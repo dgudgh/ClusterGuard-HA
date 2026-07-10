@@ -359,7 +359,7 @@ git commit -m "feat: discover MySQL replication and performance state"
 
 **Interfaces:**
 - Consumes: adapter registry, repository inventory, MySQL credentials, Task 3 discovery results.
-- Produces: `Service.Refresh(context.Context, model.ResourceID) (model.TopologySnapshot, error)`, `model.ProbeStatus`, `Repository.ReplaceClusterAnomalies`, and `ErrInventoryRequired`.
+- Produces: `Service.Refresh(context.Context, model.ResourceID) (model.TopologySnapshot, error)`, `model.ProbeStatus`, `Repository.ReplaceClusterAnomalies`, `Repository.ApplyDiscoveryRefresh`, and `ErrInventoryRequired`.
 
 - [ ] **Step 1: Write failing service tests for inventory scope and link resolution**
 
@@ -374,6 +374,12 @@ Add a failed-probe test. A never-discovered endpoint appears in `Probes` with
 its endpoint UUID and unknown health but does not create a fake
 `DatabaseInstance`. A previously discovered endpoint retains its instance UUID
 and appears unknown until a later successful refresh.
+
+Add tests proving unsupported adapters fail before any repository publication,
+resolver/adapter error text is not copied into public health summaries, a
+metrics failure degrades the probe and cluster without storing a sample, two
+endpoints resolving to one `server_uuid` produce one instance and no false
+split-brain alert, and simultaneous refreshes of one cluster cannot interleave.
 
 ```go
 func TestRefreshBuildsLinksOnlyFromRegisteredInventory(t *testing.T) {
@@ -423,12 +429,15 @@ bounded parallelism of four. `Refresh` performs these steps in order:
 
 1. Load the cluster and its active database endpoints.
 2. Reject an empty inventory with `ErrInventoryRequired`.
-3. Probe each endpoint through the selected engine adapter.
-4. Reconcile every successful native identity and bind the inventory endpoint's
+3. Require the selected adapter to advertise discovery before starting probes;
+   an unsupported engine returns `adapter.ErrUnsupported` without publication.
+4. Serialize refresh publication per cluster and probe each endpoint through
+   the selected engine adapter.
+5. Reconcile every successful native identity and bind the inventory endpoint's
    `InstanceID` to the returned platform UUID.
-5. Resolve each source native identity to a platform instance UUID.
-6. Replace the cluster replication links atomically.
-7. Store metric samples from successful probes.
+6. Resolve each source native identity to a platform instance UUID.
+7. Publish instances, endpoint bindings, replication links, metric samples, and
+   cluster anomalies through one repository snapshot transaction.
 8. Return endpoint-level unknown probe status for failures without inventing an
    engine identity, instance, or replication link.
 
@@ -436,6 +445,37 @@ If two writable primaries are discovered, return the snapshot with a critical
 anomaly and degraded cluster health; do not choose one implicitly.
 
 Add `ReplaceClusterAnomalies(clusterID model.ResourceID, anomalies []model.MetadataAnomaly) error` to the repository. It atomically replaces discovery anomalies for that cluster while retaining anomalies for other clusters.
+
+Add these transaction inputs and method to the repository:
+
+```go
+type DiscoveryObservation struct {
+	EndpointID model.ResourceID
+	Instance   model.DatabaseInstance
+	Metrics    []model.MetricSample
+}
+
+type DiscoveryRefresh struct {
+	ClusterID    model.ResourceID
+	Observations []DiscoveryObservation
+	Anomalies    []model.MetadataAnomaly
+}
+
+func (repository *Repository) ApplyDiscoveryRefresh(DiscoveryRefresh) (model.TopologySnapshot, error)
+```
+
+`ApplyDiscoveryRefresh` locks once, clones the current snapshot, reconciles all
+native identities in the candidate, binds every successful endpoint, resolves
+replication links, appends bounded metric samples, replaces cluster anomalies,
+persists the candidate once, and only then publishes it. Any error returns with
+the live snapshot unchanged. Duplicate observations with the same engine
+identity bind every endpoint to one platform UUID and return one instance.
+
+Public `ProbeStatus.Health.Summary` values use fixed classifications such as
+`database probe failed`, `discovery credentials unavailable`, and
+`performance metrics unavailable`; they never contain raw resolver, client, or
+adapter error strings. A metrics failure leaves database discovery successful
+but changes the probe and overall snapshot health to degraded.
 
 Update `ReconcileInstance` so an existing identity receives the latest
 `Replication`, `EngineMetadata`, `Maintenance`, and `PromotionEligible` values.
