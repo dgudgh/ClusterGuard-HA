@@ -250,6 +250,7 @@ git commit -m "feat: persist cluster inventory and topology state"
 - Test: `adapters/mysql/metrics_test.go`
 - Modify: `adapters/mysql/mysql_test.go`
 - Modify: `internal/api/server_test.go`
+- Modify: `pkg/adapter/registry_test.go`
 
 **Interfaces:**
 - Consumes: Task 1 adapter and model contracts.
@@ -329,6 +330,11 @@ and `Innodb_buffer_pool_read_requests`. Return counters using these exact keys:
 `slow_queries_total`, and `buffer_pool_hit_ratio`. Clamp the ratio to `[0,1]`.
 
 - [ ] **Step 6: Run all MySQL adapter tests**
+
+Update the shared adapter contract test so MySQL advertises metrics and returns
+samples, while PostgreSQL, Oracle, and SQL Server continue to advertise metrics
+and candidates as unavailable. MySQL candidate evaluation remains unavailable
+until Task 5.
 
 Run: `go test ./adapters/mysql -count=1`
 
