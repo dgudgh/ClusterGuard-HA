@@ -168,6 +168,57 @@ func TestRegisterClusterAndRefreshOnlyRegisteredInventory(t *testing.T) {
 	}
 }
 
+func TestClusterDetailExposesRegisteredEndpointsForConditionalVIPDisplay(t *testing.T) {
+	repository := store.NewMemory()
+	server := newAPIServer(t, repository, nil, nil)
+	cluster, _, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{
+		Engine: model.EngineMySQL, DisplayName: "orders",
+	}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true}})
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	activeVIP, err := repository.UpsertEndpoint(model.Endpoint{
+		ClusterID: cluster.ResourceID, Kind: model.EndpointVIP, IPAddress: "192.0.2.100", Port: 3306, Active: true,
+	})
+	if err != nil {
+		t.Fatalf("create active VIP endpoint: %v", err)
+	}
+	retiredVIP, err := repository.UpsertEndpoint(model.Endpoint{
+		ClusterID: cluster.ResourceID, Kind: model.EndpointVIP, IPAddress: "192.0.2.101", Port: 3306, Active: false,
+	})
+	if err != nil {
+		t.Fatalf("create retired VIP endpoint: %v", err)
+	}
+
+	response := callJSON(t, server.Handler(), http.MethodGet, "/api/v1/clusters/"+string(cluster.ResourceID), nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("cluster detail status: %d %s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Result struct {
+			Cluster   model.DatabaseCluster    `json:"cluster"`
+			Instances []model.DatabaseInstance `json:"instances"`
+			Endpoints []model.Endpoint         `json:"endpoints"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode cluster detail: %v", err)
+	}
+	if body.Result.Cluster.ResourceID != cluster.ResourceID || len(body.Result.Endpoints) != 3 {
+		t.Fatalf("cluster detail missing endpoint inventory: %+v", body.Result)
+	}
+	endpointByID := make(map[model.ResourceID]model.Endpoint, len(body.Result.Endpoints))
+	for _, endpoint := range body.Result.Endpoints {
+		endpointByID[endpoint.ResourceID] = endpoint
+	}
+	if endpointByID[activeVIP.ResourceID].Kind != model.EndpointVIP || !endpointByID[activeVIP.ResourceID].Active {
+		t.Fatalf("active VIP endpoint not exposed: %+v", endpointByID[activeVIP.ResourceID])
+	}
+	if endpointByID[retiredVIP.ResourceID].Kind != model.EndpointVIP || endpointByID[retiredVIP.ResourceID].Active {
+		t.Fatalf("retired VIP endpoint contract changed: %+v", endpointByID[retiredVIP.ResourceID])
+	}
+}
+
 func TestDiscoverBodyIsBoundedAndStrictIndependentOfContentLength(t *testing.T) {
 	repository := store.NewMemory()
 	cluster, _, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{

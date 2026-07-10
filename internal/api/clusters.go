@@ -93,7 +93,9 @@ func (server *Server) clusterRoute(writer http.ResponseWriter, request *http.Req
 			return
 		}
 		writeJSON(writer, http.StatusOK, map[string]interface{}{
-			"status": "ok", "result": map[string]interface{}{"cluster": cluster, "instances": server.store.Instances(clusterID)},
+			"status": "ok", "result": map[string]interface{}{
+				"cluster": cluster, "instances": server.store.Instances(clusterID), "endpoints": server.store.Endpoints(clusterID),
+			},
 		})
 		return
 	}

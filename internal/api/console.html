@@ -5,81 +5,534 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ClusterGuard HA</title>
   <style>
-    :root { color-scheme: light; --ink:#17221d; --muted:#64716b; --line:#dce5df; --canvas:#f5f8f6; --panel:#fff; --accent:#087a68; --accent-soft:#e7f5ef; --danger:#bd4b4b; }
+    :root {
+      color-scheme:light;
+      --ink:#17221d;
+      --muted:#64716b;
+      --line:#d8e1dc;
+      --line-strong:#bdcbc4;
+      --canvas:#f4f7f5;
+      --panel:#ffffff;
+      --rail:#102019;
+      --accent:#087a68;
+      --accent-soft:#e9f5f1;
+      --primary-soft:#edf8f4;
+      --candidate-soft:#eef5fb;
+      --candidate-line:#9dc3df;
+      --danger:#a33d3d;
+      --shadow:0 8px 24px rgba(24,49,38,.06);
+    }
     * { box-sizing:border-box; }
-    body { margin:0; background:var(--canvas); color:var(--ink); font:14px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-    .shell { display:grid; min-height:100vh; grid-template-columns:230px minmax(0,1fr); }
-    aside { background:#102019; color:#ecf4ef; padding:26px 18px; }
-    .brand { display:flex; align-items:center; gap:11px; margin:0 0 38px; font-size:18px; font-weight:700; }
-    .mark { display:grid; width:38px; height:38px; place-items:center; border-radius:9px; background:#eff8f3; color:#0b2319; font-size:14px; }
-    .brand small { display:block; color:#a9b9b0; font-size:12px; font-weight:500; }
-    nav a { display:block; padding:10px 12px; margin:4px 0; border-radius:6px; color:#c6d1cb; text-decoration:none; }
-    nav a:first-child { color:#fff; background:rgba(255,255,255,.12); }
-    .rail-note { position:fixed; bottom:22px; width:194px; padding:13px; border:1px solid rgba(235,245,240,.16); border-radius:7px; color:#a9b9b0; font-size:12px; }
+    html { min-width:320px; background:var(--canvas); }
+    body {
+      margin:0;
+      background:var(--canvas);
+      color:var(--ink);
+      font:14px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    button, select { font:inherit; }
+    button:focus-visible, select:focus-visible, a:focus-visible {
+      outline:3px solid rgba(8,122,104,.24);
+      outline-offset:2px;
+    }
+    .shell { display:grid; min-height:100vh; grid-template-columns:220px minmax(0,1fr); }
+    .sidebar {
+      display:flex;
+      flex-direction:column;
+      min-height:100vh;
+      padding:24px 16px;
+      background:var(--rail);
+      color:#edf5f1;
+    }
+    .brand { display:flex; align-items:center; gap:11px; margin-bottom:32px; }
+    .brand-mark {
+      display:grid;
+      width:38px;
+      height:38px;
+      place-items:center;
+      border-radius:8px;
+      background:#f0f7f3;
+      color:#102019;
+      font-weight:800;
+    }
+    .brand-name { font-size:16px; font-weight:750; }
+    .brand-subtitle { color:#9fb1a8; font-size:12px; }
+    nav { display:grid; gap:5px; }
+    nav a {
+      display:flex;
+      min-height:40px;
+      align-items:center;
+      padding:0 12px;
+      border-radius:6px;
+      color:#bdcbc4;
+      text-decoration:none;
+    }
+    nav a[aria-current="page"] { background:rgba(255,255,255,.11); color:#fff; }
+    .scope-note {
+      margin-top:auto;
+      padding:13px;
+      border:1px solid rgba(236,245,240,.16);
+      border-radius:7px;
+      color:#9fb1a8;
+      font-size:12px;
+    }
     main { min-width:0; }
-    header { display:flex; justify-content:space-between; gap:24px; align-items:flex-start; padding:30px 36px 24px; background:var(--panel); border-bottom:1px solid var(--line); }
-    .eyebrow { margin:0 0 5px; color:var(--accent); font-size:12px; font-weight:700; }
-    h1 { margin:0; font-size:25px; letter-spacing:0; }
-    .subtitle { margin:6px 0 0; color:var(--muted); }
-    button, select { height:36px; border:1px solid var(--line); border-radius:6px; background:#fff; color:var(--ink); font:inherit; }
-    button { padding:0 14px; cursor:pointer; }
-    button.primary { border-color:var(--accent); background:var(--accent); color:#fff; }
-    .content { max-width:1360px; margin:0 auto; padding:24px 36px 42px; }
-    .toolbar { display:flex; justify-content:space-between; align-items:end; gap:18px; margin-bottom:18px; }
+    .page-header {
+      display:flex;
+      align-items:end;
+      justify-content:space-between;
+      gap:24px;
+      padding:26px 32px 22px;
+      border-bottom:1px solid var(--line);
+      background:var(--panel);
+    }
+    .eyebrow { margin:0 0 4px; color:var(--accent); font-size:12px; font-weight:750; }
+    h1 { margin:0; font-size:24px; letter-spacing:0; }
+    .heading-note { margin:5px 0 0; color:var(--muted); }
+    .cluster-controls { display:flex; align-items:end; gap:10px; }
     label { display:grid; gap:5px; color:var(--muted); font-size:12px; font-weight:700; }
-    select { min-width:300px; padding:0 10px; }
-    .grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); border:1px solid var(--line); border-radius:8px; overflow:hidden; background:var(--panel); }
-    .metric { min-height:82px; padding:15px 17px; border-right:1px solid var(--line); }
-    .metric:last-child { border:0; }
-    .metric span { display:block; color:var(--muted); font-size:12px; }
-    .metric strong { display:block; margin-top:5px; font-size:18px; overflow-wrap:anywhere; }
-    .layout { display:grid; grid-template-columns:minmax(0,1.55fr) minmax(290px,.8fr); gap:18px; margin-top:18px; }
-    .panel { border:1px solid var(--line); border-radius:8px; background:var(--panel); padding:20px; }
-    h2 { margin:0; font-size:16px; }
-    .panel-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; }
-    .badge { display:inline-flex; align-items:center; min-height:24px; padding:0 8px; border-radius:999px; background:var(--accent-soft); color:#087a68; font-size:12px; font-weight:700; }
-    .nodes { display:grid; gap:9px; }
-    .node { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:12px; align-items:center; padding:13px; border:1px solid var(--line); border-radius:7px; }
-    .node strong, .node span { display:block; }
-    .node span { color:var(--muted); font-size:12px; }
-    .node .role { color:#087a68; font-weight:700; text-align:right; }
-    .empty { padding:28px 4px; color:var(--muted); text-align:center; }
-    .capabilities { display:grid; gap:10px; }
-    .capability { display:flex; justify-content:space-between; padding:11px 0; border-bottom:1px solid var(--line); }
-    .capability:last-child { border:0; }
-    .capability strong { text-transform:capitalize; }
-    .status { margin-top:18px; padding:12px 14px; border-left:3px solid #aabbb1; background:#fff; color:var(--muted); }
-    .status.error { border-color:var(--danger); color:#8d3333; }
-    @media (max-width:900px) { .shell { grid-template-columns:1fr; } aside { display:none; } .layout { grid-template-columns:1fr; } .grid { grid-template-columns:repeat(2,1fr); } .metric:nth-child(2) { border-right:0; } .metric:nth-child(n+3) { border-top:1px solid var(--line); } header,.content { padding-left:20px; padding-right:20px; } }
-    @media (max-width:560px) { header { display:block; } header button { margin-top:16px; } .toolbar { display:block; } .toolbar label { margin-bottom:12px; } select { min-width:100%; width:100%; } .grid { grid-template-columns:1fr; } .metric { border:0; border-bottom:1px solid var(--line); } .metric:last-child { border:0; } }
+    select, button {
+      height:38px;
+      border:1px solid var(--line-strong);
+      border-radius:7px;
+      background:#fff;
+      color:var(--ink);
+    }
+    select { width:min(360px,36vw); padding:0 34px 0 11px; }
+    button { display:inline-flex; align-items:center; gap:7px; padding:0 14px; cursor:pointer; font-weight:700; }
+    button:hover { border-color:var(--accent); color:var(--accent); }
+    button:disabled { cursor:wait; opacity:.62; }
+    .content { width:min(1480px,100%); margin:0 auto; padding:22px 32px 42px; }
+    .status-strip {
+      display:grid;
+      grid-template-columns:1.25fr repeat(5,minmax(0,1fr));
+      overflow:hidden;
+      border:1px solid var(--line);
+      border-radius:8px;
+      background:var(--panel);
+      box-shadow:var(--shadow);
+    }
+    .status-item { min-width:0; min-height:72px; padding:13px 15px; border-right:1px solid var(--line); }
+    .status-item:last-child { border-right:0; }
+    .status-label { display:block; color:var(--muted); font-size:12px; font-weight:650; }
+    .status-value { display:block; margin-top:4px; overflow-wrap:anywhere; font-size:16px; font-weight:760; }
+    .topology-band { margin-top:18px; padding:20px 0 6px; background:var(--panel); box-shadow:var(--shadow); }
+    .panel-heading { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:0 20px 16px; border-bottom:1px solid var(--line); }
+    h2 { margin:0; font-size:17px; }
+    .panel-caption { margin-top:3px; color:var(--muted); font-size:12px; }
+    .vip-row {
+      display:flex;
+      align-items:center;
+      gap:8px;
+      min-height:30px;
+      padding:0 10px;
+      border:1px solid #c7d8d0;
+      border-radius:999px;
+      background:var(--accent-soft);
+      color:#176c5d;
+      font-size:12px;
+      font-weight:750;
+    }
+    .vip-row[hidden] { display:none; }
+    .topology-surface { min-height:330px; padding:34px 20px 38px; }
+    .topology-grid {
+      display:grid;
+      grid-template-columns:minmax(0,1fr) 72px minmax(0,1fr);
+      width:100%;
+      align-items:stretch;
+    }
+    .primary-column { display:flex; min-width:0; align-items:center; justify-content:center; }
+    .replica-list { display:grid; min-width:0; gap:12px; align-content:center; }
+    .node-card {
+      position:relative;
+      display:flex;
+      width:100%;
+      min-height:84px;
+      flex-direction:column;
+      align-items:center;
+      justify-content:center;
+      padding:13px 44px 13px 16px;
+      border:1px solid var(--line-strong);
+      border-radius:8px;
+      background:#fff;
+      text-align:center;
+      box-shadow:0 7px 20px rgba(34,57,47,.045);
+    }
+    .primary-column .node-card { background:var(--primary-soft); border-color:#9fd2c3; }
+    .node-card.candidate { background:var(--candidate-soft); border-color:var(--candidate-line); }
+    .node-role {
+      position:absolute;
+      top:10px;
+      right:10px;
+      display:inline-flex;
+      align-items:center;
+      min-height:22px;
+      padding:0 7px;
+      border-radius:999px;
+      background:#edf3ef;
+      color:#496158;
+      font-size:11px;
+      font-weight:750;
+    }
+    .candidate .node-role { background:#dbeaf6; color:#245f86; }
+    .node-line { width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .node-address { font-size:14px; font-weight:780; }
+    .node-detail { margin-top:6px; color:var(--muted); font-size:12px; font-weight:600; }
+    .connector { position:relative; min-height:84px; }
+    .connector::before {
+      position:absolute;
+      top:50%;
+      left:0;
+      width:100%;
+      height:1px;
+      background:var(--line-strong);
+      content:"";
+    }
+    .connector::after {
+      position:absolute;
+      top:42px;
+      bottom:42px;
+      left:50%;
+      width:1px;
+      background:var(--line-strong);
+      content:"";
+    }
+    .replica-row { position:relative; min-width:0; }
+    .replica-row::before {
+      position:absolute;
+      top:50%;
+      right:100%;
+      width:36px;
+      height:1px;
+      background:var(--line-strong);
+      content:"";
+    }
+    .empty-node {
+      display:grid;
+      min-height:84px;
+      place-items:center;
+      border:1px dashed var(--line-strong);
+      border-radius:8px;
+      color:var(--muted);
+      text-align:center;
+    }
+    .live-status { margin:16px 20px 0; padding:11px 13px; border-left:3px solid #9cafa4; color:var(--muted); background:#f7faf8; }
+    .live-status.error { border-color:var(--danger); color:var(--danger); }
+    @media (max-width:1100px) {
+      .status-strip { grid-template-columns:repeat(3,1fr); }
+      .status-item:nth-child(3) { border-right:0; }
+      .status-item:nth-child(n+4) { border-top:1px solid var(--line); }
+    }
+    @media (max-width:900px) {
+      .shell { grid-template-columns:1fr; }
+      .sidebar { display:none; }
+      .page-header { align-items:stretch; padding:22px 20px 18px; }
+      .content { padding:18px 20px 34px; }
+      .topology-grid { grid-template-columns:1fr; gap:12px; }
+      .connector { display:none; }
+      .replica-row::before { display:none; }
+      .primary-column .node-card { width:100%; }
+    }
+    @media (max-width:680px) {
+      .page-header { display:block; }
+      .cluster-controls { display:grid; grid-template-columns:1fr auto; margin-top:16px; }
+      select { width:100%; }
+      .status-strip { grid-template-columns:repeat(2,1fr); }
+      .status-item:nth-child(3) { border-right:1px solid var(--line); }
+      .status-item:nth-child(even) { border-right:0; }
+      .status-item:nth-child(n+3) { border-top:1px solid var(--line); }
+      .panel-heading { align-items:flex-start; }
+      .topology-surface { min-height:0; padding:24px 14px 28px; }
+    }
   </style>
 </head>
 <body>
   <div class="shell">
-    <aside>
-      <div class="brand"><div class="mark">CG</div><div>ClusterGuard HA<small>多数据库高可用控制</small></div></div>
-      <nav><a href="#overview">总览</a><a href="#clusters">集群</a><a href="#topology">拓扑</a><a href="#metadata">元数据</a></nav>
-      <div class="rail-note">平台 UUID 为资源唯一标识。主机名、IP 与端口可通过元数据协调更新。</div>
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">CG</div>
+        <div><div class="brand-name">ClusterGuard HA</div><div class="brand-subtitle">MySQL 高可用控制</div></div>
+      </div>
+      <nav aria-label="主导航">
+        <a href="#topology" aria-current="page">集群拓扑</a>
+        <a href="#status-strip">健康摘要</a>
+      </nav>
+      <div class="scope-note">当前视图只提供发现、健康、候选评估与指标读取。数据库角色保持不变。</div>
     </aside>
     <main>
-      <header><div><p class="eyebrow">ENTERPRISE CONTROL PLANE</p><h1>ClusterGuard HA</h1><p class="subtitle">独立多数据库高可用控制平台</p></div><button class="primary" id="refresh" type="button">刷新状态</button></header>
-      <div class="content" id="overview">
-        <div class="toolbar" id="clusters"><label>数据库集群<select id="cluster-select"><option value="">未发现已注册集群</option></select></label><div class="badge" id="health-badge">等待数据</div></div>
-        <section class="grid" aria-label="集群状态"><div class="metric"><span>已注册集群</span><strong id="cluster-count">0</strong></div><div class="metric"><span>数据库节点</span><strong id="node-count">0</strong></div><div class="metric"><span>健康节点</span><strong id="healthy-count">-</strong></div><div class="metric"><span>控制面状态</span><strong>就绪</strong></div></section>
-        <div class="layout" id="topology"><section class="panel"><div class="panel-head"><h2>集群拓扑</h2><span class="badge" id="topology-title">未选择</span></div><div class="nodes" id="nodes"><div class="empty">选择一个集群后显示平台已确认的实例。</div></div></section><section class="panel"><div class="panel-head"><h2>引擎能力</h2><span class="badge">适配器注册表</span></div><div class="capabilities" id="capabilities"></div></section></div>
-        <div class="status" id="status" role="status">正在连接控制 API。</div>
+      <header class="page-header">
+        <div>
+          <p class="eyebrow">MYSQL TOPOLOGY INTELLIGENCE</p>
+          <h1>MySQL 拓扑</h1>
+          <p class="heading-note">查看已注册集群的主库、候选节点、从库与复制状态。</p>
+        </div>
+        <div class="cluster-controls">
+          <label for="cluster-select">数据库集群
+            <select id="cluster-select" aria-label="选择数据库集群">
+              <option value="">未发现已注册集群</option>
+            </select>
+          </label>
+          <button id="refresh-topology" type="button" aria-label="刷新所选集群拓扑">↻ 刷新拓扑</button>
+        </div>
+      </header>
+      <div class="content">
+        <section class="status-strip" id="status-strip" aria-label="集群状态摘要">
+          <div class="status-item"><span class="status-label">集群</span><strong class="status-value" id="summary-cluster">-</strong></div>
+          <div class="status-item"><span class="status-label">健康</span><strong class="status-value" id="summary-health">未知</strong></div>
+          <div class="status-item"><span class="status-label">主库</span><strong class="status-value" id="summary-primary">-</strong></div>
+          <div class="status-item"><span class="status-label">实例</span><strong class="status-value" id="summary-instances">0</strong></div>
+          <div class="status-item"><span class="status-label">最大延迟</span><strong class="status-value" id="summary-lag">-</strong></div>
+          <div class="status-item"><span class="status-label">QPS</span><strong class="status-value" id="summary-qps">-</strong></div>
+        </section>
+
+        <section class="topology-band" id="topology" aria-labelledby="topology-heading">
+          <div class="panel-heading">
+            <div><h2 id="topology-heading">复制拓扑</h2><div class="panel-caption" id="observed-at">等待拓扑数据</div></div>
+            <div class="vip-row" id="vip-row" hidden><span>VIP</span><span id="vip-value">-</span></div>
+          </div>
+          <div class="topology-surface">
+            <div class="topology-grid">
+              <div class="primary-column" id="primary-column"><div class="empty-node">尚未发现主库</div></div>
+              <div class="connector" id="connector" aria-hidden="true"></div>
+              <div class="replica-list" id="replica-list"><div class="empty-node">尚未发现从库</div></div>
+            </div>
+          </div>
+          <div class="live-status" id="live-status" role="status" aria-live="polite">正在连接控制 API。</div>
+        </section>
       </div>
     </main>
   </div>
+
   <script>
     const byId = id => document.getElementById(id);
-    const state = { clusters: [] };
-    const status = (message, error=false) => { const box=byId('status'); box.textContent=message; box.className='status'+(error?' error':''); };
-    const request = async path => { const response=await fetch(path); const body=await response.json(); if(!response.ok) throw new Error(body.message || '请求失败'); return body.result; };
-    const renderNodes = instances => { const root=byId('nodes'); if(!instances.length) { root.innerHTML='<div class="empty">当前集群尚未发现实例。</div>'; return; } root.innerHTML=instances.map(node => `<article class="node"><div><strong>${node.display_name || node.hostname}:${node.port}</strong><span>${node.hostname} · ${node.ip_address || 'IP 未记录'} · ${node.engine_identity.server_uuid || node.engine_identity.system_identifier || '身份已记录'}</span></div><div class="role">${node.role || 'unknown'}<span>${node.health?.state || 'unknown'}</span></div></article>`).join(''); };
-    const selectCluster = async () => { const id=byId('cluster-select').value; if(!id) { renderNodes([]); byId('node-count').textContent='0'; byId('healthy-count').textContent='-'; byId('health-badge').textContent='未选择'; status('已刷新控制面状态。'); return; } try { const [topology, health] = await Promise.all([request(`/api/v1/clusters/${id}/topology`), request(`/api/v1/clusters/${id}/health`)]); renderNodes(topology.instances); byId('node-count').textContent=health.instance_count; byId('healthy-count').textContent=health.healthy_instances; byId('health-badge').textContent=health.state; byId('topology-title').textContent=health.state; status('已从独立控制 API 刷新集群状态。'); } catch (error) { status(error.message, true); } };
-    const load = async () => { try { const [clusters, engines] = await Promise.all([request('/api/v1/clusters'), request('/api/v1/engines')]); state.clusters=clusters; const selector=byId('cluster-select'); const selected=selector.value; selector.innerHTML='<option value="">选择集群</option>'+clusters.map(cluster=>`<option value="${cluster.resource_id}">${cluster.display_name || cluster.resource_id}</option>`).join(''); selector.value=selected && clusters.some(c=>c.resource_id===selected) ? selected : (clusters[0]?.resource_id || ''); byId('cluster-count').textContent=clusters.length; byId('capabilities').innerHTML=engines.map(item=>{ const names=Object.entries(item.features).filter(([, feature])=>feature.available).map(([name])=>name); return `<div class="capability"><strong>${item.engine}</strong><span>${names.join('、') || '只读骨架'}</span></div>`; }).join(''); await selectCluster(); } catch (error) { status(error.message, true); } };
-    byId('refresh').addEventListener('click', load); byId('cluster-select').addEventListener('change', selectCluster); load();
+    const state = { clusters: [], selectedClusterId: '' };
+
+    const setLiveStatus = (message, isError = false) => {
+      const status = byId('live-status');
+      status.textContent = message;
+      status.className = isError ? 'live-status error' : 'live-status';
+    };
+
+    const fetchResult = async (path, options = {}) => {
+      const response = await fetch(path, options);
+      let payload;
+      try {
+        payload = await response.json();
+      } catch (_) {
+        throw new Error('控制 API 返回了无效数据');
+      }
+      if (!response.ok || payload.status === 'error') {
+        throw new Error(payload.message || '控制 API 请求失败');
+      }
+      return payload.result;
+    };
+
+    const optionalResult = async (path, fallback) => {
+      try {
+        return await fetchResult(path);
+      } catch (_) {
+        return fallback;
+      }
+    };
+
+    const endpointText = instance => {
+      const hostname = instance.hostname || instance.display_name || '-';
+      const ip = instance.ip_address || '-';
+      const port = instance.port || '-';
+      return `${hostname} · IP ${ip} · 端口 ${port}`;
+    };
+
+    const lagText = instance => {
+      const lag = instance.replication && instance.replication.lag_seconds;
+      return Number.isFinite(lag) ? `${lag}s` : '未知';
+    };
+
+    const versionText = instance => {
+      const metadata = instance.engine_metadata || {};
+      return metadata.version || '版本未知';
+    };
+
+    const roleText = (instance, assessment) => {
+      if (instance.role === 'primary') return '主库';
+      if (assessment && assessment.eligible && assessment.rank === 1) return '候选节点';
+      return '从库';
+    };
+
+    const createNodeCard = (instance, assessment) => {
+      const role = roleText(instance, assessment);
+      const card = document.createElement('article');
+      const candidate = role === '候选节点';
+      card.className = candidate ? 'node-card candidate' : 'node-card';
+      card.setAttribute('aria-label', `${role} ${endpointText(instance)}`);
+      card.title = instance.resource_id || '';
+
+      const roleBadge = document.createElement('span');
+      roleBadge.className = 'node-role';
+      roleBadge.textContent = role;
+
+      const address = document.createElement('div');
+      address.className = 'node-line node-address';
+      address.textContent = endpointText(instance);
+
+      const detail = document.createElement('div');
+      detail.className = 'node-line node-detail';
+      detail.textContent = `${versionText(instance)} · ${role} · 延迟 ${lagText(instance)}`;
+
+      card.append(roleBadge, address, detail);
+      return card;
+    };
+
+    const renderTopology = (snapshot, candidates) => {
+      const instances = snapshot ? snapshot.instances || [] : [];
+      const assessments = new Map((candidates || []).map(item => [item.instance_id, item]));
+      const primary = instances.find(instance => instance.role === 'primary');
+      const replicas = instances.filter(instance => instance.role !== 'primary');
+      const primaryColumn = byId('primary-column');
+      const replicaList = byId('replica-list');
+      primaryColumn.replaceChildren();
+      replicaList.replaceChildren();
+
+      if (primary) {
+        primaryColumn.append(createNodeCard(primary, assessments.get(primary.resource_id)));
+      } else {
+        const empty = document.createElement('div');
+        empty.className = 'empty-node';
+        empty.textContent = '尚未发现主库';
+        primaryColumn.append(empty);
+      }
+
+      if (replicas.length) {
+        replicas.forEach(instance => {
+          const row = document.createElement('div');
+          row.className = 'replica-row';
+          row.append(createNodeCard(instance, assessments.get(instance.resource_id)));
+          replicaList.append(row);
+        });
+      } else {
+        const empty = document.createElement('div');
+        empty.className = 'empty-node';
+        empty.textContent = '尚未发现从库';
+        replicaList.append(empty);
+      }
+      byId('connector').hidden = !primary || replicas.length === 0;
+      return { instances, primary };
+    };
+
+    const activeVIP = endpoints => (endpoints || []).find(endpoint => endpoint.active && endpoint.kind === 'vip');
+
+    const renderVIP = endpoints => {
+      const vipEndpoint = activeVIP(endpoints);
+      const vipRow = byId('vip-row');
+      vipRow.hidden = !vipEndpoint;
+      if (!vipEndpoint) {
+        byId('vip-value').textContent = '-';
+        return;
+      }
+      const address = vipEndpoint.ip_address || vipEndpoint.hostname || '-';
+      byId('vip-value').textContent = vipEndpoint.port ? `${address}:${vipEndpoint.port}` : address;
+    };
+
+    const renderSummary = (clusterDetail, topology, health, metrics) => {
+      const cluster = clusterDetail.cluster;
+      const instances = topology ? topology.instances || [] : [];
+      const primary = instances.find(instance => instance.role === 'primary');
+      const lags = instances
+        .map(instance => instance.replication && instance.replication.lag_seconds)
+        .filter(value => Number.isFinite(value));
+      const metricInstances = metrics && metrics.instances ? metrics.instances : [];
+      const qps = metricInstances.reduce((total, item) => total + (Number.isFinite(item.values && item.values.qps) ? item.values.qps : 0), 0);
+      byId('summary-cluster').textContent = cluster.display_name || cluster.resource_id;
+      byId('summary-health').textContent = health ? health.health.state || '未知' : '未采集';
+      byId('summary-primary').textContent = primary ? `${primary.hostname || primary.ip_address}:${primary.port}` : '-';
+      byId('summary-instances').textContent = String(instances.length);
+      byId('summary-lag').textContent = lags.length ? `${Math.max(...lags)}s` : '-';
+      byId('summary-qps').textContent = metricInstances.length ? qps.toFixed(1) : '-';
+      byId('observed-at').textContent = topology && topology.observed_at ? `采集时间 ${new Date(topology.observed_at).toLocaleString('zh-CN')}` : '尚未采集拓扑';
+    };
+
+    const loadSelectedCluster = async () => {
+      const clusterId = byId('cluster-select').value;
+      state.selectedClusterId = clusterId;
+      if (!clusterId) {
+        byId('summary-cluster').textContent = '-';
+        byId('summary-health').textContent = '未知';
+        renderTopology(null, []);
+        renderVIP([]);
+        setLiveStatus('请选择已注册的数据库集群。');
+        return;
+      }
+      setLiveStatus('正在读取所选集群。');
+      try {
+        const [clusterDetail, topology, health, candidates, metrics] = await Promise.all([
+          fetchResult(`/api/v1/clusters/${clusterId}`),
+          optionalResult(`/api/v1/clusters/${clusterId}/topology`, null),
+          optionalResult(`/api/v1/clusters/${clusterId}/health`, null),
+          optionalResult(`/api/v1/clusters/${clusterId}/candidates`, []),
+          optionalResult(`/api/v1/clusters/${clusterId}/metrics`, { instances: [] })
+        ]);
+        if (state.selectedClusterId !== clusterId) return;
+        renderTopology(topology, candidates);
+        renderVIP(clusterDetail.endpoints || []);
+        renderSummary(clusterDetail, topology, health, metrics);
+        setLiveStatus(topology ? '拓扑状态已更新。' : '集群已注册，尚未完成拓扑发现。');
+      } catch (error) {
+        setLiveStatus(error.message, true);
+      }
+    };
+
+    const loadClusters = async () => {
+      try {
+        const clusters = await fetchResult('/api/v1/clusters');
+        state.clusters = clusters || [];
+        const selector = byId('cluster-select');
+        const previous = selector.value;
+        selector.replaceChildren();
+        if (!state.clusters.length) {
+          const option = document.createElement('option');
+          option.value = '';
+          option.textContent = '未发现已注册集群';
+          selector.append(option);
+        } else {
+          state.clusters.forEach(cluster => {
+            const option = document.createElement('option');
+            option.value = cluster.resource_id;
+            option.textContent = cluster.display_name || cluster.resource_id;
+            selector.append(option);
+          });
+          selector.value = state.clusters.some(cluster => cluster.resource_id === previous) ? previous : state.clusters[0].resource_id;
+        }
+        await loadSelectedCluster();
+      } catch (error) {
+        setLiveStatus(error.message, true);
+      }
+    };
+
+    const refreshTopology = async () => {
+      const clusterId = byId('cluster-select').value;
+      if (!clusterId) {
+        setLiveStatus('请先选择数据库集群。', true);
+        return;
+      }
+      const refresh = byId('refresh-topology');
+      refresh.disabled = true;
+      setLiveStatus('正在刷新拓扑。');
+      try {
+        await fetchResult(`/api/v1/clusters/${clusterId}/discover`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: '{}'
+        });
+        await loadSelectedCluster();
+      } catch (error) {
+        setLiveStatus(error.message, true);
+      } finally {
+        refresh.disabled = false;
+      }
+    };
+
+    byId('cluster-select').addEventListener('change', loadSelectedCluster);
+    byId('refresh-topology').addEventListener('click', refreshTopology);
+    loadClusters();
   </script>
 </body>
 </html>
