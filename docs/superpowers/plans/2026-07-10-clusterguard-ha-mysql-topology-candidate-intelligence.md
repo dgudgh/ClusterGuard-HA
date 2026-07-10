@@ -705,6 +705,15 @@ together or not at all. Add a repository read method used by topology,
 candidate, and health handlers. A process restart must preserve the last probe
 coverage and cluster health; GET routes must not trigger a database probe.
 
+Topology reads represent every known active inventory member. A previously
+bound endpoint that currently fails probing keeps its stable instance UUID but
+uses the current failed-probe health, never stale healthy state. A
+never-successful endpoint remains probe-only and does not invent an instance.
+Preserve a temporarily unobserved node's last-known replication relation while
+marking that link unhealthy whenever either endpoint lacks a healthy current
+probe. Candidate evaluation still uses current probe evidence and therefore
+blocks the unavailable node.
+
 Prometheus output escapes label values and emits only finite numeric samples.
 Set `Content-Type: text/plain; version=0.0.4; charset=utf-8`.
 
