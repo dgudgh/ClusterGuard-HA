@@ -54,6 +54,9 @@ func TestDiscoverUsesMySQLServerUUIDNotHostnameAsIdentity(t *testing.T) {
 	if result.Instance.Engine != model.EngineMySQL || result.Instance.EngineIdentity["server_uuid"] != "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" {
 		t.Fatalf("unexpected native identity: %+v", result.Instance)
 	}
+	if len(result.Instance.EngineIdentity) != 1 || result.Instance.EngineMetadata["server_id"] != "22" {
+		t.Fatalf("server ID must be metadata, not native identity: identity=%+v metadata=%+v", result.Instance.EngineIdentity, result.Instance.EngineMetadata)
+	}
 	if result.Instance.Hostname != "mysql-renamed" || result.Instance.IPAddress != "192.0.2.10" || result.Instance.Port != 3310 {
 		t.Fatalf("unexpected discovered endpoint: %+v", result.Instance)
 	}

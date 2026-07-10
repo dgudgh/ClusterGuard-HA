@@ -188,7 +188,6 @@ func discover(ctx context.Context, runner SQLRunner, request adapter.DiscoverReq
 		Engine:    model.EngineMySQL,
 		EngineIdentity: model.EngineIdentity{
 			"server_uuid": identity.serverUUID,
-			"server_id":   identity.serverID,
 		},
 		DisplayName: displayName,
 		Hostname:    identity.hostname,
@@ -204,6 +203,7 @@ func discover(ctx context.Context, runner SQLRunner, request adapter.DiscoverReq
 		},
 		Replication: replication,
 		EngineMetadata: map[string]string{
+			"server_id":     identity.serverID,
 			"version":       identity.version,
 			"gtid_mode":     identity.gtidMode,
 			"log_bin":       identity.logBin,
