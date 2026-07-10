@@ -664,6 +664,12 @@ The candidate result must use platform UUIDs. The Prometheus body must include
 `clusterguard_mysql_connections` with `cluster_id` and `instance_id` labels,
 and must not include hostname as identity.
 
+Candidate reads must fail closed with `409` unless the persisted snapshot has
+exactly one current primary and explicit probe evidence. They must pass the
+persisted probes into `CandidateRequest`; they may never choose the first of
+zero or multiple writable primaries. Invalid non-UUID cluster path parameters
+return `400` before any repository or adapter call.
+
 Add a metrics-service test with two samples ten seconds apart. A questions delta
 of 50 must produce QPS 5, transaction delta 20 must produce TPS 2, and slow
 queries delta 10 must produce slow-query rate 1. A counter decrease represents a
@@ -721,7 +727,7 @@ Expected: PASS.
 - [ ] **Step 7: Commit API delivery**
 
 ```bash
-git add internal/api
+git add internal/api internal/discovery internal/metrics internal/runtime internal/store
 git commit -m "feat: expose MySQL topology and candidate APIs"
 ```
 
