@@ -25,53 +25,53 @@ all platform state independent of database network coordinates.
 
 **Files:** `pkg/model/*`, `pkg/identity/*`
 
-- [ ] Write model and identity tests for UUIDs and all native engine keys.
-- [ ] Run package tests and observe compile failure.
-- [ ] Implement resource, workflow, and identity model types.
-- [ ] Run package tests and commit the green model layer.
+- [x] Write model and identity tests for UUIDs and all native engine keys.
+- [x] Run package tests and observe compile failure.
+- [x] Implement resource, workflow, and identity model types.
+- [x] Run package tests and commit the green model layer.
 
 ### Task 2: Revisioned Metadata Repository
 
 **Files:** `internal/store/*`
 
-- [ ] Write reconciliation tests for hostname, IP, and port changes.
-- [ ] Run tests and observe missing repository behavior.
-- [ ] Implement in-memory state plus atomic JSON snapshot persistence.
-- [ ] Verify aliases, revisions, duplicate detection, and reload behavior.
+- [x] Write reconciliation tests for hostname, IP, and port changes.
+- [x] Run tests and observe missing repository behavior.
+- [x] Implement in-memory state plus atomic JSON snapshot persistence.
+- [x] Verify aliases, revisions, duplicate detection, and reload behavior.
 
 ### Task 3: Adapter SDK and Registry
 
 **Files:** `pkg/adapter/*`, `adapters/*`
 
-- [ ] Write registry and unsupported-capability tests.
-- [ ] Implement the adapter contract and registry.
-- [ ] Implement skeleton adapters and MySQL read-only discovery/health.
-- [ ] Verify credentials stay in process environment rather than arguments.
+- [x] Write registry and unsupported-capability tests.
+- [x] Implement the adapter contract and registry.
+- [x] Implement skeleton adapters and MySQL read-only discovery/health.
+- [x] Verify credentials stay in process environment rather than arguments.
 
 ### Task 4: Guarded Workflow
 
 **Files:** `internal/workflow/*`
 
-- [ ] Write workflow tests for gate order, fail-closed unsupported execution,
+- [x] Write workflow tests for gate order, fail-closed unsupported execution,
   verification, audit, and report creation.
-- [ ] Implement lock, approval, safety, execution, and report services.
-- [ ] Verify every supported mutation reaches audit and verification.
+- [x] Implement lock, approval, safety, execution, and report services.
+- [x] Verify every supported mutation reaches audit and verification.
 
 ### Task 5: API and Console
 
 **Files:** `internal/api/*`, `web/*`, `cmd/*`
 
-- [ ] Write endpoint tests for engines, clusters, health, workflows, and
+- [x] Write endpoint tests for engines, clusters, health, workflows, and
   metadata reconciliation.
-- [ ] Implement the `/api/v1` routes and JSON error contract.
-- [ ] Add a compact operational console backed only by these routes.
-- [ ] Verify browser assets and endpoint tests.
+- [x] Implement the `/api/v1` routes and JSON error contract.
+- [x] Add a compact operational console backed only by these routes.
+- [x] Verify browser assets and endpoint tests.
 
 ### Task 6: Delivery Verification
 
 **Files:** `configs/*`, `docs/*`, `scripts/*`
 
-- [ ] Add safe default configuration and operator documentation.
-- [ ] Run full Go tests, build both binaries, format checks, and clean-room scan.
-- [ ] Start the local service and exercise the read-only API.
-- [ ] Commit the Phase 1 baseline.
+- [x] Add safe default configuration and operator documentation.
+- [x] Run full Go tests, build both binaries, format checks, and clean-room scan.
+- [x] Start the local service and exercise the read-only API.
+- [x] Commit the Phase 1 baseline.

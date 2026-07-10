@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ClusterGuard HA</title>
+  <style>
+    :root { color-scheme: light; --ink:#17221d; --muted:#64716b; --line:#dce5df; --canvas:#f5f8f6; --panel:#fff; --accent:#087a68; --accent-soft:#e7f5ef; --danger:#bd4b4b; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--canvas); color:var(--ink); font:14px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    .shell { display:grid; min-height:100vh; grid-template-columns:230px minmax(0,1fr); }
+    aside { background:#102019; color:#ecf4ef; padding:26px 18px; }
+    .brand { display:flex; align-items:center; gap:11px; margin:0 0 38px; font-size:18px; font-weight:700; }
+    .mark { display:grid; width:38px; height:38px; place-items:center; border-radius:9px; background:#eff8f3; color:#0b2319; font-size:14px; }
+    .brand small { display:block; color:#a9b9b0; font-size:12px; font-weight:500; }
+    nav a { display:block; padding:10px 12px; margin:4px 0; border-radius:6px; color:#c6d1cb; text-decoration:none; }
+    nav a:first-child { color:#fff; background:rgba(255,255,255,.12); }
+    .rail-note { position:fixed; bottom:22px; width:194px; padding:13px; border:1px solid rgba(235,245,240,.16); border-radius:7px; color:#a9b9b0; font-size:12px; }
+    main { min-width:0; }
+    header { display:flex; justify-content:space-between; gap:24px; align-items:flex-start; padding:30px 36px 24px; background:var(--panel); border-bottom:1px solid var(--line); }
+    .eyebrow { margin:0 0 5px; color:var(--accent); font-size:12px; font-weight:700; }
+    h1 { margin:0; font-size:25px; letter-spacing:0; }
+    .subtitle { margin:6px 0 0; color:var(--muted); }
+    button, select { height:36px; border:1px solid var(--line); border-radius:6px; background:#fff; color:var(--ink); font:inherit; }
+    button { padding:0 14px; cursor:pointer; }
+    button.primary { border-color:var(--accent); background:var(--accent); color:#fff; }
+    .content { max-width:1360px; margin:0 auto; padding:24px 36px 42px; }
+    .toolbar { display:flex; justify-content:space-between; align-items:end; gap:18px; margin-bottom:18px; }
+    label { display:grid; gap:5px; color:var(--muted); font-size:12px; font-weight:700; }
+    select { min-width:300px; padding:0 10px; }
+    .grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); border:1px solid var(--line); border-radius:8px; overflow:hidden; background:var(--panel); }
+    .metric { min-height:82px; padding:15px 17px; border-right:1px solid var(--line); }
+    .metric:last-child { border:0; }
+    .metric span { display:block; color:var(--muted); font-size:12px; }
+    .metric strong { display:block; margin-top:5px; font-size:18px; overflow-wrap:anywhere; }
+    .layout { display:grid; grid-template-columns:minmax(0,1.55fr) minmax(290px,.8fr); gap:18px; margin-top:18px; }
+    .panel { border:1px solid var(--line); border-radius:8px; background:var(--panel); padding:20px; }
+    h2 { margin:0; font-size:16px; }
+    .panel-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; }
+    .badge { display:inline-flex; align-items:center; min-height:24px; padding:0 8px; border-radius:999px; background:var(--accent-soft); color:#087a68; font-size:12px; font-weight:700; }
+    .nodes { display:grid; gap:9px; }
+    .node { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:12px; align-items:center; padding:13px; border:1px solid var(--line); border-radius:7px; }
+    .node strong, .node span { display:block; }
+    .node span { color:var(--muted); font-size:12px; }
+    .node .role { color:#087a68; font-weight:700; text-align:right; }
+    .empty { padding:28px 4px; color:var(--muted); text-align:center; }
+    .capabilities { display:grid; gap:10px; }
+    .capability { display:flex; justify-content:space-between; padding:11px 0; border-bottom:1px solid var(--line); }
+    .capability:last-child { border:0; }
+    .capability strong { text-transform:capitalize; }
+    .status { margin-top:18px; padding:12px 14px; border-left:3px solid #aabbb1; background:#fff; color:var(--muted); }
+    .status.error { border-color:var(--danger); color:#8d3333; }
+    @media (max-width:900px) { .shell { grid-template-columns:1fr; } aside { display:none; } .layout { grid-template-columns:1fr; } .grid { grid-template-columns:repeat(2,1fr); } .metric:nth-child(2) { border-right:0; } .metric:nth-child(n+3) { border-top:1px solid var(--line); } header,.content { padding-left:20px; padding-right:20px; } }
+    @media (max-width:560px) { header { display:block; } header button { margin-top:16px; } .toolbar { display:block; } .toolbar label { margin-bottom:12px; } select { min-width:100%; width:100%; } .grid { grid-template-columns:1fr; } .metric { border:0; border-bottom:1px solid var(--line); } .metric:last-child { border:0; } }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside>
+      <div class="brand"><div class="mark">CG</div><div>ClusterGuard HA<small>多数据库高可用控制</small></div></div>
+      <nav><a href="#overview">总览</a><a href="#clusters">集群</a><a href="#topology">拓扑</a><a href="#metadata">元数据</a></nav>
+      <div class="rail-note">平台 UUID 为资源唯一标识。主机名、IP 与端口可通过元数据协调更新。</div>
+    </aside>
+    <main>
+      <header><div><p class="eyebrow">ENTERPRISE CONTROL PLANE</p><h1>ClusterGuard HA</h1><p class="subtitle">独立多数据库高可用控制平台</p></div><button class="primary" id="refresh" type="button">刷新状态</button></header>
+      <div class="content" id="overview">
+        <div class="toolbar" id="clusters"><label>数据库集群<select id="cluster-select"><option value="">未发现已注册集群</option></select></label><div class="badge" id="health-badge">等待数据</div></div>
+        <section class="grid" aria-label="集群状态"><div class="metric"><span>已注册集群</span><strong id="cluster-count">0</strong></div><div class="metric"><span>数据库节点</span><strong id="node-count">0</strong></div><div class="metric"><span>健康节点</span><strong id="healthy-count">-</strong></div><div class="metric"><span>控制面状态</span><strong>就绪</strong></div></section>
+        <div class="layout" id="topology"><section class="panel"><div class="panel-head"><h2>集群拓扑</h2><span class="badge" id="topology-title">未选择</span></div><div class="nodes" id="nodes"><div class="empty">选择一个集群后显示平台已确认的实例。</div></div></section><section class="panel"><div class="panel-head"><h2>引擎能力</h2><span class="badge">适配器注册表</span></div><div class="capabilities" id="capabilities"></div></section></div>
+        <div class="status" id="status" role="status">正在连接控制 API。</div>
+      </div>
+    </main>
+  </div>
+  <script>
+    const byId = id => document.getElementById(id);
+    const state = { clusters: [] };
+    const status = (message, error=false) => { const box=byId('status'); box.textContent=message; box.className='status'+(error?' error':''); };
+    const request = async path => { const response=await fetch(path); const body=await response.json(); if(!response.ok) throw new Error(body.message || '请求失败'); return body.result; };
+    const renderNodes = instances => { const root=byId('nodes'); if(!instances.length) { root.innerHTML='<div class="empty">当前集群尚未发现实例。</div>'; return; } root.innerHTML=instances.map(node => `<article class="node"><div><strong>${node.display_name || node.hostname}:${node.port}</strong><span>${node.hostname} · ${node.ip_address || 'IP 未记录'} · ${node.engine_identity.server_uuid || node.engine_identity.system_identifier || '身份已记录'}</span></div><div class="role">${node.role || 'unknown'}<span>${node.health?.state || 'unknown'}</span></div></article>`).join(''); };
+    const selectCluster = async () => { const id=byId('cluster-select').value; if(!id) { renderNodes([]); byId('node-count').textContent='0'; byId('healthy-count').textContent='-'; byId('health-badge').textContent='未选择'; status('已刷新控制面状态。'); return; } try { const [topology, health] = await Promise.all([request(`/api/v1/clusters/${id}/topology`), request(`/api/v1/clusters/${id}/health`)]); renderNodes(topology.instances); byId('node-count').textContent=health.instance_count; byId('healthy-count').textContent=health.healthy_instances; byId('health-badge').textContent=health.state; byId('topology-title').textContent=health.state; status('已从独立控制 API 刷新集群状态。'); } catch (error) { status(error.message, true); } };
+    const load = async () => { try { const [clusters, engines] = await Promise.all([request('/api/v1/clusters'), request('/api/v1/engines')]); state.clusters=clusters; const selector=byId('cluster-select'); const selected=selector.value; selector.innerHTML='<option value="">选择集群</option>'+clusters.map(cluster=>`<option value="${cluster.resource_id}">${cluster.display_name || cluster.resource_id}</option>`).join(''); selector.value=selected && clusters.some(c=>c.resource_id===selected) ? selected : (clusters[0]?.resource_id || ''); byId('cluster-count').textContent=clusters.length; byId('capabilities').innerHTML=engines.map(item=>{ const names=Object.entries(item.features).filter(([, feature])=>feature.available).map(([name])=>name); return `<div class="capability"><strong>${item.engine}</strong><span>${names.join('、') || '只读骨架'}</span></div>`; }).join(''); await selectCluster(); } catch (error) { status(error.message, true); } };
+    byId('refresh').addEventListener('click', load); byId('cluster-select').addEventListener('change', selectCluster); load();
+  </script>
+</body>
+</html>

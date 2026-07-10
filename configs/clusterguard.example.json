@@ -1,0 +1,10 @@
+{
+  "http_address": "127.0.0.1:8088",
+  "metadata_path": "/var/lib/clusterguard-ha/metadata.json",
+  "approval_token_env": "CG_APPROVAL_TOKEN",
+  "mysql": {
+    "enabled": true,
+    "username": "cg_discovery",
+    "password_env": "CG_MYSQL_DISCOVERY_PASSWORD"
+  }
+}
