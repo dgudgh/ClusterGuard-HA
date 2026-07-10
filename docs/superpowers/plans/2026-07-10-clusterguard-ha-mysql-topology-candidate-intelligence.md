@@ -552,7 +552,9 @@ Parse comma-separated UUID groups and colon-separated inclusive intervals.
 Merge overlapping intervals per UUID. Return a parse error for descending,
 zero, malformed, or UUID-less intervals. `CompareGTIDSets` counts candidate
 transactions missing from the primary set and transactions present only on the
-candidate.
+candidate. Difference aggregation must use checked arithmetic; an unrepresentable
+single-set or multi-UUID total is an error and candidate evaluation fails
+closed rather than wrapping or saturating.
 
 Extend the read-only identity query to collect `@@GLOBAL.gtid_executed` and
 store it in `EngineMetadata["gtid_executed"]`. This is the authoritative
@@ -571,8 +573,12 @@ Evaluate these blocking checks: inventory membership, non-primary role,
 reachability, promotion eligibility, maintenance state, running replication
 threads, source identity equals current primary, policy lag, GTID enabled when
 required, no errant transactions, and compatible major version. Emit warnings
-for nonzero lag and incomplete probe coverage. A failed or unbound endpoint
-probe warns without making an otherwise healthy candidate ineligible. Rank by:
+for nonzero lag, nonzero missing GTID transactions, and incomplete probe
+coverage. A candidate requires an explicit healthy bound probe to prove both
+inventory membership and current reachability. Missing evidence or a
+non-healthy bound candidate probe blocks it. A failed or unbound probe for a
+different inventory endpoint only warns and does not block a candidate whose
+own bound probe is healthy. Rank by:
 
 1. no warnings before warnings;
 2. fewer missing transactions;
