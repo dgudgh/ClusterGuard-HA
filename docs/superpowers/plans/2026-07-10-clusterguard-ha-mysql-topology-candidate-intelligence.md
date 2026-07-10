@@ -502,6 +502,10 @@ git commit -m "feat: refresh inventory-scoped MySQL topology"
 **Files:**
 - Create: `adapters/mysql/gtid.go`
 - Create: `adapters/mysql/candidates.go`
+- Modify: `adapters/mysql/probe.go`
+- Modify: `adapters/mysql/mysql.go`
+- Modify: `adapters/mysql/mysql_test.go`
+- Modify: `pkg/adapter/registry_test.go`
 - Test: `adapters/mysql/gtid_test.go`
 - Test: `adapters/mysql/candidates_test.go`
 
@@ -549,6 +553,13 @@ zero, malformed, or UUID-less intervals. `CompareGTIDSets` counts candidate
 transactions missing from the primary set and transactions present only on the
 candidate.
 
+Extend the read-only identity query to collect `@@GLOBAL.gtid_executed` and
+store it in `EngineMetadata["gtid_executed"]`. This is the authoritative
+position for writable primaries; replica comparisons continue to use the
+replication status executed set. The probe must tolerate an empty set when GTID
+mode is disabled, but it must never infer a primary GTID position from a
+replica-only status row.
+
 - [ ] **Step 5: Implement candidate checks and deterministic ranking**
 
 Evaluate these blocking checks: inventory membership, non-primary role,
@@ -564,7 +575,11 @@ for nonzero lag and incomplete probe coverage. Rank by:
 5. lexical platform UUID.
 
 Set `Rank` only on eligible candidates and advertise `CapabilityCandidates` as
-available. Keep `CapabilityExecute` unavailable.
+available from the MySQL adapter and registry contract. Keep
+`CapabilityExecute` unavailable. Treat MySQL release families `5.7`, `8.0`,
+`8.4`, and `9.7` as distinct compatibility families; exact version is only a
+ranking preference within a compatible family, never a way to bypass an
+incompatible-family block.
 
 - [ ] **Step 6: Run all adapter and contract tests**
 
@@ -589,6 +604,8 @@ git commit -m "feat: rank MySQL promotion candidates"
 - Modify: `internal/runtime/runtime.go`
 - Modify: `internal/api/server.go`
 - Modify: `internal/api/server_test.go`
+- Modify: `internal/discovery/service.go`
+- Modify: `internal/discovery/service_test.go`
 - Create: `internal/api/clusters_test.go`
 - Create: `internal/api/metrics_test.go`
 
@@ -660,6 +677,12 @@ Extend `runtime.New` in this task to construct the discovery service from the
 configured MySQL credentials and pass it to `api.NewServer`. Update API test
 construction to inject a fake discovery service, so no unit test opens a real
 database connection.
+
+Before exposing refresh to API callers, replace the unbounded per-cluster lock
+map with a bounded isolation mechanism (fixed lock striping or a tested
+reference-counted eviction design). Arbitrary unknown cluster UUIDs must not
+grow process memory, while same-cluster refreshes remain serialized and
+different inventory clusters retain useful concurrency.
 
 - [ ] **Step 5: Remove unrestricted direct discovery**
 
