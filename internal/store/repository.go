@@ -103,6 +103,10 @@ func cloneInstance(instance model.DatabaseInstance) model.DatabaseInstance {
 	copy.EngineIdentity = instance.EngineIdentity.Clone()
 	copy.Aliases = append([]string{}, instance.Aliases...)
 	copy.Replication.SourceIdentity = instance.Replication.SourceIdentity.Clone()
+	if instance.Replication.LagSeconds != nil {
+		lagSeconds := *instance.Replication.LagSeconds
+		copy.Replication.LagSeconds = &lagSeconds
+	}
 	copy.EngineMetadata = make(map[string]string, len(instance.EngineMetadata))
 	for key, value := range instance.EngineMetadata {
 		copy.EngineMetadata[key] = value
@@ -130,6 +134,30 @@ func cloneMetricSample(sample model.MetricSample) model.MetricSample {
 	copy.Values = make(map[string]float64, len(sample.Values))
 	for key, value := range sample.Values {
 		copy.Values[key] = value
+	}
+	return copy
+}
+
+func cloneReplicationLinkMap(links map[model.ResourceID][]model.ReplicationLink) map[model.ResourceID][]model.ReplicationLink {
+	copy := make(map[model.ResourceID][]model.ReplicationLink, len(links))
+	for clusterID, clusterLinks := range links {
+		copiedLinks := make([]model.ReplicationLink, len(clusterLinks))
+		for index, link := range clusterLinks {
+			copiedLinks[index] = cloneReplicationLink(link)
+		}
+		copy[clusterID] = copiedLinks
+	}
+	return copy
+}
+
+func cloneMetricSampleMap(samples map[model.ResourceID][]model.MetricSample) map[model.ResourceID][]model.MetricSample {
+	copy := make(map[model.ResourceID][]model.MetricSample, len(samples))
+	for clusterID, clusterSamples := range samples {
+		copiedSamples := make([]model.MetricSample, len(clusterSamples))
+		for index, sample := range clusterSamples {
+			copiedSamples[index] = cloneMetricSample(sample)
+		}
+		copy[clusterID] = copiedSamples
 	}
 	return copy
 }
@@ -368,13 +396,16 @@ func (repository *Repository) UpsertEndpoint(endpoint model.Endpoint) (model.End
 		endpoint.MetadataRevision = 1
 	}
 	endpoint.UpdatedAt = now
-	if repository.snapshot.Endpoints[endpoint.ClusterID] == nil {
-		repository.snapshot.Endpoints[endpoint.ClusterID] = map[model.ResourceID]model.Endpoint{}
+	next := repository.snapshot
+	next.Endpoints = cloneEndpointMap(repository.snapshot.Endpoints)
+	if next.Endpoints[endpoint.ClusterID] == nil {
+		next.Endpoints[endpoint.ClusterID] = map[model.ResourceID]model.Endpoint{}
 	}
-	repository.snapshot.Endpoints[endpoint.ClusterID][endpoint.ResourceID] = endpoint
-	if err := repository.persistLocked(); err != nil {
+	next.Endpoints[endpoint.ClusterID][endpoint.ResourceID] = endpoint
+	if err := repository.persistSnapshotLocked(next); err != nil {
 		return model.Endpoint{}, err
 	}
+	repository.snapshot = next
 	return endpoint, nil
 }
 
@@ -400,29 +431,53 @@ func (repository *Repository) Endpoints(clusterID model.ResourceID) []model.Endp
 	return endpoints
 }
 
+type replicationEdge struct {
+	sourceInstanceID model.ResourceID
+	targetInstanceID model.ResourceID
+}
+
 func (repository *Repository) ReplaceReplicationLinks(clusterID model.ResourceID, links []model.ReplicationLink) error {
 	if clusterID == "" {
 		return fmt.Errorf("cluster ID is required")
 	}
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	if _, exists := repository.snapshot.Clusters[clusterID]; !exists {
+		return fmt.Errorf("unknown cluster ID: %s", clusterID)
+	}
 	now := repository.now().UTC()
+	existingByEdge := make(map[replicationEdge]model.ReplicationLink, len(repository.snapshot.ReplicationLinks[clusterID]))
+	for _, existing := range repository.snapshot.ReplicationLinks[clusterID] {
+		existingByEdge[replicationEdge{existing.SourceInstanceID, existing.TargetInstanceID}] = existing
+	}
 	replacement := make([]model.ReplicationLink, len(links))
 	for index, link := range links {
 		if link.ClusterID != "" && link.ClusterID != clusterID {
 			return fmt.Errorf("replication link cluster ID does not match cluster")
 		}
 		link.ClusterID = clusterID
-		if link.ResourceID == "" {
-			link.ResourceID = model.NewResourceID()
+		if existing, exists := existingByEdge[replicationEdge{link.SourceInstanceID, link.TargetInstanceID}]; exists {
+			link.ResourceID = existing.ResourceID
+			link.CreatedAt = existing.CreatedAt
+			link.MetadataRevision = existing.MetadataRevision + 1
+		} else {
+			if link.ResourceID == "" {
+				link.ResourceID = model.NewResourceID()
+			}
+			link.CreatedAt = now
+			link.MetadataRevision = 1
 		}
-		link.MetadataRevision = 1
-		link.CreatedAt = now
 		link.UpdatedAt = now
 		replacement[index] = cloneReplicationLink(link)
 	}
-	repository.mu.Lock()
-	defer repository.mu.Unlock()
-	repository.snapshot.ReplicationLinks[clusterID] = replacement
-	return repository.persistLocked()
+	next := repository.snapshot
+	next.ReplicationLinks = cloneReplicationLinkMap(repository.snapshot.ReplicationLinks)
+	next.ReplicationLinks[clusterID] = replacement
+	if err := repository.persistSnapshotLocked(next); err != nil {
+		return err
+	}
+	repository.snapshot = next
+	return nil
 }
 
 func (repository *Repository) ReplicationLinks(clusterID model.ResourceID) []model.ReplicationLink {
@@ -453,6 +508,9 @@ func (repository *Repository) StoreMetricSamples(clusterID model.ResourceID, sam
 	}
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
+	if _, exists := repository.snapshot.Clusters[clusterID]; !exists {
+		return fmt.Errorf("unknown cluster ID: %s", clusterID)
+	}
 	byInstance := make(map[model.ResourceID][]model.MetricSample)
 	for _, sample := range repository.snapshot.MetricSamples[clusterID] {
 		byInstance[sample.InstanceID] = append(byInstance[sample.InstanceID], cloneMetricSample(sample))
@@ -476,8 +534,14 @@ func (repository *Repository) StoreMetricSamples(clusterID model.ResourceID, sam
 		}
 		return bounded[i].ObservedAt.Before(bounded[j].ObservedAt)
 	})
-	repository.snapshot.MetricSamples[clusterID] = bounded
-	return repository.persistLocked()
+	next := repository.snapshot
+	next.MetricSamples = cloneMetricSampleMap(repository.snapshot.MetricSamples)
+	next.MetricSamples[clusterID] = bounded
+	if err := repository.persistSnapshotLocked(next); err != nil {
+		return err
+	}
+	repository.snapshot = next
+	return nil
 }
 
 func (repository *Repository) MetricSamples(clusterID model.ResourceID) []model.MetricSample {

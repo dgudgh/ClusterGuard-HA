@@ -180,6 +180,8 @@ func TestRepositoryFindsInstanceByMySQLIdentityWithoutLeakingIdentityMaps(t *tes
 	instance := mysqlInstance(cluster.ResourceID, "mysql-a", "192.0.2.10", 3306)
 	instance.EngineMetadata = map[string]string{"version": "8.0"}
 	instance.Replication.SourceIdentity = model.EngineIdentity{"server_uuid": "source-uuid"}
+	lagSeconds := int64(3)
+	instance.Replication.LagSeconds = &lagSeconds
 	result, err := repository.ReconcileInstance(instance)
 	if err != nil {
 		t.Fatalf("reconcile instance: %v", err)
@@ -193,10 +195,11 @@ func TestRepositoryFindsInstanceByMySQLIdentityWithoutLeakingIdentityMaps(t *tes
 	found.EngineIdentity["server_uuid"] = "mutated"
 	found.EngineMetadata["version"] = "mutated"
 	found.Replication.SourceIdentity["server_uuid"] = "mutated"
+	*found.Replication.LagSeconds = 999
 	again, ok := repository.FindInstanceByIdentity(cluster.ResourceID, model.EngineMySQL, model.EngineIdentity{
 		"server_uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
 	})
-	if !ok || again.EngineIdentity["server_uuid"] != "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" || again.EngineMetadata["version"] != "8.0" || again.Replication.SourceIdentity["server_uuid"] != "source-uuid" {
+	if !ok || again.EngineIdentity["server_uuid"] != "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" || again.EngineMetadata["version"] != "8.0" || again.Replication.SourceIdentity["server_uuid"] != "source-uuid" || again.Replication.LagSeconds == nil || *again.Replication.LagSeconds != 3 {
 		t.Fatalf("instance read leaked nested maps: %+v, found=%t", again, ok)
 	}
 }
@@ -278,6 +281,108 @@ func TestStoreMetricSamplesBoundsEachInstanceOrdersSamplesAndClonesValues(t *tes
 	samples[0].Values["qps"] = 999
 	if repository.MetricSamples(cluster.ResourceID)[0].Values["qps"] == 999 {
 		t.Fatal("metric sample values map leaked from repository")
+	}
+}
+
+func TestRepositoryDoesNotPublishInventoryMutationsWhenPersistenceFails(t *testing.T) {
+	newRepository := func(t *testing.T) (*Repository, model.DatabaseCluster) {
+		t.Helper()
+		repository := NewMemory()
+		cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL})
+		if err != nil {
+			t.Fatalf("create cluster: %v", err)
+		}
+		repository.path = t.TempDir()
+		return repository, cluster
+	}
+
+	t.Run("endpoint", func(t *testing.T) {
+		repository, cluster := newRepository(t)
+		_, err := repository.UpsertEndpoint(model.Endpoint{
+			ClusterID: cluster.ResourceID,
+			Kind:      model.EndpointDatabase,
+			Hostname:  "mysql-a",
+			Port:      3306,
+			Active:    true,
+		})
+		if err == nil {
+			t.Fatal("endpoint persistence must fail when snapshot path is a directory")
+		}
+		if endpoints := repository.Endpoints(cluster.ResourceID); len(endpoints) != 0 {
+			t.Fatalf("failed endpoint persistence mutated memory: %+v", endpoints)
+		}
+	})
+
+	t.Run("replication links", func(t *testing.T) {
+		repository, cluster := newRepository(t)
+		err := repository.ReplaceReplicationLinks(cluster.ResourceID, []model.ReplicationLink{{
+			SourceInstanceID: model.NewResourceID(),
+			TargetInstanceID: model.NewResourceID(),
+		}})
+		if err == nil {
+			t.Fatal("replication link persistence must fail when snapshot path is a directory")
+		}
+		if links := repository.ReplicationLinks(cluster.ResourceID); len(links) != 0 {
+			t.Fatalf("failed replication link persistence mutated memory: %+v", links)
+		}
+	})
+
+	t.Run("metric samples", func(t *testing.T) {
+		repository, cluster := newRepository(t)
+		err := repository.StoreMetricSamples(cluster.ResourceID, []model.MetricSample{{
+			InstanceID: model.NewResourceID(),
+			ObservedAt: time.Now(),
+			Values:     map[string]float64{"qps": 1},
+		}}, 10)
+		if err == nil {
+			t.Fatal("metric persistence must fail when snapshot path is a directory")
+		}
+		if samples := repository.MetricSamples(cluster.ResourceID); len(samples) != 0 {
+			t.Fatalf("failed metric persistence mutated memory: %+v", samples)
+		}
+	})
+}
+
+func TestReplicationLinksAndMetricSamplesRejectUnknownClusters(t *testing.T) {
+	repository := NewMemory()
+	unknownClusterID := model.NewResourceID()
+	if err := repository.ReplaceReplicationLinks(unknownClusterID, nil); err == nil {
+		t.Fatal("replication links for an unknown cluster must fail")
+	}
+	if err := repository.StoreMetricSamples(unknownClusterID, nil, 10); err == nil {
+		t.Fatal("metric samples for an unknown cluster must fail")
+	}
+}
+
+func TestReplaceReplicationLinksPreservesEdgeIdentityOnRefresh(t *testing.T) {
+	repository := NewMemory()
+	cluster, _, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL}, nil)
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	sourceInstanceID := model.NewResourceID()
+	targetInstanceID := model.NewResourceID()
+	if err := repository.ReplaceReplicationLinks(cluster.ResourceID, []model.ReplicationLink{{
+		SourceInstanceID: sourceInstanceID,
+		TargetInstanceID: targetInstanceID,
+		Healthy:          true,
+	}}); err != nil {
+		t.Fatalf("store initial link: %v", err)
+	}
+	initial := repository.ReplicationLinks(cluster.ResourceID)
+	if len(initial) != 1 || initial[0].ResourceID == "" || initial[0].MetadataRevision != 1 {
+		t.Fatalf("new edge was not assigned one initialized resource: %+v", initial)
+	}
+	if err := repository.ReplaceReplicationLinks(cluster.ResourceID, []model.ReplicationLink{{
+		SourceInstanceID: sourceInstanceID,
+		TargetInstanceID: targetInstanceID,
+		Healthy:          false,
+	}}); err != nil {
+		t.Fatalf("refresh link: %v", err)
+	}
+	refreshed := repository.ReplicationLinks(cluster.ResourceID)
+	if len(refreshed) != 1 || refreshed[0].ResourceID != initial[0].ResourceID || !refreshed[0].CreatedAt.Equal(initial[0].CreatedAt) || refreshed[0].MetadataRevision != initial[0].MetadataRevision+1 || refreshed[0].Healthy {
+		t.Fatalf("link refresh did not preserve edge identity and revision: initial=%+v refreshed=%+v", initial, refreshed)
 	}
 }
 
