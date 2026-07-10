@@ -386,6 +386,150 @@ func TestReplaceReplicationLinksPreservesEdgeIdentityOnRefresh(t *testing.T) {
 	}
 }
 
+func TestReconcileInstancePersistsLatestReplicationAndDiscoveryMetadata(t *testing.T) {
+	repository := NewMemory()
+	clusterID := model.NewResourceID()
+	initialLag := int64(2)
+	initial := mysqlInstance(clusterID, "mysql-b", "192.0.2.20", 3306)
+	initial.Replication = model.ReplicationStatus{
+		SourceIdentity:    model.EngineIdentity{"server_uuid": "primary-v1"},
+		IOThread:          model.ThreadRunning,
+		SQLThread:         model.ThreadRunning,
+		LagSeconds:        &initialLag,
+		RetrievedPosition: "gtid:1-10",
+		ExecutedPosition:  "gtid:1-9",
+	}
+	initial.EngineMetadata = map[string]string{"version": "8.0.35", "gtid_mode": "ON"}
+	initial.Maintenance = false
+	initial.PromotionEligible = true
+	first, err := repository.ReconcileInstance(initial)
+	if err != nil {
+		t.Fatalf("initial reconciliation: %v", err)
+	}
+
+	latestLag := int64(17)
+	latest := mysqlInstance(clusterID, "mysql-b", "192.0.2.20", 3306)
+	latest.Replication = model.ReplicationStatus{
+		SourceIdentity:    model.EngineIdentity{"server_uuid": "primary-v2"},
+		IOThread:          model.ThreadStopped,
+		SQLThread:         model.ThreadStopped,
+		LagSeconds:        &latestLag,
+		RetrievedPosition: "gtid:1-20",
+		ExecutedPosition:  "gtid:1-11",
+		LastError:         "relay log read failure",
+	}
+	latest.EngineMetadata = map[string]string{"version": "8.0.36", "gtid_mode": "OFF"}
+	latest.Maintenance = true
+	latest.PromotionEligible = false
+	second, err := repository.ReconcileInstance(latest)
+	if err != nil {
+		t.Fatalf("latest reconciliation: %v", err)
+	}
+
+	if second.Instance.ResourceID != first.Instance.ResourceID || second.Instance.Replication.LagSeconds == nil || *second.Instance.Replication.LagSeconds != latestLag {
+		t.Fatalf("replication refresh did not preserve identity and lag: first=%+v second=%+v", first.Instance, second.Instance)
+	}
+	if second.Instance.Replication.SourceIdentity["server_uuid"] != "primary-v2" || second.Instance.Replication.IOThread != model.ThreadStopped || second.Instance.Replication.SQLThread != model.ThreadStopped || second.Instance.Replication.RetrievedPosition != "gtid:1-20" || second.Instance.Replication.ExecutedPosition != "gtid:1-11" || second.Instance.Replication.LastError == "" {
+		t.Fatalf("latest replication state was not persisted: %+v", second.Instance.Replication)
+	}
+	if second.Instance.EngineMetadata["version"] != "8.0.36" || second.Instance.EngineMetadata["gtid_mode"] != "OFF" || !second.Instance.Maintenance || second.Instance.PromotionEligible {
+		t.Fatalf("latest discovery metadata was not persisted: %+v", second.Instance)
+	}
+	stored := repository.Instances(clusterID)
+	if len(stored) != 1 || stored[0].Replication.LagSeconds == nil || *stored[0].Replication.LagSeconds != latestLag || stored[0].EngineMetadata["version"] != "8.0.36" || !stored[0].Maintenance || stored[0].PromotionEligible {
+		t.Fatalf("repository did not retain latest discovery fields: %+v", stored)
+	}
+}
+
+func TestReconcileInstancePersistenceFailureDoesNotMutateLiveInstance(t *testing.T) {
+	repository := NewMemory()
+	clusterID := model.NewResourceID()
+	initialLag := int64(2)
+	initial := mysqlInstance(clusterID, "mysql-b", "192.0.2.20", 3306)
+	initial.Replication = model.ReplicationStatus{IOThread: model.ThreadRunning, SQLThread: model.ThreadRunning, LagSeconds: &initialLag}
+	initial.EngineMetadata = map[string]string{"version": "8.0.35"}
+	initial.PromotionEligible = true
+	first, err := repository.ReconcileInstance(initial)
+	if err != nil {
+		t.Fatalf("initial reconciliation: %v", err)
+	}
+
+	repository.path = t.TempDir()
+	failedLag := int64(99)
+	changed := mysqlInstance(clusterID, "mysql-renamed", "192.0.2.99", 3310)
+	changed.Replication = model.ReplicationStatus{IOThread: model.ThreadStopped, SQLThread: model.ThreadStopped, LagSeconds: &failedLag, LastError: "failed refresh"}
+	changed.EngineMetadata = map[string]string{"version": "9.9.99"}
+	changed.Maintenance = true
+	changed.PromotionEligible = false
+	if _, err := repository.ReconcileInstance(changed); err == nil {
+		t.Fatal("reconciliation must fail when the snapshot path is a directory")
+	}
+
+	stored := repository.Instances(clusterID)
+	if len(stored) != 1 {
+		t.Fatalf("failed reconciliation changed instance count: %+v", stored)
+	}
+	got := stored[0]
+	if got.ResourceID != first.Instance.ResourceID || got.Hostname != initial.Hostname || got.Port != initial.Port || got.MetadataRevision != first.Instance.MetadataRevision {
+		t.Fatalf("failed persistence published endpoint changes: before=%+v after=%+v", first.Instance, got)
+	}
+	if got.Replication.LagSeconds == nil || *got.Replication.LagSeconds != initialLag || got.Replication.IOThread != model.ThreadRunning || got.EngineMetadata["version"] != "8.0.35" || got.Maintenance || !got.PromotionEligible {
+		t.Fatalf("failed persistence published discovery state: before=%+v after=%+v", first.Instance, got)
+	}
+}
+
+func TestReplaceClusterAnomaliesIsClusterScopedAndAtomic(t *testing.T) {
+	repository := NewMemory()
+	firstCluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "first"})
+	if err != nil {
+		t.Fatalf("create first cluster: %v", err)
+	}
+	secondCluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "second"})
+	if err != nil {
+		t.Fatalf("create second cluster: %v", err)
+	}
+	if err := repository.ReplaceClusterAnomalies(firstCluster.ResourceID, []model.MetadataAnomaly{{Engine: model.EngineMySQL, Kind: "old-first", Severity: "warning"}}); err != nil {
+		t.Fatalf("seed first anomalies: %v", err)
+	}
+	if err := repository.ReplaceClusterAnomalies(secondCluster.ResourceID, []model.MetadataAnomaly{{Engine: model.EngineMySQL, Kind: "second", Severity: "warning"}}); err != nil {
+		t.Fatalf("seed second anomalies: %v", err)
+	}
+	if err := repository.ReplaceClusterAnomalies(firstCluster.ResourceID, []model.MetadataAnomaly{{Engine: model.EngineMySQL, Kind: "new-first", Severity: "critical"}}); err != nil {
+		t.Fatalf("replace first anomalies: %v", err)
+	}
+
+	firstAnomalies := anomaliesForCluster(repository.Anomalies(), firstCluster.ResourceID)
+	secondAnomalies := anomaliesForCluster(repository.Anomalies(), secondCluster.ResourceID)
+	if len(firstAnomalies) != 1 || firstAnomalies[0].Kind != "new-first" || firstAnomalies[0].ClusterID != firstCluster.ResourceID {
+		t.Fatalf("first cluster anomalies were not replaced: %+v", firstAnomalies)
+	}
+	if len(secondAnomalies) != 1 || secondAnomalies[0].Kind != "second" {
+		t.Fatalf("second cluster anomalies were not retained: %+v", secondAnomalies)
+	}
+
+	repository.path = t.TempDir()
+	if err := repository.ReplaceClusterAnomalies(firstCluster.ResourceID, []model.MetadataAnomaly{{Engine: model.EngineMySQL, Kind: "must-not-publish", Severity: "critical"}}); err == nil {
+		t.Fatal("anomaly replacement must fail when the snapshot path is a directory")
+	}
+	afterFailure := anomaliesForCluster(repository.Anomalies(), firstCluster.ResourceID)
+	if len(afterFailure) != 1 || afterFailure[0].Kind != "new-first" {
+		t.Fatalf("failed anomaly persistence mutated live state: %+v", afterFailure)
+	}
+	if retained := anomaliesForCluster(repository.Anomalies(), secondCluster.ResourceID); len(retained) != 1 || retained[0].Kind != "second" {
+		t.Fatalf("failed anomaly persistence changed another cluster: %+v", retained)
+	}
+}
+
+func anomaliesForCluster(anomalies []model.MetadataAnomaly, clusterID model.ResourceID) []model.MetadataAnomaly {
+	result := make([]model.MetadataAnomaly, 0)
+	for _, anomaly := range anomalies {
+		if anomaly.ClusterID == clusterID {
+			result = append(result, anomaly)
+		}
+	}
+	return result
+}
+
 func contains(values []string, wanted string) bool {
 	for _, value := range values {
 		if value == wanted {

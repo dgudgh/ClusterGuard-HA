@@ -26,10 +26,19 @@ type MetricSample struct {
 	Values     map[string]float64 `json:"values"`
 }
 
+type ProbeStatus struct {
+	EndpointID ResourceID `json:"endpoint_id"`
+	InstanceID ResourceID `json:"instance_id,omitempty"`
+	Health     Health     `json:"health"`
+}
+
 type TopologySnapshot struct {
 	ClusterID  ResourceID         `json:"cluster_id"`
 	Instances  []DatabaseInstance `json:"instances"`
 	Links      []ReplicationLink  `json:"links"`
+	Probes     []ProbeStatus      `json:"probes"`
+	Health     Health             `json:"health"`
+	Anomalies  []MetadataAnomaly  `json:"anomalies,omitempty"`
 	ObservedAt time.Time          `json:"observed_at"`
 }
 

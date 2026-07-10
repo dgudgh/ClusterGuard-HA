@@ -162,6 +162,22 @@ func cloneMetricSampleMap(samples map[model.ResourceID][]model.MetricSample) map
 	return copy
 }
 
+func cloneInstanceMap(instances map[model.ResourceID]model.DatabaseInstance) map[model.ResourceID]model.DatabaseInstance {
+	copy := make(map[model.ResourceID]model.DatabaseInstance, len(instances))
+	for resourceID, instance := range instances {
+		copy[resourceID] = cloneInstance(instance)
+	}
+	return copy
+}
+
+func cloneAnomalyMap(anomalies map[model.ResourceID]model.MetadataAnomaly) map[model.ResourceID]model.MetadataAnomaly {
+	copy := make(map[model.ResourceID]model.MetadataAnomaly, len(anomalies))
+	for resourceID, anomaly := range anomalies {
+		copy[resourceID] = anomaly
+	}
+	return copy
+}
+
 func (repository *Repository) persistLocked() error {
 	return repository.persistSnapshotLocked(repository.snapshot)
 }
@@ -645,6 +661,8 @@ func (repository *Repository) ReconcileInstance(discovered model.DatabaseInstanc
 	}
 
 	now := repository.now().UTC()
+	next := repository.snapshot
+	next.Instances = cloneInstanceMap(repository.snapshot.Instances)
 	result := ReconcileResult{}
 	if existingID == "" {
 		discovered.ResourceID = model.NewResourceID()
@@ -654,10 +672,10 @@ func (repository *Repository) ReconcileInstance(discovered model.DatabaseInstanc
 		if discovered.DisplayName == "" {
 			discovered.DisplayName = discovered.Hostname
 		}
-		repository.snapshot.Instances[discovered.ResourceID] = cloneInstance(discovered)
+		next.Instances[discovered.ResourceID] = cloneInstance(discovered)
 		result = ReconcileResult{Instance: cloneInstance(discovered), Created: true}
 	} else {
-		existing := repository.snapshot.Instances[existingID]
+		existing := next.Instances[existingID]
 		if !sameEndpoint(existing, discovered) {
 			for _, alias := range model.EndpointAddress(existing.Hostname, existing.IPAddress, existing.Port) {
 				existing.Aliases = appendAlias(existing.Aliases, alias)
@@ -674,17 +692,30 @@ func (repository *Repository) ReconcileInstance(discovered model.DatabaseInstanc
 		existing.Port = discovered.Port
 		existing.Role = discovered.Role
 		existing.Health = discovered.Health
+		existing.Replication = discovered.Replication
+		existing.Replication.SourceIdentity = discovered.Replication.SourceIdentity.Clone()
+		if discovered.Replication.LagSeconds != nil {
+			lagSeconds := *discovered.Replication.LagSeconds
+			existing.Replication.LagSeconds = &lagSeconds
+		}
+		existing.Maintenance = discovered.Maintenance
+		existing.PromotionEligible = discovered.PromotionEligible
+		existing.EngineMetadata = make(map[string]string, len(discovered.EngineMetadata))
+		for key, value := range discovered.EngineMetadata {
+			existing.EngineMetadata[key] = value
+		}
 		existing.MetadataRevision++
 		existing.UpdatedAt = now
 		if existing.DisplayName == "" {
 			existing.DisplayName = existing.Hostname
 		}
-		repository.snapshot.Instances[existingID] = cloneInstance(existing)
+		next.Instances[existingID] = cloneInstance(existing)
 		result = ReconcileResult{Instance: cloneInstance(existing), Updated: true}
 	}
-	if err := repository.persistLocked(); err != nil {
+	if err := repository.persistSnapshotLocked(next); err != nil {
 		return ReconcileResult{}, err
 	}
+	repository.snapshot = next
 	return result, nil
 }
 
@@ -710,6 +741,55 @@ func (repository *Repository) Anomalies() []model.MetadataAnomaly {
 	}
 	sort.Slice(result, func(i int, j int) bool { return result[i].CreatedAt.After(result[j].CreatedAt) })
 	return result
+}
+
+func (repository *Repository) ReplaceClusterAnomalies(clusterID model.ResourceID, anomalies []model.MetadataAnomaly) error {
+	if clusterID == "" {
+		return fmt.Errorf("cluster ID is required")
+	}
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	if _, exists := repository.snapshot.Clusters[clusterID]; !exists {
+		return fmt.Errorf("unknown cluster ID: %s", clusterID)
+	}
+
+	now := repository.now().UTC()
+	next := repository.snapshot
+	next.Anomalies = cloneAnomalyMap(repository.snapshot.Anomalies)
+	for resourceID, anomaly := range next.Anomalies {
+		if anomaly.ClusterID == clusterID {
+			delete(next.Anomalies, resourceID)
+		}
+	}
+	for _, anomaly := range anomalies {
+		if anomaly.ClusterID != "" && anomaly.ClusterID != clusterID {
+			return fmt.Errorf("anomaly cluster ID does not match cluster")
+		}
+		anomaly.ClusterID = clusterID
+		if anomaly.ResourceID == "" {
+			anomaly.ResourceID = model.NewResourceID()
+		}
+		if existing, exists := repository.snapshot.Anomalies[anomaly.ResourceID]; exists {
+			if existing.ClusterID != clusterID {
+				return fmt.Errorf("anomaly resource already belongs to cluster %s", existing.ClusterID)
+			}
+			anomaly.CreatedAt = existing.CreatedAt
+			anomaly.MetadataRevision = existing.MetadataRevision + 1
+		} else {
+			if _, exists := next.Anomalies[anomaly.ResourceID]; exists {
+				return fmt.Errorf("duplicate anomaly resource ID: %s", anomaly.ResourceID)
+			}
+			anomaly.CreatedAt = now
+			anomaly.MetadataRevision = 1
+		}
+		anomaly.UpdatedAt = now
+		next.Anomalies[anomaly.ResourceID] = anomaly
+	}
+	if err := repository.persistSnapshotLocked(next); err != nil {
+		return err
+	}
+	repository.snapshot = next
+	return nil
 }
 
 func (repository *Repository) RecordAudit(event model.AuditEvent) {
