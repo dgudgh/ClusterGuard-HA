@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -41,7 +42,16 @@ func writeError(writer http.ResponseWriter, status int, message string) {
 func decode(request *http.Request, value interface{}) error {
 	decoder := json.NewDecoder(request.Body)
 	decoder.DisallowUnknownFields()
-	return decoder.Decode(value)
+	if err := decoder.Decode(value); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return errors.New("request contains multiple JSON values")
+		}
+		return err
+	}
+	return nil
 }
 
 func (server *Server) Handler() http.Handler {

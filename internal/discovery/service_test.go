@@ -429,6 +429,141 @@ func TestRefreshMarksMultipleWritablePrimariesCriticalAndDegraded(t *testing.T) 
 	}
 }
 
+func TestRefreshClusterHealthRequiresCompleteHealthySinglePrimaryTopology(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(*fakeDiscoveryAdapter, []model.Endpoint)
+		want  model.HealthState
+	}{
+		{
+			name: "healthy single primary and replica",
+			setup: func(candidate *fakeDiscoveryAdapter, endpoints []model.Endpoint) {
+				candidate.results[endpoints[0].Hostname] = discoveredInstance(endpoints[0].Hostname, endpoints[0].Port, "native-a", model.RolePrimary, "")
+				candidate.results[endpoints[1].Hostname] = discoveredInstance(endpoints[1].Hostname, endpoints[1].Port, "native-b", model.RoleReplica, "native-a")
+			},
+			want: model.HealthHealthy,
+		},
+		{
+			name: "zero primary",
+			setup: func(candidate *fakeDiscoveryAdapter, endpoints []model.Endpoint) {
+				candidate.results[endpoints[0].Hostname] = discoveredInstance(endpoints[0].Hostname, endpoints[0].Port, "native-a", model.RoleReplica, "")
+				candidate.results[endpoints[1].Hostname] = discoveredInstance(endpoints[1].Hostname, endpoints[1].Port, "native-b", model.RoleReplica, "native-a")
+			},
+			want: model.HealthDegraded,
+		},
+		{
+			name: "multiple primary",
+			setup: func(candidate *fakeDiscoveryAdapter, endpoints []model.Endpoint) {
+				candidate.results[endpoints[0].Hostname] = discoveredInstance(endpoints[0].Hostname, endpoints[0].Port, "native-a", model.RolePrimary, "")
+				candidate.results[endpoints[1].Hostname] = discoveredInstance(endpoints[1].Hostname, endpoints[1].Port, "native-b", model.RolePrimary, "")
+			},
+			want: model.HealthDegraded,
+		},
+		{
+			name: "unknown probe",
+			setup: func(candidate *fakeDiscoveryAdapter, endpoints []model.Endpoint) {
+				candidate.results[endpoints[0].Hostname] = discoveredInstance(endpoints[0].Hostname, endpoints[0].Port, "native-a", model.RolePrimary, "")
+				candidate.setFailure(endpoints[1].Hostname, errors.New("offline"))
+			},
+			want: model.HealthDegraded,
+		},
+		{
+			name: "degraded instance",
+			setup: func(candidate *fakeDiscoveryAdapter, endpoints []model.Endpoint) {
+				instance := discoveredInstance(endpoints[0].Hostname, endpoints[0].Port, "native-a", model.RolePrimary, "")
+				instance.Health.State = model.HealthDegraded
+				candidate.results[endpoints[0].Hostname] = instance
+				candidate.results[endpoints[1].Hostname] = discoveredInstance(endpoints[1].Hostname, endpoints[1].Port, "native-b", model.RoleReplica, "native-a")
+			},
+			want: model.HealthDegraded,
+		},
+		{
+			name: "unhealthy instance",
+			setup: func(candidate *fakeDiscoveryAdapter, endpoints []model.Endpoint) {
+				instance := discoveredInstance(endpoints[0].Hostname, endpoints[0].Port, "native-a", model.RolePrimary, "")
+				instance.Health.State = model.HealthUnhealthy
+				candidate.results[endpoints[0].Hostname] = instance
+				candidate.results[endpoints[1].Hostname] = discoveredInstance(endpoints[1].Hostname, endpoints[1].Port, "native-b", model.RoleReplica, "native-a")
+			},
+			want: model.HealthDegraded,
+		},
+		{
+			name: "stopped replica IO thread",
+			setup: func(candidate *fakeDiscoveryAdapter, endpoints []model.Endpoint) {
+				candidate.results[endpoints[0].Hostname] = discoveredInstance(endpoints[0].Hostname, endpoints[0].Port, "native-a", model.RolePrimary, "")
+				replica := discoveredInstance(endpoints[1].Hostname, endpoints[1].Port, "native-b", model.RoleReplica, "native-a")
+				replica.Replication.IOThread = model.ThreadStopped
+				candidate.results[endpoints[1].Hostname] = replica
+			},
+			want: model.HealthDegraded,
+		},
+		{
+			name: "stopped replica SQL thread",
+			setup: func(candidate *fakeDiscoveryAdapter, endpoints []model.Endpoint) {
+				candidate.results[endpoints[0].Hostname] = discoveredInstance(endpoints[0].Hostname, endpoints[0].Port, "native-a", model.RolePrimary, "")
+				replica := discoveredInstance(endpoints[1].Hostname, endpoints[1].Port, "native-b", model.RoleReplica, "native-a")
+				replica.Replication.SQLThread = model.ThreadStopped
+				candidate.results[endpoints[1].Hostname] = replica
+			},
+			want: model.HealthDegraded,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repository := store.NewMemory()
+			cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "health-" + strings.ReplaceAll(test.name, " ", "-")})
+			if err != nil {
+				t.Fatalf("create cluster: %v", err)
+			}
+			endpoints := []model.Endpoint{
+				addEndpoint(t, repository, cluster.ResourceID, "mysql-a", 3306, model.EndpointDatabase, true),
+				addEndpoint(t, repository, cluster.ResourceID, "mysql-b", 3307, model.EndpointDatabase, true),
+			}
+			candidate := newFakeAdapter()
+			test.setup(candidate, endpoints)
+			snapshot, err := newTestService(t, repository, candidate).Refresh(context.Background(), cluster.ResourceID)
+			if err != nil {
+				t.Fatalf("refresh: %v", err)
+			}
+			if snapshot.Health.State != test.want {
+				t.Fatalf("health = %s, want %s; snapshot=%+v", snapshot.Health.State, test.want, snapshot)
+			}
+		})
+	}
+}
+
+func TestRefreshPersistsSeparateCurrentDiscoveryAndMetricsEvidence(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "evidence"})
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	good := addEndpoint(t, repository, cluster.ResourceID, "good", 3306, model.EndpointDatabase, true)
+	metricsFailed := addEndpoint(t, repository, cluster.ResourceID, "metrics-failed", 3307, model.EndpointDatabase, true)
+	databaseFailed := addEndpoint(t, repository, cluster.ResourceID, "database-failed", 3308, model.EndpointDatabase, true)
+	candidate := newFakeAdapter()
+	candidate.results[good.Hostname] = discoveredInstance(good.Hostname, good.Port, "native-good", model.RolePrimary, "")
+	candidate.results[metricsFailed.Hostname] = discoveredInstance(metricsFailed.Hostname, metricsFailed.Port, "native-metrics", model.RoleReplica, "native-good")
+	candidate.metricFailures[metricsFailed.Hostname] = errors.New("metrics unavailable")
+	candidate.setFailure(databaseFailed.Hostname, errors.New("database unavailable"))
+
+	snapshot, err := newTestService(t, repository, candidate).Refresh(context.Background(), cluster.ResourceID)
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	probes := probesByEndpoint(snapshot.Probes)
+	if probes[good.ResourceID].DiscoveryObservedAt != discoveryTestTime || probes[good.ResourceID].MetricsObservedAt != discoveryTestTime {
+		t.Fatalf("successful probe evidence is incomplete: %+v", probes[good.ResourceID])
+	}
+	if probes[metricsFailed.ResourceID].DiscoveryObservedAt != discoveryTestTime || !probes[metricsFailed.ResourceID].MetricsObservedAt.IsZero() {
+		t.Fatalf("metrics failure evidence is incorrect: %+v", probes[metricsFailed.ResourceID])
+	}
+	if !probes[databaseFailed.ResourceID].DiscoveryObservedAt.IsZero() || !probes[databaseFailed.ResourceID].MetricsObservedAt.IsZero() {
+		t.Fatalf("database failure invented current evidence: %+v", probes[databaseFailed.ResourceID])
+	}
+}
+
 func TestRefreshBoundsConcurrentEndpointProbesAtFour(t *testing.T) {
 	repository := store.NewMemory()
 	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "parallel"})

@@ -125,6 +125,7 @@ func (service *Service) Refresh(ctx context.Context, clusterID model.ResourceID)
 			continue
 		}
 		discovered := probe.discovery.Instance
+		status.DiscoveryObservedAt = observedAt
 		discovered.ClusterID = clusterID
 		discovered.Engine = cluster.Engine
 		if discovered.Hostname == "" {
@@ -143,6 +144,11 @@ func (service *Service) Refresh(ctx context.Context, clusterID model.ResourceID)
 			status.Health = model.Health{State: model.HealthDegraded, Summary: metricsFailureSummary, ObservedAt: observedAt}
 		} else {
 			status.Health = discovered.Health
+			for _, sample := range metrics {
+				if sample.ObservedAt.After(status.MetricsObservedAt) {
+					status.MetricsObservedAt = sample.ObservedAt
+				}
+			}
 			if status.Health.ObservedAt.IsZero() {
 				status.Health.ObservedAt = observedAt
 			}

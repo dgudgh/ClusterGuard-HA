@@ -53,9 +53,17 @@ func Load(path string) (File, error) {
 			return File{}, fmt.Errorf("approval token environment variable %s is empty", environment)
 		}
 	}
-	if configuration.MySQL.Enabled && strings.TrimSpace(configuration.MySQL.PasswordEnv) != "" {
+	if configuration.MySQL.Enabled {
+		configuration.MySQL.Username = strings.TrimSpace(configuration.MySQL.Username)
+		if configuration.MySQL.Username == "" {
+			return File{}, fmt.Errorf("MySQL username is required when MySQL is enabled")
+		}
+		configuration.MySQL.PasswordEnv = strings.TrimSpace(configuration.MySQL.PasswordEnv)
+		if configuration.MySQL.PasswordEnv == "" {
+			return File{}, fmt.Errorf("MySQL password_env is required when MySQL is enabled")
+		}
 		configuration.MySQL.Password = os.Getenv(configuration.MySQL.PasswordEnv)
-		if configuration.MySQL.Password == "" {
+		if strings.TrimSpace(configuration.MySQL.Password) == "" {
 			return File{}, fmt.Errorf("MySQL password environment variable %s is empty", configuration.MySQL.PasswordEnv)
 		}
 	}

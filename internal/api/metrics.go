@@ -7,14 +7,16 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	metricsservice "clusterguard.io/ha/internal/metrics"
 	"clusterguard.io/ha/pkg/model"
 )
 
 type instanceMetrics struct {
-	InstanceID model.ResourceID   `json:"instance_id"`
-	Values     map[string]float64 `json:"values"`
+	InstanceID        model.ResourceID   `json:"instance_id"`
+	MetricsObservedAt *time.Time         `json:"metrics_observed_at,omitempty"`
+	Values            map[string]float64 `json:"values"`
 }
 
 func (server *Server) persistedMetrics(clusterID model.ResourceID) ([]instanceMetrics, model.TopologySnapshot, bool) {
@@ -26,15 +28,34 @@ func (server *Server) persistedMetrics(clusterID model.ResourceID) ([]instanceMe
 	result := make([]instanceMetrics, 0, len(snapshot.Instances))
 	for _, instance := range snapshot.Instances {
 		values := make(map[string]float64)
-		for name, value := range derived[instance.ResourceID] {
-			if finiteMetric(value) {
-				values[name] = value
+		var metricsObservedAt time.Time
+		discoveryObserved := false
+		for _, probe := range snapshot.Probes {
+			if probe.InstanceID != instance.ResourceID {
+				continue
+			}
+			if !probe.DiscoveryObservedAt.IsZero() {
+				discoveryObserved = true
+			}
+			if probe.MetricsObservedAt.After(metricsObservedAt) {
+				metricsObservedAt = probe.MetricsObservedAt
 			}
 		}
-		if instance.Replication.LagSeconds != nil && *instance.Replication.LagSeconds >= 0 {
+		if !metricsObservedAt.IsZero() {
+			for name, value := range derived[instance.ResourceID] {
+				if finiteMetric(value) {
+					values[name] = value
+				}
+			}
+		}
+		if discoveryObserved && instance.Replication.LagSeconds != nil && *instance.Replication.LagSeconds >= 0 {
 			values["replication_lag_seconds"] = float64(*instance.Replication.LagSeconds)
 		}
-		result = append(result, instanceMetrics{InstanceID: instance.ResourceID, Values: values})
+		item := instanceMetrics{InstanceID: instance.ResourceID, Values: values}
+		if !metricsObservedAt.IsZero() {
+			item.MetricsObservedAt = &metricsObservedAt
+		}
+		result = append(result, item)
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].InstanceID < result[j].InstanceID })
 	return result, snapshot, true

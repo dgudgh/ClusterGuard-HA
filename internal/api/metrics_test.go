@@ -1,8 +1,8 @@
 package api
 
 import (
-	"math"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -12,7 +12,11 @@ import (
 )
 
 func TestMetricsRoutesUsePersistedSamplesAndReplicationLag(t *testing.T) {
-	repository := store.NewMemory()
+	path := filepath.Join(t.TempDir(), "metadata.json")
+	repository, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("open metrics repository: %v", err)
+	}
 	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{
 		Engine: model.EngineMySQL, DisplayName: "metrics-api",
 	}, []model.Endpoint{
@@ -36,8 +40,8 @@ func TestMetricsRoutesUsePersistedSamplesAndReplicationLag(t *testing.T) {
 		},
 	}
 	probes := []model.ProbeStatus{
-		{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy, ObservedAt: start}},
-		{EndpointID: endpoints[1].ResourceID, Health: model.Health{State: model.HealthHealthy, ObservedAt: start}},
+		{EndpointID: endpoints[0].ResourceID, DiscoveryObservedAt: start, Health: model.Health{State: model.HealthHealthy, ObservedAt: start}},
+		{EndpointID: endpoints[1].ResourceID, DiscoveryObservedAt: start, MetricsObservedAt: start, Health: model.Health{State: model.HealthHealthy, ObservedAt: start}},
 	}
 	first, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{
 		ClusterID: cluster.ResourceID,
@@ -64,14 +68,16 @@ func TestMetricsRoutesUsePersistedSamplesAndReplicationLag(t *testing.T) {
 	secondTime := start.Add(10 * time.Second)
 	for index := range probes {
 		probes[index].Health.ObservedAt = secondTime
+		probes[index].DiscoveryObservedAt = secondTime
 	}
+	probes[1].MetricsObservedAt = secondTime
 	if _, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{
 		ClusterID: cluster.ResourceID,
 		Observations: []store.DiscoveryObservation{
 			{EndpointID: endpoints[0].ResourceID, Instance: primary},
 			{EndpointID: endpoints[1].ResourceID, Instance: replica, Metrics: []model.MetricSample{{ObservedAt: secondTime, Values: map[string]float64{
 				"questions_total": 150, "transactions_total": 60, "slow_queries_total": 15,
-				"connections": 12, "running_threads": 3, "buffer_pool_hit_ratio": math.NaN(),
+				"connections": 12, "running_threads": 3, "buffer_pool_hit_ratio": 0.98,
 			}}}},
 		},
 		Probes: probes, Health: model.Health{State: model.HealthHealthy, ObservedAt: secondTime}, ObservedAt: secondTime,
@@ -79,13 +85,17 @@ func TestMetricsRoutesUsePersistedSamplesAndReplicationLag(t *testing.T) {
 		t.Fatalf("second metrics observation: %v", err)
 	}
 
+	repository, err = store.Open(path)
+	if err != nil {
+		t.Fatalf("reopen good metrics repository: %v", err)
+	}
 	candidate := newCandidateAdapterSpy()
 	server := newAPIServer(t, repository, candidate, &fakeRefresher{})
 	jsonResponse := callJSON(t, server.Handler(), http.MethodGet, "/api/v1/clusters/"+string(cluster.ResourceID)+"/metrics", nil)
 	if jsonResponse.Code != http.StatusOK {
 		t.Fatalf("JSON metrics status: %d %s", jsonResponse.Code, jsonResponse.Body.String())
 	}
-	for _, expected := range []string{`"instance_id":"` + string(replicaID) + `"`, `"qps":5`, `"tps":2`, `"slow_queries_per_second":1`, `"replication_lag_seconds":3`, `"connections":12`} {
+	for _, expected := range []string{`"instance_id":"` + string(replicaID) + `"`, `"metrics_observed_at":"` + secondTime.Format(time.RFC3339) + `"`, `"qps":5`, `"tps":2`, `"slow_queries_per_second":1`, `"replication_lag_seconds":3`, `"connections":12`} {
 		if !strings.Contains(jsonResponse.Body.String(), expected) {
 			t.Fatalf("JSON metrics missing %s: %s", expected, jsonResponse.Body.String())
 		}
@@ -112,5 +122,67 @@ func TestMetricsRoutesUsePersistedSamplesAndReplicationLag(t *testing.T) {
 	requests, databaseCalls := candidate.captured()
 	if len(requests) != 0 || databaseCalls != 0 {
 		t.Fatalf("metrics reads invoked adapter: requests=%d database_calls=%d", len(requests), databaseCalls)
+	}
+
+	metricsFailureTime := secondTime.Add(10 * time.Second)
+	if _, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{
+		ClusterID: cluster.ResourceID,
+		Observations: []store.DiscoveryObservation{
+			{EndpointID: endpoints[0].ResourceID, Instance: primary},
+			{EndpointID: endpoints[1].ResourceID, Instance: replica},
+		},
+		Probes: []model.ProbeStatus{
+			{EndpointID: endpoints[0].ResourceID, DiscoveryObservedAt: metricsFailureTime, Health: model.Health{State: model.HealthHealthy, ObservedAt: metricsFailureTime}},
+			{EndpointID: endpoints[1].ResourceID, DiscoveryObservedAt: metricsFailureTime, Health: model.Health{State: model.HealthDegraded, ObservedAt: metricsFailureTime}},
+		},
+		ObservedAt: metricsFailureTime,
+	}); err != nil {
+		t.Fatalf("publish metrics failure: %v", err)
+	}
+	repository, err = store.Open(path)
+	if err != nil {
+		t.Fatalf("reopen metrics failure: %v", err)
+	}
+	server = newAPIServer(t, repository, newCandidateAdapterSpy(), &fakeRefresher{})
+	jsonResponse = callJSON(t, server.Handler(), http.MethodGet, "/api/v1/clusters/"+string(cluster.ResourceID)+"/metrics", nil)
+	if jsonResponse.Code != http.StatusOK || !strings.Contains(jsonResponse.Body.String(), `"replication_lag_seconds":3`) {
+		t.Fatalf("metrics failure lost current replication lag: %d %s", jsonResponse.Code, jsonResponse.Body.String())
+	}
+	for _, stale := range []string{`"qps"`, `"tps"`, `"connections"`, `"metrics_observed_at"`} {
+		if strings.Contains(jsonResponse.Body.String(), stale) {
+			t.Fatalf("metrics failure emitted stale %s: %s", stale, jsonResponse.Body.String())
+		}
+	}
+	prometheus = callJSON(t, server.Handler(), http.MethodGet, "/api/v1/clusters/"+string(cluster.ResourceID)+"/metrics/prometheus", nil)
+	if strings.Contains(prometheus.Body.String(), "clusterguard_mysql_qps") || !strings.Contains(prometheus.Body.String(), "clusterguard_mysql_replication_lag_seconds") {
+		t.Fatalf("Prometheus metrics failure freshness is wrong: %s", prometheus.Body.String())
+	}
+
+	databaseFailureTime := metricsFailureTime.Add(10 * time.Second)
+	if _, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{
+		ClusterID:    cluster.ResourceID,
+		Observations: []store.DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: primary}},
+		Probes: []model.ProbeStatus{
+			{EndpointID: endpoints[0].ResourceID, DiscoveryObservedAt: databaseFailureTime, Health: model.Health{State: model.HealthHealthy, ObservedAt: databaseFailureTime}},
+			{EndpointID: endpoints[1].ResourceID, Health: model.Health{State: model.HealthUnknown, ObservedAt: databaseFailureTime}},
+		},
+		ObservedAt: databaseFailureTime,
+	}); err != nil {
+		t.Fatalf("publish database failure: %v", err)
+	}
+	repository, err = store.Open(path)
+	if err != nil {
+		t.Fatalf("reopen database failure: %v", err)
+	}
+	server = newAPIServer(t, repository, newCandidateAdapterSpy(), &fakeRefresher{})
+	jsonResponse = callJSON(t, server.Handler(), http.MethodGet, "/api/v1/clusters/"+string(cluster.ResourceID)+"/metrics", nil)
+	for _, stale := range []string{`"qps"`, `"connections"`, `"replication_lag_seconds"`, `"metrics_observed_at"`} {
+		if strings.Contains(jsonResponse.Body.String(), stale) {
+			t.Fatalf("database failure emitted stale %s after reopen: %s", stale, jsonResponse.Body.String())
+		}
+	}
+	prometheus = callJSON(t, server.Handler(), http.MethodGet, "/api/v1/clusters/"+string(cluster.ResourceID)+"/metrics/prometheus", nil)
+	if strings.Contains(prometheus.Body.String(), "clusterguard_mysql_") {
+		t.Fatalf("database failure emitted stale Prometheus metrics: %s", prometheus.Body.String())
 	}
 }

@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -164,6 +167,73 @@ func TestRegisterClusterAndRefreshOnlyRegisteredInventory(t *testing.T) {
 	}
 }
 
+func TestDiscoverBodyIsBoundedAndStrictIndependentOfContentLength(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, _, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{
+		Engine: model.EngineMySQL, DisplayName: "strict-discovery-body",
+	}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true}})
+	if err != nil {
+		t.Fatalf("create inventory: %v", err)
+	}
+	refresher := &fakeRefresher{}
+	server := newAPIServer(t, repository, newCandidateAdapterSpy(), refresher)
+	path := "/api/v1/clusters/" + string(cluster.ResourceID) + "/discover"
+	tests := []struct {
+		name             string
+		body             string
+		forceZeroLength  bool
+		transferEncoding []string
+		wantStatus       int
+	}{
+		{name: "empty body", wantStatus: http.StatusOK},
+		{name: "one empty object", body: `{}`, wantStatus: http.StatusOK},
+		{name: "unknown credential field", body: `{"credentials":{"password":"secret"}}`, wantStatus: http.StatusBadRequest},
+		{name: "zero content length with credential bytes", body: `{"password":"secret"}`, forceZeroLength: true, wantStatus: http.StatusBadRequest},
+		{name: "chunked credential body", body: `{"password":"secret"}`, transferEncoding: []string{"chunked"}, wantStatus: http.StatusBadRequest},
+		{name: "trailing JSON value", body: `{} {}`, wantStatus: http.StatusBadRequest},
+		{name: "partial trailing JSON value", body: `{} {`, wantStatus: http.StatusBadRequest},
+		{name: "non-object null", body: `null`, wantStatus: http.StatusBadRequest},
+		{name: "oversized body", body: strings.Repeat(" ", 2048) + `{}`, wantStatus: http.StatusBadRequest},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(test.body))
+			if test.forceZeroLength {
+				request.ContentLength = 0
+			}
+			if test.transferEncoding != nil {
+				request.ContentLength = -1
+				request.TransferEncoding = test.transferEncoding
+			}
+			response := httptest.NewRecorder()
+			server.Handler().ServeHTTP(response, request)
+			if response.Code != test.wantStatus {
+				t.Fatalf("status = %d, want %d: %s", response.Code, test.wantStatus, response.Body.String())
+			}
+		})
+	}
+	if refresher.callCount() != 2 {
+		t.Fatalf("malformed discovery bodies reached refresher: calls=%d", refresher.callCount())
+	}
+}
+
+func TestGenericJSONDecodeRejectsTrailingValues(t *testing.T) {
+	repository := store.NewMemory()
+	server := newAPIServer(t, repository, newCandidateAdapterSpy(), &fakeRefresher{})
+	valid := `{"display_name":"payments","engine":"mysql","endpoints":[{"hostname":"mysql-a","port":3306}]}`
+	for _, trailing := range []string{" {}", " {"} {
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/clusters", strings.NewReader(valid+trailing))
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, request)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("trailing %q status = %d: %s", trailing, response.Code, response.Body.String())
+		}
+	}
+	if len(repository.Clusters()) != 0 {
+		t.Fatalf("trailing JSON registration changed inventory: %+v", repository.Clusters())
+	}
+}
+
 func TestRegisterClusterRejectsBlankDuplicateNameAndGlobalEndpointWithoutPartialState(t *testing.T) {
 	repository := store.NewMemory()
 	server := newAPIServer(t, repository, newCandidateAdapterSpy(), &fakeRefresher{})
@@ -198,6 +268,49 @@ func TestRegisterClusterRejectsBlankDuplicateNameAndGlobalEndpointWithoutPartial
 	}
 	if len(repository.Clusters()) != 1 || len(repository.Endpoints(repository.Clusters()[0].ResourceID)) != 1 {
 		t.Fatalf("failed registration published partial inventory: clusters=%+v", repository.Clusters())
+	}
+}
+
+func TestRegisterClusterMapsTypedStoreErrorsWithoutLeakingInternals(t *testing.T) {
+	repository := store.NewMemory()
+	server := newAPIServer(t, repository, newCandidateAdapterSpy(), &fakeRefresher{})
+	invalid := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/clusters", map[string]interface{}{
+		"display_name": "invalid-port", "engine": "mysql",
+		"endpoints": []map[string]interface{}{{"hostname": "mysql-a", "port": 0}},
+	})
+	if invalid.Code != http.StatusBadRequest || len(repository.Clusters()) != 0 {
+		t.Fatalf("validation mapping = %d %s clusters=%+v", invalid.Code, invalid.Body.String(), repository.Clusters())
+	}
+	valid := map[string]interface{}{
+		"display_name": "payments", "engine": "mysql",
+		"endpoints": []map[string]interface{}{{"hostname": "mysql-a", "port": 3306}},
+	}
+	if response := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/clusters", valid); response.Code != http.StatusCreated {
+		t.Fatalf("seed registration: %d %s", response.Code, response.Body.String())
+	}
+	conflict := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/clusters", map[string]interface{}{
+		"display_name": " PAYMENTS ", "engine": "mysql",
+		"endpoints": []map[string]interface{}{{"hostname": "mysql-b", "port": 3306}},
+	})
+	if conflict.Code != http.StatusConflict {
+		t.Fatalf("conflict mapping = %d %s", conflict.Code, conflict.Body.String())
+	}
+
+	internalPath := filepath.Join(t.TempDir(), "metadata.json")
+	failing, err := store.Open(internalPath)
+	if err != nil {
+		t.Fatalf("open failing repository: %v", err)
+	}
+	if err := os.Mkdir(internalPath, 0700); err != nil {
+		t.Fatalf("create blocking snapshot directory: %v", err)
+	}
+	failingServer := newAPIServer(t, failing, newCandidateAdapterSpy(), &fakeRefresher{})
+	internal := callJSON(t, failingServer.Handler(), http.MethodPost, "/api/v1/clusters", map[string]interface{}{
+		"display_name": "internal-failure", "engine": "mysql",
+		"endpoints": []map[string]interface{}{{"hostname": "mysql-c", "port": 3306}},
+	})
+	if internal.Code != http.StatusInternalServerError || strings.Contains(internal.Body.String(), internalPath) || len(failing.Clusters()) != 0 {
+		t.Fatalf("internal mapping leaked or published state: %d %s clusters=%+v", internal.Code, internal.Body.String(), failing.Clusters())
 	}
 }
 
@@ -261,7 +374,7 @@ func seedCandidateTopology(t *testing.T, repository *store.Repository, primaryCo
 		if failedReplica && role == model.RoleReplica {
 			health = model.Health{State: model.HealthUnknown, ObservedAt: observedAt}
 		}
-		probes = append(probes, model.ProbeStatus{EndpointID: endpoint.ResourceID, Health: health})
+		probes = append(probes, model.ProbeStatus{EndpointID: endpoint.ResourceID, DiscoveryObservedAt: observedAt, Health: health})
 	}
 	snapshot, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{
 		ClusterID: cluster.ResourceID, Observations: observations, Probes: probes,
@@ -331,6 +444,170 @@ func TestCandidateReadFailsClosedBeforeAdapterInvocation(t *testing.T) {
 	}
 }
 
+func TestCandidateReadRejectsRetainedPrimaryWithoutCurrentRoleEvidence(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{
+		Engine: model.EngineMySQL, DisplayName: "stale-primary",
+	}, []model.Endpoint{
+		{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true},
+		{Kind: model.EndpointDatabase, Hostname: "mysql-b", Port: 3307, Active: true},
+	})
+	if err != nil {
+		t.Fatalf("create inventory: %v", err)
+	}
+	observedAt := time.Date(2026, time.July, 11, 15, 0, 0, 0, time.UTC)
+	primary := model.DatabaseInstance{
+		Engine: model.EngineMySQL, EngineIdentity: model.EngineIdentity{"server_uuid": "native-a"},
+		Hostname: "mysql-a", Port: 3306, Role: model.RolePrimary, Health: model.Health{State: model.HealthHealthy},
+	}
+	replica := model.DatabaseInstance{
+		Engine: model.EngineMySQL, EngineIdentity: model.EngineIdentity{"server_uuid": "native-b"},
+		Hostname: "mysql-b", Port: 3307, Role: model.RoleReplica, Health: model.Health{State: model.HealthHealthy},
+		Replication: model.ReplicationStatus{SourceIdentity: model.EngineIdentity{"server_uuid": "native-a"}, IOThread: model.ThreadRunning, SQLThread: model.ThreadRunning},
+	}
+	if _, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{
+		ClusterID: cluster.ResourceID,
+		Observations: []store.DiscoveryObservation{
+			{EndpointID: endpoints[0].ResourceID, Instance: primary},
+			{EndpointID: endpoints[1].ResourceID, Instance: replica},
+		},
+		Probes: []model.ProbeStatus{
+			{EndpointID: endpoints[0].ResourceID, DiscoveryObservedAt: observedAt, Health: model.Health{State: model.HealthHealthy}},
+			{EndpointID: endpoints[1].ResourceID, DiscoveryObservedAt: observedAt, Health: model.Health{State: model.HealthHealthy}},
+		},
+		ObservedAt: observedAt,
+	}); err != nil {
+		t.Fatalf("seed topology: %v", err)
+	}
+	secondObservedAt := observedAt.Add(time.Minute)
+	snapshot, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{
+		ClusterID:    cluster.ResourceID,
+		Observations: []store.DiscoveryObservation{{EndpointID: endpoints[1].ResourceID, Instance: replica}},
+		Probes: []model.ProbeStatus{
+			{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthUnknown}},
+			{EndpointID: endpoints[1].ResourceID, DiscoveryObservedAt: secondObservedAt, Health: model.Health{State: model.HealthHealthy}},
+		},
+		ObservedAt: secondObservedAt,
+	})
+	if err != nil {
+		t.Fatalf("publish failed-primary observation: %v", err)
+	}
+	if len(snapshot.Instances) != 2 || snapshot.Instances[0].Role != model.RolePrimary && snapshot.Instances[1].Role != model.RolePrimary {
+		t.Fatalf("last-known primary was not retained in topology: %+v", snapshot.Instances)
+	}
+
+	candidate := newCandidateAdapterSpy()
+	server := newAPIServer(t, repository, candidate, &fakeRefresher{})
+	response := callJSON(t, server.Handler(), http.MethodGet, "/api/v1/clusters/"+string(cluster.ResourceID)+"/candidates", nil)
+	requests, _ := candidate.captured()
+	if response.Code != http.StatusConflict || len(requests) != 0 {
+		t.Fatalf("stale primary role reached candidate adapter: %d %s calls=%d", response.Code, response.Body.String(), len(requests))
+	}
+}
+
+func TestTopologyAndCandidateReadsOverlayOnlyCanonicalMetadataCoordinatesAcrossRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metadata.json")
+	repository, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("open repository: %v", err)
+	}
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{
+		Engine: model.EngineMySQL, DisplayName: "metadata-overlay-api",
+	}, []model.Endpoint{
+		{Kind: model.EndpointDatabase, Hostname: "mysql-old", IPAddress: "192.0.2.10", Port: 3306, Active: true},
+		{Kind: model.EndpointDatabase, Hostname: "mysql-replica", IPAddress: "192.0.2.11", Port: 3307, Active: true},
+	})
+	if err != nil {
+		t.Fatalf("create inventory: %v", err)
+	}
+	observedAt := time.Date(2026, time.July, 11, 19, 0, 0, 0, time.UTC)
+	primary := model.DatabaseInstance{
+		Engine: model.EngineMySQL, EngineIdentity: model.EngineIdentity{"server_uuid": "native-primary"},
+		DisplayName: "mysql-old", Hostname: "mysql-old", IPAddress: "192.0.2.10", Port: 3306,
+		Role: model.RolePrimary, Health: model.Health{State: model.HealthHealthy}, PromotionEligible: false,
+	}
+	replica := model.DatabaseInstance{
+		Engine: model.EngineMySQL, EngineIdentity: model.EngineIdentity{"server_uuid": "native-replica"},
+		DisplayName: "mysql-replica", Hostname: "mysql-replica", IPAddress: "192.0.2.11", Port: 3307,
+		Role: model.RoleReplica, Health: model.Health{State: model.HealthHealthy}, PromotionEligible: true,
+		Replication: model.ReplicationStatus{SourceIdentity: model.EngineIdentity{"server_uuid": "native-primary"}, IOThread: model.ThreadRunning, SQLThread: model.ThreadRunning},
+	}
+	initial, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{
+		ClusterID: cluster.ResourceID,
+		Observations: []store.DiscoveryObservation{
+			{EndpointID: endpoints[0].ResourceID, Instance: primary},
+			{EndpointID: endpoints[1].ResourceID, Instance: replica},
+		},
+		Probes: []model.ProbeStatus{
+			{EndpointID: endpoints[0].ResourceID, DiscoveryObservedAt: observedAt, Health: model.Health{State: model.HealthHealthy}},
+			{EndpointID: endpoints[1].ResourceID, DiscoveryObservedAt: observedAt, Health: model.Health{State: model.HealthHealthy}},
+		},
+		ObservedAt: observedAt,
+	})
+	if err != nil {
+		t.Fatalf("seed observed topology: %v", err)
+	}
+	primaryID := model.ResourceID("")
+	for _, instance := range initial.Instances {
+		if instance.Role == model.RolePrimary {
+			primaryID = instance.ResourceID
+		}
+	}
+	metadata := primary
+	metadata.ResourceID = primaryID
+	metadata.ClusterID = cluster.ResourceID
+	metadata.DisplayName = "mysql-renamed"
+	metadata.Hostname = "mysql-renamed"
+	metadata.IPAddress = "192.0.2.99"
+	metadata.Port = 4406
+	metadata.Role = model.RoleReplica
+	metadata.Health = model.Health{State: model.HealthUnhealthy}
+	metadata.Replication = model.ReplicationStatus{IOThread: model.ThreadStopped, SQLThread: model.ThreadStopped}
+	metadata.PromotionEligible = true
+	if _, err := repository.ReconcileInstance(metadata); err != nil {
+		t.Fatalf("reconcile metadata payload: %v", err)
+	}
+
+	assertReads := func(t *testing.T, repository *store.Repository) {
+		t.Helper()
+		candidate := newCandidateAdapterSpy()
+		server := newAPIServer(t, repository, candidate, &fakeRefresher{})
+		topologyResponse := callJSON(t, server.Handler(), http.MethodGet, "/api/v1/clusters/"+string(cluster.ResourceID)+"/topology", nil)
+		if topologyResponse.Code != http.StatusOK {
+			t.Fatalf("topology status: %d %s", topologyResponse.Code, topologyResponse.Body.String())
+		}
+		var body struct {
+			Result model.TopologySnapshot `json:"result"`
+		}
+		if err := json.Unmarshal(topologyResponse.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode topology: %v", err)
+		}
+		var readPrimary model.DatabaseInstance
+		for _, instance := range body.Result.Instances {
+			if instance.ResourceID == primaryID {
+				readPrimary = instance
+			}
+		}
+		if readPrimary.Hostname != metadata.Hostname || readPrimary.IPAddress != metadata.IPAddress || readPrimary.Port != metadata.Port || readPrimary.DisplayName != metadata.DisplayName {
+			t.Fatalf("topology did not overlay coordinates: %+v", readPrimary)
+		}
+		if readPrimary.Role != model.RolePrimary || readPrimary.Health.State != model.HealthHealthy || readPrimary.Replication.IOThread != primary.Replication.IOThread || readPrimary.PromotionEligible != primary.PromotionEligible || readPrimary.EngineIdentity["server_uuid"] != "native-primary" {
+			t.Fatalf("metadata payload replaced observed runtime facts: %+v", readPrimary)
+		}
+		candidateResponse := callJSON(t, server.Handler(), http.MethodGet, "/api/v1/clusters/"+string(cluster.ResourceID)+"/candidates", nil)
+		requests, _ := candidate.captured()
+		if candidateResponse.Code != http.StatusOK || len(requests) != 1 || requests[0].Primary.ResourceID != primaryID || requests[0].Primary.Role != model.RolePrimary || requests[0].Primary.Health.State != model.HealthHealthy {
+			t.Fatalf("candidate read used metadata runtime payload: %d %s requests=%+v", candidateResponse.Code, candidateResponse.Body.String(), requests)
+		}
+	}
+	assertReads(t, repository)
+	reopened, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("reopen repository: %v", err)
+	}
+	assertReads(t, reopened)
+}
+
 func TestInvalidCandidatePolicyAndClusterUUIDFailBeforeDependencies(t *testing.T) {
 	repository := store.NewMemory()
 	cluster, _ := seedCandidateTopology(t, repository, 1, false)
@@ -355,6 +632,32 @@ func TestInvalidCandidatePolicyAndClusterUUIDFailBeforeDependencies(t *testing.T
 		response := callJSON(t, invalidServer.Handler(), http.MethodGet, "/api/v1/clusters/not-a-uuid/"+suffix, nil)
 		if response.Code != http.StatusBadRequest {
 			t.Fatalf("invalid UUID %s status: %d %s", suffix, response.Code, response.Body.String())
+		}
+	}
+}
+
+func TestClusterReadRoutesDistinguishUnknownFromUnobservedInventory(t *testing.T) {
+	repository := store.NewMemory()
+	server := newAPIServer(t, repository, newCandidateAdapterSpy(), &fakeRefresher{})
+	unknownID := model.NewResourceID()
+	paths := []string{"topology", "health", "candidates", "metrics", "metrics/prometheus"}
+	for _, suffix := range paths {
+		response := callJSON(t, server.Handler(), http.MethodGet, "/api/v1/clusters/"+string(unknownID)+"/"+suffix, nil)
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("unknown cluster %s status = %d: %s", suffix, response.Code, response.Body.String())
+		}
+	}
+
+	cluster, _, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{
+		Engine: model.EngineMySQL, DisplayName: "unobserved-routes",
+	}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true}})
+	if err != nil {
+		t.Fatalf("create unobserved inventory: %v", err)
+	}
+	for _, suffix := range paths {
+		response := callJSON(t, server.Handler(), http.MethodGet, "/api/v1/clusters/"+string(cluster.ResourceID)+"/"+suffix, nil)
+		if response.Code != http.StatusConflict {
+			t.Fatalf("unobserved cluster %s status = %d: %s", suffix, response.Code, response.Body.String())
 		}
 	}
 }

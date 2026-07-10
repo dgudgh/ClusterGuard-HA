@@ -42,3 +42,44 @@ func TestLoadRejectsMissingSecret(t *testing.T) {
 		t.Fatal("expected missing approval secret to be rejected")
 	}
 }
+
+func TestLoadRequiresCompleteCredentialsWhenMySQLIsEnabled(t *testing.T) {
+	tests := []struct {
+		name        string
+		mysqlJSON   string
+		environment map[string]string
+	}{
+		{name: "missing username", mysqlJSON: `{"enabled":true,"password_env":"CG_MYSQL_PASSWORD"}`, environment: map[string]string{"CG_MYSQL_PASSWORD": "secret"}},
+		{name: "blank username", mysqlJSON: `{"enabled":true,"username":"   ","password_env":"CG_MYSQL_PASSWORD"}`, environment: map[string]string{"CG_MYSQL_PASSWORD": "secret"}},
+		{name: "missing password environment name", mysqlJSON: `{"enabled":true,"username":"discover"}`},
+		{name: "blank password environment name", mysqlJSON: `{"enabled":true,"username":"discover","password_env":"   "}`},
+		{name: "unresolved password", mysqlJSON: `{"enabled":true,"username":"discover","password_env":"CG_MYSQL_MISSING"}`},
+		{name: "blank resolved password", mysqlJSON: `{"enabled":true,"username":"discover","password_env":"CG_MYSQL_PASSWORD"}`, environment: map[string]string{"CG_MYSQL_PASSWORD": "   "}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			for name, value := range test.environment {
+				t.Setenv(name, value)
+			}
+			path := filepath.Join(t.TempDir(), "control.json")
+			contents := `{"metadata_path":"` + filepath.Join(t.TempDir(), "metadata.json") + `","mysql":` + test.mysqlJSON + `}`
+			if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Load(path); err == nil {
+				t.Fatal("enabled MySQL with incomplete credentials must fail")
+			}
+		})
+	}
+}
+
+func TestLoadAllowsDisabledMySQLWithoutCredentials(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "control.json")
+	contents := `{"metadata_path":"` + filepath.Join(t.TempDir(), "metadata.json") + `","mysql":{"enabled":false}}`
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err != nil {
+		t.Fatalf("disabled MySQL credentials should be optional: %v", err)
+	}
+}

@@ -1,16 +1,20 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"clusterguard.io/ha/internal/store"
 	"clusterguard.io/ha/pkg/adapter"
 	"clusterguard.io/ha/pkg/model"
 )
 
 const maximumCandidateLagSeconds = int64(86400)
+const maximumDiscoveryBodyBytes = 1024
 
 type clusterRegistrationPayload struct {
 	DisplayName string       `json:"display_name"`
@@ -56,7 +60,14 @@ func (server *Server) registerCluster(writer http.ResponseWriter, request *http.
 		Engine: payload.Engine, DisplayName: payload.DisplayName, Health: model.Health{State: model.HealthUnknown},
 	}, endpoints)
 	if err != nil {
-		writeError(writer, http.StatusConflict, "cluster registration conflicts with existing inventory")
+		switch {
+		case errors.Is(err, store.ErrValidation):
+			writeError(writer, http.StatusBadRequest, "invalid cluster registration")
+		case errors.Is(err, store.ErrConflict):
+			writeError(writer, http.StatusConflict, "cluster registration conflicts with existing inventory")
+		default:
+			writeError(writer, http.StatusInternalServerError, "cluster registration failed")
+		}
 		return
 	}
 	writeJSON(writer, http.StatusCreated, map[string]interface{}{
@@ -102,7 +113,15 @@ func (server *Server) clusterRoute(writer http.ResponseWriter, request *http.Req
 			writeError(writer, http.StatusBadRequest, "invalid candidate policy")
 			return
 		}
+		if _, found := server.store.Cluster(clusterID); !found {
+			writeError(writer, http.StatusNotFound, "cluster not found")
+			return
+		}
 		server.clusterCandidates(writer, request, clusterID, policy)
+		return
+	}
+	if _, found := server.store.Cluster(clusterID); !found {
+		writeError(writer, http.StatusNotFound, "cluster not found")
 		return
 	}
 	switch action {
@@ -136,12 +155,9 @@ func (server *Server) discoverCluster(writer http.ResponseWriter, request *http.
 		writeError(writer, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if request.ContentLength != 0 {
-		payload := struct{}{}
-		if err := decode(request, &payload); err != nil {
-			writeError(writer, http.StatusBadRequest, "discovery request does not accept credentials or endpoint overrides")
-			return
-		}
+	if err := validateDiscoveryBody(request); err != nil {
+		writeError(writer, http.StatusBadRequest, "discovery request does not accept credentials or endpoint overrides")
+		return
 	}
 	if _, found := server.store.Cluster(clusterID); !found || !hasActiveDatabaseEndpoint(server.store.Endpoints(clusterID)) {
 		writeError(writer, http.StatusUnprocessableEntity, "registered active database inventory is required")
@@ -161,6 +177,27 @@ func (server *Server) discoverCluster(writer http.ResponseWriter, request *http.
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": snapshot})
+}
+
+func validateDiscoveryBody(request *http.Request) error {
+	contents, err := io.ReadAll(io.LimitReader(request.Body, maximumDiscoveryBodyBytes+1))
+	if err != nil {
+		return err
+	}
+	if len(contents) > maximumDiscoveryBodyBytes {
+		return errors.New("discovery request body is too large")
+	}
+	if strings.TrimSpace(string(contents)) == "" {
+		return nil
+	}
+	payload := map[string]json.RawMessage{}
+	if err := json.Unmarshal(contents, &payload); err != nil {
+		return err
+	}
+	if payload == nil || len(payload) != 0 {
+		return errors.New("discovery request body must be an empty object")
+	}
+	return nil
 }
 
 func hasActiveDatabaseEndpoint(endpoints []model.Endpoint) bool {
@@ -211,7 +248,7 @@ func (server *Server) clusterCandidates(writer http.ResponseWriter, request *htt
 	}
 	primaries := make([]model.DatabaseInstance, 0, 1)
 	for _, instance := range snapshot.Instances {
-		if instance.Role == model.RolePrimary {
+		if instance.Role == model.RolePrimary && hasCurrentDiscoveryProbe(snapshot.Probes, instance.ResourceID) {
 			primaries = append(primaries, instance)
 		}
 	}
@@ -233,6 +270,15 @@ func (server *Server) clusterCandidates(writer http.ResponseWriter, request *htt
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": assessments})
+}
+
+func hasCurrentDiscoveryProbe(probes []model.ProbeStatus, instanceID model.ResourceID) bool {
+	for _, probe := range probes {
+		if probe.InstanceID == instanceID && !probe.DiscoveryObservedAt.IsZero() {
+			return true
+		}
+	}
+	return false
 }
 
 func hasCompleteProbeEvidence(snapshot model.TopologySnapshot) bool {

@@ -27,9 +27,11 @@ type MetricSample struct {
 }
 
 type ProbeStatus struct {
-	EndpointID ResourceID `json:"endpoint_id"`
-	InstanceID ResourceID `json:"instance_id,omitempty"`
-	Health     Health     `json:"health"`
+	EndpointID          ResourceID `json:"endpoint_id"`
+	InstanceID          ResourceID `json:"instance_id,omitempty"`
+	DiscoveryObservedAt time.Time  `json:"discovery_observed_at,omitempty"`
+	MetricsObservedAt   time.Time  `json:"metrics_observed_at,omitempty"`
+	Health              Health     `json:"health"`
 }
 
 type TopologySnapshot struct {
