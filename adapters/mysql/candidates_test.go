@@ -153,18 +153,31 @@ func TestEvaluateCandidatesWarnsForExplicitFailedUnboundProbe(t *testing.T) {
 func TestEvaluateCandidatesRequiresHealthyBoundProbeEvidence(t *testing.T) {
 	instance := candidateInstance("00000000-0000-4000-8000-000000000010", "8.0.44", 0, testPrimaryServerUUID+":1-20")
 	for _, test := range []struct {
-		name   string
-		probes []model.ProbeStatus
+		name             string
+		probes           []model.ProbeStatus
+		coverageMustWarn bool
 	}{
-		{name: "empty probes"},
+		{name: "empty probes", coverageMustWarn: true},
 		{name: "no bound probe", probes: []model.ProbeStatus{{
 			EndpointID: model.ResourceID("00000000-0000-4000-8000-000000000060"),
 			InstanceID: model.ResourceID("00000000-0000-4000-8000-000000000099"),
 			Health:     model.Health{State: model.HealthHealthy},
 		}}},
-		{name: "bound unknown probe", probes: []model.ProbeStatus{candidateProbe(instance.ResourceID, model.HealthUnknown)}},
-		{name: "bound degraded probe", probes: []model.ProbeStatus{candidateProbe(instance.ResourceID, model.HealthDegraded)}},
-		{name: "bound unhealthy probe", probes: []model.ProbeStatus{candidateProbe(instance.ResourceID, model.HealthUnhealthy)}},
+		{name: "bound unknown probe", probes: []model.ProbeStatus{candidateProbe(instance.ResourceID, model.HealthUnknown)}, coverageMustWarn: true},
+		{name: "bound degraded probe", probes: []model.ProbeStatus{candidateProbe(instance.ResourceID, model.HealthDegraded)}, coverageMustWarn: true},
+		{name: "bound unhealthy probe", probes: []model.ProbeStatus{candidateProbe(instance.ResourceID, model.HealthUnhealthy)}, coverageMustWarn: true},
+		{name: "mixed healthy and unknown bound probes", probes: []model.ProbeStatus{
+			candidateProbe(instance.ResourceID, model.HealthHealthy),
+			candidateProbe(instance.ResourceID, model.HealthUnknown),
+		}, coverageMustWarn: true},
+		{name: "mixed healthy and degraded bound probes", probes: []model.ProbeStatus{
+			candidateProbe(instance.ResourceID, model.HealthHealthy),
+			candidateProbe(instance.ResourceID, model.HealthDegraded),
+		}, coverageMustWarn: true},
+		{name: "mixed healthy and unhealthy bound probes", probes: []model.ProbeStatus{
+			candidateProbe(instance.ResourceID, model.HealthHealthy),
+			candidateProbe(instance.ResourceID, model.HealthUnhealthy),
+		}, coverageMustWarn: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			request := candidateEvaluationRequest(instance)
@@ -180,6 +193,9 @@ func TestEvaluateCandidatesRequiresHealthyBoundProbeEvidence(t *testing.T) {
 				if got := assessmentCheckStatus(t, assessments[0], checkName); got != model.CheckFail {
 					t.Fatalf("%s check = %s, want fail", checkName, got)
 				}
+			}
+			if test.coverageMustWarn && assessmentCheckStatus(t, assessments[0], "probe_coverage") != model.CheckWarn {
+				t.Fatalf("probe coverage did not warn: %+v", assessments[0])
 			}
 		})
 	}
@@ -223,6 +239,47 @@ func TestEvaluateCandidatesFailsClosedOnGTIDComparisonOverflow(t *testing.T) {
 	}
 	if len(assessments) != 1 || assessments[0].Eligible || assessmentCheckStatus(t, assessments[0], "gtid_consistency") != model.CheckFail {
 		t.Fatalf("GTID comparison overflow did not block candidate: %+v", assessments)
+	}
+	if assessments[0].DataLossRisk != "unknown" {
+		t.Fatalf("overflow data loss risk = %q, want unknown", assessments[0].DataLossRisk)
+	}
+}
+
+func TestEvaluateCandidatesReportsCoherentDataLossRiskForGTIDDivergence(t *testing.T) {
+	for _, test := range []struct {
+		name             string
+		executedGTID     string
+		wantDataLossRisk string
+	}{
+		{
+			name:             "missing and errant",
+			executedGTID:     testPrimaryServerUUID + ":1-18," + testErrantServerUUID + ":1",
+			wantDataLossRisk: "2 missing transactions",
+		},
+		{
+			name:             "errant only",
+			executedGTID:     testPrimaryServerUUID + ":1-20," + testErrantServerUUID + ":1",
+			wantDataLossRisk: "unknown",
+		},
+		{
+			name:             "malformed",
+			executedGTID:     "not-a-gtid",
+			wantDataLossRisk: "unknown",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			instance := candidateInstance("00000000-0000-4000-8000-000000000010", "8.0.44", 0, test.executedGTID)
+			assessments, err := New(nil).EvaluateCandidates(context.Background(), candidateEvaluationRequest(instance))
+			if err != nil {
+				t.Fatalf("evaluate candidates: %v", err)
+			}
+			if len(assessments) != 1 || assessments[0].Eligible || assessmentCheckStatus(t, assessments[0], "gtid_consistency") != model.CheckFail {
+				t.Fatalf("unsafe GTID divergence was not blocked: %+v", assessments)
+			}
+			if assessments[0].DataLossRisk != test.wantDataLossRisk {
+				t.Fatalf("data loss risk = %q, want %q", assessments[0].DataLossRisk, test.wantDataLossRisk)
+			}
+		})
 	}
 }
 

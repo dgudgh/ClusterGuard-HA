@@ -10,6 +10,11 @@ import (
 	"clusterguard.io/ha/pkg/model"
 )
 
+const (
+	dataLossRiskNone    = "none"
+	dataLossRiskUnknown = "unknown"
+)
+
 type candidateEvaluation struct {
 	assessment          model.CandidateAssessment
 	hasWarnings         bool
@@ -64,10 +69,11 @@ func evaluateCandidates(request adapter.CandidateRequest) []model.CandidateAsses
 func evaluateCandidate(request adapter.CandidateRequest, instance model.DatabaseInstance, incompleteCoverage bool) candidateEvaluation {
 	evaluation := candidateEvaluation{
 		assessment: model.CandidateAssessment{
-			InstanceID: instance.ResourceID,
-			Eligible:   true,
-			RiskLevel:  "low",
-			Checks:     make([]model.Check, 0, 11),
+			InstanceID:   instance.ResourceID,
+			Eligible:     true,
+			RiskLevel:    "low",
+			DataLossRisk: dataLossRiskUnknown,
+			Checks:       make([]model.Check, 0, 11),
 		},
 	}
 	addCheck := func(name string, status model.CheckStatus, message string) {
@@ -147,11 +153,17 @@ func evaluateCandidate(request adapter.CandidateRequest, instance model.Database
 		comparison, comparisonError := CompareGTIDSets(primaryGTID, candidateGTID)
 		if comparisonError != nil {
 			addCheck("gtid_consistency", model.CheckFail, "primary or candidate GTID transaction count exceeds supported limits")
-		} else if comparison.ErrantTransactions > 0 {
-			addCheck("gtid_consistency", model.CheckFail, fmt.Sprintf("candidate has %d errant transactions", comparison.ErrantTransactions))
 		} else {
 			evaluation.missingTransactions = comparison.MissingTransactions
-			if comparison.MissingTransactions > 0 {
+			switch {
+			case comparison.MissingTransactions > 0:
+				evaluation.assessment.DataLossRisk = fmt.Sprintf("%d missing transactions", comparison.MissingTransactions)
+			case comparison.ErrantTransactions == 0:
+				evaluation.assessment.DataLossRisk = dataLossRiskNone
+			}
+			if comparison.ErrantTransactions > 0 {
+				addCheck("gtid_consistency", model.CheckFail, fmt.Sprintf("candidate has %d errant transactions", comparison.ErrantTransactions))
+			} else if comparison.MissingTransactions > 0 {
 				addCheck("gtid_consistency", model.CheckWarn, fmt.Sprintf("candidate is missing %d transactions", comparison.MissingTransactions))
 			} else {
 				addCheck("gtid_consistency", model.CheckPass, "candidate has no missing or errant transactions")
@@ -175,11 +187,6 @@ func evaluateCandidate(request adapter.CandidateRequest, instance model.Database
 		addCheck("probe_coverage", model.CheckPass, "explicit probe observations are complete")
 	}
 
-	if evaluation.missingTransactions == 0 {
-		evaluation.assessment.DataLossRisk = "none"
-	} else {
-		evaluation.assessment.DataLossRisk = fmt.Sprintf("%d missing transactions", evaluation.missingTransactions)
-	}
 	if !evaluation.assessment.Eligible {
 		evaluation.assessment.RiskLevel = "blocked"
 	} else if evaluation.hasWarnings {
@@ -189,6 +196,9 @@ func evaluateCandidate(request adapter.CandidateRequest, instance model.Database
 }
 
 func hasIncompleteProbeCoverage(probes []model.ProbeStatus) bool {
+	if len(probes) == 0 {
+		return true
+	}
 	for _, probe := range probes {
 		if probe.Health.State != model.HealthHealthy {
 			return true
@@ -198,12 +208,17 @@ func hasIncompleteProbeCoverage(probes []model.ProbeStatus) bool {
 }
 
 func hasHealthyBoundProbe(probes []model.ProbeStatus, instanceID model.ResourceID) bool {
+	bound := false
 	for _, probe := range probes {
-		if probe.InstanceID == instanceID && probe.Health.State == model.HealthHealthy {
-			return true
+		if probe.InstanceID != instanceID {
+			continue
+		}
+		bound = true
+		if probe.Health.State != model.HealthHealthy {
+			return false
 		}
 	}
-	return false
+	return bound
 }
 
 func mysqlReleaseFamily(version string) (string, error) {
