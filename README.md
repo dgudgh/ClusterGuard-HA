@@ -83,20 +83,20 @@ curl -sS -X POST \
 ## CLI
 
 ```bash
-go run ./cmd/cgctl -- engines
-go run ./cmd/cgctl -- clusters
-go run ./cmd/cgctl -- topology <cluster-uuid>
-go run ./cmd/cgctl -- health <cluster-uuid>
-go run ./cmd/cgctl -- candidates <cluster-uuid>
-go run ./cmd/cgctl -- metrics <cluster-uuid>
-go run ./cmd/cgctl -- refresh <cluster-uuid>
+go run ./cmd/cgctl engines
+go run ./cmd/cgctl clusters
+go run ./cmd/cgctl topology <cluster-uuid>
+go run ./cmd/cgctl health <cluster-uuid>
+go run ./cmd/cgctl candidates <cluster-uuid>
+go run ./cmd/cgctl metrics <cluster-uuid>
+go run ./cmd/cgctl refresh <cluster-uuid>
 ```
 
 Place global flags before the command:
 
 ```bash
-go run ./cmd/cgctl -- --json topology <cluster-uuid>
-go run ./cmd/cgctl -- --server http://127.0.0.1:8088 clusters
+go run ./cmd/cgctl --json topology <cluster-uuid>
+go run ./cmd/cgctl --server http://127.0.0.1:8088 clusters
 ```
 
 See [operations.md](docs/operations.md) for the complete API workflow and

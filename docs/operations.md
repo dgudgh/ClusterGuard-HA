@@ -12,7 +12,7 @@ Implemented keys:
 | `http_address` | No | HTTP listen address; blank defaults to `127.0.0.1:8088`. |
 | `metadata_path` | Yes | Durable metadata snapshot path. |
 | `approval_token_env` | No | Environment variable containing the workflow approval token. |
-| `mysql.enabled` | Yes | Enables the MySQL read-only adapter configuration. |
+| `mysql.enabled` | No | Enables the MySQL read-only adapter; omitted or `false` keeps it disabled. |
 | `mysql.username` | When enabled | Dedicated MySQL read-only discovery user. |
 | `mysql.password_env` | When enabled | Environment variable containing that user's password. |
 
@@ -145,21 +145,21 @@ required by the ClusterGuard HA runtime.
 output:
 
 ```bash
-go run ./cmd/cgctl -- engines
-go run ./cmd/cgctl -- clusters
-go run ./cmd/cgctl -- topology <cluster-uuid>
-go run ./cmd/cgctl -- health <cluster-uuid>
-go run ./cmd/cgctl -- candidates <cluster-uuid>
-go run ./cmd/cgctl -- metrics <cluster-uuid>
-go run ./cmd/cgctl -- refresh <cluster-uuid>
+go run ./cmd/cgctl engines
+go run ./cmd/cgctl clusters
+go run ./cmd/cgctl topology <cluster-uuid>
+go run ./cmd/cgctl health <cluster-uuid>
+go run ./cmd/cgctl candidates <cluster-uuid>
+go run ./cmd/cgctl metrics <cluster-uuid>
+go run ./cmd/cgctl refresh <cluster-uuid>
 ```
 
 Global flags must appear before the command:
 
 ```bash
-go run ./cmd/cgctl -- --json clusters
-go run ./cmd/cgctl -- --json candidates <cluster-uuid>
-go run ./cmd/cgctl -- --server http://127.0.0.1:8088 topology <cluster-uuid>
+go run ./cmd/cgctl --json clusters
+go run ./cmd/cgctl --json candidates <cluster-uuid>
+go run ./cmd/cgctl --server http://127.0.0.1:8088 topology <cluster-uuid>
 ```
 
 `refresh` sends `POST` with the exact body `{}`. The other cluster commands are
