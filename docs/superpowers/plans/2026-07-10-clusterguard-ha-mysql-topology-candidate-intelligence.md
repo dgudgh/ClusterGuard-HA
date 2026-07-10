@@ -346,10 +346,14 @@ git commit -m "feat: discover MySQL replication and performance state"
 **Files:**
 - Create: `internal/discovery/service.go`
 - Test: `internal/discovery/service_test.go`
+- Modify: `pkg/model/topology.go`
+- Modify: `pkg/model/topology_test.go`
+- Modify: `internal/store/repository.go`
+- Modify: `internal/store/repository_test.go`
 
 **Interfaces:**
 - Consumes: adapter registry, repository inventory, MySQL credentials, Task 3 discovery results.
-- Produces: `Service.Refresh(context.Context, model.ResourceID) (model.TopologySnapshot, error)` and `ErrInventoryRequired`.
+- Produces: `Service.Refresh(context.Context, model.ResourceID) (model.TopologySnapshot, error)`, `model.ProbeStatus`, `Repository.ReplaceClusterAnomalies`, and `ErrInventoryRequired`.
 
 - [ ] **Step 1: Write failing service tests for inventory scope and link resolution**
 
@@ -359,6 +363,11 @@ probes exactly the three registered endpoints, preserves the three platform
 UUIDs on a second refresh, and writes two links. Add a test that supplies an
 unregistered endpoint and confirms there is no public service method capable of
 probing it.
+
+Add a failed-probe test. A never-discovered endpoint appears in `Probes` with
+its endpoint UUID and unknown health but does not create a fake
+`DatabaseInstance`. A previously discovered endpoint retains its instance UUID
+and appears unknown until a later successful refresh.
 
 ```go
 func TestRefreshBuildsLinksOnlyFromRegisteredInventory(t *testing.T) {
@@ -383,31 +392,62 @@ Expected: compile failure because `Service` and `Refresh` do not exist.
 
 - [ ] **Step 3: Implement deterministic refresh orchestration**
 
+Extend the snapshot contract before implementing the service:
+
+```go
+type ProbeStatus struct {
+	EndpointID ResourceID `json:"endpoint_id"`
+	InstanceID ResourceID `json:"instance_id,omitempty"`
+	Health     Health     `json:"health"`
+}
+
+type TopologySnapshot struct {
+	ClusterID  ResourceID         `json:"cluster_id"`
+	Instances  []DatabaseInstance `json:"instances"`
+	Links      []ReplicationLink  `json:"links"`
+	Probes     []ProbeStatus      `json:"probes"`
+	Health     Health             `json:"health"`
+	Anomalies  []MetadataAnomaly  `json:"anomalies,omitempty"`
+	ObservedAt time.Time          `json:"observed_at"`
+}
+```
+
 Create `Service` with registry, repository, credential resolver, clock, and a
 bounded parallelism of four. `Refresh` performs these steps in order:
 
 1. Load the cluster and its active database endpoints.
 2. Reject an empty inventory with `ErrInventoryRequired`.
 3. Probe each endpoint through the selected engine adapter.
-4. Reconcile every successful native identity.
+4. Reconcile every successful native identity and bind the inventory endpoint's
+   `InstanceID` to the returned platform UUID.
 5. Resolve each source native identity to a platform instance UUID.
 6. Replace the cluster replication links atomically.
 7. Store metric samples from successful probes.
-8. Return unknown/degraded instances for failed probes without inventing links.
+8. Return endpoint-level unknown probe status for failures without inventing an
+   engine identity, instance, or replication link.
 
 If two writable primaries are discovered, return the snapshot with a critical
 anomaly and degraded cluster health; do not choose one implicitly.
 
+Add `ReplaceClusterAnomalies(clusterID model.ResourceID, anomalies []model.MetadataAnomaly) error` to the repository. It atomically replaces discovery anomalies for that cluster while retaining anomalies for other clusters.
+
+Update `ReconcileInstance` so an existing identity receives the latest
+`Replication`, `EngineMetadata`, `Maintenance`, and `PromotionEligible` values.
+Use candidate-snapshot persistence so a persistence error leaves the live
+instance unchanged. Add store tests that first reconcile a replica, refresh it
+with changed lag/thread state and metadata, and then force persistence failure
+to prove both successful refresh and rollback behavior.
+
 - [ ] **Step 4: Run discovery and store tests**
 
-Run: `go test ./internal/discovery ./internal/store -count=1`
+Run: `go test ./internal/discovery ./internal/store ./pkg/model -count=1`
 
 Expected: PASS.
 
 - [ ] **Step 5: Commit cluster discovery**
 
 ```bash
-git add internal/discovery
+git add internal/discovery internal/store pkg/model
 git commit -m "feat: refresh inventory-scoped MySQL topology"
 ```
 
