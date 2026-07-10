@@ -356,6 +356,10 @@ git commit -m "feat: discover MySQL replication and performance state"
 - Modify: `pkg/model/topology_test.go`
 - Modify: `internal/store/repository.go`
 - Modify: `internal/store/repository_test.go`
+- Modify: `internal/config/config.go`
+- Modify: `internal/config/config_test.go`
+- Modify: `pkg/model/topology.go`
+- Modify: `pkg/model/topology_test.go`
 
 **Interfaces:**
 - Consumes: adapter registry, repository inventory, MySQL credentials, Task 3 discovery results.
@@ -705,6 +709,14 @@ together or not at all. Add a repository read method used by topology,
 candidate, and health handlers. A process restart must preserve the last probe
 coverage and cluster health; GET routes must not trigger a database probe.
 
+Persist explicit per-probe discovery and metrics freshness timestamps for the
+latest cycle. Candidate evaluation accepts a primary only when its role was
+successfully observed in that cycle. JSON and Prometheus emit performance
+gauges/rates only for a current metrics observation, and replication lag only
+for a current discovery observation; historical samples remain stored but must
+not masquerade as current values. JSON reports each instance's actual metric
+observation time.
+
 Topology reads represent every known active inventory member. A previously
 bound endpoint that currently fails probing keeps its stable instance UUID but
 uses the current failed-probe health, never stale healthy state. A
@@ -714,8 +726,34 @@ marking that link unhealthy whenever either endpoint lacks a healthy current
 probe. Candidate evaluation still uses current probe evidence and therefore
 blocks the unavailable node.
 
+Topology reads overlay canonical UUID-addressed instance resources instead of
+treating a duplicated snapshot copy as metadata authority. Hostname, IP, or
+port reconciliation is visible immediately without changing `resource_id`.
+Adding, removing, activating, deactivating, or re-addressing inventory
+endpoints invalidates the persisted observation until the next refresh.
+
+Cluster health is healthy only with complete active-inventory probe evidence,
+exactly one successfully observed writable primary, healthy current instance
+states, running replica IO/SQL threads, and healthy known links. Zero/multiple
+primaries, incomplete probes, any non-healthy instance, or a stopped thread
+must degrade or fail health.
+
 Prometheus output escapes label values and emits only finite numeric samples.
 Set `Content-Type: text/plain; version=0.0.4; charset=utf-8`.
+
+HTTP JSON decoding is bounded and consumes exactly one complete value. The
+discovery refresh route accepts only an empty body or one empty JSON object,
+independent of `Content-Length`; chunked credential fields, trailing values,
+and partial trailing data fail before the refresher. Valid unknown cluster UUIDs
+return `404` on read routes, while registered clusters without an observation
+return `409`.
+
+Repository cluster-name validation is shared by create and update paths:
+trimmed names are nonblank and case-insensitively unique. Registration maps
+typed validation, conflict, and persistence errors to `400`, `409`, and `500`
+without leaking internals. When MySQL discovery is enabled, configuration
+requires a nonblank username, password environment variable name, and resolved
+password.
 
 Extend `runtime.New` in this task to construct the discovery service from the
 configured MySQL credentials and pass it to `api.NewServer`. Update API test
