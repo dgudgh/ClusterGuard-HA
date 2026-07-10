@@ -48,11 +48,37 @@ func ParseGTIDSet(value string) (GTIDSet, error) {
 	return set, nil
 }
 
-func CompareGTIDSets(primary, candidate GTIDSet) GTIDComparison {
-	return GTIDComparison{
-		MissingTransactions: transactionDifference(primary, candidate),
-		ErrantTransactions:  transactionDifference(candidate, primary),
+func CompareGTIDSets(primary, candidate GTIDSet) (GTIDComparison, error) {
+	if err := validateGTIDTransactionCount(primary); err != nil {
+		return GTIDComparison{}, fmt.Errorf("count primary GTID transactions: %w", err)
 	}
+	if err := validateGTIDTransactionCount(candidate); err != nil {
+		return GTIDComparison{}, fmt.Errorf("count candidate GTID transactions: %w", err)
+	}
+	missing, err := transactionDifference(primary, candidate)
+	if err != nil {
+		return GTIDComparison{}, fmt.Errorf("count missing GTID transactions: %w", err)
+	}
+	errant, err := transactionDifference(candidate, primary)
+	if err != nil {
+		return GTIDComparison{}, fmt.Errorf("count errant GTID transactions: %w", err)
+	}
+	return GTIDComparison{MissingTransactions: missing, ErrantTransactions: errant}, nil
+}
+
+func validateGTIDTransactionCount(set GTIDSet) error {
+	var total uint64
+	for _, intervals := range set.intervals {
+		count, err := intervalTransactionCount(intervals)
+		if err != nil {
+			return err
+		}
+		total, err = checkedAddTransactions(total, count)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func parseGTIDInterval(value string) (gtidInterval, error) {
@@ -102,23 +128,41 @@ func normalizeGTIDIntervals(intervals []gtidInterval) []gtidInterval {
 	return normalized
 }
 
-func transactionDifference(left, right GTIDSet) uint64 {
+func transactionDifference(left, right GTIDSet) (uint64, error) {
 	var difference uint64
 	for uuid, leftIntervals := range left.intervals {
-		difference += intervalTransactionCount(leftIntervals) - overlapTransactionCount(leftIntervals, right.intervals[uuid])
+		leftCount, err := intervalTransactionCount(leftIntervals)
+		if err != nil {
+			return 0, err
+		}
+		overlap, err := overlapTransactionCount(leftIntervals, right.intervals[uuid])
+		if err != nil {
+			return 0, err
+		}
+		if overlap > leftCount {
+			return 0, fmt.Errorf("GTID overlap exceeds source set")
+		}
+		difference, err = checkedAddTransactions(difference, leftCount-overlap)
+		if err != nil {
+			return 0, err
+		}
 	}
-	return difference
+	return difference, nil
 }
 
-func intervalTransactionCount(intervals []gtidInterval) uint64 {
+func intervalTransactionCount(intervals []gtidInterval) (uint64, error) {
 	var count uint64
 	for _, interval := range intervals {
-		count += interval.end - interval.start + 1
+		var err error
+		count, err = checkedAddTransactions(count, interval.end-interval.start+1)
+		if err != nil {
+			return 0, err
+		}
 	}
-	return count
+	return count, nil
 }
 
-func overlapTransactionCount(left, right []gtidInterval) uint64 {
+func overlapTransactionCount(left, right []gtidInterval) (uint64, error) {
 	var count uint64
 	for leftIndex, rightIndex := 0, 0; leftIndex < len(left) && rightIndex < len(right); {
 		leftInterval := left[leftIndex]
@@ -132,7 +176,11 @@ func overlapTransactionCount(left, right []gtidInterval) uint64 {
 			end = rightInterval.end
 		}
 		if start <= end {
-			count += end - start + 1
+			var err error
+			count, err = checkedAddTransactions(count, end-start+1)
+			if err != nil {
+				return 0, err
+			}
 		}
 		if leftInterval.end < rightInterval.end {
 			leftIndex++
@@ -140,7 +188,14 @@ func overlapTransactionCount(left, right []gtidInterval) uint64 {
 			rightIndex++
 		}
 	}
-	return count
+	return count, nil
+}
+
+func checkedAddTransactions(left, right uint64) (uint64, error) {
+	if ^uint64(0)-left < right {
+		return 0, fmt.Errorf("GTID transaction count exceeds uint64")
+	}
+	return left + right, nil
 }
 
 func validGTIDUUID(value string) bool {

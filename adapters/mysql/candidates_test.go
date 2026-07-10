@@ -103,7 +103,6 @@ func TestEvaluateCandidatesFailsClosedOnUnsafeOrMissingState(t *testing.T) {
 			instance.ClusterID = model.ResourceID("00000000-0000-4000-8000-000000000099")
 		}},
 		{name: "primary role", checkName: "candidate_role", mutate: func(instance *model.DatabaseInstance) { instance.Role = model.RolePrimary }},
-		{name: "unknown reachability", checkName: "reachability", mutate: func(instance *model.DatabaseInstance) { instance.Health.State = model.HealthUnknown }},
 		{name: "promotion disabled", checkName: "promotion_eligibility", mutate: func(instance *model.DatabaseInstance) { instance.PromotionEligible = false }},
 		{name: "maintenance", checkName: "maintenance", mutate: func(instance *model.DatabaseInstance) { instance.Maintenance = true }},
 		{name: "stopped IO thread", checkName: "replication_threads", mutate: func(instance *model.DatabaseInstance) { instance.Replication.IOThread = model.ThreadStopped }},
@@ -134,10 +133,10 @@ func TestEvaluateCandidatesFailsClosedOnUnsafeOrMissingState(t *testing.T) {
 func TestEvaluateCandidatesWarnsForExplicitFailedUnboundProbe(t *testing.T) {
 	instance := candidateInstance("00000000-0000-4000-8000-000000000010", "8.0.44", 0, testPrimaryServerUUID+":1-20")
 	request := candidateEvaluationRequest(instance)
-	request.Probes = []model.ProbeStatus{{
+	request.Probes = append(request.Probes, model.ProbeStatus{
 		EndpointID: model.ResourceID("00000000-0000-4000-8000-000000000050"),
 		Health:     model.Health{State: model.HealthUnknown, Summary: "probe failed"},
-	}}
+	})
 
 	assessments, err := New(nil).EvaluateCandidates(context.Background(), request)
 	if err != nil {
@@ -148,6 +147,54 @@ func TestEvaluateCandidatesWarnsForExplicitFailedUnboundProbe(t *testing.T) {
 	}
 	if got := assessmentCheckStatus(t, assessments[0], "probe_coverage"); got != model.CheckWarn {
 		t.Fatalf("probe coverage check = %s, want warning", got)
+	}
+}
+
+func TestEvaluateCandidatesRequiresHealthyBoundProbeEvidence(t *testing.T) {
+	instance := candidateInstance("00000000-0000-4000-8000-000000000010", "8.0.44", 0, testPrimaryServerUUID+":1-20")
+	for _, test := range []struct {
+		name   string
+		probes []model.ProbeStatus
+	}{
+		{name: "empty probes"},
+		{name: "no bound probe", probes: []model.ProbeStatus{{
+			EndpointID: model.ResourceID("00000000-0000-4000-8000-000000000060"),
+			InstanceID: model.ResourceID("00000000-0000-4000-8000-000000000099"),
+			Health:     model.Health{State: model.HealthHealthy},
+		}}},
+		{name: "bound unknown probe", probes: []model.ProbeStatus{candidateProbe(instance.ResourceID, model.HealthUnknown)}},
+		{name: "bound degraded probe", probes: []model.ProbeStatus{candidateProbe(instance.ResourceID, model.HealthDegraded)}},
+		{name: "bound unhealthy probe", probes: []model.ProbeStatus{candidateProbe(instance.ResourceID, model.HealthUnhealthy)}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := candidateEvaluationRequest(instance)
+			request.Probes = test.probes
+			assessments, err := New(nil).EvaluateCandidates(context.Background(), request)
+			if err != nil {
+				t.Fatalf("evaluate candidates: %v", err)
+			}
+			if len(assessments) != 1 || assessments[0].Eligible || assessments[0].Rank != 0 {
+				t.Fatalf("candidate without healthy bound probe was eligible: %+v", assessments)
+			}
+			for _, checkName := range []string{"inventory_membership", "reachability"} {
+				if got := assessmentCheckStatus(t, assessments[0], checkName); got != model.CheckFail {
+					t.Fatalf("%s check = %s, want fail", checkName, got)
+				}
+			}
+		})
+	}
+}
+
+func TestEvaluateCandidatesUsesBoundProbeInsteadOfCandidateHealthField(t *testing.T) {
+	instance := candidateInstance("00000000-0000-4000-8000-000000000010", "8.0.44", 0, testPrimaryServerUUID+":1-20")
+	instance.Health.State = model.HealthUnknown
+
+	assessments, err := New(nil).EvaluateCandidates(context.Background(), candidateEvaluationRequest(instance))
+	if err != nil {
+		t.Fatalf("evaluate candidates: %v", err)
+	}
+	if len(assessments) != 1 || !assessments[0].Eligible || assessmentCheckStatus(t, assessments[0], "reachability") != model.CheckPass {
+		t.Fatalf("healthy bound probe was not authoritative: %+v", assessments)
 	}
 }
 
@@ -165,7 +212,47 @@ func TestEvaluateCandidatesUsesPrimaryGlobalGTIDAndReplicaExecutedGTID(t *testin
 	}
 }
 
+func TestEvaluateCandidatesFailsClosedOnGTIDComparisonOverflow(t *testing.T) {
+	instance := candidateInstance("00000000-0000-4000-8000-000000000010", "8.0.44", 0, "")
+	request := candidateEvaluationRequest(instance)
+	request.Primary.EngineMetadata["gtid_executed"] = testPrimaryServerUUID + ":1-18446744073709551615," + testErrantServerUUID + ":1"
+
+	assessments, err := New(nil).EvaluateCandidates(context.Background(), request)
+	if err != nil {
+		t.Fatalf("evaluate candidates: %v", err)
+	}
+	if len(assessments) != 1 || assessments[0].Eligible || assessmentCheckStatus(t, assessments[0], "gtid_consistency") != model.CheckFail {
+		t.Fatalf("GTID comparison overflow did not block candidate: %+v", assessments)
+	}
+}
+
+func TestEvaluateCandidatesWarnsForMissingTransactionsAtZeroLag(t *testing.T) {
+	missing := candidateInstance("00000000-0000-4000-8000-000000000010", "8.0.44", 0, testPrimaryServerUUID+":1-19")
+	caughtUp := candidateInstance("00000000-0000-4000-8000-000000000020", "8.0.44", 0, testPrimaryServerUUID+":1-20")
+
+	assessments, err := New(nil).EvaluateCandidates(context.Background(), candidateEvaluationRequest(missing, caughtUp))
+	if err != nil {
+		t.Fatalf("evaluate candidates: %v", err)
+	}
+	byID := assessmentsByID(t, assessments, 2)
+	assertAssessment(t, byID[caughtUp.ResourceID], true, 1, "low")
+	assertAssessment(t, byID[missing.ResourceID], true, 2, "warning")
+	if got := assessmentCheckStatus(t, byID[missing.ResourceID], "gtid_consistency"); got != model.CheckWarn {
+		t.Fatalf("missing transaction GTID check = %s, want warning", got)
+	}
+	if got := byID[missing.ResourceID].DataLossRisk; got != "1 missing transactions" {
+		t.Fatalf("data loss risk = %q, want missing transaction count", got)
+	}
+	if assessments[0].InstanceID != caughtUp.ResourceID {
+		t.Fatalf("warning-free caught-up candidate did not rank first: %+v", assessments)
+	}
+}
+
 func candidateEvaluationRequest(instances ...model.DatabaseInstance) adapter.CandidateRequest {
+	probes := make([]model.ProbeStatus, 0, len(instances))
+	for _, instance := range instances {
+		probes = append(probes, candidateProbe(instance.ResourceID, model.HealthHealthy))
+	}
 	return adapter.CandidateRequest{
 		Cluster: model.DatabaseCluster{
 			ResourceMeta: model.ResourceMeta{ResourceID: testClusterID},
@@ -181,7 +268,16 @@ func candidateEvaluationRequest(instances ...model.DatabaseInstance) adapter.Can
 			EngineMetadata: map[string]string{"version": "8.0.44", "gtid_mode": "ON", "gtid_executed": testPrimaryServerUUID + ":1-20"},
 		},
 		Instances: instances,
+		Probes:    probes,
 		Policy:    model.CandidatePolicy{MaximumLagSeconds: 5, RequireGTID: true},
+	}
+}
+
+func candidateProbe(instanceID model.ResourceID, state model.HealthState) model.ProbeStatus {
+	return model.ProbeStatus{
+		EndpointID: instanceID,
+		InstanceID: instanceID,
+		Health:     model.Health{State: state},
 	}
 }
 

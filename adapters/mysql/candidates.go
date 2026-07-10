@@ -80,20 +80,21 @@ func evaluateCandidate(request adapter.CandidateRequest, instance model.Database
 		}
 	}
 
-	if model.ValidResourceID(instance.ResourceID) && instance.ClusterID == request.Cluster.ResourceID && instance.Engine == model.EngineMySQL && request.Cluster.Engine == model.EngineMySQL {
+	healthyBoundProbe := hasHealthyBoundProbe(request.Probes, instance.ResourceID)
+	if model.ValidResourceID(instance.ResourceID) && instance.ClusterID == request.Cluster.ResourceID && instance.Engine == model.EngineMySQL && request.Cluster.Engine == model.EngineMySQL && healthyBoundProbe {
 		addCheck("inventory_membership", model.CheckPass, "candidate belongs to the selected MySQL cluster inventory")
 	} else {
-		addCheck("inventory_membership", model.CheckFail, "candidate is outside the selected MySQL cluster inventory")
+		addCheck("inventory_membership", model.CheckFail, "candidate lacks healthy bound probe evidence for the selected MySQL cluster inventory")
 	}
 	if instance.Role == model.RoleReplica {
 		addCheck("candidate_role", model.CheckPass, "candidate is a replica")
 	} else {
 		addCheck("candidate_role", model.CheckFail, "candidate is not a replica")
 	}
-	if instance.Health.State == model.HealthHealthy || instance.Health.State == model.HealthDegraded {
-		addCheck("reachability", model.CheckPass, "candidate is reachable")
+	if healthyBoundProbe {
+		addCheck("reachability", model.CheckPass, "current bound probe confirms candidate reachability")
 	} else {
-		addCheck("reachability", model.CheckFail, "candidate reachability is not confirmed")
+		addCheck("reachability", model.CheckFail, "current bound probe does not confirm candidate reachability")
 	}
 	if instance.PromotionEligible {
 		addCheck("promotion_eligibility", model.CheckPass, "candidate is marked promotion eligible")
@@ -143,12 +144,18 @@ func evaluateCandidate(request adapter.CandidateRequest, instance model.Database
 	if primaryGTIDError != nil || candidateGTIDError != nil {
 		addCheck("gtid_consistency", model.CheckFail, "primary or candidate GTID position is invalid")
 	} else {
-		comparison := CompareGTIDSets(primaryGTID, candidateGTID)
-		evaluation.missingTransactions = comparison.MissingTransactions
-		if comparison.ErrantTransactions > 0 {
+		comparison, comparisonError := CompareGTIDSets(primaryGTID, candidateGTID)
+		if comparisonError != nil {
+			addCheck("gtid_consistency", model.CheckFail, "primary or candidate GTID transaction count exceeds supported limits")
+		} else if comparison.ErrantTransactions > 0 {
 			addCheck("gtid_consistency", model.CheckFail, fmt.Sprintf("candidate has %d errant transactions", comparison.ErrantTransactions))
 		} else {
-			addCheck("gtid_consistency", model.CheckPass, "candidate has no errant transactions")
+			evaluation.missingTransactions = comparison.MissingTransactions
+			if comparison.MissingTransactions > 0 {
+				addCheck("gtid_consistency", model.CheckWarn, fmt.Sprintf("candidate is missing %d transactions", comparison.MissingTransactions))
+			} else {
+				addCheck("gtid_consistency", model.CheckPass, "candidate has no missing or errant transactions")
+			}
 		}
 	}
 
@@ -184,6 +191,15 @@ func evaluateCandidate(request adapter.CandidateRequest, instance model.Database
 func hasIncompleteProbeCoverage(probes []model.ProbeStatus) bool {
 	for _, probe := range probes {
 		if probe.Health.State != model.HealthHealthy {
+			return true
+		}
+	}
+	return false
+}
+
+func hasHealthyBoundProbe(probes []model.ProbeStatus, instanceID model.ResourceID) bool {
+	for _, probe := range probes {
+		if probe.InstanceID == instanceID && probe.Health.State == model.HealthHealthy {
 			return true
 		}
 	}
