@@ -21,11 +21,14 @@ type ReconcileResult struct {
 }
 
 type snapshot struct {
-	Clusters  map[model.ResourceID]model.DatabaseCluster  `json:"clusters"`
-	Instances map[model.ResourceID]model.DatabaseInstance `json:"instances"`
-	Anomalies map[model.ResourceID]model.MetadataAnomaly  `json:"anomalies"`
-	Audits    []model.AuditEvent                          `json:"audits"`
-	Reports   []model.Report                              `json:"reports"`
+	Clusters         map[model.ResourceID]model.DatabaseCluster               `json:"clusters"`
+	Instances        map[model.ResourceID]model.DatabaseInstance              `json:"instances"`
+	Endpoints        map[model.ResourceID]map[model.ResourceID]model.Endpoint `json:"endpoints"`
+	ReplicationLinks map[model.ResourceID][]model.ReplicationLink             `json:"replication_links"`
+	MetricSamples    map[model.ResourceID][]model.MetricSample                `json:"metric_samples"`
+	Anomalies        map[model.ResourceID]model.MetadataAnomaly               `json:"anomalies"`
+	Audits           []model.AuditEvent                                       `json:"audits"`
+	Reports          []model.Report                                           `json:"reports"`
 }
 
 type Repository struct {
@@ -37,11 +40,14 @@ type Repository struct {
 
 func emptySnapshot() snapshot {
 	return snapshot{
-		Clusters:  map[model.ResourceID]model.DatabaseCluster{},
-		Instances: map[model.ResourceID]model.DatabaseInstance{},
-		Anomalies: map[model.ResourceID]model.MetadataAnomaly{},
-		Audits:    []model.AuditEvent{},
-		Reports:   []model.Report{},
+		Clusters:         map[model.ResourceID]model.DatabaseCluster{},
+		Instances:        map[model.ResourceID]model.DatabaseInstance{},
+		Endpoints:        map[model.ResourceID]map[model.ResourceID]model.Endpoint{},
+		ReplicationLinks: map[model.ResourceID][]model.ReplicationLink{},
+		MetricSamples:    map[model.ResourceID][]model.MetricSample{},
+		Anomalies:        map[model.ResourceID]model.MetadataAnomaly{},
+		Audits:           []model.AuditEvent{},
+		Reports:          []model.Report{},
 	}
 }
 
@@ -71,6 +77,15 @@ func Open(path string) (*Repository, error) {
 	if repository.snapshot.Instances == nil {
 		repository.snapshot.Instances = map[model.ResourceID]model.DatabaseInstance{}
 	}
+	if repository.snapshot.Endpoints == nil {
+		repository.snapshot.Endpoints = map[model.ResourceID]map[model.ResourceID]model.Endpoint{}
+	}
+	if repository.snapshot.ReplicationLinks == nil {
+		repository.snapshot.ReplicationLinks = map[model.ResourceID][]model.ReplicationLink{}
+	}
+	if repository.snapshot.MetricSamples == nil {
+		repository.snapshot.MetricSamples = map[model.ResourceID][]model.MetricSample{}
+	}
 	if repository.snapshot.Anomalies == nil {
 		repository.snapshot.Anomalies = map[model.ResourceID]model.MetadataAnomaly{}
 	}
@@ -87,6 +102,11 @@ func cloneInstance(instance model.DatabaseInstance) model.DatabaseInstance {
 	copy := instance
 	copy.EngineIdentity = instance.EngineIdentity.Clone()
 	copy.Aliases = append([]string{}, instance.Aliases...)
+	copy.Replication.SourceIdentity = instance.Replication.SourceIdentity.Clone()
+	copy.EngineMetadata = make(map[string]string, len(instance.EngineMetadata))
+	for key, value := range instance.EngineMetadata {
+		copy.EngineMetadata[key] = value
+	}
 	return copy
 }
 
@@ -96,11 +116,33 @@ func cloneCluster(cluster model.DatabaseCluster) model.DatabaseCluster {
 	return copy
 }
 
+func cloneReplicationLink(link model.ReplicationLink) model.ReplicationLink {
+	copy := link
+	if link.LagSeconds != nil {
+		lagSeconds := *link.LagSeconds
+		copy.LagSeconds = &lagSeconds
+	}
+	return copy
+}
+
+func cloneMetricSample(sample model.MetricSample) model.MetricSample {
+	copy := sample
+	copy.Values = make(map[string]float64, len(sample.Values))
+	for key, value := range sample.Values {
+		copy.Values[key] = value
+	}
+	return copy
+}
+
 func (repository *Repository) persistLocked() error {
+	return repository.persistSnapshotLocked(repository.snapshot)
+}
+
+func (repository *Repository) persistSnapshotLocked(value snapshot) error {
 	if repository.path == "" {
 		return nil
 	}
-	contents, err := json.MarshalIndent(repository.snapshot, "", "  ")
+	contents, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode metadata snapshot: %w", err)
 	}
@@ -171,6 +213,309 @@ func (repository *Repository) Cluster(id model.ResourceID) (model.DatabaseCluste
 	defer repository.mu.RUnlock()
 	cluster, ok := repository.snapshot.Clusters[id]
 	return cloneCluster(cluster), ok
+}
+
+func validateEndpoint(endpoint model.Endpoint) error {
+	if endpoint.ClusterID == "" {
+		return fmt.Errorf("cluster ID is required")
+	}
+	if endpoint.Port <= 0 || endpoint.Port > 65535 {
+		return fmt.Errorf("invalid endpoint port: %d", endpoint.Port)
+	}
+	return nil
+}
+
+func endpointAddressCollision(left model.Endpoint, right model.Endpoint) bool {
+	for _, leftAddress := range model.EndpointAddress(left.Hostname, left.IPAddress, left.Port) {
+		for _, rightAddress := range model.EndpointAddress(right.Hostname, right.IPAddress, right.Port) {
+			if strings.EqualFold(leftAddress, rightAddress) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func endpointSetCollision(endpoints []model.Endpoint) bool {
+	for index, endpoint := range endpoints {
+		if !endpoint.Active {
+			continue
+		}
+		for _, candidate := range endpoints[index+1:] {
+			if candidate.Active && endpointAddressCollision(endpoint, candidate) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func cloneEndpointMap(endpoints map[model.ResourceID]map[model.ResourceID]model.Endpoint) map[model.ResourceID]map[model.ResourceID]model.Endpoint {
+	copy := make(map[model.ResourceID]map[model.ResourceID]model.Endpoint, len(endpoints))
+	for clusterID, clusterEndpoints := range endpoints {
+		copiedEndpoints := make(map[model.ResourceID]model.Endpoint, len(clusterEndpoints))
+		for endpointID, endpoint := range clusterEndpoints {
+			copiedEndpoints[endpointID] = endpoint
+		}
+		copy[clusterID] = copiedEndpoints
+	}
+	return copy
+}
+
+func endpointClusterForID(endpoints map[model.ResourceID]map[model.ResourceID]model.Endpoint, endpointID model.ResourceID) (model.ResourceID, bool) {
+	for clusterID, clusterEndpoints := range endpoints {
+		if _, ok := clusterEndpoints[endpointID]; ok {
+			return clusterID, true
+		}
+	}
+	return "", false
+}
+
+func (repository *Repository) CreateClusterWithEndpoints(cluster model.DatabaseCluster, endpoints []model.Endpoint) (model.DatabaseCluster, []model.Endpoint, error) {
+	if !cluster.Engine.Valid() {
+		return model.DatabaseCluster{}, nil, fmt.Errorf("unsupported engine: %s", cluster.Engine)
+	}
+	if cluster.ResourceID == "" {
+		cluster.ResourceID = model.NewResourceID()
+	}
+	endpointIDs := map[model.ResourceID]struct{}{cluster.ResourceID: {}}
+	for index := range endpoints {
+		if endpoints[index].ClusterID != "" && endpoints[index].ClusterID != cluster.ResourceID {
+			return model.DatabaseCluster{}, nil, fmt.Errorf("endpoint cluster ID does not match cluster")
+		}
+		endpoints[index].ClusterID = cluster.ResourceID
+		if err := validateEndpoint(endpoints[index]); err != nil {
+			return model.DatabaseCluster{}, nil, err
+		}
+		if endpoints[index].ResourceID == "" {
+			endpoints[index].ResourceID = model.NewResourceID()
+		}
+		if _, exists := endpointIDs[endpoints[index].ResourceID]; exists {
+			return model.DatabaseCluster{}, nil, fmt.Errorf("duplicate resource ID: %s", endpoints[index].ResourceID)
+		}
+		endpointIDs[endpoints[index].ResourceID] = struct{}{}
+	}
+	if endpointSetCollision(endpoints) {
+		return model.DatabaseCluster{}, nil, fmt.Errorf("duplicate active endpoint address")
+	}
+
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	if _, exists := repository.snapshot.Clusters[cluster.ResourceID]; exists {
+		return model.DatabaseCluster{}, nil, fmt.Errorf("cluster already exists: %s", cluster.ResourceID)
+	}
+	for _, endpoint := range endpoints {
+		if _, exists := endpointClusterForID(repository.snapshot.Endpoints, endpoint.ResourceID); exists {
+			return model.DatabaseCluster{}, nil, fmt.Errorf("endpoint resource already exists: %s", endpoint.ResourceID)
+		}
+	}
+	now := repository.now().UTC()
+	cluster.MetadataRevision = 1
+	cluster.CreatedAt = now
+	cluster.UpdatedAt = now
+	for index := range endpoints {
+		endpoints[index].MetadataRevision = 1
+		endpoints[index].CreatedAt = now
+		endpoints[index].UpdatedAt = now
+	}
+
+	next := repository.snapshot
+	next.Clusters = make(map[model.ResourceID]model.DatabaseCluster, len(repository.snapshot.Clusters)+1)
+	for resourceID, existing := range repository.snapshot.Clusters {
+		next.Clusters[resourceID] = existing
+	}
+	next.Clusters[cluster.ResourceID] = cloneCluster(cluster)
+	next.Endpoints = cloneEndpointMap(repository.snapshot.Endpoints)
+	next.Endpoints[cluster.ResourceID] = make(map[model.ResourceID]model.Endpoint, len(endpoints))
+	for _, endpoint := range endpoints {
+		next.Endpoints[cluster.ResourceID][endpoint.ResourceID] = endpoint
+	}
+	if err := repository.persistSnapshotLocked(next); err != nil {
+		return model.DatabaseCluster{}, nil, err
+	}
+	repository.snapshot = next
+	resultEndpoints := make([]model.Endpoint, len(endpoints))
+	copy(resultEndpoints, endpoints)
+	return cloneCluster(cluster), resultEndpoints, nil
+}
+
+func (repository *Repository) UpsertEndpoint(endpoint model.Endpoint) (model.Endpoint, error) {
+	if err := validateEndpoint(endpoint); err != nil {
+		return model.Endpoint{}, err
+	}
+	if endpoint.ResourceID == "" {
+		endpoint.ResourceID = model.NewResourceID()
+	}
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	if _, exists := repository.snapshot.Clusters[endpoint.ClusterID]; !exists {
+		return model.Endpoint{}, fmt.Errorf("unknown cluster ID: %s", endpoint.ClusterID)
+	}
+	if existingClusterID, exists := endpointClusterForID(repository.snapshot.Endpoints, endpoint.ResourceID); exists && existingClusterID != endpoint.ClusterID {
+		return model.Endpoint{}, fmt.Errorf("endpoint resource already belongs to cluster %s", existingClusterID)
+	}
+	for resourceID, existing := range repository.snapshot.Endpoints[endpoint.ClusterID] {
+		if resourceID != endpoint.ResourceID && endpoint.Active && existing.Active && endpointAddressCollision(endpoint, existing) {
+			return model.Endpoint{}, fmt.Errorf("active endpoint address is already owned by resource %s", resourceID)
+		}
+	}
+	now := repository.now().UTC()
+	if existing, exists := repository.snapshot.Endpoints[endpoint.ClusterID][endpoint.ResourceID]; exists {
+		endpoint.CreatedAt = existing.CreatedAt
+		endpoint.MetadataRevision = existing.MetadataRevision + 1
+	} else {
+		endpoint.CreatedAt = now
+		endpoint.MetadataRevision = 1
+	}
+	endpoint.UpdatedAt = now
+	if repository.snapshot.Endpoints[endpoint.ClusterID] == nil {
+		repository.snapshot.Endpoints[endpoint.ClusterID] = map[model.ResourceID]model.Endpoint{}
+	}
+	repository.snapshot.Endpoints[endpoint.ClusterID][endpoint.ResourceID] = endpoint
+	if err := repository.persistLocked(); err != nil {
+		return model.Endpoint{}, err
+	}
+	return endpoint, nil
+}
+
+func (repository *Repository) Endpoints(clusterID model.ResourceID) []model.Endpoint {
+	repository.mu.RLock()
+	defer repository.mu.RUnlock()
+	endpoints := make([]model.Endpoint, 0, len(repository.snapshot.Endpoints[clusterID]))
+	for _, endpoint := range repository.snapshot.Endpoints[clusterID] {
+		endpoints = append(endpoints, endpoint)
+	}
+	sort.Slice(endpoints, func(i int, j int) bool {
+		if endpoints[i].Hostname != endpoints[j].Hostname {
+			return endpoints[i].Hostname < endpoints[j].Hostname
+		}
+		if endpoints[i].IPAddress != endpoints[j].IPAddress {
+			return endpoints[i].IPAddress < endpoints[j].IPAddress
+		}
+		if endpoints[i].Port != endpoints[j].Port {
+			return endpoints[i].Port < endpoints[j].Port
+		}
+		return endpoints[i].ResourceID < endpoints[j].ResourceID
+	})
+	return endpoints
+}
+
+func (repository *Repository) ReplaceReplicationLinks(clusterID model.ResourceID, links []model.ReplicationLink) error {
+	if clusterID == "" {
+		return fmt.Errorf("cluster ID is required")
+	}
+	now := repository.now().UTC()
+	replacement := make([]model.ReplicationLink, len(links))
+	for index, link := range links {
+		if link.ClusterID != "" && link.ClusterID != clusterID {
+			return fmt.Errorf("replication link cluster ID does not match cluster")
+		}
+		link.ClusterID = clusterID
+		if link.ResourceID == "" {
+			link.ResourceID = model.NewResourceID()
+		}
+		link.MetadataRevision = 1
+		link.CreatedAt = now
+		link.UpdatedAt = now
+		replacement[index] = cloneReplicationLink(link)
+	}
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	repository.snapshot.ReplicationLinks[clusterID] = replacement
+	return repository.persistLocked()
+}
+
+func (repository *Repository) ReplicationLinks(clusterID model.ResourceID) []model.ReplicationLink {
+	repository.mu.RLock()
+	defer repository.mu.RUnlock()
+	links := make([]model.ReplicationLink, len(repository.snapshot.ReplicationLinks[clusterID]))
+	for index, link := range repository.snapshot.ReplicationLinks[clusterID] {
+		links[index] = cloneReplicationLink(link)
+	}
+	sort.Slice(links, func(i int, j int) bool {
+		if links[i].SourceInstanceID != links[j].SourceInstanceID {
+			return links[i].SourceInstanceID < links[j].SourceInstanceID
+		}
+		if links[i].TargetInstanceID != links[j].TargetInstanceID {
+			return links[i].TargetInstanceID < links[j].TargetInstanceID
+		}
+		return links[i].ResourceID < links[j].ResourceID
+	})
+	return links
+}
+
+func (repository *Repository) StoreMetricSamples(clusterID model.ResourceID, samples []model.MetricSample, limit int) error {
+	if clusterID == "" {
+		return fmt.Errorf("cluster ID is required")
+	}
+	if limit <= 0 {
+		return fmt.Errorf("metric sample limit must be positive")
+	}
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	byInstance := make(map[model.ResourceID][]model.MetricSample)
+	for _, sample := range repository.snapshot.MetricSamples[clusterID] {
+		byInstance[sample.InstanceID] = append(byInstance[sample.InstanceID], cloneMetricSample(sample))
+	}
+	for _, sample := range samples {
+		byInstance[sample.InstanceID] = append(byInstance[sample.InstanceID], cloneMetricSample(sample))
+	}
+	bounded := make([]model.MetricSample, 0)
+	for _, instanceSamples := range byInstance {
+		sort.SliceStable(instanceSamples, func(i int, j int) bool {
+			return instanceSamples[i].ObservedAt.Before(instanceSamples[j].ObservedAt)
+		})
+		if len(instanceSamples) > limit {
+			instanceSamples = instanceSamples[len(instanceSamples)-limit:]
+		}
+		bounded = append(bounded, instanceSamples...)
+	}
+	sort.SliceStable(bounded, func(i int, j int) bool {
+		if bounded[i].ObservedAt.Equal(bounded[j].ObservedAt) {
+			return bounded[i].InstanceID < bounded[j].InstanceID
+		}
+		return bounded[i].ObservedAt.Before(bounded[j].ObservedAt)
+	})
+	repository.snapshot.MetricSamples[clusterID] = bounded
+	return repository.persistLocked()
+}
+
+func (repository *Repository) MetricSamples(clusterID model.ResourceID) []model.MetricSample {
+	repository.mu.RLock()
+	defer repository.mu.RUnlock()
+	samples := make([]model.MetricSample, len(repository.snapshot.MetricSamples[clusterID]))
+	for index, sample := range repository.snapshot.MetricSamples[clusterID] {
+		samples[index] = cloneMetricSample(sample)
+	}
+	sort.SliceStable(samples, func(i int, j int) bool {
+		if samples[i].ObservedAt.Equal(samples[j].ObservedAt) {
+			return samples[i].InstanceID < samples[j].InstanceID
+		}
+		return samples[i].ObservedAt.Before(samples[j].ObservedAt)
+	})
+	return samples
+}
+
+func (repository *Repository) FindInstanceByIdentity(clusterID model.ResourceID, engine model.Engine, engineIdentity model.EngineIdentity) (model.DatabaseInstance, bool) {
+	if !engine.Valid() {
+		return model.DatabaseInstance{}, false
+	}
+	key, err := identity.InstanceKey(engine, engineIdentity)
+	if err != nil {
+		return model.DatabaseInstance{}, false
+	}
+	repository.mu.RLock()
+	defer repository.mu.RUnlock()
+	for _, instance := range repository.snapshot.Instances {
+		if instance.ClusterID != clusterID || instance.Engine != engine {
+			continue
+		}
+		instanceKey, err := identity.InstanceKey(instance.Engine, instance.EngineIdentity)
+		if err == nil && instanceKey == key {
+			return cloneInstance(instance), true
+		}
+	}
+	return model.DatabaseInstance{}, false
 }
 
 func appendAlias(aliases []string, alias string) []string {
