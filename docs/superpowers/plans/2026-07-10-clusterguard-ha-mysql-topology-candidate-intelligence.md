@@ -717,6 +717,14 @@ for a current discovery observation; historical samples remain stored but must
 not masquerade as current values. JSON reports each instance's actual metric
 observation time.
 
+Reject an observation whose timestamp is equal to or older than the current
+durable snapshot before any state mutation. Metrics derivation returns the
+timestamp of the sample actually used and emits values only when it matches the
+current-cycle metrics evidence, including after controller clock rollback.
+When multiple endpoint aliases reconcile to one instance in a cycle, persist
+one deterministic newest complete sample for that instance so alias probes
+cannot become consecutive rate samples.
+
 Topology reads represent every known active inventory member. A previously
 bound endpoint that currently fails probing keeps its stable instance UUID but
 uses the current failed-probe health, never stale healthy state. A
@@ -731,6 +739,12 @@ treating a duplicated snapshot copy as metadata authority. Hostname, IP, or
 port reconciliation is visible immediately without changing `resource_id`.
 Adding, removing, activating, deactivating, or re-addressing inventory
 endpoints invalidates the persisted observation until the next refresh.
+
+Metadata reconciliation is a coordinate-only atomic transaction. It preserves
+native identity and all observed runtime fields, updates the selected bound
+database endpoint used by the next probe, validates global address ownership,
+and invalidates topology. A single bound endpoint may be inferred; multiple
+aliases require an explicit endpoint UUID.
 
 Cluster health is healthy only with complete active-inventory probe evidence,
 exactly one successfully observed writable primary, healthy current instance
@@ -754,6 +768,12 @@ typed validation, conflict, and persistence errors to `400`, `409`, and `500`
 without leaking internals. When MySQL discovery is enabled, configuration
 requires a nonblank username, password environment variable name, and resolved
 password.
+
+Cluster updates cannot change the database engine. A nonempty native cluster
+identity is validated with the engine identity contract, globally unique, and
+write-once: it may be established once but cannot later be changed or cleared.
+The common JSON decoder enforces an explicit byte limit for registration,
+operation, and metadata requests as well as single-value framing.
 
 Extend `runtime.New` in this task to construct the discovery service from the
 configured MySQL credentials and pass it to `api.NewServer`. Update API test
