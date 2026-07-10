@@ -26,6 +26,7 @@
 - Create: `pkg/model/topology.go`
 - Modify: `pkg/model/model.go`
 - Modify: `pkg/adapter/adapter.go`
+- Modify: `adapters/mysql/mysql.go`
 - Modify: `adapters/postgresql/postgresql.go`
 - Modify: `adapters/oracle/oracle.go`
 - Modify: `adapters/sqlserver/sqlserver.go`
@@ -129,7 +130,7 @@ type CandidateAssessment struct {
 }
 ```
 
-Add `CapabilityMetrics`, `CapabilityCandidates`, `Metrics(context.Context, DiscoverRequest) ([]model.MetricSample, error)`, and `EvaluateCandidates(context.Context, CandidateRequest) ([]model.CandidateAssessment, error)` to the adapter contract. `CandidateRequest` contains `Cluster`, `Primary`, `Instances`, `Links`, and `Policy`. Skeleton adapters return `ErrUnsupported` from both methods and advertise both capabilities as unavailable.
+Add `CapabilityMetrics`, `CapabilityCandidates`, `Metrics(context.Context, DiscoverRequest) ([]model.MetricSample, error)`, and `EvaluateCandidates(context.Context, CandidateRequest) ([]model.CandidateAssessment, error)` to the adapter contract. `CandidateRequest` contains `Cluster`, `Primary`, `Instances`, `Links`, and `Policy`. All four adapters initially return `ErrUnsupported` from both methods and advertise both capabilities as unavailable. Tasks 3 and 5 replace the MySQL placeholders and advertise each capability only after its implementation is tested.
 
 Use this exact request contract:
 
@@ -152,7 +153,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit the contracts**
 
 ```bash
-git add pkg/model pkg/adapter adapters/postgresql adapters/oracle adapters/sqlserver
+git add pkg/model pkg/adapter adapters/mysql adapters/postgresql adapters/oracle adapters/sqlserver
 git commit -m "feat: define topology and candidate contracts"
 ```
 
@@ -177,7 +178,9 @@ func TestRepositoryPersistsInventoryLinksAndBoundedMetrics(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "metadata.json")
 	repository, err := Open(path)
 	if err != nil { t.Fatal(err) }
-	clusterID := model.NewResourceID()
+	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine:model.EngineMySQL, DisplayName:"payments"})
+	if err != nil { t.Fatal(err) }
+	clusterID := cluster.ResourceID
 	endpoint, err := repository.UpsertEndpoint(model.Endpoint{ClusterID: clusterID, Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true})
 	if err != nil { t.Fatal(err) }
 	if endpoint.ResourceID == "" { t.Fatal("endpoint UUID is required") }
@@ -214,7 +217,7 @@ func (repository *Repository) MetricSamples(model.ResourceID) []model.MetricSamp
 func (repository *Repository) FindInstanceByIdentity(model.ResourceID, model.Engine, model.EngineIdentity) (model.DatabaseInstance, bool)
 ```
 
-`UpsertEndpoint` rejects invalid ports, empty cluster UUIDs, and duplicate active
+`UpsertEndpoint` rejects invalid ports, empty or unknown cluster UUIDs, and duplicate active
 addresses within one cluster. `StoreMetricSamples` keeps the newest `limit`
 samples per instance, ordered by `ObservedAt`.
 
