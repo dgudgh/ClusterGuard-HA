@@ -50,7 +50,7 @@ func TestSkeletonAdaptersFailClosedForMutation(t *testing.T) {
 }
 
 func TestAdaptersFailClosedForTopologyReadExtensions(t *testing.T) {
-	for _, candidate := range []adapter.DatabaseHAAdapter{mysql.New(nil), postgresql.New(), oracle.New(), sqlserver.New()} {
+	for _, candidate := range []adapter.DatabaseHAAdapter{postgresql.New(), oracle.New(), sqlserver.New()} {
 		capabilities := candidate.Capabilities(context.Background())
 		if capabilities.Supports(adapter.CapabilityMetrics) {
 			t.Fatalf("%s must not advertise metrics before implementation", candidate.Engine())
@@ -64,5 +64,41 @@ func TestAdaptersFailClosedForTopologyReadExtensions(t *testing.T) {
 		if _, err := candidate.EvaluateCandidates(context.Background(), adapter.CandidateRequest{}); !errors.Is(err, adapter.ErrUnsupported) {
 			t.Fatalf("%s candidates must be unsupported: %v", candidate.Engine(), err)
 		}
+	}
+}
+
+type mysqlMetricsRunner struct{}
+
+func (mysqlMetricsRunner) Query(context.Context, adapter.Endpoint, adapter.Credentials, string) ([]mysql.Row, error) {
+	return []mysql.Row{
+		{"Variable_name": "Questions", "Value": "1000"},
+		{"Variable_name": "Com_commit", "Value": "60"},
+		{"Variable_name": "Com_rollback", "Value": "40"},
+		{"Variable_name": "Threads_connected", "Value": "18"},
+		{"Variable_name": "Threads_running", "Value": "3"},
+		{"Variable_name": "Slow_queries", "Value": "7"},
+		{"Variable_name": "Innodb_buffer_pool_reads", "Value": "25"},
+		{"Variable_name": "Innodb_buffer_pool_read_requests", "Value": "1000"},
+	}, nil
+}
+
+func TestMySQLProvidesMetricsButCandidatesRemainUnavailable(t *testing.T) {
+	candidate := mysql.New(mysqlMetricsRunner{})
+	capabilities := candidate.Capabilities(context.Background())
+	if !capabilities.Supports(adapter.CapabilityMetrics) {
+		t.Fatal("mysql must advertise implemented metrics")
+	}
+	if capabilities.Supports(adapter.CapabilityCandidates) {
+		t.Fatal("mysql must not advertise candidates before implementation")
+	}
+	samples, err := candidate.Metrics(context.Background(), adapter.DiscoverRequest{})
+	if err != nil {
+		t.Fatalf("mysql metrics: %v", err)
+	}
+	if len(samples) != 1 || samples[0].Values["questions_total"] != 1000 || samples[0].Values["transactions_total"] != 100 {
+		t.Fatalf("unexpected mysql metric samples: %+v", samples)
+	}
+	if _, err := candidate.EvaluateCandidates(context.Background(), adapter.CandidateRequest{}); !errors.Is(err, adapter.ErrUnsupported) {
+		t.Fatalf("mysql candidates must be unsupported: %v", err)
 	}
 }
