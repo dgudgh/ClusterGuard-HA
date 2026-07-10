@@ -33,7 +33,7 @@ func (adapterInstance *Adapter) Capabilities(context.Context) adapter.Capabiliti
 		adapter.CapabilityNodeSync:          {Available: false, Mutating: true, Reason: "node synchronization is not implemented"},
 		adapter.CapabilityMetadataReconcile: {Available: true, Reason: "metadata reconciliation is implemented by the platform repository"},
 		adapter.CapabilityMetrics:           {Available: true, Reason: "read-only performance metrics are implemented"},
-		adapter.CapabilityCandidates:        {Available: false, Reason: "candidate evaluation is scheduled after the common contract"},
+		adapter.CapabilityCandidates:        {Available: true, Reason: "read-only promotion candidate evaluation is implemented"},
 	}}
 }
 
@@ -57,8 +57,8 @@ func (adapterInstance *Adapter) Metrics(ctx context.Context, request adapter.Dis
 	return queryMetrics(ctx, adapterInstance.runner, request)
 }
 
-func (adapterInstance *Adapter) EvaluateCandidates(context.Context, adapter.CandidateRequest) ([]model.CandidateAssessment, error) {
-	return nil, adapter.ErrUnsupported
+func (adapterInstance *Adapter) EvaluateCandidates(_ context.Context, request adapter.CandidateRequest) ([]model.CandidateAssessment, error) {
+	return evaluateCandidates(request), nil
 }
 
 func (adapterInstance *Adapter) Precheck(context.Context, adapter.OperationRequest) ([]model.Check, error) {

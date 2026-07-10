@@ -82,14 +82,17 @@ func (mysqlMetricsRunner) Query(context.Context, adapter.Endpoint, adapter.Crede
 	}, nil
 }
 
-func TestMySQLProvidesMetricsButCandidatesRemainUnavailable(t *testing.T) {
+func TestMySQLProvidesMetricsAndCandidatesWithoutExecution(t *testing.T) {
 	candidate := mysql.New(mysqlMetricsRunner{})
 	capabilities := candidate.Capabilities(context.Background())
 	if !capabilities.Supports(adapter.CapabilityMetrics) {
 		t.Fatal("mysql must advertise implemented metrics")
 	}
-	if capabilities.Supports(adapter.CapabilityCandidates) {
-		t.Fatal("mysql must not advertise candidates before implementation")
+	if !capabilities.Supports(adapter.CapabilityCandidates) {
+		t.Fatal("mysql must advertise implemented candidate evaluation")
+	}
+	if capabilities.Supports(adapter.CapabilityExecute) {
+		t.Fatal("mysql must not advertise mutation execution")
 	}
 	samples, err := candidate.Metrics(context.Background(), adapter.DiscoverRequest{})
 	if err != nil {
@@ -98,7 +101,11 @@ func TestMySQLProvidesMetricsButCandidatesRemainUnavailable(t *testing.T) {
 	if len(samples) != 1 || samples[0].Values["questions_total"] != 1000 || samples[0].Values["transactions_total"] != 100 {
 		t.Fatalf("unexpected mysql metric samples: %+v", samples)
 	}
-	if _, err := candidate.EvaluateCandidates(context.Background(), adapter.CandidateRequest{}); !errors.Is(err, adapter.ErrUnsupported) {
-		t.Fatalf("mysql candidates must be unsupported: %v", err)
+	assessments, err := candidate.EvaluateCandidates(context.Background(), adapter.CandidateRequest{})
+	if err != nil || len(assessments) != 0 {
+		t.Fatalf("mysql candidate evaluation: assessments=%+v err=%v", assessments, err)
+	}
+	if _, err := candidate.Execute(context.Background(), adapter.OperationRequest{}); !errors.Is(err, adapter.ErrUnsupported) {
+		t.Fatalf("mysql execute must remain unsupported: %v", err)
 	}
 }

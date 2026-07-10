@@ -12,7 +12,7 @@ import (
 	"clusterguard.io/ha/pkg/model"
 )
 
-const identityQuery = "SELECT @@server_uuid AS server_uuid, @@hostname AS hostname, @@port AS port, @@server_id AS server_id, @@version AS version, @@read_only AS read_only, @@super_read_only AS super_read_only, @@gtid_mode AS gtid_mode, @@log_bin AS log_bin, @@binlog_format AS binlog_format"
+const identityQuery = "SELECT @@server_uuid AS server_uuid, @@hostname AS hostname, @@port AS port, @@server_id AS server_id, @@version AS version, @@read_only AS read_only, @@super_read_only AS super_read_only, @@gtid_mode AS gtid_mode, @@GLOBAL.gtid_executed AS gtid_executed, @@log_bin AS log_bin, @@binlog_format AS binlog_format"
 
 const (
 	replicaStatusQuery = "SHOW REPLICA STATUS"
@@ -28,6 +28,7 @@ type identityProbe struct {
 	readOnly      bool
 	superReadOnly bool
 	gtidMode      string
+	gtidExecuted  string
 	logBin        string
 	binlogFormat  string
 }
@@ -73,6 +74,7 @@ func parseIdentity(row Row) (identityProbe, error) {
 		readOnly:      readOnly,
 		superReadOnly: superReadOnly,
 		gtidMode:      first(row, "gtid_mode"),
+		gtidExecuted:  first(row, "gtid_executed"),
 		logBin:        first(row, "log_bin"),
 		binlogFormat:  first(row, "binlog_format"),
 	}, nil
@@ -206,6 +208,7 @@ func discover(ctx context.Context, runner SQLRunner, request adapter.DiscoverReq
 			"server_id":     identity.serverID,
 			"version":       identity.version,
 			"gtid_mode":     identity.gtidMode,
+			"gtid_executed": identity.gtidExecuted,
 			"log_bin":       identity.logBin,
 			"binlog_format": identity.binlogFormat,
 		},

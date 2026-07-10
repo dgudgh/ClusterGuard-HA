@@ -88,6 +88,7 @@ type CandidateRequest struct {
 	Primary   model.DatabaseInstance   `json:"primary"`
 	Instances []model.DatabaseInstance `json:"instances"`
 	Links     []model.ReplicationLink  `json:"links"`
+	Probes    []model.ProbeStatus      `json:"probes,omitempty"`
 	Policy    model.CandidatePolicy    `json:"policy"`
 }
 

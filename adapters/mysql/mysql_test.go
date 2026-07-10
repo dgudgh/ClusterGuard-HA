@@ -2,6 +2,7 @@ package mysql
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -87,6 +88,58 @@ func TestHealthIsReadOnlyAndDoesNotAdvertiseExecution(t *testing.T) {
 	}
 	if !capabilities.Supports(adapter.CapabilityMetrics) {
 		t.Fatalf("MySQL must advertise read-only metrics")
+	}
+	if !capabilities.Supports(adapter.CapabilityCandidates) {
+		t.Fatalf("MySQL must advertise read-only candidate evaluation")
+	}
+	if _, err := adapterInstance.Execute(context.Background(), adapter.OperationRequest{}); !errors.Is(err, adapter.ErrUnsupported) {
+		t.Fatalf("MySQL execute must remain unsupported, got %v", err)
+	}
+}
+
+func TestDiscoverCapturesGlobalGTIDExecutedForWritablePrimary(t *testing.T) {
+	runner := &fakeRunner{identity: identityRow("8.0.44", "0", "0")}
+	runner.identity["gtid_executed"] = testPrimaryServerUUID + ":1-20"
+
+	result, err := New(runner).Discover(context.Background(), adapterRequest())
+	if err != nil {
+		t.Fatalf("discover primary: %v", err)
+	}
+	if result.Instance.Role != model.RolePrimary || result.Instance.EngineMetadata["gtid_executed"] != testPrimaryServerUUID+":1-20" {
+		t.Fatalf("global GTID was not captured for writable primary: %+v", result.Instance)
+	}
+	if len(runner.queries) == 0 || !strings.Contains(runner.queries[0], "@@GLOBAL.gtid_executed AS gtid_executed") {
+		t.Fatalf("identity query did not read global GTID state: %v", runner.queries)
+	}
+}
+
+func TestDiscoverDoesNotInferGlobalGTIDFromReplicaStatus(t *testing.T) {
+	runner := healthyReplicaRunner("8.0.44", modernReplicationRow())
+	runner.identity["gtid_executed"] = ""
+
+	result, err := New(runner).Discover(context.Background(), adapterRequest())
+	if err != nil {
+		t.Fatalf("discover replica: %v", err)
+	}
+	if result.Instance.Replication.ExecutedPosition == "" {
+		t.Fatalf("test fixture has no replica executed position: %+v", result.Instance.Replication)
+	}
+	if got := result.Instance.EngineMetadata["gtid_executed"]; got != "" {
+		t.Fatalf("global GTID %q was inferred from replica-only status", got)
+	}
+}
+
+func TestDiscoverAllowsEmptyGlobalGTIDWhenGTIDModeIsDisabled(t *testing.T) {
+	runner := &fakeRunner{identity: identityRow("8.0.44", "0", "0")}
+	runner.identity["gtid_mode"] = "OFF"
+	runner.identity["gtid_executed"] = ""
+
+	result, err := New(runner).Discover(context.Background(), adapterRequest())
+	if err != nil {
+		t.Fatalf("discover with GTID disabled: %v", err)
+	}
+	if result.Instance.EngineMetadata["gtid_mode"] != "OFF" || result.Instance.EngineMetadata["gtid_executed"] != "" {
+		t.Fatalf("unexpected GTID metadata: %+v", result.Instance.EngineMetadata)
 	}
 }
 
