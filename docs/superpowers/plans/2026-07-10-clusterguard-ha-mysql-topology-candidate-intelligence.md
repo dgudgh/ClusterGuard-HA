@@ -505,6 +505,7 @@ git commit -m "feat: refresh inventory-scoped MySQL topology"
 - Modify: `adapters/mysql/probe.go`
 - Modify: `adapters/mysql/mysql.go`
 - Modify: `adapters/mysql/mysql_test.go`
+- Modify: `pkg/adapter/adapter.go`
 - Modify: `pkg/adapter/registry_test.go`
 - Test: `adapters/mysql/gtid_test.go`
 - Test: `adapters/mysql/candidates_test.go`
@@ -562,11 +563,16 @@ replica-only status row.
 
 - [ ] **Step 5: Implement candidate checks and deterministic ranking**
 
+Add `Probes []model.ProbeStatus` to `adapter.CandidateRequest`; probe coverage
+must be supplied explicitly and must never be inferred from instance or link
+counts.
+
 Evaluate these blocking checks: inventory membership, non-primary role,
 reachability, promotion eligibility, maintenance state, running replication
 threads, source identity equals current primary, policy lag, GTID enabled when
 required, no errant transactions, and compatible major version. Emit warnings
-for nonzero lag and incomplete probe coverage. Rank by:
+for nonzero lag and incomplete probe coverage. A failed or unbound endpoint
+probe warns without making an otherwise healthy candidate ineligible. Rank by:
 
 1. no warnings before warnings;
 2. fewer missing transactions;
@@ -606,6 +612,8 @@ git commit -m "feat: rank MySQL promotion candidates"
 - Modify: `internal/api/server_test.go`
 - Modify: `internal/discovery/service.go`
 - Modify: `internal/discovery/service_test.go`
+- Modify: `internal/store/repository.go`
+- Modify: `internal/store/repository_test.go`
 - Create: `internal/api/clusters_test.go`
 - Create: `internal/api/metrics_test.go`
 
@@ -618,7 +626,9 @@ git commit -m "feat: rank MySQL promotion candidates"
 Test `POST /api/v1/clusters` with a stable name and three database endpoints,
 then `POST /api/v1/clusters/{id}/discover`. Assert the response includes one
 primary, two replicas, and two links. Submit a duplicate active endpoint and
-expect `409`. Attempt refresh for a UUID without inventory and expect `422`.
+expect `409`, including when the same active database address is already owned
+by another cluster. Reject blank or case-insensitively duplicated cluster
+display names. Attempt refresh for a UUID without inventory and expect `422`.
 
 Use this registration payload:
 
@@ -669,6 +679,13 @@ seconds and required GTID, with optional query overrides bounded to safe numeric
 values.
 
 Implement `metrics.Service.Derive(samples []model.MetricSample) map[model.ResourceID]map[string]float64` using the newest two samples per instance. It returns `qps`, `tps`, and `slow_queries_per_second` only when timestamps increase and counters do not decrease; gauges and buffer-pool ratio come from the newest sample.
+
+Persist the latest complete `TopologySnapshot` observation state as part of the
+same discovery transaction: cluster health, per-endpoint probe health,
+observation time, instances, links, anomalies, and metric samples publish
+together or not at all. Add a repository read method used by topology,
+candidate, and health handlers. A process restart must preserve the last probe
+coverage and cluster health; GET routes must not trigger a database probe.
 
 Prometheus output escapes label values and emits only finite numeric samples.
 Set `Content-Type: text/plain; version=0.0.4; charset=utf-8`.
