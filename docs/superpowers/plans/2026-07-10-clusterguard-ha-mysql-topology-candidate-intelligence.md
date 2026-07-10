@@ -576,7 +576,8 @@ required, no errant transactions, and compatible major version. Emit warnings
 for nonzero lag, nonzero missing GTID transactions, and incomplete probe
 coverage. A candidate requires an explicit healthy bound probe to prove both
 inventory membership and current reachability. Missing evidence or a
-non-healthy bound candidate probe blocks it. A failed or unbound probe for a
+non-healthy bound candidate probe blocks it, even when another alias endpoint
+for the same instance is healthy. Empty probe evidence is incomplete. A failed or unbound probe for a
 different inventory endpoint only warns and does not block a candidate whose
 own bound probe is healthy. Rank by:
 
@@ -585,6 +586,11 @@ own bound probe is healthy. Rank by:
 3. lower lag;
 4. exact primary version before compatible version;
 5. lexical platform UUID.
+
+`DataLossRisk` must never report `none` when GTID parsing or counting fails, or
+when histories diverge with errant transactions. Such cases report an explicit
+indeterminate value; successful comparisons preserve the missing transaction
+count even when errant transactions also block the candidate.
 
 Set `Rank` only on eligible candidates and advertise `CapabilityCandidates` as
 available from the MySQL adapter and registry contract. Keep
