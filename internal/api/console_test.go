@@ -2,6 +2,7 @@ package api
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -84,6 +85,112 @@ func TestConsoleTopologyUsesFixedColumnsAndResponsiveConnectorRules(t *testing.T
 	} {
 		if !strings.Contains(page, contract) {
 			t.Fatalf("console missing topology layout contract %q", contract)
+		}
+	}
+}
+
+func TestConsoleInvalidatesEverySelectionRequestAndClearsBeforeFetching(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		"requestGeneration: 0",
+		"const generation = ++state.requestGeneration;",
+		"clearClusterView();",
+		"const commitIfCurrent = (generation, commit) =>",
+		"if (generation !== state.requestGeneration) return false;",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing request-generation contract %q", contract)
+		}
+	}
+
+	loadStart := strings.Index(page, "const loadSelectedCluster = async () => {")
+	loadEnd := strings.Index(page, "const loadClusters = async () => {")
+	if loadStart < 0 || loadEnd <= loadStart {
+		t.Fatal("loadSelectedCluster source not found")
+	}
+	loadSource := page[loadStart:loadEnd]
+	begin := strings.Index(loadSource, "const generation = beginClusterRequest(clusterId);")
+	firstAwait := strings.Index(loadSource, "await ")
+	if begin < 0 || firstAwait < 0 || begin > firstAwait {
+		t.Fatal("cluster request generation and stale-view clearing must happen before the first await")
+	}
+	if strings.Count(loadSource, "commitIfCurrent(generation") < 2 {
+		t.Fatal("both successful data and error status must commit through the generation guard")
+	}
+}
+
+func TestConsolePreservesAPIErrorsAndOnlyToleratesExplicitNoEvidenceConflicts(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		"class APIError extends Error",
+		"this.status = status;",
+		"throw new APIError('控制 API 返回了无效数据', response.status);",
+		"error.status === 409 && noEvidenceMessages.has(error.message)",
+		"throw error;",
+		"const unavailableSections =",
+		"部分数据不可用",
+		"候选评估",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing selective API error contract %q", contract)
+		}
+	}
+	if strings.Contains(page, "const optionalResult =") || strings.Contains(page, "catch (_) {\n        return fallback;") {
+		t.Fatal("console must not convert every optional request failure into fallback data")
+	}
+}
+
+func TestConsoleAggregatesQPSOnlyWhenFiniteEvidenceExists(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		"const qpsSamples = metricInstances",
+		".filter(value => Number.isFinite(value));",
+		"const qps = qpsSamples.reduce",
+		"qpsSamples.length ? qps.toFixed(1) : '-'",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing finite-QPS evidence contract %q", contract)
+		}
+	}
+	if strings.Contains(page, "metricInstances.length ? qps.toFixed(1) : '-'") {
+		t.Fatal("instance presence must not be treated as QPS evidence")
+	}
+}
+
+func TestConsoleHidesCenterAndBranchLinesWithoutAPrimary(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		`id="topology-grid"`,
+		".topology-grid.no-primary .replica-row::before { display:none; }",
+		"classList.toggle('no-primary', !primary)",
+		"byId('connector').hidden = !primary || replicas.length === 0;",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing no-primary connector contract %q", contract)
+		}
+	}
+}
+
+func TestConsoleUsesCompactTopologyAndLocalizedHealthAndLag(t *testing.T) {
+	page := string(consoleHTML)
+	match := regexp.MustCompile(`\.topology-surface \{ min-height:(\d+)px;`).FindStringSubmatch(page)
+	if len(match) != 2 {
+		t.Fatal("console topology surface must declare a stable compact desktop min-height")
+	}
+	height, err := strconv.Atoi(match[1])
+	if err != nil || height < 190 || height > 210 {
+		t.Fatalf("desktop topology min-height = %q, want 190-210px", match[1])
+	}
+	for _, contract := range []string{
+		"healthy: '健康'",
+		"degraded: '降级'",
+		"unhealthy: '异常'",
+		"unknown: '未知'",
+		"healthText(health.health.state)",
+		"if (instance.role === 'primary') return '-';",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing localized display contract %q", contract)
 		}
 	}
 }

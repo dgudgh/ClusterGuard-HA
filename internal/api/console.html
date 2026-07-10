@@ -134,7 +134,7 @@
       font-weight:750;
     }
     .vip-row[hidden] { display:none; }
-    .topology-surface { min-height:330px; padding:34px 20px 38px; }
+    .topology-surface { min-height:200px; padding:34px 20px 38px; }
     .topology-grid {
       display:grid;
       grid-template-columns:minmax(0,1fr) 72px minmax(0,1fr);
@@ -207,6 +207,7 @@
       background:var(--line-strong);
       content:"";
     }
+    .topology-grid.no-primary .replica-row::before { display:none; }
     .empty-node {
       display:grid;
       min-height:84px;
@@ -291,7 +292,7 @@
             <div class="vip-row" id="vip-row" hidden><span>VIP</span><span id="vip-value">-</span></div>
           </div>
           <div class="topology-surface">
-            <div class="topology-grid">
+            <div class="topology-grid" id="topology-grid">
               <div class="primary-column" id="primary-column"><div class="empty-node">尚未发现主库</div></div>
               <div class="connector" id="connector" aria-hidden="true"></div>
               <div class="replica-list" id="replica-list"><div class="empty-node">尚未发现从库</div></div>
@@ -305,7 +306,21 @@
 
   <script>
     const byId = id => document.getElementById(id);
-    const state = { clusters: [], selectedClusterId: '' };
+    const state = { clusters: [], selectedClusterId: '', requestGeneration: 0 };
+
+    class APIError extends Error {
+      constructor(message, status = 0) {
+        super(message);
+        this.name = 'APIError';
+        this.status = status;
+      }
+    }
+
+    const noEvidenceMessages = new Set([
+      'cluster has no persisted topology observation',
+      'candidate evaluation requires persisted probe evidence',
+      'candidate evaluation requires exactly one current primary'
+    ]);
 
     const setLiveStatus = (message, isError = false) => {
       const status = byId('live-status');
@@ -313,25 +328,39 @@
       status.className = isError ? 'live-status error' : 'live-status';
     };
 
+    const commitIfCurrent = (generation, commit) => {
+      if (generation !== state.requestGeneration) return false;
+      commit();
+      return true;
+    };
+
     const fetchResult = async (path, options = {}) => {
-      const response = await fetch(path, options);
+      let response;
+      try {
+        response = await fetch(path, options);
+      } catch (_) {
+        throw new APIError('无法连接控制 API');
+      }
       let payload;
       try {
         payload = await response.json();
       } catch (_) {
-        throw new Error('控制 API 返回了无效数据');
+        throw new APIError('控制 API 返回了无效数据', response.status);
       }
       if (!response.ok || payload.status === 'error') {
-        throw new Error(payload.message || '控制 API 请求失败');
+        throw new APIError(payload.message || '控制 API 请求失败', response.status);
       }
       return payload.result;
     };
 
-    const optionalResult = async (path, fallback) => {
+    const evidenceResult = async (path, fallback, section) => {
       try {
-        return await fetchResult(path);
-      } catch (_) {
-        return fallback;
+        return { value: await fetchResult(path), unavailable: '' };
+      } catch (error) {
+        if (error instanceof APIError && error.status === 409 && noEvidenceMessages.has(error.message)) {
+          return { value: fallback, unavailable: section };
+        }
+        throw error;
       }
     };
 
@@ -343,9 +372,17 @@
     };
 
     const lagText = instance => {
+      if (instance.role === 'primary') return '-';
       const lag = instance.replication && instance.replication.lag_seconds;
       return Number.isFinite(lag) ? `${lag}s` : '未知';
     };
+
+    const healthText = value => ({
+      healthy: '健康',
+      degraded: '降级',
+      unhealthy: '异常',
+      unknown: '未知'
+    })[value] || '未知';
 
     const versionText = instance => {
       const metadata = instance.engine_metadata || {};
@@ -414,6 +451,7 @@
         empty.textContent = '尚未发现从库';
         replicaList.append(empty);
       }
+      byId('topology-grid').classList.toggle('no-primary', !primary);
       byId('connector').hidden = !primary || replicas.length === 0;
       return { instances, primary };
     };
@@ -432,6 +470,25 @@
       byId('vip-value').textContent = vipEndpoint.port ? `${address}:${vipEndpoint.port}` : address;
     };
 
+    const clearClusterView = () => {
+      byId('summary-cluster').textContent = '-';
+      byId('summary-health').textContent = '未知';
+      byId('summary-primary').textContent = '-';
+      byId('summary-instances').textContent = '0';
+      byId('summary-lag').textContent = '-';
+      byId('summary-qps').textContent = '-';
+      byId('observed-at').textContent = '等待拓扑数据';
+      renderTopology(null, []);
+      renderVIP([]);
+    };
+
+    const beginClusterRequest = clusterId => {
+      const generation = ++state.requestGeneration;
+      state.selectedClusterId = clusterId;
+      clearClusterView();
+      return generation;
+    };
+
     const renderSummary = (clusterDetail, topology, health, metrics) => {
       const cluster = clusterDetail.cluster;
       const instances = topology ? topology.instances || [] : [];
@@ -440,43 +497,57 @@
         .map(instance => instance.replication && instance.replication.lag_seconds)
         .filter(value => Number.isFinite(value));
       const metricInstances = metrics && metrics.instances ? metrics.instances : [];
-      const qps = metricInstances.reduce((total, item) => total + (Number.isFinite(item.values && item.values.qps) ? item.values.qps : 0), 0);
+      const qpsSamples = metricInstances
+        .map(item => item.values && item.values.qps)
+        .filter(value => Number.isFinite(value));
+      const qps = qpsSamples.reduce((total, value) => total + value, 0);
       byId('summary-cluster').textContent = cluster.display_name || cluster.resource_id;
-      byId('summary-health').textContent = health ? health.health.state || '未知' : '未采集';
+      byId('summary-health').textContent = health ? healthText(health.health.state) : '未采集';
       byId('summary-primary').textContent = primary ? `${primary.hostname || primary.ip_address}:${primary.port}` : '-';
       byId('summary-instances').textContent = String(instances.length);
       byId('summary-lag').textContent = lags.length ? `${Math.max(...lags)}s` : '-';
-      byId('summary-qps').textContent = metricInstances.length ? qps.toFixed(1) : '-';
+      byId('summary-qps').textContent = qpsSamples.length ? qps.toFixed(1) : '-';
       byId('observed-at').textContent = topology && topology.observed_at ? `采集时间 ${new Date(topology.observed_at).toLocaleString('zh-CN')}` : '尚未采集拓扑';
     };
 
     const loadSelectedCluster = async () => {
       const clusterId = byId('cluster-select').value;
-      state.selectedClusterId = clusterId;
+      const generation = beginClusterRequest(clusterId);
       if (!clusterId) {
-        byId('summary-cluster').textContent = '-';
-        byId('summary-health').textContent = '未知';
-        renderTopology(null, []);
-        renderVIP([]);
-        setLiveStatus('请选择已注册的数据库集群。');
+        commitIfCurrent(generation, () => setLiveStatus('请选择已注册的数据库集群。'));
         return;
       }
-      setLiveStatus('正在读取所选集群。');
+      commitIfCurrent(generation, () => setLiveStatus('正在读取所选集群。'));
       try {
-        const [clusterDetail, topology, health, candidates, metrics] = await Promise.all([
+        const [clusterDetail, topologySection, healthSection, candidateSection, metricsSection] = await Promise.all([
           fetchResult(`/api/v1/clusters/${clusterId}`),
-          optionalResult(`/api/v1/clusters/${clusterId}/topology`, null),
-          optionalResult(`/api/v1/clusters/${clusterId}/health`, null),
-          optionalResult(`/api/v1/clusters/${clusterId}/candidates`, []),
-          optionalResult(`/api/v1/clusters/${clusterId}/metrics`, { instances: [] })
+          evidenceResult(`/api/v1/clusters/${clusterId}/topology`, null, '拓扑'),
+          evidenceResult(`/api/v1/clusters/${clusterId}/health`, null, '健康状态'),
+          evidenceResult(`/api/v1/clusters/${clusterId}/candidates`, [], '候选评估'),
+          evidenceResult(`/api/v1/clusters/${clusterId}/metrics`, { instances: [] }, '性能指标')
         ]);
-        if (state.selectedClusterId !== clusterId) return;
-        renderTopology(topology, candidates);
-        renderVIP(clusterDetail.endpoints || []);
-        renderSummary(clusterDetail, topology, health, metrics);
-        setLiveStatus(topology ? '拓扑状态已更新。' : '集群已注册，尚未完成拓扑发现。');
+        const topology = topologySection.value;
+        const health = healthSection.value;
+        const candidates = candidateSection.value;
+        const metrics = metricsSection.value;
+        const unavailableSections = [topologySection, healthSection, candidateSection, metricsSection]
+          .map(section => section.unavailable)
+          .filter(Boolean);
+        commitIfCurrent(generation, () => {
+          renderTopology(topology, candidates);
+          renderVIP(clusterDetail.endpoints || []);
+          renderSummary(clusterDetail, topology, health, metrics);
+          if (unavailableSections.length) {
+            setLiveStatus(`部分数据不可用：${unavailableSections.join('、')}。`);
+          } else {
+            setLiveStatus('拓扑状态已更新。');
+          }
+        });
       } catch (error) {
-        setLiveStatus(error.message, true);
+        commitIfCurrent(generation, () => {
+          clearClusterView();
+          setLiveStatus(error.message, true);
+        });
       }
     };
 
@@ -513,18 +584,19 @@
         setLiveStatus('请先选择数据库集群。', true);
         return;
       }
+      const generation = state.requestGeneration;
       const refresh = byId('refresh-topology');
       refresh.disabled = true;
-      setLiveStatus('正在刷新拓扑。');
+      commitIfCurrent(generation, () => setLiveStatus('正在刷新拓扑。'));
       try {
         await fetchResult(`/api/v1/clusters/${clusterId}/discover`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: '{}'
         });
-        await loadSelectedCluster();
+        if (generation === state.requestGeneration) await loadSelectedCluster();
       } catch (error) {
-        setLiveStatus(error.message, true);
+        commitIfCurrent(generation, () => setLiveStatus(error.message, true));
       } finally {
         refresh.disabled = false;
       }
