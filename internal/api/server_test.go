@@ -6,9 +6,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"clusterguard.io/ha/adapters/mysql"
 	"clusterguard.io/ha/adapters/oracle"
@@ -111,6 +115,25 @@ func TestDirectDiscoveryRouteIsRemoved(t *testing.T) {
 	}
 }
 
+func TestGenericJSONRoutesRejectOversizedBodiesIndependentOfContentLength(t *testing.T) {
+	server, repository := newTestServer(t)
+	for _, path := range []string{"/api/v1/clusters", "/api/v1/operations/execute", "/api/v1/metadata/reconcile/execute"} {
+		t.Run(path, func(t *testing.T) {
+			body := strings.Repeat(" ", maximumJSONBodyBytes+1) + `{}`
+			request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+			request.ContentLength = 0
+			response := httptest.NewRecorder()
+			server.Handler().ServeHTTP(response, request)
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("oversized body status = %d: %s", response.Code, response.Body.String())
+			}
+		})
+	}
+	if len(repository.Clusters()) != 0 {
+		t.Fatalf("oversized registration changed inventory: %+v", repository.Clusters())
+	}
+}
+
 func TestExecuteEndpointFailsClosedWhenMutationIsUnsupported(t *testing.T) {
 	server, _ := newTestServer(t)
 	payload := map[string]interface{}{
@@ -153,29 +176,84 @@ func TestClusterTopologyAndHealthEndpointsUsePlatformResourceIDs(t *testing.T) {
 
 func TestMetadataExecuteReusesResourceIDForRenamedMySQLEndpoint(t *testing.T) {
 	server, repository := newTestServer(t)
-	clusterID := model.NewResourceID()
-	first, err := repository.ReconcileInstance(model.DatabaseInstance{
-		ClusterID: clusterID, Engine: model.EngineMySQL, EngineIdentity: model.EngineIdentity{"server_uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},
-		DisplayName: "mysql-old", Hostname: "mysql-old", IPAddress: "192.0.2.10", Port: 3306, Role: model.RoleReplica, Health: model.Health{State: model.HealthHealthy},
-	})
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "metadata"}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-old", IPAddress: "192.0.2.10", Port: 3306, Active: true}})
 	if err != nil {
-		t.Fatalf("seed: %v", err)
+		t.Fatalf("create inventory: %v", err)
+	}
+	observedAt := time.Now().UTC()
+	seed, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{ClusterID: cluster.ResourceID, ObservedAt: observedAt, Observations: []store.DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: model.DatabaseInstance{
+		ClusterID: cluster.ResourceID, Engine: model.EngineMySQL, EngineIdentity: model.EngineIdentity{"server_uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},
+		DisplayName: "mysql-old", Hostname: "mysql-old", IPAddress: "192.0.2.10", Port: 3306, Role: model.RolePrimary, Health: model.Health{State: model.HealthHealthy}, PromotionEligible: true,
+	}}}, Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, DiscoveryObservedAt: observedAt, Health: model.Health{State: model.HealthHealthy}}}})
+	if err != nil {
+		t.Fatalf("seed topology: %v", err)
 	}
 	payload := map[string]interface{}{
 		"operation":      map[string]interface{}{"engine": "mysql", "kind": "metadata_reconciliation", "requested_by": "dba"},
 		"approval_token": "approved",
 		"instance": map[string]interface{}{
-			"cluster_id": clusterID, "engine": "mysql", "engine_identity": map[string]string{"server_uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},
-			"display_name": "mysql-new", "hostname": "mysql-new", "ip_address": "192.0.2.20", "port": 3310, "role": "replica", "health": map[string]string{"state": "healthy"},
+			"resource_id": seed.Instances[0].ResourceID, "cluster_id": cluster.ResourceID, "engine": "mysql", "engine_identity": map[string]string{"server_uuid": "forged"},
+			"display_name": "mysql-new", "hostname": "mysql-new", "ip_address": "192.0.2.20", "port": 3310, "role": "replica", "health": map[string]string{"state": "unhealthy"},
 		},
 	}
 	response := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/metadata/reconcile/execute", payload)
 	if response.Code != http.StatusOK {
 		t.Fatalf("metadata execute: %d %s", response.Code, response.Body.String())
 	}
-	instances := repository.Instances(clusterID)
-	if len(instances) != 1 || instances[0].ResourceID != first.Instance.ResourceID || instances[0].Hostname != "mysql-new" {
+	instances := repository.Instances(cluster.ResourceID)
+	if len(instances) != 1 || instances[0].ResourceID != seed.Instances[0].ResourceID || instances[0].Hostname != "mysql-new" || instances[0].Role != model.RolePrimary || instances[0].Health.State != model.HealthHealthy {
 		t.Fatalf("metadata execute did not reconcile existing resource: %+v", instances)
+	}
+	updatedEndpoints := repository.Endpoints(cluster.ResourceID)
+	if updatedEndpoints[0].Hostname != "mysql-new" || updatedEndpoints[0].IPAddress != "192.0.2.20" || updatedEndpoints[0].Port != 3310 {
+		t.Fatalf("metadata execute did not update discovery endpoint: %+v", updatedEndpoints)
+	}
+	if _, found := repository.TopologySnapshot(cluster.ResourceID); found {
+		t.Fatal("metadata execute must invalidate topology")
+	}
+}
+
+func TestMetadataExecutePersistenceFailureIsSanitizedAndAtomic(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metadata.json")
+	repository, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	registry := adapter.NewRegistry()
+	if err := registry.Register(mysql.New(apiRunner{})); err != nil {
+		t.Fatalf("register mysql: %v", err)
+	}
+	service := workflow.New(registry, workflow.AllowAllSafety{}, workflow.NewMemoryLocks(), workflow.TokenApproval{}, repository)
+	server := NewServer(registry, repository, service, &fakeRefresher{})
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "metadata-failure"}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-old", Port: 3306, Active: true}})
+	if err != nil {
+		t.Fatalf("create inventory: %v", err)
+	}
+	observedAt := time.Now().UTC()
+	snapshot, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{ClusterID: cluster.ResourceID, ObservedAt: observedAt, Observations: []store.DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: model.DatabaseInstance{ClusterID: cluster.ResourceID, Engine: model.EngineMySQL, EngineIdentity: model.EngineIdentity{"server_uuid": "failure-native"}, Hostname: "mysql-old", Port: 3306, Role: model.RolePrimary, Health: model.Health{State: model.HealthHealthy}}}}, Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}}})
+	if err != nil {
+		t.Fatalf("seed topology: %v", err)
+	}
+	beforeInstances := repository.Instances(cluster.ResourceID)
+	beforeEndpoints := repository.Endpoints(cluster.ResourceID)
+	beforeTopology, _ := repository.TopologySnapshot(cluster.ResourceID)
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("remove snapshot: %v", err)
+	}
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatalf("block snapshot path: %v", err)
+	}
+	payload := map[string]interface{}{
+		"operation": map[string]interface{}{"engine": "mysql", "kind": "metadata_reconciliation", "requested_by": "dba"}, "approval_token": "approved", "endpoint_id": endpoints[0].ResourceID,
+		"instance": map[string]interface{}{"resource_id": snapshot.Instances[0].ResourceID, "cluster_id": cluster.ResourceID, "engine": "mysql", "engine_identity": map[string]string{"server_uuid": "failure-native"}, "hostname": "mysql-new", "port": 4406},
+	}
+	response := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/metadata/reconcile/execute", payload)
+	if response.Code != http.StatusInternalServerError || strings.Contains(response.Body.String(), path) || strings.Contains(response.Body.String(), "rename metadata snapshot") {
+		t.Fatalf("metadata persistence mapping = %d %s", response.Code, response.Body.String())
+	}
+	afterTopology, found := repository.TopologySnapshot(cluster.ResourceID)
+	if !reflect.DeepEqual(repository.Instances(cluster.ResourceID), beforeInstances) || !reflect.DeepEqual(repository.Endpoints(cluster.ResourceID), beforeEndpoints) || !found || !reflect.DeepEqual(afterTopology, beforeTopology) {
+		t.Fatalf("failed metadata persistence published partial state")
 	}
 }
 

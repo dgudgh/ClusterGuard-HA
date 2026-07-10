@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	metricsservice "clusterguard.io/ha/internal/metrics"
 	"clusterguard.io/ha/pkg/model"
 )
 
@@ -337,6 +338,92 @@ func TestUpsertClusterPersistenceFailurePublishesNeitherCreateNorUpdate(t *testi
 	}
 	if _, found := repository.Cluster(newID); found {
 		t.Fatal("failed cluster create published in memory")
+	}
+}
+
+func TestClusterEngineAndNativeIdentityAreImmutableAndGloballyUnique(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metadata.json")
+	repository, err := Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	alpha, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "alpha"})
+	if err != nil {
+		t.Fatalf("create alpha: %v", err)
+	}
+	alpha.EngineIdentity = model.EngineIdentity{"server_uuid": " AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE "}
+	alpha, err = repository.UpsertCluster(alpha)
+	if err != nil {
+		t.Fatalf("establish identity: %v", err)
+	}
+	before := alpha
+
+	changedEngine := alpha
+	changedEngine.Engine = model.EnginePostgreSQL
+	if _, err := repository.UpsertCluster(changedEngine); !errors.Is(err, ErrConflict) {
+		t.Fatalf("engine change error = %v", err)
+	}
+	changedIdentity := alpha
+	changedIdentity.EngineIdentity = model.EngineIdentity{"server_uuid": "ffffffff-bbbb-cccc-dddd-eeeeeeeeeeee"}
+	if _, err := repository.UpsertCluster(changedIdentity); !errors.Is(err, ErrConflict) {
+		t.Fatalf("identity change error = %v", err)
+	}
+	clearedIdentity := alpha
+	clearedIdentity.EngineIdentity = nil
+	if _, err := repository.UpsertCluster(clearedIdentity); !errors.Is(err, ErrConflict) {
+		t.Fatalf("identity clear error = %v", err)
+	}
+	if _, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "invalid", EngineIdentity: model.EngineIdentity{"wrong": "value"}}); !errors.Is(err, ErrValidation) {
+		t.Fatalf("invalid identity error = %v", err)
+	}
+	duplicateID := model.NewResourceID()
+	if _, _, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{ResourceMeta: model.ResourceMeta{ResourceID: duplicateID}, Engine: model.EngineMySQL, DisplayName: "duplicate", EngineIdentity: model.EngineIdentity{"server_uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}}, nil); !errors.Is(err, ErrConflict) {
+		t.Fatalf("duplicate identity error = %v", err)
+	}
+	if _, found := repository.Cluster(duplicateID); found {
+		t.Fatal("duplicate identity published cluster")
+	}
+	stored, _ := repository.Cluster(alpha.ResourceID)
+	if !reflect.DeepEqual(stored, before) {
+		t.Fatalf("rejections changed established cluster: before=%+v after=%+v", before, stored)
+	}
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	persisted, _ := reopened.Cluster(alpha.ResourceID)
+	if !reflect.DeepEqual(persisted, before) {
+		t.Fatalf("rejections changed durable cluster: before=%+v after=%+v", before, persisted)
+	}
+}
+
+func TestUpsertClusterIdentityEstablishmentPersistenceFailureIsAtomic(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metadata.json")
+	repository, err := Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "alpha"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	repository.path = t.TempDir()
+	candidate := cluster
+	candidate.EngineIdentity = model.EngineIdentity{"server_uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}
+	if _, err := repository.UpsertCluster(candidate); err == nil {
+		t.Fatal("identity persistence must fail")
+	}
+	stored, _ := repository.Cluster(cluster.ResourceID)
+	if len(stored.EngineIdentity) != 0 || !reflect.DeepEqual(stored, cluster) {
+		t.Fatalf("failed identity establishment changed live cluster: %+v", stored)
+	}
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	persisted, _ := reopened.Cluster(cluster.ResourceID)
+	if !reflect.DeepEqual(persisted, cluster) {
+		t.Fatalf("failed identity establishment changed durable cluster: %+v", persisted)
 	}
 }
 
@@ -705,8 +792,8 @@ func TestApplyDiscoveryRefreshDeduplicatesIdentityAndPublishesTopology(t *testin
 		t.Fatalf("transaction did not publish endpoint bindings: %+v", bound)
 	}
 	storedSamples := repository.MetricSamples(cluster.ResourceID)
-	if len(storedSamples) != 61 {
-		t.Fatalf("bounded transaction metrics = %d, want 60 primary and 1 replica", len(storedSamples))
+	if len(storedSamples) != 2 {
+		t.Fatalf("current-cycle transaction metrics = %d, want one per resolved instance", len(storedSamples))
 	}
 	counts := map[model.ResourceID]int{}
 	for _, sample := range storedSamples {
@@ -715,8 +802,8 @@ func TestApplyDiscoveryRefreshDeduplicatesIdentityAndPublishesTopology(t *testin
 		}
 		counts[sample.InstanceID]++
 	}
-	if counts[probes[first.ResourceID].InstanceID] != 60 || counts[probes[replicaEndpoint.ResourceID].InstanceID] != 1 {
-		t.Fatalf("transaction metric bounds by instance = %+v", counts)
+	if counts[probes[first.ResourceID].InstanceID] != 1 || counts[probes[replicaEndpoint.ResourceID].InstanceID] != 1 {
+		t.Fatalf("transaction metric deduplication by instance = %+v", counts)
 	}
 }
 
@@ -945,6 +1032,125 @@ func TestApplyDiscoveryRefreshDerivesEvidenceFromSuccessfulObservations(t *testi
 	}
 }
 
+func TestApplyDiscoveryRefreshRejectsEqualAndOlderObservationsAtomically(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metadata.json")
+	repository, err := Open(path)
+	if err != nil {
+		t.Fatalf("open repository: %v", err)
+	}
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{
+		Engine: model.EngineMySQL, DisplayName: "stale-ordering",
+	}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true}})
+	if err != nil {
+		t.Fatalf("create inventory: %v", err)
+	}
+	baseTime := time.Date(2026, time.July, 12, 9, 0, 0, 0, time.UTC)
+	primary := mysqlInstance(cluster.ResourceID, "mysql-a", "", 3306)
+	primary.Role = model.RolePrimary
+	refresh := func(observedAt time.Time, version string) (model.TopologySnapshot, error) {
+		candidate := primary
+		candidate.EngineMetadata = map[string]string{"version": version}
+		return repository.ApplyDiscoveryRefresh(DiscoveryRefresh{
+			ClusterID: cluster.ResourceID,
+			Observations: []DiscoveryObservation{{
+				EndpointID: endpoints[0].ResourceID, Instance: candidate,
+				Metrics: []model.MetricSample{{ObservedAt: observedAt, Values: map[string]float64{"questions_total": float64(len(version))}}},
+			}},
+			Probes:     []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}},
+			ObservedAt: observedAt,
+			Anomalies:  []model.MetadataAnomaly{{Engine: model.EngineMySQL, Kind: version, Severity: "warning"}},
+		})
+	}
+	first, err := refresh(baseTime, "first")
+	if err != nil {
+		t.Fatalf("publish first observation: %v", err)
+	}
+	before := captureStoreDiscoveryState(repository, cluster.ResourceID)
+	for _, observedAt := range []time.Time{baseTime, baseTime.Add(-time.Second)} {
+		if _, err := refresh(observedAt, "stale"); !errors.Is(err, ErrStaleObservation) {
+			t.Fatalf("stale observation %s error = %v", observedAt, err)
+		}
+		after := captureStoreDiscoveryState(repository, cluster.ResourceID)
+		if !reflect.DeepEqual(after, before) {
+			t.Fatalf("stale observation mutated repository:\nbefore=%+v\nafter=%+v", before, after)
+		}
+	}
+
+	laterTime := baseTime.Add(time.Second)
+	later, err := refresh(laterTime, "later")
+	if err != nil {
+		t.Fatalf("publish later observation: %v", err)
+	}
+	if !later.ObservedAt.Equal(laterTime) || reflect.DeepEqual(later, first) {
+		t.Fatalf("later observation was not published: %+v", later)
+	}
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen repository: %v", err)
+	}
+	persisted, found := reopened.TopologySnapshot(cluster.ResourceID)
+	if !found || !persisted.ObservedAt.Equal(laterTime) {
+		t.Fatalf("later observation did not survive reopen: %+v found=%t", persisted, found)
+	}
+}
+
+func TestApplyDiscoveryRefreshDeduplicatesAliasMetricsPerResolvedInstance(t *testing.T) {
+	repository := NewMemory()
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "aliases"}, []model.Endpoint{
+		{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true},
+		{Kind: model.EndpointDatabase, Hostname: "mysql-alias", Port: 3306, Active: true},
+	})
+	if err != nil {
+		t.Fatalf("create inventory: %v", err)
+	}
+	selectedEndpoint := endpoints[0].ResourceID
+	if endpoints[1].ResourceID < selectedEndpoint {
+		selectedEndpoint = endpoints[1].ResourceID
+	}
+	instance := mysqlInstance(cluster.ResourceID, "mysql-a", "", 3306)
+	complete := func(questions float64) map[string]float64 {
+		return map[string]float64{"questions_total": questions, "transactions_total": questions, "slow_queries_total": questions, "connections": 10, "running_threads": 2, "buffer_pool_hit_ratio": .99}
+	}
+	start := time.Date(2026, time.July, 11, 20, 0, 0, 0, time.UTC)
+	refresh := func(observedAt time.Time, lowerValue float64, higherValue float64) model.TopologySnapshot {
+		t.Helper()
+		valuesByEndpoint := map[model.ResourceID]float64{endpoints[0].ResourceID: higherValue, endpoints[1].ResourceID: higherValue}
+		valuesByEndpoint[selectedEndpoint] = lowerValue
+		snapshot, refreshErr := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{
+			ClusterID: cluster.ResourceID, ObservedAt: observedAt,
+			Observations: []DiscoveryObservation{
+				{EndpointID: endpoints[0].ResourceID, Instance: instance, Metrics: []model.MetricSample{{ObservedAt: observedAt, Values: complete(valuesByEndpoint[endpoints[0].ResourceID])}}},
+				{EndpointID: endpoints[1].ResourceID, Instance: instance, Metrics: []model.MetricSample{{ObservedAt: observedAt, Values: complete(valuesByEndpoint[endpoints[1].ResourceID])}}},
+			},
+			Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}, {EndpointID: endpoints[1].ResourceID, Health: model.Health{State: model.HealthHealthy}}},
+		})
+		if refreshErr != nil {
+			t.Fatalf("refresh: %v", refreshErr)
+		}
+		return snapshot
+	}
+	first := refresh(start, 100, 900)
+	second := refresh(start.Add(10*time.Second), 150, 950)
+	samples := repository.MetricSamples(cluster.ResourceID)
+	if len(samples) != 2 || samples[0].Values["questions_total"] != 100 || samples[1].Values["questions_total"] != 150 {
+		t.Fatalf("alias samples were not deduplicated across cycles: %+v", samples)
+	}
+	derived := metricsservice.NewService().Derive(samples)[samples[0].InstanceID]
+	if derived.Values["qps"] != 5 {
+		t.Fatalf("alias rate compared within one refresh instead of across refreshes: %+v", derived)
+	}
+	for _, snapshot := range []model.TopologySnapshot{first, second} {
+		for _, probe := range snapshot.Probes {
+			if probe.EndpointID == selectedEndpoint && probe.MetricsObservedAt.IsZero() {
+				t.Fatalf("selected alias lacks metrics evidence: %+v", snapshot.Probes)
+			}
+			if probe.EndpointID != selectedEndpoint && !probe.MetricsObservedAt.IsZero() {
+				t.Fatalf("non-selected alias has ambiguous metrics evidence: %+v", snapshot.Probes)
+			}
+		}
+	}
+}
+
 func TestTopologySnapshotOverlaysCanonicalCoordinatesButPreservesObservedRuntimeFacts(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "metadata.json")
 	repository, err := Open(path)
@@ -1114,6 +1320,144 @@ func TestActiveInventoryMutationInvalidatesPersistedTopologyAtomically(t *testin
 				t.Fatalf("reopened topology validity = %t, want %t", reopenedFound, test.valid)
 			}
 		})
+	}
+}
+
+func TestReconcileMetadataCoordinatesUpdatesBoundEndpointAndPreservesRuntimeFacts(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metadata.json")
+	repository, err := Open(path)
+	if err != nil {
+		t.Fatalf("open repository: %v", err)
+	}
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "orders"}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-old", IPAddress: "192.0.2.10", Port: 3306, Active: true}})
+	if err != nil {
+		t.Fatalf("create inventory: %v", err)
+	}
+	lag := int64(7)
+	observed := mysqlInstance(cluster.ResourceID, "mysql-old", "192.0.2.10", 3306)
+	observed.Role = model.RolePrimary
+	observed.Health = model.Health{State: model.HealthHealthy}
+	observed.Replication = model.ReplicationStatus{IOThread: model.ThreadRunning, SQLThread: model.ThreadRunning, LagSeconds: &lag}
+	observed.Maintenance = true
+	observed.PromotionEligible = true
+	observed.EngineMetadata = map[string]string{"version": "8.4"}
+	snapshot, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{ClusterID: cluster.ResourceID, ObservedAt: time.Now().UTC(), Observations: []DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: observed}}, Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}}})
+	if err != nil {
+		t.Fatalf("publish topology: %v", err)
+	}
+	instanceID := snapshot.Instances[0].ResourceID
+	nodeID := model.NewResourceID()
+	malicious := snapshot.Instances[0]
+	malicious.DisplayName = "mysql-new"
+	malicious.Hostname = "mysql-new"
+	malicious.IPAddress = "192.0.2.20"
+	malicious.Port = 4406
+	malicious.Aliases = []string{"writer.example:4406"}
+	malicious.NodeID = nodeID
+	malicious.EngineIdentity = model.EngineIdentity{"server_uuid": "ffffffff-bbbb-cccc-dddd-eeeeeeeeeeee"}
+	malicious.Role = model.RoleReplica
+	malicious.Health = model.Health{State: model.HealthUnhealthy}
+	malicious.Replication = model.ReplicationStatus{IOThread: model.ThreadStopped, SQLThread: model.ThreadStopped}
+	malicious.Maintenance = false
+	malicious.PromotionEligible = false
+	malicious.EngineMetadata = map[string]string{"version": "forged"}
+
+	updated, endpoint, err := repository.ReconcileMetadataCoordinates(MetadataCoordinates{Instance: malicious, EndpointID: endpoints[0].ResourceID})
+	if err != nil {
+		t.Fatalf("reconcile coordinates: %v", err)
+	}
+	if updated.ResourceID != instanceID || updated.EngineIdentity["server_uuid"] != observed.EngineIdentity["server_uuid"] || updated.Role != model.RolePrimary || updated.Health.State != model.HealthHealthy || updated.Replication.IOThread != model.ThreadRunning || !updated.Maintenance || !updated.PromotionEligible || updated.EngineMetadata["version"] != "8.4" {
+		t.Fatalf("metadata changed runtime authority: %+v", updated)
+	}
+	if updated.DisplayName != "mysql-new" || updated.Hostname != "mysql-new" || updated.IPAddress != "192.0.2.20" || updated.Port != 4406 || updated.NodeID != nodeID || !contains(updated.Aliases, "mysql-old:3306") || !contains(updated.Aliases, "192.0.2.10:3306") {
+		t.Fatalf("coordinates not reconciled: %+v", updated)
+	}
+	if endpoint.ResourceID != endpoints[0].ResourceID || endpoint.Hostname != updated.Hostname || endpoint.IPAddress != updated.IPAddress || endpoint.Port != updated.Port {
+		t.Fatalf("bound endpoint not updated: %+v", endpoint)
+	}
+	if _, found := repository.TopologySnapshot(cluster.ResourceID); found {
+		t.Fatal("metadata endpoint update must invalidate topology")
+	}
+	storedCluster, _ := repository.Cluster(cluster.ResourceID)
+	if storedCluster.Health.State != model.HealthUnknown {
+		t.Fatalf("cluster health not reset: %+v", storedCluster.Health)
+	}
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	got := reopened.Instances(cluster.ResourceID)[0]
+	gotEndpoint := reopened.Endpoints(cluster.ResourceID)[0]
+	if !reflect.DeepEqual(got, updated) || !reflect.DeepEqual(gotEndpoint, endpoint) {
+		t.Fatalf("metadata transaction not durable: instance=%+v endpoint=%+v", got, gotEndpoint)
+	}
+	failedAt := snapshot.ObservedAt.Add(time.Minute)
+	failed, err := reopened.ApplyDiscoveryRefresh(DiscoveryRefresh{ClusterID: cluster.ResourceID, ObservedAt: failedAt, Probes: []model.ProbeStatus{{EndpointID: endpoint.ResourceID, Health: model.Health{State: model.HealthUnknown}}}})
+	if err != nil {
+		t.Fatalf("publish failed discovery: %v", err)
+	}
+	failedInstance := failed.Instances[0]
+	if failedInstance.Role != model.RolePrimary || failedInstance.Health.State != model.HealthUnknown || failedInstance.Replication.IOThread != model.ThreadRunning || !failedInstance.Maintenance || !failedInstance.PromotionEligible || failedInstance.EngineMetadata["version"] != "8.4" {
+		t.Fatalf("malicious metadata leaked into failed discovery topology: %+v", failedInstance)
+	}
+	reopened, err = Open(path)
+	if err != nil {
+		t.Fatalf("reopen failed discovery: %v", err)
+	}
+	persistedFailed, found := reopened.TopologySnapshot(cluster.ResourceID)
+	if !found || persistedFailed.Instances[0].Role != model.RolePrimary || persistedFailed.Instances[0].Health.State != model.HealthUnknown {
+		t.Fatalf("failed discovery runtime authority not durable: %+v found=%t", persistedFailed, found)
+	}
+}
+
+func TestReconcileMetadataCoordinatesRequiresUnambiguousOwnedEndpointAndRollsBack(t *testing.T) {
+	repository := NewMemory()
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "orders"}, []model.Endpoint{
+		{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true},
+		{Kind: model.EndpointDatabase, Hostname: "mysql-alias", Port: 3306, Active: true},
+	})
+	if err != nil {
+		t.Fatalf("create inventory: %v", err)
+	}
+	observedAt := time.Now().UTC()
+	observed := mysqlInstance(cluster.ResourceID, "mysql-a", "", 3306)
+	snapshot, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{ClusterID: cluster.ResourceID, ObservedAt: observedAt, Observations: []DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: observed}, {EndpointID: endpoints[1].ResourceID, Instance: observed}}, Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}, {EndpointID: endpoints[1].ResourceID, Health: model.Health{State: model.HealthHealthy}}}})
+	if err != nil {
+		t.Fatalf("publish topology: %v", err)
+	}
+	instance := snapshot.Instances[0]
+	instance.Hostname = "mysql-new"
+	before := captureStoreDiscoveryState(repository, cluster.ResourceID)
+	if _, _, err := repository.ReconcileMetadataCoordinates(MetadataCoordinates{Instance: instance}); !errors.Is(err, ErrValidation) {
+		t.Fatalf("ambiguous endpoint error = %v", err)
+	}
+	if after := captureStoreDiscoveryState(repository, cluster.ResourceID); !reflect.DeepEqual(after, before) {
+		t.Fatalf("ambiguous update changed state: before=%+v after=%+v", before, after)
+	}
+	foreignCluster, foreignEndpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "billing"}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "taken", Port: 3306, Active: true}})
+	if err != nil {
+		t.Fatalf("create collision inventory: %v", err)
+	}
+	_ = foreignCluster
+	instance.Hostname = foreignEndpoints[0].Hostname
+	instance.Port = foreignEndpoints[0].Port
+	if _, _, err := repository.ReconcileMetadataCoordinates(MetadataCoordinates{Instance: instance, EndpointID: endpoints[0].ResourceID}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("collision error = %v", err)
+	}
+	if after := captureStoreDiscoveryState(repository, cluster.ResourceID); !reflect.DeepEqual(after, before) {
+		t.Fatalf("collision changed state: before=%+v after=%+v", before, after)
+	}
+	if _, _, err := repository.ReconcileMetadataCoordinates(MetadataCoordinates{Instance: instance, EndpointID: foreignEndpoints[0].ResourceID}); !errors.Is(err, ErrValidation) {
+		t.Fatalf("foreign endpoint error = %v", err)
+	}
+
+	repository.path = t.TempDir()
+	instance.Hostname = "persist-fail"
+	if _, _, err := repository.ReconcileMetadataCoordinates(MetadataCoordinates{Instance: instance, EndpointID: endpoints[0].ResourceID}); err == nil {
+		t.Fatal("persistence failure must be returned")
+	}
+	if after := captureStoreDiscoveryState(repository, cluster.ResourceID); !reflect.DeepEqual(after, before) {
+		t.Fatalf("failed persistence changed state: before=%+v after=%+v", before, after)
 	}
 }
 

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,8 @@ import (
 	"clusterguard.io/ha/pkg/adapter"
 	"clusterguard.io/ha/pkg/model"
 )
+
+const maximumJSONBodyBytes = 1 << 20
 
 type Server struct {
 	registry  *adapter.Registry
@@ -40,7 +43,14 @@ func writeError(writer http.ResponseWriter, status int, message string) {
 }
 
 func decode(request *http.Request, value interface{}) error {
-	decoder := json.NewDecoder(request.Body)
+	contents, err := io.ReadAll(io.LimitReader(request.Body, maximumJSONBodyBytes+1))
+	if err != nil {
+		return err
+	}
+	if len(contents) > maximumJSONBodyBytes {
+		return errors.New("request body exceeds maximum size")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(contents))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(value); err != nil {
 		return err
@@ -179,6 +189,7 @@ func (server *Server) operationRoute(writer http.ResponseWriter, request *http.R
 type metadataPayload struct {
 	Operation     model.Operation        `json:"operation"`
 	Instance      model.DatabaseInstance `json:"instance"`
+	EndpointID    model.ResourceID       `json:"endpoint_id,omitempty"`
 	ApprovalToken string                 `json:"approval_token,omitempty"`
 }
 
@@ -214,21 +225,33 @@ func (server *Server) metadataRoute(writer http.ResponseWriter, request *http.Re
 		}
 		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": plan})
 	case "execute":
-		var reconciled store.ReconcileResult
+		var reconciled model.DatabaseInstance
+		var endpoint model.Endpoint
+		var commitErr error
 		execution, err := server.workflow.ExecuteMetadata(request.Context(), payload.Operation, metadataRequest, payload.ApprovalToken, func() error {
-			var commitErr error
-			reconciled, commitErr = server.store.ReconcileInstance(payload.Instance)
+			reconciled, endpoint, commitErr = server.store.ReconcileMetadataCoordinates(store.MetadataCoordinates{Instance: payload.Instance, EndpointID: payload.EndpointID})
 			return commitErr
 		})
 		if errors.Is(err, adapter.ErrUnsupported) {
 			writeJSON(writer, http.StatusNotImplemented, map[string]interface{}{"status": "unsupported", "result": execution, "message": execution.Message})
 			return
 		}
-		if err != nil {
-			writeJSON(writer, http.StatusConflict, map[string]interface{}{"status": "error", "result": execution, "message": err.Error()})
+		if commitErr != nil {
+			switch {
+			case errors.Is(commitErr, store.ErrValidation):
+				writeError(writer, http.StatusBadRequest, "invalid metadata reconciliation")
+			case errors.Is(commitErr, store.ErrConflict):
+				writeError(writer, http.StatusConflict, "metadata reconciliation conflicts with inventory")
+			default:
+				writeError(writer, http.StatusInternalServerError, "metadata reconciliation persistence failed")
+			}
 			return
 		}
-		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": map[string]interface{}{"execution": execution, "reconciled": reconciled}})
+		if err != nil {
+			writeError(writer, http.StatusConflict, "metadata reconciliation failed")
+			return
+		}
+		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": map[string]interface{}{"execution": execution, "reconciled": reconciled, "endpoint": endpoint}})
 	case "verify":
 		if _, err := candidate.ReconcileMetadata(request.Context(), metadataRequest); err != nil {
 			writeError(writer, http.StatusBadGateway, err.Error())

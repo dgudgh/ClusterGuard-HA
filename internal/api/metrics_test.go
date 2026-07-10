@@ -186,3 +186,46 @@ func TestMetricsRoutesUsePersistedSamplesAndReplicationLag(t *testing.T) {
 		t.Fatalf("database failure emitted stale Prometheus metrics: %s", prometheus.Body.String())
 	}
 }
+
+func TestMetricsRoutesExcludeRetainedFutureSamplesAfterClockRollback(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metadata.json")
+	repository, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "rollback"}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true}})
+	if err != nil {
+		t.Fatalf("create inventory: %v", err)
+	}
+	t1 := time.Date(2026, time.July, 11, 10, 0, 0, 0, time.UTC)
+	t2 := t1.Add(10 * time.Second)
+	t3 := t1.Add(time.Hour)
+	instance := model.DatabaseInstance{ClusterID: cluster.ResourceID, Engine: model.EngineMySQL, EngineIdentity: model.EngineIdentity{"server_uuid": "rollback-native"}, Hostname: "mysql-a", Port: 3306, Role: model.RolePrimary, Health: model.Health{State: model.HealthHealthy}}
+	metricValues := func(questions float64, connections float64) map[string]float64 {
+		return map[string]float64{"questions_total": questions, "transactions_total": questions, "slow_queries_total": questions, "connections": connections, "running_threads": 2, "buffer_pool_hit_ratio": .99}
+	}
+	first, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{ClusterID: cluster.ResourceID, ObservedAt: t1, Observations: []store.DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: instance, Metrics: []model.MetricSample{{ObservedAt: t1, Values: metricValues(100, 10)}}}}, Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, DiscoveryObservedAt: t1, MetricsObservedAt: t1, Health: model.Health{State: model.HealthHealthy}}}})
+	if err != nil {
+		t.Fatalf("first refresh: %v", err)
+	}
+	instanceID := first.Instances[0].ResourceID
+	if err := repository.StoreMetricSamples(cluster.ResourceID, []model.MetricSample{{InstanceID: instanceID, ObservedAt: t3, Values: metricValues(900, 999)}}, 60); err != nil {
+		t.Fatalf("store future sample: %v", err)
+	}
+	if _, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{ClusterID: cluster.ResourceID, ObservedAt: t2, Observations: []store.DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: instance, Metrics: []model.MetricSample{{ObservedAt: t2, Values: metricValues(110, 20)}}}}, Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, DiscoveryObservedAt: t2, MetricsObservedAt: t2, Health: model.Health{State: model.HealthHealthy}}}}); err != nil {
+		t.Fatalf("rollback refresh: %v", err)
+	}
+	repository, err = store.Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	server := newAPIServer(t, repository, newCandidateAdapterSpy(), &fakeRefresher{})
+	jsonResponse := callJSON(t, server.Handler(), http.MethodGet, "/api/v1/clusters/"+string(cluster.ResourceID)+"/metrics", nil)
+	if jsonResponse.Code != http.StatusOK || !strings.Contains(jsonResponse.Body.String(), `"metrics_observed_at":"`+t2.Format(time.RFC3339)+`"`) || !strings.Contains(jsonResponse.Body.String(), `"connections":20`) || !strings.Contains(jsonResponse.Body.String(), `"qps":1`) || strings.Contains(jsonResponse.Body.String(), `999`) {
+		t.Fatalf("rollback JSON metrics used wrong sample: %d %s", jsonResponse.Code, jsonResponse.Body.String())
+	}
+	prometheus := callJSON(t, server.Handler(), http.MethodGet, "/api/v1/clusters/"+string(cluster.ResourceID)+"/metrics/prometheus", nil)
+	if !strings.Contains(prometheus.Body.String(), "clusterguard_mysql_connections") || strings.Contains(prometheus.Body.String(), " 999") {
+		t.Fatalf("rollback Prometheus metrics used future sample: %s", prometheus.Body.String())
+	}
+}

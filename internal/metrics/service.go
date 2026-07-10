@@ -3,23 +3,29 @@ package metrics
 import (
 	"math"
 	"sort"
+	"time"
 
 	"clusterguard.io/ha/pkg/model"
 )
 
 type Service struct{}
 
+type DerivedMetrics struct {
+	ObservedAt time.Time
+	Values     map[string]float64
+}
+
 func NewService() *Service {
 	return &Service{}
 }
 
-func (service *Service) Derive(samples []model.MetricSample) map[model.ResourceID]map[string]float64 {
+func (service *Service) Derive(samples []model.MetricSample) map[model.ResourceID]DerivedMetrics {
 	byInstance := make(map[model.ResourceID][]model.MetricSample)
 	for _, sample := range samples {
 		byInstance[sample.InstanceID] = append(byInstance[sample.InstanceID], sample)
 	}
 
-	result := make(map[model.ResourceID]map[string]float64, len(byInstance))
+	result := make(map[model.ResourceID]DerivedMetrics, len(byInstance))
 	for instanceID, instanceSamples := range byInstance {
 		sort.SliceStable(instanceSamples, func(i, j int) bool {
 			return instanceSamples[i].ObservedAt.Before(instanceSamples[j].ObservedAt)
@@ -40,7 +46,7 @@ func (service *Service) Derive(samples []model.MetricSample) map[model.ResourceI
 				deriveRate(derived, "slow_queries_per_second", "slow_queries_total", previous.Values, newest.Values, seconds)
 			}
 		}
-		result[instanceID] = derived
+		result[instanceID] = DerivedMetrics{ObservedAt: newest.ObservedAt, Values: derived}
 	}
 	return result
 }

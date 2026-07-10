@@ -147,7 +147,14 @@ func newTestService(t *testing.T, repository *store.Repository, candidate *fakeD
 
 func newTestServiceWithResolver(t *testing.T, repository *store.Repository, registry *adapter.Registry, resolver CredentialResolver) *Service {
 	t.Helper()
-	return New(registry, repository, resolver, func() time.Time { return discoveryTestTime })
+	var clockMu sync.Mutex
+	next := discoveryTestTime.Add(-time.Nanosecond)
+	return New(registry, repository, resolver, func() time.Time {
+		clockMu.Lock()
+		defer clockMu.Unlock()
+		next = next.Add(time.Nanosecond)
+		return next
+	})
 }
 
 func addEndpoint(t *testing.T, repository *store.Repository, clusterID model.ResourceID, host string, port int, kind model.EndpointKind, active bool) model.Endpoint {
@@ -841,6 +848,64 @@ func TestRefreshEvictsClusterLocksForArbitraryUnknownIDs(t *testing.T) {
 	defer service.clusterLocksMu.Unlock()
 	if len(service.clusterLocks) != 0 {
 		t.Fatalf("unknown cluster IDs leaked %d lock entries", len(service.clusterLocks))
+	}
+}
+
+func TestRefreshPreservesTypedStaleObservationThroughWrapping(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "stale-service"})
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	endpoint := addEndpoint(t, repository, cluster.ResourceID, "mysql-a", 3306, model.EndpointDatabase, true)
+	candidate := newFakeAdapter()
+	candidate.results[endpoint.Hostname] = discoveredInstance(endpoint.Hostname, endpoint.Port, "native-a", model.RolePrimary, "")
+	registry := adapter.NewRegistry()
+	if err := registry.Register(candidate); err != nil {
+		t.Fatalf("register adapter: %v", err)
+	}
+	service := New(registry, repository, CredentialResolverFunc(func(context.Context, model.DatabaseCluster, model.Endpoint) (adapter.Credentials, error) {
+		return adapter.Credentials{Username: "probe", Password: "secret"}, nil
+	}), func() time.Time { return discoveryTestTime })
+	if _, err := service.Refresh(context.Background(), cluster.ResourceID); err != nil {
+		t.Fatalf("first refresh: %v", err)
+	}
+	if _, err := service.Refresh(context.Background(), cluster.ResourceID); !errors.Is(err, store.ErrStaleObservation) {
+		t.Fatalf("wrapped stale error = %v", err)
+	}
+}
+
+func TestMetadataCoordinateUpdateChangesNextDiscoveryEndpoint(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "metadata-endpoint"}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-old", Port: 3306, Active: true}})
+	if err != nil {
+		t.Fatalf("create inventory: %v", err)
+	}
+	candidate := newFakeAdapter()
+	oldInstance := model.DatabaseInstance{ClusterID: cluster.ResourceID, Engine: model.EngineMySQL, EngineIdentity: model.EngineIdentity{"server_uuid": "metadata-native"}, Hostname: "mysql-old", Port: 3306, Role: model.RolePrimary, Health: model.Health{State: model.HealthHealthy}}
+	candidate.results["mysql-old"] = oldInstance
+	service := newTestService(t, repository, candidate)
+	first, err := service.Refresh(context.Background(), cluster.ResourceID)
+	if err != nil {
+		t.Fatalf("first refresh: %v", err)
+	}
+	metadata := first.Instances[0]
+	metadata.Hostname = "mysql-new"
+	metadata.Port = 4406
+	if _, endpoint, err := repository.ReconcileMetadataCoordinates(store.MetadataCoordinates{Instance: metadata}); err != nil {
+		t.Fatalf("reconcile metadata: %v", err)
+	} else if endpoint.ResourceID != endpoints[0].ResourceID {
+		t.Fatalf("single bound endpoint was not inferred: %+v", endpoint)
+	}
+	newInstance := oldInstance
+	newInstance.Hostname = "mysql-new"
+	newInstance.Port = 4406
+	candidate.results["mysql-new"] = newInstance
+	if _, err := service.Refresh(context.Background(), cluster.ResourceID); err != nil {
+		t.Fatalf("refresh updated endpoint: %v", err)
+	}
+	if hosts := candidate.discoveredHosts(); !reflect.DeepEqual(hosts, []string{"mysql-new", "mysql-old"}) {
+		t.Fatalf("discovery did not use metadata-updated endpoint: %v", hosts)
 	}
 }
 

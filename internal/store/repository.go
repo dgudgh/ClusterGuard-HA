@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -16,8 +17,9 @@ import (
 )
 
 var (
-	ErrValidation = errors.New("repository validation failed")
-	ErrConflict   = errors.New("repository conflict")
+	ErrValidation       = errors.New("repository validation failed")
+	ErrConflict         = errors.New("repository conflict")
+	ErrStaleObservation = errors.New("stale topology observation")
 )
 
 func validationError(format string, arguments ...interface{}) error {
@@ -47,6 +49,17 @@ type DiscoveryRefresh struct {
 	Health       model.Health
 	ObservedAt   time.Time
 	Anomalies    []model.MetadataAnomaly
+}
+
+type MetadataCoordinates struct {
+	Instance   model.DatabaseInstance
+	EndpointID model.ResourceID
+}
+
+type discoveryMetricCandidate struct {
+	endpointID model.ResourceID
+	sample     model.MetricSample
+	complete   bool
 }
 
 const discoveryMetricSampleLimit = 60
@@ -309,13 +322,33 @@ func (repository *Repository) UpsertCluster(cluster model.DatabaseCluster) (mode
 	}
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
+	if existing, ok := repository.snapshot.Clusters[cluster.ResourceID]; ok && cluster.Engine != existing.Engine {
+		return model.DatabaseCluster{}, conflictError("cluster engine is immutable")
+	}
+	candidateIdentityKey, hasCandidateIdentity, err := validatedClusterIdentityKey(cluster.Engine, cluster.EngineIdentity)
+	if err != nil {
+		return model.DatabaseCluster{}, err
+	}
 	for resourceID, existing := range repository.snapshot.Clusters {
 		if resourceID != cluster.ResourceID && strings.EqualFold(strings.TrimSpace(existing.DisplayName), cluster.DisplayName) {
 			return model.DatabaseCluster{}, conflictError("cluster display name already exists")
 		}
+		if resourceID != cluster.ResourceID && hasCandidateIdentity {
+			existingKey, existingHasIdentity, _ := validatedClusterIdentityKey(existing.Engine, existing.EngineIdentity)
+			if existingHasIdentity && existingKey == candidateIdentityKey {
+				return model.DatabaseCluster{}, conflictError("cluster native identity already exists")
+			}
+		}
 	}
 	now := repository.now().UTC()
 	if existing, ok := repository.snapshot.Clusters[cluster.ResourceID]; ok {
+		existingKey, existingHasIdentity, _ := validatedClusterIdentityKey(existing.Engine, existing.EngineIdentity)
+		if existingHasIdentity {
+			if !hasCandidateIdentity || candidateIdentityKey != existingKey {
+				return model.DatabaseCluster{}, conflictError("cluster native identity is immutable")
+			}
+			cluster.EngineIdentity = existing.EngineIdentity.Clone()
+		}
 		cluster.CreatedAt = existing.CreatedAt
 		cluster.MetadataRevision = existing.MetadataRevision + 1
 	} else {
@@ -331,6 +364,17 @@ func (repository *Repository) UpsertCluster(cluster model.DatabaseCluster) (mode
 	}
 	repository.snapshot = next
 	return cloneCluster(cluster), nil
+}
+
+func validatedClusterIdentityKey(engine model.Engine, engineIdentity model.EngineIdentity) (string, bool, error) {
+	if len(engineIdentity) == 0 {
+		return "", false, nil
+	}
+	key, err := identity.ClusterKey(engine, engineIdentity)
+	if err != nil {
+		return "", false, validationError("invalid cluster native identity")
+	}
+	return key, true, nil
 }
 
 func (repository *Repository) Clusters() []model.DatabaseCluster {
@@ -416,6 +460,10 @@ func (repository *Repository) CreateClusterWithEndpoints(cluster model.DatabaseC
 		return model.DatabaseCluster{}, nil, validationError("cluster display name is required")
 	}
 	cluster.DisplayName = displayName
+	candidateIdentityKey, hasCandidateIdentity, err := validatedClusterIdentityKey(cluster.Engine, cluster.EngineIdentity)
+	if err != nil {
+		return model.DatabaseCluster{}, nil, err
+	}
 	if cluster.ResourceID == "" {
 		cluster.ResourceID = model.NewResourceID()
 	}
@@ -448,6 +496,12 @@ func (repository *Repository) CreateClusterWithEndpoints(cluster model.DatabaseC
 	for _, existing := range repository.snapshot.Clusters {
 		if strings.EqualFold(strings.TrimSpace(existing.DisplayName), cluster.DisplayName) {
 			return model.DatabaseCluster{}, nil, conflictError("cluster display name already exists")
+		}
+		if hasCandidateIdentity {
+			existingKey, existingHasIdentity, _ := validatedClusterIdentityKey(existing.Engine, existing.EngineIdentity)
+			if existingHasIdentity && existingKey == candidateIdentityKey {
+				return model.DatabaseCluster{}, nil, conflictError("cluster native identity already exists")
+			}
 		}
 	}
 	for _, endpoint := range endpoints {
@@ -859,6 +913,94 @@ func (repository *Repository) ReconcileInstance(discovered model.DatabaseInstanc
 	return result, nil
 }
 
+func (repository *Repository) ReconcileMetadataCoordinates(update MetadataCoordinates) (model.DatabaseInstance, model.Endpoint, error) {
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+
+	existing, found := repository.snapshot.Instances[update.Instance.ResourceID]
+	if !found || existing.ClusterID != update.Instance.ClusterID {
+		return model.DatabaseInstance{}, model.Endpoint{}, validationError("unknown database instance")
+	}
+	if update.Instance.Port <= 0 || update.Instance.Port > 65535 {
+		return model.DatabaseInstance{}, model.Endpoint{}, validationError("invalid database endpoint port")
+	}
+	bound := make([]model.Endpoint, 0)
+	for _, endpoint := range repository.snapshot.Endpoints[existing.ClusterID] {
+		if endpoint.Active && endpoint.Kind == model.EndpointDatabase && endpoint.InstanceID == existing.ResourceID {
+			bound = append(bound, endpoint)
+		}
+	}
+	var selected model.Endpoint
+	if update.EndpointID == "" {
+		if len(bound) != 1 {
+			return model.DatabaseInstance{}, model.Endpoint{}, validationError("endpoint_id is required when an instance has multiple active endpoints")
+		}
+		selected = bound[0]
+	} else {
+		for _, endpoint := range bound {
+			if endpoint.ResourceID == update.EndpointID {
+				selected = endpoint
+				break
+			}
+		}
+		if selected.ResourceID == "" {
+			return model.DatabaseInstance{}, model.Endpoint{}, validationError("endpoint_id is not an active endpoint bound to the instance")
+		}
+	}
+
+	replacementEndpoint := selected
+	replacementEndpoint.Hostname = update.Instance.Hostname
+	replacementEndpoint.IPAddress = update.Instance.IPAddress
+	replacementEndpoint.Port = update.Instance.Port
+	if err := validateEndpoint(replacementEndpoint); err != nil {
+		return model.DatabaseInstance{}, model.Endpoint{}, err
+	}
+	for _, clusterEndpoints := range repository.snapshot.Endpoints {
+		for resourceID, endpoint := range clusterEndpoints {
+			if resourceID != selected.ResourceID && endpoint.Active && endpoint.Kind == model.EndpointDatabase && endpointAddressCollision(replacementEndpoint, endpoint) {
+				return model.DatabaseInstance{}, model.Endpoint{}, conflictError("active database endpoint address is already registered")
+			}
+		}
+	}
+
+	now := repository.now().UTC()
+	replacement := cloneInstance(existing)
+	for _, alias := range model.EndpointAddress(selected.Hostname, selected.IPAddress, selected.Port) {
+		replacement.Aliases = appendAlias(replacement.Aliases, alias)
+	}
+	for _, alias := range update.Instance.Aliases {
+		replacement.Aliases = appendAlias(replacement.Aliases, alias)
+	}
+	replacement.DisplayName = update.Instance.DisplayName
+	replacement.Hostname = update.Instance.Hostname
+	replacement.IPAddress = update.Instance.IPAddress
+	replacement.Port = update.Instance.Port
+	replacement.NodeID = update.Instance.NodeID
+	replacement.MetadataRevision++
+	replacement.UpdatedAt = now
+	replacementEndpoint.MetadataRevision++
+	replacementEndpoint.UpdatedAt = now
+
+	next := repository.snapshot
+	next.Instances = cloneInstanceMap(repository.snapshot.Instances)
+	next.Instances[replacement.ResourceID] = cloneInstance(replacement)
+	next.Endpoints = cloneEndpointMap(repository.snapshot.Endpoints)
+	next.Endpoints[existing.ClusterID][selected.ResourceID] = replacementEndpoint
+	next.TopologySnapshots = cloneTopologySnapshotMap(repository.snapshot.TopologySnapshots)
+	delete(next.TopologySnapshots, existing.ClusterID)
+	next.Clusters = cloneClusterMap(repository.snapshot.Clusters)
+	cluster := next.Clusters[existing.ClusterID]
+	cluster.Health = model.Health{State: model.HealthUnknown}
+	cluster.MetadataRevision++
+	cluster.UpdatedAt = now
+	next.Clusters[existing.ClusterID] = cluster
+	if err := repository.persistSnapshotLocked(next); err != nil {
+		return model.DatabaseInstance{}, model.Endpoint{}, err
+	}
+	repository.snapshot = next
+	return cloneInstance(replacement), replacementEndpoint, nil
+}
+
 func bindDiscoveryEndpoint(candidate *snapshot, clusterID model.ResourceID, endpointID model.ResourceID, instanceID model.ResourceID, now time.Time) (model.Endpoint, error) {
 	endpoint, exists := candidate.Endpoints[clusterID][endpointID]
 	if !exists {
@@ -1049,6 +1191,9 @@ func (repository *Repository) ApplyDiscoveryRefresh(refresh DiscoveryRefresh) (m
 	if observedAt.IsZero() {
 		observedAt = repository.now().UTC()
 	}
+	if existing, found := repository.snapshot.TopologySnapshots[refresh.ClusterID]; found && !observedAt.After(existing.ObservedAt) {
+		return model.TopologySnapshot{}, fmt.Errorf("%w: observed at %s is not after %s", ErrStaleObservation, observedAt.Format(time.RFC3339Nano), existing.ObservedAt.Format(time.RFC3339Nano))
+	}
 	next := cloneDiscoverySnapshot(repository.snapshot)
 	activeEndpoints := make(map[model.ResourceID]model.Endpoint)
 	for endpointID, endpoint := range next.Endpoints[refresh.ClusterID] {
@@ -1063,7 +1208,7 @@ func (repository *Repository) ApplyDiscoveryRefresh(refresh DiscoveryRefresh) (m
 	observedInstances := make(map[model.ResourceID]model.DatabaseInstance)
 	discoveryEvidence := make(map[model.ResourceID]time.Time, len(observations))
 	metricsEvidence := make(map[model.ResourceID]time.Time, len(observations))
-	metricSamples := make([]model.MetricSample, 0)
+	metricCandidates := make(map[model.ResourceID][]discoveryMetricCandidate)
 	for _, observation := range observations {
 		endpoint, endpointExists := activeEndpoints[observation.EndpointID]
 		if !endpointExists {
@@ -1103,11 +1248,21 @@ func (repository *Repository) ApplyDiscoveryRefresh(refresh DiscoveryRefresh) (m
 		discoveryEvidence[observation.EndpointID] = observedAt
 		for _, sample := range observation.Metrics {
 			sample.InstanceID = result.Instance.ResourceID
-			metricSamples = append(metricSamples, sample)
-			if sample.ObservedAt.After(metricsEvidence[observation.EndpointID]) {
-				metricsEvidence[observation.EndpointID] = sample.ObservedAt
+			metricCandidates[result.Instance.ResourceID] = append(metricCandidates[result.Instance.ResourceID], discoveryMetricCandidate{
+				endpointID: observation.EndpointID, sample: sample, complete: completeDiscoveryMetricSample(sample),
+			})
+		}
+	}
+	metricSamples := make([]model.MetricSample, 0, len(metricCandidates))
+	for _, candidates := range metricCandidates {
+		selected := candidates[0]
+		for _, candidate := range candidates[1:] {
+			if betterDiscoveryMetricCandidate(candidate, selected) {
+				selected = candidate
 			}
 		}
+		metricSamples = append(metricSamples, selected.sample)
+		metricsEvidence[selected.endpointID] = selected.sample.ObservedAt
 	}
 
 	providedProbes := make(map[model.ResourceID]model.ProbeStatus, len(refresh.Probes))
@@ -1268,6 +1423,26 @@ func (repository *Repository) ApplyDiscoveryRefresh(refresh DiscoveryRefresh) (m
 	}
 	repository.snapshot = next
 	return cloneTopologySnapshot(published), nil
+}
+
+func completeDiscoveryMetricSample(sample model.MetricSample) bool {
+	for _, name := range []string{"questions_total", "transactions_total", "slow_queries_total", "connections", "running_threads", "buffer_pool_hit_ratio"} {
+		value, found := sample.Values[name]
+		if !found || math.IsNaN(value) || math.IsInf(value, 0) {
+			return false
+		}
+	}
+	return true
+}
+
+func betterDiscoveryMetricCandidate(candidate discoveryMetricCandidate, current discoveryMetricCandidate) bool {
+	if candidate.complete != current.complete {
+		return candidate.complete
+	}
+	if !candidate.sample.ObservedAt.Equal(current.sample.ObservedAt) {
+		return candidate.sample.ObservedAt.After(current.sample.ObservedAt)
+	}
+	return candidate.endpointID < current.endpointID
 }
 
 func (repository *Repository) TopologySnapshot(clusterID model.ResourceID) (model.TopologySnapshot, bool) {

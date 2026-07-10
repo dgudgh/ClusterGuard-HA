@@ -21,7 +21,11 @@ func TestDeriveUsesNewestSamplesForRatesAndGauges(t *testing.T) {
 		}},
 	}
 
-	derived := NewService().Derive(samples)[instanceID]
+	result := NewService().Derive(samples)[instanceID]
+	if !result.ObservedAt.Equal(start.Add(10 * time.Second)) {
+		t.Fatalf("selected observed time = %s", result.ObservedAt)
+	}
+	derived := result.Values
 	want := map[string]float64{
 		"qps": 5, "tps": 2, "slow_queries_per_second": 1,
 		"connections": 12, "running_threads": 3, "buffer_pool_hit_ratio": 0.98,
@@ -46,7 +50,11 @@ func TestDeriveOmitsRatesAfterCounterReset(t *testing.T) {
 		}},
 	}
 
-	derived := NewService().Derive(samples)[instanceID]
+	result := NewService().Derive(samples)[instanceID]
+	if !result.ObservedAt.Equal(start.Add(10 * time.Second)) {
+		t.Fatalf("selected observed time = %s", result.ObservedAt)
+	}
+	derived := result.Values
 	for _, name := range []string{"qps", "tps", "slow_queries_per_second"} {
 		if _, exists := derived[name]; exists {
 			t.Fatalf("counter reset emitted %s: %+v", name, derived)

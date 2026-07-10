@@ -24,7 +24,7 @@ func (server *Server) persistedMetrics(clusterID model.ResourceID) ([]instanceMe
 	if !found {
 		return nil, model.TopologySnapshot{}, false
 	}
-	derived := metricsservice.NewService().Derive(server.store.MetricSamples(clusterID))
+	allSamples := server.store.MetricSamples(clusterID)
 	result := make([]instanceMetrics, 0, len(snapshot.Instances))
 	for _, instance := range snapshot.Instances {
 		values := make(map[string]float64)
@@ -42,10 +42,21 @@ func (server *Server) persistedMetrics(clusterID model.ResourceID) ([]instanceMe
 			}
 		}
 		if !metricsObservedAt.IsZero() {
-			for name, value := range derived[instance.ResourceID] {
-				if finiteMetric(value) {
-					values[name] = value
+			eligibleSamples := make([]model.MetricSample, 0)
+			for _, sample := range allSamples {
+				if sample.InstanceID == instance.ResourceID && !sample.ObservedAt.After(metricsObservedAt) {
+					eligibleSamples = append(eligibleSamples, sample)
 				}
+			}
+			derived, derivedFound := metricsservice.NewService().Derive(eligibleSamples)[instance.ResourceID]
+			if derivedFound && derived.ObservedAt.Equal(metricsObservedAt) {
+				for name, value := range derived.Values {
+					if finiteMetric(value) {
+						values[name] = value
+					}
+				}
+			} else {
+				metricsObservedAt = time.Time{}
 			}
 		}
 		if discoveryObserved && instance.Replication.LagSeconds != nil && *instance.Replication.LagSeconds >= 0 {

@@ -172,6 +172,10 @@ func (server *Server) discoverCluster(writer http.ResponseWriter, request *http.
 		server.unsupported(writer, "discovery is unsupported for this engine")
 		return
 	}
+	if errors.Is(err, store.ErrStaleObservation) {
+		writeError(writer, http.StatusConflict, "topology observation is stale")
+		return
+	}
 	if err != nil {
 		writeError(writer, http.StatusBadGateway, "discovery refresh failed")
 		return

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -339,6 +340,24 @@ func TestClusterAPIErrorsDoNotExposeDatabaseOrCredentialDetails(t *testing.T) {
 	response = callJSON(t, candidateServer.Handler(), http.MethodGet, "/api/v1/clusters/"+string(candidateCluster.ResourceID)+"/candidates", nil)
 	if response.Code != http.StatusBadGateway || strings.Contains(response.Body.String(), "candidate-secret") || strings.Contains(response.Body.String(), "SQL failed") {
 		t.Fatalf("candidate error exposed adapter details: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestDiscoverMapsStaleObservationToSanitizedConflict(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, _, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{
+		Engine: model.EngineMySQL, DisplayName: "stale-api",
+	}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true}})
+	if err != nil {
+		t.Fatalf("create inventory: %v", err)
+	}
+	refresher := &fakeRefresher{refresh: func(context.Context, model.ResourceID) (model.TopologySnapshot, error) {
+		return model.TopologySnapshot{}, fmt.Errorf("internal path detail: %w", store.ErrStaleObservation)
+	}}
+	server := newAPIServer(t, repository, newCandidateAdapterSpy(), refresher)
+	response := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/clusters/"+string(cluster.ResourceID)+"/discover", map[string]interface{}{})
+	if response.Code != http.StatusConflict || strings.Contains(response.Body.String(), "internal path detail") || !strings.Contains(response.Body.String(), "stale") {
+		t.Fatalf("stale mapping = %d %s", response.Code, response.Body.String())
 	}
 }
 
