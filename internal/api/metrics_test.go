@@ -44,7 +44,8 @@ func TestMetricsRoutesUsePersistedSamplesAndReplicationLag(t *testing.T) {
 		{EndpointID: endpoints[1].ResourceID, DiscoveryObservedAt: start, MetricsObservedAt: start, Health: model.Health{State: model.HealthHealthy, ObservedAt: start}},
 	}
 	first, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{
-		ClusterID: cluster.ResourceID,
+		ClusterID:           cluster.ResourceID,
+		InventoryGeneration: testInventoryGeneration(t, repository, cluster.ResourceID),
 		Observations: []store.DiscoveryObservation{
 			{EndpointID: endpoints[0].ResourceID, Instance: primary},
 			{EndpointID: endpoints[1].ResourceID, Instance: replica, Metrics: []model.MetricSample{{ObservedAt: start, Values: map[string]float64{
@@ -72,7 +73,8 @@ func TestMetricsRoutesUsePersistedSamplesAndReplicationLag(t *testing.T) {
 	}
 	probes[1].MetricsObservedAt = secondTime
 	if _, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{
-		ClusterID: cluster.ResourceID,
+		ClusterID:           cluster.ResourceID,
+		InventoryGeneration: testInventoryGeneration(t, repository, cluster.ResourceID),
 		Observations: []store.DiscoveryObservation{
 			{EndpointID: endpoints[0].ResourceID, Instance: primary},
 			{EndpointID: endpoints[1].ResourceID, Instance: replica, Metrics: []model.MetricSample{{ObservedAt: secondTime, Values: map[string]float64{
@@ -126,7 +128,8 @@ func TestMetricsRoutesUsePersistedSamplesAndReplicationLag(t *testing.T) {
 
 	metricsFailureTime := secondTime.Add(10 * time.Second)
 	if _, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{
-		ClusterID: cluster.ResourceID,
+		ClusterID:           cluster.ResourceID,
+		InventoryGeneration: testInventoryGeneration(t, repository, cluster.ResourceID),
 		Observations: []store.DiscoveryObservation{
 			{EndpointID: endpoints[0].ResourceID, Instance: primary},
 			{EndpointID: endpoints[1].ResourceID, Instance: replica},
@@ -160,8 +163,9 @@ func TestMetricsRoutesUsePersistedSamplesAndReplicationLag(t *testing.T) {
 
 	databaseFailureTime := metricsFailureTime.Add(10 * time.Second)
 	if _, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{
-		ClusterID:    cluster.ResourceID,
-		Observations: []store.DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: primary}},
+		ClusterID:           cluster.ResourceID,
+		InventoryGeneration: testInventoryGeneration(t, repository, cluster.ResourceID),
+		Observations:        []store.DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: primary}},
 		Probes: []model.ProbeStatus{
 			{EndpointID: endpoints[0].ResourceID, DiscoveryObservedAt: databaseFailureTime, Health: model.Health{State: model.HealthHealthy, ObservedAt: databaseFailureTime}},
 			{EndpointID: endpoints[1].ResourceID, Health: model.Health{State: model.HealthUnknown, ObservedAt: databaseFailureTime}},
@@ -204,7 +208,7 @@ func TestMetricsRoutesExcludeRetainedFutureSamplesAfterClockRollback(t *testing.
 	metricValues := func(questions float64, connections float64) map[string]float64 {
 		return map[string]float64{"questions_total": questions, "transactions_total": questions, "slow_queries_total": questions, "connections": connections, "running_threads": 2, "buffer_pool_hit_ratio": .99}
 	}
-	first, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{ClusterID: cluster.ResourceID, ObservedAt: t1, Observations: []store.DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: instance, Metrics: []model.MetricSample{{ObservedAt: t1, Values: metricValues(100, 10)}}}}, Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, DiscoveryObservedAt: t1, MetricsObservedAt: t1, Health: model.Health{State: model.HealthHealthy}}}})
+	first, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{ClusterID: cluster.ResourceID, InventoryGeneration: testInventoryGeneration(t, repository, cluster.ResourceID), ObservedAt: t1, Observations: []store.DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: instance, Metrics: []model.MetricSample{{ObservedAt: t1, Values: metricValues(100, 10)}}}}, Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, DiscoveryObservedAt: t1, MetricsObservedAt: t1, Health: model.Health{State: model.HealthHealthy}}}})
 	if err != nil {
 		t.Fatalf("first refresh: %v", err)
 	}
@@ -212,7 +216,7 @@ func TestMetricsRoutesExcludeRetainedFutureSamplesAfterClockRollback(t *testing.
 	if err := repository.StoreMetricSamples(cluster.ResourceID, []model.MetricSample{{InstanceID: instanceID, ObservedAt: t3, Values: metricValues(900, 999)}}, 60); err != nil {
 		t.Fatalf("store future sample: %v", err)
 	}
-	if _, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{ClusterID: cluster.ResourceID, ObservedAt: t2, Observations: []store.DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: instance, Metrics: []model.MetricSample{{ObservedAt: t2, Values: metricValues(110, 20)}}}}, Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, DiscoveryObservedAt: t2, MetricsObservedAt: t2, Health: model.Health{State: model.HealthHealthy}}}}); err != nil {
+	if _, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{ClusterID: cluster.ResourceID, InventoryGeneration: testInventoryGeneration(t, repository, cluster.ResourceID), ObservedAt: t2, Observations: []store.DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: instance, Metrics: []model.MetricSample{{ObservedAt: t2, Values: metricValues(110, 20)}}}}, Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, DiscoveryObservedAt: t2, MetricsObservedAt: t2, Health: model.Health{State: model.HealthHealthy}}}}); err != nil {
 		t.Fatalf("rollback refresh: %v", err)
 	}
 	repository, err = store.Open(path)

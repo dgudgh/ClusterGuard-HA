@@ -1294,7 +1294,7 @@ func (repository *Repository) ApplyDiscoveryRefresh(refresh DiscoveryRefresh) (m
 		return model.TopologySnapshot{}, fmt.Errorf("%w: observed at %s is not after %s", ErrStaleObservation, observedAt.Format(time.RFC3339Nano), watermark.Format(time.RFC3339Nano))
 	}
 	currentGeneration := repository.snapshot.InventoryGenerations[refresh.ClusterID]
-	if refresh.InventoryGeneration != 0 && refresh.InventoryGeneration != currentGeneration {
+	if refresh.InventoryGeneration == 0 || refresh.InventoryGeneration != currentGeneration {
 		return model.TopologySnapshot{}, fmt.Errorf("%w: captured generation %d, current generation %d", ErrInventoryChanged, refresh.InventoryGeneration, currentGeneration)
 	}
 	next := cloneDiscoverySnapshot(repository.snapshot)

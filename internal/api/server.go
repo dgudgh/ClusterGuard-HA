@@ -283,6 +283,9 @@ func (server *Server) validateMetadataPayload(payload metadataPayload) error {
 	if payload.Operation.Engine != "" && payload.Operation.Engine != canonical.Engine {
 		return errors.New("operation engine does not match canonical inventory")
 	}
+	if payload.Operation.ClusterID != "" && payload.Operation.ClusterID != canonical.ClusterID {
+		return errors.New("operation cluster does not match canonical inventory")
+	}
 	canonicalKey, err := identity.InstanceKey(canonical.Engine, canonical.EngineIdentity)
 	if err != nil {
 		return err

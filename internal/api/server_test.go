@@ -125,6 +125,15 @@ func callJSON(t *testing.T, handler http.Handler, method string, path string, bo
 	return response
 }
 
+func testInventoryGeneration(t *testing.T, repository *store.Repository, clusterID model.ResourceID) uint64 {
+	t.Helper()
+	inventory, found := repository.DiscoveryInventory(clusterID)
+	if !found || inventory.Generation == 0 {
+		t.Fatalf("missing discovery inventory for %s: %+v found=%t", clusterID, inventory, found)
+	}
+	return inventory.Generation
+}
+
 func TestEnginesEndpointListsAllRegisteredEngines(t *testing.T) {
 	server, _ := newTestServer(t)
 	response := callJSON(t, server.Handler(), http.MethodGet, "/api/v1/engines", nil)
@@ -191,7 +200,8 @@ func TestClusterTopologyAndHealthEndpointsUsePlatformResourceIDs(t *testing.T) {
 		t.Fatalf("create inventory: %v", err)
 	}
 	snapshot, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{
-		ClusterID: cluster.ResourceID,
+		ClusterID:           cluster.ResourceID,
+		InventoryGeneration: testInventoryGeneration(t, repository, cluster.ResourceID),
 		Observations: []store.DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: model.DatabaseInstance{
 			ClusterID: cluster.ResourceID, Engine: model.EngineMySQL, EngineIdentity: model.EngineIdentity{"server_uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},
 			DisplayName: "mysql-a", Hostname: "mysql-a", IPAddress: "192.0.2.10", Port: 3306, Role: model.RolePrimary, Health: model.Health{State: model.HealthHealthy},
@@ -217,7 +227,7 @@ func TestMetadataExecuteReusesResourceIDForRenamedMySQLEndpoint(t *testing.T) {
 		t.Fatalf("create inventory: %v", err)
 	}
 	observedAt := time.Now().UTC()
-	seed, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{ClusterID: cluster.ResourceID, ObservedAt: observedAt, Observations: []store.DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: model.DatabaseInstance{
+	seed, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{ClusterID: cluster.ResourceID, InventoryGeneration: testInventoryGeneration(t, repository, cluster.ResourceID), ObservedAt: observedAt, Observations: []store.DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: model.DatabaseInstance{
 		ClusterID: cluster.ResourceID, Engine: model.EngineMySQL, EngineIdentity: model.EngineIdentity{"server_uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},
 		DisplayName: "mysql-old", Hostname: "mysql-old", IPAddress: "192.0.2.10", Port: 3306, Role: model.RolePrimary, Health: model.Health{State: model.HealthHealthy}, PromotionEligible: true,
 	}}}, Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, DiscoveryObservedAt: observedAt, Health: model.Health{State: model.HealthHealthy}}}})
@@ -266,7 +276,7 @@ func TestMetadataExecutePersistenceFailureIsSanitizedAndAtomic(t *testing.T) {
 		t.Fatalf("create inventory: %v", err)
 	}
 	observedAt := time.Now().UTC()
-	snapshot, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{ClusterID: cluster.ResourceID, ObservedAt: observedAt, Observations: []store.DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: model.DatabaseInstance{ClusterID: cluster.ResourceID, Engine: model.EngineMySQL, EngineIdentity: model.EngineIdentity{"server_uuid": "failure-native"}, Hostname: "mysql-old", Port: 3306, Role: model.RolePrimary, Health: model.Health{State: model.HealthHealthy}}}}, Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}}})
+	snapshot, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{ClusterID: cluster.ResourceID, InventoryGeneration: testInventoryGeneration(t, repository, cluster.ResourceID), ObservedAt: observedAt, Observations: []store.DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: model.DatabaseInstance{ClusterID: cluster.ResourceID, Engine: model.EngineMySQL, EngineIdentity: model.EngineIdentity{"server_uuid": "failure-native"}, Hostname: "mysql-old", Port: 3306, Role: model.RolePrimary, Health: model.Health{State: model.HealthHealthy}}}}, Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}}})
 	if err != nil {
 		t.Fatalf("seed topology: %v", err)
 	}
@@ -295,13 +305,15 @@ func TestMetadataExecutePersistenceFailureIsSanitizedAndAtomic(t *testing.T) {
 
 func TestMetadataRouteRejectsEngineAndIdentityTrustMismatchBeforeAdapterOrWorkflow(t *testing.T) {
 	tests := []struct {
-		name            string
-		payloadEngine   model.Engine
-		operationEngine model.Engine
-		serverUUID      string
+		name               string
+		payloadEngine      model.Engine
+		operationEngine    model.Engine
+		operationClusterID model.ResourceID
+		serverUUID         string
 	}{
 		{name: "payload engine", payloadEngine: model.EnginePostgreSQL, operationEngine: model.EnginePostgreSQL, serverUUID: "trust-native"},
 		{name: "operation engine", payloadEngine: model.EngineMySQL, operationEngine: model.EnginePostgreSQL, serverUUID: "trust-native"},
+		{name: "operation cluster", payloadEngine: model.EngineMySQL, operationEngine: model.EngineMySQL, operationClusterID: model.NewResourceID(), serverUUID: "trust-native"},
 		{name: "native identity", payloadEngine: model.EngineMySQL, operationEngine: model.EngineMySQL, serverUUID: "different-native"},
 	}
 	for _, test := range tests {
@@ -312,7 +324,7 @@ func TestMetadataRouteRejectsEngineAndIdentityTrustMismatchBeforeAdapterOrWorkfl
 				t.Fatalf("create inventory: %v", err)
 			}
 			observedAt := time.Date(2026, time.July, 12, 15, 0, 0, 0, time.UTC)
-			snapshot, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{ClusterID: cluster.ResourceID, ObservedAt: observedAt, Observations: []store.DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: model.DatabaseInstance{ClusterID: cluster.ResourceID, Engine: model.EngineMySQL, EngineIdentity: model.EngineIdentity{"server_uuid": "trust-native"}, Hostname: "mysql-a", Port: 3306, Role: model.RolePrimary, Health: model.Health{State: model.HealthHealthy}}}}, Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}}})
+			snapshot, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{ClusterID: cluster.ResourceID, InventoryGeneration: testInventoryGeneration(t, repository, cluster.ResourceID), ObservedAt: observedAt, Observations: []store.DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: model.DatabaseInstance{ClusterID: cluster.ResourceID, Engine: model.EngineMySQL, EngineIdentity: model.EngineIdentity{"server_uuid": "trust-native"}, Hostname: "mysql-a", Port: 3306, Role: model.RolePrimary, Health: model.Health{State: model.HealthHealthy}}}}, Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}}})
 			if err != nil {
 				t.Fatalf("seed topology: %v", err)
 			}
@@ -324,7 +336,7 @@ func TestMetadataRouteRejectsEngineAndIdentityTrustMismatchBeforeAdapterOrWorkfl
 			beforeInventory, _ := repository.DiscoveryInventory(cluster.ResourceID)
 			beforeWatermark, _ := repository.ObservationWatermark(cluster.ResourceID)
 			payload := map[string]interface{}{
-				"operation": map[string]interface{}{"engine": test.operationEngine, "kind": "metadata_reconciliation", "requested_by": "dba"}, "approval_token": "approved", "endpoint_id": endpoints[0].ResourceID,
+				"operation": map[string]interface{}{"engine": test.operationEngine, "cluster_id": test.operationClusterID, "kind": "metadata_reconciliation", "requested_by": "dba"}, "approval_token": "approved", "endpoint_id": endpoints[0].ResourceID,
 				"instance": map[string]interface{}{"resource_id": snapshot.Instances[0].ResourceID, "cluster_id": cluster.ResourceID, "engine": test.payloadEngine, "engine_identity": map[string]string{"server_uuid": test.serverUUID}, "hostname": "must-not-publish", "port": 4406},
 			}
 			response := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/metadata/reconcile/execute", payload)
@@ -351,7 +363,7 @@ func TestMetadataRouteRejectsEmptyActiveEndpointAddressAtomically(t *testing.T) 
 		t.Fatalf("create inventory: %v", err)
 	}
 	observedAt := time.Date(2026, time.July, 12, 16, 0, 0, 0, time.UTC)
-	snapshot, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{ClusterID: cluster.ResourceID, ObservedAt: observedAt, Observations: []store.DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: model.DatabaseInstance{ClusterID: cluster.ResourceID, Engine: model.EngineMySQL, EngineIdentity: model.EngineIdentity{"server_uuid": "empty-address-native"}, Hostname: "mysql-a", Port: 3306, Role: model.RolePrimary, Health: model.Health{State: model.HealthHealthy}}}}, Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}}})
+	snapshot, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{ClusterID: cluster.ResourceID, InventoryGeneration: testInventoryGeneration(t, repository, cluster.ResourceID), ObservedAt: observedAt, Observations: []store.DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: model.DatabaseInstance{ClusterID: cluster.ResourceID, Engine: model.EngineMySQL, EngineIdentity: model.EngineIdentity{"server_uuid": "empty-address-native"}, Hostname: "mysql-a", Port: 3306, Role: model.RolePrimary, Health: model.Health{State: model.HealthHealthy}}}}, Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}}})
 	if err != nil {
 		t.Fatalf("seed topology: %v", err)
 	}

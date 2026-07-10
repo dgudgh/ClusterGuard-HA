@@ -138,7 +138,7 @@ func TestRegisterClusterAndRefreshOnlyRegisteredInventory(t *testing.T) {
 			probes = append(probes, model.ProbeStatus{EndpointID: endpoint.ResourceID, Health: model.Health{State: model.HealthHealthy}})
 		}
 		return repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{
-			ClusterID: clusterID, Observations: observations, Probes: probes,
+			ClusterID: clusterID, InventoryGeneration: testInventoryGeneration(t, repository, clusterID), Observations: observations, Probes: probes,
 			Health: model.Health{State: model.HealthHealthy}, ObservedAt: time.Now().UTC(),
 		})
 	}
@@ -412,7 +412,7 @@ func seedCandidateTopology(t *testing.T, repository *store.Repository, primaryCo
 		probes = append(probes, model.ProbeStatus{EndpointID: endpoint.ResourceID, DiscoveryObservedAt: observedAt, Health: health})
 	}
 	snapshot, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{
-		ClusterID: cluster.ResourceID, Observations: observations, Probes: probes,
+		ClusterID: cluster.ResourceID, InventoryGeneration: testInventoryGeneration(t, repository, cluster.ResourceID), Observations: observations, Probes: probes,
 		Health: model.Health{State: model.HealthHealthy, ObservedAt: observedAt}, ObservedAt: observedAt,
 	})
 	if err != nil {
@@ -501,7 +501,8 @@ func TestCandidateReadRejectsRetainedPrimaryWithoutCurrentRoleEvidence(t *testin
 		Replication: model.ReplicationStatus{SourceIdentity: model.EngineIdentity{"server_uuid": "native-a"}, IOThread: model.ThreadRunning, SQLThread: model.ThreadRunning},
 	}
 	if _, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{
-		ClusterID: cluster.ResourceID,
+		ClusterID:           cluster.ResourceID,
+		InventoryGeneration: testInventoryGeneration(t, repository, cluster.ResourceID),
 		Observations: []store.DiscoveryObservation{
 			{EndpointID: endpoints[0].ResourceID, Instance: primary},
 			{EndpointID: endpoints[1].ResourceID, Instance: replica},
@@ -516,8 +517,9 @@ func TestCandidateReadRejectsRetainedPrimaryWithoutCurrentRoleEvidence(t *testin
 	}
 	secondObservedAt := observedAt.Add(time.Minute)
 	snapshot, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{
-		ClusterID:    cluster.ResourceID,
-		Observations: []store.DiscoveryObservation{{EndpointID: endpoints[1].ResourceID, Instance: replica}},
+		ClusterID:           cluster.ResourceID,
+		InventoryGeneration: testInventoryGeneration(t, repository, cluster.ResourceID),
+		Observations:        []store.DiscoveryObservation{{EndpointID: endpoints[1].ResourceID, Instance: replica}},
 		Probes: []model.ProbeStatus{
 			{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthUnknown}},
 			{EndpointID: endpoints[1].ResourceID, DiscoveryObservedAt: secondObservedAt, Health: model.Health{State: model.HealthHealthy}},
@@ -568,7 +570,8 @@ func TestTopologyAndCandidateReadsOverlayOnlyCanonicalMetadataCoordinatesAcrossR
 		Replication: model.ReplicationStatus{SourceIdentity: model.EngineIdentity{"server_uuid": "native-primary"}, IOThread: model.ThreadRunning, SQLThread: model.ThreadRunning},
 	}
 	initial, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{
-		ClusterID: cluster.ResourceID,
+		ClusterID:           cluster.ResourceID,
+		InventoryGeneration: testInventoryGeneration(t, repository, cluster.ResourceID),
 		Observations: []store.DiscoveryObservation{
 			{EndpointID: endpoints[0].ResourceID, Instance: primary},
 			{EndpointID: endpoints[1].ResourceID, Instance: replica},

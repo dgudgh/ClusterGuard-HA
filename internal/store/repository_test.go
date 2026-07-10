@@ -28,6 +28,15 @@ func mysqlInstance(clusterID model.ResourceID, hostname string, ipAddress string
 	}
 }
 
+func currentInventoryGeneration(t *testing.T, repository *Repository, clusterID model.ResourceID) uint64 {
+	t.Helper()
+	inventory, found := repository.DiscoveryInventory(clusterID)
+	if !found || inventory.Generation == 0 {
+		t.Fatalf("missing discovery inventory for %s: %+v found=%t", clusterID, inventory, found)
+	}
+	return inventory.Generation
+}
+
 func TestReconcileInstanceKeepsResourceIDWhenMySQLHostnameChanges(t *testing.T) {
 	repository := NewMemory()
 	clusterID := model.NewResourceID()
@@ -311,10 +320,11 @@ func TestUpsertClusterPersistenceFailurePublishesNeitherCreateNorUpdate(t *testi
 	instance := mysqlInstance(cluster.ResourceID, "mysql-a", "", 3306)
 	instance.Role = model.RolePrimary
 	if _, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{
-		ClusterID:    cluster.ResourceID,
-		Observations: []DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: instance}},
-		Probes:       []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, DiscoveryObservedAt: observedAt, Health: model.Health{State: model.HealthHealthy}}},
-		ObservedAt:   observedAt,
+		ClusterID:           cluster.ResourceID,
+		InventoryGeneration: currentInventoryGeneration(t, repository, cluster.ResourceID),
+		Observations:        []DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: instance}},
+		Probes:              []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, DiscoveryObservedAt: observedAt, Health: model.Health{State: model.HealthHealthy}}},
+		ObservedAt:          observedAt,
 	}); err != nil {
 		t.Fatalf("seed topology: %v", err)
 	}
@@ -780,7 +790,8 @@ func TestApplyDiscoveryRefreshDeduplicatesIdentityAndPublishesTopology(t *testin
 	}
 
 	snapshot, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{
-		ClusterID: cluster.ResourceID,
+		ClusterID:           cluster.ResourceID,
+		InventoryGeneration: currentInventoryGeneration(t, repository, cluster.ResourceID),
 		Observations: []DiscoveryObservation{
 			{EndpointID: first.ResourceID, Instance: primary, Metrics: samples},
 			{EndpointID: alias.ResourceID, Instance: aliasPrimary},
@@ -855,7 +866,8 @@ func TestApplyDiscoveryRefreshPersistenceFailureRollsBackAllRefreshState(t *test
 	replica.Replication.IOThread = model.ThreadRunning
 	replica.Replication.SQLThread = model.ThreadRunning
 	if _, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{
-		ClusterID: cluster.ResourceID,
+		ClusterID:           cluster.ResourceID,
+		InventoryGeneration: currentInventoryGeneration(t, repository, cluster.ResourceID),
 		Observations: []DiscoveryObservation{
 			{EndpointID: primaryEndpoint.ResourceID, Instance: primary, Metrics: []model.MetricSample{{ObservedAt: time.Unix(1, 0).UTC(), Values: map[string]float64{"qps": 1}}}},
 			{EndpointID: replicaEndpoint.ResourceID, Instance: replica},
@@ -883,7 +895,8 @@ func TestApplyDiscoveryRefreshPersistenceFailureRollsBackAllRefreshState(t *test
 	newReplica.Replication.IOThread = model.ThreadRunning
 	newReplica.Replication.SQLThread = model.ThreadRunning
 	_, err = repository.ApplyDiscoveryRefresh(DiscoveryRefresh{
-		ClusterID: cluster.ResourceID,
+		ClusterID:           cluster.ResourceID,
+		InventoryGeneration: currentInventoryGeneration(t, repository, cluster.ResourceID),
 		Observations: []DiscoveryObservation{
 			{EndpointID: primaryEndpoint.ResourceID, Instance: changedPrimary, Metrics: []model.MetricSample{{ObservedAt: time.Unix(2, 0).UTC(), Values: map[string]float64{"qps": 2}}}},
 			{EndpointID: newEndpoint.ResourceID, Instance: newReplica},
@@ -933,7 +946,8 @@ func TestDiscoverySnapshotPersistsCompleteInventoryTopologyAcrossRestart(t *test
 	}
 	firstObservedAt := time.Date(2026, time.July, 11, 10, 0, 0, 0, time.UTC)
 	first, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{
-		ClusterID: cluster.ResourceID,
+		ClusterID:           cluster.ResourceID,
+		InventoryGeneration: currentInventoryGeneration(t, repository, cluster.ResourceID),
 		Observations: []DiscoveryObservation{
 			{EndpointID: endpoints[0].ResourceID, Instance: primary},
 			{EndpointID: endpoints[1].ResourceID, Instance: replica},
@@ -958,7 +972,8 @@ func TestDiscoverySnapshotPersistsCompleteInventoryTopologyAcrossRestart(t *test
 
 	secondObservedAt := firstObservedAt.Add(time.Minute)
 	second, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{
-		ClusterID: cluster.ResourceID,
+		ClusterID:           cluster.ResourceID,
+		InventoryGeneration: currentInventoryGeneration(t, repository, cluster.ResourceID),
 		Observations: []DiscoveryObservation{{
 			EndpointID: endpoints[0].ResourceID,
 			Instance:   primary,
@@ -1021,8 +1036,9 @@ func TestApplyDiscoveryRefreshDerivesEvidenceFromSuccessfulObservations(t *testi
 	instance := mysqlInstance(cluster.ResourceID, "mysql-a", "", 3306)
 	instance.Role = model.RolePrimary
 	first, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{
-		ClusterID:    cluster.ResourceID,
-		Observations: []DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: instance}},
+		ClusterID:           cluster.ResourceID,
+		InventoryGeneration: currentInventoryGeneration(t, repository, cluster.ResourceID),
+		Observations:        []DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: instance}},
 		Probes: []model.ProbeStatus{{
 			EndpointID: endpoints[0].ResourceID, DiscoveryObservedAt: observedAt.Add(-time.Hour), MetricsObservedAt: observedAt.Add(-time.Hour),
 			Health: model.Health{State: model.HealthHealthy},
@@ -1038,7 +1054,8 @@ func TestApplyDiscoveryRefreshDerivesEvidenceFromSuccessfulObservations(t *testi
 
 	secondObservedAt := observedAt.Add(time.Minute)
 	second, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{
-		ClusterID: cluster.ResourceID,
+		ClusterID:           cluster.ResourceID,
+		InventoryGeneration: currentInventoryGeneration(t, repository, cluster.ResourceID),
 		Probes: []model.ProbeStatus{{
 			EndpointID: endpoints[0].ResourceID, DiscoveryObservedAt: secondObservedAt, MetricsObservedAt: secondObservedAt,
 			Health: model.Health{State: model.HealthUnknown},
@@ -1072,7 +1089,8 @@ func TestApplyDiscoveryRefreshRejectsEqualAndOlderObservationsAtomically(t *test
 		candidate := primary
 		candidate.EngineMetadata = map[string]string{"version": version}
 		return repository.ApplyDiscoveryRefresh(DiscoveryRefresh{
-			ClusterID: cluster.ResourceID,
+			ClusterID:           cluster.ResourceID,
+			InventoryGeneration: currentInventoryGeneration(t, repository, cluster.ResourceID),
 			Observations: []DiscoveryObservation{{
 				EndpointID: endpoints[0].ResourceID, Instance: candidate,
 				Metrics: []model.MetricSample{{ObservedAt: observedAt, Values: map[string]float64{"questions_total": float64(len(version))}}},
@@ -1181,6 +1199,24 @@ func TestDiscoveryWatermarkAndInventoryGenerationSurviveInvalidationAndRestart(t
 	}
 }
 
+func TestApplyDiscoveryRefreshRequiresExactNonzeroInventoryGeneration(t *testing.T) {
+	repository := NewMemory()
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "generation-required"}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true}})
+	if err != nil {
+		t.Fatalf("create inventory: %v", err)
+	}
+	instance := mysqlInstance(cluster.ResourceID, "mysql-a", "", 3306)
+	if _, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{ClusterID: cluster.ResourceID, ObservedAt: time.Now().UTC(), Observations: []DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: instance}}, Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}}}); !errors.Is(err, ErrInventoryChanged) {
+		t.Fatalf("zero inventory generation error = %v", err)
+	}
+	if _, found := repository.TopologySnapshot(cluster.ResourceID); found {
+		t.Fatal("zero inventory generation published topology")
+	}
+	if _, found := repository.ObservationWatermark(cluster.ResourceID); found {
+		t.Fatal("zero inventory generation advanced watermark")
+	}
+}
+
 func TestApplyDiscoveryRefreshDeduplicatesAliasMetricsPerResolvedInstance(t *testing.T) {
 	repository := NewMemory()
 	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "aliases"}, []model.Endpoint{
@@ -1204,7 +1240,7 @@ func TestApplyDiscoveryRefreshDeduplicatesAliasMetricsPerResolvedInstance(t *tes
 		valuesByEndpoint := map[model.ResourceID]float64{endpoints[0].ResourceID: higherValue, endpoints[1].ResourceID: higherValue}
 		valuesByEndpoint[selectedEndpoint] = lowerValue
 		snapshot, refreshErr := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{
-			ClusterID: cluster.ResourceID, ObservedAt: observedAt,
+			ClusterID: cluster.ResourceID, InventoryGeneration: currentInventoryGeneration(t, repository, cluster.ResourceID), ObservedAt: observedAt,
 			Observations: []DiscoveryObservation{
 				{EndpointID: endpoints[0].ResourceID, Instance: instance, Metrics: []model.MetricSample{{ObservedAt: observedAt, Values: complete(valuesByEndpoint[endpoints[0].ResourceID])}}},
 				{EndpointID: endpoints[1].ResourceID, Instance: instance, Metrics: []model.MetricSample{{ObservedAt: observedAt, Values: complete(valuesByEndpoint[endpoints[1].ResourceID])}}},
@@ -1256,8 +1292,9 @@ func TestTopologySnapshotOverlaysCanonicalCoordinatesButPreservesObservedRuntime
 	observed.Health = model.Health{State: model.HealthHealthy, ObservedAt: observedAt}
 	observed.PromotionEligible = true
 	first, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{
-		ClusterID:    cluster.ResourceID,
-		Observations: []DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: observed}},
+		ClusterID:           cluster.ResourceID,
+		InventoryGeneration: currentInventoryGeneration(t, repository, cluster.ResourceID),
+		Observations:        []DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: observed}},
 		Probes: []model.ProbeStatus{{
 			EndpointID: endpoints[0].ResourceID, DiscoveryObservedAt: observedAt,
 			Health: model.Health{State: model.HealthHealthy, ObservedAt: observedAt},
@@ -1382,10 +1419,11 @@ func TestActiveInventoryMutationInvalidatesPersistedTopologyAtomically(t *testin
 			instance := mysqlInstance(cluster.ResourceID, endpoints[0].Hostname, endpoints[0].IPAddress, endpoints[0].Port)
 			instance.Role = model.RolePrimary
 			if _, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{
-				ClusterID:    cluster.ResourceID,
-				Observations: []DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: instance}},
-				Probes:       []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, DiscoveryObservedAt: observedAt, Health: model.Health{State: model.HealthHealthy}}},
-				ObservedAt:   observedAt,
+				ClusterID:           cluster.ResourceID,
+				InventoryGeneration: currentInventoryGeneration(t, repository, cluster.ResourceID),
+				Observations:        []DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: instance}},
+				Probes:              []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, DiscoveryObservedAt: observedAt, Health: model.Health{State: model.HealthHealthy}}},
+				ObservedAt:          observedAt,
 			}); err != nil {
 				t.Fatalf("seed topology: %v", err)
 			}
@@ -1428,7 +1466,7 @@ func TestReconcileMetadataCoordinatesUpdatesBoundEndpointAndPreservesRuntimeFact
 	observed.Maintenance = true
 	observed.PromotionEligible = true
 	observed.EngineMetadata = map[string]string{"version": "8.4"}
-	snapshot, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{ClusterID: cluster.ResourceID, ObservedAt: time.Now().UTC(), Observations: []DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: observed}}, Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}}})
+	snapshot, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{ClusterID: cluster.ResourceID, InventoryGeneration: currentInventoryGeneration(t, repository, cluster.ResourceID), ObservedAt: time.Now().UTC(), Observations: []DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: observed}}, Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}}})
 	if err != nil {
 		t.Fatalf("publish topology: %v", err)
 	}
@@ -1479,7 +1517,7 @@ func TestReconcileMetadataCoordinatesUpdatesBoundEndpointAndPreservesRuntimeFact
 		t.Fatalf("metadata transaction not durable: instance=%+v endpoint=%+v", got, gotEndpoint)
 	}
 	failedAt := snapshot.ObservedAt.Add(time.Minute)
-	failed, err := reopened.ApplyDiscoveryRefresh(DiscoveryRefresh{ClusterID: cluster.ResourceID, ObservedAt: failedAt, Probes: []model.ProbeStatus{{EndpointID: endpoint.ResourceID, Health: model.Health{State: model.HealthUnknown}}}})
+	failed, err := reopened.ApplyDiscoveryRefresh(DiscoveryRefresh{ClusterID: cluster.ResourceID, InventoryGeneration: currentInventoryGeneration(t, reopened, cluster.ResourceID), ObservedAt: failedAt, Probes: []model.ProbeStatus{{EndpointID: endpoint.ResourceID, Health: model.Health{State: model.HealthUnknown}}}})
 	if err != nil {
 		t.Fatalf("publish failed discovery: %v", err)
 	}
@@ -1508,7 +1546,7 @@ func TestReconcileMetadataCoordinatesRequiresUnambiguousOwnedEndpointAndRollsBac
 	}
 	observedAt := time.Now().UTC()
 	observed := mysqlInstance(cluster.ResourceID, "mysql-a", "", 3306)
-	snapshot, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{ClusterID: cluster.ResourceID, ObservedAt: observedAt, Observations: []DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: observed}, {EndpointID: endpoints[1].ResourceID, Instance: observed}}, Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}, {EndpointID: endpoints[1].ResourceID, Health: model.Health{State: model.HealthHealthy}}}})
+	snapshot, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{ClusterID: cluster.ResourceID, InventoryGeneration: currentInventoryGeneration(t, repository, cluster.ResourceID), ObservedAt: observedAt, Observations: []DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: observed}, {EndpointID: endpoints[1].ResourceID, Instance: observed}}, Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}, {EndpointID: endpoints[1].ResourceID, Health: model.Health{State: model.HealthHealthy}}}})
 	if err != nil {
 		t.Fatalf("publish topology: %v", err)
 	}
@@ -1556,7 +1594,7 @@ func TestReconcileMetadataCoordinatesRejectsEngineAndNativeIdentityMismatchAtomi
 	}
 	observedAt := time.Date(2026, time.July, 12, 14, 0, 0, 0, time.UTC)
 	observed := mysqlInstance(cluster.ResourceID, "mysql-a", "", 3306)
-	snapshot, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{ClusterID: cluster.ResourceID, ObservedAt: observedAt, Observations: []DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: observed}}, Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}}})
+	snapshot, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{ClusterID: cluster.ResourceID, InventoryGeneration: currentInventoryGeneration(t, repository, cluster.ResourceID), ObservedAt: observedAt, Observations: []DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: observed}}, Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}}})
 	if err != nil {
 		t.Fatalf("publish topology: %v", err)
 	}
@@ -1611,10 +1649,11 @@ func TestActiveInventoryInvalidationRollsBackWhenPersistenceFails(t *testing.T) 
 	instance := mysqlInstance(cluster.ResourceID, "mysql-a", "", 3306)
 	instance.Role = model.RolePrimary
 	if _, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{
-		ClusterID:    cluster.ResourceID,
-		Observations: []DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: instance}},
-		Probes:       []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}},
-		ObservedAt:   observedAt,
+		ClusterID:           cluster.ResourceID,
+		InventoryGeneration: currentInventoryGeneration(t, repository, cluster.ResourceID),
+		Observations:        []DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: instance}},
+		Probes:              []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}},
+		ObservedAt:          observedAt,
 	}); err != nil {
 		t.Fatalf("seed topology: %v", err)
 	}
