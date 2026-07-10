@@ -34,11 +34,17 @@ func (resolve CredentialResolverFunc) Resolve(ctx context.Context, cluster model
 }
 
 type Service struct {
-	registry     *adapter.Registry
-	repository   *store.Repository
-	credentials  CredentialResolver
-	now          func() time.Time
-	clusterLocks sync.Map
+	registry       *adapter.Registry
+	repository     *store.Repository
+	credentials    CredentialResolver
+	now            func() time.Time
+	clusterLocksMu sync.Mutex
+	clusterLocks   map[model.ResourceID]*clusterLock
+}
+
+type clusterLock struct {
+	mutex      sync.Mutex
+	references int
 }
 
 func New(registry *adapter.Registry, repository *store.Repository, credentials CredentialResolver, clock func() time.Time) *Service {
@@ -46,10 +52,11 @@ func New(registry *adapter.Registry, repository *store.Repository, credentials C
 		clock = time.Now
 	}
 	return &Service{
-		registry:    registry,
-		repository:  repository,
-		credentials: credentials,
-		now:         clock,
+		registry:     registry,
+		repository:   repository,
+		credentials:  credentials,
+		now:          clock,
+		clusterLocks: make(map[model.ResourceID]*clusterLock),
 	}
 }
 
@@ -99,16 +106,22 @@ func (service *Service) Refresh(ctx context.Context, clusterID model.ResourceID)
 	credentialFailures := 0
 	databaseFailures := 0
 	metricFailures := 0
+	probes := make([]model.ProbeStatus, 0, len(probeResults))
 	for _, probe := range probeResults {
 		if probe.failure == probeUnsupported {
 			return model.TopologySnapshot{}, adapter.ErrUnsupported
 		}
+		status := model.ProbeStatus{EndpointID: probe.endpoint.ResourceID, InstanceID: probe.endpoint.InstanceID}
 		if probe.failure == probeCredentialsFailed {
 			credentialFailures++
+			status.Health = model.Health{State: model.HealthUnknown, Summary: credentialFailureSummary, ObservedAt: observedAt}
+			probes = append(probes, status)
 			continue
 		}
 		if probe.failure == probeDatabaseFailed {
 			databaseFailures++
+			status.Health = model.Health{State: model.HealthUnknown, Summary: databaseFailureSummary, ObservedAt: observedAt}
+			probes = append(probes, status)
 			continue
 		}
 		discovered := probe.discovery.Instance
@@ -127,7 +140,14 @@ func (service *Service) Refresh(ctx context.Context, clusterID model.ResourceID)
 		if probe.failure == probeMetricsFailed {
 			metricFailures++
 			metrics = nil
+			status.Health = model.Health{State: model.HealthDegraded, Summary: metricsFailureSummary, ObservedAt: observedAt}
+		} else {
+			status.Health = discovered.Health
+			if status.Health.ObservedAt.IsZero() {
+				status.Health.ObservedAt = observedAt
+			}
 		}
+		probes = append(probes, status)
 		observations = append(observations, store.DiscoveryObservation{
 			EndpointID: probe.endpoint.ResourceID,
 			Instance:   discovered,
@@ -151,47 +171,43 @@ func (service *Service) Refresh(ctx context.Context, clusterID model.ResourceID)
 			Message:   fmt.Sprintf("discovered %d writable primaries; no primary was selected", writablePrimaries),
 		})
 	}
+	health := discoveryHealth(observedAt, len(endpoints), credentialFailures, databaseFailures, metricFailures, writablePrimaries)
 	snapshot, err := service.repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{
 		ClusterID:    clusterID,
 		Observations: observations,
+		Probes:       probes,
+		Health:       health,
+		ObservedAt:   observedAt,
 		Anomalies:    anomalies,
 	})
 	if err != nil {
 		return model.TopologySnapshot{}, fmt.Errorf("apply discovery refresh: %w", err)
 	}
 
-	publishedProbes := make(map[model.ResourceID]model.ProbeStatus, len(snapshot.Probes))
-	for _, probe := range snapshot.Probes {
-		publishedProbes[probe.EndpointID] = probe
-	}
-	probes := make([]model.ProbeStatus, 0, len(probeResults))
-	for _, probe := range probeResults {
-		status := model.ProbeStatus{EndpointID: probe.endpoint.ResourceID, InstanceID: probe.endpoint.InstanceID}
-		switch probe.failure {
-		case probeCredentialsFailed:
-			status.Health = model.Health{State: model.HealthUnknown, Summary: credentialFailureSummary, ObservedAt: observedAt}
-		case probeDatabaseFailed:
-			status.Health = model.Health{State: model.HealthUnknown, Summary: databaseFailureSummary, ObservedAt: observedAt}
-		case probeMetricsFailed:
-			status = publishedProbes[probe.endpoint.ResourceID]
-			status.Health = model.Health{State: model.HealthDegraded, Summary: metricsFailureSummary, ObservedAt: observedAt}
-		default:
-			status = publishedProbes[probe.endpoint.ResourceID]
-		}
-		probes = append(probes, status)
-	}
-	snapshot.Probes = probes
-	snapshot.Health = discoveryHealth(observedAt, len(endpoints), credentialFailures, databaseFailures, metricFailures, writablePrimaries)
-	snapshot.ObservedAt = observedAt
 	sortSnapshotResources(snapshot.Instances, snapshot.Links, snapshot.Probes, snapshot.Anomalies)
 	return snapshot, nil
 }
 
 func (service *Service) lockCluster(clusterID model.ResourceID) func() {
-	value, _ := service.clusterLocks.LoadOrStore(clusterID, &sync.Mutex{})
-	lock := value.(*sync.Mutex)
-	lock.Lock()
-	return lock.Unlock
+	service.clusterLocksMu.Lock()
+	lock := service.clusterLocks[clusterID]
+	if lock == nil {
+		lock = &clusterLock{}
+		service.clusterLocks[clusterID] = lock
+	}
+	lock.references++
+	service.clusterLocksMu.Unlock()
+
+	lock.mutex.Lock()
+	return func() {
+		lock.mutex.Unlock()
+		service.clusterLocksMu.Lock()
+		lock.references--
+		if lock.references == 0 && service.clusterLocks[clusterID] == lock {
+			delete(service.clusterLocks, clusterID)
+		}
+		service.clusterLocksMu.Unlock()
+	}
 }
 
 func activeDatabaseEndpoints(endpoints []model.Endpoint) []model.Endpoint {

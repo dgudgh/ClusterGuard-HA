@@ -226,6 +226,39 @@ func TestCreateClusterWithEndpointsRejectsInvalidSetAtomically(t *testing.T) {
 	}
 }
 
+func TestCreateClusterWithEndpointsRejectsDuplicateNameAndGlobalDatabaseAddressAtomically(t *testing.T) {
+	repository := NewMemory()
+	first, _, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{
+		Engine: model.EngineMySQL, DisplayName: "Payments",
+	}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-a", IPAddress: "192.0.2.10", Port: 3306, Active: true}})
+	if err != nil {
+		t.Fatalf("create first cluster: %v", err)
+	}
+
+	duplicateNameID := model.NewResourceID()
+	if _, _, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{
+		ResourceMeta: model.ResourceMeta{ResourceID: duplicateNameID}, Engine: model.EngineMySQL, DisplayName: " payments ",
+	}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-b", Port: 3306, Active: true}}); err == nil {
+		t.Fatal("case-insensitive duplicate display name must fail")
+	}
+	if _, exists := repository.Cluster(duplicateNameID); exists || len(repository.Endpoints(duplicateNameID)) != 0 {
+		t.Fatal("duplicate display name published partial inventory")
+	}
+
+	duplicateAddressID := model.NewResourceID()
+	if _, _, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{
+		ResourceMeta: model.ResourceMeta{ResourceID: duplicateAddressID}, Engine: model.EngineMySQL, DisplayName: "reporting",
+	}, []model.Endpoint{{Kind: model.EndpointDatabase, IPAddress: "192.0.2.10", Port: 3306, Active: true}}); err == nil {
+		t.Fatal("database address already owned by another cluster must fail")
+	}
+	if _, exists := repository.Cluster(duplicateAddressID); exists || len(repository.Endpoints(duplicateAddressID)) != 0 {
+		t.Fatal("duplicate global endpoint published partial inventory")
+	}
+	if clusters := repository.Clusters(); len(clusters) != 1 || clusters[0].ResourceID != first.ResourceID {
+		t.Fatalf("failed registrations changed existing inventory: %+v", clusters)
+	}
+}
+
 func TestUpsertEndpointRejectsInvalidUnknownAndDuplicateActiveAddresses(t *testing.T) {
 	repository := NewMemory()
 	if _, err := repository.UpsertEndpoint(model.Endpoint{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true}); err == nil {
@@ -638,7 +671,14 @@ func TestApplyDiscoveryRefreshPersistenceFailureRollsBackAllRefreshState(t *test
 			{EndpointID: primaryEndpoint.ResourceID, Instance: primary, Metrics: []model.MetricSample{{ObservedAt: time.Unix(1, 0).UTC(), Values: map[string]float64{"qps": 1}}}},
 			{EndpointID: replicaEndpoint.ResourceID, Instance: replica},
 		},
-		Anomalies: []model.MetadataAnomaly{{Engine: model.EngineMySQL, Kind: "before", Severity: "warning"}},
+		Probes: []model.ProbeStatus{
+			{EndpointID: primaryEndpoint.ResourceID, Health: model.Health{State: model.HealthHealthy}},
+			{EndpointID: replicaEndpoint.ResourceID, Health: model.Health{State: model.HealthHealthy}},
+			{EndpointID: newEndpoint.ResourceID, Health: model.Health{State: model.HealthUnknown}},
+		},
+		Health:     model.Health{State: model.HealthDegraded, Summary: "before"},
+		ObservedAt: time.Unix(1, 0).UTC(),
+		Anomalies:  []model.MetadataAnomaly{{Engine: model.EngineMySQL, Kind: "before", Severity: "warning"}},
 	}); err != nil {
 		t.Fatalf("seed discovery refresh: %v", err)
 	}
@@ -659,7 +699,14 @@ func TestApplyDiscoveryRefreshPersistenceFailureRollsBackAllRefreshState(t *test
 			{EndpointID: primaryEndpoint.ResourceID, Instance: changedPrimary, Metrics: []model.MetricSample{{ObservedAt: time.Unix(2, 0).UTC(), Values: map[string]float64{"qps": 2}}}},
 			{EndpointID: newEndpoint.ResourceID, Instance: newReplica},
 		},
-		Anomalies: []model.MetadataAnomaly{{Engine: model.EngineMySQL, Kind: "after", Severity: "critical"}},
+		Probes: []model.ProbeStatus{
+			{EndpointID: primaryEndpoint.ResourceID, Health: model.Health{State: model.HealthDegraded}},
+			{EndpointID: replicaEndpoint.ResourceID, Health: model.Health{State: model.HealthUnknown}},
+			{EndpointID: newEndpoint.ResourceID, Health: model.Health{State: model.HealthHealthy}},
+		},
+		Health:     model.Health{State: model.HealthUnhealthy, Summary: "must-not-publish"},
+		ObservedAt: time.Unix(2, 0).UTC(),
+		Anomalies:  []model.MetadataAnomaly{{Engine: model.EngineMySQL, Kind: "after", Severity: "critical"}},
 	})
 	if err == nil {
 		t.Fatal("discovery refresh must fail when snapshot path is a directory")
@@ -670,21 +717,148 @@ func TestApplyDiscoveryRefreshPersistenceFailureRollsBackAllRefreshState(t *test
 	}
 }
 
+func TestDiscoverySnapshotPersistsCompleteInventoryTopologyAcrossRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metadata.json")
+	repository, err := Open(path)
+	if err != nil {
+		t.Fatalf("open repository: %v", err)
+	}
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{
+		Engine: model.EngineMySQL, DisplayName: "durable-topology",
+	}, []model.Endpoint{
+		{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true},
+		{Kind: model.EndpointDatabase, Hostname: "mysql-b", Port: 3306, Active: true},
+		{Kind: model.EndpointDatabase, Hostname: "mysql-never", Port: 3306, Active: true},
+	})
+	if err != nil {
+		t.Fatalf("create inventory: %v", err)
+	}
+	primary := mysqlInstance(cluster.ResourceID, endpoints[0].Hostname, "", endpoints[0].Port)
+	primary.EngineIdentity["server_uuid"] = "primary-native"
+	primary.Role = model.RolePrimary
+	replica := mysqlInstance(cluster.ResourceID, endpoints[1].Hostname, "", endpoints[1].Port)
+	replica.EngineIdentity["server_uuid"] = "replica-native"
+	replica.Replication = model.ReplicationStatus{
+		SourceIdentity: model.EngineIdentity{"server_uuid": "primary-native"},
+		IOThread:       model.ThreadRunning, SQLThread: model.ThreadRunning,
+	}
+	firstObservedAt := time.Date(2026, time.July, 11, 10, 0, 0, 0, time.UTC)
+	first, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{
+		ClusterID: cluster.ResourceID,
+		Observations: []DiscoveryObservation{
+			{EndpointID: endpoints[0].ResourceID, Instance: primary},
+			{EndpointID: endpoints[1].ResourceID, Instance: replica},
+		},
+		Probes: []model.ProbeStatus{
+			{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy, ObservedAt: firstObservedAt}},
+			{EndpointID: endpoints[1].ResourceID, Health: model.Health{State: model.HealthHealthy, ObservedAt: firstObservedAt}},
+			{EndpointID: endpoints[2].ResourceID, Health: model.Health{State: model.HealthUnknown, ObservedAt: firstObservedAt}},
+		},
+		Health:     model.Health{State: model.HealthDegraded, Summary: "one endpoint unavailable", ObservedAt: firstObservedAt},
+		ObservedAt: firstObservedAt,
+	})
+	if err != nil {
+		t.Fatalf("seed topology: %v", err)
+	}
+	if len(first.Links) != 1 {
+		t.Fatalf("seed topology link count = %d, want 1", len(first.Links))
+	}
+	firstProbes := probeStatusesByEndpoint(first.Probes)
+	replicaID := firstProbes[endpoints[1].ResourceID].InstanceID
+	linkID := first.Links[0].ResourceID
+
+	secondObservedAt := firstObservedAt.Add(time.Minute)
+	second, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{
+		ClusterID: cluster.ResourceID,
+		Observations: []DiscoveryObservation{{
+			EndpointID: endpoints[0].ResourceID,
+			Instance:   primary,
+			Metrics:    []model.MetricSample{{ObservedAt: secondObservedAt, Values: map[string]float64{"connections": 7}}},
+		}},
+		Probes: []model.ProbeStatus{
+			{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy, ObservedAt: secondObservedAt}},
+			{EndpointID: endpoints[1].ResourceID, Health: model.Health{State: model.HealthUnknown, Summary: "database probe unavailable", ObservedAt: secondObservedAt}},
+			{EndpointID: endpoints[2].ResourceID, Health: model.Health{State: model.HealthUnknown, Summary: "database probe unavailable", ObservedAt: secondObservedAt}},
+		},
+		Health:     model.Health{State: model.HealthDegraded, Summary: "database probe unavailable", ObservedAt: secondObservedAt},
+		ObservedAt: secondObservedAt,
+	})
+	if err != nil {
+		t.Fatalf("publish failed-member topology: %v", err)
+	}
+	if len(second.Instances) != 2 {
+		t.Fatalf("failed bound member disappeared from topology: %+v", second.Instances)
+	}
+	instances := instancesByID(second.Instances)
+	if instances[replicaID].Health.State != model.HealthUnknown || instances[replicaID].Health.ObservedAt != secondObservedAt {
+		t.Fatalf("failed member exposed stale health: %+v", instances[replicaID].Health)
+	}
+	secondProbes := probeStatusesByEndpoint(second.Probes)
+	if secondProbes[endpoints[1].ResourceID].InstanceID != replicaID {
+		t.Fatalf("failed bound endpoint lost stable instance UUID: %+v", secondProbes[endpoints[1].ResourceID])
+	}
+	if secondProbes[endpoints[2].ResourceID].InstanceID != "" {
+		t.Fatalf("never-successful endpoint invented instance UUID: %+v", secondProbes[endpoints[2].ResourceID])
+	}
+	if len(second.Links) != 1 || second.Links[0].ResourceID != linkID || second.Links[0].Healthy {
+		t.Fatalf("last-known relation was not retained as unhealthy: %+v", second.Links)
+	}
+
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen repository: %v", err)
+	}
+	persisted, found := reopened.TopologySnapshot(cluster.ResourceID)
+	if !found {
+		t.Fatal("reopened repository lost topology snapshot")
+	}
+	if !reflect.DeepEqual(persisted, second) {
+		t.Fatalf("topology snapshot changed across restart:\nwant=%+v\ngot=%+v", second, persisted)
+	}
+	if samples := reopened.MetricSamples(cluster.ResourceID); len(samples) != 1 || samples[0].InstanceID == "" {
+		t.Fatalf("topology metrics did not persist atomically: %+v", samples)
+	}
+}
+
 type storeDiscoveryState struct {
 	instances []model.DatabaseInstance
 	endpoints []model.Endpoint
 	links     []model.ReplicationLink
 	metrics   []model.MetricSample
 	anomalies []model.MetadataAnomaly
+	cluster   model.DatabaseCluster
+	topology  model.TopologySnapshot
+	found     bool
+}
+
+func probeStatusesByEndpoint(probes []model.ProbeStatus) map[model.ResourceID]model.ProbeStatus {
+	result := make(map[model.ResourceID]model.ProbeStatus, len(probes))
+	for _, probe := range probes {
+		result[probe.EndpointID] = probe
+	}
+	return result
+}
+
+func instancesByID(instances []model.DatabaseInstance) map[model.ResourceID]model.DatabaseInstance {
+	result := make(map[model.ResourceID]model.DatabaseInstance, len(instances))
+	for _, instance := range instances {
+		result[instance.ResourceID] = instance
+	}
+	return result
 }
 
 func captureStoreDiscoveryState(repository *Repository, clusterID model.ResourceID) storeDiscoveryState {
+	cluster, _ := repository.Cluster(clusterID)
+	topology, found := repository.TopologySnapshot(clusterID)
 	return storeDiscoveryState{
 		instances: repository.Instances(clusterID),
 		endpoints: repository.Endpoints(clusterID),
 		links:     repository.ReplicationLinks(clusterID),
 		metrics:   repository.MetricSamples(clusterID),
 		anomalies: anomaliesForCluster(repository.Anomalies(), clusterID),
+		cluster:   cluster,
+		topology:  topology,
+		found:     found,
 	}
 }
 

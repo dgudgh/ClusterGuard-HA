@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"clusterguard.io/ha/adapters/mysql"
@@ -20,6 +21,29 @@ import (
 )
 
 type apiRunner struct{}
+
+type fakeRefresher struct {
+	mu      sync.Mutex
+	calls   []model.ResourceID
+	refresh func(context.Context, model.ResourceID) (model.TopologySnapshot, error)
+}
+
+func (refresher *fakeRefresher) Refresh(ctx context.Context, clusterID model.ResourceID) (model.TopologySnapshot, error) {
+	refresher.mu.Lock()
+	refresher.calls = append(refresher.calls, clusterID)
+	callback := refresher.refresh
+	refresher.mu.Unlock()
+	if callback == nil {
+		return model.TopologySnapshot{}, nil
+	}
+	return callback(ctx, clusterID)
+}
+
+func (refresher *fakeRefresher) callCount() int {
+	refresher.mu.Lock()
+	defer refresher.mu.Unlock()
+	return len(refresher.calls)
+}
 
 func (apiRunner) Query(_ context.Context, _ adapter.Endpoint, _ adapter.Credentials, query string) ([]mysql.Row, error) {
 	if strings.HasPrefix(query, "SELECT") {
@@ -41,7 +65,7 @@ func newTestServer(t *testing.T) (*Server, *store.Repository) {
 	}
 	repository := store.NewMemory()
 	service := workflow.New(registry, workflow.AllowAllSafety{}, workflow.NewMemoryLocks(), workflow.TokenApproval{}, repository)
-	return NewServer(registry, repository, service), repository
+	return NewServer(registry, repository, service, &fakeRefresher{}), repository
 }
 
 func callJSON(t *testing.T, handler http.Handler, method string, path string, body interface{}) *httptest.ResponseRecorder {
@@ -74,22 +98,16 @@ func TestEnginesEndpointListsAllRegisteredEngines(t *testing.T) {
 	}
 }
 
-func TestDiscoveryEndpointReconcilesMySQLInstance(t *testing.T) {
-	server, repository := newTestServer(t)
-	clusterID := model.NewResourceID()
-	payload := map[string]interface{}{
-		"engine":      "mysql",
-		"cluster_id":  clusterID,
-		"endpoint":    map[string]interface{}{"hostname": "mysql-old", "ip_address": "192.0.2.10", "port": 3306},
-		"credentials": map[string]string{"username": "monitor", "password": "hidden"},
+func TestDirectDiscoveryRouteIsRemoved(t *testing.T) {
+	server, _ := newTestServer(t)
+	response := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/discovery", map[string]interface{}{
+		"credentials": map[string]string{"username": "monitor", "password": "hidden-secret"},
+	})
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("direct discovery status: %d %s", response.Code, response.Body.String())
 	}
-	response := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/discovery", payload)
-	if response.Code != http.StatusOK {
-		t.Fatalf("discover status: %d %s", response.Code, response.Body.String())
-	}
-	instances := repository.Instances(clusterID)
-	if len(instances) != 1 || instances[0].EngineIdentity["server_uuid"] != "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" {
-		t.Fatalf("discovery was not reconciled: %+v", instances)
+	if strings.Contains(response.Body.String(), "hidden-secret") {
+		t.Fatalf("direct discovery error exposed request secret: %s", response.Body.String())
 	}
 }
 
@@ -107,16 +125,27 @@ func TestExecuteEndpointFailsClosedWhenMutationIsUnsupported(t *testing.T) {
 
 func TestClusterTopologyAndHealthEndpointsUsePlatformResourceIDs(t *testing.T) {
 	server, repository := newTestServer(t)
-	clusterID := model.NewResourceID()
-	if _, err := repository.ReconcileInstance(model.DatabaseInstance{
-		ClusterID: clusterID, Engine: model.EngineMySQL, EngineIdentity: model.EngineIdentity{"server_uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},
-		DisplayName: "mysql-a", Hostname: "mysql-a", IPAddress: "192.0.2.10", Port: 3306, Role: model.RolePrimary, Health: model.Health{State: model.HealthHealthy},
-	}); err != nil {
-		t.Fatalf("seed instance: %v", err)
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "platform-ids"}, []model.Endpoint{
+		{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true},
+	})
+	if err != nil {
+		t.Fatalf("create inventory: %v", err)
 	}
-	for _, path := range []string{"/api/v1/clusters/" + string(clusterID) + "/topology", "/api/v1/clusters/" + string(clusterID) + "/health"} {
+	snapshot, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{
+		ClusterID: cluster.ResourceID,
+		Observations: []store.DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: model.DatabaseInstance{
+			ClusterID: cluster.ResourceID, Engine: model.EngineMySQL, EngineIdentity: model.EngineIdentity{"server_uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},
+			DisplayName: "mysql-a", Hostname: "mysql-a", IPAddress: "192.0.2.10", Port: 3306, Role: model.RolePrimary, Health: model.Health{State: model.HealthHealthy},
+		}}},
+		Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}},
+		Health: model.Health{State: model.HealthHealthy},
+	})
+	if err != nil {
+		t.Fatalf("seed topology: %v", err)
+	}
+	for _, path := range []string{"/api/v1/clusters/" + string(cluster.ResourceID) + "/topology", "/api/v1/clusters/" + string(cluster.ResourceID) + "/health"} {
 		response := callJSON(t, server.Handler(), http.MethodGet, path, nil)
-		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), string(clusterID)) {
+		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), string(cluster.ResourceID)) || !strings.Contains(response.Body.String(), string(snapshot.Instances[0].ResourceID)) {
 			t.Fatalf("endpoint %s: %d %s", path, response.Code, response.Body.String())
 		}
 	}

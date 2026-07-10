@@ -322,11 +322,14 @@ func TestRefreshRepresentsFirstAndKnownProbeFailuresWithoutInventingInstancesOrL
 		t.Fatalf("failed-probe refresh: %v", err)
 	}
 	secondProbes := probesByEndpoint(second.Probes)
-	if len(second.Instances) != 0 || len(second.Links) != 0 {
-		t.Fatalf("failed probes retained or invented current topology: %+v", second)
+	if len(second.Instances) != 1 || len(second.Links) != 0 {
+		t.Fatalf("failed bound member disappeared or invented a relation: %+v", second)
 	}
 	if secondProbes[known.ResourceID].InstanceID != knownID || secondProbes[known.ResourceID].Health.State != model.HealthUnknown {
 		t.Fatalf("known failed probe lost its UUID or health state: %+v", secondProbes[known.ResourceID])
+	}
+	if second.Instances[0].ResourceID != knownID || second.Instances[0].Health.State != model.HealthUnknown {
+		t.Fatalf("failed bound member exposed stale topology health: %+v", second.Instances)
 	}
 	if secondProbes[never.ResourceID].InstanceID != "" || len(repository.Instances(cluster.ResourceID)) != 1 {
 		t.Fatalf("failed probes changed durable instance identity: probes=%+v instances=%+v", second.Probes, repository.Instances(cluster.ResourceID))
@@ -340,6 +343,56 @@ func TestRefreshRepresentsFirstAndKnownProbeFailuresWithoutInventingInstancesOrL
 	thirdProbe := probesByEndpoint(third.Probes)[known.ResourceID]
 	if thirdProbe.InstanceID != knownID || thirdProbe.Health.State != model.HealthHealthy {
 		t.Fatalf("recovered endpoint did not resume its stable identity: %+v", thirdProbe)
+	}
+}
+
+func TestRefreshRetainsFailedMemberRelationAsUnhealthyUntilSuccessfulObservationUpdatesIt(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "relation-failure"})
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	primaryEndpoint := addEndpoint(t, repository, cluster.ResourceID, "mysql-a", 3306, model.EndpointDatabase, true)
+	replicaEndpoint := addEndpoint(t, repository, cluster.ResourceID, "mysql-b", 3307, model.EndpointDatabase, true)
+	candidate := newFakeAdapter()
+	candidate.results[primaryEndpoint.Hostname] = discoveredInstance(primaryEndpoint.Hostname, primaryEndpoint.Port, "native-a", model.RolePrimary, "")
+	candidate.results[replicaEndpoint.Hostname] = discoveredInstance(replicaEndpoint.Hostname, replicaEndpoint.Port, "native-b", model.RoleReplica, "native-a")
+	service := newTestService(t, repository, candidate)
+
+	first, err := service.Refresh(context.Background(), cluster.ResourceID)
+	if err != nil {
+		t.Fatalf("first refresh: %v", err)
+	}
+	if len(first.Links) != 1 || !first.Links[0].Healthy {
+		t.Fatalf("initial relation was not healthy: %+v", first.Links)
+	}
+	linkID := first.Links[0].ResourceID
+	replicaID := probesByEndpoint(first.Probes)[replicaEndpoint.ResourceID].InstanceID
+
+	candidate.setFailure(replicaEndpoint.Hostname, errors.New("temporarily unavailable"))
+	second, err := service.Refresh(context.Background(), cluster.ResourceID)
+	if err != nil {
+		t.Fatalf("failed-member refresh: %v", err)
+	}
+	if len(second.Instances) != 2 || len(second.Links) != 1 || second.Links[0].ResourceID != linkID || second.Links[0].Healthy {
+		t.Fatalf("failed member relation was not retained as unhealthy: %+v", second)
+	}
+	instances := make(map[model.ResourceID]model.DatabaseInstance, len(second.Instances))
+	for _, instance := range second.Instances {
+		instances[instance.ResourceID] = instance
+	}
+	if instances[replicaID].Health.State != model.HealthUnknown {
+		t.Fatalf("failed replica retained stale health: %+v", instances[replicaID])
+	}
+
+	candidate.setFailure(replicaEndpoint.Hostname, nil)
+	candidate.results[replicaEndpoint.Hostname] = discoveredInstance(replicaEndpoint.Hostname, replicaEndpoint.Port, "native-b", model.RoleReplica, "")
+	third, err := service.Refresh(context.Background(), cluster.ResourceID)
+	if err != nil {
+		t.Fatalf("relation update refresh: %v", err)
+	}
+	if len(third.Links) != 0 {
+		t.Fatalf("successful observation did not replace the old relation: %+v", third.Links)
 	}
 }
 
@@ -639,6 +692,20 @@ func TestRefreshSerializesSameClusterWhileDifferentClustersProceed(t *testing.T)
 	}
 	if err := <-queuedSameCluster; err != nil {
 		t.Fatalf("queued same-cluster refresh: %v", err)
+	}
+}
+
+func TestRefreshEvictsClusterLocksForArbitraryUnknownIDs(t *testing.T) {
+	service := newTestService(t, store.NewMemory(), newFakeAdapter())
+	for index := 0; index < 256; index++ {
+		if _, err := service.Refresh(context.Background(), model.NewResourceID()); err == nil {
+			t.Fatal("unknown inventory cluster refresh must fail")
+		}
+	}
+	service.clusterLocksMu.Lock()
+	defer service.clusterLocksMu.Unlock()
+	if len(service.clusterLocks) != 0 {
+		t.Fatalf("unknown cluster IDs leaked %d lock entries", len(service.clusterLocks))
 	}
 }
 

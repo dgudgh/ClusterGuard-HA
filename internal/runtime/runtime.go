@@ -2,6 +2,7 @@
 package runtime
 
 import (
+	"context"
 	"fmt"
 
 	"clusterguard.io/ha/adapters/mysql"
@@ -10,9 +11,11 @@ import (
 	"clusterguard.io/ha/adapters/sqlserver"
 	"clusterguard.io/ha/internal/api"
 	"clusterguard.io/ha/internal/config"
+	"clusterguard.io/ha/internal/discovery"
 	"clusterguard.io/ha/internal/store"
 	"clusterguard.io/ha/internal/workflow"
 	"clusterguard.io/ha/pkg/adapter"
+	"clusterguard.io/ha/pkg/model"
 )
 
 func New(configuration config.File) (*api.Server, error) {
@@ -38,5 +41,11 @@ func New(configuration config.File) (*api.Server, error) {
 		workflow.TokenApproval{ExpectedToken: configuration.ApprovalToken},
 		repository,
 	)
-	return api.NewServer(registry, repository, service), nil
+	refresher := discovery.New(registry, repository, discovery.CredentialResolverFunc(func(context.Context, model.DatabaseCluster, model.Endpoint) (adapter.Credentials, error) {
+		if !configuration.MySQL.Enabled {
+			return adapter.Credentials{}, fmt.Errorf("MySQL discovery credentials are not configured")
+		}
+		return adapter.Credentials{Username: configuration.MySQL.Username, Password: configuration.MySQL.Password}, nil
+	}), nil)
+	return api.NewServer(registry, repository, service, refresher), nil
 }

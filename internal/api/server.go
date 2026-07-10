@@ -14,13 +14,18 @@ import (
 )
 
 type Server struct {
-	registry *adapter.Registry
-	store    *store.Repository
-	workflow *workflow.Service
+	registry  *adapter.Registry
+	store     *store.Repository
+	workflow  *workflow.Service
+	refresher Refresher
 }
 
-func NewServer(registry *adapter.Registry, repository *store.Repository, service *workflow.Service) *Server {
-	return &Server{registry: registry, store: repository, workflow: service}
+type Refresher interface {
+	Refresh(context.Context, model.ResourceID) (model.TopologySnapshot, error)
+}
+
+func NewServer(registry *adapter.Registry, repository *store.Repository, service *workflow.Service, refresher Refresher) *Server {
+	return &Server{registry: registry, store: repository, workflow: service, refresher: refresher}
 }
 
 func writeJSON(writer http.ResponseWriter, status int, value interface{}) {
@@ -58,8 +63,8 @@ func (server *Server) route(writer http.ResponseWriter, request *http.Request) {
 		server.capabilities(writer)
 	case request.Method == http.MethodGet && path == "/api/v1/clusters":
 		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": server.store.Clusters()})
-	case request.Method == http.MethodPost && path == "/api/v1/discovery":
-		server.discovery(writer, request)
+	case request.Method == http.MethodPost && path == "/api/v1/clusters":
+		server.registerCluster(writer, request)
 	case request.Method == http.MethodGet && path == "/api/v1/metadata/anomalies":
 		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": server.store.Anomalies()})
 	case strings.HasPrefix(path, "/api/v1/clusters/"):
@@ -86,92 +91,6 @@ func (server *Server) engines(writer http.ResponseWriter) {
 
 func (server *Server) capabilities(writer http.ResponseWriter) {
 	server.engines(writer)
-}
-
-type discoveryPayload struct {
-	Engine      model.Engine     `json:"engine"`
-	ClusterID   model.ResourceID `json:"cluster_id"`
-	Endpoint    adapter.Endpoint `json:"endpoint"`
-	Credentials struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-	} `json:"credentials"`
-}
-
-func (server *Server) discovery(writer http.ResponseWriter, request *http.Request) {
-	payload := discoveryPayload{}
-	if err := decode(request, &payload); err != nil {
-		writeError(writer, http.StatusBadRequest, err.Error())
-		return
-	}
-	candidate, ok := server.registry.Get(payload.Engine)
-	if !ok || !candidate.Capabilities(request.Context()).Supports(adapter.CapabilityDiscover) {
-		server.unsupported(writer, "discovery is unsupported for this engine")
-		return
-	}
-	result, err := candidate.Discover(request.Context(), adapter.DiscoverRequest{
-		ClusterID: payload.ClusterID,
-		Endpoint:  payload.Endpoint,
-		Credentials: adapter.Credentials{
-			Username: payload.Credentials.Username,
-			Password: payload.Credentials.Password,
-		},
-	})
-	if err != nil {
-		writeError(writer, http.StatusBadGateway, err.Error())
-		return
-	}
-	reconciled, err := server.store.ReconcileInstance(result.Instance)
-	if err != nil {
-		writeError(writer, http.StatusConflict, err.Error())
-		return
-	}
-	writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": reconciled})
-}
-
-func (server *Server) clusterRoute(writer http.ResponseWriter, request *http.Request, suffix string) {
-	parts := strings.Split(suffix, "/")
-	if len(parts) == 0 || parts[0] == "" {
-		writeError(writer, http.StatusNotFound, "cluster not found")
-		return
-	}
-	clusterID := model.ResourceID(parts[0])
-	instances := server.store.Instances(clusterID)
-	if request.Method != http.MethodGet {
-		writeError(writer, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	if len(parts) == 1 {
-		cluster, found := server.store.Cluster(clusterID)
-		if !found && len(instances) == 0 {
-			writeError(writer, http.StatusNotFound, "cluster not found")
-			return
-		}
-		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": map[string]interface{}{"cluster": cluster, "instances": instances}})
-		return
-	}
-	switch parts[1] {
-	case "topology":
-		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": map[string]interface{}{"cluster_id": clusterID, "instances": instances}})
-	case "health":
-		healthy := 0
-		for _, instance := range instances {
-			if instance.Health.State == model.HealthHealthy {
-				healthy++
-			}
-		}
-		state := model.HealthUnknown
-		if len(instances) > 0 && healthy == len(instances) {
-			state = model.HealthHealthy
-		} else if healthy > 0 {
-			state = model.HealthDegraded
-		} else if len(instances) > 0 {
-			state = model.HealthUnhealthy
-		}
-		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": map[string]interface{}{"cluster_id": clusterID, "state": state, "instance_count": len(instances), "healthy_instances": healthy}})
-	default:
-		writeError(writer, http.StatusNotFound, "cluster route not found")
-	}
 }
 
 type operationPayload struct {
