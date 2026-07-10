@@ -1,38 +1,154 @@
 # ClusterGuard HA Architecture
 
-## Control Layers
+## Design Goals
 
-1. **API and Console** expose engine-neutral resources and workflows.
-2. **Workflow Core** enforces precheck, plan, lock, approval, execution,
-   verification, audit, and reporting in one state machine.
-3. **Adapter SDK** defines engine capabilities and all database-specific calls.
-4. **Metadata Core** owns stable resource identities, mutable endpoints, aliases,
-   anomaly detection, and revisioned reconciliation.
-5. **Persistence** stores platform resources and workflow records through an
-   engine-neutral repository contract.
+ClusterGuard HA is a database-neutral control plane with engine-specific
+adapters. Platform identity, inventory authority, workflow gates, persistence,
+API behavior, audit, and reports belong to the control kernel. Database
+protocol details belong to adapters.
 
-Adapters cannot acquire locks, issue approvals, or suppress verification and
-audit. Mutating adapter methods are called only by the workflow core.
+The current release enables MySQL read-only discovery, health, metrics, and
+candidate evaluation. PostgreSQL, Oracle, and SQL Server are registered through
+the same adapter contract and remain unsupported skeletons until their
+read-only implementations are complete.
 
-## Identity Rules
+## Resource Model
 
-- Every managed resource has an immutable platform UUID.
-- Hostname, IP address, and port are endpoint attributes and may change.
-- MySQL instance identity is `server_uuid`.
-- PostgreSQL cluster identity is `system_identifier`; a node keeps its platform
-  UUID across endpoint changes.
-- Oracle database identity is `DBID + DB_UNIQUE_NAME`; RAC instances are modeled
-  separately.
-- SQL Server availability-group identity is `group_id`; replica identity is
-  `replica_id`.
-- A rediscovered engine identity reuses the existing resource UUID and records
-  prior endpoints as aliases.
+Every durable resource has an immutable platform UUID and revision metadata.
+The main resources are:
 
-## Workflow
+| Resource | Responsibility |
+| --- | --- |
+| `Platform` | Top-level administrative boundary. |
+| `Controller` | Control-plane member and service endpoint. |
+| `DatabaseCluster` | Engine, display name, cluster identity, and aggregate health. |
+| `DatabaseNode` | Host-level placement independent of database process identity. |
+| `DatabaseInstance` | Engine-native database process identity and observed runtime state. |
+| `Endpoint` | Mutable hostname, IP, port, and endpoint kind. |
+| `EndpointAlias` | Historical or alternate coordinates for an endpoint. |
+| `ReplicationLink` | Source-to-target relationship, lag, and link health. |
+| `HAEndpoint` | Desired owner and health of a VIP, listener, or service endpoint. |
+| `Operation` / `OperationPlan` | Requested intent and immutable execution plan. |
+| `Execution` / `Verification` | Execution result and postcondition evidence. |
+| `AuditEvent` / `Report` | Durable operator trace and human-readable outcome. |
+
+`resource_id` is the stable reference used by APIs, persistence, links, metrics,
+and workflows. Hostname, IP address, port, display name, and aliases can change
+without creating a new database instance.
+
+## Engine Identity
+
+Native identity binds observations to the stable platform resource:
+
+| Engine | Native identity contract |
+| --- | --- |
+| MySQL | Instance identity is `server_uuid`; hostname and port are endpoints. |
+| PostgreSQL | Cluster identity will use `system_identifier`; node identity remains a platform UUID. |
+| Oracle | Database identity will use `DBID + DB_UNIQUE_NAME`; RAC instances are separate resources. |
+| SQL Server | Availability-group identity will use `group_id`; replica identity will use `replica_id`. |
+
+When MySQL discovery sees a known `server_uuid` at new coordinates, the
+existing resource UUID is retained. Previous coordinates become aliases.
+Conflicting native identities, duplicate active endpoint ownership, and
+ambiguous alias updates are blocked instead of merged heuristically.
+
+## Adapter Registry
+
+`DatabaseHAAdapter` defines engine, capability, discovery, topology, health,
+precheck, plan, execute, verify, node synchronization, metadata reconciliation,
+metrics, and candidate methods. The registry exposes a uniform capability map
+for all four engines.
+
+Capabilities are explicit. An unavailable capability returns `unsupported`;
+there is no fallback that guesses an engine behavior. The MySQL adapter enables
+read-only discovery, health, metrics, candidate evaluation, and platform
+metadata reconciliation. Its role-changing and node-changing methods remain
+unsupported. The other three adapters currently return unsupported for every
+database operation.
+
+## Inventory Authority
+
+Cluster registration creates the authoritative set of active database
+endpoints. Discovery receives only a cluster UUID and probes that registered
+inventory with server-side credentials. A caller cannot add an endpoint or
+supply credentials in a refresh request.
+
+Each cluster has a durable inventory generation. Any active database endpoint
+change or metadata-coordinate reconciliation increments the generation and
+invalidates the published topology. A refresh captures the generation before
+probing and must commit against that exact nonzero generation. If inventory
+changes while the probes are in flight, the complete refresh is rejected.
+
+## Refresh Transaction
+
+A MySQL refresh follows this sequence:
+
+1. Resolve the cluster and its active registered database endpoints.
+2. Capture the exact inventory generation and serialize refreshes per cluster.
+3. Probe every endpoint with server-side read-only credentials.
+4. Reconcile observations by MySQL `server_uuid`, preserving platform UUIDs and aliases.
+5. Build instances, replication links, probe coverage, health, anomalies, and metric samples.
+6. Atomically persist the complete observation and publish one topology snapshot.
+
+The repository keeps a durable observation-time watermark. A refresh must be
+strictly newer than that watermark; equal or older observations are rejected.
+The watermark and inventory generation survive topology invalidation and
+process restart. Persistence failure rolls back the whole refresh, so readers
+never see a mixture of old links and new instances.
+
+Multiple registered aliases may resolve to one instance. Their observations
+share one platform UUID, and metrics persistence selects one deterministic,
+complete sample for the resolved instance in each cycle.
+
+## Candidate Intelligence
+
+Candidate assessment uses only the latest persisted complete topology and
+explicit probe evidence. It requires exactly one currently observed primary.
+Each replica is evaluated for:
+
+- selected-cluster inventory membership and healthy bound probe evidence;
+- reachability and observed role;
+- maintenance state and promotion eligibility;
+- replication IO and SQL thread state;
+- replication source identity matching the current primary;
+- known, nonnegative lag within the configured policy;
+- GTID mode and parseable executed sets;
+- errant transactions and missing transactions/data-loss risk;
+- compatible MySQL release family.
+
+Blocking evidence produces an ineligible candidate. Warnings, missing
+transaction count, lag, exact-version preference, and platform UUID provide a
+deterministic ordering among eligible candidates. Candidate output is advisory
+and cannot execute a promotion.
+
+## Metrics
+
+MySQL discovery stores bounded cumulative and gauge samples. The metrics layer
+derives QPS, TPS, slow queries per second, current connections, running threads,
+buffer-pool hit ratio, and replication lag. It publishes:
+
+- JSON from `/api/v1/clusters/{id}/metrics`;
+- Prometheus text from `/api/v1/clusters/{id}/metrics/prometheus`.
+
+The Prometheus endpoint uses stable `cluster_id` and `instance_id` labels and
+can be scraped directly. ClusterGuard HA has no third-party monitoring runtime
+dependency.
+
+## Workflow Gates
+
+All future database mutations must use:
 
 ```text
 DISCOVER -> PRECHECK -> PLAN -> LOCK -> APPROVE -> EXECUTE -> VERIFY -> AUDIT -> REPORT
 ```
 
-Unsupported capabilities fail closed before lock acquisition. Execution cannot
-be reported successful without a verification record and an audit event.
+Adapters cannot acquire a platform lock, approve an operation, suppress audit,
+or skip verification. The workflow core checks capability support before any
+gate or adapter mutation. In this release, switchover, failover, HA endpoint
+mutation, replication repair, node synchronization, and node lifecycle
+execution return HTTP `501` and do not invoke a mutating adapter method.
+
+Platform metadata reconciliation is distinct from a database mutation. It may
+update a known resource's mutable coordinates after native identity validation,
+records old coordinates as aliases, advances inventory generation, and forces
+a fresh observation before topology is trusted again.
