@@ -20,6 +20,20 @@ type ReconcileResult struct {
 	Updated  bool                   `json:"updated"`
 }
 
+type DiscoveryObservation struct {
+	EndpointID model.ResourceID
+	Instance   model.DatabaseInstance
+	Metrics    []model.MetricSample
+}
+
+type DiscoveryRefresh struct {
+	ClusterID    model.ResourceID
+	Observations []DiscoveryObservation
+	Anomalies    []model.MetadataAnomaly
+}
+
+const discoveryMetricSampleLimit = 60
+
 type snapshot struct {
 	Clusters         map[model.ResourceID]model.DatabaseCluster               `json:"clusters"`
 	Instances        map[model.ResourceID]model.DatabaseInstance              `json:"instances"`
@@ -175,6 +189,16 @@ func cloneAnomalyMap(anomalies map[model.ResourceID]model.MetadataAnomaly) map[m
 	for resourceID, anomaly := range anomalies {
 		copy[resourceID] = anomaly
 	}
+	return copy
+}
+
+func cloneDiscoverySnapshot(value snapshot) snapshot {
+	copy := value
+	copy.Instances = cloneInstanceMap(value.Instances)
+	copy.Endpoints = cloneEndpointMap(value.Endpoints)
+	copy.ReplicationLinks = cloneReplicationLinkMap(value.ReplicationLinks)
+	copy.MetricSamples = cloneMetricSampleMap(value.MetricSamples)
+	copy.Anomalies = cloneAnomalyMap(value.Anomalies)
 	return copy
 }
 
@@ -626,7 +650,7 @@ func endpointCollision(left model.DatabaseInstance, right model.DatabaseInstance
 	return false
 }
 
-func (repository *Repository) ReconcileInstance(discovered model.DatabaseInstance) (ReconcileResult, error) {
+func reconcileInstanceCandidate(candidate *snapshot, discovered model.DatabaseInstance, now time.Time) (ReconcileResult, error) {
 	if discovered.ClusterID == "" {
 		return ReconcileResult{}, fmt.Errorf("cluster ID is required")
 	}
@@ -641,10 +665,8 @@ func (repository *Repository) ReconcileInstance(discovered model.DatabaseInstanc
 		return ReconcileResult{}, err
 	}
 
-	repository.mu.Lock()
-	defer repository.mu.Unlock()
 	var existingID model.ResourceID
-	for resourceID, existing := range repository.snapshot.Instances {
+	for resourceID, existing := range candidate.Instances {
 		existingKey, keyErr := identity.InstanceKey(existing.Engine, existing.EngineIdentity)
 		if keyErr == nil && existingKey == key {
 			existingID = resourceID
@@ -654,16 +676,12 @@ func (repository *Repository) ReconcileInstance(discovered model.DatabaseInstanc
 			break
 		}
 	}
-	for resourceID, existing := range repository.snapshot.Instances {
+	for resourceID, existing := range candidate.Instances {
 		if resourceID != existingID && existing.ClusterID == discovered.ClusterID && endpointCollision(existing, discovered) {
 			return ReconcileResult{}, fmt.Errorf("endpoint is already owned by resource %s", resourceID)
 		}
 	}
 
-	now := repository.now().UTC()
-	next := repository.snapshot
-	next.Instances = cloneInstanceMap(repository.snapshot.Instances)
-	result := ReconcileResult{}
 	if existingID == "" {
 		discovered.ResourceID = model.NewResourceID()
 		discovered.MetadataRevision = 1
@@ -672,51 +690,292 @@ func (repository *Repository) ReconcileInstance(discovered model.DatabaseInstanc
 		if discovered.DisplayName == "" {
 			discovered.DisplayName = discovered.Hostname
 		}
-		next.Instances[discovered.ResourceID] = cloneInstance(discovered)
-		result = ReconcileResult{Instance: cloneInstance(discovered), Created: true}
-	} else {
-		existing := next.Instances[existingID]
-		if !sameEndpoint(existing, discovered) {
-			for _, alias := range model.EndpointAddress(existing.Hostname, existing.IPAddress, existing.Port) {
-				existing.Aliases = appendAlias(existing.Aliases, alias)
-			}
-		}
-		for _, alias := range discovered.Aliases {
+		candidate.Instances[discovered.ResourceID] = cloneInstance(discovered)
+		return ReconcileResult{Instance: cloneInstance(discovered), Created: true}, nil
+	}
+
+	existing := candidate.Instances[existingID]
+	if !sameEndpoint(existing, discovered) {
+		for _, alias := range model.EndpointAddress(existing.Hostname, existing.IPAddress, existing.Port) {
 			existing.Aliases = appendAlias(existing.Aliases, alias)
 		}
-		existing.NodeID = discovered.NodeID
-		existing.EngineIdentity = discovered.EngineIdentity.Clone()
-		existing.DisplayName = discovered.DisplayName
-		existing.Hostname = discovered.Hostname
-		existing.IPAddress = discovered.IPAddress
-		existing.Port = discovered.Port
-		existing.Role = discovered.Role
-		existing.Health = discovered.Health
-		existing.Replication = discovered.Replication
-		existing.Replication.SourceIdentity = discovered.Replication.SourceIdentity.Clone()
-		if discovered.Replication.LagSeconds != nil {
-			lagSeconds := *discovered.Replication.LagSeconds
-			existing.Replication.LagSeconds = &lagSeconds
-		}
-		existing.Maintenance = discovered.Maintenance
-		existing.PromotionEligible = discovered.PromotionEligible
-		existing.EngineMetadata = make(map[string]string, len(discovered.EngineMetadata))
-		for key, value := range discovered.EngineMetadata {
-			existing.EngineMetadata[key] = value
-		}
-		existing.MetadataRevision++
-		existing.UpdatedAt = now
-		if existing.DisplayName == "" {
-			existing.DisplayName = existing.Hostname
-		}
-		next.Instances[existingID] = cloneInstance(existing)
-		result = ReconcileResult{Instance: cloneInstance(existing), Updated: true}
+	}
+	for _, alias := range discovered.Aliases {
+		existing.Aliases = appendAlias(existing.Aliases, alias)
+	}
+	existing.NodeID = discovered.NodeID
+	existing.EngineIdentity = discovered.EngineIdentity.Clone()
+	existing.DisplayName = discovered.DisplayName
+	existing.Hostname = discovered.Hostname
+	existing.IPAddress = discovered.IPAddress
+	existing.Port = discovered.Port
+	existing.Role = discovered.Role
+	existing.Health = discovered.Health
+	existing.Replication = discovered.Replication
+	existing.Replication.SourceIdentity = discovered.Replication.SourceIdentity.Clone()
+	if discovered.Replication.LagSeconds != nil {
+		lagSeconds := *discovered.Replication.LagSeconds
+		existing.Replication.LagSeconds = &lagSeconds
+	}
+	existing.Maintenance = discovered.Maintenance
+	existing.PromotionEligible = discovered.PromotionEligible
+	existing.EngineMetadata = make(map[string]string, len(discovered.EngineMetadata))
+	for key, value := range discovered.EngineMetadata {
+		existing.EngineMetadata[key] = value
+	}
+	existing.MetadataRevision++
+	existing.UpdatedAt = now
+	if existing.DisplayName == "" {
+		existing.DisplayName = existing.Hostname
+	}
+	candidate.Instances[existingID] = cloneInstance(existing)
+	return ReconcileResult{Instance: cloneInstance(existing), Updated: true}, nil
+}
+
+func (repository *Repository) ReconcileInstance(discovered model.DatabaseInstance) (ReconcileResult, error) {
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	now := repository.now().UTC()
+	next := repository.snapshot
+	next.Instances = cloneInstanceMap(repository.snapshot.Instances)
+	result, err := reconcileInstanceCandidate(&next, discovered, now)
+	if err != nil {
+		return ReconcileResult{}, err
 	}
 	if err := repository.persistSnapshotLocked(next); err != nil {
 		return ReconcileResult{}, err
 	}
 	repository.snapshot = next
 	return result, nil
+}
+
+func bindDiscoveryEndpoint(candidate *snapshot, clusterID model.ResourceID, endpointID model.ResourceID, instanceID model.ResourceID, now time.Time) (model.Endpoint, error) {
+	endpoint, exists := candidate.Endpoints[clusterID][endpointID]
+	if !exists {
+		return model.Endpoint{}, fmt.Errorf("unknown endpoint ID: %s", endpointID)
+	}
+	if !endpoint.Active || endpoint.Kind != model.EndpointDatabase {
+		return model.Endpoint{}, fmt.Errorf("endpoint is not an active database endpoint: %s", endpointID)
+	}
+	endpoint.InstanceID = instanceID
+	endpoint.MetadataRevision++
+	endpoint.UpdatedAt = now
+	candidate.Endpoints[clusterID][endpointID] = endpoint
+	return endpoint, nil
+}
+
+func replaceDiscoveryLinks(candidate *snapshot, clusterID model.ResourceID, links []model.ReplicationLink, now time.Time) error {
+	existingByEdge := make(map[replicationEdge]model.ReplicationLink, len(candidate.ReplicationLinks[clusterID]))
+	for _, existing := range candidate.ReplicationLinks[clusterID] {
+		existingByEdge[replicationEdge{existing.SourceInstanceID, existing.TargetInstanceID}] = existing
+	}
+	replacement := make([]model.ReplicationLink, len(links))
+	for index, link := range links {
+		if link.ClusterID != "" && link.ClusterID != clusterID {
+			return fmt.Errorf("replication link cluster ID does not match cluster")
+		}
+		link.ClusterID = clusterID
+		if existing, exists := existingByEdge[replicationEdge{link.SourceInstanceID, link.TargetInstanceID}]; exists {
+			link.ResourceID = existing.ResourceID
+			link.CreatedAt = existing.CreatedAt
+			link.MetadataRevision = existing.MetadataRevision + 1
+		} else {
+			if link.ResourceID == "" {
+				link.ResourceID = model.NewResourceID()
+			}
+			link.CreatedAt = now
+			link.MetadataRevision = 1
+		}
+		link.UpdatedAt = now
+		replacement[index] = cloneReplicationLink(link)
+	}
+	candidate.ReplicationLinks[clusterID] = replacement
+	return nil
+}
+
+func appendDiscoveryMetricSamples(candidate *snapshot, clusterID model.ResourceID, samples []model.MetricSample, limit int) {
+	byInstance := make(map[model.ResourceID][]model.MetricSample)
+	for _, sample := range candidate.MetricSamples[clusterID] {
+		byInstance[sample.InstanceID] = append(byInstance[sample.InstanceID], cloneMetricSample(sample))
+	}
+	for _, sample := range samples {
+		byInstance[sample.InstanceID] = append(byInstance[sample.InstanceID], cloneMetricSample(sample))
+	}
+	bounded := make([]model.MetricSample, 0)
+	for _, instanceSamples := range byInstance {
+		sort.SliceStable(instanceSamples, func(i int, j int) bool {
+			return instanceSamples[i].ObservedAt.Before(instanceSamples[j].ObservedAt)
+		})
+		if len(instanceSamples) > limit {
+			instanceSamples = instanceSamples[len(instanceSamples)-limit:]
+		}
+		bounded = append(bounded, instanceSamples...)
+	}
+	sort.SliceStable(bounded, func(i int, j int) bool {
+		if bounded[i].ObservedAt.Equal(bounded[j].ObservedAt) {
+			return bounded[i].InstanceID < bounded[j].InstanceID
+		}
+		return bounded[i].ObservedAt.Before(bounded[j].ObservedAt)
+	})
+	candidate.MetricSamples[clusterID] = bounded
+}
+
+func replaceDiscoveryAnomalies(candidate *snapshot, clusterID model.ResourceID, anomalies []model.MetadataAnomaly, now time.Time) error {
+	existingAnomalies := cloneAnomalyMap(candidate.Anomalies)
+	for resourceID, anomaly := range candidate.Anomalies {
+		if anomaly.ClusterID == clusterID {
+			delete(candidate.Anomalies, resourceID)
+		}
+	}
+	for _, anomaly := range anomalies {
+		if anomaly.ClusterID != "" && anomaly.ClusterID != clusterID {
+			return fmt.Errorf("anomaly cluster ID does not match cluster")
+		}
+		anomaly.ClusterID = clusterID
+		if anomaly.ResourceID == "" {
+			anomaly.ResourceID = model.NewResourceID()
+		}
+		if existing, exists := existingAnomalies[anomaly.ResourceID]; exists {
+			if existing.ClusterID != clusterID {
+				return fmt.Errorf("anomaly resource already belongs to cluster %s", existing.ClusterID)
+			}
+			anomaly.CreatedAt = existing.CreatedAt
+			anomaly.MetadataRevision = existing.MetadataRevision + 1
+		} else {
+			if _, exists := candidate.Anomalies[anomaly.ResourceID]; exists {
+				return fmt.Errorf("duplicate anomaly resource ID: %s", anomaly.ResourceID)
+			}
+			anomaly.CreatedAt = now
+			anomaly.MetadataRevision = 1
+		}
+		anomaly.UpdatedAt = now
+		candidate.Anomalies[anomaly.ResourceID] = anomaly
+	}
+	return nil
+}
+
+func (repository *Repository) ApplyDiscoveryRefresh(refresh DiscoveryRefresh) (model.TopologySnapshot, error) {
+	if refresh.ClusterID == "" {
+		return model.TopologySnapshot{}, fmt.Errorf("cluster ID is required")
+	}
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	cluster, exists := repository.snapshot.Clusters[refresh.ClusterID]
+	if !exists {
+		return model.TopologySnapshot{}, fmt.Errorf("unknown cluster ID: %s", refresh.ClusterID)
+	}
+
+	now := repository.now().UTC()
+	next := cloneDiscoverySnapshot(repository.snapshot)
+	observations := append([]DiscoveryObservation{}, refresh.Observations...)
+	sort.SliceStable(observations, func(i int, j int) bool { return observations[i].EndpointID < observations[j].EndpointID })
+	observedInstances := make(map[model.ResourceID]model.DatabaseInstance)
+	instanceIDsByIdentity := make(map[string]model.ResourceID)
+	probes := make([]model.ProbeStatus, 0, len(observations))
+	metricSamples := make([]model.MetricSample, 0)
+
+	for _, observation := range observations {
+		endpoint, endpointExists := next.Endpoints[refresh.ClusterID][observation.EndpointID]
+		if !endpointExists {
+			return model.TopologySnapshot{}, fmt.Errorf("unknown endpoint ID: %s", observation.EndpointID)
+		}
+		discovered := observation.Instance
+		if discovered.ClusterID != "" && discovered.ClusterID != refresh.ClusterID {
+			return model.TopologySnapshot{}, fmt.Errorf("discovered instance cluster ID does not match cluster")
+		}
+		if discovered.Engine != "" && discovered.Engine != cluster.Engine {
+			return model.TopologySnapshot{}, fmt.Errorf("discovered instance engine does not match cluster")
+		}
+		discovered.ClusterID = refresh.ClusterID
+		discovered.Engine = cluster.Engine
+		if discovered.Hostname == "" {
+			discovered.Hostname = endpoint.Hostname
+		}
+		if discovered.IPAddress == "" {
+			discovered.IPAddress = endpoint.IPAddress
+		}
+		if discovered.Port == 0 {
+			discovered.Port = endpoint.Port
+		}
+		result, err := reconcileInstanceCandidate(&next, discovered, now)
+		if err != nil {
+			return model.TopologySnapshot{}, fmt.Errorf("reconcile endpoint %s: %w", observation.EndpointID, err)
+		}
+		if _, err := bindDiscoveryEndpoint(&next, refresh.ClusterID, observation.EndpointID, result.Instance.ResourceID, now); err != nil {
+			return model.TopologySnapshot{}, err
+		}
+		observedInstances[result.Instance.ResourceID] = result.Instance
+		key, err := identity.InstanceKey(result.Instance.Engine, result.Instance.EngineIdentity)
+		if err != nil {
+			return model.TopologySnapshot{}, err
+		}
+		instanceIDsByIdentity[key] = result.Instance.ResourceID
+		probes = append(probes, model.ProbeStatus{EndpointID: observation.EndpointID, InstanceID: result.Instance.ResourceID, Health: result.Instance.Health})
+		for _, sample := range observation.Metrics {
+			sample.InstanceID = result.Instance.ResourceID
+			metricSamples = append(metricSamples, sample)
+		}
+	}
+
+	instances := make([]model.DatabaseInstance, 0, len(observedInstances))
+	links := make([]model.ReplicationLink, 0)
+	for _, instance := range observedInstances {
+		instances = append(instances, cloneInstance(instance))
+		if len(instance.Replication.SourceIdentity) == 0 {
+			continue
+		}
+		key, err := identity.InstanceKey(instance.Engine, instance.Replication.SourceIdentity)
+		if err != nil {
+			continue
+		}
+		sourceInstanceID, sourceExists := instanceIDsByIdentity[key]
+		if !sourceExists || sourceInstanceID == instance.ResourceID {
+			continue
+		}
+		links = append(links, model.ReplicationLink{
+			ClusterID:        refresh.ClusterID,
+			SourceInstanceID: sourceInstanceID,
+			TargetInstanceID: instance.ResourceID,
+			Healthy: instance.Health.State == model.HealthHealthy &&
+				instance.Replication.IOThread == model.ThreadRunning &&
+				instance.Replication.SQLThread == model.ThreadRunning,
+			LagSeconds: instance.Replication.LagSeconds,
+		})
+	}
+	if err := replaceDiscoveryLinks(&next, refresh.ClusterID, links, now); err != nil {
+		return model.TopologySnapshot{}, err
+	}
+	appendDiscoveryMetricSamples(&next, refresh.ClusterID, metricSamples, discoveryMetricSampleLimit)
+	if err := replaceDiscoveryAnomalies(&next, refresh.ClusterID, refresh.Anomalies, now); err != nil {
+		return model.TopologySnapshot{}, err
+	}
+	if err := repository.persistSnapshotLocked(next); err != nil {
+		return model.TopologySnapshot{}, err
+	}
+	repository.snapshot = next
+
+	persistedLinks := make([]model.ReplicationLink, len(next.ReplicationLinks[refresh.ClusterID]))
+	for index, link := range next.ReplicationLinks[refresh.ClusterID] {
+		persistedLinks[index] = cloneReplicationLink(link)
+	}
+	persistedAnomalies := make([]model.MetadataAnomaly, 0)
+	for _, anomaly := range next.Anomalies {
+		if anomaly.ClusterID == refresh.ClusterID {
+			persistedAnomalies = append(persistedAnomalies, anomaly)
+		}
+	}
+	sort.Slice(instances, func(i int, j int) bool { return instances[i].ResourceID < instances[j].ResourceID })
+	sort.Slice(persistedLinks, func(i int, j int) bool { return persistedLinks[i].ResourceID < persistedLinks[j].ResourceID })
+	sort.Slice(probes, func(i int, j int) bool { return probes[i].EndpointID < probes[j].EndpointID })
+	sort.Slice(persistedAnomalies, func(i int, j int) bool { return persistedAnomalies[i].ResourceID < persistedAnomalies[j].ResourceID })
+	return model.TopologySnapshot{
+		ClusterID:  refresh.ClusterID,
+		Instances:  instances,
+		Links:      persistedLinks,
+		Probes:     probes,
+		Anomalies:  persistedAnomalies,
+		ObservedAt: now,
+	}, nil
 }
 
 func (repository *Repository) Instances(clusterID model.ResourceID) []model.DatabaseInstance {

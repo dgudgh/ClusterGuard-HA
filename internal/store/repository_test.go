@@ -2,6 +2,7 @@ package store
 
 import (
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -517,6 +518,173 @@ func TestReplaceClusterAnomaliesIsClusterScopedAndAtomic(t *testing.T) {
 	}
 	if retained := anomaliesForCluster(repository.Anomalies(), secondCluster.ResourceID); len(retained) != 1 || retained[0].Kind != "second" {
 		t.Fatalf("failed anomaly persistence changed another cluster: %+v", retained)
+	}
+}
+
+func TestApplyDiscoveryRefreshDeduplicatesIdentityAndPublishesTopology(t *testing.T) {
+	repository := NewMemory()
+	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "transaction"})
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	first, err := repository.UpsertEndpoint(model.Endpoint{ClusterID: cluster.ResourceID, Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true})
+	if err != nil {
+		t.Fatalf("create first endpoint: %v", err)
+	}
+	alias, err := repository.UpsertEndpoint(model.Endpoint{ClusterID: cluster.ResourceID, Kind: model.EndpointDatabase, Hostname: "mysql-a.internal", Port: 3307, Active: true})
+	if err != nil {
+		t.Fatalf("create alias endpoint: %v", err)
+	}
+	replicaEndpoint, err := repository.UpsertEndpoint(model.Endpoint{ClusterID: cluster.ResourceID, Kind: model.EndpointDatabase, Hostname: "mysql-b", Port: 3308, Active: true})
+	if err != nil {
+		t.Fatalf("create replica endpoint: %v", err)
+	}
+	primary := mysqlInstance(cluster.ResourceID, first.Hostname, "", first.Port)
+	primary.EngineIdentity["server_uuid"] = "primary-native"
+	primary.Role = model.RolePrimary
+	aliasPrimary := primary
+	aliasPrimary.Hostname = alias.Hostname
+	aliasPrimary.Port = alias.Port
+	replica := mysqlInstance(cluster.ResourceID, replicaEndpoint.Hostname, "", replicaEndpoint.Port)
+	replica.EngineIdentity["server_uuid"] = "replica-native"
+	replica.Replication = model.ReplicationStatus{
+		SourceIdentity: model.EngineIdentity{"server_uuid": "primary-native"},
+		IOThread:       model.ThreadRunning,
+		SQLThread:      model.ThreadRunning,
+	}
+	samples := make([]model.MetricSample, 61)
+	for index := range samples {
+		samples[index] = model.MetricSample{ObservedAt: time.Unix(int64(index), 0).UTC(), Values: map[string]float64{"qps": float64(index)}}
+	}
+
+	snapshot, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{
+		ClusterID: cluster.ResourceID,
+		Observations: []DiscoveryObservation{
+			{EndpointID: first.ResourceID, Instance: primary, Metrics: samples},
+			{EndpointID: alias.ResourceID, Instance: aliasPrimary},
+			{EndpointID: replicaEndpoint.ResourceID, Instance: replica, Metrics: []model.MetricSample{{ObservedAt: time.Unix(100, 0).UTC(), Values: map[string]float64{"qps": 1}}}},
+		},
+		Anomalies: []model.MetadataAnomaly{{Engine: model.EngineMySQL, Kind: "discovery", Severity: "warning"}},
+	})
+	if err != nil {
+		t.Fatalf("apply discovery refresh: %v", err)
+	}
+	if len(snapshot.Instances) != 2 || len(snapshot.Probes) != 3 || len(snapshot.Links) != 1 || len(snapshot.Anomalies) != 1 {
+		t.Fatalf("unexpected transactional topology: %+v", snapshot)
+	}
+	probes := make(map[model.ResourceID]model.ProbeStatus, len(snapshot.Probes))
+	for _, probe := range snapshot.Probes {
+		probes[probe.EndpointID] = probe
+	}
+	if probes[first.ResourceID].InstanceID == "" || probes[first.ResourceID].InstanceID != probes[alias.ResourceID].InstanceID || probes[replicaEndpoint.ResourceID].InstanceID == probes[first.ResourceID].InstanceID {
+		t.Fatalf("transaction did not deduplicate endpoint bindings: %+v", snapshot.Probes)
+	}
+	if snapshot.Links[0].SourceInstanceID != probes[first.ResourceID].InstanceID || snapshot.Links[0].TargetInstanceID != probes[replicaEndpoint.ResourceID].InstanceID {
+		t.Fatalf("transaction did not resolve replication link: %+v", snapshot.Links)
+	}
+	bound := repository.Endpoints(cluster.ResourceID)
+	bindings := make(map[model.ResourceID]model.ResourceID, len(bound))
+	for _, endpoint := range bound {
+		bindings[endpoint.ResourceID] = endpoint.InstanceID
+	}
+	if bindings[first.ResourceID] != bindings[alias.ResourceID] || bindings[first.ResourceID] == "" || bindings[replicaEndpoint.ResourceID] == "" {
+		t.Fatalf("transaction did not publish endpoint bindings: %+v", bound)
+	}
+	storedSamples := repository.MetricSamples(cluster.ResourceID)
+	if len(storedSamples) != 61 {
+		t.Fatalf("bounded transaction metrics = %d, want 60 primary and 1 replica", len(storedSamples))
+	}
+	counts := map[model.ResourceID]int{}
+	for _, sample := range storedSamples {
+		if sample.InstanceID == "" {
+			t.Fatalf("transaction stored unbound metric sample: %+v", sample)
+		}
+		counts[sample.InstanceID]++
+	}
+	if counts[probes[first.ResourceID].InstanceID] != 60 || counts[probes[replicaEndpoint.ResourceID].InstanceID] != 1 {
+		t.Fatalf("transaction metric bounds by instance = %+v", counts)
+	}
+}
+
+func TestApplyDiscoveryRefreshPersistenceFailureRollsBackAllRefreshState(t *testing.T) {
+	repository := NewMemory()
+	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "rollback"})
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	primaryEndpoint, err := repository.UpsertEndpoint(model.Endpoint{ClusterID: cluster.ResourceID, Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true})
+	if err != nil {
+		t.Fatalf("create primary endpoint: %v", err)
+	}
+	replicaEndpoint, err := repository.UpsertEndpoint(model.Endpoint{ClusterID: cluster.ResourceID, Kind: model.EndpointDatabase, Hostname: "mysql-b", Port: 3307, Active: true})
+	if err != nil {
+		t.Fatalf("create replica endpoint: %v", err)
+	}
+	newEndpoint, err := repository.UpsertEndpoint(model.Endpoint{ClusterID: cluster.ResourceID, Kind: model.EndpointDatabase, Hostname: "mysql-c", Port: 3308, Active: true})
+	if err != nil {
+		t.Fatalf("create future endpoint: %v", err)
+	}
+	primary := mysqlInstance(cluster.ResourceID, primaryEndpoint.Hostname, "", primaryEndpoint.Port)
+	primary.EngineIdentity["server_uuid"] = "primary-native"
+	primary.Role = model.RolePrimary
+	replica := mysqlInstance(cluster.ResourceID, replicaEndpoint.Hostname, "", replicaEndpoint.Port)
+	replica.EngineIdentity["server_uuid"] = "replica-native"
+	replica.Replication.SourceIdentity = model.EngineIdentity{"server_uuid": "primary-native"}
+	replica.Replication.IOThread = model.ThreadRunning
+	replica.Replication.SQLThread = model.ThreadRunning
+	if _, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{
+		ClusterID: cluster.ResourceID,
+		Observations: []DiscoveryObservation{
+			{EndpointID: primaryEndpoint.ResourceID, Instance: primary, Metrics: []model.MetricSample{{ObservedAt: time.Unix(1, 0).UTC(), Values: map[string]float64{"qps": 1}}}},
+			{EndpointID: replicaEndpoint.ResourceID, Instance: replica},
+		},
+		Anomalies: []model.MetadataAnomaly{{Engine: model.EngineMySQL, Kind: "before", Severity: "warning"}},
+	}); err != nil {
+		t.Fatalf("seed discovery refresh: %v", err)
+	}
+	before := captureStoreDiscoveryState(repository, cluster.ResourceID)
+
+	repository.path = t.TempDir()
+	changedPrimary := primary
+	changedPrimary.EngineMetadata = map[string]string{"version": "changed"}
+	changedPrimary.Maintenance = true
+	newReplica := mysqlInstance(cluster.ResourceID, newEndpoint.Hostname, "", newEndpoint.Port)
+	newReplica.EngineIdentity["server_uuid"] = "new-replica-native"
+	newReplica.Replication.SourceIdentity = model.EngineIdentity{"server_uuid": "primary-native"}
+	newReplica.Replication.IOThread = model.ThreadRunning
+	newReplica.Replication.SQLThread = model.ThreadRunning
+	_, err = repository.ApplyDiscoveryRefresh(DiscoveryRefresh{
+		ClusterID: cluster.ResourceID,
+		Observations: []DiscoveryObservation{
+			{EndpointID: primaryEndpoint.ResourceID, Instance: changedPrimary, Metrics: []model.MetricSample{{ObservedAt: time.Unix(2, 0).UTC(), Values: map[string]float64{"qps": 2}}}},
+			{EndpointID: newEndpoint.ResourceID, Instance: newReplica},
+		},
+		Anomalies: []model.MetadataAnomaly{{Engine: model.EngineMySQL, Kind: "after", Severity: "critical"}},
+	})
+	if err == nil {
+		t.Fatal("discovery refresh must fail when snapshot path is a directory")
+	}
+	after := captureStoreDiscoveryState(repository, cluster.ResourceID)
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("failed discovery transaction published partial state:\nbefore=%+v\nafter=%+v", before, after)
+	}
+}
+
+type storeDiscoveryState struct {
+	instances []model.DatabaseInstance
+	endpoints []model.Endpoint
+	links     []model.ReplicationLink
+	metrics   []model.MetricSample
+	anomalies []model.MetadataAnomaly
+}
+
+func captureStoreDiscoveryState(repository *Repository, clusterID model.ResourceID) storeDiscoveryState {
+	return storeDiscoveryState{
+		instances: repository.Instances(clusterID),
+		endpoints: repository.Endpoints(clusterID),
+		links:     repository.ReplicationLinks(clusterID),
+		metrics:   repository.MetricSamples(clusterID),
+		anomalies: anomaliesForCluster(repository.Anomalies(), clusterID),
 	}
 }
 

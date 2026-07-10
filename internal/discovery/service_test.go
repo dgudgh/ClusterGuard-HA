@@ -3,8 +3,10 @@ package discovery
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -19,14 +21,18 @@ var discoveryTestTime = time.Date(2026, time.July, 10, 12, 0, 0, 0, time.UTC)
 type fakeDiscoveryAdapter struct {
 	adapter.UnsupportedAdapter
 
-	mu       sync.Mutex
-	results  map[string]model.DatabaseInstance
-	failures map[string]error
-	calls    []string
-	current  int
-	maximum  int
-	started  chan struct{}
-	release  <-chan struct{}
+	mu                sync.Mutex
+	results           map[string]model.DatabaseInstance
+	failures          map[string]error
+	metricFailures    map[string]error
+	calls             []string
+	current           int
+	maximum           int
+	started           chan struct{}
+	startedHosts      chan string
+	release           <-chan struct{}
+	releases          map[string]<-chan struct{}
+	discoverAvailable bool
 }
 
 func newFakeAdapter() *fakeDiscoveryAdapter {
@@ -34,7 +40,17 @@ func newFakeAdapter() *fakeDiscoveryAdapter {
 		UnsupportedAdapter: adapter.NewUnsupported(model.EngineMySQL),
 		results:            map[string]model.DatabaseInstance{},
 		failures:           map[string]error{},
+		metricFailures:     map[string]error{},
+		releases:           map[string]<-chan struct{}{},
+		discoverAvailable:  true,
 	}
+}
+
+func (candidate *fakeDiscoveryAdapter) Capabilities(context.Context) adapter.Capabilities {
+	return adapter.Capabilities{Engine: model.EngineMySQL, Features: map[adapter.Capability]adapter.CapabilityState{
+		adapter.CapabilityDiscover: {Available: candidate.discoverAvailable},
+		adapter.CapabilityMetrics:  {Available: true},
+	}}
 }
 
 func (candidate *fakeDiscoveryAdapter) Discover(ctx context.Context, request adapter.DiscoverRequest) (adapter.DiscoveryResult, error) {
@@ -48,7 +64,11 @@ func (candidate *fakeDiscoveryAdapter) Discover(ctx context.Context, request ada
 	result := candidate.results[host]
 	err := candidate.failures[host]
 	started := candidate.started
+	startedHosts := candidate.startedHosts
 	release := candidate.release
+	if hostRelease, exists := candidate.releases[host]; exists {
+		release = hostRelease
+	}
 	candidate.mu.Unlock()
 
 	defer func() {
@@ -59,6 +79,13 @@ func (candidate *fakeDiscoveryAdapter) Discover(ctx context.Context, request ada
 	if started != nil {
 		select {
 		case started <- struct{}{}:
+		case <-ctx.Done():
+			return adapter.DiscoveryResult{}, ctx.Err()
+		}
+	}
+	if startedHosts != nil {
+		select {
+		case startedHosts <- host:
 		case <-ctx.Done():
 			return adapter.DiscoveryResult{}, ctx.Err()
 		}
@@ -77,6 +104,12 @@ func (candidate *fakeDiscoveryAdapter) Discover(ctx context.Context, request ada
 }
 
 func (candidate *fakeDiscoveryAdapter) Metrics(_ context.Context, request adapter.DiscoverRequest) ([]model.MetricSample, error) {
+	candidate.mu.Lock()
+	err := candidate.metricFailures[request.Endpoint.Hostname]
+	candidate.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
 	return []model.MetricSample{{
 		ObservedAt: discoveryTestTime,
 		Values:     map[string]float64{"host_port": float64(request.Endpoint.Port)},
@@ -107,9 +140,14 @@ func newTestService(t *testing.T, repository *store.Repository, candidate *fakeD
 	if err := registry.Register(candidate); err != nil {
 		t.Fatalf("register fake adapter: %v", err)
 	}
-	return New(registry, repository, CredentialResolverFunc(func(context.Context, model.DatabaseCluster, model.Endpoint) (adapter.Credentials, error) {
+	return newTestServiceWithResolver(t, repository, registry, CredentialResolverFunc(func(context.Context, model.DatabaseCluster, model.Endpoint) (adapter.Credentials, error) {
 		return adapter.Credentials{Username: "probe", Password: "secret"}, nil
-	}), func() time.Time { return discoveryTestTime })
+	}))
+}
+
+func newTestServiceWithResolver(t *testing.T, repository *store.Repository, registry *adapter.Registry, resolver CredentialResolver) *Service {
+	t.Helper()
+	return New(registry, repository, resolver, func() time.Time { return discoveryTestTime })
 }
 
 func addEndpoint(t *testing.T, repository *store.Repository, clusterID model.ResourceID, host string, port int, kind model.EndpointKind, active bool) model.Endpoint {
@@ -382,6 +420,287 @@ func TestRefreshBoundsConcurrentEndpointProbesAtFour(t *testing.T) {
 	candidate.mu.Unlock()
 	if maximum != 4 {
 		t.Fatalf("maximum concurrent probes = %d, want 4", maximum)
+	}
+}
+
+func TestRefreshFailsClosedWhenDiscoveryIsUnsupported(t *testing.T) {
+	for _, testCase := range []struct {
+		name               string
+		configure          func(*fakeDiscoveryAdapter, string)
+		wantDiscoveryCalls int
+	}{
+		{
+			name: "capability unavailable",
+			configure: func(candidate *fakeDiscoveryAdapter, _ string) {
+				candidate.discoverAvailable = false
+			},
+		},
+		{
+			name: "adapter returns unsupported",
+			configure: func(candidate *fakeDiscoveryAdapter, host string) {
+				candidate.failures[host] = adapter.ErrUnsupported
+			},
+			wantDiscoveryCalls: 1,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			repository := store.NewMemory()
+			cluster, endpoint := seedDiscoveryRepositoryState(t, repository)
+			before := captureDiscoveryRepositoryState(repository, cluster.ResourceID)
+			candidate := newFakeAdapter()
+			candidate.results[endpoint.Hostname] = discoveredInstance(endpoint.Hostname, endpoint.Port, "replacement-native", model.RolePrimary, "")
+			testCase.configure(candidate, endpoint.Hostname)
+			service := newTestService(t, repository, candidate)
+
+			_, err := service.Refresh(context.Background(), cluster.ResourceID)
+			if !errors.Is(err, adapter.ErrUnsupported) {
+				t.Fatalf("unsupported discovery error = %v, want %v", err, adapter.ErrUnsupported)
+			}
+			if calls := len(candidate.discoveredHosts()); calls != testCase.wantDiscoveryCalls {
+				t.Fatalf("discovery calls = %d, want %d", calls, testCase.wantDiscoveryCalls)
+			}
+			after := captureDiscoveryRepositoryState(repository, cluster.ResourceID)
+			if !reflect.DeepEqual(after, before) {
+				t.Fatalf("unsupported discovery changed repository state:\nbefore=%+v\nafter=%+v", before, after)
+			}
+		})
+	}
+}
+
+func TestRefreshSanitizesCredentialAndDatabaseProbeErrors(t *testing.T) {
+	const secret = "super-secret-password"
+	for _, testCase := range []struct {
+		name        string
+		wantSummary string
+		configure   func(*testing.T, *store.Repository, model.DatabaseCluster, model.Endpoint, *fakeDiscoveryAdapter) *Service
+	}{
+		{
+			name:        "credential resolver",
+			wantSummary: "discovery credentials unavailable",
+			configure: func(t *testing.T, repository *store.Repository, _ model.DatabaseCluster, _ model.Endpoint, candidate *fakeDiscoveryAdapter) *Service {
+				registry := adapter.NewRegistry()
+				if err := registry.Register(candidate); err != nil {
+					t.Fatalf("register fake adapter: %v", err)
+				}
+				return newTestServiceWithResolver(t, repository, registry, CredentialResolverFunc(func(context.Context, model.DatabaseCluster, model.Endpoint) (adapter.Credentials, error) {
+					return adapter.Credentials{}, errors.New("resolver leaked " + secret)
+				}))
+			},
+		},
+		{
+			name:        "database adapter",
+			wantSummary: "database probe failed",
+			configure: func(t *testing.T, repository *store.Repository, _ model.DatabaseCluster, endpoint model.Endpoint, candidate *fakeDiscoveryAdapter) *Service {
+				candidate.failures[endpoint.Hostname] = errors.New("client leaked " + secret)
+				return newTestService(t, repository, candidate)
+			},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			repository := store.NewMemory()
+			cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "sanitized"})
+			if err != nil {
+				t.Fatalf("create cluster: %v", err)
+			}
+			endpoint := addEndpoint(t, repository, cluster.ResourceID, "mysql-a", 3306, model.EndpointDatabase, true)
+			candidate := newFakeAdapter()
+			service := testCase.configure(t, repository, cluster, endpoint, candidate)
+
+			snapshot, err := service.Refresh(context.Background(), cluster.ResourceID)
+			if err != nil {
+				t.Fatalf("refresh: %v", err)
+			}
+			if len(snapshot.Probes) != 1 || snapshot.Probes[0].Health.State != model.HealthUnknown || snapshot.Probes[0].Health.Summary != testCase.wantSummary {
+				t.Fatalf("unexpected sanitized probe status: %+v", snapshot.Probes)
+			}
+			if strings.Contains(strings.ToLower(fmtSnapshot(snapshot)), strings.ToLower(secret)) {
+				t.Fatalf("snapshot exposed secret-bearing error: %+v", snapshot)
+			}
+		})
+	}
+}
+
+func TestRefreshMetricsFailureDegradesProbeAndClusterWithoutStoringSample(t *testing.T) {
+	const secret = "metrics-client-secret"
+	repository := store.NewMemory()
+	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "metrics"})
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	endpoint := addEndpoint(t, repository, cluster.ResourceID, "mysql-a", 3306, model.EndpointDatabase, true)
+	candidate := newFakeAdapter()
+	candidate.results[endpoint.Hostname] = discoveredInstance(endpoint.Hostname, endpoint.Port, "native-a", model.RolePrimary, "")
+	candidate.metricFailures[endpoint.Hostname] = errors.New("metrics leaked " + secret)
+	service := newTestService(t, repository, candidate)
+
+	snapshot, err := service.Refresh(context.Background(), cluster.ResourceID)
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if len(snapshot.Instances) != 1 || len(snapshot.Probes) != 1 {
+		t.Fatalf("successful discovery was lost after metrics failure: %+v", snapshot)
+	}
+	if snapshot.Probes[0].Health.State != model.HealthDegraded || snapshot.Probes[0].Health.Summary != "performance metrics unavailable" {
+		t.Fatalf("metrics failure did not degrade probe health safely: %+v", snapshot.Probes[0])
+	}
+	if snapshot.Health.State != model.HealthDegraded || snapshot.Health.Summary != "performance metrics unavailable" {
+		t.Fatalf("metrics failure did not degrade cluster health safely: %+v", snapshot.Health)
+	}
+	if len(repository.MetricSamples(cluster.ResourceID)) != 0 {
+		t.Fatalf("metrics failure stored samples: %+v", repository.MetricSamples(cluster.ResourceID))
+	}
+	if strings.Contains(strings.ToLower(fmtSnapshot(snapshot)), strings.ToLower(secret)) {
+		t.Fatalf("snapshot exposed metrics error: %+v", snapshot)
+	}
+}
+
+func TestRefreshDeduplicatesTwoEndpointsForOneNativeIdentity(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "aliases"})
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	first := addEndpoint(t, repository, cluster.ResourceID, "mysql-a", 3306, model.EndpointDatabase, true)
+	second := addEndpoint(t, repository, cluster.ResourceID, "mysql-a.internal", 3307, model.EndpointDatabase, true)
+	candidate := newFakeAdapter()
+	candidate.results[first.Hostname] = discoveredInstance(first.Hostname, first.Port, "shared-native", model.RolePrimary, "")
+	candidate.results[second.Hostname] = discoveredInstance(second.Hostname, second.Port, "shared-native", model.RolePrimary, "")
+	service := newTestService(t, repository, candidate)
+
+	snapshot, err := service.Refresh(context.Background(), cluster.ResourceID)
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if len(snapshot.Instances) != 1 || len(snapshot.Anomalies) != 0 || snapshot.Health.State != model.HealthHealthy {
+		t.Fatalf("duplicate native observation created false topology: %+v", snapshot)
+	}
+	probes := probesByEndpoint(snapshot.Probes)
+	if probes[first.ResourceID].InstanceID == "" || probes[first.ResourceID].InstanceID != probes[second.ResourceID].InstanceID {
+		t.Fatalf("duplicate native endpoints did not bind one platform UUID: %+v", snapshot.Probes)
+	}
+	bound := repository.Endpoints(cluster.ResourceID)
+	if len(bound) != 2 || bound[0].InstanceID == "" || bound[0].InstanceID != bound[1].InstanceID {
+		t.Fatalf("repository endpoint bindings were not deduplicated: %+v", bound)
+	}
+}
+
+func TestRefreshSerializesSameClusterWhileDifferentClustersProceed(t *testing.T) {
+	repository := store.NewMemory()
+	firstCluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "first"})
+	if err != nil {
+		t.Fatalf("create first cluster: %v", err)
+	}
+	secondCluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "second"})
+	if err != nil {
+		t.Fatalf("create second cluster: %v", err)
+	}
+	firstEndpoint := addEndpoint(t, repository, firstCluster.ResourceID, "mysql-a", 3306, model.EndpointDatabase, true)
+	secondEndpoint := addEndpoint(t, repository, secondCluster.ResourceID, "mysql-b", 3306, model.EndpointDatabase, true)
+	candidate := newFakeAdapter()
+	candidate.results[firstEndpoint.Hostname] = discoveredInstance(firstEndpoint.Hostname, firstEndpoint.Port, "native-a", model.RolePrimary, "")
+	candidate.results[secondEndpoint.Hostname] = discoveredInstance(secondEndpoint.Hostname, secondEndpoint.Port, "native-b", model.RolePrimary, "")
+	started := make(chan string, 4)
+	releaseFirst := make(chan struct{})
+	candidate.startedHosts = started
+	candidate.releases[firstEndpoint.Hostname] = releaseFirst
+	service := newTestService(t, repository, candidate)
+
+	refresh := func(clusterID model.ResourceID) <-chan error {
+		result := make(chan error, 1)
+		go func() {
+			_, err := service.Refresh(context.Background(), clusterID)
+			result <- err
+		}()
+		return result
+	}
+	firstRefresh := refresh(firstCluster.ResourceID)
+	if host := waitForStartedHost(t, started); host != firstEndpoint.Hostname {
+		t.Fatalf("first probe host = %s, want %s", host, firstEndpoint.Hostname)
+	}
+	queuedSameCluster := refresh(firstCluster.ResourceID)
+	differentCluster := refresh(secondCluster.ResourceID)
+	if host := waitForStartedHost(t, started); host != secondEndpoint.Hostname {
+		t.Fatalf("same-cluster refresh interleaved before independent cluster: started %s", host)
+	}
+	if err := <-differentCluster; err != nil {
+		t.Fatalf("different-cluster refresh: %v", err)
+	}
+	select {
+	case host := <-started:
+		t.Fatalf("same-cluster refresh entered adapter while prior refresh was blocked: %s", host)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releaseFirst)
+	if err := <-firstRefresh; err != nil {
+		t.Fatalf("first refresh: %v", err)
+	}
+	if host := waitForStartedHost(t, started); host != firstEndpoint.Hostname {
+		t.Fatalf("queued same-cluster probe host = %s, want %s", host, firstEndpoint.Hostname)
+	}
+	if err := <-queuedSameCluster; err != nil {
+		t.Fatalf("queued same-cluster refresh: %v", err)
+	}
+}
+
+type discoveryRepositoryState struct {
+	instances []model.DatabaseInstance
+	endpoints []model.Endpoint
+	links     []model.ReplicationLink
+	metrics   []model.MetricSample
+	anomalies []model.MetadataAnomaly
+}
+
+func seedDiscoveryRepositoryState(t *testing.T, repository *store.Repository) (model.DatabaseCluster, model.Endpoint) {
+	t.Helper()
+	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "seeded"})
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	endpoint := addEndpoint(t, repository, cluster.ResourceID, "mysql-a", 3306, model.EndpointDatabase, true)
+	instance := discoveredInstance(endpoint.Hostname, endpoint.Port, "seed-native", model.RolePrimary, "")
+	instance.ClusterID = cluster.ResourceID
+	result, err := repository.ReconcileInstance(instance)
+	if err != nil {
+		t.Fatalf("seed instance: %v", err)
+	}
+	endpoint.InstanceID = result.Instance.ResourceID
+	if _, err := repository.UpsertEndpoint(endpoint); err != nil {
+		t.Fatalf("seed endpoint binding: %v", err)
+	}
+	if err := repository.ReplaceReplicationLinks(cluster.ResourceID, []model.ReplicationLink{{SourceInstanceID: result.Instance.ResourceID, TargetInstanceID: model.NewResourceID()}}); err != nil {
+		t.Fatalf("seed links: %v", err)
+	}
+	if err := repository.StoreMetricSamples(cluster.ResourceID, []model.MetricSample{{InstanceID: result.Instance.ResourceID, ObservedAt: discoveryTestTime, Values: map[string]float64{"qps": 1}}}, 60); err != nil {
+		t.Fatalf("seed metrics: %v", err)
+	}
+	if err := repository.ReplaceClusterAnomalies(cluster.ResourceID, []model.MetadataAnomaly{{Engine: model.EngineMySQL, Kind: "seed", Severity: "warning"}}); err != nil {
+		t.Fatalf("seed anomalies: %v", err)
+	}
+	return cluster, endpoint
+}
+
+func captureDiscoveryRepositoryState(repository *store.Repository, clusterID model.ResourceID) discoveryRepositoryState {
+	return discoveryRepositoryState{
+		instances: repository.Instances(clusterID),
+		endpoints: repository.Endpoints(clusterID),
+		links:     repository.ReplicationLinks(clusterID),
+		metrics:   repository.MetricSamples(clusterID),
+		anomalies: anomaliesForClusterID(repository.Anomalies(), clusterID),
+	}
+}
+
+func fmtSnapshot(snapshot model.TopologySnapshot) string {
+	return fmt.Sprintf("%+v", snapshot)
+}
+
+func waitForStartedHost(t *testing.T, started <-chan string) string {
+	t.Helper()
+	select {
+	case host := <-started:
+		return host
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for probe to start")
+		return ""
 	}
 }
 
