@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"clusterguard.io/ha/adapters/mysql"
+	"clusterguard.io/ha/internal/discovery"
 	"clusterguard.io/ha/internal/store"
 	"clusterguard.io/ha/internal/workflow"
 	"clusterguard.io/ha/pkg/adapter"
@@ -27,6 +29,46 @@ type candidateAdapterSpy struct {
 	requests           []adapter.CandidateRequest
 	databaseProbeCalls int
 	evaluationError    error
+}
+
+type realMySQLCandidateRunner struct{}
+
+func (realMySQLCandidateRunner) Query(_ context.Context, endpoint adapter.Endpoint, _ adapter.Credentials, query string) ([]mysql.Row, error) {
+	const primaryUUID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+	const replicaUUID = "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff"
+	if strings.HasPrefix(query, "SELECT @@server_uuid") {
+		serverUUID, serverID, readOnly, superReadOnly := primaryUUID, "1", "0", "0"
+		if endpoint.Hostname == "mysql-b" {
+			serverUUID, serverID, readOnly, superReadOnly = replicaUUID, "2", "1", "1"
+		}
+		return []mysql.Row{{
+			"server_uuid": serverUUID, "hostname": endpoint.Hostname, "port": fmt.Sprint(endpoint.Port), "server_id": serverID,
+			"version": "8.0.44", "read_only": readOnly, "super_read_only": superReadOnly, "gtid_mode": "ON",
+			"gtid_executed": primaryUUID + ":1-20", "log_bin": "1", "binlog_format": "ROW",
+		}}, nil
+	}
+	if query == "SHOW REPLICA STATUS" {
+		if endpoint.Hostname == "mysql-a" {
+			return nil, nil
+		}
+		return []mysql.Row{{
+			"Source_UUID": primaryUUID, "Replica_IO_Running": "Yes", "Replica_SQL_Running": "Yes",
+			"Seconds_Behind_Source": "0", "Retrieved_Gtid_Set": primaryUUID + ":1-20", "Executed_Gtid_Set": primaryUUID + ":1-20",
+		}}, nil
+	}
+	if query == "SHOW GLOBAL STATUS" {
+		return []mysql.Row{
+			{"Variable_name": "Questions", "Value": "10"},
+			{"Variable_name": "Com_commit", "Value": "3"},
+			{"Variable_name": "Com_rollback", "Value": "0"},
+			{"Variable_name": "Threads_connected", "Value": "2"},
+			{"Variable_name": "Threads_running", "Value": "1"},
+			{"Variable_name": "Slow_queries", "Value": "0"},
+			{"Variable_name": "Innodb_buffer_pool_reads", "Value": "1"},
+			{"Variable_name": "Innodb_buffer_pool_read_requests", "Value": "100"},
+		}, nil
+	}
+	return nil, fmt.Errorf("unexpected query %q", query)
 }
 
 func newCandidateAdapterSpy() *candidateAdapterSpy {
@@ -84,7 +126,7 @@ func newAPIServer(t *testing.T, repository *store.Repository, candidate adapter.
 		}
 	}
 	service := workflow.New(registry, workflow.AllowAllSafety{}, workflow.NewMemoryLocks(), workflow.TokenApproval{}, repository)
-	return NewServer(registry, repository, service, refresher)
+	return NewServer(registry, repository, service, refresher, WithControlToken(testControlToken))
 }
 
 func TestRegisterClusterAndRefreshOnlyRegisteredInventory(t *testing.T) {
@@ -250,6 +292,7 @@ func TestDiscoverBodyIsBoundedAndStrictIndependentOfContentLength(t *testing.T) 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(test.body))
+			request.Header.Set("Authorization", "Bearer "+testControlToken)
 			if test.forceZeroLength {
 				request.ContentLength = 0
 			}
@@ -275,6 +318,7 @@ func TestGenericJSONDecodeRejectsTrailingValues(t *testing.T) {
 	valid := `{"display_name":"payments","engine":"mysql","endpoints":[{"hostname":"mysql-a","port":3306}]}`
 	for _, trailing := range []string{" {}", " {"} {
 		request := httptest.NewRequest(http.MethodPost, "/api/v1/clusters", strings.NewReader(valid+trailing))
+		request.Header.Set("Authorization", "Bearer "+testControlToken)
 		response := httptest.NewRecorder()
 		server.Handler().ServeHTTP(response, request)
 		if response.Code != http.StatusBadRequest {
@@ -486,7 +530,7 @@ func TestCandidateReadUsesPersistedProbesAndBoundedPolicyWithoutDatabaseProbes(t
 	if len(requests) != 1 || databaseCalls != 0 {
 		t.Fatalf("candidate read invoked wrong adapter paths: requests=%d database_calls=%d", len(requests), databaseCalls)
 	}
-	if requests[0].Primary.ResourceID == "" || requests[0].Primary.Role != model.RolePrimary || !reflect.DeepEqual(requests[0].Probes, snapshot.Probes) {
+	if requests[0].Primary.ResourceID == "" || requests[0].Primary.Role != model.RolePrimary || !reflect.DeepEqual(requests[0].Probes, snapshot.Probes) || !requests[0].ObservedAt.Equal(snapshot.ObservedAt) {
 		t.Fatalf("candidate request omitted authoritative primary or probes: %+v", requests[0])
 	}
 	if requests[0].Policy.MaximumLagSeconds != 10 || !requests[0].Policy.RequireGTID {
@@ -501,6 +545,64 @@ func TestCandidateReadUsesPersistedProbesAndBoundedPolicyWithoutDatabaseProbes(t
 	if len(requests) != 2 || requests[1].Policy.MaximumLagSeconds != 30 || requests[1].Policy.RequireGTID {
 		t.Fatalf("bounded policy override was not passed: %+v", requests)
 	}
+}
+
+func TestRealMySQLDiscoveryProducesEligibleReadOnlyCandidate(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, _, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{
+		Engine: model.EngineMySQL, DisplayName: "real-adapter-candidate",
+	}, []model.Endpoint{
+		{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true},
+		{Kind: model.EndpointDatabase, Hostname: "mysql-b", Port: 3306, Active: true},
+	})
+	if err != nil {
+		t.Fatalf("create inventory: %v", err)
+	}
+	registry := adapter.NewRegistry()
+	mysqlAdapter := mysql.New(realMySQLCandidateRunner{})
+	if err := registry.Register(mysqlAdapter); err != nil {
+		t.Fatalf("register MySQL adapter: %v", err)
+	}
+	refresher := discovery.New(registry, repository, discovery.CredentialResolverFunc(func(context.Context, model.DatabaseCluster, model.Endpoint) (adapter.Credentials, error) {
+		return adapter.Credentials{Username: "monitor", Password: "secret"}, nil
+	}), func() time.Time { return time.Date(2026, time.July, 11, 18, 0, 0, 0, time.UTC) })
+	service := workflow.New(registry, workflow.AllowAllSafety{}, workflow.NewMemoryLocks(), workflow.TokenApproval{}, repository)
+	server := NewServer(registry, repository, service, refresher, WithControlToken(testControlToken))
+	refresh := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/clusters/"+string(cluster.ResourceID)+"/discover", map[string]interface{}{})
+	if refresh.Code != http.StatusOK {
+		t.Fatalf("refresh status: %d %s", refresh.Code, refresh.Body.String())
+	}
+	response := callJSON(t, server.Handler(), http.MethodGet, "/api/v1/clusters/"+string(cluster.ResourceID)+"/candidates", nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("candidate status: %d %s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Result []model.CandidateAssessment `json:"result"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode candidates: %v", err)
+	}
+	if len(body.Result) != 2 {
+		t.Fatalf("candidate assessments: %+v", body.Result)
+	}
+	var eligible model.CandidateAssessment
+	for _, assessment := range body.Result {
+		if assessment.Eligible {
+			eligible = assessment
+		}
+	}
+	if eligible.Rank != 1 || assessmentCheck(eligible.Checks, "promotion_eligibility") != model.CheckPass || assessmentCheck(eligible.Checks, "replica_read_only") != model.CheckPass {
+		t.Fatalf("real discovered replica was not ranked safely: %+v", body.Result)
+	}
+}
+
+func assessmentCheck(checks []model.Check, name string) model.CheckStatus {
+	for _, check := range checks {
+		if check.Name == name {
+			return check.Status
+		}
+	}
+	return ""
 }
 
 func TestCandidateReadFailsClosedBeforeAdapterInvocation(t *testing.T) {

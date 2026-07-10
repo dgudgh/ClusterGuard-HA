@@ -168,12 +168,17 @@ func discover(ctx context.Context, runner SQLRunner, request adapter.DiscoverReq
 	role := model.RoleUnknown
 	healthState := model.HealthDegraded
 	healthSummary := "MySQL instance is read-only with no replication source"
+	replicaReadOnly := identity.readOnly || identity.superReadOnly
 	if configured {
 		role = model.RoleReplica
 		healthSummary = "MySQL replica is reachable but replication threads are not running"
 		if replication.IOThread == model.ThreadRunning && replication.SQLThread == model.ThreadRunning {
-			healthState = model.HealthHealthy
-			healthSummary = "MySQL replica is reachable and replication threads are running"
+			if replicaReadOnly {
+				healthState = model.HealthHealthy
+				healthSummary = "MySQL replica is reachable, read-only, and replication threads are running"
+			} else {
+				healthSummary = "MySQL replica is writable while replication is configured"
+			}
 		}
 	} else if !identity.readOnly && !identity.superReadOnly {
 		role = model.RolePrimary
@@ -203,14 +208,17 @@ func discover(ctx context.Context, runner SQLRunner, request adapter.DiscoverReq
 			LatencyMS:   time.Since(started).Milliseconds(),
 			Replication: string(replication.SQLThread),
 		},
-		Replication: replication,
+		Replication:       replication,
+		PromotionEligible: configured && replicaReadOnly && healthState == model.HealthHealthy,
 		EngineMetadata: map[string]string{
-			"server_id":     identity.serverID,
-			"version":       identity.version,
-			"gtid_mode":     identity.gtidMode,
-			"gtid_executed": identity.gtidExecuted,
-			"log_bin":       identity.logBin,
-			"binlog_format": identity.binlogFormat,
+			"server_id":       identity.serverID,
+			"version":         identity.version,
+			"gtid_mode":       identity.gtidMode,
+			"gtid_executed":   identity.gtidExecuted,
+			"log_bin":         identity.logBin,
+			"binlog_format":   identity.binlogFormat,
+			"read_only":       strconv.FormatBool(identity.readOnly),
+			"super_read_only": strconv.FormatBool(identity.superReadOnly),
 		},
 	}
 	return adapter.DiscoveryResult{Instance: instance}, nil

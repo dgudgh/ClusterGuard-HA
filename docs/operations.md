@@ -11,6 +11,7 @@ Implemented keys:
 | --- | --- | --- |
 | `http_address` | No | HTTP listen address; blank defaults to `127.0.0.1:8088`. |
 | `metadata_path` | Yes | Durable metadata snapshot path. |
+| `control_token_env` | No | Environment variable containing the Bearer token for control API `POST` requests. Without it, all control `POST` routes fail closed with `503`. |
 | `approval_token_env` | No | Environment variable containing the workflow approval token. |
 | `mysql.enabled` | No | Enables server-side MySQL discovery credentials. The adapter stays registered, but discover/refresh fails closed when omitted or `false`. |
 | `mysql.username` | When enabled | Dedicated MySQL read-only discovery user. |
@@ -20,6 +21,7 @@ The JSON file contains environment-variable names only. Set secrets in the
 service environment:
 
 ```bash
+export CG_CONTROL_TOKEN='replace-with-a-control-api-secret'
 export CG_APPROVAL_TOKEN='replace-with-a-local-secret'
 export CG_MYSQL_DISCOVERY_PASSWORD='replace-with-the-read-only-secret'
 go run ./cmd/clusterguardd --config configs/clusterguard.example.json
@@ -29,6 +31,12 @@ The server rejects startup when MySQL is enabled but its username,
 `password_env`, or resolved password is blank. MySQL passwords are passed to
 the client process through its environment and are not placed in command-line
 arguments, API payloads, or persisted metadata.
+
+Every `/api/v1/` `POST` requires `Authorization: Bearer <control-token>`.
+Missing or invalid credentials return `401` before request parsing or database
+access. Keep the default loopback listener for local operation. Before exposing
+the API on another interface, terminate TLS in a trusted reverse proxy and
+apply network access controls; never transmit a control token over plain HTTP.
 
 ## 2. Inspect Engines and Capabilities
 
@@ -48,6 +56,7 @@ controller is allowed to probe:
 ```bash
 curl -sS -X POST http://127.0.0.1:8088/api/v1/clusters \
   -H 'content-type: application/json' \
+  -H "Authorization: Bearer ${CG_CONTROL_TOKEN}" \
   -d '{
     "display_name":"payments-mysql",
     "engine":"mysql",
@@ -80,6 +89,7 @@ Refresh only the registered inventory. Send exactly an empty JSON object:
 curl -sS -X POST \
   http://127.0.0.1:8088/api/v1/clusters/<cluster-uuid>/discover \
   -H 'content-type: application/json' \
+  -H "Authorization: Bearer ${CG_CONTROL_TOKEN}" \
   -d '{}'
 ```
 
@@ -163,7 +173,11 @@ go run ./cmd/cgctl --server http://127.0.0.1:8088 topology <cluster-uuid>
 ```
 
 `refresh` sends `POST` with the exact body `{}`. The other cluster commands are
-read-only `GET` requests.
+read-only `GET` requests. `refresh` reads the Bearer token from
+`CG_CONTROL_TOKEN`; select another environment variable with
+`--token-env <name>` before the command. Enter the token in the web console's
+password field before refreshing; it stays in the current page only and is not
+written to browser storage.
 
 ## 7. Reconcile Mutable Metadata
 

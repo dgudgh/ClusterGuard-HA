@@ -40,11 +40,12 @@ func TestRequestForRejectsInvalidCommands(t *testing.T) {
 }
 
 func TestRunRefreshPostsExactEmptyJSONObject(t *testing.T) {
-	var method, path, contentType, body string
+	var method, path, contentType, authorization, body string
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		method = request.Method
 		path = request.URL.Path
 		contentType = request.Header.Get("Content-Type")
+		authorization = request.Header.Get("Authorization")
 		contents, _ := io.ReadAll(request.Body)
 		body = string(contents)
 		writer.Header().Set("Content-Type", "application/json")
@@ -53,15 +54,25 @@ func TestRunRefreshPostsExactEmptyJSONObject(t *testing.T) {
 	defer server.Close()
 
 	var stdout, stderr bytes.Buffer
+	t.Setenv("CG_CONTROL_TOKEN", "control-secret")
 	exitCode := run([]string{"--server", server.URL, "refresh", "11111111-1111-4111-8111-111111111111"}, &stdout, &stderr, server.Client())
 	if exitCode != 0 || stderr.Len() != 0 {
 		t.Fatalf("run exit=%d stderr=%q", exitCode, stderr.String())
 	}
-	if method != http.MethodPost || path != "/api/v1/clusters/11111111-1111-4111-8111-111111111111/discover" || contentType != "application/json" || body != "{}" {
-		t.Fatalf("refresh request = %s %s content-type=%q body=%q", method, path, contentType, body)
+	if method != http.MethodPost || path != "/api/v1/clusters/11111111-1111-4111-8111-111111111111/discover" || contentType != "application/json" || authorization != "Bearer control-secret" || body != "{}" {
+		t.Fatalf("refresh request = %s %s content-type=%q authorization=%q body=%q", method, path, contentType, authorization, body)
 	}
 	if !strings.Contains(stdout.String(), "11111111-1111-4111-8111-111111111111") || !strings.Contains(stdout.String(), "refreshed") {
 		t.Fatalf("refresh output does not acknowledge the cluster: %q", stdout.String())
+	}
+}
+
+func TestRunRefreshFailsBeforeRequestWhenControlTokenEnvironmentIsEmpty(t *testing.T) {
+	server := testAPIServer(t, `{"status":"ok","result":{}}`)
+	defer server.Close()
+	var stdout, stderr bytes.Buffer
+	if exitCode := run([]string{"--server", server.URL, "refresh", "cluster-id"}, &stdout, &stderr, server.Client()); exitCode != 2 || !strings.Contains(stderr.String(), "control token environment variable") {
+		t.Fatalf("missing control token exit=%d stderr=%q", exitCode, stderr.String())
 	}
 }
 

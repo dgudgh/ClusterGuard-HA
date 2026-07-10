@@ -3,6 +3,7 @@ package mysql
 import (
 	"context"
 	"testing"
+	"time"
 
 	"clusterguard.io/ha/pkg/adapter"
 	"clusterguard.io/ha/pkg/model"
@@ -104,6 +105,10 @@ func TestEvaluateCandidatesFailsClosedOnUnsafeOrMissingState(t *testing.T) {
 		}},
 		{name: "primary role", checkName: "candidate_role", mutate: func(instance *model.DatabaseInstance) { instance.Role = model.RolePrimary }},
 		{name: "promotion disabled", checkName: "promotion_eligibility", mutate: func(instance *model.DatabaseInstance) { instance.PromotionEligible = false }},
+		{name: "writable replica", checkName: "replica_read_only", mutate: func(instance *model.DatabaseInstance) {
+			instance.EngineMetadata["read_only"] = "false"
+			instance.EngineMetadata["super_read_only"] = "false"
+		}},
 		{name: "maintenance", checkName: "maintenance", mutate: func(instance *model.DatabaseInstance) { instance.Maintenance = true }},
 		{name: "stopped IO thread", checkName: "replication_threads", mutate: func(instance *model.DatabaseInstance) { instance.Replication.IOThread = model.ThreadStopped }},
 		{name: "missing source", checkName: "replication_source", mutate: func(instance *model.DatabaseInstance) { instance.Replication.SourceIdentity = nil }},
@@ -125,6 +130,29 @@ func TestEvaluateCandidatesFailsClosedOnUnsafeOrMissingState(t *testing.T) {
 			}
 			if got := assessmentCheckStatus(t, assessments[0], test.checkName); got != model.CheckFail {
 				t.Fatalf("%s check = %s, want fail", test.checkName, got)
+			}
+		})
+	}
+}
+
+func TestEvaluateCandidatesRejectsStaleOrUndatedBoundProbe(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		observedAt time.Time
+	}{
+		{name: "stale", observedAt: time.Date(2026, time.July, 11, 11, 59, 59, 0, time.UTC)},
+		{name: "undated"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			instance := candidateInstance("00000000-0000-4000-8000-000000000010", "8.0.44", 0, testPrimaryServerUUID+":1-20")
+			request := candidateEvaluationRequest(instance)
+			request.Probes[0].DiscoveryObservedAt = test.observedAt
+			assessments, err := New(nil).EvaluateCandidates(context.Background(), request)
+			if err != nil {
+				t.Fatalf("evaluate candidates: %v", err)
+			}
+			if len(assessments) != 1 || assessments[0].Eligible || assessmentCheckStatus(t, assessments[0], "reachability") != model.CheckFail {
+				t.Fatalf("%s bound probe from another cycle was accepted: %+v", test.name, assessments)
 			}
 		})
 	}
@@ -306,9 +334,12 @@ func TestEvaluateCandidatesWarnsForMissingTransactionsAtZeroLag(t *testing.T) {
 }
 
 func candidateEvaluationRequest(instances ...model.DatabaseInstance) adapter.CandidateRequest {
+	observedAt := time.Date(2026, time.July, 11, 12, 0, 0, 0, time.UTC)
 	probes := make([]model.ProbeStatus, 0, len(instances))
 	for _, instance := range instances {
-		probes = append(probes, candidateProbe(instance.ResourceID, model.HealthHealthy))
+		probe := candidateProbe(instance.ResourceID, model.HealthHealthy)
+		probe.DiscoveryObservedAt = observedAt
+		probes = append(probes, probe)
 	}
 	return adapter.CandidateRequest{
 		Cluster: model.DatabaseCluster{
@@ -324,9 +355,10 @@ func candidateEvaluationRequest(instances ...model.DatabaseInstance) adapter.Can
 			Health:         model.Health{State: model.HealthHealthy},
 			EngineMetadata: map[string]string{"version": "8.0.44", "gtid_mode": "ON", "gtid_executed": testPrimaryServerUUID + ":1-20"},
 		},
-		Instances: instances,
-		Probes:    probes,
-		Policy:    model.CandidatePolicy{MaximumLagSeconds: 5, RequireGTID: true},
+		Instances:  instances,
+		Probes:     probes,
+		ObservedAt: observedAt,
+		Policy:     model.CandidatePolicy{MaximumLagSeconds: 5, RequireGTID: true},
 	}
 }
 
@@ -354,7 +386,7 @@ func candidateInstance(id, version string, lag int64, executedGTID string) model
 			LagSeconds:       &lag,
 			ExecutedPosition: executedGTID,
 		},
-		EngineMetadata: map[string]string{"version": version, "gtid_mode": "ON"},
+		EngineMetadata: map[string]string{"version": version, "gtid_mode": "ON", "read_only": "true", "super_read_only": "true"},
 	}
 }
 

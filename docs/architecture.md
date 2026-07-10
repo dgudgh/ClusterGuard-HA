@@ -70,8 +70,9 @@ database operation.
 
 Cluster registration creates the authoritative set of active database
 endpoints. Discovery receives only a cluster UUID and probes that registered
-inventory with server-side credentials. A caller cannot add an endpoint or
-supply credentials in a refresh request.
+inventory with server-side credentials. Registration and refresh are control
+operations protected by a dedicated Bearer token. A refresh caller cannot add
+an endpoint or supply credentials in its request.
 
 Each cluster has a durable inventory generation. Any active database endpoint
 change or metadata-coordinate reconciliation increments the generation and
@@ -109,6 +110,7 @@ Each replica is evaluated for:
 - selected-cluster inventory membership and healthy bound probe evidence;
 - reachability and observed role;
 - maintenance state and promotion eligibility;
+- current read-only state and probe evidence from the exact published cycle;
 - replication IO and SQL thread state;
 - replication source identity matching the current primary;
 - known, nonnegative lag within the configured policy;

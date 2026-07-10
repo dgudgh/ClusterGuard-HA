@@ -24,6 +24,8 @@ import (
 	"clusterguard.io/ha/pkg/model"
 )
 
+const testControlToken = "test-control-token"
+
 type apiRunner struct{}
 
 type metadataAdapterSpy struct {
@@ -105,7 +107,7 @@ func newTestServer(t *testing.T) (*Server, *store.Repository) {
 	}
 	repository := store.NewMemory()
 	service := workflow.New(registry, workflow.AllowAllSafety{}, workflow.NewMemoryLocks(), workflow.TokenApproval{}, repository)
-	return NewServer(registry, repository, service, &fakeRefresher{}), repository
+	return NewServer(registry, repository, service, &fakeRefresher{}, WithControlToken(testControlToken)), repository
 }
 
 func callJSON(t *testing.T, handler http.Handler, method string, path string, body interface{}) *httptest.ResponseRecorder {
@@ -120,9 +122,64 @@ func callJSON(t *testing.T, handler http.Handler, method string, path string, bo
 	}
 	request := httptest.NewRequest(method, path, bytes.NewReader(payload))
 	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+testControlToken)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	return response
+}
+
+func TestControlAPIPostsRequireConfiguredBearerToken(t *testing.T) {
+	registry := adapter.NewRegistry()
+	if err := registry.Register(mysql.New(apiRunner{})); err != nil {
+		t.Fatalf("register MySQL adapter: %v", err)
+	}
+	repository := store.NewMemory()
+	refresher := &fakeRefresher{}
+	service := workflow.New(registry, workflow.AllowAllSafety{}, workflow.NewMemoryLocks(), workflow.TokenApproval{}, repository)
+	server := NewServer(registry, repository, service, refresher, WithControlToken("control-secret"))
+	payload := []byte(`{"display_name":"secured","engine":"mysql","endpoints":[{"hostname":"mysql-a","port":3306}]}`)
+
+	request := func(token string) *httptest.ResponseRecorder {
+		t.Helper()
+		httpRequest := httptest.NewRequest(http.MethodPost, "/api/v1/clusters", bytes.NewReader(payload))
+		httpRequest.Header.Set("Content-Type", "application/json")
+		if token != "" {
+			httpRequest.Header.Set("Authorization", "Bearer "+token)
+		}
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, httpRequest)
+		return response
+	}
+
+	for _, token := range []string{"", "wrong"} {
+		response := request(token)
+		if response.Code != http.StatusUnauthorized || len(repository.Clusters()) != 0 {
+			t.Fatalf("token %q did not fail closed: %d %s", token, response.Code, response.Body.String())
+		}
+	}
+	if response := request("control-secret"); response.Code != http.StatusCreated || len(repository.Clusters()) != 1 {
+		t.Fatalf("valid control token did not authorize registration: %d %s", response.Code, response.Body.String())
+	}
+
+	cluster := repository.Clusters()[0]
+	discovery := httptest.NewRequest(http.MethodPost, "/api/v1/clusters/"+string(cluster.ResourceID)+"/discover", strings.NewReader("{}"))
+	discovery.Header.Set("Content-Type", "application/json")
+	discoveryResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(discoveryResponse, discovery)
+	if discoveryResponse.Code != http.StatusUnauthorized || refresher.callCount() != 0 {
+		t.Fatalf("anonymous discovery reached refresher: %d %s calls=%d", discoveryResponse.Code, discoveryResponse.Body.String(), refresher.callCount())
+	}
+}
+
+func TestControlAPIPostsFailClosedWhenTokenIsNotConfigured(t *testing.T) {
+	server := NewServer(adapter.NewRegistry(), store.NewMemory(), nil, nil)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/clusters", strings.NewReader(`{}`))
+	request.Header.Set("Authorization", "Bearer anything")
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("unconfigured control authentication status = %d, want 503: %s", response.Code, response.Body.String())
+	}
 }
 
 func testInventoryGeneration(t *testing.T, repository *store.Repository, clusterID model.ResourceID) uint64 {
@@ -166,6 +223,7 @@ func TestGenericJSONRoutesRejectOversizedBodiesIndependentOfContentLength(t *tes
 		t.Run(path, func(t *testing.T) {
 			body := strings.Repeat(" ", maximumJSONBodyBytes+1) + `{}`
 			request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+			request.Header.Set("Authorization", "Bearer "+testControlToken)
 			request.ContentLength = 0
 			response := httptest.NewRecorder()
 			server.Handler().ServeHTTP(response, request)
@@ -270,7 +328,7 @@ func TestMetadataExecutePersistenceFailureIsSanitizedAndAtomic(t *testing.T) {
 		t.Fatalf("register mysql: %v", err)
 	}
 	service := workflow.New(registry, workflow.AllowAllSafety{}, workflow.NewMemoryLocks(), workflow.TokenApproval{}, repository)
-	server := NewServer(registry, repository, service, &fakeRefresher{})
+	server := NewServer(registry, repository, service, &fakeRefresher{}, WithControlToken(testControlToken))
 	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "metadata-failure"}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-old", Port: 3306, Active: true}})
 	if err != nil {
 		t.Fatalf("create inventory: %v", err)

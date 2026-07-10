@@ -19,6 +19,8 @@ type MySQL struct {
 type File struct {
 	HTTPAddress      string `json:"http_address"`
 	MetadataPath     string `json:"metadata_path"`
+	ControlTokenEnv  string `json:"control_token_env"`
+	ControlToken     string `json:"-"`
 	ApprovalTokenEnv string `json:"approval_token_env"`
 	ApprovalToken    string `json:"-"`
 	MySQL            MySQL  `json:"mysql"`
@@ -46,6 +48,13 @@ func Load(path string) (File, error) {
 	}
 	if strings.TrimSpace(configuration.MetadataPath) == "" {
 		return File{}, fmt.Errorf("metadata_path is required")
+	}
+	if environment := strings.TrimSpace(configuration.ControlTokenEnv); environment != "" {
+		configuration.ControlTokenEnv = environment
+		configuration.ControlToken = os.Getenv(environment)
+		if strings.TrimSpace(configuration.ControlToken) == "" {
+			return File{}, fmt.Errorf("control token environment variable %s is empty", environment)
+		}
 	}
 	if environment := strings.TrimSpace(configuration.ApprovalTokenEnv); environment != "" {
 		configuration.ApprovalToken = os.Getenv(environment)

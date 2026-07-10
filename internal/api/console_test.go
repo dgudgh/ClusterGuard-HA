@@ -42,6 +42,20 @@ func TestConsoleConsumesSelectedClusterReadAPIsAndPostsDiscovery(t *testing.T) {
 	if !strings.Contains(page, "method: 'POST'") || !strings.Contains(page, "body: '{}'") || !strings.Contains(page, "/discover") {
 		t.Fatal("refresh topology must POST an exact empty JSON object to the discovery route")
 	}
+	for _, contract := range []string{
+		`id="control-token"`,
+		`type="password"`,
+		`autocomplete="current-password"`,
+		"'Authorization': `Bearer ${controlToken}`",
+		"byId('control-token').value.trim()",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("refresh topology is missing in-memory control authentication contract %q", contract)
+		}
+	}
+	if strings.Contains(page, "window.prompt(") || strings.Contains(page, "localStorage") || strings.Contains(page, "sessionStorage") {
+		t.Fatal("control token must use a non-persistent inline password field")
+	}
 	if !strings.Contains(page, "health.health.state") {
 		t.Fatal("console must consume the current health response shape")
 	}
@@ -116,6 +130,28 @@ func TestConsoleInvalidatesEverySelectionRequestAndClearsBeforeFetching(t *testi
 	}
 	if strings.Count(loadSource, "commitIfCurrent(generation") < 2 {
 		t.Fatal("both successful data and error status must commit through the generation guard")
+	}
+}
+
+func TestConsoleRefreshInvalidatesInFlightClusterReadsBeforePosting(t *testing.T) {
+	page := string(consoleHTML)
+	refreshStart := strings.Index(page, "const refreshTopology = async () => {")
+	if refreshStart < 0 {
+		t.Fatal("refreshTopology source not found")
+	}
+	refreshEndOffset := strings.Index(page[refreshStart:], "byId('cluster-select').addEventListener")
+	if refreshEndOffset <= 0 {
+		t.Fatal("refreshTopology source end not found")
+	}
+	refreshEnd := refreshStart + refreshEndOffset
+	refreshSource := page[refreshStart:refreshEnd]
+	invalidate := strings.Index(refreshSource, "const generation = ++state.requestGeneration;")
+	post := strings.Index(refreshSource, "await fetchResult(")
+	if invalidate < 0 || post < 0 || invalidate > post {
+		t.Fatal("refresh must invalidate all in-flight cluster reads before the discovery POST")
+	}
+	if strings.Contains(refreshSource, "const generation = state.requestGeneration;") {
+		t.Fatal("refresh must not reuse a generation owned by an earlier cluster read")
 	}
 }
 

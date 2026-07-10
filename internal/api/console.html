@@ -30,8 +30,8 @@
       color:var(--ink);
       font:14px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
-    button, select { font:inherit; }
-    button:focus-visible, select:focus-visible, a:focus-visible {
+    button, input, select { font:inherit; }
+    button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible {
       outline:3px solid rgba(8,122,104,.24);
       outline-offset:2px;
     }
@@ -91,7 +91,7 @@
     .heading-note { margin:5px 0 0; color:var(--muted); }
     .cluster-controls { display:flex; align-items:end; gap:10px; }
     label { display:grid; gap:5px; color:var(--muted); font-size:12px; font-weight:700; }
-    select, button {
+    select, input, button {
       height:38px;
       border:1px solid var(--line-strong);
       border-radius:7px;
@@ -99,6 +99,7 @@
       color:var(--ink);
     }
     select { width:min(360px,36vw); padding:0 34px 0 11px; }
+    input { width:160px; padding:0 11px; }
     button { display:inline-flex; align-items:center; gap:7px; padding:0 14px; cursor:pointer; font-weight:700; }
     button:hover { border-color:var(--accent); color:var(--accent); }
     button:disabled { cursor:wait; opacity:.62; }
@@ -236,7 +237,9 @@
     }
     @media (max-width:680px) {
       .page-header { display:block; }
-      .cluster-controls { display:grid; grid-template-columns:1fr auto; margin-top:16px; }
+      .cluster-controls { display:grid; grid-template-columns:minmax(0,1fr) auto; margin-top:16px; }
+      .cluster-controls label:first-child { grid-column:1 / -1; }
+      input { width:100%; }
       select { width:100%; }
       .status-strip { grid-template-columns:repeat(2,1fr); }
       .status-item:nth-child(3) { border-right:1px solid var(--line); }
@@ -272,6 +275,9 @@
             <select id="cluster-select" aria-label="选择数据库集群">
               <option value="">未发现已注册集群</option>
             </select>
+          </label>
+          <label for="control-token">控制令牌
+            <input id="control-token" type="password" autocomplete="current-password" placeholder="仅用于刷新">
           </label>
           <button id="refresh-topology" type="button" aria-label="刷新所选集群拓扑">↻ 刷新拓扑</button>
         </div>
@@ -584,18 +590,25 @@
         setLiveStatus('请先选择数据库集群。', true);
         return;
       }
-      const generation = state.requestGeneration;
+      const generation = ++state.requestGeneration;
+      const controlToken = byId('control-token').value.trim();
+      if (!controlToken) {
+        commitIfCurrent(generation, () => setLiveStatus('请输入控制令牌后刷新。', true));
+        byId('control-token').focus();
+        return;
+      }
       const refresh = byId('refresh-topology');
       refresh.disabled = true;
       commitIfCurrent(generation, () => setLiveStatus('正在刷新拓扑。'));
       try {
         await fetchResult(`/api/v1/clusters/${clusterId}/discover`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${controlToken}` },
           body: '{}'
         });
         if (generation === state.requestGeneration) await loadSelectedCluster();
       } catch (error) {
+        if (error instanceof APIError && error.status === 401) byId('control-token').value = '';
         commitIfCurrent(generation, () => setLiveStatus(error.message, true));
       } finally {
         refresh.disabled = false;

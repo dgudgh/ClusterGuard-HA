@@ -47,5 +47,5 @@ func New(configuration config.File) (*api.Server, error) {
 		}
 		return adapter.Credentials{Username: configuration.MySQL.Username, Password: configuration.MySQL.Password}, nil
 	}), nil)
-	return api.NewServer(registry, repository, service, refresher), nil
+	return api.NewServer(registry, repository, service, refresher, api.WithControlToken(configuration.ControlToken)), nil
 }

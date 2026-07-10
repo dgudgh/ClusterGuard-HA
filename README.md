@@ -43,6 +43,7 @@ documented read-only queries. Keep secrets in environment variables, never in
 the JSON configuration.
 
 ```bash
+export CG_CONTROL_TOKEN='replace-with-a-control-api-secret'
 export CG_APPROVAL_TOKEN='replace-with-a-local-secret'
 export CG_MYSQL_DISCOVERY_PASSWORD='replace-with-the-read-only-secret'
 go run ./cmd/clusterguardd --config configs/clusterguard.example.json
@@ -58,6 +59,7 @@ port are coordinates, not resource identifiers.
 ```bash
 curl -sS -X POST http://127.0.0.1:8088/api/v1/clusters \
   -H 'content-type: application/json' \
+  -H "Authorization: Bearer ${CG_CONTROL_TOKEN}" \
   -d '{
     "display_name":"payments-mysql",
     "engine":"mysql",
@@ -77,6 +79,7 @@ are rejected because credentials are resolved on the server.
 curl -sS -X POST \
   http://127.0.0.1:8088/api/v1/clusters/<cluster-uuid>/discover \
   -H 'content-type: application/json' \
+  -H "Authorization: Bearer ${CG_CONTROL_TOKEN}" \
   -d '{}'
 ```
 
@@ -91,6 +94,10 @@ go run ./cmd/cgctl candidates <cluster-uuid>
 go run ./cmd/cgctl metrics <cluster-uuid>
 go run ./cmd/cgctl refresh <cluster-uuid>
 ```
+
+`refresh` reads the control token from `CG_CONTROL_TOKEN`. Use
+`--token-env <name>` before the command to select a different environment
+variable; the secret is never accepted as a command-line value.
 
 Place global flags before the command:
 

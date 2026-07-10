@@ -60,6 +60,7 @@ func run(arguments []string, stdout io.Writer, stderr io.Writer, client httpDoer
 	flags.SetOutput(stderr)
 	serverURL := flags.String("server", "http://127.0.0.1:8088", "ClusterGuard HA API URL")
 	jsonOutput := flags.Bool("json", false, "print the raw API response as indented JSON")
+	controlTokenEnv := flags.String("token-env", "CG_CONTROL_TOKEN", "environment variable containing the control API token")
 	if err := flags.Parse(arguments); err != nil {
 		return 2
 	}
@@ -70,7 +71,18 @@ func run(arguments []string, stdout io.Writer, stderr io.Writer, client httpDoer
 	}
 
 	var requestBody io.Reader
+	controlToken := ""
 	if method == http.MethodPost {
+		environment := strings.TrimSpace(*controlTokenEnv)
+		if environment == "" {
+			_, _ = fmt.Fprintln(stderr, "cgctl: control token environment variable name is required")
+			return 2
+		}
+		controlToken = strings.TrimSpace(os.Getenv(environment))
+		if controlToken == "" {
+			_, _ = fmt.Fprintf(stderr, "cgctl: control token environment variable %s is empty\n", environment)
+			return 2
+		}
 		requestBody = strings.NewReader("{}")
 	}
 	request, err := http.NewRequest(method, strings.TrimRight(*serverURL, "/")+path, requestBody)
@@ -81,6 +93,7 @@ func run(arguments []string, stdout io.Writer, stderr io.Writer, client httpDoer
 	request.Header.Set("Accept", "application/json")
 	if method == http.MethodPost {
 		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Authorization", "Bearer "+controlToken)
 	}
 	response, err := client.Do(request)
 	if err != nil {

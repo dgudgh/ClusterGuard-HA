@@ -56,6 +56,9 @@ func TestDiscoverSupportsMySQLVersions(t *testing.T) {
 			if instance.Role != model.RoleReplica || instance.Health.State != model.HealthHealthy || instance.EngineMetadata["version"] != test.version {
 				t.Fatalf("unexpected engine-neutral result: %+v", instance)
 			}
+			if !instance.PromotionEligible || instance.EngineMetadata["read_only"] != "true" || instance.EngineMetadata["super_read_only"] != "true" {
+				t.Fatalf("healthy read-only replica must be promotion eligible with persisted read-only facts: %+v", instance)
+			}
 			if instance.Replication.IOThread != model.ThreadRunning || instance.Replication.SQLThread != model.ThreadRunning || instance.Replication.LagSeconds == nil || *instance.Replication.LagSeconds != 2 {
 				t.Fatalf("unexpected replication result: %+v", instance.Replication)
 			}
@@ -63,6 +66,24 @@ func TestDiscoverSupportsMySQLVersions(t *testing.T) {
 				t.Fatalf("legacy statement was not used after syntax rejection: %v", runner.queries)
 			}
 		})
+	}
+}
+
+func TestDiscoverDegradesWritableReplicaAndBlocksPromotionEligibility(t *testing.T) {
+	runner := &fakeRunner{
+		identity:    identityRow("8.4.10", "0", "0"),
+		replication: modernReplicationRow(),
+	}
+	result, err := New(runner).Discover(context.Background(), adapterRequest())
+	if err != nil {
+		t.Fatalf("discover writable replica: %v", err)
+	}
+	instance := result.Instance
+	if instance.Role != model.RoleReplica || instance.Health.State != model.HealthDegraded || instance.PromotionEligible {
+		t.Fatalf("writable replica must be degraded and ineligible: %+v", instance)
+	}
+	if instance.EngineMetadata["read_only"] != "false" || instance.EngineMetadata["super_read_only"] != "false" {
+		t.Fatalf("writable replica read-only facts were not persisted: %+v", instance.EngineMetadata)
 	}
 }
 

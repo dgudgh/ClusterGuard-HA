@@ -12,6 +12,7 @@ func TestLoadReadsConfigurationAndEnvironmentSecret(t *testing.T) {
 	contents := `{
   "http_address": "127.0.0.1:9090",
   "metadata_path": "` + filepath.Join(directory, "metadata.json") + `",
+  "control_token_env": "CG_TEST_CONTROL",
   "approval_token_env": "CG_TEST_APPROVAL",
   "mysql": {"enabled": true, "username": "discover", "password_env": "CG_TEST_MYSQL_PASSWORD"}
 }`
@@ -19,17 +20,29 @@ func TestLoadReadsConfigurationAndEnvironmentSecret(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("CG_TEST_APPROVAL", "approve-this")
+	t.Setenv("CG_TEST_CONTROL", "control-this")
 	t.Setenv("CG_TEST_MYSQL_PASSWORD", "secret")
 
 	loaded, err := Load(path)
 	if err != nil {
 		t.Fatalf("load configuration: %v", err)
 	}
-	if loaded.HTTPAddress != "127.0.0.1:9090" || loaded.ApprovalToken != "approve-this" {
+	if loaded.HTTPAddress != "127.0.0.1:9090" || loaded.ApprovalToken != "approve-this" || loaded.ControlToken != "control-this" {
 		t.Fatalf("unexpected runtime configuration: %+v", loaded)
 	}
 	if loaded.MySQL.Password != "secret" || !loaded.MySQL.Enabled {
 		t.Fatalf("expected MySQL secret to be resolved: %+v", loaded.MySQL)
+	}
+}
+
+func TestLoadRejectsConfiguredEmptyControlTokenEnvironment(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "control.json")
+	contents := `{"metadata_path":"` + filepath.Join(t.TempDir(), "metadata.json") + `","control_token_env":"CG_MISSING_CONTROL"}`
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Fatal("configured empty control token must be rejected")
 	}
 }
 

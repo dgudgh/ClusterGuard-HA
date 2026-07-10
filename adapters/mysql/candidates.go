@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"clusterguard.io/ha/pkg/adapter"
 	"clusterguard.io/ha/pkg/model"
@@ -25,7 +26,7 @@ type candidateEvaluation struct {
 
 func evaluateCandidates(request adapter.CandidateRequest) []model.CandidateAssessment {
 	evaluations := make([]candidateEvaluation, 0, len(request.Instances))
-	incompleteCoverage := hasIncompleteProbeCoverage(request.Probes)
+	incompleteCoverage := hasIncompleteProbeCoverage(request.Probes, request.ObservedAt)
 	for _, instance := range request.Instances {
 		evaluations = append(evaluations, evaluateCandidate(request, instance, incompleteCoverage))
 	}
@@ -86,7 +87,7 @@ func evaluateCandidate(request adapter.CandidateRequest, instance model.Database
 		}
 	}
 
-	healthyBoundProbe := hasHealthyBoundProbe(request.Probes, instance.ResourceID)
+	healthyBoundProbe := hasHealthyBoundProbe(request.Probes, instance.ResourceID, request.ObservedAt)
 	if model.ValidResourceID(instance.ResourceID) && instance.ClusterID == request.Cluster.ResourceID && instance.Engine == model.EngineMySQL && request.Cluster.Engine == model.EngineMySQL && healthyBoundProbe {
 		addCheck("inventory_membership", model.CheckPass, "candidate belongs to the selected MySQL cluster inventory")
 	} else {
@@ -106,6 +107,12 @@ func evaluateCandidate(request adapter.CandidateRequest, instance model.Database
 		addCheck("promotion_eligibility", model.CheckPass, "candidate is marked promotion eligible")
 	} else {
 		addCheck("promotion_eligibility", model.CheckFail, "candidate is not marked promotion eligible")
+	}
+	readOnly, readOnlyKnown := candidateReadOnly(instance.EngineMetadata)
+	if readOnlyKnown && readOnly {
+		addCheck("replica_read_only", model.CheckPass, "candidate is read-only")
+	} else {
+		addCheck("replica_read_only", model.CheckFail, "candidate must have current read-only evidence")
 	}
 	if !instance.Maintenance {
 		addCheck("maintenance", model.CheckPass, "candidate is not in maintenance")
@@ -195,30 +202,42 @@ func evaluateCandidate(request adapter.CandidateRequest, instance model.Database
 	return evaluation
 }
 
-func hasIncompleteProbeCoverage(probes []model.ProbeStatus) bool {
+func hasIncompleteProbeCoverage(probes []model.ProbeStatus, observedAt time.Time) bool {
 	if len(probes) == 0 {
 		return true
 	}
 	for _, probe := range probes {
-		if probe.Health.State != model.HealthHealthy {
+		if probe.Health.State != model.HealthHealthy || observedAt.IsZero() || !probe.DiscoveryObservedAt.Equal(observedAt) {
 			return true
 		}
 	}
 	return false
 }
 
-func hasHealthyBoundProbe(probes []model.ProbeStatus, instanceID model.ResourceID) bool {
+func hasHealthyBoundProbe(probes []model.ProbeStatus, instanceID model.ResourceID, observedAt time.Time) bool {
+	if observedAt.IsZero() {
+		return false
+	}
 	bound := false
 	for _, probe := range probes {
 		if probe.InstanceID != instanceID {
 			continue
 		}
 		bound = true
-		if probe.Health.State != model.HealthHealthy {
+		if probe.Health.State != model.HealthHealthy || !probe.DiscoveryObservedAt.Equal(observedAt) {
 			return false
 		}
 	}
 	return bound
+}
+
+func candidateReadOnly(metadata map[string]string) (bool, bool) {
+	readOnly, readOnlyErr := strconv.ParseBool(strings.TrimSpace(metadata["read_only"]))
+	superReadOnly, superReadOnlyErr := strconv.ParseBool(strings.TrimSpace(metadata["super_read_only"]))
+	if readOnlyErr != nil || superReadOnlyErr != nil {
+		return false, false
+	}
+	return readOnly || superReadOnly, true
 }
 
 func mysqlReleaseFamily(version string) (string, error) {

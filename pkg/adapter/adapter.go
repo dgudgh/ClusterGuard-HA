@@ -3,6 +3,7 @@ package adapter
 import (
 	"context"
 	"errors"
+	"time"
 
 	"clusterguard.io/ha/pkg/model"
 )
@@ -84,12 +85,13 @@ type MetadataResult struct {
 }
 
 type CandidateRequest struct {
-	Cluster   model.DatabaseCluster    `json:"cluster"`
-	Primary   model.DatabaseInstance   `json:"primary"`
-	Instances []model.DatabaseInstance `json:"instances"`
-	Links     []model.ReplicationLink  `json:"links"`
-	Probes    []model.ProbeStatus      `json:"probes,omitempty"`
-	Policy    model.CandidatePolicy    `json:"policy"`
+	Cluster    model.DatabaseCluster    `json:"cluster"`
+	Primary    model.DatabaseInstance   `json:"primary"`
+	Instances  []model.DatabaseInstance `json:"instances"`
+	Links      []model.ReplicationLink  `json:"links"`
+	Probes     []model.ProbeStatus      `json:"probes,omitempty"`
+	ObservedAt time.Time                `json:"observed_at"`
+	Policy     model.CandidatePolicy    `json:"policy"`
 }
 
 type DatabaseHAAdapter interface {

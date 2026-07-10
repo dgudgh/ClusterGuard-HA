@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
@@ -19,18 +20,31 @@ import (
 const maximumJSONBodyBytes = 1 << 20
 
 type Server struct {
-	registry  *adapter.Registry
-	store     *store.Repository
-	workflow  *workflow.Service
-	refresher Refresher
+	registry     *adapter.Registry
+	store        *store.Repository
+	workflow     *workflow.Service
+	refresher    Refresher
+	controlToken string
 }
 
 type Refresher interface {
 	Refresh(context.Context, model.ResourceID) (model.TopologySnapshot, error)
 }
 
-func NewServer(registry *adapter.Registry, repository *store.Repository, service *workflow.Service, refresher Refresher) *Server {
-	return &Server{registry: registry, store: repository, workflow: service, refresher: refresher}
+type ServerOption func(*Server)
+
+func WithControlToken(token string) ServerOption {
+	return func(server *Server) { server.controlToken = strings.TrimSpace(token) }
+}
+
+func NewServer(registry *adapter.Registry, repository *store.Repository, service *workflow.Service, refresher Refresher, options ...ServerOption) *Server {
+	server := &Server{registry: registry, store: repository, workflow: service, refresher: refresher}
+	for _, option := range options {
+		if option != nil {
+			option(server)
+		}
+	}
+	return server
 }
 
 func writeJSON(writer http.ResponseWriter, status int, value interface{}) {
@@ -71,6 +85,9 @@ func (server *Server) Handler() http.Handler {
 
 func (server *Server) route(writer http.ResponseWriter, request *http.Request) {
 	path := strings.TrimSuffix(request.URL.Path, "/")
+	if request.Method == http.MethodPost && strings.HasPrefix(path, "/api/v1/") && !server.authorizeControl(writer, request) {
+		return
+	}
 	switch {
 	case (request.Method == http.MethodGet || request.Method == http.MethodHead) && (path == "" || path == "/"):
 		writer.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -99,6 +116,20 @@ func (server *Server) route(writer http.ResponseWriter, request *http.Request) {
 	default:
 		writeError(writer, http.StatusNotFound, "route not found")
 	}
+}
+
+func (server *Server) authorizeControl(writer http.ResponseWriter, request *http.Request) bool {
+	if server.controlToken == "" {
+		writeError(writer, http.StatusServiceUnavailable, "control API authentication is not configured")
+		return false
+	}
+	scheme, token, found := strings.Cut(strings.TrimSpace(request.Header.Get("Authorization")), " ")
+	if !found || !strings.EqualFold(scheme, "Bearer") || subtle.ConstantTimeCompare([]byte(strings.TrimSpace(token)), []byte(server.controlToken)) != 1 {
+		writer.Header().Set("WWW-Authenticate", `Bearer realm="clusterguard-control"`)
+		writeError(writer, http.StatusUnauthorized, "valid control token is required")
+		return false
+	}
+	return true
 }
 
 func (server *Server) engines(writer http.ResponseWriter) {

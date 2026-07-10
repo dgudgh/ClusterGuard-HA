@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"clusterguard.io/ha/internal/store"
 	"clusterguard.io/ha/pkg/adapter"
@@ -258,7 +259,7 @@ func (server *Server) clusterCandidates(writer http.ResponseWriter, request *htt
 	}
 	primaries := make([]model.DatabaseInstance, 0, 1)
 	for _, instance := range snapshot.Instances {
-		if instance.Role == model.RolePrimary && hasCurrentDiscoveryProbe(snapshot.Probes, instance.ResourceID) {
+		if instance.Role == model.RolePrimary && hasCurrentDiscoveryProbe(snapshot.Probes, instance.ResourceID, snapshot.ObservedAt) {
 			primaries = append(primaries, instance)
 		}
 	}
@@ -273,7 +274,7 @@ func (server *Server) clusterCandidates(writer http.ResponseWriter, request *htt
 	}
 	assessments, err := candidate.EvaluateCandidates(request.Context(), adapter.CandidateRequest{
 		Cluster: cluster, Primary: primaries[0], Instances: snapshot.Instances, Links: snapshot.Links,
-		Probes: snapshot.Probes, Policy: policy,
+		Probes: snapshot.Probes, ObservedAt: snapshot.ObservedAt, Policy: policy,
 	})
 	if err != nil {
 		writeError(writer, http.StatusBadGateway, "candidate evaluation failed")
@@ -282,9 +283,12 @@ func (server *Server) clusterCandidates(writer http.ResponseWriter, request *htt
 	writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": assessments})
 }
 
-func hasCurrentDiscoveryProbe(probes []model.ProbeStatus, instanceID model.ResourceID) bool {
+func hasCurrentDiscoveryProbe(probes []model.ProbeStatus, instanceID model.ResourceID, observedAt time.Time) bool {
+	if observedAt.IsZero() {
+		return false
+	}
 	for _, probe := range probes {
-		if probe.InstanceID == instanceID && !probe.DiscoveryObservedAt.IsZero() {
+		if probe.InstanceID == instanceID && probe.DiscoveryObservedAt.Equal(observedAt) {
 			return true
 		}
 	}
@@ -292,7 +296,7 @@ func hasCurrentDiscoveryProbe(probes []model.ProbeStatus, instanceID model.Resou
 }
 
 func hasCompleteProbeEvidence(snapshot model.TopologySnapshot) bool {
-	if len(snapshot.Probes) == 0 {
+	if len(snapshot.Probes) == 0 || snapshot.ObservedAt.IsZero() {
 		return false
 	}
 	for _, instance := range snapshot.Instances {
