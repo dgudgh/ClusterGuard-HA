@@ -249,6 +249,7 @@ git commit -m "feat: persist cluster inventory and topology state"
 - Test: `adapters/mysql/probe_test.go`
 - Test: `adapters/mysql/metrics_test.go`
 - Modify: `adapters/mysql/mysql_test.go`
+- Modify: `internal/api/server_test.go`
 
 **Interfaces:**
 - Consumes: Task 1 adapter and model contracts.
@@ -345,7 +346,6 @@ git commit -m "feat: discover MySQL replication and performance state"
 **Files:**
 - Create: `internal/discovery/service.go`
 - Test: `internal/discovery/service_test.go`
-- Modify: `internal/runtime/runtime.go`
 
 **Interfaces:**
 - Consumes: adapter registry, repository inventory, MySQL credentials, Task 3 discovery results.
@@ -398,22 +398,16 @@ bounded parallelism of four. `Refresh` performs these steps in order:
 If two writable primaries are discovered, return the snapshot with a critical
 anomaly and degraded cluster health; do not choose one implicitly.
 
-- [ ] **Step 4: Wire the service into runtime without adding mutating routes**
+- [ ] **Step 4: Run discovery and store tests**
 
-Extend `runtime.New` to construct a credential resolver from the configured
-MySQL username and environment-resolved password, then pass the discovery
-service into `api.NewServer`.
-
-- [ ] **Step 5: Run discovery, store, and runtime tests**
-
-Run: `go test ./internal/discovery ./internal/store ./internal/runtime -count=1`
+Run: `go test ./internal/discovery ./internal/store -count=1`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit cluster discovery**
+- [ ] **Step 5: Commit cluster discovery**
 
 ```bash
-git add internal/discovery internal/runtime
+git add internal/discovery
 git commit -m "feat: refresh inventory-scoped MySQL topology"
 ```
 
@@ -506,6 +500,7 @@ git commit -m "feat: rank MySQL promotion candidates"
 - Create: `internal/api/metrics.go`
 - Create: `internal/metrics/service.go`
 - Create: `internal/metrics/service_test.go`
+- Modify: `internal/runtime/runtime.go`
 - Modify: `internal/api/server.go`
 - Modify: `internal/api/server_test.go`
 - Create: `internal/api/clusters_test.go`
@@ -574,6 +569,11 @@ Implement `metrics.Service.Derive(samples []model.MetricSample) map[model.Resour
 
 Prometheus output escapes label values and emits only finite numeric samples.
 Set `Content-Type: text/plain; version=0.0.4; charset=utf-8`.
+
+Extend `runtime.New` in this task to construct the discovery service from the
+configured MySQL credentials and pass it to `api.NewServer`. Update API test
+construction to inject a fake discovery service, so no unit test opens a real
+database connection.
 
 - [ ] **Step 5: Remove unrestricted direct discovery**
 
