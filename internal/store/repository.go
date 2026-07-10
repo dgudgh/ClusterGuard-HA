@@ -508,6 +508,20 @@ func endpointSetCollision(endpoints []model.Endpoint) bool {
 	return false
 }
 
+func validateEndpointInstanceBinding(instances map[model.ResourceID]model.DatabaseInstance, endpoint model.Endpoint) error {
+	if endpoint.InstanceID == "" {
+		return nil
+	}
+	instance, found := instances[endpoint.InstanceID]
+	if !found {
+		return validationError("endpoint instance binding is unknown")
+	}
+	if instance.ClusterID != endpoint.ClusterID {
+		return validationError("endpoint instance binding belongs to a different cluster")
+	}
+	return nil
+}
+
 func cloneEndpointMap(endpoints map[model.ResourceID]map[model.ResourceID]model.Endpoint) map[model.ResourceID]map[model.ResourceID]model.Endpoint {
 	copy := make(map[model.ResourceID]map[model.ResourceID]model.Endpoint, len(endpoints))
 	for clusterID, clusterEndpoints := range endpoints {
@@ -584,6 +598,9 @@ func (repository *Repository) CreateClusterWithEndpoints(cluster model.DatabaseC
 		}
 	}
 	for _, endpoint := range endpoints {
+		if err := validateEndpointInstanceBinding(repository.snapshot.Instances, endpoint); err != nil {
+			return model.DatabaseCluster{}, nil, err
+		}
 		if _, exists := endpointClusterForID(repository.snapshot.Endpoints, endpoint.ResourceID); exists {
 			return model.DatabaseCluster{}, nil, conflictError("endpoint resource already exists: %s", endpoint.ResourceID)
 		}
@@ -643,6 +660,9 @@ func (repository *Repository) UpsertEndpoint(endpoint model.Endpoint) (model.End
 	if _, exists := repository.snapshot.Clusters[endpoint.ClusterID]; !exists {
 		return model.Endpoint{}, fmt.Errorf("unknown cluster ID: %s", endpoint.ClusterID)
 	}
+	if err := validateEndpointInstanceBinding(repository.snapshot.Instances, endpoint); err != nil {
+		return model.Endpoint{}, err
+	}
 	if existingClusterID, exists := endpointClusterForID(repository.snapshot.Endpoints, endpoint.ResourceID); exists && existingClusterID != endpoint.ClusterID {
 		return model.Endpoint{}, fmt.Errorf("endpoint resource already belongs to cluster %s", existingClusterID)
 	}
@@ -694,7 +714,7 @@ func endpointInvalidatesTopology(existing model.Endpoint, existed bool, replacem
 	if existingActiveDatabase != replacementActiveDatabase {
 		return true
 	}
-	return existingActiveDatabase && (existing.Hostname != replacement.Hostname || existing.IPAddress != replacement.IPAddress || existing.Port != replacement.Port)
+	return existingActiveDatabase && (existing.Hostname != replacement.Hostname || existing.IPAddress != replacement.IPAddress || existing.Port != replacement.Port || existing.InstanceID != replacement.InstanceID)
 }
 
 func (repository *Repository) Endpoints(clusterID model.ResourceID) []model.Endpoint {

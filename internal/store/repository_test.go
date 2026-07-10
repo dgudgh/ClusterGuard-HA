@@ -481,6 +481,216 @@ func TestActiveDatabaseEndpointRequiresTrimmedNonemptyAddressAtomically(t *testi
 	}
 }
 
+func TestActiveDatabaseEndpointRebindInvalidatesGenerationAndRejectsInFlightRefreshAcrossRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metadata.json")
+	repository, err := Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "rebind"}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true}})
+	if err != nil {
+		t.Fatalf("create inventory: %v", err)
+	}
+	observedAt := time.Date(2026, time.July, 12, 18, 0, 0, 0, time.UTC)
+	primary := mysqlInstance(cluster.ResourceID, "mysql-a", "", 3306)
+	primary.Role = model.RolePrimary
+	topology, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{ClusterID: cluster.ResourceID, InventoryGeneration: currentInventoryGeneration(t, repository, cluster.ResourceID), ObservedAt: observedAt, Observations: []DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: primary}}, Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}}})
+	if err != nil {
+		t.Fatalf("seed topology: %v", err)
+	}
+	secondary := mysqlInstance(cluster.ResourceID, "mysql-b", "", 3307)
+	secondary.EngineIdentity["server_uuid"] = "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee"
+	secondaryResult, err := repository.ReconcileInstance(secondary)
+	if err != nil {
+		t.Fatalf("create same-cluster instance: %v", err)
+	}
+	beforeInventory, _ := repository.DiscoveryInventory(cluster.ResourceID)
+	beforeWatermark, _ := repository.ObservationWatermark(cluster.ResourceID)
+	rebound := repository.Endpoints(cluster.ResourceID)[0]
+	rebound.InstanceID = secondaryResult.Instance.ResourceID
+	updated, err := repository.UpsertEndpoint(rebound)
+	if err != nil {
+		t.Fatalf("valid rebind: %v", err)
+	}
+	if updated.InstanceID != secondaryResult.Instance.ResourceID {
+		t.Fatalf("endpoint was not rebound: %+v", updated)
+	}
+	afterInventory, _ := repository.DiscoveryInventory(cluster.ResourceID)
+	if afterInventory.Generation != beforeInventory.Generation+1 {
+		t.Fatalf("rebind generation = %d, want %d", afterInventory.Generation, beforeInventory.Generation+1)
+	}
+	if _, found := repository.TopologySnapshot(cluster.ResourceID); found {
+		t.Fatal("active database rebind did not invalidate topology")
+	}
+	if watermark, found := repository.ObservationWatermark(cluster.ResourceID); !found || !watermark.Equal(beforeWatermark) {
+		t.Fatalf("rebind changed watermark: %s found=%t", watermark, found)
+	}
+	beforeRejected := captureStoreDiscoveryState(repository, cluster.ResourceID)
+	if _, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{ClusterID: cluster.ResourceID, InventoryGeneration: beforeInventory.Generation, ObservedAt: observedAt.Add(time.Minute), Observations: []DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: topology.Instances[0]}}, Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}}}); !errors.Is(err, ErrInventoryChanged) {
+		t.Fatalf("in-flight old-generation rebind error = %v", err)
+	}
+	if afterRejected := captureStoreDiscoveryState(repository, cluster.ResourceID); !reflect.DeepEqual(afterRejected, beforeRejected) {
+		t.Fatalf("rejected in-flight refresh changed state: before=%+v after=%+v", beforeRejected, afterRejected)
+	}
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	persisted := reopened.Endpoints(cluster.ResourceID)[0]
+	persistedInventory, _ := reopened.DiscoveryInventory(cluster.ResourceID)
+	persistedWatermark, _ := reopened.ObservationWatermark(cluster.ResourceID)
+	if persisted.InstanceID != secondaryResult.Instance.ResourceID || persistedInventory.Generation != afterInventory.Generation || !persistedWatermark.Equal(beforeWatermark) {
+		t.Fatalf("rebind ordering state not durable: endpoint=%+v inventory=%+v watermark=%s", persisted, persistedInventory, persistedWatermark)
+	}
+}
+
+func TestEndpointBindingRejectsUnknownAndForeignInstancesAndRollsBackPersistenceFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metadata.json")
+	repository, err := Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "binding-validation"}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true}})
+	if err != nil {
+		t.Fatalf("create inventory: %v", err)
+	}
+	observedAt := time.Date(2026, time.July, 12, 19, 0, 0, 0, time.UTC)
+	primary := mysqlInstance(cluster.ResourceID, "mysql-a", "", 3306)
+	if _, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{ClusterID: cluster.ResourceID, InventoryGeneration: currentInventoryGeneration(t, repository, cluster.ResourceID), ObservedAt: observedAt, Observations: []DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: primary}}, Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}}}); err != nil {
+		t.Fatalf("seed topology: %v", err)
+	}
+	secondary := mysqlInstance(cluster.ResourceID, "mysql-b", "", 3307)
+	secondary.EngineIdentity["server_uuid"] = "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee"
+	secondaryResult, err := repository.ReconcileInstance(secondary)
+	if err != nil {
+		t.Fatalf("create same-cluster instance: %v", err)
+	}
+	foreignCluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "foreign-binding"})
+	if err != nil {
+		t.Fatalf("create foreign cluster: %v", err)
+	}
+	foreign := mysqlInstance(foreignCluster.ResourceID, "mysql-foreign", "", 3306)
+	foreign.EngineIdentity["server_uuid"] = "ffffffff-bbbb-cccc-dddd-eeeeeeeeeeee"
+	foreignResult, err := repository.ReconcileInstance(foreign)
+	if err != nil {
+		t.Fatalf("create foreign instance: %v", err)
+	}
+	before := captureStoreDiscoveryState(repository, cluster.ResourceID)
+	beforeInventory, _ := repository.DiscoveryInventory(cluster.ResourceID)
+	beforeWatermark, _ := repository.ObservationWatermark(cluster.ResourceID)
+	for _, instanceID := range []model.ResourceID{model.NewResourceID(), foreignResult.Instance.ResourceID} {
+		candidate := endpoints[0]
+		candidate.InstanceID = instanceID
+		if _, err := repository.UpsertEndpoint(candidate); !errors.Is(err, ErrValidation) {
+			t.Fatalf("invalid binding %s error = %v", instanceID, err)
+		}
+		if after := captureStoreDiscoveryState(repository, cluster.ResourceID); !reflect.DeepEqual(after, before) {
+			t.Fatalf("invalid binding changed state: before=%+v after=%+v", before, after)
+		}
+	}
+	repository.path = t.TempDir()
+	candidate := endpoints[0]
+	candidate.InstanceID = secondaryResult.Instance.ResourceID
+	if _, err := repository.UpsertEndpoint(candidate); err == nil {
+		t.Fatal("rebind persistence failure was not returned")
+	}
+	afterInventory, _ := repository.DiscoveryInventory(cluster.ResourceID)
+	afterWatermark, _ := repository.ObservationWatermark(cluster.ResourceID)
+	if after := captureStoreDiscoveryState(repository, cluster.ResourceID); !reflect.DeepEqual(after, before) || afterInventory.Generation != beforeInventory.Generation || !afterWatermark.Equal(beforeWatermark) {
+		t.Fatalf("failed rebind persistence changed state: state=%+v generation=%d watermark=%s", after, afterInventory.Generation, afterWatermark)
+	}
+}
+
+func TestPreboundEndpointCreationAndNonDatabaseRebindBehavior(t *testing.T) {
+	repository := NewMemory()
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "prebinding"}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true}})
+	if err != nil {
+		t.Fatalf("create inventory: %v", err)
+	}
+	primary := mysqlInstance(cluster.ResourceID, "mysql-a", "", 3306)
+	topology, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{ClusterID: cluster.ResourceID, InventoryGeneration: currentInventoryGeneration(t, repository, cluster.ResourceID), ObservedAt: time.Now().UTC(), Observations: []DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: primary}}, Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}}})
+	if err != nil {
+		t.Fatalf("seed topology: %v", err)
+	}
+	primaryID := topology.Instances[0].ResourceID
+	secondary := mysqlInstance(cluster.ResourceID, "mysql-b", "", 3307)
+	secondary.EngineIdentity["server_uuid"] = "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee"
+	secondaryResult, err := repository.ReconcileInstance(secondary)
+	if err != nil {
+		t.Fatalf("create secondary: %v", err)
+	}
+	beforeDatabaseCreate, _ := repository.DiscoveryInventory(cluster.ResourceID)
+	prebound, err := repository.UpsertEndpoint(model.Endpoint{ClusterID: cluster.ResourceID, InstanceID: primaryID, Kind: model.EndpointDatabase, Hostname: "mysql-alias", Port: 4406, Active: true})
+	if err != nil || prebound.InstanceID != primaryID {
+		t.Fatalf("create valid prebound database endpoint: endpoint=%+v err=%v", prebound, err)
+	}
+	afterDatabaseCreate, _ := repository.DiscoveryInventory(cluster.ResourceID)
+	if afterDatabaseCreate.Generation != beforeDatabaseCreate.Generation+1 {
+		t.Fatalf("prebound database creation generation = %d", afterDatabaseCreate.Generation)
+	}
+
+	repository = NewMemory()
+	cluster, endpoints, err = repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "non-database-binding"}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true}})
+	if err != nil {
+		t.Fatalf("create non-database inventory: %v", err)
+	}
+	primary.ClusterID = cluster.ResourceID
+	topology, err = repository.ApplyDiscoveryRefresh(DiscoveryRefresh{ClusterID: cluster.ResourceID, InventoryGeneration: currentInventoryGeneration(t, repository, cluster.ResourceID), ObservedAt: time.Now().UTC(), Observations: []DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: primary}}, Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}}})
+	if err != nil {
+		t.Fatalf("seed non-database topology: %v", err)
+	}
+	primaryID = topology.Instances[0].ResourceID
+	secondary.ClusterID = cluster.ResourceID
+	secondaryResult, err = repository.ReconcileInstance(secondary)
+	if err != nil {
+		t.Fatalf("create non-database secondary: %v", err)
+	}
+	vip, err := repository.UpsertEndpoint(model.Endpoint{ClusterID: cluster.ResourceID, InstanceID: primaryID, Kind: model.EndpointVIP, Hostname: "writer-vip", Port: 3306, Active: true})
+	if err != nil {
+		t.Fatalf("create bound VIP: %v", err)
+	}
+	beforeVIPRebind, _ := repository.DiscoveryInventory(cluster.ResourceID)
+	beforeTopology, _ := repository.TopologySnapshot(cluster.ResourceID)
+	vip.InstanceID = secondaryResult.Instance.ResourceID
+	if _, err := repository.UpsertEndpoint(vip); err != nil {
+		t.Fatalf("rebind VIP: %v", err)
+	}
+	afterVIPRebind, _ := repository.DiscoveryInventory(cluster.ResourceID)
+	afterTopology, found := repository.TopologySnapshot(cluster.ResourceID)
+	if afterVIPRebind.Generation != beforeVIPRebind.Generation || !found || !reflect.DeepEqual(afterTopology, beforeTopology) {
+		t.Fatalf("non-database rebind changed topology authority: generation=%d topology_found=%t", afterVIPRebind.Generation, found)
+	}
+}
+
+func TestCreateClusterWithEndpointsAllowsOnlyExistingSameClusterPrebinding(t *testing.T) {
+	repository := NewMemory()
+	clusterID := model.NewResourceID()
+	instance := mysqlInstance(clusterID, "mysql-a", "", 3306)
+	result, err := repository.ReconcileInstance(instance)
+	if err != nil {
+		t.Fatalf("seed same-cluster instance: %v", err)
+	}
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{ResourceMeta: model.ResourceMeta{ResourceID: clusterID}, Engine: model.EngineMySQL, DisplayName: "prebound-registration"}, []model.Endpoint{{InstanceID: result.Instance.ResourceID, Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true}})
+	if err != nil {
+		t.Fatalf("create prebound inventory: %v", err)
+	}
+	if endpoints[0].InstanceID != result.Instance.ResourceID {
+		t.Fatalf("prebound registration lost instance binding: %+v", endpoints[0])
+	}
+	inventory, found := repository.DiscoveryInventory(cluster.ResourceID)
+	if !found || inventory.Generation != 1 {
+		t.Fatalf("prebound registration inventory = %+v found=%t", inventory, found)
+	}
+
+	unknownClusterID := model.NewResourceID()
+	if _, _, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{ResourceMeta: model.ResourceMeta{ResourceID: unknownClusterID}, Engine: model.EngineMySQL, DisplayName: "invalid-prebound-registration"}, []model.Endpoint{{InstanceID: model.NewResourceID(), Kind: model.EndpointDatabase, Hostname: "mysql-unknown", Port: 3306, Active: true}}); !errors.Is(err, ErrValidation) {
+		t.Fatalf("unknown prebound registration error = %v", err)
+	}
+	if _, found := repository.Cluster(unknownClusterID); found || len(repository.Endpoints(unknownClusterID)) != 0 {
+		t.Fatal("invalid prebound registration published partial inventory")
+	}
+}
+
 func TestStoreMetricSamplesBoundsEachInstanceOrdersSamplesAndClonesValues(t *testing.T) {
 	repository := NewMemory()
 	cluster, _, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "metric-bounds"}, nil)
