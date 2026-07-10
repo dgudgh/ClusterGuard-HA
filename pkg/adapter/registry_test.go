@@ -48,3 +48,21 @@ func TestSkeletonAdaptersFailClosedForMutation(t *testing.T) {
 		}
 	}
 }
+
+func TestAdaptersFailClosedForTopologyReadExtensions(t *testing.T) {
+	for _, candidate := range []adapter.DatabaseHAAdapter{mysql.New(nil), postgresql.New(), oracle.New(), sqlserver.New()} {
+		capabilities := candidate.Capabilities(context.Background())
+		if capabilities.Supports(adapter.CapabilityMetrics) {
+			t.Fatalf("%s must not advertise metrics before implementation", candidate.Engine())
+		}
+		if capabilities.Supports(adapter.CapabilityCandidates) {
+			t.Fatalf("%s must not advertise candidates before implementation", candidate.Engine())
+		}
+		if _, err := candidate.Metrics(context.Background(), adapter.DiscoverRequest{}); !errors.Is(err, adapter.ErrUnsupported) {
+			t.Fatalf("%s metrics must be unsupported: %v", candidate.Engine(), err)
+		}
+		if _, err := candidate.EvaluateCandidates(context.Background(), adapter.CandidateRequest{}); !errors.Is(err, adapter.ErrUnsupported) {
+			t.Fatalf("%s candidates must be unsupported: %v", candidate.Engine(), err)
+		}
+	}
+}

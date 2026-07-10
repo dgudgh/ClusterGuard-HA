@@ -66,6 +66,8 @@ func (adapterInstance *Adapter) Capabilities(context.Context) adapter.Capabiliti
 		adapter.CapabilityVerify:            {Available: false, Reason: "HA mutation verification is not implemented"},
 		adapter.CapabilityNodeSync:          {Available: false, Mutating: true, Reason: "node synchronization is not implemented"},
 		adapter.CapabilityMetadataReconcile: {Available: true, Reason: "metadata reconciliation is implemented by the platform repository"},
+		adapter.CapabilityMetrics:           {Available: false, Reason: "metrics collection is scheduled after the common contract"},
+		adapter.CapabilityCandidates:        {Available: false, Reason: "candidate evaluation is scheduled after the common contract"},
 	}}
 }
 
@@ -138,6 +140,14 @@ func (adapterInstance *Adapter) Health(ctx context.Context, request adapter.Disc
 		health.Summary = "MySQL instance is reachable and writable"
 	}
 	return health, nil
+}
+
+func (adapterInstance *Adapter) Metrics(context.Context, adapter.DiscoverRequest) ([]model.MetricSample, error) {
+	return nil, adapter.ErrUnsupported
+}
+
+func (adapterInstance *Adapter) EvaluateCandidates(context.Context, adapter.CandidateRequest) ([]model.CandidateAssessment, error) {
+	return nil, adapter.ErrUnsupported
 }
 
 func (adapterInstance *Adapter) Precheck(context.Context, adapter.OperationRequest) ([]model.Check, error) {

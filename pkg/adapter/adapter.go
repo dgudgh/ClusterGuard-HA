@@ -21,6 +21,8 @@ const (
 	CapabilityVerify            Capability = "verify"
 	CapabilityNodeSync          Capability = "node_sync"
 	CapabilityMetadataReconcile Capability = "metadata_reconcile"
+	CapabilityMetrics           Capability = "metrics"
+	CapabilityCandidates        Capability = "candidates"
 )
 
 type CapabilityState struct {
@@ -81,6 +83,14 @@ type MetadataResult struct {
 	Summary string        `json:"summary"`
 }
 
+type CandidateRequest struct {
+	Cluster   model.DatabaseCluster    `json:"cluster"`
+	Primary   model.DatabaseInstance   `json:"primary"`
+	Instances []model.DatabaseInstance `json:"instances"`
+	Links     []model.ReplicationLink  `json:"links"`
+	Policy    model.CandidatePolicy    `json:"policy"`
+}
+
 type DatabaseHAAdapter interface {
 	Engine() model.Engine
 	Capabilities(context.Context) Capabilities
@@ -96,6 +106,8 @@ type DatabaseHAAdapter interface {
 	ExecuteNodeSync(context.Context, OperationRequest) (model.Execution, error)
 	MetadataPrecheck(context.Context, MetadataRequest) ([]model.Check, error)
 	ReconcileMetadata(context.Context, MetadataRequest) (MetadataResult, error)
+	Metrics(context.Context, DiscoverRequest) ([]model.MetricSample, error)
+	EvaluateCandidates(context.Context, CandidateRequest) ([]model.CandidateAssessment, error)
 }
 
 type UnsupportedAdapter struct {
@@ -110,7 +122,7 @@ func (adapter UnsupportedAdapter) Engine() model.Engine { return adapter.EngineN
 
 func (adapter UnsupportedAdapter) Capabilities(context.Context) Capabilities {
 	features := map[Capability]CapabilityState{}
-	for _, capability := range []Capability{CapabilityDiscover, CapabilityTopology, CapabilityHealth, CapabilityPrecheck, CapabilityPlan, CapabilityExecute, CapabilityVerify, CapabilityNodeSync, CapabilityMetadataReconcile} {
+	for _, capability := range []Capability{CapabilityDiscover, CapabilityTopology, CapabilityHealth, CapabilityPrecheck, CapabilityPlan, CapabilityExecute, CapabilityVerify, CapabilityNodeSync, CapabilityMetadataReconcile, CapabilityMetrics, CapabilityCandidates} {
 		features[capability] = CapabilityState{Reason: "not implemented in phase one"}
 	}
 	return Capabilities{Engine: adapter.EngineName, Features: features}
@@ -151,4 +163,10 @@ func (adapter UnsupportedAdapter) MetadataPrecheck(context.Context, MetadataRequ
 }
 func (adapter UnsupportedAdapter) ReconcileMetadata(context.Context, MetadataRequest) (MetadataResult, error) {
 	return MetadataResult{}, ErrUnsupported
+}
+func (adapter UnsupportedAdapter) Metrics(context.Context, DiscoverRequest) ([]model.MetricSample, error) {
+	return nil, ErrUnsupported
+}
+func (adapter UnsupportedAdapter) EvaluateCandidates(context.Context, CandidateRequest) ([]model.CandidateAssessment, error) {
+	return nil, ErrUnsupported
 }

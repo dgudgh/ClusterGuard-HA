@@ -135,17 +135,21 @@ type Health struct {
 
 type DatabaseInstance struct {
 	ResourceMeta
-	ClusterID      ResourceID     `json:"cluster_id"`
-	NodeID         ResourceID     `json:"node_id,omitempty"`
-	Engine         Engine         `json:"engine"`
-	EngineIdentity EngineIdentity `json:"engine_identity"`
-	DisplayName    string         `json:"display_name"`
-	Hostname       string         `json:"hostname"`
-	IPAddress      string         `json:"ip_address"`
-	Port           int            `json:"port"`
-	Aliases        []string       `json:"aliases,omitempty"`
-	Role           InstanceRole   `json:"role"`
-	Health         Health         `json:"health"`
+	ClusterID         ResourceID        `json:"cluster_id"`
+	NodeID            ResourceID        `json:"node_id,omitempty"`
+	Engine            Engine            `json:"engine"`
+	EngineIdentity    EngineIdentity    `json:"engine_identity"`
+	DisplayName       string            `json:"display_name"`
+	Hostname          string            `json:"hostname"`
+	IPAddress         string            `json:"ip_address"`
+	Port              int               `json:"port"`
+	Aliases           []string          `json:"aliases,omitempty"`
+	Role              InstanceRole      `json:"role"`
+	Health            Health            `json:"health"`
+	Replication       ReplicationStatus `json:"replication"`
+	Maintenance       bool              `json:"maintenance"`
+	PromotionEligible bool              `json:"promotion_eligible"`
+	EngineMetadata    map[string]string `json:"engine_metadata"`
 }
 
 type EndpointKind string
