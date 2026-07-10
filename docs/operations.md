@@ -12,7 +12,7 @@ Implemented keys:
 | `http_address` | No | HTTP listen address; blank defaults to `127.0.0.1:8088`. |
 | `metadata_path` | Yes | Durable metadata snapshot path. |
 | `approval_token_env` | No | Environment variable containing the workflow approval token. |
-| `mysql.enabled` | No | Enables the MySQL read-only adapter; omitted or `false` keeps it disabled. |
+| `mysql.enabled` | No | Enables server-side MySQL discovery credentials. The adapter stays registered, but discover/refresh fails closed when omitted or `false`. |
 | `mysql.username` | When enabled | Dedicated MySQL read-only discovery user. |
 | `mysql.password_env` | When enabled | Environment variable containing that user's password. |
 
