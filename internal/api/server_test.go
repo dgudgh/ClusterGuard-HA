@@ -21,8 +21,14 @@ import (
 
 type apiRunner struct{}
 
-func (apiRunner) Query(context.Context, adapter.Endpoint, adapter.Credentials, string) (string, error) {
-	return "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\tmysql-a\t192.0.2.10\t3306\t1\t8.0.44\t0\t0\n", nil
+func (apiRunner) Query(_ context.Context, _ adapter.Endpoint, _ adapter.Credentials, query string) ([]mysql.Row, error) {
+	if strings.HasPrefix(query, "SELECT") {
+		return []mysql.Row{{
+			"server_uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "hostname": "mysql-a", "port": "3306", "server_id": "1",
+			"version": "8.0.44", "read_only": "0", "super_read_only": "0", "gtid_mode": "ON", "log_bin": "1", "binlog_format": "ROW",
+		}}, nil
+	}
+	return nil, nil
 }
 
 func newTestServer(t *testing.T) (*Server, *store.Repository) {

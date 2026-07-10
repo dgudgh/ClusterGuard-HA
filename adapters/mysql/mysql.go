@@ -2,45 +2,11 @@ package mysql
 
 import (
 	"context"
-	"fmt"
-	"os"
-	"os/exec"
-	"strconv"
-	"strings"
 	"time"
 
 	"clusterguard.io/ha/pkg/adapter"
 	"clusterguard.io/ha/pkg/model"
 )
-
-type SQLRunner interface {
-	Query(context.Context, adapter.Endpoint, adapter.Credentials, string) (string, error)
-}
-
-type CLIQueryRunner struct {
-	Binary string
-}
-
-func (runner CLIQueryRunner) Query(ctx context.Context, endpoint adapter.Endpoint, credentials adapter.Credentials, query string) (string, error) {
-	binary := runner.Binary
-	if binary == "" {
-		binary = "mysql"
-	}
-	host := endpoint.Hostname
-	if host == "" {
-		host = endpoint.IPAddress
-	}
-	if host == "" || endpoint.Port <= 0 || credentials.Username == "" {
-		return "", fmt.Errorf("database endpoint, port, and username are required")
-	}
-	command := exec.CommandContext(ctx, binary, "--batch", "--raw", "--skip-column-names", "--connect-timeout=5", "-h", host, "-P", strconv.Itoa(endpoint.Port), "-u", credentials.Username, "-e", query)
-	command.Env = append(os.Environ(), "MYSQL_PWD="+credentials.Password)
-	output, err := command.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("mysql query failed: %s", strings.TrimSpace(string(output)))
-	}
-	return string(output), nil
-}
 
 type Adapter struct {
 	runner SQLRunner
@@ -66,62 +32,13 @@ func (adapterInstance *Adapter) Capabilities(context.Context) adapter.Capabiliti
 		adapter.CapabilityVerify:            {Available: false, Reason: "HA mutation verification is not implemented"},
 		adapter.CapabilityNodeSync:          {Available: false, Mutating: true, Reason: "node synchronization is not implemented"},
 		adapter.CapabilityMetadataReconcile: {Available: true, Reason: "metadata reconciliation is implemented by the platform repository"},
-		adapter.CapabilityMetrics:           {Available: false, Reason: "metrics collection is scheduled after the common contract"},
+		adapter.CapabilityMetrics:           {Available: true, Reason: "read-only performance metrics are implemented"},
 		adapter.CapabilityCandidates:        {Available: false, Reason: "candidate evaluation is scheduled after the common contract"},
 	}}
 }
 
-const identityQuery = "SELECT @@server_uuid, @@hostname, '', @@port, @@server_id, @@version, @@read_only, @@super_read_only"
-
 func (adapterInstance *Adapter) Discover(ctx context.Context, request adapter.DiscoverRequest) (adapter.DiscoveryResult, error) {
-	started := time.Now()
-	output, err := adapterInstance.runner.Query(ctx, request.Endpoint, request.Credentials, identityQuery)
-	if err != nil {
-		return adapter.DiscoveryResult{}, err
-	}
-	fields := strings.Split(strings.TrimSpace(output), "\t")
-	if len(fields) < 8 {
-		return adapter.DiscoveryResult{}, fmt.Errorf("unexpected MySQL identity response")
-	}
-	port, err := strconv.Atoi(fields[3])
-	if err != nil || port <= 0 {
-		return adapter.DiscoveryResult{}, fmt.Errorf("invalid MySQL port in identity response")
-	}
-	if _, err := strconv.ParseUint(fields[4], 10, 64); err != nil {
-		return adapter.DiscoveryResult{}, fmt.Errorf("invalid MySQL server ID in identity response")
-	}
-	ipAddress := strings.TrimSpace(fields[2])
-	if ipAddress == "" {
-		ipAddress = request.Endpoint.IPAddress
-	}
-	role := model.RoleReplica
-	if fields[6] == "0" && fields[7] == "0" {
-		role = model.RolePrimary
-	}
-	instance := model.DatabaseInstance{
-		ClusterID: request.ClusterID,
-		Engine:    model.EngineMySQL,
-		EngineIdentity: model.EngineIdentity{
-			"server_uuid": strings.ToLower(strings.TrimSpace(fields[0])),
-			"server_id":   fields[4],
-			"version":     fields[5],
-		},
-		DisplayName: strings.TrimSpace(fields[1]),
-		Hostname:    strings.TrimSpace(fields[1]),
-		IPAddress:   ipAddress,
-		Port:        port,
-		Role:        role,
-		Health: model.Health{
-			State:      model.HealthHealthy,
-			Summary:    "MySQL instance is reachable",
-			ObservedAt: time.Now().UTC(),
-			LatencyMS:  time.Since(started).Milliseconds(),
-		},
-	}
-	if instance.DisplayName == "" {
-		instance.DisplayName = request.Endpoint.Hostname
-	}
-	return adapter.DiscoveryResult{Instance: instance}, nil
+	return discover(ctx, adapterInstance.runner, request)
 }
 
 func (adapterInstance *Adapter) Topology(context.Context, adapter.DiscoverRequest) (adapter.TopologyResult, error) {
@@ -133,17 +50,11 @@ func (adapterInstance *Adapter) Health(ctx context.Context, request adapter.Disc
 	if err != nil {
 		return model.Health{State: model.HealthUnhealthy, Summary: err.Error(), ObservedAt: time.Now().UTC()}, err
 	}
-	health := result.Instance.Health
-	if result.Instance.Role == model.RoleReplica {
-		health.Summary = "MySQL instance is reachable and read-only"
-	} else {
-		health.Summary = "MySQL instance is reachable and writable"
-	}
-	return health, nil
+	return result.Instance.Health, nil
 }
 
-func (adapterInstance *Adapter) Metrics(context.Context, adapter.DiscoverRequest) ([]model.MetricSample, error) {
-	return nil, adapter.ErrUnsupported
+func (adapterInstance *Adapter) Metrics(ctx context.Context, request adapter.DiscoverRequest) ([]model.MetricSample, error) {
+	return queryMetrics(ctx, adapterInstance.runner, request)
 }
 
 func (adapterInstance *Adapter) EvaluateCandidates(context.Context, adapter.CandidateRequest) ([]model.CandidateAssessment, error) {
