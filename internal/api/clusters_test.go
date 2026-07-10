@@ -361,6 +361,22 @@ func TestDiscoverMapsStaleObservationToSanitizedConflict(t *testing.T) {
 	}
 }
 
+func TestDiscoverMapsInventoryGenerationChangeToSanitizedConflict(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, _, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "inventory-conflict-api"}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true}})
+	if err != nil {
+		t.Fatalf("create inventory: %v", err)
+	}
+	refresher := &fakeRefresher{refresh: func(context.Context, model.ResourceID) (model.TopologySnapshot, error) {
+		return model.TopologySnapshot{}, fmt.Errorf("old address detail: %w", store.ErrInventoryChanged)
+	}}
+	server := newAPIServer(t, repository, newCandidateAdapterSpy(), refresher)
+	response := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/clusters/"+string(cluster.ResourceID)+"/discover", map[string]interface{}{})
+	if response.Code != http.StatusConflict || strings.Contains(response.Body.String(), "old address detail") || !strings.Contains(response.Body.String(), "inventory") {
+		t.Fatalf("inventory conflict mapping = %d %s", response.Code, response.Body.String())
+	}
+}
+
 func seedCandidateTopology(t *testing.T, repository *store.Repository, primaryCount int, failedReplica bool) (model.DatabaseCluster, model.TopologySnapshot) {
 	t.Helper()
 	endpointCount := primaryCount + 1

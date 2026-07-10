@@ -450,6 +450,27 @@ func TestUpsertEndpointRejectsInvalidUnknownAndDuplicateActiveAddresses(t *testi
 	}
 }
 
+func TestActiveDatabaseEndpointRequiresTrimmedNonemptyAddressAtomically(t *testing.T) {
+	repository := NewMemory()
+	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "addresses"})
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	if _, err := repository.UpsertEndpoint(model.Endpoint{ClusterID: cluster.ResourceID, Kind: model.EndpointDatabase, Hostname: "   ", IPAddress: "\t", Port: 3306, Active: true}); !errors.Is(err, ErrValidation) {
+		t.Fatalf("blank active database address error = %v", err)
+	}
+	if len(repository.Endpoints(cluster.ResourceID)) != 0 {
+		t.Fatalf("blank address published endpoint: %+v", repository.Endpoints(cluster.ResourceID))
+	}
+	endpoint, err := repository.UpsertEndpoint(model.Endpoint{ClusterID: cluster.ResourceID, Kind: model.EndpointDatabase, Hostname: " mysql-a ", IPAddress: " 192.0.2.10 ", Port: 3306, Active: true})
+	if err != nil {
+		t.Fatalf("create trimmed endpoint: %v", err)
+	}
+	if endpoint.Hostname != "mysql-a" || endpoint.IPAddress != "192.0.2.10" {
+		t.Fatalf("endpoint coordinates were not trimmed: %+v", endpoint)
+	}
+}
+
 func TestStoreMetricSamplesBoundsEachInstanceOrdersSamplesAndClonesValues(t *testing.T) {
 	repository := NewMemory()
 	cluster, _, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "metric-bounds"}, nil)
@@ -1094,6 +1115,72 @@ func TestApplyDiscoveryRefreshRejectsEqualAndOlderObservationsAtomically(t *test
 	}
 }
 
+func TestDiscoveryWatermarkAndInventoryGenerationSurviveInvalidationAndRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metadata.json")
+	repository, err := Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "ordering"}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-old", Port: 3306, Active: true}})
+	if err != nil {
+		t.Fatalf("create inventory: %v", err)
+	}
+	inventory, found := repository.DiscoveryInventory(cluster.ResourceID)
+	if !found || inventory.Generation == 0 {
+		t.Fatalf("initial discovery inventory = %+v found=%t", inventory, found)
+	}
+	observedAt := time.Date(2026, time.July, 12, 12, 0, 0, 0, time.UTC)
+	instance := mysqlInstance(cluster.ResourceID, "mysql-old", "", 3306)
+	instance.Role = model.RolePrimary
+	apply := func(at time.Time, generation uint64, hostname string) (model.TopologySnapshot, error) {
+		candidate := instance
+		candidate.Hostname = hostname
+		return repository.ApplyDiscoveryRefresh(DiscoveryRefresh{
+			ClusterID: cluster.ResourceID, InventoryGeneration: generation, ObservedAt: at,
+			Observations: []DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: candidate}},
+			Probes:       []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}},
+		})
+	}
+	if _, err := apply(observedAt, inventory.Generation, "mysql-old"); err != nil {
+		t.Fatalf("first refresh: %v", err)
+	}
+	changed := repository.Endpoints(cluster.ResourceID)[0]
+	changed.Hostname = "mysql-new"
+	if _, err := repository.UpsertEndpoint(changed); err != nil {
+		t.Fatalf("invalidate inventory: %v", err)
+	}
+	current, _ := repository.DiscoveryInventory(cluster.ResourceID)
+	if current.Generation <= inventory.Generation {
+		t.Fatalf("inventory generation did not advance: old=%d current=%d", inventory.Generation, current.Generation)
+	}
+	before := captureStoreDiscoveryState(repository, cluster.ResourceID)
+	if _, err := apply(observedAt, current.Generation, "mysql-new"); !errors.Is(err, ErrStaleObservation) {
+		t.Fatalf("equal observation after invalidation error = %v", err)
+	}
+	if _, err := apply(observedAt.Add(time.Minute), inventory.Generation, "mysql-old"); !errors.Is(err, ErrInventoryChanged) {
+		t.Fatalf("old inventory generation error = %v", err)
+	}
+	if after := captureStoreDiscoveryState(repository, cluster.ResourceID); !reflect.DeepEqual(after, before) {
+		t.Fatalf("rejected refresh changed state: before=%+v after=%+v", before, after)
+	}
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	persistedInventory, _ := reopened.DiscoveryInventory(cluster.ResourceID)
+	if persistedInventory.Generation != current.Generation {
+		t.Fatalf("inventory generation not durable: got=%d want=%d", persistedInventory.Generation, current.Generation)
+	}
+	if watermark, found := reopened.ObservationWatermark(cluster.ResourceID); !found || !watermark.Equal(observedAt) {
+		t.Fatalf("observation watermark not durable: %s found=%t", watermark, found)
+	}
+	repository = reopened
+	accepted, err := apply(observedAt.Add(2*time.Minute), current.Generation, "mysql-new")
+	if err != nil || accepted.Instances[0].Hostname != "mysql-new" {
+		t.Fatalf("current inventory refresh not accepted: snapshot=%+v err=%v", accepted, err)
+	}
+}
+
 func TestApplyDiscoveryRefreshDeduplicatesAliasMetricsPerResolvedInstance(t *testing.T) {
 	repository := NewMemory()
 	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "aliases"}, []model.Endpoint{
@@ -1354,7 +1441,7 @@ func TestReconcileMetadataCoordinatesUpdatesBoundEndpointAndPreservesRuntimeFact
 	malicious.Port = 4406
 	malicious.Aliases = []string{"writer.example:4406"}
 	malicious.NodeID = nodeID
-	malicious.EngineIdentity = model.EngineIdentity{"server_uuid": "ffffffff-bbbb-cccc-dddd-eeeeeeeeeeee"}
+	malicious.EngineIdentity = observed.EngineIdentity.Clone()
 	malicious.Role = model.RoleReplica
 	malicious.Health = model.Health{State: model.HealthUnhealthy}
 	malicious.Replication = model.ReplicationStatus{IOThread: model.ThreadStopped, SQLThread: model.ThreadStopped}
@@ -1461,6 +1548,53 @@ func TestReconcileMetadataCoordinatesRequiresUnambiguousOwnedEndpointAndRollsBac
 	}
 }
 
+func TestReconcileMetadataCoordinatesRejectsEngineAndNativeIdentityMismatchAtomically(t *testing.T) {
+	repository := NewMemory()
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "metadata-trust"}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true}})
+	if err != nil {
+		t.Fatalf("create inventory: %v", err)
+	}
+	observedAt := time.Date(2026, time.July, 12, 14, 0, 0, 0, time.UTC)
+	observed := mysqlInstance(cluster.ResourceID, "mysql-a", "", 3306)
+	snapshot, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{ClusterID: cluster.ResourceID, ObservedAt: observedAt, Observations: []DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: observed}}, Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}}})
+	if err != nil {
+		t.Fatalf("publish topology: %v", err)
+	}
+	before := captureStoreDiscoveryState(repository, cluster.ResourceID)
+	beforeInventory, _ := repository.DiscoveryInventory(cluster.ResourceID)
+	beforeWatermark, _ := repository.ObservationWatermark(cluster.ResourceID)
+	tests := []struct {
+		name   string
+		mutate func(model.DatabaseInstance) model.DatabaseInstance
+	}{
+		{name: "payload engine", mutate: func(instance model.DatabaseInstance) model.DatabaseInstance {
+			instance.Engine = model.EnginePostgreSQL
+			return instance
+		}},
+		{name: "native identity", mutate: func(instance model.DatabaseInstance) model.DatabaseInstance {
+			instance.EngineIdentity = model.EngineIdentity{"server_uuid": "ffffffff-bbbb-cccc-dddd-eeeeeeeeeeee"}
+			return instance
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := test.mutate(snapshot.Instances[0])
+			candidate.Hostname = "must-not-publish"
+			if _, _, err := repository.ReconcileMetadataCoordinates(MetadataCoordinates{Instance: candidate, EndpointID: endpoints[0].ResourceID}); !errors.Is(err, ErrValidation) {
+				t.Fatalf("trust mismatch error = %v", err)
+			}
+			if after := captureStoreDiscoveryState(repository, cluster.ResourceID); !reflect.DeepEqual(after, before) {
+				t.Fatalf("trust mismatch changed state: before=%+v after=%+v", before, after)
+			}
+			afterInventory, _ := repository.DiscoveryInventory(cluster.ResourceID)
+			afterWatermark, _ := repository.ObservationWatermark(cluster.ResourceID)
+			if afterInventory.Generation != beforeInventory.Generation || !afterWatermark.Equal(beforeWatermark) {
+				t.Fatalf("trust mismatch changed ordering state: generation=%d watermark=%s", afterInventory.Generation, afterWatermark)
+			}
+		})
+	}
+}
+
 func TestActiveInventoryInvalidationRollsBackWhenPersistenceFails(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "metadata.json")
 	repository, err := Open(path)
@@ -1487,6 +1621,8 @@ func TestActiveInventoryInvalidationRollsBackWhenPersistenceFails(t *testing.T) 
 	beforeEndpoint := repository.Endpoints(cluster.ResourceID)[0]
 	beforeCluster, _ := repository.Cluster(cluster.ResourceID)
 	beforeTopology, _ := repository.TopologySnapshot(cluster.ResourceID)
+	beforeInventory, _ := repository.DiscoveryInventory(cluster.ResourceID)
+	beforeWatermark, _ := repository.ObservationWatermark(cluster.ResourceID)
 	repository.path = t.TempDir()
 	changed := beforeEndpoint
 	changed.Hostname = "must-not-publish"
@@ -1497,7 +1633,9 @@ func TestActiveInventoryInvalidationRollsBackWhenPersistenceFails(t *testing.T) 
 	afterEndpoint := repository.Endpoints(cluster.ResourceID)[0]
 	afterCluster, _ := repository.Cluster(cluster.ResourceID)
 	afterTopology, found := repository.TopologySnapshot(cluster.ResourceID)
-	if !reflect.DeepEqual(afterEndpoint, beforeEndpoint) || !reflect.DeepEqual(afterCluster, beforeCluster) || !found || !reflect.DeepEqual(afterTopology, beforeTopology) {
+	afterInventory, _ := repository.DiscoveryInventory(cluster.ResourceID)
+	afterWatermark, _ := repository.ObservationWatermark(cluster.ResourceID)
+	if !reflect.DeepEqual(afterEndpoint, beforeEndpoint) || !reflect.DeepEqual(afterCluster, beforeCluster) || !found || !reflect.DeepEqual(afterTopology, beforeTopology) || afterInventory.Generation != beforeInventory.Generation || !afterWatermark.Equal(beforeWatermark) {
 		t.Fatalf("failed invalidation published partial state: endpoint=%+v cluster=%+v topology=%+v", afterEndpoint, afterCluster, afterTopology)
 	}
 }

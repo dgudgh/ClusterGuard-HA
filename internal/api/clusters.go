@@ -176,6 +176,10 @@ func (server *Server) discoverCluster(writer http.ResponseWriter, request *http.
 		writeError(writer, http.StatusConflict, "topology observation is stale")
 		return
 	}
+	if errors.Is(err, store.ErrInventoryChanged) {
+		writeError(writer, http.StatusConflict, "database inventory changed during discovery")
+		return
+	}
 	if err != nil {
 		writeError(writer, http.StatusBadGateway, "discovery refresh failed")
 		return

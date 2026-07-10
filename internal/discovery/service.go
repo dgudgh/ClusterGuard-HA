@@ -83,11 +83,12 @@ func (service *Service) Refresh(ctx context.Context, clusterID model.ResourceID)
 	}
 	unlock := service.lockCluster(clusterID)
 	defer unlock()
-	cluster, exists := service.repository.Cluster(clusterID)
+	inventory, exists := service.repository.DiscoveryInventory(clusterID)
 	if !exists {
 		return model.TopologySnapshot{}, fmt.Errorf("unknown cluster ID: %s", clusterID)
 	}
-	endpoints := activeDatabaseEndpoints(service.repository.Endpoints(clusterID))
+	cluster := inventory.Cluster
+	endpoints := activeDatabaseEndpoints(inventory.Endpoints)
 	if len(endpoints) == 0 {
 		return model.TopologySnapshot{}, ErrInventoryRequired
 	}
@@ -179,12 +180,13 @@ func (service *Service) Refresh(ctx context.Context, clusterID model.ResourceID)
 	}
 	health := discoveryHealth(observedAt, len(endpoints), credentialFailures, databaseFailures, metricFailures, writablePrimaries)
 	snapshot, err := service.repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{
-		ClusterID:    clusterID,
-		Observations: observations,
-		Probes:       probes,
-		Health:       health,
-		ObservedAt:   observedAt,
-		Anomalies:    anomalies,
+		ClusterID:           clusterID,
+		InventoryGeneration: inventory.Generation,
+		Observations:        observations,
+		Probes:              probes,
+		Health:              health,
+		ObservedAt:          observedAt,
+		Anomalies:           anomalies,
 	})
 	if err != nil {
 		return model.TopologySnapshot{}, fmt.Errorf("apply discovery refresh: %w", err)

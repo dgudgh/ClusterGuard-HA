@@ -12,6 +12,7 @@ import (
 	"clusterguard.io/ha/internal/store"
 	"clusterguard.io/ha/internal/workflow"
 	"clusterguard.io/ha/pkg/adapter"
+	"clusterguard.io/ha/pkg/identity"
 	"clusterguard.io/ha/pkg/model"
 )
 
@@ -203,6 +204,10 @@ func (server *Server) metadataRoute(writer http.ResponseWriter, request *http.Re
 		writeError(writer, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := server.validateMetadataPayload(payload); err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid metadata reconciliation target")
+		return
+	}
 	candidate, ok := server.registry.Get(payload.Instance.Engine)
 	if !ok || !candidate.Capabilities(request.Context()).Supports(adapter.CapabilityMetadataReconcile) {
 		server.unsupported(writer, "metadata reconciliation is unsupported for this engine")
@@ -261,6 +266,32 @@ func (server *Server) metadataRoute(writer http.ResponseWriter, request *http.Re
 	default:
 		writeError(writer, http.StatusNotFound, "metadata route not found")
 	}
+}
+
+func (server *Server) validateMetadataPayload(payload metadataPayload) error {
+	if strings.TrimSpace(payload.Instance.Hostname) == "" && strings.TrimSpace(payload.Instance.IPAddress) == "" {
+		return errors.New("active database endpoint address is required")
+	}
+	canonical, found := server.store.Instance(payload.Instance.ResourceID)
+	if !found {
+		return errors.New("unknown metadata instance")
+	}
+	cluster, found := server.store.Cluster(canonical.ClusterID)
+	if !found || canonical.Engine != cluster.Engine || payload.Instance.ClusterID != canonical.ClusterID || payload.Instance.Engine != canonical.Engine {
+		return errors.New("metadata engine does not match canonical inventory")
+	}
+	if payload.Operation.Engine != "" && payload.Operation.Engine != canonical.Engine {
+		return errors.New("operation engine does not match canonical inventory")
+	}
+	canonicalKey, err := identity.InstanceKey(canonical.Engine, canonical.EngineIdentity)
+	if err != nil {
+		return err
+	}
+	payloadKey, err := identity.InstanceKey(payload.Instance.Engine, payload.Instance.EngineIdentity)
+	if err != nil || payloadKey != canonicalKey {
+		return errors.New("metadata native identity does not match canonical inventory")
+	}
+	return nil
 }
 
 func (server *Server) unsupported(writer http.ResponseWriter, message string) {

@@ -909,6 +909,48 @@ func TestMetadataCoordinateUpdateChangesNextDiscoveryEndpoint(t *testing.T) {
 	}
 }
 
+func TestRefreshRejectsInFlightObservationAfterMetadataInventoryChange(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, _, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "in-flight-metadata"}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-old", Port: 3306, Active: true}})
+	if err != nil {
+		t.Fatalf("create inventory: %v", err)
+	}
+	candidate := newFakeAdapter()
+	candidate.results["mysql-old"] = model.DatabaseInstance{ClusterID: cluster.ResourceID, Engine: model.EngineMySQL, EngineIdentity: model.EngineIdentity{"server_uuid": "in-flight-native"}, Hostname: "mysql-old", Port: 3306, Role: model.RolePrimary, Health: model.Health{State: model.HealthHealthy}}
+	service := newTestService(t, repository, candidate)
+	first, err := service.Refresh(context.Background(), cluster.ResourceID)
+	if err != nil {
+		t.Fatalf("seed refresh: %v", err)
+	}
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	candidate.started = started
+	candidate.release = release
+	result := make(chan error, 1)
+	go func() {
+		_, refreshErr := service.Refresh(context.Background(), cluster.ResourceID)
+		result <- refreshErr
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("in-flight refresh did not start")
+	}
+	metadata := first.Instances[0]
+	metadata.Hostname = "mysql-new"
+	metadata.Port = 4406
+	if _, _, err := repository.ReconcileMetadataCoordinates(store.MetadataCoordinates{Instance: metadata}); err != nil {
+		t.Fatalf("reconcile metadata during probe: %v", err)
+	}
+	close(release)
+	if err := <-result; !errors.Is(err, store.ErrInventoryChanged) {
+		t.Fatalf("in-flight refresh error = %v", err)
+	}
+	if _, found := repository.TopologySnapshot(cluster.ResourceID); found {
+		t.Fatal("old-address in-flight refresh republished invalid topology")
+	}
+}
+
 type discoveryRepositoryState struct {
 	instances []model.DatabaseInstance
 	endpoints []model.Endpoint

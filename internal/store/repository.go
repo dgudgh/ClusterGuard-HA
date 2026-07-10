@@ -20,6 +20,7 @@ var (
 	ErrValidation       = errors.New("repository validation failed")
 	ErrConflict         = errors.New("repository conflict")
 	ErrStaleObservation = errors.New("stale topology observation")
+	ErrInventoryChanged = errors.New("discovery inventory changed")
 )
 
 func validationError(format string, arguments ...interface{}) error {
@@ -43,12 +44,19 @@ type DiscoveryObservation struct {
 }
 
 type DiscoveryRefresh struct {
-	ClusterID    model.ResourceID
-	Observations []DiscoveryObservation
-	Probes       []model.ProbeStatus
-	Health       model.Health
-	ObservedAt   time.Time
-	Anomalies    []model.MetadataAnomaly
+	ClusterID           model.ResourceID
+	InventoryGeneration uint64
+	Observations        []DiscoveryObservation
+	Probes              []model.ProbeStatus
+	Health              model.Health
+	ObservedAt          time.Time
+	Anomalies           []model.MetadataAnomaly
+}
+
+type DiscoveryInventory struct {
+	Cluster    model.DatabaseCluster
+	Endpoints  []model.Endpoint
+	Generation uint64
 }
 
 type MetadataCoordinates struct {
@@ -65,15 +73,17 @@ type discoveryMetricCandidate struct {
 const discoveryMetricSampleLimit = 60
 
 type snapshot struct {
-	Clusters          map[model.ResourceID]model.DatabaseCluster               `json:"clusters"`
-	Instances         map[model.ResourceID]model.DatabaseInstance              `json:"instances"`
-	Endpoints         map[model.ResourceID]map[model.ResourceID]model.Endpoint `json:"endpoints"`
-	ReplicationLinks  map[model.ResourceID][]model.ReplicationLink             `json:"replication_links"`
-	MetricSamples     map[model.ResourceID][]model.MetricSample                `json:"metric_samples"`
-	TopologySnapshots map[model.ResourceID]model.TopologySnapshot              `json:"topology_snapshots"`
-	Anomalies         map[model.ResourceID]model.MetadataAnomaly               `json:"anomalies"`
-	Audits            []model.AuditEvent                                       `json:"audits"`
-	Reports           []model.Report                                           `json:"reports"`
+	Clusters              map[model.ResourceID]model.DatabaseCluster               `json:"clusters"`
+	Instances             map[model.ResourceID]model.DatabaseInstance              `json:"instances"`
+	Endpoints             map[model.ResourceID]map[model.ResourceID]model.Endpoint `json:"endpoints"`
+	ReplicationLinks      map[model.ResourceID][]model.ReplicationLink             `json:"replication_links"`
+	MetricSamples         map[model.ResourceID][]model.MetricSample                `json:"metric_samples"`
+	TopologySnapshots     map[model.ResourceID]model.TopologySnapshot              `json:"topology_snapshots"`
+	ObservationWatermarks map[model.ResourceID]time.Time                           `json:"observation_watermarks"`
+	InventoryGenerations  map[model.ResourceID]uint64                              `json:"inventory_generations"`
+	Anomalies             map[model.ResourceID]model.MetadataAnomaly               `json:"anomalies"`
+	Audits                []model.AuditEvent                                       `json:"audits"`
+	Reports               []model.Report                                           `json:"reports"`
 }
 
 type Repository struct {
@@ -85,15 +95,17 @@ type Repository struct {
 
 func emptySnapshot() snapshot {
 	return snapshot{
-		Clusters:          map[model.ResourceID]model.DatabaseCluster{},
-		Instances:         map[model.ResourceID]model.DatabaseInstance{},
-		Endpoints:         map[model.ResourceID]map[model.ResourceID]model.Endpoint{},
-		ReplicationLinks:  map[model.ResourceID][]model.ReplicationLink{},
-		MetricSamples:     map[model.ResourceID][]model.MetricSample{},
-		TopologySnapshots: map[model.ResourceID]model.TopologySnapshot{},
-		Anomalies:         map[model.ResourceID]model.MetadataAnomaly{},
-		Audits:            []model.AuditEvent{},
-		Reports:           []model.Report{},
+		Clusters:              map[model.ResourceID]model.DatabaseCluster{},
+		Instances:             map[model.ResourceID]model.DatabaseInstance{},
+		Endpoints:             map[model.ResourceID]map[model.ResourceID]model.Endpoint{},
+		ReplicationLinks:      map[model.ResourceID][]model.ReplicationLink{},
+		MetricSamples:         map[model.ResourceID][]model.MetricSample{},
+		TopologySnapshots:     map[model.ResourceID]model.TopologySnapshot{},
+		ObservationWatermarks: map[model.ResourceID]time.Time{},
+		InventoryGenerations:  map[model.ResourceID]uint64{},
+		Anomalies:             map[model.ResourceID]model.MetadataAnomaly{},
+		Audits:                []model.AuditEvent{},
+		Reports:               []model.Report{},
 	}
 }
 
@@ -134,6 +146,22 @@ func Open(path string) (*Repository, error) {
 	}
 	if repository.snapshot.TopologySnapshots == nil {
 		repository.snapshot.TopologySnapshots = map[model.ResourceID]model.TopologySnapshot{}
+	}
+	if repository.snapshot.ObservationWatermarks == nil {
+		repository.snapshot.ObservationWatermarks = map[model.ResourceID]time.Time{}
+	}
+	for clusterID, topology := range repository.snapshot.TopologySnapshots {
+		if topology.ObservedAt.After(repository.snapshot.ObservationWatermarks[clusterID]) {
+			repository.snapshot.ObservationWatermarks[clusterID] = topology.ObservedAt
+		}
+	}
+	if repository.snapshot.InventoryGenerations == nil {
+		repository.snapshot.InventoryGenerations = map[model.ResourceID]uint64{}
+	}
+	for clusterID := range repository.snapshot.Clusters {
+		if repository.snapshot.InventoryGenerations[clusterID] == 0 {
+			repository.snapshot.InventoryGenerations[clusterID] = 1
+		}
 	}
 	if repository.snapshot.Anomalies == nil {
 		repository.snapshot.Anomalies = map[model.ResourceID]model.MetadataAnomaly{}
@@ -266,7 +294,25 @@ func cloneDiscoverySnapshot(value snapshot) snapshot {
 	copy.ReplicationLinks = cloneReplicationLinkMap(value.ReplicationLinks)
 	copy.MetricSamples = cloneMetricSampleMap(value.MetricSamples)
 	copy.TopologySnapshots = cloneTopologySnapshotMap(value.TopologySnapshots)
+	copy.ObservationWatermarks = cloneTimeMap(value.ObservationWatermarks)
+	copy.InventoryGenerations = cloneUint64Map(value.InventoryGenerations)
 	copy.Anomalies = cloneAnomalyMap(value.Anomalies)
+	return copy
+}
+
+func cloneTimeMap(values map[model.ResourceID]time.Time) map[model.ResourceID]time.Time {
+	copy := make(map[model.ResourceID]time.Time, len(values))
+	for key, value := range values {
+		copy[key] = value
+	}
+	return copy
+}
+
+func cloneUint64Map(values map[model.ResourceID]uint64) map[model.ResourceID]uint64 {
+	copy := make(map[model.ResourceID]uint64, len(values))
+	for key, value := range values {
+		copy[key] = value
+	}
 	return copy
 }
 
@@ -395,6 +441,29 @@ func (repository *Repository) Cluster(id model.ResourceID) (model.DatabaseCluste
 	return cloneCluster(cluster), ok
 }
 
+func (repository *Repository) DiscoveryInventory(clusterID model.ResourceID) (DiscoveryInventory, bool) {
+	repository.mu.RLock()
+	defer repository.mu.RUnlock()
+	cluster, found := repository.snapshot.Clusters[clusterID]
+	if !found {
+		return DiscoveryInventory{}, false
+	}
+	result := DiscoveryInventory{Cluster: cloneCluster(cluster), Generation: repository.snapshot.InventoryGenerations[clusterID]}
+	result.Endpoints = make([]model.Endpoint, 0, len(repository.snapshot.Endpoints[clusterID]))
+	for _, endpoint := range repository.snapshot.Endpoints[clusterID] {
+		result.Endpoints = append(result.Endpoints, endpoint)
+	}
+	sort.Slice(result.Endpoints, func(i, j int) bool { return result.Endpoints[i].ResourceID < result.Endpoints[j].ResourceID })
+	return result, true
+}
+
+func (repository *Repository) ObservationWatermark(clusterID model.ResourceID) (time.Time, bool) {
+	repository.mu.RLock()
+	defer repository.mu.RUnlock()
+	watermark, found := repository.snapshot.ObservationWatermarks[clusterID]
+	return watermark, found
+}
+
 func validateEndpoint(endpoint model.Endpoint) error {
 	if endpoint.ClusterID == "" {
 		return validationError("cluster ID is required")
@@ -402,7 +471,16 @@ func validateEndpoint(endpoint model.Endpoint) error {
 	if endpoint.Port <= 0 || endpoint.Port > 65535 {
 		return validationError("invalid endpoint port: %d", endpoint.Port)
 	}
+	if endpoint.Active && endpoint.Kind == model.EndpointDatabase && endpoint.Hostname == "" && endpoint.IPAddress == "" {
+		return validationError("active database endpoint address is required")
+	}
 	return nil
+}
+
+func normalizeEndpoint(endpoint model.Endpoint) model.Endpoint {
+	endpoint.Hostname = strings.TrimSpace(endpoint.Hostname)
+	endpoint.IPAddress = strings.TrimSpace(endpoint.IPAddress)
+	return endpoint
 }
 
 func endpointAddressCollision(left model.Endpoint, right model.Endpoint) bool {
@@ -473,6 +551,7 @@ func (repository *Repository) CreateClusterWithEndpoints(cluster model.DatabaseC
 			return model.DatabaseCluster{}, nil, validationError("endpoint cluster ID does not match cluster")
 		}
 		endpoints[index].ClusterID = cluster.ResourceID
+		endpoints[index] = normalizeEndpoint(endpoints[index])
 		if err := validateEndpoint(endpoints[index]); err != nil {
 			return model.DatabaseCluster{}, nil, err
 		}
@@ -540,6 +619,8 @@ func (repository *Repository) CreateClusterWithEndpoints(cluster model.DatabaseC
 	for _, endpoint := range endpoints {
 		next.Endpoints[cluster.ResourceID][endpoint.ResourceID] = endpoint
 	}
+	next.InventoryGenerations = cloneUint64Map(repository.snapshot.InventoryGenerations)
+	next.InventoryGenerations[cluster.ResourceID] = 1
 	if err := repository.persistSnapshotLocked(next); err != nil {
 		return model.DatabaseCluster{}, nil, err
 	}
@@ -550,6 +631,7 @@ func (repository *Repository) CreateClusterWithEndpoints(cluster model.DatabaseC
 }
 
 func (repository *Repository) UpsertEndpoint(endpoint model.Endpoint) (model.Endpoint, error) {
+	endpoint = normalizeEndpoint(endpoint)
 	if err := validateEndpoint(endpoint); err != nil {
 		return model.Endpoint{}, err
 	}
@@ -596,6 +678,8 @@ func (repository *Repository) UpsertEndpoint(endpoint model.Endpoint) (model.End
 		cluster.MetadataRevision++
 		cluster.UpdatedAt = now
 		next.Clusters[endpoint.ClusterID] = cluster
+		next.InventoryGenerations = cloneUint64Map(repository.snapshot.InventoryGenerations)
+		next.InventoryGenerations[endpoint.ClusterID]++
 	}
 	if err := repository.persistSnapshotLocked(next); err != nil {
 		return model.Endpoint{}, err
@@ -921,6 +1005,18 @@ func (repository *Repository) ReconcileMetadataCoordinates(update MetadataCoordi
 	if !found || existing.ClusterID != update.Instance.ClusterID {
 		return model.DatabaseInstance{}, model.Endpoint{}, validationError("unknown database instance")
 	}
+	cluster, found := repository.snapshot.Clusters[existing.ClusterID]
+	if !found || cluster.Engine != existing.Engine || update.Instance.Engine != existing.Engine {
+		return model.DatabaseInstance{}, model.Endpoint{}, validationError("metadata engine does not match canonical inventory")
+	}
+	existingIdentityKey, err := identity.InstanceKey(existing.Engine, existing.EngineIdentity)
+	if err != nil {
+		return model.DatabaseInstance{}, model.Endpoint{}, validationError("canonical database instance identity is invalid")
+	}
+	requestedIdentityKey, err := identity.InstanceKey(update.Instance.Engine, update.Instance.EngineIdentity)
+	if err != nil || requestedIdentityKey != existingIdentityKey {
+		return model.DatabaseInstance{}, model.Endpoint{}, validationError("metadata native identity does not match canonical inventory")
+	}
 	if update.Instance.Port <= 0 || update.Instance.Port > 65535 {
 		return model.DatabaseInstance{}, model.Endpoint{}, validationError("invalid database endpoint port")
 	}
@@ -952,6 +1048,7 @@ func (repository *Repository) ReconcileMetadataCoordinates(update MetadataCoordi
 	replacementEndpoint.Hostname = update.Instance.Hostname
 	replacementEndpoint.IPAddress = update.Instance.IPAddress
 	replacementEndpoint.Port = update.Instance.Port
+	replacementEndpoint = normalizeEndpoint(replacementEndpoint)
 	if err := validateEndpoint(replacementEndpoint); err != nil {
 		return model.DatabaseInstance{}, model.Endpoint{}, err
 	}
@@ -972,8 +1069,8 @@ func (repository *Repository) ReconcileMetadataCoordinates(update MetadataCoordi
 		replacement.Aliases = appendAlias(replacement.Aliases, alias)
 	}
 	replacement.DisplayName = update.Instance.DisplayName
-	replacement.Hostname = update.Instance.Hostname
-	replacement.IPAddress = update.Instance.IPAddress
+	replacement.Hostname = replacementEndpoint.Hostname
+	replacement.IPAddress = replacementEndpoint.IPAddress
 	replacement.Port = update.Instance.Port
 	replacement.NodeID = update.Instance.NodeID
 	replacement.MetadataRevision++
@@ -988,12 +1085,14 @@ func (repository *Repository) ReconcileMetadataCoordinates(update MetadataCoordi
 	next.Endpoints[existing.ClusterID][selected.ResourceID] = replacementEndpoint
 	next.TopologySnapshots = cloneTopologySnapshotMap(repository.snapshot.TopologySnapshots)
 	delete(next.TopologySnapshots, existing.ClusterID)
+	next.InventoryGenerations = cloneUint64Map(repository.snapshot.InventoryGenerations)
+	next.InventoryGenerations[existing.ClusterID]++
 	next.Clusters = cloneClusterMap(repository.snapshot.Clusters)
-	cluster := next.Clusters[existing.ClusterID]
-	cluster.Health = model.Health{State: model.HealthUnknown}
-	cluster.MetadataRevision++
-	cluster.UpdatedAt = now
-	next.Clusters[existing.ClusterID] = cluster
+	updatedCluster := next.Clusters[existing.ClusterID]
+	updatedCluster.Health = model.Health{State: model.HealthUnknown}
+	updatedCluster.MetadataRevision++
+	updatedCluster.UpdatedAt = now
+	next.Clusters[existing.ClusterID] = updatedCluster
 	if err := repository.persistSnapshotLocked(next); err != nil {
 		return model.DatabaseInstance{}, model.Endpoint{}, err
 	}
@@ -1191,8 +1290,12 @@ func (repository *Repository) ApplyDiscoveryRefresh(refresh DiscoveryRefresh) (m
 	if observedAt.IsZero() {
 		observedAt = repository.now().UTC()
 	}
-	if existing, found := repository.snapshot.TopologySnapshots[refresh.ClusterID]; found && !observedAt.After(existing.ObservedAt) {
-		return model.TopologySnapshot{}, fmt.Errorf("%w: observed at %s is not after %s", ErrStaleObservation, observedAt.Format(time.RFC3339Nano), existing.ObservedAt.Format(time.RFC3339Nano))
+	if watermark, found := repository.snapshot.ObservationWatermarks[refresh.ClusterID]; found && !observedAt.After(watermark) {
+		return model.TopologySnapshot{}, fmt.Errorf("%w: observed at %s is not after %s", ErrStaleObservation, observedAt.Format(time.RFC3339Nano), watermark.Format(time.RFC3339Nano))
+	}
+	currentGeneration := repository.snapshot.InventoryGenerations[refresh.ClusterID]
+	if refresh.InventoryGeneration != 0 && refresh.InventoryGeneration != currentGeneration {
+		return model.TopologySnapshot{}, fmt.Errorf("%w: captured generation %d, current generation %d", ErrInventoryChanged, refresh.InventoryGeneration, currentGeneration)
 	}
 	next := cloneDiscoverySnapshot(repository.snapshot)
 	activeEndpoints := make(map[model.ResourceID]model.Endpoint)
@@ -1418,6 +1521,7 @@ func (repository *Repository) ApplyDiscoveryRefresh(refresh DiscoveryRefresh) (m
 		Health: refresh.Health, Anomalies: persistedAnomalies, ObservedAt: observedAt,
 	}
 	next.TopologySnapshots[refresh.ClusterID] = cloneTopologySnapshot(published)
+	next.ObservationWatermarks[refresh.ClusterID] = observedAt
 	if err := repository.persistSnapshotLocked(next); err != nil {
 		return model.TopologySnapshot{}, err
 	}
@@ -1483,6 +1587,13 @@ func (repository *Repository) Instances(clusterID model.ResourceID) []model.Data
 	}
 	sort.Slice(instances, func(i int, j int) bool { return instances[i].DisplayName < instances[j].DisplayName })
 	return instances
+}
+
+func (repository *Repository) Instance(instanceID model.ResourceID) (model.DatabaseInstance, bool) {
+	repository.mu.RLock()
+	defer repository.mu.RUnlock()
+	instance, found := repository.snapshot.Instances[instanceID]
+	return cloneInstance(instance), found
 }
 
 func (repository *Repository) Anomalies() []model.MetadataAnomaly {

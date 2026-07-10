@@ -26,6 +26,42 @@ import (
 
 type apiRunner struct{}
 
+type metadataAdapterSpy struct {
+	adapter.UnsupportedAdapter
+	mu    sync.Mutex
+	calls int
+}
+
+func newMetadataAdapterSpy() *metadataAdapterSpy {
+	return &metadataAdapterSpy{UnsupportedAdapter: adapter.NewUnsupported(model.EngineMySQL)}
+}
+
+func (candidate *metadataAdapterSpy) Capabilities(context.Context) adapter.Capabilities {
+	return adapter.Capabilities{Engine: model.EngineMySQL, Features: map[adapter.Capability]adapter.CapabilityState{
+		adapter.CapabilityMetadataReconcile: {Available: true},
+	}}
+}
+
+func (candidate *metadataAdapterSpy) MetadataPrecheck(context.Context, adapter.MetadataRequest) ([]model.Check, error) {
+	candidate.mu.Lock()
+	defer candidate.mu.Unlock()
+	candidate.calls++
+	return nil, nil
+}
+
+func (candidate *metadataAdapterSpy) ReconcileMetadata(context.Context, adapter.MetadataRequest) (adapter.MetadataResult, error) {
+	candidate.mu.Lock()
+	defer candidate.mu.Unlock()
+	candidate.calls++
+	return adapter.MetadataResult{}, nil
+}
+
+func (candidate *metadataAdapterSpy) callCount() int {
+	candidate.mu.Lock()
+	defer candidate.mu.Unlock()
+	return candidate.calls
+}
+
 type fakeRefresher struct {
 	mu      sync.Mutex
 	calls   []model.ResourceID
@@ -192,7 +228,7 @@ func TestMetadataExecuteReusesResourceIDForRenamedMySQLEndpoint(t *testing.T) {
 		"operation":      map[string]interface{}{"engine": "mysql", "kind": "metadata_reconciliation", "requested_by": "dba"},
 		"approval_token": "approved",
 		"instance": map[string]interface{}{
-			"resource_id": seed.Instances[0].ResourceID, "cluster_id": cluster.ResourceID, "engine": "mysql", "engine_identity": map[string]string{"server_uuid": "forged"},
+			"resource_id": seed.Instances[0].ResourceID, "cluster_id": cluster.ResourceID, "engine": "mysql", "engine_identity": map[string]string{"server_uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},
 			"display_name": "mysql-new", "hostname": "mysql-new", "ip_address": "192.0.2.20", "port": 3310, "role": "replica", "health": map[string]string{"state": "unhealthy"},
 		},
 	}
@@ -254,6 +290,94 @@ func TestMetadataExecutePersistenceFailureIsSanitizedAndAtomic(t *testing.T) {
 	afterTopology, found := repository.TopologySnapshot(cluster.ResourceID)
 	if !reflect.DeepEqual(repository.Instances(cluster.ResourceID), beforeInstances) || !reflect.DeepEqual(repository.Endpoints(cluster.ResourceID), beforeEndpoints) || !found || !reflect.DeepEqual(afterTopology, beforeTopology) {
 		t.Fatalf("failed metadata persistence published partial state")
+	}
+}
+
+func TestMetadataRouteRejectsEngineAndIdentityTrustMismatchBeforeAdapterOrWorkflow(t *testing.T) {
+	tests := []struct {
+		name            string
+		payloadEngine   model.Engine
+		operationEngine model.Engine
+		serverUUID      string
+	}{
+		{name: "payload engine", payloadEngine: model.EnginePostgreSQL, operationEngine: model.EnginePostgreSQL, serverUUID: "trust-native"},
+		{name: "operation engine", payloadEngine: model.EngineMySQL, operationEngine: model.EnginePostgreSQL, serverUUID: "trust-native"},
+		{name: "native identity", payloadEngine: model.EngineMySQL, operationEngine: model.EngineMySQL, serverUUID: "different-native"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repository := store.NewMemory()
+			cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "metadata-trust-" + test.name}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true}})
+			if err != nil {
+				t.Fatalf("create inventory: %v", err)
+			}
+			observedAt := time.Date(2026, time.July, 12, 15, 0, 0, 0, time.UTC)
+			snapshot, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{ClusterID: cluster.ResourceID, ObservedAt: observedAt, Observations: []store.DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: model.DatabaseInstance{ClusterID: cluster.ResourceID, Engine: model.EngineMySQL, EngineIdentity: model.EngineIdentity{"server_uuid": "trust-native"}, Hostname: "mysql-a", Port: 3306, Role: model.RolePrimary, Health: model.Health{State: model.HealthHealthy}}}}, Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}}})
+			if err != nil {
+				t.Fatalf("seed topology: %v", err)
+			}
+			candidate := newMetadataAdapterSpy()
+			server := newAPIServer(t, repository, candidate, &fakeRefresher{})
+			beforeInstances := repository.Instances(cluster.ResourceID)
+			beforeEndpoints := repository.Endpoints(cluster.ResourceID)
+			beforeTopology, _ := repository.TopologySnapshot(cluster.ResourceID)
+			beforeInventory, _ := repository.DiscoveryInventory(cluster.ResourceID)
+			beforeWatermark, _ := repository.ObservationWatermark(cluster.ResourceID)
+			payload := map[string]interface{}{
+				"operation": map[string]interface{}{"engine": test.operationEngine, "kind": "metadata_reconciliation", "requested_by": "dba"}, "approval_token": "approved", "endpoint_id": endpoints[0].ResourceID,
+				"instance": map[string]interface{}{"resource_id": snapshot.Instances[0].ResourceID, "cluster_id": cluster.ResourceID, "engine": test.payloadEngine, "engine_identity": map[string]string{"server_uuid": test.serverUUID}, "hostname": "must-not-publish", "port": 4406},
+			}
+			response := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/metadata/reconcile/execute", payload)
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("trust mismatch status = %d: %s", response.Code, response.Body.String())
+			}
+			if candidate.callCount() != 0 || len(repository.Audits()) != 0 || len(repository.Reports()) != 0 {
+				t.Fatalf("trust mismatch reached adapter/workflow: calls=%d audits=%d reports=%d", candidate.callCount(), len(repository.Audits()), len(repository.Reports()))
+			}
+			afterTopology, found := repository.TopologySnapshot(cluster.ResourceID)
+			afterInventory, _ := repository.DiscoveryInventory(cluster.ResourceID)
+			afterWatermark, _ := repository.ObservationWatermark(cluster.ResourceID)
+			if !reflect.DeepEqual(repository.Instances(cluster.ResourceID), beforeInstances) || !reflect.DeepEqual(repository.Endpoints(cluster.ResourceID), beforeEndpoints) || !found || !reflect.DeepEqual(afterTopology, beforeTopology) || afterInventory.Generation != beforeInventory.Generation || !afterWatermark.Equal(beforeWatermark) {
+				t.Fatal("trust mismatch changed repository state")
+			}
+		})
+	}
+}
+
+func TestMetadataRouteRejectsEmptyActiveEndpointAddressAtomically(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "empty-metadata-address"}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true}})
+	if err != nil {
+		t.Fatalf("create inventory: %v", err)
+	}
+	observedAt := time.Date(2026, time.July, 12, 16, 0, 0, 0, time.UTC)
+	snapshot, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{ClusterID: cluster.ResourceID, ObservedAt: observedAt, Observations: []store.DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: model.DatabaseInstance{ClusterID: cluster.ResourceID, Engine: model.EngineMySQL, EngineIdentity: model.EngineIdentity{"server_uuid": "empty-address-native"}, Hostname: "mysql-a", Port: 3306, Role: model.RolePrimary, Health: model.Health{State: model.HealthHealthy}}}}, Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}}})
+	if err != nil {
+		t.Fatalf("seed topology: %v", err)
+	}
+	candidate := newMetadataAdapterSpy()
+	server := newAPIServer(t, repository, candidate, &fakeRefresher{})
+	beforeInstances := repository.Instances(cluster.ResourceID)
+	beforeEndpoints := repository.Endpoints(cluster.ResourceID)
+	beforeTopology, _ := repository.TopologySnapshot(cluster.ResourceID)
+	beforeInventory, _ := repository.DiscoveryInventory(cluster.ResourceID)
+	beforeWatermark, _ := repository.ObservationWatermark(cluster.ResourceID)
+	payload := map[string]interface{}{
+		"operation": map[string]interface{}{"engine": "mysql", "kind": "metadata_reconciliation", "requested_by": "dba"}, "approval_token": "approved", "endpoint_id": endpoints[0].ResourceID,
+		"instance": map[string]interface{}{"resource_id": snapshot.Instances[0].ResourceID, "cluster_id": cluster.ResourceID, "engine": "mysql", "engine_identity": map[string]string{"server_uuid": "empty-address-native"}, "hostname": "   ", "ip_address": "\t", "port": 4406},
+	}
+	response := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/metadata/reconcile/execute", payload)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("empty metadata address status = %d: %s", response.Code, response.Body.String())
+	}
+	if candidate.callCount() != 0 || len(repository.Audits()) != 0 || len(repository.Reports()) != 0 {
+		t.Fatalf("empty address reached adapter/workflow: calls=%d audits=%d reports=%d", candidate.callCount(), len(repository.Audits()), len(repository.Reports()))
+	}
+	afterTopology, found := repository.TopologySnapshot(cluster.ResourceID)
+	afterInventory, _ := repository.DiscoveryInventory(cluster.ResourceID)
+	afterWatermark, _ := repository.ObservationWatermark(cluster.ResourceID)
+	if !reflect.DeepEqual(repository.Instances(cluster.ResourceID), beforeInstances) || !reflect.DeepEqual(repository.Endpoints(cluster.ResourceID), beforeEndpoints) || !found || !reflect.DeepEqual(afterTopology, beforeTopology) || afterInventory.Generation != beforeInventory.Generation || !afterWatermark.Equal(beforeWatermark) {
+		t.Fatal("empty metadata address changed repository state")
 	}
 }
 
