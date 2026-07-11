@@ -210,7 +210,25 @@ func Open(path string) (*Repository, error) {
 	if repository.snapshot.Reports == nil {
 		repository.snapshot.Reports = []model.Report{}
 	}
+	for index := range repository.snapshot.Reports {
+		if repository.snapshot.Reports[index].Status == "" {
+			repository.snapshot.Reports[index].Status = model.OperationIndeterminate
+			continue
+		}
+		if !terminalReportStatus(repository.snapshot.Reports[index].Status) {
+			return nil, fmt.Errorf("decode metadata snapshot: report status is not terminal")
+		}
+	}
 	return repository, nil
+}
+
+func terminalReportStatus(status model.OperationStatus) bool {
+	switch status {
+	case model.OperationBlocked, model.OperationSucceeded, model.OperationFailed, model.OperationIndeterminate, model.OperationUnsupported:
+		return true
+	default:
+		return false
+	}
 }
 
 func cloneInstance(instance model.DatabaseInstance) model.DatabaseInstance {
@@ -1780,6 +1798,9 @@ func (repository *Repository) RecordAudit(event model.AuditEvent) error {
 }
 
 func (repository *Repository) RecordReport(report model.Report) error {
+	if !terminalReportStatus(report.Status) {
+		return validationError("report status must be terminal")
+	}
 	now := repository.now().UTC()
 	if report.ResourceID == "" {
 		report.ResourceID = model.NewResourceID()

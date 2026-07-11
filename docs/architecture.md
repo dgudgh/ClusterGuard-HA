@@ -177,8 +177,9 @@ report appropriate to whether the database operation had already committed.
 
 Cluster registration and topology publication use the same post-rename
 semantics. If directory synchronization cannot confirm crash durability, the
-API returns HTTP `500` with the committed cluster, endpoint, or observation
-UUIDs instead of discarding them and inviting an unsafe retry.
+API returns HTTP `500` with committed cluster and endpoint UUIDs, or the
+topology observation token `cluster_id@observed_at`, instead of discarding them
+and inviting an unsafe retry.
 
 Platform metadata reconciliation is distinct from a database mutation. It may
 update a known resource's mutable coordinates after native identity validation,

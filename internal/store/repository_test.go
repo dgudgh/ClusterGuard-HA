@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -247,7 +248,7 @@ func TestRepositoryPersistsAuditAndReportResources(t *testing.T) {
 	if err := repository.RecordAudit(model.AuditEvent{OperationID: operationID, Stage: model.StageExecute, Message: "executed"}); err != nil {
 		t.Fatalf("record audit: %v", err)
 	}
-	if err := repository.RecordReport(model.Report{OperationID: operationID, Title: "operation report", Summary: "verified"}); err != nil {
+	if err := repository.RecordReport(model.Report{OperationID: operationID, Title: "operation report", Status: model.OperationSucceeded, Summary: "verified"}); err != nil {
 		t.Fatalf("record report: %v", err)
 	}
 	reloaded, err := Open(path)
@@ -262,15 +263,59 @@ func TestRepositoryPersistsAuditAndReportResources(t *testing.T) {
 	}
 }
 
+func TestOpenMigratesLegacyReportWithoutStatusToIndeterminate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metadata.json")
+	legacy := emptySnapshot()
+	reportID := model.NewResourceID()
+	legacy.Reports = []model.Report{{ResourceMeta: model.ResourceMeta{ResourceID: reportID, MetadataRevision: 1}, OperationID: model.NewResourceID(), Title: "legacy report", Summary: "legacy outcome"}}
+	contents, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatalf("encode legacy snapshot: %v", err)
+	}
+	if err := os.WriteFile(path, contents, 0o600); err != nil {
+		t.Fatalf("write legacy snapshot: %v", err)
+	}
+	repository, err := Open(path)
+	if err != nil {
+		t.Fatalf("open legacy snapshot: %v", err)
+	}
+	reports := repository.Reports()
+	if len(reports) != 1 || reports[0].Status != model.OperationIndeterminate {
+		t.Fatalf("legacy report was not migrated conservatively: %+v", reports)
+	}
+	if err := repository.RecordAudit(model.AuditEvent{OperationID: reports[0].OperationID, Stage: model.StageAudit, Message: "persist migration"}); err != nil {
+		t.Fatalf("persist migrated snapshot: %v", err)
+	}
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen migrated snapshot: %v", err)
+	}
+	if got := reopened.Reports(); len(got) != 1 || got[0].ResourceID != reportID || got[0].Status != model.OperationIndeterminate {
+		t.Fatalf("report migration was not durable: %+v", got)
+	}
+}
+
+func TestRecordReportRejectsNonterminalStatus(t *testing.T) {
+	for _, status := range []model.OperationStatus{"", model.OperationPlanned, model.OperationRunning} {
+		t.Run(string(status), func(t *testing.T) {
+			repository := NewMemory()
+			err := repository.RecordReport(model.Report{OperationID: model.NewResourceID(), Title: "invalid report", Status: status, Summary: "not terminal"})
+			if !errors.Is(err, ErrValidation) || len(repository.Reports()) != 0 {
+				t.Fatalf("nonterminal status %q was accepted: err=%v reports=%+v", status, err, repository.Reports())
+			}
+		})
+	}
+}
+
 func TestRecordReportUpdatesExistingResourceInsteadOfDuplicatingIt(t *testing.T) {
 	repository := NewMemory()
 	reportID := model.NewResourceID()
 	operationID := model.NewResourceID()
-	if err := repository.RecordReport(model.Report{ResourceMeta: model.ResourceMeta{ResourceID: reportID}, OperationID: operationID, Title: "operation report", Summary: "succeeded"}); err != nil {
+	if err := repository.RecordReport(model.Report{ResourceMeta: model.ResourceMeta{ResourceID: reportID}, OperationID: operationID, Title: "operation report", Status: model.OperationSucceeded, Summary: "succeeded"}); err != nil {
 		t.Fatalf("record report: %v", err)
 	}
 	first := repository.Reports()[0]
-	if err := repository.RecordReport(model.Report{ResourceMeta: model.ResourceMeta{ResourceID: reportID}, OperationID: operationID, Title: "operation report", Summary: "indeterminate"}); err != nil {
+	if err := repository.RecordReport(model.Report{ResourceMeta: model.ResourceMeta{ResourceID: reportID}, OperationID: operationID, Title: "operation report", Status: model.OperationIndeterminate, Summary: "indeterminate"}); err != nil {
 		t.Fatalf("update report: %v", err)
 	}
 	reports := repository.Reports()
@@ -298,7 +343,7 @@ func TestJournalPersistenceFailureDoesNotPublishLiveState(t *testing.T) {
 		{
 			name: "report",
 			record: func(repository *Repository) error {
-				return repository.RecordReport(model.Report{OperationID: model.NewResourceID(), Title: "must not publish"})
+				return repository.RecordReport(model.Report{OperationID: model.NewResourceID(), Title: "must not publish", Status: model.OperationFailed})
 			},
 			count: func(repository *Repository) int { return len(repository.Reports()) },
 		},

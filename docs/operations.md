@@ -265,7 +265,8 @@ state; do not automatically retry the operation.
 
 Cluster registration and discovery publication follow the same rule. A
 post-rename durability warning returns HTTP `500` plus the committed resource or
-observation in `result`. Reconcile that UUID before retrying; creating another
+observation in `result`. Reconcile the returned cluster/endpoint UUIDs or the
+observation token `cluster_id@observed_at` before retrying; creating another
 cluster or publishing as though the observation were absent can duplicate user
 intent. Reports first persist a conservative fallback and then replace it with
 the terminal outcome under the same report UUID.
