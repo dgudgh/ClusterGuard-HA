@@ -5,15 +5,16 @@ import "time"
 type WorkflowStage string
 
 const (
-	StageDiscover WorkflowStage = "discover"
-	StagePrecheck WorkflowStage = "precheck"
-	StagePlan     WorkflowStage = "plan"
-	StageLock     WorkflowStage = "lock"
-	StageApprove  WorkflowStage = "approve"
-	StageExecute  WorkflowStage = "execute"
-	StageVerify   WorkflowStage = "verify"
-	StageAudit    WorkflowStage = "audit"
-	StageReport   WorkflowStage = "report"
+	StageDiscover    WorkflowStage = "discover"
+	StagePrecheck    WorkflowStage = "precheck"
+	StagePlan        WorkflowStage = "plan"
+	StageSafetyGuard WorkflowStage = "safety_guard"
+	StageLock        WorkflowStage = "lock"
+	StageApprove     WorkflowStage = "approve"
+	StageExecute     WorkflowStage = "execute"
+	StageVerify      WorkflowStage = "verify"
+	StageAudit       WorkflowStage = "audit"
+	StageReport      WorkflowStage = "report"
 )
 
 type OperationKind string

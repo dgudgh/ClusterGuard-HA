@@ -91,6 +91,18 @@ func TestExecuteRunsGuardedWorkflowAndProducesAuditReport(t *testing.T) {
 	if len(journal.Audits()) < 8 || len(journal.Reports()) != 1 {
 		t.Fatalf("workflow must record audit and report, audits=%d reports=%d", len(journal.Audits()), len(journal.Reports()))
 	}
+	safetyIndex, lockIndex := -1, -1
+	for index, event := range journal.Audits() {
+		if event.Stage == model.StageSafetyGuard && safetyIndex < 0 {
+			safetyIndex = index
+		}
+		if event.Stage == model.StageLock && lockIndex < 0 {
+			lockIndex = index
+		}
+	}
+	if safetyIndex < 0 || lockIndex < 0 || safetyIndex >= lockIndex {
+		t.Fatalf("safety guard must be an explicit stage before lock: %+v", journal.Audits())
+	}
 }
 
 func TestExecuteBlocksUnsupportedAdapterBeforeSafetyOrLock(t *testing.T) {

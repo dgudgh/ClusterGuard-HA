@@ -24,13 +24,29 @@ service environment:
 export CG_CONTROL_TOKEN='replace-with-a-control-api-secret'
 export CG_APPROVAL_TOKEN='replace-with-a-local-secret'
 export CG_MYSQL_DISCOVERY_PASSWORD='replace-with-the-read-only-secret'
-go run ./cmd/clusterguardd --config configs/clusterguard.example.json
+go run ./cmd/clusterguard --config configs/clusterguard.example.json
 ```
 
 The server rejects startup when MySQL is enabled but its username,
 `password_env`, or resolved password is blank. MySQL passwords are passed to
 the client process through its environment and are not placed in command-line
 arguments, API payloads, or persisted metadata.
+
+Production layout:
+
+```text
+/etc/clusterguard/clusterguard.json
+/etc/clusterguard/clusterguard.env
+/var/lib/clusterguard/metadata.json
+/var/log/clusterguard/
+/usr/local/bin/clusterguard
+/usr/local/bin/cgctl
+```
+
+Use `packaging/systemd/clusterguard-ha.service` and
+`packaging/systemd/clusterguard.env.example` as the service templates. The
+server binary defaults to `/etc/clusterguard/clusterguard.json` when `--config`
+is omitted.
 
 Every `/api/v1/` `POST` requires `Authorization: Bearer <control-token>`.
 Missing or invalid credentials return `401` before request parsing or database
@@ -128,6 +144,11 @@ maintenance, promotion eligibility, IO/SQL replication threads, source
 identity, lag, GTID mode and consistency, errant and missing transactions, data
 loss risk, and MySQL version family. It returns rankings only; it cannot promote
 a node.
+
+Snapshot-derived reads accept `observation_id=<RFC3339 timestamp>`. The web
+console reads topology first and pins health, candidates, and metrics to that
+same observation. If a concurrent refresh changes the snapshot, the complete
+console read is retried instead of combining evidence from different cycles.
 
 The MySQL read-only probe and metrics path is covered by 5.7, 8.0, 8.4, and 9.7
 fixtures. Replication collection handles legacy and current terminology.

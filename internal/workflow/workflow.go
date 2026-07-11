@@ -160,11 +160,11 @@ func (service *Service) Execute(ctx context.Context, request adapter.OperationRe
 	}
 	if err := service.safety.Evaluate(ctx, operation); err != nil {
 		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationBlocked, Message: err.Error()}
-		service.audit(operation, model.StageLock, "safety guard blocked execution: "+err.Error())
+		service.audit(operation, model.StageSafetyGuard, "safety guard blocked execution: "+err.Error())
 		service.report(operation, execution)
 		return execution, err
 	}
-	service.audit(operation, model.StageLock, "safety guard passed")
+	service.audit(operation, model.StageSafetyGuard, "safety guard passed")
 	release, err := service.locks.Acquire(ctx, operation)
 	if err != nil {
 		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationBlocked, Message: err.Error()}
@@ -255,11 +255,11 @@ func (service *Service) ExecuteMetadata(ctx context.Context, operation model.Ope
 	}
 	if err := service.safety.Evaluate(ctx, operation); err != nil {
 		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationBlocked, Message: err.Error()}
-		service.audit(operation, model.StageLock, "safety guard blocked metadata reconciliation: "+err.Error())
+		service.audit(operation, model.StageSafetyGuard, "safety guard blocked metadata reconciliation: "+err.Error())
 		service.report(operation, execution)
 		return execution, err
 	}
-	service.audit(operation, model.StageLock, "safety guard passed")
+	service.audit(operation, model.StageSafetyGuard, "safety guard passed")
 	release, err := service.locks.Acquire(ctx, operation)
 	if err != nil {
 		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationBlocked, Message: err.Error()}

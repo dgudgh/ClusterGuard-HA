@@ -72,10 +72,18 @@ func (server *Server) persistedMetrics(clusterID model.ResourceID) ([]instanceMe
 	return result, snapshot, true
 }
 
-func (server *Server) clusterMetrics(writer http.ResponseWriter, clusterID model.ResourceID) {
+func (server *Server) clusterMetrics(writer http.ResponseWriter, clusterID model.ResourceID, expectedObservation *time.Time) {
 	instances, snapshot, found := server.persistedMetrics(clusterID)
 	if !found {
+		if expectedObservation != nil {
+			writeError(writer, http.StatusConflict, "topology observation changed")
+			return
+		}
 		writeError(writer, http.StatusConflict, "cluster has no persisted topology observation")
+		return
+	}
+	if !matchesObservation(expectedObservation, snapshot.ObservedAt) {
+		writeError(writer, http.StatusConflict, "topology observation changed")
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": map[string]interface{}{

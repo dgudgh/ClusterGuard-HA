@@ -24,7 +24,7 @@ func (adapterInstance *Adapter) Engine() model.Engine { return model.EngineMySQL
 func (adapterInstance *Adapter) Capabilities(context.Context) adapter.Capabilities {
 	return adapter.Capabilities{Engine: model.EngineMySQL, Features: map[adapter.Capability]adapter.CapabilityState{
 		adapter.CapabilityDiscover:          {Available: true, Reason: "read-only discovery is implemented"},
-		adapter.CapabilityTopology:          {Available: false, Reason: "topology discovery is scheduled after phase one"},
+		adapter.CapabilityTopology:          {Available: true, Reason: "read-only native replication topology is implemented"},
 		adapter.CapabilityHealth:            {Available: true, Reason: "read-only health is implemented"},
 		adapter.CapabilityPrecheck:          {Available: false, Reason: "HA mutation precheck is not implemented"},
 		adapter.CapabilityPlan:              {Available: false, Reason: "HA mutation planning is not implemented"},
@@ -41,8 +41,28 @@ func (adapterInstance *Adapter) Discover(ctx context.Context, request adapter.Di
 	return discover(ctx, adapterInstance.runner, request)
 }
 
-func (adapterInstance *Adapter) Topology(context.Context, adapter.DiscoverRequest) (adapter.TopologyResult, error) {
-	return adapter.TopologyResult{}, adapter.ErrUnsupported
+func (adapterInstance *Adapter) Topology(ctx context.Context, request adapter.DiscoverRequest) (adapter.TopologyResult, error) {
+	result, err := adapterInstance.Discover(ctx, request)
+	if err != nil {
+		return adapter.TopologyResult{}, err
+	}
+	instance := result.Instance
+	if len(instance.Replication.SourceIdentity) == 0 {
+		return adapter.TopologyResult{Links: []adapter.TopologyLink{}}, nil
+	}
+	var lagSeconds *int64
+	if instance.Replication.LagSeconds != nil {
+		value := *instance.Replication.LagSeconds
+		lagSeconds = &value
+	}
+	link := adapter.TopologyLink{
+		SourceIdentity: instance.Replication.SourceIdentity.Clone(),
+		TargetIdentity: instance.EngineIdentity.Clone(),
+		Healthy: instance.Health.State == model.HealthHealthy &&
+			instance.Replication.IOThread == model.ThreadRunning && instance.Replication.SQLThread == model.ThreadRunning,
+		LagSeconds: lagSeconds,
+	}
+	return adapter.TopologyResult{Links: []adapter.TopologyLink{link}}, nil
 }
 
 func (adapterInstance *Adapter) Health(ctx context.Context, request adapter.DiscoverRequest) (model.Health, error) {

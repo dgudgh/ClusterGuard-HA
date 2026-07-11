@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ClusterGuard HA</title>
+  <title>ClusterGuard HA Console</title>
   <style>
     :root {
       color-scheme:light;
@@ -255,7 +255,7 @@
     <aside class="sidebar">
       <div class="brand">
         <div class="brand-mark" aria-hidden="true">CG</div>
-        <div><div class="brand-name">ClusterGuard HA</div><div class="brand-subtitle">MySQL 高可用控制</div></div>
+        <div><div class="brand-name">ClusterGuard HA</div><div class="brand-subtitle">Multi-DB HA Control</div></div>
       </div>
       <nav aria-label="主导航">
         <a href="#topology" aria-current="page">集群拓扑</a>
@@ -266,9 +266,9 @@
     <main>
       <header class="page-header">
         <div>
-          <p class="eyebrow">MYSQL TOPOLOGY INTELLIGENCE</p>
-          <h1>MySQL 拓扑</h1>
-          <p class="heading-note">查看已注册集群的主库、候选节点、从库与复制状态。</p>
+          <p class="eyebrow">多数据库高可用控制平台</p>
+          <h1>ClusterGuard HA Console</h1>
+          <p class="heading-note">Multi-DB HA Control · 当前提供 MySQL 只读拓扑与候选评估。</p>
         </div>
         <div class="cluster-controls">
           <label for="cluster-select">数据库集群
@@ -525,24 +525,55 @@
       }
       commitIfCurrent(generation, () => setLiveStatus('正在读取所选集群。'));
       try {
-        const [clusterDetail, topologySection, healthSection, candidateSection, metricsSection] = await Promise.all([
-          fetchResult(`/api/v1/clusters/${clusterId}`),
-          evidenceResult(`/api/v1/clusters/${clusterId}/topology`, null, '拓扑'),
-          evidenceResult(`/api/v1/clusters/${clusterId}/health`, null, '健康状态'),
-          evidenceResult(`/api/v1/clusters/${clusterId}/candidates`, [], '候选评估'),
-          evidenceResult(`/api/v1/clusters/${clusterId}/metrics`, { instances: [] }, '性能指标')
-        ]);
-        const topology = topologySection.value;
-        const health = healthSection.value;
-        const candidates = candidateSection.value;
-        const metrics = metricsSection.value;
-        const unavailableSections = [topologySection, healthSection, candidateSection, metricsSection]
-          .map(section => section.unavailable)
-          .filter(Boolean);
+        let loaded;
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          try {
+            const clusterDetail = await fetchResult(`/api/v1/clusters/${clusterId}`);
+            const topologySection = await evidenceResult(`/api/v1/clusters/${clusterId}/topology`, null, '拓扑');
+            const topology = topologySection.value;
+            if (!topology) {
+              loaded = {
+                clusterDetail,
+                topology: null,
+                health: null,
+                candidates: [],
+                metrics: { instances: [] },
+                unavailableSections: [topologySection.unavailable, '健康状态', '候选评估', '性能指标'].filter(Boolean)
+              };
+              break;
+            }
+            if (!topology.observed_at) throw new APIError('拓扑响应缺少采集标识');
+            const observationQuery = `observation_id=${encodeURIComponent(topology.observed_at)}`;
+            const [healthSection, candidateSection, metricsSection] = await Promise.all([
+              evidenceResult(`/api/v1/clusters/${clusterId}/health?${observationQuery}`, null, '健康状态'),
+              evidenceResult(`/api/v1/clusters/${clusterId}/candidates?${observationQuery}`, [], '候选评估'),
+              evidenceResult(`/api/v1/clusters/${clusterId}/metrics?${observationQuery}`, { instances: [] }, '性能指标')
+            ]);
+            loaded = {
+              clusterDetail,
+              topology,
+              health: healthSection.value,
+              candidates: candidateSection.value,
+              metrics: metricsSection.value,
+              unavailableSections: [healthSection, candidateSection, metricsSection]
+                .map(section => section.unavailable)
+                .filter(Boolean)
+            };
+            break;
+          } catch (error) {
+            if (generation !== state.requestGeneration) return;
+            if (error instanceof APIError && error.status === 409 && error.message === 'topology observation changed' && attempt === 0) {
+              continue;
+            }
+            throw error;
+          }
+        }
+        if (!loaded) throw new APIError('无法读取一致的拓扑快照');
+        const unavailableSections = loaded.unavailableSections;
         commitIfCurrent(generation, () => {
-          renderTopology(topology, candidates);
-          renderVIP(clusterDetail.endpoints || []);
-          renderSummary(clusterDetail, topology, health, metrics);
+          renderTopology(loaded.topology, loaded.candidates);
+          renderVIP(loaded.clusterDetail.endpoints || []);
+          renderSummary(loaded.clusterDetail, loaded.topology, loaded.health, loaded.metrics);
           if (unavailableSections.length) {
             setLiveStatus(`部分数据不可用：${unavailableSections.join('、')}。`);
           } else {

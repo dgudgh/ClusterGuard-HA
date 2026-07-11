@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -544,6 +545,24 @@ func TestCandidateReadUsesPersistedProbesAndBoundedPolicyWithoutDatabaseProbes(t
 	requests, _ = candidate.captured()
 	if len(requests) != 2 || requests[1].Policy.MaximumLagSeconds != 30 || requests[1].Policy.RequireGTID {
 		t.Fatalf("bounded policy override was not passed: %+v", requests)
+	}
+}
+
+func TestSnapshotDerivedRoutesRequireTheRequestedObservation(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, snapshot := seedCandidateTopology(t, repository, 1, false)
+	server := newAPIServer(t, repository, newCandidateAdapterSpy(), &fakeRefresher{})
+	base := "/api/v1/clusters/" + string(cluster.ResourceID)
+
+	for _, route := range []string{"/health", "/candidates", "/metrics"} {
+		current := callJSON(t, server.Handler(), http.MethodGet, base+route+"?observation_id="+url.QueryEscape(snapshot.ObservedAt.Format(time.RFC3339Nano)), nil)
+		if current.Code != http.StatusOK {
+			t.Fatalf("current observation %s: %d %s", route, current.Code, current.Body.String())
+		}
+		stale := callJSON(t, server.Handler(), http.MethodGet, base+route+"?observation_id="+url.QueryEscape(snapshot.ObservedAt.Add(-time.Minute).Format(time.RFC3339Nano)), nil)
+		if stale.Code != http.StatusConflict || !strings.Contains(stale.Body.String(), "observation changed") {
+			t.Fatalf("stale observation %s: %d %s", route, stale.Code, stale.Body.String())
+		}
 	}
 }
 

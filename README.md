@@ -1,12 +1,16 @@
 # ClusterGuard HA
 
-ClusterGuard HA is an independent, clean-room high-availability control
-platform. The current release delivers read-only MySQL topology intelligence
-and keeps extension points for PostgreSQL, Oracle, and SQL Server.
+**ClusterGuard HA 多数据库企业级高可用控制平台**
+
+**ClusterGuard HA — Multi-Database High Availability Control Plane**
+
+ClusterGuard HA is an independent, clean-room high-availability control plane.
+The current release delivers read-only MySQL topology intelligence and keeps
+first-class extension points for PostgreSQL, Oracle, and SQL Server.
 
 ## Current Release
 
-The MySQL control path provides:
+The current MySQL adapter provides:
 
 - inventory-scoped discovery for MySQL 5.7, 8.0, 8.4, and 9.7;
 - immutable platform UUIDs backed by native MySQL `server_uuid` identity;
@@ -30,7 +34,7 @@ adapter can mutate a database.
 The common workflow remains:
 
 ```text
-DISCOVER -> PRECHECK -> PLAN -> LOCK -> APPROVE -> EXECUTE -> VERIFY -> AUDIT -> REPORT
+DISCOVER -> PRECHECK -> PLAN -> SAFETY_GUARD -> LOCK -> APPROVE -> EXECUTE -> VERIFY -> AUDIT -> REPORT
 ```
 
 Only implemented read-only capabilities and platform metadata reconciliation
@@ -46,10 +50,15 @@ the JSON configuration.
 export CG_CONTROL_TOKEN='replace-with-a-control-api-secret'
 export CG_APPROVAL_TOKEN='replace-with-a-local-secret'
 export CG_MYSQL_DISCOVERY_PASSWORD='replace-with-the-read-only-secret'
-go run ./cmd/clusterguardd --config configs/clusterguard.example.json
+go run ./cmd/clusterguard --config configs/clusterguard.example.json
 ```
 
 The console and API are served from `http://127.0.0.1:8088/` by default.
+
+The production binary is `clusterguard`; the CLI is `cgctl`. The distribution
+uses `/etc/clusterguard/`, `/var/lib/clusterguard/`, and
+`/var/log/clusterguard/`. The systemd unit is
+`packaging/systemd/clusterguard-ha.service`.
 
 ## Register and Refresh a MySQL Cluster
 

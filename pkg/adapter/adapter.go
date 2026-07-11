@@ -63,8 +63,15 @@ type DiscoveryResult struct {
 	Instance model.DatabaseInstance `json:"instance"`
 }
 
+type TopologyLink struct {
+	SourceIdentity model.EngineIdentity `json:"source_identity"`
+	TargetIdentity model.EngineIdentity `json:"target_identity"`
+	Healthy        bool                 `json:"healthy"`
+	LagSeconds     *int64               `json:"lag_seconds,omitempty"`
+}
+
 type TopologyResult struct {
-	Links []model.ReplicationLink `json:"links"`
+	Links []TopologyLink `json:"links"`
 }
 
 type OperationRequest struct {

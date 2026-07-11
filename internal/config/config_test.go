@@ -1,8 +1,10 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -94,5 +96,36 @@ func TestLoadAllowsDisabledMySQLWithoutCredentials(t *testing.T) {
 	}
 	if _, err := Load(path); err != nil {
 		t.Fatalf("disabled MySQL credentials should be optional: %v", err)
+	}
+}
+
+func TestOfficialDistributionUsesClusterGuardPathsAndServiceName(t *testing.T) {
+	examplePath := filepath.Join("..", "..", "configs", "clusterguard.example.json")
+	contents, err := os.ReadFile(examplePath)
+	if err != nil {
+		t.Fatalf("read example configuration: %v", err)
+	}
+	configuration := File{}
+	if err := json.Unmarshal(contents, &configuration); err != nil {
+		t.Fatalf("decode example configuration: %v", err)
+	}
+	if configuration.MetadataPath != "/var/lib/clusterguard/metadata.json" {
+		t.Fatalf("metadata path = %q", configuration.MetadataPath)
+	}
+
+	servicePath := filepath.Join("..", "..", "packaging", "systemd", "clusterguard-ha.service")
+	service, err := os.ReadFile(servicePath)
+	if err != nil {
+		t.Fatalf("read systemd service: %v", err)
+	}
+	for _, contract := range []string{
+		"ExecStart=/usr/local/bin/clusterguard --config /etc/clusterguard/clusterguard.json",
+		"EnvironmentFile=-/etc/clusterguard/clusterguard.env",
+		"StateDirectory=clusterguard",
+		"LogsDirectory=clusterguard",
+	} {
+		if !strings.Contains(string(service), contract) {
+			t.Fatalf("systemd service missing %q", contract)
+		}
 	}
 }

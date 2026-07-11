@@ -869,7 +869,7 @@ responsive stacking below 900px.
 
 Run: `go test ./cmd/cgctl ./internal/api -count=1`
 
-Then start `clusterguardd`, open `http://127.0.0.1:8088/`, and verify at desktop
+Then start `clusterguard`, open `http://127.0.0.1:8088/`, and verify at desktop
 and mobile widths that cards fit, connectors meet card edges, cluster switching
 updates all sections, and browser logs contain no errors.
 

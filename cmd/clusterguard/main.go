@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -15,9 +14,10 @@ import (
 	"clusterguard.io/ha/internal/runtime"
 )
 
+const defaultConfigPath = "/etc/clusterguard/clusterguard.json"
+
 func main() {
-	defaultConfig := filepath.Join("configs", "clusterguard.example.json")
-	configPath := flag.String("config", defaultConfig, "path to ClusterGuard HA JSON configuration")
+	configPath := flag.String("config", defaultConfigPath, "path to ClusterGuard HA JSON configuration")
 	flag.Parse()
 	configuration, err := config.Load(*configPath)
 	if err != nil {

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -225,7 +226,16 @@ func TestMetricsRoutesExcludeRetainedFutureSamplesAfterClockRollback(t *testing.
 	}
 	server := newAPIServer(t, repository, newCandidateAdapterSpy(), &fakeRefresher{})
 	jsonResponse := callJSON(t, server.Handler(), http.MethodGet, "/api/v1/clusters/"+string(cluster.ResourceID)+"/metrics", nil)
-	if jsonResponse.Code != http.StatusOK || !strings.Contains(jsonResponse.Body.String(), `"metrics_observed_at":"`+t2.Format(time.RFC3339)+`"`) || !strings.Contains(jsonResponse.Body.String(), `"connections":20`) || !strings.Contains(jsonResponse.Body.String(), `"qps":1`) || strings.Contains(jsonResponse.Body.String(), `999`) {
+	var body struct {
+		Result struct {
+			ObservedAt time.Time         `json:"observed_at"`
+			Instances  []instanceMetrics `json:"instances"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(jsonResponse.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode rollback metrics: %v", err)
+	}
+	if jsonResponse.Code != http.StatusOK || !body.Result.ObservedAt.Equal(t2) || len(body.Result.Instances) != 1 || body.Result.Instances[0].MetricsObservedAt == nil || !body.Result.Instances[0].MetricsObservedAt.Equal(t2) || body.Result.Instances[0].Values["connections"] != 20 || body.Result.Instances[0].Values["qps"] != 1 {
 		t.Fatalf("rollback JSON metrics used wrong sample: %d %s", jsonResponse.Code, jsonResponse.Body.String())
 	}
 	prometheus := callJSON(t, server.Handler(), http.MethodGet, "/api/v1/clusters/"+string(cluster.ResourceID)+"/metrics/prometheus", nil)

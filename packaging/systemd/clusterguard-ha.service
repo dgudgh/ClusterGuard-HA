@@ -1,0 +1,25 @@
+[Unit]
+Description=ClusterGuard HA Multi-Database High Availability Control Plane
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=clusterguard
+Group=clusterguard
+EnvironmentFile=-/etc/clusterguard/clusterguard.env
+ExecStart=/usr/local/bin/clusterguard --config /etc/clusterguard/clusterguard.json
+Restart=on-failure
+RestartSec=5s
+ConfigurationDirectory=clusterguard
+StateDirectory=clusterguard
+LogsDirectory=clusterguard
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/clusterguard /var/log/clusterguard
+
+[Install]
+WantedBy=multi-user.target

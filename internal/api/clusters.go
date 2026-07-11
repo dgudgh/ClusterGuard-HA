@@ -111,6 +111,11 @@ func (server *Server) clusterRoute(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	if action == "candidates" {
+		expectedObservation, err := requestedObservation(request)
+		if err != nil {
+			writeError(writer, http.StatusBadRequest, "invalid observation identifier")
+			return
+		}
 		policy, err := candidatePolicy(request)
 		if err != nil {
 			writeError(writer, http.StatusBadRequest, "invalid candidate policy")
@@ -120,7 +125,7 @@ func (server *Server) clusterRoute(writer http.ResponseWriter, request *http.Req
 			writeError(writer, http.StatusNotFound, "cluster not found")
 			return
 		}
-		server.clusterCandidates(writer, request, clusterID, policy)
+		server.clusterCandidates(writer, request, clusterID, policy, expectedObservation)
 		return
 	}
 	if _, found := server.store.Cluster(clusterID); !found {
@@ -136,16 +141,34 @@ func (server *Server) clusterRoute(writer http.ResponseWriter, request *http.Req
 		}
 		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": snapshot})
 	case "health":
+		expectedObservation, err := requestedObservation(request)
+		if err != nil {
+			writeError(writer, http.StatusBadRequest, "invalid observation identifier")
+			return
+		}
 		snapshot, found := server.store.TopologySnapshot(clusterID)
 		if !found {
+			if expectedObservation != nil {
+				writeError(writer, http.StatusConflict, "topology observation changed")
+				return
+			}
 			writeError(writer, http.StatusConflict, "cluster has no persisted topology observation")
+			return
+		}
+		if !matchesObservation(expectedObservation, snapshot.ObservedAt) {
+			writeError(writer, http.StatusConflict, "topology observation changed")
 			return
 		}
 		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": map[string]interface{}{
 			"cluster_id": clusterID, "health": snapshot.Health, "probes": snapshot.Probes, "observed_at": snapshot.ObservedAt,
 		}})
 	case "metrics":
-		server.clusterMetrics(writer, clusterID)
+		expectedObservation, err := requestedObservation(request)
+		if err != nil {
+			writeError(writer, http.StatusBadRequest, "invalid observation identifier")
+			return
+		}
+		server.clusterMetrics(writer, clusterID, expectedObservation)
 	case "metrics/prometheus":
 		server.clusterPrometheusMetrics(writer, clusterID)
 	default:
@@ -220,11 +243,31 @@ func hasActiveDatabaseEndpoint(endpoints []model.Endpoint) bool {
 	return false
 }
 
+func requestedObservation(request *http.Request) (*time.Time, error) {
+	values, present := request.URL.Query()["observation_id"]
+	if !present {
+		return nil, nil
+	}
+	if len(values) != 1 || strings.TrimSpace(values[0]) == "" {
+		return nil, errors.New("observation identifier must be singular and non-empty")
+	}
+	observedAt, err := time.Parse(time.RFC3339Nano, values[0])
+	if err != nil {
+		return nil, err
+	}
+	observedAt = observedAt.UTC()
+	return &observedAt, nil
+}
+
+func matchesObservation(expected *time.Time, actual time.Time) bool {
+	return expected == nil || expected.Equal(actual)
+}
+
 func candidatePolicy(request *http.Request) (model.CandidatePolicy, error) {
 	policy := model.CandidatePolicy{MaximumLagSeconds: 10, RequireGTID: true}
 	query := request.URL.Query()
 	for name, values := range query {
-		if (name != "maximum_lag_seconds" && name != "require_gtid") || len(values) != 1 {
+		if (name != "maximum_lag_seconds" && name != "require_gtid" && name != "observation_id") || len(values) != 1 {
 			return model.CandidatePolicy{}, errors.New("invalid candidate policy query")
 		}
 	}
@@ -246,14 +289,26 @@ func candidatePolicy(request *http.Request) (model.CandidatePolicy, error) {
 	return policy, nil
 }
 
-func (server *Server) clusterCandidates(writer http.ResponseWriter, request *http.Request, clusterID model.ResourceID, policy model.CandidatePolicy) {
+func (server *Server) clusterCandidates(writer http.ResponseWriter, request *http.Request, clusterID model.ResourceID, policy model.CandidatePolicy, expectedObservation *time.Time) {
 	cluster, found := server.store.Cluster(clusterID)
 	if !found {
 		writeError(writer, http.StatusNotFound, "cluster not found")
 		return
 	}
 	snapshot, found := server.store.TopologySnapshot(clusterID)
-	if !found || !hasCompleteProbeEvidence(snapshot) {
+	if !found {
+		if expectedObservation != nil {
+			writeError(writer, http.StatusConflict, "topology observation changed")
+			return
+		}
+		writeError(writer, http.StatusConflict, "candidate evaluation requires persisted probe evidence")
+		return
+	}
+	if !matchesObservation(expectedObservation, snapshot.ObservedAt) {
+		writeError(writer, http.StatusConflict, "topology observation changed")
+		return
+	}
+	if !hasCompleteProbeEvidence(snapshot) {
 		writeError(writer, http.StatusConflict, "candidate evaluation requires persisted probe evidence")
 		return
 	}

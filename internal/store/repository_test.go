@@ -61,6 +61,39 @@ func TestPersistentSnapshotFileSyncFailureDoesNotPublishLiveState(t *testing.T) 
 	}
 }
 
+func TestPersistentSnapshotDirectorySyncFailureCommitsLiveAndDiskState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metadata.json")
+	repository, err := Open(path)
+	if err != nil {
+		t.Fatalf("open repository: %v", err)
+	}
+	clusterID := model.NewResourceID()
+	repository.syncDirectory = func(string) error { return errors.New("directory sync failed") }
+	_, err = repository.UpsertCluster(model.DatabaseCluster{
+		ResourceMeta: model.ResourceMeta{ResourceID: clusterID},
+		Engine:       model.EngineMySQL,
+		DisplayName:  "committed-with-durability-warning",
+	})
+	if !errors.Is(err, ErrPostCommitDurability) {
+		t.Fatalf("directory sync failure = %v, want ErrPostCommitDurability", err)
+	}
+	live, found := repository.Cluster(clusterID)
+	if !found {
+		t.Fatal("rename-committed snapshot was not advanced in live state")
+	}
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen committed snapshot: %v", err)
+	}
+	onDisk, found := reopened.Cluster(clusterID)
+	if !found {
+		t.Fatal("rename-committed snapshot was not present on disk")
+	}
+	if !reflect.DeepEqual(live, onDisk) {
+		t.Fatalf("live and reopened state diverged: live=%+v disk=%+v", live, onDisk)
+	}
+}
+
 func mysqlInstance(clusterID model.ResourceID, hostname string, ipAddress string, port int) model.DatabaseInstance {
 	return model.DatabaseInstance{
 		ClusterID: clusterID,

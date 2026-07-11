@@ -61,10 +61,15 @@ for all four engines.
 
 Capabilities are explicit. An unavailable capability returns `unsupported`;
 there is no fallback that guesses an engine behavior. The MySQL adapter enables
-read-only discovery, health, metrics, candidate evaluation, and platform
-metadata reconciliation. Its role-changing and node-changing methods remain
-unsupported. The other three adapters currently return unsupported for every
-database operation.
+read-only discovery, native replication topology, health, metrics, candidate
+evaluation, and platform metadata reconciliation. Its role-changing and
+node-changing methods remain unsupported. The other three adapters currently
+return unsupported for every database operation.
+
+Adapter topology links use engine-native source and target identities. The
+resource registry resolves those identities to immutable platform UUIDs before
+publishing `ReplicationLink` resources. This keeps mutable host coordinates
+out of the topology identity contract.
 
 ## Inventory Authority
 
@@ -141,12 +146,14 @@ dependency.
 All future database mutations must use:
 
 ```text
-DISCOVER -> PRECHECK -> PLAN -> LOCK -> APPROVE -> EXECUTE -> VERIFY -> AUDIT -> REPORT
+DISCOVER -> PRECHECK -> PLAN -> SAFETY_GUARD -> LOCK -> APPROVE -> EXECUTE -> VERIFY -> AUDIT -> REPORT
 ```
 
 Adapters cannot acquire a platform lock, approve an operation, suppress audit,
-or skip verification. The workflow core checks capability support before any
-gate or adapter mutation. In this release, switchover, failover, HA endpoint
+or skip verification. Safety Guard is an explicit stage with its own audit
+events and always runs before the operation lock. The workflow core checks
+capability support before any gate or adapter mutation. In this release,
+switchover, failover, HA endpoint
 mutation, replication repair, node synchronization, and node lifecycle
 execution return HTTP `501` and do not invoke a mutating adapter method.
 

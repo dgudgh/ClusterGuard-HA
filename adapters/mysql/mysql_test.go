@@ -97,6 +97,28 @@ func TestHealthIsReadOnlyAndDoesNotAdvertiseExecution(t *testing.T) {
 	}
 }
 
+func TestTopologyReportsReadOnlyNativeReplicationLink(t *testing.T) {
+	runner := healthyReplicaRunner("8.0.44", modernReplicationRow())
+	adapterInstance := New(runner)
+	result, err := adapterInstance.Topology(context.Background(), adapterRequest())
+	if err != nil {
+		t.Fatalf("topology: %v", err)
+	}
+	if !adapterInstance.Capabilities(context.Background()).Supports(adapter.CapabilityTopology) {
+		t.Fatal("MySQL must advertise implemented read-only topology")
+	}
+	if len(result.Links) != 1 {
+		t.Fatalf("topology links = %+v", result.Links)
+	}
+	link := result.Links[0]
+	if link.SourceIdentity["server_uuid"] != "source-uuid" || link.TargetIdentity["server_uuid"] != "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" {
+		t.Fatalf("topology link identities = %+v", link)
+	}
+	if !link.Healthy || link.LagSeconds == nil || *link.LagSeconds != 2 {
+		t.Fatalf("topology link health = %+v", link)
+	}
+}
+
 func TestDiscoverCapturesGlobalGTIDExecutedForWritablePrimary(t *testing.T) {
 	runner := &fakeRunner{identity: identityRow("8.0.44", "0", "0")}
 	runner.identity["gtid_executed"] = testPrimaryServerUUID + ":1-20"

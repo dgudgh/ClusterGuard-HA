@@ -25,6 +25,20 @@ func TestConsoleIsACompactReadOnlyMySQLTopologyView(t *testing.T) {
 	}
 }
 
+func TestConsoleUsesOfficialClusterGuardProductIdentity(t *testing.T) {
+	page := string(consoleHTML)
+	for _, identity := range []string{
+		"<title>ClusterGuard HA Console</title>",
+		"ClusterGuard HA Console",
+		"Multi-DB HA Control",
+		"多数据库高可用控制平台",
+	} {
+		if !strings.Contains(page, identity) {
+			t.Fatalf("console missing official product identity %q", identity)
+		}
+	}
+}
+
 func TestConsoleConsumesSelectedClusterReadAPIsAndPostsDiscovery(t *testing.T) {
 	page := string(consoleHTML)
 	for _, route := range []string{
@@ -130,6 +144,31 @@ func TestConsoleInvalidatesEverySelectionRequestAndClearsBeforeFetching(t *testi
 	}
 	if strings.Count(loadSource, "commitIfCurrent(generation") < 2 {
 		t.Fatal("both successful data and error status must commit through the generation guard")
+	}
+}
+
+func TestConsolePinsSnapshotDerivedReadsToOneTopologyObservation(t *testing.T) {
+	page := string(consoleHTML)
+	loadStart := strings.Index(page, "const loadSelectedCluster = async () => {")
+	loadEnd := strings.Index(page, "const loadClusters = async () => {")
+	if loadStart < 0 || loadEnd <= loadStart {
+		t.Fatal("loadSelectedCluster source not found")
+	}
+	loadSource := page[loadStart:loadEnd]
+	for _, contract := range []string{
+		"const topologySection = await evidenceResult(`/api/v1/clusters/${clusterId}/topology`",
+		"const observationQuery = `observation_id=${encodeURIComponent(topology.observed_at)}`;",
+		"/health?${observationQuery}",
+		"/candidates?${observationQuery}",
+		"/metrics?${observationQuery}",
+		"error.status === 409 && error.message === 'topology observation changed'",
+	} {
+		if !strings.Contains(loadSource, contract) {
+			t.Fatalf("console missing coherent observation contract %q", contract)
+		}
+	}
+	if strings.Contains(loadSource, "Promise.all([\n          fetchResult(`/api/v1/clusters/${clusterId}`),\n          evidenceResult(`/api/v1/clusters/${clusterId}/topology`") {
+		t.Fatal("topology must be read before the parallel snapshot-derived requests")
 	}
 }
 

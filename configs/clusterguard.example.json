@@ -1,6 +1,6 @@
 {
   "http_address": "127.0.0.1:8088",
-  "metadata_path": "/var/lib/clusterguard-ha/metadata.json",
+  "metadata_path": "/var/lib/clusterguard/metadata.json",
   "control_token_env": "CG_CONTROL_TOKEN",
   "approval_token_env": "CG_APPROVAL_TOKEN",
   "mysql": {

@@ -17,10 +17,11 @@ import (
 )
 
 var (
-	ErrValidation       = errors.New("repository validation failed")
-	ErrConflict         = errors.New("repository conflict")
-	ErrStaleObservation = errors.New("stale topology observation")
-	ErrInventoryChanged = errors.New("discovery inventory changed")
+	ErrValidation           = errors.New("repository validation failed")
+	ErrConflict             = errors.New("repository conflict")
+	ErrStaleObservation     = errors.New("stale topology observation")
+	ErrInventoryChanged     = errors.New("discovery inventory changed")
+	ErrPostCommitDurability = errors.New("metadata snapshot committed with durability warning")
 )
 
 func validationError(format string, arguments ...interface{}) error {
@@ -374,8 +375,11 @@ func (repository *Repository) persistSnapshotLocked(value snapshot) error {
 	if err := os.Rename(temporaryPath, repository.path); err != nil {
 		return fmt.Errorf("publish metadata snapshot: %w", err)
 	}
+	// Rename is the commit boundary. Keep live state aligned with the file even
+	// when the subsequent directory sync cannot confirm crash durability.
+	repository.snapshot = value
 	if err := repository.syncDirectory(filepath.Dir(repository.path)); err != nil {
-		return fmt.Errorf("sync metadata directory: %w", err)
+		return fmt.Errorf("%w: sync metadata directory: %v", ErrPostCommitDurability, err)
 	}
 	return nil
 }
