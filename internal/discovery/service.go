@@ -106,9 +106,11 @@ func (service *Service) Refresh(ctx context.Context, clusterID model.ResourceID)
 	if !capabilities.Supports(adapter.CapabilityDiscover) {
 		return model.TopologySnapshot{}, adapter.ErrUnsupported
 	}
+	topologyAvailable := capabilities.Supports(adapter.CapabilityTopology)
+	metricsAvailable := capabilities.Supports(adapter.CapabilityMetrics)
 
 	observedAt := service.now().UTC()
-	probeResults := service.probeEndpoints(ctx, candidate, cluster, endpoints, capabilities.Supports(adapter.CapabilityTopology))
+	probeResults := service.probeEndpoints(ctx, candidate, cluster, endpoints, topologyAvailable, metricsAvailable)
 	if err := ctx.Err(); err != nil {
 		return model.TopologySnapshot{}, err
 	}
@@ -211,7 +213,7 @@ func (service *Service) Refresh(ctx context.Context, clusterID model.ResourceID)
 		InventoryGeneration:   inventory.Generation,
 		Observations:          observations,
 		NativeLinks:           nativeLinks,
-		TopologyAuthoritative: true,
+		TopologyAuthoritative: topologyAvailable,
 		Probes:                probes,
 		Health:                health,
 		ObservedAt:            observedAt,
@@ -278,7 +280,7 @@ func activeDatabaseEndpoints(endpoints []model.Endpoint) []model.Endpoint {
 	return result
 }
 
-func (service *Service) probeEndpoints(ctx context.Context, candidate adapter.DatabaseHAAdapter, cluster model.DatabaseCluster, endpoints []model.Endpoint, topologyAvailable bool) []endpointProbe {
+func (service *Service) probeEndpoints(ctx context.Context, candidate adapter.DatabaseHAAdapter, cluster model.DatabaseCluster, endpoints []model.Endpoint, topologyAvailable bool, metricsAvailable bool) []endpointProbe {
 	results := make([]endpointProbe, len(endpoints))
 	semaphore := make(chan struct{}, maximumParallelProbes)
 	var wait sync.WaitGroup
@@ -335,12 +337,14 @@ func (service *Service) probeEndpoints(ctx context.Context, candidate adapter.Da
 				}
 				results[index].topology = topology
 			}
-			metrics, err := candidate.Metrics(ctx, request)
-			if err != nil {
-				results[index].failure = probeMetricsFailed
-				return
+			if metricsAvailable {
+				metrics, err := candidate.Metrics(ctx, request)
+				if err != nil {
+					results[index].failure = probeMetricsFailed
+					return
+				}
+				results[index].metrics = metrics
 			}
-			results[index].metrics = metrics
 		}(index, endpoint)
 	}
 	wait.Wait()

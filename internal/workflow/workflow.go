@@ -32,8 +32,14 @@ type SafetyGuard interface {
 	Evaluate(context.Context, model.Operation) error
 }
 
+type ObservationToken struct {
+	ClusterID  model.ResourceID
+	ObservedAt time.Time
+}
+
 type DiscoveryValidator interface {
-	RequireObservation(context.Context, model.Operation) error
+	CaptureObservation(context.Context, model.Operation) (ObservationToken, error)
+	RevalidateObservation(context.Context, model.Operation, ObservationToken) error
 }
 
 type LockManager interface {
@@ -136,6 +142,24 @@ func journalFailure(execution model.Execution, err error) (model.Execution, erro
 	return execution, &journalPersistenceError{err: err}
 }
 
+func markIndeterminate(execution model.Execution) model.Execution {
+	execution.Status = model.OperationIndeterminate
+	execution.Message = "operation committed but workflow journal persistence failed"
+	return execution
+}
+
+func journalIndeterminate(execution model.Execution, err error) (model.Execution, error) {
+	execution = markIndeterminate(execution)
+	return execution, &journalPersistenceError{err: err}
+}
+
+func firstJournalError(current error, candidate error) error {
+	if current != nil {
+		return current
+	}
+	return candidate
+}
+
 func (service *Service) recordOutcome(operation model.Operation, execution model.Execution, stage model.WorkflowStage, message string, cause error) (model.Execution, error) {
 	if err := service.audit(operation, stage, message); err != nil {
 		return journalFailure(execution, err)
@@ -183,18 +207,27 @@ func (service *Service) Execute(ctx context.Context, request adapter.OperationRe
 		return service.unsupported(operation, "no adapter is registered for the requested engine")
 	}
 	capabilities := candidate.Capabilities(ctx)
-	if !capabilities.Supports(adapter.CapabilityExecute) {
-		return service.unsupported(operation, "operation execution is unsupported by this adapter")
+	for _, required := range []adapter.Capability{
+		adapter.CapabilityPrecheck,
+		adapter.CapabilityPlan,
+		adapter.CapabilityExecute,
+		adapter.CapabilityVerify,
+	} {
+		if !capabilities.Supports(required) {
+			return service.unsupported(operation, fmt.Sprintf("operation %s is unsupported by this adapter", required))
+		}
 	}
 	if service.discovery == nil {
 		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationBlocked, Message: "discovery validation is not configured"}
 		return service.recordOutcome(operation, execution, model.StageDiscover, execution.Message, fmt.Errorf("%s", execution.Message))
 	}
-	if err := service.discovery.RequireObservation(ctx, operation); err != nil {
+	observation, err := service.discovery.CaptureObservation(ctx, operation)
+	if err != nil {
 		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationBlocked, Message: err.Error()}
 		return service.recordOutcome(operation, execution, model.StageDiscover, "discovery observation blocked execution: "+err.Error(), err)
 	}
-	if err := service.audit(operation, model.StageDiscover, "current topology observation validated"); err != nil {
+	observationLabel := observation.ObservedAt.UTC().Format(time.RFC3339Nano)
+	if err := service.audit(operation, model.StageDiscover, "topology observation "+observationLabel+" validated"); err != nil {
 		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
 	}
 
@@ -236,6 +269,13 @@ func (service *Service) Execute(ctx context.Context, request adapter.OperationRe
 	if err := service.audit(operation, model.StageLock, "operation lock acquired"); err != nil {
 		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
 	}
+	if err := service.discovery.RevalidateObservation(ctx, operation, observation); err != nil {
+		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationBlocked, Message: err.Error()}
+		return service.recordOutcome(operation, execution, model.StageLock, "topology observation changed under operation lock: "+err.Error(), err)
+	}
+	if err := service.audit(operation, model.StageLock, "topology observation "+observationLabel+" revalidated under operation lock"); err != nil {
+		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
+	}
 	if err := service.approval.Validate(ctx, operation, approvalToken); err != nil {
 		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationBlocked, Message: err.Error()}
 		return service.recordOutcome(operation, execution, model.StageApprove, "approval blocked execution: "+err.Error(), err)
@@ -252,8 +292,9 @@ func (service *Service) Execute(ctx context.Context, request adapter.OperationRe
 		return service.recordOutcome(operation, execution, model.StageExecute, err.Error(), err)
 	}
 	execution.OperationID = operation.ResourceID
+	var committedJournalErr error
 	if err := service.audit(operation, model.StageExecute, "adapter execution completed"); err != nil {
-		return journalFailure(execution, err)
+		committedJournalErr = firstJournalError(committedJournalErr, err)
 	}
 	verification, err := candidate.Verify(ctx, request)
 	if err != nil || !verification.Passed {
@@ -263,23 +304,41 @@ func (service *Service) Execute(ctx context.Context, request adapter.OperationRe
 			execution.Message = "verification failed"
 		}
 		execution.Status = model.OperationFailed
-		return service.recordOutcome(operation, execution, model.StageVerify, execution.Message, err)
+		if auditErr := service.audit(operation, model.StageVerify, execution.Message); auditErr != nil {
+			committedJournalErr = firstJournalError(committedJournalErr, auditErr)
+		}
+		if committedJournalErr != nil {
+			execution = markIndeterminate(execution)
+		}
+		if reportErr := service.report(operation, execution); reportErr != nil {
+			committedJournalErr = firstJournalError(committedJournalErr, reportErr)
+		}
+		if committedJournalErr != nil {
+			return journalIndeterminate(execution, committedJournalErr)
+		}
+		return execution, err
 	}
 	if err := service.audit(operation, model.StageVerify, "verification passed"); err != nil {
-		return journalFailure(execution, err)
+		committedJournalErr = firstJournalError(committedJournalErr, err)
 	}
 	execution.Status = model.OperationSucceeded
 	if execution.Message == "" {
 		execution.Message = "operation completed and verified"
 	}
 	if err := service.audit(operation, model.StageAudit, "operation audit recorded"); err != nil {
-		return journalFailure(execution, err)
+		committedJournalErr = firstJournalError(committedJournalErr, err)
 	}
 	if err := service.audit(operation, model.StageReport, "operation report generated"); err != nil {
-		return journalFailure(execution, err)
+		committedJournalErr = firstJournalError(committedJournalErr, err)
+	}
+	if committedJournalErr != nil {
+		execution = markIndeterminate(execution)
 	}
 	if err := service.report(operation, execution); err != nil {
-		return journalFailure(execution, err)
+		committedJournalErr = firstJournalError(committedJournalErr, err)
+	}
+	if committedJournalErr != nil {
+		return journalIndeterminate(execution, committedJournalErr)
 	}
 	return execution, nil
 }
@@ -347,25 +406,44 @@ func (service *Service) ExecuteMetadata(ctx context.Context, operation model.Ope
 		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationFailed, Message: err.Error()}
 		return service.recordOutcome(operation, execution, model.StageExecute, err.Error(), err)
 	}
+	var committedJournalErr error
 	if err := service.audit(operation, model.StageExecute, "metadata reconciliation committed"); err != nil {
-		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
+		committedJournalErr = firstJournalError(committedJournalErr, err)
 	}
 	if _, err := identity.InstanceKey(request.Instance.Engine, request.Instance.EngineIdentity); err != nil {
 		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationFailed, Message: err.Error()}
-		return service.recordOutcome(operation, execution, model.StageVerify, err.Error(), err)
+		if auditErr := service.audit(operation, model.StageVerify, err.Error()); auditErr != nil {
+			committedJournalErr = firstJournalError(committedJournalErr, auditErr)
+		}
+		if committedJournalErr != nil {
+			execution = markIndeterminate(execution)
+		}
+		if reportErr := service.report(operation, execution); reportErr != nil {
+			committedJournalErr = firstJournalError(committedJournalErr, reportErr)
+		}
+		if committedJournalErr != nil {
+			return journalIndeterminate(execution, committedJournalErr)
+		}
+		return execution, err
 	}
 	if err := service.audit(operation, model.StageVerify, "engine identity verified after metadata reconciliation"); err != nil {
-		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
+		committedJournalErr = firstJournalError(committedJournalErr, err)
 	}
 	execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationSucceeded, Message: "metadata reconciliation completed and verified"}
 	if err := service.audit(operation, model.StageAudit, "metadata reconciliation audit recorded"); err != nil {
-		return journalFailure(execution, err)
+		committedJournalErr = firstJournalError(committedJournalErr, err)
 	}
 	if err := service.audit(operation, model.StageReport, "metadata reconciliation report generated"); err != nil {
-		return journalFailure(execution, err)
+		committedJournalErr = firstJournalError(committedJournalErr, err)
+	}
+	if committedJournalErr != nil {
+		execution = markIndeterminate(execution)
 	}
 	if err := service.report(operation, execution); err != nil {
-		return journalFailure(execution, err)
+		committedJournalErr = firstJournalError(committedJournalErr, err)
+	}
+	if committedJournalErr != nil {
+		return journalIndeterminate(execution, committedJournalErr)
 	}
 	return execution, nil
 }

@@ -29,12 +29,13 @@ const (
 type OperationStatus string
 
 const (
-	OperationPlanned     OperationStatus = "planned"
-	OperationBlocked     OperationStatus = "blocked"
-	OperationRunning     OperationStatus = "running"
-	OperationSucceeded   OperationStatus = "succeeded"
-	OperationFailed      OperationStatus = "failed"
-	OperationUnsupported OperationStatus = "unsupported"
+	OperationPlanned       OperationStatus = "planned"
+	OperationBlocked       OperationStatus = "blocked"
+	OperationRunning       OperationStatus = "running"
+	OperationSucceeded     OperationStatus = "succeeded"
+	OperationFailed        OperationStatus = "failed"
+	OperationIndeterminate OperationStatus = "indeterminate"
+	OperationUnsupported   OperationStatus = "unsupported"
 )
 
 type CheckStatus string

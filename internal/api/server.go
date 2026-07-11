@@ -198,7 +198,7 @@ func (server *Server) operationRoute(writer http.ResponseWriter, request *http.R
 			return
 		}
 		if errors.Is(err, workflow.ErrJournalPersistence) {
-			writeError(writer, http.StatusInternalServerError, "workflow journal persistence failed")
+			writeJSON(writer, http.StatusInternalServerError, map[string]interface{}{"status": "error", "result": execution, "message": "workflow journal persistence failed"})
 			return
 		}
 		if err != nil {
@@ -289,7 +289,10 @@ func (server *Server) metadataRoute(writer http.ResponseWriter, request *http.Re
 		}
 		if err != nil {
 			if errors.Is(err, workflow.ErrJournalPersistence) {
-				writeError(writer, http.StatusInternalServerError, "workflow journal persistence failed")
+				writeJSON(writer, http.StatusInternalServerError, map[string]interface{}{
+					"status": "error", "message": "workflow journal persistence failed",
+					"result": map[string]interface{}{"execution": execution, "reconciled": reconciled, "endpoint": endpoint},
+				})
 			} else {
 				writeError(writer, http.StatusConflict, "metadata reconciliation failed")
 			}

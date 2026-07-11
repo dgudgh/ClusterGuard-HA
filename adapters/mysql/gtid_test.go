@@ -100,6 +100,25 @@ func TestCompareGTIDSetsTreatsDifferentTagsAsDistinctTransactionSources(t *testi
 	}
 }
 
+func TestCompareGTIDSetsNormalizesTagCase(t *testing.T) {
+	primary, err := ParseGTIDSet("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:Domain_1:1-3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := ParseGTIDSet("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:domain_1:1-3")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	comparison, err := CompareGTIDSets(primary, candidate)
+	if err != nil {
+		t.Fatalf("compare tagged sets: %v", err)
+	}
+	if comparison.MissingTransactions != 0 || comparison.ErrantTransactions != 0 {
+		t.Fatalf("tag case created distinct sources: %+v", comparison)
+	}
+}
+
 func TestParseGTIDSetAcceptsEmptySet(t *testing.T) {
 	set, err := ParseGTIDSet("")
 	if err != nil {

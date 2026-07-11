@@ -16,22 +16,36 @@ type TopologyDiscovery struct {
 	Reader TopologyReader
 }
 
-func (gate TopologyDiscovery) RequireObservation(ctx context.Context, operation model.Operation) error {
+func (gate TopologyDiscovery) CaptureObservation(ctx context.Context, operation model.Operation) (ObservationToken, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return ObservationToken{}, err
 	}
 	if gate.Reader == nil {
-		return fmt.Errorf("topology reader is not configured")
+		return ObservationToken{}, fmt.Errorf("topology reader is not configured")
 	}
 	if operation.ClusterID == "" {
-		return fmt.Errorf("cluster ID is required for discovery validation")
+		return ObservationToken{}, fmt.Errorf("cluster ID is required for discovery validation")
 	}
 	snapshot, found := gate.Reader.TopologySnapshot(operation.ClusterID)
 	if !found || snapshot.ObservedAt.IsZero() {
-		return fmt.Errorf("a current topology observation is required")
+		return ObservationToken{}, fmt.Errorf("a current topology observation is required")
 	}
 	if snapshot.ClusterID != "" && snapshot.ClusterID != operation.ClusterID {
-		return fmt.Errorf("topology observation belongs to another cluster")
+		return ObservationToken{}, fmt.Errorf("topology observation belongs to another cluster")
+	}
+	return ObservationToken{ClusterID: operation.ClusterID, ObservedAt: snapshot.ObservedAt.UTC()}, nil
+}
+
+func (gate TopologyDiscovery) RevalidateObservation(ctx context.Context, operation model.Operation, token ObservationToken) error {
+	if token.ClusterID != operation.ClusterID || token.ObservedAt.IsZero() {
+		return fmt.Errorf("topology observation token does not match the operation")
+	}
+	current, err := gate.CaptureObservation(ctx, operation)
+	if err != nil {
+		return err
+	}
+	if current.ClusterID != token.ClusterID || !current.ObservedAt.Equal(token.ObservedAt) {
+		return fmt.Errorf("topology observation changed")
 	}
 	return nil
 }

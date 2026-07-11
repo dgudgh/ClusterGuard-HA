@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -32,6 +33,22 @@ type metadataAdapterSpy struct {
 	adapter.UnsupportedAdapter
 	mu    sync.Mutex
 	calls int
+}
+
+type apiStageFailingJournal struct {
+	repository *store.Repository
+	stage      model.WorkflowStage
+}
+
+func (journal apiStageFailingJournal) RecordAudit(event model.AuditEvent) error {
+	if event.Stage == journal.stage {
+		return errors.New("secret journal backend failure")
+	}
+	return journal.repository.RecordAudit(event)
+}
+
+func (journal apiStageFailingJournal) RecordReport(report model.Report) error {
+	return journal.repository.RecordReport(report)
 }
 
 func newMetadataAdapterSpy() *metadataAdapterSpy {
@@ -358,6 +375,44 @@ func TestMetadataExecutePersistenceFailureIsSanitizedAndAtomic(t *testing.T) {
 	afterTopology, found := repository.TopologySnapshot(cluster.ResourceID)
 	if !reflect.DeepEqual(repository.Instances(cluster.ResourceID), beforeInstances) || !reflect.DeepEqual(repository.Endpoints(cluster.ResourceID), beforeEndpoints) || !found || !reflect.DeepEqual(afterTopology, beforeTopology) {
 		t.Fatalf("failed metadata persistence published partial state")
+	}
+}
+
+func TestMetadataExecuteReturnsIndeterminateResultAfterPostCommitJournalFailure(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "metadata-indeterminate"}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-old", Port: 3306, Active: true}})
+	if err != nil {
+		t.Fatalf("create inventory: %v", err)
+	}
+	observedAt := time.Now().UTC()
+	snapshot, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{ClusterID: cluster.ResourceID, InventoryGeneration: testInventoryGeneration(t, repository, cluster.ResourceID), ObservedAt: observedAt, Observations: []store.DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: model.DatabaseInstance{
+		ClusterID: cluster.ResourceID, Engine: model.EngineMySQL, EngineIdentity: model.EngineIdentity{"server_uuid": "indeterminate-native"}, Hostname: "mysql-old", Port: 3306, Role: model.RolePrimary, Health: model.Health{State: model.HealthHealthy},
+	}}}, Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}}})
+	if err != nil {
+		t.Fatalf("seed topology: %v", err)
+	}
+	registry := adapter.NewRegistry()
+	if err := registry.Register(mysql.New(apiRunner{})); err != nil {
+		t.Fatalf("register mysql: %v", err)
+	}
+	journal := apiStageFailingJournal{repository: repository, stage: model.StageExecute}
+	service := workflow.New(registry, workflow.TopologyDiscovery{Reader: repository}, workflow.AllowAllSafety{}, workflow.NewMemoryLocks(), workflow.TokenApproval{}, journal)
+	server := NewServer(registry, repository, service, &fakeRefresher{}, WithControlToken(testControlToken))
+	payload := map[string]interface{}{
+		"operation": map[string]interface{}{"engine": "mysql", "kind": "metadata_reconciliation", "requested_by": "dba"}, "approval_token": "approved", "endpoint_id": endpoints[0].ResourceID,
+		"instance": map[string]interface{}{"resource_id": snapshot.Instances[0].ResourceID, "cluster_id": cluster.ResourceID, "engine": "mysql", "engine_identity": map[string]string{"server_uuid": "indeterminate-native"}, "hostname": "mysql-new", "port": 4406},
+	}
+	response := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/metadata/reconcile/execute", payload)
+	if response.Code != http.StatusInternalServerError || !strings.Contains(response.Body.String(), `"status":"indeterminate"`) || strings.Contains(response.Body.String(), "secret journal") {
+		t.Fatalf("post-commit journal response = %d %s", response.Code, response.Body.String())
+	}
+	instances := repository.Instances(cluster.ResourceID)
+	if len(instances) != 1 || instances[0].Hostname != "mysql-new" {
+		t.Fatalf("metadata commit was not preserved: %+v", instances)
+	}
+	reports := repository.Reports()
+	if len(reports) != 1 || !strings.Contains(reports[0].Summary, "journal persistence failed") {
+		t.Fatalf("durable report did not preserve indeterminate outcome: %+v", reports)
 	}
 }
 

@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,10 +11,28 @@ import (
 	"clusterguard.io/ha/pkg/model"
 )
 
+var workflowTestObservation = time.Date(2026, time.July, 12, 8, 0, 0, 123, time.UTC)
+
 type recordingAdapter struct {
 	adapter.UnsupportedAdapter
 	trace   *[]string
 	support bool
+}
+
+type capabilityMismatchAdapter struct {
+	*recordingAdapter
+	missing adapter.Capability
+}
+
+func (candidate *capabilityMismatchAdapter) Capabilities(context.Context) adapter.Capabilities {
+	features := map[adapter.Capability]adapter.CapabilityState{
+		adapter.CapabilityPrecheck: {Available: true},
+		adapter.CapabilityPlan:     {Available: true},
+		adapter.CapabilityExecute:  {Available: true, Mutating: true},
+		adapter.CapabilityVerify:   {Available: true},
+	}
+	features[candidate.missing] = adapter.CapabilityState{Available: false}
+	return adapter.Capabilities{Engine: model.EngineMySQL, Features: features}
 }
 
 func newRecordingAdapter(trace *[]string, support bool) *recordingAdapter {
@@ -22,11 +41,20 @@ func newRecordingAdapter(trace *[]string, support bool) *recordingAdapter {
 
 func (candidate *recordingAdapter) Capabilities(context.Context) adapter.Capabilities {
 	return adapter.Capabilities{Engine: model.EngineMySQL, Features: map[adapter.Capability]adapter.CapabilityState{
-		adapter.CapabilityPrecheck: {Available: candidate.support},
-		adapter.CapabilityPlan:     {Available: candidate.support},
-		adapter.CapabilityExecute:  {Available: candidate.support, Mutating: true},
-		adapter.CapabilityVerify:   {Available: candidate.support},
+		adapter.CapabilityPrecheck:          {Available: candidate.support},
+		adapter.CapabilityPlan:              {Available: candidate.support},
+		adapter.CapabilityExecute:           {Available: candidate.support, Mutating: true},
+		adapter.CapabilityVerify:            {Available: candidate.support},
+		adapter.CapabilityMetadataReconcile: {Available: candidate.support},
 	}}
+}
+
+func (candidate *recordingAdapter) MetadataPrecheck(context.Context, adapter.MetadataRequest) ([]model.Check, error) {
+	return []model.Check{{Name: "metadata_ready", Status: model.CheckPass}}, nil
+}
+
+func (candidate *recordingAdapter) ReconcileMetadata(context.Context, adapter.MetadataRequest) (adapter.MetadataResult, error) {
+	return adapter.MetadataResult{Summary: "metadata ready"}, nil
 }
 
 func (candidate *recordingAdapter) Precheck(context.Context, adapter.OperationRequest) ([]model.Check, error) {
@@ -51,8 +79,13 @@ func (candidate *recordingAdapter) Verify(context.Context, adapter.OperationRequ
 
 type recordingGate struct{ trace *[]string }
 
-func (gate recordingGate) RequireObservation(context.Context, model.Operation) error {
+func (gate recordingGate) CaptureObservation(_ context.Context, operation model.Operation) (ObservationToken, error) {
 	*gate.trace = append(*gate.trace, "gate:discover")
+	return ObservationToken{ClusterID: operation.ClusterID, ObservedAt: workflowTestObservation}, nil
+}
+
+func (gate recordingGate) RevalidateObservation(context.Context, model.Operation, ObservationToken) error {
+	*gate.trace = append(*gate.trace, "gate:revalidate")
 	return nil
 }
 
@@ -75,6 +108,91 @@ type failingJournal struct {
 
 func (journal failingJournal) RecordAudit(model.AuditEvent) error { return journal.err }
 func (journal failingJournal) RecordReport(model.Report) error    { return journal.err }
+
+type stageFailingJournal struct {
+	*MemoryJournal
+	stage model.WorkflowStage
+	err   error
+}
+
+func (journal stageFailingJournal) RecordAudit(event model.AuditEvent) error {
+	if event.Stage == journal.stage {
+		return journal.err
+	}
+	return journal.MemoryJournal.RecordAudit(event)
+}
+
+func TestExecuteStillVerifiesAfterPostCommitJournalFailure(t *testing.T) {
+	trace := []string{}
+	registry := adapter.NewRegistry()
+	if err := registry.Register(newRecordingAdapter(&trace, true)); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	journal := stageFailingJournal{MemoryJournal: NewMemoryJournal(), stage: model.StageExecute, err: errors.New("execute audit unavailable")}
+	service := New(registry, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, journal)
+	operation := model.Operation{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, Engine: model.EngineMySQL, Kind: model.OperationSwitchover, RequestedBy: "dba"}
+	execution, err := service.Execute(context.Background(), adapter.OperationRequest{Operation: operation}, "approved")
+	if !errors.Is(err, ErrJournalPersistence) {
+		t.Fatalf("execute error = %v, want journal persistence failure", err)
+	}
+	if execution.Status != model.OperationIndeterminate {
+		t.Fatalf("execution status = %q, want indeterminate", execution.Status)
+	}
+	executeIndex, verifyIndex := -1, -1
+	for index, entry := range trace {
+		if entry == "adapter:execute" {
+			executeIndex = index
+		}
+		if entry == "adapter:verify" {
+			verifyIndex = index
+		}
+	}
+	if executeIndex < 0 || verifyIndex <= executeIndex {
+		t.Fatalf("verification did not follow committed execution: %v", trace)
+	}
+	foundVerify := false
+	for _, event := range journal.Audits() {
+		if event.Stage == model.StageVerify {
+			foundVerify = true
+		}
+	}
+	if !foundVerify {
+		t.Fatalf("verification outcome was not audited: %+v", journal.Audits())
+	}
+}
+
+func TestMetadataStillVerifiesAfterPostCommitJournalFailure(t *testing.T) {
+	trace := []string{}
+	registry := adapter.NewRegistry()
+	if err := registry.Register(newRecordingAdapter(&trace, true)); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	journal := stageFailingJournal{MemoryJournal: NewMemoryJournal(), stage: model.StageExecute, err: errors.New("execute audit unavailable")}
+	service := New(registry, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, journal)
+	committed := false
+	request := adapter.MetadataRequest{ClusterID: model.NewResourceID(), Instance: model.DatabaseInstance{
+		Engine: model.EngineMySQL, EngineIdentity: model.EngineIdentity{"server_uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},
+	}}
+	execution, err := service.ExecuteMetadata(context.Background(), model.Operation{RequestedBy: "dba"}, request, "approved", func() error {
+		committed = true
+		return nil
+	})
+	if !committed || !errors.Is(err, ErrJournalPersistence) {
+		t.Fatalf("metadata result committed=%t err=%v", committed, err)
+	}
+	if execution.Status != model.OperationIndeterminate {
+		t.Fatalf("metadata execution status = %q, want indeterminate", execution.Status)
+	}
+	foundVerify := false
+	for _, event := range journal.Audits() {
+		if event.Stage == model.StageVerify {
+			foundVerify = true
+		}
+	}
+	if !foundVerify {
+		t.Fatalf("metadata verification outcome was not audited: %+v", journal.Audits())
+	}
+}
 
 func TestExecuteStopsBeforeMutationWhenAuditCannotPersist(t *testing.T) {
 	trace := []string{}
@@ -119,11 +237,57 @@ func TestTopologyDiscoveryRequiresCurrentClusterObservation(t *testing.T) {
 		{name: "current observation", reader: topologyReaderStub{found: true, snapshot: model.TopologySnapshot{ClusterID: clusterID, ObservedAt: time.Now().UTC()}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			err := (TopologyDiscovery{Reader: test.reader}).RequireObservation(context.Background(), operation)
+			_, err := (TopologyDiscovery{Reader: test.reader}).CaptureObservation(context.Background(), operation)
 			if (err != nil) != test.wantErr {
-				t.Fatalf("RequireObservation() error = %v, wantErr=%t", err, test.wantErr)
+				t.Fatalf("CaptureObservation() error = %v, wantErr=%t", err, test.wantErr)
 			}
 		})
+	}
+	gate := TopologyDiscovery{Reader: topologyReaderStub{found: true, snapshot: model.TopologySnapshot{ClusterID: clusterID, ObservedAt: workflowTestObservation}}}
+	token, err := gate.CaptureObservation(context.Background(), operation)
+	if err != nil || token.ClusterID != clusterID || !token.ObservedAt.Equal(workflowTestObservation) {
+		t.Fatalf("captured token = %+v err=%v", token, err)
+	}
+	gate.Reader = topologyReaderStub{found: true, snapshot: model.TopologySnapshot{ClusterID: clusterID, ObservedAt: workflowTestObservation.Add(time.Second)}}
+	if err := gate.RevalidateObservation(context.Background(), operation, token); err == nil {
+		t.Fatal("changed topology observation passed revalidation")
+	}
+}
+
+type changingDiscoveryGate struct {
+	trace *[]string
+	err   error
+}
+
+func (gate changingDiscoveryGate) CaptureObservation(_ context.Context, operation model.Operation) (ObservationToken, error) {
+	*gate.trace = append(*gate.trace, "gate:discover")
+	return ObservationToken{ClusterID: operation.ClusterID, ObservedAt: workflowTestObservation}, nil
+}
+
+func (gate changingDiscoveryGate) RevalidateObservation(context.Context, model.Operation, ObservationToken) error {
+	*gate.trace = append(*gate.trace, "gate:revalidate")
+	return gate.err
+}
+
+func TestExecuteBlocksWhenPinnedObservationChangesBeforeMutation(t *testing.T) {
+	trace := []string{}
+	registry := adapter.NewRegistry()
+	if err := registry.Register(newRecordingAdapter(&trace, true)); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	wantErr := errors.New("topology observation changed")
+	journal := NewMemoryJournal()
+	service := New(registry, changingDiscoveryGate{trace: &trace, err: wantErr}, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, journal)
+	execution, err := service.Execute(context.Background(), adapter.OperationRequest{Operation: model.Operation{
+		ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, ClusterID: model.NewResourceID(), Engine: model.EngineMySQL, Kind: model.OperationSwitchover,
+	}}, "approved")
+	if !errors.Is(err, wantErr) || execution.Status != model.OperationBlocked {
+		t.Fatalf("changed observation execution=%+v err=%v", execution, err)
+	}
+	for _, entry := range trace {
+		if entry == "gate:approval" || entry == "adapter:execute" || entry == "adapter:verify" {
+			t.Fatalf("changed observation reached unsafe stage: %v", trace)
+		}
 	}
 }
 
@@ -143,7 +307,7 @@ func TestExecuteRunsGuardedWorkflowAndProducesAuditReport(t *testing.T) {
 	if execution.Status != model.OperationSucceeded {
 		t.Fatalf("unexpected execution: %+v", execution)
 	}
-	want := []string{"gate:discover", "adapter:precheck", "adapter:plan", "gate:safety", "gate:lock", "gate:approval", "adapter:execute", "adapter:verify", "gate:release"}
+	want := []string{"gate:discover", "adapter:precheck", "adapter:plan", "gate:safety", "gate:lock", "gate:revalidate", "gate:approval", "adapter:execute", "adapter:verify", "gate:release"}
 	if len(trace) != len(want) {
 		t.Fatalf("workflow trace: got %v want %v", trace, want)
 	}
@@ -171,6 +335,9 @@ func TestExecuteRunsGuardedWorkflowAndProducesAuditReport(t *testing.T) {
 			lockIndex = index
 		}
 	}
+	if len(journal.Audits()) == 0 || !strings.Contains(journal.Audits()[0].Message, workflowTestObservation.Format(time.RFC3339Nano)) {
+		t.Fatalf("discover audit does not identify the pinned observation: %+v", journal.Audits())
+	}
 	if safetyIndex < 0 || lockIndex < 0 || safetyIndex >= lockIndex {
 		t.Fatalf("safety guard must be an explicit stage before lock: %+v", journal.Audits())
 	}
@@ -197,5 +364,37 @@ func TestExecuteBlocksUnsupportedAdapterBeforeSafetyOrLock(t *testing.T) {
 	}
 	if len(journal.Audits()) == 0 || len(journal.Reports()) != 1 {
 		t.Fatalf("unsupported execution still needs audit and report")
+	}
+}
+
+func TestExecuteRequiresCompleteMutationCapabilitySetBeforeDiscovery(t *testing.T) {
+	for _, missing := range []adapter.Capability{
+		adapter.CapabilityPrecheck,
+		adapter.CapabilityPlan,
+		adapter.CapabilityExecute,
+		adapter.CapabilityVerify,
+	} {
+		t.Run(string(missing), func(t *testing.T) {
+			trace := []string{}
+			registry := adapter.NewRegistry()
+			candidate := &capabilityMismatchAdapter{recordingAdapter: newRecordingAdapter(&trace, true), missing: missing}
+			if err := registry.Register(candidate); err != nil {
+				t.Fatalf("register: %v", err)
+			}
+			journal := NewMemoryJournal()
+			service := New(registry, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, journal)
+			execution, err := service.Execute(context.Background(), adapter.OperationRequest{Operation: model.Operation{
+				ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, Engine: model.EngineMySQL, Kind: model.OperationFailover,
+			}}, "approved")
+			if !errors.Is(err, adapter.ErrUnsupported) || execution.Status != model.OperationUnsupported {
+				t.Fatalf("missing %s execution=%+v err=%v", missing, execution, err)
+			}
+			if len(trace) != 0 {
+				t.Fatalf("missing %s reached discovery, gates, or adapter methods: %v", missing, trace)
+			}
+			if len(journal.Audits()) == 0 || len(journal.Reports()) != 1 {
+				t.Fatalf("missing %s was not audited and reported", missing)
+			}
+		})
 	}
 }

@@ -27,6 +27,7 @@ type fakeDiscoveryAdapter struct {
 	metricFailures    map[string]error
 	topologies        map[string]adapter.TopologyResult
 	topologyCalls     []string
+	metricCalls       int
 	calls             []string
 	current           int
 	maximum           int
@@ -35,6 +36,8 @@ type fakeDiscoveryAdapter struct {
 	release           <-chan struct{}
 	releases          map[string]<-chan struct{}
 	discoverAvailable bool
+	topologyAvailable bool
+	metricsAvailable  bool
 }
 
 func newFakeAdapter() *fakeDiscoveryAdapter {
@@ -46,14 +49,16 @@ func newFakeAdapter() *fakeDiscoveryAdapter {
 		releases:           map[string]<-chan struct{}{},
 		topologies:         map[string]adapter.TopologyResult{},
 		discoverAvailable:  true,
+		topologyAvailable:  true,
+		metricsAvailable:   true,
 	}
 }
 
 func (candidate *fakeDiscoveryAdapter) Capabilities(context.Context) adapter.Capabilities {
 	return adapter.Capabilities{Engine: model.EngineMySQL, Features: map[adapter.Capability]adapter.CapabilityState{
 		adapter.CapabilityDiscover: {Available: candidate.discoverAvailable},
-		adapter.CapabilityTopology: {Available: true},
-		adapter.CapabilityMetrics:  {Available: true},
+		adapter.CapabilityTopology: {Available: candidate.topologyAvailable},
+		adapter.CapabilityMetrics:  {Available: candidate.metricsAvailable},
 	}}
 }
 
@@ -130,6 +135,7 @@ func (candidate *fakeDiscoveryAdapter) Discover(ctx context.Context, request ada
 
 func (candidate *fakeDiscoveryAdapter) Metrics(_ context.Context, request adapter.DiscoverRequest) ([]model.MetricSample, error) {
 	candidate.mu.Lock()
+	candidate.metricCalls++
 	err := candidate.metricFailures[request.Endpoint.Hostname]
 	candidate.mu.Unlock()
 	if err != nil {
@@ -872,6 +878,63 @@ func TestRefreshPublishesAdapterNativeTopologyFromTheSameObservation(t *testing.
 	sort.Strings(topologyCalls)
 	if !reflect.DeepEqual(topologyCalls, []string{primaryEndpoint.Hostname, replicaEndpoint.Hostname}) {
 		t.Fatalf("topology calls = %v", topologyCalls)
+	}
+}
+
+func TestRefreshFallsBackToDiscoveryRelationsWhenTopologyCapabilityIsUnavailable(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "topology-fallback"})
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	primaryEndpoint := addEndpoint(t, repository, cluster.ResourceID, "mysql-a", 3306, model.EndpointDatabase, true)
+	replicaEndpoint := addEndpoint(t, repository, cluster.ResourceID, "mysql-b", 3306, model.EndpointDatabase, true)
+	candidate := newFakeAdapter()
+	candidate.topologyAvailable = false
+	candidate.results[primaryEndpoint.Hostname] = discoveredInstance(primaryEndpoint.Hostname, primaryEndpoint.Port, "native-a", model.RolePrimary, "")
+	candidate.results[replicaEndpoint.Hostname] = discoveredInstance(replicaEndpoint.Hostname, replicaEndpoint.Port, "native-b", model.RoleReplica, "native-a")
+
+	snapshot, err := newTestService(t, repository, candidate).Refresh(context.Background(), cluster.ResourceID)
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if len(snapshot.Links) != 1 || snapshot.Health.State != model.HealthHealthy {
+		t.Fatalf("topology-incapable adapter lost discovered relation: %+v", snapshot)
+	}
+	candidate.mu.Lock()
+	topologyCalls := len(candidate.topologyCalls)
+	candidate.mu.Unlock()
+	if topologyCalls != 0 {
+		t.Fatalf("unsupported topology method was called %d times", topologyCalls)
+	}
+}
+
+func TestRefreshSkipsMetricsWhenCapabilityIsUnavailable(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "metrics-optional"})
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	endpoint := addEndpoint(t, repository, cluster.ResourceID, "mysql-a", 3306, model.EndpointDatabase, true)
+	candidate := newFakeAdapter()
+	candidate.metricsAvailable = false
+	candidate.results[endpoint.Hostname] = discoveredInstance(endpoint.Hostname, endpoint.Port, "native-a", model.RolePrimary, "")
+
+	snapshot, err := newTestService(t, repository, candidate).Refresh(context.Background(), cluster.ResourceID)
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if snapshot.Health.State != model.HealthHealthy || len(snapshot.Probes) != 1 || !snapshot.Probes[0].MetricsObservedAt.IsZero() {
+		t.Fatalf("missing metrics capability degraded discovery: %+v", snapshot)
+	}
+	if len(repository.MetricSamples(cluster.ResourceID)) != 0 {
+		t.Fatalf("metrics were stored without capability: %+v", repository.MetricSamples(cluster.ResourceID))
+	}
+	candidate.mu.Lock()
+	metricCalls := candidate.metricCalls
+	candidate.mu.Unlock()
+	if metricCalls != 0 {
+		t.Fatalf("unsupported metrics method was called %d times", metricCalls)
 	}
 }
 

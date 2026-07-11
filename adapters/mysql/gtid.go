@@ -37,7 +37,7 @@ func ParseGTIDSet(value string) (GTIDSet, error) {
 		for index := 1; index < len(parts); index++ {
 			rawInterval := strings.TrimSpace(parts[index])
 			if validGTIDTag(rawInterval) {
-				source = uuid + ":" + rawInterval
+				source = uuid + ":" + strings.ToLower(rawInterval)
 				index++
 				if index >= len(parts) {
 					return GTIDSet{}, fmt.Errorf("GTID tag %q has no interval", rawInterval)

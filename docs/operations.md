@@ -251,6 +251,14 @@ with `status: unsupported`. Node synchronization routes also return `501`.
 Capability rejection happens before workflow locks, approvals, or an adapter
 mutation call, so unsupported does not mean partially executed.
 
+When mutation support is added, execution pins the exact topology observation
+used for precheck and revalidates it after acquiring the operation lock. A
+changed or invalidated observation blocks approval and execution. If a journal
+write fails before mutation, the workflow stops. If it fails after the mutation
+commit point, verification still runs and the API returns an `indeterminate`
+execution with HTTP `500`. Treat `indeterminate` as a manual-review state; do
+not automatically retry the operation.
+
 ## 9. Adapter Roadmap
 
 ### MySQL

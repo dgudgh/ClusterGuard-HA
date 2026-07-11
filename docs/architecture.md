@@ -152,10 +152,18 @@ DISCOVER -> PRECHECK -> PLAN -> SAFETY_GUARD -> LOCK -> APPROVE -> EXECUTE -> VE
 Adapters cannot acquire a platform lock, approve an operation, suppress audit,
 or skip verification. Safety Guard is an explicit stage with its own audit
 events and always runs before the operation lock. The workflow core checks
-capability support before any gate or adapter mutation. In this release,
-switchover, failover, HA endpoint
-mutation, replication repair, node synchronization, and node lifecycle
-execution return HTTP `501` and do not invoke a mutating adapter method.
+all required precheck, plan, execute, and verify capabilities before any gate
+or adapter mutation. It pins the topology observation used by the operation,
+records the observation timestamp, and revalidates the same token under the
+operation lock before approval. In this release, switchover, failover, HA
+endpoint mutation, replication repair, node synchronization, and node
+lifecycle execution return HTTP `501` and do not invoke a mutating adapter
+method.
+
+Audit and report persistence is fail-closed before the mutation commit point.
+After a mutation has committed, journal failure never skips verification. The
+workflow completes verification and returns `indeterminate`, preserving that
+the action may have changed database state and must not be retried blindly.
 
 Platform metadata reconciliation is distinct from a database mutation. It may
 update a known resource's mutable coordinates after native identity validation,
