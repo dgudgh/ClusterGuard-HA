@@ -41,12 +41,8 @@ func (adapterInstance *Adapter) Discover(ctx context.Context, request adapter.Di
 	return discover(ctx, adapterInstance.runner, request)
 }
 
-func (adapterInstance *Adapter) Topology(ctx context.Context, request adapter.DiscoverRequest) (adapter.TopologyResult, error) {
-	result, err := adapterInstance.Discover(ctx, request)
-	if err != nil {
-		return adapter.TopologyResult{}, err
-	}
-	instance := result.Instance
+func (adapterInstance *Adapter) Topology(_ context.Context, _ adapter.DiscoverRequest, discovery adapter.DiscoveryResult) (adapter.TopologyResult, error) {
+	instance := discovery.Instance
 	if len(instance.Replication.SourceIdentity) == 0 {
 		return adapter.TopologyResult{Links: []adapter.TopologyLink{}}, nil
 	}

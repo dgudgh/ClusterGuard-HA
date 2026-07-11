@@ -183,7 +183,8 @@ printf 'server_uuid\thostname\tnote\r\nsource-uuid\tmysql-a\t\r\nsource-uuid-2\t
 	t.Setenv("MYSQL_TEST_ARGS", argsPath)
 	t.Setenv("MYSQL_TEST_PASSWORD", passwordPath)
 	password := "p@ss word --password=visible"
-	rows, err := (CLIQueryRunner{Binary: binaryPath}).Query(context.Background(), adapterRequest().Endpoint, adapter.Credentials{Username: "monitor", Password: password}, "SELECT 1")
+	endpoint := adapter.Endpoint{Hostname: "localhost", Port: 4407}
+	rows, err := (CLIQueryRunner{Binary: binaryPath}).Query(context.Background(), endpoint, adapter.Credentials{Username: "monitor", Password: password}, "SELECT 1")
 	if err != nil {
 		t.Fatalf("query: %v", err)
 	}
@@ -200,7 +201,7 @@ printf 'server_uuid\thostname\tnote\r\nsource-uuid\tmysql-a\t\r\nsource-uuid-2\t
 	if strings.Contains(string(args), password) || strings.Contains(string(args), "--password") {
 		t.Fatalf("password leaked into command arguments: %q", args)
 	}
-	for _, flag := range []string{"--batch", "--raw"} {
+	for _, flag := range []string{"--batch", "--raw", "--protocol=TCP", "4407"} {
 		if !strings.Contains(string(args), flag) {
 			t.Fatalf("missing %s in command arguments: %q", flag, args)
 		}

@@ -21,6 +21,7 @@ const (
 	credentialFailureSummary = "discovery credentials unavailable"
 	databaseFailureSummary   = "database probe failed"
 	metricsFailureSummary    = "performance metrics unavailable"
+	topologyFailureSummary   = "database topology probe failed"
 )
 
 type CredentialResolver interface {
@@ -43,7 +44,7 @@ type Service struct {
 }
 
 type clusterLock struct {
-	mutex      sync.Mutex
+	gate       chan struct{}
 	references int
 }
 
@@ -63,6 +64,7 @@ func New(registry *adapter.Registry, repository *store.Repository, credentials C
 type endpointProbe struct {
 	endpoint  model.Endpoint
 	discovery adapter.DiscoveryResult
+	topology  adapter.TopologyResult
 	metrics   []model.MetricSample
 	failure   probeFailure
 }
@@ -74,6 +76,7 @@ const (
 	probeCredentialsFailed
 	probeDatabaseFailed
 	probeMetricsFailed
+	probeTopologyFailed
 	probeUnsupported
 )
 
@@ -81,7 +84,10 @@ func (service *Service) Refresh(ctx context.Context, clusterID model.ResourceID)
 	if service == nil || service.registry == nil || service.repository == nil {
 		return model.TopologySnapshot{}, fmt.Errorf("discovery service is not configured")
 	}
-	unlock := service.lockCluster(clusterID)
+	unlock, err := service.lockCluster(ctx, clusterID)
+	if err != nil {
+		return model.TopologySnapshot{}, err
+	}
 	defer unlock()
 	inventory, exists := service.repository.DiscoveryInventory(clusterID)
 	if !exists {
@@ -96,17 +102,22 @@ func (service *Service) Refresh(ctx context.Context, clusterID model.ResourceID)
 	if !exists {
 		return model.TopologySnapshot{}, adapter.ErrUnsupported
 	}
-	if !candidate.Capabilities(ctx).Supports(adapter.CapabilityDiscover) {
+	capabilities := candidate.Capabilities(ctx)
+	if !capabilities.Supports(adapter.CapabilityDiscover) {
 		return model.TopologySnapshot{}, adapter.ErrUnsupported
 	}
 
 	observedAt := service.now().UTC()
-	probeResults := service.probeEndpoints(ctx, candidate, cluster, endpoints)
+	probeResults := service.probeEndpoints(ctx, candidate, cluster, endpoints, capabilities.Supports(adapter.CapabilityTopology))
+	if err := ctx.Err(); err != nil {
+		return model.TopologySnapshot{}, err
+	}
 	observations := make([]store.DiscoveryObservation, 0, len(probeResults))
 	writablePrimaryIdentities := make(map[string]struct{})
 	credentialFailures := 0
 	databaseFailures := 0
 	metricFailures := 0
+	nativeLinks := make([]model.NativeReplicationLink, 0)
 	probes := make([]model.ProbeStatus, 0, len(probeResults))
 	for _, probe := range probeResults {
 		if probe.failure == probeUnsupported {
@@ -124,6 +135,9 @@ func (service *Service) Refresh(ctx context.Context, clusterID model.ResourceID)
 			status.Health = model.Health{State: model.HealthUnknown, Summary: databaseFailureSummary, ObservedAt: observedAt}
 			probes = append(probes, status)
 			continue
+		}
+		if probe.failure == probeTopologyFailed {
+			return model.TopologySnapshot{}, fmt.Errorf(topologyFailureSummary)
 		}
 		discovered := probe.discovery.Instance
 		status.DiscoveryObservedAt = observedAt
@@ -162,6 +176,14 @@ func (service *Service) Refresh(ctx context.Context, clusterID model.ResourceID)
 			Instance:   discovered,
 			Metrics:    metrics,
 		})
+		for _, link := range probe.topology.Links {
+			nativeLinks = append(nativeLinks, model.NativeReplicationLink{
+				SourceIdentity: link.SourceIdentity.Clone(),
+				TargetIdentity: link.TargetIdentity.Clone(),
+				Healthy:        link.Healthy,
+				LagSeconds:     cloneLagSeconds(link.LagSeconds),
+			})
+		}
 		if discovered.Role == model.RolePrimary {
 			if key, err := identity.InstanceKey(discovered.Engine, discovered.EngineIdentity); err == nil {
 				writablePrimaryIdentities[key] = struct{}{}
@@ -181,14 +203,19 @@ func (service *Service) Refresh(ctx context.Context, clusterID model.ResourceID)
 		})
 	}
 	health := discoveryHealth(observedAt, len(endpoints), credentialFailures, databaseFailures, metricFailures, writablePrimaries)
+	if err := ctx.Err(); err != nil {
+		return model.TopologySnapshot{}, err
+	}
 	snapshot, err := service.repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{
-		ClusterID:           clusterID,
-		InventoryGeneration: inventory.Generation,
-		Observations:        observations,
-		Probes:              probes,
-		Health:              health,
-		ObservedAt:          observedAt,
-		Anomalies:           anomalies,
+		ClusterID:             clusterID,
+		InventoryGeneration:   inventory.Generation,
+		Observations:          observations,
+		NativeLinks:           nativeLinks,
+		TopologyAuthoritative: true,
+		Probes:                probes,
+		Health:                health,
+		ObservedAt:            observedAt,
+		Anomalies:             anomalies,
 	})
 	if err != nil {
 		return model.TopologySnapshot{}, fmt.Errorf("apply discovery refresh: %w", err)
@@ -198,19 +225,17 @@ func (service *Service) Refresh(ctx context.Context, clusterID model.ResourceID)
 	return snapshot, nil
 }
 
-func (service *Service) lockCluster(clusterID model.ResourceID) func() {
+func (service *Service) lockCluster(ctx context.Context, clusterID model.ResourceID) (func(), error) {
 	service.clusterLocksMu.Lock()
 	lock := service.clusterLocks[clusterID]
 	if lock == nil {
-		lock = &clusterLock{}
+		lock = &clusterLock{gate: make(chan struct{}, 1)}
 		service.clusterLocks[clusterID] = lock
 	}
 	lock.references++
 	service.clusterLocksMu.Unlock()
 
-	lock.mutex.Lock()
-	return func() {
-		lock.mutex.Unlock()
+	releaseReference := func() {
 		service.clusterLocksMu.Lock()
 		lock.references--
 		if lock.references == 0 && service.clusterLocks[clusterID] == lock {
@@ -218,6 +243,28 @@ func (service *Service) lockCluster(clusterID model.ResourceID) func() {
 		}
 		service.clusterLocksMu.Unlock()
 	}
+	if err := ctx.Err(); err != nil {
+		releaseReference()
+		return nil, err
+	}
+	select {
+	case lock.gate <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			<-lock.gate
+			releaseReference()
+			return nil, err
+		}
+	case <-ctx.Done():
+		releaseReference()
+		return nil, ctx.Err()
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			<-lock.gate
+			releaseReference()
+		})
+	}, nil
 }
 
 func activeDatabaseEndpoints(endpoints []model.Endpoint) []model.Endpoint {
@@ -231,7 +278,7 @@ func activeDatabaseEndpoints(endpoints []model.Endpoint) []model.Endpoint {
 	return result
 }
 
-func (service *Service) probeEndpoints(ctx context.Context, candidate adapter.DatabaseHAAdapter, cluster model.DatabaseCluster, endpoints []model.Endpoint) []endpointProbe {
+func (service *Service) probeEndpoints(ctx context.Context, candidate adapter.DatabaseHAAdapter, cluster model.DatabaseCluster, endpoints []model.Endpoint, topologyAvailable bool) []endpointProbe {
 	results := make([]endpointProbe, len(endpoints))
 	semaphore := make(chan struct{}, maximumParallelProbes)
 	var wait sync.WaitGroup
@@ -276,6 +323,18 @@ func (service *Service) probeEndpoints(ctx context.Context, candidate adapter.Da
 				return
 			}
 			results[index].discovery = discovered
+			if topologyAvailable {
+				topology, err := candidate.Topology(ctx, request, discovered)
+				if err != nil {
+					if errors.Is(err, adapter.ErrUnsupported) {
+						results[index].failure = probeUnsupported
+					} else {
+						results[index].failure = probeTopologyFailed
+					}
+					return
+				}
+				results[index].topology = topology
+			}
 			metrics, err := candidate.Metrics(ctx, request)
 			if err != nil {
 				results[index].failure = probeMetricsFailed
@@ -286,6 +345,14 @@ func (service *Service) probeEndpoints(ctx context.Context, candidate adapter.Da
 	}
 	wait.Wait()
 	return results
+}
+
+func cloneLagSeconds(value *int64) *int64 {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
 }
 
 func sortSnapshotResources(instances []model.DatabaseInstance, links []model.ReplicationLink, probes []model.ProbeStatus, anomalies []model.MetadataAnomaly) {

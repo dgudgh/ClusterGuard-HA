@@ -62,6 +62,44 @@ func TestCompareGTIDSetsFindsMissingAndErrantIntervals(t *testing.T) {
 	}
 }
 
+func TestParseGTIDSetSupportsTaggedSourcesAndMultipleTags(t *testing.T) {
+	primary, err := ParseGTIDSet("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:Domain_1:1-3:11:Domain_2:8-10")
+	if err != nil {
+		t.Fatalf("parse tagged primary set: %v", err)
+	}
+	candidate, err := ParseGTIDSet("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:Domain_1:1-2:Domain_2:8-9")
+	if err != nil {
+		t.Fatalf("parse tagged candidate set: %v", err)
+	}
+
+	comparison, err := CompareGTIDSets(primary, candidate)
+	if err != nil {
+		t.Fatalf("compare tagged sets: %v", err)
+	}
+	if comparison.MissingTransactions != 3 || comparison.ErrantTransactions != 0 {
+		t.Fatalf("unexpected tagged comparison: %+v", comparison)
+	}
+}
+
+func TestCompareGTIDSetsTreatsDifferentTagsAsDistinctTransactionSources(t *testing.T) {
+	primary, err := ParseGTIDSet("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:Domain_1:1-3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := ParseGTIDSet("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:Domain_2:1-3")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	comparison, err := CompareGTIDSets(primary, candidate)
+	if err != nil {
+		t.Fatalf("compare tagged sets: %v", err)
+	}
+	if comparison.MissingTransactions != 3 || comparison.ErrantTransactions != 3 {
+		t.Fatalf("different tags were merged: %+v", comparison)
+	}
+}
+
 func TestParseGTIDSetAcceptsEmptySet(t *testing.T) {
 	set, err := ParseGTIDSet("")
 	if err != nil {

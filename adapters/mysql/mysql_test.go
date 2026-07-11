@@ -100,9 +100,17 @@ func TestHealthIsReadOnlyAndDoesNotAdvertiseExecution(t *testing.T) {
 func TestTopologyReportsReadOnlyNativeReplicationLink(t *testing.T) {
 	runner := healthyReplicaRunner("8.0.44", modernReplicationRow())
 	adapterInstance := New(runner)
-	result, err := adapterInstance.Topology(context.Background(), adapterRequest())
+	discovery, err := adapterInstance.Discover(context.Background(), adapterRequest())
+	if err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	queryCount := len(runner.queries)
+	result, err := adapterInstance.Topology(context.Background(), adapterRequest(), discovery)
 	if err != nil {
 		t.Fatalf("topology: %v", err)
+	}
+	if len(runner.queries) != queryCount {
+		t.Fatalf("topology repeated the database probe: before=%d after=%d", queryCount, len(runner.queries))
 	}
 	if !adapterInstance.Capabilities(context.Background()).Supports(adapter.CapabilityTopology) {
 		t.Fatal("MySQL must advertise implemented read-only topology")

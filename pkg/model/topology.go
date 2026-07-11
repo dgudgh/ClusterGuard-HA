@@ -34,6 +34,13 @@ type ProbeStatus struct {
 	Health              Health     `json:"health"`
 }
 
+type NativeReplicationLink struct {
+	SourceIdentity EngineIdentity `json:"source_identity"`
+	TargetIdentity EngineIdentity `json:"target_identity"`
+	Healthy        bool           `json:"healthy"`
+	LagSeconds     *int64         `json:"lag_seconds,omitempty"`
+}
+
 type TopologySnapshot struct {
 	ClusterID  ResourceID         `json:"cluster_id"`
 	Instances  []DatabaseInstance `json:"instances"`

@@ -33,12 +33,22 @@ func ParseGTIDSet(value string) (GTIDSet, error) {
 			return GTIDSet{}, fmt.Errorf("invalid GTID group %q", rawGroup)
 		}
 		uuid := strings.ToLower(parts[0])
-		for _, rawInterval := range parts[1:] {
+		source := uuid
+		for index := 1; index < len(parts); index++ {
+			rawInterval := strings.TrimSpace(parts[index])
+			if validGTIDTag(rawInterval) {
+				source = uuid + ":" + rawInterval
+				index++
+				if index >= len(parts) {
+					return GTIDSet{}, fmt.Errorf("GTID tag %q has no interval", rawInterval)
+				}
+				rawInterval = strings.TrimSpace(parts[index])
+			}
 			interval, err := parseGTIDInterval(rawInterval)
 			if err != nil {
 				return GTIDSet{}, fmt.Errorf("invalid GTID interval %q: %w", rawInterval, err)
 			}
-			set.intervals[uuid] = append(set.intervals[uuid], interval)
+			set.intervals[source] = append(set.intervals[source], interval)
 		}
 	}
 
@@ -210,6 +220,24 @@ func validGTIDUUID(value string) bool {
 			continue
 		}
 		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f') || (char >= 'A' && char <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+func validGTIDTag(value string) bool {
+	if len(value) < 1 || len(value) > 32 {
+		return false
+	}
+	for index, char := range value {
+		if index == 0 {
+			if !((char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || char == '_') {
+				return false
+			}
+			continue
+		}
+		if !((char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') || char == '_') {
 			return false
 		}
 	}

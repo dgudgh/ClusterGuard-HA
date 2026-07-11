@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"clusterguard.io/ha/pkg/adapter"
 	"clusterguard.io/ha/pkg/model"
@@ -50,6 +51,11 @@ func (candidate *recordingAdapter) Verify(context.Context, adapter.OperationRequ
 
 type recordingGate struct{ trace *[]string }
 
+func (gate recordingGate) RequireObservation(context.Context, model.Operation) error {
+	*gate.trace = append(*gate.trace, "gate:discover")
+	return nil
+}
+
 func (gate recordingGate) Evaluate(context.Context, model.Operation) error {
 	*gate.trace = append(*gate.trace, "gate:safety")
 	return nil
@@ -63,6 +69,64 @@ func (gate recordingGate) Validate(context.Context, model.Operation, string) err
 	return nil
 }
 
+type failingJournal struct {
+	err error
+}
+
+func (journal failingJournal) RecordAudit(model.AuditEvent) error { return journal.err }
+func (journal failingJournal) RecordReport(model.Report) error    { return journal.err }
+
+func TestExecuteStopsBeforeMutationWhenAuditCannotPersist(t *testing.T) {
+	trace := []string{}
+	registry := adapter.NewRegistry()
+	if err := registry.Register(newRecordingAdapter(&trace, true)); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	wantErr := errors.New("journal unavailable")
+	service := New(registry, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, failingJournal{err: wantErr})
+	operation := model.Operation{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, Engine: model.EngineMySQL, Kind: model.OperationSwitchover, RequestedBy: "dba"}
+	execution, err := service.Execute(context.Background(), adapter.OperationRequest{Operation: operation}, "approved")
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("execute error = %v, want journal failure", err)
+	}
+	if execution.Status != model.OperationFailed {
+		t.Fatalf("execution status = %q, want failed", execution.Status)
+	}
+	if len(trace) != 1 || trace[0] != "gate:discover" {
+		t.Fatalf("workflow continued after audit failure: %v", trace)
+	}
+}
+
+type topologyReaderStub struct {
+	snapshot model.TopologySnapshot
+	found    bool
+}
+
+func (reader topologyReaderStub) TopologySnapshot(model.ResourceID) (model.TopologySnapshot, bool) {
+	return reader.snapshot, reader.found
+}
+
+func TestTopologyDiscoveryRequiresCurrentClusterObservation(t *testing.T) {
+	clusterID := model.NewResourceID()
+	operation := model.Operation{ClusterID: clusterID}
+	for _, test := range []struct {
+		name    string
+		reader  topologyReaderStub
+		wantErr bool
+	}{
+		{name: "missing snapshot", reader: topologyReaderStub{}, wantErr: true},
+		{name: "zero observation", reader: topologyReaderStub{found: true, snapshot: model.TopologySnapshot{ClusterID: clusterID}}, wantErr: true},
+		{name: "current observation", reader: topologyReaderStub{found: true, snapshot: model.TopologySnapshot{ClusterID: clusterID, ObservedAt: time.Now().UTC()}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := (TopologyDiscovery{Reader: test.reader}).RequireObservation(context.Background(), operation)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("RequireObservation() error = %v, wantErr=%t", err, test.wantErr)
+			}
+		})
+	}
+}
+
 func TestExecuteRunsGuardedWorkflowAndProducesAuditReport(t *testing.T) {
 	trace := []string{}
 	registry := adapter.NewRegistry()
@@ -70,7 +134,7 @@ func TestExecuteRunsGuardedWorkflowAndProducesAuditReport(t *testing.T) {
 		t.Fatalf("register: %v", err)
 	}
 	journal := NewMemoryJournal()
-	service := New(registry, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, journal)
+	service := New(registry, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, journal)
 	operation := model.Operation{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, Engine: model.EngineMySQL, Kind: model.OperationSwitchover, RequestedBy: "dba"}
 	execution, err := service.Execute(context.Background(), adapter.OperationRequest{Operation: operation}, "approved")
 	if err != nil {
@@ -79,7 +143,7 @@ func TestExecuteRunsGuardedWorkflowAndProducesAuditReport(t *testing.T) {
 	if execution.Status != model.OperationSucceeded {
 		t.Fatalf("unexpected execution: %+v", execution)
 	}
-	want := []string{"adapter:precheck", "adapter:plan", "gate:safety", "gate:lock", "gate:approval", "adapter:execute", "adapter:verify", "gate:release"}
+	want := []string{"gate:discover", "adapter:precheck", "adapter:plan", "gate:safety", "gate:lock", "gate:approval", "adapter:execute", "adapter:verify", "gate:release"}
 	if len(trace) != len(want) {
 		t.Fatalf("workflow trace: got %v want %v", trace, want)
 	}
@@ -92,7 +156,14 @@ func TestExecuteRunsGuardedWorkflowAndProducesAuditReport(t *testing.T) {
 		t.Fatalf("workflow must record audit and report, audits=%d reports=%d", len(journal.Audits()), len(journal.Reports()))
 	}
 	safetyIndex, lockIndex := -1, -1
+	discoverIndex, precheckIndex := -1, -1
 	for index, event := range journal.Audits() {
+		if event.Stage == model.StageDiscover && discoverIndex < 0 {
+			discoverIndex = index
+		}
+		if event.Stage == model.StagePrecheck && precheckIndex < 0 {
+			precheckIndex = index
+		}
 		if event.Stage == model.StageSafetyGuard && safetyIndex < 0 {
 			safetyIndex = index
 		}
@@ -103,6 +174,9 @@ func TestExecuteRunsGuardedWorkflowAndProducesAuditReport(t *testing.T) {
 	if safetyIndex < 0 || lockIndex < 0 || safetyIndex >= lockIndex {
 		t.Fatalf("safety guard must be an explicit stage before lock: %+v", journal.Audits())
 	}
+	if discoverIndex < 0 || precheckIndex < 0 || discoverIndex >= precheckIndex {
+		t.Fatalf("discover must be an explicit stage before precheck: %+v", journal.Audits())
+	}
 }
 
 func TestExecuteBlocksUnsupportedAdapterBeforeSafetyOrLock(t *testing.T) {
@@ -112,7 +186,7 @@ func TestExecuteBlocksUnsupportedAdapterBeforeSafetyOrLock(t *testing.T) {
 		t.Fatalf("register: %v", err)
 	}
 	journal := NewMemoryJournal()
-	service := New(registry, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, journal)
+	service := New(registry, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, journal)
 	operation := model.Operation{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, Engine: model.EngineMySQL, Kind: model.OperationFailover}
 	execution, err := service.Execute(context.Background(), adapter.OperationRequest{Operation: operation}, "approved")
 	if !errors.Is(err, adapter.ErrUnsupported) || execution.Status != model.OperationUnsupported {

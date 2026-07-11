@@ -126,7 +126,7 @@ func newAPIServer(t *testing.T, repository *store.Repository, candidate adapter.
 			t.Fatalf("register candidate adapter: %v", err)
 		}
 	}
-	service := workflow.New(registry, workflow.AllowAllSafety{}, workflow.NewMemoryLocks(), workflow.TokenApproval{}, repository)
+	service := workflow.New(registry, workflow.TopologyDiscovery{Reader: repository}, workflow.AllowAllSafety{}, workflow.NewMemoryLocks(), workflow.TokenApproval{}, repository)
 	return NewServer(registry, repository, service, refresher, WithControlToken(testControlToken))
 }
 
@@ -585,7 +585,7 @@ func TestRealMySQLDiscoveryProducesEligibleReadOnlyCandidate(t *testing.T) {
 	refresher := discovery.New(registry, repository, discovery.CredentialResolverFunc(func(context.Context, model.DatabaseCluster, model.Endpoint) (adapter.Credentials, error) {
 		return adapter.Credentials{Username: "monitor", Password: "secret"}, nil
 	}), func() time.Time { return time.Date(2026, time.July, 11, 18, 0, 0, 0, time.UTC) })
-	service := workflow.New(registry, workflow.AllowAllSafety{}, workflow.NewMemoryLocks(), workflow.TokenApproval{}, repository)
+	service := workflow.New(registry, workflow.TopologyDiscovery{Reader: repository}, workflow.AllowAllSafety{}, workflow.NewMemoryLocks(), workflow.TokenApproval{}, repository)
 	server := NewServer(registry, repository, service, refresher, WithControlToken(testControlToken))
 	refresh := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/clusters/"+string(cluster.ResourceID)+"/discover", map[string]interface{}{})
 	if refresh.Code != http.StatusOK {

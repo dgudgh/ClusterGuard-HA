@@ -198,7 +198,7 @@ Capabilities are advertised per operation and stage, rather than through one
 coarse `execute` flag. Each mutating operation follows:
 
 ```text
-DISCOVER -> PRECHECK -> PLAN -> LOCK -> APPROVE -> EXECUTE -> VERIFY -> AUDIT -> REPORT
+DISCOVER -> PRECHECK -> PLAN -> SAFETY_GUARD -> LOCK -> APPROVE -> EXECUTE -> VERIFY -> AUDIT -> REPORT
 ```
 
 Long-running operations persist their stage, attempt count, lease/fencing token,

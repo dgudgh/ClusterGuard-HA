@@ -61,7 +61,7 @@ func (runner CLIQueryRunner) Query(ctx context.Context, endpoint adapter.Endpoin
 	if host == "" || endpoint.Port <= 0 || credentials.Username == "" {
 		return nil, fmt.Errorf("database endpoint, port, and username are required")
 	}
-	command := exec.CommandContext(ctx, binary, "--batch", "--raw", "--connect-timeout=5", "-h", host, "-P", strconv.Itoa(endpoint.Port), "-u", credentials.Username, "-e", query)
+	command := exec.CommandContext(ctx, binary, "--batch", "--raw", "--protocol=TCP", "--connect-timeout=5", "-h", host, "-P", strconv.Itoa(endpoint.Port), "-u", credentials.Username, "-e", query)
 	command.Env = append(os.Environ(), "MYSQL_PWD="+credentials.Password)
 	output, err := command.CombinedOutput()
 	if err != nil {

@@ -45,13 +45,15 @@ type DiscoveryObservation struct {
 }
 
 type DiscoveryRefresh struct {
-	ClusterID           model.ResourceID
-	InventoryGeneration uint64
-	Observations        []DiscoveryObservation
-	Probes              []model.ProbeStatus
-	Health              model.Health
-	ObservedAt          time.Time
-	Anomalies           []model.MetadataAnomaly
+	ClusterID             model.ResourceID
+	InventoryGeneration   uint64
+	Observations          []DiscoveryObservation
+	NativeLinks           []model.NativeReplicationLink
+	TopologyAuthoritative bool
+	Probes                []model.ProbeStatus
+	Health                model.Health
+	ObservedAt            time.Time
+	Anomalies             []model.MetadataAnomaly
 }
 
 type DiscoveryInventory struct {
@@ -1515,25 +1517,49 @@ func (repository *Repository) ApplyDiscoveryRefresh(refresh DiscoveryRefresh) (m
 		existing.Healthy = false
 		linksByEdge[replicationEdge{existing.SourceInstanceID, existing.TargetInstanceID}] = existing
 	}
-	for _, instance := range observedInstances {
-		if len(instance.Replication.SourceIdentity) == 0 {
-			continue
+	if refresh.TopologyAuthoritative {
+		for _, nativeLink := range refresh.NativeLinks {
+			sourceKey, sourceErr := identity.InstanceKey(cluster.Engine, nativeLink.SourceIdentity)
+			targetKey, targetErr := identity.InstanceKey(cluster.Engine, nativeLink.TargetIdentity)
+			if sourceErr != nil || targetErr != nil {
+				continue
+			}
+			sourceInstanceID, sourceExists := instanceIDsByIdentity[sourceKey]
+			targetInstanceID, targetExists := instanceIDsByIdentity[targetKey]
+			if !sourceExists || !targetExists || sourceInstanceID == targetInstanceID {
+				continue
+			}
+			if _, targetObserved := successfulTargets[targetInstanceID]; !targetObserved {
+				continue
+			}
+			link := model.ReplicationLink{
+				ClusterID: refresh.ClusterID, SourceInstanceID: sourceInstanceID, TargetInstanceID: targetInstanceID,
+				Healthy:    nativeLink.Healthy && probeHealthy[sourceInstanceID] && probeHealthy[targetInstanceID],
+				LagSeconds: nativeLink.LagSeconds,
+			}
+			linksByEdge[replicationEdge{sourceInstanceID, targetInstanceID}] = link
 		}
-		key, err := identity.InstanceKey(instance.Engine, instance.Replication.SourceIdentity)
-		if err != nil {
-			continue
+	} else {
+		for _, instance := range observedInstances {
+			if len(instance.Replication.SourceIdentity) == 0 {
+				continue
+			}
+			key, err := identity.InstanceKey(instance.Engine, instance.Replication.SourceIdentity)
+			if err != nil {
+				continue
+			}
+			sourceInstanceID, sourceExists := instanceIDsByIdentity[key]
+			if !sourceExists || sourceInstanceID == instance.ResourceID {
+				continue
+			}
+			link := model.ReplicationLink{
+				ClusterID: refresh.ClusterID, SourceInstanceID: sourceInstanceID, TargetInstanceID: instance.ResourceID,
+				Healthy: probeHealthy[sourceInstanceID] && probeHealthy[instance.ResourceID] &&
+					instance.Replication.IOThread == model.ThreadRunning && instance.Replication.SQLThread == model.ThreadRunning,
+				LagSeconds: instance.Replication.LagSeconds,
+			}
+			linksByEdge[replicationEdge{sourceInstanceID, instance.ResourceID}] = link
 		}
-		sourceInstanceID, sourceExists := instanceIDsByIdentity[key]
-		if !sourceExists || sourceInstanceID == instance.ResourceID {
-			continue
-		}
-		link := model.ReplicationLink{
-			ClusterID: refresh.ClusterID, SourceInstanceID: sourceInstanceID, TargetInstanceID: instance.ResourceID,
-			Healthy: probeHealthy[sourceInstanceID] && probeHealthy[instance.ResourceID] &&
-				instance.Replication.IOThread == model.ThreadRunning && instance.Replication.SQLThread == model.ThreadRunning,
-			LagSeconds: instance.Replication.LagSeconds,
-		}
-		linksByEdge[replicationEdge{sourceInstanceID, instance.ResourceID}] = link
 	}
 	links := make([]model.ReplicationLink, 0, len(linksByEdge))
 	for _, link := range linksByEdge {
@@ -1706,7 +1732,7 @@ func (repository *Repository) ReplaceClusterAnomalies(clusterID model.ResourceID
 	return nil
 }
 
-func (repository *Repository) RecordAudit(event model.AuditEvent) {
+func (repository *Repository) RecordAudit(event model.AuditEvent) error {
 	now := repository.now().UTC()
 	if event.ResourceID == "" {
 		event.ResourceID = model.NewResourceID()
@@ -1718,11 +1744,16 @@ func (repository *Repository) RecordAudit(event model.AuditEvent) {
 	event.MetadataRevision = 1
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
-	repository.snapshot.Audits = append(repository.snapshot.Audits, event)
-	_ = repository.persistLocked()
+	next := repository.snapshot
+	next.Audits = append(append([]model.AuditEvent{}, repository.snapshot.Audits...), event)
+	if err := repository.persistSnapshotLocked(next); err != nil {
+		return err
+	}
+	repository.snapshot = next
+	return nil
 }
 
-func (repository *Repository) RecordReport(report model.Report) {
+func (repository *Repository) RecordReport(report model.Report) error {
 	now := repository.now().UTC()
 	if report.ResourceID == "" {
 		report.ResourceID = model.NewResourceID()
@@ -1734,8 +1765,13 @@ func (repository *Repository) RecordReport(report model.Report) {
 	report.MetadataRevision = 1
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
-	repository.snapshot.Reports = append(repository.snapshot.Reports, report)
-	_ = repository.persistLocked()
+	next := repository.snapshot
+	next.Reports = append(append([]model.Report{}, repository.snapshot.Reports...), report)
+	if err := repository.persistSnapshotLocked(next); err != nil {
+		return err
+	}
+	repository.snapshot = next
+	return nil
 }
 
 func (repository *Repository) Audits() []model.AuditEvent {

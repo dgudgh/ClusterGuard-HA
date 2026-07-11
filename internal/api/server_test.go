@@ -106,7 +106,7 @@ func newTestServer(t *testing.T) (*Server, *store.Repository) {
 		}
 	}
 	repository := store.NewMemory()
-	service := workflow.New(registry, workflow.AllowAllSafety{}, workflow.NewMemoryLocks(), workflow.TokenApproval{}, repository)
+	service := workflow.New(registry, workflow.TopologyDiscovery{Reader: repository}, workflow.AllowAllSafety{}, workflow.NewMemoryLocks(), workflow.TokenApproval{}, repository)
 	return NewServer(registry, repository, service, &fakeRefresher{}, WithControlToken(testControlToken)), repository
 }
 
@@ -135,7 +135,7 @@ func TestControlAPIPostsRequireConfiguredBearerToken(t *testing.T) {
 	}
 	repository := store.NewMemory()
 	refresher := &fakeRefresher{}
-	service := workflow.New(registry, workflow.AllowAllSafety{}, workflow.NewMemoryLocks(), workflow.TokenApproval{}, repository)
+	service := workflow.New(registry, workflow.TopologyDiscovery{Reader: repository}, workflow.AllowAllSafety{}, workflow.NewMemoryLocks(), workflow.TokenApproval{}, repository)
 	server := NewServer(registry, repository, service, refresher, WithControlToken("control-secret"))
 	payload := []byte(`{"display_name":"secured","engine":"mysql","endpoints":[{"hostname":"mysql-a","port":3306}]}`)
 
@@ -327,7 +327,7 @@ func TestMetadataExecutePersistenceFailureIsSanitizedAndAtomic(t *testing.T) {
 	if err := registry.Register(mysql.New(apiRunner{})); err != nil {
 		t.Fatalf("register mysql: %v", err)
 	}
-	service := workflow.New(registry, workflow.AllowAllSafety{}, workflow.NewMemoryLocks(), workflow.TokenApproval{}, repository)
+	service := workflow.New(registry, workflow.TopologyDiscovery{Reader: repository}, workflow.AllowAllSafety{}, workflow.NewMemoryLocks(), workflow.TokenApproval{}, repository)
 	server := NewServer(registry, repository, service, &fakeRefresher{}, WithControlToken(testControlToken))
 	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "metadata-failure"}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-old", Port: 3306, Active: true}})
 	if err != nil {

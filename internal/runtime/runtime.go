@@ -36,6 +36,7 @@ func New(configuration config.File) (*api.Server, error) {
 	}
 	service := workflow.New(
 		registry,
+		workflow.TopologyDiscovery{Reader: repository},
 		workflow.AllowAllSafety{},
 		workflow.NewMemoryLocks(),
 		workflow.TokenApproval{ExpectedToken: configuration.ApprovalToken},

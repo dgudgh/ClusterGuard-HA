@@ -63,12 +63,7 @@ type DiscoveryResult struct {
 	Instance model.DatabaseInstance `json:"instance"`
 }
 
-type TopologyLink struct {
-	SourceIdentity model.EngineIdentity `json:"source_identity"`
-	TargetIdentity model.EngineIdentity `json:"target_identity"`
-	Healthy        bool                 `json:"healthy"`
-	LagSeconds     *int64               `json:"lag_seconds,omitempty"`
-}
+type TopologyLink = model.NativeReplicationLink
 
 type TopologyResult struct {
 	Links []TopologyLink `json:"links"`
@@ -105,7 +100,7 @@ type DatabaseHAAdapter interface {
 	Engine() model.Engine
 	Capabilities(context.Context) Capabilities
 	Discover(context.Context, DiscoverRequest) (DiscoveryResult, error)
-	Topology(context.Context, DiscoverRequest) (TopologyResult, error)
+	Topology(context.Context, DiscoverRequest, DiscoveryResult) (TopologyResult, error)
 	Health(context.Context, DiscoverRequest) (model.Health, error)
 	Precheck(context.Context, OperationRequest) ([]model.Check, error)
 	BuildPlan(context.Context, OperationRequest) (model.OperationPlan, error)
@@ -141,7 +136,7 @@ func (adapter UnsupportedAdapter) Capabilities(context.Context) Capabilities {
 func (adapter UnsupportedAdapter) Discover(context.Context, DiscoverRequest) (DiscoveryResult, error) {
 	return DiscoveryResult{}, ErrUnsupported
 }
-func (adapter UnsupportedAdapter) Topology(context.Context, DiscoverRequest) (TopologyResult, error) {
+func (adapter UnsupportedAdapter) Topology(context.Context, DiscoverRequest, DiscoveryResult) (TopologyResult, error) {
 	return TopologyResult{}, ErrUnsupported
 }
 func (adapter UnsupportedAdapter) Health(context.Context, DiscoverRequest) (model.Health, error) {

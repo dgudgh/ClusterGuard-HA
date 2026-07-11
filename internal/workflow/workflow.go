@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -11,8 +12,28 @@ import (
 	"clusterguard.io/ha/pkg/model"
 )
 
+var ErrJournalPersistence = errors.New("workflow journal persistence failed")
+
+type journalPersistenceError struct {
+	err error
+}
+
+func (failure *journalPersistenceError) Error() string {
+	return fmt.Sprintf("%s: %v", ErrJournalPersistence, failure.err)
+}
+
+func (failure *journalPersistenceError) Unwrap() error { return failure.err }
+
+func (failure *journalPersistenceError) Is(target error) bool {
+	return target == ErrJournalPersistence || errors.Is(failure.err, target)
+}
+
 type SafetyGuard interface {
 	Evaluate(context.Context, model.Operation) error
+}
+
+type DiscoveryValidator interface {
+	RequireObservation(context.Context, model.Operation) error
 }
 
 type LockManager interface {
@@ -24,8 +45,8 @@ type ApprovalValidator interface {
 }
 
 type Journal interface {
-	RecordAudit(model.AuditEvent)
-	RecordReport(model.Report)
+	RecordAudit(model.AuditEvent) error
+	RecordReport(model.Report) error
 }
 
 type MemoryJournal struct {
@@ -36,16 +57,18 @@ type MemoryJournal struct {
 
 func NewMemoryJournal() *MemoryJournal { return &MemoryJournal{} }
 
-func (journal *MemoryJournal) RecordAudit(event model.AuditEvent) {
+func (journal *MemoryJournal) RecordAudit(event model.AuditEvent) error {
 	journal.mu.Lock()
 	defer journal.mu.Unlock()
 	journal.audits = append(journal.audits, event)
+	return nil
 }
 
-func (journal *MemoryJournal) RecordReport(report model.Report) {
+func (journal *MemoryJournal) RecordReport(report model.Report) error {
 	journal.mu.Lock()
 	defer journal.mu.Unlock()
 	journal.reports = append(journal.reports, report)
+	return nil
 }
 
 func (journal *MemoryJournal) Audits() []model.AuditEvent {
@@ -61,43 +84,66 @@ func (journal *MemoryJournal) Reports() []model.Report {
 }
 
 type Service struct {
-	registry *adapter.Registry
-	safety   SafetyGuard
-	locks    LockManager
-	approval ApprovalValidator
-	journal  Journal
-	now      func() time.Time
+	registry  *adapter.Registry
+	discovery DiscoveryValidator
+	safety    SafetyGuard
+	locks     LockManager
+	approval  ApprovalValidator
+	journal   Journal
+	now       func() time.Time
 }
 
-func New(registry *adapter.Registry, safety SafetyGuard, locks LockManager, approval ApprovalValidator, journal Journal) *Service {
-	return &Service{registry: registry, safety: safety, locks: locks, approval: approval, journal: journal, now: time.Now}
+func New(registry *adapter.Registry, discovery DiscoveryValidator, safety SafetyGuard, locks LockManager, approval ApprovalValidator, journal Journal) *Service {
+	return &Service{registry: registry, discovery: discovery, safety: safety, locks: locks, approval: approval, journal: journal, now: time.Now}
 }
 
-func (service *Service) audit(operation model.Operation, stage model.WorkflowStage, message string) {
+func (service *Service) audit(operation model.Operation, stage model.WorkflowStage, message string) error {
 	if service.journal == nil {
-		return
+		return fmt.Errorf("workflow journal is not configured")
 	}
 	now := service.now().UTC()
-	service.journal.RecordAudit(model.AuditEvent{
+	if err := service.journal.RecordAudit(model.AuditEvent{
 		ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID(), MetadataRevision: 1, CreatedAt: now, UpdatedAt: now},
 		OperationID:  operation.ResourceID,
 		Stage:        stage,
 		Actor:        operation.RequestedBy,
 		Message:      message,
-	})
+	}); err != nil {
+		return fmt.Errorf("persist %s audit event: %w", stage, err)
+	}
+	return nil
 }
 
-func (service *Service) report(operation model.Operation, execution model.Execution) {
+func (service *Service) report(operation model.Operation, execution model.Execution) error {
 	if service.journal == nil {
-		return
+		return fmt.Errorf("workflow journal is not configured")
 	}
 	now := service.now().UTC()
-	service.journal.RecordReport(model.Report{
+	if err := service.journal.RecordReport(model.Report{
 		ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID(), MetadataRevision: 1, CreatedAt: now, UpdatedAt: now},
 		OperationID:  operation.ResourceID,
 		Title:        string(operation.Kind) + " report",
 		Summary:      execution.Message,
-	})
+	}); err != nil {
+		return fmt.Errorf("persist operation report: %w", err)
+	}
+	return nil
+}
+
+func journalFailure(execution model.Execution, err error) (model.Execution, error) {
+	execution.Status = model.OperationFailed
+	execution.Message = "workflow journal persistence failed"
+	return execution, &journalPersistenceError{err: err}
+}
+
+func (service *Service) recordOutcome(operation model.Operation, execution model.Execution, stage model.WorkflowStage, message string, cause error) (model.Execution, error) {
+	if err := service.audit(operation, stage, message); err != nil {
+		return journalFailure(execution, err)
+	}
+	if err := service.report(operation, execution); err != nil {
+		return journalFailure(execution, err)
+	}
+	return execution, cause
 }
 
 func hasBlockingCheck(checks []model.Check) bool {
@@ -111,9 +157,15 @@ func hasBlockingCheck(checks []model.Check) bool {
 
 func (service *Service) unsupported(operation model.Operation, message string) (model.Execution, error) {
 	execution := model.Execution{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID(), MetadataRevision: 1, CreatedAt: service.now().UTC(), UpdatedAt: service.now().UTC()}, OperationID: operation.ResourceID, Status: model.OperationUnsupported, Message: message}
-	service.audit(operation, model.StagePrecheck, message)
-	service.audit(operation, model.StageReport, "unsupported operation reported")
-	service.report(operation, execution)
+	if err := service.audit(operation, model.StagePrecheck, message); err != nil {
+		return journalFailure(execution, err)
+	}
+	if err := service.audit(operation, model.StageReport, "unsupported operation reported"); err != nil {
+		return journalFailure(execution, err)
+	}
+	if err := service.report(operation, execution); err != nil {
+		return journalFailure(execution, err)
+	}
 	return execution, adapter.ErrUnsupported
 }
 
@@ -134,65 +186,75 @@ func (service *Service) Execute(ctx context.Context, request adapter.OperationRe
 	if !capabilities.Supports(adapter.CapabilityExecute) {
 		return service.unsupported(operation, "operation execution is unsupported by this adapter")
 	}
+	if service.discovery == nil {
+		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationBlocked, Message: "discovery validation is not configured"}
+		return service.recordOutcome(operation, execution, model.StageDiscover, execution.Message, fmt.Errorf("%s", execution.Message))
+	}
+	if err := service.discovery.RequireObservation(ctx, operation); err != nil {
+		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationBlocked, Message: err.Error()}
+		return service.recordOutcome(operation, execution, model.StageDiscover, "discovery observation blocked execution: "+err.Error(), err)
+	}
+	if err := service.audit(operation, model.StageDiscover, "current topology observation validated"); err != nil {
+		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
+	}
 
 	checks, err := candidate.Precheck(ctx, request)
 	if err != nil {
 		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationFailed, Message: err.Error()}
-		service.audit(operation, model.StagePrecheck, err.Error())
-		service.report(operation, execution)
-		return execution, err
+		return service.recordOutcome(operation, execution, model.StagePrecheck, err.Error(), err)
 	}
-	service.audit(operation, model.StagePrecheck, "adapter precheck completed")
+	if err := service.audit(operation, model.StagePrecheck, "adapter precheck completed"); err != nil {
+		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
+	}
 	if hasBlockingCheck(checks) {
 		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationBlocked, Message: "precheck contains blocking checks"}
-		service.report(operation, execution)
-		return execution, nil
+		return service.recordOutcome(operation, execution, model.StagePrecheck, "adapter precheck blocked execution", nil)
 	}
 	if _, err := candidate.BuildPlan(ctx, request); err != nil {
 		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationFailed, Message: err.Error()}
-		service.audit(operation, model.StagePlan, err.Error())
-		service.report(operation, execution)
-		return execution, err
+		return service.recordOutcome(operation, execution, model.StagePlan, err.Error(), err)
 	}
-	service.audit(operation, model.StagePlan, "adapter operation plan created")
+	if err := service.audit(operation, model.StagePlan, "adapter operation plan created"); err != nil {
+		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
+	}
 	if service.safety == nil || service.locks == nil || service.approval == nil {
 		return model.Execution{}, fmt.Errorf("workflow gates are not configured")
 	}
 	if err := service.safety.Evaluate(ctx, operation); err != nil {
 		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationBlocked, Message: err.Error()}
-		service.audit(operation, model.StageSafetyGuard, "safety guard blocked execution: "+err.Error())
-		service.report(operation, execution)
-		return execution, err
+		return service.recordOutcome(operation, execution, model.StageSafetyGuard, "safety guard blocked execution: "+err.Error(), err)
 	}
-	service.audit(operation, model.StageSafetyGuard, "safety guard passed")
+	if err := service.audit(operation, model.StageSafetyGuard, "safety guard passed"); err != nil {
+		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
+	}
 	release, err := service.locks.Acquire(ctx, operation)
 	if err != nil {
 		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationBlocked, Message: err.Error()}
-		service.audit(operation, model.StageLock, "operation lock blocked execution: "+err.Error())
-		service.report(operation, execution)
-		return execution, err
+		return service.recordOutcome(operation, execution, model.StageLock, "operation lock blocked execution: "+err.Error(), err)
 	}
 	defer release()
-	service.audit(operation, model.StageLock, "operation lock acquired")
+	if err := service.audit(operation, model.StageLock, "operation lock acquired"); err != nil {
+		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
+	}
 	if err := service.approval.Validate(ctx, operation, approvalToken); err != nil {
 		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationBlocked, Message: err.Error()}
-		service.audit(operation, model.StageApprove, "approval blocked execution: "+err.Error())
-		service.report(operation, execution)
-		return execution, err
+		return service.recordOutcome(operation, execution, model.StageApprove, "approval blocked execution: "+err.Error(), err)
 	}
-	service.audit(operation, model.StageApprove, "approval validated")
+	if err := service.audit(operation, model.StageApprove, "approval validated"); err != nil {
+		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
+	}
 	execution, err := candidate.Execute(ctx, request)
 	if err != nil {
 		if execution.Status == "" {
 			execution.Status = model.OperationFailed
 		}
 		execution.OperationID = operation.ResourceID
-		service.audit(operation, model.StageExecute, err.Error())
-		service.report(operation, execution)
-		return execution, err
+		return service.recordOutcome(operation, execution, model.StageExecute, err.Error(), err)
 	}
 	execution.OperationID = operation.ResourceID
-	service.audit(operation, model.StageExecute, "adapter execution completed")
+	if err := service.audit(operation, model.StageExecute, "adapter execution completed"); err != nil {
+		return journalFailure(execution, err)
+	}
 	verification, err := candidate.Verify(ctx, request)
 	if err != nil || !verification.Passed {
 		if err != nil {
@@ -201,18 +263,24 @@ func (service *Service) Execute(ctx context.Context, request adapter.OperationRe
 			execution.Message = "verification failed"
 		}
 		execution.Status = model.OperationFailed
-		service.audit(operation, model.StageVerify, execution.Message)
-		service.report(operation, execution)
-		return execution, err
+		return service.recordOutcome(operation, execution, model.StageVerify, execution.Message, err)
 	}
-	service.audit(operation, model.StageVerify, "verification passed")
+	if err := service.audit(operation, model.StageVerify, "verification passed"); err != nil {
+		return journalFailure(execution, err)
+	}
 	execution.Status = model.OperationSucceeded
 	if execution.Message == "" {
 		execution.Message = "operation completed and verified"
 	}
-	service.audit(operation, model.StageAudit, "operation audit recorded")
-	service.audit(operation, model.StageReport, "operation report generated")
-	service.report(operation, execution)
+	if err := service.audit(operation, model.StageAudit, "operation audit recorded"); err != nil {
+		return journalFailure(execution, err)
+	}
+	if err := service.audit(operation, model.StageReport, "operation report generated"); err != nil {
+		return journalFailure(execution, err)
+	}
+	if err := service.report(operation, execution); err != nil {
+		return journalFailure(execution, err)
+	}
 	return execution, nil
 }
 
@@ -233,66 +301,71 @@ func (service *Service) ExecuteMetadata(ctx context.Context, operation model.Ope
 	checks, err := candidate.MetadataPrecheck(ctx, request)
 	if err != nil {
 		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationFailed, Message: err.Error()}
-		service.audit(operation, model.StagePrecheck, err.Error())
-		service.report(operation, execution)
-		return execution, err
+		return service.recordOutcome(operation, execution, model.StagePrecheck, err.Error(), err)
 	}
-	service.audit(operation, model.StagePrecheck, "metadata precheck completed")
+	if err := service.audit(operation, model.StagePrecheck, "metadata precheck completed"); err != nil {
+		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
+	}
 	if hasBlockingCheck(checks) {
 		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationBlocked, Message: "metadata precheck contains blocking checks"}
-		service.report(operation, execution)
-		return execution, nil
+		return service.recordOutcome(operation, execution, model.StagePrecheck, "metadata precheck blocked reconciliation", nil)
 	}
 	if _, err := candidate.ReconcileMetadata(ctx, request); err != nil {
 		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationFailed, Message: err.Error()}
-		service.audit(operation, model.StagePlan, err.Error())
-		service.report(operation, execution)
-		return execution, err
+		return service.recordOutcome(operation, execution, model.StagePlan, err.Error(), err)
 	}
-	service.audit(operation, model.StagePlan, "metadata reconciliation plan created")
+	if err := service.audit(operation, model.StagePlan, "metadata reconciliation plan created"); err != nil {
+		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
+	}
 	if service.safety == nil || service.locks == nil || service.approval == nil {
 		return model.Execution{}, fmt.Errorf("workflow gates are not configured")
 	}
 	if err := service.safety.Evaluate(ctx, operation); err != nil {
 		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationBlocked, Message: err.Error()}
-		service.audit(operation, model.StageSafetyGuard, "safety guard blocked metadata reconciliation: "+err.Error())
-		service.report(operation, execution)
-		return execution, err
+		return service.recordOutcome(operation, execution, model.StageSafetyGuard, "safety guard blocked metadata reconciliation: "+err.Error(), err)
 	}
-	service.audit(operation, model.StageSafetyGuard, "safety guard passed")
+	if err := service.audit(operation, model.StageSafetyGuard, "safety guard passed"); err != nil {
+		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
+	}
 	release, err := service.locks.Acquire(ctx, operation)
 	if err != nil {
 		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationBlocked, Message: err.Error()}
-		service.audit(operation, model.StageLock, "operation lock blocked metadata reconciliation: "+err.Error())
-		service.report(operation, execution)
-		return execution, err
+		return service.recordOutcome(operation, execution, model.StageLock, "operation lock blocked metadata reconciliation: "+err.Error(), err)
 	}
 	defer release()
-	service.audit(operation, model.StageLock, "operation lock acquired")
+	if err := service.audit(operation, model.StageLock, "operation lock acquired"); err != nil {
+		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
+	}
 	if err := service.approval.Validate(ctx, operation, approvalToken); err != nil {
 		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationBlocked, Message: err.Error()}
-		service.audit(operation, model.StageApprove, "approval blocked metadata reconciliation: "+err.Error())
-		service.report(operation, execution)
-		return execution, err
+		return service.recordOutcome(operation, execution, model.StageApprove, "approval blocked metadata reconciliation: "+err.Error(), err)
 	}
-	service.audit(operation, model.StageApprove, "approval validated")
+	if err := service.audit(operation, model.StageApprove, "approval validated"); err != nil {
+		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
+	}
 	if err := commit(); err != nil {
 		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationFailed, Message: err.Error()}
-		service.audit(operation, model.StageExecute, err.Error())
-		service.report(operation, execution)
-		return execution, err
+		return service.recordOutcome(operation, execution, model.StageExecute, err.Error(), err)
 	}
-	service.audit(operation, model.StageExecute, "metadata reconciliation committed")
+	if err := service.audit(operation, model.StageExecute, "metadata reconciliation committed"); err != nil {
+		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
+	}
 	if _, err := identity.InstanceKey(request.Instance.Engine, request.Instance.EngineIdentity); err != nil {
 		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationFailed, Message: err.Error()}
-		service.audit(operation, model.StageVerify, err.Error())
-		service.report(operation, execution)
-		return execution, err
+		return service.recordOutcome(operation, execution, model.StageVerify, err.Error(), err)
 	}
-	service.audit(operation, model.StageVerify, "engine identity verified after metadata reconciliation")
+	if err := service.audit(operation, model.StageVerify, "engine identity verified after metadata reconciliation"); err != nil {
+		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
+	}
 	execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationSucceeded, Message: "metadata reconciliation completed and verified"}
-	service.audit(operation, model.StageAudit, "metadata reconciliation audit recorded")
-	service.audit(operation, model.StageReport, "metadata reconciliation report generated")
-	service.report(operation, execution)
+	if err := service.audit(operation, model.StageAudit, "metadata reconciliation audit recorded"); err != nil {
+		return journalFailure(execution, err)
+	}
+	if err := service.audit(operation, model.StageReport, "metadata reconciliation report generated"); err != nil {
+		return journalFailure(execution, err)
+	}
+	if err := service.report(operation, execution); err != nil {
+		return journalFailure(execution, err)
+	}
 	return execution, nil
 }

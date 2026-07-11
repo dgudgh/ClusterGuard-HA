@@ -25,6 +25,8 @@ type fakeDiscoveryAdapter struct {
 	results           map[string]model.DatabaseInstance
 	failures          map[string]error
 	metricFailures    map[string]error
+	topologies        map[string]adapter.TopologyResult
+	topologyCalls     []string
 	calls             []string
 	current           int
 	maximum           int
@@ -42,6 +44,7 @@ func newFakeAdapter() *fakeDiscoveryAdapter {
 		failures:           map[string]error{},
 		metricFailures:     map[string]error{},
 		releases:           map[string]<-chan struct{}{},
+		topologies:         map[string]adapter.TopologyResult{},
 		discoverAvailable:  true,
 	}
 }
@@ -49,8 +52,30 @@ func newFakeAdapter() *fakeDiscoveryAdapter {
 func (candidate *fakeDiscoveryAdapter) Capabilities(context.Context) adapter.Capabilities {
 	return adapter.Capabilities{Engine: model.EngineMySQL, Features: map[adapter.Capability]adapter.CapabilityState{
 		adapter.CapabilityDiscover: {Available: candidate.discoverAvailable},
+		adapter.CapabilityTopology: {Available: true},
 		adapter.CapabilityMetrics:  {Available: true},
 	}}
+}
+
+func (candidate *fakeDiscoveryAdapter) Topology(_ context.Context, request adapter.DiscoverRequest, discovery adapter.DiscoveryResult) (adapter.TopologyResult, error) {
+	host := request.Endpoint.Hostname
+	candidate.mu.Lock()
+	defer candidate.mu.Unlock()
+	candidate.topologyCalls = append(candidate.topologyCalls, host)
+	if topology, exists := candidate.topologies[host]; exists {
+		return topology, nil
+	}
+	instance := discovery.Instance
+	if len(instance.Replication.SourceIdentity) == 0 {
+		return adapter.TopologyResult{}, nil
+	}
+	return adapter.TopologyResult{Links: []adapter.TopologyLink{{
+		SourceIdentity: instance.Replication.SourceIdentity.Clone(),
+		TargetIdentity: instance.EngineIdentity.Clone(),
+		Healthy: instance.Health.State == model.HealthHealthy &&
+			instance.Replication.IOThread == model.ThreadRunning && instance.Replication.SQLThread == model.ThreadRunning,
+		LagSeconds: instance.Replication.LagSeconds,
+	}}}, nil
 }
 
 func (candidate *fakeDiscoveryAdapter) Discover(ctx context.Context, request adapter.DiscoverRequest) (adapter.DiscoveryResult, error) {
@@ -813,6 +838,43 @@ func TestRefreshDeduplicatesTwoEndpointsForOneNativeIdentity(t *testing.T) {
 	}
 }
 
+func TestRefreshPublishesAdapterNativeTopologyFromTheSameObservation(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "adapter-topology"})
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	primaryEndpoint := addEndpoint(t, repository, cluster.ResourceID, "mysql-a", 3306, model.EndpointDatabase, true)
+	replicaEndpoint := addEndpoint(t, repository, cluster.ResourceID, "mysql-b", 3306, model.EndpointDatabase, true)
+	candidate := newFakeAdapter()
+	primary := discoveredInstance(primaryEndpoint.Hostname, primaryEndpoint.Port, "native-a", model.RolePrimary, "")
+	replica := discoveredInstance(replicaEndpoint.Hostname, replicaEndpoint.Port, "native-b", model.RoleReplica, "")
+	candidate.results[primaryEndpoint.Hostname] = primary
+	candidate.results[replicaEndpoint.Hostname] = replica
+	lag := int64(3)
+	candidate.topologies[replicaEndpoint.Hostname] = adapter.TopologyResult{Links: []adapter.TopologyLink{{
+		SourceIdentity: primary.EngineIdentity.Clone(),
+		TargetIdentity: replica.EngineIdentity.Clone(),
+		Healthy:        true,
+		LagSeconds:     &lag,
+	}}}
+
+	snapshot, err := newTestService(t, repository, candidate).Refresh(context.Background(), cluster.ResourceID)
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if len(snapshot.Links) != 1 || snapshot.Links[0].LagSeconds == nil || *snapshot.Links[0].LagSeconds != lag {
+		t.Fatalf("adapter-native topology was not published: %+v", snapshot.Links)
+	}
+	candidate.mu.Lock()
+	topologyCalls := append([]string{}, candidate.topologyCalls...)
+	candidate.mu.Unlock()
+	sort.Strings(topologyCalls)
+	if !reflect.DeepEqual(topologyCalls, []string{primaryEndpoint.Hostname, replicaEndpoint.Hostname}) {
+		t.Fatalf("topology calls = %v", topologyCalls)
+	}
+}
+
 func TestRefreshSerializesSameClusterWhileDifferentClustersProceed(t *testing.T) {
 	repository := store.NewMemory()
 	firstCluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "first"})
@@ -868,6 +930,106 @@ func TestRefreshSerializesSameClusterWhileDifferentClustersProceed(t *testing.T)
 	}
 	if err := <-queuedSameCluster; err != nil {
 		t.Fatalf("queued same-cluster refresh: %v", err)
+	}
+}
+
+func TestCanceledProbeDoesNotPublishADegradedObservation(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "cancel-probe"})
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	endpoint := addEndpoint(t, repository, cluster.ResourceID, "mysql-a", 3306, model.EndpointDatabase, true)
+	candidate := newFakeAdapter()
+	candidate.results[endpoint.Hostname] = discoveredInstance(endpoint.Hostname, endpoint.Port, "native-a", model.RolePrimary, "")
+	service := newTestService(t, repository, candidate)
+	if _, err := service.Refresh(context.Background(), cluster.ResourceID); err != nil {
+		t.Fatalf("seed refresh: %v", err)
+	}
+	before := captureDiscoveryRepositoryState(repository, cluster.ResourceID)
+	beforeTopology, found := repository.TopologySnapshot(cluster.ResourceID)
+	if !found {
+		t.Fatal("seed refresh did not publish topology")
+	}
+
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	candidate.started = started
+	candidate.release = release
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		_, refreshErr := service.Refresh(ctx, cluster.ResourceID)
+		result <- refreshErr
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("canceled probe did not start")
+	}
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("canceled refresh error = %v", err)
+		}
+	case <-time.After(time.Second):
+		close(release)
+		t.Fatal("canceled probe did not return promptly")
+	}
+	after := captureDiscoveryRepositoryState(repository, cluster.ResourceID)
+	afterTopology, found := repository.TopologySnapshot(cluster.ResourceID)
+	if !reflect.DeepEqual(after, before) || !found || !reflect.DeepEqual(afterTopology, beforeTopology) {
+		t.Fatalf("canceled probe changed repository state:\nbefore=%+v\nafter=%+v\nbefore topology=%+v\nafter topology=%+v", before, after, beforeTopology, afterTopology)
+	}
+}
+
+func TestCanceledRefreshStopsWhileWaitingForClusterLock(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "cancel-lock"})
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	endpoint := addEndpoint(t, repository, cluster.ResourceID, "mysql-a", 3306, model.EndpointDatabase, true)
+	candidate := newFakeAdapter()
+	candidate.results[endpoint.Hostname] = discoveredInstance(endpoint.Hostname, endpoint.Port, "native-a", model.RolePrimary, "")
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	candidate.started = started
+	candidate.release = release
+	service := newTestService(t, repository, candidate)
+	first := make(chan error, 1)
+	go func() {
+		_, refreshErr := service.Refresh(context.Background(), cluster.ResourceID)
+		first <- refreshErr
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("first refresh did not acquire the cluster lock")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	second := make(chan error, 1)
+	go func() {
+		_, refreshErr := service.Refresh(ctx, cluster.ResourceID)
+		second <- refreshErr
+	}()
+	cancel()
+	select {
+	case err := <-second:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("lock wait cancellation error = %v", err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		close(release)
+		<-first
+		<-second
+		t.Fatal("refresh ignored cancellation while waiting for the cluster lock")
+	}
+	close(release)
+	if err := <-first; err != nil {
+		t.Fatalf("first refresh: %v", err)
 	}
 }
 

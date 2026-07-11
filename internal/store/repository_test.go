@@ -190,8 +190,12 @@ func TestRepositoryPersistsAuditAndReportResources(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	operationID := model.NewResourceID()
-	repository.RecordAudit(model.AuditEvent{OperationID: operationID, Stage: model.StageExecute, Message: "executed"})
-	repository.RecordReport(model.Report{OperationID: operationID, Title: "operation report", Summary: "verified"})
+	if err := repository.RecordAudit(model.AuditEvent{OperationID: operationID, Stage: model.StageExecute, Message: "executed"}); err != nil {
+		t.Fatalf("record audit: %v", err)
+	}
+	if err := repository.RecordReport(model.Report{OperationID: operationID, Title: "operation report", Summary: "verified"}); err != nil {
+		t.Fatalf("record report: %v", err)
+	}
 	reloaded, err := Open(path)
 	if err != nil {
 		t.Fatalf("reload: %v", err)
@@ -201,6 +205,44 @@ func TestRepositoryPersistsAuditAndReportResources(t *testing.T) {
 	}
 	if len(reloaded.Reports()) != 1 || reloaded.Reports()[0].OperationID != operationID {
 		t.Fatalf("report was not persisted: %+v", reloaded.Reports())
+	}
+}
+
+func TestJournalPersistenceFailureDoesNotPublishLiveState(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		record func(*Repository) error
+		count  func(*Repository) int
+	}{
+		{
+			name: "audit",
+			record: func(repository *Repository) error {
+				return repository.RecordAudit(model.AuditEvent{OperationID: model.NewResourceID(), Stage: model.StageExecute, Message: "must not publish"})
+			},
+			count: func(repository *Repository) int { return len(repository.Audits()) },
+		},
+		{
+			name: "report",
+			record: func(repository *Repository) error {
+				return repository.RecordReport(model.Report{OperationID: model.NewResourceID(), Title: "must not publish"})
+			},
+			count: func(repository *Repository) int { return len(repository.Reports()) },
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "metadata.json")
+			repository, err := Open(path)
+			if err != nil {
+				t.Fatalf("open: %v", err)
+			}
+			repository.syncFile = func(*os.File) error { return errors.New("sync failed") }
+			if err := test.record(repository); err == nil {
+				t.Fatal("journal persistence failure was ignored")
+			}
+			if count := test.count(repository); count != 0 {
+				t.Fatalf("journal persistence failure published %d live resources", count)
+			}
+		})
 	}
 }
 

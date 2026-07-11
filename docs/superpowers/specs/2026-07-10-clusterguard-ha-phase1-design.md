@@ -58,7 +58,7 @@ unsupported capabilities and fail closed for every unimplemented operation.
 Every mutating path follows this fixed state machine:
 
 ```text
-DISCOVER -> PRECHECK -> PLAN -> LOCK -> APPROVE -> EXECUTE -> VERIFY -> AUDIT -> REPORT
+DISCOVER -> PRECHECK -> PLAN -> SAFETY_GUARD -> LOCK -> APPROVE -> EXECUTE -> VERIFY -> AUDIT -> REPORT
 ```
 
 The workflow core owns lock acquisition, approval validation, safety checks,

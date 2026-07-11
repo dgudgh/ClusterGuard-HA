@@ -8,6 +8,34 @@ import (
 	"clusterguard.io/ha/pkg/model"
 )
 
+type TopologyReader interface {
+	TopologySnapshot(model.ResourceID) (model.TopologySnapshot, bool)
+}
+
+type TopologyDiscovery struct {
+	Reader TopologyReader
+}
+
+func (gate TopologyDiscovery) RequireObservation(ctx context.Context, operation model.Operation) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if gate.Reader == nil {
+		return fmt.Errorf("topology reader is not configured")
+	}
+	if operation.ClusterID == "" {
+		return fmt.Errorf("cluster ID is required for discovery validation")
+	}
+	snapshot, found := gate.Reader.TopologySnapshot(operation.ClusterID)
+	if !found || snapshot.ObservedAt.IsZero() {
+		return fmt.Errorf("a current topology observation is required")
+	}
+	if snapshot.ClusterID != "" && snapshot.ClusterID != operation.ClusterID {
+		return fmt.Errorf("topology observation belongs to another cluster")
+	}
+	return nil
+}
+
 type AllowAllSafety struct{}
 
 func (AllowAllSafety) Evaluate(context.Context, model.Operation) error { return nil }
