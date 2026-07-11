@@ -34,13 +34,26 @@ func (resolve CredentialResolverFunc) Resolve(ctx context.Context, cluster model
 	return resolve(ctx, cluster, endpoint)
 }
 
+type PublicationFence interface {
+	AcquireCluster(context.Context, model.ResourceID) (func(), error)
+}
+
+type Option func(*Service)
+
+func WithPublicationFence(fence PublicationFence) Option {
+	return func(service *Service) {
+		service.publicationFence = fence
+	}
+}
+
 type Service struct {
-	registry       *adapter.Registry
-	repository     *store.Repository
-	credentials    CredentialResolver
-	now            func() time.Time
-	clusterLocksMu sync.Mutex
-	clusterLocks   map[model.ResourceID]*clusterLock
+	registry         *adapter.Registry
+	repository       *store.Repository
+	credentials      CredentialResolver
+	publicationFence PublicationFence
+	now              func() time.Time
+	clusterLocksMu   sync.Mutex
+	clusterLocks     map[model.ResourceID]*clusterLock
 }
 
 type clusterLock struct {
@@ -48,17 +61,23 @@ type clusterLock struct {
 	references int
 }
 
-func New(registry *adapter.Registry, repository *store.Repository, credentials CredentialResolver, clock func() time.Time) *Service {
+func New(registry *adapter.Registry, repository *store.Repository, credentials CredentialResolver, clock func() time.Time, options ...Option) *Service {
 	if clock == nil {
 		clock = time.Now
 	}
-	return &Service{
+	service := &Service{
 		registry:     registry,
 		repository:   repository,
 		credentials:  credentials,
 		now:          clock,
 		clusterLocks: make(map[model.ResourceID]*clusterLock),
 	}
+	for _, option := range options {
+		if option != nil {
+			option(service)
+		}
+	}
+	return service
 }
 
 type endpointProbe struct {
@@ -207,6 +226,14 @@ func (service *Service) Refresh(ctx context.Context, clusterID model.ResourceID)
 	health := discoveryHealth(observedAt, len(endpoints), credentialFailures, databaseFailures, metricFailures, writablePrimaries)
 	if err := ctx.Err(); err != nil {
 		return model.TopologySnapshot{}, err
+	}
+	var releasePublicationFence func()
+	if service.publicationFence != nil {
+		releasePublicationFence, err = service.publicationFence.AcquireCluster(ctx, clusterID)
+		if err != nil {
+			return model.TopologySnapshot{}, fmt.Errorf("acquire discovery publication fence: %w", err)
+		}
+		defer releasePublicationFence()
 	}
 	snapshot, err := service.repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{
 		ClusterID:             clusterID,

@@ -106,6 +106,11 @@ type failingJournal struct {
 	err error
 }
 
+type committedWarning struct{ message string }
+
+func (warning committedWarning) Error() string { return warning.message }
+func (committedWarning) Committed() bool       { return true }
+
 func (journal failingJournal) RecordAudit(model.AuditEvent) error { return journal.err }
 func (journal failingJournal) RecordReport(model.Report) error    { return journal.err }
 
@@ -120,6 +125,17 @@ func (journal stageFailingJournal) RecordAudit(event model.AuditEvent) error {
 		return journal.err
 	}
 	return journal.MemoryJournal.RecordAudit(event)
+}
+
+type postCommitReportJournal struct {
+	*MemoryJournal
+}
+
+func (journal postCommitReportJournal) RecordReport(report model.Report) error {
+	if err := journal.MemoryJournal.RecordReport(report); err != nil {
+		return err
+	}
+	return committedWarning{message: "report committed with durability warning"}
 }
 
 func TestExecuteStillVerifiesAfterPostCommitJournalFailure(t *testing.T) {
@@ -161,6 +177,25 @@ func TestExecuteStillVerifiesAfterPostCommitJournalFailure(t *testing.T) {
 	}
 }
 
+func TestReportPostCommitWarningRewritesDurableOutcomeAsIndeterminate(t *testing.T) {
+	trace := []string{}
+	registry := adapter.NewRegistry()
+	if err := registry.Register(newRecordingAdapter(&trace, true)); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	journal := postCommitReportJournal{MemoryJournal: NewMemoryJournal()}
+	service := New(registry, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, journal)
+	operation := model.Operation{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, ClusterID: model.NewResourceID(), Engine: model.EngineMySQL, Kind: model.OperationSwitchover, RequestedBy: "dba"}
+	execution, err := service.Execute(context.Background(), adapter.OperationRequest{Operation: operation}, "approved")
+	if !errors.Is(err, ErrJournalPersistence) || execution.Status != model.OperationIndeterminate {
+		t.Fatalf("report warning execution=%+v err=%v", execution, err)
+	}
+	reports := journal.Reports()
+	if len(reports) != 1 || !strings.Contains(reports[0].Summary, "journal persistence failed") {
+		t.Fatalf("durable report disagrees with indeterminate response: %+v", reports)
+	}
+}
+
 func TestMetadataStillVerifiesAfterPostCommitJournalFailure(t *testing.T) {
 	trace := []string{}
 	registry := adapter.NewRegistry()
@@ -191,6 +226,38 @@ func TestMetadataStillVerifiesAfterPostCommitJournalFailure(t *testing.T) {
 	}
 	if !foundVerify {
 		t.Fatalf("metadata verification outcome was not audited: %+v", journal.Audits())
+	}
+}
+
+func TestMetadataStillVerifiesAfterCommittedPersistenceWarning(t *testing.T) {
+	trace := []string{}
+	registry := adapter.NewRegistry()
+	if err := registry.Register(newRecordingAdapter(&trace, true)); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	journal := NewMemoryJournal()
+	service := New(registry, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, journal)
+	warning := committedWarning{message: "metadata committed with durability warning"}
+	request := adapter.MetadataRequest{ClusterID: model.NewResourceID(), Instance: model.DatabaseInstance{
+		Engine: model.EngineMySQL, EngineIdentity: model.EngineIdentity{"server_uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},
+	}}
+	execution, err := service.ExecuteMetadata(context.Background(), model.Operation{RequestedBy: "dba"}, request, "approved", func() error {
+		return warning
+	})
+	if !errors.Is(err, warning) {
+		t.Fatalf("metadata warning = %v, want committed persistence warning", err)
+	}
+	if execution.Status != model.OperationIndeterminate {
+		t.Fatalf("metadata execution status = %q, want indeterminate", execution.Status)
+	}
+	foundVerify := false
+	for _, event := range journal.Audits() {
+		if event.Stage == model.StageVerify {
+			foundVerify = true
+		}
+	}
+	if !foundVerify {
+		t.Fatalf("committed metadata warning skipped verification: %+v", journal.Audits())
 	}
 }
 
@@ -299,7 +366,8 @@ func TestExecuteRunsGuardedWorkflowAndProducesAuditReport(t *testing.T) {
 	}
 	journal := NewMemoryJournal()
 	service := New(registry, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, journal)
-	operation := model.Operation{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, Engine: model.EngineMySQL, Kind: model.OperationSwitchover, RequestedBy: "dba"}
+	clusterID := model.NewResourceID()
+	operation := model.Operation{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, ClusterID: clusterID, Engine: model.EngineMySQL, Kind: model.OperationSwitchover, RequestedBy: "dba"}
 	execution, err := service.Execute(context.Background(), adapter.OperationRequest{Operation: operation}, "approved")
 	if err != nil {
 		t.Fatalf("execute: %v", err)
@@ -335,7 +403,8 @@ func TestExecuteRunsGuardedWorkflowAndProducesAuditReport(t *testing.T) {
 			lockIndex = index
 		}
 	}
-	if len(journal.Audits()) == 0 || !strings.Contains(journal.Audits()[0].Message, workflowTestObservation.Format(time.RFC3339Nano)) {
+	observationLabel := string(clusterID) + "@" + workflowTestObservation.Format(time.RFC3339Nano)
+	if len(journal.Audits()) == 0 || !strings.Contains(journal.Audits()[0].Message, observationLabel) {
 		t.Fatalf("discover audit does not identify the pinned observation: %+v", journal.Audits())
 	}
 	if safetyIndex < 0 || lockIndex < 0 || safetyIndex >= lockIndex {

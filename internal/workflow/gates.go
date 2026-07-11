@@ -61,10 +61,24 @@ type MemoryLocks struct {
 
 func NewMemoryLocks() *MemoryLocks { return &MemoryLocks{active: map[string]bool{}} }
 
-func (locks *MemoryLocks) Acquire(_ context.Context, operation model.Operation) (func(), error) {
+func (locks *MemoryLocks) Acquire(ctx context.Context, operation model.Operation) (func(), error) {
 	key := string(operation.ClusterID)
 	if key == "" {
 		key = string(operation.ResourceID)
+	}
+	return locks.acquire(ctx, key)
+}
+
+func (locks *MemoryLocks) AcquireCluster(ctx context.Context, clusterID model.ResourceID) (func(), error) {
+	return locks.acquire(ctx, string(clusterID))
+}
+
+func (locks *MemoryLocks) acquire(ctx context.Context, key string) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if key == "" {
+		return nil, fmt.Errorf("operation lock resource is required")
 	}
 	locks.mu.Lock()
 	defer locks.mu.Unlock()

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -413,6 +414,26 @@ func TestMetadataExecuteReturnsIndeterminateResultAfterPostCommitJournalFailure(
 	reports := repository.Reports()
 	if len(reports) != 1 || !strings.Contains(reports[0].Summary, "journal persistence failed") {
 		t.Fatalf("durable report did not preserve indeterminate outcome: %+v", reports)
+	}
+}
+
+func TestMetadataPostCommitDurabilityWarningReturnsCommittedResult(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	instanceID := model.NewResourceID()
+	endpointID := model.NewResourceID()
+	execution := model.Execution{OperationID: model.NewResourceID(), Status: model.OperationIndeterminate, Message: "operation committed but persistence durability could not be confirmed"}
+	reconciled := model.DatabaseInstance{ResourceMeta: model.ResourceMeta{ResourceID: instanceID}, Hostname: "mysql-new", Port: 4406}
+	endpoint := model.Endpoint{ResourceMeta: model.ResourceMeta{ResourceID: endpointID}, Hostname: "mysql-new", Port: 4406}
+	commitErr := fmt.Errorf("%w: secret filesystem detail", store.ErrPostCommitDurability)
+	if !writeMetadataExecutionFailure(recorder, execution, reconciled, endpoint, commitErr, commitErr) {
+		t.Fatal("post-commit durability warning was not handled")
+	}
+	body := recorder.Body.String()
+	if recorder.Code != http.StatusInternalServerError || !strings.Contains(body, `"status":"indeterminate"`) || !strings.Contains(body, string(instanceID)) || !strings.Contains(body, string(endpointID)) {
+		t.Fatalf("post-commit response = %d %s", recorder.Code, body)
+	}
+	if strings.Contains(body, "secret filesystem detail") {
+		t.Fatalf("post-commit response leaked persistence details: %s", body)
 	}
 }
 

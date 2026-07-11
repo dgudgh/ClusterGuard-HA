@@ -34,11 +34,12 @@ func New(configuration config.File) (*api.Server, error) {
 			return nil, fmt.Errorf("register %s adapter: %w", candidate.Engine(), err)
 		}
 	}
+	locks := workflow.NewMemoryLocks()
 	service := workflow.New(
 		registry,
 		workflow.TopologyDiscovery{Reader: repository},
 		workflow.AllowAllSafety{},
-		workflow.NewMemoryLocks(),
+		locks,
 		workflow.TokenApproval{ExpectedToken: configuration.ApprovalToken},
 		repository,
 	)
@@ -47,6 +48,6 @@ func New(configuration config.File) (*api.Server, error) {
 			return adapter.Credentials{}, fmt.Errorf("MySQL discovery credentials are not configured")
 		}
 		return adapter.Credentials{Username: configuration.MySQL.Username, Password: configuration.MySQL.Password}, nil
-	}), nil)
+	}), nil, discovery.WithPublicationFence(locks))
 	return api.NewServer(registry, repository, service, refresher, api.WithControlToken(configuration.ControlToken)), nil
 }

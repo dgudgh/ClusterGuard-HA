@@ -276,26 +276,7 @@ func (server *Server) metadataRoute(writer http.ResponseWriter, request *http.Re
 			writeJSON(writer, http.StatusNotImplemented, map[string]interface{}{"status": "unsupported", "result": execution, "message": execution.Message})
 			return
 		}
-		if commitErr != nil {
-			switch {
-			case errors.Is(commitErr, store.ErrValidation):
-				writeError(writer, http.StatusBadRequest, "invalid metadata reconciliation")
-			case errors.Is(commitErr, store.ErrConflict):
-				writeError(writer, http.StatusConflict, "metadata reconciliation conflicts with inventory")
-			default:
-				writeError(writer, http.StatusInternalServerError, "metadata reconciliation persistence failed")
-			}
-			return
-		}
-		if err != nil {
-			if errors.Is(err, workflow.ErrJournalPersistence) {
-				writeJSON(writer, http.StatusInternalServerError, map[string]interface{}{
-					"status": "error", "message": "workflow journal persistence failed",
-					"result": map[string]interface{}{"execution": execution, "reconciled": reconciled, "endpoint": endpoint},
-				})
-			} else {
-				writeError(writer, http.StatusConflict, "metadata reconciliation failed")
-			}
+		if writeMetadataExecutionFailure(writer, execution, reconciled, endpoint, commitErr, err) {
 			return
 		}
 		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": map[string]interface{}{"execution": execution, "reconciled": reconciled, "endpoint": endpoint}})
@@ -308,6 +289,36 @@ func (server *Server) metadataRoute(writer http.ResponseWriter, request *http.Re
 	default:
 		writeError(writer, http.StatusNotFound, "metadata route not found")
 	}
+}
+
+func writeMetadataExecutionFailure(writer http.ResponseWriter, execution model.Execution, reconciled model.DatabaseInstance, endpoint model.Endpoint, commitErr error, executionErr error) bool {
+	result := map[string]interface{}{"execution": execution, "reconciled": reconciled, "endpoint": endpoint}
+	if commitErr != nil {
+		switch {
+		case errors.Is(commitErr, store.ErrPostCommitDurability):
+			writeJSON(writer, http.StatusInternalServerError, map[string]interface{}{
+				"status": "error", "message": "metadata reconciliation committed with durability warning", "result": result,
+			})
+		case errors.Is(commitErr, store.ErrValidation):
+			writeError(writer, http.StatusBadRequest, "invalid metadata reconciliation")
+		case errors.Is(commitErr, store.ErrConflict):
+			writeError(writer, http.StatusConflict, "metadata reconciliation conflicts with inventory")
+		default:
+			writeError(writer, http.StatusInternalServerError, "metadata reconciliation persistence failed")
+		}
+		return true
+	}
+	if executionErr == nil {
+		return false
+	}
+	if errors.Is(executionErr, workflow.ErrJournalPersistence) {
+		writeJSON(writer, http.StatusInternalServerError, map[string]interface{}{
+			"status": "error", "message": "workflow journal persistence failed", "result": result,
+		})
+	} else {
+		writeError(writer, http.StatusConflict, "metadata reconciliation failed")
+	}
+	return true
 }
 
 func (server *Server) validateMetadataPayload(payload metadataPayload) error {

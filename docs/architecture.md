@@ -154,8 +154,11 @@ or skip verification. Safety Guard is an explicit stage with its own audit
 events and always runs before the operation lock. The workflow core checks
 all required precheck, plan, execute, and verify capabilities before any gate
 or adapter mutation. It pins the topology observation used by the operation,
-records the observation timestamp, and revalidates the same token under the
-operation lock before approval. In this release, switchover, failover, HA
+records the cluster UUID and observation timestamp, and revalidates the same
+token under the operation lock before approval. Discovery publication and
+operation execution use the same per-cluster fence, so a refresh cannot publish
+a new snapshot between revalidation and execution. In this release,
+switchover, failover, HA
 endpoint mutation, replication repair, node synchronization, and node
 lifecycle execution return HTTP `501` and do not invoke a mutating adapter
 method.
@@ -164,6 +167,11 @@ Audit and report persistence is fail-closed before the mutation commit point.
 After a mutation has committed, journal failure never skips verification. The
 workflow completes verification and returns `indeterminate`, preserving that
 the action may have changed database state and must not be retried blindly.
+If the atomic metadata rename succeeds but directory synchronization cannot
+confirm crash durability, the committed result is retained, verification still
+runs, and the API returns the reconciled resources with an `indeterminate`
+execution. A report that encounters the same post-commit warning is rewritten
+under its existing report UUID so its durable summary matches the response.
 
 Platform metadata reconciliation is distinct from a database mutation. It may
 update a known resource's mutable coordinates after native identity validation,

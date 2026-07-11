@@ -32,6 +32,22 @@ func conflictError(format string, arguments ...interface{}) error {
 	return fmt.Errorf("%w: %s", ErrConflict, fmt.Sprintf(format, arguments...))
 }
 
+type postCommitDurabilityError struct {
+	cause error
+}
+
+func (failure *postCommitDurabilityError) Error() string {
+	return fmt.Sprintf("%s: sync metadata directory: %v", ErrPostCommitDurability, failure.cause)
+}
+
+func (failure *postCommitDurabilityError) Unwrap() error { return failure.cause }
+
+func (failure *postCommitDurabilityError) Is(target error) bool {
+	return target == ErrPostCommitDurability || errors.Is(failure.cause, target)
+}
+
+func (*postCommitDurabilityError) Committed() bool { return true }
+
 type ReconcileResult struct {
 	Instance model.DatabaseInstance `json:"instance"`
 	Created  bool                   `json:"created"`
@@ -381,7 +397,7 @@ func (repository *Repository) persistSnapshotLocked(value snapshot) error {
 	// when the subsequent directory sync cannot confirm crash durability.
 	repository.snapshot = value
 	if err := repository.syncDirectory(filepath.Dir(repository.path)); err != nil {
-		return fmt.Errorf("%w: sync metadata directory: %v", ErrPostCommitDurability, err)
+		return &postCommitDurabilityError{cause: err}
 	}
 	return nil
 }
@@ -1146,6 +1162,9 @@ func (repository *Repository) ReconcileMetadataCoordinates(update MetadataCoordi
 	updatedCluster.UpdatedAt = now
 	next.Clusters[existing.ClusterID] = updatedCluster
 	if err := repository.persistSnapshotLocked(next); err != nil {
+		if errors.Is(err, ErrPostCommitDurability) {
+			return cloneInstance(replacement), replacementEndpoint, err
+		}
 		return model.DatabaseInstance{}, model.Endpoint{}, err
 	}
 	repository.snapshot = next
@@ -1758,15 +1777,30 @@ func (repository *Repository) RecordReport(report model.Report) error {
 	if report.ResourceID == "" {
 		report.ResourceID = model.NewResourceID()
 	}
-	if report.CreatedAt.IsZero() {
-		report.CreatedAt = now
-	}
-	report.UpdatedAt = now
-	report.MetadataRevision = 1
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 	next := repository.snapshot
-	next.Reports = append(append([]model.Report{}, repository.snapshot.Reports...), report)
+	next.Reports = append([]model.Report{}, repository.snapshot.Reports...)
+	updated := false
+	for index, existing := range next.Reports {
+		if existing.ResourceID != report.ResourceID {
+			continue
+		}
+		report.CreatedAt = existing.CreatedAt
+		report.UpdatedAt = now
+		report.MetadataRevision = existing.MetadataRevision + 1
+		next.Reports[index] = report
+		updated = true
+		break
+	}
+	if !updated {
+		if report.CreatedAt.IsZero() {
+			report.CreatedAt = now
+		}
+		report.UpdatedAt = now
+		report.MetadataRevision = 1
+		next.Reports = append(next.Reports, report)
+	}
 	if err := repository.persistSnapshotLocked(next); err != nil {
 		return err
 	}

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"clusterguard.io/ha/internal/store"
+	workflowcore "clusterguard.io/ha/internal/workflow"
 	"clusterguard.io/ha/pkg/adapter"
 	"clusterguard.io/ha/pkg/model"
 )
@@ -1093,6 +1094,37 @@ func TestCanceledRefreshStopsWhileWaitingForClusterLock(t *testing.T) {
 	close(release)
 	if err := <-first; err != nil {
 		t.Fatalf("first refresh: %v", err)
+	}
+}
+
+func TestRefreshCannotPublishWhileWorkflowHoldsClusterFence(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "shared-fence"})
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	endpoint := addEndpoint(t, repository, cluster.ResourceID, "mysql-a", 3306, model.EndpointDatabase, true)
+	candidate := newFakeAdapter()
+	candidate.results[endpoint.Hostname] = discoveredInstance(endpoint.Hostname, endpoint.Port, "native-a", model.RolePrimary, "")
+	registry := adapter.NewRegistry()
+	if err := registry.Register(candidate); err != nil {
+		t.Fatalf("register adapter: %v", err)
+	}
+	locks := workflowcore.NewMemoryLocks()
+	release, err := locks.Acquire(context.Background(), model.Operation{ClusterID: cluster.ResourceID})
+	if err != nil {
+		t.Fatalf("acquire workflow fence: %v", err)
+	}
+	defer release()
+	service := New(registry, repository, CredentialResolverFunc(func(context.Context, model.DatabaseCluster, model.Endpoint) (adapter.Credentials, error) {
+		return adapter.Credentials{Username: "probe", Password: "secret"}, nil
+	}), func() time.Time { return discoveryTestTime }, WithPublicationFence(locks))
+
+	if _, err := service.Refresh(context.Background(), cluster.ResourceID); err == nil {
+		t.Fatal("discovery publication ignored the active workflow fence")
+	}
+	if _, found := repository.TopologySnapshot(cluster.ResourceID); found {
+		t.Fatal("discovery published topology while workflow held the cluster fence")
 	}
 }
 

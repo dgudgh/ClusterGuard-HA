@@ -73,6 +73,12 @@ func (journal *MemoryJournal) RecordAudit(event model.AuditEvent) error {
 func (journal *MemoryJournal) RecordReport(report model.Report) error {
 	journal.mu.Lock()
 	defer journal.mu.Unlock()
+	for index, existing := range journal.reports {
+		if existing.ResourceID == report.ResourceID {
+			journal.reports[index] = report
+			return nil
+		}
+	}
 	journal.reports = append(journal.reports, report)
 	return nil
 }
@@ -125,12 +131,19 @@ func (service *Service) report(operation model.Operation, execution model.Execut
 		return fmt.Errorf("workflow journal is not configured")
 	}
 	now := service.now().UTC()
-	if err := service.journal.RecordReport(model.Report{
+	report := model.Report{
 		ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID(), MetadataRevision: 1, CreatedAt: now, UpdatedAt: now},
 		OperationID:  operation.ResourceID,
 		Title:        string(operation.Kind) + " report",
 		Summary:      execution.Message,
-	}); err != nil {
+	}
+	if err := service.journal.RecordReport(report); err != nil {
+		if isCommittedWarning(err) {
+			report.Summary = markIndeterminate(execution).Message
+			if correctionErr := service.journal.RecordReport(report); correctionErr != nil && !isCommittedWarning(correctionErr) {
+				return fmt.Errorf("persist indeterminate operation report after committed warning: %v; original: %w", correctionErr, err)
+			}
+		}
 		return fmt.Errorf("persist operation report: %w", err)
 	}
 	return nil
@@ -146,6 +159,17 @@ func markIndeterminate(execution model.Execution) model.Execution {
 	execution.Status = model.OperationIndeterminate
 	execution.Message = "operation committed but workflow journal persistence failed"
 	return execution
+}
+
+func markDurabilityIndeterminate(execution model.Execution) model.Execution {
+	execution.Status = model.OperationIndeterminate
+	execution.Message = "operation committed but persistence durability could not be confirmed"
+	return execution
+}
+
+func isCommittedWarning(err error) bool {
+	var warning interface{ Committed() bool }
+	return err != nil && errors.As(err, &warning) && warning.Committed()
 }
 
 func journalIndeterminate(execution model.Execution, err error) (model.Execution, error) {
@@ -226,7 +250,7 @@ func (service *Service) Execute(ctx context.Context, request adapter.OperationRe
 		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationBlocked, Message: err.Error()}
 		return service.recordOutcome(operation, execution, model.StageDiscover, "discovery observation blocked execution: "+err.Error(), err)
 	}
-	observationLabel := observation.ObservedAt.UTC().Format(time.RFC3339Nano)
+	observationLabel := fmt.Sprintf("%s@%s", observation.ClusterID, observation.ObservedAt.UTC().Format(time.RFC3339Nano))
 	if err := service.audit(operation, model.StageDiscover, "topology observation "+observationLabel+" validated"); err != nil {
 		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
 	}
@@ -402,7 +426,9 @@ func (service *Service) ExecuteMetadata(ctx context.Context, operation model.Ope
 	if err := service.audit(operation, model.StageApprove, "approval validated"); err != nil {
 		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
 	}
-	if err := commit(); err != nil {
+	commitErr := commit()
+	if commitErr != nil && !isCommittedWarning(commitErr) {
+		err := commitErr
 		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationFailed, Message: err.Error()}
 		return service.recordOutcome(operation, execution, model.StageExecute, err.Error(), err)
 	}
@@ -415,6 +441,9 @@ func (service *Service) ExecuteMetadata(ctx context.Context, operation model.Ope
 		if auditErr := service.audit(operation, model.StageVerify, err.Error()); auditErr != nil {
 			committedJournalErr = firstJournalError(committedJournalErr, auditErr)
 		}
+		if commitErr != nil {
+			execution = markDurabilityIndeterminate(execution)
+		}
 		if committedJournalErr != nil {
 			execution = markIndeterminate(execution)
 		}
@@ -423,6 +452,9 @@ func (service *Service) ExecuteMetadata(ctx context.Context, operation model.Ope
 		}
 		if committedJournalErr != nil {
 			return journalIndeterminate(execution, committedJournalErr)
+		}
+		if commitErr != nil {
+			return execution, commitErr
 		}
 		return execution, err
 	}
@@ -436,6 +468,9 @@ func (service *Service) ExecuteMetadata(ctx context.Context, operation model.Ope
 	if err := service.audit(operation, model.StageReport, "metadata reconciliation report generated"); err != nil {
 		committedJournalErr = firstJournalError(committedJournalErr, err)
 	}
+	if commitErr != nil {
+		execution = markDurabilityIndeterminate(execution)
+	}
 	if committedJournalErr != nil {
 		execution = markIndeterminate(execution)
 	}
@@ -444,6 +479,9 @@ func (service *Service) ExecuteMetadata(ctx context.Context, operation model.Ope
 	}
 	if committedJournalErr != nil {
 		return journalIndeterminate(execution, committedJournalErr)
+	}
+	if commitErr != nil {
+		return execution, commitErr
 	}
 	return execution, nil
 }

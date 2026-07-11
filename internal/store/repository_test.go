@@ -208,6 +208,26 @@ func TestRepositoryPersistsAuditAndReportResources(t *testing.T) {
 	}
 }
 
+func TestRecordReportUpdatesExistingResourceInsteadOfDuplicatingIt(t *testing.T) {
+	repository := NewMemory()
+	reportID := model.NewResourceID()
+	operationID := model.NewResourceID()
+	if err := repository.RecordReport(model.Report{ResourceMeta: model.ResourceMeta{ResourceID: reportID}, OperationID: operationID, Title: "operation report", Summary: "succeeded"}); err != nil {
+		t.Fatalf("record report: %v", err)
+	}
+	first := repository.Reports()[0]
+	if err := repository.RecordReport(model.Report{ResourceMeta: model.ResourceMeta{ResourceID: reportID}, OperationID: operationID, Title: "operation report", Summary: "indeterminate"}); err != nil {
+		t.Fatalf("update report: %v", err)
+	}
+	reports := repository.Reports()
+	if len(reports) != 1 {
+		t.Fatalf("report update created duplicates: %+v", reports)
+	}
+	if reports[0].Summary != "indeterminate" || reports[0].MetadataRevision != first.MetadataRevision+1 || !reports[0].CreatedAt.Equal(first.CreatedAt) {
+		t.Fatalf("report update did not preserve identity and revision: first=%+v updated=%+v", first, reports[0])
+	}
+}
+
 func TestJournalPersistenceFailureDoesNotPublishLiveState(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -1866,6 +1886,48 @@ func TestReconcileMetadataCoordinatesUpdatesBoundEndpointAndPreservesRuntimeFact
 	persistedFailed, found := reopened.TopologySnapshot(cluster.ResourceID)
 	if !found || persistedFailed.Instances[0].Role != model.RolePrimary || persistedFailed.Instances[0].Health.State != model.HealthUnknown {
 		t.Fatalf("failed discovery runtime authority not durable: %+v found=%t", persistedFailed, found)
+	}
+}
+
+func TestReconcileMetadataCoordinatesReturnsCommittedResultAfterDirectorySyncWarning(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metadata.json")
+	repository, err := Open(path)
+	if err != nil {
+		t.Fatalf("open repository: %v", err)
+	}
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "durability-warning"}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-old", Port: 3306, Active: true}})
+	if err != nil {
+		t.Fatalf("create inventory: %v", err)
+	}
+	observed := mysqlInstance(cluster.ResourceID, "mysql-old", "", 3306)
+	snapshot, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{ClusterID: cluster.ResourceID, InventoryGeneration: currentInventoryGeneration(t, repository, cluster.ResourceID), ObservedAt: time.Now().UTC(), Observations: []DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: observed}}, Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}}})
+	if err != nil {
+		t.Fatalf("publish topology: %v", err)
+	}
+	update := snapshot.Instances[0]
+	update.Hostname = "mysql-new"
+	update.Port = 4406
+	repository.syncDirectory = func(string) error { return errors.New("directory sync unavailable") }
+
+	updated, endpoint, err := repository.ReconcileMetadataCoordinates(MetadataCoordinates{Instance: update, EndpointID: endpoints[0].ResourceID})
+	if !errors.Is(err, ErrPostCommitDurability) {
+		t.Fatalf("reconcile error = %v, want post-commit durability warning", err)
+	}
+	var committed interface{ Committed() bool }
+	if !errors.As(err, &committed) || !committed.Committed() {
+		t.Fatalf("post-commit warning does not expose committed state: %T %v", err, err)
+	}
+	if updated.ResourceID != update.ResourceID || updated.Hostname != "mysql-new" || endpoint.ResourceID != endpoints[0].ResourceID || endpoint.Port != 4406 {
+		t.Fatalf("committed result was discarded: instance=%+v endpoint=%+v", updated, endpoint)
+	}
+	live := repository.Instances(cluster.ResourceID)
+	reopened, reopenErr := Open(path)
+	if reopenErr != nil {
+		t.Fatalf("reopen committed metadata: %v", reopenErr)
+	}
+	onDisk := reopened.Instances(cluster.ResourceID)
+	if len(live) != 1 || len(onDisk) != 1 || live[0].Hostname != "mysql-new" || !reflect.DeepEqual(live, onDisk) {
+		t.Fatalf("post-commit state diverged: live=%+v disk=%+v", live, onDisk)
 	}
 }
 
