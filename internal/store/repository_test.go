@@ -94,6 +94,60 @@ func TestPersistentSnapshotDirectorySyncFailureCommitsLiveAndDiskState(t *testin
 	}
 }
 
+func TestCreateClusterReturnsCommittedResourcesAfterDirectorySyncWarning(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metadata.json")
+	repository, err := Open(path)
+	if err != nil {
+		t.Fatalf("open repository: %v", err)
+	}
+	repository.syncDirectory = func(string) error { return errors.New("directory sync unavailable") }
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "committed-registration"}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true}})
+	if !errors.Is(err, ErrPostCommitDurability) {
+		t.Fatalf("registration error = %v, want post-commit warning", err)
+	}
+	if !model.ValidResourceID(cluster.ResourceID) || len(endpoints) != 1 || !model.ValidResourceID(endpoints[0].ResourceID) {
+		t.Fatalf("committed registration results were discarded: cluster=%+v endpoints=%+v", cluster, endpoints)
+	}
+	reopened, reopenErr := Open(path)
+	if reopenErr != nil {
+		t.Fatalf("reopen registration: %v", reopenErr)
+	}
+	stored, found := reopened.Cluster(cluster.ResourceID)
+	if !found || stored.DisplayName != cluster.DisplayName || !reflect.DeepEqual(reopened.Endpoints(cluster.ResourceID), endpoints) {
+		t.Fatalf("committed registration is not recoverable: cluster=%+v endpoints=%+v", stored, reopened.Endpoints(cluster.ResourceID))
+	}
+}
+
+func TestDiscoveryReturnsCommittedSnapshotAfterDirectorySyncWarning(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metadata.json")
+	repository, err := Open(path)
+	if err != nil {
+		t.Fatalf("open repository: %v", err)
+	}
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "committed-discovery"}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true}})
+	if err != nil {
+		t.Fatalf("create inventory: %v", err)
+	}
+	observedAt := time.Now().UTC()
+	repository.syncDirectory = func(string) error { return errors.New("directory sync unavailable") }
+	published, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{ClusterID: cluster.ResourceID, InventoryGeneration: currentInventoryGeneration(t, repository, cluster.ResourceID), ObservedAt: observedAt, Observations: []DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: mysqlInstance(cluster.ResourceID, "mysql-a", "", 3306)}}, Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}}})
+	if !errors.Is(err, ErrPostCommitDurability) {
+		t.Fatalf("discovery error = %v, want post-commit warning", err)
+	}
+	if published.ClusterID != cluster.ResourceID || !published.ObservedAt.Equal(observedAt) || len(published.Instances) != 1 {
+		t.Fatalf("committed discovery result was discarded: %+v", published)
+	}
+	live, found := repository.TopologySnapshot(cluster.ResourceID)
+	reopened, reopenErr := Open(path)
+	if reopenErr != nil {
+		t.Fatalf("reopen discovery: %v", reopenErr)
+	}
+	onDisk, diskFound := reopened.TopologySnapshot(cluster.ResourceID)
+	if !found || !diskFound || !reflect.DeepEqual(live, published) || !reflect.DeepEqual(onDisk, published) {
+		t.Fatalf("committed discovery diverged: published=%+v live=%+v disk=%+v", published, live, onDisk)
+	}
+}
+
 func mysqlInstance(clusterID model.ResourceID, hostname string, ipAddress string, port int) model.DatabaseInstance {
 	return model.DatabaseInstance{
 		ClusterID: clusterID,

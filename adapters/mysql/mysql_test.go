@@ -13,6 +13,7 @@ import (
 type fakeRunner struct {
 	identity        Row
 	replication     Row
+	replicationRows []Row
 	status          []Row
 	replicaError    error
 	queries         []string
@@ -27,6 +28,9 @@ func (runner *fakeRunner) Query(_ context.Context, _ adapter.Endpoint, _ adapter
 	case query == "SHOW REPLICA STATUS":
 		if runner.replicaError != nil {
 			return nil, runner.replicaError
+		}
+		if runner.replicationRows != nil {
+			return runner.replicationRows, nil
 		}
 		if runner.replication == nil {
 			return nil, nil

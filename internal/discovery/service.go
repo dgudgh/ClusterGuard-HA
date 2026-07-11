@@ -247,6 +247,10 @@ func (service *Service) Refresh(ctx context.Context, clusterID model.ResourceID)
 		Anomalies:             anomalies,
 	})
 	if err != nil {
+		if errors.Is(err, store.ErrPostCommitDurability) {
+			sortSnapshotResources(snapshot.Instances, snapshot.Links, snapshot.Probes, snapshot.Anomalies)
+			return snapshot, fmt.Errorf("apply discovery refresh: %w", err)
+		}
 		return model.TopologySnapshot{}, fmt.Errorf("apply discovery refresh: %w", err)
 	}
 

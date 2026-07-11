@@ -170,8 +170,15 @@ the action may have changed database state and must not be retried blindly.
 If the atomic metadata rename succeeds but directory synchronization cannot
 confirm crash durability, the committed result is retained, verification still
 runs, and the API returns the reconciled resources with an `indeterminate`
-execution. A report that encounters the same post-commit warning is rewritten
-under its existing report UUID so its durable summary matches the response.
+execution. Terminal reports use a crash-recoverable two-phase protocol under one
+report UUID: a conservative fallback is made durable before the verified outcome
+replaces it. A terminal write failure therefore leaves a failed or indeterminate
+report appropriate to whether the database operation had already committed.
+
+Cluster registration and topology publication use the same post-rename
+semantics. If directory synchronization cannot confirm crash durability, the
+API returns HTTP `500` with the committed cluster, endpoint, or observation
+UUIDs instead of discarding them and inviting an unsafe retry.
 
 Platform metadata reconciliation is distinct from a database mutation. It may
 update a known resource's mutable coordinates after native identity validation,

@@ -97,9 +97,10 @@ type AuditEvent struct {
 
 type Report struct {
 	ResourceMeta
-	OperationID ResourceID `json:"operation_id"`
-	Title       string     `json:"title"`
-	Summary     string     `json:"summary"`
+	OperationID ResourceID      `json:"operation_id"`
+	Title       string          `json:"title"`
+	Status      OperationStatus `json:"status"`
+	Summary     string          `json:"summary"`
 }
 
 type MetadataAnomaly struct {

@@ -105,6 +105,9 @@ func probeReplication(ctx context.Context, runner SQLRunner, endpoint adapter.En
 	if len(rows) == 0 {
 		return model.ReplicationStatus{IOThread: model.ThreadUnknown, SQLThread: model.ThreadUnknown}, false, nil
 	}
+	if len(rows) > 1 {
+		return model.ReplicationStatus{}, true, fmt.Errorf("multiple MySQL replication channels are unsupported")
+	}
 	status, err := parseReplication(rows[0])
 	if err != nil {
 		return model.ReplicationStatus{}, true, err

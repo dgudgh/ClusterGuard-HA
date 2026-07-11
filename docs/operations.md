@@ -263,6 +263,18 @@ is also reported as committed but `indeterminate`, including the reconciled
 instance and endpoint in the response. Treat `indeterminate` as a manual-review
 state; do not automatically retry the operation.
 
+Cluster registration and discovery publication follow the same rule. A
+post-rename durability warning returns HTTP `500` plus the committed resource or
+observation in `result`. Reconcile that UUID before retrying; creating another
+cluster or publishing as though the observation were absent can duplicate user
+intent. Reports first persist a conservative fallback and then replace it with
+the terminal outcome under the same report UUID.
+
+MySQL multi-source replication is detected but not modeled in this phase. If
+`SHOW REPLICA STATUS` or its legacy equivalent returns more than one channel,
+discovery fails closed and does not publish partial health, topology, or
+promotion eligibility.
+
 ## 9. Adapter Roadmap
 
 ### MySQL

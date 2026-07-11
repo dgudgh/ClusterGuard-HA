@@ -211,6 +211,45 @@ func TestRegisterClusterAndRefreshOnlyRegisteredInventory(t *testing.T) {
 	}
 }
 
+func TestRegistrationPostCommitWarningReturnsCommittedUUIDs(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	cluster := model.DatabaseCluster{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, Engine: model.EngineMySQL, DisplayName: "committed"}
+	endpoints := []model.Endpoint{{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, ClusterID: cluster.ResourceID, Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true}}
+	err := fmt.Errorf("%w: secret filesystem detail", store.ErrPostCommitDurability)
+	if !writeClusterRegistrationFailure(recorder, cluster, endpoints, err) {
+		t.Fatal("post-commit registration warning was not handled")
+	}
+	body := recorder.Body.String()
+	if recorder.Code != http.StatusInternalServerError || !strings.Contains(body, string(cluster.ResourceID)) || !strings.Contains(body, string(endpoints[0].ResourceID)) || !strings.Contains(body, "committed with durability warning") {
+		t.Fatalf("post-commit registration response = %d %s", recorder.Code, body)
+	}
+	if strings.Contains(body, "secret filesystem detail") {
+		t.Fatalf("registration response leaked persistence details: %s", body)
+	}
+}
+
+func TestDiscoveryPostCommitWarningReturnsPublishedObservation(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, _, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "discovery-warning"}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true}})
+	if err != nil {
+		t.Fatalf("create inventory: %v", err)
+	}
+	observedAt := time.Now().UTC()
+	snapshot := model.TopologySnapshot{ClusterID: cluster.ResourceID, ObservedAt: observedAt, Health: model.Health{State: model.HealthHealthy}}
+	refresher := &fakeRefresher{refresh: func(context.Context, model.ResourceID) (model.TopologySnapshot, error) {
+		return snapshot, fmt.Errorf("%w: secret discovery path", store.ErrPostCommitDurability)
+	}}
+	server := newAPIServer(t, repository, newCandidateAdapterSpy(), refresher)
+	response := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/clusters/"+string(cluster.ResourceID)+"/discover", nil)
+	body := response.Body.String()
+	if response.Code != http.StatusInternalServerError || !strings.Contains(body, string(cluster.ResourceID)) || !strings.Contains(body, observedAt.Format(time.RFC3339Nano)) || !strings.Contains(body, "published with durability warning") {
+		t.Fatalf("post-commit discovery response = %d %s", response.Code, body)
+	}
+	if strings.Contains(body, "secret discovery path") {
+		t.Fatalf("discovery response leaked persistence details: %s", body)
+	}
+}
+
 func TestClusterDetailExposesRegisteredEndpointsForConditionalVIPDisplay(t *testing.T) {
 	repository := store.NewMemory()
 	server := newAPIServer(t, repository, nil, nil)

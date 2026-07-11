@@ -126,25 +126,37 @@ func (service *Service) audit(operation model.Operation, stage model.WorkflowSta
 	return nil
 }
 
-func (service *Service) report(operation model.Operation, execution model.Execution) error {
+func (service *Service) report(operation model.Operation, execution model.Execution, operationCommitted bool) error {
 	if service.journal == nil {
 		return fmt.Errorf("workflow journal is not configured")
 	}
 	now := service.now().UTC()
+	fallback := execution
+	if operationCommitted {
+		fallback = markIndeterminate(fallback)
+	} else {
+		fallback.Status = model.OperationFailed
+		fallback.Message = "workflow journal persistence failed"
+	}
 	report := model.Report{
 		ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID(), MetadataRevision: 1, CreatedAt: now, UpdatedAt: now},
 		OperationID:  operation.ResourceID,
 		Title:        string(operation.Kind) + " report",
-		Summary:      execution.Message,
+		Status:       fallback.Status,
+		Summary:      fallback.Message,
 	}
 	if err := service.journal.RecordReport(report); err != nil {
+		return fmt.Errorf("persist fallback operation report: %w", err)
+	}
+	report.Status = execution.Status
+	report.Summary = execution.Message
+	if err := service.journal.RecordReport(report); err != nil {
 		if isCommittedWarning(err) {
-			report.Summary = markIndeterminate(execution).Message
-			if correctionErr := service.journal.RecordReport(report); correctionErr != nil && !isCommittedWarning(correctionErr) {
-				return fmt.Errorf("persist indeterminate operation report after committed warning: %v; original: %w", correctionErr, err)
-			}
+			// The conservative record was already made durable. After the terminal
+			// rename, recovery can observe either the terminal record or fallback.
+			return nil
 		}
-		return fmt.Errorf("persist operation report: %w", err)
+		return fmt.Errorf("persist terminal operation report: %w", err)
 	}
 	return nil
 }
@@ -188,7 +200,7 @@ func (service *Service) recordOutcome(operation model.Operation, execution model
 	if err := service.audit(operation, stage, message); err != nil {
 		return journalFailure(execution, err)
 	}
-	if err := service.report(operation, execution); err != nil {
+	if err := service.report(operation, execution, false); err != nil {
 		return journalFailure(execution, err)
 	}
 	return execution, cause
@@ -211,7 +223,7 @@ func (service *Service) unsupported(operation model.Operation, message string) (
 	if err := service.audit(operation, model.StageReport, "unsupported operation reported"); err != nil {
 		return journalFailure(execution, err)
 	}
-	if err := service.report(operation, execution); err != nil {
+	if err := service.report(operation, execution, false); err != nil {
 		return journalFailure(execution, err)
 	}
 	return execution, adapter.ErrUnsupported
@@ -334,7 +346,7 @@ func (service *Service) Execute(ctx context.Context, request adapter.OperationRe
 		if committedJournalErr != nil {
 			execution = markIndeterminate(execution)
 		}
-		if reportErr := service.report(operation, execution); reportErr != nil {
+		if reportErr := service.report(operation, execution, true); reportErr != nil {
 			committedJournalErr = firstJournalError(committedJournalErr, reportErr)
 		}
 		if committedJournalErr != nil {
@@ -358,7 +370,7 @@ func (service *Service) Execute(ctx context.Context, request adapter.OperationRe
 	if committedJournalErr != nil {
 		execution = markIndeterminate(execution)
 	}
-	if err := service.report(operation, execution); err != nil {
+	if err := service.report(operation, execution, true); err != nil {
 		committedJournalErr = firstJournalError(committedJournalErr, err)
 	}
 	if committedJournalErr != nil {
@@ -447,7 +459,7 @@ func (service *Service) ExecuteMetadata(ctx context.Context, operation model.Ope
 		if committedJournalErr != nil {
 			execution = markIndeterminate(execution)
 		}
-		if reportErr := service.report(operation, execution); reportErr != nil {
+		if reportErr := service.report(operation, execution, true); reportErr != nil {
 			committedJournalErr = firstJournalError(committedJournalErr, reportErr)
 		}
 		if committedJournalErr != nil {
@@ -474,7 +486,7 @@ func (service *Service) ExecuteMetadata(ctx context.Context, operation model.Ope
 	if committedJournalErr != nil {
 		execution = markIndeterminate(execution)
 	}
-	if err := service.report(operation, execution); err != nil {
+	if err := service.report(operation, execution, true); err != nil {
 		committedJournalErr = firstJournalError(committedJournalErr, err)
 	}
 	if committedJournalErr != nil {

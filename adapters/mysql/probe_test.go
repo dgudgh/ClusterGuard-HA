@@ -143,6 +143,20 @@ func TestDiscoverDegradesReplicaWithStoppedOrMissingThread(t *testing.T) {
 	}
 }
 
+func TestDiscoverRejectsMultipleReplicationChannels(t *testing.T) {
+	runner := healthyReplicaRunner("8.4.10", modernReplicationRow())
+	second := modernReplicationRow()
+	second["Channel_Name"] = "analytics"
+	second["Source_UUID"] = "other-source-uuid"
+	second["Replica_SQL_Running"] = "No"
+	runner.replicationRows = []Row{modernReplicationRow(), second}
+
+	_, err := New(runner).Discover(context.Background(), adapterRequest())
+	if err == nil || !strings.Contains(err.Error(), "multiple MySQL replication channels are unsupported") {
+		t.Fatalf("multi-channel replication did not fail closed: %v", err)
+	}
+}
+
 func TestDiscoverIdentifiesPrimaryOnlyWhenWritableAndUnreplicated(t *testing.T) {
 	for _, test := range []struct {
 		name          string

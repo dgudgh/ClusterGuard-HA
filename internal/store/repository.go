@@ -687,6 +687,10 @@ func (repository *Repository) CreateClusterWithEndpoints(cluster model.DatabaseC
 	next.InventoryGenerations = cloneUint64Map(repository.snapshot.InventoryGenerations)
 	next.InventoryGenerations[cluster.ResourceID] = 1
 	if err := repository.persistSnapshotLocked(next); err != nil {
+		if errors.Is(err, ErrPostCommitDurability) {
+			resultEndpoints := append([]model.Endpoint{}, endpoints...)
+			return cloneCluster(cluster), resultEndpoints, err
+		}
 		return model.DatabaseCluster{}, nil, err
 	}
 	repository.snapshot = next
@@ -1618,6 +1622,9 @@ func (repository *Repository) ApplyDiscoveryRefresh(refresh DiscoveryRefresh) (m
 	next.TopologySnapshots[refresh.ClusterID] = cloneTopologySnapshot(published)
 	next.ObservationWatermarks[refresh.ClusterID] = observedAt
 	if err := repository.persistSnapshotLocked(next); err != nil {
+		if errors.Is(err, ErrPostCommitDurability) {
+			return cloneTopologySnapshot(published), err
+		}
 		return model.TopologySnapshot{}, err
 	}
 	repository.snapshot = next

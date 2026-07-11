@@ -60,20 +60,32 @@ func (server *Server) registerCluster(writer http.ResponseWriter, request *http.
 	cluster, createdEndpoints, err := server.store.CreateClusterWithEndpoints(model.DatabaseCluster{
 		Engine: payload.Engine, DisplayName: payload.DisplayName, Health: model.Health{State: model.HealthUnknown},
 	}, endpoints)
-	if err != nil {
-		switch {
-		case errors.Is(err, store.ErrValidation):
-			writeError(writer, http.StatusBadRequest, "invalid cluster registration")
-		case errors.Is(err, store.ErrConflict):
-			writeError(writer, http.StatusConflict, "cluster registration conflicts with existing inventory")
-		default:
-			writeError(writer, http.StatusInternalServerError, "cluster registration failed")
-		}
+	if writeClusterRegistrationFailure(writer, cluster, createdEndpoints, err) {
 		return
 	}
 	writeJSON(writer, http.StatusCreated, map[string]interface{}{
 		"status": "ok", "result": map[string]interface{}{"cluster": cluster, "endpoints": createdEndpoints},
 	})
+}
+
+func writeClusterRegistrationFailure(writer http.ResponseWriter, cluster model.DatabaseCluster, endpoints []model.Endpoint, err error) bool {
+	if err == nil {
+		return false
+	}
+	switch {
+	case errors.Is(err, store.ErrPostCommitDurability):
+		writeJSON(writer, http.StatusInternalServerError, map[string]interface{}{
+			"status": "error", "message": "cluster registration committed with durability warning",
+			"result": map[string]interface{}{"cluster": cluster, "endpoints": endpoints},
+		})
+	case errors.Is(err, store.ErrValidation):
+		writeError(writer, http.StatusBadRequest, "invalid cluster registration")
+	case errors.Is(err, store.ErrConflict):
+		writeError(writer, http.StatusConflict, "cluster registration conflicts with existing inventory")
+	default:
+		writeError(writer, http.StatusInternalServerError, "cluster registration failed")
+	}
+	return true
 }
 
 func (server *Server) clusterRoute(writer http.ResponseWriter, request *http.Request, suffix string) {
@@ -196,6 +208,12 @@ func (server *Server) discoverCluster(writer http.ResponseWriter, request *http.
 	snapshot, err := server.refresher.Refresh(request.Context(), clusterID)
 	if errors.Is(err, adapter.ErrUnsupported) {
 		server.unsupported(writer, "discovery is unsupported for this engine")
+		return
+	}
+	if errors.Is(err, store.ErrPostCommitDurability) {
+		writeJSON(writer, http.StatusInternalServerError, map[string]interface{}{
+			"status": "error", "message": "topology observation published with durability warning", "result": snapshot,
+		})
 		return
 	}
 	if errors.Is(err, store.ErrStaleObservation) {

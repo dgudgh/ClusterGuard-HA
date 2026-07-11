@@ -138,6 +138,35 @@ func (journal postCommitReportJournal) RecordReport(report model.Report) error {
 	return committedWarning{message: "report committed with durability warning"}
 }
 
+type finalReportFailingJournal struct {
+	*MemoryJournal
+	calls int
+}
+
+func (journal *finalReportFailingJournal) RecordReport(report model.Report) error {
+	journal.calls++
+	if journal.calls == 2 {
+		return errors.New("terminal report write failed before commit")
+	}
+	return journal.MemoryJournal.RecordReport(report)
+}
+
+type finalReportPostCommitJournal struct {
+	*MemoryJournal
+	calls int
+}
+
+func (journal *finalReportPostCommitJournal) RecordReport(report model.Report) error {
+	journal.calls++
+	if err := journal.MemoryJournal.RecordReport(report); err != nil {
+		return err
+	}
+	if journal.calls == 2 {
+		return committedWarning{message: "terminal report committed with durability warning"}
+	}
+	return nil
+}
+
 func TestExecuteStillVerifiesAfterPostCommitJournalFailure(t *testing.T) {
 	trace := []string{}
 	registry := adapter.NewRegistry()
@@ -177,7 +206,7 @@ func TestExecuteStillVerifiesAfterPostCommitJournalFailure(t *testing.T) {
 	}
 }
 
-func TestReportPostCommitWarningRewritesDurableOutcomeAsIndeterminate(t *testing.T) {
+func TestInitialReportPostCommitWarningPreservesDurableIndeterminateFallback(t *testing.T) {
 	trace := []string{}
 	registry := adapter.NewRegistry()
 	if err := registry.Register(newRecordingAdapter(&trace, true)); err != nil {
@@ -193,6 +222,64 @@ func TestReportPostCommitWarningRewritesDurableOutcomeAsIndeterminate(t *testing
 	reports := journal.Reports()
 	if len(reports) != 1 || !strings.Contains(reports[0].Summary, "journal persistence failed") {
 		t.Fatalf("durable report disagrees with indeterminate response: %+v", reports)
+	}
+}
+
+func TestFinalReportWriteFailurePreservesDurableIndeterminateFallback(t *testing.T) {
+	trace := []string{}
+	registry := adapter.NewRegistry()
+	if err := registry.Register(newRecordingAdapter(&trace, true)); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	journal := &finalReportFailingJournal{MemoryJournal: NewMemoryJournal()}
+	service := New(registry, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, journal)
+	operation := model.Operation{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, ClusterID: model.NewResourceID(), Engine: model.EngineMySQL, Kind: model.OperationSwitchover, RequestedBy: "dba"}
+	execution, err := service.Execute(context.Background(), adapter.OperationRequest{Operation: operation}, "approved")
+	if !errors.Is(err, ErrJournalPersistence) || execution.Status != model.OperationIndeterminate {
+		t.Fatalf("terminal report failure execution=%+v err=%v", execution, err)
+	}
+	reports := journal.Reports()
+	if journal.calls != 2 || len(reports) != 1 || !strings.Contains(reports[0].Summary, "journal persistence failed") {
+		t.Fatalf("durable fallback was not preserved: calls=%d reports=%+v", journal.calls, reports)
+	}
+}
+
+func TestFinalReportPostCommitWarningUsesDurableFallbackAndKeepsVerifiedOutcome(t *testing.T) {
+	trace := []string{}
+	registry := adapter.NewRegistry()
+	if err := registry.Register(newRecordingAdapter(&trace, true)); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	journal := &finalReportPostCommitJournal{MemoryJournal: NewMemoryJournal()}
+	service := New(registry, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, journal)
+	operation := model.Operation{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, ClusterID: model.NewResourceID(), Engine: model.EngineMySQL, Kind: model.OperationSwitchover, RequestedBy: "dba"}
+	execution, err := service.Execute(context.Background(), adapter.OperationRequest{Operation: operation}, "approved")
+	if err != nil || execution.Status != model.OperationSucceeded {
+		t.Fatalf("recoverable terminal warning execution=%+v err=%v", execution, err)
+	}
+	reports := journal.Reports()
+	if journal.calls != 2 || len(reports) != 1 || reports[0].Status != model.OperationSucceeded || reports[0].Summary != "executed" {
+		t.Fatalf("terminal report did not match verified outcome: calls=%d reports=%+v", journal.calls, reports)
+	}
+}
+
+func TestUnsupportedReportWarningDoesNotClaimDatabaseOperationCommitted(t *testing.T) {
+	trace := []string{}
+	registry := adapter.NewRegistry()
+	if err := registry.Register(newRecordingAdapter(&trace, false)); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	journal := postCommitReportJournal{MemoryJournal: NewMemoryJournal()}
+	service := New(registry, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, journal)
+	execution, err := service.Execute(context.Background(), adapter.OperationRequest{Operation: model.Operation{
+		ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, ClusterID: model.NewResourceID(), Engine: model.EngineMySQL, Kind: model.OperationFailover,
+	}}, "approved")
+	if !errors.Is(err, ErrJournalPersistence) || execution.Status != model.OperationFailed {
+		t.Fatalf("unsupported report warning execution=%+v err=%v", execution, err)
+	}
+	reports := journal.Reports()
+	if len(reports) != 1 || strings.Contains(reports[0].Summary, "operation committed") || !strings.Contains(reports[0].Summary, "journal persistence failed") {
+		t.Fatalf("unsupported report falsely claims a database commit: %+v", reports)
 	}
 }
 

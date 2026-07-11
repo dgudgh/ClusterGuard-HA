@@ -86,10 +86,13 @@ func (locks *MemoryLocks) acquire(ctx context.Context, key string) (func(), erro
 		return nil, fmt.Errorf("an operation lock is already active for this resource")
 	}
 	locks.active[key] = true
+	var once sync.Once
 	return func() {
-		locks.mu.Lock()
-		defer locks.mu.Unlock()
-		delete(locks.active, key)
+		once.Do(func() {
+			locks.mu.Lock()
+			defer locks.mu.Unlock()
+			delete(locks.active, key)
+		})
 	}, nil
 }
 
