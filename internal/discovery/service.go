@@ -129,15 +129,17 @@ func (service *Service) Refresh(ctx context.Context, clusterID model.ResourceID)
 		status.DiscoveryObservedAt = observedAt
 		discovered.ClusterID = clusterID
 		discovered.Engine = cluster.Engine
-		if discovered.Hostname == "" {
-			discovered.Hostname = probe.endpoint.Hostname
+		engineMetadata := make(map[string]string, len(discovered.EngineMetadata)+1)
+		for key, value := range discovered.EngineMetadata {
+			engineMetadata[key] = value
 		}
-		if discovered.IPAddress == "" {
-			discovered.IPAddress = probe.endpoint.IPAddress
+		discovered.EngineMetadata = engineMetadata
+		if discovered.Hostname != "" {
+			discovered.EngineMetadata["reported_hostname"] = discovered.Hostname
 		}
-		if discovered.Port == 0 {
-			discovered.Port = probe.endpoint.Port
-		}
+		discovered.Hostname = probe.endpoint.Hostname
+		discovered.IPAddress = probe.endpoint.IPAddress
+		discovered.Port = probe.endpoint.Port
 		metrics := probe.metrics
 		if probe.failure == probeMetricsFailed {
 			metricFailures++

@@ -297,6 +297,40 @@ func TestRefreshBuildsLinksAndMetricsOnlyFromRegisteredInventory(t *testing.T) {
 	}
 }
 
+func TestRefreshUsesInventoryCoordinatesWhenReportedHostnamesCollide(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "shared-short-hostname"})
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	first := addEndpoint(t, repository, cluster.ResourceID, "mysql-a.example.test", 3306, model.EndpointDatabase, true)
+	second := addEndpoint(t, repository, cluster.ResourceID, "mysql-b.example.test", 3306, model.EndpointDatabase, true)
+	candidate := newFakeAdapter()
+	candidate.results[first.Hostname] = discoveredInstance("mysql-short", 3306, "native-a", model.RolePrimary, "")
+	candidate.results[second.Hostname] = discoveredInstance("mysql-short", 3306, "native-b", model.RoleReplica, "native-a")
+
+	snapshot, err := newTestService(t, repository, candidate).Refresh(context.Background(), cluster.ResourceID)
+	if err != nil {
+		t.Fatalf("refresh shared reported hostname: %v", err)
+	}
+	if len(snapshot.Instances) != 2 {
+		t.Fatalf("shared reported hostname collapsed inventory: %+v", snapshot.Instances)
+	}
+	hosts := map[string]bool{}
+	for _, instance := range snapshot.Instances {
+		hosts[instance.Hostname] = true
+		if instance.EngineMetadata["reported_hostname"] != "mysql-short" {
+			t.Fatalf("reported hostname evidence missing: %+v", instance)
+		}
+	}
+	if !hosts[first.Hostname] || !hosts[second.Hostname] {
+		t.Fatalf("instances did not retain authoritative inventory coordinates: %+v", snapshot.Instances)
+	}
+	if _, mutated := candidate.results[first.Hostname].EngineMetadata["reported_hostname"]; mutated {
+		t.Fatal("refresh mutated adapter-owned engine metadata")
+	}
+}
+
 func TestRefreshRepresentsFirstAndKnownProbeFailuresWithoutInventingInstancesOrLinks(t *testing.T) {
 	repository := store.NewMemory()
 	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "failures"})

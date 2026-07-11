@@ -45,7 +45,7 @@ func TestConsoleConsumesSelectedClusterReadAPIsAndPostsDiscovery(t *testing.T) {
 	for _, contract := range []string{
 		`id="control-token"`,
 		`type="password"`,
-		`autocomplete="current-password"`,
+		`autocomplete="off"`,
 		"'Authorization': `Bearer ${controlToken}`",
 		"byId('control-token').value.trim()",
 	} {
@@ -145,10 +145,11 @@ func TestConsoleRefreshInvalidatesInFlightClusterReadsBeforePosting(t *testing.T
 	}
 	refreshEnd := refreshStart + refreshEndOffset
 	refreshSource := page[refreshStart:refreshEnd]
+	tokenValidation := strings.Index(refreshSource, "const controlToken = byId('control-token').value.trim();")
 	invalidate := strings.Index(refreshSource, "const generation = ++state.requestGeneration;")
 	post := strings.Index(refreshSource, "await fetchResult(")
-	if invalidate < 0 || post < 0 || invalidate > post {
-		t.Fatal("refresh must invalidate all in-flight cluster reads before the discovery POST")
+	if tokenValidation < 0 || invalidate < 0 || post < 0 || tokenValidation > invalidate || invalidate > post {
+		t.Fatal("refresh must validate the token, then invalidate in-flight reads before the discovery POST")
 	}
 	if strings.Contains(refreshSource, "const generation = state.requestGeneration;") {
 		t.Fatal("refresh must not reuse a generation owned by an earlier cluster read")

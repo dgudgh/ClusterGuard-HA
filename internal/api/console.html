@@ -277,7 +277,7 @@
             </select>
           </label>
           <label for="control-token">控制令牌
-            <input id="control-token" type="password" autocomplete="current-password" placeholder="仅用于刷新">
+            <input id="control-token" type="password" autocomplete="off" placeholder="仅用于刷新">
           </label>
           <button id="refresh-topology" type="button" aria-label="刷新所选集群拓扑">↻ 刷新拓扑</button>
         </div>
@@ -590,13 +590,13 @@
         setLiveStatus('请先选择数据库集群。', true);
         return;
       }
-      const generation = ++state.requestGeneration;
       const controlToken = byId('control-token').value.trim();
       if (!controlToken) {
-        commitIfCurrent(generation, () => setLiveStatus('请输入控制令牌后刷新。', true));
+        setLiveStatus('请输入控制令牌后刷新。', true);
         byId('control-token').focus();
         return;
       }
+      const generation = ++state.requestGeneration;
       const refresh = byId('refresh-topology');
       refresh.disabled = true;
       commitIfCurrent(generation, () => setLiveStatus('正在刷新拓扑。'));

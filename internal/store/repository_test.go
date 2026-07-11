@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -11,6 +12,54 @@ import (
 	metricsservice "clusterguard.io/ha/internal/metrics"
 	"clusterguard.io/ha/pkg/model"
 )
+
+func TestPersistentSnapshotSyncsFileAndDirectoryBeforeSuccess(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metadata.json")
+	repository, err := Open(path)
+	if err != nil {
+		t.Fatalf("open repository: %v", err)
+	}
+	events := make([]string, 0, 2)
+	repository.syncFile = func(file *os.File) error {
+		info, statErr := file.Stat()
+		if statErr != nil || info.Size() == 0 {
+			t.Fatalf("snapshot file was not written before sync: info=%+v err=%v", info, statErr)
+		}
+		events = append(events, "file")
+		return nil
+	}
+	repository.syncDirectory = func(directory string) error {
+		if directory != filepath.Dir(path) {
+			t.Fatalf("synced directory = %q, want %q", directory, filepath.Dir(path))
+		}
+		if _, statErr := os.Stat(path); statErr != nil {
+			t.Fatalf("snapshot was not renamed before directory sync: %v", statErr)
+		}
+		events = append(events, "directory")
+		return nil
+	}
+	if _, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "durable"}); err != nil {
+		t.Fatalf("persist cluster: %v", err)
+	}
+	if !reflect.DeepEqual(events, []string{"file", "directory"}) {
+		t.Fatalf("durability sequence = %v", events)
+	}
+}
+
+func TestPersistentSnapshotFileSyncFailureDoesNotPublishLiveState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metadata.json")
+	repository, err := Open(path)
+	if err != nil {
+		t.Fatalf("open repository: %v", err)
+	}
+	repository.syncFile = func(*os.File) error { return errors.New("sync failed") }
+	if _, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "not-published"}); err == nil {
+		t.Fatal("file sync failure was ignored")
+	}
+	if len(repository.Clusters()) != 0 {
+		t.Fatalf("file sync failure published live state: %+v", repository.Clusters())
+	}
+}
 
 func mysqlInstance(clusterID model.ResourceID, hostname string, ipAddress string, port int) model.DatabaseInstance {
 	return model.DatabaseInstance{

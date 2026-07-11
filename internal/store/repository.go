@@ -87,10 +87,12 @@ type snapshot struct {
 }
 
 type Repository struct {
-	mu       sync.RWMutex
-	path     string
-	snapshot snapshot
-	now      func() time.Time
+	mu            sync.RWMutex
+	path          string
+	snapshot      snapshot
+	now           func() time.Time
+	syncFile      func(*os.File) error
+	syncDirectory func(string) error
 }
 
 func emptySnapshot() snapshot {
@@ -110,7 +112,24 @@ func emptySnapshot() snapshot {
 }
 
 func NewMemory() *Repository {
-	return &Repository{snapshot: emptySnapshot(), now: time.Now}
+	return &Repository{
+		snapshot:      emptySnapshot(),
+		now:           time.Now,
+		syncFile:      func(file *os.File) error { return file.Sync() },
+		syncDirectory: syncMetadataDirectory,
+	}
+}
+
+func syncMetadataDirectory(path string) error {
+	directory, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	if err := directory.Sync(); err != nil {
+		_ = directory.Close()
+		return err
+	}
+	return directory.Close()
 }
 
 func Open(path string) (*Repository, error) {
@@ -345,11 +364,18 @@ func (repository *Repository) persistSnapshotLocked(value snapshot) error {
 		temporary.Close()
 		return fmt.Errorf("write metadata snapshot: %w", err)
 	}
+	if err := repository.syncFile(temporary); err != nil {
+		temporary.Close()
+		return fmt.Errorf("sync metadata snapshot: %w", err)
+	}
 	if err := temporary.Close(); err != nil {
 		return fmt.Errorf("close metadata snapshot: %w", err)
 	}
 	if err := os.Rename(temporaryPath, repository.path); err != nil {
 		return fmt.Errorf("publish metadata snapshot: %w", err)
+	}
+	if err := repository.syncDirectory(filepath.Dir(repository.path)); err != nil {
+		return fmt.Errorf("sync metadata directory: %w", err)
 	}
 	return nil
 }
