@@ -7,10 +7,12 @@ adapters. Platform identity, inventory authority, workflow gates, persistence,
 API behavior, audit, and reports belong to the control kernel. Database
 protocol details belong to adapters.
 
-The current release enables MySQL read-only discovery, health, metrics, and
-candidate evaluation. PostgreSQL, Oracle, and SQL Server are registered through
-the same adapter contract and remain unsupported skeletons until their
-read-only implementations are complete.
+The current release enables MySQL discovery, health, metrics, candidate
+evaluation, guarded switchover precheck, immutable planning, and a deterministic
+role-transition kernel. The default runtime has no executable writer-endpoint
+provider, so mutation remains unavailable outside tests. PostgreSQL, Oracle,
+and SQL Server are registered through the same adapter contract and remain
+unsupported skeletons until their read-only implementations are complete.
 
 ## Resource Model
 
@@ -28,7 +30,7 @@ The main resources are:
 | `EndpointAlias` | Historical or alternate coordinates for an endpoint. |
 | `ReplicationLink` | Source-to-target relationship, lag, and link health. |
 | `HAEndpoint` | Desired owner and health of a VIP, listener, or service endpoint. |
-| `Operation` / `OperationPlan` | Requested intent and immutable execution plan. |
+| `OperationRecord` / `OperationPlan` | Idempotent intent, durable stage progress, and immutable execution plan. |
 | `Execution` / `Verification` | Execution result and postcondition evidence. |
 | `AuditEvent` / `Report` | Durable operator trace and human-readable outcome. |
 
@@ -62,9 +64,12 @@ for all four engines.
 Capabilities are explicit. An unavailable capability returns `unsupported`;
 there is no fallback that guesses an engine behavior. The MySQL adapter enables
 read-only discovery, native replication topology, health, metrics, candidate
-evaluation, and platform metadata reconciliation. Its role-changing and
-node-changing methods remain unsupported. The other three adapters currently
-return unsupported for every database operation.
+evaluation, platform metadata reconciliation, and strict planned-switchover
+precheck/planning. MySQL execution is advertised only when both a mutating SQL
+executor and an executable writer-endpoint provider are injected. The default
+provider is explicitly unsupported. Node-changing methods remain unsupported.
+The other three adapters currently return unsupported for every database
+operation.
 
 Adapter topology links use engine-native source and target identities. The
 resource registry resolves those identities to immutable platform UUIDs before
@@ -157,11 +162,25 @@ or adapter mutation. It pins the topology observation used by the operation,
 records the cluster UUID and observation timestamp, and revalidates the same
 token under the operation lock before approval. Discovery publication and
 operation execution use the same per-cluster fence, so a refresh cannot publish
-a new snapshot between revalidation and execution. In this release,
-switchover, failover, HA
-endpoint mutation, replication repair, node synchronization, and node
-lifecycle execution return HTTP `501` and do not invoke a mutating adapter
-method.
+a new snapshot between revalidation and execution.
+
+Each operation has a durable UUID and caller-supplied idempotency key. The
+repository atomically persists its observation token, immutable plan digest,
+referenced metadata revisions, workflow stage, completed step attempts,
+execution, and verification. Reusing a key for the same intent returns the
+existing operation; reusing it for another target or operation kind is a
+conflict. A same-process duplicate cannot terminalize the active operation, and
+a restart can resume from observed step postconditions.
+
+MySQL planned switchover is restricted to a healthy two-member topology in this
+increment. It requires zero lag, identical GTID histories, current complete
+probe coverage, running replication threads, compatible release families, and
+an executable endpoint provider. The source is fenced before the target is
+detached and promoted. Success requires independent proof of one writable
+instance and one target endpoint owner. The default provider blocks execution,
+so production requests return HTTP `501` before locks or mutations. Failover,
+former-primary rejoin, replication repair, node synchronization, and node
+lifecycle execution also remain unsupported.
 
 Audit and report persistence is fail-closed before the mutation commit point.
 After a mutation has committed, journal failure never skips verification. The

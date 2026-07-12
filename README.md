@@ -5,8 +5,9 @@
 **ClusterGuard HA — Multi-Database High Availability Control Plane**
 
 ClusterGuard HA is an independent, clean-room high-availability control plane.
-The current release delivers read-only MySQL topology intelligence and keeps
-first-class extension points for PostgreSQL, Oracle, and SQL Server.
+The current release delivers MySQL topology intelligence plus a durable,
+guarded planned-switchover foundation, and keeps first-class extension points
+for PostgreSQL, Oracle, and SQL Server.
 
 ## Current Release
 
@@ -19,6 +20,10 @@ The current MySQL adapter provides:
 - JSON metrics and a Prometheus text endpoint that can be scraped directly;
 - a compact Chinese topology console and the `cgctl` read-only CLI;
 - endpoint metadata reconciliation without changing database state.
+- durable operation UUIDs, idempotency keys, stage progress, audit, and reports;
+- strict two-node MySQL switchover precheck and immutable plan generation;
+- a tested MySQL 5.7/8.x/9.x role-transition kernel behind an independent
+  writer-endpoint provider contract.
 
 PostgreSQL, Oracle, and SQL Server adapters are registered and report their
 capabilities, but their discovery and execution methods currently fail closed
@@ -26,10 +31,15 @@ as unsupported.
 
 ## Safety Boundary
 
-This release does **not** execute switchover, failover, VIP or listener
-mutation, replication repair, node installation, node synchronization, or node
-lifecycle actions. Unsupported execution requests return HTTP `501` before an
-adapter can mutate a database.
+The default runtime does **not** execute switchover because no real
+writer-endpoint provider is configured. It returns HTTP `501` before safety
+gates, SQL, or endpoint side effects. The complete role-transition path is
+exercised only with a deterministic provider in tests until Linux VIP leasing,
+quorum, fencing, and unique-owner verification are delivered.
+
+Failover, automatic recovery, former-primary rejoin, replication repair, node
+installation, node synchronization, and node lifecycle actions remain
+unsupported.
 
 The common workflow remains:
 
@@ -102,6 +112,7 @@ go run ./cmd/cgctl health <cluster-uuid>
 go run ./cmd/cgctl candidates <cluster-uuid>
 go run ./cmd/cgctl metrics <cluster-uuid>
 go run ./cmd/cgctl refresh <cluster-uuid>
+go run ./cmd/cgctl operation <operation-uuid>
 ```
 
 `refresh` reads the control token from `CG_CONTROL_TOKEN`. Use
