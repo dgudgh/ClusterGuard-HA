@@ -121,6 +121,14 @@ func (server *Server) operationResourceRoute(writer http.ResponseWriter, request
 		}
 		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": map[string]interface{}{"operation": updated, "plan": plan}})
 		return
+	case "verify":
+		verification, err := server.workflow.Verify(request.Context(), adapterRequest)
+		if err != nil {
+			server.writeOperationActionError(writer, err, record)
+			return
+		}
+		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": verification})
+		return
 	case "execute":
 	default:
 		writeError(writer, http.StatusNotFound, "operation action not found")

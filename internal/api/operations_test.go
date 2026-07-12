@@ -129,4 +129,8 @@ func TestOperationAPIExposesResourceScopedPrecheckAndPlanActions(t *testing.T) {
 			t.Fatalf("%s route status=%d body=%s", action, response.Code, response.Body.String())
 		}
 	}
+	verify := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/operations/"+string(created.ResourceID)+"/verify", map[string]interface{}{})
+	if verify.Code != http.StatusNotImplemented {
+		t.Fatalf("verify route status=%d body=%s", verify.Code, verify.Body.String())
+	}
 }

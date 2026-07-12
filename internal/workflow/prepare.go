@@ -19,6 +19,44 @@ func (service *Service) Plan(ctx context.Context, request adapter.OperationReque
 	return record, plan, err
 }
 
+func (service *Service) Verify(ctx context.Context, request adapter.OperationRequest) (model.Verification, error) {
+	if service.registry == nil || service.operations == nil || service.resolver == nil {
+		return model.Verification{}, fmt.Errorf("durable operation verification is not configured")
+	}
+	record, found := service.operations.OperationByIdempotencyKey(request.IdempotencyKey)
+	if !found {
+		return model.Verification{}, fmt.Errorf("operation does not exist")
+	}
+	candidate, found := service.registry.Get(record.Operation.Engine)
+	if !found || !candidate.Capabilities(ctx).Supports(adapter.CapabilityVerify) {
+		return model.Verification{}, adapter.ErrUnsupported
+	}
+	if !service.claimOperation(record.ResourceID) {
+		return model.Verification{}, ErrOperationInProgress
+	}
+	defer service.releaseOperation(record.ResourceID)
+	request.Operation = record.Operation
+	request.Operation.ResourceID = record.ResourceID
+	request.TargetID = record.TargetID
+	request.Plan = &record.Plan
+	request, err := service.resolver.Resolve(ctx, request)
+	if err != nil {
+		return model.Verification{}, err
+	}
+	verification, err := candidate.Verify(ctx, request)
+	if err != nil {
+		return verification, err
+	}
+	message := "manual operation verification failed"
+	if verification.Passed {
+		message = "manual operation verification passed"
+	}
+	if err := service.audit(record.Operation, model.StageVerify, message); err != nil {
+		return verification, err
+	}
+	return verification, nil
+}
+
 func (service *Service) prepare(ctx context.Context, request adapter.OperationRequest, includePlan bool) (model.OperationRecord, []model.Check, model.OperationPlan, error) {
 	if service.registry == nil || service.operations == nil || service.resolver == nil {
 		return model.OperationRecord{}, nil, model.OperationPlan{}, fmt.Errorf("durable operation preparation is not configured")
