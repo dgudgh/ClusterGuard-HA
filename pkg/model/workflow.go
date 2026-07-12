@@ -63,11 +63,27 @@ type Operation struct {
 
 type OperationPlan struct {
 	ResourceMeta
-	OperationID ResourceID    `json:"operation_id"`
-	Stage       WorkflowStage `json:"stage"`
-	Checks      []Check       `json:"checks"`
-	Summary     string        `json:"summary"`
-	Mutating    bool          `json:"mutating"`
+	OperationID       ResourceID            `json:"operation_id"`
+	ClusterID         ResourceID            `json:"cluster_id,omitempty"`
+	SourceID          ResourceID            `json:"source_id,omitempty"`
+	TargetID          ResourceID            `json:"target_id,omitempty"`
+	Stage             WorkflowStage         `json:"stage"`
+	ObservationToken  string                `json:"observation_token,omitempty"`
+	ResourceRevisions map[ResourceID]uint64 `json:"resource_revisions,omitempty"`
+	Checks            []Check               `json:"checks"`
+	Steps             []PlanStep            `json:"steps,omitempty"`
+	Digest            string                `json:"digest,omitempty"`
+	Summary           string                `json:"summary"`
+	Mutating          bool                  `json:"mutating"`
+}
+
+type PlanStep struct {
+	Index         int        `json:"index"`
+	Name          string     `json:"name"`
+	Owner         string     `json:"owner"`
+	TargetID      ResourceID `json:"target_id,omitempty"`
+	Mutating      bool       `json:"mutating"`
+	Postcondition string     `json:"postcondition,omitempty"`
 }
 
 type Execution struct {
@@ -101,6 +117,43 @@ type Report struct {
 	Title       string          `json:"title"`
 	Status      OperationStatus `json:"status"`
 	Summary     string          `json:"summary"`
+}
+
+type StepAttempt struct {
+	Step         string          `json:"step"`
+	Attempt      uint64          `json:"attempt"`
+	Status       OperationStatus `json:"status"`
+	StartedAt    time.Time       `json:"started_at"`
+	FinishedAt   time.Time       `json:"finished_at,omitempty"`
+	Message      string          `json:"message,omitempty"`
+	FailureClass string          `json:"failure_class,omitempty"`
+}
+
+type OperationRecord struct {
+	ResourceMeta
+	Operation      Operation       `json:"operation"`
+	TargetID       ResourceID      `json:"target_id"`
+	IdempotencyKey string          `json:"idempotency_key"`
+	Stage          WorkflowStage   `json:"stage"`
+	Status         OperationStatus `json:"status"`
+	Observation    string          `json:"observation_token,omitempty"`
+	Plan           OperationPlan   `json:"plan"`
+	Attempts       []StepAttempt   `json:"attempts,omitempty"`
+	Execution      Execution       `json:"execution"`
+	Verification   Verification    `json:"verification"`
+	FailureClass   string          `json:"failure_class,omitempty"`
+	Message        string          `json:"message,omitempty"`
+}
+
+type OperationTransition struct {
+	Stage        WorkflowStage
+	Status       OperationStatus
+	Observation  string
+	Attempt      *StepAttempt
+	Execution    *Execution
+	Verification *Verification
+	FailureClass string
+	Message      string
 }
 
 type MetadataAnomaly struct {

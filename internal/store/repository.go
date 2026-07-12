@@ -101,6 +101,8 @@ type snapshot struct {
 	ObservationWatermarks map[model.ResourceID]time.Time                           `json:"observation_watermarks"`
 	InventoryGenerations  map[model.ResourceID]uint64                              `json:"inventory_generations"`
 	Anomalies             map[model.ResourceID]model.MetadataAnomaly               `json:"anomalies"`
+	Operations            map[model.ResourceID]model.OperationRecord               `json:"operations"`
+	OperationKeys         map[string]model.ResourceID                              `json:"operation_keys"`
 	Audits                []model.AuditEvent                                       `json:"audits"`
 	Reports               []model.Report                                           `json:"reports"`
 }
@@ -125,6 +127,8 @@ func emptySnapshot() snapshot {
 		ObservationWatermarks: map[model.ResourceID]time.Time{},
 		InventoryGenerations:  map[model.ResourceID]uint64{},
 		Anomalies:             map[model.ResourceID]model.MetadataAnomaly{},
+		Operations:            map[model.ResourceID]model.OperationRecord{},
+		OperationKeys:         map[string]model.ResourceID{},
 		Audits:                []model.AuditEvent{},
 		Reports:               []model.Report{},
 	}
@@ -203,6 +207,30 @@ func Open(path string) (*Repository, error) {
 	}
 	if repository.snapshot.Anomalies == nil {
 		repository.snapshot.Anomalies = map[model.ResourceID]model.MetadataAnomaly{}
+	}
+	if repository.snapshot.Operations == nil {
+		repository.snapshot.Operations = map[model.ResourceID]model.OperationRecord{}
+	}
+	if repository.snapshot.OperationKeys == nil {
+		repository.snapshot.OperationKeys = map[string]model.ResourceID{}
+	}
+	for resourceID, operation := range repository.snapshot.Operations {
+		if operation.ResourceID == "" {
+			operation.ResourceID = resourceID
+		}
+		if operation.Operation.ResourceID == "" {
+			operation.Operation.ResourceID = operation.ResourceID
+		}
+		key := strings.TrimSpace(operation.IdempotencyKey)
+		if operation.ResourceID != resourceID || !model.ValidResourceID(resourceID) || key == "" {
+			return nil, fmt.Errorf("decode metadata snapshot: invalid operation record")
+		}
+		if existing, found := repository.snapshot.OperationKeys[key]; found && existing != resourceID {
+			return nil, fmt.Errorf("decode metadata snapshot: duplicate operation idempotency key")
+		}
+		operation.IdempotencyKey = key
+		repository.snapshot.Operations[resourceID] = cloneOperationRecord(operation)
+		repository.snapshot.OperationKeys[key] = resourceID
 	}
 	if repository.snapshot.Audits == nil {
 		repository.snapshot.Audits = []model.AuditEvent{}
@@ -286,6 +314,41 @@ func cloneTopologySnapshot(value model.TopologySnapshot) model.TopologySnapshot 
 	return copy
 }
 
+func cloneOperationPlan(plan model.OperationPlan) model.OperationPlan {
+	copy := plan
+	copy.Checks = append([]model.Check{}, plan.Checks...)
+	copy.Steps = append([]model.PlanStep{}, plan.Steps...)
+	copy.ResourceRevisions = make(map[model.ResourceID]uint64, len(plan.ResourceRevisions))
+	for resourceID, revision := range plan.ResourceRevisions {
+		copy.ResourceRevisions[resourceID] = revision
+	}
+	return copy
+}
+
+func cloneOperationRecord(operation model.OperationRecord) model.OperationRecord {
+	copy := operation
+	copy.Plan = cloneOperationPlan(operation.Plan)
+	copy.Attempts = append([]model.StepAttempt{}, operation.Attempts...)
+	copy.Verification.Checks = append([]model.Check{}, operation.Verification.Checks...)
+	return copy
+}
+
+func cloneOperationMap(operations map[model.ResourceID]model.OperationRecord) map[model.ResourceID]model.OperationRecord {
+	copy := make(map[model.ResourceID]model.OperationRecord, len(operations))
+	for resourceID, operation := range operations {
+		copy[resourceID] = cloneOperationRecord(operation)
+	}
+	return copy
+}
+
+func cloneOperationKeyMap(keys map[string]model.ResourceID) map[string]model.ResourceID {
+	copy := make(map[string]model.ResourceID, len(keys))
+	for key, resourceID := range keys {
+		copy[key] = resourceID
+	}
+	return copy
+}
+
 func cloneClusterMap(clusters map[model.ResourceID]model.DatabaseCluster) map[model.ResourceID]model.DatabaseCluster {
 	copy := make(map[model.ResourceID]model.DatabaseCluster, len(clusters))
 	for resourceID, cluster := range clusters {
@@ -353,6 +416,8 @@ func cloneDiscoverySnapshot(value snapshot) snapshot {
 	copy.ObservationWatermarks = cloneTimeMap(value.ObservationWatermarks)
 	copy.InventoryGenerations = cloneUint64Map(value.InventoryGenerations)
 	copy.Anomalies = cloneAnomalyMap(value.Anomalies)
+	copy.Operations = cloneOperationMap(value.Operations)
+	copy.OperationKeys = cloneOperationKeyMap(value.OperationKeys)
 	return copy
 }
 
