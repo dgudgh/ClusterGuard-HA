@@ -77,6 +77,11 @@ type OperationRequest struct {
 	Credentials    Credentials          `json:"-"`
 	Resolved       *ResolvedOperation   `json:"-"`
 	Plan           *model.OperationPlan `json:"-"`
+	Progress       OperationProgress    `json:"-"`
+}
+
+type OperationProgress interface {
+	CompleteStep(context.Context, string, string) error
 }
 
 type ResolvedOperation struct {

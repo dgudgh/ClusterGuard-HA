@@ -13,6 +13,7 @@ import (
 )
 
 var ErrJournalPersistence = errors.New("workflow journal persistence failed")
+var ErrOperationInProgress = errors.New("operation is already in progress")
 
 type journalPersistenceError struct {
 	err error
@@ -96,17 +97,35 @@ func (journal *MemoryJournal) Reports() []model.Report {
 }
 
 type Service struct {
-	registry  *adapter.Registry
-	discovery DiscoveryValidator
-	safety    SafetyGuard
-	locks     LockManager
-	approval  ApprovalValidator
-	journal   Journal
-	now       func() time.Time
+	registry   *adapter.Registry
+	discovery  DiscoveryValidator
+	safety     SafetyGuard
+	locks      LockManager
+	approval   ApprovalValidator
+	journal    Journal
+	operations OperationStore
+	resolver   OperationResolver
+	inflightMu sync.Mutex
+	inflight   map[model.ResourceID]struct{}
+	now        func() time.Time
 }
 
-func New(registry *adapter.Registry, discovery DiscoveryValidator, safety SafetyGuard, locks LockManager, approval ApprovalValidator, journal Journal) *Service {
-	return &Service{registry: registry, discovery: discovery, safety: safety, locks: locks, approval: approval, journal: journal, now: time.Now}
+type Option func(*Service)
+
+func WithOperationStore(operations OperationStore) Option {
+	return func(service *Service) { service.operations = operations }
+}
+
+func WithOperationResolver(resolver OperationResolver) Option {
+	return func(service *Service) { service.resolver = resolver }
+}
+
+func New(registry *adapter.Registry, discovery DiscoveryValidator, safety SafetyGuard, locks LockManager, approval ApprovalValidator, journal Journal, options ...Option) *Service {
+	service := &Service{registry: registry, discovery: discovery, safety: safety, locks: locks, approval: approval, journal: journal, inflight: map[model.ResourceID]struct{}{}, now: time.Now}
+	for _, option := range options {
+		option(service)
+	}
+	return service
 }
 
 func (service *Service) audit(operation model.Operation, stage model.WorkflowStage, message string) error {
@@ -230,6 +249,16 @@ func (service *Service) unsupported(operation model.Operation, message string) (
 }
 
 func (service *Service) Execute(ctx context.Context, request adapter.OperationRequest, approvalToken string) (model.Execution, error) {
+	if service.operations != nil || service.resolver != nil {
+		if service.operations == nil || service.resolver == nil {
+			return model.Execution{}, fmt.Errorf("durable workflow requires operation store and resolver")
+		}
+		return service.executeDurable(ctx, request, approvalToken)
+	}
+	return service.executeLegacy(ctx, request, approvalToken)
+}
+
+func (service *Service) executeLegacy(ctx context.Context, request adapter.OperationRequest, approvalToken string) (model.Execution, error) {
 	if service.registry == nil {
 		return model.Execution{}, fmt.Errorf("adapter registry is not configured")
 	}

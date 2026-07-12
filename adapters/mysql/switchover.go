@@ -324,6 +324,13 @@ func executionFailure(operationID model.ResourceID, started time.Time, status mo
 	return newExecution(operationID, status, started, err.Error()), &switchoverFailure{class: class, err: err}
 }
 
+func completeOperationStep(ctx context.Context, request adapter.OperationRequest, step string, message string) error {
+	if request.Progress == nil {
+		return nil
+	}
+	return request.Progress.CompleteStep(ctx, step, message)
+}
+
 func queryFencedState(ctx context.Context, runner SQLRunner, endpoint adapter.Endpoint, credentials adapter.Credentials) (bool, error) {
 	identity, err := probeIdentity(ctx, runner, endpoint, credentials)
 	if err != nil {
@@ -390,6 +397,9 @@ func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request a
 			return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("confirm source read-only state: %w", err))
 		}
 	}
+	if err := completeOperationStep(context.WithoutCancel(ctx), request, "fence_source", "source is read-only and fenced"); err != nil {
+		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("persist source fencing progress: %w", err))
+	}
 
 	mutationContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
 	defer cancel()
@@ -404,6 +414,9 @@ func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request a
 	if _, err := ParseGTIDSet(gtidPosition); err != nil {
 		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("validate fenced source GTID: %w", err))
 	}
+	if err := completeOperationStep(mutationContext, request, "capture_source_gtid", "fenced source GTID position captured"); err != nil {
+		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("persist source GTID progress: %w", err))
+	}
 	waitQuery := fmt.Sprintf("SELECT WAIT_FOR_EXECUTED_GTID_SET('%s', 30) AS wait_result", gtidPosition)
 	waitRows, err := adapterInstance.runner.Query(mutationContext, targetEndpoint, credentials, waitQuery)
 	if err != nil || len(waitRows) != 1 || strings.TrimSpace(waitRows[0]["wait_result"]) != "0" {
@@ -411,6 +424,9 @@ func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request a
 			err = fmt.Errorf("target did not execute the fenced source GTID within 30 seconds")
 		}
 		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", err)
+	}
+	if err := completeOperationStep(mutationContext, request, "wait_target_gtid", "target executed the fenced source GTID position"); err != nil {
+		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("persist target catch-up progress: %w", err))
 	}
 
 	_, replicationConfigured, err := probeReplication(mutationContext, adapterInstance.runner, targetEndpoint, credentials)
@@ -429,6 +445,9 @@ func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request a
 			return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("reset target replication: %w", err))
 		}
 	}
+	if err := completeOperationStep(mutationContext, request, "stop_target_replication", "target replication is stopped and detached"); err != nil {
+		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("persist target replication progress: %w", err))
+	}
 
 	targetWritable, err := queryWritableState(mutationContext, adapterInstance.runner, targetEndpoint, credentials)
 	if err != nil {
@@ -443,12 +462,22 @@ func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request a
 			return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("target promotion result is uncertain: %w", err))
 		}
 	}
+	if err := completeOperationStep(mutationContext, request, "promote_target", "selected target is writable"); err != nil {
+		_ = adapterInstance.fenceInstance(mutationContext, targetEndpoint, credentials)
+		return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("persist target promotion progress: %w", err))
+	}
 	if err := adapterInstance.endpointProvider.Transfer(mutationContext, resolved); err != nil {
 		fenceErr := adapterInstance.fenceInstance(mutationContext, targetEndpoint, credentials)
 		if fenceErr != nil {
 			err = fmt.Errorf("writer endpoint transfer failed (%v) and target fencing failed: %w", err, fenceErr)
 		}
 		return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("writer endpoint transfer is unverified: %w", err))
+	}
+	if err := completeOperationStep(mutationContext, request, "transfer_writer_endpoint", "writer endpoint transferred to selected target"); err != nil {
+		return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("persist writer endpoint progress: %w", err))
+	}
+	if err := completeOperationStep(mutationContext, request, "retain_source_read_only", "former primary remains read-only"); err != nil {
+		return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("persist former-primary state progress: %w", err))
 	}
 	return newExecution(request.Operation.ResourceID, model.OperationRunning, started, "MySQL role transition and writer endpoint transfer completed; verification is required"), nil
 }

@@ -210,6 +210,18 @@ type classifiedFailure interface {
 	FailureClass() string
 }
 
+type progressCollector struct {
+	mu    sync.Mutex
+	steps []string
+}
+
+func (collector *progressCollector) CompleteStep(_ context.Context, step string, _ string) error {
+	collector.mu.Lock()
+	defer collector.mu.Unlock()
+	collector.steps = append(collector.steps, step)
+	return nil
+}
+
 func failureClass(err error) string {
 	var classified classifiedFailure
 	if errors.As(err, &classified) {
@@ -251,6 +263,24 @@ func TestSwitchoverExecuteAndVerifyHappyPath(t *testing.T) {
 	}
 	if provider.owner != request.TargetID || provider.transferCalls != 1 {
 		t.Fatalf("endpoint transfer was not coupled to target: owner=%s calls=%d", provider.owner, provider.transferCalls)
+	}
+}
+
+func TestSwitchoverExecuteRecordsEveryCompletedMutationBoundary(t *testing.T) {
+	adapterInstance, request, _, _ := executableSwitchoverFixture(t)
+	collector := &progressCollector{}
+	request.Progress = collector
+	if _, err := adapterInstance.Execute(context.Background(), request); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	want := []string{"fence_source", "capture_source_gtid", "wait_target_gtid", "stop_target_replication", "promote_target", "transfer_writer_endpoint", "retain_source_read_only"}
+	if len(collector.steps) != len(want) {
+		t.Fatalf("progress steps=%v, want %v", collector.steps, want)
+	}
+	for index := range want {
+		if collector.steps[index] != want[index] {
+			t.Fatalf("progress step %d=%q, want %q", index, collector.steps[index], want[index])
+		}
 	}
 }
 

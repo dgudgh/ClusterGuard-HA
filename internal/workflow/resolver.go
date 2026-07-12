@@ -28,6 +28,12 @@ type OperationResolver interface {
 	Resolve(context.Context, adapter.OperationRequest) (adapter.OperationRequest, error)
 }
 
+type OperationResolverFunc func(context.Context, adapter.OperationRequest) (adapter.OperationRequest, error)
+
+func (resolver OperationResolverFunc) Resolve(ctx context.Context, request adapter.OperationRequest) (adapter.OperationRequest, error) {
+	return resolver(ctx, request)
+}
+
 type RepositoryResolver struct {
 	Reader      OperationResourceReader
 	Credentials CredentialProvider
