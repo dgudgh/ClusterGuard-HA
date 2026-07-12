@@ -30,7 +30,7 @@ type apiEnvelope struct {
 
 func requestFor(arguments []string) (method string, path string, err error) {
 	if len(arguments) == 0 {
-		return "", "", fmt.Errorf("command is required: engines, clusters, topology, health, candidates, metrics, refresh")
+		return "", "", fmt.Errorf("command is required: engines, clusters, topology, health, candidates, metrics, refresh, operation")
 	}
 	command := arguments[0]
 	switch command {
@@ -50,6 +50,11 @@ func requestFor(arguments []string) (method string, path string, err error) {
 			action = "discover"
 		}
 		return method, "/api/v1/clusters/" + url.PathEscape(arguments[1]) + "/" + action, nil
+	case "operation":
+		if len(arguments) != 2 || strings.TrimSpace(arguments[1]) == "" {
+			return "", "", fmt.Errorf("operation requires a platform operation UUID")
+		}
+		return http.MethodGet, "/api/v1/operations/" + url.PathEscape(arguments[1]), nil
 	default:
 		return "", "", fmt.Errorf("unknown command %q", command)
 	}
@@ -227,6 +232,14 @@ func writeHuman(writer io.Writer, command string, result json.RawMessage) error 
 			}
 			_, _ = fmt.Fprintln(writer)
 		}
+	case "operation":
+		var operation model.OperationRecord
+		if err := json.Unmarshal(result, &operation); err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(writer, "%s\tengine=%s\tkind=%s\ttarget=%s\tstage=%s\tstatus=%s\tmessage=%s\n",
+			operation.ResourceID, operation.Operation.Engine, operation.Operation.Kind, operation.TargetID,
+			valueOrUnknown(string(operation.Stage)), valueOrUnknown(string(operation.Status)), valueOrDash(operation.Message))
 	default:
 		return fmt.Errorf("unsupported human output command %q", command)
 	}

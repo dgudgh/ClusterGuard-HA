@@ -105,10 +105,18 @@ func (server *Server) route(writer http.ResponseWriter, request *http.Request) {
 		server.registerCluster(writer, request)
 	case request.Method == http.MethodGet && path == "/api/v1/metadata/anomalies":
 		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": server.store.Anomalies()})
+	case path == "/api/v1/operations":
+		server.operationsCollection(writer, request)
 	case strings.HasPrefix(path, "/api/v1/clusters/"):
 		server.clusterRoute(writer, request, strings.TrimPrefix(path, "/api/v1/clusters/"))
 	case strings.HasPrefix(path, "/api/v1/operations/"):
-		server.operationRoute(writer, request, strings.TrimPrefix(path, "/api/v1/operations/"))
+		tail := strings.TrimPrefix(path, "/api/v1/operations/")
+		switch tail {
+		case "precheck", "plan", "execute", "verify":
+			server.operationRoute(writer, request, tail)
+		default:
+			server.operationResourceRoute(writer, request, tail)
+		}
 	case strings.HasPrefix(path, "/api/v1/nodes/sync/"):
 		server.unsupported(writer, "node synchronization is not implemented in phase one")
 	case strings.HasPrefix(path, "/api/v1/metadata/reconcile/"):
@@ -146,10 +154,11 @@ func (server *Server) capabilities(writer http.ResponseWriter) {
 }
 
 type operationPayload struct {
-	Operation     model.Operation   `json:"operation"`
-	TargetID      model.ResourceID  `json:"target_id,omitempty"`
-	Parameters    map[string]string `json:"parameters,omitempty"`
-	ApprovalToken string            `json:"approval_token,omitempty"`
+	Operation      model.Operation   `json:"operation"`
+	TargetID       model.ResourceID  `json:"target_id,omitempty"`
+	IdempotencyKey string            `json:"idempotency_key,omitempty"`
+	Parameters     map[string]string `json:"parameters,omitempty"`
+	ApprovalToken  string            `json:"approval_token,omitempty"`
 }
 
 func (server *Server) operationRoute(writer http.ResponseWriter, request *http.Request, action string) {
@@ -167,7 +176,7 @@ func (server *Server) operationRoute(writer http.ResponseWriter, request *http.R
 		server.unsupported(writer, "adapter is not registered for this engine")
 		return
 	}
-	adapterRequest := adapter.OperationRequest{Operation: payload.Operation, TargetID: payload.TargetID, Parameters: payload.Parameters}
+	adapterRequest := adapter.OperationRequest{Operation: payload.Operation, TargetID: payload.TargetID, IdempotencyKey: payload.IdempotencyKey, Parameters: payload.Parameters}
 	switch action {
 	case "precheck":
 		if !candidate.Capabilities(request.Context()).Supports(adapter.CapabilityPrecheck) {

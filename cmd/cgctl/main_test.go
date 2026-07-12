@@ -22,6 +22,7 @@ func TestRequestForCommands(t *testing.T) {
 		{[]string{"candidates", "cluster-id"}, http.MethodGet, "/api/v1/clusters/cluster-id/candidates"},
 		{[]string{"metrics", "cluster-id"}, http.MethodGet, "/api/v1/clusters/cluster-id/metrics"},
 		{[]string{"refresh", "cluster-id"}, http.MethodPost, "/api/v1/clusters/cluster-id/discover"},
+		{[]string{"operation", "11111111-1111-4111-8111-111111111111"}, http.MethodGet, "/api/v1/operations/11111111-1111-4111-8111-111111111111"},
 	}
 	for _, test := range tests {
 		method, path, err := requestFor(test.arguments)
@@ -115,6 +116,13 @@ func TestRunHumanOutputIsConciseAndCommandSpecific(t *testing.T) {
 			command:  []string{"metrics", "cluster-id"},
 			response: `{"status":"ok","result":{"cluster_id":"cluster-id","instances":[{"instance_id":"instance-1","values":{"qps":12.5,"replication_lag_seconds":0}}]}}`,
 			want:     []string{"instance-1", "qps=12.5", "replication_lag_seconds=0"},
+		},
+		{
+			name:    "operation",
+			command: []string{"operation", "11111111-1111-4111-8111-111111111111"},
+			response: `{"status":"ok","result":{"resource_id":"11111111-1111-4111-8111-111111111111","operation":{"engine":"mysql","kind":"switchover"},` +
+				`"target_id":"22222222-2222-4222-8222-222222222222","stage":"report","status":"succeeded","message":"operation completed and verified"}}`,
+			want: []string{"11111111-1111-4111-8111-111111111111", "mysql", "switchover", "target=22222222-2222-4222-8222-222222222222", "stage=report", "status=succeeded"},
 		},
 	}
 	for _, test := range tests {

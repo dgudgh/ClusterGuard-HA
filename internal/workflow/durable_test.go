@@ -201,3 +201,26 @@ func TestDurableWorkflowRejectsConcurrentDuplicateWithoutTerminalizingSharedReco
 		t.Fatalf("first execution did not complete: result=%+v err=%v", first.execution, first.err)
 	}
 }
+
+func TestDurablePrecheckAndPlanPersistReadOnlyStages(t *testing.T) {
+	request, resolved := durableRequestFixture()
+	repository := store.NewMemory()
+	candidate := newDurableAdapter()
+	service := newDurableWorkflowService(t, repository, candidate, request, resolved)
+
+	record, checks, err := service.Precheck(context.Background(), request)
+	if err != nil || len(checks) != 1 || checks[0].Status != model.CheckPass {
+		t.Fatalf("precheck: record=%+v checks=%+v err=%v", record, checks, err)
+	}
+	if record.Stage != model.StagePrecheck || record.Status != model.OperationPlanned || record.Observation == "" {
+		t.Fatalf("precheck stage was not persisted: %+v", record)
+	}
+
+	record, plan, err := service.Plan(context.Background(), request)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if record.Stage != model.StagePlan || record.Status != model.OperationPlanned || plan.Digest == "" || record.Plan.Digest != plan.Digest {
+		t.Fatalf("plan stage was not persisted: record=%+v plan=%+v", record, plan)
+	}
+}

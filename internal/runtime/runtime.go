@@ -35,6 +35,12 @@ func New(configuration config.File) (*api.Server, error) {
 		}
 	}
 	locks := workflow.NewMemoryLocks()
+	mysqlCredentials := func(context.Context, model.DatabaseCluster) (adapter.Credentials, error) {
+		if !configuration.MySQL.Enabled {
+			return adapter.Credentials{}, fmt.Errorf("MySQL operation credentials are not configured")
+		}
+		return adapter.Credentials{Username: configuration.MySQL.Username, Password: configuration.MySQL.Password}, nil
+	}
 	service := workflow.New(
 		registry,
 		workflow.TopologyDiscovery{Reader: repository},
@@ -42,6 +48,11 @@ func New(configuration config.File) (*api.Server, error) {
 		locks,
 		workflow.TokenApproval{ExpectedToken: configuration.ApprovalToken},
 		repository,
+		workflow.WithOperationStore(repository),
+		workflow.WithOperationResolver(workflow.RepositoryResolver{
+			Reader:      repository,
+			Credentials: workflow.CredentialProviderFunc(mysqlCredentials),
+		}),
 	)
 	refresher := discovery.New(registry, repository, discovery.CredentialResolverFunc(func(context.Context, model.DatabaseCluster, model.Endpoint) (adapter.Credentials, error) {
 		if !configuration.MySQL.Enabled {
