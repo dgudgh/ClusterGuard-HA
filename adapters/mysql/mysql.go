@@ -34,8 +34,8 @@ func (adapterInstance *Adapter) Capabilities(context.Context) adapter.Capabiliti
 		adapter.CapabilityDiscover:          {Available: true, Reason: "read-only discovery is implemented"},
 		adapter.CapabilityTopology:          {Available: true, Reason: "read-only native replication topology is implemented"},
 		adapter.CapabilityHealth:            {Available: true, Reason: "read-only health is implemented"},
-		adapter.CapabilityPrecheck:          {Available: false, Reason: "HA mutation precheck is not implemented"},
-		adapter.CapabilityPlan:              {Available: false, Reason: "HA mutation planning is not implemented"},
+		adapter.CapabilityPrecheck:          {Available: true, Reason: "guarded planned-switchover precheck is implemented"},
+		adapter.CapabilityPlan:              {Available: true, Reason: "guarded planned-switchover planning is implemented"},
 		adapter.CapabilityExecute:           {Available: false, Mutating: true, Reason: "HA mutation execution is not implemented"},
 		adapter.CapabilityVerify:            {Available: false, Reason: "HA mutation verification is not implemented"},
 		adapter.CapabilityNodeSync:          {Available: false, Mutating: true, Reason: "node synchronization is not implemented"},
@@ -85,11 +85,11 @@ func (adapterInstance *Adapter) EvaluateCandidates(_ context.Context, request ad
 	return evaluateCandidates(request), nil
 }
 
-func (adapterInstance *Adapter) Precheck(context.Context, adapter.OperationRequest) ([]model.Check, error) {
-	return nil, adapter.ErrUnsupported
+func (adapterInstance *Adapter) Precheck(ctx context.Context, request adapter.OperationRequest) ([]model.Check, error) {
+	return adapterInstance.switchoverPrecheck(ctx, request)
 }
-func (adapterInstance *Adapter) BuildPlan(context.Context, adapter.OperationRequest) (model.OperationPlan, error) {
-	return model.OperationPlan{}, adapter.ErrUnsupported
+func (adapterInstance *Adapter) BuildPlan(ctx context.Context, request adapter.OperationRequest) (model.OperationPlan, error) {
+	return adapterInstance.switchoverPlan(ctx, request)
 }
 func (adapterInstance *Adapter) Execute(context.Context, adapter.OperationRequest) (model.Execution, error) {
 	return model.Execution{}, adapter.ErrUnsupported
