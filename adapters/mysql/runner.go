@@ -22,6 +22,10 @@ type SQLRunner interface {
 	Query(context.Context, adapter.Endpoint, adapter.Credentials, string) ([]Row, error)
 }
 
+type SQLExecutor interface {
+	Exec(context.Context, adapter.Endpoint, adapter.Credentials, string) error
+}
+
 var ErrStatementUnsupported = errors.New("mysql statement unsupported")
 
 var mysqlErrorCodePattern = regexp.MustCompile(`(?m)ERROR\s+([0-9]+)\b`)
@@ -50,6 +54,19 @@ type CLIQueryRunner struct {
 }
 
 func (runner CLIQueryRunner) Query(ctx context.Context, endpoint adapter.Endpoint, credentials adapter.Credentials, query string) ([]Row, error) {
+	output, err := runner.execute(ctx, endpoint, credentials, query)
+	if err != nil {
+		return nil, err
+	}
+	return parseTSV(output)
+}
+
+func (runner CLIQueryRunner) Exec(ctx context.Context, endpoint adapter.Endpoint, credentials adapter.Credentials, statement string) error {
+	_, err := runner.execute(ctx, endpoint, credentials, statement)
+	return err
+}
+
+func (runner CLIQueryRunner) execute(ctx context.Context, endpoint adapter.Endpoint, credentials adapter.Credentials, query string) ([]byte, error) {
 	binary := runner.Binary
 	if binary == "" {
 		binary = "mysql"
@@ -71,7 +88,7 @@ func (runner CLIQueryRunner) Query(ctx context.Context, endpoint adapter.Endpoin
 			Err:    err,
 		}
 	}
-	return parseTSV(output)
+	return output, nil
 }
 
 func mysqlErrorCode(output []byte) int {

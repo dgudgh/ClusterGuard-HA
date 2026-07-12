@@ -10,6 +10,7 @@ import (
 
 type Adapter struct {
 	runner           SQLRunner
+	executor         SQLExecutor
 	endpointProvider adapter.HAEndpointProvider
 }
 
@@ -24,20 +25,26 @@ func NewWithEndpointProvider(runner SQLRunner, endpointProvider adapter.HAEndpoi
 	if endpointProvider == nil {
 		endpointProvider = UnsupportedHAEndpointProvider{}
 	}
-	return &Adapter{runner: runner, endpointProvider: endpointProvider}
+	executor, _ := runner.(SQLExecutor)
+	return &Adapter{runner: runner, executor: executor, endpointProvider: endpointProvider}
 }
 
 func (adapterInstance *Adapter) Engine() model.Engine { return model.EngineMySQL }
 
-func (adapterInstance *Adapter) Capabilities(context.Context) adapter.Capabilities {
+func (adapterInstance *Adapter) Capabilities(ctx context.Context) adapter.Capabilities {
+	executionAvailable := adapterInstance.executor != nil && adapterInstance.endpointProvider != nil && adapterInstance.endpointProvider.Executable(ctx)
+	executionReason := "a mutating SQL executor and writer-endpoint provider are required"
+	if executionAvailable {
+		executionReason = "guarded planned-switchover execution is implemented"
+	}
 	return adapter.Capabilities{Engine: model.EngineMySQL, Features: map[adapter.Capability]adapter.CapabilityState{
 		adapter.CapabilityDiscover:          {Available: true, Reason: "read-only discovery is implemented"},
 		adapter.CapabilityTopology:          {Available: true, Reason: "read-only native replication topology is implemented"},
 		adapter.CapabilityHealth:            {Available: true, Reason: "read-only health is implemented"},
 		adapter.CapabilityPrecheck:          {Available: true, Reason: "guarded planned-switchover precheck is implemented"},
 		adapter.CapabilityPlan:              {Available: true, Reason: "guarded planned-switchover planning is implemented"},
-		adapter.CapabilityExecute:           {Available: false, Mutating: true, Reason: "HA mutation execution is not implemented"},
-		adapter.CapabilityVerify:            {Available: false, Reason: "HA mutation verification is not implemented"},
+		adapter.CapabilityExecute:           {Available: executionAvailable, Mutating: true, Reason: executionReason},
+		adapter.CapabilityVerify:            {Available: executionAvailable, Reason: executionReason},
 		adapter.CapabilityNodeSync:          {Available: false, Mutating: true, Reason: "node synchronization is not implemented"},
 		adapter.CapabilityMetadataReconcile: {Available: true, Reason: "metadata reconciliation is implemented by the platform repository"},
 		adapter.CapabilityMetrics:           {Available: true, Reason: "read-only performance metrics are implemented"},
@@ -91,11 +98,11 @@ func (adapterInstance *Adapter) Precheck(ctx context.Context, request adapter.Op
 func (adapterInstance *Adapter) BuildPlan(ctx context.Context, request adapter.OperationRequest) (model.OperationPlan, error) {
 	return adapterInstance.switchoverPlan(ctx, request)
 }
-func (adapterInstance *Adapter) Execute(context.Context, adapter.OperationRequest) (model.Execution, error) {
-	return model.Execution{}, adapter.ErrUnsupported
+func (adapterInstance *Adapter) Execute(ctx context.Context, request adapter.OperationRequest) (model.Execution, error) {
+	return adapterInstance.switchoverExecute(ctx, request)
 }
-func (adapterInstance *Adapter) Verify(context.Context, adapter.OperationRequest) (model.Verification, error) {
-	return model.Verification{}, adapter.ErrUnsupported
+func (adapterInstance *Adapter) Verify(ctx context.Context, request adapter.OperationRequest) (model.Verification, error) {
+	return adapterInstance.switchoverVerify(ctx, request)
 }
 func (adapterInstance *Adapter) NodeSyncPrecheck(context.Context, adapter.OperationRequest) ([]model.Check, error) {
 	return nil, adapter.ErrUnsupported

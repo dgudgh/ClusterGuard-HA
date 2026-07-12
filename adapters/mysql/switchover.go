@@ -7,10 +7,28 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"clusterguard.io/ha/pkg/adapter"
 	"clusterguard.io/ha/pkg/model"
 )
+
+const (
+	gtidPositionQuery   = "SELECT @@GLOBAL.gtid_executed AS gtid_executed"
+	setSuperReadOnlyOn  = "SET GLOBAL super_read_only = ON"
+	setReadOnlyOn       = "SET GLOBAL read_only = ON"
+	setSuperReadOnlyOff = "SET GLOBAL super_read_only = OFF"
+	setReadOnlyOff      = "SET GLOBAL read_only = OFF"
+)
+
+type switchoverFailure struct {
+	class string
+	err   error
+}
+
+func (failure *switchoverFailure) Error() string        { return failure.err.Error() }
+func (failure *switchoverFailure) Unwrap() error        { return failure.err }
+func (failure *switchoverFailure) FailureClass() string { return failure.class }
 
 func appendSwitchoverCheck(checks *[]model.Check, name string, status model.CheckStatus, message string) {
 	*checks = append(*checks, model.Check{Name: name, Status: status, Message: message})
@@ -245,4 +263,259 @@ func (adapterInstance *Adapter) switchoverPlan(ctx context.Context, request adap
 		return model.OperationPlan{}, err
 	}
 	return plan, nil
+}
+
+func instanceEndpoint(instance model.DatabaseInstance) adapter.Endpoint {
+	return adapter.Endpoint{Hostname: instance.Hostname, IPAddress: instance.IPAddress, Port: instance.Port}
+}
+
+func validateExecutionPlan(request adapter.OperationRequest) error {
+	if request.Plan == nil {
+		return fmt.Errorf("an immutable operation plan is required")
+	}
+	if request.Resolved == nil {
+		return fmt.Errorf("resolved MySQL operation context is required")
+	}
+	plan := *request.Plan
+	digest, err := operationPlanDigest(plan)
+	if err != nil {
+		return err
+	}
+	resolved := *request.Resolved
+	expectedObservation := string(resolved.Cluster.ResourceID) + "@" + resolved.Snapshot.ObservedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
+	if plan.Digest == "" || digest != plan.Digest {
+		return fmt.Errorf("operation plan digest changed")
+	}
+	if plan.OperationID != request.Operation.ResourceID || plan.ClusterID != request.Operation.ClusterID ||
+		plan.SourceID != resolved.Primary.ResourceID || plan.TargetID != request.TargetID || plan.TargetID != resolved.Target.ResourceID {
+		return fmt.Errorf("operation plan resource scope changed")
+	}
+	if plan.ObservationToken != expectedObservation {
+		return fmt.Errorf("operation plan observation token changed")
+	}
+	for resourceID, revision := range map[model.ResourceID]uint64{
+		resolved.Cluster.ResourceID: resolved.Cluster.MetadataRevision,
+		resolved.Primary.ResourceID: resolved.Primary.MetadataRevision,
+		resolved.Target.ResourceID:  resolved.Target.MetadataRevision,
+	} {
+		if revision == 0 || plan.ResourceRevisions[resourceID] != revision {
+			return fmt.Errorf("operation plan resource revision changed")
+		}
+	}
+	if planHasBlockingChecks(plan.Checks) {
+		return fmt.Errorf("operation plan contains blocking checks")
+	}
+	return nil
+}
+
+func newExecution(operationID model.ResourceID, status model.OperationStatus, started time.Time, message string) model.Execution {
+	now := time.Now().UTC()
+	return model.Execution{
+		ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID(), MetadataRevision: 1, CreatedAt: now, UpdatedAt: now},
+		OperationID:  operationID,
+		Status:       status,
+		StartedAt:    started,
+		FinishedAt:   now,
+		Message:      message,
+	}
+}
+
+func executionFailure(operationID model.ResourceID, started time.Time, status model.OperationStatus, class string, err error) (model.Execution, error) {
+	return newExecution(operationID, status, started, err.Error()), &switchoverFailure{class: class, err: err}
+}
+
+func queryFencedState(ctx context.Context, runner SQLRunner, endpoint adapter.Endpoint, credentials adapter.Credentials) (bool, error) {
+	identity, err := probeIdentity(ctx, runner, endpoint, credentials)
+	if err != nil {
+		return false, err
+	}
+	return identity.readOnly && identity.superReadOnly, nil
+}
+
+func queryWritableState(ctx context.Context, runner SQLRunner, endpoint adapter.Endpoint, credentials adapter.Credentials) (bool, error) {
+	identity, err := probeIdentity(ctx, runner, endpoint, credentials)
+	if err != nil {
+		return false, err
+	}
+	return !identity.readOnly && !identity.superReadOnly, nil
+}
+
+func (adapterInstance *Adapter) fenceInstance(ctx context.Context, endpoint adapter.Endpoint, credentials adapter.Credentials) error {
+	fenced, err := queryFencedState(ctx, adapterInstance.runner, endpoint, credentials)
+	if err == nil && fenced {
+		return nil
+	}
+	if err := adapterInstance.executor.Exec(ctx, endpoint, credentials, setSuperReadOnlyOn); err != nil {
+		return err
+	}
+	return adapterInstance.executor.Exec(ctx, endpoint, credentials, setReadOnlyOn)
+}
+
+func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request adapter.OperationRequest) (model.Execution, error) {
+	started := time.Now().UTC()
+	if request.Operation.Kind != model.OperationSwitchover {
+		return executionFailure(request.Operation.ResourceID, started, model.OperationUnsupported, "pre_commit", adapter.ErrUnsupported)
+	}
+	if adapterInstance.executor == nil || adapterInstance.endpointProvider == nil || !adapterInstance.endpointProvider.Executable(ctx) {
+		return executionFailure(request.Operation.ResourceID, started, model.OperationUnsupported, "pre_commit", adapter.ErrUnsupported)
+	}
+	if err := validateExecutionPlan(request); err != nil {
+		return executionFailure(request.Operation.ResourceID, started, model.OperationFailed, "pre_commit", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return executionFailure(request.Operation.ResourceID, started, model.OperationFailed, "pre_commit", err)
+	}
+	resolved := *request.Resolved
+	credentials := resolved.Credentials
+	sourceEndpoint := instanceEndpoint(resolved.Primary)
+	targetEndpoint := instanceEndpoint(resolved.Target)
+
+	sourceFenced, err := queryFencedState(ctx, adapterInstance.runner, sourceEndpoint, credentials)
+	if err != nil {
+		return executionFailure(request.Operation.ResourceID, started, model.OperationFailed, "pre_commit", fmt.Errorf("probe source fencing state: %w", err))
+	}
+	if !sourceFenced {
+		if err := adapterInstance.executor.Exec(ctx, sourceEndpoint, credentials, setSuperReadOnlyOn); err != nil {
+			probeContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			if fenced, probeErr := queryFencedState(probeContext, adapterInstance.runner, sourceEndpoint, credentials); probeErr != nil {
+				return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "fenced_unknown", fmt.Errorf("source fencing result is unknown after error: %w", err))
+			} else if fenced {
+				return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("source was fenced but the fencing command returned an error: %w", err))
+			}
+			return executionFailure(request.Operation.ResourceID, started, model.OperationFailed, "pre_commit", fmt.Errorf("fence source: %w", err))
+		}
+		sourceFenced = true
+		if err := adapterInstance.executor.Exec(ctx, sourceEndpoint, credentials, setReadOnlyOn); err != nil {
+			return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("confirm source read-only state: %w", err))
+		}
+	}
+
+	mutationContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+	defer cancel()
+	rows, err := adapterInstance.runner.Query(mutationContext, sourceEndpoint, credentials, gtidPositionQuery)
+	if err != nil || len(rows) != 1 || strings.TrimSpace(rows[0]["gtid_executed"]) == "" {
+		if err == nil {
+			err = fmt.Errorf("source GTID response is empty")
+		}
+		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("capture fenced source GTID: %w", err))
+	}
+	gtidPosition := strings.TrimSpace(rows[0]["gtid_executed"])
+	if _, err := ParseGTIDSet(gtidPosition); err != nil {
+		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("validate fenced source GTID: %w", err))
+	}
+	waitQuery := fmt.Sprintf("SELECT WAIT_FOR_EXECUTED_GTID_SET('%s', 30) AS wait_result", gtidPosition)
+	waitRows, err := adapterInstance.runner.Query(mutationContext, targetEndpoint, credentials, waitQuery)
+	if err != nil || len(waitRows) != 1 || strings.TrimSpace(waitRows[0]["wait_result"]) != "0" {
+		if err == nil {
+			err = fmt.Errorf("target did not execute the fenced source GTID within 30 seconds")
+		}
+		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", err)
+	}
+
+	_, replicationConfigured, err := probeReplication(mutationContext, adapterInstance.runner, targetEndpoint, credentials)
+	if err != nil {
+		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("probe target replication before promotion: %w", err))
+	}
+	if replicationConfigured {
+		dialect, err := dialectForVersion(resolved.Target.EngineMetadata["version"])
+		if err != nil {
+			return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", err)
+		}
+		if err := adapterInstance.executor.Exec(mutationContext, targetEndpoint, credentials, dialect.StopReplication); err != nil {
+			return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("stop target replication: %w", err))
+		}
+		if err := adapterInstance.executor.Exec(mutationContext, targetEndpoint, credentials, dialect.ResetReplication); err != nil {
+			return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("reset target replication: %w", err))
+		}
+	}
+
+	targetWritable, err := queryWritableState(mutationContext, adapterInstance.runner, targetEndpoint, credentials)
+	if err != nil {
+		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("probe target writable state: %w", err))
+	}
+	if !targetWritable {
+		if err := adapterInstance.executor.Exec(mutationContext, targetEndpoint, credentials, setSuperReadOnlyOff); err != nil {
+			return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("prepare target promotion: %w", err))
+		}
+		if err := adapterInstance.executor.Exec(mutationContext, targetEndpoint, credentials, setReadOnlyOff); err != nil {
+			_ = adapterInstance.fenceInstance(mutationContext, targetEndpoint, credentials)
+			return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("target promotion result is uncertain: %w", err))
+		}
+	}
+	if err := adapterInstance.endpointProvider.Transfer(mutationContext, resolved); err != nil {
+		fenceErr := adapterInstance.fenceInstance(mutationContext, targetEndpoint, credentials)
+		if fenceErr != nil {
+			err = fmt.Errorf("writer endpoint transfer failed (%v) and target fencing failed: %w", err, fenceErr)
+		}
+		return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("writer endpoint transfer is unverified: %w", err))
+	}
+	return newExecution(request.Operation.ResourceID, model.OperationRunning, started, "MySQL role transition and writer endpoint transfer completed; verification is required"), nil
+}
+
+func (adapterInstance *Adapter) switchoverVerify(ctx context.Context, request adapter.OperationRequest) (model.Verification, error) {
+	now := time.Now().UTC()
+	verification := model.Verification{
+		ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID(), MetadataRevision: 1, CreatedAt: now, UpdatedAt: now},
+		OperationID:  request.Operation.ResourceID,
+		ObservedAt:   now,
+		Checks:       []model.Check{},
+	}
+	if request.Operation.Kind != model.OperationSwitchover || request.Resolved == nil {
+		return verification, adapter.ErrUnsupported
+	}
+	if err := validateExecutionPlan(request); err != nil {
+		verification.Checks = append(verification.Checks, model.Check{Name: "plan_integrity", Status: model.CheckFail, Message: err.Error()})
+		return verification, nil
+	}
+	resolved := *request.Resolved
+	credentials := resolved.Credentials
+	sourceEndpoint := instanceEndpoint(resolved.Primary)
+	targetEndpoint := instanceEndpoint(resolved.Target)
+
+	sourceIdentity, sourceErr := probeIdentity(ctx, adapterInstance.runner, sourceEndpoint, credentials)
+	if sourceErr != nil {
+		verification.Checks = append(verification.Checks, model.Check{Name: "source_reachable", Status: model.CheckFail, Message: "former primary reachability is unknown: " + sourceErr.Error()})
+	} else if sourceIdentity.readOnly && sourceIdentity.superReadOnly {
+		verification.Checks = append(verification.Checks, model.Check{Name: "source_read_only", Status: model.CheckPass, Message: "former primary is read-only"})
+	} else {
+		verification.Checks = append(verification.Checks, model.Check{Name: "source_read_only", Status: model.CheckFail, Message: "former primary is not fully read-only"})
+	}
+	targetIdentity, targetErr := probeIdentity(ctx, adapterInstance.runner, targetEndpoint, credentials)
+	if targetErr != nil {
+		verification.Checks = append(verification.Checks, model.Check{Name: "target_reachable", Status: model.CheckFail, Message: "target reachability is unknown: " + targetErr.Error()})
+	} else if !targetIdentity.readOnly && !targetIdentity.superReadOnly {
+		verification.Checks = append(verification.Checks, model.Check{Name: "target_writable", Status: model.CheckPass, Message: "selected target is writable"})
+	} else {
+		verification.Checks = append(verification.Checks, model.Check{Name: "target_writable", Status: model.CheckFail, Message: "selected target is not writable"})
+	}
+	_, targetReplicationConfigured, replicationErr := probeReplication(ctx, adapterInstance.runner, targetEndpoint, credentials)
+	if replicationErr != nil {
+		verification.Checks = append(verification.Checks, model.Check{Name: "target_replication_detached", Status: model.CheckFail, Message: "target replication state is unknown: " + replicationErr.Error()})
+	} else if targetReplicationConfigured {
+		verification.Checks = append(verification.Checks, model.Check{Name: "target_replication_detached", Status: model.CheckFail, Message: "selected target is still configured as a replica"})
+	} else {
+		verification.Checks = append(verification.Checks, model.Check{Name: "target_replication_detached", Status: model.CheckPass, Message: "selected target is no longer configured as a replica"})
+	}
+	if sourceErr == nil && targetErr == nil {
+		writableCount := 0
+		if !sourceIdentity.readOnly && !sourceIdentity.superReadOnly {
+			writableCount++
+		}
+		if !targetIdentity.readOnly && !targetIdentity.superReadOnly {
+			writableCount++
+		}
+		if writableCount == 1 {
+			verification.Checks = append(verification.Checks, model.Check{Name: "writable_primary_uniqueness", Status: model.CheckPass, Message: "exactly one controlled instance is writable"})
+		} else {
+			verification.Checks = append(verification.Checks, model.Check{Name: "writable_primary_uniqueness", Status: model.CheckFail, Message: fmt.Sprintf("%d controlled instances are writable", writableCount)})
+		}
+	}
+	provider := adapterInstance.endpointProvider
+	if provider == nil {
+		provider = UnsupportedHAEndpointProvider{}
+	}
+	verification.Checks = append(verification.Checks, provider.Verify(ctx, resolved))
+	verification.Passed = !planHasBlockingChecks(verification.Checks)
+	return verification, nil
 }
