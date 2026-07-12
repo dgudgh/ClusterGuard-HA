@@ -9,14 +9,22 @@ import (
 )
 
 type Adapter struct {
-	runner SQLRunner
+	runner           SQLRunner
+	endpointProvider adapter.HAEndpointProvider
 }
 
 func New(runner SQLRunner) *Adapter {
+	return NewWithEndpointProvider(runner, UnsupportedHAEndpointProvider{})
+}
+
+func NewWithEndpointProvider(runner SQLRunner, endpointProvider adapter.HAEndpointProvider) *Adapter {
 	if runner == nil {
 		runner = CLIQueryRunner{}
 	}
-	return &Adapter{runner: runner}
+	if endpointProvider == nil {
+		endpointProvider = UnsupportedHAEndpointProvider{}
+	}
+	return &Adapter{runner: runner, endpointProvider: endpointProvider}
 }
 
 func (adapterInstance *Adapter) Engine() model.Engine { return model.EngineMySQL }

@@ -70,10 +70,28 @@ type TopologyResult struct {
 }
 
 type OperationRequest struct {
-	Operation   model.Operation   `json:"operation"`
-	TargetID    model.ResourceID  `json:"target_id,omitempty"`
-	Parameters  map[string]string `json:"parameters,omitempty"`
-	Credentials Credentials       `json:"-"`
+	Operation      model.Operation      `json:"operation"`
+	TargetID       model.ResourceID     `json:"target_id,omitempty"`
+	IdempotencyKey string               `json:"idempotency_key,omitempty"`
+	Parameters     map[string]string    `json:"parameters,omitempty"`
+	Credentials    Credentials          `json:"-"`
+	Resolved       *ResolvedOperation   `json:"-"`
+	Plan           *model.OperationPlan `json:"-"`
+}
+
+type ResolvedOperation struct {
+	Cluster     model.DatabaseCluster  `json:"cluster"`
+	Snapshot    model.TopologySnapshot `json:"snapshot"`
+	Primary     model.DatabaseInstance `json:"primary"`
+	Target      model.DatabaseInstance `json:"target"`
+	Credentials Credentials            `json:"-"`
+}
+
+type HAEndpointProvider interface {
+	Executable(context.Context) bool
+	Precheck(context.Context, ResolvedOperation) []model.Check
+	Transfer(context.Context, ResolvedOperation) error
+	Verify(context.Context, ResolvedOperation) model.Check
 }
 
 type MetadataRequest struct {
