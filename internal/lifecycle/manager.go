@@ -20,8 +20,16 @@ type MutationAuthority interface {
 	RequireMutationAuthority(context.Context) error
 }
 
+type SafetyGuard interface {
+	EvaluateLifecycle(context.Context, Request, Plan) error
+}
+
 type ClusterLocker interface {
 	AcquireCluster(context.Context, model.ResourceID) (func(), error)
+}
+
+type ApprovalGate interface {
+	ValidateLifecycle(context.Context, Request, Plan, string) error
 }
 
 type Executor interface {
@@ -35,24 +43,26 @@ type MetadataCommitter interface {
 type Manager struct {
 	store     TaskStore
 	authority MutationAuthority
+	safety    SafetyGuard
 	locks     ClusterLocker
+	approval  ApprovalGate
 	executor  Executor
 	committer MetadataCommitter
 	now       func() time.Time
 }
 
-func NewManager(store TaskStore, authority MutationAuthority, locks ClusterLocker, executor Executor, committer MetadataCommitter, now func() time.Time) *Manager {
+func NewManager(store TaskStore, authority MutationAuthority, safety SafetyGuard, locks ClusterLocker, approval ApprovalGate, executor Executor, committer MetadataCommitter, now func() time.Time) *Manager {
 	if now == nil {
 		now = time.Now
 	}
-	return &Manager{store: store, authority: authority, locks: locks, executor: executor, committer: committer, now: now}
+	return &Manager{store: store, authority: authority, safety: safety, locks: locks, approval: approval, executor: executor, committer: committer, now: now}
 }
 
 func (manager *Manager) configured() bool {
-	return manager != nil && manager.store != nil && manager.authority != nil && manager.locks != nil && manager.executor != nil && manager.committer != nil
+	return manager != nil && manager.store != nil && manager.authority != nil && manager.safety != nil && manager.locks != nil && manager.approval != nil && manager.executor != nil && manager.committer != nil
 }
 
-func (manager *Manager) Execute(ctx context.Context, request Request, plan Plan, secrets ExecutionSecrets) (Task, error) {
+func (manager *Manager) Execute(ctx context.Context, request Request, plan Plan, secrets ExecutionSecrets, approvalToken string) (Task, error) {
 	if !manager.configured() {
 		return Task{}, fmt.Errorf("lifecycle manager is not configured")
 	}
@@ -78,11 +88,23 @@ func (manager *Manager) Execute(ctx context.Context, request Request, plan Plan,
 	if err := manager.authority.RequireMutationAuthority(ctx); err != nil {
 		return interrupt(err)
 	}
+	failGate := func(message string, cause error) (Task, error) {
+		task.Status = TaskFailed
+		task.Message = message
+		task, _ = manager.store.PutLifecycleTask(task)
+		return task, cause
+	}
+	if err := manager.safety.EvaluateLifecycle(ctx, request, plan); err != nil {
+		return failGate("lifecycle safety guard blocked execution", err)
+	}
 	release, err := manager.locks.AcquireCluster(ctx, request.ClusterID)
 	if err != nil {
 		return interrupt(err)
 	}
 	defer release()
+	if err := manager.approval.ValidateLifecycle(ctx, request, plan, approvalToken); err != nil {
+		return failGate("lifecycle approval blocked execution", err)
+	}
 	task.Status = TaskRunning
 	if task, err = manager.store.PutLifecycleTask(task); err != nil {
 		return task, fmt.Errorf("persist running lifecycle task: %w", err)

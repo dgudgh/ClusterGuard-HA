@@ -90,6 +90,40 @@ func TestLifecyclePlanRejectsDuplicateFixedNodeNames(t *testing.T) {
 	}
 }
 
+func TestInventoryPlanningRejectsUnknownRebuildAndExistingAddIdentity(t *testing.T) {
+	existing := model.DatabaseNode{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, NodeName: "cg-data-0001", Kind: model.NodeData, Hostname: "mysql-a", IPAddress: "192.0.2.10", Active: true}
+	capabilities := Capabilities{SourceVersion: "8.0.44", CloneAvailable: true}
+	add := Request{ClusterID: model.NewResourceID(), Action: ActionAdd, SyncMethod: SyncAuto, Targets: []Target{lifecycleTarget("CG-DATA-0001", model.NodeData, "8.0.44")}}
+	if plan := BuildPlanWithInventory(add, capabilities, []model.DatabaseNode{existing}); !plan.Blocked || !failedLifecycleCheck(plan.Checks, "inventory_target_CG-DATA-0001") {
+		t.Fatalf("existing fixed node name was accepted for add: %+v", plan)
+	}
+
+	rebuild := Request{ClusterID: add.ClusterID, Action: ActionRebuild, SyncMethod: SyncAuto, Targets: []Target{{NodeID: model.NewResourceID(), NodeName: "cg-data-unknown", Kind: model.NodeData, Hostname: "mysql-b", MySQLVersion: "8.0.44", MySQLPort: 3306, Rebuild: true}}}
+	if plan := BuildPlanWithInventory(rebuild, capabilities, []model.DatabaseNode{existing}); !plan.Blocked || !failedLifecycleCheck(plan.Checks, "inventory_target_cg-data-unknown") {
+		t.Fatalf("unknown rebuild node UUID was accepted: %+v", plan)
+	}
+}
+
+func TestInventoryPlanningDerivesControllerCountAndPreservesRebuildIdentity(t *testing.T) {
+	controllers := []model.DatabaseNode{
+		{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, NodeName: "cg-control-01", Kind: model.NodeController, Hostname: "control-a", Active: true},
+		{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, NodeName: "cg-control-02", Kind: model.NodeController, Hostname: "control-b", Active: true},
+		{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, NodeName: "cg-mixed-03", Kind: model.NodeMixed, Hostname: "control-c", Active: true},
+	}
+	request := Request{ClusterID: model.NewResourceID(), Action: ActionAdd, CurrentControllerCount: 99, Targets: []Target{lifecycleTarget("cg-control-04", model.NodeController, "8.0.44")}}
+	plan := BuildPlanWithInventory(request, Capabilities{}, controllers)
+	if !plan.Blocked || plan.FinalControllerCount != 4 || !failedLifecycleCheck(plan.Checks, "final_controller_membership") {
+		t.Fatalf("controller count was trusted from caller instead of inventory: %+v", plan)
+	}
+
+	existing := controllers[2]
+	rebuild := Request{ClusterID: request.ClusterID, Action: ActionRebuild, SyncMethod: SyncAuto, Targets: []Target{{NodeID: existing.ResourceID, NodeName: existing.NodeName, Kind: existing.Kind, Hostname: "control-c-rebuilt", MySQLVersion: "8.0.44", MySQLPort: 3306, Rebuild: true}}}
+	rebuiltPlan := BuildPlanWithInventory(rebuild, Capabilities{SourceVersion: "8.0.44", CloneAvailable: true}, controllers)
+	if rebuiltPlan.Blocked || rebuiltPlan.FinalControllerCount != 3 || rebuiltPlan.Targets[0].NodeID != existing.ResourceID || !rebuiltPlan.Targets[0].ReusesNodeSlot {
+		t.Fatalf("registered mixed-node rebuild was not preserved: %+v", rebuiltPlan)
+	}
+}
+
 func twoDigits(value int) string {
 	if value < 10 {
 		return "0" + string(rune('0'+value))

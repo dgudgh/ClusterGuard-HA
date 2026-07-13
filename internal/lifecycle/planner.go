@@ -70,6 +70,59 @@ func BuildPlan(request Request, capabilities Capabilities) Plan {
 	return plan
 }
 
+func BuildPlanWithInventory(request Request, capabilities Capabilities, nodes []model.DatabaseNode) Plan {
+	request.CurrentControllerCount = 0
+	byID := make(map[model.ResourceID]model.DatabaseNode, len(nodes))
+	byName := make(map[string]model.DatabaseNode, len(nodes))
+	for _, node := range nodes {
+		byID[node.ResourceID] = node
+		byName[strings.ToLower(strings.TrimSpace(node.NodeName))] = node
+		if node.Active && (node.Kind == model.NodeController || node.Kind == model.NodeMixed) {
+			request.CurrentControllerCount++
+		}
+	}
+	plan := BuildPlan(request, capabilities)
+	for index, target := range request.Targets {
+		passed := true
+		message := "target fixed identity is consistent with the registered node inventory"
+		nameKey := strings.ToLower(strings.TrimSpace(target.NodeName))
+		rebuild := request.Action == ActionRebuild || target.Rebuild
+		if rebuild {
+			existing, found := byID[target.NodeID]
+			passed = found && existing.NodeName == target.NodeName && existing.Kind == target.Kind
+			if !passed {
+				message = "rebuild requires the exact registered node UUID, fixed name, and node kind"
+			}
+		} else {
+			_, nameExists := byName[nameKey]
+			_, idExists := byID[plan.Targets[index].NodeID]
+			passed = !nameExists && !idExists
+			if !passed {
+				message = "new node UUID or fixed node name is already registered"
+			}
+		}
+		if passed {
+			for _, existing := range nodes {
+				if !existing.Active || existing.ResourceID == target.NodeID {
+					continue
+				}
+				if (target.Hostname != "" && strings.EqualFold(existing.Hostname, target.Hostname)) || (target.IPAddress != "" && existing.IPAddress == target.IPAddress) {
+					passed = false
+					message = "target host coordinates already belong to another active fixed node"
+					break
+				}
+			}
+		}
+		status := model.CheckPass
+		if !passed {
+			status = model.CheckFail
+			plan.Blocked = true
+		}
+		plan.Checks = append(plan.Checks, model.Check{Name: "inventory_target_" + target.NodeName, Status: status, Message: message})
+	}
+	return plan
+}
+
 func SelectSyncMethod(requested SyncMethod, sourceVersion, targetVersion string, capabilities Capabilities) (SyncMethod, string, error) {
 	if requested == "" {
 		requested = SyncAuto

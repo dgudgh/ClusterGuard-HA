@@ -44,6 +44,22 @@ type lifecycleAuthorityStub struct{ err error }
 
 func (stub lifecycleAuthorityStub) RequireMutationAuthority(context.Context) error { return stub.err }
 
+type lifecycleSafetyStub struct{ err error }
+
+func (stub lifecycleSafetyStub) EvaluateLifecycle(context.Context, Request, Plan) error {
+	return stub.err
+}
+
+type lifecycleApprovalStub struct {
+	err      error
+	received string
+}
+
+func (stub *lifecycleApprovalStub) ValidateLifecycle(_ context.Context, _ Request, _ Plan, token string) error {
+	stub.received = token
+	return stub.err
+}
+
 type lifecycleLockStub struct{ held bool }
 
 func (lock *lifecycleLockStub) AcquireCluster(context.Context, model.ResourceID) (func(), error) {
@@ -94,14 +110,18 @@ func TestManagerCommitsMetadataOnlyAfterVerification(t *testing.T) {
 		{Stage: StageSynchronize, Status: StageSucceeded, Message: "replication-secret copied"},
 	}, result: ExecutionResult{Verified: true, Message: "mysql-root-secret verification completed", Instances: []model.DatabaseInstance{{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, Role: model.RoleReplica}}}}
 	committer := &lifecycleCommitterStub{}
-	manager := NewManager(store, lifecycleAuthorityStub{}, &lifecycleLockStub{}, executor, committer, func() time.Time { return time.Date(2026, time.July, 13, 19, 0, 0, 0, time.UTC) })
+	approval := &lifecycleApprovalStub{}
+	manager := NewManager(store, lifecycleAuthorityStub{}, lifecycleSafetyStub{}, &lifecycleLockStub{}, approval, executor, committer, func() time.Time { return time.Date(2026, time.July, 13, 19, 0, 0, 0, time.UTC) })
 	secrets := ExecutionSecrets{SSHPassword: "ssh-secret", MySQLRootPassword: "mysql-root-secret", ReplicationPassword: "replication-secret"}
-	task, err := manager.Execute(context.Background(), request, plan, secrets)
+	task, err := manager.Execute(context.Background(), request, plan, secrets, "approval-secret")
 	if err != nil || task.Status != TaskSucceeded || committer.calls != 1 {
 		t.Fatalf("execute task=%+v commit_calls=%d err=%v", task, committer.calls, err)
 	}
 	if executor.received != secrets {
 		t.Fatal("executor did not receive transient secrets")
+	}
+	if approval.received != "approval-secret" {
+		t.Fatalf("approval token was not checked: %q", approval.received)
 	}
 	for _, line := range task.LogTail {
 		if strings.Contains(line, "ssh-secret") || strings.Contains(line, "mysql-root-secret") || strings.Contains(line, "replication-secret") {
@@ -122,8 +142,8 @@ func TestManagerDoesNotCommitMetadataWhenVerificationFails(t *testing.T) {
 	request, plan := executableLifecyclePlan()
 	store := &taskStoreStub{tasks: map[model.ResourceID]Task{}}
 	committer := &lifecycleCommitterStub{}
-	manager := NewManager(store, lifecycleAuthorityStub{}, &lifecycleLockStub{}, &lifecycleExecutorStub{result: ExecutionResult{Verified: false}}, committer, time.Now)
-	task, err := manager.Execute(context.Background(), request, plan, ExecutionSecrets{})
+	manager := NewManager(store, lifecycleAuthorityStub{}, lifecycleSafetyStub{}, &lifecycleLockStub{}, &lifecycleApprovalStub{}, &lifecycleExecutorStub{result: ExecutionResult{Verified: false}}, committer, time.Now)
+	task, err := manager.Execute(context.Background(), request, plan, ExecutionSecrets{}, "approved")
 	if err == nil || task.Status != TaskFailed || committer.calls != 0 {
 		t.Fatalf("unverified task=%+v commit_calls=%d err=%v", task, committer.calls, err)
 	}
@@ -133,9 +153,34 @@ func TestManagerInterruptsBeforeMutationWithoutLeaderQuorum(t *testing.T) {
 	request, plan := executableLifecyclePlan()
 	store := &taskStoreStub{tasks: map[model.ResourceID]Task{}}
 	executor := &lifecycleExecutorStub{}
-	manager := NewManager(store, lifecycleAuthorityStub{err: errors.New("no quorum")}, &lifecycleLockStub{}, executor, &lifecycleCommitterStub{}, time.Now)
-	task, err := manager.Execute(context.Background(), request, plan, ExecutionSecrets{})
+	manager := NewManager(store, lifecycleAuthorityStub{err: errors.New("no quorum")}, lifecycleSafetyStub{}, &lifecycleLockStub{}, &lifecycleApprovalStub{}, executor, &lifecycleCommitterStub{}, time.Now)
+	task, err := manager.Execute(context.Background(), request, plan, ExecutionSecrets{}, "approved")
 	if err == nil || task.Status != TaskInterrupted || len(executor.received.SSHPassword) != 0 {
 		t.Fatalf("authority failure task=%+v err=%v", task, err)
+	}
+}
+
+func TestManagerBlocksExecutorWhenSafetyGuardRejectsPlan(t *testing.T) {
+	request, plan := executableLifecyclePlan()
+	store := &taskStoreStub{tasks: map[model.ResourceID]Task{}}
+	executor := &lifecycleExecutorStub{}
+	manager := NewManager(store, lifecycleAuthorityStub{}, lifecycleSafetyStub{err: errors.New("unsafe plan")}, &lifecycleLockStub{}, &lifecycleApprovalStub{}, executor, &lifecycleCommitterStub{}, time.Now)
+
+	task, err := manager.Execute(context.Background(), request, plan, ExecutionSecrets{SSHPassword: "must-not-run"}, "approved")
+	if err == nil || task.Status != TaskFailed || executor.received.SSHPassword != "" || !strings.Contains(task.Message, "safety") {
+		t.Fatalf("unsafe execution task=%+v executor=%+v err=%v", task, executor.received, err)
+	}
+}
+
+func TestManagerBlocksExecutorWhenApprovalIsMissing(t *testing.T) {
+	request, plan := executableLifecyclePlan()
+	store := &taskStoreStub{tasks: map[model.ResourceID]Task{}}
+	executor := &lifecycleExecutorStub{}
+	approval := &lifecycleApprovalStub{err: errors.New("approval required")}
+	manager := NewManager(store, lifecycleAuthorityStub{}, lifecycleSafetyStub{}, &lifecycleLockStub{}, approval, executor, &lifecycleCommitterStub{}, time.Now)
+
+	task, err := manager.Execute(context.Background(), request, plan, ExecutionSecrets{SSHPassword: "must-not-run"}, "")
+	if err == nil || task.Status != TaskFailed || executor.received.SSHPassword != "" || approval.received != "" || !strings.Contains(task.Message, "approval") {
+		t.Fatalf("unapproved execution task=%+v executor=%+v approval=%q err=%v", task, executor.received, approval.received, err)
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 
+	"clusterguard.io/ha/internal/lifecycle"
 	"clusterguard.io/ha/internal/store"
 	"clusterguard.io/ha/internal/workflow"
 	"clusterguard.io/ha/pkg/adapter"
@@ -25,6 +26,9 @@ type Server struct {
 	workflow     *workflow.Service
 	refresher    Refresher
 	controlToken string
+	lifecycle    NodeLifecycleManager
+	lifecycleCap lifecycle.Capabilities
+	lifecycleSec LifecycleSecretProvider
 }
 
 type Refresher interface {
@@ -35,6 +39,14 @@ type ServerOption func(*Server)
 
 func WithControlToken(token string) ServerOption {
 	return func(server *Server) { server.controlToken = strings.TrimSpace(token) }
+}
+
+func WithNodeLifecycle(manager NodeLifecycleManager, capabilities lifecycle.Capabilities, secrets LifecycleSecretProvider) ServerOption {
+	return func(server *Server) {
+		server.lifecycle = manager
+		server.lifecycleCap = capabilities
+		server.lifecycleSec = secrets
+	}
 }
 
 func NewServer(registry *adapter.Registry, repository *store.Repository, service *workflow.Service, refresher Refresher, options ...ServerOption) *Server {
@@ -122,7 +134,7 @@ func (server *Server) route(writer http.ResponseWriter, request *http.Request) {
 			server.operationResourceRoute(writer, request, tail)
 		}
 	case strings.HasPrefix(path, "/api/v1/nodes/sync/"):
-		server.unsupported(writer, "node synchronization is not implemented in phase one")
+		server.nodeSyncRoute(writer, request, strings.TrimPrefix(path, "/api/v1/nodes/sync/"))
 	case strings.HasPrefix(path, "/api/v1/metadata/reconcile/"):
 		server.metadataRoute(writer, request, strings.TrimPrefix(path, "/api/v1/metadata/reconcile/"))
 	default:
