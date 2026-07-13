@@ -130,6 +130,7 @@ fi
 install_file 0644 "${bundle_dir}/packaging/logrotate/clusterguard-ha" /etc/logrotate.d/clusterguard-ha
 
 if [[ -z "${install_root}" ]]; then
+  chown root:clusterguard /etc/clusterguard
   chown root:clusterguard /etc/clusterguard/clusterguard.env /etc/clusterguard/node.json
   if [[ "${role}" == "controller" || "${role}" == "mixed" ]]; then
     chown root:clusterguard /etc/clusterguard/clusterguard.json

@@ -162,8 +162,14 @@ func TestInstallerMakesControllerConfigReadableByServiceGroup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(contents), "chown root:clusterguard /etc/clusterguard/clusterguard.json") {
-		t.Fatal("installer does not make the controller configuration readable by the clusterguard service group")
+	text := string(contents)
+	for _, expected := range []string{
+		"chown root:clusterguard /etc/clusterguard\n",
+		"chown root:clusterguard /etc/clusterguard/clusterguard.json",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("installer is missing service-readable configuration ownership: %q", expected)
+		}
 	}
 }
 
