@@ -448,6 +448,52 @@ func TestHAMatrixRejectsDuplicateClusterInventory(t *testing.T) {
 	}
 }
 
+func TestHAMatrixReportsSafeOperationEvidenceForHTTPFailure(t *testing.T) {
+	clusterID := "11111111-1111-4111-8111-111111111111"
+	operationID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodGet && strings.HasSuffix(request.URL.Path, "/candidates") {
+			_, _ = fmt.Fprint(writer, `{"status":"ok","result":[{"instance_id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","eligible":true,"rank":1}]}`)
+			return
+		}
+		if request.Method == http.MethodPost && request.URL.Path == "/api/v1/operations/execute" {
+			writer.WriteHeader(http.StatusInternalServerError)
+			_, _ = fmt.Fprintf(writer, `{"status":"indeterminate","message":"operation requires operator review","debug":"never-print-matrix-approval","result":{"resource_id":"%s","stage":"VERIFY","failure_class":"promoted_unverified","verification":{"checks":[{"name":"writer_endpoint_owner","status":"fail"},{"name":"target_writable","status":"fail"}]}}}`, operationID)
+			return
+		}
+		http.NotFound(writer, request)
+	}))
+	defer server.Close()
+
+	command := exec.Command("bash", "clusterguard-ha-matrix.sh",
+		"--api", server.URL,
+		"--clusters", clusterID,
+		"--round-robin", "1",
+		"--random", "0",
+	)
+	command.Env = append(os.Environ(), "CG_CONTROL_TOKEN=matrix-control", "CG_APPROVAL_TOKEN=matrix-approval")
+	output, err := command.CombinedOutput()
+	text := string(output)
+	if err == nil {
+		t.Fatalf("HTTP 500 matrix execution unexpectedly passed:\n%s", text)
+	}
+	for _, expected := range []string{
+		"api_error http=500 status=indeterminate",
+		"operation=" + operationID,
+		"stage=VERIFY",
+		"failure_class=promoted_unverified",
+		"failed_checks=target_writable,writer_endpoint_owner",
+		"switch_failed ordinal=0 cluster=" + clusterID,
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("matrix diagnostics missing %q:\n%s", expected, text)
+		}
+	}
+	if strings.Contains(text, "never-print-matrix-approval") || strings.Contains(text, "matrix-approval") {
+		t.Fatalf("matrix diagnostics leaked hidden response or approval data:\n%s", text)
+	}
+}
+
 func TestBundleBuildContainsInstallableRuntimeAndChecksums(t *testing.T) {
 	contents, err := os.ReadFile("build-clusterguard-bundle.sh")
 	if err != nil {

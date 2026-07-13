@@ -78,13 +78,51 @@ api_get() {
 
 api_post() {
   local url="$1" payload="$2"
+  local body_file http_status
+  body_file="$(mktemp "${TMPDIR:-/tmp}/clusterguard-api.XXXXXX")" || return 1
   if [[ "${insecure}" == true ]]; then
-    curl -k --fail --silent --show-error --max-time 180 \
-      -H "Authorization: Bearer ${control_token}" -H 'Content-Type: application/json' -d "${payload}" "${url}"
+    if ! http_status="$(curl -k --silent --show-error --max-time 180 --output "${body_file}" --write-out '%{http_code}' \
+      -H "Authorization: Bearer ${control_token}" -H 'Content-Type: application/json' -d "${payload}" "${url}")"; then
+      rm -f "${body_file}"
+      echo "api_transport_error method=POST" >&2
+      return 1
+    fi
   else
-    curl --fail --silent --show-error --max-time 180 \
-      -H "Authorization: Bearer ${control_token}" -H 'Content-Type: application/json' -d "${payload}" "${url}"
+    if ! http_status="$(curl --silent --show-error --max-time 180 --output "${body_file}" --write-out '%{http_code}' \
+      -H "Authorization: Bearer ${control_token}" -H 'Content-Type: application/json' -d "${payload}" "${url}")"; then
+      rm -f "${body_file}"
+      echo "api_transport_error method=POST" >&2
+      return 1
+    fi
   fi
+  if [[ ! "${http_status}" =~ ^2[0-9][0-9]$ ]]; then
+    if jq -e . "${body_file}" >/dev/null 2>&1; then
+      jq -r --arg http "${http_status}" '
+        def compact: tostring | gsub("[\\r\\n\\t]+"; " ") | .[0:240];
+        . as $root |
+        [
+          "api_error",
+          "http=" + $http,
+          "status=" + (($root.status // "unknown") | compact),
+          "message=" + (($root.message // "not_available") | compact),
+          "operation=" + (($root.result.resource_id // "unknown") | compact),
+          "stage=" + (($root.result.stage // "unknown") | compact),
+          "failure_class=" + (($root.result.failure_class // $root.result.execution.failure_class // "unknown") | compact),
+          "failed_checks=" + ([
+            $root.result.verification.checks[]?
+            | select(.status == "fail" or .status == "blocked")
+            | .name
+          ] | unique | join(",") | if . == "" then "none" else . end)
+        ] | join(" ")
+      ' "${body_file}" >&2
+    else
+      echo "api_error http=${http_status} status=invalid_json" >&2
+    fi
+    rm -f "${body_file}"
+    return 22
+  fi
+  cat "${body_file}"
+  rm -f "${body_file}"
 }
 
 execute_switch() {
