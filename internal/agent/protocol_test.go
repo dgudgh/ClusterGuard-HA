@@ -39,11 +39,20 @@ func (controller *fakeVIPController) Release(context.Context, ClusterPolicy) err
 	return controller.releaseErr
 }
 
-type fakeRoleController struct{ calls *[]string }
+type fakeRoleController struct {
+	calls         *[]string
+	readOnly      bool
+	superReadOnly bool
+}
 
-func (controller fakeRoleController) PersistReadOnly(context.Context, ClusterPolicy, bool) error {
+func (controller fakeRoleController) PersistReadOnly(_ context.Context, _ ClusterPolicy, readOnly bool) error {
 	*controller.calls = append(*controller.calls, "read_only")
 	return nil
+}
+
+func (controller fakeRoleController) Status(context.Context, ClusterPolicy) (bool, bool, error) {
+	*controller.calls = append(*controller.calls, "role_status")
+	return controller.readOnly, controller.superReadOnly, nil
 }
 
 func testAgentService(t *testing.T, vip *fakeVIPController, roles RoleController) (*Service, ClusterPolicy, time.Time) {
@@ -150,6 +159,20 @@ func TestAgentSelfIsolationEnforcesReadOnlyWhenVIPReleaseFails(t *testing.T) {
 	}
 	if strings.Join(calls, ",") != "release,read_only" {
 		t.Fatalf("self isolation did not enforce read-only after release failure: %v", calls)
+	}
+}
+
+func TestAgentRoleStatusReportsBothMySQLReadOnlyFlags(t *testing.T) {
+	calls := []string{}
+	roles := fakeRoleController{calls: &calls, readOnly: true, superReadOnly: true}
+	service, policy, now := testAgentService(t, &fakeVIPController{}, roles)
+	request := signedAgentRequest(t, Request{Command: CommandRoleStatus, ClusterID: policy.ClusterID, ExpiresAt: now.Add(time.Minute)})
+	response := service.Handle(context.Background(), request)
+	if response.Status != StatusOK || response.ReadOnly == nil || response.SuperReadOnly == nil || !*response.ReadOnly || !*response.SuperReadOnly {
+		t.Fatalf("role status response=%+v", response)
+	}
+	if strings.Join(calls, ",") != "role_status" {
+		t.Fatalf("role status calls=%v", calls)
 	}
 }
 

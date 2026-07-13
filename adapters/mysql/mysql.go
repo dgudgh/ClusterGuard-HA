@@ -13,6 +13,7 @@ type Adapter struct {
 	executor         SQLExecutor
 	endpointProvider adapter.HAEndpointProvider
 	maintenance      MaintenanceStore
+	failoverSafety   FailoverSafetyProvider
 }
 
 func New(runner SQLRunner) *Adapter {
@@ -24,6 +25,10 @@ func NewWithEndpointProvider(runner SQLRunner, endpointProvider adapter.HAEndpoi
 }
 
 func NewWithProviders(runner SQLRunner, endpointProvider adapter.HAEndpointProvider, maintenance MaintenanceStore) *Adapter {
+	return NewWithSafetyProviders(runner, endpointProvider, maintenance, UnsupportedFailoverSafetyProvider{})
+}
+
+func NewWithSafetyProviders(runner SQLRunner, endpointProvider adapter.HAEndpointProvider, maintenance MaintenanceStore, failoverSafety FailoverSafetyProvider) *Adapter {
 	if runner == nil {
 		runner = CLIQueryRunner{}
 	}
@@ -33,8 +38,11 @@ func NewWithProviders(runner SQLRunner, endpointProvider adapter.HAEndpointProvi
 	if maintenance == nil {
 		maintenance = UnsupportedMaintenanceStore{}
 	}
+	if failoverSafety == nil {
+		failoverSafety = UnsupportedFailoverSafetyProvider{}
+	}
 	executor, _ := runner.(SQLExecutor)
-	return &Adapter{runner: runner, executor: executor, endpointProvider: endpointProvider, maintenance: maintenance}
+	return &Adapter{runner: runner, executor: executor, endpointProvider: endpointProvider, maintenance: maintenance, failoverSafety: failoverSafety}
 }
 
 func (adapterInstance *Adapter) Engine() model.Engine { return model.EngineMySQL }
@@ -108,6 +116,8 @@ func (adapterInstance *Adapter) Precheck(ctx context.Context, request adapter.Op
 		return adapterInstance.rejoinPrecheck(ctx, request)
 	case model.OperationReplicationRepair:
 		return adapterInstance.repairPrecheck(ctx, request)
+	case model.OperationFailover:
+		return adapterInstance.failoverPrecheck(ctx, request)
 	default:
 		return nil, adapter.ErrUnsupported
 	}
@@ -120,6 +130,8 @@ func (adapterInstance *Adapter) BuildPlan(ctx context.Context, request adapter.O
 		return adapterInstance.rejoinPlan(ctx, request)
 	case model.OperationReplicationRepair:
 		return adapterInstance.repairPlan(ctx, request)
+	case model.OperationFailover:
+		return adapterInstance.failoverPlan(ctx, request)
 	default:
 		return model.OperationPlan{}, adapter.ErrUnsupported
 	}
@@ -132,6 +144,8 @@ func (adapterInstance *Adapter) Execute(ctx context.Context, request adapter.Ope
 		return adapterInstance.rejoinExecute(ctx, request)
 	case model.OperationReplicationRepair:
 		return adapterInstance.repairExecute(ctx, request)
+	case model.OperationFailover:
+		return adapterInstance.failoverExecute(ctx, request)
 	default:
 		return model.Execution{}, adapter.ErrUnsupported
 	}
@@ -144,6 +158,8 @@ func (adapterInstance *Adapter) Verify(ctx context.Context, request adapter.Oper
 		return adapterInstance.rejoinVerify(ctx, request)
 	case model.OperationReplicationRepair:
 		return adapterInstance.repairVerify(ctx, request)
+	case model.OperationFailover:
+		return adapterInstance.failoverVerify(ctx, request)
 	default:
 		return model.Verification{}, adapter.ErrUnsupported
 	}

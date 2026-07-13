@@ -38,6 +38,10 @@ type PublicationFence interface {
 	AcquireCluster(context.Context, model.ResourceID) (func(), error)
 }
 
+type PrimaryFailureObserver interface {
+	Record(model.ResourceID, bool, time.Time)
+}
+
 type Option func(*Service)
 
 func WithPublicationFence(fence PublicationFence) Option {
@@ -46,14 +50,21 @@ func WithPublicationFence(fence PublicationFence) Option {
 	}
 }
 
+func WithPrimaryFailureObserver(observer PrimaryFailureObserver) Option {
+	return func(service *Service) {
+		service.primaryFailureObserver = observer
+	}
+}
+
 type Service struct {
-	registry         *adapter.Registry
-	repository       *store.Repository
-	credentials      CredentialResolver
-	publicationFence PublicationFence
-	now              func() time.Time
-	clusterLocksMu   sync.Mutex
-	clusterLocks     map[model.ResourceID]*clusterLock
+	registry               *adapter.Registry
+	repository             *store.Repository
+	credentials            CredentialResolver
+	publicationFence       PublicationFence
+	primaryFailureObserver PrimaryFailureObserver
+	now                    func() time.Time
+	clusterLocksMu         sync.Mutex
+	clusterLocks           map[model.ResourceID]*clusterLock
 }
 
 type clusterLock struct {
@@ -255,7 +266,37 @@ func (service *Service) Refresh(ctx context.Context, clusterID model.ResourceID)
 	}
 
 	sortSnapshotResources(snapshot.Instances, snapshot.Links, snapshot.Probes, snapshot.Anomalies)
+	if service.primaryFailureObserver != nil {
+		service.primaryFailureObserver.Record(clusterID, primaryProbeUnavailable(snapshot), observedAt)
+	}
 	return snapshot, nil
+}
+
+func primaryProbeUnavailable(snapshot model.TopologySnapshot) bool {
+	primaryID := model.ResourceID("")
+	for _, instance := range snapshot.Instances {
+		if instance.Role != model.RolePrimary {
+			continue
+		}
+		if primaryID != "" {
+			return false
+		}
+		primaryID = instance.ResourceID
+	}
+	if primaryID == "" {
+		return false
+	}
+	boundProbeFound := false
+	for _, probe := range snapshot.Probes {
+		if probe.InstanceID != primaryID {
+			continue
+		}
+		boundProbeFound = true
+		if !probe.DiscoveryObservedAt.IsZero() && probe.DiscoveryObservedAt.Equal(snapshot.ObservedAt) {
+			return false
+		}
+	}
+	return boundProbeFound
 }
 
 func (service *Service) lockCluster(ctx context.Context, clusterID model.ResourceID) (func(), error) {

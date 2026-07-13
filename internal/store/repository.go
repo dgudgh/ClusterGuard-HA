@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"clusterguard.io/ha/internal/coordination"
 	"clusterguard.io/ha/pkg/identity"
 	"clusterguard.io/ha/pkg/model"
 )
@@ -96,6 +97,7 @@ type snapshot struct {
 	Instances             map[model.ResourceID]model.DatabaseInstance              `json:"instances"`
 	Endpoints             map[model.ResourceID]map[model.ResourceID]model.Endpoint `json:"endpoints"`
 	HAEndpoints           map[model.ResourceID]model.HAEndpoint                    `json:"ha_endpoints"`
+	CoordinationLeases    map[model.ResourceID]coordination.LeaseRecord            `json:"coordination_leases"`
 	ReplicationLinks      map[model.ResourceID][]model.ReplicationLink             `json:"replication_links"`
 	MetricSamples         map[model.ResourceID][]model.MetricSample                `json:"metric_samples"`
 	TopologySnapshots     map[model.ResourceID]model.TopologySnapshot              `json:"topology_snapshots"`
@@ -123,6 +125,7 @@ func emptySnapshot() snapshot {
 		Instances:             map[model.ResourceID]model.DatabaseInstance{},
 		Endpoints:             map[model.ResourceID]map[model.ResourceID]model.Endpoint{},
 		HAEndpoints:           map[model.ResourceID]model.HAEndpoint{},
+		CoordinationLeases:    map[model.ResourceID]coordination.LeaseRecord{},
 		ReplicationLinks:      map[model.ResourceID][]model.ReplicationLink{},
 		MetricSamples:         map[model.ResourceID][]model.MetricSample{},
 		TopologySnapshots:     map[model.ResourceID]model.TopologySnapshot{},
@@ -184,6 +187,9 @@ func Open(path string) (*Repository, error) {
 	}
 	if repository.snapshot.HAEndpoints == nil {
 		repository.snapshot.HAEndpoints = map[model.ResourceID]model.HAEndpoint{}
+	}
+	if repository.snapshot.CoordinationLeases == nil {
+		repository.snapshot.CoordinationLeases = map[model.ResourceID]coordination.LeaseRecord{}
 	}
 	if repository.snapshot.ReplicationLinks == nil {
 		repository.snapshot.ReplicationLinks = map[model.ResourceID][]model.ReplicationLink{}
@@ -416,6 +422,7 @@ func cloneDiscoverySnapshot(value snapshot) snapshot {
 	copy.Instances = cloneInstanceMap(value.Instances)
 	copy.Endpoints = cloneEndpointMap(value.Endpoints)
 	copy.HAEndpoints = cloneHAEndpointMap(value.HAEndpoints)
+	copy.CoordinationLeases = cloneCoordinationLeaseMap(value.CoordinationLeases)
 	copy.ReplicationLinks = cloneReplicationLinkMap(value.ReplicationLinks)
 	copy.MetricSamples = cloneMetricSampleMap(value.MetricSamples)
 	copy.TopologySnapshots = cloneTopologySnapshotMap(value.TopologySnapshots)
@@ -431,6 +438,14 @@ func cloneHAEndpointMap(values map[model.ResourceID]model.HAEndpoint) map[model.
 	copy := make(map[model.ResourceID]model.HAEndpoint, len(values))
 	for resourceID, endpoint := range values {
 		copy[resourceID] = endpoint
+	}
+	return copy
+}
+
+func cloneCoordinationLeaseMap(values map[model.ResourceID]coordination.LeaseRecord) map[model.ResourceID]coordination.LeaseRecord {
+	copy := make(map[model.ResourceID]coordination.LeaseRecord, len(values))
+	for resourceID, lease := range values {
+		copy[resourceID] = lease
 	}
 	return copy
 }

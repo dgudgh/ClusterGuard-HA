@@ -21,6 +21,7 @@ const (
 	CommandVIPRelease  = "vip_release"
 	CommandSelfIsolate = "self_isolate"
 	CommandPersistRole = "persist_role"
+	CommandRoleStatus  = "role_status"
 
 	StatusOK      = "ok"
 	StatusBlocked = "blocked"
@@ -42,12 +43,14 @@ type Request struct {
 }
 
 type Response struct {
-	Status     string           `json:"status"`
-	Message    string           `json:"message"`
-	Error      string           `json:"error,omitempty"`
-	OwnsVIP    *bool            `json:"owns_vip,omitempty"`
-	ClusterID  model.ResourceID `json:"cluster_id,omitempty"`
-	InstanceID model.ResourceID `json:"instance_id,omitempty"`
+	Status        string           `json:"status"`
+	Message       string           `json:"message"`
+	Error         string           `json:"error,omitempty"`
+	OwnsVIP       *bool            `json:"owns_vip,omitempty"`
+	ReadOnly      *bool            `json:"read_only,omitempty"`
+	SuperReadOnly *bool            `json:"super_read_only,omitempty"`
+	ClusterID     model.ResourceID `json:"cluster_id,omitempty"`
+	InstanceID    model.ResourceID `json:"instance_id,omitempty"`
 }
 
 type unsignedRequest struct {
@@ -89,6 +92,7 @@ type VIPController interface {
 
 type RoleController interface {
 	PersistReadOnly(context.Context, ClusterPolicy, bool) error
+	Status(context.Context, ClusterPolicy) (bool, bool, error)
 }
 
 type Service struct {
@@ -166,6 +170,12 @@ func (service *Service) Handle(ctx context.Context, request Request) Response {
 	case CommandPersistRole:
 		err = service.roles.PersistReadOnly(ctx, policy, request.ReadOnly)
 		response.Message = "MySQL role persisted"
+	case CommandRoleStatus:
+		var readOnly, superReadOnly bool
+		readOnly, superReadOnly, err = service.roles.Status(ctx, policy)
+		response.ReadOnly = &readOnly
+		response.SuperReadOnly = &superReadOnly
+		response.Message = "MySQL role status collected"
 	default:
 		return blocked("agent command is unsupported")
 	}

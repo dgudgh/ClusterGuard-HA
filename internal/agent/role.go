@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type MySQLRoleController struct {
@@ -18,16 +19,54 @@ func NewMySQLRoleController(runner CommandRunner, mysqlBinary string, stateDirec
 	return &MySQLRoleController{runner: runner, mysqlBinary: mysqlBinary, stateDirectory: stateDirectory}
 }
 
+func (controller *MySQLRoleController) Status(ctx context.Context, policy ClusterPolicy) (bool, bool, error) {
+	arguments := controller.mysqlArguments(policy)
+	arguments = append(arguments, "--execute", "SELECT @@GLOBAL.read_only, @@GLOBAL.super_read_only")
+	output, err := controller.runner.Run(ctx, controller.mysqlBinary, arguments...)
+	if err != nil {
+		return false, false, err
+	}
+	fields := strings.Fields(string(output))
+	if len(fields) != 2 {
+		return false, false, fmt.Errorf("unexpected MySQL role status output")
+	}
+	readOnly, err := mysqlBoolean(fields[0])
+	if err != nil {
+		return false, false, err
+	}
+	superReadOnly, err := mysqlBoolean(fields[1])
+	if err != nil {
+		return false, false, err
+	}
+	return readOnly, superReadOnly, nil
+}
+
+func (controller *MySQLRoleController) mysqlArguments(policy ClusterPolicy) []string {
+	arguments := []string{"--no-defaults"}
+	if policy.MySQLDefaultsFile != "" {
+		arguments = []string{"--defaults-extra-file=" + policy.MySQLDefaultsFile}
+	}
+	return append(arguments, "--protocol=tcp", "--host=127.0.0.1", fmt.Sprintf("--port=%d", policy.MySQLPort), "--batch", "--skip-column-names")
+}
+
+func mysqlBoolean(value string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "on", "true":
+		return true, nil
+	case "0", "off", "false":
+		return false, nil
+	default:
+		return false, fmt.Errorf("unexpected MySQL boolean value")
+	}
+}
+
 func (controller *MySQLRoleController) PersistReadOnly(ctx context.Context, policy ClusterPolicy, readOnly bool) error {
 	value := "OFF"
 	if readOnly {
 		value = "ON"
 	}
-	arguments := []string{"--no-defaults"}
-	if policy.MySQLDefaultsFile != "" {
-		arguments = []string{"--defaults-extra-file=" + policy.MySQLDefaultsFile}
-	}
-	arguments = append(arguments, "--protocol=tcp", "--host=127.0.0.1", fmt.Sprintf("--port=%d", policy.MySQLPort), "--batch", "--skip-column-names", "--execute", "SET GLOBAL super_read_only = "+value+"; SET GLOBAL read_only = "+value)
+	arguments := controller.mysqlArguments(policy)
+	arguments = append(arguments, "--execute", "SET GLOBAL super_read_only = "+value+"; SET GLOBAL read_only = "+value)
 	if _, err := controller.runner.Run(ctx, controller.mysqlBinary, arguments...); err != nil {
 		return err
 	}

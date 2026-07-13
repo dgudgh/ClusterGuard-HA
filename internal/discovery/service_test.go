@@ -41,6 +41,24 @@ type fakeDiscoveryAdapter struct {
 	metricsAvailable  bool
 }
 
+type primaryFailureObservation struct {
+	clusterID  model.ResourceID
+	failed     bool
+	observedAt time.Time
+}
+
+type primaryFailureObserverStub struct {
+	observations []primaryFailureObservation
+}
+
+func (observer *primaryFailureObserverStub) Record(clusterID model.ResourceID, failed bool, observedAt time.Time) {
+	observer.observations = append(observer.observations, primaryFailureObservation{
+		clusterID:  clusterID,
+		failed:     failed,
+		observedAt: observedAt,
+	})
+}
+
 func newFakeAdapter() *fakeDiscoveryAdapter {
 	return &fakeDiscoveryAdapter{
 		UnsupportedAdapter: adapter.NewUnsupported(model.EngineMySQL),
@@ -416,6 +434,53 @@ func TestRefreshRepresentsFirstAndKnownProbeFailuresWithoutInventingInstancesOrL
 	thirdProbe := probesByEndpoint(third.Probes)[known.ResourceID]
 	if thirdProbe.InstanceID != knownID || thirdProbe.Health.State != model.HealthHealthy {
 		t.Fatalf("recovered endpoint did not resume its stable identity: %+v", thirdProbe)
+	}
+}
+
+func TestRefreshPublishesPrimaryFailureEvidenceOnlyAfterDurableTopologyRefresh(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "failure-evidence"})
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	primaryEndpoint := addEndpoint(t, repository, cluster.ResourceID, "mysql-a", 3306, model.EndpointDatabase, true)
+	replicaEndpoint := addEndpoint(t, repository, cluster.ResourceID, "mysql-b", 3306, model.EndpointDatabase, true)
+	candidate := newFakeAdapter()
+	candidate.results[primaryEndpoint.Hostname] = discoveredInstance(primaryEndpoint.Hostname, primaryEndpoint.Port, "native-a", model.RolePrimary, "")
+	candidate.results[replicaEndpoint.Hostname] = discoveredInstance(replicaEndpoint.Hostname, replicaEndpoint.Port, "native-b", model.RoleReplica, "native-a")
+	registry := adapter.NewRegistry()
+	if err := registry.Register(candidate); err != nil {
+		t.Fatalf("register fake adapter: %v", err)
+	}
+	observer := &primaryFailureObserverStub{}
+	now := discoveryTestTime.Add(-5 * time.Second)
+	service := New(registry, repository, CredentialResolverFunc(func(context.Context, model.DatabaseCluster, model.Endpoint) (adapter.Credentials, error) {
+		return adapter.Credentials{Username: "probe", Password: "secret"}, nil
+	}), func() time.Time {
+		now = now.Add(5 * time.Second)
+		return now
+	}, WithPrimaryFailureObserver(observer))
+
+	if _, err := service.Refresh(context.Background(), cluster.ResourceID); err != nil {
+		t.Fatalf("healthy refresh: %v", err)
+	}
+	candidate.setFailure(primaryEndpoint.Hostname, errors.New("primary unreachable"))
+	if _, err := service.Refresh(context.Background(), cluster.ResourceID); err != nil {
+		t.Fatalf("failed-primary refresh: %v", err)
+	}
+	candidate.setFailure(primaryEndpoint.Hostname, nil)
+	candidate.metricFailures[primaryEndpoint.Hostname] = errors.New("metrics unavailable")
+	if _, err := service.Refresh(context.Background(), cluster.ResourceID); err != nil {
+		t.Fatalf("metrics-only failure refresh: %v", err)
+	}
+
+	want := []primaryFailureObservation{
+		{clusterID: cluster.ResourceID, failed: false, observedAt: discoveryTestTime},
+		{clusterID: cluster.ResourceID, failed: true, observedAt: discoveryTestTime.Add(5 * time.Second)},
+		{clusterID: cluster.ResourceID, failed: false, observedAt: discoveryTestTime.Add(10 * time.Second)},
+	}
+	if !reflect.DeepEqual(observer.observations, want) {
+		t.Fatalf("primary failure evidence = %+v, want %+v", observer.observations, want)
 	}
 }
 
