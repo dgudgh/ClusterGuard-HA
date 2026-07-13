@@ -53,7 +53,7 @@ func TestGuardedMySQLSwitchoverRunsThroughDurableWorkflow(t *testing.T) {
 		t.Fatalf("execute: result=%+v err=%v", execution, err)
 	}
 	record, found := repository.OperationByIdempotencyKey(request.IdempotencyKey)
-	if !found || record.Status != model.OperationSucceeded || !record.Verification.Passed || len(record.Attempts) != 7 {
+	if !found || record.Status != model.OperationSucceeded || !record.Verification.Passed || len(record.Attempts) != 8 {
 		t.Fatalf("durable operation is incomplete: found=%t record=%+v", found, record)
 	}
 	if len(repository.Audits()) < 9 || len(repository.Reports()) != 1 || repository.Reports()[0].Status != model.OperationSucceeded {

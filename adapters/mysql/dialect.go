@@ -9,6 +9,8 @@ import (
 type mysqlDialect struct {
 	StopReplication  string
 	ResetReplication string
+	StartReplication string
+	ModernSource     bool
 }
 
 func numericVersionComponent(value string) (int, error) {
@@ -39,7 +41,7 @@ func dialectForVersion(version string) (mysqlDialect, error) {
 		return mysqlDialect{}, fmt.Errorf("MySQL version %q is unsupported for guarded switchover", version)
 	}
 	if major == 5 {
-		return mysqlDialect{StopReplication: "STOP SLAVE", ResetReplication: "RESET SLAVE ALL"}, nil
+		return mysqlDialect{StopReplication: "STOP SLAVE", ResetReplication: "RESET SLAVE ALL", StartReplication: "START SLAVE"}, nil
 	}
 	if major == 8 && minor == 0 {
 		if len(parts) < 3 {
@@ -50,8 +52,8 @@ func dialectForVersion(version string) (mysqlDialect, error) {
 			return mysqlDialect{}, fmt.Errorf("invalid MySQL version %q", version)
 		}
 		if patch < 22 {
-			return mysqlDialect{StopReplication: "STOP SLAVE", ResetReplication: "RESET SLAVE ALL"}, nil
+			return mysqlDialect{StopReplication: "STOP SLAVE", ResetReplication: "RESET SLAVE ALL", StartReplication: "START SLAVE"}, nil
 		}
 	}
-	return mysqlDialect{StopReplication: "STOP REPLICA", ResetReplication: "RESET REPLICA ALL"}, nil
+	return mysqlDialect{StopReplication: "STOP REPLICA", ResetReplication: "RESET REPLICA ALL", StartReplication: "START REPLICA", ModernSource: true}, nil
 }

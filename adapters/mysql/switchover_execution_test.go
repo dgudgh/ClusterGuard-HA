@@ -21,6 +21,10 @@ type switchoverSQLClient struct {
 	version               string
 	primaryReadOnly       bool
 	primarySuperReadOnly  bool
+	primaryReplication    bool
+	primarySourceUUID     string
+	primaryIO             bool
+	primarySQL            bool
 	targetReadOnly        bool
 	targetSuperReadOnly   bool
 	targetReplication     bool
@@ -112,15 +116,39 @@ func (client *switchoverSQLClient) Query(ctx context.Context, endpoint adapter.E
 }
 
 func (client *switchoverSQLClient) replicationRows(host string) []Row {
-	if host != client.targetHost || !client.targetReplication {
+	configured := client.targetReplication
+	sourceUUID := client.primaryUUID
+	lag := client.targetLag
+	executed := client.targetExecuted
+	ioRunning := true
+	sqlRunning := true
+	if host == client.primaryHost {
+		configured = client.primaryReplication
+		sourceUUID = client.primarySourceUUID
+		lag = 0
+		executed = client.primaryGTID
+		ioRunning = client.primaryIO
+		sqlRunning = client.primarySQL
+	} else if host != client.targetHost {
 		return nil
 	}
+	if !configured {
+		return nil
+	}
+	ioState := "No"
+	if ioRunning {
+		ioState = "Yes"
+	}
+	sqlState := "No"
+	if sqlRunning {
+		sqlState = "Yes"
+	}
 	return []Row{{
-		"Source_UUID": primaryUUID, "Master_UUID": primaryUUID,
-		"Replica_IO_Running": "Yes", "Replica_SQL_Running": "Yes",
-		"Slave_IO_Running": "Yes", "Slave_SQL_Running": "Yes",
-		"Seconds_Behind_Source": strconv.FormatInt(client.targetLag, 10), "Seconds_Behind_Master": strconv.FormatInt(client.targetLag, 10),
-		"Executed_Gtid_Set": client.targetExecuted,
+		"Source_UUID": sourceUUID, "Master_UUID": sourceUUID,
+		"Replica_IO_Running": ioState, "Replica_SQL_Running": sqlState,
+		"Slave_IO_Running": ioState, "Slave_SQL_Running": sqlState,
+		"Seconds_Behind_Source": strconv.FormatInt(lag, 10), "Seconds_Behind_Master": strconv.FormatInt(lag, 10),
+		"Executed_Gtid_Set": executed,
 	}}
 }
 
@@ -149,6 +177,21 @@ func (client *switchoverSQLClient) Exec(ctx context.Context, endpoint adapter.En
 			client.primaryReadOnly = true
 		case setReadOnlyOn:
 			client.primaryReadOnly = true
+		case "STOP REPLICA", "STOP SLAVE":
+			client.primaryIO = false
+			client.primarySQL = false
+		case "RESET REPLICA ALL", "RESET SLAVE ALL":
+			client.primaryReplication = false
+			client.primarySourceUUID = ""
+		case "START REPLICA", "START SLAVE":
+			client.primaryReplication = true
+			client.primaryIO = true
+			client.primarySQL = true
+		default:
+			if strings.HasPrefix(statement, "CHANGE REPLICATION SOURCE TO") || strings.HasPrefix(statement, "CHANGE MASTER TO") {
+				client.primaryReplication = true
+				client.primarySourceUUID = client.targetUUID
+			}
 		}
 	}
 	if host == client.targetHost {
@@ -316,6 +359,10 @@ func TestSwitchoverExecuteAndVerifyHappyPath(t *testing.T) {
 		"db-replica RESET REPLICA ALL",
 		"db-replica " + setSuperReadOnlyOff,
 		"db-replica " + setReadOnlyOff,
+		"db-primary " + setSuperReadOnlyOn,
+		"db-primary " + setReadOnlyOn,
+		"db-primary CHANGE REPLICATION SOURCE TO SOURCE_HOST='192.0.2.11', SOURCE_PORT=3306, SOURCE_USER='replicator', SOURCE_PASSWORD='replication-secret', SOURCE_AUTO_POSITION=1",
+		"db-primary START REPLICA",
 	}
 	got := client.statements()
 	if len(got) != len(want) {
@@ -373,7 +420,7 @@ func TestSwitchoverExecuteRecordsEveryCompletedMutationBoundary(t *testing.T) {
 	if _, err := adapterInstance.Execute(context.Background(), request); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	want := []string{"fence_source", "capture_source_gtid", "wait_target_gtid", "stop_target_replication", "promote_target", "transfer_writer_endpoint", "retain_source_read_only"}
+	want := []string{"fence_source", "capture_source_gtid", "wait_target_gtid", "stop_target_replication", "promote_target", "reparent_follower_" + string(request.Resolved.Primary.ResourceID), "transfer_writer_endpoint", "retain_source_read_only"}
 	if len(collector.steps) != len(want) {
 		t.Fatalf("progress steps=%v, want %v", collector.steps, want)
 	}

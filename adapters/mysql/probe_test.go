@@ -239,6 +239,35 @@ printf '%s\n' 'server_uuid	hostname	note' 'source-uuid	mysql-a	' 'source-uuid-2	
 	}
 }
 
+func TestCLIQueryRunnerSendsSQLOnStdinInsteadOfProcessArguments(t *testing.T) {
+	tempDir := t.TempDir()
+	argsPath := filepath.Join(tempDir, "args")
+	stdinPath := filepath.Join(tempDir, "stdin")
+	binaryPath := filepath.Join(tempDir, "mysql")
+	script := `#!/bin/sh
+printf '%s\n' "$@" > "$MYSQL_TEST_ARGS"
+cat > "$MYSQL_TEST_STDIN"
+printf 'result\n1\n'
+`
+	if err := os.WriteFile(binaryPath, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MYSQL_TEST_ARGS", argsPath)
+	t.Setenv("MYSQL_TEST_STDIN", stdinPath)
+	statement := "CHANGE REPLICATION SOURCE TO SOURCE_PASSWORD='top-secret'"
+	if err := (CLIQueryRunner{Binary: binaryPath}).Exec(context.Background(), adapter.Endpoint{Hostname: "localhost", Port: 3306}, adapter.Credentials{Username: "operator", Password: "login-secret"}, statement); err != nil {
+		t.Fatalf("execute SQL: %v", err)
+	}
+	arguments, _ := os.ReadFile(argsPath)
+	stdin, _ := os.ReadFile(stdinPath)
+	if strings.Contains(string(arguments), statement) || strings.Contains(string(arguments), "top-secret") {
+		t.Fatalf("SQL secret leaked into process arguments: %s", arguments)
+	}
+	if strings.TrimSpace(string(stdin)) != statement {
+		t.Fatalf("stdin=%q want %q", stdin, statement)
+	}
+}
+
 func TestCLIQueryRunnerClassifiesOnlySyntaxRejectionAsUnsupported(t *testing.T) {
 	tempDir := t.TempDir()
 	binaryPath := filepath.Join(tempDir, "mysql")

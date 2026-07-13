@@ -115,8 +115,96 @@ func switchoverRequestFixture() adapter.OperationRequest {
 		TargetID: targetID,
 		Resolved: &adapter.ResolvedOperation{
 			Cluster: cluster, Snapshot: snapshot, Primary: primary, Target: target,
-			Credentials: adapter.Credentials{Username: "clusterguard", Password: "secret"},
+			Credentials:            adapter.Credentials{Username: "clusterguard", Password: "secret"},
+			ReplicationCredentials: adapter.Credentials{Username: "replicator", Password: "replication-secret"},
 		},
+	}
+}
+
+func threeNodeSwitchoverRequestFixture() adapter.OperationRequest {
+	request := switchoverRequestFixture()
+	lag := int64(0)
+	sibling := model.DatabaseInstance{
+		ResourceMeta:   model.ResourceMeta{ResourceID: model.NewResourceID(), MetadataRevision: 9},
+		ClusterID:      request.Operation.ClusterID,
+		Engine:         model.EngineMySQL,
+		EngineIdentity: model.EngineIdentity{"server_uuid": extraUUID},
+		DisplayName:    "db-sibling",
+		Hostname:       "db-sibling",
+		IPAddress:      "192.0.2.12",
+		Port:           3306,
+		Role:           model.RoleReplica,
+		Health:         model.Health{State: model.HealthHealthy, ObservedAt: request.Resolved.Snapshot.ObservedAt},
+		Replication: model.ReplicationStatus{
+			SourceIdentity: model.EngineIdentity{"server_uuid": primaryUUID},
+			IOThread:       model.ThreadRunning, SQLThread: model.ThreadRunning,
+			LagSeconds: &lag, ExecutedPosition: primaryUUID + ":1-100",
+		},
+		PromotionEligible: true,
+		EngineMetadata: map[string]string{
+			"server_id": "12", "version": "8.0.46", "gtid_mode": "ON",
+			"gtid_executed": primaryUUID + ":1-100", "log_bin": "ON",
+			"read_only": "true", "super_read_only": "true",
+		},
+	}
+	request.Resolved.Snapshot.Instances = append(request.Resolved.Snapshot.Instances, sibling)
+	request.Resolved.Snapshot.Probes = append(request.Resolved.Snapshot.Probes, model.ProbeStatus{
+		InstanceID: sibling.ResourceID, DiscoveryObservedAt: request.Resolved.Snapshot.ObservedAt,
+		Health: model.Health{State: model.HealthHealthy},
+	})
+	request.Resolved.ReplicationCredentials = adapter.Credentials{Username: "replicator", Password: "replication-secret"}
+	return request
+}
+
+func TestSwitchoverPrecheckAcceptsHealthyThreeNodeTopology(t *testing.T) {
+	request := threeNodeSwitchoverRequestFixture()
+	checks, err := NewWithEndpointProvider(nil, passingEndpointProvider()).Precheck(context.Background(), request)
+	if err != nil {
+		t.Fatalf("precheck: %v", err)
+	}
+	for _, check := range checks {
+		if check.Status == model.CheckFail {
+			t.Fatalf("healthy three-node topology failed check %+v", check)
+		}
+	}
+}
+
+func TestSwitchoverPrecheckBlocksUnsafeSibling(t *testing.T) {
+	request := threeNodeSwitchoverRequestFixture()
+	sibling := &request.Resolved.Snapshot.Instances[2]
+	sibling.Replication.ExecutedPosition += "," + targetUUID + ":1"
+	checks, err := NewWithEndpointProvider(nil, passingEndpointProvider()).Precheck(context.Background(), request)
+	if err != nil {
+		t.Fatalf("precheck: %v", err)
+	}
+	if !failedCheck(checks, "follower_readiness_"+string(sibling.ResourceID)) {
+		t.Fatalf("unsafe sibling checks=%+v", checks)
+	}
+}
+
+func TestSwitchoverPlanPinsEveryFollowerRevisionAndReparentStep(t *testing.T) {
+	request := threeNodeSwitchoverRequestFixture()
+	plan, err := NewWithEndpointProvider(nil, passingEndpointProvider()).BuildPlan(context.Background(), request)
+	if err != nil {
+		t.Fatalf("build plan: %v", err)
+	}
+	for _, instance := range request.Resolved.Snapshot.Instances {
+		if plan.ResourceRevisions[instance.ResourceID] != instance.MetadataRevision {
+			t.Fatalf("resource %s revision not pinned: %+v", instance.ResourceID, plan.ResourceRevisions)
+		}
+		if instance.ResourceID == request.TargetID {
+			continue
+		}
+		step := "reparent_follower_" + string(instance.ResourceID)
+		found := false
+		for _, candidate := range plan.Steps {
+			if candidate.Name == step && candidate.TargetID == instance.ResourceID {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("plan missing %s: %+v", step, plan.Steps)
+		}
 	}
 }
 
@@ -180,13 +268,6 @@ func TestSwitchoverPrecheckBlocksUnsafeEvidence(t *testing.T) {
 		{name: "version mismatch", check: "version_compatibility", mutate: func(request *adapter.OperationRequest) { request.Resolved.Target.EngineMetadata["version"] = "5.7.44" }},
 		{name: "incomplete probe", check: "probe_coverage", mutate: func(request *adapter.OperationRequest) {
 			request.Resolved.Snapshot.Probes[1].Health.State = model.HealthUnknown
-		}},
-		{name: "extra member", check: "topology_scope", mutate: func(request *adapter.OperationRequest) {
-			extra := request.Resolved.Target
-			extra.ResourceID = model.NewResourceID()
-			extra.EngineIdentity = model.EngineIdentity{"server_uuid": extraUUID}
-			request.Resolved.Snapshot.Instances = append(request.Resolved.Snapshot.Instances, extra)
-			request.Resolved.Snapshot.Probes = append(request.Resolved.Snapshot.Probes, model.ProbeStatus{InstanceID: extra.ResourceID, DiscoveryObservedAt: request.Resolved.Snapshot.ObservedAt, Health: model.Health{State: model.HealthHealthy}})
 		}},
 	}
 
@@ -264,7 +345,7 @@ func TestSwitchoverPlanIsCanonicalAndImmutableByDigest(t *testing.T) {
 	if plan.OperationID != request.Operation.ResourceID || plan.SourceID != request.Resolved.Primary.ResourceID || plan.TargetID != request.TargetID {
 		t.Fatalf("plan resource scope is wrong: %+v", plan)
 	}
-	if len(plan.Steps) != 10 || plan.Digest == "" || plan.ObservationToken == "" {
+	if len(plan.Steps) != 11 || plan.Digest == "" || plan.ObservationToken == "" {
 		t.Fatalf("plan is incomplete: %+v", plan)
 	}
 	if plan.ResourceRevisions[request.Resolved.Cluster.ResourceID] != request.Resolved.Cluster.MetadataRevision ||

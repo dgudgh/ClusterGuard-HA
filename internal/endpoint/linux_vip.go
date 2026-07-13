@@ -209,14 +209,14 @@ func (provider *LinuxVIPProvider) Transfer(ctx context.Context, resolved adapter
 func (provider *LinuxVIPProvider) Verify(ctx context.Context, resolved adapter.ResolvedOperation) model.Check {
 	resource, err := provider.resource(resolved.Cluster.ResourceID)
 	if err != nil {
-		return model.Check{Name: "writer_endpoint_provider", Status: model.CheckFail, Message: err.Error()}
+		return model.Check{Name: "writer_endpoint_owner", Status: model.CheckFail, Message: err.Error()}
 	}
 	owners, complete := observationSummary(provider.observe(ctx, resolved, resource))
 	if !complete {
-		return model.Check{Name: "writer_endpoint_provider", Status: model.CheckFail, Message: "VIP probe coverage is incomplete"}
+		return model.Check{Name: "writer_endpoint_owner", Status: model.CheckFail, Message: "VIP probe coverage is incomplete"}
 	}
 	if len(owners) != 1 || owners[0] != resolved.Target.ResourceID {
-		return model.Check{Name: "writer_endpoint_provider", Status: model.CheckFail, Message: "VIP is not owned only by the operation target"}
+		return model.Check{Name: "writer_endpoint_owner", Status: model.CheckFail, Message: "VIP is not owned only by the operation target"}
 	}
-	return model.Check{Name: "writer_endpoint_provider", Status: model.CheckPass, Message: "VIP is owned only by the operation target"}
+	return model.Check{Name: "writer_endpoint_owner", Status: model.CheckPass, Message: "VIP is owned only by the operation target"}
 }

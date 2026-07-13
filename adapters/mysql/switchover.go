@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -227,10 +228,16 @@ func (adapterInstance *Adapter) switchoverPrecheck(ctx context.Context, request 
 	} else {
 		appendSwitchoverCheck(&checks, "probe_coverage", model.CheckFail, "all explicit inventory probes must be current and healthy")
 	}
-	if len(resolved.Snapshot.Instances) == 2 {
-		appendSwitchoverCheck(&checks, "topology_scope", model.CheckPass, "two-node topology requires no replica reparenting")
+	if len(resolved.Snapshot.Instances) >= 2 {
+		appendSwitchoverCheck(&checks, "topology_scope", model.CheckPass, "all non-target inventory members will be reparented to the selected target")
 	} else {
-		appendSwitchoverCheck(&checks, "topology_scope", model.CheckFail, "this increment supports exactly two inventory members; replica reparenting is not implemented")
+		appendSwitchoverCheck(&checks, "topology_scope", model.CheckFail, "planned switchover requires a primary and at least one replica")
+	}
+	for _, instance := range resolved.Snapshot.Instances {
+		if instance.ResourceID == resolved.Primary.ResourceID || instance.ResourceID == resolved.Target.ResourceID {
+			continue
+		}
+		checks = append(checks, followerReadinessCheck(resolved.Primary, instance))
 	}
 
 	provider := adapterInstance.endpointProvider
@@ -248,6 +255,52 @@ func (adapterInstance *Adapter) switchoverPrecheck(ctx context.Context, request 
 		appendSwitchoverCheck(&checks, "writer_endpoint_provider", model.CheckFail, "writer endpoint provider did not return explicit ready evidence")
 	}
 	return checks, nil
+}
+
+func followerReadinessCheck(primary model.DatabaseInstance, follower model.DatabaseInstance) model.Check {
+	name := "follower_readiness_" + string(follower.ResourceID)
+	fail := func(message string) model.Check {
+		return model.Check{Name: name, Status: model.CheckFail, Message: message}
+	}
+	if follower.Role != model.RoleReplica || follower.Health.State != model.HealthHealthy || follower.Maintenance {
+		return fail("follower must be a healthy replica outside maintenance")
+	}
+	readOnly, known := candidateReadOnly(follower.EngineMetadata)
+	if !known || !readOnly {
+		return fail("follower must have current read-only evidence")
+	}
+	if follower.Replication.IOThread != model.ThreadRunning || follower.Replication.SQLThread != model.ThreadRunning {
+		return fail("follower replication threads must both be running")
+	}
+	primaryUUID := strings.ToLower(strings.TrimSpace(primary.EngineIdentity["server_uuid"]))
+	if primaryUUID == "" || strings.ToLower(strings.TrimSpace(follower.Replication.SourceIdentity["server_uuid"])) != primaryUUID {
+		return fail("follower must directly follow the current primary")
+	}
+	if follower.Replication.LagSeconds == nil || *follower.Replication.LagSeconds != 0 {
+		return fail("follower replication lag must be known and zero")
+	}
+	if !strings.EqualFold(strings.TrimSpace(follower.EngineMetadata["gtid_mode"]), "ON") {
+		return fail("follower GTID mode must be ON")
+	}
+	logBin, logBinKnown := boolMetadata(follower.EngineMetadata, "log_bin")
+	if !logBinKnown || !logBin {
+		return fail("follower binary logging must be enabled")
+	}
+	primarySet, primaryErr := ParseGTIDSet(primary.EngineMetadata["gtid_executed"])
+	followerSet, followerErr := ParseGTIDSet(follower.Replication.ExecutedPosition)
+	if primaryErr != nil || followerErr != nil {
+		return fail("follower GTID position is invalid")
+	}
+	comparison, err := CompareGTIDSets(primarySet, followerSet)
+	if err != nil || comparison.MissingTransactions != 0 || comparison.ErrantTransactions != 0 {
+		return fail("follower GTID history is not identical to the current primary")
+	}
+	primaryFamily, primaryVersionErr := mysqlReleaseFamily(primary.EngineMetadata["version"])
+	followerFamily, followerVersionErr := mysqlReleaseFamily(follower.EngineMetadata["version"])
+	if primaryVersionErr != nil || followerVersionErr != nil || primaryFamily != followerFamily {
+		return fail("follower MySQL release family is incompatible")
+	}
+	return model.Check{Name: name, Status: model.CheckPass, Message: "follower is safe to reparent after promotion"}
 }
 
 func failedCheckNamed(checks []model.Check, name string) bool {
@@ -297,26 +350,41 @@ func (adapterInstance *Adapter) switchoverPlan(ctx context.Context, request adap
 		{Index: 5, Name: "wait_target_gtid", Owner: "mysql", TargetID: resolved.Target.ResourceID, Postcondition: "target executed the fenced source GTID position"},
 		{Index: 6, Name: "stop_target_replication", Owner: "mysql", TargetID: resolved.Target.ResourceID, Mutating: true, Postcondition: "target replication is stopped"},
 		{Index: 7, Name: "promote_target", Owner: "mysql", TargetID: resolved.Target.ResourceID, Mutating: true, Postcondition: "target is writable"},
-		{Index: 8, Name: "transfer_writer_endpoint", Owner: "endpoint", TargetID: resolved.Target.ResourceID, Mutating: true, Postcondition: "writer endpoint has one target owner"},
-		{Index: 9, Name: "retain_source_read_only", Owner: "mysql", TargetID: resolved.Primary.ResourceID, Mutating: true, Postcondition: "former primary remains read-only"},
-		{Index: 10, Name: "verify_roles_and_endpoint", Owner: "platform", TargetID: resolved.Target.ResourceID, Postcondition: "one writable primary and one endpoint owner are proven"},
+	}
+	followers := make([]model.DatabaseInstance, 0, len(resolved.Snapshot.Instances)-1)
+	for _, instance := range resolved.Snapshot.Instances {
+		if instance.ResourceID != resolved.Target.ResourceID {
+			followers = append(followers, instance)
+		}
+	}
+	sort.Slice(followers, func(i, j int) bool { return followers[i].ResourceID < followers[j].ResourceID })
+	for _, follower := range followers {
+		steps = append(steps, model.PlanStep{
+			Index: len(steps) + 1, Name: "reparent_follower_" + string(follower.ResourceID), Owner: "mysql",
+			TargetID: follower.ResourceID, Mutating: true, Postcondition: "follower is read-only and replicates from the selected target",
+		})
+	}
+	steps = append(steps,
+		model.PlanStep{Index: len(steps) + 1, Name: "transfer_writer_endpoint", Owner: "endpoint", TargetID: resolved.Target.ResourceID, Mutating: true, Postcondition: "writer endpoint has one target owner"},
+		model.PlanStep{Index: len(steps) + 2, Name: "retain_source_read_only", Owner: "mysql", TargetID: resolved.Primary.ResourceID, Mutating: true, Postcondition: "former primary remains read-only"},
+		model.PlanStep{Index: len(steps) + 3, Name: "verify_roles_and_endpoint", Owner: "platform", TargetID: resolved.Target.ResourceID, Postcondition: "one writable primary, healthy followers, and one endpoint owner are proven"},
+	)
+	resourceRevisions := map[model.ResourceID]uint64{resolved.Cluster.ResourceID: resolved.Cluster.MetadataRevision}
+	for _, instance := range resolved.Snapshot.Instances {
+		resourceRevisions[instance.ResourceID] = instance.MetadataRevision
 	}
 	plan := model.OperationPlan{
-		OperationID:      request.Operation.ResourceID,
-		ClusterID:        resolved.Cluster.ResourceID,
-		SourceID:         resolved.Primary.ResourceID,
-		TargetID:         resolved.Target.ResourceID,
-		Stage:            model.StagePlan,
-		ObservationToken: string(resolved.Cluster.ResourceID) + "@" + resolved.Snapshot.ObservedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00"),
-		ResourceRevisions: map[model.ResourceID]uint64{
-			resolved.Cluster.ResourceID: resolved.Cluster.MetadataRevision,
-			resolved.Primary.ResourceID: resolved.Primary.MetadataRevision,
-			resolved.Target.ResourceID:  resolved.Target.MetadataRevision,
-		},
-		Checks:   checks,
-		Steps:    steps,
-		Summary:  "guarded MySQL planned switchover is ready",
-		Mutating: true,
+		OperationID:       request.Operation.ResourceID,
+		ClusterID:         resolved.Cluster.ResourceID,
+		SourceID:          resolved.Primary.ResourceID,
+		TargetID:          resolved.Target.ResourceID,
+		Stage:             model.StagePlan,
+		ObservationToken:  string(resolved.Cluster.ResourceID) + "@" + resolved.Snapshot.ObservedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00"),
+		ResourceRevisions: resourceRevisions,
+		Checks:            checks,
+		Steps:             steps,
+		Summary:           "guarded MySQL planned switchover is ready",
+		Mutating:          true,
 	}
 	if planHasBlockingChecks(checks) {
 		plan.Summary = "guarded MySQL planned switchover is blocked"
@@ -358,11 +426,14 @@ func validateExecutionPlan(request adapter.OperationRequest) error {
 	}
 	for resourceID, revision := range map[model.ResourceID]uint64{
 		resolved.Cluster.ResourceID: resolved.Cluster.MetadataRevision,
-		resolved.Primary.ResourceID: resolved.Primary.MetadataRevision,
-		resolved.Target.ResourceID:  resolved.Target.MetadataRevision,
 	} {
 		if revision == 0 || plan.ResourceRevisions[resourceID] != revision {
 			return fmt.Errorf("operation plan resource revision changed")
+		}
+	}
+	for _, instance := range resolved.Snapshot.Instances {
+		if instance.MetadataRevision == 0 || plan.ResourceRevisions[instance.ResourceID] != instance.MetadataRevision {
+			return fmt.Errorf("operation plan follower resource revision changed")
 		}
 	}
 	if planHasBlockingChecks(plan.Checks) {
@@ -391,7 +462,11 @@ func validateVerificationPlan(request adapter.OperationRequest) error {
 	if strings.TrimSpace(plan.ObservationToken) == "" {
 		return fmt.Errorf("operation plan observation token is missing")
 	}
-	for _, resourceID := range []model.ResourceID{resolved.Cluster.ResourceID, resolved.Primary.ResourceID, resolved.Target.ResourceID} {
+	resourceIDs := []model.ResourceID{resolved.Cluster.ResourceID}
+	for _, instance := range resolved.Snapshot.Instances {
+		resourceIDs = append(resourceIDs, instance.ResourceID)
+	}
+	for _, resourceID := range resourceIDs {
 		if plan.ResourceRevisions[resourceID] == 0 {
 			return fmt.Errorf("operation plan resource revisions are incomplete")
 		}
@@ -435,6 +510,25 @@ func operationStepCompleted(ctx context.Context, request adapter.OperationReques
 		return false, nil
 	}
 	return reader.StepCompleted(ctx, step)
+}
+
+func allMutationStepsCompleted(ctx context.Context, request adapter.OperationRequest) (bool, error) {
+	if request.Plan == nil || request.Progress == nil {
+		return false, nil
+	}
+	for _, step := range request.Plan.Steps {
+		if !step.Mutating {
+			continue
+		}
+		completed, err := operationStepCompleted(ctx, request, step.Name)
+		if err != nil {
+			return false, err
+		}
+		if !completed {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func endpointOwnerVerified(check model.Check) bool {
@@ -523,6 +617,54 @@ func (adapterInstance *Adapter) liveSwitchoverPrecheck(ctx context.Context, reso
 	comparison, err := CompareGTIDSets(sourceSet, targetSet)
 	if err != nil || comparison.MissingTransactions != 0 || comparison.ErrantTransactions != 0 {
 		return fmt.Errorf("live source and target GTID histories are not identical")
+	}
+	for _, follower := range resolved.Snapshot.Instances {
+		if follower.ResourceID == resolved.Primary.ResourceID || follower.ResourceID == resolved.Target.ResourceID {
+			continue
+		}
+		followerEndpoint := instanceEndpoint(follower)
+		followerIdentity, err := probeIdentity(ctx, adapterInstance.runner, followerEndpoint, credentials)
+		if err != nil {
+			return fmt.Errorf("probe live follower identity: %w", err)
+		}
+		if followerIdentity.serverUUID != strings.ToLower(strings.TrimSpace(follower.EngineIdentity["server_uuid"])) {
+			return fmt.Errorf("live follower identity no longer matches the immutable operation resource")
+		}
+		if !followerIdentity.readOnly || !followerIdentity.superReadOnly {
+			return fmt.Errorf("live follower is not fully read-only")
+		}
+		if !strings.EqualFold(followerIdentity.gtidMode, "ON") {
+			return fmt.Errorf("live follower must keep GTID mode ON")
+		}
+		followerLogBin, parseErr := parseMySQLBoolean(followerIdentity.logBin)
+		if parseErr != nil || !followerLogBin {
+			return fmt.Errorf("live follower must keep binary logging enabled")
+		}
+		followerFamily, versionErr := mysqlReleaseFamily(followerIdentity.version)
+		if versionErr != nil || followerFamily != sourceFamily {
+			return fmt.Errorf("live follower MySQL release family is incompatible")
+		}
+		followerReplication, configured, err := probeReplication(ctx, adapterInstance.runner, followerEndpoint, credentials)
+		if err != nil {
+			return fmt.Errorf("probe live follower replication: %w", err)
+		}
+		if !configured || followerReplication.IOThread != model.ThreadRunning || followerReplication.SQLThread != model.ThreadRunning {
+			return fmt.Errorf("live follower replication threads are not both running")
+		}
+		if strings.ToLower(strings.TrimSpace(followerReplication.SourceIdentity["server_uuid"])) != sourceIdentity.serverUUID {
+			return fmt.Errorf("live follower no longer follows the selected source")
+		}
+		if followerReplication.LagSeconds == nil || *followerReplication.LagSeconds != 0 {
+			return fmt.Errorf("live follower replication lag must be known and zero")
+		}
+		followerSet, parseErr := ParseGTIDSet(followerReplication.ExecutedPosition)
+		if parseErr != nil {
+			return fmt.Errorf("live follower GTID position is invalid")
+		}
+		followerComparison, compareErr := CompareGTIDSets(sourceSet, followerSet)
+		if compareErr != nil || followerComparison.MissingTransactions != 0 || followerComparison.ErrantTransactions != 0 {
+			return fmt.Errorf("live source and follower GTID histories are not identical")
+		}
 	}
 	return nil
 }
@@ -634,6 +776,20 @@ func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request a
 	credentials := resolved.Credentials
 	sourceEndpoint := instanceEndpoint(resolved.Primary)
 	targetEndpoint := instanceEndpoint(resolved.Target)
+	completed, err := allMutationStepsCompleted(ctx, request)
+	if err != nil {
+		return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("read completed operation progress: %w", err))
+	}
+	if completed {
+		verification, verifyErr := adapterInstance.switchoverVerify(ctx, request)
+		if verifyErr != nil || !verification.Passed {
+			if verifyErr == nil {
+				verifyErr = fmt.Errorf("completed operation postconditions are not satisfied")
+			}
+			return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", verifyErr)
+		}
+		return newExecution(request.Operation.ResourceID, model.OperationRunning, started, "MySQL switchover was already completed and remains verified"), nil
+	}
 
 	sourceFenced, err := queryFencedState(ctx, adapterInstance.runner, sourceEndpoint, credentials)
 	if err != nil {
@@ -741,6 +897,31 @@ func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request a
 		_ = adapterInstance.fenceInstance(mutationContext, targetEndpoint, credentials)
 		return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("persist target promotion progress: %w", err))
 	}
+	followers := make([]model.DatabaseInstance, 0, len(resolved.Snapshot.Instances)-1)
+	for _, instance := range resolved.Snapshot.Instances {
+		if instance.ResourceID != resolved.Target.ResourceID {
+			followers = append(followers, instance)
+		}
+	}
+	sort.Slice(followers, func(i, j int) bool { return followers[i].ResourceID < followers[j].ResourceID })
+	for _, follower := range followers {
+		step := "reparent_follower_" + string(follower.ResourceID)
+		completed, progressErr := operationStepCompleted(mutationContext, request, step)
+		if progressErr != nil {
+			_ = adapterInstance.fenceInstance(mutationContext, targetEndpoint, credentials)
+			return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("read follower reparent progress: %w", progressErr))
+		}
+		if !completed {
+			if err := adapterInstance.reparentFollower(mutationContext, follower, resolved.Target, credentials, resolved.ReplicationCredentials); err != nil {
+				_ = adapterInstance.fenceInstance(mutationContext, targetEndpoint, credentials)
+				return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("reparent follower: %w", err))
+			}
+			if err := completeOperationStep(mutationContext, request, step, "follower is read-only and follows the selected target"); err != nil {
+				_ = adapterInstance.fenceInstance(mutationContext, targetEndpoint, credentials)
+				return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("persist follower reparent progress: %w", err))
+			}
+		}
+	}
 	endpointEvidence := sanitizeEndpointCheck(adapterInstance.endpointProvider.Verify(mutationContext, resolved), "writer_endpoint_owner")
 	if !endpointOwnerVerified(endpointEvidence) {
 		if endpointEvidence.Name != "writer_endpoint_owner" || endpointEvidence.Status != model.CheckFail {
@@ -831,19 +1012,24 @@ func (adapterInstance *Adapter) switchoverVerify(ctx context.Context, request ad
 	} else {
 		verification.Checks = append(verification.Checks, model.Check{Name: "target_replication_detached", Status: model.CheckPass, Message: "selected target is no longer configured as a replica"})
 	}
-	if sourceErr == nil && targetErr == nil {
-		writableCount := 0
-		if !sourceIdentity.readOnly && !sourceIdentity.superReadOnly {
+	writableCount := 0
+	if targetErr == nil && !targetIdentity.readOnly && !targetIdentity.superReadOnly {
+		writableCount++
+	}
+	for _, follower := range resolved.Snapshot.Instances {
+		if follower.ResourceID == resolved.Target.ResourceID {
+			continue
+		}
+		checks, writable := adapterInstance.verifyFollower(ctx, follower, resolved.Target, credentials)
+		verification.Checks = append(verification.Checks, checks...)
+		if writable {
 			writableCount++
 		}
-		if !targetIdentity.readOnly && !targetIdentity.superReadOnly {
-			writableCount++
-		}
-		if writableCount == 1 {
-			verification.Checks = append(verification.Checks, model.Check{Name: "writable_primary_uniqueness", Status: model.CheckPass, Message: "exactly one controlled instance is writable"})
-		} else {
-			verification.Checks = append(verification.Checks, model.Check{Name: "writable_primary_uniqueness", Status: model.CheckFail, Message: fmt.Sprintf("%d controlled instances are writable", writableCount)})
-		}
+	}
+	if writableCount == 1 {
+		verification.Checks = append(verification.Checks, model.Check{Name: "writable_primary_uniqueness", Status: model.CheckPass, Message: "exactly one controlled instance is writable"})
+	} else {
+		verification.Checks = append(verification.Checks, model.Check{Name: "writable_primary_uniqueness", Status: model.CheckFail, Message: fmt.Sprintf("%d controlled instances are writable", writableCount)})
 	}
 	provider := adapterInstance.endpointProvider
 	if provider == nil {
