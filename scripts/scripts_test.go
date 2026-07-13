@@ -103,7 +103,7 @@ func TestInstallerDefaultsToPreflightAndRequiresExplicitExecute(t *testing.T) {
 	}
 }
 
-func TestInstallerWritesProtectedEnvironmentAndEnablesEveryMixedNodeService(t *testing.T) {
+func TestInstallerWritesProtectedEnvironmentAndDefersAgentReconcileByDefault(t *testing.T) {
 	bundle := fakeInstallBundle(t)
 	input := t.TempDir()
 	config := filepath.Join(input, "clusterguard.json")
@@ -149,11 +149,48 @@ func TestInstallerWritesProtectedEnvironmentAndEnablesEveryMixedNodeService(t *t
 		"daemon-reload",
 		"enable --now clusterguard-ha.service",
 		"enable --now clusterguard-agent.service",
-		"enable --now clusterguard-agent-reconcile.timer",
+		"disable --now clusterguard-agent-reconcile.timer",
 	} {
 		if !strings.Contains(logText, expected) {
 			t.Fatalf("systemd activation missing %q:\n%s", expected, logText)
 		}
+	}
+	if strings.Contains(logText, "enable --now clusterguard-agent-reconcile.timer") {
+		t.Fatalf("installer activated reconcile before VIP metadata and leases were ready:\n%s", logText)
+	}
+}
+
+func TestInstallerActivatesAgentReconcileOnlyWhenExplicitlyRequested(t *testing.T) {
+	bundle := fakeInstallBundle(t)
+	input := t.TempDir()
+	config := filepath.Join(input, "clusterguard.json")
+	environment := filepath.Join(input, "clusterguard.env")
+	agentConfig := filepath.Join(input, "agent.json")
+	writeFile(t, config, `{"metadata_path":"/var/lib/clusterguard/metadata.json"}`, 0o600)
+	writeFile(t, environment, "CG_CONTROL_TOKEN=top-secret\n", 0o600)
+	writeFile(t, agentConfig, `{"shared_secret_env":"CG_AGENT_SHARED_SECRET"}`, 0o600)
+	installRoot := filepath.Join(t.TempDir(), "root")
+	systemctlLog := filepath.Join(t.TempDir(), "systemctl.log")
+	fakeSystemctl := filepath.Join(t.TempDir(), "systemctl")
+	writeExecutable(t, fakeSystemctl, "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >>\"${CG_SYSTEMCTL_LOG}\"\n")
+
+	arguments := append(installerArguments(bundle, config, environment, agentConfig), "--activate-agent-reconcile", "--execute")
+	command := exec.Command("bash", arguments...)
+	command.Env = append(os.Environ(),
+		"CG_INSTALL_ROOT="+installRoot,
+		"CG_PREFLIGHT_SKIP_RUNTIME=1",
+		"CG_SYSTEMCTL="+fakeSystemctl,
+		"CG_SYSTEMCTL_LOG="+systemctlLog,
+	)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("execute installer with reconcile activation: %v\n%s", err, output)
+	}
+	logContents, err := os.ReadFile(systemctlLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(logContents), "enable --now clusterguard-agent-reconcile.timer") {
+		t.Fatalf("explicit reconcile activation was not honored:\n%s", logContents)
 	}
 }
 

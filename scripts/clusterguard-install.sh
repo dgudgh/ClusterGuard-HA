@@ -11,15 +11,20 @@ environment_file=""
 agent_config_file=""
 assets_dir=""
 execute=false
+activate_agent_reconcile=false
 
 usage() {
   cat <<'EOF'
 usage: clusterguard-install.sh --bundle-dir DIR --role controller|data|mixed
        --node-name NAME --node-id UUID [--config FILE] --env-file FILE
-       [--agent-config FILE] [--assets-dir DIR] [--execute]
+       [--agent-config FILE] [--assets-dir DIR]
+       [--activate-agent-reconcile] [--execute]
 
 The default mode performs preflight and prints the installation plan. No host
 state is changed until --execute is supplied.
+
+Agent reconciliation is installed but kept disabled by default. Activate it
+only after every managed VIP has canonical owner metadata and a majority lease.
 EOF
 }
 
@@ -34,6 +39,7 @@ while (($#)); do
     --env-file) environment_file="${2:-}"; preflight_arguments+=("$1" "$2"); shift 2 ;;
     --agent-config) agent_config_file="${2:-}"; preflight_arguments+=("$1" "$2"); shift 2 ;;
     --assets-dir) assets_dir="${2:-}"; preflight_arguments+=("$1" "$2"); shift 2 ;;
+    --activate-agent-reconcile) activate_agent_reconcile=true; shift ;;
     --execute) execute=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown installer argument: $1" >&2; usage >&2; exit 2 ;;
@@ -56,7 +62,8 @@ role: ${role}
 configuration: ${config_file:-not-required}
 agent configuration: ${agent_config_file:-not-required}
 runtime assets: ${assets_dir:-not-provided}
-services: $([[ "${role}" == "controller" ]] && printf controller || [[ "${role}" == "data" ]] && printf agent || printf 'controller, agent, reconcile timer')
+services: $([[ "${role}" == "controller" ]] && printf controller || [[ "${role}" == "data" ]] && printf agent || printf 'controller, agent')
+agent reconciliation: $([[ "${activate_agent_reconcile}" == "true" ]] && printf activated || printf 'installed, deferred until VIP bootstrap completes')
 EOF
 
 if [[ "${execute}" != "true" ]]; then
@@ -146,7 +153,11 @@ if [[ "${role}" == "controller" || "${role}" == "mixed" ]]; then
 fi
 if [[ "${role}" == "data" || "${role}" == "mixed" ]]; then
   "${systemctl_binary}" enable --now clusterguard-agent.service
-  "${systemctl_binary}" enable --now clusterguard-agent-reconcile.timer
+  if [[ "${activate_agent_reconcile}" == "true" ]]; then
+    "${systemctl_binary}" enable --now clusterguard-agent-reconcile.timer
+  else
+    "${systemctl_binary}" disable --now clusterguard-agent-reconcile.timer
+  fi
 fi
 
 printf '\ninstallation: complete\n'

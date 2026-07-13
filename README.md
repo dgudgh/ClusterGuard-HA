@@ -86,7 +86,10 @@ uses `/etc/clusterguard/`, `/var/lib/clusterguard/`, and
 agent, lifecycle helpers, systemd units, log rotation, configuration samples,
 and a full SHA-256 manifest. `scripts/clusterguard-install.sh` is preflight-only
 unless `--execute` is supplied and installs protected TLS, SSH, and per-version
-MySQL client assets from an explicit allowlisted runtime directory.
+MySQL client assets from an explicit allowlisted runtime directory. Agent VIP
+reconciliation is deferred by default and requires the explicit
+`--activate-agent-reconcile` flag after endpoint metadata and majority leases
+have been verified.
 
 ## Register and Refresh a MySQL Cluster
 

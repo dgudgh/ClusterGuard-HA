@@ -78,6 +78,15 @@ changing the host. It installs service keys group-readable only where the
 unprivileged controller requires them, while MySQL client credentials remain
 root-only for the restricted data-node agent.
 
+For data and mixed nodes, installation starts the restricted agent but keeps
+the periodic VIP reconciler disabled. Register the cluster HA endpoint, prove
+that its canonical owner is the current writable primary, establish the
+majority ownership lease, and complete one successful reconcile on every
+node. Only then repeat the installer with `--activate-agent-reconcile
+--execute`, or enable the timer through the lifecycle workflow. This prevents
+a partially configured deployment from changing MySQL role state during
+bootstrap.
+
 Every `/api/v1/` `POST` requires `Authorization: Bearer <control-token>`.
 Missing or invalid credentials return `401` before request parsing or database
 access. Keep the default loopback listener for local operation. Before exposing
