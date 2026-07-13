@@ -5,8 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
+	"path/filepath"
 	"strings"
+
+	"clusterguard.io/ha/pkg/model"
 )
 
 type Credential struct {
@@ -34,15 +38,54 @@ type Agent struct {
 	SharedSecret    string `json:"-"`
 }
 
+type ConsensusPeer struct {
+	ResourceID model.ResourceID `json:"resource_id"`
+	Address    string           `json:"address"`
+}
+
+type Consensus struct {
+	Enabled             bool             `json:"enabled"`
+	LocalID             model.ResourceID `json:"local_id"`
+	BindAddress         string           `json:"bind_address"`
+	AdvertiseAddress    string           `json:"advertise_address"`
+	DataDirectory       string           `json:"data_directory"`
+	Bootstrap           bool             `json:"bootstrap"`
+	ApplyTimeoutSeconds int              `json:"apply_timeout_seconds,omitempty"`
+	Peers               []ConsensusPeer  `json:"peers"`
+}
+
+type NodeLifecycle struct {
+	Enabled                bool            `json:"enabled"`
+	ExecutorPath           string          `json:"executor_path"`
+	PackageRepository      string          `json:"package_repository"`
+	KnownHostsFile         string          `json:"known_hosts_file"`
+	IdentityFile           string          `json:"identity_file,omitempty"`
+	JQBinary               string          `json:"jq_binary"`
+	ControlJoinHelper      string          `json:"control_join_helper,omitempty"`
+	CloneHelper            string          `json:"clone_helper,omitempty"`
+	XtraBackupHelper       string          `json:"xtrabackup_helper,omitempty"`
+	SSHPasswordEnv         string          `json:"ssh_password_env,omitempty"`
+	MySQLRootPasswordEnv   string          `json:"mysql_root_password_env"`
+	ReplicationPasswordEnv string          `json:"replication_password_env"`
+	SSHPassword            string          `json:"-"`
+	MySQLRootPassword      string          `json:"-"`
+	ReplicationPassword    string          `json:"-"`
+	CloneAvailable         bool            `json:"clone_available"`
+	XtraBackupVersions     map[string]bool `json:"xtrabackup_versions,omitempty"`
+	LogicalDumpAllowed     bool            `json:"logical_dump_allowed"`
+}
+
 type File struct {
-	HTTPAddress      string `json:"http_address"`
-	MetadataPath     string `json:"metadata_path"`
-	ControlTokenEnv  string `json:"control_token_env"`
-	ControlToken     string `json:"-"`
-	ApprovalTokenEnv string `json:"approval_token_env"`
-	ApprovalToken    string `json:"-"`
-	MySQL            MySQL  `json:"mysql"`
-	Agent            Agent  `json:"agent"`
+	HTTPAddress      string        `json:"http_address"`
+	MetadataPath     string        `json:"metadata_path"`
+	ControlTokenEnv  string        `json:"control_token_env"`
+	ControlToken     string        `json:"-"`
+	ApprovalTokenEnv string        `json:"approval_token_env"`
+	ApprovalToken    string        `json:"-"`
+	MySQL            MySQL         `json:"mysql"`
+	Agent            Agent         `json:"agent"`
+	Consensus        Consensus     `json:"consensus"`
+	NodeLifecycle    NodeLifecycle `json:"node_lifecycle"`
 }
 
 func Load(path string) (File, error) {
@@ -105,7 +148,114 @@ func Load(path string) (File, error) {
 			return File{}, fmt.Errorf("agent shared secret environment variable %s is empty", configuration.Agent.SharedSecretEnv)
 		}
 	}
+	if configuration.Consensus.Enabled {
+		if err := validateConsensus(&configuration.Consensus); err != nil {
+			return File{}, err
+		}
+	}
+	if configuration.NodeLifecycle.Enabled {
+		if !configuration.Consensus.Enabled {
+			return File{}, fmt.Errorf("node lifecycle execution requires Raft consensus")
+		}
+		if err := resolveNodeLifecycle(&configuration.NodeLifecycle); err != nil {
+			return File{}, err
+		}
+	}
 	return configuration, nil
+}
+
+func validateConsensus(configuration *Consensus) error {
+	configuration.BindAddress = strings.TrimSpace(configuration.BindAddress)
+	configuration.AdvertiseAddress = strings.TrimSpace(configuration.AdvertiseAddress)
+	configuration.DataDirectory = strings.TrimSpace(configuration.DataDirectory)
+	if !model.ValidResourceID(configuration.LocalID) || !filepath.IsAbs(configuration.DataDirectory) {
+		return fmt.Errorf("consensus requires a valid local_id and absolute data_directory")
+	}
+	if _, _, err := net.SplitHostPort(configuration.BindAddress); err != nil {
+		return fmt.Errorf("consensus bind_address is invalid")
+	}
+	if _, _, err := net.SplitHostPort(configuration.AdvertiseAddress); err != nil {
+		return fmt.Errorf("consensus advertise_address is invalid")
+	}
+	if len(configuration.Peers) < 3 || len(configuration.Peers)%2 == 0 {
+		return fmt.Errorf("consensus peers must be an odd set of at least three controllers")
+	}
+	ids := make(map[model.ResourceID]struct{}, len(configuration.Peers))
+	addresses := make(map[string]struct{}, len(configuration.Peers))
+	localFound := false
+	for index := range configuration.Peers {
+		peer := &configuration.Peers[index]
+		peer.Address = strings.TrimSpace(peer.Address)
+		if !model.ValidResourceID(peer.ResourceID) {
+			return fmt.Errorf("consensus peer resource_id is invalid")
+		}
+		if _, _, err := net.SplitHostPort(peer.Address); err != nil {
+			return fmt.Errorf("consensus peer address is invalid")
+		}
+		if _, duplicate := ids[peer.ResourceID]; duplicate {
+			return fmt.Errorf("consensus peer resource_id is duplicated")
+		}
+		if _, duplicate := addresses[peer.Address]; duplicate {
+			return fmt.Errorf("consensus peer address is duplicated")
+		}
+		ids[peer.ResourceID] = struct{}{}
+		addresses[peer.Address] = struct{}{}
+		if peer.ResourceID == configuration.LocalID {
+			localFound = true
+		}
+	}
+	if !localFound {
+		return fmt.Errorf("consensus local controller is outside peers")
+	}
+	if configuration.ApplyTimeoutSeconds <= 0 {
+		configuration.ApplyTimeoutSeconds = 10
+	}
+	return nil
+}
+
+func resolveNodeLifecycle(configuration *NodeLifecycle) error {
+	paths := map[string]*string{
+		"executor_path":      &configuration.ExecutorPath,
+		"package_repository": &configuration.PackageRepository,
+		"known_hosts_file":   &configuration.KnownHostsFile,
+		"jq_binary":          &configuration.JQBinary,
+	}
+	for name, value := range paths {
+		*value = strings.TrimSpace(*value)
+		if !filepath.IsAbs(*value) {
+			return fmt.Errorf("node lifecycle %s must be an absolute path", name)
+		}
+	}
+	for _, value := range []*string{&configuration.IdentityFile, &configuration.ControlJoinHelper, &configuration.CloneHelper, &configuration.XtraBackupHelper} {
+		*value = strings.TrimSpace(*value)
+		if *value != "" && !filepath.IsAbs(*value) {
+			return fmt.Errorf("node lifecycle helper paths must be absolute")
+		}
+	}
+	configuration.SSHPasswordEnv = strings.TrimSpace(configuration.SSHPasswordEnv)
+	if configuration.IdentityFile == "" && configuration.SSHPasswordEnv == "" {
+		return fmt.Errorf("node lifecycle requires identity_file or ssh_password_env")
+	}
+	if configuration.SSHPasswordEnv != "" {
+		configuration.SSHPassword = os.Getenv(configuration.SSHPasswordEnv)
+		if configuration.SSHPassword == "" {
+			return fmt.Errorf("node lifecycle SSH password environment variable %s is empty", configuration.SSHPasswordEnv)
+		}
+	}
+	configuration.MySQLRootPasswordEnv = strings.TrimSpace(configuration.MySQLRootPasswordEnv)
+	configuration.ReplicationPasswordEnv = strings.TrimSpace(configuration.ReplicationPasswordEnv)
+	if configuration.MySQLRootPasswordEnv == "" || configuration.ReplicationPasswordEnv == "" {
+		return fmt.Errorf("node lifecycle MySQL root and replication password environments are required")
+	}
+	configuration.MySQLRootPassword = os.Getenv(configuration.MySQLRootPasswordEnv)
+	configuration.ReplicationPassword = os.Getenv(configuration.ReplicationPasswordEnv)
+	if configuration.MySQLRootPassword == "" || configuration.ReplicationPassword == "" {
+		return fmt.Errorf("node lifecycle MySQL credential environment is empty")
+	}
+	if configuration.XtraBackupVersions == nil {
+		configuration.XtraBackupVersions = map[string]bool{}
+	}
+	return nil
 }
 
 func resolveCredential(name string, credential *Credential) error {

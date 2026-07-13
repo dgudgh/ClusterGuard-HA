@@ -3,6 +3,20 @@
   "metadata_path": "/var/lib/clusterguard/metadata.json",
   "control_token_env": "CG_CONTROL_TOKEN",
   "approval_token_env": "CG_APPROVAL_TOKEN",
+  "consensus": {
+    "enabled": true,
+    "local_id": "c1520000-0000-4000-8000-000000000152",
+    "bind_address": "0.0.0.0:10009",
+    "advertise_address": "192.168.102.152:10009",
+    "data_directory": "/var/lib/clusterguard/raft",
+    "bootstrap": true,
+    "apply_timeout_seconds": 10,
+    "peers": [
+      {"resource_id": "c1520000-0000-4000-8000-000000000152", "address": "192.168.102.152:10009"},
+      {"resource_id": "c1530000-0000-4000-8000-000000000153", "address": "192.168.102.153:10009"},
+      {"resource_id": "c1540000-0000-4000-8000-000000000154", "address": "192.168.102.154:10009"}
+    ]
+  },
   "mysql": {
     "enabled": true,
     "discovery": {
@@ -27,5 +41,19 @@
     "agent_binary": "/usr/local/bin/clusterguard-agent",
     "agent_config_path": "/etc/clusterguard/agent.json",
     "shared_secret_env": "CG_AGENT_SHARED_SECRET"
+  },
+  "node_lifecycle": {
+    "enabled": true,
+    "executor_path": "/usr/local/libexec/clusterguard-node-lifecycle.sh",
+    "package_repository": "/opt/clusterguard/packages",
+    "known_hosts_file": "/etc/clusterguard/known_hosts",
+    "identity_file": "/etc/clusterguard/lifecycle_ed25519",
+    "jq_binary": "/usr/local/libexec/jq-linux-amd64",
+    "ssh_password_env": "CG_NODE_SSH_PASSWORD",
+    "mysql_root_password_env": "CG_NODE_MYSQL_ROOT_PASSWORD",
+    "replication_password_env": "CG_NODE_MYSQL_REPLICATION_PASSWORD",
+    "clone_available": false,
+    "xtrabackup_versions": {},
+    "logical_dump_allowed": true
   }
 }

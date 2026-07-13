@@ -81,8 +81,18 @@ case "${method}" in
     ;;
   logical_dump)
     [[ -x "${mysqldump}" ]] || { echo "mysqldump is unavailable" >&2; exit 4; }
-    "${mysqldump}" --defaults-extra-file="${donor_defaults}" --host="${donor_host}" --port="${donor_port}" \
-      --single-transaction --routines --events --triggers --hex-blob --all-databases --set-gtid-purged=ON | mysql_target
+    mapfile -t user_databases < <(mysql_donor --batch --skip-column-names -e \
+      "SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT IN ('information_schema','performance_schema','mysql','sys') ORDER BY schema_name")
+    if [[ "${#user_databases[@]}" -gt 0 ]]; then
+      "${mysqldump}" --defaults-extra-file="${donor_defaults}" --host="${donor_host}" --port="${donor_port}" \
+        --single-transaction --routines --events --triggers --hex-blob --set-gtid-purged=ON --databases "${user_databases[@]}" | mysql_target
+    else
+      donor_gtid="$(mysql_donor --batch --skip-column-names -e 'SELECT @@GLOBAL.gtid_executed')"
+      mysql_target -e 'RESET BINARY LOGS AND GTIDS' >/dev/null 2>&1 || mysql_target -e 'RESET MASTER'
+      if [[ -n "${donor_gtid}" ]]; then
+        printf 'SET GLOBAL GTID_PURGED=%s;\n' "$(sql_quote "${donor_gtid}")" | mysql_target
+      fi
+    fi
     ;;
 esac
 

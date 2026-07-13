@@ -30,6 +30,22 @@ const testControlToken = "test-control-token"
 
 type apiRunner struct{}
 
+type apiMutationAuthorityStub struct {
+	err           error
+	calls         int
+	leaderID      model.ResourceID
+	leaderAddress string
+}
+
+func (authority *apiMutationAuthorityStub) RequireMutationAuthority(context.Context) error {
+	authority.calls++
+	return authority.err
+}
+
+func (authority *apiMutationAuthorityStub) Leader() (model.ResourceID, string, bool) {
+	return authority.leaderID, authority.leaderAddress, authority.leaderID != ""
+}
+
 type metadataAdapterSpy struct {
 	adapter.UnsupportedAdapter
 	mu    sync.Mutex
@@ -197,6 +213,32 @@ func TestControlAPIPostsFailClosedWhenTokenIsNotConfigured(t *testing.T) {
 	server.Handler().ServeHTTP(response, request)
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("unconfigured control authentication status = %d, want 503: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestControlAPIMutationsRequireCurrentQuorumLeader(t *testing.T) {
+	registry := adapter.NewRegistry()
+	if err := registry.Register(mysql.New(apiRunner{})); err != nil {
+		t.Fatalf("register MySQL adapter: %v", err)
+	}
+	repository := store.NewMemory()
+	leaderID := model.NewResourceID()
+	authority := &apiMutationAuthorityStub{err: errors.New("not leader"), leaderID: leaderID, leaderAddress: "192.0.2.10:10009"}
+	server := NewServer(registry, repository, nil, nil, WithControlToken(testControlToken), WithMutationAuthority(authority))
+	payload := map[string]interface{}{"display_name": "secured", "engine": "mysql", "endpoints": []map[string]interface{}{{"hostname": "mysql-a", "port": 3306}}}
+
+	blocked := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/clusters", payload)
+	if blocked.Code != http.StatusServiceUnavailable || len(repository.Clusters()) != 0 || authority.calls != 1 || blocked.Header().Get("X-ClusterGuard-Leader-ID") != string(leaderID) || blocked.Header().Get("X-ClusterGuard-Leader-Address") != authority.leaderAddress {
+		t.Fatalf("non-leader mutation was not blocked: %d %s headers=%v", blocked.Code, blocked.Body.String(), blocked.Header())
+	}
+	read := callJSON(t, server.Handler(), http.MethodGet, "/api/v1/engines", nil)
+	if read.Code != http.StatusOK || authority.calls != 1 {
+		t.Fatalf("read-only API was incorrectly gated: %d %s calls=%d", read.Code, read.Body.String(), authority.calls)
+	}
+	authority.err = nil
+	allowed := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/clusters", payload)
+	if allowed.Code != http.StatusCreated || len(repository.Clusters()) != 1 || authority.calls != 2 {
+		t.Fatalf("authoritative mutation failed: %d %s calls=%d", allowed.Code, allowed.Body.String(), authority.calls)
 	}
 }
 

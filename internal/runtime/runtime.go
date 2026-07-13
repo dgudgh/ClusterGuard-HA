@@ -4,6 +4,8 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"time"
 
 	"clusterguard.io/ha/adapters/mysql"
 	"clusterguard.io/ha/adapters/oracle"
@@ -11,31 +13,78 @@ import (
 	"clusterguard.io/ha/adapters/sqlserver"
 	"clusterguard.io/ha/internal/api"
 	"clusterguard.io/ha/internal/config"
+	"clusterguard.io/ha/internal/consensus"
+	"clusterguard.io/ha/internal/coordination"
 	"clusterguard.io/ha/internal/discovery"
 	writerendpoint "clusterguard.io/ha/internal/endpoint"
+	"clusterguard.io/ha/internal/lifecycle"
 	"clusterguard.io/ha/internal/store"
 	"clusterguard.io/ha/internal/workflow"
 	"clusterguard.io/ha/pkg/adapter"
 	"clusterguard.io/ha/pkg/model"
 )
 
-func New(configuration config.File) (*api.Server, error) {
+type Runtime struct {
+	server    *api.Server
+	consensus *consensus.Node
+}
+
+func (runtime *Runtime) Handler() http.Handler {
+	if runtime == nil || runtime.server == nil {
+		return http.NotFoundHandler()
+	}
+	return runtime.server.Handler()
+}
+
+func (runtime *Runtime) Close() error {
+	if runtime == nil || runtime.consensus == nil {
+		return nil
+	}
+	return runtime.consensus.Close()
+}
+
+func New(configuration config.File) (*Runtime, error) {
 	repository, err := store.Open(configuration.MetadataPath)
 	if err != nil {
 		return nil, err
 	}
+	result := &Runtime{}
+	if configuration.Consensus.Enabled {
+		peers := make([]consensus.Peer, len(configuration.Consensus.Peers))
+		for index, peer := range configuration.Consensus.Peers {
+			peers[index] = consensus.Peer{ResourceID: peer.ResourceID, Address: peer.Address}
+		}
+		result.consensus, err = consensus.Open(consensus.Config{
+			LocalID: configuration.Consensus.LocalID, BindAddress: configuration.Consensus.BindAddress,
+			AdvertiseAddress: configuration.Consensus.AdvertiseAddress, DataDirectory: configuration.Consensus.DataDirectory,
+			Peers: peers, Bootstrap: configuration.Consensus.Bootstrap,
+			ApplyTimeout: time.Duration(configuration.Consensus.ApplyTimeoutSeconds) * time.Second,
+		}, repository)
+		if err != nil {
+			return nil, fmt.Errorf("start controller consensus: %w", err)
+		}
+		if err := repository.SetSnapshotConsensus(result.consensus); err != nil {
+			_ = result.Close()
+			return nil, fmt.Errorf("attach replicated metadata store: %w", err)
+		}
+	}
 	registry := adapter.NewRegistry()
 	var endpointProvider adapter.HAEndpointProvider = mysql.UnsupportedHAEndpointProvider{}
 	if configuration.Agent.Enabled {
+		if result.consensus == nil {
+			return nil, fmt.Errorf("agent-backed VIP execution requires controller consensus")
+		}
 		transport, transportErr := writerendpoint.NewSSHAgentTransport(writerendpoint.SSHAgentTransportConfig{
 			SSHBinary: configuration.Agent.SSHBinary, User: configuration.Agent.User,
 			IdentityFile: configuration.Agent.IdentityFile, KnownHostsFile: configuration.Agent.KnownHostsFile,
 			AgentBinary: configuration.Agent.AgentBinary, AgentConfigPath: configuration.Agent.AgentConfigPath,
 		}, writerendpoint.OSProcessRunner{})
 		if transportErr != nil {
+			_ = result.Close()
 			return nil, fmt.Errorf("configure agent transport: %w", transportErr)
 		}
-		endpointProvider = writerendpoint.NewLinuxVIPProvider(repository, transport, writerendpoint.NewMemoryLeaseStore(nil), configuration.Agent.SharedSecret, nil)
+		leaseStore := coordination.NewLeaseStore(repository, result.consensus, nil)
+		endpointProvider = writerendpoint.NewLinuxVIPProvider(repository, transport, leaseStore, configuration.Agent.SharedSecret, nil)
 	}
 	mysqlAdapter := mysql.NewWithProviders(mysql.CLIQueryRunner{}, endpointProvider, repository)
 	for _, candidate := range []adapter.DatabaseHAAdapter{
@@ -45,6 +94,7 @@ func New(configuration config.File) (*api.Server, error) {
 		sqlserver.New(),
 	} {
 		if err := registry.Register(candidate); err != nil {
+			_ = result.Close()
 			return nil, fmt.Errorf("register %s adapter: %w", candidate.Engine(), err)
 		}
 	}
@@ -71,7 +121,51 @@ func New(configuration config.File) (*api.Server, error) {
 		}
 		return mysqlDiscoveryCredentials(configuration.MySQL)
 	}), nil, discovery.WithPublicationFence(locks))
-	return api.NewServer(registry, repository, service, refresher, api.WithControlToken(configuration.ControlToken)), nil
+	options := []api.ServerOption{api.WithControlToken(configuration.ControlToken)}
+	if result.consensus != nil {
+		options = append(options, api.WithMutationAuthority(result.consensus))
+	}
+	if configuration.NodeLifecycle.Enabled {
+		if result.consensus == nil {
+			_ = result.Close()
+			return nil, fmt.Errorf("node lifecycle execution requires controller consensus")
+		}
+		executor, executorErr := lifecycle.NewShellExecutor(configuration.NodeLifecycle.ExecutorPath, lifecycle.OSLifecycleProcessRunner{}, lifecycle.WithShellEnvironment(lifecycle.ShellEnvironment{
+			PackageRepository: configuration.NodeLifecycle.PackageRepository,
+			KnownHostsFile:    configuration.NodeLifecycle.KnownHostsFile,
+			IdentityFile:      configuration.NodeLifecycle.IdentityFile,
+			JQBinary:          configuration.NodeLifecycle.JQBinary,
+			ControlJoinHelper: configuration.NodeLifecycle.ControlJoinHelper,
+			CloneHelper:       configuration.NodeLifecycle.CloneHelper,
+			XtraBackupHelper:  configuration.NodeLifecycle.XtraBackupHelper,
+		}))
+		if executorErr != nil {
+			_ = result.Close()
+			return nil, fmt.Errorf("configure node lifecycle executor: %w", executorErr)
+		}
+		manager := lifecycle.NewManager(repository, result.consensus, lifecycle.PlanSafetyGuard{}, locks, lifecycle.TokenApproval{ExpectedToken: configuration.ApprovalToken}, executor, repository, nil)
+		secrets := nodeLifecycleSecrets(configuration.NodeLifecycle)
+		options = append(options, api.WithNodeLifecycle(manager, nodeLifecycleCapabilities(configuration.NodeLifecycle), api.LifecycleSecretProviderFunc(func(context.Context, lifecycle.Request) (lifecycle.ExecutionSecrets, error) {
+			return secrets, nil
+		})))
+	}
+	result.server = api.NewServer(registry, repository, service, refresher, options...)
+	return result, nil
+}
+
+func nodeLifecycleSecrets(configuration config.NodeLifecycle) lifecycle.ExecutionSecrets {
+	return lifecycle.ExecutionSecrets{
+		SSHPassword: configuration.SSHPassword, MySQLRootPassword: configuration.MySQLRootPassword,
+		ReplicationPassword: configuration.ReplicationPassword,
+	}
+}
+
+func nodeLifecycleCapabilities(configuration config.NodeLifecycle) lifecycle.Capabilities {
+	versions := make(map[string]bool, len(configuration.XtraBackupVersions))
+	for version, available := range configuration.XtraBackupVersions {
+		versions[version] = available
+	}
+	return lifecycle.Capabilities{CloneAvailable: configuration.CloneAvailable, XtraBackupVersions: versions, LogicalDumpAllowed: configuration.LogicalDumpAllowed}
 }
 
 func mysqlOperationCredentials(configuration config.MySQL) (adapter.OperationCredentials, error) {

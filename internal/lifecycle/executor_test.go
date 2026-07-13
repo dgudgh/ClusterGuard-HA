@@ -58,6 +58,40 @@ func TestShellExecutorPassesSecretsOnlyThroughEnvironmentAndEmitsStages(t *testi
 	}
 }
 
+func TestShellExecutorPassesOnlyTypedStaticLifecyclePaths(t *testing.T) {
+	runner := &lifecycleProcessRunnerStub{out: []byte(`{"type":"result","verified":true}` + "\n")}
+	executor, err := NewShellExecutor("/usr/local/libexec/clusterguard-node-lifecycle.sh", runner, WithShellEnvironment(ShellEnvironment{
+		PackageRepository: "/opt/clusterguard/packages",
+		KnownHostsFile:    "/etc/clusterguard/known_hosts",
+		IdentityFile:      "/etc/clusterguard/lifecycle_ed25519",
+		JQBinary:          "/usr/local/libexec/jq-linux-amd64",
+		ControlJoinHelper: "/usr/local/libexec/clusterguard-control-join",
+		CloneHelper:       "/usr/local/libexec/clusterguard-mysql-clone",
+		XtraBackupHelper:  "/usr/local/libexec/clusterguard-mysql-xtrabackup",
+	}))
+	if err != nil {
+		t.Fatalf("new configured shell executor: %v", err)
+	}
+	request, plan := executableLifecyclePlan()
+	if _, err := executor.Execute(context.Background(), request, plan, ExecutionSecrets{}, nil); err != nil {
+		t.Fatalf("execute configured shell lifecycle: %v", err)
+	}
+	joined := strings.Join(runner.env, "\n")
+	for _, expected := range []string{
+		"CG_PACKAGE_REPOSITORY=/opt/clusterguard/packages",
+		"CG_SSH_KNOWN_HOSTS=/etc/clusterguard/known_hosts",
+		"CG_SSH_IDENTITY_FILE=/etc/clusterguard/lifecycle_ed25519",
+		"CG_JQ_BINARY=/usr/local/libexec/jq-linux-amd64",
+		"CG_CONTROL_JOIN_HELPER=/usr/local/libexec/clusterguard-control-join",
+		"CG_MYSQL_CLONE_HELPER=/usr/local/libexec/clusterguard-mysql-clone",
+		"CG_MYSQL_XTRABACKUP_HELPER=/usr/local/libexec/clusterguard-mysql-xtrabackup",
+	} {
+		if !strings.Contains(joined, expected) {
+			t.Fatalf("static lifecycle environment missing %q: %v", expected, runner.env)
+		}
+	}
+}
+
 func TestShellExecutorRejectsMalformedOrUnverifiedResult(t *testing.T) {
 	request, plan := executableLifecyclePlan()
 	for _, testCase := range []struct {

@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -199,6 +200,82 @@ func TestLoadResolvesAgentTransportSecret(t *testing.T) {
 	}
 	if strings.Contains(string(encoded), "agent-secret") {
 		t.Fatalf("serialized configuration exposed agent secret: %s", encoded)
+	}
+}
+
+func TestLoadResolvesRaftAndWriteOnlyNodeLifecycleConfiguration(t *testing.T) {
+	t.Setenv("CG_TEST_SSH", "ssh-secret")
+	t.Setenv("CG_TEST_INSTALL_ROOT", "install-root-secret")
+	t.Setenv("CG_TEST_INSTALL_REPLICATION", "install-replication-secret")
+	localID := "11111111-1111-4111-8111-111111111111"
+	path := filepath.Join(t.TempDir(), "control.json")
+	contents := `{
+  "metadata_path":"` + filepath.Join(t.TempDir(), "metadata.json") + `",
+  "consensus": {
+    "enabled": true,
+    "local_id":"` + localID + `",
+    "bind_address":"127.0.0.1:10009",
+    "advertise_address":"127.0.0.1:10009",
+    "data_directory":"` + filepath.Join(t.TempDir(), "raft") + `",
+    "bootstrap":true,
+    "peers":[
+      {"resource_id":"` + localID + `","address":"127.0.0.1:10009"},
+      {"resource_id":"22222222-2222-4222-8222-222222222222","address":"127.0.0.1:10019"},
+      {"resource_id":"33333333-3333-4333-8333-333333333333","address":"127.0.0.1:10029"}
+    ]
+  },
+  "node_lifecycle": {
+    "enabled":true,
+    "executor_path":"/usr/local/libexec/clusterguard-node-lifecycle.sh",
+    "package_repository":"/opt/clusterguard/packages",
+    "known_hosts_file":"/etc/clusterguard/known_hosts",
+    "jq_binary":"/usr/local/libexec/jq-linux-amd64",
+    "ssh_password_env":"CG_TEST_SSH",
+    "mysql_root_password_env":"CG_TEST_INSTALL_ROOT",
+    "replication_password_env":"CG_TEST_INSTALL_REPLICATION",
+    "clone_available":true,
+    "xtrabackup_versions":{"8.0":true},
+    "logical_dump_allowed":true
+  }
+}`
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("load Raft lifecycle configuration: %v", err)
+	}
+	if !loaded.Consensus.Enabled || string(loaded.Consensus.LocalID) != localID || len(loaded.Consensus.Peers) != 3 || !loaded.NodeLifecycle.Enabled || loaded.NodeLifecycle.SSHPassword != "ssh-secret" || loaded.NodeLifecycle.MySQLRootPassword != "install-root-secret" || loaded.NodeLifecycle.ReplicationPassword != "install-replication-secret" {
+		t.Fatalf("loaded Raft lifecycle configuration=%+v", loaded)
+	}
+	encoded, err := json.Marshal(loaded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"ssh-secret", "install-root-secret", "install-replication-secret"} {
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("serialized lifecycle configuration exposed %q: %s", secret, encoded)
+		}
+	}
+}
+
+func TestLoadRejectsUnsafeRaftMembershipAndLifecycleWithoutConsensus(t *testing.T) {
+	write := func(t *testing.T, contents string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "control.json")
+		if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	base := `{"metadata_path":"/tmp/metadata.json","consensus":{"enabled":true,"local_id":"11111111-1111-4111-8111-111111111111","bind_address":"127.0.0.1:10009","advertise_address":"127.0.0.1:10009","data_directory":"/tmp/raft","peers":[%s]}}`
+	twoPeers := `{"resource_id":"11111111-1111-4111-8111-111111111111","address":"127.0.0.1:10009"},{"resource_id":"22222222-2222-4222-8222-222222222222","address":"127.0.0.1:10019"}`
+	if _, err := Load(write(t, fmt.Sprintf(base, twoPeers))); err == nil {
+		t.Fatal("even two-controller Raft membership was accepted")
+	}
+	withoutConsensus := `{"metadata_path":"/tmp/metadata.json","node_lifecycle":{"enabled":true,"executor_path":"/x","package_repository":"/x","known_hosts_file":"/x","jq_binary":"/x","ssh_password_env":"X","mysql_root_password_env":"Y","replication_password_env":"Z"}}`
+	if _, err := Load(write(t, withoutConsensus)); err == nil {
+		t.Fatal("real node lifecycle was enabled without Raft consensus")
 	}
 }
 

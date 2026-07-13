@@ -61,16 +61,65 @@ func (OSLifecycleProcessRunner) Run(ctx context.Context, input []byte, environme
 }
 
 type ShellExecutor struct {
-	script string
-	runner ProcessRunner
+	script      string
+	runner      ProcessRunner
+	environment []string
 }
 
-func NewShellExecutor(script string, runner ProcessRunner) (*ShellExecutor, error) {
+type ShellEnvironment struct {
+	PackageRepository string
+	KnownHostsFile    string
+	IdentityFile      string
+	JQBinary          string
+	ControlJoinHelper string
+	CloneHelper       string
+	XtraBackupHelper  string
+}
+
+type ShellExecutorOption func(*ShellExecutor) error
+
+func WithShellEnvironment(configuration ShellEnvironment) ShellExecutorOption {
+	return func(executor *ShellExecutor) error {
+		values := []struct {
+			name  string
+			value string
+		}{
+			{"CG_PACKAGE_REPOSITORY", configuration.PackageRepository},
+			{"CG_SSH_KNOWN_HOSTS", configuration.KnownHostsFile},
+			{"CG_SSH_IDENTITY_FILE", configuration.IdentityFile},
+			{"CG_JQ_BINARY", configuration.JQBinary},
+			{"CG_CONTROL_JOIN_HELPER", configuration.ControlJoinHelper},
+			{"CG_MYSQL_CLONE_HELPER", configuration.CloneHelper},
+			{"CG_MYSQL_XTRABACKUP_HELPER", configuration.XtraBackupHelper},
+		}
+		for _, value := range values {
+			path := strings.TrimSpace(value.value)
+			if path == "" {
+				continue
+			}
+			if !filepath.IsAbs(path) {
+				return fmt.Errorf("lifecycle executor path environment must be absolute")
+			}
+			executor.environment = append(executor.environment, value.name+"="+path)
+		}
+		return nil
+	}
+}
+
+func NewShellExecutor(script string, runner ProcessRunner, options ...ShellExecutorOption) (*ShellExecutor, error) {
 	script = strings.TrimSpace(script)
 	if !filepath.IsAbs(script) || runner == nil {
 		return nil, fmt.Errorf("absolute lifecycle executor path and process runner are required")
 	}
-	return &ShellExecutor{script: script, runner: runner}, nil
+	executor := &ShellExecutor{script: script, runner: runner}
+	for _, option := range options {
+		if option != nil {
+			if err := option(executor); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return executor, nil
 }
 
 type executorRecord struct {
@@ -94,11 +143,12 @@ func (executor *ShellExecutor) Execute(ctx context.Context, request Request, pla
 		return ExecutionResult{}, fmt.Errorf("encode lifecycle request: %w", err)
 	}
 	contents = append(contents, '\n')
-	environment := []string{
-		"CG_SSH_PASSWORD=" + secrets.SSHPassword,
-		"CG_MYSQL_ROOT_PASSWORD=" + secrets.MySQLRootPassword,
-		"CG_MYSQL_REPLICATION_PASSWORD=" + secrets.ReplicationPassword,
-	}
+	environment := append([]string{}, executor.environment...)
+	environment = append(environment,
+		"CG_SSH_PASSWORD="+secrets.SSHPassword,
+		"CG_MYSQL_ROOT_PASSWORD="+secrets.MySQLRootPassword,
+		"CG_MYSQL_REPLICATION_PASSWORD="+secrets.ReplicationPassword,
+	)
 	output, err := executor.runner.Run(ctx, contents, environment, executor.script, "execute")
 	if err != nil {
 		return ExecutionResult{}, fmt.Errorf("node lifecycle executor failed")

@@ -27,6 +27,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("startup error: %v", err)
 	}
+	defer func() {
+		if err := server.Close(); err != nil {
+			log.Printf("control plane shutdown error: %v", err)
+		}
+	}()
 	httpServer := &http.Server{Addr: configuration.HTTPAddress, Handler: server.Handler(), ReadHeaderTimeout: 5 * time.Second}
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)

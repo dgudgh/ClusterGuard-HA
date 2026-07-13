@@ -61,3 +61,33 @@ func TestSyncScriptSupportsVersionAwareReplicationAndSelectedCopyMethods(t *test
 		}
 	}
 }
+
+func TestLifecycleBundlesRemoteJQAndLogicalDumpExcludesSystemSchemas(t *testing.T) {
+	lifecycleContents, err := os.ReadFile("clusterguard-node-lifecycle.sh")
+	if err != nil {
+		t.Fatalf("read lifecycle script: %v", err)
+	}
+	lifecycleText := string(lifecycleContents)
+	for _, required := range []string{"CG_JQ_BINARY", "/var/lib/clusterguard/stage/jq", "PATH=/var/lib/clusterguard/stage:"} {
+		if !strings.Contains(lifecycleText, required) {
+			t.Fatalf("lifecycle script does not bundle remote jq: missing %q", required)
+		}
+	}
+	if strings.Contains(lifecycleText, `command -v bash >/dev/null && command -v jq >/dev/null`) {
+		t.Fatal("fresh target still requires jq before lifecycle bootstrap")
+	}
+
+	syncContents, err := os.ReadFile("clusterguard-mysql-sync.sh")
+	if err != nil {
+		t.Fatalf("read sync script: %v", err)
+	}
+	syncText := string(syncContents)
+	if strings.Contains(syncText, "--all-databases") {
+		t.Fatal("logical synchronization still overwrites MySQL system schemas")
+	}
+	for _, required := range []string{"information_schema", "performance_schema", "mysql", "sys", "--databases"} {
+		if !strings.Contains(syncText, required) {
+			t.Fatalf("logical synchronization system-schema filter missing %q", required)
+		}
+	}
+}

@@ -29,10 +29,19 @@ type Server struct {
 	lifecycle    NodeLifecycleManager
 	lifecycleCap lifecycle.Capabilities
 	lifecycleSec LifecycleSecretProvider
+	authority    MutationAuthority
 }
 
 type Refresher interface {
 	Refresh(context.Context, model.ResourceID) (model.TopologySnapshot, error)
+}
+
+type MutationAuthority interface {
+	RequireMutationAuthority(context.Context) error
+}
+
+type LeaderLocator interface {
+	Leader() (model.ResourceID, string, bool)
 }
 
 type ServerOption func(*Server)
@@ -47,6 +56,10 @@ func WithNodeLifecycle(manager NodeLifecycleManager, capabilities lifecycle.Capa
 		server.lifecycleCap = capabilities
 		server.lifecycleSec = secrets
 	}
+}
+
+func WithMutationAuthority(authority MutationAuthority) ServerOption {
+	return func(server *Server) { server.authority = authority }
 }
 
 func NewServer(registry *adapter.Registry, repository *store.Repository, service *workflow.Service, refresher Refresher, options ...ServerOption) *Server {
@@ -98,6 +111,9 @@ func (server *Server) Handler() http.Handler {
 func (server *Server) route(writer http.ResponseWriter, request *http.Request) {
 	path := strings.TrimSuffix(request.URL.Path, "/")
 	if mutatingMethod(request.Method) && strings.HasPrefix(path, "/api/v1/") && !server.authorizeControl(writer, request) {
+		return
+	}
+	if mutatingMethod(request.Method) && strings.HasPrefix(path, "/api/v1/") && !server.authorizeMutation(writer, request) {
 		return
 	}
 	switch {
@@ -158,6 +174,28 @@ func (server *Server) authorizeControl(writer http.ResponseWriter, request *http
 		return false
 	}
 	return true
+}
+
+func (server *Server) authorizeMutation(writer http.ResponseWriter, request *http.Request) bool {
+	if server.authority == nil {
+		return true
+	}
+	if err := server.authority.RequireMutationAuthority(request.Context()); err == nil {
+		return true
+	}
+	result := map[string]interface{}{}
+	if locator, ok := server.authority.(LeaderLocator); ok {
+		if leaderID, address, found := locator.Leader(); found {
+			writer.Header().Set("X-ClusterGuard-Leader-ID", string(leaderID))
+			writer.Header().Set("X-ClusterGuard-Leader-Address", address)
+			result["leader_id"] = leaderID
+			result["leader_address"] = address
+		}
+	}
+	writeJSON(writer, http.StatusServiceUnavailable, map[string]interface{}{
+		"status": "blocked", "message": "mutation requires the current Raft leader with controller quorum", "result": result,
+	})
+	return false
 }
 
 func (server *Server) engines(writer http.ResponseWriter) {
