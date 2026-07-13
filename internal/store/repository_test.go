@@ -1765,7 +1765,11 @@ func TestTopologySnapshotOverlaysCanonicalCoordinatesButPreservesObservedRuntime
 	metadata.IPAddress = "192.0.2.99"
 	metadata.Port = 4406
 	metadata.Aliases = []string{"mysql-writer"}
-	metadata.NodeID = model.NewResourceID()
+	node, err := repository.PutNode(model.DatabaseNode{NodeName: "cg-data-overlay", Kind: model.NodeData, Hostname: metadata.Hostname, IPAddress: metadata.IPAddress, Active: true})
+	if err != nil {
+		t.Fatalf("register metadata node: %v", err)
+	}
+	metadata.NodeID = node.ResourceID
 	metadata.Role = model.RoleReplica
 	metadata.Health = model.Health{State: model.HealthUnhealthy}
 	metadata.Replication = model.ReplicationStatus{IOThread: model.ThreadStopped, SQLThread: model.ThreadStopped}
@@ -1924,7 +1928,11 @@ func TestReconcileMetadataCoordinatesUpdatesBoundEndpointAndPreservesRuntimeFact
 		t.Fatalf("publish topology: %v", err)
 	}
 	instanceID := snapshot.Instances[0].ResourceID
-	nodeID := model.NewResourceID()
+	node, err := repository.PutNode(model.DatabaseNode{NodeName: "cg-data-coordinate", Kind: model.NodeData, Hostname: "mysql-new", IPAddress: "192.0.2.20", Active: true})
+	if err != nil {
+		t.Fatalf("register metadata node: %v", err)
+	}
+	nodeID := node.ResourceID
 	malicious := snapshot.Instances[0]
 	malicious.DisplayName = "mysql-new"
 	malicious.Hostname = "mysql-new"

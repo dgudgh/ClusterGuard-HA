@@ -85,7 +85,7 @@ func (server *Server) Handler() http.Handler {
 
 func (server *Server) route(writer http.ResponseWriter, request *http.Request) {
 	path := strings.TrimSuffix(request.URL.Path, "/")
-	if request.Method == http.MethodPost && strings.HasPrefix(path, "/api/v1/") && !server.authorizeControl(writer, request) {
+	if mutatingMethod(request.Method) && strings.HasPrefix(path, "/api/v1/") && !server.authorizeControl(writer, request) {
 		return
 	}
 	switch {
@@ -103,6 +103,10 @@ func (server *Server) route(writer http.ResponseWriter, request *http.Request) {
 		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": server.store.Clusters()})
 	case request.Method == http.MethodPost && path == "/api/v1/clusters":
 		server.registerCluster(writer, request)
+	case path == "/api/v1/nodes":
+		server.nodesCollection(writer, request)
+	case strings.HasPrefix(path, "/api/v1/nodes/") && !strings.HasPrefix(path, "/api/v1/nodes/sync/"):
+		server.nodeResource(writer, request, strings.TrimPrefix(path, "/api/v1/nodes/"))
 	case request.Method == http.MethodGet && path == "/api/v1/metadata/anomalies":
 		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": server.store.Anomalies()})
 	case path == "/api/v1/operations":
@@ -124,6 +128,10 @@ func (server *Server) route(writer http.ResponseWriter, request *http.Request) {
 	default:
 		writeError(writer, http.StatusNotFound, "route not found")
 	}
+}
+
+func mutatingMethod(method string) bool {
+	return method == http.MethodPost || method == http.MethodPut || method == http.MethodPatch || method == http.MethodDelete
 }
 
 func (server *Server) authorizeControl(writer http.ResponseWriter, request *http.Request) bool {

@@ -100,11 +100,29 @@ type DatabaseCluster struct {
 	Health         Health         `json:"health"`
 }
 
+type NodeKind string
+
+const (
+	NodeData       NodeKind = "data"
+	NodeController NodeKind = "controller"
+	NodeMixed      NodeKind = "mixed"
+)
+
+func (kind NodeKind) Valid() bool {
+	return kind == NodeData || kind == NodeController || kind == NodeMixed
+}
+
 type DatabaseNode struct {
 	ResourceMeta
-	ClusterID   ResourceID `json:"cluster_id"`
+	PlatformID  ResourceID `json:"platform_id,omitempty"`
+	NodeName    string     `json:"node_name"`
 	DisplayName string     `json:"display_name"`
+	Hostname    string     `json:"hostname,omitempty"`
+	IPAddress   string     `json:"ip_address,omitempty"`
+	Aliases     []string   `json:"aliases,omitempty"`
+	Kind        NodeKind   `json:"kind"`
 	HostClass   string     `json:"host_class,omitempty"`
+	Active      bool       `json:"active"`
 }
 
 type InstanceRole string

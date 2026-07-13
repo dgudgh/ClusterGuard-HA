@@ -94,6 +94,7 @@ const discoveryMetricSampleLimit = 60
 
 type snapshot struct {
 	Clusters              map[model.ResourceID]model.DatabaseCluster               `json:"clusters"`
+	Nodes                 map[model.ResourceID]model.DatabaseNode                  `json:"nodes"`
 	Instances             map[model.ResourceID]model.DatabaseInstance              `json:"instances"`
 	Endpoints             map[model.ResourceID]map[model.ResourceID]model.Endpoint `json:"endpoints"`
 	HAEndpoints           map[model.ResourceID]model.HAEndpoint                    `json:"ha_endpoints"`
@@ -122,6 +123,7 @@ type Repository struct {
 func emptySnapshot() snapshot {
 	return snapshot{
 		Clusters:              map[model.ResourceID]model.DatabaseCluster{},
+		Nodes:                 map[model.ResourceID]model.DatabaseNode{},
 		Instances:             map[model.ResourceID]model.DatabaseInstance{},
 		Endpoints:             map[model.ResourceID]map[model.ResourceID]model.Endpoint{},
 		HAEndpoints:           map[model.ResourceID]model.HAEndpoint{},
@@ -181,6 +183,9 @@ func Open(path string) (*Repository, error) {
 	}
 	if repository.snapshot.Instances == nil {
 		repository.snapshot.Instances = map[model.ResourceID]model.DatabaseInstance{}
+	}
+	if repository.snapshot.Nodes == nil {
+		repository.snapshot.Nodes = map[model.ResourceID]model.DatabaseNode{}
 	}
 	if repository.snapshot.Endpoints == nil {
 		repository.snapshot.Endpoints = map[model.ResourceID]map[model.ResourceID]model.Endpoint{}
@@ -419,6 +424,7 @@ func cloneAnomalyMap(anomalies map[model.ResourceID]model.MetadataAnomaly) map[m
 func cloneDiscoverySnapshot(value snapshot) snapshot {
 	copy := value
 	copy.Clusters = cloneClusterMap(value.Clusters)
+	copy.Nodes = cloneNodeMap(value.Nodes)
 	copy.Instances = cloneInstanceMap(value.Instances)
 	copy.Endpoints = cloneEndpointMap(value.Endpoints)
 	copy.HAEndpoints = cloneHAEndpointMap(value.HAEndpoints)
@@ -431,6 +437,20 @@ func cloneDiscoverySnapshot(value snapshot) snapshot {
 	copy.Anomalies = cloneAnomalyMap(value.Anomalies)
 	copy.Operations = cloneOperationMap(value.Operations)
 	copy.OperationKeys = cloneOperationKeyMap(value.OperationKeys)
+	return copy
+}
+
+func cloneNode(node model.DatabaseNode) model.DatabaseNode {
+	copy := node
+	copy.Aliases = append([]string{}, node.Aliases...)
+	return copy
+}
+
+func cloneNodeMap(nodes map[model.ResourceID]model.DatabaseNode) map[model.ResourceID]model.DatabaseNode {
+	copy := make(map[model.ResourceID]model.DatabaseNode, len(nodes))
+	for resourceID, node := range nodes {
+		copy[resourceID] = cloneNode(node)
+	}
 	return copy
 }
 
@@ -1096,6 +1116,14 @@ func reconcileInstanceCandidate(candidate *snapshot, discovered model.DatabaseIn
 	if err != nil {
 		return ReconcileResult{}, err
 	}
+	if discovered.NodeID == "" {
+		discovered.NodeID = nodeIDForCoordinates(candidate.Nodes, discovered.Hostname, discovered.IPAddress)
+	}
+	if discovered.NodeID != "" {
+		if _, found := candidate.Nodes[discovered.NodeID]; !found {
+			return ReconcileResult{}, validationError("database instance node is not registered")
+		}
+	}
 
 	var existingID model.ResourceID
 	for resourceID, existing := range candidate.Instances {
@@ -1135,7 +1163,9 @@ func reconcileInstanceCandidate(candidate *snapshot, discovered model.DatabaseIn
 	for _, alias := range discovered.Aliases {
 		existing.Aliases = appendAlias(existing.Aliases, alias)
 	}
-	existing.NodeID = discovered.NodeID
+	if discovered.NodeID != "" {
+		existing.NodeID = discovered.NodeID
+	}
 	existing.EngineIdentity = discovered.EngineIdentity.Clone()
 	existing.DisplayName = discovered.DisplayName
 	existing.Hostname = discovered.Hostname
@@ -1162,6 +1192,37 @@ func reconcileInstanceCandidate(candidate *snapshot, discovered model.DatabaseIn
 	}
 	candidate.Instances[existingID] = cloneInstance(existing)
 	return ReconcileResult{Instance: cloneInstance(existing), Updated: true}, nil
+}
+
+func nodeIDForCoordinates(nodes map[model.ResourceID]model.DatabaseNode, hostname, ipAddress string) model.ResourceID {
+	hostname = strings.TrimSpace(hostname)
+	ipAddress = strings.TrimSpace(ipAddress)
+	matched := model.ResourceID("")
+	for resourceID, node := range nodes {
+		if !node.Active || !nodeMatchesCoordinate(node, hostname, ipAddress) {
+			continue
+		}
+		if matched != "" {
+			return ""
+		}
+		matched = resourceID
+	}
+	return matched
+}
+
+func nodeMatchesCoordinate(node model.DatabaseNode, hostname, ipAddress string) bool {
+	if hostname != "" && strings.EqualFold(node.Hostname, hostname) {
+		return true
+	}
+	if ipAddress != "" && node.IPAddress == ipAddress {
+		return true
+	}
+	for _, alias := range node.Aliases {
+		if (hostname != "" && strings.EqualFold(alias, hostname)) || (ipAddress != "" && alias == ipAddress) {
+			return true
+		}
+	}
+	return false
 }
 
 func (repository *Repository) ReconcileInstance(discovered model.DatabaseInstance) (ReconcileResult, error) {
@@ -1203,6 +1264,11 @@ func (repository *Repository) ReconcileMetadataCoordinates(update MetadataCoordi
 	}
 	if update.Instance.Port <= 0 || update.Instance.Port > 65535 {
 		return model.DatabaseInstance{}, model.Endpoint{}, validationError("invalid database endpoint port")
+	}
+	if update.Instance.NodeID != "" {
+		if _, found := repository.snapshot.Nodes[update.Instance.NodeID]; !found {
+			return model.DatabaseInstance{}, model.Endpoint{}, validationError("database instance node is not registered")
+		}
 	}
 	bound := make([]model.Endpoint, 0)
 	for _, endpoint := range repository.snapshot.Endpoints[existing.ClusterID] {
@@ -1256,7 +1322,9 @@ func (repository *Repository) ReconcileMetadataCoordinates(update MetadataCoordi
 	replacement.Hostname = replacementEndpoint.Hostname
 	replacement.IPAddress = replacementEndpoint.IPAddress
 	replacement.Port = update.Instance.Port
-	replacement.NodeID = update.Instance.NodeID
+	if update.Instance.NodeID != "" {
+		replacement.NodeID = update.Instance.NodeID
+	}
 	replacement.MetadataRevision++
 	replacement.UpdatedAt = now
 	replacementEndpoint.MetadataRevision++
