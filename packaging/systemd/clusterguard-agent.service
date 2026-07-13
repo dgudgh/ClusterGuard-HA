@@ -1,0 +1,24 @@
+[Unit]
+Description=ClusterGuard HA Data Node Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+EnvironmentFile=-/etc/clusterguard/agent.env
+ExecStart=/usr/local/bin/clusterguard-agent --config /etc/clusterguard/agent.json --check-config
+StandardOutput=journal
+RemainAfterExit=yes
+NoNewPrivileges=false
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/clusterguard-agent
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
