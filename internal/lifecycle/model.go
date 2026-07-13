@@ -75,3 +75,79 @@ type Plan struct {
 	Blocked              bool             `json:"blocked"`
 	CreatedAt            time.Time        `json:"created_at"`
 }
+
+type TaskStatus string
+
+const (
+	TaskPlanned     TaskStatus = "planned"
+	TaskQueued      TaskStatus = "queued"
+	TaskRunning     TaskStatus = "running"
+	TaskVerifying   TaskStatus = "verifying"
+	TaskSucceeded   TaskStatus = "succeeded"
+	TaskFailed      TaskStatus = "failed"
+	TaskInterrupted TaskStatus = "interrupted"
+)
+
+func (status TaskStatus) Valid() bool {
+	switch status {
+	case TaskPlanned, TaskQueued, TaskRunning, TaskVerifying, TaskSucceeded, TaskFailed, TaskInterrupted:
+		return true
+	default:
+		return false
+	}
+}
+
+type Stage string
+
+const (
+	StagePreflight   Stage = "preflight"
+	StageInstall     Stage = "install"
+	StageSynchronize Stage = "synchronize"
+	StageConfigure   Stage = "configure_replication"
+	StageVerify      Stage = "verify"
+	StageCommit      Stage = "metadata_commit"
+)
+
+type StageStatus string
+
+const (
+	StagePending   StageStatus = "pending"
+	StageRunning   StageStatus = "running"
+	StageSucceeded StageStatus = "succeeded"
+	StageFailed    StageStatus = "failed"
+)
+
+type StageState struct {
+	Stage     Stage       `json:"stage"`
+	Status    StageStatus `json:"status"`
+	Message   string      `json:"message,omitempty"`
+	UpdatedAt time.Time   `json:"updated_at"`
+}
+
+type Event struct {
+	Stage   Stage
+	Status  StageStatus
+	Message string
+}
+
+type ExecutionResult struct {
+	Verified  bool                     `json:"verified"`
+	Instances []model.DatabaseInstance `json:"instances,omitempty"`
+	Checks    []model.Check            `json:"checks,omitempty"`
+	Message   string                   `json:"message,omitempty"`
+}
+
+type Task struct {
+	model.ResourceMeta
+	ClusterID    model.ResourceID `json:"cluster_id"`
+	OperationID  model.ResourceID `json:"operation_id,omitempty"`
+	Request      Request          `json:"request"`
+	Plan         Plan             `json:"plan"`
+	Status       TaskStatus       `json:"status"`
+	CurrentStage Stage            `json:"current_stage,omitempty"`
+	Stages       []StageState     `json:"stages,omitempty"`
+	Checks       []model.Check    `json:"checks,omitempty"`
+	LogTail      []string         `json:"log_tail,omitempty"`
+	Message      string           `json:"message,omitempty"`
+	ReportID     model.ResourceID `json:"report_id,omitempty"`
+}

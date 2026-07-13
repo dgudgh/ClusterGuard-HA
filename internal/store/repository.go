@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"clusterguard.io/ha/internal/coordination"
+	"clusterguard.io/ha/internal/lifecycle"
 	"clusterguard.io/ha/pkg/identity"
 	"clusterguard.io/ha/pkg/model"
 )
@@ -99,6 +100,7 @@ type snapshot struct {
 	Endpoints             map[model.ResourceID]map[model.ResourceID]model.Endpoint `json:"endpoints"`
 	HAEndpoints           map[model.ResourceID]model.HAEndpoint                    `json:"ha_endpoints"`
 	CoordinationLeases    map[model.ResourceID]coordination.LeaseRecord            `json:"coordination_leases"`
+	LifecycleTasks        map[model.ResourceID]lifecycle.Task                      `json:"lifecycle_tasks"`
 	ReplicationLinks      map[model.ResourceID][]model.ReplicationLink             `json:"replication_links"`
 	MetricSamples         map[model.ResourceID][]model.MetricSample                `json:"metric_samples"`
 	TopologySnapshots     map[model.ResourceID]model.TopologySnapshot              `json:"topology_snapshots"`
@@ -128,6 +130,7 @@ func emptySnapshot() snapshot {
 		Endpoints:             map[model.ResourceID]map[model.ResourceID]model.Endpoint{},
 		HAEndpoints:           map[model.ResourceID]model.HAEndpoint{},
 		CoordinationLeases:    map[model.ResourceID]coordination.LeaseRecord{},
+		LifecycleTasks:        map[model.ResourceID]lifecycle.Task{},
 		ReplicationLinks:      map[model.ResourceID][]model.ReplicationLink{},
 		MetricSamples:         map[model.ResourceID][]model.MetricSample{},
 		TopologySnapshots:     map[model.ResourceID]model.TopologySnapshot{},
@@ -195,6 +198,9 @@ func Open(path string) (*Repository, error) {
 	}
 	if repository.snapshot.CoordinationLeases == nil {
 		repository.snapshot.CoordinationLeases = map[model.ResourceID]coordination.LeaseRecord{}
+	}
+	if repository.snapshot.LifecycleTasks == nil {
+		repository.snapshot.LifecycleTasks = map[model.ResourceID]lifecycle.Task{}
 	}
 	if repository.snapshot.ReplicationLinks == nil {
 		repository.snapshot.ReplicationLinks = map[model.ResourceID][]model.ReplicationLink{}
@@ -429,6 +435,7 @@ func cloneDiscoverySnapshot(value snapshot) snapshot {
 	copy.Endpoints = cloneEndpointMap(value.Endpoints)
 	copy.HAEndpoints = cloneHAEndpointMap(value.HAEndpoints)
 	copy.CoordinationLeases = cloneCoordinationLeaseMap(value.CoordinationLeases)
+	copy.LifecycleTasks = cloneLifecycleTaskMap(value.LifecycleTasks)
 	copy.ReplicationLinks = cloneReplicationLinkMap(value.ReplicationLinks)
 	copy.MetricSamples = cloneMetricSampleMap(value.MetricSamples)
 	copy.TopologySnapshots = cloneTopologySnapshotMap(value.TopologySnapshots)
@@ -466,6 +473,25 @@ func cloneCoordinationLeaseMap(values map[model.ResourceID]coordination.LeaseRec
 	copy := make(map[model.ResourceID]coordination.LeaseRecord, len(values))
 	for resourceID, lease := range values {
 		copy[resourceID] = lease
+	}
+	return copy
+}
+
+func cloneLifecycleTask(task lifecycle.Task) lifecycle.Task {
+	copy := task
+	copy.Request.Targets = append([]lifecycle.Target{}, task.Request.Targets...)
+	copy.Plan.Targets = append([]lifecycle.TargetPlan{}, task.Plan.Targets...)
+	copy.Plan.Checks = append([]model.Check{}, task.Plan.Checks...)
+	copy.Stages = append([]lifecycle.StageState{}, task.Stages...)
+	copy.Checks = append([]model.Check{}, task.Checks...)
+	copy.LogTail = append([]string{}, task.LogTail...)
+	return copy
+}
+
+func cloneLifecycleTaskMap(values map[model.ResourceID]lifecycle.Task) map[model.ResourceID]lifecycle.Task {
+	copy := make(map[model.ResourceID]lifecycle.Task, len(values))
+	for resourceID, task := range values {
+		copy[resourceID] = cloneLifecycleTask(task)
 	}
 	return copy
 }
