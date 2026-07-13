@@ -41,19 +41,19 @@ func (server *Server) activeVIP(clusterID model.ResourceID) (model.HAEndpoint, m
 	return selected, selectedEndpoint, selected.ResourceID != ""
 }
 
-func (server *Server) activeOwnershipLease(clusterID, endpointID model.ResourceID, now time.Time) (endpoint.Lease, bool) {
-	var selected endpoint.Lease
+func (server *Server) activeOwnershipLease(clusterID, endpointID model.ResourceID, now time.Time) (coordination.LeaseRecord, bool) {
+	var selected coordination.LeaseRecord
 	for _, record := range server.store.CoordinationLeases() {
 		lease := record.Lease
 		if lease.ClusterID != clusterID || lease.HAEndpointID != endpointID || !lease.Active || !lease.ExpiresAt.After(now) {
 			continue
 		}
-		if selected.ResourceID != "" {
-			return endpoint.Lease{}, false
+		if selected.Lease.ResourceID != "" {
+			return coordination.LeaseRecord{}, false
 		}
-		selected = lease
+		selected = record
 	}
-	return selected, selected.ResourceID != ""
+	return selected, selected.Lease.ResourceID != ""
 }
 
 func (server *Server) transitionAuthorizes(instanceID model.ResourceID, lease endpoint.Lease) bool {
@@ -96,15 +96,23 @@ func (server *Server) agentReconcileRoute(writer http.ResponseWriter, request *h
 	}
 
 	evidence := coordination.SelfIsolationEvidence{LocalInstanceID: payload.InstanceID, Now: now}
-	if snapshot, found := server.store.TopologySnapshot(payload.ClusterID); found {
+	snapshot, snapshotFound := server.store.TopologySnapshot(payload.ClusterID)
+	if snapshotFound {
 		evidence.CurrentPrimaryID = topologyPrimaryID(snapshot)
 	}
 	if resource, vipEndpoint, found := server.activeVIP(payload.ClusterID); found {
 		evidence.CanonicalOwnerID = resource.OwnerID
 		evidence.EndpointOwnerID = vipEndpoint.InstanceID
-		if lease, leaseFound := server.activeOwnershipLease(payload.ClusterID, resource.ResourceID, now); leaseFound {
+		if leaseRecord, leaseFound := server.activeOwnershipLease(payload.ClusterID, resource.ResourceID, now); leaseFound {
+			lease := leaseRecord.Lease
 			evidence.Lease = lease
 			evidence.TransitionTarget = server.transitionAuthorizes(payload.InstanceID, lease)
+			if snapshotFound && !evidence.TransitionTarget && evidence.CurrentPrimaryID == "" &&
+				evidence.CanonicalOwnerID == payload.InstanceID && evidence.EndpointOwnerID == payload.InstanceID && !resource.Healthy &&
+				!leaseRecord.UpdatedAt.IsZero() && !leaseRecord.UpdatedAt.Before(snapshot.ObservedAt) && !leaseRecord.UpdatedAt.After(now.Add(5*time.Second)) {
+				candidate, err := coordination.RebootBootstrapCandidate(snapshot, payload.InstanceID, now, 15*time.Second)
+				evidence.BootstrapTarget = err == nil && candidate.ResourceID == payload.InstanceID
+			}
 		}
 	}
 	decision := coordination.EvaluateSelfIsolation(evidence)
@@ -112,8 +120,11 @@ func (server *Server) agentReconcileRoute(writer http.ResponseWriter, request *h
 		ClusterID: payload.ClusterID, InstanceID: payload.InstanceID, Reason: decision.Reason,
 		ValidUntil: now.Add(10 * time.Second), ControllerID: controllerID,
 	}
-	if decision.Action == coordination.SelfIsolationKeepVIP {
+	if decision.Action == coordination.SelfIsolationKeepVIP || decision.Action == coordination.SelfIsolationBootstrapPrimary {
 		response.Action = agent.ReconcileKeepVIP
+		if decision.Action == coordination.SelfIsolationBootstrapPrimary {
+			response.Action = agent.ReconcileBootstrapPrimary
+		}
 		response.LeaseID = evidence.Lease.ResourceID
 		response.ValidUntil = evidence.Lease.ExpiresAt
 		if response.ValidUntil.After(now.Add(30 * time.Second)) {

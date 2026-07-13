@@ -91,7 +91,8 @@ func ownershipKeeperFixture(now time.Time) (*ownershipInventoryStub, *ownershipO
 	clusterID := model.NewResourceID()
 	primary := model.DatabaseInstance{
 		ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, ClusterID: clusterID, Engine: model.EngineMySQL,
-		Role: model.RolePrimary, Health: model.Health{State: model.HealthHealthy}, EngineMetadata: map[string]string{"read_only": "false", "super_read_only": "false"},
+		EngineIdentity: model.EngineIdentity{"server_uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},
+		Role:           model.RolePrimary, Health: model.Health{State: model.HealthHealthy}, EngineMetadata: map[string]string{"read_only": "false", "super_read_only": "false"},
 	}
 	resource := model.HAEndpoint{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, ClusterID: clusterID, EndpointID: model.NewResourceID(), Kind: model.EndpointVIP, OwnerID: primary.ResourceID, Healthy: true}
 	inventory := &ownershipInventoryStub{
@@ -102,6 +103,113 @@ func ownershipKeeperFixture(now time.Time) (*ownershipInventoryStub, *ownershipO
 	}
 	observer := &ownershipObserverStub{result: endpoint.OwnershipObservation{HAEndpointID: resource.ResourceID, CanonicalOwnerID: primary.ResourceID, EndpointOwnerID: primary.ResourceID, OwnerIDs: []model.ResourceID{primary.ResourceID}, Complete: true}}
 	return inventory, observer, &ownershipLeaseStub{}, primary, resource
+}
+
+func rebootBootstrapFixture(now time.Time) (*ownershipInventoryStub, *ownershipObserverStub, *ownershipLeaseStub, model.DatabaseInstance, model.DatabaseInstance) {
+	inventory, observer, leases, canonical, _ := ownershipKeeperFixture(now)
+	lag := int64(0)
+	canonical.Role = model.RoleUnknown
+	canonical.Health = model.Health{State: model.HealthDegraded, Summary: "MySQL instance is read-only with no replication source"}
+	canonical.EngineMetadata = map[string]string{"read_only": "true", "super_read_only": "true"}
+	replica := model.DatabaseInstance{
+		ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, ClusterID: canonical.ClusterID, Engine: model.EngineMySQL,
+		EngineIdentity: model.EngineIdentity{"server_uuid": "bbbbbbbb-cccc-dddd-eeee-ffffffffffff"},
+		Role:           model.RoleReplica, Health: model.Health{State: model.HealthHealthy},
+		Replication: model.ReplicationStatus{
+			SourceIdentity: canonical.EngineIdentity.Clone(), IOThread: model.ThreadRunning, SQLThread: model.ThreadRunning, LagSeconds: &lag,
+		},
+		EngineMetadata: map[string]string{"read_only": "true", "super_read_only": "true"},
+	}
+	inventory.snapshots[canonical.ClusterID] = model.TopologySnapshot{
+		ClusterID: canonical.ClusterID, ObservedAt: now, Instances: []model.DatabaseInstance{canonical, replica},
+		Links: []model.ReplicationLink{{
+			ClusterID: canonical.ClusterID, SourceInstanceID: canonical.ResourceID, TargetInstanceID: replica.ResourceID, Healthy: false, LagSeconds: &lag,
+		}},
+		Probes: []model.ProbeStatus{
+			{InstanceID: canonical.ResourceID, DiscoveryObservedAt: now, Health: canonical.Health},
+			{InstanceID: replica.ResourceID, DiscoveryObservedAt: now, Health: replica.Health},
+		},
+		Health: model.Health{State: model.HealthDegraded},
+	}
+	observer.result.OwnerIDs = nil
+	return inventory, observer, leases, canonical, replica
+}
+
+func TestRebootBootstrapCandidateRequiresCompleteReadOnlyCanonicalTopology(t *testing.T) {
+	now := time.Date(2026, time.July, 13, 20, 30, 0, 0, time.UTC)
+	inventory, _, _, canonical, replica := rebootBootstrapFixture(now)
+	snapshot := inventory.snapshots[canonical.ClusterID]
+	candidate, err := RebootBootstrapCandidate(snapshot, canonical.ResourceID, now, 15*time.Second)
+	if err != nil || candidate.ResourceID != canonical.ResourceID {
+		t.Fatalf("strict reboot candidate=%+v err=%v", candidate, err)
+	}
+
+	unsafe := []struct {
+		name   string
+		mutate func(*model.TopologySnapshot)
+	}{
+		{name: "stale topology", mutate: func(value *model.TopologySnapshot) { value.ObservedAt = now.Add(-time.Minute) }},
+		{name: "canonical partially writable", mutate: func(value *model.TopologySnapshot) { value.Instances[0].EngineMetadata["read_only"] = "false" }},
+		{name: "replica source mismatch", mutate: func(value *model.TopologySnapshot) {
+			value.Instances[1].Replication.SourceIdentity["server_uuid"] = "cccccccc-dddd-eeee-ffff-aaaaaaaaaaaa"
+		}},
+		{name: "replica lag", mutate: func(value *model.TopologySnapshot) {
+			lag := int64(1)
+			value.Instances[1].Replication.LagSeconds = &lag
+			value.Links[0].LagSeconds = &lag
+		}},
+		{name: "replica thread stopped", mutate: func(value *model.TopologySnapshot) { value.Instances[1].Replication.SQLThread = model.ThreadStopped }},
+		{name: "incomplete probe coverage", mutate: func(value *model.TopologySnapshot) { value.Probes = value.Probes[:1] }},
+		{name: "wrong canonical owner", mutate: func(value *model.TopologySnapshot) { value.Instances[0].ResourceID = model.NewResourceID() }},
+		{name: "unexpected replication edge", mutate: func(value *model.TopologySnapshot) { value.Links[0].SourceInstanceID = replica.ResourceID }},
+	}
+	for _, test := range unsafe {
+		t.Run(test.name, func(t *testing.T) {
+			value := inventory.snapshots[canonical.ClusterID]
+			value.Instances = append([]model.DatabaseInstance{}, value.Instances...)
+			value.Links = append([]model.ReplicationLink{}, value.Links...)
+			value.Probes = append([]model.ProbeStatus{}, value.Probes...)
+			for index := range value.Instances {
+				value.Instances[index].EngineMetadata = cloneStringMap(value.Instances[index].EngineMetadata)
+				value.Instances[index].EngineIdentity = value.Instances[index].EngineIdentity.Clone()
+				value.Instances[index].Replication.SourceIdentity = value.Instances[index].Replication.SourceIdentity.Clone()
+			}
+			test.mutate(&value)
+			if candidate, err := RebootBootstrapCandidate(value, canonical.ResourceID, now, 15*time.Second); err == nil || candidate.ResourceID != "" {
+				t.Fatalf("unsafe candidate=%+v err=%v", candidate, err)
+			}
+		})
+	}
+}
+
+func cloneStringMap(value map[string]string) map[string]string {
+	clone := make(map[string]string, len(value))
+	for key, item := range value {
+		clone[key] = item
+	}
+	return clone
+}
+
+func TestOwnershipKeeperGrantsBootstrapLeaseOnlyToRebootedCanonicalPrimary(t *testing.T) {
+	now := time.Date(2026, time.July, 13, 20, 45, 0, 0, time.UTC)
+	inventory, observer, leases, canonical, _ := rebootBootstrapFixture(now)
+	keeper := NewOwnershipKeeper(inventory, observer, leases, ownershipAuthorityStub{}, func() time.Time { return now }, 5*time.Second, 15*time.Second)
+	if err := keeper.RunOnce(context.Background()); err != nil {
+		t.Fatalf("reboot bootstrap lease: %v", err)
+	}
+	if len(leases.requests) != 1 || leases.requests[0].OwnerID != canonical.ResourceID || inventory.commits != 1 {
+		t.Fatalf("bootstrap leases=%+v commits=%d", leases.requests, inventory.commits)
+	}
+	if inventory.resources[canonical.ClusterID][0].Healthy {
+		t.Fatal("zero-owner bootstrap was incorrectly marked healthy before agent verification")
+	}
+
+	inventory, observer, leases, _, _ = rebootBootstrapFixture(now)
+	observer.result.OwnerIDs = []model.ResourceID{canonical.ResourceID}
+	_ = NewOwnershipKeeper(inventory, observer, leases, ownershipAuthorityStub{}, func() time.Time { return now }, 5*time.Second, 15*time.Second).RunOnce(context.Background())
+	if len(leases.requests) != 0 {
+		t.Fatalf("non-zero-owner reboot bootstrap leases=%+v", leases.requests)
+	}
 }
 
 func TestOwnershipKeeperRenewsOnlyHealthyWritableCurrentPrimary(t *testing.T) {

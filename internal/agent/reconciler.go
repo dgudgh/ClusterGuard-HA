@@ -47,8 +47,12 @@ func (reconciler *Reconciler) reconcile(ctx context.Context, policy ClusterPolic
 	if err != nil {
 		return reconciler.selfIsolate(ctx, policy, err)
 	}
-	if decision.ClusterID != policy.ClusterID || decision.InstanceID != policy.InstanceID || decision.Action != ReconcileKeepVIP || !model.ValidResourceID(decision.LeaseID) {
+	if decision.ClusterID != policy.ClusterID || decision.InstanceID != policy.InstanceID || !model.ValidResourceID(decision.LeaseID) ||
+		(decision.Action != ReconcileKeepVIP && decision.Action != ReconcileBootstrapPrimary) {
 		return reconciler.selfIsolate(ctx, policy, fmt.Errorf("controller did not authorize local VIP ownership"))
+	}
+	if decision.Action == ReconcileBootstrapPrimary {
+		return reconciler.bootstrapPrimary(ctx, policy)
 	}
 	readOnly, superReadOnly, err := reconciler.roles.Status(ctx, policy)
 	if err != nil || readOnly || superReadOnly {
@@ -67,6 +71,46 @@ func (reconciler *Reconciler) reconcile(ctx context.Context, policy ClusterPolic
 		}
 	}
 	return ReconcileResult{ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileKeepVIP, Message: "active majority lease authorizes local VIP ownership"}, nil
+}
+
+func (reconciler *Reconciler) bootstrapPrimary(ctx context.Context, policy ClusterPolicy) (ReconcileResult, error) {
+	readOnly, superReadOnly, err := reconciler.roles.Status(ctx, policy)
+	if err != nil || !readOnly || !superReadOnly {
+		if err == nil {
+			err = fmt.Errorf("reboot bootstrap requires MySQL to be fully read-only")
+		}
+		return reconciler.selfIsolate(ctx, policy, err)
+	}
+	ownsVIP, err := reconciler.vip.Status(ctx, policy)
+	if err != nil {
+		return reconciler.selfIsolate(ctx, policy, err)
+	}
+	if !ownsVIP {
+		if err := reconciler.vip.Acquire(ctx, policy); err != nil {
+			return reconciler.selfIsolate(ctx, policy, fmt.Errorf("acquire reboot bootstrap VIP: %w", err))
+		}
+	}
+	if err := reconciler.roles.PersistReadOnly(ctx, policy, false); err != nil {
+		return reconciler.selfIsolate(ctx, policy, fmt.Errorf("activate rebooted primary: %w", err))
+	}
+	readOnly, superReadOnly, err = reconciler.roles.Status(ctx, policy)
+	if err != nil || readOnly || superReadOnly {
+		if err == nil {
+			err = fmt.Errorf("rebooted primary did not become fully writable")
+		}
+		return reconciler.selfIsolate(ctx, policy, err)
+	}
+	ownsVIP, err = reconciler.vip.Status(ctx, policy)
+	if err != nil || !ownsVIP {
+		if err == nil {
+			err = fmt.Errorf("rebooted primary does not own the authorized VIP")
+		}
+		return reconciler.selfIsolate(ctx, policy, err)
+	}
+	return ReconcileResult{
+		ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileBootstrapPrimary,
+		Message: "majority lease restored the rebooted primary and its VIP",
+	}, nil
 }
 
 func (reconciler *Reconciler) ReconcileAll(ctx context.Context, policies map[model.ResourceID]ClusterPolicy) ([]ReconcileResult, error) {

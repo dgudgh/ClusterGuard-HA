@@ -12,6 +12,7 @@ type SelfIsolationAction string
 
 const (
 	SelfIsolationKeepVIP            SelfIsolationAction = "keep_vip"
+	SelfIsolationBootstrapPrimary   SelfIsolationAction = "bootstrap_primary"
 	SelfIsolationReleaseAndReadOnly SelfIsolationAction = "release_and_read_only"
 )
 
@@ -22,6 +23,7 @@ type SelfIsolationEvidence struct {
 	EndpointOwnerID  model.ResourceID
 	Lease            endpoint.Lease
 	TransitionTarget bool
+	BootstrapTarget  bool
 	Now              time.Time
 }
 
@@ -44,6 +46,15 @@ func EvaluateSelfIsolation(evidence SelfIsolationEvidence) SelfIsolationDecision
 	}
 	if evidence.TransitionTarget {
 		return SelfIsolationDecision{Action: SelfIsolationKeepVIP, Reason: "active controlled transition lease authorizes the target"}
+	}
+	if evidence.BootstrapTarget {
+		if evidence.CurrentPrimaryID != "" {
+			return isolate("reboot bootstrap is blocked while a current primary exists")
+		}
+		if evidence.CanonicalOwnerID != evidence.LocalInstanceID || evidence.EndpointOwnerID != evidence.LocalInstanceID {
+			return isolate("canonical VIP ownership metadata does not select the rebooted primary")
+		}
+		return SelfIsolationDecision{Action: SelfIsolationBootstrapPrimary, Reason: "majority lease authorizes the verified rebooted primary"}
 	}
 	if evidence.CurrentPrimaryID != evidence.LocalInstanceID {
 		return isolate("local instance is not the current primary")

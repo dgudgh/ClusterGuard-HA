@@ -92,10 +92,6 @@ func (keeper *OwnershipKeeper) reconcileCluster(ctx context.Context, cluster mod
 	if !found || snapshot.ObservedAt.IsZero() || now.Sub(snapshot.ObservedAt) > keeper.maxAge || snapshot.ObservedAt.After(now.Add(keeper.interval)) {
 		return fmt.Errorf("cluster %s topology is stale or unavailable", cluster.ResourceID)
 	}
-	primary, err := writablePrimary(snapshot)
-	if err != nil {
-		return fmt.Errorf("cluster %s: %w", cluster.ResourceID, err)
-	}
 	observation, err := keeper.observer.ObserveOwnership(ctx, cluster, snapshot)
 	if err != nil {
 		return fmt.Errorf("cluster %s VIP observation: %w", cluster.ResourceID, err)
@@ -103,11 +99,26 @@ func (keeper *OwnershipKeeper) reconcileCluster(ctx context.Context, cluster mod
 	if !observation.Complete || !model.ValidResourceID(observation.HAEndpointID) || len(observation.OwnerIDs) > 1 {
 		return fmt.Errorf("cluster %s VIP ownership coverage is unsafe", cluster.ResourceID)
 	}
+	primary, primaryErr := writablePrimary(snapshot)
+	bootstrap := false
+	if primaryErr != nil {
+		if len(observation.OwnerIDs) != 0 || observation.CanonicalOwnerID != observation.EndpointOwnerID {
+			return fmt.Errorf("cluster %s reboot bootstrap requires zero VIP owners and matching canonical metadata", cluster.ResourceID)
+		}
+		primary, err = RebootBootstrapCandidate(snapshot, observation.CanonicalOwnerID, now, keeper.maxAge)
+		if err != nil {
+			return fmt.Errorf("cluster %s: %w; reboot bootstrap blocked: %v", cluster.ResourceID, primaryErr, err)
+		}
+		bootstrap = true
+	}
 	if len(observation.OwnerIDs) == 1 && observation.OwnerIDs[0] != primary.ResourceID {
 		return fmt.Errorf("cluster %s VIP is owned by a non-primary instance", cluster.ResourceID)
 	}
 	if len(observation.OwnerIDs) == 0 && (observation.CanonicalOwnerID != primary.ResourceID || observation.EndpointOwnerID != primary.ResourceID) {
 		return fmt.Errorf("cluster %s zero-owner bootstrap metadata does not select the current primary", cluster.ResourceID)
+	}
+	if bootstrap && len(observation.OwnerIDs) != 0 {
+		return fmt.Errorf("cluster %s reboot bootstrap requires zero VIP owners", cluster.ResourceID)
 	}
 	healthy := len(observation.OwnerIDs) == 1
 	if err := keeper.inventory.CommitHAEndpointOwner(cluster.ResourceID, observation.HAEndpointID, primary.ResourceID, healthy); err != nil {

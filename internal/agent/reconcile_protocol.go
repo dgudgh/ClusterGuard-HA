@@ -16,8 +16,9 @@ import (
 type ReconcileAction string
 
 const (
-	ReconcileKeepVIP     ReconcileAction = "keep_vip"
-	ReconcileSelfIsolate ReconcileAction = "release_and_read_only"
+	ReconcileKeepVIP          ReconcileAction = "keep_vip"
+	ReconcileBootstrapPrimary ReconcileAction = "bootstrap_primary"
+	ReconcileSelfIsolate      ReconcileAction = "release_and_read_only"
 )
 
 type ReconcileRequest struct {
@@ -118,11 +119,11 @@ func VerifyReconcileResponse(response ReconcileResponse, request ReconcileReques
 	if response.ClusterID != request.ClusterID || response.InstanceID != request.InstanceID || !model.ValidResourceID(response.ControllerID) || strings.TrimSpace(response.Reason) == "" {
 		return fmt.Errorf("agent reconcile response scope is invalid")
 	}
-	if response.Action != ReconcileKeepVIP && response.Action != ReconcileSelfIsolate {
+	if response.Action != ReconcileKeepVIP && response.Action != ReconcileBootstrapPrimary && response.Action != ReconcileSelfIsolate {
 		return fmt.Errorf("agent reconcile response action is invalid")
 	}
-	if response.Action == ReconcileKeepVIP && !model.ValidResourceID(response.LeaseID) {
-		return fmt.Errorf("keep-VIP response requires a lease UUID")
+	if (response.Action == ReconcileKeepVIP || response.Action == ReconcileBootstrapPrimary) && !model.ValidResourceID(response.LeaseID) {
+		return fmt.Errorf("VIP ownership response requires a lease UUID")
 	}
 	if !response.ValidUntil.After(now.UTC()) || response.ValidUntil.After(now.UTC().Add(time.Minute)) {
 		return fmt.Errorf("agent reconcile response is expired or outside the allowed time window")

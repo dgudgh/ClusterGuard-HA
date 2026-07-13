@@ -56,3 +56,34 @@ func TestEvaluateSelfIsolationAllowsActiveTransitionTarget(t *testing.T) {
 		t.Fatalf("active transition decision=%+v", decision)
 	}
 }
+
+func TestEvaluateSelfIsolationAuthorizesOnlyProvenRebootBootstrapTarget(t *testing.T) {
+	now := time.Date(2026, time.July, 13, 21, 30, 0, 0, time.UTC)
+	localID := model.NewResourceID()
+	base := SelfIsolationEvidence{
+		LocalInstanceID: localID, CanonicalOwnerID: localID, EndpointOwnerID: localID, BootstrapTarget: true, Now: now,
+		Lease: endpoint.Lease{ResourceID: model.NewResourceID(), OwnerID: localID, ExpiresAt: now.Add(30 * time.Second), Active: true},
+	}
+	if decision := EvaluateSelfIsolation(base); decision.Action != SelfIsolationBootstrapPrimary {
+		t.Fatalf("valid reboot bootstrap decision=%+v", decision)
+	}
+
+	unsafe := []struct {
+		name   string
+		mutate func(*SelfIsolationEvidence)
+	}{
+		{name: "current primary exists", mutate: func(value *SelfIsolationEvidence) { value.CurrentPrimaryID = localID }},
+		{name: "canonical mismatch", mutate: func(value *SelfIsolationEvidence) { value.CanonicalOwnerID = model.NewResourceID() }},
+		{name: "endpoint mismatch", mutate: func(value *SelfIsolationEvidence) { value.EndpointOwnerID = model.NewResourceID() }},
+		{name: "lease missing", mutate: func(value *SelfIsolationEvidence) { value.Lease = endpoint.Lease{} }},
+	}
+	for _, test := range unsafe {
+		t.Run(test.name, func(t *testing.T) {
+			value := base
+			test.mutate(&value)
+			if decision := EvaluateSelfIsolation(value); decision.Action != SelfIsolationReleaseAndReadOnly {
+				t.Fatalf("unsafe reboot bootstrap decision=%+v", decision)
+			}
+		})
+	}
+}
