@@ -180,6 +180,23 @@ func TestReconcilerBootstrapsRebootedPrimaryInLeaseAuthorizedOrder(t *testing.T)
 	}
 }
 
+func TestReconcilerTreatsRepeatedBootstrapDecisionAsAlreadyConverged(t *testing.T) {
+	policy := reconcilePolicy()
+	vip := &reconcileVIPStub{owns: true}
+	roles := &reconcileRoleStub{}
+	decision := reconcileDecisionStub{response: ReconcileResponse{
+		ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileBootstrapPrimary, LeaseID: model.NewResourceID(),
+	}}
+
+	results, err := NewReconciler(vip, roles, decision).ReconcileAll(context.Background(), map[model.ResourceID]ClusterPolicy{policy.ClusterID: policy})
+	if err != nil || len(results) != 1 || results[0].Action != ReconcileKeepVIP {
+		t.Fatalf("repeated bootstrap results=%+v err=%v", results, err)
+	}
+	if vip.acquires != 0 || vip.releases != 0 || len(roles.persisted) != 0 {
+		t.Fatalf("already-converged bootstrap mutated state: vip=%+v roles=%+v", vip, roles)
+	}
+}
+
 func TestReconcilerBootstrapFailuresAlwaysReleaseVIPAndFenceMySQL(t *testing.T) {
 	policy := reconcilePolicy()
 	tests := []struct {
@@ -187,6 +204,7 @@ func TestReconcilerBootstrapFailuresAlwaysReleaseVIPAndFenceMySQL(t *testing.T) 
 		vip   *reconcileVIPStub
 		roles *reconcileRoleStub
 	}{
+		{name: "writable without VIP", vip: &reconcileVIPStub{}, roles: &reconcileRoleStub{}},
 		{name: "partial initial read only", vip: &reconcileVIPStub{}, roles: &reconcileRoleStub{readOnly: false, superReadOnly: true}},
 		{name: "VIP acquire failed", vip: &reconcileVIPStub{acquireErr: errors.New("address conflict")}, roles: &reconcileRoleStub{readOnly: true, superReadOnly: true}},
 		{name: "writable transition failed", vip: &reconcileVIPStub{}, roles: &reconcileRoleStub{readOnly: true, superReadOnly: true, persistWritableErr: errors.New("mysql rejected role change")}},

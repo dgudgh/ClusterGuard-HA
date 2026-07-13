@@ -85,11 +85,24 @@ func (reconciler *Reconciler) reconcile(ctx context.Context, policy ClusterPolic
 
 func (reconciler *Reconciler) bootstrapPrimary(ctx context.Context, policy ClusterPolicy) (ReconcileResult, error) {
 	readOnly, superReadOnly, err := reconciler.roles.Status(ctx, policy)
-	if err != nil || !readOnly || !superReadOnly {
-		if err == nil {
-			err = fmt.Errorf("reboot bootstrap requires MySQL to be fully read-only")
-		}
+	if err != nil {
 		return reconciler.selfIsolate(ctx, policy, err)
+	}
+	if !readOnly && !superReadOnly {
+		ownsVIP, statusErr := reconciler.vip.Status(ctx, policy)
+		if statusErr != nil || !ownsVIP {
+			if statusErr == nil {
+				statusErr = fmt.Errorf("writable reboot bootstrap target does not own the authorized VIP")
+			}
+			return reconciler.selfIsolate(ctx, policy, statusErr)
+		}
+		return ReconcileResult{
+			ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileKeepVIP,
+			Message: "majority lease bootstrap is already converged",
+		}, nil
+	}
+	if !readOnly || !superReadOnly {
+		return reconciler.selfIsolate(ctx, policy, fmt.Errorf("reboot bootstrap requires MySQL to be fully read-only"))
 	}
 	ownsVIP, err := reconciler.vip.Status(ctx, policy)
 	if err != nil {
