@@ -234,6 +234,31 @@ func TestAgentReconcileBootstrapsVerifiedOwnerWhenLeaseHealthIsMarkedHealthy(t *
 	}
 }
 
+func TestAgentReconcileAcceptsValidLeaseOlderThanFreshEquivalentTopology(t *testing.T) {
+	now := time.Now().UTC()
+	repository := store.NewMemory()
+	cluster, canonical, lease := seedRebootBootstrapState(t, repository, now)
+	if err := repository.PutCoordinationLease(coordination.LeaseRecord{
+		Lease: lease, CreatedAt: now.Add(-20 * time.Second), UpdatedAt: now.Add(-5 * time.Second),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	authority := &apiMutationAuthorityStub{leaderID: model.NewResourceID(), leaderAddress: "controller-a:10009"}
+	server := newAPIServer(t, repository, adapter.NewUnsupported(model.EngineMySQL), &fakeRefresher{}, WithMutationAuthority(authority), WithAgentReconcileSecret("agent-secret"))
+	request := agent.ReconcileRequest{ClusterID: cluster.ResourceID, InstanceID: canonical.ResourceID, RequestedAt: now, Nonce: "0123456789abcdef"}
+	if err := agent.SignReconcileRequest(&request, "agent-secret"); err != nil {
+		t.Fatal(err)
+	}
+	response := callAgentReconcile(t, server, request)
+	var decision agent.ReconcileResponse
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &decision) != nil {
+		t.Fatalf("valid lease decision status=%d body=%s", response.Code, response.Body.String())
+	}
+	if decision.Action != agent.ReconcileBootstrapPrimary {
+		t.Fatalf("valid lease was invalidated by a newer equivalent topology sample: %+v", decision)
+	}
+}
+
 func TestAgentReconcileRejectsRebootBootstrapWithLeaseOlderThanTopology(t *testing.T) {
 	now := time.Now().UTC()
 	repository := store.NewMemory()
