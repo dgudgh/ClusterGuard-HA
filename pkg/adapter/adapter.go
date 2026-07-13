@@ -95,12 +95,14 @@ type OperationProgressReader interface {
 }
 
 type ResolvedOperation struct {
+	OperationID            model.ResourceID       `json:"operation_id"`
 	Cluster                model.DatabaseCluster  `json:"cluster"`
 	Snapshot               model.TopologySnapshot `json:"snapshot"`
 	Primary                model.DatabaseInstance `json:"primary"`
 	Target                 model.DatabaseInstance `json:"target"`
 	Credentials            Credentials            `json:"-"`
 	ReplicationCredentials Credentials            `json:"-"`
+	PlanDigest             string                 `json:"-"`
 }
 
 type HAEndpointProvider interface {

@@ -22,6 +22,18 @@ type MySQL struct {
 	Replication Credential `json:"replication"`
 }
 
+type Agent struct {
+	Enabled         bool   `json:"enabled"`
+	User            string `json:"user"`
+	IdentityFile    string `json:"identity_file"`
+	KnownHostsFile  string `json:"known_hosts_file"`
+	SSHBinary       string `json:"ssh_binary,omitempty"`
+	AgentBinary     string `json:"agent_binary,omitempty"`
+	AgentConfigPath string `json:"agent_config_path,omitempty"`
+	SharedSecretEnv string `json:"shared_secret_env"`
+	SharedSecret    string `json:"-"`
+}
+
 type File struct {
 	HTTPAddress      string `json:"http_address"`
 	MetadataPath     string `json:"metadata_path"`
@@ -30,6 +42,7 @@ type File struct {
 	ApprovalTokenEnv string `json:"approval_token_env"`
 	ApprovalToken    string `json:"-"`
 	MySQL            MySQL  `json:"mysql"`
+	Agent            Agent  `json:"agent"`
 }
 
 func Load(path string) (File, error) {
@@ -77,6 +90,19 @@ func Load(path string) (File, error) {
 			if err := resolveCredential(name, credential); err != nil {
 				return File{}, err
 			}
+		}
+	}
+	if configuration.Agent.Enabled {
+		configuration.Agent.User = strings.TrimSpace(configuration.Agent.User)
+		configuration.Agent.IdentityFile = strings.TrimSpace(configuration.Agent.IdentityFile)
+		configuration.Agent.KnownHostsFile = strings.TrimSpace(configuration.Agent.KnownHostsFile)
+		configuration.Agent.SharedSecretEnv = strings.TrimSpace(configuration.Agent.SharedSecretEnv)
+		if configuration.Agent.User == "" || configuration.Agent.IdentityFile == "" || configuration.Agent.KnownHostsFile == "" || configuration.Agent.SharedSecretEnv == "" {
+			return File{}, fmt.Errorf("agent user, identity_file, known_hosts_file, and shared_secret_env are required when agent transport is enabled")
+		}
+		configuration.Agent.SharedSecret = os.Getenv(configuration.Agent.SharedSecretEnv)
+		if strings.TrimSpace(configuration.Agent.SharedSecret) == "" {
+			return File{}, fmt.Errorf("agent shared secret environment variable %s is empty", configuration.Agent.SharedSecretEnv)
 		}
 	}
 	return configuration, nil

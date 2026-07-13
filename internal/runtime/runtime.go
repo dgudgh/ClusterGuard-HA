@@ -12,6 +12,7 @@ import (
 	"clusterguard.io/ha/internal/api"
 	"clusterguard.io/ha/internal/config"
 	"clusterguard.io/ha/internal/discovery"
+	writerendpoint "clusterguard.io/ha/internal/endpoint"
 	"clusterguard.io/ha/internal/store"
 	"clusterguard.io/ha/internal/workflow"
 	"clusterguard.io/ha/pkg/adapter"
@@ -24,8 +25,21 @@ func New(configuration config.File) (*api.Server, error) {
 		return nil, err
 	}
 	registry := adapter.NewRegistry()
+	mysqlAdapter := mysql.New(mysql.CLIQueryRunner{})
+	if configuration.Agent.Enabled {
+		transport, transportErr := writerendpoint.NewSSHAgentTransport(writerendpoint.SSHAgentTransportConfig{
+			SSHBinary: configuration.Agent.SSHBinary, User: configuration.Agent.User,
+			IdentityFile: configuration.Agent.IdentityFile, KnownHostsFile: configuration.Agent.KnownHostsFile,
+			AgentBinary: configuration.Agent.AgentBinary, AgentConfigPath: configuration.Agent.AgentConfigPath,
+		}, writerendpoint.OSProcessRunner{})
+		if transportErr != nil {
+			return nil, fmt.Errorf("configure agent transport: %w", transportErr)
+		}
+		provider := writerendpoint.NewLinuxVIPProvider(repository, transport, writerendpoint.NewMemoryLeaseStore(nil), configuration.Agent.SharedSecret, nil)
+		mysqlAdapter = mysql.NewWithEndpointProvider(mysql.CLIQueryRunner{}, provider)
+	}
 	for _, candidate := range []adapter.DatabaseHAAdapter{
-		mysql.New(mysql.CLIQueryRunner{}),
+		mysqlAdapter,
 		postgresql.New(),
 		oracle.New(),
 		sqlserver.New(),

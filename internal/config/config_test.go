@@ -170,6 +170,38 @@ func TestLoadAllowsDisabledMySQLWithoutCredentials(t *testing.T) {
 	}
 }
 
+func TestLoadResolvesAgentTransportSecret(t *testing.T) {
+	t.Setenv("CG_TEST_AGENT_SECRET", "agent-secret")
+	path := filepath.Join(t.TempDir(), "control.json")
+	contents := `{
+  "metadata_path":"` + filepath.Join(t.TempDir(), "metadata.json") + `",
+  "agent": {
+    "enabled": true,
+    "user": "cg-agent",
+    "identity_file": "/etc/clusterguard/agent_ed25519",
+    "known_hosts_file": "/etc/clusterguard/agent_known_hosts",
+    "shared_secret_env": "CG_TEST_AGENT_SECRET"
+  }
+}`
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("load agent transport: %v", err)
+	}
+	if !loaded.Agent.Enabled || loaded.Agent.SharedSecret != "agent-secret" || loaded.Agent.User != "cg-agent" {
+		t.Fatalf("unexpected agent configuration: %+v", loaded.Agent)
+	}
+	encoded, err := json.Marshal(loaded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "agent-secret") {
+		t.Fatalf("serialized configuration exposed agent secret: %s", encoded)
+	}
+}
+
 func TestOfficialDistributionUsesClusterGuardPathsAndServiceName(t *testing.T) {
 	examplePath := filepath.Join("..", "..", "configs", "clusterguard.example.json")
 	contents, err := os.ReadFile(examplePath)

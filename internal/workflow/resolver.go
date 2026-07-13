@@ -141,12 +141,16 @@ func (resolver RepositoryResolver) Resolve(ctx context.Context, request adapter.
 	request.Credentials = credentials.Administrative
 	request.ReplicationCredentials = credentials.Replication
 	request.Resolved = &adapter.ResolvedOperation{
+		OperationID:            request.Operation.ResourceID,
 		Cluster:                cluster,
 		Snapshot:               snapshot,
 		Primary:                primary,
 		Target:                 target,
 		Credentials:            credentials.Administrative,
 		ReplicationCredentials: credentials.Replication,
+	}
+	if request.Plan != nil {
+		request.Resolved.PlanDigest = request.Plan.Digest
 	}
 	return request, nil
 }
