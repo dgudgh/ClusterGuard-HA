@@ -157,6 +157,16 @@ func TestInstallerWritesProtectedEnvironmentAndEnablesEveryMixedNodeService(t *t
 	}
 }
 
+func TestInstallerMakesControllerConfigReadableByServiceGroup(t *testing.T) {
+	contents, err := os.ReadFile("clusterguard-install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(contents), "chown root:clusterguard /etc/clusterguard/clusterguard.json") {
+		t.Fatal("installer does not make the controller configuration readable by the clusterguard service group")
+	}
+}
+
 func TestInstallerCopiesOnlySupportedRuntimeAssetsWithProtectedModes(t *testing.T) {
 	bundle := fakeInstallBundle(t)
 	input := t.TempDir()
