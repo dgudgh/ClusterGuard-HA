@@ -195,6 +195,8 @@ type HAEndpoint struct {
 	Kind        EndpointKind `json:"kind"`
 	DesiredRole InstanceRole `json:"desired_role"`
 	OwnerID     ResourceID   `json:"owner_id,omitempty"`
+	Interface   string       `json:"interface,omitempty"`
+	Prefix      int          `json:"prefix,omitempty"`
 	Healthy     bool         `json:"healthy"`
 }
 

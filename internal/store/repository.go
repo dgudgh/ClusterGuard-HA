@@ -95,6 +95,7 @@ type snapshot struct {
 	Clusters              map[model.ResourceID]model.DatabaseCluster               `json:"clusters"`
 	Instances             map[model.ResourceID]model.DatabaseInstance              `json:"instances"`
 	Endpoints             map[model.ResourceID]map[model.ResourceID]model.Endpoint `json:"endpoints"`
+	HAEndpoints           map[model.ResourceID]model.HAEndpoint                    `json:"ha_endpoints"`
 	ReplicationLinks      map[model.ResourceID][]model.ReplicationLink             `json:"replication_links"`
 	MetricSamples         map[model.ResourceID][]model.MetricSample                `json:"metric_samples"`
 	TopologySnapshots     map[model.ResourceID]model.TopologySnapshot              `json:"topology_snapshots"`
@@ -121,6 +122,7 @@ func emptySnapshot() snapshot {
 		Clusters:              map[model.ResourceID]model.DatabaseCluster{},
 		Instances:             map[model.ResourceID]model.DatabaseInstance{},
 		Endpoints:             map[model.ResourceID]map[model.ResourceID]model.Endpoint{},
+		HAEndpoints:           map[model.ResourceID]model.HAEndpoint{},
 		ReplicationLinks:      map[model.ResourceID][]model.ReplicationLink{},
 		MetricSamples:         map[model.ResourceID][]model.MetricSample{},
 		TopologySnapshots:     map[model.ResourceID]model.TopologySnapshot{},
@@ -179,6 +181,9 @@ func Open(path string) (*Repository, error) {
 	}
 	if repository.snapshot.Endpoints == nil {
 		repository.snapshot.Endpoints = map[model.ResourceID]map[model.ResourceID]model.Endpoint{}
+	}
+	if repository.snapshot.HAEndpoints == nil {
+		repository.snapshot.HAEndpoints = map[model.ResourceID]model.HAEndpoint{}
 	}
 	if repository.snapshot.ReplicationLinks == nil {
 		repository.snapshot.ReplicationLinks = map[model.ResourceID][]model.ReplicationLink{}
@@ -410,6 +415,7 @@ func cloneDiscoverySnapshot(value snapshot) snapshot {
 	copy.Clusters = cloneClusterMap(value.Clusters)
 	copy.Instances = cloneInstanceMap(value.Instances)
 	copy.Endpoints = cloneEndpointMap(value.Endpoints)
+	copy.HAEndpoints = cloneHAEndpointMap(value.HAEndpoints)
 	copy.ReplicationLinks = cloneReplicationLinkMap(value.ReplicationLinks)
 	copy.MetricSamples = cloneMetricSampleMap(value.MetricSamples)
 	copy.TopologySnapshots = cloneTopologySnapshotMap(value.TopologySnapshots)
@@ -418,6 +424,14 @@ func cloneDiscoverySnapshot(value snapshot) snapshot {
 	copy.Anomalies = cloneAnomalyMap(value.Anomalies)
 	copy.Operations = cloneOperationMap(value.Operations)
 	copy.OperationKeys = cloneOperationKeyMap(value.OperationKeys)
+	return copy
+}
+
+func cloneHAEndpointMap(values map[model.ResourceID]model.HAEndpoint) map[model.ResourceID]model.HAEndpoint {
+	copy := make(map[model.ResourceID]model.HAEndpoint, len(values))
+	for resourceID, endpoint := range values {
+		copy[resourceID] = endpoint
+	}
 	return copy
 }
 

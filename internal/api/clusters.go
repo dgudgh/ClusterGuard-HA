@@ -118,6 +118,10 @@ func (server *Server) clusterRoute(writer http.ResponseWriter, request *http.Req
 		server.discoverCluster(writer, request, clusterID)
 		return
 	}
+	if action == "ha-endpoints" {
+		server.clusterHAEndpoints(writer, request, clusterID)
+		return
+	}
 	if request.Method != http.MethodGet {
 		writeError(writer, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -185,6 +189,65 @@ func (server *Server) clusterRoute(writer http.ResponseWriter, request *http.Req
 		server.clusterPrometheusMetrics(writer, clusterID)
 	default:
 		writeError(writer, http.StatusNotFound, "cluster route not found")
+	}
+}
+
+type haEndpointPayload struct {
+	Kind      model.EndpointKind `json:"kind"`
+	IPAddress string             `json:"ip_address"`
+	Interface string             `json:"interface"`
+	Prefix    int                `json:"prefix"`
+	OwnerID   model.ResourceID   `json:"owner_id"`
+	Active    bool               `json:"active"`
+}
+
+type haEndpointView struct {
+	Resource model.HAEndpoint `json:"resource"`
+	Endpoint model.Endpoint   `json:"endpoint"`
+}
+
+func (server *Server) clusterHAEndpoints(writer http.ResponseWriter, request *http.Request, clusterID model.ResourceID) {
+	if _, found := server.store.Cluster(clusterID); !found {
+		writeError(writer, http.StatusNotFound, "cluster not found")
+		return
+	}
+	switch request.Method {
+	case http.MethodGet:
+		resources := server.store.HAEndpoints(clusterID)
+		views := make([]haEndpointView, 0, len(resources))
+		for _, resource := range resources {
+			endpoint, found := server.store.Endpoint(resource.EndpointID)
+			if !found {
+				writeError(writer, http.StatusInternalServerError, "HA endpoint inventory is inconsistent")
+				return
+			}
+			views = append(views, haEndpointView{Resource: resource, Endpoint: endpoint})
+		}
+		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": views})
+	case http.MethodPost:
+		payload := haEndpointPayload{}
+		if err := decode(request, &payload); err != nil {
+			writeError(writer, http.StatusBadRequest, "invalid HA endpoint")
+			return
+		}
+		resource, endpoint, err := server.store.PutHAEndpoint(store.HAEndpointSpec{
+			ClusterID: clusterID, Kind: payload.Kind, IPAddress: payload.IPAddress,
+			Interface: payload.Interface, Prefix: payload.Prefix, OwnerID: payload.OwnerID, Active: payload.Active,
+		})
+		if err != nil {
+			switch {
+			case errors.Is(err, store.ErrValidation):
+				writeError(writer, http.StatusBadRequest, "invalid HA endpoint")
+			case errors.Is(err, store.ErrConflict):
+				writeError(writer, http.StatusConflict, "HA endpoint conflicts with existing inventory")
+			default:
+				writeError(writer, http.StatusInternalServerError, "store HA endpoint failed")
+			}
+			return
+		}
+		writeJSON(writer, http.StatusCreated, map[string]interface{}{"status": "ok", "result": haEndpointView{Resource: resource, Endpoint: endpoint}})
+	default:
+		writeError(writer, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
