@@ -1,5 +1,7 @@
 # ClusterGuard HA
 
+ClusterGuard HA requires Go 1.22 or newer.
+
 **ClusterGuard HA 多数据库企业级高可用控制平台**
 
 **ClusterGuard HA — Multi-Database High Availability Control Plane**

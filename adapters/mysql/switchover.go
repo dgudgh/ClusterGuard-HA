@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -22,13 +23,58 @@ const (
 )
 
 type switchoverFailure struct {
-	class string
-	err   error
+	class   string
+	message string
+	err     error
 }
 
-func (failure *switchoverFailure) Error() string        { return failure.err.Error() }
+func (failure *switchoverFailure) Error() string        { return failure.message }
 func (failure *switchoverFailure) Unwrap() error        { return failure.err }
 func (failure *switchoverFailure) FailureClass() string { return failure.class }
+
+func publicSwitchoverError(err error) string {
+	if err == nil {
+		return "MySQL switchover failed"
+	}
+	switch {
+	case errors.Is(err, adapter.ErrUnsupported):
+		return adapter.ErrUnsupported.Error()
+	case errors.Is(err, context.Canceled):
+		return "MySQL switchover request was canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "MySQL switchover step timed out"
+	}
+	message := strings.TrimSpace(err.Error())
+	if separator := strings.Index(message, ": "); separator > 0 {
+		message = message[:separator]
+		var queryError *QueryError
+		if errors.As(err, &queryError) && queryError.Code > 0 {
+			return fmt.Sprintf("%s (MySQL error %d)", message, queryError.Code)
+		}
+		return message
+	}
+	return "MySQL switchover safety check failed"
+}
+
+func sanitizeEndpointCheck(check model.Check, expectedName string) model.Check {
+	check.Name = strings.TrimSpace(check.Name)
+	if check.Name == "" {
+		return check
+	}
+	if check.Name != expectedName {
+		check.Message = "writer endpoint provider returned unexpected evidence"
+		return check
+	}
+	switch check.Status {
+	case model.CheckPass:
+		check.Message = "writer endpoint evidence passed"
+	case model.CheckFail:
+		check.Message = "writer endpoint evidence failed"
+	default:
+		check.Message = "writer endpoint evidence is incomplete"
+	}
+	return check
+}
 
 func appendSwitchoverCheck(checks *[]model.Check, name string, status model.CheckStatus, message string) {
 	*checks = append(*checks, model.Check{Name: name, Status: status, Message: message})
@@ -44,8 +90,11 @@ func boolMetadata(metadata map[string]string, name string) (bool, bool) {
 }
 
 func planHasBlockingChecks(checks []model.Check) bool {
+	if len(checks) == 0 {
+		return true
+	}
 	for _, check := range checks {
-		if check.Status == model.CheckFail {
+		if strings.TrimSpace(check.Name) == "" || check.Status != model.CheckPass {
 			return true
 		}
 	}
@@ -189,9 +238,15 @@ func (adapterInstance *Adapter) switchoverPrecheck(ctx context.Context, request 
 	if provider == nil {
 		provider = UnsupportedHAEndpointProvider{}
 	}
-	checks = append(checks, provider.Precheck(ctx, resolved)...)
-	if !provider.Executable(ctx) && !failedCheckNamed(checks, "writer_endpoint_provider") {
-		appendSwitchoverCheck(&checks, "writer_endpoint_provider", model.CheckFail, "writer endpoint provider does not support execution")
+	for _, check := range provider.Precheck(ctx, resolved) {
+		checks = append(checks, sanitizeEndpointCheck(check, "writer_endpoint_provider"))
+	}
+	if !provider.Executable(ctx) {
+		if !failedCheckNamed(checks, "writer_endpoint_provider") {
+			appendSwitchoverCheck(&checks, "writer_endpoint_provider", model.CheckFail, "writer endpoint provider does not support execution")
+		}
+	} else if !passedCheckNamed(checks, "writer_endpoint_provider") {
+		appendSwitchoverCheck(&checks, "writer_endpoint_provider", model.CheckFail, "writer endpoint provider did not return explicit ready evidence")
 	}
 	return checks, nil
 }
@@ -199,6 +254,15 @@ func (adapterInstance *Adapter) switchoverPrecheck(ctx context.Context, request 
 func failedCheckNamed(checks []model.Check, name string) bool {
 	for _, check := range checks {
 		if check.Name == name && check.Status == model.CheckFail {
+			return true
+		}
+	}
+	return false
+}
+
+func passedCheckNamed(checks []model.Check, name string) bool {
+	for _, check := range checks {
+		if check.Name == name && check.Status == model.CheckPass {
 			return true
 		}
 	}
@@ -321,7 +385,8 @@ func newExecution(operationID model.ResourceID, status model.OperationStatus, st
 }
 
 func executionFailure(operationID model.ResourceID, started time.Time, status model.OperationStatus, class string, err error) (model.Execution, error) {
-	return newExecution(operationID, status, started, err.Error()), &switchoverFailure{class: class, err: err}
+	message := publicSwitchoverError(err)
+	return newExecution(operationID, status, started, message), &switchoverFailure{class: class, message: message, err: err}
 }
 
 func completeOperationStep(ctx context.Context, request adapter.OperationRequest, step string, message string) error {
@@ -329,6 +394,10 @@ func completeOperationStep(ctx context.Context, request adapter.OperationRequest
 		return nil
 	}
 	return request.Progress.CompleteStep(ctx, step, message)
+}
+
+func endpointOwnerVerified(check model.Check) bool {
+	return check.Name == "writer_endpoint_owner" && check.Status == model.CheckPass
 }
 
 func queryFencedState(ctx context.Context, runner SQLRunner, endpoint adapter.Endpoint, credentials adapter.Credentials) (bool, error) {
@@ -347,15 +416,87 @@ func queryWritableState(ctx context.Context, runner SQLRunner, endpoint adapter.
 	return !identity.readOnly && !identity.superReadOnly, nil
 }
 
+func (adapterInstance *Adapter) liveSwitchoverPrecheck(ctx context.Context, resolved adapter.ResolvedOperation) error {
+	credentials := resolved.Credentials
+	sourceEndpoint := instanceEndpoint(resolved.Primary)
+	targetEndpoint := instanceEndpoint(resolved.Target)
+	sourceIdentity, err := probeIdentity(ctx, adapterInstance.runner, sourceEndpoint, credentials)
+	if err != nil {
+		return fmt.Errorf("probe live source identity: %w", err)
+	}
+	targetIdentity, err := probeIdentity(ctx, adapterInstance.runner, targetEndpoint, credentials)
+	if err != nil {
+		return fmt.Errorf("probe live target identity: %w", err)
+	}
+	if sourceIdentity.serverUUID != strings.ToLower(strings.TrimSpace(resolved.Primary.EngineIdentity["server_uuid"])) ||
+		targetIdentity.serverUUID != strings.ToLower(strings.TrimSpace(resolved.Target.EngineIdentity["server_uuid"])) {
+		return fmt.Errorf("live MySQL identity no longer matches the immutable operation resources")
+	}
+	if sourceIdentity.readOnly || sourceIdentity.superReadOnly {
+		return fmt.Errorf("live source is no longer writable before fencing")
+	}
+	if !targetIdentity.readOnly && !targetIdentity.superReadOnly {
+		return fmt.Errorf("live target is writable before promotion")
+	}
+	if !strings.EqualFold(sourceIdentity.gtidMode, "ON") || !strings.EqualFold(targetIdentity.gtidMode, "ON") {
+		return fmt.Errorf("live source and target must keep GTID mode ON")
+	}
+	sourceLogBin, sourceLogBinError := parseMySQLBoolean(sourceIdentity.logBin)
+	targetLogBin, targetLogBinError := parseMySQLBoolean(targetIdentity.logBin)
+	if sourceLogBinError != nil || targetLogBinError != nil || !sourceLogBin || !targetLogBin {
+		return fmt.Errorf("live source and target must keep binary logging enabled")
+	}
+	sourceFamily, sourceVersionError := mysqlReleaseFamily(sourceIdentity.version)
+	targetFamily, targetVersionError := mysqlReleaseFamily(targetIdentity.version)
+	if sourceVersionError != nil || targetVersionError != nil || sourceFamily != targetFamily {
+		return fmt.Errorf("live source and target MySQL release families are incompatible")
+	}
+	if _, err := dialectForVersion(targetIdentity.version); err != nil {
+		return err
+	}
+	_, sourceReplicationConfigured, err := probeReplication(ctx, adapterInstance.runner, sourceEndpoint, credentials)
+	if err != nil {
+		return fmt.Errorf("probe live source replication: %w", err)
+	}
+	if sourceReplicationConfigured {
+		return fmt.Errorf("live source unexpectedly has a replication source")
+	}
+	targetReplication, targetReplicationConfigured, err := probeReplication(ctx, adapterInstance.runner, targetEndpoint, credentials)
+	if err != nil {
+		return fmt.Errorf("probe live target replication: %w", err)
+	}
+	if !targetReplicationConfigured || targetReplication.IOThread != model.ThreadRunning || targetReplication.SQLThread != model.ThreadRunning {
+		return fmt.Errorf("live target replication threads are not both running")
+	}
+	if strings.ToLower(strings.TrimSpace(targetReplication.SourceIdentity["server_uuid"])) != sourceIdentity.serverUUID {
+		return fmt.Errorf("live target no longer follows the selected source")
+	}
+	if targetReplication.LagSeconds == nil || *targetReplication.LagSeconds != 0 {
+		return fmt.Errorf("live target replication lag must be known and zero")
+	}
+	sourceSet, sourceSetError := ParseGTIDSet(sourceIdentity.gtidExecuted)
+	targetSet, targetSetError := ParseGTIDSet(targetReplication.ExecutedPosition)
+	if sourceSetError != nil || targetSetError != nil {
+		return fmt.Errorf("live source or target GTID position is invalid")
+	}
+	comparison, err := CompareGTIDSets(sourceSet, targetSet)
+	if err != nil || comparison.MissingTransactions != 0 || comparison.ErrantTransactions != 0 {
+		return fmt.Errorf("live source and target GTID histories are not identical")
+	}
+	return nil
+}
+
 func (adapterInstance *Adapter) fenceInstance(ctx context.Context, endpoint adapter.Endpoint, credentials adapter.Credentials) error {
-	fenced, err := queryFencedState(ctx, adapterInstance.runner, endpoint, credentials)
+	recoveryContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	fenced, err := queryFencedState(recoveryContext, adapterInstance.runner, endpoint, credentials)
 	if err == nil && fenced {
 		return nil
 	}
-	if err := adapterInstance.executor.Exec(ctx, endpoint, credentials, setSuperReadOnlyOn); err != nil {
+	if err := adapterInstance.executor.Exec(recoveryContext, endpoint, credentials, setSuperReadOnlyOn); err != nil {
 		return err
 	}
-	return adapterInstance.executor.Exec(ctx, endpoint, credentials, setReadOnlyOn)
+	return adapterInstance.executor.Exec(recoveryContext, endpoint, credentials, setReadOnlyOn)
 }
 
 func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request adapter.OperationRequest) (model.Execution, error) {
@@ -382,6 +523,9 @@ func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request a
 		return executionFailure(request.Operation.ResourceID, started, model.OperationFailed, "pre_commit", fmt.Errorf("probe source fencing state: %w", err))
 	}
 	if !sourceFenced {
+		if err := adapterInstance.liveSwitchoverPrecheck(ctx, resolved); err != nil {
+			return executionFailure(request.Operation.ResourceID, started, model.OperationFailed, "pre_commit", err)
+		}
 		if err := adapterInstance.executor.Exec(ctx, sourceEndpoint, credentials, setSuperReadOnlyOn); err != nil {
 			probeContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			defer cancel()
@@ -466,12 +610,21 @@ func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request a
 		_ = adapterInstance.fenceInstance(mutationContext, targetEndpoint, credentials)
 		return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("persist target promotion progress: %w", err))
 	}
-	if err := adapterInstance.endpointProvider.Transfer(mutationContext, resolved); err != nil {
-		fenceErr := adapterInstance.fenceInstance(mutationContext, targetEndpoint, credentials)
-		if fenceErr != nil {
-			err = fmt.Errorf("writer endpoint transfer failed (%v) and target fencing failed: %w", err, fenceErr)
+	endpointEvidence := sanitizeEndpointCheck(adapterInstance.endpointProvider.Verify(mutationContext, resolved), "writer_endpoint_owner")
+	if !endpointOwnerVerified(endpointEvidence) {
+		if endpointEvidence.Name != "writer_endpoint_owner" || endpointEvidence.Status != model.CheckFail {
+			if err := adapterInstance.fenceInstance(mutationContext, targetEndpoint, credentials); err != nil {
+				return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("writer endpoint ownership is unknown and target fencing failed: %w", err))
+			}
+			return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("writer endpoint ownership is unknown before transfer"))
 		}
-		return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("writer endpoint transfer is unverified: %w", err))
+		if err := adapterInstance.endpointProvider.Transfer(mutationContext, resolved); err != nil {
+			fenceErr := adapterInstance.fenceInstance(mutationContext, targetEndpoint, credentials)
+			if fenceErr != nil {
+				err = fmt.Errorf("writer endpoint transfer failed (%v) and target fencing failed: %w", err, fenceErr)
+			}
+			return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("writer endpoint transfer is unverified: %w", err))
+		}
 	}
 	if err := completeOperationStep(mutationContext, request, "transfer_writer_endpoint", "writer endpoint transferred to selected target"); err != nil {
 		return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("persist writer endpoint progress: %w", err))
@@ -544,7 +697,7 @@ func (adapterInstance *Adapter) switchoverVerify(ctx context.Context, request ad
 	if provider == nil {
 		provider = UnsupportedHAEndpointProvider{}
 	}
-	verification.Checks = append(verification.Checks, provider.Verify(ctx, resolved))
-	verification.Passed = !planHasBlockingChecks(verification.Checks)
+	verification.Checks = append(verification.Checks, sanitizeEndpointCheck(provider.Verify(ctx, resolved), "writer_endpoint_owner"))
+	verification.Passed = !planHasBlockingChecks(verification.Checks) && passedCheckNamed(verification.Checks, "writer_endpoint_owner")
 	return verification, nil
 }

@@ -9,6 +9,8 @@ func TestMySQLDialectSelectsLegacyAndModernReplicationStatements(t *testing.T) {
 		reset   string
 	}{
 		{version: "5.7.44-log", stop: "STOP SLAVE", reset: "RESET SLAVE ALL"},
+		{version: "8.0.21", stop: "STOP SLAVE", reset: "RESET SLAVE ALL"},
+		{version: "8.0.22", stop: "STOP REPLICA", reset: "RESET REPLICA ALL"},
 		{version: "8.0.46", stop: "STOP REPLICA", reset: "RESET REPLICA ALL"},
 		{version: "8.4.10", stop: "STOP REPLICA", reset: "RESET REPLICA ALL"},
 		{version: "9.7.0", stop: "STOP REPLICA", reset: "RESET REPLICA ALL"},

@@ -55,6 +55,22 @@ func operationFailureClass(err error) string {
 	return ""
 }
 
+func detachedVerification(ctx context.Context, candidate adapter.DatabaseHAAdapter, request adapter.OperationRequest) (model.Verification, error) {
+	verifyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	return candidate.Verify(verifyCtx, request)
+}
+
+func verificationOutcomeMessage(verification model.Verification, err error) string {
+	if err != nil {
+		return "post-commit verification failed: " + err.Error()
+	}
+	if !verification.Passed {
+		return "post-commit verification found failed checks"
+	}
+	return "post-commit verification passed"
+}
+
 func terminalRecordResult(record model.OperationRecord) (model.Execution, error) {
 	execution := record.Execution
 	if execution.OperationID == "" {
@@ -134,23 +150,50 @@ func (service *Service) finishDurable(recordID model.ResourceID, operation model
 	if execution.Message == "" && cause != nil {
 		execution.Message = cause.Error()
 	}
+	var journalErr error
+	if err := service.audit(operation, stage, execution.Message); err != nil {
+		journalErr = firstJournalError(journalErr, err)
+	}
+	if stage != model.StageReport {
+		if err := service.audit(operation, model.StageReport, "terminal operation report generated"); err != nil {
+			journalErr = firstJournalError(journalErr, err)
+		}
+	}
+	reportedExecution := execution
+	if journalErr != nil {
+		if operationCommitted {
+			reportedExecution = markIndeterminate(reportedExecution)
+		} else {
+			reportedExecution.Status = model.OperationFailed
+			reportedExecution.Message = "workflow journal persistence failed"
+		}
+	}
+	if err := service.report(operation, reportedExecution, operationCommitted); err != nil {
+		journalErr = firstJournalError(journalErr, err)
+	}
+	if journalErr != nil {
+		if operationCommitted {
+			execution = markIndeterminate(execution)
+		} else {
+			execution.Status = model.OperationFailed
+			execution.Message = "workflow journal persistence failed"
+		}
+		cause = &journalPersistenceError{err: journalErr}
+		if failureClass == "" {
+			failureClass = "journal"
+		}
+	}
+	record, err = service.durableRecord(recordID)
+	if err != nil {
+		return execution, err
+	}
 	if _, err := service.operations.TransitionOperation(recordID, record.MetadataRevision, model.OperationTransition{
 		Stage: stage, Status: execution.Status, Execution: &execution,
 		FailureClass: failureClass, Message: execution.Message,
 	}); err != nil && !isCommittedWarning(err) {
-		return execution, err
-	}
-	if err := service.audit(operation, stage, execution.Message); err != nil {
-		return journalFailure(execution, err)
-	}
-	if stage != model.StageReport {
-		if err := service.audit(operation, model.StageReport, "terminal operation report generated"); err != nil {
-			return journalFailure(execution, err)
-		}
-	}
-	if err := service.report(operation, execution, operationCommitted); err != nil {
 		if operationCommitted {
-			return journalIndeterminate(execution, err)
+			execution = markDurabilityIndeterminate(execution)
+			return execution, &journalPersistenceError{err: fmt.Errorf("persist terminal operation state: %w", err)}
 		}
 		return journalFailure(execution, err)
 	}
@@ -315,34 +358,75 @@ func (service *Service) executeDurable(ctx context.Context, request adapter.Oper
 		if execution.Status == "" {
 			execution.Status = model.OperationFailed
 		}
-		committed := operationFailureClass(executeErr) != "" && operationFailureClass(executeErr) != "pre_commit"
-		return service.finishDurable(record.ResourceID, operation, model.StageExecute, execution, operationFailureClass(executeErr), executeErr, committed)
-	}
-	if _, err := service.advanceDurable(record.ResourceID, model.StageExecute, model.OperationTransition{Execution: &execution, Message: "adapter execution completed"}); err != nil {
-		return markDurabilityIndeterminate(execution), err
-	}
-	if err := service.audit(operation, model.StageExecute, "adapter execution completed"); err != nil {
-		return journalIndeterminate(execution, err)
-	}
-	verification, verifyErr := candidate.Verify(ctx, request)
-	if verifyErr != nil || !verification.Passed {
-		if verifyErr != nil {
-			execution.Message = verifyErr.Error()
-		} else {
-			execution.Message = "verification failed"
-			verifyErr = errors.New(execution.Message)
+		failureClass := operationFailureClass(executeErr)
+		committed := failureClass != "" && failureClass != "pre_commit"
+		if !committed {
+			return service.finishDurable(record.ResourceID, operation, model.StageExecute, execution, failureClass, executeErr, false)
 		}
-		execution.Status = model.OperationFailed
+
+		verification, verifyErr := detachedVerification(ctx, candidate, request)
+		verificationMessage := verificationOutcomeMessage(verification, verifyErr)
+		if _, err := service.advanceDurable(record.ResourceID, model.StageVerify, model.OperationTransition{
+			Verification: &verification,
+			FailureClass: failureClass,
+			Message:      verificationMessage,
+		}); err != nil {
+			execution = markDurabilityIndeterminate(execution)
+			cause := fmt.Errorf("persist post-commit verification evidence: %w (execution error: %v)", err, executeErr)
+			return service.finishDurable(record.ResourceID, operation, model.StageVerify, execution, failureClass, cause, true)
+		}
+		execution.Status = model.OperationIndeterminate
+		execution.Message = executeErr.Error() + "; " + verificationMessage
+		cause := executeErr
+		if verifyErr != nil {
+			cause = fmt.Errorf("%w; verification error: %v", executeErr, verifyErr)
+		} else if !verification.Passed {
+			cause = fmt.Errorf("%w; post-commit verification failed", executeErr)
+		}
+		return service.finishDurable(record.ResourceID, operation, model.StageVerify, execution, failureClass, cause, true)
+	}
+	var committedJournalErr error
+	if _, err := service.advanceDurable(record.ResourceID, model.StageExecute, model.OperationTransition{Execution: &execution, Message: "adapter execution completed"}); err != nil {
+		committedJournalErr = firstJournalError(committedJournalErr, err)
+	} else if err := service.audit(operation, model.StageExecute, "adapter execution completed"); err != nil {
+		committedJournalErr = firstJournalError(committedJournalErr, err)
+	}
+	verification, verifyErr := detachedVerification(ctx, candidate, request)
+	verificationMessage := verificationOutcomeMessage(verification, verifyErr)
+	if _, err := service.advanceDurable(record.ResourceID, model.StageVerify, model.OperationTransition{Verification: &verification, Message: verificationMessage}); err != nil {
+		committedJournalErr = firstJournalError(committedJournalErr, err)
+	}
+	if verifyErr != nil || !verification.Passed {
+		execution.Message = verificationMessage
+		execution.Status = model.OperationIndeterminate
+		if verifyErr == nil {
+			verifyErr = errors.New(verificationMessage)
+		}
+		if committedJournalErr != nil {
+			verifyErr = &journalPersistenceError{err: fmt.Errorf("%v; %w", verifyErr, committedJournalErr)}
+		}
 		return service.finishDurable(record.ResourceID, operation, model.StageVerify, execution, "verification", verifyErr, true)
 	}
-	if _, err := service.advanceDurable(record.ResourceID, model.StageVerify, model.OperationTransition{Verification: &verification, Message: "verification passed"}); err != nil {
-		return markDurabilityIndeterminate(execution), err
+	if committedJournalErr != nil {
+		execution.Status = model.OperationIndeterminate
+		execution.Message = "operation committed and verified, but workflow journal persistence failed"
+		return service.finishDurable(record.ResourceID, operation, model.StageVerify, execution, "journal", &journalPersistenceError{err: committedJournalErr}, true)
 	}
+	var finalAuditErr error
+	finalAuditStage := model.StageVerify
 	if err := service.audit(operation, model.StageVerify, "verification passed"); err != nil {
-		return journalIndeterminate(execution, err)
+		finalAuditErr = firstJournalError(finalAuditErr, err)
 	}
 	if err := service.audit(operation, model.StageAudit, "operation audit recorded"); err != nil {
-		return journalIndeterminate(execution, err)
+		if finalAuditErr == nil {
+			finalAuditStage = model.StageAudit
+		}
+		finalAuditErr = firstJournalError(finalAuditErr, err)
+	}
+	if finalAuditErr != nil {
+		execution.Status = model.OperationIndeterminate
+		execution.Message = "operation committed and verified, but workflow journal persistence failed"
+		return service.finishDurable(record.ResourceID, operation, finalAuditStage, execution, "journal", &journalPersistenceError{err: finalAuditErr}, true)
 	}
 	execution.Status = model.OperationSucceeded
 	execution.Message = "operation completed and verified"

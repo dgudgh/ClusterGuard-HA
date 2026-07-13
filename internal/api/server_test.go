@@ -258,8 +258,10 @@ func TestGenericJSONRoutesRejectOversizedBodiesIndependentOfContentLength(t *tes
 func TestExecuteEndpointFailsClosedWhenMutationIsUnsupported(t *testing.T) {
 	server, _ := newTestServer(t)
 	payload := map[string]interface{}{
-		"operation":      map[string]interface{}{"engine": "mysql", "kind": "failover", "requested_by": "dba"},
-		"approval_token": "approved",
+		"operation":       map[string]interface{}{"cluster_id": model.NewResourceID(), "engine": "mysql", "kind": "failover", "requested_by": "dba"},
+		"target_id":       model.NewResourceID(),
+		"idempotency_key": "unsupported-failover",
+		"approval_token":  "approved",
 	}
 	response := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/operations/execute", payload)
 	if response.Code != http.StatusNotImplemented || !strings.Contains(response.Body.String(), "unsupported") {

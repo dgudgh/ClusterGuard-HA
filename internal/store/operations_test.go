@@ -149,3 +149,32 @@ func TestOperationTransitionPersistsAttemptsAndRejectsStaleRevision(t *testing.T
 		t.Fatalf("stale transition revision was accepted: %v", err)
 	}
 }
+
+func TestIndeterminateOperationCanOnlyBeReconciledByPersistedVerification(t *testing.T) {
+	repository := NewMemory()
+	request := operationFixture()
+	request.IdempotencyKey = "reconcile-verification"
+	operation, _, err := repository.CreateOperation(request)
+	if err != nil {
+		t.Fatalf("create operation: %v", err)
+	}
+	indeterminate, err := repository.TransitionOperation(operation.ResourceID, operation.MetadataRevision, model.OperationTransition{
+		Stage: model.StageVerify, Status: model.OperationIndeterminate, Message: "promotion outcome requires verification",
+	})
+	if err != nil {
+		t.Fatalf("mark indeterminate: %v", err)
+	}
+	verification := model.Verification{Passed: true, Checks: []model.Check{{Name: "writer_endpoint_owner", Status: model.CheckPass}}}
+	reconciled, err := repository.TransitionOperation(indeterminate.ResourceID, indeterminate.MetadataRevision, model.OperationTransition{
+		Stage: indeterminate.Stage, Status: model.OperationSucceeded, Verification: &verification, Message: "manual verification passed",
+	})
+	if err != nil {
+		t.Fatalf("reconcile verification: %v", err)
+	}
+	if reconciled.Status != model.OperationSucceeded || !reconciled.Verification.Passed || reconciled.Verification.OperationID != operation.ResourceID {
+		t.Fatalf("reconciled operation=%+v", reconciled)
+	}
+	if _, err := repository.TransitionOperation(reconciled.ResourceID, reconciled.MetadataRevision, model.OperationTransition{Message: "mutate succeeded terminal"}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("succeeded terminal was mutable: %v", err)
+	}
+}

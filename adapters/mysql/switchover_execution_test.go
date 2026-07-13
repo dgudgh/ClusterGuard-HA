@@ -23,6 +23,7 @@ type switchoverSQLClient struct {
 	targetReadOnly        bool
 	targetSuperReadOnly   bool
 	targetReplication     bool
+	targetLag             int64
 	primaryGTID           string
 	targetExecuted        string
 	executed              []string
@@ -52,7 +53,10 @@ func boolString(value bool) string {
 	return "0"
 }
 
-func (client *switchoverSQLClient) Query(_ context.Context, endpoint adapter.Endpoint, _ adapter.Credentials, query string) ([]Row, error) {
+func (client *switchoverSQLClient) Query(ctx context.Context, endpoint adapter.Endpoint, _ adapter.Credentials, query string) ([]Row, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	client.mu.Lock()
 	defer client.mu.Unlock()
 	host := endpoint.Hostname
@@ -108,12 +112,15 @@ func (client *switchoverSQLClient) replicationRows(host string) []Row {
 		"Source_UUID": primaryUUID, "Master_UUID": primaryUUID,
 		"Replica_IO_Running": "Yes", "Replica_SQL_Running": "Yes",
 		"Slave_IO_Running": "Yes", "Slave_SQL_Running": "Yes",
-		"Seconds_Behind_Source": "0", "Seconds_Behind_Master": "0",
+		"Seconds_Behind_Source": strconv.FormatInt(client.targetLag, 10), "Seconds_Behind_Master": strconv.FormatInt(client.targetLag, 10),
 		"Executed_Gtid_Set": client.targetExecuted,
 	}}
 }
 
-func (client *switchoverSQLClient) Exec(_ context.Context, endpoint adapter.Endpoint, _ adapter.Credentials, statement string) error {
+func (client *switchoverSQLClient) Exec(ctx context.Context, endpoint adapter.Endpoint, _ adapter.Credentials, statement string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	client.mu.Lock()
 	defer client.mu.Unlock()
 	host := endpoint.Hostname
@@ -164,6 +171,7 @@ type recordingEndpointProvider struct {
 	transferCalls  int
 	transferError  error
 	duplicateOwner bool
+	verifyOverride *model.Check
 }
 
 func (provider *recordingEndpointProvider) Executable(context.Context) bool { return true }
@@ -183,6 +191,9 @@ func (provider *recordingEndpointProvider) Transfer(_ context.Context, resolved 
 func (provider *recordingEndpointProvider) Verify(_ context.Context, resolved adapter.ResolvedOperation) model.Check {
 	provider.mu.Lock()
 	defer provider.mu.Unlock()
+	if provider.verifyOverride != nil {
+		return *provider.verifyOverride
+	}
 	if provider.duplicateOwner {
 		return model.Check{Name: "writer_endpoint_owner", Status: model.CheckFail, Message: "writer endpoint has multiple owners"}
 	}
@@ -190,6 +201,32 @@ func (provider *recordingEndpointProvider) Verify(_ context.Context, resolved ad
 		return model.Check{Name: "writer_endpoint_owner", Status: model.CheckFail, Message: "writer endpoint is not owned by the selected target"}
 	}
 	return model.Check{Name: "writer_endpoint_owner", Status: model.CheckPass, Message: "writer endpoint has one target owner"}
+}
+
+func TestSwitchoverVerifyRequiresExplicitEndpointOwnershipPass(t *testing.T) {
+	tests := []struct {
+		name  string
+		check model.Check
+	}{
+		{name: "missing evidence"},
+		{name: "warning evidence", check: model.Check{Name: "writer_endpoint_owner", Status: model.CheckWarn, Message: "one host could not be probed"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			adapterInstance, request, _, provider := executableSwitchoverFixture(t)
+			if _, err := adapterInstance.Execute(context.Background(), request); err != nil {
+				t.Fatalf("execute: %v", err)
+			}
+			provider.verifyOverride = &test.check
+			verification, err := adapterInstance.Verify(context.Background(), request)
+			if err != nil {
+				t.Fatalf("verify: %v", err)
+			}
+			if verification.Passed {
+				t.Fatalf("verification passed without explicit endpoint ownership evidence: %+v", verification.Checks)
+			}
+		})
+	}
 }
 
 func executableSwitchoverFixture(t *testing.T) (*Adapter, adapter.OperationRequest, *switchoverSQLClient, *recordingEndpointProvider) {
@@ -313,8 +350,22 @@ func TestSwitchoverExecutionFailureClasses(t *testing.T) {
 	}
 }
 
+func TestSwitchoverExecutionDoesNotExposeProviderErrorDetails(t *testing.T) {
+	adapterInstance, request, _, provider := executableSwitchoverFixture(t)
+	provider.transferError = errors.New("vip-token=top-secret command=/sbin/ip addr add")
+	execution, err := adapterInstance.Execute(context.Background(), request)
+	if err == nil {
+		t.Fatal("endpoint transfer failure unexpectedly succeeded")
+	}
+	for _, message := range []string{execution.Message, err.Error()} {
+		if strings.Contains(message, "top-secret") || strings.Contains(message, "/sbin/ip") {
+			t.Fatalf("unsafe switchover error message %q", message)
+		}
+	}
+}
+
 func TestSwitchoverRetryObservesPostconditionsBeforeMutation(t *testing.T) {
-	adapterInstance, request, client, _ := executableSwitchoverFixture(t)
+	adapterInstance, request, client, provider := executableSwitchoverFixture(t)
 	if _, err := adapterInstance.Execute(context.Background(), request); err != nil {
 		t.Fatalf("first execute: %v", err)
 	}
@@ -324,6 +375,9 @@ func TestSwitchoverRetryObservesPostconditionsBeforeMutation(t *testing.T) {
 	}
 	if after := len(client.statements()); after != before {
 		t.Fatalf("retry repeated mutations: before=%d after=%d statements=%v", before, after, client.statements())
+	}
+	if provider.transferCalls != 1 {
+		t.Fatalf("retry repeated writer endpoint transfer: calls=%d", provider.transferCalls)
 	}
 }
 
@@ -351,5 +405,43 @@ func TestSwitchoverExecuteRejectsModifiedPlanBeforeMutation(t *testing.T) {
 	}
 	if len(client.statements()) != 0 {
 		t.Fatalf("modified plan caused SQL mutations: %v", client.statements())
+	}
+}
+
+func TestRecoveryFencingDetachesFromCanceledOperationContext(t *testing.T) {
+	adapterInstance, request, client, _ := executableSwitchoverFixture(t)
+	client.targetReadOnly = false
+	client.targetSuperReadOnly = false
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := adapterInstance.fenceInstance(canceled, instanceEndpoint(request.Resolved.Target), request.Resolved.Credentials); err != nil {
+		t.Fatalf("detached recovery fencing: %v", err)
+	}
+	if !client.targetReadOnly || !client.targetSuperReadOnly {
+		t.Fatalf("target was not fenced: read_only=%t super_read_only=%t", client.targetReadOnly, client.targetSuperReadOnly)
+	}
+}
+
+func TestSwitchoverFencesPromotedTargetWhenEndpointOwnershipIsUnknown(t *testing.T) {
+	adapterInstance, request, client, provider := executableSwitchoverFixture(t)
+	provider.verifyOverride = &model.Check{Name: "writer_endpoint_owner", Status: model.CheckWarn, Message: "owner probe incomplete"}
+	execution, err := adapterInstance.Execute(context.Background(), request)
+	if err == nil || execution.Status != model.OperationIndeterminate || failureClass(err) != "promoted_unverified" {
+		t.Fatalf("execution=%+v err=%v class=%q", execution, err, failureClass(err))
+	}
+	if !client.targetReadOnly || !client.targetSuperReadOnly {
+		t.Fatalf("target remained writable with unknown endpoint ownership: read_only=%t super_read_only=%t", client.targetReadOnly, client.targetSuperReadOnly)
+	}
+}
+
+func TestSwitchoverExecuteRevalidatesLiveReplicationBeforeFirstMutation(t *testing.T) {
+	adapterInstance, request, client, _ := executableSwitchoverFixture(t)
+	client.targetLag = 5
+	execution, err := adapterInstance.Execute(context.Background(), request)
+	if err == nil || execution.Status != model.OperationFailed || failureClass(err) != "pre_commit" {
+		t.Fatalf("live replication drift execution=%+v err=%v", execution, err)
+	}
+	if len(client.statements()) != 0 {
+		t.Fatalf("live precheck failure issued mutating SQL: %v", client.statements())
 	}
 }

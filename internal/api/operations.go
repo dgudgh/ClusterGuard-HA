@@ -64,6 +64,22 @@ type operationActionPayload struct {
 	ApprovalToken string `json:"approval_token,omitempty"`
 }
 
+func (server *Server) operationTimeline(operationID model.ResourceID) map[string]interface{} {
+	audits := make([]model.AuditEvent, 0)
+	for _, event := range server.store.Audits() {
+		if event.OperationID == operationID {
+			audits = append(audits, event)
+		}
+	}
+	reports := make([]model.Report, 0)
+	for _, report := range server.store.Reports() {
+		if report.OperationID == operationID {
+			reports = append(reports, report)
+		}
+	}
+	return map[string]interface{}{"audits": audits, "reports": reports}
+}
+
 func (server *Server) operationResourceRoute(writer http.ResponseWriter, request *http.Request, tail string) {
 	parts := strings.Split(strings.Trim(strings.TrimSpace(tail), "/"), "/")
 	if len(parts) == 0 || parts[0] == "" {
@@ -85,7 +101,7 @@ func (server *Server) operationResourceRoute(writer http.ResponseWriter, request
 			writeError(writer, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
-		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": record})
+		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": record, "timeline": server.operationTimeline(operationID)})
 		return
 	}
 	if len(parts) != 2 || request.Method != http.MethodPost {
@@ -143,6 +159,8 @@ func (server *Server) operationResourceRoute(writer http.ResponseWriter, request
 		writeJSON(writer, http.StatusConflict, map[string]interface{}{"status": "running", "message": err.Error(), "result": updated})
 	case errors.Is(err, workflow.ErrJournalPersistence):
 		writeJSON(writer, http.StatusInternalServerError, map[string]interface{}{"status": "error", "message": "workflow journal persistence failed", "result": updated})
+	case err != nil && updated.Status == model.OperationIndeterminate:
+		writeJSON(writer, http.StatusInternalServerError, map[string]interface{}{"status": "indeterminate", "message": err.Error(), "result": updated})
 	case err != nil:
 		writeJSON(writer, http.StatusConflict, map[string]interface{}{"status": "error", "message": err.Error(), "result": updated})
 	default:
@@ -152,6 +170,8 @@ func (server *Server) operationResourceRoute(writer http.ResponseWriter, request
 
 func (server *Server) writeOperationActionError(writer http.ResponseWriter, err error, record model.OperationRecord) {
 	switch {
+	case record.Status == model.OperationIndeterminate:
+		writeJSON(writer, http.StatusInternalServerError, map[string]interface{}{"status": "indeterminate", "message": err.Error(), "result": record})
 	case errors.Is(err, adapter.ErrUnsupported):
 		writeJSON(writer, http.StatusNotImplemented, map[string]interface{}{"status": "unsupported", "message": err.Error(), "result": record})
 	case errors.Is(err, workflow.ErrOperationInProgress), errors.Is(err, store.ErrConflict):

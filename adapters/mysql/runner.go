@@ -37,10 +37,10 @@ type QueryError struct {
 }
 
 func (queryError *QueryError) Error() string {
-	if queryError.Output != "" {
-		return fmt.Sprintf("mysql query failed: %s", queryError.Output)
+	if queryError.Code > 0 {
+		return fmt.Sprintf("mysql query failed with error code %d", queryError.Code)
 	}
-	return fmt.Sprintf("mysql query failed: %v", queryError.Err)
+	return "mysql query failed"
 }
 
 func (queryError *QueryError) Unwrap() error { return queryError.Err }

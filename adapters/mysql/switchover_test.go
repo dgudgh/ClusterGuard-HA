@@ -217,6 +217,28 @@ func TestSwitchoverPrecheckReportsUnsupportedEndpointProvider(t *testing.T) {
 	}
 }
 
+func TestSwitchoverPlanRejectsNonPassingEndpointEvidence(t *testing.T) {
+	tests := []struct {
+		name   string
+		checks []model.Check
+	}{
+		{name: "missing evidence"},
+		{name: "warning evidence", checks: []model.Check{{Name: "writer_endpoint_provider", Status: model.CheckWarn, Message: "endpoint ownership probe is incomplete"}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			provider := endpointProviderStub{executable: true, checks: test.checks}
+			plan, err := NewWithEndpointProvider(nil, provider).BuildPlan(context.Background(), switchoverRequestFixture())
+			if err != nil {
+				t.Fatalf("build blocked plan: %v", err)
+			}
+			if !planHasBlockingChecks(plan.Checks) || !failedCheckNamed(plan.Checks, "writer_endpoint_provider") {
+				t.Fatalf("switchover plan did not block endpoint evidence without an explicit pass: %+v", plan.Checks)
+			}
+		})
+	}
+}
+
 func TestSwitchoverPlanIsCanonicalAndImmutableByDigest(t *testing.T) {
 	request := switchoverRequestFixture()
 	adapterInstance := NewWithEndpointProvider(nil, passingEndpointProvider())

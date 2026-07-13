@@ -171,58 +171,55 @@ func (server *Server) operationRoute(writer http.ResponseWriter, request *http.R
 		writeError(writer, http.StatusBadRequest, err.Error())
 		return
 	}
-	candidate, ok := server.registry.Get(payload.Operation.Engine)
+	_, ok := server.registry.Get(payload.Operation.Engine)
 	if !ok {
 		server.unsupported(writer, "adapter is not registered for this engine")
+		return
+	}
+	if strings.TrimSpace(payload.IdempotencyKey) == "" {
+		writeError(writer, http.StatusBadRequest, "idempotency_key is required")
+		return
+	}
+	if server.workflow == nil {
+		writeError(writer, http.StatusServiceUnavailable, "workflow service is not configured")
 		return
 	}
 	adapterRequest := adapter.OperationRequest{Operation: payload.Operation, TargetID: payload.TargetID, IdempotencyKey: payload.IdempotencyKey, Parameters: payload.Parameters}
 	switch action {
 	case "precheck":
-		if !candidate.Capabilities(request.Context()).Supports(adapter.CapabilityPrecheck) {
-			server.unsupported(writer, "operation precheck is unsupported")
-			return
-		}
-		checks, err := candidate.Precheck(request.Context(), adapterRequest)
+		record, checks, err := server.workflow.Precheck(request.Context(), adapterRequest)
 		if err != nil {
-			writeError(writer, http.StatusBadGateway, err.Error())
+			server.writeOperationActionError(writer, err, record)
 			return
 		}
-		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": checks})
+		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": map[string]interface{}{"operation": record, "checks": checks}})
 	case "plan":
-		if !candidate.Capabilities(request.Context()).Supports(adapter.CapabilityPlan) {
-			server.unsupported(writer, "operation planning is unsupported")
-			return
-		}
-		plan, err := candidate.BuildPlan(request.Context(), adapterRequest)
+		record, plan, err := server.workflow.Plan(request.Context(), adapterRequest)
 		if err != nil {
-			writeError(writer, http.StatusBadGateway, err.Error())
+			server.writeOperationActionError(writer, err, record)
 			return
 		}
-		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": plan})
+		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": map[string]interface{}{"operation": record, "plan": plan}})
 	case "execute":
 		execution, err := server.workflow.Execute(request.Context(), adapterRequest, payload.ApprovalToken)
-		if errors.Is(err, adapter.ErrUnsupported) {
-			writeJSON(writer, http.StatusNotImplemented, map[string]interface{}{"status": "unsupported", "result": execution, "message": execution.Message})
-			return
+		record, _ := server.store.OperationByIdempotencyKey(payload.IdempotencyKey)
+		switch {
+		case errors.Is(err, adapter.ErrUnsupported):
+			writeJSON(writer, http.StatusNotImplemented, map[string]interface{}{"status": "unsupported", "result": record, "message": execution.Message})
+		case errors.Is(err, workflow.ErrJournalPersistence), err != nil && record.Status == model.OperationIndeterminate:
+			writeJSON(writer, http.StatusInternalServerError, map[string]interface{}{"status": "indeterminate", "result": record, "message": execution.Message})
+		case errors.Is(err, workflow.ErrOperationInProgress):
+			writeJSON(writer, http.StatusConflict, map[string]interface{}{"status": "running", "result": record, "message": err.Error()})
+		case err != nil:
+			server.writeOperationActionError(writer, err, record)
+		default:
+			writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": record})
 		}
-		if errors.Is(err, workflow.ErrJournalPersistence) {
-			writeJSON(writer, http.StatusInternalServerError, map[string]interface{}{"status": "error", "result": execution, "message": "workflow journal persistence failed"})
-			return
-		}
-		if err != nil {
-			writeJSON(writer, http.StatusConflict, map[string]interface{}{"status": "error", "result": execution, "message": err.Error()})
-			return
-		}
-		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": execution})
 	case "verify":
-		if !candidate.Capabilities(request.Context()).Supports(adapter.CapabilityVerify) {
-			server.unsupported(writer, "operation verification is unsupported")
-			return
-		}
-		verification, err := candidate.Verify(request.Context(), adapterRequest)
+		verification, err := server.workflow.Verify(request.Context(), adapterRequest)
 		if err != nil {
-			writeError(writer, http.StatusBadGateway, err.Error())
+			record, _ := server.store.OperationByIdempotencyKey(payload.IdempotencyKey)
+			server.writeOperationActionError(writer, err, record)
 			return
 		}
 		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": verification})

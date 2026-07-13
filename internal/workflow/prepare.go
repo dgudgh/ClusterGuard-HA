@@ -54,6 +54,27 @@ func (service *Service) Verify(ctx context.Context, request adapter.OperationReq
 	if err := service.audit(record.Operation, model.StageVerify, message); err != nil {
 		return verification, err
 	}
+	if record.Status == model.OperationIndeterminate {
+		status := model.OperationIndeterminate
+		failureClass := record.FailureClass
+		if verification.Passed {
+			status = model.OperationSucceeded
+			failureClass = ""
+		}
+		execution := record.Execution
+		execution.OperationID = record.ResourceID
+		execution.Status = status
+		execution.Message = message
+		if err := service.report(record.Operation, execution, true); err != nil {
+			return verification, err
+		}
+		if _, err := service.operations.TransitionOperation(record.ResourceID, record.MetadataRevision, model.OperationTransition{
+			Stage: record.Stage, Status: status, Execution: &execution, Verification: &verification,
+			FailureClass: failureClass, Message: message,
+		}); err != nil {
+			return verification, err
+		}
+	}
 	return verification, nil
 }
 

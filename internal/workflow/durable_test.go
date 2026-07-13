@@ -13,9 +13,13 @@ import (
 
 type durableAdapter struct {
 	adapter.UnsupportedAdapter
-	executeCalls   int
-	executeStarted chan struct{}
-	executeRelease chan struct{}
+	executeCalls       int
+	verifyCalls        int
+	executeError       error
+	executeStarted     chan struct{}
+	executeRelease     chan struct{}
+	afterExecute       func()
+	verificationResult *model.Verification
 }
 
 func newDurableAdapter() *durableAdapter {
@@ -64,6 +68,12 @@ func (candidate *durableAdapter) Execute(ctx context.Context, request adapter.Op
 	if err := request.Progress.CompleteStep(ctx, "execute", "test mutation completed"); err != nil {
 		return model.Execution{Status: model.OperationIndeterminate, Message: err.Error()}, err
 	}
+	if candidate.afterExecute != nil {
+		candidate.afterExecute()
+	}
+	if candidate.executeError != nil {
+		return model.Execution{Status: model.OperationIndeterminate, Message: candidate.executeError.Error()}, candidate.executeError
+	}
 	return model.Execution{Status: model.OperationRunning, Message: "executed"}, nil
 }
 
@@ -83,9 +93,23 @@ func newDurableWorkflowService(t *testing.T, repository *store.Repository, candi
 		WithOperationStore(repository), WithOperationResolver(resolver))
 }
 
-func (candidate *durableAdapter) Verify(context.Context, adapter.OperationRequest) (model.Verification, error) {
+func (candidate *durableAdapter) Verify(ctx context.Context, _ adapter.OperationRequest) (model.Verification, error) {
+	candidate.verifyCalls++
+	if err := ctx.Err(); err != nil {
+		return model.Verification{}, err
+	}
+	if candidate.verificationResult != nil {
+		return *candidate.verificationResult, nil
+	}
 	return model.Verification{Passed: true, Checks: []model.Check{{Name: "verified", Status: model.CheckPass}}}, nil
 }
+
+type durableCommittedFailure struct{}
+
+func (durableCommittedFailure) Error() string {
+	return "target promotion outcome requires verification"
+}
+func (durableCommittedFailure) FailureClass() string { return "promoted_unverified" }
 
 func durableRequestFixture() (adapter.OperationRequest, adapter.ResolvedOperation) {
 	observedAt := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
@@ -222,5 +246,166 @@ func TestDurablePrecheckAndPlanPersistReadOnlyStages(t *testing.T) {
 	}
 	if record.Stage != model.StagePlan || record.Status != model.OperationPlanned || plan.Digest == "" || record.Plan.Digest != plan.Digest {
 		t.Fatalf("plan stage was not persisted: record=%+v plan=%+v", record, plan)
+	}
+}
+
+func TestDurableWorkflowStillVerifiesAfterCommittedAdapterError(t *testing.T) {
+	request, resolved := durableRequestFixture()
+	repository := store.NewMemory()
+	candidate := newDurableAdapter()
+	candidate.executeError = durableCommittedFailure{}
+	service := newDurableWorkflowService(t, repository, candidate, request, resolved)
+
+	execution, err := service.Execute(context.Background(), request, "approved")
+	if err == nil || execution.Status != model.OperationIndeterminate {
+		t.Fatalf("committed error result=%+v err=%v", execution, err)
+	}
+	if candidate.verifyCalls != 1 {
+		t.Fatalf("post-commit verification calls=%d, want 1", candidate.verifyCalls)
+	}
+	record, found := repository.OperationByIdempotencyKey(request.IdempotencyKey)
+	if !found || !record.Verification.Passed || record.Status != model.OperationIndeterminate {
+		t.Fatalf("post-commit verification evidence was not durable: found=%t record=%+v", found, record)
+	}
+}
+
+func TestDurableWorkflowVerificationSurvivesCallerCancellationAfterMutation(t *testing.T) {
+	request, resolved := durableRequestFixture()
+	repository := store.NewMemory()
+	candidate := newDurableAdapter()
+	ctx, cancel := context.WithCancel(context.Background())
+	candidate.afterExecute = cancel
+	service := newDurableWorkflowService(t, repository, candidate, request, resolved)
+
+	execution, err := service.Execute(ctx, request, "approved")
+	if err != nil || execution.Status != model.OperationSucceeded {
+		t.Fatalf("detached verification result=%+v err=%v", execution, err)
+	}
+	if candidate.verifyCalls != 1 {
+		t.Fatalf("verification calls=%d, want 1", candidate.verifyCalls)
+	}
+}
+
+func TestDurableWorkflowPersistsFailedPostCommitVerificationAsIndeterminate(t *testing.T) {
+	request, resolved := durableRequestFixture()
+	repository := store.NewMemory()
+	candidate := newDurableAdapter()
+	candidate.verificationResult = &model.Verification{Passed: false, Checks: []model.Check{{Name: "writer_endpoint_owner", Status: model.CheckFail, Message: "endpoint owner is unknown"}}}
+	service := newDurableWorkflowService(t, repository, candidate, request, resolved)
+
+	execution, err := service.Execute(context.Background(), request, "approved")
+	if err == nil || execution.Status != model.OperationIndeterminate {
+		t.Fatalf("failed verification result=%+v err=%v", execution, err)
+	}
+	record, found := repository.OperationByIdempotencyKey(request.IdempotencyKey)
+	if !found || record.Status != model.OperationIndeterminate || record.Verification.Passed || len(record.Verification.Checks) != 1 {
+		t.Fatalf("failed verification evidence was not persisted conservatively: found=%t record=%+v", found, record)
+	}
+}
+
+func TestManualVerificationReconcilesIndeterminateOperation(t *testing.T) {
+	request, resolved := durableRequestFixture()
+	repository := store.NewMemory()
+	candidate := newDurableAdapter()
+	candidate.verificationResult = &model.Verification{Passed: false, Checks: []model.Check{{Name: "writer_endpoint_owner", Status: model.CheckFail}}}
+	service := newDurableWorkflowService(t, repository, candidate, request, resolved)
+	if _, err := service.Execute(context.Background(), request, "approved"); err == nil {
+		t.Fatal("initial failed verification unexpectedly succeeded")
+	}
+	candidate.verificationResult = &model.Verification{Passed: true, Checks: []model.Check{{Name: "writer_endpoint_owner", Status: model.CheckPass}}}
+	verification, err := service.Verify(context.Background(), request)
+	if err != nil || !verification.Passed {
+		t.Fatalf("manual verification result=%+v err=%v", verification, err)
+	}
+	record, found := repository.OperationByIdempotencyKey(request.IdempotencyKey)
+	if !found || record.Status != model.OperationSucceeded || !record.Verification.Passed {
+		t.Fatalf("manual verification did not reconcile operation: found=%t record=%+v", found, record)
+	}
+}
+
+func TestDurableWorkflowStillVerifiesAfterCommittedExecutionAuditFailure(t *testing.T) {
+	request, resolved := durableRequestFixture()
+	repository := store.NewMemory()
+	candidate := newDurableAdapter()
+	registry := adapter.NewRegistry()
+	if err := registry.Register(candidate); err != nil {
+		t.Fatalf("register adapter: %v", err)
+	}
+	trace := []string{}
+	journal := stageFailingJournal{MemoryJournal: NewMemoryJournal(), stage: model.StageExecute, err: errors.New("execute audit unavailable")}
+	resolver := OperationResolverFunc(func(_ context.Context, candidate adapter.OperationRequest) (adapter.OperationRequest, error) {
+		candidate.Resolved = &resolved
+		candidate.Credentials = resolved.Credentials
+		return candidate, nil
+	})
+	service := New(registry, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, journal,
+		WithOperationStore(repository), WithOperationResolver(resolver))
+
+	execution, err := service.Execute(context.Background(), request, "approved")
+	if !errors.Is(err, ErrJournalPersistence) || execution.Status != model.OperationIndeterminate {
+		t.Fatalf("audit failure result=%+v err=%v", execution, err)
+	}
+	if candidate.verifyCalls != 1 {
+		t.Fatalf("verification calls=%d, want 1", candidate.verifyCalls)
+	}
+	record, found := repository.OperationByIdempotencyKey(request.IdempotencyKey)
+	if !found || !record.Verification.Passed || record.Status != model.OperationIndeterminate {
+		t.Fatalf("audit failure verification evidence was not durable: found=%t record=%+v", found, record)
+	}
+}
+
+func TestDurableWorkflowDoesNotPersistSuccessBeforeReportAudit(t *testing.T) {
+	request, resolved := durableRequestFixture()
+	repository := store.NewMemory()
+	candidate := newDurableAdapter()
+	registry := adapter.NewRegistry()
+	if err := registry.Register(candidate); err != nil {
+		t.Fatalf("register adapter: %v", err)
+	}
+	trace := []string{}
+	journal := stageFailingJournal{MemoryJournal: NewMemoryJournal(), stage: model.StageReport, err: errors.New("report audit unavailable")}
+	resolver := OperationResolverFunc(func(_ context.Context, candidate adapter.OperationRequest) (adapter.OperationRequest, error) {
+		candidate.Resolved = &resolved
+		candidate.Credentials = resolved.Credentials
+		return candidate, nil
+	})
+	service := New(registry, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, journal,
+		WithOperationStore(repository), WithOperationResolver(resolver))
+
+	execution, err := service.Execute(context.Background(), request, "approved")
+	if !errors.Is(err, ErrJournalPersistence) || execution.Status != model.OperationIndeterminate {
+		t.Fatalf("report audit failure result=%+v err=%v", execution, err)
+	}
+	record, found := repository.OperationByIdempotencyKey(request.IdempotencyKey)
+	if !found || record.Status != model.OperationIndeterminate {
+		t.Fatalf("report audit failure left a non-conservative terminal record: found=%t record=%+v", found, record)
+	}
+}
+
+func TestDurableWorkflowPersistsIndeterminateWhenVerificationAuditFails(t *testing.T) {
+	request, resolved := durableRequestFixture()
+	repository := store.NewMemory()
+	candidate := newDurableAdapter()
+	registry := adapter.NewRegistry()
+	if err := registry.Register(candidate); err != nil {
+		t.Fatalf("register adapter: %v", err)
+	}
+	trace := []string{}
+	journal := stageFailingJournal{MemoryJournal: NewMemoryJournal(), stage: model.StageVerify, err: errors.New("verification audit unavailable")}
+	resolver := OperationResolverFunc(func(_ context.Context, candidate adapter.OperationRequest) (adapter.OperationRequest, error) {
+		candidate.Resolved = &resolved
+		candidate.Credentials = resolved.Credentials
+		return candidate, nil
+	})
+	service := New(registry, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, journal,
+		WithOperationStore(repository), WithOperationResolver(resolver))
+
+	execution, err := service.Execute(context.Background(), request, "approved")
+	if !errors.Is(err, ErrJournalPersistence) || execution.Status != model.OperationIndeterminate {
+		t.Fatalf("verification audit failure result=%+v err=%v", execution, err)
+	}
+	record, found := repository.OperationByIdempotencyKey(request.IdempotencyKey)
+	if !found || record.Status != model.OperationIndeterminate || !record.Verification.Passed {
+		t.Fatalf("verification audit failure did not persist conservative evidence: found=%t record=%+v", found, record)
 	}
 }

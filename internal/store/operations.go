@@ -251,6 +251,25 @@ func validateAttempt(existing []model.StepAttempt, attempt model.StepAttempt) er
 	return nil
 }
 
+func verificationReconciliationAllowed(operation model.OperationRecord, transition model.OperationTransition) bool {
+	if operation.Status != model.OperationIndeterminate || transition.Verification == nil {
+		return false
+	}
+	if transition.Status != model.OperationIndeterminate && transition.Status != model.OperationSucceeded {
+		return false
+	}
+	if transition.Status == model.OperationSucceeded && !transition.Verification.Passed {
+		return false
+	}
+	if transition.Observation != "" || transition.Attempt != nil {
+		return false
+	}
+	if transition.Stage != "" && transition.Stage != operation.Stage {
+		return false
+	}
+	return true
+}
+
 func (repository *Repository) TransitionOperation(resourceID model.ResourceID, expectedRevision uint64, transition model.OperationTransition) (model.OperationRecord, error) {
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
@@ -261,7 +280,8 @@ func (repository *Repository) TransitionOperation(resourceID model.ResourceID, e
 	if operation.MetadataRevision != expectedRevision {
 		return model.OperationRecord{}, conflictError("operation metadata revision changed")
 	}
-	if terminalOperationStatus(operation.Status) {
+	reconcilingVerification := verificationReconciliationAllowed(operation, transition)
+	if terminalOperationStatus(operation.Status) && !reconcilingVerification {
 		return model.OperationRecord{}, conflictError("terminal operation is immutable")
 	}
 	if transition.Stage != "" {

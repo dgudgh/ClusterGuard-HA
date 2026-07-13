@@ -83,6 +83,35 @@ func TestOperationAPIProvidesIdempotentCreateAndRead(t *testing.T) {
 	}
 }
 
+func TestOperationAPIReadIncludesPersistedAuditAndReportTimeline(t *testing.T) {
+	server, repository := newDurableOperationAPIServer(t)
+	createdResponse := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/operations", operationRequestBody(model.NewResourceID(), model.NewResourceID(), "api-operation-timeline"))
+	created := decodeOperationResult(t, createdResponse.Body.Bytes())
+	if err := repository.RecordAudit(model.AuditEvent{OperationID: created.ResourceID, Stage: model.StageVerify, Message: "verification passed"}); err != nil {
+		t.Fatalf("record audit: %v", err)
+	}
+	if err := repository.RecordReport(model.Report{OperationID: created.ResourceID, Title: "switchover report", Status: model.OperationSucceeded, Summary: "verified"}); err != nil {
+		t.Fatalf("record report: %v", err)
+	}
+
+	response := callJSON(t, server.Handler(), http.MethodGet, "/api/v1/operations/"+string(created.ResourceID), nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("read status=%d body=%s", response.Code, response.Body.String())
+	}
+	var envelope struct {
+		Timeline struct {
+			Audits  []model.AuditEvent `json:"audits"`
+			Reports []model.Report     `json:"reports"`
+		} `json:"timeline"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode timeline: %v", err)
+	}
+	if len(envelope.Timeline.Audits) != 1 || len(envelope.Timeline.Reports) != 1 || envelope.Timeline.Audits[0].OperationID != created.ResourceID {
+		t.Fatalf("operation timeline=%+v", envelope.Timeline)
+	}
+}
+
 func TestOperationAPIRejectsMissingKeyAndConflictingReuse(t *testing.T) {
 	server, _ := newDurableOperationAPIServer(t)
 	clusterID := model.NewResourceID()
@@ -119,6 +148,23 @@ func TestOperationAPIDefaultExecutionIsUnsupportedBeforeSideEffects(t *testing.T
 	}
 }
 
+func TestOperationAPIMapsIndeterminateExecutionToServerError(t *testing.T) {
+	server, repository := newDurableOperationAPIServer(t)
+	createdResponse := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/operations", operationRequestBody(model.NewResourceID(), model.NewResourceID(), "api-indeterminate"))
+	created := decodeOperationResult(t, createdResponse.Body.Bytes())
+	execution := model.Execution{OperationID: created.ResourceID, Status: model.OperationIndeterminate, Message: "promotion outcome requires verification"}
+	if _, err := repository.TransitionOperation(created.ResourceID, created.MetadataRevision, model.OperationTransition{
+		Stage: model.StageVerify, Status: model.OperationIndeterminate, Execution: &execution, FailureClass: "promoted_unverified", Message: execution.Message,
+	}); err != nil {
+		t.Fatalf("mark indeterminate: %v", err)
+	}
+
+	response := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/operations/"+string(created.ResourceID)+"/execute", map[string]string{"approval_token": "approved"})
+	if response.Code != http.StatusInternalServerError || !strings.Contains(response.Body.String(), string(model.OperationIndeterminate)) {
+		t.Fatalf("indeterminate execute status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestOperationAPIExposesResourceScopedPrecheckAndPlanActions(t *testing.T) {
 	server, _ := newDurableOperationAPIServer(t)
 	createdResponse := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/operations", operationRequestBody(model.NewResourceID(), model.NewResourceID(), "api-prepare-actions"))
@@ -132,5 +178,39 @@ func TestOperationAPIExposesResourceScopedPrecheckAndPlanActions(t *testing.T) {
 	verify := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/operations/"+string(created.ResourceID)+"/verify", map[string]interface{}{})
 	if verify.Code != http.StatusNotImplemented {
 		t.Fatalf("verify route status=%d body=%s", verify.Code, verify.Body.String())
+	}
+}
+
+func TestLegacyOperationStageRoutesUseDurableUUIDWorkflow(t *testing.T) {
+	server, repository := newDurableOperationAPIServer(t)
+	clusterID := model.NewResourceID()
+	targetID := model.NewResourceID()
+	for _, action := range []string{"precheck", "plan"} {
+		body := operationRequestBody(clusterID, targetID, "legacy-"+action)
+		response := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/operations/"+action, body)
+		if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "topology observation") {
+			t.Fatalf("legacy %s status=%d body=%s", action, response.Code, response.Body.String())
+		}
+		if _, found := repository.OperationByIdempotencyKey("legacy-" + action); !found {
+			t.Fatalf("legacy %s did not create a durable UUID operation", action)
+		}
+	}
+	verifyBody := operationRequestBody(clusterID, targetID, "legacy-verify")
+	if response := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/operations", verifyBody); response.Code != http.StatusCreated {
+		t.Fatalf("create legacy verify operation status=%d body=%s", response.Code, response.Body.String())
+	}
+	if response := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/operations/verify", verifyBody); response.Code != http.StatusNotImplemented {
+		t.Fatalf("legacy verify status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestOperationStageRoutesRequireIdempotencyKey(t *testing.T) {
+	server, _ := newDurableOperationAPIServer(t)
+	body := operationRequestBody(model.NewResourceID(), model.NewResourceID(), "")
+	for _, action := range []string{"precheck", "plan", "execute", "verify"} {
+		response := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/operations/"+action, body)
+		if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "idempotency") {
+			t.Fatalf("%s status=%d body=%s", action, response.Code, response.Body.String())
+		}
 	}
 }

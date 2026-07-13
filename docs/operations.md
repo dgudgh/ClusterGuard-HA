@@ -249,6 +249,12 @@ curl -sS http://127.0.0.1:8088/api/v1/operations/<operation-uuid>
 go run ./cmd/cgctl operation <operation-uuid>
 ```
 
+The operation resource response also includes `timeline.audits` and
+`timeline.reports`, filtered by the immutable operation UUID. The collection
+actions under `/api/v1/operations/precheck|plan|execute|verify` require an
+`idempotency_key` and use the same durable UUID workflow; there is no direct
+Adapter execution path.
+
 The default runtime deliberately fails the execute action with HTTP `501`:
 
 ```bash
@@ -263,6 +269,11 @@ so ClusterGuard HA persists `unsupported` before acquiring a lock or issuing a
 mutating SQL statement. Tests inject a deterministic provider and exercise the
 complete 5.7/8.x/9.x transition, step persistence, independent verification,
 audit, report, failure classification, and idempotent retry.
+
+Replication statement selection uses `STOP/RESET SLAVE` through MySQL 8.0.21
+and `STOP/RESET REPLICA` from MySQL 8.0.22 onward. Before any write, the kernel
+re-probes source and target identity, roles, GTID history, replication threads,
+lag, binary logging, and release compatibility under the operation lock.
 
 ## 8. Reconcile Mutable Metadata
 
@@ -329,6 +340,14 @@ with HTTP `500`. An atomic metadata rename followed by a directory-sync warning
 is also reported as committed but `indeterminate`, including the reconciled
 instance and endpoint in the response. Treat `indeterminate` as a manual-review
 state; do not automatically retry the operation.
+
+Post-commit verification uses a bounded context detached from the caller. A
+failed verification is persisted with its checks and remains `indeterminate`.
+Calling the operation `verify` action again may reconcile that record to
+`succeeded` only when explicit verification evidence passes; all other terminal
+states remain immutable. Audit and report persistence is attempted before the
+terminal operation status, so a journal failure cannot leave a durable
+`succeeded` record.
 
 Cluster registration and discovery publication follow the same rule. A
 post-rename durability warning returns HTTP `500` plus the committed resource or
