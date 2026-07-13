@@ -73,6 +73,19 @@ func TestDeliveryScriptsAreSyntaxValid(t *testing.T) {
 	}
 }
 
+func TestVIPReconcileTimerAttemptsRecoveryWithinThirtySecondWindow(t *testing.T) {
+	contents, err := os.ReadFile("../packaging/systemd/clusterguard-agent-reconcile.timer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	for _, expected := range []string{"OnBootSec=10s", "OnUnitActiveSec=10s", "AccuracySec=1s"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("VIP reconcile timer missing %q", expected)
+		}
+	}
+}
+
 func TestAgentStdioWrapperLoadsProtectedEnvironmentBeforeAgent(t *testing.T) {
 	contents, err := os.ReadFile("clusterguard-agent-stdio.sh")
 	if err != nil {

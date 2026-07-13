@@ -116,15 +116,15 @@ SET GLOBAL read_only=ON;
 SQL
 if [[ "${major_minor}" == "5.7" ]]; then
   mysql_target -e 'STOP SLAVE; RESET SLAVE ALL;' || true
-  printf "CHANGE MASTER TO MASTER_HOST='%s', MASTER_PORT=%s, MASTER_USER='%s', MASTER_PASSWORD=%s, MASTER_AUTO_POSITION=1;\nSTART SLAVE;\n" \
-    "${donor_host}" "${donor_port}" "${replication_user}" "${donor_secret}" | mysql_target
+	printf "CHANGE MASTER TO MASTER_HOST='%s', MASTER_PORT=%s, MASTER_USER='%s', MASTER_PASSWORD=%s, MASTER_AUTO_POSITION=1, MASTER_CONNECT_RETRY=5, MASTER_RETRY_COUNT=86400;\nSTART SLAVE;\n" \
+		"${donor_host}" "${donor_port}" "${replication_user}" "${donor_secret}" | mysql_target
   status_command='SHOW SLAVE STATUS\G'
   io_pattern='Slave_IO_Running: Yes'
   sql_pattern='Slave_SQL_Running: Yes'
 else
   mysql_target -e 'STOP REPLICA; RESET REPLICA ALL;' || true
-  printf "CHANGE REPLICATION SOURCE TO SOURCE_HOST='%s', SOURCE_PORT=%s, SOURCE_USER='%s', SOURCE_PASSWORD=%s, SOURCE_AUTO_POSITION=1;\nSTART REPLICA;\n" \
-    "${donor_host}" "${donor_port}" "${replication_user}" "${donor_secret}" | mysql_target
+	printf "CHANGE REPLICATION SOURCE TO SOURCE_HOST='%s', SOURCE_PORT=%s, SOURCE_USER='%s', SOURCE_PASSWORD=%s, SOURCE_AUTO_POSITION=1, SOURCE_CONNECT_RETRY=5, SOURCE_RETRY_COUNT=86400;\nSTART REPLICA;\n" \
+		"${donor_host}" "${donor_port}" "${replication_user}" "${donor_secret}" | mysql_target
   status_command='SHOW REPLICA STATUS\G'
   io_pattern='Replica_IO_Running: Yes'
   sql_pattern='Replica_SQL_Running: Yes'

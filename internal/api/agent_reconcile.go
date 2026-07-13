@@ -108,7 +108,7 @@ func (server *Server) agentReconcileRoute(writer http.ResponseWriter, request *h
 			evidence.Lease = lease
 			evidence.TransitionTarget = server.transitionAuthorizes(payload.InstanceID, lease)
 			if snapshotFound && !evidence.TransitionTarget && evidence.CurrentPrimaryID == "" &&
-				evidence.CanonicalOwnerID == payload.InstanceID && evidence.EndpointOwnerID == payload.InstanceID && !resource.Healthy &&
+				evidence.CanonicalOwnerID == payload.InstanceID && evidence.EndpointOwnerID == payload.InstanceID &&
 				!leaseRecord.UpdatedAt.IsZero() && !leaseRecord.UpdatedAt.Before(snapshot.ObservedAt) && !leaseRecord.UpdatedAt.After(now.Add(5*time.Second)) {
 				candidate, err := coordination.RebootBootstrapCandidate(snapshot, payload.InstanceID, now, 15*time.Second)
 				evidence.BootstrapTarget = err == nil && candidate.ResourceID == payload.InstanceID

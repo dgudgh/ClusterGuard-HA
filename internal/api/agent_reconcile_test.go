@@ -207,6 +207,33 @@ func TestAgentReconcileReturnsSignedBootstrapDecisionForVerifiedRebootedPrimary(
 	}
 }
 
+func TestAgentReconcileBootstrapsVerifiedOwnerWhenLeaseHealthIsMarkedHealthy(t *testing.T) {
+	now := time.Now().UTC()
+	repository := store.NewMemory()
+	cluster, canonical, _ := seedRebootBootstrapState(t, repository, now)
+	resources := repository.HAEndpoints(cluster.ResourceID)
+	if len(resources) != 1 {
+		t.Fatalf("HA endpoint count=%d", len(resources))
+	}
+	if err := repository.CommitHAEndpointOwner(cluster.ResourceID, resources[0].ResourceID, canonical.ResourceID, true); err != nil {
+		t.Fatal(err)
+	}
+	authority := &apiMutationAuthorityStub{leaderID: model.NewResourceID(), leaderAddress: "controller-a:10009"}
+	server := newAPIServer(t, repository, adapter.NewUnsupported(model.EngineMySQL), &fakeRefresher{}, WithMutationAuthority(authority), WithAgentReconcileSecret("agent-secret"))
+	request := agent.ReconcileRequest{ClusterID: cluster.ResourceID, InstanceID: canonical.ResourceID, RequestedAt: now, Nonce: "0123456789abcdef"}
+	if err := agent.SignReconcileRequest(&request, "agent-secret"); err != nil {
+		t.Fatal(err)
+	}
+	response := callAgentReconcile(t, server, request)
+	var decision agent.ReconcileResponse
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &decision) != nil {
+		t.Fatalf("bootstrap decision status=%d body=%s", response.Code, response.Body.String())
+	}
+	if decision.Action != agent.ReconcileBootstrapPrimary {
+		t.Fatalf("healthy lease marker blocked verified reboot bootstrap: %+v", decision)
+	}
+}
+
 func TestAgentReconcileRejectsRebootBootstrapWithLeaseOlderThanTopology(t *testing.T) {
 	now := time.Now().UTC()
 	repository := store.NewMemory()

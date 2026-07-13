@@ -55,7 +55,11 @@ func TestSyncScriptSupportsVersionAwareReplicationAndSelectedCopyMethods(t *test
 		t.Fatalf("read sync script: %v", err)
 	}
 	text := string(contents)
-	for _, required := range []string{"clone", "xtrabackup", "logical_dump", "CHANGE MASTER TO", "CHANGE REPLICATION SOURCE TO", "START SLAVE", "START REPLICA", "super_read_only"} {
+	for _, required := range []string{
+		"clone", "xtrabackup", "logical_dump", "CHANGE MASTER TO", "CHANGE REPLICATION SOURCE TO",
+		"MASTER_CONNECT_RETRY=5", "MASTER_RETRY_COUNT=86400", "SOURCE_CONNECT_RETRY=5", "SOURCE_RETRY_COUNT=86400",
+		"START SLAVE", "START REPLICA", "super_read_only",
+	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("sync script missing %q", required)
 		}
