@@ -22,7 +22,7 @@ func NewMySQLRoleController(runner CommandRunner, mysqlBinary string, stateDirec
 func (controller *MySQLRoleController) Status(ctx context.Context, policy ClusterPolicy) (bool, bool, error) {
 	arguments := controller.mysqlArguments(policy)
 	arguments = append(arguments, "--execute", "SELECT @@GLOBAL.read_only, @@GLOBAL.super_read_only")
-	output, err := controller.runner.Run(ctx, controller.mysqlBinary, arguments...)
+	output, err := controller.runner.Run(ctx, controller.binary(policy), arguments...)
 	if err != nil {
 		return false, false, err
 	}
@@ -39,6 +39,13 @@ func (controller *MySQLRoleController) Status(ctx context.Context, policy Cluste
 		return false, false, err
 	}
 	return readOnly, superReadOnly, nil
+}
+
+func (controller *MySQLRoleController) binary(policy ClusterPolicy) string {
+	if binary := strings.TrimSpace(policy.MySQLBinary); binary != "" {
+		return binary
+	}
+	return controller.mysqlBinary
 }
 
 func (controller *MySQLRoleController) mysqlArguments(policy ClusterPolicy) []string {
@@ -67,7 +74,7 @@ func (controller *MySQLRoleController) PersistReadOnly(ctx context.Context, poli
 	}
 	arguments := controller.mysqlArguments(policy)
 	arguments = append(arguments, "--execute", "SET GLOBAL super_read_only = "+value+"; SET GLOBAL read_only = "+value)
-	if _, err := controller.runner.Run(ctx, controller.mysqlBinary, arguments...); err != nil {
+	if _, err := controller.runner.Run(ctx, controller.binary(policy), arguments...); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(controller.stateDirectory, 0750); err != nil {

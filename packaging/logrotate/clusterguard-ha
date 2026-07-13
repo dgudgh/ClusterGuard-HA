@@ -1,0 +1,10 @@
+/var/log/clusterguard/*.log /var/log/clusterguard/mysql/*/*.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    create 0640 clusterguard clusterguard
+}

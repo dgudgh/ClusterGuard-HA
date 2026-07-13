@@ -27,3 +27,17 @@ func TestMySQLRoleStatusReadsBothGlobalReadOnlyFlags(t *testing.T) {
 		t.Fatalf("role status: read_only=%v super_read_only=%v err=%v", readOnly, superReadOnly, err)
 	}
 }
+
+func TestMySQLRoleUsesThePerClusterClientBinary(t *testing.T) {
+	runner := &fakeCommandRunner{outputs: map[string]string{}}
+	controller := NewMySQLRoleController(runner, "/usr/local/mysql/bin/mysql", t.TempDir())
+	policy := ClusterPolicy{
+		MySQLBinary:       "/opt/clusterguard/mysql/3384/software/bin/mysql",
+		MySQLPort:         3384,
+		MySQLDefaultsFile: "/etc/clusterguard/mysql/3384-client.cnf",
+	}
+	_, _, _ = controller.Status(context.Background(), policy)
+	if len(runner.calls) != 1 || !strings.HasPrefix(runner.calls[0], policy.MySQLBinary+" ") {
+		t.Fatalf("role command did not use per-cluster client: %v", runner.calls)
+	}
+}

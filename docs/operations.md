@@ -54,6 +54,30 @@ Use `packaging/systemd/clusterguard-ha.service` and
 server binary defaults to `/etc/clusterguard/clusterguard.json` when `--config`
 is omitted.
 
+Build one self-verifying Linux bundle, then run the installer in its default
+read-only preflight mode before permitting mutation:
+
+```bash
+./scripts/build-clusterguard-bundle.sh --output ./dist --version 1.0.0
+tar -xzf ./dist/clusterguard-ha-1.0.0-linux-amd64.tar.gz
+cd ./clusterguard-ha-1.0.0-linux-amd64
+./scripts/clusterguard-install.sh \
+  --bundle-dir "$PWD" --role mixed \
+  --node-name cg-node-0001 --node-id <platform-node-uuid> \
+  --config /secure/input/clusterguard.json \
+  --env-file /secure/input/clusterguard.env \
+  --agent-config /secure/input/agent.json \
+  --assets-dir /secure/input/assets
+```
+
+After reviewing the plan, repeat the command with `--execute`. Runtime assets
+use an allowlisted layout: `tls/*.crt`, `tls/*.key`, `ssh/*_ed25519`,
+`ssh/*known_hosts`, and `mysql/*-client.cnf`. The installer rejects symlinks,
+unknown asset types, bad checksums, invalid JSON, and mutable node names before
+changing the host. It installs service keys group-readable only where the
+unprivileged controller requires them, while MySQL client credentials remain
+root-only for the restricted data-node agent.
+
 Every `/api/v1/` `POST` requires `Authorization: Bearer <control-token>`.
 Missing or invalid credentials return `401` before request parsing or database
 access. Keep the default loopback listener for local operation. Before exposing

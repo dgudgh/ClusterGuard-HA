@@ -91,3 +91,24 @@ func TestLifecycleBundlesRemoteJQAndLogicalDumpExcludesSystemSchemas(t *testing.
 		}
 	}
 }
+
+func TestNewNodeBootstrapDoesNotCreateErrantGTIDsBeforeSynchronization(t *testing.T) {
+	installContents, err := os.ReadFile("clusterguard-mysql-install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(installContents), "SET sql_log_bin=0;") {
+		t.Fatal("local root bootstrap is still written to the new node binlog")
+	}
+
+	syncContents, err := os.ReadFile("clusterguard-mysql-sync.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	syncText := string(syncContents)
+	reset := strings.Index(syncText, "RESET BINARY LOGS AND GTIDS")
+	dump := strings.Index(syncText, "--set-gtid-purged=ON")
+	if reset < 0 || dump < 0 || reset > dump || !strings.Contains(syncText, "RESET MASTER") {
+		t.Fatalf("logical sync must clear target GTIDs before importing donor GTIDs")
+	}
+}

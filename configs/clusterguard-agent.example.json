@@ -20,7 +20,8 @@
       "interface": "ens160",
       "prefix": 24,
       "mysql_port": 3306,
-      "mysql_defaults_file": "/etc/clusterguard/mysql-3306.cnf"
+      "mysql_binary": "/opt/clusterguard/mysql/3306/software/bin/mysql",
+      "mysql_defaults_file": "/etc/clusterguard/mysql/3306-client.cnf"
     }
   ]
 }

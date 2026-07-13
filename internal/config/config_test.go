@@ -365,8 +365,11 @@ func TestOfficialDistributionUsesClusterGuardPathsAndServiceName(t *testing.T) {
 		"ExecStart=/usr/local/bin/clusterguard --config /etc/clusterguard/clusterguard.json",
 		"EnvironmentFile=-/etc/clusterguard/clusterguard.env",
 		"Environment=PATH=/usr/local/mysql/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin",
+		"ConfigurationDirectoryMode=0750",
 		"StateDirectory=clusterguard",
+		"StateDirectoryMode=0750",
 		"LogsDirectory=clusterguard",
+		"LogsDirectoryMode=0750",
 	} {
 		if !strings.Contains(string(service), contract) {
 			t.Fatalf("systemd service missing %q", contract)

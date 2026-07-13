@@ -81,6 +81,8 @@ case "${method}" in
     ;;
   logical_dump)
     [[ -x "${mysqldump}" ]] || { echo "mysqldump is unavailable" >&2; exit 4; }
+    mysql_target -e 'STOP REPLICA; RESET REPLICA ALL;' >/dev/null 2>&1 || mysql_target -e 'STOP SLAVE; RESET SLAVE ALL;' >/dev/null 2>&1 || true
+    mysql_target -e 'RESET BINARY LOGS AND GTIDS' >/dev/null 2>&1 || mysql_target -e 'RESET MASTER'
     mapfile -t user_databases < <(mysql_donor --batch --skip-column-names -e \
       "SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT IN ('information_schema','performance_schema','mysql','sys') ORDER BY schema_name")
     if [[ "${#user_databases[@]}" -gt 0 ]]; then

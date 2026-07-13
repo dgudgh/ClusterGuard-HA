@@ -115,6 +115,7 @@ done
 "${mysql}" --no-defaults --protocol=socket --socket="${socket}" -uroot -e 'SELECT 1' >/dev/null
 password_hex="$(printf '%s' "${root_password}" | od -An -tx1 | tr -d ' \n')"
 "${mysql}" --no-defaults --protocol=socket --socket="${socket}" -uroot <<SQL
+SET sql_log_bin=0;
 SET @cg_password=CONVERT(0x${password_hex} USING utf8mb4);
 SET @cg_statement=CONCAT("ALTER USER 'root'@'localhost' IDENTIFIED BY ", QUOTE(@cg_password));
 PREPARE cg_alter FROM @cg_statement;

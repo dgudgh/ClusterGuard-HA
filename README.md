@@ -82,6 +82,12 @@ uses `/etc/clusterguard/`, `/var/lib/clusterguard/`, and
 `/var/log/clusterguard/`. The systemd unit is
 `packaging/systemd/clusterguard-ha.service`.
 
+`scripts/build-clusterguard-bundle.sh` produces the controller, CLI, restricted
+agent, lifecycle helpers, systemd units, log rotation, configuration samples,
+and a full SHA-256 manifest. `scripts/clusterguard-install.sh` is preflight-only
+unless `--execute` is supplied and installs protected TLS, SSH, and per-version
+MySQL client assets from an explicit allowlisted runtime directory.
+
 ## Register and Refresh a MySQL Cluster
 
 Registration creates the authoritative endpoint inventory. Hostname, IP, and

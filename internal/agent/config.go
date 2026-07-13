@@ -17,6 +17,7 @@ type ClusterPolicy struct {
 	Interface         string           `json:"interface"`
 	Prefix            int              `json:"prefix"`
 	MySQLPort         int              `json:"mysql_port"`
+	MySQLBinary       string           `json:"mysql_binary,omitempty"`
 	MySQLDefaultsFile string           `json:"mysql_defaults_file"`
 }
 
@@ -105,6 +106,10 @@ func LoadConfig(path string) (Config, error) {
 		}
 		if _, exists := configuration.Clusters[policy.ClusterID]; exists {
 			return Config{}, fmt.Errorf("duplicate agent cluster policy")
+		}
+		policy.MySQLBinary = strings.TrimSpace(policy.MySQLBinary)
+		if policy.MySQLBinary != "" && !filepath.IsAbs(policy.MySQLBinary) {
+			return Config{}, fmt.Errorf("cluster mysql_binary must be an absolute path")
 		}
 		configuration.Clusters[policy.ClusterID] = policy
 	}
