@@ -91,18 +91,19 @@ type Plan struct {
 type TaskStatus string
 
 const (
-	TaskPlanned     TaskStatus = "planned"
-	TaskQueued      TaskStatus = "queued"
-	TaskRunning     TaskStatus = "running"
-	TaskVerifying   TaskStatus = "verifying"
-	TaskSucceeded   TaskStatus = "succeeded"
-	TaskFailed      TaskStatus = "failed"
-	TaskInterrupted TaskStatus = "interrupted"
+	TaskPlanned       TaskStatus = "planned"
+	TaskQueued        TaskStatus = "queued"
+	TaskRunning       TaskStatus = "running"
+	TaskVerifying     TaskStatus = "verifying"
+	TaskSucceeded     TaskStatus = "succeeded"
+	TaskFailed        TaskStatus = "failed"
+	TaskInterrupted   TaskStatus = "interrupted"
+	TaskIndeterminate TaskStatus = "indeterminate"
 )
 
 func (status TaskStatus) Valid() bool {
 	switch status {
-	case TaskPlanned, TaskQueued, TaskRunning, TaskVerifying, TaskSucceeded, TaskFailed, TaskInterrupted:
+	case TaskPlanned, TaskQueued, TaskRunning, TaskVerifying, TaskSucceeded, TaskFailed, TaskInterrupted, TaskIndeterminate:
 		return true
 	default:
 		return false

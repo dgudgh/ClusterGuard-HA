@@ -1951,3 +1951,14 @@ func (repository *Repository) Reports() []model.Report {
 	defer repository.mu.RUnlock()
 	return append([]model.Report{}, repository.snapshot.Reports...)
 }
+
+func (repository *Repository) Report(resourceID model.ResourceID) (model.Report, bool) {
+	repository.mu.RLock()
+	defer repository.mu.RUnlock()
+	for _, report := range repository.snapshot.Reports {
+		if report.ResourceID == resourceID {
+			return report, true
+		}
+	}
+	return model.Report{}, false
+}

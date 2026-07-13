@@ -47,6 +47,17 @@ func (repository *Repository) LifecycleTask(resourceID model.ResourceID) (lifecy
 	return cloneLifecycleTask(task), found
 }
 
+func (repository *Repository) LifecycleTaskByOperationID(operationID model.ResourceID) (lifecycle.Task, bool) {
+	repository.mu.RLock()
+	defer repository.mu.RUnlock()
+	for _, task := range repository.snapshot.LifecycleTasks {
+		if task.OperationID == operationID {
+			return cloneLifecycleTask(task), true
+		}
+	}
+	return lifecycle.Task{}, false
+}
+
 func (repository *Repository) LifecycleTasks() []lifecycle.Task {
 	repository.mu.RLock()
 	defer repository.mu.RUnlock()

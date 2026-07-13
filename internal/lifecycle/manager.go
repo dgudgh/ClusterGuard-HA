@@ -16,6 +16,11 @@ type TaskStore interface {
 	LifecycleTasks() []Task
 }
 
+type LifecycleJournal interface {
+	RecordAudit(model.AuditEvent) error
+	RecordReport(model.Report) error
+}
+
 type MutationAuthority interface {
 	RequireMutationAuthority(context.Context) error
 }
@@ -59,7 +64,11 @@ func NewManager(store TaskStore, authority MutationAuthority, safety SafetyGuard
 }
 
 func (manager *Manager) configured() bool {
-	return manager != nil && manager.store != nil && manager.authority != nil && manager.safety != nil && manager.locks != nil && manager.approval != nil && manager.executor != nil && manager.committer != nil
+	if manager == nil || manager.store == nil || manager.authority == nil || manager.safety == nil || manager.locks == nil || manager.approval == nil || manager.executor == nil || manager.committer == nil {
+		return false
+	}
+	_, journalConfigured := manager.store.(LifecycleJournal)
+	return journalConfigured
 }
 
 func (manager *Manager) Execute(ctx context.Context, request Request, plan Plan, secrets ExecutionSecrets, approvalToken string) (Task, error) {
@@ -73,41 +82,81 @@ func (manager *Manager) Execute(ctx context.Context, request Request, plan Plan,
 	now := manager.now().UTC()
 	task := Task{
 		ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID(), CreatedAt: now, UpdatedAt: now},
-		ClusterID:    request.ClusterID, Request: request, Plan: plan, Status: TaskQueued,
+		ClusterID:    request.ClusterID, OperationID: model.NewResourceID(), Request: request, Plan: plan, Status: TaskQueued,
+	}
+	journal := manager.store.(LifecycleJournal)
+	actor := strings.TrimSpace(request.RequestedBy)
+	if actor == "" {
+		actor = "system"
+	}
+	recordAudit := func(stage model.WorkflowStage, message string) error {
+		eventNow := manager.now().UTC()
+		return journal.RecordAudit(model.AuditEvent{
+			ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID(), CreatedAt: eventNow, UpdatedAt: eventNow},
+			OperationID:  task.OperationID,
+			Stage:        stage,
+			Actor:        actor,
+			Message:      redactLifecycleMessage(message, redactionSecrets),
+		})
 	}
 	var err error
 	if task, err = manager.store.PutLifecycleTask(task); err != nil {
 		return Task{}, fmt.Errorf("persist queued lifecycle task: %w", err)
 	}
+	persistTerminal := func(status TaskStatus, message string, cause error) (Task, error) {
+		task.Status = status
+		task.Message = message
+		persisted, persistErr := manager.store.PutLifecycleTask(task)
+		if persistErr == nil {
+			task = persisted
+		}
+		return task, errors.Join(cause, persistErr)
+	}
+	if err := recordAudit(model.StagePrecheck, "lifecycle request and immutable plan matched"); err != nil {
+		return persistTerminal(TaskFailed, "lifecycle precheck audit could not be persisted", err)
+	}
 	interrupt := func(cause error) (Task, error) {
-		task.Status = TaskInterrupted
-		task.Message = "lifecycle execution lost leader-backed mutation authority"
-		task, _ = manager.store.PutLifecycleTask(task)
-		return task, cause
+		return persistTerminal(TaskInterrupted, "lifecycle execution lost leader-backed mutation authority", cause)
+	}
+	indeterminate := func(message string, cause error) (Task, error) {
+		return persistTerminal(TaskIndeterminate, message, cause)
 	}
 	if err := manager.authority.RequireMutationAuthority(ctx); err != nil {
 		return interrupt(err)
 	}
 	failGate := func(message string, cause error) (Task, error) {
-		task.Status = TaskFailed
-		task.Message = message
-		task, _ = manager.store.PutLifecycleTask(task)
-		return task, cause
+		return persistTerminal(TaskFailed, message, cause)
 	}
 	if err := manager.safety.EvaluateLifecycle(ctx, request, plan); err != nil {
+		auditErr := recordAudit(model.StageSafetyGuard, "lifecycle safety guard blocked execution")
+		err = errors.Join(err, auditErr)
 		return failGate("lifecycle safety guard blocked execution", err)
+	}
+	if err := recordAudit(model.StageSafetyGuard, "lifecycle safety guard passed"); err != nil {
+		return failGate("lifecycle safety guard audit could not be persisted", err)
 	}
 	release, err := manager.locks.AcquireCluster(ctx, request.ClusterID)
 	if err != nil {
+		err = errors.Join(err, recordAudit(model.StageLock, "cluster operation lock could not be acquired"))
 		return interrupt(err)
 	}
 	defer release()
+	if err := recordAudit(model.StageLock, "cluster operation lock acquired"); err != nil {
+		return failGate("cluster operation lock audit could not be persisted", err)
+	}
 	if err := manager.approval.ValidateLifecycle(ctx, request, plan, approvalToken); err != nil {
+		err = errors.Join(err, recordAudit(model.StageApprove, "lifecycle approval blocked execution"))
 		return failGate("lifecycle approval blocked execution", err)
+	}
+	if err := recordAudit(model.StageApprove, "lifecycle approval validated"); err != nil {
+		return failGate("lifecycle approval audit could not be persisted", err)
 	}
 	task.Status = TaskRunning
 	if task, err = manager.store.PutLifecycleTask(task); err != nil {
 		return task, fmt.Errorf("persist running lifecycle task: %w", err)
+	}
+	if err := recordAudit(model.StageExecute, "lifecycle execution authorized"); err != nil {
+		return failGate("lifecycle execution audit could not be persisted", err)
 	}
 
 	var eventPersistenceError error
@@ -147,32 +196,43 @@ func (manager *Manager) Execute(ctx context.Context, request Request, plan Plan,
 		executionErr = errors.Join(executionErr, eventPersistenceError)
 	}
 	if executionErr != nil {
-		task.Status = TaskFailed
-		task.Message = "lifecycle execution failed"
-		task, _ = manager.store.PutLifecycleTask(task)
-		return task, executionErr
+		return indeterminate("lifecycle execution failed; target state requires verification", executionErr)
 	}
 	if err := manager.authority.RequireMutationAuthority(ctx); err != nil {
-		return interrupt(err)
+		return indeterminate("lifecycle execution completed but leader-backed authority was lost before verification", err)
 	}
 	task.Status = TaskVerifying
 	task.CurrentStage = StageVerify
 	task.Checks = append([]model.Check{}, result.Checks...)
 	task.Message = redactLifecycleMessage(result.Message, redactionSecrets)
 	if task, err = manager.store.PutLifecycleTask(task); err != nil {
-		return task, fmt.Errorf("persist lifecycle verification: %w", err)
+		return indeterminate("lifecycle execution completed but verification state could not be persisted", err)
 	}
 	if !result.Verified {
-		task.Status = TaskFailed
-		task.Message = "lifecycle verification failed; metadata was not changed"
-		task, _ = manager.store.PutLifecycleTask(task)
-		return task, fmt.Errorf("lifecycle verification failed")
+		return indeterminate("lifecycle verification failed; metadata was not changed", fmt.Errorf("lifecycle verification failed"))
+	}
+	if err := recordAudit(model.StageVerify, "lifecycle execution verification passed"); err != nil {
+		return indeterminate("lifecycle verification passed but its audit could not be persisted", err)
 	}
 	if err := manager.committer.Commit(ctx, task, result); err != nil {
-		task.Status = TaskFailed
-		task.Message = "verified lifecycle metadata commit failed"
-		task, _ = manager.store.PutLifecycleTask(task)
-		return task, err
+		return indeterminate("verified lifecycle metadata commit failed", err)
+	}
+	if err := recordAudit(model.StageAudit, "lifecycle execution audit trail completed"); err != nil {
+		return indeterminate("lifecycle metadata was committed but audit finalization failed", err)
+	}
+	task.ReportID = model.NewResourceID()
+	report := model.Report{
+		ResourceMeta: model.ResourceMeta{ResourceID: task.ReportID, CreatedAt: manager.now().UTC(), UpdatedAt: manager.now().UTC()},
+		OperationID:  task.OperationID,
+		Title:        "MySQL node lifecycle report",
+		Status:       model.OperationSucceeded,
+		Summary:      fmt.Sprintf("%s lifecycle completed for %d target(s); verification passed and metadata was committed", request.Action, len(plan.Targets)),
+	}
+	if err := journal.RecordReport(report); err != nil {
+		return indeterminate("lifecycle metadata was committed but its report could not be persisted", err)
+	}
+	if err := recordAudit(model.StageReport, "lifecycle report persisted"); err != nil {
+		return indeterminate("lifecycle report was persisted but report audit finalization failed", err)
 	}
 	task.Status = TaskSucceeded
 	task.CurrentStage = StageCommit

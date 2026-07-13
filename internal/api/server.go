@@ -26,6 +26,7 @@ type Server struct {
 	workflow     *workflow.Service
 	refresher    Refresher
 	controlToken string
+	monitorToken string
 	lifecycle    NodeLifecycleManager
 	lifecycleCap lifecycle.Capabilities
 	lifecycleSec LifecycleSecretProvider
@@ -48,6 +49,10 @@ type ServerOption func(*Server)
 
 func WithControlToken(token string) ServerOption {
 	return func(server *Server) { server.controlToken = strings.TrimSpace(token) }
+}
+
+func WithMonitoringToken(token string) ServerOption {
+	return func(server *Server) { server.monitorToken = strings.TrimSpace(token) }
 }
 
 func WithNodeLifecycle(manager NodeLifecycleManager, capabilities lifecycle.Capabilities, secrets LifecycleSecretProvider) ServerOption {
@@ -110,6 +115,9 @@ func (server *Server) Handler() http.Handler {
 
 func (server *Server) route(writer http.ResponseWriter, request *http.Request) {
 	path := strings.TrimSuffix(request.URL.Path, "/")
+	if strings.HasPrefix(path, "/api/v1/monitoring/") && !server.authorizeMonitoring(writer, request) {
+		return
+	}
 	if mutatingMethod(request.Method) && strings.HasPrefix(path, "/api/v1/") && !server.authorizeControl(writer, request) {
 		return
 	}
@@ -137,6 +145,10 @@ func (server *Server) route(writer http.ResponseWriter, request *http.Request) {
 		server.nodeResource(writer, request, strings.TrimPrefix(path, "/api/v1/nodes/"))
 	case request.Method == http.MethodGet && path == "/api/v1/metadata/anomalies":
 		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": server.store.Anomalies()})
+	case request.Method == http.MethodGet && strings.HasPrefix(path, "/api/v1/monitoring/"):
+		server.monitoringRoute(writer, strings.TrimPrefix(path, "/api/v1/monitoring/"))
+	case request.Method == http.MethodGet && (path == "/api/v1/reports" || strings.HasPrefix(path, "/api/v1/reports/")):
+		server.reportRoute(writer, request, strings.TrimPrefix(path, "/api/v1/reports"))
 	case path == "/api/v1/operations":
 		server.operationsCollection(writer, request)
 	case strings.HasPrefix(path, "/api/v1/clusters/"):
@@ -171,6 +183,20 @@ func (server *Server) authorizeControl(writer http.ResponseWriter, request *http
 	if !found || !strings.EqualFold(scheme, "Bearer") || subtle.ConstantTimeCompare([]byte(strings.TrimSpace(token)), []byte(server.controlToken)) != 1 {
 		writer.Header().Set("WWW-Authenticate", `Bearer realm="clusterguard-control"`)
 		writeError(writer, http.StatusUnauthorized, "valid control token is required")
+		return false
+	}
+	return true
+}
+
+func (server *Server) authorizeMonitoring(writer http.ResponseWriter, request *http.Request) bool {
+	if server.monitorToken == "" {
+		writeError(writer, http.StatusServiceUnavailable, "monitoring API authentication is not configured")
+		return false
+	}
+	scheme, token, found := strings.Cut(strings.TrimSpace(request.Header.Get("Authorization")), " ")
+	if !found || !strings.EqualFold(scheme, "Bearer") || subtle.ConstantTimeCompare([]byte(strings.TrimSpace(token)), []byte(server.monitorToken)) != 1 {
+		writer.Header().Set("WWW-Authenticate", `Bearer realm="clusterguard-monitoring"`)
+		writeError(writer, http.StatusUnauthorized, "valid monitoring token is required")
 		return false
 	}
 	return true

@@ -2,6 +2,7 @@
   "http_address": "127.0.0.1:8088",
   "metadata_path": "/var/lib/clusterguard/metadata.json",
   "control_token_env": "CG_CONTROL_TOKEN",
+  "monitoring_token_env": "CG_MONITORING_TOKEN",
   "approval_token_env": "CG_APPROVAL_TOKEN",
   "consensus": {
     "enabled": true,

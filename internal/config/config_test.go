@@ -16,6 +16,7 @@ func TestLoadReadsConfigurationAndEnvironmentSecret(t *testing.T) {
   "http_address": "127.0.0.1:9090",
   "metadata_path": "` + filepath.Join(directory, "metadata.json") + `",
   "control_token_env": "CG_TEST_CONTROL",
+  "monitoring_token_env": "CG_TEST_MONITORING",
   "approval_token_env": "CG_TEST_APPROVAL",
   "mysql": {
     "enabled": true,
@@ -29,6 +30,7 @@ func TestLoadReadsConfigurationAndEnvironmentSecret(t *testing.T) {
 	}
 	t.Setenv("CG_TEST_APPROVAL", "approve-this")
 	t.Setenv("CG_TEST_CONTROL", "control-this")
+	t.Setenv("CG_TEST_MONITORING", "monitor-this")
 	t.Setenv("CG_TEST_MYSQL_DISCOVERY", "discovery-secret")
 	t.Setenv("CG_TEST_MYSQL_OPERATION", "operation-secret")
 	t.Setenv("CG_TEST_MYSQL_REPLICATION", "replication-secret")
@@ -37,7 +39,7 @@ func TestLoadReadsConfigurationAndEnvironmentSecret(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load configuration: %v", err)
 	}
-	if loaded.HTTPAddress != "127.0.0.1:9090" || loaded.ApprovalToken != "approve-this" || loaded.ControlToken != "control-this" {
+	if loaded.HTTPAddress != "127.0.0.1:9090" || loaded.ApprovalToken != "approve-this" || loaded.ControlToken != "control-this" || loaded.MonitoringToken != "monitor-this" {
 		t.Fatalf("unexpected runtime configuration: %+v", loaded)
 	}
 	if loaded.MySQL.Discovery.Password != "discovery-secret" || loaded.MySQL.Operation.Password != "operation-secret" || loaded.MySQL.Replication.Password != "replication-secret" || !loaded.MySQL.Enabled {

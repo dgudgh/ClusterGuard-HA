@@ -76,16 +76,18 @@ type NodeLifecycle struct {
 }
 
 type File struct {
-	HTTPAddress      string        `json:"http_address"`
-	MetadataPath     string        `json:"metadata_path"`
-	ControlTokenEnv  string        `json:"control_token_env"`
-	ControlToken     string        `json:"-"`
-	ApprovalTokenEnv string        `json:"approval_token_env"`
-	ApprovalToken    string        `json:"-"`
-	MySQL            MySQL         `json:"mysql"`
-	Agent            Agent         `json:"agent"`
-	Consensus        Consensus     `json:"consensus"`
-	NodeLifecycle    NodeLifecycle `json:"node_lifecycle"`
+	HTTPAddress        string        `json:"http_address"`
+	MetadataPath       string        `json:"metadata_path"`
+	ControlTokenEnv    string        `json:"control_token_env"`
+	ControlToken       string        `json:"-"`
+	MonitoringTokenEnv string        `json:"monitoring_token_env"`
+	MonitoringToken    string        `json:"-"`
+	ApprovalTokenEnv   string        `json:"approval_token_env"`
+	ApprovalToken      string        `json:"-"`
+	MySQL              MySQL         `json:"mysql"`
+	Agent              Agent         `json:"agent"`
+	Consensus          Consensus     `json:"consensus"`
+	NodeLifecycle      NodeLifecycle `json:"node_lifecycle"`
 }
 
 func Load(path string) (File, error) {
@@ -116,6 +118,13 @@ func Load(path string) (File, error) {
 		configuration.ControlToken = os.Getenv(environment)
 		if strings.TrimSpace(configuration.ControlToken) == "" {
 			return File{}, fmt.Errorf("control token environment variable %s is empty", environment)
+		}
+	}
+	if environment := strings.TrimSpace(configuration.MonitoringTokenEnv); environment != "" {
+		configuration.MonitoringTokenEnv = environment
+		configuration.MonitoringToken = os.Getenv(environment)
+		if strings.TrimSpace(configuration.MonitoringToken) == "" {
+			return File{}, fmt.Errorf("monitoring token environment variable %s is empty", environment)
 		}
 	}
 	if environment := strings.TrimSpace(configuration.ApprovalTokenEnv); environment != "" {

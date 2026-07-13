@@ -11,8 +11,12 @@ import (
 )
 
 type taskStoreStub struct {
-	tasks   map[model.ResourceID]Task
-	history []Task
+	tasks      map[model.ResourceID]Task
+	history    []Task
+	audits     []model.AuditEvent
+	reports    []model.Report
+	auditErrAt model.WorkflowStage
+	reportErr  error
 }
 
 func (store *taskStoreStub) PutLifecycleTask(task Task) (Task, error) {
@@ -38,6 +42,20 @@ func (store *taskStoreStub) LifecycleTasks() []Task {
 		result = append(result, task)
 	}
 	return result
+}
+func (store *taskStoreStub) RecordAudit(event model.AuditEvent) error {
+	if event.Stage == store.auditErrAt {
+		return errors.New("audit unavailable")
+	}
+	store.audits = append(store.audits, event)
+	return nil
+}
+func (store *taskStoreStub) RecordReport(report model.Report) error {
+	if store.reportErr != nil {
+		return store.reportErr
+	}
+	store.reports = append(store.reports, report)
+	return nil
 }
 
 type lifecycleAuthorityStub struct{ err error }
@@ -75,9 +93,11 @@ type lifecycleExecutorStub struct {
 	result   ExecutionResult
 	err      error
 	received ExecutionSecrets
+	calls    int
 }
 
 func (executor *lifecycleExecutorStub) Execute(_ context.Context, _ Request, _ Plan, secrets ExecutionSecrets, emit func(Event)) (ExecutionResult, error) {
+	executor.calls++
 	executor.received = secrets
 	for _, event := range executor.events {
 		emit(event)
@@ -136,6 +156,18 @@ func TestManagerCommitsMetadataOnlyAfterVerification(t *testing.T) {
 	if committer.task.Status != TaskVerifying {
 		t.Fatalf("metadata committed outside verified stage: %+v", committer.task)
 	}
+	wantStages := []model.WorkflowStage{model.StagePrecheck, model.StageSafetyGuard, model.StageLock, model.StageApprove, model.StageExecute, model.StageVerify, model.StageAudit, model.StageReport}
+	if len(store.audits) != len(wantStages) {
+		t.Fatalf("lifecycle audits=%+v", store.audits)
+	}
+	for index, stage := range wantStages {
+		if store.audits[index].Stage != stage || store.audits[index].OperationID != task.OperationID || store.audits[index].Actor != "dba" {
+			t.Fatalf("lifecycle audit %d=%+v want stage=%s", index, store.audits[index], stage)
+		}
+	}
+	if len(store.reports) != 1 || store.reports[0].OperationID != task.OperationID || store.reports[0].Status != model.OperationSucceeded || task.ReportID != store.reports[0].ResourceID {
+		t.Fatalf("lifecycle report task=%+v reports=%+v", task, store.reports)
+	}
 }
 
 func TestManagerDoesNotCommitMetadataWhenVerificationFails(t *testing.T) {
@@ -144,7 +176,7 @@ func TestManagerDoesNotCommitMetadataWhenVerificationFails(t *testing.T) {
 	committer := &lifecycleCommitterStub{}
 	manager := NewManager(store, lifecycleAuthorityStub{}, lifecycleSafetyStub{}, &lifecycleLockStub{}, &lifecycleApprovalStub{}, &lifecycleExecutorStub{result: ExecutionResult{Verified: false}}, committer, time.Now)
 	task, err := manager.Execute(context.Background(), request, plan, ExecutionSecrets{}, "approved")
-	if err == nil || task.Status != TaskFailed || committer.calls != 0 {
+	if err == nil || task.Status != TaskIndeterminate || committer.calls != 0 {
 		t.Fatalf("unverified task=%+v commit_calls=%d err=%v", task, committer.calls, err)
 	}
 }
@@ -182,5 +214,29 @@ func TestManagerBlocksExecutorWhenApprovalIsMissing(t *testing.T) {
 	task, err := manager.Execute(context.Background(), request, plan, ExecutionSecrets{SSHPassword: "must-not-run"}, "")
 	if err == nil || task.Status != TaskFailed || executor.received.SSHPassword != "" || approval.received != "" || !strings.Contains(task.Message, "approval") {
 		t.Fatalf("unapproved execution task=%+v executor=%+v approval=%q err=%v", task, executor.received, approval.received, err)
+	}
+}
+
+func TestManagerFailsClosedWhenPreMutationAuditCannotBePersisted(t *testing.T) {
+	request, plan := executableLifecyclePlan()
+	store := &taskStoreStub{tasks: map[model.ResourceID]Task{}, auditErrAt: model.StagePrecheck}
+	executor := &lifecycleExecutorStub{}
+	manager := NewManager(store, lifecycleAuthorityStub{}, lifecycleSafetyStub{}, &lifecycleLockStub{}, &lifecycleApprovalStub{}, executor, &lifecycleCommitterStub{}, time.Now)
+
+	task, err := manager.Execute(context.Background(), request, plan, ExecutionSecrets{SSHPassword: "must-not-run"}, "approved")
+	if err == nil || task.Status != TaskFailed || executor.calls != 0 {
+		t.Fatalf("pre-mutation audit failure task=%+v executor_calls=%d err=%v", task, executor.calls, err)
+	}
+}
+
+func TestManagerMarksTaskIndeterminateWhenReportPersistenceFailsAfterMutation(t *testing.T) {
+	request, plan := executableLifecyclePlan()
+	store := &taskStoreStub{tasks: map[model.ResourceID]Task{}, reportErr: errors.New("report unavailable")}
+	committer := &lifecycleCommitterStub{}
+	manager := NewManager(store, lifecycleAuthorityStub{}, lifecycleSafetyStub{}, &lifecycleLockStub{}, &lifecycleApprovalStub{}, &lifecycleExecutorStub{result: ExecutionResult{Verified: true}}, committer, time.Now)
+
+	task, err := manager.Execute(context.Background(), request, plan, ExecutionSecrets{}, "approved")
+	if err == nil || task.Status != TaskIndeterminate || committer.calls != 1 || task.ReportID == "" {
+		t.Fatalf("post-mutation report failure task=%+v commit_calls=%d err=%v", task, committer.calls, err)
 	}
 }

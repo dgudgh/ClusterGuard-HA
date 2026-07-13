@@ -121,7 +121,7 @@ func New(configuration config.File) (*Runtime, error) {
 		}
 		return mysqlDiscoveryCredentials(configuration.MySQL)
 	}), nil, discovery.WithPublicationFence(locks))
-	options := []api.ServerOption{api.WithControlToken(configuration.ControlToken)}
+	options := []api.ServerOption{api.WithControlToken(configuration.ControlToken), api.WithMonitoringToken(configuration.MonitoringToken)}
 	if result.consensus != nil {
 		options = append(options, api.WithMutationAuthority(result.consensus))
 	}
