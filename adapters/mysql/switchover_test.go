@@ -2,6 +2,7 @@ package mysql
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -236,6 +237,13 @@ func TestSwitchoverPlanRejectsNonPassingEndpointEvidence(t *testing.T) {
 				t.Fatalf("switchover plan did not block endpoint evidence without an explicit pass: %+v", plan.Checks)
 			}
 		})
+	}
+}
+
+func TestEndpointEvidenceSanitizationRedactsUnnamedProviderDetails(t *testing.T) {
+	check := sanitizeEndpointCheck(model.Check{Message: "vip-token=top-secret command=/sbin/ip"}, "writer_endpoint_owner")
+	if strings.Contains(check.Message, "top-secret") || strings.Contains(check.Message, "/sbin/ip") || check.Message == "" {
+		t.Fatalf("unsafe endpoint evidence message %q", check.Message)
 	}
 }
 

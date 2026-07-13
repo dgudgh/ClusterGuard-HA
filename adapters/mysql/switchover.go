@@ -59,6 +59,7 @@ func publicSwitchoverError(err error) string {
 func sanitizeEndpointCheck(check model.Check, expectedName string) model.Check {
 	check.Name = strings.TrimSpace(check.Name)
 	if check.Name == "" {
+		check.Message = "writer endpoint provider returned unnamed evidence"
 		return check
 	}
 	if check.Name != expectedName {
