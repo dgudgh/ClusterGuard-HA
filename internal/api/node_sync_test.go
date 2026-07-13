@@ -102,6 +102,20 @@ func TestNodeSyncAPIPlansFromCanonicalPrimaryAndExecutesWithoutEchoingSecrets(t 
 	}
 }
 
+func TestNodeSyncCapabilitiesReportWhetherRealExecutionIsConfigured(t *testing.T) {
+	configured, _, _, _ := prepareNodeSyncAPI(t)
+	response := callJSON(t, configured.Handler(), http.MethodGet, "/api/v1/nodes/sync/capabilities", nil)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"available":true`) || !strings.Contains(response.Body.String(), `"clone_available":true`) {
+		t.Fatalf("configured lifecycle capabilities: %d %s", response.Code, response.Body.String())
+	}
+
+	unconfigured, _ := newTestServer(t)
+	response = callJSON(t, unconfigured.Handler(), http.MethodGet, "/api/v1/nodes/sync/capabilities", nil)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"available":false`) || !strings.Contains(response.Body.String(), "not configured") {
+		t.Fatalf("unconfigured lifecycle capabilities: %d %s", response.Code, response.Body.String())
+	}
+}
+
 func TestNodeSyncAPIBlocksUnknownOrDuplicateInventoryBeforeExecutor(t *testing.T) {
 	server, repository, cluster, manager := prepareNodeSyncAPI(t)
 	if _, err := repository.PutNode(model.DatabaseNode{NodeName: "cg-data-0002", Kind: model.NodeData, Hostname: "different-host", Active: true}); err != nil {

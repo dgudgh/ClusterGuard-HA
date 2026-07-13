@@ -117,6 +117,22 @@ func (server *Server) prepareNodeSync(payload nodeSyncPayload) (lifecycle.Reques
 }
 
 func (server *Server) nodeSyncRoute(writer http.ResponseWriter, request *http.Request, action string) {
+	if action == "capabilities" {
+		if request.Method != http.MethodGet {
+			writeError(writer, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		available := server.lifecycle != nil && server.lifecycleSec != nil
+		reason := "node lifecycle execution is configured"
+		if !available {
+			reason = "node lifecycle execution is not configured"
+		}
+		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": map[string]interface{}{
+			"available": available, "reason": reason, "capabilities": server.lifecycleCap,
+			"controller_membership_rule": "final controller membership must be an odd set of at least three",
+		}})
+		return
+	}
 	if action == "tasks" || strings.HasPrefix(action, "tasks/") {
 		server.nodeSyncTaskRoute(writer, request, strings.TrimPrefix(action, "tasks"))
 		return
