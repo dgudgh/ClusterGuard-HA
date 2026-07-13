@@ -13,22 +13,45 @@ import (
 func main() {
 	configurationPath := flag.String("config", "/etc/clusterguard/agent.json", "agent configuration path")
 	checkConfig := flag.Bool("check-config", false, "validate configuration and exit")
+	reconcile := flag.Bool("reconcile", false, "reconcile local VIP ownership against the majority controller")
 	flag.Parse()
 	configuration, err := agent.LoadConfig(*configurationPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	runner := agent.OSCommandRunner{}
+	vip := agent.NewLinuxVIPController(runner, configuration.IPBinary, configuration.ARPingBinary)
+	roles := agent.NewMySQLRoleController(runner, configuration.MySQLBinary, configuration.RoleStateDirectory)
 	if *checkConfig {
+		if len(configuration.ControllerURLs) > 0 {
+			if _, err := agent.NewControllerHTTPClient(configuration); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+		}
 		return
 	}
-	runner := agent.OSCommandRunner{}
-	service, err := agent.NewService(
-		configuration,
-		agent.NewLinuxVIPController(runner, configuration.IPBinary, configuration.ARPingBinary),
-		agent.NewMySQLRoleController(runner, configuration.MySQLBinary, configuration.RoleStateDirectory),
-		nil,
-	)
+	if *reconcile {
+		httpClient, err := agent.NewControllerHTTPClient(configuration)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		decisions, err := agent.NewHTTPReconcileClient(configuration.ControllerURLs, configuration.SharedSecret, httpClient, configuration.AllowInsecureHTTP, nil)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		results, reconcileErr := agent.NewReconciler(vip, roles, decisions).ReconcileAll(context.Background(), configuration.Clusters)
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]interface{}{"status": "completed", "results": results})
+		if reconcileErr != nil {
+			fmt.Fprintln(os.Stderr, reconcileErr)
+			os.Exit(3)
+		}
+		return
+	}
+	service, err := agent.NewService(configuration, vip, roles, nil)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

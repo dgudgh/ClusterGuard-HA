@@ -79,6 +79,8 @@ type NodeLifecycle struct {
 
 type File struct {
 	HTTPAddress        string        `json:"http_address"`
+	TLSCertFile        string        `json:"tls_cert_file,omitempty"`
+	TLSKeyFile         string        `json:"tls_key_file,omitempty"`
 	MetadataPath       string        `json:"metadata_path"`
 	ControlTokenEnv    string        `json:"control_token_env"`
 	ControlToken       string        `json:"-"`
@@ -111,6 +113,14 @@ func Load(path string) (File, error) {
 	}
 	if strings.TrimSpace(configuration.HTTPAddress) == "" {
 		configuration.HTTPAddress = "127.0.0.1:8088"
+	}
+	configuration.TLSCertFile = strings.TrimSpace(configuration.TLSCertFile)
+	configuration.TLSKeyFile = strings.TrimSpace(configuration.TLSKeyFile)
+	if (configuration.TLSCertFile == "") != (configuration.TLSKeyFile == "") {
+		return File{}, fmt.Errorf("tls_cert_file and tls_key_file must be configured together")
+	}
+	if configuration.TLSCertFile != "" && (!filepath.IsAbs(configuration.TLSCertFile) || !filepath.IsAbs(configuration.TLSKeyFile)) {
+		return File{}, fmt.Errorf("TLS certificate and key paths must be absolute")
 	}
 	if strings.TrimSpace(configuration.MetadataPath) == "" {
 		return File{}, fmt.Errorf("metadata_path is required")

@@ -60,6 +60,9 @@ func (store *MemoryLeaseStore) Acquire(ctx context.Context, request LeaseRequest
 		return Lease{}, fmt.Errorf("%w: lease store is blocked", ErrLeaseConflict)
 	}
 	now := store.now().UTC()
+	if request.TTL <= 0 {
+		request.TTL = 30 * time.Second
+	}
 	for resourceID, lease := range store.leases {
 		if !lease.Active || !lease.ExpiresAt.After(now) {
 			delete(store.leases, resourceID)
@@ -69,12 +72,11 @@ func (store *MemoryLeaseStore) Acquire(ctx context.Context, request LeaseRequest
 			continue
 		}
 		if lease.OperationID == request.OperationID && lease.OwnerID == request.OwnerID {
+			lease.ExpiresAt = now.Add(request.TTL)
+			store.leases[resourceID] = lease
 			return lease, nil
 		}
 		return Lease{}, fmt.Errorf("%w: active endpoint lease belongs to another operation", ErrLeaseConflict)
-	}
-	if request.TTL <= 0 {
-		request.TTL = 30 * time.Second
 	}
 	lease := Lease{
 		ResourceID: model.NewResourceID(), ClusterID: request.ClusterID, HAEndpointID: request.HAEndpointID,

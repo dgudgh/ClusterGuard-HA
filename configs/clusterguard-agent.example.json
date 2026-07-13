@@ -1,5 +1,13 @@
 {
   "shared_secret_env": "CG_AGENT_SHARED_SECRET",
+  "controller_urls": [
+    "https://192.168.102.152:8088",
+    "https://192.168.102.153:8088",
+    "https://192.168.102.154:8088"
+  ],
+  "controller_ca_file": "/etc/clusterguard/tls/ca.crt",
+  "controller_server_name": "clusterguard.internal",
+  "reconcile_timeout_seconds": 4,
   "ip_binary": "/sbin/ip",
   "arping_binary": "/usr/sbin/arping",
   "mysql_binary": "/usr/local/mysql/bin/mysql",

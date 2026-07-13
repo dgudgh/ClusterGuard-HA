@@ -28,8 +28,20 @@ import (
 type Runtime struct {
 	server    *api.Server
 	consensus *consensus.Node
+	runCtx    context.Context
 	cancel    context.CancelFunc
 	wait      sync.WaitGroup
+}
+
+func (runtime *Runtime) startLoop(run func(context.Context)) {
+	if runtime.runCtx == nil {
+		runtime.runCtx, runtime.cancel = context.WithCancel(context.Background())
+	}
+	runtime.wait.Add(1)
+	go func() {
+		defer runtime.wait.Done()
+		run(runtime.runCtx)
+	}()
 }
 
 func (runtime *Runtime) Handler() http.Handler {
@@ -80,6 +92,8 @@ func New(configuration config.File) (*Runtime, error) {
 	}
 	registry := adapter.NewRegistry()
 	var endpointProvider adapter.HAEndpointProvider = mysql.UnsupportedHAEndpointProvider{}
+	var vipProvider *writerendpoint.LinuxVIPProvider
+	var ownershipLeases *coordination.LeaseStore
 	if configuration.Agent.Enabled {
 		if result.consensus == nil {
 			return nil, fmt.Errorf("agent-backed VIP execution requires controller consensus")
@@ -93,8 +107,9 @@ func New(configuration config.File) (*Runtime, error) {
 			_ = result.Close()
 			return nil, fmt.Errorf("configure agent transport: %w", transportErr)
 		}
-		leaseStore := coordination.NewLeaseStore(repository, result.consensus, nil)
-		endpointProvider = writerendpoint.NewLinuxVIPProvider(repository, transport, leaseStore, configuration.Agent.SharedSecret, nil)
+		ownershipLeases = coordination.NewLeaseStore(repository, result.consensus, nil)
+		vipProvider = writerendpoint.NewLinuxVIPProvider(repository, transport, ownershipLeases, configuration.Agent.SharedSecret, nil)
+		endpointProvider = vipProvider
 	}
 	mysqlAdapter := mysql.NewWithProviders(mysql.CLIQueryRunner{}, endpointProvider, repository)
 	for _, candidate := range []adapter.DatabaseHAAdapter{
@@ -132,6 +147,9 @@ func New(configuration config.File) (*Runtime, error) {
 		return mysqlDiscoveryCredentials(configuration.MySQL)
 	}), nil, discovery.WithPublicationFence(locks))
 	options := []api.ServerOption{api.WithControlToken(configuration.ControlToken), api.WithMonitoringToken(configuration.MonitoringToken)}
+	if configuration.Agent.Enabled {
+		options = append(options, api.WithAgentReconcileSecret(configuration.Agent.SharedSecret))
+	}
 	if result.consensus != nil {
 		options = append(options, api.WithMutationAuthority(result.consensus))
 	}
@@ -170,13 +188,11 @@ func New(configuration config.File) (*Runtime, error) {
 			time.Duration(configuration.MySQL.DiscoveryIntervalSeconds)*time.Second,
 			time.Duration(configuration.MySQL.DiscoveryTimeoutSeconds)*time.Second,
 		)
-		var runContext context.Context
-		runContext, result.cancel = context.WithCancel(context.Background())
-		result.wait.Add(1)
-		go func() {
-			defer result.wait.Done()
-			scheduler.Run(runContext)
-		}()
+		result.startLoop(scheduler.Run)
+	}
+	if vipProvider != nil && ownershipLeases != nil && result.consensus != nil {
+		keeper := coordination.NewOwnershipKeeper(repository, vipProvider, ownershipLeases, result.consensus, nil, 5*time.Second, 15*time.Second)
+		result.startLoop(keeper.Run)
 	}
 	return result, nil
 }

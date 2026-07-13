@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"clusterguard.io/ha/pkg/model"
@@ -20,21 +21,31 @@ type ClusterPolicy struct {
 }
 
 type Config struct {
-	SharedSecret       string
-	Clusters           map[model.ResourceID]ClusterPolicy
-	IPBinary           string
-	ARPingBinary       string
-	MySQLBinary        string
-	RoleStateDirectory string
+	SharedSecret            string
+	Clusters                map[model.ResourceID]ClusterPolicy
+	ControllerURLs          []string
+	ControllerCAFile        string
+	ControllerServerName    string
+	AllowInsecureHTTP       bool
+	ReconcileTimeoutSeconds int
+	IPBinary                string
+	ARPingBinary            string
+	MySQLBinary             string
+	RoleStateDirectory      string
 }
 
 type fileConfig struct {
-	SharedSecretEnv    string          `json:"shared_secret_env"`
-	IPBinary           string          `json:"ip_binary"`
-	ARPingBinary       string          `json:"arping_binary"`
-	MySQLBinary        string          `json:"mysql_binary"`
-	RoleStateDirectory string          `json:"role_state_directory"`
-	Clusters           []ClusterPolicy `json:"clusters"`
+	SharedSecretEnv         string          `json:"shared_secret_env"`
+	ControllerURLs          []string        `json:"controller_urls,omitempty"`
+	ControllerCAFile        string          `json:"controller_ca_file,omitempty"`
+	ControllerServerName    string          `json:"controller_server_name,omitempty"`
+	AllowInsecureHTTP       bool            `json:"allow_insecure_http,omitempty"`
+	ReconcileTimeoutSeconds int             `json:"reconcile_timeout_seconds,omitempty"`
+	IPBinary                string          `json:"ip_binary"`
+	ARPingBinary            string          `json:"arping_binary"`
+	MySQLBinary             string          `json:"mysql_binary"`
+	RoleStateDirectory      string          `json:"role_state_directory"`
+	Clusters                []ClusterPolicy `json:"clusters"`
 }
 
 func LoadConfig(path string) (Config, error) {
@@ -54,7 +65,10 @@ func LoadConfig(path string) (Config, error) {
 	}
 	configuration := Config{
 		SharedSecret: os.Getenv(secretEnvironment), Clusters: make(map[model.ResourceID]ClusterPolicy),
-		IPBinary: strings.TrimSpace(file.IPBinary), ARPingBinary: strings.TrimSpace(file.ARPingBinary),
+		ControllerURLs: append([]string{}, file.ControllerURLs...), ControllerCAFile: strings.TrimSpace(file.ControllerCAFile),
+		ControllerServerName: strings.TrimSpace(file.ControllerServerName), AllowInsecureHTTP: file.AllowInsecureHTTP,
+		ReconcileTimeoutSeconds: file.ReconcileTimeoutSeconds,
+		IPBinary:                strings.TrimSpace(file.IPBinary), ARPingBinary: strings.TrimSpace(file.ARPingBinary),
 		MySQLBinary: strings.TrimSpace(file.MySQLBinary), RoleStateDirectory: strings.TrimSpace(file.RoleStateDirectory),
 	}
 	if strings.TrimSpace(configuration.SharedSecret) == "" {
@@ -71,6 +85,19 @@ func LoadConfig(path string) (Config, error) {
 	}
 	if configuration.RoleStateDirectory == "" {
 		configuration.RoleStateDirectory = "/var/lib/clusterguard-agent/roles"
+	}
+	if configuration.ReconcileTimeoutSeconds <= 0 {
+		configuration.ReconcileTimeoutSeconds = 5
+	}
+	if configuration.ControllerCAFile != "" && !filepath.IsAbs(configuration.ControllerCAFile) {
+		return Config{}, fmt.Errorf("controller_ca_file must be an absolute path")
+	}
+	for index, raw := range configuration.ControllerURLs {
+		normalized, err := normalizeControllerURL(raw, configuration.AllowInsecureHTTP)
+		if err != nil {
+			return Config{}, err
+		}
+		configuration.ControllerURLs[index] = normalized
 	}
 	for _, policy := range file.Clusters {
 		if !model.ValidResourceID(policy.ClusterID) || !model.ValidResourceID(policy.InstanceID) {

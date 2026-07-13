@@ -125,6 +125,31 @@ func TestLoadRejectsConfiguredEmptyControlTokenEnvironment(t *testing.T) {
 	}
 }
 
+func TestLoadRequiresCompleteAbsoluteTLSCertificatePair(t *testing.T) {
+	for _, contents := range []string{
+		`{"metadata_path":"/tmp/metadata.json","tls_cert_file":"/etc/clusterguard/tls/server.crt"}`,
+		`{"metadata_path":"/tmp/metadata.json","tls_key_file":"/etc/clusterguard/tls/server.key"}`,
+		`{"metadata_path":"/tmp/metadata.json","tls_cert_file":"relative.crt","tls_key_file":"relative.key"}`,
+	} {
+		path := filepath.Join(t.TempDir(), "control.json")
+		if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(path); err == nil {
+			t.Fatalf("unsafe TLS configuration was accepted: %s", contents)
+		}
+	}
+	path := filepath.Join(t.TempDir(), "control.json")
+	contents := `{"metadata_path":"/tmp/metadata.json","tls_cert_file":"/etc/clusterguard/tls/server.crt","tls_key_file":"/etc/clusterguard/tls/server.key"}`
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil || loaded.TLSCertFile == "" || loaded.TLSKeyFile == "" {
+		t.Fatalf("complete TLS configuration=%+v err=%v", loaded, err)
+	}
+}
+
 func TestLoadRejectsMissingSecret(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "control.json")
 	if err := os.WriteFile(path, []byte(`{"approval_token_env":"CG_MISSING_TOKEN"}`), 0600); err != nil {

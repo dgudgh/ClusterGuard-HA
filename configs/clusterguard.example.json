@@ -1,5 +1,7 @@
 {
   "http_address": "127.0.0.1:8088",
+  "tls_cert_file": "/etc/clusterguard/tls/server.crt",
+  "tls_key_file": "/etc/clusterguard/tls/server.key",
   "metadata_path": "/var/lib/clusterguard/metadata.json",
   "control_token_env": "CG_CONTROL_TOKEN",
   "monitoring_token_env": "CG_MONITORING_TOKEN",

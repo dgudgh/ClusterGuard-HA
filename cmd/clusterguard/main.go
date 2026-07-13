@@ -41,8 +41,14 @@ func main() {
 			log.Printf("shutdown error: %v", err)
 		}
 	}()
-	fmt.Printf("ClusterGuard HA listening on http://%s/\n", configuration.HTTPAddress)
-	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	scheme := "http"
+	serve := httpServer.ListenAndServe
+	if configuration.TLSCertFile != "" {
+		scheme = "https"
+		serve = func() error { return httpServer.ListenAndServeTLS(configuration.TLSCertFile, configuration.TLSKeyFile) }
+	}
+	fmt.Printf("ClusterGuard HA listening on %s://%s/\n", scheme, configuration.HTTPAddress)
+	if err := serve(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("server error: %v", err)
 	}
 }

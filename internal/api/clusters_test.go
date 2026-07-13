@@ -118,7 +118,7 @@ func (candidate *candidateAdapterSpy) captured() ([]adapter.CandidateRequest, in
 	return append([]adapter.CandidateRequest{}, candidate.requests...), candidate.databaseProbeCalls
 }
 
-func newAPIServer(t *testing.T, repository *store.Repository, candidate adapter.DatabaseHAAdapter, refresher Refresher) *Server {
+func newAPIServer(t *testing.T, repository *store.Repository, candidate adapter.DatabaseHAAdapter, refresher Refresher, extraOptions ...ServerOption) *Server {
 	t.Helper()
 	registry := adapter.NewRegistry()
 	if candidate != nil {
@@ -127,7 +127,8 @@ func newAPIServer(t *testing.T, repository *store.Repository, candidate adapter.
 		}
 	}
 	service := workflow.New(registry, workflow.TopologyDiscovery{Reader: repository}, workflow.AllowAllSafety{}, workflow.NewMemoryLocks(), workflow.TokenApproval{}, repository)
-	return NewServer(registry, repository, service, refresher, WithControlToken(testControlToken))
+	options := append([]ServerOption{WithControlToken(testControlToken)}, extraOptions...)
+	return NewServer(registry, repository, service, refresher, options...)
 }
 
 func TestRegisterClusterAndRefreshOnlyRegisteredInventory(t *testing.T) {

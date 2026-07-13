@@ -74,3 +74,22 @@ func TestQuorumLeaseRejectsGrantWithoutMajority(t *testing.T) {
 		t.Fatalf("minority lease error=%v", err)
 	}
 }
+
+func TestQuorumLeaseRenewsSameStableOwnershipIntent(t *testing.T) {
+	now := time.Date(2026, time.July, 13, 15, 0, 0, 0, time.UTC)
+	records := &leaseRecordStore{records: map[model.ResourceID]LeaseRecord{}}
+	store := NewLeaseStore(records, authoritativeMembership(t), func() time.Time { return now })
+	request := endpoint.LeaseRequest{ClusterID: model.NewResourceID(), HAEndpointID: model.NewResourceID(), OperationID: model.NewResourceID(), OwnerID: model.NewResourceID(), TTL: 30 * time.Second}
+	first, err := store.Acquire(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(10 * time.Second)
+	renewed, err := store.Acquire(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renewed.ResourceID != first.ResourceID || !renewed.ExpiresAt.Equal(now.Add(30*time.Second)) || !records.records[first.ResourceID].UpdatedAt.Equal(now) {
+		t.Fatalf("renewed lease=%+v record=%+v", renewed, records.records[first.ResourceID])
+	}
+}

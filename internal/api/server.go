@@ -27,6 +27,7 @@ type Server struct {
 	refresher    Refresher
 	controlToken string
 	monitorToken string
+	agentSecret  string
 	lifecycle    NodeLifecycleManager
 	lifecycleCap lifecycle.Capabilities
 	lifecycleSec LifecycleSecretProvider
@@ -53,6 +54,10 @@ func WithControlToken(token string) ServerOption {
 
 func WithMonitoringToken(token string) ServerOption {
 	return func(server *Server) { server.monitorToken = strings.TrimSpace(token) }
+}
+
+func WithAgentReconcileSecret(secret string) ServerOption {
+	return func(server *Server) { server.agentSecret = strings.TrimSpace(secret) }
 }
 
 func WithNodeLifecycle(manager NodeLifecycleManager, capabilities lifecycle.Capabilities, secrets LifecycleSecretProvider) ServerOption {
@@ -115,6 +120,10 @@ func (server *Server) Handler() http.Handler {
 
 func (server *Server) route(writer http.ResponseWriter, request *http.Request) {
 	path := strings.TrimSuffix(request.URL.Path, "/")
+	if path == "/api/v1/agent/reconcile" {
+		server.agentReconcileRoute(writer, request)
+		return
+	}
 	if strings.HasPrefix(path, "/api/v1/monitoring/") && !server.authorizeMonitoring(writer, request) {
 		return
 	}

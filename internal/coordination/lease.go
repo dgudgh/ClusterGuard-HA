@@ -57,6 +57,9 @@ func (store *LeaseStore) Acquire(ctx context.Context, request endpoint.LeaseRequ
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	now := store.now().UTC()
+	if request.TTL <= 0 || request.TTL > time.Minute {
+		request.TTL = 30 * time.Second
+	}
 	for _, record := range store.records.CoordinationLeases() {
 		lease := record.Lease
 		if !lease.Active || !lease.ExpiresAt.After(now) {
@@ -67,12 +70,15 @@ func (store *LeaseStore) Acquire(ctx context.Context, request endpoint.LeaseRequ
 			continue
 		}
 		if lease.OperationID == request.OperationID && lease.OwnerID == request.OwnerID {
+			lease.ExpiresAt = now.Add(request.TTL)
+			record.Lease = lease
+			record.UpdatedAt = now
+			if err := store.records.PutCoordinationLease(record); err != nil {
+				return endpoint.Lease{}, fmt.Errorf("renew quorum lease: %w", err)
+			}
 			return lease, nil
 		}
 		return endpoint.Lease{}, fmt.Errorf("%w: active quorum lease belongs to another operation", endpoint.ErrLeaseConflict)
-	}
-	if request.TTL <= 0 || request.TTL > time.Minute {
-		request.TTL = 30 * time.Second
 	}
 	lease := endpoint.Lease{
 		ResourceID: model.NewResourceID(), ClusterID: request.ClusterID, HAEndpointID: request.HAEndpointID,

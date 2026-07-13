@@ -1,0 +1,159 @@
+package coordination
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"clusterguard.io/ha/internal/endpoint"
+	"clusterguard.io/ha/pkg/model"
+)
+
+type ownershipInventoryStub struct {
+	clusters  []model.DatabaseCluster
+	snapshots map[model.ResourceID]model.TopologySnapshot
+	resources map[model.ResourceID][]model.HAEndpoint
+	endpoints map[model.ResourceID]model.Endpoint
+	commits   int
+}
+
+func (inventory *ownershipInventoryStub) Clusters() []model.DatabaseCluster {
+	return append([]model.DatabaseCluster{}, inventory.clusters...)
+}
+func (inventory *ownershipInventoryStub) TopologySnapshot(clusterID model.ResourceID) (model.TopologySnapshot, bool) {
+	snapshot, found := inventory.snapshots[clusterID]
+	return snapshot, found
+}
+func (inventory *ownershipInventoryStub) HAEndpoints(clusterID model.ResourceID) []model.HAEndpoint {
+	return append([]model.HAEndpoint{}, inventory.resources[clusterID]...)
+}
+func (inventory *ownershipInventoryStub) Endpoint(resourceID model.ResourceID) (model.Endpoint, bool) {
+	value, found := inventory.endpoints[resourceID]
+	return value, found
+}
+func (inventory *ownershipInventoryStub) CommitHAEndpointOwner(clusterID, resourceID, ownerID model.ResourceID, healthy bool) error {
+	resources := inventory.resources[clusterID]
+	for index := range resources {
+		if resources[index].ResourceID != resourceID {
+			continue
+		}
+		resources[index].OwnerID = ownerID
+		resources[index].Healthy = healthy
+		inventory.resources[clusterID] = resources
+		endpointValue := inventory.endpoints[resources[index].EndpointID]
+		endpointValue.InstanceID = ownerID
+		inventory.endpoints[resources[index].EndpointID] = endpointValue
+		inventory.commits++
+		return nil
+	}
+	return errors.New("resource missing")
+}
+
+type ownershipObserverStub struct {
+	result endpoint.OwnershipObservation
+	err    error
+	calls  int
+}
+
+func (observer *ownershipObserverStub) ObserveOwnership(context.Context, model.DatabaseCluster, model.TopologySnapshot) (endpoint.OwnershipObservation, error) {
+	observer.calls++
+	return observer.result, observer.err
+}
+
+type ownershipLeaseStub struct {
+	requests []endpoint.LeaseRequest
+	err      error
+}
+
+type ownershipAuthorityStub struct{ err error }
+
+func (authority ownershipAuthorityStub) RequireMutationAuthority(context.Context) error {
+	return authority.err
+}
+
+func (store *ownershipLeaseStub) Acquire(_ context.Context, request endpoint.LeaseRequest) (endpoint.Lease, error) {
+	store.requests = append(store.requests, request)
+	if store.err != nil {
+		return endpoint.Lease{}, store.err
+	}
+	return endpoint.Lease{ResourceID: model.NewResourceID(), ClusterID: request.ClusterID, HAEndpointID: request.HAEndpointID, OperationID: request.OperationID, OwnerID: request.OwnerID, ExpiresAt: time.Now().Add(request.TTL), Active: true}, nil
+}
+
+func ownershipKeeperFixture(now time.Time) (*ownershipInventoryStub, *ownershipObserverStub, *ownershipLeaseStub, model.DatabaseInstance, model.HAEndpoint) {
+	clusterID := model.NewResourceID()
+	primary := model.DatabaseInstance{
+		ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, ClusterID: clusterID, Engine: model.EngineMySQL,
+		Role: model.RolePrimary, Health: model.Health{State: model.HealthHealthy}, EngineMetadata: map[string]string{"read_only": "false", "super_read_only": "false"},
+	}
+	resource := model.HAEndpoint{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, ClusterID: clusterID, EndpointID: model.NewResourceID(), Kind: model.EndpointVIP, OwnerID: primary.ResourceID, Healthy: true}
+	inventory := &ownershipInventoryStub{
+		clusters:  []model.DatabaseCluster{{ResourceMeta: model.ResourceMeta{ResourceID: clusterID}, Engine: model.EngineMySQL}},
+		snapshots: map[model.ResourceID]model.TopologySnapshot{clusterID: {ClusterID: clusterID, ObservedAt: now, Instances: []model.DatabaseInstance{primary}}},
+		resources: map[model.ResourceID][]model.HAEndpoint{clusterID: {resource}},
+		endpoints: map[model.ResourceID]model.Endpoint{resource.EndpointID: {ResourceMeta: model.ResourceMeta{ResourceID: resource.EndpointID}, ClusterID: clusterID, InstanceID: primary.ResourceID, Kind: model.EndpointVIP, IPAddress: "192.0.2.100", Active: true}},
+	}
+	observer := &ownershipObserverStub{result: endpoint.OwnershipObservation{HAEndpointID: resource.ResourceID, CanonicalOwnerID: primary.ResourceID, EndpointOwnerID: primary.ResourceID, OwnerIDs: []model.ResourceID{primary.ResourceID}, Complete: true}}
+	return inventory, observer, &ownershipLeaseStub{}, primary, resource
+}
+
+func TestOwnershipKeeperRenewsOnlyHealthyWritableCurrentPrimary(t *testing.T) {
+	now := time.Date(2026, time.July, 13, 20, 0, 0, 0, time.UTC)
+	inventory, observer, leases, primary, resource := ownershipKeeperFixture(now)
+	keeper := NewOwnershipKeeper(inventory, observer, leases, ownershipAuthorityStub{}, func() time.Time { return now }, 5*time.Second, 15*time.Second)
+	if err := keeper.RunOnce(context.Background()); err != nil {
+		t.Fatalf("renew ownership: %v", err)
+	}
+	if len(leases.requests) != 1 {
+		t.Fatalf("lease requests=%+v", leases.requests)
+	}
+	request := leases.requests[0]
+	if request.OwnerID != primary.ResourceID || request.HAEndpointID != resource.ResourceID || request.OperationID != resource.ResourceID || request.TTL != 30*time.Second {
+		t.Fatalf("stable ownership lease=%+v", request)
+	}
+}
+
+func TestOwnershipKeeperAllowsZeroOwnerBootstrapOnlyForCanonicalPrimary(t *testing.T) {
+	now := time.Date(2026, time.July, 13, 20, 0, 0, 0, time.UTC)
+	inventory, observer, leases, _, _ := ownershipKeeperFixture(now)
+	observer.result.OwnerIDs = nil
+	if err := NewOwnershipKeeper(inventory, observer, leases, ownershipAuthorityStub{}, func() time.Time { return now }, 5*time.Second, 15*time.Second).RunOnce(context.Background()); err != nil {
+		t.Fatalf("zero-owner bootstrap: %v", err)
+	}
+	if len(leases.requests) != 1 || inventory.commits != 1 || inventory.resources[inventory.clusters[0].ResourceID][0].Healthy {
+		t.Fatalf("zero-owner state leases=%+v inventory=%+v", leases.requests, inventory.resources)
+	}
+}
+
+func TestOwnershipKeeperStopsRenewalForOldOwnerStaleTopologyOrMinority(t *testing.T) {
+	now := time.Date(2026, time.July, 13, 20, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name   string
+		mutate func(*ownershipInventoryStub, *ownershipObserverStub)
+		auth   error
+	}{
+		{name: "old owner", mutate: func(_ *ownershipInventoryStub, observer *ownershipObserverStub) {
+			observer.result.OwnerIDs = []model.ResourceID{model.NewResourceID()}
+		}},
+		{name: "stale topology", mutate: func(inventory *ownershipInventoryStub, _ *ownershipObserverStub) {
+			clusterID := inventory.clusters[0].ResourceID
+			snapshot := inventory.snapshots[clusterID]
+			snapshot.ObservedAt = now.Add(-time.Minute)
+			inventory.snapshots[clusterID] = snapshot
+		}},
+		{name: "minority", auth: errors.New("no quorum")},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			inventory, observer, leases, _, _ := ownershipKeeperFixture(now)
+			if test.mutate != nil {
+				test.mutate(inventory, observer)
+			}
+			keeper := NewOwnershipKeeper(inventory, observer, leases, ownershipAuthorityStub{err: test.auth}, func() time.Time { return now }, 5*time.Second, 15*time.Second)
+			_ = keeper.RunOnce(context.Background())
+			if len(leases.requests) != 0 {
+				t.Fatalf("unsafe lease requests=%+v", leases.requests)
+			}
+		})
+	}
+}

@@ -46,6 +46,14 @@ type endpointResource struct {
 	endpoint model.Endpoint
 }
 
+type OwnershipObservation struct {
+	HAEndpointID     model.ResourceID   `json:"ha_endpoint_id"`
+	CanonicalOwnerID model.ResourceID   `json:"canonical_owner_id,omitempty"`
+	EndpointOwnerID  model.ResourceID   `json:"endpoint_owner_id,omitempty"`
+	OwnerIDs         []model.ResourceID `json:"owner_ids"`
+	Complete         bool               `json:"complete"`
+}
+
 func (provider *LinuxVIPProvider) resource(clusterID model.ResourceID) (endpointResource, error) {
 	resources := provider.inventory.HAEndpoints(clusterID)
 	active := make([]model.HAEndpoint, 0, 1)
@@ -129,6 +137,30 @@ func observationSummary(observations []ownerObservation) ([]model.ResourceID, bo
 		}
 	}
 	return owners, complete
+}
+
+func (provider *LinuxVIPProvider) ObserveOwnership(ctx context.Context, cluster model.DatabaseCluster, snapshot model.TopologySnapshot) (OwnershipObservation, error) {
+	if !provider.Executable(ctx) {
+		return OwnershipObservation{}, fmt.Errorf("writer endpoint provider is not configured")
+	}
+	if cluster.ResourceID == "" || snapshot.ClusterID != cluster.ResourceID {
+		return OwnershipObservation{}, fmt.Errorf("VIP observation cluster scope is invalid")
+	}
+	resource, err := provider.resource(cluster.ResourceID)
+	if err != nil {
+		return OwnershipObservation{}, err
+	}
+	resolved := adapter.ResolvedOperation{
+		OperationID: resource.resource.ResourceID,
+		Cluster:     cluster,
+		Snapshot:    snapshot,
+		PlanDigest:  "sha256:ownership:" + string(resource.resource.ResourceID),
+	}
+	owners, complete := observationSummary(provider.observe(ctx, resolved, resource))
+	return OwnershipObservation{
+		HAEndpointID: resource.resource.ResourceID, CanonicalOwnerID: resource.resource.OwnerID,
+		EndpointOwnerID: resource.endpoint.InstanceID, OwnerIDs: owners, Complete: complete,
+	}, nil
 }
 
 func (provider *LinuxVIPProvider) Precheck(ctx context.Context, resolved adapter.ResolvedOperation) []model.Check {
