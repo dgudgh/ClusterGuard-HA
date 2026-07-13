@@ -79,7 +79,7 @@ func TestVIPReconcileTimerAttemptsRecoveryWithinThirtySecondWindow(t *testing.T)
 		t.Fatal(err)
 	}
 	text := string(contents)
-	for _, expected := range []string{"OnBootSec=10s", "OnUnitActiveSec=10s", "AccuracySec=1s"} {
+	for _, expected := range []string{"OnBootSec=5s", "OnUnitActiveSec=5s", "AccuracySec=1s"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("VIP reconcile timer missing %q", expected)
 		}

@@ -2,8 +2,8 @@
 Description=Run ClusterGuard HA Data Node VIP Reconcile
 
 [Timer]
-OnBootSec=10s
-OnUnitActiveSec=10s
+OnBootSec=5s
+OnUnitActiveSec=5s
 AccuracySec=1s
 Unit=clusterguard-agent-reconcile.service
 
