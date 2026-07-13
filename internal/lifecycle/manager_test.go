@@ -61,7 +61,7 @@ type lifecycleExecutorStub struct {
 	received ExecutionSecrets
 }
 
-func (executor *lifecycleExecutorStub) Execute(_ context.Context, _ Request, secrets ExecutionSecrets, emit func(Event)) (ExecutionResult, error) {
+func (executor *lifecycleExecutorStub) Execute(_ context.Context, _ Request, _ Plan, secrets ExecutionSecrets, emit func(Event)) (ExecutionResult, error) {
 	executor.received = secrets
 	for _, event := range executor.events {
 		emit(event)

@@ -25,7 +25,7 @@ type ClusterLocker interface {
 }
 
 type Executor interface {
-	Execute(context.Context, Request, ExecutionSecrets, func(Event)) (ExecutionResult, error)
+	Execute(context.Context, Request, Plan, ExecutionSecrets, func(Event)) (ExecutionResult, error)
 }
 
 type MetadataCommitter interface {
@@ -119,7 +119,7 @@ func (manager *Manager) Execute(ctx context.Context, request Request, plan Plan,
 		}
 	}
 
-	result, executionErr := manager.executor.Execute(ctx, request, secrets, emit)
+	result, executionErr := manager.executor.Execute(ctx, request, plan, secrets, emit)
 	secrets = ExecutionSecrets{}
 	if eventPersistenceError != nil {
 		executionErr = errors.Join(executionErr, eventPersistenceError)

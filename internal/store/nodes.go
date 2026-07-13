@@ -5,6 +5,7 @@ import (
 	"net"
 	"sort"
 	"strings"
+	"time"
 
 	"clusterguard.io/ha/pkg/model"
 )
@@ -63,7 +64,7 @@ func nodeAddressCollision(left, right model.DatabaseNode) bool {
 	return left.Active && right.Active && ((left.Hostname != "" && right.Hostname != "" && strings.EqualFold(left.Hostname, right.Hostname)) || (left.IPAddress != "" && left.IPAddress == right.IPAddress))
 }
 
-func (repository *Repository) PutNode(node model.DatabaseNode) (model.DatabaseNode, error) {
+func putNodeCandidate(nodes map[model.ResourceID]model.DatabaseNode, node model.DatabaseNode, now time.Time) (model.DatabaseNode, error) {
 	node = normalizeNode(node)
 	if err := validateNode(node); err != nil {
 		return model.DatabaseNode{}, err
@@ -73,14 +74,11 @@ func (repository *Repository) PutNode(node model.DatabaseNode) (model.DatabaseNo
 	} else if !model.ValidResourceID(node.ResourceID) {
 		return model.DatabaseNode{}, validationError("node resource ID is invalid")
 	}
-
-	repository.mu.Lock()
-	defer repository.mu.Unlock()
-	existing, existed := repository.snapshot.Nodes[node.ResourceID]
+	existing, existed := nodes[node.ResourceID]
 	if existed && node.NodeName != existing.NodeName {
 		return model.DatabaseNode{}, conflictError("node_name is immutable")
 	}
-	for resourceID, candidate := range repository.snapshot.Nodes {
+	for resourceID, candidate := range nodes {
 		if resourceID == node.ResourceID {
 			continue
 		}
@@ -91,7 +89,6 @@ func (repository *Repository) PutNode(node model.DatabaseNode) (model.DatabaseNo
 			return model.DatabaseNode{}, conflictError("active node coordinates already belong to %s", candidate.NodeName)
 		}
 	}
-	now := repository.now().UTC()
 	if existed {
 		if existing.Hostname != "" && !strings.EqualFold(existing.Hostname, node.Hostname) {
 			node.Aliases = appendAlias(node.Aliases, existing.Hostname)
@@ -110,9 +107,21 @@ func (repository *Repository) PutNode(node model.DatabaseNode) (model.DatabaseNo
 		node.MetadataRevision = 1
 	}
 	node.UpdatedAt = now
+	nodes[node.ResourceID] = cloneNode(node)
+	return node, nil
+}
+
+func (repository *Repository) PutNode(node model.DatabaseNode) (model.DatabaseNode, error) {
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	now := repository.now().UTC()
 	next := repository.snapshot
 	next.Nodes = cloneNodeMap(repository.snapshot.Nodes)
-	next.Nodes[node.ResourceID] = cloneNode(node)
+	var err error
+	node, err = putNodeCandidate(next.Nodes, node, now)
+	if err != nil {
+		return model.DatabaseNode{}, err
+	}
 	if err := repository.persistSnapshotLocked(next); err != nil {
 		if errors.Is(err, ErrPostCommitDurability) {
 			return cloneNode(node), err

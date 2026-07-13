@@ -28,6 +28,7 @@ type Target struct {
 	Kind         model.NodeKind   `json:"kind"`
 	Hostname     string           `json:"hostname"`
 	IPAddress    string           `json:"ip_address,omitempty"`
+	SSHUser      string           `json:"ssh_user,omitempty"`
 	SSHPort      int              `json:"ssh_port,omitempty"`
 	MySQLVersion string           `json:"mysql_version,omitempty"`
 	MySQLPort    int              `json:"mysql_port,omitempty"`
@@ -36,10 +37,21 @@ type Target struct {
 	Rebuild      bool             `json:"rebuild,omitempty"`
 }
 
+type Donor struct {
+	InstanceID model.ResourceID `json:"instance_id,omitempty"`
+	Hostname   string           `json:"hostname,omitempty"`
+	IPAddress  string           `json:"ip_address,omitempty"`
+	Port       int              `json:"port,omitempty"`
+	ServerUUID string           `json:"server_uuid,omitempty"`
+	Version    string           `json:"version,omitempty"`
+}
+
 type Request struct {
 	ClusterID              model.ResourceID `json:"cluster_id"`
 	Action                 Action           `json:"action"`
 	Targets                []Target         `json:"targets"`
+	Donor                  Donor            `json:"donor,omitempty"`
+	VIP                    string           `json:"vip,omitempty"`
 	SyncMethod             SyncMethod       `json:"sync_method"`
 	CurrentControllerCount int              `json:"current_controller_count,omitempty"`
 	RequestedBy            string           `json:"requested_by,omitempty"`
@@ -117,6 +129,19 @@ const (
 	StageFailed    StageStatus = "failed"
 )
 
+func (status StageStatus) Valid() bool {
+	return status == StagePending || status == StageRunning || status == StageSucceeded || status == StageFailed
+}
+
+func (stage Stage) Valid() bool {
+	switch stage {
+	case StagePreflight, StageInstall, StageSynchronize, StageConfigure, StageVerify, StageCommit:
+		return true
+	default:
+		return false
+	}
+}
+
 type StageState struct {
 	Stage     Stage       `json:"stage"`
 	Status    StageStatus `json:"status"`
@@ -125,9 +150,9 @@ type StageState struct {
 }
 
 type Event struct {
-	Stage   Stage
-	Status  StageStatus
-	Message string
+	Stage   Stage       `json:"stage"`
+	Status  StageStatus `json:"status"`
+	Message string      `json:"message,omitempty"`
 }
 
 type ExecutionResult struct {

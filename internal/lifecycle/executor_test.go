@@ -1,0 +1,85 @@
+package lifecycle
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+)
+
+type lifecycleProcessRunnerStub struct {
+	input []byte
+	env   []string
+	name  string
+	args  []string
+	out   []byte
+	err   error
+}
+
+func (runner *lifecycleProcessRunnerStub) Run(_ context.Context, input []byte, environment []string, name string, arguments ...string) ([]byte, error) {
+	runner.input = append([]byte{}, input...)
+	runner.env = append([]string{}, environment...)
+	runner.name = name
+	runner.args = append([]string{}, arguments...)
+	return append([]byte{}, runner.out...), runner.err
+}
+
+func TestShellExecutorPassesSecretsOnlyThroughEnvironmentAndEmitsStages(t *testing.T) {
+	runner := &lifecycleProcessRunnerStub{out: []byte(
+		`{"type":"event","stage":"install","status":"running","message":"install started"}` + "\n" +
+			`{"type":"event","stage":"verify","status":"succeeded","message":"replication healthy"}` + "\n" +
+			`{"type":"result","verified":true,"message":"node synchronized"}` + "\n",
+	)}
+	executor, err := NewShellExecutor("/usr/local/libexec/clusterguard-node-lifecycle.sh", runner)
+	if err != nil {
+		t.Fatalf("new shell executor: %v", err)
+	}
+	request, plan := executableLifecyclePlan()
+	secrets := ExecutionSecrets{SSHPassword: "ssh-secret", MySQLRootPassword: "mysql-root-secret", ReplicationPassword: "replication-secret"}
+	events := []Event{}
+	result, err := executor.Execute(context.Background(), request, plan, secrets, func(event Event) { events = append(events, event) })
+	if err != nil || !result.Verified || len(events) != 2 || events[0].Stage != StageInstall || events[1].Stage != StageVerify {
+		t.Fatalf("execute result=%+v events=%+v err=%v", result, events, err)
+	}
+	unsafe := string(runner.input) + " " + runner.name + " " + strings.Join(runner.args, " ")
+	for _, secret := range []string{"ssh-secret", "mysql-root-secret", "replication-secret"} {
+		if strings.Contains(unsafe, secret) {
+			t.Fatalf("secret %q appeared in stdin or command arguments: %s", secret, unsafe)
+		}
+	}
+	joinedEnvironment := strings.Join(runner.env, "\n")
+	for _, expected := range []string{"CG_SSH_PASSWORD=ssh-secret", "CG_MYSQL_ROOT_PASSWORD=mysql-root-secret", "CG_MYSQL_REPLICATION_PASSWORD=replication-secret"} {
+		if !strings.Contains(joinedEnvironment, expected) {
+			t.Fatalf("executor environment missing %q: %v", expected, runner.env)
+		}
+	}
+	if runner.name != "/usr/local/libexec/clusterguard-node-lifecycle.sh" || len(runner.args) != 1 || runner.args[0] != "execute" {
+		t.Fatalf("executor command=%s %v", runner.name, runner.args)
+	}
+}
+
+func TestShellExecutorRejectsMalformedOrUnverifiedResult(t *testing.T) {
+	request, plan := executableLifecyclePlan()
+	for _, testCase := range []struct {
+		name string
+		out  string
+		err  error
+	}{
+		{name: "malformed", out: "not-json\n"},
+		{name: "missing result", out: `{"type":"event","stage":"install","status":"succeeded"}` + "\n"},
+		{name: "unverified", out: `{"type":"result","verified":false,"message":"verification failed"}` + "\n"},
+		{name: "process failure", err: errors.New("remote command failed with mysql-root-secret")},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			runner := &lifecycleProcessRunnerStub{out: []byte(testCase.out), err: testCase.err}
+			executor, err := NewShellExecutor("/usr/local/libexec/clusterguard-node-lifecycle.sh", runner)
+			if err != nil {
+				t.Fatalf("new shell executor: %v", err)
+			}
+			_, err = executor.Execute(context.Background(), request, plan, ExecutionSecrets{MySQLRootPassword: "mysql-root-secret"}, func(Event) {})
+			if err == nil || strings.Contains(err.Error(), "mysql-root-secret") {
+				t.Fatalf("unsafe executor error=%v", err)
+			}
+		})
+	}
+}

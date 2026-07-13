@@ -45,6 +45,9 @@ func BuildPlan(request Request, capabilities Capabilities) Plan {
 			}
 		}
 		targetPlan := TargetPlan{Target: target, ReusesNodeSlot: request.Action == ActionRebuild || target.Rebuild}
+		if targetPlan.NodeID == "" && request.Action == ActionAdd {
+			targetPlan.NodeID = model.NewResourceID()
+		}
 		if target.Kind == model.NodeData || target.Kind == model.NodeMixed {
 			targetPlan.DatabaseRole = model.RoleReplica
 			method, reason, err := SelectSyncMethod(request.SyncMethod, capabilities.SourceVersion, target.MySQLVersion, capabilities)

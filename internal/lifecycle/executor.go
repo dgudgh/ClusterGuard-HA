@@ -1,0 +1,156 @@
+package lifecycle
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os/exec"
+	"path/filepath"
+	"strings"
+
+	"clusterguard.io/ha/pkg/model"
+)
+
+const maximumLifecycleOutputBytes = 2 << 20
+
+type ProcessRunner interface {
+	Run(context.Context, []byte, []string, string, ...string) ([]byte, error)
+}
+
+type OSLifecycleProcessRunner struct{}
+
+type boundedBuffer struct {
+	buffer   bytes.Buffer
+	limit    int
+	overflow bool
+}
+
+func (buffer *boundedBuffer) Write(contents []byte) (int, error) {
+	original := len(contents)
+	remaining := buffer.limit - buffer.buffer.Len()
+	if remaining <= 0 {
+		buffer.overflow = true
+		return original, nil
+	}
+	if len(contents) > remaining {
+		contents = contents[:remaining]
+		buffer.overflow = true
+	}
+	_, _ = buffer.buffer.Write(contents)
+	return original, nil
+}
+
+func (OSLifecycleProcessRunner) Run(ctx context.Context, input []byte, environment []string, name string, arguments ...string) ([]byte, error) {
+	command := exec.CommandContext(ctx, name, arguments...)
+	command.Stdin = bytes.NewReader(input)
+	command.Env = append([]string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C", "LC_ALL=C"}, environment...)
+	stdout := &boundedBuffer{limit: maximumLifecycleOutputBytes}
+	stderr := &boundedBuffer{limit: 64 << 10}
+	command.Stdout = stdout
+	command.Stderr = stderr
+	if err := command.Run(); err != nil {
+		return nil, fmt.Errorf("node lifecycle executor failed")
+	}
+	if stdout.overflow {
+		return nil, fmt.Errorf("node lifecycle output exceeded the allowed size")
+	}
+	return append([]byte{}, stdout.buffer.Bytes()...), nil
+}
+
+type ShellExecutor struct {
+	script string
+	runner ProcessRunner
+}
+
+func NewShellExecutor(script string, runner ProcessRunner) (*ShellExecutor, error) {
+	script = strings.TrimSpace(script)
+	if !filepath.IsAbs(script) || runner == nil {
+		return nil, fmt.Errorf("absolute lifecycle executor path and process runner are required")
+	}
+	return &ShellExecutor{script: script, runner: runner}, nil
+}
+
+type executorRecord struct {
+	Type      string                   `json:"type"`
+	Stage     Stage                    `json:"stage,omitempty"`
+	Status    StageStatus              `json:"status,omitempty"`
+	Message   string                   `json:"message,omitempty"`
+	Verified  bool                     `json:"verified,omitempty"`
+	Instances []model.DatabaseInstance `json:"instances,omitempty"`
+	Checks    []model.Check            `json:"checks,omitempty"`
+}
+
+type executorInput struct {
+	Request Request `json:"request"`
+	Plan    Plan    `json:"plan"`
+}
+
+func (executor *ShellExecutor) Execute(ctx context.Context, request Request, plan Plan, secrets ExecutionSecrets, emit func(Event)) (ExecutionResult, error) {
+	contents, err := json.Marshal(executorInput{Request: request, Plan: plan})
+	if err != nil {
+		return ExecutionResult{}, fmt.Errorf("encode lifecycle request: %w", err)
+	}
+	contents = append(contents, '\n')
+	environment := []string{
+		"CG_SSH_PASSWORD=" + secrets.SSHPassword,
+		"CG_MYSQL_ROOT_PASSWORD=" + secrets.MySQLRootPassword,
+		"CG_MYSQL_REPLICATION_PASSWORD=" + secrets.ReplicationPassword,
+	}
+	output, err := executor.runner.Run(ctx, contents, environment, executor.script, "execute")
+	if err != nil {
+		return ExecutionResult{}, fmt.Errorf("node lifecycle executor failed")
+	}
+	return decodeExecutorOutput(output, emit)
+}
+
+func decodeExecutorOutput(output []byte, emit func(Event)) (ExecutionResult, error) {
+	scanner := bufio.NewScanner(bytes.NewReader(output))
+	scanner.Buffer(make([]byte, 64<<10), 1<<20)
+	var result ExecutionResult
+	resultFound := false
+	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		decoder := json.NewDecoder(bytes.NewReader(line))
+		decoder.DisallowUnknownFields()
+		var record executorRecord
+		if err := decoder.Decode(&record); err != nil {
+			return ExecutionResult{}, fmt.Errorf("decode lifecycle executor record")
+		}
+		if err := decoder.Decode(&struct{}{}); err != io.EOF {
+			return ExecutionResult{}, fmt.Errorf("decode lifecycle executor record")
+		}
+		switch record.Type {
+		case "event":
+			if !record.Stage.Valid() || !record.Status.Valid() || resultFound {
+				return ExecutionResult{}, fmt.Errorf("invalid lifecycle stage record")
+			}
+			if emit != nil {
+				emit(Event{Stage: record.Stage, Status: record.Status, Message: record.Message})
+			}
+		case "result":
+			if resultFound {
+				return ExecutionResult{}, fmt.Errorf("multiple lifecycle results returned")
+			}
+			result = ExecutionResult{Verified: record.Verified, Instances: record.Instances, Checks: record.Checks, Message: record.Message}
+			resultFound = true
+		default:
+			return ExecutionResult{}, fmt.Errorf("unsupported lifecycle executor record")
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return ExecutionResult{}, fmt.Errorf("read lifecycle executor output")
+	}
+	if !resultFound {
+		return ExecutionResult{}, fmt.Errorf("lifecycle executor did not return a result")
+	}
+	if !result.Verified {
+		return result, fmt.Errorf("lifecycle executor verification failed")
+	}
+	return result, nil
+}
