@@ -3,7 +3,10 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -13,6 +16,30 @@ import (
 	"clusterguard.io/ha/pkg/adapter"
 	"clusterguard.io/ha/pkg/model"
 )
+
+func TestOperationExecutionResponsePrefersIndeterminateOverJournalFailure(t *testing.T) {
+	secret := "password=top-secret /var/lib/private"
+	execution := model.Execution{Status: model.OperationIndeterminate, Message: secret}
+	record := model.OperationRecord{Status: model.OperationIndeterminate, Message: secret, Execution: execution}
+	recorder := httptest.NewRecorder()
+	writeOperationExecutionResponse(recorder, fmt.Errorf("%w: %s", workflow.ErrJournalPersistence, secret), execution, record)
+	if recorder.Code != http.StatusInternalServerError || !strings.Contains(recorder.Body.String(), `"status":"indeterminate"`) || strings.Contains(recorder.Body.String(), secret) || strings.Contains(recorder.Body.String(), "/var/lib/private") {
+		t.Fatalf("response=%d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestOperationActionErrorRedactsUntrustedDetails(t *testing.T) {
+	secret := "token=top-secret /etc/clusterguard/credentials"
+	recorder := httptest.NewRecorder()
+	server := &Server{}
+	server.writeOperationActionError(recorder, errors.New(secret), model.OperationRecord{
+		Status: model.OperationFailed, Message: secret,
+		Execution: model.Execution{Status: model.OperationFailed, Message: secret},
+	})
+	if recorder.Code != http.StatusConflict || strings.Contains(recorder.Body.String(), "top-secret") || strings.Contains(recorder.Body.String(), "/etc/clusterguard") {
+		t.Fatalf("response=%d %s", recorder.Code, recorder.Body.String())
+	}
+}
 
 func newDurableOperationAPIServer(t *testing.T) (*Server, *store.Repository) {
 	t.Helper()
@@ -87,10 +114,15 @@ func TestOperationAPIReadIncludesPersistedAuditAndReportTimeline(t *testing.T) {
 	server, repository := newDurableOperationAPIServer(t)
 	createdResponse := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/operations", operationRequestBody(model.NewResourceID(), model.NewResourceID(), "api-operation-timeline"))
 	created := decodeOperationResult(t, createdResponse.Body.Bytes())
-	if err := repository.RecordAudit(model.AuditEvent{OperationID: created.ResourceID, Stage: model.StageVerify, Message: "verification passed"}); err != nil {
+	secret := "password=timeline-secret /var/lib/private"
+	execution := model.Execution{OperationID: created.ResourceID, Status: model.OperationFailed, Message: secret}
+	if _, err := repository.TransitionOperation(created.ResourceID, created.MetadataRevision, model.OperationTransition{Stage: model.StageVerify, Status: model.OperationFailed, Execution: &execution, Message: secret}); err != nil {
+		t.Fatalf("transition operation: %v", err)
+	}
+	if err := repository.RecordAudit(model.AuditEvent{OperationID: created.ResourceID, Stage: model.StageVerify, Message: secret}); err != nil {
 		t.Fatalf("record audit: %v", err)
 	}
-	if err := repository.RecordReport(model.Report{OperationID: created.ResourceID, Title: "switchover report", Status: model.OperationSucceeded, Summary: "verified"}); err != nil {
+	if err := repository.RecordReport(model.Report{OperationID: created.ResourceID, Title: "switchover report", Status: model.OperationFailed, Summary: secret}); err != nil {
 		t.Fatalf("record report: %v", err)
 	}
 
@@ -107,7 +139,7 @@ func TestOperationAPIReadIncludesPersistedAuditAndReportTimeline(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
 		t.Fatalf("decode timeline: %v", err)
 	}
-	if len(envelope.Timeline.Audits) != 1 || len(envelope.Timeline.Reports) != 1 || envelope.Timeline.Audits[0].OperationID != created.ResourceID {
+	if len(envelope.Timeline.Audits) != 1 || len(envelope.Timeline.Reports) != 1 || envelope.Timeline.Audits[0].OperationID != created.ResourceID || strings.Contains(response.Body.String(), "timeline-secret") || strings.Contains(response.Body.String(), "/var/lib/private") {
 		t.Fatalf("operation timeline=%+v", envelope.Timeline)
 	}
 }

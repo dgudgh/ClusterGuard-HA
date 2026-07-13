@@ -16,10 +16,30 @@ type OperationStore interface {
 	OperationByIdempotencyKey(string) (model.OperationRecord, bool)
 }
 
+type OperationFinalizer interface {
+	FinalizeOperation(model.ResourceID, uint64, model.OperationTransition, []model.AuditEvent, []model.Report) (model.OperationRecord, error)
+}
+
 type repositoryProgress struct {
 	operations  OperationStore
 	operationID model.ResourceID
 	now         func() time.Time
+}
+
+func (progress repositoryProgress) StepCompleted(ctx context.Context, step string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	record, found := progress.operations.Operation(progress.operationID)
+	if !found {
+		return false, fmt.Errorf("operation progress record does not exist")
+	}
+	for _, attempt := range record.Attempts {
+		if attempt.Step == step && attempt.Status == model.OperationSucceeded {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (progress repositoryProgress) CompleteStep(ctx context.Context, step string, message string) error {

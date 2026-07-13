@@ -3,6 +3,7 @@ package store
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"clusterguard.io/ha/pkg/model"
 )
@@ -151,6 +152,33 @@ func (repository *Repository) OperationByIdempotencyKey(key string) (model.Opera
 	return cloneOperationRecord(operation), found
 }
 
+type OperationTimeline struct {
+	Operation model.OperationRecord
+	Audits    []model.AuditEvent
+	Reports   []model.Report
+}
+
+func (repository *Repository) OperationTimeline(resourceID model.ResourceID) (OperationTimeline, bool) {
+	repository.mu.RLock()
+	defer repository.mu.RUnlock()
+	operation, found := repository.snapshot.Operations[resourceID]
+	if !found {
+		return OperationTimeline{}, false
+	}
+	timeline := OperationTimeline{Operation: cloneOperationRecord(operation), Audits: []model.AuditEvent{}, Reports: []model.Report{}}
+	for _, event := range repository.snapshot.Audits {
+		if event.OperationID == resourceID {
+			timeline.Audits = append(timeline.Audits, event)
+		}
+	}
+	for _, report := range repository.snapshot.Reports {
+		if report.OperationID == resourceID {
+			timeline.Reports = append(timeline.Reports, report)
+		}
+	}
+	return timeline, true
+}
+
 func validateOperationPlan(operation model.OperationRecord, plan model.OperationPlan) error {
 	if plan.OperationID != operation.ResourceID {
 		return validationError("operation plan ID does not match operation")
@@ -264,22 +292,13 @@ func verificationReconciliationAllowed(operation model.OperationRecord, transiti
 	if transition.Observation != "" || transition.Attempt != nil {
 		return false
 	}
-	if transition.Stage != "" && transition.Stage != operation.Stage {
+	if transition.Stage != "" && transition.Stage != operation.Stage && transition.Stage != model.StageReport {
 		return false
 	}
 	return true
 }
 
-func (repository *Repository) TransitionOperation(resourceID model.ResourceID, expectedRevision uint64, transition model.OperationTransition) (model.OperationRecord, error) {
-	repository.mu.Lock()
-	defer repository.mu.Unlock()
-	operation, found := repository.snapshot.Operations[resourceID]
-	if !found {
-		return model.OperationRecord{}, validationError("operation does not exist")
-	}
-	if operation.MetadataRevision != expectedRevision {
-		return model.OperationRecord{}, conflictError("operation metadata revision changed")
-	}
+func applyOperationTransition(operation model.OperationRecord, transition model.OperationTransition, now time.Time) (model.OperationRecord, error) {
 	reconcilingVerification := verificationReconciliationAllowed(operation, transition)
 	if terminalOperationStatus(operation.Status) && !reconcilingVerification {
 		return model.OperationRecord{}, conflictError("terminal operation is immutable")
@@ -322,13 +341,121 @@ func (repository *Repository) TransitionOperation(resourceID model.ResourceID, e
 	operation.FailureClass = strings.TrimSpace(transition.FailureClass)
 	operation.Message = strings.TrimSpace(transition.Message)
 	operation.MetadataRevision++
-	operation.UpdatedAt = repository.now().UTC()
+	operation.UpdatedAt = now.UTC()
 	operation.Operation.MetadataRevision = operation.MetadataRevision
 	operation.Operation.UpdatedAt = operation.UpdatedAt
+	return operation, nil
+}
+
+func (repository *Repository) TransitionOperation(resourceID model.ResourceID, expectedRevision uint64, transition model.OperationTransition) (model.OperationRecord, error) {
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	operation, found := repository.snapshot.Operations[resourceID]
+	if !found {
+		return model.OperationRecord{}, validationError("operation does not exist")
+	}
+	if operation.MetadataRevision != expectedRevision {
+		return model.OperationRecord{}, conflictError("operation metadata revision changed")
+	}
+	operation, err := applyOperationTransition(operation, transition, repository.now())
+	if err != nil {
+		return model.OperationRecord{}, err
+	}
 
 	next := repository.snapshot
 	next.Operations = cloneOperationMap(repository.snapshot.Operations)
 	next.Operations[resourceID] = cloneOperationRecord(operation)
+	if err := repository.persistSnapshotLocked(next); err != nil {
+		return cloneOperationRecord(operation), err
+	}
+	repository.snapshot = next
+	return cloneOperationRecord(operation), nil
+}
+
+func normalizeFinalAudit(event model.AuditEvent, operationID model.ResourceID, now time.Time) (model.AuditEvent, error) {
+	if event.OperationID != "" && event.OperationID != operationID {
+		return model.AuditEvent{}, validationError("audit operation ID does not match operation")
+	}
+	event.OperationID = operationID
+	if event.ResourceID == "" {
+		event.ResourceID = model.NewResourceID()
+	}
+	if event.CreatedAt.IsZero() {
+		event.CreatedAt = now
+	}
+	event.UpdatedAt = now
+	event.MetadataRevision = 1
+	return event, nil
+}
+
+func upsertFinalReport(reports []model.Report, report model.Report, operationID model.ResourceID, now time.Time) ([]model.Report, error) {
+	if !terminalReportStatus(report.Status) {
+		return nil, validationError("report status must be terminal")
+	}
+	if report.OperationID != "" && report.OperationID != operationID {
+		return nil, validationError("report operation ID does not match operation")
+	}
+	report.OperationID = operationID
+	if report.ResourceID == "" {
+		report.ResourceID = model.NewResourceID()
+	}
+	for index, existing := range reports {
+		if existing.ResourceID != report.ResourceID {
+			continue
+		}
+		if existing.OperationID != operationID {
+			return nil, conflictError("report resource belongs to another operation")
+		}
+		report.CreatedAt = existing.CreatedAt
+		report.UpdatedAt = now
+		report.MetadataRevision = existing.MetadataRevision + 1
+		reports[index] = report
+		return reports, nil
+	}
+	if report.CreatedAt.IsZero() {
+		report.CreatedAt = now
+	}
+	report.UpdatedAt = now
+	report.MetadataRevision = 1
+	return append(reports, report), nil
+}
+
+// FinalizeOperation publishes the terminal operation, its audit events, and its
+// reports as one repository snapshot so readers cannot observe a partial result.
+func (repository *Repository) FinalizeOperation(resourceID model.ResourceID, expectedRevision uint64, transition model.OperationTransition, audits []model.AuditEvent, reports []model.Report) (model.OperationRecord, error) {
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	operation, found := repository.snapshot.Operations[resourceID]
+	if !found {
+		return model.OperationRecord{}, validationError("operation does not exist")
+	}
+	if operation.MetadataRevision != expectedRevision {
+		return model.OperationRecord{}, conflictError("operation metadata revision changed")
+	}
+	now := repository.now().UTC()
+	operation, err := applyOperationTransition(operation, transition, now)
+	if err != nil {
+		return model.OperationRecord{}, err
+	}
+
+	next := repository.snapshot
+	next.Operations = cloneOperationMap(repository.snapshot.Operations)
+	next.Operations[resourceID] = cloneOperationRecord(operation)
+	next.Audits = append([]model.AuditEvent{}, repository.snapshot.Audits...)
+	for _, event := range audits {
+		event, err = normalizeFinalAudit(event, resourceID, now)
+		if err != nil {
+			return model.OperationRecord{}, err
+		}
+		next.Audits = append(next.Audits, event)
+	}
+	next.Reports = append([]model.Report{}, repository.snapshot.Reports...)
+	for _, report := range reports {
+		next.Reports, err = upsertFinalReport(next.Reports, report, resourceID, now)
+		if err != nil {
+			return model.OperationRecord{}, err
+		}
+	}
 	if err := repository.persistSnapshotLocked(next); err != nil {
 		return cloneOperationRecord(operation), err
 	}

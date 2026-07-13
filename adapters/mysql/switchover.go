@@ -59,12 +59,10 @@ func publicSwitchoverError(err error) string {
 func sanitizeEndpointCheck(check model.Check, expectedName string) model.Check {
 	check.Name = strings.TrimSpace(check.Name)
 	if check.Name == "" {
-		check.Message = "writer endpoint provider returned unnamed evidence"
-		return check
+		return model.Check{Name: expectedName, Status: model.CheckFail, Message: "writer endpoint provider returned unnamed evidence"}
 	}
 	if check.Name != expectedName {
-		check.Message = "writer endpoint provider returned unexpected evidence"
-		return check
+		return model.Check{Name: expectedName, Status: model.CheckFail, Message: "writer endpoint provider returned unexpected evidence"}
 	}
 	switch check.Status {
 	case model.CheckPass:
@@ -373,6 +371,37 @@ func validateExecutionPlan(request adapter.OperationRequest) error {
 	return nil
 }
 
+func validateVerificationPlan(request adapter.OperationRequest) error {
+	if request.Plan == nil || request.Resolved == nil {
+		return fmt.Errorf("an immutable operation plan and resolved context are required")
+	}
+	plan := *request.Plan
+	digest, err := operationPlanDigest(plan)
+	if err != nil {
+		return err
+	}
+	resolved := *request.Resolved
+	if plan.Digest == "" || digest != plan.Digest {
+		return fmt.Errorf("operation plan digest changed")
+	}
+	if plan.OperationID != request.Operation.ResourceID || plan.ClusterID != request.Operation.ClusterID ||
+		plan.SourceID != resolved.Primary.ResourceID || plan.TargetID != request.TargetID || plan.TargetID != resolved.Target.ResourceID {
+		return fmt.Errorf("operation plan resource scope changed")
+	}
+	if strings.TrimSpace(plan.ObservationToken) == "" {
+		return fmt.Errorf("operation plan observation token is missing")
+	}
+	for _, resourceID := range []model.ResourceID{resolved.Cluster.ResourceID, resolved.Primary.ResourceID, resolved.Target.ResourceID} {
+		if plan.ResourceRevisions[resourceID] == 0 {
+			return fmt.Errorf("operation plan resource revisions are incomplete")
+		}
+	}
+	if planHasBlockingChecks(plan.Checks) {
+		return fmt.Errorf("operation plan contains blocking checks")
+	}
+	return nil
+}
+
 func newExecution(operationID model.ResourceID, status model.OperationStatus, started time.Time, message string) model.Execution {
 	now := time.Now().UTC()
 	return model.Execution{
@@ -395,6 +424,17 @@ func completeOperationStep(ctx context.Context, request adapter.OperationRequest
 		return nil
 	}
 	return request.Progress.CompleteStep(ctx, step, message)
+}
+
+func operationStepCompleted(ctx context.Context, request adapter.OperationRequest, step string) (bool, error) {
+	if request.Progress == nil {
+		return false, nil
+	}
+	reader, ok := request.Progress.(adapter.OperationProgressReader)
+	if !ok {
+		return false, nil
+	}
+	return reader.StepCompleted(ctx, step)
 }
 
 func endpointOwnerVerified(check model.Check) bool {
@@ -487,6 +527,82 @@ func (adapterInstance *Adapter) liveSwitchoverPrecheck(ctx context.Context, reso
 	return nil
 }
 
+func (adapterInstance *Adapter) liveSwitchoverResumePrecheck(ctx context.Context, resolved adapter.ResolvedOperation) error {
+	credentials := resolved.Credentials
+	sourceEndpoint := instanceEndpoint(resolved.Primary)
+	targetEndpoint := instanceEndpoint(resolved.Target)
+	sourceIdentity, err := probeIdentity(ctx, adapterInstance.runner, sourceEndpoint, credentials)
+	if err != nil {
+		return fmt.Errorf("probe live source identity: %w", err)
+	}
+	targetIdentity, err := probeIdentity(ctx, adapterInstance.runner, targetEndpoint, credentials)
+	if err != nil {
+		return fmt.Errorf("probe live target identity: %w", err)
+	}
+	if sourceIdentity.serverUUID != strings.ToLower(strings.TrimSpace(resolved.Primary.EngineIdentity["server_uuid"])) ||
+		targetIdentity.serverUUID != strings.ToLower(strings.TrimSpace(resolved.Target.EngineIdentity["server_uuid"])) {
+		return fmt.Errorf("live MySQL identity no longer matches the immutable operation resources")
+	}
+	if !sourceIdentity.readOnly || !sourceIdentity.superReadOnly {
+		return fmt.Errorf("live source is not fully fenced during operation recovery")
+	}
+	if !strings.EqualFold(sourceIdentity.gtidMode, "ON") || !strings.EqualFold(targetIdentity.gtidMode, "ON") {
+		return fmt.Errorf("live source and target must keep GTID mode ON")
+	}
+	sourceLogBin, sourceLogBinError := parseMySQLBoolean(sourceIdentity.logBin)
+	targetLogBin, targetLogBinError := parseMySQLBoolean(targetIdentity.logBin)
+	if sourceLogBinError != nil || targetLogBinError != nil || !sourceLogBin || !targetLogBin {
+		return fmt.Errorf("live source and target must keep binary logging enabled")
+	}
+	sourceFamily, sourceVersionError := mysqlReleaseFamily(sourceIdentity.version)
+	targetFamily, targetVersionError := mysqlReleaseFamily(targetIdentity.version)
+	if sourceVersionError != nil || targetVersionError != nil || sourceFamily != targetFamily {
+		return fmt.Errorf("live source and target MySQL release families are incompatible")
+	}
+	if _, err := dialectForVersion(targetIdentity.version); err != nil {
+		return err
+	}
+	_, sourceReplicationConfigured, err := probeReplication(ctx, adapterInstance.runner, sourceEndpoint, credentials)
+	if err != nil {
+		return fmt.Errorf("probe live source replication: %w", err)
+	}
+	if sourceReplicationConfigured {
+		return fmt.Errorf("live source unexpectedly has a replication source")
+	}
+	targetReplication, targetReplicationConfigured, err := probeReplication(ctx, adapterInstance.runner, targetEndpoint, credentials)
+	if err != nil {
+		return fmt.Errorf("probe live target replication: %w", err)
+	}
+	targetFenced := targetIdentity.readOnly && targetIdentity.superReadOnly
+	targetWritable := !targetIdentity.readOnly && !targetIdentity.superReadOnly
+	if !targetFenced && !targetWritable {
+		return fmt.Errorf("live target has a partial read-only state during operation recovery")
+	}
+	if targetFenced {
+		if !targetReplicationConfigured || targetReplication.IOThread != model.ThreadRunning || targetReplication.SQLThread != model.ThreadRunning {
+			return fmt.Errorf("live target replication threads are not both running")
+		}
+		if strings.ToLower(strings.TrimSpace(targetReplication.SourceIdentity["server_uuid"])) != sourceIdentity.serverUUID {
+			return fmt.Errorf("live target no longer follows the selected source")
+		}
+		if targetReplication.LagSeconds == nil || *targetReplication.LagSeconds != 0 {
+			return fmt.Errorf("live target replication lag must be known and zero")
+		}
+	} else if targetReplicationConfigured {
+		return fmt.Errorf("promoted target still has a replication source")
+	}
+	sourceSet, sourceSetError := ParseGTIDSet(sourceIdentity.gtidExecuted)
+	targetSet, targetSetError := ParseGTIDSet(targetIdentity.gtidExecuted)
+	if sourceSetError != nil || targetSetError != nil {
+		return fmt.Errorf("live source or target GTID position is invalid")
+	}
+	comparison, err := CompareGTIDSets(sourceSet, targetSet)
+	if err != nil || comparison.MissingTransactions != 0 || (targetFenced && comparison.ErrantTransactions != 0) {
+		return fmt.Errorf("live source and target GTID histories are unsafe for operation recovery")
+	}
+	return nil
+}
+
 func (adapterInstance *Adapter) fenceInstance(ctx context.Context, endpoint adapter.Endpoint, credentials adapter.Credentials) error {
 	recoveryContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
@@ -523,7 +639,18 @@ func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request a
 	if err != nil {
 		return executionFailure(request.Operation.ResourceID, started, model.OperationFailed, "pre_commit", fmt.Errorf("probe source fencing state: %w", err))
 	}
-	if !sourceFenced {
+	if sourceFenced {
+		ownedFence, err := operationStepCompleted(ctx, request, "fence_source")
+		if err != nil {
+			return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "pre_commit", fmt.Errorf("read source fencing progress: %w", err))
+		}
+		if !ownedFence {
+			return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "pre_commit", fmt.Errorf("source is fenced without durable ownership by this operation"))
+		}
+		if err := adapterInstance.liveSwitchoverResumePrecheck(ctx, resolved); err != nil {
+			return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", err)
+		}
+	} else {
 		if err := adapterInstance.liveSwitchoverPrecheck(ctx, resolved); err != nil {
 			return executionFailure(request.Operation.ResourceID, started, model.OperationFailed, "pre_commit", err)
 		}
@@ -600,6 +727,9 @@ func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request a
 	}
 	if !targetWritable {
 		if err := adapterInstance.executor.Exec(mutationContext, targetEndpoint, credentials, setSuperReadOnlyOff); err != nil {
+			if fenceErr := adapterInstance.fenceInstance(mutationContext, targetEndpoint, credentials); fenceErr != nil {
+				return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("prepare target promotion failed and target fencing failed: %w", fenceErr))
+			}
 			return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("prepare target promotion: %w", err))
 		}
 		if err := adapterInstance.executor.Exec(mutationContext, targetEndpoint, credentials, setReadOnlyOff); err != nil {
@@ -626,6 +756,13 @@ func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request a
 			}
 			return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("writer endpoint transfer is unverified: %w", err))
 		}
+		endpointEvidence = sanitizeEndpointCheck(adapterInstance.endpointProvider.Verify(mutationContext, resolved), "writer_endpoint_owner")
+		if !endpointOwnerVerified(endpointEvidence) {
+			if fenceErr := adapterInstance.fenceInstance(mutationContext, targetEndpoint, credentials); fenceErr != nil {
+				return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("writer endpoint transfer postcondition is unverified and target fencing failed: %w", fenceErr))
+			}
+			return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("writer endpoint transfer postcondition is unverified"))
+		}
 	}
 	if err := completeOperationStep(mutationContext, request, "transfer_writer_endpoint", "writer endpoint transferred to selected target"); err != nil {
 		return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("persist writer endpoint progress: %w", err))
@@ -647,7 +784,7 @@ func (adapterInstance *Adapter) switchoverVerify(ctx context.Context, request ad
 	if request.Operation.Kind != model.OperationSwitchover || request.Resolved == nil {
 		return verification, adapter.ErrUnsupported
 	}
-	if err := validateExecutionPlan(request); err != nil {
+	if err := validateVerificationPlan(request); err != nil {
 		verification.Checks = append(verification.Checks, model.Check{Name: "plan_integrity", Status: model.CheckFail, Message: err.Error()})
 		return verification, nil
 	}
@@ -659,18 +796,32 @@ func (adapterInstance *Adapter) switchoverVerify(ctx context.Context, request ad
 	sourceIdentity, sourceErr := probeIdentity(ctx, adapterInstance.runner, sourceEndpoint, credentials)
 	if sourceErr != nil {
 		verification.Checks = append(verification.Checks, model.Check{Name: "source_reachable", Status: model.CheckFail, Message: "former primary reachability is unknown: " + sourceErr.Error()})
-	} else if sourceIdentity.readOnly && sourceIdentity.superReadOnly {
-		verification.Checks = append(verification.Checks, model.Check{Name: "source_read_only", Status: model.CheckPass, Message: "former primary is read-only"})
 	} else {
-		verification.Checks = append(verification.Checks, model.Check{Name: "source_read_only", Status: model.CheckFail, Message: "former primary is not fully read-only"})
+		if sourceIdentity.serverUUID == strings.ToLower(strings.TrimSpace(resolved.Primary.EngineIdentity["server_uuid"])) {
+			verification.Checks = append(verification.Checks, model.Check{Name: "source_identity", Status: model.CheckPass, Message: "former primary identity matches the immutable source resource"})
+		} else {
+			verification.Checks = append(verification.Checks, model.Check{Name: "source_identity", Status: model.CheckFail, Message: "former primary identity does not match the immutable source resource"})
+		}
+		if sourceIdentity.readOnly && sourceIdentity.superReadOnly {
+			verification.Checks = append(verification.Checks, model.Check{Name: "source_read_only", Status: model.CheckPass, Message: "former primary is read-only"})
+		} else {
+			verification.Checks = append(verification.Checks, model.Check{Name: "source_read_only", Status: model.CheckFail, Message: "former primary is not fully read-only"})
+		}
 	}
 	targetIdentity, targetErr := probeIdentity(ctx, adapterInstance.runner, targetEndpoint, credentials)
 	if targetErr != nil {
 		verification.Checks = append(verification.Checks, model.Check{Name: "target_reachable", Status: model.CheckFail, Message: "target reachability is unknown: " + targetErr.Error()})
-	} else if !targetIdentity.readOnly && !targetIdentity.superReadOnly {
-		verification.Checks = append(verification.Checks, model.Check{Name: "target_writable", Status: model.CheckPass, Message: "selected target is writable"})
 	} else {
-		verification.Checks = append(verification.Checks, model.Check{Name: "target_writable", Status: model.CheckFail, Message: "selected target is not writable"})
+		if targetIdentity.serverUUID == strings.ToLower(strings.TrimSpace(resolved.Target.EngineIdentity["server_uuid"])) {
+			verification.Checks = append(verification.Checks, model.Check{Name: "target_identity", Status: model.CheckPass, Message: "target identity matches the immutable target resource"})
+		} else {
+			verification.Checks = append(verification.Checks, model.Check{Name: "target_identity", Status: model.CheckFail, Message: "target identity does not match the immutable target resource"})
+		}
+		if !targetIdentity.readOnly && !targetIdentity.superReadOnly {
+			verification.Checks = append(verification.Checks, model.Check{Name: "target_writable", Status: model.CheckPass, Message: "selected target is writable"})
+		} else {
+			verification.Checks = append(verification.Checks, model.Check{Name: "target_writable", Status: model.CheckFail, Message: "selected target is not writable"})
+		}
 	}
 	_, targetReplicationConfigured, replicationErr := probeReplication(ctx, adapterInstance.runner, targetEndpoint, credentials)
 	if replicationErr != nil {

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"clusterguard.io/ha/pkg/adapter"
 	"clusterguard.io/ha/pkg/model"
@@ -24,11 +25,15 @@ type switchoverSQLClient struct {
 	targetSuperReadOnly   bool
 	targetReplication     bool
 	targetLag             int64
+	primaryUUID           string
+	targetUUID            string
 	primaryGTID           string
 	targetExecuted        string
 	executed              []string
 	failStatement         string
 	failStatementConsumed bool
+	failAfterStatement    string
+	failTargetStatement   string
 }
 
 func newSwitchoverSQLClient(request adapter.OperationRequest) *switchoverSQLClient {
@@ -41,6 +46,8 @@ func newSwitchoverSQLClient(request adapter.OperationRequest) *switchoverSQLClie
 		targetReadOnly:       true,
 		targetSuperReadOnly:  true,
 		targetReplication:    true,
+		primaryUUID:          primaryUUID,
+		targetUUID:           targetUUID,
 		primaryGTID:          request.Resolved.Primary.EngineMetadata["gtid_executed"],
 		targetExecuted:       request.Resolved.Target.Replication.ExecutedPosition,
 	}
@@ -67,13 +74,13 @@ func (client *switchoverSQLClient) Query(ctx context.Context, endpoint adapter.E
 		isPrimary := host == client.primaryHost
 		readOnly := client.targetReadOnly
 		superReadOnly := client.targetSuperReadOnly
-		serverUUID := targetUUID
+		serverUUID := client.targetUUID
 		serverID := "11"
 		gtid := client.targetExecuted
 		if isPrimary {
 			readOnly = client.primaryReadOnly
 			superReadOnly = client.primarySuperReadOnly
-			serverUUID = primaryUUID
+			serverUUID = client.primaryUUID
 			serverID = "10"
 			gtid = client.primaryGTID
 		}
@@ -132,6 +139,9 @@ func (client *switchoverSQLClient) Exec(ctx context.Context, endpoint adapter.En
 		client.failStatementConsumed = true
 		return errors.New("injected SQL execution failure")
 	}
+	if host == client.targetHost && statement == client.failTargetStatement {
+		return errors.New("injected target fencing failure")
+	}
 	if host == client.primaryHost {
 		switch statement {
 		case setSuperReadOnlyOn:
@@ -156,6 +166,9 @@ func (client *switchoverSQLClient) Exec(ctx context.Context, endpoint adapter.En
 			client.targetReadOnly = true
 		}
 	}
+	if statement == client.failAfterStatement {
+		return errors.New("injected post-commit SQL execution failure")
+	}
 	return nil
 }
 
@@ -166,12 +179,13 @@ func (client *switchoverSQLClient) statements() []string {
 }
 
 type recordingEndpointProvider struct {
-	mu             sync.Mutex
-	owner          model.ResourceID
-	transferCalls  int
-	transferError  error
-	duplicateOwner bool
-	verifyOverride *model.Check
+	mu               sync.Mutex
+	owner            model.ResourceID
+	transferCalls    int
+	transferError    error
+	transferNoEffect bool
+	duplicateOwner   bool
+	verifyOverride   *model.Check
 }
 
 func (provider *recordingEndpointProvider) Executable(context.Context) bool { return true }
@@ -184,6 +198,9 @@ func (provider *recordingEndpointProvider) Transfer(_ context.Context, resolved 
 	provider.transferCalls++
 	if provider.transferError != nil {
 		return provider.transferError
+	}
+	if provider.transferNoEffect {
+		return nil
 	}
 	provider.owner = resolved.Target.ResourceID
 	return nil
@@ -259,6 +276,17 @@ func (collector *progressCollector) CompleteStep(_ context.Context, step string,
 	return nil
 }
 
+func (collector *progressCollector) StepCompleted(_ context.Context, step string) (bool, error) {
+	collector.mu.Lock()
+	defer collector.mu.Unlock()
+	for _, candidate := range collector.steps {
+		if candidate == step {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func failureClass(err error) string {
 	var classified classifiedFailure
 	if errors.As(err, &classified) {
@@ -300,6 +328,41 @@ func TestSwitchoverExecuteAndVerifyHappyPath(t *testing.T) {
 	}
 	if provider.owner != request.TargetID || provider.transferCalls != 1 {
 		t.Fatalf("endpoint transfer was not coupled to target: owner=%s calls=%d", provider.owner, provider.transferCalls)
+	}
+}
+
+func TestSwitchoverVerifyRejectsEndpointIdentityDrift(t *testing.T) {
+	adapterInstance, request, client, _ := executableSwitchoverFixture(t)
+	if _, err := adapterInstance.Execute(context.Background(), request); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	client.targetUUID = extraUUID
+	verification, err := adapterInstance.Verify(context.Background(), request)
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	if verification.Passed || !failedCheck(verification.Checks, "target_identity") {
+		t.Fatalf("identity drift passed verification: %+v", verification.Checks)
+	}
+}
+
+func TestSwitchoverVerifyAcceptsRefreshedPostPromotionTopology(t *testing.T) {
+	adapterInstance, request, _, _ := executableSwitchoverFixture(t)
+	if _, err := adapterInstance.Execute(context.Background(), request); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	request.Resolved.Snapshot.ObservedAt = request.Resolved.Snapshot.ObservedAt.Add(time.Minute)
+	request.Resolved.Cluster.MetadataRevision++
+	request.Resolved.Primary.MetadataRevision++
+	request.Resolved.Primary.Role = model.RoleReplica
+	request.Resolved.Target.MetadataRevision++
+	request.Resolved.Target.Role = model.RolePrimary
+	verification, err := adapterInstance.Verify(context.Background(), request)
+	if err != nil {
+		t.Fatalf("verify refreshed topology: %v", err)
+	}
+	if !verification.Passed || failedCheck(verification.Checks, "plan_integrity") {
+		t.Fatalf("refreshed post-promotion topology failed verification: %+v", verification.Checks)
 	}
 }
 
@@ -350,6 +413,28 @@ func TestSwitchoverExecutionFailureClasses(t *testing.T) {
 	}
 }
 
+func TestSwitchoverRefencesTargetWhenFirstPromotionCommandIsUncertain(t *testing.T) {
+	adapterInstance, request, client, _ := executableSwitchoverFixture(t)
+	client.failAfterStatement = setSuperReadOnlyOff
+	execution, err := adapterInstance.Execute(context.Background(), request)
+	if err == nil || execution.Status != model.OperationBlocked || failureClass(err) != "fenced" {
+		t.Fatalf("uncertain promotion result=%+v err=%v class=%q", execution, err, failureClass(err))
+	}
+	if !client.targetReadOnly || !client.targetSuperReadOnly {
+		t.Fatalf("uncertain promotion left target partially writable: read_only=%t super_read_only=%t", client.targetReadOnly, client.targetSuperReadOnly)
+	}
+}
+
+func TestSwitchoverReportsIndeterminateWhenUncertainPromotionCannotBeRefenced(t *testing.T) {
+	adapterInstance, request, client, _ := executableSwitchoverFixture(t)
+	client.failAfterStatement = setSuperReadOnlyOff
+	client.failTargetStatement = setSuperReadOnlyOn
+	execution, err := adapterInstance.Execute(context.Background(), request)
+	if err == nil || execution.Status != model.OperationIndeterminate || failureClass(err) != "promoted_unverified" {
+		t.Fatalf("failed target refence result=%+v err=%v class=%q", execution, err, failureClass(err))
+	}
+}
+
 func TestSwitchoverExecutionDoesNotExposeProviderErrorDetails(t *testing.T) {
 	adapterInstance, request, _, provider := executableSwitchoverFixture(t)
 	provider.transferError = errors.New("vip-token=top-secret command=/sbin/ip addr add")
@@ -364,8 +449,27 @@ func TestSwitchoverExecutionDoesNotExposeProviderErrorDetails(t *testing.T) {
 	}
 }
 
+func TestSwitchoverDoesNotJournalEndpointTransferBeforePostcondition(t *testing.T) {
+	adapterInstance, request, client, provider := executableSwitchoverFixture(t)
+	provider.transferNoEffect = true
+	collector := &progressCollector{}
+	request.Progress = collector
+	execution, err := adapterInstance.Execute(context.Background(), request)
+	if err == nil || execution.Status != model.OperationIndeterminate || failureClass(err) != "promoted_unverified" {
+		t.Fatalf("unverified transfer result=%+v err=%v class=%q", execution, err, failureClass(err))
+	}
+	completed, _ := collector.StepCompleted(context.Background(), "transfer_writer_endpoint")
+	if completed {
+		t.Fatalf("unverified endpoint transfer was journaled complete: %v", collector.steps)
+	}
+	if !client.targetReadOnly || !client.targetSuperReadOnly {
+		t.Fatalf("target remained writable after unverified endpoint transfer")
+	}
+}
+
 func TestSwitchoverRetryObservesPostconditionsBeforeMutation(t *testing.T) {
 	adapterInstance, request, client, provider := executableSwitchoverFixture(t)
+	request.Progress = &progressCollector{}
 	if _, err := adapterInstance.Execute(context.Background(), request); err != nil {
 		t.Fatalf("first execute: %v", err)
 	}
@@ -378,6 +482,34 @@ func TestSwitchoverRetryObservesPostconditionsBeforeMutation(t *testing.T) {
 	}
 	if provider.transferCalls != 1 {
 		t.Fatalf("retry repeated writer endpoint transfer: calls=%d", provider.transferCalls)
+	}
+}
+
+func TestSwitchoverResumeRejectsFenceWithoutOperationProgress(t *testing.T) {
+	adapterInstance, request, client, provider := executableSwitchoverFixture(t)
+	client.primaryReadOnly = true
+	client.primarySuperReadOnly = true
+	execution, err := adapterInstance.Execute(context.Background(), request)
+	if err == nil || execution.Status != model.OperationBlocked || failureClass(err) != "pre_commit" {
+		t.Fatalf("unowned fence result=%+v err=%v class=%q", execution, err, failureClass(err))
+	}
+	if len(client.statements()) != 0 || provider.transferCalls != 0 {
+		t.Fatalf("unowned fence allowed mutation: statements=%v transfers=%d", client.statements(), provider.transferCalls)
+	}
+}
+
+func TestSwitchoverResumeRevalidatesLiveReplicaBeforeMutation(t *testing.T) {
+	adapterInstance, request, client, provider := executableSwitchoverFixture(t)
+	client.primaryReadOnly = true
+	client.primarySuperReadOnly = true
+	client.targetLag = 5
+	request.Progress = &progressCollector{steps: []string{"fence_source"}}
+	execution, err := adapterInstance.Execute(context.Background(), request)
+	if err == nil || execution.Status != model.OperationBlocked || failureClass(err) != "fenced" {
+		t.Fatalf("stale resume result=%+v err=%v class=%q", execution, err, failureClass(err))
+	}
+	if len(client.statements()) != 0 || provider.transferCalls != 0 {
+		t.Fatalf("stale resume allowed mutation: statements=%v transfers=%d", client.statements(), provider.transferCalls)
 	}
 }
 

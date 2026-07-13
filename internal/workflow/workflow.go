@@ -128,28 +128,42 @@ func New(registry *adapter.Registry, discovery DiscoveryValidator, safety Safety
 	return service
 }
 
-func (service *Service) audit(operation model.Operation, stage model.WorkflowStage, message string) error {
-	if service.journal == nil {
-		return fmt.Errorf("workflow journal is not configured")
-	}
+func (service *Service) auditEvent(operation model.Operation, stage model.WorkflowStage, message string) model.AuditEvent {
 	now := service.now().UTC()
-	if err := service.journal.RecordAudit(model.AuditEvent{
+	return model.AuditEvent{
 		ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID(), MetadataRevision: 1, CreatedAt: now, UpdatedAt: now},
 		OperationID:  operation.ResourceID,
 		Stage:        stage,
 		Actor:        operation.RequestedBy,
 		Message:      message,
-	}); err != nil {
+	}
+}
+
+func (service *Service) audit(operation model.Operation, stage model.WorkflowStage, message string) error {
+	if service.journal == nil {
+		return fmt.Errorf("workflow journal is not configured")
+	}
+	if err := service.journal.RecordAudit(service.auditEvent(operation, stage, message)); err != nil {
 		return fmt.Errorf("persist %s audit event: %w", stage, err)
 	}
 	return nil
+}
+
+func (service *Service) terminalReport(operation model.Operation, execution model.Execution) model.Report {
+	now := service.now().UTC()
+	return model.Report{
+		ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID(), MetadataRevision: 1, CreatedAt: now, UpdatedAt: now},
+		OperationID:  operation.ResourceID,
+		Title:        string(operation.Kind) + " report",
+		Status:       execution.Status,
+		Summary:      execution.Message,
+	}
 }
 
 func (service *Service) report(operation model.Operation, execution model.Execution, operationCommitted bool) error {
 	if service.journal == nil {
 		return fmt.Errorf("workflow journal is not configured")
 	}
-	now := service.now().UTC()
 	fallback := execution
 	if operationCommitted {
 		fallback = markIndeterminate(fallback)
@@ -157,13 +171,7 @@ func (service *Service) report(operation model.Operation, execution model.Execut
 		fallback.Status = model.OperationFailed
 		fallback.Message = "workflow journal persistence failed"
 	}
-	report := model.Report{
-		ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID(), MetadataRevision: 1, CreatedAt: now, UpdatedAt: now},
-		OperationID:  operation.ResourceID,
-		Title:        string(operation.Kind) + " report",
-		Status:       fallback.Status,
-		Summary:      fallback.Message,
-	}
+	report := service.terminalReport(operation, fallback)
 	if err := service.journal.RecordReport(report); err != nil {
 		return fmt.Errorf("persist fallback operation report: %w", err)
 	}

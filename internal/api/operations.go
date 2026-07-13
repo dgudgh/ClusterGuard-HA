@@ -19,7 +19,11 @@ func (server *Server) operationsCollection(writer http.ResponseWriter, request *
 			writeError(writer, http.StatusBadRequest, "cluster_id must be a platform UUID")
 			return
 		}
-		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": server.store.Operations(clusterID)})
+		operations := server.store.Operations(clusterID)
+		for index := range operations {
+			operations[index] = publicOperationRecord(operations[index])
+		}
+		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": operations})
 	case http.MethodPost:
 		payload := operationPayload{}
 		if err := decode(request, &payload); err != nil {
@@ -64,17 +68,131 @@ type operationActionPayload struct {
 	ApprovalToken string `json:"approval_token,omitempty"`
 }
 
-func (server *Server) operationTimeline(operationID model.ResourceID) map[string]interface{} {
-	audits := make([]model.AuditEvent, 0)
-	for _, event := range server.store.Audits() {
-		if event.OperationID == operationID {
-			audits = append(audits, event)
+type operationExecutionResponse struct {
+	code    int
+	status  string
+	message string
+}
+
+func publicOperationStatusMessage(status model.OperationStatus) string {
+	switch status {
+	case model.OperationPlanned:
+		return "operation is planned"
+	case model.OperationRunning:
+		return "operation is running"
+	case model.OperationBlocked:
+		return "operation was blocked by safety checks"
+	case model.OperationSucceeded:
+		return "operation completed and verified"
+	case model.OperationFailed:
+		return "operation failed"
+	case model.OperationIndeterminate:
+		return "operation outcome requires verification"
+	case model.OperationUnsupported:
+		return "operation is unsupported"
+	default:
+		return "operation status is unavailable"
+	}
+}
+
+func publicCheckMessage(status model.CheckStatus) string {
+	switch status {
+	case model.CheckPass:
+		return "check passed"
+	case model.CheckWarn:
+		return "check requires review"
+	default:
+		return "check failed"
+	}
+}
+
+func publicOperationRecord(record model.OperationRecord) model.OperationRecord {
+	if record.Message != "" {
+		record.Message = publicOperationStatusMessage(record.Status)
+	}
+	if record.Execution.Message != "" {
+		record.Execution.Message = publicOperationStatusMessage(record.Execution.Status)
+	}
+	record.Plan.Checks = append([]model.Check{}, record.Plan.Checks...)
+	for index := range record.Plan.Checks {
+		if record.Plan.Checks[index].Message != "" {
+			record.Plan.Checks[index].Message = publicCheckMessage(record.Plan.Checks[index].Status)
 		}
 	}
-	reports := make([]model.Report, 0)
-	for _, report := range server.store.Reports() {
-		if report.OperationID == operationID {
-			reports = append(reports, report)
+	record.Verification.Checks = append([]model.Check{}, record.Verification.Checks...)
+	for index := range record.Verification.Checks {
+		if record.Verification.Checks[index].Message != "" {
+			record.Verification.Checks[index].Message = publicCheckMessage(record.Verification.Checks[index].Status)
+		}
+	}
+	record.Attempts = append([]model.StepAttempt{}, record.Attempts...)
+	for index := range record.Attempts {
+		if record.Attempts[index].Message != "" {
+			record.Attempts[index].Message = publicOperationStatusMessage(record.Attempts[index].Status)
+		}
+	}
+	return record
+}
+
+func publicOperationErrorMessage(err error, record model.OperationRecord) string {
+	if err != nil && strings.Contains(strings.ToLower(err.Error()), "topology observation") {
+		return "topology observation is unavailable or changed"
+	}
+	switch {
+	case record.Status == model.OperationIndeterminate:
+		return publicOperationStatusMessage(model.OperationIndeterminate)
+	case errors.Is(err, adapter.ErrUnsupported):
+		return publicOperationStatusMessage(model.OperationUnsupported)
+	case errors.Is(err, workflow.ErrOperationInProgress):
+		return publicOperationStatusMessage(model.OperationRunning)
+	case errors.Is(err, workflow.ErrJournalPersistence):
+		return "operation state persistence failed"
+	case errors.Is(err, store.ErrValidation):
+		return "operation request is invalid"
+	case errors.Is(err, store.ErrConflict):
+		return "operation state conflict"
+	default:
+		return "operation action failed"
+	}
+}
+
+func classifyOperationExecution(err error, execution model.Execution, record model.OperationRecord) operationExecutionResponse {
+	switch {
+	case errors.Is(err, adapter.ErrUnsupported):
+		return operationExecutionResponse{code: http.StatusNotImplemented, status: "unsupported", message: publicOperationStatusMessage(model.OperationUnsupported)}
+	case errors.Is(err, workflow.ErrOperationInProgress):
+		return operationExecutionResponse{code: http.StatusConflict, status: "running", message: publicOperationStatusMessage(model.OperationRunning)}
+	case execution.Status == model.OperationIndeterminate || record.Status == model.OperationIndeterminate:
+		return operationExecutionResponse{code: http.StatusInternalServerError, status: "indeterminate", message: publicOperationStatusMessage(model.OperationIndeterminate)}
+	case errors.Is(err, workflow.ErrJournalPersistence):
+		return operationExecutionResponse{code: http.StatusInternalServerError, status: "error", message: publicOperationErrorMessage(err, record)}
+	case err != nil:
+		return operationExecutionResponse{code: http.StatusConflict, status: "error", message: publicOperationErrorMessage(err, record)}
+	default:
+		return operationExecutionResponse{code: http.StatusOK, status: "ok"}
+	}
+}
+
+func writeOperationExecutionResponse(writer http.ResponseWriter, err error, execution model.Execution, record model.OperationRecord) {
+	response := classifyOperationExecution(err, execution, record)
+	payload := map[string]interface{}{"status": response.status, "result": publicOperationRecord(record)}
+	if response.message != "" {
+		payload["message"] = response.message
+	}
+	writeJSON(writer, response.code, payload)
+}
+
+func publicOperationTimeline(timeline store.OperationTimeline) map[string]interface{} {
+	audits := append([]model.AuditEvent{}, timeline.Audits...)
+	for index := range audits {
+		if audits[index].Message != "" {
+			audits[index].Message = string(audits[index].Stage) + " event recorded"
+		}
+	}
+	reports := append([]model.Report{}, timeline.Reports...)
+	for index := range reports {
+		if reports[index].Summary != "" {
+			reports[index].Summary = publicOperationStatusMessage(reports[index].Status)
 		}
 	}
 	return map[string]interface{}{"audits": audits, "reports": reports}
@@ -91,17 +209,22 @@ func (server *Server) operationResourceRoute(writer http.ResponseWriter, request
 		writeError(writer, http.StatusBadRequest, "operation ID must be a platform UUID")
 		return
 	}
-	record, found := server.store.Operation(operationID)
-	if !found {
-		writeError(writer, http.StatusNotFound, "operation not found")
-		return
-	}
 	if len(parts) == 1 {
 		if request.Method != http.MethodGet {
 			writeError(writer, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
-		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": record, "timeline": server.operationTimeline(operationID)})
+		timeline, found := server.store.OperationTimeline(operationID)
+		if !found {
+			writeError(writer, http.StatusNotFound, "operation not found")
+			return
+		}
+		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": publicOperationRecord(timeline.Operation), "timeline": publicOperationTimeline(timeline)})
+		return
+	}
+	record, found := server.store.Operation(operationID)
+	if !found {
+		writeError(writer, http.StatusNotFound, "operation not found")
 		return
 	}
 	if len(parts) != 2 || request.Method != http.MethodPost {
@@ -152,33 +275,22 @@ func (server *Server) operationResourceRoute(writer http.ResponseWriter, request
 	}
 	execution, err := server.workflow.Execute(request.Context(), adapterRequest, payload.ApprovalToken)
 	updated, _ := server.store.Operation(operationID)
-	switch {
-	case errors.Is(err, adapter.ErrUnsupported):
-		writeJSON(writer, http.StatusNotImplemented, map[string]interface{}{"status": "unsupported", "message": execution.Message, "result": updated})
-	case errors.Is(err, workflow.ErrOperationInProgress):
-		writeJSON(writer, http.StatusConflict, map[string]interface{}{"status": "running", "message": err.Error(), "result": updated})
-	case errors.Is(err, workflow.ErrJournalPersistence):
-		writeJSON(writer, http.StatusInternalServerError, map[string]interface{}{"status": "error", "message": "workflow journal persistence failed", "result": updated})
-	case err != nil && updated.Status == model.OperationIndeterminate:
-		writeJSON(writer, http.StatusInternalServerError, map[string]interface{}{"status": "indeterminate", "message": err.Error(), "result": updated})
-	case err != nil:
-		writeJSON(writer, http.StatusConflict, map[string]interface{}{"status": "error", "message": err.Error(), "result": updated})
-	default:
-		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": updated})
-	}
+	writeOperationExecutionResponse(writer, err, execution, updated)
 }
 
 func (server *Server) writeOperationActionError(writer http.ResponseWriter, err error, record model.OperationRecord) {
+	publicRecord := publicOperationRecord(record)
+	message := publicOperationErrorMessage(err, record)
 	switch {
 	case record.Status == model.OperationIndeterminate:
-		writeJSON(writer, http.StatusInternalServerError, map[string]interface{}{"status": "indeterminate", "message": err.Error(), "result": record})
+		writeJSON(writer, http.StatusInternalServerError, map[string]interface{}{"status": "indeterminate", "message": message, "result": publicRecord})
 	case errors.Is(err, adapter.ErrUnsupported):
-		writeJSON(writer, http.StatusNotImplemented, map[string]interface{}{"status": "unsupported", "message": err.Error(), "result": record})
+		writeJSON(writer, http.StatusNotImplemented, map[string]interface{}{"status": "unsupported", "message": message, "result": publicRecord})
 	case errors.Is(err, workflow.ErrOperationInProgress), errors.Is(err, store.ErrConflict):
-		writeJSON(writer, http.StatusConflict, map[string]interface{}{"status": "error", "message": err.Error(), "result": record})
+		writeJSON(writer, http.StatusConflict, map[string]interface{}{"status": "error", "message": message, "result": publicRecord})
 	case errors.Is(err, store.ErrValidation):
-		writeJSON(writer, http.StatusBadRequest, map[string]interface{}{"status": "error", "message": err.Error(), "result": record})
+		writeJSON(writer, http.StatusBadRequest, map[string]interface{}{"status": "error", "message": message, "result": publicRecord})
 	default:
-		writeJSON(writer, http.StatusConflict, map[string]interface{}{"status": "error", "message": err.Error(), "result": record})
+		writeJSON(writer, http.StatusConflict, map[string]interface{}{"status": "error", "message": message, "result": publicRecord})
 	}
 }

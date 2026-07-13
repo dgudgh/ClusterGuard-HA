@@ -84,6 +84,10 @@ type OperationProgress interface {
 	CompleteStep(context.Context, string, string) error
 }
 
+type OperationProgressReader interface {
+	StepCompleted(context.Context, string) (bool, error)
+}
+
 type ResolvedOperation struct {
 	Cluster     model.DatabaseCluster  `json:"cluster"`
 	Snapshot    model.TopologySnapshot `json:"snapshot"`

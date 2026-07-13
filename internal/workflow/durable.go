@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"time"
 
 	"clusterguard.io/ha/pkg/adapter"
@@ -133,7 +134,28 @@ func (service *Service) putDurablePlan(record model.OperationRecord, plan model.
 	return updated, err
 }
 
+func (service *Service) atomicFinalizer() (OperationFinalizer, bool) {
+	operationFinalizer, operationSupports := service.operations.(OperationFinalizer)
+	journalFinalizer, journalSupports := service.journal.(OperationFinalizer)
+	if !operationSupports || !journalSupports {
+		return nil, false
+	}
+	operationValue := reflect.ValueOf(operationFinalizer)
+	journalValue := reflect.ValueOf(journalFinalizer)
+	if !operationValue.IsValid() || !journalValue.IsValid() || operationValue.Type() != journalValue.Type() || !operationValue.Comparable() {
+		return nil, false
+	}
+	if operationValue.Interface() != journalValue.Interface() {
+		return nil, false
+	}
+	return operationFinalizer, true
+}
+
 func (service *Service) finishDurable(recordID model.ResourceID, operation model.Operation, stage model.WorkflowStage, execution model.Execution, failureClass string, cause error, operationCommitted bool) (model.Execution, error) {
+	return service.finishDurableWithAudits(recordID, operation, stage, execution, failureClass, cause, operationCommitted, nil)
+}
+
+func (service *Service) finishDurableWithAudits(recordID model.ResourceID, operation model.Operation, stage model.WorkflowStage, execution model.Execution, failureClass string, cause error, operationCommitted bool, finalAudits []model.AuditEvent) (model.Execution, error) {
 	record, err := service.durableRecord(recordID)
 	if err != nil {
 		return execution, err
@@ -149,6 +171,34 @@ func (service *Service) finishDurable(recordID model.ResourceID, operation model
 	}
 	if execution.Message == "" && cause != nil {
 		execution.Message = cause.Error()
+	}
+	if finalizer, ok := service.atomicFinalizer(); ok {
+		audits := append([]model.AuditEvent{}, finalAudits...)
+		audits = append(audits, service.auditEvent(operation, stage, execution.Message))
+		if stage != model.StageReport {
+			audits = append(audits, service.auditEvent(operation, model.StageReport, "terminal operation report generated"))
+		}
+		_, finalizeErr := finalizer.FinalizeOperation(recordID, record.MetadataRevision, model.OperationTransition{
+			Stage: stage, Status: execution.Status, Execution: &execution,
+			FailureClass: failureClass, Message: execution.Message,
+		}, audits, []model.Report{service.terminalReport(operation, execution)})
+		if finalizeErr == nil {
+			return execution, cause
+		}
+		if operationCommitted {
+			execution = markDurabilityIndeterminate(execution)
+			return execution, &journalPersistenceError{err: fmt.Errorf("atomically persist terminal operation timeline: %w", finalizeErr)}
+		}
+		return journalFailure(execution, fmt.Errorf("atomically persist terminal operation timeline: %w", finalizeErr))
+	}
+	if len(finalAudits) != 0 {
+		atomicErr := errors.New("atomic operation finalizer is not configured")
+		if operationCommitted {
+			execution.Status = model.OperationIndeterminate
+			execution.Message = "operation committed and verified, but atomic terminal persistence is unavailable"
+			return service.finishDurable(recordID, operation, model.StageVerify, execution, "journal", &journalPersistenceError{err: atomicErr}, true)
+		}
+		return journalFailure(execution, atomicErr)
 	}
 	var journalErr error
 	if err := service.audit(operation, stage, execution.Message); err != nil {
@@ -412,25 +462,12 @@ func (service *Service) executeDurable(ctx context.Context, request adapter.Oper
 		execution.Message = "operation committed and verified, but workflow journal persistence failed"
 		return service.finishDurable(record.ResourceID, operation, model.StageVerify, execution, "journal", &journalPersistenceError{err: committedJournalErr}, true)
 	}
-	var finalAuditErr error
-	finalAuditStage := model.StageVerify
-	if err := service.audit(operation, model.StageVerify, "verification passed"); err != nil {
-		finalAuditErr = firstJournalError(finalAuditErr, err)
-	}
-	if err := service.audit(operation, model.StageAudit, "operation audit recorded"); err != nil {
-		if finalAuditErr == nil {
-			finalAuditStage = model.StageAudit
-		}
-		finalAuditErr = firstJournalError(finalAuditErr, err)
-	}
-	if finalAuditErr != nil {
-		execution.Status = model.OperationIndeterminate
-		execution.Message = "operation committed and verified, but workflow journal persistence failed"
-		return service.finishDurable(record.ResourceID, operation, finalAuditStage, execution, "journal", &journalPersistenceError{err: finalAuditErr}, true)
-	}
 	execution.Status = model.OperationSucceeded
 	execution.Message = "operation completed and verified"
-	return service.finishDurable(record.ResourceID, operation, model.StageReport, execution, "", nil, true)
+	return service.finishDurableWithAudits(record.ResourceID, operation, model.StageReport, execution, "", nil, true, []model.AuditEvent{
+		service.auditEvent(operation, model.StageVerify, "verification passed"),
+		service.auditEvent(operation, model.StageAudit, "operation audit recorded"),
+	})
 }
 
 func newDurableExecution(operationID model.ResourceID, status model.OperationStatus, message string, now func() time.Time) model.Execution {

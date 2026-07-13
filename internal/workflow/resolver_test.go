@@ -85,6 +85,37 @@ func TestRepositoryResolverResolvesUUIDScopedContext(t *testing.T) {
 	}
 }
 
+func TestRepositoryResolverUsesImmutablePlanResourcesForPostCommitVerification(t *testing.T) {
+	for _, state := range []string{"target promoted", "no current primary"} {
+		t.Run(state, func(t *testing.T) {
+			reader, request := resolvedOperationFixture()
+			sourceID := reader.snapshot.Instances[0].ResourceID
+			targetID := reader.snapshot.Instances[1].ResourceID
+			reader.snapshot.Instances[0].Role = model.RoleReplica
+			if state == "target promoted" {
+				reader.snapshot.Instances[1].Role = model.RolePrimary
+			} else {
+				reader.snapshot.Instances[1].Role = model.RoleReplica
+			}
+			request.Operation.Status = model.OperationIndeterminate
+			request.Plan = &model.OperationPlan{SourceID: sourceID, TargetID: targetID}
+			resolver := RepositoryResolver{
+				Reader: reader,
+				Credentials: CredentialProviderFunc(func(context.Context, model.DatabaseCluster) (adapter.Credentials, error) {
+					return adapter.Credentials{Username: "clusterguard"}, nil
+				}),
+			}
+			resolved, err := resolver.Resolve(context.Background(), request)
+			if err != nil {
+				t.Fatalf("resolve post-commit resources: %v", err)
+			}
+			if resolved.Resolved.Primary.ResourceID != sourceID || resolved.Resolved.Target.ResourceID != targetID {
+				t.Fatalf("resolved context=%+v", resolved.Resolved)
+			}
+		})
+	}
+}
+
 func TestRepositoryResolverRejectsAmbiguousOrExternalResources(t *testing.T) {
 	tests := []struct {
 		name   string

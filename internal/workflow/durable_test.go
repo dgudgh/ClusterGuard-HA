@@ -111,6 +111,15 @@ func (durableCommittedFailure) Error() string {
 }
 func (durableCommittedFailure) FailureClass() string { return "promoted_unverified" }
 
+type failingAtomicRepository struct {
+	*store.Repository
+	err error
+}
+
+func (repository *failingAtomicRepository) FinalizeOperation(model.ResourceID, uint64, model.OperationTransition, []model.AuditEvent, []model.Report) (model.OperationRecord, error) {
+	return model.OperationRecord{}, repository.err
+}
+
 func durableRequestFixture() (adapter.OperationRequest, adapter.ResolvedOperation) {
 	observedAt := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
 	cluster := model.DatabaseCluster{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID(), MetadataRevision: 2}, Engine: model.EngineMySQL, DisplayName: "mysql-test"}
@@ -163,6 +172,41 @@ func TestDurableWorkflowPersistsPlanProgressAndTerminalOutcome(t *testing.T) {
 	repeated, err := service.Execute(context.Background(), request, "approved")
 	if err != nil || repeated.Status != model.OperationSucceeded || candidate.executeCalls != 1 {
 		t.Fatalf("terminal idempotent retry executed again: result=%+v calls=%d err=%v", repeated, candidate.executeCalls, err)
+	}
+}
+
+func TestDurableWorkflowDoesNotPublishFinalAuditsBeforeAtomicFinalization(t *testing.T) {
+	request, resolved := durableRequestFixture()
+	repository := &failingAtomicRepository{Repository: store.NewMemory(), err: errors.New("terminal snapshot unavailable")}
+	registry := adapter.NewRegistry()
+	candidate := newDurableAdapter()
+	if err := registry.Register(candidate); err != nil {
+		t.Fatalf("register adapter: %v", err)
+	}
+	trace := []string{}
+	resolver := OperationResolverFunc(func(_ context.Context, candidate adapter.OperationRequest) (adapter.OperationRequest, error) {
+		candidate.Resolved = &resolved
+		candidate.Credentials = resolved.Credentials
+		return candidate, nil
+	})
+	service := New(registry, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, repository,
+		WithOperationStore(repository), WithOperationResolver(resolver))
+
+	execution, err := service.Execute(context.Background(), request, "approved")
+	if !errors.Is(err, ErrJournalPersistence) || execution.Status != model.OperationIndeterminate {
+		t.Fatalf("atomic finalization failure result=%+v err=%v", execution, err)
+	}
+	for _, event := range repository.Audits() {
+		if event.Message == "verification passed" || event.Message == "operation audit recorded" {
+			t.Fatalf("final audit escaped failed atomic publication: %+v", event)
+		}
+	}
+	if len(repository.Reports()) != 0 {
+		t.Fatalf("terminal report escaped failed atomic publication: %+v", repository.Reports())
+	}
+	record, found := repository.OperationByIdempotencyKey(request.IdempotencyKey)
+	if !found || record.Status == model.OperationSucceeded {
+		t.Fatalf("failed atomic publication exposed success: found=%t record=%+v", found, record)
 	}
 }
 
@@ -318,7 +362,7 @@ func TestManualVerificationReconcilesIndeterminateOperation(t *testing.T) {
 		t.Fatalf("manual verification result=%+v err=%v", verification, err)
 	}
 	record, found := repository.OperationByIdempotencyKey(request.IdempotencyKey)
-	if !found || record.Status != model.OperationSucceeded || !record.Verification.Passed {
+	if !found || record.Status != model.OperationSucceeded || record.Stage != model.StageReport || !record.Verification.Passed {
 		t.Fatalf("manual verification did not reconcile operation: found=%t record=%+v", found, record)
 	}
 }

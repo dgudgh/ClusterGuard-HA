@@ -51,9 +51,6 @@ func (service *Service) Verify(ctx context.Context, request adapter.OperationReq
 	if verification.Passed {
 		message = "manual operation verification passed"
 	}
-	if err := service.audit(record.Operation, model.StageVerify, message); err != nil {
-		return verification, err
-	}
 	if record.Status == model.OperationIndeterminate {
 		status := model.OperationIndeterminate
 		failureClass := record.FailureClass
@@ -65,15 +62,32 @@ func (service *Service) Verify(ctx context.Context, request adapter.OperationReq
 		execution.OperationID = record.ResourceID
 		execution.Status = status
 		execution.Message = message
+		if finalizer, ok := service.atomicFinalizer(); ok {
+			_, err := finalizer.FinalizeOperation(record.ResourceID, record.MetadataRevision, model.OperationTransition{
+				Stage: model.StageReport, Status: status, Execution: &execution, Verification: &verification,
+				FailureClass: failureClass, Message: message,
+			}, []model.AuditEvent{
+				service.auditEvent(record.Operation, model.StageVerify, message),
+				service.auditEvent(record.Operation, model.StageReport, "manual verification report generated"),
+			}, []model.Report{service.terminalReport(record.Operation, execution)})
+			return verification, err
+		}
+		if err := service.audit(record.Operation, model.StageVerify, message); err != nil {
+			return verification, err
+		}
 		if err := service.report(record.Operation, execution, true); err != nil {
 			return verification, err
 		}
 		if _, err := service.operations.TransitionOperation(record.ResourceID, record.MetadataRevision, model.OperationTransition{
-			Stage: record.Stage, Status: status, Execution: &execution, Verification: &verification,
+			Stage: model.StageReport, Status: status, Execution: &execution, Verification: &verification,
 			FailureClass: failureClass, Message: message,
 		}); err != nil {
 			return verification, err
 		}
+		return verification, nil
+	}
+	if err := service.audit(record.Operation, model.StageVerify, message); err != nil {
+		return verification, err
 	}
 	return verification, nil
 }

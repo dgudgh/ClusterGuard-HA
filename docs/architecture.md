@@ -182,6 +182,17 @@ so production requests return HTTP `501` before locks or mutations. Failover,
 former-primary rejoin, replication repair, node synchronization, and node
 lifecycle execution also remain unsupported.
 
+Recovery never treats a pre-existing source fence as sufficient by itself. The
+durable operation must own the completed `fence_source` step, and the adapter
+rechecks source and target native identities, source fencing, GTID history,
+binary logging, version compatibility, target replication state, and writer
+endpoint postconditions before it can continue.
+
+Post-commit verification binds to the immutable plan digest and planned
+source/target UUIDs rather than the pre-mutation observation timestamp. This
+allows a refreshed post-promotion topology to be verified without weakening
+live native-identity, role, read-only, replication, or endpoint-owner checks.
+
 Audit and report persistence is fail-closed before the mutation commit point.
 After a mutation has committed, journal failure never skips verification. The
 workflow completes verification and returns `indeterminate`, preserving that
@@ -190,9 +201,10 @@ If the atomic metadata rename succeeds but directory synchronization cannot
 confirm crash durability, the committed result is retained, verification still
 runs, and the API returns the reconciled resources with an `indeterminate`
 execution. Terminal reports use a crash-recoverable two-phase protocol under one
-report UUID: a conservative fallback is made durable before the verified outcome
-replaces it. A terminal write failure therefore leaves a failed or indeterminate
-report appropriate to whether the database operation had already committed.
+report UUID for non-operation metadata workflows. Durable database operations
+instead publish their terminal record, final audit events, and report in one
+repository snapshot. A failed publication exposes none of those terminal
+records; a successful publication exposes all of them.
 
 Cluster registration and topology publication use the same post-rename
 semantics. If directory synchronization cannot confirm crash durability, the

@@ -189,7 +189,7 @@ func TestCLIQueryRunnerUsesPasswordEnvironmentAndParsesTSV(t *testing.T) {
 	script := `#!/bin/sh
 printf '%s\n' "$@" > "$MYSQL_TEST_ARGS"
 printf '%s' "$MYSQL_PWD" > "$MYSQL_TEST_PASSWORD"
-printf 'server_uuid\thostname\tnote\r\nsource-uuid\tmysql-a\t\r\nsource-uuid-2\tmysql-b\tready\r\n'
+printf '%s\n' 'server_uuid	hostname	note' 'source-uuid	mysql-a	' 'source-uuid-2	mysql-b	line1\nline2'
 `
 	if err := os.WriteFile(binaryPath, []byte(script), 0o700); err != nil {
 		t.Fatalf("write fake mysql: %v", err)
@@ -204,7 +204,7 @@ printf 'server_uuid\thostname\tnote\r\nsource-uuid\tmysql-a\t\r\nsource-uuid-2\t
 	}
 	if !reflect.DeepEqual(rows, []Row{
 		{"server_uuid": "source-uuid", "hostname": "mysql-a", "note": ""},
-		{"server_uuid": "source-uuid-2", "hostname": "mysql-b", "note": "ready"},
+		{"server_uuid": "source-uuid-2", "hostname": "mysql-b", "note": "line1\nline2"},
 	}) {
 		t.Fatalf("unexpected TSV rows: %#v", rows)
 	}
@@ -212,13 +212,20 @@ printf 'server_uuid\thostname\tnote\r\nsource-uuid\tmysql-a\t\r\nsource-uuid-2\t
 	if err != nil {
 		t.Fatalf("read args: %v", err)
 	}
+	argumentLines := strings.Split(strings.TrimSpace(string(args)), "\n")
+	if len(argumentLines) == 0 || argumentLines[0] != "--no-defaults" {
+		t.Fatalf("mysql option files were not disabled before all other arguments: %q", args)
+	}
 	if strings.Contains(string(args), password) || strings.Contains(string(args), "--password") {
 		t.Fatalf("password leaked into command arguments: %q", args)
 	}
-	for _, flag := range []string{"--batch", "--raw", "--protocol=TCP", "4407"} {
+	for _, flag := range []string{"--batch", "--protocol=TCP", "4407"} {
 		if !strings.Contains(string(args), flag) {
 			t.Fatalf("missing %s in command arguments: %q", flag, args)
 		}
+	}
+	if strings.Contains(string(args), "--raw") {
+		t.Fatalf("raw batch output can split multiline fields into invalid TSV records: %q", args)
 	}
 	if strings.Contains(string(args), "--skip-column-names") {
 		t.Fatalf("headers were disabled: %q", args)

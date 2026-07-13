@@ -121,6 +121,7 @@ func TestOfficialDistributionUsesClusterGuardPathsAndServiceName(t *testing.T) {
 	for _, contract := range []string{
 		"ExecStart=/usr/local/bin/clusterguard --config /etc/clusterguard/clusterguard.json",
 		"EnvironmentFile=-/etc/clusterguard/clusterguard.env",
+		"Environment=PATH=/usr/local/mysql/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin",
 		"StateDirectory=clusterguard",
 		"LogsDirectory=clusterguard",
 	} {

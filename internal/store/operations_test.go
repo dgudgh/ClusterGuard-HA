@@ -178,3 +178,71 @@ func TestIndeterminateOperationCanOnlyBeReconciledByPersistedVerification(t *tes
 		t.Fatalf("succeeded terminal was mutable: %v", err)
 	}
 }
+
+func TestFinalizeOperationAtomicallyPersistsTerminalTimeline(t *testing.T) {
+	repository := NewMemory()
+	created, _, err := repository.CreateOperation(operationFixture())
+	if err != nil {
+		t.Fatalf("create operation: %v", err)
+	}
+	execution := model.Execution{OperationID: created.ResourceID, Status: model.OperationSucceeded, Message: "verified"}
+	audits := []model.AuditEvent{
+		{OperationID: created.ResourceID, Stage: model.StageVerify, Message: "verification passed"},
+		{OperationID: created.ResourceID, Stage: model.StageReport, Message: "report generated"},
+	}
+	reports := []model.Report{{OperationID: created.ResourceID, Title: "switchover report", Status: model.OperationSucceeded, Summary: "verified"}}
+	finalized, err := repository.FinalizeOperation(created.ResourceID, created.MetadataRevision, model.OperationTransition{
+		Stage: model.StageReport, Status: model.OperationSucceeded, Execution: &execution, Message: "verified",
+	}, audits, reports)
+	if err != nil {
+		t.Fatalf("finalize operation: %v", err)
+	}
+	if finalized.Status != model.OperationSucceeded || finalized.Stage != model.StageReport || len(repository.Audits()) != 2 || len(repository.Reports()) != 1 {
+		t.Fatalf("atomic finalization mismatch: operation=%+v audits=%+v reports=%+v", finalized, repository.Audits(), repository.Reports())
+	}
+}
+
+func TestFinalizeOperationPublishesNothingWhenSnapshotPersistenceFails(t *testing.T) {
+	repository := NewMemory()
+	created, _, err := repository.CreateOperation(operationFixture())
+	if err != nil {
+		t.Fatalf("create operation: %v", err)
+	}
+	repository.path = t.TempDir()
+	_, err = repository.FinalizeOperation(created.ResourceID, created.MetadataRevision, model.OperationTransition{
+		Stage: model.StageReport, Status: model.OperationSucceeded, Message: "must not publish",
+	}, []model.AuditEvent{{OperationID: created.ResourceID, Stage: model.StageReport}}, []model.Report{{OperationID: created.ResourceID, Title: "report", Status: model.OperationSucceeded}})
+	if err == nil {
+		t.Fatal("atomic finalization ignored persistence failure")
+	}
+	persisted, found := repository.Operation(created.ResourceID)
+	if !found || persisted.Status == model.OperationSucceeded || len(repository.Audits()) != 0 || len(repository.Reports()) != 0 {
+		t.Fatalf("failed atomic finalization published partial state: operation=%+v audits=%+v reports=%+v", persisted, repository.Audits(), repository.Reports())
+	}
+}
+
+func TestOperationTimelineReadsOperationAuditsAndReportsTogether(t *testing.T) {
+	repository := NewMemory()
+	created, _, err := repository.CreateOperation(operationFixture())
+	if err != nil {
+		t.Fatalf("create operation: %v", err)
+	}
+	otherOperationID := model.NewResourceID()
+	if _, err := repository.FinalizeOperation(created.ResourceID, created.MetadataRevision, model.OperationTransition{
+		Stage: model.StageReport, Status: model.OperationSucceeded, Message: "verified",
+	}, []model.AuditEvent{
+		{OperationID: otherOperationID, Stage: model.StageReport, Message: "other"},
+	}, nil); err == nil {
+		t.Fatal("cross-operation audit was accepted")
+	}
+	if _, err := repository.FinalizeOperation(created.ResourceID, created.MetadataRevision, model.OperationTransition{
+		Stage: model.StageReport, Status: model.OperationSucceeded, Message: "verified",
+	}, []model.AuditEvent{{OperationID: created.ResourceID, Stage: model.StageReport, Message: "report generated"}},
+		[]model.Report{{OperationID: created.ResourceID, Title: "report", Status: model.OperationSucceeded, Summary: "verified"}}); err != nil {
+		t.Fatalf("finalize operation: %v", err)
+	}
+	timeline, found := repository.OperationTimeline(created.ResourceID)
+	if !found || timeline.Operation.Status != model.OperationSucceeded || len(timeline.Audits) != 1 || len(timeline.Reports) != 1 {
+		t.Fatalf("timeline=%+v found=%t", timeline, found)
+	}
+}

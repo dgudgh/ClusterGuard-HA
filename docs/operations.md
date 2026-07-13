@@ -332,30 +332,39 @@ The guarded kernel pins the exact topology observation used for precheck as
 `cluster_id@observed_at` and revalidates it after acquiring the operation lock.
 Discovery publication uses that same cluster lock, so it cannot replace the
 validated observation during execution. A changed or invalidated observation
-blocks approval and execution. Completed steps are durable and retries observe
-their postconditions before issuing another mutation. If a journal write fails
-before mutation, the workflow stops. If it fails after the mutation commit
-point, verification still runs and the API returns an `indeterminate` execution
-with HTTP `500`. An atomic metadata rename followed by a directory-sync warning
-is also reported as committed but `indeterminate`, including the reconciled
+blocks approval and execution. Completed steps are durable. An already-fenced
+source is accepted only when this operation owns the durable `fence_source`
+step; recovery then revalidates immutable source and target identities, fencing,
+GTID history, binary logging, release compatibility, replication state, and
+endpoint ownership before another mutation. If a journal write fails before
+mutation, the workflow stops. If it fails after the mutation commit point,
+verification still runs and the API returns an `indeterminate` execution with
+HTTP `500`. An atomic metadata rename followed by a directory-sync warning is
+also reported as committed but `indeterminate`, including the reconciled
 instance and endpoint in the response. Treat `indeterminate` as a manual-review
 state; do not automatically retry the operation.
 
 Post-commit verification uses a bounded context detached from the caller. A
 failed verification is persisted with its checks and remains `indeterminate`.
+Verification keeps the immutable plan digest and source/target UUID scope but
+accepts a newer topology observation and metadata revisions after promotion;
+the refreshed endpoints must still return the planned native identities and
+the expected live roles.
 Calling the operation `verify` action again may reconcile that record to
 `succeeded` only when explicit verification evidence passes; all other terminal
-states remain immutable. Audit and report persistence is attempted before the
-terminal operation status, so a journal failure cannot leave a durable
-`succeeded` record.
+states remain immutable. The terminal operation record, terminal audit events,
+and operation report are published in one repository snapshot, so readers
+cannot observe a succeeded report with a running operation or the reverse.
+Manual verification reconciliation uses the same atomic finalization path.
 
 Cluster registration and discovery publication follow the same rule. A
 post-rename durability warning returns HTTP `500` plus the committed resource or
 observation in `result`. Reconcile the returned cluster/endpoint UUIDs or the
 observation token `cluster_id@observed_at` before retrying; creating another
 cluster or publishing as though the observation were absent can duplicate user
-intent. Reports first persist a conservative fallback and then replace it with
-the terminal outcome under the same report UUID.
+intent. Non-operation metadata workflows first persist a conservative report
+fallback and then replace it with the terminal outcome under the same report
+UUID.
 
 MySQL multi-source replication is detected but not modeled in this phase. If
 `SHOW REPLICA STATUS` or its legacy equivalent returns more than one channel,

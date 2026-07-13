@@ -78,7 +78,7 @@ func (runner CLIQueryRunner) execute(ctx context.Context, endpoint adapter.Endpo
 	if host == "" || endpoint.Port <= 0 || credentials.Username == "" {
 		return nil, fmt.Errorf("database endpoint, port, and username are required")
 	}
-	command := exec.CommandContext(ctx, binary, "--batch", "--raw", "--protocol=TCP", "--connect-timeout=5", "-h", host, "-P", strconv.Itoa(endpoint.Port), "-u", credentials.Username, "-e", query)
+	command := exec.CommandContext(ctx, binary, "--no-defaults", "--batch", "--protocol=TCP", "--connect-timeout=5", "-h", host, "-P", strconv.Itoa(endpoint.Port), "-u", credentials.Username, "-e", query)
 	command.Env = append(os.Environ(), "MYSQL_PWD="+credentials.Password)
 	output, err := command.CombinedOutput()
 	if err != nil {
@@ -134,9 +134,44 @@ func parseTSV(output []byte) ([]Row, error) {
 		}
 		row := make(Row, len(headers))
 		for index, header := range headers {
-			row[header] = values[index]
+			row[header] = decodeMySQLBatchValue(values[index])
 		}
 		rows = append(rows, row)
 	}
 	return rows, nil
+}
+
+func decodeMySQLBatchValue(value string) string {
+	if !strings.Contains(value, `\`) {
+		return value
+	}
+	var decoded strings.Builder
+	decoded.Grow(len(value))
+	for index := 0; index < len(value); index++ {
+		if value[index] != '\\' || index+1 == len(value) {
+			decoded.WriteByte(value[index])
+			continue
+		}
+		index++
+		switch value[index] {
+		case '0':
+			decoded.WriteByte(0)
+		case 'b':
+			decoded.WriteByte('\b')
+		case 'n':
+			decoded.WriteByte('\n')
+		case 'r':
+			decoded.WriteByte('\r')
+		case 't':
+			decoded.WriteByte('\t')
+		case 'Z':
+			decoded.WriteByte(0x1a)
+		case '\\':
+			decoded.WriteByte('\\')
+		default:
+			decoded.WriteByte('\\')
+			decoded.WriteByte(value[index])
+		}
+	}
+	return decoded.String()
 }

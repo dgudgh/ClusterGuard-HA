@@ -8,6 +8,7 @@ Type=simple
 User=clusterguard
 Group=clusterguard
 EnvironmentFile=-/etc/clusterguard/clusterguard.env
+Environment=PATH=/usr/local/mysql/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
 ExecStart=/usr/local/bin/clusterguard --config /etc/clusterguard/clusterguard.json
 Restart=on-failure
 RestartSec=5s

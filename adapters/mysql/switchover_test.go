@@ -241,9 +241,16 @@ func TestSwitchoverPlanRejectsNonPassingEndpointEvidence(t *testing.T) {
 }
 
 func TestEndpointEvidenceSanitizationRedactsUnnamedProviderDetails(t *testing.T) {
-	check := sanitizeEndpointCheck(model.Check{Message: "vip-token=top-secret command=/sbin/ip"}, "writer_endpoint_owner")
-	if strings.Contains(check.Message, "top-secret") || strings.Contains(check.Message, "/sbin/ip") || check.Message == "" {
-		t.Fatalf("unsafe endpoint evidence message %q", check.Message)
+	for _, input := range []model.Check{
+		{Message: "vip-token=top-secret command=/sbin/ip"},
+		{Name: "vip-token=top-secret-/sbin/ip", Status: model.CheckPass, Message: "ready"},
+	} {
+		check := sanitizeEndpointCheck(input, "writer_endpoint_owner")
+		if strings.Contains(check.Name, "top-secret") || strings.Contains(check.Name, "/sbin/ip") ||
+			strings.Contains(check.Message, "top-secret") || strings.Contains(check.Message, "/sbin/ip") ||
+			check.Name != "writer_endpoint_owner" || check.Status != model.CheckFail {
+			t.Fatalf("unsafe endpoint evidence %+v", check)
+		}
 	}
 }
 

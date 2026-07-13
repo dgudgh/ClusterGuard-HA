@@ -89,11 +89,22 @@ func (resolver RepositoryResolver) Resolve(ctx context.Context, request adapter.
 	var primary model.DatabaseInstance
 	var target model.DatabaseInstance
 	primaryCount := 0
+	postCommitResolution := request.Plan != nil
+	if postCommitResolution {
+		if !model.ValidResourceID(request.Plan.SourceID) || !model.ValidResourceID(request.Plan.TargetID) || request.Plan.TargetID != request.TargetID {
+			return adapter.OperationRequest{}, fmt.Errorf("operation plan resources are invalid for verification")
+		}
+		if request.Plan.SourceID == request.Plan.TargetID {
+			return adapter.OperationRequest{}, fmt.Errorf("operation plan source and target must differ")
+		}
+	}
 	for _, instance := range snapshot.Instances {
 		if instance.ClusterID != cluster.ResourceID || instance.Engine != cluster.Engine || !model.ValidResourceID(instance.ResourceID) {
 			return adapter.OperationRequest{}, fmt.Errorf("topology contains an instance outside the selected cluster inventory")
 		}
-		if instance.Role == model.RolePrimary {
+		if postCommitResolution && instance.ResourceID == request.Plan.SourceID {
+			primary = instance
+		} else if !postCommitResolution && instance.Role == model.RolePrimary {
 			primary = instance
 			primaryCount++
 		}
@@ -101,13 +112,19 @@ func (resolver RepositoryResolver) Resolve(ctx context.Context, request adapter.
 			target = instance
 		}
 	}
-	if primaryCount != 1 {
-		return adapter.OperationRequest{}, fmt.Errorf("exactly one current primary is required")
+	if postCommitResolution {
+		if primary.ResourceID == "" {
+			return adapter.OperationRequest{}, fmt.Errorf("operation plan source is not in the selected cluster inventory")
+		}
+	} else {
+		if primaryCount != 1 {
+			return adapter.OperationRequest{}, fmt.Errorf("exactly one current primary is required")
+		}
 	}
 	if target.ResourceID == "" {
 		return adapter.OperationRequest{}, fmt.Errorf("target is not in the selected cluster inventory")
 	}
-	if target.ResourceID == primary.ResourceID {
+	if !postCommitResolution && target.ResourceID == primary.ResourceID {
 		return adapter.OperationRequest{}, fmt.Errorf("target must differ from the current primary")
 	}
 	credentials, err := resolver.Credentials.Credentials(ctx, cluster)

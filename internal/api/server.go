@@ -203,18 +203,7 @@ func (server *Server) operationRoute(writer http.ResponseWriter, request *http.R
 	case "execute":
 		execution, err := server.workflow.Execute(request.Context(), adapterRequest, payload.ApprovalToken)
 		record, _ := server.store.OperationByIdempotencyKey(payload.IdempotencyKey)
-		switch {
-		case errors.Is(err, adapter.ErrUnsupported):
-			writeJSON(writer, http.StatusNotImplemented, map[string]interface{}{"status": "unsupported", "result": record, "message": execution.Message})
-		case errors.Is(err, workflow.ErrJournalPersistence), err != nil && record.Status == model.OperationIndeterminate:
-			writeJSON(writer, http.StatusInternalServerError, map[string]interface{}{"status": "indeterminate", "result": record, "message": execution.Message})
-		case errors.Is(err, workflow.ErrOperationInProgress):
-			writeJSON(writer, http.StatusConflict, map[string]interface{}{"status": "running", "result": record, "message": err.Error()})
-		case err != nil:
-			server.writeOperationActionError(writer, err, record)
-		default:
-			writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": record})
-		}
+		writeOperationExecutionResponse(writer, err, execution, record)
 	case "verify":
 		verification, err := server.workflow.Verify(request.Context(), adapterRequest)
 		if err != nil {
