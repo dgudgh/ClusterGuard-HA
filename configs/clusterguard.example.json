@@ -20,6 +20,8 @@
   },
   "mysql": {
     "enabled": true,
+    "discovery_interval_seconds": 5,
+    "discovery_timeout_seconds": 4,
     "discovery": {
       "username": "cg_discovery",
       "password_env": "CG_MYSQL_DISCOVERY_PASSWORD"

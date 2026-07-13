@@ -20,10 +20,12 @@ type Credential struct {
 }
 
 type MySQL struct {
-	Enabled     bool       `json:"enabled"`
-	Discovery   Credential `json:"discovery"`
-	Operation   Credential `json:"operation"`
-	Replication Credential `json:"replication"`
+	Enabled                  bool       `json:"enabled"`
+	DiscoveryIntervalSeconds int        `json:"discovery_interval_seconds,omitempty"`
+	DiscoveryTimeoutSeconds  int        `json:"discovery_timeout_seconds,omitempty"`
+	Discovery                Credential `json:"discovery"`
+	Operation                Credential `json:"operation"`
+	Replication              Credential `json:"replication"`
 }
 
 type Agent struct {
@@ -134,6 +136,12 @@ func Load(path string) (File, error) {
 		}
 	}
 	if configuration.MySQL.Enabled {
+		if configuration.MySQL.DiscoveryIntervalSeconds <= 0 {
+			configuration.MySQL.DiscoveryIntervalSeconds = 5
+		}
+		if configuration.MySQL.DiscoveryTimeoutSeconds <= 0 {
+			configuration.MySQL.DiscoveryTimeoutSeconds = 4
+		}
 		for name, credential := range map[string]*Credential{
 			"discovery":   &configuration.MySQL.Discovery,
 			"operation":   &configuration.MySQL.Operation,

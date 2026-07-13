@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"clusterguard.io/ha/adapters/mysql"
@@ -27,6 +28,8 @@ import (
 type Runtime struct {
 	server    *api.Server
 	consensus *consensus.Node
+	cancel    context.CancelFunc
+	wait      sync.WaitGroup
 }
 
 func (runtime *Runtime) Handler() http.Handler {
@@ -37,7 +40,14 @@ func (runtime *Runtime) Handler() http.Handler {
 }
 
 func (runtime *Runtime) Close() error {
-	if runtime == nil || runtime.consensus == nil {
+	if runtime == nil {
+		return nil
+	}
+	if runtime.cancel != nil {
+		runtime.cancel()
+		runtime.wait.Wait()
+	}
+	if runtime.consensus == nil {
 		return nil
 	}
 	return runtime.consensus.Close()
@@ -150,6 +160,24 @@ func New(configuration config.File) (*Runtime, error) {
 		})))
 	}
 	result.server = api.NewServer(registry, repository, service, refresher, options...)
+	if configuration.MySQL.Enabled && configuration.MySQL.DiscoveryIntervalSeconds > 0 {
+		var authority discovery.ScheduledMutationAuthority
+		if result.consensus != nil {
+			authority = result.consensus
+		}
+		scheduler := discovery.NewScheduler(
+			repository, refresher, authority,
+			time.Duration(configuration.MySQL.DiscoveryIntervalSeconds)*time.Second,
+			time.Duration(configuration.MySQL.DiscoveryTimeoutSeconds)*time.Second,
+		)
+		var runContext context.Context
+		runContext, result.cancel = context.WithCancel(context.Background())
+		result.wait.Add(1)
+		go func() {
+			defer result.wait.Done()
+			scheduler.Run(runContext)
+		}()
+	}
 	return result, nil
 }
 

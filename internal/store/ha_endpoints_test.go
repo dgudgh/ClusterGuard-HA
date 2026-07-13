@@ -101,3 +101,28 @@ func TestHAEndpointSurvivesRepositoryRestart(t *testing.T) {
 		t.Fatalf("loaded HA endpoint=%+v found=%t", loaded, found)
 	}
 }
+
+func TestCommitHAEndpointOwnerAtomicallyFollowsVerifiedPhysicalOwner(t *testing.T) {
+	repository := NewMemory()
+	cluster, source := seedHAEndpointCluster(t, repository, "payments", 3306)
+	targetResult, err := repository.ReconcileInstance(model.DatabaseInstance{
+		ClusterID: cluster.ResourceID, Engine: model.EngineMySQL,
+		EngineIdentity: model.EngineIdentity{"server_uuid": "payments-target-uuid"},
+		Hostname:       "payments-target", IPAddress: "192.0.2.11", Port: 3306,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource, endpoint, err := repository.PutHAEndpoint(HAEndpointSpec{ClusterID: cluster.ResourceID, Kind: model.EndpointVIP, IPAddress: "192.0.2.100", Interface: "ens160", Prefix: 24, OwnerID: source.ResourceID, Active: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.CommitHAEndpointOwner(cluster.ResourceID, resource.ResourceID, targetResult.Instance.ResourceID, true); err != nil {
+		t.Fatalf("commit HA endpoint owner: %v", err)
+	}
+	updated, found := repository.HAEndpoint(resource.ResourceID)
+	updatedEndpoint, endpointFound := repository.Endpoint(endpoint.ResourceID)
+	if !found || !endpointFound || updated.OwnerID != targetResult.Instance.ResourceID || !updated.Healthy || updatedEndpoint.InstanceID != targetResult.Instance.ResourceID || updated.MetadataRevision != resource.MetadataRevision+1 || updatedEndpoint.MetadataRevision != endpoint.MetadataRevision+1 {
+		t.Fatalf("canonical HA endpoint owner resource=%+v endpoint=%+v", updated, updatedEndpoint)
+	}
+}

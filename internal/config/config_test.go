@@ -45,6 +45,9 @@ func TestLoadReadsConfigurationAndEnvironmentSecret(t *testing.T) {
 	if loaded.MySQL.Discovery.Password != "discovery-secret" || loaded.MySQL.Operation.Password != "operation-secret" || loaded.MySQL.Replication.Password != "replication-secret" || !loaded.MySQL.Enabled {
 		t.Fatalf("expected MySQL secret to be resolved: %+v", loaded.MySQL)
 	}
+	if loaded.MySQL.DiscoveryIntervalSeconds != 5 || loaded.MySQL.DiscoveryTimeoutSeconds != 4 {
+		t.Fatalf("unexpected discovery schedule: %+v", loaded.MySQL)
+	}
 }
 
 func TestLoadResolvesPurposeSpecificMySQLCredentials(t *testing.T) {

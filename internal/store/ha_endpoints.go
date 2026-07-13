@@ -116,6 +116,50 @@ func (repository *Repository) PutHAEndpoint(spec HAEndpointSpec) (model.HAEndpoi
 	return resource, endpoint, nil
 }
 
+// CommitHAEndpointOwner records a physically verified VIP owner without
+// changing the stable HA endpoint or endpoint UUIDs.
+func (repository *Repository) CommitHAEndpointOwner(clusterID, resourceID, ownerID model.ResourceID, healthy bool) error {
+	if !model.ValidResourceID(clusterID) || !model.ValidResourceID(resourceID) || !model.ValidResourceID(ownerID) {
+		return validationError("HA endpoint ownership scope is invalid")
+	}
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	resource, found := repository.snapshot.HAEndpoints[resourceID]
+	if !found || resource.ClusterID != clusterID || resource.Kind != model.EndpointVIP {
+		return validationError("HA endpoint resource is outside the selected cluster")
+	}
+	owner, found := repository.snapshot.Instances[ownerID]
+	if !found || owner.ClusterID != clusterID {
+		return validationError("HA endpoint owner is outside the selected cluster")
+	}
+	endpoint, found := repository.snapshot.Endpoints[clusterID][resource.EndpointID]
+	if !found || endpoint.Kind != model.EndpointVIP || !endpoint.Active {
+		return validationError("active VIP endpoint metadata is unavailable")
+	}
+	if resource.OwnerID == ownerID && resource.Healthy == healthy && endpoint.InstanceID == ownerID {
+		return nil
+	}
+	now := repository.now().UTC()
+	resource.OwnerID = ownerID
+	resource.Healthy = healthy
+	resource.MetadataRevision++
+	resource.UpdatedAt = now
+	endpoint.InstanceID = ownerID
+	endpoint.MetadataRevision++
+	endpoint.UpdatedAt = now
+
+	next := repository.snapshot
+	next.HAEndpoints = cloneHAEndpointMap(repository.snapshot.HAEndpoints)
+	next.HAEndpoints[resourceID] = resource
+	next.Endpoints = cloneEndpointMap(repository.snapshot.Endpoints)
+	next.Endpoints[clusterID][endpoint.ResourceID] = endpoint
+	if err := repository.commitSnapshotLocked(next); err != nil {
+		return err
+	}
+	repository.snapshot = next
+	return nil
+}
+
 func (repository *Repository) HAEndpoint(resourceID model.ResourceID) (model.HAEndpoint, bool) {
 	repository.mu.RLock()
 	defer repository.mu.RUnlock()

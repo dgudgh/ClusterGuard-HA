@@ -15,6 +15,7 @@ import (
 type Inventory interface {
 	HAEndpoints(model.ResourceID) []model.HAEndpoint
 	Endpoint(model.ResourceID) (model.Endpoint, bool)
+	CommitHAEndpointOwner(model.ResourceID, model.ResourceID, model.ResourceID, bool) error
 }
 
 type AgentTransport interface {
@@ -186,22 +187,32 @@ func (provider *LinuxVIPProvider) Transfer(ctx context.Context, resolved adapter
 	if !complete || len(owners) > 1 {
 		return fmt.Errorf("VIP ownership is unsafe before transfer")
 	}
-	for _, observation := range observations {
-		if observation.owns && observation.instance.ResourceID != resolved.Target.ResourceID {
-			if err := provider.sendMutation(ctx, resolved, resource, observation.instance, agent.CommandVIPRelease, lease); err != nil {
-				return fmt.Errorf("release source VIP: %w", err)
+	targetAlreadyOwns := len(owners) == 1 && owners[0] == resolved.Target.ResourceID
+	if !targetAlreadyOwns {
+		for _, observation := range observations {
+			if observation.owns && observation.instance.ResourceID != resolved.Target.ResourceID {
+				if err := provider.sendMutation(ctx, resolved, resource, observation.instance, agent.CommandVIPRelease, lease); err != nil {
+					return fmt.Errorf("release source VIP: %w", err)
+				}
 			}
+		}
+		owners, complete = observationSummary(provider.observe(ctx, resolved, resource))
+		if !complete || len(owners) != 0 {
+			return fmt.Errorf("zero VIP ownership could not be proven")
+		}
+		if err := provider.sendMutation(ctx, resolved, resource, resolved.Target, agent.CommandVIPAcquire, lease); err != nil {
+			return fmt.Errorf("acquire target VIP: %w", err)
 		}
 	}
 	owners, complete = observationSummary(provider.observe(ctx, resolved, resource))
-	if !complete || len(owners) != 0 {
-		return fmt.Errorf("zero VIP ownership could not be proven")
+	if !complete || len(owners) != 1 || owners[0] != resolved.Target.ResourceID {
+		return fmt.Errorf("target-only VIP ownership could not be verified")
 	}
-	if err := provider.sendMutation(ctx, resolved, resource, resolved.Target, agent.CommandVIPAcquire, lease); err != nil {
-		return fmt.Errorf("acquire target VIP: %w", err)
+	if err := provider.inventory.CommitHAEndpointOwner(resolved.Cluster.ResourceID, resource.resource.ResourceID, resolved.Target.ResourceID, true); err != nil {
+		return fmt.Errorf("commit VIP ownership metadata: %w", err)
 	}
 	if check := provider.Verify(ctx, resolved); check.Status != model.CheckPass {
-		return fmt.Errorf("target-only VIP ownership could not be verified")
+		return fmt.Errorf("physical and metadata VIP ownership did not converge")
 	}
 	return nil
 }
@@ -218,5 +229,8 @@ func (provider *LinuxVIPProvider) Verify(ctx context.Context, resolved adapter.R
 	if len(owners) != 1 || owners[0] != resolved.Target.ResourceID {
 		return model.Check{Name: "writer_endpoint_owner", Status: model.CheckFail, Message: "VIP is not owned only by the operation target"}
 	}
-	return model.Check{Name: "writer_endpoint_owner", Status: model.CheckPass, Message: "VIP is owned only by the operation target"}
+	if resource.resource.OwnerID != resolved.Target.ResourceID || resource.endpoint.InstanceID != resolved.Target.ResourceID {
+		return model.Check{Name: "writer_endpoint_owner", Status: model.CheckFail, Message: "physical VIP ownership is correct but canonical ownership metadata is stale"}
+	}
+	return model.Check{Name: "writer_endpoint_owner", Status: model.CheckPass, Message: "VIP physical and metadata ownership match only the operation target"}
 }

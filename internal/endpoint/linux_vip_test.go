@@ -16,6 +16,8 @@ import (
 type vipInventoryStub struct {
 	resources []model.HAEndpoint
 	endpoints map[model.ResourceID]model.Endpoint
+	updates   int
+	updateErr error
 }
 
 func (inventory vipInventoryStub) HAEndpoints(model.ResourceID) []model.HAEndpoint {
@@ -25,6 +27,26 @@ func (inventory vipInventoryStub) HAEndpoints(model.ResourceID) []model.HAEndpoi
 func (inventory vipInventoryStub) Endpoint(resourceID model.ResourceID) (model.Endpoint, bool) {
 	value, found := inventory.endpoints[resourceID]
 	return value, found
+}
+
+func (inventory *vipInventoryStub) CommitHAEndpointOwner(clusterID, resourceID, ownerID model.ResourceID, healthy bool) error {
+	if inventory.updateErr != nil {
+		return inventory.updateErr
+	}
+	for index := range inventory.resources {
+		resource := &inventory.resources[index]
+		if resource.ResourceID != resourceID || resource.ClusterID != clusterID {
+			continue
+		}
+		resource.OwnerID = ownerID
+		resource.Healthy = healthy
+		endpoint := inventory.endpoints[resource.EndpointID]
+		endpoint.InstanceID = ownerID
+		inventory.endpoints[resource.EndpointID] = endpoint
+		inventory.updates++
+		return nil
+	}
+	return errors.New("HA endpoint not found")
 }
 
 type agentTransportStub struct {
@@ -56,7 +78,7 @@ func (transport *agentTransportStub) Send(_ context.Context, instance model.Data
 	}
 }
 
-func vipProviderFixture(t *testing.T) (*LinuxVIPProvider, adapter.ResolvedOperation, *agentTransportStub, *MemoryLeaseStore) {
+func vipProviderFixture(t *testing.T) (*LinuxVIPProvider, adapter.ResolvedOperation, *agentTransportStub, *MemoryLeaseStore, *vipInventoryStub) {
 	t.Helper()
 	clusterID := model.NewResourceID()
 	primaryID := model.NewResourceID()
@@ -69,7 +91,7 @@ func vipProviderFixture(t *testing.T) (*LinuxVIPProvider, adapter.ResolvedOperat
 		{ResourceMeta: model.ResourceMeta{ResourceID: targetID}, ClusterID: clusterID, Hostname: "mysql-b", IPAddress: "192.0.2.11", Port: 3306, Role: model.RoleReplica},
 		{ResourceMeta: model.ResourceMeta{ResourceID: siblingID}, ClusterID: clusterID, Hostname: "mysql-c", IPAddress: "192.0.2.12", Port: 3306, Role: model.RoleReplica},
 	}
-	inventory := vipInventoryStub{
+	inventory := &vipInventoryStub{
 		resources: []model.HAEndpoint{{ResourceMeta: model.ResourceMeta{ResourceID: haID}, ClusterID: clusterID, EndpointID: endpointID, Kind: model.EndpointVIP, OwnerID: primaryID, Interface: "ens160", Prefix: 24}},
 		endpoints: map[model.ResourceID]model.Endpoint{endpointID: {ResourceMeta: model.ResourceMeta{ResourceID: endpointID}, ClusterID: clusterID, Kind: model.EndpointVIP, IPAddress: "192.0.2.100", Active: true}},
 	}
@@ -83,11 +105,11 @@ func vipProviderFixture(t *testing.T) (*LinuxVIPProvider, adapter.ResolvedOperat
 		Snapshot:    model.TopologySnapshot{ClusterID: clusterID, Instances: instances, ObservedAt: now},
 		Primary:     instances[0], Target: instances[1], PlanDigest: "sha256:0123456789abcdef",
 	}
-	return provider, resolved, transport, leases
+	return provider, resolved, transport, leases, inventory
 }
 
 func TestVIPPrecheckFailsOnUnknownProbeCoverage(t *testing.T) {
-	provider, resolved, transport, _ := vipProviderFixture(t)
+	provider, resolved, transport, _, _ := vipProviderFixture(t)
 	transport.unavailable[resolved.Snapshot.Instances[2].ResourceID] = true
 	checks := provider.Precheck(context.Background(), resolved)
 	if len(checks) != 1 || checks[0].Status != model.CheckFail || !strings.Contains(checks[0].Message, "coverage") {
@@ -96,7 +118,7 @@ func TestVIPPrecheckFailsOnUnknownProbeCoverage(t *testing.T) {
 }
 
 func TestVIPPrecheckFailsWithTwoOwners(t *testing.T) {
-	provider, resolved, transport, _ := vipProviderFixture(t)
+	provider, resolved, transport, _, _ := vipProviderFixture(t)
 	transport.owners[resolved.Target.ResourceID] = true
 	checks := provider.Precheck(context.Background(), resolved)
 	if len(checks) != 1 || checks[0].Status != model.CheckFail || !strings.Contains(checks[0].Message, "multiple") {
@@ -105,12 +127,15 @@ func TestVIPPrecheckFailsWithTwoOwners(t *testing.T) {
 }
 
 func TestVIPTransferReleasesEveryNonTargetBeforeAcquire(t *testing.T) {
-	provider, resolved, transport, _ := vipProviderFixture(t)
+	provider, resolved, transport, _, inventory := vipProviderFixture(t)
 	if err := provider.Transfer(context.Background(), resolved); err != nil {
 		t.Fatalf("transfer VIP: %v", err)
 	}
 	if transport.owners[resolved.Primary.ResourceID] || !transport.owners[resolved.Target.ResourceID] {
 		t.Fatalf("owners after transfer=%+v", transport.owners)
+	}
+	if inventory.updates != 1 || inventory.resources[0].OwnerID != resolved.Target.ResourceID || !inventory.resources[0].Healthy || inventory.endpoints[inventory.resources[0].EndpointID].InstanceID != resolved.Target.ResourceID {
+		t.Fatalf("inventory did not follow physical VIP ownership: %+v", inventory)
 	}
 	joined := strings.Join(transport.calls, "\n")
 	release := strings.Index(joined, agent.CommandVIPRelease+":"+string(resolved.Primary.ResourceID))
@@ -121,7 +146,7 @@ func TestVIPTransferReleasesEveryNonTargetBeforeAcquire(t *testing.T) {
 }
 
 func TestVIPTransferDoesNotAcquireWhenLeaseStoreBlocks(t *testing.T) {
-	provider, resolved, transport, leases := vipProviderFixture(t)
+	provider, resolved, transport, leases, _ := vipProviderFixture(t)
 	leases.Blocked = true
 	if err := provider.Transfer(context.Background(), resolved); err == nil || !strings.Contains(err.Error(), "lease") {
 		t.Fatalf("blocked lease error=%v", err)
@@ -134,7 +159,7 @@ func TestVIPTransferDoesNotAcquireWhenLeaseStoreBlocks(t *testing.T) {
 }
 
 func TestVIPVerifyRequiresExactlyOneTargetOwner(t *testing.T) {
-	provider, resolved, transport, _ := vipProviderFixture(t)
+	provider, resolved, transport, _, inventory := vipProviderFixture(t)
 	check := provider.Verify(context.Background(), resolved)
 	if check.Status != model.CheckFail {
 		t.Fatalf("pre-transfer verify=%+v", check)
@@ -142,7 +167,22 @@ func TestVIPVerifyRequiresExactlyOneTargetOwner(t *testing.T) {
 	transport.owners[resolved.Primary.ResourceID] = false
 	transport.owners[resolved.Target.ResourceID] = true
 	check = provider.Verify(context.Background(), resolved)
+	if check.Status != model.CheckFail || !strings.Contains(check.Message, "metadata") {
+		t.Fatalf("physical-only target ownership must not pass=%+v", check)
+	}
+	if err := inventory.CommitHAEndpointOwner(resolved.Cluster.ResourceID, inventory.resources[0].ResourceID, resolved.Target.ResourceID, true); err != nil {
+		t.Fatal(err)
+	}
+	check = provider.Verify(context.Background(), resolved)
 	if check.Status != model.CheckPass {
-		t.Fatalf("target-only verify=%+v", check)
+		t.Fatalf("physical and metadata target ownership=%+v", check)
+	}
+}
+
+func TestVIPTransferFailsWhenPhysicalMoveCannotCommitCanonicalOwner(t *testing.T) {
+	provider, resolved, _, _, inventory := vipProviderFixture(t)
+	inventory.updateErr = errors.New("metadata quorum unavailable")
+	if err := provider.Transfer(context.Background(), resolved); err == nil || !strings.Contains(err.Error(), "metadata") {
+		t.Fatalf("metadata commit error=%v", err)
 	}
 }
