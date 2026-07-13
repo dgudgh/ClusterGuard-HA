@@ -150,10 +150,12 @@ fi
 
 "${systemctl_binary}" daemon-reload
 if [[ "${role}" == "controller" || "${role}" == "mixed" ]]; then
-  "${systemctl_binary}" enable --now clusterguard-ha.service
+  "${systemctl_binary}" enable clusterguard-ha.service
+  "${systemctl_binary}" restart clusterguard-ha.service
 fi
 if [[ "${role}" == "data" || "${role}" == "mixed" ]]; then
-  "${systemctl_binary}" enable --now clusterguard-agent.service
+  "${systemctl_binary}" enable clusterguard-agent.service
+  "${systemctl_binary}" restart clusterguard-agent.service
   if [[ "${activate_agent_reconcile}" == "true" ]]; then
     "${systemctl_binary}" enable --now clusterguard-agent-reconcile.timer
   else

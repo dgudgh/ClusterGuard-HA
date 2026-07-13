@@ -164,8 +164,10 @@ func TestInstallerWritesProtectedEnvironmentAndDefersAgentReconcileByDefault(t *
 	logText := string(logContents)
 	for _, expected := range []string{
 		"daemon-reload",
-		"enable --now clusterguard-ha.service",
-		"enable --now clusterguard-agent.service",
+		"enable clusterguard-ha.service",
+		"restart clusterguard-ha.service",
+		"enable clusterguard-agent.service",
+		"restart clusterguard-agent.service",
 		"disable --now clusterguard-agent-reconcile.timer",
 	} {
 		if !strings.Contains(logText, expected) {
