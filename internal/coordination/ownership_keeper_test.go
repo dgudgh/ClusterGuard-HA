@@ -56,6 +56,13 @@ type ownershipObserverStub struct {
 	calls  int
 }
 
+type blockingOwnershipObserver struct{}
+
+func (blockingOwnershipObserver) ObserveOwnership(ctx context.Context, _ model.DatabaseCluster, _ model.TopologySnapshot) (endpoint.OwnershipObservation, error) {
+	<-ctx.Done()
+	return endpoint.OwnershipObservation{}, ctx.Err()
+}
+
 func (observer *ownershipObserverStub) ObserveOwnership(context.Context, model.DatabaseCluster, model.TopologySnapshot) (endpoint.OwnershipObservation, error) {
 	observer.calls++
 	return observer.result, observer.err
@@ -155,5 +162,21 @@ func TestOwnershipKeeperStopsRenewalForOldOwnerStaleTopologyOrMinority(t *testin
 				t.Fatalf("unsafe lease requests=%+v", leases.requests)
 			}
 		})
+	}
+}
+
+func TestOwnershipKeeperBoundsEachClusterProbe(t *testing.T) {
+	now := time.Now().UTC()
+	inventory, _, leases, _, _ := ownershipKeeperFixture(now)
+	keeper := NewOwnershipKeeper(
+		inventory, blockingOwnershipObserver{}, leases, ownershipAuthorityStub{}, func() time.Time { return now },
+		5*time.Second, 15*time.Second, WithOwnershipProbeTimeout(20*time.Millisecond),
+	)
+	started := time.Now()
+	if err := keeper.RunOnce(context.Background()); err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("bounded ownership probe err=%v", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("ownership probe exceeded timeout: %s", elapsed)
 	}
 }

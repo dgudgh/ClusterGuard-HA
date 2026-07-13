@@ -8,6 +8,7 @@ import (
 	"io"
 	"os/exec"
 	"strings"
+	"time"
 
 	"clusterguard.io/ha/internal/agent"
 	"clusterguard.io/ha/pkg/model"
@@ -25,7 +26,7 @@ func (OSProcessRunner) Run(ctx context.Context, input []byte, name string, argum
 	command.Env = []string{"PATH=/usr/local/bin:/usr/bin:/bin", "LANG=C", "LC_ALL=C"}
 	output, err := command.CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("agent transport command failed")
+		return nil, fmt.Errorf("agent transport command failed: %w", err)
 	}
 	return output, nil
 }
@@ -37,6 +38,7 @@ type SSHAgentTransportConfig struct {
 	KnownHostsFile  string
 	AgentBinary     string
 	AgentConfigPath string
+	CommandTimeout  time.Duration
 }
 
 type SSHAgentTransport struct {
@@ -60,6 +62,9 @@ func NewSSHAgentTransport(configuration SSHAgentTransportConfig, runner ProcessR
 	if configuration.AgentConfigPath == "" {
 		configuration.AgentConfigPath = "/etc/clusterguard/agent.json"
 	}
+	if configuration.CommandTimeout <= 0 {
+		configuration.CommandTimeout = 5 * time.Second
+	}
 	if configuration.User == "" || configuration.IdentityFile == "" || configuration.KnownHostsFile == "" || runner == nil {
 		return nil, fmt.Errorf("SSH agent transport configuration is incomplete")
 	}
@@ -67,6 +72,8 @@ func NewSSHAgentTransport(configuration SSHAgentTransportConfig, runner ProcessR
 }
 
 func (transport *SSHAgentTransport) Send(ctx context.Context, instance model.DatabaseInstance, request agent.Request) (agent.Response, error) {
+	commandContext, cancel := context.WithTimeout(ctx, transport.configuration.CommandTimeout)
+	defer cancel()
 	host := strings.TrimSpace(instance.IPAddress)
 	if host == "" {
 		host = strings.TrimSpace(instance.Hostname)
@@ -83,13 +90,17 @@ func (transport *SSHAgentTransport) Send(ctx context.Context, instance model.Dat
 		"-o", "BatchMode=yes",
 		"-o", "PasswordAuthentication=no",
 		"-o", "KbdInteractiveAuthentication=no",
+		"-o", "ConnectTimeout=5",
+		"-o", "ConnectionAttempts=1",
+		"-o", "ServerAliveInterval=2",
+		"-o", "ServerAliveCountMax=2",
 		"-o", "StrictHostKeyChecking=yes",
 		"-o", "UserKnownHostsFile=" + transport.configuration.KnownHostsFile,
 		"-i", transport.configuration.IdentityFile,
 		transport.configuration.User + "@" + host,
 		transport.configuration.AgentBinary, "--config", transport.configuration.AgentConfigPath,
 	}
-	output, err := transport.runner.Run(ctx, contents, transport.configuration.SSHBinary, arguments...)
+	output, err := transport.runner.Run(commandContext, contents, transport.configuration.SSHBinary, arguments...)
 	if err != nil {
 		return agent.Response{}, err
 	}

@@ -3,6 +3,7 @@ package endpoint
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,13 @@ type processRunnerStub struct {
 	input []byte
 	name  string
 	args  []string
+}
+
+type blockingProcessRunner struct{}
+
+func (blockingProcessRunner) Run(ctx context.Context, _ []byte, _ string, _ ...string) ([]byte, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
 }
 
 func (runner *processRunnerStub) Run(_ context.Context, input []byte, name string, arguments ...string) ([]byte, error) {
@@ -42,6 +50,7 @@ func TestSSHAgentTransportUsesPinnedNonInteractiveConnection(t *testing.T) {
 	joined := strings.Join(runner.args, " ")
 	for _, required := range []string{
 		"-o BatchMode=yes", "-o StrictHostKeyChecking=yes", "-o UserKnownHostsFile=/etc/clusterguard/agent_known_hosts",
+		"-o ConnectTimeout=5", "-o ConnectionAttempts=1", "-o ServerAliveInterval=2", "-o ServerAliveCountMax=2",
 		"-i /etc/clusterguard/agent_ed25519", "cg-agent@192.0.2.10", "/usr/local/bin/clusterguard-agent", "--config /etc/clusterguard/agent.json",
 	} {
 		if !strings.Contains(joined, required) {
@@ -50,6 +59,23 @@ func TestSSHAgentTransportUsesPinnedNonInteractiveConnection(t *testing.T) {
 	}
 	if runner.name != "/usr/bin/ssh" || !json.Valid(runner.input) || strings.Contains(joined, "password") {
 		t.Fatalf("unsafe transport name=%q args=%s input=%s", runner.name, joined, runner.input)
+	}
+}
+
+func TestSSHAgentTransportBoundsRemoteCommandDuration(t *testing.T) {
+	transport, err := NewSSHAgentTransport(SSHAgentTransportConfig{
+		User: "root", IdentityFile: "/key", KnownHostsFile: "/known", CommandTimeout: 20 * time.Millisecond,
+	}, blockingProcessRunner{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	_, err = transport.Send(context.Background(), model.DatabaseInstance{IPAddress: "192.0.2.10"}, agent.Request{})
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("bounded send err=%v", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("agent command exceeded timeout: %s", elapsed)
 	}
 }
 

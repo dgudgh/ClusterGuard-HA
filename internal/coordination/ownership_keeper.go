@@ -28,16 +28,27 @@ type OwnershipLeaseStore interface {
 }
 
 type OwnershipKeeper struct {
-	inventory OwnershipInventory
-	observer  OwnershipObserver
-	leases    OwnershipLeaseStore
-	authority MutationAuthority
-	now       func() time.Time
-	interval  time.Duration
-	maxAge    time.Duration
+	inventory    OwnershipInventory
+	observer     OwnershipObserver
+	leases       OwnershipLeaseStore
+	authority    MutationAuthority
+	now          func() time.Time
+	interval     time.Duration
+	maxAge       time.Duration
+	probeTimeout time.Duration
 }
 
-func NewOwnershipKeeper(inventory OwnershipInventory, observer OwnershipObserver, leases OwnershipLeaseStore, authority MutationAuthority, now func() time.Time, interval, maxAge time.Duration) *OwnershipKeeper {
+type OwnershipKeeperOption func(*OwnershipKeeper)
+
+func WithOwnershipProbeTimeout(timeout time.Duration) OwnershipKeeperOption {
+	return func(keeper *OwnershipKeeper) {
+		if timeout > 0 {
+			keeper.probeTimeout = timeout
+		}
+	}
+}
+
+func NewOwnershipKeeper(inventory OwnershipInventory, observer OwnershipObserver, leases OwnershipLeaseStore, authority MutationAuthority, now func() time.Time, interval, maxAge time.Duration, options ...OwnershipKeeperOption) *OwnershipKeeper {
 	if now == nil {
 		now = time.Now
 	}
@@ -47,7 +58,13 @@ func NewOwnershipKeeper(inventory OwnershipInventory, observer OwnershipObserver
 	if maxAge <= 0 {
 		maxAge = 15 * time.Second
 	}
-	return &OwnershipKeeper{inventory: inventory, observer: observer, leases: leases, authority: authority, now: now, interval: interval, maxAge: maxAge}
+	keeper := &OwnershipKeeper{inventory: inventory, observer: observer, leases: leases, authority: authority, now: now, interval: interval, maxAge: maxAge, probeTimeout: 6 * time.Second}
+	for _, option := range options {
+		if option != nil {
+			option(keeper)
+		}
+	}
+	return keeper
 }
 
 func writablePrimary(snapshot model.TopologySnapshot) (model.DatabaseInstance, error) {
@@ -119,7 +136,10 @@ func (keeper *OwnershipKeeper) RunOnce(ctx context.Context) error {
 	now := keeper.now().UTC()
 	var failures []error
 	for _, cluster := range keeper.inventory.Clusters() {
-		if err := keeper.reconcileCluster(ctx, cluster, now); err != nil {
+		probeContext, cancel := context.WithTimeout(ctx, keeper.probeTimeout)
+		err := keeper.reconcileCluster(probeContext, cluster, now)
+		cancel()
+		if err != nil {
 			failures = append(failures, err)
 		}
 	}
