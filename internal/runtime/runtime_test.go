@@ -2,17 +2,61 @@ package runtime
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"clusterguard.io/ha/internal/agent"
 	"clusterguard.io/ha/internal/config"
+	"clusterguard.io/ha/internal/endpoint"
 	"clusterguard.io/ha/pkg/adapter"
 	"clusterguard.io/ha/pkg/model"
 )
+
+type runtimeFailoverAuthority struct{}
+
+func (runtimeFailoverAuthority) RequireMutationAuthority(context.Context) error { return nil }
+
+type runtimeFailoverInventory struct {
+	resource model.HAEndpoint
+	endpoint model.Endpoint
+}
+
+func (inventory runtimeFailoverInventory) HAEndpoints(model.ResourceID) []model.HAEndpoint {
+	return []model.HAEndpoint{inventory.resource}
+}
+
+func (inventory runtimeFailoverInventory) Endpoint(resourceID model.ResourceID) (model.Endpoint, bool) {
+	return inventory.endpoint, resourceID == inventory.endpoint.ResourceID
+}
+
+type runtimeFailoverLeases struct{}
+
+func (runtimeFailoverLeases) Acquire(context.Context, endpoint.LeaseRequest) (endpoint.Lease, error) {
+	return endpoint.Lease{}, nil
+}
+func (runtimeFailoverLeases) Validate(context.Context, endpoint.Lease) error  { return nil }
+func (runtimeFailoverLeases) Release(context.Context, model.ResourceID) error { return nil }
+
+type runtimeFailoverTransport struct{}
+
+func (runtimeFailoverTransport) Send(_ context.Context, _ model.DatabaseInstance, request agent.Request) (agent.Response, error) {
+	switch request.Command {
+	case agent.CommandVIPStatus:
+		owns := false
+		return agent.Response{Status: agent.StatusOK, OwnsVIP: &owns}, nil
+	case agent.CommandRoleStatus:
+		readOnly, superReadOnly := true, true
+		return agent.Response{Status: agent.StatusOK, ReadOnly: &readOnly, SuperReadOnly: &superReadOnly}, nil
+	default:
+		return agent.Response{Status: agent.StatusOK}, nil
+	}
+}
 
 func runtimeFreeAddress(t *testing.T) string {
 	t.Helper()
@@ -57,6 +101,50 @@ func TestMySQLDiscoveryCredentialsDoNotUseOperationSecret(t *testing.T) {
 	if credentials != (adapter.Credentials{Username: "discover", Password: "discovery-secret"}) {
 		t.Fatalf("unexpected discovery credentials: %+v", credentials)
 	}
+}
+
+func TestMySQLFailoverRuntimeSharesThirtySecondFailureEvidence(t *testing.T) {
+	now := time.Date(2026, time.July, 13, 20, 0, 30, 0, time.UTC)
+	clusterID, primaryID, targetID := model.NewResourceID(), model.NewResourceID(), model.NewResourceID()
+	endpointID, haEndpointID := model.NewResourceID(), model.NewResourceID()
+	components := newMySQLFailoverRuntime(
+		runtimeFailoverAuthority{},
+		runtimeFailoverInventory{
+			resource: model.HAEndpoint{
+				ResourceMeta: model.ResourceMeta{ResourceID: haEndpointID}, ClusterID: clusterID,
+				EndpointID: endpointID, Kind: model.EndpointVIP, Interface: "ens160", Prefix: 24,
+			},
+			endpoint: model.Endpoint{
+				ResourceMeta: model.ResourceMeta{ResourceID: endpointID}, ClusterID: clusterID,
+				Kind: model.EndpointVIP, IPAddress: "192.0.2.100", Active: true,
+			},
+		},
+		runtimeFailoverLeases{}, runtimeFailoverTransport{}, "agent-secret", func() time.Time { return now },
+	)
+	if components.failureObserver == nil {
+		t.Fatal("runtime did not expose a primary-failure observer to discovery")
+	}
+	start := now.Add(-30 * time.Second)
+	components.failureObserver.Record(clusterID, true, start)
+	for index := 1; index <= 6; index++ {
+		components.failureObserver.Record(clusterID, true, start.Add(time.Duration(index)*5*time.Second))
+	}
+	resolved := adapter.ResolvedOperation{
+		OperationID: model.NewResourceID(),
+		Cluster:     model.DatabaseCluster{ResourceMeta: model.ResourceMeta{ResourceID: clusterID}, Engine: model.EngineMySQL},
+		Primary:     model.DatabaseInstance{ResourceMeta: model.ResourceMeta{ResourceID: primaryID}, ClusterID: clusterID, Engine: model.EngineMySQL},
+		Target:      model.DatabaseInstance{ResourceMeta: model.ResourceMeta{ResourceID: targetID}, ClusterID: clusterID, Engine: model.EngineMySQL},
+	}
+	checks := components.safety.Precheck(context.Background(), resolved)
+	for _, check := range checks {
+		if check.Name == "stable_primary_failure" {
+			if check.Status != model.CheckPass {
+				t.Fatalf("runtime failover safety did not consume discovery evidence: %+v", checks)
+			}
+			return
+		}
+	}
+	t.Fatalf("runtime failover safety omitted stable-primary-failure check: %+v", checks)
 }
 
 func runtimeRequest(t *testing.T, handler http.Handler, method string, path string, body interface{}) *httptest.ResponseRecorder {

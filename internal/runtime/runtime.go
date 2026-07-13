@@ -33,6 +33,29 @@ type Runtime struct {
 	wait      sync.WaitGroup
 }
 
+type mysqlFailoverRuntime struct {
+	failureObserver discovery.PrimaryFailureObserver
+	safety          mysql.FailoverSafetyProvider
+}
+
+func newMySQLFailoverRuntime(
+	authority coordination.MutationAuthority,
+	inventory coordination.FailoverInventory,
+	leases writerendpoint.LeaseStore,
+	transport writerendpoint.AgentTransport,
+	secret string,
+	now func() time.Time,
+) mysqlFailoverRuntime {
+	components := mysqlFailoverRuntime{safety: mysql.UnsupportedFailoverSafetyProvider{}}
+	if authority == nil || inventory == nil || leases == nil || transport == nil || secret == "" {
+		return components
+	}
+	failures := coordination.NewFailureWindow(6, 30*time.Second)
+	components.failureObserver = failures
+	components.safety = coordination.NewGuardedFailoverSafety(failures, authority, inventory, leases, transport, secret, now)
+	return components
+}
+
 func (runtime *Runtime) startLoop(run func(context.Context)) {
 	if runtime.runCtx == nil {
 		runtime.runCtx, runtime.cancel = context.WithCancel(context.Background())
@@ -94,6 +117,7 @@ func New(configuration config.File) (*Runtime, error) {
 	var endpointProvider adapter.HAEndpointProvider = mysql.UnsupportedHAEndpointProvider{}
 	var vipProvider *writerendpoint.LinuxVIPProvider
 	var ownershipLeases *coordination.LeaseStore
+	var agentTransport writerendpoint.AgentTransport
 	if configuration.Agent.Enabled {
 		if result.consensus == nil {
 			return nil, fmt.Errorf("agent-backed VIP execution requires controller consensus")
@@ -107,11 +131,23 @@ func New(configuration config.File) (*Runtime, error) {
 			_ = result.Close()
 			return nil, fmt.Errorf("configure agent transport: %w", transportErr)
 		}
+		agentTransport = transport
 		ownershipLeases = coordination.NewLeaseStore(repository, result.consensus, nil)
 		vipProvider = writerendpoint.NewLinuxVIPProvider(repository, transport, ownershipLeases, configuration.Agent.SharedSecret, nil)
 		endpointProvider = vipProvider
 	}
-	mysqlAdapter := mysql.NewWithProviders(mysql.CLIQueryRunner{}, endpointProvider, repository)
+	var failoverAuthority coordination.MutationAuthority
+	var failoverLeases writerendpoint.LeaseStore
+	if result.consensus != nil {
+		failoverAuthority = result.consensus
+	}
+	if ownershipLeases != nil {
+		failoverLeases = ownershipLeases
+	}
+	failoverRuntime := newMySQLFailoverRuntime(
+		failoverAuthority, repository, failoverLeases, agentTransport, configuration.Agent.SharedSecret, nil,
+	)
+	mysqlAdapter := mysql.NewWithSafetyProviders(mysql.CLIQueryRunner{}, endpointProvider, repository, failoverRuntime.safety)
 	for _, candidate := range []adapter.DatabaseHAAdapter{
 		mysqlAdapter,
 		postgresql.New(),
@@ -140,12 +176,16 @@ func New(configuration config.File) (*Runtime, error) {
 			Credentials: workflow.CredentialProviderFunc(mysqlCredentials),
 		}),
 	)
+	discoveryOptions := []discovery.Option{discovery.WithPublicationFence(locks)}
+	if failoverRuntime.failureObserver != nil {
+		discoveryOptions = append(discoveryOptions, discovery.WithPrimaryFailureObserver(failoverRuntime.failureObserver))
+	}
 	refresher := discovery.New(registry, repository, discovery.CredentialResolverFunc(func(context.Context, model.DatabaseCluster, model.Endpoint) (adapter.Credentials, error) {
 		if !configuration.MySQL.Enabled {
 			return adapter.Credentials{}, fmt.Errorf("MySQL discovery credentials are not configured")
 		}
 		return mysqlDiscoveryCredentials(configuration.MySQL)
-	}), nil, discovery.WithPublicationFence(locks))
+	}), nil, discoveryOptions...)
 	options := []api.ServerOption{api.WithControlToken(configuration.ControlToken), api.WithMonitoringToken(configuration.MonitoringToken)}
 	if configuration.Agent.Enabled {
 		options = append(options, api.WithAgentReconcileSecret(configuration.Agent.SharedSecret))
