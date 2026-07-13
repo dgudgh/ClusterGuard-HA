@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"clusterguard.io/ha/pkg/adapter"
 )
@@ -78,7 +79,8 @@ func (runner CLIQueryRunner) execute(ctx context.Context, endpoint adapter.Endpo
 	if host == "" || endpoint.Port <= 0 || credentials.Username == "" {
 		return nil, fmt.Errorf("database endpoint, port, and username are required")
 	}
-	command := exec.CommandContext(ctx, binary, "--no-defaults", "--batch", "--protocol=TCP", "--connect-timeout=5", "-h", host, "-P", strconv.Itoa(endpoint.Port), "-u", credentials.Username)
+	connectTimeout := mysqlConnectTimeoutSeconds(ctx)
+	command := exec.CommandContext(ctx, binary, "--no-defaults", "--batch", "--protocol=TCP", "--connect-timeout="+strconv.Itoa(connectTimeout), "-h", host, "-P", strconv.Itoa(endpoint.Port), "-u", credentials.Username)
 	command.Stdin = strings.NewReader(query + "\n")
 	command.Env = append(os.Environ(), "MYSQL_PWD="+credentials.Password)
 	output, err := command.CombinedOutput()
@@ -90,6 +92,23 @@ func (runner CLIQueryRunner) execute(ctx context.Context, endpoint adapter.Endpo
 		}
 	}
 	return output, nil
+}
+
+func mysqlConnectTimeoutSeconds(ctx context.Context) int {
+	const defaultTimeout = 5
+	deadline, bounded := ctx.Deadline()
+	if !bounded {
+		return defaultTimeout
+	}
+	remaining := time.Until(deadline) - time.Second
+	if remaining < time.Second {
+		return 1
+	}
+	seconds := int(remaining / time.Second)
+	if seconds < defaultTimeout {
+		return seconds
+	}
+	return defaultTimeout
 }
 
 func mysqlErrorCode(output []byte) int {
