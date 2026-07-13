@@ -9,11 +9,17 @@ import (
 	"strings"
 )
 
-type MySQL struct {
-	Enabled     bool   `json:"enabled"`
+type Credential struct {
 	Username    string `json:"username"`
 	PasswordEnv string `json:"password_env"`
 	Password    string `json:"-"`
+}
+
+type MySQL struct {
+	Enabled     bool       `json:"enabled"`
+	Discovery   Credential `json:"discovery"`
+	Operation   Credential `json:"operation"`
+	Replication Credential `json:"replication"`
 }
 
 type File struct {
@@ -63,18 +69,31 @@ func Load(path string) (File, error) {
 		}
 	}
 	if configuration.MySQL.Enabled {
-		configuration.MySQL.Username = strings.TrimSpace(configuration.MySQL.Username)
-		if configuration.MySQL.Username == "" {
-			return File{}, fmt.Errorf("MySQL username is required when MySQL is enabled")
-		}
-		configuration.MySQL.PasswordEnv = strings.TrimSpace(configuration.MySQL.PasswordEnv)
-		if configuration.MySQL.PasswordEnv == "" {
-			return File{}, fmt.Errorf("MySQL password_env is required when MySQL is enabled")
-		}
-		configuration.MySQL.Password = os.Getenv(configuration.MySQL.PasswordEnv)
-		if strings.TrimSpace(configuration.MySQL.Password) == "" {
-			return File{}, fmt.Errorf("MySQL password environment variable %s is empty", configuration.MySQL.PasswordEnv)
+		for name, credential := range map[string]*Credential{
+			"discovery":   &configuration.MySQL.Discovery,
+			"operation":   &configuration.MySQL.Operation,
+			"replication": &configuration.MySQL.Replication,
+		} {
+			if err := resolveCredential(name, credential); err != nil {
+				return File{}, err
+			}
 		}
 	}
 	return configuration, nil
+}
+
+func resolveCredential(name string, credential *Credential) error {
+	credential.Username = strings.TrimSpace(credential.Username)
+	if credential.Username == "" {
+		return fmt.Errorf("MySQL %s username is required when MySQL is enabled", name)
+	}
+	credential.PasswordEnv = strings.TrimSpace(credential.PasswordEnv)
+	if credential.PasswordEnv == "" {
+		return fmt.Errorf("MySQL %s password_env is required when MySQL is enabled", name)
+	}
+	credential.Password = os.Getenv(credential.PasswordEnv)
+	if strings.TrimSpace(credential.Password) == "" {
+		return fmt.Errorf("MySQL %s password environment variable %s is empty", name, credential.PasswordEnv)
+	}
+	return nil
 }

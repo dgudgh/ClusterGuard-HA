@@ -16,14 +16,21 @@ func TestLoadReadsConfigurationAndEnvironmentSecret(t *testing.T) {
   "metadata_path": "` + filepath.Join(directory, "metadata.json") + `",
   "control_token_env": "CG_TEST_CONTROL",
   "approval_token_env": "CG_TEST_APPROVAL",
-  "mysql": {"enabled": true, "username": "discover", "password_env": "CG_TEST_MYSQL_PASSWORD"}
+  "mysql": {
+    "enabled": true,
+    "discovery": {"username": "discover", "password_env": "CG_TEST_MYSQL_DISCOVERY"},
+    "operation": {"username": "operator", "password_env": "CG_TEST_MYSQL_OPERATION"},
+    "replication": {"username": "replicator", "password_env": "CG_TEST_MYSQL_REPLICATION"}
+  }
 }`
 	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("CG_TEST_APPROVAL", "approve-this")
 	t.Setenv("CG_TEST_CONTROL", "control-this")
-	t.Setenv("CG_TEST_MYSQL_PASSWORD", "secret")
+	t.Setenv("CG_TEST_MYSQL_DISCOVERY", "discovery-secret")
+	t.Setenv("CG_TEST_MYSQL_OPERATION", "operation-secret")
+	t.Setenv("CG_TEST_MYSQL_REPLICATION", "replication-secret")
 
 	loaded, err := Load(path)
 	if err != nil {
@@ -32,8 +39,72 @@ func TestLoadReadsConfigurationAndEnvironmentSecret(t *testing.T) {
 	if loaded.HTTPAddress != "127.0.0.1:9090" || loaded.ApprovalToken != "approve-this" || loaded.ControlToken != "control-this" {
 		t.Fatalf("unexpected runtime configuration: %+v", loaded)
 	}
-	if loaded.MySQL.Password != "secret" || !loaded.MySQL.Enabled {
+	if loaded.MySQL.Discovery.Password != "discovery-secret" || loaded.MySQL.Operation.Password != "operation-secret" || loaded.MySQL.Replication.Password != "replication-secret" || !loaded.MySQL.Enabled {
 		t.Fatalf("expected MySQL secret to be resolved: %+v", loaded.MySQL)
+	}
+}
+
+func TestLoadResolvesPurposeSpecificMySQLCredentials(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "control.json")
+	contents := `{
+  "metadata_path": "` + filepath.Join(directory, "metadata.json") + `",
+  "mysql": {
+    "enabled": true,
+    "discovery": {"username": "discover", "password_env": "CG_TEST_DISCOVERY"},
+    "operation": {"username": "operator", "password_env": "CG_TEST_OPERATION"},
+    "replication": {"username": "replicator", "password_env": "CG_TEST_REPLICATION"}
+  }
+}`
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CG_TEST_DISCOVERY", "discovery-secret")
+	t.Setenv("CG_TEST_OPERATION", "operation-secret")
+	t.Setenv("CG_TEST_REPLICATION", "replication-secret")
+
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("load configuration: %v", err)
+	}
+	if loaded.MySQL.Discovery.Username != "discover" || loaded.MySQL.Discovery.Password != "discovery-secret" {
+		t.Fatalf("unexpected discovery credentials: %+v", loaded.MySQL.Discovery)
+	}
+	if loaded.MySQL.Operation.Username != "operator" || loaded.MySQL.Operation.Password != "operation-secret" {
+		t.Fatalf("unexpected operation credentials: %+v", loaded.MySQL.Operation)
+	}
+	if loaded.MySQL.Replication.Username != "replicator" || loaded.MySQL.Replication.Password != "replication-secret" {
+		t.Fatalf("unexpected replication credentials: %+v", loaded.MySQL.Replication)
+	}
+	encoded, err := json.Marshal(loaded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"discovery-secret", "operation-secret", "replication-secret"} {
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("serialized configuration exposed %q: %s", secret, encoded)
+		}
+	}
+}
+
+func TestLoadRejectsMissingPurposeSpecificMySQLCredential(t *testing.T) {
+	t.Setenv("CG_TEST_DISCOVERY", "discovery-secret")
+	t.Setenv("CG_TEST_OPERATION", "operation-secret")
+	path := filepath.Join(t.TempDir(), "control.json")
+	contents := `{
+  "metadata_path": "` + filepath.Join(t.TempDir(), "metadata.json") + `",
+  "mysql": {
+    "enabled": true,
+    "discovery": {"username": "discover", "password_env": "CG_TEST_DISCOVERY"},
+    "operation": {"username": "operator", "password_env": "CG_TEST_OPERATION"},
+    "replication": {"username": "replicator", "password_env": "CG_TEST_REPLICATION_MISSING"}
+  }
+}`
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "replication") {
+		t.Fatalf("missing replication secret must be rejected clearly, got %v", err)
 	}
 }
 

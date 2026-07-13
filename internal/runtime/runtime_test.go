@@ -9,8 +9,41 @@ import (
 	"testing"
 
 	"clusterguard.io/ha/internal/config"
+	"clusterguard.io/ha/pkg/adapter"
 	"clusterguard.io/ha/pkg/model"
 )
+
+func TestMySQLOperationCredentialsAreIndependent(t *testing.T) {
+	credentials, err := mysqlOperationCredentials(config.MySQL{
+		Enabled:     true,
+		Discovery:   config.Credential{Username: "discover", Password: "discovery-secret"},
+		Operation:   config.Credential{Username: "operator", Password: "operation-secret"},
+		Replication: config.Credential{Username: "replicator", Password: "replication-secret"},
+	})
+	if err != nil {
+		t.Fatalf("resolve credentials: %v", err)
+	}
+	if credentials.Administrative != (adapter.Credentials{Username: "operator", Password: "operation-secret"}) {
+		t.Fatalf("unexpected administrative credentials: %+v", credentials.Administrative)
+	}
+	if credentials.Replication != (adapter.Credentials{Username: "replicator", Password: "replication-secret"}) {
+		t.Fatalf("unexpected replication credentials: %+v", credentials.Replication)
+	}
+}
+
+func TestMySQLDiscoveryCredentialsDoNotUseOperationSecret(t *testing.T) {
+	credentials, err := mysqlDiscoveryCredentials(config.MySQL{
+		Enabled:   true,
+		Discovery: config.Credential{Username: "discover", Password: "discovery-secret"},
+		Operation: config.Credential{Username: "operator", Password: "operation-secret"},
+	})
+	if err != nil {
+		t.Fatalf("resolve credentials: %v", err)
+	}
+	if credentials != (adapter.Credentials{Username: "discover", Password: "discovery-secret"}) {
+		t.Fatalf("unexpected discovery credentials: %+v", credentials)
+	}
+}
 
 func runtimeRequest(t *testing.T, handler http.Handler, method string, path string, body interface{}) *httptest.ResponseRecorder {
 	t.Helper()
@@ -30,7 +63,12 @@ func TestRuntimeWiresDurableOperationsWithUnsupportedDefaultEndpointProvider(t *
 	server, err := New(config.File{
 		MetadataPath: filepath.Join(t.TempDir(), "metadata.json"),
 		ControlToken: "control", ApprovalToken: "approval",
-		MySQL: config.MySQL{Enabled: true, Username: "clusterguard", Password: "secret"},
+		MySQL: config.MySQL{
+			Enabled:     true,
+			Discovery:   config.Credential{Username: "discover", Password: "discovery-secret"},
+			Operation:   config.Credential{Username: "operator", Password: "operation-secret"},
+			Replication: config.Credential{Username: "replicator", Password: "replication-secret"},
+		},
 	})
 	if err != nil {
 		t.Fatalf("new runtime: %v", err)

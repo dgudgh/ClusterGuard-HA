@@ -5,7 +5,17 @@
   "approval_token_env": "CG_APPROVAL_TOKEN",
   "mysql": {
     "enabled": true,
-    "username": "cg_discovery",
-    "password_env": "CG_MYSQL_DISCOVERY_PASSWORD"
+    "discovery": {
+      "username": "cg_discovery",
+      "password_env": "CG_MYSQL_DISCOVERY_PASSWORD"
+    },
+    "operation": {
+      "username": "cg_operator",
+      "password_env": "CG_MYSQL_OPERATION_PASSWORD"
+    },
+    "replication": {
+      "username": "cg_replication",
+      "password_env": "CG_MYSQL_REPLICATION_PASSWORD"
+    }
   }
 }

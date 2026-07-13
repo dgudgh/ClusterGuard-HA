@@ -35,11 +35,8 @@ func New(configuration config.File) (*api.Server, error) {
 		}
 	}
 	locks := workflow.NewMemoryLocks()
-	mysqlCredentials := func(context.Context, model.DatabaseCluster) (adapter.Credentials, error) {
-		if !configuration.MySQL.Enabled {
-			return adapter.Credentials{}, fmt.Errorf("MySQL operation credentials are not configured")
-		}
-		return adapter.Credentials{Username: configuration.MySQL.Username, Password: configuration.MySQL.Password}, nil
+	mysqlCredentials := func(context.Context, model.DatabaseCluster) (adapter.OperationCredentials, error) {
+		return mysqlOperationCredentials(configuration.MySQL)
 	}
 	service := workflow.New(
 		registry,
@@ -58,7 +55,30 @@ func New(configuration config.File) (*api.Server, error) {
 		if !configuration.MySQL.Enabled {
 			return adapter.Credentials{}, fmt.Errorf("MySQL discovery credentials are not configured")
 		}
-		return adapter.Credentials{Username: configuration.MySQL.Username, Password: configuration.MySQL.Password}, nil
+		return mysqlDiscoveryCredentials(configuration.MySQL)
 	}), nil, discovery.WithPublicationFence(locks))
 	return api.NewServer(registry, repository, service, refresher, api.WithControlToken(configuration.ControlToken)), nil
+}
+
+func mysqlOperationCredentials(configuration config.MySQL) (adapter.OperationCredentials, error) {
+	if !configuration.Enabled {
+		return adapter.OperationCredentials{}, fmt.Errorf("MySQL operation credentials are not configured")
+	}
+	if configuration.Operation.Username == "" || configuration.Operation.Password == "" {
+		return adapter.OperationCredentials{}, fmt.Errorf("MySQL operation credentials are incomplete")
+	}
+	if configuration.Replication.Username == "" || configuration.Replication.Password == "" {
+		return adapter.OperationCredentials{}, fmt.Errorf("MySQL replication credentials are incomplete")
+	}
+	return adapter.OperationCredentials{
+		Administrative: adapter.Credentials{Username: configuration.Operation.Username, Password: configuration.Operation.Password},
+		Replication:    adapter.Credentials{Username: configuration.Replication.Username, Password: configuration.Replication.Password},
+	}, nil
+}
+
+func mysqlDiscoveryCredentials(configuration config.MySQL) (adapter.Credentials, error) {
+	if !configuration.Enabled || configuration.Discovery.Username == "" || configuration.Discovery.Password == "" {
+		return adapter.Credentials{}, fmt.Errorf("MySQL discovery credentials are not configured")
+	}
+	return adapter.Credentials{Username: configuration.Discovery.Username, Password: configuration.Discovery.Password}, nil
 }

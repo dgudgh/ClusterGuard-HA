@@ -15,12 +15,12 @@ type OperationResourceReader interface {
 }
 
 type CredentialProvider interface {
-	Credentials(context.Context, model.DatabaseCluster) (adapter.Credentials, error)
+	Credentials(context.Context, model.DatabaseCluster) (adapter.OperationCredentials, error)
 }
 
-type CredentialProviderFunc func(context.Context, model.DatabaseCluster) (adapter.Credentials, error)
+type CredentialProviderFunc func(context.Context, model.DatabaseCluster) (adapter.OperationCredentials, error)
 
-func (provider CredentialProviderFunc) Credentials(ctx context.Context, cluster model.DatabaseCluster) (adapter.Credentials, error) {
+func (provider CredentialProviderFunc) Credentials(ctx context.Context, cluster model.DatabaseCluster) (adapter.OperationCredentials, error) {
 	return provider(ctx, cluster)
 }
 
@@ -131,17 +131,22 @@ func (resolver RepositoryResolver) Resolve(ctx context.Context, request adapter.
 	if err != nil {
 		return adapter.OperationRequest{}, fmt.Errorf("resolve operation credentials: %w", err)
 	}
-	if strings.TrimSpace(credentials.Username) == "" {
+	if strings.TrimSpace(credentials.Administrative.Username) == "" {
 		return adapter.OperationRequest{}, fmt.Errorf("resolved operation credentials have no username")
 	}
+	if strings.TrimSpace(credentials.Replication.Username) == "" {
+		return adapter.OperationRequest{}, fmt.Errorf("resolved replication credentials have no username")
+	}
 
-	request.Credentials = credentials
+	request.Credentials = credentials.Administrative
+	request.ReplicationCredentials = credentials.Replication
 	request.Resolved = &adapter.ResolvedOperation{
-		Cluster:     cluster,
-		Snapshot:    snapshot,
-		Primary:     primary,
-		Target:      target,
-		Credentials: credentials,
+		Cluster:                cluster,
+		Snapshot:               snapshot,
+		Primary:                primary,
+		Target:                 target,
+		Credentials:            credentials.Administrative,
+		ReplicationCredentials: credentials.Replication,
 	}
 	return request, nil
 }

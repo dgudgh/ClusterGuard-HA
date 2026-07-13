@@ -69,8 +69,11 @@ func TestRepositoryResolverResolvesUUIDScopedContext(t *testing.T) {
 	reader, request := resolvedOperationFixture()
 	resolver := RepositoryResolver{
 		Reader: reader,
-		Credentials: CredentialProviderFunc(func(context.Context, model.DatabaseCluster) (adapter.Credentials, error) {
-			return adapter.Credentials{Username: "clusterguard", Password: "secret"}, nil
+		Credentials: CredentialProviderFunc(func(context.Context, model.DatabaseCluster) (adapter.OperationCredentials, error) {
+			return adapter.OperationCredentials{
+				Administrative: adapter.Credentials{Username: "clusterguard", Password: "secret"},
+				Replication:    adapter.Credentials{Username: "replicator", Password: "replication-secret"},
+			}, nil
 		}),
 	}
 	resolved, err := resolver.Resolve(context.Background(), request)
@@ -82,6 +85,9 @@ func TestRepositoryResolverResolvesUUIDScopedContext(t *testing.T) {
 	}
 	if resolved.Resolved.Credentials.Username != "clusterguard" || resolved.Resolved.Credentials.Password != "secret" {
 		t.Fatalf("server-side credentials were not injected")
+	}
+	if resolved.Resolved.ReplicationCredentials.Username != "replicator" || resolved.Resolved.ReplicationCredentials.Password != "replication-secret" {
+		t.Fatalf("server-side replication credentials were not injected")
 	}
 }
 
@@ -101,8 +107,8 @@ func TestRepositoryResolverUsesImmutablePlanResourcesForPostCommitVerification(t
 			request.Plan = &model.OperationPlan{SourceID: sourceID, TargetID: targetID}
 			resolver := RepositoryResolver{
 				Reader: reader,
-				Credentials: CredentialProviderFunc(func(context.Context, model.DatabaseCluster) (adapter.Credentials, error) {
-					return adapter.Credentials{Username: "clusterguard"}, nil
+				Credentials: CredentialProviderFunc(func(context.Context, model.DatabaseCluster) (adapter.OperationCredentials, error) {
+					return adapter.OperationCredentials{Administrative: adapter.Credentials{Username: "clusterguard"}, Replication: adapter.Credentials{Username: "replicator"}}, nil
 				}),
 			}
 			resolved, err := resolver.Resolve(context.Background(), request)
@@ -163,8 +169,8 @@ func TestRepositoryResolverRejectsAmbiguousOrExternalResources(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			reader, request := resolvedOperationFixture()
 			test.mutate(&reader, &request)
-			resolver := RepositoryResolver{Reader: reader, Credentials: CredentialProviderFunc(func(context.Context, model.DatabaseCluster) (adapter.Credentials, error) {
-				return adapter.Credentials{Username: "clusterguard"}, nil
+			resolver := RepositoryResolver{Reader: reader, Credentials: CredentialProviderFunc(func(context.Context, model.DatabaseCluster) (adapter.OperationCredentials, error) {
+				return adapter.OperationCredentials{Administrative: adapter.Credentials{Username: "clusterguard"}, Replication: adapter.Credentials{Username: "replicator"}}, nil
 			})}
 			_, err := resolver.Resolve(context.Background(), request)
 			if err == nil || !strings.Contains(err.Error(), test.want) {
@@ -177,8 +183,8 @@ func TestRepositoryResolverRejectsAmbiguousOrExternalResources(t *testing.T) {
 func TestRepositoryResolverFailsClosedWhenCredentialsCannotResolve(t *testing.T) {
 	reader, request := resolvedOperationFixture()
 	credentialFailure := errors.New("secret backend unavailable")
-	resolver := RepositoryResolver{Reader: reader, Credentials: CredentialProviderFunc(func(context.Context, model.DatabaseCluster) (adapter.Credentials, error) {
-		return adapter.Credentials{}, credentialFailure
+	resolver := RepositoryResolver{Reader: reader, Credentials: CredentialProviderFunc(func(context.Context, model.DatabaseCluster) (adapter.OperationCredentials, error) {
+		return adapter.OperationCredentials{}, credentialFailure
 	})}
 	_, err := resolver.Resolve(context.Background(), request)
 	if !errors.Is(err, credentialFailure) {

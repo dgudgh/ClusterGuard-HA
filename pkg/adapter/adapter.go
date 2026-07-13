@@ -53,6 +53,11 @@ type Credentials struct {
 	Password string `json:"-"`
 }
 
+type OperationCredentials struct {
+	Administrative Credentials `json:"-"`
+	Replication    Credentials `json:"-"`
+}
+
 type DiscoverRequest struct {
 	ClusterID   model.ResourceID `json:"cluster_id"`
 	Endpoint    Endpoint         `json:"endpoint"`
@@ -70,14 +75,15 @@ type TopologyResult struct {
 }
 
 type OperationRequest struct {
-	Operation      model.Operation      `json:"operation"`
-	TargetID       model.ResourceID     `json:"target_id,omitempty"`
-	IdempotencyKey string               `json:"idempotency_key,omitempty"`
-	Parameters     map[string]string    `json:"parameters,omitempty"`
-	Credentials    Credentials          `json:"-"`
-	Resolved       *ResolvedOperation   `json:"-"`
-	Plan           *model.OperationPlan `json:"-"`
-	Progress       OperationProgress    `json:"-"`
+	Operation              model.Operation      `json:"operation"`
+	TargetID               model.ResourceID     `json:"target_id,omitempty"`
+	IdempotencyKey         string               `json:"idempotency_key,omitempty"`
+	Parameters             map[string]string    `json:"parameters,omitempty"`
+	Credentials            Credentials          `json:"-"`
+	ReplicationCredentials Credentials          `json:"-"`
+	Resolved               *ResolvedOperation   `json:"-"`
+	Plan                   *model.OperationPlan `json:"-"`
+	Progress               OperationProgress    `json:"-"`
 }
 
 type OperationProgress interface {
@@ -89,11 +95,12 @@ type OperationProgressReader interface {
 }
 
 type ResolvedOperation struct {
-	Cluster     model.DatabaseCluster  `json:"cluster"`
-	Snapshot    model.TopologySnapshot `json:"snapshot"`
-	Primary     model.DatabaseInstance `json:"primary"`
-	Target      model.DatabaseInstance `json:"target"`
-	Credentials Credentials            `json:"-"`
+	Cluster                model.DatabaseCluster  `json:"cluster"`
+	Snapshot               model.TopologySnapshot `json:"snapshot"`
+	Primary                model.DatabaseInstance `json:"primary"`
+	Target                 model.DatabaseInstance `json:"target"`
+	Credentials            Credentials            `json:"-"`
+	ReplicationCredentials Credentials            `json:"-"`
 }
 
 type HAEndpointProvider interface {
