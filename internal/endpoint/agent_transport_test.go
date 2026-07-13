@@ -62,3 +62,21 @@ func TestSSHAgentTransportRejectsInstanceWithoutAddress(t *testing.T) {
 		t.Fatal("addressless instance must be rejected")
 	}
 }
+
+func TestSSHAgentTransportDefaultsToProtectedEnvironmentWrapper(t *testing.T) {
+	runner := &processRunnerStub{}
+	transport, err := NewSSHAgentTransport(SSHAgentTransportConfig{
+		User: "root", IdentityFile: "/key", KnownHostsFile: "/known",
+	}, runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := agent.Request{Command: agent.CommandVIPStatus, ClusterID: model.NewResourceID(), OperationID: model.NewResourceID(), PlanDigest: "sha256:test", ExpiresAt: time.Now().Add(time.Minute), Signature: "signature"}
+	if _, err := transport.Send(context.Background(), model.DatabaseInstance{IPAddress: "192.0.2.10"}, request); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(runner.args, " ")
+	if !strings.Contains(joined, "/usr/local/libexec/clusterguard-agent-stdio --config /etc/clusterguard/agent.json") {
+		t.Fatalf("default remote command bypasses protected agent environment: %s", joined)
+	}
+}

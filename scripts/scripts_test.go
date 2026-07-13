@@ -34,7 +34,7 @@ func fakeInstallBundle(t *testing.T) string {
 	for _, name := range []string{"clusterguard", "cgctl", "clusterguard-agent"} {
 		writeExecutable(t, filepath.Join(root, "bin", name), "#!/usr/bin/env bash\nexit 0\n")
 	}
-	for _, name := range []string{"clusterguard-node-lifecycle.sh", "clusterguard-mysql-install.sh", "clusterguard-mysql-sync.sh", "clusterguard-preflight.sh", "clusterguard-smoke.sh"} {
+	for _, name := range []string{"clusterguard-node-lifecycle.sh", "clusterguard-mysql-install.sh", "clusterguard-mysql-sync.sh", "clusterguard-preflight.sh", "clusterguard-smoke.sh", "clusterguard-agent-stdio.sh"} {
 		writeExecutable(t, filepath.Join(root, "scripts", name), "#!/usr/bin/env bash\nexit 0\n")
 	}
 	for _, name := range []string{"clusterguard-ha.service", "clusterguard-agent.service", "clusterguard-agent-reconcile.service", "clusterguard-agent-reconcile.timer"} {
@@ -60,6 +60,7 @@ func installerArguments(bundle, config, environment, agentConfig string) []strin
 func TestDeliveryScriptsAreSyntaxValid(t *testing.T) {
 	paths := []string{
 		"clusterguard-install.sh",
+		"clusterguard-agent-stdio.sh",
 		"clusterguard-preflight.sh",
 		"build-clusterguard-bundle.sh",
 		"clusterguard-smoke.sh",
@@ -68,6 +69,22 @@ func TestDeliveryScriptsAreSyntaxValid(t *testing.T) {
 	for _, path := range paths {
 		if output, err := exec.Command("bash", "-n", path).CombinedOutput(); err != nil {
 			t.Fatalf("bash -n %s: %v\n%s", path, err, output)
+		}
+	}
+}
+
+func TestAgentStdioWrapperLoadsProtectedEnvironmentBeforeAgent(t *testing.T) {
+	contents, err := os.ReadFile("clusterguard-agent-stdio.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	for _, expected := range []string{
+		"source /etc/clusterguard/agent.env",
+		"exec /usr/local/bin/clusterguard-agent \"$@\"",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("agent stdio wrapper is missing %q", expected)
 		}
 	}
 }
@@ -278,7 +295,7 @@ func TestBundleBuildContainsInstallableRuntimeAndChecksums(t *testing.T) {
 	}
 	text := string(contents)
 	for _, expected := range []string{
-		"cmd/clusterguard", "cmd/cgctl", "cmd/clusterguard-agent", "SHA256SUMS", "clusterguard-install.sh",
+		"cmd/clusterguard", "cmd/cgctl", "cmd/clusterguard-agent", "SHA256SUMS", "clusterguard-install.sh", "clusterguard-agent-stdio.sh",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("bundle builder missing %q", expected)

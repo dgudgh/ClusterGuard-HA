@@ -58,6 +58,7 @@ required=(
   scripts/clusterguard-node-lifecycle.sh
   scripts/clusterguard-mysql-install.sh
   scripts/clusterguard-mysql-sync.sh
+  scripts/clusterguard-agent-stdio.sh
   packaging/systemd/clusterguard-ha.service
   packaging/systemd/clusterguard-agent.service
   packaging/systemd/clusterguard-agent-reconcile.service

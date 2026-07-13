@@ -35,7 +35,7 @@ for target in "${build_targets[@]}"; do
   package_path="${target#*:}"
   CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" go -C "${repository}" build -trimpath -ldflags "-s -w" -o "${root}/bin/${command_path}" "${package_path}"
 done
-for helper in clusterguard-install.sh clusterguard-preflight.sh clusterguard-smoke.sh clusterguard-ha-matrix.sh clusterguard-node-lifecycle.sh clusterguard-mysql-install.sh clusterguard-mysql-sync.sh; do
+for helper in clusterguard-install.sh clusterguard-preflight.sh clusterguard-smoke.sh clusterguard-ha-matrix.sh clusterguard-node-lifecycle.sh clusterguard-mysql-install.sh clusterguard-mysql-sync.sh clusterguard-agent-stdio.sh; do
   install -m 0755 "${repository}/scripts/${helper}" "${root}/scripts/${helper}"
 done
 cp "${repository}"/configs/*.json "${root}/configs/"

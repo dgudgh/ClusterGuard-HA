@@ -46,7 +46,7 @@
     "identity_file": "/etc/clusterguard/agent_ed25519",
     "known_hosts_file": "/etc/clusterguard/agent_known_hosts",
     "ssh_binary": "/usr/bin/ssh",
-    "agent_binary": "/usr/local/bin/clusterguard-agent",
+    "agent_binary": "/usr/local/libexec/clusterguard-agent-stdio",
     "agent_config_path": "/etc/clusterguard/agent.json",
     "shared_secret_env": "CG_AGENT_SHARED_SECRET"
   },

@@ -55,7 +55,7 @@ func NewSSHAgentTransport(configuration SSHAgentTransportConfig, runner ProcessR
 		configuration.SSHBinary = "/usr/bin/ssh"
 	}
 	if configuration.AgentBinary == "" {
-		configuration.AgentBinary = "/usr/local/bin/clusterguard-agent"
+		configuration.AgentBinary = "/usr/local/libexec/clusterguard-agent-stdio"
 	}
 	if configuration.AgentConfigPath == "" {
 		configuration.AgentConfigPath = "/etc/clusterguard/agent.json"
