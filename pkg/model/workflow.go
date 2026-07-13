@@ -24,6 +24,8 @@ const (
 	OperationFailover               OperationKind = "failover"
 	OperationNodeSync               OperationKind = "node_sync"
 	OperationMetadataReconciliation OperationKind = "metadata_reconciliation"
+	OperationFormerPrimaryRejoin    OperationKind = "former_primary_rejoin"
+	OperationReplicationRepair      OperationKind = "replication_repair"
 )
 
 type OperationStatus string

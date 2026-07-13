@@ -25,7 +25,7 @@ func New(configuration config.File) (*api.Server, error) {
 		return nil, err
 	}
 	registry := adapter.NewRegistry()
-	mysqlAdapter := mysql.New(mysql.CLIQueryRunner{})
+	var endpointProvider adapter.HAEndpointProvider = mysql.UnsupportedHAEndpointProvider{}
 	if configuration.Agent.Enabled {
 		transport, transportErr := writerendpoint.NewSSHAgentTransport(writerendpoint.SSHAgentTransportConfig{
 			SSHBinary: configuration.Agent.SSHBinary, User: configuration.Agent.User,
@@ -35,9 +35,9 @@ func New(configuration config.File) (*api.Server, error) {
 		if transportErr != nil {
 			return nil, fmt.Errorf("configure agent transport: %w", transportErr)
 		}
-		provider := writerendpoint.NewLinuxVIPProvider(repository, transport, writerendpoint.NewMemoryLeaseStore(nil), configuration.Agent.SharedSecret, nil)
-		mysqlAdapter = mysql.NewWithEndpointProvider(mysql.CLIQueryRunner{}, provider)
+		endpointProvider = writerendpoint.NewLinuxVIPProvider(repository, transport, writerendpoint.NewMemoryLeaseStore(nil), configuration.Agent.SharedSecret, nil)
 	}
+	mysqlAdapter := mysql.NewWithProviders(mysql.CLIQueryRunner{}, endpointProvider, repository)
 	for _, candidate := range []adapter.DatabaseHAAdapter{
 		mysqlAdapter,
 		postgresql.New(),

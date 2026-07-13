@@ -10,7 +10,8 @@ import (
 
 func validOperationKind(kind model.OperationKind) bool {
 	switch kind {
-	case model.OperationSwitchover, model.OperationFailover, model.OperationNodeSync, model.OperationMetadataReconciliation:
+	case model.OperationSwitchover, model.OperationFailover, model.OperationNodeSync, model.OperationMetadataReconciliation,
+		model.OperationFormerPrimaryRejoin, model.OperationReplicationRepair:
 		return true
 	default:
 		return false

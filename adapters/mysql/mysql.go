@@ -12,6 +12,7 @@ type Adapter struct {
 	runner           SQLRunner
 	executor         SQLExecutor
 	endpointProvider adapter.HAEndpointProvider
+	maintenance      MaintenanceStore
 }
 
 func New(runner SQLRunner) *Adapter {
@@ -19,14 +20,21 @@ func New(runner SQLRunner) *Adapter {
 }
 
 func NewWithEndpointProvider(runner SQLRunner, endpointProvider adapter.HAEndpointProvider) *Adapter {
+	return NewWithProviders(runner, endpointProvider, UnsupportedMaintenanceStore{})
+}
+
+func NewWithProviders(runner SQLRunner, endpointProvider adapter.HAEndpointProvider, maintenance MaintenanceStore) *Adapter {
 	if runner == nil {
 		runner = CLIQueryRunner{}
 	}
 	if endpointProvider == nil {
 		endpointProvider = UnsupportedHAEndpointProvider{}
 	}
+	if maintenance == nil {
+		maintenance = UnsupportedMaintenanceStore{}
+	}
 	executor, _ := runner.(SQLExecutor)
-	return &Adapter{runner: runner, executor: executor, endpointProvider: endpointProvider}
+	return &Adapter{runner: runner, executor: executor, endpointProvider: endpointProvider, maintenance: maintenance}
 }
 
 func (adapterInstance *Adapter) Engine() model.Engine { return model.EngineMySQL }
@@ -35,7 +43,7 @@ func (adapterInstance *Adapter) Capabilities(ctx context.Context) adapter.Capabi
 	executionAvailable := adapterInstance.executor != nil && adapterInstance.endpointProvider != nil && adapterInstance.endpointProvider.Executable(ctx)
 	executionReason := "a mutating SQL executor and writer-endpoint provider are required"
 	if executionAvailable {
-		executionReason = "guarded planned-switchover execution is implemented"
+		executionReason = "guarded switchover, former-primary rejoin, and replication repair are implemented"
 	}
 	return adapter.Capabilities{Engine: model.EngineMySQL, Features: map[adapter.Capability]adapter.CapabilityState{
 		adapter.CapabilityDiscover:          {Available: true, Reason: "read-only discovery is implemented"},
@@ -93,16 +101,52 @@ func (adapterInstance *Adapter) EvaluateCandidates(_ context.Context, request ad
 }
 
 func (adapterInstance *Adapter) Precheck(ctx context.Context, request adapter.OperationRequest) ([]model.Check, error) {
-	return adapterInstance.switchoverPrecheck(ctx, request)
+	switch request.Operation.Kind {
+	case model.OperationSwitchover:
+		return adapterInstance.switchoverPrecheck(ctx, request)
+	case model.OperationFormerPrimaryRejoin:
+		return adapterInstance.rejoinPrecheck(ctx, request)
+	case model.OperationReplicationRepair:
+		return adapterInstance.repairPrecheck(ctx, request)
+	default:
+		return nil, adapter.ErrUnsupported
+	}
 }
 func (adapterInstance *Adapter) BuildPlan(ctx context.Context, request adapter.OperationRequest) (model.OperationPlan, error) {
-	return adapterInstance.switchoverPlan(ctx, request)
+	switch request.Operation.Kind {
+	case model.OperationSwitchover:
+		return adapterInstance.switchoverPlan(ctx, request)
+	case model.OperationFormerPrimaryRejoin:
+		return adapterInstance.rejoinPlan(ctx, request)
+	case model.OperationReplicationRepair:
+		return adapterInstance.repairPlan(ctx, request)
+	default:
+		return model.OperationPlan{}, adapter.ErrUnsupported
+	}
 }
 func (adapterInstance *Adapter) Execute(ctx context.Context, request adapter.OperationRequest) (model.Execution, error) {
-	return adapterInstance.switchoverExecute(ctx, request)
+	switch request.Operation.Kind {
+	case model.OperationSwitchover:
+		return adapterInstance.switchoverExecute(ctx, request)
+	case model.OperationFormerPrimaryRejoin:
+		return adapterInstance.rejoinExecute(ctx, request)
+	case model.OperationReplicationRepair:
+		return adapterInstance.repairExecute(ctx, request)
+	default:
+		return model.Execution{}, adapter.ErrUnsupported
+	}
 }
 func (adapterInstance *Adapter) Verify(ctx context.Context, request adapter.OperationRequest) (model.Verification, error) {
-	return adapterInstance.switchoverVerify(ctx, request)
+	switch request.Operation.Kind {
+	case model.OperationSwitchover:
+		return adapterInstance.switchoverVerify(ctx, request)
+	case model.OperationFormerPrimaryRejoin:
+		return adapterInstance.rejoinVerify(ctx, request)
+	case model.OperationReplicationRepair:
+		return adapterInstance.repairVerify(ctx, request)
+	default:
+		return model.Verification{}, adapter.ErrUnsupported
+	}
 }
 func (adapterInstance *Adapter) NodeSyncPrecheck(context.Context, adapter.OperationRequest) ([]model.Check, error) {
 	return nil, adapter.ErrUnsupported

@@ -1770,6 +1770,7 @@ func (repository *Repository) TopologySnapshot(clusterID model.ResourceID) (mode
 		overlaid.IPAddress = canonical.IPAddress
 		overlaid.Port = canonical.Port
 		overlaid.Aliases = append([]string{}, canonical.Aliases...)
+		overlaid.Maintenance = canonical.Maintenance
 		result.Instances[index] = overlaid
 	}
 	return result, true

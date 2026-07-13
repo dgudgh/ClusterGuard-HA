@@ -138,6 +138,10 @@ func (client *threeNodeSQLClient) Exec(_ context.Context, endpoint adapter.Endpo
 	case "START REPLICA", "START SLAVE":
 		node.ioRunning = true
 		node.sqlRunning = true
+	case "START REPLICA IO_THREAD", "START SLAVE IO_THREAD":
+		node.ioRunning = true
+	case "START REPLICA SQL_THREAD", "START SLAVE SQL_THREAD":
+		node.sqlRunning = true
 	default:
 		if strings.HasPrefix(statement, "CHANGE REPLICATION SOURCE TO") || strings.HasPrefix(statement, "CHANGE MASTER TO") {
 			node.sourceUUID = targetUUID
