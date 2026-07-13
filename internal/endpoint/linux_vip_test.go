@@ -145,6 +145,89 @@ func TestVIPTransferReleasesEveryNonTargetBeforeAcquire(t *testing.T) {
 	}
 }
 
+func TestVIPAuthorizeTransitionCreatesTargetLeaseWithoutMovingVIP(t *testing.T) {
+	provider, resolved, transport, leases, inventory := vipProviderFixture(t)
+	authorization, err := provider.AuthorizeTransition(context.Background(), resolved)
+	if err != nil {
+		t.Fatalf("authorize transition: %v", err)
+	}
+	defer authorization.Cancel()
+	if len(leases.leases) != 1 {
+		t.Fatalf("transition leases=%d, want 1", len(leases.leases))
+	}
+	var authorized Lease
+	for _, lease := range leases.leases {
+		authorized = lease
+	}
+	if authorized.OperationID != resolved.OperationID || authorized.OwnerID != resolved.Target.ResourceID || !authorized.Active {
+		t.Fatalf("transition lease=%+v", authorized)
+	}
+	if len(transport.calls) != 0 || !transport.owners[resolved.Primary.ResourceID] || transport.owners[resolved.Target.ResourceID] {
+		t.Fatalf("authorization moved VIP ownership: calls=%v owners=%+v", transport.calls, transport.owners)
+	}
+	if inventory.updates != 0 || inventory.resources[0].OwnerID != resolved.Primary.ResourceID {
+		t.Fatalf("authorization changed canonical owner: %+v", inventory)
+	}
+	if err := provider.Transfer(context.Background(), resolved); err != nil {
+		t.Fatalf("transfer with prepared lease: %v", err)
+	}
+	if len(leases.leases) != 1 {
+		t.Fatalf("transfer replaced prepared lease: %+v", leases.leases)
+	}
+	for resourceID := range leases.leases {
+		if resourceID != authorized.ResourceID {
+			t.Fatalf("transfer used lease %s, want prepared lease %s", resourceID, authorized.ResourceID)
+		}
+	}
+}
+
+type failingRenewalLeaseStore struct {
+	delegate *MemoryLeaseStore
+	mu       sync.Mutex
+	calls    int
+}
+
+func (store *failingRenewalLeaseStore) Acquire(ctx context.Context, request LeaseRequest) (Lease, error) {
+	store.mu.Lock()
+	store.calls++
+	call := store.calls
+	store.mu.Unlock()
+	if call > 1 {
+		return Lease{}, errors.New("quorum renewal failed")
+	}
+	return store.delegate.Acquire(ctx, request)
+}
+
+func (store *failingRenewalLeaseStore) Validate(ctx context.Context, lease Lease) error {
+	return store.delegate.Validate(ctx, lease)
+}
+
+func (store *failingRenewalLeaseStore) Release(ctx context.Context, resourceID model.ResourceID) error {
+	return store.delegate.Release(ctx, resourceID)
+}
+
+func TestVIPTransitionAuthorizationCancelsWhenLeaseRenewalFails(t *testing.T) {
+	provider, resolved, _, leases, _ := vipProviderFixture(t)
+	provider.leases = &failingRenewalLeaseStore{delegate: leases}
+	provider.transitionRenewInterval = time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	authorization, err := provider.AuthorizeTransition(ctx, resolved)
+	if err != nil {
+		t.Fatalf("authorize transition: %v", err)
+	}
+	defer authorization.Cancel()
+	select {
+	case <-authorization.Context.Done():
+		if cause := context.Cause(authorization.Context); cause == nil || !strings.Contains(cause.Error(), "renew") {
+			t.Fatalf("authorization cancellation cause=%v", cause)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("transition authorization remained active after lease renewal failure")
+	}
+}
+
 func TestVIPTransferDoesNotAcquireWhenLeaseStoreBlocks(t *testing.T) {
 	provider, resolved, transport, leases, _ := vipProviderFixture(t)
 	leases.Blocked = true

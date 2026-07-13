@@ -130,6 +130,48 @@ func TestReconcilerBootstrapsVIPOnlyWithSignedKeepDecisionAndWritableMySQL(t *te
 	}
 }
 
+func TestReconcilerHoldsPreparedTransitionTargetWithoutRewritingReadOnlyState(t *testing.T) {
+	policy := reconcilePolicy()
+	vip := &reconcileVIPStub{}
+	roles := &reconcileRoleStub{readOnly: true, superReadOnly: true}
+	decision := reconcileDecisionStub{response: ReconcileResponse{
+		ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileTransitionTarget, LeaseID: model.NewResourceID(),
+	}}
+	results, err := NewReconciler(vip, roles, decision).ReconcileAll(context.Background(), map[model.ResourceID]ClusterPolicy{policy.ClusterID: policy})
+	if err != nil || len(results) != 1 || results[0].Action != ReconcileTransitionTarget {
+		t.Fatalf("transition hold results=%+v err=%v", results, err)
+	}
+	if vip.acquires != 0 || vip.releases != 0 || vip.statusCalls != 1 || len(roles.persisted) != 0 {
+		t.Fatalf("transition hold mutated state: vip=%+v roles=%+v", vip, roles)
+	}
+}
+
+func TestReconcilerTransitionTargetDoesNotPreemptControlledVIPTransfer(t *testing.T) {
+	policy := reconcilePolicy()
+	vip := &reconcileVIPStub{}
+	roles := &reconcileRoleStub{}
+	decision := reconcileDecisionStub{response: ReconcileResponse{
+		ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileTransitionTarget, LeaseID: model.NewResourceID(),
+	}}
+	results, err := NewReconciler(vip, roles, decision).ReconcileAll(context.Background(), map[model.ResourceID]ClusterPolicy{policy.ClusterID: policy})
+	if err != nil || len(results) != 1 || results[0].Action != ReconcileTransitionTarget || vip.acquires != 0 || vip.releases != 0 || len(roles.persisted) != 0 {
+		t.Fatalf("promoted transition results=%+v vip=%+v roles=%+v err=%v", results, vip, roles, err)
+	}
+}
+
+func TestReconcilerTransitionTargetFailsClosedOnPartialReadOnlyState(t *testing.T) {
+	policy := reconcilePolicy()
+	vip := &reconcileVIPStub{owns: true}
+	roles := &reconcileRoleStub{readOnly: true, superReadOnly: false}
+	decision := reconcileDecisionStub{response: ReconcileResponse{
+		ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileTransitionTarget, LeaseID: model.NewResourceID(),
+	}}
+	results, err := NewReconciler(vip, roles, decision).ReconcileAll(context.Background(), map[model.ResourceID]ClusterPolicy{policy.ClusterID: policy})
+	if err == nil || len(results) != 1 || results[0].Action != ReconcileSelfIsolate || vip.releases != 1 || len(roles.persisted) != 1 || !roles.persisted[0] {
+		t.Fatalf("partial transition results=%+v vip=%+v roles=%+v err=%v", results, vip, roles, err)
+	}
+}
+
 func TestReconcilerFailsClosedWhenLeaderDecisionIsMissing(t *testing.T) {
 	policy := reconcilePolicy()
 	vip := &reconcileVIPStub{owns: true}

@@ -30,6 +30,15 @@ type Lease struct {
 	Active       bool
 }
 
+func SameLeaseIdentity(current, presented Lease) bool {
+	return current.ResourceID == presented.ResourceID &&
+		current.ClusterID == presented.ClusterID &&
+		current.HAEndpointID == presented.HAEndpointID &&
+		current.OperationID == presented.OperationID &&
+		current.OwnerID == presented.OwnerID &&
+		current.Active == presented.Active
+}
+
 type LeaseStore interface {
 	Acquire(context.Context, LeaseRequest) (Lease, error)
 	Validate(context.Context, Lease) error
@@ -93,7 +102,7 @@ func (store *MemoryLeaseStore) Validate(ctx context.Context, lease Lease) error 
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	current, found := store.leases[lease.ResourceID]
-	if !found || !current.Active || !current.ExpiresAt.After(store.now().UTC()) || current != lease {
+	if !found || !current.Active || !current.ExpiresAt.After(store.now().UTC()) || !SameLeaseIdentity(current, lease) {
 		return fmt.Errorf("%w: endpoint lease is missing, expired, or changed", ErrLeaseConflict)
 	}
 	return nil

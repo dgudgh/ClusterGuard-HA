@@ -49,11 +49,12 @@ type reparentNodeState struct {
 }
 
 type threeNodeSQLClient struct {
-	mu          sync.Mutex
-	version     string
-	nodes       map[string]*reparentNodeState
-	statements  []string
-	credentials []string
+	mu             sync.Mutex
+	version        string
+	nodes          map[string]*reparentNodeState
+	statements     []string
+	credentials    []string
+	beforeWritable func()
 }
 
 func newThreeNodeSQLClient(request adapter.OperationRequest) *threeNodeSQLClient {
@@ -127,6 +128,9 @@ func (client *threeNodeSQLClient) Exec(_ context.Context, endpoint adapter.Endpo
 	case setReadOnlyOn:
 		node.readOnly = true
 	case setSuperReadOnlyOff:
+		if client.beforeWritable != nil {
+			client.beforeWritable()
+		}
 		node.superReadOnly = false
 	case setReadOnlyOff:
 		node.readOnly = false

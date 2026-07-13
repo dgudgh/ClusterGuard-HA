@@ -402,6 +402,10 @@ func (service *Service) executeDurable(ctx context.Context, request adapter.Oper
 	}
 	request.Plan = &record.Plan
 	request.Progress = repositoryProgress{operations: service.operations, operationID: record.ResourceID, now: service.now}
+	record, err = service.advanceDurable(record.ResourceID, model.StageExecute, model.OperationTransition{Message: "adapter execution started"})
+	if err != nil {
+		return model.Execution{}, err
+	}
 	execution, executeErr := candidate.Execute(ctx, request)
 	execution.OperationID = operation.ResourceID
 	if executeErr != nil {

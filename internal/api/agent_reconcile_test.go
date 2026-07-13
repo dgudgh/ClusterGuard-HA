@@ -170,6 +170,70 @@ func TestAgentReconcileRequiresLeaderQuorumAndReturnsSignedOwnershipDecision(t *
 	}
 }
 
+func TestAgentReconcileKeepsPreparedTransitionTargetOnlyAtExecuteStage(t *testing.T) {
+	now := time.Now().UTC()
+	repository := store.NewMemory()
+	cluster, formerPrimary, lease := seedRebootBootstrapState(t, repository, now)
+	snapshot, found := repository.TopologySnapshot(cluster.ResourceID)
+	if !found {
+		t.Fatal("topology snapshot is missing")
+	}
+	var target model.DatabaseInstance
+	for _, instance := range snapshot.Instances {
+		if instance.ResourceID != formerPrimary.ResourceID {
+			target = instance
+		}
+	}
+	if !model.ValidResourceID(target.ResourceID) {
+		t.Fatal("transition target is missing")
+	}
+	record, _, err := repository.CreateOperation(model.OperationRecord{
+		Operation: model.Operation{ClusterID: cluster.ResourceID, Engine: model.EngineMySQL, Kind: model.OperationSwitchover, RequestedBy: "dba"},
+		TargetID:  target.ResourceID, IdempotencyKey: "agent-transition-stage",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err = repository.TransitionOperation(record.ResourceID, record.MetadataRevision, model.OperationTransition{Stage: model.StageApprove, Status: model.OperationRunning, Message: "approval validated"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease.OperationID = record.ResourceID
+	lease.OwnerID = target.ResourceID
+	if err := repository.PutCoordinationLease(coordination.LeaseRecord{Lease: lease, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	leaderID := model.NewResourceID()
+	authority := &apiMutationAuthorityStub{leaderID: leaderID, leaderAddress: "controller-a:10009"}
+	server := newAPIServer(t, repository, adapter.NewUnsupported(model.EngineMySQL), &fakeRefresher{}, WithMutationAuthority(authority), WithAgentReconcileSecret("agent-secret"))
+
+	request := agent.ReconcileRequest{ClusterID: cluster.ResourceID, InstanceID: target.ResourceID, RequestedAt: now, Nonce: "approve-stage-0001"}
+	if err := agent.SignReconcileRequest(&request, "agent-secret"); err != nil {
+		t.Fatal(err)
+	}
+	response := callAgentReconcile(t, server, request)
+	var decision agent.ReconcileResponse
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &decision) != nil || decision.Action != agent.ReconcileSelfIsolate {
+		t.Fatalf("approve-stage decision status=%d response=%+v body=%s", response.Code, decision, response.Body.String())
+	}
+
+	record, err = repository.TransitionOperation(record.ResourceID, record.MetadataRevision, model.OperationTransition{Stage: model.StageExecute, Status: model.OperationRunning, Message: "adapter execution started"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.RequestedAt = time.Now().UTC()
+	request.Nonce = "execute-stage-0001"
+	request.Signature = ""
+	if err := agent.SignReconcileRequest(&request, "agent-secret"); err != nil {
+		t.Fatal(err)
+	}
+	response = callAgentReconcile(t, server, request)
+	decision = agent.ReconcileResponse{}
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &decision) != nil || decision.Action != agent.ReconcileTransitionTarget || decision.LeaseID != lease.ResourceID {
+		t.Fatalf("execute-stage decision status=%d response=%+v body=%s", response.Code, decision, response.Body.String())
+	}
+}
+
 func TestAgentReconcileRejectsUnsignedRequestWithoutControlTokenFallback(t *testing.T) {
 	repository := store.NewMemory()
 	authority := &apiMutationAuthorityStub{leaderID: model.NewResourceID()}

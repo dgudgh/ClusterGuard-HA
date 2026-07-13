@@ -253,12 +253,16 @@ func TestDurableWorkflowRejectsConcurrentDuplicateWithoutTerminalizingSharedReco
 		firstResult <- result{execution: execution, err: err}
 	}()
 	<-candidate.executeStarted
+	record, found := repository.OperationByIdempotencyKey(request.IdempotencyKey)
+	if !found || record.Status != model.OperationRunning || record.Stage != model.StageExecute {
+		t.Fatalf("running adapter execution was not durably visible at execute stage: found=%t record=%+v", found, record)
+	}
 
 	duplicate, err := service.Execute(context.Background(), request, "approved")
 	if !errors.Is(err, ErrOperationInProgress) || duplicate.Status != model.OperationRunning {
 		t.Fatalf("concurrent duplicate result=%+v err=%v", duplicate, err)
 	}
-	record, found := repository.OperationByIdempotencyKey(request.IdempotencyKey)
+	record, found = repository.OperationByIdempotencyKey(request.IdempotencyKey)
 	if !found || durableTerminalStatus(record.Status) {
 		t.Fatalf("concurrent duplicate terminalized shared operation: found=%t record=%+v", found, record)
 	}

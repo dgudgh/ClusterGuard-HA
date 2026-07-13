@@ -38,6 +38,7 @@ type switchoverSQLClient struct {
 	failStatementConsumed bool
 	failAfterStatement    string
 	failTargetStatement   string
+	onTargetPromotion     func()
 }
 
 func newSwitchoverSQLClient(request adapter.OperationRequest) *switchoverSQLClient {
@@ -199,6 +200,9 @@ func (client *switchoverSQLClient) Exec(ctx context.Context, endpoint adapter.En
 		case "RESET REPLICA ALL", "RESET SLAVE ALL":
 			client.targetReplication = false
 		case setSuperReadOnlyOff:
+			if client.onTargetPromotion != nil {
+				client.onTargetPromotion()
+			}
 			client.targetSuperReadOnly = false
 		case setReadOnlyOff:
 			client.targetReadOnly = false
@@ -229,11 +233,25 @@ type recordingEndpointProvider struct {
 	transferNoEffect bool
 	duplicateOwner   bool
 	verifyOverride   *model.Check
+	authorizeCalls   int
+	authorizeError   error
+	authorized       bool
 }
 
 func (provider *recordingEndpointProvider) Executable(context.Context) bool { return true }
 func (provider *recordingEndpointProvider) Precheck(context.Context, adapter.ResolvedOperation) []model.Check {
 	return []model.Check{{Name: "writer_endpoint_provider", Status: model.CheckPass, Message: "writer endpoint provider is ready"}}
+}
+func (provider *recordingEndpointProvider) AuthorizeTransition(ctx context.Context, _ adapter.ResolvedOperation) (adapter.TransitionAuthorization, error) {
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	provider.authorizeCalls++
+	if provider.authorizeError != nil {
+		return adapter.TransitionAuthorization{}, provider.authorizeError
+	}
+	provider.authorized = true
+	guarded, cancel := context.WithCancel(ctx)
+	return adapter.TransitionAuthorization{Context: guarded, Cancel: cancel}, nil
 }
 func (provider *recordingEndpointProvider) Transfer(_ context.Context, resolved adapter.ResolvedOperation) error {
 	provider.mu.Lock()
@@ -378,6 +396,22 @@ func TestSwitchoverExecuteAndVerifyHappyPath(t *testing.T) {
 	}
 }
 
+func TestSwitchoverAuthorizesEndpointBeforeTargetBecomesWritable(t *testing.T) {
+	adapterInstance, request, client, provider := executableSwitchoverFixture(t)
+	authorizedAtPromotion := false
+	client.onTargetPromotion = func() {
+		provider.mu.Lock()
+		defer provider.mu.Unlock()
+		authorizedAtPromotion = provider.authorized
+	}
+	if _, err := adapterInstance.Execute(context.Background(), request); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if provider.authorizeCalls != 1 || !authorizedAtPromotion {
+		t.Fatalf("endpoint transition was not authorized before promotion: calls=%d authorized_at_promotion=%t", provider.authorizeCalls, authorizedAtPromotion)
+	}
+}
+
 func TestSwitchoverVerifyRejectsEndpointIdentityDrift(t *testing.T) {
 	adapterInstance, request, client, _ := executableSwitchoverFixture(t)
 	if _, err := adapterInstance.Execute(context.Background(), request); err != nil {
@@ -420,7 +454,7 @@ func TestSwitchoverExecuteRecordsEveryCompletedMutationBoundary(t *testing.T) {
 	if _, err := adapterInstance.Execute(context.Background(), request); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	want := []string{"fence_source", "capture_source_gtid", "wait_target_gtid", "stop_target_replication", "promote_target", "reparent_follower_" + string(request.Resolved.Primary.ResourceID), "transfer_writer_endpoint", "retain_source_read_only"}
+	want := []string{"fence_source", "capture_source_gtid", "wait_target_gtid", "stop_target_replication", "authorize_target_transition", "promote_target", "reparent_follower_" + string(request.Resolved.Primary.ResourceID), "transfer_writer_endpoint", "retain_source_read_only"}
 	if len(collector.steps) != len(want) {
 		t.Fatalf("progress steps=%v, want %v", collector.steps, want)
 	}
@@ -529,6 +563,28 @@ func TestSwitchoverRetryObservesPostconditionsBeforeMutation(t *testing.T) {
 	}
 	if provider.transferCalls != 1 {
 		t.Fatalf("retry repeated writer endpoint transfer: calls=%d", provider.transferCalls)
+	}
+}
+
+func TestSwitchoverRetryResumesAfterReparentedEndpointTransferFailure(t *testing.T) {
+	adapterInstance, request, client, provider := executableSwitchoverFixture(t)
+	request.Progress = &progressCollector{}
+	provider.transferError = errors.New("endpoint transfer unavailable")
+	first, err := adapterInstance.Execute(context.Background(), request)
+	if err == nil || first.Status != model.OperationIndeterminate || failureClass(err) != "promoted_unverified" {
+		t.Fatalf("first execution=%+v err=%v class=%q", first, err, failureClass(err))
+	}
+	if !client.primaryReplication || client.primarySourceUUID != client.targetUUID || !client.targetReadOnly || !client.targetSuperReadOnly {
+		t.Fatalf("failed transfer did not leave a resumable fenced topology: primary_replication=%t source=%q target_read_only=%t target_super_read_only=%t", client.primaryReplication, client.primarySourceUUID, client.targetReadOnly, client.targetSuperReadOnly)
+	}
+	provider.transferError = nil
+	second, err := adapterInstance.Execute(context.Background(), request)
+	if err != nil || second.Status != model.OperationRunning {
+		t.Fatalf("resume execution=%+v err=%v", second, err)
+	}
+	verification, err := adapterInstance.Verify(context.Background(), request)
+	if err != nil || !verification.Passed {
+		t.Fatalf("resume verification=%+v err=%v", verification, err)
 	}
 }
 

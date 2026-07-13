@@ -97,7 +97,7 @@ func (store *LeaseStore) Validate(ctx context.Context, lease endpoint.Lease) err
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	for _, record := range store.records.CoordinationLeases() {
-		if record.Lease.ResourceID == lease.ResourceID && record.Lease == lease && lease.Active && lease.ExpiresAt.After(store.now().UTC()) {
+		if record.Lease.ResourceID == lease.ResourceID && record.Lease.Active && record.Lease.ExpiresAt.After(store.now().UTC()) && endpoint.SameLeaseIdentity(record.Lease, lease) {
 			return nil
 		}
 	}

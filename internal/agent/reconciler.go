@@ -58,8 +58,11 @@ func (reconciler *Reconciler) reconcile(ctx context.Context, policy ClusterPolic
 	if decision.Action == ReconcileSelfIsolate {
 		return reconciler.convergeSelfIsolation(ctx, policy)
 	}
-	if !model.ValidResourceID(decision.LeaseID) || (decision.Action != ReconcileKeepVIP && decision.Action != ReconcileBootstrapPrimary) {
+	if !model.ValidResourceID(decision.LeaseID) || (decision.Action != ReconcileKeepVIP && decision.Action != ReconcileTransitionTarget && decision.Action != ReconcileBootstrapPrimary) {
 		return reconciler.selfIsolate(ctx, policy, fmt.Errorf("controller did not authorize local VIP ownership"))
+	}
+	if decision.Action == ReconcileTransitionTarget {
+		return reconciler.reconcileTransitionTarget(ctx, policy)
 	}
 	if decision.Action == ReconcileBootstrapPrimary {
 		return reconciler.bootstrapPrimary(ctx, policy)
@@ -81,6 +84,29 @@ func (reconciler *Reconciler) reconcile(ctx context.Context, policy ClusterPolic
 		}
 	}
 	return ReconcileResult{ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileKeepVIP, Message: "active majority lease authorizes local VIP ownership"}, nil
+}
+
+func (reconciler *Reconciler) reconcileTransitionTarget(ctx context.Context, policy ClusterPolicy) (ReconcileResult, error) {
+	readOnly, superReadOnly, err := reconciler.roles.Status(ctx, policy)
+	if err != nil || readOnly != superReadOnly {
+		if err == nil {
+			err = fmt.Errorf("transition target has a partial read-only state")
+		}
+		return reconciler.selfIsolate(ctx, policy, err)
+	}
+	ownsVIP, err := reconciler.vip.Status(ctx, policy)
+	if err != nil {
+		return reconciler.selfIsolate(ctx, policy, err)
+	}
+	if readOnly {
+		if ownsVIP {
+			if err := reconciler.vip.Release(ctx, policy); err != nil {
+				return reconciler.selfIsolate(ctx, policy, fmt.Errorf("release VIP while transition target is read-only: %w", err))
+			}
+		}
+		return ReconcileResult{ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileTransitionTarget, Message: "majority lease holds the read-only target for controlled promotion"}, nil
+	}
+	return ReconcileResult{ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileTransitionTarget, Message: "majority lease preserves the promoted target while the controller transfers the VIP"}, nil
 }
 
 func (reconciler *Reconciler) bootstrapPrimary(ctx context.Context, policy ClusterPolicy) (ReconcileResult, error) {

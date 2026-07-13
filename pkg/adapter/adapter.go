@@ -105,9 +105,15 @@ type ResolvedOperation struct {
 	PlanDigest             string                 `json:"-"`
 }
 
+type TransitionAuthorization struct {
+	Context context.Context
+	Cancel  context.CancelFunc
+}
+
 type HAEndpointProvider interface {
 	Executable(context.Context) bool
 	Precheck(context.Context, ResolvedOperation) []model.Check
+	AuthorizeTransition(context.Context, ResolvedOperation) (TransitionAuthorization, error)
 	Transfer(context.Context, ResolvedOperation) error
 	Verify(context.Context, ResolvedOperation) model.Check
 }

@@ -23,18 +23,23 @@ type AgentTransport interface {
 }
 
 type LinuxVIPProvider struct {
-	inventory Inventory
-	transport AgentTransport
-	leases    LeaseStore
-	secret    string
-	now       func() time.Time
+	inventory               Inventory
+	transport               AgentTransport
+	leases                  LeaseStore
+	secret                  string
+	now                     func() time.Time
+	transitionLeaseTTL      time.Duration
+	transitionRenewInterval time.Duration
 }
 
 func NewLinuxVIPProvider(inventory Inventory, transport AgentTransport, leases LeaseStore, secret string, now func() time.Time) *LinuxVIPProvider {
 	if now == nil {
 		now = time.Now
 	}
-	return &LinuxVIPProvider{inventory: inventory, transport: transport, leases: leases, secret: secret, now: now}
+	return &LinuxVIPProvider{
+		inventory: inventory, transport: transport, leases: leases, secret: secret, now: now,
+		transitionLeaseTTL: 30 * time.Second, transitionRenewInterval: 10 * time.Second,
+	}
 }
 
 func (provider *LinuxVIPProvider) Executable(context.Context) bool {
@@ -202,17 +207,63 @@ func (provider *LinuxVIPProvider) sendMutation(ctx context.Context, resolved ada
 	return nil
 }
 
+func (provider *LinuxVIPProvider) acquireTransitionLease(ctx context.Context, resolved adapter.ResolvedOperation, resource endpointResource) (Lease, error) {
+	ttl := provider.transitionLeaseTTL
+	if ttl <= 0 {
+		ttl = 30 * time.Second
+	}
+	lease, err := provider.leases.Acquire(ctx, LeaseRequest{
+		ClusterID: resolved.Cluster.ResourceID, HAEndpointID: resource.resource.ResourceID,
+		OperationID: resolved.OperationID, OwnerID: resolved.Target.ResourceID, TTL: ttl,
+	})
+	if err != nil {
+		return Lease{}, fmt.Errorf("acquire endpoint lease: %w", err)
+	}
+	return lease, nil
+}
+
+func (provider *LinuxVIPProvider) AuthorizeTransition(ctx context.Context, resolved adapter.ResolvedOperation) (adapter.TransitionAuthorization, error) {
+	resource, err := provider.resource(resolved.Cluster.ResourceID)
+	if err != nil {
+		return adapter.TransitionAuthorization{}, err
+	}
+	if _, err = provider.acquireTransitionLease(ctx, resolved, resource); err != nil {
+		return adapter.TransitionAuthorization{}, err
+	}
+	guarded, cancelCause := context.WithCancelCause(ctx)
+	interval := provider.transitionRenewInterval
+	if interval <= 0 {
+		interval = 10 * time.Second
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-guarded.Done():
+				return
+			case <-ticker.C:
+				if _, renewErr := provider.acquireTransitionLease(guarded, resolved, resource); renewErr != nil {
+					cancelCause(fmt.Errorf("renew target transition lease: %w", renewErr))
+					return
+				}
+			}
+		}
+	}()
+	return adapter.TransitionAuthorization{
+		Context: guarded,
+		Cancel:  func() { cancelCause(context.Canceled) },
+	}, nil
+}
+
 func (provider *LinuxVIPProvider) Transfer(ctx context.Context, resolved adapter.ResolvedOperation) error {
 	resource, err := provider.resource(resolved.Cluster.ResourceID)
 	if err != nil {
 		return err
 	}
-	lease, err := provider.leases.Acquire(ctx, LeaseRequest{
-		ClusterID: resolved.Cluster.ResourceID, HAEndpointID: resource.resource.ResourceID,
-		OperationID: resolved.OperationID, OwnerID: resolved.Target.ResourceID, TTL: 30 * time.Second,
-	})
+	lease, err := provider.acquireTransitionLease(ctx, resolved, resource)
 	if err != nil {
-		return fmt.Errorf("acquire endpoint lease: %w", err)
+		return err
 	}
 	observations := provider.observe(ctx, resolved, resource)
 	owners, complete := observationSummary(observations)

@@ -349,7 +349,8 @@ func (adapterInstance *Adapter) switchoverPlan(ctx context.Context, request adap
 		{Index: 4, Name: "capture_source_gtid", Owner: "mysql", TargetID: resolved.Primary.ResourceID, Postcondition: "source GTID position is captured after fencing"},
 		{Index: 5, Name: "wait_target_gtid", Owner: "mysql", TargetID: resolved.Target.ResourceID, Postcondition: "target executed the fenced source GTID position"},
 		{Index: 6, Name: "stop_target_replication", Owner: "mysql", TargetID: resolved.Target.ResourceID, Mutating: true, Postcondition: "target replication is stopped"},
-		{Index: 7, Name: "promote_target", Owner: "mysql", TargetID: resolved.Target.ResourceID, Mutating: true, Postcondition: "target is writable"},
+		{Index: 7, Name: "authorize_target_transition", Owner: "endpoint", TargetID: resolved.Target.ResourceID, Mutating: true, Postcondition: "target has an active transition lease"},
+		{Index: 8, Name: "promote_target", Owner: "mysql", TargetID: resolved.Target.ResourceID, Mutating: true, Postcondition: "target is writable"},
 	}
 	followers := make([]model.DatabaseInstance, 0, len(resolved.Snapshot.Instances)-1)
 	for _, instance := range resolved.Snapshot.Instances {
@@ -669,7 +670,7 @@ func (adapterInstance *Adapter) liveSwitchoverPrecheck(ctx context.Context, reso
 	return nil
 }
 
-func (adapterInstance *Adapter) liveSwitchoverResumePrecheck(ctx context.Context, resolved adapter.ResolvedOperation) error {
+func (adapterInstance *Adapter) liveSwitchoverResumePrecheck(ctx context.Context, request adapter.OperationRequest, resolved adapter.ResolvedOperation) error {
 	credentials := resolved.Credentials
 	sourceEndpoint := instanceEndpoint(resolved.Primary)
 	targetEndpoint := instanceEndpoint(resolved.Target)
@@ -704,12 +705,33 @@ func (adapterInstance *Adapter) liveSwitchoverResumePrecheck(ctx context.Context
 	if _, err := dialectForVersion(targetIdentity.version); err != nil {
 		return err
 	}
-	_, sourceReplicationConfigured, err := probeReplication(ctx, adapterInstance.runner, sourceEndpoint, credentials)
+	promoted, err := operationStepCompleted(ctx, request, "promote_target")
+	if err != nil {
+		return fmt.Errorf("read target promotion progress: %w", err)
+	}
+	sourceReparented, err := operationStepCompleted(ctx, request, "reparent_follower_"+string(resolved.Primary.ResourceID))
+	if err != nil {
+		return fmt.Errorf("read former-primary reparent progress: %w", err)
+	}
+	sourceReplication, sourceReplicationConfigured, err := probeReplication(ctx, adapterInstance.runner, sourceEndpoint, credentials)
 	if err != nil {
 		return fmt.Errorf("probe live source replication: %w", err)
 	}
 	if sourceReplicationConfigured {
-		return fmt.Errorf("live source unexpectedly has a replication source")
+		if !sourceReparented {
+			return fmt.Errorf("live source has a replication source without durable reparent progress")
+		}
+		if sourceReplication.IOThread != model.ThreadRunning || sourceReplication.SQLThread != model.ThreadRunning {
+			return fmt.Errorf("live former-primary replication threads are not both running")
+		}
+		if strings.ToLower(strings.TrimSpace(sourceReplication.SourceIdentity["server_uuid"])) != targetIdentity.serverUUID {
+			return fmt.Errorf("live former primary does not follow the selected target")
+		}
+		if sourceReplication.LagSeconds == nil || *sourceReplication.LagSeconds != 0 {
+			return fmt.Errorf("live former-primary replication lag must be known and zero")
+		}
+	} else if sourceReparented {
+		return fmt.Errorf("durably reparented former primary no longer has a replication source")
 	}
 	targetReplication, targetReplicationConfigured, err := probeReplication(ctx, adapterInstance.runner, targetEndpoint, credentials)
 	if err != nil {
@@ -721,17 +743,29 @@ func (adapterInstance *Adapter) liveSwitchoverResumePrecheck(ctx context.Context
 		return fmt.Errorf("live target has a partial read-only state during operation recovery")
 	}
 	if targetFenced {
-		if !targetReplicationConfigured || targetReplication.IOThread != model.ThreadRunning || targetReplication.SQLThread != model.ThreadRunning {
-			return fmt.Errorf("live target replication threads are not both running")
+		if targetReplicationConfigured {
+			if promoted {
+				return fmt.Errorf("durably promoted target unexpectedly has a replication source")
+			}
+			if targetReplication.IOThread != model.ThreadRunning || targetReplication.SQLThread != model.ThreadRunning {
+				return fmt.Errorf("live target replication threads are not both running")
+			}
+			if strings.ToLower(strings.TrimSpace(targetReplication.SourceIdentity["server_uuid"])) != sourceIdentity.serverUUID {
+				return fmt.Errorf("live target no longer follows the selected source")
+			}
+			if targetReplication.LagSeconds == nil || *targetReplication.LagSeconds != 0 {
+				return fmt.Errorf("live target replication lag must be known and zero")
+			}
+		} else if !promoted {
+			return fmt.Errorf("live target is detached without durable promotion progress")
 		}
-		if strings.ToLower(strings.TrimSpace(targetReplication.SourceIdentity["server_uuid"])) != sourceIdentity.serverUUID {
-			return fmt.Errorf("live target no longer follows the selected source")
+	} else {
+		if !promoted {
+			return fmt.Errorf("live target is writable without durable promotion progress")
 		}
-		if targetReplication.LagSeconds == nil || *targetReplication.LagSeconds != 0 {
-			return fmt.Errorf("live target replication lag must be known and zero")
+		if targetReplicationConfigured {
+			return fmt.Errorf("promoted target still has a replication source")
 		}
-	} else if targetReplicationConfigured {
-		return fmt.Errorf("promoted target still has a replication source")
 	}
 	sourceSet, sourceSetError := ParseGTIDSet(sourceIdentity.gtidExecuted)
 	targetSet, targetSetError := ParseGTIDSet(targetIdentity.gtidExecuted)
@@ -756,6 +790,25 @@ func (adapterInstance *Adapter) fenceInstance(ctx context.Context, endpoint adap
 		return err
 	}
 	return adapterInstance.executor.Exec(recoveryContext, endpoint, credentials, setReadOnlyOn)
+}
+
+func (adapterInstance *Adapter) authorizeEndpointTransition(ctx context.Context, request adapter.OperationRequest, resolved adapter.ResolvedOperation) (adapter.TransitionAuthorization, error) {
+	authorization, err := adapterInstance.endpointProvider.AuthorizeTransition(ctx, resolved)
+	if err != nil {
+		return adapter.TransitionAuthorization{}, err
+	}
+	if authorization.Context == nil || authorization.Cancel == nil {
+		return adapter.TransitionAuthorization{}, fmt.Errorf("endpoint provider returned an incomplete transition authorization")
+	}
+	if err := authorization.Context.Err(); err != nil {
+		authorization.Cancel()
+		return adapter.TransitionAuthorization{}, fmt.Errorf("target transition authorization is inactive: %w", context.Cause(authorization.Context))
+	}
+	if err := completeOperationStep(context.WithoutCancel(ctx), request, "authorize_target_transition", "target transition lease is active"); err != nil {
+		authorization.Cancel()
+		return adapter.TransitionAuthorization{}, err
+	}
+	return authorization, nil
 }
 
 func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request adapter.OperationRequest) (model.Execution, error) {
@@ -803,7 +856,7 @@ func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request a
 		if !ownedFence {
 			return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "pre_commit", fmt.Errorf("source is fenced without durable ownership by this operation"))
 		}
-		if err := adapterInstance.liveSwitchoverResumePrecheck(ctx, resolved); err != nil {
+		if err := adapterInstance.liveSwitchoverResumePrecheck(ctx, request, resolved); err != nil {
 			return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", err)
 		}
 	} else {
@@ -876,6 +929,12 @@ func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request a
 	if err := completeOperationStep(mutationContext, request, "stop_target_replication", "target replication is stopped and detached"); err != nil {
 		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("persist target replication progress: %w", err))
 	}
+	authorization, err := adapterInstance.authorizeEndpointTransition(mutationContext, request, resolved)
+	if err != nil {
+		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("authorize target transition: %w", err))
+	}
+	defer authorization.Cancel()
+	mutationContext = authorization.Context
 
 	targetWritable, err := queryWritableState(mutationContext, adapterInstance.runner, targetEndpoint, credentials)
 	if err != nil {

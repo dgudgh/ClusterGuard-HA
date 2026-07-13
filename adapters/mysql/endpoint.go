@@ -19,6 +19,10 @@ func (UnsupportedHAEndpointProvider) Precheck(context.Context, adapter.ResolvedO
 	}}
 }
 
+func (UnsupportedHAEndpointProvider) AuthorizeTransition(context.Context, adapter.ResolvedOperation) (adapter.TransitionAuthorization, error) {
+	return adapter.TransitionAuthorization{}, adapter.ErrUnsupported
+}
+
 func (UnsupportedHAEndpointProvider) Transfer(context.Context, adapter.ResolvedOperation) error {
 	return adapter.ErrUnsupported
 }

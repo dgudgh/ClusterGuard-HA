@@ -132,6 +132,9 @@ func (server *Server) agentReconcileRoute(writer http.ResponseWriter, request *h
 	}
 	if decision.Action == coordination.SelfIsolationKeepVIP || decision.Action == coordination.SelfIsolationBootstrapPrimary {
 		response.Action = agent.ReconcileKeepVIP
+		if evidence.TransitionTarget {
+			response.Action = agent.ReconcileTransitionTarget
+		}
 		if decision.Action == coordination.SelfIsolationBootstrapPrimary {
 			response.Action = agent.ReconcileBootstrapPrimary
 		}

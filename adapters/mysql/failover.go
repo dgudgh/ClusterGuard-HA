@@ -86,7 +86,8 @@ func (adapterInstance *Adapter) failoverPlan(ctx context.Context, request adapte
 	steps := []model.PlanStep{
 		{Index: 1, Name: "revalidate_failure_evidence", Owner: "platform", TargetID: resolved.Primary.ResourceID, Postcondition: "stable failure, quorum, and fencing evidence remain valid"},
 		{Index: 2, Name: "fence_old_primary", Owner: "safety", TargetID: resolved.Primary.ResourceID, Mutating: true, Postcondition: "old primary cannot serve writes or own the VIP"},
-		{Index: 3, Name: "promote_failover_target", Owner: "mysql", TargetID: resolved.Target.ResourceID, Mutating: true, Postcondition: "selected target is detached and writable"},
+		{Index: 3, Name: "authorize_target_transition", Owner: "endpoint", TargetID: resolved.Target.ResourceID, Mutating: true, Postcondition: "target has an active transition lease"},
+		{Index: 4, Name: "promote_failover_target", Owner: "mysql", TargetID: resolved.Target.ResourceID, Mutating: true, Postcondition: "selected target is detached and writable"},
 	}
 	followers := make([]model.DatabaseInstance, 0)
 	for _, instance := range resolved.Snapshot.Instances {
@@ -146,31 +147,61 @@ func (adapterInstance *Adapter) failoverExecute(ctx context.Context, request ada
 	if err := completeOperationStep(context.WithoutCancel(ctx), request, "fence_old_primary", "old primary is isolated"); err != nil {
 		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "pre_commit", err)
 	}
+	promoted, err := operationStepCompleted(ctx, request, "promote_failover_target")
+	if err != nil {
+		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("read failover target promotion progress: %w", err))
+	}
 	targetEndpoint := instanceEndpoint(resolved.Target)
 	identity, err := probeIdentity(ctx, adapterInstance.runner, targetEndpoint, resolved.Credentials)
-	if err != nil || identity.serverUUID != strings.ToLower(strings.TrimSpace(resolved.Target.EngineIdentity["server_uuid"])) || (!identity.readOnly && !identity.superReadOnly) {
+	if err != nil || identity.serverUUID != strings.ToLower(strings.TrimSpace(resolved.Target.EngineIdentity["server_uuid"])) {
 		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "pre_commit", fmt.Errorf("failover target live identity or read-only state is unsafe"))
+	}
+	targetFenced := identity.readOnly && identity.superReadOnly
+	targetWritable := !identity.readOnly && !identity.superReadOnly
+	if !targetFenced && !targetWritable {
+		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("failover target has a partial read-only state"))
 	}
 	dialect, err := dialectForVersion(identity.version)
 	if err != nil {
 		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "pre_commit", err)
 	}
 	_, configured, err := probeReplication(ctx, adapterInstance.runner, targetEndpoint, resolved.Credentials)
-	if err != nil || !configured {
+	if err != nil {
 		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "pre_commit", fmt.Errorf("failover target replication state is unavailable"))
 	}
-	if err := adapterInstance.executor.Exec(ctx, targetEndpoint, resolved.Credentials, dialect.StopReplication); err != nil {
-		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "pre_commit", err)
+	if promoted {
+		if configured {
+			return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("durably promoted failover target unexpectedly has a replication source"))
+		}
+	} else {
+		if !targetFenced || !configured {
+			return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "pre_commit", fmt.Errorf("failover target replication state is unavailable"))
+		}
+		if err := adapterInstance.executor.Exec(ctx, targetEndpoint, resolved.Credentials, dialect.StopReplication); err != nil {
+			return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "pre_commit", err)
+		}
+		if err := adapterInstance.executor.Exec(ctx, targetEndpoint, resolved.Credentials, dialect.ResetReplication); err != nil {
+			return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "pre_commit", err)
+		}
 	}
-	if err := adapterInstance.executor.Exec(ctx, targetEndpoint, resolved.Credentials, dialect.ResetReplication); err != nil {
-		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "pre_commit", err)
+	authorization, err := adapterInstance.authorizeEndpointTransition(ctx, request, resolved)
+	if err != nil {
+		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("authorize failover target transition: %w", err))
 	}
-	if err := adapterInstance.executor.Exec(ctx, targetEndpoint, resolved.Credentials, setSuperReadOnlyOff); err != nil {
-		return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", err)
+	defer authorization.Cancel()
+	ctx = authorization.Context
+	targetWritable, err = queryWritableState(ctx, adapterInstance.runner, targetEndpoint, resolved.Credentials)
+	if err != nil {
+		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("recheck failover target writable state: %w", err))
 	}
-	if err := adapterInstance.executor.Exec(ctx, targetEndpoint, resolved.Credentials, setReadOnlyOff); err != nil {
-		_ = adapterInstance.fenceInstance(ctx, targetEndpoint, resolved.Credentials)
-		return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", err)
+	if !targetWritable {
+		if err := adapterInstance.executor.Exec(ctx, targetEndpoint, resolved.Credentials, setSuperReadOnlyOff); err != nil {
+			return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", err)
+		}
+		if err := adapterInstance.executor.Exec(ctx, targetEndpoint, resolved.Credentials, setReadOnlyOff); err != nil {
+			_ = adapterInstance.fenceInstance(ctx, targetEndpoint, resolved.Credentials)
+			return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", err)
+		}
 	}
 	if err := completeOperationStep(context.WithoutCancel(ctx), request, "promote_failover_target", "selected failover target is writable"); err != nil {
 		_ = adapterInstance.fenceInstance(ctx, targetEndpoint, resolved.Credentials)
@@ -180,12 +211,20 @@ func (adapterInstance *Adapter) failoverExecute(ctx context.Context, request ada
 		if follower.ResourceID == resolved.Primary.ResourceID || follower.ResourceID == resolved.Target.ResourceID || follower.Health.State != model.HealthHealthy {
 			continue
 		}
-		if err := adapterInstance.reparentFollower(ctx, follower, resolved.Target, resolved.Credentials, resolved.ReplicationCredentials); err != nil {
+		step := "reparent_failover_follower_" + string(follower.ResourceID)
+		completed, progressErr := operationStepCompleted(ctx, request, step)
+		if progressErr != nil {
 			_ = adapterInstance.fenceInstance(ctx, targetEndpoint, resolved.Credentials)
-			return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("reparent reachable follower: %w", err))
+			return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("read failover follower progress: %w", progressErr))
 		}
-		if err := completeOperationStep(context.WithoutCancel(ctx), request, "reparent_failover_follower_"+string(follower.ResourceID), "reachable follower follows the new primary"); err != nil {
-			return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", err)
+		if !completed {
+			if err := adapterInstance.reparentFollower(ctx, follower, resolved.Target, resolved.Credentials, resolved.ReplicationCredentials); err != nil {
+				_ = adapterInstance.fenceInstance(ctx, targetEndpoint, resolved.Credentials)
+				return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("reparent reachable follower: %w", err))
+			}
+			if err := completeOperationStep(context.WithoutCancel(ctx), request, step, "reachable follower follows the new primary"); err != nil {
+				return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", err)
+			}
 		}
 	}
 	if err := adapterInstance.endpointProvider.Transfer(ctx, resolved); err != nil {

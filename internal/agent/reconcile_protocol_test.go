@@ -62,3 +62,28 @@ func TestReconcileProtocolRequiresLeaseForBootstrapPrimaryDecision(t *testing.T)
 		t.Fatal("bootstrap response without lease was accepted")
 	}
 }
+
+func TestReconcileProtocolRequiresLeaseForTransitionTargetDecision(t *testing.T) {
+	now := time.Date(2026, time.July, 13, 21, 50, 0, 0, time.UTC)
+	request := ReconcileRequest{ClusterID: model.NewResourceID(), InstanceID: model.NewResourceID(), RequestedAt: now, Nonce: "0123456789abcdef"}
+	if err := SignReconcileRequest(&request, "agent-secret"); err != nil {
+		t.Fatal(err)
+	}
+	response := ReconcileResponse{
+		ClusterID: request.ClusterID, InstanceID: request.InstanceID, Action: ReconcileTransitionTarget,
+		Reason: "controlled transition target", LeaseID: model.NewResourceID(), ValidUntil: now.Add(20 * time.Second), ControllerID: model.NewResourceID(),
+	}
+	if err := SignReconcileResponse(&response, "agent-secret"); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyReconcileResponse(response, request, "agent-secret", now); err != nil {
+		t.Fatalf("verify transition response: %v", err)
+	}
+	response.LeaseID = ""
+	if err := SignReconcileResponse(&response, "agent-secret"); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyReconcileResponse(response, request, "agent-secret", now); err == nil {
+		t.Fatal("transition response without lease was accepted")
+	}
+}

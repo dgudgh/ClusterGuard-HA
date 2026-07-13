@@ -43,4 +43,7 @@ func TestMemoryLeaseStoreRenewsSameStableOwnershipIntent(t *testing.T) {
 	if renewed.ResourceID != first.ResourceID || !renewed.ExpiresAt.Equal(now.Add(30*time.Second)) {
 		t.Fatalf("renewed lease=%+v", renewed)
 	}
+	if err := store.Validate(context.Background(), first); err != nil {
+		t.Fatalf("validate in-flight lease snapshot after renewal: %v", err)
+	}
 }

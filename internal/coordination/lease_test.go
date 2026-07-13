@@ -92,4 +92,7 @@ func TestQuorumLeaseRenewsSameStableOwnershipIntent(t *testing.T) {
 	if renewed.ResourceID != first.ResourceID || !renewed.ExpiresAt.Equal(now.Add(30*time.Second)) || !records.records[first.ResourceID].UpdatedAt.Equal(now) {
 		t.Fatalf("renewed lease=%+v record=%+v", renewed, records.records[first.ResourceID])
 	}
+	if err := store.Validate(context.Background(), first); err != nil {
+		t.Fatalf("validate in-flight lease snapshot after renewal: %v", err)
+	}
 }

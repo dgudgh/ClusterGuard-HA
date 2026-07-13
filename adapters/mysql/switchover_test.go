@@ -27,6 +27,10 @@ func (provider endpointProviderStub) Executable(context.Context) bool { return p
 func (provider endpointProviderStub) Precheck(context.Context, adapter.ResolvedOperation) []model.Check {
 	return append([]model.Check{}, provider.checks...)
 }
+func (provider endpointProviderStub) AuthorizeTransition(ctx context.Context, _ adapter.ResolvedOperation) (adapter.TransitionAuthorization, error) {
+	guarded, cancel := context.WithCancel(ctx)
+	return adapter.TransitionAuthorization{Context: guarded, Cancel: cancel}, nil
+}
 func (provider endpointProviderStub) Transfer(_ context.Context, resolved adapter.ResolvedOperation) error {
 	if provider.transfer != nil {
 		return provider.transfer(resolved)
@@ -345,7 +349,7 @@ func TestSwitchoverPlanIsCanonicalAndImmutableByDigest(t *testing.T) {
 	if plan.OperationID != request.Operation.ResourceID || plan.SourceID != request.Resolved.Primary.ResourceID || plan.TargetID != request.TargetID {
 		t.Fatalf("plan resource scope is wrong: %+v", plan)
 	}
-	if len(plan.Steps) != 11 || plan.Digest == "" || plan.ObservationToken == "" {
+	if len(plan.Steps) != 12 || plan.Digest == "" || plan.ObservationToken == "" {
 		t.Fatalf("plan is incomplete: %+v", plan)
 	}
 	if plan.ResourceRevisions[request.Resolved.Cluster.ResourceID] != request.Resolved.Cluster.MetadataRevision ||

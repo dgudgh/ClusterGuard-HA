@@ -2,6 +2,7 @@ package mysql
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"clusterguard.io/ha/pkg/adapter"
@@ -115,6 +116,12 @@ func TestFailoverExecutesFenceBeforePromotionAndVerifies(t *testing.T) {
 	request.Resolved.ReplicationCredentials = adapter.Credentials{Username: "replicator", Password: "replication-secret"}
 	client := newThreeNodeSQLClient(request)
 	endpointProvider := &recordingEndpointProvider{}
+	authorizedAtPromotion := false
+	client.beforeWritable = func() {
+		endpointProvider.mu.Lock()
+		defer endpointProvider.mu.Unlock()
+		authorizedAtPromotion = endpointProvider.authorized
+	}
 	safety := passingFailoverSafety()
 	adapterInstance := NewWithSafetyProviders(client, endpointProvider, UnsupportedMaintenanceStore{}, safety)
 	plan, err := adapterInstance.BuildPlan(context.Background(), request)
@@ -128,6 +135,9 @@ func TestFailoverExecutesFenceBeforePromotionAndVerifies(t *testing.T) {
 	}
 	if safety.fenceCalls != 1 || endpointProvider.owner != request.TargetID {
 		t.Fatalf("failover did not fence and transfer endpoint: fence=%d owner=%s", safety.fenceCalls, endpointProvider.owner)
+	}
+	if endpointProvider.authorizeCalls != 1 || !authorizedAtPromotion {
+		t.Fatalf("failover endpoint transition was not authorized before promotion: calls=%d authorized_at_promotion=%t", endpointProvider.authorizeCalls, authorizedAtPromotion)
 	}
 	verification, err := adapterInstance.Verify(context.Background(), request)
 	if err != nil || !verification.Passed {
@@ -176,5 +186,34 @@ func TestFailoverRetryVerifiesWithoutRepeatingMutations(t *testing.T) {
 	}
 	if len(client.statements) != statements || safety.fenceCalls != fenceCalls || endpointProvider.transferCalls != transferCalls {
 		t.Fatalf("retry repeated mutation: sql=%d/%d fence=%d/%d transfer=%d/%d", len(client.statements), statements, safety.fenceCalls, fenceCalls, endpointProvider.transferCalls, transferCalls)
+	}
+}
+
+func TestFailoverRetryResumesAfterEndpointTransferFailure(t *testing.T) {
+	request := failoverRequestFixture()
+	request.Resolved.Credentials = adapter.Credentials{Username: "operator", Password: "operation-secret"}
+	request.Resolved.ReplicationCredentials = adapter.Credentials{Username: "replicator", Password: "replication-secret"}
+	request.Progress = &progressCollector{}
+	client := newThreeNodeSQLClient(request)
+	endpointProvider := &recordingEndpointProvider{transferError: errors.New("endpoint transfer unavailable")}
+	safety := passingFailoverSafety()
+	adapterInstance := NewWithSafetyProviders(client, endpointProvider, UnsupportedMaintenanceStore{}, safety)
+	plan, err := adapterInstance.BuildPlan(context.Background(), request)
+	if err != nil {
+		t.Fatalf("build plan: %v", err)
+	}
+	request.Plan = &plan
+	first, err := adapterInstance.Execute(context.Background(), request)
+	if err == nil || first.Status != model.OperationIndeterminate || failureClass(err) != "promoted_unverified" {
+		t.Fatalf("first execution=%+v err=%v class=%q", first, err, failureClass(err))
+	}
+	endpointProvider.transferError = nil
+	second, err := adapterInstance.Execute(context.Background(), request)
+	if err != nil || second.Status != model.OperationRunning {
+		t.Fatalf("resume execution=%+v err=%v", second, err)
+	}
+	verification, err := adapterInstance.Verify(context.Background(), request)
+	if err != nil || !verification.Passed {
+		t.Fatalf("resume verification=%+v err=%v", verification, err)
 	}
 }
