@@ -55,5 +55,5 @@ else
 fi
 mkdir -p "${output}"
 archive="${output}/$(basename "${root}").tar.gz"
-tar -C "${stage}" -czf "${archive}" "$(basename "${root}")"
+tar --no-xattrs -C "${stage}" -czf "${archive}" "$(basename "${root}")"
 printf '%s\n' "${archive}"

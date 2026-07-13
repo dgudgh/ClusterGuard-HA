@@ -305,7 +305,7 @@ func TestBundleBuildContainsInstallableRuntimeAndChecksums(t *testing.T) {
 	}
 	text := string(contents)
 	for _, expected := range []string{
-		"cmd/clusterguard", "cmd/cgctl", "cmd/clusterguard-agent", "SHA256SUMS", "clusterguard-install.sh", "clusterguard-agent-stdio.sh", "COPYFILE_DISABLE=1",
+		"cmd/clusterguard", "cmd/cgctl", "cmd/clusterguard-agent", "SHA256SUMS", "clusterguard-install.sh", "clusterguard-agent-stdio.sh", "COPYFILE_DISABLE=1", "--no-xattrs",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("bundle builder missing %q", expected)
