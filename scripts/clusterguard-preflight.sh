@@ -45,6 +45,7 @@ if [[ -n "${assets_dir}" ]]; then
   while IFS= read -r -d '' asset; do
     relative="${asset#"${assets_dir}"/}"
     case "${relative}" in
+      ._*|*/._*|.DS_Store|*/.DS_Store) continue ;;
       tls/*.crt|tls/*.key|ssh/*known_hosts|ssh/*_ed25519|mysql/*-client.cnf) ;;
       *) echo "unsupported runtime asset: ${relative}" >&2; exit 3 ;;
     esac

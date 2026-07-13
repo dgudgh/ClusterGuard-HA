@@ -245,6 +245,9 @@ func TestInstallerCopiesOnlySupportedRuntimeAssetsWithProtectedModes(t *testing.
 	writeFile(t, filepath.Join(assets, "ssh", "controller_ed25519"), "private-key", 0o600)
 	writeFile(t, filepath.Join(assets, "ssh", "known_hosts"), "host-key", 0o600)
 	writeFile(t, filepath.Join(assets, "mysql", "3306-client.cnf"), "[client]\npassword=secret\n", 0o600)
+	writeFile(t, filepath.Join(assets, "._tls"), "apple-double", 0o600)
+	writeFile(t, filepath.Join(assets, "tls", "._server.crt"), "apple-double", 0o600)
+	writeFile(t, filepath.Join(assets, ".DS_Store"), "finder-metadata", 0o600)
 	installRoot := filepath.Join(t.TempDir(), "root")
 	fakeSystemctl := filepath.Join(t.TempDir(), "systemctl")
 	writeExecutable(t, fakeSystemctl, "#!/usr/bin/env bash\nexit 0\n")
@@ -272,6 +275,11 @@ func TestInstallerCopiesOnlySupportedRuntimeAssetsWithProtectedModes(t *testing.
 			t.Fatalf("asset %s mode=%#o, want %#o", path, info.Mode().Perm(), mode)
 		}
 	}
+	for _, path := range []string{"._tls", "tls/._server.crt", ".DS_Store"} {
+		if _, err := os.Stat(filepath.Join(installRoot, "etc", "clusterguard", path)); !os.IsNotExist(err) {
+			t.Fatalf("packaging metadata %s was installed: %v", path, err)
+		}
+	}
 }
 
 func TestSmokeChecksOneWriterOneVIPAndReplicaThreads(t *testing.T) {
@@ -297,7 +305,7 @@ func TestBundleBuildContainsInstallableRuntimeAndChecksums(t *testing.T) {
 	}
 	text := string(contents)
 	for _, expected := range []string{
-		"cmd/clusterguard", "cmd/cgctl", "cmd/clusterguard-agent", "SHA256SUMS", "clusterguard-install.sh", "clusterguard-agent-stdio.sh",
+		"cmd/clusterguard", "cmd/cgctl", "cmd/clusterguard-agent", "SHA256SUMS", "clusterguard-install.sh", "clusterguard-agent-stdio.sh", "COPYFILE_DISABLE=1",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("bundle builder missing %q", expected)

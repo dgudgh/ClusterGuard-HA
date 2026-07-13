@@ -116,6 +116,7 @@ if [[ -n "${assets_dir}" ]]; then
   while IFS= read -r -d '' asset; do
     relative="${asset#"${assets_dir}"/}"
     case "${relative}" in
+      ._*|*/._*|.DS_Store|*/.DS_Store) continue ;;
       tls/*.crt|ssh/*known_hosts) mode=0644 ;;
       tls/*.key|ssh/*_ed25519) mode=0640 ;;
       mysql/*-client.cnf) mode=0600 ;;

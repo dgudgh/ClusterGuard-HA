@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export COPYFILE_DISABLE=1
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 repository="$(cd "${script_dir}/.." && pwd)"
