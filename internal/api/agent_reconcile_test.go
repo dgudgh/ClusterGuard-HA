@@ -259,7 +259,33 @@ func TestAgentReconcileAcceptsValidLeaseOlderThanFreshEquivalentTopology(t *test
 	}
 }
 
-func TestAgentReconcileRejectsRebootBootstrapWithLeaseOlderThanTopology(t *testing.T) {
+func TestValidBootstrapLeaseRecordRejectsInvalidTemporalEvidence(t *testing.T) {
+	now := time.Now().UTC()
+	base := coordination.LeaseRecord{
+		Lease:     endpoint.Lease{ExpiresAt: now.Add(30 * time.Second)},
+		UpdatedAt: now,
+	}
+	tests := []struct {
+		name   string
+		mutate func(*coordination.LeaseRecord)
+	}{
+		{name: "zero update time", mutate: func(record *coordination.LeaseRecord) { record.UpdatedAt = time.Time{} }},
+		{name: "future update time", mutate: func(record *coordination.LeaseRecord) { record.UpdatedAt = now.Add(time.Nanosecond) }},
+		{name: "non-positive lifetime", mutate: func(record *coordination.LeaseRecord) { record.UpdatedAt = record.Lease.ExpiresAt }},
+		{name: "lifetime exceeds maximum", mutate: func(record *coordination.LeaseRecord) { record.UpdatedAt = now.Add(-31 * time.Second) }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			record := base
+			test.mutate(&record)
+			if validBootstrapLeaseRecord(record, now) {
+				t.Fatalf("invalid bootstrap lease record was accepted: %+v", record)
+			}
+		})
+	}
+}
+
+func TestAgentReconcileRejectsBootstrapLeaseWithImpossibleLifetime(t *testing.T) {
 	now := time.Now().UTC()
 	repository := store.NewMemory()
 	cluster, canonical, lease := seedRebootBootstrapState(t, repository, now)

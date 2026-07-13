@@ -64,7 +64,7 @@ func (server *Server) transitionAuthorizes(instanceID model.ResourceID, lease en
 func validBootstrapLeaseRecord(record coordination.LeaseRecord, now time.Time) bool {
 	updatedAt := record.UpdatedAt.UTC()
 	expiresAt := record.Lease.ExpiresAt.UTC()
-	if updatedAt.IsZero() || updatedAt.After(now.UTC().Add(5*time.Second)) {
+	if updatedAt.IsZero() || updatedAt.After(now.UTC()) {
 		return false
 	}
 	lifetime := expiresAt.Sub(updatedAt)
