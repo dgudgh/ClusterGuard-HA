@@ -130,23 +130,27 @@ func TestReconcilerBootstrapsVIPOnlyWithSignedKeepDecisionAndWritableMySQL(t *te
 	}
 }
 
-func TestReconcilerFailsClosedWhenLeaderDecisionIsMissingOrIsolates(t *testing.T) {
+func TestReconcilerFailsClosedWhenLeaderDecisionIsMissing(t *testing.T) {
 	policy := reconcilePolicy()
-	for _, test := range []struct {
-		name     string
-		decision reconcileDecisionStub
-	}{
-		{name: "unreachable", decision: reconcileDecisionStub{err: errors.New("leader unavailable")}},
-		{name: "isolate", decision: reconcileDecisionStub{response: ReconcileResponse{ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileSelfIsolate}}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			vip := &reconcileVIPStub{owns: true}
-			roles := &reconcileRoleStub{}
-			results, err := NewReconciler(vip, roles, test.decision).ReconcileAll(context.Background(), map[model.ResourceID]ClusterPolicy{policy.ClusterID: policy})
-			if err == nil || len(results) != 1 || results[0].Action != ReconcileSelfIsolate || vip.releases != 1 || len(roles.persisted) != 1 || !roles.persisted[0] {
-				t.Fatalf("fail-closed results=%+v vip=%+v roles=%+v err=%v", results, vip, roles, err)
-			}
-		})
+	vip := &reconcileVIPStub{owns: true}
+	roles := &reconcileRoleStub{}
+	decision := reconcileDecisionStub{err: errors.New("leader unavailable")}
+	results, err := NewReconciler(vip, roles, decision).ReconcileAll(context.Background(), map[model.ResourceID]ClusterPolicy{policy.ClusterID: policy})
+	if err == nil || len(results) != 1 || results[0].Action != ReconcileSelfIsolate || vip.releases != 1 || len(roles.persisted) != 1 || !roles.persisted[0] {
+		t.Fatalf("fail-closed results=%+v vip=%+v roles=%+v err=%v", results, vip, roles, err)
+	}
+}
+
+func TestReconcilerTreatsControllerDirectedIsolationAsHealthyConvergence(t *testing.T) {
+	policy := reconcilePolicy()
+	vip := &reconcileVIPStub{owns: true}
+	roles := &reconcileRoleStub{}
+	decision := reconcileDecisionStub{response: ReconcileResponse{
+		ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileSelfIsolate,
+	}}
+	results, err := NewReconciler(vip, roles, decision).ReconcileAll(context.Background(), map[model.ResourceID]ClusterPolicy{policy.ClusterID: policy})
+	if err != nil || len(results) != 1 || results[0].Action != ReconcileSelfIsolate || vip.releases != 1 || len(roles.persisted) != 1 || !roles.persisted[0] {
+		t.Fatalf("expected isolation results=%+v vip=%+v roles=%+v err=%v", results, vip, roles, err)
 	}
 }
 

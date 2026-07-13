@@ -80,6 +80,7 @@ ${replica_update_option}
 read_only=ON
 super_read_only=ON
 skip_name_resolve=ON
+max_connect_errors=10000
 pid_file=${run_dir}/mysqld.pid
 log_error=${log_dir}/error.log
 EOF

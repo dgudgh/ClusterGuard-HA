@@ -112,3 +112,13 @@ func TestNewNodeBootstrapDoesNotCreateErrantGTIDsBeforeSynchronization(t *testin
 		t.Fatalf("logical sync must clear target GTIDs before importing donor GTIDs")
 	}
 }
+
+func TestMySQLInstallRaisesHostErrorToleranceForControllerProbes(t *testing.T) {
+	installContents, err := os.ReadFile("clusterguard-mysql-install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(installContents), "max_connect_errors=10000") {
+		t.Fatal("managed MySQL instances can block healthy controllers after a transient probe storm")
+	}
+}

@@ -32,11 +32,16 @@ func NewReconciler(vip VIPController, roles RoleController, decisions ReconcileD
 	return &Reconciler{vip: vip, roles: roles, decisions: decisions}
 }
 
-func (reconciler *Reconciler) selfIsolate(ctx context.Context, policy ClusterPolicy, cause error) (ReconcileResult, error) {
+func (reconciler *Reconciler) convergeSelfIsolation(ctx context.Context, policy ClusterPolicy) (ReconcileResult, error) {
 	releaseErr := reconciler.vip.Release(ctx, policy)
 	roleErr := reconciler.roles.PersistReadOnly(ctx, policy, true)
 	message := "VIP released and MySQL persisted read-only"
-	return ReconcileResult{ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileSelfIsolate, Message: message}, errors.Join(ErrSelfIsolated, cause, releaseErr, roleErr)
+	return ReconcileResult{ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileSelfIsolate, Message: message}, errors.Join(releaseErr, roleErr)
+}
+
+func (reconciler *Reconciler) selfIsolate(ctx context.Context, policy ClusterPolicy, cause error) (ReconcileResult, error) {
+	result, isolationErr := reconciler.convergeSelfIsolation(ctx, policy)
+	return result, errors.Join(ErrSelfIsolated, cause, isolationErr)
 }
 
 func (reconciler *Reconciler) reconcile(ctx context.Context, policy ClusterPolicy) (ReconcileResult, error) {
@@ -47,8 +52,13 @@ func (reconciler *Reconciler) reconcile(ctx context.Context, policy ClusterPolic
 	if err != nil {
 		return reconciler.selfIsolate(ctx, policy, err)
 	}
-	if decision.ClusterID != policy.ClusterID || decision.InstanceID != policy.InstanceID || !model.ValidResourceID(decision.LeaseID) ||
-		(decision.Action != ReconcileKeepVIP && decision.Action != ReconcileBootstrapPrimary) {
+	if decision.ClusterID != policy.ClusterID || decision.InstanceID != policy.InstanceID {
+		return reconciler.selfIsolate(ctx, policy, fmt.Errorf("controller did not authorize local VIP ownership"))
+	}
+	if decision.Action == ReconcileSelfIsolate {
+		return reconciler.convergeSelfIsolation(ctx, policy)
+	}
+	if !model.ValidResourceID(decision.LeaseID) || (decision.Action != ReconcileKeepVIP && decision.Action != ReconcileBootstrapPrimary) {
 		return reconciler.selfIsolate(ctx, policy, fmt.Errorf("controller did not authorize local VIP ownership"))
 	}
 	if decision.Action == ReconcileBootstrapPrimary {
