@@ -1,11 +1,18 @@
 package scripts
 
 import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func writeExecutable(t *testing.T, path, contents string) {
@@ -308,6 +315,136 @@ func TestSmokeChecksOneWriterOneVIPAndReplicaThreads(t *testing.T) {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("smoke script missing invariant %q", expected)
 		}
+	}
+}
+
+func TestHAMatrixRunsSeededCoveredConcurrentSwitchesWithSmoke(t *testing.T) {
+	clusterIDs := []string{
+		"11111111-1111-4111-8111-111111111111",
+		"22222222-2222-4222-8222-222222222222",
+	}
+	type execution struct {
+		ClusterID string
+		TargetID  string
+		Approval  string
+	}
+	var (
+		active, maximumActive int32
+		executionMu           sync.Mutex
+		executions            []execution
+		operationOrdinal      int32
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer matrix-control" {
+			http.Error(writer, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if request.Method == http.MethodGet && strings.HasSuffix(request.URL.Path, "/candidates") {
+			clusterID := strings.Split(strings.TrimPrefix(request.URL.Path, "/api/v1/clusters/"), "/")[0]
+			_, _ = fmt.Fprintf(writer, `{"status":"ok","result":[{"instance_id":"%s","eligible":true,"rank":1},{"instance_id":"%s","eligible":true,"rank":2}]}`,
+				clusterID[:8]+"-aaaa-4aaa-8aaa-aaaaaaaaaaa1", clusterID[:8]+"-bbbb-4bbb-8bbb-bbbbbbbbbbb2")
+			return
+		}
+		if request.Method == http.MethodPost && request.URL.Path == "/api/v1/operations/execute" {
+			current := atomic.AddInt32(&active, 1)
+			for {
+				observed := atomic.LoadInt32(&maximumActive)
+				if current <= observed || atomic.CompareAndSwapInt32(&maximumActive, observed, current) {
+					break
+				}
+			}
+			defer atomic.AddInt32(&active, -1)
+			payload := struct {
+				Operation struct {
+					ClusterID string `json:"cluster_id"`
+				} `json:"operation"`
+				TargetID      string `json:"target_id"`
+				ApprovalToken string `json:"approval_token"`
+			}{}
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				http.Error(writer, err.Error(), http.StatusBadRequest)
+				return
+			}
+			executionMu.Lock()
+			executions = append(executions, execution{ClusterID: payload.Operation.ClusterID, TargetID: payload.TargetID, Approval: payload.ApprovalToken})
+			executionMu.Unlock()
+			time.Sleep(100 * time.Millisecond)
+			ordinal := atomic.AddInt32(&operationOrdinal, 1)
+			_, _ = fmt.Fprintf(writer, `{"status":"ok","result":{"resource_id":"operation-%d","status":"succeeded"}}`, ordinal)
+			return
+		}
+		http.NotFound(writer, request)
+	}))
+	defer server.Close()
+
+	fakeScripts := t.TempDir()
+	smokeLog := filepath.Join(t.TempDir(), "smoke.log")
+	writeExecutable(t, filepath.Join(fakeScripts, "clusterguard-smoke.sh"), `#!/usr/bin/env bash
+set -euo pipefail
+while (($#)); do
+  case "$1" in
+    --cluster) cluster="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf '%s\n' "${cluster}" >>"${CG_MATRIX_SMOKE_LOG}"
+`)
+	command := exec.Command("bash", "clusterguard-ha-matrix.sh",
+		"--api", server.URL,
+		"--clusters", strings.Join(clusterIDs, ","),
+		"--round-robin", "2",
+		"--random", "2",
+		"--seed", "11",
+		"--parallel", "2",
+	)
+	command.Env = append(os.Environ(),
+		"CG_CONTROL_TOKEN=matrix-control",
+		"CG_APPROVAL_TOKEN=matrix-approval",
+		"CG_MATRIX_SMOKE_LOG="+smokeLog,
+		"script_dir="+fakeScripts,
+	)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("HA matrix: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "matrix_summary total=4 passed=4 failed=0 seed=11") {
+		t.Fatalf("matrix summary missing:\n%s", output)
+	}
+	if atomic.LoadInt32(&maximumActive) < 2 {
+		t.Fatalf("matrix did not execute independent clusters concurrently: maximum=%d", maximumActive)
+	}
+	if len(executions) != 4 {
+		t.Fatalf("executions=%d, want 4", len(executions))
+	}
+	byCluster := map[string][]string{}
+	for _, execution := range executions {
+		if execution.Approval != "matrix-approval" {
+			t.Fatalf("approval token was not forwarded: %+v", execution)
+		}
+		byCluster[execution.ClusterID] = append(byCluster[execution.ClusterID], execution.TargetID)
+	}
+	for _, clusterID := range clusterIDs {
+		targets := byCluster[clusterID]
+		if len(targets) != 2 || targets[0] == targets[1] {
+			t.Fatalf("cluster %s targets=%v, want two rotated candidates", clusterID, targets)
+		}
+	}
+	smokeContents, err := os.ReadFile(smokeLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lines := strings.Fields(string(smokeContents)); len(lines) != 4 {
+		t.Fatalf("smoke checks=%d, want 4: %s", len(lines), smokeContents)
+	}
+}
+
+func TestHAMatrixRejectsDuplicateClusterInventory(t *testing.T) {
+	clusterID := "11111111-1111-4111-8111-111111111111"
+	command := exec.Command("bash", "clusterguard-ha-matrix.sh", "--clusters", clusterID+","+clusterID, "--round-robin", "0", "--random", "0")
+	command.Env = append(os.Environ(), "CG_CONTROL_TOKEN=matrix-control", "CG_APPROVAL_TOKEN=matrix-approval")
+	output, err := command.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "cluster UUIDs must be unique") {
+		t.Fatalf("duplicate inventory was not rejected: err=%v output=%s", err, output)
 	}
 }
 
