@@ -39,6 +39,9 @@ func decodeSnapshotContents(contents []byte) (snapshot, error) {
 	if decoded.CoordinationLeases == nil {
 		decoded.CoordinationLeases = map[model.ResourceID]coordination.LeaseRecord{}
 	}
+	if decoded.OperationLocks == nil {
+		decoded.OperationLocks = map[model.ResourceID]coordination.OperationLockRecord{}
+	}
 	if decoded.LifecycleTasks == nil {
 		decoded.LifecycleTasks = map[model.ResourceID]lifecycle.Task{}
 	}

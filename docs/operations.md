@@ -13,9 +13,15 @@ Implemented keys:
 | `metadata_path` | Yes | Durable metadata snapshot path. |
 | `control_token_env` | No | Environment variable containing the Bearer token for control API `POST` requests. Without it, all control `POST` routes fail closed with `503`. |
 | `approval_token_env` | No | Environment variable containing the workflow approval token. |
-| `mysql.enabled` | No | Enables server-side MySQL discovery credentials. The adapter stays registered, but discover/refresh fails closed when omitted or `false`. |
-| `mysql.username` | When enabled | Dedicated MySQL read-only discovery user. |
-| `mysql.password_env` | When enabled | Environment variable containing that user's password. |
+| `mysql.enabled` | No | Enables server-side MySQL discovery and operation credentials. |
+| `mysql.discovery` | When enabled | Dedicated read-only discovery username and password environment reference. |
+| `mysql.operation` | When enabled | Dedicated administrative operation username and password environment reference. |
+| `mysql.replication` | When enabled | Dedicated replication username and password environment reference. |
+| `mysql.automatic_failover_enabled` | No | Enables leader-only automatic failover; defaults to `false`. |
+| `mysql.automatic_failover_interval_seconds` | No | Recovery-controller poll interval; defaults to 5 seconds. |
+| `mysql.automatic_failover_retry_seconds` | No | Backoff after a blocked or failed incident attempt; defaults to 30 seconds. |
+| `consensus` | For real HA mutation | Odd Raft controller membership, persistent state, and majority authority. |
+| `agent` | For VIP/fencing mutation | Restricted signed node command transport. |
 
 The JSON file contains environment-variable names only. Set secrets in the
 service environment:
@@ -65,6 +71,29 @@ Both routes list the registered engines and the explicit availability,
 mutation flag, and reason for each capability.
 
 ## 3. Register Authoritative Inventory
+
+Register each physical host once with a fixed globally unique `node_name` before
+attaching database endpoints. The platform returns an immutable `resource_id`:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8088/api/v1/nodes \
+  -H 'content-type: application/json' \
+  -H "Authorization: Bearer ${CG_CONTROL_TOKEN}" \
+  -d '{
+    "node_name":"cg-data-0001",
+    "display_name":"MySQL host 1",
+    "hostname":"mysql-a",
+    "ip_address":"192.0.2.10",
+    "kind":"data",
+    "active":true
+  }'
+```
+
+`node_name` and `resource_id` never change. A hostname or IP change uses
+`PUT /api/v1/nodes/{resource_id}` with the same `node_name`; the previous
+coordinates become aliases. Rebuild requests must supply the original node UUID
+and fixed name, so a repaired host reuses the existing slot instead of appearing
+as an extra node.
 
 Register the cluster display name, engine, and every database endpoint that the
 controller is allowed to probe:
@@ -236,11 +265,12 @@ curl -sS -X POST http://127.0.0.1:8088/api/v1/operations/<operation-uuid>/plan \
   -H "Authorization: Bearer ${CG_CONTROL_TOKEN}" -d '{}'
 ```
 
-The first mutating release requires exactly two inventory members and blocks
-unknown evidence. Checks require one healthy writable primary, a healthy direct
-replica, zero lag, running IO/SQL threads, GTID mode `ON`, identical GTID sets,
-binary logging, current complete probe coverage, compatible MySQL release
-families, and a real writer-endpoint provider.
+The guarded release supports one primary and multiple inventory replicas. Checks
+require one healthy writable primary, a selected eligible replica, bounded lag,
+running IO/SQL threads, GTID mode `ON`, compatible GTID history, binary logging,
+current probe coverage, compatible MySQL release families, and a verified
+writer-endpoint provider. The immutable plan includes every follower that must
+be reparented.
 
 Inspect the durable state after a process restart:
 
@@ -255,7 +285,7 @@ actions under `/api/v1/operations/precheck|plan|execute|verify` require an
 `idempotency_key` and use the same durable UUID workflow; there is no direct
 Adapter execution path.
 
-The default runtime deliberately fails the execute action with HTTP `501`:
+Execute a reviewed operation with the approval token:
 
 ```bash
 curl -sS -X POST http://127.0.0.1:8088/api/v1/operations/<operation-uuid>/execute \
@@ -264,11 +294,11 @@ curl -sS -X POST http://127.0.0.1:8088/api/v1/operations/<operation-uuid>/execut
   -d '{"approval_token":"<approval-token>"}'
 ```
 
-This is not a simulated success. No production endpoint provider is installed,
-so ClusterGuard HA persists `unsupported` before acquiring a lock or issuing a
-mutating SQL statement. Tests inject a deterministic provider and exercise the
-complete 5.7/8.x/9.x transition, step persistence, independent verification,
-audit, report, failure classification, and idempotent retry.
+When Agent, Raft, HA endpoint inventory, or operation credentials are absent,
+ClusterGuard HA persists a blocked or unsupported result before issuing a
+mutating SQL statement. With those dependencies configured, execution fences
+the source, promotes the selected target, reparents reachable followers,
+transfers the VIP, verifies postconditions, and writes the audit/report timeline.
 
 Replication statement selection uses `STOP/RESET SLAVE` through MySQL 8.0.21
 and `STOP/RESET REPLICA` from MySQL 8.0.22 onward. Before any write, the kernel
@@ -311,22 +341,30 @@ resource UUID. A changed hostname, IP, or port must not create a duplicate
 resource. Native-identity mismatches, duplicate endpoint ownership, cross-
 cluster updates, and ambiguous endpoint selection are blocked.
 
-## 9. Current Safety Boundary
+## 9. Automatic Failover and Safety Boundary
 
-Available production operations are read-only observation, durable switchover
-precheck/planning, and platform metadata reconciliation. The following actions
-are not enabled:
+Automatic failover is disabled by default. Enabling it requires Raft consensus,
+the restricted node agent, an approval secret, an active VIP resource, and all
+three purpose-specific MySQL credentials. Startup rejects an incomplete
+automatic-failover configuration.
 
-- planned-switchover execution without a real writer-endpoint provider;
-- failover, automatic recovery, or former-primary rejoin;
-- VIP, listener, service, or writer-endpoint mutation;
-- replication repair or source rewiring;
-- node installation, synchronization, replacement, or removal.
+The recovery controller executes only on the majority Leader. Discovery records
+one incident after six follow-up failed-primary samples span 30 seconds. The
+controller chooses only the rank-one eligible candidate and submits a normal
+durable `failover` operation through every workflow stage. Incident-derived
+idempotency keys prevent a Leader change from repeating a successful or
+indeterminate failover. Blocked attempts wait at least the configured retry
+period.
 
-Requests to operation execute routes for those actions return HTTP `501` with
-`status: unsupported`. Node synchronization routes also return `501`.
-Capability rejection happens before workflow locks, approvals, or an adapter
-mutation call, so unsupported does not mean partially executed.
+The operation lock is stored in the Raft-replicated metadata snapshot and
+renewed while its holder remains the majority Leader. The Safety Guard checks
+majority again before lock and approval. VIP ownership is separately protected
+by a short exclusive endpoint lease and cluster-wide owner verification.
+
+PostgreSQL, Oracle, and SQL Server mutation remains unsupported. A MySQL action
+whose required Agent, endpoint, identity, topology, quorum, fencing, or approval
+evidence is missing is blocked before the unsafe step. Unsupported or blocked
+never means partially successful.
 
 The guarded kernel pins the exact topology observation used for precheck as
 `cluster_id@observed_at` and revalidates it after acquiring the operation lock.
@@ -375,12 +413,11 @@ promotion eligibility.
 
 ### MySQL
 
-Next work is the real Linux VIP provider: durable lease, controller leadership,
-quorum, fencing token, all-node owner probes, transfer compensation, and
-network-partition tests. Only after that provider passes the same workflow may
-the tested planned-switchover kernel be enabled in production. Failover,
-former-primary rejoin, replica reparenting, repair, and node lifecycle remain
-later independently gated projects.
+The independent MySQL path now includes discovery, candidate evaluation,
+planned switchover, guarded failover, former-primary rejoin, allowlisted repair,
+Linux VIP ownership, self-isolation, and staged node lifecycle. Remaining work
+is delivery packaging and destructive three-host acceptance, including real
+network fencing integration for whole-host partitions.
 
 ### PostgreSQL
 

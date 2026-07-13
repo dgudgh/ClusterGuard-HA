@@ -32,3 +32,33 @@ func TestCoordinationLeasePersistsAcrossRepositoryRestart(t *testing.T) {
 		t.Fatalf("persisted records=%+v", records)
 	}
 }
+
+func TestCoordinationOperationLockPersistsAcrossRepositoryRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metadata.json")
+	repository, err := Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	now := time.Now().UTC()
+	record := coordination.OperationLockRecord{
+		ResourceID: model.NewResourceID(), ClusterID: model.NewResourceID(), OperationID: model.NewResourceID(),
+		ExpiresAt: now.Add(time.Minute), CreatedAt: now, UpdatedAt: now,
+	}
+	if err := repository.PutCoordinationOperationLock(record); err != nil {
+		t.Fatalf("put operation lock: %v", err)
+	}
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	records := reopened.CoordinationOperationLocks()
+	if len(records) != 1 || records[0] != record {
+		t.Fatalf("persisted operation locks=%+v", records)
+	}
+	if err := reopened.DeleteCoordinationOperationLock(record.ResourceID); err != nil {
+		t.Fatalf("delete operation lock: %v", err)
+	}
+	if records := reopened.CoordinationOperationLocks(); len(records) != 0 {
+		t.Fatalf("deleted operation lock remains: %+v", records)
+	}
+}

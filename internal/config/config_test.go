@@ -48,6 +48,9 @@ func TestLoadReadsConfigurationAndEnvironmentSecret(t *testing.T) {
 	if loaded.MySQL.DiscoveryIntervalSeconds != 5 || loaded.MySQL.DiscoveryTimeoutSeconds != 4 {
 		t.Fatalf("unexpected discovery schedule: %+v", loaded.MySQL)
 	}
+	if loaded.MySQL.AutomaticFailoverEnabled || loaded.MySQL.AutomaticFailoverIntervalSeconds != 5 || loaded.MySQL.AutomaticFailoverRetrySeconds != 30 {
+		t.Fatalf("unexpected automatic failover defaults: %+v", loaded.MySQL)
+	}
 }
 
 func TestLoadResolvesPurposeSpecificMySQLCredentials(t *testing.T) {
@@ -201,6 +204,33 @@ func TestLoadAllowsDisabledMySQLWithoutCredentials(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsAutomaticFailoverWithoutConsensusAgentAndApproval(t *testing.T) {
+	for name, value := range map[string]string{
+		"CG_AUTO_DISCOVERY":   "discovery-secret",
+		"CG_AUTO_OPERATION":   "operation-secret",
+		"CG_AUTO_REPLICATION": "replication-secret",
+	} {
+		t.Setenv(name, value)
+	}
+	path := filepath.Join(t.TempDir(), "control.json")
+	contents := `{
+  "metadata_path":"` + filepath.Join(t.TempDir(), "metadata.json") + `",
+  "mysql": {
+    "enabled":true,
+    "automatic_failover_enabled":true,
+    "discovery":{"username":"discover","password_env":"CG_AUTO_DISCOVERY"},
+    "operation":{"username":"operator","password_env":"CG_AUTO_OPERATION"},
+    "replication":{"username":"replicator","password_env":"CG_AUTO_REPLICATION"}
+  }
+}`
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "automatic failover") {
+		t.Fatalf("unsafe automatic failover configuration error=%v", err)
+	}
+}
+
 func TestLoadResolvesAgentTransportSecret(t *testing.T) {
 	t.Setenv("CG_TEST_AGENT_SECRET", "agent-secret")
 	path := filepath.Join(t.TempDir(), "control.json")
@@ -321,6 +351,9 @@ func TestOfficialDistributionUsesClusterGuardPathsAndServiceName(t *testing.T) {
 	}
 	if configuration.MetadataPath != "/var/lib/clusterguard/metadata.json" {
 		t.Fatalf("metadata path = %q", configuration.MetadataPath)
+	}
+	if configuration.MySQL.AutomaticFailoverEnabled || configuration.MySQL.AutomaticFailoverIntervalSeconds != 5 || configuration.MySQL.AutomaticFailoverRetrySeconds != 30 {
+		t.Fatalf("distribution automatic failover defaults=%+v", configuration.MySQL)
 	}
 
 	servicePath := filepath.Join("..", "..", "packaging", "systemd", "clusterguard-ha.service")

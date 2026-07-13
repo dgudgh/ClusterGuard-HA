@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -14,13 +15,14 @@ import (
 	"clusterguard.io/ha/internal/agent"
 	"clusterguard.io/ha/internal/config"
 	"clusterguard.io/ha/internal/endpoint"
+	"clusterguard.io/ha/internal/store"
 	"clusterguard.io/ha/pkg/adapter"
 	"clusterguard.io/ha/pkg/model"
 )
 
-type runtimeFailoverAuthority struct{}
+type runtimeFailoverAuthority struct{ err error }
 
-func (runtimeFailoverAuthority) RequireMutationAuthority(context.Context) error { return nil }
+func (stub runtimeFailoverAuthority) RequireMutationAuthority(context.Context) error { return stub.err }
 
 type runtimeFailoverInventory struct {
 	resource model.HAEndpoint
@@ -147,6 +149,37 @@ func TestMySQLFailoverRuntimeSharesThirtySecondFailureEvidence(t *testing.T) {
 	t.Fatalf("runtime failover safety omitted stable-primary-failure check: %+v", checks)
 }
 
+func TestRuntimeLocksPersistClusterMutationThroughQuorumStore(t *testing.T) {
+	repository := store.NewMemory()
+	locks := newRuntimeLocks(repository, runtimeFailoverAuthority{})
+	operation := model.Operation{
+		ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()},
+		ClusterID:    model.NewResourceID(),
+	}
+	release, err := locks.operations.Acquire(context.Background(), operation)
+	if err != nil {
+		t.Fatalf("acquire runtime operation lock: %v", err)
+	}
+	if records := repository.CoordinationOperationLocks(); len(records) != 1 || records[0].OperationID != operation.ResourceID {
+		t.Fatalf("runtime operation lock was not persisted: %+v", records)
+	}
+	release()
+	if records := repository.CoordinationOperationLocks(); len(records) != 0 {
+		t.Fatalf("runtime operation lock was not released: %+v", records)
+	}
+}
+
+func TestRuntimeSafetyGuardUsesControllerMajorityWhenConfigured(t *testing.T) {
+	operation := model.Operation{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, ClusterID: model.NewResourceID()}
+	guard := newRuntimeSafetyGuard(runtimeFailoverAuthority{err: errors.New("no quorum")})
+	if err := guard.Evaluate(context.Background(), operation); err == nil {
+		t.Fatal("runtime safety guard ignored controller quorum loss")
+	}
+	if err := newRuntimeSafetyGuard(nil).Evaluate(context.Background(), operation); err != nil {
+		t.Fatalf("standalone safety guard should preserve local-mode behavior: %v", err)
+	}
+}
+
 func runtimeRequest(t *testing.T, handler http.Handler, method string, path string, body interface{}) *httptest.ResponseRecorder {
 	t.Helper()
 	contents, err := json.Marshal(body)
@@ -223,6 +256,39 @@ func TestRuntimeRaftBlocksMutationWithoutControllerMajority(t *testing.T) {
 	})
 	if response.Code != http.StatusServiceUnavailable || !bytes.Contains(response.Body.Bytes(), []byte("Raft leader")) {
 		t.Fatalf("minority mutation status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestRuntimeStartsAutomaticFailoverOnlyWithGuardedDependencies(t *testing.T) {
+	addresses := []string{runtimeFreeAddress(t), runtimeFreeAddress(t), runtimeFreeAddress(t)}
+	ids := []model.ResourceID{model.NewResourceID(), model.NewResourceID(), model.NewResourceID()}
+	peers := make([]config.ConsensusPeer, 3)
+	for index := range peers {
+		peers[index] = config.ConsensusPeer{ResourceID: ids[index], Address: addresses[index]}
+	}
+	server, err := New(config.File{
+		MetadataPath: filepath.Join(t.TempDir(), "metadata.json"), ApprovalToken: "approval",
+		Consensus: config.Consensus{
+			Enabled: true, LocalID: ids[0], BindAddress: addresses[0], AdvertiseAddress: addresses[0],
+			DataDirectory: filepath.Join(t.TempDir(), "raft"), Bootstrap: true, ApplyTimeoutSeconds: 1, Peers: peers,
+		},
+		Agent: config.Agent{
+			Enabled: true, User: "cg-agent", IdentityFile: "/tmp/agent-key", KnownHostsFile: "/tmp/known-hosts", SharedSecret: "agent-secret",
+		},
+		MySQL: config.MySQL{
+			Enabled: true, DiscoveryIntervalSeconds: 5, DiscoveryTimeoutSeconds: 4,
+			AutomaticFailoverEnabled: true, AutomaticFailoverIntervalSeconds: 5, AutomaticFailoverRetrySeconds: 30,
+			Discovery:   config.Credential{Username: "discover", Password: "discovery-secret"},
+			Operation:   config.Credential{Username: "operator", Password: "operation-secret"},
+			Replication: config.Credential{Username: "replicator", Password: "replication-secret"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("start automatic failover runtime: %v", err)
+	}
+	defer server.Close()
+	if server.automaticRecovery == nil {
+		t.Fatal("guarded automatic failover controller was not started")
 	}
 }
 

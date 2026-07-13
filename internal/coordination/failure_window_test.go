@@ -47,3 +47,21 @@ func TestFailureWindowIgnoresDuplicateObservationTimestamp(t *testing.T) {
 		t.Fatal("duplicate discovery observation counted twice")
 	}
 }
+
+func TestFailureWindowExposesStableIncidentIdentityUntilRecovery(t *testing.T) {
+	window := NewFailureWindow(6, 30*time.Second)
+	clusterID := model.NewResourceID()
+	start := time.Date(2026, time.July, 13, 22, 0, 0, 0, time.UTC)
+	window.Record(clusterID, true, start)
+	for index := 1; index <= 6; index++ {
+		window.Record(clusterID, true, start.Add(time.Duration(index)*5*time.Second))
+	}
+	incident, stable := window.Incident(clusterID, start.Add(30*time.Second))
+	if !stable || !incident.Equal(start) {
+		t.Fatalf("stable incident=(%s,%t), want (%s,true)", incident, stable, start)
+	}
+	window.Record(clusterID, false, start.Add(35*time.Second))
+	if incident, stable := window.Incident(clusterID, start.Add(35*time.Second)); stable || !incident.IsZero() {
+		t.Fatalf("healthy observation retained incident=(%s,%t)", incident, stable)
+	}
+}

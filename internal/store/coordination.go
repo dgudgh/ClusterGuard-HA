@@ -55,3 +55,50 @@ func (repository *Repository) DeleteCoordinationLease(resourceID model.ResourceI
 	repository.snapshot = next
 	return nil
 }
+
+func (repository *Repository) CoordinationOperationLocks() []coordination.OperationLockRecord {
+	repository.mu.RLock()
+	defer repository.mu.RUnlock()
+	records := make([]coordination.OperationLockRecord, 0, len(repository.snapshot.OperationLocks))
+	for _, record := range repository.snapshot.OperationLocks {
+		records = append(records, record)
+	}
+	sort.Slice(records, func(i, j int) bool { return records[i].ResourceID < records[j].ResourceID })
+	return records
+}
+
+func (repository *Repository) PutCoordinationOperationLock(record coordination.OperationLockRecord) error {
+	if !model.ValidResourceID(record.ResourceID) || !model.ValidResourceID(record.ClusterID) || !model.ValidResourceID(record.OperationID) ||
+		record.ExpiresAt.IsZero() || record.CreatedAt.IsZero() || record.UpdatedAt.IsZero() {
+		return validationError("coordination operation lock is invalid")
+	}
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	next := repository.snapshot
+	next.OperationLocks = cloneOperationLockMap(repository.snapshot.OperationLocks)
+	next.OperationLocks[record.ResourceID] = record
+	if err := repository.commitSnapshotLocked(next); err != nil {
+		return fmt.Errorf("persist coordination operation lock: %w", err)
+	}
+	repository.snapshot = next
+	return nil
+}
+
+func (repository *Repository) DeleteCoordinationOperationLock(resourceID model.ResourceID) error {
+	if !model.ValidResourceID(resourceID) {
+		return validationError("coordination operation lock ID is invalid")
+	}
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	if _, found := repository.snapshot.OperationLocks[resourceID]; !found {
+		return nil
+	}
+	next := repository.snapshot
+	next.OperationLocks = cloneOperationLockMap(repository.snapshot.OperationLocks)
+	delete(next.OperationLocks, resourceID)
+	if err := repository.commitSnapshotLocked(next); err != nil {
+		return fmt.Errorf("delete coordination operation lock: %w", err)
+	}
+	repository.snapshot = next
+	return nil
+}

@@ -8,6 +8,27 @@ import (
 	"clusterguard.io/ha/pkg/model"
 )
 
+type MutationAuthority interface {
+	RequireMutationAuthority(context.Context) error
+}
+
+type AuthoritySafetyGuard struct {
+	Authority MutationAuthority
+}
+
+func (guard AuthoritySafetyGuard) Evaluate(ctx context.Context, operation model.Operation) error {
+	if guard.Authority == nil {
+		return fmt.Errorf("mutation authority safety guard is not configured")
+	}
+	if !model.ValidResourceID(operation.ResourceID) || !model.ValidResourceID(operation.ClusterID) {
+		return fmt.Errorf("operation and cluster UUIDs are required by the safety guard")
+	}
+	if err := guard.Authority.RequireMutationAuthority(ctx); err != nil {
+		return fmt.Errorf("leader-backed controller majority is required: %w", err)
+	}
+	return nil
+}
+
 type TopologyReader interface {
 	TopologySnapshot(model.ResourceID) (model.TopologySnapshot, bool)
 }
@@ -57,6 +78,59 @@ func (AllowAllSafety) Evaluate(context.Context, model.Operation) error { return 
 type MemoryLocks struct {
 	mu     sync.Mutex
 	active map[string]bool
+}
+
+type ClusterLockManager interface {
+	Acquire(context.Context, model.Operation) (func(), error)
+	AcquireCluster(context.Context, model.ResourceID) (func(), error)
+}
+
+type CompositeLocks struct {
+	local  ClusterLockManager
+	quorum ClusterLockManager
+}
+
+func NewCompositeLocks(local, quorum ClusterLockManager) *CompositeLocks {
+	return &CompositeLocks{local: local, quorum: quorum}
+}
+
+func (locks *CompositeLocks) Acquire(ctx context.Context, operation model.Operation) (func(), error) {
+	if locks == nil || locks.local == nil || locks.quorum == nil {
+		return nil, fmt.Errorf("composite operation lock is not configured")
+	}
+	return acquireComposite(
+		func() (func(), error) { return locks.local.Acquire(ctx, operation) },
+		func() (func(), error) { return locks.quorum.Acquire(ctx, operation) },
+	)
+}
+
+func (locks *CompositeLocks) AcquireCluster(ctx context.Context, clusterID model.ResourceID) (func(), error) {
+	if locks == nil || locks.local == nil || locks.quorum == nil {
+		return nil, fmt.Errorf("composite operation lock is not configured")
+	}
+	return acquireComposite(
+		func() (func(), error) { return locks.local.AcquireCluster(ctx, clusterID) },
+		func() (func(), error) { return locks.quorum.AcquireCluster(ctx, clusterID) },
+	)
+}
+
+func acquireComposite(acquireLocal, acquireQuorum func() (func(), error)) (func(), error) {
+	releaseLocal, err := acquireLocal()
+	if err != nil {
+		return nil, err
+	}
+	releaseQuorum, err := acquireQuorum()
+	if err != nil {
+		releaseLocal()
+		return nil, err
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			releaseQuorum()
+			releaseLocal()
+		})
+	}, nil
 }
 
 func NewMemoryLocks() *MemoryLocks { return &MemoryLocks{active: map[string]bool{}} }

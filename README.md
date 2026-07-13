@@ -7,25 +7,31 @@ ClusterGuard HA requires Go 1.22 or newer.
 **ClusterGuard HA — Multi-Database High Availability Control Plane**
 
 ClusterGuard HA is an independent, clean-room high-availability control plane.
-The current release delivers MySQL topology intelligence plus a durable,
-guarded planned-switchover foundation, and keeps first-class extension points
-for PostgreSQL, Oracle, and SQL Server.
+The current release delivers the guarded MySQL control path and keeps
+first-class extension points for PostgreSQL, Oracle, and SQL Server.
 
 ## Current Release
 
 The current MySQL adapter provides:
 
 - inventory-scoped discovery for MySQL 5.7, 8.0, 8.4, and 9.7;
-- immutable platform UUIDs backed by native MySQL `server_uuid` identity;
+- globally unique immutable node names, platform UUIDs, and native MySQL
+  `server_uuid` identity;
 - persisted topology, health, replication links, probe evidence, and metrics;
 - promotion-candidate assessment with GTID and replication safety checks;
-- JSON metrics and a Prometheus text endpoint that can be scraped directly;
-- a compact Chinese topology console and the `cgctl` read-only CLI;
-- endpoint metadata reconciliation without changing database state.
+- guarded three-node planned switchover with primary and VIP ownership coupled;
+- former-primary rejoin and allowlisted replication repair;
+- 30-second stable-failure detection and optional automatic failover;
+- Raft-backed operation locks, endpoint leases, local self-isolation, and
+  reboot-time VIP convergence through the restricted node agent;
+- add/rebuild lifecycle tasks with fixed node-slot reuse, staged install,
+  synchronization, verification, audit, and report output;
+- endpoint metadata reconciliation without changing immutable resource identity;
+- JSON, Prometheus, and monitoring-safe health output;
+- a compact Chinese console and the `cgctl` CLI;
 - durable operation UUIDs, idempotency keys, stage progress, audit, and reports;
-- strict two-node MySQL switchover precheck and immutable plan generation;
-- a tested MySQL 5.7/8.x/9.x role-transition kernel behind an independent
-  writer-endpoint provider contract.
+- tested MySQL 5.7/8.x/9.x mutation dialects behind an independent adapter and
+  writer-endpoint contract.
 
 PostgreSQL, Oracle, and SQL Server adapters are registered and report their
 capabilities, but their discovery and execution methods currently fail closed
@@ -33,15 +39,19 @@ as unsupported.
 
 ## Safety Boundary
 
-The default runtime does **not** execute switchover because no real
-writer-endpoint provider is configured. It returns HTTP `501` before safety
-gates, SQL, or endpoint side effects. The complete role-transition path is
-exercised only with a deterministic provider in tests until Linux VIP leasing,
-quorum, fencing, and unique-owner verification are delivered.
+The example configuration keeps the restricted node agent and automatic
+failover disabled. Real MySQL role or VIP mutation becomes executable only when
+the cluster has a complete HA endpoint inventory, an odd Raft controller set,
+current leader-backed majority authority, purpose-specific MySQL credentials,
+agent signing material, an operation lock, and approval. Missing or unknown
+evidence blocks the operation; it never produces a simulated success.
 
-Failover, automatic recovery, former-primary rejoin, replication repair, node
-installation, node synchronization, and node lifecycle actions remain
-unsupported.
+Automatic failover is separately opt-in. It requires six follow-up failure
+observations across 30 seconds, the rank-one eligible candidate, current
+controller quorum, old-primary isolation, and an exclusive VIP lease. A whole-
+host network partition that cannot prove old-primary fencing remains blocked.
+The platform prefers temporary unavailability over a second writer or VIP
+owner.
 
 The common workflow remains:
 
@@ -49,8 +59,8 @@ The common workflow remains:
 DISCOVER -> PRECHECK -> PLAN -> SAFETY_GUARD -> LOCK -> APPROVE -> EXECUTE -> VERIFY -> AUDIT -> REPORT
 ```
 
-Only implemented read-only capabilities and platform metadata reconciliation
-are available. Future database mutations must pass every workflow gate.
+Every implemented database mutation passes the same workflow. PostgreSQL,
+Oracle, and SQL Server execution remains unsupported and fail-closed.
 
 ## Start
 

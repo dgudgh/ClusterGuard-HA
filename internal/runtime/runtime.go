@@ -19,6 +19,7 @@ import (
 	"clusterguard.io/ha/internal/discovery"
 	writerendpoint "clusterguard.io/ha/internal/endpoint"
 	"clusterguard.io/ha/internal/lifecycle"
+	"clusterguard.io/ha/internal/recovery"
 	"clusterguard.io/ha/internal/store"
 	"clusterguard.io/ha/internal/workflow"
 	"clusterguard.io/ha/pkg/adapter"
@@ -26,16 +27,41 @@ import (
 )
 
 type Runtime struct {
-	server    *api.Server
-	consensus *consensus.Node
-	runCtx    context.Context
-	cancel    context.CancelFunc
-	wait      sync.WaitGroup
+	server            *api.Server
+	consensus         *consensus.Node
+	automaticRecovery *recovery.Controller
+	runCtx            context.Context
+	cancel            context.CancelFunc
+	wait              sync.WaitGroup
 }
 
 type mysqlFailoverRuntime struct {
 	failureObserver discovery.PrimaryFailureObserver
+	failureEvidence *coordination.FailureWindow
 	safety          mysql.FailoverSafetyProvider
+}
+
+type runtimeLocks struct {
+	publication *workflow.MemoryLocks
+	operations  workflow.ClusterLockManager
+}
+
+func newRuntimeLocks(repository *store.Repository, authority coordination.MutationAuthority) runtimeLocks {
+	local := workflow.NewMemoryLocks()
+	result := runtimeLocks{publication: local, operations: local}
+	if repository == nil || authority == nil {
+		return result
+	}
+	quorum := coordination.NewOperationLocks(repository, authority, 15*time.Minute, nil)
+	result.operations = workflow.NewCompositeLocks(local, quorum)
+	return result
+}
+
+func newRuntimeSafetyGuard(authority coordination.MutationAuthority) workflow.SafetyGuard {
+	if authority == nil {
+		return workflow.AllowAllSafety{}
+	}
+	return workflow.AuthoritySafetyGuard{Authority: authority}
 }
 
 func newMySQLFailoverRuntime(
@@ -52,6 +78,7 @@ func newMySQLFailoverRuntime(
 	}
 	failures := coordination.NewFailureWindow(6, 30*time.Second)
 	components.failureObserver = failures
+	components.failureEvidence = failures
 	components.safety = coordination.NewGuardedFailoverSafety(failures, authority, inventory, leases, transport, secret, now)
 	return components
 }
@@ -159,15 +186,15 @@ func New(configuration config.File) (*Runtime, error) {
 			return nil, fmt.Errorf("register %s adapter: %w", candidate.Engine(), err)
 		}
 	}
-	locks := workflow.NewMemoryLocks()
+	locks := newRuntimeLocks(repository, failoverAuthority)
 	mysqlCredentials := func(context.Context, model.DatabaseCluster) (adapter.OperationCredentials, error) {
 		return mysqlOperationCredentials(configuration.MySQL)
 	}
 	service := workflow.New(
 		registry,
 		workflow.TopologyDiscovery{Reader: repository},
-		workflow.AllowAllSafety{},
-		locks,
+		newRuntimeSafetyGuard(failoverAuthority),
+		locks.operations,
 		workflow.TokenApproval{ExpectedToken: configuration.ApprovalToken},
 		repository,
 		workflow.WithOperationStore(repository),
@@ -176,7 +203,7 @@ func New(configuration config.File) (*Runtime, error) {
 			Credentials: workflow.CredentialProviderFunc(mysqlCredentials),
 		}),
 	)
-	discoveryOptions := []discovery.Option{discovery.WithPublicationFence(locks)}
+	discoveryOptions := []discovery.Option{discovery.WithPublicationFence(locks.publication)}
 	if failoverRuntime.failureObserver != nil {
 		discoveryOptions = append(discoveryOptions, discovery.WithPrimaryFailureObserver(failoverRuntime.failureObserver))
 	}
@@ -211,7 +238,7 @@ func New(configuration config.File) (*Runtime, error) {
 			_ = result.Close()
 			return nil, fmt.Errorf("configure node lifecycle executor: %w", executorErr)
 		}
-		manager := lifecycle.NewManager(repository, result.consensus, lifecycle.PlanSafetyGuard{}, locks, lifecycle.TokenApproval{ExpectedToken: configuration.ApprovalToken}, executor, repository, nil)
+		manager := lifecycle.NewManager(repository, result.consensus, lifecycle.PlanSafetyGuard{}, locks.operations, lifecycle.TokenApproval{ExpectedToken: configuration.ApprovalToken}, executor, repository, nil)
 		secrets := nodeLifecycleSecrets(configuration.NodeLifecycle)
 		options = append(options, api.WithNodeLifecycle(manager, nodeLifecycleCapabilities(configuration.NodeLifecycle), api.LifecycleSecretProviderFunc(func(context.Context, lifecycle.Request) (lifecycle.ExecutionSecrets, error) {
 			return secrets, nil
@@ -229,6 +256,19 @@ func New(configuration config.File) (*Runtime, error) {
 			time.Duration(configuration.MySQL.DiscoveryTimeoutSeconds)*time.Second,
 		)
 		result.startLoop(scheduler.Run)
+	}
+	if configuration.MySQL.AutomaticFailoverEnabled {
+		if result.consensus == nil || failoverRuntime.failureEvidence == nil || !configuration.Agent.Enabled || configuration.ApprovalToken == "" {
+			_ = result.Close()
+			return nil, fmt.Errorf("automatic MySQL failover requires consensus, agent fencing, failure evidence, and approval")
+		}
+		result.automaticRecovery = recovery.NewController(
+			repository, failoverRuntime.failureEvidence, recovery.NewMySQLCandidateSelector(mysqlAdapter), service,
+			result.consensus, configuration.ApprovalToken,
+			time.Duration(configuration.MySQL.AutomaticFailoverRetrySeconds)*time.Second, nil,
+			recovery.WithInterval(time.Duration(configuration.MySQL.AutomaticFailoverIntervalSeconds)*time.Second),
+		)
+		result.startLoop(result.automaticRecovery.Run)
 	}
 	if vipProvider != nil && ownershipLeases != nil && result.consensus != nil {
 		keeper := coordination.NewOwnershipKeeper(repository, vipProvider, ownershipLeases, result.consensus, nil, 5*time.Second, 15*time.Second)

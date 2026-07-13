@@ -8,11 +8,11 @@ API behavior, audit, and reports belong to the control kernel. Database
 protocol details belong to adapters.
 
 The current release enables MySQL discovery, health, metrics, candidate
-evaluation, guarded switchover precheck, immutable planning, and a deterministic
-role-transition kernel. The default runtime has no executable writer-endpoint
-provider, so mutation remains unavailable outside tests. PostgreSQL, Oracle,
-and SQL Server are registered through the same adapter contract and remain
-unsupported skeletons until their read-only implementations are complete.
+evaluation, guarded switchover and failover, former-primary rejoin, allowlisted
+repair, Linux VIP ownership, and node lifecycle. Mutation remains capability-
+and configuration-gated. PostgreSQL, Oracle, and SQL Server are registered
+through the same adapter contract and remain unsupported skeletons until their
+read-only implementations are complete.
 
 ## Resource Model
 
@@ -35,8 +35,9 @@ The main resources are:
 | `AuditEvent` / `Report` | Durable operator trace and human-readable outcome. |
 
 `resource_id` is the stable reference used by APIs, persistence, links, metrics,
-and workflows. Hostname, IP address, port, display name, and aliases can change
-without creating a new database instance.
+and workflows. Each physical node also has a globally unique immutable
+`node_name` such as `cg-data-0001`. Hostname, IP address, port, display name, and
+aliases can change without creating a new node or database instance.
 
 ## Engine Identity
 
@@ -63,13 +64,13 @@ for all four engines.
 
 Capabilities are explicit. An unavailable capability returns `unsupported`;
 there is no fallback that guesses an engine behavior. The MySQL adapter enables
-read-only discovery, native replication topology, health, metrics, candidate
-evaluation, platform metadata reconciliation, and strict planned-switchover
-precheck/planning. MySQL execution is advertised only when both a mutating SQL
-executor and an executable writer-endpoint provider are injected. The default
-provider is explicitly unsupported. Node-changing methods remain unsupported.
-The other three adapters currently return unsupported for every database
-operation.
+native replication topology, health, metrics, candidates, metadata
+reconciliation, guarded switchover/failover, former-primary rejoin, and
+allowlisted repair. MySQL execution is advertised only when both a mutating SQL
+executor and an executable writer-endpoint provider are configured. Node
+lifecycle is owned by the platform task engine rather than bypassing the common
+gates. The other three adapters currently return unsupported for database
+mutation.
 
 Adapter topology links use engine-native source and target identities. The
 resource registry resolves those identities to immutable platform UUIDs before
@@ -131,7 +132,8 @@ Each replica is evaluated for:
 Blocking evidence produces an ineligible candidate. Warnings, missing
 transaction count, lag, exact-version preference, and platform UUID provide a
 deterministic ordering among eligible candidates. Candidate output is advisory
-and cannot execute a promotion.
+for API readers; the automatic recovery controller may consume only the rank-one
+eligible result after a stable failure incident and all common gates.
 
 ## Metrics
 
@@ -172,15 +174,20 @@ existing operation; reusing it for another target or operation kind is a
 conflict. A same-process duplicate cannot terminalize the active operation, and
 a restart can resume from observed step postconditions.
 
-MySQL planned switchover is restricted to a healthy two-member topology in this
-increment. It requires zero lag, identical GTID histories, current complete
-probe coverage, running replication threads, compatible release families, and
-an executable endpoint provider. The source is fenced before the target is
-detached and promoted. Success requires independent proof of one writable
-instance and one target endpoint owner. The default provider blocks execution,
-so production requests return HTTP `501` before locks or mutations. Failover,
-former-primary rejoin, replication repair, node synchronization, and node
-lifecycle execution also remain unsupported.
+MySQL switchover supports one primary with multiple replicas. It requires an
+eligible selected target, compatible GTID history, current probe evidence,
+running replication threads, compatible release families, and an executable
+endpoint provider. The source is fenced before promotion, every reachable
+follower is reparented, and success requires independent proof of one writable
+instance and one target VIP owner.
+
+Automatic failover uses a 30-second stable incident recorded by discovery. Only
+the majority Leader may submit the durable operation. The same incident cannot
+be repeated after success or an indeterminate outcome. Operation locks are
+Raft-replicated and renewed, Safety Guard rechecks majority, and endpoint
+mutation requires a separate short lease. The restricted data-node agent
+removes a stale VIP and persists both MySQL read-only flags when the node cannot
+obtain a valid signed keep decision.
 
 Recovery never treats a pre-existing source fence as sufficient by itself. The
 durable operation must own the completed `fence_source` step, and the adapter

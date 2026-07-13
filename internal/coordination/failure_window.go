@@ -63,7 +63,21 @@ func (window *FailureWindow) Stable(clusterID model.ResourceID, now time.Time) b
 	window.mu.RLock()
 	defer window.mu.RUnlock()
 	series, found := window.series[clusterID]
-	if !found || len(series.checks) < window.requiredChecks || now.IsZero() {
+	return found && window.stableSeries(series, now)
+}
+
+func (window *FailureWindow) Incident(clusterID model.ResourceID, now time.Time) (time.Time, bool) {
+	window.mu.RLock()
+	defer window.mu.RUnlock()
+	series, found := window.series[clusterID]
+	if !found || !window.stableSeries(series, now) {
+		return time.Time{}, false
+	}
+	return series.startedAt, true
+}
+
+func (window *FailureWindow) stableSeries(series failureSeries, now time.Time) bool {
+	if len(series.checks) < window.requiredChecks || now.IsZero() {
 		return false
 	}
 	now = now.UTC()

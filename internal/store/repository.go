@@ -100,6 +100,7 @@ type snapshot struct {
 	Endpoints             map[model.ResourceID]map[model.ResourceID]model.Endpoint `json:"endpoints"`
 	HAEndpoints           map[model.ResourceID]model.HAEndpoint                    `json:"ha_endpoints"`
 	CoordinationLeases    map[model.ResourceID]coordination.LeaseRecord            `json:"coordination_leases"`
+	OperationLocks        map[model.ResourceID]coordination.OperationLockRecord    `json:"operation_locks"`
 	LifecycleTasks        map[model.ResourceID]lifecycle.Task                      `json:"lifecycle_tasks"`
 	ReplicationLinks      map[model.ResourceID][]model.ReplicationLink             `json:"replication_links"`
 	MetricSamples         map[model.ResourceID][]model.MetricSample                `json:"metric_samples"`
@@ -131,6 +132,7 @@ func emptySnapshot() snapshot {
 		Endpoints:             map[model.ResourceID]map[model.ResourceID]model.Endpoint{},
 		HAEndpoints:           map[model.ResourceID]model.HAEndpoint{},
 		CoordinationLeases:    map[model.ResourceID]coordination.LeaseRecord{},
+		OperationLocks:        map[model.ResourceID]coordination.OperationLockRecord{},
 		LifecycleTasks:        map[model.ResourceID]lifecycle.Task{},
 		ReplicationLinks:      map[model.ResourceID][]model.ReplicationLink{},
 		MetricSamples:         map[model.ResourceID][]model.MetricSample{},
@@ -350,6 +352,7 @@ func cloneDiscoverySnapshot(value snapshot) snapshot {
 	copy.Endpoints = cloneEndpointMap(value.Endpoints)
 	copy.HAEndpoints = cloneHAEndpointMap(value.HAEndpoints)
 	copy.CoordinationLeases = cloneCoordinationLeaseMap(value.CoordinationLeases)
+	copy.OperationLocks = cloneOperationLockMap(value.OperationLocks)
 	copy.LifecycleTasks = cloneLifecycleTaskMap(value.LifecycleTasks)
 	copy.ReplicationLinks = cloneReplicationLinkMap(value.ReplicationLinks)
 	copy.MetricSamples = cloneMetricSampleMap(value.MetricSamples)
@@ -388,6 +391,14 @@ func cloneCoordinationLeaseMap(values map[model.ResourceID]coordination.LeaseRec
 	copy := make(map[model.ResourceID]coordination.LeaseRecord, len(values))
 	for resourceID, lease := range values {
 		copy[resourceID] = lease
+	}
+	return copy
+}
+
+func cloneOperationLockMap(values map[model.ResourceID]coordination.OperationLockRecord) map[model.ResourceID]coordination.OperationLockRecord {
+	copy := make(map[model.ResourceID]coordination.OperationLockRecord, len(values))
+	for resourceID, lock := range values {
+		copy[resourceID] = lock
 	}
 	return copy
 }

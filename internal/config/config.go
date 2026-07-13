@@ -20,12 +20,15 @@ type Credential struct {
 }
 
 type MySQL struct {
-	Enabled                  bool       `json:"enabled"`
-	DiscoveryIntervalSeconds int        `json:"discovery_interval_seconds,omitempty"`
-	DiscoveryTimeoutSeconds  int        `json:"discovery_timeout_seconds,omitempty"`
-	Discovery                Credential `json:"discovery"`
-	Operation                Credential `json:"operation"`
-	Replication              Credential `json:"replication"`
+	Enabled                          bool       `json:"enabled"`
+	DiscoveryIntervalSeconds         int        `json:"discovery_interval_seconds,omitempty"`
+	DiscoveryTimeoutSeconds          int        `json:"discovery_timeout_seconds,omitempty"`
+	AutomaticFailoverEnabled         bool       `json:"automatic_failover_enabled,omitempty"`
+	AutomaticFailoverIntervalSeconds int        `json:"automatic_failover_interval_seconds,omitempty"`
+	AutomaticFailoverRetrySeconds    int        `json:"automatic_failover_retry_seconds,omitempty"`
+	Discovery                        Credential `json:"discovery"`
+	Operation                        Credential `json:"operation"`
+	Replication                      Credential `json:"replication"`
 }
 
 type Agent struct {
@@ -152,6 +155,12 @@ func Load(path string) (File, error) {
 		if configuration.MySQL.DiscoveryTimeoutSeconds <= 0 {
 			configuration.MySQL.DiscoveryTimeoutSeconds = 4
 		}
+		if configuration.MySQL.AutomaticFailoverIntervalSeconds <= 0 {
+			configuration.MySQL.AutomaticFailoverIntervalSeconds = 5
+		}
+		if configuration.MySQL.AutomaticFailoverRetrySeconds <= 0 {
+			configuration.MySQL.AutomaticFailoverRetrySeconds = 30
+		}
 		for name, credential := range map[string]*Credential{
 			"discovery":   &configuration.MySQL.Discovery,
 			"operation":   &configuration.MySQL.Operation,
@@ -186,6 +195,11 @@ func Load(path string) (File, error) {
 		}
 		if err := resolveNodeLifecycle(&configuration.NodeLifecycle); err != nil {
 			return File{}, err
+		}
+	}
+	if configuration.MySQL.AutomaticFailoverEnabled {
+		if !configuration.Consensus.Enabled || !configuration.Agent.Enabled || strings.TrimSpace(configuration.ApprovalToken) == "" {
+			return File{}, fmt.Errorf("automatic failover requires controller consensus, the restricted node agent, and an approval token")
 		}
 	}
 	return configuration, nil
