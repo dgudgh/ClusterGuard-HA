@@ -27,6 +27,12 @@ var (
 
 const maximumReplicatedStateBytes = 64 << 20
 
+const (
+	raftSnapshotThreshold = 64
+	raftTrailingLogs      = 32
+	raftSnapshotInterval  = 30 * time.Second
+)
+
 type Peer struct {
 	ResourceID model.ResourceID `json:"resource_id"`
 	Address    string           `json:"address"`
@@ -163,6 +169,15 @@ type Node struct {
 	closeErr     error
 }
 
+func newRaftRuntimeConfiguration(localID model.ResourceID) *raft.Config {
+	configuration := raft.DefaultConfig()
+	configuration.LocalID = raft.ServerID(localID)
+	configuration.SnapshotThreshold = raftSnapshotThreshold
+	configuration.TrailingLogs = raftTrailingLogs
+	configuration.SnapshotInterval = raftSnapshotInterval
+	return configuration
+}
+
 func Open(configuration Config, machine StateMachine) (*Node, error) {
 	if machine == nil {
 		return nil, fmt.Errorf("Raft state machine is required")
@@ -200,8 +215,7 @@ func Open(configuration Config, machine StateMachine) (*Node, error) {
 	}
 	node := &Node{transport: transport, store: boltStore, applyTimeout: configuration.ApplyTimeout}
 	node.fsm = &replicatedFSM{machine: machine, skipLocal: &node.skipLocal}
-	raftConfiguration := raft.DefaultConfig()
-	raftConfiguration.LocalID = raft.ServerID(configuration.LocalID)
+	raftConfiguration := newRaftRuntimeConfiguration(configuration.LocalID)
 	raftConfiguration.LogOutput = io.Discard
 	instance, err := raft.NewRaft(raftConfiguration, node.fsm, boltStore, boltStore, snapshotStore, transport)
 	if err != nil {

@@ -150,3 +150,21 @@ func TestRaftConfigurationRequiresOddUniqueThreeNodeMembership(t *testing.T) {
 		}
 	}
 }
+
+func TestRaftRuntimeConfigurationCompactsFullStateLogsAggressively(t *testing.T) {
+	localID := model.NewResourceID()
+	configuration := newRaftRuntimeConfiguration(localID)
+
+	if string(configuration.LocalID) != string(localID) {
+		t.Fatalf("local id=%q, want %q", configuration.LocalID, localID)
+	}
+	if configuration.SnapshotThreshold != 64 {
+		t.Fatalf("snapshot threshold=%d, want 64", configuration.SnapshotThreshold)
+	}
+	if configuration.TrailingLogs != 32 {
+		t.Fatalf("trailing logs=%d, want 32", configuration.TrailingLogs)
+	}
+	if configuration.SnapshotInterval != 30*time.Second {
+		t.Fatalf("snapshot interval=%s, want 30s", configuration.SnapshotInterval)
+	}
+}
