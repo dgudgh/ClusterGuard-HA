@@ -10,13 +10,14 @@ import (
 )
 
 type nodePayload struct {
-	NodeName    string         `json:"node_name"`
-	DisplayName string         `json:"display_name,omitempty"`
-	Hostname    string         `json:"hostname,omitempty"`
-	IPAddress   string         `json:"ip_address,omitempty"`
-	Kind        model.NodeKind `json:"kind"`
-	HostClass   string         `json:"host_class,omitempty"`
-	Active      bool           `json:"active"`
+	ResourceID  model.ResourceID `json:"resource_id,omitempty"`
+	NodeName    string           `json:"node_name"`
+	DisplayName string           `json:"display_name,omitempty"`
+	Hostname    string           `json:"hostname,omitempty"`
+	IPAddress   string           `json:"ip_address,omitempty"`
+	Kind        model.NodeKind   `json:"kind"`
+	HostClass   string           `json:"host_class,omitempty"`
+	Active      bool             `json:"active"`
 }
 
 func (payload nodePayload) node(resourceID model.ResourceID) model.DatabaseNode {
@@ -37,7 +38,7 @@ func (server *Server) nodesCollection(writer http.ResponseWriter, request *http.
 			writeError(writer, http.StatusBadRequest, "invalid node payload")
 			return
 		}
-		node, err := server.store.PutNode(payload.node(""))
+		node, err := server.store.PutNode(payload.node(payload.ResourceID))
 		if err != nil {
 			writeNodeError(writer, err)
 			return
@@ -70,6 +71,10 @@ func (server *Server) nodeResource(writer http.ResponseWriter, request *http.Req
 		payload := nodePayload{}
 		if err := decode(request, &payload); err != nil {
 			writeError(writer, http.StatusBadRequest, "invalid node payload")
+			return
+		}
+		if payload.ResourceID != "" && payload.ResourceID != resourceID {
+			writeError(writer, http.StatusConflict, "node resource identity is immutable")
 			return
 		}
 		node, err := server.store.PutNode(payload.node(resourceID))

@@ -65,3 +65,29 @@ func TestNodeRegistryAPIRejectsDuplicateNameAndUnknownFields(t *testing.T) {
 		t.Fatalf("unknown node field: %d %s", response.Code, response.Body.String())
 	}
 }
+
+func TestNodeRegistryAPIAcceptsPreallocatedIdentityAndRejectsIdentityChange(t *testing.T) {
+	server, _ := newTestServer(t)
+	resourceID := model.NewResourceID()
+	created := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/nodes", map[string]interface{}{
+		"resource_id": resourceID, "node_name": "cg-node-0001", "hostname": "mysql-a",
+		"ip_address": "192.0.2.10", "kind": "mixed", "active": true,
+	})
+	if created.Code != http.StatusCreated || !strings.Contains(created.Body.String(), string(resourceID)) {
+		t.Fatalf("create preallocated node: %d %s", created.Code, created.Body.String())
+	}
+	changed := callJSON(t, server.Handler(), http.MethodPut, "/api/v1/nodes/"+string(resourceID), map[string]interface{}{
+		"resource_id": model.NewResourceID(), "node_name": "cg-node-0001", "hostname": "mysql-b",
+		"ip_address": "192.0.2.20", "kind": "mixed", "active": true,
+	})
+	if changed.Code != http.StatusConflict {
+		t.Fatalf("changed node identity: %d %s", changed.Code, changed.Body.String())
+	}
+	invalid := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/nodes", map[string]interface{}{
+		"resource_id": "not-a-uuid", "node_name": "cg-node-0002", "hostname": "mysql-c",
+		"kind": "data", "active": true,
+	})
+	if invalid.Code != http.StatusBadRequest {
+		t.Fatalf("invalid preallocated identity: %d %s", invalid.Code, invalid.Body.String())
+	}
+}

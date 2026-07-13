@@ -104,6 +104,7 @@ curl -sS -X POST http://127.0.0.1:8088/api/v1/nodes \
   -H 'content-type: application/json' \
   -H "Authorization: Bearer ${CG_CONTROL_TOKEN}" \
   -d '{
+    "resource_id":"<preallocated-platform-node-uuid>",
     "node_name":"cg-data-0001",
     "display_name":"MySQL host 1",
     "hostname":"mysql-a",
@@ -113,7 +114,9 @@ curl -sS -X POST http://127.0.0.1:8088/api/v1/nodes \
   }'
 ```
 
-`node_name` and `resource_id` never change. A hostname or IP change uses
+`resource_id` may be preallocated by the signed installation manifest; when it
+is omitted, the control plane generates it. `node_name` and `resource_id` never
+change. A hostname or IP change uses
 `PUT /api/v1/nodes/{resource_id}` with the same `node_name`; the previous
 coordinates become aliases. Rebuild requests must supply the original node UUID
 and fixed name, so a repaired host reuses the existing slot instead of appearing
