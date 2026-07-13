@@ -304,7 +304,7 @@ func (repository *Repository) Commit(ctx context.Context, task lifecycle.Task, r
 			delete(next.Anomalies, anomalyID)
 		}
 	}
-	if err := repository.persistSnapshotLocked(next); err != nil {
+	if err := repository.commitSnapshotLocked(next); err != nil {
 		return err
 	}
 	repository.snapshot = next

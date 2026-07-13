@@ -30,7 +30,7 @@ func (repository *Repository) PutLifecycleTask(task lifecycle.Task) (lifecycle.T
 	next := repository.snapshot
 	next.LifecycleTasks = cloneLifecycleTaskMap(repository.snapshot.LifecycleTasks)
 	next.LifecycleTasks[task.ResourceID] = cloneLifecycleTask(task)
-	if err := repository.persistSnapshotLocked(next); err != nil {
+	if err := repository.commitSnapshotLocked(next); err != nil {
 		if errors.Is(err, ErrPostCommitDurability) {
 			return cloneLifecycleTask(task), err
 		}

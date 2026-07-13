@@ -30,7 +30,7 @@ func (repository *Repository) PutCoordinationLease(record coordination.LeaseReco
 	next := repository.snapshot
 	next.CoordinationLeases = cloneCoordinationLeaseMap(repository.snapshot.CoordinationLeases)
 	next.CoordinationLeases[lease.ResourceID] = record
-	if err := repository.persistSnapshotLocked(next); err != nil {
+	if err := repository.commitSnapshotLocked(next); err != nil {
 		return fmt.Errorf("persist coordination lease: %w", err)
 	}
 	repository.snapshot = next
@@ -49,7 +49,7 @@ func (repository *Repository) DeleteCoordinationLease(resourceID model.ResourceI
 	next := repository.snapshot
 	next.CoordinationLeases = cloneCoordinationLeaseMap(repository.snapshot.CoordinationLeases)
 	delete(next.CoordinationLeases, resourceID)
-	if err := repository.persistSnapshotLocked(next); err != nil {
+	if err := repository.commitSnapshotLocked(next); err != nil {
 		return fmt.Errorf("delete coordination lease: %w", err)
 	}
 	repository.snapshot = next

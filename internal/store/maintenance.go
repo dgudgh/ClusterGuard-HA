@@ -29,7 +29,7 @@ func (repository *Repository) SetMaintenance(ctx context.Context, clusterID, ins
 	next := repository.snapshot
 	next.Instances = cloneInstanceMap(repository.snapshot.Instances)
 	next.Instances[instanceID] = cloneInstance(instance)
-	if err := repository.persistSnapshotLocked(next); err != nil {
+	if err := repository.commitSnapshotLocked(next); err != nil {
 		return fmt.Errorf("persist maintenance state: %w", err)
 	}
 	repository.snapshot = next

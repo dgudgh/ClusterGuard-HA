@@ -128,7 +128,7 @@ func (repository *Repository) CreateOperation(operation model.OperationRecord) (
 	next.OperationKeys = cloneOperationKeyMap(repository.snapshot.OperationKeys)
 	next.Operations[operation.ResourceID] = cloneOperationRecord(operation)
 	next.OperationKeys[operation.IdempotencyKey] = operation.ResourceID
-	if err := repository.persistSnapshotLocked(next); err != nil {
+	if err := repository.commitSnapshotLocked(next); err != nil {
 		return cloneOperationRecord(operation), false, err
 	}
 	repository.snapshot = next
@@ -257,7 +257,7 @@ func (repository *Repository) PutOperationPlan(resourceID model.ResourceID, expe
 	next := repository.snapshot
 	next.Operations = cloneOperationMap(repository.snapshot.Operations)
 	next.Operations[resourceID] = cloneOperationRecord(operation)
-	if err := repository.persistSnapshotLocked(next); err != nil {
+	if err := repository.commitSnapshotLocked(next); err != nil {
 		return cloneOperationRecord(operation), err
 	}
 	repository.snapshot = next
@@ -366,7 +366,7 @@ func (repository *Repository) TransitionOperation(resourceID model.ResourceID, e
 	next := repository.snapshot
 	next.Operations = cloneOperationMap(repository.snapshot.Operations)
 	next.Operations[resourceID] = cloneOperationRecord(operation)
-	if err := repository.persistSnapshotLocked(next); err != nil {
+	if err := repository.commitSnapshotLocked(next); err != nil {
 		return cloneOperationRecord(operation), err
 	}
 	repository.snapshot = next
@@ -457,7 +457,7 @@ func (repository *Repository) FinalizeOperation(resourceID model.ResourceID, exp
 			return model.OperationRecord{}, err
 		}
 	}
-	if err := repository.persistSnapshotLocked(next); err != nil {
+	if err := repository.commitSnapshotLocked(next); err != nil {
 		return cloneOperationRecord(operation), err
 	}
 	repository.snapshot = next

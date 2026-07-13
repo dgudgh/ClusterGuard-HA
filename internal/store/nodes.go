@@ -122,7 +122,7 @@ func (repository *Repository) PutNode(node model.DatabaseNode) (model.DatabaseNo
 	if err != nil {
 		return model.DatabaseNode{}, err
 	}
-	if err := repository.persistSnapshotLocked(next); err != nil {
+	if err := repository.commitSnapshotLocked(next); err != nil {
 		if errors.Is(err, ErrPostCommitDurability) {
 			return cloneNode(node), err
 		}

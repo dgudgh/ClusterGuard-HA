@@ -117,6 +117,7 @@ type Repository struct {
 	mu            sync.RWMutex
 	path          string
 	snapshot      snapshot
+	consensus     SnapshotConsensus
 	now           func() time.Time
 	syncFile      func(*os.File) error
 	syncDirectory func(string) error
@@ -178,97 +179,11 @@ func Open(path string) (*Repository, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read metadata snapshot: %w", err)
 	}
-	if err := json.Unmarshal(contents, &repository.snapshot); err != nil {
+	decoded, err := decodeSnapshotContents(contents)
+	if err != nil {
 		return nil, fmt.Errorf("decode metadata snapshot: %w", err)
 	}
-	if repository.snapshot.Clusters == nil {
-		repository.snapshot.Clusters = map[model.ResourceID]model.DatabaseCluster{}
-	}
-	if repository.snapshot.Instances == nil {
-		repository.snapshot.Instances = map[model.ResourceID]model.DatabaseInstance{}
-	}
-	if repository.snapshot.Nodes == nil {
-		repository.snapshot.Nodes = map[model.ResourceID]model.DatabaseNode{}
-	}
-	if repository.snapshot.Endpoints == nil {
-		repository.snapshot.Endpoints = map[model.ResourceID]map[model.ResourceID]model.Endpoint{}
-	}
-	if repository.snapshot.HAEndpoints == nil {
-		repository.snapshot.HAEndpoints = map[model.ResourceID]model.HAEndpoint{}
-	}
-	if repository.snapshot.CoordinationLeases == nil {
-		repository.snapshot.CoordinationLeases = map[model.ResourceID]coordination.LeaseRecord{}
-	}
-	if repository.snapshot.LifecycleTasks == nil {
-		repository.snapshot.LifecycleTasks = map[model.ResourceID]lifecycle.Task{}
-	}
-	if repository.snapshot.ReplicationLinks == nil {
-		repository.snapshot.ReplicationLinks = map[model.ResourceID][]model.ReplicationLink{}
-	}
-	if repository.snapshot.MetricSamples == nil {
-		repository.snapshot.MetricSamples = map[model.ResourceID][]model.MetricSample{}
-	}
-	if repository.snapshot.TopologySnapshots == nil {
-		repository.snapshot.TopologySnapshots = map[model.ResourceID]model.TopologySnapshot{}
-	}
-	if repository.snapshot.ObservationWatermarks == nil {
-		repository.snapshot.ObservationWatermarks = map[model.ResourceID]time.Time{}
-	}
-	for clusterID, topology := range repository.snapshot.TopologySnapshots {
-		if topology.ObservedAt.After(repository.snapshot.ObservationWatermarks[clusterID]) {
-			repository.snapshot.ObservationWatermarks[clusterID] = topology.ObservedAt
-		}
-	}
-	if repository.snapshot.InventoryGenerations == nil {
-		repository.snapshot.InventoryGenerations = map[model.ResourceID]uint64{}
-	}
-	for clusterID := range repository.snapshot.Clusters {
-		if repository.snapshot.InventoryGenerations[clusterID] == 0 {
-			repository.snapshot.InventoryGenerations[clusterID] = 1
-		}
-	}
-	if repository.snapshot.Anomalies == nil {
-		repository.snapshot.Anomalies = map[model.ResourceID]model.MetadataAnomaly{}
-	}
-	if repository.snapshot.Operations == nil {
-		repository.snapshot.Operations = map[model.ResourceID]model.OperationRecord{}
-	}
-	if repository.snapshot.OperationKeys == nil {
-		repository.snapshot.OperationKeys = map[string]model.ResourceID{}
-	}
-	for resourceID, operation := range repository.snapshot.Operations {
-		if operation.ResourceID == "" {
-			operation.ResourceID = resourceID
-		}
-		if operation.Operation.ResourceID == "" {
-			operation.Operation.ResourceID = operation.ResourceID
-		}
-		key := strings.TrimSpace(operation.IdempotencyKey)
-		if operation.ResourceID != resourceID || !model.ValidResourceID(resourceID) || key == "" {
-			return nil, fmt.Errorf("decode metadata snapshot: invalid operation record")
-		}
-		if existing, found := repository.snapshot.OperationKeys[key]; found && existing != resourceID {
-			return nil, fmt.Errorf("decode metadata snapshot: duplicate operation idempotency key")
-		}
-		operation.IdempotencyKey = key
-		repository.snapshot.Operations[resourceID] = cloneOperationRecord(operation)
-		repository.snapshot.OperationKeys[key] = resourceID
-	}
-	if repository.snapshot.Audits == nil {
-		repository.snapshot.Audits = []model.AuditEvent{}
-	}
-	if repository.snapshot.Reports == nil {
-		repository.snapshot.Reports = []model.Report{}
-	}
-	for index := range repository.snapshot.Reports {
-		if repository.snapshot.Reports[index].Status == "" {
-			repository.snapshot.Reports[index].Status = model.OperationIndeterminate
-			continue
-		}
-		if !terminalReportStatus(repository.snapshot.Reports[index].Status) {
-			return nil, fmt.Errorf("decode metadata snapshot: report status is not terminal")
-		}
-	}
+	repository.snapshot = decoded
 	return repository, nil
 }
 
@@ -513,7 +428,7 @@ func cloneUint64Map(values map[model.ResourceID]uint64) map[model.ResourceID]uin
 }
 
 func (repository *Repository) persistLocked() error {
-	return repository.persistSnapshotLocked(repository.snapshot)
+	return repository.commitSnapshotLocked(repository.snapshot)
 }
 
 func (repository *Repository) persistSnapshotLocked(value snapshot) error {
@@ -611,7 +526,7 @@ func (repository *Repository) UpsertCluster(cluster model.DatabaseCluster) (mode
 	next := repository.snapshot
 	next.Clusters = cloneClusterMap(repository.snapshot.Clusters)
 	next.Clusters[cluster.ResourceID] = cloneCluster(cluster)
-	if err := repository.persistSnapshotLocked(next); err != nil {
+	if err := repository.commitSnapshotLocked(next); err != nil {
 		return model.DatabaseCluster{}, err
 	}
 	repository.snapshot = next
@@ -844,7 +759,7 @@ func (repository *Repository) CreateClusterWithEndpoints(cluster model.DatabaseC
 	}
 	next.InventoryGenerations = cloneUint64Map(repository.snapshot.InventoryGenerations)
 	next.InventoryGenerations[cluster.ResourceID] = 1
-	if err := repository.persistSnapshotLocked(next); err != nil {
+	if err := repository.commitSnapshotLocked(next); err != nil {
 		if errors.Is(err, ErrPostCommitDurability) {
 			resultEndpoints := append([]model.Endpoint{}, endpoints...)
 			return cloneCluster(cluster), resultEndpoints, err
@@ -911,7 +826,7 @@ func (repository *Repository) UpsertEndpoint(endpoint model.Endpoint) (model.End
 		next.InventoryGenerations = cloneUint64Map(repository.snapshot.InventoryGenerations)
 		next.InventoryGenerations[endpoint.ClusterID]++
 	}
-	if err := repository.persistSnapshotLocked(next); err != nil {
+	if err := repository.commitSnapshotLocked(next); err != nil {
 		return model.Endpoint{}, err
 	}
 	repository.snapshot = next
@@ -991,7 +906,7 @@ func (repository *Repository) ReplaceReplicationLinks(clusterID model.ResourceID
 	next := repository.snapshot
 	next.ReplicationLinks = cloneReplicationLinkMap(repository.snapshot.ReplicationLinks)
 	next.ReplicationLinks[clusterID] = replacement
-	if err := repository.persistSnapshotLocked(next); err != nil {
+	if err := repository.commitSnapshotLocked(next); err != nil {
 		return err
 	}
 	repository.snapshot = next
@@ -1055,7 +970,7 @@ func (repository *Repository) StoreMetricSamples(clusterID model.ResourceID, sam
 	next := repository.snapshot
 	next.MetricSamples = cloneMetricSampleMap(repository.snapshot.MetricSamples)
 	next.MetricSamples[clusterID] = bounded
-	if err := repository.persistSnapshotLocked(next); err != nil {
+	if err := repository.commitSnapshotLocked(next); err != nil {
 		return err
 	}
 	repository.snapshot = next
@@ -1261,7 +1176,7 @@ func (repository *Repository) ReconcileInstance(discovered model.DatabaseInstanc
 	if err != nil {
 		return ReconcileResult{}, err
 	}
-	if err := repository.persistSnapshotLocked(next); err != nil {
+	if err := repository.commitSnapshotLocked(next); err != nil {
 		return ReconcileResult{}, err
 	}
 	repository.snapshot = next
@@ -1371,7 +1286,7 @@ func (repository *Repository) ReconcileMetadataCoordinates(update MetadataCoordi
 	updatedCluster.MetadataRevision++
 	updatedCluster.UpdatedAt = now
 	next.Clusters[existing.ClusterID] = updatedCluster
-	if err := repository.persistSnapshotLocked(next); err != nil {
+	if err := repository.commitSnapshotLocked(next); err != nil {
 		if errors.Is(err, ErrPostCommitDurability) {
 			return cloneInstance(replacement), replacementEndpoint, err
 		}
@@ -1827,7 +1742,7 @@ func (repository *Repository) ApplyDiscoveryRefresh(refresh DiscoveryRefresh) (m
 	}
 	next.TopologySnapshots[refresh.ClusterID] = cloneTopologySnapshot(published)
 	next.ObservationWatermarks[refresh.ClusterID] = observedAt
-	if err := repository.persistSnapshotLocked(next); err != nil {
+	if err := repository.commitSnapshotLocked(next); err != nil {
 		if errors.Is(err, ErrPostCommitDurability) {
 			return cloneTopologySnapshot(published), err
 		}
@@ -1958,7 +1873,7 @@ func (repository *Repository) ReplaceClusterAnomalies(clusterID model.ResourceID
 		anomaly.UpdatedAt = now
 		next.Anomalies[anomaly.ResourceID] = anomaly
 	}
-	if err := repository.persistSnapshotLocked(next); err != nil {
+	if err := repository.commitSnapshotLocked(next); err != nil {
 		return err
 	}
 	repository.snapshot = next
@@ -1979,7 +1894,7 @@ func (repository *Repository) RecordAudit(event model.AuditEvent) error {
 	defer repository.mu.Unlock()
 	next := repository.snapshot
 	next.Audits = append(append([]model.AuditEvent{}, repository.snapshot.Audits...), event)
-	if err := repository.persistSnapshotLocked(next); err != nil {
+	if err := repository.commitSnapshotLocked(next); err != nil {
 		return err
 	}
 	repository.snapshot = next
@@ -2018,7 +1933,7 @@ func (repository *Repository) RecordReport(report model.Report) error {
 		report.MetadataRevision = 1
 		next.Reports = append(next.Reports, report)
 	}
-	if err := repository.persistSnapshotLocked(next); err != nil {
+	if err := repository.commitSnapshotLocked(next); err != nil {
 		return err
 	}
 	repository.snapshot = next

@@ -109,7 +109,7 @@ func (repository *Repository) PutHAEndpoint(spec HAEndpointSpec) (model.HAEndpoi
 	next.Endpoints[spec.ClusterID][endpoint.ResourceID] = endpoint
 	next.HAEndpoints = cloneHAEndpointMap(repository.snapshot.HAEndpoints)
 	next.HAEndpoints[resource.ResourceID] = resource
-	if err := repository.persistSnapshotLocked(next); err != nil {
+	if err := repository.commitSnapshotLocked(next); err != nil {
 		return resource, endpoint, err
 	}
 	repository.snapshot = next
