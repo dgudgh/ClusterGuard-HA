@@ -147,6 +147,7 @@ func TestOperationsViewRunsOneRealGuardedSwitchover(t *testing.T) {
 		"/api/v1/operations/execute", "executeOperation('switchover'", "target_id:", "state.selectedCandidateId",
 		"approval_token: state.approvalToken", "idempotency_key:", "requested_by: state.operator",
 		"'Authorization': `Bearer ${state.controlToken}`", "await loadSelectedCluster()", "await loadOperationLog()",
+		"const retryableOperationFailure =", "failureClass === 'stale_plan'", "attempt < 3",
 	} {
 		if !strings.Contains(page, contract) {
 			t.Fatalf("console switch is not wired to the real workflow: missing %q", contract)

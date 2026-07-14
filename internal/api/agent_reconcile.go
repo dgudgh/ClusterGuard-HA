@@ -58,7 +58,21 @@ func (server *Server) activeOwnershipLease(clusterID, endpointID model.ResourceI
 
 func (server *Server) transitionAuthorizes(instanceID model.ResourceID, lease endpoint.Lease) bool {
 	operation, found := server.store.Operation(lease.OperationID)
-	return found && operation.TargetID == instanceID && operation.Status == model.OperationRunning && (operation.Stage == model.StageExecute || operation.Stage == model.StageVerify)
+	if found && operation.TargetID == instanceID && operation.Status == model.OperationRunning && (operation.Stage == model.StageExecute || operation.Stage == model.StageVerify) {
+		return true
+	}
+	if lease.OperationID != lease.HAEndpointID || lease.OwnerID != instanceID {
+		return false
+	}
+	for _, candidate := range server.store.Operations(lease.ClusterID) {
+		if candidate.TargetID != instanceID || candidate.Status != model.OperationRunning || (candidate.Stage != model.StageExecute && candidate.Stage != model.StageVerify) {
+			continue
+		}
+		if candidate.Operation.Kind == model.OperationSwitchover || candidate.Operation.Kind == model.OperationFailover {
+			return true
+		}
+	}
+	return false
 }
 
 func validBootstrapLeaseRecord(record coordination.LeaseRecord, now time.Time) bool {

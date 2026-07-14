@@ -101,7 +101,9 @@ api_post() {
     fi
   fi
   if [[ ! "${http_status}" =~ ^2[0-9][0-9]$ ]]; then
+    local failure_class=""
     if jq -e . "${body_file}" >/dev/null 2>&1; then
+      failure_class="$(jq -r '.result.failure_class // .result.execution.failure_class // ""' "${body_file}")"
       jq -r --arg http "${http_status}" '
         def compact: tostring | gsub("[\\r\\n\\t]+"; " ") | .[0:240];
         . as $root |
@@ -124,6 +126,9 @@ api_post() {
       echo "api_error http=${http_status} status=invalid_json" >&2
     fi
     rm -f "${body_file}"
+    if [[ "${failure_class}" == "stale_plan" ]]; then
+      return 75
+    fi
     return 22
   fi
   cat "${body_file}"
@@ -163,7 +168,7 @@ wait_for_smoke() {
 
 execute_switch() {
   local cluster_id="$1" ordinal="$2" target_offset="$3"
-  local candidates eligible_count target payload response operation_id
+  local candidates eligible_count target payload response operation_id api_status execute_attempt
   if ! candidates="$(api_get "${api%/}/api/v1/clusters/${cluster_id}/candidates")"; then
     echo "switch_failed ordinal=${ordinal} cluster=${cluster_id} stage=candidates" >&2
     return 1
@@ -179,12 +184,23 @@ execute_switch() {
     echo "switch_failed ordinal=${ordinal} cluster=${cluster_id} stage=candidates reason=empty_target" >&2
     return 1
   }
-  payload="$(jq -nc --arg cluster_id "${cluster_id}" --arg target_id "${target}" --arg approval_token "${approval_token}" --arg key "matrix-${cluster_id}-${ordinal}-$(date +%s%N)" \
-    '{operation:{cluster_id:$cluster_id,engine:"mysql",kind:"switchover",requested_by:"cg-ha-matrix"},target_id:$target_id,idempotency_key:$key,approval_token:$approval_token}')"
-  if ! response="$(api_post "${api%/}/api/v1/operations/execute" "${payload}")"; then
+  response=""
+  for ((execute_attempt=1; execute_attempt<=3; execute_attempt++)); do
+    payload="$(jq -nc --arg cluster_id "${cluster_id}" --arg target_id "${target}" --arg approval_token "${approval_token}" --arg key "matrix-${cluster_id}-${ordinal}-${execute_attempt}-$(date +%s%N)" \
+      '{operation:{cluster_id:$cluster_id,engine:"mysql",kind:"switchover",requested_by:"cg-ha-matrix"},target_id:$target_id,idempotency_key:$key,approval_token:$approval_token}')"
+    if response="$(api_post "${api%/}/api/v1/operations/execute" "${payload}")"; then
+      break
+    else
+      api_status=$?
+    fi
+    if [[ "${api_status}" -eq 75 && "${execute_attempt}" -lt 3 ]]; then
+      echo "switch_retry ordinal=${ordinal} cluster=${cluster_id} target=${target} attempt=${execute_attempt} reason=stale_plan" >&2
+      sleep 1
+      continue
+    fi
     echo "switch_failed ordinal=${ordinal} cluster=${cluster_id} target=${target} stage=execute" >&2
     return 1
-  fi
+  done
   operation_id="$(jq -r '.result.resource_id // ""' <<<"${response}")"
   if ! jq -e '.status == "ok" and .result.status == "succeeded"' <<<"${response}" >/dev/null; then
     echo "switch_failed ordinal=${ordinal} cluster=${cluster_id} target=${target} operation=${operation_id:-unknown} stage=verify_response" >&2

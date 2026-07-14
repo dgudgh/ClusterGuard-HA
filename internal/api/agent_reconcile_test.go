@@ -232,6 +232,25 @@ func TestAgentReconcileKeepsPreparedTransitionTargetOnlyAtExecuteStage(t *testin
 	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &decision) != nil || decision.Action != agent.ReconcileTransitionTarget || decision.LeaseID != lease.ResourceID {
 		t.Fatalf("execute-stage decision status=%d response=%+v body=%s", response.Code, decision, response.Body.String())
 	}
+
+	if err := repository.CommitHAEndpointOwner(cluster.ResourceID, lease.HAEndpointID, target.ResourceID, true); err != nil {
+		t.Fatal(err)
+	}
+	lease.OperationID = lease.HAEndpointID
+	if err := repository.PutCoordinationLease(coordination.LeaseRecord{Lease: lease, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	request.RequestedAt = time.Now().UTC()
+	request.Nonce = "finalized-stage-0001"
+	request.Signature = ""
+	if err := agent.SignReconcileRequest(&request, "agent-secret"); err != nil {
+		t.Fatal(err)
+	}
+	response = callAgentReconcile(t, server, request)
+	decision = agent.ReconcileResponse{}
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &decision) != nil || decision.Action != agent.ReconcileTransitionTarget || decision.LeaseID != lease.ResourceID {
+		t.Fatalf("finalized execute-stage decision status=%d response=%+v body=%s", response.Code, decision, response.Body.String())
+	}
 }
 
 func TestAgentReconcileRejectsUnsignedRequestWithoutControlTokenFallback(t *testing.T) {

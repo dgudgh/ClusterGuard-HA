@@ -801,19 +801,38 @@
       target.className = isError ? 'result-banner error' : 'result-banner success';
     };
 
+    const retryableOperationFailure = error => {
+      const result = error && error.result ? error.result : {};
+      const failureClass = result.failure_class || (result.execution && result.execution.failure_class) || '';
+      return failureClass === 'stale_plan';
+    };
+
     const executeOperation = async (kind, targetID, label) => {
       if (!state.switchUnlocked || !targetID || !requireExecutionContext()) return;
       const cluster = state.clusterDetail && state.clusterDetail.cluster;
       if (!cluster) return;
-      const payload = {
-        operation: { cluster_id: cluster.resource_id, engine: cluster.engine, kind, requested_by: state.operator },
-        target_id: kind === 'switchover' ? state.selectedCandidateId : targetID,
-        idempotency_key: `console-${kind}-${cluster.resource_id}-${targetID}-${Date.now()}`,
-        approval_token: state.approvalToken
-      };
       renderActionResult(`${label}正在执行。`);
       try {
-        const operation = await fetchResult('/api/v1/operations/execute', controlOptions(payload));
+        let operation = null;
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+          const payload = {
+            operation: { cluster_id: cluster.resource_id, engine: cluster.engine, kind, requested_by: state.operator },
+            target_id: kind === 'switchover' ? state.selectedCandidateId : targetID,
+            idempotency_key: `console-${kind}-${cluster.resource_id}-${targetID}-${attempt}-${Date.now()}`,
+            approval_token: state.approvalToken
+          };
+          try {
+            operation = await fetchResult('/api/v1/operations/execute', controlOptions(payload));
+            break;
+          } catch (error) {
+            if (retryableOperationFailure(error) && attempt < 3) {
+              renderActionResult(`${label}检测到拓扑刚刚刷新，正在重新执行安全检查（${attempt}/2）。`);
+              await new Promise(resolve => window.setTimeout(resolve, 500));
+              continue;
+            }
+            throw error;
+          }
+        }
         if (!operation || operation.status !== 'succeeded') throw new APIError(`${label}未完成验证`, 409, operation);
         renderActionResult(`${label}完成，后端验证通过。`);
         state.switchUnlocked = false;

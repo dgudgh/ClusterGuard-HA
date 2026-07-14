@@ -497,6 +497,52 @@ fi
 	}
 }
 
+func TestHAMatrixRetriesFreshOperationAfterStalePlan(t *testing.T) {
+	clusterID := "11111111-1111-4111-8111-111111111111"
+	var attempts int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodGet && strings.HasSuffix(request.URL.Path, "/candidates") {
+			_, _ = fmt.Fprint(writer, `{"status":"ok","result":[{"instance_id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","eligible":true,"rank":1}]}`)
+			return
+		}
+		if request.Method == http.MethodPost && request.URL.Path == "/api/v1/operations/execute" {
+			if atomic.AddInt32(&attempts, 1) == 1 {
+				writer.WriteHeader(http.StatusConflict)
+				_, _ = fmt.Fprint(writer, `{"status":"error","message":"topology observation is unavailable or changed","result":{"resource_id":"stale-operation","stage":"lock","failure_class":"stale_plan"}}`)
+				return
+			}
+			_, _ = fmt.Fprint(writer, `{"status":"ok","result":{"resource_id":"operation-2","status":"succeeded"}}`)
+			return
+		}
+		http.NotFound(writer, request)
+	}))
+	defer server.Close()
+
+	fakeScripts := t.TempDir()
+	writeExecutable(t, filepath.Join(fakeScripts, "clusterguard-smoke.sh"), "#!/usr/bin/env bash\nexit 0\n")
+	command := exec.Command("bash", "clusterguard-ha-matrix.sh",
+		"--api", server.URL,
+		"--clusters", clusterID,
+		"--round-robin", "1",
+		"--random", "0",
+	)
+	command.Env = append(os.Environ(),
+		"CG_CONTROL_TOKEN=matrix-control",
+		"CG_APPROVAL_TOKEN=matrix-approval",
+		"script_dir="+fakeScripts,
+	)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("HA matrix stale-plan retry: %v\n%s", err, output)
+	}
+	if atomic.LoadInt32(&attempts) != 2 || !strings.Contains(string(output), "switch_retry ordinal=0") || !strings.Contains(string(output), "reason=stale_plan") {
+		t.Fatalf("stale plan was not retried once with a fresh operation: attempts=%d\n%s", attempts, output)
+	}
+	if !strings.Contains(string(output), "matrix_summary total=1 passed=1 failed=0") {
+		t.Fatalf("matrix summary missing after stale-plan retry:\n%s", output)
+	}
+}
+
 func TestHAMatrixRejectsDuplicateClusterInventory(t *testing.T) {
 	clusterID := "11111111-1111-4111-8111-111111111111"
 	command := exec.Command("bash", "clusterguard-ha-matrix.sh", "--clusters", clusterID+","+clusterID, "--round-robin", "0", "--random", "0")
