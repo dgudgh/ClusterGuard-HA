@@ -118,7 +118,8 @@ if [[ -n "${assets_dir}" ]]; then
     case "${relative}" in
       ._*|*/._*|.DS_Store|*/.DS_Store) continue ;;
       tls/*.crt|ssh/*known_hosts) mode=0644 ;;
-      tls/*.key|ssh/*_ed25519) mode=0640 ;;
+      tls/*.key) mode=0640 ;;
+      ssh/*_ed25519) mode=0600 ;;
       mysql/*-client.cnf) mode=0600 ;;
       *) echo "unsupported runtime asset: ${relative}" >&2; exit 3 ;;
     esac
@@ -146,6 +147,10 @@ if [[ -z "${install_root}" ]]; then
   fi
   [[ ! -d /etc/clusterguard/tls ]] || chown -R root:clusterguard /etc/clusterguard/tls
   [[ ! -d /etc/clusterguard/ssh ]] || chown -R root:clusterguard /etc/clusterguard/ssh
+  if [[ -d /etc/clusterguard/ssh ]]; then
+    find /etc/clusterguard/ssh -maxdepth 1 -type f -name '*_ed25519' -exec chown clusterguard:clusterguard {} +
+    find /etc/clusterguard/ssh -maxdepth 1 -type f -name '*_ed25519' -exec chmod 0600 {} +
+  fi
   chown -R clusterguard:clusterguard /var/lib/clusterguard /var/log/clusterguard
 fi
 

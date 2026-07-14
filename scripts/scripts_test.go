@@ -242,6 +242,8 @@ func TestInstallerMakesControllerConfigReadableByServiceGroup(t *testing.T) {
 	for _, expected := range []string{
 		"chown root:clusterguard /etc/clusterguard\n",
 		"chown root:clusterguard /etc/clusterguard/clusterguard.json",
+		"find /etc/clusterguard/ssh -maxdepth 1 -type f -name '*_ed25519' -exec chown clusterguard:clusterguard {} +",
+		"find /etc/clusterguard/ssh -maxdepth 1 -type f -name '*_ed25519' -exec chmod 0600 {} +",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("installer is missing service-readable configuration ownership: %q", expected)
@@ -284,7 +286,7 @@ func TestInstallerCopiesOnlySupportedRuntimeAssetsWithProtectedModes(t *testing.
 	}
 	for path, mode := range map[string]os.FileMode{
 		"tls/ca.crt": 0o644, "tls/server.crt": 0o644, "tls/server.key": 0o640,
-		"ssh/controller_ed25519": 0o640, "ssh/known_hosts": 0o644,
+		"ssh/controller_ed25519": 0o600, "ssh/known_hosts": 0o644,
 		"mysql/3306-client.cnf": 0o600,
 	} {
 		info, err := os.Stat(filepath.Join(installRoot, "etc", "clusterguard", path))
