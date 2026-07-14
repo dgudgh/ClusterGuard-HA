@@ -438,6 +438,63 @@ printf '%s\n' "${cluster}" >>"${CG_MATRIX_SMOKE_LOG}"
 	}
 }
 
+func TestHAMatrixWaitsForSmokeConvergence(t *testing.T) {
+	clusterID := "11111111-1111-4111-8111-111111111111"
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodGet && strings.HasSuffix(request.URL.Path, "/candidates") {
+			_, _ = fmt.Fprint(writer, `{"status":"ok","result":[{"instance_id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","eligible":true,"rank":1}]}`)
+			return
+		}
+		if request.Method == http.MethodPost && request.URL.Path == "/api/v1/operations/execute" {
+			_, _ = fmt.Fprint(writer, `{"status":"ok","result":{"resource_id":"operation-1","status":"succeeded"}}`)
+			return
+		}
+		http.NotFound(writer, request)
+	}))
+	defer server.Close()
+
+	fakeScripts := t.TempDir()
+	attemptFile := filepath.Join(t.TempDir(), "smoke-attempts")
+	writeExecutable(t, filepath.Join(fakeScripts, "clusterguard-smoke.sh"), `#!/usr/bin/env bash
+set -euo pipefail
+attempt=0
+if [[ -f "${CG_MATRIX_SMOKE_ATTEMPT_FILE}" ]]; then
+  attempt="$(cat "${CG_MATRIX_SMOKE_ATTEMPT_FILE}")"
+fi
+attempt=$((attempt + 1))
+printf '%s\n' "${attempt}" >"${CG_MATRIX_SMOKE_ATTEMPT_FILE}"
+if ((attempt < 3)); then
+  printf '{"checks":[{"name":"topology_fresh","status":"fail"}]}\n'
+  exit 1
+fi
+`)
+	command := exec.Command("bash", "clusterguard-ha-matrix.sh",
+		"--api", server.URL,
+		"--clusters", clusterID,
+		"--round-robin", "1",
+		"--random", "0",
+		"--smoke-attempts", "3",
+		"--smoke-interval", "0",
+	)
+	command.Env = append(os.Environ(),
+		"CG_CONTROL_TOKEN=matrix-control",
+		"CG_APPROVAL_TOKEN=matrix-approval",
+		"CG_MATRIX_SMOKE_ATTEMPT_FILE="+attemptFile,
+		"script_dir="+fakeScripts,
+	)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("HA matrix convergence retry: %v\n%s", err, output)
+	}
+	contents, err := os.ReadFile(attemptFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(contents)) != "3" {
+		t.Fatalf("smoke attempts=%q, want 3", contents)
+	}
+}
+
 func TestHAMatrixRejectsDuplicateClusterInventory(t *testing.T) {
 	clusterID := "11111111-1111-4111-8111-111111111111"
 	command := exec.Command("bash", "clusterguard-ha-matrix.sh", "--clusters", clusterID+","+clusterID, "--round-robin", "0", "--random", "0")

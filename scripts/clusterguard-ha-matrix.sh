@@ -7,6 +7,8 @@ round_robin=20
 random_cycles=30
 matrix_seed=20260713
 parallel=1
+smoke_attempts=15
+smoke_interval=2
 control_token_environment="CG_CONTROL_TOKEN"
 approval_token_environment="CG_APPROVAL_TOKEN"
 script_dir="${script_dir:-$(cd "$(dirname "$0")" && pwd)}"
@@ -24,7 +26,7 @@ finish() {
 trap finish EXIT
 
 usage() {
-  echo "usage: $0 --clusters UUID[,UUID...] [--api URL] [--round-robin N] [--random N] [--seed N] [--parallel N]"
+  echo "usage: $0 --clusters UUID[,UUID...] [--api URL] [--round-robin N] [--random N] [--seed N] [--parallel N] [--smoke-attempts N] [--smoke-interval SECONDS]"
 }
 
 while (($#)); do
@@ -35,6 +37,8 @@ while (($#)); do
     --random) random_cycles="${2:-}"; shift 2 ;;
     --seed) matrix_seed="${2:-}"; shift 2 ;;
     --parallel) parallel="${2:-}"; shift 2 ;;
+    --smoke-attempts) smoke_attempts="${2:-}"; shift 2 ;;
+    --smoke-interval) smoke_interval="${2:-}"; shift 2 ;;
     --token-env) control_token_environment="${2:-}"; shift 2 ;;
     --approval-env) approval_token_environment="${2:-}"; shift 2 ;;
     --insecure) insecure=true; shift ;;
@@ -43,10 +47,11 @@ while (($#)); do
   esac
 done
 
-for value in "${round_robin}" "${random_cycles}" "${matrix_seed}"; do
+for value in "${round_robin}" "${random_cycles}" "${matrix_seed}" "${smoke_interval}"; do
   [[ "${value}" =~ ^[0-9]+$ ]] || { echo "matrix counts and seed must be non-negative integers" >&2; exit 2; }
 done
 [[ "${parallel}" =~ ^[1-9][0-9]*$ ]] || { echo "parallel must be a positive integer" >&2; exit 2; }
+[[ "${smoke_attempts}" =~ ^[1-9][0-9]*$ ]] || { echo "smoke attempts must be a positive integer" >&2; exit 2; }
 
 IFS=',' read -r -a cluster_ids <<<"${clusters}"
 [[ "${#cluster_ids[@]}" -gt 0 && -n "${cluster_ids[0]}" ]] || { echo "at least one cluster UUID is required" >&2; exit 2; }
@@ -125,10 +130,40 @@ api_post() {
   rm -f "${body_file}"
 }
 
+wait_for_smoke() {
+  local cluster_id="$1" ordinal="$2" operation_id="$3" target="$4"
+  local attempt output_file failed_checks
+  local -a smoke_command
+  output_file="$(mktemp "${TMPDIR:-/tmp}/clusterguard-smoke.XXXXXX")" || return 1
+  for ((attempt=1; attempt<=smoke_attempts; attempt++)); do
+    if [[ "${insecure}" == true ]]; then
+      smoke_command=("${script_dir}/clusterguard-smoke.sh" --api "${api}" --cluster "${cluster_id}" --token-env "${control_token_environment}" --insecure)
+    else
+      smoke_command=("${script_dir}/clusterguard-smoke.sh" --api "${api}" --cluster "${cluster_id}" --token-env "${control_token_environment}")
+    fi
+    if "${smoke_command[@]}" >"${output_file}" 2>&1; then
+      rm -f "${output_file}"
+      if ((attempt > 1)); then
+        printf 'smoke_converged ordinal=%s cluster=%s operation=%s attempt=%s\n' "${ordinal}" "${cluster_id}" "${operation_id:-unknown}" "${attempt}"
+      fi
+      return 0
+    fi
+    if ((attempt < smoke_attempts && smoke_interval > 0)); then
+      sleep "${smoke_interval}"
+    fi
+  done
+  failed_checks="unknown"
+  if jq -e . "${output_file}" >/dev/null 2>&1; then
+    failed_checks="$(jq -r '[.checks[]? | select(.status != "pass") | .name] | unique | join(",") | if . == "" then "unknown" else . end' "${output_file}")"
+  fi
+  rm -f "${output_file}"
+  echo "smoke_failed ordinal=${ordinal} cluster=${cluster_id} target=${target} operation=${operation_id:-unknown} attempts=${smoke_attempts} failed_checks=${failed_checks}" >&2
+  return 1
+}
+
 execute_switch() {
   local cluster_id="$1" ordinal="$2" target_offset="$3"
   local candidates eligible_count target payload response operation_id
-  local -a smoke_command
   if ! candidates="$(api_get "${api%/}/api/v1/clusters/${cluster_id}/candidates")"; then
     echo "switch_failed ordinal=${ordinal} cluster=${cluster_id} stage=candidates" >&2
     return 1
@@ -155,12 +190,7 @@ execute_switch() {
     echo "switch_failed ordinal=${ordinal} cluster=${cluster_id} target=${target} operation=${operation_id:-unknown} stage=verify_response" >&2
     return 1
   fi
-  if [[ "${insecure}" == true ]]; then
-    smoke_command=("${script_dir}/clusterguard-smoke.sh" --api "${api}" --cluster "${cluster_id}" --token-env "${control_token_environment}" --insecure)
-  else
-    smoke_command=("${script_dir}/clusterguard-smoke.sh" --api "${api}" --cluster "${cluster_id}" --token-env "${control_token_environment}")
-  fi
-  if ! "${smoke_command[@]}" >/dev/null; then
+  if ! wait_for_smoke "${cluster_id}" "${ordinal}" "${operation_id}" "${target}"; then
     echo "switch_failed ordinal=${ordinal} cluster=${cluster_id} target=${target} operation=${operation_id:-unknown} stage=smoke" >&2
     return 1
   fi
