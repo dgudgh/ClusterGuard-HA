@@ -29,6 +29,8 @@ type switchoverSQLClient struct {
 	targetSuperReadOnly   bool
 	targetReplication     bool
 	targetLag             int64
+	targetIO              bool
+	targetSQL             bool
 	primaryUUID           string
 	targetUUID            string
 	primaryGTID           string
@@ -53,6 +55,8 @@ func newSwitchoverSQLClient(request adapter.OperationRequest) *switchoverSQLClie
 		targetReadOnly:       true,
 		targetSuperReadOnly:  true,
 		targetReplication:    true,
+		targetIO:             true,
+		targetSQL:            true,
 		primaryUUID:          primaryUUID,
 		targetUUID:           targetUUID,
 		primaryGTID:          request.Resolved.Primary.EngineMetadata["gtid_executed"],
@@ -138,6 +142,9 @@ func (client *switchoverSQLClient) replicationRows(host string) []Row {
 		sqlRunning = client.primarySQL
 	} else if host != client.targetHost {
 		return nil
+	} else {
+		ioRunning = client.targetIO
+		sqlRunning = client.targetSQL
 	}
 	if !configured {
 		return nil
@@ -741,13 +748,25 @@ func TestSwitchoverFencesPromotedTargetWhenEndpointOwnershipIsUnknown(t *testing
 
 func TestSwitchoverExecuteRevalidatesLiveReplicationBeforeFirstMutation(t *testing.T) {
 	adapterInstance, request, client, _ := executableSwitchoverFixture(t)
-	client.targetLag = 5
+	client.targetSQL = false
 	execution, err := adapterInstance.Execute(context.Background(), request)
 	if err == nil || execution.Status != model.OperationFailed || failureClass(err) != "pre_commit" {
 		t.Fatalf("live replication drift execution=%+v err=%v", execution, err)
 	}
 	if len(client.statements()) != 0 {
 		t.Fatalf("live precheck failure issued mutating SQL: %v", client.statements())
+	}
+}
+
+func TestLiveSwitchoverPrecheckAllowsKnownLagBeforeSourceFencing(t *testing.T) {
+	adapterInstance, request, client, _ := executableSwitchoverFixture(t)
+	client.targetLag = 1
+
+	if err := adapterInstance.liveSwitchoverPrecheck(context.Background(), *request.Resolved); err != nil {
+		t.Fatalf("live precheck rejected bounded catch-up before source fencing: %v", err)
+	}
+	if len(client.statements()) != 0 {
+		t.Fatalf("live precheck issued mutating SQL: %v", client.statements())
 	}
 }
 

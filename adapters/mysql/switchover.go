@@ -690,8 +690,8 @@ func (adapterInstance *Adapter) liveSwitchoverPrecheck(ctx context.Context, reso
 	if strings.ToLower(strings.TrimSpace(targetReplication.SourceIdentity["server_uuid"])) != sourceIdentity.serverUUID {
 		return fmt.Errorf("live target no longer follows the selected source")
 	}
-	if targetReplication.LagSeconds == nil || *targetReplication.LagSeconds != 0 {
-		return fmt.Errorf("live target replication lag must be known and zero")
+	if targetReplication.LagSeconds == nil || *targetReplication.LagSeconds < 0 {
+		return fmt.Errorf("live target replication lag must be known and non-negative")
 	}
 	targetSet, targetSetError := ParseGTIDSet(targetReplication.ExecutedPosition)
 	if targetSetError != nil {
@@ -741,8 +741,8 @@ func (adapterInstance *Adapter) liveSwitchoverPrecheck(ctx context.Context, reso
 		if strings.ToLower(strings.TrimSpace(followerReplication.SourceIdentity["server_uuid"])) != sourceIdentity.serverUUID {
 			return fmt.Errorf("live follower no longer follows the selected source")
 		}
-		if followerReplication.LagSeconds == nil || *followerReplication.LagSeconds != 0 {
-			return fmt.Errorf("live follower replication lag must be known and zero")
+		if followerReplication.LagSeconds == nil || *followerReplication.LagSeconds < 0 {
+			return fmt.Errorf("live follower replication lag must be known and non-negative")
 		}
 		followerSet, parseErr := ParseGTIDSet(followerReplication.ExecutedPosition)
 		if parseErr != nil {
