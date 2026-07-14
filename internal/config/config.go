@@ -50,6 +50,7 @@ type ConsensusPeer struct {
 
 type Consensus struct {
 	Enabled             bool             `json:"enabled"`
+	SnapshotCASEnabled  bool             `json:"snapshot_cas_enabled"`
 	LocalID             model.ResourceID `json:"local_id"`
 	BindAddress         string           `json:"bind_address"`
 	AdvertiseAddress    string           `json:"advertise_address"`

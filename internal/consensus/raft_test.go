@@ -2,6 +2,7 @@ package consensus
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"path/filepath"
 	"sync"
@@ -9,11 +10,38 @@ import (
 	"time"
 
 	"clusterguard.io/ha/pkg/model"
+	"github.com/hashicorp/raft"
 )
 
 type stateRecorder struct {
 	mu     sync.Mutex
 	states [][]byte
+}
+
+type rejectingStateRecorder struct {
+	stateRecorder
+	reject string
+}
+
+type committedApplyWarning struct{}
+
+func (committedApplyWarning) Error() string   { return "metadata directory sync warning" }
+func (committedApplyWarning) Committed() bool { return true }
+
+type warningStateRecorder struct{ stateRecorder }
+
+func (recorder *warningStateRecorder) ApplyReplicatedState(state []byte) error {
+	if err := recorder.stateRecorder.ApplyReplicatedState(state); err != nil {
+		return err
+	}
+	return committedApplyWarning{}
+}
+
+func (recorder *rejectingStateRecorder) ApplyReplicatedState(state []byte) error {
+	if string(state) == recorder.reject {
+		return context.Canceled
+	}
+	return recorder.stateRecorder.ApplyReplicatedState(state)
 }
 
 func (recorder *stateRecorder) ValidateReplicatedState(state []byte) error {
@@ -39,6 +67,103 @@ func (recorder *stateRecorder) contains(want string) bool {
 		}
 	}
 	return false
+}
+
+func TestReplicatedFSMNeverSuppressesCommittedState(t *testing.T) {
+	recorder := &stateRecorder{}
+	fsm := &replicatedFSM{machine: recorder}
+
+	foreignState := []byte(`{"revision":2}`)
+	foreignCommand, err := encodeReplicatedLog(foreignState)
+	if err != nil {
+		t.Fatalf("encode foreign command: %v", err)
+	}
+	if response := fsm.Apply(&raft.Log{Data: foreignCommand}); response != nil {
+		t.Fatalf("apply foreign command: %v", response)
+	}
+	if !recorder.contains(string(foreignState)) {
+		t.Fatal("foreign leader command was skipped by a pending local commit")
+	}
+
+	localState := []byte(`{"revision":1}`)
+	localCommand, err := encodeReplicatedLog(localState)
+	if err != nil {
+		t.Fatalf("encode local command: %v", err)
+	}
+	if response := fsm.Apply(&raft.Log{Data: localCommand}); response != nil {
+		t.Fatalf("apply matching local command: %v", response)
+	}
+	if !recorder.contains(string(localState)) {
+		t.Fatal("matching local command was suppressed instead of applying through the state machine")
+	}
+
+	if response := fsm.Apply(&raft.Log{Data: localCommand}); response != nil {
+		t.Fatalf("reapply committed local command: %v", response)
+	}
+	if !recorder.contains(string(localState)) {
+		t.Fatal("replayed local command was not applied")
+	}
+}
+
+func TestReplicatedLogRemainsReadableByLegacySnapshotDecoder(t *testing.T) {
+	state := []byte(`{"clusters":{"cluster-1":{"display_name":"mysql-ha"}},"nodes":{},"instances":{}}`)
+	command, err := encodeReplicatedLog(state)
+	if err != nil {
+		t.Fatalf("encode replicated log: %v", err)
+	}
+	legacy := struct {
+		Clusters map[string]json.RawMessage `json:"clusters"`
+	}{}
+	if err := json.Unmarshal(command, &legacy); err != nil {
+		t.Fatalf("decode replicated log with legacy snapshot decoder: %v", err)
+	}
+	if len(legacy.Clusters) != 1 {
+		t.Fatalf("legacy decoder saw clusters=%v, want the original snapshot payload", legacy.Clusters)
+	}
+}
+
+func TestReplicatedFSMDoesNotSnapshotRejectedState(t *testing.T) {
+	recorder := &rejectingStateRecorder{reject: `{"revision":2}`}
+	fsm := &replicatedFSM{machine: recorder}
+	accepted := []byte(`{"revision":1}`)
+	if response := fsm.Apply(&raft.Log{Data: accepted}); response != nil {
+		t.Fatalf("apply accepted state: %v", response)
+	}
+	rejected := []byte(recorder.reject)
+	if response := fsm.Apply(&raft.Log{Data: rejected}); response == nil {
+		t.Fatal("state-machine rejection was ignored")
+	}
+	fsm.mu.RLock()
+	defer fsm.mu.RUnlock()
+	if string(fsm.state) != string(accepted) {
+		t.Fatalf("snapshot state=%s, want last accepted state=%s", fsm.state, accepted)
+	}
+}
+
+func TestReplicatedFSMSnapshotsStateCommittedWithDurabilityWarning(t *testing.T) {
+	recorder := &warningStateRecorder{}
+	fsm := &replicatedFSM{machine: recorder}
+	state := []byte(`{"revision":7}`)
+	response := fsm.Apply(&raft.Log{Data: state})
+	if _, ok := response.(error); !ok {
+		t.Fatalf("committed durability warning response=%v, want error", response)
+	}
+	fsm.mu.RLock()
+	defer fsm.mu.RUnlock()
+	if string(fsm.state) != string(state) {
+		t.Fatalf("snapshot state=%s, want committed state=%s", fsm.state, state)
+	}
+}
+
+func TestNodeReportsExplicitSnapshotCASProtocolState(t *testing.T) {
+	disabled := &Node{}
+	if disabled.SnapshotCASActive() {
+		t.Fatal("snapshot CAS protocol was active without explicit configuration")
+	}
+	enabled := &Node{snapshotCAS: true}
+	if !enabled.SnapshotCASActive() {
+		t.Fatal("snapshot CAS protocol did not report the configured active state")
+	}
 }
 
 func freeTCPAddress(t *testing.T) string {
@@ -100,6 +225,9 @@ func TestThreeNodeRaftCommitsToFollowersAndLosesAuthorityWithoutQuorum(t *testin
 	if err := leader.Commit([]byte(`{"revision":1}`)); err != nil {
 		t.Fatalf("commit replicated state: %v", err)
 	}
+	if err := leader.Synchronize(); err != nil {
+		t.Fatalf("synchronize committed state: %v", err)
+	}
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		applied := 0
@@ -135,6 +263,9 @@ func TestThreeNodeRaftCommitsToFollowersAndLosesAuthorityWithoutQuorum(t *testin
 		err := leader.RequireMutationAuthority(ctx)
 		cancel()
 		if err != nil {
+			if synchronizeErr := leader.Synchronize(); synchronizeErr == nil {
+				t.Fatal("isolated leader synchronized state without a majority")
+			}
 			return
 		}
 		time.Sleep(100 * time.Millisecond)

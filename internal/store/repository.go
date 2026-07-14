@@ -1,7 +1,6 @@
 package store
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -115,13 +114,15 @@ type snapshot struct {
 }
 
 type Repository struct {
-	mu            sync.RWMutex
-	path          string
-	snapshot      snapshot
-	consensus     SnapshotConsensus
-	now           func() time.Time
-	syncFile      func(*os.File) error
-	syncDirectory func(string) error
+	mu              sync.RWMutex
+	consensusCommit sync.Mutex
+	stateRevision   uint64
+	path            string
+	snapshot        snapshot
+	consensus       SnapshotConsensus
+	now             func() time.Time
+	syncFile        func(*os.File) error
+	syncDirectory   func(string) error
 }
 
 func emptySnapshot() snapshot {
@@ -181,11 +182,14 @@ func Open(path string) (*Repository, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read metadata snapshot: %w", err)
 	}
-	decoded, err := decodeSnapshotContents(contents)
+	decoded, metadata, err := decodeSnapshotState(contents)
 	if err != nil {
 		return nil, fmt.Errorf("decode metadata snapshot: %w", err)
 	}
 	repository.snapshot = decoded
+	if metadata.StateRevision != nil {
+		repository.stateRevision = *metadata.StateRevision
+	}
 	return repository, nil
 }
 
@@ -443,10 +447,16 @@ func (repository *Repository) persistLocked() error {
 }
 
 func (repository *Repository) persistSnapshotLocked(value snapshot) error {
+	return repository.persistSnapshotRevisionLocked(value, repository.stateRevision)
+}
+
+func (repository *Repository) persistSnapshotRevisionLocked(value snapshot, stateRevision uint64) error {
 	if repository.path == "" {
+		repository.snapshot = value
+		repository.stateRevision = stateRevision
 		return nil
 	}
-	contents, err := json.MarshalIndent(value, "", "  ")
+	contents, err := encodeSnapshotRevision(value, stateRevision, "")
 	if err != nil {
 		return fmt.Errorf("encode metadata snapshot: %w", err)
 	}
@@ -480,6 +490,7 @@ func (repository *Repository) persistSnapshotLocked(value snapshot) error {
 	// Rename is the commit boundary. Keep live state aligned with the file even
 	// when the subsequent directory sync cannot confirm crash durability.
 	repository.snapshot = value
+	repository.stateRevision = stateRevision
 	if err := repository.syncDirectory(filepath.Dir(repository.path)); err != nil {
 		return &postCommitDurabilityError{cause: err}
 	}

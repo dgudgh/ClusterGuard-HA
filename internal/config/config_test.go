@@ -273,6 +273,7 @@ func TestLoadResolvesRaftAndWriteOnlyNodeLifecycleConfiguration(t *testing.T) {
   "metadata_path":"` + filepath.Join(t.TempDir(), "metadata.json") + `",
   "consensus": {
     "enabled": true,
+    "snapshot_cas_enabled": true,
     "local_id":"` + localID + `",
     "bind_address":"127.0.0.1:10009",
     "advertise_address":"127.0.0.1:10009",
@@ -305,7 +306,7 @@ func TestLoadResolvesRaftAndWriteOnlyNodeLifecycleConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load Raft lifecycle configuration: %v", err)
 	}
-	if !loaded.Consensus.Enabled || string(loaded.Consensus.LocalID) != localID || len(loaded.Consensus.Peers) != 3 || !loaded.NodeLifecycle.Enabled || loaded.NodeLifecycle.SSHPassword != "ssh-secret" || loaded.NodeLifecycle.MySQLRootPassword != "install-root-secret" || loaded.NodeLifecycle.ReplicationPassword != "install-replication-secret" {
+	if !loaded.Consensus.Enabled || !loaded.Consensus.SnapshotCASEnabled || string(loaded.Consensus.LocalID) != localID || len(loaded.Consensus.Peers) != 3 || !loaded.NodeLifecycle.Enabled || loaded.NodeLifecycle.SSHPassword != "ssh-secret" || loaded.NodeLifecycle.MySQLRootPassword != "install-root-secret" || loaded.NodeLifecycle.ReplicationPassword != "install-replication-secret" {
 		t.Fatalf("loaded Raft lifecycle configuration=%+v", loaded)
 	}
 	encoded, err := json.Marshal(loaded)
@@ -316,6 +317,36 @@ func TestLoadResolvesRaftAndWriteOnlyNodeLifecycleConfiguration(t *testing.T) {
 		if strings.Contains(string(encoded), secret) {
 			t.Fatalf("serialized lifecycle configuration exposed %q: %s", secret, encoded)
 		}
+	}
+}
+
+func TestLoadDefaultsSnapshotCASProtocolGateToDisabledForUpgrade(t *testing.T) {
+	localID := "11111111-1111-4111-8111-111111111111"
+	path := filepath.Join(t.TempDir(), "control.json")
+	contents := `{
+  "metadata_path":"` + filepath.Join(t.TempDir(), "metadata.json") + `",
+  "consensus": {
+    "enabled":true,
+    "local_id":"` + localID + `",
+    "bind_address":"127.0.0.1:10009",
+    "advertise_address":"127.0.0.1:10009",
+    "data_directory":"` + filepath.Join(t.TempDir(), "raft") + `",
+    "peers":[
+      {"resource_id":"` + localID + `","address":"127.0.0.1:10009"},
+      {"resource_id":"22222222-2222-4222-8222-222222222222","address":"127.0.0.1:10019"},
+      {"resource_id":"33333333-3333-4333-8333-333333333333","address":"127.0.0.1:10029"}
+    ]
+  }
+}`
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("load legacy consensus configuration: %v", err)
+	}
+	if loaded.Consensus.SnapshotCASEnabled {
+		t.Fatal("legacy configuration silently activated the snapshot CAS protocol")
 	}
 }
 

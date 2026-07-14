@@ -5,9 +5,15 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"clusterguard.io/ha/pkg/adapter"
 	"clusterguard.io/ha/pkg/model"
+)
+
+const (
+	followerReplicationStartTimeout = 10 * time.Second
+	followerReplicationPollInterval = 100 * time.Millisecond
 )
 
 func mysqlStringLiteral(value string) string {
@@ -44,6 +50,30 @@ func buildChangeSourceStatement(version string, target model.DatabaseInstance, c
 		"MASTER_AUTO_POSITION=1", nil
 }
 
+func waitForFollowerReplicationHealthy(ctx context.Context, runner SQLRunner, endpoint adapter.Endpoint, credentials adapter.Credentials, targetUUID string) (model.ReplicationStatus, error) {
+	waitContext, cancel := context.WithTimeout(ctx, followerReplicationStartTimeout)
+	defer cancel()
+	ticker := time.NewTicker(followerReplicationPollInterval)
+	defer ticker.Stop()
+	var lastError error
+	for {
+		status, configured, err := probeReplication(waitContext, runner, endpoint, credentials)
+		if err == nil && configured && strings.ToLower(strings.TrimSpace(status.SourceIdentity["server_uuid"])) == targetUUID &&
+			status.IOThread == model.ThreadRunning && status.SQLThread == model.ThreadRunning {
+			return status, nil
+		}
+		lastError = err
+		select {
+		case <-waitContext.Done():
+			if lastError != nil {
+				return model.ReplicationStatus{}, fmt.Errorf("replication health did not converge: %w", lastError)
+			}
+			return model.ReplicationStatus{}, fmt.Errorf("replication source or threads did not converge within %s", followerReplicationStartTimeout)
+		case <-ticker.C:
+		}
+	}
+}
+
 func (adapterInstance *Adapter) reparentFollower(ctx context.Context, follower model.DatabaseInstance, target model.DatabaseInstance, administrative adapter.Credentials, replication adapter.Credentials) error {
 	endpoint := instanceEndpoint(follower)
 	if err := adapterInstance.executor.Exec(ctx, endpoint, administrative, setSuperReadOnlyOn); err != nil {
@@ -78,13 +108,9 @@ func (adapterInstance *Adapter) reparentFollower(ctx context.Context, follower m
 	if err := adapterInstance.executor.Exec(ctx, endpoint, administrative, dialect.StartReplication); err != nil {
 		return fmt.Errorf("start follower replication: %w", err)
 	}
-	status, configured, err := probeReplication(ctx, adapterInstance.runner, endpoint, administrative)
-	if err != nil || !configured {
-		return fmt.Errorf("verify follower replication configuration")
-	}
 	targetUUID := strings.ToLower(strings.TrimSpace(target.EngineIdentity["server_uuid"]))
-	if strings.ToLower(strings.TrimSpace(status.SourceIdentity["server_uuid"])) != targetUUID || status.IOThread != model.ThreadRunning || status.SQLThread != model.ThreadRunning {
-		return fmt.Errorf("follower does not replicate from the selected target")
+	if _, err := waitForFollowerReplicationHealthy(ctx, adapterInstance.runner, endpoint, administrative, targetUUID); err != nil {
+		return fmt.Errorf("verify follower replication configuration: %w", err)
 	}
 	targetRows, err := adapterInstance.runner.Query(ctx, instanceEndpoint(target), administrative, gtidPositionQuery)
 	if err != nil || len(targetRows) != 1 || strings.TrimSpace(targetRows[0]["gtid_executed"]) == "" {
@@ -96,10 +122,8 @@ func (adapterInstance *Adapter) reparentFollower(ctx context.Context, follower m
 	if err := waitForExecutedGTIDSet(ctx, adapterInstance.runner, endpoint, administrative, targetRows[0]["gtid_executed"]); err != nil {
 		return fmt.Errorf("wait for follower GTID catch-up: %w", err)
 	}
-	status, configured, err = probeReplication(ctx, adapterInstance.runner, endpoint, administrative)
-	if err != nil || !configured || strings.ToLower(strings.TrimSpace(status.SourceIdentity["server_uuid"])) != targetUUID ||
-		status.IOThread != model.ThreadRunning || status.SQLThread != model.ThreadRunning {
-		return fmt.Errorf("follower did not remain healthy after GTID catch-up")
+	if _, err := waitForFollowerReplicationHealthy(ctx, adapterInstance.runner, endpoint, administrative, targetUUID); err != nil {
+		return fmt.Errorf("follower did not remain healthy after GTID catch-up: %w", err)
 	}
 	return nil
 }

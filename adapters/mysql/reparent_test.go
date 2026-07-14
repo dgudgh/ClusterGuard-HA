@@ -39,13 +39,15 @@ func TestBuildChangeSourceStatementUsesVersionDialectAndEscapesSecrets(t *testin
 }
 
 type reparentNodeState struct {
-	uuid          string
-	readOnly      bool
-	superReadOnly bool
-	sourceUUID    string
-	ioRunning     bool
-	sqlRunning    bool
-	gtid          string
+	uuid                   string
+	readOnly               bool
+	superReadOnly          bool
+	sourceUUID             string
+	ioRunning              bool
+	sqlRunning             bool
+	gtid                   string
+	startProbeFailures     int
+	remainingProbeFailures int
 }
 
 type threeNodeSQLClient struct {
@@ -92,7 +94,9 @@ func (client *threeNodeSQLClient) Query(_ context.Context, endpoint adapter.Endp
 			return nil, nil
 		}
 		ioState := "No"
-		if node.ioRunning {
+		if node.remainingProbeFailures > 0 {
+			node.remainingProbeFailures--
+		} else if node.ioRunning {
 			ioState = "Yes"
 		}
 		sqlState := "No"
@@ -185,6 +189,7 @@ func (client *threeNodeSQLClient) Exec(_ context.Context, endpoint adapter.Endpo
 	case "START REPLICA", "START SLAVE":
 		node.ioRunning = true
 		node.sqlRunning = true
+		node.remainingProbeFailures = node.startProbeFailures
 	case "START REPLICA IO_THREAD", "START SLAVE IO_THREAD":
 		node.ioRunning = true
 	case "START REPLICA SQL_THREAD", "START SLAVE SQL_THREAD":
@@ -240,6 +245,31 @@ func TestSwitchoverReparentsFormerPrimaryAndSiblingBeforeVIPTransfer(t *testing.
 	verification, err := adapterInstance.Verify(context.Background(), request)
 	if err != nil || !verification.Passed {
 		t.Fatalf("verify: result=%+v err=%v", verification, err)
+	}
+}
+
+func TestSwitchoverWaitsForFollowerReplicationThreadsAfterRestart(t *testing.T) {
+	request := threeNodeSwitchoverRequestFixture()
+	request.Resolved.Credentials = adapter.Credentials{Username: "operator", Password: "operation-secret"}
+	request.Resolved.ReplicationCredentials = adapter.Credentials{Username: "replicator", Password: "replication-secret"}
+	client := newThreeNodeSQLClient(request)
+	sibling := request.Resolved.Snapshot.Instances[2]
+	client.nodes[sibling.Hostname].startProbeFailures = 1
+	adapterInstance := NewWithEndpointProvider(client, &recordingEndpointProvider{})
+	plan, err := adapterInstance.BuildPlan(context.Background(), request)
+	if err != nil {
+		t.Fatalf("build plan: %v", err)
+	}
+	request.Plan = &plan
+	request.Resolved.PlanDigest = plan.Digest
+
+	execution, err := adapterInstance.Execute(context.Background(), request)
+	if err != nil || execution.Status != model.OperationRunning {
+		t.Fatalf("execute with transient follower startup: execution=%+v err=%v", execution, err)
+	}
+	state := client.nodes[sibling.Hostname]
+	if !state.ioRunning || !state.sqlRunning || state.sourceUUID != targetUUID {
+		t.Fatalf("follower did not converge after transient startup: %+v", state)
 	}
 }
 

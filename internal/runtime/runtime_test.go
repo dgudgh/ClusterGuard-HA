@@ -248,6 +248,7 @@ func TestRuntimeRaftBlocksMutationWithoutControllerMajority(t *testing.T) {
 		Consensus: config.Consensus{
 			Enabled: true, LocalID: ids[0], BindAddress: addresses[0], AdvertiseAddress: addresses[0],
 			DataDirectory: filepath.Join(t.TempDir(), "raft"), Bootstrap: true, ApplyTimeoutSeconds: 1, Peers: peers,
+			SnapshotCASEnabled: true,
 		},
 	})
 	if err != nil {
@@ -274,6 +275,7 @@ func TestRuntimeStartsAutomaticFailoverOnlyWithGuardedDependencies(t *testing.T)
 		Consensus: config.Consensus{
 			Enabled: true, LocalID: ids[0], BindAddress: addresses[0], AdvertiseAddress: addresses[0],
 			DataDirectory: filepath.Join(t.TempDir(), "raft"), Bootstrap: true, ApplyTimeoutSeconds: 1, Peers: peers,
+			SnapshotCASEnabled: true,
 		},
 		Agent: config.Agent{
 			Enabled: true, User: "cg-agent", IdentityFile: "/tmp/agent-key", KnownHostsFile: "/tmp/known-hosts", SharedSecret: "agent-secret",

@@ -8,6 +8,7 @@
   "approval_token_env": "CG_APPROVAL_TOKEN",
   "consensus": {
     "enabled": true,
+    "snapshot_cas_enabled": true,
     "local_id": "c1520000-0000-4000-8000-000000000152",
     "bind_address": "0.0.0.0:10009",
     "advertise_address": "192.168.102.152:10009",

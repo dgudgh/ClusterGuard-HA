@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"clusterguard.io/ha/pkg/model"
@@ -39,18 +38,35 @@ type Peer struct {
 }
 
 type Config struct {
-	LocalID          model.ResourceID
-	BindAddress      string
-	AdvertiseAddress string
-	DataDirectory    string
-	Peers            []Peer
-	Bootstrap        bool
-	ApplyTimeout     time.Duration
+	LocalID            model.ResourceID
+	BindAddress        string
+	AdvertiseAddress   string
+	DataDirectory      string
+	Peers              []Peer
+	Bootstrap          bool
+	ApplyTimeout       time.Duration
+	SnapshotCASEnabled bool
 }
 
 type StateMachine interface {
 	ValidateReplicatedState([]byte) error
 	ApplyReplicatedState([]byte) error
+}
+
+type snapshotStateRestorer interface {
+	RestoreReplicatedState([]byte) error
+}
+
+type committedStateError interface {
+	Committed() bool
+}
+
+func stateWasCommitted(err error) bool {
+	if err == nil {
+		return false
+	}
+	committed := committedStateError(nil)
+	return errors.As(err, &committed) && committed.Committed()
 }
 
 func validateConfig(configuration Config) error {
@@ -94,25 +110,42 @@ func validateConfig(configuration Config) error {
 	return nil
 }
 
+func encodeReplicatedLog(state []byte) ([]byte, error) {
+	if len(state) == 0 || len(state) > maximumReplicatedStateBytes {
+		return nil, fmt.Errorf("replicated state is invalid")
+	}
+	return append([]byte{}, state...), nil
+}
+
+func decodeReplicatedLog(contents []byte) ([]byte, error) {
+	if len(contents) == 0 || len(contents) > maximumReplicatedStateBytes {
+		return nil, fmt.Errorf("replicated state size is invalid")
+	}
+	return append([]byte{}, contents...), nil
+}
+
 type replicatedFSM struct {
-	machine   StateMachine
-	skipLocal *atomic.Bool
-	mu        sync.RWMutex
-	state     []byte
+	machine StateMachine
+	mu      sync.RWMutex
+	state   []byte
 }
 
 func (fsm *replicatedFSM) Apply(log *raft.Log) interface{} {
-	state := append([]byte{}, log.Data...)
+	state, err := decodeReplicatedLog(log.Data)
+	if err != nil {
+		return err
+	}
 	if err := fsm.machine.ValidateReplicatedState(state); err != nil {
 		return err
+	}
+	applyErr := fsm.machine.ApplyReplicatedState(state)
+	if applyErr != nil && !stateWasCommitted(applyErr) {
+		return applyErr
 	}
 	fsm.mu.Lock()
 	fsm.state = state
 	fsm.mu.Unlock()
-	if fsm.skipLocal.Load() {
-		return nil
-	}
-	return fsm.machine.ApplyReplicatedState(state)
+	return applyErr
 }
 
 func (fsm *replicatedFSM) Snapshot() (raft.FSMSnapshot, error) {
@@ -136,13 +169,18 @@ func (fsm *replicatedFSM) Restore(reader io.ReadCloser) error {
 	if err := fsm.machine.ValidateReplicatedState(state); err != nil {
 		return err
 	}
-	if err := fsm.machine.ApplyReplicatedState(state); err != nil {
-		return err
+	apply := fsm.machine.ApplyReplicatedState
+	if restorer, ok := fsm.machine.(snapshotStateRestorer); ok {
+		apply = restorer.RestoreReplicatedState
+	}
+	applyErr := apply(state)
+	if applyErr != nil && !stateWasCommitted(applyErr) {
+		return applyErr
 	}
 	fsm.mu.Lock()
 	fsm.state = append([]byte{}, state...)
 	fsm.mu.Unlock()
-	return nil
+	return applyErr
 }
 
 type replicatedSnapshot struct{ state []byte }
@@ -163,7 +201,7 @@ type Node struct {
 	store        *raftboltdb.BoltStore
 	fsm          *replicatedFSM
 	applyTimeout time.Duration
-	skipLocal    atomic.Bool
+	snapshotCAS  bool
 	commitMu     sync.Mutex
 	closeOnce    sync.Once
 	closeErr     error
@@ -213,8 +251,11 @@ func Open(configuration Config, machine StateMachine) (*Node, error) {
 		_ = boltStore.Close()
 		return nil, fmt.Errorf("open Raft transport: %w", err)
 	}
-	node := &Node{transport: transport, store: boltStore, applyTimeout: configuration.ApplyTimeout}
-	node.fsm = &replicatedFSM{machine: machine, skipLocal: &node.skipLocal}
+	node := &Node{
+		transport: transport, store: boltStore, applyTimeout: configuration.ApplyTimeout,
+		snapshotCAS: configuration.SnapshotCASEnabled,
+	}
+	node.fsm = &replicatedFSM{machine: machine}
 	raftConfiguration := newRaftRuntimeConfiguration(configuration.LocalID)
 	raftConfiguration.LogOutput = io.Discard
 	instance, err := raft.NewRaft(raftConfiguration, node.fsm, boltStore, boltStore, snapshotStore, transport)
@@ -244,6 +285,12 @@ func Open(configuration Config, machine StateMachine) (*Node, error) {
 	return node, nil
 }
 
+// SnapshotCASActive reports whether every controller is expected to enforce
+// snapshot content compare-and-swap validation for replicated mutations.
+func (node *Node) SnapshotCASActive() bool {
+	return node != nil && node.snapshotCAS
+}
+
 func waitFuture(ctx context.Context, future raft.Future) error {
 	result := make(chan error, 1)
 	go func() { result <- future.Error() }()
@@ -271,6 +318,24 @@ func (node *Node) RequireMutationAuthority(ctx context.Context) error {
 	return nil
 }
 
+func (node *Node) Synchronize() error {
+	if node == nil || node.raft == nil {
+		return ErrNotLeader
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), node.applyTimeout)
+	defer cancel()
+	if err := node.RequireMutationAuthority(ctx); err != nil {
+		return err
+	}
+	if err := waitFuture(ctx, node.raft.Barrier(node.applyTimeout)); err != nil {
+		if errors.Is(err, raft.ErrNotLeader) {
+			return ErrNotLeader
+		}
+		return fmt.Errorf("%w: synchronize applied Raft state: %v", ErrCommitIndeterminate, err)
+	}
+	return nil
+}
+
 func (node *Node) Commit(state []byte) error {
 	if node == nil || node.raft == nil {
 		return ErrNotLeader
@@ -283,15 +348,17 @@ func (node *Node) Commit(state []byte) error {
 	}
 	node.commitMu.Lock()
 	defer node.commitMu.Unlock()
+	command, err := encodeReplicatedLog(state)
+	if err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), node.applyTimeout)
 	defer cancel()
 	if err := node.RequireMutationAuthority(ctx); err != nil {
 		return err
 	}
-	node.skipLocal.Store(true)
-	future := node.raft.Apply(append([]byte{}, state...), node.applyTimeout)
-	err := future.Error()
-	node.skipLocal.Store(false)
+	future := node.raft.Apply(command, node.applyTimeout)
+	err = future.Error()
 	if err != nil {
 		if errors.Is(err, raft.ErrNotLeader) {
 			return ErrNotLeader

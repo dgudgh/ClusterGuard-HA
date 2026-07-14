@@ -21,6 +21,7 @@ Implemented keys:
 | `mysql.automatic_failover_interval_seconds` | No | Recovery-controller poll interval; defaults to 5 seconds. |
 | `mysql.automatic_failover_retry_seconds` | No | Backoff after a blocked or failed incident attempt; defaults to 30 seconds. |
 | `consensus` | For real HA mutation | Odd Raft controller membership, persistent state, and majority authority. |
+| `consensus.snapshot_cas_enabled` | For replicated mutation | Explicitly activates snapshot content compare-and-swap on an all-upgraded controller set. Missing or `false` keeps metadata mutation fail-closed. |
 | `agent` | For VIP/fencing mutation | Restricted signed node command transport. |
 
 The JSON file contains environment-variable names only. Set secrets in the
@@ -53,6 +54,15 @@ Use `packaging/systemd/clusterguard-ha.service` and
 `packaging/systemd/clusterguard.env.example` as the service templates. The
 server binary defaults to `/etc/clusterguard/clusterguard.json` when `--config`
 is omitted.
+
+When upgrading an existing Raft controller set to a release that supports
+snapshot content compare-and-swap, do not enable the protocol during a mixed
+version rollout. Pause metadata mutations and periodic reconcilers, replace
+the binary on every controller, then set `consensus.snapshot_cas_enabled` to
+`true` on every controller and restart the full controller set. A new binary
+with the key missing or set to `false` remains readable but rejects replicated
+metadata mutation. Never enable the key while an older controller can still
+become leader.
 
 Build one self-verifying Linux bundle, then run the installer in its default
 read-only preflight mode before permitting mutation:

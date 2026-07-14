@@ -130,7 +130,8 @@ func New(configuration config.File) (*Runtime, error) {
 			LocalID: configuration.Consensus.LocalID, BindAddress: configuration.Consensus.BindAddress,
 			AdvertiseAddress: configuration.Consensus.AdvertiseAddress, DataDirectory: configuration.Consensus.DataDirectory,
 			Peers: peers, Bootstrap: configuration.Consensus.Bootstrap,
-			ApplyTimeout: time.Duration(configuration.Consensus.ApplyTimeoutSeconds) * time.Second,
+			ApplyTimeout:       time.Duration(configuration.Consensus.ApplyTimeoutSeconds) * time.Second,
+			SnapshotCASEnabled: configuration.Consensus.SnapshotCASEnabled,
 		}, repository)
 		if err != nil {
 			return nil, fmt.Errorf("start controller consensus: %w", err)
