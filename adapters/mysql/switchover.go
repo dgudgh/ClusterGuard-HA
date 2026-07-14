@@ -101,6 +101,23 @@ func planHasBlockingChecks(checks []model.Check) bool {
 	return false
 }
 
+func switchoverPlanHasBlockingChecks(checks []model.Check) bool {
+	if len(checks) == 0 {
+		return true
+	}
+	for _, check := range checks {
+		if strings.TrimSpace(check.Name) == "" {
+			return true
+		}
+		switch check.Status {
+		case model.CheckPass, model.CheckWarn:
+		default:
+			return true
+		}
+	}
+	return false
+}
+
 func (adapterInstance *Adapter) switchoverPrecheck(ctx context.Context, request adapter.OperationRequest) ([]model.Check, error) {
 	if request.Operation.Kind != model.OperationSwitchover {
 		return nil, adapter.ErrUnsupported
@@ -203,8 +220,10 @@ func (adapterInstance *Adapter) switchoverPrecheck(ctx context.Context, request 
 		appendSwitchoverCheck(&checks, "gtid_consistency", model.CheckFail, "source or target GTID position is invalid")
 	} else if comparison, err := CompareGTIDSets(primarySet, targetSet); err != nil {
 		appendSwitchoverCheck(&checks, "gtid_consistency", model.CheckFail, "source or target GTID position exceeds supported limits")
-	} else if comparison.MissingTransactions != 0 || comparison.ErrantTransactions != 0 {
+	} else if comparison.ErrantTransactions != 0 {
 		appendSwitchoverCheck(&checks, "gtid_consistency", model.CheckFail, fmt.Sprintf("target has %d missing and %d errant transactions", comparison.MissingTransactions, comparison.ErrantTransactions))
+	} else if comparison.MissingTransactions != 0 {
+		appendSwitchoverCheck(&checks, "gtid_consistency", model.CheckWarn, fmt.Sprintf("target is missing %d transactions that will be caught up after source fencing", comparison.MissingTransactions))
 	} else {
 		appendSwitchoverCheck(&checks, "gtid_consistency", model.CheckPass, "source and target GTID histories are identical")
 	}
@@ -292,8 +311,11 @@ func followerReadinessCheck(primary model.DatabaseInstance, follower model.Datab
 		return fail("follower GTID position is invalid")
 	}
 	comparison, err := CompareGTIDSets(primarySet, followerSet)
-	if err != nil || comparison.MissingTransactions != 0 || comparison.ErrantTransactions != 0 {
+	if err != nil || comparison.ErrantTransactions != 0 {
 		return fail("follower GTID history is not identical to the current primary")
+	}
+	if comparison.MissingTransactions != 0 {
+		return model.Check{Name: name, Status: model.CheckWarn, Message: fmt.Sprintf("follower is missing %d transactions and will catch up after reparenting", comparison.MissingTransactions)}
 	}
 	primaryFamily, primaryVersionErr := mysqlReleaseFamily(primary.EngineMetadata["version"])
 	followerFamily, followerVersionErr := mysqlReleaseFamily(follower.EngineMetadata["version"])
@@ -387,7 +409,7 @@ func (adapterInstance *Adapter) switchoverPlan(ctx context.Context, request adap
 		Summary:           "guarded MySQL planned switchover is ready",
 		Mutating:          true,
 	}
-	if planHasBlockingChecks(checks) {
+	if switchoverPlanHasBlockingChecks(checks) {
 		plan.Summary = "guarded MySQL planned switchover is blocked"
 	}
 	plan.Digest, err = operationPlanDigest(plan)
@@ -437,7 +459,7 @@ func validateExecutionPlan(request adapter.OperationRequest) error {
 			return fmt.Errorf("operation plan follower resource revision changed")
 		}
 	}
-	if planHasBlockingChecks(plan.Checks) {
+	if switchoverPlanHasBlockingChecks(plan.Checks) {
 		return fmt.Errorf("operation plan contains blocking checks")
 	}
 	return nil
@@ -472,7 +494,7 @@ func validateVerificationPlan(request adapter.OperationRequest) error {
 			return fmt.Errorf("operation plan resource revisions are incomplete")
 		}
 	}
-	if planHasBlockingChecks(plan.Checks) {
+	if switchoverPlanHasBlockingChecks(plan.Checks) {
 		return fmt.Errorf("operation plan contains blocking checks")
 	}
 	return nil
@@ -552,6 +574,22 @@ func queryWritableState(ctx context.Context, runner SQLRunner, endpoint adapter.
 	return !identity.readOnly && !identity.superReadOnly, nil
 }
 
+func waitForExecutedGTIDSet(ctx context.Context, runner SQLRunner, endpoint adapter.Endpoint, credentials adapter.Credentials, position string) error {
+	position = strings.TrimSpace(position)
+	if _, err := ParseGTIDSet(position); err != nil {
+		return fmt.Errorf("GTID position is invalid: %w", err)
+	}
+	query := fmt.Sprintf("SELECT WAIT_FOR_EXECUTED_GTID_SET(%s, 30) AS wait_result", mysqlStringLiteral(position))
+	rows, err := runner.Query(ctx, endpoint, credentials, query)
+	if err != nil {
+		return err
+	}
+	if len(rows) != 1 || strings.TrimSpace(rows[0]["wait_result"]) != "0" {
+		return fmt.Errorf("GTID position was not executed within 30 seconds")
+	}
+	return nil
+}
+
 func (adapterInstance *Adapter) liveSwitchoverPrecheck(ctx context.Context, resolved adapter.ResolvedOperation) error {
 	credentials := resolved.Credentials
 	sourceEndpoint := instanceEndpoint(resolved.Primary)
@@ -616,7 +654,7 @@ func (adapterInstance *Adapter) liveSwitchoverPrecheck(ctx context.Context, reso
 		return fmt.Errorf("live source or target GTID position is invalid")
 	}
 	comparison, err := CompareGTIDSets(sourceSet, targetSet)
-	if err != nil || comparison.MissingTransactions != 0 || comparison.ErrantTransactions != 0 {
+	if err != nil || comparison.ErrantTransactions != 0 {
 		return fmt.Errorf("live source and target GTID histories are not identical")
 	}
 	for _, follower := range resolved.Snapshot.Instances {
@@ -663,7 +701,7 @@ func (adapterInstance *Adapter) liveSwitchoverPrecheck(ctx context.Context, reso
 			return fmt.Errorf("live follower GTID position is invalid")
 		}
 		followerComparison, compareErr := CompareGTIDSets(sourceSet, followerSet)
-		if compareErr != nil || followerComparison.MissingTransactions != 0 || followerComparison.ErrantTransactions != 0 {
+		if compareErr != nil || followerComparison.ErrantTransactions != 0 {
 			return fmt.Errorf("live source and follower GTID histories are not identical")
 		}
 	}
@@ -921,13 +959,8 @@ func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request a
 	if err := completeOperationStep(mutationContext, request, "capture_source_gtid", "fenced source GTID position captured"); err != nil {
 		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("persist source GTID progress: %w", err))
 	}
-	waitQuery := fmt.Sprintf("SELECT WAIT_FOR_EXECUTED_GTID_SET('%s', 30) AS wait_result", gtidPosition)
-	waitRows, err := adapterInstance.runner.Query(mutationContext, targetEndpoint, credentials, waitQuery)
-	if err != nil || len(waitRows) != 1 || strings.TrimSpace(waitRows[0]["wait_result"]) != "0" {
-		if err == nil {
-			err = fmt.Errorf("target did not execute the fenced source GTID within 30 seconds")
-		}
-		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", err)
+	if err := waitForExecutedGTIDSet(mutationContext, adapterInstance.runner, targetEndpoint, credentials, gtidPosition); err != nil {
+		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("target did not execute the fenced source GTID: %w", err))
 	}
 	if err := completeOperationStep(mutationContext, request, "wait_target_gtid", "target executed the fenced source GTID position"); err != nil {
 		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("persist target catch-up progress: %w", err))

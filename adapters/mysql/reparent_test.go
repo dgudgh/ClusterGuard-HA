@@ -52,6 +52,7 @@ type threeNodeSQLClient struct {
 	mu             sync.Mutex
 	version        string
 	nodes          map[string]*reparentNodeState
+	queries        []string
 	statements     []string
 	credentials    []string
 	beforeWritable func()
@@ -78,6 +79,7 @@ func (client *threeNodeSQLClient) Query(_ context.Context, endpoint adapter.Endp
 	if node == nil {
 		return nil, errors.New("unknown node")
 	}
+	client.queries = append(client.queries, endpoint.Hostname+" "+query)
 	switch {
 	case query == identityQuery:
 		return []Row{{
@@ -106,9 +108,50 @@ func (client *threeNodeSQLClient) Query(_ context.Context, endpoint adapter.Endp
 	case query == gtidPositionQuery:
 		return []Row{{"gtid_executed": node.gtid}}, nil
 	case strings.HasPrefix(query, "SELECT WAIT_FOR_EXECUTED_GTID_SET("):
+		const prefix = "SELECT WAIT_FOR_EXECUTED_GTID_SET('"
+		const suffix = "', 30) AS wait_result"
+		if strings.HasPrefix(query, prefix) && strings.HasSuffix(query, suffix) {
+			node.gtid = strings.TrimSuffix(strings.TrimPrefix(query, prefix), suffix)
+		}
 		return []Row{{"wait_result": "0"}}, nil
 	default:
 		return nil, fmt.Errorf("unexpected query %q", query)
+	}
+}
+
+func TestSwitchoverWaitsForEveryMissingReplicaAfterSourceFence(t *testing.T) {
+	request := threeNodeSwitchoverRequestFixture()
+	request.Resolved.Credentials = adapter.Credentials{Username: "operator", Password: "operation-secret"}
+	request.Resolved.ReplicationCredentials = adapter.Credentials{Username: "replicator", Password: "replication-secret"}
+	request.Resolved.Target.Replication.ExecutedPosition = primaryUUID + ":1-99"
+	sibling := &request.Resolved.Snapshot.Instances[2]
+	sibling.Replication.ExecutedPosition = primaryUUID + ":1-99"
+
+	client := newThreeNodeSQLClient(request)
+	client.nodes[request.Resolved.Target.Hostname].gtid = primaryUUID + ":1-99"
+	client.nodes[sibling.Hostname].gtid = primaryUUID + ":1-99"
+	adapterInstance := NewWithEndpointProvider(client, &recordingEndpointProvider{})
+	plan, err := adapterInstance.BuildPlan(context.Background(), request)
+	if err != nil {
+		t.Fatalf("build plan: %v", err)
+	}
+	request.Plan = &plan
+	request.Resolved.PlanDigest = plan.Digest
+
+	execution, err := adapterInstance.Execute(context.Background(), request)
+	if err != nil || execution.Status != model.OperationRunning {
+		t.Fatalf("execute missing-GTID switchover: execution=%+v err=%v", execution, err)
+	}
+	waited := map[string]bool{}
+	for _, query := range client.queries {
+		if strings.Contains(query, "WAIT_FOR_EXECUTED_GTID_SET") {
+			waited[strings.Fields(query)[0]] = true
+		}
+	}
+	for _, instance := range request.Resolved.Snapshot.Instances {
+		if !waited[instance.Hostname] {
+			t.Fatalf("instance %s did not receive a GTID catch-up wait: queries=%v", instance.Hostname, client.queries)
+		}
 	}
 }
 

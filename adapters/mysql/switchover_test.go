@@ -173,6 +173,38 @@ func TestSwitchoverPrecheckAcceptsHealthyThreeNodeTopology(t *testing.T) {
 	}
 }
 
+func TestSwitchoverPrecheckAllowsMissingTransactionsThatExecutionCanCatchUp(t *testing.T) {
+	request := threeNodeSwitchoverRequestFixture()
+	request.Resolved.Target.Replication.ExecutedPosition = primaryUUID + ":1-99"
+	sibling := &request.Resolved.Snapshot.Instances[2]
+	sibling.Replication.ExecutedPosition = primaryUUID + ":1-99"
+
+	adapterInstance := NewWithEndpointProvider(nil, passingEndpointProvider())
+	checks, err := adapterInstance.Precheck(context.Background(), request)
+	if err != nil {
+		t.Fatalf("precheck: %v", err)
+	}
+	warnings := map[string]bool{}
+	for _, check := range checks {
+		if check.Status == model.CheckFail {
+			t.Fatalf("catch-up-safe topology failed check %+v", check)
+		}
+		if check.Status == model.CheckWarn {
+			warnings[check.Name] = true
+		}
+	}
+	if !warnings["gtid_consistency"] || !warnings["follower_readiness_"+string(sibling.ResourceID)] {
+		t.Fatalf("missing GTID warnings: %+v", checks)
+	}
+	plan, err := adapterInstance.BuildPlan(context.Background(), request)
+	if err != nil {
+		t.Fatalf("build plan: %v", err)
+	}
+	if plan.Summary != "guarded MySQL planned switchover is ready" {
+		t.Fatalf("catch-up-safe plan was blocked: %+v", plan)
+	}
+}
+
 func TestSwitchoverPrecheckBlocksUnsafeSibling(t *testing.T) {
 	request := threeNodeSwitchoverRequestFixture()
 	sibling := &request.Resolved.Snapshot.Instances[2]
@@ -263,9 +295,6 @@ func TestSwitchoverPrecheckBlocksUnsafeEvidence(t *testing.T) {
 		}},
 		{name: "gtid disabled", check: "gtid_mode", mutate: func(request *adapter.OperationRequest) { request.Resolved.Target.EngineMetadata["gtid_mode"] = "OFF" }},
 		{name: "binary logging disabled", check: "binary_logging", mutate: func(request *adapter.OperationRequest) { request.Resolved.Primary.EngineMetadata["log_bin"] = "OFF" }},
-		{name: "missing transaction", check: "gtid_consistency", mutate: func(request *adapter.OperationRequest) {
-			request.Resolved.Target.Replication.ExecutedPosition = primaryUUID + ":1-99"
-		}},
 		{name: "errant transaction", check: "gtid_consistency", mutate: func(request *adapter.OperationRequest) {
 			request.Resolved.Target.Replication.ExecutedPosition += "," + extraUUID + ":1"
 		}},

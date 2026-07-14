@@ -86,6 +86,21 @@ func (adapterInstance *Adapter) reparentFollower(ctx context.Context, follower m
 	if strings.ToLower(strings.TrimSpace(status.SourceIdentity["server_uuid"])) != targetUUID || status.IOThread != model.ThreadRunning || status.SQLThread != model.ThreadRunning {
 		return fmt.Errorf("follower does not replicate from the selected target")
 	}
+	targetRows, err := adapterInstance.runner.Query(ctx, instanceEndpoint(target), administrative, gtidPositionQuery)
+	if err != nil || len(targetRows) != 1 || strings.TrimSpace(targetRows[0]["gtid_executed"]) == "" {
+		if err == nil {
+			err = fmt.Errorf("target GTID response is empty")
+		}
+		return fmt.Errorf("capture target GTID for follower catch-up: %w", err)
+	}
+	if err := waitForExecutedGTIDSet(ctx, adapterInstance.runner, endpoint, administrative, targetRows[0]["gtid_executed"]); err != nil {
+		return fmt.Errorf("wait for follower GTID catch-up: %w", err)
+	}
+	status, configured, err = probeReplication(ctx, adapterInstance.runner, endpoint, administrative)
+	if err != nil || !configured || strings.ToLower(strings.TrimSpace(status.SourceIdentity["server_uuid"])) != targetUUID ||
+		status.IOThread != model.ThreadRunning || status.SQLThread != model.ThreadRunning {
+		return fmt.Errorf("follower did not remain healthy after GTID catch-up")
+	}
 	return nil
 }
 
