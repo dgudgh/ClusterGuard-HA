@@ -115,6 +115,7 @@ type snapshot struct {
 
 type Repository struct {
 	mu              sync.RWMutex
+	mutationMu      sync.Mutex
 	consensusCommit sync.Mutex
 	stateRevision   uint64
 	path            string
@@ -442,10 +443,6 @@ func cloneUint64Map(values map[model.ResourceID]uint64) map[model.ResourceID]uin
 	return copy
 }
 
-func (repository *Repository) persistLocked() error {
-	return repository.commitSnapshotLocked(repository.snapshot)
-}
-
 func (repository *Repository) persistSnapshotLocked(value snapshot) error {
 	return repository.persistSnapshotRevisionLocked(value, repository.stateRevision)
 }
@@ -509,6 +506,8 @@ func (repository *Repository) UpsertCluster(cluster model.DatabaseCluster) (mode
 	if cluster.ResourceID == "" {
 		cluster.ResourceID = model.NewResourceID()
 	}
+	repository.mutationMu.Lock()
+	defer repository.mutationMu.Unlock()
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 	if existing, ok := repository.snapshot.Clusters[cluster.ResourceID]; ok && cluster.Engine != existing.Engine {
@@ -724,6 +723,8 @@ func (repository *Repository) CreateClusterWithEndpoints(cluster model.DatabaseC
 		return model.DatabaseCluster{}, nil, validationError("duplicate active endpoint address")
 	}
 
+	repository.mutationMu.Lock()
+	defer repository.mutationMu.Unlock()
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 	if _, exists := repository.snapshot.Clusters[cluster.ResourceID]; exists {
@@ -802,6 +803,8 @@ func (repository *Repository) UpsertEndpoint(endpoint model.Endpoint) (model.End
 	if endpoint.ResourceID == "" {
 		endpoint.ResourceID = model.NewResourceID()
 	}
+	repository.mutationMu.Lock()
+	defer repository.mutationMu.Unlock()
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 	if _, exists := repository.snapshot.Clusters[endpoint.ClusterID]; !exists {
@@ -895,6 +898,8 @@ func (repository *Repository) ReplaceReplicationLinks(clusterID model.ResourceID
 	if clusterID == "" {
 		return fmt.Errorf("cluster ID is required")
 	}
+	repository.mutationMu.Lock()
+	defer repository.mutationMu.Unlock()
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 	if _, exists := repository.snapshot.Clusters[clusterID]; !exists {
@@ -961,6 +966,8 @@ func (repository *Repository) StoreMetricSamples(clusterID model.ResourceID, sam
 	if limit <= 0 {
 		return fmt.Errorf("metric sample limit must be positive")
 	}
+	repository.mutationMu.Lock()
+	defer repository.mutationMu.Unlock()
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 	if _, exists := repository.snapshot.Clusters[clusterID]; !exists {
@@ -1189,6 +1196,8 @@ func nodeMatchesCoordinate(node model.DatabaseNode, hostname, ipAddress string) 
 }
 
 func (repository *Repository) ReconcileInstance(discovered model.DatabaseInstance) (ReconcileResult, error) {
+	repository.mutationMu.Lock()
+	defer repository.mutationMu.Unlock()
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 	now := repository.now().UTC()
@@ -1206,6 +1215,8 @@ func (repository *Repository) ReconcileInstance(discovered model.DatabaseInstanc
 }
 
 func (repository *Repository) ReconcileMetadataCoordinates(update MetadataCoordinates) (model.DatabaseInstance, model.Endpoint, error) {
+	repository.mutationMu.Lock()
+	defer repository.mutationMu.Unlock()
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 
@@ -1497,6 +1508,8 @@ func (repository *Repository) ApplyDiscoveryRefresh(refresh DiscoveryRefresh) (m
 	if refresh.ClusterID == "" {
 		return model.TopologySnapshot{}, fmt.Errorf("cluster ID is required")
 	}
+	repository.mutationMu.Lock()
+	defer repository.mutationMu.Unlock()
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 	cluster, exists := repository.snapshot.Clusters[refresh.ClusterID]
@@ -1857,6 +1870,8 @@ func (repository *Repository) ReplaceClusterAnomalies(clusterID model.ResourceID
 	if clusterID == "" {
 		return fmt.Errorf("cluster ID is required")
 	}
+	repository.mutationMu.Lock()
+	defer repository.mutationMu.Unlock()
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 	if _, exists := repository.snapshot.Clusters[clusterID]; !exists {
@@ -1912,6 +1927,8 @@ func (repository *Repository) RecordAudit(event model.AuditEvent) error {
 	}
 	event.UpdatedAt = now
 	event.MetadataRevision = 1
+	repository.mutationMu.Lock()
+	defer repository.mutationMu.Unlock()
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 	next := repository.snapshot
@@ -1931,6 +1948,8 @@ func (repository *Repository) RecordReport(report model.Report) error {
 	if report.ResourceID == "" {
 		report.ResourceID = model.NewResourceID()
 	}
+	repository.mutationMu.Lock()
+	defer repository.mutationMu.Unlock()
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 	next := repository.snapshot

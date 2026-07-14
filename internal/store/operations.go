@@ -96,6 +96,8 @@ func (repository *Repository) CreateOperation(operation model.OperationRecord) (
 		return model.OperationRecord{}, false, err
 	}
 
+	repository.mutationMu.Lock()
+	defer repository.mutationMu.Unlock()
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 	if resourceID, found := repository.snapshot.OperationKeys[operation.IdempotencyKey]; found {
@@ -219,6 +221,8 @@ func validateOperationPlan(operation model.OperationRecord, plan model.Operation
 }
 
 func (repository *Repository) PutOperationPlan(resourceID model.ResourceID, expectedRevision uint64, plan model.OperationPlan) (model.OperationRecord, error) {
+	repository.mutationMu.Lock()
+	defer repository.mutationMu.Unlock()
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 	operation, found := repository.snapshot.Operations[resourceID]
@@ -349,6 +353,8 @@ func applyOperationTransition(operation model.OperationRecord, transition model.
 }
 
 func (repository *Repository) TransitionOperation(resourceID model.ResourceID, expectedRevision uint64, transition model.OperationTransition) (model.OperationRecord, error) {
+	repository.mutationMu.Lock()
+	defer repository.mutationMu.Unlock()
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 	operation, found := repository.snapshot.Operations[resourceID]
@@ -424,6 +430,8 @@ func upsertFinalReport(reports []model.Report, report model.Report, operationID 
 // FinalizeOperation publishes the terminal operation, its audit events, and its
 // reports as one repository snapshot so readers cannot observe a partial result.
 func (repository *Repository) FinalizeOperation(resourceID model.ResourceID, expectedRevision uint64, transition model.OperationTransition, audits []model.AuditEvent, reports []model.Report) (model.OperationRecord, error) {
+	repository.mutationMu.Lock()
+	defer repository.mutationMu.Unlock()
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 	operation, found := repository.snapshot.Operations[resourceID]

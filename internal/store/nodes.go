@@ -112,6 +112,8 @@ func putNodeCandidate(nodes map[model.ResourceID]model.DatabaseNode, node model.
 }
 
 func (repository *Repository) PutNode(node model.DatabaseNode) (model.DatabaseNode, error) {
+	repository.mutationMu.Lock()
+	defer repository.mutationMu.Unlock()
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 	now := repository.now().UTC()

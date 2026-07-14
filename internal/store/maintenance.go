@@ -14,6 +14,8 @@ func (repository *Repository) SetMaintenance(ctx context.Context, clusterID, ins
 	if !model.ValidResourceID(clusterID) || !model.ValidResourceID(instanceID) {
 		return validationError("maintenance resource scope is invalid")
 	}
+	repository.mutationMu.Lock()
+	defer repository.mutationMu.Unlock()
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 	instance, found := repository.snapshot.Instances[instanceID]

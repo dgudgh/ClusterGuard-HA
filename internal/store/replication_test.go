@@ -3,6 +3,7 @@ package store
 import (
 	"errors"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -121,6 +122,97 @@ func TestRepositoryConsensusCommitAppliesWithoutHoldingRepositoryLock(t *testing
 		}
 	case <-time.After(time.Second):
 		t.Fatal("consensus commit deadlocked with the local replicated-state apply")
+	}
+}
+
+func TestRepositorySerializesMutationsBeforeBuildingConsensusSnapshot(t *testing.T) {
+	repository := NewMemory()
+	clusterA, endpointsA, err := repository.CreateClusterWithEndpoints(
+		model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "cluster-a"},
+		[]model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true}},
+	)
+	if err != nil {
+		t.Fatalf("create cluster a: %v", err)
+	}
+	clusterB, endpointsB, err := repository.CreateClusterWithEndpoints(
+		model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "cluster-b"},
+		[]model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-b", Port: 3307, Active: true}},
+	)
+	if err != nil {
+		t.Fatalf("create cluster b: %v", err)
+	}
+	refresh := func(cluster model.DatabaseCluster, endpoint model.Endpoint, serverUUID string, observedAt time.Time) error {
+		instance := mysqlInstance(cluster.ResourceID, endpoint.Hostname, endpoint.IPAddress, endpoint.Port)
+		instance.EngineIdentity["server_uuid"] = serverUUID
+		instance.Role = model.RolePrimary
+		_, refreshErr := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{
+			ClusterID:           cluster.ResourceID,
+			InventoryGeneration: currentInventoryGeneration(t, repository, cluster.ResourceID),
+			ObservedAt:          observedAt,
+			Observations:        []DiscoveryObservation{{EndpointID: endpoint.ResourceID, Instance: instance}},
+			Probes:              []model.ProbeStatus{{EndpointID: endpoint.ResourceID, Health: model.Health{State: model.HealthHealthy}}},
+		})
+		return refreshErr
+	}
+
+	firstSynchronizeEntered := make(chan struct{})
+	releaseFirstSynchronize := make(chan struct{})
+	var blockFirst sync.Once
+	consensus := &synchronizingSnapshotConsensusStub{}
+	consensus.apply = repository.ApplyReplicatedState
+	consensus.synchronize = func() error {
+		blockFirst.Do(func() {
+			close(firstSynchronizeEntered)
+			<-releaseFirstSynchronize
+		})
+		return nil
+	}
+	if err := repository.SetSnapshotConsensus(consensus); err != nil {
+		t.Fatalf("set snapshot consensus: %v", err)
+	}
+
+	errors := make(chan error, 2)
+	baseTime := time.Date(2026, time.July, 14, 1, 0, 0, 0, time.UTC)
+	go func() {
+		errors <- refresh(clusterA, endpointsA[0], "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", baseTime)
+	}()
+	select {
+	case <-firstSynchronizeEntered:
+	case <-time.After(time.Second):
+		t.Fatal("first discovery refresh did not reach consensus synchronization")
+	}
+	if repository.mutationMu.TryLock() {
+		repository.mutationMu.Unlock()
+		t.Fatal("discovery refresh released the mutation gate before its consensus commit completed")
+	}
+	secondStarted := make(chan struct{})
+	go func() {
+		close(secondStarted)
+		errors <- refresh(clusterB, endpointsB[0], "ffffffff-bbbb-cccc-dddd-eeeeeeeeeeee", baseTime.Add(time.Second))
+	}()
+	<-secondStarted
+	select {
+	case err := <-errors:
+		t.Fatalf("a discovery refresh completed before the blocked consensus commit was released: %v", err)
+	default:
+	}
+	close(releaseFirstSynchronize)
+
+	for index := 0; index < 2; index++ {
+		select {
+		case err := <-errors:
+			if err != nil {
+				t.Fatalf("serialized mutation %d failed: %v", index+1, err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("concurrent mutation did not complete")
+		}
+	}
+	for _, cluster := range []model.DatabaseCluster{clusterA, clusterB} {
+		topology, found := repository.TopologySnapshot(cluster.ResourceID)
+		if !found || topology.ClusterID != cluster.ResourceID || len(topology.Instances) != 1 {
+			t.Fatalf("cluster %s topology=%+v found=%t, want one committed discovery instance", cluster.DisplayName, topology, found)
+		}
 	}
 }
 

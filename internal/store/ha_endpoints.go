@@ -48,6 +48,8 @@ func validateHAEndpointSpec(current snapshot, spec HAEndpointSpec) error {
 func (repository *Repository) PutHAEndpoint(spec HAEndpointSpec) (model.HAEndpoint, model.Endpoint, error) {
 	spec.IPAddress = strings.TrimSpace(spec.IPAddress)
 	spec.Interface = strings.TrimSpace(spec.Interface)
+	repository.mutationMu.Lock()
+	defer repository.mutationMu.Unlock()
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 	if err := validateHAEndpointSpec(repository.snapshot, spec); err != nil {
@@ -122,6 +124,8 @@ func (repository *Repository) CommitHAEndpointOwner(clusterID, resourceID, owner
 	if !model.ValidResourceID(clusterID) || !model.ValidResourceID(resourceID) || !model.ValidResourceID(ownerID) {
 		return validationError("HA endpoint ownership scope is invalid")
 	}
+	repository.mutationMu.Lock()
+	defer repository.mutationMu.Unlock()
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 	resource, found := repository.snapshot.HAEndpoints[resourceID]

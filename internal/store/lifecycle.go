@@ -12,6 +12,8 @@ func (repository *Repository) PutLifecycleTask(task lifecycle.Task) (lifecycle.T
 	if !model.ValidResourceID(task.ResourceID) || !model.ValidResourceID(task.ClusterID) || !task.Status.Valid() {
 		return lifecycle.Task{}, validationError("lifecycle task identity or status is invalid")
 	}
+	repository.mutationMu.Lock()
+	defer repository.mutationMu.Unlock()
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 	now := repository.now().UTC()

@@ -245,6 +245,8 @@ func (repository *Repository) Commit(ctx context.Context, task lifecycle.Task, r
 		return validationError("lifecycle task must be in verifying state")
 	}
 
+	repository.mutationMu.Lock()
+	defer repository.mutationMu.Unlock()
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 	stored, found := repository.snapshot.LifecycleTasks[task.ResourceID]

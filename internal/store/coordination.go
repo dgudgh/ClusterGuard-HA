@@ -25,6 +25,8 @@ func (repository *Repository) PutCoordinationLease(record coordination.LeaseReco
 		!model.ValidResourceID(lease.OperationID) || !model.ValidResourceID(lease.OwnerID) || lease.ExpiresAt.IsZero() {
 		return validationError("coordination lease is invalid")
 	}
+	repository.mutationMu.Lock()
+	defer repository.mutationMu.Unlock()
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 	next := repository.snapshot
@@ -41,6 +43,8 @@ func (repository *Repository) DeleteCoordinationLease(resourceID model.ResourceI
 	if !model.ValidResourceID(resourceID) {
 		return validationError("coordination lease ID is invalid")
 	}
+	repository.mutationMu.Lock()
+	defer repository.mutationMu.Unlock()
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 	if _, found := repository.snapshot.CoordinationLeases[resourceID]; !found {
@@ -72,6 +76,8 @@ func (repository *Repository) PutCoordinationOperationLock(record coordination.O
 		record.ExpiresAt.IsZero() || record.CreatedAt.IsZero() || record.UpdatedAt.IsZero() {
 		return validationError("coordination operation lock is invalid")
 	}
+	repository.mutationMu.Lock()
+	defer repository.mutationMu.Unlock()
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 	next := repository.snapshot
@@ -88,6 +94,8 @@ func (repository *Repository) DeleteCoordinationOperationLock(resourceID model.R
 	if !model.ValidResourceID(resourceID) {
 		return validationError("coordination operation lock ID is invalid")
 	}
+	repository.mutationMu.Lock()
+	defer repository.mutationMu.Unlock()
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 	if _, found := repository.snapshot.OperationLocks[resourceID]; !found {
