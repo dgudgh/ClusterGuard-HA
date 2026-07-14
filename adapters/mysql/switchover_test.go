@@ -205,6 +205,50 @@ func TestSwitchoverPrecheckAllowsMissingTransactionsThatExecutionCanCatchUp(t *t
 	}
 }
 
+func TestSwitchoverPrecheckWarnsForPrimaryOwnedGTIDFromLaterTargetSample(t *testing.T) {
+	request := switchoverRequestFixture()
+	request.Resolved.Primary.Health.ObservedAt = request.Resolved.Snapshot.ObservedAt.Add(-25 * time.Millisecond)
+	request.Resolved.Target.Health.ObservedAt = request.Resolved.Snapshot.ObservedAt
+	request.Resolved.Target.Replication.ExecutedPosition = primaryUUID + ":1-101"
+
+	checks, err := NewWithEndpointProvider(nil, passingEndpointProvider()).Precheck(context.Background(), request)
+	if err != nil {
+		t.Fatalf("precheck: %v", err)
+	}
+	for _, check := range checks {
+		if check.Name == "gtid_consistency" {
+			if check.Status != model.CheckWarn {
+				t.Fatalf("GTID consistency check = %+v, want warning", check)
+			}
+			return
+		}
+	}
+	t.Fatalf("GTID consistency check is missing: %+v", checks)
+}
+
+func TestSwitchoverPrecheckWarnsForPrimaryOwnedGTIDFromLaterFollowerSample(t *testing.T) {
+	request := threeNodeSwitchoverRequestFixture()
+	request.Resolved.Primary.Health.ObservedAt = request.Resolved.Snapshot.ObservedAt.Add(-25 * time.Millisecond)
+	sibling := &request.Resolved.Snapshot.Instances[2]
+	sibling.Health.ObservedAt = request.Resolved.Snapshot.ObservedAt
+	sibling.Replication.ExecutedPosition = primaryUUID + ":1-101"
+
+	checks, err := NewWithEndpointProvider(nil, passingEndpointProvider()).Precheck(context.Background(), request)
+	if err != nil {
+		t.Fatalf("precheck: %v", err)
+	}
+	name := "follower_readiness_" + string(sibling.ResourceID)
+	for _, check := range checks {
+		if check.Name == name {
+			if check.Status != model.CheckWarn {
+				t.Fatalf("follower readiness check = %+v, want warning", check)
+			}
+			return
+		}
+	}
+	t.Fatalf("follower readiness check is missing: %+v", checks)
+}
+
 func TestSwitchoverPrecheckBlocksUnsafeSibling(t *testing.T) {
 	request := threeNodeSwitchoverRequestFixture()
 	sibling := &request.Resolved.Snapshot.Instances[2]

@@ -32,6 +32,7 @@ type switchoverSQLClient struct {
 	primaryUUID           string
 	targetUUID            string
 	primaryGTID           string
+	refreshedSourceGTID   string
 	targetExecuted        string
 	executed              []string
 	failStatement         string
@@ -106,7 +107,11 @@ func (client *switchoverSQLClient) Query(ctx context.Context, endpoint adapter.E
 		return client.replicationRows(host), nil
 	}
 	if query == gtidPositionQuery {
-		return []Row{{"gtid_executed": client.primaryGTID}}, nil
+		gtid := client.primaryGTID
+		if client.refreshedSourceGTID != "" {
+			gtid = client.refreshedSourceGTID
+		}
+		return []Row{{"gtid_executed": gtid}}, nil
 	}
 	if strings.HasPrefix(query, "SELECT WAIT_FOR_EXECUTED_GTID_SET(") {
 		if client.targetExecuted == client.primaryGTID {
@@ -743,5 +748,31 @@ func TestSwitchoverExecuteRevalidatesLiveReplicationBeforeFirstMutation(t *testi
 	}
 	if len(client.statements()) != 0 {
 		t.Fatalf("live precheck failure issued mutating SQL: %v", client.statements())
+	}
+}
+
+func TestLiveSwitchoverPrecheckRefreshesSourceGTIDAfterReplicaSample(t *testing.T) {
+	adapterInstance, request, client, _ := executableSwitchoverFixture(t)
+	client.targetExecuted = primaryUUID + ":1-101"
+	client.refreshedSourceGTID = primaryUUID + ":1-101"
+
+	if err := adapterInstance.liveSwitchoverPrecheck(context.Background(), *request.Resolved); err != nil {
+		t.Fatalf("live precheck rejected a replica sample that the refreshed source contains: %v", err)
+	}
+	if len(client.statements()) != 0 {
+		t.Fatalf("live precheck issued mutating SQL: %v", client.statements())
+	}
+}
+
+func TestLiveSwitchoverPrecheckStillRejectsForeignErrantGTID(t *testing.T) {
+	adapterInstance, request, client, _ := executableSwitchoverFixture(t)
+	client.targetExecuted = primaryUUID + ":1-100," + extraUUID + ":1"
+	client.refreshedSourceGTID = primaryUUID + ":1-101"
+
+	if err := adapterInstance.liveSwitchoverPrecheck(context.Background(), *request.Resolved); err == nil {
+		t.Fatal("live precheck accepted a foreign errant GTID")
+	}
+	if len(client.statements()) != 0 {
+		t.Fatalf("failed live precheck issued mutating SQL: %v", client.statements())
 	}
 }

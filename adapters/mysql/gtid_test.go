@@ -3,6 +3,7 @@ package mysql
 import (
 	"math"
 	"testing"
+	"time"
 )
 
 func TestParseGTIDSetNormalizesOverlappingIntervals(t *testing.T) {
@@ -59,6 +60,69 @@ func TestCompareGTIDSetsFindsMissingAndErrantIntervals(t *testing.T) {
 	}
 	if comparison.MissingTransactions != 2 || comparison.ErrantTransactions != 1 {
 		t.Fatalf("unexpected comparison: %+v", comparison)
+	}
+}
+
+func TestLikelyTemporalGTIDSamplingSkewRequiresStrictPrimaryOwnedSuperset(t *testing.T) {
+	primary, err := ParseGTIDSet("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:1-20")
+	if err != nil {
+		t.Fatal(err)
+	}
+	observedAt := time.Date(2026, time.July, 14, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name              string
+		candidatePosition string
+		primaryObserved   time.Time
+		candidateObserved time.Time
+		want              bool
+	}{
+		{
+			name:              "later primary-owned superset",
+			candidatePosition: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:1-21",
+			primaryObserved:   observedAt,
+			candidateObserved: observedAt.Add(time.Millisecond),
+			want:              true,
+		},
+		{
+			name:              "foreign transaction source",
+			candidatePosition: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:1-20,ffffffff-1111-2222-3333-444444444444:1",
+			primaryObserved:   observedAt,
+			candidateObserved: observedAt.Add(time.Millisecond),
+		},
+		{
+			name:              "same observation time",
+			candidatePosition: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:1-21",
+			primaryObserved:   observedAt,
+			candidateObserved: observedAt,
+		},
+		{
+			name:              "missing and additional transactions",
+			candidatePosition: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:1-18:21",
+			primaryObserved:   observedAt,
+			candidateObserved: observedAt.Add(time.Millisecond),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			candidate, err := ParseGTIDSet(test.candidatePosition)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := likelyTemporalGTIDSamplingSkew(
+				primary,
+				candidate,
+				"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+				test.primaryObserved,
+				test.candidateObserved,
+			)
+			if err != nil {
+				t.Fatalf("classify temporal GTID sampling skew: %v", err)
+			}
+			if got != test.want {
+				t.Fatalf("temporal skew = %t, want %t", got, test.want)
+			}
+		})
 	}
 }
 

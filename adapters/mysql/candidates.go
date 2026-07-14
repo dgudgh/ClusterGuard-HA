@@ -169,7 +169,21 @@ func evaluateCandidate(request adapter.CandidateRequest, instance model.Database
 				evaluation.assessment.DataLossRisk = dataLossRiskNone
 			}
 			if comparison.ErrantTransactions > 0 {
-				addCheck("gtid_consistency", model.CheckFail, fmt.Sprintf("candidate has %d errant transactions", comparison.ErrantTransactions))
+				temporalSkew, temporalSkewError := likelyTemporalGTIDSamplingSkew(
+					primaryGTID,
+					candidateGTID,
+					primaryServerUUID,
+					request.Primary.Health.ObservedAt,
+					instance.Health.ObservedAt,
+				)
+				if temporalSkewError != nil {
+					addCheck("gtid_consistency", model.CheckFail, "primary or candidate GTID transaction count exceeds supported limits")
+				} else if temporalSkew {
+					evaluation.assessment.DataLossRisk = "live GTID validation required"
+					addCheck("gtid_consistency", model.CheckWarn, "candidate has source-owned GTIDs from a later sample; live validation is required before execution")
+				} else {
+					addCheck("gtid_consistency", model.CheckFail, fmt.Sprintf("candidate has %d errant transactions", comparison.ErrantTransactions))
+				}
 			} else if comparison.MissingTransactions > 0 {
 				addCheck("gtid_consistency", model.CheckWarn, fmt.Sprintf("candidate is missing %d transactions", comparison.MissingTransactions))
 			} else {

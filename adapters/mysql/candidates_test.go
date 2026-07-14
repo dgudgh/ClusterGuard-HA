@@ -256,6 +256,24 @@ func TestEvaluateCandidatesUsesPrimaryGlobalGTIDAndReplicaExecutedGTID(t *testin
 	}
 }
 
+func TestEvaluateCandidatesWarnsForPrimaryOwnedGTIDFromLaterReplicaSample(t *testing.T) {
+	instance := candidateInstance("00000000-0000-4000-8000-000000000010", "8.0.44", 0, testPrimaryServerUUID+":1-21")
+	request := candidateEvaluationRequest(instance)
+	request.Primary.Health.ObservedAt = request.ObservedAt.Add(-25 * time.Millisecond)
+	request.Instances[0].Health.ObservedAt = request.ObservedAt
+
+	assessments, err := New(nil).EvaluateCandidates(context.Background(), request)
+	if err != nil {
+		t.Fatalf("evaluate candidates: %v", err)
+	}
+	if len(assessments) != 1 || !assessments[0].Eligible || assessments[0].RiskLevel != "warning" {
+		t.Fatalf("later replica sample owned by the primary must require live validation without blocking: %+v", assessments)
+	}
+	if got := assessmentCheckStatus(t, assessments[0], "gtid_consistency"); got != model.CheckWarn {
+		t.Fatalf("GTID consistency check = %s, want warning", got)
+	}
+}
+
 func TestEvaluateCandidatesFailsClosedOnGTIDComparisonOverflow(t *testing.T) {
 	instance := candidateInstance("00000000-0000-4000-8000-000000000010", "8.0.44", 0, "")
 	request := candidateEvaluationRequest(instance)

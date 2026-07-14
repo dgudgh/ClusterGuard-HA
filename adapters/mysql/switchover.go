@@ -221,7 +221,20 @@ func (adapterInstance *Adapter) switchoverPrecheck(ctx context.Context, request 
 	} else if comparison, err := CompareGTIDSets(primarySet, targetSet); err != nil {
 		appendSwitchoverCheck(&checks, "gtid_consistency", model.CheckFail, "source or target GTID position exceeds supported limits")
 	} else if comparison.ErrantTransactions != 0 {
-		appendSwitchoverCheck(&checks, "gtid_consistency", model.CheckFail, fmt.Sprintf("target has %d missing and %d errant transactions", comparison.MissingTransactions, comparison.ErrantTransactions))
+		temporalSkew, temporalSkewError := likelyTemporalGTIDSamplingSkew(
+			primarySet,
+			targetSet,
+			primaryUUID,
+			resolved.Primary.Health.ObservedAt,
+			resolved.Target.Health.ObservedAt,
+		)
+		if temporalSkewError != nil {
+			appendSwitchoverCheck(&checks, "gtid_consistency", model.CheckFail, "source or target GTID position exceeds supported limits")
+		} else if temporalSkew {
+			appendSwitchoverCheck(&checks, "gtid_consistency", model.CheckWarn, "target has source-owned GTIDs from a later sample; live validation is required before execution")
+		} else {
+			appendSwitchoverCheck(&checks, "gtid_consistency", model.CheckFail, fmt.Sprintf("target has %d missing and %d errant transactions", comparison.MissingTransactions, comparison.ErrantTransactions))
+		}
 	} else if comparison.MissingTransactions != 0 {
 		appendSwitchoverCheck(&checks, "gtid_consistency", model.CheckWarn, fmt.Sprintf("target is missing %d transactions that will be caught up after source fencing", comparison.MissingTransactions))
 	} else {
@@ -311,8 +324,21 @@ func followerReadinessCheck(primary model.DatabaseInstance, follower model.Datab
 		return fail("follower GTID position is invalid")
 	}
 	comparison, err := CompareGTIDSets(primarySet, followerSet)
-	if err != nil || comparison.ErrantTransactions != 0 {
+	if err != nil {
 		return fail("follower GTID history is not identical to the current primary")
+	}
+	if comparison.ErrantTransactions != 0 {
+		temporalSkew, temporalSkewError := likelyTemporalGTIDSamplingSkew(
+			primarySet,
+			followerSet,
+			primaryUUID,
+			primary.Health.ObservedAt,
+			follower.Health.ObservedAt,
+		)
+		if temporalSkewError != nil || !temporalSkew {
+			return fail("follower GTID history is not identical to the current primary")
+		}
+		return model.Check{Name: name, Status: model.CheckWarn, Message: "follower has source-owned GTIDs from a later sample; live validation is required before execution"}
 	}
 	if comparison.MissingTransactions != 0 {
 		return model.Check{Name: name, Status: model.CheckWarn, Message: fmt.Sprintf("follower is missing %d transactions and will catch up after reparenting", comparison.MissingTransactions)}
@@ -590,6 +616,25 @@ func waitForExecutedGTIDSet(ctx context.Context, runner SQLRunner, endpoint adap
 	return nil
 }
 
+func queryExecutedGTIDSet(ctx context.Context, runner SQLRunner, endpoint adapter.Endpoint, credentials adapter.Credentials) (GTIDSet, error) {
+	rows, err := runner.Query(ctx, endpoint, credentials, gtidPositionQuery)
+	if err != nil {
+		return GTIDSet{}, err
+	}
+	if len(rows) != 1 {
+		return GTIDSet{}, fmt.Errorf("GTID position query returned %d rows", len(rows))
+	}
+	position, ok := rows[0]["gtid_executed"]
+	if !ok {
+		return GTIDSet{}, fmt.Errorf("GTID position query omitted gtid_executed")
+	}
+	set, err := ParseGTIDSet(position)
+	if err != nil {
+		return GTIDSet{}, fmt.Errorf("parse GTID position: %w", err)
+	}
+	return set, nil
+}
+
 func (adapterInstance *Adapter) liveSwitchoverPrecheck(ctx context.Context, resolved adapter.ResolvedOperation) error {
 	credentials := resolved.Credentials
 	sourceEndpoint := instanceEndpoint(resolved.Primary)
@@ -648,10 +693,13 @@ func (adapterInstance *Adapter) liveSwitchoverPrecheck(ctx context.Context, reso
 	if targetReplication.LagSeconds == nil || *targetReplication.LagSeconds != 0 {
 		return fmt.Errorf("live target replication lag must be known and zero")
 	}
-	sourceSet, sourceSetError := ParseGTIDSet(sourceIdentity.gtidExecuted)
 	targetSet, targetSetError := ParseGTIDSet(targetReplication.ExecutedPosition)
-	if sourceSetError != nil || targetSetError != nil {
+	if targetSetError != nil {
 		return fmt.Errorf("live source or target GTID position is invalid")
+	}
+	sourceSet, sourceSetError := queryExecutedGTIDSet(ctx, adapterInstance.runner, sourceEndpoint, credentials)
+	if sourceSetError != nil {
+		return fmt.Errorf("refresh live source GTID after target sample: %w", sourceSetError)
 	}
 	comparison, err := CompareGTIDSets(sourceSet, targetSet)
 	if err != nil || comparison.ErrantTransactions != 0 {
@@ -700,7 +748,11 @@ func (adapterInstance *Adapter) liveSwitchoverPrecheck(ctx context.Context, reso
 		if parseErr != nil {
 			return fmt.Errorf("live follower GTID position is invalid")
 		}
-		followerComparison, compareErr := CompareGTIDSets(sourceSet, followerSet)
+		refreshedSourceSet, refreshErr := queryExecutedGTIDSet(ctx, adapterInstance.runner, sourceEndpoint, credentials)
+		if refreshErr != nil {
+			return fmt.Errorf("refresh live source GTID after follower sample: %w", refreshErr)
+		}
+		followerComparison, compareErr := CompareGTIDSets(refreshedSourceSet, followerSet)
 		if compareErr != nil || followerComparison.ErrantTransactions != 0 {
 			return fmt.Errorf("live source and follower GTID histories are not identical")
 		}

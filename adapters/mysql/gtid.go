@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type GTIDSet struct {
@@ -74,6 +75,46 @@ func CompareGTIDSets(primary, candidate GTIDSet) (GTIDComparison, error) {
 		return GTIDComparison{}, fmt.Errorf("count errant GTID transactions: %w", err)
 	}
 	return GTIDComparison{MissingTransactions: missing, ErrantTransactions: errant}, nil
+}
+
+func likelyTemporalGTIDSamplingSkew(primary, candidate GTIDSet, primaryUUID string, primaryObservedAt, candidateObservedAt time.Time) (bool, error) {
+	if primaryObservedAt.IsZero() || candidateObservedAt.IsZero() || !candidateObservedAt.After(primaryObservedAt) {
+		return false, nil
+	}
+	comparison, err := CompareGTIDSets(primary, candidate)
+	if err != nil {
+		return false, err
+	}
+	if comparison.MissingTransactions != 0 || comparison.ErrantTransactions == 0 {
+		return false, nil
+	}
+
+	primaryUUID = strings.ToLower(strings.TrimSpace(primaryUUID))
+	if !validGTIDUUID(primaryUUID) {
+		return false, nil
+	}
+	for source, candidateIntervals := range candidate.intervals {
+		candidateCount, err := intervalTransactionCount(candidateIntervals)
+		if err != nil {
+			return false, err
+		}
+		overlap, err := overlapTransactionCount(candidateIntervals, primary.intervals[source])
+		if err != nil {
+			return false, err
+		}
+		if candidateCount > overlap && gtidSourceUUID(source) != primaryUUID {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func gtidSourceUUID(source string) string {
+	source = strings.ToLower(strings.TrimSpace(source))
+	if len(source) < 36 || !validGTIDUUID(source[:36]) {
+		return ""
+	}
+	return source[:36]
 }
 
 func validateGTIDTransactionCount(set GTIDSet) error {
