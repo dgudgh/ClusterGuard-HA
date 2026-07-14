@@ -47,3 +47,43 @@ func TestMemoryLeaseStoreRenewsSameStableOwnershipIntent(t *testing.T) {
 		t.Fatalf("validate in-flight lease snapshot after renewal: %v", err)
 	}
 }
+
+func TestMemoryLeaseStoreAtomicallyHandsStableOwnershipToTransition(t *testing.T) {
+	now := time.Date(2026, time.July, 13, 13, 0, 0, 0, time.UTC)
+	store := NewMemoryLeaseStore(func() time.Time { return now })
+	clusterID, endpointID := model.NewResourceID(), model.NewResourceID()
+	sourceID, targetID := model.NewResourceID(), model.NewResourceID()
+	stable, err := store.Acquire(context.Background(), LeaseRequest{
+		ClusterID: clusterID, HAEndpointID: endpointID, OperationID: endpointID, OwnerID: sourceID, TTL: 30 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	transition, err := store.Acquire(context.Background(), LeaseRequest{
+		ClusterID: clusterID, HAEndpointID: endpointID, OperationID: model.NewResourceID(), OwnerID: targetID,
+		PreviousOwnerID: sourceID, TTL: 30 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("handoff stable lease: %v", err)
+	}
+	if transition.ResourceID == stable.ResourceID || transition.OwnerID != targetID || len(store.leases) != 1 {
+		t.Fatalf("transition=%+v stable=%+v leases=%+v", transition, stable, store.leases)
+	}
+}
+
+func TestMemoryLeaseStoreRejectsStableHandoffWithWrongPreviousOwner(t *testing.T) {
+	store := NewMemoryLeaseStore(time.Now)
+	clusterID, endpointID := model.NewResourceID(), model.NewResourceID()
+	if _, err := store.Acquire(context.Background(), LeaseRequest{
+		ClusterID: clusterID, HAEndpointID: endpointID, OperationID: endpointID, OwnerID: model.NewResourceID(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := store.Acquire(context.Background(), LeaseRequest{
+		ClusterID: clusterID, HAEndpointID: endpointID, OperationID: model.NewResourceID(), OwnerID: model.NewResourceID(),
+		PreviousOwnerID: model.NewResourceID(),
+	})
+	if !errors.Is(err, ErrLeaseConflict) {
+		t.Fatalf("wrong-owner handoff error=%v", err)
+	}
+}

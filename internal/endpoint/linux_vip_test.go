@@ -147,6 +147,13 @@ func TestVIPTransferReleasesEveryNonTargetBeforeAcquire(t *testing.T) {
 
 func TestVIPAuthorizeTransitionCreatesTargetLeaseWithoutMovingVIP(t *testing.T) {
 	provider, resolved, transport, leases, inventory := vipProviderFixture(t)
+	stable, err := leases.Acquire(context.Background(), LeaseRequest{
+		ClusterID: resolved.Cluster.ResourceID, HAEndpointID: inventory.resources[0].ResourceID,
+		OperationID: inventory.resources[0].ResourceID, OwnerID: resolved.Primary.ResourceID, TTL: 30 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("acquire stable ownership lease: %v", err)
+	}
 	authorization, err := provider.AuthorizeTransition(context.Background(), resolved)
 	if err != nil {
 		t.Fatalf("authorize transition: %v", err)
@@ -161,6 +168,9 @@ func TestVIPAuthorizeTransitionCreatesTargetLeaseWithoutMovingVIP(t *testing.T) 
 	}
 	if authorized.OperationID != resolved.OperationID || authorized.OwnerID != resolved.Target.ResourceID || !authorized.Active {
 		t.Fatalf("transition lease=%+v", authorized)
+	}
+	if authorized.ResourceID == stable.ResourceID {
+		t.Fatalf("stable ownership lease was not replaced during transition: stable=%+v transition=%+v", stable, authorized)
 	}
 	if len(transport.calls) != 0 || !transport.owners[resolved.Primary.ResourceID] || transport.owners[resolved.Target.ResourceID] {
 		t.Fatalf("authorization moved VIP ownership: calls=%v owners=%+v", transport.calls, transport.owners)

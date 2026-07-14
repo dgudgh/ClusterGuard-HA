@@ -169,6 +169,12 @@ func (adapterInstance *Adapter) failoverExecute(ctx context.Context, request ada
 	if err != nil {
 		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "pre_commit", fmt.Errorf("failover target replication state is unavailable"))
 	}
+	authorization, err := adapterInstance.authorizeEndpointTransition(ctx, request, resolved)
+	if err != nil {
+		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("authorize failover target transition: %w", err))
+	}
+	defer authorization.Cancel()
+	ctx = authorization.Context
 	if promoted {
 		if configured {
 			return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("durably promoted failover target unexpectedly has a replication source"))
@@ -184,12 +190,6 @@ func (adapterInstance *Adapter) failoverExecute(ctx context.Context, request ada
 			return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "pre_commit", err)
 		}
 	}
-	authorization, err := adapterInstance.authorizeEndpointTransition(ctx, request, resolved)
-	if err != nil {
-		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("authorize failover target transition: %w", err))
-	}
-	defer authorization.Cancel()
-	ctx = authorization.Context
 	targetWritable, err = queryWritableState(ctx, adapterInstance.runner, targetEndpoint, resolved.Credentials)
 	if err != nil {
 		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("recheck failover target writable state: %w", err))

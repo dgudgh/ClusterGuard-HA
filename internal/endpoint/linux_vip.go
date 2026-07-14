@@ -214,7 +214,8 @@ func (provider *LinuxVIPProvider) acquireTransitionLease(ctx context.Context, re
 	}
 	lease, err := provider.leases.Acquire(ctx, LeaseRequest{
 		ClusterID: resolved.Cluster.ResourceID, HAEndpointID: resource.resource.ResourceID,
-		OperationID: resolved.OperationID, OwnerID: resolved.Target.ResourceID, TTL: ttl,
+		OperationID: resolved.OperationID, OwnerID: resolved.Target.ResourceID,
+		PreviousOwnerID: resolved.Primary.ResourceID, TTL: ttl,
 	})
 	if err != nil {
 		return Lease{}, fmt.Errorf("acquire endpoint lease: %w", err)

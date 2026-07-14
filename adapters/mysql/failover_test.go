@@ -3,6 +3,7 @@ package mysql
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"clusterguard.io/ha/pkg/adapter"
@@ -142,6 +143,33 @@ func TestFailoverExecutesFenceBeforePromotionAndVerifies(t *testing.T) {
 	verification, err := adapterInstance.Verify(context.Background(), request)
 	if err != nil || !verification.Passed {
 		t.Fatalf("verify: result=%+v err=%v", verification, err)
+	}
+}
+
+func TestFailoverAuthorizationFailureLeavesCandidateReplicationAttached(t *testing.T) {
+	request := failoverRequestFixture()
+	request.Resolved.Credentials = adapter.Credentials{Username: "operator", Password: "operation-secret"}
+	request.Resolved.ReplicationCredentials = adapter.Credentials{Username: "replicator", Password: "replication-secret"}
+	client := newThreeNodeSQLClient(request)
+	endpointProvider := &recordingEndpointProvider{authorizeError: errors.New("stable endpoint lease handoff blocked")}
+	adapterInstance := NewWithSafetyProviders(client, endpointProvider, UnsupportedMaintenanceStore{}, passingFailoverSafety())
+	plan, err := adapterInstance.BuildPlan(context.Background(), request)
+	if err != nil {
+		t.Fatalf("build plan: %v", err)
+	}
+	request.Plan = &plan
+	execution, err := adapterInstance.Execute(context.Background(), request)
+	if err == nil || execution.Status != model.OperationBlocked || failureClass(err) != "fenced" {
+		t.Fatalf("authorization failure execution=%+v err=%v class=%q", execution, err, failureClass(err))
+	}
+	target := client.nodes[request.Resolved.Target.Hostname]
+	if target.sourceUUID == "" || !target.readOnly || !target.superReadOnly {
+		t.Fatalf("authorization failure detached or promoted target: %+v", target)
+	}
+	for _, statement := range client.statements {
+		if strings.HasPrefix(statement, request.Resolved.Target.Hostname+" STOP ") || strings.HasPrefix(statement, request.Resolved.Target.Hostname+" RESET ") {
+			t.Fatalf("failover target replication mutated before endpoint authorization: %s", statement)
+		}
 	}
 }
 

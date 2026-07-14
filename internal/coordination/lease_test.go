@@ -96,3 +96,27 @@ func TestQuorumLeaseRenewsSameStableOwnershipIntent(t *testing.T) {
 		t.Fatalf("validate in-flight lease snapshot after renewal: %v", err)
 	}
 }
+
+func TestQuorumLeaseAtomicallyHandsStableOwnershipToTransition(t *testing.T) {
+	now := time.Date(2026, time.July, 13, 15, 0, 0, 0, time.UTC)
+	records := &leaseRecordStore{records: map[model.ResourceID]LeaseRecord{}}
+	store := NewLeaseStore(records, authoritativeMembership(t), func() time.Time { return now })
+	clusterID, endpointID := model.NewResourceID(), model.NewResourceID()
+	sourceID, targetID := model.NewResourceID(), model.NewResourceID()
+	stable, err := store.Acquire(context.Background(), endpoint.LeaseRequest{
+		ClusterID: clusterID, HAEndpointID: endpointID, OperationID: endpointID, OwnerID: sourceID, TTL: 30 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	transition, err := store.Acquire(context.Background(), endpoint.LeaseRequest{
+		ClusterID: clusterID, HAEndpointID: endpointID, OperationID: model.NewResourceID(), OwnerID: targetID,
+		PreviousOwnerID: sourceID, TTL: 30 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("handoff stable quorum lease: %v", err)
+	}
+	if transition.ResourceID == stable.ResourceID || transition.OwnerID != targetID || len(records.records) != 1 {
+		t.Fatalf("transition=%+v stable=%+v records=%+v", transition, stable, records.records)
+	}
+}

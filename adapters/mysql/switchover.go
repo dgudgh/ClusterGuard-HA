@@ -811,6 +811,29 @@ func (adapterInstance *Adapter) authorizeEndpointTransition(ctx context.Context,
 	return authorization, nil
 }
 
+func (adapterInstance *Adapter) restoreCandidateBeforePromotion(ctx context.Context, request adapter.OperationRequest, resolved adapter.ResolvedOperation) error {
+	recoveryContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	promoted, err := operationStepCompleted(recoveryContext, request, "promote_target")
+	if err != nil {
+		return fmt.Errorf("read target promotion progress before candidate restoration: %w", err)
+	}
+	if promoted {
+		return fmt.Errorf("candidate has durable promotion progress and cannot be restored as a replica")
+	}
+	if err := adapterInstance.reparentFollower(recoveryContext, resolved.Target, resolved.Primary, resolved.Credentials, resolved.ReplicationCredentials); err != nil {
+		return fmt.Errorf("restore candidate replication to fenced source: %w", err)
+	}
+	return nil
+}
+
+func (adapterInstance *Adapter) failBeforeCandidatePromotion(ctx context.Context, request adapter.OperationRequest, resolved adapter.ResolvedOperation, started time.Time, cause error) (model.Execution, error) {
+	if err := adapterInstance.restoreCandidateBeforePromotion(ctx, request, resolved); err != nil {
+		return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "fenced_unknown", fmt.Errorf("%v; candidate restoration failed: %w", cause, err))
+	}
+	return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("%v; candidate replication was restored to the fenced source", cause))
+}
+
 func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request adapter.OperationRequest) (model.Execution, error) {
 	started := time.Now().UTC()
 	if request.Operation.Kind != model.OperationSwitchover {
@@ -909,6 +932,12 @@ func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request a
 	if err := completeOperationStep(mutationContext, request, "wait_target_gtid", "target executed the fenced source GTID position"); err != nil {
 		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("persist target catch-up progress: %w", err))
 	}
+	authorization, err := adapterInstance.authorizeEndpointTransition(mutationContext, request, resolved)
+	if err != nil {
+		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("authorize target transition: %w", err))
+	}
+	defer authorization.Cancel()
+	mutationContext = authorization.Context
 
 	_, replicationConfigured, err := probeReplication(mutationContext, adapterInstance.runner, targetEndpoint, credentials)
 	if err != nil {
@@ -920,25 +949,19 @@ func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request a
 			return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", err)
 		}
 		if err := adapterInstance.executor.Exec(mutationContext, targetEndpoint, credentials, dialect.StopReplication); err != nil {
-			return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("stop target replication: %w", err))
+			return adapterInstance.failBeforeCandidatePromotion(mutationContext, request, resolved, started, fmt.Errorf("stop target replication: %w", err))
 		}
 		if err := adapterInstance.executor.Exec(mutationContext, targetEndpoint, credentials, dialect.ResetReplication); err != nil {
-			return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("reset target replication: %w", err))
+			return adapterInstance.failBeforeCandidatePromotion(mutationContext, request, resolved, started, fmt.Errorf("reset target replication: %w", err))
 		}
 	}
 	if err := completeOperationStep(mutationContext, request, "stop_target_replication", "target replication is stopped and detached"); err != nil {
-		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("persist target replication progress: %w", err))
+		return adapterInstance.failBeforeCandidatePromotion(mutationContext, request, resolved, started, fmt.Errorf("persist target replication progress: %w", err))
 	}
-	authorization, err := adapterInstance.authorizeEndpointTransition(mutationContext, request, resolved)
-	if err != nil {
-		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("authorize target transition: %w", err))
-	}
-	defer authorization.Cancel()
-	mutationContext = authorization.Context
 
 	targetWritable, err := queryWritableState(mutationContext, adapterInstance.runner, targetEndpoint, credentials)
 	if err != nil {
-		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("probe target writable state: %w", err))
+		return adapterInstance.failBeforeCandidatePromotion(mutationContext, request, resolved, started, fmt.Errorf("probe target writable state: %w", err))
 	}
 	if !targetWritable {
 		if err := adapterInstance.executor.Exec(mutationContext, targetEndpoint, credentials, setSuperReadOnlyOff); err != nil {

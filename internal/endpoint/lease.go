@@ -13,11 +13,12 @@ import (
 var ErrLeaseConflict = errors.New("endpoint lease conflict")
 
 type LeaseRequest struct {
-	ClusterID    model.ResourceID
-	HAEndpointID model.ResourceID
-	OperationID  model.ResourceID
-	OwnerID      model.ResourceID
-	TTL          time.Duration
+	ClusterID       model.ResourceID
+	HAEndpointID    model.ResourceID
+	OperationID     model.ResourceID
+	OwnerID         model.ResourceID
+	PreviousOwnerID model.ResourceID
+	TTL             time.Duration
 }
 
 type Lease struct {
@@ -37,6 +38,14 @@ func SameLeaseIdentity(current, presented Lease) bool {
 		current.OperationID == presented.OperationID &&
 		current.OwnerID == presented.OwnerID &&
 		current.Active == presented.Active
+}
+
+func CanHandoffStableLease(current Lease, request LeaseRequest) bool {
+	return model.ValidResourceID(request.PreviousOwnerID) &&
+		current.OperationID == request.HAEndpointID &&
+		request.OperationID != request.HAEndpointID &&
+		current.OwnerID == request.PreviousOwnerID &&
+		request.OwnerID != request.PreviousOwnerID
 }
 
 type LeaseStore interface {
@@ -84,6 +93,10 @@ func (store *MemoryLeaseStore) Acquire(ctx context.Context, request LeaseRequest
 			lease.ExpiresAt = now.Add(request.TTL)
 			store.leases[resourceID] = lease
 			return lease, nil
+		}
+		if CanHandoffStableLease(lease, request) {
+			delete(store.leases, resourceID)
+			continue
 		}
 		return Lease{}, fmt.Errorf("%w: active endpoint lease belongs to another operation", ErrLeaseConflict)
 	}

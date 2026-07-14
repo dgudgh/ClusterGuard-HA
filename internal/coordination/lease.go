@@ -78,6 +78,12 @@ func (store *LeaseStore) Acquire(ctx context.Context, request endpoint.LeaseRequ
 			}
 			return lease, nil
 		}
+		if endpoint.CanHandoffStableLease(lease, request) {
+			if err := store.records.DeleteCoordinationLease(lease.ResourceID); err != nil {
+				return endpoint.Lease{}, fmt.Errorf("retire stable ownership lease: %w", err)
+			}
+			continue
+		}
 		return endpoint.Lease{}, fmt.Errorf("%w: active quorum lease belongs to another operation", endpoint.ErrLeaseConflict)
 	}
 	lease := endpoint.Lease{

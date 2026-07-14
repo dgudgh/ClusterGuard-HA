@@ -39,6 +39,7 @@ type switchoverSQLClient struct {
 	failAfterStatement    string
 	failTargetStatement   string
 	onTargetPromotion     func()
+	onTargetReset         func()
 }
 
 func newSwitchoverSQLClient(request adapter.OperationRequest) *switchoverSQLClient {
@@ -199,6 +200,11 @@ func (client *switchoverSQLClient) Exec(ctx context.Context, endpoint adapter.En
 		switch statement {
 		case "RESET REPLICA ALL", "RESET SLAVE ALL":
 			client.targetReplication = false
+			if client.onTargetReset != nil {
+				client.onTargetReset()
+			}
+		case "START REPLICA", "START SLAVE":
+			client.targetReplication = true
 		case setSuperReadOnlyOff:
 			if client.onTargetPromotion != nil {
 				client.onTargetPromotion()
@@ -211,6 +217,10 @@ func (client *switchoverSQLClient) Exec(ctx context.Context, endpoint adapter.En
 			client.targetReadOnly = true
 		case setReadOnlyOn:
 			client.targetReadOnly = true
+		default:
+			if strings.HasPrefix(statement, "CHANGE REPLICATION SOURCE TO") || strings.HasPrefix(statement, "CHANGE MASTER TO") {
+				client.targetReplication = true
+			}
 		}
 	}
 	if statement == client.failAfterStatement {
@@ -226,16 +236,17 @@ func (client *switchoverSQLClient) statements() []string {
 }
 
 type recordingEndpointProvider struct {
-	mu               sync.Mutex
-	owner            model.ResourceID
-	transferCalls    int
-	transferError    error
-	transferNoEffect bool
-	duplicateOwner   bool
-	verifyOverride   *model.Check
-	authorizeCalls   int
-	authorizeError   error
-	authorized       bool
+	mu                  sync.Mutex
+	owner               model.ResourceID
+	transferCalls       int
+	transferError       error
+	transferNoEffect    bool
+	duplicateOwner      bool
+	verifyOverride      *model.Check
+	authorizeCalls      int
+	authorizeError      error
+	authorized          bool
+	authorizationCancel context.CancelFunc
 }
 
 func (provider *recordingEndpointProvider) Executable(context.Context) bool { return true }
@@ -251,7 +262,17 @@ func (provider *recordingEndpointProvider) AuthorizeTransition(ctx context.Conte
 	}
 	provider.authorized = true
 	guarded, cancel := context.WithCancel(ctx)
+	provider.authorizationCancel = cancel
 	return adapter.TransitionAuthorization{Context: guarded, Cancel: cancel}, nil
+}
+
+func (provider *recordingEndpointProvider) cancelAuthorization() {
+	provider.mu.Lock()
+	cancel := provider.authorizationCancel
+	provider.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 func (provider *recordingEndpointProvider) Transfer(_ context.Context, resolved adapter.ResolvedOperation) error {
 	provider.mu.Lock()
@@ -412,6 +433,39 @@ func TestSwitchoverAuthorizesEndpointBeforeTargetBecomesWritable(t *testing.T) {
 	}
 }
 
+func TestSwitchoverAuthorizationFailureLeavesCandidateReplicationAttached(t *testing.T) {
+	adapterInstance, request, client, provider := executableSwitchoverFixture(t)
+	provider.authorizeError = errors.New("stable endpoint lease handoff blocked")
+	execution, err := adapterInstance.Execute(context.Background(), request)
+	if err == nil || execution.Status != model.OperationBlocked || failureClass(err) != "fenced" {
+		t.Fatalf("authorization failure execution=%+v err=%v class=%q", execution, err, failureClass(err))
+	}
+	if !client.targetReplication || !client.targetReadOnly || !client.targetSuperReadOnly {
+		t.Fatalf("authorization failure detached or promoted target: replication=%t read_only=%t super_read_only=%t", client.targetReplication, client.targetReadOnly, client.targetSuperReadOnly)
+	}
+	for _, statement := range client.statements() {
+		if strings.HasPrefix(statement, client.targetHost+" STOP ") || strings.HasPrefix(statement, client.targetHost+" RESET ") {
+			t.Fatalf("target replication mutated before endpoint authorization: %s", statement)
+		}
+	}
+}
+
+func TestSwitchoverRestoresCandidateReplicationWhenTransitionLeaseIsLostBeforePromotion(t *testing.T) {
+	adapterInstance, request, client, provider := executableSwitchoverFixture(t)
+	client.onTargetReset = provider.cancelAuthorization
+	execution, err := adapterInstance.Execute(context.Background(), request)
+	if err == nil || execution.Status != model.OperationBlocked || failureClass(err) != "fenced" {
+		t.Fatalf("lease loss execution=%+v err=%v class=%q", execution, err, failureClass(err))
+	}
+	if !client.targetReplication || !client.targetReadOnly || !client.targetSuperReadOnly {
+		t.Fatalf("lease loss left candidate detached: replication=%t read_only=%t super_read_only=%t", client.targetReplication, client.targetReadOnly, client.targetSuperReadOnly)
+	}
+	joined := strings.Join(client.statements(), "\n")
+	if !strings.Contains(joined, client.targetHost+" CHANGE REPLICATION SOURCE TO") || !strings.Contains(joined, client.targetHost+" START REPLICA") {
+		t.Fatalf("candidate replication compensation was not executed:\n%s", joined)
+	}
+}
+
 func TestSwitchoverVerifyRejectsEndpointIdentityDrift(t *testing.T) {
 	adapterInstance, request, client, _ := executableSwitchoverFixture(t)
 	if _, err := adapterInstance.Execute(context.Background(), request); err != nil {
@@ -454,7 +508,7 @@ func TestSwitchoverExecuteRecordsEveryCompletedMutationBoundary(t *testing.T) {
 	if _, err := adapterInstance.Execute(context.Background(), request); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	want := []string{"fence_source", "capture_source_gtid", "wait_target_gtid", "stop_target_replication", "authorize_target_transition", "promote_target", "reparent_follower_" + string(request.Resolved.Primary.ResourceID), "transfer_writer_endpoint", "retain_source_read_only"}
+	want := []string{"fence_source", "capture_source_gtid", "wait_target_gtid", "authorize_target_transition", "stop_target_replication", "promote_target", "reparent_follower_" + string(request.Resolved.Primary.ResourceID), "transfer_writer_endpoint", "retain_source_read_only"}
 	if len(collector.steps) != len(want) {
 		t.Fatalf("progress steps=%v, want %v", collector.steps, want)
 	}
