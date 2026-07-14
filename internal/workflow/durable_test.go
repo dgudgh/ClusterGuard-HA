@@ -175,6 +175,38 @@ func TestDurableWorkflowPersistsPlanProgressAndTerminalOutcome(t *testing.T) {
 	}
 }
 
+func TestDurableWorkflowLocksTopologyBeforeCapturingPlanObservation(t *testing.T) {
+	request, resolved := durableRequestFixture()
+	repository := store.NewMemory()
+	registry := adapter.NewRegistry()
+	candidate := newDurableAdapter()
+	if err := registry.Register(candidate); err != nil {
+		t.Fatalf("register adapter: %v", err)
+	}
+	trace := []string{}
+	resolver := OperationResolverFunc(func(_ context.Context, candidate adapter.OperationRequest) (adapter.OperationRequest, error) {
+		candidate.Resolved = &resolved
+		candidate.Credentials = resolved.Credentials
+		return candidate, nil
+	})
+	service := New(registry, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, repository,
+		WithOperationStore(repository), WithOperationResolver(resolver))
+
+	execution, err := service.Execute(context.Background(), request, "approved")
+	if err != nil || execution.Status != model.OperationSucceeded {
+		t.Fatalf("durable execute: result=%+v err=%v", execution, err)
+	}
+	want := []string{"gate:safety", "gate:lock", "gate:discover", "gate:revalidate", "gate:approval", "gate:release"}
+	if len(trace) != len(want) {
+		t.Fatalf("workflow gate trace: got %v want %v", trace, want)
+	}
+	for index := range want {
+		if trace[index] != want[index] {
+			t.Fatalf("workflow gate trace[%d]: got %q want %q", index, trace[index], want[index])
+		}
+	}
+}
+
 func TestDurableWorkflowDoesNotPublishFinalAuditsBeforeAtomicFinalization(t *testing.T) {
 	request, resolved := durableRequestFixture()
 	repository := &failingAtomicRepository{Repository: store.NewMemory(), err: errors.New("terminal snapshot unavailable")}
