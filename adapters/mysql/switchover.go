@@ -835,7 +835,7 @@ func (adapterInstance *Adapter) authorizeEndpointTransition(ctx context.Context,
 	if err != nil {
 		return adapter.TransitionAuthorization{}, err
 	}
-	if authorization.Context == nil || authorization.Cancel == nil {
+	if authorization.Context == nil || authorization.Cancel == nil || authorization.Finalize == nil {
 		return adapter.TransitionAuthorization{}, fmt.Errorf("endpoint provider returned an incomplete transition authorization")
 	}
 	if err := authorization.Context.Err(); err != nil {
@@ -1059,6 +1059,12 @@ func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request a
 			}
 			return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("writer endpoint transfer postcondition is unverified"))
 		}
+	}
+	if err := authorization.Finalize(mutationContext); err != nil {
+		if fenceErr := adapterInstance.fenceInstance(mutationContext, targetEndpoint, credentials); fenceErr != nil {
+			err = fmt.Errorf("%v; target fencing failed: %w", err, fenceErr)
+		}
+		return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("stabilize writer endpoint lease: %w", err))
 	}
 	if err := completeOperationStep(mutationContext, request, "transfer_writer_endpoint", "writer endpoint transferred to selected target"); err != nil {
 		return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("persist writer endpoint progress: %w", err))

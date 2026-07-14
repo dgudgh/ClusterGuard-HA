@@ -244,7 +244,9 @@ type recordingEndpointProvider struct {
 	duplicateOwner      bool
 	verifyOverride      *model.Check
 	authorizeCalls      int
+	finalizeCalls       int
 	authorizeError      error
+	finalizeError       error
 	authorized          bool
 	authorizationCancel context.CancelFunc
 }
@@ -263,7 +265,16 @@ func (provider *recordingEndpointProvider) AuthorizeTransition(ctx context.Conte
 	provider.authorized = true
 	guarded, cancel := context.WithCancel(ctx)
 	provider.authorizationCancel = cancel
-	return adapter.TransitionAuthorization{Context: guarded, Cancel: cancel}, nil
+	return adapter.TransitionAuthorization{
+		Context: guarded,
+		Cancel:  cancel,
+		Finalize: func(context.Context) error {
+			provider.mu.Lock()
+			defer provider.mu.Unlock()
+			provider.finalizeCalls++
+			return provider.finalizeError
+		},
+	}, nil
 }
 
 func (provider *recordingEndpointProvider) cancelAuthorization() {
@@ -412,8 +423,8 @@ func TestSwitchoverExecuteAndVerifyHappyPath(t *testing.T) {
 			t.Fatalf("statement %d=%q, want %q", index, got[index], want[index])
 		}
 	}
-	if provider.owner != request.TargetID || provider.transferCalls != 1 {
-		t.Fatalf("endpoint transfer was not coupled to target: owner=%s calls=%d", provider.owner, provider.transferCalls)
+	if provider.owner != request.TargetID || provider.transferCalls != 1 || provider.finalizeCalls != 1 {
+		t.Fatalf("endpoint transfer was not coupled and finalized: owner=%s transfer_calls=%d finalize_calls=%d", provider.owner, provider.transferCalls, provider.finalizeCalls)
 	}
 }
 

@@ -71,6 +71,38 @@ func TestMemoryLeaseStoreAtomicallyHandsStableOwnershipToTransition(t *testing.T
 	}
 }
 
+func TestMemoryLeaseStoreFinalizesTransitionWithoutWaitingForTTL(t *testing.T) {
+	now := time.Date(2026, time.July, 13, 13, 0, 0, 0, time.UTC)
+	store := NewMemoryLeaseStore(func() time.Time { return now })
+	clusterID, endpointID := model.NewResourceID(), model.NewResourceID()
+	sourceID, targetID := model.NewResourceID(), model.NewResourceID()
+	if _, err := store.Acquire(context.Background(), LeaseRequest{
+		ClusterID: clusterID, HAEndpointID: endpointID, OperationID: endpointID, OwnerID: sourceID, TTL: 30 * time.Second,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	transition, err := store.Acquire(context.Background(), LeaseRequest{
+		ClusterID: clusterID, HAEndpointID: endpointID, OperationID: model.NewResourceID(), OwnerID: targetID,
+		PreviousOwnerID: sourceID, TTL: 30 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stable, err := store.FinalizeTransition(context.Background(), transition, 30*time.Second)
+	if err != nil {
+		t.Fatalf("finalize transition: %v", err)
+	}
+	if stable.ResourceID != transition.ResourceID || stable.OperationID != endpointID || stable.OwnerID != targetID || len(store.leases) != 1 {
+		t.Fatalf("stable=%+v transition=%+v leases=%+v", stable, transition, store.leases)
+	}
+	if _, err := store.Acquire(context.Background(), LeaseRequest{
+		ClusterID: clusterID, HAEndpointID: endpointID, OperationID: model.NewResourceID(), OwnerID: sourceID,
+		PreviousOwnerID: targetID, TTL: 30 * time.Second,
+	}); err != nil {
+		t.Fatalf("immediate reverse handoff: %v", err)
+	}
+}
+
 func TestMemoryLeaseStoreRejectsStableHandoffWithWrongPreviousOwner(t *testing.T) {
 	store := NewMemoryLeaseStore(time.Now)
 	clusterID, endpointID := model.NewResourceID(), model.NewResourceID()

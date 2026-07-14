@@ -110,6 +110,36 @@ func (store *LeaseStore) Validate(ctx context.Context, lease endpoint.Lease) err
 	return fmt.Errorf("%w: quorum lease is missing, expired, or changed", endpoint.ErrLeaseConflict)
 }
 
+func (store *LeaseStore) FinalizeTransition(ctx context.Context, transition endpoint.Lease, ttl time.Duration) (endpoint.Lease, error) {
+	if err := store.authorize(ctx); err != nil {
+		return endpoint.Lease{}, err
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	now := store.now().UTC()
+	for _, record := range store.records.CoordinationLeases() {
+		current := record.Lease
+		if current.ResourceID != transition.ResourceID {
+			continue
+		}
+		if !current.Active || !current.ExpiresAt.After(now) || !endpoint.SameLeaseIdentity(current, transition) || current.OperationID == current.HAEndpointID {
+			break
+		}
+		if ttl <= 0 || ttl > time.Minute {
+			ttl = 30 * time.Second
+		}
+		current.OperationID = current.HAEndpointID
+		current.ExpiresAt = now.Add(ttl)
+		record.Lease = current
+		record.UpdatedAt = now
+		if err := store.records.PutCoordinationLease(record); err != nil {
+			return endpoint.Lease{}, fmt.Errorf("finalize quorum transition lease: %w", err)
+		}
+		return current, nil
+	}
+	return endpoint.Lease{}, fmt.Errorf("%w: transition quorum lease is missing, expired, changed, or already stable", endpoint.ErrLeaseConflict)
+}
+
 func (store *LeaseStore) Release(ctx context.Context, resourceID model.ResourceID) error {
 	if err := store.authorize(ctx); err != nil {
 		return err

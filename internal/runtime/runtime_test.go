@@ -42,7 +42,10 @@ type runtimeFailoverLeases struct{}
 func (runtimeFailoverLeases) Acquire(context.Context, endpoint.LeaseRequest) (endpoint.Lease, error) {
 	return endpoint.Lease{}, nil
 }
-func (runtimeFailoverLeases) Validate(context.Context, endpoint.Lease) error  { return nil }
+func (runtimeFailoverLeases) Validate(context.Context, endpoint.Lease) error { return nil }
+func (runtimeFailoverLeases) FinalizeTransition(_ context.Context, lease endpoint.Lease, _ time.Duration) (endpoint.Lease, error) {
+	return lease, nil
+}
 func (runtimeFailoverLeases) Release(context.Context, model.ResourceID) error { return nil }
 
 type runtimeFailoverTransport struct{}

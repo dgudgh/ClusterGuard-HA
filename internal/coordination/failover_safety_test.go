@@ -48,7 +48,10 @@ func (stub *failoverLeaseStub) Acquire(_ context.Context, request endpoint.Lease
 	return stub.lease, nil
 }
 
-func (*failoverLeaseStub) Validate(context.Context, endpoint.Lease) error  { return nil }
+func (*failoverLeaseStub) Validate(context.Context, endpoint.Lease) error { return nil }
+func (*failoverLeaseStub) FinalizeTransition(_ context.Context, lease endpoint.Lease, _ time.Duration) (endpoint.Lease, error) {
+	return lease, nil
+}
 func (*failoverLeaseStub) Release(context.Context, model.ResourceID) error { return nil }
 
 type failoverAgentTransportStub struct {

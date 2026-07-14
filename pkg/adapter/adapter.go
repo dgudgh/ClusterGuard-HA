@@ -106,8 +106,9 @@ type ResolvedOperation struct {
 }
 
 type TransitionAuthorization struct {
-	Context context.Context
-	Cancel  context.CancelFunc
+	Context  context.Context
+	Cancel   context.CancelFunc
+	Finalize func(context.Context) error
 }
 
 type HAEndpointProvider interface {

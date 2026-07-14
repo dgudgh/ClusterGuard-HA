@@ -228,7 +228,8 @@ func (provider *LinuxVIPProvider) AuthorizeTransition(ctx context.Context, resol
 	if err != nil {
 		return adapter.TransitionAuthorization{}, err
 	}
-	if _, err = provider.acquireTransitionLease(ctx, resolved, resource); err != nil {
+	lease, err := provider.acquireTransitionLease(ctx, resolved, resource)
+	if err != nil {
 		return adapter.TransitionAuthorization{}, err
 	}
 	guarded, cancelCause := context.WithCancelCause(ctx)
@@ -236,12 +237,18 @@ func (provider *LinuxVIPProvider) AuthorizeTransition(ctx context.Context, resol
 	if interval <= 0 {
 		interval = 10 * time.Second
 	}
+	stopRenewal := make(chan struct{})
+	renewalStopped := make(chan struct{})
+	var stopOnce sync.Once
 	go func() {
+		defer close(renewalStopped)
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-guarded.Done():
+				return
+			case <-stopRenewal:
 				return
 			case <-ticker.C:
 				if _, renewErr := provider.acquireTransitionLease(guarded, resolved, resource); renewErr != nil {
@@ -251,9 +258,33 @@ func (provider *LinuxVIPProvider) AuthorizeTransition(ctx context.Context, resol
 			}
 		}
 	}()
+	stop := func() {
+		stopOnce.Do(func() { close(stopRenewal) })
+		<-renewalStopped
+	}
+	var finalizeOnce sync.Once
+	var finalizeErr error
+	finalize := func(finalizeContext context.Context) error {
+		finalizeOnce.Do(func() {
+			stop()
+			if guarded.Err() != nil {
+				finalizeErr = context.Cause(guarded)
+				return
+			}
+			_, finalizeErr = provider.leases.FinalizeTransition(finalizeContext, lease, provider.transitionLeaseTTL)
+			if finalizeErr != nil {
+				cancelCause(fmt.Errorf("finalize target transition lease: %w", finalizeErr))
+			}
+		})
+		return finalizeErr
+	}
 	return adapter.TransitionAuthorization{
 		Context: guarded,
-		Cancel:  func() { cancelCause(context.Canceled) },
+		Cancel: func() {
+			stop()
+			cancelCause(context.Canceled)
+		},
+		Finalize: finalize,
 	}, nil
 }
 

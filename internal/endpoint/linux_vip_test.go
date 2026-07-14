@@ -191,6 +191,34 @@ func TestVIPAuthorizeTransitionCreatesTargetLeaseWithoutMovingVIP(t *testing.T) 
 	}
 }
 
+func TestVIPFinalizationAllowsImmediateReverseTransition(t *testing.T) {
+	provider, resolved, _, leases, inventory := vipProviderFixture(t)
+	if _, err := leases.Acquire(context.Background(), LeaseRequest{
+		ClusterID: resolved.Cluster.ResourceID, HAEndpointID: inventory.resources[0].ResourceID,
+		OperationID: inventory.resources[0].ResourceID, OwnerID: resolved.Primary.ResourceID, TTL: 30 * time.Second,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	authorization, err := provider.AuthorizeTransition(context.Background(), resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer authorization.Cancel()
+	if err := provider.Transfer(authorization.Context, resolved); err != nil {
+		t.Fatal(err)
+	}
+	if err := authorization.Finalize(context.Background()); err != nil {
+		t.Fatalf("finalize transition authorization: %v", err)
+	}
+
+	reverse := resolved
+	reverse.OperationID = model.NewResourceID()
+	reverse.Primary, reverse.Target = resolved.Target, resolved.Primary
+	if _, err := provider.AuthorizeTransition(context.Background(), reverse); err != nil {
+		t.Fatalf("immediate reverse authorization: %v", err)
+	}
+}
+
 type failingRenewalLeaseStore struct {
 	delegate *MemoryLeaseStore
 	mu       sync.Mutex
@@ -210,6 +238,10 @@ func (store *failingRenewalLeaseStore) Acquire(ctx context.Context, request Leas
 
 func (store *failingRenewalLeaseStore) Validate(ctx context.Context, lease Lease) error {
 	return store.delegate.Validate(ctx, lease)
+}
+
+func (store *failingRenewalLeaseStore) FinalizeTransition(ctx context.Context, lease Lease, ttl time.Duration) (Lease, error) {
+	return store.delegate.FinalizeTransition(ctx, lease, ttl)
 }
 
 func (store *failingRenewalLeaseStore) Release(ctx context.Context, resourceID model.ResourceID) error {

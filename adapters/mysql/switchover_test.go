@@ -29,7 +29,7 @@ func (provider endpointProviderStub) Precheck(context.Context, adapter.ResolvedO
 }
 func (provider endpointProviderStub) AuthorizeTransition(ctx context.Context, _ adapter.ResolvedOperation) (adapter.TransitionAuthorization, error) {
 	guarded, cancel := context.WithCancel(ctx)
-	return adapter.TransitionAuthorization{Context: guarded, Cancel: cancel}, nil
+	return adapter.TransitionAuthorization{Context: guarded, Cancel: cancel, Finalize: func(context.Context) error { return nil }}, nil
 }
 func (provider endpointProviderStub) Transfer(_ context.Context, resolved adapter.ResolvedOperation) error {
 	if provider.transfer != nil {

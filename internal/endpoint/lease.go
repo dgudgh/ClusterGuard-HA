@@ -51,6 +51,7 @@ func CanHandoffStableLease(current Lease, request LeaseRequest) bool {
 type LeaseStore interface {
 	Acquire(context.Context, LeaseRequest) (Lease, error)
 	Validate(context.Context, Lease) error
+	FinalizeTransition(context.Context, Lease, time.Duration) (Lease, error)
 	Release(context.Context, model.ResourceID) error
 }
 
@@ -119,6 +120,26 @@ func (store *MemoryLeaseStore) Validate(ctx context.Context, lease Lease) error 
 		return fmt.Errorf("%w: endpoint lease is missing, expired, or changed", ErrLeaseConflict)
 	}
 	return nil
+}
+
+func (store *MemoryLeaseStore) FinalizeTransition(ctx context.Context, transition Lease, ttl time.Duration) (Lease, error) {
+	if err := ctx.Err(); err != nil {
+		return Lease{}, err
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	now := store.now().UTC()
+	current, found := store.leases[transition.ResourceID]
+	if !found || !current.Active || !current.ExpiresAt.After(now) || !SameLeaseIdentity(current, transition) || current.OperationID == current.HAEndpointID {
+		return Lease{}, fmt.Errorf("%w: transition lease is missing, expired, changed, or already stable", ErrLeaseConflict)
+	}
+	if ttl <= 0 {
+		ttl = 30 * time.Second
+	}
+	current.OperationID = current.HAEndpointID
+	current.ExpiresAt = now.Add(ttl)
+	store.leases[current.ResourceID] = current
+	return current, nil
 }
 
 func (store *MemoryLeaseStore) Release(ctx context.Context, resourceID model.ResourceID) error {
