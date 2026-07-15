@@ -9,11 +9,11 @@ substitute for environment-specific production qualification.
 ## Build Under Test
 
 - branch: `codex/mysql-feature-parity`
-- bundle: `clusterguard-ha-mysql-parity-rc58-linux-amd64.tar.gz`
+- bundle: `clusterguard-ha-mysql-parity-rc61-linux-amd64.tar.gz`
 - bundle SHA-256:
-  `4b49745a2003cf8720ddbac95cc6cbba230a1e20246fa88216a994e4f946abca`
+  `f8724fb4d79e3af57c32c4c5fb8be13d266a246b39752f5b6430cebd69ac7860`
 - server binary SHA-256:
-  `13e93038239c771c4641bdd5a1b0f151760cac9fa863dd550065d72724b361c6`
+  `03eac92b7013f3788957fbe6b60c32cb291c6c4bc242b0ff12933c71c73c7539`
 - MySQL sync helper SHA-256:
   `35d1c9e2bb9d2da4b61c01b7ec124c5ca5128b877e1ffde460a720c5126e529e`
 
@@ -71,6 +71,27 @@ not hostname and port.
   aliases and no duplicate node was created.
 - Final topology snapshots were identical on all three controllers and all six
   cluster smoke checks passed after cleanup.
+- The console fleet overview, compact topology, operation workbench, node
+  lifecycle, metrics, searchable operation log, settings, and metadata dialog
+  were exercised against the live three-controller API rather than fixture
+  data.
+- A browser-driven real switchover completed through all five visible stages:
+  precheck, plan, safety gate, execute, and verify. The result was not declared
+  successful until the durable operation reached `succeeded/report` and its
+  verification passed.
+- A stale read-after-write window was reproduced during a real switch, covered
+  by a regression test, and fixed. The console now waits for the expected
+  primary before rendering the verified result instead of replacing it with a
+  transient follower snapshot.
+- Read-only automatic refresh was then observed for 40 seconds after a second
+  real switch. The verified result, five completed stages, selected cluster,
+  and new primary remained intact across the 30-second refresh interval.
+- A mutation sent to a follower failed closed and returned the current Leader
+  API address. The same operation was executed on the Leader and recorded as
+  operation `fd5e2277-efe0-46bb-b690-c55da3935783`.
+- After final cleanup, every controller reported `orch-mysql03` at
+  `192.168.102.154:3306` as the only primary for `mysql-ha-3306`; only that host
+  owned VIP `192.168.102.155`, and the latest operation remained verified.
 
 ## Local Verification
 
@@ -91,11 +112,13 @@ Configuration JSON, shell syntax, clean-room naming, dependency hygiene, bundle
 contents, and manifest checks are also part of the final release gate.
 
 The live laboratory root served the expected `ClusterGuard HA Console` title,
-Chinese default language, and six-cluster API directory. Interactive screenshot
-automation was not available because the in-app browser rejected the laboratory
-self-signed certificate under its URL security policy. Console structure,
-responsive constraints, real API wiring, and safe rendering remain covered by
-the `internal/api` console contract tests.
+Chinese default language, and six-cluster API directory. Browser automation was
+performed through a loopback-only TLS-terminating test bridge to the active
+controller; it did not change the laboratory servers or production network
+path. Visual checks covered the overview, topology, operation workbench, nodes,
+metrics, logs, settings, about page, and metadata dialog. The operation log was
+confirmed to show the local time, stable cluster name, source and target nodes,
+status, and a collapsed raw workflow object that expands on demand.
 
 ## Production Qualification Still Required
 
