@@ -57,6 +57,64 @@ func TestEvaluateSelfIsolationAllowsActiveTransitionTarget(t *testing.T) {
 	}
 }
 
+func TestEvaluateSelfIsolationHoldsActiveTransitionSource(t *testing.T) {
+	now := time.Date(2026, time.July, 15, 4, 40, 0, 0, time.UTC)
+	sourceID := model.NewResourceID()
+	decision := EvaluateSelfIsolation(SelfIsolationEvidence{
+		LocalInstanceID:  sourceID,
+		TransitionSource: true,
+		Now:              now,
+		Lease: endpoint.Lease{
+			ResourceID: model.NewResourceID(), ClusterID: model.NewResourceID(), HAEndpointID: model.NewResourceID(),
+			OperationID: model.NewResourceID(), OwnerID: model.NewResourceID(), PreviousOwnerID: sourceID,
+			ExpiresAt: now.Add(30 * time.Second), Active: true,
+		},
+	})
+	if decision.Action != SelfIsolationHoldTransitionSource {
+		t.Fatalf("active transition source decision=%+v", decision)
+	}
+}
+
+func TestEvaluateSelfIsolationTrustsStableMajorityOwnershipDuringTopologyConvergence(t *testing.T) {
+	now := time.Date(2026, time.July, 15, 4, 30, 0, 0, time.UTC)
+	localID := model.NewResourceID()
+	endpointID := model.NewResourceID()
+	decision := EvaluateSelfIsolation(SelfIsolationEvidence{
+		LocalInstanceID:  localID,
+		CurrentPrimaryID: model.NewResourceID(),
+		CanonicalOwnerID: localID,
+		EndpointOwnerID:  localID,
+		StableTarget:     true,
+		Now:              now,
+		Lease: endpoint.Lease{
+			ResourceID: model.NewResourceID(), ClusterID: model.NewResourceID(), HAEndpointID: endpointID,
+			OperationID: endpointID, OwnerID: localID, ExpiresAt: now.Add(30 * time.Second), Active: true,
+		},
+	})
+	if decision.Action != SelfIsolationKeepVIP {
+		t.Fatalf("stable majority ownership was rejected during topology convergence: %+v", decision)
+	}
+}
+
+func TestEvaluateSelfIsolationDoesNotTrustUnfinalizedLeaseAfterOperationWindow(t *testing.T) {
+	now := time.Date(2026, time.July, 15, 4, 30, 0, 0, time.UTC)
+	localID := model.NewResourceID()
+	decision := EvaluateSelfIsolation(SelfIsolationEvidence{
+		LocalInstanceID:  localID,
+		CurrentPrimaryID: model.NewResourceID(),
+		CanonicalOwnerID: localID,
+		EndpointOwnerID:  localID,
+		Now:              now,
+		Lease: endpoint.Lease{
+			ResourceID: model.NewResourceID(), ClusterID: model.NewResourceID(), HAEndpointID: model.NewResourceID(),
+			OperationID: model.NewResourceID(), OwnerID: localID, ExpiresAt: now.Add(30 * time.Second), Active: true,
+		},
+	})
+	if decision.Action != SelfIsolationReleaseAndReadOnly {
+		t.Fatalf("unfinalized lease escaped topology mismatch: %+v", decision)
+	}
+}
+
 func TestEvaluateSelfIsolationAuthorizesOnlyProvenRebootBootstrapTarget(t *testing.T) {
 	now := time.Date(2026, time.July, 13, 21, 30, 0, 0, time.UTC)
 	localID := model.NewResourceID()

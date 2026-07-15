@@ -37,7 +37,8 @@ func (adapterInstance *Adapter) rejoinPrecheck(ctx context.Context, request adap
 	appendCheck("current_primary_writable", resolved.Primary.Role == model.RolePrimary && resolved.Primary.Health.State == model.HealthHealthy && primaryKnown && !primaryReadOnly, "current primary is healthy and writable", "current primary must be healthy and writable")
 	targetReadOnly, targetReadOnlyKnown := boolMetadata(resolved.Target.EngineMetadata, "read_only")
 	targetSuperReadOnly, targetSuperReadOnlyKnown := boolMetadata(resolved.Target.EngineMetadata, "super_read_only")
-	appendCheck("former_primary_read_only", resolved.Target.Health.State == model.HealthHealthy && targetReadOnlyKnown && targetSuperReadOnlyKnown && targetReadOnly && targetSuperReadOnly, "former primary is healthy and fully read-only", "former primary must be reachable, healthy, and fully read-only")
+	targetReachable := resolved.Target.Health.State == model.HealthHealthy || resolved.Target.Health.State == model.HealthDegraded
+	appendCheck("former_primary_read_only", targetReachable && targetReadOnlyKnown && targetSuperReadOnlyKnown && targetReadOnly && targetSuperReadOnly, "former primary is reachable and fully read-only", "former primary must be reachable and fully read-only")
 	appendCheck("mysql_identity", strings.TrimSpace(resolved.Primary.EngineIdentity["server_uuid"]) != "" && strings.TrimSpace(resolved.Target.EngineIdentity["server_uuid"]) != "", "native MySQL identities are present", "native MySQL identities are required")
 	primarySet, primaryErr := ParseGTIDSet(resolved.Primary.EngineMetadata["gtid_executed"])
 	formerSet, formerErr := ParseGTIDSet(resolved.Target.EngineMetadata["gtid_executed"])
@@ -62,7 +63,7 @@ func (adapterInstance *Adapter) rejoinPlan(ctx context.Context, request adapter.
 	plan := model.OperationPlan{
 		OperationID: request.Operation.ResourceID, ClusterID: resolved.Cluster.ResourceID,
 		SourceID: resolved.Primary.ResourceID, TargetID: resolved.Target.ResourceID, Stage: model.StagePlan,
-		ObservationToken:  string(resolved.Cluster.ResourceID) + "@" + resolved.Snapshot.ObservedAt.UTC().Format(time.RFC3339Nano),
+		ObservationToken:  resolvedObservationToken(resolved),
 		ResourceRevisions: planResourceRevisions(resolved), Checks: checks, Mutating: true,
 		Steps: []model.PlanStep{
 			{Index: 1, Name: "revalidate_former_primary", Owner: "mysql", TargetID: resolved.Target.ResourceID, Postcondition: "identity, GTID, VIP, and read-only state remain safe"},

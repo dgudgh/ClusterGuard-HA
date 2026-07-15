@@ -118,6 +118,7 @@ type Repository struct {
 	mutationMu      sync.Mutex
 	consensusCommit sync.Mutex
 	stateRevision   uint64
+	stateDigest     string
 	path            string
 	snapshot        snapshot
 	consensus       SnapshotConsensus
@@ -150,8 +151,11 @@ func emptySnapshot() snapshot {
 }
 
 func NewMemory() *Repository {
+	initial := emptySnapshot()
+	digest, _ := snapshotDigest(initial)
 	return &Repository{
-		snapshot:      emptySnapshot(),
+		snapshot:      initial,
+		stateDigest:   digest,
 		now:           time.Now,
 		syncFile:      func(file *os.File) error { return file.Sync() },
 		syncDirectory: syncMetadataDirectory,
@@ -188,6 +192,7 @@ func Open(path string) (*Repository, error) {
 		return nil, fmt.Errorf("decode metadata snapshot: %w", err)
 	}
 	repository.snapshot = decoded
+	repository.stateDigest = metadata.ContentsDigest
 	if metadata.StateRevision != nil {
 		repository.stateRevision = *metadata.StateRevision
 	}
@@ -271,6 +276,7 @@ func cloneOperationPlan(plan model.OperationPlan) model.OperationPlan {
 
 func cloneOperationRecord(operation model.OperationRecord) model.OperationRecord {
 	copy := operation
+	copy.Precheck = append([]model.Check{}, operation.Precheck...)
 	copy.Plan = cloneOperationPlan(operation.Plan)
 	copy.Attempts = append([]model.StepAttempt{}, operation.Attempts...)
 	copy.Verification.Checks = append([]model.Check{}, operation.Verification.Checks...)
@@ -448,14 +454,15 @@ func (repository *Repository) persistSnapshotLocked(value snapshot) error {
 }
 
 func (repository *Repository) persistSnapshotRevisionLocked(value snapshot, stateRevision uint64) error {
-	if repository.path == "" {
-		repository.snapshot = value
-		repository.stateRevision = stateRevision
-		return nil
-	}
-	contents, err := encodeSnapshotRevision(value, stateRevision, "")
+	contents, stateDigest, normalized, err := encodeSnapshotRevisionState(value, stateRevision, "")
 	if err != nil {
 		return fmt.Errorf("encode metadata snapshot: %w", err)
+	}
+	if repository.path == "" {
+		repository.snapshot = normalized
+		repository.stateRevision = stateRevision
+		repository.stateDigest = stateDigest
+		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(repository.path), 0750); err != nil {
 		return fmt.Errorf("create metadata directory: %w", err)
@@ -486,8 +493,9 @@ func (repository *Repository) persistSnapshotRevisionLocked(value snapshot, stat
 	}
 	// Rename is the commit boundary. Keep live state aligned with the file even
 	// when the subsequent directory sync cannot confirm crash durability.
-	repository.snapshot = value
+	repository.snapshot = normalized
 	repository.stateRevision = stateRevision
+	repository.stateDigest = stateDigest
 	if err := repository.syncDirectory(filepath.Dir(repository.path)); err != nil {
 		return &postCommitDurabilityError{cause: err}
 	}
@@ -550,7 +558,6 @@ func (repository *Repository) UpsertCluster(cluster model.DatabaseCluster) (mode
 	if err := repository.commitSnapshotLocked(next); err != nil {
 		return model.DatabaseCluster{}, err
 	}
-	repository.snapshot = next
 	return cloneCluster(cluster), nil
 }
 
@@ -789,7 +796,6 @@ func (repository *Repository) CreateClusterWithEndpoints(cluster model.DatabaseC
 		}
 		return model.DatabaseCluster{}, nil, err
 	}
-	repository.snapshot = next
 	resultEndpoints := make([]model.Endpoint, len(endpoints))
 	copy(resultEndpoints, endpoints)
 	return cloneCluster(cluster), resultEndpoints, nil
@@ -854,7 +860,6 @@ func (repository *Repository) UpsertEndpoint(endpoint model.Endpoint) (model.End
 	if err := repository.commitSnapshotLocked(next); err != nil {
 		return model.Endpoint{}, err
 	}
-	repository.snapshot = next
 	return endpoint, nil
 }
 
@@ -936,7 +941,6 @@ func (repository *Repository) ReplaceReplicationLinks(clusterID model.ResourceID
 	if err := repository.commitSnapshotLocked(next); err != nil {
 		return err
 	}
-	repository.snapshot = next
 	return nil
 }
 
@@ -1002,7 +1006,6 @@ func (repository *Repository) StoreMetricSamples(clusterID model.ResourceID, sam
 	if err := repository.commitSnapshotLocked(next); err != nil {
 		return err
 	}
-	repository.snapshot = next
 	return nil
 }
 
@@ -1210,7 +1213,6 @@ func (repository *Repository) ReconcileInstance(discovered model.DatabaseInstanc
 	if err := repository.commitSnapshotLocked(next); err != nil {
 		return ReconcileResult{}, err
 	}
-	repository.snapshot = next
 	return result, nil
 }
 
@@ -1325,7 +1327,6 @@ func (repository *Repository) ReconcileMetadataCoordinates(update MetadataCoordi
 		}
 		return model.DatabaseInstance{}, model.Endpoint{}, err
 	}
-	repository.snapshot = next
 	return cloneInstance(replacement), replacementEndpoint, nil
 }
 
@@ -1783,8 +1784,55 @@ func (repository *Repository) ApplyDiscoveryRefresh(refresh DiscoveryRefresh) (m
 		}
 		return model.TopologySnapshot{}, err
 	}
-	repository.snapshot = next
 	return cloneTopologySnapshot(published), nil
+}
+
+// ApplyDiscoveryRefreshBatch publishes one scheduler observation round as one
+// replicated snapshot. The batch is all-or-nothing so readers never observe a
+// mixture of old and new cluster observations from the same round.
+func (repository *Repository) ApplyDiscoveryRefreshBatch(refreshes []DiscoveryRefresh) (map[model.ResourceID]model.TopologySnapshot, error) {
+	if len(refreshes) == 0 {
+		return map[model.ResourceID]model.TopologySnapshot{}, nil
+	}
+	ordered := append([]DiscoveryRefresh{}, refreshes...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].ClusterID < ordered[j].ClusterID })
+	for index, refresh := range ordered {
+		if refresh.ClusterID == "" {
+			return nil, validationError("discovery refresh batch contains an empty cluster ID")
+		}
+		if index > 0 && refresh.ClusterID == ordered[index-1].ClusterID {
+			return nil, validationError("discovery refresh batch contains duplicate cluster ID: %s", refresh.ClusterID)
+		}
+	}
+
+	repository.mutationMu.Lock()
+	defer repository.mutationMu.Unlock()
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+
+	// Reuse the fully validated single-refresh state transition against an
+	// isolated in-memory candidate, then publish its final state once.
+	candidate := &Repository{
+		stateRevision: repository.stateRevision,
+		snapshot:      repository.snapshot,
+		now:           repository.now,
+	}
+	published := make(map[model.ResourceID]model.TopologySnapshot, len(ordered))
+	for _, refresh := range ordered {
+		snapshot, err := candidate.ApplyDiscoveryRefresh(refresh)
+		if err != nil {
+			return nil, fmt.Errorf("apply discovery refresh for cluster %s: %w", refresh.ClusterID, err)
+		}
+		published[refresh.ClusterID] = snapshot
+	}
+	if err := repository.commitSnapshotLocked(candidate.snapshot); err != nil {
+		if errors.Is(err, ErrPostCommitDurability) {
+			return published, err
+		}
+		return nil, err
+	}
+	repository.snapshot = candidate.snapshot
+	return published, nil
 }
 
 func completeDiscoveryMetricSample(sample model.MetricSample) bool {
@@ -1913,7 +1961,6 @@ func (repository *Repository) ReplaceClusterAnomalies(clusterID model.ResourceID
 	if err := repository.commitSnapshotLocked(next); err != nil {
 		return err
 	}
-	repository.snapshot = next
 	return nil
 }
 
@@ -1936,7 +1983,6 @@ func (repository *Repository) RecordAudit(event model.AuditEvent) error {
 	if err := repository.commitSnapshotLocked(next); err != nil {
 		return err
 	}
-	repository.snapshot = next
 	return nil
 }
 
@@ -1977,7 +2023,6 @@ func (repository *Repository) RecordReport(report model.Report) error {
 	if err := repository.commitSnapshotLocked(next); err != nil {
 		return err
 	}
-	repository.snapshot = next
 	return nil
 }
 

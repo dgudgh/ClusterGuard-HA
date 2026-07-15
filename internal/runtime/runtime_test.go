@@ -172,6 +172,29 @@ func TestRuntimeLocksPersistClusterMutationThroughQuorumStore(t *testing.T) {
 	}
 }
 
+func TestLifecycleLockDoesNotFreezeDiscoveryButStillConflictsWithMutations(t *testing.T) {
+	repository := store.NewMemory()
+	locks := newRuntimeLocks(repository, runtimeFailoverAuthority{})
+	clusterID := model.NewResourceID()
+	releaseLifecycle, err := locks.lifecycle.AcquireCluster(context.Background(), clusterID)
+	if err != nil {
+		t.Fatalf("acquire lifecycle lock: %v", err)
+	}
+	defer releaseLifecycle()
+
+	releasePublication, err := locks.publication.AcquireCluster(context.Background(), clusterID)
+	if err != nil {
+		t.Fatalf("lifecycle work froze topology publication: %v", err)
+	}
+	releasePublication()
+
+	operation := model.Operation{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, ClusterID: clusterID}
+	if release, err := locks.operations.Acquire(context.Background(), operation); err == nil {
+		release()
+		t.Fatal("lifecycle lock did not block a concurrent cluster mutation")
+	}
+}
+
 func TestRuntimeSafetyGuardUsesControllerMajorityWhenConfigured(t *testing.T) {
 	operation := model.Operation{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, ClusterID: model.NewResourceID()}
 	guard := newRuntimeSafetyGuard(runtimeFailoverAuthority{err: errors.New("no quorum")})

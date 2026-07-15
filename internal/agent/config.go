@@ -33,6 +33,7 @@ type Config struct {
 	ARPingBinary            string
 	MySQLBinary             string
 	RoleStateDirectory      string
+	DecisionStateDirectory  string
 }
 
 type fileConfig struct {
@@ -46,6 +47,7 @@ type fileConfig struct {
 	ARPingBinary            string          `json:"arping_binary"`
 	MySQLBinary             string          `json:"mysql_binary"`
 	RoleStateDirectory      string          `json:"role_state_directory"`
+	DecisionStateDirectory  string          `json:"decision_state_directory,omitempty"`
 	Clusters                []ClusterPolicy `json:"clusters"`
 }
 
@@ -71,6 +73,7 @@ func LoadConfig(path string) (Config, error) {
 		ReconcileTimeoutSeconds: file.ReconcileTimeoutSeconds,
 		IPBinary:                strings.TrimSpace(file.IPBinary), ARPingBinary: strings.TrimSpace(file.ARPingBinary),
 		MySQLBinary: strings.TrimSpace(file.MySQLBinary), RoleStateDirectory: strings.TrimSpace(file.RoleStateDirectory),
+		DecisionStateDirectory: strings.TrimSpace(file.DecisionStateDirectory),
 	}
 	if strings.TrimSpace(configuration.SharedSecret) == "" {
 		return Config{}, fmt.Errorf("agent shared secret environment variable %s is empty", secretEnvironment)
@@ -87,11 +90,17 @@ func LoadConfig(path string) (Config, error) {
 	if configuration.RoleStateDirectory == "" {
 		configuration.RoleStateDirectory = "/var/lib/clusterguard-agent/roles"
 	}
+	if configuration.DecisionStateDirectory == "" {
+		configuration.DecisionStateDirectory = "/var/lib/clusterguard-agent/decisions"
+	}
 	if configuration.ReconcileTimeoutSeconds <= 0 {
 		configuration.ReconcileTimeoutSeconds = 5
 	}
 	if configuration.ControllerCAFile != "" && !filepath.IsAbs(configuration.ControllerCAFile) {
 		return Config{}, fmt.Errorf("controller_ca_file must be an absolute path")
+	}
+	if !filepath.IsAbs(configuration.DecisionStateDirectory) {
+		return Config{}, fmt.Errorf("decision_state_directory must be an absolute path")
 	}
 	for index, raw := range configuration.ControllerURLs {
 		normalized, err := normalizeControllerURL(raw, configuration.AllowInsecureHTTP)

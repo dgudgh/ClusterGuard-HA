@@ -304,22 +304,12 @@ func (service *Service) executeDurable(ctx context.Context, request adapter.Oper
 	if service.safety == nil || service.locks == nil || service.approval == nil {
 		return model.Execution{}, fmt.Errorf("workflow gates are not configured")
 	}
-	if err := service.safety.Evaluate(ctx, operation); err != nil {
-		execution := newDurableExecution(operation.ResourceID, model.OperationBlocked, err.Error(), service.now)
-		return service.finishDurable(record.ResourceID, operation, model.StageSafetyGuard, execution, "pre_commit", err, false)
-	}
-	release, err := service.locks.Acquire(ctx, operation)
-	if err != nil {
-		execution := newDurableExecution(operation.ResourceID, model.OperationBlocked, err.Error(), service.now)
-		return service.finishDurable(record.ResourceID, operation, model.StageLock, execution, "pre_commit", err, false)
-	}
-	defer release()
 	observation, err := service.discovery.CaptureObservation(ctx, operation)
 	if err != nil {
 		execution := newDurableExecution(operation.ResourceID, model.OperationBlocked, err.Error(), service.now)
 		return service.finishDurable(record.ResourceID, operation, model.StageDiscover, execution, "pre_commit", err, false)
 	}
-	observationLabel := fmt.Sprintf("%s@%s", observation.ClusterID, observation.ObservedAt.UTC().Format(time.RFC3339Nano))
+	observationLabel := observationLabel(observation)
 	if record.Observation != "" && record.Observation != observationLabel {
 		execution := newDurableExecution(operation.ResourceID, model.OperationBlocked, "topology observation changed since the operation was created", service.now)
 		return service.finishDurable(record.ResourceID, operation, record.Stage, execution, "stale_plan", errors.New(execution.Message), false)
@@ -332,17 +322,20 @@ func (service *Service) executeDurable(ctx context.Context, request adapter.Oper
 		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
 	}
 
-	request, err = service.resolver.Resolve(ctx, request)
+	request, err = resolveCapturedOperation(ctx, service.resolver, request, observation)
 	if err != nil {
 		execution := newDurableExecution(operation.ResourceID, model.OperationBlocked, err.Error(), service.now)
 		return service.finishDurable(record.ResourceID, operation, model.StageDiscover, execution, "pre_commit", err, false)
 	}
+	request.Resolved.ObservationToken = observationLabel
 	checks, err := candidate.Precheck(ctx, request)
 	if err != nil {
 		execution := newDurableExecution(operation.ResourceID, model.OperationFailed, err.Error(), service.now)
 		return service.finishDurable(record.ResourceID, operation, model.StagePrecheck, execution, "pre_commit", err, false)
 	}
-	record, err = service.advanceDurable(record.ResourceID, model.StagePrecheck, model.OperationTransition{Message: "adapter precheck completed"})
+	record, err = service.advanceDurable(record.ResourceID, model.StagePrecheck, model.OperationTransition{
+		Precheck: append([]model.Check{}, checks...), Message: "adapter precheck completed",
+	})
 	if err != nil {
 		return model.Execution{}, err
 	}
@@ -366,6 +359,10 @@ func (service *Service) executeDurable(ctx context.Context, request adapter.Oper
 	if err := service.audit(operation, model.StagePlan, "immutable adapter operation plan persisted"); err != nil {
 		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
 	}
+	if err := service.safety.Evaluate(ctx, operation); err != nil {
+		execution := newDurableExecution(operation.ResourceID, model.OperationBlocked, err.Error(), service.now)
+		return service.finishDurable(record.ResourceID, operation, model.StageSafetyGuard, execution, "pre_commit", err, false)
+	}
 	record, err = service.advanceDurable(record.ResourceID, model.StageSafetyGuard, model.OperationTransition{Message: "safety guard passed"})
 	if err != nil {
 		return model.Execution{}, err
@@ -373,6 +370,12 @@ func (service *Service) executeDurable(ctx context.Context, request adapter.Oper
 	if err := service.audit(operation, model.StageSafetyGuard, "safety guard passed"); err != nil {
 		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
 	}
+	release, err := service.locks.Acquire(ctx, operation)
+	if err != nil {
+		execution := newDurableExecution(operation.ResourceID, model.OperationBlocked, err.Error(), service.now)
+		return service.finishDurable(record.ResourceID, operation, model.StageLock, execution, "pre_commit", err, false)
+	}
+	defer release()
 	record, err = service.advanceDurable(record.ResourceID, model.StageLock, model.OperationTransition{Message: "operation lock acquired"})
 	if err != nil {
 		return model.Execution{}, err
@@ -384,11 +387,12 @@ func (service *Service) executeDurable(ctx context.Context, request adapter.Oper
 		execution := newDurableExecution(operation.ResourceID, model.OperationBlocked, err.Error(), service.now)
 		return service.finishDurable(record.ResourceID, operation, model.StageLock, execution, "stale_plan", err, false)
 	}
-	request, err = service.resolver.Resolve(ctx, request)
+	request, err = resolveCapturedOperation(ctx, service.resolver, request, observation)
 	if err != nil {
 		execution := newDurableExecution(operation.ResourceID, model.OperationBlocked, err.Error(), service.now)
 		return service.finishDurable(record.ResourceID, operation, model.StageLock, execution, "stale_plan", err, false)
 	}
+	request.Resolved.ObservationToken = observationLabel
 	if err := service.approval.Validate(ctx, operation, approvalToken); err != nil {
 		execution := newDurableExecution(operation.ResourceID, model.OperationBlocked, err.Error(), service.now)
 		return service.finishDurable(record.ResourceID, operation, model.StageApprove, execution, "pre_commit", err, false)

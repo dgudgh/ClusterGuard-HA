@@ -114,13 +114,23 @@ func (repository *Repository) PutHAEndpoint(spec HAEndpointSpec) (model.HAEndpoi
 	if err := repository.commitSnapshotLocked(next); err != nil {
 		return resource, endpoint, err
 	}
-	repository.snapshot = next
 	return resource, endpoint, nil
 }
 
 // CommitHAEndpointOwner records a physically verified VIP owner without
 // changing the stable HA endpoint or endpoint UUIDs.
 func (repository *Repository) CommitHAEndpointOwner(clusterID, resourceID, ownerID model.ResourceID, healthy bool) error {
+	return repository.commitHAEndpointOwner(clusterID, resourceID, ownerID, healthy, nil, nil)
+}
+
+// CommitObservedHAEndpointOwner records a reconciler observation only when the
+// HA endpoint metadata still has the revisions seen before the physical probe.
+// This prevents a slow background probe from overwriting a newer switchover.
+func (repository *Repository) CommitObservedHAEndpointOwner(clusterID, resourceID model.ResourceID, expectedResourceRevision, expectedEndpointRevision uint64, ownerID model.ResourceID, healthy bool) error {
+	return repository.commitHAEndpointOwner(clusterID, resourceID, ownerID, healthy, &expectedResourceRevision, &expectedEndpointRevision)
+}
+
+func (repository *Repository) commitHAEndpointOwner(clusterID, resourceID, ownerID model.ResourceID, healthy bool, expectedResourceRevision, expectedEndpointRevision *uint64) error {
 	if !model.ValidResourceID(clusterID) || !model.ValidResourceID(resourceID) || !model.ValidResourceID(ownerID) {
 		return validationError("HA endpoint ownership scope is invalid")
 	}
@@ -139,6 +149,12 @@ func (repository *Repository) CommitHAEndpointOwner(clusterID, resourceID, owner
 	endpoint, found := repository.snapshot.Endpoints[clusterID][resource.EndpointID]
 	if !found || endpoint.Kind != model.EndpointVIP || !endpoint.Active {
 		return validationError("active VIP endpoint metadata is unavailable")
+	}
+	if expectedResourceRevision != nil && resource.MetadataRevision != *expectedResourceRevision {
+		return conflictError("HA endpoint metadata changed after ownership observation")
+	}
+	if expectedEndpointRevision != nil && endpoint.MetadataRevision != *expectedEndpointRevision {
+		return conflictError("VIP endpoint metadata changed after ownership observation")
 	}
 	if resource.OwnerID == ownerID && resource.Healthy == healthy && endpoint.InstanceID == ownerID {
 		return nil
@@ -160,7 +176,6 @@ func (repository *Repository) CommitHAEndpointOwner(clusterID, resourceID, owner
 	if err := repository.commitSnapshotLocked(next); err != nil {
 		return err
 	}
-	repository.snapshot = next
 	return nil
 }
 

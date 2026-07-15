@@ -91,6 +91,29 @@ func TestRepositoryResolverResolvesUUIDScopedContext(t *testing.T) {
 	}
 }
 
+func TestRepositoryResolverUsesCapturedSnapshotInsteadOfLaterRepositoryState(t *testing.T) {
+	reader, request := resolvedOperationFixture()
+	captured := reader.snapshot
+	reader.snapshot.Instances = append([]model.DatabaseInstance{}, reader.snapshot.Instances...)
+	reader.snapshot.Instances[0].Role = model.RoleReplica
+	resolver := RepositoryResolver{
+		Reader: reader,
+		Credentials: CredentialProviderFunc(func(context.Context, model.DatabaseCluster) (adapter.OperationCredentials, error) {
+			return adapter.OperationCredentials{
+				Administrative: adapter.Credentials{Username: "clusterguard"},
+				Replication:    adapter.Credentials{Username: "replicator"},
+			}, nil
+		}),
+	}
+	resolved, err := resolver.ResolveCaptured(context.Background(), request, captured)
+	if err != nil {
+		t.Fatalf("resolve captured operation: %v", err)
+	}
+	if resolved.Resolved == nil || resolved.Resolved.Primary.ResourceID != captured.Instances[0].ResourceID || resolved.Resolved.Target.ResourceID != request.TargetID {
+		t.Fatalf("resolver did not use the captured topology: %+v", resolved.Resolved)
+	}
+}
+
 func TestRepositoryResolverUsesImmutablePlanResourcesForPostCommitVerification(t *testing.T) {
 	for _, state := range []string{"target promoted", "no current primary"} {
 		t.Run(state, func(t *testing.T) {

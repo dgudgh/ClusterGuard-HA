@@ -117,6 +117,23 @@ func TestVIPPrecheckFailsOnUnknownProbeCoverage(t *testing.T) {
 	}
 }
 
+func TestObserveOwnershipCarriesMetadataRevisionsForConditionalCommit(t *testing.T) {
+	provider, resolved, _, _, inventory := vipProviderFixture(t)
+	inventory.resources[0].MetadataRevision = 7
+	endpointID := inventory.resources[0].EndpointID
+	endpointValue := inventory.endpoints[endpointID]
+	endpointValue.MetadataRevision = 11
+	inventory.endpoints[endpointID] = endpointValue
+
+	observation, err := provider.ObserveOwnership(context.Background(), resolved.Cluster, resolved.Snapshot)
+	if err != nil {
+		t.Fatalf("observe ownership: %v", err)
+	}
+	if observation.HAEndpointRevision != 7 || observation.EndpointRevision != 11 {
+		t.Fatalf("ownership observation revisions=%+v", observation)
+	}
+}
+
 func TestVIPPrecheckFailsWithTwoOwners(t *testing.T) {
 	provider, resolved, transport, _, _ := vipProviderFixture(t)
 	transport.owners[resolved.Target.ResourceID] = true

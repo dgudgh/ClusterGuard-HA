@@ -461,9 +461,18 @@ promotion eligibility.
 
 The independent MySQL path now includes discovery, candidate evaluation,
 planned switchover, guarded failover, former-primary rejoin, allowlisted repair,
-Linux VIP ownership, self-isolation, and staged node lifecycle. Remaining work
-is delivery packaging and destructive three-host acceptance, including real
-network fencing integration for whole-host partitions.
+Linux VIP ownership, self-isolation, staged node lifecycle, delivery packaging,
+and destructive three-host acceptance. The laboratory acceptance covers six
+clusters, repeated real switchovers, quorum loss, a primary network partition,
+former-primary rejoin, a full host reboot, divergent-node rebuild, and mutable
+hostname/IP/port reconciliation. See `docs/mysql-feature-parity-acceptance.md`
+for the evidence and bundle hashes.
+
+Production deployments still require site-specific out-of-band fencing and a
+qualified physical-copy method such as Clone or XtraBackup. The bundled logical
+dump rebuild is a destructive fallback: before importing donor data it removes
+all non-system schemas on the target so target-only data cannot survive behind
+a reset GTID history.
 
 ### PostgreSQL
 

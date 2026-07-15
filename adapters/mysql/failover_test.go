@@ -146,6 +146,33 @@ func TestFailoverExecutesFenceBeforePromotionAndVerifies(t *testing.T) {
 	}
 }
 
+func TestFailoverDoesNotTransferEndpointUntilTargetWritableIsProven(t *testing.T) {
+	request := failoverRequestFixture()
+	request.Resolved.Credentials = adapter.Credentials{Username: "operator", Password: "operation-secret"}
+	request.Resolved.ReplicationCredentials = adapter.Credentials{Username: "replicator", Password: "replication-secret"}
+	client := newThreeNodeSQLClient(request)
+	client.ignoreWritable = true
+	endpointProvider := &recordingEndpointProvider{}
+	adapterInstance := NewWithSafetyProviders(client, endpointProvider, UnsupportedMaintenanceStore{}, passingFailoverSafety())
+	plan, err := adapterInstance.BuildPlan(context.Background(), request)
+	if err != nil {
+		t.Fatalf("build plan: %v", err)
+	}
+	request.Plan = &plan
+
+	execution, err := adapterInstance.Execute(context.Background(), request)
+	if err == nil || execution.Status != model.OperationBlocked || failureClass(err) != "fenced" {
+		t.Fatalf("unproven failover promotion execution=%+v err=%v class=%q", execution, err, failureClass(err))
+	}
+	if endpointProvider.transferCalls != 0 {
+		t.Fatalf("failover endpoint transferred before target writable postcondition: calls=%d", endpointProvider.transferCalls)
+	}
+	target := client.nodes[request.Resolved.Target.Hostname]
+	if !target.readOnly || !target.superReadOnly {
+		t.Fatalf("unproven failover target was not re-fenced: %+v", target)
+	}
+}
+
 func TestFailoverAuthorizationFailureLeavesCandidateReplicationAttached(t *testing.T) {
 	request := failoverRequestFixture()
 	request.Resolved.Credentials = adapter.Credentials{Username: "operator", Password: "operation-secret"}

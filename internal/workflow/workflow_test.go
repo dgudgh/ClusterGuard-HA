@@ -81,7 +81,7 @@ type recordingGate struct{ trace *[]string }
 
 func (gate recordingGate) CaptureObservation(_ context.Context, operation model.Operation) (ObservationToken, error) {
 	*gate.trace = append(*gate.trace, "gate:discover")
-	return ObservationToken{ClusterID: operation.ClusterID, ObservedAt: workflowTestObservation}, nil
+	return ObservationToken{ClusterID: operation.ClusterID, ObservedAt: workflowTestObservation, Digest: "sha256:workflow-test"}, nil
 }
 
 func (gate recordingGate) RevalidateObservation(context.Context, model.Operation, ObservationToken) error {
@@ -397,14 +397,56 @@ func TestTopologyDiscoveryRequiresCurrentClusterObservation(t *testing.T) {
 			}
 		})
 	}
-	gate := TopologyDiscovery{Reader: topologyReaderStub{found: true, snapshot: model.TopologySnapshot{ClusterID: clusterID, ObservedAt: workflowTestObservation}}}
+	instanceID := model.NewResourceID()
+	snapshot := model.TopologySnapshot{
+		ClusterID: clusterID,
+		Instances: []model.DatabaseInstance{{
+			ResourceMeta: model.ResourceMeta{ResourceID: instanceID, MetadataRevision: 7},
+			ClusterID:    clusterID, Engine: model.EngineMySQL, Hostname: "mysql-a", IPAddress: "192.0.2.10", Port: 3306,
+			Role: model.RolePrimary, Health: model.Health{State: model.HealthHealthy, ObservedAt: workflowTestObservation},
+			Replication:    model.ReplicationStatus{SourceIdentity: model.EngineIdentity{"server_uuid": "source-a"}, IOThread: model.ThreadRunning, SQLThread: model.ThreadRunning},
+			EngineMetadata: map[string]string{"version": "8.0.44", "gtid_executed": "source-a:1-10"},
+		}},
+		Anomalies:  []model.MetadataAnomaly{{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID(), MetadataRevision: 1}, ClusterID: clusterID, Engine: model.EngineMySQL, Kind: "test_warning", Severity: "warning", Message: "stable warning"}},
+		ObservedAt: workflowTestObservation,
+	}
+	gate := TopologyDiscovery{Reader: topologyReaderStub{found: true, snapshot: snapshot}}
 	token, err := gate.CaptureObservation(context.Background(), operation)
-	if err != nil || token.ClusterID != clusterID || !token.ObservedAt.Equal(workflowTestObservation) {
+	if err != nil || token.ClusterID != clusterID || !token.ObservedAt.Equal(workflowTestObservation) || token.Digest == "" || token.Snapshot.ClusterID != clusterID {
 		t.Fatalf("captured token = %+v err=%v", token, err)
 	}
-	gate.Reader = topologyReaderStub{found: true, snapshot: model.TopologySnapshot{ClusterID: clusterID, ObservedAt: workflowTestObservation.Add(time.Second)}}
-	if err := gate.RevalidateObservation(context.Background(), operation, token); err == nil {
-		t.Fatal("changed topology observation passed revalidation")
+	refreshed := snapshot
+	refreshed.ObservedAt = workflowTestObservation.Add(time.Second)
+	refreshed.Instances = append([]model.DatabaseInstance{}, snapshot.Instances...)
+	refreshed.Instances[0].MetadataRevision++
+	refreshed.Instances[0].Health.ObservedAt = refreshed.ObservedAt
+	refreshed.Instances[0].EngineMetadata = map[string]string{"version": "8.0.44", "gtid_executed": "source-a:1-20"}
+	refreshed.Anomalies = append([]model.MetadataAnomaly{}, snapshot.Anomalies...)
+	refreshed.Anomalies[0].ResourceID = model.NewResourceID()
+	refreshed.Anomalies[0].MetadataRevision++
+	gate.Reader = topologyReaderStub{found: true, snapshot: refreshed}
+	if err := gate.RevalidateObservation(context.Background(), operation, token); err != nil {
+		t.Fatalf("equivalent topology heartbeat failed revalidation: %v", err)
+	}
+	for _, change := range []struct {
+		name   string
+		mutate func(*model.DatabaseInstance)
+	}{
+		{name: "role", mutate: func(value *model.DatabaseInstance) { value.Role = model.RoleReplica }},
+		{name: "endpoint", mutate: func(value *model.DatabaseInstance) { value.IPAddress = "192.0.2.11" }},
+		{name: "replication source", mutate: func(value *model.DatabaseInstance) {
+			value.Replication.SourceIdentity = model.EngineIdentity{"server_uuid": "source-b"}
+		}},
+	} {
+		t.Run("rejects "+change.name+" change", func(t *testing.T) {
+			changed := refreshed
+			changed.Instances = append([]model.DatabaseInstance{}, refreshed.Instances...)
+			change.mutate(&changed.Instances[0])
+			gate.Reader = topologyReaderStub{found: true, snapshot: changed}
+			if err := gate.RevalidateObservation(context.Background(), operation, token); err == nil {
+				t.Fatalf("changed topology %s passed revalidation", change.name)
+			}
+		})
 	}
 }
 
@@ -490,7 +532,7 @@ func TestExecuteRunsGuardedWorkflowAndProducesAuditReport(t *testing.T) {
 			lockIndex = index
 		}
 	}
-	observationLabel := string(clusterID) + "@" + workflowTestObservation.Format(time.RFC3339Nano)
+	observationLabel := string(clusterID) + "@sha256:workflow-test"
 	if len(journal.Audits()) == 0 || !strings.Contains(journal.Audits()[0].Message, observationLabel) {
 		t.Fatalf("discover audit does not identify the pinned observation: %+v", journal.Audits())
 	}

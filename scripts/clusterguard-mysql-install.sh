@@ -25,17 +25,25 @@ client_file="${config_dir}/${port}-client.cnf"
 socket="${run_dir}/mysql.sock"
 service="clusterguard-mysql-${port}.service"
 managed_mysql="${install_root}/software/bin/mysql"
+mysql_client=""
+for candidate in "${managed_mysql}" "${CG_MYSQL_CLIENT:-}" "$(command -v mysql 2>/dev/null || true)"; do
+  if [[ -n "${candidate}" && -x "${candidate}" ]]; then
+    mysql_client="${candidate}"
+    break
+  fi
+done
 
 mkdir -p "${config_dir}" "${log_dir}" "${run_dir}" "$(dirname "${data_dir}")" "${install_root}"
 chmod 0750 "${config_dir}" "${log_dir}" "$(dirname "${data_dir}")"
 if ! getent group mysql >/dev/null 2>&1; then groupadd --system mysql; fi
 if ! id mysql >/dev/null 2>&1; then useradd --system --gid mysql --home-dir /nonexistent --shell /sbin/nologin mysql; fi
 
-if [[ -x "${managed_mysql}" && -f "${client_file}" ]] && "${managed_mysql}" --defaults-extra-file="${client_file}" --protocol=tcp --host=127.0.0.1 --port="${port}" --batch --skip-column-names -e 'SELECT @@server_uuid' >/dev/null 2>&1; then
-  "${managed_mysql}" --defaults-extra-file="${client_file}" --protocol=tcp --host=127.0.0.1 --port="${port}" <<'SQL'
+if [[ -n "${mysql_client}" && -f "${client_file}" ]] && "${mysql_client}" --defaults-extra-file="${client_file}" --protocol=tcp --host=127.0.0.1 --port="${port}" --batch --skip-column-names -e 'SELECT @@server_uuid' >/dev/null 2>&1; then
+  "${mysql_client}" --defaults-extra-file="${client_file}" --protocol=tcp --host=127.0.0.1 --port="${port}" <<'SQL'
 SET GLOBAL super_read_only=ON;
 SET GLOBAL read_only=ON;
 SQL
+  printf 'existing MySQL instance accepted for synchronization\n'
   exit 0
 fi
 

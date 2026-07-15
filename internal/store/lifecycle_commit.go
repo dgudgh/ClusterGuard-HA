@@ -172,15 +172,19 @@ func existingLifecycleNodeInstance(candidate snapshot, clusterID, nodeID model.R
 func commitLifecycleDataTarget(candidate *snapshot, task lifecycle.Task, target lifecycle.TargetPlan, verified model.DatabaseInstance, now time.Time) error {
 	rebuild := task.Plan.Action == lifecycle.ActionRebuild || target.Rebuild
 	var endpoint model.Endpoint
+	var preservedInstanceID model.ResourceID
 	if rebuild {
 		oldInstance, err := existingLifecycleNodeInstance(*candidate, task.ClusterID, target.NodeID)
 		if err != nil {
 			return err
 		}
-		oldKey, _ := identity.InstanceKey(oldInstance.Engine, oldInstance.EngineIdentity)
-		newKey, _ := identity.InstanceKey(verified.Engine, verified.EngineIdentity)
-		if oldKey == newKey {
-			return validationError("physical rebuild did not produce a new MySQL native identity")
+		oldKey, err := identity.InstanceKey(oldInstance.Engine, oldInstance.EngineIdentity)
+		if err != nil {
+			return validationError("registered lifecycle instance native identity is invalid")
+		}
+		newKey, err := identity.InstanceKey(verified.Engine, verified.EngineIdentity)
+		if err != nil {
+			return validationError("verified lifecycle instance native identity is invalid")
 		}
 		endpoint, _, err = endpointBoundToInstance(*candidate, task.ClusterID, oldInstance.ResourceID)
 		if err != nil {
@@ -189,7 +193,11 @@ func commitLifecycleDataTarget(candidate *snapshot, task lifecycle.Task, target 
 		if endpoint.ResourceID == "" {
 			return validationError("rebuild target has no active database endpoint to preserve")
 		}
-		removeLifecycleInstanceReferences(candidate, task.ClusterID, oldInstance.ResourceID)
+		if oldKey == newKey {
+			preservedInstanceID = oldInstance.ResourceID
+		} else {
+			removeLifecycleInstanceReferences(candidate, task.ClusterID, oldInstance.ResourceID)
+		}
 	}
 
 	verified.ResourceID = ""
@@ -200,7 +208,11 @@ func commitLifecycleDataTarget(candidate *snapshot, task lifecycle.Task, target 
 	if err != nil {
 		return fmt.Errorf("reconcile verified lifecycle instance: %w", err)
 	}
-	if !result.Created || result.Instance.NodeID != target.NodeID {
+	if preservedInstanceID != "" {
+		if !result.Updated || result.Created || result.Instance.ResourceID != preservedInstanceID || result.Instance.NodeID != target.NodeID {
+			return conflictError("verified MySQL native identity could not be resynchronized in place")
+		}
+	} else if !result.Created || result.Instance.NodeID != target.NodeID {
 		return conflictError("verified MySQL native identity already belongs to active metadata")
 	}
 
@@ -231,9 +243,127 @@ func commitLifecycleDataTarget(candidate *snapshot, task lifecycle.Task, target 
 	return nil
 }
 
+func lifecycleInstanceByNode(candidate snapshot, clusterID, nodeID model.ResourceID) (model.DatabaseInstance, bool, error) {
+	var selected model.DatabaseInstance
+	for _, instance := range candidate.Instances {
+		if instance.ClusterID != clusterID || instance.NodeID != nodeID {
+			continue
+		}
+		if selected.ResourceID != "" {
+			return model.DatabaseInstance{}, false, validationError("lifecycle target has multiple active database instances")
+		}
+		selected = instance
+	}
+	return selected, selected.ResourceID != "", nil
+}
+
+// patchLifecycleTopology keeps the last published primary visible while a
+// verified replica is committed. Node synchronization does not change the
+// primary, so deleting the snapshot creates a false fail-closed window where
+// the primary agent releases its VIP before discovery can publish again.
+func patchLifecycleTopology(candidate *snapshot, task lifecycle.Task, targets []lifecycleCommitTarget) error {
+	topology, found := candidate.TopologySnapshots[task.ClusterID]
+	if !found {
+		return nil
+	}
+	topology = cloneTopologySnapshot(topology)
+
+	replacements := make(map[model.ResourceID]model.DatabaseInstance)
+	for _, target := range targets {
+		if target.instance == nil {
+			continue
+		}
+		instance, instanceFound, err := lifecycleInstanceByNode(*candidate, task.ClusterID, target.plan.NodeID)
+		if err != nil {
+			return err
+		}
+		if !instanceFound {
+			return validationError("verified lifecycle target is missing after metadata commit")
+		}
+		replacements[target.plan.NodeID] = cloneInstance(instance)
+	}
+	if len(replacements) == 0 {
+		candidate.TopologySnapshots[task.ClusterID] = topology
+		return nil
+	}
+
+	resourceReplacements := make(map[model.ResourceID]model.ResourceID)
+	insertedNodes := make(map[model.ResourceID]struct{}, len(replacements))
+	instances := make([]model.DatabaseInstance, 0, len(topology.Instances)+len(replacements))
+	for _, observed := range topology.Instances {
+		replacement, replace := replacements[observed.NodeID]
+		if !replace {
+			instances = append(instances, cloneInstance(observed))
+			continue
+		}
+		resourceReplacements[observed.ResourceID] = replacement.ResourceID
+		if _, inserted := insertedNodes[observed.NodeID]; inserted {
+			continue
+		}
+		instances = append(instances, replacement)
+		insertedNodes[observed.NodeID] = struct{}{}
+	}
+	for nodeID, replacement := range replacements {
+		if _, inserted := insertedNodes[nodeID]; inserted {
+			continue
+		}
+		instances = append(instances, replacement)
+	}
+	topology.Instances = instances
+
+	activeIDs := make(map[model.ResourceID]struct{}, len(instances))
+	for _, instance := range instances {
+		activeIDs[instance.ResourceID] = struct{}{}
+	}
+	type edge struct {
+		source model.ResourceID
+		target model.ResourceID
+	}
+	seenEdges := make(map[edge]struct{}, len(topology.Links))
+	links := make([]model.ReplicationLink, 0, len(topology.Links))
+	for _, link := range topology.Links {
+		if replacementID, replace := resourceReplacements[link.SourceInstanceID]; replace {
+			link.SourceInstanceID = replacementID
+		}
+		if replacementID, replace := resourceReplacements[link.TargetInstanceID]; replace {
+			link.TargetInstanceID = replacementID
+		}
+		if _, sourceActive := activeIDs[link.SourceInstanceID]; !sourceActive {
+			continue
+		}
+		if _, targetActive := activeIDs[link.TargetInstanceID]; !targetActive || link.SourceInstanceID == link.TargetInstanceID {
+			continue
+		}
+		key := edge{source: link.SourceInstanceID, target: link.TargetInstanceID}
+		if _, duplicate := seenEdges[key]; duplicate {
+			continue
+		}
+		seenEdges[key] = struct{}{}
+		links = append(links, cloneReplicationLink(link))
+	}
+	topology.Links = links
+
+	probes := make([]model.ProbeStatus, 0, len(topology.Probes))
+	for _, probe := range topology.Probes {
+		if replacementID, replace := resourceReplacements[probe.InstanceID]; replace {
+			probe.InstanceID = replacementID
+		}
+		if probe.InstanceID != "" {
+			if _, active := activeIDs[probe.InstanceID]; !active {
+				continue
+			}
+		}
+		probes = append(probes, probe)
+	}
+	topology.Probes = probes
+	candidate.TopologySnapshots[task.ClusterID] = topology
+	return nil
+}
+
 // Commit publishes a verified lifecycle result as one metadata transaction.
-// Physical node identity is preserved while a rebuilt database receives a new
-// engine-native identity and the existing endpoint is rebound atomically.
+// Physical node identity is preserved while a rebuilt database either keeps
+// its native identity for an in-place resync or receives a replacement native
+// identity. The existing endpoint is rebound atomically in both cases.
 func (repository *Repository) Commit(ctx context.Context, task lifecycle.Task, result lifecycle.ExecutionResult) error {
 	if ctx == nil {
 		return validationError("lifecycle commit context is required")
@@ -294,7 +424,9 @@ func (repository *Repository) Commit(ctx context.Context, task lifecycle.Task, r
 		}
 	}
 
-	delete(next.TopologySnapshots, task.ClusterID)
+	if err := patchLifecycleTopology(&next, stored, targets); err != nil {
+		return fmt.Errorf("preserve lifecycle topology continuity: %w", err)
+	}
 	next.InventoryGenerations[task.ClusterID]++
 	updatedCluster := next.Clusters[task.ClusterID]
 	updatedCluster.Health = model.Health{State: model.HealthUnknown}
@@ -309,6 +441,5 @@ func (repository *Repository) Commit(ctx context.Context, task lifecycle.Task, r
 	if err := repository.commitSnapshotLocked(next); err != nil {
 		return err
 	}
-	repository.snapshot = next
 	return nil
 }

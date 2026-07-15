@@ -7,10 +7,11 @@ import (
 )
 
 type mysqlDialect struct {
-	StopReplication  string
-	ResetReplication string
-	StartReplication string
-	ModernSource     bool
+	StopReplication       string
+	ResetReplication      string
+	StartReplication      string
+	PublicKeySourceOption string
+	ModernSource          bool
 }
 
 func numericVersionComponent(value string) (int, error) {
@@ -52,8 +53,14 @@ func dialectForVersion(version string) (mysqlDialect, error) {
 			return mysqlDialect{}, fmt.Errorf("invalid MySQL version %q", version)
 		}
 		if patch < 22 {
-			return mysqlDialect{StopReplication: "STOP SLAVE", ResetReplication: "RESET SLAVE ALL", StartReplication: "START SLAVE"}, nil
+			return mysqlDialect{
+				StopReplication: "STOP SLAVE", ResetReplication: "RESET SLAVE ALL", StartReplication: "START SLAVE",
+				PublicKeySourceOption: "GET_MASTER_PUBLIC_KEY=1",
+			}, nil
 		}
 	}
-	return mysqlDialect{StopReplication: "STOP REPLICA", ResetReplication: "RESET REPLICA ALL", StartReplication: "START REPLICA", ModernSource: true}, nil
+	return mysqlDialect{
+		StopReplication: "STOP REPLICA", ResetReplication: "RESET REPLICA ALL", StartReplication: "START REPLICA",
+		PublicKeySourceOption: "GET_SOURCE_PUBLIC_KEY=1", ModernSource: true,
+	}, nil
 }

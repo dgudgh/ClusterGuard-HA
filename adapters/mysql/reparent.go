@@ -40,14 +40,18 @@ func buildChangeSourceStatement(version string, target model.DatabaseInstance, c
 			"SOURCE_PORT=" + strconv.Itoa(target.Port) + ", " +
 			"SOURCE_USER=" + mysqlStringLiteral(credentials.Username) + ", " +
 			"SOURCE_PASSWORD=" + mysqlStringLiteral(credentials.Password) + ", " +
-			"SOURCE_AUTO_POSITION=1", nil
+			"SOURCE_AUTO_POSITION=1, " + dialect.PublicKeySourceOption, nil
 	}
-	return "CHANGE MASTER TO " +
+	statement := "CHANGE MASTER TO " +
 		"MASTER_HOST=" + mysqlStringLiteral(host) + ", " +
 		"MASTER_PORT=" + strconv.Itoa(target.Port) + ", " +
 		"MASTER_USER=" + mysqlStringLiteral(credentials.Username) + ", " +
 		"MASTER_PASSWORD=" + mysqlStringLiteral(credentials.Password) + ", " +
-		"MASTER_AUTO_POSITION=1", nil
+		"MASTER_AUTO_POSITION=1"
+	if dialect.PublicKeySourceOption != "" {
+		statement += ", " + dialect.PublicKeySourceOption
+	}
+	return statement, nil
 }
 
 func waitForFollowerReplicationHealthy(ctx context.Context, runner SQLRunner, endpoint adapter.Endpoint, credentials adapter.Credentials, targetUUID string) (model.ReplicationStatus, error) {

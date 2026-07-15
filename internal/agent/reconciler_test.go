@@ -146,6 +146,35 @@ func TestReconcilerHoldsPreparedTransitionTargetWithoutRewritingReadOnlyState(t 
 	}
 }
 
+func TestReconcilerHoldsControlledTransitionSourceWithoutMutatingRoleOrVIP(t *testing.T) {
+	for _, state := range []struct {
+		name          string
+		readOnly      bool
+		superReadOnly bool
+		ownsVIP       bool
+	}{
+		{name: "writable_source_with_vip", ownsVIP: true},
+		{name: "fenced_source_with_vip", readOnly: true, superReadOnly: true, ownsVIP: true},
+		{name: "fenced_source_after_vip_release", readOnly: true, superReadOnly: true},
+	} {
+		t.Run(state.name, func(t *testing.T) {
+			policy := reconcilePolicy()
+			vip := &reconcileVIPStub{owns: state.ownsVIP}
+			roles := &reconcileRoleStub{readOnly: state.readOnly, superReadOnly: state.superReadOnly}
+			decision := reconcileDecisionStub{response: ReconcileResponse{
+				ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileTransitionSource, LeaseID: model.NewResourceID(),
+			}}
+			results, err := NewReconciler(vip, roles, decision).ReconcileAll(context.Background(), map[model.ResourceID]ClusterPolicy{policy.ClusterID: policy})
+			if err != nil || len(results) != 1 || results[0].Action != ReconcileTransitionSource {
+				t.Fatalf("transition source results=%+v err=%v", results, err)
+			}
+			if vip.acquires != 0 || vip.releases != 0 || len(roles.persisted) != 0 {
+				t.Fatalf("transition source mutated state: vip=%+v roles=%+v", vip, roles)
+			}
+		})
+	}
+}
+
 func TestReconcilerTransitionTargetDoesNotPreemptControlledVIPTransfer(t *testing.T) {
 	policy := reconcilePolicy()
 	vip := &reconcileVIPStub{}
@@ -159,16 +188,27 @@ func TestReconcilerTransitionTargetDoesNotPreemptControlledVIPTransfer(t *testin
 	}
 }
 
-func TestReconcilerTransitionTargetFailsClosedOnPartialReadOnlyState(t *testing.T) {
-	policy := reconcilePolicy()
-	vip := &reconcileVIPStub{owns: true}
-	roles := &reconcileRoleStub{readOnly: true, superReadOnly: false}
-	decision := reconcileDecisionStub{response: ReconcileResponse{
-		ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileTransitionTarget, LeaseID: model.NewResourceID(),
-	}}
-	results, err := NewReconciler(vip, roles, decision).ReconcileAll(context.Background(), map[model.ResourceID]ClusterPolicy{policy.ClusterID: policy})
-	if err == nil || len(results) != 1 || results[0].Action != ReconcileSelfIsolate || vip.releases != 1 || len(roles.persisted) != 1 || !roles.persisted[0] {
-		t.Fatalf("partial transition results=%+v vip=%+v roles=%+v err=%v", results, vip, roles, err)
+func TestReconcilerDoesNotInterruptLeaseAuthorizedPartialReadOnlyTransition(t *testing.T) {
+	for _, state := range []struct {
+		name          string
+		readOnly      bool
+		superReadOnly bool
+	}{
+		{name: "read_only_remains_on", readOnly: true, superReadOnly: false},
+		{name: "super_read_only_remains_on", readOnly: false, superReadOnly: true},
+	} {
+		t.Run(state.name, func(t *testing.T) {
+			policy := reconcilePolicy()
+			vip := &reconcileVIPStub{owns: true}
+			roles := &reconcileRoleStub{readOnly: state.readOnly, superReadOnly: state.superReadOnly}
+			decision := reconcileDecisionStub{response: ReconcileResponse{
+				ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileTransitionTarget, LeaseID: model.NewResourceID(),
+			}}
+			results, err := NewReconciler(vip, roles, decision).ReconcileAll(context.Background(), map[model.ResourceID]ClusterPolicy{policy.ClusterID: policy})
+			if err != nil || len(results) != 1 || results[0].Action != ReconcileTransitionTarget || vip.releases != 1 || len(roles.persisted) != 0 {
+				t.Fatalf("partial transition results=%+v vip=%+v roles=%+v err=%v", results, vip, roles, err)
+			}
+		})
 	}
 }
 

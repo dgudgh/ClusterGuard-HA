@@ -33,6 +33,35 @@ func TestCoordinationLeasePersistsAcrossRepositoryRestart(t *testing.T) {
 	}
 }
 
+func TestCoordinationLeaseBatchUsesOneConsensusCommit(t *testing.T) {
+	repository := NewMemory()
+	consensus := &snapshotConsensusStub{apply: repository.ApplyReplicatedState}
+	if err := repository.SetSnapshotConsensus(consensus); err != nil {
+		t.Fatalf("set snapshot consensus: %v", err)
+	}
+	now := time.Date(2026, time.July, 14, 13, 0, 0, 0, time.UTC)
+	records := make([]coordination.LeaseRecord, 0, 6)
+	for index := 0; index < 6; index++ {
+		endpointID := model.NewResourceID()
+		records = append(records, coordination.LeaseRecord{
+			Lease: endpoint.Lease{
+				ResourceID: model.NewResourceID(), ClusterID: model.NewResourceID(), HAEndpointID: endpointID,
+				OperationID: endpointID, OwnerID: model.NewResourceID(), ExpiresAt: now.Add(30 * time.Second), Active: true,
+			},
+			CreatedAt: now, UpdatedAt: now,
+		})
+	}
+	if err := repository.ReplaceCoordinationLeases(records); err != nil {
+		t.Fatalf("replace coordination leases: %v", err)
+	}
+	if len(consensus.commits) != 1 {
+		t.Fatalf("six lease records used %d consensus commits, want one", len(consensus.commits))
+	}
+	if persisted := repository.CoordinationLeases(); len(persisted) != len(records) {
+		t.Fatalf("persisted lease records=%d want=%d", len(persisted), len(records))
+	}
+}
+
 func TestCoordinationOperationLockPersistsAcrossRepositoryRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "metadata.json")
 	repository, err := Open(path)

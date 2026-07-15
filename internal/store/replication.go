@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -22,6 +23,10 @@ type snapshotConsensusSynchronizer interface {
 	Synchronize() error
 }
 
+type snapshotConsensusCommitSynchronizer interface {
+	SynchronizeForCommit() error
+}
+
 type snapshotConsensusProtocolGate interface {
 	SnapshotCASActive() bool
 }
@@ -33,6 +38,14 @@ const (
 )
 
 type snapshotRevisionMetadata struct {
+	StateRevision  *uint64 `json:"clusterguard_state_revision"`
+	StateDigest    string  `json:"clusterguard_state_digest"`
+	BaseDigest     string  `json:"clusterguard_base_digest"`
+	ContentsDigest string  `json:"-"`
+}
+
+type snapshotStateEnvelope struct {
+	snapshot
 	StateRevision *uint64 `json:"clusterguard_state_revision"`
 	StateDigest   string  `json:"clusterguard_state_digest"`
 	BaseDigest    string  `json:"clusterguard_base_digest"`
@@ -47,15 +60,17 @@ func validSnapshotDigest(value string) bool {
 }
 
 func canonicalSnapshotContents(value snapshot) ([]byte, error) {
-	raw, err := json.Marshal(value)
+	_, contents, err := normalizedSnapshotContents(value)
+	return contents, err
+}
+
+func normalizedSnapshotContents(value snapshot) (snapshot, []byte, error) {
+	normalized, err := normalizeSnapshot(value)
 	if err != nil {
-		return nil, err
+		return snapshot{}, nil, err
 	}
-	normalized, _, err := decodeSnapshotState(raw)
-	if err != nil {
-		return nil, err
-	}
-	return json.Marshal(normalized)
+	contents, err := json.Marshal(normalized)
+	return normalized, contents, err
 }
 
 func snapshotDigest(value snapshot) (string, error) {
@@ -67,27 +82,170 @@ func snapshotDigest(value snapshot) (string, error) {
 	return hex.EncodeToString(digest[:]), nil
 }
 
-func encodeSnapshotRevision(value snapshot, stateRevision uint64, baseDigest string) ([]byte, error) {
-	contents, err := canonicalSnapshotContents(value)
+func normalizeSnapshot(value snapshot) (snapshot, error) {
+	normalized := value
+	if normalized.Clusters == nil {
+		normalized.Clusters = map[model.ResourceID]model.DatabaseCluster{}
+	}
+	if normalized.Nodes == nil {
+		normalized.Nodes = map[model.ResourceID]model.DatabaseNode{}
+	}
+	if normalized.Instances == nil {
+		normalized.Instances = map[model.ResourceID]model.DatabaseInstance{}
+	}
+	if normalized.Endpoints == nil {
+		normalized.Endpoints = map[model.ResourceID]map[model.ResourceID]model.Endpoint{}
+	}
+	if normalized.HAEndpoints == nil {
+		normalized.HAEndpoints = map[model.ResourceID]model.HAEndpoint{}
+	}
+	if normalized.CoordinationLeases == nil {
+		normalized.CoordinationLeases = map[model.ResourceID]coordination.LeaseRecord{}
+	}
+	if normalized.OperationLocks == nil {
+		normalized.OperationLocks = map[model.ResourceID]coordination.OperationLockRecord{}
+	}
+	if normalized.LifecycleTasks == nil {
+		normalized.LifecycleTasks = map[model.ResourceID]lifecycle.Task{}
+	}
+	if normalized.ReplicationLinks == nil {
+		normalized.ReplicationLinks = map[model.ResourceID][]model.ReplicationLink{}
+	}
+	if normalized.MetricSamples == nil {
+		normalized.MetricSamples = map[model.ResourceID][]model.MetricSample{}
+	}
+	if normalized.TopologySnapshots == nil {
+		normalized.TopologySnapshots = map[model.ResourceID]model.TopologySnapshot{}
+	}
+	if normalized.ObservationWatermarks == nil {
+		normalized.ObservationWatermarks = map[model.ResourceID]time.Time{}
+	}
+	watermarksCopied := false
+	for clusterID, topology := range normalized.TopologySnapshots {
+		if !topology.ObservedAt.After(normalized.ObservationWatermarks[clusterID]) {
+			continue
+		}
+		if !watermarksCopied {
+			normalized.ObservationWatermarks = cloneTimeMap(normalized.ObservationWatermarks)
+			watermarksCopied = true
+		}
+		normalized.ObservationWatermarks[clusterID] = topology.ObservedAt
+	}
+	if normalized.InventoryGenerations == nil {
+		normalized.InventoryGenerations = map[model.ResourceID]uint64{}
+	}
+	inventoryCopied := false
+	for clusterID := range normalized.Clusters {
+		if normalized.InventoryGenerations[clusterID] != 0 {
+			continue
+		}
+		if !inventoryCopied {
+			normalized.InventoryGenerations = cloneUint64Map(normalized.InventoryGenerations)
+			inventoryCopied = true
+		}
+		normalized.InventoryGenerations[clusterID] = 1
+	}
+	if normalized.Anomalies == nil {
+		normalized.Anomalies = map[model.ResourceID]model.MetadataAnomaly{}
+	}
+	if normalized.Operations == nil {
+		normalized.Operations = map[model.ResourceID]model.OperationRecord{}
+	}
+	if normalized.OperationKeys == nil {
+		normalized.OperationKeys = map[string]model.ResourceID{}
+	}
+	operationsCopied := false
+	keysCopied := false
+	for resourceID, operation := range normalized.Operations {
+		changed := false
+		if operation.ResourceID == "" {
+			operation.ResourceID = resourceID
+			changed = true
+		}
+		if operation.Operation.ResourceID == "" {
+			operation.Operation.ResourceID = operation.ResourceID
+			changed = true
+		}
+		key := strings.TrimSpace(operation.IdempotencyKey)
+		if operation.ResourceID != resourceID || !model.ValidResourceID(resourceID) || key == "" {
+			return snapshot{}, fmt.Errorf("invalid operation record")
+		}
+		if existing, found := normalized.OperationKeys[key]; found && existing != resourceID {
+			return snapshot{}, fmt.Errorf("duplicate operation idempotency key")
+		}
+		if operation.IdempotencyKey != key {
+			operation.IdempotencyKey = key
+			changed = true
+		}
+		if changed {
+			if !operationsCopied {
+				normalized.Operations = cloneOperationMap(normalized.Operations)
+				operationsCopied = true
+			}
+			normalized.Operations[resourceID] = cloneOperationRecord(operation)
+		}
+		if normalized.OperationKeys[key] != resourceID {
+			if !keysCopied {
+				normalized.OperationKeys = cloneOperationKeyMap(normalized.OperationKeys)
+				keysCopied = true
+			}
+			normalized.OperationKeys[key] = resourceID
+		}
+	}
+	if normalized.Audits == nil {
+		normalized.Audits = []model.AuditEvent{}
+	}
+	if normalized.Reports == nil {
+		normalized.Reports = []model.Report{}
+	}
+	reportsCopied := false
+	for index := range normalized.Reports {
+		if normalized.Reports[index].Status == "" {
+			if !reportsCopied {
+				normalized.Reports = append([]model.Report{}, normalized.Reports...)
+				reportsCopied = true
+			}
+			normalized.Reports[index].Status = model.OperationIndeterminate
+			continue
+		}
+		if !terminalReportStatus(normalized.Reports[index].Status) {
+			return snapshot{}, fmt.Errorf("report status is not terminal")
+		}
+	}
+	return normalized, nil
+}
+
+func encodeSnapshotRevisionState(value snapshot, stateRevision uint64, baseDigest string) ([]byte, string, snapshot, error) {
+	normalized, contents, err := normalizedSnapshotContents(value)
 	if err != nil {
-		return nil, err
+		return nil, "", snapshot{}, err
 	}
 	if len(contents) < 2 || contents[0] != '{' || contents[len(contents)-1] != '}' {
-		return nil, fmt.Errorf("metadata snapshot must encode as an object")
+		return nil, "", snapshot{}, fmt.Errorf("metadata snapshot must encode as an object")
 	}
 	digest := sha256.Sum256(contents)
 	stateDigest := hex.EncodeToString(digest[:])
 	prefix := fmt.Sprintf(`{"%s":%d,"%s":"%s",`, snapshotStateRevisionField, stateRevision, snapshotStateDigestField, stateDigest)
 	if baseDigest != "" {
 		if !validSnapshotDigest(baseDigest) {
-			return nil, fmt.Errorf("metadata snapshot base digest is invalid")
+			return nil, "", snapshot{}, fmt.Errorf("metadata snapshot base digest is invalid")
 		}
 		prefix = fmt.Sprintf(`{"%s":%d,"%s":"%s","%s":"%s",`, snapshotStateRevisionField, stateRevision, snapshotStateDigestField, stateDigest, snapshotBaseDigestField, baseDigest)
 	}
 	encoded := make([]byte, 0, len(prefix)+len(contents)-1)
 	encoded = append(encoded, prefix...)
 	encoded = append(encoded, contents[1:]...)
-	return encoded, nil
+	return encoded, stateDigest, normalized, nil
+}
+
+func encodeSnapshotRevisionWithDigest(value snapshot, stateRevision uint64, baseDigest string) ([]byte, string, error) {
+	contents, digest, _, err := encodeSnapshotRevisionState(value, stateRevision, baseDigest)
+	return contents, digest, err
+}
+
+func encodeSnapshotRevision(value snapshot, stateRevision uint64, baseDigest string) ([]byte, error) {
+	contents, _, err := encodeSnapshotRevisionWithDigest(value, stateRevision, baseDigest)
+	return contents, err
 }
 
 func encodeConsensusSnapshot(value, base snapshot, stateRevision uint64) ([]byte, error) {
@@ -101,17 +259,51 @@ func encodeConsensusSnapshot(value, base snapshot, stateRevision uint64) ([]byte
 	return encodeSnapshotRevision(value, stateRevision, baseDigest)
 }
 
+func snapshotPayload(contents []byte) ([]byte, error) {
+	marker := []byte(`"clusters":`)
+	index := bytes.Index(contents, marker)
+	if index < 0 {
+		return nil, fmt.Errorf("metadata snapshot payload is missing")
+	}
+	previous := index - 1
+	for previous >= 0 {
+		switch contents[previous] {
+		case ' ', '\t', '\r', '\n':
+			previous--
+			continue
+		}
+		break
+	}
+	if previous < 0 || (contents[previous] != '{' && contents[previous] != ',') {
+		return nil, fmt.Errorf("metadata snapshot payload is missing")
+	}
+	payload := make([]byte, 1+len(contents)-index)
+	payload[0] = '{'
+	copy(payload[1:], contents[index:])
+	return payload, nil
+}
+
+func digestSnapshotPayload(contents []byte) (string, error) {
+	payload, err := snapshotPayload(contents)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(payload)
+	return hex.EncodeToString(digest[:]), nil
+}
+
 func decodeSnapshotState(contents []byte) (snapshot, snapshotRevisionMetadata, error) {
-	raw := map[string]json.RawMessage{}
-	if err := json.Unmarshal(contents, &raw); err != nil {
+	if _, err := snapshotPayload(contents); err != nil {
 		return snapshot{}, snapshotRevisionMetadata{}, err
 	}
-	if _, found := raw["clusters"]; !found {
-		return snapshot{}, snapshotRevisionMetadata{}, fmt.Errorf("metadata snapshot payload is missing")
-	}
-	metadata := snapshotRevisionMetadata{}
-	if err := json.Unmarshal(contents, &metadata); err != nil {
+	envelope := snapshotStateEnvelope{}
+	if err := json.Unmarshal(contents, &envelope); err != nil {
 		return snapshot{}, snapshotRevisionMetadata{}, err
+	}
+	metadata := snapshotRevisionMetadata{
+		StateRevision: envelope.StateRevision,
+		StateDigest:   envelope.StateDigest,
+		BaseDigest:    envelope.BaseDigest,
 	}
 	metadata.StateDigest = strings.ToLower(strings.TrimSpace(metadata.StateDigest))
 	metadata.BaseDigest = strings.ToLower(strings.TrimSpace(metadata.BaseDigest))
@@ -122,109 +314,25 @@ func decodeSnapshotState(contents []byte) (snapshot, snapshotRevisionMetadata, e
 		return snapshot{}, snapshotRevisionMetadata{}, fmt.Errorf("metadata snapshot base digest is invalid")
 	}
 
-	decoded := snapshot{}
-	if err := json.Unmarshal(contents, &decoded); err != nil {
+	decoded, err := normalizeSnapshot(envelope.snapshot)
+	if err != nil {
 		return snapshot{}, snapshotRevisionMetadata{}, err
 	}
-	if decoded.Clusters == nil {
-		decoded.Clusters = map[model.ResourceID]model.DatabaseCluster{}
-	}
-	if decoded.Nodes == nil {
-		decoded.Nodes = map[model.ResourceID]model.DatabaseNode{}
-	}
-	if decoded.Instances == nil {
-		decoded.Instances = map[model.ResourceID]model.DatabaseInstance{}
-	}
-	if decoded.Endpoints == nil {
-		decoded.Endpoints = map[model.ResourceID]map[model.ResourceID]model.Endpoint{}
-	}
-	if decoded.HAEndpoints == nil {
-		decoded.HAEndpoints = map[model.ResourceID]model.HAEndpoint{}
-	}
-	if decoded.CoordinationLeases == nil {
-		decoded.CoordinationLeases = map[model.ResourceID]coordination.LeaseRecord{}
-	}
-	if decoded.OperationLocks == nil {
-		decoded.OperationLocks = map[model.ResourceID]coordination.OperationLockRecord{}
-	}
-	if decoded.LifecycleTasks == nil {
-		decoded.LifecycleTasks = map[model.ResourceID]lifecycle.Task{}
-	}
-	if decoded.ReplicationLinks == nil {
-		decoded.ReplicationLinks = map[model.ResourceID][]model.ReplicationLink{}
-	}
-	if decoded.MetricSamples == nil {
-		decoded.MetricSamples = map[model.ResourceID][]model.MetricSample{}
-	}
-	if decoded.TopologySnapshots == nil {
-		decoded.TopologySnapshots = map[model.ResourceID]model.TopologySnapshot{}
-	}
-	if decoded.ObservationWatermarks == nil {
-		decoded.ObservationWatermarks = map[model.ResourceID]time.Time{}
-	}
-	for clusterID, topology := range decoded.TopologySnapshots {
-		if topology.ObservedAt.After(decoded.ObservationWatermarks[clusterID]) {
-			decoded.ObservationWatermarks[clusterID] = topology.ObservedAt
-		}
-	}
-	if decoded.InventoryGenerations == nil {
-		decoded.InventoryGenerations = map[model.ResourceID]uint64{}
-	}
-	for clusterID := range decoded.Clusters {
-		if decoded.InventoryGenerations[clusterID] == 0 {
-			decoded.InventoryGenerations[clusterID] = 1
-		}
-	}
-	if decoded.Anomalies == nil {
-		decoded.Anomalies = map[model.ResourceID]model.MetadataAnomaly{}
-	}
-	if decoded.Operations == nil {
-		decoded.Operations = map[model.ResourceID]model.OperationRecord{}
-	}
-	if decoded.OperationKeys == nil {
-		decoded.OperationKeys = map[string]model.ResourceID{}
-	}
-	for resourceID, operation := range decoded.Operations {
-		if operation.ResourceID == "" {
-			operation.ResourceID = resourceID
-		}
-		if operation.Operation.ResourceID == "" {
-			operation.Operation.ResourceID = operation.ResourceID
-		}
-		key := strings.TrimSpace(operation.IdempotencyKey)
-		if operation.ResourceID != resourceID || !model.ValidResourceID(resourceID) || key == "" {
-			return snapshot{}, snapshotRevisionMetadata{}, fmt.Errorf("invalid operation record")
-		}
-		if existing, found := decoded.OperationKeys[key]; found && existing != resourceID {
-			return snapshot{}, snapshotRevisionMetadata{}, fmt.Errorf("duplicate operation idempotency key")
-		}
-		operation.IdempotencyKey = key
-		decoded.Operations[resourceID] = cloneOperationRecord(operation)
-		decoded.OperationKeys[key] = resourceID
-	}
-	if decoded.Audits == nil {
-		decoded.Audits = []model.AuditEvent{}
-	}
-	if decoded.Reports == nil {
-		decoded.Reports = []model.Report{}
-	}
-	for index := range decoded.Reports {
-		if decoded.Reports[index].Status == "" {
-			decoded.Reports[index].Status = model.OperationIndeterminate
-			continue
-		}
-		if !terminalReportStatus(decoded.Reports[index].Status) {
-			return snapshot{}, snapshotRevisionMetadata{}, fmt.Errorf("report status is not terminal")
-		}
-	}
 	if metadata.StateDigest != "" {
-		actualDigest, err := snapshotDigest(decoded)
+		actualDigest, err := digestSnapshotPayload(contents)
 		if err != nil {
 			return snapshot{}, snapshotRevisionMetadata{}, err
 		}
 		if actualDigest != metadata.StateDigest {
 			return snapshot{}, snapshotRevisionMetadata{}, fmt.Errorf("metadata snapshot state digest does not match contents")
 		}
+		metadata.ContentsDigest = actualDigest
+	} else {
+		actualDigest, err := snapshotDigest(decoded)
+		if err != nil {
+			return snapshot{}, snapshotRevisionMetadata{}, err
+		}
+		metadata.ContentsDigest = actualDigest
 	}
 	return decoded, metadata, nil
 }
@@ -262,6 +370,10 @@ func (repository *Repository) ApplyReplicatedState(contents []byte) error {
 	return repository.applyReplicatedState(contents, false)
 }
 
+// ApplyValidatesReplicatedState tells the Raft FSM that Apply performs the
+// same fail-closed validation before changing repository state.
+func (*Repository) ApplyValidatesReplicatedState() bool { return true }
+
 func (repository *Repository) RestoreReplicatedState(contents []byte) error {
 	return repository.applyReplicatedState(contents, true)
 }
@@ -273,9 +385,12 @@ func (repository *Repository) applyReplicatedState(contents []byte, authoritativ
 	}
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
-	currentDigest, err := snapshotDigest(repository.snapshot)
-	if err != nil {
-		return err
+	currentDigest := repository.stateDigest
+	if currentDigest == "" {
+		currentDigest, err = snapshotDigest(repository.snapshot)
+		if err != nil {
+			return err
+		}
 	}
 	if !authoritative && metadata.StateDigest != "" && metadata.StateDigest == currentDigest {
 		if reflect.DeepEqual(decoded, repository.snapshot) {
@@ -287,11 +402,24 @@ func (repository *Repository) applyReplicatedState(contents []byte, authoritativ
 	if metadata.StateRevision != nil {
 		nextRevision = *metadata.StateRevision
 	}
-	if !authoritative && metadata.BaseDigest != "" && metadata.BaseDigest != currentDigest {
+	if !authoritative && metadata.StateRevision != nil {
+		switch {
+		case *metadata.StateRevision < repository.stateRevision:
+			return conflictError("replicated metadata revision %d is older than local revision %d", *metadata.StateRevision, repository.stateRevision)
+		case *metadata.StateRevision == repository.stateRevision:
+			if reflect.DeepEqual(decoded, repository.snapshot) {
+				return nil
+			}
+			return conflictError("replicated metadata revision %d conflicts with local state", *metadata.StateRevision)
+		}
+		// A Raft log entry with a newer revision is already committed. Because
+		// every entry contains the complete state, it is also the recovery path
+		// for a follower whose durable metadata drifted behind the applied log.
+		// Base-digest CAS is enforced before proposal; rejecting a newer committed
+		// entry here would advance Raft's applied index while leaving the follower
+		// permanently stale.
+	} else if !authoritative && metadata.BaseDigest != "" && metadata.BaseDigest != currentDigest {
 		return conflictError("replicated metadata base digest does not match local state")
-	}
-	if !authoritative && metadata.BaseDigest == "" && metadata.StateRevision != nil && *metadata.StateRevision < repository.stateRevision {
-		return conflictError("replicated metadata revision %d is older than local revision %d", *metadata.StateRevision, repository.stateRevision)
 	}
 	if err := repository.persistSnapshotRevisionLocked(decoded, nextRevision); err != nil {
 		return err
@@ -307,7 +435,15 @@ func (repository *Repository) commitSnapshotLocked(value snapshot) error {
 		return conflictError("snapshot CAS protocol is not activated on the controller quorum")
 	}
 	baseRevision := repository.stateRevision
-	contents, err := encodeConsensusSnapshot(value, repository.snapshot, baseRevision+1)
+	baseDigest := repository.stateDigest
+	if baseDigest == "" {
+		calculated, digestErr := snapshotDigest(repository.snapshot)
+		if digestErr != nil {
+			return fmt.Errorf("digest replicated metadata base snapshot: %w", digestErr)
+		}
+		baseDigest = calculated
+	}
+	contents, err := encodeSnapshotRevision(value, baseRevision+1, baseDigest)
 	if err != nil {
 		return fmt.Errorf("encode replicated metadata snapshot: %w", err)
 	}
@@ -319,7 +455,17 @@ func (repository *Repository) commitSnapshotLocked(value snapshot) error {
 	if repository.stateRevision != baseRevision {
 		return conflictError("metadata changed while waiting to synchronize controller state")
 	}
-	if synchronizer, ok := repository.consensus.(snapshotConsensusSynchronizer); ok {
+	if synchronizer, ok := repository.consensus.(snapshotConsensusCommitSynchronizer); ok {
+		repository.mu.Unlock()
+		synchronizeErr := synchronizer.SynchronizeForCommit()
+		repository.mu.Lock()
+		if synchronizeErr != nil {
+			return fmt.Errorf("synchronize controller state before commit: %w", synchronizeErr)
+		}
+		if repository.stateRevision != baseRevision {
+			return conflictError("metadata changed while synchronizing controller state")
+		}
+	} else if synchronizer, ok := repository.consensus.(snapshotConsensusSynchronizer); ok {
 		repository.mu.Unlock()
 		synchronizeErr := synchronizer.Synchronize()
 		repository.mu.Lock()

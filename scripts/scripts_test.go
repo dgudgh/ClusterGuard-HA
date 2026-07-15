@@ -177,6 +177,15 @@ func TestInstallerWritesProtectedEnvironmentAndDefersAgentReconcileByDefault(t *
 	if info.Mode().Perm() != 0o640 {
 		t.Fatalf("environment mode=%#o, want 0640", info.Mode().Perm())
 	}
+	for _, helper := range []string{"clusterguard-node-lifecycle.sh", "clusterguard-mysql-install.sh", "clusterguard-mysql-sync.sh"} {
+		info, err := os.Stat(filepath.Join(installRoot, "usr", "local", "libexec", helper))
+		if err != nil {
+			t.Fatalf("installed lifecycle helper %s: %v", helper, err)
+		}
+		if info.Mode().Perm() != 0o755 {
+			t.Fatalf("lifecycle helper %s mode=%#o, want 0755 so the unprivileged controller can execute it", helper, info.Mode().Perm())
+		}
+	}
 	logContents, err := os.ReadFile(systemctlLog)
 	if err != nil {
 		t.Fatal(err)
@@ -440,6 +449,56 @@ printf '%s\n' "${cluster}" >>"${CG_MATRIX_SMOKE_LOG}"
 	}
 }
 
+func TestHAMatrixRetriesTransientCandidateRead(t *testing.T) {
+	clusterID := "11111111-1111-4111-8111-111111111111"
+	var candidateReads int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodGet && strings.HasSuffix(request.URL.Path, "/candidates") {
+			if atomic.AddInt32(&candidateReads, 1) == 1 {
+				http.Error(writer, "temporarily unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			_, _ = fmt.Fprint(writer, `{"status":"ok","result":[{"instance_id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","eligible":true,"rank":1}]}`)
+			return
+		}
+		if request.Method == http.MethodPost && request.URL.Path == "/api/v1/operations/execute" {
+			_, _ = fmt.Fprint(writer, `{"status":"ok","result":{"resource_id":"operation-1","status":"succeeded"}}`)
+			return
+		}
+		http.NotFound(writer, request)
+	}))
+	defer server.Close()
+
+	fakeScripts := t.TempDir()
+	writeExecutable(t, filepath.Join(fakeScripts, "clusterguard-smoke.sh"), "#!/usr/bin/env bash\nexit 0\n")
+	command := exec.Command("bash", "clusterguard-ha-matrix.sh",
+		"--api", server.URL,
+		"--clusters", clusterID,
+		"--round-robin", "1",
+		"--random", "0",
+	)
+	command.Env = append(os.Environ(),
+		"CG_CONTROL_TOKEN=matrix-control",
+		"CG_APPROVAL_TOKEN=matrix-approval",
+		"CG_MATRIX_READ_ATTEMPTS=2",
+		"CG_MATRIX_READ_RETRY_INTERVAL=0",
+		"script_dir="+fakeScripts,
+	)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("HA matrix transient candidate read: %v\n%s", err, output)
+	}
+	if atomic.LoadInt32(&candidateReads) != 2 {
+		t.Fatalf("candidate reads=%d, want 2\n%s", candidateReads, output)
+	}
+	if !strings.Contains(string(output), "api_read_retry attempt=1") {
+		t.Fatalf("candidate read retry diagnostic missing:\n%s", output)
+	}
+	if !strings.Contains(string(output), "matrix_summary total=1 passed=1 failed=0") {
+		t.Fatalf("matrix summary missing after transient candidate read:\n%s", output)
+	}
+}
+
 func TestHAMatrixWaitsForSmokeConvergence(t *testing.T) {
 	clusterID := "11111111-1111-4111-8111-111111111111"
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -540,6 +599,134 @@ func TestHAMatrixRetriesFreshOperationAfterStalePlan(t *testing.T) {
 	}
 	if !strings.Contains(string(output), "matrix_summary total=1 passed=1 failed=0") {
 		t.Fatalf("matrix summary missing after stale-plan retry:\n%s", output)
+	}
+}
+
+func TestHAMatrixFollowsRaftLeaderForMutation(t *testing.T) {
+	clusterID := "11111111-1111-4111-8111-111111111111"
+	var followerPosts, leaderPosts int32
+	leader := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodPost && request.URL.Path == "/api/v1/operations/execute" {
+			atomic.AddInt32(&leaderPosts, 1)
+			_, _ = fmt.Fprint(writer, `{"status":"ok","result":{"resource_id":"operation-leader","status":"succeeded"}}`)
+			return
+		}
+		http.NotFound(writer, request)
+	}))
+	defer leader.Close()
+	follower := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodGet && strings.HasSuffix(request.URL.Path, "/candidates") {
+			_, _ = fmt.Fprint(writer, `{"status":"ok","result":[{"instance_id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","eligible":true,"rank":1}]}`)
+			return
+		}
+		if request.Method == http.MethodPost && request.URL.Path == "/api/v1/operations/execute" {
+			atomic.AddInt32(&followerPosts, 1)
+			writer.Header().Set("X-ClusterGuard-Leader-Address", "127.0.0.1:10009")
+			writer.Header().Set("X-ClusterGuard-Leader-API-Address", leader.URL)
+			writer.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = fmt.Fprint(writer, `{"status":"blocked","message":"mutation requires the current Raft leader with controller quorum"}`)
+			return
+		}
+		http.NotFound(writer, request)
+	}))
+	defer follower.Close()
+
+	fakeScripts := t.TempDir()
+	writeExecutable(t, filepath.Join(fakeScripts, "clusterguard-smoke.sh"), "#!/usr/bin/env bash\nexit 0\n")
+	command := exec.Command("bash", "clusterguard-ha-matrix.sh",
+		"--api", follower.URL,
+		"--clusters", clusterID,
+		"--round-robin", "1",
+		"--random", "0",
+	)
+	command.Env = append(os.Environ(),
+		"CG_CONTROL_TOKEN=matrix-control",
+		"CG_APPROVAL_TOKEN=matrix-approval",
+		"script_dir="+fakeScripts,
+	)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("HA matrix leader follow: %v\n%s", err, output)
+	}
+	if atomic.LoadInt32(&followerPosts) != 1 || atomic.LoadInt32(&leaderPosts) != 1 {
+		t.Fatalf("leader routing posts follower=%d leader=%d\n%s", followerPosts, leaderPosts, output)
+	}
+	if !strings.Contains(string(output), "api_leader_retry") || !strings.Contains(string(output), "to="+leader.URL) {
+		t.Fatalf("leader routing diagnostic missing:\n%s", output)
+	}
+}
+
+func TestHAMatrixReconcilesTimedOutMutationWithoutSubmittingAgain(t *testing.T) {
+	clusterID := "11111111-1111-4111-8111-111111111111"
+	operationID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	var posts, lookups int32
+	var keyMu sync.Mutex
+	operationKey := ""
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodGet && strings.HasSuffix(request.URL.Path, "/candidates") {
+			_, _ = fmt.Fprint(writer, `{"status":"ok","result":[{"instance_id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","eligible":true,"rank":1}]}`)
+			return
+		}
+		if request.Method == http.MethodPost && request.URL.Path == "/api/v1/operations/execute" {
+			atomic.AddInt32(&posts, 1)
+			payload := struct {
+				IdempotencyKey string `json:"idempotency_key"`
+			}{}
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				http.Error(writer, err.Error(), http.StatusBadRequest)
+				return
+			}
+			keyMu.Lock()
+			operationKey = payload.IdempotencyKey
+			keyMu.Unlock()
+			time.Sleep(1500 * time.Millisecond)
+			_, _ = fmt.Fprintf(writer, `{"status":"ok","result":{"resource_id":"%s","idempotency_key":"%s","status":"succeeded"}}`, operationID, payload.IdempotencyKey)
+			return
+		}
+		if request.Method == http.MethodGet && request.URL.Path == "/api/v1/operations" {
+			atomic.AddInt32(&lookups, 1)
+			keyMu.Lock()
+			persistedKey := operationKey
+			keyMu.Unlock()
+			if persistedKey == "" || request.URL.Query().Get("idempotency_key") != persistedKey {
+				http.Error(writer, "operation not found", http.StatusNotFound)
+				return
+			}
+			_, _ = fmt.Fprintf(writer, `{"status":"ok","result":{"resource_id":"%s","idempotency_key":"%s","status":"succeeded"}}`, operationID, persistedKey)
+			return
+		}
+		http.NotFound(writer, request)
+	}))
+	defer server.Close()
+
+	fakeScripts := t.TempDir()
+	writeExecutable(t, filepath.Join(fakeScripts, "clusterguard-smoke.sh"), "#!/usr/bin/env bash\nexit 0\n")
+	command := exec.Command("bash", "clusterguard-ha-matrix.sh",
+		"--api", server.URL,
+		"--clusters", clusterID,
+		"--round-robin", "1",
+		"--random", "0",
+		"--api-timeout", "1",
+	)
+	command.Env = append(os.Environ(),
+		"CG_CONTROL_TOKEN=matrix-control",
+		"CG_APPROVAL_TOKEN=matrix-approval",
+		"CG_MATRIX_RECONCILE_ATTEMPTS=2",
+		"CG_MATRIX_RECONCILE_INTERVAL=0",
+		"script_dir="+fakeScripts,
+	)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("HA matrix timeout reconciliation: %v posts=%d lookups=%d\n%s", err, posts, lookups, output)
+	}
+	if atomic.LoadInt32(&posts) != 1 {
+		t.Fatalf("timed out mutation was submitted %d times, want exactly once\n%s", posts, output)
+	}
+	if atomic.LoadInt32(&lookups) == 0 || !strings.Contains(string(output), "api_transport_reconciled operation="+operationID+" status=succeeded") {
+		t.Fatalf("timed out mutation was not reconciled by idempotency key: lookups=%d\n%s", lookups, output)
+	}
+	if !strings.Contains(string(output), "matrix_summary total=1 passed=1 failed=0") {
+		t.Fatalf("matrix summary missing after timeout reconciliation:\n%s", output)
 	}
 }
 

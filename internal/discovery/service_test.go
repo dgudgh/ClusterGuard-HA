@@ -51,6 +51,25 @@ type primaryFailureObserverStub struct {
 	observations []primaryFailureObservation
 }
 
+type discoveryConsensusStub struct {
+	repository *store.Repository
+	mu         sync.Mutex
+	commits    int
+}
+
+func (consensus *discoveryConsensusStub) Commit(state []byte) error {
+	consensus.mu.Lock()
+	consensus.commits++
+	consensus.mu.Unlock()
+	return consensus.repository.ApplyReplicatedState(state)
+}
+
+func (consensus *discoveryConsensusStub) count() int {
+	consensus.mu.Lock()
+	defer consensus.mu.Unlock()
+	return consensus.commits
+}
+
 func (observer *primaryFailureObserverStub) Record(clusterID model.ResourceID, failed bool, observedAt time.Time) {
 	observer.observations = append(observer.observations, primaryFailureObservation{
 		clusterID:  clusterID,
@@ -342,8 +361,45 @@ func TestRefreshBuildsLinksAndMetricsOnlyFromRegisteredInventory(t *testing.T) {
 	}
 
 	serviceType := reflect.TypeOf(service)
-	if serviceType.NumMethod() != 1 || serviceType.Method(0).Name != "Refresh" {
+	if got, want := exportedMethodNames(serviceType), []string{"Refresh", "RefreshBatch"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("service exposes a probe path outside inventory refresh: methods=%v", exportedMethodNames(serviceType))
+	}
+}
+
+func TestRefreshBatchPublishesAllClustersWithOneConsensusCommit(t *testing.T) {
+	repository := store.NewMemory()
+	candidate := newFakeAdapter()
+	clusterIDs := make([]model.ResourceID, 0, 3)
+	for index := 0; index < 3; index++ {
+		cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: fmt.Sprintf("batch-%d", index)})
+		if err != nil {
+			t.Fatalf("create cluster %d: %v", index, err)
+		}
+		host := fmt.Sprintf("batch-mysql-%d", index)
+		addEndpoint(t, repository, cluster.ResourceID, host, 3306+index, model.EndpointDatabase, true)
+		candidate.results[host] = discoveredInstance(host, 3306+index, fmt.Sprintf("batch-native-%d", index), model.RolePrimary, "")
+		clusterIDs = append(clusterIDs, cluster.ResourceID)
+	}
+	consensus := &discoveryConsensusStub{repository: repository}
+	if err := repository.SetSnapshotConsensus(consensus); err != nil {
+		t.Fatalf("set snapshot consensus: %v", err)
+	}
+	service := newTestService(t, repository, candidate)
+	published, err := service.RefreshBatch(context.Background(), clusterIDs)
+	if err != nil {
+		t.Fatalf("refresh cluster batch: %v", err)
+	}
+	if len(published) != len(clusterIDs) {
+		t.Fatalf("published clusters=%d want=%d", len(published), len(clusterIDs))
+	}
+	if commits := consensus.count(); commits != 1 {
+		t.Fatalf("service batch used %d consensus commits, want one", commits)
+	}
+	for _, clusterID := range clusterIDs {
+		snapshot, found := repository.TopologySnapshot(clusterID)
+		if !found || len(snapshot.Instances) != 1 {
+			t.Fatalf("cluster %s topology=%+v found=%t", clusterID, snapshot, found)
+		}
 	}
 }
 
@@ -1162,7 +1218,7 @@ func TestCanceledRefreshStopsWhileWaitingForClusterLock(t *testing.T) {
 	}
 }
 
-func TestRefreshCannotPublishWhileWorkflowHoldsClusterFence(t *testing.T) {
+func TestRefreshWaitsWithoutPublishingWhileWorkflowHoldsClusterFence(t *testing.T) {
 	repository := store.NewMemory()
 	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "shared-fence"})
 	if err != nil {
@@ -1171,6 +1227,8 @@ func TestRefreshCannotPublishWhileWorkflowHoldsClusterFence(t *testing.T) {
 	endpoint := addEndpoint(t, repository, cluster.ResourceID, "mysql-a", 3306, model.EndpointDatabase, true)
 	candidate := newFakeAdapter()
 	candidate.results[endpoint.Hostname] = discoveredInstance(endpoint.Hostname, endpoint.Port, "native-a", model.RolePrimary, "")
+	probeStarted := make(chan struct{}, 1)
+	candidate.started = probeStarted
 	registry := adapter.NewRegistry()
 	if err := registry.Register(candidate); err != nil {
 		t.Fatalf("register adapter: %v", err)
@@ -1185,11 +1243,94 @@ func TestRefreshCannotPublishWhileWorkflowHoldsClusterFence(t *testing.T) {
 		return adapter.Credentials{Username: "probe", Password: "secret"}, nil
 	}), func() time.Time { return discoveryTestTime }, WithPublicationFence(locks))
 
-	if _, err := service.Refresh(context.Background(), cluster.ResourceID); err == nil {
-		t.Fatal("discovery publication ignored the active workflow fence")
+	type refreshResult struct {
+		snapshot model.TopologySnapshot
+		err      error
+	}
+	result := make(chan refreshResult, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	go func() {
+		snapshot, refreshErr := service.Refresh(ctx, cluster.ResourceID)
+		result <- refreshResult{snapshot: snapshot, err: refreshErr}
+	}()
+
+	select {
+	case <-probeStarted:
+		t.Fatal("discovery probed the database while workflow held the cluster fence")
+	case <-time.After(20 * time.Millisecond):
+	}
+	select {
+	case value := <-result:
+		t.Fatalf("discovery did not wait for the active workflow fence: %v", value.err)
+	case <-time.After(20 * time.Millisecond):
 	}
 	if _, found := repository.TopologySnapshot(cluster.ResourceID); found {
 		t.Fatal("discovery published topology while workflow held the cluster fence")
+	}
+	release()
+	select {
+	case <-probeStarted:
+	case <-time.After(time.Second):
+		t.Fatal("discovery did not begin probing after the workflow fence was released")
+	}
+	select {
+	case value := <-result:
+		if value.err != nil || value.snapshot.ClusterID != cluster.ResourceID {
+			t.Fatalf("discovery did not resume after the workflow fence was released: snapshot=%+v err=%v", value.snapshot, value.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("discovery remained blocked after the workflow fence was released")
+	}
+}
+
+func TestRefreshBatchDoesNotProbeWhileWorkflowHoldsClusterFence(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "batch-fence"})
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	endpoint := addEndpoint(t, repository, cluster.ResourceID, "mysql-a", 3306, model.EndpointDatabase, true)
+	candidate := newFakeAdapter()
+	candidate.results[endpoint.Hostname] = discoveredInstance(endpoint.Hostname, endpoint.Port, "native-a", model.RolePrimary, "")
+	probeStarted := make(chan struct{}, 1)
+	candidate.started = probeStarted
+	registry := adapter.NewRegistry()
+	if err := registry.Register(candidate); err != nil {
+		t.Fatalf("register adapter: %v", err)
+	}
+	locks := workflowcore.NewMemoryLocks()
+	release, err := locks.Acquire(context.Background(), model.Operation{ClusterID: cluster.ResourceID})
+	if err != nil {
+		t.Fatalf("acquire workflow fence: %v", err)
+	}
+	service := New(registry, repository, CredentialResolverFunc(func(context.Context, model.DatabaseCluster, model.Endpoint) (adapter.Credentials, error) {
+		return adapter.Credentials{Username: "probe", Password: "secret"}, nil
+	}), func() time.Time { return discoveryTestTime }, WithPublicationFence(locks))
+
+	result := make(chan error, 1)
+	go func() {
+		_, refreshErr := service.RefreshBatch(context.Background(), []model.ResourceID{cluster.ResourceID})
+		result <- refreshErr
+	}()
+	select {
+	case <-probeStarted:
+		t.Fatal("batch discovery probed the database while workflow held the cluster fence")
+	case <-time.After(20 * time.Millisecond):
+	}
+	release()
+	select {
+	case <-probeStarted:
+	case <-time.After(time.Second):
+		t.Fatal("batch discovery did not begin probing after the workflow fence was released")
+	}
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("batch discovery after fence release: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("batch discovery remained blocked after the workflow fence was released")
 	}
 }
 

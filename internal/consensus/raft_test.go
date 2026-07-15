@@ -30,6 +30,27 @@ func (committedApplyWarning) Committed() bool { return true }
 
 type warningStateRecorder struct{ stateRecorder }
 
+type selfValidatingStateRecorder struct {
+	stateRecorder
+	validateCalls int
+	applyCalls    int
+}
+
+func (*selfValidatingStateRecorder) ApplyValidatesReplicatedState() bool { return true }
+
+func (recorder *selfValidatingStateRecorder) ValidateReplicatedState(state []byte) error {
+	recorder.validateCalls++
+	return recorder.stateRecorder.ValidateReplicatedState(state)
+}
+
+func (recorder *selfValidatingStateRecorder) ApplyReplicatedState(state []byte) error {
+	recorder.applyCalls++
+	if err := recorder.ValidateReplicatedState(state); err != nil {
+		return err
+	}
+	return recorder.stateRecorder.ApplyReplicatedState(state)
+}
+
 func (recorder *warningStateRecorder) ApplyReplicatedState(state []byte) error {
 	if err := recorder.stateRecorder.ApplyReplicatedState(state); err != nil {
 		return err
@@ -102,6 +123,18 @@ func TestReplicatedFSMNeverSuppressesCommittedState(t *testing.T) {
 	}
 	if !recorder.contains(string(localState)) {
 		t.Fatal("replayed local command was not applied")
+	}
+}
+
+func TestReplicatedFSMDoesNotRepeatValidationForSelfValidatingApply(t *testing.T) {
+	recorder := &selfValidatingStateRecorder{}
+	fsm := &replicatedFSM{machine: recorder}
+	state := []byte(`{"revision":1}`)
+	if response := fsm.Apply(&raft.Log{Data: state}); response != nil {
+		t.Fatalf("apply self-validating state: %v", response)
+	}
+	if recorder.applyCalls != 1 || recorder.validateCalls != 1 {
+		t.Fatalf("apply calls=%d validate calls=%d, want one of each", recorder.applyCalls, recorder.validateCalls)
 	}
 }
 
@@ -228,6 +261,13 @@ func TestThreeNodeRaftCommitsToFollowersAndLosesAuthorityWithoutQuorum(t *testin
 	if err := leader.Synchronize(); err != nil {
 		t.Fatalf("synchronize committed state: %v", err)
 	}
+	synchronizedIndex := leader.raft.LastIndex()
+	if err := leader.SynchronizeForCommit(); err != nil {
+		t.Fatalf("reuse term-scoped commit synchronization: %v", err)
+	}
+	if current := leader.raft.LastIndex(); current != synchronizedIndex {
+		t.Fatalf("same-term commit synchronization appended another barrier: index=%d want=%d", current, synchronizedIndex)
+	}
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		applied := 0
@@ -265,6 +305,11 @@ func TestThreeNodeRaftCommitsToFollowersAndLosesAuthorityWithoutQuorum(t *testin
 		if err != nil {
 			if synchronizeErr := leader.Synchronize(); synchronizeErr == nil {
 				t.Fatal("isolated leader synchronized state without a majority")
+			}
+			if commitSyncErr := leader.SynchronizeForCommit(); commitSyncErr == nil {
+				if commitErr := leader.Commit([]byte(`{"revision":2}`)); commitErr == nil {
+					t.Fatal("cached same-term synchronization allowed a commit without a majority")
+				}
 			}
 			return
 		}

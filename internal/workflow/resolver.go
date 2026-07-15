@@ -28,6 +28,10 @@ type OperationResolver interface {
 	Resolve(context.Context, adapter.OperationRequest) (adapter.OperationRequest, error)
 }
 
+type CapturedOperationResolver interface {
+	ResolveCaptured(context.Context, adapter.OperationRequest, model.TopologySnapshot) (adapter.OperationRequest, error)
+}
+
 type OperationResolverFunc func(context.Context, adapter.OperationRequest) (adapter.OperationRequest, error)
 
 func (resolver OperationResolverFunc) Resolve(ctx context.Context, request adapter.OperationRequest) (adapter.OperationRequest, error) {
@@ -56,6 +60,21 @@ func rejectsEndpointParameters(parameters map[string]string) bool {
 }
 
 func (resolver RepositoryResolver) Resolve(ctx context.Context, request adapter.OperationRequest) (adapter.OperationRequest, error) {
+	return resolver.resolve(ctx, request, nil)
+}
+
+func (resolver RepositoryResolver) ResolveCaptured(ctx context.Context, request adapter.OperationRequest, snapshot model.TopologySnapshot) (adapter.OperationRequest, error) {
+	return resolver.resolve(ctx, request, &snapshot)
+}
+
+func resolveCapturedOperation(ctx context.Context, resolver OperationResolver, request adapter.OperationRequest, observation ObservationToken) (adapter.OperationRequest, error) {
+	if captured, ok := resolver.(CapturedOperationResolver); ok && observation.Snapshot.ClusterID != "" {
+		return captured.ResolveCaptured(ctx, request, observation.Snapshot)
+	}
+	return resolver.Resolve(ctx, request)
+}
+
+func (resolver RepositoryResolver) resolve(ctx context.Context, request adapter.OperationRequest, captured *model.TopologySnapshot) (adapter.OperationRequest, error) {
 	if err := ctx.Err(); err != nil {
 		return adapter.OperationRequest{}, err
 	}
@@ -78,8 +97,15 @@ func (resolver RepositoryResolver) Resolve(ctx context.Context, request adapter.
 	if cluster.Engine != request.Operation.Engine {
 		return adapter.OperationRequest{}, fmt.Errorf("operation engine does not match the selected cluster")
 	}
-	snapshot, found := resolver.Reader.TopologySnapshot(cluster.ResourceID)
-	if !found || snapshot.ObservedAt.IsZero() {
+	snapshot := model.TopologySnapshot{}
+	snapshotFound := false
+	if captured != nil {
+		snapshot = *captured
+		snapshotFound = true
+	} else {
+		snapshot, snapshotFound = resolver.Reader.TopologySnapshot(cluster.ResourceID)
+	}
+	if !snapshotFound || snapshot.ObservedAt.IsZero() {
 		return adapter.OperationRequest{}, fmt.Errorf("a current topology observation is required")
 	}
 	if snapshot.ClusterID != cluster.ResourceID {

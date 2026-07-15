@@ -200,6 +200,7 @@ func TestAgentReconcileKeepsPreparedTransitionTargetOnlyAtExecuteStage(t *testin
 	}
 	lease.OperationID = record.ResourceID
 	lease.OwnerID = target.ResourceID
+	lease.PreviousOwnerID = formerPrimary.ResourceID
 	if err := repository.PutCoordinationLease(coordination.LeaseRecord{Lease: lease, CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
@@ -233,10 +234,21 @@ func TestAgentReconcileKeepsPreparedTransitionTargetOnlyAtExecuteStage(t *testin
 		t.Fatalf("execute-stage decision status=%d response=%+v body=%s", response.Code, decision, response.Body.String())
 	}
 
+	sourceRequest := agent.ReconcileRequest{ClusterID: cluster.ResourceID, InstanceID: formerPrimary.ResourceID, RequestedAt: time.Now().UTC(), Nonce: "execute-source-0001"}
+	if err := agent.SignReconcileRequest(&sourceRequest, "agent-secret"); err != nil {
+		t.Fatal(err)
+	}
+	response = callAgentReconcile(t, server, sourceRequest)
+	decision = agent.ReconcileResponse{}
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &decision) != nil || decision.Action != agent.ReconcileTransitionSource || decision.LeaseID != lease.ResourceID {
+		t.Fatalf("execute-stage source decision status=%d response=%+v body=%s", response.Code, decision, response.Body.String())
+	}
+
 	if err := repository.CommitHAEndpointOwner(cluster.ResourceID, lease.HAEndpointID, target.ResourceID, true); err != nil {
 		t.Fatal(err)
 	}
 	lease.OperationID = lease.HAEndpointID
+	lease.PreviousOwnerID = ""
 	if err := repository.PutCoordinationLease(coordination.LeaseRecord{Lease: lease, CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
@@ -250,6 +262,24 @@ func TestAgentReconcileKeepsPreparedTransitionTargetOnlyAtExecuteStage(t *testin
 	decision = agent.ReconcileResponse{}
 	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &decision) != nil || decision.Action != agent.ReconcileTransitionTarget || decision.LeaseID != lease.ResourceID {
 		t.Fatalf("finalized execute-stage decision status=%d response=%+v body=%s", response.Code, decision, response.Body.String())
+	}
+
+	record, err = repository.TransitionOperation(record.ResourceID, record.MetadataRevision, model.OperationTransition{
+		Stage: model.StageReport, Status: model.OperationSucceeded, Message: "operation completed before topology convergence",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.RequestedAt = time.Now().UTC()
+	request.Nonce = "stable-before-topology-0001"
+	request.Signature = ""
+	if err := agent.SignReconcileRequest(&request, "agent-secret"); err != nil {
+		t.Fatal(err)
+	}
+	response = callAgentReconcile(t, server, request)
+	decision = agent.ReconcileResponse{}
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &decision) != nil || decision.Action != agent.ReconcileKeepVIP || decision.LeaseID != lease.ResourceID {
+		t.Fatalf("stable handoff decision status=%d response=%+v body=%s", response.Code, decision, response.Body.String())
 	}
 }
 

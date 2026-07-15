@@ -75,6 +75,21 @@ func (server *Server) transitionAuthorizes(instanceID model.ResourceID, lease en
 	return false
 }
 
+func (server *Server) transitionSourceAuthorizes(instanceID model.ResourceID, lease endpoint.Lease) bool {
+	if lease.OperationID == lease.HAEndpointID || lease.PreviousOwnerID != instanceID {
+		return false
+	}
+	operation, found := server.store.Operation(lease.OperationID)
+	if !found || operation.TargetID != lease.OwnerID || operation.Status != model.OperationRunning ||
+		(operation.Stage != model.StageExecute && operation.Stage != model.StageVerify) {
+		return false
+	}
+	if operation.Operation.Kind != model.OperationSwitchover {
+		return false
+	}
+	return !model.ValidResourceID(operation.Plan.SourceID) || operation.Plan.SourceID == instanceID
+}
+
 func validBootstrapLeaseRecord(record coordination.LeaseRecord, now time.Time) bool {
 	updatedAt := record.UpdatedAt.UTC()
 	expiresAt := record.Lease.ExpiresAt.UTC()
@@ -131,6 +146,8 @@ func (server *Server) agentReconcileRoute(writer http.ResponseWriter, request *h
 			lease := leaseRecord.Lease
 			evidence.Lease = lease
 			evidence.TransitionTarget = server.transitionAuthorizes(payload.InstanceID, lease)
+			evidence.TransitionSource = server.transitionSourceAuthorizes(payload.InstanceID, lease)
+			evidence.StableTarget = lease.OperationID == lease.HAEndpointID && lease.OwnerID == payload.InstanceID && validBootstrapLeaseRecord(leaseRecord, now)
 			if snapshotFound && !evidence.TransitionTarget && evidence.CurrentPrimaryID == "" &&
 				evidence.CanonicalOwnerID == payload.InstanceID && evidence.EndpointOwnerID == payload.InstanceID &&
 				validBootstrapLeaseRecord(leaseRecord, now) {
@@ -144,10 +161,13 @@ func (server *Server) agentReconcileRoute(writer http.ResponseWriter, request *h
 		ClusterID: payload.ClusterID, InstanceID: payload.InstanceID, Reason: decision.Reason,
 		ValidUntil: now.Add(10 * time.Second), ControllerID: controllerID,
 	}
-	if decision.Action == coordination.SelfIsolationKeepVIP || decision.Action == coordination.SelfIsolationBootstrapPrimary {
+	if decision.Action == coordination.SelfIsolationKeepVIP || decision.Action == coordination.SelfIsolationHoldTransitionSource || decision.Action == coordination.SelfIsolationBootstrapPrimary {
 		response.Action = agent.ReconcileKeepVIP
 		if evidence.TransitionTarget {
 			response.Action = agent.ReconcileTransitionTarget
+		}
+		if decision.Action == coordination.SelfIsolationHoldTransitionSource {
+			response.Action = agent.ReconcileTransitionSource
 		}
 		if decision.Action == coordination.SelfIsolationBootstrapPrimary {
 			response.Action = agent.ReconcileBootstrapPrimary

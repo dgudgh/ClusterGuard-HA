@@ -99,7 +99,7 @@ install_file 0755 "${bundle_dir}/bin/clusterguard" /usr/local/bin/clusterguard
 install_file 0755 "${bundle_dir}/bin/cgctl" /usr/local/bin/cgctl
 install_file 0755 "${bundle_dir}/bin/clusterguard-agent" /usr/local/bin/clusterguard-agent
 for helper in clusterguard-node-lifecycle.sh clusterguard-mysql-install.sh clusterguard-mysql-sync.sh clusterguard-preflight.sh clusterguard-smoke.sh; do
-  install_file 0750 "${bundle_dir}/scripts/${helper}" "/usr/local/libexec/${helper}"
+	install_file 0755 "${bundle_dir}/scripts/${helper}" "/usr/local/libexec/${helper}"
 done
 install_file 0750 "${bundle_dir}/scripts/clusterguard-agent-stdio.sh" /usr/local/libexec/clusterguard-agent-stdio
 if [[ -x "${bundle_dir}/bin/jq" ]]; then

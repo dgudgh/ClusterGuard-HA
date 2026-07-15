@@ -91,7 +91,8 @@ func (provider *GuardedFailoverSafety) Fence(ctx context.Context, resolved adapt
 	}
 	lease, err := provider.leases.Acquire(ctx, endpoint.LeaseRequest{
 		ClusterID: resolved.Cluster.ResourceID, HAEndpointID: resource.haEndpoint.ResourceID,
-		OperationID: resolved.OperationID, OwnerID: resolved.Target.ResourceID, TTL: 30 * time.Second,
+		OperationID: resolved.OperationID, OwnerID: resolved.Target.ResourceID,
+		PreviousOwnerID: resolved.Primary.ResourceID, TTL: 30 * time.Second,
 	})
 	if err != nil {
 		return fmt.Errorf("acquire failover quorum lease: %w", err)

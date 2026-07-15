@@ -108,12 +108,13 @@ func (executor *lifecycleExecutorStub) Execute(_ context.Context, _ Request, _ P
 type lifecycleCommitterStub struct {
 	calls int
 	task  Task
+	err   error
 }
 
 func (committer *lifecycleCommitterStub) Commit(_ context.Context, task Task, _ ExecutionResult) error {
 	committer.calls++
 	committer.task = task
-	return nil
+	return committer.err
 }
 
 func executableLifecyclePlan() (Request, Plan) {
@@ -178,6 +179,30 @@ func TestManagerDoesNotCommitMetadataWhenVerificationFails(t *testing.T) {
 	task, err := manager.Execute(context.Background(), request, plan, ExecutionSecrets{}, "approved")
 	if err == nil || task.Status != TaskIndeterminate || committer.calls != 0 {
 		t.Fatalf("unverified task=%+v commit_calls=%d err=%v", task, committer.calls, err)
+	}
+}
+
+func TestManagerPersistsRedactedLifecycleExecutionFailure(t *testing.T) {
+	request, plan := executableLifecyclePlan()
+	store := &taskStoreStub{tasks: map[model.ResourceID]Task{}}
+	executor := &lifecycleExecutorStub{err: errors.New("logical dump failed with mysql-root-secret")}
+	manager := NewManager(store, lifecycleAuthorityStub{}, lifecycleSafetyStub{}, &lifecycleLockStub{}, &lifecycleApprovalStub{}, executor, &lifecycleCommitterStub{}, time.Now)
+
+	task, err := manager.Execute(context.Background(), request, plan, ExecutionSecrets{MySQLRootPassword: "mysql-root-secret"}, "approved")
+	if err == nil || task.Status != TaskIndeterminate || !strings.Contains(task.Message, "logical dump failed") || strings.Contains(task.Message, "mysql-root-secret") {
+		t.Fatalf("execution failure was not persisted safely: task=%+v err=%v", task, err)
+	}
+}
+
+func TestManagerPersistsRedactedLifecycleMetadataCommitFailure(t *testing.T) {
+	request, plan := executableLifecyclePlan()
+	store := &taskStoreStub{tasks: map[model.ResourceID]Task{}}
+	committer := &lifecycleCommitterStub{err: errors.New("metadata conflict for mysql-root-secret")}
+	manager := NewManager(store, lifecycleAuthorityStub{}, lifecycleSafetyStub{}, &lifecycleLockStub{}, &lifecycleApprovalStub{}, &lifecycleExecutorStub{result: ExecutionResult{Verified: true}}, committer, time.Now)
+
+	task, err := manager.Execute(context.Background(), request, plan, ExecutionSecrets{MySQLRootPassword: "mysql-root-secret"}, "approved")
+	if err == nil || task.Status != TaskIndeterminate || !strings.Contains(task.Message, "metadata conflict") || strings.Contains(task.Message, "mysql-root-secret") {
+		t.Fatalf("metadata commit failure was not persisted safely: task=%+v err=%v", task, err)
 	}
 }
 

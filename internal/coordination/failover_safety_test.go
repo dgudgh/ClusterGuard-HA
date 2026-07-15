@@ -160,6 +160,33 @@ func TestGuardedFailoverSafetyAcquiresLeaseBeforeFencingAndVerifiesIsolation(t *
 	}
 }
 
+func TestGuardedFailoverSafetyLeaseCanBeReusedByEndpointTransitionAuthorization(t *testing.T) {
+	resolved, inventory, window, now := failoverSafetyFixture(t)
+	recordStableFailure(window, resolved.Cluster.ResourceID, now)
+	calls := []string{}
+	leases := endpoint.NewMemoryLeaseStore(func() time.Time { return now })
+	transport := &failoverAgentTransportStub{calls: &calls, readOnly: true, superReadOnly: true}
+	provider := NewGuardedFailoverSafety(window, failoverAuthorityStub{}, inventory, leases, transport, "agent-secret", func() time.Time { return now })
+	if err := provider.Fence(context.Background(), resolved); err != nil {
+		t.Fatalf("fence old primary: %v", err)
+	}
+
+	lease, err := leases.Acquire(context.Background(), endpoint.LeaseRequest{
+		ClusterID:       resolved.Cluster.ResourceID,
+		HAEndpointID:    inventory.haEndpoint.ResourceID,
+		OperationID:     resolved.OperationID,
+		OwnerID:         resolved.Target.ResourceID,
+		PreviousOwnerID: resolved.Primary.ResourceID,
+		TTL:             30 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("reuse failover lease for endpoint transition authorization: %v", err)
+	}
+	if lease.PreviousOwnerID != resolved.Primary.ResourceID {
+		t.Fatalf("lease previous owner=%q, want %q", lease.PreviousOwnerID, resolved.Primary.ResourceID)
+	}
+}
+
 func TestGuardedFailoverSafetyRejectsPartialOldPrimaryIsolation(t *testing.T) {
 	resolved, inventory, window, now := failoverSafetyFixture(t)
 	recordStableFailure(window, resolved.Cluster.ResourceID, now)

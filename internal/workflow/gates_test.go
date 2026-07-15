@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	"clusterguard.io/ha/pkg/model"
 )
@@ -50,10 +51,54 @@ func TestMemoryLockReleaseIsIdempotent(t *testing.T) {
 	defer secondRelease()
 
 	firstRelease()
-	thirdRelease, err := locks.AcquireCluster(context.Background(), clusterID)
-	if err == nil {
-		thirdRelease()
-		t.Fatal("a repeated stale release removed the active replacement lock")
+	blockedContext, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if thirdRelease, err := locks.AcquireCluster(blockedContext, clusterID); !errors.Is(err, context.DeadlineExceeded) {
+		if err == nil {
+			thirdRelease()
+		}
+		t.Fatalf("a repeated stale release removed the active replacement lock: %v", err)
+	}
+}
+
+func TestMemoryLockWaitsForCurrentHolderAndHonorsContext(t *testing.T) {
+	locks := NewMemoryLocks()
+	clusterID := model.NewResourceID()
+	firstRelease, err := locks.AcquireCluster(context.Background(), clusterID)
+	if err != nil {
+		t.Fatalf("acquire first lock: %v", err)
+	}
+
+	type result struct {
+		release func()
+		err     error
+	}
+	acquired := make(chan result, 1)
+	waitContext, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	go func() {
+		release, acquireErr := locks.AcquireCluster(waitContext, clusterID)
+		acquired <- result{release: release, err: acquireErr}
+	}()
+
+	select {
+	case value := <-acquired:
+		if value.release != nil {
+			value.release()
+		}
+		t.Fatalf("contending lock did not wait: %v", value.err)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	firstRelease()
+	select {
+	case value := <-acquired:
+		if value.err != nil {
+			t.Fatalf("waiting lock failed after release: %v", value.err)
+		}
+		value.release()
+	case <-time.After(time.Second):
+		t.Fatal("waiting lock was not awakened after release")
 	}
 }
 

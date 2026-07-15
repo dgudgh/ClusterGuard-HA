@@ -66,7 +66,7 @@ func TestMemoryLeaseStoreAtomicallyHandsStableOwnershipToTransition(t *testing.T
 	if err != nil {
 		t.Fatalf("handoff stable lease: %v", err)
 	}
-	if transition.ResourceID == stable.ResourceID || transition.OwnerID != targetID || len(store.leases) != 1 {
+	if transition.ResourceID == stable.ResourceID || transition.OwnerID != targetID || transition.PreviousOwnerID != sourceID || len(store.leases) != 1 {
 		t.Fatalf("transition=%+v stable=%+v leases=%+v", transition, stable, store.leases)
 	}
 }
@@ -92,7 +92,7 @@ func TestMemoryLeaseStoreFinalizesTransitionWithoutWaitingForTTL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("finalize transition: %v", err)
 	}
-	if stable.ResourceID != transition.ResourceID || stable.OperationID != endpointID || stable.OwnerID != targetID || len(store.leases) != 1 {
+	if stable.ResourceID != transition.ResourceID || stable.OperationID != endpointID || stable.OwnerID != targetID || stable.PreviousOwnerID != "" || len(store.leases) != 1 {
 		t.Fatalf("stable=%+v transition=%+v leases=%+v", stable, transition, store.leases)
 	}
 	if _, err := store.Acquire(context.Background(), LeaseRequest{

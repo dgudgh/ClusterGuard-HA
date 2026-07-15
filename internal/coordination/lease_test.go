@@ -11,7 +11,8 @@ import (
 )
 
 type leaseRecordStore struct {
-	records map[model.ResourceID]LeaseRecord
+	records      map[model.ResourceID]LeaseRecord
+	replaceCalls int
 }
 
 func (store *leaseRecordStore) CoordinationLeases() []LeaseRecord {
@@ -29,6 +30,15 @@ func (store *leaseRecordStore) PutCoordinationLease(record LeaseRecord) error {
 
 func (store *leaseRecordStore) DeleteCoordinationLease(id model.ResourceID) error {
 	delete(store.records, id)
+	return nil
+}
+
+func (store *leaseRecordStore) ReplaceCoordinationLeases(records []LeaseRecord) error {
+	store.replaceCalls++
+	store.records = make(map[model.ResourceID]LeaseRecord, len(records))
+	for _, record := range records {
+		store.records[record.Lease.ResourceID] = record
+	}
 	return nil
 }
 
@@ -97,6 +107,77 @@ func TestQuorumLeaseRenewsSameStableOwnershipIntent(t *testing.T) {
 	}
 }
 
+func TestQuorumLeaseBatchesStableOwnershipRenewalsInOneDurableMutation(t *testing.T) {
+	now := time.Date(2026, time.July, 14, 12, 0, 0, 0, time.UTC)
+	records := &leaseRecordStore{records: map[model.ResourceID]LeaseRecord{}}
+	store := NewLeaseStore(records, authoritativeMembership(t), func() time.Time { return now })
+	requests := make([]endpoint.LeaseRequest, 0, 6)
+	for index := 0; index < 6; index++ {
+		clusterID, endpointID := model.NewResourceID(), model.NewResourceID()
+		requests = append(requests, endpoint.LeaseRequest{
+			ClusterID: clusterID, HAEndpointID: endpointID, OperationID: endpointID,
+			OwnerID: model.NewResourceID(), TTL: 30 * time.Second,
+		})
+	}
+	if err := store.AcquireStableBatch(context.Background(), requests); err != nil {
+		t.Fatalf("initial batch acquire: %v", err)
+	}
+	if records.replaceCalls != 1 || len(records.records) != len(requests) {
+		t.Fatalf("initial batch persisted calls=%d records=%d", records.replaceCalls, len(records.records))
+	}
+
+	now = now.Add(10 * time.Second)
+	if err := store.AcquireStableBatch(context.Background(), requests); err != nil {
+		t.Fatalf("batch renewal: %v", err)
+	}
+	if records.replaceCalls != 2 {
+		t.Fatalf("six lease renewals used %d durable mutations, want two total batch mutations", records.replaceCalls)
+	}
+	for _, record := range records.records {
+		if !record.Lease.ExpiresAt.Equal(now.Add(30*time.Second)) || !record.UpdatedAt.Equal(now) {
+			t.Fatalf("batch-renewed record=%+v", record)
+		}
+	}
+}
+
+func TestQuorumLeaseBatchIsolatesTransitionConflictToOneCluster(t *testing.T) {
+	now := time.Date(2026, time.July, 14, 12, 30, 0, 0, time.UTC)
+	records := &leaseRecordStore{records: map[model.ResourceID]LeaseRecord{}}
+	store := NewLeaseStore(records, authoritativeMembership(t), func() time.Time { return now })
+	conflictedEndpointID := model.NewResourceID()
+	conflicted := endpoint.LeaseRequest{
+		ClusterID: model.NewResourceID(), HAEndpointID: conflictedEndpointID, OperationID: conflictedEndpointID,
+		OwnerID: model.NewResourceID(), TTL: 30 * time.Second,
+	}
+	if _, err := store.Acquire(context.Background(), endpoint.LeaseRequest{
+		ClusterID: conflicted.ClusterID, HAEndpointID: conflicted.HAEndpointID,
+		OperationID: model.NewResourceID(), OwnerID: model.NewResourceID(), TTL: 30 * time.Second,
+	}); err != nil {
+		t.Fatalf("seed transition lease: %v", err)
+	}
+	healthyEndpointID := model.NewResourceID()
+	healthy := endpoint.LeaseRequest{
+		ClusterID: model.NewResourceID(), HAEndpointID: healthyEndpointID, OperationID: healthyEndpointID,
+		OwnerID: model.NewResourceID(), TTL: 30 * time.Second,
+	}
+	records.replaceCalls = 0
+	if err := store.AcquireStableBatch(context.Background(), []endpoint.LeaseRequest{conflicted, healthy}); !errors.Is(err, endpoint.ErrLeaseConflict) {
+		t.Fatalf("batch conflict error=%v", err)
+	}
+	if records.replaceCalls != 1 {
+		t.Fatalf("healthy lease was not persisted in one batch mutation: calls=%d", records.replaceCalls)
+	}
+	foundHealthy := false
+	for _, record := range records.records {
+		if record.Lease.ClusterID == healthy.ClusterID && record.Lease.OwnerID == healthy.OwnerID {
+			foundHealthy = true
+		}
+	}
+	if !foundHealthy {
+		t.Fatalf("healthy cluster lease was starved by unrelated transition: records=%+v", records.records)
+	}
+}
+
 func TestQuorumLeaseAtomicallyHandsStableOwnershipToTransition(t *testing.T) {
 	now := time.Date(2026, time.July, 13, 15, 0, 0, 0, time.UTC)
 	records := &leaseRecordStore{records: map[model.ResourceID]LeaseRecord{}}
@@ -116,7 +197,7 @@ func TestQuorumLeaseAtomicallyHandsStableOwnershipToTransition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handoff stable quorum lease: %v", err)
 	}
-	if transition.ResourceID == stable.ResourceID || transition.OwnerID != targetID || len(records.records) != 1 {
+	if transition.ResourceID == stable.ResourceID || transition.OwnerID != targetID || transition.PreviousOwnerID != sourceID || len(records.records) != 1 {
 		t.Fatalf("transition=%+v stable=%+v records=%+v", transition, stable, records.records)
 	}
 }
@@ -145,7 +226,7 @@ func TestQuorumLeaseFinalizesTransitionInOneDurableUpdate(t *testing.T) {
 		t.Fatalf("finalize transition: %v", err)
 	}
 	record := records.records[transition.ResourceID]
-	if len(records.records) != 1 || stable.ResourceID != transition.ResourceID || stable.OperationID != endpointID || stable.OwnerID != targetID || record.Lease != stable || !record.UpdatedAt.Equal(now) {
+	if len(records.records) != 1 || stable.ResourceID != transition.ResourceID || stable.OperationID != endpointID || stable.OwnerID != targetID || stable.PreviousOwnerID != "" || record.Lease != stable || !record.UpdatedAt.Equal(now) {
 		t.Fatalf("stable=%+v record=%+v records=%+v", stable, record, records.records)
 	}
 	if _, err := store.Acquire(context.Background(), endpoint.LeaseRequest{

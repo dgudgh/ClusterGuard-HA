@@ -52,7 +52,14 @@ func (OSLifecycleProcessRunner) Run(ctx context.Context, input []byte, environme
 	command.Stdout = stdout
 	command.Stderr = stderr
 	if err := command.Run(); err != nil {
-		return nil, fmt.Errorf("node lifecycle executor failed")
+		detail := strings.TrimSpace(stderr.buffer.String())
+		if detail == "" {
+			return nil, fmt.Errorf("node lifecycle executor failed")
+		}
+		if stderr.overflow {
+			detail += "\n[stderr truncated]"
+		}
+		return nil, fmt.Errorf("node lifecycle executor failed: %s", detail)
 	}
 	if stdout.overflow {
 		return nil, fmt.Errorf("node lifecycle output exceeded the allowed size")
@@ -151,7 +158,12 @@ func (executor *ShellExecutor) Execute(ctx context.Context, request Request, pla
 	)
 	output, err := executor.runner.Run(ctx, contents, environment, executor.script, "execute")
 	if err != nil {
-		return ExecutionResult{}, fmt.Errorf("node lifecycle executor failed")
+		detail := redactLifecycleMessage(err.Error(), secrets)
+		detail = strings.TrimSpace(strings.TrimPrefix(detail, "node lifecycle executor failed:"))
+		if detail == "" || detail == "node lifecycle executor failed" {
+			return ExecutionResult{}, fmt.Errorf("node lifecycle executor failed")
+		}
+		return ExecutionResult{}, fmt.Errorf("node lifecycle executor failed: %s", detail)
 	}
 	return decodeExecutorOutput(output, emit)
 }

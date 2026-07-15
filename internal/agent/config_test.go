@@ -15,18 +15,40 @@ func TestLoadConfigReadsSecureControllerReconcileSettings(t *testing.T) {
   "controller_ca_file":"/etc/clusterguard/tls/ca.crt",
   "controller_server_name":"clusterguard.internal",
   "reconcile_timeout_seconds":4,
+	"decision_state_directory":"/var/lib/clusterguard-agent/decisions",
   "clusters":[{"cluster_id":"11111111-1111-4111-8111-111111111111","instance_id":"22222222-2222-4222-8222-222222222222","vip":"192.0.2.100","interface":"ens160","prefix":24,"mysql_port":3306,"mysql_binary":"/opt/clusterguard/mysql/3306/software/bin/mysql"}]
 }`
 	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := LoadConfig(path)
-	if err != nil || len(loaded.ControllerURLs) != 3 || loaded.ControllerCAFile != "/etc/clusterguard/tls/ca.crt" || loaded.ControllerServerName != "clusterguard.internal" || loaded.ReconcileTimeoutSeconds != 4 {
+	if err != nil || len(loaded.ControllerURLs) != 3 || loaded.ControllerCAFile != "/etc/clusterguard/tls/ca.crt" || loaded.ControllerServerName != "clusterguard.internal" || loaded.ReconcileTimeoutSeconds != 4 || loaded.DecisionStateDirectory != "/var/lib/clusterguard-agent/decisions" {
 		t.Fatalf("agent controller configuration=%+v err=%v", loaded, err)
 	}
 	policy := loaded.Clusters["11111111-1111-4111-8111-111111111111"]
 	if policy.MySQLBinary != "/opt/clusterguard/mysql/3306/software/bin/mysql" {
 		t.Fatalf("per-cluster mysql binary=%q", policy.MySQLBinary)
+	}
+}
+
+func TestLoadConfigDefaultsAndValidatesDecisionStateDirectory(t *testing.T) {
+	t.Setenv("CG_AGENT_TEST_SECRET", "agent-secret")
+	directory := t.TempDir()
+	path := filepath.Join(directory, "agent.json")
+	contents := `{"shared_secret_env":"CG_AGENT_TEST_SECRET","controller_urls":["https://192.0.2.10:8088"],"clusters":[{"cluster_id":"11111111-1111-4111-8111-111111111111","instance_id":"22222222-2222-4222-8222-222222222222"}]}`
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadConfig(path)
+	if err != nil || loaded.DecisionStateDirectory != "/var/lib/clusterguard-agent/decisions" {
+		t.Fatalf("default decision state directory=%q err=%v", loaded.DecisionStateDirectory, err)
+	}
+	contents = `{"shared_secret_env":"CG_AGENT_TEST_SECRET","controller_urls":["https://192.0.2.10:8088"],"decision_state_directory":"relative","clusters":[{"cluster_id":"11111111-1111-4111-8111-111111111111","instance_id":"22222222-2222-4222-8222-222222222222"}]}`
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(path); err == nil {
+		t.Fatal("relative decision state directory was accepted")
 	}
 }
 

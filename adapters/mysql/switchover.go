@@ -283,7 +283,7 @@ func (adapterInstance *Adapter) switchoverPrecheck(ctx context.Context, request 
 		if !failedCheckNamed(checks, "writer_endpoint_provider") {
 			appendSwitchoverCheck(&checks, "writer_endpoint_provider", model.CheckFail, "writer endpoint provider does not support execution")
 		}
-	} else if !passedCheckNamed(checks, "writer_endpoint_provider") {
+	} else if !passedCheckNamed(checks, "writer_endpoint_provider") && !failedCheckNamed(checks, "writer_endpoint_provider") {
 		appendSwitchoverCheck(&checks, "writer_endpoint_provider", model.CheckFail, "writer endpoint provider did not return explicit ready evidence")
 	}
 	return checks, nil
@@ -393,11 +393,11 @@ func (adapterInstance *Adapter) switchoverPlan(ctx context.Context, request adap
 	steps := []model.PlanStep{
 		{Index: 1, Name: "revalidate_topology", Owner: "platform", TargetID: resolved.Cluster.ResourceID, Postcondition: "observation and resource revisions are unchanged"},
 		{Index: 2, Name: "validate_writer_endpoint", Owner: "endpoint", TargetID: resolved.Target.ResourceID, Postcondition: "endpoint provider is executable"},
-		{Index: 3, Name: "fence_source", Owner: "mysql", TargetID: resolved.Primary.ResourceID, Mutating: true, Postcondition: "source is read-only"},
-		{Index: 4, Name: "capture_source_gtid", Owner: "mysql", TargetID: resolved.Primary.ResourceID, Postcondition: "source GTID position is captured after fencing"},
-		{Index: 5, Name: "wait_target_gtid", Owner: "mysql", TargetID: resolved.Target.ResourceID, Postcondition: "target executed the fenced source GTID position"},
-		{Index: 6, Name: "stop_target_replication", Owner: "mysql", TargetID: resolved.Target.ResourceID, Mutating: true, Postcondition: "target replication is stopped"},
-		{Index: 7, Name: "authorize_target_transition", Owner: "endpoint", TargetID: resolved.Target.ResourceID, Mutating: true, Postcondition: "target has an active transition lease"},
+		{Index: 3, Name: "authorize_target_transition", Owner: "endpoint", TargetID: resolved.Target.ResourceID, Mutating: true, Postcondition: "source and target have an active transition lease"},
+		{Index: 4, Name: "fence_source", Owner: "mysql", TargetID: resolved.Primary.ResourceID, Mutating: true, Postcondition: "source is read-only"},
+		{Index: 5, Name: "capture_source_gtid", Owner: "mysql", TargetID: resolved.Primary.ResourceID, Postcondition: "source GTID position is captured after fencing"},
+		{Index: 6, Name: "wait_target_gtid", Owner: "mysql", TargetID: resolved.Target.ResourceID, Postcondition: "target executed the fenced source GTID position"},
+		{Index: 7, Name: "stop_target_replication", Owner: "mysql", TargetID: resolved.Target.ResourceID, Mutating: true, Postcondition: "target replication is stopped"},
 		{Index: 8, Name: "promote_target", Owner: "mysql", TargetID: resolved.Target.ResourceID, Mutating: true, Postcondition: "target is writable"},
 	}
 	followers := make([]model.DatabaseInstance, 0, len(resolved.Snapshot.Instances)-1)
@@ -428,7 +428,7 @@ func (adapterInstance *Adapter) switchoverPlan(ctx context.Context, request adap
 		SourceID:          resolved.Primary.ResourceID,
 		TargetID:          resolved.Target.ResourceID,
 		Stage:             model.StagePlan,
-		ObservationToken:  string(resolved.Cluster.ResourceID) + "@" + resolved.Snapshot.ObservedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00"),
+		ObservationToken:  resolvedObservationToken(&resolved),
 		ResourceRevisions: resourceRevisions,
 		Checks:            checks,
 		Steps:             steps,
@@ -462,7 +462,7 @@ func validateExecutionPlan(request adapter.OperationRequest) error {
 		return err
 	}
 	resolved := *request.Resolved
-	expectedObservation := string(resolved.Cluster.ResourceID) + "@" + resolved.Snapshot.ObservedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
+	expectedObservation := resolvedObservationToken(&resolved)
 	if plan.Digest == "" || digest != plan.Digest {
 		return fmt.Errorf("operation plan digest changed")
 	}
@@ -473,15 +473,15 @@ func validateExecutionPlan(request adapter.OperationRequest) error {
 	if plan.ObservationToken != expectedObservation {
 		return fmt.Errorf("operation plan observation token changed")
 	}
-	for resourceID, revision := range map[model.ResourceID]uint64{
-		resolved.Cluster.ResourceID: resolved.Cluster.MetadataRevision,
-	} {
-		if revision == 0 || plan.ResourceRevisions[resourceID] != revision {
+	for resourceID, revision := range map[model.ResourceID]uint64{resolved.Cluster.ResourceID: resolved.Cluster.MetadataRevision} {
+		if revision == 0 || plan.ResourceRevisions[resourceID] == 0 ||
+			(resolved.ObservationToken == "" && plan.ResourceRevisions[resourceID] != revision) {
 			return fmt.Errorf("operation plan resource revision changed")
 		}
 	}
 	for _, instance := range resolved.Snapshot.Instances {
-		if instance.MetadataRevision == 0 || plan.ResourceRevisions[instance.ResourceID] != instance.MetadataRevision {
+		if instance.MetadataRevision == 0 || plan.ResourceRevisions[instance.ResourceID] == 0 ||
+			(resolved.ObservationToken == "" && plan.ResourceRevisions[instance.ResourceID] != instance.MetadataRevision) {
 			return fmt.Errorf("operation plan follower resource revision changed")
 		}
 	}
@@ -976,7 +976,22 @@ func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request a
 		if err := adapterInstance.liveSwitchoverPrecheck(ctx, resolved); err != nil {
 			return executionFailure(request.Operation.ResourceID, started, model.OperationFailed, "pre_commit", err)
 		}
-		if err := adapterInstance.executor.Exec(ctx, sourceEndpoint, credentials, setSuperReadOnlyOn); err != nil {
+	}
+
+	mutationContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+	defer cancel()
+	authorization, err := adapterInstance.authorizeEndpointTransition(mutationContext, request, resolved)
+	if err != nil {
+		if sourceFenced {
+			return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("authorize target transition: %w", err))
+		}
+		return executionFailure(request.Operation.ResourceID, started, model.OperationFailed, "pre_commit", fmt.Errorf("authorize target transition: %w", err))
+	}
+	defer authorization.Cancel()
+	mutationContext = authorization.Context
+
+	if !sourceFenced {
+		if err := adapterInstance.executor.Exec(mutationContext, sourceEndpoint, credentials, setSuperReadOnlyOn); err != nil {
 			probeContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			defer cancel()
 			if fenced, probeErr := queryFencedState(probeContext, adapterInstance.runner, sourceEndpoint, credentials); probeErr != nil {
@@ -987,16 +1002,14 @@ func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request a
 			return executionFailure(request.Operation.ResourceID, started, model.OperationFailed, "pre_commit", fmt.Errorf("fence source: %w", err))
 		}
 		sourceFenced = true
-		if err := adapterInstance.executor.Exec(ctx, sourceEndpoint, credentials, setReadOnlyOn); err != nil {
+		if err := adapterInstance.executor.Exec(mutationContext, sourceEndpoint, credentials, setReadOnlyOn); err != nil {
 			return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("confirm source read-only state: %w", err))
 		}
 	}
-	if err := completeOperationStep(context.WithoutCancel(ctx), request, "fence_source", "source is read-only and fenced"); err != nil {
+	if err := completeOperationStep(context.WithoutCancel(mutationContext), request, "fence_source", "source is read-only and fenced"); err != nil {
 		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("persist source fencing progress: %w", err))
 	}
 
-	mutationContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
-	defer cancel()
 	rows, err := adapterInstance.runner.Query(mutationContext, sourceEndpoint, credentials, gtidPositionQuery)
 	if err != nil || len(rows) != 1 || strings.TrimSpace(rows[0]["gtid_executed"]) == "" {
 		if err == nil {
@@ -1017,13 +1030,6 @@ func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request a
 	if err := completeOperationStep(mutationContext, request, "wait_target_gtid", "target executed the fenced source GTID position"); err != nil {
 		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("persist target catch-up progress: %w", err))
 	}
-	authorization, err := adapterInstance.authorizeEndpointTransition(mutationContext, request, resolved)
-	if err != nil {
-		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("authorize target transition: %w", err))
-	}
-	defer authorization.Cancel()
-	mutationContext = authorization.Context
-
 	_, replicationConfigured, err := probeReplication(mutationContext, adapterInstance.runner, targetEndpoint, credentials)
 	if err != nil {
 		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("probe target replication before promotion: %w", err))
@@ -1049,16 +1055,23 @@ func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request a
 		return adapterInstance.failBeforeCandidatePromotion(mutationContext, request, resolved, started, fmt.Errorf("probe target writable state: %w", err))
 	}
 	if !targetWritable {
-		if err := adapterInstance.executor.Exec(mutationContext, targetEndpoint, credentials, setSuperReadOnlyOff); err != nil {
+		if err := adapterInstance.executor.Exec(mutationContext, targetEndpoint, credentials, setReadOnlyOff); err != nil {
 			if fenceErr := adapterInstance.fenceInstance(mutationContext, targetEndpoint, credentials); fenceErr != nil {
-				return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("prepare target promotion failed and target fencing failed: %w", fenceErr))
+				return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("target promotion failed (%v) and target fencing failed: %w", err, fenceErr))
 			}
 			return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("prepare target promotion: %w", err))
 		}
-		if err := adapterInstance.executor.Exec(mutationContext, targetEndpoint, credentials, setReadOnlyOff); err != nil {
-			_ = adapterInstance.fenceInstance(mutationContext, targetEndpoint, credentials)
-			return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("target promotion result is uncertain: %w", err))
+	}
+	targetWritable, err = queryWritableState(mutationContext, adapterInstance.runner, targetEndpoint, credentials)
+	if err != nil || !targetWritable {
+		postconditionErr := err
+		if postconditionErr == nil {
+			postconditionErr = fmt.Errorf("selected target remained read-only after promotion")
 		}
+		if fenceErr := adapterInstance.fenceInstance(mutationContext, targetEndpoint, credentials); fenceErr != nil {
+			return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("target writable postcondition failed (%v) and target fencing failed: %w", postconditionErr, fenceErr))
+		}
+		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("target writable postcondition failed: %w", postconditionErr))
 	}
 	if err := completeOperationStep(mutationContext, request, "promote_target", "selected target is writable"); err != nil {
 		_ = adapterInstance.fenceInstance(mutationContext, targetEndpoint, credentials)

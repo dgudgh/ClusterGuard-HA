@@ -41,6 +41,21 @@ func TestFormerPrimaryFastRejoinRequiresSubsetGTID(t *testing.T) {
 	}
 }
 
+func TestFormerPrimaryFastRejoinAcceptsReachableDegradedFencedNode(t *testing.T) {
+	request := formerPrimaryRejoinFixture()
+	request.Resolved.Target.Health = model.Health{
+		State:   model.HealthDegraded,
+		Summary: "MySQL instance is read-only with no replication source",
+	}
+	checks, err := NewWithEndpointProvider(nil, passingEndpointProvider()).Precheck(context.Background(), request)
+	if err != nil {
+		t.Fatalf("precheck: %v", err)
+	}
+	if !passedCheck(checks, "former_primary_read_only") || planHasBlockingChecks(checks) {
+		t.Fatalf("reachable fenced former primary was blocked: %+v", checks)
+	}
+}
+
 func TestFormerPrimaryWithErrantGTIDRequiresRebuild(t *testing.T) {
 	request := formerPrimaryRejoinFixture()
 	request.Resolved.Target.EngineMetadata["gtid_executed"] += "," + extraUUID + ":1"

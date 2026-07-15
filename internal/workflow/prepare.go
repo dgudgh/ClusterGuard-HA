@@ -3,7 +3,6 @@ package workflow
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"clusterguard.io/ha/pkg/adapter"
 	"clusterguard.io/ha/pkg/model"
@@ -134,7 +133,7 @@ func (service *Service) prepare(ctx context.Context, request adapter.OperationRe
 	if err != nil {
 		return record, nil, model.OperationPlan{}, err
 	}
-	observationLabel := fmt.Sprintf("%s@%s", observation.ClusterID, observation.ObservedAt.UTC().Format(time.RFC3339Nano))
+	observationLabel := observationLabel(observation)
 	if record.Observation != "" && record.Observation != observationLabel {
 		return record, nil, model.OperationPlan{}, fmt.Errorf("topology observation changed since the operation was created")
 	}
@@ -144,16 +143,17 @@ func (service *Service) prepare(ctx context.Context, request adapter.OperationRe
 	if err != nil {
 		return model.OperationRecord{}, nil, model.OperationPlan{}, err
 	}
-	request, err = service.resolver.Resolve(ctx, request)
+	request, err = resolveCapturedOperation(ctx, service.resolver, request, observation)
 	if err != nil {
 		return record, nil, model.OperationPlan{}, err
 	}
+	request.Resolved.ObservationToken = observationLabel
 	checks, err := candidate.Precheck(ctx, request)
 	if err != nil {
 		return record, nil, model.OperationPlan{}, err
 	}
 	record, err = service.advanceDurable(record.ResourceID, model.StagePrecheck, model.OperationTransition{
-		Status: model.OperationPlanned, Message: "adapter precheck completed",
+		Status: model.OperationPlanned, Precheck: append([]model.Check{}, checks...), Message: "adapter precheck completed",
 	})
 	if err != nil {
 		return model.OperationRecord{}, nil, model.OperationPlan{}, err

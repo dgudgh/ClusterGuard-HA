@@ -126,3 +126,41 @@ func TestCommitHAEndpointOwnerAtomicallyFollowsVerifiedPhysicalOwner(t *testing.
 		t.Fatalf("canonical HA endpoint owner resource=%+v endpoint=%+v", updated, updatedEndpoint)
 	}
 }
+
+func TestCommitObservedHAEndpointOwnerRejectsStaleObservation(t *testing.T) {
+	repository := NewMemory()
+	cluster, source := seedHAEndpointCluster(t, repository, "payments", 3306)
+	targetResult, err := repository.ReconcileInstance(model.DatabaseInstance{
+		ClusterID: cluster.ResourceID, Engine: model.EngineMySQL,
+		EngineIdentity: model.EngineIdentity{"server_uuid": "payments-target-uuid"},
+		Hostname:       "payments-target", IPAddress: "192.0.2.11", Port: 3306,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource, endpoint, err := repository.PutHAEndpoint(HAEndpointSpec{
+		ClusterID: cluster.ResourceID, Kind: model.EndpointVIP, IPAddress: "192.0.2.100",
+		Interface: "ens160", Prefix: 24, OwnerID: source.ResourceID, Active: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A switchover commits the new owner after the keeper has already observed
+	// the old resource revisions.
+	if err := repository.CommitHAEndpointOwner(cluster.ResourceID, resource.ResourceID, targetResult.Instance.ResourceID, true); err != nil {
+		t.Fatalf("commit switchover owner: %v", err)
+	}
+	if err := repository.CommitObservedHAEndpointOwner(
+		cluster.ResourceID, resource.ResourceID, resource.MetadataRevision, endpoint.MetadataRevision,
+		source.ResourceID, false,
+	); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale keeper observation error=%v, want conflict", err)
+	}
+
+	updated, found := repository.HAEndpoint(resource.ResourceID)
+	updatedEndpoint, endpointFound := repository.Endpoint(endpoint.ResourceID)
+	if !found || !endpointFound || updated.OwnerID != targetResult.Instance.ResourceID || !updated.Healthy || updatedEndpoint.InstanceID != targetResult.Instance.ResourceID {
+		t.Fatalf("stale observation replaced verified owner: resource=%+v endpoint=%+v", updated, updatedEndpoint)
+	}
+}

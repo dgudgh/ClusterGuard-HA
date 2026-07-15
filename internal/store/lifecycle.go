@@ -38,7 +38,6 @@ func (repository *Repository) PutLifecycleTask(task lifecycle.Task) (lifecycle.T
 		}
 		return lifecycle.Task{}, err
 	}
-	repository.snapshot = next
 	return cloneLifecycleTask(task), nil
 }
 

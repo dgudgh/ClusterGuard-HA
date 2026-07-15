@@ -621,7 +621,7 @@ Build both binaries, install systemd units, render role-specific config, preserv
 MySQL data by default, create restricted identities, verify paths/ports/time
 sync, start services, register clusters, and run smoke checks.
 
-- [ ] **Step 4: Run full local verification**
+- [x] **Step 4: Run full local verification**
 
 Run:
 
@@ -638,13 +638,13 @@ rg -n 'orchestrator|orchctl|orchestrator-client|Orchestrator Enterprise|Enterpri
 Expected: all commands pass and the clean-room name scan has no matches outside
 historical design records.
 
-- [ ] **Step 5: Deploy to `192.168.102.152-154`**
+- [x] **Step 5: Deploy to `192.168.102.152-154`**
 
 Install an odd controller set and agents, register all six lab clusters and one
 VIP per cluster, refresh topology, and verify every MySQL instance by native
 UUID before enabling mutations.
 
-- [ ] **Step 6: Run destructive acceptance**
+- [x] **Step 6: Run destructive acceptance**
 
 Execute:
 
@@ -660,7 +660,9 @@ Execute:
 Each case must prove one writable primary, one VIP owner, healthy follower
 threads, bounded lag, complete operation timeline, and report output.
 
-- [ ] **Step 7: Commit final delivery assets**
+Acceptance evidence: `docs/mysql-feature-parity-acceptance.md`.
+
+- [x] **Step 7: Commit final delivery assets**
 
 ```bash
 git add scripts packaging README.md docs

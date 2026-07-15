@@ -117,3 +117,25 @@ func TestShellExecutorRejectsMalformedOrUnverifiedResult(t *testing.T) {
 		})
 	}
 }
+
+func TestOSLifecycleProcessRunnerReturnsBoundedStderrDetail(t *testing.T) {
+	_, err := (OSLifecycleProcessRunner{}).Run(
+		context.Background(), nil, nil, "/bin/sh", "-c", "printf 'logical dump failed on target\\n' >&2; exit 7",
+	)
+	if err == nil || !strings.Contains(err.Error(), "logical dump failed on target") {
+		t.Fatalf("process error did not preserve stderr detail: %v", err)
+	}
+}
+
+func TestShellExecutorRedactsSecretsButPreservesProcessFailureDetail(t *testing.T) {
+	runner := &lifecycleProcessRunnerStub{err: errors.New("mysql rejected mysql-root-secret while resetting GTID")}
+	executor, err := NewShellExecutor("/usr/local/libexec/clusterguard-node-lifecycle.sh", runner)
+	if err != nil {
+		t.Fatalf("new shell executor: %v", err)
+	}
+	request, plan := executableLifecyclePlan()
+	_, err = executor.Execute(context.Background(), request, plan, ExecutionSecrets{MySQLRootPassword: "mysql-root-secret"}, nil)
+	if err == nil || !strings.Contains(err.Error(), "while resetting GTID") || strings.Contains(err.Error(), "mysql-root-secret") {
+		t.Fatalf("process error was not safely propagated: %v", err)
+	}
+}

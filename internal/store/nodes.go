@@ -130,7 +130,6 @@ func (repository *Repository) PutNode(node model.DatabaseNode) (model.DatabaseNo
 		}
 		return model.DatabaseNode{}, err
 	}
-	repository.snapshot = next
 	return cloneNode(node), nil
 }
 

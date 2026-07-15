@@ -18,6 +18,7 @@ type ReconcileAction string
 const (
 	ReconcileKeepVIP          ReconcileAction = "keep_vip"
 	ReconcileTransitionTarget ReconcileAction = "transition_target"
+	ReconcileTransitionSource ReconcileAction = "transition_source"
 	ReconcileBootstrapPrimary ReconcileAction = "bootstrap_primary"
 	ReconcileSelfIsolate      ReconcileAction = "release_and_read_only"
 )
@@ -120,10 +121,10 @@ func VerifyReconcileResponse(response ReconcileResponse, request ReconcileReques
 	if response.ClusterID != request.ClusterID || response.InstanceID != request.InstanceID || !model.ValidResourceID(response.ControllerID) || strings.TrimSpace(response.Reason) == "" {
 		return fmt.Errorf("agent reconcile response scope is invalid")
 	}
-	if response.Action != ReconcileKeepVIP && response.Action != ReconcileTransitionTarget && response.Action != ReconcileBootstrapPrimary && response.Action != ReconcileSelfIsolate {
+	if response.Action != ReconcileKeepVIP && response.Action != ReconcileTransitionTarget && response.Action != ReconcileTransitionSource && response.Action != ReconcileBootstrapPrimary && response.Action != ReconcileSelfIsolate {
 		return fmt.Errorf("agent reconcile response action is invalid")
 	}
-	if (response.Action == ReconcileKeepVIP || response.Action == ReconcileTransitionTarget || response.Action == ReconcileBootstrapPrimary) && !model.ValidResourceID(response.LeaseID) {
+	if (response.Action == ReconcileKeepVIP || response.Action == ReconcileTransitionTarget || response.Action == ReconcileTransitionSource || response.Action == ReconcileBootstrapPrimary) && !model.ValidResourceID(response.LeaseID) {
 		return fmt.Errorf("VIP ownership response requires a lease UUID")
 	}
 	if !response.ValidUntil.After(now.UTC()) || response.ValidUntil.After(now.UTC().Add(time.Minute)) {

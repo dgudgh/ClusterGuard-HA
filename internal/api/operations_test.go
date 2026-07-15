@@ -41,6 +41,24 @@ func TestOperationActionErrorRedactsUntrustedDetails(t *testing.T) {
 	}
 }
 
+func TestPublicOperationRecordPreservesPrecheckOutcomeAndRedactsMessage(t *testing.T) {
+	record := model.OperationRecord{Precheck: []model.Check{
+		{Name: "replication_threads", Status: model.CheckPass, Message: "username=private"},
+		{Name: "gtid_consistency", Status: model.CheckFail, Message: "password=private /var/lib/mysql"},
+	}}
+
+	public := publicOperationRecord(record)
+	if len(public.Precheck) != 2 || public.Precheck[0].Name != "replication_threads" || public.Precheck[1].Name != "gtid_consistency" || public.Precheck[1].Status != model.CheckFail {
+		t.Fatalf("public precheck evidence=%+v", public.Precheck)
+	}
+	if public.Precheck[0].Message != "check passed" || public.Precheck[1].Message != "check failed" {
+		t.Fatalf("public precheck messages were not redacted: %+v", public.Precheck)
+	}
+	if record.Precheck[1].Message != "password=private /var/lib/mysql" {
+		t.Fatalf("public projection mutated the stored operation: %+v", record.Precheck)
+	}
+}
+
 func newDurableOperationAPIServer(t *testing.T) (*Server, *store.Repository) {
 	t.Helper()
 	registry := adapter.NewRegistry()
@@ -107,6 +125,30 @@ func TestOperationAPIProvidesIdempotentCreateAndRead(t *testing.T) {
 	read := decodeOperationResult(t, readResponse.Body.Bytes())
 	if read.ResourceID != created.ResourceID || read.TargetID != targetID {
 		t.Fatalf("read returned wrong operation: %+v", read)
+	}
+}
+
+func TestOperationAPIReadsSingleOperationByIdempotencyKey(t *testing.T) {
+	server, _ := newDurableOperationAPIServer(t)
+	createdResponse := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/operations", operationRequestBody(model.NewResourceID(), model.NewResourceID(), "api-switch-lookup"))
+	created := decodeOperationResult(t, createdResponse.Body.Bytes())
+
+	lookup := callJSON(t, server.Handler(), http.MethodGet, "/api/v1/operations?idempotency_key=api-switch-lookup", nil)
+	if lookup.Code != http.StatusOK {
+		t.Fatalf("lookup status=%d body=%s", lookup.Code, lookup.Body.String())
+	}
+	found := decodeOperationResult(t, lookup.Body.Bytes())
+	if found.ResourceID != created.ResourceID || found.IdempotencyKey != "api-switch-lookup" {
+		t.Fatalf("lookup returned wrong operation: %+v", found)
+	}
+
+	missing := callJSON(t, server.Handler(), http.MethodGet, "/api/v1/operations?idempotency_key=unknown-operation", nil)
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("missing lookup status=%d body=%s", missing.Code, missing.Body.String())
+	}
+	ambiguous := callJSON(t, server.Handler(), http.MethodGet, "/api/v1/operations?cluster_id="+string(created.Operation.ClusterID)+"&idempotency_key=api-switch-lookup", nil)
+	if ambiguous.Code != http.StatusBadRequest {
+		t.Fatalf("ambiguous lookup status=%d body=%s", ambiguous.Code, ambiguous.Body.String())
 	}
 }
 

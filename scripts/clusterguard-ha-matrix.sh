@@ -9,6 +9,11 @@ matrix_seed=20260713
 parallel=1
 smoke_attempts=15
 smoke_interval=2
+api_timeout=180
+read_attempts="${CG_MATRIX_READ_ATTEMPTS:-3}"
+read_retry_interval="${CG_MATRIX_READ_RETRY_INTERVAL:-1}"
+transport_reconcile_attempts="${CG_MATRIX_RECONCILE_ATTEMPTS:-45}"
+transport_reconcile_interval="${CG_MATRIX_RECONCILE_INTERVAL:-2}"
 control_token_environment="CG_CONTROL_TOKEN"
 approval_token_environment="CG_APPROVAL_TOKEN"
 script_dir="${script_dir:-$(cd "$(dirname "$0")" && pwd)}"
@@ -26,7 +31,7 @@ finish() {
 trap finish EXIT
 
 usage() {
-  echo "usage: $0 --clusters UUID[,UUID...] [--api URL] [--round-robin N] [--random N] [--seed N] [--parallel N] [--smoke-attempts N] [--smoke-interval SECONDS]"
+  echo "usage: $0 --clusters UUID[,UUID...] [--api URL] [--round-robin N] [--random N] [--seed N] [--parallel N] [--smoke-attempts N] [--smoke-interval SECONDS] [--api-timeout SECONDS]"
 }
 
 while (($#)); do
@@ -39,6 +44,7 @@ while (($#)); do
     --parallel) parallel="${2:-}"; shift 2 ;;
     --smoke-attempts) smoke_attempts="${2:-}"; shift 2 ;;
     --smoke-interval) smoke_interval="${2:-}"; shift 2 ;;
+    --api-timeout) api_timeout="${2:-}"; shift 2 ;;
     --token-env) control_token_environment="${2:-}"; shift 2 ;;
     --approval-env) approval_token_environment="${2:-}"; shift 2 ;;
     --insecure) insecure=true; shift ;;
@@ -52,6 +58,11 @@ for value in "${round_robin}" "${random_cycles}" "${matrix_seed}" "${smoke_inter
 done
 [[ "${parallel}" =~ ^[1-9][0-9]*$ ]] || { echo "parallel must be a positive integer" >&2; exit 2; }
 [[ "${smoke_attempts}" =~ ^[1-9][0-9]*$ ]] || { echo "smoke attempts must be a positive integer" >&2; exit 2; }
+[[ "${api_timeout}" =~ ^[1-9][0-9]*$ ]] || { echo "API timeout must be a positive integer" >&2; exit 2; }
+[[ "${read_attempts}" =~ ^[1-9][0-9]*$ ]] || { echo "read attempts must be a positive integer" >&2; exit 2; }
+[[ "${read_retry_interval}" =~ ^[0-9]+$ ]] || { echo "read retry interval must be a non-negative integer" >&2; exit 2; }
+[[ "${transport_reconcile_attempts}" =~ ^[1-9][0-9]*$ ]] || { echo "transport reconcile attempts must be a positive integer" >&2; exit 2; }
+[[ "${transport_reconcile_interval}" =~ ^[0-9]+$ ]] || { echo "transport reconcile interval must be a non-negative integer" >&2; exit 2; }
 
 IFS=',' read -r -a cluster_ids <<<"${clusters}"
 [[ "${#cluster_ids[@]}" -gt 0 && -n "${cluster_ids[0]}" ]] || { echo "at least one cluster UUID is required" >&2; exit 2; }
@@ -72,34 +83,116 @@ approval_token="${!approval_token_environment:-}"
 RANDOM=$((matrix_seed % 32768))
 
 api_get() {
+  local url="$1" attempt
+  for ((attempt=1; attempt<=read_attempts; attempt++)); do
+    if [[ "${insecure}" == true ]]; then
+      if curl -k --fail --silent --show-error --max-time 15 \
+        -H "Authorization: Bearer ${control_token}" -H 'Accept: application/json' "${url}"; then
+        return 0
+      fi
+    elif curl --fail --silent --show-error --max-time 15 \
+      -H "Authorization: Bearer ${control_token}" -H 'Accept: application/json' "${url}"; then
+      return 0
+    fi
+    if ((attempt < read_attempts)); then
+      echo "api_read_retry attempt=${attempt} max_attempts=${read_attempts}" >&2
+      if ((read_retry_interval > 0)); then
+        sleep "${read_retry_interval}"
+      fi
+    fi
+  done
+  return 1
+}
+
+reconcile_operation_after_transport() {
+  local idempotency_key="$1"
+  local encoded_key response operation_status operation_id failure_class attempt last_status
+  encoded_key="$(jq -rn --arg value "${idempotency_key}" '$value | @uri')"
+  last_status="not_found"
+  for ((attempt=1; attempt<=transport_reconcile_attempts; attempt++)); do
+    if response="$(api_get "${api%/}/api/v1/operations?idempotency_key=${encoded_key}" 2>/dev/null)" && jq -e '.status == "ok" and (.result.status | type == "string")' <<<"${response}" >/dev/null 2>&1; then
+      operation_status="$(jq -r '.result.status' <<<"${response}")"
+      operation_id="$(jq -r '.result.resource_id // "unknown"' <<<"${response}")"
+      last_status="${operation_status}"
+      case "${operation_status}" in
+        succeeded)
+          echo "api_transport_reconciled operation=${operation_id} status=succeeded attempt=${attempt}" >&2
+          printf '%s\n' "${response}"
+          return 0
+          ;;
+        blocked|failed|indeterminate|unsupported)
+          failure_class="$(jq -r '.result.failure_class // .result.execution.failure_class // "unknown"' <<<"${response}")"
+          echo "api_transport_reconciled operation=${operation_id} status=${operation_status} failure_class=${failure_class} attempt=${attempt}" >&2
+          if [[ "${failure_class}" == "stale_plan" ]]; then
+            return 75
+          fi
+          return 22
+          ;;
+      esac
+    fi
+    if ((attempt < transport_reconcile_attempts && transport_reconcile_interval > 0)); then
+      sleep "${transport_reconcile_interval}"
+    fi
+  done
+  echo "api_transport_ambiguous status=${last_status} attempts=${transport_reconcile_attempts}" >&2
+  return 1
+}
+
+post_request() {
+  local url="$1" payload="$2" body_file="$3" header_file="$4"
   if [[ "${insecure}" == true ]]; then
-    curl -k --fail --silent --show-error --max-time 15 \
-      -H "Authorization: Bearer ${control_token}" -H 'Accept: application/json' "$1"
+    curl -k --silent --show-error --max-time "${api_timeout}" --output "${body_file}" --dump-header "${header_file}" --write-out '%{http_code}' \
+      -H "Authorization: Bearer ${control_token}" -H 'Content-Type: application/json' -d "${payload}" "${url}"
   else
-    curl --fail --silent --show-error --max-time 15 \
-      -H "Authorization: Bearer ${control_token}" -H 'Accept: application/json' "$1"
+    curl --silent --show-error --max-time "${api_timeout}" --output "${body_file}" --dump-header "${header_file}" --write-out '%{http_code}' \
+      -H "Authorization: Bearer ${control_token}" -H 'Content-Type: application/json' -d "${payload}" "${url}"
   fi
 }
 
 api_post() {
   local url="$1" payload="$2"
-  local body_file http_status
+  local body_file header_file http_status current_url leader_api leader_raft leader_api_host leader_raft_host attempt
+  local idempotency_key reconcile_response reconcile_status
   body_file="$(mktemp "${TMPDIR:-/tmp}/clusterguard-api.XXXXXX")" || return 1
-  if [[ "${insecure}" == true ]]; then
-    if ! http_status="$(curl -k --silent --show-error --max-time 180 --output "${body_file}" --write-out '%{http_code}' \
-      -H "Authorization: Bearer ${control_token}" -H 'Content-Type: application/json' -d "${payload}" "${url}")"; then
-      rm -f "${body_file}"
-      echo "api_transport_error method=POST" >&2
-      return 1
+  header_file="$(mktemp "${TMPDIR:-/tmp}/clusterguard-api-headers.XXXXXX")" || { rm -f "${body_file}"; return 1; }
+  current_url="${url}"
+  idempotency_key="$(jq -r '.idempotency_key // ""' <<<"${payload}")"
+  for attempt in 1 2; do
+    : >"${body_file}"
+    : >"${header_file}"
+    if ! http_status="$(post_request "${current_url}" "${payload}" "${body_file}" "${header_file}")"; then
+      echo "api_transport_error method=POST resolution=idempotency_lookup" >&2
+      if [[ -n "${idempotency_key}" ]] && reconcile_response="$(reconcile_operation_after_transport "${idempotency_key}")"; then
+        rm -f "${body_file}" "${header_file}"
+        printf '%s\n' "${reconcile_response}"
+        return 0
+      else
+        reconcile_status=$?
+        rm -f "${body_file}" "${header_file}"
+        return "${reconcile_status}"
+      fi
     fi
-  else
-    if ! http_status="$(curl --silent --show-error --max-time 180 --output "${body_file}" --write-out '%{http_code}' \
-      -H "Authorization: Bearer ${control_token}" -H 'Content-Type: application/json' -d "${payload}" "${url}")"; then
-      rm -f "${body_file}"
-      echo "api_transport_error method=POST" >&2
-      return 1
+    if [[ "${http_status}" == "503" && "${attempt}" -eq 1 ]]; then
+      leader_api="$(awk 'tolower($0) ~ /^x-clusterguard-leader-api-address:/ { sub(/^[^:]+:[[:space:]]*/, ""); sub(/\r$/, ""); value=$0 } END { print value }' "${header_file}")"
+      leader_raft="$(awk 'tolower($0) ~ /^x-clusterguard-leader-address:/ { sub(/^[^:]+:[[:space:]]*/, ""); sub(/\r$/, ""); value=$0 } END { print value }' "${header_file}")"
+      if [[ "${leader_api}" =~ ^https?://[^/?#]+/?$ && -n "${leader_raft}" ]]; then
+        leader_api_host="${leader_api#*://}"
+        leader_api_host="${leader_api_host%%/*}"
+        leader_api_host="${leader_api_host%%:*}"
+        leader_api_host="${leader_api_host#[}"
+        leader_api_host="${leader_api_host%]}"
+        leader_raft_host="${leader_raft%%:*}"
+        leader_raft_host="${leader_raft_host#[}"
+        leader_raft_host="${leader_raft_host%]}"
+        if [[ "${leader_api_host}" == "${leader_raft_host}" ]]; then
+          printf 'api_leader_retry from=%s to=%s\n' "${api%/}" "${leader_api%/}" >&2
+          current_url="${leader_api%/}${url#${api%/}}"
+          continue
+        fi
+      fi
     fi
-  fi
+    break
+  done
   if [[ ! "${http_status}" =~ ^2[0-9][0-9]$ ]]; then
     local failure_class=""
     if jq -e . "${body_file}" >/dev/null 2>&1; then
@@ -125,14 +218,14 @@ api_post() {
     else
       echo "api_error http=${http_status} status=invalid_json" >&2
     fi
-    rm -f "${body_file}"
+    rm -f "${body_file}" "${header_file}"
     if [[ "${failure_class}" == "stale_plan" ]]; then
       return 75
     fi
     return 22
   fi
   cat "${body_file}"
-  rm -f "${body_file}"
+  rm -f "${body_file}" "${header_file}"
 }
 
 wait_for_smoke() {

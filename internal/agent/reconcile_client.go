@@ -22,9 +22,18 @@ type HTTPReconcileClient struct {
 	secret      string
 	client      *http.Client
 	now         func() time.Time
+	cache       ReconcileDecisionCache
 }
 
-func NewHTTPReconcileClient(controllerURLs []string, secret string, client *http.Client, allowInsecureHTTP bool, now func() time.Time) (*HTTPReconcileClient, error) {
+type HTTPReconcileClientOption func(*HTTPReconcileClient)
+
+func WithReconcileDecisionCache(cache ReconcileDecisionCache) HTTPReconcileClientOption {
+	return func(client *HTTPReconcileClient) {
+		client.cache = cache
+	}
+}
+
+func NewHTTPReconcileClient(controllerURLs []string, secret string, client *http.Client, allowInsecureHTTP bool, now func() time.Time, options ...HTTPReconcileClientOption) (*HTTPReconcileClient, error) {
 	if strings.TrimSpace(secret) == "" || len(controllerURLs) == 0 {
 		return nil, fmt.Errorf("agent reconcile controllers and secret are required")
 	}
@@ -44,7 +53,35 @@ func NewHTTPReconcileClient(controllerURLs []string, secret string, client *http
 	if now == nil {
 		now = time.Now
 	}
-	return &HTTPReconcileClient{controllers: controllers, secret: secret, client: client, now: now}, nil
+	result := &HTTPReconcileClient{controllers: controllers, secret: secret, client: client, now: now}
+	for _, option := range options {
+		if option != nil {
+			option(result)
+		}
+	}
+	return result, nil
+}
+
+type controllerUnavailableError struct{ cause error }
+
+func (failure controllerUnavailableError) Error() string { return failure.cause.Error() }
+func (failure controllerUnavailableError) Unwrap() error { return failure.cause }
+
+func controllerUnavailable(err error) error {
+	return controllerUnavailableError{cause: err}
+}
+
+func onlyControllerAvailabilityFailures(failures []error) bool {
+	if len(failures) == 0 {
+		return false
+	}
+	for _, failure := range failures {
+		var unavailable controllerUnavailableError
+		if !errors.As(failure, &unavailable) {
+			return false
+		}
+	}
+	return true
 }
 
 func normalizeControllerURL(raw string, allowInsecureHTTP bool) (string, error) {
@@ -94,14 +131,14 @@ func (client *HTTPReconcileClient) Decision(ctx context.Context, policy ClusterP
 		request.Header.Set("Content-Type", "application/json")
 		response, requestErr := client.client.Do(request)
 		if requestErr != nil {
-			failures = append(failures, requestErr)
+			failures = append(failures, controllerUnavailable(requestErr))
 			continue
 		}
 		limited := io.LimitReader(response.Body, maximumReconcileResponseBytes+1)
 		responseContents, readErr := io.ReadAll(limited)
 		closeErr := response.Body.Close()
 		if readErr != nil || closeErr != nil {
-			failures = append(failures, errors.Join(readErr, closeErr))
+			failures = append(failures, controllerUnavailable(errors.Join(readErr, closeErr)))
 			continue
 		}
 		if len(responseContents) > maximumReconcileResponseBytes {
@@ -109,7 +146,11 @@ func (client *HTTPReconcileClient) Decision(ctx context.Context, policy ClusterP
 			continue
 		}
 		if response.StatusCode != http.StatusOK {
-			failures = append(failures, fmt.Errorf("controller reconcile status %d", response.StatusCode))
+			failure := fmt.Errorf("controller reconcile status %d", response.StatusCode)
+			if response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= http.StatusInternalServerError {
+				failure = controllerUnavailable(failure)
+			}
+			failures = append(failures, failure)
 			continue
 		}
 		decision := ReconcileResponse{}
@@ -127,7 +168,17 @@ func (client *HTTPReconcileClient) Decision(ctx context.Context, policy ClusterP
 			failures = append(failures, err)
 			continue
 		}
+		if client.cache != nil {
+			_ = client.cache.Store(decision)
+		}
 		return decision, nil
+	}
+	if client.cache != nil && onlyControllerAvailabilityFailures(failures) {
+		if decision, cacheErr := client.cache.Load(payload, client.secret, now); cacheErr == nil {
+			return decision, nil
+		} else {
+			failures = append(failures, cacheErr)
+		}
 	}
 	return ReconcileResponse{}, fmt.Errorf("no controller returned an authenticated leader decision: %w", errors.Join(failures...))
 }

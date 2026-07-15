@@ -22,13 +22,14 @@ type LeaseRequest struct {
 }
 
 type Lease struct {
-	ResourceID   model.ResourceID
-	ClusterID    model.ResourceID
-	HAEndpointID model.ResourceID
-	OperationID  model.ResourceID
-	OwnerID      model.ResourceID
-	ExpiresAt    time.Time
-	Active       bool
+	ResourceID      model.ResourceID
+	ClusterID       model.ResourceID
+	HAEndpointID    model.ResourceID
+	OperationID     model.ResourceID
+	OwnerID         model.ResourceID
+	PreviousOwnerID model.ResourceID
+	ExpiresAt       time.Time
+	Active          bool
 }
 
 func SameLeaseIdentity(current, presented Lease) bool {
@@ -37,6 +38,7 @@ func SameLeaseIdentity(current, presented Lease) bool {
 		current.HAEndpointID == presented.HAEndpointID &&
 		current.OperationID == presented.OperationID &&
 		current.OwnerID == presented.OwnerID &&
+		current.PreviousOwnerID == presented.PreviousOwnerID &&
 		current.Active == presented.Active
 }
 
@@ -90,7 +92,7 @@ func (store *MemoryLeaseStore) Acquire(ctx context.Context, request LeaseRequest
 		if lease.ClusterID != request.ClusterID || lease.HAEndpointID != request.HAEndpointID {
 			continue
 		}
-		if lease.OperationID == request.OperationID && lease.OwnerID == request.OwnerID {
+		if lease.OperationID == request.OperationID && lease.OwnerID == request.OwnerID && lease.PreviousOwnerID == request.PreviousOwnerID {
 			lease.ExpiresAt = now.Add(request.TTL)
 			store.leases[resourceID] = lease
 			return lease, nil
@@ -103,7 +105,8 @@ func (store *MemoryLeaseStore) Acquire(ctx context.Context, request LeaseRequest
 	}
 	lease := Lease{
 		ResourceID: model.NewResourceID(), ClusterID: request.ClusterID, HAEndpointID: request.HAEndpointID,
-		OperationID: request.OperationID, OwnerID: request.OwnerID, ExpiresAt: now.Add(request.TTL), Active: true,
+		OperationID: request.OperationID, OwnerID: request.OwnerID, PreviousOwnerID: request.PreviousOwnerID,
+		ExpiresAt: now.Add(request.TTL), Active: true,
 	}
 	store.leases[lease.ResourceID] = lease
 	return lease, nil
@@ -137,6 +140,7 @@ func (store *MemoryLeaseStore) FinalizeTransition(ctx context.Context, transitio
 		ttl = 30 * time.Second
 	}
 	current.OperationID = current.HAEndpointID
+	current.PreviousOwnerID = ""
 	current.ExpiresAt = now.Add(ttl)
 	store.leases[current.ResourceID] = current
 	return current, nil

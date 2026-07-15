@@ -98,8 +98,10 @@ for ((index=0; index<target_count; index++)); do
   target="$(jq -c ".plan.targets[${index}]" "${request_file}")"
   host="$(jq -r '.ip_address // .hostname' <<<"${target}")"
   user="$(jq -r '.ssh_user // "root"' <<<"${target}")"
+  node_id="$(jq -r '.node_id // ""' <<<"${target}")"
   node_name="$(jq -r '.node_name' <<<"${target}")"
   kind="$(jq -r '.kind' <<<"${target}")"
+  reuses_node_slot="$(jq -r '.reuses_node_slot // false' <<<"${target}")"
   validate_remote_identity "${host}" "${user}"
   remote_exec "${host}" "${user}" "test \"\$(id -u)\" -eq 0 && command -v bash >/dev/null"
   remote_exec "${host}" "${user}" "install -d -m 0700 /var/lib/clusterguard/stage"
@@ -122,9 +124,9 @@ for ((index=0; index<target_count; index++)); do
       remote_package="/var/lib/clusterguard/stage/${package_name}"
       copy_remote "${package_path}" "${host}" "${user}" "${remote_package}"
     fi
-    payload="$(TARGET_JSON="${target}" REMOTE_PACKAGE="${remote_package}" jq -nc \
-      --argjson request "$(jq -c '.request' "${request_file}")" \
-      '{request:$request,target:(env.TARGET_JSON|fromjson)+{package_path:env.REMOTE_PACKAGE},secrets:{mysql_root_password:env.CG_MYSQL_ROOT_PASSWORD,replication_password:env.CG_MYSQL_REPLICATION_PASSWORD}}')"
+	payload="$(TARGET_JSON="${target}" REMOTE_PACKAGE="${remote_package}" jq -nc \
+	  --argjson request "$(jq -c '.request' "${request_file}")" \
+	  '{request:$request,target:((env.TARGET_JSON|fromjson)+{package_path:env.REMOTE_PACKAGE}),secrets:{mysql_root_password:env.CG_MYSQL_ROOT_PASSWORD,replication_password:env.CG_MYSQL_REPLICATION_PASSWORD}}')"
 
     emit_event install running "installing MySQL on ${node_name}"
     remote_stdin "${payload}" "${host}" "${user}" "chmod 0700 /var/lib/clusterguard/stage/clusterguard-mysql-install.sh && PATH=/var/lib/clusterguard/stage:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin /var/lib/clusterguard/stage/clusterguard-mysql-install.sh" >/dev/null
@@ -141,10 +143,15 @@ for ((index=0; index<target_count; index++)); do
   fi
 
   if [[ "${kind}" == "controller" || "${kind}" == "mixed" ]]; then
-    [[ -n "${control_helper}" && -x "${control_helper}" ]] || { echo "control-node join executor is not configured" >&2; exit 4; }
-    emit_event install running "installing controller role on ${node_name}"
-    "${control_helper}" "${request_file}" "${index}"
-    emit_event verify succeeded "controller role joined the verified odd membership"
+    if [[ "${reuses_node_slot}" == "true" ]] && remote_exec "${host}" "${user}" \
+      "systemctl is-active --quiet clusterguard-ha.service && test \"\$(jq -r '.consensus.local_id // empty' /etc/clusterguard/clusterguard.json)\" = '${node_id}'"; then
+      emit_event verify succeeded "existing controller role preserved on ${node_name}"
+    else
+      [[ -n "${control_helper}" && -x "${control_helper}" ]] || { echo "control-node join executor is not configured" >&2; exit 4; }
+      emit_event install running "installing controller role on ${node_name}"
+      "${control_helper}" "${request_file}" "${index}"
+      emit_event verify succeeded "controller role joined the verified odd membership"
+    fi
   fi
 done
 

@@ -41,6 +41,7 @@ type switchoverSQLClient struct {
 	failStatementConsumed bool
 	failAfterStatement    string
 	failTargetStatement   string
+	ignoreTargetPromotion bool
 	onTargetPromotion     func()
 	onTargetReset         func()
 }
@@ -218,12 +219,17 @@ func (client *switchoverSQLClient) Exec(ctx context.Context, endpoint adapter.En
 		case "START REPLICA", "START SLAVE":
 			client.targetReplication = true
 		case setSuperReadOnlyOff:
+			if !client.ignoreTargetPromotion {
+				client.targetSuperReadOnly = false
+			}
+		case setReadOnlyOff:
 			if client.onTargetPromotion != nil {
 				client.onTargetPromotion()
 			}
-			client.targetSuperReadOnly = false
-		case setReadOnlyOff:
-			client.targetReadOnly = false
+			if !client.ignoreTargetPromotion {
+				client.targetReadOnly = false
+				client.targetSuperReadOnly = false
+			}
 		case setSuperReadOnlyOn:
 			client.targetSuperReadOnly = true
 			client.targetReadOnly = true
@@ -419,11 +425,10 @@ func TestSwitchoverExecuteAndVerifyHappyPath(t *testing.T) {
 		"db-primary " + setReadOnlyOn,
 		"db-replica STOP REPLICA",
 		"db-replica RESET REPLICA ALL",
-		"db-replica " + setSuperReadOnlyOff,
 		"db-replica " + setReadOnlyOff,
 		"db-primary " + setSuperReadOnlyOn,
 		"db-primary " + setReadOnlyOn,
-		"db-primary CHANGE REPLICATION SOURCE TO SOURCE_HOST='192.0.2.11', SOURCE_PORT=3306, SOURCE_USER='replicator', SOURCE_PASSWORD='replication-secret', SOURCE_AUTO_POSITION=1",
+		"db-primary CHANGE REPLICATION SOURCE TO SOURCE_HOST='192.0.2.11', SOURCE_PORT=3306, SOURCE_USER='replicator', SOURCE_PASSWORD='replication-secret', SOURCE_AUTO_POSITION=1, GET_SOURCE_PUBLIC_KEY=1",
 		"db-primary START REPLICA",
 	}
 	got := client.statements()
@@ -437,6 +442,22 @@ func TestSwitchoverExecuteAndVerifyHappyPath(t *testing.T) {
 	}
 	if provider.owner != request.TargetID || provider.transferCalls != 1 || provider.finalizeCalls != 1 {
 		t.Fatalf("endpoint transfer was not coupled and finalized: owner=%s transfer_calls=%d finalize_calls=%d", provider.owner, provider.transferCalls, provider.finalizeCalls)
+	}
+}
+
+func TestSwitchoverDoesNotTransferEndpointUntilTargetWritableIsProven(t *testing.T) {
+	adapterInstance, request, client, provider := executableSwitchoverFixture(t)
+	client.ignoreTargetPromotion = true
+
+	execution, err := adapterInstance.Execute(context.Background(), request)
+	if err == nil || execution.Status != model.OperationBlocked || failureClass(err) != "fenced" {
+		t.Fatalf("unproven promotion execution=%+v err=%v class=%q", execution, err, failureClass(err))
+	}
+	if provider.transferCalls != 0 {
+		t.Fatalf("endpoint transferred before target writable postcondition: calls=%d", provider.transferCalls)
+	}
+	if !client.targetReadOnly || !client.targetSuperReadOnly {
+		t.Fatalf("unproven target was not re-fenced: read_only=%t super_read_only=%t", client.targetReadOnly, client.targetSuperReadOnly)
 	}
 }
 
@@ -460,16 +481,17 @@ func TestSwitchoverAuthorizationFailureLeavesCandidateReplicationAttached(t *tes
 	adapterInstance, request, client, provider := executableSwitchoverFixture(t)
 	provider.authorizeError = errors.New("stable endpoint lease handoff blocked")
 	execution, err := adapterInstance.Execute(context.Background(), request)
-	if err == nil || execution.Status != model.OperationBlocked || failureClass(err) != "fenced" {
+	if err == nil || execution.Status != model.OperationFailed || failureClass(err) != "pre_commit" {
 		t.Fatalf("authorization failure execution=%+v err=%v class=%q", execution, err, failureClass(err))
+	}
+	if client.primaryReadOnly || client.primarySuperReadOnly {
+		t.Fatalf("authorization failure fenced the source before ownership handoff: read_only=%t super_read_only=%t", client.primaryReadOnly, client.primarySuperReadOnly)
 	}
 	if !client.targetReplication || !client.targetReadOnly || !client.targetSuperReadOnly {
 		t.Fatalf("authorization failure detached or promoted target: replication=%t read_only=%t super_read_only=%t", client.targetReplication, client.targetReadOnly, client.targetSuperReadOnly)
 	}
-	for _, statement := range client.statements() {
-		if strings.HasPrefix(statement, client.targetHost+" STOP ") || strings.HasPrefix(statement, client.targetHost+" RESET ") {
-			t.Fatalf("target replication mutated before endpoint authorization: %s", statement)
-		}
+	if statements := client.statements(); len(statements) != 0 {
+		t.Fatalf("SQL state changed before endpoint authorization: %v", statements)
 	}
 }
 
@@ -524,6 +546,46 @@ func TestSwitchoverVerifyAcceptsRefreshedPostPromotionTopology(t *testing.T) {
 	}
 }
 
+func TestSwitchoverExecuteAcceptsEquivalentRefreshedObservation(t *testing.T) {
+	request := switchoverRequestFixture()
+	request.Resolved.ObservationToken = string(request.Operation.ClusterID) + "@sha256:equivalent-topology"
+	client := newSwitchoverSQLClient(request)
+	adapterInstance := NewWithEndpointProvider(client, &recordingEndpointProvider{})
+	plan, err := adapterInstance.BuildPlan(context.Background(), request)
+	if err != nil {
+		t.Fatalf("build plan: %v", err)
+	}
+	request.Plan = &plan
+	request.Resolved.Snapshot.ObservedAt = request.Resolved.Snapshot.ObservedAt.Add(time.Minute)
+	request.Resolved.Cluster.MetadataRevision++
+	request.Resolved.Primary.MetadataRevision++
+	request.Resolved.Target.MetadataRevision++
+
+	execution, err := adapterInstance.Execute(context.Background(), request)
+	if err != nil || execution.Status != model.OperationRunning {
+		t.Fatalf("equivalent refreshed observation was blocked: execution=%+v err=%v", execution, err)
+	}
+}
+
+func TestSwitchoverExecuteRejectsSemanticObservationChange(t *testing.T) {
+	request := switchoverRequestFixture()
+	request.Resolved.ObservationToken = string(request.Operation.ClusterID) + "@sha256:planned-topology"
+	client := newSwitchoverSQLClient(request)
+	adapterInstance := NewWithEndpointProvider(client, &recordingEndpointProvider{})
+	plan, err := adapterInstance.BuildPlan(context.Background(), request)
+	if err != nil {
+		t.Fatalf("build plan: %v", err)
+	}
+	request.Plan = &plan
+	request.Resolved.ObservationToken = string(request.Operation.ClusterID) + "@sha256:changed-topology"
+
+	execution, err := adapterInstance.Execute(context.Background(), request)
+	planError := validateExecutionPlan(request)
+	if err == nil || failureClass(err) != "pre_commit" || planError == nil || !strings.Contains(planError.Error(), "observation token") || len(client.statements()) != 0 {
+		t.Fatalf("changed semantic observation was not blocked: execution=%+v err=%v class=%q", execution, err, failureClass(err))
+	}
+}
+
 func TestSwitchoverExecuteRecordsEveryCompletedMutationBoundary(t *testing.T) {
 	adapterInstance, request, _, _ := executableSwitchoverFixture(t)
 	collector := &progressCollector{}
@@ -531,7 +593,7 @@ func TestSwitchoverExecuteRecordsEveryCompletedMutationBoundary(t *testing.T) {
 	if _, err := adapterInstance.Execute(context.Background(), request); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	want := []string{"fence_source", "capture_source_gtid", "wait_target_gtid", "authorize_target_transition", "stop_target_replication", "promote_target", "reparent_follower_" + string(request.Resolved.Primary.ResourceID), "transfer_writer_endpoint", "retain_source_read_only"}
+	want := []string{"authorize_target_transition", "fence_source", "capture_source_gtid", "wait_target_gtid", "stop_target_replication", "promote_target", "reparent_follower_" + string(request.Resolved.Primary.ResourceID), "transfer_writer_endpoint", "retain_source_read_only"}
 	if len(collector.steps) != len(want) {
 		t.Fatalf("progress steps=%v, want %v", collector.steps, want)
 	}
@@ -573,7 +635,7 @@ func TestSwitchoverExecutionFailureClasses(t *testing.T) {
 
 func TestSwitchoverRefencesTargetWhenFirstPromotionCommandIsUncertain(t *testing.T) {
 	adapterInstance, request, client, _ := executableSwitchoverFixture(t)
-	client.failAfterStatement = setSuperReadOnlyOff
+	client.failAfterStatement = setReadOnlyOff
 	execution, err := adapterInstance.Execute(context.Background(), request)
 	if err == nil || execution.Status != model.OperationBlocked || failureClass(err) != "fenced" {
 		t.Fatalf("uncertain promotion result=%+v err=%v class=%q", execution, err, failureClass(err))
@@ -585,7 +647,7 @@ func TestSwitchoverRefencesTargetWhenFirstPromotionCommandIsUncertain(t *testing
 
 func TestSwitchoverReportsIndeterminateWhenUncertainPromotionCannotBeRefenced(t *testing.T) {
 	adapterInstance, request, client, _ := executableSwitchoverFixture(t)
-	client.failAfterStatement = setSuperReadOnlyOff
+	client.failAfterStatement = setReadOnlyOff
 	client.failTargetStatement = setSuperReadOnlyOn
 	execution, err := adapterInstance.Execute(context.Background(), request)
 	if err == nil || execution.Status != model.OperationIndeterminate || failureClass(err) != "promoted_unverified" {

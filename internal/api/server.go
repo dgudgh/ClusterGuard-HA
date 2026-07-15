@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 
@@ -225,12 +226,39 @@ func (server *Server) authorizeMutation(writer http.ResponseWriter, request *htt
 			writer.Header().Set("X-ClusterGuard-Leader-Address", address)
 			result["leader_id"] = leaderID
 			result["leader_address"] = address
+			if apiAddress := mutationLeaderAPIAddress(request, address); apiAddress != "" {
+				writer.Header().Set("X-ClusterGuard-Leader-API-Address", apiAddress)
+				result["leader_api_address"] = apiAddress
+			}
 		}
 	}
 	writeJSON(writer, http.StatusServiceUnavailable, map[string]interface{}{
 		"status": "blocked", "message": "mutation requires the current Raft leader with controller quorum", "result": result,
 	})
 	return false
+}
+
+func mutationLeaderAPIAddress(request *http.Request, raftAddress string) string {
+	leaderHost, _, err := net.SplitHostPort(strings.TrimSpace(raftAddress))
+	if err != nil || strings.TrimSpace(leaderHost) == "" {
+		return ""
+	}
+	_, apiPort, err := net.SplitHostPort(strings.TrimSpace(request.Host))
+	if err != nil {
+		if request.TLS != nil {
+			apiPort = "443"
+		} else {
+			apiPort = "80"
+		}
+	}
+	scheme := strings.TrimSpace(request.URL.Scheme)
+	if scheme == "" {
+		scheme = "http"
+		if request.TLS != nil {
+			scheme = "https"
+		}
+	}
+	return scheme + "://" + net.JoinHostPort(leaderHost, apiPort)
 }
 
 func (server *Server) engines(writer http.ResponseWriter) {

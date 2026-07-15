@@ -119,22 +119,36 @@ func (service *Service) Refresh(ctx context.Context, clusterID model.ResourceID)
 		return model.TopologySnapshot{}, err
 	}
 	defer unlock()
+	releasePublicationFence, err := service.acquirePublicationFence(ctx, clusterID)
+	if err != nil {
+		return model.TopologySnapshot{}, err
+	}
+	defer releasePublicationFence()
+	refresh, err := service.prepareRefresh(ctx, clusterID)
+	if err != nil {
+		return model.TopologySnapshot{}, err
+	}
+	snapshot, err := service.repository.ApplyDiscoveryRefresh(refresh)
+	return service.finishRefresh(clusterID, refresh.ObservedAt, snapshot, err)
+}
+
+func (service *Service) prepareRefresh(ctx context.Context, clusterID model.ResourceID) (store.DiscoveryRefresh, error) {
 	inventory, exists := service.repository.DiscoveryInventory(clusterID)
 	if !exists {
-		return model.TopologySnapshot{}, fmt.Errorf("unknown cluster ID: %s", clusterID)
+		return store.DiscoveryRefresh{}, fmt.Errorf("unknown cluster ID: %s", clusterID)
 	}
 	cluster := inventory.Cluster
 	endpoints := activeDatabaseEndpoints(inventory.Endpoints)
 	if len(endpoints) == 0 {
-		return model.TopologySnapshot{}, ErrInventoryRequired
+		return store.DiscoveryRefresh{}, ErrInventoryRequired
 	}
 	candidate, exists := service.registry.Get(cluster.Engine)
 	if !exists {
-		return model.TopologySnapshot{}, adapter.ErrUnsupported
+		return store.DiscoveryRefresh{}, adapter.ErrUnsupported
 	}
 	capabilities := candidate.Capabilities(ctx)
 	if !capabilities.Supports(adapter.CapabilityDiscover) {
-		return model.TopologySnapshot{}, adapter.ErrUnsupported
+		return store.DiscoveryRefresh{}, adapter.ErrUnsupported
 	}
 	topologyAvailable := capabilities.Supports(adapter.CapabilityTopology)
 	metricsAvailable := capabilities.Supports(adapter.CapabilityMetrics)
@@ -142,7 +156,7 @@ func (service *Service) Refresh(ctx context.Context, clusterID model.ResourceID)
 	observedAt := service.now().UTC()
 	probeResults := service.probeEndpoints(ctx, candidate, cluster, endpoints, topologyAvailable, metricsAvailable)
 	if err := ctx.Err(); err != nil {
-		return model.TopologySnapshot{}, err
+		return store.DiscoveryRefresh{}, err
 	}
 	observations := make([]store.DiscoveryObservation, 0, len(probeResults))
 	writablePrimaryIdentities := make(map[string]struct{})
@@ -153,7 +167,7 @@ func (service *Service) Refresh(ctx context.Context, clusterID model.ResourceID)
 	probes := make([]model.ProbeStatus, 0, len(probeResults))
 	for _, probe := range probeResults {
 		if probe.failure == probeUnsupported {
-			return model.TopologySnapshot{}, adapter.ErrUnsupported
+			return store.DiscoveryRefresh{}, adapter.ErrUnsupported
 		}
 		status := model.ProbeStatus{EndpointID: probe.endpoint.ResourceID, InstanceID: probe.endpoint.InstanceID}
 		if probe.failure == probeCredentialsFailed {
@@ -169,7 +183,7 @@ func (service *Service) Refresh(ctx context.Context, clusterID model.ResourceID)
 			continue
 		}
 		if probe.failure == probeTopologyFailed {
-			return model.TopologySnapshot{}, fmt.Errorf(topologyFailureSummary)
+			return store.DiscoveryRefresh{}, fmt.Errorf(topologyFailureSummary)
 		}
 		discovered := probe.discovery.Instance
 		status.DiscoveryObservedAt = observedAt
@@ -236,17 +250,9 @@ func (service *Service) Refresh(ctx context.Context, clusterID model.ResourceID)
 	}
 	health := discoveryHealth(observedAt, len(endpoints), credentialFailures, databaseFailures, metricFailures, writablePrimaries)
 	if err := ctx.Err(); err != nil {
-		return model.TopologySnapshot{}, err
+		return store.DiscoveryRefresh{}, err
 	}
-	var releasePublicationFence func()
-	if service.publicationFence != nil {
-		releasePublicationFence, err = service.publicationFence.AcquireCluster(ctx, clusterID)
-		if err != nil {
-			return model.TopologySnapshot{}, fmt.Errorf("acquire discovery publication fence: %w", err)
-		}
-		defer releasePublicationFence()
-	}
-	snapshot, err := service.repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{
+	return store.DiscoveryRefresh{
 		ClusterID:             clusterID,
 		InventoryGeneration:   inventory.Generation,
 		Observations:          observations,
@@ -256,7 +262,21 @@ func (service *Service) Refresh(ctx context.Context, clusterID model.ResourceID)
 		Health:                health,
 		ObservedAt:            observedAt,
 		Anomalies:             anomalies,
-	})
+	}, nil
+}
+
+func (service *Service) acquirePublicationFence(ctx context.Context, clusterID model.ResourceID) (func(), error) {
+	if service.publicationFence != nil {
+		releasePublicationFence, err := service.publicationFence.AcquireCluster(ctx, clusterID)
+		if err != nil {
+			return nil, fmt.Errorf("acquire discovery publication fence: %w", err)
+		}
+		return releasePublicationFence, nil
+	}
+	return func() {}, nil
+}
+
+func (service *Service) finishRefresh(clusterID model.ResourceID, observedAt time.Time, snapshot model.TopologySnapshot, err error) (model.TopologySnapshot, error) {
 	if err != nil {
 		if errors.Is(err, store.ErrPostCommitDurability) {
 			sortSnapshotResources(snapshot.Instances, snapshot.Links, snapshot.Probes, snapshot.Anomalies)
@@ -270,6 +290,116 @@ func (service *Service) Refresh(ctx context.Context, clusterID model.ResourceID)
 		service.primaryFailureObserver.Record(clusterID, primaryProbeUnavailable(snapshot), observedAt)
 	}
 	return snapshot, nil
+}
+
+type preparedRefresh struct {
+	refresh store.DiscoveryRefresh
+	release func()
+	err     error
+}
+
+// RefreshBatch probes clusters concurrently and publishes the complete
+// scheduler round with one repository mutation. Per-cluster locks and
+// publication fences remain held until the shared snapshot commits.
+func (service *Service) RefreshBatch(ctx context.Context, clusterIDs []model.ResourceID) (map[model.ResourceID]model.TopologySnapshot, error) {
+	if service == nil || service.registry == nil || service.repository == nil {
+		return nil, fmt.Errorf("discovery service is not configured")
+	}
+	ordered := append([]model.ResourceID{}, clusterIDs...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i] < ordered[j] })
+	for index, clusterID := range ordered {
+		if !model.ValidResourceID(clusterID) {
+			return nil, fmt.Errorf("discovery batch contains an invalid cluster ID")
+		}
+		if index > 0 && clusterID == ordered[index-1] {
+			return nil, fmt.Errorf("discovery batch contains duplicate cluster ID: %s", clusterID)
+		}
+	}
+	if len(ordered) == 0 {
+		return map[model.ResourceID]model.TopologySnapshot{}, nil
+	}
+
+	results := make([]preparedRefresh, len(ordered))
+	parallel := maximumScheduledRefreshes
+	if len(ordered) < parallel {
+		parallel = len(ordered)
+	}
+	gate := make(chan struct{}, parallel)
+	var wait sync.WaitGroup
+	for index, clusterID := range ordered {
+		wait.Add(1)
+		go func(index int, clusterID model.ResourceID) {
+			defer wait.Done()
+			select {
+			case gate <- struct{}{}:
+				defer func() { <-gate }()
+			case <-ctx.Done():
+				results[index].err = ctx.Err()
+				return
+			}
+			unlock, err := service.lockCluster(ctx, clusterID)
+			if err != nil {
+				results[index].err = err
+				return
+			}
+			releaseFence, err := service.acquirePublicationFence(ctx, clusterID)
+			if err != nil {
+				unlock()
+				results[index].err = err
+				return
+			}
+			refresh, err := service.prepareRefresh(ctx, clusterID)
+			if err != nil {
+				releaseFence()
+				unlock()
+				results[index].err = err
+				return
+			}
+			results[index] = preparedRefresh{
+				refresh: refresh,
+				release: func() {
+					releaseFence()
+					unlock()
+				},
+			}
+		}(index, clusterID)
+	}
+	wait.Wait()
+
+	refreshes := make([]store.DiscoveryRefresh, 0, len(results))
+	failures := make([]error, 0)
+	for _, result := range results {
+		if result.release != nil {
+			defer result.release()
+		}
+		if result.err != nil {
+			failures = append(failures, result.err)
+			continue
+		}
+		refreshes = append(refreshes, result.refresh)
+	}
+	if len(refreshes) == 0 {
+		return nil, errors.Join(failures...)
+	}
+	published, publishErr := service.repository.ApplyDiscoveryRefreshBatch(refreshes)
+	if publishErr != nil && !errors.Is(publishErr, store.ErrPostCommitDurability) {
+		return nil, errors.Join(append(failures, fmt.Errorf("apply discovery refresh batch: %w", publishErr))...)
+	}
+	for _, refresh := range refreshes {
+		snapshot, found := published[refresh.ClusterID]
+		if !found {
+			continue
+		}
+		sortSnapshotResources(snapshot.Instances, snapshot.Links, snapshot.Probes, snapshot.Anomalies)
+		published[refresh.ClusterID] = snapshot
+		if service.primaryFailureObserver != nil {
+			service.primaryFailureObserver.Record(refresh.ClusterID, primaryProbeUnavailable(snapshot), refresh.ObservedAt)
+		}
+	}
+	if publishErr != nil {
+		failures = append(failures, fmt.Errorf("apply discovery refresh batch: %w", publishErr))
+	}
+	return published, errors.Join(failures...)
 }
 
 func primaryProbeUnavailable(snapshot model.TopologySnapshot) bool {

@@ -133,7 +133,6 @@ func (repository *Repository) CreateOperation(operation model.OperationRecord) (
 	if err := repository.commitSnapshotLocked(next); err != nil {
 		return cloneOperationRecord(operation), false, err
 	}
-	repository.snapshot = next
 	return cloneOperationRecord(operation), false, nil
 }
 
@@ -264,7 +263,6 @@ func (repository *Repository) PutOperationPlan(resourceID model.ResourceID, expe
 	if err := repository.commitSnapshotLocked(next); err != nil {
 		return cloneOperationRecord(operation), err
 	}
-	repository.snapshot = next
 	return cloneOperationRecord(operation), nil
 }
 
@@ -329,6 +327,9 @@ func applyOperationTransition(operation model.OperationRecord, transition model.
 		}
 		operation.Observation = transition.Observation
 	}
+	if transition.Precheck != nil {
+		operation.Precheck = append([]model.Check{}, transition.Precheck...)
+	}
 	if transition.Attempt != nil {
 		if err := validateAttempt(operation.Attempts, *transition.Attempt); err != nil {
 			return model.OperationRecord{}, err
@@ -375,7 +376,6 @@ func (repository *Repository) TransitionOperation(resourceID model.ResourceID, e
 	if err := repository.commitSnapshotLocked(next); err != nil {
 		return cloneOperationRecord(operation), err
 	}
-	repository.snapshot = next
 	return cloneOperationRecord(operation), nil
 }
 
@@ -468,7 +468,6 @@ func (repository *Repository) FinalizeOperation(resourceID model.ResourceID, exp
 	if err := repository.commitSnapshotLocked(next); err != nil {
 		return cloneOperationRecord(operation), err
 	}
-	repository.snapshot = next
 	return cloneOperationRecord(operation), nil
 }
 

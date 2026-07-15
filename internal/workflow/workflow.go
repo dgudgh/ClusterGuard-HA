@@ -36,6 +36,15 @@ type SafetyGuard interface {
 type ObservationToken struct {
 	ClusterID  model.ResourceID
 	ObservedAt time.Time
+	Digest     string
+	Snapshot   model.TopologySnapshot
+}
+
+func observationLabel(token ObservationToken) string {
+	if token.Digest != "" {
+		return fmt.Sprintf("%s@%s", token.ClusterID, token.Digest)
+	}
+	return fmt.Sprintf("%s@%s", token.ClusterID, token.ObservedAt.UTC().Format(time.RFC3339Nano))
 }
 
 type DiscoveryValidator interface {
@@ -299,9 +308,12 @@ func (service *Service) executeLegacy(ctx context.Context, request adapter.Opera
 		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationBlocked, Message: err.Error()}
 		return service.recordOutcome(operation, execution, model.StageDiscover, "discovery observation blocked execution: "+err.Error(), err)
 	}
-	observationLabel := fmt.Sprintf("%s@%s", observation.ClusterID, observation.ObservedAt.UTC().Format(time.RFC3339Nano))
+	observationLabel := observationLabel(observation)
 	if err := service.audit(operation, model.StageDiscover, "topology observation "+observationLabel+" validated"); err != nil {
 		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
+	}
+	if request.Resolved != nil {
+		request.Resolved.ObservationToken = observationLabel
 	}
 
 	checks, err := candidate.Precheck(ctx, request)

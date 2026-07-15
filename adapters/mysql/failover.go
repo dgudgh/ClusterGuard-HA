@@ -105,7 +105,7 @@ func (adapterInstance *Adapter) failoverPlan(ctx context.Context, request adapte
 	)
 	plan := model.OperationPlan{
 		OperationID: request.Operation.ResourceID, ClusterID: resolved.Cluster.ResourceID, SourceID: resolved.Primary.ResourceID, TargetID: resolved.Target.ResourceID,
-		Stage: model.StagePlan, ObservationToken: string(resolved.Cluster.ResourceID) + "@" + resolved.Snapshot.ObservedAt.UTC().Format(time.RFC3339Nano),
+		Stage: model.StagePlan, ObservationToken: resolvedObservationToken(resolved),
 		ResourceRevisions: planResourceRevisions(resolved), Checks: checks, Steps: steps, Mutating: true, Summary: "guarded MySQL failover is ready",
 	}
 	if planHasBlockingChecks(checks) {
@@ -195,13 +195,23 @@ func (adapterInstance *Adapter) failoverExecute(ctx context.Context, request ada
 		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("recheck failover target writable state: %w", err))
 	}
 	if !targetWritable {
-		if err := adapterInstance.executor.Exec(ctx, targetEndpoint, resolved.Credentials, setSuperReadOnlyOff); err != nil {
-			return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", err)
-		}
 		if err := adapterInstance.executor.Exec(ctx, targetEndpoint, resolved.Credentials, setReadOnlyOff); err != nil {
-			_ = adapterInstance.fenceInstance(ctx, targetEndpoint, resolved.Credentials)
-			return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", err)
+			if fenceErr := adapterInstance.fenceInstance(ctx, targetEndpoint, resolved.Credentials); fenceErr != nil {
+				return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("failover target promotion failed (%v) and target fencing failed: %w", err, fenceErr))
+			}
+			return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", err)
 		}
+	}
+	targetWritable, err = queryWritableState(ctx, adapterInstance.runner, targetEndpoint, resolved.Credentials)
+	if err != nil || !targetWritable {
+		postconditionErr := err
+		if postconditionErr == nil {
+			postconditionErr = fmt.Errorf("selected failover target remained read-only after promotion")
+		}
+		if fenceErr := adapterInstance.fenceInstance(ctx, targetEndpoint, resolved.Credentials); fenceErr != nil {
+			return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("failover target writable postcondition failed (%v) and target fencing failed: %w", postconditionErr, fenceErr))
+		}
+		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", postconditionErr)
 	}
 	if err := completeOperationStep(context.WithoutCancel(ctx), request, "promote_failover_target", "selected failover target is writable"); err != nil {
 		_ = adapterInstance.fenceInstance(ctx, targetEndpoint, resolved.Credentials)

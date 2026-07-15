@@ -2,7 +2,9 @@ package coordination
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -24,6 +26,7 @@ type LeaseRecordStore interface {
 	CoordinationLeases() []LeaseRecord
 	PutCoordinationLease(LeaseRecord) error
 	DeleteCoordinationLease(model.ResourceID) error
+	ReplaceCoordinationLeases([]LeaseRecord) error
 }
 
 type LeaseStore struct {
@@ -69,7 +72,7 @@ func (store *LeaseStore) Acquire(ctx context.Context, request endpoint.LeaseRequ
 		if lease.ClusterID != request.ClusterID || lease.HAEndpointID != request.HAEndpointID {
 			continue
 		}
-		if lease.OperationID == request.OperationID && lease.OwnerID == request.OwnerID {
+		if lease.OperationID == request.OperationID && lease.OwnerID == request.OwnerID && lease.PreviousOwnerID == request.PreviousOwnerID {
 			lease.ExpiresAt = now.Add(request.TTL)
 			record.Lease = lease
 			record.UpdatedAt = now
@@ -88,12 +91,106 @@ func (store *LeaseStore) Acquire(ctx context.Context, request endpoint.LeaseRequ
 	}
 	lease := endpoint.Lease{
 		ResourceID: model.NewResourceID(), ClusterID: request.ClusterID, HAEndpointID: request.HAEndpointID,
-		OperationID: request.OperationID, OwnerID: request.OwnerID, ExpiresAt: now.Add(request.TTL), Active: true,
+		OperationID: request.OperationID, OwnerID: request.OwnerID, PreviousOwnerID: request.PreviousOwnerID,
+		ExpiresAt: now.Add(request.TTL), Active: true,
 	}
 	if err := store.records.PutCoordinationLease(LeaseRecord{Lease: lease, CreatedAt: now, UpdatedAt: now}); err != nil {
 		return endpoint.Lease{}, fmt.Errorf("persist quorum lease: %w", err)
 	}
 	return lease, nil
+}
+
+// AcquireStableBatch renews the controller-owned steady-state leases with one
+// durable metadata mutation. A transition conflict remains local to its
+// endpoint so one active operation cannot starve unrelated clusters.
+func (store *LeaseStore) AcquireStableBatch(ctx context.Context, requests []endpoint.LeaseRequest) error {
+	if err := store.authorize(ctx); err != nil {
+		return err
+	}
+	if len(requests) == 0 {
+		return nil
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	now := store.now().UTC()
+	next := make(map[model.ResourceID]LeaseRecord)
+	activeByScope := make(map[string]model.ResourceID)
+	duplicateScopes := make(map[string]bool)
+	changed := false
+	for _, record := range store.records.CoordinationLeases() {
+		lease := record.Lease
+		if !lease.Active || !lease.ExpiresAt.After(now) {
+			changed = true
+			continue
+		}
+		next[lease.ResourceID] = record
+		scope := leaseScope(lease.ClusterID, lease.HAEndpointID)
+		if _, found := activeByScope[scope]; found {
+			duplicateScopes[scope] = true
+			continue
+		}
+		activeByScope[scope] = lease.ResourceID
+	}
+
+	failures := make([]error, 0)
+	seenRequests := make(map[string]bool, len(requests))
+	for _, request := range requests {
+		if !model.ValidResourceID(request.ClusterID) || !model.ValidResourceID(request.HAEndpointID) ||
+			request.OperationID != request.HAEndpointID || !model.ValidResourceID(request.OwnerID) ||
+			request.PreviousOwnerID != "" {
+			failures = append(failures, fmt.Errorf("cluster %s: stable endpoint lease request is invalid", request.ClusterID))
+			continue
+		}
+		scope := leaseScope(request.ClusterID, request.HAEndpointID)
+		if seenRequests[scope] {
+			failures = append(failures, fmt.Errorf("cluster %s: duplicate stable endpoint lease request", request.ClusterID))
+			continue
+		}
+		seenRequests[scope] = true
+		if duplicateScopes[scope] {
+			failures = append(failures, fmt.Errorf("cluster %s: %w: multiple active quorum leases", request.ClusterID, endpoint.ErrLeaseConflict))
+			continue
+		}
+		ttl := request.TTL
+		if ttl <= 0 || ttl > time.Minute {
+			ttl = 30 * time.Second
+		}
+		if resourceID, found := activeByScope[scope]; found {
+			record := next[resourceID]
+			if record.Lease.OperationID != request.OperationID || record.Lease.OwnerID != request.OwnerID {
+				failures = append(failures, fmt.Errorf("cluster %s: %w: active quorum lease belongs to another operation", request.ClusterID, endpoint.ErrLeaseConflict))
+				continue
+			}
+			record.Lease.ExpiresAt = now.Add(ttl)
+			record.UpdatedAt = now
+			next[resourceID] = record
+			changed = true
+			continue
+		}
+		lease := endpoint.Lease{
+			ResourceID: model.NewResourceID(), ClusterID: request.ClusterID, HAEndpointID: request.HAEndpointID,
+			OperationID: request.OperationID, OwnerID: request.OwnerID, ExpiresAt: now.Add(ttl), Active: true,
+		}
+		next[lease.ResourceID] = LeaseRecord{Lease: lease, CreatedAt: now, UpdatedAt: now}
+		activeByScope[scope] = lease.ResourceID
+		changed = true
+	}
+	if changed {
+		records := make([]LeaseRecord, 0, len(next))
+		for _, record := range next {
+			records = append(records, record)
+		}
+		sort.Slice(records, func(i, j int) bool { return records[i].Lease.ResourceID < records[j].Lease.ResourceID })
+		if err := store.records.ReplaceCoordinationLeases(records); err != nil {
+			failures = append(failures, fmt.Errorf("persist stable quorum lease batch: %w", err))
+		}
+	}
+	return errors.Join(failures...)
+}
+
+func leaseScope(clusterID, endpointID model.ResourceID) string {
+	return string(clusterID) + "\x00" + string(endpointID)
 }
 
 func (store *LeaseStore) Validate(ctx context.Context, lease endpoint.Lease) error {
@@ -129,6 +226,7 @@ func (store *LeaseStore) FinalizeTransition(ctx context.Context, transition endp
 			ttl = 30 * time.Second
 		}
 		current.OperationID = current.HAEndpointID
+		current.PreviousOwnerID = ""
 		current.ExpiresAt = now.Add(ttl)
 		record.Lease = current
 		record.UpdatedAt = now

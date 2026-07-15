@@ -2,10 +2,22 @@ package mysql
 
 import (
 	"fmt"
+	"strings"
+	"time"
 
 	"clusterguard.io/ha/pkg/adapter"
 	"clusterguard.io/ha/pkg/model"
 )
+
+func resolvedObservationToken(resolved *adapter.ResolvedOperation) string {
+	if resolved == nil {
+		return ""
+	}
+	if token := strings.TrimSpace(resolved.ObservationToken); token != "" {
+		return token
+	}
+	return string(resolved.Cluster.ResourceID) + "@" + resolved.Snapshot.ObservedAt.UTC().Format(time.RFC3339Nano)
+}
 
 func validateMySQLPlan(request adapter.OperationRequest, kind model.OperationKind, strictRevisions bool) error {
 	if request.Operation.Kind != kind || request.Resolved == nil || request.Plan == nil {
@@ -20,6 +32,9 @@ func validateMySQLPlan(request adapter.OperationRequest, kind model.OperationKin
 	if plan.Stage != model.StagePlan || plan.Digest == "" || plan.ObservationToken == "" {
 		return fmt.Errorf("operation plan integrity fields are missing")
 	}
+	if plan.ObservationToken != resolvedObservationToken(resolved) {
+		return fmt.Errorf("operation plan observation token changed")
+	}
 	digest, err := operationPlanDigest(*plan)
 	if err != nil || digest != plan.Digest {
 		return fmt.Errorf("operation plan digest changed")
@@ -32,11 +47,11 @@ func validateMySQLPlan(request adapter.OperationRequest, kind model.OperationKin
 	}
 	for _, instance := range resolved.Snapshot.Instances {
 		revision := plan.ResourceRevisions[instance.ResourceID]
-		if revision == 0 || (strictRevisions && revision != instance.MetadataRevision) {
+		if revision == 0 || (strictRevisions && resolved.ObservationToken == "" && revision != instance.MetadataRevision) {
 			return fmt.Errorf("operation plan instance revision changed")
 		}
 	}
-	if strictRevisions && plan.ResourceRevisions[resolved.Cluster.ResourceID] != resolved.Cluster.MetadataRevision {
+	if strictRevisions && resolved.ObservationToken == "" && plan.ResourceRevisions[resolved.Cluster.ResourceID] != resolved.Cluster.MetadataRevision {
 		return fmt.Errorf("operation plan cluster revision changed")
 	}
 	return nil

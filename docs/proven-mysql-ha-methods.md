@@ -112,6 +112,11 @@ count is unrestricted. Controller or mixed-node changes must end with an odd
 membership of at least three and are committed as one verified membership
 change.
 
+The logical-dump fallback deliberately purges every non-system schema on the
+target before donor import. This prevents a physically replaced or divergent
+target from retaining target-only data after GTID state is reset. It is allowed
+only inside the guarded rebuild workflow and never runs as an implicit repair.
+
 ## Planned Restart
 
 A managed MySQL restart is an operation, not a raw service restart. It places
@@ -141,13 +146,22 @@ information, and settings. Every visible execution action either calls a real
 ClusterGuard API or is disabled with the backend capability reason. Raw
 operation evidence is collapsed by default but remains available for audit.
 
-## Remaining Delivery Work
+## Validated Delivery
 
-- package the controller, CLI, restricted agent, lifecycle executor, systemd
-  units, log rotation, and sample configuration into one installable bundle;
-- implement and verify real controller membership join and rollback helpers;
-- configure Clone and matching XtraBackup helpers for the laboratory package
-  repository;
-- deploy three controllers and three data-node agents to the test hosts;
-- execute real planned switch, primary loss, former-primary return, repeated
-  restart, partition, minority self-isolation, and node rebuild matrices.
+The RC58 bundle contains the controller, CLI, restricted agent, lifecycle
+executor, systemd units, timers, log rotation, configuration templates, and
+installer. It was deployed to three controllers and three colocated data nodes.
+The acceptance matrix verified six clusters, 50 repeated real switchovers,
+quorum-loss self-isolation, primary network failure, former-primary return,
+repeated restart, full-host reboot, divergent rebuild, and endpoint metadata
+reconciliation. Detailed evidence is recorded in
+`docs/mysql-feature-parity-acceptance.md`.
+
+Production hardening that remains environment-specific:
+
+- integrate and exercise out-of-band host fencing for the deployment platform;
+- qualify Clone or the exact XtraBackup build for each supported MySQL family;
+- establish backup/restore, retention, and recovery-time objectives;
+- integrate external alert delivery and long-term metrics retention;
+- repeat the destructive matrix on the target kernel, network, storage, and
+  MySQL packages before production enablement.

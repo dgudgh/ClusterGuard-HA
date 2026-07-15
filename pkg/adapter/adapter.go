@@ -96,6 +96,7 @@ type OperationProgressReader interface {
 
 type ResolvedOperation struct {
 	OperationID            model.ResourceID       `json:"operation_id"`
+	ObservationToken       string                 `json:"-"`
 	Cluster                model.DatabaseCluster  `json:"cluster"`
 	Snapshot               model.TopologySnapshot `json:"snapshot"`
 	Primary                model.DatabaseInstance `json:"primary"`

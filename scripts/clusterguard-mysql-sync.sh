@@ -36,10 +36,15 @@ replication_password="$(jq -r '.secrets.replication_password' "${payload}")"
 replication_user="clusterguard_repl"
 
 install_root="/opt/clusterguard/mysql/${target_port}/software"
-mysql="${install_root}/bin/mysql"
-mysqldump="${install_root}/bin/mysqldump"
+mysql=""
+for candidate in "${install_root}/bin/mysql" "${CG_MYSQL_CLIENT:-}" "$(command -v mysql 2>/dev/null || true)"; do
+  if [[ -n "${candidate}" && -x "${candidate}" ]]; then
+    mysql="${candidate}"
+    break
+  fi
+done
 target_defaults="/etc/clusterguard/mysql/${target_port}-client.cnf"
-[[ -x "${mysql}" && -f "${target_defaults}" ]] || { echo "target MySQL installation is incomplete" >&2; exit 3; }
+[[ -n "${mysql}" && -x "${mysql}" && -f "${target_defaults}" ]] || { echo "target MySQL client or protected option file is unavailable" >&2; exit 3; }
 cat >"${donor_defaults}" <<EOF
 [client]
 user=root
@@ -62,6 +67,17 @@ mysql_donor() {
   "${mysql}" --defaults-extra-file="${donor_defaults}" --protocol=tcp --host="${donor_host}" --port="${donor_port}" "$@"
 }
 
+target_basedir="$(mysql_target --batch --skip-column-names -e 'SELECT @@basedir')"
+native_mysql="${target_basedir%/}/bin/mysql"
+native_mysqldump="${target_basedir%/}/bin/mysqldump"
+if [[ -x "${native_mysql}" ]]; then
+  mysql="${native_mysql}"
+fi
+mysqldump="${native_mysqldump}"
+if [[ ! -x "${mysqldump}" ]]; then
+  mysqldump="$(dirname "${mysql}")/mysqldump"
+fi
+
 target_ready=true
 mysql_target <<'SQL'
 SET GLOBAL super_read_only=OFF;
@@ -83,6 +99,21 @@ case "${method}" in
     [[ -x "${mysqldump}" ]] || { echo "mysqldump is unavailable" >&2; exit 4; }
     mysql_target -e 'STOP REPLICA; RESET REPLICA ALL;' >/dev/null 2>&1 || mysql_target -e 'STOP SLAVE; RESET SLAVE ALL;' >/dev/null 2>&1 || true
     mysql_target -e 'RESET BINARY LOGS AND GTIDS' >/dev/null 2>&1 || mysql_target -e 'RESET MASTER'
+    mapfile -t target_database_hex < <(mysql_target --batch --skip-column-names -e \
+      "SELECT HEX(schema_name) FROM information_schema.schemata WHERE schema_name NOT IN ('information_schema','performance_schema','mysql','sys') ORDER BY schema_name")
+    drop_schema_template="$(cat <<'SQL'
+SET SESSION sql_log_bin=0;
+SET @cg_schema=CONVERT(0xSCHEMA_HEX USING utf8mb4);
+SET @cg_drop_schema_sql=CONCAT('DROP DATABASE IF EXISTS `', REPLACE(@cg_schema, '`', '``'), '`');
+PREPARE cg_drop_schema FROM @cg_drop_schema_sql;
+EXECUTE cg_drop_schema;
+DEALLOCATE PREPARE cg_drop_schema;
+SQL
+)"
+    for target_schema_hex in "${target_database_hex[@]}"; do
+      [[ "${target_schema_hex}" =~ ^[0-9A-F]+$ ]] || { echo "target schema identity is invalid" >&2; exit 4; }
+      mysql_target -e "${drop_schema_template/SCHEMA_HEX/${target_schema_hex}}"
+    done
     mapfile -t user_databases < <(mysql_donor --batch --skip-column-names -e \
       "SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT IN ('information_schema','performance_schema','mysql','sys') ORDER BY schema_name")
     if [[ "${#user_databases[@]}" -gt 0 ]]; then
@@ -123,7 +154,7 @@ if [[ "${major_minor}" == "5.7" ]]; then
   sql_pattern='Slave_SQL_Running: Yes'
 else
   mysql_target -e 'STOP REPLICA; RESET REPLICA ALL;' || true
-	printf "CHANGE REPLICATION SOURCE TO SOURCE_HOST='%s', SOURCE_PORT=%s, SOURCE_USER='%s', SOURCE_PASSWORD=%s, SOURCE_AUTO_POSITION=1, SOURCE_CONNECT_RETRY=5, SOURCE_RETRY_COUNT=86400;\nSTART REPLICA;\n" \
+	printf "CHANGE REPLICATION SOURCE TO SOURCE_HOST='%s', SOURCE_PORT=%s, SOURCE_USER='%s', SOURCE_PASSWORD=%s, SOURCE_AUTO_POSITION=1, GET_SOURCE_PUBLIC_KEY=1, SOURCE_CONNECT_RETRY=5, SOURCE_RETRY_COUNT=86400;\nSTART REPLICA;\n" \
 		"${donor_host}" "${donor_port}" "${replication_user}" "${donor_secret}" | mysql_target
   status_command='SHOW REPLICA STATUS\G'
   io_pattern='Replica_IO_Running: Yes'

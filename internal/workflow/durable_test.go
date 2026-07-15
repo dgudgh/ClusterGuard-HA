@@ -16,6 +16,9 @@ type durableAdapter struct {
 	executeCalls       int
 	verifyCalls        int
 	executeError       error
+	precheckStarted    chan struct{}
+	precheckRelease    chan struct{}
+	precheckChecks     []model.Check
 	executeStarted     chan struct{}
 	executeRelease     chan struct{}
 	afterExecute       func()
@@ -36,6 +39,13 @@ func (candidate *durableAdapter) Capabilities(context.Context) adapter.Capabilit
 }
 
 func (candidate *durableAdapter) Precheck(context.Context, adapter.OperationRequest) ([]model.Check, error) {
+	if candidate.precheckStarted != nil {
+		close(candidate.precheckStarted)
+		<-candidate.precheckRelease
+	}
+	if candidate.precheckChecks != nil {
+		return append([]model.Check{}, candidate.precheckChecks...), nil
+	}
 	return []model.Check{{Name: "ready", Status: model.CheckPass, Message: "ready"}}, nil
 }
 
@@ -44,7 +54,7 @@ func (candidate *durableAdapter) BuildPlan(_ context.Context, request adapter.Op
 	return model.OperationPlan{
 		OperationID: request.Operation.ResourceID, ClusterID: request.Operation.ClusterID,
 		SourceID: resolved.Primary.ResourceID, TargetID: request.TargetID, Stage: model.StagePlan,
-		ObservationToken: string(request.Operation.ClusterID) + "@" + resolved.Snapshot.ObservedAt.Format(time.RFC3339Nano),
+		ObservationToken: resolved.ObservationToken,
 		ResourceRevisions: map[model.ResourceID]uint64{
 			resolved.Cluster.ResourceID: resolved.Cluster.MetadataRevision,
 			resolved.Primary.ResourceID: resolved.Primary.MetadataRevision,
@@ -165,6 +175,9 @@ func TestDurableWorkflowPersistsPlanProgressAndTerminalOutcome(t *testing.T) {
 	if record.Plan.Digest == "" || len(record.Attempts) != 1 || record.Attempts[0].Step != "execute" {
 		t.Fatalf("plan or progress was not persisted: %+v", record)
 	}
+	if record.Plan.ObservationToken != string(request.Operation.ClusterID)+"@sha256:workflow-test" {
+		t.Fatalf("semantic observation token was not pinned into the plan: %q", record.Plan.ObservationToken)
+	}
 	if candidate.executeCalls != 1 {
 		t.Fatalf("adapter execute calls=%d", candidate.executeCalls)
 	}
@@ -175,7 +188,7 @@ func TestDurableWorkflowPersistsPlanProgressAndTerminalOutcome(t *testing.T) {
 	}
 }
 
-func TestDurableWorkflowLocksTopologyBeforeCapturingPlanObservation(t *testing.T) {
+func TestDurableWorkflowCapturesPlanBeforeLockAndRevalidatesAfterLock(t *testing.T) {
 	request, resolved := durableRequestFixture()
 	repository := store.NewMemory()
 	registry := adapter.NewRegistry()
@@ -196,7 +209,7 @@ func TestDurableWorkflowLocksTopologyBeforeCapturingPlanObservation(t *testing.T
 	if err != nil || execution.Status != model.OperationSucceeded {
 		t.Fatalf("durable execute: result=%+v err=%v", execution, err)
 	}
-	want := []string{"gate:safety", "gate:lock", "gate:discover", "gate:revalidate", "gate:approval", "gate:release"}
+	want := []string{"gate:discover", "gate:safety", "gate:lock", "gate:revalidate", "gate:approval", "gate:release"}
 	if len(trace) != len(want) {
 		t.Fatalf("workflow gate trace: got %v want %v", trace, want)
 	}
@@ -204,6 +217,54 @@ func TestDurableWorkflowLocksTopologyBeforeCapturingPlanObservation(t *testing.T
 		if trace[index] != want[index] {
 			t.Fatalf("workflow gate trace[%d]: got %q want %q", index, trace[index], want[index])
 		}
+	}
+}
+
+func TestDurableWorkflowDoesNotFreezeTopologyPublicationDuringPrecheck(t *testing.T) {
+	request, resolved := durableRequestFixture()
+	repository := store.NewMemory()
+	registry := adapter.NewRegistry()
+	candidate := newDurableAdapter()
+	candidate.precheckStarted = make(chan struct{})
+	candidate.precheckRelease = make(chan struct{})
+	if err := registry.Register(candidate); err != nil {
+		t.Fatalf("register adapter: %v", err)
+	}
+	trace := []string{}
+	locks := NewMemoryLocks()
+	resolver := OperationResolverFunc(func(_ context.Context, candidate adapter.OperationRequest) (adapter.OperationRequest, error) {
+		candidate.Resolved = &resolved
+		candidate.Credentials = resolved.Credentials
+		return candidate, nil
+	})
+	service := New(registry, recordingGate{&trace}, recordingGate{&trace}, locks, recordingGate{&trace}, repository,
+		WithOperationStore(repository), WithOperationResolver(resolver))
+
+	type result struct {
+		execution model.Execution
+		err       error
+	}
+	finished := make(chan result, 1)
+	go func() {
+		execution, err := service.Execute(context.Background(), request, "approved")
+		finished <- result{execution: execution, err: err}
+	}()
+	<-candidate.precheckStarted
+
+	publicationContext, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	releasePublication, err := locks.AcquireCluster(publicationContext, request.Operation.ClusterID)
+	if err != nil {
+		close(candidate.precheckRelease)
+		<-finished
+		t.Fatalf("precheck froze topology publication: %v", err)
+	}
+	releasePublication()
+	close(candidate.precheckRelease)
+
+	outcome := <-finished
+	if outcome.err != nil || outcome.execution.Status != model.OperationSucceeded {
+		t.Fatalf("durable execute: result=%+v err=%v", outcome.execution, outcome.err)
 	}
 }
 
@@ -319,6 +380,9 @@ func TestDurablePrecheckAndPlanPersistReadOnlyStages(t *testing.T) {
 	if record.Stage != model.StagePrecheck || record.Status != model.OperationPlanned || record.Observation == "" {
 		t.Fatalf("precheck stage was not persisted: %+v", record)
 	}
+	if len(record.Precheck) != 1 || record.Precheck[0].Name != "ready" || record.Precheck[0].Status != model.CheckPass {
+		t.Fatalf("precheck evidence was not persisted: %+v", record.Precheck)
+	}
 
 	record, plan, err := service.Plan(context.Background(), request)
 	if err != nil {
@@ -326,6 +390,29 @@ func TestDurablePrecheckAndPlanPersistReadOnlyStages(t *testing.T) {
 	}
 	if record.Stage != model.StagePlan || record.Status != model.OperationPlanned || plan.Digest == "" || record.Plan.Digest != plan.Digest {
 		t.Fatalf("plan stage was not persisted: record=%+v plan=%+v", record, plan)
+	}
+}
+
+func TestDurableWorkflowPersistsBlockingPrecheckEvidence(t *testing.T) {
+	request, resolved := durableRequestFixture()
+	repository := store.NewMemory()
+	candidate := newDurableAdapter()
+	candidate.precheckChecks = []model.Check{
+		{Name: "replication_threads", Status: model.CheckPass, Message: "replication is healthy"},
+		{Name: "gtid_consistency", Status: model.CheckFail, Message: "target is missing a transient transaction"},
+	}
+	service := newDurableWorkflowService(t, repository, candidate, request, resolved)
+
+	execution, err := service.Execute(context.Background(), request, "approved")
+	if err == nil || execution.Status != model.OperationBlocked || candidate.executeCalls != 0 {
+		t.Fatalf("blocking precheck result=%+v calls=%d err=%v", execution, candidate.executeCalls, err)
+	}
+	record, found := repository.OperationByIdempotencyKey(request.IdempotencyKey)
+	if !found || record.Status != model.OperationBlocked || record.Stage != model.StagePrecheck {
+		t.Fatalf("blocked operation was not persisted: found=%t record=%+v", found, record)
+	}
+	if len(record.Precheck) != 2 || record.Precheck[1].Name != "gtid_consistency" || record.Precheck[1].Status != model.CheckFail || record.Precheck[1].Message != "target is missing a transient transaction" {
+		t.Fatalf("blocking precheck evidence was not persisted: %+v", record.Precheck)
 	}
 }
 

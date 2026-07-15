@@ -34,7 +34,6 @@ func (repository *Repository) SetMaintenance(ctx context.Context, clusterID, ins
 	if err := repository.commitSnapshotLocked(next); err != nil {
 		return fmt.Errorf("persist maintenance state: %w", err)
 	}
-	repository.snapshot = next
 	return nil
 }
 

@@ -70,7 +70,7 @@ func (adapterInstance *Adapter) repairPlan(ctx context.Context, request adapter.
 	plan := model.OperationPlan{
 		OperationID: request.Operation.ResourceID, ClusterID: resolved.Cluster.ResourceID, SourceID: resolved.Primary.ResourceID,
 		TargetID: resolved.Target.ResourceID, Stage: model.StagePlan,
-		ObservationToken:  string(resolved.Cluster.ResourceID) + "@" + resolved.Snapshot.ObservedAt.UTC().Format(time.RFC3339Nano),
+		ObservationToken:  resolvedObservationToken(resolved),
 		ResourceRevisions: planResourceRevisions(resolved), Checks: checks, Mutating: mutating,
 		Steps:   []model.PlanStep{{Index: 1, Name: "repair_" + action, Owner: "mysql", TargetID: resolved.Target.ResourceID, Mutating: mutating, Postcondition: "requested low-risk repair postcondition is verified"}},
 		Summary: "low-risk replication repair is ready",

@@ -58,7 +58,7 @@ func TestSyncScriptSupportsVersionAwareReplicationAndSelectedCopyMethods(t *test
 	for _, required := range []string{
 		"clone", "xtrabackup", "logical_dump", "CHANGE MASTER TO", "CHANGE REPLICATION SOURCE TO",
 		"MASTER_CONNECT_RETRY=5", "MASTER_RETRY_COUNT=86400", "SOURCE_CONNECT_RETRY=5", "SOURCE_RETRY_COUNT=86400",
-		"START SLAVE", "START REPLICA", "super_read_only",
+		"GET_SOURCE_PUBLIC_KEY=1", "START SLAVE", "START REPLICA", "super_read_only",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("sync script missing %q", required)
@@ -117,6 +117,28 @@ func TestNewNodeBootstrapDoesNotCreateErrantGTIDsBeforeSynchronization(t *testin
 	}
 }
 
+func TestLogicalDumpPurgesStaleTargetSchemasBeforeImport(t *testing.T) {
+	syncContents, err := os.ReadFile("clusterguard-mysql-sync.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	syncText := string(syncContents)
+	purge := strings.Index(syncText, "target_database_hex")
+	dump := strings.Index(syncText, "--set-gtid-purged=ON")
+	if purge < 0 || dump < 0 || purge > dump {
+		t.Fatal("logical rebuild must purge target-only user schemas before importing the donor dump")
+	}
+	for _, required := range []string{
+		"SELECT HEX(schema_name) FROM information_schema.schemata",
+		"DROP DATABASE IF EXISTS",
+		"PREPARE cg_drop_schema",
+	} {
+		if !strings.Contains(syncText, required) {
+			t.Fatalf("logical rebuild cannot safely purge stale target schemas: missing %q", required)
+		}
+	}
+}
+
 func TestMySQLInstallRaisesHostErrorToleranceForControllerProbes(t *testing.T) {
 	installContents, err := os.ReadFile("clusterguard-mysql-install.sh")
 	if err != nil {
@@ -124,5 +146,65 @@ func TestMySQLInstallRaisesHostErrorToleranceForControllerProbes(t *testing.T) {
 	}
 	if !strings.Contains(string(installContents), "max_connect_errors=10000") {
 		t.Fatal("managed MySQL instances can block healthy controllers after a transient probe storm")
+	}
+}
+
+func TestExistingRegisteredMySQLCanBeResynchronizedWithoutManagedInstallPath(t *testing.T) {
+	installContents, err := os.ReadFile("clusterguard-mysql-install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	installText := string(installContents)
+	for _, required := range []string{"CG_MYSQL_CLIENT", "command -v mysql", "existing MySQL instance accepted for synchronization"} {
+		if !strings.Contains(installText, required) {
+			t.Fatalf("install helper cannot adopt an existing registered MySQL instance: missing %q", required)
+		}
+	}
+
+	syncContents, err := os.ReadFile("clusterguard-mysql-sync.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	syncText := string(syncContents)
+	for _, required := range []string{"CG_MYSQL_CLIENT", "command -v mysql", "SELECT @@basedir", `bin/mysqldump`} {
+		if !strings.Contains(syncText, required) {
+			t.Fatalf("sync helper cannot use the registered instance's native client tools: missing %q", required)
+		}
+	}
+}
+
+func TestMixedNodeDatabaseRebuildPreservesHealthyControllerRole(t *testing.T) {
+	contents, err := os.ReadFile("clusterguard-node-lifecycle.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	for _, required := range []string{
+		"reuses_node_slot", "clusterguard-ha.service", "existing controller role preserved",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("mixed-node rebuild does not preserve an active controller role: missing %q", required)
+		}
+	}
+	preserve := strings.Index(text, "existing controller role preserved")
+	join := strings.Index(text, `"${control_helper}" "${request_file}" "${index}"`)
+	if preserve < 0 || join < 0 || preserve > join {
+		t.Fatal("controller preservation must be checked before invoking the join helper")
+	}
+}
+
+func TestLifecyclePayloadObjectMergeIsValidForJQ16(t *testing.T) {
+	contents, err := os.ReadFile("clusterguard-node-lifecycle.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expression := `target:((env.TARGET_JSON|fromjson)+{package_path:env.REMOTE_PACKAGE})`
+	if !strings.Contains(string(contents), expression) {
+		t.Fatalf("lifecycle payload must parenthesize the complete jq object merge: missing %q", expression)
+	}
+	command := exec.Command("jq", "-nc", `{target:((env.TARGET_JSON|fromjson)+{package_path:env.REMOTE_PACKAGE})}`)
+	command.Env = append(os.Environ(), `TARGET_JSON={"node_name":"cg-node-0001"}`, "REMOTE_PACKAGE=")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("jq lifecycle payload expression is not portable: %v\n%s", err, output)
 	}
 }

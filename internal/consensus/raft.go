@@ -57,6 +57,15 @@ type snapshotStateRestorer interface {
 	RestoreReplicatedState([]byte) error
 }
 
+type applyValidatingStateMachine interface {
+	ApplyValidatesReplicatedState() bool
+}
+
+func validatesReplicatedStateDuringApply(machine StateMachine) bool {
+	validator, ok := machine.(applyValidatingStateMachine)
+	return ok && validator.ApplyValidatesReplicatedState()
+}
+
 type committedStateError interface {
 	Committed() bool
 }
@@ -135,8 +144,10 @@ func (fsm *replicatedFSM) Apply(log *raft.Log) interface{} {
 	if err != nil {
 		return err
 	}
-	if err := fsm.machine.ValidateReplicatedState(state); err != nil {
-		return err
+	if !validatesReplicatedStateDuringApply(fsm.machine) {
+		if err := fsm.machine.ValidateReplicatedState(state); err != nil {
+			return err
+		}
 	}
 	applyErr := fsm.machine.ApplyReplicatedState(state)
 	if applyErr != nil && !stateWasCommitted(applyErr) {
@@ -166,8 +177,10 @@ func (fsm *replicatedFSM) Restore(reader io.ReadCloser) error {
 	if len(state) == 0 {
 		return nil
 	}
-	if err := fsm.machine.ValidateReplicatedState(state); err != nil {
-		return err
+	if !validatesReplicatedStateDuringApply(fsm.machine) {
+		if err := fsm.machine.ValidateReplicatedState(state); err != nil {
+			return err
+		}
 	}
 	apply := fsm.machine.ApplyReplicatedState
 	if restorer, ok := fsm.machine.(snapshotStateRestorer); ok {
@@ -196,15 +209,17 @@ func (snapshot *replicatedSnapshot) Persist(sink raft.SnapshotSink) error {
 func (*replicatedSnapshot) Release() {}
 
 type Node struct {
-	raft         *raft.Raft
-	transport    *raft.NetworkTransport
-	store        *raftboltdb.BoltStore
-	fsm          *replicatedFSM
-	applyTimeout time.Duration
-	snapshotCAS  bool
-	commitMu     sync.Mutex
-	closeOnce    sync.Once
-	closeErr     error
+	raft                   *raft.Raft
+	transport              *raft.NetworkTransport
+	store                  *raftboltdb.BoltStore
+	fsm                    *replicatedFSM
+	applyTimeout           time.Duration
+	snapshotCAS            bool
+	commitMu               sync.Mutex
+	synchronizeMu          sync.Mutex
+	synchronizedCommitTerm uint64
+	closeOnce              sync.Once
+	closeErr               error
 }
 
 func newRaftRuntimeConfiguration(localID model.ResourceID) *raft.Config {
@@ -319,20 +334,45 @@ func (node *Node) RequireMutationAuthority(ctx context.Context) error {
 }
 
 func (node *Node) Synchronize() error {
+	return node.synchronize(true)
+}
+
+// SynchronizeForCommit drains inherited Raft entries once per leadership
+// term. Subsequent repository commits in the same term can rely on Commit's
+// quorum verification and Apply ordering without adding another barrier.
+func (node *Node) SynchronizeForCommit() error {
+	return node.synchronize(false)
+}
+
+func (node *Node) synchronize(force bool) error {
 	if node == nil || node.raft == nil {
 		return ErrNotLeader
+	}
+	node.synchronizeMu.Lock()
+	defer node.synchronizeMu.Unlock()
+	if node.raft.State() != raft.Leader {
+		return ErrNotLeader
+	}
+	term := node.raft.CurrentTerm()
+	if !force && term != 0 && node.synchronizedCommitTerm == term {
+		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), node.applyTimeout)
 	defer cancel()
 	if err := node.RequireMutationAuthority(ctx); err != nil {
 		return err
 	}
+	term = node.raft.CurrentTerm()
 	if err := waitFuture(ctx, node.raft.Barrier(node.applyTimeout)); err != nil {
 		if errors.Is(err, raft.ErrNotLeader) {
 			return ErrNotLeader
 		}
 		return fmt.Errorf("%w: synchronize applied Raft state: %v", ErrCommitIndeterminate, err)
 	}
+	if node.raft.State() != raft.Leader || node.raft.CurrentTerm() != term {
+		return ErrNotLeader
+	}
+	node.synchronizedCommitTerm = term
 	return nil
 }
 

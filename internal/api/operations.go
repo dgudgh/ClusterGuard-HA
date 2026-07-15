@@ -14,7 +14,26 @@ import (
 func (server *Server) operationsCollection(writer http.ResponseWriter, request *http.Request) {
 	switch request.Method {
 	case http.MethodGet:
-		clusterID := model.ResourceID(strings.TrimSpace(request.URL.Query().Get("cluster_id")))
+		query := request.URL.Query()
+		if _, lookupByKey := query["idempotency_key"]; lookupByKey {
+			if _, filteredByCluster := query["cluster_id"]; filteredByCluster {
+				writeError(writer, http.StatusBadRequest, "cluster_id and idempotency_key cannot be combined")
+				return
+			}
+			key := strings.TrimSpace(query.Get("idempotency_key"))
+			if key == "" {
+				writeError(writer, http.StatusBadRequest, "idempotency_key is required")
+				return
+			}
+			record, found := server.store.OperationByIdempotencyKey(key)
+			if !found {
+				writeError(writer, http.StatusNotFound, "operation not found")
+				return
+			}
+			writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": publicOperationRecord(record)})
+			return
+		}
+		clusterID := model.ResourceID(strings.TrimSpace(query.Get("cluster_id")))
 		if clusterID != "" && !model.ValidResourceID(clusterID) {
 			writeError(writer, http.StatusBadRequest, "cluster_id must be a platform UUID")
 			return
@@ -112,6 +131,12 @@ func publicOperationRecord(record model.OperationRecord) model.OperationRecord {
 	}
 	if record.Execution.Message != "" {
 		record.Execution.Message = publicOperationStatusMessage(record.Execution.Status)
+	}
+	record.Precheck = append([]model.Check{}, record.Precheck...)
+	for index := range record.Precheck {
+		if record.Precheck[index].Message != "" {
+			record.Precheck[index].Message = publicCheckMessage(record.Precheck[index].Status)
+		}
 	}
 	record.Plan.Checks = append([]model.Check{}, record.Plan.Checks...)
 	for index := range record.Plan.Checks {

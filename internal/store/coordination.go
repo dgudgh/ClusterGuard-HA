@@ -35,7 +35,6 @@ func (repository *Repository) PutCoordinationLease(record coordination.LeaseReco
 	if err := repository.commitSnapshotLocked(next); err != nil {
 		return fmt.Errorf("persist coordination lease: %w", err)
 	}
-	repository.snapshot = next
 	return nil
 }
 
@@ -56,7 +55,32 @@ func (repository *Repository) DeleteCoordinationLease(resourceID model.ResourceI
 	if err := repository.commitSnapshotLocked(next); err != nil {
 		return fmt.Errorf("delete coordination lease: %w", err)
 	}
-	repository.snapshot = next
+	return nil
+}
+
+func (repository *Repository) ReplaceCoordinationLeases(records []coordination.LeaseRecord) error {
+	nextRecords := make(map[model.ResourceID]coordination.LeaseRecord, len(records))
+	for _, record := range records {
+		lease := record.Lease
+		if !model.ValidResourceID(lease.ResourceID) || !model.ValidResourceID(lease.ClusterID) || !model.ValidResourceID(lease.HAEndpointID) ||
+			!model.ValidResourceID(lease.OperationID) || !model.ValidResourceID(lease.OwnerID) || lease.ExpiresAt.IsZero() ||
+			record.CreatedAt.IsZero() || record.UpdatedAt.IsZero() {
+			return validationError("coordination lease batch contains an invalid record")
+		}
+		if _, found := nextRecords[lease.ResourceID]; found {
+			return validationError("coordination lease batch contains duplicate resource IDs")
+		}
+		nextRecords[lease.ResourceID] = record
+	}
+	repository.mutationMu.Lock()
+	defer repository.mutationMu.Unlock()
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	next := repository.snapshot
+	next.CoordinationLeases = nextRecords
+	if err := repository.commitSnapshotLocked(next); err != nil {
+		return fmt.Errorf("replace coordination leases: %w", err)
+	}
 	return nil
 }
 
@@ -86,7 +110,6 @@ func (repository *Repository) PutCoordinationOperationLock(record coordination.O
 	if err := repository.commitSnapshotLocked(next); err != nil {
 		return fmt.Errorf("persist coordination operation lock: %w", err)
 	}
-	repository.snapshot = next
 	return nil
 }
 
@@ -107,6 +130,5 @@ func (repository *Repository) DeleteCoordinationOperationLock(resourceID model.R
 	if err := repository.commitSnapshotLocked(next); err != nil {
 		return fmt.Errorf("delete coordination operation lock: %w", err)
 	}
-	repository.snapshot = next
 	return nil
 }

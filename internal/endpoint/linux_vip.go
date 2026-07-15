@@ -52,11 +52,13 @@ type endpointResource struct {
 }
 
 type OwnershipObservation struct {
-	HAEndpointID     model.ResourceID   `json:"ha_endpoint_id"`
-	CanonicalOwnerID model.ResourceID   `json:"canonical_owner_id,omitempty"`
-	EndpointOwnerID  model.ResourceID   `json:"endpoint_owner_id,omitempty"`
-	OwnerIDs         []model.ResourceID `json:"owner_ids"`
-	Complete         bool               `json:"complete"`
+	HAEndpointID       model.ResourceID   `json:"ha_endpoint_id"`
+	HAEndpointRevision uint64             `json:"ha_endpoint_revision"`
+	EndpointRevision   uint64             `json:"endpoint_revision"`
+	CanonicalOwnerID   model.ResourceID   `json:"canonical_owner_id,omitempty"`
+	EndpointOwnerID    model.ResourceID   `json:"endpoint_owner_id,omitempty"`
+	OwnerIDs           []model.ResourceID `json:"owner_ids"`
+	Complete           bool               `json:"complete"`
 }
 
 func (provider *LinuxVIPProvider) resource(clusterID model.ResourceID) (endpointResource, error) {
@@ -163,7 +165,8 @@ func (provider *LinuxVIPProvider) ObserveOwnership(ctx context.Context, cluster 
 	}
 	owners, complete := observationSummary(provider.observe(ctx, resolved, resource))
 	return OwnershipObservation{
-		HAEndpointID: resource.resource.ResourceID, CanonicalOwnerID: resource.resource.OwnerID,
+		HAEndpointID: resource.resource.ResourceID, HAEndpointRevision: resource.resource.MetadataRevision,
+		EndpointRevision: resource.endpoint.MetadataRevision, CanonicalOwnerID: resource.resource.OwnerID,
 		EndpointOwnerID: resource.endpoint.InstanceID, OwnerIDs: owners, Complete: complete,
 	}, nil
 }

@@ -2,7 +2,10 @@ package store
 
 import (
 	"errors"
+	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -33,6 +36,11 @@ type synchronizingSnapshotConsensusStub struct {
 	syncCalls   int
 }
 
+type commitSynchronizingSnapshotConsensusStub struct {
+	synchronizingSnapshotConsensusStub
+	commitSyncCalls int
+}
+
 type gatedSnapshotConsensusStub struct {
 	snapshotConsensusStub
 	active bool
@@ -46,6 +54,109 @@ func (stub *synchronizingSnapshotConsensusStub) Synchronize() error {
 		return nil
 	}
 	return stub.synchronize()
+}
+
+func (stub *commitSynchronizingSnapshotConsensusStub) SynchronizeForCommit() error {
+	stub.commitSyncCalls++
+	if stub.synchronize == nil {
+		return nil
+	}
+	return stub.synchronize()
+}
+
+func TestRepositoryUsesTermScopedCommitSynchronizationWhenAvailable(t *testing.T) {
+	repository := NewMemory()
+	consensus := &commitSynchronizingSnapshotConsensusStub{}
+	consensus.apply = repository.ApplyReplicatedState
+	if err := repository.SetSnapshotConsensus(consensus); err != nil {
+		t.Fatalf("set snapshot consensus: %v", err)
+	}
+	if _, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "term-scoped"}); err != nil {
+		t.Fatalf("commit cluster: %v", err)
+	}
+	if consensus.commitSyncCalls != 1 || consensus.syncCalls != 0 {
+		t.Fatalf("commit synchronizations=%d generic synchronizations=%d, want 1 and 0", consensus.commitSyncCalls, consensus.syncCalls)
+	}
+}
+
+func TestRepositoryTracksCanonicalDigestAcrossPersistenceAndReplication(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metadata.json")
+	repository, err := Open(path)
+	if err != nil {
+		t.Fatalf("open repository: %v", err)
+	}
+	assertDigest := func(label string, candidate *Repository) {
+		t.Helper()
+		want, digestErr := snapshotDigest(candidate.snapshot)
+		if digestErr != nil {
+			t.Fatalf("%s digest snapshot: %v", label, digestErr)
+		}
+		if candidate.stateDigest != want {
+			t.Fatalf("%s cached digest=%q want=%q", label, candidate.stateDigest, want)
+		}
+	}
+	assertDigest("empty", repository)
+
+	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "digest-source"})
+	if err != nil {
+		t.Fatalf("persist cluster: %v", err)
+	}
+	assertDigest("persisted", repository)
+
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen repository: %v", err)
+	}
+	assertDigest("reopened", reopened)
+
+	state, err := repository.ReplicatedState()
+	if err != nil {
+		t.Fatalf("encode replicated state: %v", err)
+	}
+	follower := NewMemory()
+	if err := follower.ApplyReplicatedState(state); err != nil {
+		t.Fatalf("apply replicated state: %v", err)
+	}
+	assertDigest("replicated", follower)
+	if _, found := follower.Cluster(cluster.ResourceID); !found {
+		t.Fatal("replicated digest state lost the source cluster")
+	}
+
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read metadata snapshot: %v", err)
+	}
+	decoded, metadata, err := decodeSnapshotState(contents)
+	if err != nil {
+		t.Fatalf("decode metadata snapshot: %v", err)
+	}
+	if metadata.ContentsDigest == "" || metadata.ContentsDigest != repository.stateDigest {
+		t.Fatalf("decoded contents digest=%q cached=%q", metadata.ContentsDigest, repository.stateDigest)
+	}
+	if got := decoded.Clusters[cluster.ResourceID].DisplayName; got != "digest-source" {
+		t.Fatalf("decoded cluster name=%q", got)
+	}
+}
+
+func TestSnapshotRevisionRejectsPayloadChangedAfterDigestWasWritten(t *testing.T) {
+	value := emptySnapshot()
+	cluster := model.DatabaseCluster{
+		ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()},
+		Engine:       model.EngineMySQL,
+		DisplayName:  "before",
+	}
+	value.Clusters[cluster.ResourceID] = cluster
+	contents, err := encodeSnapshotRevision(value, 7, "")
+	if err != nil {
+		t.Fatalf("encode metadata snapshot: %v", err)
+	}
+	tampered := []byte(strings.Replace(string(contents), `"display_name":"before"`, `"display_name":"after"`, 1))
+	if string(tampered) == string(contents) {
+		t.Fatal("test did not alter the encoded snapshot")
+	}
+	if _, _, err := decodeSnapshotState(tampered); err == nil || !strings.Contains(err.Error(), "digest does not match") {
+		t.Fatalf("tampered snapshot error=%v, want digest mismatch", err)
+	}
 }
 
 func TestRepositoryDrainsReplicatedBacklogBeforeConsensusMutation(t *testing.T) {
@@ -212,6 +323,56 @@ func TestRepositorySerializesMutationsBeforeBuildingConsensusSnapshot(t *testing
 		topology, found := repository.TopologySnapshot(cluster.ResourceID)
 		if !found || topology.ClusterID != cluster.ResourceID || len(topology.Instances) != 1 {
 			t.Fatalf("cluster %s topology=%+v found=%t, want one committed discovery instance", cluster.DisplayName, topology, found)
+		}
+	}
+}
+
+func TestDiscoveryRefreshBatchUsesOneConsensusCommit(t *testing.T) {
+	repository := NewMemory()
+	clusters := make([]model.DatabaseCluster, 0, 3)
+	endpoints := make([]model.Endpoint, 0, 3)
+	for index := 0; index < 3; index++ {
+		cluster, clusterEndpoints, err := repository.CreateClusterWithEndpoints(
+			model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: fmt.Sprintf("cluster-%d", index)},
+			[]model.Endpoint{{Kind: model.EndpointDatabase, Hostname: fmt.Sprintf("mysql-%d", index), Port: 3306 + index, Active: true}},
+		)
+		if err != nil {
+			t.Fatalf("create cluster %d: %v", index, err)
+		}
+		clusters = append(clusters, cluster)
+		endpoints = append(endpoints, clusterEndpoints[0])
+	}
+	consensus := &snapshotConsensusStub{apply: repository.ApplyReplicatedState}
+	if err := repository.SetSnapshotConsensus(consensus); err != nil {
+		t.Fatalf("set snapshot consensus: %v", err)
+	}
+	observedAt := time.Date(2026, time.July, 15, 3, 0, 0, 0, time.UTC)
+	refreshes := make([]DiscoveryRefresh, 0, len(clusters))
+	for index, cluster := range clusters {
+		instance := mysqlInstance(cluster.ResourceID, endpoints[index].Hostname, endpoints[index].IPAddress, endpoints[index].Port)
+		instance.EngineIdentity["server_uuid"] = fmt.Sprintf("00000000-0000-0000-0000-%012d", index+1)
+		instance.Role = model.RolePrimary
+		refreshes = append(refreshes, DiscoveryRefresh{
+			ClusterID: cluster.ResourceID, InventoryGeneration: currentInventoryGeneration(t, repository, cluster.ResourceID),
+			ObservedAt:   observedAt.Add(time.Duration(index) * time.Nanosecond),
+			Observations: []DiscoveryObservation{{EndpointID: endpoints[index].ResourceID, Instance: instance}},
+			Probes:       []model.ProbeStatus{{EndpointID: endpoints[index].ResourceID, Health: model.Health{State: model.HealthHealthy}}},
+		})
+	}
+	published, err := repository.ApplyDiscoveryRefreshBatch(refreshes)
+	if err != nil {
+		t.Fatalf("apply discovery batch: %v", err)
+	}
+	if len(published) != len(clusters) {
+		t.Fatalf("published snapshots=%d want=%d", len(published), len(clusters))
+	}
+	if len(consensus.commits) != 1 {
+		t.Fatalf("three discovery refreshes used %d consensus commits, want one", len(consensus.commits))
+	}
+	for _, cluster := range clusters {
+		snapshot, found := repository.TopologySnapshot(cluster.ResourceID)
+		if !found || len(snapshot.Instances) != 1 {
+			t.Fatalf("cluster %s topology=%+v found=%t", cluster.ResourceID, snapshot, found)
 		}
 	}
 }
@@ -427,5 +588,76 @@ func TestRepositoryConsensusSnapshotAcceptsMatchingContentAcrossRevisionSkew(t *
 	}
 	if _, found := follower.Cluster(added.ResourceID); !found {
 		t.Fatal("matching-content mutation was not applied")
+	}
+}
+
+func TestRepositoryConsensusSnapshotHealsDivergedOlderFollower(t *testing.T) {
+	base := NewMemory()
+	if _, err := base.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "shared"}); err != nil {
+		t.Fatalf("create shared state: %v", err)
+	}
+	baseState, err := base.ReplicatedState()
+	if err != nil {
+		t.Fatalf("encode shared state: %v", err)
+	}
+
+	leader := NewMemory()
+	if err := leader.RestoreReplicatedState(baseState); err != nil {
+		t.Fatalf("seed leader: %v", err)
+	}
+	follower := NewMemory()
+	if err := follower.RestoreReplicatedState(baseState); err != nil {
+		t.Fatalf("seed follower: %v", err)
+	}
+	diverged := follower.snapshot
+	diverged.Clusters = cloneClusterMap(follower.snapshot.Clusters)
+	localOnly := model.DatabaseCluster{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, Engine: model.EngineMySQL, DisplayName: "local-only"}
+	diverged.Clusters[localOnly.ResourceID] = localOnly
+	if err := follower.persistSnapshotRevisionLocked(diverged, 3); err != nil {
+		t.Fatalf("persist diverged follower state: %v", err)
+	}
+	leader.stateRevision = 9
+
+	next := leader.snapshot
+	next.Clusters = cloneClusterMap(leader.snapshot.Clusters)
+	authoritative := model.DatabaseCluster{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, Engine: model.EngineMySQL, DisplayName: "authoritative"}
+	next.Clusters[authoritative.ResourceID] = authoritative
+	state, err := encodeConsensusSnapshot(next, leader.snapshot, leader.stateRevision+1)
+	if err != nil {
+		t.Fatalf("encode consensus mutation: %v", err)
+	}
+	if err := follower.ApplyReplicatedState(state); err != nil {
+		t.Fatalf("heal diverged older follower: %v", err)
+	}
+	if follower.stateRevision != 10 {
+		t.Fatalf("healed follower revision=%d want=10", follower.stateRevision)
+	}
+	if _, found := follower.Cluster(authoritative.ResourceID); !found {
+		t.Fatal("authoritative committed state was not applied")
+	}
+	if _, found := follower.Cluster(localOnly.ResourceID); found {
+		t.Fatal("diverged follower-only state survived a newer committed snapshot")
+	}
+}
+
+func TestRepositoryConsensusSnapshotRejectsConflictingStateAtSameRevision(t *testing.T) {
+	repository := NewMemory()
+	if _, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "current"}); err != nil {
+		t.Fatalf("create current state: %v", err)
+	}
+
+	base := emptySnapshot()
+	conflicting := emptySnapshot()
+	foreign := model.DatabaseCluster{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, Engine: model.EngineMySQL, DisplayName: "conflicting"}
+	conflicting.Clusters[foreign.ResourceID] = foreign
+	state, err := encodeConsensusSnapshot(conflicting, base, repository.stateRevision)
+	if err != nil {
+		t.Fatalf("encode conflicting state: %v", err)
+	}
+	if err := repository.ApplyReplicatedState(state); !errors.Is(err, ErrConflict) {
+		t.Fatalf("same-revision conflict error=%v want repository conflict", err)
+	}
+	if _, found := repository.Cluster(foreign.ResourceID); found {
+		t.Fatal("same-revision conflicting state was applied")
 	}
 }

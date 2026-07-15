@@ -38,7 +38,15 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
-		decisions, err := agent.NewHTTPReconcileClient(configuration.ControllerURLs, configuration.SharedSecret, httpClient, configuration.AllowInsecureHTTP, nil)
+		decisionCache, err := agent.NewFileReconcileDecisionCache(configuration.DecisionStateDirectory)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		decisions, err := agent.NewHTTPReconcileClient(
+			configuration.ControllerURLs, configuration.SharedSecret, httpClient, configuration.AllowInsecureHTTP, nil,
+			agent.WithReconcileDecisionCache(decisionCache),
+		)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)

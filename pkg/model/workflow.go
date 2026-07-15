@@ -139,6 +139,7 @@ type OperationRecord struct {
 	Stage          WorkflowStage   `json:"stage"`
 	Status         OperationStatus `json:"status"`
 	Observation    string          `json:"observation_token,omitempty"`
+	Precheck       []Check         `json:"precheck,omitempty"`
 	Plan           OperationPlan   `json:"plan"`
 	Attempts       []StepAttempt   `json:"attempts,omitempty"`
 	Execution      Execution       `json:"execution"`
@@ -151,6 +152,7 @@ type OperationTransition struct {
 	Stage        WorkflowStage
 	Status       OperationStatus
 	Observation  string
+	Precheck     []Check
 	Attempt      *StepAttempt
 	Execution    *Execution
 	Verification *Verification

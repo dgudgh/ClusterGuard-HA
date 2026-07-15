@@ -196,7 +196,11 @@ func (manager *Manager) Execute(ctx context.Context, request Request, plan Plan,
 		executionErr = errors.Join(executionErr, eventPersistenceError)
 	}
 	if executionErr != nil {
-		return indeterminate("lifecycle execution failed; target state requires verification", executionErr)
+		message := "lifecycle execution failed; target state requires verification"
+		if detail := boundedLifecycleMessage(redactLifecycleMessage(executionErr.Error(), redactionSecrets), 2048); detail != "" {
+			message += ": " + detail
+		}
+		return indeterminate(message, executionErr)
 	}
 	if err := manager.authority.RequireMutationAuthority(ctx); err != nil {
 		return indeterminate("lifecycle execution completed but leader-backed authority was lost before verification", err)
@@ -215,7 +219,11 @@ func (manager *Manager) Execute(ctx context.Context, request Request, plan Plan,
 		return indeterminate("lifecycle verification passed but its audit could not be persisted", err)
 	}
 	if err := manager.committer.Commit(ctx, task, result); err != nil {
-		return indeterminate("verified lifecycle metadata commit failed", err)
+		message := "verified lifecycle metadata commit failed"
+		if detail := boundedLifecycleMessage(redactLifecycleMessage(err.Error(), redactionSecrets), 2048); detail != "" {
+			message += ": " + detail
+		}
+		return indeterminate(message, err)
 	}
 	if err := recordAudit(model.StageAudit, "lifecycle execution audit trail completed"); err != nil {
 		return indeterminate("lifecycle metadata was committed but audit finalization failed", err)
@@ -248,4 +256,12 @@ func redactLifecycleMessage(message string, secrets ExecutionSecrets) string {
 		}
 	}
 	return strings.TrimSpace(message)
+}
+
+func boundedLifecycleMessage(message string, limit int) string {
+	runes := []rune(strings.TrimSpace(message))
+	if limit <= 0 || len(runes) <= limit {
+		return string(runes)
+	}
+	return string(runes[:limit]) + " [truncated]"
 }

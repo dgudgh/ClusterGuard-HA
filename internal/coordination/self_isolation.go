@@ -11,9 +11,10 @@ import (
 type SelfIsolationAction string
 
 const (
-	SelfIsolationKeepVIP            SelfIsolationAction = "keep_vip"
-	SelfIsolationBootstrapPrimary   SelfIsolationAction = "bootstrap_primary"
-	SelfIsolationReleaseAndReadOnly SelfIsolationAction = "release_and_read_only"
+	SelfIsolationKeepVIP              SelfIsolationAction = "keep_vip"
+	SelfIsolationHoldTransitionSource SelfIsolationAction = "hold_transition_source"
+	SelfIsolationBootstrapPrimary     SelfIsolationAction = "bootstrap_primary"
+	SelfIsolationReleaseAndReadOnly   SelfIsolationAction = "release_and_read_only"
 )
 
 type SelfIsolationEvidence struct {
@@ -23,6 +24,8 @@ type SelfIsolationEvidence struct {
 	EndpointOwnerID  model.ResourceID
 	Lease            endpoint.Lease
 	TransitionTarget bool
+	TransitionSource bool
+	StableTarget     bool
 	BootstrapTarget  bool
 	Now              time.Time
 }
@@ -41,7 +44,16 @@ func EvaluateSelfIsolation(evidence SelfIsolationEvidence) SelfIsolationDecision
 	}
 	now := evidence.Now.UTC()
 	lease := evidence.Lease
-	if !lease.Active || !model.ValidResourceID(lease.ResourceID) || lease.OwnerID != evidence.LocalInstanceID || !lease.ExpiresAt.After(now) {
+	if !lease.Active || !model.ValidResourceID(lease.ResourceID) || !lease.ExpiresAt.After(now) {
+		return isolate("no active majority lease authorizes local VIP ownership")
+	}
+	if evidence.TransitionSource {
+		if lease.OperationID == lease.HAEndpointID || lease.PreviousOwnerID != evidence.LocalInstanceID {
+			return isolate("active transition lease does not authorize the local source")
+		}
+		return SelfIsolationDecision{Action: SelfIsolationHoldTransitionSource, Reason: "active controlled transition lease authorizes the source"}
+	}
+	if lease.OwnerID != evidence.LocalInstanceID {
 		return isolate("no active majority lease authorizes local VIP ownership")
 	}
 	if evidence.TransitionTarget {
@@ -56,11 +68,14 @@ func EvaluateSelfIsolation(evidence SelfIsolationEvidence) SelfIsolationDecision
 		}
 		return SelfIsolationDecision{Action: SelfIsolationBootstrapPrimary, Reason: "majority lease authorizes the verified rebooted primary"}
 	}
-	if evidence.CurrentPrimaryID != evidence.LocalInstanceID {
-		return isolate("local instance is not the current primary")
-	}
 	if evidence.CanonicalOwnerID != evidence.LocalInstanceID || evidence.EndpointOwnerID != evidence.LocalInstanceID {
 		return isolate("canonical VIP ownership metadata does not select the local primary")
+	}
+	if evidence.StableTarget && model.ValidResourceID(lease.HAEndpointID) && lease.OperationID == lease.HAEndpointID {
+		return SelfIsolationDecision{Action: SelfIsolationKeepVIP, Reason: "active stable majority lease and canonical endpoint ownership are valid"}
+	}
+	if evidence.CurrentPrimaryID != evidence.LocalInstanceID {
+		return isolate("local instance is not the current primary")
 	}
 	return SelfIsolationDecision{Action: SelfIsolationKeepVIP, Reason: strings.TrimSpace("active majority lease and current-primary ownership are valid")}
 }

@@ -227,8 +227,12 @@ func TestControlAPIMutationsRequireCurrentQuorumLeader(t *testing.T) {
 	server := NewServer(registry, repository, nil, nil, WithControlToken(testControlToken), WithMutationAuthority(authority))
 	payload := map[string]interface{}{"display_name": "secured", "engine": "mysql", "endpoints": []map[string]interface{}{{"hostname": "mysql-a", "port": 3306}}}
 
-	blocked := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/clusters", payload)
-	if blocked.Code != http.StatusServiceUnavailable || len(repository.Clusters()) != 0 || authority.calls != 1 || blocked.Header().Get("X-ClusterGuard-Leader-ID") != string(leaderID) || blocked.Header().Get("X-ClusterGuard-Leader-Address") != authority.leaderAddress {
+	blockedRequest := httptest.NewRequest(http.MethodPost, "http://controller-b:8088/api/v1/clusters", strings.NewReader(`{"display_name":"secured","engine":"mysql","endpoints":[{"hostname":"mysql-a","port":3306}]}`))
+	blockedRequest.Header.Set("Authorization", "Bearer "+testControlToken)
+	blockedRequest.Header.Set("Content-Type", "application/json")
+	blocked := httptest.NewRecorder()
+	server.Handler().ServeHTTP(blocked, blockedRequest)
+	if blocked.Code != http.StatusServiceUnavailable || len(repository.Clusters()) != 0 || authority.calls != 1 || blocked.Header().Get("X-ClusterGuard-Leader-ID") != string(leaderID) || blocked.Header().Get("X-ClusterGuard-Leader-Address") != authority.leaderAddress || blocked.Header().Get("X-ClusterGuard-Leader-API-Address") != "http://192.0.2.10:8088" {
 		t.Fatalf("non-leader mutation was not blocked: %d %s headers=%v", blocked.Code, blocked.Body.String(), blocked.Header())
 	}
 	read := callJSON(t, server.Handler(), http.MethodGet, "/api/v1/engines", nil)

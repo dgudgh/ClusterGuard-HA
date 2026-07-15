@@ -6,6 +6,7 @@ import (
 	"os"
 	"reflect"
 	"testing"
+	"time"
 
 	"clusterguard.io/ha/internal/lifecycle"
 	"clusterguard.io/ha/pkg/model"
@@ -162,6 +163,161 @@ func TestCommitLifecycleRebuildPreservesFixedNodeAndReplacesNativeInstance(t *te
 	afterGeneration := currentInventoryGeneration(t, repository, cluster.ResourceID)
 	if afterGeneration != beforeGeneration+1 {
 		t.Fatalf("inventory generation=%d, want %d", afterGeneration, beforeGeneration+1)
+	}
+}
+
+func TestCommitLifecycleRebuildResyncsExistingNativeInstanceInPlace(t *testing.T) {
+	repository := NewMemory()
+	node, err := repository.PutNode(model.DatabaseNode{
+		NodeName: "cg-data-0004", Kind: model.NodeData, Hostname: "mysql-old", IPAddress: "192.0.2.30", Active: true,
+	})
+	if err != nil {
+		t.Fatalf("register node: %v", err)
+	}
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(
+		model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "orders"},
+		[]model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-old", IPAddress: "192.0.2.30", Port: 3306, Active: true}},
+	)
+	if err != nil {
+		t.Fatalf("create cluster inventory: %v", err)
+	}
+	serverUUID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	oldResult, err := repository.ReconcileInstance(lifecycleMySQLInstance(cluster.ResourceID, node.ResourceID, serverUUID, "mysql-old", "192.0.2.30", 3306))
+	if err != nil {
+		t.Fatalf("register existing instance: %v", err)
+	}
+	oldEndpoint := endpoints[0]
+	oldEndpoint.InstanceID = oldResult.Instance.ResourceID
+	if _, err := repository.UpsertEndpoint(oldEndpoint); err != nil {
+		t.Fatalf("bind existing endpoint: %v", err)
+	}
+	target := lifecycle.TargetPlan{Target: lifecycle.Target{
+		NodeID: node.ResourceID, NodeName: node.NodeName, Kind: model.NodeData,
+		Hostname: "mysql-renamed", IPAddress: "192.0.2.31", MySQLPort: 3310, Rebuild: true,
+	}, DatabaseRole: model.RoleReplica, ReusesNodeSlot: true}
+	task := persistVerifyingLifecycleTask(t, repository, cluster.ResourceID, lifecycle.ActionRebuild, []lifecycle.TargetPlan{target})
+	resynced := lifecycleMySQLInstance(cluster.ResourceID, node.ResourceID, serverUUID, "mysql-renamed", "192.0.2.31", 3310)
+
+	if err := repository.Commit(context.Background(), task, lifecycle.ExecutionResult{Verified: true, Instances: []model.DatabaseInstance{resynced}}); err != nil {
+		t.Fatalf("commit in-place lifecycle resync: %v", err)
+	}
+
+	instances := repository.Instances(cluster.ResourceID)
+	if len(instances) != 1 || instances[0].ResourceID != oldResult.Instance.ResourceID || instances[0].EngineIdentity["server_uuid"] != serverUUID {
+		t.Fatalf("in-place resync changed native resource identity: before=%+v after=%+v", oldResult.Instance, instances)
+	}
+	if instances[0].Hostname != resynced.Hostname || instances[0].IPAddress != resynced.IPAddress || instances[0].Port != resynced.Port {
+		t.Fatalf("in-place resync did not update mutable endpoint: %+v", instances[0])
+	}
+	if !contains(instances[0].Aliases, "mysql-old:3306") || !contains(instances[0].Aliases, "192.0.2.30:3306") {
+		t.Fatalf("old instance endpoints were not retained as aliases: %+v", instances[0].Aliases)
+	}
+	updatedEndpoints := repository.Endpoints(cluster.ResourceID)
+	if len(updatedEndpoints) != 1 || updatedEndpoints[0].ResourceID != oldEndpoint.ResourceID || updatedEndpoints[0].InstanceID != oldResult.Instance.ResourceID || updatedEndpoints[0].Hostname != resynced.Hostname || updatedEndpoints[0].IPAddress != resynced.IPAddress || updatedEndpoints[0].Port != resynced.Port {
+		t.Fatalf("in-place resync endpoint=%+v", updatedEndpoints)
+	}
+}
+
+func TestCommitLifecycleRebuildPreservesPublishedTopologyWhileResyncingReplica(t *testing.T) {
+	repository := NewMemory()
+	primaryNode, err := repository.PutNode(model.DatabaseNode{
+		NodeName: "cg-data-0001", Kind: model.NodeData, Hostname: "mysql-primary", IPAddress: "192.0.2.40", Active: true,
+	})
+	if err != nil {
+		t.Fatalf("register primary node: %v", err)
+	}
+	replicaNode, err := repository.PutNode(model.DatabaseNode{
+		NodeName: "cg-data-0002", Kind: model.NodeData, Hostname: "mysql-replica", IPAddress: "192.0.2.41", Active: true,
+	})
+	if err != nil {
+		t.Fatalf("register replica node: %v", err)
+	}
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(
+		model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "payments"},
+		[]model.Endpoint{
+			{Kind: model.EndpointDatabase, Hostname: "mysql-primary", IPAddress: "192.0.2.40", Port: 3306, Active: true},
+			{Kind: model.EndpointDatabase, Hostname: "mysql-replica", IPAddress: "192.0.2.41", Port: 3306, Active: true},
+		},
+	)
+	if err != nil {
+		t.Fatalf("create cluster inventory: %v", err)
+	}
+	primary := lifecycleMySQLInstance(cluster.ResourceID, primaryNode.ResourceID, "11111111-2222-3333-4444-555555555555", "mysql-primary", "192.0.2.40", 3306)
+	primary.Role = model.RolePrimary
+	primary.Replication = model.ReplicationStatus{}
+	primaryResult, err := repository.ReconcileInstance(primary)
+	if err != nil {
+		t.Fatalf("register primary instance: %v", err)
+	}
+	replicaUUID := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	replica := lifecycleMySQLInstance(cluster.ResourceID, replicaNode.ResourceID, replicaUUID, "mysql-replica", "192.0.2.41", 3306)
+	replica.Replication.SourceIdentity = primary.EngineIdentity.Clone()
+	replicaResult, err := repository.ReconcileInstance(replica)
+	if err != nil {
+		t.Fatalf("register replica instance: %v", err)
+	}
+	for index, endpoint := range endpoints {
+		if index == 0 {
+			endpoint.InstanceID = primaryResult.Instance.ResourceID
+		} else {
+			endpoint.InstanceID = replicaResult.Instance.ResourceID
+		}
+		if _, err := repository.UpsertEndpoint(endpoint); err != nil {
+			t.Fatalf("bind endpoint %d: %v", index, err)
+		}
+	}
+	observedAt := time.Date(2026, time.July, 14, 13, 46, 42, 0, time.UTC)
+	lag := int64(0)
+	repository.snapshot.TopologySnapshots[cluster.ResourceID] = model.TopologySnapshot{
+		ClusterID: cluster.ResourceID,
+		Instances: []model.DatabaseInstance{primaryResult.Instance, replicaResult.Instance},
+		Links: []model.ReplicationLink{{
+			ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID(), MetadataRevision: 1},
+			ClusterID:    cluster.ResourceID, SourceInstanceID: primaryResult.Instance.ResourceID,
+			TargetInstanceID: replicaResult.Instance.ResourceID, Healthy: true, LagSeconds: &lag,
+		}},
+		Health: model.Health{State: model.HealthHealthy, ObservedAt: observedAt}, ObservedAt: observedAt,
+	}
+
+	target := lifecycle.TargetPlan{Target: lifecycle.Target{
+		NodeID: replicaNode.ResourceID, NodeName: replicaNode.NodeName, Kind: model.NodeData,
+		Hostname: "mysql-replica-renamed", IPAddress: "192.0.2.42", MySQLPort: 3310, Rebuild: true,
+	}, DatabaseRole: model.RoleReplica, ReusesNodeSlot: true}
+	task := persistVerifyingLifecycleTask(t, repository, cluster.ResourceID, lifecycle.ActionRebuild, []lifecycle.TargetPlan{target})
+	resynced := lifecycleMySQLInstance(cluster.ResourceID, replicaNode.ResourceID, replicaUUID, "mysql-replica-renamed", "192.0.2.42", 3310)
+	resynced.Replication.SourceIdentity = primary.EngineIdentity.Clone()
+
+	if err := repository.Commit(context.Background(), task, lifecycle.ExecutionResult{Verified: true, Instances: []model.DatabaseInstance{resynced}}); err != nil {
+		t.Fatalf("commit lifecycle resync: %v", err)
+	}
+
+	topology, found := repository.TopologySnapshot(cluster.ResourceID)
+	if !found {
+		t.Fatal("verified replica lifecycle commit removed the published topology")
+	}
+	if !topology.ObservedAt.Equal(observedAt) {
+		t.Fatalf("topology observed_at=%s, want original verified time %s", topology.ObservedAt, observedAt)
+	}
+	if len(topology.Instances) != 2 {
+		t.Fatalf("topology instances=%+v, want primary and resynchronized replica", topology.Instances)
+	}
+	var publishedPrimary, publishedReplica model.DatabaseInstance
+	for _, instance := range topology.Instances {
+		switch instance.ResourceID {
+		case primaryResult.Instance.ResourceID:
+			publishedPrimary = instance
+		case replicaResult.Instance.ResourceID:
+			publishedReplica = instance
+		}
+	}
+	if publishedPrimary.ResourceID == "" || publishedPrimary.Role != model.RolePrimary || publishedPrimary.Health.State != model.HealthHealthy {
+		t.Fatalf("current primary disappeared during lifecycle commit: %+v", publishedPrimary)
+	}
+	if publishedReplica.ResourceID == "" || publishedReplica.Hostname != resynced.Hostname || publishedReplica.IPAddress != resynced.IPAddress || publishedReplica.Port != resynced.Port || publishedReplica.Role != model.RoleReplica {
+		t.Fatalf("resynchronized replica was not patched into topology: %+v", publishedReplica)
+	}
+	if len(topology.Links) != 1 || topology.Links[0].SourceInstanceID != publishedPrimary.ResourceID || topology.Links[0].TargetInstanceID != publishedReplica.ResourceID {
+		t.Fatalf("replication link continuity was lost: %+v", topology.Links)
 	}
 }
 

@@ -19,6 +19,10 @@ type ScheduledRefresher interface {
 	Refresh(context.Context, model.ResourceID) (model.TopologySnapshot, error)
 }
 
+type ScheduledBatchRefresher interface {
+	RefreshBatch(context.Context, []model.ResourceID) (map[model.ResourceID]model.TopologySnapshot, error)
+}
+
 type ScheduledMutationAuthority interface {
 	RequireMutationAuthority(context.Context) error
 }
@@ -56,6 +60,18 @@ func (scheduler *Scheduler) RunOnce(ctx context.Context) error {
 	clusters := scheduler.clusters.Clusters()
 	if len(clusters) == 0 {
 		return nil
+	}
+	clusterIDs := make([]model.ResourceID, 0, len(clusters))
+	for _, cluster := range clusters {
+		if model.ValidResourceID(cluster.ResourceID) {
+			clusterIDs = append(clusterIDs, cluster.ResourceID)
+		}
+	}
+	if batch, ok := scheduler.refresher.(ScheduledBatchRefresher); ok {
+		refreshContext, cancel := context.WithTimeout(ctx, scheduler.timeout)
+		defer cancel()
+		_, err := batch.RefreshBatch(refreshContext, clusterIDs)
+		return err
 	}
 	parallel := maximumScheduledRefreshes
 	if len(clusters) < parallel {

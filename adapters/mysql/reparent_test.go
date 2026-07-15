@@ -17,11 +17,35 @@ func TestBuildChangeSourceStatementUsesVersionDialectAndEscapesSecrets(t *testin
 	target := model.DatabaseInstance{Hostname: "mysql'new", Port: 3307}
 	credentials := adapter.Credentials{Username: "repl'user", Password: "p\\ass'word"}
 	tests := []struct {
-		version string
-		want    []string
+		version   string
+		want      []string
+		forbidden []string
 	}{
-		{version: "5.7.44", want: []string{"CHANGE MASTER TO", "MASTER_HOST='mysql\\'new'", "MASTER_USER='repl\\'user'", "MASTER_PASSWORD='p\\\\ass\\'word'", "MASTER_AUTO_POSITION=1"}},
-		{version: "8.4.10", want: []string{"CHANGE REPLICATION SOURCE TO", "SOURCE_HOST='mysql\\'new'", "SOURCE_USER='repl\\'user'", "SOURCE_PASSWORD='p\\\\ass\\'word'", "SOURCE_AUTO_POSITION=1"}},
+		{
+			version:   "5.7.44",
+			want:      []string{"CHANGE MASTER TO", "MASTER_HOST='mysql\\'new'", "MASTER_USER='repl\\'user'", "MASTER_PASSWORD='p\\\\ass\\'word'", "MASTER_AUTO_POSITION=1"},
+			forbidden: []string{"GET_MASTER_PUBLIC_KEY", "GET_SOURCE_PUBLIC_KEY"},
+		},
+		{
+			version:   "8.0.21",
+			want:      []string{"CHANGE MASTER TO", "MASTER_AUTO_POSITION=1", "GET_MASTER_PUBLIC_KEY=1"},
+			forbidden: []string{"GET_SOURCE_PUBLIC_KEY"},
+		},
+		{
+			version:   "8.0.22",
+			want:      []string{"CHANGE REPLICATION SOURCE TO", "SOURCE_AUTO_POSITION=1", "GET_SOURCE_PUBLIC_KEY=1"},
+			forbidden: []string{"GET_MASTER_PUBLIC_KEY"},
+		},
+		{
+			version:   "8.4.10",
+			want:      []string{"CHANGE REPLICATION SOURCE TO", "SOURCE_HOST='mysql\\'new'", "SOURCE_USER='repl\\'user'", "SOURCE_PASSWORD='p\\\\ass\\'word'", "SOURCE_AUTO_POSITION=1", "GET_SOURCE_PUBLIC_KEY=1"},
+			forbidden: []string{"GET_MASTER_PUBLIC_KEY"},
+		},
+		{
+			version:   "9.7.0",
+			want:      []string{"CHANGE REPLICATION SOURCE TO", "SOURCE_AUTO_POSITION=1", "GET_SOURCE_PUBLIC_KEY=1"},
+			forbidden: []string{"GET_MASTER_PUBLIC_KEY"},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.version, func(t *testing.T) {
@@ -32,6 +56,11 @@ func TestBuildChangeSourceStatementUsesVersionDialectAndEscapesSecrets(t *testin
 			for _, fragment := range test.want {
 				if !strings.Contains(statement, fragment) {
 					t.Fatalf("statement missing %q: %s", fragment, statement)
+				}
+			}
+			for _, fragment := range test.forbidden {
+				if strings.Contains(statement, fragment) {
+					t.Fatalf("statement unexpectedly contains %q: %s", fragment, statement)
 				}
 			}
 		})
@@ -58,6 +87,7 @@ type threeNodeSQLClient struct {
 	statements     []string
 	credentials    []string
 	beforeWritable func()
+	ignoreWritable bool
 }
 
 func newThreeNodeSQLClient(request adapter.OperationRequest) *threeNodeSQLClient {
@@ -175,12 +205,15 @@ func (client *threeNodeSQLClient) Exec(_ context.Context, endpoint adapter.Endpo
 	case setReadOnlyOn:
 		node.readOnly = true
 	case setSuperReadOnlyOff:
+		node.superReadOnly = false
+	case setReadOnlyOff:
 		if client.beforeWritable != nil {
 			client.beforeWritable()
 		}
-		node.superReadOnly = false
-	case setReadOnlyOff:
-		node.readOnly = false
+		if !client.ignoreWritable {
+			node.readOnly = false
+			node.superReadOnly = false
+		}
 	case "STOP REPLICA", "STOP SLAVE":
 		node.ioRunning = false
 		node.sqlRunning = false

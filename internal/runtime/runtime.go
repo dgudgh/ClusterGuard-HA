@@ -44,16 +44,18 @@ type mysqlFailoverRuntime struct {
 type runtimeLocks struct {
 	publication *workflow.MemoryLocks
 	operations  workflow.ClusterLockManager
+	lifecycle   workflow.ClusterLockManager
 }
 
 func newRuntimeLocks(repository *store.Repository, authority coordination.MutationAuthority) runtimeLocks {
 	local := workflow.NewMemoryLocks()
-	result := runtimeLocks{publication: local, operations: local}
+	result := runtimeLocks{publication: local, operations: local, lifecycle: local}
 	if repository == nil || authority == nil {
 		return result
 	}
 	quorum := coordination.NewOperationLocks(repository, authority, 15*time.Minute, nil)
 	result.operations = workflow.NewCompositeLocks(local, quorum)
+	result.lifecycle = workflow.NewCompositeLocks(workflow.NewMemoryLocks(), quorum)
 	return result
 }
 
@@ -239,7 +241,7 @@ func New(configuration config.File) (*Runtime, error) {
 			_ = result.Close()
 			return nil, fmt.Errorf("configure node lifecycle executor: %w", executorErr)
 		}
-		manager := lifecycle.NewManager(repository, result.consensus, lifecycle.PlanSafetyGuard{}, locks.operations, lifecycle.TokenApproval{ExpectedToken: configuration.ApprovalToken}, executor, repository, nil)
+		manager := lifecycle.NewManager(repository, result.consensus, lifecycle.PlanSafetyGuard{}, locks.lifecycle, lifecycle.TokenApproval{ExpectedToken: configuration.ApprovalToken}, executor, repository, nil)
 		secrets := nodeLifecycleSecrets(configuration.NodeLifecycle)
 		options = append(options, api.WithNodeLifecycle(manager, nodeLifecycleCapabilities(configuration.NodeLifecycle), api.LifecycleSecretProviderFunc(func(context.Context, lifecycle.Request) (lifecycle.ExecutionSecrets, error) {
 			return secrets, nil

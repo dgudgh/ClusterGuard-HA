@@ -412,6 +412,27 @@ func TestEndpointEvidenceSanitizationRedactsUnnamedProviderDetails(t *testing.T)
 	}
 }
 
+func TestSwitchoverPrecheckReturnsOneEndpointFailure(t *testing.T) {
+	request := switchoverRequestFixture()
+	provider := endpointProviderStub{
+		executable: true,
+		checks:     []model.Check{{Name: "writer_endpoint_provider", Status: model.CheckFail, Message: "VIP owner is converging"}},
+	}
+	checks, err := NewWithEndpointProvider(nil, provider).Precheck(context.Background(), request)
+	if err != nil {
+		t.Fatalf("precheck: %v", err)
+	}
+	count := 0
+	for _, check := range checks {
+		if check.Name == "writer_endpoint_provider" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("writer endpoint failure count=%d checks=%+v", count, checks)
+	}
+}
+
 func TestSwitchoverPlanIsCanonicalAndImmutableByDigest(t *testing.T) {
 	request := switchoverRequestFixture()
 	adapterInstance := NewWithEndpointProvider(nil, passingEndpointProvider())
@@ -440,5 +461,23 @@ func TestSwitchoverPlanIsCanonicalAndImmutableByDigest(t *testing.T) {
 	changedDigest, err := operationPlanDigest(changed)
 	if err != nil || changedDigest == plan.Digest {
 		t.Fatalf("material plan change did not change digest: digest=%q err=%v", changedDigest, err)
+	}
+}
+
+func TestSwitchoverPlanAuthorizesTransitionBeforeSourceFence(t *testing.T) {
+	request := switchoverRequestFixture()
+	plan, err := NewWithEndpointProvider(nil, passingEndpointProvider()).BuildPlan(context.Background(), request)
+	if err != nil {
+		t.Fatalf("build plan: %v", err)
+	}
+	stepIndex := map[string]int{}
+	for _, step := range plan.Steps {
+		stepIndex[step.Name] = step.Index
+	}
+	if stepIndex["authorize_target_transition"] == 0 || stepIndex["fence_source"] == 0 {
+		t.Fatalf("plan is missing transition authorization or source fencing: %+v", plan.Steps)
+	}
+	if stepIndex["authorize_target_transition"] >= stepIndex["fence_source"] {
+		t.Fatalf("transition authorization must precede source fencing: %+v", plan.Steps)
 	}
 }

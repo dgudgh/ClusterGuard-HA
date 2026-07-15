@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"clusterguard.io/ha/internal/endpoint"
@@ -16,7 +17,7 @@ type OwnershipInventory interface {
 	TopologySnapshot(model.ResourceID) (model.TopologySnapshot, bool)
 	HAEndpoints(model.ResourceID) []model.HAEndpoint
 	Endpoint(model.ResourceID) (model.Endpoint, bool)
-	CommitHAEndpointOwner(model.ResourceID, model.ResourceID, model.ResourceID, bool) error
+	CommitObservedHAEndpointOwner(model.ResourceID, model.ResourceID, uint64, uint64, model.ResourceID, bool) error
 }
 
 type OwnershipObserver interface {
@@ -24,7 +25,7 @@ type OwnershipObserver interface {
 }
 
 type OwnershipLeaseStore interface {
-	Acquire(context.Context, endpoint.LeaseRequest) (endpoint.Lease, error)
+	AcquireStableBatch(context.Context, []endpoint.LeaseRequest) error
 }
 
 type OwnershipKeeper struct {
@@ -87,51 +88,51 @@ func writablePrimary(snapshot model.TopologySnapshot) (model.DatabaseInstance, e
 	return primary, nil
 }
 
-func (keeper *OwnershipKeeper) reconcileCluster(ctx context.Context, cluster model.DatabaseCluster, now time.Time) error {
+func (keeper *OwnershipKeeper) reconcileCluster(ctx context.Context, cluster model.DatabaseCluster, now time.Time) (endpoint.LeaseRequest, error) {
 	snapshot, found := keeper.inventory.TopologySnapshot(cluster.ResourceID)
 	if !found || snapshot.ObservedAt.IsZero() || now.Sub(snapshot.ObservedAt) > keeper.maxAge || snapshot.ObservedAt.After(now.Add(keeper.interval)) {
-		return fmt.Errorf("cluster %s topology is stale or unavailable", cluster.ResourceID)
+		return endpoint.LeaseRequest{}, fmt.Errorf("cluster %s topology is stale or unavailable", cluster.ResourceID)
 	}
 	observation, err := keeper.observer.ObserveOwnership(ctx, cluster, snapshot)
 	if err != nil {
-		return fmt.Errorf("cluster %s VIP observation: %w", cluster.ResourceID, err)
+		return endpoint.LeaseRequest{}, fmt.Errorf("cluster %s VIP observation: %w", cluster.ResourceID, err)
 	}
 	if !observation.Complete || !model.ValidResourceID(observation.HAEndpointID) || len(observation.OwnerIDs) > 1 {
-		return fmt.Errorf("cluster %s VIP ownership coverage is unsafe", cluster.ResourceID)
+		return endpoint.LeaseRequest{}, fmt.Errorf("cluster %s VIP ownership coverage is unsafe", cluster.ResourceID)
 	}
 	primary, primaryErr := writablePrimary(snapshot)
 	bootstrap := false
 	if primaryErr != nil {
 		if len(observation.OwnerIDs) != 0 || observation.CanonicalOwnerID != observation.EndpointOwnerID {
-			return fmt.Errorf("cluster %s reboot bootstrap requires zero VIP owners and matching canonical metadata", cluster.ResourceID)
+			return endpoint.LeaseRequest{}, fmt.Errorf("cluster %s reboot bootstrap requires zero VIP owners and matching canonical metadata", cluster.ResourceID)
 		}
 		primary, err = RebootBootstrapCandidate(snapshot, observation.CanonicalOwnerID, now, keeper.maxAge)
 		if err != nil {
-			return fmt.Errorf("cluster %s: %w; reboot bootstrap blocked: %v", cluster.ResourceID, primaryErr, err)
+			return endpoint.LeaseRequest{}, fmt.Errorf("cluster %s: %w; reboot bootstrap blocked: %v", cluster.ResourceID, primaryErr, err)
 		}
 		bootstrap = true
 	}
 	if len(observation.OwnerIDs) == 1 && observation.OwnerIDs[0] != primary.ResourceID {
-		return fmt.Errorf("cluster %s VIP is owned by a non-primary instance", cluster.ResourceID)
+		return endpoint.LeaseRequest{}, fmt.Errorf("cluster %s VIP is owned by a non-primary instance", cluster.ResourceID)
 	}
 	if len(observation.OwnerIDs) == 0 && (observation.CanonicalOwnerID != primary.ResourceID || observation.EndpointOwnerID != primary.ResourceID) {
-		return fmt.Errorf("cluster %s zero-owner bootstrap metadata does not select the current primary", cluster.ResourceID)
+		return endpoint.LeaseRequest{}, fmt.Errorf("cluster %s zero-owner bootstrap metadata does not select the current primary", cluster.ResourceID)
 	}
 	if bootstrap && len(observation.OwnerIDs) != 0 {
-		return fmt.Errorf("cluster %s reboot bootstrap requires zero VIP owners", cluster.ResourceID)
+		return endpoint.LeaseRequest{}, fmt.Errorf("cluster %s reboot bootstrap requires zero VIP owners", cluster.ResourceID)
 	}
 	healthy := len(observation.OwnerIDs) == 1
-	if err := keeper.inventory.CommitHAEndpointOwner(cluster.ResourceID, observation.HAEndpointID, primary.ResourceID, healthy); err != nil {
-		return fmt.Errorf("cluster %s commit VIP owner: %w", cluster.ResourceID, err)
+	if err := keeper.inventory.CommitObservedHAEndpointOwner(
+		cluster.ResourceID, observation.HAEndpointID,
+		observation.HAEndpointRevision, observation.EndpointRevision,
+		primary.ResourceID, healthy,
+	); err != nil {
+		return endpoint.LeaseRequest{}, fmt.Errorf("cluster %s commit VIP owner: %w", cluster.ResourceID, err)
 	}
-	_, err = keeper.leases.Acquire(ctx, endpoint.LeaseRequest{
+	return endpoint.LeaseRequest{
 		ClusterID: cluster.ResourceID, HAEndpointID: observation.HAEndpointID,
 		OperationID: observation.HAEndpointID, OwnerID: primary.ResourceID, TTL: 30 * time.Second,
-	})
-	if err != nil {
-		return fmt.Errorf("cluster %s renew VIP ownership lease: %w", cluster.ResourceID, err)
-	}
-	return nil
+	}, nil
 }
 
 func (keeper *OwnershipKeeper) RunOnce(ctx context.Context) error {
@@ -145,13 +146,29 @@ func (keeper *OwnershipKeeper) RunOnce(ctx context.Context) error {
 		return nil
 	}
 	now := keeper.now().UTC()
-	var failures []error
-	for _, cluster := range keeper.inventory.Clusters() {
-		probeContext, cancel := context.WithTimeout(ctx, keeper.probeTimeout)
-		err := keeper.reconcileCluster(probeContext, cluster, now)
-		cancel()
-		if err != nil {
-			failures = append(failures, err)
+	clusters := keeper.inventory.Clusters()
+	failures := make([]error, len(clusters))
+	requests := make([]endpoint.LeaseRequest, len(clusters))
+	var wait sync.WaitGroup
+	for index, cluster := range clusters {
+		wait.Add(1)
+		go func(index int, cluster model.DatabaseCluster) {
+			defer wait.Done()
+			probeContext, cancel := context.WithTimeout(ctx, keeper.probeTimeout)
+			defer cancel()
+			requests[index], failures[index] = keeper.reconcileCluster(probeContext, cluster, now)
+		}(index, cluster)
+	}
+	wait.Wait()
+	validRequests := make([]endpoint.LeaseRequest, 0, len(requests))
+	for index, request := range requests {
+		if failures[index] == nil {
+			validRequests = append(validRequests, request)
+		}
+	}
+	if len(validRequests) > 0 {
+		if err := keeper.leases.AcquireStableBatch(ctx, validRequests); err != nil {
+			failures = append(failures, fmt.Errorf("renew VIP ownership lease batch: %w", err))
 		}
 	}
 	return errors.Join(failures...)
