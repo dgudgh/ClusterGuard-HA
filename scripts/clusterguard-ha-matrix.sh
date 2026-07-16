@@ -15,7 +15,6 @@ read_retry_interval="${CG_MATRIX_READ_RETRY_INTERVAL:-1}"
 transport_reconcile_attempts="${CG_MATRIX_RECONCILE_ATTEMPTS:-45}"
 transport_reconcile_interval="${CG_MATRIX_RECONCILE_INTERVAL:-2}"
 control_token_environment="CG_CONTROL_TOKEN"
-approval_token_environment="CG_APPROVAL_TOKEN"
 script_dir="${script_dir:-$(cd "$(dirname "$0")" && pwd)}"
 insecure=false
 total=0
@@ -46,7 +45,6 @@ while (($#)); do
     --smoke-interval) smoke_interval="${2:-}"; shift 2 ;;
     --api-timeout) api_timeout="${2:-}"; shift 2 ;;
     --token-env) control_token_environment="${2:-}"; shift 2 ;;
-    --approval-env) approval_token_environment="${2:-}"; shift 2 ;;
     --insecure) insecure=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown matrix argument: $1" >&2; exit 2 ;;
@@ -78,8 +76,7 @@ if ((parallel > ${#cluster_ids[@]})); then
 fi
 
 control_token="${!control_token_environment:-}"
-approval_token="${!approval_token_environment:-}"
-[[ -n "${control_token}" && -n "${approval_token}" ]] || { echo "control and approval token environments are required" >&2; exit 2; }
+[[ -n "${control_token}" ]] || { echo "control token environment is required" >&2; exit 2; }
 RANDOM=$((matrix_seed % 32768))
 
 api_get() {
@@ -139,18 +136,28 @@ reconcile_operation_after_transport() {
 }
 
 post_request() {
-  local url="$1" payload="$2" body_file="$3" header_file="$4"
+  local url="$1" payload="$2" body_file="$3" header_file="$4" authorization_mode="$5"
   if [[ "${insecure}" == true ]]; then
-    curl -k --silent --show-error --max-time "${api_timeout}" --output "${body_file}" --dump-header "${header_file}" --write-out '%{http_code}' \
-      -H "Authorization: Bearer ${control_token}" -H 'Content-Type: application/json' -d "${payload}" "${url}"
+    if [[ "${authorization_mode}" == "admin" ]]; then
+      curl -k --silent --show-error --max-time "${api_timeout}" --output "${body_file}" --dump-header "${header_file}" --write-out '%{http_code}' \
+        -H "Authorization: Bearer ${control_token}" -H 'Content-Type: application/json' -d "${payload}" "${url}"
+    else
+      curl -k --silent --show-error --max-time "${api_timeout}" --output "${body_file}" --dump-header "${header_file}" --write-out '%{http_code}' \
+        -H 'Content-Type: application/json' -d "${payload}" "${url}"
+    fi
   else
-    curl --silent --show-error --max-time "${api_timeout}" --output "${body_file}" --dump-header "${header_file}" --write-out '%{http_code}' \
-      -H "Authorization: Bearer ${control_token}" -H 'Content-Type: application/json' -d "${payload}" "${url}"
+    if [[ "${authorization_mode}" == "admin" ]]; then
+      curl --silent --show-error --max-time "${api_timeout}" --output "${body_file}" --dump-header "${header_file}" --write-out '%{http_code}' \
+        -H "Authorization: Bearer ${control_token}" -H 'Content-Type: application/json' -d "${payload}" "${url}"
+    else
+      curl --silent --show-error --max-time "${api_timeout}" --output "${body_file}" --dump-header "${header_file}" --write-out '%{http_code}' \
+        -H 'Content-Type: application/json' -d "${payload}" "${url}"
+    fi
   fi
 }
 
 api_post() {
-  local url="$1" payload="$2"
+  local url="$1" payload="$2" authorization_mode="${3:-admin}"
   local body_file header_file http_status current_url leader_api leader_raft leader_api_host leader_raft_host attempt
   local idempotency_key reconcile_response reconcile_status
   body_file="$(mktemp "${TMPDIR:-/tmp}/clusterguard-api.XXXXXX")" || return 1
@@ -160,7 +167,7 @@ api_post() {
   for attempt in 1 2; do
     : >"${body_file}"
     : >"${header_file}"
-    if ! http_status="$(post_request "${current_url}" "${payload}" "${body_file}" "${header_file}")"; then
+    if ! http_status="$(post_request "${current_url}" "${payload}" "${body_file}" "${header_file}" "${authorization_mode}")"; then
       echo "api_transport_error method=POST resolution=idempotency_lookup" >&2
       if [[ -n "${idempotency_key}" ]] && reconcile_response="$(reconcile_operation_after_transport "${idempotency_key}")"; then
         rm -f "${body_file}" "${header_file}"
@@ -228,6 +235,25 @@ api_post() {
   rm -f "${body_file}" "${header_file}"
 }
 
+issue_approval() {
+  local cluster_id="$1" target_id="$2" ordinal="$3" execute_attempt="$4" idempotency_key="$5"
+  local payload response approval_token
+  payload="$(jq -nc \
+    --arg cluster_id "${cluster_id}" \
+    --arg target_id "${target_id}" \
+    --arg key "${idempotency_key}" \
+    '{cluster_id:$cluster_id,engine:"mysql",operation_kind:"switchover",target_id:$target_id,issued_by:"cg-ha-matrix",ttl_seconds:300,idempotency_key:$key}')"
+  if ! response="$(api_post "${api%/}/api/v1/approvals" "${payload}" admin)"; then
+    echo "approval_issue_failed ordinal=${ordinal} cluster=${cluster_id} target=${target_id} attempt=${execute_attempt}" >&2
+    return 1
+  fi
+  approval_token="$(jq -er '.result.approval_token | select(type == "string" and length > 0)' <<<"${response}")" || {
+    echo "approval_issue_failed ordinal=${ordinal} cluster=${cluster_id} target=${target_id} attempt=${execute_attempt} reason=missing_token" >&2
+    return 1
+  }
+  printf '%s\n' "${approval_token}"
+}
+
 wait_for_smoke() {
   local cluster_id="$1" ordinal="$2" operation_id="$3" target="$4"
   local attempt output_file failed_checks
@@ -261,7 +287,7 @@ wait_for_smoke() {
 
 execute_switch() {
   local cluster_id="$1" ordinal="$2" target_offset="$3"
-  local candidates eligible_count target payload response operation_id api_status execute_attempt
+  local candidates eligible_count target payload response operation_id api_status execute_attempt approval_token idempotency_key
   if ! candidates="$(api_get "${api%/}/api/v1/clusters/${cluster_id}/candidates")"; then
     echo "switch_failed ordinal=${ordinal} cluster=${cluster_id} stage=candidates" >&2
     return 1
@@ -279,9 +305,14 @@ execute_switch() {
   }
   response=""
   for ((execute_attempt=1; execute_attempt<=3; execute_attempt++)); do
-    payload="$(jq -nc --arg cluster_id "${cluster_id}" --arg target_id "${target}" --arg approval_token "${approval_token}" --arg key "matrix-${cluster_id}-${ordinal}-${execute_attempt}-$(date +%s%N)" \
+    idempotency_key="matrix-${cluster_id}-${ordinal}-${execute_attempt}-$(date +%s%N)"
+    if ! approval_token="$(issue_approval "${cluster_id}" "${target}" "${ordinal}" "${execute_attempt}" "${idempotency_key}")"; then
+      echo "switch_failed ordinal=${ordinal} cluster=${cluster_id} target=${target} stage=approval" >&2
+      return 1
+    fi
+    payload="$(jq -nc --arg cluster_id "${cluster_id}" --arg target_id "${target}" --arg approval_token "${approval_token}" --arg key "${idempotency_key}" \
       '{operation:{cluster_id:$cluster_id,engine:"mysql",kind:"switchover",requested_by:"cg-ha-matrix"},target_id:$target_id,idempotency_key:$key,approval_token:$approval_token}')"
-    if response="$(api_post "${api%/}/api/v1/operations/execute" "${payload}")"; then
+    if response="$(api_post "${api%/}/api/v1/operations/execute" "${payload}" grant)"; then
       break
     else
       api_status=$?

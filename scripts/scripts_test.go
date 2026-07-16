@@ -80,6 +80,29 @@ func TestDeliveryScriptsAreSyntaxValid(t *testing.T) {
 	}
 }
 
+func TestHAMatrixUsesFreshOneTimeApprovalPerSwitch(t *testing.T) {
+	contents, err := os.ReadFile("clusterguard-ha-matrix.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	for _, expected := range []string{
+		"/api/v1/approvals",
+		"approval_token",
+		"approval_issue_failed",
+		"requested_by:\"cg-ha-matrix\"",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("HA matrix missing one-time approval contract %q", expected)
+		}
+	}
+	for _, forbidden := range []string{"CG_APPROVAL_TOKEN", "--approval-env", "approval_token_environment"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("HA matrix still depends on reusable approval material %q", forbidden)
+		}
+	}
+}
+
 func TestVIPReconcileTimerAttemptsRecoveryWithinThirtySecondWindow(t *testing.T) {
 	contents, err := os.ReadFile("../packaging/systemd/clusterguard-agent-reconcile.timer")
 	if err != nil {
@@ -329,6 +352,32 @@ func TestSmokeChecksOneWriterOneVIPAndReplicaThreads(t *testing.T) {
 	}
 }
 
+func serveMatrixApproval(writer http.ResponseWriter, request *http.Request, issued *int32) bool {
+	if request.Method != http.MethodPost || request.URL.Path != "/api/v1/approvals" {
+		return false
+	}
+	if request.Header.Get("Authorization") != "Bearer matrix-control" {
+		http.Error(writer, "unauthorized", http.StatusUnauthorized)
+		return true
+	}
+	payload := struct {
+		ClusterID      string `json:"cluster_id"`
+		TargetID       string `json:"target_id"`
+		IdempotencyKey string `json:"idempotency_key"`
+	}{}
+	if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+		http.Error(writer, err.Error(), http.StatusBadRequest)
+		return true
+	}
+	ordinal := int32(1)
+	if issued != nil {
+		ordinal = atomic.AddInt32(issued, 1)
+	}
+	_, _ = fmt.Fprintf(writer, `{"status":"ok","result":{"operation":{"resource_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","idempotency_key":%q},"grant":{"resource_id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","cluster_id":%q,"target_id":%q,"status":"active"},"approval_token":"cgag_bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.token-%d"}}`,
+		payload.IdempotencyKey, payload.ClusterID, payload.TargetID, ordinal)
+	return true
+}
+
 func TestHAMatrixRunsSeededCoveredConcurrentSwitchesWithSmoke(t *testing.T) {
 	clusterIDs := []string{
 		"11111111-1111-4111-8111-111111111111",
@@ -344,9 +393,13 @@ func TestHAMatrixRunsSeededCoveredConcurrentSwitchesWithSmoke(t *testing.T) {
 		executionMu           sync.Mutex
 		executions            []execution
 		operationOrdinal      int32
+		issuedApprovals       int32
 	)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.Header.Get("Authorization") != "Bearer matrix-control" {
+		if serveMatrixApproval(writer, request, &issuedApprovals) {
+			return
+		}
+		if request.URL.Path != "/api/v1/operations/execute" && request.Header.Get("Authorization") != "Bearer matrix-control" {
 			http.Error(writer, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -357,6 +410,10 @@ func TestHAMatrixRunsSeededCoveredConcurrentSwitchesWithSmoke(t *testing.T) {
 			return
 		}
 		if request.Method == http.MethodPost && request.URL.Path == "/api/v1/operations/execute" {
+			if request.Header.Get("Authorization") != "" {
+				http.Error(writer, "grant execution must not send administrator authorization", http.StatusBadRequest)
+				return
+			}
 			current := atomic.AddInt32(&active, 1)
 			for {
 				observed := atomic.LoadInt32(&maximumActive)
@@ -410,7 +467,6 @@ printf '%s\n' "${cluster}" >>"${CG_MATRIX_SMOKE_LOG}"
 	)
 	command.Env = append(os.Environ(),
 		"CG_CONTROL_TOKEN=matrix-control",
-		"CG_APPROVAL_TOKEN=matrix-approval",
 		"CG_MATRIX_SMOKE_LOG="+smokeLog,
 		"script_dir="+fakeScripts,
 	)
@@ -427,10 +483,13 @@ printf '%s\n' "${cluster}" >>"${CG_MATRIX_SMOKE_LOG}"
 	if len(executions) != 4 {
 		t.Fatalf("executions=%d, want 4", len(executions))
 	}
+	if atomic.LoadInt32(&issuedApprovals) != 4 {
+		t.Fatalf("issued approvals=%d, want one per execution", issuedApprovals)
+	}
 	byCluster := map[string][]string{}
 	for _, execution := range executions {
-		if execution.Approval != "matrix-approval" {
-			t.Fatalf("approval token was not forwarded: %+v", execution)
+		if !strings.HasPrefix(execution.Approval, "cgag_") {
+			t.Fatalf("one-time approval token was not forwarded: %+v", execution)
 		}
 		byCluster[execution.ClusterID] = append(byCluster[execution.ClusterID], execution.TargetID)
 	}
@@ -453,6 +512,9 @@ func TestHAMatrixRetriesTransientCandidateRead(t *testing.T) {
 	clusterID := "11111111-1111-4111-8111-111111111111"
 	var candidateReads int32
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if serveMatrixApproval(writer, request, nil) {
+			return
+		}
 		if request.Method == http.MethodGet && strings.HasSuffix(request.URL.Path, "/candidates") {
 			if atomic.AddInt32(&candidateReads, 1) == 1 {
 				http.Error(writer, "temporarily unavailable", http.StatusServiceUnavailable)
@@ -479,7 +541,6 @@ func TestHAMatrixRetriesTransientCandidateRead(t *testing.T) {
 	)
 	command.Env = append(os.Environ(),
 		"CG_CONTROL_TOKEN=matrix-control",
-		"CG_APPROVAL_TOKEN=matrix-approval",
 		"CG_MATRIX_READ_ATTEMPTS=2",
 		"CG_MATRIX_READ_RETRY_INTERVAL=0",
 		"script_dir="+fakeScripts,
@@ -502,6 +563,9 @@ func TestHAMatrixRetriesTransientCandidateRead(t *testing.T) {
 func TestHAMatrixWaitsForSmokeConvergence(t *testing.T) {
 	clusterID := "11111111-1111-4111-8111-111111111111"
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if serveMatrixApproval(writer, request, nil) {
+			return
+		}
 		if request.Method == http.MethodGet && strings.HasSuffix(request.URL.Path, "/candidates") {
 			_, _ = fmt.Fprint(writer, `{"status":"ok","result":[{"instance_id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","eligible":true,"rank":1}]}`)
 			return
@@ -539,7 +603,6 @@ fi
 	)
 	command.Env = append(os.Environ(),
 		"CG_CONTROL_TOKEN=matrix-control",
-		"CG_APPROVAL_TOKEN=matrix-approval",
 		"CG_MATRIX_SMOKE_ATTEMPT_FILE="+attemptFile,
 		"script_dir="+fakeScripts,
 	)
@@ -558,8 +621,11 @@ fi
 
 func TestHAMatrixRetriesFreshOperationAfterStalePlan(t *testing.T) {
 	clusterID := "11111111-1111-4111-8111-111111111111"
-	var attempts int32
+	var attempts, issuedApprovals int32
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if serveMatrixApproval(writer, request, &issuedApprovals) {
+			return
+		}
 		if request.Method == http.MethodGet && strings.HasSuffix(request.URL.Path, "/candidates") {
 			_, _ = fmt.Fprint(writer, `{"status":"ok","result":[{"instance_id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","eligible":true,"rank":1}]}`)
 			return
@@ -587,7 +653,6 @@ func TestHAMatrixRetriesFreshOperationAfterStalePlan(t *testing.T) {
 	)
 	command.Env = append(os.Environ(),
 		"CG_CONTROL_TOKEN=matrix-control",
-		"CG_APPROVAL_TOKEN=matrix-approval",
 		"script_dir="+fakeScripts,
 	)
 	output, err := command.CombinedOutput()
@@ -596,6 +661,9 @@ func TestHAMatrixRetriesFreshOperationAfterStalePlan(t *testing.T) {
 	}
 	if atomic.LoadInt32(&attempts) != 2 || !strings.Contains(string(output), "switch_retry ordinal=0") || !strings.Contains(string(output), "reason=stale_plan") {
 		t.Fatalf("stale plan was not retried once with a fresh operation: attempts=%d\n%s", attempts, output)
+	}
+	if atomic.LoadInt32(&issuedApprovals) != 2 {
+		t.Fatalf("stale plan retry reused an approval: issued=%d", issuedApprovals)
 	}
 	if !strings.Contains(string(output), "matrix_summary total=1 passed=1 failed=0") {
 		t.Fatalf("matrix summary missing after stale-plan retry:\n%s", output)
@@ -615,6 +683,9 @@ func TestHAMatrixFollowsRaftLeaderForMutation(t *testing.T) {
 	}))
 	defer leader.Close()
 	follower := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if serveMatrixApproval(writer, request, nil) {
+			return
+		}
 		if request.Method == http.MethodGet && strings.HasSuffix(request.URL.Path, "/candidates") {
 			_, _ = fmt.Fprint(writer, `{"status":"ok","result":[{"instance_id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","eligible":true,"rank":1}]}`)
 			return
@@ -641,7 +712,6 @@ func TestHAMatrixFollowsRaftLeaderForMutation(t *testing.T) {
 	)
 	command.Env = append(os.Environ(),
 		"CG_CONTROL_TOKEN=matrix-control",
-		"CG_APPROVAL_TOKEN=matrix-approval",
 		"script_dir="+fakeScripts,
 	)
 	output, err := command.CombinedOutput()
@@ -663,6 +733,9 @@ func TestHAMatrixReconcilesTimedOutMutationWithoutSubmittingAgain(t *testing.T) 
 	var keyMu sync.Mutex
 	operationKey := ""
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if serveMatrixApproval(writer, request, nil) {
+			return
+		}
 		if request.Method == http.MethodGet && strings.HasSuffix(request.URL.Path, "/candidates") {
 			_, _ = fmt.Fprint(writer, `{"status":"ok","result":[{"instance_id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","eligible":true,"rank":1}]}`)
 			return
@@ -710,7 +783,6 @@ func TestHAMatrixReconcilesTimedOutMutationWithoutSubmittingAgain(t *testing.T) 
 	)
 	command.Env = append(os.Environ(),
 		"CG_CONTROL_TOKEN=matrix-control",
-		"CG_APPROVAL_TOKEN=matrix-approval",
 		"CG_MATRIX_RECONCILE_ATTEMPTS=2",
 		"CG_MATRIX_RECONCILE_INTERVAL=0",
 		"script_dir="+fakeScripts,
@@ -733,7 +805,7 @@ func TestHAMatrixReconcilesTimedOutMutationWithoutSubmittingAgain(t *testing.T) 
 func TestHAMatrixRejectsDuplicateClusterInventory(t *testing.T) {
 	clusterID := "11111111-1111-4111-8111-111111111111"
 	command := exec.Command("bash", "clusterguard-ha-matrix.sh", "--clusters", clusterID+","+clusterID, "--round-robin", "0", "--random", "0")
-	command.Env = append(os.Environ(), "CG_CONTROL_TOKEN=matrix-control", "CG_APPROVAL_TOKEN=matrix-approval")
+	command.Env = append(os.Environ(), "CG_CONTROL_TOKEN=matrix-control")
 	output, err := command.CombinedOutput()
 	if err == nil || !strings.Contains(string(output), "cluster UUIDs must be unique") {
 		t.Fatalf("duplicate inventory was not rejected: err=%v output=%s", err, output)
@@ -744,6 +816,9 @@ func TestHAMatrixReportsSafeOperationEvidenceForHTTPFailure(t *testing.T) {
 	clusterID := "11111111-1111-4111-8111-111111111111"
 	operationID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if serveMatrixApproval(writer, request, nil) {
+			return
+		}
 		if request.Method == http.MethodGet && strings.HasSuffix(request.URL.Path, "/candidates") {
 			_, _ = fmt.Fprint(writer, `{"status":"ok","result":[{"instance_id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","eligible":true,"rank":1}]}`)
 			return
@@ -763,7 +838,7 @@ func TestHAMatrixReportsSafeOperationEvidenceForHTTPFailure(t *testing.T) {
 		"--round-robin", "1",
 		"--random", "0",
 	)
-	command.Env = append(os.Environ(), "CG_CONTROL_TOKEN=matrix-control", "CG_APPROVAL_TOKEN=matrix-approval")
+	command.Env = append(os.Environ(), "CG_CONTROL_TOKEN=matrix-control")
 	output, err := command.CombinedOutput()
 	text := string(output)
 	if err == nil {
@@ -781,7 +856,7 @@ func TestHAMatrixReportsSafeOperationEvidenceForHTTPFailure(t *testing.T) {
 			t.Fatalf("matrix diagnostics missing %q:\n%s", expected, text)
 		}
 	}
-	if strings.Contains(text, "never-print-matrix-approval") || strings.Contains(text, "matrix-approval") {
+	if strings.Contains(text, "never-print-matrix-approval") || strings.Contains(text, "cgag_") {
 		t.Fatalf("matrix diagnostics leaked hidden response or approval data:\n%s", text)
 	}
 }
