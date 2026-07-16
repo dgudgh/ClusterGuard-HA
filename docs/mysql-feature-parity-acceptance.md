@@ -152,10 +152,11 @@ and sanitized responses.
 The authenticated control path completed a new three-host destructive
 acceptance on 2026-07-17 CST:
 
-- branch `codex/platform-auth-session`, commit `545c44c`;
+- branch `codex/platform-auth-session`, workflow fix commits `545c44c` and
+  `4b5e5df`;
 - release archive
-  `clusterguard-ha-platform-auth-rc3-linux-amd64.tar.gz`, SHA-256
-  `5df26c860b7488917e746eb6884969e5cb8ef19b8fe649c2719740cd631784c3`;
+  `clusterguard-ha-platform-auth-rc4-linux-amd64.tar.gz`, SHA-256
+  `ac97e44af9727c45214bb5c4e793aa30bc40feaf509250f2ece3a25304ee3dfc`;
 - the temporary bootstrap password was changed before business API access was
   allowed; the old session was revoked, re-login succeeded, logout revoked its
   session, and unauthenticated business reads returned `401`;
@@ -170,6 +171,10 @@ acceptance on 2026-07-17 CST:
   reproduced the defect before the fix and passed after execution was changed
   to reuse the exact persisted plan while retaining current precheck, safety,
   lock, topology revalidation, approval, verification, audit, and report gates;
+- regression test
+  `TestPutDurablePlanPreservesOperationIdentityOnPersistenceFailure` also
+  proves that plan-store errors retain the durable operation UUID and revision
+  so blocked outcomes and audits can be persisted against the correct record;
 - operation `92ec6cda-c2b6-4fbb-aca5-27c1848aa29a` then completed through
   `succeeded/report` with verification passed, moving `mysql-ha-3306` from
   `192.168.102.154:3306` to `192.168.102.152:3306`;
@@ -184,6 +189,10 @@ acceptance on 2026-07-17 CST:
   control Bearer without a one-time grant also returned `401`;
 - the terminal operation and consumed grant were present on all three
   controller metadata replicas.
+
+RC4 was rolled across `192.168.102.152` through `.154` after the destructive
+switchover and all three controllers ran server binary SHA-256
+`15c6ec6b62f52b775b69f3a66a15937420f555f9f15f5578c30ad19f47e98f79`.
 
 The full Go suite, race suite, shell matrix suite, static checks, source scans,
 and Linux amd64 builds gate this update.
