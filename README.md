@@ -28,7 +28,8 @@ The current MySQL adapter provides:
   synchronization, verification, audit, and report output;
 - endpoint metadata reconciliation without changing immutable resource identity;
 - JSON, Prometheus, and monitoring-safe health output;
-- a compact Chinese console and the `cgctl` CLI;
+- an authenticated Chinese console with role-based access, mandatory bootstrap
+  password change, CSRF protection, and the `cgctl` service CLI;
 - durable operation UUIDs, idempotency keys, stage progress, audit, and reports;
 - plan-bound, five-minute, single-use approval grants for manual high-risk
   database operations;
@@ -55,11 +56,21 @@ host network partition that cannot prove old-primary fencing remains blocked.
 The platform prefers temporary unavailability over a second writer or VIP
 owner.
 
-Manual high-risk execution requires a one-time grant issued by an administrator.
-Only the grant hash is replicated, the plaintext is returned once, and a grant
-is consumed atomically with the workflow approval stage. Automatic failover
-uses an internal incident authorization path and does not depend on a reusable
-human token.
+The browser console authenticates against platform users stored in the
+replicated metadata snapshot. A fresh installation creates `admin` with the
+temporary password `admin123` and `MustChangePassword=true`. The first login
+must replace it before any platform operation is accepted. Passwords are stored
+only as Argon2id hashes. Sessions have an eight-hour absolute lifetime, use
+HttpOnly SameSite cookies plus CSRF validation, and are revoked by password
+change or logout.
+
+For an authenticated administrator or operator, the server builds the exact
+plan and internally issues and consumes a one-time grant; the browser never
+sees an approval secret. External service automation keeps the explicit grant
+API: only the grant hash is replicated, plaintext is returned once, and
+consumption is atomic with the workflow approval stage. Automatic failover uses
+an internal incident authorization path and does not depend on a reusable human
+token.
 
 The common workflow remains:
 
@@ -83,6 +94,9 @@ go run ./cmd/clusterguard --config configs/clusterguard.example.json
 ```
 
 The console and API are served from `http://127.0.0.1:8088/` by default.
+Open the console and sign in with `admin` / `admin123` on a new metadata store.
+The console immediately requires a new password and does not load cluster data
+until that change succeeds.
 
 The production binary is `clusterguard`; the CLI is `cgctl`. The distribution
 uses `/etc/clusterguard/`, `/var/lib/clusterguard/`, and
@@ -147,11 +161,33 @@ go run ./cmd/cgctl approval list
 go run ./cmd/cgctl approval show <grant-uuid>
 ```
 
-`refresh` reads the control token from `CG_CONTROL_TOKEN`. Use
+`cgctl` uses the control token from `CG_CONTROL_TOKEN` for authenticated reads
+and writes. Use
 `--token-env <name>` before the command to select a different environment
 variable; the secret is never accepted as a command-line value. Approval
 issuance also reads this administrator credential. The returned approval token
 is printed once and is never persisted by `cgctl`.
+
+If the administrator password is lost, there is no online bypass or reset API.
+Stop writes to the control plane and recover a protected metadata backup with a
+known administrator credential through the documented offline disaster-
+recovery process. Do not delete user records, edit hashes, or re-enable
+`admin123` in a live Raft set.
+
+The HA matrix supports browser-equivalent session execution:
+
+```bash
+export CG_PLATFORM_USERNAME='admin'
+export CG_PLATFORM_PASSWORD='<current-platform-password>'
+scripts/clusterguard-ha-matrix.sh \
+  --api http://127.0.0.1:8088 \
+  --clusters '<cluster-uuid>' \
+  --platform-session
+```
+
+On a fresh metadata store, set `CG_PLATFORM_NEW_PASSWORD` as well. Omitting
+`--platform-session` keeps the explicit one-time grant mode for service
+automation tests.
 
 Place global flags before the command:
 

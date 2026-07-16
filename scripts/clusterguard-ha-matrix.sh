@@ -15,6 +15,13 @@ read_retry_interval="${CG_MATRIX_READ_RETRY_INTERVAL:-1}"
 transport_reconcile_attempts="${CG_MATRIX_RECONCILE_ATTEMPTS:-45}"
 transport_reconcile_interval="${CG_MATRIX_RECONCILE_INTERVAL:-2}"
 control_token_environment="CG_CONTROL_TOKEN"
+platform_session=false
+platform_username_environment="CG_PLATFORM_USERNAME"
+platform_password_environment="CG_PLATFORM_PASSWORD"
+platform_new_password_environment="CG_PLATFORM_NEW_PASSWORD"
+platform_cookie_jar=""
+platform_username=""
+platform_password=""
 script_dir="${script_dir:-$(cd "$(dirname "$0")" && pwd)}"
 insecure=false
 total=0
@@ -24,13 +31,16 @@ failed=0
 finish() {
   local status=$?
   trap - EXIT
+  if [[ -n "${platform_cookie_jar}" ]]; then
+    rm -f "${platform_cookie_jar}"
+  fi
   printf 'matrix_summary total=%s passed=%s failed=%s seed=%s\n' "${total}" "${passed}" "${failed}" "${matrix_seed}"
   exit "${status}"
 }
 trap finish EXIT
 
 usage() {
-  echo "usage: $0 --clusters UUID[,UUID...] [--api URL] [--round-robin N] [--random N] [--seed N] [--parallel N] [--smoke-attempts N] [--smoke-interval SECONDS] [--api-timeout SECONDS]"
+  echo "usage: $0 --clusters UUID[,UUID...] [--api URL] [--round-robin N] [--random N] [--seed N] [--parallel N] [--smoke-attempts N] [--smoke-interval SECONDS] [--api-timeout SECONDS] [--platform-session]"
 }
 
 while (($#)); do
@@ -45,6 +55,10 @@ while (($#)); do
     --smoke-interval) smoke_interval="${2:-}"; shift 2 ;;
     --api-timeout) api_timeout="${2:-}"; shift 2 ;;
     --token-env) control_token_environment="${2:-}"; shift 2 ;;
+    --platform-session) platform_session=true; shift ;;
+    --platform-user-env) platform_username_environment="${2:-}"; shift 2 ;;
+    --platform-password-env) platform_password_environment="${2:-}"; shift 2 ;;
+    --platform-new-password-env) platform_new_password_environment="${2:-}"; shift 2 ;;
     --insecure) insecure=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown matrix argument: $1" >&2; exit 2 ;;
@@ -76,19 +90,35 @@ if ((parallel > ${#cluster_ids[@]})); then
 fi
 
 control_token="${!control_token_environment:-}"
-[[ -n "${control_token}" ]] || { echo "control token environment is required" >&2; exit 2; }
+if [[ "${platform_session}" == true ]]; then
+  platform_username="${!platform_username_environment:-}"
+  platform_password="${!platform_password_environment:-}"
+  [[ -n "${platform_username}" ]] || platform_username="admin"
+  [[ -n "${platform_password}" ]] || { echo "platform password environment is required for --platform-session" >&2; exit 2; }
+  platform_cookie_jar="$(mktemp "${TMPDIR:-/tmp}/clusterguard-platform-session.XXXXXX")"
+else
+  [[ -n "${control_token}" ]] || { echo "control token environment is required" >&2; exit 2; }
+fi
 RANDOM=$((matrix_seed % 32768))
 
 api_get() {
-  local url="$1" attempt
+  local url="$1" attempt csrf_token session_token
+  local -a command
   for ((attempt=1; attempt<=read_attempts; attempt++)); do
+    command=(curl --fail --silent --show-error --max-time 15 -H 'Accept: application/json')
     if [[ "${insecure}" == true ]]; then
-      if curl -k --fail --silent --show-error --max-time 15 \
-        -H "Authorization: Bearer ${control_token}" -H 'Accept: application/json' "${url}"; then
-        return 0
-      fi
-    elif curl --fail --silent --show-error --max-time 15 \
-      -H "Authorization: Bearer ${control_token}" -H 'Accept: application/json' "${url}"; then
+      command+=(-k)
+    fi
+    if [[ "${platform_session}" == true ]]; then
+      session_token="$(awk '$6 == "clusterguard_session" { value=$7 } END { print value }' "${platform_cookie_jar}")"
+      csrf_token="$(awk '$6 == "clusterguard_csrf" { value=$7 } END { print value }' "${platform_cookie_jar}")"
+      [[ -n "${session_token}" && -n "${csrf_token}" ]] || { echo "platform session cookies are unavailable" >&2; return 1; }
+      command+=(-H "Cookie: clusterguard_session=${session_token}; clusterguard_csrf=${csrf_token}")
+    else
+      command+=(-H "Authorization: Bearer ${control_token}")
+    fi
+    command+=("${url}")
+    if "${command[@]}"; then
       return 0
     fi
     if ((attempt < read_attempts)); then
@@ -137,23 +167,34 @@ reconcile_operation_after_transport() {
 
 post_request() {
   local url="$1" payload="$2" body_file="$3" header_file="$4" authorization_mode="$5"
+  local csrf_token session_token
+  local -a command=(curl --silent --show-error --max-time "${api_timeout}" --output "${body_file}" --dump-header "${header_file}" --write-out '%{http_code}')
   if [[ "${insecure}" == true ]]; then
-    if [[ "${authorization_mode}" == "admin" ]]; then
-      curl -k --silent --show-error --max-time "${api_timeout}" --output "${body_file}" --dump-header "${header_file}" --write-out '%{http_code}' \
-        -H "Authorization: Bearer ${control_token}" -H 'Content-Type: application/json' -d "${payload}" "${url}"
-    else
-      curl -k --silent --show-error --max-time "${api_timeout}" --output "${body_file}" --dump-header "${header_file}" --write-out '%{http_code}' \
-        -H 'Content-Type: application/json' -d "${payload}" "${url}"
-    fi
-  else
-    if [[ "${authorization_mode}" == "admin" ]]; then
-      curl --silent --show-error --max-time "${api_timeout}" --output "${body_file}" --dump-header "${header_file}" --write-out '%{http_code}' \
-        -H "Authorization: Bearer ${control_token}" -H 'Content-Type: application/json' -d "${payload}" "${url}"
-    else
-      curl --silent --show-error --max-time "${api_timeout}" --output "${body_file}" --dump-header "${header_file}" --write-out '%{http_code}' \
-        -H 'Content-Type: application/json' -d "${payload}" "${url}"
-    fi
+    command+=(-k)
   fi
+  command+=(-H 'Content-Type: application/json')
+  case "${authorization_mode}" in
+    admin)
+      command+=(-H "Authorization: Bearer ${control_token}")
+      ;;
+    login)
+      command+=(-c "${platform_cookie_jar}")
+      ;;
+    session)
+      session_token="$(awk '$6 == "clusterguard_session" { value=$7 } END { print value }' "${platform_cookie_jar}")"
+      csrf_token="$(awk '$6 == "clusterguard_csrf" { value=$7 } END { print value }' "${platform_cookie_jar}")"
+      [[ -n "${session_token}" && -n "${csrf_token}" ]] || { echo "platform session cookies are unavailable" >&2; return 1; }
+      command+=(-H "Cookie: clusterguard_session=${session_token}; clusterguard_csrf=${csrf_token}" -H "X-CSRF-Token: ${csrf_token}")
+      ;;
+    grant)
+      ;;
+    *)
+      echo "unknown authorization_mode: ${authorization_mode}" >&2
+      return 2
+      ;;
+  esac
+  command+=(-d "${payload}" "${url}")
+  "${command[@]}"
 }
 
 api_post() {
@@ -254,6 +295,36 @@ issue_approval() {
   printf '%s\n' "${approval_token}"
 }
 
+platform_login() {
+  local password="$1" payload response must_change new_password
+  payload="$(jq -nc --arg username "${platform_username}" --arg password "${password}" '{username:$username,password:$password}')"
+  if ! response="$(api_post "${api%/}/api/v1/auth/login" "${payload}" login)"; then
+    echo "platform_login_failed" >&2
+    return 1
+  fi
+  must_change="$(jq -r '.result.user.must_change_password // false' <<<"${response}")"
+  if [[ "${must_change}" == "true" ]]; then
+    new_password="${!platform_new_password_environment:-}"
+    [[ -n "${new_password}" ]] || { echo "platform new password environment is required for bootstrap password change" >&2; return 1; }
+    payload="$(jq -nc --arg current_password "${password}" --arg new_password "${new_password}" '{current_password:$current_password,new_password:$new_password}')"
+    if ! api_post "${api%/}/api/v1/auth/password" "${payload}" session >/dev/null; then
+      echo "platform_password_change_failed" >&2
+      return 1
+    fi
+    platform_password="${new_password}"
+    payload="$(jq -nc --arg username "${platform_username}" --arg password "${platform_password}" '{username:$username,password:$password}')"
+    if ! response="$(api_post "${api%/}/api/v1/auth/login" "${payload}" login)"; then
+      echo "platform_relogin_failed" >&2
+      return 1
+    fi
+  fi
+  if ! jq -e '.status == "ok" and .result.user.must_change_password == false' <<<"${response}" >/dev/null; then
+    echo "platform_session_not_ready" >&2
+    return 1
+  fi
+  echo "platform_session_ready user=${platform_username}" >&2
+}
+
 wait_for_smoke() {
   local cluster_id="$1" ordinal="$2" operation_id="$3" target="$4"
   local attempt output_file failed_checks
@@ -287,7 +358,7 @@ wait_for_smoke() {
 
 execute_switch() {
   local cluster_id="$1" ordinal="$2" target_offset="$3"
-  local candidates eligible_count target payload response operation_id api_status execute_attempt approval_token idempotency_key
+  local candidates eligible_count target payload response operation_id api_status execute_attempt approval_token idempotency_key requested_by authorization_mode
   if ! candidates="$(api_get "${api%/}/api/v1/clusters/${cluster_id}/candidates")"; then
     echo "switch_failed ordinal=${ordinal} cluster=${cluster_id} stage=candidates" >&2
     return 1
@@ -306,13 +377,21 @@ execute_switch() {
   response=""
   for ((execute_attempt=1; execute_attempt<=3; execute_attempt++)); do
     idempotency_key="matrix-${cluster_id}-${ordinal}-${execute_attempt}-$(date +%s%N)"
-    if ! approval_token="$(issue_approval "${cluster_id}" "${target}" "${ordinal}" "${execute_attempt}" "${idempotency_key}")"; then
-      echo "switch_failed ordinal=${ordinal} cluster=${cluster_id} target=${target} stage=approval" >&2
-      return 1
+    if [[ "${platform_session}" == true ]]; then
+      requested_by="${platform_username}"
+      authorization_mode="session"
+      payload="$(jq -nc --arg cluster_id "${cluster_id}" --arg target_id "${target}" --arg requested_by "${requested_by}" --arg key "${idempotency_key}" \
+        '{operation:{cluster_id:$cluster_id,engine:"mysql",kind:"switchover",requested_by:$requested_by},target_id:$target_id,idempotency_key:$key}')"
+    else
+      if ! approval_token="$(issue_approval "${cluster_id}" "${target}" "${ordinal}" "${execute_attempt}" "${idempotency_key}")"; then
+        echo "switch_failed ordinal=${ordinal} cluster=${cluster_id} target=${target} stage=approval" >&2
+        return 1
+      fi
+      authorization_mode="grant"
+      payload="$(jq -nc --arg cluster_id "${cluster_id}" --arg target_id "${target}" --arg approval_token "${approval_token}" --arg key "${idempotency_key}" \
+        '{operation:{cluster_id:$cluster_id,engine:"mysql",kind:"switchover",requested_by:"cg-ha-matrix"},target_id:$target_id,idempotency_key:$key,approval_token:$approval_token}')"
     fi
-    payload="$(jq -nc --arg cluster_id "${cluster_id}" --arg target_id "${target}" --arg approval_token "${approval_token}" --arg key "${idempotency_key}" \
-      '{operation:{cluster_id:$cluster_id,engine:"mysql",kind:"switchover",requested_by:"cg-ha-matrix"},target_id:$target_id,idempotency_key:$key,approval_token:$approval_token}')"
-    if response="$(api_post "${api%/}/api/v1/operations/execute" "${payload}" grant)"; then
+    if response="$(api_post "${api%/}/api/v1/operations/execute" "${payload}" "${authorization_mode}")"; then
       break
     else
       api_status=$?
@@ -337,6 +416,10 @@ execute_switch() {
   printf 'verified switch ordinal=%s operation=%s cluster=%s target=%s candidate_offset=%s\n' \
     "${ordinal}" "${operation_id}" "${cluster_id}" "${target}" "${target_offset}"
 }
+
+if [[ "${platform_session}" == true ]]; then
+  platform_login "${platform_password}"
+fi
 
 cluster_attempts=()
 for ((index=0; index<${#cluster_ids[@]}; index++)); do

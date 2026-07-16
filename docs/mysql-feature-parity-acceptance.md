@@ -120,25 +120,37 @@ metrics, logs, settings, about page, and metadata dialog. The operation log was
 confirmed to show the local time, stable cluster name, source and target nodes,
 status, and a collapsed raw workflow object that expands on demand.
 
-## One-Time Approval Update
+## Platform Authentication And One-Time Approval Update
 
-The 2026-07-16 authorization update replaces reusable database-operation
-approval strings with Raft-replicated, hash-only, single-use grants:
+The 2026-07-16 authorization update adds Raft-replicated platform users and
+sessions while retaining hash-only, one-time operation grants:
 
-- administrator-authenticated issuance builds the exact durable operation plan;
-- the plaintext token is returned once, defaults to a five-minute lifetime, and
-  is bound to cluster, engine, operation kind, target, observation, and plan;
-- manual execute accepts the grant without the administrator Bearer credential;
-- grant consumption and the durable `APPROVE` transition are atomic;
-- consumed, expired, mismatched, and stale-plan grants fail closed;
-- the HA console clears the token and relocks after every attempt;
-- the HA matrix obtains a fresh grant before every destructive switchover;
+- a new metadata store bootstraps `admin` with temporary password `admin123`
+  and `MustChangePassword=true`;
+- the bootstrap password must be changed before any database or administrative
+  mutation is accepted;
+- passwords use Argon2id, browser sessions have an eight-hour absolute
+  lifetime, and password change or logout revokes the active session;
+- session-authenticated `admin` and `operator` execution builds the exact
+  durable operation plan, creates a one-time grant inside the server, consumes
+  it atomically at `APPROVE`, and never sends the approval secret to the
+  browser;
+- explicit service automation remains separate: the control Bearer
+  authenticates the client, a plaintext grant is returned once, and the grant
+  remains bound to cluster, engine, operation kind, target, observation, and
+  plan;
+- consumed, expired, mismatched, replayed, and stale-plan grants fail closed;
+- the HA matrix supports browser-equivalent platform-session execution and
+  preserves a separate explicit-grant mode for service-client replay tests;
 - automatic failover uses a private incident authorization path and no human
   token, while retaining quorum, fencing, lock, verification, audit, and report.
 
-The local full Go suite, shell matrix suite, source scans, and builds gate this
-update. A new three-host destructive acceptance record is added after deploying
-the updated bundle.
+Local API verification covered bootstrap login, mutation blocking before the
+password change, session revocation, re-login, CSRF-protected reads and writes,
+and sanitized responses. The full Go suite, shell matrix suite, source scans,
+and builds gate this update. The authenticated bundle still requires a new
+three-host destructive acceptance run before this section can claim live-lab
+platform-session switchovers.
 
 ## Production Qualification Still Required
 

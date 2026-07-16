@@ -140,15 +140,17 @@ func run(arguments []string, stdout io.Writer, stderr io.Writer, client httpDoer
 		return 2
 	}
 
-	var requestBody io.Reader
+	environment := strings.TrimSpace(*controlTokenEnv)
 	controlToken := ""
+	if environment != "" {
+		controlToken = strings.TrimSpace(os.Getenv(environment))
+	}
+	var requestBody io.Reader
 	if method == http.MethodPost {
-		environment := strings.TrimSpace(*controlTokenEnv)
 		if environment == "" {
 			_, _ = fmt.Fprintln(stderr, "cgctl: control token environment variable name is required")
 			return 2
 		}
-		controlToken = strings.TrimSpace(os.Getenv(environment))
 		if controlToken == "" {
 			_, _ = fmt.Fprintf(stderr, "cgctl: control token environment variable %s is empty\n", environment)
 			return 2
@@ -176,6 +178,8 @@ func run(arguments []string, stdout io.Writer, stderr io.Writer, client httpDoer
 	request.Header.Set("Accept", "application/json")
 	if method == http.MethodPost {
 		request.Header.Set("Content-Type", "application/json")
+	}
+	if controlToken != "" {
 		request.Header.Set("Authorization", "Bearer "+controlToken)
 	}
 	response, err := client.Do(request)

@@ -49,6 +49,64 @@ Production layout:
 /usr/local/bin/cgctl
 ```
 
+### Platform Login
+
+On an empty metadata store, the Leader creates one bootstrap administrator:
+
+```text
+username: admin
+temporary password: admin123
+role: admin
+MustChangePassword: true
+```
+
+The first login succeeds only far enough to change the password. Every other
+platform API returns `password_change_required` until that change completes.
+The password is stored as an Argon2id hash in the replicated metadata snapshot;
+plaintext is never written to configuration, environment files, audit events,
+or reports.
+
+Browser sessions have an eight-hour absolute lifetime. The session secret is
+kept in an HttpOnly SameSite cookie, mutating requests require the matching
+`clusterguard_csrf` cookie and `X-CSRF-Token` header, and password change or
+logout revokes the session. Roles are:
+
+| Role | Access |
+| --- | --- |
+| `admin` | Full platform access, including metadata and node lifecycle. |
+| `operator` | Read access plus guarded database operations and discovery refresh. |
+| `viewer` | Read-only access. |
+
+The console never asks for a control token, lifecycle token, or one-time
+approval token. A logged-in platform operation creates and consumes its
+plan-bound one-time authorization inside the server.
+
+The destructive matrix can exercise the same session path:
+
+```bash
+export CG_PLATFORM_USERNAME='admin'
+export CG_PLATFORM_PASSWORD='<current-platform-password>'
+
+scripts/clusterguard-ha-matrix.sh \
+  --api http://127.0.0.1:8088 \
+  --clusters '<cluster-uuid>' \
+  --platform-session
+```
+
+For a fresh metadata store, also set
+`CG_PLATFORM_NEW_PASSWORD='<replacement-password>'`. The matrix changes the
+bootstrap password, logs in again, and then executes without an
+`approval_token` field. Without `--platform-session`, the matrix retains the
+explicit one-time grant path used to validate service-client replay rejection.
+
+Password-loss recovery is deliberately offline and fail-closed. There is no
+remote reset endpoint. Stop control-plane mutations, preserve the current
+metadata and Raft data, and restore a protected metadata backup whose
+administrator credential is known. Do not delete `PlatformUser` records or edit
+password hashes in a running controller set. If no recoverable backup exists,
+escalate to the separately reviewed offline disaster-recovery procedure before
+restarting the controllers.
+
 Use `packaging/systemd/clusterguard-ha.service` and
 `packaging/systemd/clusterguard.env.example` as the service templates. The
 server binary defaults to `/etc/clusterguard/clusterguard.json` when `--config`
@@ -96,14 +154,14 @@ node. Only then repeat the installer with `--activate-agent-reconcile
 a partially configured deployment from changing MySQL role state during
 bootstrap.
 
-Administrative `/api/v1/` mutation routes require
-`Authorization: Bearer <control-token>`. Manual database execute routes are the
-only exception: they accept a matching one-time approval grant and deliberately
-do not accept the administrator credential as an approval substitute. Missing
-or invalid credentials fail before database access. Keep the default loopback
-listener for local operation. Before exposing the API on another interface,
-enable TLS and network access controls; never transmit either credential over
-plain HTTP.
+Browser `/api/v1/` requests require a valid platform session; mutating requests
+also require CSRF and role authorization. External service clients use
+`Authorization: Bearer <control-token>`. Explicit service database execution
+also requires its matching one-time approval grant and deliberately does not
+accept the control credential as an approval substitute. Missing or invalid
+credentials fail before database access. Keep the default loopback listener for
+local operation. Before exposing the API on another interface, enable TLS and
+network access controls; never transmit credentials over plain HTTP.
 
 ## 2. Inspect Engines and Capabilities
 
@@ -275,14 +333,26 @@ go run ./cmd/cgctl --json candidates <cluster-uuid>
 go run ./cmd/cgctl --server http://127.0.0.1:8088 topology <cluster-uuid>
 ```
 
-`refresh` sends `POST` with the exact body `{}`. Approval issuance builds the
+`cgctl` attaches the configured control credential to authenticated reads and
+writes. `refresh` sends `POST` with the exact body `{}`. Approval issuance builds the
 durable plan and returns the plaintext grant once. Both commands read the
 administrator Bearer credential from `CG_CONTROL_TOKEN`; select another
 environment variable with `--token-env <name>` before the command. Approval
-list/show are read-only and never expose the persisted token hash. The console
-keeps administrator and one-time approval credentials only in page memory.
+list/show never expose the persisted token hash. The console uses its platform
+session and never receives either credential.
 
 ## 7. Prepare A Guarded MySQL Switchover
+
+### Browser Console
+
+An authenticated `admin` or `operator` selects the candidate, unlocks the local
+anti-mistake control, and clicks execute. The request contains cluster, engine,
+operation kind, target UUID, idempotency key, and the logged-in username. It
+contains no approval token. The server persists the plan, issues a one-time
+grant internally, consumes it under the operation lock, and returns only the
+operation result.
+
+### External Service API
 
 An administrator first selects the exact cluster and candidate and asks
 ClusterGuard to build the durable plan and issue a single-use grant:
@@ -338,7 +408,7 @@ curl -sS -X POST http://127.0.0.1:8088/api/v1/operations/<operation-uuid>/execut
 Grant consumption and the durable `APPROVE` transition are atomic under the
 operation lock. The token cannot be reused. Expired, consumed, mismatched, or
 stale-plan grants are blocked and require a newly issued grant. The web console
-clears the token after every attempt and relocks the selected target.
+never receives the token and relocks the selected target after every attempt.
 
 When Agent, Raft, HA endpoint inventory, or operation credentials are absent,
 ClusterGuard HA persists a blocked or unsupported result before issuing a

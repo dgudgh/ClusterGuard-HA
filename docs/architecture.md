@@ -32,6 +32,9 @@ The main resources are:
 | `HAEndpoint` | Desired owner and health of a VIP, listener, or service endpoint. |
 | `OperationRecord` / `OperationPlan` | Idempotent intent, durable stage progress, and immutable execution plan. |
 | `ApprovalGrant` | Single-use, expiring authorization bound to one operation plan and target. |
+| `PlatformUser` | Platform username, role, Argon2id password hash, `MustChangePassword`, and auth revision. |
+| `PlatformSession` | Hash-only opaque session and CSRF identity with an eight-hour expiry. |
+| `SecurityEvent` | Login, logout, password, and authorization security evidence. |
 | `Execution` / `Verification` | Execution result and postcondition evidence. |
 | `AuditEvent` / `Report` | Durable operator trace and human-readable outcome. |
 
@@ -149,6 +152,31 @@ The Prometheus endpoint uses stable `cluster_id` and `instance_id` labels and
 can be scraped directly. ClusterGuard HA has no third-party monitoring runtime
 dependency.
 
+## Platform Authentication
+
+A new metadata store bootstraps `admin` with temporary password `admin123`,
+role `admin`, and `MustChangePassword=true`. Existing users are never
+overwritten during restart or Leader change. Passwords use Argon2id and sessions
+store only SHA-256 token and CSRF hashes in the same replicated snapshot as
+other control metadata.
+
+The browser receives an opaque HttpOnly SameSite session cookie and a separate
+CSRF cookie. Mutating requests must present the cookie value in
+`X-CSRF-Token`. An eight-hour absolute lifetime bounds a session; password
+change and logout revoke it. `admin` has full access, `operator` can run guarded
+database operations, and `viewer` remains read-only.
+
+The browser never receives an approval secret. For a logged-in operation, the
+API uses the authenticated actor to create the durable plan, issue a one-time
+grant internally, and pass it directly to the unchanged approval-consumption
+stage. Service clients remain separate: the control Bearer authenticates the
+client, and an explicit one-time grant authorizes the exact database plan.
+
+There is no online forgotten-password bypass. Recovery requires stopping
+control-plane mutation and restoring protected metadata whose administrator
+credential is known; live deletion of `PlatformUser` records or direct hash
+editing is outside the safety model.
+
 ## Workflow Gates
 
 All future database mutations must use:
@@ -175,16 +203,16 @@ existing operation; reusing it for another target or operation kind is a
 conflict. A same-process duplicate cannot terminalize the active operation, and
 a restart can resume from observed step postconditions.
 
-Manual high-risk database execution uses a one-time `ApprovalGrant`. An
-administrator-authenticated request first builds and persists the exact
-operation plan, then returns a random `cgag_...` token once. The replicated
+High-risk database execution uses a one-time `ApprovalGrant`. A platform
+session creates and consumes it entirely inside the server. An explicit service
+request instead returns a random `cgag_...` token once. The replicated
 repository stores only its SHA-256 hash. A grant defaults to five minutes,
 cannot exceed fifteen minutes, and is bound to the operation UUID, cluster,
 engine, operation kind, target UUID, observation, and plan digest. Under the
 operation lock, grant consumption and the durable `APPROVE` transition commit
 atomically. Reuse, expiry, target mismatch, or a stale plan fails closed. The
-manual execute route does not accept the administrator control credential as an
-approval substitute.
+service execute route does not accept the administrator control credential as
+an approval substitute.
 
 MySQL switchover supports one primary with multiple replicas. It requires an
 eligible selected target, compatible GTID history, current probe evidence,

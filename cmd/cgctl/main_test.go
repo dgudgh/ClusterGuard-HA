@@ -161,8 +161,8 @@ func TestRunApprovalListAndShowAreReadOnlyAndSanitized(t *testing.T) {
 			if exitCode := run(arguments, &stdout, &stderr, server.Client()); exitCode != 0 || stderr.Len() != 0 {
 				t.Fatalf("run exit=%d stderr=%q", exitCode, stderr.String())
 			}
-			if authorization != "" {
-				t.Fatalf("read-only approval request sent authorization=%q", authorization)
+			if authorization != "Bearer must-not-be-sent" {
+				t.Fatalf("read-only approval request authorization=%q", authorization)
 			}
 			for _, expected := range test.want {
 				if !strings.Contains(stdout.String(), expected) {
@@ -173,6 +173,24 @@ func TestRunApprovalListAndShowAreReadOnlyAndSanitized(t *testing.T) {
 				t.Fatalf("sanitized output exposed a token: %s", stdout.String())
 			}
 		})
+	}
+}
+
+func TestRunReadRequestUsesConfiguredControlCredential(t *testing.T) {
+	var authorization string
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		authorization = request.Header.Get("Authorization")
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(writer, `{"status":"ok","result":[]}`)
+	}))
+	defer server.Close()
+	t.Setenv("CG_CONTROL_TOKEN", "read-control-secret")
+	var stdout, stderr bytes.Buffer
+	if exitCode := run([]string{"--server", server.URL, "clusters"}, &stdout, &stderr, server.Client()); exitCode != 0 || stderr.Len() != 0 {
+		t.Fatalf("read request exit=%d stderr=%q", exitCode, stderr.String())
+	}
+	if authorization != "Bearer read-control-secret" {
+		t.Fatalf("read request authorization=%q", authorization)
 	}
 }
 

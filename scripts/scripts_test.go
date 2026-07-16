@@ -103,6 +103,124 @@ func TestHAMatrixUsesFreshOneTimeApprovalPerSwitch(t *testing.T) {
 	}
 }
 
+func TestHAMatrixSupportsAuthenticatedPlatformSessionExecution(t *testing.T) {
+	contents, err := os.ReadFile("clusterguard-ha-matrix.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	for _, expected := range []string{
+		"--platform-session",
+		"CG_PLATFORM_USERNAME",
+		"CG_PLATFORM_PASSWORD",
+		"CG_PLATFORM_NEW_PASSWORD",
+		"/api/v1/auth/login",
+		"/api/v1/auth/password",
+		"clusterguard_csrf",
+		"X-CSRF-Token",
+		"authorization_mode",
+		"session",
+		"requested_by:$requested_by",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("HA matrix missing platform session contract %q", expected)
+		}
+	}
+}
+
+func TestAuthenticationDeliveryDocumentationCoversBootstrapAndRecovery(t *testing.T) {
+	for _, path := range []string{"../README.md", "../docs/operations.md", "../docs/architecture.md", "../docs/mysql-feature-parity-acceptance.md"} {
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(contents)
+		for _, expected := range []string{"admin", "admin123", "MustChangePassword", "eight-hour", "logout", "one-time"} {
+			if !strings.Contains(text, expected) {
+				t.Fatalf("%s missing authentication documentation %q", path, expected)
+			}
+		}
+	}
+	environment, err := os.ReadFile("../packaging/systemd/clusterguard.env.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(environment), "Platform administrator passwords are not configured in this file") {
+		t.Fatal("systemd environment sample does not separate platform passwords from service secrets")
+	}
+}
+
+func TestHAMatrixPlatformSessionNeedsNoControlTokenOrApprovalField(t *testing.T) {
+	clusterID := "11111111-1111-4111-8111-111111111111"
+	var executions int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == http.MethodPost && request.URL.Path == "/api/v1/auth/login":
+			http.SetCookie(writer, &http.Cookie{Name: "clusterguard_session", Value: "session-secret", Path: "/", HttpOnly: true})
+			http.SetCookie(writer, &http.Cookie{Name: "clusterguard_csrf", Value: "csrf-secret", Path: "/"})
+			_, _ = fmt.Fprint(writer, `{"status":"ok","result":{"user":{"username":"admin","must_change_password":false}}}`)
+		case request.Method == http.MethodGet && strings.HasSuffix(request.URL.Path, "/candidates"):
+			if request.Header.Get("Authorization") != "" {
+				http.Error(writer, "platform reads must not use the control bearer", http.StatusBadRequest)
+				return
+			}
+			if cookie, err := request.Cookie("clusterguard_session"); err != nil || cookie.Value != "session-secret" {
+				http.Error(writer, "missing platform session", http.StatusUnauthorized)
+				return
+			}
+			_, _ = fmt.Fprint(writer, `{"status":"ok","result":[{"instance_id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","eligible":true,"rank":1}]}`)
+		case request.Method == http.MethodPost && request.URL.Path == "/api/v1/operations/execute":
+			if request.Header.Get("Authorization") != "" {
+				http.Error(writer, "platform execution must not use the control bearer", http.StatusBadRequest)
+				return
+			}
+			if request.Header.Get("X-CSRF-Token") != "csrf-secret" {
+				http.Error(writer, "missing CSRF token", http.StatusForbidden)
+				return
+			}
+			payload := map[string]any{}
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				http.Error(writer, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if _, found := payload["approval_token"]; found {
+				http.Error(writer, "platform execution exposed an approval token", http.StatusBadRequest)
+				return
+			}
+			atomic.AddInt32(&executions, 1)
+			_, _ = fmt.Fprint(writer, `{"status":"ok","result":{"resource_id":"operation-1","status":"succeeded"}}`)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	fakeScripts := t.TempDir()
+	writeExecutable(t, filepath.Join(fakeScripts, "clusterguard-smoke.sh"), "#!/usr/bin/env bash\nexit 0\n")
+	command := exec.Command("bash", "clusterguard-ha-matrix.sh",
+		"--api", server.URL,
+		"--clusters", clusterID,
+		"--round-robin", "1",
+		"--random", "0",
+		"--platform-session",
+	)
+	command.Env = append(os.Environ(),
+		"CG_PLATFORM_USERNAME=admin",
+		"CG_PLATFORM_PASSWORD=changed-password",
+		"script_dir="+fakeScripts,
+	)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("platform-session HA matrix: %v\n%s", err, output)
+	}
+	if atomic.LoadInt32(&executions) != 1 {
+		t.Fatalf("platform-session executions=%d, want 1\n%s", executions, output)
+	}
+	if !strings.Contains(string(output), "matrix_summary total=1 passed=1 failed=0") {
+		t.Fatalf("platform-session matrix summary missing:\n%s", output)
+	}
+}
+
 func TestVIPReconcileTimerAttemptsRecoveryWithinThirtySecondWindow(t *testing.T) {
 	contents, err := os.ReadFile("../packaging/systemd/clusterguard-agent-reconcile.timer")
 	if err != nil {
