@@ -13,13 +13,15 @@ import (
 )
 
 type nodeLifecycleManagerSpy struct {
-	calls         int
-	request       lifecycle.Request
-	plan          lifecycle.Plan
-	secrets       lifecycle.ExecutionSecrets
-	approvalToken string
-	task          lifecycle.Task
-	err           error
+	calls           int
+	authorizedCalls int
+	request         lifecycle.Request
+	plan            lifecycle.Plan
+	secrets         lifecycle.ExecutionSecrets
+	approvalToken   string
+	actor           string
+	task            lifecycle.Task
+	err             error
 }
 
 func (manager *nodeLifecycleManagerSpy) Execute(_ context.Context, request lifecycle.Request, plan lifecycle.Plan, secrets lifecycle.ExecutionSecrets, approvalToken string) (lifecycle.Task, error) {
@@ -28,6 +30,18 @@ func (manager *nodeLifecycleManagerSpy) Execute(_ context.Context, request lifec
 	manager.plan = plan
 	manager.secrets = secrets
 	manager.approvalToken = approvalToken
+	if manager.task.ResourceID == "" {
+		manager.task = lifecycle.Task{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, ClusterID: request.ClusterID, Request: request, Plan: plan, Status: lifecycle.TaskSucceeded}
+	}
+	return manager.task, manager.err
+}
+
+func (manager *nodeLifecycleManagerSpy) ExecuteAuthorized(_ context.Context, request lifecycle.Request, plan lifecycle.Plan, secrets lifecycle.ExecutionSecrets, actor string) (lifecycle.Task, error) {
+	manager.authorizedCalls++
+	manager.request = request
+	manager.plan = plan
+	manager.secrets = secrets
+	manager.actor = actor
 	if manager.task.ResourceID == "" {
 		manager.task = lifecycle.Task{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, ClusterID: request.ClusterID, Request: request, Plan: plan, Status: lifecycle.TaskSucceeded}
 	}
@@ -99,6 +113,39 @@ func TestNodeSyncAPIPlansFromCanonicalPrimaryAndExecutesWithoutEchoingSecrets(t 
 		if strings.Contains(executed.Body.String(), secret) {
 			t.Fatalf("node sync response exposed %q: %s", secret, executed.Body.String())
 		}
+	}
+}
+
+func TestSessionLifecycleUsesPlatformAdminAuthorizationWithoutClientToken(t *testing.T) {
+	server, _, cluster, manager := prepareNodeSyncAPI(t)
+	client, username := attachAuthenticatedTestClient(t, server, server.store, model.PlatformRoleAdmin)
+	payload := nodeSyncRequestBody(cluster.ResourceID)
+	payload["requested_by"] = "forged-browser-actor"
+	executed := client.request(t, http.MethodPost, "/api/v1/nodes/sync/execute", payload, true)
+	if executed.Code != http.StatusOK {
+		t.Fatalf("session lifecycle execute: %d %s", executed.Code, executed.Body.String())
+	}
+	if manager.authorizedCalls != 1 || manager.calls != 0 || manager.actor != username || manager.request.RequestedBy != username {
+		t.Fatalf("session lifecycle manager=%+v", manager)
+	}
+	if manager.approvalToken != "" {
+		t.Fatalf("session lifecycle forwarded a client approval token: %q", manager.approvalToken)
+	}
+}
+
+func TestPlatformRolesBelowAdminCannotExecuteNodeLifecycle(t *testing.T) {
+	for _, role := range []model.PlatformRole{model.PlatformRoleOperator, model.PlatformRoleViewer} {
+		t.Run(string(role), func(t *testing.T) {
+			server, repository, cluster, manager := prepareNodeSyncAPI(t)
+			client, _ := attachAuthenticatedTestClient(t, server, repository, role)
+			response := client.request(t, http.MethodPost, "/api/v1/nodes/sync/execute", nodeSyncRequestBody(cluster.ResourceID), true)
+			if response.Code != http.StatusForbidden {
+				t.Fatalf("%s lifecycle status=%d body=%s", role, response.Code, response.Body.String())
+			}
+			if manager.calls != 0 || manager.authorizedCalls != 0 {
+				t.Fatalf("%s lifecycle reached manager: %+v", role, manager)
+			}
+		})
 	}
 }
 

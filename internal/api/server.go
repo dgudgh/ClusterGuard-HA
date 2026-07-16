@@ -444,6 +444,10 @@ func (server *Server) metadataRoute(writer http.ResponseWriter, request *http.Re
 		writeError(writer, http.StatusBadRequest, "invalid metadata reconciliation target")
 		return
 	}
+	authentication, platformSession := requestAuthentication(request)
+	if platformSession && authentication.viaSession {
+		payload.Operation.RequestedBy = authentication.principal.Username
+	}
 	candidate, ok := server.registry.Get(payload.Instance.Engine)
 	if !ok || !candidate.Capabilities(request.Context()).Supports(adapter.CapabilityMetadataReconcile) {
 		server.unsupported(writer, "metadata reconciliation is unsupported for this engine")
@@ -469,10 +473,23 @@ func (server *Server) metadataRoute(writer http.ResponseWriter, request *http.Re
 		var reconciled model.DatabaseInstance
 		var endpoint model.Endpoint
 		var commitErr error
-		execution, err := server.workflow.ExecuteMetadata(request.Context(), payload.Operation, metadataRequest, payload.ApprovalToken, func() error {
+		commit := func() error {
 			reconciled, endpoint, commitErr = server.store.ReconcileMetadataCoordinates(store.MetadataCoordinates{Instance: payload.Instance, EndpointID: payload.EndpointID})
 			return commitErr
-		})
+		}
+		var execution model.Execution
+		var err error
+		if platformSession && authentication.viaSession {
+			execution, err = server.workflow.ExecuteMetadataAuthorized(
+				request.Context(),
+				payload.Operation,
+				metadataRequest,
+				authentication.principal.Username,
+				commit,
+			)
+		} else {
+			execution, err = server.workflow.ExecuteMetadata(request.Context(), payload.Operation, metadataRequest, payload.ApprovalToken, commit)
+		}
 		if errors.Is(err, adapter.ErrUnsupported) {
 			writeJSON(writer, http.StatusNotImplemented, map[string]interface{}{"status": "unsupported", "result": execution, "message": execution.Message})
 			return

@@ -359,6 +359,51 @@ func TestMetadataStillVerifiesAfterPostCommitJournalFailure(t *testing.T) {
 	}
 }
 
+func TestPlatformRoleMetadataAuthorizationPreservesGatesWithoutExternalApproval(t *testing.T) {
+	trace := []string{}
+	registry := adapter.NewRegistry()
+	if err := registry.Register(newRecordingAdapter(&trace, true)); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	journal := NewMemoryJournal()
+	gate := recordingGate{trace: &trace}
+	service := New(registry, gate, gate, gate, gate, journal)
+	request := adapter.MetadataRequest{ClusterID: model.NewResourceID(), Instance: model.DatabaseInstance{
+		Engine: model.EngineMySQL,
+		EngineIdentity: model.EngineIdentity{
+			"server_uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+		},
+	}}
+	committed := false
+	execution, err := service.ExecuteMetadataAuthorized(
+		context.Background(),
+		model.Operation{RequestedBy: "caller-supplied"},
+		request,
+		"admin",
+		func() error {
+			committed = true
+			return nil
+		},
+	)
+	if err != nil || !committed || execution.Status != model.OperationSucceeded {
+		t.Fatalf("authorized metadata execution=%+v committed=%t err=%v", execution, committed, err)
+	}
+	for _, entry := range trace {
+		if entry == "gate:approval" {
+			t.Fatalf("platform-authorized metadata called external approval: %+v", trace)
+		}
+	}
+	foundApprovalAudit := false
+	for _, event := range journal.Audits() {
+		if event.Stage == model.StageApprove {
+			foundApprovalAudit = event.Actor == "admin" && strings.Contains(event.Message, "platform")
+		}
+	}
+	if !foundApprovalAudit {
+		t.Fatalf("platform metadata authorization audit missing: %+v", journal.Audits())
+	}
+}
+
 func TestMetadataStillVerifiesAfterCommittedPersistenceWarning(t *testing.T) {
 	trace := []string{}
 	registry := adapter.NewRegistry()

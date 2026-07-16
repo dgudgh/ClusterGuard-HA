@@ -14,6 +14,7 @@ import (
 
 type NodeLifecycleManager interface {
 	Execute(context.Context, lifecycle.Request, lifecycle.Plan, lifecycle.ExecutionSecrets, string) (lifecycle.Task, error)
+	ExecuteAuthorized(context.Context, lifecycle.Request, lifecycle.Plan, lifecycle.ExecutionSecrets, string) (lifecycle.Task, error)
 }
 
 type LifecycleSecretProvider interface {
@@ -154,6 +155,10 @@ func (server *Server) nodeSyncRoute(writer http.ResponseWriter, request *http.Re
 		writeError(writer, http.StatusBadRequest, "invalid node synchronization payload")
 		return
 	}
+	authentication, platformSession := requestAuthentication(request)
+	if platformSession && authentication.viaSession {
+		payload.RequestedBy = authentication.principal.Username
+	}
 	prepared, plan, err := server.prepareNodeSync(payload)
 	if err != nil {
 		writeError(writer, http.StatusConflict, err.Error())
@@ -178,7 +183,12 @@ func (server *Server) nodeSyncRoute(writer http.ResponseWriter, request *http.Re
 			writeError(writer, http.StatusServiceUnavailable, "node lifecycle credentials are unavailable")
 			return
 		}
-		task, err := server.lifecycle.Execute(request.Context(), prepared, plan, secrets, payload.ApprovalToken)
+		var task lifecycle.Task
+		if platformSession && authentication.viaSession {
+			task, err = server.lifecycle.ExecuteAuthorized(request.Context(), prepared, plan, secrets, authentication.principal.Username)
+		} else {
+			task, err = server.lifecycle.Execute(request.Context(), prepared, plan, secrets, payload.ApprovalToken)
+		}
 		secrets = lifecycle.ExecutionSecrets{}
 		if err != nil {
 			status := http.StatusBadGateway

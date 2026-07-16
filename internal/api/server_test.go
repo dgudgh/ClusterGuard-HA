@@ -54,6 +54,20 @@ type metadataAdapterSpy struct {
 	calls int
 }
 
+type strictAdministrativeApproval struct {
+	calls int
+}
+
+func (gate *strictAdministrativeApproval) Consume(_ context.Context, operation model.OperationRecord, _ string) (model.ResourceID, model.OperationRecord, error) {
+	gate.calls++
+	return "", operation, errors.New("explicit approval is required")
+}
+
+func (gate *strictAdministrativeApproval) Validate(context.Context, model.Operation, string) error {
+	gate.calls++
+	return errors.New("explicit administrative approval is required")
+}
+
 type apiStageFailingJournal struct {
 	repository *store.Repository
 	stage      model.WorkflowStage
@@ -383,6 +397,94 @@ func TestMetadataExecuteReusesResourceIDForRenamedMySQLEndpoint(t *testing.T) {
 	}
 	if _, found := repository.TopologySnapshot(cluster.ResourceID); found {
 		t.Fatal("metadata execute must invalidate topology")
+	}
+}
+
+func TestSessionMetadataUsesPlatformAdminAuthorizationWithoutClientToken(t *testing.T) {
+	registry := adapter.NewRegistry()
+	candidate := newMetadataAdapterSpy()
+	if err := registry.Register(candidate); err != nil {
+		t.Fatalf("register metadata adapter: %v", err)
+	}
+	repository := store.NewMemory()
+	approvalGate := &strictAdministrativeApproval{}
+	service := workflow.New(
+		registry,
+		workflow.TopologyDiscovery{Reader: repository},
+		workflow.AllowAllSafety{},
+		workflow.NewMemoryLocks(),
+		approvalGate,
+		repository,
+	)
+	server := NewServer(
+		registry,
+		repository,
+		service,
+		&fakeRefresher{},
+		WithControlToken(testControlToken),
+	)
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(
+		model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "session-metadata"},
+		[]model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-old", IPAddress: "192.0.2.10", Port: 3306, Active: true}},
+	)
+	if err != nil {
+		t.Fatalf("create metadata inventory: %v", err)
+	}
+	observedAt := time.Now().UTC()
+	snapshot, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{
+		ClusterID: cluster.ResourceID, InventoryGeneration: testInventoryGeneration(t, repository, cluster.ResourceID),
+		ObservedAt: observedAt,
+		Observations: []store.DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: model.DatabaseInstance{
+			ClusterID: cluster.ResourceID, Engine: model.EngineMySQL,
+			EngineIdentity: model.EngineIdentity{"server_uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},
+			DisplayName:    "mysql-old", Hostname: "mysql-old", IPAddress: "192.0.2.10", Port: 3306,
+			Role: model.RolePrimary, Health: model.Health{State: model.HealthHealthy}, PromotionEligible: true,
+		}}},
+		Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, DiscoveryObservedAt: observedAt, Health: model.Health{State: model.HealthHealthy}}},
+	})
+	if err != nil {
+		t.Fatalf("seed metadata topology: %v", err)
+	}
+	client, username := attachAuthenticatedTestClient(t, server, repository, model.PlatformRoleAdmin)
+	response := client.request(t, http.MethodPost, "/api/v1/metadata/reconcile/execute", map[string]interface{}{
+		"operation": map[string]interface{}{
+			"engine":       "mysql",
+			"kind":         "metadata_reconciliation",
+			"requested_by": "forged-browser-actor",
+		},
+		"instance": map[string]interface{}{
+			"resource_id": snapshot.Instances[0].ResourceID,
+			"cluster_id":  cluster.ResourceID,
+			"engine":      "mysql",
+			"engine_identity": map[string]string{
+				"server_uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+			},
+			"display_name": "mysql-new",
+			"hostname":     "mysql-new",
+			"ip_address":   "192.0.2.20",
+			"port":         3310,
+			"role":         "replica",
+			"health":       map[string]string{"state": "unhealthy"},
+		},
+	}, true)
+	if response.Code != http.StatusOK {
+		t.Fatalf("session metadata execute: %d %s", response.Code, response.Body.String())
+	}
+	if approvalGate.calls != 0 {
+		t.Fatalf("session metadata called external approval gate: %d", approvalGate.calls)
+	}
+	instances := repository.Instances(cluster.ResourceID)
+	if len(instances) != 1 || instances[0].ResourceID != snapshot.Instances[0].ResourceID || instances[0].Hostname != "mysql-new" {
+		t.Fatalf("session metadata reconciliation=%+v", instances)
+	}
+	foundApprovalAudit := false
+	for _, event := range repository.Audits() {
+		if event.Stage == model.StageApprove {
+			foundApprovalAudit = event.Actor == username && strings.Contains(event.Message, "platform")
+		}
+	}
+	if !foundApprovalAudit {
+		t.Fatalf("session metadata approval audit missing: %+v", repository.Audits())
 	}
 }
 

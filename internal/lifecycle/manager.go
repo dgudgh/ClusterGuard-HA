@@ -72,6 +72,28 @@ func (manager *Manager) configured() bool {
 }
 
 func (manager *Manager) Execute(ctx context.Context, request Request, plan Plan, secrets ExecutionSecrets, approvalToken string) (Task, error) {
+	return manager.execute(ctx, request, plan, secrets, lifecycleExecutionAuthorization{approvalToken: approvalToken})
+}
+
+type lifecycleExecutionAuthorization struct {
+	approvalToken string
+	platformActor string
+}
+
+func (authorization lifecycleExecutionAuthorization) platformAuthorized() bool {
+	return strings.TrimSpace(authorization.platformActor) != ""
+}
+
+func (manager *Manager) ExecuteAuthorized(ctx context.Context, request Request, plan Plan, secrets ExecutionSecrets, actor string) (Task, error) {
+	actor = strings.TrimSpace(actor)
+	if actor == "" {
+		return Task{}, fmt.Errorf("platform lifecycle actor is required")
+	}
+	request.RequestedBy = actor
+	return manager.execute(ctx, request, plan, secrets, lifecycleExecutionAuthorization{platformActor: actor})
+}
+
+func (manager *Manager) execute(ctx context.Context, request Request, plan Plan, secrets ExecutionSecrets, authorization lifecycleExecutionAuthorization) (Task, error) {
 	if !manager.configured() {
 		return Task{}, fmt.Errorf("lifecycle manager is not configured")
 	}
@@ -144,11 +166,15 @@ func (manager *Manager) Execute(ctx context.Context, request Request, plan Plan,
 	if err := recordAudit(model.StageLock, "cluster operation lock acquired"); err != nil {
 		return failGate("cluster operation lock audit could not be persisted", err)
 	}
-	if err := manager.approval.ValidateLifecycle(ctx, request, plan, approvalToken); err != nil {
-		err = errors.Join(err, recordAudit(model.StageApprove, "lifecycle approval blocked execution"))
-		return failGate("lifecycle approval blocked execution", err)
+	approvalMessage := "platform role authorized lifecycle execution"
+	if !authorization.platformAuthorized() {
+		if err := manager.approval.ValidateLifecycle(ctx, request, plan, authorization.approvalToken); err != nil {
+			err = errors.Join(err, recordAudit(model.StageApprove, "lifecycle approval blocked execution"))
+			return failGate("lifecycle approval blocked execution", err)
+		}
+		approvalMessage = "lifecycle approval validated"
 	}
-	if err := recordAudit(model.StageApprove, "lifecycle approval validated"); err != nil {
+	if err := recordAudit(model.StageApprove, approvalMessage); err != nil {
 		return failGate("lifecycle approval audit could not be persisted", err)
 	}
 	task.Status = TaskRunning

@@ -474,7 +474,29 @@ func (service *Service) executeLegacy(ctx context.Context, request adapter.Opera
 	return execution, nil
 }
 
+type metadataExecutionAuthorization struct {
+	approvalToken string
+	platformActor string
+}
+
+func (authorization metadataExecutionAuthorization) platformAuthorized() bool {
+	return strings.TrimSpace(authorization.platformActor) != ""
+}
+
 func (service *Service) ExecuteMetadata(ctx context.Context, operation model.Operation, request adapter.MetadataRequest, approvalToken string, commit func() error) (model.Execution, error) {
+	return service.executeMetadata(ctx, operation, request, metadataExecutionAuthorization{approvalToken: approvalToken}, commit)
+}
+
+func (service *Service) ExecuteMetadataAuthorized(ctx context.Context, operation model.Operation, request adapter.MetadataRequest, actor string, commit func() error) (model.Execution, error) {
+	actor = strings.TrimSpace(actor)
+	if actor == "" {
+		return model.Execution{}, fmt.Errorf("platform metadata actor is required")
+	}
+	operation.RequestedBy = actor
+	return service.executeMetadata(ctx, operation, request, metadataExecutionAuthorization{platformActor: actor}, commit)
+}
+
+func (service *Service) executeMetadata(ctx context.Context, operation model.Operation, request adapter.MetadataRequest, authorization metadataExecutionAuthorization, commit func() error) (model.Execution, error) {
 	if service.registry == nil || commit == nil {
 		return model.Execution{}, fmt.Errorf("metadata workflow is not configured")
 	}
@@ -507,7 +529,7 @@ func (service *Service) ExecuteMetadata(ctx context.Context, operation model.Ope
 	if err := service.audit(operation, model.StagePlan, "metadata reconciliation plan created"); err != nil {
 		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
 	}
-	if service.safety == nil || service.locks == nil || service.approval == nil {
+	if service.safety == nil || service.locks == nil || (!authorization.platformAuthorized() && service.approval == nil) {
 		return model.Execution{}, fmt.Errorf("workflow gates are not configured")
 	}
 	if err := service.safety.Evaluate(ctx, operation); err != nil {
@@ -526,15 +548,19 @@ func (service *Service) ExecuteMetadata(ctx context.Context, operation model.Ope
 	if err := service.audit(operation, model.StageLock, "operation lock acquired"); err != nil {
 		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
 	}
-	administrativeApproval, ok := service.approval.(AdministrativeApprovalValidator)
-	if !ok {
-		return model.Execution{}, fmt.Errorf("administrative approval validation is not configured")
+	approvalMessage := "platform role authorized metadata reconciliation"
+	if !authorization.platformAuthorized() {
+		administrativeApproval, ok := service.approval.(AdministrativeApprovalValidator)
+		if !ok {
+			return model.Execution{}, fmt.Errorf("administrative approval validation is not configured")
+		}
+		if err := administrativeApproval.Validate(ctx, operation, authorization.approvalToken); err != nil {
+			execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationBlocked, Message: err.Error()}
+			return service.recordOutcome(operation, execution, model.StageApprove, "approval blocked metadata reconciliation: "+err.Error(), err)
+		}
+		approvalMessage = "approval validated"
 	}
-	if err := administrativeApproval.Validate(ctx, operation, approvalToken); err != nil {
-		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationBlocked, Message: err.Error()}
-		return service.recordOutcome(operation, execution, model.StageApprove, "approval blocked metadata reconciliation: "+err.Error(), err)
-	}
-	if err := service.audit(operation, model.StageApprove, "approval validated"); err != nil {
+	if err := service.audit(operation, model.StageApprove, approvalMessage); err != nil {
 		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
 	}
 	commitErr := commit()

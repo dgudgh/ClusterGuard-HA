@@ -71,9 +71,11 @@ func (stub lifecycleSafetyStub) EvaluateLifecycle(context.Context, Request, Plan
 type lifecycleApprovalStub struct {
 	err      error
 	received string
+	calls    int
 }
 
 func (stub *lifecycleApprovalStub) ValidateLifecycle(_ context.Context, _ Request, _ Plan, token string) error {
+	stub.calls++
 	stub.received = token
 	return stub.err
 }
@@ -168,6 +170,46 @@ func TestManagerCommitsMetadataOnlyAfterVerification(t *testing.T) {
 	}
 	if len(store.reports) != 1 || store.reports[0].OperationID != task.OperationID || store.reports[0].Status != model.OperationSucceeded || task.ReportID != store.reports[0].ResourceID {
 		t.Fatalf("lifecycle report task=%+v reports=%+v", task, store.reports)
+	}
+}
+
+func TestManagerPlatformRoleAuthorizationPreservesGatesWithoutExternalApproval(t *testing.T) {
+	request, plan := executableLifecyclePlan()
+	store := &taskStoreStub{tasks: map[model.ResourceID]Task{}}
+	approval := &lifecycleApprovalStub{err: errors.New("external approval must not be called")}
+	executor := &lifecycleExecutorStub{result: ExecutionResult{Verified: true}}
+	committer := &lifecycleCommitterStub{}
+	manager := NewManager(
+		store,
+		lifecycleAuthorityStub{},
+		lifecycleSafetyStub{},
+		&lifecycleLockStub{},
+		approval,
+		executor,
+		committer,
+		time.Now,
+	)
+	task, err := manager.ExecuteAuthorized(
+		context.Background(),
+		request,
+		plan,
+		ExecutionSecrets{},
+		"admin",
+	)
+	if err != nil || task.Status != TaskSucceeded || executor.calls != 1 || committer.calls != 1 {
+		t.Fatalf("authorized lifecycle task=%+v executor=%d committer=%d err=%v", task, executor.calls, committer.calls, err)
+	}
+	if approval.calls != 0 {
+		t.Fatalf("platform-authorized lifecycle called external approval: %+v", approval)
+	}
+	foundApprovalAudit := false
+	for _, event := range store.audits {
+		if event.Stage == model.StageApprove {
+			foundApprovalAudit = event.Actor == "admin" && strings.Contains(event.Message, "platform")
+		}
+	}
+	if !foundApprovalAudit {
+		t.Fatalf("platform authorization audit missing: %+v", store.audits)
 	}
 }
 
