@@ -161,6 +161,37 @@ func (repository *Repository) PlatformUsers() []model.PlatformUser {
 	return users
 }
 
+func (repository *Repository) ReplacePlatformUser(expectedMetadataRevision uint64, user model.PlatformUser) error {
+	user.Username = normalizePlatformUsername(user.Username)
+	user.DisplayName = strings.TrimSpace(user.DisplayName)
+	if expectedMetadataRevision == 0 || user.MetadataRevision != expectedMetadataRevision+1 {
+		return validationError("platform user replacement revision is invalid")
+	}
+	if err := validatePlatformUser(user); err != nil {
+		return err
+	}
+	repository.mutationMu.Lock()
+	defer repository.mutationMu.Unlock()
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	current, found := repository.snapshot.PlatformUsers[user.ResourceID]
+	if !found {
+		return conflictError("platform user does not exist")
+	}
+	if current.MetadataRevision != expectedMetadataRevision {
+		return conflictError("platform user metadata revision changed")
+	}
+	for resourceID, existing := range repository.snapshot.PlatformUsers {
+		if resourceID != user.ResourceID && normalizePlatformUsername(existing.Username) == user.Username {
+			return conflictError("platform username already exists")
+		}
+	}
+	next := repository.snapshot
+	next.PlatformUsers = clonePlatformUserMap(repository.snapshot.PlatformUsers)
+	next.PlatformUsers[user.ResourceID] = user
+	return repository.commitSnapshotLocked(next)
+}
+
 func (repository *Repository) PutPlatformSession(session model.PlatformSession) error {
 	if err := validatePlatformSession(session); err != nil {
 		return err
