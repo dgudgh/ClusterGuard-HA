@@ -55,6 +55,29 @@
     button:disabled { cursor:not-allowed; opacity:.48; }
     input, select { width:100%; padding:0 11px; }
     label { display:grid; gap:5px; color:var(--muted); font-size:12px; font-weight:700; }
+    .shell[hidden], .auth-shell[hidden] { display:none; }
+    .auth-shell {
+      display:grid;
+      min-height:100vh;
+      place-items:center;
+      padding:24px;
+      background:var(--canvas);
+    }
+    .login-panel {
+      width:min(420px,100%);
+      padding:28px;
+      border:1px solid var(--line);
+      border-radius:8px;
+      background:#fff;
+      box-shadow:var(--shadow);
+    }
+    .login-brand { display:flex; align-items:center; gap:12px; margin-bottom:24px; }
+    .login-brand h1 { font-size:20px; }
+    .login-brand p { margin:3px 0 0; color:var(--muted); font-size:12px; }
+    .login-form { display:grid; gap:14px; }
+    .login-submit { width:100%; margin-top:4px; }
+    .login-status { min-height:20px; margin:12px 0 0; color:var(--muted); font-size:12px; }
+    .login-status.error { color:var(--danger); }
     .shell { display:grid; min-height:100vh; grid-template-columns:220px minmax(0,1fr); }
     .sidebar {
       position:sticky;
@@ -103,7 +126,10 @@
     .eyebrow { margin:0 0 3px; color:var(--accent); font-size:11px; font-weight:780; }
     h1 { margin:0; font-size:22px; }
     .cluster-toolbar { display:grid; width:min(760px,68vw); grid-template-columns:minmax(240px,1fr) auto; align-items:end; gap:10px; }
-    .toolbar-actions { display:flex; gap:8px; }
+    .toolbar-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; }
+    .account-summary { display:flex; min-height:38px; align-items:center; gap:7px; padding:0 10px; border:1px solid var(--line); border-radius:7px; background:#f8faf9; }
+    .account-summary strong { font-size:12px; }
+    .account-summary span { color:var(--muted); font-size:11px; }
     .primary-button { border-color:var(--accent-strong); background:var(--accent-strong); color:#fff; }
     .primary-button:hover:not(:disabled) { border-color:#064a41; background:#064a41; color:#fff; }
     .danger-button { border-color:#d9a4a4; color:#9d3030; background:#fff; }
@@ -252,6 +278,7 @@
     .identity-cell strong { display:block; margin-top:3px; overflow-wrap:anywhere; font-size:12px; }
     .dialog-actions { display:flex; justify-content:flex-end; gap:8px; padding:0 18px 18px; }
     .live-status { position:fixed; right:22px; bottom:18px; z-index:40; max-width:min(460px,calc(100vw - 44px)); padding:11px 14px; border:1px solid var(--line-strong); border-left:3px solid var(--accent); border-radius:7px; background:#fff; box-shadow:var(--shadow); color:var(--muted); }
+    .live-status[hidden] { display:none; }
     .live-status.error { border-left-color:var(--danger); color:#903434; }
     @media (max-width:1160px) {
       .summary-grid, .metric-grid { grid-template-columns:repeat(3,1fr); }
@@ -303,7 +330,22 @@
   </style>
 </head>
 <body>
-  <div class="shell">
+  <section class="auth-shell" id="login-shell" aria-labelledby="login-title">
+    <div class="login-panel">
+      <div class="login-brand">
+        <div class="brand-mark" aria-hidden="true">CG</div>
+        <div><h1 id="login-title">ClusterGuard HA Console</h1><p>多数据库高可用控制平台</p></div>
+      </div>
+      <form class="login-form" id="login-form">
+        <label for="login-username">用户名<input id="login-username" name="username" autocomplete="username" value="admin" required></label>
+        <label for="login-password">密码<input id="login-password" name="password" type="password" autocomplete="current-password" required></label>
+        <button class="primary-button login-submit" id="login-submit" type="submit">登录</button>
+      </form>
+      <p class="login-status" id="login-status" role="status" aria-live="polite">请输入平台账户。</p>
+    </div>
+  </section>
+
+  <div class="shell" id="console-shell" hidden>
     <aside class="sidebar">
       <div class="brand">
         <div class="brand-mark" aria-hidden="true">CG</div>
@@ -335,6 +377,9 @@
           <div class="toolbar-actions">
             <button id="refresh-cluster" type="button" aria-label="刷新所选集群">↻ <span data-i18n="refresh">刷新</span></button>
             <button id="inspect-cluster" class="primary-button" type="button">✓ <span data-i18n="inspect">检查</span></button>
+            <div class="account-summary" aria-label="当前账户"><strong id="current-user-name">-</strong><span id="current-user-role">-</span></div>
+            <button id="open-password-change" type="button">修改密码</button>
+            <button id="logout-button" type="button">退出</button>
           </div>
         </div>
       </header>
@@ -420,7 +465,7 @@
                 <div class="operation-stage" data-operation-stage="verify" data-state="idle">验证</div>
               </div>
               <div class="center-actions"><button id="execute-switchover" class="primary-button execute-button" type="button" disabled>⇄ 执行切换</button></div>
-              <div class="gate-note">后端仍会执行 Safety Guard、集群操作锁和审批校验</div>
+              <div class="gate-note">后端仍会执行 Safety Guard、集群操作锁、平台身份授权和验证</div>
             </div>
             <div class="operation-box">
               <div class="operation-box-head"><div><span class="summary-label">旧主回挂恢复</span><h3>恢复为当前主库的从库</h3><p>节点保持只读，并按原生身份重新接入复制拓扑。</p></div><span class="badge warning">中</span></div>
@@ -515,16 +560,16 @@
         </section>
 
         <section class="view" data-view="settings" hidden aria-labelledby="settings-title">
-          <div class="view-heading"><div><h2 id="settings-title">控制台设置</h2><p>管理员凭据仅用于维护类操作，并只保存在当前页面内存中</p></div></div>
+          <div class="view-heading"><div><h2 id="settings-title">控制台设置</h2><p>账户、安全和本地显示偏好</p></div></div>
           <div class="panel"><div class="panel-body">
             <div class="settings-grid">
-              <label for="admin-token">管理员凭据<input id="admin-token" type="password" autocomplete="off"></label>
-              <label for="lifecycle-token">节点流程审批凭据<input id="lifecycle-token" type="password" autocomplete="off"></label>
-              <label for="operator-name">操作人<input id="operator-name" autocomplete="off" value="dba"></label>
+              <div class="identity-cell"><span>当前用户</span><strong id="settings-user-name">-</strong></div>
+              <div class="identity-cell"><span>平台角色</span><strong id="settings-user-role">-</strong></div>
               <label for="language-select">界面语言<select id="language-select"><option value="zh-CN">中文</option><option value="en-US">English</option></select></label>
               <label for="refresh-interval">自动刷新<select id="refresh-interval"><option value="30000">30 秒</option><option value="60000" selected>60 秒</option><option value="120000">2 分钟</option><option value="0">关闭</option></select></label>
             </div>
-            <p class="settings-note">管理员凭据用于刷新、元数据和节点维护。主库切换使用单独的一次性审批令牌，不会复用这里的凭据。</p>
+            <div class="form-actions"><button id="settings-change-password" type="button">修改密码</button><button id="settings-logout" type="button">退出当前账户</button></div>
+            <p class="settings-note">高风险操作由平台登录态、角色权限、CSRF、Safety Guard 和集群操作锁共同保护。</p>
           </div></div>
         </section>
       </div>
@@ -552,23 +597,28 @@
     <div class="dialog-actions"><button id="cancel-metadata" type="button">取消</button><button id="save-metadata" class="primary-button" type="button">保存元数据</button></div>
   </dialog>
 
-  <dialog id="approval-modal" role="dialog" aria-modal="true" aria-labelledby="approval-title">
-    <div class="dialog-head"><h2 id="approval-title">一次性审批令牌</h2><button class="dialog-close" id="close-approval-modal" type="button" aria-label="关闭">×</button></div>
+  <dialog id="password-modal" role="dialog" aria-modal="true" aria-labelledby="password-title">
+    <div class="dialog-head"><h2 id="password-title">修改平台密码</h2><button class="dialog-close" id="close-password-modal" type="button" aria-label="关闭">×</button></div>
     <div class="dialog-body">
-      <label for="approval-token">一次性审批令牌<input id="approval-token" type="password" autocomplete="off" placeholder="cgag_..."></label>
-      <p class="settings-note">由管理员生成，5 分钟内有效，执行一次后失效。</p>
+      <div class="form-grid">
+        <label class="span-2" for="current-password">当前密码<input id="current-password" type="password" autocomplete="current-password"></label>
+        <label for="new-password">新密码<input id="new-password" type="password" autocomplete="new-password"></label>
+        <label for="confirm-new-password">确认新密码<input id="confirm-new-password" type="password" autocomplete="new-password"></label>
+      </div>
+      <div class="result-banner" id="password-result">新密码至少 12 位，且不能继续使用默认密码。</div>
     </div>
-    <div class="dialog-actions"><button id="cancel-approval" type="button">取消</button><button id="confirm-approval" class="primary-button" type="button">确认并执行</button></div>
+    <div class="dialog-actions"><button id="cancel-password-change" type="button">取消</button><button id="save-password" class="primary-button" type="button">保存新密码</button></div>
   </dialog>
 
-  <div class="live-status" id="live-status" role="status" aria-live="polite">正在连接控制 API。</div>
+  <div class="live-status" id="live-status" role="status" aria-live="polite" hidden>正在连接控制 API。</div>
 
   <script>
     const byId = id => document.getElementById(id);
     const state = {
       language: 'zh-CN', clusters: [], clusterDirectory: new Map(), fleetTopology: new Map(), capabilities: [], nodes: [], allOperations: [], lifecycleTasks: [], lifecycleCapability: { available:false, reason:'未配置' },
       selectedClusterId: '', selectedCandidateId: '', selectedRejoinId: '', switchUnlocked: false, operationRunning: false,
-      adminToken: '', lifecycleToken: '', approvalToken: '', pendingApprovalAction: null, operator: 'dba', requestGeneration: 0, refreshIntervalMs: 60000, refreshTimer: null,
+      currentUser: null, passwordChangeRequired: false, authenticating: false,
+      requestGeneration: 0, refreshIntervalMs: 60000, refreshTimer: null,
       fleetSearch: '', fleetHealth: 'all', logSearch: '', logKind: 'all', logStatus: 'all',
       clusterDetail: null, topology: null, health: null, candidates: [], metrics: { instances: [] }, operations: []
     };
@@ -618,74 +668,91 @@
       });
     };
 
+    const csrfCookieValue = () => {
+      const entry = document.cookie.split('; ').find(value => value.startsWith('clusterguard_csrf='));
+      return entry ? decodeURIComponent(entry.slice('clusterguard_csrf='.length)) : '';
+    };
+
+    const mutationOptions = body => ({
+      method:'POST',
+      credentials:'same-origin',
+      headers:{ 'Content-Type':'application/json' },
+      body:JSON.stringify(body)
+    });
+
+    const canOperateClusters = () => !!(state.currentUser && ['admin', 'operator'].includes(state.currentUser.role));
+    const canAdministerPlatform = () => !!(state.currentUser && state.currentUser.role === 'admin');
+
+    const renderAuthenticatedUser = () => {
+      const user = state.currentUser || {};
+      const role = ({ admin:'管理员', operator:'操作员', viewer:'只读用户' })[user.role] || user.role || '-';
+      byId('current-user-name').textContent = user.display_name || user.username || '-';
+      byId('current-user-role').textContent = role;
+      byId('settings-user-name').textContent = user.username || '-';
+      byId('settings-user-role').textContent = role;
+      byId('open-metadata-modal').disabled = !canAdministerPlatform();
+      updateExecutionButtons();
+    };
+
+    const showLogin = (message = '请输入平台账户。', isError = false) => {
+      state.currentUser = null;
+      state.passwordChangeRequired = false;
+      state.switchUnlocked = false;
+      state.operationRunning = false;
+      if (state.refreshTimer) window.clearInterval(state.refreshTimer);
+      state.refreshTimer = null;
+      byId('console-shell').hidden = true;
+      byId('login-shell').hidden = false;
+      byId('live-status').hidden = true;
+      const status = byId('login-status');
+      status.textContent = message;
+      status.className = isError ? 'login-status error' : 'login-status';
+      const passwordDialog = byId('password-modal');
+      if (passwordDialog.open) passwordDialog.close();
+      window.setTimeout(() => byId('login-username').focus(), 0);
+    };
+
+    const showAuthenticatedConsole = user => {
+      state.currentUser = user;
+      byId('login-shell').hidden = true;
+      byId('console-shell').hidden = false;
+      byId('live-status').hidden = false;
+      renderAuthenticatedUser();
+    };
+
+    const openPasswordChange = (required = false) => {
+      state.passwordChangeRequired = required;
+      byId('password-title').textContent = required ? '首次登录必须修改密码' : '修改平台密码';
+      byId('close-password-modal').hidden = required;
+      byId('cancel-password-change').hidden = required;
+      byId('current-password').value = '';
+      byId('new-password').value = '';
+      byId('confirm-new-password').value = '';
+      byId('password-result').textContent = required ? '默认管理员密码必须先修改，完成后请重新登录。' : '新密码至少 12 位，且不能继续使用默认密码。';
+      byId('password-result').className = 'result-banner';
+      if (!byId('password-modal').open) byId('password-modal').showModal();
+      window.setTimeout(() => byId('current-password').focus(), 0);
+    };
+
     const fetchResult = async (path, options = {}) => {
+      const method = String(options.method || 'GET').toUpperCase();
+      const headers = { Accept:'application/json', ...(options.headers || {}) };
+      if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+        const csrf = csrfCookieValue();
+        if (csrf) headers['X-CSRF-Token'] = csrf;
+      }
+      const requestOptions = { ...options, method, headers, credentials:'same-origin' };
       let response;
-      try { response = await fetch(path, options); } catch (_) { throw new APIError('无法连接控制 API'); }
+      try { response = await fetch(path, requestOptions); } catch (_) { throw new APIError('无法连接控制 API'); }
       let payload;
       try { payload = await response.json(); } catch (_) { throw new APIError('控制 API 返回了无效数据', response.status); }
+      if (response.status === 401) showLogin('登录已失效，请重新登录。', true);
+      if (payload.password_change_required) openPasswordChange(true);
       if (!response.ok || ['error', 'blocked', 'unsupported', 'indeterminate'].includes(payload.status)) {
         throw new APIError(payload.message || '控制 API 请求失败', response.status, payload.result);
       }
       return payload.result;
     };
-
-    const adminOptions = body => ({
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.adminToken}` },
-      body: JSON.stringify(body)
-    });
-
-    const operationOptions = body => ({
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-
-    const requireAdminContext = () => {
-      state.adminToken = byId('admin-token').value.trim();
-      state.operator = byId('operator-name').value.trim() || 'dba';
-      if (!state.adminToken) {
-        showView('settings');
-        setLiveStatus('请先在设置中填写管理员凭据。', true);
-        return false;
-      }
-      return true;
-    };
-
-    const requireLifecycleContext = () => {
-      if (!requireAdminContext()) return false;
-      state.lifecycleToken = byId('lifecycle-token').value.trim();
-      if (!state.lifecycleToken) {
-        showView('settings');
-        setLiveStatus('请先在设置中填写节点流程审批凭据。', true);
-        return false;
-      }
-      return true;
-    };
-
-    const clearApprovalToken = () => {
-      state.approvalToken = '';
-      byId('approval-token').value = '';
-    };
-
-    const requireManualApproval = (kind, targetID, label) => {
-      state.operator = byId('operator-name').value.trim() || 'dba';
-      if (state.approvalToken) return true;
-      state.pendingApprovalAction = { kind, targetID, label };
-      byId('approval-modal').showModal();
-      byId('approval-token').focus();
-      setLiveStatus('请输入管理员签发的一次性审批令牌。', true);
-      return false;
-    };
-
-    const localizedApprovalError = message => ({
-      'approval grant is required':'请输入一次性审批令牌。',
-      'approval grant is invalid':'审批令牌无效，请重新申请。',
-      'approval grant has already been consumed':'审批令牌已使用，请重新申请。',
-      'approval grant has expired':'审批令牌已过期，请重新申请。',
-      'approval grant does not match this operation':'审批令牌与当前集群或目标不匹配。',
-      'approval grant plan is stale':'审批令牌绑定的计划已过期，请重新申请。'
-    })[message] || message;
 
     const commitIfCurrent = (generation, commit) => {
       if (generation !== state.requestGeneration) return false;
@@ -1003,11 +1070,12 @@
 
     const updateExecutionButtons = () => {
       const executable = capabilityAvailable('execute');
+      const allowed = canOperateClusters();
       const execute = byId('execute-switchover');
-      execute.disabled = state.operationRunning || !state.switchUnlocked || !state.selectedCandidateId || !executable;
-      byId('execute-rejoin').disabled = state.operationRunning || !state.switchUnlocked || !state.selectedRejoinId || !executable;
-      byId('execute-repair').disabled = state.operationRunning || !state.switchUnlocked || !state.selectedRejoinId || !executable;
-      byId('switch-lock').disabled = state.operationRunning;
+      execute.disabled = state.operationRunning || !state.switchUnlocked || !state.selectedCandidateId || !executable || !allowed;
+      byId('execute-rejoin').disabled = state.operationRunning || !state.switchUnlocked || !state.selectedRejoinId || !executable || !allowed;
+      byId('execute-repair').disabled = state.operationRunning || !state.switchUnlocked || !state.selectedRejoinId || !executable || !allowed;
+      byId('switch-lock').disabled = state.operationRunning || !allowed;
       byId('switch-lock').textContent = state.switchUnlocked ? '✓ 已解锁' : '锁 操作锁定';
       byId('switch-lock').className = state.switchUnlocked ? 'danger-button' : '';
     };
@@ -1066,7 +1134,7 @@
     };
 
     const executeOperation = async (kind, targetID, label) => {
-      if (!state.switchUnlocked || !targetID || !requireManualApproval(kind, targetID, label)) return;
+      if (!state.switchUnlocked || !targetID || !state.currentUser) return;
       const cluster = state.clusterDetail && state.clusterDetail.cluster;
       if (!cluster) return;
       state.operationRunning = true;
@@ -1076,13 +1144,12 @@
       try {
         const idempotencyKey = `console-${kind}-${cluster.resource_id}-${targetID}-${Date.now()}`;
         const payload = {
-          operation: { cluster_id: cluster.resource_id, engine: cluster.engine, kind, requested_by: state.operator },
+          operation: { cluster_id: cluster.resource_id, engine: cluster.engine, kind, requested_by: state.currentUser.username },
           target_id: kind === 'switchover' ? state.selectedCandidateId : targetID,
-          idempotency_key: idempotencyKey,
-          approval_token: state.approvalToken
+          idempotency_key: idempotencyKey
         };
         let settled = false;
-        const executionRequest = fetchResult('/api/v1/operations/execute', operationOptions(payload)).finally(() => { settled = true; });
+        const executionRequest = fetchResult('/api/v1/operations/execute', mutationOptions(payload)).finally(() => { settled = true; });
         const progressRequest = kind === 'switchover' ? pollOperationProgress(idempotencyKey, () => settled) : Promise.resolve();
         let operation;
         try { operation = await executionRequest; }
@@ -1099,14 +1166,12 @@
         if (kind === 'switchover' && error.result) renderOperationProgress(error.result);
         const message = error.result && error.result.status === 'indeterminate'
           ? '结果不确定，停止执行并要求人工复核'
-          : localizedApprovalError(error.message);
+          : error.message;
         renderActionResult(`${label}失败：${message}`, true);
         setLiveStatus(message, true);
       } finally {
-        clearApprovalToken();
         state.operationRunning = false;
         relockSwitch();
-        state.pendingApprovalAction = null;
       }
     };
 
@@ -1144,9 +1209,9 @@
       });
       const selector = byId('rebuild-node-select'); selector.replaceChildren(new Option('请选择已有节点', ''));
       state.nodes.forEach(node => selector.append(new Option(node.node_name, node.resource_id)));
-      const available = state.lifecycleCapability.available;
+      const available = state.lifecycleCapability.available && canAdministerPlatform();
       byId('execute-node-sync').disabled = !available;
-      const reason = localizedReason(state.lifecycleCapability.reason);
+      const reason = canAdministerPlatform() ? localizedReason(state.lifecycleCapability.reason) : '仅管理员可以执行节点流程';
       byId('execute-node-sync').title = available ? '' : reason;
       byId('lifecycle-capability').textContent = available ? '可执行' : '未配置';
       byId('lifecycle-capability').className = available ? 'badge success' : 'badge warning';
@@ -1169,8 +1234,7 @@
       cluster_id: state.selectedClusterId,
       action: byId('node-action').value,
       sync_method: byId('sync-method').value,
-      requested_by: state.operator,
-      approval_token: state.lifecycleToken,
+      requested_by: state.currentUser ? state.currentUser.username : '',
       targets: [{
         node_id: byId('node-resource-id').value.trim(), node_name: byId('node-name').value.trim(), kind: byId('node-kind').value,
         hostname: byId('node-hostname').value.trim(), ip_address: byId('node-ip').value.trim(), ssh_user: byId('node-ssh-user').value.trim(),
@@ -1181,12 +1245,12 @@
 
     const executeNodeSync = async () => {
       if (!state.lifecycleCapability.available) { setLiveStatus(`节点流程不可执行：${localizedReason(state.lifecycleCapability.reason)}`, true); return; }
-      if (!requireLifecycleContext() || !state.selectedClusterId) return;
+      if (!canAdministerPlatform() || !state.selectedClusterId) { setLiveStatus('仅管理员可以执行节点流程。', true); return; }
       const payload = lifecyclePayload();
       try {
-        const precheck = await fetchResult('/api/v1/nodes/sync/precheck', adminOptions(payload));
+        const precheck = await fetchResult('/api/v1/nodes/sync/precheck', mutationOptions(payload));
         if (precheck.blocked) throw new APIError('节点流程被预检查阻断', 409, precheck);
-        const task = await fetchResult('/api/v1/nodes/sync/execute', adminOptions(payload));
+        const task = await fetchResult('/api/v1/nodes/sync/execute', mutationOptions(payload));
         setLiveStatus(`节点任务已完成：${task.status}`);
         await loadNodesAndTasks();
         await loadSelectedCluster();
@@ -1291,24 +1355,23 @@
     };
 
     const saveMetadata = async () => {
-      if (!requireAdminContext()) return;
+      if (!canAdministerPlatform()) { byId('metadata-result').textContent = '仅管理员可以修改元数据。'; return; }
       const instance = state.topology && (state.topology.instances || []).find(item => item.resource_id === byId('metadata-instance-select').value);
       if (!instance) { byId('metadata-result').textContent = '请选择实例。'; return; }
       const endpoint = state.clusterDetail.endpoints.find(item => item.kind === 'database' && item.instance_id === instance.resource_id);
       if (!endpoint) { byId('metadata-result').textContent = '实例缺少绑定的数据库 endpoint。'; return; }
       const updated = { ...instance, display_name: byId('metadata-display-name').value.trim(), hostname: byId('metadata-hostname').value.trim(), ip_address: byId('metadata-ip').value.trim(), port: Number(byId('metadata-port').value), engine_identity: { ...instance.engine_identity }, engine_metadata: { ...instance.engine_metadata }, aliases: [...(instance.aliases || [])] };
       const payload = {
-        operation: { cluster_id: instance.cluster_id, engine: instance.engine, kind: 'metadata_reconciliation', requested_by: state.operator },
+        operation: { cluster_id: instance.cluster_id, engine: instance.engine, kind: 'metadata_reconciliation', requested_by: state.currentUser.username },
         instance: updated,
-        endpoint_id: endpoint.resource_id,
-        approval_token: state.adminToken
+        endpoint_id: endpoint.resource_id
       };
       try {
-        const checks = await fetchResult('/api/v1/metadata/reconcile/precheck', adminOptions(payload));
+        const checks = await fetchResult('/api/v1/metadata/reconcile/precheck', mutationOptions(payload));
         if ((checks || []).some(check => check.status === 'fail')) throw new APIError('元数据预检查未通过');
-        await fetchResult('/api/v1/metadata/reconcile/execute', adminOptions(payload));
+        await fetchResult('/api/v1/metadata/reconcile/execute', mutationOptions(payload));
         let refreshError = null;
-        try { await fetchResult(`/api/v1/clusters/${instance.cluster_id}/discover`, adminOptions({})); }
+        try { await fetchResult(`/api/v1/clusters/${instance.cluster_id}/discover`, mutationOptions({})); }
         catch (error) { refreshError = error; }
         byId('metadata-result').textContent = refreshError ? '元数据已更新，但拓扑刷新失败。' : '元数据已更新，固定身份保持不变。';
         await loadSelectedCluster();
@@ -1378,10 +1441,89 @@
       renderCapabilities(); renderNodes(); renderLifecycleTasks(); renderOverview(); await loadSelectedCluster();
     };
 
-    const refreshDiscovery = async () => {
-      if (!state.selectedClusterId || !requireAdminContext()) return;
+    const submitLogin = async event => {
+      event.preventDefault();
+      if (state.authenticating) return;
+      state.authenticating = true;
+      byId('login-submit').disabled = true;
+      byId('login-status').textContent = '正在验证平台账户。';
+      byId('login-status').className = 'login-status';
       try {
-        await fetchResult(`/api/v1/clusters/${state.selectedClusterId}/discover`, adminOptions({}));
+        const result = await fetchResult('/api/v1/auth/login', mutationOptions({
+          username: byId('login-username').value.trim(),
+          password: byId('login-password').value
+        }));
+        showAuthenticatedConsole(result.user);
+        if (result.user.must_change_password) {
+          openPasswordChange(true);
+          return;
+        }
+        await loadClusters();
+        scheduleAutoRefresh();
+      } catch (error) {
+        showLogin(error.status === 401 ? '用户名或密码不正确。' : error.message, true);
+      } finally {
+        byId('login-password').value = '';
+        byId('login-submit').disabled = false;
+        state.authenticating = false;
+      }
+    };
+
+    const savePasswordChange = async () => {
+      const currentPassword = byId('current-password').value;
+      const newPassword = byId('new-password').value;
+      const confirmation = byId('confirm-new-password').value;
+      if (newPassword !== confirmation) {
+        byId('password-result').textContent = '两次输入的新密码不一致。';
+        byId('password-result').className = 'result-banner error';
+        return;
+      }
+      try {
+        await fetchResult('/api/v1/auth/password', mutationOptions({
+          current_password: currentPassword,
+          new_password: newPassword
+        }));
+        state.passwordChangeRequired = false;
+        byId('password-modal').close();
+        showLogin('密码已修改，请使用新密码重新登录。');
+      } catch (error) {
+        byId('password-result').textContent = `密码修改失败：${error.message}`;
+        byId('password-result').className = 'result-banner error';
+      } finally {
+        byId('current-password').value = '';
+        byId('new-password').value = '';
+        byId('confirm-new-password').value = '';
+      }
+    };
+
+    const logout = async () => {
+      try {
+        await fetchResult('/api/v1/auth/logout', mutationOptions({}));
+        showLogin('已退出平台账户。');
+      } catch (error) {
+        if (error.status !== 401) setLiveStatus(`退出失败：${error.message}`, true);
+      }
+    };
+
+    const bootstrapConsole = async () => {
+      try {
+        const result = await fetchResult('/api/v1/auth/me');
+        showAuthenticatedConsole(result.user);
+        if (result.user.must_change_password) {
+          openPasswordChange(true);
+          return;
+        }
+        await loadClusters();
+        scheduleAutoRefresh();
+      } catch (error) {
+        if (error.status !== 401) showLogin(error.message, true);
+      }
+    };
+
+    const refreshDiscovery = async () => {
+      if (!state.selectedClusterId || !canOperateClusters()) return;
+      try {
+        await fetchResult(`/api/v1/clusters/${state.selectedClusterId}/discover`, mutationOptions({}));
         await loadSelectedCluster({ preserveOperationResult:true });
       } catch (error) { setLiveStatus(error.message, true); }
     };
@@ -1427,28 +1569,22 @@
     byId('cancel-metadata').addEventListener('click', () => byId('metadata-modal').close());
     byId('metadata-instance-select').addEventListener('change', populateMetadataForm);
     byId('save-metadata').addEventListener('click', saveMetadata);
-    byId('admin-token').addEventListener('input', event => { state.adminToken = event.target.value.trim(); });
-    byId('lifecycle-token').addEventListener('input', event => { state.lifecycleToken = event.target.value.trim(); });
-    byId('approval-token').addEventListener('input', event => { state.approvalToken = event.target.value.trim(); });
-    byId('close-approval-modal').addEventListener('click', () => { state.pendingApprovalAction = null; clearApprovalToken(); byId('approval-modal').close(); });
-    byId('cancel-approval').addEventListener('click', () => { state.pendingApprovalAction = null; clearApprovalToken(); byId('approval-modal').close(); });
-    byId('confirm-approval').addEventListener('click', () => {
-      state.approvalToken = byId('approval-token').value.trim();
-      if (!state.approvalToken) { setLiveStatus('请输入一次性审批令牌。', true); return; }
-      const pending = state.pendingApprovalAction;
-      state.pendingApprovalAction = null;
-      byId('approval-modal').close();
-      if (pending) executeOperation(pending.kind, pending.targetID, pending.label);
-    });
-    byId('operator-name').addEventListener('input', event => { state.operator = event.target.value.trim() || 'dba'; });
+    byId('login-form').addEventListener('submit', submitLogin);
+    byId('open-password-change').addEventListener('click', () => openPasswordChange(false));
+    byId('settings-change-password').addEventListener('click', () => openPasswordChange(false));
+    byId('logout-button').addEventListener('click', logout);
+    byId('settings-logout').addEventListener('click', logout);
+    byId('close-password-modal').addEventListener('click', () => { if (!state.passwordChangeRequired) byId('password-modal').close(); });
+    byId('cancel-password-change').addEventListener('click', () => { if (!state.passwordChangeRequired) byId('password-modal').close(); });
+    byId('save-password').addEventListener('click', savePasswordChange);
+    byId('password-modal').addEventListener('cancel', event => { if (state.passwordChangeRequired) event.preventDefault(); });
     byId('language-select').addEventListener('change', event => { state.language = event.target.value; applyLanguage(); renderOverview(); renderTopology(); renderOperationContext(); renderMetrics(); renderNodes(); renderLifecycleTasks(); renderOperationLog(); });
     byId('refresh-interval').addEventListener('change', event => { state.refreshIntervalMs = Number(event.target.value); scheduleAutoRefresh(); });
     window.addEventListener('hashchange', () => showView(window.location.hash.slice(1)));
 
     applyLanguage();
     showView(window.location.hash.slice(1) || 'overview');
-    loadClusters().catch(error => setLiveStatus(error.message, true));
-    scheduleAutoRefresh();
+    bootstrapConsole();
   </script>
 </body>
 </html>

@@ -155,9 +155,8 @@ func TestOperationsViewRunsOneRealGuardedSwitchover(t *testing.T) {
 	}
 	for _, contract := range []string{
 		"/api/v1/operations/execute", "executeOperation('switchover'", "target_id:", "state.selectedCandidateId",
-		"approval_token: state.approvalToken", "idempotency_key:", "requested_by: state.operator",
-		"fetchResult('/api/v1/operations/execute', operationOptions(payload))", "await loadSelectedCluster()", "await loadOperationLog()",
-		"const localizedApprovalError =", "审批令牌绑定的计划已过期，请重新申请。",
+		"idempotency_key:", "requested_by: state.currentUser.username",
+		"fetchResult('/api/v1/operations/execute', mutationOptions(payload))", "await loadSelectedCluster()", "await loadOperationLog()",
 	} {
 		if !strings.Contains(page, contract) {
 			t.Fatalf("console switch is not wired to the real workflow: missing %q", contract)
@@ -178,7 +177,7 @@ func TestOperationsUseSimpleLocalAntiMistakeLockWithoutBypassingBackendGates(t *
 	for _, contract := range []string{
 		`id="switch-lock"`, "switchUnlocked: false", "state.switchUnlocked = !state.switchUnlocked",
 		"execute.disabled = state.operationRunning || !state.switchUnlocked", "操作锁定", "已解锁",
-		"后端仍会执行 Safety Guard、集群操作锁和审批校验",
+		"后端仍会执行 Safety Guard、集群操作锁、平台身份授权和验证",
 	} {
 		if !strings.Contains(page, contract) {
 			t.Fatalf("console missing anti-mistake lock contract %q", contract)
@@ -270,18 +269,24 @@ func TestConsoleUsesNativeMetricNamesAndFormatsBufferRatioAsPercent(t *testing.T
 	}
 }
 
-func TestSecretsStayInMemoryAndAPIDerivedTextUsesSafeDOM(t *testing.T) {
+func TestConsoleKeepsPasswordsTransientAndAPIDerivedTextUsesSafeDOM(t *testing.T) {
 	page := string(consoleHTML)
 	for _, contract := range []string{
-		`id="admin-token"`, `id="approval-token"`, `type="password"`, `autocomplete="off"`,
-		"state.adminToken =", "state.approvalToken =", "textContent", `aria-live="polite"`, ":focus-visible",
+		`id="login-password"`, `id="current-password"`, `id="new-password"`, `type="password"`,
+		`autocomplete="current-password"`, `autocomplete="new-password"`,
+		"state.currentUser", "textContent", `aria-live="polite"`, ":focus-visible",
 	} {
 		if !strings.Contains(page, contract) {
 			t.Fatalf("console missing secure rendering contract %q", contract)
 		}
 	}
-	if strings.Contains(page, `id="control-token"`) {
-		t.Fatal("normal console must not expose the legacy long-lived control-token field")
+	for _, forbidden := range []string{
+		`id="control-token"`, `id="admin-token"`, `id="approval-token"`, `id="lifecycle-token"`,
+		"state.adminToken", "state.approvalToken", "state.lifecycleToken",
+	} {
+		if strings.Contains(page, forbidden) {
+			t.Fatalf("normal console must not expose credential field %q", forbidden)
+		}
 	}
 	for _, forbidden := range []string{".innerHTML", "insertAdjacentHTML", "document.write", "localStorage", "sessionStorage", "window.prompt("} {
 		if strings.Contains(page, forbidden) {
@@ -293,31 +298,67 @@ func TestSecretsStayInMemoryAndAPIDerivedTextUsesSafeDOM(t *testing.T) {
 	}
 }
 
-func TestConsoleUsesOneTimeApprovalWithoutControlAuthorization(t *testing.T) {
+func TestConsoleHasLoginAndForcedPasswordChange(t *testing.T) {
 	page := string(consoleHTML)
 	for _, contract := range []string{
-		"一次性审批令牌", "由管理员生成，5 分钟内有效，执行一次后失效。",
-		`id="approval-modal"`, `id="approval-token"`, "const operationOptions = body =>",
-		"headers: { 'Content-Type': 'application/json' }", "const requireManualApproval =",
-		"byId('approval-modal').showModal()", "const clearApprovalToken = () =>",
-		"byId('approval-token').value = ''", "state.approvalToken = ''",
-		"approval grant has already been consumed", "审批令牌已使用，请重新申请。",
-		"approval grant has expired", "审批令牌已过期，请重新申请。",
-		"approval grant does not match this operation", "审批令牌与当前集群或目标不匹配。",
-		"approval grant plan is stale", "审批令牌绑定的计划已过期，请重新申请。",
+		`id="login-shell"`, `id="console-shell"`, `id="login-form"`,
+		`id="login-username"`, `id="login-password"`, `id="login-submit"`,
+		`id="password-modal"`, `id="current-password"`, `id="new-password"`,
+		`id="confirm-new-password"`, "/api/v1/auth/login", "/api/v1/auth/me",
+		"/api/v1/auth/password", "must_change_password", "passwordChangeRequired",
 	} {
 		if !strings.Contains(page, contract) {
-			t.Fatalf("console missing one-time approval contract %q", contract)
+			t.Fatalf("console missing authenticated entry contract %q", contract)
 		}
 	}
-	operationStart := strings.Index(page, "const operationOptions = body =>")
-	operationEnd := strings.Index(page[operationStart:], "});")
-	if operationStart < 0 || operationEnd < 0 {
-		t.Fatal("operation POST helper not found")
+}
+
+func TestConsoleSendsCSRFOnMutatingRequests(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		"const csrfCookieValue = () =>", "clusterguard_csrf", "'X-CSRF-Token'",
+		"credentials:'same-origin'", "const mutationOptions = body =>",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing authenticated mutation contract %q", contract)
+		}
 	}
-	operationHelper := page[operationStart : operationStart+operationEnd]
-	if strings.Contains(operationHelper, "Authorization") {
-		t.Fatal("manual operation helper must not send the administrative Authorization header")
+	if strings.Contains(page, "'Authorization': `Bearer") {
+		t.Fatal("browser console must authenticate with its platform session, not a bearer secret")
+	}
+}
+
+func TestConsoleOperationDoesNotHandleApprovalToken(t *testing.T) {
+	page := string(consoleHTML)
+	for _, forbidden := range []string{
+		`id="approval-token"`, `id="approval-modal"`, "state.approvalToken",
+		"approval_token: state.approvalToken", "requireManualApproval", "clearApprovalToken",
+	} {
+		if strings.Contains(page, forbidden) {
+			t.Fatalf("platform console must not handle approval token %q", forbidden)
+		}
+	}
+	for _, contract := range []string{
+		"requested_by: state.currentUser.username",
+		"fetchResult('/api/v1/operations/execute', mutationOptions(payload))",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("platform operation missing session-owned authorization contract %q", contract)
+		}
+	}
+}
+
+func TestConsoleShowsAuthenticatedUserAndLogout(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		`id="current-user-name"`, `id="current-user-role"`,
+		`id="open-password-change"`, `id="logout-button"`,
+		`id="settings-user-name"`, `id="settings-user-role"`,
+		"/api/v1/auth/logout", "const renderAuthenticatedUser =",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing account contract %q", contract)
+		}
 	}
 }
 
@@ -424,7 +465,7 @@ func TestConsoleRelocksDestructiveActionWhenClusterOrTargetChanges(t *testing.T)
 		"const relockSwitch = () =>", "relockSwitch();\n      clearClusterView(preserveOperationResult);",
 		"state.selectedCandidateId = event.target.value; relockSwitch(); renderOperationContext();",
 		"state.selectedRejoinId = event.target.value; relockSwitch(); updateExecutionButtons();",
-		"finally {\n        clearApprovalToken();\n        state.operationRunning = false;\n        relockSwitch();",
+		"finally {\n        state.operationRunning = false;\n        relockSwitch();",
 		"byId('operation-result').textContent = '等待操作。';",
 	} {
 		if !strings.Contains(page, contract) {
