@@ -4,6 +4,7 @@ package runtime
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"fmt"
 	"net/http"
 	"sync"
@@ -47,6 +48,22 @@ type runtimeLocks struct {
 	publication *workflow.MemoryLocks
 	operations  workflow.ClusterLockManager
 	lifecycle   workflow.ClusterLockManager
+}
+
+type runtimeApprovalGates struct {
+	*approval.Service
+	administrativeToken string
+}
+
+func (gates runtimeApprovalGates) Validate(ctx context.Context, _ model.Operation, token string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if gates.administrativeToken == "" || token == "" ||
+		subtle.ConstantTimeCompare([]byte(token), []byte(gates.administrativeToken)) != 1 {
+		return fmt.Errorf("valid administrative credential is required")
+	}
+	return nil
 }
 
 func newRuntimeLocks(repository *store.Repository, authority coordination.MutationAuthority) runtimeLocks {
@@ -196,12 +213,13 @@ func New(configuration config.File) (*Runtime, error) {
 		return mysqlOperationCredentials(configuration.MySQL)
 	}
 	approvalService := approval.New(repository, rand.Reader, time.Now)
+	approvalGates := runtimeApprovalGates{Service: approvalService, administrativeToken: configuration.ControlToken}
 	service := workflow.New(
 		registry,
 		workflow.TopologyDiscovery{Reader: repository},
 		newRuntimeSafetyGuard(failoverAuthority),
 		locks.operations,
-		approvalService,
+		approvalGates,
 		repository,
 		workflow.WithOperationStore(repository),
 		workflow.WithOperationResolver(workflow.RepositoryResolver{

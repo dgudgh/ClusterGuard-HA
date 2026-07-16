@@ -206,6 +206,19 @@ func TestRuntimeSafetyGuardUsesControllerMajorityWhenConfigured(t *testing.T) {
 	}
 }
 
+func TestRuntimeApprovalGatesSeparateOneTimeDatabaseAndAdministrativeMetadataAuthorization(t *testing.T) {
+	gates := runtimeApprovalGates{administrativeToken: "administrator-secret"}
+	operation := model.Operation{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, ClusterID: model.NewResourceID()}
+	for _, token := range []string{"", "wrong-secret"} {
+		if err := gates.Validate(context.Background(), operation, token); err == nil {
+			t.Fatalf("administrative token %q was accepted", token)
+		}
+	}
+	if err := gates.Validate(context.Background(), operation, "administrator-secret"); err != nil {
+		t.Fatalf("valid administrative metadata credential was rejected: %v", err)
+	}
+}
+
 func runtimeRequest(t *testing.T, handler http.Handler, method string, path string, body interface{}) *httptest.ResponseRecorder {
 	t.Helper()
 	contents, err := json.Marshal(body)

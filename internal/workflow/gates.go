@@ -349,20 +349,6 @@ func (locks *MemoryLocks) acquire(ctx context.Context, key string) (func(), erro
 	}
 }
 
-type TokenApproval struct {
-	ExpectedToken string
-}
-
-func (approval TokenApproval) Validate(_ context.Context, _ model.Operation, token string) error {
-	if token == "" {
-		return fmt.Errorf("approval token is required")
-	}
-	if approval.ExpectedToken != "" && token != approval.ExpectedToken {
-		return fmt.Errorf("approval token is invalid")
-	}
-	return nil
-}
-
 type AllowAllApproval struct{}
 
 func (AllowAllApproval) Consume(_ context.Context, operation model.OperationRecord, _ string) (model.ResourceID, model.OperationRecord, error) {
