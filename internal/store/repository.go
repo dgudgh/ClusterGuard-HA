@@ -98,6 +98,8 @@ type snapshot struct {
 	Instances             map[model.ResourceID]model.DatabaseInstance              `json:"instances"`
 	Endpoints             map[model.ResourceID]map[model.ResourceID]model.Endpoint `json:"endpoints"`
 	HAEndpoints           map[model.ResourceID]model.HAEndpoint                    `json:"ha_endpoints"`
+	PlatformUsers         map[model.ResourceID]model.PlatformUser                  `json:"platform_users"`
+	PlatformSessions      map[model.ResourceID]model.PlatformSession               `json:"platform_sessions"`
 	ApprovalGrants        map[model.ResourceID]model.ApprovalGrant                 `json:"approval_grants"`
 	CoordinationLeases    map[model.ResourceID]coordination.LeaseRecord            `json:"coordination_leases"`
 	OperationLocks        map[model.ResourceID]coordination.OperationLockRecord    `json:"operation_locks"`
@@ -112,6 +114,7 @@ type snapshot struct {
 	OperationKeys         map[string]model.ResourceID                              `json:"operation_keys"`
 	Audits                []model.AuditEvent                                       `json:"audits"`
 	Reports               []model.Report                                           `json:"reports"`
+	SecurityEvents        []model.SecurityEvent                                    `json:"security_events"`
 }
 
 type Repository struct {
@@ -135,6 +138,8 @@ func emptySnapshot() snapshot {
 		Instances:             map[model.ResourceID]model.DatabaseInstance{},
 		Endpoints:             map[model.ResourceID]map[model.ResourceID]model.Endpoint{},
 		HAEndpoints:           map[model.ResourceID]model.HAEndpoint{},
+		PlatformUsers:         map[model.ResourceID]model.PlatformUser{},
+		PlatformSessions:      map[model.ResourceID]model.PlatformSession{},
 		ApprovalGrants:        map[model.ResourceID]model.ApprovalGrant{},
 		CoordinationLeases:    map[model.ResourceID]coordination.LeaseRecord{},
 		OperationLocks:        map[model.ResourceID]coordination.OperationLockRecord{},
@@ -149,6 +154,7 @@ func emptySnapshot() snapshot {
 		OperationKeys:         map[string]model.ResourceID{},
 		Audits:                []model.AuditEvent{},
 		Reports:               []model.Report{},
+		SecurityEvents:        []model.SecurityEvent{},
 	}
 }
 
@@ -364,6 +370,8 @@ func cloneDiscoverySnapshot(value snapshot) snapshot {
 	copy.Instances = cloneInstanceMap(value.Instances)
 	copy.Endpoints = cloneEndpointMap(value.Endpoints)
 	copy.HAEndpoints = cloneHAEndpointMap(value.HAEndpoints)
+	copy.PlatformUsers = clonePlatformUserMap(value.PlatformUsers)
+	copy.PlatformSessions = clonePlatformSessionMap(value.PlatformSessions)
 	copy.ApprovalGrants = cloneApprovalGrantMap(value.ApprovalGrants)
 	copy.CoordinationLeases = cloneCoordinationLeaseMap(value.CoordinationLeases)
 	copy.OperationLocks = cloneOperationLockMap(value.OperationLocks)
@@ -376,6 +384,7 @@ func cloneDiscoverySnapshot(value snapshot) snapshot {
 	copy.Anomalies = cloneAnomalyMap(value.Anomalies)
 	copy.Operations = cloneOperationMap(value.Operations)
 	copy.OperationKeys = cloneOperationKeyMap(value.OperationKeys)
+	copy.SecurityEvents = append([]model.SecurityEvent{}, value.SecurityEvents...)
 	return copy
 }
 
@@ -405,6 +414,22 @@ func cloneApprovalGrantMap(values map[model.ResourceID]model.ApprovalGrant) map[
 	copy := make(map[model.ResourceID]model.ApprovalGrant, len(values))
 	for resourceID, grant := range values {
 		copy[resourceID] = grant
+	}
+	return copy
+}
+
+func clonePlatformUserMap(values map[model.ResourceID]model.PlatformUser) map[model.ResourceID]model.PlatformUser {
+	copy := make(map[model.ResourceID]model.PlatformUser, len(values))
+	for resourceID, user := range values {
+		copy[resourceID] = user
+	}
+	return copy
+}
+
+func clonePlatformSessionMap(values map[model.ResourceID]model.PlatformSession) map[model.ResourceID]model.PlatformSession {
+	copy := make(map[model.ResourceID]model.PlatformSession, len(values))
+	for resourceID, session := range values {
+		copy[resourceID] = session
 	}
 	return copy
 }

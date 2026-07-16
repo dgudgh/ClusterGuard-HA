@@ -99,6 +99,38 @@ func normalizeSnapshot(value snapshot) (snapshot, error) {
 	if normalized.HAEndpoints == nil {
 		normalized.HAEndpoints = map[model.ResourceID]model.HAEndpoint{}
 	}
+	if normalized.PlatformUsers == nil {
+		normalized.PlatformUsers = map[model.ResourceID]model.PlatformUser{}
+	}
+	normalizedUsernames := make(map[string]model.ResourceID, len(normalized.PlatformUsers))
+	for resourceID, user := range normalized.PlatformUsers {
+		if user.ResourceID != resourceID {
+			return snapshot{}, fmt.Errorf("invalid platform user record")
+		}
+		if err := validatePlatformUser(user); err != nil {
+			return snapshot{}, err
+		}
+		username := normalizePlatformUsername(user.Username)
+		if existing, found := normalizedUsernames[username]; found && existing != resourceID {
+			return snapshot{}, fmt.Errorf("duplicate platform username")
+		}
+		normalizedUsernames[username] = resourceID
+	}
+	if normalized.PlatformSessions == nil {
+		normalized.PlatformSessions = map[model.ResourceID]model.PlatformSession{}
+	}
+	for resourceID, session := range normalized.PlatformSessions {
+		if session.ResourceID != resourceID {
+			return snapshot{}, fmt.Errorf("invalid platform session record")
+		}
+		if err := validatePlatformSession(session); err != nil {
+			return snapshot{}, err
+		}
+		user, found := normalized.PlatformUsers[session.UserID]
+		if !found || session.UserAuthRevision > user.AuthRevision {
+			return snapshot{}, fmt.Errorf("platform session user identity is invalid")
+		}
+	}
 	if normalized.ApprovalGrants == nil {
 		normalized.ApprovalGrants = map[model.ResourceID]model.ApprovalGrant{}
 	}
@@ -208,6 +240,14 @@ func normalizeSnapshot(value snapshot) (snapshot, error) {
 	}
 	if normalized.Reports == nil {
 		normalized.Reports = []model.Report{}
+	}
+	if normalized.SecurityEvents == nil {
+		normalized.SecurityEvents = []model.SecurityEvent{}
+	}
+	for _, event := range normalized.SecurityEvents {
+		if err := validateSecurityEvent(event); err != nil {
+			return snapshot{}, err
+		}
 	}
 	reportsCopied := false
 	for index := range normalized.Reports {
