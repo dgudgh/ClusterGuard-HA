@@ -34,6 +34,36 @@ func (server *Server) approvedOperation(ctx context.Context, token string, opera
 	return record, nil
 }
 
+func (server *Server) issuePlatformSessionOperationApproval(
+	ctx context.Context,
+	authentication requestAuthenticationState,
+	request adapter.OperationRequest,
+) (model.OperationRecord, string, error) {
+	if server.approvals == nil || server.workflow == nil {
+		return model.OperationRecord{}, "", errors.New("approval service is not configured")
+	}
+	request.Operation.RequestedBy = authentication.principal.Username
+	record, _, err := server.workflow.Plan(ctx, request)
+	if err != nil {
+		return record, "", err
+	}
+	issued, err := server.approvals.Issue(ctx, approval.IssueRequest{
+		Operation: record,
+		IssuedBy:  authentication.principal.Username,
+	})
+	if err != nil {
+		return record, "", err
+	}
+	server.recordSecurityEvent(
+		authentication.principal,
+		authentication.principal.Username,
+		"operation_approval_issued",
+		"success",
+		"one-time platform operation approval issued",
+	)
+	return record, issued.Token, nil
+}
+
 func (server *Server) operationsCollection(writer http.ResponseWriter, request *http.Request) {
 	switch request.Method {
 	case http.MethodGet:
@@ -71,6 +101,9 @@ func (server *Server) operationsCollection(writer http.ResponseWriter, request *
 		if err := decode(request, &payload); err != nil {
 			writeError(writer, http.StatusBadRequest, err.Error())
 			return
+		}
+		if authentication, authenticated := requestAuthentication(request); authenticated && authentication.viaSession {
+			payload.Operation.RequestedBy = authentication.principal.Username
 		}
 		if strings.TrimSpace(payload.Operation.RequestedBy) == "" {
 			writeError(writer, http.StatusBadRequest, "operation requested_by is required")
@@ -321,16 +354,34 @@ func (server *Server) operationResourceRoute(writer http.ResponseWriter, request
 		writeError(writer, http.StatusNotFound, "operation action not found")
 		return
 	}
-	approved, err := server.approvedOperation(request.Context(), payload.ApprovalToken, record.Operation, record.TargetID)
-	if err != nil {
-		server.writeApprovalError(writer, err)
-		return
+	approvalToken := payload.ApprovalToken
+	if authentication, authenticated := requestAuthentication(request); authenticated && authentication.viaSession {
+		planned, token, err := server.issuePlatformSessionOperationApproval(request.Context(), authentication, adapterRequest)
+		if err != nil {
+			server.writeOperationActionError(writer, err, planned)
+			return
+		}
+		if planned.ResourceID != record.ResourceID {
+			server.writeApprovalError(writer, approval.ErrMismatch)
+			return
+		}
+		record = planned
+		adapterRequest.Operation = planned.Operation
+		adapterRequest.TargetID = planned.TargetID
+		adapterRequest.IdempotencyKey = planned.IdempotencyKey
+		approvalToken = token
+	} else {
+		approved, err := server.approvedOperation(request.Context(), approvalToken, record.Operation, record.TargetID)
+		if err != nil {
+			server.writeApprovalError(writer, err)
+			return
+		}
+		if approved.ResourceID != record.ResourceID {
+			server.writeApprovalError(writer, approval.ErrMismatch)
+			return
+		}
 	}
-	if approved.ResourceID != record.ResourceID {
-		server.writeApprovalError(writer, approval.ErrMismatch)
-		return
-	}
-	execution, err := server.workflow.Execute(request.Context(), adapterRequest, payload.ApprovalToken)
+	execution, err := server.workflow.Execute(request.Context(), adapterRequest, approvalToken)
 	updated, _ := server.store.Operation(operationID)
 	writeOperationExecutionResponse(writer, err, execution, updated)
 }

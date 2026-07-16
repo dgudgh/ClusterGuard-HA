@@ -360,17 +360,37 @@ func (server *Server) operationRoute(writer http.ResponseWriter, request *http.R
 		writeError(writer, http.StatusServiceUnavailable, "workflow service is not configured")
 		return
 	}
-	if action == "execute" {
-		record, err := server.approvedOperation(request.Context(), payload.ApprovalToken, payload.Operation, payload.TargetID)
-		if err != nil {
-			server.writeApprovalError(writer, err)
-			return
-		}
-		payload.Operation = record.Operation
-		payload.TargetID = record.TargetID
-		payload.IdempotencyKey = record.IdempotencyKey
+	authentication, platformSession := requestAuthentication(request)
+	if platformSession && authentication.viaSession {
+		payload.Operation.RequestedBy = authentication.principal.Username
 	}
-	adapterRequest := adapter.OperationRequest{Operation: payload.Operation, TargetID: payload.TargetID, IdempotencyKey: payload.IdempotencyKey, Parameters: payload.Parameters}
+	adapterRequest := adapter.OperationRequest{
+		Operation: payload.Operation, TargetID: payload.TargetID,
+		IdempotencyKey: payload.IdempotencyKey, Parameters: payload.Parameters,
+	}
+	approvalToken := payload.ApprovalToken
+	if action == "execute" {
+		if platformSession && authentication.viaSession {
+			record, token, err := server.issuePlatformSessionOperationApproval(request.Context(), authentication, adapterRequest)
+			if err != nil {
+				server.writeOperationActionError(writer, err, record)
+				return
+			}
+			adapterRequest.Operation = record.Operation
+			adapterRequest.TargetID = record.TargetID
+			adapterRequest.IdempotencyKey = record.IdempotencyKey
+			approvalToken = token
+		} else {
+			record, err := server.approvedOperation(request.Context(), approvalToken, payload.Operation, payload.TargetID)
+			if err != nil {
+				server.writeApprovalError(writer, err)
+				return
+			}
+			adapterRequest.Operation = record.Operation
+			adapterRequest.TargetID = record.TargetID
+			adapterRequest.IdempotencyKey = record.IdempotencyKey
+		}
+	}
 	switch action {
 	case "precheck":
 		record, checks, err := server.workflow.Precheck(request.Context(), adapterRequest)
@@ -387,8 +407,8 @@ func (server *Server) operationRoute(writer http.ResponseWriter, request *http.R
 		}
 		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": map[string]interface{}{"operation": record, "plan": plan}})
 	case "execute":
-		execution, err := server.workflow.Execute(request.Context(), adapterRequest, payload.ApprovalToken)
-		record, _ := server.store.OperationByIdempotencyKey(payload.IdempotencyKey)
+		execution, err := server.workflow.Execute(request.Context(), adapterRequest, approvalToken)
+		record, _ := server.store.OperationByIdempotencyKey(adapterRequest.IdempotencyKey)
 		writeOperationExecutionResponse(writer, err, execution, record)
 	case "verify":
 		verification, err := server.workflow.Verify(request.Context(), adapterRequest)

@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"clusterguard.io/ha/internal/approval"
+	platformauth "clusterguard.io/ha/internal/auth"
 	"clusterguard.io/ha/internal/store"
 	"clusterguard.io/ha/internal/workflow"
 	"clusterguard.io/ha/pkg/adapter"
@@ -138,6 +140,45 @@ func newApprovalAPIServer(t *testing.T) (*Server, *store.Repository, *approvalAP
 	return server, repository, candidate, cluster.ResourceID, target.ResourceID
 }
 
+func newAuthenticatedApprovalAPIClient(t *testing.T, role model.PlatformRole) (*authTestClient, *store.Repository, *approvalAPIAdapter, model.ResourceID, model.ResourceID, string) {
+	t.Helper()
+	server, repository, candidate, clusterID, targetID := newApprovalAPIServer(t)
+	now := time.Date(2026, time.July, 16, 10, 0, 0, 0, time.UTC)
+	username := string(role) + "-user"
+	password := "Secure-platform-password-123"
+	hasher := platformauth.Argon2Hasher{
+		Params: platformauth.Argon2Params{
+			Memory: 64, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
+		},
+		Random: bytes.NewReader(bytes.Repeat([]byte{0x61}, 256)),
+	}
+	passwordHash, err := hasher.Hash(password)
+	if err != nil {
+		t.Fatalf("hash platform password: %v", err)
+	}
+	if _, err := repository.CreatePlatformUser(model.PlatformUser{
+		ResourceMeta: model.ResourceMeta{
+			ResourceID: model.NewResourceID(), MetadataRevision: 1, CreatedAt: now, UpdatedAt: now,
+		},
+		Username: username, DisplayName: username, Role: role,
+		PasswordHash: passwordHash, AuthRevision: 1,
+	}); err != nil {
+		t.Fatalf("create platform user: %v", err)
+	}
+	server.authentication = platformauth.New(
+		repository,
+		hasher,
+		bytes.NewReader(bytes.Repeat([]byte{0x62}, 8192)),
+		func() time.Time { return now },
+		8*time.Hour,
+	)
+	client := &authTestClient{handler: server.Handler()}
+	if response := client.login(t, username, password); response.Code != http.StatusOK {
+		t.Fatalf("platform login status=%d body=%s", response.Code, response.Body.String())
+	}
+	return client, repository, candidate, clusterID, targetID, username
+}
+
 func approvalIssueBody(clusterID, targetID model.ResourceID) map[string]interface{} {
 	return map[string]interface{}{
 		"cluster_id":      clusterID,
@@ -223,6 +264,146 @@ func TestApprovalGrantExecutesWithoutControlTokenAndRejectsReuse(t *testing.T) {
 	}
 	if candidate.executeCalls != 1 {
 		t.Fatalf("reused grant executed again: calls=%d", candidate.executeCalls)
+	}
+}
+
+func TestPlatformSessionAutomaticallyIssuesAndConsumesOneTimeApproval(t *testing.T) {
+	for _, role := range []model.PlatformRole{model.PlatformRoleAdmin, model.PlatformRoleOperator} {
+		t.Run(string(role), func(t *testing.T) {
+			client, repository, candidate, clusterID, targetID, username := newAuthenticatedApprovalAPIClient(t, role)
+			idempotencyKey := "session-switch-" + string(role)
+			response := client.request(t, http.MethodPost, "/api/v1/operations/execute", map[string]interface{}{
+				"operation": map[string]interface{}{
+					"cluster_id":   clusterID,
+					"engine":       "mysql",
+					"kind":         "switchover",
+					"requested_by": "caller-supplied-identity",
+				},
+				"target_id":       targetID,
+				"idempotency_key": idempotencyKey,
+			}, true)
+			if response.Code != http.StatusOK {
+				t.Fatalf("session execute status=%d body=%s", response.Code, response.Body.String())
+			}
+			if candidate.executeCalls != 1 {
+				t.Fatalf("session execute calls=%d", candidate.executeCalls)
+			}
+			for _, forbidden := range []string{"cgag_", "token_hash", "approval_token"} {
+				if strings.Contains(strings.ToLower(response.Body.String()), forbidden) {
+					t.Fatalf("session execute response exposes %q: %s", forbidden, response.Body.String())
+				}
+			}
+			record, found := repository.OperationByIdempotencyKey(idempotencyKey)
+			if !found || record.Operation.RequestedBy != username {
+				t.Fatalf("stored operation=%+v found=%v", record, found)
+			}
+			grants := repository.ApprovalGrants()
+			if len(grants) != 1 {
+				t.Fatalf("approval grants=%+v", grants)
+			}
+			if grants[0].Status != model.ApprovalGrantConsumed || grants[0].IssuedBy != username {
+				t.Fatalf("approval grant=%+v", grants[0])
+			}
+		})
+	}
+}
+
+func TestPlatformSessionAutomaticallyApprovesDurableOperationResource(t *testing.T) {
+	client, repository, candidate, clusterID, targetID, username := newAuthenticatedApprovalAPIClient(t, model.PlatformRoleAdmin)
+	idempotencyKey := "session-resource-switch"
+	planned := client.request(t, http.MethodPost, "/api/v1/operations/plan", map[string]interface{}{
+		"operation": map[string]interface{}{
+			"cluster_id":   clusterID,
+			"engine":       "mysql",
+			"kind":         "switchover",
+			"requested_by": "forged-plan-actor",
+		},
+		"target_id":       targetID,
+		"idempotency_key": idempotencyKey,
+	}, true)
+	if planned.Code != http.StatusOK {
+		t.Fatalf("session plan status=%d body=%s", planned.Code, planned.Body.String())
+	}
+	record, found := repository.OperationByIdempotencyKey(idempotencyKey)
+	if !found || record.Operation.RequestedBy != username {
+		t.Fatalf("planned operation=%+v found=%v", record, found)
+	}
+	executed := client.request(
+		t,
+		http.MethodPost,
+		"/api/v1/operations/"+string(record.ResourceID)+"/execute",
+		map[string]interface{}{},
+		true,
+	)
+	if executed.Code != http.StatusOK {
+		t.Fatalf("session resource execute status=%d body=%s", executed.Code, executed.Body.String())
+	}
+	if candidate.executeCalls != 1 {
+		t.Fatalf("session resource execute calls=%d", candidate.executeCalls)
+	}
+	grants := repository.ApprovalGrants()
+	if len(grants) != 1 || grants[0].Status != model.ApprovalGrantConsumed || grants[0].IssuedBy != username {
+		t.Fatalf("session resource grants=%+v", grants)
+	}
+}
+
+func TestServiceBearerCannotAutoIssuePlatformApproval(t *testing.T) {
+	client, repository, candidate, clusterID, targetID, _ := newAuthenticatedApprovalAPIClient(t, model.PlatformRoleAdmin)
+	response := requestJSON(t, client.handler, http.MethodPost, "/api/v1/operations/execute", map[string]interface{}{
+		"operation": map[string]interface{}{
+			"cluster_id":   clusterID,
+			"engine":       "mysql",
+			"kind":         "switchover",
+			"requested_by": "service-api",
+		},
+		"target_id":       targetID,
+		"idempotency_key": "service-bearer-without-grant",
+	}, "Bearer "+testControlToken)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("service bearer status=%d body=%s", response.Code, response.Body.String())
+	}
+	if candidate.executeCalls != 0 || len(repository.ApprovalGrants()) != 0 {
+		t.Fatalf("service bearer bypassed approval: calls=%d grants=%+v", candidate.executeCalls, repository.ApprovalGrants())
+	}
+}
+
+func TestAuthenticatedServiceAPIStillSupportsExplicitOneTimeApproval(t *testing.T) {
+	client, repository, candidate, clusterID, targetID, _ := newAuthenticatedApprovalAPIClient(t, model.PlatformRoleAdmin)
+	issued := requestJSON(
+		t,
+		client.handler,
+		http.MethodPost,
+		"/api/v1/approvals",
+		approvalIssueBody(clusterID, targetID),
+		"Bearer "+testControlToken,
+	)
+	if issued.Code != http.StatusCreated {
+		t.Fatalf("service approval issue status=%d body=%s", issued.Code, issued.Body.String())
+	}
+	var envelope struct {
+		Result struct {
+			Operation     model.OperationRecord `json:"operation"`
+			ApprovalToken string                `json:"approval_token"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(issued.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode service approval: %v", err)
+	}
+	executed := requestJSON(t, client.handler, http.MethodPost, "/api/v1/operations/execute", map[string]interface{}{
+		"operation":       envelope.Result.Operation.Operation,
+		"target_id":       targetID,
+		"idempotency_key": envelope.Result.Operation.IdempotencyKey,
+		"approval_token":  envelope.Result.ApprovalToken,
+	}, "Bearer "+testControlToken)
+	if executed.Code != http.StatusOK {
+		t.Fatalf("service approved execute status=%d body=%s", executed.Code, executed.Body.String())
+	}
+	if candidate.executeCalls != 1 {
+		t.Fatalf("service approved execute calls=%d", candidate.executeCalls)
+	}
+	grants := repository.ApprovalGrants()
+	if len(grants) != 1 || grants[0].Status != model.ApprovalGrantConsumed {
+		t.Fatalf("service approval grants=%+v", grants)
 	}
 }
 
