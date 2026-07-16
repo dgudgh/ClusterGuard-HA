@@ -219,7 +219,11 @@ func New(configuration config.File) (*Runtime, error) {
 		}
 		return mysqlDiscoveryCredentials(configuration.MySQL)
 	}), nil, discoveryOptions...)
-	options := []api.ServerOption{api.WithControlToken(configuration.ControlToken), api.WithMonitoringToken(configuration.MonitoringToken)}
+	options := []api.ServerOption{
+		api.WithControlToken(configuration.ControlToken),
+		api.WithMonitoringToken(configuration.MonitoringToken),
+		api.WithApprovalService(approvalService),
+	}
 	if configuration.Agent.Enabled {
 		options = append(options, api.WithAgentReconcileSecret(configuration.Agent.SharedSecret))
 	}

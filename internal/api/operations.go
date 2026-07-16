@@ -1,15 +1,38 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
 
+	"clusterguard.io/ha/internal/approval"
 	"clusterguard.io/ha/internal/store"
 	"clusterguard.io/ha/internal/workflow"
 	"clusterguard.io/ha/pkg/adapter"
 	"clusterguard.io/ha/pkg/model"
 )
+
+func (server *Server) approvedOperation(ctx context.Context, token string, operation model.Operation, targetID model.ResourceID) (model.OperationRecord, error) {
+	if server.approvals == nil || server.store == nil {
+		return model.OperationRecord{}, errors.New("approval service is not configured")
+	}
+	grant, err := server.approvals.AuthorizeIntent(ctx, token, operation, targetID)
+	if err != nil {
+		return model.OperationRecord{}, err
+	}
+	record, found := server.store.Operation(grant.OperationID)
+	if !found {
+		return model.OperationRecord{}, approval.ErrMismatch
+	}
+	if record.Operation.ClusterID != operation.ClusterID ||
+		record.Operation.Engine != operation.Engine ||
+		record.Operation.Kind != operation.Kind ||
+		record.TargetID != targetID {
+		return model.OperationRecord{}, approval.ErrMismatch
+	}
+	return record, nil
+}
 
 func (server *Server) operationsCollection(writer http.ResponseWriter, request *http.Request) {
 	switch request.Method {
@@ -296,6 +319,15 @@ func (server *Server) operationResourceRoute(writer http.ResponseWriter, request
 	case "execute":
 	default:
 		writeError(writer, http.StatusNotFound, "operation action not found")
+		return
+	}
+	approved, err := server.approvedOperation(request.Context(), payload.ApprovalToken, record.Operation, record.TargetID)
+	if err != nil {
+		server.writeApprovalError(writer, err)
+		return
+	}
+	if approved.ResourceID != record.ResourceID {
+		server.writeApprovalError(writer, approval.ErrMismatch)
 		return
 	}
 	execution, err := server.workflow.Execute(request.Context(), adapterRequest, payload.ApprovalToken)

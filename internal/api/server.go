@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 
+	"clusterguard.io/ha/internal/approval"
 	"clusterguard.io/ha/internal/lifecycle"
 	"clusterguard.io/ha/internal/store"
 	"clusterguard.io/ha/internal/workflow"
@@ -25,6 +26,7 @@ type Server struct {
 	registry     *adapter.Registry
 	store        *store.Repository
 	workflow     *workflow.Service
+	approvals    *approval.Service
 	refresher    Refresher
 	controlToken string
 	monitorToken string
@@ -51,6 +53,10 @@ type ServerOption func(*Server)
 
 func WithControlToken(token string) ServerOption {
 	return func(server *Server) { server.controlToken = strings.TrimSpace(token) }
+}
+
+func WithApprovalService(service *approval.Service) ServerOption {
+	return func(server *Server) { server.approvals = service }
 }
 
 func WithMonitoringToken(token string) ServerOption {
@@ -128,11 +134,13 @@ func (server *Server) route(writer http.ResponseWriter, request *http.Request) {
 	if strings.HasPrefix(path, "/api/v1/monitoring/") && !server.authorizeMonitoring(writer, request) {
 		return
 	}
-	if mutatingMethod(request.Method) && strings.HasPrefix(path, "/api/v1/") && !server.authorizeControl(writer, request) {
-		return
-	}
-	if mutatingMethod(request.Method) && strings.HasPrefix(path, "/api/v1/") && !server.authorizeMutation(writer, request) {
-		return
+	if mutatingMethod(request.Method) && strings.HasPrefix(path, "/api/v1/") {
+		if !manualGrantExecutionRoute(request.Method, path) && !server.authorizeControl(writer, request) {
+			return
+		}
+		if !server.authorizeMutation(writer, request) {
+			return
+		}
 	}
 	switch {
 	case (request.Method == http.MethodGet || request.Method == http.MethodHead) && (path == "" || path == "/"):
@@ -155,6 +163,8 @@ func (server *Server) route(writer http.ResponseWriter, request *http.Request) {
 		server.nodeResource(writer, request, strings.TrimPrefix(path, "/api/v1/nodes/"))
 	case request.Method == http.MethodGet && path == "/api/v1/metadata/anomalies":
 		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": server.store.Anomalies()})
+	case path == "/api/v1/approvals" || strings.HasPrefix(path, "/api/v1/approvals/"):
+		server.approvalRoute(writer, request, strings.TrimPrefix(path, "/api/v1/approvals"))
 	case request.Method == http.MethodGet && strings.HasPrefix(path, "/api/v1/monitoring/"):
 		server.monitoringRoute(writer, strings.TrimPrefix(path, "/api/v1/monitoring/"))
 	case request.Method == http.MethodGet && (path == "/api/v1/reports" || strings.HasPrefix(path, "/api/v1/reports/")):
@@ -182,6 +192,16 @@ func (server *Server) route(writer http.ResponseWriter, request *http.Request) {
 
 func mutatingMethod(method string) bool {
 	return method == http.MethodPost || method == http.MethodPut || method == http.MethodPatch || method == http.MethodDelete
+}
+
+func manualGrantExecutionRoute(method, path string) bool {
+	if method != http.MethodPost {
+		return false
+	}
+	if path == "/api/v1/operations/execute" {
+		return true
+	}
+	return strings.HasPrefix(path, "/api/v1/operations/") && strings.HasSuffix(path, "/execute")
 }
 
 func (server *Server) authorizeControl(writer http.ResponseWriter, request *http.Request) bool {
@@ -304,6 +324,16 @@ func (server *Server) operationRoute(writer http.ResponseWriter, request *http.R
 	if server.workflow == nil {
 		writeError(writer, http.StatusServiceUnavailable, "workflow service is not configured")
 		return
+	}
+	if action == "execute" {
+		record, err := server.approvedOperation(request.Context(), payload.ApprovalToken, payload.Operation, payload.TargetID)
+		if err != nil {
+			server.writeApprovalError(writer, err)
+			return
+		}
+		payload.Operation = record.Operation
+		payload.TargetID = record.TargetID
+		payload.IdempotencyKey = record.IdempotencyKey
 	}
 	adapterRequest := adapter.OperationRequest{Operation: payload.Operation, TargetID: payload.TargetID, IdempotencyKey: payload.IdempotencyKey, Parameters: payload.Parameters}
 	switch action {

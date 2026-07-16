@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,8 +10,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"clusterguard.io/ha/adapters/mysql"
+	"clusterguard.io/ha/internal/approval"
 	"clusterguard.io/ha/internal/store"
 	"clusterguard.io/ha/internal/workflow"
 	"clusterguard.io/ha/pkg/adapter"
@@ -66,12 +69,13 @@ func newDurableOperationAPIServer(t *testing.T) (*Server, *store.Repository) {
 		t.Fatalf("register MySQL adapter: %v", err)
 	}
 	repository := store.NewMemory()
+	approvalService := approval.New(repository, rand.Reader, time.Now)
 	resolver := workflow.OperationResolverFunc(func(_ context.Context, request adapter.OperationRequest) (adapter.OperationRequest, error) {
 		return request, nil
 	})
 	service := workflow.New(registry, workflow.TopologyDiscovery{Reader: repository}, workflow.AllowAllSafety{}, workflow.NewMemoryLocks(), workflow.AllowAllApproval{}, repository,
 		workflow.WithOperationStore(repository), workflow.WithOperationResolver(resolver))
-	return NewServer(registry, repository, service, &fakeRefresher{}, WithControlToken(testControlToken)), repository
+	return NewServer(registry, repository, service, &fakeRefresher{}, WithControlToken(testControlToken), WithApprovalService(approvalService)), repository
 }
 
 func operationRequestBody(clusterID model.ResourceID, targetID model.ResourceID, key string) map[string]interface{} {
@@ -210,12 +214,12 @@ func TestOperationAPIDefaultExecutionIsUnsupportedBeforeSideEffects(t *testing.T
 	created := decodeOperationResult(t, createdResponse.Body.Bytes())
 
 	executeResponse := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/operations/"+string(created.ResourceID)+"/execute", map[string]string{"approval_token": "approved"})
-	if executeResponse.Code != http.StatusNotImplemented {
+	if executeResponse.Code != http.StatusUnauthorized {
 		t.Fatalf("execute status=%d body=%s", executeResponse.Code, executeResponse.Body.String())
 	}
 	persisted, found := repository.Operation(created.ResourceID)
-	if !found || persisted.Status != model.OperationUnsupported {
-		t.Fatalf("unsupported terminal outcome was not persisted: found=%t record=%+v", found, persisted)
+	if !found || persisted.Status != model.OperationPlanned {
+		t.Fatalf("unapproved operation changed state: found=%t record=%+v", found, persisted)
 	}
 	if len(persisted.Attempts) != 0 {
 		t.Fatalf("unsupported operation recorded mutating steps: %+v", persisted.Attempts)
@@ -234,7 +238,7 @@ func TestOperationAPIMapsIndeterminateExecutionToServerError(t *testing.T) {
 	}
 
 	response := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/operations/"+string(created.ResourceID)+"/execute", map[string]string{"approval_token": "approved"})
-	if response.Code != http.StatusInternalServerError || !strings.Contains(response.Body.String(), string(model.OperationIndeterminate)) {
+	if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), "approval grant") {
 		t.Fatalf("indeterminate execute status=%d body=%s", response.Code, response.Body.String())
 	}
 }

@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +21,7 @@ import (
 	"clusterguard.io/ha/adapters/oracle"
 	"clusterguard.io/ha/adapters/postgresql"
 	"clusterguard.io/ha/adapters/sqlserver"
+	"clusterguard.io/ha/internal/approval"
 	"clusterguard.io/ha/internal/store"
 	"clusterguard.io/ha/internal/workflow"
 	"clusterguard.io/ha/pkg/adapter"
@@ -140,8 +142,9 @@ func newTestServer(t *testing.T) (*Server, *store.Repository) {
 		}
 	}
 	repository := store.NewMemory()
+	approvalService := approval.New(repository, rand.Reader, time.Now)
 	service := workflow.New(registry, workflow.TopologyDiscovery{Reader: repository}, workflow.AllowAllSafety{}, workflow.NewMemoryLocks(), workflow.AllowAllApproval{}, repository)
-	return NewServer(registry, repository, service, &fakeRefresher{}, WithControlToken(testControlToken)), repository
+	return NewServer(registry, repository, service, &fakeRefresher{}, WithControlToken(testControlToken), WithApprovalService(approvalService)), repository
 }
 
 func callJSON(t *testing.T, handler http.Handler, method string, path string, body interface{}) *httptest.ResponseRecorder {
@@ -310,7 +313,7 @@ func TestExecuteEndpointFailsClosedWhenMutationIsUnsupported(t *testing.T) {
 		"approval_token":  "approved",
 	}
 	response := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/operations/execute", payload)
-	if response.Code != http.StatusNotImplemented || !strings.Contains(response.Body.String(), "unsupported") {
+	if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), "approval grant") {
 		t.Fatalf("unsupported execute must fail closed: %d %s", response.Code, response.Body.String())
 	}
 }
