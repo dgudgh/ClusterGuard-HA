@@ -13,12 +13,54 @@ import (
 	"time"
 
 	"clusterguard.io/ha/internal/agent"
+	platformauth "clusterguard.io/ha/internal/auth"
 	"clusterguard.io/ha/internal/config"
 	"clusterguard.io/ha/internal/endpoint"
 	"clusterguard.io/ha/internal/store"
 	"clusterguard.io/ha/pkg/adapter"
 	"clusterguard.io/ha/pkg/model"
 )
+
+func TestRuntimeBootstrapsDefaultAdministratorOnce(t *testing.T) {
+	metadataPath := filepath.Join(t.TempDir(), "metadata.json")
+	configuration := config.File{MetadataPath: metadataPath}
+
+	first, err := New(configuration)
+	if err != nil {
+		t.Fatalf("start first runtime: %v", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("close first runtime: %v", err)
+	}
+	repository, err := store.Open(metadataPath)
+	if err != nil {
+		t.Fatalf("open bootstrapped metadata: %v", err)
+	}
+	users := repository.PlatformUsers()
+	if len(users) != 1 || users[0].Username != platformauth.DefaultAdminUsername ||
+		users[0].Role != model.PlatformRoleAdmin || !users[0].MustChangePassword {
+		t.Fatalf("unexpected bootstrap users: %+v", users)
+	}
+	if users[0].PasswordHash == "" || bytes.Contains([]byte(users[0].PasswordHash), []byte(platformauth.DefaultAdminPassword)) {
+		t.Fatal("runtime persisted the bootstrap password without hashing")
+	}
+	firstUserID := users[0].ResourceID
+
+	second, err := New(configuration)
+	if err != nil {
+		t.Fatalf("restart runtime: %v", err)
+	}
+	if err := second.Close(); err != nil {
+		t.Fatalf("close restarted runtime: %v", err)
+	}
+	reopened, err := store.Open(metadataPath)
+	if err != nil {
+		t.Fatalf("reopen metadata: %v", err)
+	}
+	if users := reopened.PlatformUsers(); len(users) != 1 || users[0].ResourceID != firstUserID {
+		t.Fatalf("runtime restart duplicated bootstrap administrator: %+v", users)
+	}
+}
 
 type runtimeFailoverAuthority struct{ err error }
 

@@ -16,6 +16,7 @@ import (
 	"clusterguard.io/ha/adapters/sqlserver"
 	"clusterguard.io/ha/internal/api"
 	"clusterguard.io/ha/internal/approval"
+	platformauth "clusterguard.io/ha/internal/auth"
 	"clusterguard.io/ha/internal/config"
 	"clusterguard.io/ha/internal/consensus"
 	"clusterguard.io/ha/internal/coordination"
@@ -32,10 +33,36 @@ import (
 type Runtime struct {
 	server            *api.Server
 	consensus         *consensus.Node
+	authentication    *platformauth.Service
 	automaticRecovery *recovery.Controller
 	runCtx            context.Context
 	cancel            context.CancelFunc
 	wait              sync.WaitGroup
+}
+
+func runAuthenticationBootstrap(
+	ctx context.Context,
+	repository *store.Repository,
+	service *platformauth.Service,
+	authority coordination.MutationAuthority,
+) {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if _, found := repository.PlatformUserByUsername(platformauth.DefaultAdminUsername); found {
+			return
+		}
+		if authority == nil || authority.RequireMutationAuthority(ctx) == nil {
+			if _, err := service.EnsureBootstrapAdmin(ctx); err == nil {
+				return
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 type mysqlFailoverRuntime struct {
@@ -161,6 +188,22 @@ func New(configuration config.File) (*Runtime, error) {
 			_ = result.Close()
 			return nil, fmt.Errorf("attach replicated metadata store: %w", err)
 		}
+	}
+	result.authentication = platformauth.New(
+		repository,
+		platformauth.DefaultArgon2Hasher(rand.Reader),
+		rand.Reader,
+		time.Now,
+		8*time.Hour,
+	)
+	if result.consensus == nil {
+		if _, err := result.authentication.EnsureBootstrapAdmin(context.Background()); err != nil {
+			return nil, fmt.Errorf("bootstrap platform administrator: %w", err)
+		}
+	} else {
+		result.startLoop(func(ctx context.Context) {
+			runAuthenticationBootstrap(ctx, repository, result.authentication, result.consensus)
+		})
 	}
 	registry := adapter.NewRegistry()
 	var endpointProvider adapter.HAEndpointProvider = mysql.UnsupportedHAEndpointProvider{}
