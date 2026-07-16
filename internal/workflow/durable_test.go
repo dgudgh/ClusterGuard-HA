@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 
 type durableAdapter struct {
 	adapter.UnsupportedAdapter
+	buildPlanCalls     int
 	executeCalls       int
 	verifyCalls        int
 	executeError       error
@@ -23,6 +25,7 @@ type durableAdapter struct {
 	executeRelease     chan struct{}
 	afterExecute       func()
 	verificationResult *model.Verification
+	planDigest         func(adapter.OperationRequest) string
 }
 
 func newDurableAdapter() *durableAdapter {
@@ -50,7 +53,12 @@ func (candidate *durableAdapter) Precheck(context.Context, adapter.OperationRequ
 }
 
 func (candidate *durableAdapter) BuildPlan(_ context.Context, request adapter.OperationRequest) (model.OperationPlan, error) {
+	candidate.buildPlanCalls++
 	resolved := request.Resolved
+	digest := "sha256:durable-test"
+	if candidate.planDigest != nil {
+		digest = candidate.planDigest(request)
+	}
 	return model.OperationPlan{
 		OperationID: request.Operation.ResourceID, ClusterID: request.Operation.ClusterID,
 		SourceID: resolved.Primary.ResourceID, TargetID: request.TargetID, Stage: model.StagePlan,
@@ -62,7 +70,7 @@ func (candidate *durableAdapter) BuildPlan(_ context.Context, request adapter.Op
 		},
 		Checks: []model.Check{{Name: "ready", Status: model.CheckPass}},
 		Steps:  []model.PlanStep{{Index: 1, Name: "execute", Owner: "test", TargetID: request.TargetID, Mutating: true}},
-		Digest: "sha256:durable-test", Summary: "durable test plan", Mutating: true,
+		Digest: digest, Summary: "durable test plan", Mutating: true,
 	}, nil
 }
 
@@ -390,6 +398,54 @@ func TestDurablePrecheckAndPlanPersistReadOnlyStages(t *testing.T) {
 	}
 	if record.Stage != model.StagePlan || record.Status != model.OperationPlanned || plan.Digest == "" || record.Plan.Digest != plan.Digest {
 		t.Fatalf("plan stage was not persisted: record=%+v plan=%+v", record, plan)
+	}
+}
+
+func TestDurableWorkflowReusesPersistedPlanWhenOnlyMetadataRevisionsAdvance(t *testing.T) {
+	request, resolved := durableRequestFixture()
+	repository := store.NewMemory()
+	candidate := newDurableAdapter()
+	candidate.planDigest = func(request adapter.OperationRequest) string {
+		return fmt.Sprintf("sha256:revision-%d", request.Resolved.Cluster.MetadataRevision)
+	}
+	registry := adapter.NewRegistry()
+	if err := registry.Register(candidate); err != nil {
+		t.Fatalf("register adapter: %v", err)
+	}
+	current := resolved
+	trace := []string{}
+	resolver := OperationResolverFunc(func(_ context.Context, candidate adapter.OperationRequest) (adapter.OperationRequest, error) {
+		candidate.Resolved = &current
+		candidate.Credentials = current.Credentials
+		return candidate, nil
+	})
+	service := New(registry, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, repository,
+		WithOperationStore(repository), WithOperationResolver(resolver))
+
+	record, plan, err := service.Plan(context.Background(), request)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if candidate.buildPlanCalls != 1 || record.Plan.Digest != plan.Digest {
+		t.Fatalf("initial durable plan was not persisted exactly once: calls=%d record=%+v plan=%+v", candidate.buildPlanCalls, record, plan)
+	}
+
+	current.Cluster.MetadataRevision++
+	current.Primary.MetadataRevision++
+	current.Target.MetadataRevision++
+	for index := range current.Snapshot.Instances {
+		current.Snapshot.Instances[index].MetadataRevision++
+	}
+
+	execution, err := service.Execute(context.Background(), request, "approved")
+	if err != nil || execution.Status != model.OperationSucceeded {
+		t.Fatalf("execute persisted plan after revision-only refresh: result=%+v err=%v", execution, err)
+	}
+	if candidate.buildPlanCalls != 1 {
+		t.Fatalf("execution rebuilt an already persisted plan: calls=%d", candidate.buildPlanCalls)
+	}
+	if candidate.executeCalls != 1 {
+		t.Fatalf("persisted plan was not executed: calls=%d", candidate.executeCalls)
 	}
 }
 

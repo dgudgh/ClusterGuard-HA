@@ -346,17 +346,24 @@ func (service *Service) executeDurable(ctx context.Context, request adapter.Oper
 		execution := newDurableExecution(operation.ResourceID, model.OperationBlocked, "precheck contains blocking checks", service.now)
 		return service.finishDurable(record.ResourceID, operation, model.StagePrecheck, execution, "pre_commit", errors.New(execution.Message), false)
 	}
-	plan, err := candidate.BuildPlan(ctx, request)
-	if err != nil {
-		execution := newDurableExecution(operation.ResourceID, model.OperationFailed, err.Error(), service.now)
-		return service.finishDurable(record.ResourceID, operation, model.StagePlan, execution, "pre_commit", err, false)
+	planAuditMessage := "immutable adapter operation plan reused"
+	if record.Plan.Digest == "" {
+		plan, planErr := candidate.BuildPlan(ctx, request)
+		if planErr != nil {
+			execution := newDurableExecution(operation.ResourceID, model.OperationFailed, planErr.Error(), service.now)
+			return service.finishDurable(record.ResourceID, operation, model.StagePlan, execution, "pre_commit", planErr, false)
+		}
+		record, err = service.putDurablePlan(record, plan)
+		if err != nil {
+			execution := newDurableExecution(operation.ResourceID, model.OperationBlocked, err.Error(), service.now)
+			return service.finishDurable(record.ResourceID, operation, model.StagePlan, execution, "stale_plan", err, false)
+		}
+		planAuditMessage = "immutable adapter operation plan persisted"
+	} else if record.Plan.ObservationToken != observationLabel {
+		execution := newDurableExecution(operation.ResourceID, model.OperationBlocked, "persisted operation plan observation changed", service.now)
+		return service.finishDurable(record.ResourceID, operation, model.StagePlan, execution, "stale_plan", errors.New(execution.Message), false)
 	}
-	record, err = service.putDurablePlan(record, plan)
-	if err != nil {
-		execution := newDurableExecution(operation.ResourceID, model.OperationBlocked, err.Error(), service.now)
-		return service.finishDurable(record.ResourceID, operation, model.StagePlan, execution, "stale_plan", err, false)
-	}
-	if err := service.audit(operation, model.StagePlan, "immutable adapter operation plan persisted"); err != nil {
+	if err := service.audit(operation, model.StagePlan, planAuditMessage); err != nil {
 		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
 	}
 	if err := service.safety.Evaluate(ctx, operation); err != nil {
