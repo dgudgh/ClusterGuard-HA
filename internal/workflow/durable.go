@@ -123,13 +123,16 @@ func (service *Service) advanceDurable(resourceID model.ResourceID, stage model.
 func (service *Service) putDurablePlan(record model.OperationRecord, plan model.OperationPlan) (model.OperationRecord, error) {
 	if record.Plan.Digest != "" {
 		if record.Plan.Digest != plan.Digest {
-			return model.OperationRecord{}, fmt.Errorf("persisted operation plan differs from current topology")
+			return record, fmt.Errorf("persisted operation plan differs from current topology")
 		}
 		return record, nil
 	}
 	updated, err := service.operations.PutOperationPlan(record.ResourceID, record.MetadataRevision, plan)
 	if err != nil && isCommittedWarning(err) {
 		return service.durableRecord(record.ResourceID)
+	}
+	if err != nil {
+		return record, err
 	}
 	return updated, err
 }

@@ -138,6 +138,15 @@ func (repository *failingAtomicRepository) FinalizeOperation(model.ResourceID, u
 	return model.OperationRecord{}, repository.err
 }
 
+type failingPlanRepository struct {
+	*store.Repository
+	err error
+}
+
+func (repository *failingPlanRepository) PutOperationPlan(model.ResourceID, uint64, model.OperationPlan) (model.OperationRecord, error) {
+	return model.OperationRecord{}, repository.err
+}
+
 func durableRequestFixture() (adapter.OperationRequest, adapter.ResolvedOperation) {
 	observedAt := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
 	cluster := model.DatabaseCluster{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID(), MetadataRevision: 2}, Engine: model.EngineMySQL, DisplayName: "mysql-test"}
@@ -446,6 +455,23 @@ func TestDurableWorkflowReusesPersistedPlanWhenOnlyMetadataRevisionsAdvance(t *t
 	}
 	if candidate.executeCalls != 1 {
 		t.Fatalf("persisted plan was not executed: calls=%d", candidate.executeCalls)
+	}
+}
+
+func TestPutDurablePlanPreservesOperationIdentityOnPersistenceFailure(t *testing.T) {
+	failure := errors.New("plan persistence unavailable")
+	repository := &failingPlanRepository{Repository: store.NewMemory(), err: failure}
+	service := &Service{operations: repository}
+	record := model.OperationRecord{
+		ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID(), MetadataRevision: 4},
+	}
+
+	returned, err := service.putDurablePlan(record, model.OperationPlan{Digest: "sha256:test"})
+	if !errors.Is(err, failure) {
+		t.Fatalf("plan persistence error=%v, want %v", err, failure)
+	}
+	if returned.ResourceID != record.ResourceID || returned.MetadataRevision != record.MetadataRevision {
+		t.Fatalf("plan persistence failure lost operation identity: returned=%+v record=%+v", returned, record)
 	}
 }
 
