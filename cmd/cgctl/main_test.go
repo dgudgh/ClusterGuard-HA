@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -23,12 +24,178 @@ func TestRequestForCommands(t *testing.T) {
 		{[]string{"metrics", "cluster-id"}, http.MethodGet, "/api/v1/clusters/cluster-id/metrics"},
 		{[]string{"refresh", "cluster-id"}, http.MethodPost, "/api/v1/clusters/cluster-id/discover"},
 		{[]string{"operation", "11111111-1111-4111-8111-111111111111"}, http.MethodGet, "/api/v1/operations/11111111-1111-4111-8111-111111111111"},
+		{[]string{"approval", "issue", "--cluster", "cluster-id"}, http.MethodPost, "/api/v1/approvals"},
+		{[]string{"approval", "list"}, http.MethodGet, "/api/v1/approvals"},
+		{[]string{"approval", "show", "11111111-1111-4111-8111-111111111111"}, http.MethodGet, "/api/v1/approvals/11111111-1111-4111-8111-111111111111"},
 	}
 	for _, test := range tests {
 		method, path, err := requestFor(test.arguments)
 		if err != nil || method != test.method || path != test.path {
 			t.Fatalf("requestFor(%v) = %s %s, %v; want %s %s", test.arguments, method, path, err, test.method, test.path)
 		}
+	}
+}
+
+func TestRunApprovalIssueUsesAdministrativeCredentialAndPrintsSecretOnce(t *testing.T) {
+	var method, path, authorization string
+	var body map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		method = request.Method
+		path = request.URL.Path
+		authorization = request.Header.Get("Authorization")
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatalf("decode issue request: %v", err)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(writer, `{
+  "status":"ok",
+  "result":{
+    "operation":{"resource_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"},
+    "grant":{
+      "resource_id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "operation_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "cluster_id":"11111111-1111-4111-8111-111111111111",
+      "engine":"mysql",
+      "operation_kind":"switchover",
+      "target_id":"22222222-2222-4222-8222-222222222222",
+      "issued_by":"platform-admin",
+      "issued_at":"2026-07-16T10:00:00Z",
+      "expires_at":"2026-07-16T10:05:00Z",
+      "status":"active"
+    },
+    "approval_token":"cgag_bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.c2VjcmV0"
+  }
+}`)
+	}))
+	defer server.Close()
+
+	t.Setenv("CG_CONTROL_TOKEN", "administrator-secret")
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{
+		"--server", server.URL,
+		"approval", "issue",
+		"--cluster", "11111111-1111-4111-8111-111111111111",
+		"--engine", "mysql",
+		"--kind", "switchover",
+		"--target", "22222222-2222-4222-8222-222222222222",
+		"--issued-by", "platform-admin",
+		"--ttl", "5m",
+	}, &stdout, &stderr, server.Client())
+	if exitCode != 0 || stderr.Len() != 0 {
+		t.Fatalf("run exit=%d stderr=%q", exitCode, stderr.String())
+	}
+	if method != http.MethodPost || path != "/api/v1/approvals" || authorization != "Bearer administrator-secret" {
+		t.Fatalf("issue request=%s %s authorization=%q", method, path, authorization)
+	}
+	for name, expected := range map[string]interface{}{
+		"cluster_id":     "11111111-1111-4111-8111-111111111111",
+		"engine":         "mysql",
+		"operation_kind": "switchover",
+		"target_id":      "22222222-2222-4222-8222-222222222222",
+		"issued_by":      "platform-admin",
+		"ttl_seconds":    float64(300),
+	} {
+		if body[name] != expected {
+			t.Fatalf("issue body %s=%v want %v; body=%v", name, body[name], expected, body)
+		}
+	}
+	for _, expected := range []string{
+		"Approval token is shown once and cannot be recovered.",
+		"grant=bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+		"operation=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+		"cgag_bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.c2VjcmV0",
+	} {
+		if !strings.Contains(stdout.String(), expected) {
+			t.Fatalf("issue output missing %q:\n%s", expected, stdout.String())
+		}
+	}
+}
+
+func TestRunApprovalListAndShowAreReadOnlyAndSanitized(t *testing.T) {
+	tests := []struct {
+		name     string
+		command  []string
+		response string
+		want     []string
+	}{
+		{
+			name:    "list",
+			command: []string{"approval", "list"},
+			response: `{"status":"ok","result":[{
+			  "resource_id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+			  "operation_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+			  "cluster_id":"11111111-1111-4111-8111-111111111111",
+			  "engine":"mysql","operation_kind":"switchover",
+			  "target_id":"22222222-2222-4222-8222-222222222222",
+			  "expires_at":"2026-07-16T10:05:00Z","status":"active"
+			}]}`,
+			want: []string{"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "status=active", "kind=switchover"},
+		},
+		{
+			name:    "show",
+			command: []string{"approval", "show", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"},
+			response: `{"status":"ok","result":{
+			  "resource_id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+			  "operation_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+			  "cluster_id":"11111111-1111-4111-8111-111111111111",
+			  "engine":"mysql","operation_kind":"switchover",
+			  "target_id":"22222222-2222-4222-8222-222222222222",
+			  "expires_at":"2026-07-16T10:05:00Z","status":"consumed",
+			  "consumed_by_operation_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+			}}`,
+			want: []string{"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "status=consumed", "operation=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var authorization string
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				authorization = request.Header.Get("Authorization")
+				writer.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(writer, test.response)
+			}))
+			defer server.Close()
+			t.Setenv("CG_CONTROL_TOKEN", "must-not-be-sent")
+			var stdout, stderr bytes.Buffer
+			arguments := append([]string{"--server", server.URL}, test.command...)
+			if exitCode := run(arguments, &stdout, &stderr, server.Client()); exitCode != 0 || stderr.Len() != 0 {
+				t.Fatalf("run exit=%d stderr=%q", exitCode, stderr.String())
+			}
+			if authorization != "" {
+				t.Fatalf("read-only approval request sent authorization=%q", authorization)
+			}
+			for _, expected := range test.want {
+				if !strings.Contains(stdout.String(), expected) {
+					t.Fatalf("output missing %q:\n%s", expected, stdout.String())
+				}
+			}
+			if strings.Contains(stdout.String(), "token_hash") || strings.Contains(stdout.String(), "cgag_") {
+				t.Fatalf("sanitized output exposed a token: %s", stdout.String())
+			}
+		})
+	}
+}
+
+func TestRunApprovalIssueRejectsInvalidTTLBeforeRequest(t *testing.T) {
+	requested := false
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requested = true
+	}))
+	defer server.Close()
+	t.Setenv("CG_CONTROL_TOKEN", "administrator-secret")
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{
+		"--server", server.URL,
+		"approval", "issue",
+		"--cluster", "11111111-1111-4111-8111-111111111111",
+		"--engine", "mysql",
+		"--kind", "switchover",
+		"--target", "22222222-2222-4222-8222-222222222222",
+		"--issued-by", "platform-admin",
+		"--ttl", "16m",
+	}, &stdout, &stderr, server.Client())
+	if exitCode != 2 || requested || !strings.Contains(stderr.String(), "TTL") {
+		t.Fatalf("invalid TTL exit=%d requested=%t stderr=%q", exitCode, requested, stderr.String())
 	}
 }
 

@@ -28,9 +28,19 @@ type apiEnvelope struct {
 	Result  json.RawMessage `json:"result"`
 }
 
+type approvalIssueRequest struct {
+	ClusterID      model.ResourceID    `json:"cluster_id"`
+	Engine         model.Engine        `json:"engine"`
+	OperationKind  model.OperationKind `json:"operation_kind"`
+	TargetID       model.ResourceID    `json:"target_id"`
+	IssuedBy       string              `json:"issued_by"`
+	TTLSeconds     int64               `json:"ttl_seconds"`
+	IdempotencyKey string              `json:"idempotency_key,omitempty"`
+}
+
 func requestFor(arguments []string) (method string, path string, err error) {
 	if len(arguments) == 0 {
-		return "", "", fmt.Errorf("command is required: engines, clusters, topology, health, candidates, metrics, refresh, operation")
+		return "", "", fmt.Errorf("command is required: engines, clusters, topology, health, candidates, metrics, refresh, operation, approval")
 	}
 	command := arguments[0]
 	switch command {
@@ -55,9 +65,64 @@ func requestFor(arguments []string) (method string, path string, err error) {
 			return "", "", fmt.Errorf("operation requires a platform operation UUID")
 		}
 		return http.MethodGet, "/api/v1/operations/" + url.PathEscape(arguments[1]), nil
+	case "approval":
+		if len(arguments) < 2 {
+			return "", "", fmt.Errorf("approval requires a subcommand: issue, list, show")
+		}
+		switch arguments[1] {
+		case "issue":
+			return http.MethodPost, "/api/v1/approvals", nil
+		case "list":
+			if len(arguments) != 2 {
+				return "", "", fmt.Errorf("approval list does not accept arguments")
+			}
+			return http.MethodGet, "/api/v1/approvals", nil
+		case "show":
+			if len(arguments) != 3 || strings.TrimSpace(arguments[2]) == "" {
+				return "", "", fmt.Errorf("approval show requires a platform approval UUID")
+			}
+			return http.MethodGet, "/api/v1/approvals/" + url.PathEscape(arguments[2]), nil
+		default:
+			return "", "", fmt.Errorf("unknown approval subcommand %q", arguments[1])
+		}
 	default:
 		return "", "", fmt.Errorf("unknown command %q", command)
 	}
+}
+
+func parseApprovalIssue(arguments []string, stderr io.Writer) (approvalIssueRequest, error) {
+	flags := flag.NewFlagSet("cgctl approval issue", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	clusterID := flags.String("cluster", "", "platform cluster UUID")
+	engine := flags.String("engine", "mysql", "database engine")
+	kind := flags.String("kind", "", "operation kind")
+	targetID := flags.String("target", "", "platform target instance UUID")
+	issuedBy := flags.String("issued-by", "", "administrator identity")
+	ttl := flags.Duration("ttl", 5*time.Minute, "single-use grant lifetime")
+	idempotencyKey := flags.String("idempotency-key", "", "optional operation idempotency key")
+	if err := flags.Parse(arguments); err != nil {
+		return approvalIssueRequest{}, err
+	}
+	if flags.NArg() != 0 {
+		return approvalIssueRequest{}, fmt.Errorf("approval issue does not accept positional arguments")
+	}
+	request := approvalIssueRequest{
+		ClusterID:      model.ResourceID(strings.TrimSpace(*clusterID)),
+		Engine:         model.Engine(strings.TrimSpace(*engine)),
+		OperationKind:  model.OperationKind(strings.TrimSpace(*kind)),
+		TargetID:       model.ResourceID(strings.TrimSpace(*targetID)),
+		IssuedBy:       strings.TrimSpace(*issuedBy),
+		TTLSeconds:     int64((*ttl) / time.Second),
+		IdempotencyKey: strings.TrimSpace(*idempotencyKey),
+	}
+	if !model.ValidResourceID(request.ClusterID) || !model.ValidResourceID(request.TargetID) ||
+		!request.Engine.Valid() || request.OperationKind == "" || request.IssuedBy == "" {
+		return approvalIssueRequest{}, fmt.Errorf("approval issue requires valid --cluster, --engine, --kind, --target, and --issued-by values")
+	}
+	if *ttl <= 0 || *ttl > 15*time.Minute || time.Duration(request.TTLSeconds)*time.Second != *ttl {
+		return approvalIssueRequest{}, fmt.Errorf("approval TTL must be a whole number of seconds between 1s and 15m")
+	}
+	return request, nil
 }
 
 func run(arguments []string, stdout io.Writer, stderr io.Writer, client httpDoer) int {
@@ -88,7 +153,20 @@ func run(arguments []string, stdout io.Writer, stderr io.Writer, client httpDoer
 			_, _ = fmt.Fprintf(stderr, "cgctl: control token environment variable %s is empty\n", environment)
 			return 2
 		}
-		requestBody = strings.NewReader("{}")
+		body := []byte("{}")
+		if len(flags.Args()) >= 2 && flags.Args()[0] == "approval" && flags.Args()[1] == "issue" {
+			issue, parseErr := parseApprovalIssue(flags.Args()[2:], stderr)
+			if parseErr != nil {
+				_, _ = fmt.Fprintln(stderr, "cgctl:", parseErr)
+				return 2
+			}
+			body, err = json.Marshal(issue)
+			if err != nil {
+				_, _ = fmt.Fprintln(stderr, "cgctl: invalid approval request")
+				return 2
+			}
+		}
+		requestBody = bytes.NewReader(body)
 	}
 	request, err := http.NewRequest(method, strings.TrimRight(*serverURL, "/")+path, requestBody)
 	if err != nil {
@@ -134,7 +212,11 @@ func run(arguments []string, stdout io.Writer, stderr io.Writer, client httpDoer
 		_, _ = formatted.WriteTo(stdout)
 		return 0
 	}
-	if err := writeHuman(stdout, flags.Args()[0], envelope.Result); err != nil {
+	humanCommand := flags.Args()[0]
+	if humanCommand == "approval" && len(flags.Args()) >= 2 {
+		humanCommand += " " + flags.Args()[1]
+	}
+	if err := writeHuman(stdout, humanCommand, envelope.Result); err != nil {
 		_, _ = fmt.Fprintln(stderr, "cgctl: invalid API result")
 		return 1
 	}
@@ -240,10 +322,48 @@ func writeHuman(writer io.Writer, command string, result json.RawMessage) error 
 		_, _ = fmt.Fprintf(writer, "%s\tengine=%s\tkind=%s\ttarget=%s\tstage=%s\tstatus=%s\tmessage=%s\n",
 			operation.ResourceID, operation.Operation.Engine, operation.Operation.Kind, operation.TargetID,
 			valueOrUnknown(string(operation.Stage)), valueOrUnknown(string(operation.Status)), valueOrDash(operation.Message))
+	case "approval issue":
+		var issued struct {
+			Operation     model.OperationRecord `json:"operation"`
+			Grant         model.ApprovalGrant   `json:"grant"`
+			ApprovalToken string                `json:"approval_token"`
+		}
+		if err := json.Unmarshal(result, &issued); err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintln(writer, "Approval token is shown once and cannot be recovered.")
+		_, _ = fmt.Fprintf(writer, "operation=%s\tgrant=%s\tcluster=%s\tengine=%s\tkind=%s\ttarget=%s\texpires=%s\n",
+			issued.Operation.ResourceID, issued.Grant.ResourceID, issued.Grant.ClusterID, issued.Grant.Engine,
+			issued.Grant.OperationKind, issued.Grant.TargetID, issued.Grant.ExpiresAt.UTC().Format(time.RFC3339))
+		_, _ = fmt.Fprintln(writer, issued.ApprovalToken)
+	case "approval list":
+		var grants []model.ApprovalGrant
+		if err := json.Unmarshal(result, &grants); err != nil {
+			return err
+		}
+		for _, grant := range grants {
+			writeApprovalGrant(writer, grant)
+		}
+	case "approval show":
+		var grant model.ApprovalGrant
+		if err := json.Unmarshal(result, &grant); err != nil {
+			return err
+		}
+		writeApprovalGrant(writer, grant)
 	default:
 		return fmt.Errorf("unsupported human output command %q", command)
 	}
 	return nil
+}
+
+func writeApprovalGrant(writer io.Writer, grant model.ApprovalGrant) {
+	_, _ = fmt.Fprintf(writer, "%s\toperation=%s\tcluster=%s\tengine=%s\tkind=%s\ttarget=%s\tstatus=%s\texpires=%s",
+		grant.ResourceID, grant.OperationID, grant.ClusterID, grant.Engine, grant.OperationKind, grant.TargetID,
+		valueOrUnknown(string(grant.Status)), grant.ExpiresAt.UTC().Format(time.RFC3339))
+	if grant.ConsumedByOperationID != "" {
+		_, _ = fmt.Fprintf(writer, "\tconsumed_by=%s", grant.ConsumedByOperationID)
+	}
+	_, _ = fmt.Fprintln(writer)
 }
 
 func displayEndpoint(instance model.DatabaseInstance) string {
