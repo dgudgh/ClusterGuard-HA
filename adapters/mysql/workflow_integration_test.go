@@ -25,6 +25,10 @@ func (integrationGates) Acquire(context.Context, model.Operation) (func(), error
 	return func() {}, nil
 }
 func (integrationGates) Validate(context.Context, model.Operation, string) error { return nil }
+func (integrationGates) Consume(_ context.Context, operation model.OperationRecord, _ string) (model.ResourceID, model.OperationRecord, error) {
+	operation.Stage = model.StageApprove
+	return model.NewResourceID(), operation, nil
+}
 
 func TestGuardedMySQLSwitchoverRunsThroughDurableWorkflow(t *testing.T) {
 	request := switchoverRequestFixture()

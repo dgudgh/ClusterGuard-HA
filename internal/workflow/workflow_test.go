@@ -97,6 +97,12 @@ func (gate recordingGate) Acquire(context.Context, model.Operation) (func(), err
 	*gate.trace = append(*gate.trace, "gate:lock")
 	return func() { *gate.trace = append(*gate.trace, "gate:release") }, nil
 }
+func (gate recordingGate) Consume(_ context.Context, operation model.OperationRecord, _ string) (model.ResourceID, model.OperationRecord, error) {
+	*gate.trace = append(*gate.trace, "gate:approval")
+	operation.Stage = model.StageApprove
+	return model.NewResourceID(), operation, nil
+}
+
 func (gate recordingGate) Validate(context.Context, model.Operation, string) error {
 	*gate.trace = append(*gate.trace, "gate:approval")
 	return nil
@@ -154,6 +160,43 @@ func (journal *finalReportFailingJournal) RecordReport(report model.Report) erro
 type finalReportPostCommitJournal struct {
 	*MemoryJournal
 	calls int
+}
+
+func TestAutomaticExecutionUsesInternalAuthorizationWithoutHumanGrant(t *testing.T) {
+	trace := []string{}
+	registry := adapter.NewRegistry()
+	if err := registry.Register(newRecordingAdapter(&trace, true)); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	service := New(registry, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, recordingGate{&trace}, NewMemoryJournal())
+	request := adapter.OperationRequest{
+		Operation: model.Operation{
+			ClusterID:   model.NewResourceID(),
+			Engine:      model.EngineMySQL,
+			Kind:        model.OperationFailover,
+			RequestedBy: "untrusted-caller",
+		},
+		TargetID: model.NewResourceID(),
+	}
+
+	execution, err := service.ExecuteAutomatic(context.Background(), request, "incident-20260716")
+	if err != nil || execution.Status != model.OperationSucceeded {
+		t.Fatalf("automatic execution=%+v err=%v", execution, err)
+	}
+	for _, entry := range trace {
+		if entry == "gate:approval" {
+			t.Fatalf("automatic recovery consumed a human grant: %v", trace)
+		}
+	}
+	if _, err := service.ExecuteAutomatic(context.Background(), adapter.OperationRequest{
+		Operation: model.Operation{ClusterID: model.NewResourceID(), Engine: model.EngineMySQL, Kind: model.OperationSwitchover},
+		TargetID:  model.NewResourceID(),
+	}, "incident-20260716"); err == nil {
+		t.Fatal("automatic switchover was accepted")
+	}
+	if _, err := service.ExecuteAutomatic(context.Background(), request, ""); err == nil {
+		t.Fatal("automatic failover without incident identity was accepted")
+	}
 }
 
 func (journal *finalReportPostCommitJournal) RecordReport(report model.Report) error {

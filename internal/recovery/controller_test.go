@@ -63,24 +63,24 @@ func (stub recoverySelectorStub) Select(_ context.Context, cluster model.Databas
 }
 
 type recoveryExecutorStub struct {
-	mu       sync.Mutex
-	requests []adapter.OperationRequest
-	tokens   []string
-	err      error
+	mu        sync.Mutex
+	requests  []adapter.OperationRequest
+	incidents []string
+	err       error
 }
 
-func (stub *recoveryExecutorStub) Execute(_ context.Context, request adapter.OperationRequest, token string) (model.Execution, error) {
+func (stub *recoveryExecutorStub) ExecuteAutomatic(_ context.Context, request adapter.OperationRequest, incidentID string) (model.Execution, error) {
 	stub.mu.Lock()
 	defer stub.mu.Unlock()
 	stub.requests = append(stub.requests, request)
-	stub.tokens = append(stub.tokens, token)
+	stub.incidents = append(stub.incidents, incidentID)
 	return model.Execution{Status: model.OperationSucceeded}, stub.err
 }
 
 func (stub *recoveryExecutorStub) calls() ([]adapter.OperationRequest, []string) {
 	stub.mu.Lock()
 	defer stub.mu.Unlock()
-	return append([]adapter.OperationRequest{}, stub.requests...), append([]string{}, stub.tokens...)
+	return append([]adapter.OperationRequest{}, stub.requests...), append([]string{}, stub.incidents...)
 }
 
 func recoveryFixture(now time.Time) (model.DatabaseCluster, model.TopologySnapshot, model.ResourceID) {
@@ -106,21 +106,24 @@ func TestControllerExecutesOneAuditedFailoverForStableIncident(t *testing.T) {
 		recoveryStateStub{clusters: []model.DatabaseCluster{cluster}, snapshots: map[model.ResourceID]model.TopologySnapshot{cluster.ResourceID: snapshot}},
 		recoveryFailureEvidenceStub{incidents: map[model.ResourceID]time.Time{cluster.ResourceID: incident}},
 		recoverySelectorStub{targets: map[model.ResourceID]model.ResourceID{cluster.ResourceID: targetID}},
-		executor, recoveryAuthorityStub{}, "automatic-approval", 30*time.Second, func() time.Time { return now },
+		executor, recoveryAuthorityStub{}, 30*time.Second, func() time.Time { return now },
 	)
 	if err := controller.RunOnce(context.Background()); err != nil {
 		t.Fatalf("run automatic failover: %v", err)
 	}
-	requests, tokens := executor.calls()
-	if len(requests) != 1 || len(tokens) != 1 {
-		t.Fatalf("automatic failover calls=%d tokens=%d", len(requests), len(tokens))
+	requests, incidents := executor.calls()
+	if len(requests) != 1 || len(incidents) != 1 {
+		t.Fatalf("automatic failover calls=%d incidents=%d", len(requests), len(incidents))
 	}
 	request := requests[0]
 	if request.Operation.ClusterID != cluster.ResourceID || request.Operation.Engine != model.EngineMySQL || request.Operation.Kind != model.OperationFailover ||
-		request.Operation.RequestedBy != AutomaticRecoveryActor || request.TargetID != targetID || tokens[0] != "automatic-approval" {
-		t.Fatalf("automatic failover request=%+v token=%q", request, tokens[0])
+		request.Operation.RequestedBy != AutomaticRecoveryActor || request.TargetID != targetID {
+		t.Fatalf("automatic failover request=%+v", request)
 	}
 	prefix := automaticFailoverPrefix(cluster.ResourceID, snapshot.Instances[0].ResourceID, incident)
+	if incidents[0] != strings.TrimSuffix(prefix, ":") {
+		t.Fatalf("incident ID=%q, want %q", incidents[0], strings.TrimSuffix(prefix, ":"))
+	}
 	if request.IdempotencyKey != prefix+"1" {
 		t.Fatalf("idempotency key=%q, want %q", request.IdempotencyKey, prefix+"1")
 	}
@@ -142,7 +145,7 @@ func TestControllerDoesNothingWithoutLeaderMajorityOrStableIncident(t *testing.T
 			controller := NewController(
 				recoveryStateStub{clusters: []model.DatabaseCluster{cluster}, snapshots: map[model.ResourceID]model.TopologySnapshot{cluster.ResourceID: snapshot}},
 				testCase.evidence, recoverySelectorStub{targets: map[model.ResourceID]model.ResourceID{cluster.ResourceID: targetID}},
-				executor, testCase.authority, "automatic-approval", 30*time.Second, func() time.Time { return now },
+				executor, testCase.authority, 30*time.Second, func() time.Time { return now },
 			)
 			if err := controller.RunOnce(context.Background()); err != nil {
 				t.Fatalf("run once: %v", err)
@@ -171,7 +174,7 @@ func TestControllerDoesNotRepeatSucceededOrIndeterminateIncident(t *testing.T) {
 				}}},
 			},
 			recoveryFailureEvidenceStub{incidents: map[model.ResourceID]time.Time{cluster.ResourceID: incident}},
-			recoverySelectorStub{targets: map[model.ResourceID]model.ResourceID{cluster.ResourceID: targetID}}, executor, recoveryAuthorityStub{}, "approval", 30*time.Second, func() time.Time { return now },
+			recoverySelectorStub{targets: map[model.ResourceID]model.ResourceID{cluster.ResourceID: targetID}}, executor, recoveryAuthorityStub{}, 30*time.Second, func() time.Time { return now },
 		)
 		if err := controller.RunOnce(context.Background()); err != nil {
 			t.Fatalf("run completed incident: %v", err)
@@ -198,7 +201,7 @@ func TestControllerRetriesBlockedIncidentAfterBackoff(t *testing.T) {
 			}}},
 		},
 		recoveryFailureEvidenceStub{incidents: map[model.ResourceID]time.Time{cluster.ResourceID: incident}},
-		recoverySelectorStub{targets: map[model.ResourceID]model.ResourceID{cluster.ResourceID: targetID}}, executor, recoveryAuthorityStub{}, "approval", 30*time.Second, func() time.Time { return now },
+		recoverySelectorStub{targets: map[model.ResourceID]model.ResourceID{cluster.ResourceID: targetID}}, executor, recoveryAuthorityStub{}, 30*time.Second, func() time.Time { return now },
 	)
 	if err := controller.RunOnce(context.Background()); err != nil {
 		t.Fatalf("retry blocked incident: %v", err)
@@ -235,7 +238,7 @@ func TestMySQLCandidateSelectorUsesTheRankOneEligibleReplica(t *testing.T) {
 }
 
 func TestControllerUsesConfiguredPollingInterval(t *testing.T) {
-	controller := NewController(nil, nil, nil, nil, nil, "", 30*time.Second, nil, WithInterval(7*time.Second))
+	controller := NewController(nil, nil, nil, nil, nil, 30*time.Second, nil, WithInterval(7*time.Second))
 	if controller.interval != 7*time.Second {
 		t.Fatalf("controller interval=%s", controller.interval)
 	}

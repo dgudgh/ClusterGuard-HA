@@ -38,19 +38,18 @@ type CandidateSelector interface {
 }
 
 type OperationExecutor interface {
-	Execute(context.Context, adapter.OperationRequest, string) (model.Execution, error)
+	ExecuteAutomatic(context.Context, adapter.OperationRequest, string) (model.Execution, error)
 }
 
 type Controller struct {
-	state         StateReader
-	failures      FailureEvidence
-	selector      CandidateSelector
-	executor      OperationExecutor
-	authority     MutationAuthority
-	approvalToken string
-	retryDelay    time.Duration
-	interval      time.Duration
-	now           func() time.Time
+	state      StateReader
+	failures   FailureEvidence
+	selector   CandidateSelector
+	executor   OperationExecutor
+	authority  MutationAuthority
+	retryDelay time.Duration
+	interval   time.Duration
+	now        func() time.Time
 }
 
 type Option func(*Controller)
@@ -63,7 +62,7 @@ func WithInterval(interval time.Duration) Option {
 	}
 }
 
-func NewController(state StateReader, failures FailureEvidence, selector CandidateSelector, executor OperationExecutor, authority MutationAuthority, approvalToken string, retryDelay time.Duration, now func() time.Time, options ...Option) *Controller {
+func NewController(state StateReader, failures FailureEvidence, selector CandidateSelector, executor OperationExecutor, authority MutationAuthority, retryDelay time.Duration, now func() time.Time, options ...Option) *Controller {
 	if retryDelay <= 0 {
 		retryDelay = 30 * time.Second
 	}
@@ -72,7 +71,7 @@ func NewController(state StateReader, failures FailureEvidence, selector Candida
 	}
 	controller := &Controller{
 		state: state, failures: failures, selector: selector, executor: executor, authority: authority,
-		approvalToken: approvalToken, retryDelay: retryDelay, interval: 5 * time.Second, now: now,
+		retryDelay: retryDelay, interval: 5 * time.Second, now: now,
 	}
 	for _, option := range options {
 		if option != nil {
@@ -91,7 +90,7 @@ func automaticFailoverPrefix(clusterID, sourceID model.ResourceID, incident time
 }
 
 func (controller *Controller) configured() bool {
-	return controller != nil && controller.state != nil && controller.failures != nil && controller.selector != nil && controller.executor != nil && controller.authority != nil && strings.TrimSpace(controller.approvalToken) != ""
+	return controller != nil && controller.state != nil && controller.failures != nil && controller.selector != nil && controller.executor != nil && controller.authority != nil
 }
 
 func (controller *Controller) RunOnce(ctx context.Context) error {
@@ -174,7 +173,8 @@ func (controller *Controller) recoverCluster(ctx context.Context, cluster model.
 	}
 	operationContext, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	_, err = controller.executor.Execute(operationContext, request, controller.approvalToken)
+	incidentID := strings.TrimSuffix(prefix, ":")
+	_, err = controller.executor.ExecuteAutomatic(operationContext, request, incidentID)
 	if err != nil {
 		return fmt.Errorf("execute automatic failover for %s: %w", cluster.ResourceID, err)
 	}

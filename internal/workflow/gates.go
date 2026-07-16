@@ -362,3 +362,14 @@ func (approval TokenApproval) Validate(_ context.Context, _ model.Operation, tok
 	}
 	return nil
 }
+
+type AllowAllApproval struct{}
+
+func (AllowAllApproval) Consume(_ context.Context, operation model.OperationRecord, _ string) (model.ResourceID, model.OperationRecord, error) {
+	operation.Stage = model.StageApprove
+	return model.NewResourceID(), operation, nil
+}
+
+func (AllowAllApproval) Validate(context.Context, model.Operation, string) error {
+	return nil
+}

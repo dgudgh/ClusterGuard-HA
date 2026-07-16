@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -56,8 +57,20 @@ type LockManager interface {
 	Acquire(context.Context, model.Operation) (func(), error)
 }
 
-type ApprovalValidator interface {
+type ApprovalConsumer interface {
+	Consume(context.Context, model.OperationRecord, string) (model.ResourceID, model.OperationRecord, error)
+}
+
+type AdministrativeApprovalValidator interface {
 	Validate(context.Context, model.Operation, string) error
+}
+
+const AutomaticRecoveryActor = "clusterguard-automatic-recovery"
+
+type executionAuthorization struct {
+	approvalToken string
+	automatic     bool
+	incidentID    string
 }
 
 type Journal interface {
@@ -110,7 +123,7 @@ type Service struct {
 	discovery  DiscoveryValidator
 	safety     SafetyGuard
 	locks      LockManager
-	approval   ApprovalValidator
+	approval   ApprovalConsumer
 	journal    Journal
 	operations OperationStore
 	resolver   OperationResolver
@@ -129,7 +142,7 @@ func WithOperationResolver(resolver OperationResolver) Option {
 	return func(service *Service) { service.resolver = resolver }
 }
 
-func New(registry *adapter.Registry, discovery DiscoveryValidator, safety SafetyGuard, locks LockManager, approval ApprovalValidator, journal Journal, options ...Option) *Service {
+func New(registry *adapter.Registry, discovery DiscoveryValidator, safety SafetyGuard, locks LockManager, approval ApprovalConsumer, journal Journal, options ...Option) *Service {
 	service := &Service{registry: registry, discovery: discovery, safety: safety, locks: locks, approval: approval, journal: journal, inflight: map[model.ResourceID]struct{}{}, now: time.Now}
 	for _, option := range options {
 		option(service)
@@ -266,16 +279,32 @@ func (service *Service) unsupported(operation model.Operation, message string) (
 }
 
 func (service *Service) Execute(ctx context.Context, request adapter.OperationRequest, approvalToken string) (model.Execution, error) {
+	return service.execute(ctx, request, executionAuthorization{approvalToken: approvalToken})
+}
+
+func (service *Service) ExecuteAutomatic(ctx context.Context, request adapter.OperationRequest, incidentID string) (model.Execution, error) {
+	incidentID = strings.TrimSpace(incidentID)
+	if request.Operation.Kind != model.OperationFailover {
+		return model.Execution{}, fmt.Errorf("automatic authorization is restricted to failover")
+	}
+	if incidentID == "" {
+		return model.Execution{}, fmt.Errorf("automatic recovery incident identity is required")
+	}
+	request.Operation.RequestedBy = AutomaticRecoveryActor
+	return service.execute(ctx, request, executionAuthorization{automatic: true, incidentID: incidentID})
+}
+
+func (service *Service) execute(ctx context.Context, request adapter.OperationRequest, authorization executionAuthorization) (model.Execution, error) {
 	if service.operations != nil || service.resolver != nil {
 		if service.operations == nil || service.resolver == nil {
 			return model.Execution{}, fmt.Errorf("durable workflow requires operation store and resolver")
 		}
-		return service.executeDurable(ctx, request, approvalToken)
+		return service.executeDurable(ctx, request, authorization)
 	}
-	return service.executeLegacy(ctx, request, approvalToken)
+	return service.executeLegacy(ctx, request, authorization)
 }
 
-func (service *Service) executeLegacy(ctx context.Context, request adapter.OperationRequest, approvalToken string) (model.Execution, error) {
+func (service *Service) executeLegacy(ctx context.Context, request adapter.OperationRequest, authorization executionAuthorization) (model.Execution, error) {
 	if service.registry == nil {
 		return model.Execution{}, fmt.Errorf("adapter registry is not configured")
 	}
@@ -328,14 +357,15 @@ func (service *Service) executeLegacy(ctx context.Context, request adapter.Opera
 		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationBlocked, Message: "precheck contains blocking checks"}
 		return service.recordOutcome(operation, execution, model.StagePrecheck, "adapter precheck blocked execution", nil)
 	}
-	if _, err := candidate.BuildPlan(ctx, request); err != nil {
+	plan, err := candidate.BuildPlan(ctx, request)
+	if err != nil {
 		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationFailed, Message: err.Error()}
 		return service.recordOutcome(operation, execution, model.StagePlan, err.Error(), err)
 	}
 	if err := service.audit(operation, model.StagePlan, "adapter operation plan created"); err != nil {
 		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
 	}
-	if service.safety == nil || service.locks == nil || service.approval == nil {
+	if service.safety == nil || service.locks == nil || (!authorization.automatic && service.approval == nil) {
 		return model.Execution{}, fmt.Errorf("workflow gates are not configured")
 	}
 	if err := service.safety.Evaluate(ctx, operation); err != nil {
@@ -361,11 +391,27 @@ func (service *Service) executeLegacy(ctx context.Context, request adapter.Opera
 	if err := service.audit(operation, model.StageLock, "topology observation "+observationLabel+" revalidated under operation lock"); err != nil {
 		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
 	}
-	if err := service.approval.Validate(ctx, operation, approvalToken); err != nil {
-		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationBlocked, Message: err.Error()}
-		return service.recordOutcome(operation, execution, model.StageApprove, "approval blocked execution: "+err.Error(), err)
+	approvalMessage := ""
+	if authorization.automatic {
+		approvalMessage = "automatic recovery authorized for incident " + authorization.incidentID
+	} else {
+		record := model.OperationRecord{
+			ResourceMeta: model.ResourceMeta{ResourceID: operation.ResourceID},
+			Operation:    operation,
+			TargetID:     request.TargetID,
+			Stage:        model.StageLock,
+			Status:       model.OperationRunning,
+			Observation:  observationLabel,
+			Plan:         plan,
+		}
+		grantID, _, err := service.approval.Consume(ctx, record, authorization.approvalToken)
+		if err != nil {
+			execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationBlocked, Message: err.Error()}
+			return service.recordOutcome(operation, execution, model.StageApprove, "approval blocked execution: "+err.Error(), err)
+		}
+		approvalMessage = "one-time approval grant " + string(grantID) + " consumed"
 	}
-	if err := service.audit(operation, model.StageApprove, "approval validated"); err != nil {
+	if err := service.audit(operation, model.StageApprove, approvalMessage); err != nil {
 		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
 	}
 	execution, err := candidate.Execute(ctx, request)
@@ -480,7 +526,11 @@ func (service *Service) ExecuteMetadata(ctx context.Context, operation model.Ope
 	if err := service.audit(operation, model.StageLock, "operation lock acquired"); err != nil {
 		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
 	}
-	if err := service.approval.Validate(ctx, operation, approvalToken); err != nil {
+	administrativeApproval, ok := service.approval.(AdministrativeApprovalValidator)
+	if !ok {
+		return model.Execution{}, fmt.Errorf("administrative approval validation is not configured")
+	}
+	if err := administrativeApproval.Validate(ctx, operation, approvalToken); err != nil {
 		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationBlocked, Message: err.Error()}
 		return service.recordOutcome(operation, execution, model.StageApprove, "approval blocked metadata reconciliation: "+err.Error(), err)
 	}

@@ -250,7 +250,7 @@ func (service *Service) finishDurableWithAudits(recordID model.ResourceID, opera
 	return execution, cause
 }
 
-func (service *Service) executeDurable(ctx context.Context, request adapter.OperationRequest, approvalToken string) (model.Execution, error) {
+func (service *Service) executeDurable(ctx context.Context, request adapter.OperationRequest, authorization executionAuthorization) (model.Execution, error) {
 	if service.registry == nil {
 		return model.Execution{}, fmt.Errorf("adapter registry is not configured")
 	}
@@ -301,7 +301,7 @@ func (service *Service) executeDurable(ctx context.Context, request adapter.Oper
 		execution := newDurableExecution(operation.ResourceID, model.OperationBlocked, "discovery validation is not configured", service.now)
 		return service.finishDurable(record.ResourceID, operation, model.StageDiscover, execution, "pre_commit", errors.New(execution.Message), false)
 	}
-	if service.safety == nil || service.locks == nil || service.approval == nil {
+	if service.safety == nil || service.locks == nil || (!authorization.automatic && service.approval == nil) {
 		return model.Execution{}, fmt.Errorf("workflow gates are not configured")
 	}
 	observation, err := service.discovery.CaptureObservation(ctx, operation)
@@ -393,15 +393,23 @@ func (service *Service) executeDurable(ctx context.Context, request adapter.Oper
 		return service.finishDurable(record.ResourceID, operation, model.StageLock, execution, "stale_plan", err, false)
 	}
 	request.Resolved.ObservationToken = observationLabel
-	if err := service.approval.Validate(ctx, operation, approvalToken); err != nil {
-		execution := newDurableExecution(operation.ResourceID, model.OperationBlocked, err.Error(), service.now)
-		return service.finishDurable(record.ResourceID, operation, model.StageApprove, execution, "pre_commit", err, false)
+	approvalMessage := ""
+	if authorization.automatic {
+		approvalMessage = "automatic recovery authorized for incident " + authorization.incidentID
+		record, err = service.advanceDurable(record.ResourceID, model.StageApprove, model.OperationTransition{Message: approvalMessage})
+		if err != nil {
+			return model.Execution{}, err
+		}
+	} else {
+		grantID, approved, approvalErr := service.approval.Consume(ctx, record, authorization.approvalToken)
+		if approvalErr != nil {
+			execution := newDurableExecution(operation.ResourceID, model.OperationBlocked, approvalErr.Error(), service.now)
+			return service.finishDurable(record.ResourceID, operation, model.StageApprove, execution, "pre_commit", approvalErr, false)
+		}
+		record = approved
+		approvalMessage = "one-time approval grant " + string(grantID) + " consumed"
 	}
-	record, err = service.advanceDurable(record.ResourceID, model.StageApprove, model.OperationTransition{Message: "approval validated"})
-	if err != nil {
-		return model.Execution{}, err
-	}
-	if err := service.audit(operation, model.StageApprove, "approval validated"); err != nil {
+	if err := service.audit(operation, model.StageApprove, approvalMessage); err != nil {
 		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
 	}
 	request.Plan = &record.Plan

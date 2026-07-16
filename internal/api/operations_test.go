@@ -69,7 +69,7 @@ func newDurableOperationAPIServer(t *testing.T) (*Server, *store.Repository) {
 	resolver := workflow.OperationResolverFunc(func(_ context.Context, request adapter.OperationRequest) (adapter.OperationRequest, error) {
 		return request, nil
 	})
-	service := workflow.New(registry, workflow.TopologyDiscovery{Reader: repository}, workflow.AllowAllSafety{}, workflow.NewMemoryLocks(), workflow.TokenApproval{}, repository,
+	service := workflow.New(registry, workflow.TopologyDiscovery{Reader: repository}, workflow.AllowAllSafety{}, workflow.NewMemoryLocks(), workflow.AllowAllApproval{}, repository,
 		workflow.WithOperationStore(repository), workflow.WithOperationResolver(resolver))
 	return NewServer(registry, repository, service, &fakeRefresher{}, WithControlToken(testControlToken)), repository
 }

@@ -3,6 +3,7 @@ package runtime
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"net/http"
 	"sync"
@@ -13,6 +14,7 @@ import (
 	"clusterguard.io/ha/adapters/postgresql"
 	"clusterguard.io/ha/adapters/sqlserver"
 	"clusterguard.io/ha/internal/api"
+	"clusterguard.io/ha/internal/approval"
 	"clusterguard.io/ha/internal/config"
 	"clusterguard.io/ha/internal/consensus"
 	"clusterguard.io/ha/internal/coordination"
@@ -193,12 +195,13 @@ func New(configuration config.File) (*Runtime, error) {
 	mysqlCredentials := func(context.Context, model.DatabaseCluster) (adapter.OperationCredentials, error) {
 		return mysqlOperationCredentials(configuration.MySQL)
 	}
+	approvalService := approval.New(repository, rand.Reader, time.Now)
 	service := workflow.New(
 		registry,
 		workflow.TopologyDiscovery{Reader: repository},
 		newRuntimeSafetyGuard(failoverAuthority),
 		locks.operations,
-		workflow.TokenApproval{ExpectedToken: configuration.ApprovalToken},
+		approvalService,
 		repository,
 		workflow.WithOperationStore(repository),
 		workflow.WithOperationResolver(workflow.RepositoryResolver{
@@ -261,13 +264,13 @@ func New(configuration config.File) (*Runtime, error) {
 		result.startLoop(scheduler.Run)
 	}
 	if configuration.MySQL.AutomaticFailoverEnabled {
-		if result.consensus == nil || failoverRuntime.failureEvidence == nil || !configuration.Agent.Enabled || configuration.ApprovalToken == "" {
+		if result.consensus == nil || failoverRuntime.failureEvidence == nil || !configuration.Agent.Enabled {
 			_ = result.Close()
-			return nil, fmt.Errorf("automatic MySQL failover requires consensus, agent fencing, failure evidence, and approval")
+			return nil, fmt.Errorf("automatic MySQL failover requires consensus, agent fencing, and failure evidence")
 		}
 		result.automaticRecovery = recovery.NewController(
 			repository, failoverRuntime.failureEvidence, recovery.NewMySQLCandidateSelector(mysqlAdapter), service,
-			result.consensus, configuration.ApprovalToken,
+			result.consensus,
 			time.Duration(configuration.MySQL.AutomaticFailoverRetrySeconds)*time.Second, nil,
 			recovery.WithInterval(time.Duration(configuration.MySQL.AutomaticFailoverIntervalSeconds)*time.Second),
 		)
