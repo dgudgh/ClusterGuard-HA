@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"clusterguard.io/ha/internal/approval"
+	platformauth "clusterguard.io/ha/internal/auth"
 	"clusterguard.io/ha/internal/lifecycle"
 	"clusterguard.io/ha/internal/store"
 	"clusterguard.io/ha/internal/workflow"
@@ -23,18 +24,19 @@ import (
 const maximumJSONBodyBytes = 1 << 20
 
 type Server struct {
-	registry     *adapter.Registry
-	store        *store.Repository
-	workflow     *workflow.Service
-	approvals    *approval.Service
-	refresher    Refresher
-	controlToken string
-	monitorToken string
-	agentSecret  string
-	lifecycle    NodeLifecycleManager
-	lifecycleCap lifecycle.Capabilities
-	lifecycleSec LifecycleSecretProvider
-	authority    MutationAuthority
+	registry       *adapter.Registry
+	store          *store.Repository
+	workflow       *workflow.Service
+	approvals      *approval.Service
+	authentication *platformauth.Service
+	refresher      Refresher
+	controlToken   string
+	monitorToken   string
+	agentSecret    string
+	lifecycle      NodeLifecycleManager
+	lifecycleCap   lifecycle.Capabilities
+	lifecycleSec   LifecycleSecretProvider
+	authority      MutationAuthority
 }
 
 type Refresher interface {
@@ -57,6 +59,10 @@ func WithControlToken(token string) ServerOption {
 
 func WithApprovalService(service *approval.Service) ServerOption {
 	return func(server *Server) { server.approvals = service }
+}
+
+func WithAuthentication(service *platformauth.Service) ServerOption {
+	return func(server *Server) { server.authentication = service }
 }
 
 func WithMonitoringToken(token string) ServerOption {
@@ -127,6 +133,9 @@ func (server *Server) Handler() http.Handler {
 
 func (server *Server) route(writer http.ResponseWriter, request *http.Request) {
 	path := strings.TrimSuffix(request.URL.Path, "/")
+	if path == "" {
+		path = "/"
+	}
 	if path == "/api/v1/agent/reconcile" {
 		server.agentReconcileRoute(writer, request)
 		return
@@ -134,16 +143,34 @@ func (server *Server) route(writer http.ResponseWriter, request *http.Request) {
 	if strings.HasPrefix(path, "/api/v1/monitoring/") && !server.authorizeMonitoring(writer, request) {
 		return
 	}
-	if mutatingMethod(request.Method) && strings.HasPrefix(path, "/api/v1/") {
-		if !manualGrantExecutionRoute(request.Method, path) && !server.authorizeControl(writer, request) {
+	if path == "/api/v1/auth/login" || path == "/api/v1/auth/me" ||
+		path == "/api/v1/auth/logout" || path == "/api/v1/auth/password" {
+		server.authRoute(writer, request, path)
+		return
+	}
+	if server.authentication != nil && strings.HasPrefix(path, "/api/v1/") {
+		authenticatedRequest, ok := server.authenticatePlatformRequest(writer, request)
+		if !ok {
 			return
+		}
+		request = authenticatedRequest
+	}
+	if mutatingMethod(request.Method) && strings.HasPrefix(path, "/api/v1/") {
+		if authentication, authenticated := requestAuthentication(request); authenticated && authentication.viaSession {
+			if !server.authorizeSessionMutation(writer, request, authentication.principal, path) {
+				return
+			}
+		} else {
+			if !manualGrantExecutionRoute(request.Method, path) && !server.authorizeControl(writer, request) {
+				return
+			}
 		}
 		if !server.authorizeMutation(writer, request) {
 			return
 		}
 	}
 	switch {
-	case (request.Method == http.MethodGet || request.Method == http.MethodHead) && (path == "" || path == "/"):
+	case (request.Method == http.MethodGet || request.Method == http.MethodHead) && path == "/":
 		writer.Header().Set("Content-Type", "text/html; charset=utf-8")
 		writer.WriteHeader(http.StatusOK)
 		if request.Method != http.MethodHead {
@@ -209,13 +236,21 @@ func (server *Server) authorizeControl(writer http.ResponseWriter, request *http
 		writeError(writer, http.StatusServiceUnavailable, "control API authentication is not configured")
 		return false
 	}
-	scheme, token, found := strings.Cut(strings.TrimSpace(request.Header.Get("Authorization")), " ")
-	if !found || !strings.EqualFold(scheme, "Bearer") || subtle.ConstantTimeCompare([]byte(strings.TrimSpace(token)), []byte(server.controlToken)) != 1 {
+	if !server.validControlBearer(request) {
 		writer.Header().Set("WWW-Authenticate", `Bearer realm="clusterguard-control"`)
 		writeError(writer, http.StatusUnauthorized, "valid control token is required")
 		return false
 	}
 	return true
+}
+
+func (server *Server) validControlBearer(request *http.Request) bool {
+	if server.controlToken == "" {
+		return false
+	}
+	scheme, token, found := strings.Cut(strings.TrimSpace(request.Header.Get("Authorization")), " ")
+	return found && strings.EqualFold(scheme, "Bearer") &&
+		subtle.ConstantTimeCompare([]byte(strings.TrimSpace(token)), []byte(server.controlToken)) == 1
 }
 
 func (server *Server) authorizeMonitoring(writer http.ResponseWriter, request *http.Request) bool {

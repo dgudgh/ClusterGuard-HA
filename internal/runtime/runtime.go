@@ -284,6 +284,7 @@ func New(configuration config.File) (*Runtime, error) {
 		api.WithControlToken(configuration.ControlToken),
 		api.WithMonitoringToken(configuration.MonitoringToken),
 		api.WithApprovalService(approvalService),
+		api.WithAuthentication(result.authentication),
 	}
 	if configuration.Agent.Enabled {
 		options = append(options, api.WithAgentReconcileSecret(configuration.Agent.SharedSecret))
