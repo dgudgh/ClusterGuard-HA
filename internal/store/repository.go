@@ -98,6 +98,7 @@ type snapshot struct {
 	Instances             map[model.ResourceID]model.DatabaseInstance              `json:"instances"`
 	Endpoints             map[model.ResourceID]map[model.ResourceID]model.Endpoint `json:"endpoints"`
 	HAEndpoints           map[model.ResourceID]model.HAEndpoint                    `json:"ha_endpoints"`
+	ApprovalGrants        map[model.ResourceID]model.ApprovalGrant                 `json:"approval_grants"`
 	CoordinationLeases    map[model.ResourceID]coordination.LeaseRecord            `json:"coordination_leases"`
 	OperationLocks        map[model.ResourceID]coordination.OperationLockRecord    `json:"operation_locks"`
 	LifecycleTasks        map[model.ResourceID]lifecycle.Task                      `json:"lifecycle_tasks"`
@@ -134,6 +135,7 @@ func emptySnapshot() snapshot {
 		Instances:             map[model.ResourceID]model.DatabaseInstance{},
 		Endpoints:             map[model.ResourceID]map[model.ResourceID]model.Endpoint{},
 		HAEndpoints:           map[model.ResourceID]model.HAEndpoint{},
+		ApprovalGrants:        map[model.ResourceID]model.ApprovalGrant{},
 		CoordinationLeases:    map[model.ResourceID]coordination.LeaseRecord{},
 		OperationLocks:        map[model.ResourceID]coordination.OperationLockRecord{},
 		LifecycleTasks:        map[model.ResourceID]lifecycle.Task{},
@@ -362,6 +364,7 @@ func cloneDiscoverySnapshot(value snapshot) snapshot {
 	copy.Instances = cloneInstanceMap(value.Instances)
 	copy.Endpoints = cloneEndpointMap(value.Endpoints)
 	copy.HAEndpoints = cloneHAEndpointMap(value.HAEndpoints)
+	copy.ApprovalGrants = cloneApprovalGrantMap(value.ApprovalGrants)
 	copy.CoordinationLeases = cloneCoordinationLeaseMap(value.CoordinationLeases)
 	copy.OperationLocks = cloneOperationLockMap(value.OperationLocks)
 	copy.LifecycleTasks = cloneLifecycleTaskMap(value.LifecycleTasks)
@@ -394,6 +397,14 @@ func cloneHAEndpointMap(values map[model.ResourceID]model.HAEndpoint) map[model.
 	copy := make(map[model.ResourceID]model.HAEndpoint, len(values))
 	for resourceID, endpoint := range values {
 		copy[resourceID] = endpoint
+	}
+	return copy
+}
+
+func cloneApprovalGrantMap(values map[model.ResourceID]model.ApprovalGrant) map[model.ResourceID]model.ApprovalGrant {
+	copy := make(map[model.ResourceID]model.ApprovalGrant, len(values))
+	for resourceID, grant := range values {
+		copy[resourceID] = grant
 	}
 	return copy
 }

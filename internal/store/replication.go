@@ -99,6 +99,17 @@ func normalizeSnapshot(value snapshot) (snapshot, error) {
 	if normalized.HAEndpoints == nil {
 		normalized.HAEndpoints = map[model.ResourceID]model.HAEndpoint{}
 	}
+	if normalized.ApprovalGrants == nil {
+		normalized.ApprovalGrants = map[model.ResourceID]model.ApprovalGrant{}
+	}
+	for resourceID, grant := range normalized.ApprovalGrants {
+		if grant.ResourceID != resourceID {
+			return snapshot{}, fmt.Errorf("invalid approval grant record")
+		}
+		if err := validateApprovalGrant(grant); err != nil {
+			return snapshot{}, err
+		}
+	}
 	if normalized.CoordinationLeases == nil {
 		normalized.CoordinationLeases = map[model.ResourceID]coordination.LeaseRecord{}
 	}
