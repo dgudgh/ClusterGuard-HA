@@ -31,6 +31,7 @@ The main resources are:
 | `ReplicationLink` | Source-to-target relationship, lag, and link health. |
 | `HAEndpoint` | Desired owner and health of a VIP, listener, or service endpoint. |
 | `OperationRecord` / `OperationPlan` | Idempotent intent, durable stage progress, and immutable execution plan. |
+| `ApprovalGrant` | Single-use, expiring authorization bound to one operation plan and target. |
 | `Execution` / `Verification` | Execution result and postcondition evidence. |
 | `AuditEvent` / `Report` | Durable operator trace and human-readable outcome. |
 
@@ -174,6 +175,17 @@ existing operation; reusing it for another target or operation kind is a
 conflict. A same-process duplicate cannot terminalize the active operation, and
 a restart can resume from observed step postconditions.
 
+Manual high-risk database execution uses a one-time `ApprovalGrant`. An
+administrator-authenticated request first builds and persists the exact
+operation plan, then returns a random `cgag_...` token once. The replicated
+repository stores only its SHA-256 hash. A grant defaults to five minutes,
+cannot exceed fifteen minutes, and is bound to the operation UUID, cluster,
+engine, operation kind, target UUID, observation, and plan digest. Under the
+operation lock, grant consumption and the durable `APPROVE` transition commit
+atomically. Reuse, expiry, target mismatch, or a stale plan fails closed. The
+manual execute route does not accept the administrator control credential as an
+approval substitute.
+
 MySQL switchover supports one primary with multiple replicas. It requires an
 eligible selected target, compatible GTID history, current probe evidence,
 running replication threads, compatible release families, and an executable
@@ -188,6 +200,12 @@ Raft-replicated and renewed, Safety Guard rechecks majority, and endpoint
 mutation requires a separate short lease. The restricted data-node agent
 removes a stale VIP and persists both MySQL read-only flags when the node cannot
 obtain a valid signed keep decision.
+
+Automatic recovery enters the workflow through a separate internal method. It
+does not mint or consume a human approval grant and cannot be selected by an
+HTTP field. The incident ID is recorded at `APPROVE`, while consensus, Safety
+Guard, the replicated operation lock, fencing, execution, verification, audit,
+and report remain mandatory.
 
 Recovery never treats a pre-existing source fence as sufficient by itself. The
 durable operation must own the completed `fence_source` step, and the adapter

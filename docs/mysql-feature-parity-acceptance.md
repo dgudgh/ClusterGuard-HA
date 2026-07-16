@@ -120,6 +120,26 @@ metrics, logs, settings, about page, and metadata dialog. The operation log was
 confirmed to show the local time, stable cluster name, source and target nodes,
 status, and a collapsed raw workflow object that expands on demand.
 
+## One-Time Approval Update
+
+The 2026-07-16 authorization update replaces reusable database-operation
+approval strings with Raft-replicated, hash-only, single-use grants:
+
+- administrator-authenticated issuance builds the exact durable operation plan;
+- the plaintext token is returned once, defaults to a five-minute lifetime, and
+  is bound to cluster, engine, operation kind, target, observation, and plan;
+- manual execute accepts the grant without the administrator Bearer credential;
+- grant consumption and the durable `APPROVE` transition are atomic;
+- consumed, expired, mismatched, and stale-plan grants fail closed;
+- the HA console clears the token and relocks after every attempt;
+- the HA matrix obtains a fresh grant before every destructive switchover;
+- automatic failover uses a private incident authorization path and no human
+  token, while retaining quorum, fencing, lock, verification, audit, and report.
+
+The local full Go suite, shell matrix suite, source scans, and builds gate this
+update. A new three-host destructive acceptance record is added after deploying
+the updated bundle.
+
 ## Production Qualification Still Required
 
 - ClusterGuard self-isolation and quorum gates are present, but production must

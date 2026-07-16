@@ -30,6 +30,8 @@ The current MySQL adapter provides:
 - JSON, Prometheus, and monitoring-safe health output;
 - a compact Chinese console and the `cgctl` CLI;
 - durable operation UUIDs, idempotency keys, stage progress, audit, and reports;
+- plan-bound, five-minute, single-use approval grants for manual high-risk
+  database operations;
 - tested MySQL 5.7/8.x/9.x mutation dialects behind an independent adapter and
   writer-endpoint contract.
 
@@ -53,6 +55,12 @@ host network partition that cannot prove old-primary fencing remains blocked.
 The platform prefers temporary unavailability over a second writer or VIP
 owner.
 
+Manual high-risk execution requires a one-time grant issued by an administrator.
+Only the grant hash is replicated, the plaintext is returned once, and a grant
+is consumed atomically with the workflow approval stage. Automatic failover
+uses an internal incident authorization path and does not depend on a reusable
+human token.
+
 The common workflow remains:
 
 ```text
@@ -70,7 +78,6 @@ the JSON configuration.
 
 ```bash
 export CG_CONTROL_TOKEN='replace-with-a-control-api-secret'
-export CG_APPROVAL_TOKEN='replace-with-a-local-secret'
 export CG_MYSQL_DISCOVERY_PASSWORD='replace-with-the-read-only-secret'
 go run ./cmd/clusterguard --config configs/clusterguard.example.json
 ```
@@ -134,11 +141,17 @@ go run ./cmd/cgctl candidates <cluster-uuid>
 go run ./cmd/cgctl metrics <cluster-uuid>
 go run ./cmd/cgctl refresh <cluster-uuid>
 go run ./cmd/cgctl operation <operation-uuid>
+go run ./cmd/cgctl approval issue --cluster <cluster-uuid> --engine mysql \
+  --kind switchover --target <instance-uuid> --issued-by <administrator> --ttl 5m
+go run ./cmd/cgctl approval list
+go run ./cmd/cgctl approval show <grant-uuid>
 ```
 
 `refresh` reads the control token from `CG_CONTROL_TOKEN`. Use
 `--token-env <name>` before the command to select a different environment
-variable; the secret is never accepted as a command-line value.
+variable; the secret is never accepted as a command-line value. Approval
+issuance also reads this administrator credential. The returned approval token
+is printed once and is never persisted by `cgctl`.
 
 Place global flags before the command:
 

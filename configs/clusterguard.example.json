@@ -5,7 +5,6 @@
   "metadata_path": "/var/lib/clusterguard/metadata.json",
   "control_token_env": "CG_CONTROL_TOKEN",
   "monitoring_token_env": "CG_MONITORING_TOKEN",
-  "approval_token_env": "CG_APPROVAL_TOKEN",
   "consensus": {
     "enabled": true,
     "snapshot_cas_enabled": true,
@@ -52,7 +51,7 @@
     "shared_secret_env": "CG_AGENT_SHARED_SECRET"
   },
   "node_lifecycle": {
-    "enabled": true,
+    "enabled": false,
     "executor_path": "/usr/local/libexec/clusterguard-node-lifecycle.sh",
     "package_repository": "/opt/clusterguard/packages",
     "known_hosts_file": "/etc/clusterguard/known_hosts",
