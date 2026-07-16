@@ -147,10 +147,46 @@ sessions while retaining hash-only, one-time operation grants:
 
 Local API verification covered bootstrap login, mutation blocking before the
 password change, session revocation, re-login, CSRF-protected reads and writes,
-and sanitized responses. The full Go suite, shell matrix suite, source scans,
-and builds gate this update. The authenticated bundle still requires a new
-three-host destructive acceptance run before this section can claim live-lab
-platform-session switchovers.
+and sanitized responses.
+
+The authenticated control path completed a new three-host destructive
+acceptance on 2026-07-17 CST:
+
+- branch `codex/platform-auth-session`, commit `545c44c`;
+- release archive
+  `clusterguard-ha-platform-auth-rc3-linux-amd64.tar.gz`, SHA-256
+  `5df26c860b7488917e746eb6884969e5cb8ef19b8fe649c2719740cd631784c3`;
+- the temporary bootstrap password was changed before business API access was
+  allowed; the old session was revoked, re-login succeeded, logout revoked its
+  session, and unauthenticated business reads returned `401`;
+- the dedicated monitoring bearer remained GET-only and returned `200` on all
+  three controllers after the rolling upgrade;
+- a first real session switchover exposed a workflow defect: periodic discovery
+  advanced metadata revisions without changing the semantic topology digest,
+  while execution rebuilt an already approved immutable plan and rejected its
+  new digest;
+- regression test
+  `TestDurableWorkflowReusesPersistedPlanWhenOnlyMetadataRevisionsAdvance`
+  reproduced the defect before the fix and passed after execution was changed
+  to reuse the exact persisted plan while retaining current precheck, safety,
+  lock, topology revalidation, approval, verification, audit, and report gates;
+- operation `92ec6cda-c2b6-4fbb-aca5-27c1848aa29a` then completed through
+  `succeeded/report` with verification passed, moving `mysql-ha-3306` from
+  `192.168.102.154:3306` to `192.168.102.152:3306`;
+- VIP `192.168.102.155` existed only on the new primary. Both
+  `192.168.102.153:3306` and the former primary
+  `192.168.102.154:3306` were read-only, followed
+  `192.168.102.152:3306`, had both replication threads running, and reported
+  zero lag;
+- every workflow audit stage recorded actor `admin`, the switchover report was
+  `succeeded`, and the server-issued approval grant was stored as `consumed`;
+- an unauthenticated forged execute request returned `401`, and a service
+  control Bearer without a one-time grant also returned `401`;
+- the terminal operation and consumed grant were present on all three
+  controller metadata replicas.
+
+The full Go suite, race suite, shell matrix suite, static checks, source scans,
+and Linux amd64 builds gate this update.
 
 ## Production Qualification Still Required
 
