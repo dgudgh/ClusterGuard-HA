@@ -82,20 +82,21 @@ type NodeLifecycle struct {
 }
 
 type File struct {
-	HTTPAddress        string        `json:"http_address"`
-	TLSCertFile        string        `json:"tls_cert_file,omitempty"`
-	TLSKeyFile         string        `json:"tls_key_file,omitempty"`
-	MetadataPath       string        `json:"metadata_path"`
-	ControlTokenEnv    string        `json:"control_token_env"`
-	ControlToken       string        `json:"-"`
-	MonitoringTokenEnv string        `json:"monitoring_token_env"`
-	MonitoringToken    string        `json:"-"`
-	ApprovalTokenEnv   string        `json:"approval_token_env"`
-	ApprovalToken      string        `json:"-"`
-	MySQL              MySQL         `json:"mysql"`
-	Agent              Agent         `json:"agent"`
-	Consensus          Consensus     `json:"consensus"`
-	NodeLifecycle      NodeLifecycle `json:"node_lifecycle"`
+	HTTPAddress         string        `json:"http_address"`
+	TLSCertFile         string        `json:"tls_cert_file,omitempty"`
+	TLSKeyFile          string        `json:"tls_key_file,omitempty"`
+	MetadataPath        string        `json:"metadata_path"`
+	ControlTokenEnv     string        `json:"control_token_env"`
+	ControlToken        string        `json:"-"`
+	MonitoringTokenEnv  string        `json:"monitoring_token_env"`
+	MonitoringToken     string        `json:"-"`
+	ApprovalTokenEnv    string        `json:"approval_token_env"`
+	ApprovalToken       string        `json:"-"`
+	DeprecationWarnings []string      `json:"-"`
+	MySQL               MySQL         `json:"mysql"`
+	Agent               Agent         `json:"agent"`
+	Consensus           Consensus     `json:"consensus"`
+	NodeLifecycle       NodeLifecycle `json:"node_lifecycle"`
 }
 
 func Load(path string) (File, error) {
@@ -144,10 +145,10 @@ func Load(path string) (File, error) {
 		}
 	}
 	if environment := strings.TrimSpace(configuration.ApprovalTokenEnv); environment != "" {
+		configuration.ApprovalTokenEnv = environment
 		configuration.ApprovalToken = os.Getenv(environment)
-		if configuration.ApprovalToken == "" {
-			return File{}, fmt.Errorf("approval token environment variable %s is empty", environment)
-		}
+		configuration.DeprecationWarnings = append(configuration.DeprecationWarnings,
+			"CG_APPROVAL_TOKEN is deprecated for database operations and automatic recovery; use one-time approval grants")
 	}
 	if configuration.MySQL.Enabled {
 		if configuration.MySQL.DiscoveryIntervalSeconds <= 0 {
@@ -199,8 +200,8 @@ func Load(path string) (File, error) {
 		}
 	}
 	if configuration.MySQL.AutomaticFailoverEnabled {
-		if !configuration.Consensus.Enabled || !configuration.Agent.Enabled || strings.TrimSpace(configuration.ApprovalToken) == "" {
-			return File{}, fmt.Errorf("automatic failover requires controller consensus, the restricted node agent, and an approval token")
+		if !configuration.Consensus.Enabled || !configuration.Agent.Enabled {
+			return File{}, fmt.Errorf("automatic failover requires controller consensus and the restricted node agent")
 		}
 	}
 	return configuration, nil

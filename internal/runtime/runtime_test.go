@@ -220,7 +220,7 @@ func runtimeRequest(t *testing.T, handler http.Handler, method string, path stri
 	return response
 }
 
-func TestRuntimeWiresDurableOperationsWithUnsupportedDefaultEndpointProvider(t *testing.T) {
+func TestRuntimeRejectsLegacyStaticApprovalForDatabaseExecution(t *testing.T) {
 	server, err := New(config.File{
 		MetadataPath: filepath.Join(t.TempDir(), "metadata.json"),
 		ControlToken: "control", ApprovalToken: "approval",
@@ -250,12 +250,12 @@ func TestRuntimeWiresDurableOperationsWithUnsupportedDefaultEndpointProvider(t *
 		t.Fatalf("decode create: %v", err)
 	}
 	execute := runtimeRequest(t, server.Handler(), http.MethodPost, "/api/v1/operations/"+string(envelope.Result.ResourceID)+"/execute", map[string]string{"approval_token": "approval"})
-	if execute.Code != http.StatusNotImplemented {
-		t.Fatalf("default execution status=%d body=%s", execute.Code, execute.Body.String())
+	if execute.Code != http.StatusUnauthorized || !bytes.Contains(execute.Body.Bytes(), []byte("approval grant is invalid")) {
+		t.Fatalf("legacy approval execution status=%d body=%s", execute.Code, execute.Body.String())
 	}
 	read := runtimeRequest(t, server.Handler(), http.MethodGet, "/api/v1/operations/"+string(envelope.Result.ResourceID), nil)
-	if read.Code != http.StatusOK || !bytes.Contains(read.Body.Bytes(), []byte(`"status":"unsupported"`)) {
-		t.Fatalf("unsupported outcome was not durable: status=%d body=%s", read.Code, read.Body.String())
+	if read.Code != http.StatusOK || bytes.Contains(read.Body.Bytes(), []byte(`"status":"unsupported"`)) {
+		t.Fatalf("rejected legacy approval changed durable state: status=%d body=%s", read.Code, read.Body.String())
 	}
 }
 
@@ -294,7 +294,7 @@ func TestRuntimeStartsAutomaticFailoverOnlyWithGuardedDependencies(t *testing.T)
 		peers[index] = config.ConsensusPeer{ResourceID: ids[index], Address: addresses[index]}
 	}
 	server, err := New(config.File{
-		MetadataPath: filepath.Join(t.TempDir(), "metadata.json"), ApprovalToken: "approval",
+		MetadataPath: filepath.Join(t.TempDir(), "metadata.json"),
 		Consensus: config.Consensus{
 			Enabled: true, LocalID: ids[0], BindAddress: addresses[0], AdvertiseAddress: addresses[0],
 			DataDirectory: filepath.Join(t.TempDir(), "raft"), Bootstrap: true, ApplyTimeoutSeconds: 1, Peers: peers,

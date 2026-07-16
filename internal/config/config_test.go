@@ -153,13 +153,21 @@ func TestLoadRequiresCompleteAbsoluteTLSCertificatePair(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsMissingSecret(t *testing.T) {
+func TestLoadTreatsLegacyApprovalTokenAsDeprecatedWithoutRequiringEnvironment(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "control.json")
-	if err := os.WriteFile(path, []byte(`{"approval_token_env":"CG_MISSING_TOKEN"}`), 0600); err != nil {
+	contents := `{"metadata_path":"` + filepath.Join(t.TempDir(), "metadata.json") + `","approval_token_env":"CG_MISSING_TOKEN"}`
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Load(path); err == nil {
-		t.Fatal("expected missing approval secret to be rejected")
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("deprecated approval environment should not block startup: %v", err)
+	}
+	if loaded.ApprovalToken != "" {
+		t.Fatal("missing deprecated approval environment unexpectedly produced a token")
+	}
+	if len(loaded.DeprecationWarnings) != 1 || !strings.Contains(loaded.DeprecationWarnings[0], "CG_APPROVAL_TOKEN") {
+		t.Fatalf("deprecation warnings=%v", loaded.DeprecationWarnings)
 	}
 }
 
@@ -204,7 +212,7 @@ func TestLoadAllowsDisabledMySQLWithoutCredentials(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsAutomaticFailoverWithoutConsensusAgentAndApproval(t *testing.T) {
+func TestLoadRejectsAutomaticFailoverWithoutConsensusAndAgent(t *testing.T) {
 	for name, value := range map[string]string{
 		"CG_AUTO_DISCOVERY":   "discovery-secret",
 		"CG_AUTO_OPERATION":   "operation-secret",
@@ -228,6 +236,60 @@ func TestLoadRejectsAutomaticFailoverWithoutConsensusAgentAndApproval(t *testing
 	}
 	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "automatic failover") {
 		t.Fatalf("unsafe automatic failover configuration error=%v", err)
+	}
+}
+
+func TestLoadAllowsAutomaticFailoverWithoutStaticApproval(t *testing.T) {
+	for name, value := range map[string]string{
+		"CG_AUTO_DISCOVERY":   "discovery-secret",
+		"CG_AUTO_OPERATION":   "operation-secret",
+		"CG_AUTO_REPLICATION": "replication-secret",
+		"CG_AUTO_AGENT":       "agent-secret",
+	} {
+		t.Setenv(name, value)
+	}
+	localID := "11111111-1111-4111-8111-111111111111"
+	path := filepath.Join(t.TempDir(), "control.json")
+	contents := `{
+  "metadata_path":"` + filepath.Join(t.TempDir(), "metadata.json") + `",
+  "consensus": {
+    "enabled":true,
+    "snapshot_cas_enabled":true,
+    "local_id":"` + localID + `",
+    "bind_address":"127.0.0.1:10009",
+    "advertise_address":"127.0.0.1:10009",
+    "data_directory":"` + filepath.Join(t.TempDir(), "raft") + `",
+    "bootstrap":true,
+    "peers":[
+      {"resource_id":"` + localID + `","address":"127.0.0.1:10009"},
+      {"resource_id":"22222222-2222-4222-8222-222222222222","address":"127.0.0.1:10019"},
+      {"resource_id":"33333333-3333-4333-8333-333333333333","address":"127.0.0.1:10029"}
+    ]
+  },
+  "agent": {
+    "enabled":true,
+    "user":"cg-agent",
+    "identity_file":"/etc/clusterguard/agent_ed25519",
+    "known_hosts_file":"/etc/clusterguard/agent_known_hosts",
+    "shared_secret_env":"CG_AUTO_AGENT"
+  },
+  "mysql": {
+    "enabled":true,
+    "automatic_failover_enabled":true,
+    "discovery":{"username":"discover","password_env":"CG_AUTO_DISCOVERY"},
+    "operation":{"username":"operator","password_env":"CG_AUTO_OPERATION"},
+    "replication":{"username":"replicator","password_env":"CG_AUTO_REPLICATION"}
+  }
+}`
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("automatic failover should not depend on a static approval token: %v", err)
+	}
+	if !loaded.MySQL.AutomaticFailoverEnabled || loaded.ApprovalToken != "" {
+		t.Fatalf("automatic failover configuration=%+v approval=%q", loaded.MySQL, loaded.ApprovalToken)
 	}
 }
 
