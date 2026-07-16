@@ -140,7 +140,15 @@ func (server *Server) route(writer http.ResponseWriter, request *http.Request) {
 		server.agentReconcileRoute(writer, request)
 		return
 	}
-	if strings.HasPrefix(path, "/api/v1/monitoring/") && !server.authorizeMonitoring(writer, request) {
+	if strings.HasPrefix(path, "/api/v1/monitoring/") {
+		if request.Method != http.MethodGet {
+			writeError(writer, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		if !server.authorizeMonitoring(writer, request) {
+			return
+		}
+		server.monitoringRoute(writer, strings.TrimPrefix(path, "/api/v1/monitoring/"))
 		return
 	}
 	if path == "/api/v1/auth/login" || path == "/api/v1/auth/me" ||
@@ -192,8 +200,6 @@ func (server *Server) route(writer http.ResponseWriter, request *http.Request) {
 		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": server.store.Anomalies()})
 	case path == "/api/v1/approvals" || strings.HasPrefix(path, "/api/v1/approvals/"):
 		server.approvalRoute(writer, request, strings.TrimPrefix(path, "/api/v1/approvals"))
-	case request.Method == http.MethodGet && strings.HasPrefix(path, "/api/v1/monitoring/"):
-		server.monitoringRoute(writer, strings.TrimPrefix(path, "/api/v1/monitoring/"))
 	case request.Method == http.MethodGet && (path == "/api/v1/reports" || strings.HasPrefix(path, "/api/v1/reports/")):
 		server.reportRoute(writer, request, strings.TrimPrefix(path, "/api/v1/reports"))
 	case path == "/api/v1/operations":

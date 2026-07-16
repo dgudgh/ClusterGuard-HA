@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	platformauth "clusterguard.io/ha/internal/auth"
 	"clusterguard.io/ha/internal/store"
 	"clusterguard.io/ha/pkg/model"
 )
@@ -72,6 +73,27 @@ func TestMonitoringAPIRequiresDedicatedReadToken(t *testing.T) {
 	}
 	if response := monitoringRequest(t, server, "/api/v1/monitoring/health", "monitor-secret"); response.Code != http.StatusOK {
 		t.Fatalf("valid monitoring token status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestMonitoringTokenRemainsDedicatedWhenPlatformAuthenticationIsEnabled(t *testing.T) {
+	server, _, _ := prepareMonitoringAPI(t)
+	server.authentication = platformauth.New(
+		server.store,
+		platformauth.Argon2Hasher{
+			Params: platformauth.Argon2Params{
+				Memory: 64, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
+			},
+			Random: bytes.NewReader(bytes.Repeat([]byte{0x31}, 256)),
+		},
+		bytes.NewReader(bytes.Repeat([]byte{0x32}, 256)),
+		time.Now,
+		8*time.Hour,
+	)
+
+	response := monitoringRequest(t, server, "/api/v1/monitoring/health", "monitor-secret")
+	if response.Code != http.StatusOK {
+		t.Fatalf("platform authentication intercepted monitoring token: status=%d body=%s", response.Code, response.Body.String())
 	}
 }
 
