@@ -156,8 +156,8 @@ func TestOperationsViewRunsOneRealGuardedSwitchover(t *testing.T) {
 	for _, contract := range []string{
 		"/api/v1/operations/execute", "executeOperation('switchover'", "target_id:", "state.selectedCandidateId",
 		"approval_token: state.approvalToken", "idempotency_key:", "requested_by: state.operator",
-		"'Authorization': `Bearer ${state.controlToken}`", "await loadSelectedCluster()", "await loadOperationLog()",
-		"const retryableOperationFailure =", "failureClass === 'stale_plan'", "attempt < 3",
+		"fetchResult('/api/v1/operations/execute', operationOptions(payload))", "await loadSelectedCluster()", "await loadOperationLog()",
+		"const localizedApprovalError =", "审批令牌绑定的计划已过期，请重新申请。",
 	} {
 		if !strings.Contains(page, contract) {
 			t.Fatalf("console switch is not wired to the real workflow: missing %q", contract)
@@ -167,6 +167,9 @@ func TestOperationsViewRunsOneRealGuardedSwitchover(t *testing.T) {
 		if strings.Contains(page, forbidden) {
 			t.Fatalf("console must not expose simulated execution %q", forbidden)
 		}
+	}
+	if strings.Contains(page, "attempt < 3") {
+		t.Fatal("a plan-bound one-time approval must not be retried against a different plan")
 	}
 }
 
@@ -270,12 +273,15 @@ func TestConsoleUsesNativeMetricNamesAndFormatsBufferRatioAsPercent(t *testing.T
 func TestSecretsStayInMemoryAndAPIDerivedTextUsesSafeDOM(t *testing.T) {
 	page := string(consoleHTML)
 	for _, contract := range []string{
-		`id="control-token"`, `id="approval-token"`, `type="password"`, `autocomplete="off"`,
-		"state.controlToken =", "state.approvalToken =", "textContent", `aria-live="polite"`, ":focus-visible",
+		`id="admin-token"`, `id="approval-token"`, `type="password"`, `autocomplete="off"`,
+		"state.adminToken =", "state.approvalToken =", "textContent", `aria-live="polite"`, ":focus-visible",
 	} {
 		if !strings.Contains(page, contract) {
 			t.Fatalf("console missing secure rendering contract %q", contract)
 		}
+	}
+	if strings.Contains(page, `id="control-token"`) {
+		t.Fatal("normal console must not expose the legacy long-lived control-token field")
 	}
 	for _, forbidden := range []string{".innerHTML", "insertAdjacentHTML", "document.write", "localStorage", "sessionStorage", "window.prompt("} {
 		if strings.Contains(page, forbidden) {
@@ -284,6 +290,34 @@ func TestSecretsStayInMemoryAndAPIDerivedTextUsesSafeDOM(t *testing.T) {
 	}
 	if strings.Contains(page, "<script src=") || strings.Contains(page, `<link rel="stylesheet"`) {
 		t.Fatal("console must remain self-contained")
+	}
+}
+
+func TestConsoleUsesOneTimeApprovalWithoutControlAuthorization(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		"一次性审批令牌", "由管理员生成，5 分钟内有效，执行一次后失效。",
+		`id="approval-modal"`, `id="approval-token"`, "const operationOptions = body =>",
+		"headers: { 'Content-Type': 'application/json' }", "const requireManualApproval =",
+		"byId('approval-modal').showModal()", "const clearApprovalToken = () =>",
+		"byId('approval-token').value = ''", "state.approvalToken = ''",
+		"approval grant has already been consumed", "审批令牌已使用，请重新申请。",
+		"approval grant has expired", "审批令牌已过期，请重新申请。",
+		"approval grant does not match this operation", "审批令牌与当前集群或目标不匹配。",
+		"approval grant plan is stale", "审批令牌绑定的计划已过期，请重新申请。",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing one-time approval contract %q", contract)
+		}
+	}
+	operationStart := strings.Index(page, "const operationOptions = body =>")
+	operationEnd := strings.Index(page[operationStart:], "});")
+	if operationStart < 0 || operationEnd < 0 {
+		t.Fatal("operation POST helper not found")
+	}
+	operationHelper := page[operationStart : operationStart+operationEnd]
+	if strings.Contains(operationHelper, "Authorization") {
+		t.Fatal("manual operation helper must not send the administrative Authorization header")
 	}
 }
 
@@ -342,7 +376,7 @@ func TestConsoleOperationRendersDurableWorkflowProgressAndIndeterminateState(t *
 		"const renderOperationProgress = operation =>", "const pollOperationProgress = async",
 		"/api/v1/operations?idempotency_key=${encodeURIComponent(idempotencyKey)}",
 		"['safety_guard', 'lock', 'approve']", "operation.verification && operation.verification.passed",
-		"operation.status === 'indeterminate'", "结果不确定，停止自动重试并要求人工复核",
+		"operation.status === 'indeterminate'", "结果不确定，停止执行并要求人工复核",
 		"state.switchUnlocked = false", "renderOperationProgress(operation)",
 	} {
 		if !strings.Contains(page, contract) {
@@ -390,7 +424,7 @@ func TestConsoleRelocksDestructiveActionWhenClusterOrTargetChanges(t *testing.T)
 		"const relockSwitch = () =>", "relockSwitch();\n      clearClusterView(preserveOperationResult);",
 		"state.selectedCandidateId = event.target.value; relockSwitch(); renderOperationContext();",
 		"state.selectedRejoinId = event.target.value; relockSwitch(); updateExecutionButtons();",
-		"finally {\n        state.operationRunning = false;\n        relockSwitch();",
+		"finally {\n        clearApprovalToken();\n        state.operationRunning = false;\n        relockSwitch();",
 		"byId('operation-result').textContent = '等待操作。';",
 	} {
 		if !strings.Contains(page, contract) {

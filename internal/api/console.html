@@ -515,16 +515,16 @@
         </section>
 
         <section class="view" data-view="settings" hidden aria-labelledby="settings-title">
-          <div class="view-heading"><div><h2 id="settings-title">控制台设置</h2><p>凭据仅保存在当前页面内存中</p></div></div>
+          <div class="view-heading"><div><h2 id="settings-title">控制台设置</h2><p>管理员凭据仅用于维护类操作，并只保存在当前页面内存中</p></div></div>
           <div class="panel"><div class="panel-body">
             <div class="settings-grid">
-              <label for="control-token">控制 API 令牌<input id="control-token" type="password" autocomplete="off"></label>
-              <label for="approval-token">审批令牌<input id="approval-token" type="password" autocomplete="off"></label>
+              <label for="admin-token">管理员凭据<input id="admin-token" type="password" autocomplete="off"></label>
+              <label for="lifecycle-token">节点流程审批凭据<input id="lifecycle-token" type="password" autocomplete="off"></label>
               <label for="operator-name">操作人<input id="operator-name" autocomplete="off" value="dba"></label>
               <label for="language-select">界面语言<select id="language-select"><option value="zh-CN">中文</option><option value="en-US">English</option></select></label>
               <label for="refresh-interval">自动刷新<select id="refresh-interval"><option value="30000">30 秒</option><option value="60000" selected>60 秒</option><option value="120000">2 分钟</option><option value="0">关闭</option></select></label>
             </div>
-            <p class="settings-note">令牌不会写入浏览器持久存储；刷新页面后需要重新输入。</p>
+            <p class="settings-note">管理员凭据用于刷新、元数据和节点维护。主库切换使用单独的一次性审批令牌，不会复用这里的凭据。</p>
           </div></div>
         </section>
       </div>
@@ -552,6 +552,15 @@
     <div class="dialog-actions"><button id="cancel-metadata" type="button">取消</button><button id="save-metadata" class="primary-button" type="button">保存元数据</button></div>
   </dialog>
 
+  <dialog id="approval-modal" role="dialog" aria-modal="true" aria-labelledby="approval-title">
+    <div class="dialog-head"><h2 id="approval-title">一次性审批令牌</h2><button class="dialog-close" id="close-approval-modal" type="button" aria-label="关闭">×</button></div>
+    <div class="dialog-body">
+      <label for="approval-token">一次性审批令牌<input id="approval-token" type="password" autocomplete="off" placeholder="cgag_..."></label>
+      <p class="settings-note">由管理员生成，5 分钟内有效，执行一次后失效。</p>
+    </div>
+    <div class="dialog-actions"><button id="cancel-approval" type="button">取消</button><button id="confirm-approval" class="primary-button" type="button">确认并执行</button></div>
+  </dialog>
+
   <div class="live-status" id="live-status" role="status" aria-live="polite">正在连接控制 API。</div>
 
   <script>
@@ -559,7 +568,7 @@
     const state = {
       language: 'zh-CN', clusters: [], clusterDirectory: new Map(), fleetTopology: new Map(), capabilities: [], nodes: [], allOperations: [], lifecycleTasks: [], lifecycleCapability: { available:false, reason:'未配置' },
       selectedClusterId: '', selectedCandidateId: '', selectedRejoinId: '', switchUnlocked: false, operationRunning: false,
-      controlToken: '', approvalToken: '', operator: 'dba', requestGeneration: 0, refreshIntervalMs: 60000, refreshTimer: null,
+      adminToken: '', lifecycleToken: '', approvalToken: '', pendingApprovalAction: null, operator: 'dba', requestGeneration: 0, refreshIntervalMs: 60000, refreshTimer: null,
       fleetSearch: '', fleetHealth: 'all', logSearch: '', logKind: 'all', logStatus: 'all',
       clusterDetail: null, topology: null, health: null, candidates: [], metrics: { instances: [] }, operations: []
     };
@@ -620,23 +629,63 @@
       return payload.result;
     };
 
-    const controlOptions = body => ({
+    const adminOptions = body => ({
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.controlToken}` },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.adminToken}` },
       body: JSON.stringify(body)
     });
 
-    const requireExecutionContext = () => {
-      state.controlToken = byId('control-token').value.trim();
-      state.approvalToken = byId('approval-token').value.trim();
+    const operationOptions = body => ({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+
+    const requireAdminContext = () => {
+      state.adminToken = byId('admin-token').value.trim();
       state.operator = byId('operator-name').value.trim() || 'dba';
-      if (!state.controlToken || !state.approvalToken) {
+      if (!state.adminToken) {
         showView('settings');
-        setLiveStatus('请先在设置中填写控制令牌和审批令牌。', true);
+        setLiveStatus('请先在设置中填写管理员凭据。', true);
         return false;
       }
       return true;
     };
+
+    const requireLifecycleContext = () => {
+      if (!requireAdminContext()) return false;
+      state.lifecycleToken = byId('lifecycle-token').value.trim();
+      if (!state.lifecycleToken) {
+        showView('settings');
+        setLiveStatus('请先在设置中填写节点流程审批凭据。', true);
+        return false;
+      }
+      return true;
+    };
+
+    const clearApprovalToken = () => {
+      state.approvalToken = '';
+      byId('approval-token').value = '';
+    };
+
+    const requireManualApproval = (kind, targetID, label) => {
+      state.operator = byId('operator-name').value.trim() || 'dba';
+      if (state.approvalToken) return true;
+      state.pendingApprovalAction = { kind, targetID, label };
+      byId('approval-modal').showModal();
+      byId('approval-token').focus();
+      setLiveStatus('请输入管理员签发的一次性审批令牌。', true);
+      return false;
+    };
+
+    const localizedApprovalError = message => ({
+      'approval grant is required':'请输入一次性审批令牌。',
+      'approval grant is invalid':'审批令牌无效，请重新申请。',
+      'approval grant has already been consumed':'审批令牌已使用，请重新申请。',
+      'approval grant has expired':'审批令牌已过期，请重新申请。',
+      'approval grant does not match this operation':'审批令牌与当前集群或目标不匹配。',
+      'approval grant plan is stale':'审批令牌绑定的计划已过期，请重新申请。'
+    })[message] || message;
 
     const commitIfCurrent = (generation, commit) => {
       if (generation !== state.requestGeneration) return false;
@@ -1016,14 +1065,8 @@
       target.className = isError ? 'result-banner error' : 'result-banner success';
     };
 
-    const retryableOperationFailure = error => {
-      const result = error && error.result ? error.result : {};
-      const failureClass = result.failure_class || (result.execution && result.execution.failure_class) || '';
-      return failureClass === 'stale_plan';
-    };
-
     const executeOperation = async (kind, targetID, label) => {
-      if (!state.switchUnlocked || !targetID || !requireExecutionContext()) return;
+      if (!state.switchUnlocked || !targetID || !requireManualApproval(kind, targetID, label)) return;
       const cluster = state.clusterDetail && state.clusterDetail.cluster;
       if (!cluster) return;
       state.operationRunning = true;
@@ -1031,36 +1074,20 @@
       if (kind === 'switchover') renderOperationProgress({ stage:'precheck', status:'running' });
       renderActionResult(`${label}正在执行。`);
       try {
-        let operation = null;
-        for (let attempt = 1; attempt <= 3; attempt += 1) {
-          const idempotencyKey = `console-${kind}-${cluster.resource_id}-${targetID}-${attempt}-${Date.now()}`;
-          const payload = {
-            operation: { cluster_id: cluster.resource_id, engine: cluster.engine, kind, requested_by: state.operator },
-            target_id: kind === 'switchover' ? state.selectedCandidateId : targetID,
-            idempotency_key: idempotencyKey,
-            approval_token: state.approvalToken
-          };
-          try {
-            let settled = false;
-            const executionRequest = fetchResult('/api/v1/operations/execute', controlOptions(payload)).finally(() => { settled = true; });
-            const progressRequest = kind === 'switchover' ? pollOperationProgress(idempotencyKey, () => settled) : Promise.resolve();
-            try { operation = await executionRequest; }
-            finally { settled = true; await progressRequest; }
-            if (kind === 'switchover') renderOperationProgress(operation);
-            break;
-          } catch (error) {
-            if (kind === 'switchover' && error.result) renderOperationProgress(error.result);
-            if (error.result && error.result.status === 'indeterminate') {
-              throw new APIError('结果不确定，停止自动重试并要求人工复核', error.status, error.result);
-            }
-            if (retryableOperationFailure(error) && attempt < 3) {
-              renderActionResult(`${label}检测到拓扑刚刚刷新，正在重新执行安全检查（${attempt}/2）。`);
-              await new Promise(resolve => window.setTimeout(resolve, 500));
-              continue;
-            }
-            throw error;
-          }
-        }
+        const idempotencyKey = `console-${kind}-${cluster.resource_id}-${targetID}-${Date.now()}`;
+        const payload = {
+          operation: { cluster_id: cluster.resource_id, engine: cluster.engine, kind, requested_by: state.operator },
+          target_id: kind === 'switchover' ? state.selectedCandidateId : targetID,
+          idempotency_key: idempotencyKey,
+          approval_token: state.approvalToken
+        };
+        let settled = false;
+        const executionRequest = fetchResult('/api/v1/operations/execute', operationOptions(payload)).finally(() => { settled = true; });
+        const progressRequest = kind === 'switchover' ? pollOperationProgress(idempotencyKey, () => settled) : Promise.resolve();
+        let operation;
+        try { operation = await executionRequest; }
+        finally { settled = true; await progressRequest; }
+        if (kind === 'switchover') renderOperationProgress(operation);
         if (!operation || operation.status !== 'succeeded' || !(operation.verification && operation.verification.passed)) throw new APIError(`${label}未完成验证`, 409, operation);
         if (kind === 'switchover') {
           await loadSelectedCluster({ preserveOperationResult:true, expectedPrimaryID: operation.target_id });
@@ -1069,11 +1096,17 @@
         renderActionResult(`${label}：${t('operationSucceeded')}`);
         await loadOperationLog();
       } catch (error) {
-        renderActionResult(`${label}失败：${error.message}`, true);
-        setLiveStatus(error.message, true);
+        if (kind === 'switchover' && error.result) renderOperationProgress(error.result);
+        const message = error.result && error.result.status === 'indeterminate'
+          ? '结果不确定，停止执行并要求人工复核'
+          : localizedApprovalError(error.message);
+        renderActionResult(`${label}失败：${message}`, true);
+        setLiveStatus(message, true);
       } finally {
+        clearApprovalToken();
         state.operationRunning = false;
         relockSwitch();
+        state.pendingApprovalAction = null;
       }
     };
 
@@ -1137,7 +1170,7 @@
       action: byId('node-action').value,
       sync_method: byId('sync-method').value,
       requested_by: state.operator,
-      approval_token: state.approvalToken,
+      approval_token: state.lifecycleToken,
       targets: [{
         node_id: byId('node-resource-id').value.trim(), node_name: byId('node-name').value.trim(), kind: byId('node-kind').value,
         hostname: byId('node-hostname').value.trim(), ip_address: byId('node-ip').value.trim(), ssh_user: byId('node-ssh-user').value.trim(),
@@ -1148,12 +1181,12 @@
 
     const executeNodeSync = async () => {
       if (!state.lifecycleCapability.available) { setLiveStatus(`节点流程不可执行：${localizedReason(state.lifecycleCapability.reason)}`, true); return; }
-      if (!requireExecutionContext() || !state.selectedClusterId) return;
+      if (!requireLifecycleContext() || !state.selectedClusterId) return;
       const payload = lifecyclePayload();
       try {
-        const precheck = await fetchResult('/api/v1/nodes/sync/precheck', controlOptions(payload));
+        const precheck = await fetchResult('/api/v1/nodes/sync/precheck', adminOptions(payload));
         if (precheck.blocked) throw new APIError('节点流程被预检查阻断', 409, precheck);
-        const task = await fetchResult('/api/v1/nodes/sync/execute', controlOptions(payload));
+        const task = await fetchResult('/api/v1/nodes/sync/execute', adminOptions(payload));
         setLiveStatus(`节点任务已完成：${task.status}`);
         await loadNodesAndTasks();
         await loadSelectedCluster();
@@ -1258,7 +1291,7 @@
     };
 
     const saveMetadata = async () => {
-      if (!requireExecutionContext()) return;
+      if (!requireAdminContext()) return;
       const instance = state.topology && (state.topology.instances || []).find(item => item.resource_id === byId('metadata-instance-select').value);
       if (!instance) { byId('metadata-result').textContent = '请选择实例。'; return; }
       const endpoint = state.clusterDetail.endpoints.find(item => item.kind === 'database' && item.instance_id === instance.resource_id);
@@ -1268,14 +1301,14 @@
         operation: { cluster_id: instance.cluster_id, engine: instance.engine, kind: 'metadata_reconciliation', requested_by: state.operator },
         instance: updated,
         endpoint_id: endpoint.resource_id,
-        approval_token: state.approvalToken
+        approval_token: state.adminToken
       };
       try {
-        const checks = await fetchResult('/api/v1/metadata/reconcile/precheck', controlOptions(payload));
+        const checks = await fetchResult('/api/v1/metadata/reconcile/precheck', adminOptions(payload));
         if ((checks || []).some(check => check.status === 'fail')) throw new APIError('元数据预检查未通过');
-        await fetchResult('/api/v1/metadata/reconcile/execute', controlOptions(payload));
+        await fetchResult('/api/v1/metadata/reconcile/execute', adminOptions(payload));
         let refreshError = null;
-        try { await fetchResult(`/api/v1/clusters/${instance.cluster_id}/discover`, controlOptions({})); }
+        try { await fetchResult(`/api/v1/clusters/${instance.cluster_id}/discover`, adminOptions({})); }
         catch (error) { refreshError = error; }
         byId('metadata-result').textContent = refreshError ? '元数据已更新，但拓扑刷新失败。' : '元数据已更新，固定身份保持不变。';
         await loadSelectedCluster();
@@ -1346,9 +1379,9 @@
     };
 
     const refreshDiscovery = async () => {
-      if (!state.selectedClusterId || !requireExecutionContext()) return;
+      if (!state.selectedClusterId || !requireAdminContext()) return;
       try {
-        await fetchResult(`/api/v1/clusters/${state.selectedClusterId}/discover`, controlOptions({}));
+        await fetchResult(`/api/v1/clusters/${state.selectedClusterId}/discover`, adminOptions({}));
         await loadSelectedCluster({ preserveOperationResult:true });
       } catch (error) { setLiveStatus(error.message, true); }
     };
@@ -1394,8 +1427,19 @@
     byId('cancel-metadata').addEventListener('click', () => byId('metadata-modal').close());
     byId('metadata-instance-select').addEventListener('change', populateMetadataForm);
     byId('save-metadata').addEventListener('click', saveMetadata);
-    byId('control-token').addEventListener('input', event => { state.controlToken = event.target.value.trim(); });
+    byId('admin-token').addEventListener('input', event => { state.adminToken = event.target.value.trim(); });
+    byId('lifecycle-token').addEventListener('input', event => { state.lifecycleToken = event.target.value.trim(); });
     byId('approval-token').addEventListener('input', event => { state.approvalToken = event.target.value.trim(); });
+    byId('close-approval-modal').addEventListener('click', () => { state.pendingApprovalAction = null; clearApprovalToken(); byId('approval-modal').close(); });
+    byId('cancel-approval').addEventListener('click', () => { state.pendingApprovalAction = null; clearApprovalToken(); byId('approval-modal').close(); });
+    byId('confirm-approval').addEventListener('click', () => {
+      state.approvalToken = byId('approval-token').value.trim();
+      if (!state.approvalToken) { setLiveStatus('请输入一次性审批令牌。', true); return; }
+      const pending = state.pendingApprovalAction;
+      state.pendingApprovalAction = null;
+      byId('approval-modal').close();
+      if (pending) executeOperation(pending.kind, pending.targetID, pending.label);
+    });
     byId('operator-name').addEventListener('input', event => { state.operator = event.target.value.trim() || 'dba'; });
     byId('language-select').addEventListener('change', event => { state.language = event.target.value; applyLanguage(); renderOverview(); renderTopology(); renderOperationContext(); renderMetrics(); renderNodes(); renderLifecycleTasks(); renderOperationLog(); });
     byId('refresh-interval').addEventListener('change', event => { state.refreshIntervalMs = Number(event.target.value); scheduleAutoRefresh(); });
