@@ -161,7 +161,7 @@ func TestPlatformSessionRequiresPasswordChangeAndCSRFFOrMutation(t *testing.T) {
 }
 
 func TestPlatformPasswordChangeRevokesSessionAndAllowsRelogin(t *testing.T) {
-	server, _, _ := newAuthenticationTestServer(t)
+	server, repository, _ := newAuthenticationTestServer(t)
 	client := &authTestClient{handler: server.Handler()}
 	if response := client.login(t, "admin", "admin123"); response.Code != http.StatusOK {
 		t.Fatalf("login status=%d body=%s", response.Code, response.Body.String())
@@ -188,6 +188,11 @@ func TestPlatformPasswordChangeRevokesSessionAndAllowsRelogin(t *testing.T) {
 	}, true)
 	if response.Code != http.StatusCreated {
 		t.Fatalf("authenticated admin mutation status=%d body=%s", response.Code, response.Body.String())
+	}
+	cluster := repository.Clusters()[0]
+	response = client.request(t, http.MethodDelete, "/api/v1/clusters/"+string(cluster.ResourceID), map[string]string{"confirm_display_name": cluster.DisplayName}, true)
+	if response.Code != http.StatusOK || len(repository.Clusters()) != 0 {
+		t.Fatalf("authenticated admin retirement status=%d body=%s clusters=%+v", response.Code, response.Body.String(), repository.Clusters())
 	}
 }
 
@@ -230,6 +235,20 @@ func TestPlatformViewerCanReadButCannotMutate(t *testing.T) {
 	}, true)
 	if response.Code != http.StatusForbidden || len(repository.Clusters()) != 0 {
 		t.Fatalf("viewer mutation status=%d body=%s clusters=%+v", response.Code, response.Body.String(), repository.Clusters())
+	}
+	cluster, _, err := repository.CreateClusterWithEndpoints(
+		model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "viewer-cannot-retire"},
+		[]model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true}},
+	)
+	if err != nil {
+		t.Fatalf("create cluster for retirement authorization: %v", err)
+	}
+	response = client.request(t, http.MethodDelete, "/api/v1/clusters/"+string(cluster.ResourceID), map[string]string{"confirm_display_name": cluster.DisplayName}, true)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("viewer retirement status=%d body=%s", response.Code, response.Body.String())
+	}
+	if _, found := repository.Cluster(cluster.ResourceID); !found {
+		t.Fatal("viewer retired a cluster")
 	}
 }
 

@@ -27,6 +27,10 @@ type clusterRegistrationPayload struct {
 	} `json:"endpoints"`
 }
 
+type clusterRetirementPayload struct {
+	ConfirmDisplayName string `json:"confirm_display_name"`
+}
+
 func (server *Server) registerCluster(writer http.ResponseWriter, request *http.Request) {
 	payload := clusterRegistrationPayload{}
 	if err := decode(request, &payload); err != nil {
@@ -96,6 +100,10 @@ func (server *Server) clusterRoute(writer http.ResponseWriter, request *http.Req
 	}
 	clusterID := model.ResourceID(parts[0])
 	if len(parts) == 1 {
+		if request.Method == http.MethodDelete {
+			server.retireCluster(writer, request, clusterID)
+			return
+		}
 		if request.Method != http.MethodGet {
 			writeError(writer, http.StatusMethodNotAllowed, "method not allowed")
 			return
@@ -190,6 +198,39 @@ func (server *Server) clusterRoute(writer http.ResponseWriter, request *http.Req
 	default:
 		writeError(writer, http.StatusNotFound, "cluster route not found")
 	}
+}
+
+func (server *Server) retireCluster(writer http.ResponseWriter, request *http.Request, clusterID model.ResourceID) {
+	if _, found := server.store.Cluster(clusterID); !found {
+		writeError(writer, http.StatusNotFound, "cluster not found")
+		return
+	}
+	payload := clusterRetirementPayload{}
+	if err := decode(request, &payload); err != nil || payload.ConfirmDisplayName == "" {
+		writeError(writer, http.StatusBadRequest, "exact cluster display name confirmation is required")
+		return
+	}
+	actor := "service-api"
+	if authentication, found := requestAuthentication(request); found && strings.TrimSpace(authentication.principal.Username) != "" {
+		actor = authentication.principal.Username
+	}
+	result, err := server.store.RetireCluster(clusterID, payload.ConfirmDisplayName, actor)
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrValidation):
+			writeError(writer, http.StatusBadRequest, "cluster display name confirmation does not match")
+		case errors.Is(err, store.ErrConflict):
+			writeError(writer, http.StatusConflict, "cluster retirement is blocked by active work")
+		case errors.Is(err, store.ErrPostCommitDurability):
+			writeJSON(writer, http.StatusInternalServerError, map[string]interface{}{
+				"status": "error", "message": "cluster retirement committed with durability warning", "result": result,
+			})
+		default:
+			writeError(writer, http.StatusInternalServerError, "cluster retirement failed")
+		}
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": result})
 }
 
 type haEndpointPayload struct {

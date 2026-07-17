@@ -18,6 +18,7 @@ import (
 
 	"clusterguard.io/ha/adapters/mysql"
 	"clusterguard.io/ha/internal/discovery"
+	"clusterguard.io/ha/internal/lifecycle"
 	"clusterguard.io/ha/internal/store"
 	"clusterguard.io/ha/internal/workflow"
 	"clusterguard.io/ha/pkg/adapter"
@@ -209,6 +210,80 @@ func TestRegisterClusterAndRefreshOnlyRegisteredInventory(t *testing.T) {
 	password := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/clusters/"+string(body.Result.Cluster.ResourceID)+"/discover", map[string]string{"password": "api-secret"})
 	if password.Code != http.StatusBadRequest || strings.Contains(password.Body.String(), "api-secret") || refresher.callCount() != 1 {
 		t.Fatalf("password-bearing refresh was accepted or exposed: %d %s", password.Code, password.Body.String())
+	}
+}
+
+func TestDeleteClusterRetiresInventoryAndReturnsSummary(t *testing.T) {
+	repository := store.NewMemory()
+	server := newAPIServer(t, repository, newCandidateAdapterSpy(), &fakeRefresher{})
+	cluster, _, err := repository.CreateClusterWithEndpoints(
+		model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "retire-api"},
+		[]model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true}},
+	)
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	response := callJSON(t, server.Handler(), http.MethodDelete, "/api/v1/clusters/"+string(cluster.ResourceID), map[string]string{"confirm_display_name": cluster.DisplayName})
+	if response.Code != http.StatusOK {
+		t.Fatalf("delete cluster status=%d body=%s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"display_name":"retire-api"`) || !strings.Contains(response.Body.String(), `"endpoints_removed":1`) {
+		t.Fatalf("delete cluster summary=%s", response.Body.String())
+	}
+	if _, found := repository.Cluster(cluster.ResourceID); found || len(repository.Audits()) != 1 || repository.Audits()[0].Actor != "service-api" {
+		t.Fatalf("cluster was not retired with service audit: found=%t audits=%+v", found, repository.Audits())
+	}
+}
+
+func TestDeleteClusterValidatesConfirmationAndConflicts(t *testing.T) {
+	repository := store.NewMemory()
+	server := newAPIServer(t, repository, newCandidateAdapterSpy(), &fakeRefresher{})
+	cluster, _, err := repository.CreateClusterWithEndpoints(
+		model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "retire-guard"},
+		[]model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true}},
+	)
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	for _, body := range []interface{}{nil, map[string]string{"confirm_display_name": "wrong"}, map[string]string{"confirm_display_name": cluster.DisplayName, "unexpected": "field"}} {
+		response := callJSON(t, server.Handler(), http.MethodDelete, "/api/v1/clusters/"+string(cluster.ResourceID), body)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("invalid delete body=%+v status=%d response=%s", body, response.Code, response.Body.String())
+		}
+	}
+	if _, err := repository.PutLifecycleTask(lifecycle.Task{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, ClusterID: cluster.ResourceID, Status: lifecycle.TaskRunning}); err != nil {
+		t.Fatalf("put lifecycle task: %v", err)
+	}
+	blocked := callJSON(t, server.Handler(), http.MethodDelete, "/api/v1/clusters/"+string(cluster.ResourceID), map[string]string{"confirm_display_name": cluster.DisplayName})
+	if blocked.Code != http.StatusConflict || !strings.Contains(blocked.Body.String(), "active work") {
+		t.Fatalf("active work delete status=%d body=%s", blocked.Code, blocked.Body.String())
+	}
+	if _, found := repository.Cluster(cluster.ResourceID); !found {
+		t.Fatal("blocked delete removed the cluster")
+	}
+	missing := callJSON(t, server.Handler(), http.MethodDelete, "/api/v1/clusters/"+string(model.NewResourceID()), map[string]string{"confirm_display_name": "missing"})
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("missing delete status=%d body=%s", missing.Code, missing.Body.String())
+	}
+}
+
+func TestDeleteClusterRequiresMutationLeader(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, _, err := repository.CreateClusterWithEndpoints(
+		model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "leader-only-retirement"},
+		[]model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true}},
+	)
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	authority := &apiMutationAuthorityStub{err: errors.New("not leader"), leaderID: model.NewResourceID(), leaderAddress: "192.0.2.10:10009"}
+	server := newAPIServer(t, repository, newCandidateAdapterSpy(), &fakeRefresher{}, WithMutationAuthority(authority))
+	response := callJSON(t, server.Handler(), http.MethodDelete, "/api/v1/clusters/"+string(cluster.ResourceID), map[string]string{"confirm_display_name": cluster.DisplayName})
+	if response.Code != http.StatusServiceUnavailable || authority.calls != 1 {
+		t.Fatalf("follower delete status=%d body=%s calls=%d", response.Code, response.Body.String(), authority.calls)
+	}
+	if _, found := repository.Cluster(cluster.ResourceID); !found {
+		t.Fatal("follower delete changed inventory")
 	}
 }
 
