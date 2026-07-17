@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -62,6 +63,22 @@ func TestRetireClusterRemovesLiveInventoryAndKeepsHistory(t *testing.T) {
 	if err := repository.ReplaceClusterAnomalies(cluster.ResourceID, []model.MetadataAnomaly{{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, ClusterID: cluster.ResourceID, Engine: model.EngineMySQL, Kind: "test", Severity: "warning", Message: "historical anomaly"}}); err != nil {
 		t.Fatalf("store anomaly: %v", err)
 	}
+	if err := repository.ReplaceReplicationLinks(cluster.ResourceID, []model.ReplicationLink{{SourceInstanceID: instance.ResourceID, TargetInstanceID: model.NewResourceID(), Healthy: true}}); err != nil {
+		t.Fatalf("store replication link: %v", err)
+	}
+	historicalRequest := model.OperationRecord{
+		Operation:      model.Operation{ClusterID: cluster.ResourceID, Engine: model.EngineMySQL, Kind: model.OperationSwitchover, RequestedBy: "operator"},
+		TargetID:       instance.ResourceID,
+		IdempotencyKey: "retirement-history-operation",
+	}
+	historicalOperation, _, err := repository.CreateOperation(historicalRequest)
+	if err != nil {
+		t.Fatalf("create historical operation: %v", err)
+	}
+	historicalOperation, err = repository.TransitionOperation(historicalOperation.ResourceID, historicalOperation.MetadataRevision, model.OperationTransition{Stage: model.StageReport, Status: model.OperationFailed, Message: "historical failure"})
+	if err != nil {
+		t.Fatalf("finish historical operation: %v", err)
+	}
 	historyOperationID := model.NewResourceID()
 	if err := repository.RecordAudit(model.AuditEvent{OperationID: historyOperationID, Stage: model.StageAudit, Actor: "operator", Message: "historical event"}); err != nil {
 		t.Fatalf("record audit: %v", err)
@@ -81,7 +98,7 @@ func TestRetireClusterRemovesLiveInventoryAndKeepsHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("retire cluster: %v", err)
 	}
-	if result.Cluster.ResourceID != cluster.ResourceID || result.InstancesRemoved != 1 || result.EndpointsRemoved != 2 || result.HAEndpointsRemoved != 1 || result.MetricSamplesRemoved != 1 || result.AnomaliesRemoved != 1 || result.RetiredAt != now {
+	if result.Cluster.ResourceID != cluster.ResourceID || result.InstancesRemoved != 1 || result.EndpointsRemoved != 2 || result.HAEndpointsRemoved != 1 || result.ReplicationLinksRemoved != 1 || result.MetricSamplesRemoved != 1 || result.AnomaliesRemoved != 1 || result.RetiredAt != now {
 		t.Fatalf("retirement summary = %+v", result)
 	}
 	if _, found := repository.Cluster(cluster.ResourceID); found || len(repository.Clusters()) != 0 || len(repository.Instances(cluster.ResourceID)) != 0 || len(repository.Endpoints(cluster.ResourceID)) != 0 || len(repository.HAEndpoints(cluster.ResourceID)) != 0 || len(repository.MetricSamples(cluster.ResourceID)) != 0 {
@@ -98,6 +115,16 @@ func TestRetireClusterRemovesLiveInventoryAndKeepsHistory(t *testing.T) {
 	}
 	if len(repository.Reports()) != 1 || repository.Reports()[0].Title != "historical report" {
 		t.Fatalf("report history changed: %+v", repository.Reports())
+	}
+	retirementAudit := repository.Audits()[1].Message
+	for _, count := range []string{"instances=1", "endpoints=2", "ha_endpoints=1", "replication_links=1", "metric_samples=1", "anomalies=1"} {
+		if !strings.Contains(retirementAudit, count) {
+			t.Fatalf("retirement audit missing %q: %s", count, retirementAudit)
+		}
+	}
+	replayed, existing, err := repository.CreateOperation(historicalRequest)
+	if err != nil || !existing || replayed.ResourceID != historicalOperation.ResourceID || replayed.Status != model.OperationFailed {
+		t.Fatalf("terminal operation history was not retained: replay=%+v existing=%t err=%v", replayed, existing, err)
 	}
 	if persisted, found := repository.LifecycleTask(task.ResourceID); !found || persisted.Status != lifecycle.TaskSucceeded {
 		t.Fatalf("terminal lifecycle history changed: %+v found=%t", persisted, found)
@@ -117,6 +144,13 @@ func TestRetireClusterRequiresExactDisplayName(t *testing.T) {
 		if _, found := repository.Cluster(cluster.ResourceID); !found {
 			t.Fatalf("confirmation %q retired the cluster", confirmation)
 		}
+	}
+}
+
+func TestRetireClusterMissingResourceReturnsNotFound(t *testing.T) {
+	repository := NewMemory()
+	if _, err := repository.RetireCluster(model.NewResourceID(), "missing", "admin"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing cluster retirement error = %v, want not found", err)
 	}
 }
 
@@ -143,7 +177,14 @@ func TestRetireClusterBlocksActiveWork(t *testing.T) {
 				t.Fatalf("put lock: %v", err)
 			}
 		}},
-		{name: "ownership lease", seed: func(t *testing.T, repository *Repository, cluster model.DatabaseCluster, instance model.DatabaseInstance) {
+		{name: "stable ownership lease", seed: func(t *testing.T, repository *Repository, cluster model.DatabaseCluster, instance model.DatabaseInstance) {
+			now := repository.now().UTC()
+			haEndpointID := model.NewResourceID()
+			if err := repository.PutCoordinationLease(coordination.LeaseRecord{Lease: endpoint.Lease{ResourceID: model.NewResourceID(), ClusterID: cluster.ResourceID, HAEndpointID: haEndpointID, OperationID: haEndpointID, OwnerID: instance.ResourceID, ExpiresAt: now.Add(time.Minute), Active: true}, CreatedAt: now, UpdatedAt: now}); err != nil {
+				t.Fatalf("put lease: %v", err)
+			}
+		}},
+		{name: "transition ownership lease", seed: func(t *testing.T, repository *Repository, cluster model.DatabaseCluster, instance model.DatabaseInstance) {
 			now := repository.now().UTC()
 			if err := repository.PutCoordinationLease(coordination.LeaseRecord{Lease: endpoint.Lease{ResourceID: model.NewResourceID(), ClusterID: cluster.ResourceID, HAEndpointID: model.NewResourceID(), OperationID: model.NewResourceID(), OwnerID: instance.ResourceID, ExpiresAt: now.Add(time.Minute), Active: true}, CreatedAt: now, UpdatedAt: now}); err != nil {
 				t.Fatalf("put lease: %v", err)
@@ -186,5 +227,94 @@ func TestRetireClusterPersistsAcrossRestart(t *testing.T) {
 	}
 	if _, found := reopened.Cluster(cluster.ResourceID); found || len(reopened.Audits()) != 1 || !strings.Contains(reopened.Audits()[0].Message, cluster.DisplayName) {
 		t.Fatalf("retirement was not durable: cluster=%t audits=%+v", found, reopened.Audits())
+	}
+}
+
+func TestRetireClusterReturnsCommittedResultAfterDirectorySyncWarning(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metadata.json")
+	repository, err := Open(path)
+	if err != nil {
+		t.Fatalf("open repository: %v", err)
+	}
+	cluster, _, _ := seedRetirementCluster(t, repository)
+	repository.syncDirectory = func(string) error { return errors.New("directory sync unavailable") }
+
+	result, err := repository.RetireCluster(cluster.ResourceID, cluster.DisplayName, "admin")
+	if !errors.Is(err, ErrPostCommitDurability) {
+		t.Fatalf("retirement error = %v, want post-commit durability warning", err)
+	}
+	if result.Cluster.ResourceID != cluster.ResourceID || result.InstancesRemoved != 1 || result.EndpointsRemoved != 1 {
+		t.Fatalf("committed retirement result was discarded: %+v", result)
+	}
+	if _, found := repository.Cluster(cluster.ResourceID); found {
+		t.Fatal("committed retirement remains in live inventory")
+	}
+	reopened, reopenErr := Open(path)
+	if reopenErr != nil {
+		t.Fatalf("reopen repository: %v", reopenErr)
+	}
+	if _, found := reopened.Cluster(cluster.ResourceID); found || len(reopened.Audits()) != 1 {
+		t.Fatalf("committed retirement was not recoverable: found=%t audits=%+v", found, reopened.Audits())
+	}
+}
+
+func TestRetireClusterPersistenceFailureKeepsLiveAndDiskInventory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metadata.json")
+	repository, err := Open(path)
+	if err != nil {
+		t.Fatalf("open repository: %v", err)
+	}
+	cluster, _, _ := seedRetirementCluster(t, repository)
+	repository.syncFile = func(*os.File) error { return errors.New("file sync unavailable") }
+
+	if _, err := repository.RetireCluster(cluster.ResourceID, cluster.DisplayName, "admin"); err == nil || errors.Is(err, ErrPostCommitDurability) {
+		t.Fatalf("retirement error = %v, want pre-commit persistence failure", err)
+	}
+	if _, found := repository.Cluster(cluster.ResourceID); !found || len(repository.Audits()) != 0 {
+		t.Fatalf("failed retirement changed live state: found=%t audits=%+v", found, repository.Audits())
+	}
+	reopened, reopenErr := Open(path)
+	if reopenErr != nil {
+		t.Fatalf("reopen repository: %v", reopenErr)
+	}
+	if _, found := reopened.Cluster(cluster.ResourceID); !found || len(reopened.Audits()) != 0 {
+		t.Fatalf("failed retirement changed disk state: found=%t audits=%+v", found, reopened.Audits())
+	}
+}
+
+func TestRetireClusterRemovesExpiredOwnershipLease(t *testing.T) {
+	repository := NewMemory()
+	now := time.Date(2026, 7, 17, 10, 0, 0, 0, time.UTC)
+	repository.now = func() time.Time { return now }
+	cluster, instance, _ := seedRetirementCluster(t, repository)
+	lease := coordination.LeaseRecord{
+		Lease: endpoint.Lease{
+			ResourceID: model.NewResourceID(), ClusterID: cluster.ResourceID, HAEndpointID: model.NewResourceID(),
+			OperationID: model.NewResourceID(), OwnerID: instance.ResourceID, ExpiresAt: now.Add(-time.Second), Active: true,
+		},
+		CreatedAt: now.Add(-time.Minute), UpdatedAt: now.Add(-time.Second),
+	}
+	if err := repository.PutCoordinationLease(lease); err != nil {
+		t.Fatalf("put expired ownership lease: %v", err)
+	}
+	lock := coordination.OperationLockRecord{
+		ResourceID: model.NewResourceID(), ClusterID: cluster.ResourceID, OperationID: model.NewResourceID(),
+		ExpiresAt: now.Add(-time.Second), CreatedAt: now.Add(-time.Minute), UpdatedAt: now.Add(-time.Second),
+	}
+	if err := repository.PutCoordinationOperationLock(lock); err != nil {
+		t.Fatalf("put expired operation lock: %v", err)
+	}
+	if _, err := repository.RetireCluster(cluster.ResourceID, cluster.DisplayName, "admin"); err != nil {
+		t.Fatalf("retire cluster with expired lease: %v", err)
+	}
+	for _, persisted := range repository.CoordinationLeases() {
+		if persisted.Lease.ResourceID == lease.Lease.ResourceID {
+			t.Fatal("retirement kept an expired ownership lease")
+		}
+	}
+	for _, persisted := range repository.CoordinationOperationLocks() {
+		if persisted.ResourceID == lock.ResourceID {
+			t.Fatal("retirement kept an expired operation lock")
+		}
 	}
 }

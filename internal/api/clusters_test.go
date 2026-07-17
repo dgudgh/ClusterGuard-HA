@@ -304,6 +304,34 @@ func TestRegistrationPostCommitWarningReturnsCommittedUUIDs(t *testing.T) {
 	}
 }
 
+func TestRetirementPostCommitWarningReturnsCommittedSummary(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	cluster := model.DatabaseCluster{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, Engine: model.EngineMySQL, DisplayName: "retired-with-warning"}
+	result := store.ClusterRetirement{Cluster: cluster, RetiredAt: time.Now().UTC(), InstancesRemoved: 3, EndpointsRemoved: 4}
+	err := fmt.Errorf("%w: secret filesystem detail", store.ErrPostCommitDurability)
+	if !writeClusterRetirementFailure(recorder, result, err) {
+		t.Fatal("post-commit retirement warning was not handled")
+	}
+	body := recorder.Body.String()
+	if recorder.Code != http.StatusInternalServerError || !strings.Contains(body, `"committed":true`) || !strings.Contains(body, string(cluster.ResourceID)) || !strings.Contains(body, `"instances_removed":3`) {
+		t.Fatalf("post-commit retirement response = %d %s", recorder.Code, body)
+	}
+	if strings.Contains(body, "secret filesystem detail") {
+		t.Fatalf("retirement response leaked persistence details: %s", body)
+	}
+}
+
+func TestRetirementMissingResourceReturnsNotFoundAfterConcurrentDelete(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	err := fmt.Errorf("%w: removed by another request", store.ErrNotFound)
+	if !writeClusterRetirementFailure(recorder, store.ClusterRetirement{}, err) {
+		t.Fatal("missing cluster retirement was not handled")
+	}
+	if recorder.Code != http.StatusNotFound || !strings.Contains(recorder.Body.String(), "cluster not found") {
+		t.Fatalf("missing retirement response = %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestDiscoveryPostCommitWarningReturnsPublishedObservation(t *testing.T) {
 	repository := store.NewMemory()
 	cluster, _, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "discovery-warning"}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true}})

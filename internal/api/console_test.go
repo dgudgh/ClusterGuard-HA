@@ -118,6 +118,87 @@ func TestClusterSelectorUsesStableClusterNameOnly(t *testing.T) {
 	}
 }
 
+func TestConsoleClusterManagementUsesFocusedAdministratorModal(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		`id="open-cluster-management-modal"`, `<dialog id="cluster-management-modal"`,
+		`aria-labelledby="cluster-management-title"`, `id="cluster-create-tab"`, `id="cluster-retire-tab"`,
+		`id="cluster-create-panel"`, `id="cluster-retire-panel"`, `id="cluster-management-result"`,
+		"byId('open-cluster-management-modal').hidden = !canAdministerPlatform();",
+		"byId('cluster-management-modal').showModal()", "byId('cluster-management-modal').close()",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing cluster management modal contract %q", contract)
+		}
+	}
+	for _, forbidden := range []string{`id="cluster-password"`, `id="cluster-username"`, "cluster_credentials"} {
+		if strings.Contains(page, forbidden) {
+			t.Fatalf("cluster management modal must not collect database credentials %q", forbidden)
+		}
+	}
+}
+
+func TestConsoleClusterManagementRegistersDiscoversAndSelectsNewCluster(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		`id="cluster-display-name"`, `id="cluster-engine"`, `id="cluster-endpoint-list"`,
+		`id="add-cluster-endpoint"`, `id="submit-cluster-registration"`,
+		"const addClusterEndpointRow =", "removeClusterEndpointRow", "at least one database endpoint",
+		"fetchResult('/api/v1/clusters', mutationOptions(payload))",
+		"fetchResult(`/api/v1/clusters/${registered.cluster.resource_id}/discover`, mutationOptions({}))",
+		"await loadClusters(registered.cluster.resource_id)",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing cluster registration contract %q", contract)
+		}
+	}
+}
+
+func TestConsoleClusterManagementRetiresWithExactNameConfirmation(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		`id="retire-cluster-name"`, `id="retire-cluster-id"`, `id="retire-cluster-confirmation"`,
+		`id="submit-cluster-retirement"`, "confirmation === cluster.display_name",
+		"fetchResult(`/api/v1/clusters/${cluster.resource_id}`, deletionOptions({ confirm_display_name: confirmation }))",
+		"const confirmation = byId('retire-cluster-confirmation').value;",
+		"仅从 ClusterGuard 活动清单移除", "不会停止数据库、删除数据或操作系统 VIP",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing guarded cluster retirement contract %q", contract)
+		}
+	}
+	if strings.Contains(page, "const confirmation = byId('retire-cluster-confirmation').value.trim();") {
+		t.Fatal("console trims the exact-name retirement confirmation")
+	}
+}
+
+func TestConsoleClusterRetirementRecognizesCommittedDurabilityWarning(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		"this.committed = committed",
+		"payload.committed === true",
+		"error instanceof APIError && error.committed",
+		"退役已提交，但元数据目录同步需要复核",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing committed retirement warning contract %q", contract)
+		}
+	}
+}
+
+func TestConsoleClusterManagementKeepsActionsVisibleOnSmallScreens(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		`.cluster-management-dialog[open] { display:grid; grid-template-rows:auto minmax(0,1fr) auto;`,
+		`.cluster-management-dialog .dialog-body { min-height:0; overflow:auto;`,
+		`.cluster-management-dialog .dialog-actions {`,
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing responsive cluster management contract %q", contract)
+		}
+	}
+}
+
 func TestTopologyShowsStableAndNativeIdentityAndMetadataModal(t *testing.T) {
 	page := string(consoleHTML)
 	view := consoleView(t, "topology")
@@ -209,6 +290,44 @@ func TestFormerPrimaryRejoinAndNodeLifecycleUseRealAPIs(t *testing.T) {
 	} {
 		if !strings.Contains(page, contract) {
 			t.Fatalf("console missing real node/rejoin contract %q", contract)
+		}
+	}
+}
+
+func TestNodeLifecycleUsesFocusedModalInsteadOfInlineForm(t *testing.T) {
+	page := string(consoleHTML)
+	nodesView := consoleView(t, "nodes")
+	for _, contract := range []string{
+		`id="open-node-lifecycle-modal"`, `<dialog id="node-lifecycle-modal"`,
+		`aria-labelledby="node-lifecycle-title"`, `id="close-node-lifecycle-modal"`,
+		`id="cancel-node-lifecycle"`, `id="node-lifecycle-result"`,
+		"byId('node-lifecycle-modal').showModal()", "byId('node-lifecycle-modal').close()",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing node lifecycle modal contract %q", contract)
+		}
+	}
+	if strings.Contains(nodesView, `id="node-action"`) || strings.Contains(nodesView, `class="node-form"`) {
+		t.Fatal("node lifecycle form must not remain inline in the nodes workspace")
+	}
+}
+
+func TestNodeLifecycleEntryReevaluatesAfterClusterSelection(t *testing.T) {
+	page := string(consoleHTML)
+	contract := "state.selectedClusterId = clusterId;\n      updateNodeLifecycleControls();"
+	if !strings.Contains(page, contract) {
+		t.Fatalf("console does not refresh node lifecycle controls after cluster selection: missing %q", contract)
+	}
+}
+
+func TestNodeLifecycleModalKeepsActionsVisibleOnSmallScreens(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		`.node-lifecycle-dialog[open] { display:grid; grid-template-rows:auto minmax(0,1fr) auto;`,
+		`.node-lifecycle-dialog .dialog-body { min-height:0; max-height:none; overflow:auto;`,
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing responsive node modal contract %q", contract)
 		}
 	}
 }
@@ -503,8 +622,13 @@ func TestConsoleOrganizesNodeWorkflowAndFiltersOperationEvidence(t *testing.T) {
 	nodes := consoleView(t, "nodes")
 	logView := consoleView(t, "operation-log")
 	for _, label := range []string{"任务类型", "固定身份", "服务器连接", "数据库与同步"} {
+		if !strings.Contains(page, label) {
+			t.Fatalf("node lifecycle dialog missing form group %q", label)
+		}
+	}
+	for _, label := range []string{"节点清单", "任务进度", `id="open-node-lifecycle-modal"`} {
 		if !strings.Contains(nodes, label) {
-			t.Fatalf("node workflow missing form group %q", label)
+			t.Fatalf("node workspace missing focused content %q", label)
 		}
 	}
 	for _, contract := range []string{

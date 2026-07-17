@@ -215,22 +215,31 @@ func (server *Server) retireCluster(writer http.ResponseWriter, request *http.Re
 		actor = authentication.principal.Username
 	}
 	result, err := server.store.RetireCluster(clusterID, payload.ConfirmDisplayName, actor)
-	if err != nil {
-		switch {
-		case errors.Is(err, store.ErrValidation):
-			writeError(writer, http.StatusBadRequest, "cluster display name confirmation does not match")
-		case errors.Is(err, store.ErrConflict):
-			writeError(writer, http.StatusConflict, "cluster retirement is blocked by active work")
-		case errors.Is(err, store.ErrPostCommitDurability):
-			writeJSON(writer, http.StatusInternalServerError, map[string]interface{}{
-				"status": "error", "message": "cluster retirement committed with durability warning", "result": result,
-			})
-		default:
-			writeError(writer, http.StatusInternalServerError, "cluster retirement failed")
-		}
+	if writeClusterRetirementFailure(writer, result, err) {
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": result})
+}
+
+func writeClusterRetirementFailure(writer http.ResponseWriter, result store.ClusterRetirement, err error) bool {
+	if err == nil {
+		return false
+	}
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		writeError(writer, http.StatusNotFound, "cluster not found")
+	case errors.Is(err, store.ErrValidation):
+		writeError(writer, http.StatusBadRequest, "cluster display name confirmation does not match")
+	case errors.Is(err, store.ErrConflict):
+		writeError(writer, http.StatusConflict, "cluster retirement is blocked by active work")
+	case errors.Is(err, store.ErrPostCommitDurability):
+		writeJSON(writer, http.StatusInternalServerError, map[string]interface{}{
+			"status": "error", "message": "cluster retirement committed with durability warning", "committed": true, "result": result,
+		})
+	default:
+		writeError(writer, http.StatusInternalServerError, "cluster retirement failed")
+	}
+	return true
 }
 
 type haEndpointPayload struct {

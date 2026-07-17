@@ -41,7 +41,7 @@ func (repository *Repository) RetireCluster(clusterID model.ResourceID, confirmD
 
 	cluster, found := repository.snapshot.Clusters[clusterID]
 	if !found {
-		return ClusterRetirement{}, validationError("cluster does not exist")
+		return ClusterRetirement{}, notFoundError("cluster does not exist")
 	}
 	if confirmDisplayName != cluster.DisplayName {
 		return ClusterRetirement{}, validationError("cluster display name confirmation does not match")
@@ -59,9 +59,8 @@ func (repository *Repository) RetireCluster(clusterID model.ResourceID, confirmD
 	}
 	for _, record := range repository.snapshot.CoordinationLeases {
 		lease := record.Lease
-		transitioning := lease.OperationID != lease.HAEndpointID || lease.PreviousOwnerID != ""
-		if lease.ClusterID == clusterID && lease.Active && lease.ExpiresAt.After(now) && transitioning {
-			return ClusterRetirement{}, conflictError("cluster HA endpoint ownership transition is active")
+		if lease.ClusterID == clusterID && lease.Active && lease.ExpiresAt.After(now) {
+			return ClusterRetirement{}, conflictError("cluster HA endpoint ownership lease is active")
 		}
 	}
 	for _, task := range repository.snapshot.LifecycleTasks {
@@ -150,7 +149,17 @@ func (repository *Repository) RetireCluster(clusterID model.ResourceID, confirmD
 	audit := model.AuditEvent{
 		ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID(), MetadataRevision: 1, CreatedAt: now, UpdatedAt: now},
 		OperationID:  model.NewResourceID(), Stage: model.StageAudit, Actor: actor,
-		Message: fmt.Sprintf("cluster %s (%s) retired from active management; instances=%d endpoints=%d ha_endpoints=%d", cluster.DisplayName, cluster.ResourceID, result.InstancesRemoved, result.EndpointsRemoved, result.HAEndpointsRemoved),
+		Message: fmt.Sprintf(
+			"cluster %s (%s) retired from active management; instances=%d endpoints=%d ha_endpoints=%d replication_links=%d metric_samples=%d anomalies=%d",
+			cluster.DisplayName,
+			cluster.ResourceID,
+			result.InstancesRemoved,
+			result.EndpointsRemoved,
+			result.HAEndpointsRemoved,
+			result.ReplicationLinksRemoved,
+			result.MetricSamplesRemoved,
+			result.AnomaliesRemoved,
+		),
 	}
 	next.Audits = append(append([]model.AuditEvent{}, repository.snapshot.Audits...), audit)
 	if err := repository.commitSnapshotLocked(next); err != nil {

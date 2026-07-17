@@ -29,6 +29,9 @@ func (repository *Repository) PutCoordinationLease(record coordination.LeaseReco
 	defer repository.mutationMu.Unlock()
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
+	if _, found := repository.snapshot.Clusters[lease.ClusterID]; !found {
+		return notFoundError("coordination lease cluster does not exist")
+	}
 	next := repository.snapshot
 	next.CoordinationLeases = cloneCoordinationLeaseMap(repository.snapshot.CoordinationLeases)
 	next.CoordinationLeases[lease.ResourceID] = record
@@ -76,6 +79,11 @@ func (repository *Repository) ReplaceCoordinationLeases(records []coordination.L
 	defer repository.mutationMu.Unlock()
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
+	for _, record := range nextRecords {
+		if _, found := repository.snapshot.Clusters[record.Lease.ClusterID]; !found {
+			return notFoundError("coordination lease cluster does not exist")
+		}
+	}
 	next := repository.snapshot
 	next.CoordinationLeases = nextRecords
 	if err := repository.commitSnapshotLocked(next); err != nil {

@@ -142,6 +142,7 @@
     .panel + .panel { margin-top:16px; }
     .panel-header { display:flex; min-height:58px; align-items:center; justify-content:space-between; gap:14px; padding:0 18px; border-bottom:1px solid var(--line); }
     .panel-title { margin:0; font-size:15px; }
+    .panel-actions { display:flex; align-items:center; gap:8px; }
     .panel-body { padding:18px; min-width:0; overflow-x:auto; }
     .badge { display:inline-flex; min-height:24px; align-items:center; padding:0 8px; border-radius:999px; background:#edf3ef; color:#486057; font-size:11px; font-weight:780; }
     .badge.success { background:var(--accent-soft); color:#176c5d; }
@@ -270,6 +271,7 @@
     dialog::backdrop { background:rgba(16,32,25,.44); }
     .dialog-head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:16px 18px; border-bottom:1px solid var(--line); }
     .dialog-head h2 { margin:0; font-size:17px; }
+    .dialog-title p { margin:3px 0 0; color:var(--muted); font-size:12px; }
     .dialog-close { width:36px; min-height:36px; padding:0; }
     .dialog-body { padding:18px; }
     .read-only-identity { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1px; margin-bottom:16px; background:var(--line); border:1px solid var(--line); border-radius:7px; overflow:hidden; }
@@ -277,6 +279,39 @@
     .identity-cell span { display:block; color:var(--muted); font-size:11px; }
     .identity-cell strong { display:block; margin-top:3px; overflow-wrap:anywhere; font-size:12px; }
     .dialog-actions { display:flex; justify-content:flex-end; gap:8px; padding:0 18px 18px; }
+    .node-lifecycle-dialog { width:min(920px,calc(100vw - 32px)); overflow:hidden; }
+    .node-lifecycle-dialog[open] { display:grid; grid-template-rows:auto minmax(0,1fr) auto; height:min(720px,calc(100vh - 48px)); }
+    .node-lifecycle-dialog .dialog-head { align-items:flex-start; background:#fff; }
+    .node-lifecycle-dialog .dialog-body { min-height:0; max-height:none; overflow:auto; background:#f7faf8; }
+    .node-lifecycle-dialog .node-form-group { background:#fff; }
+    .node-lifecycle-dialog .dialog-actions { align-items:center; justify-content:space-between; padding:14px 18px; border-top:1px solid var(--line); background:#fff; }
+    .cluster-management-dialog { width:min(820px,calc(100vw - 32px)); overflow:hidden; }
+    .cluster-management-dialog[open] { display:grid; grid-template-rows:auto minmax(0,1fr) auto; height:min(680px,calc(100vh - 48px)); }
+    .cluster-management-dialog .dialog-head { align-items:flex-start; background:#fff; }
+    .cluster-management-dialog .dialog-body { min-height:0; overflow:auto; background:#f7faf8; }
+    .cluster-management-dialog .dialog-actions { align-items:center; justify-content:space-between; padding:14px 18px; border-top:1px solid var(--line); background:#fff; }
+    .cluster-management-tabs { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:4px; margin-bottom:16px; padding:4px; border:1px solid var(--line); border-radius:7px; background:#edf2ef; }
+    .cluster-management-tabs button { border:0; background:transparent; color:var(--muted); }
+    .cluster-management-tabs button[aria-selected="true"] { background:#fff; color:var(--accent-strong); box-shadow:0 1px 4px rgba(19,48,36,.08); }
+    .cluster-management-panel { display:grid; gap:14px; }
+    .cluster-management-panel[hidden] { display:none; }
+    .cluster-management-section { padding:14px; border:1px solid var(--line); border-radius:8px; background:#fff; }
+    .cluster-management-section h3 { margin:0 0 4px; font-size:14px; }
+    .cluster-management-section > p { margin:0 0 13px; color:var(--muted); font-size:12px; }
+    .cluster-endpoint-list { display:grid; gap:8px; }
+    .cluster-endpoint-row { display:grid; grid-template-columns:minmax(150px,1fr) minmax(150px,1fr) 110px 38px; gap:8px; align-items:end; }
+    .cluster-endpoint-remove { width:38px; min-height:38px; padding:0; }
+    .cluster-management-inline-action { display:flex; justify-content:flex-start; margin-top:10px; }
+    .retirement-summary { display:grid; grid-template-columns:1.15fr 1fr .7fr; gap:1px; overflow:hidden; border:1px solid var(--line); border-radius:7px; background:var(--line); }
+    .retirement-summary .identity-cell { background:#fff; }
+    .retirement-warning { padding:12px 14px; border:1px solid #ead6ac; border-radius:7px; background:var(--warning-soft); color:#6d4c10; font-size:12px; line-height:1.55; }
+    .retirement-warning strong { display:block; margin-bottom:3px; color:#5b3f0d; }
+    .dialog-action-note { max-width:560px; color:var(--muted); font-size:11px; }
+    .dialog-buttons { display:flex; flex:0 0 auto; gap:8px; }
+    .dialog-buttons button[hidden] { display:none; }
+    .dialog-context { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px; padding:11px 13px; border:1px solid #cfe3da; border-radius:7px; background:var(--accent-soft); }
+    .dialog-context span { color:var(--muted); font-size:11px; }
+    .dialog-context strong { display:block; margin-top:2px; font-size:13px; }
     .live-status { position:fixed; right:22px; bottom:18px; z-index:40; max-width:min(460px,calc(100vw - 44px)); padding:11px 14px; border:1px solid var(--line-strong); border-left:3px solid var(--accent); border-radius:7px; background:#fff; box-shadow:var(--shadow); color:var(--muted); }
     .live-status[hidden] { display:none; }
     .live-status.error { border-left-color:var(--danger); color:#903434; }
@@ -320,6 +355,14 @@
       .summary-cell:nth-child(-n+2), .context-cell:nth-child(-n+2) { border-top:0; }
       .form-grid, .settings-grid { grid-template-columns:1fr; }
       .form-grid .span-2 { grid-column:auto; }
+      .node-lifecycle-dialog .dialog-actions { align-items:stretch; flex-direction:column; }
+      .cluster-management-dialog .dialog-actions { align-items:stretch; flex-direction:column; }
+      .cluster-endpoint-row { grid-template-columns:1fr 1fr; }
+      .cluster-endpoint-remove { width:100%; }
+      .retirement-summary { grid-template-columns:1fr; }
+      .dialog-action-note { max-width:none; }
+      .dialog-buttons { width:100%; }
+      .dialog-buttons button { flex:1; }
       .log-grid { grid-template-columns:1fr 1fr; }
       .read-only-identity { grid-template-columns:1fr; }
       .filter-controls { align-items:stretch; flex-direction:column; }
@@ -375,6 +418,7 @@
             <select id="cluster-select" aria-label="选择数据库集群"><option value="">未发现已注册集群</option></select>
           </label>
           <div class="toolbar-actions">
+            <button id="open-cluster-management-modal" type="button" title="新增或退役集群">＋ <span>集群管理</span></button>
             <button id="refresh-cluster" type="button" aria-label="刷新所选集群">↻ <span data-i18n="refresh">刷新</span></button>
             <button id="inspect-cluster" class="primary-button" type="button">✓ <span data-i18n="inspect">检查</span></button>
             <div class="account-summary" aria-label="当前账户"><strong id="current-user-name">-</strong><span id="current-user-role">-</span></div>
@@ -481,39 +525,11 @@
         <section class="view" data-view="nodes" hidden aria-labelledby="nodes-title">
           <div class="view-heading"><div><h2 id="nodes-title" data-i18n="nodesTitle">节点管理</h2><p>新增节点与损坏节点恢复使用同一条安装、同步和验证流程</p></div><span class="badge">数据节点不限制 · 控制节点保持奇数</span></div>
           <div class="panel">
-            <div class="panel-header"><h3 class="panel-title">节点清单</h3><span class="badge" id="node-count">0 个节点</span></div>
-            <div class="panel-body"><table class="inventory-table"><thead><tr><th>固定节点名</th><th>资源 ID</th><th>类型</th><th>主机名</th><th>IP</th><th>状态</th></tr></thead><tbody id="node-inventory"></tbody></table></div>
-          </div>
-          <div class="panel">
-            <div class="panel-header"><h3 class="panel-title">添加或修复节点</h3><span class="badge warning" id="lifecycle-capability">受控执行</span></div>
-            <div class="panel-body">
-              <div class="node-form">
-                <fieldset class="node-form-group"><legend>任务类型</legend><div class="form-grid">
-                  <label>动作<select id="node-action"><option value="add">添加节点</option><option value="rebuild">修复已有节点</option></select></label>
-                  <label class="span-2">修复节点选择<select id="rebuild-node-select"><option value="">请选择已有节点</option></select></label>
-                </div></fieldset>
-                <fieldset class="node-form-group"><legend>固定身份</legend><div class="form-grid">
-                  <label>节点类型<select id="node-kind"><option value="data">数据节点</option><option value="controller">控制节点</option><option value="mixed">混合节点</option></select></label>
-                  <label>固定节点名<input id="node-name" autocomplete="off" placeholder="cg-data-0004"></label>
-                  <label class="span-2">资源 ID<input id="node-resource-id" autocomplete="off" placeholder="修复时复用原资源 ID"></label>
-                </div></fieldset>
-                <fieldset class="node-form-group"><legend>服务器连接</legend><div class="form-grid">
-                  <label>主机名<input id="node-hostname" autocomplete="off"></label>
-                  <label>IP<input id="node-ip" autocomplete="off"></label>
-                  <label>SSH 用户<input id="node-ssh-user" autocomplete="off" value="root"></label>
-                  <label>SSH 端口<input id="node-ssh-port" type="number" value="22"></label>
-                </div></fieldset>
-                <fieldset class="node-form-group"><legend>数据库与同步</legend><div class="form-grid">
-                  <label>MySQL 版本<input id="node-mysql-version" autocomplete="off" placeholder="8.4.10"></label>
-                  <label>MySQL 端口<input id="node-mysql-port" type="number" value="3306"></label>
-                  <label>server_id<input id="node-server-id" type="number" min="1"></label>
-                  <label>同步方式<select id="sync-method"><option value="auto">自动</option><option value="clone">Clone</option><option value="xtrabackup">XtraBackup</option><option value="logical_dump">逻辑备份</option></select></label>
-                  <label class="span-2">安装包名称<input id="node-package" autocomplete="off"></label>
-                </div></fieldset>
-              </div>
-              <div class="form-actions"><button id="execute-node-sync" class="primary-button execute-button" type="button">执行节点流程</button></div>
-              <p class="gate-note" id="lifecycle-gate-note">控制节点最终数量必须为大于等于 3 的奇数。修复节点复用原资源 ID 和固定节点名。</p>
+            <div class="panel-header">
+              <h3 class="panel-title">节点清单</h3>
+              <div class="panel-actions"><span class="badge" id="node-count">0 个节点</span><span class="badge warning" id="lifecycle-capability">受控执行</span><button id="open-node-lifecycle-modal" class="primary-button" type="button">＋ 添加或修复节点</button></div>
             </div>
+            <div class="panel-body"><table class="inventory-table"><thead><tr><th>固定节点名</th><th>资源 ID</th><th>类型</th><th>主机名</th><th>IP</th><th>状态</th></tr></thead><tbody id="node-inventory"></tbody></table></div>
           </div>
           <div class="panel">
             <div class="panel-header"><h3 class="panel-title">任务进度</h3><span class="badge" id="lifecycle-task-count">0 条</span></div>
@@ -576,6 +592,99 @@
     </main>
   </div>
 
+  <dialog id="cluster-management-modal" class="cluster-management-dialog" role="dialog" aria-modal="true" aria-labelledby="cluster-management-title">
+    <div class="dialog-head">
+      <div class="dialog-title"><h2 id="cluster-management-title">集群管理</h2><p>登记新的数据库集群，或将不再管理的集群安全移出活动清单。</p></div>
+      <button class="dialog-close" id="close-cluster-management-modal" type="button" aria-label="关闭">×</button>
+    </div>
+    <div class="dialog-body">
+      <div class="cluster-management-tabs" role="tablist" aria-label="集群管理操作">
+        <button id="cluster-create-tab" type="button" role="tab" aria-controls="cluster-create-panel" aria-selected="true">新增集群</button>
+        <button id="cluster-retire-tab" type="button" role="tab" aria-controls="cluster-retire-panel" aria-selected="false">退役集群</button>
+      </div>
+
+      <section class="cluster-management-panel" id="cluster-create-panel" role="tabpanel" aria-labelledby="cluster-create-tab">
+        <div class="cluster-management-section">
+          <h3>集群身份</h3>
+          <p>集群名称长期保持稳定；主库、主机名、IP 和端口变化不会改变集群身份。</p>
+          <div class="form-grid">
+            <label class="span-2" for="cluster-display-name">集群名称<input id="cluster-display-name" autocomplete="off" placeholder="例如：mysql-production-01"></label>
+            <label class="span-2" for="cluster-engine">数据库类型<select id="cluster-engine"><option value="mysql">MySQL</option><option value="postgresql">PostgreSQL</option><option value="oracle">Oracle</option><option value="sqlserver">SQL Server</option></select></label>
+          </div>
+        </div>
+        <div class="cluster-management-section">
+          <h3>发现入口</h3>
+          <p>至少登记一个可访问的数据库端点。认证信息由控制节点后端配置管理，不在浏览器中收集。</p>
+          <div class="cluster-endpoint-list" id="cluster-endpoint-list"></div>
+          <div class="cluster-management-inline-action"><button id="add-cluster-endpoint" type="button">＋ 添加端点</button></div>
+        </div>
+      </section>
+
+      <section class="cluster-management-panel" id="cluster-retire-panel" role="tabpanel" aria-labelledby="cluster-retire-tab" hidden>
+        <div class="cluster-management-section">
+          <h3>退役所选集群</h3>
+          <p>仅从 ClusterGuard 活动清单移除；历史操作、审计和报告仍会保留。</p>
+          <div class="retirement-summary">
+            <div class="identity-cell"><span>集群名称</span><strong id="retire-cluster-name">未选择集群</strong></div>
+            <div class="identity-cell"><span>集群资源 ID</span><strong class="mono" id="retire-cluster-id">-</strong></div>
+            <div class="identity-cell"><span>活动实例</span><strong id="retire-cluster-instances">0</strong></div>
+          </div>
+        </div>
+        <div class="retirement-warning"><strong>不会停止数据库、删除数据或操作系统 VIP</strong>退役只清理 ClusterGuard 的活动清单和运行态资源。执行中的操作、锁、节点任务或任何未过期的 VIP 所有权租约都会阻断退役；需先停止对应 Agent 的自动收敛并等待租约过期。</div>
+        <label for="retire-cluster-confirmation">输入完整集群名称确认<input id="retire-cluster-confirmation" autocomplete="off" placeholder="请输入上方集群名称"></label>
+      </section>
+
+      <div class="result-banner" id="cluster-management-result" role="status">请选择新增或退役操作。</div>
+    </div>
+    <div class="dialog-actions">
+      <span class="dialog-action-note">新增后会立即执行一次发现；退役不会对数据库服务器执行任何命令。</span>
+      <div class="dialog-buttons">
+        <button id="cancel-cluster-management" type="button">取消</button>
+        <button id="submit-cluster-registration" class="primary-button" type="button">登记并发现</button>
+        <button id="submit-cluster-retirement" class="danger-button" type="button" hidden disabled>确认退役</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="node-lifecycle-modal" class="node-lifecycle-dialog" role="dialog" aria-modal="true" aria-labelledby="node-lifecycle-title">
+    <div class="dialog-head">
+      <div class="dialog-title"><h2 id="node-lifecycle-title">添加或修复节点</h2><p>安装、数据同步、复制接入和元数据更新由同一条受控流程完成。</p></div>
+      <button class="dialog-close" id="close-node-lifecycle-modal" type="button" aria-label="关闭">×</button>
+    </div>
+    <div class="dialog-body">
+      <div class="dialog-context"><div><span>目标集群</span><strong id="node-lifecycle-cluster">未选择集群</strong></div><span class="badge success">受控执行</span></div>
+      <div class="node-form">
+        <fieldset class="node-form-group"><legend>任务类型</legend><div class="form-grid">
+          <label>动作<select id="node-action"><option value="add">添加节点</option><option value="rebuild">修复已有节点</option></select></label>
+          <label class="span-2" id="rebuild-node-field" hidden>修复节点选择<select id="rebuild-node-select"><option value="">请选择已有节点</option></select></label>
+        </div></fieldset>
+        <fieldset class="node-form-group"><legend>固定身份</legend><div class="form-grid">
+          <label>节点类型<select id="node-kind"><option value="data">数据节点</option><option value="controller">控制节点</option><option value="mixed">混合节点</option></select></label>
+          <label>固定节点名<input id="node-name" autocomplete="off" placeholder="cg-data-0004"></label>
+          <label class="span-2">资源 ID<input id="node-resource-id" autocomplete="off" placeholder="新增可留空，修复时自动复用"></label>
+        </div></fieldset>
+        <fieldset class="node-form-group"><legend>服务器连接</legend><div class="form-grid">
+          <label>主机名<input id="node-hostname" autocomplete="off"></label>
+          <label>IP<input id="node-ip" autocomplete="off"></label>
+          <label>SSH 用户<input id="node-ssh-user" autocomplete="off" value="root"></label>
+          <label>SSH 端口<input id="node-ssh-port" type="number" value="22"></label>
+        </div></fieldset>
+        <fieldset class="node-form-group"><legend>数据库与同步</legend><div class="form-grid">
+          <label>MySQL 版本<input id="node-mysql-version" autocomplete="off" placeholder="8.4.10"></label>
+          <label>MySQL 端口<input id="node-mysql-port" type="number" value="3306"></label>
+          <label>server_id<input id="node-server-id" type="number" min="1"></label>
+          <label>同步方式<select id="sync-method"><option value="auto">自动选择</option><option value="clone">Clone</option><option value="xtrabackup">XtraBackup</option><option value="logical_dump">逻辑备份</option></select></label>
+          <label class="span-2">安装包名称<input id="node-package" autocomplete="off" placeholder="使用服务器预置安装包时可留空"></label>
+        </div></fieldset>
+      </div>
+      <div class="result-banner" id="node-lifecycle-result" role="status">请确认固定身份和服务器连接信息后执行。</div>
+    </div>
+    <div class="dialog-actions">
+      <span class="dialog-action-note" id="lifecycle-gate-note">控制节点最终数量必须为大于等于 3 的奇数。修复节点复用原资源 ID 和固定节点名。</span>
+      <div class="dialog-buttons"><button id="cancel-node-lifecycle" type="button">取消</button><button id="execute-node-sync" class="primary-button" type="button">执行节点流程</button></div>
+    </div>
+  </dialog>
+
   <dialog id="metadata-modal" role="dialog" aria-modal="true" aria-labelledby="metadata-title">
     <div class="dialog-head"><h2 id="metadata-title">修改元数据</h2><button class="dialog-close" id="close-metadata-modal" type="button" aria-label="关闭">×</button></div>
     <div class="dialog-body">
@@ -617,7 +726,7 @@
     const state = {
       language: 'zh-CN', clusters: [], clusterDirectory: new Map(), fleetTopology: new Map(), capabilities: [], nodes: [], allOperations: [], lifecycleTasks: [], lifecycleCapability: { available:false, reason:'未配置' },
       selectedClusterId: '', selectedCandidateId: '', selectedRejoinId: '', switchUnlocked: false, operationRunning: false,
-      currentUser: null, passwordChangeRequired: false, authenticating: false,
+      currentUser: null, passwordChangeRequired: false, authenticating: false, lifecycleRunning: false, clusterMutationRunning: false, clusterManagementMode: 'create',
       requestGeneration: 0, refreshIntervalMs: 60000, refreshTimer: null,
       fleetSearch: '', fleetHealth: 'all', logSearch: '', logKind: 'all', logStatus: 'all',
       clusterDetail: null, topology: null, health: null, candidates: [], metrics: { instances: [] }, operations: []
@@ -643,7 +752,7 @@
     const t = key => (translations[state.language] && translations[state.language][key]) || translations['zh-CN'][key] || key;
 
     class APIError extends Error {
-      constructor(message, status = 0, result = null) { super(message); this.name = 'APIError'; this.status = status; this.result = result; }
+      constructor(message, status = 0, result = null, committed = false) { super(message); this.name = 'APIError'; this.status = status; this.result = result; this.committed = committed; }
     }
 
     const noEvidenceMessages = new Set([
@@ -679,6 +788,7 @@
       headers:{ 'Content-Type':'application/json' },
       body:JSON.stringify(body)
     });
+    const deletionOptions = body => ({ ...mutationOptions(body), method:'DELETE' });
 
     const canOperateClusters = () => !!(state.currentUser && ['admin', 'operator'].includes(state.currentUser.role));
     const canAdministerPlatform = () => !!(state.currentUser && state.currentUser.role === 'admin');
@@ -691,6 +801,7 @@
       byId('settings-user-name').textContent = user.username || '-';
       byId('settings-user-role').textContent = role;
       byId('open-metadata-modal').disabled = !canAdministerPlatform();
+      byId('open-cluster-management-modal').hidden = !canAdministerPlatform();
       updateExecutionButtons();
     };
 
@@ -749,7 +860,7 @@
       if (response.status === 401) showLogin('登录已失效，请重新登录。', true);
       if (payload.password_change_required) openPasswordChange(true);
       if (!response.ok || ['error', 'blocked', 'unsupported', 'indeterminate'].includes(payload.status)) {
-        throw new APIError(payload.message || '控制 API 请求失败', response.status, payload.result);
+        throw new APIError(payload.message || '控制 API 请求失败', response.status, payload.result, payload.committed === true);
       }
       return payload.result;
     };
@@ -862,6 +973,7 @@
     const beginClusterRequest = (clusterId, preserveOperationResult = false) => {
       const generation = ++state.requestGeneration;
       state.selectedClusterId = clusterId;
+      updateNodeLifecycleControls();
       relockSwitch();
       clearClusterView(preserveOperationResult);
       return generation;
@@ -1199,6 +1311,26 @@
       });
     };
 
+    const updateNodeLifecycleControls = () => {
+      const available = state.lifecycleCapability.available && canAdministerPlatform() && Boolean(state.selectedClusterId);
+      const reason = !state.selectedClusterId
+        ? '请先选择目标集群'
+        : (canAdministerPlatform() ? localizedReason(state.lifecycleCapability.reason) : '仅管理员可以执行节点流程');
+      const disabled = !available || state.lifecycleRunning;
+      byId('open-node-lifecycle-modal').disabled = disabled;
+      byId('execute-node-sync').disabled = disabled;
+      byId('close-node-lifecycle-modal').disabled = state.lifecycleRunning;
+      byId('cancel-node-lifecycle').disabled = state.lifecycleRunning;
+      byId('open-node-lifecycle-modal').title = available ? '' : reason;
+      byId('execute-node-sync').title = available ? '' : reason;
+      byId('execute-node-sync').textContent = state.lifecycleRunning ? '正在执行…' : '执行节点流程';
+      byId('lifecycle-capability').textContent = available ? '可执行' : '未配置';
+      byId('lifecycle-capability').className = available ? 'badge success' : 'badge warning';
+      byId('lifecycle-gate-note').textContent = available
+        ? '控制节点最终数量必须为大于等于 3 的奇数。修复节点复用原资源 ID 和固定节点名。'
+        : `节点流程不可执行：${reason}`;
+    };
+
     const renderNodes = () => {
       byId('node-count').textContent = `${state.nodes.length} 个节点`;
       const body = byId('node-inventory'); body.replaceChildren();
@@ -1207,17 +1339,10 @@
         [node.node_name, node.resource_id, nodeKindText(node.kind), node.hostname || '-', node.ip_address || '-', node.active ? '启用' : '停用'].forEach((value, index) => row.append(text('td', index === 1 ? 'mono' : '', value)));
         body.append(row);
       });
-      const selector = byId('rebuild-node-select'); selector.replaceChildren(new Option('请选择已有节点', ''));
+      const selector = byId('rebuild-node-select'); const selectedNode = selector.value; selector.replaceChildren(new Option('请选择已有节点', ''));
       state.nodes.forEach(node => selector.append(new Option(node.node_name, node.resource_id)));
-      const available = state.lifecycleCapability.available && canAdministerPlatform();
-      byId('execute-node-sync').disabled = !available;
-      const reason = canAdministerPlatform() ? localizedReason(state.lifecycleCapability.reason) : '仅管理员可以执行节点流程';
-      byId('execute-node-sync').title = available ? '' : reason;
-      byId('lifecycle-capability').textContent = available ? '可执行' : '未配置';
-      byId('lifecycle-capability').className = available ? 'badge success' : 'badge warning';
-      byId('lifecycle-gate-note').textContent = available
-        ? '控制节点最终数量必须为大于等于 3 的奇数。修复节点复用原资源 ID 和固定节点名。'
-        : `节点流程不可执行：${reason}`;
+      if (state.nodes.some(node => node.resource_id === selectedNode)) selector.value = selectedNode;
+      updateNodeLifecycleControls();
     };
 
     const populateRebuildNode = () => {
@@ -1228,6 +1353,42 @@
       byId('node-kind').value = node.kind;
       byId('node-hostname').value = node.hostname || '';
       byId('node-ip').value = node.ip_address || '';
+    };
+
+    const updateNodeActionMode = () => {
+      const rebuilding = byId('node-action').value === 'rebuild';
+      byId('rebuild-node-field').hidden = !rebuilding;
+      byId('node-resource-id').readOnly = rebuilding;
+      byId('node-name').readOnly = rebuilding;
+      byId('node-kind').disabled = rebuilding;
+      if (rebuilding) populateRebuildNode();
+    };
+
+    const resetNodeLifecycleForm = () => {
+      byId('node-action').value = 'add';
+      byId('rebuild-node-select').value = '';
+      byId('node-kind').value = 'data';
+      ['node-name', 'node-resource-id', 'node-hostname', 'node-ip', 'node-server-id', 'node-package'].forEach(id => { byId(id).value = ''; });
+      byId('node-ssh-user').value = 'root';
+      byId('node-ssh-port').value = '22';
+      byId('sync-method').value = 'auto';
+      const primary = state.topology && (state.topology.instances || []).find(instance => instance.role === 'primary');
+      byId('node-mysql-version').value = primary && primary.engine_metadata ? primary.engine_metadata.version || '' : '';
+      byId('node-mysql-port').value = primary && primary.port ? String(primary.port) : '3306';
+      updateNodeActionMode();
+    };
+
+    const openNodeLifecycleModal = () => {
+      if (!state.lifecycleCapability.available || !canAdministerPlatform() || !state.selectedClusterId) {
+        setLiveStatus('当前账户或环境不允许执行节点流程。', true);
+        return;
+      }
+      const cluster = state.clusters.find(item => item.resource_id === state.selectedClusterId);
+      byId('node-lifecycle-cluster').textContent = cluster ? cluster.display_name : state.selectedClusterId;
+      byId('node-lifecycle-result').textContent = '请确认固定身份和服务器连接信息后执行。';
+      byId('node-lifecycle-result').className = 'result-banner';
+      resetNodeLifecycleForm();
+      byId('node-lifecycle-modal').showModal();
     };
 
     const lifecyclePayload = () => ({
@@ -1247,6 +1408,10 @@
       if (!state.lifecycleCapability.available) { setLiveStatus(`节点流程不可执行：${localizedReason(state.lifecycleCapability.reason)}`, true); return; }
       if (!canAdministerPlatform() || !state.selectedClusterId) { setLiveStatus('仅管理员可以执行节点流程。', true); return; }
       const payload = lifecyclePayload();
+      state.lifecycleRunning = true;
+      updateNodeLifecycleControls();
+      byId('node-lifecycle-result').textContent = '正在执行预检查、安装、同步和验证，请勿关闭窗口。';
+      byId('node-lifecycle-result').className = 'result-banner';
       try {
         const precheck = await fetchResult('/api/v1/nodes/sync/precheck', mutationOptions(payload));
         if (precheck.blocked) throw new APIError('节点流程被预检查阻断', 409, precheck);
@@ -1254,7 +1419,15 @@
         setLiveStatus(`节点任务已完成：${task.status}`);
         await loadNodesAndTasks();
         await loadSelectedCluster();
-      } catch (error) { setLiveStatus(error.message, true); }
+        byId('node-lifecycle-modal').close();
+      } catch (error) {
+        byId('node-lifecycle-result').textContent = `执行失败：${error.message}`;
+        byId('node-lifecycle-result').className = 'result-banner error';
+        setLiveStatus(error.message, true);
+      } finally {
+        state.lifecycleRunning = false;
+        updateNodeLifecycleControls();
+      }
     };
 
     const renderLifecycleTasks = () => {
@@ -1428,16 +1601,184 @@
       } catch (error) { commitIfCurrent(generation, () => { clearClusterView(preserveOperationResult); renderOverview(); setLiveStatus(error.message, true); }); }
     };
 
-    const loadClusters = async () => {
+    const selectedCluster = () => state.clusters.find(cluster => cluster.resource_id === (byId('cluster-select').value || state.selectedClusterId));
+
+    const setClusterManagementResult = (message, status = '') => {
+      const target = byId('cluster-management-result');
+      target.textContent = message;
+      target.className = `result-banner${status ? ` ${status}` : ''}`;
+    };
+
+    const updateClusterEndpointRemoveButtons = () => {
+      const rows = [...byId('cluster-endpoint-list').querySelectorAll('.cluster-endpoint-row')];
+      rows.forEach(row => { row.querySelector('.cluster-endpoint-remove').disabled = state.clusterMutationRunning || rows.length === 1; });
+    };
+
+    const addClusterEndpointRow = (endpoint = {}) => {
+      const row = document.createElement('div');
+      row.className = 'cluster-endpoint-row';
+
+      const hostnameLabel = text('label', '', '主机名');
+      const hostname = document.createElement('input');
+      hostname.dataset.field = 'hostname'; hostname.autocomplete = 'off'; hostname.placeholder = 'db-node-01'; hostname.value = endpoint.hostname || '';
+      hostnameLabel.append(hostname);
+
+      const ipLabel = text('label', '', 'IP 地址');
+      const ipAddress = document.createElement('input');
+      ipAddress.dataset.field = 'ip_address'; ipAddress.autocomplete = 'off'; ipAddress.placeholder = '192.168.1.10'; ipAddress.value = endpoint.ip_address || '';
+      ipLabel.append(ipAddress);
+
+      const portLabel = text('label', '', '端口');
+      const port = document.createElement('input');
+      port.dataset.field = 'port'; port.type = 'number'; port.min = '1'; port.max = '65535'; port.value = String(endpoint.port || 3306);
+      portLabel.append(port);
+
+      const removeClusterEndpointRow = () => { row.remove(); updateClusterEndpointRemoveButtons(); };
+      const remove = text('button', 'cluster-endpoint-remove', '×');
+      remove.type = 'button'; remove.title = '移除端点'; remove.setAttribute('aria-label', '移除端点'); remove.addEventListener('click', removeClusterEndpointRow);
+      row.append(hostnameLabel, ipLabel, portLabel, remove);
+      byId('cluster-endpoint-list').append(row);
+      updateClusterEndpointRemoveButtons();
+    };
+
+    const renderClusterRetirementContext = () => {
+      const cluster = selectedCluster();
+      const detail = cluster ? state.clusterDirectory.get(cluster.resource_id) : null;
+      byId('retire-cluster-name').textContent = cluster ? cluster.display_name : '未选择集群';
+      byId('retire-cluster-id').textContent = cluster ? cluster.resource_id : '-';
+      byId('retire-cluster-instances').textContent = String(detail && detail.instances ? detail.instances.length : 0);
+      const confirmation = byId('retire-cluster-confirmation').value;
+      const confirmed = !!cluster && confirmation === cluster.display_name;
+      byId('submit-cluster-retirement').disabled = !canAdministerPlatform() || state.clusterMutationRunning || !confirmed;
+    };
+
+    const setClusterManagementMode = mode => {
+      state.clusterManagementMode = mode === 'retire' ? 'retire' : 'create';
+      const create = state.clusterManagementMode === 'create';
+      byId('cluster-create-tab').setAttribute('aria-selected', String(create));
+      byId('cluster-retire-tab').setAttribute('aria-selected', String(!create));
+      byId('cluster-create-panel').hidden = !create;
+      byId('cluster-retire-panel').hidden = create;
+      byId('submit-cluster-registration').hidden = !create;
+      byId('submit-cluster-retirement').hidden = create;
+      if (!create) renderClusterRetirementContext();
+      setClusterManagementResult(create ? '填写稳定集群名称和至少一个发现入口。' : '输入完整集群名称后才能退役。');
+    };
+
+    const setClusterManagementRunning = running => {
+      state.clusterMutationRunning = running;
+      byId('submit-cluster-registration').disabled = running || !canAdministerPlatform();
+      byId('add-cluster-endpoint').disabled = running;
+      byId('cluster-create-tab').disabled = running;
+      byId('cluster-retire-tab').disabled = running;
+      byId('cancel-cluster-management').disabled = running;
+      byId('close-cluster-management-modal').disabled = running;
+      byId('cluster-display-name').disabled = running;
+      byId('cluster-engine').disabled = running;
+      byId('retire-cluster-confirmation').disabled = running;
+      byId('cluster-endpoint-list').querySelectorAll('input').forEach(input => { input.disabled = running; });
+      updateClusterEndpointRemoveButtons();
+      renderClusterRetirementContext();
+    };
+
+    const openClusterManagementModal = () => {
+      if (!canAdministerPlatform()) { setLiveStatus('仅管理员可以管理集群。', true); return; }
+      byId('cluster-display-name').value = '';
+      byId('cluster-engine').value = 'mysql';
+      byId('cluster-endpoint-list').replaceChildren();
+      addClusterEndpointRow();
+      byId('retire-cluster-confirmation').value = '';
+      setClusterManagementRunning(false);
+      setClusterManagementMode('create');
+      renderClusterRetirementContext();
+      byId('cluster-management-modal').showModal();
+      window.setTimeout(() => byId('cluster-display-name').focus(), 0);
+    };
+
+    const closeClusterManagementModal = () => {
+      if (state.clusterMutationRunning) return;
+      byId('cluster-management-modal').close();
+    };
+
+    const submitClusterRegistration = async () => {
+      if (!canAdministerPlatform() || state.clusterMutationRunning) return;
+      const displayName = byId('cluster-display-name').value.trim();
+      const engine = byId('cluster-engine').value;
+      const endpoints = [...byId('cluster-endpoint-list').querySelectorAll('.cluster-endpoint-row')].map(row => ({
+        hostname: row.querySelector('[data-field="hostname"]').value.trim(),
+        ip_address: row.querySelector('[data-field="ip_address"]').value.trim(),
+        port: Number(row.querySelector('[data-field="port"]').value)
+      })).filter(endpoint => endpoint.hostname || endpoint.ip_address);
+      try {
+        if (!displayName) throw new APIError('请输入集群名称。');
+        if (!endpoints.length) throw new APIError('at least one database endpoint：请至少填写一个数据库端点。');
+        if (endpoints.some(endpoint => !Number.isInteger(endpoint.port) || endpoint.port < 1 || endpoint.port > 65535)) throw new APIError('数据库端口必须在 1 到 65535 之间。');
+        setClusterManagementRunning(true);
+        setClusterManagementResult('正在登记集群。');
+        const payload = { display_name:displayName, engine, endpoints };
+        const registered = await fetchResult('/api/v1/clusters', mutationOptions(payload));
+        let discoveryWarning = '';
+        try {
+          setClusterManagementResult('集群已登记，正在执行首次发现。');
+          await fetchResult(`/api/v1/clusters/${registered.cluster.resource_id}/discover`, mutationOptions({}));
+        } catch (error) {
+          discoveryWarning = error.message;
+        }
+        await loadClusters(registered.cluster.resource_id);
+        if (discoveryWarning) {
+          setClusterManagementResult(`集群已登记，但首次发现未完成：${discoveryWarning}`, 'error');
+          setLiveStatus(`集群 ${displayName} 已登记，首次发现需要处理。`, true);
+        } else {
+          setClusterManagementResult(`集群 ${displayName} 已登记并完成首次发现。`, 'success');
+          setLiveStatus(`集群 ${displayName} 已添加。`);
+          window.setTimeout(closeClusterManagementModal, 500);
+        }
+      } catch (error) {
+        setClusterManagementResult(`新增集群失败：${error.message}`, 'error');
+      } finally {
+        setClusterManagementRunning(false);
+      }
+    };
+
+    const submitClusterRetirement = async () => {
+      const cluster = selectedCluster();
+      const confirmation = byId('retire-cluster-confirmation').value;
+      if (!canAdministerPlatform() || state.clusterMutationRunning || !cluster) return;
+      if (confirmation !== cluster.display_name) { renderClusterRetirementContext(); return; }
+      try {
+        setClusterManagementRunning(true);
+        setClusterManagementResult(`正在安全退役 ${cluster.display_name}。`);
+        await fetchResult(`/api/v1/clusters/${cluster.resource_id}`, deletionOptions({ confirm_display_name: confirmation }));
+        const retiredName = cluster.display_name;
+        state.selectedClusterId = '';
+        await loadClusters();
+        setLiveStatus(`集群 ${retiredName} 已从活动清单移除，历史审计仍保留。`);
+        byId('cluster-management-modal').close();
+      } catch (error) {
+        if (error instanceof APIError && error.committed && error.result && error.result.cluster && error.result.cluster.resource_id === cluster.resource_id) {
+          const retiredName = cluster.display_name;
+          state.selectedClusterId = '';
+          await loadClusters();
+          setLiveStatus(`集群 ${retiredName} 退役已提交，但元数据目录同步需要复核。`);
+          byId('cluster-management-modal').close();
+        } else {
+          setClusterManagementResult(`退役被阻断：${error.message}`, 'error');
+        }
+      } finally {
+        setClusterManagementRunning(false);
+      }
+    };
+
+    const loadClusters = async (preferredClusterId = '') => {
       const [clusters, capabilities, nodes, operations, tasks, lifecycleCapability] = await Promise.all([
         fetchResult('/api/v1/clusters'), fetchResult('/api/v1/capabilities'), fetchResult('/api/v1/nodes'), fetchResult('/api/v1/operations'), fetchResult('/api/v1/nodes/sync/tasks'), fetchResult('/api/v1/nodes/sync/capabilities')
       ]);
       state.clusters = clusters || []; state.capabilities = capabilities || []; state.nodes = nodes || []; state.allOperations = operations || []; state.lifecycleTasks = tasks || []; state.lifecycleCapability = lifecycleCapability || { available:false, reason:'未配置' };
       state.clusterDirectory = await loadFleetDetails(state.clusters);
-      const selector = byId('cluster-select'); const previous = selector.value; selector.replaceChildren();
+      const selector = byId('cluster-select'); const previous = selector.value; const preferred = preferredClusterId || previous; selector.replaceChildren();
       if (!state.clusters.length) selector.append(new Option('未发现已注册集群', ''));
       state.clusters.forEach(cluster => { const option = document.createElement('option'); option.value = cluster.resource_id; option.textContent = cluster.display_name || cluster.resource_id; selector.append(option); });
-      selector.value = state.clusters.some(cluster => cluster.resource_id === previous) ? previous : (state.clusters[0] ? state.clusters[0].resource_id : '');
+      selector.value = state.clusters.some(cluster => cluster.resource_id === preferred) ? preferred : (state.clusters[0] ? state.clusters[0].resource_id : '');
       renderCapabilities(); renderNodes(); renderLifecycleTasks(); renderOverview(); await loadSelectedCluster();
     };
 
@@ -1546,6 +1887,16 @@
       if (window.location.hash !== `#${selected}`) window.history.replaceState(null, '', `#${selected}`);
     };
 
+    byId('open-cluster-management-modal').addEventListener('click', openClusterManagementModal);
+    byId('close-cluster-management-modal').addEventListener('click', closeClusterManagementModal);
+    byId('cancel-cluster-management').addEventListener('click', closeClusterManagementModal);
+    byId('cluster-management-modal').addEventListener('cancel', event => { if (state.clusterMutationRunning) event.preventDefault(); });
+    byId('cluster-create-tab').addEventListener('click', () => setClusterManagementMode('create'));
+    byId('cluster-retire-tab').addEventListener('click', () => setClusterManagementMode('retire'));
+    byId('add-cluster-endpoint').addEventListener('click', () => addClusterEndpointRow());
+    byId('submit-cluster-registration').addEventListener('click', submitClusterRegistration);
+    byId('submit-cluster-retirement').addEventListener('click', submitClusterRetirement);
+    byId('retire-cluster-confirmation').addEventListener('input', renderClusterRetirementContext);
     byId('cluster-select').addEventListener('change', loadSelectedCluster);
     byId('fleet-search').addEventListener('input', event => { state.fleetSearch = event.target.value; renderOverview(); });
     byId('fleet-health-filter').addEventListener('change', event => { state.fleetHealth = event.target.value; renderOverview(); });
@@ -1557,7 +1908,18 @@
     byId('execute-switchover').addEventListener('click', () => executeOperation('switchover', state.selectedCandidateId, '主库切换'));
     byId('execute-rejoin').addEventListener('click', () => executeOperation('former_primary_rejoin', state.selectedRejoinId, '旧主回挂'));
     byId('execute-repair').addEventListener('click', () => executeOperation('replication_repair', state.selectedRejoinId, '复制修复'));
-    byId('node-action').addEventListener('change', () => { if (byId('node-action').value === 'rebuild') populateRebuildNode(); });
+    byId('open-node-lifecycle-modal').addEventListener('click', openNodeLifecycleModal);
+    byId('close-node-lifecycle-modal').addEventListener('click', () => byId('node-lifecycle-modal').close());
+    byId('cancel-node-lifecycle').addEventListener('click', () => byId('node-lifecycle-modal').close());
+    byId('node-lifecycle-modal').addEventListener('cancel', event => { if (state.lifecycleRunning) event.preventDefault(); });
+    byId('node-action').addEventListener('change', () => {
+      if (byId('node-action').value === 'add') {
+        byId('rebuild-node-select').value = '';
+        byId('node-kind').value = 'data';
+        ['node-name', 'node-resource-id', 'node-hostname', 'node-ip'].forEach(id => { byId(id).value = ''; });
+      }
+      updateNodeActionMode();
+    });
     byId('rebuild-node-select').addEventListener('change', populateRebuildNode);
     byId('execute-node-sync').addEventListener('click', executeNodeSync);
     byId('refresh-operation-log').addEventListener('click', loadOperationLog);

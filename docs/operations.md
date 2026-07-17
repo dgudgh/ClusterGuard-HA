@@ -44,6 +44,7 @@ Production layout:
 /etc/clusterguard/clusterguard.json
 /etc/clusterguard/clusterguard.env
 /var/lib/clusterguard/metadata.json
+/var/lib/clusterguard/admin-recovery.json  # one-time, normally absent
 /var/log/clusterguard/
 /usr/local/bin/clusterguard
 /usr/local/bin/cgctl
@@ -99,13 +100,30 @@ bootstrap password, logs in again, and then executes without an
 `approval_token` field. Without `--platform-session`, the matrix retains the
 explicit one-time grant path used to validate service-client replay rejection.
 
-Password-loss recovery is deliberately offline and fail-closed. There is no
-remote reset endpoint. Stop control-plane mutations, preserve the current
-metadata and Raft data, and restore a protected metadata backup whose
-administrator credential is known. Do not delete `PlatformUser` records or edit
-password hashes in a running controller set. If no recoverable backup exists,
-escalate to the separately reviewed offline disaster-recovery procedure before
-restarting the controllers.
+Password-loss recovery is deliberately local, one-time, and fail-closed. There
+is no remote reset endpoint. First pause control-plane mutations and back up the
+current metadata and Raft directories. On one controller, generate an artifact
+as the service account:
+
+```bash
+sudo -u clusterguard /usr/local/bin/clusterguard admin prepare-recovery
+```
+
+The command prints a strong temporary password exactly once and writes only its
+Argon2id hash to `/var/lib/clusterguard/admin-recovery.json`. Copy the exact same
+artifact to every controller and install it as
+`clusterguard:clusterguard` with mode `0600`. Restart the controller services
+one at a time so quorum remains available. A controller reads an artifact only
+when it was present at process startup; the current Raft Leader commits the
+recovery ID once, revokes all administrator sessions, requires a password
+change, writes a security event, and every controller then deletes its local
+artifact. The artifact expires after 24 hours.
+
+Log in as `admin` with the temporary password and replace it immediately. Do
+not reuse `admin123`, delete `PlatformUser` records, edit password hashes, or
+reset only one controller's metadata snapshot. If the one-time artifact cannot
+be committed with quorum, restore a protected metadata backup through the
+offline disaster-recovery procedure.
 
 Use `packaging/systemd/clusterguard-ha.service` and
 `packaging/systemd/clusterguard.env.example` as the service templates. The
@@ -231,6 +249,33 @@ curl -sS http://127.0.0.1:8088/api/v1/clusters/<cluster-uuid>
 ```
 
 The cluster detail route returns `cluster`, `instances`, and `endpoints`.
+
+Administrators can perform the same registration from **Cluster Management**
+beside the console cluster selector. The focused dialog registers one or more
+discovery endpoints, immediately requests a discovery refresh, and selects the
+new cluster. Database credentials remain server-side and are never collected
+by the browser.
+
+The dialog's **Retire Cluster** tab removes a cluster from active ClusterGuard
+management after the administrator types its exact display name. Retirement
+does not stop a database, delete database data, or mutate an operating-system
+VIP. It removes live inventory and coordination state while preserving audit,
+report, operation, and completed lifecycle history. A running database
+operation, unexpired operation lock, active node lifecycle task, or any active
+HA ownership lease blocks retirement. Before retiring a cluster with managed
+HA endpoints, stop its agent reconciliation and wait for the ownership lease
+to expire. This keeps retirement from indirectly triggering host-side VIP
+changes after the inventory disappears.
+
+The equivalent service API is:
+
+```bash
+curl -sS -X DELETE \
+  http://127.0.0.1:8088/api/v1/clusters/<cluster-uuid> \
+  -H 'content-type: application/json' \
+  -H "Authorization: Bearer ${CG_CONTROL_TOKEN}" \
+  -d '{"confirm_display_name":"payments-mysql"}'
+```
 
 ## 4. Refresh MySQL Topology
 

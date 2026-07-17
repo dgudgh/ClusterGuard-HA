@@ -20,6 +20,7 @@ import (
 var (
 	ErrValidation           = errors.New("repository validation failed")
 	ErrConflict             = errors.New("repository conflict")
+	ErrNotFound             = errors.New("repository resource not found")
 	ErrStaleObservation     = errors.New("stale topology observation")
 	ErrInventoryChanged     = errors.New("discovery inventory changed")
 	ErrPostCommitDurability = errors.New("metadata snapshot committed with durability warning")
@@ -31,6 +32,10 @@ func validationError(format string, arguments ...interface{}) error {
 
 func conflictError(format string, arguments ...interface{}) error {
 	return fmt.Errorf("%w: %s", ErrConflict, fmt.Sprintf(format, arguments...))
+}
+
+func notFoundError(format string, arguments ...interface{}) error {
+	return fmt.Errorf("%w: %s", ErrNotFound, fmt.Sprintf(format, arguments...))
 }
 
 type postCommitDurabilityError struct {

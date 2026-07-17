@@ -1,6 +1,8 @@
 package store
 
 import (
+	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -16,8 +18,15 @@ func TestCoordinationLeasePersistsAcrossRepositoryRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
+	cluster, _, err := repository.CreateClusterWithEndpoints(
+		model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "lease-persistence"},
+		[]model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true}},
+	)
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
 	lease := endpoint.Lease{
-		ResourceID: model.NewResourceID(), ClusterID: model.NewResourceID(), HAEndpointID: model.NewResourceID(),
+		ResourceID: model.NewResourceID(), ClusterID: cluster.ResourceID, HAEndpointID: model.NewResourceID(),
 		OperationID: model.NewResourceID(), OwnerID: model.NewResourceID(), ExpiresAt: time.Now().UTC().Add(time.Minute), Active: true,
 	}
 	if err := repository.PutCoordinationLease(coordination.LeaseRecord{Lease: lease, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}); err != nil {
@@ -33,8 +42,48 @@ func TestCoordinationLeasePersistsAcrossRepositoryRestart(t *testing.T) {
 	}
 }
 
+func TestCoordinationLeaseCannotRecreateRetiredClusterState(t *testing.T) {
+	repository := NewMemory()
+	cluster, _, err := repository.CreateClusterWithEndpoints(
+		model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "retired-lease-cluster"},
+		[]model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true}},
+	)
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	if _, err := repository.RetireCluster(cluster.ResourceID, cluster.DisplayName, "admin"); err != nil {
+		t.Fatalf("retire cluster: %v", err)
+	}
+	now := time.Now().UTC()
+	haEndpointID := model.NewResourceID()
+	record := coordination.LeaseRecord{Lease: endpoint.Lease{
+		ResourceID: model.NewResourceID(), ClusterID: cluster.ResourceID, HAEndpointID: haEndpointID,
+		OperationID: haEndpointID, OwnerID: model.NewResourceID(), ExpiresAt: now.Add(time.Minute), Active: true,
+	}, CreatedAt: now, UpdatedAt: now}
+	if err := repository.PutCoordinationLease(record); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("put lease for retired cluster error = %v, want not found", err)
+	}
+	if err := repository.ReplaceCoordinationLeases([]coordination.LeaseRecord{record}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("replace lease batch for retired cluster error = %v, want not found", err)
+	}
+	if records := repository.CoordinationLeases(); len(records) != 0 {
+		t.Fatalf("retired cluster lease was recreated: %+v", records)
+	}
+}
+
 func TestCoordinationLeaseBatchUsesOneConsensusCommit(t *testing.T) {
 	repository := NewMemory()
+	clusterIDs := make([]model.ResourceID, 0, 6)
+	for index := 0; index < 6; index++ {
+		cluster, _, err := repository.CreateClusterWithEndpoints(
+			model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: fmt.Sprintf("lease-batch-%d", index)},
+			[]model.Endpoint{{Kind: model.EndpointDatabase, Hostname: fmt.Sprintf("mysql-%d", index), Port: 3306, Active: true}},
+		)
+		if err != nil {
+			t.Fatalf("create cluster %d: %v", index, err)
+		}
+		clusterIDs = append(clusterIDs, cluster.ResourceID)
+	}
 	consensus := &snapshotConsensusStub{apply: repository.ApplyReplicatedState}
 	if err := repository.SetSnapshotConsensus(consensus); err != nil {
 		t.Fatalf("set snapshot consensus: %v", err)
@@ -45,7 +94,7 @@ func TestCoordinationLeaseBatchUsesOneConsensusCommit(t *testing.T) {
 		endpointID := model.NewResourceID()
 		records = append(records, coordination.LeaseRecord{
 			Lease: endpoint.Lease{
-				ResourceID: model.NewResourceID(), ClusterID: model.NewResourceID(), HAEndpointID: endpointID,
+				ResourceID: model.NewResourceID(), ClusterID: clusterIDs[index], HAEndpointID: endpointID,
 				OperationID: endpointID, OwnerID: model.NewResourceID(), ExpiresAt: now.Add(30 * time.Second), Active: true,
 			},
 			CreatedAt: now, UpdatedAt: now,
