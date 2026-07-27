@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
 
 	"clusterguard.io/ha/internal/endpoint"
+	"clusterguard.io/ha/internal/observability"
 	"clusterguard.io/ha/pkg/model"
 )
 
@@ -29,14 +31,16 @@ type OwnershipLeaseStore interface {
 }
 
 type OwnershipKeeper struct {
-	inventory    OwnershipInventory
-	observer     OwnershipObserver
-	leases       OwnershipLeaseStore
-	authority    MutationAuthority
-	now          func() time.Time
-	interval     time.Duration
-	maxAge       time.Duration
-	probeTimeout time.Duration
+	inventory     OwnershipInventory
+	observer      OwnershipObserver
+	leases        OwnershipLeaseStore
+	authority     MutationAuthority
+	now           func() time.Time
+	interval      time.Duration
+	maxAge        time.Duration
+	probeTimeout  time.Duration
+	onError       func(error)
+	errorReminder *observability.ErrorReminder
 }
 
 type OwnershipKeeperOption func(*OwnershipKeeper)
@@ -45,6 +49,14 @@ func WithOwnershipProbeTimeout(timeout time.Duration) OwnershipKeeperOption {
 	return func(keeper *OwnershipKeeper) {
 		if timeout > 0 {
 			keeper.probeTimeout = timeout
+		}
+	}
+}
+
+func WithOwnershipErrorHandler(handler func(error)) OwnershipKeeperOption {
+	return func(keeper *OwnershipKeeper) {
+		if handler != nil {
+			keeper.onError = handler
 		}
 	}
 }
@@ -59,7 +71,12 @@ func NewOwnershipKeeper(inventory OwnershipInventory, observer OwnershipObserver
 	if maxAge <= 0 {
 		maxAge = 15 * time.Second
 	}
-	keeper := &OwnershipKeeper{inventory: inventory, observer: observer, leases: leases, authority: authority, now: now, interval: interval, maxAge: maxAge, probeTimeout: 6 * time.Second}
+	keeper := &OwnershipKeeper{
+		inventory: inventory, observer: observer, leases: leases, authority: authority, now: now,
+		interval: interval, maxAge: maxAge, probeTimeout: 6 * time.Second,
+		onError:       func(err error) { log.Printf("VIP ownership reconciliation failed: %v", err) },
+		errorReminder: observability.NewErrorReminder(5*time.Minute, now),
+	}
 	for _, option := range options {
 		if option != nil {
 			option(keeper)
@@ -68,24 +85,83 @@ func NewOwnershipKeeper(inventory OwnershipInventory, observer OwnershipObserver
 	return keeper
 }
 
+func (keeper *OwnershipKeeper) reportError(err error) {
+	if keeper == nil || errors.Is(err, context.Canceled) {
+		return
+	}
+	if keeper.errorReminder != nil && !keeper.errorReminder.ShouldReport(err) {
+		return
+	}
+	if err != nil && keeper.onError != nil {
+		keeper.onError(err)
+	}
+}
+
 func writablePrimary(snapshot model.TopologySnapshot) (model.DatabaseInstance, error) {
 	var primary model.DatabaseInstance
 	for _, instance := range snapshot.Instances {
 		if instance.Role != model.RolePrimary {
 			continue
 		}
-		if primary.ResourceID != "" {
-			return model.DatabaseInstance{}, fmt.Errorf("topology has multiple primary instances")
+		if instance.Health.State == model.HealthHealthy && primaryProvenWritable(instance) && currentSuccessfulProbe(snapshot, instance.ResourceID) {
+			if primary.ResourceID != "" {
+				return model.DatabaseInstance{}, fmt.Errorf("topology has multiple current writable primary instances")
+			}
+			primary = instance
+			continue
 		}
-		primary = instance
+		if !currentFailedProbe(snapshot, instance.ResourceID) {
+			return model.DatabaseInstance{}, fmt.Errorf("topology has an ambiguous additional primary instance: %s", instance.ResourceID)
+		}
 	}
 	if !model.ValidResourceID(primary.ResourceID) {
-		return model.DatabaseInstance{}, fmt.Errorf("topology has no current primary")
-	}
-	if primary.Health.State != model.HealthHealthy || !strings.EqualFold(strings.TrimSpace(primary.EngineMetadata["read_only"]), "false") || !strings.EqualFold(strings.TrimSpace(primary.EngineMetadata["super_read_only"]), "false") {
-		return model.DatabaseInstance{}, fmt.Errorf("current primary is not proven healthy and writable")
+		return model.DatabaseInstance{}, fmt.Errorf("topology has no current healthy writable primary")
 	}
 	return primary, nil
+}
+
+func currentSuccessfulProbe(snapshot model.TopologySnapshot, instanceID model.ResourceID) bool {
+	found := false
+	for _, probe := range snapshot.Probes {
+		if probe.InstanceID != instanceID {
+			continue
+		}
+		found = true
+		if !probe.DiscoveryObservedAt.Equal(snapshot.ObservedAt) || probe.Health.State != model.HealthHealthy {
+			return false
+		}
+	}
+	return found
+}
+
+func currentFailedProbe(snapshot model.TopologySnapshot, instanceID model.ResourceID) bool {
+	found := false
+	for _, probe := range snapshot.Probes {
+		if probe.InstanceID != instanceID {
+			continue
+		}
+		found = true
+		if !probe.DiscoveryObservedAt.IsZero() || !probe.Health.ObservedAt.Equal(snapshot.ObservedAt) {
+			return false
+		}
+		if probe.Health.State != model.HealthUnknown && probe.Health.State != model.HealthUnhealthy {
+			return false
+		}
+	}
+	return found
+}
+
+func primaryProvenWritable(primary model.DatabaseInstance) bool {
+	switch primary.Engine {
+	case model.EngineMySQL:
+		return strings.EqualFold(strings.TrimSpace(primary.EngineMetadata["read_only"]), "false") &&
+			strings.EqualFold(strings.TrimSpace(primary.EngineMetadata["super_read_only"]), "false")
+	case model.EnginePostgreSQL:
+		return strings.EqualFold(strings.TrimSpace(primary.EngineMetadata["in_recovery"]), "false") &&
+			strings.EqualFold(strings.TrimSpace(primary.EngineMetadata["transaction_read_only"]), "false")
+	default:
+		return false
+	}
 }
 
 func (keeper *OwnershipKeeper) reconcileCluster(ctx context.Context, cluster model.DatabaseCluster, now time.Time) (endpoint.LeaseRequest, error) {
@@ -178,7 +254,7 @@ func (keeper *OwnershipKeeper) Run(ctx context.Context) {
 	if ctx == nil {
 		return
 	}
-	_ = keeper.RunOnce(ctx)
+	keeper.reportError(keeper.RunOnce(ctx))
 	ticker := time.NewTicker(keeper.interval)
 	defer ticker.Stop()
 	for {
@@ -186,7 +262,7 @@ func (keeper *OwnershipKeeper) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			_ = keeper.RunOnce(ctx)
+			keeper.reportError(keeper.RunOnce(ctx))
 		}
 	}
 }

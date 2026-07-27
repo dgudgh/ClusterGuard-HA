@@ -93,11 +93,32 @@ func newFakeAdapter() *fakeDiscoveryAdapter {
 }
 
 func (candidate *fakeDiscoveryAdapter) Capabilities(context.Context) adapter.Capabilities {
-	return adapter.Capabilities{Engine: model.EngineMySQL, Features: map[adapter.Capability]adapter.CapabilityState{
+	return adapter.Capabilities{Engine: candidate.Engine(), Features: map[adapter.Capability]adapter.CapabilityState{
 		adapter.CapabilityDiscover: {Available: candidate.discoverAvailable},
 		adapter.CapabilityTopology: {Available: candidate.topologyAvailable},
 		adapter.CapabilityMetrics:  {Available: candidate.metricsAvailable},
 	}}
+}
+
+func newPostgreSQLFakeAdapter() *fakeDiscoveryAdapter {
+	candidate := newFakeAdapter()
+	candidate.UnsupportedAdapter = adapter.NewUnsupported(model.EnginePostgreSQL)
+	candidate.metricsAvailable = false
+	return candidate
+}
+
+func newOracleFakeAdapter() *fakeDiscoveryAdapter {
+	candidate := newFakeAdapter()
+	candidate.UnsupportedAdapter = adapter.NewUnsupported(model.EngineOracle)
+	candidate.metricsAvailable = false
+	return candidate
+}
+
+func newSQLServerFakeAdapter() *fakeDiscoveryAdapter {
+	candidate := newFakeAdapter()
+	candidate.UnsupportedAdapter = adapter.NewUnsupported(model.EngineSQLServer)
+	candidate.metricsAvailable = false
+	return candidate
 }
 
 func (candidate *fakeDiscoveryAdapter) Topology(_ context.Context, request adapter.DiscoverRequest, discovery adapter.DiscoveryResult) (adapter.TopologyResult, error) {
@@ -262,6 +283,266 @@ func discoveredInstance(host string, port int, nativeID string, role model.Insta
 		}
 	}
 	return instance
+}
+
+func discoveredPostgreSQLInstance(host string, port int, nodeID string, systemID string, role model.InstanceRole, sourceID string) model.DatabaseInstance {
+	instance := model.DatabaseInstance{
+		Engine: model.EnginePostgreSQL,
+		EngineIdentity: model.EngineIdentity{
+			"resource_id":       nodeID,
+			"system_identifier": systemID,
+		},
+		DisplayName:       host,
+		Hostname:          host,
+		Port:              port,
+		Role:              role,
+		Health:            model.Health{State: model.HealthHealthy, ObservedAt: discoveryTestTime},
+		PromotionEligible: role == model.RoleStandby,
+		EngineMetadata:    map[string]string{"version": "16.3", "timeline_id": "7"},
+	}
+	if sourceID != "" {
+		lag := int64(0)
+		instance.Replication = model.ReplicationStatus{
+			SourceIdentity: model.EngineIdentity{"resource_id": sourceID, "system_identifier": systemID},
+			IOThread:       model.ThreadRunning,
+			SQLThread:      model.ThreadRunning,
+			LagSeconds:     &lag,
+		}
+	}
+	return instance
+}
+
+func discoveredOracleInstance(host string, port int, dbid string, database string, instanceName string, role model.InstanceRole) model.DatabaseInstance {
+	instance := model.DatabaseInstance{
+		Engine: model.EngineOracle,
+		EngineIdentity: model.EngineIdentity{
+			"dbid":           dbid,
+			"db_unique_name": database,
+			"instance_name":  instanceName,
+		},
+		DisplayName:       host,
+		Hostname:          host,
+		Port:              port,
+		Role:              role,
+		Health:            model.Health{State: model.HealthHealthy, ObservedAt: discoveryTestTime},
+		PromotionEligible: role == model.RoleStandby,
+		EngineMetadata:    map[string]string{"version": "19c"},
+	}
+	if role == model.RoleStandby {
+		instance.Replication.IOThread = model.ThreadRunning
+		instance.Replication.SQLThread = model.ThreadRunning
+	}
+	return instance
+}
+
+func discoveredSQLServerInstance(host string, port int, groupID string, replicaID string, role model.InstanceRole) model.DatabaseInstance {
+	instance := model.DatabaseInstance{
+		Engine: model.EngineSQLServer,
+		EngineIdentity: model.EngineIdentity{
+			"group_id":   groupID,
+			"replica_id": replicaID,
+		},
+		DisplayName:       host,
+		Hostname:          host,
+		Port:              port,
+		Role:              role,
+		Health:            model.Health{State: model.HealthHealthy, ObservedAt: discoveryTestTime},
+		PromotionEligible: role == model.RoleReplica,
+		EngineMetadata:    map[string]string{"ag_name": "orders-ag"},
+	}
+	if role == model.RoleReplica {
+		instance.Replication.IOThread = model.ThreadRunning
+		instance.Replication.SQLThread = model.ThreadRunning
+	}
+	return instance
+}
+
+func TestRefreshBindsPostgreSQLSystemIdentifierOnFirstCompleteObservation(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EnginePostgreSQL, DisplayName: "pg-production"})
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	primaryEndpoint := addEndpoint(t, repository, cluster.ResourceID, "pg-a", 5432, model.EndpointDatabase, true)
+	standbyEndpoint := addEndpoint(t, repository, cluster.ResourceID, "pg-b", 5432, model.EndpointDatabase, true)
+	primaryID := "11111111-1111-4111-8111-111111111111"
+	standbyID := "22222222-2222-4222-8222-222222222222"
+	systemID := "7428625847249870011"
+	candidate := newPostgreSQLFakeAdapter()
+	candidate.results[primaryEndpoint.Hostname] = discoveredPostgreSQLInstance(primaryEndpoint.Hostname, primaryEndpoint.Port, primaryID, systemID, model.RolePrimary, "")
+	candidate.results[standbyEndpoint.Hostname] = discoveredPostgreSQLInstance(standbyEndpoint.Hostname, standbyEndpoint.Port, standbyID, systemID, model.RoleStandby, primaryID)
+
+	snapshot, err := newTestService(t, repository, candidate).Refresh(context.Background(), cluster.ResourceID)
+	if err != nil {
+		t.Fatalf("refresh PostgreSQL: %v", err)
+	}
+	stored, found := repository.Cluster(cluster.ResourceID)
+	if !found || stored.EngineIdentity["system_identifier"] != systemID {
+		t.Fatalf("cluster identity was not bound: %+v", stored)
+	}
+	if len(snapshot.Instances) != 2 || len(snapshot.Links) != 1 || snapshot.Health.State != model.HealthHealthy {
+		t.Fatalf("unexpected PostgreSQL topology: %+v", snapshot)
+	}
+}
+
+func TestRefreshBindsOracleDataGuardClusterIdentity(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineOracle, DisplayName: "oracle-dg"})
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	primaryEndpoint := addEndpoint(t, repository, cluster.ResourceID, "ora-a", 1521, model.EndpointDatabase, true)
+	standbyEndpoint := addEndpoint(t, repository, cluster.ResourceID, "ora-b", 1521, model.EndpointDatabase, true)
+	candidate := newOracleFakeAdapter()
+	candidate.results[primaryEndpoint.Hostname] = discoveredOracleInstance(primaryEndpoint.Hostname, primaryEndpoint.Port, "1234567890", "MESDB", "mesdb", model.RolePrimary)
+	candidate.results[standbyEndpoint.Hostname] = discoveredOracleInstance(standbyEndpoint.Hostname, standbyEndpoint.Port, "1234567890", "REPORTDB", "mesdb", model.RoleStandby)
+
+	snapshot, err := newTestService(t, repository, candidate).Refresh(context.Background(), cluster.ResourceID)
+	if err != nil {
+		t.Fatalf("refresh Oracle: %v", err)
+	}
+	stored, found := repository.Cluster(cluster.ResourceID)
+	if !found || stored.EngineIdentity["dbid"] != "1234567890" || stored.EngineIdentity["db_unique_name"] != "" {
+		t.Fatalf("Oracle cluster identity was not bound: %+v", stored)
+	}
+	if len(snapshot.Instances) != 2 || len(snapshot.Links) != 1 || snapshot.Health.State != model.HealthHealthy {
+		t.Fatalf("unexpected Oracle topology: %+v", snapshot)
+	}
+}
+
+func TestRefreshRejectsMixedOracleDataGuardClusterIdentities(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineOracle, DisplayName: "oracle-mixed"})
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	first := addEndpoint(t, repository, cluster.ResourceID, "ora-a", 1521, model.EndpointDatabase, true)
+	second := addEndpoint(t, repository, cluster.ResourceID, "ora-b", 1521, model.EndpointDatabase, true)
+	candidate := newOracleFakeAdapter()
+	candidate.results[first.Hostname] = discoveredOracleInstance(first.Hostname, first.Port, "1234567890", "ORCL_A", "orcl1", model.RolePrimary)
+	candidate.results[second.Hostname] = discoveredOracleInstance(second.Hostname, second.Port, "9999999999", "ORCL_B", "orcl2", model.RoleStandby)
+
+	if _, err := newTestService(t, repository, candidate).Refresh(context.Background(), cluster.ResourceID); err == nil || !strings.Contains(err.Error(), "mixed cluster identities") {
+		t.Fatalf("mixed Oracle identities were not rejected: %v", err)
+	}
+	stored, _ := repository.Cluster(cluster.ResourceID)
+	if len(stored.EngineIdentity) != 0 || len(repository.Instances(cluster.ResourceID)) != 0 {
+		t.Fatalf("failed mixed Oracle refresh published partial state: cluster=%+v instances=%+v", stored, repository.Instances(cluster.ResourceID))
+	}
+}
+
+func TestRefreshBindsSQLServerAvailabilityGroupIdentity(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineSQLServer, DisplayName: "sqlserver-ag"})
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	primaryEndpoint := addEndpoint(t, repository, cluster.ResourceID, "sql-a", 1433, model.EndpointDatabase, true)
+	replicaEndpoint := addEndpoint(t, repository, cluster.ResourceID, "sql-b", 1433, model.EndpointDatabase, true)
+	candidate := newSQLServerFakeAdapter()
+	candidate.results[primaryEndpoint.Hostname] = discoveredSQLServerInstance(primaryEndpoint.Hostname, primaryEndpoint.Port, "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", "11111111-1111-4111-8111-111111111111", model.RolePrimary)
+	candidate.results[replicaEndpoint.Hostname] = discoveredSQLServerInstance(replicaEndpoint.Hostname, replicaEndpoint.Port, "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", "22222222-2222-4222-8222-222222222222", model.RoleReplica)
+
+	snapshot, err := newTestService(t, repository, candidate).Refresh(context.Background(), cluster.ResourceID)
+	if err != nil {
+		t.Fatalf("refresh SQL Server: %v", err)
+	}
+	stored, found := repository.Cluster(cluster.ResourceID)
+	if !found || stored.EngineIdentity["group_id"] != "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" {
+		t.Fatalf("SQL Server AG identity was not bound: %+v", stored)
+	}
+	if len(snapshot.Instances) != 2 || len(snapshot.Links) != 1 || snapshot.Health.State != model.HealthHealthy {
+		t.Fatalf("unexpected SQL Server topology: %+v", snapshot)
+	}
+}
+
+func TestRefreshRejectsMixedSQLServerAvailabilityGroups(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineSQLServer, DisplayName: "sql-mixed"})
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	first := addEndpoint(t, repository, cluster.ResourceID, "sql-a", 1433, model.EndpointDatabase, true)
+	second := addEndpoint(t, repository, cluster.ResourceID, "sql-b", 1433, model.EndpointDatabase, true)
+	candidate := newSQLServerFakeAdapter()
+	candidate.results[first.Hostname] = discoveredSQLServerInstance(first.Hostname, first.Port, "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", "11111111-1111-4111-8111-111111111111", model.RolePrimary)
+	candidate.results[second.Hostname] = discoveredSQLServerInstance(second.Hostname, second.Port, "ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee", "22222222-2222-4222-8222-222222222222", model.RoleReplica)
+
+	if _, err := newTestService(t, repository, candidate).Refresh(context.Background(), cluster.ResourceID); err == nil || !strings.Contains(err.Error(), "mixed cluster identities") {
+		t.Fatalf("mixed SQL Server AG identities were not rejected: %v", err)
+	}
+	stored, _ := repository.Cluster(cluster.ResourceID)
+	if len(stored.EngineIdentity) != 0 || len(repository.Instances(cluster.ResourceID)) != 0 {
+		t.Fatalf("failed mixed SQL Server refresh published partial state: cluster=%+v instances=%+v", stored, repository.Instances(cluster.ResourceID))
+	}
+}
+
+func TestRefreshDoesNotPublishPartialPostgreSQLIdentityBeforeFirstCompleteObservation(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EnginePostgreSQL, DisplayName: "pg-first-bind"})
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	primaryEndpoint := addEndpoint(t, repository, cluster.ResourceID, "pg-a", 5432, model.EndpointDatabase, true)
+	standbyEndpoint := addEndpoint(t, repository, cluster.ResourceID, "pg-b", 5432, model.EndpointDatabase, true)
+	primaryID := "11111111-1111-4111-8111-111111111111"
+	standbyID := "22222222-2222-4222-8222-222222222222"
+	systemID := "7428625847249870011"
+	candidate := newPostgreSQLFakeAdapter()
+	candidate.results[primaryEndpoint.Hostname] = discoveredPostgreSQLInstance(primaryEndpoint.Hostname, primaryEndpoint.Port, primaryID, systemID, model.RolePrimary, "")
+	candidate.results[standbyEndpoint.Hostname] = discoveredPostgreSQLInstance(standbyEndpoint.Hostname, standbyEndpoint.Port, standbyID, systemID, model.RoleStandby, primaryID)
+	candidate.setFailure(standbyEndpoint.Hostname, errors.New("standby unavailable"))
+	service := newTestService(t, repository, candidate)
+
+	if _, err := service.Refresh(context.Background(), cluster.ResourceID); err == nil ||
+		!strings.Contains(err.Error(), "observed 1 of 2 endpoints") {
+		t.Fatalf("partial first PostgreSQL observation error=%v", err)
+	}
+	stored, _ := repository.Cluster(cluster.ResourceID)
+	if len(stored.EngineIdentity) != 0 || len(repository.Instances(cluster.ResourceID)) != 0 {
+		t.Fatalf("partial first observation changed durable identity: cluster=%+v instances=%+v", stored, repository.Instances(cluster.ResourceID))
+	}
+	for _, endpoint := range repository.Endpoints(cluster.ResourceID) {
+		if endpoint.InstanceID != "" {
+			t.Fatalf("partial first observation bound endpoint: %+v", endpoint)
+		}
+	}
+
+	candidate.setFailure(standbyEndpoint.Hostname, nil)
+	snapshot, err := service.Refresh(context.Background(), cluster.ResourceID)
+	if err != nil {
+		t.Fatalf("complete PostgreSQL observation: %v", err)
+	}
+	stored, _ = repository.Cluster(cluster.ResourceID)
+	if stored.EngineIdentity["system_identifier"] != systemID || len(snapshot.Instances) != 2 {
+		t.Fatalf("complete observation did not bind atomically: cluster=%+v topology=%+v", stored, snapshot)
+	}
+}
+
+func TestRefreshRejectsMixedPostgreSQLSystemIdentifiersWithoutPublishing(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EnginePostgreSQL, DisplayName: "pg-mixed"})
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	first := addEndpoint(t, repository, cluster.ResourceID, "pg-a", 5432, model.EndpointDatabase, true)
+	second := addEndpoint(t, repository, cluster.ResourceID, "pg-b", 5432, model.EndpointDatabase, true)
+	candidate := newPostgreSQLFakeAdapter()
+	candidate.results[first.Hostname] = discoveredPostgreSQLInstance(first.Hostname, first.Port, "11111111-1111-4111-8111-111111111111", "7428625847249870011", model.RolePrimary, "")
+	candidate.results[second.Hostname] = discoveredPostgreSQLInstance(second.Hostname, second.Port, "22222222-2222-4222-8222-222222222222", "9999999999999999999", model.RoleStandby, "11111111-1111-4111-8111-111111111111")
+
+	if _, err := newTestService(t, repository, candidate).Refresh(context.Background(), cluster.ResourceID); err == nil || !strings.Contains(err.Error(), "mixed cluster identities") {
+		t.Fatalf("mixed PostgreSQL cluster was not rejected: %v", err)
+	}
+	stored, _ := repository.Cluster(cluster.ResourceID)
+	if len(stored.EngineIdentity) != 0 || len(repository.Instances(cluster.ResourceID)) != 0 {
+		t.Fatalf("failed mixed refresh published partial state: cluster=%+v instances=%+v", stored, repository.Instances(cluster.ResourceID))
+	}
+	for _, endpoint := range repository.Endpoints(cluster.ResourceID) {
+		if endpoint.InstanceID != "" {
+			t.Fatalf("failed mixed refresh bound endpoint: %+v", endpoint)
+		}
+	}
 }
 
 func TestRefreshRejectsInventoryWithoutActiveDatabaseEndpoints(t *testing.T) {
@@ -1234,7 +1515,7 @@ func TestRefreshWaitsWithoutPublishingWhileWorkflowHoldsClusterFence(t *testing.
 		t.Fatalf("register adapter: %v", err)
 	}
 	locks := workflowcore.NewMemoryLocks()
-	release, err := locks.Acquire(context.Background(), model.Operation{ClusterID: cluster.ResourceID})
+	_, release, err := locks.Acquire(context.Background(), model.Operation{ClusterID: cluster.ResourceID})
 	if err != nil {
 		t.Fatalf("acquire workflow fence: %v", err)
 	}
@@ -1300,7 +1581,7 @@ func TestRefreshBatchDoesNotProbeWhileWorkflowHoldsClusterFence(t *testing.T) {
 		t.Fatalf("register adapter: %v", err)
 	}
 	locks := workflowcore.NewMemoryLocks()
-	release, err := locks.Acquire(context.Background(), model.Operation{ClusterID: cluster.ResourceID})
+	_, release, err := locks.Acquire(context.Background(), model.Operation{ClusterID: cluster.ResourceID})
 	if err != nil {
 		t.Fatalf("acquire workflow fence: %v", err)
 	}

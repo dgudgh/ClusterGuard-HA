@@ -10,6 +10,20 @@ import (
 
 var ErrUnsupported = errors.New("capability is unsupported")
 
+type operationLeaseContextKey struct{}
+
+func WithOperationLeaseID(ctx context.Context, leaseID model.ResourceID) context.Context {
+	return context.WithValue(ctx, operationLeaseContextKey{}, leaseID)
+}
+
+func OperationLeaseID(ctx context.Context) model.ResourceID {
+	if ctx == nil {
+		return ""
+	}
+	leaseID, _ := ctx.Value(operationLeaseContextKey{}).(model.ResourceID)
+	return leaseID
+}
+
 type Capability string
 
 const (
@@ -51,6 +65,7 @@ type Endpoint struct {
 type Credentials struct {
 	Username string `json:"username"`
 	Password string `json:"-"`
+	Database string `json:"-"`
 }
 
 type OperationCredentials struct {
@@ -94,6 +109,10 @@ type OperationProgressReader interface {
 	StepCompleted(context.Context, string) (bool, error)
 }
 
+type OperationProgressResultReader interface {
+	StepResult(context.Context, string) (string, bool, error)
+}
+
 type ResolvedOperation struct {
 	OperationID            model.ResourceID       `json:"operation_id"`
 	ObservationToken       string                 `json:"-"`
@@ -109,7 +128,9 @@ type ResolvedOperation struct {
 type TransitionAuthorization struct {
 	Context  context.Context
 	Cancel   context.CancelFunc
+	Abort    func(context.Context) error
 	Finalize func(context.Context) error
+	LeaseID  model.ResourceID
 }
 
 type HAEndpointProvider interface {

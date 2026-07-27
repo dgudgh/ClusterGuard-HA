@@ -111,7 +111,7 @@ func (server *Server) agentReconcileRoute(writer http.ResponseWriter, request *h
 		return
 	}
 	payload := agent.ReconcileRequest{}
-	if err := decode(request, &payload); err != nil {
+	if err := decodePreservingBody(request, &payload); err != nil {
 		writeError(writer, http.StatusBadRequest, "invalid agent reconcile request")
 		return
 	}

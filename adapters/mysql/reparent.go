@@ -17,9 +17,17 @@ const (
 )
 
 func mysqlStringLiteral(value string) string {
-	value = strings.ReplaceAll(value, `\`, `\\`)
-	value = strings.ReplaceAll(value, `'`, `\'`)
+	value = strings.ReplaceAll(value, `'`, `''`)
 	return "'" + value + "'"
+}
+
+func mysqlLiteralStatement(statement string, values ...string) string {
+	for _, value := range values {
+		if strings.Contains(value, `\`) {
+			return "SET SESSION sql_mode='NO_BACKSLASH_ESCAPES'; " + statement
+		}
+	}
+	return statement
 }
 
 func buildChangeSourceStatement(version string, target model.DatabaseInstance, credentials adapter.Credentials) (string, error) {
@@ -35,12 +43,13 @@ func buildChangeSourceStatement(version string, target model.DatabaseInstance, c
 		return "", fmt.Errorf("replication source endpoint and credentials are required")
 	}
 	if dialect.ModernSource {
-		return "CHANGE REPLICATION SOURCE TO " +
+		statement := "CHANGE REPLICATION SOURCE TO " +
 			"SOURCE_HOST=" + mysqlStringLiteral(host) + ", " +
 			"SOURCE_PORT=" + strconv.Itoa(target.Port) + ", " +
 			"SOURCE_USER=" + mysqlStringLiteral(credentials.Username) + ", " +
 			"SOURCE_PASSWORD=" + mysqlStringLiteral(credentials.Password) + ", " +
-			"SOURCE_AUTO_POSITION=1, " + dialect.PublicKeySourceOption, nil
+			"SOURCE_AUTO_POSITION=1, " + dialect.PublicKeySourceOption
+		return mysqlLiteralStatement(statement, host, credentials.Username, credentials.Password), nil
 	}
 	statement := "CHANGE MASTER TO " +
 		"MASTER_HOST=" + mysqlStringLiteral(host) + ", " +
@@ -51,7 +60,7 @@ func buildChangeSourceStatement(version string, target model.DatabaseInstance, c
 	if dialect.PublicKeySourceOption != "" {
 		statement += ", " + dialect.PublicKeySourceOption
 	}
-	return statement, nil
+	return mysqlLiteralStatement(statement, host, credentials.Username, credentials.Password), nil
 }
 
 func waitForFollowerReplicationHealthy(ctx context.Context, runner SQLRunner, endpoint adapter.Endpoint, credentials adapter.Credentials, targetUUID string) (model.ReplicationStatus, error) {

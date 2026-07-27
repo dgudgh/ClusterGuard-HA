@@ -99,7 +99,18 @@ func validPlannedOperation(record model.OperationRecord) bool {
 		strings.TrimSpace(record.Observation) != "" &&
 		strings.TrimSpace(record.Plan.Digest) != "" &&
 		record.Plan.OperationID == record.ResourceID &&
-		record.Plan.TargetID == record.TargetID
+		record.Plan.TargetID == record.TargetID &&
+		!hasBlockingChecks(record.Precheck) &&
+		!hasBlockingChecks(record.Plan.Checks)
+}
+
+func hasBlockingChecks(checks []model.Check) bool {
+	for _, check := range checks {
+		if check.Status == model.CheckFail {
+			return true
+		}
+	}
+	return false
 }
 
 func (service *Service) Issue(ctx context.Context, request IssueRequest) (IssuedGrant, error) {

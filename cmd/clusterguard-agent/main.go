@@ -10,6 +10,34 @@ import (
 	"clusterguard.io/ha/internal/agent"
 )
 
+type runtimeControllers struct {
+	vip        agent.VIPController
+	roles      agent.RoleController
+	postgresql agent.PostgreSQLController
+	oracle     agent.OracleController
+}
+
+func newRuntimeControllers(configuration agent.Config, runner agent.CommandRunner) (runtimeControllers, error) {
+	postgresql, err := agent.NewDefaultPostgreSQLController(runner)
+	if err != nil {
+		return runtimeControllers{}, err
+	}
+	oracle, err := agent.NewDefaultOracleController(agent.OSInputCommandRunner{})
+	if err != nil {
+		return runtimeControllers{}, err
+	}
+	return runtimeControllers{
+		vip:        agent.NewLinuxVIPController(runner, configuration.IPBinary, configuration.ARPingBinary),
+		roles:      agent.NewMySQLRoleController(runner, configuration.MySQLBinary, configuration.RoleStateDirectory),
+		postgresql: postgresql,
+		oracle:     oracle,
+	}, nil
+}
+
+func newRuntimeMutationLedger(configuration agent.Config) (agent.MutationLedger, error) {
+	return agent.NewFileMutationLedger(configuration.MutationStateDirectory)
+}
+
 func main() {
 	configurationPath := flag.String("config", "/etc/clusterguard/agent.json", "agent configuration path")
 	checkConfig := flag.Bool("check-config", false, "validate configuration and exit")
@@ -21,8 +49,11 @@ func main() {
 		os.Exit(1)
 	}
 	runner := agent.OSCommandRunner{}
-	vip := agent.NewLinuxVIPController(runner, configuration.IPBinary, configuration.ARPingBinary)
-	roles := agent.NewMySQLRoleController(runner, configuration.MySQLBinary, configuration.RoleStateDirectory)
+	controllers, err := newRuntimeControllers(configuration, runner)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	if *checkConfig {
 		if len(configuration.ControllerURLs) > 0 {
 			if _, err := agent.NewControllerHTTPClient(configuration); err != nil {
@@ -51,7 +82,10 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
-		results, reconcileErr := agent.NewReconciler(vip, roles, decisions).ReconcileAll(context.Background(), configuration.Clusters)
+		results, reconcileErr := agent.NewReconciler(
+			controllers.vip, controllers.roles, decisions,
+			agent.WithPostgreSQLReconcileController(controllers.postgresql),
+		).ReconcileAll(context.Background(), configuration.Clusters)
 		_ = json.NewEncoder(os.Stdout).Encode(map[string]interface{}{"status": "completed", "results": results})
 		if reconcileErr != nil {
 			fmt.Fprintln(os.Stderr, reconcileErr)
@@ -59,7 +93,17 @@ func main() {
 		}
 		return
 	}
-	service, err := agent.NewService(configuration, vip, roles, nil)
+	mutationLedger, err := newRuntimeMutationLedger(configuration)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	service, err := agent.NewService(
+		configuration, controllers.vip, controllers.roles, nil,
+		agent.WithPostgreSQLController(controllers.postgresql),
+		agent.WithOracleController(controllers.oracle),
+		agent.WithMutationLedger(mutationLedger),
+	)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

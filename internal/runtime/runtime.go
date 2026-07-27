@@ -5,8 +5,15 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
 	"fmt"
+	"log"
+	"net"
 	"net/http"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -31,13 +38,127 @@ import (
 )
 
 type Runtime struct {
-	server            *api.Server
-	consensus         *consensus.Node
-	authentication    *platformauth.Service
-	automaticRecovery *recovery.Controller
-	runCtx            context.Context
-	cancel            context.CancelFunc
-	wait              sync.WaitGroup
+	server              *api.Server
+	consensus           *consensus.Node
+	authentication      *platformauth.Service
+	automaticRecovery   *recovery.Controller
+	automaticRecoveries []*recovery.Controller
+	runCtx              context.Context
+	cancel              context.CancelFunc
+	wait                sync.WaitGroup
+}
+
+type engineClusterSource struct {
+	source discovery.ScheduledClusterSource
+	engine model.Engine
+}
+
+func (source engineClusterSource) Clusters() []model.DatabaseCluster {
+	if source.source == nil || !source.engine.Valid() {
+		return nil
+	}
+	clusters := source.source.Clusters()
+	filtered := make([]model.DatabaseCluster, 0, len(clusters))
+	for _, cluster := range clusters {
+		if cluster.Engine == source.engine {
+			filtered = append(filtered, cluster)
+		}
+	}
+	return filtered
+}
+
+func consensusPeerAPIAddress(configuration config.File, peer config.ConsensusPeer) (string, error) {
+	if address := strings.TrimRight(strings.TrimSpace(peer.APIAddress), "/"); address != "" {
+		return address, nil
+	}
+	httpAddress := strings.TrimSpace(configuration.HTTPAddress)
+	if httpAddress == "" {
+		httpAddress = "127.0.0.1:8088"
+	}
+	_, apiPort, err := net.SplitHostPort(httpAddress)
+	if err != nil || apiPort == "" {
+		return "", fmt.Errorf("derive controller API port from http_address %q", httpAddress)
+	}
+	leaderHost, _, err := net.SplitHostPort(strings.TrimSpace(peer.Address))
+	if err != nil || strings.TrimSpace(leaderHost) == "" {
+		return "", fmt.Errorf("derive controller API host from consensus peer %q", peer.Address)
+	}
+	scheme := "http"
+	if strings.TrimSpace(configuration.TLSCertFile) != "" {
+		scheme = "https"
+	}
+	return scheme + "://" + net.JoinHostPort(leaderHost, apiPort), nil
+}
+
+func consensusConfiguration(configuration config.File) (consensus.Config, error) {
+	peers := make([]consensus.Peer, len(configuration.Consensus.Peers))
+	for index, peer := range configuration.Consensus.Peers {
+		apiAddress, err := consensusPeerAPIAddress(configuration, peer)
+		if err != nil {
+			return consensus.Config{}, fmt.Errorf("configure controller API address: %w", err)
+		}
+		peers[index] = consensus.Peer{ResourceID: peer.ResourceID, Address: peer.Address, APIAddress: apiAddress}
+	}
+	return consensus.Config{
+		LocalID: configuration.Consensus.LocalID, BindAddress: configuration.Consensus.BindAddress,
+		AdvertiseAddress: configuration.Consensus.AdvertiseAddress, DataDirectory: configuration.Consensus.DataDirectory,
+		Peers: peers, Bootstrap: configuration.Consensus.Bootstrap,
+		ApplyTimeout:           time.Duration(configuration.Consensus.ApplyTimeoutSeconds) * time.Second,
+		SnapshotCASEnabled:     configuration.Consensus.SnapshotCASEnabled,
+		AllowInsecureTransport: configuration.Consensus.AllowInsecureTransport,
+		TLSCertFile:            configuration.Consensus.TLSCertFile,
+		TLSKeyFile:             configuration.Consensus.TLSKeyFile,
+		TLSCAFile:              configuration.Consensus.TLSCAFile,
+	}, nil
+}
+
+// ValidateConfiguration performs external control-plane checks used by
+// installation preflight without opening metadata or binding listeners.
+func ValidateConfiguration(configuration config.File) error {
+	if !configuration.Consensus.Enabled {
+		return nil
+	}
+	consensusConfig, err := consensusConfiguration(configuration)
+	if err != nil {
+		return err
+	}
+	if err := consensus.ValidateConfiguration(consensusConfig); err != nil {
+		return fmt.Errorf("validate controller consensus: %w", err)
+	}
+	return nil
+}
+
+func newMutationRPCClient(configuration config.File) (*http.Client, error) {
+	baseTransport, standardTransport := http.DefaultTransport.(*http.Transport)
+	if !standardTransport {
+		if configuration.TLSCAFile != "" {
+			return nil, fmt.Errorf("control-plane TLS CA requires a configurable HTTP transport")
+		}
+		return &http.Client{Transport: http.DefaultTransport}, nil
+	}
+	transport := baseTransport.Clone()
+	transport.ResponseHeaderTimeout = 5 * time.Minute
+	if configuration.TLSCAFile != "" {
+		contents, err := os.ReadFile(configuration.TLSCAFile)
+		if err != nil {
+			return nil, fmt.Errorf("read control-plane TLS CA: %w", err)
+		}
+		roots, err := x509.SystemCertPool()
+		if err != nil {
+			roots = x509.NewCertPool()
+		}
+		if !roots.AppendCertsFromPEM(contents) {
+			return nil, fmt.Errorf("control-plane TLS CA contains no valid certificates")
+		}
+		tlsConfiguration := &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}
+		if transport.TLSClientConfig != nil {
+			tlsConfiguration = transport.TLSClientConfig.Clone()
+			tlsConfiguration.MinVersion = tls.VersionTLS12
+			tlsConfiguration.RootCAs = roots
+		}
+		transport.TLSClientConfig = tlsConfiguration
+	}
+	return &http.Client{Transport: transport}, nil
 }
 
 func runAuthenticationBootstrap(
@@ -45,9 +166,12 @@ func runAuthenticationBootstrap(
 	repository *store.Repository,
 	service *platformauth.Service,
 	authority coordination.MutationAuthority,
+	onError func(error),
 ) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
+	var lastReportedAt time.Time
+	lastReportedError := ""
 	for {
 		if _, found := repository.PlatformUserByUsername(platformauth.DefaultAdminUsername); found {
 			return
@@ -55,11 +179,75 @@ func runAuthenticationBootstrap(
 		if authority == nil || authority.RequireMutationAuthority(ctx) == nil {
 			if _, err := service.EnsureBootstrapAdmin(ctx); err == nil {
 				return
+			} else if onError != nil && ctx.Err() == nil {
+				now := time.Now().UTC()
+				message := err.Error()
+				if message != lastReportedError || lastReportedAt.IsZero() || now.Sub(lastReportedAt) >= 30*time.Second {
+					onError(fmt.Errorf("bootstrap platform administrator: %w", err))
+					lastReportedAt = now
+					lastReportedError = message
+				}
 			}
 		}
 		select {
 		case <-ctx.Done():
 			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func authenticationRecoveryApplied(repository *store.Repository, recoveryID model.ResourceID) bool {
+	for _, event := range repository.SecurityEvents() {
+		if event.ResourceID == recoveryID && event.Kind == "password_recovered" {
+			return true
+		}
+	}
+	return false
+}
+
+func runAuthenticationRecovery(
+	ctx context.Context,
+	repository *store.Repository,
+	service *platformauth.Service,
+	authority coordination.MutationAuthority,
+	path string,
+	now func() time.Time,
+	interval time.Duration,
+) error {
+	if now == nil {
+		now = time.Now
+	}
+	if interval <= 0 {
+		interval = 500 * time.Millisecond
+	}
+	artifact, err := platformauth.ReadAdminRecoveryArtifact(path, now().UTC())
+	if err != nil {
+		return err
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		if authenticationRecoveryApplied(repository, artifact.RecoveryID) {
+			return os.Remove(path)
+		}
+		if _, found := repository.PlatformUserByUsername(platformauth.DefaultAdminUsername); found {
+			if authority == nil || authority.RequireMutationAuthority(ctx) == nil {
+				_, _, applyErr := service.ApplyAdminRecoveryArtifact(ctx, artifact)
+				if applyErr == nil || authenticationRecoveryApplied(repository, artifact.RecoveryID) {
+					return os.Remove(path)
+				}
+				if errors.Is(applyErr, store.ErrRecoveryRejected) {
+					return applyErr
+				}
+				if !errors.Is(applyErr, store.ErrConflict) {
+					return applyErr
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
 		case <-ticker.C:
 		}
 	}
@@ -119,16 +307,70 @@ func newMySQLFailoverRuntime(
 	transport writerendpoint.AgentTransport,
 	secret string,
 	now func() time.Time,
+	externalFencers ...coordination.ExternalFencer,
 ) mysqlFailoverRuntime {
 	components := mysqlFailoverRuntime{safety: mysql.UnsupportedFailoverSafetyProvider{}}
-	if authority == nil || inventory == nil || leases == nil || transport == nil || secret == "" {
+	var externalFencer coordination.ExternalFencer
+	if len(externalFencers) > 0 {
+		externalFencer = externalFencers[0]
+	}
+	if authority == nil || inventory == nil || leases == nil || ((transport == nil || secret == "") && externalFencer == nil) {
 		return components
 	}
 	failures := coordination.NewFailureWindow(6, 30*time.Second)
 	components.failureObserver = failures
 	components.failureEvidence = failures
-	components.safety = coordination.NewGuardedFailoverSafety(failures, authority, inventory, leases, transport, secret, now)
+	options := make([]coordination.GuardedFailoverOption, 0, 1)
+	if externalFencer != nil {
+		options = append(options, coordination.WithExternalFencer(externalFencer))
+	}
+	components.safety = coordination.NewGuardedFailoverSafety(failures, authority, inventory, leases, transport, secret, now, options...)
 	return components
+}
+
+func newPostgreSQLRuntimeAdapter(
+	configuration config.File,
+	endpointProvider adapter.HAEndpointProvider,
+	transport writerendpoint.AgentTransport,
+	failoverSafety postgresql.FailoverSafetyProvider,
+) *postgresql.Adapter {
+	var nodeController postgresql.NodeController = postgresql.UnsupportedNodeController{}
+	if _, err := postgresqlOperationCredentials(configuration.PostgreSQL); err == nil && transport != nil && strings.TrimSpace(configuration.Agent.SharedSecret) != "" {
+		nodeController = writerendpoint.NewPostgreSQLNodeController(transport, configuration.Agent.SharedSecret, nil)
+	}
+	if failoverSafety == nil {
+		failoverSafety = postgresql.UnsupportedFailoverSafetyProvider{}
+	}
+	return postgresql.NewWithProviders(
+		postgresql.CLIQueryRunner{}, endpointProvider, nodeController, failoverSafety,
+	)
+}
+
+func newOracleRuntimeAdapter(
+	configuration config.File,
+	transport writerendpoint.AgentTransport,
+	endpointProviders ...adapter.HAEndpointProvider,
+) *oracle.Adapter {
+	var brokerController oracle.BrokerController = oracle.UnsupportedBrokerController{}
+	var discoveryProvider oracle.BrokerDiscoveryProvider = oracle.UnsupportedBrokerDiscoveryProvider{}
+	var endpointProvider adapter.HAEndpointProvider = oracle.UnsupportedHAEndpointProvider{}
+	if len(endpointProviders) > 0 && endpointProviders[0] != nil {
+		endpointProvider = endpointProviders[0]
+	}
+	if configuration.Oracle.Enabled && transport != nil && strings.TrimSpace(configuration.Agent.SharedSecret) != "" {
+		discoveryProvider = writerendpoint.NewOracleBrokerDiscoveryProvider(
+			transport, configuration.Agent.SharedSecret, nil,
+		)
+	}
+	if _, err := oracleOperationCredentials(configuration.Oracle); err == nil &&
+		transport != nil && strings.TrimSpace(configuration.Agent.SharedSecret) != "" {
+		brokerController = writerendpoint.NewOracleBrokerController(
+			transport, configuration.Agent.SharedSecret, nil,
+		)
+	}
+	return oracle.NewWithRuntimeProviders(
+		oracle.CLIBrokerRunner{}, oracle.CLISQLPlusRunner{}, discoveryProvider, brokerController, endpointProvider,
+	)
 }
 
 func (runtime *Runtime) startLoop(run func(context.Context)) {
@@ -140,6 +382,17 @@ func (runtime *Runtime) startLoop(run func(context.Context)) {
 		defer runtime.wait.Done()
 		run(runtime.runCtx)
 	}()
+}
+
+func (runtime *Runtime) startAutomaticRecovery(controller *recovery.Controller) {
+	if runtime == nil || controller == nil {
+		return
+	}
+	if runtime.automaticRecovery == nil {
+		runtime.automaticRecovery = controller
+	}
+	runtime.automaticRecoveries = append(runtime.automaticRecoveries, controller)
+	runtime.startLoop(controller.Run)
 }
 
 func (runtime *Runtime) Handler() http.Handler {
@@ -164,23 +417,18 @@ func (runtime *Runtime) Close() error {
 }
 
 func New(configuration config.File) (*Runtime, error) {
+	startedAt := time.Now().UTC()
 	repository, err := store.Open(configuration.MetadataPath)
 	if err != nil {
 		return nil, err
 	}
 	result := &Runtime{}
 	if configuration.Consensus.Enabled {
-		peers := make([]consensus.Peer, len(configuration.Consensus.Peers))
-		for index, peer := range configuration.Consensus.Peers {
-			peers[index] = consensus.Peer{ResourceID: peer.ResourceID, Address: peer.Address}
+		consensusConfig, configErr := consensusConfiguration(configuration)
+		if configErr != nil {
+			return nil, configErr
 		}
-		result.consensus, err = consensus.Open(consensus.Config{
-			LocalID: configuration.Consensus.LocalID, BindAddress: configuration.Consensus.BindAddress,
-			AdvertiseAddress: configuration.Consensus.AdvertiseAddress, DataDirectory: configuration.Consensus.DataDirectory,
-			Peers: peers, Bootstrap: configuration.Consensus.Bootstrap,
-			ApplyTimeout:       time.Duration(configuration.Consensus.ApplyTimeoutSeconds) * time.Second,
-			SnapshotCASEnabled: configuration.Consensus.SnapshotCASEnabled,
-		}, repository)
+		result.consensus, err = consensus.Open(consensusConfig, repository)
 		if err != nil {
 			return nil, fmt.Errorf("start controller consensus: %w", err)
 		}
@@ -202,14 +450,32 @@ func New(configuration config.File) (*Runtime, error) {
 		}
 	} else {
 		result.startLoop(func(ctx context.Context) {
-			runAuthenticationBootstrap(ctx, repository, result.authentication, result.consensus)
+			runAuthenticationBootstrap(ctx, repository, result.authentication, result.consensus, func(err error) {
+				log.Printf("administrator bootstrap failed: %v", err)
+			})
 		})
+	}
+	if _, statErr := os.Stat(platformauth.DefaultAdminRecoveryFile); statErr == nil {
+		result.startLoop(func(ctx context.Context) {
+			if recoveryErr := runAuthenticationRecovery(
+				ctx, repository, result.authentication, result.consensus,
+				platformauth.DefaultAdminRecoveryFile, time.Now, 500*time.Millisecond,
+			); recoveryErr != nil && ctx.Err() == nil {
+				log.Printf("administrator recovery failed: %v", recoveryErr)
+			}
+		})
+	} else if !os.IsNotExist(statErr) {
+		_ = result.Close()
+		return nil, fmt.Errorf("inspect administrator recovery artifact: %w", statErr)
 	}
 	registry := adapter.NewRegistry()
 	var endpointProvider adapter.HAEndpointProvider = mysql.UnsupportedHAEndpointProvider{}
 	var vipProvider *writerendpoint.LinuxVIPProvider
 	var ownershipLeases *coordination.LeaseStore
 	var agentTransport writerendpoint.AgentTransport
+	if result.consensus != nil {
+		ownershipLeases = coordination.NewLeaseStore(repository, result.consensus, nil)
+	}
 	if configuration.Agent.Enabled {
 		if result.consensus == nil {
 			return nil, fmt.Errorf("agent-backed VIP execution requires controller consensus")
@@ -218,13 +484,14 @@ func New(configuration config.File) (*Runtime, error) {
 			SSHBinary: configuration.Agent.SSHBinary, User: configuration.Agent.User,
 			IdentityFile: configuration.Agent.IdentityFile, KnownHostsFile: configuration.Agent.KnownHostsFile,
 			AgentBinary: configuration.Agent.AgentBinary, AgentConfigPath: configuration.Agent.AgentConfigPath,
+			CommandTimeout:  time.Duration(configuration.Agent.CommandTimeoutSeconds) * time.Second,
+			MutationTimeout: time.Duration(configuration.Agent.MutationTimeoutSeconds) * time.Second,
 		}, writerendpoint.OSProcessRunner{})
 		if transportErr != nil {
 			_ = result.Close()
 			return nil, fmt.Errorf("configure agent transport: %w", transportErr)
 		}
 		agentTransport = transport
-		ownershipLeases = coordination.NewLeaseStore(repository, result.consensus, nil)
 		vipProvider = writerendpoint.NewLinuxVIPProvider(repository, transport, ownershipLeases, configuration.Agent.SharedSecret, nil)
 		endpointProvider = vipProvider
 	}
@@ -236,14 +503,29 @@ func New(configuration config.File) (*Runtime, error) {
 	if ownershipLeases != nil {
 		failoverLeases = ownershipLeases
 	}
+	var externalFencer coordination.ExternalFencer
+	if configuration.Fencing.Enabled {
+		commandFencer, fencerErr := coordination.NewCommandFencer(
+			configuration.Fencing.ExecutablePath,
+			time.Duration(configuration.Fencing.TimeoutSeconds)*time.Second,
+			nil,
+		)
+		if fencerErr != nil {
+			_ = result.Close()
+			return nil, fmt.Errorf("configure external fencing provider: %w", fencerErr)
+		}
+		externalFencer = commandFencer
+	}
 	failoverRuntime := newMySQLFailoverRuntime(
-		failoverAuthority, repository, failoverLeases, agentTransport, configuration.Agent.SharedSecret, nil,
+		failoverAuthority, repository, failoverLeases, agentTransport, configuration.Agent.SharedSecret, nil, externalFencer,
 	)
 	mysqlAdapter := mysql.NewWithSafetyProviders(mysql.CLIQueryRunner{}, endpointProvider, repository, failoverRuntime.safety)
+	postgresqlAdapter := newPostgreSQLRuntimeAdapter(configuration, endpointProvider, agentTransport, failoverRuntime.safety)
+	oracleAdapter := newOracleRuntimeAdapter(configuration, agentTransport, endpointProvider)
 	for _, candidate := range []adapter.DatabaseHAAdapter{
 		mysqlAdapter,
-		postgresql.New(),
-		oracle.New(),
+		postgresqlAdapter,
+		oracleAdapter,
 		sqlserver.New(),
 	} {
 		if err := registry.Register(candidate); err != nil {
@@ -252,8 +534,8 @@ func New(configuration config.File) (*Runtime, error) {
 		}
 	}
 	locks := newRuntimeLocks(repository, failoverAuthority)
-	mysqlCredentials := func(context.Context, model.DatabaseCluster) (adapter.OperationCredentials, error) {
-		return mysqlOperationCredentials(configuration.MySQL)
+	operationCredentials := func(_ context.Context, cluster model.DatabaseCluster) (adapter.OperationCredentials, error) {
+		return databaseOperationCredentials(configuration, cluster)
 	}
 	approvalService := approval.New(repository, rand.Reader, time.Now)
 	approvalGates := runtimeApprovalGates{Service: approvalService, administrativeToken: configuration.ControlToken}
@@ -267,30 +549,37 @@ func New(configuration config.File) (*Runtime, error) {
 		workflow.WithOperationStore(repository),
 		workflow.WithOperationResolver(workflow.RepositoryResolver{
 			Reader:      repository,
-			Credentials: workflow.CredentialProviderFunc(mysqlCredentials),
+			Credentials: workflow.CredentialProviderFunc(operationCredentials),
 		}),
 	)
 	discoveryOptions := []discovery.Option{discovery.WithPublicationFence(locks.publication)}
 	if failoverRuntime.failureObserver != nil {
 		discoveryOptions = append(discoveryOptions, discovery.WithPrimaryFailureObserver(failoverRuntime.failureObserver))
 	}
-	refresher := discovery.New(registry, repository, discovery.CredentialResolverFunc(func(context.Context, model.DatabaseCluster, model.Endpoint) (adapter.Credentials, error) {
-		if !configuration.MySQL.Enabled {
-			return adapter.Credentials{}, fmt.Errorf("MySQL discovery credentials are not configured")
-		}
-		return mysqlDiscoveryCredentials(configuration.MySQL)
+	refresher := discovery.New(registry, repository, discovery.CredentialResolverFunc(func(_ context.Context, cluster model.DatabaseCluster, _ model.Endpoint) (adapter.Credentials, error) {
+		return databaseDiscoveryCredentials(configuration, cluster)
 	}), nil, discoveryOptions...)
 	options := []api.ServerOption{
 		api.WithControlToken(configuration.ControlToken),
 		api.WithMonitoringToken(configuration.MonitoringToken),
 		api.WithApprovalService(approvalService),
 		api.WithAuthentication(result.authentication),
+		api.WithSecureCookies(strings.TrimSpace(configuration.TLSCertFile) != ""),
+		api.WithControlPlaneStatus(newControlPlaneStatusProvider(repository, result.consensus, startedAt)),
 	}
 	if configuration.Agent.Enabled {
 		options = append(options, api.WithAgentReconcileSecret(configuration.Agent.SharedSecret))
 	}
 	if result.consensus != nil {
-		options = append(options, api.WithMutationAuthority(result.consensus))
+		mutationRPCClient, clientErr := newMutationRPCClient(configuration)
+		if clientErr != nil {
+			_ = result.Close()
+			return nil, fmt.Errorf("configure leader mutation RPC: %w", clientErr)
+		}
+		options = append(options,
+			api.WithMutationAuthority(result.consensus),
+			api.WithMutationRPC(api.NewLeaderMutationRPCClient(mutationRPCClient, repository)),
+		)
 	}
 	if configuration.NodeLifecycle.Enabled {
 		if result.consensus == nil {
@@ -298,13 +587,15 @@ func New(configuration config.File) (*Runtime, error) {
 			return nil, fmt.Errorf("node lifecycle execution requires controller consensus")
 		}
 		executor, executorErr := lifecycle.NewShellExecutor(configuration.NodeLifecycle.ExecutorPath, lifecycle.OSLifecycleProcessRunner{}, lifecycle.WithShellEnvironment(lifecycle.ShellEnvironment{
-			PackageRepository: configuration.NodeLifecycle.PackageRepository,
-			KnownHostsFile:    configuration.NodeLifecycle.KnownHostsFile,
-			IdentityFile:      configuration.NodeLifecycle.IdentityFile,
-			JQBinary:          configuration.NodeLifecycle.JQBinary,
-			ControlJoinHelper: configuration.NodeLifecycle.ControlJoinHelper,
-			CloneHelper:       configuration.NodeLifecycle.CloneHelper,
-			XtraBackupHelper:  configuration.NodeLifecycle.XtraBackupHelper,
+			PackageRepository:       configuration.NodeLifecycle.PackageRepository,
+			KnownHostsFile:          configuration.NodeLifecycle.KnownHostsFile,
+			IdentityFile:            configuration.NodeLifecycle.IdentityFile,
+			JQBinary:                configuration.NodeLifecycle.JQBinary,
+			ControlJoinHelper:       configuration.NodeLifecycle.ControlJoinHelper,
+			CloneHelper:             configuration.NodeLifecycle.CloneHelper,
+			XtraBackupHelper:        configuration.NodeLifecycle.XtraBackupHelper,
+			PostgreSQLInstallHelper: configuration.NodeLifecycle.PostgreSQLInstallHelper,
+			PostgreSQLSyncHelper:    configuration.NodeLifecycle.PostgreSQLSyncHelper,
 		}))
 		if executorErr != nil {
 			_ = result.Close()
@@ -323,9 +614,45 @@ func New(configuration config.File) (*Runtime, error) {
 			authority = result.consensus
 		}
 		scheduler := discovery.NewScheduler(
-			repository, refresher, authority,
+			engineClusterSource{source: repository, engine: model.EngineMySQL}, refresher, authority,
 			time.Duration(configuration.MySQL.DiscoveryIntervalSeconds)*time.Second,
 			time.Duration(configuration.MySQL.DiscoveryTimeoutSeconds)*time.Second,
+		)
+		result.startLoop(scheduler.Run)
+	}
+	if configuration.PostgreSQL.Enabled && configuration.PostgreSQL.DiscoveryIntervalSeconds > 0 {
+		var authority discovery.ScheduledMutationAuthority
+		if result.consensus != nil {
+			authority = result.consensus
+		}
+		scheduler := discovery.NewScheduler(
+			engineClusterSource{source: repository, engine: model.EnginePostgreSQL}, refresher, authority,
+			time.Duration(configuration.PostgreSQL.DiscoveryIntervalSeconds)*time.Second,
+			time.Duration(configuration.PostgreSQL.DiscoveryTimeoutSeconds)*time.Second,
+		)
+		result.startLoop(scheduler.Run)
+	}
+	if configuration.Oracle.Enabled && configuration.Oracle.DiscoveryIntervalSeconds > 0 {
+		var authority discovery.ScheduledMutationAuthority
+		if result.consensus != nil {
+			authority = result.consensus
+		}
+		scheduler := discovery.NewScheduler(
+			engineClusterSource{source: repository, engine: model.EngineOracle}, refresher, authority,
+			time.Duration(configuration.Oracle.DiscoveryIntervalSeconds)*time.Second,
+			time.Duration(configuration.Oracle.DiscoveryTimeoutSeconds)*time.Second,
+		)
+		result.startLoop(scheduler.Run)
+	}
+	if configuration.SQLServer.Enabled && configuration.SQLServer.DiscoveryIntervalSeconds > 0 {
+		var authority discovery.ScheduledMutationAuthority
+		if result.consensus != nil {
+			authority = result.consensus
+		}
+		scheduler := discovery.NewScheduler(
+			engineClusterSource{source: repository, engine: model.EngineSQLServer}, refresher, authority,
+			time.Duration(configuration.SQLServer.DiscoveryIntervalSeconds)*time.Second,
+			time.Duration(configuration.SQLServer.DiscoveryTimeoutSeconds)*time.Second,
 		)
 		result.startLoop(scheduler.Run)
 	}
@@ -334,13 +661,27 @@ func New(configuration config.File) (*Runtime, error) {
 			_ = result.Close()
 			return nil, fmt.Errorf("automatic MySQL failover requires consensus, agent fencing, and failure evidence")
 		}
-		result.automaticRecovery = recovery.NewController(
+		controller := recovery.NewController(
 			repository, failoverRuntime.failureEvidence, recovery.NewMySQLCandidateSelector(mysqlAdapter), service,
 			result.consensus,
 			time.Duration(configuration.MySQL.AutomaticFailoverRetrySeconds)*time.Second, nil,
 			recovery.WithInterval(time.Duration(configuration.MySQL.AutomaticFailoverIntervalSeconds)*time.Second),
 		)
-		result.startLoop(result.automaticRecovery.Run)
+		result.startAutomaticRecovery(controller)
+	}
+	if configuration.PostgreSQL.AutomaticFailoverEnabled {
+		if result.consensus == nil || failoverRuntime.failureEvidence == nil || !configuration.Agent.Enabled {
+			_ = result.Close()
+			return nil, fmt.Errorf("automatic PostgreSQL failover requires consensus, agent fencing, and failure evidence")
+		}
+		controller := recovery.NewController(
+			repository, failoverRuntime.failureEvidence, recovery.NewPostgreSQLCandidateSelector(postgresqlAdapter), service,
+			result.consensus,
+			time.Duration(configuration.PostgreSQL.AutomaticFailoverRetrySeconds)*time.Second, nil,
+			recovery.WithEngine(model.EnginePostgreSQL),
+			recovery.WithInterval(time.Duration(configuration.PostgreSQL.AutomaticFailoverIntervalSeconds)*time.Second),
+		)
+		result.startAutomaticRecovery(controller)
 	}
 	if vipProvider != nil && ownershipLeases != nil && result.consensus != nil {
 		keeper := coordination.NewOwnershipKeeper(repository, vipProvider, ownershipLeases, result.consensus, nil, 5*time.Second, 15*time.Second)
@@ -352,7 +693,9 @@ func New(configuration config.File) (*Runtime, error) {
 func nodeLifecycleSecrets(configuration config.NodeLifecycle) lifecycle.ExecutionSecrets {
 	return lifecycle.ExecutionSecrets{
 		SSHPassword: configuration.SSHPassword, MySQLRootPassword: configuration.MySQLRootPassword,
-		ReplicationPassword: configuration.ReplicationPassword,
+		ReplicationPassword:           configuration.ReplicationPassword,
+		PostgreSQLAdminPassword:       configuration.PostgreSQLAdminPassword,
+		PostgreSQLReplicationPassword: configuration.PostgreSQLReplicationPassword,
 	}
 }
 
@@ -361,7 +704,11 @@ func nodeLifecycleCapabilities(configuration config.NodeLifecycle) lifecycle.Cap
 	for version, available := range configuration.XtraBackupVersions {
 		versions[version] = available
 	}
-	return lifecycle.Capabilities{CloneAvailable: configuration.CloneAvailable, XtraBackupVersions: versions, LogicalDumpAllowed: configuration.LogicalDumpAllowed}
+	return lifecycle.Capabilities{
+		CloneAvailable: configuration.CloneAvailable, XtraBackupVersions: versions, LogicalDumpAllowed: configuration.LogicalDumpAllowed,
+		PostgreSQLBaseBackupAvailable: configuration.PostgreSQLBaseBackupAvailable,
+		PostgreSQLRewindAvailable:     configuration.PostgreSQLRewindAvailable,
+	}
 }
 
 func mysqlOperationCredentials(configuration config.MySQL) (adapter.OperationCredentials, error) {
@@ -385,4 +732,130 @@ func mysqlDiscoveryCredentials(configuration config.MySQL) (adapter.Credentials,
 		return adapter.Credentials{}, fmt.Errorf("MySQL discovery credentials are not configured")
 	}
 	return adapter.Credentials{Username: configuration.Discovery.Username, Password: configuration.Discovery.Password}, nil
+}
+
+func postgresqlDiscoveryCredentials(configuration config.PostgreSQL) (adapter.Credentials, error) {
+	if !configuration.Enabled || configuration.Discovery.Username == "" || configuration.Discovery.Password == "" {
+		return adapter.Credentials{}, fmt.Errorf("PostgreSQL discovery credentials are not configured")
+	}
+	database := strings.TrimSpace(configuration.Discovery.Database)
+	if database == "" {
+		database = "postgres"
+	}
+	return adapter.Credentials{
+		Username: configuration.Discovery.Username,
+		Password: configuration.Discovery.Password,
+		Database: database,
+	}, nil
+}
+
+func postgresqlOperationCredentials(configuration config.PostgreSQL) (adapter.OperationCredentials, error) {
+	if !configuration.Enabled {
+		return adapter.OperationCredentials{}, fmt.Errorf("PostgreSQL operation credentials are not configured")
+	}
+	if configuration.Operation.Username == "" || configuration.Operation.Password == "" {
+		return adapter.OperationCredentials{}, fmt.Errorf("PostgreSQL operation credentials are incomplete")
+	}
+	if configuration.Replication.Username == "" || configuration.Replication.Password == "" {
+		return adapter.OperationCredentials{}, fmt.Errorf("PostgreSQL replication credentials are incomplete")
+	}
+	operationDatabase := strings.TrimSpace(configuration.Operation.Database)
+	if operationDatabase == "" {
+		operationDatabase = "postgres"
+	}
+	replicationDatabase := strings.TrimSpace(configuration.Replication.Database)
+	if replicationDatabase == "" {
+		replicationDatabase = operationDatabase
+	}
+	return adapter.OperationCredentials{
+		Administrative: adapter.Credentials{Username: configuration.Operation.Username, Password: configuration.Operation.Password, Database: operationDatabase},
+		Replication:    adapter.Credentials{Username: configuration.Replication.Username, Password: configuration.Replication.Password, Database: replicationDatabase},
+	}, nil
+}
+
+func oracleDiscoveryCredentials(configuration config.Oracle) (adapter.Credentials, error) {
+	if !configuration.Enabled || configuration.Discovery.Username == "" || configuration.Discovery.Password == "" {
+		return adapter.Credentials{}, fmt.Errorf("Oracle discovery credentials are not configured")
+	}
+	return adapter.Credentials{
+		Username: configuration.Discovery.Username,
+		Password: configuration.Discovery.Password,
+		Database: strings.TrimSpace(configuration.Discovery.Database),
+	}, nil
+}
+
+func oracleOperationCredentials(configuration config.Oracle) (adapter.OperationCredentials, error) {
+	if !configuration.Enabled {
+		return adapter.OperationCredentials{}, fmt.Errorf("Oracle operation credentials are not configured")
+	}
+	if configuration.Operation.Username == "" || configuration.Operation.Password == "" {
+		return adapter.OperationCredentials{}, fmt.Errorf("Oracle operation credentials are incomplete")
+	}
+	database := strings.TrimSpace(configuration.Operation.Database)
+	if database == "" {
+		database = strings.TrimSpace(configuration.Discovery.Database)
+	}
+	return adapter.OperationCredentials{
+		Administrative: adapter.Credentials{Username: configuration.Operation.Username, Password: configuration.Operation.Password, Database: database},
+	}, nil
+}
+
+func sqlServerDiscoveryCredentials(configuration config.SQLServer) (adapter.Credentials, error) {
+	if !configuration.Enabled || configuration.Discovery.Username == "" || configuration.Discovery.Password == "" {
+		return adapter.Credentials{}, fmt.Errorf("SQL Server discovery credentials are not configured")
+	}
+	database := strings.TrimSpace(configuration.Discovery.Database)
+	if database == "" {
+		database = "master"
+	}
+	return adapter.Credentials{Username: configuration.Discovery.Username, Password: configuration.Discovery.Password, Database: database}, nil
+}
+
+func sqlServerOperationCredentials(configuration config.SQLServer) (adapter.OperationCredentials, error) {
+	if !configuration.Enabled {
+		return adapter.OperationCredentials{}, fmt.Errorf("SQL Server operation credentials are not configured")
+	}
+	if configuration.Operation.Username == "" || configuration.Operation.Password == "" {
+		return adapter.OperationCredentials{}, fmt.Errorf("SQL Server operation credentials are incomplete")
+	}
+	database := strings.TrimSpace(configuration.Operation.Database)
+	if database == "" {
+		database = strings.TrimSpace(configuration.Discovery.Database)
+	}
+	if database == "" {
+		database = "master"
+	}
+	return adapter.OperationCredentials{
+		Administrative: adapter.Credentials{Username: configuration.Operation.Username, Password: configuration.Operation.Password, Database: database},
+	}, nil
+}
+
+func databaseDiscoveryCredentials(configuration config.File, cluster model.DatabaseCluster) (adapter.Credentials, error) {
+	switch cluster.Engine {
+	case model.EngineMySQL:
+		return mysqlDiscoveryCredentials(configuration.MySQL)
+	case model.EnginePostgreSQL:
+		return postgresqlDiscoveryCredentials(configuration.PostgreSQL)
+	case model.EngineOracle:
+		return oracleDiscoveryCredentials(configuration.Oracle)
+	case model.EngineSQLServer:
+		return sqlServerDiscoveryCredentials(configuration.SQLServer)
+	default:
+		return adapter.Credentials{}, adapter.ErrUnsupported
+	}
+}
+
+func databaseOperationCredentials(configuration config.File, cluster model.DatabaseCluster) (adapter.OperationCredentials, error) {
+	switch cluster.Engine {
+	case model.EngineMySQL:
+		return mysqlOperationCredentials(configuration.MySQL)
+	case model.EnginePostgreSQL:
+		return postgresqlOperationCredentials(configuration.PostgreSQL)
+	case model.EngineOracle:
+		return oracleOperationCredentials(configuration.Oracle)
+	case model.EngineSQLServer:
+		return sqlServerOperationCredentials(configuration.SQLServer)
+	default:
+		return adapter.OperationCredentials{}, adapter.ErrUnsupported
+	}
 }

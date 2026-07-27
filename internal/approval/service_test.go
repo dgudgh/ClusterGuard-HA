@@ -110,6 +110,24 @@ func TestIssueRejectsInvalidTTLAndUnplannedOperation(t *testing.T) {
 	}
 }
 
+func TestIssueRejectsPlanWithBlockingChecks(t *testing.T) {
+	now := time.Date(2026, time.July, 16, 9, 0, 0, 0, time.UTC)
+	repository := store.NewMemory()
+	service := New(repository, bytes.NewReader(bytes.Repeat([]byte{2}, approvalSecretBytes)), func() time.Time { return now })
+	record := plannedOperation(t, repository, now)
+	record.Plan.Checks = []model.Check{{
+		Name: "target_ready", Status: model.CheckFail,
+		Message: "target is not ready",
+	}}
+
+	if _, err := service.Issue(context.Background(), IssueRequest{Operation: record, IssuedBy: "approver"}); err == nil {
+		t.Fatal("operation plan with blocking checks received an approval grant")
+	}
+	if grants := repository.ApprovalGrants(); len(grants) != 0 {
+		t.Fatalf("blocking plan persisted approval grants: %+v", grants)
+	}
+}
+
 func TestAuthorizeIntentRejectsExpiredConsumedAndMismatchedGrant(t *testing.T) {
 	now := time.Date(2026, time.July, 16, 9, 0, 0, 0, time.UTC)
 	repository := store.NewMemory()

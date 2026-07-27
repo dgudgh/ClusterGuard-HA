@@ -30,6 +30,27 @@ func TestParseReplicationAcceptsBothTerminologyFamilies(t *testing.T) {
 	}
 }
 
+func TestParseReplicationPreservesSourceReconnectAndChannelErrors(t *testing.T) {
+	status, err := parseReplication(Row{
+		"Source_UUID":           "source-uuid",
+		"Replica_IO_Running":    "Connecting",
+		"Replica_SQL_Running":   "Yes",
+		"Seconds_Behind_Source": "NULL",
+		"Executed_Gtid_Set":     "source-uuid:1-20",
+		"Last_IO_Error":         "Error reconnecting to source",
+		"Last_SQL_Error":        "",
+	})
+	if err != nil {
+		t.Fatalf("parse reconnecting replication: %v", err)
+	}
+	if status.IOThread != model.ThreadConnecting || status.SQLThread != model.ThreadRunning || status.LagSeconds != nil {
+		t.Fatalf("source reconnect state was lost: %+v", status)
+	}
+	if status.LastIOError != "Error reconnecting to source" || status.LastSQLError != "" || status.LastError != "Error reconnecting to source" {
+		t.Fatalf("replication channel errors were not preserved: %+v", status)
+	}
+}
+
 func TestDiscoverSupportsMySQLVersions(t *testing.T) {
 	tests := []struct {
 		version           string

@@ -10,6 +10,9 @@ Implemented keys:
 | Key | Required | Meaning |
 | --- | --- | --- |
 | `http_address` | No | HTTP listen address; blank defaults to `127.0.0.1:8088`. |
+| `tls_cert_file`, `tls_key_file` | For non-loopback API access | Server certificate and key. Non-loopback plaintext is rejected unless the unsafe lab override is explicit. |
+| `tls_ca_file` | For HTTPS controller RPC | CA used to verify the configured Leader API address during mutation forwarding. |
+| `allow_insecure_http` | Lab only | Explicitly permits non-loopback plaintext HTTP and emits a startup warning. Never enable where credentials or sessions cross an untrusted network. |
 | `metadata_path` | Yes | Durable metadata snapshot path. |
 | `control_token_env` | No | Environment variable containing the Bearer token for control API `POST` requests. Without it, all control `POST` routes fail closed with `503`. |
 | `approval_token_env` | Deprecated | Legacy node-lifecycle approval only. It is ignored by database operations and automatic recovery; new database execution uses one-time grants. |
@@ -20,9 +23,26 @@ Implemented keys:
 | `mysql.automatic_failover_enabled` | No | Enables leader-only automatic failover; defaults to `false`. |
 | `mysql.automatic_failover_interval_seconds` | No | Recovery-controller poll interval; defaults to 5 seconds. |
 | `mysql.automatic_failover_retry_seconds` | No | Backoff after a blocked or failed incident attempt; defaults to 30 seconds. |
+| `postgresql.enabled` | No | Enables native PostgreSQL discovery and configured HA capabilities; defaults to `false`. |
+| `postgresql.discovery_interval_seconds` | No | PostgreSQL scheduler interval; defaults to 5 seconds and is independent of MySQL. |
+| `postgresql.discovery_timeout_seconds` | No | Per-endpoint PostgreSQL probe timeout; defaults to 4 seconds. |
+| `postgresql.automatic_failover_enabled` | No | Enables leader-only PostgreSQL automatic failover; defaults to `false`. |
+| `postgresql.automatic_failover_interval_seconds` | No | PostgreSQL recovery-controller poll interval; defaults to 5 seconds. |
+| `postgresql.automatic_failover_retry_seconds` | No | Backoff after a blocked or failed PostgreSQL incident attempt; defaults to 30 seconds. |
+| `postgresql.discovery` | When enabled | Dedicated monitor username, database, and password environment reference. |
+| `postgresql.operation` | For PostgreSQL mutation | Dedicated operation username, database, and password environment reference. Must be configured together with `postgresql.replication`. |
+| `postgresql.replication` | For PostgreSQL mutation and node sync | Dedicated replication username, database, and password environment reference. Must be configured together with `postgresql.operation`. |
 | `consensus` | For real HA mutation | Odd Raft controller membership, persistent state, and majority authority. |
 | `consensus.snapshot_cas_enabled` | For replicated mutation | Explicitly activates snapshot content compare-and-swap on an all-upgraded controller set. Missing or `false` keeps metadata mutation fail-closed. |
-| `agent` | For VIP/fencing mutation | Restricted signed node command transport. |
+| `consensus.tls_cert_file`, `tls_key_file`, `tls_ca_file` | For non-loopback Raft | Mutual-TLS identity and private CA for controller-to-controller Raft traffic. All three are required together. |
+| `consensus.peers[].api_address` | Recommended | Trusted HTTPS address used to forward mutations to that controller when it is Leader. It is never derived from the inbound HTTP Host header. |
+| `consensus.allow_insecure_transport` | Lab only | Explicitly permits non-loopback plaintext Raft and emits a startup warning. |
+| `agent` | For VIP mutation | Restricted signed node command transport for VIP ownership, role status, and in-band self-isolation. |
+| `fencing` | For partition-safe failover | Site-specific external fence/status command used when the old-primary agent cannot prove isolation. |
+
+In a multi-controller deployment, `http_address` must listen on an address
+reachable by the configured peer API addresses; a loopback-only listener cannot
+receive follower-to-Leader mutation RPCs.
 
 The JSON file contains environment-variable names only. Set secrets in the
 service environment:
@@ -30,13 +50,18 @@ service environment:
 ```bash
 export CG_CONTROL_TOKEN='replace-with-a-control-api-secret'
 export CG_MYSQL_DISCOVERY_PASSWORD='replace-with-the-read-only-secret'
+export CG_POSTGRESQL_DISCOVERY_PASSWORD='replace-with-the-pg-monitor-secret'
+export CG_POSTGRESQL_OPERATION_PASSWORD='replace-with-the-pg-operation-secret'
+export CG_POSTGRESQL_REPLICATION_PASSWORD='replace-with-the-pg-replication-secret'
+export CG_ORACLE_DISCOVERY_PASSWORD='replace-with-the-dedicated-sysdg-secret'
+export CG_ORACLE_OPERATION_PASSWORD='replace-with-the-dedicated-sysdg-secret'
 go run ./cmd/clusterguard --config configs/clusterguard.example.json
 ```
 
-The server rejects startup when MySQL is enabled but its username,
-`password_env`, or resolved password is blank. MySQL passwords are passed to
-the client process through its environment and are not placed in command-line
-arguments, API payloads, or persisted metadata.
+The server rejects startup when an enabled engine lacks its required username,
+`password_env`, or resolved password. MySQL and PostgreSQL passwords are passed
+to their client processes through environment variables and are not placed in
+command-line arguments, API payloads, or persisted metadata.
 
 Production layout:
 
@@ -128,7 +153,17 @@ offline disaster-recovery procedure.
 Use `packaging/systemd/clusterguard-ha.service` and
 `packaging/systemd/clusterguard.env.example` as the service templates. The
 server binary defaults to `/etc/clusterguard/clusterguard.json` when `--config`
-is omitted.
+is omitted. Validate the exact production file before restarting a controller:
+
+```bash
+/usr/local/bin/clusterguard \
+  --config /etc/clusterguard/clusterguard.json \
+  --check-config
+```
+
+The packaged systemd unit runs this validation as `ExecStartPre`; an invalid
+configuration therefore fails before the serving process replaces a healthy
+controller.
 
 When upgrading an existing Raft controller set to a release that supports
 snapshot content compare-and-swap, do not enable the protocol during a mixed
@@ -138,6 +173,18 @@ the binary on every controller, then set `consensus.snapshot_cas_enabled` to
 with the key missing or set to `false` remains readable but rejects replicated
 metadata mutation. Never enable the key while an older controller can still
 become leader.
+
+Controller state is capped at 16 MiB on disk, in Raft log entries, and in Raft
+snapshots. Before upgrading, verify that the protected metadata file is below
+that limit and back it up. Audit, report, session, approval, operation,
+lifecycle, and security-event history is bounded automatically; export records
+to an external retention system when longer history is required.
+
+For Raft mTLS rollout, install the private CA and per-controller certificates
+on every controller before changing configuration. Certificates must include
+the advertised peer IP or DNS name and both client and server usages. Restart
+one controller at a time and verify a writable majority after every restart.
+Do not rotate the CA and all controller identities in one unverified step.
 
 Build one self-verifying Linux bundle, then run the installer in its default
 read-only preflight mode before permitting mutation:
@@ -302,7 +349,56 @@ Concurrent refreshes are serialized per cluster. The commit requires both:
 An equal/older observation or an inventory change during an in-flight refresh
 returns `409` and publishes no partial result.
 
-## 5. Read Topology, Health, Candidates, and Metrics
+## 5. Check Control-Plane Health and Readiness
+
+ClusterGuard exposes two minimal, unauthenticated probes for service managers
+and load balancers:
+
+```bash
+curl -fsS http://127.0.0.1:8088/healthz
+curl -fsS http://127.0.0.1:8088/readyz
+```
+
+`/healthz` proves only that the HTTP process is alive. `/readyz` returns HTTP
+`503` when a Raft controller has no known Leader, a Leader cannot confirm
+quorum, a follower cannot identify the trusted Leader API, or local metadata is
+still catching up. Database health does not change either control-plane probe.
+Both routes support `HEAD` and intentionally omit controller addresses,
+resource IDs, counters, and configuration details.
+
+Authenticated operators can inspect the full state through the console
+Settings page, the API, or `cgctl`:
+
+```bash
+cgctl --server http://127.0.0.1:8088 status
+cgctl --server http://127.0.0.1:8088 --json status
+curl -sS http://127.0.0.1:8088/api/v1/control-plane/status \
+  -H 'Cookie: clusterguard_session=<session>'
+```
+
+The detailed response includes the local role, Leader identity and address,
+voter count, quorum and mutation authority, Raft indexes, durable metadata
+revision, uptime, active operations, indeterminate operations, and active node
+lifecycle tasks. Every HTTP response carries `X-Request-ID`; a caller-supplied
+safe ID is preserved across follower-to-Leader forwarding and the same value is
+included in JSON error envelopes.
+
+`active_operations` counts only records whose status is `running`. A durable
+`planned` record is historical work waiting for an explicit execution request;
+it does not consume the active-operation limit and does not make readiness look
+busy. `indeterminate_operations` remains separate because each such record
+requires operator review before retrying or changing topology.
+
+Background ownership and automatic-recovery loops report a new failure
+immediately. An unchanged failure is then suppressed and reminded every five
+minutes; a changed failure is reported immediately, and one successful cycle
+resets the suppression state. A retry-backoff cycle for the same stable
+incident is not treated as success, so the 30-second safety retry remains
+active without producing the same journal entry every 30 seconds. The reminder
+state resets only after the incident clears. This limits journal noise without
+hiding a persistent incident or delaying a recurrence after recovery.
+
+## 6. Read Topology, Health, Candidates, and Metrics
 
 ```bash
 curl -sS http://127.0.0.1:8088/api/v1/clusters/<cluster-uuid>/topology
@@ -310,6 +406,8 @@ curl -sS http://127.0.0.1:8088/api/v1/clusters/<cluster-uuid>/health
 curl -sS http://127.0.0.1:8088/api/v1/clusters/<cluster-uuid>/candidates
 curl -sS http://127.0.0.1:8088/api/v1/clusters/<cluster-uuid>/metrics
 curl -sS http://127.0.0.1:8088/api/v1/clusters/<cluster-uuid>/metrics/prometheus
+curl -sS http://127.0.0.1:8088/api/v1/monitoring/prometheus \
+  -H "Authorization: Bearer ${CG_MONITORING_TOKEN}"
 ```
 
 The candidate route accepts optional bounded policy values:
@@ -333,8 +431,10 @@ console read is retried instead of combining evidence from different cycles.
 The MySQL read-only probe and metrics path is covered by 5.7, 8.0, 8.4, and 9.7
 fixtures. Replication collection handles legacy and current terminology.
 
-The Prometheus text endpoint can be used as a direct scrape target. Exported
-metric names include:
+The per-cluster Prometheus endpoint exports database metrics for one cluster.
+The protected `/api/v1/monitoring/prometheus` fleet endpoint exports all
+cluster alert and database series plus the local control-plane state. Metric
+names include:
 
 ```text
 clusterguard_mysql_qps
@@ -344,18 +444,44 @@ clusterguard_mysql_connections
 clusterguard_mysql_running_threads
 clusterguard_mysql_buffer_pool_hit_ratio
 clusterguard_mysql_replication_lag_seconds
+clusterguard_control_plane_ready
+clusterguard_control_plane_leader
+clusterguard_control_plane_quorum_confirmed
+clusterguard_control_plane_metadata_revision
+clusterguard_control_plane_operations
+clusterguard_control_plane_lifecycle_tasks
 ```
 
-Every series is labeled with the stable platform `cluster_id` and
-`instance_id`. No external exporter, monitoring agent, or metrics database is
-required by the ClusterGuard HA runtime.
+Alert immediately when `clusterguard_control_plane_ready` is `0`. A Leader with
+`clusterguard_control_plane_quorum_confirmed == 0` is not allowed to mutate
+metadata. Track metadata revision per controller and investigate a follower
+that does not converge. Active and indeterminate operation gauges distinguish
+normal work from an operation that requires human review.
 
-## 6. Use `cgctl`
+Database series are labeled with stable platform `cluster_id` and
+`instance_id` values. Control-plane gauges are intentionally local to the
+scraped controller and carry no mutable hostname label; assign the controller
+identity in the Prometheus scrape target configuration. No external exporter,
+monitoring agent, or metrics database is required by the ClusterGuard HA
+runtime.
+
+The console operation log loads 50 events initially and adds 50 events per
+request when the operator selects **Load more**. Repeated blocked retries for
+one automatic-recovery incident appear as one incident with an attempt count;
+the durable operation records remain separate and auditable. Manual operations
+and different incidents are never consolidated. Raw request and response data
+is collapsed by default and an incident opens on its newest attempt. Durable
+snapshots keep the newest 128 planned operations, 512 terminal operations,
+1,024 audit events, 512 reports, and 2,048 security events. Export records
+before those bounds when policy requires a longer audit-retention period.
+
+## 7. Use `cgctl`
 
 `cgctl` defaults to `http://127.0.0.1:8088` and prints concise human-readable
 output:
 
 ```bash
+go run ./cmd/cgctl status
 go run ./cmd/cgctl engines
 go run ./cmd/cgctl clusters
 go run ./cmd/cgctl topology <cluster-uuid>
@@ -386,7 +512,7 @@ environment variable with `--token-env <name>` before the command. Approval
 list/show never expose the persisted token hash. The console uses its platform
 session and never receives either credential.
 
-## 7. Prepare A Guarded MySQL Switchover
+## 8. Prepare A Guarded MySQL Switchover
 
 ### Browser Console
 
@@ -466,7 +592,7 @@ and `STOP/RESET REPLICA` from MySQL 8.0.22 onward. Before any write, the kernel
 re-probes source and target identity, roles, GTID history, replication threads,
 lag, binary logging, and release compatibility under the operation lock.
 
-## 8. Reconcile Mutable Metadata
+## 9. Reconcile Mutable Metadata
 
 Platform UUID and native engine identity are immutable. For MySQL, native
 identity is `engine_identity.server_uuid`. Hostname, IP address, port, display
@@ -502,7 +628,7 @@ resource UUID. A changed hostname, IP, or port must not create a duplicate
 resource. Native-identity mismatches, duplicate endpoint ownership, cross-
 cluster updates, and ambiguous endpoint selection are blocked.
 
-## 9. Automatic Failover and Safety Boundary
+## 10. Automatic Failover and Safety Boundary
 
 Automatic failover is disabled by default. Enabling it requires Raft consensus,
 the restricted node agent, an active VIP resource, and all three
@@ -524,10 +650,55 @@ renewed while its holder remains the majority Leader. The Safety Guard checks
 majority again before lock and approval. VIP ownership is separately protected
 by a short exclusive endpoint lease and cluster-wide owner verification.
 
-PostgreSQL, Oracle, and SQL Server mutation remains unsupported. A MySQL action
-whose required Agent, endpoint, identity, topology, quorum, fencing, or approval
-evidence is missing is blocked before the unsafe step. Unsupported or blocked
-never means partially successful.
+### External fencing contract
+
+Set `fencing.enabled=true` only after installing an absolute, regular,
+executable provider path. Startup fails when the provider is missing or is not
+executable. ClusterGuard invokes it with exactly one argument, either `fence`
+or `status`, and writes one JSON object to stdin:
+
+```json
+{
+  "cluster_id": "<cluster-uuid>",
+  "operation_id": "<operation-uuid>",
+  "lease_id": "<lease-uuid-when-fencing>",
+  "instance": {
+    "resource_id": "<old-primary-uuid>",
+    "hostname": "mysql-01",
+    "ip_address": "192.0.2.10",
+    "port": 3306
+  }
+}
+```
+
+The provider must emit one JSON object and nothing else on stdout:
+
+```json
+{"status":"ok","fenced":true,"message":"power isolation confirmed"}
+```
+
+Logs belong on stderr. Output is capped at 64 KiB and each call is bounded by
+`fencing.timeout_seconds`. A successful `fence` call is not sufficient:
+ClusterGuard immediately calls `status` and proceeds only when that independent
+call also returns `fenced:true`. Any timeout, malformed output, unknown field,
+process failure, or ambiguous status blocks promotion. The provider should key
+status by the immutable instance resource UUID and verify a real out-of-band
+mechanism such as a hypervisor, cloud, PDU, or BMC; network reachability alone
+is not fencing.
+
+The provider does not inherit database passwords, control tokens, or the full
+service environment. Put provider-specific credentials in variables prefixed
+with `CG_FENCER_`; only that prefix plus `PATH`, locale, and timezone variables
+is passed to the child process. Prefer a root-owned credential file when the
+provider supports one.
+
+Oracle and SQL Server mutation is available only through their native HA
+control planes. Oracle role transition uses Data Guard Broker through DGMGRL.
+SQL Server planned role transition uses Always On availability-group failover
+through sqlcmd/T-SQL. A MySQL, PostgreSQL, Oracle, or SQL Server action whose
+required runner, Agent, endpoint, identity, topology, quorum, fencing,
+credential, lock, approval, or verification evidence is missing is blocked
+before the unsafe step. Unsupported or blocked never means partially successful.
 
 The guarded kernel pins the exact topology observation used for precheck as
 `cluster_id@observed_at` and revalidates it after acquiring the operation lock.
@@ -572,7 +743,38 @@ MySQL multi-source replication is detected but not modeled in this phase. If
 discovery fails closed and does not publish partial health, topology, or
 promotion eligibility.
 
-## 10. Adapter Roadmap
+## 11. PostgreSQL HA
+
+PostgreSQL is an engine-native ClusterGuard HA implementation. It provides
+identity-safe discovery, primary/standby topology, health, native metrics,
+timeline-aware candidate evaluation, controlled switchover, guarded failover,
+former-primary rewind/rejoin, allowlisted repair, Linux VIP coupling, and
+`pg_basebackup` node synchronization.
+
+Optional automatic failover runs in a PostgreSQL-only recovery controller. It
+requires six consecutive primary-failure observations (30 seconds at the
+default cadence), a current topology snapshot, a rank-one standby with known
+zero replay lag, Raft leader and majority authority, restricted-Agent or
+external-fencer proof that the old primary cannot write, and the complete
+common workflow through verification, audit, and report. The controller never
+uses network unreachability as fencing evidence and never retries an
+indeterminate post-promotion result.
+
+Execution is never inferred from the engine name alone. ClusterGuard advertises
+each mutation capability only when dedicated operation and replication
+credentials, a restricted signed Agent policy, an executable endpoint provider,
+current topology evidence, and the required controller quorum are present.
+Failover additionally requires stable failure evidence and successful external
+fencing when the old primary cannot prove isolation.
+
+Use [PostgreSQL HA Operations](postgresql-ha.md) for the complete identity SQL,
+least-privilege account model, `pg_hba.conf` requirements, controller and Agent
+configuration, node lifecycle settings, operation flow, metrics, and destructive
+qualification checklist. Unknown lag and optional metrics remain unknown; the
+platform never converts missing evidence to a synthetic zero or reports a
+simulated success.
+
+## 12. Adapter Roadmap
 
 ### MySQL
 
@@ -585,29 +787,97 @@ former-primary rejoin, a full host reboot, divergent-node rebuild, and mutable
 hostname/IP/port reconciliation. See `docs/mysql-feature-parity-acceptance.md`
 for the evidence and bundle hashes.
 
-Production deployments still require site-specific out-of-band fencing and a
-qualified physical-copy method such as Clone or XtraBackup. The bundled logical
+Production deployments must configure and exercise a site-specific out-of-band
+provider through the fencing contract above, and qualify a physical-copy method
+such as Clone or XtraBackup. The bundled logical
 dump rebuild is a destructive fallback: before importing donor data it removes
 all non-system schemas on the target so target-only data cannot survive behind
 a reset GTID history.
 
 ### PostgreSQL
 
-Implement read-only discovery from `system_identifier`, primary/standby role,
-streaming-replication links, timeline and WAL position, lag, and health. Then add
-timeline-aware candidate evaluation. Promotion remains unsupported until
-quorum/fencing, planning, and verification contracts exist.
+Discovery, stable identity, primary/standby topology, native monitoring,
+timeline-aware candidate evaluation, controlled switchover/failover,
+promotion/repoint, independent verification, former-primary rewind/rejoin,
+allowlisted repair, VIP coupling, and base-backup node lifecycle are implemented.
+The next production step is destructive qualification across supported
+PostgreSQL release families and site-specific fencing, service, storage, TLS,
+backup, and restore layouts; capabilities that have not passed local policy
+remain disabled rather than emulated.
 
 ### Oracle
 
-Implement read-only database discovery from `DBID` and `DB_UNIQUE_NAME`, model
-RAC instances separately, then collect Data Guard role, transport/apply lag,
-archive destinations, and broker health. Role transitions remain unsupported
-until RAC and Data Guard safety evidence is represented in common plans.
+ClusterGuard supports Data Guard Broker controlled switchover through the
+restricted signed node Agent. The Agent combines local SQLPlus identity
+evidence with Broker state, so `DBID + DB_UNIQUE_NAME` stays stable even when a
+hostname, IP address, listener endpoint, or role changes. It runs DGMGRL as the
+Oracle operating-system account and connects with a dedicated password-file
+`SYSDG` user. Do not configure `SYS` for routine platform operation.
+
+Every switchover requires a healthy primary, a broker-healthy standby, zero
+transport and apply lag, `Ready for Switchover`, a frozen topology revision,
+controller quorum, Safety Guard, a durable operation lock, and a plan-bound
+one-time approval. The mutation is accepted only by the source node Agent for
+the configured Broker member allowlist. Completion requires independent status
+checks on both nodes: the target must be `PRIMARY`, the former primary must be
+a standby, Broker status must be `SUCCESS`, and lag must converge to zero.
+
+The controller configuration enables Oracle and references secrets:
+
+```json
+{
+  "oracle": {
+    "enabled": true,
+    "discovery_interval_seconds": 15,
+    "discovery_timeout_seconds": 15,
+    "discovery": {
+      "username": "CLUSTERGUARD_DG",
+      "database": "DB_UNIQUE_NAME",
+      "password_env": "CG_ORACLE_DISCOVERY_PASSWORD"
+    },
+    "operation": {
+      "username": "CLUSTERGUARD_DG",
+      "database": "DB_UNIQUE_NAME",
+      "password_env": "CG_ORACLE_OPERATION_PASSWORD"
+    }
+  }
+}
+```
+
+Each Oracle node uses its own Agent policy with the same platform cluster UUID,
+its platform instance UUID, local `DB_UNIQUE_NAME`, connect identifier, Oracle
+home, SID, Broker configuration, and complete member allowlist. Store the
+database secret only in `CG_ORACLE_BROKER_PASSWORD` in the Agent environment.
+The same account and password-file entry must exist on every Broker member.
+
+Failure failover deliberately remains blocked until external old-primary
+fencing is configured. ClusterGuard does not edit Oracle data files, archive
+logs, or RAC resources directly. Remaining Oracle expansion work is RAC
+instance modeling, archive destination checks, listener endpoint correction,
+and a destructive acceptance matrix with site-specific fencing rules.
 
 ### SQL Server
 
-Implement availability-group discovery from `group_id`, replicas from
-`replica_id`, listener endpoints, synchronization state, redo/send queues, and
-quorum health. Add candidate planning only after synchronous-commit and quorum
-requirements can block unsafe failover.
+ClusterGuard supports a guarded Always On planned-failover path for SQL Server.
+When `sqlcmd` is present on the controller or a SQL Server runner is injected,
+the SQL Server adapter can discover the local Always On replica from AG DMVs,
+read synchronization health and send/redo queue metrics, model
+primary-to-secondary topology, assess synchronized synchronous-commit
+candidates, and precheck, plan, execute, and verify
+`ALTER AVAILABILITY GROUP [name] FAILOVER`. The immutable operation plan pins
+the AG and replica identities, topology observation, resource revisions, and
+plan digest before the common safety, lock, approval, execution, verification,
+audit, and report stages.
+
+Execution requires a stable AG `group_id`, replica `replica_id`, healthy
+current primary evidence, a healthy promotion-eligible secondary, synchronous
+commit, synchronized target state, and a durable operation lease. Verification
+polls until it observes exactly one primary, confirms the selected target owns
+that role, and confirms every AG replica reports healthy. An asynchronous or
+synchronizing replica remains visible and healthy when appropriate, but is not
+promotion eligible. Forced failover remains blocked by default because it can
+lose data; it needs a separate explicit data-loss approval policy before
+execution is allowed.
+
+Remaining SQL Server production work is native Listener endpoint ownership
+modeling, WSFC quorum evidence, and site-specific fencing for forced failover.

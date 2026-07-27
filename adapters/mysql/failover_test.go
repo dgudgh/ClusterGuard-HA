@@ -77,6 +77,34 @@ func failoverRequestFixture() adapter.OperationRequest {
 	return request
 }
 
+func sourceLossFailoverRequestFixture() adapter.OperationRequest {
+	request := failoverRequestFixture()
+	request.Resolved.Primary.Health.State = model.HealthUnknown
+	for index := range request.Resolved.Snapshot.Instances {
+		instance := &request.Resolved.Snapshot.Instances[index]
+		if instance.ResourceID == request.Resolved.Primary.ResourceID {
+			instance.Health.State = model.HealthUnknown
+			continue
+		}
+		instance.Health.State = model.HealthDegraded
+		instance.PromotionEligible = false
+		instance.Replication.IOThread = model.ThreadConnecting
+		instance.Replication.SQLThread = model.ThreadRunning
+		instance.Replication.LagSeconds = nil
+		instance.Replication.LastIOError = "Error reconnecting to source"
+		if instance.ResourceID == request.Resolved.Target.ResourceID {
+			request.Resolved.Target = *instance
+		}
+	}
+	for index := range request.Resolved.Snapshot.Probes {
+		probe := &request.Resolved.Snapshot.Probes[index]
+		if probe.InstanceID != request.Resolved.Primary.ResourceID {
+			probe.Health.State = model.HealthDegraded
+		}
+	}
+	return request
+}
+
 func TestFailoverBlocksUnfencedOldPrimary(t *testing.T) {
 	request := failoverRequestFixture()
 	safety := passingFailoverSafety()
@@ -108,6 +136,70 @@ func TestFailoverRequiresStableWindowAndControllerQuorum(t *testing.T) {
 				t.Fatalf("missing blocker %q: %+v", name, checks)
 			}
 		})
+	}
+}
+
+func TestFailoverPlansReachableReplicasWhileTheirSourceReconnects(t *testing.T) {
+	request := sourceLossFailoverRequestFixture()
+	adapterInstance := NewWithSafetyProviders(nil, passingEndpointProvider(), UnsupportedMaintenanceStore{}, passingFailoverSafety())
+	checks, err := adapterInstance.Precheck(context.Background(), request)
+	if err != nil {
+		t.Fatalf("precheck source reconnect: %v", err)
+	}
+	for _, check := range checks {
+		if check.Status == model.CheckFail {
+			t.Fatalf("safe source reconnect failover was blocked by %+v", check)
+		}
+	}
+	plan, err := adapterInstance.BuildPlan(context.Background(), request)
+	if err != nil {
+		t.Fatalf("plan source reconnect failover: %v", err)
+	}
+	followerSteps := 0
+	for _, step := range plan.Steps {
+		if strings.HasPrefix(step.Name, "reparent_failover_follower_") {
+			followerSteps++
+		}
+	}
+	if followerSteps != 1 {
+		t.Fatalf("source reconnect follower steps=%d, want 1: %+v", followerSteps, plan.Steps)
+	}
+}
+
+func TestFailoverExecutesWhenSourceIsReconnectingAndReparentsSibling(t *testing.T) {
+	request := sourceLossFailoverRequestFixture()
+	request.Resolved.Credentials = adapter.Credentials{Username: "operator", Password: "operation-secret"}
+	request.Resolved.ReplicationCredentials = adapter.Credentials{Username: "replicator", Password: "replication-secret"}
+	client := newThreeNodeSQLClient(request)
+	provider := &recordingEndpointProvider{}
+	adapterInstance := NewWithSafetyProviders(client, provider, UnsupportedMaintenanceStore{}, passingFailoverSafety())
+	plan, err := adapterInstance.BuildPlan(context.Background(), request)
+	if err != nil {
+		t.Fatalf("build source reconnect failover: %v", err)
+	}
+	request.Plan = &plan
+	execution, err := adapterInstance.Execute(context.Background(), request)
+	if err != nil || execution.Status != model.OperationRunning {
+		t.Fatalf("execute source reconnect failover: execution=%+v err=%v", execution, err)
+	}
+	verification, err := adapterInstance.Verify(context.Background(), request)
+	if err != nil || !verification.Passed {
+		t.Fatalf("verify source reconnect failover: verification=%+v err=%v", verification, err)
+	}
+	for _, instance := range request.Resolved.Snapshot.Instances {
+		state := client.nodes[instance.Hostname]
+		if instance.ResourceID == request.Resolved.Primary.ResourceID {
+			continue
+		}
+		if instance.ResourceID == request.Resolved.Target.ResourceID {
+			if state.readOnly || state.superReadOnly || state.sourceUUID != "" {
+				t.Fatalf("promoted target state=%+v", state)
+			}
+			continue
+		}
+		if !state.readOnly || !state.superReadOnly || state.sourceUUID != strings.ToLower(request.Resolved.Target.EngineIdentity["server_uuid"]) || !state.ioRunning || !state.sqlRunning {
+			t.Fatalf("reparented sibling state=%+v", state)
+		}
 	}
 }
 

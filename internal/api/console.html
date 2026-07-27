@@ -93,7 +93,8 @@
     .brand-mark { display:grid; width:38px; height:38px; place-items:center; border-radius:8px; background:#eef6f2; color:#102019; font-weight:850; }
     .brand-name { font-size:15px; font-weight:780; }
     .brand-subtitle { color:#9fb1a8; font-size:11px; }
-    .nav { display:grid; gap:4px; }
+    .nav { display:grid; gap:4px; scrollbar-width:none; -ms-overflow-style:none; }
+    .nav::-webkit-scrollbar { display:none; }
     .nav-link {
       display:flex;
       min-height:40px;
@@ -144,7 +145,7 @@
     .panel-title { margin:0; font-size:15px; }
     .panel-actions { display:flex; align-items:center; gap:8px; }
     .panel-body { padding:18px; min-width:0; overflow-x:auto; }
-    .badge { display:inline-flex; min-height:24px; align-items:center; padding:0 8px; border-radius:999px; background:#edf3ef; color:#486057; font-size:11px; font-weight:780; }
+    .badge { display:inline-flex; min-height:24px; flex:0 0 auto; align-items:center; padding:0 8px; border-radius:999px; background:#edf3ef; color:#486057; font-size:11px; font-weight:780; white-space:nowrap; }
     .badge.success { background:var(--accent-soft); color:#176c5d; }
     .badge.warning { background:var(--warning-soft); color:#7c5712; }
     .badge.danger { background:var(--danger-soft); color:#9c3434; }
@@ -168,10 +169,27 @@
     .cluster-row-action .row-health.healthy { background:var(--accent-soft); color:#176c5d; }
     .cluster-row-action .row-health.attention { background:var(--warning-soft); color:#7c5712; }
     .cluster-name { font-weight:760; }
-    .topology-frame { padding:18px; }
-    .topology-grid { display:grid; grid-template-columns:minmax(0,1fr) 72px minmax(0,1fr); min-height:224px; align-items:stretch; }
+    .topology-frame {
+      display:flex;
+      height:420px;
+      align-items:center;
+      justify-content:center;
+      overflow:auto;
+      padding:16px;
+      background-image:radial-gradient(rgba(16,32,25,.09) 1px, transparent 1px);
+      background-position:0 0;
+      background-size:20px 20px;
+    }
+    .topology-grid {
+      display:grid;
+      width:min(980px,100%);
+      min-width:min(980px,100%);
+      min-height:332px;
+      grid-template-columns:minmax(0,1fr) 72px minmax(0,1fr);
+      align-items:stretch;
+    }
     .primary-column { display:flex; min-width:0; align-items:center; }
-    .replica-list { display:grid; min-width:0; gap:10px; align-content:center; grid-auto-rows:var(--topology-node-height); }
+    .replica-list { display:grid; min-width:0; max-height:332px; gap:10px; align-content:center; grid-auto-rows:var(--topology-node-height); overflow:auto; padding-right:2px; }
     .node-card {
       position:relative;
       display:flex;
@@ -240,6 +258,9 @@
     .node-form-group { min-width:0; margin:0; padding:14px; border:1px solid var(--line); border-radius:8px; }
     .node-form-group legend { padding:0 7px; color:var(--ink); font-size:12px; font-weight:780; }
     .node-form-group .form-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    .engine-form-fields { grid-column:1 / -1; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+    .engine-form-fields[hidden] { display:none; }
+    .engine-form-fields .span-2 { grid-column:span 2; }
     .inventory-table, .metrics-table { min-width:900px; width:100%; border-collapse:collapse; }
     .inventory-table th, .inventory-table td, .metrics-table th, .metrics-table td { padding:10px 11px; border-bottom:1px solid var(--line); text-align:left; vertical-align:middle; }
     .inventory-table th, .metrics-table th { color:var(--muted); font-size:11px; }
@@ -256,6 +277,8 @@
     .log-cell { min-width:0; padding:10px 12px; background:#fff; }
     .log-cell span { display:block; color:var(--muted); font-size:11px; }
     .log-cell strong { display:block; margin-top:3px; overflow-wrap:anywhere; font-size:12px; }
+    .log-load-more { display:flex; justify-content:center; padding:16px 0 2px; }
+    .log-load-more button { min-width:180px; }
     details { border-top:1px solid var(--line); }
     summary { padding:10px 14px; cursor:pointer; color:var(--muted); font-weight:700; }
     pre { max-height:360px; margin:0; overflow:auto; padding:14px; background:#102019; color:#eaf4ef; font:12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space:pre-wrap; }
@@ -306,6 +329,12 @@
     .retirement-summary .identity-cell { background:#fff; }
     .retirement-warning { padding:12px 14px; border:1px solid #ead6ac; border-radius:7px; background:var(--warning-soft); color:#6d4c10; font-size:12px; line-height:1.55; }
     .retirement-warning strong { display:block; margin-bottom:3px; color:#5b3f0d; }
+    .retirement-confirmation { display:grid; gap:8px; padding:12px 14px; border:1px solid var(--line); border-radius:8px; background:#fff; }
+    .retirement-confirmation label { margin:0; }
+    .confirmation-phrase { display:flex; flex-wrap:wrap; align-items:center; gap:8px; color:var(--muted); font-size:12px; }
+    .confirmation-phrase code { padding:3px 7px; border:1px solid var(--line); border-radius:6px; background:#f8faf9; color:var(--ink); font:700 12px/1.3 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .confirmation-state { margin:0; padding-left:10px; border-left:3px solid #9aafa4; color:var(--muted); font-size:12px; }
+    .confirmation-state.ready { border-color:var(--success); color:#1f624c; }
     .dialog-action-note { max-width:560px; color:var(--muted); font-size:11px; }
     .dialog-buttons { display:flex; flex:0 0 auto; gap:8px; }
     .dialog-buttons button[hidden] { display:none; }
@@ -479,7 +508,7 @@
           <div class="panel">
             <div class="panel-header"><h3 class="panel-title">节点身份字段</h3></div>
             <div class="panel-body">
-              <table class="inventory-table"><thead><tr><th>固定节点名</th><th>资源 ID</th><th>server_uuid</th><th>主机名</th><th>IP</th><th>端口</th><th>版本</th><th>角色</th><th>延迟</th><th>VIP</th></tr></thead><tbody id="topology-inventory"></tbody></table>
+              <table class="inventory-table"><thead><tr><th>固定节点名</th><th>资源 ID</th><th>原生身份</th><th>主机名</th><th>IP</th><th>端口</th><th>版本</th><th>角色</th><th>延迟</th><th>VIP</th></tr></thead><tbody id="topology-inventory"></tbody></table>
             </div>
           </div>
         </section>
@@ -539,15 +568,8 @@
 
         <section class="view" data-view="metrics" hidden aria-labelledby="metrics-title">
           <div class="view-heading"><div><h2 id="metrics-title" data-i18n="metricsTitle">健康与性能</h2><p>直接来自 ClusterGuard 原生采集接口</p></div><span class="metric-observation" id="metrics-observed-at">无采样证据</span></div>
-          <div class="metric-grid" id="metric-summary">
-            <div class="metric-tile"><span class="summary-label">QPS</span><strong id="metric-qps">-</strong></div>
-            <div class="metric-tile"><span class="summary-label">TPS</span><strong id="metric-tps">-</strong></div>
-            <div class="metric-tile"><span class="summary-label">连接</span><strong id="metric-connections">-</strong></div>
-            <div class="metric-tile"><span class="summary-label">运行线程</span><strong id="metric-threads">-</strong></div>
-            <div class="metric-tile"><span class="summary-label">慢查询/s</span><strong id="metric-slow">-</strong></div>
-            <div class="metric-tile"><span class="summary-label">缓冲命中</span><strong id="metric-buffer">-</strong></div>
-          </div>
-          <div class="panel"><div class="panel-body"><table class="metrics-table"><thead><tr><th>实例</th><th>角色</th><th>QPS</th><th>TPS</th><th>连接</th><th>运行线程</th><th>Slow/s</th><th>缓冲命中</th><th>延迟</th></tr></thead><tbody id="metrics-instances"></tbody></table></div></div>
+          <div class="metric-grid" id="metric-summary"></div>
+          <div class="panel"><div class="panel-body"><table class="metrics-table"><thead><tr id="metrics-head-row"></tr></thead><tbody id="metrics-instances"></tbody></table></div></div>
         </section>
 
         <section class="view" data-view="operation-log" hidden aria-labelledby="log-title">
@@ -565,18 +587,35 @@
           <div class="log-list" id="operation-log-list">
             <div class="log-card"><div class="log-grid"><div class="log-cell"><span>时间</span><strong>-</strong></div><div class="log-cell"><span>集群</span><strong>-</strong></div><div class="log-cell"><span>原主库</span><strong>-</strong></div><div class="log-cell"><span>目标节点</span><strong>-</strong></div><div class="log-cell"><span>操作类型</span><strong>-</strong></div><div class="log-cell"><span>状态</span><strong>-</strong></div></div><details><summary>原始返回</summary><pre>暂无记录</pre></details></div>
           </div>
+          <div class="log-load-more"><button id="load-more-operation-log" type="button" hidden>加载更多</button></div>
         </section>
 
         <section class="view" data-view="about" hidden aria-labelledby="about-title">
           <div class="view-heading"><div><h2 id="about-title">关于 ClusterGuard HA</h2><p>Multi-Database High Availability Control Plane</p></div></div>
           <div class="about-grid">
-            <div class="panel"><div class="panel-header"><h3 class="panel-title">ClusterGuard HA</h3></div><div class="panel-body about-copy"><p><strong>ClusterGuard HA 多数据库企业级高可用控制平台</strong></p><p>独立的控制内核，以不可变平台资源 ID 和数据库原生身份管理可变主机名、IP 与端口。MySQL 已接入发现、拓扑、候选评估、切换、恢复、VIP、节点生命周期、审计和报告工作流。</p><p>PostgreSQL、Oracle 与 SQL Server 作为一等数据库类型注册；未实现的变更能力会明确返回 unsupported。</p></div></div>
+            <div class="panel"><div class="panel-header"><h3 class="panel-title">ClusterGuard HA</h3></div><div class="panel-body about-copy"><p><strong>ClusterGuard HA 多数据库企业级高可用控制平台</strong></p><p>独立的控制内核，以不可变平台资源 ID 和数据库原生身份管理可变主机名、IP 与端口。MySQL 已接入发现、拓扑、候选评估、切换、恢复、VIP、节点生命周期、审计和报告工作流。</p><p>PostgreSQL 已接入发现、主备拓扑、流复制健康、候选评估、受控切换、故障恢复、旧主回挂、节点同步、原生指标、审计和报告工作流。Oracle Data Guard Broker 与 SQL Server Always On 已接入只读发现、健康、拓扑、候选评估和受控切换入口；具体执行只在原生命令工具、凭据、门禁和验证证据真实可用时开放，未实现能力明确返回 unsupported。</p></div></div>
             <div class="panel"><div class="panel-header"><h3 class="panel-title">数据库适配器</h3></div><div class="panel-body capability-list" id="adapter-capabilities"></div></div>
           </div>
         </section>
 
         <section class="view" data-view="settings" hidden aria-labelledby="settings-title">
           <div class="view-heading"><div><h2 id="settings-title">控制台设置</h2><p>账户、安全和本地显示偏好</p></div></div>
+          <div class="panel">
+            <div class="panel-header"><div><h3 class="panel-title">控制面状态</h3><p>当前控制节点的就绪、Leader 与元数据收敛状态</p></div><span class="badge" id="control-plane-ready">未知</span></div>
+            <div class="panel-body">
+              <div class="settings-grid">
+                <div class="identity-cell"><span>本机控制器</span><strong id="control-plane-local">-</strong></div>
+                <div class="identity-cell"><span>Raft 角色</span><strong id="control-plane-role">-</strong></div>
+                <div class="identity-cell"><span>当前 Leader</span><strong id="control-plane-leader">-</strong></div>
+                <div class="identity-cell"><span>Quorum</span><strong id="control-plane-quorum">-</strong></div>
+                <div class="identity-cell"><span>元数据版本</span><strong id="control-plane-revision">-</strong></div>
+                <div class="identity-cell"><span>运行时长</span><strong id="control-plane-uptime">-</strong></div>
+                <div class="identity-cell"><span>活动操作</span><strong id="control-plane-operations">-</strong></div>
+                <div class="identity-cell"><span>节点任务</span><strong id="control-plane-tasks">-</strong></div>
+              </div>
+              <p class="settings-note" id="control-plane-reason">尚未取得控制面状态。</p>
+            </div>
+          </div>
           <div class="panel"><div class="panel-body">
             <div class="settings-grid">
               <div class="identity-cell"><span>当前用户</span><strong id="settings-user-name">-</strong></div>
@@ -631,7 +670,11 @@
           </div>
         </div>
         <div class="retirement-warning"><strong>不会停止数据库、删除数据或操作系统 VIP</strong>退役只清理 ClusterGuard 的活动清单和运行态资源。执行中的操作、锁、节点任务或任何未过期的 VIP 所有权租约都会阻断退役；需先停止对应 Agent 的自动收敛并等待租约过期。</div>
-        <label for="retire-cluster-confirmation">输入完整集群名称确认<input id="retire-cluster-confirmation" autocomplete="off" placeholder="请输入上方集群名称"></label>
+        <div class="retirement-confirmation">
+          <div class="confirmation-phrase">请输入 <code id="retire-cluster-confirmation-phrase">-</code> 确认退役</div>
+          <label for="retire-cluster-confirmation">输入确认<input id="retire-cluster-confirmation" name="retire-cluster-confirmation-text" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" placeholder="手动输入上方完整集群名称"></label>
+          <p class="confirmation-state" id="retire-cluster-confirmation-state">尚未输入完整集群名称，不能退役。</p>
+        </div>
       </section>
 
       <div class="result-banner" id="cluster-management-result" role="status">请选择新增或退役操作。</div>
@@ -670,11 +713,19 @@
           <label>SSH 端口<input id="node-ssh-port" type="number" value="22"></label>
         </div></fieldset>
         <fieldset class="node-form-group"><legend>数据库与同步</legend><div class="form-grid">
-          <label>MySQL 版本<input id="node-mysql-version" autocomplete="off" placeholder="8.4.10"></label>
-          <label>MySQL 端口<input id="node-mysql-port" type="number" value="3306"></label>
-          <label>server_id<input id="node-server-id" type="number" min="1"></label>
-          <label>同步方式<select id="sync-method"><option value="auto">自动选择</option><option value="clone">Clone</option><option value="xtrabackup">XtraBackup</option><option value="logical_dump">逻辑备份</option></select></label>
-          <label class="span-2">安装包名称<input id="node-package" autocomplete="off" placeholder="使用服务器预置安装包时可留空"></label>
+          <div class="engine-form-fields" id="mysql-lifecycle-fields">
+            <label>MySQL 版本<input id="node-mysql-version" autocomplete="off" placeholder="8.4.10"></label>
+            <label>MySQL 端口<input id="node-mysql-port" type="number" value="3306"></label>
+            <label class="span-2">server_id<input id="node-server-id" type="number" min="1"></label>
+          </div>
+          <div class="engine-form-fields" id="postgresql-lifecycle-fields" hidden>
+            <label>PostgreSQL 版本<input id="node-postgresql-version" autocomplete="off" placeholder="16.3"></label>
+            <label>PostgreSQL 端口<input id="node-postgresql-port" type="number" value="5432"></label>
+            <label>systemd 服务<input id="node-postgresql-service" autocomplete="off" placeholder="postgresql-16"></label>
+            <label>数据目录<input id="node-postgresql-data-directory" autocomplete="off" placeholder="/var/lib/pgsql/16/data"></label>
+          </div>
+          <label>同步方式<select id="sync-method"><option value="auto">自动选择</option></select></label>
+          <label>安装包名称<input id="node-package" autocomplete="off" placeholder="使用服务器预置安装包时可留空"></label>
         </div></fieldset>
       </div>
       <div class="result-banner" id="node-lifecycle-result" role="status">请确认固定身份和服务器连接信息后执行。</div>
@@ -692,7 +743,7 @@
       <div class="read-only-identity">
         <div class="identity-cell"><span>固定节点名</span><strong id="metadata-node-name">-</strong></div>
         <div class="identity-cell"><span>资源 ID</span><strong id="metadata-resource-id">-</strong></div>
-        <div class="identity-cell"><span>server_uuid</span><strong id="metadata-server-uuid">-</strong></div>
+        <div class="identity-cell"><span id="metadata-native-identity-label">原生身份</span><strong id="metadata-native-identity">-</strong></div>
         <div class="identity-cell"><span>metadata_revision</span><strong id="metadata-revision">-</strong></div>
       </div>
       <div class="form-grid">
@@ -701,7 +752,7 @@
         <label>IP<input id="metadata-ip" autocomplete="off"></label>
         <label>端口<input id="metadata-port" type="number" min="1" max="65535"></label>
       </div>
-      <div class="result-banner" id="metadata-result">固定节点名、资源 ID 和 server_uuid 不会被修改。</div>
+      <div class="result-banner" id="metadata-result">固定节点名、资源 ID 和数据库原生身份不会被修改。</div>
     </div>
     <div class="dialog-actions"><button id="cancel-metadata" type="button">取消</button><button id="save-metadata" class="primary-button" type="button">保存元数据</button></div>
   </dialog>
@@ -723,12 +774,14 @@
 
   <script>
     const byId = id => document.getElementById(id);
+    const operationLogPageSize = 50;
     const state = {
       language: 'zh-CN', clusters: [], clusterDirectory: new Map(), fleetTopology: new Map(), capabilities: [], nodes: [], allOperations: [], lifecycleTasks: [], lifecycleCapability: { available:false, reason:'未配置' },
+      controlPlane: null,
       selectedClusterId: '', selectedCandidateId: '', selectedRejoinId: '', switchUnlocked: false, operationRunning: false,
-      currentUser: null, passwordChangeRequired: false, authenticating: false, lifecycleRunning: false, clusterMutationRunning: false, clusterManagementMode: 'create',
-      requestGeneration: 0, refreshIntervalMs: 60000, refreshTimer: null,
-      fleetSearch: '', fleetHealth: 'all', logSearch: '', logKind: 'all', logStatus: 'all',
+      currentUser: null, passwordChangeRequired: false, authenticating: false, lifecycleRunning: false, clusterMutationRunning: false, clusterManagementMode: 'create', retireConfirmationClusterId: '',
+      requestGeneration: 0, refreshIntervalMs: 60000, refreshTimer: null, liveStatusTimer: null,
+      fleetSearch: '', fleetHealth: 'all', logSearch: '', logKind: 'all', logStatus: 'all', logVisibleLimit: operationLogPageSize,
       clusterDetail: null, topology: null, health: null, candidates: [], metrics: { instances: [] }, operations: []
     };
 
@@ -763,10 +816,19 @@
 
     const setLiveStatus = (message, isError = false) => {
       const target = byId('live-status');
+      if (state.liveStatusTimer) window.clearTimeout(state.liveStatusTimer);
+      state.liveStatusTimer = null;
       target.textContent = message;
       target.className = isError ? 'live-status error' : 'live-status';
+      target.hidden = false;
       byId('sidebar-service-state').textContent = isError ? '需要处理' : '运行中';
       byId('sidebar-refresh-time').textContent = new Date().toLocaleTimeString(state.language);
+      if (!isError) {
+        state.liveStatusTimer = window.setTimeout(() => {
+          target.hidden = true;
+          state.liveStatusTimer = null;
+        }, 6000);
+      }
     };
 
     const applyLanguage = () => {
@@ -792,6 +854,22 @@
 
     const canOperateClusters = () => !!(state.currentUser && ['admin', 'operator'].includes(state.currentUser.role));
     const canAdministerPlatform = () => !!(state.currentUser && state.currentUser.role === 'admin');
+    const controllerDisplayName = controllerID => {
+      const node = state.nodes.find(item => item.resource_id === controllerID);
+      if (!node) return controllerID || '-';
+      const endpoint = node.ip_address || node.hostname;
+      return endpoint ? `${node.node_name} · ${endpoint}` : node.node_name;
+    };
+    const controlRoleText = role => ({ leader:'Leader', follower:'跟随节点', candidate:'候选节点', standalone:'单机控制器' })[role] || role || '-';
+    const formatDuration = seconds => {
+      const value = Math.max(0, Number(seconds) || 0);
+      const days = Math.floor(value / 86400);
+      const hours = Math.floor((value % 86400) / 3600);
+      const minutes = Math.floor((value % 3600) / 60);
+      if (days) return `${days} 天 ${hours} 小时`;
+      if (hours) return `${hours} 小时 ${minutes} 分钟`;
+      return `${minutes} 分钟`;
+    };
 
     const renderAuthenticatedUser = () => {
       const user = state.currentUser || {};
@@ -805,13 +883,39 @@
       updateExecutionButtons();
     };
 
+    const renderControlPlaneStatus = () => {
+      const status = state.controlPlane;
+      const ready = byId('control-plane-ready');
+      if (!status) {
+        ready.textContent = '不可用';
+        ready.className = 'badge danger';
+        ['control-plane-local', 'control-plane-role', 'control-plane-leader', 'control-plane-quorum', 'control-plane-revision', 'control-plane-uptime', 'control-plane-operations', 'control-plane-tasks'].forEach(id => { byId(id).textContent = '-'; });
+        byId('control-plane-reason').textContent = '控制面诊断暂时不可用，集群数据仍可独立查看。';
+        return;
+      }
+      ready.textContent = status.ready ? '就绪' : '未就绪';
+      ready.className = `badge ${status.ready ? 'success' : 'danger'}`;
+      byId('control-plane-local').textContent = status.mode === 'standalone' ? '单机控制器' : controllerDisplayName(status.local_controller_id);
+      byId('control-plane-role').textContent = controlRoleText(status.role);
+      byId('control-plane-leader').textContent = status.mode === 'standalone' ? '单机模式' : controllerDisplayName(status.leader_id);
+      byId('control-plane-quorum').textContent = status.mode === 'standalone' ? '单机模式' : (status.role === 'leader' ? (status.quorum_confirmed ? `${status.voter_count || 0} 个投票节点，已确认` : `${status.voter_count || 0} 个投票节点，未确认`) : (status.leader_known ? `${status.voter_count || 0} 个投票节点，由 Leader 确认` : 'Leader 未知'));
+      byId('control-plane-revision').textContent = String(status.state_revision ?? '-');
+      byId('control-plane-uptime').textContent = formatDuration(status.uptime_seconds || 0);
+      byId('control-plane-operations').textContent = `${status.active_operations || 0} 活动 / ${status.indeterminate_operations || 0} 待复核`;
+      byId('control-plane-tasks').textContent = `${status.active_lifecycle_tasks || 0} 活动`;
+      const reasons = { ready:'控制节点已准备好处理请求。', leader_unavailable:'当前未发现 Leader。', quorum_unavailable:'Leader 无法确认控制节点多数派。', metadata_catchup:'本机正在追赶已提交元数据。', leader_api_unavailable:'无法确定 Leader API 地址。', leader_election_in_progress:'控制节点正在选举 Leader。', status_unavailable:'状态采集暂时不可用。' };
+      byId('control-plane-reason').textContent = reasons[status.readiness_reason] || status.readiness_reason || '状态原因未知。';
+    };
+
     const showLogin = (message = '请输入平台账户。', isError = false) => {
       state.currentUser = null;
       state.passwordChangeRequired = false;
       state.switchUnlocked = false;
       state.operationRunning = false;
       if (state.refreshTimer) window.clearInterval(state.refreshTimer);
+      if (state.liveStatusTimer) window.clearTimeout(state.liveStatusTimer);
       state.refreshTimer = null;
+      state.liveStatusTimer = null;
       byId('console-shell').hidden = true;
       byId('login-shell').hidden = false;
       byId('live-status').hidden = true;
@@ -829,6 +933,7 @@
       byId('console-shell').hidden = false;
       byId('live-status').hidden = false;
       renderAuthenticatedUser();
+      window.requestAnimationFrame(() => keepActiveNavigationVisible(document.querySelector('[data-nav][aria-current="page"]')));
     };
 
     const openPasswordChange = (required = false) => {
@@ -903,11 +1008,31 @@
       return node ? node.node_name : '未登记';
     };
     const instanceAddress = instance => instance ? `${instance.hostname || instance.ip_address || instance.display_name}:${instance.port}` : '-';
+    const instanceDisplayName = instance => instance ? `${instance.display_name || instance.hostname || instance.ip_address || nodeName(instance)}:${instance.port}` : '-';
     const instanceLabel = resourceID => {
       const instance = state.topology && (state.topology.instances || []).find(item => item.resource_id === resourceID);
       return instance ? instanceAddress(instance) : (resourceID || '-');
     };
+    const clusterDisplayName = clusterID => {
+      const cluster = state.clusters.find(item => item.resource_id === clusterID);
+      return cluster ? cluster.display_name || cluster.resource_id : (clusterID || '-');
+    };
     const assessmentByID = resourceID => state.candidates.find(item => item.instance_id === resourceID);
+    const candidateBlockReason = assessment => {
+      if (!assessment) return '缺少候选评估';
+      const checks = assessment.checks || [];
+      const blocking = checks.find(check => check.status === 'fail') || checks.find(check => check.status === 'warn');
+      if (!blocking) return '候选不满足切换条件';
+      const message = blocking.message || blocking.name || '候选不满足切换条件';
+      const errant = String(message).match(/candidate has (\\d+) errant transaction/);
+      if (errant) return `存在 ${errant[1]} 个游离事务`;
+      return message;
+    };
+    const candidateOptionLabel = (instance, assessment) => {
+      const label = instanceDisplayName(instance);
+      if (assessment && assessment.eligible) return assessment.rank === 1 ? `${label}（推荐）` : `${label}（可切换）`;
+      return `${label}（不可切换：${candidateBlockReason(assessment)}）`;
+    };
     const activeVIP = () => {
       const endpoints = state.clusterDetail ? state.clusterDetail.endpoints || [] : [];
       return endpoints.find(endpoint => endpoint.active && endpoint.kind === 'vip');
@@ -946,6 +1071,7 @@
 
     const clearClusterView = (preserveOperationResult = false) => {
       state.clusterDetail = null; state.topology = null; state.health = null; state.candidates = []; state.metrics = { instances: [] }; state.operations = [];
+      state.logVisibleLimit = operationLogPageSize;
       byId('topology-cluster-name').textContent = '未选择集群';
       byId('topology-observed-at').textContent = '等待拓扑数据';
       byId('topology-freshness').textContent = '无观测证据';
@@ -1048,7 +1174,7 @@
       const card = text('article', candidate ? 'node-card candidate' : 'node-card', '');
       card.setAttribute('aria-label', `${roleText(instance.role)} ${instanceAddress(instance)}`);
       card.append(text('span', `badge node-state ${instance.health.state === 'healthy' ? 'success' : 'warning'}`, healthText(instance.health.state)));
-      card.append(text('div', 'node-title', `${nodeName(instance)} · ${instanceAddress(instance)} · 延迟 ${lagText(instance)}`));
+      card.append(text('div', 'node-title', `${instanceDisplayName(instance)} · 延迟 ${lagText(instance)}`));
       const lineOne = text('div', 'node-line', '');
       lineOne.append(text('span', '', '主机名 ')); lineOne.append(text('strong', '', instance.hostname || '-'));
       lineOne.append(text('span', '', '   IP ')); lineOne.append(text('strong', '', instance.ip_address || '-'));
@@ -1061,16 +1187,47 @@
       return card;
     };
 
-    const renderTopologyAnomalies = () => {
+    const topologyAttentionReasons = () => {
+      const topology = state.topology;
+      const instances = topology ? topology.instances || [] : [];
+      const reasons = (topology && topology.anomalies ? topology.anomalies : []).map(anomaly => typeof anomaly === 'string' ? anomaly : anomaly.message || anomaly.kind || '拓扑异常');
+      const clusterState = state.clusterDetail && state.clusterDetail.cluster && state.clusterDetail.cluster.health && state.clusterDetail.cluster.health.state;
+      if (!topology) reasons.push('拓扑观测不可用');
+      else if (!instances.some(instance => instance.role === 'primary')) reasons.push('未发现当前主库');
+      instances.forEach(instance => {
+        const health = instance.health && instance.health.state;
+        if (health !== 'healthy') reasons.push(`${instanceAddress(instance)}：${healthText(health)}`);
+      });
+      if (['degraded', 'unhealthy'].includes(clusterState) && !reasons.length) reasons.push(`集群健康状态：${healthText(clusterState)}`);
+      return [...new Set(reasons)];
+    };
+
+    const renderTopologyAnomalies = (anomalies = topologyAttentionReasons()) => {
       const root = byId('topology-anomalies');
-      const anomalies = state.topology && state.topology.anomalies ? state.topology.anomalies : [];
       root.replaceChildren();
       if (!anomalies.length) root.append(text('span', 'anomaly-item clear', '暂无异常'));
       anomalies.forEach(anomaly => {
-        const message = typeof anomaly === 'string' ? anomaly : anomaly.message || anomaly.kind || '拓扑异常';
-        root.append(text('span', 'anomaly-item', message));
+        root.append(text('span', 'anomaly-item', anomaly));
       });
       byId('topology-freshness').textContent = observationAge(state.topology && state.topology.observed_at);
+    };
+
+    const nativeIdentityLabel = instance => {
+      const engine = instance && instance.engine;
+      if (engine === 'mysql') return 'server_uuid';
+      if (engine === 'postgresql') return 'node_id / system_identifier';
+      if (engine === 'oracle') return 'DBID / DB_UNIQUE_NAME';
+      if (engine === 'sqlserver') return 'group_id / replica_id';
+      return '原生身份';
+    };
+
+    const nativeIdentityValue = instance => {
+      const identity = instance && instance.engine_identity ? instance.engine_identity : {};
+      if (instance && instance.engine === 'mysql') return identity.server_uuid || '-';
+      if (instance && instance.engine === 'postgresql') return `${identity.resource_id || '-'} / ${identity.system_identifier || '-'}`;
+      if (instance && instance.engine === 'oracle') return `${identity.dbid || '-'} / ${identity.db_unique_name || '-'}`;
+      if (instance && instance.engine === 'sqlserver') return `${identity.group_id || '-'} / ${identity.replica_id || '-'}`;
+      return '-';
     };
 
     const renderTopology = () => {
@@ -1087,14 +1244,15 @@
       byId('topology-connector').hidden = !primary || replicas.length === 0;
       const cluster = state.clusterDetail && state.clusterDetail.cluster;
       byId('topology-cluster-name').textContent = cluster ? cluster.display_name || cluster.resource_id : '未选择集群';
-      byId('topology-risk').textContent = state.topology && state.topology.anomalies && state.topology.anomalies.length ? '需关注' : '健康';
-      byId('topology-risk').className = state.topology && state.topology.anomalies && state.topology.anomalies.length ? 'badge warning' : 'badge success';
+      const attentionReasons = topologyAttentionReasons();
+      byId('topology-risk').textContent = attentionReasons.length ? '需关注' : '健康';
+      byId('topology-risk').className = attentionReasons.length ? 'badge warning' : 'badge success';
       byId('topology-observed-at').textContent = state.topology && state.topology.observed_at ? `采集时间 ${new Date(state.topology.observed_at).toLocaleString(state.language)}` : '尚未采集拓扑';
-      renderTopologyAnomalies();
+      renderTopologyAnomalies(attentionReasons);
       const body = byId('topology-inventory'); body.replaceChildren();
       instances.forEach(instance => {
         const row = document.createElement('tr');
-        const values = [nodeName(instance), instance.resource_id, instance.engine_identity && instance.engine_identity.server_uuid, instance.hostname, instance.ip_address, instance.port, instance.engine_metadata && instance.engine_metadata.version, roleText(instance.role), lagText(instance), instance.role === 'primary' && activeVIP() ? (activeVIP().ip_address || activeVIP().hostname) : '-'];
+        const values = [nodeName(instance), instance.resource_id, nativeIdentityValue(instance), instance.hostname, instance.ip_address, instance.port, instance.engine_metadata && instance.engine_metadata.version, roleText(instance.role), lagText(instance), instance.role === 'primary' && activeVIP() ? (activeVIP().ip_address || activeVIP().hostname) : '-'];
         values.forEach((value, index) => row.append(text('td', index === 1 || index === 2 ? 'mono' : '', String(value || '-'))));
         body.append(row);
       });
@@ -1131,7 +1289,7 @@
       const candidates = eligibleCandidates();
       if (!candidates.length) selector.append(new Option('无可用候选', ''));
       candidates.forEach(({ instance, assessment }) => {
-        const option = new Option(nodeName(instance), instance.resource_id);
+        const option = new Option(candidateOptionLabel(instance, assessment), instance.resource_id);
         option.disabled = !assessment || !assessment.eligible;
         selector.append(option);
       });
@@ -1143,7 +1301,7 @@
       const rejoin = byId('rejoin-select'); rejoin.replaceChildren();
       const rejoinTargets = formerPrimaryCandidates();
       if (!rejoinTargets.length) rejoin.append(new Option('未发现可恢复节点', ''));
-      rejoinTargets.forEach(instance => rejoin.append(new Option(nodeName(instance), instance.resource_id)));
+      rejoinTargets.forEach(instance => rejoin.append(new Option(instanceDisplayName(instance), instance.resource_id)));
       state.selectedRejoinId = rejoinTargets.some(instance => instance.resource_id === state.selectedRejoinId) ? state.selectedRejoinId : (rejoinTargets[0] ? rejoinTargets[0].resource_id : '');
       rejoin.value = state.selectedRejoinId;
       updateExecutionButtons();
@@ -1291,31 +1449,140 @@
       ? value.toLocaleString(state.language, { minimumFractionDigits:0, maximumFractionDigits:digits })
       : '-';
     const formatPercent = value => Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : '-';
+    const formatBytes = value => {
+      if (!Number.isFinite(value)) return '-';
+      const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+      let size = value; let unit = 0;
+      while (size >= 1024 && unit < units.length - 1) { size /= 1024; unit += 1; }
+      return `${size.toLocaleString(state.language, { maximumFractionDigits:unit ? 1 : 0 })} ${units[unit]}`;
+    };
+
+    const metricDefinitionForEngine = engine => engine === 'postgresql' ? {
+      summary: [
+        { label:'活动连接', key:'active_connections', aggregate:'sum', digits:0 },
+        { label:'连接总数', key:'connections', aggregate:'sum', digits:0 },
+        { label:'累计事务', key:'transactions_total', aggregate:'sum', digits:0 },
+        { label:'死锁', key:'deadlocks_total', aggregate:'sum', digits:0 },
+        { label:'数据库容量', key:'database_size_bytes', aggregate:'sum', format:'bytes' },
+        { label:'缓存命中', key:'buffer_cache_hit_ratio', aggregate:'average', format:'percent' }
+      ],
+      columns: [
+        { label:'活动连接', key:'active_connections', digits:0 },
+        { label:'连接总数', key:'connections', digits:0 },
+        { label:'累计事务', key:'transactions_total', digits:0 },
+        { label:'死锁', key:'deadlocks_total', digits:0 },
+        { label:'复制客户端', key:'replication_clients', digits:0 },
+        { label:'数据库容量', key:'database_size_bytes', format:'bytes' },
+        { label:'缓存命中', key:'buffer_cache_hit_ratio', format:'percent' },
+        { label:'最长事务', key:'max_transaction_age_seconds', suffix:'s' },
+        { label:'延迟', topology:'lag' }
+      ]
+    } : {
+      summary: [
+        { label:'QPS', key:'qps', aggregate:'sum' },
+        { label:'TPS', key:'tps', aggregate:'sum' },
+        { label:'连接', key:'connections', aggregate:'sum', digits:0 },
+        { label:'运行线程', key:'running_threads', aggregate:'sum', digits:0 },
+        { label:'慢查询/s', key:'slow_queries_per_second', aggregate:'sum' },
+        { label:'缓冲命中', key:'buffer_pool_hit_ratio', aggregate:'average', format:'percent' }
+      ],
+      columns: [
+        { label:'QPS', key:'qps' }, { label:'TPS', key:'tps' },
+        { label:'连接', key:'connections', digits:0 }, { label:'运行线程', key:'running_threads', digits:0 },
+        { label:'Slow/s', key:'slow_queries_per_second' }, { label:'缓冲命中', key:'buffer_pool_hit_ratio', format:'percent' },
+        { label:'延迟', topology:'lag' }
+      ]
+    };
+
+    const formatMetricValue = (definition, value) => {
+      if (definition.format === 'percent') return formatPercent(value);
+      if (definition.format === 'bytes') return formatBytes(value);
+      const rendered = formatMetric(value, Number.isInteger(definition.digits) ? definition.digits : 2);
+      return rendered === '-' || !definition.suffix ? rendered : `${rendered}${definition.suffix}`;
+    };
 
     const renderMetrics = () => {
       const samples = state.metrics && state.metrics.instances ? state.metrics.instances : [];
-      const sum = key => { const values = samples.map(item => item.values && item.values[key]).filter(Number.isFinite); return values.length ? values.reduce((total, value) => total + value, 0) : null; };
-      const average = key => { const values = samples.map(item => item.values && item.values[key]).filter(Number.isFinite); return values.length ? values.reduce((a, b) => a + b, 0) / values.length : null; };
-      const set = (id, value, digits = 1) => { byId(id).textContent = Number.isFinite(value) ? value.toFixed(digits) : '-'; };
-      set('metric-qps', sum('qps')); set('metric-tps', sum('tps')); set('metric-connections', sum('connections'), 0); set('metric-threads', sum('running_threads'), 0); set('metric-slow', sum('slow_queries_per_second'));
-      byId('metric-buffer').textContent = formatPercent(average('buffer_pool_hit_ratio'));
+      const cluster = state.clusterDetail && state.clusterDetail.cluster;
+      const definition = metricDefinitionForEngine(cluster ? cluster.engine : 'mysql');
+      const aggregate = item => {
+        const values = samples.map(sample => sample.values && sample.values[item.key]).filter(Number.isFinite);
+        if (!values.length) return null;
+        if (item.aggregate === 'average') return values.reduce((total, value) => total + value, 0) / values.length;
+        if (item.aggregate === 'max') return Math.max(...values);
+        return values.reduce((total, value) => total + value, 0);
+      };
+      const summary = byId('metric-summary'); summary.replaceChildren();
+      definition.summary.forEach(item => {
+        const tile = text('div', 'metric-tile', '');
+        tile.append(text('span', 'summary-label', item.label), text('strong', '', formatMetricValue(item, aggregate(item))));
+        summary.append(tile);
+      });
       byId('metrics-observed-at').textContent = state.metrics && state.metrics.observed_at ? `拓扑观测 ${new Date(state.metrics.observed_at).toLocaleString(state.language)}` : '无采样证据';
+      const head = byId('metrics-head-row'); head.replaceChildren();
+      ['实例', '角色', ...definition.columns.map(item => item.label)].forEach(label => head.append(text('th', '', label)));
       const body = byId('metrics-instances'); body.replaceChildren();
       const instances = state.topology ? state.topology.instances || [] : [];
       samples.forEach(sample => {
         const instance = instances.find(item => item.resource_id === sample.instance_id);
-        const value = (key, digits = 2) => formatMetric(sample.values && sample.values[key], digits);
         const row = document.createElement('tr');
-        [instance ? instanceAddress(instance) : sample.instance_id, instance ? roleText(instance.role) : '-', value('qps'), value('tps'), value('connections', 0), value('running_threads', 0), value('slow_queries_per_second'), formatPercent(sample.values && sample.values.buffer_pool_hit_ratio), instance ? lagText(instance) : '-'].forEach(item => row.append(text('td', '', String(item))));
+        const values = definition.columns.map(item => item.topology === 'lag'
+          ? (instance ? lagText(instance) : '-')
+          : formatMetricValue(item, sample.values && sample.values[item.key]));
+        [instance ? instanceAddress(instance) : sample.instance_id, instance ? roleText(instance.role) : '-', ...values].forEach(item => row.append(text('td', '', String(item))));
         body.append(row);
       });
     };
 
+    const lifecycleEngine = () => {
+      const cluster = state.clusters.find(item => item.resource_id === state.selectedClusterId);
+      return cluster ? cluster.engine : '';
+    };
+
+    const postgresqlLifecycleAvailable = () => {
+      const capabilities = state.lifecycleCapability.capabilities || {};
+      return Boolean(capabilities.postgresql_basebackup_available || capabilities.postgresql_rewind_available);
+    };
+
+    const lifecycleEngineSupported = () => {
+      const cluster = state.clusters.find(item => item.resource_id === state.selectedClusterId);
+      return Boolean(cluster && (cluster.engine === 'mysql' || (cluster.engine === 'postgresql' && postgresqlLifecycleAvailable())));
+    };
+
+    const lifecycleUnavailableReason = () => {
+      const engine = lifecycleEngine();
+      if (engine === 'postgresql' && !postgresqlLifecycleAvailable()) return 'PostgreSQL 节点同步能力未配置';
+      if (engine && engine !== 'mysql' && engine !== 'postgresql') return `${engine} 节点生命周期尚未实现`;
+      return localizedReason(state.lifecycleCapability.reason);
+    };
+
+    const applyNodeLifecycleEngine = () => {
+      const engine = lifecycleEngine();
+      byId('mysql-lifecycle-fields').hidden = engine !== 'mysql';
+      byId('postgresql-lifecycle-fields').hidden = engine !== 'postgresql';
+      const capabilities = state.lifecycleCapability.capabilities || {};
+      const methods = [['自动选择', 'auto']];
+      if (engine === 'postgresql') {
+        if (capabilities.postgresql_basebackup_available) methods.push(['pg_basebackup', 'pg_basebackup']);
+        if (capabilities.postgresql_rewind_available) methods.push(['pg_rewind（仅修复）', 'pg_rewind']);
+      } else {
+        if (capabilities.clone_available) methods.push(['Clone', 'clone']);
+        if (Object.values(capabilities.xtrabackup_versions || {}).some(Boolean)) methods.push(['XtraBackup', 'xtrabackup']);
+        if (capabilities.logical_dump_allowed) methods.push(['逻辑备份', 'logical_dump']);
+      }
+      const selector = byId('sync-method');
+      const selected = selector.value;
+      selector.replaceChildren(...methods.map(([label, value]) => new Option(label, value)));
+      selector.value = methods.some(([, value]) => value === selected) ? selected : 'auto';
+    };
+
     const updateNodeLifecycleControls = () => {
-      const available = state.lifecycleCapability.available && canAdministerPlatform() && Boolean(state.selectedClusterId);
+      const available = state.lifecycleCapability.available && canAdministerPlatform() && Boolean(state.selectedClusterId) && lifecycleEngineSupported();
       const reason = !state.selectedClusterId
         ? '请先选择目标集群'
-        : (canAdministerPlatform() ? localizedReason(state.lifecycleCapability.reason) : '仅管理员可以执行节点流程');
+        : (!lifecycleEngineSupported()
+          ? lifecycleUnavailableReason()
+          : (canAdministerPlatform() ? localizedReason(state.lifecycleCapability.reason) : '仅管理员可以执行节点流程'));
       const disabled = !available || state.lifecycleRunning;
       byId('open-node-lifecycle-modal').disabled = disabled;
       byId('execute-node-sync').disabled = disabled;
@@ -1342,6 +1609,7 @@
       const selector = byId('rebuild-node-select'); const selectedNode = selector.value; selector.replaceChildren(new Option('请选择已有节点', ''));
       state.nodes.forEach(node => selector.append(new Option(node.node_name, node.resource_id)));
       if (state.nodes.some(node => node.resource_id === selectedNode)) selector.value = selectedNode;
+      applyNodeLifecycleEngine();
       updateNodeLifecycleControls();
     };
 
@@ -1368,19 +1636,22 @@
       byId('node-action').value = 'add';
       byId('rebuild-node-select').value = '';
       byId('node-kind').value = 'data';
-      ['node-name', 'node-resource-id', 'node-hostname', 'node-ip', 'node-server-id', 'node-package'].forEach(id => { byId(id).value = ''; });
+      ['node-name', 'node-resource-id', 'node-hostname', 'node-ip', 'node-server-id', 'node-package', 'node-postgresql-service', 'node-postgresql-data-directory'].forEach(id => { byId(id).value = ''; });
       byId('node-ssh-user').value = 'root';
       byId('node-ssh-port').value = '22';
-      byId('sync-method').value = 'auto';
       const primary = state.topology && (state.topology.instances || []).find(instance => instance.role === 'primary');
       byId('node-mysql-version').value = primary && primary.engine_metadata ? primary.engine_metadata.version || '' : '';
       byId('node-mysql-port').value = primary && primary.port ? String(primary.port) : '3306';
+      byId('node-postgresql-version').value = primary && primary.engine_metadata ? primary.engine_metadata.version || '' : '';
+      byId('node-postgresql-port').value = primary && primary.port ? String(primary.port) : '5432';
+      applyNodeLifecycleEngine();
+      byId('sync-method').value = 'auto';
       updateNodeActionMode();
     };
 
     const openNodeLifecycleModal = () => {
-      if (!state.lifecycleCapability.available || !canAdministerPlatform() || !state.selectedClusterId) {
-        setLiveStatus('当前账户或环境不允许执行节点流程。', true);
+      if (!state.lifecycleCapability.available || !canAdministerPlatform() || !state.selectedClusterId || !lifecycleEngineSupported()) {
+        setLiveStatus(!lifecycleEngineSupported() ? `${lifecycleUnavailableReason()}。` : '当前账户或环境不允许执行节点流程。', true);
         return;
       }
       const cluster = state.clusters.find(item => item.resource_id === state.selectedClusterId);
@@ -1391,21 +1662,33 @@
       byId('node-lifecycle-modal').showModal();
     };
 
-    const lifecyclePayload = () => ({
-      cluster_id: state.selectedClusterId,
-      action: byId('node-action').value,
-      sync_method: byId('sync-method').value,
-      requested_by: state.currentUser ? state.currentUser.username : '',
-      targets: [{
+    const lifecyclePayload = () => {
+      const target = {
         node_id: byId('node-resource-id').value.trim(), node_name: byId('node-name').value.trim(), kind: byId('node-kind').value,
         hostname: byId('node-hostname').value.trim(), ip_address: byId('node-ip').value.trim(), ssh_user: byId('node-ssh-user').value.trim(),
-        ssh_port: Number(byId('node-ssh-port').value), mysql_version: byId('node-mysql-version').value.trim(), mysql_port: Number(byId('node-mysql-port').value),
-        server_id: Number(byId('node-server-id').value), package_name: byId('node-package').value.trim(), rebuild: byId('node-action').value === 'rebuild'
-      }]
-    });
+        ssh_port: Number(byId('node-ssh-port').value), package_name: byId('node-package').value.trim(), rebuild: byId('node-action').value === 'rebuild'
+      };
+      if (lifecycleEngine() === 'postgresql') Object.assign(target, {
+        postgresql_version: byId('node-postgresql-version').value.trim(),
+        postgresql_port: Number(byId('node-postgresql-port').value),
+        postgresql_service: byId('node-postgresql-service').value.trim(),
+        postgresql_data_directory: byId('node-postgresql-data-directory').value.trim()
+      });
+      else Object.assign(target, {
+        mysql_version: byId('node-mysql-version').value.trim(), mysql_port: Number(byId('node-mysql-port').value), server_id: Number(byId('node-server-id').value)
+      });
+      return {
+        cluster_id: state.selectedClusterId,
+        action: byId('node-action').value,
+        sync_method: byId('sync-method').value,
+        requested_by: state.currentUser ? state.currentUser.username : '',
+        targets: [target]
+      };
+    };
 
     const executeNodeSync = async () => {
       if (!state.lifecycleCapability.available) { setLiveStatus(`节点流程不可执行：${localizedReason(state.lifecycleCapability.reason)}`, true); return; }
+      if (!lifecycleEngineSupported()) { setLiveStatus(`节点流程不可执行：${lifecycleUnavailableReason()}`, true); return; }
       if (!canAdministerPlatform() || !state.selectedClusterId) { setLiveStatus('仅管理员可以执行节点流程。', true); return; }
       const payload = lifecyclePayload();
       state.lifecycleRunning = true;
@@ -1438,7 +1721,7 @@
         const card = text('div', 'log-card', '');
         const head = text('div', 'log-head', ''); head.append(text('strong', '', `${task.request.action} · ${task.request.targets.map(target => target.node_name).join(', ')}`), text('span', 'badge', statusText(task.status)));
         const grid = text('div', 'log-grid', '');
-        [['时间', new Date(task.created_at).toLocaleString(state.language)], ['集群', task.cluster_id], ['阶段', task.current_stage || '-'], ['同步', task.request.sync_method], ['操作', task.request.requested_by || '-'], ['报告', task.report_id || '-']].forEach(([label, value]) => { const cell = text('div', 'log-cell', ''); cell.append(text('span', '', label), text('strong', '', String(value))); grid.append(cell); });
+        [['时间', new Date(task.created_at).toLocaleString(state.language)], ['集群', clusterDisplayName(task.cluster_id)], ['阶段', task.current_stage || '-'], ['同步', task.request.sync_method], ['操作', task.request.requested_by || '-'], ['报告', task.report_id || '-']].forEach(([label, value]) => { const cell = text('div', 'log-cell', ''); cell.append(text('span', '', label), text('strong', '', String(value))); grid.append(cell); });
         card.append(head, grid); root.append(card);
       });
     };
@@ -1452,9 +1735,41 @@
     const newestTaskFirst = (left, right) => timeValue(right.created_at) - timeValue(left.created_at);
     const operationTime = operation => operation.created_at || (operation.operation && operation.operation.created_at) || '';
     const newestOperationFirst = (left, right) => timeValue(operationTime(right)) - timeValue(operationTime(left));
+    const automaticRecoveryIncidentKey = operation => {
+      const record = operation.operation || {};
+      const key = String(operation.idempotency_key || '');
+      if (record.requested_by !== 'clusterguard-automatic-recovery' || !key.startsWith('automatic-failover:')) return '';
+      const separator = key.lastIndexOf(':');
+      if (separator <= 'automatic-failover:'.length) return '';
+      const attempt = Number(key.slice(separator + 1));
+      return Number.isInteger(attempt) && attempt > 0 ? key.slice(0, separator) : '';
+    };
+    const consolidateOperationIncidents = operations => {
+      const consolidated = [];
+      const incidents = new Map();
+      operations.slice().sort(newestOperationFirst).forEach(operation => {
+        const incidentKey = automaticRecoveryIncidentKey(operation);
+        if (!incidentKey) { consolidated.push(operation); return; }
+        const existing = incidents.get(incidentKey);
+        if (existing) {
+          existing.incident_attempt_count += 1;
+          existing.incident_first_at = operationTime(operation) || existing.incident_first_at;
+          return;
+        }
+        const incident = Object.assign({}, operation, {
+          incident_key: incidentKey,
+          incident_attempt_count: 1,
+          incident_first_at: operationTime(operation),
+          incident_last_at: operationTime(operation)
+        });
+        incidents.set(incidentKey, incident);
+        consolidated.push(incident);
+      });
+      return consolidated;
+    };
     const filteredOperations = () => {
       const search = state.logSearch.trim().toLowerCase();
-      return state.operations.filter(operation => {
+      return consolidateOperationIncidents(state.operations).filter(operation => {
         const kind = operation.operation && operation.operation.kind;
         if (state.logKind !== 'all' && kind !== state.logKind) return false;
         if (state.logStatus !== 'all' && operation.status !== state.logStatus) return false;
@@ -1467,9 +1782,14 @@
     const renderOperationLog = () => {
       const root = byId('operation-log-list'); root.replaceChildren();
       const operations = filteredOperations().slice().sort(newestOperationFirst);
-      byId('log-visible-count').textContent = `${operations.length} 条`;
+      const visibleOperations = operations.slice(0, state.logVisibleLimit);
+      const loadMore = byId('load-more-operation-log');
+      const rawRecordCount = operations.reduce((total, operation) => total + (operation.incident_attempt_count || 1), 0);
+      byId('log-visible-count').textContent = operations.length > visibleOperations.length ? `显示 ${visibleOperations.length} / ${operations.length} 个事件 · ${rawRecordCount} 条原始记录` : `${operations.length} 个事件 · ${rawRecordCount} 条原始记录`;
+      loadMore.hidden = visibleOperations.length >= operations.length;
+      loadMore.textContent = `加载更多（剩余 ${Math.max(0, operations.length - visibleOperations.length)} 条）`;
       if (!operations.length) { root.append(text('div', 'empty-state', state.operations.length ? '没有符合筛选条件的记录' : '暂无操作记录')); return; }
-      operations.forEach(operation => {
+      visibleOperations.forEach(operation => {
         const card = text('article', 'log-card', '');
         const head = text('div', 'log-head', '');
         head.append(text('strong', '', kindText(operation.operation && operation.operation.kind)), text('span', `badge ${operation.status === 'succeeded' ? 'success' : operation.status === 'failed' ? 'danger' : 'warning'}`, statusText(operation.status)));
@@ -1481,17 +1801,18 @@
           ['原主库', instanceLabel(operation.plan.source_id)],
           ['目标节点', instanceLabel(operation.target_id)],
           ['操作类型', kindText(operation.operation && operation.operation.kind)],
-          ['状态', statusText(operation.status)]
+          ['状态', operation.incident_attempt_count > 1 ? `${statusText(operation.status)}（${operation.incident_attempt_count} 次）` : statusText(operation.status)]
         ];
         fields.forEach(([label, value]) => { const cell = text('div', 'log-cell', ''); cell.append(text('span', '', label), text('strong', '', value)); grid.append(cell); });
         const details = document.createElement('details');
-        const summary = document.createElement('summary'); summary.textContent = '原始返回';
+        const summary = document.createElement('summary'); summary.textContent = operation.incident_attempt_count > 1 ? `原始返回（最近一次，事故共 ${operation.incident_attempt_count} 次）` : '原始返回';
         const raw = document.createElement('pre'); raw.textContent = JSON.stringify(operation, null, 2);
         details.append(summary, raw); card.append(head, grid, details); root.append(card);
       });
     };
 
     const loadOperationLog = async () => {
+      state.logVisibleLimit = operationLogPageSize;
       if (!state.selectedClusterId) { state.operations = []; renderOperationLog(); return; }
       state.operations = await fetchResult(`/api/v1/operations?cluster_id=${state.selectedClusterId}`) || [];
       renderOperationLog();
@@ -1501,8 +1822,13 @@
       const root = byId('adapter-capabilities'); root.replaceChildren();
       state.capabilities.forEach(capability => {
         const execute = capability.features && capability.features.execute;
+        const observable = ['discover', 'topology', 'health']
+          .every(name => capability.features && capability.features[name] && capability.features[name].available);
+        const executable = Boolean(execute && execute.available);
+        const label = executable ? '可执行' : observable ? '只读可用' : '未实现';
+        const badgeClass = executable ? 'badge success' : observable ? 'badge warning' : 'badge';
         const row = text('div', 'capability-row', '');
-        row.append(text('strong', '', capability.engine), text('span', execute && execute.available ? 'badge success' : 'badge', execute && execute.available ? '可执行' : '只读 / 未实现'));
+        row.append(text('strong', '', capability.engine), text('span', badgeClass, label));
         root.append(row);
       });
     };
@@ -1519,7 +1845,8 @@
       const instance = state.topology && (state.topology.instances || []).find(item => item.resource_id === byId('metadata-instance-select').value);
       byId('metadata-node-name').textContent = instance ? nodeName(instance) : '-';
       byId('metadata-resource-id').textContent = instance ? instance.resource_id : '-';
-      byId('metadata-server-uuid').textContent = instance && instance.engine_identity ? instance.engine_identity.server_uuid || '-' : '-';
+      byId('metadata-native-identity-label').textContent = nativeIdentityLabel(instance);
+      byId('metadata-native-identity').textContent = nativeIdentityValue(instance);
       byId('metadata-revision').textContent = instance ? String(instance.metadata_revision) : '-';
       byId('metadata-display-name').value = instance ? instance.display_name || '' : '';
       byId('metadata-hostname').value = instance ? instance.hostname || '' : '';
@@ -1591,7 +1918,7 @@
           await new Promise(resolve => window.setTimeout(resolve, 400));
         }
         commitIfCurrent(generation, () => {
-          state.clusterDetail = loaded.clusterDetail; state.clusterDirectory.set(clusterId, loaded.clusterDetail); state.fleetTopology.set(clusterId, loaded.topology); state.topology = loaded.topology; state.health = loaded.health; state.candidates = loaded.candidates || []; state.metrics = loaded.metrics || { instances:[] }; state.operations = loaded.operations || [];
+          state.clusterDetail = loaded.clusterDetail; state.clusterDirectory.set(clusterId, loaded.clusterDetail); state.fleetTopology.set(clusterId, loaded.topology); state.topology = loaded.topology; state.health = loaded.health; state.candidates = loaded.candidates || []; state.metrics = loaded.metrics || { instances:[] }; state.operations = loaded.operations || []; state.logVisibleLimit = operationLogPageSize;
           const clusterIndex = state.clusters.findIndex(cluster => cluster.resource_id === clusterId);
           if (clusterIndex >= 0 && loaded.clusterDetail.cluster) state.clusters[clusterIndex] = loaded.clusterDetail.cluster;
           renderTopology(); renderOperationContext(); renderMetrics(); renderOperationLog(); renderOverview();
@@ -1614,6 +1941,8 @@
       rows.forEach(row => { row.querySelector('.cluster-endpoint-remove').disabled = state.clusterMutationRunning || rows.length === 1; });
     };
 
+    const defaultPortForEngine = engine => ({mysql:3306, postgresql:5432, oracle:1521, sqlserver:1433})[engine] || 0;
+
     const addClusterEndpointRow = (endpoint = {}) => {
       const row = document.createElement('div');
       row.className = 'cluster-endpoint-row';
@@ -1630,7 +1959,11 @@
 
       const portLabel = text('label', '', '端口');
       const port = document.createElement('input');
-      port.dataset.field = 'port'; port.type = 'number'; port.min = '1'; port.max = '65535'; port.value = String(endpoint.port || 3306);
+      const suppliedPort = Number(endpoint.port);
+      port.dataset.field = 'port'; port.dataset.engineDefault = suppliedPort > 0 ? 'false' : 'true';
+      port.type = 'number'; port.min = '1'; port.max = '65535';
+      port.value = String(suppliedPort > 0 ? suppliedPort : defaultPortForEngine(byId('cluster-engine').value));
+      port.addEventListener('input', () => { port.dataset.engineDefault = 'false'; });
       portLabel.append(port);
 
       const removeClusterEndpointRow = () => { row.remove(); updateClusterEndpointRemoveButtons(); };
@@ -1641,14 +1974,34 @@
       updateClusterEndpointRemoveButtons();
     };
 
+    const applyClusterEngineDefaults = () => {
+      const nextPort = defaultPortForEngine(byId('cluster-engine').value);
+      byId('cluster-endpoint-list').querySelectorAll('[data-field="port"]').forEach(port => {
+        if (port.dataset.engineDefault === 'false' && port.value) return;
+        port.value = String(nextPort);
+        port.dataset.engineDefault = 'true';
+      });
+    };
+
     const renderClusterRetirementContext = () => {
       const cluster = selectedCluster();
       const detail = cluster ? state.clusterDirectory.get(cluster.resource_id) : null;
+      const confirmationField = byId('retire-cluster-confirmation');
+      const contextClusterId = cluster ? cluster.resource_id : '';
+      if (state.retireConfirmationClusterId !== contextClusterId) {
+        confirmationField.value = '';
+        state.retireConfirmationClusterId = contextClusterId;
+      }
       byId('retire-cluster-name').textContent = cluster ? cluster.display_name : '未选择集群';
       byId('retire-cluster-id').textContent = cluster ? cluster.resource_id : '-';
       byId('retire-cluster-instances').textContent = String(detail && detail.instances ? detail.instances.length : 0);
-      const confirmation = byId('retire-cluster-confirmation').value;
+      byId('retire-cluster-confirmation-phrase').textContent = cluster ? cluster.display_name : '-';
+      confirmationField.placeholder = cluster ? `输入 ${cluster.display_name}` : '请选择集群';
+      const confirmation = confirmationField.value;
       const confirmed = !!cluster && confirmation === cluster.display_name;
+      const confirmationState = byId('retire-cluster-confirmation-state');
+      confirmationState.textContent = confirmed ? '已输入完整集群名称，可以提交退役。' : '尚未输入完整集群名称，不能退役。';
+      confirmationState.className = `confirmation-state${confirmed ? ' ready' : ''}`;
       byId('submit-cluster-retirement').disabled = !canAdministerPlatform() || state.clusterMutationRunning || !confirmed;
     };
 
@@ -1661,6 +2014,7 @@
       byId('cluster-retire-panel').hidden = create;
       byId('submit-cluster-registration').hidden = !create;
       byId('submit-cluster-retirement').hidden = create;
+      if (!create) state.retireConfirmationClusterId = '';
       if (!create) renderClusterRetirementContext();
       setClusterManagementResult(create ? '填写稳定集群名称和至少一个发现入口。' : '输入完整集群名称后才能退役。');
     };
@@ -1688,6 +2042,7 @@
       byId('cluster-endpoint-list').replaceChildren();
       addClusterEndpointRow();
       byId('retire-cluster-confirmation').value = '';
+      state.retireConfirmationClusterId = '';
       setClusterManagementRunning(false);
       setClusterManagementMode('create');
       renderClusterRetirementContext();
@@ -1770,10 +2125,11 @@
     };
 
     const loadClusters = async (preferredClusterId = '') => {
-      const [clusters, capabilities, nodes, operations, tasks, lifecycleCapability] = await Promise.all([
-        fetchResult('/api/v1/clusters'), fetchResult('/api/v1/capabilities'), fetchResult('/api/v1/nodes'), fetchResult('/api/v1/operations'), fetchResult('/api/v1/nodes/sync/tasks'), fetchResult('/api/v1/nodes/sync/capabilities')
+      const [clusters, capabilities, nodes, operations, tasks, lifecycleCapability, controlPlane] = await Promise.all([
+        fetchResult('/api/v1/clusters'), fetchResult('/api/v1/capabilities'), fetchResult('/api/v1/nodes'), fetchResult('/api/v1/operations'), fetchResult('/api/v1/nodes/sync/tasks'), fetchResult('/api/v1/nodes/sync/capabilities'), fetchResult('/api/v1/control-plane/status').catch(() => null)
       ]);
       state.clusters = clusters || []; state.capabilities = capabilities || []; state.nodes = nodes || []; state.allOperations = operations || []; state.lifecycleTasks = tasks || []; state.lifecycleCapability = lifecycleCapability || { available:false, reason:'未配置' };
+      state.controlPlane = controlPlane; renderControlPlaneStatus();
       state.clusterDirectory = await loadFleetDetails(state.clusters);
       const selector = byId('cluster-select'); const previous = selector.value; const preferred = preferredClusterId || previous; selector.replaceChildren();
       if (!state.clusters.length) selector.append(new Option('未发现已注册集群', ''));
@@ -1879,11 +2235,20 @@
     };
 
     const inspectCluster = () => { showView('topology'); loadSelectedCluster(); };
+    const keepActiveNavigationVisible = activeLink => {
+      if (!activeLink || !window.matchMedia('(max-width: 900px)').matches) return;
+      const navigation = activeLink.closest('.nav');
+      if (!navigation) return;
+      const targetLeft = Math.max(0, activeLink.offsetLeft - ((navigation.clientWidth - activeLink.clientWidth) / 2));
+      navigation.scrollTo({ left: targetLeft, behavior:'smooth' });
+    };
     const showView = viewName => {
       const known = [...document.querySelectorAll('[data-view]')].some(view => view.dataset.view === viewName);
       const selected = known ? viewName : 'overview';
       document.querySelectorAll('[data-view]').forEach(view => { view.hidden = view.dataset.view !== selected; });
       document.querySelectorAll('[data-nav]').forEach(link => { if (link.dataset.nav === selected) link.setAttribute('aria-current', 'page'); else link.removeAttribute('aria-current'); });
+      const activeLink = document.querySelector(`[data-nav="${selected}"]`);
+      keepActiveNavigationVisible(activeLink);
       if (window.location.hash !== `#${selected}`) window.history.replaceState(null, '', `#${selected}`);
     };
 
@@ -1893,6 +2258,7 @@
     byId('cluster-management-modal').addEventListener('cancel', event => { if (state.clusterMutationRunning) event.preventDefault(); });
     byId('cluster-create-tab').addEventListener('click', () => setClusterManagementMode('create'));
     byId('cluster-retire-tab').addEventListener('click', () => setClusterManagementMode('retire'));
+    byId('cluster-engine').addEventListener('change', applyClusterEngineDefaults);
     byId('add-cluster-endpoint').addEventListener('click', () => addClusterEndpointRow());
     byId('submit-cluster-registration').addEventListener('click', submitClusterRegistration);
     byId('submit-cluster-retirement').addEventListener('click', submitClusterRetirement);
@@ -1923,9 +2289,10 @@
     byId('rebuild-node-select').addEventListener('change', populateRebuildNode);
     byId('execute-node-sync').addEventListener('click', executeNodeSync);
     byId('refresh-operation-log').addEventListener('click', loadOperationLog);
-    byId('log-search').addEventListener('input', event => { state.logSearch = event.target.value; renderOperationLog(); });
-    byId('log-kind-filter').addEventListener('change', event => { state.logKind = event.target.value; renderOperationLog(); });
-    byId('log-status-filter').addEventListener('change', event => { state.logStatus = event.target.value; renderOperationLog(); });
+    byId('load-more-operation-log').addEventListener('click', () => { state.logVisibleLimit += operationLogPageSize; renderOperationLog(); });
+    byId('log-search').addEventListener('input', event => { state.logSearch = event.target.value; state.logVisibleLimit = operationLogPageSize; renderOperationLog(); });
+    byId('log-kind-filter').addEventListener('change', event => { state.logKind = event.target.value; state.logVisibleLimit = operationLogPageSize; renderOperationLog(); });
+    byId('log-status-filter').addEventListener('change', event => { state.logStatus = event.target.value; state.logVisibleLimit = operationLogPageSize; renderOperationLog(); });
     byId('open-metadata-modal').addEventListener('click', () => { renderMetadataSelector(); byId('metadata-modal').showModal(); });
     byId('close-metadata-modal').addEventListener('click', () => byId('metadata-modal').close());
     byId('cancel-metadata').addEventListener('click', () => byId('metadata-modal').close());

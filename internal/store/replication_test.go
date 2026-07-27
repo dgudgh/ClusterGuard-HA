@@ -1,6 +1,8 @@
 package store
 
 import (
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -135,6 +137,78 @@ func TestRepositoryTracksCanonicalDigestAcrossPersistenceAndReplication(t *testi
 	}
 	if got := decoded.Clusters[cluster.ResourceID].DisplayName; got != "digest-source" {
 		t.Fatalf("decoded cluster name=%q", got)
+	}
+}
+
+func TestSnapshotCodecRejectsStateAboveMaximumSize(t *testing.T) {
+	value := emptySnapshot()
+	resourceID := model.NewResourceID()
+	value.Clusters[resourceID] = model.DatabaseCluster{
+		ResourceMeta: model.ResourceMeta{ResourceID: resourceID},
+		Engine:       model.EngineMySQL,
+		DisplayName:  strings.Repeat("x", maximumEncodedSnapshotBytes),
+	}
+	if _, err := encodeSnapshotRevision(value, 1, ""); err == nil || !strings.Contains(err.Error(), "maximum") {
+		t.Fatalf("oversized encoded snapshot error=%v", err)
+	}
+
+	contents := append([]byte(`{"clusters":{}}`), make([]byte, maximumSnapshotBytes)...)
+	if _, _, err := decodeSnapshotState(contents); err == nil || !strings.Contains(err.Error(), "maximum") {
+		t.Fatalf("oversized decoded snapshot error=%v", err)
+	}
+}
+
+func TestOpenRejectsOversizedMetadataFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metadata.json")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create metadata file: %v", err)
+	}
+	if err := file.Truncate(maximumSnapshotBytes + 1); err != nil {
+		_ = file.Close()
+		t.Fatalf("size metadata file: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close metadata file: %v", err)
+	}
+	if _, err := Open(path); err == nil || !strings.Contains(err.Error(), "maximum") {
+		t.Fatalf("oversized metadata file error=%v", err)
+	}
+}
+
+func TestRestoreCompactsBoundedLegacyRaftSnapshot(t *testing.T) {
+	value := emptySnapshot()
+	message := strings.Repeat("a", 1800)
+	for index := 0; index < 10000; index++ {
+		value.Audits = append(value.Audits, model.AuditEvent{
+			ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()},
+			Message:      message,
+		})
+	}
+	contents, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("encode legacy Raft snapshot: %v", err)
+	}
+	digest := sha256.Sum256(contents)
+	prefix := fmt.Sprintf(`{"clusterguard_state_revision":232052,"clusterguard_state_digest":"%x","clusterguard_base_digest":"%s",`, digest, strings.Repeat("1", 64))
+	contents = append([]byte(prefix), contents[1:]...)
+	if len(contents) <= maximumEncodedSnapshotBytes || len(contents) >= maximumSnapshotBytes {
+		t.Fatalf("legacy Raft fixture size=%d", len(contents))
+	}
+
+	repository := NewMemory()
+	if err := repository.RestoreReplicatedState(contents); err != nil {
+		t.Fatalf("restore bounded legacy Raft snapshot: %v", err)
+	}
+	if len(repository.Audits()) != maximumAuditEvents {
+		t.Fatalf("restored audits=%d", len(repository.Audits()))
+	}
+	replicated, err := repository.ReplicatedState()
+	if err != nil {
+		t.Fatalf("encode compacted replicated state: %v", err)
+	}
+	if len(replicated) >= maximumEncodedSnapshotBytes {
+		t.Fatalf("compacted replicated bytes=%d", len(replicated))
 	}
 }
 

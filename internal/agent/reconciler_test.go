@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"clusterguard.io/ha/pkg/model"
@@ -110,6 +111,107 @@ func (client reconcileDecisionStub) Decision(context.Context, ClusterPolicy) (Re
 
 func reconcilePolicy() ClusterPolicy {
 	return ClusterPolicy{ClusterID: model.NewResourceID(), InstanceID: model.NewResourceID(), VIP: "192.0.2.100", Interface: "ens160", Prefix: 24, MySQLPort: 3306}
+}
+
+func reconcilePostgreSQLPolicy() ClusterPolicy {
+	policy := reconcilePolicy()
+	policy.Engine = model.EnginePostgreSQL
+	policy.PostgreSQLPort = 5432
+	return policy
+}
+
+func TestReconcilerPostgreSQLKeepVIPRequiresRunningPrimary(t *testing.T) {
+	policy := reconcilePostgreSQLPolicy()
+	vip := &reconcileVIPStub{}
+	roles := &reconcileRoleStub{}
+	calls := []string{}
+	postgresql := &fakePostgreSQLController{calls: &calls, running: true, inRecovery: false}
+	decision := reconcileDecisionStub{response: ReconcileResponse{
+		ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileKeepVIP, LeaseID: model.NewResourceID(),
+	}}
+	results, err := NewReconciler(vip, roles, decision, WithPostgreSQLReconcileController(postgresql)).ReconcileAll(
+		context.Background(), map[model.ResourceID]ClusterPolicy{policy.ClusterID: policy},
+	)
+	if err != nil || len(results) != 1 || results[0].Action != ReconcileKeepVIP || vip.acquires != 1 || vip.releases != 0 {
+		t.Fatalf("PostgreSQL keep VIP results=%+v vip=%+v err=%v", results, vip, err)
+	}
+	if len(roles.persisted) != 0 || roles.statusCalls != 0 || len(calls) != 1 || calls[0] != "postgresql_status" {
+		t.Fatalf("PostgreSQL reconcile crossed engine boundary: roles=%+v calls=%v", roles, calls)
+	}
+}
+
+func TestReconcilerPostgreSQLSelfIsolationReleasesVIPWithoutStoppingWriter(t *testing.T) {
+	policy := reconcilePostgreSQLPolicy()
+	events := []string{}
+	vip := &reconcileVIPStub{owns: true, events: &events}
+	roles := &reconcileRoleStub{events: &events}
+	postgresql := &fakePostgreSQLController{calls: &events, running: true}
+	results, err := NewReconciler(vip, roles, reconcileDecisionStub{err: errors.New("leader unavailable")}, WithPostgreSQLReconcileController(postgresql)).ReconcileAll(
+		context.Background(), map[model.ResourceID]ClusterPolicy{policy.ClusterID: policy},
+	)
+	if err == nil || len(results) != 1 || results[0].Action != ReconcileSelfIsolate {
+		t.Fatalf("PostgreSQL self isolation results=%+v err=%v", results, err)
+	}
+	if strings.Contains(strings.Join(events, ","), "postgresql_stop") || len(events) != 2 || events[0] != "vip_release" || events[1] != "postgresql_status" || len(roles.persisted) != 0 {
+		t.Fatalf("PostgreSQL reconcile self-isolation stopped the service: events=%v roles=%+v", events, roles)
+	}
+	if !strings.Contains(results[0].Message, "left running without VIP") {
+		t.Fatalf("PostgreSQL self-isolation did not explain the bounded state: %+v", results[0])
+	}
+}
+
+func TestReconcilerPostgreSQLSelfIsolationKeepsStreamingStandbyRunning(t *testing.T) {
+	policy := reconcilePostgreSQLPolicy()
+	events := []string{}
+	vip := &reconcileVIPStub{events: &events}
+	roles := &reconcileRoleStub{events: &events}
+	postgresql := &fakePostgreSQLController{calls: &events, running: true, inRecovery: true}
+	results, err := NewReconciler(vip, roles, reconcileDecisionStub{err: errors.New("VIP owned by current primary")}, WithPostgreSQLReconcileController(postgresql)).ReconcileAll(
+		context.Background(), map[model.ResourceID]ClusterPolicy{policy.ClusterID: policy},
+	)
+	if err == nil || len(results) != 1 || results[0].Action != ReconcileSelfIsolate {
+		t.Fatalf("PostgreSQL standby isolation results=%+v err=%v", results, err)
+	}
+	if strings.Contains(strings.Join(events, ","), "postgresql_stop") || len(events) != 2 || events[0] != "vip_release" || events[1] != "postgresql_status" {
+		t.Fatalf("healthy PostgreSQL standby was stopped: events=%v", events)
+	}
+}
+
+func TestReconcilerPostgreSQLSelfIsolationDoesNotStopTransientService(t *testing.T) {
+	policy := reconcilePostgreSQLPolicy()
+	events := []string{}
+	vip := &reconcileVIPStub{events: &events}
+	roles := &reconcileRoleStub{events: &events}
+	postgresql := &fakePostgreSQLController{calls: &events, running: false}
+	results, err := NewReconciler(vip, roles, reconcileDecisionStub{err: errors.New("local PostgreSQL service is transitioning")}, WithPostgreSQLReconcileController(postgresql)).ReconcileAll(
+		context.Background(), map[model.ResourceID]ClusterPolicy{policy.ClusterID: policy},
+	)
+	if err == nil || len(results) != 1 || results[0].Action != ReconcileSelfIsolate {
+		t.Fatalf("PostgreSQL transient isolation results=%+v err=%v", results, err)
+	}
+	if strings.Contains(strings.Join(events, ","), "postgresql_stop") || len(events) != 2 || events[0] != "vip_release" || events[1] != "postgresql_status" {
+		t.Fatalf("transitioning PostgreSQL service was stopped: events=%v", events)
+	}
+}
+
+func TestReconcilerPostgreSQLTransitionTargetCannotOwnVIPWhileInRecovery(t *testing.T) {
+	policy := reconcilePostgreSQLPolicy()
+	vip := &reconcileVIPStub{owns: true}
+	roles := &reconcileRoleStub{}
+	calls := []string{}
+	postgresql := &fakePostgreSQLController{calls: &calls, running: true, inRecovery: true}
+	decision := reconcileDecisionStub{response: ReconcileResponse{
+		ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileTransitionTarget, LeaseID: model.NewResourceID(),
+	}}
+	results, err := NewReconciler(vip, roles, decision, WithPostgreSQLReconcileController(postgresql)).ReconcileAll(
+		context.Background(), map[model.ResourceID]ClusterPolicy{policy.ClusterID: policy},
+	)
+	if err != nil || len(results) != 1 || results[0].Action != ReconcileTransitionTarget || vip.releases != 1 || vip.acquires != 0 {
+		t.Fatalf("PostgreSQL transition target results=%+v vip=%+v err=%v", results, vip, err)
+	}
+	if len(roles.persisted) != 0 || strings.Contains(strings.Join(calls, ","), "postgresql_promote") {
+		t.Fatalf("PostgreSQL reconciler performed an unauthorized role mutation: roles=%+v calls=%v", roles, calls)
+	}
 }
 
 func TestReconcilerBootstrapsVIPOnlyWithSignedKeepDecisionAndWritableMySQL(t *testing.T) {

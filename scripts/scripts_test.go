@@ -41,7 +41,11 @@ func fakeInstallBundle(t *testing.T) string {
 	for _, name := range []string{"clusterguard", "cgctl", "clusterguard-agent"} {
 		writeExecutable(t, filepath.Join(root, "bin", name), "#!/usr/bin/env bash\nexit 0\n")
 	}
-	for _, name := range []string{"clusterguard-node-lifecycle.sh", "clusterguard-mysql-install.sh", "clusterguard-mysql-sync.sh", "clusterguard-preflight.sh", "clusterguard-smoke.sh", "clusterguard-agent-stdio.sh"} {
+	for _, name := range []string{
+		"clusterguard-node-lifecycle.sh", "clusterguard-mysql-install.sh", "clusterguard-mysql-sync.sh",
+		"clusterguard-mysql-probe-cleanup.sh", "clusterguard-postgresql-install.sh", "clusterguard-postgresql-sync.sh",
+		"clusterguard-preflight.sh", "clusterguard-smoke.sh", "clusterguard-agent-stdio.sh",
+	} {
 		writeExecutable(t, filepath.Join(root, "scripts", name), "#!/usr/bin/env bash\nexit 0\n")
 	}
 	for _, name := range []string{"clusterguard-ha.service", "clusterguard-agent.service", "clusterguard-agent-reconcile.service", "clusterguard-agent-reconcile.timer"} {
@@ -76,6 +80,20 @@ func TestDeliveryScriptsAreSyntaxValid(t *testing.T) {
 	for _, path := range paths {
 		if output, err := exec.Command("bash", "-n", path).CombinedOutput(); err != nil {
 			t.Fatalf("bash -n %s: %v\n%s", path, err, output)
+		}
+	}
+}
+
+func TestPostgreSQLLifecycleHelpersAreInstalledBundledAndPreflighted(t *testing.T) {
+	for _, path := range []string{"clusterguard-install.sh", "build-clusterguard-bundle.sh", "clusterguard-preflight.sh"} {
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, helper := range []string{"clusterguard-postgresql-install.sh", "clusterguard-postgresql-sync.sh"} {
+			if !strings.Contains(string(contents), helper) {
+				t.Fatalf("%s does not deliver required PostgreSQL helper %s", path, helper)
+			}
 		}
 	}
 }
@@ -234,6 +252,19 @@ func TestVIPReconcileTimerAttemptsRecoveryWithinThirtySecondWindow(t *testing.T)
 	}
 }
 
+func TestVIPReconcileServiceCanDropPrivilegesForPostgreSQL(t *testing.T) {
+	contents, err := os.ReadFile("../packaging/systemd/clusterguard-agent-reconcile.service")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	for _, capability := range []string{"CAP_SETUID", "CAP_SETGID"} {
+		if !strings.Contains(text, capability) {
+			t.Fatalf("VIP reconcile service cannot run PostgreSQL commands as its operating-system user: missing %s", capability)
+		}
+	}
+}
+
 func TestAgentStdioWrapperLoadsProtectedEnvironmentBeforeAgent(t *testing.T) {
 	contents, err := os.ReadFile("clusterguard-agent-stdio.sh")
 	if err != nil {
@@ -318,7 +349,10 @@ func TestInstallerWritesProtectedEnvironmentAndDefersAgentReconcileByDefault(t *
 	if info.Mode().Perm() != 0o640 {
 		t.Fatalf("environment mode=%#o, want 0640", info.Mode().Perm())
 	}
-	for _, helper := range []string{"clusterguard-node-lifecycle.sh", "clusterguard-mysql-install.sh", "clusterguard-mysql-sync.sh"} {
+	for _, helper := range []string{
+		"clusterguard-node-lifecycle.sh", "clusterguard-mysql-install.sh", "clusterguard-mysql-sync.sh",
+		"clusterguard-postgresql-install.sh", "clusterguard-postgresql-sync.sh",
+	} {
 		info, err := os.Stat(filepath.Join(installRoot, "usr", "local", "libexec", helper))
 		if err != nil {
 			t.Fatalf("installed lifecycle helper %s: %v", helper, err)
@@ -986,7 +1020,9 @@ func TestBundleBuildContainsInstallableRuntimeAndChecksums(t *testing.T) {
 	}
 	text := string(contents)
 	for _, expected := range []string{
-		"cmd/clusterguard", "cmd/cgctl", "cmd/clusterguard-agent", "SHA256SUMS", "clusterguard-install.sh", "clusterguard-agent-stdio.sh", "COPYFILE_DISABLE=1", "--no-xattrs",
+		"cmd/clusterguard", "cmd/cgctl", "cmd/clusterguard-agent", "SHA256SUMS",
+		"clusterguard-install.sh", "clusterguard-agent-stdio.sh", "clusterguard-mysql-probe-cleanup.sh",
+		"docs/offline-install.md", "OFFLINE-INSTALL.md", "COPYFILE_DISABLE=1", "--no-xattrs",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("bundle builder missing %q", expected)

@@ -17,6 +17,7 @@ type taskStoreStub struct {
 	reports    []model.Report
 	auditErrAt model.WorkflowStage
 	reportErr  error
+	onPut      func(Task)
 }
 
 func (store *taskStoreStub) PutLifecycleTask(task Task) (Task, error) {
@@ -30,6 +31,9 @@ func (store *taskStoreStub) PutLifecycleTask(task Task) (Task, error) {
 	}
 	store.tasks[task.ResourceID] = task
 	store.history = append(store.history, task)
+	if store.onPut != nil {
+		store.onPut(task)
+	}
 	return task, nil
 }
 func (store *taskStoreStub) LifecycleTask(resourceID model.ResourceID) (Task, bool) {
@@ -82,12 +86,30 @@ func (stub *lifecycleApprovalStub) ValidateLifecycle(_ context.Context, _ Reques
 
 type lifecycleLockStub struct{ held bool }
 
-func (lock *lifecycleLockStub) AcquireCluster(context.Context, model.ResourceID) (func(), error) {
+func (lock *lifecycleLockStub) AcquireCluster(ctx context.Context, _ model.ResourceID) (context.Context, func(), error) {
 	if lock.held {
-		return nil, errors.New("locked")
+		return nil, nil, errors.New("locked")
 	}
 	lock.held = true
-	return func() { lock.held = false }, nil
+	return ctx, func() { lock.held = false }, nil
+}
+
+type cancelingLifecycleLockStub struct {
+	held   bool
+	cancel context.CancelCauseFunc
+}
+
+func (lock *cancelingLifecycleLockStub) AcquireCluster(ctx context.Context, _ model.ResourceID) (context.Context, func(), error) {
+	if lock.held {
+		return nil, nil, errors.New("locked")
+	}
+	lock.held = true
+	leaseCtx, cancel := context.WithCancelCause(ctx)
+	lock.cancel = cancel
+	return leaseCtx, func() {
+		cancel(context.Canceled)
+		lock.held = false
+	}, nil
 }
 
 type lifecycleExecutorStub struct {
@@ -170,6 +192,52 @@ func TestManagerCommitsMetadataOnlyAfterVerification(t *testing.T) {
 	}
 	if len(store.reports) != 1 || store.reports[0].OperationID != task.OperationID || store.reports[0].Status != model.OperationSucceeded || task.ReportID != store.reports[0].ResourceID {
 		t.Fatalf("lifecycle report task=%+v reports=%+v", task, store.reports)
+	}
+}
+
+func TestManagerUsesDatabaseEngineInLifecycleReport(t *testing.T) {
+	request := Request{
+		ClusterID: model.NewResourceID(), Engine: model.EnginePostgreSQL, Action: ActionRebuild,
+		RequestedBy: "admin", SyncMethod: SyncPostgreSQLBaseBackup,
+		Targets: []Target{{NodeID: model.NewResourceID(), NodeName: "cg-pg-0001", Kind: model.NodeData, Hostname: "pg01", PostgreSQLVersion: "16.3", PostgreSQLPort: 5432, Rebuild: true}},
+	}
+	plan := Plan{ClusterID: request.ClusterID, Action: request.Action, Targets: []TargetPlan{{Target: request.Targets[0], SyncMethod: SyncPostgreSQLBaseBackup}}, CreatedAt: time.Now().UTC()}
+	store := &taskStoreStub{tasks: map[model.ResourceID]Task{}}
+	manager := NewManager(
+		store, lifecycleAuthorityStub{}, lifecycleSafetyStub{}, &lifecycleLockStub{}, &lifecycleApprovalStub{},
+		&lifecycleExecutorStub{result: ExecutionResult{Verified: true}}, &lifecycleCommitterStub{}, time.Now,
+	)
+	task, err := manager.Execute(context.Background(), request, plan, ExecutionSecrets{}, "approved")
+	if err != nil || task.Status != TaskSucceeded || len(store.reports) != 1 {
+		t.Fatalf("PostgreSQL lifecycle task=%+v reports=%+v err=%v", task, store.reports, err)
+	}
+	if store.reports[0].Title != "PostgreSQL node lifecycle report" || !strings.Contains(store.reports[0].Summary, "PostgreSQL") {
+		t.Fatalf("engine-specific lifecycle report=%+v", store.reports[0])
+	}
+}
+
+func TestManagerDoesNotCommitMetadataAfterLockLeaseIsLostAtVerifiedBoundary(t *testing.T) {
+	request, plan := executableLifecyclePlan()
+	leaseLost := errors.New("operation lock lease lost")
+	lock := &cancelingLifecycleLockStub{}
+	store := &taskStoreStub{tasks: map[model.ResourceID]Task{}}
+	store.onPut = func(task Task) {
+		if task.Status == TaskVerifying && lock.cancel != nil {
+			lock.cancel(leaseLost)
+		}
+	}
+	executor := &lifecycleExecutorStub{result: ExecutionResult{Verified: true}}
+	committer := &lifecycleCommitterStub{}
+	manager := NewManager(
+		store, lifecycleAuthorityStub{}, lifecycleSafetyStub{}, lock,
+		&lifecycleApprovalStub{}, executor, committer, time.Now,
+	)
+	task, err := manager.Execute(context.Background(), request, plan, ExecutionSecrets{}, "approval-secret")
+	if !errors.Is(err, leaseLost) || task.Status != TaskIndeterminate {
+		t.Fatalf("lease-lost lifecycle task=%+v err=%v", task, err)
+	}
+	if committer.calls != 0 {
+		t.Fatalf("metadata commit ran after lock lease loss: calls=%d", committer.calls)
 	}
 }
 

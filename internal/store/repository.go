@@ -3,6 +3,7 @@ package store
 import (
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -23,6 +24,7 @@ var (
 	ErrNotFound             = errors.New("repository resource not found")
 	ErrStaleObservation     = errors.New("stale topology observation")
 	ErrInventoryChanged     = errors.New("discovery inventory changed")
+	ErrRecoveryRejected     = errors.New("platform administrator recovery rejected")
 	ErrPostCommitDurability = errors.New("metadata snapshot committed with durability warning")
 )
 
@@ -32,6 +34,10 @@ func validationError(format string, arguments ...interface{}) error {
 
 func conflictError(format string, arguments ...interface{}) error {
 	return fmt.Errorf("%w: %s", ErrConflict, fmt.Sprintf(format, arguments...))
+}
+
+func recoveryConflictError(format string, arguments ...interface{}) error {
+	return fmt.Errorf("%w: %w: %s", ErrConflict, ErrRecoveryRejected, fmt.Sprintf(format, arguments...))
 }
 
 func notFoundError(format string, arguments ...interface{}) error {
@@ -68,6 +74,7 @@ type DiscoveryObservation struct {
 
 type DiscoveryRefresh struct {
 	ClusterID             model.ResourceID
+	ClusterIdentity       model.EngineIdentity
 	InventoryGeneration   uint64
 	Observations          []DiscoveryObservation
 	NativeLinks           []model.NativeReplicationLink
@@ -175,6 +182,15 @@ func NewMemory() *Repository {
 	}
 }
 
+func (repository *Repository) StateRevision() uint64 {
+	if repository == nil {
+		return 0
+	}
+	repository.mu.RLock()
+	defer repository.mu.RUnlock()
+	return repository.stateRevision
+}
+
 func syncMetadataDirectory(path string) error {
 	directory, err := os.Open(path)
 	if err != nil {
@@ -193,12 +209,27 @@ func Open(path string) (*Repository, error) {
 	if repository.path == "" {
 		return repository, nil
 	}
-	contents, err := os.ReadFile(repository.path)
+	file, err := os.Open(repository.path)
 	if os.IsNotExist(err) {
 		return repository, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read metadata snapshot: %w", err)
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("inspect metadata snapshot: %w", err)
+	}
+	if info.Size() > maximumSnapshotBytes {
+		return nil, validationError("metadata snapshot exceeds maximum size")
+	}
+	contents, err := io.ReadAll(io.LimitReader(file, maximumSnapshotBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read metadata snapshot: %w", err)
+	}
+	if len(contents) > maximumSnapshotBytes {
+		return nil, validationError("metadata snapshot exceeds maximum size")
 	}
 	decoded, metadata, err := decodeSnapshotState(contents)
 	if err != nil {
@@ -1525,7 +1556,7 @@ func strictTopologyHealth(observedAt time.Time, fallback model.Health, probes []
 			if hasCurrentDiscoveryEvidence(probes, instance.ResourceID) {
 				currentPrimaries++
 			}
-		case model.RoleReplica:
+		case model.RoleReplica, model.RoleStandby:
 			if instance.Replication.IOThread != model.ThreadRunning || instance.Replication.SQLThread != model.ThreadRunning || !healthyIncomingLinks[instance.ResourceID] {
 				healthy = false
 			}
@@ -1557,6 +1588,13 @@ func (repository *Repository) ApplyDiscoveryRefresh(refresh DiscoveryRefresh) (m
 	cluster, exists := repository.snapshot.Clusters[refresh.ClusterID]
 	if !exists {
 		return model.TopologySnapshot{}, fmt.Errorf("unknown cluster ID: %s", refresh.ClusterID)
+	}
+	clusterIdentity, err := validateDiscoveryClusterIdentity(cluster, refresh)
+	if err != nil {
+		return model.TopologySnapshot{}, err
+	}
+	if len(clusterIdentity) > 0 {
+		cluster.EngineIdentity = clusterIdentity.Clone()
 	}
 
 	observedAt := refresh.ObservedAt.UTC()
@@ -1625,7 +1663,7 @@ func (repository *Repository) ApplyDiscoveryRefresh(refresh DiscoveryRefresh) (m
 		for _, sample := range observation.Metrics {
 			sample.InstanceID = result.Instance.ResourceID
 			metricCandidates[result.Instance.ResourceID] = append(metricCandidates[result.Instance.ResourceID], discoveryMetricCandidate{
-				endpointID: observation.EndpointID, sample: sample, complete: completeDiscoveryMetricSample(sample),
+				endpointID: observation.EndpointID, sample: sample, complete: completeDiscoveryMetricSample(cluster.Engine, sample),
 			})
 		}
 	}
@@ -1828,6 +1866,88 @@ func (repository *Repository) ApplyDiscoveryRefresh(refresh DiscoveryRefresh) (m
 	return cloneTopologySnapshot(published), nil
 }
 
+func validateDiscoveryClusterIdentity(cluster model.DatabaseCluster, refresh DiscoveryRefresh) (model.EngineIdentity, error) {
+	if !discoveryClusterIdentityRequired(cluster.Engine) {
+		return cluster.EngineIdentity.Clone(), nil
+	}
+
+	var observedIdentity model.EngineIdentity
+	var observedKey string
+	for _, observation := range refresh.Observations {
+		candidate := discoveryClusterIdentity(cluster.Engine, observation.Instance.EngineIdentity)
+		key, err := identity.ClusterKey(cluster.Engine, candidate)
+		if err != nil {
+			return nil, validationError("%s discovery observation is missing a valid cluster identity", cluster.Engine)
+		}
+		if observedKey != "" && observedKey != key {
+			return nil, validationError("%s discovery observations contain mixed cluster identities", cluster.Engine)
+		}
+		observedIdentity = candidate
+		observedKey = key
+	}
+
+	var refreshKey string
+	if len(refresh.ClusterIdentity) > 0 {
+		key, err := identity.ClusterKey(cluster.Engine, refresh.ClusterIdentity)
+		if err != nil {
+			return nil, validationError("%s refresh cluster identity is invalid", cluster.Engine)
+		}
+		refreshKey = key
+		if observedKey == "" {
+			return nil, validationError("%s cluster identity cannot be bound without discovery evidence", cluster.Engine)
+		}
+		if refreshKey != observedKey {
+			return nil, validationError("%s refresh identity does not match discovery observations", cluster.Engine)
+		}
+	}
+
+	var persistedKey string
+	if len(cluster.EngineIdentity) > 0 {
+		key, err := identity.ClusterKey(cluster.Engine, cluster.EngineIdentity)
+		if err != nil {
+			return nil, validationError("persisted %s cluster identity is invalid", cluster.Engine)
+		}
+		persistedKey = key
+		if observedKey != "" && persistedKey != observedKey {
+			return nil, conflictError("%s cluster identity does not match the registered cluster", cluster.Engine)
+		}
+		if refreshKey != "" && persistedKey != refreshKey {
+			return nil, conflictError("%s refresh identity does not match the registered cluster", cluster.Engine)
+		}
+		return cluster.EngineIdentity.Clone(), nil
+	}
+
+	if observedKey != "" && refreshKey == "" {
+		return nil, validationError("%s discovery refresh must include the observed cluster identity", cluster.Engine)
+	}
+	if refreshKey != "" {
+		return observedIdentity.Clone(), nil
+	}
+	return nil, nil
+}
+
+func discoveryClusterIdentityRequired(engine model.Engine) bool {
+	switch engine {
+	case model.EnginePostgreSQL, model.EngineOracle, model.EngineSQLServer:
+		return true
+	default:
+		return false
+	}
+}
+
+func discoveryClusterIdentity(engine model.Engine, source model.EngineIdentity) model.EngineIdentity {
+	switch engine {
+	case model.EnginePostgreSQL:
+		return model.EngineIdentity{"system_identifier": strings.TrimSpace(source["system_identifier"])}
+	case model.EngineOracle:
+		return model.EngineIdentity{"dbid": strings.TrimSpace(source["dbid"])}
+	case model.EngineSQLServer:
+		return model.EngineIdentity{"group_id": strings.TrimSpace(source["group_id"])}
+	default:
+		return nil
+	}
+}
+
 // ApplyDiscoveryRefreshBatch publishes one scheduler observation round as one
 // replicated snapshot. The batch is all-or-nothing so readers never observe a
 // mixture of old and new cluster observations from the same round.
@@ -1876,10 +1996,29 @@ func (repository *Repository) ApplyDiscoveryRefreshBatch(refreshes []DiscoveryRe
 	return published, nil
 }
 
-func completeDiscoveryMetricSample(sample model.MetricSample) bool {
-	for _, name := range []string{"questions_total", "transactions_total", "slow_queries_total", "connections", "running_threads", "buffer_pool_hit_ratio"} {
+func completeDiscoveryMetricSample(engine model.Engine, sample model.MetricSample) bool {
+	required := []string{}
+	switch engine {
+	case model.EngineMySQL:
+		required = []string{"questions_total", "transactions_total", "slow_queries_total", "connections", "running_threads", "buffer_pool_hit_ratio"}
+	case model.EnginePostgreSQL:
+		required = []string{
+			"connections", "active_connections", "transactions_total", "deadlocks_total", "temp_bytes_total",
+			"blocks_read_total", "blocks_hit_total", "database_size_bytes", "replication_clients", "buffer_cache_hit_ratio",
+		}
+	case model.EngineOracle:
+		required = []string{"broker_status_healthy"}
+	case model.EngineSQLServer:
+		required = []string{"always_on_healthy", "connected", "synchronized", "log_send_queue_bytes", "redo_queue_bytes"}
+	default:
+		return false
+	}
+	for _, name := range required {
 		value, found := sample.Values[name]
-		if !found || math.IsNaN(value) || math.IsInf(value, 0) {
+		if !found || math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
+			return false
+		}
+		if (name == "buffer_pool_hit_ratio" || name == "buffer_cache_hit_ratio") && value > 1 {
 			return false
 		}
 	}
@@ -2006,6 +2145,9 @@ func (repository *Repository) ReplaceClusterAnomalies(clusterID model.ResourceID
 }
 
 func (repository *Repository) RecordAudit(event model.AuditEvent) error {
+	if err := validateAuditText(event); err != nil {
+		return err
+	}
 	now := repository.now().UTC()
 	if event.ResourceID == "" {
 		event.ResourceID = model.NewResourceID()
@@ -2030,6 +2172,9 @@ func (repository *Repository) RecordAudit(event model.AuditEvent) error {
 func (repository *Repository) RecordReport(report model.Report) error {
 	if !terminalReportStatus(report.Status) {
 		return validationError("report status must be terminal")
+	}
+	if err := validateReportText(report); err != nil {
+		return err
 	}
 	now := repository.now().UTC()
 	if report.ResourceID == "" {

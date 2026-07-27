@@ -14,6 +14,8 @@ import (
 	"clusterguard.io/ha/pkg/model"
 )
 
+const oracleBrokerQueryTimeout = 90 * time.Second
+
 type ProcessRunner interface {
 	Run(context.Context, []byte, string, ...string) ([]byte, error)
 }
@@ -39,6 +41,7 @@ type SSHAgentTransportConfig struct {
 	AgentBinary     string
 	AgentConfigPath string
 	CommandTimeout  time.Duration
+	MutationTimeout time.Duration
 }
 
 type SSHAgentTransport struct {
@@ -65,6 +68,9 @@ func NewSSHAgentTransport(configuration SSHAgentTransportConfig, runner ProcessR
 	if configuration.CommandTimeout <= 0 {
 		configuration.CommandTimeout = 5 * time.Second
 	}
+	if configuration.MutationTimeout <= 0 {
+		configuration.MutationTimeout = 30 * time.Minute
+	}
 	if configuration.User == "" || configuration.IdentityFile == "" || configuration.KnownHostsFile == "" || runner == nil {
 		return nil, fmt.Errorf("SSH agent transport configuration is incomplete")
 	}
@@ -72,7 +78,16 @@ func NewSSHAgentTransport(configuration SSHAgentTransportConfig, runner ProcessR
 }
 
 func (transport *SSHAgentTransport) Send(ctx context.Context, instance model.DatabaseInstance, request agent.Request) (agent.Response, error) {
-	commandContext, cancel := context.WithTimeout(ctx, transport.configuration.CommandTimeout)
+	timeout := transport.configuration.CommandTimeout
+	switch {
+	case postgresqlAgentMutationCommand(request.Command) || request.Command == agent.CommandOracleBrokerSwitchover:
+		timeout = transport.configuration.MutationTimeout
+	case request.Command == agent.CommandOracleBrokerDiscover || request.Command == agent.CommandOracleBrokerStatus:
+		if timeout < oracleBrokerQueryTimeout {
+			timeout = oracleBrokerQueryTimeout
+		}
+	}
+	commandContext, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	host := strings.TrimSpace(instance.IPAddress)
 	if host == "" {
@@ -92,8 +107,8 @@ func (transport *SSHAgentTransport) Send(ctx context.Context, instance model.Dat
 		"-o", "KbdInteractiveAuthentication=no",
 		"-o", "ConnectTimeout=5",
 		"-o", "ConnectionAttempts=1",
-		"-o", "ServerAliveInterval=2",
-		"-o", "ServerAliveCountMax=2",
+		"-o", "ServerAliveInterval=5",
+		"-o", "ServerAliveCountMax=6",
 		"-o", "StrictHostKeyChecking=yes",
 		"-o", "UserKnownHostsFile=" + transport.configuration.KnownHostsFile,
 		"-i", transport.configuration.IdentityFile,
@@ -114,4 +129,14 @@ func (transport *SSHAgentTransport) Send(ctx context.Context, instance model.Dat
 		return agent.Response{}, fmt.Errorf("agent response contains multiple JSON values")
 	}
 	return response, nil
+}
+
+func postgresqlAgentMutationCommand(command string) bool {
+	switch command {
+	case agent.CommandPostgreSQLStop, agent.CommandPostgreSQLStart, agent.CommandPostgreSQLPromote,
+		agent.CommandPostgreSQLRepoint, agent.CommandPostgreSQLRewind, agent.CommandPostgreSQLBaseBackup:
+		return true
+	default:
+		return false
+	}
 }

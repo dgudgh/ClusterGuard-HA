@@ -12,6 +12,37 @@ import (
 	"clusterguard.io/ha/pkg/model"
 )
 
+func TestPrometheusMetricNamesAreScopedByDatabaseEngine(t *testing.T) {
+	tests := []struct {
+		engine model.Engine
+		name   string
+		want   string
+	}{
+		{model.EngineMySQL, "qps", "clusterguard_mysql_qps"},
+		{model.EngineMySQL, "replication_lag_seconds", "clusterguard_mysql_replication_lag_seconds"},
+		{model.EnginePostgreSQL, "replication_lag_seconds", "clusterguard_postgresql_replication_lag_seconds"},
+		{model.EnginePostgreSQL, "connections", "clusterguard_postgresql_connections"},
+		{model.EnginePostgreSQL, "transactions_total", "clusterguard_postgresql_transactions_total"},
+		{model.EnginePostgreSQL, "conflicts_total", "clusterguard_postgresql_conflicts_total"},
+		{model.EnginePostgreSQL, "buffer_cache_hit_ratio", "clusterguard_postgresql_buffer_cache_hit_ratio"},
+		{model.EnginePostgreSQL, "wal_bytes", "clusterguard_postgresql_wal_bytes"},
+		{model.EnginePostgreSQL, "qps", ""},
+		{model.EngineOracle, "replication_lag_seconds", "clusterguard_oracle_replication_lag_seconds"},
+		{model.EngineOracle, "broker_status_healthy", "clusterguard_oracle_broker_status_healthy"},
+		{model.EngineOracle, "apply_lag_seconds", "clusterguard_oracle_apply_lag_seconds"},
+		{model.EngineOracle, "qps", ""},
+		{model.EngineSQLServer, "replication_lag_seconds", "clusterguard_sqlserver_replication_lag_seconds"},
+		{model.EngineSQLServer, "always_on_healthy", "clusterguard_sqlserver_always_on_healthy"},
+		{model.EngineSQLServer, "redo_queue_bytes", "clusterguard_sqlserver_redo_queue_bytes"},
+		{model.EngineSQLServer, "qps", ""},
+	}
+	for _, test := range tests {
+		if got := prometheusMetricName(test.engine, test.name); got != test.want {
+			t.Errorf("prometheusMetricName(%s, %s)=%q want %q", test.engine, test.name, got, test.want)
+		}
+	}
+}
+
 func TestMetricsRoutesUsePersistedSamplesAndReplicationLag(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "metadata.json")
 	repository, err := store.Open(path)

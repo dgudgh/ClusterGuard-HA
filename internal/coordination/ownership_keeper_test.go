@@ -3,6 +3,7 @@ package coordination
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -138,8 +139,11 @@ func ownershipKeeperFixture(now time.Time) (*ownershipInventoryStub, *ownershipO
 	}
 	resource := model.HAEndpoint{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID(), MetadataRevision: 1}, ClusterID: clusterID, EndpointID: model.NewResourceID(), Kind: model.EndpointVIP, OwnerID: primary.ResourceID, Healthy: true}
 	inventory := &ownershipInventoryStub{
-		clusters:  []model.DatabaseCluster{{ResourceMeta: model.ResourceMeta{ResourceID: clusterID}, Engine: model.EngineMySQL}},
-		snapshots: map[model.ResourceID]model.TopologySnapshot{clusterID: {ClusterID: clusterID, ObservedAt: now, Instances: []model.DatabaseInstance{primary}}},
+		clusters: []model.DatabaseCluster{{ResourceMeta: model.ResourceMeta{ResourceID: clusterID}, Engine: model.EngineMySQL}},
+		snapshots: map[model.ResourceID]model.TopologySnapshot{clusterID: {
+			ClusterID: clusterID, ObservedAt: now, Instances: []model.DatabaseInstance{primary},
+			Probes: []model.ProbeStatus{{InstanceID: primary.ResourceID, DiscoveryObservedAt: now, Health: primary.Health}},
+		}},
 		resources: map[model.ResourceID][]model.HAEndpoint{clusterID: {resource}},
 		endpoints: map[model.ResourceID]model.Endpoint{resource.EndpointID: {ResourceMeta: model.ResourceMeta{ResourceID: resource.EndpointID, MetadataRevision: 1}, ClusterID: clusterID, InstanceID: primary.ResourceID, Kind: model.EndpointVIP, IPAddress: "192.0.2.100", Active: true}},
 	}
@@ -149,6 +153,121 @@ func ownershipKeeperFixture(now time.Time) (*ownershipInventoryStub, *ownershipO
 		OwnerIDs: []model.ResourceID{primary.ResourceID}, Complete: true,
 	}}
 	return inventory, observer, &ownershipLeaseStub{}, primary, resource
+}
+
+func TestWritablePrimaryAcceptsHealthyPostgreSQLWriter(t *testing.T) {
+	now := time.Date(2026, time.July, 21, 6, 30, 0, 0, time.UTC)
+	primary := model.DatabaseInstance{
+		ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()},
+		Engine:       model.EnginePostgreSQL,
+		Role:         model.RolePrimary,
+		Health:       model.Health{State: model.HealthHealthy},
+		EngineMetadata: map[string]string{
+			"in_recovery":           "false",
+			"transaction_read_only": "false",
+		},
+	}
+	snapshot := model.TopologySnapshot{
+		ObservedAt: now,
+		Instances:  []model.DatabaseInstance{primary},
+		Probes:     []model.ProbeStatus{{InstanceID: primary.ResourceID, DiscoveryObservedAt: now, Health: primary.Health}},
+	}
+	selected, err := writablePrimary(snapshot)
+	if err != nil || selected.ResourceID != primary.ResourceID {
+		t.Fatalf("healthy PostgreSQL writer was rejected: selected=%+v err=%v", selected, err)
+	}
+
+	primary.EngineMetadata["transaction_read_only"] = "true"
+	snapshot.Instances[0] = primary
+	if selected, err := writablePrimary(snapshot); err == nil || selected.ResourceID != "" {
+		t.Fatalf("read-only PostgreSQL primary was accepted: selected=%+v err=%v", selected, err)
+	}
+}
+
+func TestWritablePrimaryAllowsCurrentFailedProbeForFormerPrimary(t *testing.T) {
+	now := time.Date(2026, time.July, 21, 6, 35, 0, 0, time.UTC)
+	current := model.DatabaseInstance{
+		ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()},
+		Engine:       model.EnginePostgreSQL,
+		Role:         model.RolePrimary,
+		Health:       model.Health{State: model.HealthHealthy, ObservedAt: now},
+		EngineMetadata: map[string]string{
+			"in_recovery":           "false",
+			"transaction_read_only": "false",
+		},
+	}
+	former := current
+	former.ResourceID = model.NewResourceID()
+	former.Health = model.Health{State: model.HealthUnknown, Summary: "database probe failed", ObservedAt: now}
+	snapshot := model.TopologySnapshot{
+		ObservedAt: now,
+		Instances:  []model.DatabaseInstance{former, current},
+		Probes: []model.ProbeStatus{
+			{InstanceID: former.ResourceID, Health: former.Health},
+			{InstanceID: current.ResourceID, DiscoveryObservedAt: now, Health: current.Health},
+		},
+	}
+
+	selected, err := writablePrimary(snapshot)
+	if err != nil || selected.ResourceID != current.ResourceID {
+		t.Fatalf("verified current writer was rejected beside unreachable former primary: selected=%+v err=%v", selected, err)
+	}
+}
+
+func TestWritablePrimaryRejectsAmbiguousFormerPrimaryEvidence(t *testing.T) {
+	now := time.Date(2026, time.July, 21, 6, 40, 0, 0, time.UTC)
+	writer := model.DatabaseInstance{
+		ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()},
+		Engine:       model.EnginePostgreSQL,
+		Role:         model.RolePrimary,
+		Health:       model.Health{State: model.HealthHealthy, ObservedAt: now},
+		EngineMetadata: map[string]string{
+			"in_recovery":           "false",
+			"transaction_read_only": "false",
+		},
+	}
+	former := writer
+	former.ResourceID = model.NewResourceID()
+	former.Health = model.Health{State: model.HealthUnknown, Summary: "database probe failed", ObservedAt: now}
+	base := model.TopologySnapshot{
+		ObservedAt: now,
+		Instances:  []model.DatabaseInstance{former, writer},
+		Probes: []model.ProbeStatus{
+			{InstanceID: former.ResourceID, Health: former.Health},
+			{InstanceID: writer.ResourceID, DiscoveryObservedAt: now, Health: writer.Health},
+		},
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*model.TopologySnapshot)
+	}{
+		{name: "former primary has no bound probe", mutate: func(snapshot *model.TopologySnapshot) {
+			snapshot.Probes = snapshot.Probes[1:]
+		}},
+		{name: "former primary failure is stale", mutate: func(snapshot *model.TopologySnapshot) {
+			snapshot.Probes[0].Health.ObservedAt = now.Add(-time.Second)
+		}},
+		{name: "former primary remains reachable", mutate: func(snapshot *model.TopologySnapshot) {
+			snapshot.Instances[0].Health = model.Health{State: model.HealthHealthy, ObservedAt: now}
+			snapshot.Probes[0] = model.ProbeStatus{InstanceID: former.ResourceID, DiscoveryObservedAt: now, Health: snapshot.Instances[0].Health}
+		}},
+		{name: "writer lacks current successful probe", mutate: func(snapshot *model.TopologySnapshot) {
+			snapshot.Probes[1].DiscoveryObservedAt = time.Time{}
+			snapshot.Probes[1].Health = model.Health{State: model.HealthUnknown, ObservedAt: now}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			snapshot := base
+			snapshot.Instances = append([]model.DatabaseInstance{}, base.Instances...)
+			snapshot.Probes = append([]model.ProbeStatus{}, base.Probes...)
+			test.mutate(&snapshot)
+			if selected, err := writablePrimary(snapshot); err == nil || selected.ResourceID != "" {
+				t.Fatalf("ambiguous topology selected=%+v err=%v", selected, err)
+			}
+		})
+	}
 }
 
 func rebootBootstrapFixture(now time.Time) (*ownershipInventoryStub, *ownershipObserverStub, *ownershipLeaseStub, model.DatabaseInstance, model.DatabaseInstance) {
@@ -410,5 +529,58 @@ func TestOwnershipKeeperProbesClustersConcurrently(t *testing.T) {
 	unblock()
 	if err := <-done; err == nil {
 		t.Fatal("released probes unexpectedly succeeded")
+	}
+}
+
+func TestOwnershipKeeperRunReportsBackgroundFailures(t *testing.T) {
+	reported := make(chan error, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	keeper := NewOwnershipKeeper(nil, nil, nil, nil, nil, time.Hour, time.Minute,
+		WithOwnershipErrorHandler(func(err error) {
+			reported <- err
+			cancel()
+		}),
+	)
+	done := make(chan struct{})
+	go func() {
+		keeper.Run(ctx)
+		close(done)
+	}()
+	select {
+	case err := <-reported:
+		if err == nil || !strings.Contains(err.Error(), "not configured") {
+			t.Fatalf("reported ownership error=%v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ownership keeper swallowed its background failure")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("ownership keeper did not stop after cancellation")
+	}
+}
+
+func TestOwnershipKeeperRateLimitsRepeatedBackgroundFailures(t *testing.T) {
+	now := time.Date(2026, 7, 20, 9, 0, 0, 0, time.UTC)
+	reported := make([]string, 0, 3)
+	keeper := NewOwnershipKeeper(nil, nil, nil, nil, func() time.Time { return now }, time.Second, time.Minute,
+		WithOwnershipErrorHandler(func(err error) { reported = append(reported, err.Error()) }),
+	)
+
+	keeper.reportError(errors.New("ownership blocked"))
+	keeper.reportError(errors.New("ownership blocked"))
+	if len(reported) != 1 {
+		t.Fatalf("duplicate ownership errors reported=%v", reported)
+	}
+	now = now.Add(5 * time.Minute)
+	keeper.reportError(errors.New("ownership blocked"))
+	if len(reported) != 2 {
+		t.Fatalf("ownership reminder missing=%v", reported)
+	}
+	keeper.reportError(nil)
+	keeper.reportError(errors.New("ownership blocked"))
+	if len(reported) != 3 {
+		t.Fatalf("ownership recovery did not reset suppression=%v", reported)
 	}
 }

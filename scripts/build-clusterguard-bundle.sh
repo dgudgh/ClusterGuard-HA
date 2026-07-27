@@ -8,6 +8,7 @@ output="${repository}/dist"
 version="$(git -C "${repository}" describe --always --dirty 2>/dev/null || printf dev)"
 goos="${CG_BUNDLE_GOOS:-linux}"
 goarch="${CG_BUNDLE_GOARCH:-amd64}"
+jq_binary="${CG_JQ_BINARY:-}"
 
 while (($#)); do
   case "$1" in
@@ -15,7 +16,8 @@ while (($#)); do
     --version) version="${2:-}"; shift 2 ;;
     --goos) goos="${2:-}"; shift 2 ;;
     --goarch) goarch="${2:-}"; shift 2 ;;
-    -h|--help) echo "usage: $0 [--output DIR] [--version VERSION] [--goos OS] [--goarch ARCH]"; exit 0 ;;
+    --jq-binary) jq_binary="${2:-}"; shift 2 ;;
+    -h|--help) echo "usage: $0 [--output DIR] [--version VERSION] [--goos OS] [--goarch ARCH] [--jq-binary FILE]"; exit 0 ;;
     *) echo "unknown bundle argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -36,16 +38,26 @@ for target in "${build_targets[@]}"; do
   package_path="${target#*:}"
   CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" go -C "${repository}" build -trimpath -ldflags "-s -w" -o "${root}/bin/${command_path}" "${package_path}"
 done
-for helper in clusterguard-install.sh clusterguard-preflight.sh clusterguard-smoke.sh clusterguard-ha-matrix.sh clusterguard-node-lifecycle.sh clusterguard-mysql-install.sh clusterguard-mysql-sync.sh clusterguard-agent-stdio.sh; do
+for helper in clusterguard-install.sh clusterguard-preflight.sh clusterguard-smoke.sh clusterguard-ha-matrix.sh clusterguard-node-lifecycle.sh clusterguard-mysql-install.sh clusterguard-mysql-sync.sh clusterguard-mysql-probe-cleanup.sh clusterguard-postgresql-install.sh clusterguard-postgresql-sync.sh clusterguard-agent-stdio.sh; do
   install -m 0755 "${repository}/scripts/${helper}" "${root}/scripts/${helper}"
 done
 cp "${repository}"/configs/*.json "${root}/configs/"
 cp "${repository}"/packaging/systemd/* "${root}/packaging/systemd/"
 cp "${repository}"/packaging/logrotate/* "${root}/packaging/logrotate/"
 cp "${repository}/README.md" "${root}/README.md"
-if [[ -n "${CG_JQ_BINARY:-}" ]]; then
-  [[ -x "${CG_JQ_BINARY}" ]] || { echo "CG_JQ_BINARY is not executable" >&2; exit 3; }
-  install -m 0755 "${CG_JQ_BINARY}" "${root}/bin/jq"
+cp "${repository}/docs/offline-install.md" "${root}/OFFLINE-INSTALL.md"
+if [[ -n "${jq_binary}" ]]; then
+  [[ -x "${jq_binary}" ]] || { echo "jq binary is not executable" >&2; exit 3; }
+  command -v file >/dev/null 2>&1 || { echo "file is required to validate a bundled jq binary" >&2; exit 3; }
+  jq_format="$(file -b "${jq_binary}")"
+  if [[ "${goos}" == "linux" ]]; then
+    [[ "${jq_format}" == *ELF* ]] || { echo "jq binary is not a Linux ELF executable" >&2; exit 3; }
+    case "${goarch}" in
+      amd64) [[ "${jq_format}" == *x86-64* || "${jq_format}" == *x86_64* ]] || { echo "jq binary architecture is not amd64" >&2; exit 3; } ;;
+      arm64) [[ "${jq_format}" == *aarch64* || "${jq_format}" == *ARM64* ]] || { echo "jq binary architecture is not arm64" >&2; exit 3; } ;;
+    esac
+  fi
+  install -m 0755 "${jq_binary}" "${root}/bin/jq"
 fi
 
 if command -v sha256sum >/dev/null 2>&1; then

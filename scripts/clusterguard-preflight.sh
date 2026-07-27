@@ -46,7 +46,7 @@ if [[ -n "${assets_dir}" ]]; then
     relative="${asset#"${assets_dir}"/}"
     case "${relative}" in
       ._*|*/._*|.DS_Store|*/.DS_Store) continue ;;
-      tls/*.crt|tls/*.key|ssh/*known_hosts|ssh/*_ed25519|mysql/*-client.cnf) ;;
+      tls/*.crt|tls/*.key|ssh/*known_hosts|ssh/*_ed25519|mysql/*-client.cnf|postgresql/*.pass) ;;
       *) echo "unsupported runtime asset: ${relative}" >&2; exit 3 ;;
     esac
   done < <(find "${assets_dir}" -mindepth 2 -maxdepth 2 -type f -print0 | sort -z)
@@ -59,6 +59,9 @@ required=(
   scripts/clusterguard-node-lifecycle.sh
   scripts/clusterguard-mysql-install.sh
   scripts/clusterguard-mysql-sync.sh
+  scripts/clusterguard-mysql-probe-cleanup.sh
+  scripts/clusterguard-postgresql-install.sh
+  scripts/clusterguard-postgresql-sync.sh
   scripts/clusterguard-agent-stdio.sh
   packaging/systemd/clusterguard-ha.service
   packaging/systemd/clusterguard-agent.service
@@ -106,13 +109,53 @@ if [[ -f "${bundle_dir}/SHA256SUMS" ]]; then
 fi
 
 if [[ "${CG_PREFLIGHT_SKIP_RUNTIME:-0}" != "1" ]]; then
-  for command_name in bash find install systemctl; do
+  for command_name in bash find install systemctl getent groupadd useradd chmod chown; do
     command -v "${command_name}" >/dev/null 2>&1 || { echo "required command ${command_name} is unavailable" >&2; exit 3; }
   done
   [[ -d /run/systemd/system ]] || { echo "systemd is not running" >&2; exit 3; }
   timedatectl show -p NTPSynchronized --value 2>/dev/null | grep -Eq '^(yes|true|1)$' || {
     echo "warning: host clock synchronization is not confirmed" >&2
   }
+
+  if [[ "${role}" == "data" || "${role}" == "mixed" ]]; then
+    ip_binary="$("${jq_binary}" -r '.ip_binary // "/sbin/ip"' "${agent_config_file}")"
+    arping_binary="$("${jq_binary}" -r '.arping_binary // "/usr/sbin/arping"' "${agent_config_file}")"
+    [[ -x "${ip_binary}" ]] || { echo "configured ip binary is unavailable: ${ip_binary}" >&2; exit 3; }
+    [[ -x "${arping_binary}" ]] || { echo "configured arping binary is unavailable: ${arping_binary}" >&2; exit 3; }
+  fi
+
+  if [[ "${role}" == "controller" || "${role}" == "mixed" ]]; then
+    if "${jq_binary}" -e '.mysql.enabled == true' "${config_file}" >/dev/null; then
+      command -v mysql >/dev/null 2>&1 || [[ -x /usr/local/mysql/bin/mysql ]] || {
+        echo "enabled MySQL adapter requires an offline-installed mysql client" >&2
+        exit 3
+      }
+    fi
+    if "${jq_binary}" -e '.postgresql.enabled == true' "${config_file}" >/dev/null; then
+      command -v psql >/dev/null 2>&1 || [[ -x /usr/pgsql-16/bin/psql || -x /usr/lib/postgresql/16/bin/psql ]] || {
+        echo "enabled PostgreSQL adapter requires an offline-installed psql client" >&2
+        exit 3
+      }
+    fi
+    if "${jq_binary}" -e '.sqlserver.enabled == true' "${config_file}" >/dev/null; then
+      command -v sqlcmd >/dev/null 2>&1 || [[ -x /opt/mssql-tools18/bin/sqlcmd || -x /opt/mssql-tools/bin/sqlcmd ]] || {
+        echo "enabled SQL Server adapter requires an offline-installed sqlcmd client" >&2
+        exit 3
+      }
+    fi
+    if "${jq_binary}" -e '.oracle.enabled == true and .agent.enabled != true' "${config_file}" >/dev/null; then
+      command -v sqlplus >/dev/null 2>&1 && command -v dgmgrl >/dev/null 2>&1 || {
+        echo "direct Oracle control requires offline-installed sqlplus and dgmgrl clients" >&2
+        exit 3
+      }
+    fi
+    if "${jq_binary}" -e '.node_lifecycle.enabled == true' "${config_file}" >/dev/null; then
+      command -v ssh >/dev/null 2>&1 && command -v scp >/dev/null 2>&1 || {
+        echo "enabled node lifecycle requires offline-installed ssh and scp clients" >&2
+        exit 3
+      }
+    fi
+  fi
 fi
 
 printf 'preflight: pass\n'

@@ -115,7 +115,7 @@ SQL
       mysql_target -e "${drop_schema_template/SCHEMA_HEX/${target_schema_hex}}"
     done
     mapfile -t user_databases < <(mysql_donor --batch --skip-column-names -e \
-      "SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT IN ('information_schema','performance_schema','mysql','sys') ORDER BY schema_name")
+      "SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT IN ('information_schema','performance_schema','mysql','sys','cg_rc28_test','clusterguard_ha_test','clusterguard_matrix_probe','clusterguard_validation') ORDER BY schema_name")
     if [[ "${#user_databases[@]}" -gt 0 ]]; then
       "${mysqldump}" --defaults-extra-file="${donor_defaults}" --host="${donor_host}" --port="${donor_port}" \
         --single-transaction --routines --events --triggers --hex-blob --set-gtid-purged=ON --databases "${user_databases[@]}" | mysql_target

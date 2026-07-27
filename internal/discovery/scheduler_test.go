@@ -21,6 +21,7 @@ type schedulerRefresher struct {
 	calls      []model.ResourceID
 	batchCalls [][]model.ResourceID
 	wake       chan struct{}
+	err        error
 }
 
 func (refresher *schedulerRefresher) Refresh(_ context.Context, clusterID model.ResourceID) (model.TopologySnapshot, error) {
@@ -33,7 +34,7 @@ func (refresher *schedulerRefresher) Refresh(_ context.Context, clusterID model.
 		default:
 		}
 	}
-	return model.TopologySnapshot{ClusterID: clusterID}, nil
+	return model.TopologySnapshot{ClusterID: clusterID}, refresher.err
 }
 
 func (refresher *schedulerRefresher) count() int {
@@ -56,7 +57,7 @@ func (refresher *schedulerRefresher) RefreshBatch(_ context.Context, clusterIDs 
 	for _, clusterID := range clusterIDs {
 		result[clusterID] = model.TopologySnapshot{ClusterID: clusterID}
 	}
-	return result, nil
+	return result, refresher.err
 }
 
 func (refresher *schedulerRefresher) totalCount() int {
@@ -136,5 +137,37 @@ func TestSchedulerRunsImmediatelyAndStopsWithContext(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("scheduler did not stop")
+	}
+}
+
+func TestSchedulerRunReportsRefreshFailures(t *testing.T) {
+	expected := errors.New("discovery backend unavailable")
+	reported := make(chan error, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	scheduler := NewScheduler(
+		schedulerClusterSource{clusters: []model.DatabaseCluster{{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}}}},
+		&schedulerRefresher{err: expected}, nil, time.Hour, time.Second,
+		WithSchedulerErrorHandler(func(err error) {
+			reported <- err
+			cancel()
+		}),
+	)
+	done := make(chan struct{})
+	go func() {
+		scheduler.Run(ctx)
+		close(done)
+	}()
+	select {
+	case err := <-reported:
+		if !errors.Is(err, expected) {
+			t.Fatalf("reported discovery error=%v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("scheduler swallowed refresh failure")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("scheduler did not stop after error test cancellation")
 	}
 }

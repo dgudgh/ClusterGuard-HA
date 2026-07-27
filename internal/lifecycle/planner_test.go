@@ -80,6 +80,94 @@ func TestAutomaticSyncSkipsCloneForMySQL57AndUsesFallbackOrder(t *testing.T) {
 	}
 }
 
+func TestPostgreSQLLifecycleAutoUsesBaseBackupAndRejectsCrossMajor(t *testing.T) {
+	request := Request{
+		ClusterID: model.NewResourceID(), Engine: model.EnginePostgreSQL, Action: ActionAdd, SyncMethod: SyncAuto,
+		Targets: []Target{{NodeName: "cg-pg-0002", Kind: model.NodeData, Hostname: "pg-02", PostgreSQLVersion: "16.4", PostgreSQLPort: 5432}},
+	}
+	capabilities := Capabilities{SourceVersion: "16.3", PostgreSQLBaseBackupAvailable: true, PostgreSQLRewindAvailable: true}
+	plan := BuildPlan(request, capabilities)
+	if plan.Blocked || len(plan.Targets) != 1 || plan.Targets[0].SyncMethod != SyncPostgreSQLBaseBackup {
+		t.Fatalf("PostgreSQL auto synchronization plan=%+v", plan)
+	}
+	request.Targets[0].PostgreSQLVersion = "15.8"
+	plan = BuildPlan(request, capabilities)
+	if !plan.Blocked || !failedLifecycleCheck(plan.Checks, "sync_method_cg-pg-0002") {
+		t.Fatalf("cross-major PostgreSQL lifecycle was accepted: %+v", plan)
+	}
+}
+
+func TestPostgreSQLLifecycleExplicitRewindRequiresCapability(t *testing.T) {
+	request := Request{
+		ClusterID: model.NewResourceID(), Engine: model.EnginePostgreSQL, Action: ActionRebuild, SyncMethod: SyncPostgreSQLRewind,
+		Targets: []Target{{NodeID: model.NewResourceID(), NodeName: "cg-pg-0002", Kind: model.NodeData, Hostname: "pg-02", PostgreSQLVersion: "16.4", PostgreSQLPort: 5432, Rebuild: true}},
+	}
+	blocked := BuildPlan(request, Capabilities{SourceVersion: "16.3", PostgreSQLBaseBackupAvailable: true})
+	if !blocked.Blocked {
+		t.Fatalf("PostgreSQL rewind without capability was accepted: %+v", blocked)
+	}
+	accepted := BuildPlan(request, Capabilities{SourceVersion: "16.3", PostgreSQLBaseBackupAvailable: true, PostgreSQLRewindAvailable: true})
+	if accepted.Blocked || accepted.Targets[0].SyncMethod != SyncPostgreSQLRewind {
+		t.Fatalf("configured PostgreSQL rewind was rejected: %+v", accepted)
+	}
+}
+
+func TestLifecyclePlanRejectsInvalidTargetTransportAndDatabaseCoordinates(t *testing.T) {
+	base := Target{
+		NodeName: "cg-pg-0002", Kind: model.NodeData, Hostname: "pg-02.example.test", IPAddress: "192.0.2.32",
+		SSHUser: "root", SSHPort: 22, PostgreSQLVersion: "16.4", PostgreSQLPort: 5432,
+	}
+	capabilities := Capabilities{SourceVersion: "16.3", PostgreSQLBaseBackupAvailable: true}
+	tests := []struct {
+		name   string
+		mutate func(*Target)
+	}{
+		{name: "fixed node name", mutate: func(target *Target) { target.NodeName = "cg pg 0002" }},
+		{name: "hostname", mutate: func(target *Target) { target.Hostname = "pg 02" }},
+		{name: "ip address", mutate: func(target *Target) { target.IPAddress = "999.0.2.32" }},
+		{name: "ssh user", mutate: func(target *Target) { target.SSHUser = "root;id" }},
+		{name: "ssh port", mutate: func(target *Target) { target.SSHPort = 70000 }},
+		{name: "database port", mutate: func(target *Target) { target.PostgreSQLPort = 0 }},
+		{name: "database version", mutate: func(target *Target) { target.PostgreSQLVersion = "16 latest" }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			target := base
+			test.mutate(&target)
+			plan := BuildPlan(Request{
+				ClusterID: model.NewResourceID(), Engine: model.EnginePostgreSQL, Action: ActionAdd,
+				SyncMethod: SyncAuto, Targets: []Target{target},
+			}, capabilities)
+			if !plan.Blocked || !failedLifecycleCheck(plan.Checks, "target_configuration_cg-pg-0002") {
+				t.Fatalf("invalid %s was accepted: %+v", test.name, plan)
+			}
+		})
+	}
+}
+
+func TestLifecyclePlanRejectsDonorThatReferencesTheTargetResourceOrEndpoint(t *testing.T) {
+	targetID := model.NewResourceID()
+	target := Target{
+		NodeID: targetID, NodeName: "cg-pg-0002", Kind: model.NodeData, Hostname: "pg-02", IPAddress: "192.0.2.32",
+		SSHPort: 22, PostgreSQLVersion: "16.4", PostgreSQLPort: 5432, Rebuild: true,
+	}
+	base := Request{
+		ClusterID: model.NewResourceID(), Engine: model.EnginePostgreSQL, Action: ActionRebuild,
+		SyncMethod: SyncPostgreSQLRewind, Targets: []Target{target},
+		Donor: Donor{InstanceID: targetID, Hostname: "pg-primary", IPAddress: "192.0.2.31", Port: 5432},
+	}
+	capabilities := Capabilities{SourceVersion: "16.3", PostgreSQLRewindAvailable: true}
+	if plan := BuildPlan(base, capabilities); !plan.Blocked || !failedLifecycleCheck(plan.Checks, "donor_target_cg-pg-0002") {
+		t.Fatalf("self-referencing donor resource was accepted: %+v", plan)
+	}
+	base.Donor.InstanceID = model.NewResourceID()
+	base.Donor.Hostname = target.Hostname
+	base.Donor.IPAddress = target.IPAddress
+	if plan := BuildPlan(base, capabilities); !plan.Blocked || !failedLifecycleCheck(plan.Checks, "donor_target_cg-pg-0002") {
+		t.Fatalf("self-referencing donor endpoint was accepted: %+v", plan)
+	}
+}
+
 func TestLifecyclePlanRejectsDuplicateFixedNodeNames(t *testing.T) {
 	request := Request{ClusterID: model.NewResourceID(), Action: ActionAdd, SyncMethod: SyncAuto, Targets: []Target{
 		lifecycleTarget("cg-data-0001", model.NodeData, "8.0.44"), lifecycleTarget("CG-DATA-0001", model.NodeData, "8.0.44"),

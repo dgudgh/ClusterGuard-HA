@@ -27,19 +27,24 @@ type repositoryProgress struct {
 }
 
 func (progress repositoryProgress) StepCompleted(ctx context.Context, step string) (bool, error) {
+	_, completed, err := progress.StepResult(ctx, step)
+	return completed, err
+}
+
+func (progress repositoryProgress) StepResult(ctx context.Context, step string) (string, bool, error) {
 	if err := ctx.Err(); err != nil {
-		return false, err
+		return "", false, err
 	}
 	record, found := progress.operations.Operation(progress.operationID)
 	if !found {
-		return false, fmt.Errorf("operation progress record does not exist")
+		return "", false, fmt.Errorf("operation progress record does not exist")
 	}
 	for _, attempt := range record.Attempts {
 		if attempt.Step == step && attempt.Status == model.OperationSucceeded {
-			return true, nil
+			return attempt.Message, true, nil
 		}
 	}
-	return false, nil
+	return "", false, nil
 }
 
 func (progress repositoryProgress) CompleteStep(ctx context.Context, step string, message string) error {

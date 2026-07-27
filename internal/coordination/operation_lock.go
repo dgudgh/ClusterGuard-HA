@@ -7,10 +7,28 @@ import (
 	"sync"
 	"time"
 
+	"clusterguard.io/ha/pkg/adapter"
 	"clusterguard.io/ha/pkg/model"
 )
 
 var ErrOperationLockConflict = errors.New("cluster operation lock is already held")
+var ErrOperationLockLeaseLost = errors.New("cluster operation lock lease was lost")
+
+type operationLockLeaseLostError struct {
+	cause error
+}
+
+func (failure *operationLockLeaseLostError) Error() string {
+	return fmt.Sprintf("%s: %v", ErrOperationLockLeaseLost, failure.cause)
+}
+
+func (failure *operationLockLeaseLostError) Unwrap() error { return failure.cause }
+
+func (failure *operationLockLeaseLostError) Is(target error) bool {
+	return target == ErrOperationLockLeaseLost || errors.Is(failure.cause, target)
+}
+
+func (failure *operationLockLeaseLostError) FailureClass() string { return "lock_lease_lost" }
 
 type OperationLockRecord struct {
 	ResourceID  model.ResourceID `json:"resource_id"`
@@ -45,26 +63,26 @@ func NewOperationLocks(records OperationLockRecordStore, authority MutationAutho
 	return &OperationLocks{records: records, authority: authority, ttl: ttl, now: now}
 }
 
-func (locks *OperationLocks) Acquire(ctx context.Context, operation model.Operation) (func(), error) {
+func (locks *OperationLocks) Acquire(ctx context.Context, operation model.Operation) (context.Context, func(), error) {
 	if !model.ValidResourceID(operation.ResourceID) {
-		return nil, fmt.Errorf("durable operation UUID is required for the cluster lock")
+		return nil, nil, fmt.Errorf("durable operation UUID is required for the cluster lock")
 	}
 	return locks.acquire(ctx, operation.ClusterID, operation.ResourceID)
 }
 
-func (locks *OperationLocks) AcquireCluster(ctx context.Context, clusterID model.ResourceID) (func(), error) {
+func (locks *OperationLocks) AcquireCluster(ctx context.Context, clusterID model.ResourceID) (context.Context, func(), error) {
 	return locks.acquire(ctx, clusterID, model.NewResourceID())
 }
 
-func (locks *OperationLocks) acquire(ctx context.Context, clusterID, operationID model.ResourceID) (func(), error) {
+func (locks *OperationLocks) acquire(ctx context.Context, clusterID, operationID model.ResourceID) (context.Context, func(), error) {
 	if locks == nil || locks.records == nil || locks.authority == nil {
-		return nil, fmt.Errorf("quorum operation lock is not configured")
+		return nil, nil, fmt.Errorf("quorum operation lock is not configured")
 	}
 	if !model.ValidResourceID(clusterID) || !model.ValidResourceID(operationID) {
-		return nil, fmt.Errorf("cluster and operation UUIDs are required for the operation lock")
+		return nil, nil, fmt.Errorf("cluster and operation UUIDs are required for the operation lock")
 	}
 	if err := locks.authority.RequireMutationAuthority(ctx); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	locks.mu.Lock()
 	defer locks.mu.Unlock()
@@ -72,12 +90,12 @@ func (locks *OperationLocks) acquire(ctx context.Context, clusterID, operationID
 	for _, record := range locks.records.CoordinationOperationLocks() {
 		if !record.ExpiresAt.After(now) {
 			if err := locks.records.DeleteCoordinationOperationLock(record.ResourceID); err != nil {
-				return nil, fmt.Errorf("expire abandoned operation lock: %w", err)
+				return nil, nil, fmt.Errorf("expire abandoned operation lock: %w", err)
 			}
 			continue
 		}
 		if record.ClusterID == clusterID {
-			return nil, fmt.Errorf("%w for cluster %s", ErrOperationLockConflict, clusterID)
+			return nil, nil, fmt.Errorf("%w for cluster %s", ErrOperationLockConflict, clusterID)
 		}
 	}
 	record := OperationLockRecord{
@@ -85,24 +103,27 @@ func (locks *OperationLocks) acquire(ctx context.Context, clusterID, operationID
 		ExpiresAt: now.Add(locks.ttl), CreatedAt: now, UpdatedAt: now,
 	}
 	if err := locks.records.PutCoordinationOperationLock(record); err != nil {
-		return nil, fmt.Errorf("persist quorum operation lock: %w", err)
+		return nil, nil, fmt.Errorf("persist quorum operation lock: %w", err)
 	}
+	leaseCtx, cancelLease := context.WithCancelCause(ctx)
+	leaseCtx = adapter.WithOperationLeaseID(leaseCtx, record.ResourceID)
 	stopRenewal := make(chan struct{})
 	renewalDone := make(chan struct{})
-	go locks.renew(record, stopRenewal, renewalDone)
+	go locks.renew(leaseCtx, record, stopRenewal, renewalDone, cancelLease)
 	var once sync.Once
-	return func() {
+	return leaseCtx, func() {
 		once.Do(func() {
 			close(stopRenewal)
 			<-renewalDone
 			locks.mu.Lock()
 			defer locks.mu.Unlock()
 			_ = locks.records.DeleteCoordinationOperationLock(record.ResourceID)
+			cancelLease(context.Canceled)
 		})
 	}, nil
 }
 
-func (locks *OperationLocks) renew(record OperationLockRecord, stop <-chan struct{}, done chan<- struct{}) {
+func (locks *OperationLocks) renew(leaseCtx context.Context, record OperationLockRecord, stop <-chan struct{}, done chan<- struct{}, cancelLease context.CancelCauseFunc) {
 	defer close(done)
 	interval := locks.ttl / 3
 	if interval < 10*time.Millisecond {
@@ -117,11 +138,14 @@ func (locks *OperationLocks) renew(record OperationLockRecord, stop <-chan struc
 		select {
 		case <-stop:
 			return
+		case <-leaseCtx.Done():
+			return
 		case <-ticker.C:
 			ctx, cancel := context.WithTimeout(context.Background(), interval)
 			err := locks.authority.RequireMutationAuthority(ctx)
 			cancel()
 			if err != nil {
+				cancelLease(&operationLockLeaseLostError{cause: fmt.Errorf("renewal authority check failed: %w", err)})
 				return
 			}
 			locks.mu.Lock()
@@ -134,6 +158,7 @@ func (locks *OperationLocks) renew(record OperationLockRecord, stop <-chan struc
 			}
 			if !found {
 				locks.mu.Unlock()
+				cancelLease(&operationLockLeaseLostError{cause: errors.New("persisted lock record disappeared")})
 				return
 			}
 			now := locks.now().UTC()
@@ -142,6 +167,7 @@ func (locks *OperationLocks) renew(record OperationLockRecord, stop <-chan struc
 			err = locks.records.PutCoordinationOperationLock(record)
 			locks.mu.Unlock()
 			if err != nil {
+				cancelLease(&operationLockLeaseLostError{cause: fmt.Errorf("persist renewed lock: %w", err)})
 				return
 			}
 		}

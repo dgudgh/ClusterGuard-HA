@@ -59,6 +59,80 @@ func rejectsEndpointParameters(parameters map[string]string) bool {
 	return false
 }
 
+func operationRequiresReplicationCredentials(engine model.Engine) bool {
+	switch engine {
+	case model.EngineOracle, model.EngineSQLServer:
+		return false
+	default:
+		return true
+	}
+}
+
+func resolverCurrentSuccessfulProbe(snapshot model.TopologySnapshot, instanceID model.ResourceID) bool {
+	found := false
+	for _, probe := range snapshot.Probes {
+		if probe.InstanceID != instanceID {
+			continue
+		}
+		found = true
+		if !probe.DiscoveryObservedAt.Equal(snapshot.ObservedAt) || probe.Health.State != model.HealthHealthy {
+			return false
+		}
+	}
+	return found
+}
+
+func resolverCurrentFailedProbe(snapshot model.TopologySnapshot, instanceID model.ResourceID) bool {
+	found := false
+	for _, probe := range snapshot.Probes {
+		if probe.InstanceID != instanceID {
+			continue
+		}
+		found = true
+		if !probe.DiscoveryObservedAt.IsZero() || !probe.Health.ObservedAt.Equal(snapshot.ObservedAt) {
+			return false
+		}
+		if probe.Health.State != model.HealthUnknown && probe.Health.State != model.HealthUnhealthy {
+			return false
+		}
+	}
+	return found
+}
+
+func resolverPrimaryProvenWritable(instance model.DatabaseInstance) bool {
+	switch instance.Engine {
+	case model.EngineMySQL:
+		return strings.EqualFold(strings.TrimSpace(instance.EngineMetadata["read_only"]), "false") &&
+			strings.EqualFold(strings.TrimSpace(instance.EngineMetadata["super_read_only"]), "false")
+	case model.EnginePostgreSQL:
+		return strings.EqualFold(strings.TrimSpace(instance.EngineMetadata["in_recovery"]), "false") &&
+			strings.EqualFold(strings.TrimSpace(instance.EngineMetadata["transaction_read_only"]), "false")
+	default:
+		return false
+	}
+}
+
+func resolveFormerPrimaryRejoinPrimary(snapshot model.TopologySnapshot, target model.DatabaseInstance) (model.DatabaseInstance, bool) {
+	var primary model.DatabaseInstance
+	for _, instance := range snapshot.Instances {
+		if instance.Role != model.RolePrimary {
+			continue
+		}
+		if instance.ResourceID == target.ResourceID {
+			if !resolverCurrentFailedProbe(snapshot, instance.ResourceID) {
+				return model.DatabaseInstance{}, false
+			}
+			continue
+		}
+		if instance.Health.State != model.HealthHealthy || !resolverPrimaryProvenWritable(instance) ||
+			!resolverCurrentSuccessfulProbe(snapshot, instance.ResourceID) || primary.ResourceID != "" {
+			return model.DatabaseInstance{}, false
+		}
+		primary = instance
+	}
+	return primary, model.ValidResourceID(primary.ResourceID)
+}
+
 func (resolver RepositoryResolver) Resolve(ctx context.Context, request adapter.OperationRequest) (adapter.OperationRequest, error) {
 	return resolver.resolve(ctx, request, nil)
 }
@@ -143,7 +217,13 @@ func (resolver RepositoryResolver) resolve(ctx context.Context, request adapter.
 			return adapter.OperationRequest{}, fmt.Errorf("operation plan source is not in the selected cluster inventory")
 		}
 	} else {
-		if primaryCount != 1 {
+		if request.Operation.Kind == model.OperationFormerPrimaryRejoin {
+			var resolved bool
+			primary, resolved = resolveFormerPrimaryRejoinPrimary(snapshot, target)
+			if !resolved {
+				return adapter.OperationRequest{}, fmt.Errorf("exactly one current primary is required")
+			}
+		} else if primaryCount != 1 {
 			return adapter.OperationRequest{}, fmt.Errorf("exactly one current primary is required")
 		}
 	}
@@ -160,7 +240,7 @@ func (resolver RepositoryResolver) resolve(ctx context.Context, request adapter.
 	if strings.TrimSpace(credentials.Administrative.Username) == "" {
 		return adapter.OperationRequest{}, fmt.Errorf("resolved operation credentials have no username")
 	}
-	if strings.TrimSpace(credentials.Replication.Username) == "" {
+	if operationRequiresReplicationCredentials(cluster.Engine) && strings.TrimSpace(credentials.Replication.Username) == "" {
 		return adapter.OperationRequest{}, fmt.Errorf("resolved replication credentials have no username")
 	}
 

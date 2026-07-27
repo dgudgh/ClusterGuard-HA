@@ -13,6 +13,8 @@ import (
 type leaseRecordStore struct {
 	records      map[model.ResourceID]LeaseRecord
 	replaceCalls int
+	putCalls     int
+	deleteCalls  int
 }
 
 func (store *leaseRecordStore) CoordinationLeases() []LeaseRecord {
@@ -24,11 +26,13 @@ func (store *leaseRecordStore) CoordinationLeases() []LeaseRecord {
 }
 
 func (store *leaseRecordStore) PutCoordinationLease(record LeaseRecord) error {
+	store.putCalls++
 	store.records[record.Lease.ResourceID] = record
 	return nil
 }
 
 func (store *leaseRecordStore) DeleteCoordinationLease(id model.ResourceID) error {
+	store.deleteCalls++
 	delete(store.records, id)
 	return nil
 }
@@ -197,8 +201,11 @@ func TestQuorumLeaseAtomicallyHandsStableOwnershipToTransition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handoff stable quorum lease: %v", err)
 	}
-	if transition.ResourceID == stable.ResourceID || transition.OwnerID != targetID || transition.PreviousOwnerID != sourceID || len(records.records) != 1 {
+	if transition.ResourceID != stable.ResourceID || transition.OwnerID != targetID || transition.PreviousOwnerID != sourceID || len(records.records) != 1 {
 		t.Fatalf("transition=%+v stable=%+v records=%+v", transition, stable, records.records)
+	}
+	if records.deleteCalls != 0 || records.putCalls != 2 {
+		t.Fatalf("stable handoff mutations put=%d delete=%d, want two upserts and no delete", records.putCalls, records.deleteCalls)
 	}
 }
 
@@ -234,5 +241,35 @@ func TestQuorumLeaseFinalizesTransitionInOneDurableUpdate(t *testing.T) {
 		PreviousOwnerID: targetID, TTL: 30 * time.Second,
 	}); err != nil {
 		t.Fatalf("immediate reverse handoff: %v", err)
+	}
+}
+
+func TestQuorumLeaseRollsTransitionBackInOneDurableUpdate(t *testing.T) {
+	now := time.Date(2026, time.July, 21, 12, 0, 0, 0, time.UTC)
+	records := &leaseRecordStore{records: map[model.ResourceID]LeaseRecord{}}
+	store := NewLeaseStore(records, authoritativeMembership(t), func() time.Time { return now })
+	clusterID, endpointID := model.NewResourceID(), model.NewResourceID()
+	sourceID, targetID := model.NewResourceID(), model.NewResourceID()
+	if _, err := store.Acquire(context.Background(), endpoint.LeaseRequest{
+		ClusterID: clusterID, HAEndpointID: endpointID, OperationID: endpointID, OwnerID: sourceID, TTL: 30 * time.Second,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	transition, err := store.Acquire(context.Background(), endpoint.LeaseRequest{
+		ClusterID: clusterID, HAEndpointID: endpointID, OperationID: model.NewResourceID(), OwnerID: targetID,
+		PreviousOwnerID: sourceID, TTL: 30 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now = now.Add(time.Second)
+	stable, err := store.RollbackTransition(context.Background(), transition, 30*time.Second)
+	if err != nil {
+		t.Fatalf("rollback transition: %v", err)
+	}
+	record := records.records[transition.ResourceID]
+	if len(records.records) != 1 || stable.ResourceID != transition.ResourceID || stable.OperationID != endpointID || stable.OwnerID != sourceID || stable.PreviousOwnerID != "" || record.Lease != stable || !record.UpdatedAt.Equal(now) {
+		t.Fatalf("stable=%+v record=%+v records=%+v", stable, record, records.records)
 	}
 }

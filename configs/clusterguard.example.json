@@ -1,7 +1,8 @@
 {
-  "http_address": "127.0.0.1:8088",
+  "http_address": "0.0.0.0:8088",
   "tls_cert_file": "/etc/clusterguard/tls/server.crt",
   "tls_key_file": "/etc/clusterguard/tls/server.key",
+  "tls_ca_file": "/etc/clusterguard/tls/ca.crt",
   "metadata_path": "/var/lib/clusterguard/metadata.json",
   "control_token_env": "CG_CONTROL_TOKEN",
   "monitoring_token_env": "CG_MONITORING_TOKEN",
@@ -12,12 +13,15 @@
     "bind_address": "0.0.0.0:10009",
     "advertise_address": "192.168.102.152:10009",
     "data_directory": "/var/lib/clusterguard/raft",
+    "tls_cert_file": "/etc/clusterguard/tls/raft.crt",
+    "tls_key_file": "/etc/clusterguard/tls/raft.key",
+    "tls_ca_file": "/etc/clusterguard/tls/raft-ca.crt",
     "bootstrap": true,
     "apply_timeout_seconds": 10,
     "peers": [
-      {"resource_id": "c1520000-0000-4000-8000-000000000152", "address": "192.168.102.152:10009"},
-      {"resource_id": "c1530000-0000-4000-8000-000000000153", "address": "192.168.102.153:10009"},
-      {"resource_id": "c1540000-0000-4000-8000-000000000154", "address": "192.168.102.154:10009"}
+      {"resource_id": "c1520000-0000-4000-8000-000000000152", "address": "192.168.102.152:10009", "api_address": "https://192.168.102.152:8088"},
+      {"resource_id": "c1530000-0000-4000-8000-000000000153", "address": "192.168.102.153:10009", "api_address": "https://192.168.102.153:8088"},
+      {"resource_id": "c1540000-0000-4000-8000-000000000154", "address": "192.168.102.154:10009", "api_address": "https://192.168.102.154:8088"}
     ]
   },
   "mysql": {
@@ -40,6 +44,59 @@
       "password_env": "CG_MYSQL_REPLICATION_PASSWORD"
     }
   },
+  "postgresql": {
+    "enabled": false,
+    "discovery_interval_seconds": 5,
+    "discovery_timeout_seconds": 4,
+    "automatic_failover_enabled": false,
+    "automatic_failover_interval_seconds": 5,
+    "automatic_failover_retry_seconds": 30,
+    "discovery": {
+      "username": "cg_monitor",
+      "database": "postgres",
+      "password_env": "CG_POSTGRESQL_DISCOVERY_PASSWORD"
+    },
+    "operation": {
+      "username": "cg_operator",
+      "database": "postgres",
+      "password_env": "CG_POSTGRESQL_OPERATION_PASSWORD"
+    },
+    "replication": {
+      "username": "clusterguard_repl",
+      "database": "postgres",
+      "password_env": "CG_POSTGRESQL_REPLICATION_PASSWORD"
+    }
+  },
+  "oracle": {
+    "enabled": false,
+    "discovery_interval_seconds": 15,
+    "discovery_timeout_seconds": 10,
+    "discovery": {
+      "username": "CLUSTERGUARD_DG",
+      "database": "DB_UNIQUE_NAME",
+      "password_env": "CG_ORACLE_DISCOVERY_PASSWORD"
+    },
+    "operation": {
+      "username": "CLUSTERGUARD_DG",
+      "database": "DB_UNIQUE_NAME",
+      "password_env": "CG_ORACLE_OPERATION_PASSWORD"
+    }
+  },
+  "sqlserver": {
+    "enabled": false,
+    "discovery_interval_seconds": 15,
+    "discovery_timeout_seconds": 10,
+    "discovery": {
+      "username": "cg_monitor",
+      "database": "master",
+      "password_env": "CG_SQLSERVER_DISCOVERY_PASSWORD"
+    },
+    "operation": {
+      "username": "cg_operator",
+      "database": "master",
+      "password_env": "CG_SQLSERVER_OPERATION_PASSWORD"
+    }
+  },
   "agent": {
     "enabled": false,
     "user": "cg-agent",
@@ -48,7 +105,14 @@
     "ssh_binary": "/usr/bin/ssh",
     "agent_binary": "/usr/local/libexec/clusterguard-agent-stdio",
     "agent_config_path": "/etc/clusterguard/agent.json",
+    "command_timeout_seconds": 30,
+    "mutation_timeout_seconds": 1800,
     "shared_secret_env": "CG_AGENT_SHARED_SECRET"
+  },
+  "fencing": {
+    "enabled": false,
+    "executable_path": "/usr/local/libexec/clusterguard-fencer",
+    "timeout_seconds": 30
   },
   "node_lifecycle": {
     "enabled": false,
@@ -60,8 +124,14 @@
     "ssh_password_env": "CG_NODE_SSH_PASSWORD",
     "mysql_root_password_env": "CG_NODE_MYSQL_ROOT_PASSWORD",
     "replication_password_env": "CG_NODE_MYSQL_REPLICATION_PASSWORD",
+    "postgresql_install_helper": "/usr/local/libexec/clusterguard-postgresql-install.sh",
+    "postgresql_sync_helper": "/usr/local/libexec/clusterguard-postgresql-sync.sh",
+    "postgresql_admin_password_env": "CG_NODE_POSTGRESQL_ADMIN_PASSWORD",
+    "postgresql_replication_password_env": "CG_NODE_POSTGRESQL_REPLICATION_PASSWORD",
     "clone_available": false,
     "xtrabackup_versions": {},
-    "logical_dump_allowed": true
+    "logical_dump_allowed": true,
+    "postgresql_basebackup_available": false,
+    "postgresql_rewind_available": false
   }
 }

@@ -30,7 +30,7 @@ type SafetyGuard interface {
 }
 
 type ClusterLocker interface {
-	AcquireCluster(context.Context, model.ResourceID) (func(), error)
+	AcquireCluster(context.Context, model.ResourceID) (context.Context, func(), error)
 }
 
 type ApprovalGate interface {
@@ -157,7 +157,7 @@ func (manager *Manager) execute(ctx context.Context, request Request, plan Plan,
 	if err := recordAudit(model.StageSafetyGuard, "lifecycle safety guard passed"); err != nil {
 		return failGate("lifecycle safety guard audit could not be persisted", err)
 	}
-	release, err := manager.locks.AcquireCluster(ctx, request.ClusterID)
+	leaseCtx, release, err := manager.locks.AcquireCluster(ctx, request.ClusterID)
 	if err != nil {
 		err = errors.Join(err, recordAudit(model.StageLock, "cluster operation lock could not be acquired"))
 		return interrupt(err)
@@ -168,7 +168,7 @@ func (manager *Manager) execute(ctx context.Context, request Request, plan Plan,
 	}
 	approvalMessage := "platform role authorized lifecycle execution"
 	if !authorization.platformAuthorized() {
-		if err := manager.approval.ValidateLifecycle(ctx, request, plan, authorization.approvalToken); err != nil {
+		if err := manager.approval.ValidateLifecycle(leaseCtx, request, plan, authorization.approvalToken); err != nil {
 			err = errors.Join(err, recordAudit(model.StageApprove, "lifecycle approval blocked execution"))
 			return failGate("lifecycle approval blocked execution", err)
 		}
@@ -183,6 +183,9 @@ func (manager *Manager) execute(ctx context.Context, request Request, plan Plan,
 	}
 	if err := recordAudit(model.StageExecute, "lifecycle execution authorized"); err != nil {
 		return failGate("lifecycle execution audit could not be persisted", err)
+	}
+	if leaseErr := context.Cause(leaseCtx); leaseErr != nil {
+		return interrupt(leaseErr)
 	}
 
 	var eventPersistenceError error
@@ -216,8 +219,11 @@ func (manager *Manager) execute(ctx context.Context, request Request, plan Plan,
 		}
 	}
 
-	result, executionErr := manager.executor.Execute(ctx, request, plan, secrets, emit)
+	result, executionErr := manager.executor.Execute(leaseCtx, request, plan, secrets, emit)
 	secrets = ExecutionSecrets{}
+	if leaseErr := context.Cause(leaseCtx); leaseErr != nil {
+		executionErr = errors.Join(executionErr, leaseErr)
+	}
 	if eventPersistenceError != nil {
 		executionErr = errors.Join(executionErr, eventPersistenceError)
 	}
@@ -228,7 +234,7 @@ func (manager *Manager) execute(ctx context.Context, request Request, plan Plan,
 		}
 		return indeterminate(message, executionErr)
 	}
-	if err := manager.authority.RequireMutationAuthority(ctx); err != nil {
+	if err := manager.authority.RequireMutationAuthority(leaseCtx); err != nil {
 		return indeterminate("lifecycle execution completed but leader-backed authority was lost before verification", err)
 	}
 	task.Status = TaskVerifying
@@ -244,23 +250,37 @@ func (manager *Manager) execute(ctx context.Context, request Request, plan Plan,
 	if err := recordAudit(model.StageVerify, "lifecycle execution verification passed"); err != nil {
 		return indeterminate("lifecycle verification passed but its audit could not be persisted", err)
 	}
-	if err := manager.committer.Commit(ctx, task, result); err != nil {
+	if leaseErr := context.Cause(leaseCtx); leaseErr != nil {
+		return indeterminate("lifecycle verification passed but the operation lock was lost before metadata commit", leaseErr)
+	}
+	commitErr := manager.committer.Commit(leaseCtx, task, result)
+	if leaseErr := context.Cause(leaseCtx); leaseErr != nil {
+		return indeterminate(
+			"lifecycle metadata commit outcome is indeterminate because the operation lock was lost",
+			errors.Join(commitErr, leaseErr),
+		)
+	}
+	if commitErr != nil {
 		message := "verified lifecycle metadata commit failed"
-		if detail := boundedLifecycleMessage(redactLifecycleMessage(err.Error(), redactionSecrets), 2048); detail != "" {
+		if detail := boundedLifecycleMessage(redactLifecycleMessage(commitErr.Error(), redactionSecrets), 2048); detail != "" {
 			message += ": " + detail
 		}
-		return indeterminate(message, err)
+		return indeterminate(message, commitErr)
 	}
 	if err := recordAudit(model.StageAudit, "lifecycle execution audit trail completed"); err != nil {
 		return indeterminate("lifecycle metadata was committed but audit finalization failed", err)
 	}
 	task.ReportID = model.NewResourceID()
+	engineName := "MySQL"
+	if request.Engine == model.EnginePostgreSQL {
+		engineName = "PostgreSQL"
+	}
 	report := model.Report{
 		ResourceMeta: model.ResourceMeta{ResourceID: task.ReportID, CreatedAt: manager.now().UTC(), UpdatedAt: manager.now().UTC()},
 		OperationID:  task.OperationID,
-		Title:        "MySQL node lifecycle report",
+		Title:        engineName + " node lifecycle report",
 		Status:       model.OperationSucceeded,
-		Summary:      fmt.Sprintf("%s lifecycle completed for %d target(s); verification passed and metadata was committed", request.Action, len(plan.Targets)),
+		Summary:      fmt.Sprintf("%s %s lifecycle completed for %d target(s); verification passed and metadata was committed", engineName, request.Action, len(plan.Targets)),
 	}
 	if err := journal.RecordReport(report); err != nil {
 		return indeterminate("lifecycle metadata was committed but its report could not be persisted", err)
@@ -276,7 +296,10 @@ func (manager *Manager) execute(ctx context.Context, request Request, plan Plan,
 }
 
 func redactLifecycleMessage(message string, secrets ExecutionSecrets) string {
-	for _, secret := range []string{secrets.SSHPassword, secrets.MySQLRootPassword, secrets.ReplicationPassword} {
+	for _, secret := range []string{
+		secrets.SSHPassword, secrets.MySQLRootPassword, secrets.ReplicationPassword,
+		secrets.PostgreSQLAdminPassword, secrets.PostgreSQLReplicationPassword,
+	} {
 		if strings.TrimSpace(secret) != "" {
 			message = strings.ReplaceAll(message, secret, "[REDACTED]")
 		}

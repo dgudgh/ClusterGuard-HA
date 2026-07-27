@@ -12,7 +12,6 @@ const (
 	maximumPlatformUsernameLength     = 128
 	maximumPlatformDisplayNameLength  = 256
 	maximumSecurityEventMessageLength = 1024
-	maximumSecurityEvents             = 10000
 )
 
 type ChangePlatformPasswordRequest struct {
@@ -20,6 +19,14 @@ type ChangePlatformPasswordRequest struct {
 	ExpectedMetadataRevision uint64
 	PasswordHash             string
 	ChangedAt                time.Time
+}
+
+type PlatformAdminRecoveryRequest struct {
+	RecoveryID        model.ResourceID
+	Username          string
+	PasswordHash      string
+	ArtifactCreatedAt time.Time
+	RecoveredAt       time.Time
 }
 
 func normalizePlatformUsername(username string) string {
@@ -48,6 +55,9 @@ func validatePlatformUser(user model.PlatformUser) error {
 	}
 	if user.AuthRevision == 0 {
 		return validationError("platform user auth revision is required")
+	}
+	if user.LastRecoveryID != "" && !model.ValidResourceID(user.LastRecoveryID) {
+		return validationError("platform user recovery ID is invalid")
 	}
 	return nil
 }
@@ -312,6 +322,112 @@ func (repository *Repository) ChangePlatformPassword(request ChangePlatformPassw
 		return model.PlatformUser{}, err
 	}
 	return user, nil
+}
+
+func (repository *Repository) ApplyPlatformAdminRecovery(request PlatformAdminRecoveryRequest) (model.PlatformUser, bool, error) {
+	username := normalizePlatformUsername(request.Username)
+	passwordHash := strings.TrimSpace(request.PasswordHash)
+	if !model.ValidResourceID(request.RecoveryID) || username == "" || passwordHash == "" ||
+		request.ArtifactCreatedAt.IsZero() || request.RecoveredAt.IsZero() {
+		return model.PlatformUser{}, false, validationError("platform administrator recovery request is invalid")
+	}
+	artifactCreatedAt := request.ArtifactCreatedAt.UTC()
+	recoveredAt := request.RecoveredAt.UTC()
+	if artifactCreatedAt.After(recoveredAt) {
+		return model.PlatformUser{}, false, validationError("platform administrator recovery artifact is newer than the recovery time")
+	}
+
+	repository.mutationMu.Lock()
+	defer repository.mutationMu.Unlock()
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+
+	var user model.PlatformUser
+	var found bool
+	for _, candidate := range repository.snapshot.PlatformUsers {
+		if normalizePlatformUsername(candidate.Username) == username {
+			user = candidate
+			found = true
+			break
+		}
+	}
+	if !found {
+		return model.PlatformUser{}, false, recoveryConflictError("platform administrator does not exist")
+	}
+	for _, candidate := range repository.snapshot.PlatformUsers {
+		if candidate.LastRecoveryID != request.RecoveryID {
+			continue
+		}
+		if candidate.ResourceID != user.ResourceID {
+			return model.PlatformUser{}, false, recoveryConflictError("platform recovery ID is already used")
+		}
+		return user, false, nil
+	}
+	for _, event := range repository.snapshot.SecurityEvents {
+		if event.ResourceID != request.RecoveryID {
+			continue
+		}
+		if event.Kind != "password_recovered" || normalizePlatformUsername(event.Username) != username || event.UserID != user.ResourceID {
+			return model.PlatformUser{}, false, recoveryConflictError("platform recovery ID is already used")
+		}
+		return user, false, nil
+	}
+	if user.Role != model.PlatformRoleAdmin || user.Disabled {
+		return model.PlatformUser{}, false, validationError("platform password recovery requires an enabled administrator")
+	}
+	passwordVersionAt := user.PasswordChangedAt.UTC()
+	if passwordVersionAt.IsZero() {
+		passwordVersionAt = user.CreatedAt.UTC()
+	}
+	if artifactCreatedAt.Before(passwordVersionAt) {
+		return model.PlatformUser{}, false, recoveryConflictError("platform recovery artifact predates the current password version")
+	}
+
+	user.PasswordHash = passwordHash
+	user.MustChangePassword = true
+	user.AuthRevision++
+	user.PasswordChangedAt = recoveredAt
+	user.LastRecoveryID = request.RecoveryID
+	user.UpdatedAt = recoveredAt
+	user.MetadataRevision++
+	if err := validatePlatformUser(user); err != nil {
+		return model.PlatformUser{}, false, err
+	}
+	event := model.SecurityEvent{
+		ResourceMeta: model.ResourceMeta{
+			ResourceID: request.RecoveryID, MetadataRevision: 1,
+			CreatedAt: recoveredAt, UpdatedAt: recoveredAt,
+		},
+		UserID: user.ResourceID, Username: username,
+		Kind: "password_recovered", Outcome: "success",
+		Message: "platform administrator password recovered from a one-time local artifact",
+	}
+	if err := validateSecurityEvent(event); err != nil {
+		return model.PlatformUser{}, false, err
+	}
+
+	next := repository.snapshot
+	next.PlatformUsers = clonePlatformUserMap(repository.snapshot.PlatformUsers)
+	next.PlatformSessions = clonePlatformSessionMap(repository.snapshot.PlatformSessions)
+	next.SecurityEvents = append([]model.SecurityEvent{}, repository.snapshot.SecurityEvents...)
+	next.PlatformUsers[user.ResourceID] = user
+	for resourceID, session := range next.PlatformSessions {
+		if session.UserID != user.ResourceID || !session.RevokedAt.IsZero() {
+			continue
+		}
+		session.RevokedAt = recoveredAt
+		session.UpdatedAt = recoveredAt
+		session.MetadataRevision++
+		next.PlatformSessions[resourceID] = session
+	}
+	next.SecurityEvents = append(next.SecurityEvents, event)
+	if len(next.SecurityEvents) > maximumSecurityEvents {
+		next.SecurityEvents = append([]model.SecurityEvent{}, next.SecurityEvents[len(next.SecurityEvents)-maximumSecurityEvents:]...)
+	}
+	if err := repository.commitSnapshotLocked(next); err != nil {
+		return model.PlatformUser{}, false, err
+	}
+	return user, true, nil
 }
 
 func (repository *Repository) RecordSecurityEvent(event model.SecurityEvent) error {

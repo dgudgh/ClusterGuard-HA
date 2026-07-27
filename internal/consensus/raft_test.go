@@ -2,9 +2,20 @@ package consensus
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
+	"fmt"
+	"io"
+	"math/big"
 	"net"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -12,6 +23,97 @@ import (
 	"clusterguard.io/ha/pkg/model"
 	"github.com/hashicorp/raft"
 )
+
+func writeTestRaftTLSIdentity(t *testing.T) (string, string, string) {
+	return writeTestRaftTLSIdentityWith(t,
+		[]x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		[]net.IP{net.ParseIP("127.0.0.1")}, []string{"localhost"},
+	)
+}
+
+func writeTestRaftTLSIdentityWith(t *testing.T, usages []x509.ExtKeyUsage, addresses []net.IP, names []string) (string, string, string) {
+	t.Helper()
+	now := time.Now()
+	caKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate Raft test CA key: %v", err)
+	}
+	caTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "ClusterGuard test Raft CA"},
+		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour),
+		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("create Raft test CA: %v", err)
+	}
+	leafKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate Raft test leaf key: %v", err)
+	}
+	leafTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "clusterguard-controller"},
+		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour),
+		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage: usages, IPAddresses: addresses, DNSNames: names,
+	}
+	leafDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, caTemplate, &leafKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("create Raft test leaf certificate: %v", err)
+	}
+	directory := t.TempDir()
+	caPath := filepath.Join(directory, "ca.pem")
+	certPath := filepath.Join(directory, "controller.pem")
+	keyPath := filepath.Join(directory, "controller-key.pem")
+	if err := os.WriteFile(caPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}), 0o600); err != nil {
+		t.Fatalf("write Raft test CA: %v", err)
+	}
+	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER}), 0o600); err != nil {
+		t.Fatalf("write Raft test certificate: %v", err)
+	}
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(leafKey)}), 0o600); err != nil {
+		t.Fatalf("write Raft test key: %v", err)
+	}
+	return certPath, keyPath, caPath
+}
+
+func TestRaftTLSIdentityRequiresClientAndServerUsage(t *testing.T) {
+	certPath, keyPath, caPath := writeTestRaftTLSIdentityWith(t,
+		[]x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		[]net.IP{net.ParseIP("127.0.0.1")}, nil,
+	)
+	peers := []Peer{
+		{ResourceID: model.NewResourceID(), Address: "127.0.0.1:10009"},
+		{ResourceID: model.NewResourceID(), Address: "127.0.0.1:10010"},
+		{ResourceID: model.NewResourceID(), Address: "127.0.0.1:10011"},
+	}
+	err := ValidateConfiguration(Config{
+		LocalID: peers[0].ResourceID, BindAddress: peers[0].Address, AdvertiseAddress: peers[0].Address,
+		DataDirectory: t.TempDir(), Peers: peers, TLSCertFile: certPath, TLSKeyFile: keyPath, TLSCAFile: caPath,
+	})
+	if err == nil || !strings.Contains(err.Error(), "client authentication") {
+		t.Fatalf("server-only Raft identity error=%v", err)
+	}
+}
+
+func TestRaftTLSIdentityRequiresAdvertisedAddress(t *testing.T) {
+	certPath, keyPath, caPath := writeTestRaftTLSIdentityWith(t,
+		[]x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		[]net.IP{net.ParseIP("127.0.0.2")}, nil,
+	)
+	peers := []Peer{
+		{ResourceID: model.NewResourceID(), Address: "127.0.0.1:10009"},
+		{ResourceID: model.NewResourceID(), Address: "127.0.0.1:10010"},
+		{ResourceID: model.NewResourceID(), Address: "127.0.0.1:10011"},
+	}
+	err := ValidateConfiguration(Config{
+		LocalID: peers[0].ResourceID, BindAddress: peers[0].Address, AdvertiseAddress: peers[0].Address,
+		DataDirectory: t.TempDir(), Peers: peers, TLSCertFile: certPath, TLSKeyFile: keyPath, TLSCAFile: caPath,
+	})
+	if err == nil || !strings.Contains(err.Error(), "advertised address") {
+		t.Fatalf("wrong-address Raft identity error=%v", err)
+	}
+}
 
 type stateRecorder struct {
 	mu     sync.Mutex
@@ -199,6 +301,18 @@ func TestNodeReportsExplicitSnapshotCASProtocolState(t *testing.T) {
 	}
 }
 
+func TestNodeResolvesLeaderAPIOnlyFromConfiguredControllerIdentity(t *testing.T) {
+	leaderID := model.NewResourceID()
+	node := &Node{leaderAPIs: map[model.ResourceID]string{leaderID: "https://controller-a.example:3000"}}
+	address, found := node.LeaderAPIAddress(leaderID)
+	if !found || address != "https://controller-a.example:3000" {
+		t.Fatalf("leader API address=%q found=%t", address, found)
+	}
+	if address, found := node.LeaderAPIAddress(model.NewResourceID()); found || address != "" {
+		t.Fatalf("unknown controller API address=%q found=%t", address, found)
+	}
+}
+
 func freeTCPAddress(t *testing.T) string {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -210,6 +324,74 @@ func freeTCPAddress(t *testing.T) string {
 		t.Fatalf("release TCP address: %v", err)
 	}
 	return address
+}
+
+func TestRaftTLSStreamLayerRequiresClientCertificatesAndTransfersData(t *testing.T) {
+	certPath, keyPath, caPath := writeTestRaftTLSIdentity(t)
+	address := freeTCPAddress(t)
+	advertise, err := net.ResolveTCPAddr("tcp", address)
+	if err != nil {
+		t.Fatalf("resolve Raft TLS advertise address: %v", err)
+	}
+	layer, err := newRaftTLSStreamLayer(address, advertise, certPath, keyPath, caPath)
+	if err != nil {
+		t.Fatalf("open Raft TLS stream layer: %v", err)
+	}
+	defer layer.Close()
+	if layer.serverTLS.ClientAuth != tls.RequireAndVerifyClientCert || layer.clientTLS.RootCAs == nil || len(layer.clientTLS.Certificates) != 1 {
+		t.Fatalf("Raft TLS is not mutual: server=%+v client=%+v", layer.serverTLS, layer.clientTLS)
+	}
+	serverResult := make(chan error, 1)
+	go func() {
+		connection, acceptErr := layer.Accept()
+		if acceptErr != nil {
+			serverResult <- acceptErr
+			return
+		}
+		defer connection.Close()
+		buffer := make([]byte, 4)
+		if _, readErr := io.ReadFull(connection, buffer); readErr != nil {
+			serverResult <- readErr
+			return
+		}
+		if string(buffer) != "raft" {
+			serverResult <- fmt.Errorf("server received %q", buffer)
+			return
+		}
+		serverResult <- nil
+	}()
+	connection, err := layer.Dial(raft.ServerAddress(address), time.Second)
+	if err != nil {
+		t.Fatalf("dial Raft TLS stream layer: %v", err)
+	}
+	if _, err := connection.Write([]byte("raft")); err != nil {
+		t.Fatalf("write Raft TLS payload: %v", err)
+	}
+	if err := connection.Close(); err != nil {
+		t.Fatalf("close Raft TLS client: %v", err)
+	}
+	if err := <-serverResult; err != nil {
+		t.Fatalf("Raft TLS server: %v", err)
+	}
+}
+
+func TestRaftConfigurationRejectsExternalPlaintextTransport(t *testing.T) {
+	peers := []Peer{
+		{ResourceID: model.NewResourceID(), Address: "192.0.2.11:10009"},
+		{ResourceID: model.NewResourceID(), Address: "192.0.2.12:10009"},
+		{ResourceID: model.NewResourceID(), Address: "192.0.2.13:10009"},
+	}
+	configuration := Config{
+		LocalID: peers[0].ResourceID, BindAddress: "0.0.0.0:10009", AdvertiseAddress: peers[0].Address,
+		DataDirectory: t.TempDir(), Peers: peers,
+	}
+	if err := validateConfig(configuration); err == nil || !strings.Contains(err.Error(), "Raft TLS") {
+		t.Fatalf("external plaintext Raft configuration error=%v", err)
+	}
+	configuration.AllowInsecureTransport = true
+	if err := validateConfig(configuration); err != nil {
+		t.Fatalf("explicit insecure Raft configuration rejected: %v", err)
+	}
 }
 
 func waitForRaftLeader(t *testing.T, nodes []*Node) *Node {
@@ -255,6 +437,26 @@ func TestThreeNodeRaftCommitsToFollowersAndLosesAuthorityWithoutQuorum(t *testin
 		defer node.Close()
 	}
 	leader := waitForRaftLeader(t, nodes)
+	statusContext, cancelStatus := context.WithTimeout(context.Background(), time.Second)
+	leaderStatus := leader.Status(statusContext)
+	cancelStatus()
+	if !leaderStatus.Enabled || leaderStatus.Role != "leader" || !leaderStatus.LeaderKnown ||
+		!leaderStatus.QuorumConfirmed || !leaderStatus.MutationAuthority || leaderStatus.VoterCount != 3 ||
+		leaderStatus.LocalControllerID == "" || leaderStatus.LeaderID != leaderStatus.LocalControllerID ||
+		leaderStatus.Term == 0 || leaderStatus.SnapshotCASActive {
+		t.Fatalf("leader status=%+v", leaderStatus)
+	}
+	for _, node := range nodes {
+		if node == leader {
+			continue
+		}
+		followerStatus := node.Status(context.Background())
+		if followerStatus.Role != "follower" || !followerStatus.LeaderKnown || followerStatus.LeaderID != leaderStatus.LeaderID ||
+			followerStatus.MutationAuthority || followerStatus.QuorumConfirmed || followerStatus.VoterCount != 3 {
+			t.Fatalf("follower status=%+v leader=%+v", followerStatus, leaderStatus)
+		}
+		break
+	}
 	if err := leader.Commit([]byte(`{"revision":1}`)); err != nil {
 		t.Fatalf("commit replicated state: %v", err)
 	}
@@ -316,6 +518,50 @@ func TestThreeNodeRaftCommitsToFollowersAndLosesAuthorityWithoutQuorum(t *testin
 		time.Sleep(100 * time.Millisecond)
 	}
 	t.Fatal("isolated leader retained mutation authority without a majority")
+}
+
+func TestThreeNodeRaftCommitsOverMutualTLS(t *testing.T) {
+	certPath, keyPath, caPath := writeTestRaftTLSIdentity(t)
+	addresses := []string{freeTCPAddress(t), freeTCPAddress(t), freeTCPAddress(t)}
+	peers := make([]Peer, 3)
+	for index := range peers {
+		peers[index] = Peer{ResourceID: model.NewResourceID(), Address: addresses[index]}
+	}
+	recorders := []*stateRecorder{{}, {}, {}}
+	nodes := make([]*Node, 3)
+	for _, index := range []int{1, 2, 0} {
+		node, err := Open(Config{
+			LocalID: peers[index].ResourceID, BindAddress: addresses[index], AdvertiseAddress: addresses[index],
+			DataDirectory: filepath.Join(t.TempDir(), "raft"), Peers: peers, Bootstrap: index == 0,
+			ApplyTimeout: 3 * time.Second, TLSCertFile: certPath, TLSKeyFile: keyPath, TLSCAFile: caPath,
+		}, recorders[index])
+		if err != nil {
+			t.Fatalf("open TLS Raft node %d: %v", index, err)
+		}
+		nodes[index] = node
+		defer node.Close()
+	}
+	leader := waitForRaftLeader(t, nodes)
+	if err := leader.Commit([]byte(`{"revision":9}`)); err != nil {
+		t.Fatalf("commit state over mutual TLS: %v", err)
+	}
+	if err := leader.Synchronize(); err != nil {
+		t.Fatalf("synchronize state over mutual TLS: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		followersReady := 0
+		for index, node := range nodes {
+			if node != leader && recorders[index].contains(`{"revision":9}`) {
+				followersReady++
+			}
+		}
+		if followersReady == 2 {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("mutual-TLS Raft followers did not apply committed state")
 }
 
 func TestRaftConfigurationRequiresOddUniqueThreeNodeMembership(t *testing.T) {

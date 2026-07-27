@@ -23,17 +23,46 @@ type ReconcileResult struct {
 }
 
 type Reconciler struct {
-	vip       VIPController
-	roles     RoleController
-	decisions ReconcileDecisionClient
+	vip        VIPController
+	roles      RoleController
+	postgresql PostgreSQLController
+	decisions  ReconcileDecisionClient
 }
 
-func NewReconciler(vip VIPController, roles RoleController, decisions ReconcileDecisionClient) *Reconciler {
-	return &Reconciler{vip: vip, roles: roles, decisions: decisions}
+type ReconcilerOption func(*Reconciler)
+
+func WithPostgreSQLReconcileController(controller PostgreSQLController) ReconcilerOption {
+	return func(reconciler *Reconciler) { reconciler.postgresql = controller }
+}
+
+func NewReconciler(vip VIPController, roles RoleController, decisions ReconcileDecisionClient, options ...ReconcilerOption) *Reconciler {
+	reconciler := &Reconciler{vip: vip, roles: roles, decisions: decisions}
+	for _, option := range options {
+		if option != nil {
+			option(reconciler)
+		}
+	}
+	return reconciler
 }
 
 func (reconciler *Reconciler) convergeSelfIsolation(ctx context.Context, policy ClusterPolicy) (ReconcileResult, error) {
 	releaseErr := reconciler.vip.Release(ctx, policy)
+	if policy.Engine == model.EnginePostgreSQL {
+		if reconciler.postgresql == nil {
+			return ReconcileResult{ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileSelfIsolate, Message: "VIP released; PostgreSQL controller is unavailable"}, errors.Join(releaseErr, fmt.Errorf("PostgreSQL reconciler controller is not configured"))
+		}
+		running, inRecovery, statusErr := reconciler.postgresql.Status(ctx, policy)
+		if statusErr != nil {
+			return ReconcileResult{ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileSelfIsolate, Message: "VIP released; PostgreSQL status is unknown"}, errors.Join(releaseErr, statusErr)
+		}
+		if statusErr == nil && running && inRecovery {
+			return ReconcileResult{ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileSelfIsolate, Message: "VIP released; PostgreSQL streaming standby remains active"}, releaseErr
+		}
+		if statusErr == nil && !running {
+			return ReconcileResult{ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileSelfIsolate, Message: "VIP released; PostgreSQL is not currently eligible for ownership"}, releaseErr
+		}
+		return ReconcileResult{ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileSelfIsolate, Message: "VIP released; PostgreSQL writer left running without VIP pending controller authorization"}, releaseErr
+	}
 	roleErr := reconciler.roles.PersistReadOnly(ctx, policy, true)
 	message := "VIP released and MySQL persisted read-only"
 	return ReconcileResult{ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileSelfIsolate, Message: message}, errors.Join(releaseErr, roleErr)
@@ -61,6 +90,9 @@ func (reconciler *Reconciler) reconcile(ctx context.Context, policy ClusterPolic
 	if !model.ValidResourceID(decision.LeaseID) || (decision.Action != ReconcileKeepVIP && decision.Action != ReconcileTransitionTarget && decision.Action != ReconcileTransitionSource && decision.Action != ReconcileBootstrapPrimary) {
 		return reconciler.selfIsolate(ctx, policy, fmt.Errorf("controller did not authorize local VIP ownership"))
 	}
+	if policy.Engine == model.EnginePostgreSQL {
+		return reconciler.reconcilePostgreSQL(ctx, policy, decision.Action)
+	}
 	if decision.Action == ReconcileTransitionSource {
 		return reconciler.reconcileTransitionSource(ctx, policy)
 	}
@@ -87,6 +119,64 @@ func (reconciler *Reconciler) reconcile(ctx context.Context, policy ClusterPolic
 		}
 	}
 	return ReconcileResult{ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileKeepVIP, Message: "active majority lease authorizes local VIP ownership"}, nil
+}
+
+func (reconciler *Reconciler) reconcilePostgreSQL(ctx context.Context, policy ClusterPolicy, action ReconcileAction) (ReconcileResult, error) {
+	if reconciler.postgresql == nil {
+		return reconciler.selfIsolate(ctx, policy, fmt.Errorf("PostgreSQL reconciler controller is not configured"))
+	}
+	switch action {
+	case ReconcileTransitionSource:
+		if _, _, err := reconciler.postgresql.Status(ctx, policy); err != nil {
+			return reconciler.selfIsolate(ctx, policy, err)
+		}
+		if _, err := reconciler.vip.Status(ctx, policy); err != nil {
+			return reconciler.selfIsolate(ctx, policy, err)
+		}
+		return ReconcileResult{ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: action, Message: "majority lease holds the PostgreSQL source for controlled transition"}, nil
+	case ReconcileTransitionTarget:
+		running, inRecovery, err := reconciler.postgresql.Status(ctx, policy)
+		if err != nil || !running {
+			if err == nil {
+				err = fmt.Errorf("PostgreSQL transition target is not running")
+			}
+			return reconciler.selfIsolate(ctx, policy, err)
+		}
+		ownsVIP, err := reconciler.vip.Status(ctx, policy)
+		if err != nil {
+			return reconciler.selfIsolate(ctx, policy, err)
+		}
+		if inRecovery && ownsVIP {
+			if err := reconciler.vip.Release(ctx, policy); err != nil {
+				return reconciler.selfIsolate(ctx, policy, fmt.Errorf("release VIP from PostgreSQL standby transition target: %w", err))
+			}
+		}
+		message := "majority lease preserves the promoted PostgreSQL target while the controller transfers the VIP"
+		if inRecovery {
+			message = "majority lease holds the PostgreSQL standby without VIP for controlled promotion"
+		}
+		return ReconcileResult{ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: action, Message: message}, nil
+	case ReconcileBootstrapPrimary, ReconcileKeepVIP:
+		running, inRecovery, err := reconciler.postgresql.Status(ctx, policy)
+		if err != nil || !running || inRecovery {
+			if err == nil {
+				err = fmt.Errorf("PostgreSQL VIP ownership requires a running primary outside recovery")
+			}
+			return reconciler.selfIsolate(ctx, policy, err)
+		}
+		ownsVIP, err := reconciler.vip.Status(ctx, policy)
+		if err != nil {
+			return reconciler.selfIsolate(ctx, policy, err)
+		}
+		if !ownsVIP {
+			if err := reconciler.vip.Acquire(ctx, policy); err != nil {
+				return reconciler.selfIsolate(ctx, policy, fmt.Errorf("acquire authorized PostgreSQL VIP: %w", err))
+			}
+		}
+		return ReconcileResult{ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: action, Message: "active majority lease authorizes the running PostgreSQL primary and VIP"}, nil
+	default:
+		return reconciler.selfIsolate(ctx, policy, fmt.Errorf("unsupported PostgreSQL reconcile action %q", action))
+	}
 }
 
 func (reconciler *Reconciler) reconcileTransitionSource(ctx context.Context, policy ClusterPolicy) (ReconcileResult, error) {

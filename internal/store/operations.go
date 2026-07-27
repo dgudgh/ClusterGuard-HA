@@ -37,6 +37,10 @@ func terminalOperationStatus(status model.OperationStatus) bool {
 	}
 }
 
+func activeOperationStatus(status model.OperationStatus) bool {
+	return status == model.OperationRunning
+}
+
 func workflowStageOrder(stage model.WorkflowStage) int {
 	switch stage {
 	case model.StageDiscover:
@@ -109,6 +113,15 @@ func (repository *Repository) CreateOperation(operation model.OperationRecord) (
 			return model.OperationRecord{}, false, conflictError("operation idempotency key is already used by another intent")
 		}
 		return cloneOperationRecord(existing), true, nil
+	}
+	activeOperations := 0
+	for _, existing := range repository.snapshot.Operations {
+		if activeOperationStatus(existing.Status) {
+			activeOperations++
+		}
+	}
+	if activeOperations >= maximumActiveOperations {
+		return model.OperationRecord{}, false, validationError("active operation capacity is exhausted")
 	}
 
 	now := repository.now().UTC()
@@ -384,6 +397,9 @@ func normalizeFinalAudit(event model.AuditEvent, operationID model.ResourceID, n
 		return model.AuditEvent{}, validationError("audit operation ID does not match operation")
 	}
 	event.OperationID = operationID
+	if err := validateAuditText(event); err != nil {
+		return model.AuditEvent{}, err
+	}
 	if event.ResourceID == "" {
 		event.ResourceID = model.NewResourceID()
 	}
@@ -401,6 +417,9 @@ func upsertFinalReport(reports []model.Report, report model.Report, operationID 
 	}
 	if report.OperationID != "" && report.OperationID != operationID {
 		return nil, validationError("report operation ID does not match operation")
+	}
+	if err := validateReportText(report); err != nil {
+		return nil, err
 	}
 	report.OperationID = operationID
 	if report.ResourceID == "" {

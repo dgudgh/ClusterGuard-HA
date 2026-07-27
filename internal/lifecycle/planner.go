@@ -2,10 +2,20 @@ package lifecycle
 
 import (
 	"fmt"
+	"net"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
 	"clusterguard.io/ha/pkg/model"
+)
+
+var (
+	lifecycleNamePattern    = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+	lifecycleSSHUserPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_-]*$`)
+	lifecycleVersionPattern = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+)*$`)
+	lifecycleServicePattern = regexp.MustCompile(`^[A-Za-z0-9@_.-]+\.service$`)
 )
 
 func BuildPlan(request Request, capabilities Capabilities) Plan {
@@ -18,6 +28,11 @@ func BuildPlan(request Request, capabilities Capabilities) Plan {
 		plan.Checks = append(plan.Checks, model.Check{Name: name, Status: status, Message: message})
 	}
 	appendCheck("cluster_identity", model.ValidResourceID(request.ClusterID), "cluster UUID is valid", "cluster UUID is required")
+	engine := request.Engine
+	if engine == "" {
+		engine = model.EngineMySQL
+	}
+	appendCheck("database_engine", engine == model.EngineMySQL || engine == model.EnginePostgreSQL, "database engine is supported by the lifecycle executor", "node lifecycle currently supports mysql and postgresql")
 	appendCheck("lifecycle_action", request.Action == ActionAdd || request.Action == ActionRebuild, "lifecycle action is valid", "lifecycle action must be add or rebuild")
 	appendCheck("target_count", len(request.Targets) > 0, "at least one lifecycle target is present", "at least one lifecycle target is required")
 
@@ -44,13 +59,37 @@ func BuildPlan(request Request, capabilities Capabilities) Plan {
 				plan.FinalControllerCount++
 			}
 		}
+		configurationValid := lifecycleTargetConfigurationValid(target, engine)
+		appendCheck(
+			"target_configuration_"+lifecycleCheckName(target.NodeName), configurationValid,
+			"target transport and database coordinates are valid",
+			"target fixed name, hostname, IP, SSH settings, database version, port, service, data directory, or package name is invalid",
+		)
+		if target.Kind == model.NodeData || target.Kind == model.NodeMixed {
+			distinct := lifecycleDonorTargetDistinct(request.Donor, target, engine)
+			appendCheck(
+				"donor_target_"+lifecycleCheckName(target.NodeName), distinct,
+				"synchronization donor and target are distinct resources",
+				"synchronization donor cannot reference the target resource or database endpoint",
+			)
+		}
 		targetPlan := TargetPlan{Target: target, ReusesNodeSlot: request.Action == ActionRebuild || target.Rebuild}
 		if targetPlan.NodeID == "" && request.Action == ActionAdd {
 			targetPlan.NodeID = model.NewResourceID()
 		}
 		if target.Kind == model.NodeData || target.Kind == model.NodeMixed {
 			targetPlan.DatabaseRole = model.RoleReplica
-			method, reason, err := SelectSyncMethod(request.SyncMethod, capabilities.SourceVersion, target.MySQLVersion, capabilities)
+			var method SyncMethod
+			var reason string
+			var err error
+			switch engine {
+			case model.EngineMySQL:
+				method, reason, err = SelectSyncMethod(request.SyncMethod, capabilities.SourceVersion, target.MySQLVersion, capabilities)
+			case model.EnginePostgreSQL:
+				method, reason, err = SelectPostgreSQLSyncMethod(request.SyncMethod, request.Action, capabilities.SourceVersion, target.PostgreSQLVersion, capabilities)
+			default:
+				err = fmt.Errorf("node synchronization is unsupported for engine %s", engine)
+			}
 			if err != nil {
 				plan.Checks = append(plan.Checks, model.Check{Name: "sync_method_" + target.NodeName, Status: model.CheckFail, Message: err.Error()})
 				plan.Blocked = true
@@ -68,6 +107,114 @@ func BuildPlan(request Request, capabilities Capabilities) Plan {
 		appendCheck("final_controller_membership", validMembership, fmt.Sprintf("final controller membership is odd: %d", plan.FinalControllerCount), fmt.Sprintf("final controller membership must be an odd count of at least three, got %d", plan.FinalControllerCount))
 	}
 	return plan
+}
+
+func lifecycleCheckName(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "unnamed"
+	}
+	return strings.Map(func(character rune) rune {
+		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') || character == '.' || character == '_' || character == '-' {
+			return character
+		}
+		return '-'
+	}, value)
+}
+
+func lifecycleTargetConfigurationValid(target Target, engine model.Engine) bool {
+	if !lifecycleNamePattern.MatchString(strings.TrimSpace(target.NodeName)) ||
+		!lifecycleNamePattern.MatchString(strings.TrimSpace(target.Hostname)) {
+		return false
+	}
+	if target.IPAddress != "" && net.ParseIP(strings.TrimSpace(target.IPAddress)) == nil {
+		return false
+	}
+	if target.SSHUser != "" && !lifecycleSSHUserPattern.MatchString(strings.TrimSpace(target.SSHUser)) {
+		return false
+	}
+	if target.SSHPort < 0 || target.SSHPort > 65535 {
+		return false
+	}
+	if target.PackageName != "" && filepath.Base(target.PackageName) != target.PackageName {
+		return false
+	}
+	if target.Kind != model.NodeData && target.Kind != model.NodeMixed {
+		return true
+	}
+	validPort := func(port int) bool { return port >= 1 && port <= 65535 }
+	switch engine {
+	case model.EngineMySQL:
+		return lifecycleVersionPattern.MatchString(strings.TrimSpace(target.MySQLVersion)) && validPort(target.MySQLPort)
+	case model.EnginePostgreSQL:
+		if !lifecycleVersionPattern.MatchString(strings.TrimSpace(target.PostgreSQLVersion)) || !validPort(target.PostgreSQLPort) {
+			return false
+		}
+		if target.PostgreSQLService != "" && !lifecycleServicePattern.MatchString(strings.TrimSpace(target.PostgreSQLService)) {
+			return false
+		}
+		if target.PostgreSQLDataDirectory != "" {
+			directory := strings.TrimSpace(target.PostgreSQLDataDirectory)
+			if !filepath.IsAbs(directory) || filepath.Clean(directory) != directory || directory == "/" || directory == "/var" || directory == "/var/lib" || directory == "/opt" || directory == "/etc" {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+func lifecycleDonorTargetDistinct(donor Donor, target Target, engine model.Engine) bool {
+	if donor.InstanceID == "" {
+		return true
+	}
+	if donor.InstanceID == target.NodeID {
+		return false
+	}
+	targetPort := target.MySQLPort
+	if engine == model.EnginePostgreSQL {
+		targetPort = target.PostgreSQLPort
+	}
+	if donor.Port <= 0 || donor.Port != targetPort {
+		return true
+	}
+	if donor.IPAddress != "" && target.IPAddress != "" && strings.EqualFold(strings.TrimSpace(donor.IPAddress), strings.TrimSpace(target.IPAddress)) {
+		return false
+	}
+	return donor.Hostname == "" || !strings.EqualFold(strings.TrimSpace(donor.Hostname), strings.TrimSpace(target.Hostname))
+}
+
+func SelectPostgreSQLSyncMethod(requested SyncMethod, action Action, sourceVersion, targetVersion string, capabilities Capabilities) (SyncMethod, string, error) {
+	if requested == "" {
+		requested = SyncAuto
+	}
+	sourceMajor, sourceOK := postgresqlReleaseMajor(sourceVersion)
+	targetMajor, targetOK := postgresqlReleaseMajor(targetVersion)
+	if !sourceOK || !targetOK || sourceMajor != targetMajor {
+		return "", "", fmt.Errorf("PostgreSQL source and target must use the same major release")
+	}
+	switch requested {
+	case SyncAuto:
+		if capabilities.PostgreSQLBaseBackupAvailable {
+			return SyncPostgreSQLBaseBackup, "pg_basebackup is the safe PostgreSQL synchronization baseline", nil
+		}
+	case SyncPostgreSQLBaseBackup:
+		if capabilities.PostgreSQLBaseBackupAvailable {
+			return requested, "pg_basebackup is available for the matching PostgreSQL major release", nil
+		}
+	case SyncPostgreSQLRewind:
+		if action != ActionRebuild {
+			return "", "", fmt.Errorf("pg_rewind is only valid for a registered node rebuild")
+		}
+		if capabilities.PostgreSQLRewindAvailable {
+			return requested, "pg_rewind is available for the registered PostgreSQL rebuild target", nil
+		}
+	default:
+		return "", "", fmt.Errorf("unsupported PostgreSQL synchronization method")
+	}
+	return "", "", fmt.Errorf("requested PostgreSQL synchronization method %s is unavailable", requested)
 }
 
 func BuildPlanWithInventory(request Request, capabilities Capabilities, nodes []model.DatabaseNode) Plan {
@@ -168,4 +315,17 @@ func mysqlReleaseFamily(version string) (string, bool) {
 		return "", false
 	}
 	return parts[0] + "." + parts[1], true
+}
+
+func postgresqlReleaseMajor(version string) (string, bool) {
+	parts := strings.Split(strings.TrimSpace(version), ".")
+	if len(parts) == 0 || parts[0] == "" {
+		return "", false
+	}
+	for _, character := range parts[0] {
+		if character < '0' || character > '9' {
+			return "", false
+		}
+	}
+	return parts[0], true
 }

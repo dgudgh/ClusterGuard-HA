@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -22,6 +24,23 @@ type httpDoer interface {
 	Do(*http.Request) (*http.Response, error)
 }
 
+func newAPIClient(caFile string) (*http.Client, error) {
+	contents, err := os.ReadFile(strings.TrimSpace(caFile))
+	if err != nil {
+		return nil, fmt.Errorf("read control-plane CA: %w", err)
+	}
+	roots, err := x509.SystemCertPool()
+	if err != nil {
+		roots = x509.NewCertPool()
+	}
+	if !roots.AppendCertsFromPEM(contents) {
+		return nil, fmt.Errorf("control-plane CA contains no valid certificates")
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}
+	return &http.Client{Transport: transport, Timeout: 10 * time.Second}, nil
+}
+
 type apiEnvelope struct {
 	Status  string          `json:"status"`
 	Message string          `json:"message"`
@@ -40,13 +59,16 @@ type approvalIssueRequest struct {
 
 func requestFor(arguments []string) (method string, path string, err error) {
 	if len(arguments) == 0 {
-		return "", "", fmt.Errorf("command is required: engines, clusters, topology, health, candidates, metrics, refresh, operation, approval")
+		return "", "", fmt.Errorf("command is required: status, engines, clusters, topology, health, candidates, metrics, refresh, operation, approval")
 	}
 	command := arguments[0]
 	switch command {
-	case "engines", "clusters":
+	case "status", "engines", "clusters":
 		if len(arguments) != 1 {
 			return "", "", fmt.Errorf("%s does not accept arguments", command)
+		}
+		if command == "status" {
+			return http.MethodGet, "/api/v1/control-plane/status", nil
 		}
 		return http.MethodGet, "/api/v1/" + command, nil
 	case "topology", "health", "candidates", "metrics", "refresh":
@@ -131,8 +153,17 @@ func run(arguments []string, stdout io.Writer, stderr io.Writer, client httpDoer
 	serverURL := flags.String("server", "http://127.0.0.1:8088", "ClusterGuard HA API URL")
 	jsonOutput := flags.Bool("json", false, "print the raw API response as indented JSON")
 	controlTokenEnv := flags.String("token-env", "CG_CONTROL_TOKEN", "environment variable containing the control API token")
+	caFile := flags.String("ca-file", strings.TrimSpace(os.Getenv("CG_TLS_CA_FILE")), "private CA used to authenticate the HTTPS control plane")
 	if err := flags.Parse(arguments); err != nil {
 		return 2
+	}
+	if strings.TrimSpace(*caFile) != "" {
+		configuredClient, err := newAPIClient(*caFile)
+		if err != nil {
+			_, _ = fmt.Fprintln(stderr, "cgctl:", err)
+			return 2
+		}
+		client = configuredClient
 	}
 	method, path, err := requestFor(flags.Args())
 	if err != nil {
@@ -229,6 +260,36 @@ func run(arguments []string, stdout io.Writer, stderr io.Writer, client httpDoer
 
 func writeHuman(writer io.Writer, command string, result json.RawMessage) error {
 	switch command {
+	case "status":
+		var status struct {
+			Mode                    string           `json:"mode"`
+			LocalControllerID       model.ResourceID `json:"local_controller_id"`
+			Role                    string           `json:"role"`
+			LeaderID                model.ResourceID `json:"leader_id"`
+			LeaderKnown             bool             `json:"leader_known"`
+			VoterCount              int              `json:"voter_count"`
+			QuorumConfirmed         bool             `json:"quorum_confirmed"`
+			MutationAuthority       bool             `json:"mutation_authority"`
+			SnapshotCASActive       bool             `json:"snapshot_cas_active"`
+			StateRevision           uint64           `json:"state_revision"`
+			Ready                   bool             `json:"ready"`
+			ReadinessReason         string           `json:"readiness_reason"`
+			UptimeSeconds           int64            `json:"uptime_seconds"`
+			ClusterCount            int              `json:"cluster_count"`
+			ActiveOperations        int              `json:"active_operations"`
+			IndeterminateOperations int              `json:"indeterminate_operations"`
+			ActiveLifecycleTasks    int              `json:"active_lifecycle_tasks"`
+		}
+		if err := json.Unmarshal(result, &status); err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(writer, "ready=%s\treason=%s\tmode=%s\trole=%s\tquorum=%s\tmutation_authority=%s\tsnapshot_cas=%s\n",
+			yesNo(status.Ready), valueOrUnknown(status.ReadinessReason), valueOrUnknown(status.Mode), valueOrUnknown(status.Role),
+			yesNo(status.QuorumConfirmed), yesNo(status.MutationAuthority), yesNo(status.SnapshotCASActive))
+		_, _ = fmt.Fprintf(writer, "local=%s\tleader=%s\tleader_known=%s\tvoters=%d\trevision=%d\tuptime=%ds\n",
+			valueOrDash(string(status.LocalControllerID)), valueOrDash(string(status.LeaderID)), yesNo(status.LeaderKnown), status.VoterCount, status.StateRevision, status.UptimeSeconds)
+		_, _ = fmt.Fprintf(writer, "clusters=%d\tactive_operations=%d\tindeterminate_operations=%d\tactive_lifecycle_tasks=%d\n",
+			status.ClusterCount, status.ActiveOperations, status.IndeterminateOperations, status.ActiveLifecycleTasks)
 	case "engines":
 		var engines []struct {
 			Engine   model.Engine `json:"engine"`

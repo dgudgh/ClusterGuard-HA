@@ -2,6 +2,7 @@ package identity
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"clusterguard.io/ha/pkg/model"
@@ -18,8 +19,9 @@ func InstanceKey(engine model.Engine, identity model.EngineIdentity) (string, er
 			return "mysql:" + serverUUID, nil
 		}
 	case model.EnginePostgreSQL:
-		if resourceID := value(identity, "resource_id"); resourceID != "" {
-			return "postgresql:" + resourceID, nil
+		resourceID := model.ResourceID(value(identity, "resource_id"))
+		if model.ValidResourceID(resourceID) && validPostgreSQLSystemIdentifier(value(identity, "system_identifier")) {
+			return "postgresql:" + string(resourceID), nil
 		}
 	case model.EngineOracle:
 		dbid := value(identity, "dbid")
@@ -45,14 +47,13 @@ func ClusterKey(engine model.Engine, identity model.EngineIdentity) (string, err
 			return "mysql:" + serverUUID, nil
 		}
 	case model.EnginePostgreSQL:
-		if systemID := value(identity, "system_identifier"); systemID != "" {
+		if systemID := value(identity, "system_identifier"); validPostgreSQLSystemIdentifier(systemID) {
 			return "postgresql:" + systemID, nil
 		}
 	case model.EngineOracle:
 		dbid := value(identity, "dbid")
-		database := value(identity, "db_unique_name")
-		if dbid != "" && database != "" {
-			return fmt.Sprintf("oracle:%s:%s", dbid, database), nil
+		if dbid != "" {
+			return "oracle:" + dbid, nil
 		}
 	case model.EngineSQLServer:
 		if groupID := value(identity, "group_id"); groupID != "" {
@@ -60,4 +61,9 @@ func ClusterKey(engine model.Engine, identity model.EngineIdentity) (string, err
 		}
 	}
 	return "", fmt.Errorf("missing native %s cluster identity", engine)
+}
+
+func validPostgreSQLSystemIdentifier(value string) bool {
+	parsed, err := strconv.ParseUint(strings.TrimSpace(value), 10, 64)
+	return err == nil && parsed > 0
 }

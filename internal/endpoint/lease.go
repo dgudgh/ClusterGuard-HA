@@ -54,6 +54,7 @@ type LeaseStore interface {
 	Acquire(context.Context, LeaseRequest) (Lease, error)
 	Validate(context.Context, Lease) error
 	FinalizeTransition(context.Context, Lease, time.Duration) (Lease, error)
+	RollbackTransition(context.Context, Lease, time.Duration) (Lease, error)
 	Release(context.Context, model.ResourceID) error
 }
 
@@ -98,8 +99,12 @@ func (store *MemoryLeaseStore) Acquire(ctx context.Context, request LeaseRequest
 			return lease, nil
 		}
 		if CanHandoffStableLease(lease, request) {
-			delete(store.leases, resourceID)
-			continue
+			lease.OperationID = request.OperationID
+			lease.OwnerID = request.OwnerID
+			lease.PreviousOwnerID = request.PreviousOwnerID
+			lease.ExpiresAt = now.Add(request.TTL)
+			store.leases[resourceID] = lease
+			return lease, nil
 		}
 		return Lease{}, fmt.Errorf("%w: active endpoint lease belongs to another operation", ErrLeaseConflict)
 	}
@@ -140,6 +145,29 @@ func (store *MemoryLeaseStore) FinalizeTransition(ctx context.Context, transitio
 		ttl = 30 * time.Second
 	}
 	current.OperationID = current.HAEndpointID
+	current.PreviousOwnerID = ""
+	current.ExpiresAt = now.Add(ttl)
+	store.leases[current.ResourceID] = current
+	return current, nil
+}
+
+func (store *MemoryLeaseStore) RollbackTransition(ctx context.Context, transition Lease, ttl time.Duration) (Lease, error) {
+	if err := ctx.Err(); err != nil {
+		return Lease{}, err
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	now := store.now().UTC()
+	current, found := store.leases[transition.ResourceID]
+	if !found || !current.Active || !current.ExpiresAt.After(now) || !SameLeaseIdentity(current, transition) ||
+		current.OperationID == current.HAEndpointID || !model.ValidResourceID(current.PreviousOwnerID) {
+		return Lease{}, fmt.Errorf("%w: transition lease is missing, expired, changed, or cannot be rolled back", ErrLeaseConflict)
+	}
+	if ttl <= 0 {
+		ttl = 30 * time.Second
+	}
+	current.OperationID = current.HAEndpointID
+	current.OwnerID = current.PreviousOwnerID
 	current.PreviousOwnerID = ""
 	current.ExpiresAt = now.Add(ttl)
 	store.leases[current.ResourceID] = current

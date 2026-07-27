@@ -20,6 +20,10 @@ type instanceMetrics struct {
 }
 
 func (server *Server) persistedMetrics(clusterID model.ResourceID) ([]instanceMetrics, model.TopologySnapshot, bool) {
+	cluster, clusterFound := server.store.Cluster(clusterID)
+	if !clusterFound {
+		return nil, model.TopologySnapshot{}, false
+	}
 	snapshot, found := server.store.TopologySnapshot(clusterID)
 	if !found {
 		return nil, model.TopologySnapshot{}, false
@@ -48,7 +52,7 @@ func (server *Server) persistedMetrics(clusterID model.ResourceID) ([]instanceMe
 					eligibleSamples = append(eligibleSamples, sample)
 				}
 			}
-			derived, derivedFound := metricsservice.NewService().Derive(eligibleSamples)[instance.ResourceID]
+			derived, derivedFound := metricsservice.NewService().DeriveForEngine(cluster.Engine, eligibleSamples)[instance.ResourceID]
 			if derivedFound && derived.ObservedAt.Equal(metricsObservedAt) {
 				for name, value := range derived.Values {
 					if finiteMetric(value) {
@@ -97,31 +101,103 @@ func (server *Server) clusterPrometheusMetrics(writer http.ResponseWriter, clust
 		writeError(writer, http.StatusConflict, "cluster has no persisted topology observation")
 		return
 	}
+	cluster, found := server.store.Cluster(clusterID)
+	if !found {
+		writeError(writer, http.StatusNotFound, "cluster not found")
+		return
+	}
 	writer.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	writer.WriteHeader(http.StatusOK)
+	emittedMetadata := make(map[string]bool)
 	for _, instance := range instances {
 		names := make([]string, 0, len(instance.Values))
 		for name, value := range instance.Values {
-			if prometheusMetricName(name) != "" && finiteMetric(value) {
+			if prometheusMetricName(cluster.Engine, name) != "" && finiteMetric(value) {
 				names = append(names, name)
 			}
 		}
 		sort.Strings(names)
 		for _, name := range names {
+			metricName := writePrometheusMetricMetadata(writer, emittedMetadata, cluster.Engine, name)
 			_, _ = fmt.Fprintf(writer, "%s{cluster_id=\"%s\",instance_id=\"%s\"} %s\n",
-				prometheusMetricName(name), escapePrometheusLabel(string(clusterID)), escapePrometheusLabel(string(instance.InstanceID)),
+				metricName, escapePrometheusLabel(string(clusterID)), escapePrometheusLabel(string(instance.InstanceID)),
 				strconv.FormatFloat(instance.Values[name], 'g', -1, 64))
 		}
 	}
 }
 
-func prometheusMetricName(name string) string {
-	switch name {
-	case "qps", "tps", "slow_queries_per_second", "connections", "running_threads", "buffer_pool_hit_ratio", "replication_lag_seconds":
-		return "clusterguard_mysql_" + name
+type prometheusMetricDescriptor struct {
+	Name string
+	Type string
+	Help string
+}
+
+func prometheusMetricDescriptorFor(engine model.Engine, name string) (prometheusMetricDescriptor, bool) {
+	descriptor := prometheusMetricDescriptor{Type: "gauge"}
+	switch engine {
+	case model.EngineMySQL:
+		switch name {
+		case "qps", "tps", "slow_queries_per_second", "connections", "running_threads", "buffer_pool_hit_ratio", "replication_lag_seconds":
+			descriptor.Name = "clusterguard_mysql_" + name
+			descriptor.Help = "Observed MySQL " + name + " for an immutable database instance."
+		default:
+			return prometheusMetricDescriptor{}, false
+		}
+	case model.EnginePostgreSQL:
+		switch name {
+		case "connections", "active_connections", "transactions_total", "deadlocks_total", "conflicts_total",
+			"temp_bytes_total", "blocks_read_total", "blocks_hit_total", "database_size_bytes", "replication_clients",
+			"buffer_cache_hit_ratio", "wal_bytes", "checkpoints_total", "max_transaction_age_seconds", "replication_lag_seconds":
+			descriptor.Name = "clusterguard_postgresql_" + name
+			descriptor.Help = "Observed PostgreSQL " + name + " for an immutable database instance."
+			if strings.HasSuffix(name, "_total") {
+				descriptor.Type = "counter"
+			}
+		default:
+			return prometheusMetricDescriptor{}, false
+		}
+	case model.EngineOracle:
+		switch name {
+		case "broker_status_healthy", "transport_lag_seconds", "apply_lag_seconds", "role_primary", "replication_lag_seconds":
+			descriptor.Name = "clusterguard_oracle_" + name
+			descriptor.Help = "Observed Oracle " + name + " for an immutable database instance."
+		default:
+			return prometheusMetricDescriptor{}, false
+		}
+	case model.EngineSQLServer:
+		switch name {
+		case "always_on_healthy", "connected", "synchronized", "synchronous_commit",
+			"log_send_queue_bytes", "redo_queue_bytes", "role_primary", "role_secondary", "replication_lag_seconds":
+			descriptor.Name = "clusterguard_sqlserver_" + name
+			descriptor.Help = "Observed SQL Server " + name + " for an immutable database instance."
+		default:
+			return prometheusMetricDescriptor{}, false
+		}
 	default:
+		return prometheusMetricDescriptor{}, false
+	}
+	return descriptor, true
+}
+
+func writePrometheusMetricMetadata(writer http.ResponseWriter, emitted map[string]bool, engine model.Engine, name string) string {
+	descriptor, found := prometheusMetricDescriptorFor(engine, name)
+	if !found {
 		return ""
 	}
+	if !emitted[descriptor.Name] {
+		_, _ = fmt.Fprintf(writer, "# HELP %s %s\n", descriptor.Name, descriptor.Help)
+		_, _ = fmt.Fprintf(writer, "# TYPE %s %s\n", descriptor.Name, descriptor.Type)
+		emitted[descriptor.Name] = true
+	}
+	return descriptor.Name
+}
+
+func prometheusMetricName(engine model.Engine, name string) string {
+	descriptor, found := prometheusMetricDescriptorFor(engine, name)
+	if found {
+		return descriptor.Name
+	}
+	return ""
 }
 
 func finiteMetric(value float64) bool {

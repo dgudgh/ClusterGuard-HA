@@ -56,8 +56,38 @@ func operationFailureClass(err error) string {
 	return ""
 }
 
+type preCommitAdapterExecutionError struct{ err error }
+
+func (failure *preCommitAdapterExecutionError) Error() string        { return failure.err.Error() }
+func (failure *preCommitAdapterExecutionError) Unwrap() error        { return failure.err }
+func (failure *preCommitAdapterExecutionError) FailureClass() string { return "pre_commit" }
+
+func normalizeAdapterExecutionError(execution model.Execution, err error) error {
+	if execution.Status != model.OperationBlocked {
+		return err
+	}
+	if err == nil {
+		message := execution.Message
+		if message == "" {
+			message = "adapter blocked execution before mutation"
+		}
+		err = errors.New(message)
+	}
+	if operationFailureClass(err) != "" {
+		return err
+	}
+	return &preCommitAdapterExecutionError{err: err}
+}
+
+func verificationTimeout(engine model.Engine) time.Duration {
+	if engine == model.EngineOracle {
+		return 4 * time.Minute
+	}
+	return 30 * time.Second
+}
+
 func detachedVerification(ctx context.Context, candidate adapter.DatabaseHAAdapter, request adapter.OperationRequest) (model.Verification, error) {
-	verifyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	verifyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), verificationTimeout(request.Operation.Engine))
 	defer cancel()
 	return candidate.Verify(verifyCtx, request)
 }
@@ -380,7 +410,7 @@ func (service *Service) executeDurable(ctx context.Context, request adapter.Oper
 	if err := service.audit(operation, model.StageSafetyGuard, "safety guard passed"); err != nil {
 		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
 	}
-	release, err := service.locks.Acquire(ctx, operation)
+	leaseCtx, release, err := service.locks.Acquire(ctx, operation)
 	if err != nil {
 		execution := newDurableExecution(operation.ResourceID, model.OperationBlocked, err.Error(), service.now)
 		return service.finishDurable(record.ResourceID, operation, model.StageLock, execution, "pre_commit", err, false)
@@ -393,11 +423,11 @@ func (service *Service) executeDurable(ctx context.Context, request adapter.Oper
 	if err := service.audit(operation, model.StageLock, "operation lock acquired"); err != nil {
 		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
 	}
-	if err := service.discovery.RevalidateObservation(ctx, operation, observation); err != nil {
+	if err := service.discovery.RevalidateObservation(leaseCtx, operation, observation); err != nil {
 		execution := newDurableExecution(operation.ResourceID, model.OperationBlocked, err.Error(), service.now)
 		return service.finishDurable(record.ResourceID, operation, model.StageLock, execution, "stale_plan", err, false)
 	}
-	request, err = resolveCapturedOperation(ctx, service.resolver, request, observation)
+	request, err = resolveCapturedOperation(leaseCtx, service.resolver, request, observation)
 	if err != nil {
 		execution := newDurableExecution(operation.ResourceID, model.OperationBlocked, err.Error(), service.now)
 		return service.finishDurable(record.ResourceID, operation, model.StageLock, execution, "stale_plan", err, false)
@@ -411,7 +441,7 @@ func (service *Service) executeDurable(ctx context.Context, request adapter.Oper
 			return model.Execution{}, err
 		}
 	} else {
-		grantID, approved, approvalErr := service.approval.Consume(ctx, record, authorization.approvalToken)
+		grantID, approved, approvalErr := service.approval.Consume(leaseCtx, record, authorization.approvalToken)
 		if approvalErr != nil {
 			execution := newDurableExecution(operation.ResourceID, model.OperationBlocked, approvalErr.Error(), service.now)
 			return service.finishDurable(record.ResourceID, operation, model.StageApprove, execution, "pre_commit", approvalErr, false)
@@ -424,12 +454,29 @@ func (service *Service) executeDurable(ctx context.Context, request adapter.Oper
 	}
 	request.Plan = &record.Plan
 	request.Progress = repositoryProgress{operations: service.operations, operationID: record.ResourceID, now: service.now}
+	if request.Resolved != nil {
+		request.Resolved.PlanDigest = record.Plan.Digest
+	}
+	if leaseErr := lockLeaseFailure(leaseCtx); leaseErr != nil {
+		execution := newDurableExecution(operation.ResourceID, model.OperationBlocked, leaseErr.Error(), service.now)
+		return service.finishDurable(record.ResourceID, operation, model.StageLock, execution, "lock_lease_lost", leaseErr, false)
+	}
 	record, err = service.advanceDurable(record.ResourceID, model.StageExecute, model.OperationTransition{Message: "adapter execution started"})
 	if err != nil {
 		return model.Execution{}, err
 	}
-	execution, executeErr := candidate.Execute(ctx, request)
+	execution, executeErr := candidate.Execute(leaseCtx, request)
 	execution.OperationID = operation.ResourceID
+	if leaseErr := lockLeaseFailure(leaseCtx); leaseErr != nil {
+		if executeErr != nil {
+			executeErr = errors.Join(executeErr, leaseErr)
+		} else {
+			executeErr = leaseErr
+		}
+		execution.Status = model.OperationIndeterminate
+		execution.Message = "operation lock lease was lost during execution: " + leaseErr.Error()
+	}
+	executeErr = normalizeAdapterExecutionError(execution, executeErr)
 	if executeErr != nil {
 		if execution.Status == "" {
 			execution.Status = model.OperationFailed
@@ -440,7 +487,7 @@ func (service *Service) executeDurable(ctx context.Context, request adapter.Oper
 			return service.finishDurable(record.ResourceID, operation, model.StageExecute, execution, failureClass, executeErr, false)
 		}
 
-		verification, verifyErr := detachedVerification(ctx, candidate, request)
+		verification, verifyErr := detachedVerification(leaseCtx, candidate, request)
 		verificationMessage := verificationOutcomeMessage(verification, verifyErr)
 		if _, err := service.advanceDurable(record.ResourceID, model.StageVerify, model.OperationTransition{
 			Verification: &verification,
@@ -450,6 +497,15 @@ func (service *Service) executeDurable(ctx context.Context, request adapter.Oper
 			execution = markDurabilityIndeterminate(execution)
 			cause := fmt.Errorf("persist post-commit verification evidence: %w (execution error: %v)", err, executeErr)
 			return service.finishDurable(record.ResourceID, operation, model.StageVerify, execution, failureClass, cause, true)
+		}
+		if leaseErr := lockLeaseFailure(leaseCtx); leaseErr != nil {
+			execution.Status = model.OperationIndeterminate
+			execution.Message = "operation lock lease was lost during verification; " + verificationMessage
+			cause := errors.Join(executeErr, leaseErr)
+			if verifyErr != nil {
+				cause = errors.Join(cause, verifyErr)
+			}
+			return service.finishDurable(record.ResourceID, operation, model.StageVerify, execution, "lock_lease_lost", cause, true)
 		}
 		execution.Status = model.OperationIndeterminate
 		execution.Message = executeErr.Error() + "; " + verificationMessage
@@ -467,10 +523,24 @@ func (service *Service) executeDurable(ctx context.Context, request adapter.Oper
 	} else if err := service.audit(operation, model.StageExecute, "adapter execution completed"); err != nil {
 		committedJournalErr = firstJournalError(committedJournalErr, err)
 	}
-	verification, verifyErr := detachedVerification(ctx, candidate, request)
+	verification, verifyErr := detachedVerification(leaseCtx, candidate, request)
 	verificationMessage := verificationOutcomeMessage(verification, verifyErr)
 	if _, err := service.advanceDurable(record.ResourceID, model.StageVerify, model.OperationTransition{Verification: &verification, Message: verificationMessage}); err != nil {
 		committedJournalErr = firstJournalError(committedJournalErr, err)
+	}
+	if leaseErr := lockLeaseFailure(leaseCtx); leaseErr != nil {
+		execution.Status = model.OperationIndeterminate
+		execution.Message = "operation lock lease was lost during verification; " + verificationMessage
+		cause := error(leaseErr)
+		if verifyErr != nil {
+			cause = errors.Join(cause, verifyErr)
+		} else if !verification.Passed {
+			cause = errors.Join(cause, errors.New(verificationMessage))
+		}
+		if committedJournalErr != nil {
+			cause = errors.Join(cause, &journalPersistenceError{err: committedJournalErr})
+		}
+		return service.finishDurable(record.ResourceID, operation, model.StageVerify, execution, "lock_lease_lost", cause, true)
 	}
 	if verifyErr != nil || !verification.Passed {
 		execution.Message = verificationMessage

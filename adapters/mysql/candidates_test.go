@@ -351,6 +351,70 @@ func TestEvaluateCandidatesWarnsForMissingTransactionsAtZeroLag(t *testing.T) {
 	}
 }
 
+func TestEvaluateCandidatesAllowsSourceReconnectOnlyForConfirmedFailover(t *testing.T) {
+	candidate := candidateInstance("00000000-0000-4000-8000-000000000010", "8.0.44", 0, testPrimaryServerUUID+":1-20")
+	candidate.Health.State = model.HealthDegraded
+	candidate.PromotionEligible = false
+	candidate.Replication.IOThread = model.ThreadConnecting
+	candidate.Replication.LagSeconds = nil
+	candidate.Replication.LastIOError = "Error reconnecting to source"
+
+	strictRequest := candidateEvaluationRequest(candidate)
+	strictRequest.Primary.Health.State = model.HealthUnknown
+	strictRequest.Probes[0].Health.State = model.HealthDegraded
+	strict, err := New(nil).EvaluateCandidates(context.Background(), strictRequest)
+	if err != nil {
+		t.Fatalf("strict evaluation: %v", err)
+	}
+	if len(strict) != 1 || strict[0].Eligible {
+		t.Fatalf("planned switchover rules accepted a disconnected source: %+v", strict)
+	}
+
+	failoverRequest := strictRequest
+	failoverRequest.Policy.AllowSourceDisconnected = true
+	failover, err := New(nil).EvaluateCandidates(context.Background(), failoverRequest)
+	if err != nil {
+		t.Fatalf("failover evaluation: %v", err)
+	}
+	if len(failover) != 1 || !failover[0].Eligible || failover[0].Rank != 1 || failover[0].DataLossRisk != dataLossRiskNone {
+		t.Fatalf("safe source-loss failover candidate was blocked: %+v", failover)
+	}
+	if assessmentCheckStatus(t, failover[0], "replication_threads") != model.CheckWarn || assessmentCheckStatus(t, failover[0], "replication_lag") != model.CheckWarn {
+		t.Fatalf("source-loss evidence must remain visible as warnings: %+v", failover[0])
+	}
+}
+
+func TestEvaluateFailoverCandidateStillBlocksUnsafeReplicationState(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*model.DatabaseInstance)
+	}{
+		{name: "IO thread stopped", mutate: func(instance *model.DatabaseInstance) { instance.Replication.IOThread = model.ThreadStopped }},
+		{name: "SQL thread stopped", mutate: func(instance *model.DatabaseInstance) { instance.Replication.SQLThread = model.ThreadStopped }},
+		{name: "SQL error", mutate: func(instance *model.DatabaseInstance) { instance.Replication.LastSQLError = "duplicate key" }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := candidateInstance("00000000-0000-4000-8000-000000000010", "8.0.44", 0, testPrimaryServerUUID+":1-20")
+			candidate.Health.State = model.HealthDegraded
+			candidate.PromotionEligible = false
+			candidate.Replication.IOThread = model.ThreadConnecting
+			candidate.Replication.LagSeconds = nil
+			test.mutate(&candidate)
+			request := candidateEvaluationRequest(candidate)
+			request.Primary.Health.State = model.HealthUnhealthy
+			request.Probes[0].Health.State = model.HealthDegraded
+			request.Policy.AllowSourceDisconnected = true
+			assessments, err := New(nil).EvaluateCandidates(context.Background(), request)
+			if err != nil {
+				t.Fatalf("evaluate failover candidate: %v", err)
+			}
+			if len(assessments) != 1 || assessments[0].Eligible {
+				t.Fatalf("unsafe failover candidate was accepted: %+v", assessments)
+			}
+		})
+	}
+}
+
 func candidateEvaluationRequest(instances ...model.DatabaseInstance) adapter.CandidateRequest {
 	observedAt := time.Date(2026, time.July, 11, 12, 0, 0, 0, time.UTC)
 	probes := make([]model.ProbeStatus, 0, len(instances))

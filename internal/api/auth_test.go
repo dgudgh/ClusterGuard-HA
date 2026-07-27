@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -21,6 +22,20 @@ type authTestClient struct {
 	handler http.Handler
 	cookies []*http.Cookie
 	csrf    string
+}
+
+type authMutationRPCStub struct {
+	calls         int
+	path          string
+	leaderAddress string
+}
+
+func (stub *authMutationRPCStub) Forward(writer http.ResponseWriter, request *http.Request, leaderAddress string) error {
+	stub.calls++
+	stub.path = request.URL.Path
+	stub.leaderAddress = leaderAddress
+	writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": map[string]bool{"proxied": true}})
+	return nil
 }
 
 func newAuthenticationTestServer(t *testing.T) (*Server, *store.Repository, *platformauth.Service) {
@@ -95,7 +110,7 @@ func (client *authTestClient) login(t *testing.T, username, password string) *ht
 func TestPlatformLoginUsesGenericFailureAndReturnsSanitizedUser(t *testing.T) {
 	server, repository, _ := newAuthenticationTestServer(t)
 	client := &authTestClient{handler: server.Handler()}
-	var failureBody string
+	var failureMessage string
 	for _, attempt := range []struct{ username, password string }{
 		{username: "missing", password: "admin123"},
 		{username: "admin", password: "wrong-password"},
@@ -104,10 +119,21 @@ func TestPlatformLoginUsesGenericFailureAndReturnsSanitizedUser(t *testing.T) {
 		if response.Code != http.StatusUnauthorized {
 			t.Fatalf("failed login status=%d body=%s", response.Code, response.Body.String())
 		}
-		if failureBody == "" {
-			failureBody = response.Body.String()
-		} else if response.Body.String() != failureBody {
-			t.Fatalf("login failure reveals account state: first=%s second=%s", failureBody, response.Body.String())
+		var failure struct {
+			Status    string `json:"status"`
+			Message   string `json:"message"`
+			RequestID string `json:"request_id"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &failure); err != nil {
+			t.Fatalf("decode login failure: %v", err)
+		}
+		if failure.Status != "error" || failure.Message == "" || failure.RequestID == "" {
+			t.Fatalf("invalid login failure envelope: %+v", failure)
+		}
+		if failureMessage == "" {
+			failureMessage = failure.Message
+		} else if failure.Message != failureMessage {
+			t.Fatalf("login failure reveals account state: first=%q second=%q", failureMessage, failure.Message)
 		}
 	}
 	response := client.login(t, "admin", "admin123")
@@ -128,6 +154,78 @@ func TestPlatformLoginUsesGenericFailureAndReturnsSanitizedUser(t *testing.T) {
 	events := repository.SecurityEvents()
 	if len(events) != 3 || events[0].Kind != "login_failed" || events[2].Kind != "login_success" {
 		t.Fatalf("login security events=%+v", events)
+	}
+}
+
+func TestPlatformAuthenticationMutationsProxyToRaftLeader(t *testing.T) {
+	server, repository, _ := newAuthenticationTestServer(t)
+	leaderAPI := "https://controller-leader.example:3000"
+	authority := &apiMutationAuthorityStub{
+		err: errors.New("not leader"), leaderID: model.NewResourceID(),
+		leaderAddress: "controller-leader.example:10009", leaderAPI: leaderAPI,
+	}
+	rpc := &authMutationRPCStub{}
+	WithMutationAuthority(authority)(server)
+	WithMutationRPC(rpc)(server)
+
+	client := &authTestClient{handler: server.Handler()}
+	response := client.login(t, "admin", "admin123")
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"proxied":true`) {
+		t.Fatalf("proxied login status=%d body=%s", response.Code, response.Body.String())
+	}
+	if rpc.calls != 1 || rpc.path != "/api/v1/auth/login" || rpc.leaderAddress != leaderAPI {
+		t.Fatalf("authentication RPC calls=%d path=%q leader=%q", rpc.calls, rpc.path, rpc.leaderAddress)
+	}
+	if len(repository.PlatformSessions("")) != 0 || len(repository.SecurityEvents()) != 0 {
+		t.Fatalf("follower mutated authentication state: sessions=%+v events=%+v", repository.PlatformSessions(""), repository.SecurityEvents())
+	}
+}
+
+func TestPlatformLoginThrottlingReturnsRetryableStatus(t *testing.T) {
+	server, repository, _ := newAuthenticationTestServer(t)
+	client := &authTestClient{handler: server.Handler()}
+	for attempt := 0; attempt < 5; attempt++ {
+		response := client.login(t, "admin", "wrong-password")
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("failed login %d status=%d body=%s", attempt+1, response.Code, response.Body.String())
+		}
+	}
+	response := client.login(t, "admin", "wrong-password")
+	if response.Code != http.StatusTooManyRequests {
+		t.Fatalf("throttled login status=%d body=%s", response.Code, response.Body.String())
+	}
+	if response.Header().Get("Retry-After") != "60" {
+		t.Fatalf("throttled login Retry-After=%q", response.Header().Get("Retry-After"))
+	}
+	if strings.Contains(strings.ToLower(response.Body.String()), "admin") {
+		t.Fatalf("throttled response exposes account identity: %s", response.Body.String())
+	}
+	events := repository.SecurityEvents()
+	if len(events) != 6 || events[len(events)-1].Kind != "login_throttled" {
+		t.Fatalf("login security events=%+v", events)
+	}
+}
+
+func TestPlatformSessionCookiesFollowTrustedTransportConfiguration(t *testing.T) {
+	server, _, _ := newAuthenticationTestServer(t)
+	WithSecureCookies(true)(server)
+	client := &authTestClient{handler: server.Handler()}
+	response := client.login(t, "admin", "admin123")
+	if response.Code != http.StatusOK {
+		t.Fatalf("login status=%d body=%s", response.Code, response.Body.String())
+	}
+	secureCookies := 0
+	for _, cookie := range response.Result().Cookies() {
+		if cookie.Name != sessionCookieName && cookie.Name != csrfCookieName {
+			continue
+		}
+		secureCookies++
+		if !cookie.Secure || cookie.SameSite != http.SameSiteStrictMode {
+			t.Fatalf("unsafe authentication cookie: %+v", cookie)
+		}
+	}
+	if secureCookies != 2 {
+		t.Fatalf("authentication cookies=%v", response.Result().Cookies())
 	}
 }
 

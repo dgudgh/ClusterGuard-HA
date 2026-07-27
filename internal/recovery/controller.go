@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"clusterguard.io/ha/internal/observability"
 	"clusterguard.io/ha/pkg/adapter"
 	"clusterguard.io/ha/pkg/model"
 )
@@ -42,14 +44,17 @@ type OperationExecutor interface {
 }
 
 type Controller struct {
-	state      StateReader
-	failures   FailureEvidence
-	selector   CandidateSelector
-	executor   OperationExecutor
-	authority  MutationAuthority
-	retryDelay time.Duration
-	interval   time.Duration
-	now        func() time.Time
+	state         StateReader
+	failures      FailureEvidence
+	selector      CandidateSelector
+	executor      OperationExecutor
+	authority     MutationAuthority
+	engine        model.Engine
+	retryDelay    time.Duration
+	interval      time.Duration
+	now           func() time.Time
+	onError       func(error)
+	errorReminder *observability.ErrorReminder
 }
 
 type Option func(*Controller)
@@ -58,6 +63,20 @@ func WithInterval(interval time.Duration) Option {
 	return func(controller *Controller) {
 		if interval > 0 {
 			controller.interval = interval
+		}
+	}
+}
+
+func WithEngine(engine model.Engine) Option {
+	return func(controller *Controller) {
+		controller.engine = engine
+	}
+}
+
+func WithErrorHandler(handler func(error)) Option {
+	return func(controller *Controller) {
+		if handler != nil {
+			controller.onError = handler
 		}
 	}
 }
@@ -71,7 +90,9 @@ func NewController(state StateReader, failures FailureEvidence, selector Candida
 	}
 	controller := &Controller{
 		state: state, failures: failures, selector: selector, executor: executor, authority: authority,
-		retryDelay: retryDelay, interval: 5 * time.Second, now: now,
+		engine: model.EngineMySQL, retryDelay: retryDelay, interval: 5 * time.Second, now: now,
+		onError:       func(err error) { log.Printf("automatic recovery cycle failed: %v", err) },
+		errorReminder: observability.NewErrorReminder(5*time.Minute, now),
 	}
 	for _, option := range options {
 		if option != nil {
@@ -79,6 +100,37 @@ func NewController(state StateReader, failures FailureEvidence, selector Candida
 		}
 	}
 	return controller
+}
+
+func (controller *Controller) reportError(err error) {
+	if controller == nil || errors.Is(err, context.Canceled) {
+		return
+	}
+	if err == nil && controller.hasStableIncident() {
+		return
+	}
+	if controller.errorReminder != nil && !controller.errorReminder.ShouldReport(err) {
+		return
+	}
+	if err != nil && controller.onError != nil {
+		controller.onError(err)
+	}
+}
+
+func (controller *Controller) hasStableIncident() bool {
+	if controller == nil || controller.state == nil || controller.failures == nil {
+		return false
+	}
+	now := controller.now().UTC()
+	for _, cluster := range controller.state.Clusters() {
+		if cluster.Engine != controller.engine || !model.ValidResourceID(cluster.ResourceID) {
+			continue
+		}
+		if _, stable := controller.failures.Incident(cluster.ResourceID, now); stable {
+			return true
+		}
+	}
+	return false
 }
 
 func automaticFailoverSourcePrefix(clusterID, sourceID model.ResourceID) string {
@@ -90,12 +142,12 @@ func automaticFailoverPrefix(clusterID, sourceID model.ResourceID, incident time
 }
 
 func (controller *Controller) configured() bool {
-	return controller != nil && controller.state != nil && controller.failures != nil && controller.selector != nil && controller.executor != nil && controller.authority != nil
+	return controller != nil && (controller.engine == model.EngineMySQL || controller.engine == model.EnginePostgreSQL) && controller.state != nil && controller.failures != nil && controller.selector != nil && controller.executor != nil && controller.authority != nil
 }
 
 func (controller *Controller) RunOnce(ctx context.Context) error {
 	if !controller.configured() {
-		return fmt.Errorf("automatic MySQL recovery controller is not configured")
+		return fmt.Errorf("automatic %s recovery controller is not configured", controller.engine)
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -108,7 +160,7 @@ func (controller *Controller) RunOnce(ctx context.Context) error {
 	errorsFound := make(chan error, len(clusters))
 	var wait sync.WaitGroup
 	for _, cluster := range clusters {
-		if cluster.Engine != model.EngineMySQL || !model.ValidResourceID(cluster.ResourceID) {
+		if cluster.Engine != controller.engine || !model.ValidResourceID(cluster.ResourceID) {
 			continue
 		}
 		cluster := cluster
@@ -159,13 +211,13 @@ func (controller *Controller) recoverCluster(ctx context.Context, cluster model.
 	}
 	sourcePrefix := automaticFailoverSourcePrefix(cluster.ResourceID, primaryID)
 	prefix := automaticFailoverPrefix(cluster.ResourceID, primaryID, incident)
-	attempt, allowed := nextAutomaticAttempt(controller.state.Operations(cluster.ResourceID), sourcePrefix, prefix, now, controller.retryDelay)
+	attempt, allowed := nextAutomaticAttempt(controller.state.Operations(cluster.ResourceID), primaryID, sourcePrefix, prefix, incident, now, controller.retryDelay)
 	if !allowed {
 		return nil
 	}
 	request := adapter.OperationRequest{
 		Operation: model.Operation{
-			ClusterID: cluster.ResourceID, Engine: model.EngineMySQL, Kind: model.OperationFailover,
+			ClusterID: cluster.ResourceID, Engine: cluster.Engine, Kind: model.OperationFailover,
 			RequestedBy: AutomaticRecoveryActor,
 		},
 		TargetID: targetID, IdempotencyKey: prefix + strconv.Itoa(attempt),
@@ -204,10 +256,14 @@ func snapshotContains(snapshot model.TopologySnapshot, instanceID model.Resource
 	return false
 }
 
-func nextAutomaticAttempt(operations []model.OperationRecord, sourcePrefix, incidentPrefix string, now time.Time, retryDelay time.Duration) (int, bool) {
+func nextAutomaticAttempt(operations []model.OperationRecord, sourceID model.ResourceID, sourcePrefix, incidentPrefix string, incident, now time.Time, retryDelay time.Duration) (int, bool) {
+	tenureStartedAt := latestPrimaryAssignment(operations, sourceID, incident)
 	next := 1
 	for _, operation := range operations {
 		if !strings.HasPrefix(operation.IdempotencyKey, sourcePrefix) || operation.Operation.Kind != model.OperationFailover || operation.Operation.RequestedBy != AutomaticRecoveryActor {
+			continue
+		}
+		if !tenureStartedAt.IsZero() && !operation.UpdatedAt.IsZero() && !operation.UpdatedAt.After(tenureStartedAt) {
 			continue
 		}
 		if strings.HasPrefix(operation.IdempotencyKey, incidentPrefix) {
@@ -229,11 +285,27 @@ func nextAutomaticAttempt(operations []model.OperationRecord, sourcePrefix, inci
 	return next, true
 }
 
+func latestPrimaryAssignment(operations []model.OperationRecord, sourceID model.ResourceID, incident time.Time) time.Time {
+	var latest time.Time
+	for _, operation := range operations {
+		if operation.TargetID != sourceID || operation.Status != model.OperationSucceeded || operation.UpdatedAt.IsZero() || operation.UpdatedAt.After(incident) {
+			continue
+		}
+		if operation.Operation.Kind != model.OperationFailover && operation.Operation.Kind != model.OperationSwitchover {
+			continue
+		}
+		if operation.UpdatedAt.After(latest) {
+			latest = operation.UpdatedAt
+		}
+	}
+	return latest
+}
+
 func (controller *Controller) Run(ctx context.Context) {
 	if ctx == nil {
 		return
 	}
-	_ = controller.RunOnce(ctx)
+	controller.reportError(controller.RunOnce(ctx))
 	ticker := time.NewTicker(controller.interval)
 	defer ticker.Stop()
 	for {
@@ -241,7 +313,7 @@ func (controller *Controller) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			_ = controller.RunOnce(ctx)
+			controller.reportError(controller.RunOnce(ctx))
 		}
 	}
 }

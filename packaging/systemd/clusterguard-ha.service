@@ -2,16 +2,22 @@
 Description=ClusterGuard HA Multi-Database High Availability Control Plane
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
 User=clusterguard
 Group=clusterguard
 EnvironmentFile=-/etc/clusterguard/clusterguard.env
-Environment=PATH=/usr/local/mysql/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+Environment=PATH=/usr/local/mysql/bin:/usr/pgsql-16/bin:/usr/lib/postgresql/16/bin:/opt/mssql-tools18/bin:/opt/mssql-tools/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+ExecStartPre=/usr/local/bin/clusterguard --config /etc/clusterguard/clusterguard.json --check-config
 ExecStart=/usr/local/bin/clusterguard --config /etc/clusterguard/clusterguard.json
 Restart=on-failure
 RestartSec=5s
+TimeoutStopSec=35s
+LimitNOFILE=65536
+TasksMax=4096
 ConfigurationDirectory=clusterguard
 ConfigurationDirectoryMode=0750
 StateDirectory=clusterguard

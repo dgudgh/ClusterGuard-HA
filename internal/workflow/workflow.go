@@ -54,7 +54,19 @@ type DiscoveryValidator interface {
 }
 
 type LockManager interface {
-	Acquire(context.Context, model.Operation) (func(), error)
+	Acquire(context.Context, model.Operation) (context.Context, func(), error)
+}
+
+func lockLeaseFailure(ctx context.Context) error {
+	cause := context.Cause(ctx)
+	if cause == nil {
+		return nil
+	}
+	var classified interface{ FailureClass() string }
+	if errors.As(cause, &classified) && classified.FailureClass() == "lock_lease_lost" {
+		return cause
+	}
+	return nil
 }
 
 type ApprovalConsumer interface {
@@ -228,6 +240,12 @@ func markDurabilityIndeterminate(execution model.Execution) model.Execution {
 	return execution
 }
 
+func markLockLeaseIndeterminate(execution model.Execution) model.Execution {
+	execution.Status = model.OperationIndeterminate
+	execution.Message = "metadata commit returned after the operation lock lease was lost; committed state requires verification"
+	return execution
+}
+
 func isCommittedWarning(err error) bool {
 	var warning interface{ Committed() bool }
 	return err != nil && errors.As(err, &warning) && warning.Committed()
@@ -375,7 +393,7 @@ func (service *Service) executeLegacy(ctx context.Context, request adapter.Opera
 	if err := service.audit(operation, model.StageSafetyGuard, "safety guard passed"); err != nil {
 		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
 	}
-	release, err := service.locks.Acquire(ctx, operation)
+	leaseCtx, release, err := service.locks.Acquire(ctx, operation)
 	if err != nil {
 		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationBlocked, Message: err.Error()}
 		return service.recordOutcome(operation, execution, model.StageLock, "operation lock blocked execution: "+err.Error(), err)
@@ -384,7 +402,7 @@ func (service *Service) executeLegacy(ctx context.Context, request adapter.Opera
 	if err := service.audit(operation, model.StageLock, "operation lock acquired"); err != nil {
 		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
 	}
-	if err := service.discovery.RevalidateObservation(ctx, operation, observation); err != nil {
+	if err := service.discovery.RevalidateObservation(leaseCtx, operation, observation); err != nil {
 		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationBlocked, Message: err.Error()}
 		return service.recordOutcome(operation, execution, model.StageLock, "topology observation changed under operation lock: "+err.Error(), err)
 	}
@@ -404,7 +422,7 @@ func (service *Service) executeLegacy(ctx context.Context, request adapter.Opera
 			Observation:  observationLabel,
 			Plan:         plan,
 		}
-		grantID, _, err := service.approval.Consume(ctx, record, authorization.approvalToken)
+		grantID, _, err := service.approval.Consume(leaseCtx, record, authorization.approvalToken)
 		if err != nil {
 			execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationBlocked, Message: err.Error()}
 			return service.recordOutcome(operation, execution, model.StageApprove, "approval blocked execution: "+err.Error(), err)
@@ -414,7 +432,21 @@ func (service *Service) executeLegacy(ctx context.Context, request adapter.Opera
 	if err := service.audit(operation, model.StageApprove, approvalMessage); err != nil {
 		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
 	}
-	execution, err := candidate.Execute(ctx, request)
+	if err := lockLeaseFailure(leaseCtx); err != nil {
+		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationBlocked, Message: err.Error()}
+		return service.recordOutcome(operation, execution, model.StageLock, "operation lock lease was lost before execution: "+err.Error(), err)
+	}
+	execution, err := candidate.Execute(leaseCtx, request)
+	if leaseErr := lockLeaseFailure(leaseCtx); leaseErr != nil {
+		if err != nil {
+			err = errors.Join(err, leaseErr)
+		} else {
+			err = leaseErr
+		}
+		execution.Status = model.OperationIndeterminate
+		execution.Message = "operation lock lease was lost during execution: " + leaseErr.Error()
+	}
+	err = normalizeAdapterExecutionError(execution, err)
 	if err != nil {
 		if execution.Status == "" {
 			execution.Status = model.OperationFailed
@@ -427,14 +459,36 @@ func (service *Service) executeLegacy(ctx context.Context, request adapter.Opera
 	if err := service.audit(operation, model.StageExecute, "adapter execution completed"); err != nil {
 		committedJournalErr = firstJournalError(committedJournalErr, err)
 	}
-	verification, err := candidate.Verify(ctx, request)
+	verification, err := candidate.Verify(leaseCtx, request)
+	if leaseErr := lockLeaseFailure(leaseCtx); leaseErr != nil {
+		execution.Status = model.OperationIndeterminate
+		execution.Message = "operation lock lease was lost during verification; committed state requires review"
+		cause := leaseErr
+		if err != nil {
+			cause = errors.Join(leaseErr, err)
+		} else if !verification.Passed {
+			cause = errors.Join(leaseErr, errors.New("post-commit verification did not pass"))
+		}
+		if auditErr := service.audit(operation, model.StageVerify, execution.Message); auditErr != nil {
+			committedJournalErr = firstJournalError(committedJournalErr, auditErr)
+		}
+		if reportErr := service.report(operation, execution, true); reportErr != nil {
+			committedJournalErr = firstJournalError(committedJournalErr, reportErr)
+		}
+		if committedJournalErr != nil {
+			return execution, &journalPersistenceError{err: errors.Join(cause, committedJournalErr)}
+		}
+		return execution, cause
+	}
 	if err != nil || !verification.Passed {
+		verificationErr := err
 		if err != nil {
 			execution.Message = err.Error()
 		} else {
 			execution.Message = "verification failed"
+			verificationErr = errors.New(execution.Message)
 		}
-		execution.Status = model.OperationFailed
+		execution.Status = model.OperationIndeterminate
 		if auditErr := service.audit(operation, model.StageVerify, execution.Message); auditErr != nil {
 			committedJournalErr = firstJournalError(committedJournalErr, auditErr)
 		}
@@ -445,9 +499,9 @@ func (service *Service) executeLegacy(ctx context.Context, request adapter.Opera
 			committedJournalErr = firstJournalError(committedJournalErr, reportErr)
 		}
 		if committedJournalErr != nil {
-			return journalIndeterminate(execution, committedJournalErr)
+			return journalIndeterminate(execution, errors.Join(verificationErr, committedJournalErr))
 		}
-		return execution, err
+		return execution, verificationErr
 	}
 	if err := service.audit(operation, model.StageVerify, "verification passed"); err != nil {
 		committedJournalErr = firstJournalError(committedJournalErr, err)
@@ -539,7 +593,7 @@ func (service *Service) executeMetadata(ctx context.Context, operation model.Ope
 	if err := service.audit(operation, model.StageSafetyGuard, "safety guard passed"); err != nil {
 		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
 	}
-	release, err := service.locks.Acquire(ctx, operation)
+	leaseCtx, release, err := service.locks.Acquire(ctx, operation)
 	if err != nil {
 		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationBlocked, Message: err.Error()}
 		return service.recordOutcome(operation, execution, model.StageLock, "operation lock blocked metadata reconciliation: "+err.Error(), err)
@@ -554,7 +608,7 @@ func (service *Service) executeMetadata(ctx context.Context, operation model.Ope
 		if !ok {
 			return model.Execution{}, fmt.Errorf("administrative approval validation is not configured")
 		}
-		if err := administrativeApproval.Validate(ctx, operation, authorization.approvalToken); err != nil {
+		if err := administrativeApproval.Validate(leaseCtx, operation, authorization.approvalToken); err != nil {
 			execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationBlocked, Message: err.Error()}
 			return service.recordOutcome(operation, execution, model.StageApprove, "approval blocked metadata reconciliation: "+err.Error(), err)
 		}
@@ -563,14 +617,27 @@ func (service *Service) executeMetadata(ctx context.Context, operation model.Ope
 	if err := service.audit(operation, model.StageApprove, approvalMessage); err != nil {
 		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
 	}
+	if err := lockLeaseFailure(leaseCtx); err != nil {
+		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationBlocked, Message: err.Error()}
+		return service.recordOutcome(operation, execution, model.StageLock, "operation lock lease was lost before metadata commit: "+err.Error(), err)
+	}
 	commitErr := commit()
-	if commitErr != nil && !isCommittedWarning(commitErr) {
+	postCommitLeaseErr := lockLeaseFailure(leaseCtx)
+	commitOutcomeUncertain := postCommitLeaseErr != nil
+	if commitOutcomeUncertain {
+		commitErr = errors.Join(commitErr, postCommitLeaseErr)
+	}
+	if commitErr != nil && !isCommittedWarning(commitErr) && !commitOutcomeUncertain {
 		err := commitErr
 		execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationFailed, Message: err.Error()}
 		return service.recordOutcome(operation, execution, model.StageExecute, err.Error(), err)
 	}
 	var committedJournalErr error
-	if err := service.audit(operation, model.StageExecute, "metadata reconciliation committed"); err != nil {
+	executeAuditMessage := "metadata reconciliation committed"
+	if commitOutcomeUncertain {
+		executeAuditMessage = "metadata reconciliation commit returned after the operation lock lease was lost"
+	}
+	if err := service.audit(operation, model.StageExecute, executeAuditMessage); err != nil {
 		committedJournalErr = firstJournalError(committedJournalErr, err)
 	}
 	if _, err := identity.InstanceKey(request.Instance.Engine, request.Instance.EngineIdentity); err != nil {
@@ -578,7 +645,9 @@ func (service *Service) executeMetadata(ctx context.Context, operation model.Ope
 		if auditErr := service.audit(operation, model.StageVerify, err.Error()); auditErr != nil {
 			committedJournalErr = firstJournalError(committedJournalErr, auditErr)
 		}
-		if commitErr != nil {
+		if commitOutcomeUncertain {
+			execution = markLockLeaseIndeterminate(execution)
+		} else if commitErr != nil {
 			execution = markDurabilityIndeterminate(execution)
 		}
 		if committedJournalErr != nil {
@@ -605,7 +674,9 @@ func (service *Service) executeMetadata(ctx context.Context, operation model.Ope
 	if err := service.audit(operation, model.StageReport, "metadata reconciliation report generated"); err != nil {
 		committedJournalErr = firstJournalError(committedJournalErr, err)
 	}
-	if commitErr != nil {
+	if commitOutcomeUncertain {
+		execution = markLockLeaseIndeterminate(execution)
+	} else if commitErr != nil {
 		execution = markDurabilityIndeterminate(execution)
 	}
 	if committedJournalErr != nil {

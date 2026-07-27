@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -22,6 +24,7 @@ import (
 	"clusterguard.io/ha/adapters/postgresql"
 	"clusterguard.io/ha/adapters/sqlserver"
 	"clusterguard.io/ha/internal/approval"
+	"clusterguard.io/ha/internal/controlstate"
 	"clusterguard.io/ha/internal/store"
 	"clusterguard.io/ha/internal/workflow"
 	"clusterguard.io/ha/pkg/adapter"
@@ -37,6 +40,7 @@ type apiMutationAuthorityStub struct {
 	calls         int
 	leaderID      model.ResourceID
 	leaderAddress string
+	leaderAPI     string
 }
 
 func (authority *apiMutationAuthorityStub) RequireMutationAuthority(context.Context) error {
@@ -46,6 +50,10 @@ func (authority *apiMutationAuthorityStub) RequireMutationAuthority(context.Cont
 
 func (authority *apiMutationAuthorityStub) Leader() (model.ResourceID, string, bool) {
 	return authority.leaderID, authority.leaderAddress, authority.leaderID != ""
+}
+
+func (authority *apiMutationAuthorityStub) LeaderAPIAddress(model.ResourceID) (string, bool) {
+	return authority.leaderAPI, strings.TrimSpace(authority.leaderAPI) != ""
 }
 
 type metadataAdapterSpy struct {
@@ -240,7 +248,10 @@ func TestControlAPIMutationsRequireCurrentQuorumLeader(t *testing.T) {
 	}
 	repository := store.NewMemory()
 	leaderID := model.NewResourceID()
-	authority := &apiMutationAuthorityStub{err: errors.New("not leader"), leaderID: leaderID, leaderAddress: "192.0.2.10:10009"}
+	authority := &apiMutationAuthorityStub{
+		err: errors.New("not leader"), leaderID: leaderID,
+		leaderAddress: "192.0.2.10:10009", leaderAPI: "https://192.0.2.10:8443",
+	}
 	server := NewServer(registry, repository, nil, nil, WithControlToken(testControlToken), WithMutationAuthority(authority))
 	payload := map[string]interface{}{"display_name": "secured", "engine": "mysql", "endpoints": []map[string]interface{}{{"hostname": "mysql-a", "port": 3306}}}
 
@@ -249,7 +260,7 @@ func TestControlAPIMutationsRequireCurrentQuorumLeader(t *testing.T) {
 	blockedRequest.Header.Set("Content-Type", "application/json")
 	blocked := httptest.NewRecorder()
 	server.Handler().ServeHTTP(blocked, blockedRequest)
-	if blocked.Code != http.StatusServiceUnavailable || len(repository.Clusters()) != 0 || authority.calls != 1 || blocked.Header().Get("X-ClusterGuard-Leader-ID") != string(leaderID) || blocked.Header().Get("X-ClusterGuard-Leader-Address") != authority.leaderAddress || blocked.Header().Get("X-ClusterGuard-Leader-API-Address") != "http://192.0.2.10:8088" {
+	if blocked.Code != http.StatusServiceUnavailable || len(repository.Clusters()) != 0 || authority.calls != 1 || blocked.Header().Get("X-ClusterGuard-Leader-ID") != string(leaderID) || blocked.Header().Get("X-ClusterGuard-Leader-Address") != authority.leaderAddress || blocked.Header().Get("X-ClusterGuard-Leader-API-Address") != authority.leaderAPI {
 		t.Fatalf("non-leader mutation was not blocked: %d %s headers=%v", blocked.Code, blocked.Body.String(), blocked.Header())
 	}
 	read := callJSON(t, server.Handler(), http.MethodGet, "/api/v1/engines", nil)
@@ -260,6 +271,304 @@ func TestControlAPIMutationsRequireCurrentQuorumLeader(t *testing.T) {
 	allowed := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/clusters", payload)
 	if allowed.Code != http.StatusCreated || len(repository.Clusters()) != 1 || authority.calls != 2 {
 		t.Fatalf("authoritative mutation failed: %d %s calls=%d", allowed.Code, allowed.Body.String(), authority.calls)
+	}
+}
+
+func TestControlAPIMutationsProxyToCurrentQuorumLeader(t *testing.T) {
+	var forwardedCalls int
+	leader := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		forwardedCalls++
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatalf("read forwarded body: %v", err)
+		}
+		if request.Method != http.MethodPost || request.URL.RequestURI() != "/api/v1/clusters?source=console" {
+			t.Fatalf("forwarded request = %s %s", request.Method, request.URL.RequestURI())
+		}
+		if string(body) != `{"display_name":"proxied","engine":"mysql","endpoints":[{"hostname":"mysql-a","port":3306}]}` {
+			t.Fatalf("forwarded body = %s", body)
+		}
+		for name, want := range map[string]string{
+			"Authorization":   "Bearer " + testControlToken,
+			"Cookie":          "clusterguard_session=session-token",
+			"X-CSRF-Token":    "csrf-token",
+			"Idempotency-Key": "register-proxied-cluster",
+		} {
+			if got := request.Header.Get(name); got != want {
+				t.Fatalf("forwarded %s = %q, want %q", name, got, want)
+			}
+		}
+		if request.Header.Get(mutationRPCForwardedHeader) == "" {
+			t.Fatal("forwarded request is missing loop-prevention marker")
+		}
+		writer.Header().Set(mutationRPCRevisionHeader, "1")
+		writer.Header().Set("X-Leader-Result", "accepted")
+		writeJSON(writer, http.StatusCreated, map[string]interface{}{"status": "ok", "result": map[string]bool{"proxied": true}})
+	}))
+	defer leader.Close()
+	leaderURL, err := url.Parse(leader.URL)
+	if err != nil {
+		t.Fatalf("parse leader URL: %v", err)
+	}
+
+	registry := adapter.NewRegistry()
+	if err := registry.Register(mysql.New(apiRunner{})); err != nil {
+		t.Fatalf("register MySQL adapter: %v", err)
+	}
+	repository := store.NewMemory()
+	authority := &apiMutationAuthorityStub{
+		err: errors.New("not leader"), leaderID: model.NewResourceID(),
+		leaderAddress: leaderURL.Hostname() + ":10009", leaderAPI: leader.URL,
+	}
+	server := NewServer(
+		registry, repository, nil, nil,
+		WithControlToken(testControlToken),
+		WithMutationAuthority(authority),
+		WithMutationRPC(NewLeaderMutationRPCClient(leader.Client(), &mutationRevisionStub{revision: 1})),
+	)
+	payload := `{"display_name":"proxied","engine":"mysql","endpoints":[{"hostname":"mysql-a","port":3306}]}`
+	request := httptest.NewRequest(http.MethodPost, "http://attacker-controlled.example:65530/api/v1/clusters?source=console", strings.NewReader(payload))
+	request.Header.Set("Authorization", "Bearer "+testControlToken)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Cookie", "clusterguard_session=session-token")
+	request.Header.Set("X-CSRF-Token", "csrf-token")
+	request.Header.Set("Idempotency-Key", "register-proxied-cluster")
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated || !strings.Contains(response.Body.String(), `"proxied":true`) {
+		t.Fatalf("proxied mutation response = %d %s", response.Code, response.Body.String())
+	}
+	if response.Header().Get("X-Leader-Result") != "accepted" || response.Header().Get("X-ClusterGuard-Mutation-RPC-Leader") != leader.URL {
+		t.Fatalf("proxied response headers = %v", response.Header())
+	}
+	if forwardedCalls != 1 || authority.calls != 1 || len(repository.Clusters()) != 0 {
+		t.Fatalf("forwarded=%d authority=%d local_clusters=%d", forwardedCalls, authority.calls, len(repository.Clusters()))
+	}
+}
+
+func TestClusterRetirementProxiesToCurrentQuorumLeader(t *testing.T) {
+	clusterID := model.NewResourceID()
+	payload := `{"confirm_display_name":"retire-through-leader"}`
+	forwardedCalls := 0
+	leader := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		forwardedCalls++
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatalf("read forwarded retirement body: %v", err)
+		}
+		if request.Method != http.MethodDelete || request.URL.Path != "/api/v1/clusters/"+string(clusterID) {
+			t.Fatalf("forwarded retirement request = %s %s", request.Method, request.URL.RequestURI())
+		}
+		if string(body) != payload {
+			t.Fatalf("forwarded retirement body = %s", body)
+		}
+		if request.Header.Get("Authorization") != "Bearer "+testControlToken || request.Header.Get(mutationRPCForwardedHeader) != "1" {
+			t.Fatalf("forwarded retirement headers = %v", request.Header)
+		}
+		writer.Header().Set(mutationRPCRevisionHeader, "1")
+		writeJSON(writer, http.StatusOK, map[string]interface{}{
+			"status": "ok", "result": map[string]interface{}{"cluster_id": clusterID, "retired": true},
+		})
+	}))
+	defer leader.Close()
+
+	repository := store.NewMemory()
+	authority := &apiMutationAuthorityStub{
+		err: errors.New("not leader"), leaderID: model.NewResourceID(),
+		leaderAddress: "192.0.2.10:10009", leaderAPI: leader.URL,
+	}
+	server := NewServer(
+		adapter.NewRegistry(), repository, nil, nil,
+		WithControlToken(testControlToken),
+		WithMutationAuthority(authority),
+		WithMutationRPC(NewLeaderMutationRPCClient(leader.Client(), &mutationRevisionStub{revision: 1})),
+	)
+	request := httptest.NewRequest(http.MethodDelete, "/api/v1/clusters/"+string(clusterID), strings.NewReader(payload))
+	request.Header.Set("Authorization", "Bearer "+testControlToken)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"retired":true`) {
+		t.Fatalf("proxied retirement response = %d %s", response.Code, response.Body.String())
+	}
+	if forwardedCalls != 1 || authority.calls != 1 || len(repository.Clusters()) != 0 {
+		t.Fatalf("retirement forwarded=%d authority=%d local_clusters=%d", forwardedCalls, authority.calls, len(repository.Clusters()))
+	}
+}
+
+func TestForwardedMutationCannotLoopThroughAnotherFollower(t *testing.T) {
+	forwardedCalls := 0
+	leader := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { forwardedCalls++ }))
+	defer leader.Close()
+	leaderURL, err := url.Parse(leader.URL)
+	if err != nil {
+		t.Fatalf("parse leader URL: %v", err)
+	}
+	authority := &apiMutationAuthorityStub{
+		err: errors.New("not leader"), leaderID: model.NewResourceID(),
+		leaderAddress: leaderURL.Hostname() + ":10009", leaderAPI: leader.URL,
+	}
+	server := NewServer(
+		adapter.NewRegistry(), store.NewMemory(), nil, nil,
+		WithControlToken(testControlToken),
+		WithMutationAuthority(authority),
+		WithMutationRPC(NewLeaderMutationRPCClient(leader.Client())),
+	)
+	request := httptest.NewRequest(http.MethodPost, "http://controller-c:"+leaderURL.Port()+"/api/v1/clusters", strings.NewReader(`{}`))
+	request.Header.Set("Authorization", "Bearer "+testControlToken)
+	request.Header.Set(mutationRPCForwardedHeader, "1")
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusServiceUnavailable || forwardedCalls != 0 || !strings.Contains(response.Body.String(), "current Raft leader") {
+		t.Fatalf("looping mutation response=%d %s forwarded=%d", response.Code, response.Body.String(), forwardedCalls)
+	}
+}
+
+func TestMutationRPCLeaderResponseIncludesCommittedMetadataRevision(t *testing.T) {
+	registry := adapter.NewRegistry()
+	if err := registry.Register(mysql.New(apiRunner{})); err != nil {
+		t.Fatalf("register MySQL adapter: %v", err)
+	}
+	repository := store.NewMemory()
+	server := NewServer(registry, repository, nil, nil, WithControlToken(testControlToken))
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/clusters", strings.NewReader(`{"display_name":"revision","engine":"mysql","endpoints":[{"hostname":"mysql-a","port":3306}]}`))
+	request.Header.Set("Authorization", "Bearer "+testControlToken)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(mutationRPCForwardedHeader, "1")
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusCreated || response.Header().Get("X-ClusterGuard-Metadata-Revision") != "1" {
+		t.Fatalf("leader mutation response=%d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
+	}
+}
+
+type mutationRevisionStub struct {
+	mu       sync.Mutex
+	revision uint64
+}
+
+func (stub *mutationRevisionStub) StateRevision() uint64 {
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	return stub.revision
+}
+
+func (stub *mutationRevisionStub) set(revision uint64) {
+	stub.mu.Lock()
+	stub.revision = revision
+	stub.mu.Unlock()
+}
+
+func TestMutationRPCWaitsForFollowerMetadataBeforeReturningSuccess(t *testing.T) {
+	called := make(chan struct{})
+	leader := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("X-ClusterGuard-Metadata-Revision", "2")
+		close(called)
+		writeJSON(writer, http.StatusOK, map[string]string{"status": "ok"})
+	}))
+	defer leader.Close()
+	revisions := &mutationRevisionStub{revision: 1}
+	updated := make(chan struct{})
+	go func() {
+		<-called
+		time.Sleep(100 * time.Millisecond)
+		revisions.set(2)
+		close(updated)
+	}()
+	request := httptest.NewRequest(http.MethodDelete, "/api/v1/clusters/00000000-0000-4000-8000-000000000001", strings.NewReader(`{}`))
+	response := httptest.NewRecorder()
+	if err := NewLeaderMutationRPCClient(leader.Client(), revisions).Forward(response, request, leader.URL); err != nil {
+		t.Fatalf("forward mutation RPC: %v", err)
+	}
+	select {
+	case <-updated:
+	default:
+		t.Fatal("mutation RPC returned before follower applied the leader metadata revision")
+	}
+	if response.Code != http.StatusOK {
+		t.Fatalf("mutation RPC response=%d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestMutationRPCRejectsLeaderSuccessWhenFollowerDoesNotCatchUp(t *testing.T) {
+	leader := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set(mutationRPCRevisionHeader, "2")
+		writeJSON(writer, http.StatusOK, map[string]string{"status": "ok"})
+	}))
+	defer leader.Close()
+
+	revisions := &mutationRevisionStub{revision: 1}
+	request := httptest.NewRequest(http.MethodDelete, "/api/v1/clusters/00000000-0000-4000-8000-000000000001", nil)
+	ctx, cancel := context.WithTimeout(request.Context(), 25*time.Millisecond)
+	defer cancel()
+	request = request.WithContext(ctx)
+	response := httptest.NewRecorder()
+	err := NewLeaderMutationRPCClient(leader.Client(), revisions).Forward(response, request, leader.URL)
+	if err == nil || !strings.Contains(err.Error(), "metadata revision") {
+		t.Fatalf("stale follower mutation RPC error=%v response=%d %s", err, response.Code, response.Body.String())
+	}
+}
+
+func TestMutationRPCRejectsLeaderSuccessWithoutRevisionEvidence(t *testing.T) {
+	leader := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writeJSON(writer, http.StatusOK, map[string]string{"status": "ok"})
+	}))
+	defer leader.Close()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/clusters", strings.NewReader(`{}`))
+	response := httptest.NewRecorder()
+	err := NewLeaderMutationRPCClient(leader.Client(), &mutationRevisionStub{revision: 1}).Forward(response, request, leader.URL)
+	if err == nil || !strings.Contains(err.Error(), "revision") {
+		t.Fatalf("missing leader revision error=%v response=%d %s", err, response.Code, response.Body.String())
+	}
+}
+
+func TestMutationRPCRejectsRedirectWithoutForwardingCredentials(t *testing.T) {
+	redirectedCalls := 0
+	redirected := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { redirectedCalls++ }))
+	defer redirected.Close()
+	leader := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		http.Redirect(writer, &http.Request{}, redirected.URL, http.StatusTemporaryRedirect)
+	}))
+	defer leader.Close()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/clusters", strings.NewReader(`{}`))
+	request.Header.Set("Authorization", "Bearer secret")
+	response := httptest.NewRecorder()
+	err := NewLeaderMutationRPCClient(leader.Client(), &mutationRevisionStub{revision: 1}).Forward(response, request, leader.URL)
+	if err == nil || redirectedCalls != 0 {
+		t.Fatalf("redirect error=%v redirected_calls=%d", err, redirectedCalls)
+	}
+}
+
+func TestMutationRPCRejectsOversizedRequestBeforeCallingLeader(t *testing.T) {
+	leaderCalls := 0
+	leader := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { leaderCalls++ }))
+	defer leader.Close()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/clusters", strings.NewReader(strings.Repeat("x", maximumJSONBodyBytes+1)))
+	request.ContentLength = 0
+	response := httptest.NewRecorder()
+	err := NewLeaderMutationRPCClient(leader.Client(), &mutationRevisionStub{revision: 1}).Forward(response, request, leader.URL)
+	if err == nil || !strings.Contains(err.Error(), "maximum") || leaderCalls != 0 {
+		t.Fatalf("oversized request error=%v leader_calls=%d", err, leaderCalls)
+	}
+}
+
+func TestMutationRPCRejectsOversizedLeaderResponseBeforeWritingFollowerResponse(t *testing.T) {
+	leader := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set(mutationRPCRevisionHeader, "1")
+		writer.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(writer, strings.Repeat("x", controlstate.MaximumBytes+1))
+	}))
+	defer leader.Close()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/clusters", strings.NewReader(`{}`))
+	response := httptest.NewRecorder()
+	err := NewLeaderMutationRPCClient(leader.Client(), &mutationRevisionStub{revision: 1}).Forward(response, request, leader.URL)
+	if err == nil || !strings.Contains(err.Error(), "maximum") {
+		t.Fatalf("oversized response error=%v", err)
+	}
+	if response.Code != http.StatusOK || response.Body.Len() != 0 {
+		t.Fatalf("partial oversized response leaked: code=%d body_bytes=%d", response.Code, response.Body.Len())
 	}
 }
 
@@ -694,5 +1003,25 @@ func TestConsoleIsServedAtRoot(t *testing.T) {
 	server.Handler().ServeHTTP(head, httptest.NewRequest(http.MethodHead, "/", nil))
 	if head.Code != http.StatusOK || head.Header().Get("Content-Type") != "text/html; charset=utf-8" {
 		t.Fatalf("expected console HEAD response, got %d %q", head.Code, head.Header().Get("Content-Type"))
+	}
+}
+
+func TestHandlerAddsBrowserSecurityHeaders(t *testing.T) {
+	server := NewServer(adapter.NewRegistry(), store.NewMemory(), nil, nil, WithSecureCookies(true))
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	for name, expected := range map[string]string{
+		"X-Content-Type-Options":    "nosniff",
+		"X-Frame-Options":           "DENY",
+		"Referrer-Policy":           "no-referrer",
+		"Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+	} {
+		if value := response.Header().Get(name); value != expected {
+			t.Fatalf("%s=%q want %q", name, value, expected)
+		}
+	}
+	if policy := response.Header().Get("Content-Security-Policy"); !strings.Contains(policy, "default-src 'self'") {
+		t.Fatalf("Content-Security-Policy=%q", policy)
 	}
 }

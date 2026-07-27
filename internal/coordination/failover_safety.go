@@ -21,28 +21,56 @@ type FailoverInventory interface {
 	Endpoint(model.ResourceID) (model.Endpoint, bool)
 }
 
+type ExternalFenceRequest struct {
+	ClusterID   model.ResourceID       `json:"cluster_id"`
+	OperationID model.ResourceID       `json:"operation_id"`
+	LeaseID     model.ResourceID       `json:"lease_id,omitempty"`
+	Instance    model.DatabaseInstance `json:"instance"`
+}
+
+type ExternalFencer interface {
+	Fence(context.Context, ExternalFenceRequest) error
+	Status(context.Context, ExternalFenceRequest) (bool, error)
+}
+
 type GuardedFailoverSafety struct {
 	failures  FailureStability
 	authority MutationAuthority
 	inventory FailoverInventory
 	leases    endpoint.LeaseStore
 	transport endpoint.AgentTransport
+	external  ExternalFencer
 	secret    string
 	now       func() time.Time
 }
 
-func NewGuardedFailoverSafety(failures FailureStability, authority MutationAuthority, inventory FailoverInventory, leases endpoint.LeaseStore, transport endpoint.AgentTransport, secret string, now func() time.Time) *GuardedFailoverSafety {
+type GuardedFailoverOption func(*GuardedFailoverSafety)
+
+func WithExternalFencer(fencer ExternalFencer) GuardedFailoverOption {
+	return func(provider *GuardedFailoverSafety) { provider.external = fencer }
+}
+
+func NewGuardedFailoverSafety(failures FailureStability, authority MutationAuthority, inventory FailoverInventory, leases endpoint.LeaseStore, transport endpoint.AgentTransport, secret string, now func() time.Time, options ...GuardedFailoverOption) *GuardedFailoverSafety {
 	if now == nil {
 		now = time.Now
 	}
-	return &GuardedFailoverSafety{
+	provider := &GuardedFailoverSafety{
 		failures: failures, authority: authority, inventory: inventory, leases: leases,
 		transport: transport, secret: strings.TrimSpace(secret), now: now,
 	}
+	for _, option := range options {
+		if option != nil {
+			option(provider)
+		}
+	}
+	return provider
 }
 
 func (provider *GuardedFailoverSafety) configured() bool {
-	return provider != nil && provider.failures != nil && provider.authority != nil && provider.inventory != nil && provider.leases != nil && provider.transport != nil && provider.secret != ""
+	if provider == nil || provider.failures == nil || provider.authority == nil || provider.inventory == nil || provider.leases == nil {
+		return false
+	}
+	return (provider.transport != nil && provider.secret != "") || provider.external != nil
 }
 
 func (provider *GuardedFailoverSafety) Precheck(ctx context.Context, resolved adapter.ResolvedOperation) []model.Check {
@@ -64,13 +92,13 @@ func (provider *GuardedFailoverSafety) Precheck(ctx context.Context, resolved ad
 	} else {
 		checks = append(checks, model.Check{Name: "controller_quorum", Status: model.CheckPass, Message: "local leader has controller majority authority"})
 	}
-	_, isolated, err := provider.probeIsolation(ctx, resolved)
+	probe, err := provider.probeIsolation(ctx, resolved)
 	if err != nil {
 		checks = append(checks, model.Check{Name: "old_primary_fenced", Status: model.CheckFail, Message: "old-primary isolation path is unreachable or incomplete"})
-	} else if isolated {
-		checks = append(checks, model.Check{Name: "old_primary_fenced", Status: model.CheckPass, Message: "old primary is already read-only and does not own the VIP"})
+	} else if probe.isolated {
+		checks = append(checks, model.Check{Name: "old_primary_fenced", Status: model.CheckPass, Message: "old primary isolation is verified through " + probe.method})
 	} else {
-		checks = append(checks, model.Check{Name: "old_primary_fenced", Status: model.CheckPass, Message: "restricted old-primary isolation path is reachable and will run before promotion"})
+		checks = append(checks, model.Check{Name: "old_primary_fenced", Status: model.CheckPass, Message: probe.method + " old-primary isolation path is reachable and will run before promotion"})
 	}
 	return checks
 }
@@ -97,16 +125,39 @@ func (provider *GuardedFailoverSafety) Fence(ctx context.Context, resolved adapt
 	if err != nil {
 		return fmt.Errorf("acquire failover quorum lease: %w", err)
 	}
-	request, err := provider.signedRequest(resolved, resource, agent.CommandSelfIsolate, lease.ResourceID)
-	if err != nil {
-		return err
+	var agentFailure error
+	if provider.transport != nil && provider.secret != "" {
+		request, requestErr := provider.signedRequest(resolved, resource, agent.CommandSelfIsolate, lease.ResourceID)
+		if requestErr == nil {
+			response, sendErr := provider.transport.Send(ctx, resolved.Primary, request)
+			switch {
+			case sendErr != nil:
+				agentFailure = fmt.Errorf("isolate old primary through restricted agent: %w", sendErr)
+			case response.Status != agent.StatusOK:
+				agentFailure = fmt.Errorf("old-primary agent blocked isolation")
+			default:
+				return nil
+			}
+		} else {
+			agentFailure = requestErr
+		}
 	}
-	response, err := provider.transport.Send(ctx, resolved.Primary, request)
-	if err != nil {
-		return fmt.Errorf("isolate old primary: %w", err)
+	if provider.external == nil {
+		if agentFailure != nil {
+			return agentFailure
+		}
+		return fmt.Errorf("old-primary isolation path is unavailable")
 	}
-	if response.Status != agent.StatusOK {
-		return fmt.Errorf("old-primary agent blocked isolation")
+	externalRequest := provider.externalFenceRequest(resolved, lease.ResourceID)
+	if err := provider.external.Fence(ctx, externalRequest); err != nil {
+		return fmt.Errorf("externally fence old primary: %w", err)
+	}
+	fenced, err := provider.external.Status(ctx, externalRequest)
+	if err != nil {
+		return fmt.Errorf("verify external fencing: %w", err)
+	}
+	if !fenced {
+		return fmt.Errorf("verify external fencing: old primary is not proven isolated")
 	}
 	return nil
 }
@@ -115,14 +166,14 @@ func (provider *GuardedFailoverSafety) Verify(ctx context.Context, resolved adap
 	if !provider.configured() {
 		return model.Check{Name: "old_primary_fenced", Status: model.CheckFail, Message: "old-primary fencing is not configured"}
 	}
-	_, isolated, err := provider.probeIsolation(ctx, resolved)
+	probe, err := provider.probeIsolation(ctx, resolved)
 	if err != nil {
 		return model.Check{Name: "old_primary_fenced", Status: model.CheckFail, Message: "old-primary isolation cannot be verified"}
 	}
-	if !isolated {
+	if !probe.isolated {
 		return model.Check{Name: "old_primary_fenced", Status: model.CheckFail, Message: "old primary still owns the VIP or remains writable"}
 	}
-	return model.Check{Name: "old_primary_fenced", Status: model.CheckPass, Message: "old primary has no VIP and both read-only flags are enabled"}
+	return model.Check{Name: "old_primary_fenced", Status: model.CheckPass, Message: "old-primary isolation is verified through " + probe.method}
 }
 
 type failoverVIPResource struct {
@@ -150,6 +201,7 @@ func (provider *GuardedFailoverSafety) activeVIP(clusterID model.ResourceID) (fa
 func (provider *GuardedFailoverSafety) signedRequest(resolved adapter.ResolvedOperation, resource failoverVIPResource, command string, leaseID model.ResourceID) (agent.Request, error) {
 	request := agent.Request{
 		Command: command, ClusterID: resolved.Cluster.ResourceID, OperationID: resolved.OperationID,
+		Engine:  resolved.Cluster.Engine,
 		LeaseID: leaseID, PlanDigest: resolved.PlanDigest, ExpiresAt: provider.now().UTC().Add(30 * time.Second),
 		VIP: resource.endpoint.IPAddress, Interface: resource.haEndpoint.Interface, Prefix: resource.haEndpoint.Prefix,
 	}
@@ -164,27 +216,56 @@ func (provider *GuardedFailoverSafety) signedRequest(resolved adapter.ResolvedOp
 	return request, nil
 }
 
-func (provider *GuardedFailoverSafety) probeIsolation(ctx context.Context, resolved adapter.ResolvedOperation) (bool, bool, error) {
-	resource, err := provider.activeVIP(resolved.Cluster.ResourceID)
-	if err != nil {
-		return false, false, err
+type isolationProbe struct {
+	isolated bool
+	method   string
+}
+
+func (provider *GuardedFailoverSafety) externalFenceRequest(resolved adapter.ResolvedOperation, leaseID model.ResourceID) ExternalFenceRequest {
+	return ExternalFenceRequest{
+		ClusterID: resolved.Cluster.ResourceID, OperationID: resolved.OperationID,
+		LeaseID: leaseID, Instance: resolved.Primary,
 	}
-	vipRequest, err := provider.signedRequest(resolved, resource, agent.CommandVIPStatus, "")
-	if err != nil {
-		return false, false, err
+}
+
+func (provider *GuardedFailoverSafety) probeIsolation(ctx context.Context, resolved adapter.ResolvedOperation) (isolationProbe, error) {
+	if provider.transport != nil && provider.secret != "" {
+		resource, err := provider.activeVIP(resolved.Cluster.ResourceID)
+		if err == nil {
+			vipRequest, requestErr := provider.signedRequest(resolved, resource, agent.CommandVIPStatus, "")
+			if requestErr == nil {
+				vipResponse, sendErr := provider.transport.Send(ctx, resolved.Primary, vipRequest)
+				if sendErr == nil && vipResponse.Status == agent.StatusOK && vipResponse.OwnsVIP != nil {
+					roleCommand := agent.CommandRoleStatus
+					if resolved.Cluster.Engine == model.EnginePostgreSQL {
+						roleCommand = agent.CommandPostgreSQLStatus
+					}
+					roleRequest, roleRequestErr := provider.signedRequest(resolved, resource, roleCommand, "")
+					if roleRequestErr == nil {
+						roleResponse, roleErr := provider.transport.Send(ctx, resolved.Primary, roleRequest)
+						if resolved.Cluster.Engine == model.EnginePostgreSQL && roleErr == nil && roleResponse.Status == agent.StatusOK && roleResponse.ServiceRunning != nil {
+							return isolationProbe{
+								isolated: !*vipResponse.OwnsVIP && !*roleResponse.ServiceRunning,
+								method:   "restricted PostgreSQL agent",
+							}, nil
+						}
+						if resolved.Cluster.Engine != model.EnginePostgreSQL && roleErr == nil && roleResponse.Status == agent.StatusOK && roleResponse.ReadOnly != nil && roleResponse.SuperReadOnly != nil {
+							return isolationProbe{
+								isolated: !*vipResponse.OwnsVIP && *roleResponse.ReadOnly && *roleResponse.SuperReadOnly,
+								method:   "restricted agent",
+							}, nil
+						}
+					}
+				}
+			}
+		}
 	}
-	vipResponse, err := provider.transport.Send(ctx, resolved.Primary, vipRequest)
-	if err != nil || vipResponse.Status != agent.StatusOK || vipResponse.OwnsVIP == nil {
-		return false, false, fmt.Errorf("old-primary VIP status is unavailable")
+	if provider.external != nil {
+		fenced, err := provider.external.Status(ctx, provider.externalFenceRequest(resolved, ""))
+		if err != nil {
+			return isolationProbe{}, fmt.Errorf("external old-primary fence status is unavailable: %w", err)
+		}
+		return isolationProbe{isolated: fenced, method: "external fencing"}, nil
 	}
-	roleRequest, err := provider.signedRequest(resolved, resource, agent.CommandRoleStatus, "")
-	if err != nil {
-		return false, false, err
-	}
-	roleResponse, err := provider.transport.Send(ctx, resolved.Primary, roleRequest)
-	if err != nil || roleResponse.Status != agent.StatusOK || roleResponse.ReadOnly == nil || roleResponse.SuperReadOnly == nil {
-		return false, false, fmt.Errorf("old-primary role status is unavailable")
-	}
-	isolated := !*vipResponse.OwnsVIP && *roleResponse.ReadOnly && *roleResponse.SuperReadOnly
-	return true, isolated, nil
+	return isolationProbe{}, fmt.Errorf("old-primary VIP and role status are unavailable")
 }

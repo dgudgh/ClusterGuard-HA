@@ -4,22 +4,76 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"clusterguard.io/ha/adapters/postgresql"
 	"clusterguard.io/ha/internal/agent"
 	platformauth "clusterguard.io/ha/internal/auth"
 	"clusterguard.io/ha/internal/config"
+	"clusterguard.io/ha/internal/coordination"
 	"clusterguard.io/ha/internal/endpoint"
 	"clusterguard.io/ha/internal/store"
 	"clusterguard.io/ha/pkg/adapter"
 	"clusterguard.io/ha/pkg/model"
 )
+
+type runtimeExternalFencer struct{}
+
+type runtimeRoundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (roundTrip runtimeRoundTripperFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return roundTrip(request)
+}
+
+func (runtimeExternalFencer) Fence(context.Context, coordination.ExternalFenceRequest) error {
+	return nil
+}
+func (runtimeExternalFencer) Status(context.Context, coordination.ExternalFenceRequest) (bool, error) {
+	return true, nil
+}
+
+type failingBootstrapHasher struct{ err error }
+
+func (hasher failingBootstrapHasher) Hash(string) (string, error) { return "", hasher.err }
+func (failingBootstrapHasher) Verify(string, string) bool         { return false }
+
+func TestAuthenticationBootstrapReportsLeaderCommitFailures(t *testing.T) {
+	repository := store.NewMemory()
+	want := errors.New("password hasher unavailable")
+	service := platformauth.New(repository, failingBootstrapHasher{err: want}, nil, time.Now, time.Hour)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	reported := make(chan error, 1)
+	done := make(chan struct{})
+	go func() {
+		runAuthenticationBootstrap(ctx, repository, service, nil, func(err error) {
+			select {
+			case reported <- err:
+			default:
+			}
+			cancel()
+		})
+		close(done)
+	}()
+	select {
+	case err := <-reported:
+		if !strings.Contains(err.Error(), want.Error()) {
+			t.Fatalf("reported bootstrap error=%v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("bootstrap failure was silently swallowed")
+	}
+	<-done
+}
 
 func TestRuntimeBootstrapsDefaultAdministratorOnce(t *testing.T) {
 	metadataPath := filepath.Join(t.TempDir(), "metadata.json")
@@ -62,6 +116,302 @@ func TestRuntimeBootstrapsDefaultAdministratorOnce(t *testing.T) {
 	}
 }
 
+func TestRuntimeMarksAuthenticationCookiesSecureWhenTLSIsConfigured(t *testing.T) {
+	server, err := New(config.File{
+		MetadataPath: filepath.Join(t.TempDir(), "metadata.json"),
+		TLSCertFile:  "/etc/clusterguard/tls/server.crt",
+		TLSKeyFile:   "/etc/clusterguard/tls/server.key",
+	})
+	if err != nil {
+		t.Fatalf("start TLS-configured runtime: %v", err)
+	}
+	defer server.Close()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"username":"admin","password":"admin123"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("login status=%d body=%s", response.Code, response.Body.String())
+	}
+	for _, cookie := range response.Result().Cookies() {
+		if (cookie.Name == "clusterguard_session" || cookie.Name == "clusterguard_csrf") && !cookie.Secure {
+			t.Fatalf("TLS runtime issued insecure cookie: %+v", cookie)
+		}
+	}
+}
+
+func TestMutationRPCClientTrustsConfiguredControlPlaneCA(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	certificate := server.Certificate()
+	if certificate == nil {
+		t.Fatal("test TLS server has no certificate")
+	}
+	caPath := filepath.Join(t.TempDir(), "ca.crt")
+	contents := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate.Raw})
+	if err := os.WriteFile(caPath, contents, 0600); err != nil {
+		t.Fatalf("write test CA: %v", err)
+	}
+	client, err := newMutationRPCClient(config.File{TLSCAFile: caPath})
+	if err != nil {
+		t.Fatalf("create mutation RPC client: %v", err)
+	}
+	response, err := client.Get(server.URL)
+	if err != nil {
+		t.Fatalf("call TLS leader with configured CA: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("leader response status = %d", response.StatusCode)
+	}
+}
+
+func TestMutationRPCClientRejectsInvalidControlPlaneCA(t *testing.T) {
+	caPath := filepath.Join(t.TempDir(), "ca.crt")
+	if err := os.WriteFile(caPath, []byte("not a certificate"), 0600); err != nil {
+		t.Fatalf("write invalid test CA: %v", err)
+	}
+	if _, err := newMutationRPCClient(config.File{TLSCAFile: caPath}); err == nil {
+		t.Fatal("invalid control-plane CA was accepted")
+	}
+}
+
+func TestMutationRPCClientAcceptsCustomDefaultTransport(t *testing.T) {
+	original := http.DefaultTransport
+	http.DefaultTransport = runtimeRoundTripperFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("test transport")
+	})
+	t.Cleanup(func() { http.DefaultTransport = original })
+
+	client, err := newMutationRPCClient(config.File{})
+	if err != nil {
+		t.Fatalf("create mutation RPC client with custom default transport: %v", err)
+	}
+	if client == nil || client.Transport == nil {
+		t.Fatal("mutation RPC client has no isolated transport")
+	}
+}
+
+func TestConsensusPeerAPIAddressUsesTrustedControllerConfiguration(t *testing.T) {
+	peer := config.ConsensusPeer{
+		ResourceID: model.NewResourceID(),
+		Address:    "192.0.2.25:10009",
+	}
+	address, err := consensusPeerAPIAddress(config.File{
+		HTTPAddress: "0.0.0.0:3000",
+		TLSCertFile: "/etc/clusterguard/tls/server.crt",
+		Consensus:   config.Consensus{Peers: []config.ConsensusPeer{peer}},
+	}, peer)
+	if err != nil || address != "https://192.0.2.25:3000" {
+		t.Fatalf("derived controller API address=%q err=%v", address, err)
+	}
+	peer.APIAddress = "https://controller-a.example:8443"
+	address, err = consensusPeerAPIAddress(config.File{HTTPAddress: "0.0.0.0:3000"}, peer)
+	if err != nil || address != peer.APIAddress {
+		t.Fatalf("explicit controller API address=%q err=%v", address, err)
+	}
+}
+
+type runtimeRecoveryAuthority struct{ calls int }
+
+func (authority *runtimeRecoveryAuthority) RequireMutationAuthority(context.Context) error {
+	authority.calls++
+	if authority.calls < 3 {
+		return errors.New("not leader")
+	}
+	return nil
+}
+
+type runtimeRecoveryConsensus struct {
+	repository  *store.Repository
+	synchronize func() error
+	syncCalls   int
+}
+
+func (consensus *runtimeRecoveryConsensus) Commit(state []byte) error {
+	return consensus.repository.ApplyReplicatedState(state)
+}
+
+func (consensus *runtimeRecoveryConsensus) SynchronizeForCommit() error {
+	consensus.syncCalls++
+	if consensus.synchronize == nil {
+		return nil
+	}
+	return consensus.synchronize()
+}
+
+func TestAuthenticationRecoveryWaitsForLeaderConsumesArtifactAndRestoresLogin(t *testing.T) {
+	now := time.Date(2026, time.July, 17, 3, 0, 0, 0, time.UTC)
+	repository := store.NewMemory()
+	service := platformauth.New(
+		repository,
+		platformauth.Argon2Hasher{
+			Params: platformauth.Argon2Params{Memory: 64, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32},
+			Random: bytes.NewReader(bytes.Repeat([]byte{0x33}, 256)),
+		},
+		bytes.NewReader(bytes.Repeat([]byte{0x44}, 4096)),
+		func() time.Time { return now }, 8*time.Hour,
+	)
+	if _, err := service.EnsureBootstrapAdmin(context.Background()); err != nil {
+		t.Fatalf("bootstrap administrator: %v", err)
+	}
+	password := "Recovery-temporary-password-123"
+	artifact, err := platformauth.NewAdminRecoveryArtifact(
+		password,
+		platformauth.Argon2Hasher{
+			Params: platformauth.Argon2Params{Memory: 64, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32},
+			Random: bytes.NewReader(bytes.Repeat([]byte{0x55}, 256)),
+		},
+		func() time.Time { return now },
+	)
+	if err != nil {
+		t.Fatalf("new recovery artifact: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "admin-recovery.json")
+	if err := platformauth.WriteAdminRecoveryArtifact(path, artifact); err != nil {
+		t.Fatalf("write recovery artifact: %v", err)
+	}
+	authority := &runtimeRecoveryAuthority{}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := runAuthenticationRecovery(ctx, repository, service, authority, path, func() time.Time { return now }, time.Millisecond); err != nil {
+		t.Fatalf("run authentication recovery: %v", err)
+	}
+	if authority.calls < 3 {
+		t.Fatalf("recovery bypassed leader gate: calls=%d", authority.calls)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("consumed recovery artifact remains: %v", err)
+	}
+	login, err := service.Login(context.Background(), platformauth.DefaultAdminUsername, password)
+	if err != nil || !login.Principal.MustChangePassword {
+		t.Fatalf("recovery login=%+v err=%v", login, err)
+	}
+}
+
+func TestAuthenticationRecoveryRetriesRepositoryConflictUntilLeaderCommitSucceeds(t *testing.T) {
+	now := time.Date(2026, time.July, 17, 3, 0, 0, 0, time.UTC)
+	repository := store.NewMemory()
+	service := platformauth.New(
+		repository,
+		platformauth.Argon2Hasher{
+			Params: platformauth.Argon2Params{Memory: 64, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32},
+			Random: bytes.NewReader(bytes.Repeat([]byte{0x63}, 256)),
+		},
+		bytes.NewReader(bytes.Repeat([]byte{0x64}, 4096)),
+		func() time.Time { return now }, 8*time.Hour,
+	)
+	if _, err := service.EnsureBootstrapAdmin(context.Background()); err != nil {
+		t.Fatalf("bootstrap administrator: %v", err)
+	}
+	initialState, err := repository.ReplicatedState()
+	if err != nil {
+		t.Fatalf("read initial state: %v", err)
+	}
+	concurrent := store.NewMemory()
+	if err := concurrent.RestoreReplicatedState(initialState); err != nil {
+		t.Fatalf("restore concurrent state: %v", err)
+	}
+	if _, err := concurrent.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "concurrent-discovery"}); err != nil {
+		t.Fatalf("create concurrent metadata: %v", err)
+	}
+	concurrentState, err := concurrent.ReplicatedState()
+	if err != nil {
+		t.Fatalf("read concurrent state: %v", err)
+	}
+	consensus := &runtimeRecoveryConsensus{repository: repository}
+	consensus.synchronize = func() error {
+		if consensus.syncCalls == 1 {
+			return repository.ApplyReplicatedState(concurrentState)
+		}
+		return nil
+	}
+	if err := repository.SetSnapshotConsensus(consensus); err != nil {
+		t.Fatalf("configure consensus: %v", err)
+	}
+
+	password := "Recovery-after-conflict-password-123"
+	artifact, err := platformauth.NewAdminRecoveryArtifact(
+		password,
+		platformauth.Argon2Hasher{
+			Params: platformauth.Argon2Params{Memory: 64, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32},
+			Random: bytes.NewReader(bytes.Repeat([]byte{0x65}, 256)),
+		},
+		func() time.Time { return now },
+	)
+	if err != nil {
+		t.Fatalf("new recovery artifact: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "admin-recovery.json")
+	if err := platformauth.WriteAdminRecoveryArtifact(path, artifact); err != nil {
+		t.Fatalf("write recovery artifact: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := runAuthenticationRecovery(ctx, repository, service, nil, path, func() time.Time { return now }, time.Millisecond); err != nil {
+		t.Fatalf("recover after transient repository conflict: %v", err)
+	}
+	if consensus.syncCalls < 2 {
+		t.Fatalf("recovery commit attempts=%d, want at least 2", consensus.syncCalls)
+	}
+	if _, err := service.Login(context.Background(), platformauth.DefaultAdminUsername, password); err != nil {
+		t.Fatalf("login with recovered password: %v", err)
+	}
+}
+
+func TestAuthenticationRecoveryRejectsStaleArtifactWithoutRetryingForever(t *testing.T) {
+	now := time.Date(2026, time.July, 17, 3, 0, 0, 0, time.UTC)
+	repository := store.NewMemory()
+	service := platformauth.New(
+		repository,
+		platformauth.Argon2Hasher{
+			Params: platformauth.Argon2Params{Memory: 64, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32},
+			Random: bytes.NewReader(bytes.Repeat([]byte{0x73}, 512)),
+		},
+		bytes.NewReader(bytes.Repeat([]byte{0x74}, 4096)),
+		func() time.Time { return now }, 8*time.Hour,
+	)
+	if _, err := service.EnsureBootstrapAdmin(context.Background()); err != nil {
+		t.Fatalf("bootstrap administrator: %v", err)
+	}
+	artifact, err := platformauth.NewAdminRecoveryArtifact(
+		"Stale-recovery-password-123",
+		platformauth.Argon2Hasher{
+			Params: platformauth.Argon2Params{Memory: 64, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32},
+			Random: bytes.NewReader(bytes.Repeat([]byte{0x75}, 256)),
+		},
+		func() time.Time { return now },
+	)
+	if err != nil {
+		t.Fatalf("new recovery artifact: %v", err)
+	}
+	login, err := service.Login(context.Background(), platformauth.DefaultAdminUsername, platformauth.DefaultAdminPassword)
+	if err != nil {
+		t.Fatalf("login administrator: %v", err)
+	}
+	now = now.Add(time.Minute)
+	if _, err := service.ChangePassword(
+		context.Background(), login.SessionToken, platformauth.DefaultAdminPassword, "Newer-administrator-password-123",
+	); err != nil {
+		t.Fatalf("change administrator password: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "admin-recovery.json")
+	if err := platformauth.WriteAdminRecoveryArtifact(path, artifact); err != nil {
+		t.Fatalf("write stale recovery artifact: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	err = runAuthenticationRecovery(ctx, repository, service, nil, path, func() time.Time { return now }, time.Millisecond)
+	if err == nil || errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("stale recovery artifact error=%v, want immediate repository conflict", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("rejected recovery artifact should remain for operator inspection: %v", err)
+	}
+}
+
 type runtimeFailoverAuthority struct{ err error }
 
 func (stub runtimeFailoverAuthority) RequireMutationAuthority(context.Context) error { return stub.err }
@@ -86,6 +436,9 @@ func (runtimeFailoverLeases) Acquire(context.Context, endpoint.LeaseRequest) (en
 }
 func (runtimeFailoverLeases) Validate(context.Context, endpoint.Lease) error { return nil }
 func (runtimeFailoverLeases) FinalizeTransition(_ context.Context, lease endpoint.Lease, _ time.Duration) (endpoint.Lease, error) {
+	return lease, nil
+}
+func (runtimeFailoverLeases) RollbackTransition(_ context.Context, lease endpoint.Lease, _ time.Duration) (endpoint.Lease, error) {
 	return lease, nil
 }
 func (runtimeFailoverLeases) Release(context.Context, model.ResourceID) error { return nil }
@@ -150,6 +503,184 @@ func TestMySQLDiscoveryCredentialsDoNotUseOperationSecret(t *testing.T) {
 	}
 }
 
+func TestDatabaseDiscoveryCredentialsAreRoutedByEngine(t *testing.T) {
+	configuration := config.File{
+		MySQL: config.MySQL{
+			Enabled:   true,
+			Discovery: config.Credential{Username: "mysql-monitor", Password: "mysql-secret"},
+		},
+		PostgreSQL: config.PostgreSQL{
+			Enabled:   true,
+			Discovery: config.Credential{Username: "pg-monitor", Password: "pg-secret", Database: "postgres"},
+		},
+		Oracle: config.Oracle{
+			Enabled:   true,
+			Discovery: config.Credential{Username: "ora-monitor", Password: "ora-secret", Database: "CGPROD"},
+		},
+		SQLServer: config.SQLServer{
+			Enabled:   true,
+			Discovery: config.Credential{Username: "sql-monitor", Password: "sql-secret", Database: "master"},
+		},
+	}
+	mysqlCredentials, err := databaseDiscoveryCredentials(configuration, model.DatabaseCluster{Engine: model.EngineMySQL})
+	if err != nil || mysqlCredentials != (adapter.Credentials{Username: "mysql-monitor", Password: "mysql-secret"}) {
+		t.Fatalf("MySQL discovery credentials=%+v err=%v", mysqlCredentials, err)
+	}
+	postgresqlCredentials, err := databaseDiscoveryCredentials(configuration, model.DatabaseCluster{Engine: model.EnginePostgreSQL})
+	if err != nil || postgresqlCredentials != (adapter.Credentials{Username: "pg-monitor", Password: "pg-secret", Database: "postgres"}) {
+		t.Fatalf("PostgreSQL discovery credentials=%+v err=%v", postgresqlCredentials, err)
+	}
+	oracleCredentials, err := databaseDiscoveryCredentials(configuration, model.DatabaseCluster{Engine: model.EngineOracle})
+	if err != nil || oracleCredentials != (adapter.Credentials{Username: "ora-monitor", Password: "ora-secret", Database: "CGPROD"}) {
+		t.Fatalf("Oracle discovery credentials=%+v err=%v", oracleCredentials, err)
+	}
+	sqlServerCredentials, err := databaseDiscoveryCredentials(configuration, model.DatabaseCluster{Engine: model.EngineSQLServer})
+	if err != nil || sqlServerCredentials != (adapter.Credentials{Username: "sql-monitor", Password: "sql-secret", Database: "master"}) {
+		t.Fatalf("SQL Server discovery credentials=%+v err=%v", sqlServerCredentials, err)
+	}
+}
+
+func TestDatabaseOperationCredentialsAreRoutedForOracleAndSQLServer(t *testing.T) {
+	configuration := config.File{
+		Oracle: config.Oracle{
+			Enabled:   true,
+			Discovery: config.Credential{Database: "CGPROD"},
+			Operation: config.Credential{Username: "sys", Password: "ora-operation-secret", Database: "CGPROD"},
+		},
+		SQLServer: config.SQLServer{
+			Enabled:   true,
+			Discovery: config.Credential{Database: "master"},
+			Operation: config.Credential{Username: "ag-operator", Password: "sql-operation-secret"},
+		},
+	}
+	oracleCredentials, err := databaseOperationCredentials(configuration, model.DatabaseCluster{Engine: model.EngineOracle})
+	if err != nil || oracleCredentials.Administrative != (adapter.Credentials{Username: "sys", Password: "ora-operation-secret", Database: "CGPROD"}) {
+		t.Fatalf("Oracle operation credentials=%+v err=%v", oracleCredentials, err)
+	}
+	sqlServerCredentials, err := databaseOperationCredentials(configuration, model.DatabaseCluster{Engine: model.EngineSQLServer})
+	if err != nil || sqlServerCredentials.Administrative != (adapter.Credentials{Username: "ag-operator", Password: "sql-operation-secret", Database: "master"}) {
+		t.Fatalf("SQL Server operation credentials=%+v err=%v", sqlServerCredentials, err)
+	}
+	configuration.Oracle.Operation = config.Credential{}
+	if _, err := databaseOperationCredentials(configuration, model.DatabaseCluster{Engine: model.EngineOracle}); err == nil {
+		t.Fatal("incomplete Oracle operation credentials were accepted")
+	}
+}
+
+func TestDatabaseOperationCredentialsAreRoutedForPostgreSQL(t *testing.T) {
+	configuration := config.File{PostgreSQL: config.PostgreSQL{
+		Enabled:     true,
+		Operation:   config.Credential{Username: "pg-operator", Password: "operation-secret", Database: "postgres"},
+		Replication: config.Credential{Username: "pg-replication", Password: "replication-secret", Database: "postgres"},
+	}}
+	credentials, err := databaseOperationCredentials(configuration, model.DatabaseCluster{Engine: model.EnginePostgreSQL})
+	if err != nil || credentials.Administrative != (adapter.Credentials{Username: "pg-operator", Password: "operation-secret", Database: "postgres"}) || credentials.Replication != (adapter.Credentials{Username: "pg-replication", Password: "replication-secret", Database: "postgres"}) {
+		t.Fatalf("PostgreSQL mutation credentials=%+v err=%v", credentials, err)
+	}
+	configuration.PostgreSQL.Replication = config.Credential{}
+	if _, err := databaseOperationCredentials(configuration, model.DatabaseCluster{Engine: model.EnginePostgreSQL}); err == nil {
+		t.Fatal("incomplete PostgreSQL mutation credentials were accepted")
+	}
+}
+
+type runtimePostgreSQLEndpointProvider struct{}
+
+func (runtimePostgreSQLEndpointProvider) Executable(context.Context) bool { return true }
+func (runtimePostgreSQLEndpointProvider) Precheck(context.Context, adapter.ResolvedOperation) []model.Check {
+	return []model.Check{{Name: "writer_endpoint", Status: model.CheckPass}}
+}
+func (runtimePostgreSQLEndpointProvider) AuthorizeTransition(ctx context.Context, _ adapter.ResolvedOperation) (adapter.TransitionAuthorization, error) {
+	guarded, cancel := context.WithCancel(ctx)
+	return adapter.TransitionAuthorization{Context: guarded, Cancel: cancel, Abort: func(context.Context) error { return nil }, Finalize: func(context.Context) error { return nil }, LeaseID: model.NewResourceID()}, nil
+}
+func (runtimePostgreSQLEndpointProvider) Transfer(context.Context, adapter.ResolvedOperation) error {
+	return nil
+}
+func (runtimePostgreSQLEndpointProvider) Verify(context.Context, adapter.ResolvedOperation) model.Check {
+	return model.Check{Name: "writer_endpoint_owner", Status: model.CheckPass}
+}
+
+type runtimePostgreSQLAgentTransport struct{}
+
+func (runtimePostgreSQLAgentTransport) Send(context.Context, model.DatabaseInstance, agent.Request) (agent.Response, error) {
+	return agent.Response{Status: agent.StatusOK}, nil
+}
+
+func TestRuntimePostgreSQLAdapterAdvertisesExecutionOnlyWhenFullyConfigured(t *testing.T) {
+	configuration := config.File{
+		PostgreSQL: config.PostgreSQL{
+			Enabled:     true,
+			Operation:   config.Credential{Username: "pg-operator", Password: "operation-secret", Database: "postgres"},
+			Replication: config.Credential{Username: "pg-replication", Password: "replication-secret", Database: "postgres"},
+		},
+		Agent: config.Agent{SharedSecret: "agent-secret"},
+	}
+	candidate := newPostgreSQLRuntimeAdapter(configuration, runtimePostgreSQLEndpointProvider{}, runtimePostgreSQLAgentTransport{}, postgresql.UnsupportedFailoverSafetyProvider{})
+	if !candidate.Capabilities(context.Background()).Supports(adapter.CapabilityExecute) {
+		t.Fatal("fully configured PostgreSQL runtime did not advertise execution")
+	}
+	configuration.PostgreSQL.Replication = config.Credential{}
+	candidate = newPostgreSQLRuntimeAdapter(configuration, runtimePostgreSQLEndpointProvider{}, runtimePostgreSQLAgentTransport{}, postgresql.UnsupportedFailoverSafetyProvider{})
+	if candidate.Capabilities(context.Background()).Supports(adapter.CapabilityExecute) {
+		t.Fatal("PostgreSQL runtime advertised execution without replication credentials")
+	}
+	configuration.PostgreSQL.Replication = config.Credential{Username: "pg-replication", Password: "replication-secret"}
+	candidate = newPostgreSQLRuntimeAdapter(configuration, runtimePostgreSQLEndpointProvider{}, nil, postgresql.UnsupportedFailoverSafetyProvider{})
+	if candidate.Capabilities(context.Background()).Supports(adapter.CapabilityExecute) {
+		t.Fatal("PostgreSQL runtime advertised execution without restricted agent transport")
+	}
+}
+
+func TestRuntimeOracleAdapterAdvertisesExecutionOnlyWithRestrictedAgentAndCredentials(t *testing.T) {
+	configuration := config.File{
+		Oracle: config.Oracle{
+			Enabled: true,
+			Operation: config.Credential{
+				Username: "sys", Password: "operation-secret", Database: "mesdb",
+			},
+		},
+		Agent: config.Agent{SharedSecret: "agent-secret"},
+	}
+	candidate := newOracleRuntimeAdapter(configuration, runtimePostgreSQLAgentTransport{})
+	if !candidate.Capabilities(context.Background()).Supports(adapter.CapabilityExecute) {
+		t.Fatal("fully configured Oracle runtime did not advertise controlled switchover")
+	}
+	configuration.Oracle.Operation = config.Credential{}
+	candidate = newOracleRuntimeAdapter(configuration, runtimePostgreSQLAgentTransport{})
+	if candidate.Capabilities(context.Background()).Supports(adapter.CapabilityExecute) {
+		t.Fatal("Oracle runtime advertised execution without operation credentials")
+	}
+	configuration.Oracle.Operation = config.Credential{Username: "sys", Password: "operation-secret"}
+	candidate = newOracleRuntimeAdapter(configuration, nil)
+	if candidate.Capabilities(context.Background()).Supports(adapter.CapabilityExecute) {
+		t.Fatal("Oracle runtime advertised execution without restricted agent transport")
+	}
+}
+
+func TestEngineClusterSourceFiltersIndependentSchedulers(t *testing.T) {
+	clusters := runtimeClusterSource{clusters: []model.DatabaseCluster{
+		{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, Engine: model.EngineMySQL, DisplayName: "mysql-a"},
+		{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, Engine: model.EnginePostgreSQL, DisplayName: "pg-a"},
+		{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, Engine: model.EngineMySQL, DisplayName: "mysql-b"},
+	}}
+	postgresqlClusters := (engineClusterSource{source: clusters, engine: model.EnginePostgreSQL}).Clusters()
+	if len(postgresqlClusters) != 1 || postgresqlClusters[0].DisplayName != "pg-a" {
+		t.Fatalf("PostgreSQL scheduler inventory=%+v", postgresqlClusters)
+	}
+	mysqlClusters := (engineClusterSource{source: clusters, engine: model.EngineMySQL}).Clusters()
+	if len(mysqlClusters) != 2 {
+		t.Fatalf("MySQL scheduler inventory=%+v", mysqlClusters)
+	}
+}
+
+type runtimeClusterSource struct {
+	clusters []model.DatabaseCluster
+}
+
+func (source runtimeClusterSource) Clusters() []model.DatabaseCluster {
+	return append([]model.DatabaseCluster{}, source.clusters...)
+}
+
 func TestMySQLFailoverRuntimeSharesThirtySecondFailureEvidence(t *testing.T) {
 	now := time.Date(2026, time.July, 13, 20, 0, 30, 0, time.UTC)
 	clusterID, primaryID, targetID := model.NewResourceID(), model.NewResourceID(), model.NewResourceID()
@@ -194,6 +725,16 @@ func TestMySQLFailoverRuntimeSharesThirtySecondFailureEvidence(t *testing.T) {
 	t.Fatalf("runtime failover safety omitted stable-primary-failure check: %+v", checks)
 }
 
+func TestMySQLFailoverRuntimeAcceptsExternalFencingWithoutOldPrimaryAgentReachability(t *testing.T) {
+	components := newMySQLFailoverRuntime(
+		runtimeFailoverAuthority{}, runtimeFailoverInventory{}, runtimeFailoverLeases{}, nil, "", nil,
+		runtimeExternalFencer{},
+	)
+	if _, ok := components.safety.(*coordination.GuardedFailoverSafety); !ok {
+		t.Fatalf("external fencing was not wired into guarded failover safety: %T", components.safety)
+	}
+}
+
 func TestRuntimeLocksPersistClusterMutationThroughQuorumStore(t *testing.T) {
 	repository := store.NewMemory()
 	locks := newRuntimeLocks(repository, runtimeFailoverAuthority{})
@@ -201,7 +742,7 @@ func TestRuntimeLocksPersistClusterMutationThroughQuorumStore(t *testing.T) {
 		ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()},
 		ClusterID:    model.NewResourceID(),
 	}
-	release, err := locks.operations.Acquire(context.Background(), operation)
+	_, release, err := locks.operations.Acquire(context.Background(), operation)
 	if err != nil {
 		t.Fatalf("acquire runtime operation lock: %v", err)
 	}
@@ -218,20 +759,20 @@ func TestLifecycleLockDoesNotFreezeDiscoveryButStillConflictsWithMutations(t *te
 	repository := store.NewMemory()
 	locks := newRuntimeLocks(repository, runtimeFailoverAuthority{})
 	clusterID := model.NewResourceID()
-	releaseLifecycle, err := locks.lifecycle.AcquireCluster(context.Background(), clusterID)
+	_, releaseLifecycle, err := locks.lifecycle.AcquireCluster(context.Background(), clusterID)
 	if err != nil {
 		t.Fatalf("acquire lifecycle lock: %v", err)
 	}
 	defer releaseLifecycle()
 
-	releasePublication, err := locks.publication.AcquireCluster(context.Background(), clusterID)
+	_, releasePublication, err := locks.publication.AcquireCluster(context.Background(), clusterID)
 	if err != nil {
 		t.Fatalf("lifecycle work froze topology publication: %v", err)
 	}
 	releasePublication()
 
 	operation := model.Operation{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, ClusterID: clusterID}
-	if release, err := locks.operations.Acquire(context.Background(), operation); err == nil {
+	if _, release, err := locks.operations.Acquire(context.Background(), operation); err == nil {
 		release()
 		t.Fatal("lifecycle lock did not block a concurrent cluster mutation")
 	}
@@ -341,7 +882,7 @@ func TestRuntimeRaftBlocksMutationWithoutControllerMajority(t *testing.T) {
 	}
 }
 
-func TestRuntimeStartsAutomaticFailoverOnlyWithGuardedDependencies(t *testing.T) {
+func TestRuntimeStartsEngineIsolatedAutomaticFailoverWithGuardedDependencies(t *testing.T) {
 	addresses := []string{runtimeFreeAddress(t), runtimeFreeAddress(t), runtimeFreeAddress(t)}
 	ids := []model.ResourceID{model.NewResourceID(), model.NewResourceID(), model.NewResourceID()}
 	peers := make([]config.ConsensusPeer, 3)
@@ -365,27 +906,36 @@ func TestRuntimeStartsAutomaticFailoverOnlyWithGuardedDependencies(t *testing.T)
 			Operation:   config.Credential{Username: "operator", Password: "operation-secret"},
 			Replication: config.Credential{Username: "replicator", Password: "replication-secret"},
 		},
+		PostgreSQL: config.PostgreSQL{
+			Enabled: true, DiscoveryIntervalSeconds: 5, DiscoveryTimeoutSeconds: 4,
+			AutomaticFailoverEnabled: true, AutomaticFailoverIntervalSeconds: 5, AutomaticFailoverRetrySeconds: 30,
+			Discovery:   config.Credential{Username: "pg-discover", Password: "pg-discovery-secret", Database: "postgres"},
+			Operation:   config.Credential{Username: "pg-operator", Password: "pg-operation-secret", Database: "postgres"},
+			Replication: config.Credential{Username: "pg-replicator", Password: "pg-replication-secret", Database: "postgres"},
+		},
 	})
 	if err != nil {
 		t.Fatalf("start automatic failover runtime: %v", err)
 	}
 	defer server.Close()
-	if server.automaticRecovery == nil {
-		t.Fatal("guarded automatic failover controller was not started")
+	if server.automaticRecovery == nil || len(server.automaticRecoveries) != 2 {
+		t.Fatalf("engine-isolated automatic failover controllers=%d", len(server.automaticRecoveries))
 	}
 }
 
 func TestRuntimeResolvesNodeLifecycleSecretsAndCapabilitiesServerSide(t *testing.T) {
 	configuration := config.NodeLifecycle{
 		SSHPassword: "ssh-secret", MySQLRootPassword: "root-secret", ReplicationPassword: "replication-secret",
+		PostgreSQLAdminPassword: "pg-admin-secret", PostgreSQLReplicationPassword: "pg-replication-secret",
 		CloneAvailable: true, XtraBackupVersions: map[string]bool{"8.0": true}, LogicalDumpAllowed: true,
+		PostgreSQLBaseBackupAvailable: true, PostgreSQLRewindAvailable: true,
 	}
 	secrets := nodeLifecycleSecrets(configuration)
 	capabilities := nodeLifecycleCapabilities(configuration)
-	if secrets.SSHPassword != "ssh-secret" || secrets.MySQLRootPassword != "root-secret" || secrets.ReplicationPassword != "replication-secret" {
+	if secrets.SSHPassword != "ssh-secret" || secrets.MySQLRootPassword != "root-secret" || secrets.ReplicationPassword != "replication-secret" || secrets.PostgreSQLAdminPassword != "pg-admin-secret" || secrets.PostgreSQLReplicationPassword != "pg-replication-secret" {
 		t.Fatalf("runtime lifecycle secrets=%+v", secrets)
 	}
-	if !capabilities.CloneAvailable || !capabilities.XtraBackupVersions["8.0"] || !capabilities.LogicalDumpAllowed {
+	if !capabilities.CloneAvailable || !capabilities.XtraBackupVersions["8.0"] || !capabilities.LogicalDumpAllowed || !capabilities.PostgreSQLBaseBackupAvailable || !capabilities.PostgreSQLRewindAvailable {
 		t.Fatalf("runtime lifecycle capabilities=%+v", capabilities)
 	}
 }

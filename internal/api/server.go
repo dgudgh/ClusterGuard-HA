@@ -7,9 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"clusterguard.io/ha/internal/approval"
 	platformauth "clusterguard.io/ha/internal/auth"
@@ -22,6 +22,8 @@ import (
 )
 
 const maximumJSONBodyBytes = 1 << 20
+
+const requestIDHeader = "X-Request-ID"
 
 type Server struct {
 	registry       *adapter.Registry
@@ -37,6 +39,10 @@ type Server struct {
 	lifecycleCap   lifecycle.Capabilities
 	lifecycleSec   LifecycleSecretProvider
 	authority      MutationAuthority
+	mutationRPC    MutationRPC
+	secureCookies  bool
+	controlPlane   ControlPlaneStatusProvider
+	startedAt      time.Time
 }
 
 type Refresher interface {
@@ -49,6 +55,10 @@ type MutationAuthority interface {
 
 type LeaderLocator interface {
 	Leader() (model.ResourceID, string, bool)
+}
+
+type LeaderAPILocator interface {
+	LeaderAPIAddress(model.ResourceID) (string, bool)
 }
 
 type ServerOption func(*Server)
@@ -85,8 +95,20 @@ func WithMutationAuthority(authority MutationAuthority) ServerOption {
 	return func(server *Server) { server.authority = authority }
 }
 
+func WithMutationRPC(client MutationRPC) ServerOption {
+	return func(server *Server) { server.mutationRPC = client }
+}
+
+func WithSecureCookies(enabled bool) ServerOption {
+	return func(server *Server) { server.secureCookies = enabled }
+}
+
+func WithControlPlaneStatus(provider ControlPlaneStatusProvider) ServerOption {
+	return func(server *Server) { server.controlPlane = provider }
+}
+
 func NewServer(registry *adapter.Registry, repository *store.Repository, service *workflow.Service, refresher Refresher, options ...ServerOption) *Server {
-	server := &Server{registry: registry, store: repository, workflow: service, refresher: refresher}
+	server := &Server{registry: registry, store: repository, workflow: service, refresher: refresher, startedAt: time.Now().UTC()}
 	for _, option := range options {
 		if option != nil {
 			option(server)
@@ -96,6 +118,18 @@ func NewServer(registry *adapter.Registry, repository *store.Repository, service
 }
 
 func writeJSON(writer http.ResponseWriter, status int, value interface{}) {
+	if status >= http.StatusBadRequest {
+		if source, ok := value.(map[string]interface{}); ok {
+			copy := make(map[string]interface{}, len(source)+1)
+			for key, item := range source {
+				copy[key] = item
+			}
+			if requestID := writer.Header().Get(requestIDHeader); requestID != "" {
+				copy["request_id"] = requestID
+			}
+			value = copy
+		}
+	}
 	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 	writer.WriteHeader(status)
 	_ = json.NewEncoder(writer).Encode(value)
@@ -106,13 +140,38 @@ func writeError(writer http.ResponseWriter, status int, message string) {
 }
 
 func decode(request *http.Request, value interface{}) error {
-	contents, err := io.ReadAll(io.LimitReader(request.Body, maximumJSONBodyBytes+1))
+	contents, err := readJSONBody(request)
 	if err != nil {
 		return err
 	}
-	if len(contents) > maximumJSONBodyBytes {
-		return errors.New("request body exceeds maximum size")
+	return decodeJSON(contents, value)
+}
+
+func decodePreservingBody(request *http.Request, value interface{}) error {
+	contents, err := readJSONBody(request)
+	if err != nil {
+		return err
 	}
+	request.Body = io.NopCloser(bytes.NewReader(contents))
+	request.ContentLength = int64(len(contents))
+	return decodeJSON(contents, value)
+}
+
+func readJSONBody(request *http.Request) ([]byte, error) {
+	if request == nil || request.Body == nil {
+		return nil, errors.New("request body is required")
+	}
+	contents, err := io.ReadAll(io.LimitReader(request.Body, maximumJSONBodyBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(contents) > maximumJSONBodyBytes {
+		return nil, errors.New("request body exceeds maximum size")
+	}
+	return contents, nil
+}
+
+func decodeJSON(contents []byte, value interface{}) error {
 	decoder := json.NewDecoder(bytes.NewReader(contents))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(value); err != nil {
@@ -128,13 +187,39 @@ func decode(request *http.Request, value interface{}) error {
 }
 
 func (server *Server) Handler() http.Handler {
-	return http.HandlerFunc(server.route)
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set(requestIDHeader, requestID(request.Header.Get(requestIDHeader)))
+		writer.Header().Set("X-Content-Type-Options", "nosniff")
+		writer.Header().Set("X-Frame-Options", "DENY")
+		writer.Header().Set("Referrer-Policy", "no-referrer")
+		writer.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		writer.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+		if server.requestIsSecure(request) {
+			writer.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
+		server.route(writer, request)
+	})
 }
 
 func (server *Server) route(writer http.ResponseWriter, request *http.Request) {
+	if server.store != nil && mutatingMethod(request.Method) && strings.TrimSpace(request.Header.Get(mutationRPCForwardedHeader)) != "" {
+		writer = &mutationRPCRevisionWriter{ResponseWriter: writer, revisions: server.store}
+	}
 	path := strings.TrimSuffix(request.URL.Path, "/")
 	if path == "" {
 		path = "/"
+	}
+	if path == "/healthz" || path == "/readyz" {
+		if request.Method != http.MethodGet && request.Method != http.MethodHead {
+			writeError(writer, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		if path == "/healthz" {
+			server.healthProbe(writer, request)
+		} else {
+			server.readinessProbe(writer, request)
+		}
+		return
 	}
 	if path == "/api/v1/agent/reconcile" {
 		server.agentReconcileRoute(writer, request)
@@ -188,6 +273,8 @@ func (server *Server) route(writer http.ResponseWriter, request *http.Request) {
 		server.engines(writer)
 	case request.Method == http.MethodGet && path == "/api/v1/capabilities":
 		server.capabilities(writer)
+	case request.Method == http.MethodGet && path == "/api/v1/control-plane/status":
+		server.controlPlaneStatusRoute(writer, request)
 	case request.Method == http.MethodGet && path == "/api/v1/clusters":
 		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": server.store.Clusters()})
 	case request.Method == http.MethodPost && path == "/api/v1/clusters":
@@ -221,6 +308,25 @@ func (server *Server) route(writer http.ResponseWriter, request *http.Request) {
 	default:
 		writeError(writer, http.StatusNotFound, "route not found")
 	}
+}
+
+func requestID(value string) string {
+	value = strings.TrimSpace(value)
+	if value != "" && len(value) <= 128 {
+		valid := true
+		for index := 0; index < len(value); index++ {
+			character := value[index]
+			if !((character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+				(character >= '0' && character <= '9') || strings.ContainsRune("._:-", rune(character))) {
+				valid = false
+				break
+			}
+		}
+		if valid {
+			return value
+		}
+	}
+	return string(model.NewResourceID())
 }
 
 func mutatingMethod(method string) bool {
@@ -281,45 +387,35 @@ func (server *Server) authorizeMutation(writer http.ResponseWriter, request *htt
 		return true
 	}
 	result := map[string]interface{}{}
+	leaderAPIAddress := ""
 	if locator, ok := server.authority.(LeaderLocator); ok {
 		if leaderID, address, found := locator.Leader(); found {
 			writer.Header().Set("X-ClusterGuard-Leader-ID", string(leaderID))
 			writer.Header().Set("X-ClusterGuard-Leader-Address", address)
 			result["leader_id"] = leaderID
 			result["leader_address"] = address
-			if apiAddress := mutationLeaderAPIAddress(request, address); apiAddress != "" {
-				writer.Header().Set("X-ClusterGuard-Leader-API-Address", apiAddress)
-				result["leader_api_address"] = apiAddress
+			if apiLocator, ok := server.authority.(LeaderAPILocator); ok {
+				if apiAddress, found := apiLocator.LeaderAPIAddress(leaderID); found {
+					leaderAPIAddress = strings.TrimRight(strings.TrimSpace(apiAddress), "/")
+					writer.Header().Set("X-ClusterGuard-Leader-API-Address", leaderAPIAddress)
+					result["leader_api_address"] = leaderAPIAddress
+				}
 			}
 		}
+	}
+	if server.mutationRPC != nil && leaderAPIAddress != "" && strings.TrimSpace(request.Header.Get(mutationRPCForwardedHeader)) == "" {
+		if err := server.mutationRPC.Forward(writer, request, leaderAPIAddress); err == nil {
+			return false
+		}
+		writeJSON(writer, http.StatusServiceUnavailable, map[string]interface{}{
+			"status": "blocked", "message": "current Raft leader is temporarily unreachable", "result": result,
+		})
+		return false
 	}
 	writeJSON(writer, http.StatusServiceUnavailable, map[string]interface{}{
 		"status": "blocked", "message": "mutation requires the current Raft leader with controller quorum", "result": result,
 	})
 	return false
-}
-
-func mutationLeaderAPIAddress(request *http.Request, raftAddress string) string {
-	leaderHost, _, err := net.SplitHostPort(strings.TrimSpace(raftAddress))
-	if err != nil || strings.TrimSpace(leaderHost) == "" {
-		return ""
-	}
-	_, apiPort, err := net.SplitHostPort(strings.TrimSpace(request.Host))
-	if err != nil {
-		if request.TLS != nil {
-			apiPort = "443"
-		} else {
-			apiPort = "80"
-		}
-	}
-	scheme := strings.TrimSpace(request.URL.Scheme)
-	if scheme == "" {
-		scheme = "http"
-		if request.TLS != nil {
-			scheme = "https"
-		}
-	}
-	return scheme + "://" + net.JoinHostPort(leaderHost, apiPort)
 }
 
 func (server *Server) engines(writer http.ResponseWriter) {

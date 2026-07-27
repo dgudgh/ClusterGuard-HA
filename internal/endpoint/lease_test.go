@@ -66,7 +66,7 @@ func TestMemoryLeaseStoreAtomicallyHandsStableOwnershipToTransition(t *testing.T
 	if err != nil {
 		t.Fatalf("handoff stable lease: %v", err)
 	}
-	if transition.ResourceID == stable.ResourceID || transition.OwnerID != targetID || transition.PreviousOwnerID != sourceID || len(store.leases) != 1 {
+	if transition.ResourceID != stable.ResourceID || transition.OwnerID != targetID || transition.PreviousOwnerID != sourceID || len(store.leases) != 1 {
 		t.Fatalf("transition=%+v stable=%+v leases=%+v", transition, stable, store.leases)
 	}
 }
@@ -100,6 +100,37 @@ func TestMemoryLeaseStoreFinalizesTransitionWithoutWaitingForTTL(t *testing.T) {
 		PreviousOwnerID: targetID, TTL: 30 * time.Second,
 	}); err != nil {
 		t.Fatalf("immediate reverse handoff: %v", err)
+	}
+}
+
+func TestMemoryLeaseStoreRollsTransitionBackToPreviousStableOwner(t *testing.T) {
+	now := time.Date(2026, time.July, 21, 12, 0, 0, 0, time.UTC)
+	store := NewMemoryLeaseStore(func() time.Time { return now })
+	clusterID, endpointID := model.NewResourceID(), model.NewResourceID()
+	sourceID, targetID := model.NewResourceID(), model.NewResourceID()
+	if _, err := store.Acquire(context.Background(), LeaseRequest{
+		ClusterID: clusterID, HAEndpointID: endpointID, OperationID: endpointID, OwnerID: sourceID, TTL: 30 * time.Second,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	transition, err := store.Acquire(context.Background(), LeaseRequest{
+		ClusterID: clusterID, HAEndpointID: endpointID, OperationID: model.NewResourceID(), OwnerID: targetID,
+		PreviousOwnerID: sourceID, TTL: 30 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now = now.Add(time.Second)
+	stable, err := store.RollbackTransition(context.Background(), transition, 30*time.Second)
+	if err != nil {
+		t.Fatalf("rollback transition: %v", err)
+	}
+	if stable.ResourceID != transition.ResourceID || stable.OperationID != endpointID || stable.OwnerID != sourceID || stable.PreviousOwnerID != "" || len(store.leases) != 1 {
+		t.Fatalf("stable=%+v transition=%+v leases=%+v", stable, transition, store.leases)
+	}
+	if err := store.Validate(context.Background(), stable); err != nil {
+		t.Fatalf("validate restored stable lease: %v", err)
 	}
 }
 

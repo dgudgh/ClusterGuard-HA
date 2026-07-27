@@ -3,9 +3,12 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"encoding/pem"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -17,6 +20,7 @@ func TestRequestForCommands(t *testing.T) {
 		path      string
 	}{
 		{[]string{"engines"}, http.MethodGet, "/api/v1/engines"},
+		{[]string{"status"}, http.MethodGet, "/api/v1/control-plane/status"},
 		{[]string{"clusters"}, http.MethodGet, "/api/v1/clusters"},
 		{[]string{"topology", "cluster-id"}, http.MethodGet, "/api/v1/clusters/cluster-id/topology"},
 		{[]string{"health", "cluster-id"}, http.MethodGet, "/api/v1/clusters/cluster-id/health"},
@@ -33,6 +37,60 @@ func TestRequestForCommands(t *testing.T) {
 		if err != nil || method != test.method || path != test.path {
 			t.Fatalf("requestFor(%v) = %s %s, %v; want %s %s", test.arguments, method, path, err, test.method, test.path)
 		}
+	}
+}
+
+func TestRunStatusPrintsEnterpriseControlPlaneSummary(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/api/v1/control-plane/status" {
+			t.Fatalf("status path=%s", request.URL.Path)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(writer, `{"status":"ok","result":{"mode":"raft","local_controller_id":"11111111-1111-4111-8111-111111111111","role":"leader","leader_id":"11111111-1111-4111-8111-111111111111","leader_known":true,"voter_count":3,"quorum_confirmed":true,"mutation_authority":true,"snapshot_cas_active":true,"state_revision":42,"ready":true,"readiness_reason":"ready","uptime_seconds":600,"cluster_count":2,"active_operations":1,"indeterminate_operations":0,"active_lifecycle_tasks":1}}`)
+	}))
+	defer server.Close()
+	var stdout, stderr bytes.Buffer
+	if exitCode := run([]string{"--server", server.URL, "status"}, &stdout, &stderr, server.Client()); exitCode != 0 || stderr.Len() != 0 {
+		t.Fatalf("status exit=%d stderr=%q", exitCode, stderr.String())
+	}
+	for _, expected := range []string{"ready=yes", "mode=raft", "role=leader", "quorum=yes", "revision=42", "clusters=2", "active_operations=1", "active_lifecycle_tasks=1"} {
+		if !strings.Contains(stdout.String(), expected) {
+			t.Fatalf("status output missing %q: %s", expected, stdout.String())
+		}
+	}
+}
+
+func TestRunStatusTrustsConfiguredPrivateCA(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(writer, `{"status":"ok","result":{"mode":"raft","role":"follower","leader_known":true,"voter_count":3,"snapshot_cas_active":true,"ready":true,"readiness_reason":"ready"}}`)
+	}))
+	defer server.Close()
+	certificate := server.Certificate()
+	if certificate == nil {
+		t.Fatal("TLS test server has no certificate")
+	}
+	caPath := filepath.Join(t.TempDir(), "controller-ca.crt")
+	contents := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate.Raw})
+	if err := os.WriteFile(caPath, contents, 0o600); err != nil {
+		t.Fatalf("write private CA: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{"--server", server.URL, "--ca-file", caPath, "status"}, &stdout, &stderr, http.DefaultClient)
+	if exitCode != 0 || stderr.Len() != 0 || !strings.Contains(stdout.String(), "ready=yes") {
+		t.Fatalf("private CA status exit=%d stdout=%q stderr=%q", exitCode, stdout.String(), stderr.String())
+	}
+}
+
+func TestRunRejectsInvalidPrivateCA(t *testing.T) {
+	caPath := filepath.Join(t.TempDir(), "invalid-ca.crt")
+	if err := os.WriteFile(caPath, []byte("not a certificate"), 0o600); err != nil {
+		t.Fatalf("write invalid CA: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{"--server", "https://127.0.0.1:3000", "--ca-file", caPath, "status"}, &stdout, &stderr, http.DefaultClient)
+	if exitCode != 2 || !strings.Contains(stderr.String(), "CA") {
+		t.Fatalf("invalid CA exit=%d stdout=%q stderr=%q", exitCode, stdout.String(), stderr.String())
 	}
 }
 

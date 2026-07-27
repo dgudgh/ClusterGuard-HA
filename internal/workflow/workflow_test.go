@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"errors"
+	"maps"
 	"strings"
 	"testing"
 	"time"
@@ -79,6 +80,66 @@ func (candidate *recordingAdapter) Verify(context.Context, adapter.OperationRequ
 
 type recordingGate struct{ trace *[]string }
 
+type testLockLeaseLost struct{}
+
+func (testLockLeaseLost) Error() string        { return "test operation lock lease lost" }
+func (testLockLeaseLost) FailureClass() string { return "lock_lease_lost" }
+
+type leaseLosingLock struct {
+	executeStarted <-chan struct{}
+}
+
+func (lock leaseLosingLock) Acquire(ctx context.Context, _ model.Operation) (context.Context, func(), error) {
+	leaseCtx, cancel := context.WithCancelCause(ctx)
+	go func() {
+		<-lock.executeStarted
+		cancel(testLockLeaseLost{})
+	}()
+	return leaseCtx, func() { cancel(context.Canceled) }, nil
+}
+
+type commitCancelingLock struct {
+	cancel context.CancelCauseFunc
+}
+
+func (lock *commitCancelingLock) Acquire(ctx context.Context, _ model.Operation) (context.Context, func(), error) {
+	leaseCtx, cancel := context.WithCancelCause(ctx)
+	lock.cancel = cancel
+	return leaseCtx, func() { cancel(context.Canceled) }, nil
+}
+
+type verifyCancelingAdapter struct {
+	*recordingAdapter
+	lock *commitCancelingLock
+}
+
+func (candidate *verifyCancelingAdapter) Verify(context.Context, adapter.OperationRequest) (model.Verification, error) {
+	*candidate.trace = append(*candidate.trace, "adapter:verify")
+	candidate.lock.cancel(testLockLeaseLost{})
+	return model.Verification{Passed: true, Checks: []model.Check{{Name: "verified", Status: model.CheckPass}}}, nil
+}
+
+type failingVerificationAdapter struct {
+	*recordingAdapter
+}
+
+func (candidate *failingVerificationAdapter) Verify(context.Context, adapter.OperationRequest) (model.Verification, error) {
+	*candidate.trace = append(*candidate.trace, "adapter:verify")
+	return model.Verification{Passed: false, Checks: []model.Check{{Name: "verified", Status: model.CheckFail}}}, nil
+}
+
+type leaseAwareAdapter struct {
+	*recordingAdapter
+	executeStarted chan struct{}
+}
+
+func (candidate *leaseAwareAdapter) Execute(ctx context.Context, _ adapter.OperationRequest) (model.Execution, error) {
+	*candidate.trace = append(*candidate.trace, "adapter:execute")
+	close(candidate.executeStarted)
+	<-ctx.Done()
+	return model.Execution{Status: model.OperationRunning}, ctx.Err()
+}
+
 func (gate recordingGate) CaptureObservation(_ context.Context, operation model.Operation) (ObservationToken, error) {
 	*gate.trace = append(*gate.trace, "gate:discover")
 	return ObservationToken{ClusterID: operation.ClusterID, ObservedAt: workflowTestObservation, Digest: "sha256:workflow-test"}, nil
@@ -93,9 +154,9 @@ func (gate recordingGate) Evaluate(context.Context, model.Operation) error {
 	*gate.trace = append(*gate.trace, "gate:safety")
 	return nil
 }
-func (gate recordingGate) Acquire(context.Context, model.Operation) (func(), error) {
+func (gate recordingGate) Acquire(ctx context.Context, _ model.Operation) (context.Context, func(), error) {
 	*gate.trace = append(*gate.trace, "gate:lock")
-	return func() { *gate.trace = append(*gate.trace, "gate:release") }, nil
+	return ctx, func() { *gate.trace = append(*gate.trace, "gate:release") }, nil
 }
 func (gate recordingGate) Consume(_ context.Context, operation model.OperationRecord, _ string) (model.ResourceID, model.OperationRecord, error) {
 	*gate.trace = append(*gate.trace, "gate:approval")
@@ -359,6 +420,89 @@ func TestMetadataStillVerifiesAfterPostCommitJournalFailure(t *testing.T) {
 	}
 }
 
+func TestMetadataCommitIsIndeterminateWhenLockLeaseIsLostDuringCommit(t *testing.T) {
+	trace := []string{}
+	registry := adapter.NewRegistry()
+	if err := registry.Register(newRecordingAdapter(&trace, true)); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	journal := NewMemoryJournal()
+	gate := recordingGate{trace: &trace}
+	lock := &commitCancelingLock{}
+	service := New(registry, gate, gate, lock, gate, journal)
+	request := adapter.MetadataRequest{ClusterID: model.NewResourceID(), Instance: model.DatabaseInstance{
+		Engine: model.EngineMySQL, EngineIdentity: model.EngineIdentity{"server_uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},
+	}}
+	committed := false
+	execution, err := service.ExecuteMetadata(context.Background(), model.Operation{RequestedBy: "dba"}, request, "approved", func() error {
+		committed = true
+		lock.cancel(testLockLeaseLost{})
+		return nil
+	})
+	var leaseLost testLockLeaseLost
+	if !committed || !errors.As(err, &leaseLost) || execution.Status != model.OperationIndeterminate {
+		t.Fatalf("lease-lost metadata execution=%+v committed=%t err=%v", execution, committed, err)
+	}
+	if !strings.Contains(execution.Message, "lock lease") {
+		t.Fatalf("indeterminate metadata message=%q", execution.Message)
+	}
+}
+
+func TestExecuteIsIndeterminateWhenLockLeaseIsLostDuringVerification(t *testing.T) {
+	trace := []string{}
+	lock := &commitCancelingLock{}
+	registry := adapter.NewRegistry()
+	candidate := &verifyCancelingAdapter{recordingAdapter: newRecordingAdapter(&trace, true), lock: lock}
+	if err := registry.Register(candidate); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	journal := NewMemoryJournal()
+	gate := recordingGate{trace: &trace}
+	service := New(registry, gate, gate, lock, gate, journal)
+	operation := model.Operation{
+		ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()},
+		ClusterID:    model.NewResourceID(),
+		Engine:       model.EngineMySQL,
+		Kind:         model.OperationSwitchover,
+		RequestedBy:  "dba",
+	}
+
+	execution, err := service.Execute(context.Background(), adapter.OperationRequest{Operation: operation}, "approved")
+	var leaseLost testLockLeaseLost
+	if !errors.As(err, &leaseLost) || execution.Status != model.OperationIndeterminate {
+		t.Fatalf("lease-lost verification execution=%+v err=%v", execution, err)
+	}
+	if !strings.Contains(execution.Message, "lock lease") {
+		t.Fatalf("indeterminate verification message=%q", execution.Message)
+	}
+}
+
+func TestExecuteReturnsIndeterminateErrorWhenPostCommitVerificationFails(t *testing.T) {
+	trace := []string{}
+	registry := adapter.NewRegistry()
+	candidate := &failingVerificationAdapter{recordingAdapter: newRecordingAdapter(&trace, true)}
+	if err := registry.Register(candidate); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	gate := recordingGate{trace: &trace}
+	service := New(registry, gate, gate, gate, gate, NewMemoryJournal())
+	operation := model.Operation{
+		ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()},
+		ClusterID:    model.NewResourceID(),
+		Engine:       model.EngineMySQL,
+		Kind:         model.OperationSwitchover,
+		RequestedBy:  "dba",
+	}
+
+	execution, err := service.Execute(context.Background(), adapter.OperationRequest{Operation: operation}, "approved")
+	if err == nil || execution.Status != model.OperationIndeterminate {
+		t.Fatalf("failed verification execution=%+v err=%v", execution, err)
+	}
+	if !strings.Contains(execution.Message, "verification failed") {
+		t.Fatalf("failed verification message=%q", execution.Message)
+	}
+}
+
 func TestPlatformRoleMetadataAuthorizationPreservesGatesWithoutExternalApproval(t *testing.T) {
 	trace := []string{}
 	registry := adapter.NewRegistry()
@@ -538,6 +682,123 @@ func TestTopologyDiscoveryRequiresCurrentClusterObservation(t *testing.T) {
 	}
 }
 
+func TestTopologyDiscoveryIgnoresVolatilePostgreSQLWALPositions(t *testing.T) {
+	clusterID := model.NewResourceID()
+	instanceID := model.NewResourceID()
+	operation := model.Operation{ClusterID: clusterID}
+	snapshot := model.TopologySnapshot{
+		ClusterID: clusterID,
+		Instances: []model.DatabaseInstance{{
+			ResourceMeta: model.ResourceMeta{ResourceID: instanceID, MetadataRevision: 7},
+			ClusterID:    clusterID,
+			Engine:       model.EnginePostgreSQL,
+			Hostname:     "postgres-a",
+			IPAddress:    "192.0.2.20",
+			Port:         5432,
+			Role:         model.RolePrimary,
+			Health:       model.Health{State: model.HealthHealthy, Replication: "primary", ObservedAt: workflowTestObservation},
+			EngineMetadata: map[string]string{
+				"version": "16.14", "timeline_id": "1", "in_recovery": "false",
+				"current_lsn": "0/405D728", "receive_lsn": "", "replay_lsn": "",
+			},
+		}},
+		ObservedAt: workflowTestObservation,
+	}
+	gate := TopologyDiscovery{Reader: topologyReaderStub{found: true, snapshot: snapshot}}
+	token, err := gate.CaptureObservation(context.Background(), operation)
+	if err != nil {
+		t.Fatalf("capture PostgreSQL observation: %v", err)
+	}
+
+	refreshed := snapshot
+	refreshed.ObservedAt = snapshot.ObservedAt.Add(time.Second)
+	refreshed.Instances = append([]model.DatabaseInstance{}, snapshot.Instances...)
+	refreshed.Instances[0].MetadataRevision++
+	refreshed.Instances[0].Health.ObservedAt = refreshed.ObservedAt
+	refreshed.Instances[0].EngineMetadata = map[string]string{
+		"version": "16.14", "timeline_id": "1", "in_recovery": "false",
+		"current_lsn": "0/405E000", "receive_lsn": "0/405E000", "replay_lsn": "0/405DFF8",
+	}
+	gate.Reader = topologyReaderStub{found: true, snapshot: refreshed}
+	if err := gate.RevalidateObservation(context.Background(), operation, token); err != nil {
+		t.Fatalf("PostgreSQL WAL progress invalidated equivalent topology: %v", err)
+	}
+
+	changed := refreshed
+	changed.Instances = append([]model.DatabaseInstance{}, refreshed.Instances...)
+	changed.Instances[0].EngineMetadata = map[string]string{
+		"version": "16.14", "timeline_id": "2", "in_recovery": "false",
+		"current_lsn": "0/405E000", "receive_lsn": "0/405E000", "replay_lsn": "0/405DFF8",
+	}
+	gate.Reader = topologyReaderStub{found: true, snapshot: changed}
+	if err := gate.RevalidateObservation(context.Background(), operation, token); err == nil {
+		t.Fatal("PostgreSQL timeline change passed observation revalidation")
+	}
+}
+
+func TestTopologyDiscoveryIgnoresVolatileOracleBrokerLag(t *testing.T) {
+	clusterID := model.NewResourceID()
+	instanceID := model.NewResourceID()
+	operation := model.Operation{ClusterID: clusterID}
+	snapshot := model.TopologySnapshot{
+		ClusterID: clusterID,
+		Instances: []model.DatabaseInstance{{
+			ResourceMeta: model.ResourceMeta{ResourceID: instanceID, MetadataRevision: 7},
+			ClusterID:    clusterID,
+			Engine:       model.EngineOracle,
+			EngineIdentity: model.EngineIdentity{
+				"dbid": "3248481464", "db_unique_name": "mesdb",
+			},
+			Hostname: "mesdb", IPAddress: "192.0.2.20", Port: 1521,
+			Role: model.RoleStandby,
+			Health: model.Health{
+				State: model.HealthHealthy, Replication: "success", ObservedAt: workflowTestObservation,
+			},
+			Replication: model.ReplicationStatus{
+				IOThread: model.ThreadRunning, SQLThread: model.ThreadRunning,
+			},
+			PromotionEligible: true,
+			EngineMetadata: map[string]string{
+				"data_guard_broker": "enabled", "database_role": "PHYSICAL STANDBY",
+				"database_status": "SUCCESS", "configuration_status": "SUCCESS",
+				"transport_lag_seconds": "0", "apply_lag_seconds": "0",
+			},
+		}},
+		ObservedAt: workflowTestObservation,
+	}
+	gate := TopologyDiscovery{Reader: topologyReaderStub{found: true, snapshot: snapshot}}
+	token, err := gate.CaptureObservation(context.Background(), operation)
+	if err != nil {
+		t.Fatalf("capture Oracle observation: %v", err)
+	}
+
+	refreshed := snapshot
+	refreshed.ObservedAt = snapshot.ObservedAt.Add(time.Second)
+	refreshed.Instances = append([]model.DatabaseInstance{}, snapshot.Instances...)
+	refreshed.Instances[0].MetadataRevision++
+	refreshed.Instances[0].Health.ObservedAt = refreshed.ObservedAt
+	refreshed.Instances[0].PromotionEligible = false
+	refreshed.Instances[0].EngineMetadata = map[string]string{
+		"data_guard_broker": "enabled", "database_role": "PHYSICAL STANDBY",
+		"database_status": "SUCCESS", "configuration_status": "SUCCESS",
+		"transport_lag_seconds": "1", "apply_lag_seconds": "1",
+	}
+	gate.Reader = topologyReaderStub{found: true, snapshot: refreshed}
+	if err := gate.RevalidateObservation(context.Background(), operation, token); err != nil {
+		t.Fatalf("Oracle Broker lag heartbeat invalidated equivalent topology: %v", err)
+	}
+
+	changed := refreshed
+	changed.Instances = append([]model.DatabaseInstance{}, refreshed.Instances...)
+	changed.Instances[0].Role = model.RolePrimary
+	changed.Instances[0].EngineMetadata = maps.Clone(refreshed.Instances[0].EngineMetadata)
+	changed.Instances[0].EngineMetadata["database_role"] = "PRIMARY"
+	gate.Reader = topologyReaderStub{found: true, snapshot: changed}
+	if err := gate.RevalidateObservation(context.Background(), operation, token); err == nil {
+		t.Fatal("Oracle role change passed observation revalidation")
+	}
+}
+
 type changingDiscoveryGate struct {
 	trace *[]string
 	err   error
@@ -629,6 +890,33 @@ func TestExecuteRunsGuardedWorkflowAndProducesAuditReport(t *testing.T) {
 	}
 	if discoverIndex < 0 || precheckIndex < 0 || discoverIndex >= precheckIndex {
 		t.Fatalf("discover must be an explicit stage before precheck: %+v", journal.Audits())
+	}
+}
+
+func TestExecuteMarksOperationIndeterminateWhenLockLeaseIsLostDuringMutation(t *testing.T) {
+	trace := []string{}
+	started := make(chan struct{})
+	candidate := &leaseAwareAdapter{recordingAdapter: newRecordingAdapter(&trace, true), executeStarted: started}
+	registry := adapter.NewRegistry()
+	if err := registry.Register(candidate); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	gate := recordingGate{trace: &trace}
+	service := New(registry, gate, gate, leaseLosingLock{executeStarted: started}, gate, NewMemoryJournal())
+	operation := model.Operation{
+		ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()},
+		ClusterID:    model.NewResourceID(), Engine: model.EngineMySQL,
+		Kind: model.OperationSwitchover, RequestedBy: "dba",
+	}
+
+	execution, err := service.Execute(context.Background(), adapter.OperationRequest{Operation: operation}, "approved")
+	if err == nil || execution.Status != model.OperationIndeterminate || !strings.Contains(execution.Message, "lock lease was lost") {
+		t.Fatalf("lease-loss execution=%+v err=%v", execution, err)
+	}
+	for _, entry := range trace {
+		if entry == "adapter:verify" {
+			t.Fatalf("legacy workflow reported normal verification after losing the mutation lock: %v", trace)
+		}
 	}
 }
 

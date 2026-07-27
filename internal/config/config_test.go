@@ -96,6 +96,232 @@ func TestLoadResolvesPurposeSpecificMySQLCredentials(t *testing.T) {
 	}
 }
 
+func TestLoadResolvesPostgreSQLReadOnlyDiscoveryConfiguration(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "control.json")
+	contents := `{
+  "metadata_path": "` + filepath.Join(directory, "metadata.json") + `",
+  "postgresql": {
+    "enabled": true,
+    "discovery": {
+      "username": "cg_monitor",
+      "database": "clusterguard",
+      "password_env": "CG_TEST_POSTGRESQL_DISCOVERY"
+    }
+  }
+}`
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CG_TEST_POSTGRESQL_DISCOVERY", "postgresql-secret")
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("load PostgreSQL configuration: %v", err)
+	}
+	if !loaded.PostgreSQL.Enabled || loaded.PostgreSQL.DiscoveryIntervalSeconds != 5 || loaded.PostgreSQL.DiscoveryTimeoutSeconds != 4 {
+		t.Fatalf("unexpected PostgreSQL schedule: %+v", loaded.PostgreSQL)
+	}
+	if loaded.PostgreSQL.AutomaticFailoverEnabled || loaded.PostgreSQL.AutomaticFailoverIntervalSeconds != 5 || loaded.PostgreSQL.AutomaticFailoverRetrySeconds != 30 {
+		t.Fatalf("unexpected PostgreSQL automatic failover defaults: %+v", loaded.PostgreSQL)
+	}
+	if loaded.PostgreSQL.Discovery.Username != "cg_monitor" || loaded.PostgreSQL.Discovery.Database != "clusterguard" || loaded.PostgreSQL.Discovery.Password != "postgresql-secret" {
+		t.Fatalf("unexpected PostgreSQL credential: %+v", loaded.PostgreSQL.Discovery)
+	}
+	encoded, err := json.Marshal(loaded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "postgresql-secret") {
+		t.Fatalf("serialized configuration exposed PostgreSQL password: %s", encoded)
+	}
+}
+
+func TestLoadResolvesPurposeSpecificPostgreSQLOperationCredentials(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "control.json")
+	contents := `{
+  "metadata_path": "` + filepath.Join(directory, "metadata.json") + `",
+  "postgresql": {
+    "enabled": true,
+    "discovery": {"username":"cg_monitor","database":"postgres","password_env":"CG_TEST_PG_DISCOVERY"},
+    "operation": {"username":"cg_operator","database":"postgres","password_env":"CG_TEST_PG_OPERATION"},
+    "replication": {"username":"cg_replication","database":"postgres","password_env":"CG_TEST_PG_REPLICATION"}
+  }
+}`
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CG_TEST_PG_DISCOVERY", "discovery-secret")
+	t.Setenv("CG_TEST_PG_OPERATION", "operation-secret")
+	t.Setenv("CG_TEST_PG_REPLICATION", "replication-secret")
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("load PostgreSQL operation configuration: %v", err)
+	}
+	if loaded.PostgreSQL.Operation.Username != "cg_operator" || loaded.PostgreSQL.Operation.Password != "operation-secret" || loaded.PostgreSQL.Replication.Username != "cg_replication" || loaded.PostgreSQL.Replication.Password != "replication-secret" {
+		t.Fatalf("PostgreSQL credentials=%+v", loaded.PostgreSQL)
+	}
+	encoded, err := json.Marshal(loaded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"discovery-secret", "operation-secret", "replication-secret"} {
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("serialized PostgreSQL configuration exposed %q: %s", secret, encoded)
+		}
+	}
+}
+
+func TestLoadRejectsPartialPostgreSQLOperationCredentials(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "control.json")
+	contents := `{
+  "metadata_path": "` + filepath.Join(directory, "metadata.json") + `",
+  "postgresql": {
+    "enabled": true,
+    "discovery": {"username":"cg_monitor","password_env":"CG_TEST_PG_DISCOVERY"},
+    "operation": {"username":"cg_operator","password_env":"CG_TEST_PG_OPERATION"}
+  }
+}`
+	t.Setenv("CG_TEST_PG_DISCOVERY", "discovery-secret")
+	t.Setenv("CG_TEST_PG_OPERATION", "operation-secret")
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "operation and replication") {
+		t.Fatalf("partial PostgreSQL mutation credentials error=%v", err)
+	}
+}
+
+func TestLoadRejectsPostgreSQLAutomaticFailoverWithoutMutationCredentials(t *testing.T) {
+	setPostgreSQLAutomaticFailoverSecrets(t)
+	path := writePostgreSQLAutomaticFailoverConfig(t, false, true)
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "operation and replication credentials") {
+		t.Fatalf("PostgreSQL automatic failover credential error=%v", err)
+	}
+}
+
+func TestLoadRejectsAutomaticFailoverForDisabledEngine(t *testing.T) {
+	for _, engine := range []string{"mysql", "postgresql"} {
+		t.Run(engine, func(t *testing.T) {
+			directory := t.TempDir()
+			path := filepath.Join(directory, "control.json")
+			contents := `{"metadata_path":` + fmt.Sprintf("%q", filepath.Join(directory, "metadata.json")) + `,` + fmt.Sprintf("%q", engine) + `:{"enabled":false,"automatic_failover_enabled":true}}`
+			if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "must be enabled") {
+				t.Fatalf("disabled %s automatic failover error=%v", engine, err)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsPostgreSQLAutomaticFailoverWithoutConsensusAndAgent(t *testing.T) {
+	setPostgreSQLAutomaticFailoverSecrets(t)
+	path := writePostgreSQLAutomaticFailoverConfig(t, true, false)
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "automatic failover") {
+		t.Fatalf("unsafe PostgreSQL automatic failover configuration error=%v", err)
+	}
+}
+
+func TestLoadAllowsPostgreSQLAutomaticFailoverWithoutStaticApproval(t *testing.T) {
+	setPostgreSQLAutomaticFailoverSecrets(t)
+	path := writePostgreSQLAutomaticFailoverConfig(t, true, true)
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("load PostgreSQL automatic failover configuration: %v", err)
+	}
+	if !loaded.PostgreSQL.AutomaticFailoverEnabled || loaded.PostgreSQL.AutomaticFailoverIntervalSeconds != 5 || loaded.PostgreSQL.AutomaticFailoverRetrySeconds != 30 || loaded.ApprovalToken != "" {
+		t.Fatalf("PostgreSQL automatic failover configuration=%+v approval=%q", loaded.PostgreSQL, loaded.ApprovalToken)
+	}
+}
+
+func setPostgreSQLAutomaticFailoverSecrets(t *testing.T) {
+	t.Helper()
+	for name, value := range map[string]string{
+		"CG_AUTO_PG_DISCOVERY":   "discovery-secret",
+		"CG_AUTO_PG_OPERATION":   "operation-secret",
+		"CG_AUTO_PG_REPLICATION": "replication-secret",
+		"CG_AUTO_PG_AGENT":       "agent-secret",
+	} {
+		t.Setenv(name, value)
+	}
+}
+
+func writePostgreSQLAutomaticFailoverConfig(t *testing.T, mutationCredentials, infrastructure bool) string {
+	t.Helper()
+	directory := t.TempDir()
+	postgresql := map[string]any{
+		"enabled":                    true,
+		"automatic_failover_enabled": true,
+		"discovery": map[string]any{
+			"username": "discover", "password_env": "CG_AUTO_PG_DISCOVERY",
+		},
+	}
+	if mutationCredentials {
+		postgresql["operation"] = map[string]any{"username": "operator", "password_env": "CG_AUTO_PG_OPERATION"}
+		postgresql["replication"] = map[string]any{"username": "replicator", "password_env": "CG_AUTO_PG_REPLICATION"}
+	}
+	configuration := map[string]any{
+		"metadata_path": filepath.Join(directory, "metadata.json"),
+		"postgresql":    postgresql,
+	}
+	if infrastructure {
+		localID := "11111111-1111-4111-8111-111111111111"
+		configuration["consensus"] = map[string]any{
+			"enabled": true, "snapshot_cas_enabled": true, "local_id": localID,
+			"bind_address": "127.0.0.1:10009", "advertise_address": "127.0.0.1:10009",
+			"data_directory": filepath.Join(directory, "raft"), "bootstrap": true,
+			"peers": []map[string]any{
+				{"resource_id": localID, "address": "127.0.0.1:10009"},
+				{"resource_id": "22222222-2222-4222-8222-222222222222", "address": "127.0.0.1:10019"},
+				{"resource_id": "33333333-3333-4333-8333-333333333333", "address": "127.0.0.1:10029"},
+			},
+		}
+		configuration["agent"] = map[string]any{
+			"enabled": true, "user": "cg-agent",
+			"identity_file": "/etc/clusterguard/agent_ed25519", "known_hosts_file": "/etc/clusterguard/agent_known_hosts",
+			"shared_secret_env": "CG_AUTO_PG_AGENT",
+		}
+	}
+	encoded, err := json.Marshal(configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(directory, "control.json")
+	if err := os.WriteFile(path, encoded, 0600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestLoadDefaultsPostgreSQLDatabaseAndRejectsMissingSecret(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "control.json")
+	contents := `{
+  "metadata_path": "` + filepath.Join(directory, "metadata.json") + `",
+  "postgresql": {
+    "enabled": true,
+    "discovery": {"username": "cg_monitor", "password_env": "CG_TEST_POSTGRESQL_MISSING"}
+  }
+}`
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "PostgreSQL discovery") {
+		t.Fatalf("missing PostgreSQL secret error = %v", err)
+	}
+	t.Setenv("CG_TEST_POSTGRESQL_MISSING", "secret")
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("load PostgreSQL defaults: %v", err)
+	}
+	if loaded.PostgreSQL.Discovery.Database != "postgres" {
+		t.Fatalf("database = %q, want postgres", loaded.PostgreSQL.Discovery.Database)
+	}
+}
+
 func TestLoadRejectsMissingPurposeSpecificMySQLCredential(t *testing.T) {
 	t.Setenv("CG_TEST_DISCOVERY", "discovery-secret")
 	t.Setenv("CG_TEST_OPERATION", "operation-secret")
@@ -133,6 +359,7 @@ func TestLoadRequiresCompleteAbsoluteTLSCertificatePair(t *testing.T) {
 		`{"metadata_path":"/tmp/metadata.json","tls_cert_file":"/etc/clusterguard/tls/server.crt"}`,
 		`{"metadata_path":"/tmp/metadata.json","tls_key_file":"/etc/clusterguard/tls/server.key"}`,
 		`{"metadata_path":"/tmp/metadata.json","tls_cert_file":"relative.crt","tls_key_file":"relative.key"}`,
+		`{"metadata_path":"/tmp/metadata.json","tls_ca_file":"relative-ca.crt"}`,
 	} {
 		path := filepath.Join(t.TempDir(), "control.json")
 		if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
@@ -143,13 +370,177 @@ func TestLoadRequiresCompleteAbsoluteTLSCertificatePair(t *testing.T) {
 		}
 	}
 	path := filepath.Join(t.TempDir(), "control.json")
-	contents := `{"metadata_path":"/tmp/metadata.json","tls_cert_file":"/etc/clusterguard/tls/server.crt","tls_key_file":"/etc/clusterguard/tls/server.key"}`
+	contents := `{"metadata_path":"/tmp/metadata.json","tls_cert_file":"/etc/clusterguard/tls/server.crt","tls_key_file":"/etc/clusterguard/tls/server.key","tls_ca_file":"/etc/clusterguard/tls/ca.crt"}`
 	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := Load(path)
-	if err != nil || loaded.TLSCertFile == "" || loaded.TLSKeyFile == "" {
+	if err != nil || loaded.TLSCertFile == "" || loaded.TLSKeyFile == "" || loaded.TLSCAFile == "" {
 		t.Fatalf("complete TLS configuration=%+v err=%v", loaded, err)
+	}
+}
+
+func TestLoadRejectsExternalPlaintextHTTPUnlessExplicitlyAllowed(t *testing.T) {
+	for _, address := range []string{"0.0.0.0:3000", ":3000", "192.0.2.10:3000"} {
+		path := filepath.Join(t.TempDir(), "control.json")
+		contents := `{"http_address":"` + address + `","metadata_path":"/tmp/metadata.json"}`
+		if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "plaintext HTTP") {
+			t.Fatalf("external plaintext HTTP %q error=%v", address, err)
+		}
+	}
+
+	path := filepath.Join(t.TempDir(), "control.json")
+	contents := `{"http_address":"0.0.0.0:3000","allow_insecure_http":true,"metadata_path":"/tmp/metadata.json"}`
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil || !loaded.AllowInsecureHTTP {
+		t.Fatalf("explicit development HTTP configuration=%+v err=%v", loaded, err)
+	}
+	if len(loaded.DeprecationWarnings) == 0 || !strings.Contains(loaded.DeprecationWarnings[len(loaded.DeprecationWarnings)-1], "plaintext HTTP") {
+		t.Fatalf("missing plaintext HTTP warning: %v", loaded.DeprecationWarnings)
+	}
+}
+
+func TestLoadRequiresMutualTLSForExternalConsensusTransport(t *testing.T) {
+	writeConfig := func(contents string) string {
+		path := filepath.Join(t.TempDir(), "control.json")
+		if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	configuration := func(extra string) string {
+		return `{
+  "metadata_path":"/tmp/metadata.json",
+  "tls_cert_file":"/etc/clusterguard/tls/server.crt",
+  "tls_key_file":"/etc/clusterguard/tls/server.key",
+  "consensus":{
+    "enabled":true,
+    "local_id":"11111111-1111-4111-8111-111111111111",
+    "bind_address":"0.0.0.0:10009",
+    "advertise_address":"192.0.2.11:10009",
+    "data_directory":"/tmp/raft",
+    ` + extra + `
+    "peers":[
+      {"resource_id":"11111111-1111-4111-8111-111111111111","address":"192.0.2.11:10009"},
+      {"resource_id":"22222222-2222-4222-8222-222222222222","address":"192.0.2.12:10009"},
+      {"resource_id":"33333333-3333-4333-8333-333333333333","address":"192.0.2.13:10009"}
+    ]
+  }
+}`
+	}
+	if _, err := Load(writeConfig(configuration(""))); err == nil || !strings.Contains(err.Error(), "Raft TLS") {
+		t.Fatalf("external plaintext Raft transport error=%v", err)
+	}
+	loaded, err := Load(writeConfig(configuration(`
+    "tls_cert_file":"/etc/clusterguard/tls/raft.crt",
+    "tls_key_file":"/etc/clusterguard/tls/raft.key",
+    "tls_ca_file":"/etc/clusterguard/tls/raft-ca.crt",`)))
+	if err != nil || loaded.Consensus.TLSCertFile == "" || loaded.Consensus.TLSCAFile == "" {
+		t.Fatalf("mutual TLS consensus configuration=%+v err=%v", loaded.Consensus, err)
+	}
+	loaded, err = Load(writeConfig(configuration(`"allow_insecure_transport":true,`)))
+	if err != nil || !loaded.Consensus.AllowInsecureTransport {
+		t.Fatalf("explicit insecure consensus configuration=%+v err=%v", loaded.Consensus, err)
+	}
+	if len(loaded.DeprecationWarnings) == 0 || !strings.Contains(loaded.DeprecationWarnings[len(loaded.DeprecationWarnings)-1], "Raft transport") {
+		t.Fatalf("missing insecure Raft warning: %v", loaded.DeprecationWarnings)
+	}
+	if _, err := Load(writeConfig(configuration(`"tls_cert_file":"/etc/clusterguard/tls/raft.crt",`))); err == nil {
+		t.Fatal("partial Raft TLS configuration was accepted")
+	}
+}
+
+func TestLoadRejectsUnsafeConsensusPeerAPIAddresses(t *testing.T) {
+	writeConfig := func(apiAddress string, allowInsecure bool) string {
+		path := filepath.Join(t.TempDir(), "control.json")
+		contents := fmt.Sprintf(`{
+  "http_address":"127.0.0.1:8088",
+  "allow_insecure_http":%t,
+  "metadata_path":"/tmp/metadata.json",
+  "consensus":{
+    "enabled":true,
+    "snapshot_cas_enabled":true,
+    "local_id":"11111111-1111-4111-8111-111111111111",
+    "bind_address":"0.0.0.0:10009",
+    "advertise_address":"192.0.2.11:10009",
+    "data_directory":"/tmp/raft",
+    "tls_cert_file":"/etc/clusterguard/tls/raft.crt",
+    "tls_key_file":"/etc/clusterguard/tls/raft.key",
+    "tls_ca_file":"/etc/clusterguard/tls/raft-ca.crt",
+    "peers":[
+      {"resource_id":"11111111-1111-4111-8111-111111111111","address":"192.0.2.11:10009","api_address":"https://controller-a.example:8088"},
+      {"resource_id":"22222222-2222-4222-8222-222222222222","address":"192.0.2.12:10009","api_address":%q},
+      {"resource_id":"33333333-3333-4333-8333-333333333333","address":"192.0.2.13:10009","api_address":"https://controller-c.example:8088"}
+    ]
+  }
+}`, allowInsecure, apiAddress)
+		if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+
+	if _, err := Load(writeConfig("http://192.0.2.12:8088", false)); err == nil || !strings.Contains(err.Error(), "peer API") {
+		t.Fatalf("external plaintext peer API error=%v", err)
+	}
+	if _, err := Load(writeConfig("https://controller-a.example:8088", false)); err == nil || !strings.Contains(err.Error(), "duplicated") {
+		t.Fatalf("duplicate peer API error=%v", err)
+	}
+	loaded, err := Load(writeConfig("http://192.0.2.12:8088", true))
+	if err != nil || len(loaded.DeprecationWarnings) == 0 {
+		t.Fatalf("explicit insecure peer API configuration=%+v err=%v", loaded.Consensus, err)
+	}
+}
+
+func TestLoadValidatesExternalFencingProvider(t *testing.T) {
+	writeConfig := func(contents string) string {
+		path := filepath.Join(t.TempDir(), "control.json")
+		if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	if _, err := Load(writeConfig(`{"metadata_path":"/tmp/metadata.json","fencing":{"enabled":true,"executable_path":"relative-fencer"}}`)); err == nil {
+		t.Fatal("relative external fencer path was accepted")
+	}
+	configuration := `{
+  "metadata_path":"/tmp/metadata.json",
+  "consensus":{
+    "enabled":true,
+    "local_id":"11111111-1111-4111-8111-111111111111",
+    "bind_address":"127.0.0.1:10009",
+    "advertise_address":"127.0.0.1:10009",
+    "data_directory":"/tmp/raft",
+    "peers":[
+      {"resource_id":"11111111-1111-4111-8111-111111111111","address":"127.0.0.1:10009"},
+      {"resource_id":"22222222-2222-4222-8222-222222222222","address":"127.0.0.1:10010"},
+      {"resource_id":"33333333-3333-4333-8333-333333333333","address":"127.0.0.1:10011"}
+    ]
+  },
+  "fencing":{"enabled":true,"executable_path":"/usr/local/libexec/clusterguard-fencer","timeout_seconds":20}
+}`
+	loaded, err := Load(writeConfig(configuration))
+	if err != nil || !loaded.Fencing.Enabled || loaded.Fencing.TimeoutSeconds != 20 {
+		t.Fatalf("external fencing configuration=%+v err=%v", loaded.Fencing, err)
+	}
+}
+
+func TestLoadAllowsLoopbackPlaintextHTTP(t *testing.T) {
+	for _, address := range []string{"127.0.0.1:3000", "[::1]:3000", "localhost:3000"} {
+		path := filepath.Join(t.TempDir(), "control.json")
+		contents := `{"http_address":"` + address + `","metadata_path":"/tmp/metadata.json"}`
+		if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(path); err != nil {
+			t.Fatalf("loopback HTTP %q rejected: %v", address, err)
+		}
 	}
 }
 
@@ -303,6 +694,8 @@ func TestLoadResolvesAgentTransportSecret(t *testing.T) {
     "user": "cg-agent",
     "identity_file": "/etc/clusterguard/agent_ed25519",
     "known_hosts_file": "/etc/clusterguard/agent_known_hosts",
+    "command_timeout_seconds": 37,
+    "mutation_timeout_seconds": 901,
     "shared_secret_env": "CG_TEST_AGENT_SECRET"
   }
 }`
@@ -313,7 +706,8 @@ func TestLoadResolvesAgentTransportSecret(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load agent transport: %v", err)
 	}
-	if !loaded.Agent.Enabled || loaded.Agent.SharedSecret != "agent-secret" || loaded.Agent.User != "cg-agent" {
+	if !loaded.Agent.Enabled || loaded.Agent.SharedSecret != "agent-secret" || loaded.Agent.User != "cg-agent" ||
+		loaded.Agent.CommandTimeoutSeconds != 37 || loaded.Agent.MutationTimeoutSeconds != 901 {
 		t.Fatalf("unexpected agent configuration: %+v", loaded.Agent)
 	}
 	encoded, err := json.Marshal(loaded)
@@ -329,6 +723,8 @@ func TestLoadResolvesRaftAndWriteOnlyNodeLifecycleConfiguration(t *testing.T) {
 	t.Setenv("CG_TEST_SSH", "ssh-secret")
 	t.Setenv("CG_TEST_INSTALL_ROOT", "install-root-secret")
 	t.Setenv("CG_TEST_INSTALL_REPLICATION", "install-replication-secret")
+	t.Setenv("CG_TEST_POSTGRESQL_ADMIN", "postgresql-admin-secret")
+	t.Setenv("CG_TEST_POSTGRESQL_REPLICATION", "postgresql-replication-secret")
 	localID := "11111111-1111-4111-8111-111111111111"
 	path := filepath.Join(t.TempDir(), "control.json")
 	contents := `{
@@ -356,6 +752,12 @@ func TestLoadResolvesRaftAndWriteOnlyNodeLifecycleConfiguration(t *testing.T) {
     "ssh_password_env":"CG_TEST_SSH",
     "mysql_root_password_env":"CG_TEST_INSTALL_ROOT",
     "replication_password_env":"CG_TEST_INSTALL_REPLICATION",
+    "postgresql_install_helper":"/usr/local/libexec/clusterguard-postgresql-install.sh",
+    "postgresql_sync_helper":"/usr/local/libexec/clusterguard-postgresql-sync.sh",
+    "postgresql_admin_password_env":"CG_TEST_POSTGRESQL_ADMIN",
+    "postgresql_replication_password_env":"CG_TEST_POSTGRESQL_REPLICATION",
+    "postgresql_basebackup_available":true,
+    "postgresql_rewind_available":true,
     "clone_available":true,
     "xtrabackup_versions":{"8.0":true},
     "logical_dump_allowed":true
@@ -368,17 +770,37 @@ func TestLoadResolvesRaftAndWriteOnlyNodeLifecycleConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load Raft lifecycle configuration: %v", err)
 	}
-	if !loaded.Consensus.Enabled || !loaded.Consensus.SnapshotCASEnabled || string(loaded.Consensus.LocalID) != localID || len(loaded.Consensus.Peers) != 3 || !loaded.NodeLifecycle.Enabled || loaded.NodeLifecycle.SSHPassword != "ssh-secret" || loaded.NodeLifecycle.MySQLRootPassword != "install-root-secret" || loaded.NodeLifecycle.ReplicationPassword != "install-replication-secret" {
+	if !loaded.Consensus.Enabled || !loaded.Consensus.SnapshotCASEnabled || string(loaded.Consensus.LocalID) != localID || len(loaded.Consensus.Peers) != 3 || !loaded.NodeLifecycle.Enabled || loaded.NodeLifecycle.SSHPassword != "ssh-secret" || loaded.NodeLifecycle.MySQLRootPassword != "install-root-secret" || loaded.NodeLifecycle.ReplicationPassword != "install-replication-secret" || loaded.NodeLifecycle.PostgreSQLAdminPassword != "postgresql-admin-secret" || loaded.NodeLifecycle.PostgreSQLReplicationPassword != "postgresql-replication-secret" || !loaded.NodeLifecycle.PostgreSQLBaseBackupAvailable || !loaded.NodeLifecycle.PostgreSQLRewindAvailable {
 		t.Fatalf("loaded Raft lifecycle configuration=%+v", loaded)
 	}
 	encoded, err := json.Marshal(loaded)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, secret := range []string{"ssh-secret", "install-root-secret", "install-replication-secret"} {
+	for _, secret := range []string{"ssh-secret", "install-root-secret", "install-replication-secret", "postgresql-admin-secret", "postgresql-replication-secret"} {
 		if strings.Contains(string(encoded), secret) {
 			t.Fatalf("serialized lifecycle configuration exposed %q: %s", secret, encoded)
 		}
+	}
+}
+
+func TestLoadRejectsIncompletePostgreSQLLifecycleCapability(t *testing.T) {
+	t.Setenv("CG_TEST_LIFECYCLE_SSH", "ssh-secret")
+	t.Setenv("CG_TEST_LIFECYCLE_MYSQL", "mysql-secret")
+	t.Setenv("CG_TEST_LIFECYCLE_REPLICATION", "replication-secret")
+	configuration := NodeLifecycle{
+		PostgreSQLBaseBackupAvailable: true,
+		PostgreSQLInstallHelper:       "/usr/local/libexec/clusterguard-postgresql-install.sh",
+		ExecutorPath:                  "/usr/local/libexec/clusterguard-node-lifecycle.sh",
+		PackageRepository:             "/opt/clusterguard/packages",
+		KnownHostsFile:                "/etc/clusterguard/known_hosts",
+		JQBinary:                      "/usr/local/libexec/jq-linux-amd64",
+		SSHPasswordEnv:                "CG_TEST_LIFECYCLE_SSH",
+		MySQLRootPasswordEnv:          "CG_TEST_LIFECYCLE_MYSQL",
+		ReplicationPasswordEnv:        "CG_TEST_LIFECYCLE_REPLICATION",
+	}
+	if err := resolveNodeLifecycle(&configuration); err == nil || !strings.Contains(err.Error(), "PostgreSQL") {
+		t.Fatalf("incomplete PostgreSQL lifecycle configuration error=%v", err)
 	}
 }
 
@@ -432,6 +854,32 @@ func TestLoadRejectsUnsafeRaftMembershipAndLifecycleWithoutConsensus(t *testing.
 	}
 }
 
+func TestLoadAcceptsOnlyAbsoluteHTTPControllerAPIAddresses(t *testing.T) {
+	localID := "11111111-1111-4111-8111-111111111111"
+	configuration := func(apiAddress string) string {
+		return `{"metadata_path":"/tmp/metadata.json","consensus":{"enabled":true,"local_id":"` + localID + `","bind_address":"127.0.0.1:10009","advertise_address":"127.0.0.1:10009","data_directory":"/tmp/raft","peers":[` +
+			`{"resource_id":"` + localID + `","address":"127.0.0.1:10009","api_address":"` + apiAddress + `"},` +
+			`{"resource_id":"22222222-2222-4222-8222-222222222222","address":"127.0.0.1:10019","api_address":"https://127.0.0.1:3019"},` +
+			`{"resource_id":"33333333-3333-4333-8333-333333333333","address":"127.0.0.1:10029","api_address":"https://127.0.0.1:3029"}]}}`
+	}
+	write := func(contents string) string {
+		path := filepath.Join(t.TempDir(), "control.json")
+		if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	loaded, err := Load(write(configuration("https://127.0.0.1:3009")))
+	if err != nil || loaded.Consensus.Peers[0].APIAddress != "https://127.0.0.1:3009" {
+		t.Fatalf("valid controller API address configuration=%+v err=%v", loaded.Consensus.Peers, err)
+	}
+	for _, invalid := range []string{"127.0.0.1:3009", "ftp://127.0.0.1:3009", "https://user:pass@127.0.0.1:3009/path"} {
+		if _, err := Load(write(configuration(invalid))); err == nil {
+			t.Fatalf("invalid controller API address %q was accepted", invalid)
+		}
+	}
+}
+
 func TestOfficialDistributionUsesClusterGuardPathsAndServiceName(t *testing.T) {
 	examplePath := filepath.Join("..", "..", "configs", "clusterguard.example.json")
 	contents, err := os.ReadFile(examplePath)
@@ -445,6 +893,9 @@ func TestOfficialDistributionUsesClusterGuardPathsAndServiceName(t *testing.T) {
 	if configuration.MetadataPath != "/var/lib/clusterguard/metadata.json" {
 		t.Fatalf("metadata path = %q", configuration.MetadataPath)
 	}
+	if configuration.HTTPAddress != "0.0.0.0:8088" {
+		t.Fatalf("clustered example HTTP address = %q, want a peer-reachable TLS listener", configuration.HTTPAddress)
+	}
 	if configuration.MySQL.AutomaticFailoverEnabled || configuration.MySQL.AutomaticFailoverIntervalSeconds != 5 || configuration.MySQL.AutomaticFailoverRetrySeconds != 30 {
 		t.Fatalf("distribution automatic failover defaults=%+v", configuration.MySQL)
 	}
@@ -455,9 +906,10 @@ func TestOfficialDistributionUsesClusterGuardPathsAndServiceName(t *testing.T) {
 		t.Fatalf("read systemd service: %v", err)
 	}
 	for _, contract := range []string{
+		"ExecStartPre=/usr/local/bin/clusterguard --config /etc/clusterguard/clusterguard.json --check-config",
 		"ExecStart=/usr/local/bin/clusterguard --config /etc/clusterguard/clusterguard.json",
 		"EnvironmentFile=-/etc/clusterguard/clusterguard.env",
-		"Environment=PATH=/usr/local/mysql/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin",
+		"Environment=PATH=/usr/local/mysql/bin:/usr/pgsql-16/bin:/usr/lib/postgresql/16/bin:/opt/mssql-tools18/bin:/opt/mssql-tools/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin",
 		"ConfigurationDirectoryMode=0750",
 		"StateDirectory=clusterguard",
 		"StateDirectoryMode=0750",

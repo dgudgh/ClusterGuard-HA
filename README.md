@@ -7,10 +7,18 @@ ClusterGuard HA requires Go 1.22 or newer.
 **ClusterGuard HA — Multi-Database High Availability Control Plane**
 
 ClusterGuard HA is an independent, clean-room high-availability control plane.
-The current release delivers the guarded MySQL control path and keeps
-first-class extension points for PostgreSQL, Oracle, and SQL Server.
+The current release delivers guarded MySQL and PostgreSQL control paths, and
+adds controlled role-transition adapters for Oracle Data Guard Broker and SQL
+Server Always On when their native command runners are configured.
 
 ## Current Release
+
+> **Qualification status:** The capabilities below are implemented and covered
+> by automated tests. They are not a substitute for production qualification.
+> PostgreSQL mutation must remain disabled until the exact database package,
+> service layout, storage, network, fencing provider, VIP provider, and
+> three-controller deployment pass the live acceptance matrix in
+> [postgresql-ha.md](docs/postgresql-ha.md).
 
 The current MySQL adapter provides:
 
@@ -28,6 +36,8 @@ The current MySQL adapter provides:
   synchronization, verification, audit, and report output;
 - endpoint metadata reconciliation without changing immutable resource identity;
 - JSON, Prometheus, and monitoring-safe health output;
+- fail-closed liveness/readiness separation, Raft role and quorum diagnostics,
+  bounded history, paginated operation logs, and rate-limited incident reminders;
 - an authenticated Chinese console with role-based access, mandatory bootstrap
   password change, CSRF protection, and the `cgctl` service CLI;
 - durable operation UUIDs, idempotency keys, stage progress, audit, and reports;
@@ -36,9 +46,31 @@ The current MySQL adapter provides:
 - tested MySQL 5.7/8.x/9.x mutation dialects behind an independent adapter and
   writer-endpoint contract.
 
-PostgreSQL, Oracle, and SQL Server adapters are registered and report their
-capabilities, but their discovery and execution methods currently fail closed
-as unsupported.
+The PostgreSQL adapter provides inventory-scoped discovery, immutable node
+identity, `system_identifier` cluster binding, primary/standby topology,
+streaming health, timeline and WAL evidence, native metrics, deterministic
+candidate assessment, guarded planned switchover and failover, former-primary
+`pg_rewind` recovery, allowlisted low-risk repair, writer-VIP coupling, and
+`pg_basebackup`/`pg_rewind` node lifecycle, plus optional 30-second stable-failure
+automatic failover. Mutations are advertised only when
+the restricted Agent, operation credentials, endpoint provider, controller
+quorum, and required fencing evidence are configured.
+
+The Oracle adapter supports signed-Agent Data Guard Broker discovery, health,
+topology, standby candidate assessment, precheck, plan, execute, and dual-node
+verification for controlled switchover. A dedicated password-file
+`SYSDG` account is used instead of `SYS`; the local Agent runs DGMGRL as the
+Oracle operating-system account and accepts only configured Broker members.
+ClusterGuard never edits Oracle data files directly. Failure failover remains
+blocked until old-primary fencing is configured.
+
+The SQL Server adapter supports Always On read-only discovery, health,
+topology, synchronized-secondary candidate assessment, precheck, plan, execute,
+verify, and send/redo queue metrics for planned failover to a synchronized
+synchronous-commit secondary.
+Discovery and execution are advertised only when `sqlcmd` is available or a SQL
+Server runner is injected. Forced failover remains blocked by default unless a
+future explicit data-loss approval policy is configured.
 
 ## Safety Boundary
 
@@ -52,9 +84,10 @@ evidence blocks the operation; it never produces a simulated success.
 Automatic failover is separately opt-in. It requires six follow-up failure
 observations across 30 seconds, the rank-one eligible candidate, current
 controller quorum, old-primary isolation, and an exclusive VIP lease. A whole-
-host network partition that cannot prove old-primary fencing remains blocked.
-The platform prefers temporary unavailability over a second writer or VIP
-owner.
+host network partition is eligible only when the configured external fencer
+isolates the old primary and a separate status call proves that isolation.
+Without that evidence the operation remains blocked. The platform prefers
+temporary unavailability over a second writer or VIP owner.
 
 The browser console authenticates against platform users stored in the
 replicated metadata snapshot. A fresh installation creates `admin` with the
@@ -78,8 +111,10 @@ The common workflow remains:
 DISCOVER -> PRECHECK -> PLAN -> SAFETY_GUARD -> LOCK -> APPROVE -> EXECUTE -> VERIFY -> AUDIT -> REPORT
 ```
 
-Every implemented database mutation passes the same workflow. PostgreSQL,
-Oracle, and SQL Server execution remains unsupported and fail-closed.
+Every implemented mutation passes the same workflow. Oracle and SQL Server
+execution remains fail-closed unless the native broker/AG command runner is
+configured and the platform has current identity, role, health, lock, approval,
+and verification evidence.
 
 ## Start
 
@@ -90,6 +125,15 @@ the JSON configuration.
 ```bash
 export CG_CONTROL_TOKEN='replace-with-a-control-api-secret'
 export CG_MYSQL_DISCOVERY_PASSWORD='replace-with-the-read-only-secret'
+export CG_POSTGRESQL_DISCOVERY_PASSWORD='replace-with-the-pg-monitor-secret'
+export CG_POSTGRESQL_OPERATION_PASSWORD='replace-with-the-pg-operation-secret'
+export CG_POSTGRESQL_REPLICATION_PASSWORD='replace-with-the-pg-replication-secret'
+export CG_ORACLE_DISCOVERY_PASSWORD='replace-with-the-dgbroker-monitor-secret'
+export CG_ORACLE_OPERATION_PASSWORD='replace-with-the-dgbroker-operation-secret'
+export CG_SQLSERVER_DISCOVERY_PASSWORD='replace-with-the-ag-monitor-secret'
+export CG_SQLSERVER_OPERATION_PASSWORD='replace-with-the-ag-operation-secret'
+# Optional, only on controllers that execute these engines:
+# export PATH="/opt/oracle/product/bin:/opt/mssql-tools18/bin:$PATH"
 go run ./cmd/clusterguard --config configs/clusterguard.example.json
 ```
 
@@ -97,6 +141,13 @@ The console and API are served from `http://127.0.0.1:8088/` by default.
 Open the console and sign in with `admin` / `admin123` on a new metadata store.
 The console immediately requires a new password and does not load cluster data
 until that change succeeds.
+
+Service managers should use `/healthz` for liveness and `/readyz` for
+fail-closed control-plane readiness. Authenticated operators can use
+`cgctl status` or `/api/v1/control-plane/status` for Raft role, Leader, quorum,
+metadata revision, active work, and uptime diagnostics. Every API response has
+an `X-Request-ID` that is preserved when a follower forwards a mutation to the
+current Leader.
 
 The production binary is `clusterguard`; the CLI is `cgctl`. The distribution
 uses `/etc/clusterguard/`, `/var/lib/clusterguard/`, and
@@ -111,6 +162,9 @@ MySQL client assets from an explicit allowlisted runtime directory. Agent VIP
 reconciliation is deferred by default and requires the explicit
 `--activate-agent-reconcile` flag after endpoint metadata and majority leases
 have been verified.
+
+See `docs/offline-install.md` for the air-gapped build, transfer, dependency,
+preflight, installation, Raft rollout, and rollback procedure.
 
 ## Register and Refresh a MySQL Cluster
 
@@ -144,6 +198,45 @@ curl -sS -X POST \
   -d '{}'
 ```
 
+## Register and Refresh a PostgreSQL Cluster
+
+Each PostgreSQL instance must have a unique immutable
+`clusterguard.node_id`. Every standby also declares the current primary's node
+UUID in `clusterguard.primary_node_id`. ClusterGuard binds the cluster to
+`pg_control_system().system_identifier`; changing hostname, IP, or port updates
+the endpoint and retains the same platform instance UUID.
+
+Enable the `postgresql` configuration block, set the dedicated discovery,
+operation, and replication credential environments, and register only
+authoritative endpoints:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8088/api/v1/clusters \
+  -H 'content-type: application/json' \
+  -H "Authorization: Bearer ${CG_CONTROL_TOKEN}" \
+  -d '{
+    "display_name":"payments-postgresql",
+    "engine":"postgresql",
+    "endpoints":[
+      {"hostname":"pg-a","ip_address":"192.0.2.20","port":5432},
+      {"hostname":"pg-b","ip_address":"192.0.2.21","port":5432}
+    ]
+  }'
+
+curl -sS -X POST \
+  http://127.0.0.1:8088/api/v1/clusters/<cluster-uuid>/discover \
+  -H 'content-type: application/json' \
+  -H "Authorization: Bearer ${CG_CONTROL_TOKEN}" \
+  -d '{}'
+```
+
+The console exposes PostgreSQL topology, health, native metrics, candidate
+evidence, guarded operations, node synchronization, audit, and reports. Every
+mutating control remains disabled until the corresponding runtime capability
+and safety evidence are real; the console never presents simulated success.
+See [postgresql-ha.md](docs/postgresql-ha.md) for database grants, restricted
+Agent policy, lifecycle, fencing, and production qualification.
+
 ## CLI
 
 ```bash
@@ -169,10 +262,14 @@ issuance also reads this administrator credential. The returned approval token
 is printed once and is never persisted by `cgctl`.
 
 If the administrator password is lost, there is no online bypass or reset API.
-Stop writes to the control plane and recover a protected metadata backup with a
-known administrator credential through the documented offline disaster-
-recovery process. Do not delete user records, edit hashes, or re-enable
-`admin123` in a live Raft set.
+After backing up metadata and pausing mutations, create a private one-time
+artifact with `clusterguard admin prepare-recovery`, distribute that same
+artifact to all controllers as `clusterguard:clusterguard` mode `0600`, and
+restart them one at a time. The Raft Leader applies its recovery ID once,
+revokes existing sessions, forces a password change, audits the action, and
+removes the artifact on every node. See [operations.md](docs/operations.md) for
+the complete procedure. Never edit password hashes or re-enable `admin123` in
+a live Raft set.
 
 The HA matrix supports browser-equivalent session execution:
 

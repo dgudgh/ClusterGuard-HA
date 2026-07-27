@@ -88,7 +88,13 @@ func evaluateCandidate(request adapter.CandidateRequest, instance model.Database
 	}
 
 	healthyBoundProbe := hasHealthyBoundProbe(request.Probes, instance.ResourceID, request.ObservedAt)
-	if model.ValidResourceID(instance.ResourceID) && instance.ClusterID == request.Cluster.ResourceID && instance.Engine == model.EngineMySQL && request.Cluster.Engine == model.EngineMySQL && healthyBoundProbe {
+	reachableBoundProbe := hasReachableBoundProbe(request.Probes, instance.ResourceID, request.ObservedAt)
+	primaryFailed := request.Primary.Health.State == model.HealthUnhealthy || request.Primary.Health.State == model.HealthUnknown
+	sourceReconnect := request.Policy.AllowSourceDisconnected && primaryFailed && reachableBoundProbe &&
+		instance.Replication.IOThread == model.ThreadConnecting && instance.Replication.SQLThread == model.ThreadRunning &&
+		strings.TrimSpace(instance.Replication.LastSQLError) == ""
+	boundEvidence := healthyBoundProbe || sourceReconnect
+	if model.ValidResourceID(instance.ResourceID) && instance.ClusterID == request.Cluster.ResourceID && instance.Engine == model.EngineMySQL && request.Cluster.Engine == model.EngineMySQL && boundEvidence {
 		addCheck("inventory_membership", model.CheckPass, "candidate belongs to the selected MySQL cluster inventory")
 	} else {
 		addCheck("inventory_membership", model.CheckFail, "candidate lacks healthy bound probe evidence for the selected MySQL cluster inventory")
@@ -100,11 +106,15 @@ func evaluateCandidate(request adapter.CandidateRequest, instance model.Database
 	}
 	if healthyBoundProbe {
 		addCheck("reachability", model.CheckPass, "current bound probe confirms candidate reachability")
+	} else if sourceReconnect {
+		addCheck("reachability", model.CheckWarn, "current bound probe confirms the candidate is reachable while its failed source reconnects")
 	} else {
 		addCheck("reachability", model.CheckFail, "current bound probe does not confirm candidate reachability")
 	}
 	if instance.PromotionEligible {
 		addCheck("promotion_eligibility", model.CheckPass, "candidate is marked promotion eligible")
+	} else if sourceReconnect {
+		addCheck("promotion_eligibility", model.CheckWarn, "failover eligibility is derived from current source-loss evidence")
 	} else {
 		addCheck("promotion_eligibility", model.CheckFail, "candidate is not marked promotion eligible")
 	}
@@ -121,8 +131,15 @@ func evaluateCandidate(request adapter.CandidateRequest, instance model.Database
 	}
 	if instance.Replication.IOThread == model.ThreadRunning && instance.Replication.SQLThread == model.ThreadRunning {
 		addCheck("replication_threads", model.CheckPass, "replication IO and SQL threads are running")
+	} else if sourceReconnect {
+		addCheck("replication_threads", model.CheckWarn, "SQL apply is running while the IO thread reconnects to the failed primary")
 	} else {
 		addCheck("replication_threads", model.CheckFail, "replication IO and SQL threads must both be running")
+	}
+	if strings.TrimSpace(instance.Replication.LastSQLError) == "" {
+		addCheck("replication_sql_error", model.CheckPass, "replication SQL channel has no current error")
+	} else {
+		addCheck("replication_sql_error", model.CheckFail, "replication SQL channel has an unresolved error")
 	}
 	primaryServerUUID := strings.ToLower(strings.TrimSpace(request.Primary.EngineIdentity["server_uuid"]))
 	sourceServerUUID := strings.ToLower(strings.TrimSpace(instance.Replication.SourceIdentity["server_uuid"]))
@@ -131,7 +148,9 @@ func evaluateCandidate(request adapter.CandidateRequest, instance model.Database
 	} else {
 		addCheck("replication_source", model.CheckFail, "candidate replication source does not match the current primary")
 	}
-	if instance.Replication.LagSeconds == nil || *instance.Replication.LagSeconds < 0 {
+	if sourceReconnect && instance.Replication.LagSeconds == nil {
+		addCheck("replication_lag", model.CheckWarn, "replication lag is unavailable after source loss; GTID position determines data-loss risk")
+	} else if instance.Replication.LagSeconds == nil || *instance.Replication.LagSeconds < 0 {
 		addCheck("replication_lag", model.CheckFail, "candidate replication lag is unknown or invalid")
 	} else {
 		evaluation.lagSeconds = *instance.Replication.LagSeconds
@@ -239,6 +258,23 @@ func hasHealthyBoundProbe(probes []model.ProbeStatus, instanceID model.ResourceI
 		}
 		bound = true
 		if probe.Health.State != model.HealthHealthy || !probe.DiscoveryObservedAt.Equal(observedAt) {
+			return false
+		}
+	}
+	return bound
+}
+
+func hasReachableBoundProbe(probes []model.ProbeStatus, instanceID model.ResourceID, observedAt time.Time) bool {
+	if observedAt.IsZero() {
+		return false
+	}
+	bound := false
+	for _, probe := range probes {
+		if probe.InstanceID != instanceID {
+			continue
+		}
+		bound = true
+		if !probe.DiscoveryObservedAt.Equal(observedAt) || (probe.Health.State != model.HealthHealthy && probe.Health.State != model.HealthDegraded) {
 			return false
 		}
 	}

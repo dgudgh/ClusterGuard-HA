@@ -69,7 +69,7 @@ func EvaluateAlerts(snapshot model.TopologySnapshot, endpoints []HAEndpointState
 		case model.HealthDegraded:
 			add("instance_degraded", SeverityWarning, instance.ResourceID, "database instance is degraded")
 		}
-		if instance.Role != model.RoleReplica {
+		if instance.Role != model.RoleReplica && instance.Role != model.RoleStandby {
 			continue
 		}
 		if instance.Replication.IOThread == model.ThreadStopped {

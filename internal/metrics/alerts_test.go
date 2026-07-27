@@ -78,3 +78,22 @@ func TestHealthyClusterProducesNoActiveAlerts(t *testing.T) {
 		t.Fatalf("healthy cluster alerts=%+v", alerts)
 	}
 }
+
+func TestPostgreSQLStandbyProducesReplicationAlerts(t *testing.T) {
+	clusterID := model.NewResourceID()
+	primaryID := model.NewResourceID()
+	standbyID := model.NewResourceID()
+	lag := int64(45)
+	snapshot := model.TopologySnapshot{ClusterID: clusterID, ObservedAt: time.Now().UTC(), Instances: []model.DatabaseInstance{
+		{ResourceMeta: model.ResourceMeta{ResourceID: primaryID}, Engine: model.EnginePostgreSQL, Role: model.RolePrimary, Health: model.Health{State: model.HealthHealthy}},
+		{ResourceMeta: model.ResourceMeta{ResourceID: standbyID}, Engine: model.EnginePostgreSQL, Role: model.RoleStandby, Health: model.Health{State: model.HealthDegraded}, Replication: model.ReplicationStatus{IOThread: model.ThreadStopped, SQLThread: model.ThreadRunning, LagSeconds: &lag}},
+	}}
+
+	alerts := EvaluateAlerts(snapshot, nil, AlertPolicy{WarningLagSeconds: 10, CriticalLagSeconds: 30})
+	for _, code := range []string{"replication_io_thread_stopped", "replication_lag_critical"} {
+		alert, found := alertByCode(alerts, code)
+		if !found || alert.InstanceID != standbyID {
+			t.Fatalf("PostgreSQL standby alert %s=%+v found=%t", code, alert, found)
+		}
+	}
+}

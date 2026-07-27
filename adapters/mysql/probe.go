@@ -116,12 +116,16 @@ func probeReplication(ctx context.Context, runner SQLRunner, endpoint adapter.En
 }
 
 func parseReplication(row Row) (model.ReplicationStatus, error) {
+	lastIOError := first(row, "Last_IO_Error")
+	lastSQLError := first(row, "Last_SQL_Error")
 	status := model.ReplicationStatus{
 		SourceIdentity:    model.EngineIdentity{},
 		IOThread:          parseThreadState(first(row, "Replica_IO_Running", "Slave_IO_Running")),
 		SQLThread:         parseThreadState(first(row, "Replica_SQL_Running", "Slave_SQL_Running")),
 		RetrievedPosition: first(row, "Retrieved_Gtid_Set"),
 		ExecutedPosition:  first(row, "Executed_Gtid_Set"),
+		LastIOError:       lastIOError,
+		LastSQLError:      lastSQLError,
 		LastError:         first(row, "Last_SQL_Error", "Last_IO_Error", "Last_Error"),
 	}
 	if sourceUUID := first(row, "Source_UUID", "Master_UUID"); sourceUUID != "" {
@@ -144,6 +148,9 @@ func parseThreadState(value string) model.ThreadState {
 	}
 	if strings.EqualFold(value, "Yes") {
 		return model.ThreadRunning
+	}
+	if strings.EqualFold(value, "Connecting") {
+		return model.ThreadConnecting
 	}
 	return model.ThreadStopped
 }

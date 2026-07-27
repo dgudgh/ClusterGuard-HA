@@ -1292,6 +1292,113 @@ func TestApplyDiscoveryRefreshDeduplicatesIdentityAndPublishesTopology(t *testin
 	}
 }
 
+func TestApplyDiscoveryRefreshBindsPostgreSQLClusterIdentityAndPreservesNodeAcrossEndpointRename(t *testing.T) {
+	repository := NewMemory()
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{
+		Engine: model.EnginePostgreSQL, DisplayName: "pg-stable-identity",
+	}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "pg-old", IPAddress: "192.0.2.40", Port: 5432, Active: true}})
+	if err != nil {
+		t.Fatalf("create PostgreSQL inventory: %v", err)
+	}
+	systemID := "7428625847249870011"
+	nodeID := "11111111-1111-4111-8111-111111111111"
+	instance := model.DatabaseInstance{
+		ClusterID: cluster.ResourceID,
+		Engine:    model.EnginePostgreSQL,
+		EngineIdentity: model.EngineIdentity{
+			"resource_id":       nodeID,
+			"system_identifier": systemID,
+		},
+		Hostname: "pg-old", IPAddress: "192.0.2.40", Port: 5432,
+		Role: model.RolePrimary, Health: model.Health{State: model.HealthHealthy},
+		EngineMetadata: map[string]string{"timeline_id": "7"},
+	}
+	firstObservedAt := time.Date(2026, time.July, 20, 12, 0, 0, 0, time.UTC)
+	first, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{
+		ClusterID:             cluster.ResourceID,
+		ClusterIdentity:       model.EngineIdentity{"system_identifier": systemID},
+		InventoryGeneration:   currentInventoryGeneration(t, repository, cluster.ResourceID),
+		Observations:          []DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: instance}},
+		TopologyAuthoritative: true,
+		Probes:                []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}},
+		ObservedAt:            firstObservedAt,
+	})
+	if err != nil {
+		t.Fatalf("first PostgreSQL refresh: %v", err)
+	}
+	if len(first.Instances) != 1 {
+		t.Fatalf("first topology = %+v", first)
+	}
+	resourceID := first.Instances[0].ResourceID
+	storedCluster, _ := repository.Cluster(cluster.ResourceID)
+	if storedCluster.EngineIdentity["system_identifier"] != systemID {
+		t.Fatalf("cluster identity was not persisted: %+v", storedCluster.EngineIdentity)
+	}
+
+	renamed := endpoints[0]
+	renamed.Hostname = "pg-new"
+	renamed.IPAddress = "192.0.2.41"
+	renamed.Port = 5544
+	renamed, err = repository.UpsertEndpoint(renamed)
+	if err != nil {
+		t.Fatalf("rename endpoint: %v", err)
+	}
+	instance.Hostname = renamed.Hostname
+	instance.IPAddress = renamed.IPAddress
+	instance.Port = renamed.Port
+	second, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{
+		ClusterID:             cluster.ResourceID,
+		ClusterIdentity:       model.EngineIdentity{"system_identifier": systemID},
+		InventoryGeneration:   currentInventoryGeneration(t, repository, cluster.ResourceID),
+		Observations:          []DiscoveryObservation{{EndpointID: renamed.ResourceID, Instance: instance}},
+		TopologyAuthoritative: true,
+		Probes:                []model.ProbeStatus{{EndpointID: renamed.ResourceID, Health: model.Health{State: model.HealthHealthy}}},
+		ObservedAt:            firstObservedAt.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("renamed PostgreSQL refresh: %v", err)
+	}
+	if len(second.Instances) != 1 || second.Instances[0].ResourceID != resourceID {
+		t.Fatalf("endpoint rename created a duplicate node: before=%s after=%+v", resourceID, second.Instances)
+	}
+	if second.Instances[0].Hostname != "pg-new" || second.Instances[0].Port != 5544 {
+		t.Fatalf("endpoint rename was not reconciled: %+v", second.Instances[0])
+	}
+	if len(second.Instances[0].Aliases) == 0 {
+		t.Fatalf("old endpoint was not retained as an alias: %+v", second.Instances[0])
+	}
+}
+
+func TestApplyDiscoveryRefreshRejectsPostgreSQLClusterIdentityMismatchAtomically(t *testing.T) {
+	repository := NewMemory()
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{
+		Engine: model.EnginePostgreSQL, EngineIdentity: model.EngineIdentity{"system_identifier": "7428625847249870011"}, DisplayName: "pg-identity-mismatch",
+	}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "pg-a", Port: 5432, Active: true}})
+	if err != nil {
+		t.Fatalf("create PostgreSQL inventory: %v", err)
+	}
+	instance := model.DatabaseInstance{
+		ClusterID: cluster.ResourceID, Engine: model.EnginePostgreSQL,
+		EngineIdentity: model.EngineIdentity{"resource_id": "11111111-1111-4111-8111-111111111111", "system_identifier": "9999999999999999999"},
+		Hostname:       "pg-a", Port: 5432, Role: model.RolePrimary, Health: model.Health{State: model.HealthHealthy},
+	}
+	_, err = repository.ApplyDiscoveryRefresh(DiscoveryRefresh{
+		ClusterID:           cluster.ResourceID,
+		ClusterIdentity:     model.EngineIdentity{"system_identifier": "9999999999999999999"},
+		InventoryGeneration: currentInventoryGeneration(t, repository, cluster.ResourceID),
+		Observations:        []DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: instance}},
+		Probes:              []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}},
+		ObservedAt:          time.Date(2026, time.July, 20, 13, 0, 0, 0, time.UTC),
+	})
+	if err == nil {
+		t.Fatal("mismatched PostgreSQL system identifier unexpectedly published")
+	}
+	storedCluster, _ := repository.Cluster(cluster.ResourceID)
+	if storedCluster.EngineIdentity["system_identifier"] != "7428625847249870011" || len(repository.Instances(cluster.ResourceID)) != 0 {
+		t.Fatalf("mismatched refresh changed repository: cluster=%+v instances=%+v", storedCluster, repository.Instances(cluster.ResourceID))
+	}
+}
+
 func TestApplyDiscoveryRefreshPersistenceFailureRollsBackAllRefreshState(t *testing.T) {
 	repository := NewMemory()
 	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "rollback"})
@@ -1724,6 +1831,46 @@ func TestApplyDiscoveryRefreshDeduplicatesAliasMetricsPerResolvedInstance(t *tes
 				t.Fatalf("non-selected alias has ambiguous metrics evidence: %+v", snapshot.Probes)
 			}
 		}
+	}
+}
+
+func TestCompleteDiscoveryMetricSampleUsesEngineSpecificContract(t *testing.T) {
+	postgresqlSample := model.MetricSample{Values: map[string]float64{
+		"connections": 12, "active_connections": 3, "transactions_total": 140,
+		"deadlocks_total": 2, "temp_bytes_total": 8192, "blocks_read_total": 30,
+		"blocks_hit_total": 1170, "database_size_bytes": 2097152, "replication_clients": 1,
+		"buffer_cache_hit_ratio": 0.975,
+	}}
+	if !completeDiscoveryMetricSample(model.EnginePostgreSQL, postgresqlSample) {
+		t.Fatalf("complete PostgreSQL sample was rejected: %+v", postgresqlSample.Values)
+	}
+	if completeDiscoveryMetricSample(model.EngineMySQL, postgresqlSample) {
+		t.Fatalf("PostgreSQL sample satisfied the MySQL contract: %+v", postgresqlSample.Values)
+	}
+	postgresqlSample.Values["buffer_cache_hit_ratio"] = 1.1
+	if completeDiscoveryMetricSample(model.EnginePostgreSQL, postgresqlSample) {
+		t.Fatal("invalid PostgreSQL cache-hit ratio was accepted")
+	}
+	oracleSample := model.MetricSample{Values: map[string]float64{
+		"broker_status_healthy": 1,
+		"apply_lag_seconds":     3,
+	}}
+	if !completeDiscoveryMetricSample(model.EngineOracle, oracleSample) {
+		t.Fatalf("complete Oracle sample was rejected: %+v", oracleSample.Values)
+	}
+	sqlServerSample := model.MetricSample{Values: map[string]float64{
+		"always_on_healthy":    1,
+		"connected":            1,
+		"synchronized":         1,
+		"log_send_queue_bytes": 0,
+		"redo_queue_bytes":     0,
+	}}
+	if !completeDiscoveryMetricSample(model.EngineSQLServer, sqlServerSample) {
+		t.Fatalf("complete SQL Server sample was rejected: %+v", sqlServerSample.Values)
+	}
+	delete(sqlServerSample.Values, "synchronized")
+	if completeDiscoveryMetricSample(model.EngineSQLServer, sqlServerSample) {
+		t.Fatalf("incomplete SQL Server sample was accepted: %+v", sqlServerSample.Values)
 	}
 }
 

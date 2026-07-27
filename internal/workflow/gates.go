@@ -105,12 +105,21 @@ func stableHealth(value model.Health) topologyObservationHealth {
 func stableEngineMetadata(values map[string]string) map[string]string {
 	result := make(map[string]string, len(values))
 	for key, value := range values {
-		if key == "gtid_executed" {
+		switch key {
+		case "gtid_executed", "current_lsn", "receive_lsn", "replay_lsn",
+			"transport_lag_seconds", "apply_lag_seconds":
 			continue
 		}
 		result[key] = value
 	}
 	return result
+}
+
+func stablePromotionEligible(instance model.DatabaseInstance) bool {
+	if instance.Engine == model.EngineOracle {
+		return instance.Role == model.RoleStandby && instance.Health.State == model.HealthHealthy
+	}
+	return instance.PromotionEligible
 }
 
 func topologyDigest(snapshot model.TopologySnapshot) (string, error) {
@@ -131,7 +140,7 @@ func topologyDigest(snapshot model.TopologySnapshot) (string, error) {
 			Hostname: instance.Hostname, IPAddress: instance.IPAddress, Port: instance.Port, Aliases: aliases,
 			Role: instance.Role, Health: stableHealth(instance.Health), SourceIdentity: instance.Replication.SourceIdentity.Clone(),
 			IOThread: instance.Replication.IOThread, SQLThread: instance.Replication.SQLThread, LastError: instance.Replication.LastError,
-			Maintenance: instance.Maintenance, PromotionEligible: instance.PromotionEligible,
+			Maintenance: instance.Maintenance, PromotionEligible: stablePromotionEligible(instance),
 			EngineMetadata: stableEngineMetadata(instance.EngineMetadata),
 		})
 	}
@@ -236,8 +245,8 @@ type MemoryLocks struct {
 }
 
 type ClusterLockManager interface {
-	Acquire(context.Context, model.Operation) (func(), error)
-	AcquireCluster(context.Context, model.ResourceID) (func(), error)
+	Acquire(context.Context, model.Operation) (context.Context, func(), error)
+	AcquireCluster(context.Context, model.ResourceID) (context.Context, func(), error)
 }
 
 type CompositeLocks struct {
@@ -249,38 +258,46 @@ func NewCompositeLocks(local, quorum ClusterLockManager) *CompositeLocks {
 	return &CompositeLocks{local: local, quorum: quorum}
 }
 
-func (locks *CompositeLocks) Acquire(ctx context.Context, operation model.Operation) (func(), error) {
+func (locks *CompositeLocks) Acquire(ctx context.Context, operation model.Operation) (context.Context, func(), error) {
 	if locks == nil || locks.local == nil || locks.quorum == nil {
-		return nil, fmt.Errorf("composite operation lock is not configured")
+		return nil, nil, fmt.Errorf("composite operation lock is not configured")
 	}
-	return acquireComposite(
-		func() (func(), error) { return locks.local.Acquire(ctx, operation) },
-		func() (func(), error) { return locks.quorum.Acquire(ctx, operation) },
+	return acquireComposite(ctx,
+		func(acquireCtx context.Context) (context.Context, func(), error) {
+			return locks.local.Acquire(acquireCtx, operation)
+		},
+		func(acquireCtx context.Context) (context.Context, func(), error) {
+			return locks.quorum.Acquire(acquireCtx, operation)
+		},
 	)
 }
 
-func (locks *CompositeLocks) AcquireCluster(ctx context.Context, clusterID model.ResourceID) (func(), error) {
+func (locks *CompositeLocks) AcquireCluster(ctx context.Context, clusterID model.ResourceID) (context.Context, func(), error) {
 	if locks == nil || locks.local == nil || locks.quorum == nil {
-		return nil, fmt.Errorf("composite operation lock is not configured")
+		return nil, nil, fmt.Errorf("composite operation lock is not configured")
 	}
-	return acquireComposite(
-		func() (func(), error) { return locks.local.AcquireCluster(ctx, clusterID) },
-		func() (func(), error) { return locks.quorum.AcquireCluster(ctx, clusterID) },
+	return acquireComposite(ctx,
+		func(acquireCtx context.Context) (context.Context, func(), error) {
+			return locks.local.AcquireCluster(acquireCtx, clusterID)
+		},
+		func(acquireCtx context.Context) (context.Context, func(), error) {
+			return locks.quorum.AcquireCluster(acquireCtx, clusterID)
+		},
 	)
 }
 
-func acquireComposite(acquireLocal, acquireQuorum func() (func(), error)) (func(), error) {
-	releaseLocal, err := acquireLocal()
+func acquireComposite(ctx context.Context, acquireLocal, acquireQuorum func(context.Context) (context.Context, func(), error)) (context.Context, func(), error) {
+	localCtx, releaseLocal, err := acquireLocal(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	releaseQuorum, err := acquireQuorum()
+	quorumCtx, releaseQuorum, err := acquireQuorum(localCtx)
 	if err != nil {
 		releaseLocal()
-		return nil, err
+		return nil, nil, err
 	}
 	var once sync.Once
-	return func() {
+	return quorumCtx, func() {
 		once.Do(func() {
 			releaseQuorum()
 			releaseLocal()
@@ -292,7 +309,7 @@ func NewMemoryLocks() *MemoryLocks {
 	return &MemoryLocks{active: map[string]bool{}, waiters: map[string]chan struct{}{}}
 }
 
-func (locks *MemoryLocks) Acquire(ctx context.Context, operation model.Operation) (func(), error) {
+func (locks *MemoryLocks) Acquire(ctx context.Context, operation model.Operation) (context.Context, func(), error) {
 	key := string(operation.ClusterID)
 	if key == "" {
 		key = string(operation.ResourceID)
@@ -300,17 +317,17 @@ func (locks *MemoryLocks) Acquire(ctx context.Context, operation model.Operation
 	return locks.acquire(ctx, key)
 }
 
-func (locks *MemoryLocks) AcquireCluster(ctx context.Context, clusterID model.ResourceID) (func(), error) {
+func (locks *MemoryLocks) AcquireCluster(ctx context.Context, clusterID model.ResourceID) (context.Context, func(), error) {
 	return locks.acquire(ctx, string(clusterID))
 }
 
-func (locks *MemoryLocks) acquire(ctx context.Context, key string) (func(), error) {
+func (locks *MemoryLocks) acquire(ctx context.Context, key string) (context.Context, func(), error) {
 	if key == "" {
-		return nil, fmt.Errorf("operation lock resource is required")
+		return nil, nil, fmt.Errorf("operation lock resource is required")
 	}
 	for {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		locks.mu.Lock()
 		if locks.active == nil {
@@ -323,7 +340,7 @@ func (locks *MemoryLocks) acquire(ctx context.Context, key string) (func(), erro
 			locks.active[key] = true
 			locks.mu.Unlock()
 			var once sync.Once
-			return func() {
+			return ctx, func() {
 				once.Do(func() {
 					locks.mu.Lock()
 					defer locks.mu.Unlock()
@@ -343,7 +360,7 @@ func (locks *MemoryLocks) acquire(ctx context.Context, key string) (func(), erro
 		locks.mu.Unlock()
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, nil, ctx.Err()
 		case <-waiting:
 		}
 	}

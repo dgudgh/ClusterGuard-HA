@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"sort"
@@ -60,7 +61,7 @@ func (server *Server) fleetMonitoring() ([]clusterMonitoring, string) {
 			if instance.Role == model.RolePrimary {
 				item.PrimaryID = instance.ResourceID
 			}
-			if instance.Role == model.RoleReplica {
+			if instance.Role == model.RoleReplica || instance.Role == model.RoleStandby {
 				item.ReplicaCount++
 			}
 			if lag := instance.Replication.LagSeconds; lag != nil && (item.MaximumLag == nil || *lag > *item.MaximumLag) {
@@ -125,8 +126,8 @@ func (server *Server) zabbixMonitoring(writer http.ResponseWriter) {
 			zabbixMetric{Key: "clusterguard.alerts.critical", ClusterID: cluster.ClusterID, Value: float64(cluster.CriticalCount), ObservedAt: cluster.ObservedAt},
 			zabbixMetric{Key: "clusterguard.alerts.warning", ClusterID: cluster.ClusterID, Value: float64(cluster.WarningCount), ObservedAt: cluster.ObservedAt},
 		)
-		if cluster.MaximumLag != nil {
-			items = append(items, zabbixMetric{Key: "clusterguard.mysql.replication_lag_seconds_max", ClusterID: cluster.ClusterID, Value: float64(*cluster.MaximumLag), ObservedAt: cluster.ObservedAt})
+		if cluster.MaximumLag != nil && prometheusMetricName(cluster.Engine, "replication_lag_seconds") != "" {
+			items = append(items, zabbixMetric{Key: "clusterguard." + string(cluster.Engine) + ".replication_lag_seconds_max", ClusterID: cluster.ClusterID, Value: float64(*cluster.MaximumLag), ObservedAt: cluster.ObservedAt})
 		}
 		instances, _, found := server.persistedMetrics(cluster.ClusterID)
 		if !found {
@@ -134,8 +135,8 @@ func (server *Server) zabbixMonitoring(writer http.ResponseWriter) {
 		}
 		for _, instance := range instances {
 			for name, value := range instance.Values {
-				if prometheusMetricName(name) != "" && finiteMetric(value) {
-					items = append(items, zabbixMetric{Key: "clusterguard.mysql." + name, ClusterID: cluster.ClusterID, InstanceID: instance.InstanceID, Value: value, ObservedAt: cluster.ObservedAt})
+				if prometheusMetricName(cluster.Engine, name) != "" && finiteMetric(value) {
+					items = append(items, zabbixMetric{Key: "clusterguard." + string(cluster.Engine) + "." + name, ClusterID: cluster.ClusterID, InstanceID: instance.InstanceID, Value: value, ObservedAt: cluster.ObservedAt})
 				}
 			}
 		}
@@ -156,6 +157,26 @@ func (server *Server) fleetPrometheus(writer http.ResponseWriter) {
 	clusters, _ := server.fleetMonitoring()
 	writer.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	writer.WriteHeader(http.StatusOK)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	controlPlane, statusErr := server.currentControlPlaneStatus(ctx)
+	if statusErr != nil {
+		controlPlane = ControlPlaneStatus{ReadinessReason: "status_unavailable"}
+	}
+	_, _ = fmt.Fprintln(writer, "# HELP clusterguard_control_plane_ready Whether this controller is ready to serve its configured role.")
+	_, _ = fmt.Fprintln(writer, "# TYPE clusterguard_control_plane_ready gauge")
+	_, _ = fmt.Fprintf(writer, "clusterguard_control_plane_ready %d\n", booleanMetric(controlPlane.Ready))
+	_, _ = fmt.Fprintln(writer, "# HELP clusterguard_control_plane_leader Whether this controller currently holds the Raft leader role.")
+	_, _ = fmt.Fprintln(writer, "# TYPE clusterguard_control_plane_leader gauge")
+	_, _ = fmt.Fprintf(writer, "clusterguard_control_plane_leader %d\n", booleanMetric(controlPlane.Role == "leader"))
+	_, _ = fmt.Fprintln(writer, "# HELP clusterguard_control_plane_quorum_confirmed Whether a controller quorum is currently confirmed.")
+	_, _ = fmt.Fprintln(writer, "# TYPE clusterguard_control_plane_quorum_confirmed gauge")
+	_, _ = fmt.Fprintf(writer, "clusterguard_control_plane_quorum_confirmed %d\n", booleanMetric(controlPlane.QuorumConfirmed))
+	_, _ = fmt.Fprintf(writer, "clusterguard_control_plane_metadata_revision %d\n", controlPlane.StateRevision)
+	_, _ = fmt.Fprintf(writer, "clusterguard_control_plane_operations{state=\"active\"} %d\n", controlPlane.ActiveOperations)
+	_, _ = fmt.Fprintf(writer, "clusterguard_control_plane_operations{state=\"indeterminate\"} %d\n", controlPlane.IndeterminateOperations)
+	_, _ = fmt.Fprintf(writer, "clusterguard_control_plane_lifecycle_tasks{state=\"active\"} %d\n", controlPlane.ActiveLifecycleTasks)
+	emittedMetadata := make(map[string]bool)
 	for _, cluster := range clusters {
 		health := 1.0
 		if cluster.CriticalCount > 0 {
@@ -174,14 +195,22 @@ func (server *Server) fleetPrometheus(writer http.ResponseWriter) {
 		for _, instance := range instances {
 			names := make([]string, 0, len(instance.Values))
 			for name, value := range instance.Values {
-				if prometheusMetricName(name) != "" && finiteMetric(value) {
+				if prometheusMetricName(cluster.Engine, name) != "" && finiteMetric(value) {
 					names = append(names, name)
 				}
 			}
 			sort.Strings(names)
 			for _, name := range names {
-				_, _ = fmt.Fprintf(writer, "%s{cluster_id=\"%s\",instance_id=\"%s\"} %s\n", prometheusMetricName(name), clusterLabel, escapePrometheusLabel(string(instance.InstanceID)), strconv.FormatFloat(instance.Values[name], 'g', -1, 64))
+				metricName := writePrometheusMetricMetadata(writer, emittedMetadata, cluster.Engine, name)
+				_, _ = fmt.Fprintf(writer, "%s{cluster_id=\"%s\",instance_id=\"%s\"} %s\n", metricName, clusterLabel, escapePrometheusLabel(string(instance.InstanceID)), strconv.FormatFloat(instance.Values[name], 'g', -1, 64))
 			}
 		}
 	}
+}
+
+func booleanMetric(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }

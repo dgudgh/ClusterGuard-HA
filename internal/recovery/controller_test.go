@@ -129,6 +129,52 @@ func TestControllerExecutesOneAuditedFailoverForStableIncident(t *testing.T) {
 	}
 }
 
+func TestControllerExecutesPostgreSQLFailoverOnlyForPostgreSQLClusters(t *testing.T) {
+	now := time.Date(2026, time.July, 20, 11, 30, 0, 0, time.UTC)
+	postgresCluster, postgresSnapshot, postgresTargetID := recoveryFixture(now)
+	postgresCluster.Engine = model.EnginePostgreSQL
+	postgresCluster.DisplayName = "payments-postgresql"
+	for index := range postgresSnapshot.Instances {
+		postgresSnapshot.Instances[index].Engine = model.EnginePostgreSQL
+		if postgresSnapshot.Instances[index].Role == model.RoleReplica {
+			postgresSnapshot.Instances[index].Role = model.RoleStandby
+		}
+	}
+	mysqlCluster, mysqlSnapshot, mysqlTargetID := recoveryFixture(now)
+	incident := now.Add(-30 * time.Second)
+	executor := &recoveryExecutorStub{}
+	controller := NewController(
+		recoveryStateStub{
+			clusters: []model.DatabaseCluster{mysqlCluster, postgresCluster},
+			snapshots: map[model.ResourceID]model.TopologySnapshot{
+				mysqlCluster.ResourceID:    mysqlSnapshot,
+				postgresCluster.ResourceID: postgresSnapshot,
+			},
+		},
+		recoveryFailureEvidenceStub{incidents: map[model.ResourceID]time.Time{
+			mysqlCluster.ResourceID:    incident,
+			postgresCluster.ResourceID: incident,
+		}},
+		recoverySelectorStub{targets: map[model.ResourceID]model.ResourceID{
+			mysqlCluster.ResourceID:    mysqlTargetID,
+			postgresCluster.ResourceID: postgresTargetID,
+		}},
+		executor, recoveryAuthorityStub{}, 30*time.Second, func() time.Time { return now },
+		WithEngine(model.EnginePostgreSQL),
+	)
+	if err := controller.RunOnce(context.Background()); err != nil {
+		t.Fatalf("run PostgreSQL automatic failover: %v", err)
+	}
+	requests, _ := executor.calls()
+	if len(requests) != 1 {
+		t.Fatalf("PostgreSQL recovery requests=%+v", requests)
+	}
+	request := requests[0]
+	if request.Operation.ClusterID != postgresCluster.ResourceID || request.Operation.Engine != model.EnginePostgreSQL || request.TargetID != postgresTargetID {
+		t.Fatalf("PostgreSQL automatic failover request=%+v", request)
+	}
+}
+
 func TestControllerDoesNothingWithoutLeaderMajorityOrStableIncident(t *testing.T) {
 	now := time.Date(2026, time.July, 13, 22, 30, 30, 0, time.UTC)
 	cluster, snapshot, targetID := recoveryFixture(now)
@@ -185,6 +231,58 @@ func TestControllerDoesNotRepeatSucceededOrIndeterminateIncident(t *testing.T) {
 	}
 }
 
+func TestControllerAllowsNewIncidentAfterSourceReturnsToPrimary(t *testing.T) {
+	now := time.Date(2026, time.July, 21, 7, 10, 0, 0, time.UTC)
+	cluster, snapshot, targetID := recoveryFixture(now)
+	sourceID := snapshot.Instances[0].ResourceID
+	previousIncident := now.Add(-2 * time.Hour)
+	currentIncident := now.Add(-30 * time.Second)
+	executor := &recoveryExecutorStub{}
+	controller := NewController(
+		recoveryStateStub{
+			clusters:  []model.DatabaseCluster{cluster},
+			snapshots: map[model.ResourceID]model.TopologySnapshot{cluster.ResourceID: snapshot},
+			operations: map[model.ResourceID][]model.OperationRecord{cluster.ResourceID: {
+				{
+					ResourceMeta:   model.ResourceMeta{UpdatedAt: now.Add(-90 * time.Minute)},
+					IdempotencyKey: automaticFailoverPrefix(cluster.ResourceID, sourceID, previousIncident) + "1",
+					Status:         model.OperationSucceeded,
+					Operation: model.Operation{
+						ClusterID: cluster.ResourceID, Engine: model.EngineMySQL, Kind: model.OperationFailover,
+						RequestedBy: AutomaticRecoveryActor,
+					},
+					TargetID: targetID,
+				},
+				{
+					ResourceMeta:   model.ResourceMeta{UpdatedAt: now.Add(-time.Minute)},
+					IdempotencyKey: "controlled-return-to-primary",
+					Status:         model.OperationSucceeded,
+					Operation: model.Operation{
+						ClusterID: cluster.ResourceID, Engine: model.EngineMySQL, Kind: model.OperationSwitchover,
+						RequestedBy: "dba",
+					},
+					TargetID: sourceID,
+				},
+			}},
+		},
+		recoveryFailureEvidenceStub{incidents: map[model.ResourceID]time.Time{cluster.ResourceID: currentIncident}},
+		recoverySelectorStub{targets: map[model.ResourceID]model.ResourceID{cluster.ResourceID: targetID}},
+		executor, recoveryAuthorityStub{}, 30*time.Second, func() time.Time { return now },
+	)
+
+	if err := controller.RunOnce(context.Background()); err != nil {
+		t.Fatalf("run new source tenure incident: %v", err)
+	}
+	requests, _ := executor.calls()
+	if len(requests) != 1 {
+		t.Fatalf("new primary tenure recovery requests=%+v", requests)
+	}
+	wantKey := automaticFailoverPrefix(cluster.ResourceID, sourceID, currentIncident) + "1"
+	if requests[0].IdempotencyKey != wantKey {
+		t.Fatalf("new primary tenure idempotency key=%q, want %q", requests[0].IdempotencyKey, wantKey)
+	}
+}
+
 func TestControllerRetriesBlockedIncidentAfterBackoff(t *testing.T) {
 	now := time.Date(2026, time.July, 13, 22, 30, 30, 0, time.UTC)
 	cluster, snapshot, targetID := recoveryFixture(now)
@@ -232,8 +330,54 @@ func TestMySQLCandidateSelectorUsesTheRankOneEligibleReplica(t *testing.T) {
 	if selected != targetID {
 		t.Fatalf("selected=%s, want rank-one %s", selected, targetID)
 	}
-	if evaluator.request.Primary.Role != model.RolePrimary || len(evaluator.request.Instances) != 2 || evaluator.request.Policy.MaximumLagSeconds != 30 || !evaluator.request.Policy.RequireGTID {
+	if evaluator.request.Primary.Role != model.RolePrimary || len(evaluator.request.Instances) != 2 || evaluator.request.Policy.MaximumLagSeconds != 30 || !evaluator.request.Policy.RequireGTID || !evaluator.request.Policy.AllowSourceDisconnected {
 		t.Fatalf("candidate evaluation request=%+v", evaluator.request)
+	}
+}
+
+func TestPostgreSQLCandidateSelectorRequiresKnownZeroLag(t *testing.T) {
+	now := time.Date(2026, time.July, 20, 11, 45, 0, 0, time.UTC)
+	cluster, snapshot, targetID := recoveryFixture(now)
+	cluster.Engine = model.EnginePostgreSQL
+	for index := range snapshot.Instances {
+		snapshot.Instances[index].Engine = model.EnginePostgreSQL
+		if snapshot.Instances[index].Role == model.RoleReplica {
+			snapshot.Instances[index].Role = model.RoleStandby
+		}
+	}
+	evaluator := &recoveryCandidateEvaluatorStub{assessments: []model.CandidateAssessment{{InstanceID: targetID, Eligible: true, Rank: 1}}}
+	selector := NewPostgreSQLCandidateSelector(evaluator)
+	selected, err := selector.Select(context.Background(), cluster, snapshot)
+	if err != nil {
+		t.Fatalf("select PostgreSQL candidate: %v", err)
+	}
+	if selected != targetID {
+		t.Fatalf("selected=%s, want %s", selected, targetID)
+	}
+	if evaluator.request.Policy.MaximumLagSeconds != 0 || evaluator.request.Policy.RequireGTID || !evaluator.request.Policy.AllowSourceDisconnected {
+		t.Fatalf("PostgreSQL automatic candidate policy=%+v", evaluator.request.Policy)
+	}
+}
+
+func TestDatabaseCandidateSelectorRejectsEmptyOrForeignTopology(t *testing.T) {
+	clusterID := model.NewResourceID()
+	cluster := model.DatabaseCluster{
+		ResourceMeta: model.ResourceMeta{ResourceID: clusterID},
+		Engine:       model.EnginePostgreSQL,
+	}
+	selector := NewPostgreSQLCandidateSelector(&recoveryCandidateEvaluatorStub{})
+	for _, testCase := range []struct {
+		name     string
+		snapshot model.TopologySnapshot
+	}{
+		{name: "empty", snapshot: model.TopologySnapshot{ClusterID: clusterID}},
+		{name: "foreign cluster", snapshot: model.TopologySnapshot{ClusterID: model.NewResourceID()}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if _, err := selector.Select(context.Background(), cluster, testCase.snapshot); err == nil {
+				t.Fatal("unsafe topology snapshot was accepted")
+			}
+		})
 	}
 }
 
@@ -241,5 +385,84 @@ func TestControllerUsesConfiguredPollingInterval(t *testing.T) {
 	controller := NewController(nil, nil, nil, nil, nil, 30*time.Second, nil, WithInterval(7*time.Second))
 	if controller.interval != 7*time.Second {
 		t.Fatalf("controller interval=%s", controller.interval)
+	}
+}
+
+func TestControllerRunReportsBackgroundFailures(t *testing.T) {
+	reported := make(chan error, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	controller := NewController(nil, nil, nil, nil, nil, 30*time.Second, nil,
+		WithErrorHandler(func(err error) {
+			reported <- err
+			cancel()
+		}),
+	)
+	done := make(chan struct{})
+	go func() {
+		controller.Run(ctx)
+		close(done)
+	}()
+	select {
+	case err := <-reported:
+		if err == nil || !strings.Contains(err.Error(), "not configured") {
+			t.Fatalf("reported recovery error=%v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("automatic recovery swallowed its background failure")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("automatic recovery did not stop after cancellation")
+	}
+}
+
+func TestControllerRateLimitsRepeatedBackgroundFailures(t *testing.T) {
+	now := time.Date(2026, 7, 20, 9, 0, 0, 0, time.UTC)
+	reported := make([]string, 0, 3)
+	controller := NewController(nil, nil, nil, nil, nil, 30*time.Second, func() time.Time { return now },
+		WithErrorHandler(func(err error) { reported = append(reported, err.Error()) }),
+	)
+
+	controller.reportError(errors.New("recovery blocked"))
+	controller.reportError(errors.New("recovery blocked"))
+	if len(reported) != 1 {
+		t.Fatalf("duplicate recovery errors reported=%v", reported)
+	}
+	now = now.Add(5 * time.Minute)
+	controller.reportError(errors.New("recovery blocked"))
+	if len(reported) != 2 {
+		t.Fatalf("recovery reminder missing=%v", reported)
+	}
+	controller.reportError(nil)
+	controller.reportError(errors.New("recovery blocked"))
+	if len(reported) != 3 {
+		t.Fatalf("successful cycle did not reset suppression=%v", reported)
+	}
+}
+
+func TestControllerKeepsErrorSuppressedWhileStableIncidentIsInRetryBackoff(t *testing.T) {
+	now := time.Date(2026, 7, 20, 9, 0, 0, 0, time.UTC)
+	cluster, _, _ := recoveryFixture(now)
+	evidence := recoveryFailureEvidenceStub{incidents: map[model.ResourceID]time.Time{cluster.ResourceID: now.Add(-time.Minute)}}
+	reported := make([]string, 0, 2)
+	controller := NewController(
+		recoveryStateStub{clusters: []model.DatabaseCluster{cluster}}, evidence, nil, nil, nil,
+		30*time.Second, func() time.Time { return now },
+		WithErrorHandler(func(err error) { reported = append(reported, err.Error()) }),
+	)
+
+	controller.reportError(errors.New("precheck contains blocking checks"))
+	controller.reportError(nil)
+	controller.reportError(errors.New("precheck contains blocking checks"))
+	if len(reported) != 1 {
+		t.Fatalf("retry backoff reset duplicate suppression=%v", reported)
+	}
+
+	delete(evidence.incidents, cluster.ResourceID)
+	controller.reportError(nil)
+	controller.reportError(errors.New("precheck contains blocking checks"))
+	if len(reported) != 2 {
+		t.Fatalf("resolved incident did not reset duplicate suppression=%v", reported)
 	}
 }

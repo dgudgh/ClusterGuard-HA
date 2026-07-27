@@ -25,6 +25,16 @@ func (blockingProcessRunner) Run(ctx context.Context, _ []byte, _ string, _ ...s
 	return nil, ctx.Err()
 }
 
+type contextCaptureRunner struct {
+	deadline time.Time
+	ok       bool
+}
+
+func (runner *contextCaptureRunner) Run(ctx context.Context, _ []byte, _ string, _ ...string) ([]byte, error) {
+	runner.deadline, runner.ok = ctx.Deadline()
+	return json.Marshal(agent.Response{Status: agent.StatusOK, ClusterID: model.ResourceID("11111111-1111-4111-8111-111111111111"), InstanceID: model.ResourceID("22222222-2222-4222-8222-222222222222")})
+}
+
 func (runner *processRunnerStub) Run(_ context.Context, input []byte, name string, arguments ...string) ([]byte, error) {
 	runner.input = append([]byte{}, input...)
 	runner.name = name
@@ -50,7 +60,7 @@ func TestSSHAgentTransportUsesPinnedNonInteractiveConnection(t *testing.T) {
 	joined := strings.Join(runner.args, " ")
 	for _, required := range []string{
 		"-o BatchMode=yes", "-o StrictHostKeyChecking=yes", "-o UserKnownHostsFile=/etc/clusterguard/agent_known_hosts",
-		"-o ConnectTimeout=5", "-o ConnectionAttempts=1", "-o ServerAliveInterval=2", "-o ServerAliveCountMax=2",
+		"-o ConnectTimeout=5", "-o ConnectionAttempts=1", "-o ServerAliveInterval=5", "-o ServerAliveCountMax=6",
 		"-i /etc/clusterguard/agent_ed25519", "cg-agent@192.0.2.10", "/usr/local/bin/clusterguard-agent", "--config /etc/clusterguard/agent.json",
 	} {
 		if !strings.Contains(joined, required) {
@@ -76,6 +86,69 @@ func TestSSHAgentTransportBoundsRemoteCommandDuration(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed > time.Second {
 		t.Fatalf("agent command exceeded timeout: %s", elapsed)
+	}
+}
+
+func TestSSHAgentTransportUsesLongTimeoutForPostgreSQLMutations(t *testing.T) {
+	runner := &contextCaptureRunner{}
+	transport, err := NewSSHAgentTransport(SSHAgentTransportConfig{
+		User: "root", IdentityFile: "/key", KnownHostsFile: "/known",
+		CommandTimeout:  5 * time.Second,
+		MutationTimeout: 12 * time.Minute,
+	}, runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clusterID := model.ResourceID("11111111-1111-4111-8111-111111111111")
+	instanceID := model.ResourceID("22222222-2222-4222-8222-222222222222")
+	started := time.Now()
+	_, err = transport.Send(context.Background(), model.DatabaseInstance{ResourceMeta: model.ResourceMeta{ResourceID: instanceID}, ClusterID: clusterID, IPAddress: "192.0.2.10"}, agent.Request{
+		Command: agent.CommandPostgreSQLRepoint, Engine: model.EnginePostgreSQL,
+		ClusterID: clusterID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !runner.ok {
+		t.Fatal("mutation transport context has no deadline")
+	}
+	remaining := time.Until(runner.deadline)
+	if remaining < 11*time.Minute || runner.deadline.Before(started.Add(11*time.Minute)) {
+		t.Fatalf("PostgreSQL mutation used short transport timeout, remaining=%s deadline=%s", remaining, runner.deadline)
+	}
+}
+
+func TestSSHAgentTransportAllowsOracleBrokerStatusToConverge(t *testing.T) {
+	runner := &contextCaptureRunner{}
+	transport, err := NewSSHAgentTransport(SSHAgentTransportConfig{
+		User: "root", IdentityFile: "/key", KnownHostsFile: "/known",
+		CommandTimeout:  5 * time.Second,
+		MutationTimeout: 12 * time.Minute,
+	}, runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clusterID := model.ResourceID("11111111-1111-4111-8111-111111111111")
+	instanceID := model.ResourceID("22222222-2222-4222-8222-222222222222")
+	started := time.Now()
+	_, err = transport.Send(context.Background(), model.DatabaseInstance{
+		ResourceMeta: model.ResourceMeta{ResourceID: instanceID},
+		ClusterID:    clusterID,
+		IPAddress:    "192.0.2.10",
+	}, agent.Request{
+		Command:   agent.CommandOracleBrokerStatus,
+		Engine:    model.EngineOracle,
+		ClusterID: clusterID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !runner.ok {
+		t.Fatal("Oracle Broker status transport context has no deadline")
+	}
+	remaining := time.Until(runner.deadline)
+	if remaining < 89*time.Second || runner.deadline.Before(started.Add(89*time.Second)) {
+		t.Fatalf("Oracle Broker status used short transport timeout, remaining=%s deadline=%s", remaining, runner.deadline)
 	}
 }
 

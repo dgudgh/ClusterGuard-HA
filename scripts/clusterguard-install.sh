@@ -98,7 +98,7 @@ fi
 install_file 0755 "${bundle_dir}/bin/clusterguard" /usr/local/bin/clusterguard
 install_file 0755 "${bundle_dir}/bin/cgctl" /usr/local/bin/cgctl
 install_file 0755 "${bundle_dir}/bin/clusterguard-agent" /usr/local/bin/clusterguard-agent
-for helper in clusterguard-node-lifecycle.sh clusterguard-mysql-install.sh clusterguard-mysql-sync.sh clusterguard-preflight.sh clusterguard-smoke.sh; do
+for helper in clusterguard-node-lifecycle.sh clusterguard-mysql-install.sh clusterguard-mysql-sync.sh clusterguard-mysql-probe-cleanup.sh clusterguard-postgresql-install.sh clusterguard-postgresql-sync.sh clusterguard-preflight.sh clusterguard-smoke.sh; do
 	install_file 0755 "${bundle_dir}/scripts/${helper}" "/usr/local/libexec/${helper}"
 done
 install_file 0750 "${bundle_dir}/scripts/clusterguard-agent-stdio.sh" /usr/local/libexec/clusterguard-agent-stdio
@@ -120,7 +120,7 @@ if [[ -n "${assets_dir}" ]]; then
       tls/*.crt|ssh/*known_hosts) mode=0644 ;;
       tls/*.key) mode=0640 ;;
       ssh/*_ed25519) mode=0600 ;;
-      mysql/*-client.cnf) mode=0600 ;;
+      mysql/*-client.cnf|postgresql/*.pass) mode=0600 ;;
       *) echo "unsupported runtime asset: ${relative}" >&2; exit 3 ;;
     esac
     install_file "${mode}" "${asset}" "/etc/clusterguard/${relative}"

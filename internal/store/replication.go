@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"clusterguard.io/ha/internal/controlstate"
 	"clusterguard.io/ha/internal/coordination"
 	"clusterguard.io/ha/internal/lifecycle"
 	"clusterguard.io/ha/pkg/model"
@@ -32,9 +33,11 @@ type snapshotConsensusProtocolGate interface {
 }
 
 const (
-	snapshotStateRevisionField = "clusterguard_state_revision"
-	snapshotStateDigestField   = "clusterguard_state_digest"
-	snapshotBaseDigestField    = "clusterguard_base_digest"
+	snapshotStateRevisionField  = "clusterguard_state_revision"
+	snapshotStateDigestField    = "clusterguard_state_digest"
+	snapshotBaseDigestField     = "clusterguard_base_digest"
+	maximumSnapshotBytes        = controlstate.MaximumBytes
+	maximumEncodedSnapshotBytes = controlstate.MaximumEncodedBytes
 )
 
 type snapshotRevisionMetadata struct {
@@ -271,6 +274,9 @@ func encodeSnapshotRevisionState(value snapshot, stateRevision uint64, baseDiges
 	if err != nil {
 		return nil, "", snapshot{}, err
 	}
+	if len(contents) > maximumEncodedSnapshotBytes {
+		return nil, "", snapshot{}, validationError("metadata snapshot exceeds maximum size")
+	}
 	if len(contents) < 2 || contents[0] != '{' || contents[len(contents)-1] != '}' {
 		return nil, "", snapshot{}, fmt.Errorf("metadata snapshot must encode as an object")
 	}
@@ -282,6 +288,9 @@ func encodeSnapshotRevisionState(value snapshot, stateRevision uint64, baseDiges
 			return nil, "", snapshot{}, fmt.Errorf("metadata snapshot base digest is invalid")
 		}
 		prefix = fmt.Sprintf(`{"%s":%d,"%s":"%s","%s":"%s",`, snapshotStateRevisionField, stateRevision, snapshotStateDigestField, stateDigest, snapshotBaseDigestField, baseDigest)
+	}
+	if len(prefix)+len(contents)-1 > maximumEncodedSnapshotBytes {
+		return nil, "", snapshot{}, validationError("metadata snapshot exceeds maximum size")
 	}
 	encoded := make([]byte, 0, len(prefix)+len(contents)-1)
 	encoded = append(encoded, prefix...)
@@ -344,6 +353,9 @@ func digestSnapshotPayload(contents []byte) (string, error) {
 }
 
 func decodeSnapshotState(contents []byte) (snapshot, snapshotRevisionMetadata, error) {
+	if len(contents) == 0 || len(contents) > maximumSnapshotBytes {
+		return snapshot{}, snapshotRevisionMetadata{}, validationError("metadata snapshot exceeds maximum size")
+	}
 	if _, err := snapshotPayload(contents); err != nil {
 		return snapshot{}, snapshotRevisionMetadata{}, err
 	}
@@ -434,6 +446,12 @@ func (repository *Repository) applyReplicatedState(contents []byte, authoritativ
 	if err != nil {
 		return err
 	}
+	if len(contents) > maximumEncodedSnapshotBytes {
+		// Legacy snapshots predate bounded history retention. A zero cutoff keeps
+		// unrevoked sessions while deterministically trimming replicated terminal
+		// history on every controller during the upgrade.
+		decoded = compactSnapshotHistory(decoded, time.Time{})
+	}
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 	currentDigest := repository.stateDigest
@@ -479,6 +497,7 @@ func (repository *Repository) applyReplicatedState(contents []byte, authoritativ
 }
 
 func (repository *Repository) commitSnapshotLocked(value snapshot) error {
+	value = compactSnapshotHistory(value, repository.now().UTC())
 	if repository.consensus == nil {
 		return repository.persistSnapshotRevisionLocked(value, repository.stateRevision+1)
 	}

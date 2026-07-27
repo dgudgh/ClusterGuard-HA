@@ -159,7 +159,8 @@ reconciliation. Detailed evidence is recorded in
 
 Production hardening that remains environment-specific:
 
-- integrate and exercise out-of-band host fencing for the deployment platform;
+- configure and exercise the external fencing provider against the deployment
+  platform's hypervisor, cloud, PDU, or BMC API;
 - qualify Clone or the exact XtraBackup build for each supported MySQL family;
 - establish backup/restore, retention, and recovery-time objectives;
 - integrate external alert delivery and long-term metrics retention;

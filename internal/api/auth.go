@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -44,8 +45,8 @@ type passwordChangePayload struct {
 	NewPassword     string `json:"new_password"`
 }
 
-func requestIsSecure(request *http.Request) bool {
-	return request != nil && request.TLS != nil
+func (server *Server) requestIsSecure(request *http.Request) bool {
+	return server.secureCookies || (request != nil && request.TLS != nil)
 }
 
 func sessionCookie(token string, expires time.Time, secure bool) *http.Cookie {
@@ -111,13 +112,19 @@ func (server *Server) authRoute(writer http.ResponseWriter, request *http.Reques
 		}
 		result, err := server.authentication.Login(request.Context(), payload.Username, payload.Password)
 		if err != nil {
+			if errors.Is(err, platformauth.ErrLoginThrottled) {
+				server.recordSecurityEvent(platformauth.Principal{}, payload.Username, "login_throttled", "blocked", "platform login throttled")
+				writer.Header().Set("Retry-After", fmt.Sprintf("%.0f", platformauth.LoginThrottleRetryAfter.Seconds()))
+				writeError(writer, http.StatusTooManyRequests, platformauth.ErrLoginThrottled.Error())
+				return
+			}
 			server.recordSecurityEvent(platformauth.Principal{}, payload.Username, "login_failed", "failure", "platform login failed")
 			writeError(writer, http.StatusUnauthorized, platformauth.ErrInvalidCredentials.Error())
 			return
 		}
 		server.recordSecurityEvent(result.Principal, result.Principal.Username, "login_success", "success", "platform login succeeded")
-		http.SetCookie(writer, sessionCookie(result.SessionToken, result.ExpiresAt, requestIsSecure(request)))
-		http.SetCookie(writer, csrfCookie(result.CSRFToken, result.ExpiresAt, requestIsSecure(request)))
+		http.SetCookie(writer, sessionCookie(result.SessionToken, result.ExpiresAt, server.requestIsSecure(request)))
+		http.SetCookie(writer, csrfCookie(result.CSRFToken, result.ExpiresAt, server.requestIsSecure(request)))
 		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": map[string]interface{}{
 			"user": result.Principal, "expires_at": result.ExpiresAt,
 		}})
@@ -146,12 +153,12 @@ func (server *Server) authRoute(writer http.ResponseWriter, request *http.Reques
 			return
 		}
 		if err := server.authentication.Logout(request.Context(), state.sessionToken); err != nil {
-			clearAuthenticationCookies(writer, requestIsSecure(request))
+			clearAuthenticationCookies(writer, server.requestIsSecure(request))
 			writeError(writer, http.StatusUnauthorized, platformauth.ErrUnauthenticated.Error())
 			return
 		}
 		server.recordSecurityEvent(state.principal, state.principal.Username, "logout", "success", "platform session logged out")
-		clearAuthenticationCookies(writer, requestIsSecure(request))
+		clearAuthenticationCookies(writer, server.requestIsSecure(request))
 		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok"})
 		return
 	case "/api/v1/auth/password":
@@ -184,7 +191,7 @@ func (server *Server) authRoute(writer http.ResponseWriter, request *http.Reques
 			return
 		}
 		server.recordSecurityEvent(state.principal, changed.Username, "password_changed", "success", "platform password changed")
-		clearAuthenticationCookies(writer, requestIsSecure(request))
+		clearAuthenticationCookies(writer, server.requestIsSecure(request))
 		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": map[string]interface{}{"password_changed": true}})
 		return
 	default:
@@ -195,14 +202,14 @@ func (server *Server) authRoute(writer http.ResponseWriter, request *http.Reques
 func (server *Server) requireSession(writer http.ResponseWriter, request *http.Request, csrfRequired bool) (requestAuthenticationState, bool) {
 	cookie, err := request.Cookie(sessionCookieName)
 	if err != nil || strings.TrimSpace(cookie.Value) == "" {
-		clearAuthenticationCookies(writer, requestIsSecure(request))
+		clearAuthenticationCookies(writer, server.requestIsSecure(request))
 		writer.Header().Set("WWW-Authenticate", `Session realm="clusterguard-platform"`)
 		writeError(writer, http.StatusUnauthorized, platformauth.ErrUnauthenticated.Error())
 		return requestAuthenticationState{}, false
 	}
 	principal, err := server.authentication.Authenticate(request.Context(), cookie.Value)
 	if err != nil {
-		clearAuthenticationCookies(writer, requestIsSecure(request))
+		clearAuthenticationCookies(writer, server.requestIsSecure(request))
 		writer.Header().Set("WWW-Authenticate", `Session realm="clusterguard-platform"`)
 		writeError(writer, http.StatusUnauthorized, platformauth.ErrUnauthenticated.Error())
 		return requestAuthenticationState{}, false
@@ -245,7 +252,7 @@ func (server *Server) authenticatePlatformRequest(writer http.ResponseWriter, re
 			principal: platformauth.Principal{Username: "service-api", DisplayName: "Service API", Role: model.PlatformRoleAdmin},
 		}), true
 	}
-	clearAuthenticationCookies(writer, requestIsSecure(request))
+	clearAuthenticationCookies(writer, server.requestIsSecure(request))
 	writer.Header().Set("WWW-Authenticate", `Session realm="clusterguard-platform"`)
 	writeError(writer, http.StatusUnauthorized, platformauth.ErrUnauthenticated.Error())
 	return nil, false

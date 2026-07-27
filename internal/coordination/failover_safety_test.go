@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -52,18 +53,46 @@ func (*failoverLeaseStub) Validate(context.Context, endpoint.Lease) error { retu
 func (*failoverLeaseStub) FinalizeTransition(_ context.Context, lease endpoint.Lease, _ time.Duration) (endpoint.Lease, error) {
 	return lease, nil
 }
+func (*failoverLeaseStub) RollbackTransition(_ context.Context, lease endpoint.Lease, _ time.Duration) (endpoint.Lease, error) {
+	return lease, nil
+}
 func (*failoverLeaseStub) Release(context.Context, model.ResourceID) error { return nil }
 
 type failoverAgentTransportStub struct {
-	calls         *[]string
-	ownsVIP       bool
-	readOnly      bool
-	superReadOnly bool
-	err           error
+	calls          *[]string
+	requests       []agent.Request
+	ownsVIP        bool
+	readOnly       bool
+	superReadOnly  bool
+	serviceRunning bool
+	inRecovery     bool
+	err            error
+}
+
+type failoverExternalFencerStub struct {
+	calls     *[]string
+	fenced    bool
+	fenceErr  error
+	statusErr error
+}
+
+func (stub *failoverExternalFencerStub) Fence(_ context.Context, _ ExternalFenceRequest) error {
+	*stub.calls = append(*stub.calls, "external_fence")
+	if stub.fenceErr != nil {
+		return stub.fenceErr
+	}
+	stub.fenced = true
+	return nil
+}
+
+func (stub *failoverExternalFencerStub) Status(_ context.Context, _ ExternalFenceRequest) (bool, error) {
+	*stub.calls = append(*stub.calls, "external_status")
+	return stub.fenced, stub.statusErr
 }
 
 func (stub *failoverAgentTransportStub) Send(_ context.Context, _ model.DatabaseInstance, request agent.Request) (agent.Response, error) {
 	*stub.calls = append(*stub.calls, request.Command)
+	stub.requests = append(stub.requests, request)
 	if stub.err != nil {
 		return agent.Response{}, stub.err
 	}
@@ -76,8 +105,40 @@ func (stub *failoverAgentTransportStub) Send(_ context.Context, _ model.Database
 	case agent.CommandRoleStatus:
 		readOnly, superReadOnly := stub.readOnly, stub.superReadOnly
 		return agent.Response{Status: agent.StatusOK, ReadOnly: &readOnly, SuperReadOnly: &superReadOnly}, nil
+	case agent.CommandPostgreSQLStatus:
+		running, inRecovery := stub.serviceRunning, stub.inRecovery
+		return agent.Response{Status: agent.StatusOK, ServiceRunning: &running, InRecovery: &inRecovery}, nil
 	default:
 		return agent.Response{Status: agent.StatusBlocked}, nil
+	}
+}
+
+func TestGuardedFailoverSafetyUsesPostgreSQLServiceStateForIsolation(t *testing.T) {
+	resolved, inventory, window, now := failoverSafetyFixture(t)
+	resolved.Cluster.Engine = model.EnginePostgreSQL
+	resolved.Primary.Engine = model.EnginePostgreSQL
+	resolved.Primary.Port = 5432
+	resolved.Target.Engine = model.EnginePostgreSQL
+	resolved.Target.Port = 5432
+	recordStableFailure(window, resolved.Cluster.ResourceID, now)
+	calls := []string{}
+	transport := &failoverAgentTransportStub{calls: &calls, ownsVIP: false, serviceRunning: false}
+	provider := NewGuardedFailoverSafety(window, failoverAuthorityStub{}, inventory, &failoverLeaseStub{calls: &calls}, transport, "agent-secret", func() time.Time { return now })
+	if check := provider.Verify(context.Background(), resolved); check.Status != model.CheckPass {
+		t.Fatalf("stopped PostgreSQL primary isolation=%+v", check)
+	}
+	want := []string{agent.CommandVIPStatus, agent.CommandPostgreSQLStatus}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("PostgreSQL isolation probes=%v want=%v", calls, want)
+	}
+	for _, request := range transport.requests {
+		if request.Engine != model.EnginePostgreSQL {
+			t.Fatalf("PostgreSQL safety request engine=%q request=%+v", request.Engine, request)
+		}
+	}
+	transport.serviceRunning = true
+	if check := provider.Verify(context.Background(), resolved); check.Status != model.CheckFail {
+		t.Fatalf("running PostgreSQL primary was accepted as isolated: %+v", check)
 	}
 }
 
@@ -219,5 +280,53 @@ func TestGuardedFailoverSafetyFailsClosedWhenAgentIsUnavailable(t *testing.T) {
 	provider := NewGuardedFailoverSafety(window, failoverAuthorityStub{}, inventory, &failoverLeaseStub{calls: &calls}, &failoverAgentTransportStub{calls: &calls, err: errors.New("unreachable")}, "agent-secret", func() time.Time { return now })
 	if check := provider.Verify(context.Background(), resolved); check.Status != model.CheckFail {
 		t.Fatalf("unreachable old primary was accepted as isolated: %+v", check)
+	}
+}
+
+func TestGuardedFailoverSafetyUsesVerifiedExternalFencingWhenAgentIsUnreachable(t *testing.T) {
+	resolved, inventory, window, now := failoverSafetyFixture(t)
+	recordStableFailure(window, resolved.Cluster.ResourceID, now)
+	calls := []string{}
+	leases := &failoverLeaseStub{calls: &calls, lease: endpoint.Lease{ResourceID: model.NewResourceID(), Active: true, ExpiresAt: now.Add(30 * time.Second)}}
+	external := &failoverExternalFencerStub{calls: &calls}
+	provider := NewGuardedFailoverSafety(
+		window, failoverAuthorityStub{}, inventory, leases,
+		&failoverAgentTransportStub{calls: &calls, err: errors.New("host network partition")},
+		"agent-secret", func() time.Time { return now }, WithExternalFencer(external),
+	)
+	checks := provider.Precheck(context.Background(), resolved)
+	if failoverCheckStatus(checks, "old_primary_fenced") != model.CheckPass {
+		t.Fatalf("reachable external fence path was rejected: %+v", checks)
+	}
+	calls = nil
+	external.calls = &calls
+	if err := provider.Fence(context.Background(), resolved); err != nil {
+		t.Fatalf("external fence old primary: %v", err)
+	}
+	if check := provider.Verify(context.Background(), resolved); check.Status != model.CheckPass || !strings.Contains(check.Message, "external") {
+		t.Fatalf("external fencing verification=%+v", check)
+	}
+	want := []string{"lease", agent.CommandSelfIsolate, "external_fence", "external_status", agent.CommandVIPStatus, "external_status"}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("external fencing order=%v want=%v", calls, want)
+	}
+}
+
+func TestGuardedFailoverSafetyFailsClosedWhenExternalFenceCannotBeVerified(t *testing.T) {
+	resolved, inventory, window, now := failoverSafetyFixture(t)
+	recordStableFailure(window, resolved.Cluster.ResourceID, now)
+	calls := []string{}
+	provider := NewGuardedFailoverSafety(
+		window, failoverAuthorityStub{}, inventory,
+		&failoverLeaseStub{calls: &calls, lease: endpoint.Lease{ResourceID: model.NewResourceID(), Active: true}},
+		&failoverAgentTransportStub{calls: &calls, err: errors.New("host network partition")},
+		"agent-secret", func() time.Time { return now },
+		WithExternalFencer(&failoverExternalFencerStub{calls: &calls, statusErr: errors.New("BMC unreachable")}),
+	)
+	if err := provider.Fence(context.Background(), resolved); err == nil || !strings.Contains(err.Error(), "verify external fencing") {
+		t.Fatalf("unverified external fence error=%v", err)
+	}
+	if check := provider.Verify(context.Background(), resolved); check.Status != model.CheckFail {
+		t.Fatalf("unverified external fencing was accepted: %+v", check)
 	}
 }

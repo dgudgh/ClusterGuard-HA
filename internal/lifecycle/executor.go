@@ -74,13 +74,15 @@ type ShellExecutor struct {
 }
 
 type ShellEnvironment struct {
-	PackageRepository string
-	KnownHostsFile    string
-	IdentityFile      string
-	JQBinary          string
-	ControlJoinHelper string
-	CloneHelper       string
-	XtraBackupHelper  string
+	PackageRepository       string
+	KnownHostsFile          string
+	IdentityFile            string
+	JQBinary                string
+	ControlJoinHelper       string
+	CloneHelper             string
+	XtraBackupHelper        string
+	PostgreSQLInstallHelper string
+	PostgreSQLSyncHelper    string
 }
 
 type ShellExecutorOption func(*ShellExecutor) error
@@ -98,6 +100,8 @@ func WithShellEnvironment(configuration ShellEnvironment) ShellExecutorOption {
 			{"CG_CONTROL_JOIN_HELPER", configuration.ControlJoinHelper},
 			{"CG_MYSQL_CLONE_HELPER", configuration.CloneHelper},
 			{"CG_MYSQL_XTRABACKUP_HELPER", configuration.XtraBackupHelper},
+			{"CG_POSTGRESQL_INSTALL_HELPER", configuration.PostgreSQLInstallHelper},
+			{"CG_POSTGRESQL_SYNC_HELPER", configuration.PostgreSQLSyncHelper},
 		}
 		for _, value := range values {
 			path := strings.TrimSpace(value.value)
@@ -155,6 +159,8 @@ func (executor *ShellExecutor) Execute(ctx context.Context, request Request, pla
 		"CG_SSH_PASSWORD="+secrets.SSHPassword,
 		"CG_MYSQL_ROOT_PASSWORD="+secrets.MySQLRootPassword,
 		"CG_MYSQL_REPLICATION_PASSWORD="+secrets.ReplicationPassword,
+		"CG_POSTGRESQL_ADMIN_PASSWORD="+secrets.PostgreSQLAdminPassword,
+		"CG_POSTGRESQL_REPLICATION_PASSWORD="+secrets.PostgreSQLReplicationPassword,
 	)
 	output, err := executor.runner.Run(ctx, contents, environment, executor.script, "execute")
 	if err != nil {

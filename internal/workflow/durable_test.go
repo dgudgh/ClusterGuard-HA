@@ -24,8 +24,11 @@ type durableAdapter struct {
 	executeStarted     chan struct{}
 	executeRelease     chan struct{}
 	afterExecute       func()
+	afterVerify        func()
 	verificationResult *model.Verification
+	executeResult      *model.Execution
 	planDigest         func(adapter.OperationRequest) string
+	executePlanDigest  string
 }
 
 func newDurableAdapter() *durableAdapter {
@@ -76,6 +79,9 @@ func (candidate *durableAdapter) BuildPlan(_ context.Context, request adapter.Op
 
 func (candidate *durableAdapter) Execute(ctx context.Context, request adapter.OperationRequest) (model.Execution, error) {
 	candidate.executeCalls++
+	if request.Resolved != nil {
+		candidate.executePlanDigest = request.Resolved.PlanDigest
+	}
 	if candidate.executeStarted != nil {
 		close(candidate.executeStarted)
 		<-candidate.executeRelease
@@ -91,6 +97,9 @@ func (candidate *durableAdapter) Execute(ctx context.Context, request adapter.Op
 	}
 	if candidate.executeError != nil {
 		return model.Execution{Status: model.OperationIndeterminate, Message: candidate.executeError.Error()}, candidate.executeError
+	}
+	if candidate.executeResult != nil {
+		return *candidate.executeResult, nil
 	}
 	return model.Execution{Status: model.OperationRunning, Message: "executed"}, nil
 }
@@ -113,6 +122,9 @@ func newDurableWorkflowService(t *testing.T, repository *store.Repository, candi
 
 func (candidate *durableAdapter) Verify(ctx context.Context, _ adapter.OperationRequest) (model.Verification, error) {
 	candidate.verifyCalls++
+	if candidate.afterVerify != nil {
+		candidate.afterVerify()
+	}
 	if err := ctx.Err(); err != nil {
 		return model.Verification{}, err
 	}
@@ -120,6 +132,45 @@ func (candidate *durableAdapter) Verify(ctx context.Context, _ adapter.Operation
 		return *candidate.verificationResult, nil
 	}
 	return model.Verification{Passed: true, Checks: []model.Check{{Name: "verified", Status: model.CheckPass}}}, nil
+}
+
+func TestVerificationTimeoutAllowsOracleBrokerConvergence(t *testing.T) {
+	if got, want := verificationTimeout(model.EngineOracle), 4*time.Minute; got != want {
+		t.Fatalf("Oracle verification timeout=%s, want %s", got, want)
+	}
+	if got, want := verificationTimeout(model.EngineMySQL), 30*time.Second; got != want {
+		t.Fatalf("MySQL verification timeout=%s, want %s", got, want)
+	}
+}
+
+func TestDurableWorkflowIsIndeterminateWhenLockLeaseIsLostDuringVerification(t *testing.T) {
+	request, resolved := durableRequestFixture()
+	repository := store.NewMemory()
+	registry := adapter.NewRegistry()
+	lock := &commitCancelingLock{}
+	candidate := newDurableAdapter()
+	candidate.afterVerify = func() { lock.cancel(testLockLeaseLost{}) }
+	if err := registry.Register(candidate); err != nil {
+		t.Fatalf("register adapter: %v", err)
+	}
+	trace := []string{}
+	resolver := OperationResolverFunc(func(_ context.Context, candidate adapter.OperationRequest) (adapter.OperationRequest, error) {
+		candidate.Resolved = &resolved
+		candidate.Credentials = resolved.Credentials
+		return candidate, nil
+	})
+	service := New(registry, recordingGate{&trace}, recordingGate{&trace}, lock, recordingGate{&trace}, repository,
+		WithOperationStore(repository), WithOperationResolver(resolver))
+
+	execution, err := service.Execute(context.Background(), request, "approved")
+	var leaseLost testLockLeaseLost
+	if !errors.As(err, &leaseLost) || execution.Status != model.OperationIndeterminate {
+		t.Fatalf("lease-lost durable verification execution=%+v err=%v", execution, err)
+	}
+	record, found := repository.OperationByIdempotencyKey(request.IdempotencyKey)
+	if !found || record.Status != model.OperationIndeterminate || record.FailureClass != "lock_lease_lost" {
+		t.Fatalf("lease-lost durable record found=%t record=%+v", found, record)
+	}
 }
 
 type durableCommittedFailure struct{}
@@ -198,6 +249,9 @@ func TestDurableWorkflowPersistsPlanProgressAndTerminalOutcome(t *testing.T) {
 	if candidate.executeCalls != 1 {
 		t.Fatalf("adapter execute calls=%d", candidate.executeCalls)
 	}
+	if candidate.executePlanDigest != record.Plan.Digest {
+		t.Fatalf("resolved plan digest=%q want persisted digest %q", candidate.executePlanDigest, record.Plan.Digest)
+	}
 
 	repeated, err := service.Execute(context.Background(), request, "approved")
 	if err != nil || repeated.Status != model.OperationSucceeded || candidate.executeCalls != 1 {
@@ -270,7 +324,7 @@ func TestDurableWorkflowDoesNotFreezeTopologyPublicationDuringPrecheck(t *testin
 
 	publicationContext, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	releasePublication, err := locks.AcquireCluster(publicationContext, request.Operation.ClusterID)
+	_, releasePublication, err := locks.AcquireCluster(publicationContext, request.Operation.ClusterID)
 	if err != nil {
 		close(candidate.precheckRelease)
 		<-finished
@@ -495,6 +549,35 @@ func TestDurableWorkflowPersistsBlockingPrecheckEvidence(t *testing.T) {
 	}
 	if len(record.Precheck) != 2 || record.Precheck[1].Name != "gtid_consistency" || record.Precheck[1].Status != model.CheckFail || record.Precheck[1].Message != "target is missing a transient transaction" {
 		t.Fatalf("blocking precheck evidence was not persisted: %+v", record.Precheck)
+	}
+}
+
+func TestDurableWorkflowDoesNotTreatBlockedAdapterExecutionAsCommitted(t *testing.T) {
+	request, resolved := durableRequestFixture()
+	repository := store.NewMemory()
+	candidate := newDurableAdapter()
+	candidate.executeResult = &model.Execution{
+		Status:  model.OperationBlocked,
+		Message: "last-moment adapter safety check blocked execution",
+	}
+	service := newDurableWorkflowService(t, repository, candidate, request, resolved)
+
+	execution, err := service.Execute(context.Background(), request, "approved")
+	if err == nil || execution.Status != model.OperationBlocked {
+		t.Fatalf("blocked adapter result=%+v err=%v", execution, err)
+	}
+	if candidate.executeCalls != 1 || candidate.verifyCalls != 0 {
+		t.Fatalf("blocked adapter calls execute=%d verify=%d", candidate.executeCalls, candidate.verifyCalls)
+	}
+	record, found := repository.OperationByIdempotencyKey(request.IdempotencyKey)
+	if !found || record.Status != model.OperationBlocked || record.Stage != model.StageExecute ||
+		record.FailureClass != "pre_commit" || record.Verification.OperationID != "" {
+		t.Fatalf("blocked adapter outcome was recorded as committed: found=%t record=%+v", found, record)
+	}
+	for _, event := range repository.Audits() {
+		if event.OperationID == record.ResourceID && event.Stage == model.StageVerify {
+			t.Fatalf("blocked adapter emitted verification audit: %+v", event)
+		}
 	}
 }
 

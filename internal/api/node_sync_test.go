@@ -73,8 +73,14 @@ func prepareNodeSyncAPI(t *testing.T) (*Server, *store.Repository, model.Databas
 		t.Fatalf("publish node-sync topology: %v", err)
 	}
 	manager := &nodeLifecycleManagerSpy{}
-	WithNodeLifecycle(manager, lifecycle.Capabilities{CloneAvailable: true, XtraBackupVersions: map[string]bool{"8.0": true}, LogicalDumpAllowed: true}, LifecycleSecretProviderFunc(func(context.Context, lifecycle.Request) (lifecycle.ExecutionSecrets, error) {
-		return lifecycle.ExecutionSecrets{SSHPassword: "ssh-write-only", MySQLRootPassword: "root-write-only", ReplicationPassword: "replication-write-only"}, nil
+	WithNodeLifecycle(manager, lifecycle.Capabilities{
+		CloneAvailable: true, XtraBackupVersions: map[string]bool{"8.0": true}, LogicalDumpAllowed: true,
+		PostgreSQLBaseBackupAvailable: true, PostgreSQLRewindAvailable: true,
+	}, LifecycleSecretProviderFunc(func(context.Context, lifecycle.Request) (lifecycle.ExecutionSecrets, error) {
+		return lifecycle.ExecutionSecrets{
+			SSHPassword: "ssh-write-only", MySQLRootPassword: "root-write-only", ReplicationPassword: "replication-write-only",
+			PostgreSQLAdminPassword: "pg-admin-write-only", PostgreSQLReplicationPassword: "pg-repl-write-only",
+		}, nil
 	}))(server)
 	return server, repository, cluster, manager
 }
@@ -173,6 +179,108 @@ func TestNodeSyncAPIBlocksUnknownOrDuplicateInventoryBeforeExecutor(t *testing.T
 	response := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/nodes/sync/execute", payload)
 	if response.Code != http.StatusConflict || manager.calls != 0 || !strings.Contains(response.Body.String(), "blocked") {
 		t.Fatalf("duplicate inventory execute: %d %s calls=%d", response.Code, response.Body.String(), manager.calls)
+	}
+}
+
+func TestNodeSyncAPISupportsPostgreSQLBaseBackupLifecycle(t *testing.T) {
+	server, repository, _, manager := prepareNodeSyncAPI(t)
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(
+		model.DatabaseCluster{Engine: model.EnginePostgreSQL, DisplayName: "postgres-orders", EngineIdentity: model.EngineIdentity{"system_identifier": "7428625847249870011"}},
+		[]model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "pg-primary", Port: 5432, Active: true}},
+	)
+	if err != nil {
+		t.Fatalf("create PostgreSQL inventory: %v", err)
+	}
+	primaryIdentity := model.NewResourceID()
+	primary := model.DatabaseInstance{
+		ClusterID: cluster.ResourceID, Engine: model.EnginePostgreSQL,
+		EngineIdentity: model.EngineIdentity{"resource_id": string(primaryIdentity), "system_identifier": "7428625847249870011"},
+		DisplayName:    "pg-primary", Hostname: "pg-primary", Port: 5432, Role: model.RolePrimary,
+		Health: model.Health{State: model.HealthHealthy}, EngineMetadata: map[string]string{"version": "16.3", "in_recovery": "false", "transaction_read_only": "false"},
+	}
+	if _, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{
+		ClusterID: cluster.ResourceID, InventoryGeneration: testInventoryGeneration(t, repository, cluster.ResourceID), ObservedAt: time.Now().UTC(),
+		Observations: []store.DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: primary}},
+		Probes:       []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: primary.Health}},
+	}); err != nil {
+		t.Fatalf("publish PostgreSQL topology: %v", err)
+	}
+	payload := map[string]interface{}{
+		"cluster_id": cluster.ResourceID, "action": "add", "sync_method": "auto", "approval_token": "approved-postgresql-lifecycle",
+		"targets": []map[string]interface{}{{
+			"node_name": "cg-pg-0002", "kind": "data", "hostname": "pg-replica", "ip_address": "192.0.2.32",
+			"ssh_user": "root", "ssh_port": 22, "postgresql_version": "16.4", "postgresql_port": 5432,
+		}},
+	}
+	precheck := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/nodes/sync/precheck", payload)
+	if precheck.Code != http.StatusOK || !strings.Contains(precheck.Body.String(), `"blocked":false`) {
+		t.Fatalf("PostgreSQL lifecycle precheck: %d %s", precheck.Code, precheck.Body.String())
+	}
+	plan := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/nodes/sync/plan", payload)
+	if plan.Code != http.StatusOK || !strings.Contains(plan.Body.String(), `"sync_method":"pg_basebackup"`) {
+		t.Fatalf("PostgreSQL lifecycle plan: %d %s", plan.Code, plan.Body.String())
+	}
+	executed := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/nodes/sync/execute", payload)
+	if executed.Code != http.StatusOK || manager.calls != 1 || manager.request.Engine != model.EnginePostgreSQL ||
+		manager.request.Donor.SystemIdentifier != "7428625847249870011" || manager.request.Donor.NativeResourceID != primaryIdentity || manager.request.Donor.Version != "16.3" {
+		t.Fatalf("PostgreSQL lifecycle execute: %d %s manager=%+v", executed.Code, executed.Body.String(), manager)
+	}
+	for _, secret := range []string{"pg-admin-write-only", "pg-repl-write-only"} {
+		if strings.Contains(executed.Body.String(), secret) {
+			t.Fatalf("PostgreSQL lifecycle response exposed %q", secret)
+		}
+	}
+}
+
+func TestNodeSyncAPIIgnoresUnhealthyStalePostgreSQLPrimaryWhenSelectingDonor(t *testing.T) {
+	server, repository, _, manager := prepareNodeSyncAPI(t)
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(
+		model.DatabaseCluster{Engine: model.EnginePostgreSQL, DisplayName: "postgres-orders", EngineIdentity: model.EngineIdentity{"system_identifier": "7428625847249870011"}},
+		[]model.Endpoint{
+			{Kind: model.EndpointDatabase, Hostname: "pg-primary", Port: 5432, Active: true},
+			{Kind: model.EndpointDatabase, Hostname: "pg-old-primary", Port: 5432, Active: true},
+		},
+	)
+	if err != nil {
+		t.Fatalf("create PostgreSQL inventory: %v", err)
+	}
+	primaryIdentity := model.NewResourceID()
+	staleIdentity := model.NewResourceID()
+	primary := model.DatabaseInstance{
+		ClusterID: cluster.ResourceID, Engine: model.EnginePostgreSQL,
+		EngineIdentity: model.EngineIdentity{"resource_id": string(primaryIdentity), "system_identifier": "7428625847249870011"},
+		DisplayName:    "pg-primary", Hostname: "pg-primary", Port: 5432, Role: model.RolePrimary,
+		Health: model.Health{State: model.HealthHealthy}, EngineMetadata: map[string]string{"version": "16.3"},
+	}
+	stale := model.DatabaseInstance{
+		ClusterID: cluster.ResourceID, Engine: model.EnginePostgreSQL,
+		EngineIdentity: model.EngineIdentity{"resource_id": string(staleIdentity), "system_identifier": "7428625847249870011"},
+		DisplayName:    "pg-old-primary", Hostname: "pg-old-primary", Port: 5432, Role: model.RolePrimary,
+		Health: model.Health{State: model.HealthUnknown, Summary: "database probe failed"}, EngineMetadata: map[string]string{"version": "16.3"},
+	}
+	if _, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{
+		ClusterID: cluster.ResourceID, InventoryGeneration: testInventoryGeneration(t, repository, cluster.ResourceID), ObservedAt: time.Now().UTC(),
+		Observations: []store.DiscoveryObservation{
+			{EndpointID: endpoints[0].ResourceID, Instance: primary},
+			{EndpointID: endpoints[1].ResourceID, Instance: stale},
+		},
+		Probes: []model.ProbeStatus{
+			{EndpointID: endpoints[0].ResourceID, Health: primary.Health},
+			{EndpointID: endpoints[1].ResourceID, Health: stale.Health},
+		},
+	}); err != nil {
+		t.Fatalf("publish PostgreSQL topology: %v", err)
+	}
+	payload := map[string]interface{}{
+		"cluster_id": cluster.ResourceID, "action": "add", "sync_method": "pg_basebackup",
+		"targets": []map[string]interface{}{{
+			"node_name": "cg-pg-0002", "kind": "data", "hostname": "pg-replica",
+			"ssh_user": "root", "ssh_port": 22, "postgresql_version": "16.4", "postgresql_port": 5432,
+		}},
+	}
+	executed := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/nodes/sync/execute", payload)
+	if executed.Code != http.StatusOK || manager.request.Donor.NativeResourceID != primaryIdentity {
+		t.Fatalf("PostgreSQL donor selected stale primary: code=%d body=%s manager=%+v", executed.Code, executed.Body.String(), manager)
 	}
 }
 

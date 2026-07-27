@@ -25,6 +25,17 @@ func (repository *Repository) PutLifecycleTask(task lifecycle.Task) (lifecycle.T
 		task.CreatedAt = existing.CreatedAt
 		task.MetadataRevision = existing.MetadataRevision + 1
 	} else {
+		activeTasks := 0
+		for _, candidate := range repository.snapshot.LifecycleTasks {
+			switch candidate.Status {
+			case lifecycle.TaskSucceeded, lifecycle.TaskFailed, lifecycle.TaskInterrupted, lifecycle.TaskIndeterminate:
+			default:
+				activeTasks++
+			}
+		}
+		if activeTasks >= maximumActiveLifecycleTasks {
+			return lifecycle.Task{}, validationError("active lifecycle task capacity is exhausted")
+		}
 		task.CreatedAt = now
 		task.MetadataRevision = 1
 	}

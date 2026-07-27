@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"clusterguard.io/ha/adapters/mysql"
+	"clusterguard.io/ha/adapters/postgresql"
 	"clusterguard.io/ha/internal/discovery"
 	"clusterguard.io/ha/internal/lifecycle"
 	"clusterguard.io/ha/internal/store"
@@ -34,6 +35,8 @@ type candidateAdapterSpy struct {
 }
 
 type realMySQLCandidateRunner struct{}
+
+type realPostgreSQLCandidateRunner struct{}
 
 func (realMySQLCandidateRunner) Query(_ context.Context, endpoint adapter.Endpoint, _ adapter.Credentials, query string) ([]mysql.Row, error) {
 	const primaryUUID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
@@ -71,6 +74,41 @@ func (realMySQLCandidateRunner) Query(_ context.Context, endpoint adapter.Endpoi
 		}, nil
 	}
 	return nil, fmt.Errorf("unexpected query %q", query)
+}
+
+func (realPostgreSQLCandidateRunner) Query(_ context.Context, endpoint adapter.Endpoint, _ adapter.Credentials, query string) ([]postgresql.Row, error) {
+	if strings.Contains(query, "clusterguard_metrics") {
+		return []postgresql.Row{{
+			"connections": "12", "active_connections": "2", "transactions_total": "1200", "deadlocks_total": "0",
+			"temp_bytes_total": "0", "blocks_read_total": "20", "blocks_hit_total": "1980", "database_size_bytes": "1048576",
+			"replication_clients": "1", "max_transaction_age_seconds": "3",
+		}}, nil
+	}
+	if !strings.Contains(query, "clusterguard_probe") {
+		return nil, fmt.Errorf("unexpected query %q", query)
+	}
+	const primaryID = "11111111-1111-4111-8111-111111111111"
+	const standbyID = "22222222-2222-4222-8222-222222222222"
+	row := postgresql.Row{
+		"node_id": primaryID, "primary_node_id": "", "system_identifier": "7428625847249870011",
+		"hostname": endpoint.Hostname, "port": fmt.Sprint(endpoint.Port), "version": "16.3",
+		"wal_log_hints": "on", "data_checksum_version": "1",
+		"in_recovery": "false", "transaction_read_only": "off", "replay_paused": "false",
+		"wal_receiver_status": "", "current_lsn": "0/5000050", "receive_lsn": "", "replay_lsn": "",
+		"lag_seconds": "", "timeline_id": "7",
+	}
+	if endpoint.Hostname == "pg-b" {
+		row["node_id"] = standbyID
+		row["primary_node_id"] = primaryID
+		row["in_recovery"] = "true"
+		row["transaction_read_only"] = "on"
+		row["wal_receiver_status"] = "streaming"
+		row["current_lsn"] = ""
+		row["receive_lsn"] = "0/5000050"
+		row["replay_lsn"] = "0/5000050"
+		row["lag_seconds"] = "0"
+	}
+	return []postgresql.Row{row}, nil
 }
 
 func newCandidateAdapterSpy() *candidateAdapterSpy {
@@ -755,6 +793,59 @@ func TestRealMySQLDiscoveryProducesEligibleReadOnlyCandidate(t *testing.T) {
 	}
 	if eligible.Rank != 1 || assessmentCheck(eligible.Checks, "promotion_eligibility") != model.CheckPass || assessmentCheck(eligible.Checks, "replica_read_only") != model.CheckPass {
 		t.Fatalf("real discovered replica was not ranked safely: %+v", body.Result)
+	}
+}
+
+func TestRealPostgreSQLDiscoveryBindsIdentityAndProducesEligibleStandby(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, _, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{
+		Engine: model.EnginePostgreSQL, DisplayName: "postgres-production",
+	}, []model.Endpoint{
+		{Kind: model.EndpointDatabase, Hostname: "pg-a", Port: 5432, Active: true},
+		{Kind: model.EndpointDatabase, Hostname: "pg-b", Port: 5432, Active: true},
+	})
+	if err != nil {
+		t.Fatalf("create PostgreSQL inventory: %v", err)
+	}
+	registry := adapter.NewRegistry()
+	postgresAdapter := postgresql.New(realPostgreSQLCandidateRunner{})
+	if err := registry.Register(postgresAdapter); err != nil {
+		t.Fatalf("register PostgreSQL adapter: %v", err)
+	}
+	observedAt := time.Date(2026, time.July, 20, 18, 0, 0, 0, time.UTC)
+	refresher := discovery.New(registry, repository, discovery.CredentialResolverFunc(func(context.Context, model.DatabaseCluster, model.Endpoint) (adapter.Credentials, error) {
+		return adapter.Credentials{Username: "cg_monitor", Password: "secret", Database: "postgres"}, nil
+	}), func() time.Time { return observedAt })
+	service := workflow.New(registry, workflow.TopologyDiscovery{Reader: repository}, workflow.AllowAllSafety{}, workflow.NewMemoryLocks(), workflow.AllowAllApproval{}, repository)
+	server := NewServer(registry, repository, service, refresher, WithControlToken(testControlToken))
+
+	refresh := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/clusters/"+string(cluster.ResourceID)+"/discover", map[string]interface{}{})
+	if refresh.Code != http.StatusOK || strings.Count(refresh.Body.String(), `"role":"primary"`) != 1 || strings.Count(refresh.Body.String(), `"role":"standby"`) != 1 {
+		t.Fatalf("PostgreSQL refresh: %d %s", refresh.Code, refresh.Body.String())
+	}
+	stored, found := repository.Cluster(cluster.ResourceID)
+	if !found || stored.EngineIdentity["system_identifier"] != "7428625847249870011" {
+		t.Fatalf("PostgreSQL cluster identity was not bound: %+v", stored)
+	}
+
+	response := callJSON(t, server.Handler(), http.MethodGet, "/api/v1/clusters/"+string(cluster.ResourceID)+"/candidates", nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("PostgreSQL candidates: %d %s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Result []model.CandidateAssessment `json:"result"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode PostgreSQL candidates: %v", err)
+	}
+	eligible := make([]model.CandidateAssessment, 0, 1)
+	for _, assessment := range body.Result {
+		if assessment.Eligible {
+			eligible = append(eligible, assessment)
+		}
+	}
+	if len(eligible) != 1 || eligible[0].Rank != 1 || assessmentCheck(eligible[0].Checks, "system_identifier") != model.CheckPass || assessmentCheck(eligible[0].Checks, "timeline") != model.CheckPass {
+		t.Fatalf("PostgreSQL standby was not ranked safely: %+v", body.Result)
 	}
 }
 

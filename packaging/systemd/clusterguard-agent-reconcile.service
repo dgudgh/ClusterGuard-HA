@@ -1,6 +1,6 @@
 [Unit]
 Description=ClusterGuard HA Data Node VIP Reconcile
-After=network-online.target mysql.service mysqld.service
+After=network-online.target mysql.service mysqld.service postgresql.service
 Wants=network-online.target
 
 [Service]
@@ -16,6 +16,6 @@ PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
 ReadWritePaths=/var/lib/clusterguard-agent
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SETUID CAP_SETGID
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_SETUID CAP_SETGID
 UMask=0077

@@ -35,20 +35,26 @@ func TestShellExecutorPassesSecretsOnlyThroughEnvironmentAndEmitsStages(t *testi
 		t.Fatalf("new shell executor: %v", err)
 	}
 	request, plan := executableLifecyclePlan()
-	secrets := ExecutionSecrets{SSHPassword: "ssh-secret", MySQLRootPassword: "mysql-root-secret", ReplicationPassword: "replication-secret"}
+	secrets := ExecutionSecrets{
+		SSHPassword: "ssh-secret", MySQLRootPassword: "mysql-root-secret", ReplicationPassword: "replication-secret",
+		PostgreSQLAdminPassword: "pg-admin-secret", PostgreSQLReplicationPassword: "pg-replication-secret",
+	}
 	events := []Event{}
 	result, err := executor.Execute(context.Background(), request, plan, secrets, func(event Event) { events = append(events, event) })
 	if err != nil || !result.Verified || len(events) != 2 || events[0].Stage != StageInstall || events[1].Stage != StageVerify {
 		t.Fatalf("execute result=%+v events=%+v err=%v", result, events, err)
 	}
 	unsafe := string(runner.input) + " " + runner.name + " " + strings.Join(runner.args, " ")
-	for _, secret := range []string{"ssh-secret", "mysql-root-secret", "replication-secret"} {
+	for _, secret := range []string{"ssh-secret", "mysql-root-secret", "replication-secret", "pg-admin-secret", "pg-replication-secret"} {
 		if strings.Contains(unsafe, secret) {
 			t.Fatalf("secret %q appeared in stdin or command arguments: %s", secret, unsafe)
 		}
 	}
 	joinedEnvironment := strings.Join(runner.env, "\n")
-	for _, expected := range []string{"CG_SSH_PASSWORD=ssh-secret", "CG_MYSQL_ROOT_PASSWORD=mysql-root-secret", "CG_MYSQL_REPLICATION_PASSWORD=replication-secret"} {
+	for _, expected := range []string{
+		"CG_SSH_PASSWORD=ssh-secret", "CG_MYSQL_ROOT_PASSWORD=mysql-root-secret", "CG_MYSQL_REPLICATION_PASSWORD=replication-secret",
+		"CG_POSTGRESQL_ADMIN_PASSWORD=pg-admin-secret", "CG_POSTGRESQL_REPLICATION_PASSWORD=pg-replication-secret",
+	} {
 		if !strings.Contains(joinedEnvironment, expected) {
 			t.Fatalf("executor environment missing %q: %v", expected, runner.env)
 		}
@@ -61,13 +67,15 @@ func TestShellExecutorPassesSecretsOnlyThroughEnvironmentAndEmitsStages(t *testi
 func TestShellExecutorPassesOnlyTypedStaticLifecyclePaths(t *testing.T) {
 	runner := &lifecycleProcessRunnerStub{out: []byte(`{"type":"result","verified":true}` + "\n")}
 	executor, err := NewShellExecutor("/usr/local/libexec/clusterguard-node-lifecycle.sh", runner, WithShellEnvironment(ShellEnvironment{
-		PackageRepository: "/opt/clusterguard/packages",
-		KnownHostsFile:    "/etc/clusterguard/known_hosts",
-		IdentityFile:      "/etc/clusterguard/lifecycle_ed25519",
-		JQBinary:          "/usr/local/libexec/jq-linux-amd64",
-		ControlJoinHelper: "/usr/local/libexec/clusterguard-control-join",
-		CloneHelper:       "/usr/local/libexec/clusterguard-mysql-clone",
-		XtraBackupHelper:  "/usr/local/libexec/clusterguard-mysql-xtrabackup",
+		PackageRepository:       "/opt/clusterguard/packages",
+		KnownHostsFile:          "/etc/clusterguard/known_hosts",
+		IdentityFile:            "/etc/clusterguard/lifecycle_ed25519",
+		JQBinary:                "/usr/local/libexec/jq-linux-amd64",
+		ControlJoinHelper:       "/usr/local/libexec/clusterguard-control-join",
+		CloneHelper:             "/usr/local/libexec/clusterguard-mysql-clone",
+		XtraBackupHelper:        "/usr/local/libexec/clusterguard-mysql-xtrabackup",
+		PostgreSQLInstallHelper: "/usr/local/libexec/clusterguard-postgresql-install.sh",
+		PostgreSQLSyncHelper:    "/usr/local/libexec/clusterguard-postgresql-sync.sh",
 	}))
 	if err != nil {
 		t.Fatalf("new configured shell executor: %v", err)
@@ -85,6 +93,8 @@ func TestShellExecutorPassesOnlyTypedStaticLifecyclePaths(t *testing.T) {
 		"CG_CONTROL_JOIN_HELPER=/usr/local/libexec/clusterguard-control-join",
 		"CG_MYSQL_CLONE_HELPER=/usr/local/libexec/clusterguard-mysql-clone",
 		"CG_MYSQL_XTRABACKUP_HELPER=/usr/local/libexec/clusterguard-mysql-xtrabackup",
+		"CG_POSTGRESQL_INSTALL_HELPER=/usr/local/libexec/clusterguard-postgresql-install.sh",
+		"CG_POSTGRESQL_SYNC_HELPER=/usr/local/libexec/clusterguard-postgresql-sync.sh",
 	} {
 		if !strings.Contains(joined, expected) {
 			t.Fatalf("static lifecycle environment missing %q: %v", expected, runner.env)

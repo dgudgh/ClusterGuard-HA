@@ -54,6 +54,7 @@ type agentTransportStub struct {
 	owners      map[model.ResourceID]bool
 	unavailable map[model.ResourceID]bool
 	calls       []string
+	requests    []agent.Request
 }
 
 func (transport *agentTransportStub) Send(_ context.Context, instance model.DatabaseInstance, request agent.Request) (agent.Response, error) {
@@ -63,6 +64,7 @@ func (transport *agentTransportStub) Send(_ context.Context, instance model.Data
 		return agent.Response{}, errors.New("agent unavailable")
 	}
 	transport.calls = append(transport.calls, request.Command+":"+string(instance.ResourceID))
+	transport.requests = append(transport.requests, request)
 	switch request.Command {
 	case agent.CommandVIPStatus:
 		owns := transport.owners[instance.ResourceID]
@@ -186,8 +188,11 @@ func TestVIPAuthorizeTransitionCreatesTargetLeaseWithoutMovingVIP(t *testing.T) 
 	if authorized.OperationID != resolved.OperationID || authorized.OwnerID != resolved.Target.ResourceID || !authorized.Active {
 		t.Fatalf("transition lease=%+v", authorized)
 	}
-	if authorized.ResourceID == stable.ResourceID {
-		t.Fatalf("stable ownership lease was not replaced during transition: stable=%+v transition=%+v", stable, authorized)
+	if authorization.LeaseID != authorized.ResourceID {
+		t.Fatalf("authorization lease=%s, want %s", authorization.LeaseID, authorized.ResourceID)
+	}
+	if authorized.ResourceID != stable.ResourceID {
+		t.Fatalf("stable ownership lease was not atomically upgraded during transition: stable=%+v transition=%+v", stable, authorized)
 	}
 	if len(transport.calls) != 0 || !transport.owners[resolved.Primary.ResourceID] || transport.owners[resolved.Target.ResourceID] {
 		t.Fatalf("authorization moved VIP ownership: calls=%v owners=%+v", transport.calls, transport.owners)
@@ -204,6 +209,52 @@ func TestVIPAuthorizeTransitionCreatesTargetLeaseWithoutMovingVIP(t *testing.T) 
 	for resourceID := range leases.leases {
 		if resourceID != authorized.ResourceID {
 			t.Fatalf("transfer used lease %s, want prepared lease %s", resourceID, authorized.ResourceID)
+		}
+	}
+}
+
+func TestVIPAbortTransitionRestoresSourceLease(t *testing.T) {
+	provider, resolved, transport, leases, inventory := vipProviderFixture(t)
+	if _, err := leases.Acquire(context.Background(), LeaseRequest{
+		ClusterID: resolved.Cluster.ResourceID, HAEndpointID: inventory.resources[0].ResourceID,
+		OperationID: inventory.resources[0].ResourceID, OwnerID: resolved.Primary.ResourceID, TTL: 30 * time.Second,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	authorization, err := provider.AuthorizeTransition(context.Background(), resolved)
+	if err != nil {
+		t.Fatalf("authorize transition: %v", err)
+	}
+	defer authorization.Cancel()
+	if authorization.Abort == nil {
+		t.Fatal("transition authorization has no abort callback")
+	}
+	if err := authorization.Abort(context.Background()); err != nil {
+		t.Fatalf("abort transition: %v", err)
+	}
+	if len(leases.leases) != 1 {
+		t.Fatalf("leases after abort=%+v", leases.leases)
+	}
+	for _, lease := range leases.leases {
+		if lease.ResourceID != authorization.LeaseID || lease.OperationID != inventory.resources[0].ResourceID || lease.OwnerID != resolved.Primary.ResourceID || lease.PreviousOwnerID != "" {
+			t.Fatalf("restored lease=%+v", lease)
+		}
+	}
+	if len(transport.calls) != 0 || !transport.owners[resolved.Primary.ResourceID] || transport.owners[resolved.Target.ResourceID] {
+		t.Fatalf("abort moved VIP ownership: calls=%v owners=%+v", transport.calls, transport.owners)
+	}
+}
+
+func TestVIPSignedRequestBindsDatabaseEngine(t *testing.T) {
+	provider, resolved, transport, _, _ := vipProviderFixture(t)
+	resolved.Cluster.Engine = model.EnginePostgreSQL
+	provider.Precheck(context.Background(), resolved)
+	if len(transport.requests) == 0 {
+		t.Fatal("VIP precheck sent no agent requests")
+	}
+	for _, request := range transport.requests {
+		if request.Engine != model.EnginePostgreSQL {
+			t.Fatalf("VIP request engine=%q, want postgresql", request.Engine)
 		}
 	}
 }
@@ -259,6 +310,10 @@ func (store *failingRenewalLeaseStore) Validate(ctx context.Context, lease Lease
 
 func (store *failingRenewalLeaseStore) FinalizeTransition(ctx context.Context, lease Lease, ttl time.Duration) (Lease, error) {
 	return store.delegate.FinalizeTransition(ctx, lease, ttl)
+}
+
+func (store *failingRenewalLeaseStore) RollbackTransition(ctx context.Context, lease Lease, ttl time.Duration) (Lease, error) {
+	return store.delegate.RollbackTransition(ctx, lease, ttl)
 }
 
 func (store *failingRenewalLeaseStore) Release(ctx context.Context, resourceID model.ResourceID) error {

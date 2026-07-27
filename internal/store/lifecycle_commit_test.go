@@ -34,6 +34,30 @@ func lifecycleMySQLInstance(clusterID, nodeID model.ResourceID, serverUUID, host
 	}
 }
 
+func lifecyclePostgreSQLInstance(clusterID, nodeID model.ResourceID, systemIdentifier, hostname, ipAddress string, port int) model.DatabaseInstance {
+	return model.DatabaseInstance{
+		ClusterID: clusterID,
+		NodeID:    nodeID,
+		Engine:    model.EnginePostgreSQL,
+		EngineIdentity: model.EngineIdentity{
+			"resource_id":       string(nodeID),
+			"system_identifier": systemIdentifier,
+		},
+		DisplayName: hostname,
+		Hostname:    hostname,
+		IPAddress:   ipAddress,
+		Port:        port,
+		Role:        model.RoleStandby,
+		Health:      model.Health{State: model.HealthHealthy},
+		Replication: model.ReplicationStatus{
+			SourceIdentity: model.EngineIdentity{"resource_id": string(model.NewResourceID()), "system_identifier": systemIdentifier},
+			IOThread:       model.ThreadRunning,
+			SQLThread:      model.ThreadRunning,
+		},
+		PromotionEligible: true,
+	}
+}
+
 func persistVerifyingLifecycleTask(t *testing.T, repository *Repository, clusterID model.ResourceID, action lifecycle.Action, targets []lifecycle.TargetPlan) lifecycle.Task {
 	t.Helper()
 	requestTargets := make([]lifecycle.Target, len(targets))
@@ -51,6 +75,46 @@ func persistVerifyingLifecycleTask(t *testing.T, repository *Repository, cluster
 		t.Fatalf("persist verifying lifecycle task: %v", err)
 	}
 	return task
+}
+
+func TestCommitLifecycleAddPublishesVerifiedPostgreSQLStandby(t *testing.T) {
+	repository := NewMemory()
+	cluster, _, err := repository.CreateClusterWithEndpoints(
+		model.DatabaseCluster{Engine: model.EnginePostgreSQL, DisplayName: "pg-ha"},
+		[]model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "pg-primary", IPAddress: "192.0.2.50", Port: 5432, Active: true}},
+	)
+	if err != nil {
+		t.Fatalf("create PostgreSQL cluster inventory: %v", err)
+	}
+	nodeID := model.NewResourceID()
+	target := lifecycle.TargetPlan{Target: lifecycle.Target{
+		NodeID: nodeID, NodeName: "cg-pg-0002", Kind: model.NodeMixed,
+		Hostname: "pg-standby", IPAddress: "192.0.2.51", PostgreSQLPort: 5432,
+	}, DatabaseRole: model.RoleStandby, SyncMethod: lifecycle.SyncPostgreSQLBaseBackup}
+	task := persistVerifyingLifecycleTask(t, repository, cluster.ResourceID, lifecycle.ActionAdd, []lifecycle.TargetPlan{target})
+	verified := lifecyclePostgreSQLInstance(cluster.ResourceID, nodeID, "7664793534806288468", "pg-standby", "192.0.2.51", 5432)
+
+	if err := repository.Commit(context.Background(), task, lifecycle.ExecutionResult{Verified: true, Instances: []model.DatabaseInstance{verified}}); err != nil {
+		t.Fatalf("commit verified PostgreSQL lifecycle result: %v", err)
+	}
+
+	instances := repository.Instances(cluster.ResourceID)
+	if len(instances) != 1 || instances[0].Engine != model.EnginePostgreSQL || instances[0].NodeID != nodeID || instances[0].Role != model.RoleStandby {
+		t.Fatalf("committed PostgreSQL instances=%+v", instances)
+	}
+	endpoints := repository.Endpoints(cluster.ResourceID)
+	if len(endpoints) != 2 {
+		t.Fatalf("endpoint count=%d, want 2: %+v", len(endpoints), endpoints)
+	}
+	var targetEndpoint model.Endpoint
+	for _, endpoint := range endpoints {
+		if endpoint.InstanceID == instances[0].ResourceID {
+			targetEndpoint = endpoint
+		}
+	}
+	if targetEndpoint.ResourceID == "" || targetEndpoint.Hostname != verified.Hostname || targetEndpoint.IPAddress != verified.IPAddress || targetEndpoint.Port != verified.Port || !targetEndpoint.Active {
+		t.Fatalf("verified PostgreSQL endpoint was not published: %+v", targetEndpoint)
+	}
 }
 
 func TestCommitLifecycleAddPublishesVerifiedNodeInstanceAndEndpointAtomically(t *testing.T) {

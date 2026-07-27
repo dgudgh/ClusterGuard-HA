@@ -23,7 +23,7 @@ func TestBuildChangeSourceStatementUsesVersionDialectAndEscapesSecrets(t *testin
 	}{
 		{
 			version:   "5.7.44",
-			want:      []string{"CHANGE MASTER TO", "MASTER_HOST='mysql\\'new'", "MASTER_USER='repl\\'user'", "MASTER_PASSWORD='p\\\\ass\\'word'", "MASTER_AUTO_POSITION=1"},
+			want:      []string{"SET SESSION sql_mode='NO_BACKSLASH_ESCAPES'; CHANGE MASTER TO", "MASTER_HOST='mysql''new'", "MASTER_USER='repl''user'", "MASTER_PASSWORD='p\\ass''word'", "MASTER_AUTO_POSITION=1"},
 			forbidden: []string{"GET_MASTER_PUBLIC_KEY", "GET_SOURCE_PUBLIC_KEY"},
 		},
 		{
@@ -38,7 +38,7 @@ func TestBuildChangeSourceStatementUsesVersionDialectAndEscapesSecrets(t *testin
 		},
 		{
 			version:   "8.4.10",
-			want:      []string{"CHANGE REPLICATION SOURCE TO", "SOURCE_HOST='mysql\\'new'", "SOURCE_USER='repl\\'user'", "SOURCE_PASSWORD='p\\\\ass\\'word'", "SOURCE_AUTO_POSITION=1", "GET_SOURCE_PUBLIC_KEY=1"},
+			want:      []string{"SET SESSION sql_mode='NO_BACKSLASH_ESCAPES'; CHANGE REPLICATION SOURCE TO", "SOURCE_HOST='mysql''new'", "SOURCE_USER='repl''user'", "SOURCE_PASSWORD='p\\ass''word'", "SOURCE_AUTO_POSITION=1", "GET_SOURCE_PUBLIC_KEY=1"},
 			forbidden: []string{"GET_MASTER_PUBLIC_KEY"},
 		},
 		{
@@ -73,7 +73,9 @@ type reparentNodeState struct {
 	superReadOnly          bool
 	sourceUUID             string
 	ioRunning              bool
+	ioConnecting           bool
 	sqlRunning             bool
+	lastSQLError           string
 	gtid                   string
 	startProbeFailures     int
 	remainingProbeFailures int
@@ -96,9 +98,12 @@ func newThreeNodeSQLClient(request adapter.OperationRequest) *threeNodeSQLClient
 		nodes[instance.Hostname] = &reparentNodeState{
 			uuid:     strings.ToLower(instance.EngineIdentity["server_uuid"]),
 			readOnly: instance.Role != model.RolePrimary, superReadOnly: instance.Role != model.RolePrimary,
-			sourceUUID: strings.ToLower(instance.Replication.SourceIdentity["server_uuid"]),
-			ioRunning:  instance.Role == model.RoleReplica, sqlRunning: instance.Role == model.RoleReplica,
-			gtid: request.Resolved.Primary.EngineMetadata["gtid_executed"],
+			sourceUUID:   strings.ToLower(instance.Replication.SourceIdentity["server_uuid"]),
+			ioRunning:    instance.Replication.IOThread == model.ThreadRunning,
+			ioConnecting: instance.Replication.IOThread == model.ThreadConnecting,
+			sqlRunning:   instance.Replication.SQLThread == model.ThreadRunning,
+			lastSQLError: instance.Replication.LastSQLError,
+			gtid:         request.Resolved.Primary.EngineMetadata["gtid_executed"],
 		}
 	}
 	return &threeNodeSQLClient{version: "8.0.46", nodes: nodes}
@@ -126,6 +131,8 @@ func (client *threeNodeSQLClient) Query(_ context.Context, endpoint adapter.Endp
 		ioState := "No"
 		if node.remainingProbeFailures > 0 {
 			node.remainingProbeFailures--
+		} else if node.ioConnecting {
+			ioState = "Connecting"
 		} else if node.ioRunning {
 			ioState = "Yes"
 		}
@@ -133,11 +140,16 @@ func (client *threeNodeSQLClient) Query(_ context.Context, endpoint adapter.Endp
 		if node.sqlRunning {
 			sqlState = "Yes"
 		}
+		lag := "0"
+		if node.ioConnecting {
+			lag = "NULL"
+		}
 		return []Row{{
 			"Source_UUID": node.sourceUUID, "Master_UUID": node.sourceUUID,
 			"Replica_IO_Running": ioState, "Replica_SQL_Running": sqlState,
 			"Slave_IO_Running": ioState, "Slave_SQL_Running": sqlState,
-			"Seconds_Behind_Source": "0", "Seconds_Behind_Master": "0", "Executed_Gtid_Set": node.gtid,
+			"Seconds_Behind_Source": lag, "Seconds_Behind_Master": lag, "Executed_Gtid_Set": node.gtid,
+			"Last_SQL_Error": node.lastSQLError,
 		}}, nil
 	case query == gtidPositionQuery:
 		return []Row{{"gtid_executed": node.gtid}}, nil
@@ -216,11 +228,13 @@ func (client *threeNodeSQLClient) Exec(_ context.Context, endpoint adapter.Endpo
 		}
 	case "STOP REPLICA", "STOP SLAVE":
 		node.ioRunning = false
+		node.ioConnecting = false
 		node.sqlRunning = false
 	case "RESET REPLICA ALL", "RESET SLAVE ALL":
 		node.sourceUUID = ""
 	case "START REPLICA", "START SLAVE":
 		node.ioRunning = true
+		node.ioConnecting = false
 		node.sqlRunning = true
 		node.remainingProbeFailures = node.startProbeFailures
 	case "START REPLICA IO_THREAD", "START SLAVE IO_THREAD":

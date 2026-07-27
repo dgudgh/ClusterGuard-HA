@@ -47,42 +47,61 @@ type nodeSyncVerifyPayload struct {
 	TaskID model.ResourceID `json:"task_id"`
 }
 
-func primaryLifecycleDonor(topology model.TopologySnapshot) (lifecycle.Donor, error) {
+func primaryLifecycleDonor(topology model.TopologySnapshot, engine model.Engine) (lifecycle.Donor, error) {
 	var primary model.DatabaseInstance
 	for _, instance := range topology.Instances {
-		if instance.Role != model.RolePrimary {
+		if instance.Role != model.RolePrimary || instance.Health.State != model.HealthHealthy {
 			continue
 		}
 		if primary.ResourceID != "" {
-			return lifecycle.Donor{}, fmt.Errorf("topology has multiple primary instances")
+			return lifecycle.Donor{}, fmt.Errorf("topology has multiple healthy primary instances")
 		}
 		primary = instance
 	}
-	if primary.ResourceID == "" || primary.Health.State != model.HealthHealthy {
+	if primary.ResourceID == "" {
 		return lifecycle.Donor{}, fmt.Errorf("a unique healthy current primary is required")
 	}
 	version := strings.TrimSpace(primary.EngineMetadata["version"])
-	serverUUID := strings.TrimSpace(primary.EngineIdentity["server_uuid"])
-	if version == "" || serverUUID == "" || primary.Port <= 0 {
+	if version == "" || primary.Port <= 0 {
 		return lifecycle.Donor{}, fmt.Errorf("current primary version and native identity are required")
 	}
-	return lifecycle.Donor{
+	donor := lifecycle.Donor{
 		InstanceID: primary.ResourceID, Hostname: primary.Hostname, IPAddress: primary.IPAddress,
-		Port: primary.Port, ServerUUID: serverUUID, Version: version,
-	}, nil
+		Port: primary.Port, Version: version,
+	}
+	switch engine {
+	case model.EngineMySQL:
+		donor.ServerUUID = strings.TrimSpace(primary.EngineIdentity["server_uuid"])
+		if donor.ServerUUID == "" {
+			return lifecycle.Donor{}, fmt.Errorf("current MySQL primary server_uuid is required")
+		}
+	case model.EnginePostgreSQL:
+		donor.SystemIdentifier = strings.TrimSpace(primary.EngineIdentity["system_identifier"])
+		if donor.SystemIdentifier == "" {
+			return lifecycle.Donor{}, fmt.Errorf("current PostgreSQL primary system_identifier is required")
+		}
+		donor.NativeResourceID = model.ResourceID(strings.TrimSpace(primary.EngineIdentity["resource_id"]))
+		if !model.ValidResourceID(donor.NativeResourceID) {
+			return lifecycle.Donor{}, fmt.Errorf("current PostgreSQL primary native resource_id is required")
+		}
+	default:
+		return lifecycle.Donor{}, fmt.Errorf("node lifecycle is unsupported for engine %s", engine)
+	}
+	return donor, nil
 }
 
 func (server *Server) prepareNodeSync(payload nodeSyncPayload) (lifecycle.Request, lifecycle.Plan, error) {
 	request := payload.request()
 	cluster, found := server.store.Cluster(request.ClusterID)
-	if !found || cluster.Engine != model.EngineMySQL {
-		return lifecycle.Request{}, lifecycle.Plan{}, fmt.Errorf("registered MySQL cluster is required")
+	if !found || (cluster.Engine != model.EngineMySQL && cluster.Engine != model.EnginePostgreSQL) {
+		return lifecycle.Request{}, lifecycle.Plan{}, fmt.Errorf("registered MySQL or PostgreSQL cluster is required")
 	}
+	request.Engine = cluster.Engine
 	topology, found := server.store.TopologySnapshot(request.ClusterID)
 	if !found || topology.ObservedAt.IsZero() {
 		return lifecycle.Request{}, lifecycle.Plan{}, fmt.Errorf("a current topology observation is required")
 	}
-	donor, err := primaryLifecycleDonor(topology)
+	donor, err := primaryLifecycleDonor(topology, cluster.Engine)
 	if err != nil {
 		return lifecycle.Request{}, lifecycle.Plan{}, err
 	}

@@ -34,23 +34,41 @@ func (UnsupportedFailoverSafetyProvider) Verify(context.Context, adapter.Resolve
 }
 
 func (adapterInstance *Adapter) selectedFailoverCandidate(resolved *adapter.ResolvedOperation) (model.CandidateAssessment, bool) {
+	for _, assessment := range adapterInstance.failoverCandidateAssessments(resolved) {
+		if assessment.InstanceID == resolved.Target.ResourceID {
+			return assessment, true
+		}
+	}
+	return model.CandidateAssessment{}, false
+}
+
+func (adapterInstance *Adapter) failoverCandidateAssessments(resolved *adapter.ResolvedOperation) []model.CandidateAssessment {
 	candidates := make([]model.DatabaseInstance, 0, len(resolved.Snapshot.Instances)-1)
 	for _, instance := range resolved.Snapshot.Instances {
 		if instance.ResourceID != resolved.Primary.ResourceID {
 			candidates = append(candidates, instance)
 		}
 	}
-	assessments := evaluateCandidates(adapter.CandidateRequest{
+	return evaluateCandidates(adapter.CandidateRequest{
 		Cluster: resolved.Cluster, Primary: resolved.Primary, Instances: candidates, Links: resolved.Snapshot.Links,
 		Probes: resolved.Snapshot.Probes, ObservedAt: resolved.Snapshot.ObservedAt,
-		Policy: model.CandidatePolicy{MaximumLagSeconds: 30, RequireGTID: true},
+		Policy: model.CandidatePolicy{MaximumLagSeconds: 30, RequireGTID: true, AllowSourceDisconnected: true},
 	})
-	for _, assessment := range assessments {
-		if assessment.InstanceID == resolved.Target.ResourceID {
-			return assessment, true
+}
+
+func (adapterInstance *Adapter) eligibleFailoverFollowers(resolved *adapter.ResolvedOperation) []model.DatabaseInstance {
+	eligible := make(map[model.ResourceID]bool)
+	for _, assessment := range adapterInstance.failoverCandidateAssessments(resolved) {
+		eligible[assessment.InstanceID] = assessment.Eligible
+	}
+	followers := make([]model.DatabaseInstance, 0)
+	for _, instance := range resolved.Snapshot.Instances {
+		if instance.ResourceID != resolved.Primary.ResourceID && instance.ResourceID != resolved.Target.ResourceID && eligible[instance.ResourceID] {
+			followers = append(followers, instance)
 		}
 	}
-	return model.CandidateAssessment{}, false
+	sort.Slice(followers, func(i, j int) bool { return followers[i].ResourceID < followers[j].ResourceID })
+	return followers
 }
 
 func (adapterInstance *Adapter) failoverPrecheck(ctx context.Context, request adapter.OperationRequest) ([]model.Check, error) {
@@ -89,13 +107,7 @@ func (adapterInstance *Adapter) failoverPlan(ctx context.Context, request adapte
 		{Index: 3, Name: "authorize_target_transition", Owner: "endpoint", TargetID: resolved.Target.ResourceID, Mutating: true, Postcondition: "target has an active transition lease"},
 		{Index: 4, Name: "promote_failover_target", Owner: "mysql", TargetID: resolved.Target.ResourceID, Mutating: true, Postcondition: "selected target is detached and writable"},
 	}
-	followers := make([]model.DatabaseInstance, 0)
-	for _, instance := range resolved.Snapshot.Instances {
-		if instance.ResourceID != resolved.Primary.ResourceID && instance.ResourceID != resolved.Target.ResourceID && instance.Health.State == model.HealthHealthy {
-			followers = append(followers, instance)
-		}
-	}
-	sort.Slice(followers, func(i, j int) bool { return followers[i].ResourceID < followers[j].ResourceID })
+	followers := adapterInstance.eligibleFailoverFollowers(resolved)
 	for _, follower := range followers {
 		steps = append(steps, model.PlanStep{Index: len(steps) + 1, Name: "reparent_failover_follower_" + string(follower.ResourceID), Owner: "mysql", TargetID: follower.ResourceID, Mutating: true, Postcondition: "reachable follower follows the new primary"})
 	}
@@ -165,7 +177,7 @@ func (adapterInstance *Adapter) failoverExecute(ctx context.Context, request ada
 	if err != nil {
 		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "pre_commit", err)
 	}
-	_, configured, err := probeReplication(ctx, adapterInstance.runner, targetEndpoint, resolved.Credentials)
+	replication, configured, err := probeReplication(ctx, adapterInstance.runner, targetEndpoint, resolved.Credentials)
 	if err != nil {
 		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "pre_commit", fmt.Errorf("failover target replication state is unavailable"))
 	}
@@ -182,6 +194,9 @@ func (adapterInstance *Adapter) failoverExecute(ctx context.Context, request ada
 	} else {
 		if !targetFenced || !configured {
 			return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "pre_commit", fmt.Errorf("failover target replication state is unavailable"))
+		}
+		if !safeLiveFailoverReplication(resolved.Primary, identity, replication) {
+			return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "pre_commit", fmt.Errorf("failover target live replication state is unsafe"))
 		}
 		if err := adapterInstance.executor.Exec(ctx, targetEndpoint, resolved.Credentials, dialect.StopReplication); err != nil {
 			return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "pre_commit", err)
@@ -217,10 +232,7 @@ func (adapterInstance *Adapter) failoverExecute(ctx context.Context, request ada
 		_ = adapterInstance.fenceInstance(ctx, targetEndpoint, resolved.Credentials)
 		return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", err)
 	}
-	for _, follower := range resolved.Snapshot.Instances {
-		if follower.ResourceID == resolved.Primary.ResourceID || follower.ResourceID == resolved.Target.ResourceID || follower.Health.State != model.HealthHealthy {
-			continue
-		}
+	for _, follower := range adapterInstance.eligibleFailoverFollowers(&resolved) {
 		step := "reparent_failover_follower_" + string(follower.ResourceID)
 		completed, progressErr := operationStepCompleted(ctx, request, step)
 		if progressErr != nil {
@@ -265,10 +277,7 @@ func (adapterInstance *Adapter) failoverVerify(ctx context.Context, request adap
 	} else {
 		verification.Checks = append(verification.Checks, model.Check{Name: "new_primary_writable", Status: model.CheckFail, Message: "selected target writable state is unverified"})
 	}
-	for _, follower := range resolved.Snapshot.Instances {
-		if follower.ResourceID == resolved.Primary.ResourceID || follower.ResourceID == resolved.Target.ResourceID || follower.Health.State != model.HealthHealthy {
-			continue
-		}
+	for _, follower := range adapterInstance.eligibleFailoverFollowers(resolved) {
 		checks, _ := adapterInstance.verifyFollower(ctx, follower, resolved.Target, resolved.Credentials)
 		verification.Checks = append(verification.Checks, checks...)
 	}
@@ -276,4 +285,22 @@ func (adapterInstance *Adapter) failoverVerify(ctx context.Context, request adap
 	verification.Checks = append(verification.Checks, sanitizeEndpointCheck(adapterInstance.endpointProvider.Verify(ctx, *resolved), "writer_endpoint_owner"))
 	verification.Passed = !planHasBlockingChecks(verification.Checks)
 	return verification, nil
+}
+
+func safeLiveFailoverReplication(primary model.DatabaseInstance, identity identityProbe, replication model.ReplicationStatus) bool {
+	if replication.SQLThread != model.ThreadRunning || (replication.IOThread != model.ThreadRunning && replication.IOThread != model.ThreadConnecting) || strings.TrimSpace(replication.LastSQLError) != "" {
+		return false
+	}
+	primaryUUID := strings.ToLower(strings.TrimSpace(primary.EngineIdentity["server_uuid"]))
+	sourceUUID := strings.ToLower(strings.TrimSpace(replication.SourceIdentity["server_uuid"]))
+	if primaryUUID == "" || sourceUUID != primaryUUID || !strings.EqualFold(strings.TrimSpace(identity.gtidMode), "ON") {
+		return false
+	}
+	primaryGTID, primaryErr := ParseGTIDSet(primary.EngineMetadata["gtid_executed"])
+	candidateGTID, candidateErr := ParseGTIDSet(replication.ExecutedPosition)
+	if primaryErr != nil || candidateErr != nil {
+		return false
+	}
+	comparison, err := CompareGTIDSets(primaryGTID, candidateGTID)
+	return err == nil && comparison.ErrantTransactions == 0
 }

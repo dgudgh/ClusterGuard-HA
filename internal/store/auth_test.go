@@ -135,6 +135,176 @@ func TestPlatformPasswordChangeAtomicallyRevokesAllSessions(t *testing.T) {
 	}
 }
 
+func TestPlatformAdminRecoveryAtomicallyForcesChangeRevokesSessionsAndAudits(t *testing.T) {
+	now := time.Date(2026, time.July, 17, 2, 0, 0, 0, time.UTC)
+	repository := NewMemory()
+	user := platformUserFixture(now)
+	user.MustChangePassword = false
+	created, err := repository.CreatePlatformUser(user)
+	if err != nil {
+		t.Fatalf("create platform user: %v", err)
+	}
+	session := platformSessionFixture(created, now)
+	if err := repository.PutPlatformSession(session); err != nil {
+		t.Fatalf("put session: %v", err)
+	}
+	recoveryID := model.NewResourceID()
+
+	recovered, applied, err := repository.ApplyPlatformAdminRecovery(PlatformAdminRecoveryRequest{
+		RecoveryID: recoveryID, Username: " ADMIN ",
+		PasswordHash:      "$argon2id$v=19$m=65536,t=3,p=2$cmVjb3ZlcnlzYWx0$cmVjb3ZlcnloYXNo",
+		ArtifactCreatedAt: now.Add(30 * time.Second),
+		RecoveredAt:       now.Add(time.Minute),
+	})
+	if err != nil || !applied {
+		t.Fatalf("recover platform administrator: applied=%t err=%v", applied, err)
+	}
+	if !recovered.MustChangePassword || recovered.AuthRevision != created.AuthRevision+1 ||
+		recovered.MetadataRevision != created.MetadataRevision+1 {
+		t.Fatalf("recovered user=%+v", recovered)
+	}
+	storedSession, found := repository.PlatformSession(session.ResourceID)
+	if !found || storedSession.RevokedAt.IsZero() || storedSession.MetadataRevision != session.MetadataRevision+1 {
+		t.Fatalf("recovered session=%+v found=%t", storedSession, found)
+	}
+	events := repository.SecurityEvents()
+	if len(events) != 1 || events[0].ResourceID != recoveryID || events[0].Kind != "password_recovered" ||
+		events[0].Outcome != "success" || events[0].UserID != created.ResourceID {
+		t.Fatalf("recovery security events=%+v", events)
+	}
+
+	repeated, applied, err := repository.ApplyPlatformAdminRecovery(PlatformAdminRecoveryRequest{
+		RecoveryID: recoveryID, Username: "admin",
+		PasswordHash:      "$argon2id$v=19$m=65536,t=3,p=2$cmVjb3ZlcnlzYWx0$cmVjb3ZlcnloYXNo",
+		ArtifactCreatedAt: now.Add(30 * time.Second),
+		RecoveredAt:       now.Add(2 * time.Minute),
+	})
+	if err != nil || applied || repeated.MetadataRevision != recovered.MetadataRevision || len(repository.SecurityEvents()) != 1 {
+		t.Fatalf("repeated recovery user=%+v applied=%t events=%+v err=%v", repeated, applied, repository.SecurityEvents(), err)
+	}
+}
+
+func TestPlatformAdminRecoveryRemainsOneTimeAfterSecurityEventRetention(t *testing.T) {
+	now := time.Date(2026, time.July, 17, 2, 30, 0, 0, time.UTC)
+	repository := NewMemory()
+	created, err := repository.CreatePlatformUser(platformUserFixture(now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	recoveryID := model.NewResourceID()
+	recovered, applied, err := repository.ApplyPlatformAdminRecovery(PlatformAdminRecoveryRequest{
+		RecoveryID: recoveryID, Username: created.Username,
+		PasswordHash:      "$argon2id$v=19$m=65536,t=3,p=2$cmVjb3ZlcnlzYWx0$cmVjb3ZlcnloYXNo",
+		ArtifactCreatedAt: now.Add(30 * time.Second),
+		RecoveredAt:       now.Add(time.Minute),
+	})
+	if err != nil || !applied {
+		t.Fatalf("initial recovery applied=%t err=%v", applied, err)
+	}
+
+	repository.mu.RLock()
+	trimmed := cloneDiscoverySnapshot(repository.snapshot)
+	revision := repository.stateRevision
+	repository.mu.RUnlock()
+	trimmed.SecurityEvents = nil
+	contents, err := encodeSnapshotRevision(trimmed, revision+1, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopened := NewMemory()
+	if err := reopened.RestoreReplicatedState(contents); err != nil {
+		t.Fatal(err)
+	}
+
+	repeated, applied, err := reopened.ApplyPlatformAdminRecovery(PlatformAdminRecoveryRequest{
+		RecoveryID: recoveryID, Username: created.Username,
+		PasswordHash:      "$argon2id$v=19$m=65536,t=3,p=2$cmVjb3ZlcnlzYWx0$cmVjb3ZlcnloYXNo",
+		ArtifactCreatedAt: now.Add(30 * time.Second),
+		RecoveredAt:       now.Add(2 * time.Minute),
+	})
+	if err != nil || applied || repeated.MetadataRevision != recovered.MetadataRevision {
+		t.Fatalf("retained recovery replay user=%+v applied=%t err=%v", repeated, applied, err)
+	}
+}
+
+func TestPlatformAdminRecoveryRejectsOlderArtifactAfterNewerRecoveryAndEventRetention(t *testing.T) {
+	now := time.Date(2026, time.July, 17, 3, 0, 0, 0, time.UTC)
+	repository := NewMemory()
+	created, err := repository.CreatePlatformUser(platformUserFixture(now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstID := model.NewResourceID()
+	firstHash := "$argon2id$v=19$m=65536,t=3,p=2$Zmlyc3RzYWx0$Zmlyc3RoYXNo"
+	firstCreatedAt := now.Add(time.Minute)
+	if _, applied, err := repository.ApplyPlatformAdminRecovery(PlatformAdminRecoveryRequest{
+		RecoveryID: firstID, Username: created.Username, PasswordHash: firstHash,
+		ArtifactCreatedAt: firstCreatedAt, RecoveredAt: now.Add(2 * time.Minute),
+	}); err != nil || !applied {
+		t.Fatalf("first recovery applied=%t err=%v", applied, err)
+	}
+
+	secondID := model.NewResourceID()
+	secondHash := "$argon2id$v=19$m=65536,t=3,p=2$c2Vjb25kc2FsdA$c2Vjb25kaGFzaA"
+	if _, applied, err := repository.ApplyPlatformAdminRecovery(PlatformAdminRecoveryRequest{
+		RecoveryID: secondID, Username: created.Username, PasswordHash: secondHash,
+		ArtifactCreatedAt: now.Add(3 * time.Minute), RecoveredAt: now.Add(4 * time.Minute),
+	}); err != nil || !applied {
+		t.Fatalf("second recovery applied=%t err=%v", applied, err)
+	}
+
+	repository.mu.RLock()
+	trimmed := cloneDiscoverySnapshot(repository.snapshot)
+	revision := repository.stateRevision
+	repository.mu.RUnlock()
+	trimmed.SecurityEvents = nil
+	contents, err := encodeSnapshotRevision(trimmed, revision+1, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopened := NewMemory()
+	if err := reopened.RestoreReplicatedState(contents); err != nil {
+		t.Fatal(err)
+	}
+
+	before, _ := reopened.PlatformUser(created.ResourceID)
+	_, applied, err := reopened.ApplyPlatformAdminRecovery(PlatformAdminRecoveryRequest{
+		RecoveryID: firstID, Username: created.Username, PasswordHash: firstHash,
+		ArtifactCreatedAt: firstCreatedAt, RecoveredAt: now.Add(5 * time.Minute),
+	})
+	if !errors.Is(err, ErrConflict) || applied {
+		t.Fatalf("older recovery replay applied=%t err=%v", applied, err)
+	}
+	after, _ := reopened.PlatformUser(created.ResourceID)
+	if after.PasswordHash != secondHash || after.MetadataRevision != before.MetadataRevision || after.AuthRevision != before.AuthRevision {
+		t.Fatalf("older recovery changed password version: before=%+v after=%+v", before, after)
+	}
+}
+
+func TestPlatformAdminRecoveryRejectsNonAdminWithoutMutation(t *testing.T) {
+	now := time.Date(2026, time.July, 17, 2, 0, 0, 0, time.UTC)
+	repository := NewMemory()
+	user := platformUserFixture(now)
+	user.Username = "operator"
+	user.Role = model.PlatformRoleOperator
+	created, err := repository.CreatePlatformUser(user)
+	if err != nil {
+		t.Fatalf("create platform user: %v", err)
+	}
+
+	_, _, err = repository.ApplyPlatformAdminRecovery(PlatformAdminRecoveryRequest{
+		RecoveryID: model.NewResourceID(), Username: "operator", PasswordHash: "replacement-hash",
+		ArtifactCreatedAt: now.Add(30 * time.Second), RecoveredAt: now.Add(time.Minute),
+	})
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("recover non-admin error=%v", err)
+	}
+	stored, _ := repository.PlatformUser(created.ResourceID)
+	if stored.PasswordHash != created.PasswordHash || stored.MetadataRevision != created.MetadataRevision || len(repository.SecurityEvents()) != 0 {
+		t.Fatalf("failed recovery mutated state: user=%+v events=%+v", stored, repository.SecurityEvents())
+	}
+}
+
 func TestPlatformPasswordChangeConflictLeavesUserAndSessionsUnchanged(t *testing.T) {
 	now := time.Date(2026, time.July, 16, 12, 0, 0, 0, time.UTC)
 	repository := NewMemory()

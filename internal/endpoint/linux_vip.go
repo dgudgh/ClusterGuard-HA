@@ -94,7 +94,8 @@ func (provider *LinuxVIPProvider) signedRequest(resolved adapter.ResolvedOperati
 	request := agent.Request{
 		Command: command, ClusterID: resolved.Cluster.ResourceID, OperationID: resolved.OperationID,
 		LeaseID: leaseID, PlanDigest: digest, ExpiresAt: provider.now().UTC().Add(30 * time.Second),
-		VIP: resource.endpoint.IPAddress, Interface: resource.resource.Interface, Prefix: resource.resource.Prefix,
+		Engine: resolved.Cluster.Engine,
+		VIP:    resource.endpoint.IPAddress, Interface: resource.resource.Interface, Prefix: resource.resource.Prefix,
 	}
 	signature, err := agent.SignRequest(request, provider.secret)
 	if err != nil {
@@ -265,28 +266,54 @@ func (provider *LinuxVIPProvider) AuthorizeTransition(ctx context.Context, resol
 		stopOnce.Do(func() { close(stopRenewal) })
 		<-renewalStopped
 	}
-	var finalizeOnce sync.Once
-	var finalizeErr error
+	var terminalMu sync.Mutex
+	terminalAction := ""
+	var terminalErr error
 	finalize := func(finalizeContext context.Context) error {
-		finalizeOnce.Do(func() {
-			stop()
-			if guarded.Err() != nil {
-				finalizeErr = context.Cause(guarded)
-				return
+		terminalMu.Lock()
+		defer terminalMu.Unlock()
+		if terminalAction != "" {
+			if terminalAction == "finalize" {
+				return terminalErr
 			}
-			_, finalizeErr = provider.leases.FinalizeTransition(finalizeContext, lease, provider.transitionLeaseTTL)
-			if finalizeErr != nil {
-				cancelCause(fmt.Errorf("finalize target transition lease: %w", finalizeErr))
+			return fmt.Errorf("target transition lease was already aborted")
+		}
+		stop()
+		if guarded.Err() != nil {
+			return context.Cause(guarded)
+		}
+		terminalAction = "finalize"
+		_, terminalErr = provider.leases.FinalizeTransition(finalizeContext, lease, provider.transitionLeaseTTL)
+		if terminalErr != nil {
+			cancelCause(fmt.Errorf("finalize target transition lease: %w", terminalErr))
+		}
+		return terminalErr
+	}
+	abort := func(abortContext context.Context) error {
+		terminalMu.Lock()
+		defer terminalMu.Unlock()
+		if terminalAction != "" {
+			if terminalAction == "abort" {
+				return terminalErr
 			}
-		})
-		return finalizeErr
+			return fmt.Errorf("target transition lease was already finalized")
+		}
+		stop()
+		terminalAction = "abort"
+		_, terminalErr = provider.leases.RollbackTransition(abortContext, lease, provider.transitionLeaseTTL)
+		if terminalErr != nil {
+			cancelCause(fmt.Errorf("rollback target transition lease: %w", terminalErr))
+		}
+		return terminalErr
 	}
 	return adapter.TransitionAuthorization{
 		Context: guarded,
+		LeaseID: lease.ResourceID,
 		Cancel: func() {
 			stop()
 			cancelCause(context.Canceled)
 		},
+		Abort:    abort,
 		Finalize: finalize,
 	}, nil
 }

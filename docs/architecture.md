@@ -7,12 +7,19 @@ adapters. Platform identity, inventory authority, workflow gates, persistence,
 API behavior, audit, and reports belong to the control kernel. Database
 protocol details belong to adapters.
 
-The current release enables MySQL discovery, health, metrics, candidate
-evaluation, guarded switchover and failover, former-primary rejoin, allowlisted
-repair, Linux VIP ownership, and node lifecycle. Mutation remains capability-
-and configuration-gated. PostgreSQL, Oracle, and SQL Server are registered
-through the same adapter contract and remain unsupported skeletons until their
-read-only implementations are complete.
+The current release enables MySQL and PostgreSQL discovery, health, native
+metrics, deterministic candidate evaluation, guarded switchover and failover,
+former-primary rejoin, allowlisted repair, Linux VIP ownership, and node
+lifecycle. Mutation remains capability- and configuration-gated: a missing
+majority, fence, restricted Agent policy, credential, endpoint provider, or
+current observation blocks the operation before the unsafe step. Oracle and SQL
+Server role transitions are integrated through their native HA control planes:
+Oracle Data Guard Broker via DGMGRL and SQL Server Always On via sqlcmd/T-SQL.
+SQL Server discovery, health, candidate, queue-metric, execution, and
+verification paths are implemented. Oracle discovery and guarded Broker
+execution are implemented through the restricted node Agent; Oracle metric
+expansion remains roadmap work. Mutation stays unavailable unless every native
+runner and safety dependency is configured.
 
 ## Resource Model
 
@@ -50,14 +57,20 @@ Native identity binds observations to the stable platform resource:
 | Engine | Native identity contract |
 | --- | --- |
 | MySQL | Instance identity is `server_uuid`; hostname and port are endpoints. |
-| PostgreSQL | Cluster identity will use `system_identifier`; node identity remains a platform UUID. |
-| Oracle | Database identity will use `DBID + DB_UNIQUE_NAME`; RAC instances are separate resources. |
-| SQL Server | Availability-group identity will use `group_id`; replica identity will use `replica_id`. |
+| PostgreSQL | Cluster identity is `system_identifier`; each node supplies an immutable `clusterguard.node_id` UUID and each standby supplies its primary node UUID. |
+| Oracle | Database identity uses `DBID + DB_UNIQUE_NAME`; RAC instances are separate resources. |
+| SQL Server | Availability-group identity uses `group_id`; replica identity uses `replica_id`. |
 
 When MySQL discovery sees a known `server_uuid` at new coordinates, the
 existing resource UUID is retained. Previous coordinates become aliases.
 Conflicting native identities, duplicate active endpoint ownership, and
 ambiguous alias updates are blocked instead of merged heuristically.
+
+PostgreSQL discovery applies the same rule with the configured node UUID. A
+hostname, IP, or port change updates the bound endpoint without creating a new
+instance. The complete refresh is rejected if active endpoints report mixed
+`system_identifier` values, if the value conflicts with the cluster's durable
+identity, or if the first identity bind lacks full active-endpoint coverage.
 
 ## Adapter Registry
 
@@ -73,8 +86,21 @@ reconciliation, guarded switchover/failover, former-primary rejoin, and
 allowlisted repair. MySQL execution is advertised only when both a mutating SQL
 executor and an executable writer-endpoint provider are configured. Node
 lifecycle is owned by the platform task engine rather than bypassing the common
-gates. The other three adapters currently return unsupported for database
-mutation.
+gates. The PostgreSQL adapter enables identity-safe discovery, topology, health,
+native metrics, metadata checks, timeline-aware candidate assessment, guarded
+switchover/failover, former-primary rewind and rejoin, allowlisted repair, and
+base-backup node synchronization. PostgreSQL mutation is advertised only when
+the required operation credentials, restricted node controller, endpoint
+provider, and cluster safety evidence are available. The Oracle adapter
+provides Data Guard Broker discovery, topology, health, standby candidate
+assessment, precheck, plan, execute, and verify when DGMGRL is configured;
+otherwise runner-backed reads and execution return `unsupported`. The SQL
+Server adapter provides Always On discovery, topology, health,
+synchronized-secondary candidate assessment, planned failover precheck, plan,
+execute, verify, and send/redo queue metrics when sqlcmd is configured; forced
+failover remains blocked without an explicit data-loss approval policy. Oracle
+metrics and Oracle/SQL Server node sync continue to return `unsupported` until
+their engine-specific implementations are added.
 
 Adapter topology links use engine-native source and target identities. The
 resource registry resolves those identities to immutable platform UUIDs before
@@ -116,6 +142,14 @@ Multiple registered aliases may resolve to one instance. Their observations
 share one platform UUID, and metrics persistence selects one deterministic,
 complete sample for the resolved instance in each cycle.
 
+A PostgreSQL refresh uses a separate engine-filtered scheduler and PostgreSQL
+credential set. It reads `system_identifier`, primary/recovery state, read-only
+state, WAL receiver status, receive/replay LSN, timeline, and replay lag from
+each authoritative endpoint. Cluster identity, endpoint bindings, instances,
+links, probes, and health are committed atomically. Missing node UUIDs, mixed
+system identities, malformed timelines or LSNs, and partial first binding fail
+closed without publishing a half-current topology.
+
 ## Candidate Intelligence
 
 Candidate assessment uses only the latest persisted complete topology and
@@ -139,6 +173,14 @@ deterministic ordering among eligible candidates. Candidate output is advisory
 for API readers; the automatic recovery controller may consume only the rank-one
 eligible result after a stable failure incident and all common gates.
 
+PostgreSQL candidates are standbys from the same durable cluster identity and
+timeline whose source UUID matches the observed primary. A candidate requires
+fresh bound probe evidence, streaming WAL receive, active replay, known lag,
+and promotion eligibility. Ranking prefers the greatest replay LSN, then lower
+lag, then stable resource UUID. The selected resource UUID and observation are
+bound into the immutable plan; execution revalidates both under the operation
+lock before promotion.
+
 ## Metrics
 
 MySQL discovery stores bounded cumulative and gauge samples. The metrics layer
@@ -151,6 +193,14 @@ buffer-pool hit ratio, and replication lag. It publishes:
 The Prometheus endpoint uses stable `cluster_id` and `instance_id` labels and
 can be scraped directly. ClusterGuard HA has no third-party monitoring runtime
 dependency.
+
+PostgreSQL stores native connection, transaction, deadlock, temporary-byte,
+block-read, block-hit, database-size, replication-client, cache-hit, and
+optional longest-transaction samples alongside topology-derived replication
+lag. Prometheus series use the `clusterguard_postgresql_*` namespace and Zabbix
+keys use `clusterguard.postgresql.*`. Unknown lag or optional transaction age
+is omitted rather than reported as zero, and PostgreSQL data is never labeled
+as MySQL.
 
 ## Platform Authentication
 
@@ -179,7 +229,7 @@ editing is outside the safety model.
 
 ## Workflow Gates
 
-All future database mutations must use:
+All implemented database mutations use:
 
 ```text
 DISCOVER -> PRECHECK -> PLAN -> SAFETY_GUARD -> LOCK -> APPROVE -> EXECUTE -> VERIFY -> AUDIT -> REPORT

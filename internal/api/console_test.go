@@ -68,6 +68,71 @@ func TestConsoleHasEightFocusedViewsWithChineseAsDefault(t *testing.T) {
 	}
 }
 
+func TestSettingsShowsAuthenticatedControlPlaneDiagnostics(t *testing.T) {
+	page := string(consoleHTML)
+	view := consoleView(t, "settings")
+	for _, label := range []string{"控制面状态", "本机控制器", "Raft 角色", "当前 Leader", "Quorum", "元数据版本", "运行时长", "活动操作", "节点任务"} {
+		if !strings.Contains(view, label) {
+			t.Fatalf("settings missing control-plane diagnostic %q", label)
+		}
+	}
+	for _, contract := range []string{
+		"controlPlane: null", "fetchResult('/api/v1/control-plane/status')", "renderControlPlaneStatus()",
+		`id="control-plane-ready"`, `id="control-plane-local"`, `id="control-plane-role"`, `id="control-plane-leader"`,
+		`id="control-plane-quorum"`, `id="control-plane-revision"`, `id="control-plane-uptime"`,
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing control-plane contract %q", contract)
+		}
+	}
+}
+
+func TestMobileNavigationKeepsHorizontalSwipeWithoutVisibleScrollbar(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{"scrollbar-width:none", "-ms-overflow-style:none", ".nav::-webkit-scrollbar { display:none; }"} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console mobile navigation missing %q", contract)
+		}
+	}
+}
+
+func TestMobileNavigationKeepsActiveViewVisible(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		"const keepActiveNavigationVisible = activeLink =>",
+		"window.matchMedia('(max-width: 900px)').matches",
+		"navigation.scrollTo({ left: targetLeft, behavior:'smooth' })",
+		"keepActiveNavigationVisible(activeLink)",
+		"window.requestAnimationFrame(() => keepActiveNavigationVisible(document.querySelector('[data-nav][aria-current=\"page\"]')))",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console mobile navigation missing active-view visibility contract %q", contract)
+		}
+	}
+}
+
+func TestConsoleAutoDismissesInformationalStatusButKeepsErrorsVisible(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		"liveStatusTimer: null",
+		"window.clearTimeout(state.liveStatusTimer)",
+		"state.liveStatusTimer = window.setTimeout(() =>",
+		"target.hidden = true",
+		"if (!isError)",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console live status lifecycle missing %q", contract)
+		}
+	}
+}
+
+func TestStatusBadgesDoNotWrapInCompactLayouts(t *testing.T) {
+	if !strings.Contains(string(consoleHTML), ".badge { display:inline-flex; min-height:24px; flex:0 0 auto;") ||
+		!strings.Contains(string(consoleHTML), "white-space:nowrap;") {
+		t.Fatal("status badges must remain legible on one line")
+	}
+}
+
 func TestOverviewContainsFleetSummaryButNoTopologyGraph(t *testing.T) {
 	view := consoleView(t, "overview")
 	for _, label := range []string{"集群总数", "健康集群", "异常集群", "数据库实例", "控制节点", "待复核操作"} {
@@ -144,6 +209,8 @@ func TestConsoleClusterManagementRegistersDiscoversAndSelectsNewCluster(t *testi
 		`id="cluster-display-name"`, `id="cluster-engine"`, `id="cluster-endpoint-list"`,
 		`id="add-cluster-endpoint"`, `id="submit-cluster-registration"`,
 		"const addClusterEndpointRow =", "removeClusterEndpointRow", "at least one database endpoint",
+		"const defaultPortForEngine =", "postgresql:5432", "applyClusterEngineDefaults",
+		"byId('cluster-engine').addEventListener('change', applyClusterEngineDefaults)",
 		"fetchResult('/api/v1/clusters', mutationOptions(payload))",
 		"fetchResult(`/api/v1/clusters/${registered.cluster.resource_id}/discover`, mutationOptions({}))",
 		"await loadClusters(registered.cluster.resource_id)",
@@ -202,14 +269,15 @@ func TestConsoleClusterManagementKeepsActionsVisibleOnSmallScreens(t *testing.T)
 func TestTopologyShowsStableAndNativeIdentityAndMetadataModal(t *testing.T) {
 	page := string(consoleHTML)
 	view := consoleView(t, "topology")
-	for _, label := range []string{"固定节点名", "资源 ID", "server_uuid", "主机名", "IP", "端口", "版本", "角色", "延迟", "VIP"} {
+	for _, label := range []string{"固定节点名", "资源 ID", "原生身份", "主机名", "IP", "端口", "版本", "角色", "延迟", "VIP"} {
 		if !strings.Contains(view, label) {
 			t.Fatalf("topology missing identity label %q", label)
 		}
 	}
 	for _, contract := range []string{
 		`id="open-metadata-modal"`, `role="dialog"`, `aria-modal="true"`, `id="metadata-modal"`,
-		"instance.node_id", "instance.resource_id", "instance.engine_identity.server_uuid",
+		"instance.node_id", "instance.resource_id", "const nativeIdentityLabel =", "const nativeIdentityValue =",
+		"identity.server_uuid", "identity.resource_id", "identity.system_identifier",
 		"/api/v1/metadata/reconcile/precheck", "/api/v1/metadata/reconcile/execute",
 		"/api/v1/clusters/${instance.cluster_id}/discover",
 		"endpoint_id: endpoint.resource_id", "metadata_revision",
@@ -220,6 +288,43 @@ func TestTopologyShowsStableAndNativeIdentityAndMetadataModal(t *testing.T) {
 	}
 	if !strings.Contains(view, "修改元数据") {
 		t.Fatal("metadata action must be scoped to the topology view")
+	}
+}
+
+func TestConsoleOffersNativePostgreSQLLifecycleOnlyWhenCapabilityIsReal(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		`id="mysql-lifecycle-fields"`, `id="postgresql-lifecycle-fields"`,
+		`id="node-postgresql-version"`, `id="node-postgresql-port"`,
+		`id="node-postgresql-service"`, `id="node-postgresql-data-directory"`,
+		"const lifecycleEngine =", "const postgresqlLifecycleAvailable =",
+		"postgresql_basebackup_available", "postgresql_rewind_available",
+		"const applyNodeLifecycleEngine =", "cluster.engine === 'postgresql'",
+		"pg_basebackup", "pg_rewind", "postgresql_version:", "postgresql_port:",
+		"postgresql_service:", "postgresql_data_directory:",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing native PostgreSQL lifecycle contract %q", contract)
+		}
+	}
+	if strings.Contains(page, "节点安装与同步当前仅支持 MySQL") {
+		t.Fatal("console still presents PostgreSQL lifecycle as a MySQL-only feature")
+	}
+}
+
+func TestAboutDistinguishesConfiguredExecutionFromReadOnlyAndUnsupportedAdapters(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		"const observable = ['discover', 'topology', 'health']",
+		"every(name => capability.features && capability.features[name] && capability.features[name].available)",
+		"const label = executable ? '可执行' : observable ? '只读可用' : '未实现'",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing truthful adapter capability contract %q", contract)
+		}
+	}
+	if strings.Contains(page, "只读 / 未实现") {
+		t.Fatal("console must not collapse read-only and unsupported adapters into one status")
 	}
 }
 
@@ -263,6 +368,28 @@ func TestOperationsUseSimpleLocalAntiMistakeLockWithoutBypassingBackendGates(t *
 		if !strings.Contains(page, contract) {
 			t.Fatalf("console missing anti-mistake lock contract %q", contract)
 		}
+	}
+}
+
+func TestOperationSelectorsUseDatabaseInstanceLabels(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		"const instanceDisplayName =",
+		"const candidateOptionLabel =",
+		"new Option(candidateOptionLabel(instance, assessment), instance.resource_id)",
+		"rejoin.append(new Option(instanceDisplayName(instance), instance.resource_id))",
+		"不可切换：${candidateBlockReason(assessment)}",
+		"存在 ${errant[1]} 个游离事务",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console operation selector must use database instance labels: missing %q", contract)
+		}
+	}
+	if strings.Contains(page, "new Option(nodeName(instance), instance.resource_id)") {
+		t.Fatal("console operation selector still exposes fixed control node names as database targets")
+	}
+	if strings.Contains(page, "const option = new Option(instanceDisplayName(instance), instance.resource_id)") {
+		t.Fatal("candidate selector must explain disabled candidate reasons instead of only greying them out")
 	}
 }
 
@@ -385,6 +512,21 @@ func TestConsoleUsesNativeMetricNamesAndFormatsBufferRatioAsPercent(t *testing.T
 	}
 	if strings.Contains(page, "threads_running") {
 		t.Fatal("console uses the wrong running-thread metric name")
+	}
+}
+
+func TestConsoleRendersEngineSpecificPostgreSQLMetrics(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		"const metricDefinitionForEngine =", "engine === 'postgresql'",
+		"active_connections", "transactions_total", "deadlocks_total",
+		"database_size_bytes", "buffer_cache_hit_ratio", "max_transaction_age_seconds",
+		"活动连接", "累计事务", "死锁", "数据库容量", "最长事务",
+		`id="metrics-head-row"`,
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing PostgreSQL metric contract %q", contract)
+		}
 	}
 }
 
@@ -645,11 +787,85 @@ func TestConsoleOrganizesNodeWorkflowAndFiltersOperationEvidence(t *testing.T) {
 	}
 }
 
+func TestConsoleDerivesTopologyAttentionFromObservedInstanceHealth(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		"const topologyAttentionReasons = () =>",
+		"instance.health && instance.health.state",
+		"const attentionReasons = topologyAttentionReasons();",
+		"attentionReasons.length ? '需关注' : '健康'",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("topology must not report healthy when observed instances are degraded or unknown: missing %q", contract)
+		}
+	}
+}
+
+func TestConsoleUsesClusterDisplayNameForLifecycleTasks(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		"const clusterDisplayName = clusterID =>",
+		"['集群', clusterDisplayName(task.cluster_id)]",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("node lifecycle evidence must show the registered cluster name instead of an internal UUID: missing %q", contract)
+		}
+	}
+}
+
+func TestConsolePaginatesLargeOperationLogs(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		`id="load-more-operation-log"`,
+		"const operationLogPageSize = 50;",
+		"logVisibleLimit: operationLogPageSize",
+		"const visibleOperations = operations.slice(0, state.logVisibleLimit);",
+		"state.logVisibleLimit += operationLogPageSize;",
+		"state.logVisibleLimit = operationLogPageSize;",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("operation evidence must remain responsive with large histories: missing %q", contract)
+		}
+	}
+}
+
+func TestConsoleConsolidatesAutomaticRecoveryRetriesByIncident(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		"const automaticRecoveryIncidentKey = operation =>",
+		"record.requested_by !== 'clusterguard-automatic-recovery'",
+		"const consolidateOperationIncidents = operations =>",
+		"incident_attempt_count",
+		"个事件 · ${rawRecordCount} 条原始记录",
+		"原始返回（最近一次，事故共",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("automatic recovery retries must remain auditable without flooding the operator timeline: missing %q", contract)
+		}
+	}
+}
+
+func TestConsoleExplainsFollowerQuorumAndUsesControllerNames(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		"const controllerDisplayName = controllerID =>",
+		"const controlRoleText = role =>",
+		"status.leader_known ? `${status.voter_count || 0} 个投票节点，由 Leader 确认`",
+		"controllerDisplayName(status.local_controller_id)",
+		"controllerDisplayName(status.leader_id)",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("control-plane status must be readable without misreporting follower quorum: missing %q", contract)
+		}
+	}
+}
+
 func TestConsoleFormatsMetricsAndOrdersEvidenceForOperators(t *testing.T) {
 	page := string(consoleHTML)
 	for _, contract := range []string{
 		"const formatMetric = (value, digits = 2) =>",
-		"value('qps')", "value('connections', 0)", "value('running_threads', 0)",
+		"{ label:'QPS', key:'qps', aggregate:'sum' }", "{ label:'连接', key:'connections', aggregate:'sum', digits:0 }",
+		"{ label:'运行线程', key:'running_threads', aggregate:'sum', digits:0 }", "formatMetricValue(item, aggregate(item))",
 		"const newestOperationFirst =", "filteredOperations().slice().sort(newestOperationFirst)",
 		"const newestTaskFirst =", "state.lifecycleTasks.slice().sort(newestTaskFirst).slice(0, 8)",
 		`id="lifecycle-task-count"`,

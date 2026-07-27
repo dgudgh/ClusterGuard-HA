@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"errors"
+	"log"
 	"sync"
 	"time"
 
@@ -33,16 +34,42 @@ type Scheduler struct {
 	authority ScheduledMutationAuthority
 	interval  time.Duration
 	timeout   time.Duration
+	onError   func(error)
 }
 
-func NewScheduler(clusters ScheduledClusterSource, refresher ScheduledRefresher, authority ScheduledMutationAuthority, interval, timeout time.Duration) *Scheduler {
+type SchedulerOption func(*Scheduler)
+
+func WithSchedulerErrorHandler(handler func(error)) SchedulerOption {
+	return func(scheduler *Scheduler) {
+		if handler != nil {
+			scheduler.onError = handler
+		}
+	}
+}
+
+func NewScheduler(clusters ScheduledClusterSource, refresher ScheduledRefresher, authority ScheduledMutationAuthority, interval, timeout time.Duration, options ...SchedulerOption) *Scheduler {
 	if interval <= 0 {
 		interval = 5 * time.Second
 	}
 	if timeout <= 0 {
 		timeout = 4 * time.Second
 	}
-	return &Scheduler{clusters: clusters, refresher: refresher, authority: authority, interval: interval, timeout: timeout}
+	scheduler := &Scheduler{
+		clusters: clusters, refresher: refresher, authority: authority, interval: interval, timeout: timeout,
+		onError: func(err error) { log.Printf("scheduled topology discovery failed: %v", err) },
+	}
+	for _, option := range options {
+		if option != nil {
+			option(scheduler)
+		}
+	}
+	return scheduler
+}
+
+func (scheduler *Scheduler) reportError(err error) {
+	if err != nil && !errors.Is(err, context.Canceled) && scheduler != nil && scheduler.onError != nil {
+		scheduler.onError(err)
+	}
 }
 
 func (scheduler *Scheduler) RunOnce(ctx context.Context) error {
@@ -115,7 +142,7 @@ func (scheduler *Scheduler) Run(ctx context.Context) {
 	if ctx == nil {
 		return
 	}
-	_ = scheduler.RunOnce(ctx)
+	scheduler.reportError(scheduler.RunOnce(ctx))
 	ticker := time.NewTicker(scheduler.interval)
 	defer ticker.Stop()
 	for {
@@ -123,7 +150,7 @@ func (scheduler *Scheduler) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			_ = scheduler.RunOnce(ctx)
+			scheduler.reportError(scheduler.RunOnce(ctx))
 		}
 	}
 }

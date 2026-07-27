@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 
 	"clusterguard.io/ha/internal/store"
@@ -18,17 +19,26 @@ import (
 )
 
 const (
-	sessionSecretBytes = 32
-	csrfSecretBytes    = 32
-	sessionTokenPrefix = "cgs_"
-	defaultSessionTTL  = 8 * time.Hour
+	sessionSecretBytes              = 32
+	csrfSecretBytes                 = 32
+	sessionTokenPrefix              = "cgs_"
+	defaultSessionTTL               = 8 * time.Hour
+	maximumLoginFailures            = 5
+	maximumConcurrentPasswordChecks = 4
+	LoginThrottleRetryAfter         = time.Minute
 )
 
 var (
 	ErrInvalidCredentials = errors.New("invalid username or password")
 	ErrUnauthenticated    = errors.New("authentication is required")
 	ErrInvalidCSRF        = errors.New("CSRF validation failed")
+	ErrLoginThrottled     = errors.New("login is temporarily throttled")
 )
+
+type loginFailureState struct {
+	failures     int
+	blockedUntil time.Time
+}
 
 type PasswordHasher interface {
 	Hash(string) (string, error)
@@ -52,11 +62,14 @@ type LoginResult struct {
 }
 
 type Service struct {
-	store      *store.Repository
-	hasher     PasswordHasher
-	random     io.Reader
-	now        func() time.Time
-	sessionTTL time.Duration
+	store          *store.Repository
+	hasher         PasswordHasher
+	random         io.Reader
+	now            func() time.Time
+	sessionTTL     time.Duration
+	loginMu        sync.Mutex
+	loginFailures  map[string]loginFailureState
+	passwordChecks chan struct{}
 }
 
 func New(repository *store.Repository, hasher PasswordHasher, random io.Reader, now func() time.Time, sessionTTL time.Duration) *Service {
@@ -69,11 +82,64 @@ func New(repository *store.Repository, hasher PasswordHasher, random io.Reader, 
 	if sessionTTL <= 0 {
 		sessionTTL = defaultSessionTTL
 	}
-	return &Service{store: repository, hasher: hasher, random: random, now: now, sessionTTL: sessionTTL}
+	return &Service{
+		store: repository, hasher: hasher, random: random, now: now, sessionTTL: sessionTTL,
+		loginFailures:  make(map[string]loginFailureState),
+		passwordChecks: make(chan struct{}, maximumConcurrentPasswordChecks),
+	}
 }
 
 func (service *Service) configured() bool {
-	return service != nil && service.store != nil && service.hasher != nil && service.random != nil && service.now != nil && service.sessionTTL > 0
+	return service != nil && service.store != nil && service.hasher != nil && service.random != nil && service.now != nil &&
+		service.sessionTTL > 0 && service.loginFailures != nil && service.passwordChecks != nil
+}
+
+func (service *Service) loginFailureKey(username string, found bool) string {
+	if !found {
+		return "<unknown>"
+	}
+	return strings.ToLower(strings.TrimSpace(username))
+}
+
+func (service *Service) beginPasswordCheck(key string) error {
+	now := service.now().UTC()
+	service.loginMu.Lock()
+	state := service.loginFailures[key]
+	if !state.blockedUntil.IsZero() && now.Before(state.blockedUntil) {
+		service.loginMu.Unlock()
+		return ErrLoginThrottled
+	}
+	if !state.blockedUntil.IsZero() {
+		delete(service.loginFailures, key)
+	}
+	service.loginMu.Unlock()
+	select {
+	case service.passwordChecks <- struct{}{}:
+		return nil
+	default:
+		return ErrLoginThrottled
+	}
+}
+
+func (service *Service) endPasswordCheck() {
+	<-service.passwordChecks
+}
+
+func (service *Service) recordLoginFailure(key string) {
+	service.loginMu.Lock()
+	defer service.loginMu.Unlock()
+	state := service.loginFailures[key]
+	state.failures++
+	if state.failures >= maximumLoginFailures {
+		state.blockedUntil = service.now().UTC().Add(LoginThrottleRetryAfter)
+	}
+	service.loginFailures[key] = state
+}
+
+func (service *Service) clearLoginFailures(key string) {
+	service.loginMu.Lock()
+	delete(service.loginFailures, key)
+	service.loginMu.Unlock()
 }
 
 func (service *Service) EnsureBootstrapAdmin(ctx context.Context) (model.PlatformUser, error) {
@@ -162,16 +228,24 @@ func (service *Service) Login(ctx context.Context, username, password string) (L
 		return LoginResult{}, fmt.Errorf("authentication service is not configured")
 	}
 	user, found := service.store.PlatformUserByUsername(username)
+	failureKey := service.loginFailureKey(username, found)
+	if err := service.beginPasswordCheck(failureKey); err != nil {
+		return LoginResult{}, err
+	}
+	defer service.endPasswordCheck()
 	if !found {
 		if dummy, available := service.store.PlatformUserByUsername(DefaultAdminUsername); available {
 			_ = service.hasher.Verify(dummy.PasswordHash, password)
 		}
+		service.recordLoginFailure(failureKey)
 		return LoginResult{}, ErrInvalidCredentials
 	}
 	passwordValid := service.hasher.Verify(user.PasswordHash, password)
 	if user.Disabled || !passwordValid {
+		service.recordLoginFailure(failureKey)
 		return LoginResult{}, ErrInvalidCredentials
 	}
+	service.clearLoginFailures(failureKey)
 	sessionSecret := make([]byte, sessionSecretBytes)
 	if _, err := io.ReadFull(service.random, sessionSecret); err != nil {
 		return LoginResult{}, fmt.Errorf("generate session secret: %w", err)

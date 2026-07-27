@@ -129,6 +129,57 @@ func callAgentReconcile(t *testing.T, server *Server, request agent.ReconcileReq
 	return response
 }
 
+type agentReconcileMutationRPCStub struct {
+	calls         int
+	leaderAddress string
+	payload       agent.ReconcileRequest
+	decodeErr     error
+}
+
+func (stub *agentReconcileMutationRPCStub) Forward(writer http.ResponseWriter, request *http.Request, leaderAddress string) error {
+	stub.calls++
+	stub.leaderAddress = leaderAddress
+	stub.decodeErr = json.NewDecoder(request.Body).Decode(&stub.payload)
+	writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": map[string]bool{"proxied": true}})
+	return nil
+}
+
+func TestAgentReconcileForwardsVerifiedBodyToRaftLeader(t *testing.T) {
+	repository := store.NewMemory()
+	leaderID := model.NewResourceID()
+	authority := &apiMutationAuthorityStub{
+		err: errors.New("not leader"), leaderID: leaderID,
+		leaderAddress: "controller-a:10009", leaderAPI: "https://controller-a:3000",
+	}
+	rpc := &agentReconcileMutationRPCStub{}
+	server := newAPIServer(
+		t, repository, adapter.NewUnsupported(model.EngineMySQL), &fakeRefresher{},
+		WithMutationAuthority(authority), WithAgentReconcileSecret("agent-secret"), WithMutationRPC(rpc),
+	)
+	payload := agent.ReconcileRequest{
+		ClusterID: model.NewResourceID(), InstanceID: model.NewResourceID(),
+		RequestedAt: time.Now().UTC(), Nonce: "forward-agent-0001",
+	}
+	if err := agent.SignReconcileRequest(&payload, "agent-secret"); err != nil {
+		t.Fatal(err)
+	}
+
+	response := callAgentReconcile(t, server, payload)
+	if response.Code != http.StatusOK {
+		t.Fatalf("forwarded reconcile status=%d body=%s", response.Code, response.Body.String())
+	}
+	if rpc.calls != 1 || rpc.leaderAddress != "https://controller-a:3000" {
+		t.Fatalf("forward calls=%d leader=%q", rpc.calls, rpc.leaderAddress)
+	}
+	if rpc.decodeErr != nil {
+		t.Fatalf("forwarded reconcile body is not decodable: %v", rpc.decodeErr)
+	}
+	if rpc.payload.ClusterID != payload.ClusterID || rpc.payload.InstanceID != payload.InstanceID ||
+		rpc.payload.Nonce != payload.Nonce || rpc.payload.Signature != payload.Signature {
+		t.Fatalf("forwarded payload=%+v want=%+v", rpc.payload, payload)
+	}
+}
+
 func TestAgentReconcileRequiresLeaderQuorumAndReturnsSignedOwnershipDecision(t *testing.T) {
 	now := time.Now().UTC()
 	repository := store.NewMemory()

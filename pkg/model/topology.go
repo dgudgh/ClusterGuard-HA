@@ -5,9 +5,10 @@ import "time"
 type ThreadState string
 
 const (
-	ThreadUnknown ThreadState = "unknown"
-	ThreadRunning ThreadState = "running"
-	ThreadStopped ThreadState = "stopped"
+	ThreadUnknown    ThreadState = "unknown"
+	ThreadRunning    ThreadState = "running"
+	ThreadConnecting ThreadState = "connecting"
+	ThreadStopped    ThreadState = "stopped"
 )
 
 type ReplicationStatus struct {
@@ -17,6 +18,8 @@ type ReplicationStatus struct {
 	LagSeconds        *int64         `json:"lag_seconds,omitempty"`
 	RetrievedPosition string         `json:"retrieved_position,omitempty"`
 	ExecutedPosition  string         `json:"executed_position,omitempty"`
+	LastIOError       string         `json:"last_io_error,omitempty"`
+	LastSQLError      string         `json:"last_sql_error,omitempty"`
 	LastError         string         `json:"last_error,omitempty"`
 }
 
@@ -52,8 +55,9 @@ type TopologySnapshot struct {
 }
 
 type CandidatePolicy struct {
-	MaximumLagSeconds int64 `json:"maximum_lag_seconds"`
-	RequireGTID       bool  `json:"require_gtid"`
+	MaximumLagSeconds       int64 `json:"maximum_lag_seconds"`
+	RequireGTID             bool  `json:"require_gtid"`
+	AllowSourceDisconnected bool  `json:"allow_source_disconnected,omitempty"`
 }
 
 type CandidateAssessment struct {

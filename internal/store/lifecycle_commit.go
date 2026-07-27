@@ -22,8 +22,8 @@ func isLifecycleDataTarget(target lifecycle.TargetPlan) bool {
 }
 
 func validateLifecycleInstance(target lifecycle.TargetPlan, cluster model.DatabaseCluster, instance model.DatabaseInstance) error {
-	if instance.ClusterID != cluster.ResourceID || instance.Engine != cluster.Engine || cluster.Engine != model.EngineMySQL {
-		return validationError("verified lifecycle instance does not match the MySQL cluster")
+	if instance.ClusterID != cluster.ResourceID || instance.Engine != cluster.Engine || (cluster.Engine != model.EngineMySQL && cluster.Engine != model.EnginePostgreSQL) {
+		return validationError("verified lifecycle instance does not match the database cluster")
 	}
 	if instance.NodeID != target.NodeID {
 		return validationError("verified lifecycle instance node UUID does not match the fixed target")
@@ -34,16 +34,39 @@ func validateLifecycleInstance(target lifecycle.TargetPlan, cluster model.Databa
 	if target.IPAddress != "" && strings.TrimSpace(instance.IPAddress) != strings.TrimSpace(target.IPAddress) {
 		return validationError("verified lifecycle instance IP address does not match the planned target")
 	}
-	if target.MySQLPort <= 0 || instance.Port != target.MySQLPort {
+	expectedPort, ok := lifecycleTargetPort(target, cluster.Engine)
+	if !ok || instance.Port != expectedPort {
 		return validationError("verified lifecycle instance port does not match the planned target")
 	}
-	if instance.Role != model.RoleReplica || instance.Health.State != model.HealthHealthy || instance.Replication.IOThread != model.ThreadRunning || instance.Replication.SQLThread != model.ThreadRunning {
+	if !verifiedLifecycleReplicaRole(cluster.Engine, instance.Role) || instance.Health.State != model.HealthHealthy || instance.Replication.IOThread != model.ThreadRunning || instance.Replication.SQLThread != model.ThreadRunning {
 		return validationError("verified lifecycle instance is not a healthy read-only replication target")
 	}
 	if _, err := identity.InstanceKey(instance.Engine, instance.EngineIdentity); err != nil {
 		return validationError("verified lifecycle instance native identity is invalid")
 	}
 	return nil
+}
+
+func lifecycleTargetPort(target lifecycle.TargetPlan, engine model.Engine) (int, bool) {
+	switch engine {
+	case model.EngineMySQL:
+		return target.MySQLPort, target.MySQLPort > 0
+	case model.EnginePostgreSQL:
+		return target.PostgreSQLPort, target.PostgreSQLPort > 0
+	default:
+		return 0, false
+	}
+}
+
+func verifiedLifecycleReplicaRole(engine model.Engine, role model.InstanceRole) bool {
+	switch engine {
+	case model.EngineMySQL:
+		return role == model.RoleReplica
+	case model.EnginePostgreSQL:
+		return role == model.RoleReplica || role == model.RoleStandby
+	default:
+		return false
+	}
 }
 
 func lifecycleCommitTargets(task lifecycle.Task, result lifecycle.ExecutionResult, cluster model.DatabaseCluster) ([]lifecycleCommitTarget, error) {
@@ -210,10 +233,10 @@ func commitLifecycleDataTarget(candidate *snapshot, task lifecycle.Task, target 
 	}
 	if preservedInstanceID != "" {
 		if !result.Updated || result.Created || result.Instance.ResourceID != preservedInstanceID || result.Instance.NodeID != target.NodeID {
-			return conflictError("verified MySQL native identity could not be resynchronized in place")
+			return conflictError("verified database native identity could not be resynchronized in place")
 		}
 	} else if !result.Created || result.Instance.NodeID != target.NodeID {
-		return conflictError("verified MySQL native identity already belongs to active metadata")
+		return conflictError("verified database native identity already belongs to active metadata")
 	}
 
 	if endpoint.ResourceID == "" {

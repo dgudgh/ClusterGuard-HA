@@ -8,7 +8,10 @@ import (
 )
 
 func TestNodeLifecycleScriptsAreSyntaxValidAndExposeStructuredStages(t *testing.T) {
-	paths := []string{"clusterguard-node-lifecycle.sh", "clusterguard-mysql-install.sh", "clusterguard-mysql-sync.sh"}
+	paths := []string{
+		"clusterguard-node-lifecycle.sh", "clusterguard-mysql-install.sh", "clusterguard-mysql-sync.sh",
+		"clusterguard-postgresql-install.sh", "clusterguard-postgresql-sync.sh", "clusterguard-mysql-probe-cleanup.sh",
+	}
 	for _, path := range paths {
 		if output, err := exec.Command("bash", "-n", path).CombinedOutput(); err != nil {
 			t.Fatalf("bash -n %s: %v\n%s", path, err, output)
@@ -27,6 +30,148 @@ func TestNodeLifecycleScriptsAreSyntaxValidAndExposeStructuredStages(t *testing.
 	for _, forbidden := range []string{"orchestrator", "orchctl", "ProxySQL", "DBProxy", "RouteRepair"} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("lifecycle script contains forbidden legacy term %q", forbidden)
+		}
+	}
+	for _, required := range []string{
+		`port="$(jq -r '.ssh_port // 22'`,
+		`result+=(-p "${port}")`,
+		`result+=(-P "${port}")`,
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("lifecycle SSH transport does not honor configured ports: missing %q", required)
+		}
+	}
+}
+
+func TestMySQLProbeCleanupConvergesLegacySchemasToSingleCanonicalSchema(t *testing.T) {
+	contents, err := os.ReadFile("clusterguard-mysql-probe-cleanup.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	if strings.Contains(text, `--password="${password}"`) || !strings.Contains(text, `MYSQL_PWD="${password}"`) {
+		t.Fatal("probe cleanup helper must keep MySQL credentials out of process arguments")
+	}
+	for _, required := range []string{
+		"canonical_probe_schema",
+		"clusterguard_probe",
+		"cg_rc28_test",
+		"clusterguard_ha_test",
+		"clusterguard_matrix_probe",
+		"clusterguard_validation",
+		"DROP DATABASE IF EXISTS",
+		"CREATE DATABASE IF NOT EXISTS",
+		"probe_heartbeat",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("MySQL probe cleanup script missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"DROP DATABASE IF EXISTS `mysql`", "DROP DATABASE IF EXISTS `sys`", "DROP DATABASE IF EXISTS `performance_schema`"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("MySQL probe cleanup script must not target system schema %q", forbidden)
+		}
+	}
+}
+
+func TestPostgreSQLLifecycleUsesProtectedCredentialsAtomicSyncAndNativeVerification(t *testing.T) {
+	lifecycleContents, err := os.ReadFile("clusterguard-node-lifecycle.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{".request.engine", "clusterguard-postgresql-install.sh", "clusterguard-postgresql-sync.sh", "CG_POSTGRESQL_ADMIN_PASSWORD", "CG_POSTGRESQL_REPLICATION_PASSWORD"} {
+		if !strings.Contains(string(lifecycleContents), required) {
+			t.Fatalf("lifecycle PostgreSQL dispatch missing %q", required)
+		}
+	}
+	for _, path := range []string{"clusterguard-postgresql-install.sh", "clusterguard-postgresql-sync.sh"} {
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		text := string(contents)
+		for _, required := range []string{"PGPASSFILE", "chmod 0600"} {
+			if !strings.Contains(text, required) {
+				t.Fatalf("%s does not protect PostgreSQL credentials: missing %q", path, required)
+			}
+		}
+		for _, forbidden := range []string{"password=", "PGPASSWORD="} {
+			if strings.Contains(text, forbidden) {
+				t.Fatalf("%s exposes PostgreSQL credentials through %q", path, forbidden)
+			}
+		}
+	}
+	syncContents, err := os.ReadFile("clusterguard-postgresql-sync.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"pg_basebackup", "pg_rewind", "pg_is_in_recovery", "system_identifier", ".clusterguard-backup", "unexpectedly owns the cluster VIP"} {
+		if !strings.Contains(string(syncContents), required) {
+			t.Fatalf("PostgreSQL synchronization safety invariant missing %q", required)
+		}
+	}
+	installContents, err := os.ReadFile("clusterguard-postgresql-install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	installText := string(installContents)
+	for _, required := range []string{
+		`chown root:postgres "${config_directory}"`,
+		`chown postgres:postgres "${pass_file}"`,
+		"BEGIN ClusterGuard managed PostgreSQL settings",
+		`allowed_cidr="${target_ipv4%.*}.0/24"`,
+	} {
+		if !strings.Contains(installText, required) {
+			t.Fatalf("PostgreSQL installer is missing enterprise invariant %q", required)
+		}
+	}
+	syncText := string(syncContents)
+	for _, required := range []string{
+		`replication_pass="${target_pass}"`,
+		`chown postgres:postgres "${target_pass}"`,
+		`printf '*:*:*:postgres:%s\n'`,
+		`printf '*:*:*:%s:%s\n' "${replication_user}"`,
+	} {
+		if !strings.Contains(syncText, required) {
+			t.Fatalf("PostgreSQL synchronization passfile contract is missing %q", required)
+		}
+	}
+	if !strings.Contains(installText, `printf '*:*:*:postgres:%s\n'`) {
+		t.Fatal("PostgreSQL installer does not persist cluster-wide admin passfile access for pg_rewind")
+	}
+}
+
+func TestPostgreSQLLifecycleRequiresCanonicalDistinctPlatformIdentities(t *testing.T) {
+	installContents, err := os.ReadFile("clusterguard-postgresql-install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	syncContents, err := os.ReadFile("clusterguard-postgresql-sync.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalPattern := `[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}`
+	if !strings.Contains(string(installContents), canonicalPattern) {
+		t.Fatal("PostgreSQL installer does not require a canonical platform UUID")
+	}
+	syncText := string(syncContents)
+	if !strings.Contains(syncText, canonicalPattern) ||
+		!strings.Contains(syncText, `valid_platform_uuid "${node_id}"`) ||
+		!strings.Contains(syncText, `valid_platform_uuid "${source_node_id}"`) {
+		t.Fatal("PostgreSQL synchronization does not validate both platform UUIDs canonically")
+	}
+	if !strings.Contains(syncText, `[[ "${source_node_id}" != "${node_id}" ]]`) {
+		t.Fatal("PostgreSQL synchronization does not reject a donor that is also the target resource")
+	}
+	for _, required := range []string{
+		`valid_platform_uuid "${cluster_id}"`,
+		`[[ "${node_name}" =~ ^[A-Za-z0-9._-]+$ ]]`,
+		`[[ "${target_host}" =~ ^[A-Za-z0-9._-]+$ ]]`,
+		`PostgreSQL donor endpoint cannot equal the target endpoint`,
+		`"$(pgpass_escape "${source_host}")"`,
+	} {
+		if !strings.Contains(syncText, required) {
+			t.Fatalf("PostgreSQL synchronization input boundary is missing %q", required)
 		}
 	}
 }
@@ -139,6 +284,33 @@ func TestLogicalDumpPurgesStaleTargetSchemasBeforeImport(t *testing.T) {
 	}
 }
 
+func TestLogicalDumpExcludesLegacyProbeSchemas(t *testing.T) {
+	syncContents, err := os.ReadFile("clusterguard-mysql-sync.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	syncText := string(syncContents)
+	targetPurge := strings.Index(syncText, "target_database_hex")
+	donorDump := strings.Index(syncText, "user_databases")
+	if targetPurge < 0 || donorDump < 0 || targetPurge > donorDump {
+		t.Fatal("logical rebuild must purge target schemas before selecting donor dump schemas")
+	}
+	for _, legacySchema := range []string{
+		"cg_rc28_test",
+		"clusterguard_ha_test",
+		"clusterguard_matrix_probe",
+		"clusterguard_validation",
+	} {
+		legacyPosition := strings.Index(syncText, legacySchema)
+		if legacyPosition < 0 {
+			t.Fatalf("logical rebuild must exclude legacy probe schema %q from donor dump", legacySchema)
+		}
+		if legacyPosition < donorDump {
+			t.Fatalf("logical rebuild must still purge legacy target schema %q before donor filtering", legacySchema)
+		}
+	}
+}
+
 func TestMySQLInstallRaisesHostErrorToleranceForControllerProbes(t *testing.T) {
 	installContents, err := os.ReadFile("clusterguard-mysql-install.sh")
 	if err != nil {
@@ -169,6 +341,26 @@ func TestExistingRegisteredMySQLCanBeResynchronizedWithoutManagedInstallPath(t *
 	for _, required := range []string{"CG_MYSQL_CLIENT", "command -v mysql", "SELECT @@basedir", `bin/mysqldump`} {
 		if !strings.Contains(syncText, required) {
 			t.Fatalf("sync helper cannot use the registered instance's native client tools: missing %q", required)
+		}
+	}
+}
+
+func TestExistingRegisteredPostgreSQLCanBeRebuiltWithSystemToolchain(t *testing.T) {
+	installContents, err := os.ReadFile("clusterguard-postgresql-install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	installText := string(installContents)
+	for _, required := range []string{
+		"existing PostgreSQL toolchain accepted for rebuild synchronization",
+		"command -v pg_basebackup",
+		"command -v pg_rewind",
+		"command -v pg_controldata",
+		"systemctl cat",
+		"ln -sfn",
+	} {
+		if !strings.Contains(installText, required) {
+			t.Fatalf("install helper cannot adopt an existing registered PostgreSQL toolchain: missing %q", required)
 		}
 	}
 }

@@ -20,31 +20,31 @@ type workflowAuthorityStub struct{ err error }
 
 func (stub workflowAuthorityStub) RequireMutationAuthority(context.Context) error { return stub.err }
 
-func (stub compositeLockStub) Acquire(context.Context, model.Operation) (func(), error) {
-	return stub.acquire()
+func (stub compositeLockStub) Acquire(ctx context.Context, _ model.Operation) (context.Context, func(), error) {
+	return stub.acquire(ctx)
 }
 
-func (stub compositeLockStub) AcquireCluster(context.Context, model.ResourceID) (func(), error) {
-	return stub.acquire()
+func (stub compositeLockStub) AcquireCluster(ctx context.Context, _ model.ResourceID) (context.Context, func(), error) {
+	return stub.acquire(ctx)
 }
 
-func (stub compositeLockStub) acquire() (func(), error) {
+func (stub compositeLockStub) acquire(ctx context.Context) (context.Context, func(), error) {
 	*stub.calls = append(*stub.calls, "acquire:"+stub.name)
 	if stub.failure != nil {
-		return nil, stub.failure
+		return nil, nil, stub.failure
 	}
-	return func() { *stub.calls = append(*stub.calls, "release:"+stub.name) }, nil
+	return ctx, func() { *stub.calls = append(*stub.calls, "release:"+stub.name) }, nil
 }
 
 func TestMemoryLockReleaseIsIdempotent(t *testing.T) {
 	locks := NewMemoryLocks()
 	clusterID := model.NewResourceID()
-	firstRelease, err := locks.AcquireCluster(context.Background(), clusterID)
+	_, firstRelease, err := locks.AcquireCluster(context.Background(), clusterID)
 	if err != nil {
 		t.Fatalf("acquire first lock: %v", err)
 	}
 	firstRelease()
-	secondRelease, err := locks.AcquireCluster(context.Background(), clusterID)
+	_, secondRelease, err := locks.AcquireCluster(context.Background(), clusterID)
 	if err != nil {
 		t.Fatalf("acquire second lock: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestMemoryLockReleaseIsIdempotent(t *testing.T) {
 	firstRelease()
 	blockedContext, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
-	if thirdRelease, err := locks.AcquireCluster(blockedContext, clusterID); !errors.Is(err, context.DeadlineExceeded) {
+	if _, thirdRelease, err := locks.AcquireCluster(blockedContext, clusterID); !errors.Is(err, context.DeadlineExceeded) {
 		if err == nil {
 			thirdRelease()
 		}
@@ -64,7 +64,7 @@ func TestMemoryLockReleaseIsIdempotent(t *testing.T) {
 func TestMemoryLockWaitsForCurrentHolderAndHonorsContext(t *testing.T) {
 	locks := NewMemoryLocks()
 	clusterID := model.NewResourceID()
-	firstRelease, err := locks.AcquireCluster(context.Background(), clusterID)
+	_, firstRelease, err := locks.AcquireCluster(context.Background(), clusterID)
 	if err != nil {
 		t.Fatalf("acquire first lock: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestMemoryLockWaitsForCurrentHolderAndHonorsContext(t *testing.T) {
 	waitContext, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	go func() {
-		release, acquireErr := locks.AcquireCluster(waitContext, clusterID)
+		_, release, acquireErr := locks.AcquireCluster(waitContext, clusterID)
 		acquired <- result{release: release, err: acquireErr}
 	}()
 
@@ -108,7 +108,7 @@ func TestCompositeLocksAcquireLocalThenQuorumAndReleaseInReverse(t *testing.T) {
 		compositeLockStub{name: "local", calls: &calls},
 		compositeLockStub{name: "quorum", calls: &calls},
 	)
-	release, err := locks.Acquire(context.Background(), model.Operation{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, ClusterID: model.NewResourceID()})
+	_, release, err := locks.Acquire(context.Background(), model.Operation{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, ClusterID: model.NewResourceID()})
 	if err != nil {
 		t.Fatalf("acquire composite lock: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestCompositeLocksReleaseLocalWhenQuorumAcquireFails(t *testing.T) {
 		compositeLockStub{name: "local", calls: &calls},
 		compositeLockStub{name: "quorum", calls: &calls, failure: errors.New("no quorum")},
 	)
-	if _, err := locks.AcquireCluster(context.Background(), model.NewResourceID()); err == nil {
+	if _, _, err := locks.AcquireCluster(context.Background(), model.NewResourceID()); err == nil {
 		t.Fatal("composite lock ignored quorum failure")
 	}
 	want := []string{"acquire:local", "acquire:quorum", "release:local"}

@@ -21,8 +21,8 @@ func (integrationGates) RevalidateObservation(context.Context, model.Operation, 
 	return nil
 }
 func (integrationGates) Evaluate(context.Context, model.Operation) error { return nil }
-func (integrationGates) Acquire(context.Context, model.Operation) (func(), error) {
-	return func() {}, nil
+func (integrationGates) Acquire(ctx context.Context, _ model.Operation) (context.Context, func(), error) {
+	return ctx, func() {}, nil
 }
 func (integrationGates) Validate(context.Context, model.Operation, string) error { return nil }
 func (integrationGates) Consume(_ context.Context, operation model.OperationRecord, _ string) (model.ResourceID, model.OperationRecord, error) {

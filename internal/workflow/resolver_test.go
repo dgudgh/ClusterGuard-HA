@@ -91,6 +91,138 @@ func TestRepositoryResolverResolvesUUIDScopedContext(t *testing.T) {
 	}
 }
 
+func TestRepositoryResolverAllowsAdministrativeOnlyCredentialsForOracle(t *testing.T) {
+	reader, request := resolvedOperationFixture()
+	reader.cluster.Engine = model.EngineOracle
+	request.Operation.Engine = model.EngineOracle
+	for index := range reader.snapshot.Instances {
+		reader.snapshot.Instances[index].Engine = model.EngineOracle
+	}
+
+	resolver := RepositoryResolver{
+		Reader: reader,
+		Credentials: CredentialProviderFunc(func(context.Context, model.DatabaseCluster) (adapter.OperationCredentials, error) {
+			return adapter.OperationCredentials{
+				Administrative: adapter.Credentials{Username: "clusterguard_dg", Password: "secret"},
+			}, nil
+		}),
+	}
+	resolved, err := resolver.Resolve(context.Background(), request)
+	if err != nil {
+		t.Fatalf("resolve Oracle operation: %v", err)
+	}
+	if resolved.Resolved == nil || resolved.Resolved.Credentials.Username != "clusterguard_dg" {
+		t.Fatalf("Oracle administrative credentials were not injected: %+v", resolved.Resolved)
+	}
+	if resolved.Resolved.ReplicationCredentials.Username != "" {
+		t.Fatalf("Oracle operation unexpectedly required replication credentials: %+v", resolved.Resolved.ReplicationCredentials)
+	}
+}
+
+func TestRepositoryResolverStillRequiresReplicationCredentialsForMySQL(t *testing.T) {
+	reader, request := resolvedOperationFixture()
+	resolver := RepositoryResolver{
+		Reader: reader,
+		Credentials: CredentialProviderFunc(func(context.Context, model.DatabaseCluster) (adapter.OperationCredentials, error) {
+			return adapter.OperationCredentials{
+				Administrative: adapter.Credentials{Username: "clusterguard", Password: "secret"},
+			}, nil
+		}),
+	}
+	_, err := resolver.Resolve(context.Background(), request)
+	if err == nil || !strings.Contains(err.Error(), "replication credentials") {
+		t.Fatalf("MySQL missing replication credential error=%v", err)
+	}
+}
+
+func TestRepositoryResolverResolvesFormerPrimaryRejoinWithFailedHistoricalPrimary(t *testing.T) {
+	reader, request := resolvedOperationFixture()
+	formerPrimaryID := reader.snapshot.Instances[0].ResourceID
+	currentPrimaryID := reader.snapshot.Instances[1].ResourceID
+	observedAt := reader.snapshot.ObservedAt
+
+	reader.cluster.Engine = model.EnginePostgreSQL
+	reader.snapshot.Instances[0].Engine = model.EnginePostgreSQL
+	reader.snapshot.Instances[0].Health = model.Health{
+		State: model.HealthUnknown, ObservedAt: observedAt,
+	}
+	reader.snapshot.Instances[1].Engine = model.EnginePostgreSQL
+	reader.snapshot.Instances[1].Role = model.RolePrimary
+	reader.snapshot.Instances[1].Health = model.Health{
+		State: model.HealthHealthy, ObservedAt: observedAt,
+	}
+	reader.snapshot.Instances[1].EngineMetadata = map[string]string{
+		"in_recovery": "false", "transaction_read_only": "false",
+	}
+	reader.snapshot.Probes = []model.ProbeStatus{
+		{
+			InstanceID: formerPrimaryID,
+			Health:     model.Health{State: model.HealthUnknown, ObservedAt: observedAt},
+		},
+		{
+			InstanceID: currentPrimaryID, DiscoveryObservedAt: observedAt,
+			Health: model.Health{State: model.HealthHealthy, ObservedAt: observedAt},
+		},
+	}
+	request.Operation.Engine = model.EnginePostgreSQL
+	request.Operation.Kind = model.OperationFormerPrimaryRejoin
+	request.TargetID = formerPrimaryID
+
+	resolver := RepositoryResolver{
+		Reader: reader,
+		Credentials: CredentialProviderFunc(func(context.Context, model.DatabaseCluster) (adapter.OperationCredentials, error) {
+			return adapter.OperationCredentials{
+				Administrative: adapter.Credentials{Username: "clusterguard"},
+				Replication:    adapter.Credentials{Username: "replicator"},
+			}, nil
+		}),
+	}
+	resolved, err := resolver.Resolve(context.Background(), request)
+	if err != nil {
+		t.Fatalf("resolve former-primary rejoin: %v", err)
+	}
+	if resolved.Resolved.Primary.ResourceID != currentPrimaryID || resolved.Resolved.Target.ResourceID != formerPrimaryID {
+		t.Fatalf("resolved rejoin resources=%+v", resolved.Resolved)
+	}
+}
+
+func TestRepositoryResolverRejectsAmbiguousFormerPrimaryRejoinEvidence(t *testing.T) {
+	reader, request := resolvedOperationFixture()
+	formerPrimaryID := reader.snapshot.Instances[0].ResourceID
+	currentPrimaryID := reader.snapshot.Instances[1].ResourceID
+	observedAt := reader.snapshot.ObservedAt
+
+	reader.cluster.Engine = model.EnginePostgreSQL
+	for index := range reader.snapshot.Instances {
+		reader.snapshot.Instances[index].Engine = model.EnginePostgreSQL
+		reader.snapshot.Instances[index].Role = model.RolePrimary
+		reader.snapshot.Instances[index].Health = model.Health{State: model.HealthHealthy, ObservedAt: observedAt}
+		reader.snapshot.Instances[index].EngineMetadata = map[string]string{
+			"in_recovery": "false", "transaction_read_only": "false",
+		}
+	}
+	reader.snapshot.Probes = []model.ProbeStatus{
+		{InstanceID: formerPrimaryID, DiscoveryObservedAt: observedAt, Health: model.Health{State: model.HealthHealthy, ObservedAt: observedAt}},
+		{InstanceID: currentPrimaryID, DiscoveryObservedAt: observedAt, Health: model.Health{State: model.HealthHealthy, ObservedAt: observedAt}},
+	}
+	request.Operation.Engine = model.EnginePostgreSQL
+	request.Operation.Kind = model.OperationFormerPrimaryRejoin
+	request.TargetID = formerPrimaryID
+
+	resolver := RepositoryResolver{
+		Reader: reader,
+		Credentials: CredentialProviderFunc(func(context.Context, model.DatabaseCluster) (adapter.OperationCredentials, error) {
+			return adapter.OperationCredentials{
+				Administrative: adapter.Credentials{Username: "clusterguard"},
+				Replication:    adapter.Credentials{Username: "replicator"},
+			}, nil
+		}),
+	}
+	if _, err := resolver.Resolve(context.Background(), request); err == nil || !strings.Contains(err.Error(), "exactly one current primary") {
+		t.Fatalf("ambiguous rejoin evidence error=%v", err)
+	}
+}
+
 func TestRepositoryResolverUsesCapturedSnapshotInsteadOfLaterRepositoryState(t *testing.T) {
 	reader, request := resolvedOperationFixture()
 	captured := reader.snapshot

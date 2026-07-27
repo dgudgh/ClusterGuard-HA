@@ -24,6 +24,7 @@ type PlatformUser struct {
 	Disabled           bool         `json:"disabled"`
 	AuthRevision       uint64       `json:"auth_revision"`
 	PasswordChangedAt  time.Time    `json:"password_changed_at,omitempty"`
+	LastRecoveryID     ResourceID   `json:"last_recovery_id,omitempty"`
 }
 
 type PlatformSession struct {

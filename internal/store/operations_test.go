@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -147,6 +148,22 @@ func TestOperationTransitionPersistsAttemptsAndRejectsStaleRevision(t *testing.T
 	}
 	if _, err := repository.TransitionOperation(created.ResourceID, created.MetadataRevision, model.OperationTransition{Stage: model.StagePlan, Status: model.OperationRunning}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("stale transition revision was accepted: %v", err)
+	}
+}
+
+func TestPlannedOperationHistoryDoesNotExhaustRunningCapacity(t *testing.T) {
+	repository := NewMemory()
+	for index := 0; index < maximumActiveOperations; index++ {
+		request := operationFixture()
+		request.IdempotencyKey = fmt.Sprintf("dormant-plan-%d", index)
+		if _, _, err := repository.CreateOperation(request); err != nil {
+			t.Fatalf("create dormant plan %d: %v", index, err)
+		}
+	}
+	request := operationFixture()
+	request.IdempotencyKey = "plan-after-history"
+	if _, _, err := repository.CreateOperation(request); err != nil {
+		t.Fatalf("dormant plan history exhausted execution capacity: %v", err)
 	}
 }
 

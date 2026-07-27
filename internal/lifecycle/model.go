@@ -16,38 +16,47 @@ const (
 type SyncMethod string
 
 const (
-	SyncAuto        SyncMethod = "auto"
-	SyncClone       SyncMethod = "clone"
-	SyncXtraBackup  SyncMethod = "xtrabackup"
-	SyncLogicalDump SyncMethod = "logical_dump"
+	SyncAuto                 SyncMethod = "auto"
+	SyncClone                SyncMethod = "clone"
+	SyncXtraBackup           SyncMethod = "xtrabackup"
+	SyncLogicalDump          SyncMethod = "logical_dump"
+	SyncPostgreSQLRewind     SyncMethod = "pg_rewind"
+	SyncPostgreSQLBaseBackup SyncMethod = "pg_basebackup"
 )
 
 type Target struct {
-	NodeID       model.ResourceID `json:"node_id,omitempty"`
-	NodeName     string           `json:"node_name"`
-	Kind         model.NodeKind   `json:"kind"`
-	Hostname     string           `json:"hostname"`
-	IPAddress    string           `json:"ip_address,omitempty"`
-	SSHUser      string           `json:"ssh_user,omitempty"`
-	SSHPort      int              `json:"ssh_port,omitempty"`
-	MySQLVersion string           `json:"mysql_version,omitempty"`
-	MySQLPort    int              `json:"mysql_port,omitempty"`
-	ServerID     uint64           `json:"server_id,omitempty"`
-	PackageName  string           `json:"package_name,omitempty"`
-	Rebuild      bool             `json:"rebuild,omitempty"`
+	NodeID                  model.ResourceID `json:"node_id,omitempty"`
+	NodeName                string           `json:"node_name"`
+	Kind                    model.NodeKind   `json:"kind"`
+	Hostname                string           `json:"hostname"`
+	IPAddress               string           `json:"ip_address,omitempty"`
+	SSHUser                 string           `json:"ssh_user,omitempty"`
+	SSHPort                 int              `json:"ssh_port,omitempty"`
+	MySQLVersion            string           `json:"mysql_version,omitempty"`
+	MySQLPort               int              `json:"mysql_port,omitempty"`
+	PostgreSQLVersion       string           `json:"postgresql_version,omitempty"`
+	PostgreSQLPort          int              `json:"postgresql_port,omitempty"`
+	PostgreSQLService       string           `json:"postgresql_service,omitempty"`
+	PostgreSQLDataDirectory string           `json:"postgresql_data_directory,omitempty"`
+	ServerID                uint64           `json:"server_id,omitempty"`
+	PackageName             string           `json:"package_name,omitempty"`
+	Rebuild                 bool             `json:"rebuild,omitempty"`
 }
 
 type Donor struct {
-	InstanceID model.ResourceID `json:"instance_id,omitempty"`
-	Hostname   string           `json:"hostname,omitempty"`
-	IPAddress  string           `json:"ip_address,omitempty"`
-	Port       int              `json:"port,omitempty"`
-	ServerUUID string           `json:"server_uuid,omitempty"`
-	Version    string           `json:"version,omitempty"`
+	InstanceID       model.ResourceID `json:"instance_id,omitempty"`
+	NativeResourceID model.ResourceID `json:"native_resource_id,omitempty"`
+	Hostname         string           `json:"hostname,omitempty"`
+	IPAddress        string           `json:"ip_address,omitempty"`
+	Port             int              `json:"port,omitempty"`
+	ServerUUID       string           `json:"server_uuid,omitempty"`
+	SystemIdentifier string           `json:"system_identifier,omitempty"`
+	Version          string           `json:"version,omitempty"`
 }
 
 type Request struct {
 	ClusterID              model.ResourceID `json:"cluster_id"`
+	Engine                 model.Engine     `json:"engine,omitempty"`
 	Action                 Action           `json:"action"`
 	Targets                []Target         `json:"targets"`
 	Donor                  Donor            `json:"donor,omitempty"`
@@ -58,16 +67,20 @@ type Request struct {
 }
 
 type ExecutionSecrets struct {
-	SSHPassword         string `json:"-"`
-	MySQLRootPassword   string `json:"-"`
-	ReplicationPassword string `json:"-"`
+	SSHPassword                   string `json:"-"`
+	MySQLRootPassword             string `json:"-"`
+	ReplicationPassword           string `json:"-"`
+	PostgreSQLAdminPassword       string `json:"-"`
+	PostgreSQLReplicationPassword string `json:"-"`
 }
 
 type Capabilities struct {
-	SourceVersion      string          `json:"source_version,omitempty"`
-	CloneAvailable     bool            `json:"clone_available"`
-	XtraBackupVersions map[string]bool `json:"xtrabackup_versions,omitempty"`
-	LogicalDumpAllowed bool            `json:"logical_dump_allowed"`
+	SourceVersion                 string          `json:"source_version,omitempty"`
+	CloneAvailable                bool            `json:"clone_available"`
+	XtraBackupVersions            map[string]bool `json:"xtrabackup_versions,omitempty"`
+	LogicalDumpAllowed            bool            `json:"logical_dump_allowed"`
+	PostgreSQLBaseBackupAvailable bool            `json:"postgresql_basebackup_available"`
+	PostgreSQLRewindAvailable     bool            `json:"postgresql_rewind_available"`
 }
 
 type TargetPlan struct {

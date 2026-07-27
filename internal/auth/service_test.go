@@ -90,6 +90,25 @@ func TestLoginUsesGenericFailureAndIssuesHashedSession(t *testing.T) {
 	}
 }
 
+func TestLoginThrottlesRepeatedFailuresAndRecoversAfterCooldown(t *testing.T) {
+	service, _, now := newTestService(t)
+	if _, err := service.EnsureBootstrapAdmin(context.Background()); err != nil {
+		t.Fatalf("ensure bootstrap admin: %v", err)
+	}
+	for attempt := 0; attempt < maximumLoginFailures; attempt++ {
+		if _, err := service.Login(context.Background(), DefaultAdminUsername, "wrong-password"); !errors.Is(err, ErrInvalidCredentials) {
+			t.Fatalf("failed login %d error=%v", attempt, err)
+		}
+	}
+	if _, err := service.Login(context.Background(), DefaultAdminUsername, DefaultAdminPassword); !errors.Is(err, ErrLoginThrottled) {
+		t.Fatalf("throttled login error=%v", err)
+	}
+	*now = now.Add(LoginThrottleRetryAfter + time.Second)
+	if _, err := service.Login(context.Background(), DefaultAdminUsername, DefaultAdminPassword); err != nil {
+		t.Fatalf("login after cooldown: %v", err)
+	}
+}
+
 func TestAuthenticateChecksExpiryRevocationAndUserRevision(t *testing.T) {
 	service, repository, now := newTestService(t)
 	user, err := service.EnsureBootstrapAdmin(context.Background())
