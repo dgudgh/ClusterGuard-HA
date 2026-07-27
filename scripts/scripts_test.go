@@ -71,9 +71,11 @@ func installerArguments(bundle, config, environment, agentConfig string) []strin
 func TestDeliveryScriptsAreSyntaxValid(t *testing.T) {
 	paths := []string{
 		"clusterguard-install.sh",
+		"clusterguard-configure.sh",
 		"clusterguard-agent-stdio.sh",
 		"clusterguard-preflight.sh",
 		"build-clusterguard-bundle.sh",
+		"build-clusterguard-rpm.sh",
 		"clusterguard-smoke.sh",
 		"clusterguard-ha-matrix.sh",
 	}
@@ -1021,11 +1023,185 @@ func TestBundleBuildContainsInstallableRuntimeAndChecksums(t *testing.T) {
 	text := string(contents)
 	for _, expected := range []string{
 		"cmd/clusterguard", "cmd/cgctl", "cmd/clusterguard-agent", "SHA256SUMS",
-		"clusterguard-install.sh", "clusterguard-agent-stdio.sh", "clusterguard-mysql-probe-cleanup.sh",
-		"docs/offline-install.md", "OFFLINE-INSTALL.md", "COPYFILE_DISABLE=1", "--no-xattrs",
+		"clusterguard-install.sh", "clusterguard-configure.sh", "clusterguard-agent-stdio.sh",
+		"clusterguard-mysql-probe-cleanup.sh", "docs/offline-install.md", "docs/zh-CN/*.md",
+		"OFFLINE-INSTALL.md", "COPYFILE_DISABLE=1", "--no-xattrs",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("bundle builder missing %q", expected)
+		}
+	}
+}
+
+func TestRPMConfigurationRollsBackWhenServiceActivationFails(t *testing.T) {
+	input := t.TempDir()
+	config := filepath.Join(input, "clusterguard.json")
+	environment := filepath.Join(input, "clusterguard.env")
+	writeFile(t, config, `{"mysql":{"enabled":false}}`, 0o600)
+	writeFile(t, environment, "CG_CONTROL_TOKEN=new-secret\n", 0o600)
+
+	installRoot := filepath.Join(t.TempDir(), "root")
+	existingConfig := filepath.Join(installRoot, "etc", "clusterguard", "clusterguard.json")
+	existingEnvironment := filepath.Join(installRoot, "etc", "clusterguard", "clusterguard.env")
+	writeFile(t, existingConfig, `{"mysql":{"enabled":true},"marker":"old"}`, 0o640)
+	writeFile(t, existingEnvironment, "CG_CONTROL_TOKEN=old-secret\n", 0o640)
+
+	fakeSystemctl := filepath.Join(t.TempDir(), "systemctl")
+	writeExecutable(t, fakeSystemctl, `#!/usr/bin/env bash
+if [[ "$*" == "restart clusterguard-ha.service" ]]; then
+  exit 1
+fi
+exit 0
+`)
+	fakeJQ := filepath.Join(t.TempDir(), "jq")
+	writeExecutable(t, fakeJQ, "#!/usr/bin/env bash\nexit 0\n")
+	command := exec.Command("bash", "clusterguard-configure.sh",
+		"--role", "controller",
+		"--node-name", "cg-node-0001",
+		"--node-id", "11111111-1111-4111-8111-111111111111",
+		"--config", config,
+		"--env-file", environment,
+		"--execute",
+	)
+	command.Env = append(os.Environ(),
+		"CG_INSTALL_ROOT="+installRoot,
+		"CG_CONFIGURE_SKIP_RUNTIME=1",
+		"CG_SYSTEMCTL="+fakeSystemctl,
+		"CG_JQ_BINARY="+fakeJQ,
+	)
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatalf("configuration unexpectedly succeeded:\n%s", output)
+	}
+	if !strings.Contains(string(output), "已自动恢复原配置") {
+		t.Fatalf("rollback diagnostic missing:\n%s", output)
+	}
+	restoredConfig, readErr := os.ReadFile(existingConfig)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if !strings.Contains(string(restoredConfig), `"marker":"old"`) {
+		t.Fatalf("configuration was not restored: %s", restoredConfig)
+	}
+	restoredEnvironment, readErr := os.ReadFile(existingEnvironment)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(restoredEnvironment) != "CG_CONTROL_TOKEN=old-secret\n" {
+		t.Fatalf("environment was not restored: %s", restoredEnvironment)
+	}
+	if _, statErr := os.Stat(filepath.Join(installRoot, "etc", "clusterguard", "node.json")); !os.IsNotExist(statErr) {
+		t.Fatalf("new node identity remained after rollback: %v", statErr)
+	}
+}
+
+func TestRPMDeliveryIsCompleteAndDoesNotStartUnconfiguredServices(t *testing.T) {
+	requiredFiles := []string{
+		"../packaging/rpm/nfpm.yaml",
+		"../packaging/rpm/postinstall.sh",
+		"../packaging/rpm/preremove.sh",
+		"../packaging/rpm/postremove.sh",
+		"build-clusterguard-rpm.sh",
+		"clusterguard-configure.sh",
+	}
+	for _, path := range requiredFiles {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("required RPM delivery file %s: %v", path, err)
+		}
+	}
+
+	configuration, err := os.ReadFile("../packaging/rpm/nfpm.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(configuration)
+	for _, expected := range []string{
+		"name: clusterguard-ha",
+		"/usr/local/bin/clusterguard",
+		"/usr/local/bin/cgctl",
+		"/usr/local/bin/clusterguard-agent",
+		"/usr/local/sbin/clusterguard-configure",
+		"/usr/lib/systemd/system/clusterguard-ha.service",
+		"/etc/clusterguard/clusterguard.json.example",
+		"type: config|noreplace",
+		"/usr/share/doc/clusterguard-ha/离线安装手册.md",
+		"/usr/share/doc/clusterguard-ha/数据库接入手册.md",
+		"/usr/share/doc/clusterguard-ha/运维操作手册.md",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("RPM configuration is missing %q", expected)
+		}
+	}
+
+	postinstall, err := os.ReadFile("../packaging/rpm/postinstall.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	postinstallText := string(postinstall)
+	for _, forbidden := range []string{
+		"systemctl enable --now clusterguard-ha",
+		"systemctl start clusterguard-ha",
+		"systemctl restart clusterguard-ha",
+	} {
+		if strings.Contains(postinstallText, forbidden) {
+			t.Fatalf("RPM postinstall starts an unconfigured service: %q", forbidden)
+		}
+	}
+	for _, expected := range []string{
+		"useradd",
+		"/var/lib/clusterguard",
+		"/var/log/clusterguard",
+		"systemctl daemon-reload",
+		"clusterguard-configure",
+	} {
+		if !strings.Contains(postinstallText, expected) {
+			t.Fatalf("RPM postinstall is missing %q", expected)
+		}
+	}
+}
+
+func TestChineseDeliveryManualsCoverInstallDatabasePreparationAndOperations(t *testing.T) {
+	expectations := map[string][]string{
+		"../docs/zh-CN/offline-rpm-install.md": {
+			"离线安装",
+			"rpm -K",
+			"rpm -qpl",
+			"dnf install",
+			"clusterguard-configure",
+			"--execute",
+			"卸载与回滚",
+		},
+		"../docs/zh-CN/database-preparation.md": {
+			"MySQL",
+			"PostgreSQL",
+			"Oracle Data Guard Broker",
+			"SQL Server Always On",
+			"数据库侧",
+			"最小权限",
+			"验证",
+		},
+		"../docs/zh-CN/operations-manual.md": {
+			"运维操作手册",
+			"登录",
+			"集群接入",
+			"计划切换",
+			"故障切换",
+			"旧主恢复",
+			"节点扩容",
+			"操作日志",
+			"备份与恢复",
+			"应急处理",
+		},
+	}
+	for path, required := range expectations {
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		for _, expected := range required {
+			if !strings.Contains(string(contents), expected) {
+				t.Fatalf("%s is missing %q", path, expected)
+			}
 		}
 	}
 }

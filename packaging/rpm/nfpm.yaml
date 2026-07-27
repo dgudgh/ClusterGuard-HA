@@ -1,0 +1,187 @@
+name: clusterguard-ha
+arch: ${CG_RPM_GOARCH}
+platform: linux
+version: ${CG_RPM_VERSION}
+release: ${CG_RPM_RELEASE}
+version_schema: semver
+maintainer: ClusterGuard HA Engineering
+description: |
+  ClusterGuard HA 多数据库企业级高可用控制平台。
+  提供 MySQL、PostgreSQL、Oracle Data Guard Broker 和 SQL Server Always On
+  的发现、诊断、受控切换、验证、审计及报告能力。
+vendor: ClusterGuard HA
+homepage: https://github.com/dgudgh/ClusterGuard-HA
+license: Proprietary
+
+depends:
+  - bash
+  - coreutils
+  - findutils
+  - gzip
+  - iproute
+  - iputils
+  - openssh-clients
+  - shadow-utils
+  - systemd
+  - tar
+
+scripts:
+  postinstall: ./postinstall.sh
+  preremove: ./preremove.sh
+  postremove: ./postremove.sh
+
+contents:
+  - src: ${CG_RPM_STAGE}/bin/clusterguard
+    dst: /usr/local/bin/clusterguard
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${CG_RPM_STAGE}/bin/cgctl
+    dst: /usr/local/bin/cgctl
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${CG_RPM_STAGE}/bin/clusterguard-agent
+    dst: /usr/local/bin/clusterguard-agent
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${CG_RPM_STAGE}/bin/jq
+    dst: /usr/local/libexec/jq-linux-amd64
+    expand: true
+    file_info:
+      mode: 0755
+
+  - src: ${CG_RPM_STAGE}/scripts/clusterguard-configure.sh
+    dst: /usr/local/sbin/clusterguard-configure
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${CG_RPM_STAGE}/scripts/clusterguard-agent-stdio.sh
+    dst: /usr/local/libexec/clusterguard-agent-stdio
+    expand: true
+    file_info:
+      mode: 0750
+  - src: ${CG_RPM_STAGE}/scripts/clusterguard-node-lifecycle.sh
+    dst: /usr/local/libexec/clusterguard-node-lifecycle.sh
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${CG_RPM_STAGE}/scripts/clusterguard-mysql-install.sh
+    dst: /usr/local/libexec/clusterguard-mysql-install.sh
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${CG_RPM_STAGE}/scripts/clusterguard-mysql-sync.sh
+    dst: /usr/local/libexec/clusterguard-mysql-sync.sh
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${CG_RPM_STAGE}/scripts/clusterguard-mysql-probe-cleanup.sh
+    dst: /usr/local/libexec/clusterguard-mysql-probe-cleanup.sh
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${CG_RPM_STAGE}/scripts/clusterguard-postgresql-install.sh
+    dst: /usr/local/libexec/clusterguard-postgresql-install.sh
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${CG_RPM_STAGE}/scripts/clusterguard-postgresql-sync.sh
+    dst: /usr/local/libexec/clusterguard-postgresql-sync.sh
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${CG_RPM_STAGE}/scripts/clusterguard-preflight.sh
+    dst: /usr/local/libexec/clusterguard-preflight.sh
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${CG_RPM_STAGE}/scripts/clusterguard-smoke.sh
+    dst: /usr/local/libexec/clusterguard-smoke.sh
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${CG_RPM_STAGE}/scripts/clusterguard-ha-matrix.sh
+    dst: /usr/local/libexec/clusterguard-ha-matrix.sh
+    expand: true
+    file_info:
+      mode: 0755
+
+  - src: ${CG_RPM_STAGE}/configs/clusterguard.example.json
+    dst: /etc/clusterguard/clusterguard.json.example
+    type: config|noreplace
+    expand: true
+    file_info:
+      mode: 0640
+  - src: ${CG_RPM_STAGE}/configs/clusterguard-agent.example.json
+    dst: /etc/clusterguard/agent.json.example
+    type: config|noreplace
+    expand: true
+    file_info:
+      mode: 0640
+  - src: ${CG_RPM_STAGE}/packaging/clusterguard.env.example
+    dst: /etc/clusterguard/clusterguard.env.example
+    type: config|noreplace
+    expand: true
+    file_info:
+      mode: 0640
+
+  - src: ${CG_RPM_STAGE}/packaging/clusterguard-ha.service
+    dst: /usr/lib/systemd/system/clusterguard-ha.service
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${CG_RPM_STAGE}/packaging/clusterguard-agent.service
+    dst: /usr/lib/systemd/system/clusterguard-agent.service
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${CG_RPM_STAGE}/packaging/clusterguard-agent-reconcile.service
+    dst: /usr/lib/systemd/system/clusterguard-agent-reconcile.service
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${CG_RPM_STAGE}/packaging/clusterguard-agent-reconcile.timer
+    dst: /usr/lib/systemd/system/clusterguard-agent-reconcile.timer
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${CG_RPM_STAGE}/packaging/clusterguard-ha.logrotate
+    dst: /etc/logrotate.d/clusterguard-ha
+    type: config|noreplace
+    expand: true
+    file_info:
+      mode: 0644
+
+  - src: ${CG_RPM_STAGE}/docs/README.md
+    dst: /usr/share/doc/clusterguard-ha/README.md
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${CG_RPM_STAGE}/docs/offline-rpm-install.md
+    dst: /usr/share/doc/clusterguard-ha/离线安装手册.md
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${CG_RPM_STAGE}/docs/database-preparation.md
+    dst: /usr/share/doc/clusterguard-ha/数据库接入手册.md
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${CG_RPM_STAGE}/docs/operations-manual.md
+    dst: /usr/share/doc/clusterguard-ha/运维操作手册.md
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${CG_RPM_STAGE}/BUILD-INFO
+    dst: /usr/share/doc/clusterguard-ha/BUILD-INFO
+    expand: true
+    file_info:
+      mode: 0644
+
+rpm:
+  group: Applications/Databases
+  summary: ClusterGuard HA 多数据库高可用控制平台
+  packager: ClusterGuard HA Engineering
+  compression: gzip

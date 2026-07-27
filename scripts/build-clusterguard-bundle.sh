@@ -26,7 +26,7 @@ done
 stage="$(mktemp -d /tmp/clusterguard-bundle.XXXXXX)"
 trap 'rm -rf "${stage}"' EXIT
 root="${stage}/clusterguard-ha-${version}-${goos}-${goarch}"
-mkdir -p "${root}/bin" "${root}/scripts" "${root}/configs" "${root}/packaging/systemd" "${root}/packaging/logrotate"
+mkdir -p "${root}/bin" "${root}/scripts" "${root}/configs" "${root}/docs/zh-CN" "${root}/packaging/systemd" "${root}/packaging/logrotate"
 
 build_targets=(
   "clusterguard:./cmd/clusterguard"
@@ -38,7 +38,7 @@ for target in "${build_targets[@]}"; do
   package_path="${target#*:}"
   CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" go -C "${repository}" build -trimpath -ldflags "-s -w" -o "${root}/bin/${command_path}" "${package_path}"
 done
-for helper in clusterguard-install.sh clusterguard-preflight.sh clusterguard-smoke.sh clusterguard-ha-matrix.sh clusterguard-node-lifecycle.sh clusterguard-mysql-install.sh clusterguard-mysql-sync.sh clusterguard-mysql-probe-cleanup.sh clusterguard-postgresql-install.sh clusterguard-postgresql-sync.sh clusterguard-agent-stdio.sh; do
+for helper in clusterguard-install.sh clusterguard-configure.sh clusterguard-preflight.sh clusterguard-smoke.sh clusterguard-ha-matrix.sh clusterguard-node-lifecycle.sh clusterguard-mysql-install.sh clusterguard-mysql-sync.sh clusterguard-mysql-probe-cleanup.sh clusterguard-postgresql-install.sh clusterguard-postgresql-sync.sh clusterguard-agent-stdio.sh; do
   install -m 0755 "${repository}/scripts/${helper}" "${root}/scripts/${helper}"
 done
 cp "${repository}"/configs/*.json "${root}/configs/"
@@ -46,6 +46,7 @@ cp "${repository}"/packaging/systemd/* "${root}/packaging/systemd/"
 cp "${repository}"/packaging/logrotate/* "${root}/packaging/logrotate/"
 cp "${repository}/README.md" "${root}/README.md"
 cp "${repository}/docs/offline-install.md" "${root}/OFFLINE-INSTALL.md"
+cp "${repository}"/docs/zh-CN/*.md "${root}/docs/zh-CN/"
 if [[ -n "${jq_binary}" ]]; then
   [[ -x "${jq_binary}" ]] || { echo "jq binary is not executable" >&2; exit 3; }
   command -v file >/dev/null 2>&1 || { echo "file is required to validate a bundled jq binary" >&2; exit 3; }

@@ -166,6 +166,15 @@ have been verified.
 See `docs/offline-install.md` for the air-gapped build, transfer, dependency,
 preflight, installation, Raft rollout, and rollback procedure.
 
+Chinese delivery documentation:
+
+- `docs/zh-CN/offline-rpm-install.md`: RPM build, verification, installation,
+  three-controller rollout, upgrade, uninstall, and rollback.
+- `docs/zh-CN/database-preparation.md`: database-side accounts, permissions,
+  replication prerequisites, and validation for all four engines.
+- `docs/zh-CN/operations-manual.md`: console login, cluster onboarding,
+  switching, recovery, expansion, audit, backup, and emergency handling.
+
 ## Register and Refresh a MySQL Cluster
 
 Registration creates the authoritative endpoint inventory. Hostname, IP, and
