@@ -1,5 +1,10 @@
 # ClusterGuard HA Guarded MySQL Switchover Design
 
+<!-- LANGUAGE-SWITCH -->
+> **Language:** English | [简体中文](../zh-CN/specs/2026-07-12-clusterguard-ha-guarded-mysql-switchover-design.md)
+<!-- /LANGUAGE-SWITCH -->
+
+
 ## Objective
 
 Implement the first mutating MySQL operation in the independent ClusterGuard

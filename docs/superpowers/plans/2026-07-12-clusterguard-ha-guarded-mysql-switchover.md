@@ -1,5 +1,10 @@
 # ClusterGuard HA Guarded MySQL Switchover Implementation Plan
 
+<!-- LANGUAGE-SWITCH -->
+> **Language:** English | [简体中文](../zh-CN/plans/2026-07-12-clusterguard-ha-guarded-mysql-switchover.md)
+<!-- /LANGUAGE-SWITCH -->
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a durable, idempotent, independently verified MySQL planned-switchover kernel while keeping default production execution unsupported until a real writer-endpoint provider is configured.

@@ -1,82 +1,85 @@
-# ClusterGuard HA Console 对标超越实施计划
+# ClusterGuard HA Console Benchmark and Superiority Implementation Plan
 
-> 按 TDD 执行；每个生产页面改动前先加入失败的契约测试。
+<!-- LANGUAGE-SWITCH -->
+> **Language:** English | [简体中文](../zh-CN/plans/2026-07-15-console-benchmark-and-superiority.md)
+<!-- /LANGUAGE-SWITCH -->
 
-**目标：** 在不改变后端 API 的前提下，将自包含控制台升级为舰队优先、证据驱动、真实可执行的企业级高可用工作台。
+> Execute according to TDD; add failed contract tests before any changes to production pages.
 
-**技术约束：** Go `embed` 的单页 HTML/CSS/JavaScript；无 CDN、无 Node 构建依赖；所有 API 数据使用安全 DOM API 渲染。
+**Objective:** Upgrade the self-contained console to a fleet-priority, evidence-driven, real-executable enterprise-level high-availability workstation without changing the backend API.
+
+**Technical Constraints:** Single-page HTML/CSS/JavaScript using Go `embed`; no CDN, no Node build dependencies; all API data rendered using secure DOM API.
 
 ---
 
-## Task 1：建立超越基线测试
+## Task 1: Establish Benchmark Test Baseline
 
-**文件：**
-- 修改：`internal/api/console_test.go`
+**Files:**
+- Modify: `internal/api/console_test.go`
 
-1. 新增舰队筛选、观测新鲜度和集群行跳转契约测试。
-2. 新增五阶段切换进度、一次性解锁和不确定结果禁止重试测试。
-3. 新增紧凑拓扑、稳定连接线和异常摘要测试。
-4. 新增节点流程分组、日志筛选和完整国际化测试。
-5. 运行 `go test ./internal/api -run Console`，确认新测试失败。
+1. Add fleet filtering, observation freshness, and cluster row jump contract tests.
+2. Add five-phase switch progress, one-time unlock, and no retry for indeterminate results tests.
+3. Add compact topology, stable connection lines, and anomaly summary tests.
+4. Add node process grouping, log filtering, and full internationalization tests.
+5. Run `go test ./internal/api -run Console`, confirm new tests fail.
 
-## Task 2：重构控制台壳层和总览
+## Task 2: Refactor Console Shell and Overview
 
-**文件：**
-- 修改：`internal/api/console.html`
+**Files:**
+- Modify: `internal/api/console.html`
 
-1. 统一 8px 视觉网格、侧栏、页头和内容宽度。
-2. 改善导航语义和当前页状态。
-3. 增加舰队搜索、健康筛选、集群行操作和观测时间。
-4. 保持总览不泄漏所选集群拓扑。
-5. 运行总览相关测试。
+1. Unify 8px visual grid, sidebar, header, and content width.
+2. Improve navigation semantics and current page state.
+3. Add fleet search, health filtering, cluster row operations, and observation time.
+4. Keep overview from leaking selected cluster topology.
+5. Run overview-related tests.
 
-## Task 3：重构拓扑和元数据体验
+## Task 3: Refactor Topology and Metadata Experience
 
-**文件：**
-- 修改：`internal/api/console.html`
+**Files:**
+- Modify: `internal/api/console.html`
 
-1. 将拓扑改为紧凑圆角矩形和稳定逐行连接结构。
-2. 固定节点信息为三行，VIP 和首选候选使用小型 badge。
-3. 增加异常摘要和证据新鲜度。
-4. 元数据弹窗分离不可变身份和可变 endpoint，增加变更说明。
-5. 运行拓扑、身份和响应式测试。
+1. Change topology to compact rounded rectangles and stable row-by-row connection structure.
+2. Fix node information to three rows, VIP and preferred candidate use small badge.
+3. Add anomaly summary and evidence freshness.
+4. Separate immutable identity and mutable endpoint in metadata popup, add change notes.
+5. Run topology, identity, and responsive tests.
 
-## Task 4：重构受控操作工作台
+## Task 4: Refactor Controlled Operation Workbench
 
-**文件：**
-- 修改：`internal/api/console.html`
+**Files:**
+- Modify: `internal/api/console.html`
 
-1. 保留五项上下文和一个切换按钮。
-2. 增加 PRECHECK、PLAN、GATES、EXECUTE、VERIFY 阶段指示器。
-3. 把后端状态映射为 succeeded/blocked/unsupported/indeterminate/failed。
-4. 只对 `stale_plan` 重建计划；不确定结果绝不自动重试。
-5. 执行结束自动锁回，并刷新拓扑和操作日志。
-6. 运行操作契约测试。
+1. Keep five context items and one switch button.
+2. Add PRECHECK, PLAN, GATES, EXECUTE, VERIFY phase indicators.
+3. Map backend status to succeeded/blocked/unsupported/indeterminate/failed.
+4. Rebuild plan only for `stale_plan`; never automatically retry for indeterminate results.
+5. Automatically lock back and refresh topology and operation logs upon execution completion.
+6. Run operation contract tests.
 
-## Task 5：完善节点、指标、日志、设置
+## Task 5: Complete Node, Metrics, Logs, and Settings
 
-**文件：**
-- 修改：`internal/api/console.html`
+**Files:**
+- Modify: `internal/api/console.html`
 
-1. 节点表单按动作、身份、连接、数据库四组组织。
-2. 任务进度显示阶段、状态、目标和报告。
-3. 指标显示观测时间，缺失值不伪装为零。
-4. 操作日志增加关键词、类型和状态筛选；保留折叠原始证据。
-5. 设置增加内存态刷新间隔，补齐静态和动态中英文文案。
-6. 运行页面全量测试。
+1. Organize node form into four groups: action, identity, connection, and database.
+2. Display task progress with phase, status, target, and report.
+3. Display metrics with observation time, missing values are not faked as zero.
+4. Add keyword, type, and status filtering to operation logs; retain collapsed original evidence.
+5. Add memory-state refresh interval to settings, complete static and dynamic Chinese and English copy.
+6. Run full page tests.
 
-## Task 6：回归和交付
+## Task 6: Regression and Delivery
 
-**文件：**
-- 修改：`docs/mysql-feature-parity-acceptance.md`
-- 修改：`docs/operations.md`
+**Files:**
+- Modify: `docs/mysql-feature-parity-acceptance.md`
+- Modify: `docs/operations.md`
 
-1. 运行 `gofmt`（如 Go 文件有改动）。
-2. 运行 `go test ./internal/api`。
-3. 运行 `go test ./...`。
-4. 运行 `go vet ./...`、`git diff --check` 和 clean-room 扫描。
-5. 构建 Linux 二进制并部署到 `192.168.102.152-154`。
-6. 通过真实 API 验证集群、拓扑、候选、操作、节点、指标和日志页面数据源。
-7. 对可控测试集群执行一次真实切换和一次旧主回挂，验证 VERIFY 后成功语义。
-8. 更新验收文档并提交本地分支。
-
+1. Run `gofmt` (if Go files have changed).
+2. Run `go test ./internal/api`.
+3. Run `go test ./...`.
+4. Run `go vet ./...`, `git diff --check`, and clean-room scan.
+5. Build Linux binary and deploy to `192.168.102.152-154`.
+6. Verify cluster, topology, candidate, operation, node, metrics, and logs page data sources via real API.
+7. Execute one real switch and one old master re-hang on a controllable test cluster, verify successful semantics after VERIFY.
+8. Update acceptance documentation and submit local branch.

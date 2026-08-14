@@ -1,5 +1,10 @@
 # Proven MySQL HA Methods
 
+<!-- LANGUAGE-SWITCH -->
+> **Language:** English | [简体中文](zh-CN/proven-mysql-ha-methods.md)
+<!-- /LANGUAGE-SWITCH -->
+
+
 ## Purpose
 
 This document records production behaviors and laboratory scenarios that were

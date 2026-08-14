@@ -1,5 +1,10 @@
 # PostgreSQL Enterprise HA Design
 
+<!-- LANGUAGE-SWITCH -->
+> **Language:** English | [简体中文](../zh-CN/specs/2026-07-20-postgresql-enterprise-ha-design.md)
+<!-- /LANGUAGE-SWITCH -->
+
+
 ## Goal
 
 Promote PostgreSQL from a read-only compatibility adapter to a first-class

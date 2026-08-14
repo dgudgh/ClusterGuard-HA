@@ -1,5 +1,10 @@
 # PostgreSQL Read-Only Compatibility Design
 
+<!-- LANGUAGE-SWITCH -->
+> **Language:** English | [简体中文](../zh-CN/specs/2026-07-20-postgresql-readonly-compatibility-design.md)
+<!-- /LANGUAGE-SWITCH -->
+
+
 ## Goal
 
 Make PostgreSQL a usable first-class read-only engine in ClusterGuard HA while

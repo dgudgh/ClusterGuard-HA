@@ -1,5 +1,10 @@
 # ClusterGuard HA 中文文档
 
+<!-- LANGUAGE-SWITCH -->
+> **语言：** [English](../en-US/README.md) | 简体中文
+<!-- /LANGUAGE-SWITCH -->
+
+
 ## 当前版本
 
 | 版本 | 状态 | 数据库支持边界 |
@@ -19,13 +24,15 @@
 
 1. [2.1-45 发布说明](release-2.1.45.md)
    确认正式包、摘要、支持范围和生产准入边界。
-2. [离线安装与部署手册](offline-rpm-install.md)
+2. [产品导览](product-tour.md)
+   通过实际控制台截图了解拓扑、操作、节点生命周期和操作日志。
+3. [离线安装与部署手册](offline-rpm-install.md)
    完成控制节点、数据节点、数据库、Agent、Raft、VIP 和证书部署。
-3. [数据库接入手册](database-preparation.md)
+4. [数据库接入手册](database-preparation.md)
    准备数据库原生身份、最小权限、复制和健康检查条件。
-4. [运维操作手册](operations-manual.md)
+5. [运维操作手册](operations-manual.md)
    执行切换、旧主恢复、节点扩容、计划关机、审计和应急处理。
-5. [版本与发版规范](version-release-policy.md)
+6. [版本与发版规范](version-release-policy.md)
    构建新版本、维护标签和发布 PostgreSQL 2.2 时使用。
 
 ## 验收证据

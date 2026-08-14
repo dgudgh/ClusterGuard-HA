@@ -1,5 +1,10 @@
 # ClusterGuard HA Offline Installation
 
+<!-- LANGUAGE-SWITCH -->
+> **Language:** English | [简体中文](zh-CN/offline-install.md)
+<!-- /LANGUAGE-SWITCH -->
+
+
 The sealed MySQL production release is ClusterGuard HA `2.1-45`. PostgreSQL
 delivery starts with the `2.2` line. The supported production bootstrap path is
 the complete offline kit and its multi-node installer:
@@ -14,7 +19,7 @@ clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz
 ```
 
 The authoritative, current deployment guide is
-[`docs/zh-CN/offline-rpm-install.md`](zh-CN/offline-rpm-install.md). It covers:
+[`docs/en-US/offline-rpm-install.md`](en-US/offline-rpm-install.md). It covers:
 
 - reviewed SSH host keys and protected site state;
 - three-node odd-numbered control-plane installation;

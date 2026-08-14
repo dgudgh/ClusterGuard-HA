@@ -1,5 +1,10 @@
 # ClusterGuard HA 2.1-45 发布说明
 
+<!-- LANGUAGE-SWITCH -->
+> **语言：** [English](../en-US/release-2.1.45.md) | 简体中文
+<!-- /LANGUAGE-SWITCH -->
+
+
 ## 1. 发布定位
 
 `2.1-45` 是 ClusterGuard HA 2.1 系列的最终封板版本。对应 Git 标签为

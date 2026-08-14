@@ -1,5 +1,10 @@
 # ClusterGuard HA — 集群下电与自动恢复（Power Lifecycle Management）测试报告
 
+<!-- LANGUAGE-SWITCH -->
+> **语言：** [English](../en-US/power-lifecycle-test-report.md) | 简体中文
+<!-- /LANGUAGE-SWITCH -->
+
+
 - 生产候选版本：`1.0.0-rc.20260809.13`
 - 日期：2026-08-09
 - 范围：状态机 + 存储 + API + 真实 agent 关机 + 自动恢复 + 多引擎 + 控制台 + 报告 + 端到端测试

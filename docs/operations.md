@@ -1,5 +1,10 @@
 # ClusterGuard HA Operations
 
+<!-- LANGUAGE-SWITCH -->
+> **Language:** English | [简体中文](zh-CN/operations.md)
+<!-- /LANGUAGE-SWITCH -->
+
+
 Version boundary: `v2.1.45` is the sealed MySQL release. PostgreSQL operations
 belong to the 2.2 line. Oracle and SQL Server procedures remain separately
 gated until their own production qualification is complete.

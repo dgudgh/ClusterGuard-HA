@@ -1,5 +1,10 @@
 # ClusterGuard HA MySQL Feature Parity Design
 
+<!-- LANGUAGE-SWITCH -->
+> **Language:** English | [简体中文](../zh-CN/specs/2026-07-13-mysql-feature-parity-design.md)
+<!-- /LANGUAGE-SWITCH -->
+
+
 ## Purpose
 
 ClusterGuard HA will independently implement the production MySQL capabilities

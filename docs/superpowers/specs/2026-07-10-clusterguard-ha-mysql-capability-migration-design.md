@@ -1,5 +1,10 @@
 # ClusterGuard HA MySQL Capability Migration Design
 
+<!-- LANGUAGE-SWITCH -->
+> **Language:** English | [简体中文](../zh-CN/specs/2026-07-10-clusterguard-ha-mysql-capability-migration-design.md)
+<!-- /LANGUAGE-SWITCH -->
+
+
 ## Objective
 
 Bring the proven MySQL product capabilities from the frozen prototype into

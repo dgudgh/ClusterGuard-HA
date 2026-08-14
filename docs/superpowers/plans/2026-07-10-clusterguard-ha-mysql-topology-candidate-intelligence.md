@@ -1,5 +1,9 @@
 # MySQL Topology and Candidate Intelligence Implementation Plan
 
+<!-- LANGUAGE-SWITCH -->
+> **Language:** English | [简体中文](../zh-CN/plans/2026-07-10-clusterguard-ha-mysql-topology-candidate-intelligence.md)
+<!-- /LANGUAGE-SWITCH -->
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Deliver inventory-scoped MySQL topology discovery, replication and performance health, candidate ranking, APIs, CLI output, and a compact topology console without enabling any database mutation.

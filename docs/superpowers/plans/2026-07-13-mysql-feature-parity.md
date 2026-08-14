@@ -1,5 +1,10 @@
 # ClusterGuard HA MySQL Feature Parity Implementation Plan
 
+<!-- LANGUAGE-SWITCH -->
+> **Language:** English | [简体中文](../zh-CN/plans/2026-07-13-mysql-feature-parity.md)
+<!-- /LANGUAGE-SWITCH -->
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Deliver the previous prototype's real MySQL HA, VIP, recovery, node lifecycle, monitoring, console, and installation capabilities as independent ClusterGuard HA implementations.

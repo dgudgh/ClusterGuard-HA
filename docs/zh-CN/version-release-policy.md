@@ -1,5 +1,10 @@
 # ClusterGuard HA 版本与发版规范
 
+<!-- LANGUAGE-SWITCH -->
+> **语言：** [English](../en-US/version-release-policy.md) | 简体中文
+<!-- /LANGUAGE-SWITCH -->
+
+
 ## 1. 版本格式
 
 ClusterGuard HA 的安装包使用：

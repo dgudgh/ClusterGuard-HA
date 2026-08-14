@@ -1,5 +1,10 @@
 # Task 1 Report: Common Topology, Metrics, and Candidate Contracts
 
+<!-- LANGUAGE-SWITCH -->
+> **Language:** English | [简体中文](task-1-report.zh-CN.md)
+<!-- /LANGUAGE-SWITCH -->
+
+
 ## Implementation
 
 - Added portable topology contracts in `pkg/model/topology.go`:

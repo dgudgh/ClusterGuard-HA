@@ -1,5 +1,10 @@
 # ClusterGuard HA 离线安装与部署手册
 
+<!-- LANGUAGE-SWITCH -->
+> **语言：** [English](../en-US/offline-rpm-install.md) | 简体中文
+<!-- /LANGUAGE-SWITCH -->
+
+
 适用产品：ClusterGuard HA 2.1-45（MySQL 封板版）及 2.2.x x86_64
 适用系统：RHEL、Rocky Linux、AlmaLinux、Oracle Linux 8/9，systemd，x86_64
 部署方式：一台运维机通过 SSH 远程安装多个控制节点和数据库节点
@@ -166,7 +171,7 @@ targets_file=/etc/clusterguard/fencing/vmware-targets.tsv
 
 ## 4. 准备数据库介质与离线依赖
 
-正式离线包可以在构建时通过可重复的 `--database-package` 直接嵌入批准的数据库介质。安装器在未传 `-r` 时，会自动从离线包的 `packages/database/` 和统一目录 `/opt` 查找匹配的 tar 包。也可以通过 `--database-package-dir /secure/database-media` 指定企业统一介质目录。
+正式离线包可以在构建时通过可重复的 `--database-package` 直接嵌入审批的数据库介质。安装器在未传 `-r` 时，会自动从离线包的 `packages/database/` 和统一目录 `/opt` 查找匹配的 tar 包。也可以通过 `--database-package-dir /secure/database-media` 指定企业统一介质目录。
 
 安装器要求介质是可读取的 `tar`、`tar.gz`、`tgz`、`tar.xz`、`tar.bz2` 或 `tbz2`，并且压缩包只有一个安全的顶层目录。它使用 `--engine` 与 `--database-version` 匹配文件名；例如 MySQL 8.0.44 将匹配文件名中同时包含 `mysql` 或 `upsql` 和 `8.0.44` 的包。找到多个候选时会拒绝执行，要求使用 `-r` 明确指定，绝不会随意选择一个版本。
 
@@ -176,7 +181,7 @@ MySQL 8.0 示例：
 sha256sum /opt/mysql-8.0.44-linux-glibc2.17-x86_64.tar.xz
 ```
 
-MySQL 8.4 仅需替换文件名、`--database-version` 和集群名。UPSQL 使用其企业批准的兼容 MySQL tar 包，并在 `--engine mysql` 下部署。
+MySQL 8.4 仅需替换文件名、`--database-version` 和集群名。UPSQL 使用其企业审批的兼容 MySQL tar 包，并在 `--engine mysql` 下部署。
 
 安装器会在每个 MySQL 数据节点读取物理内存并自动生成该节点的参数。`innodb_buffer_pool_size` 默认取物理内存的 70% 并向上取整到 4 GiB 的整数倍；若取整后超过物理内存的 80%，则取不超过 80% 的最大 4 GiB 倍数，不设置固定容量上限。例如 256 GiB 内存会配置为 180 GiB。`max_connections` 默认固定为 1000。缓存、临时表和 redo 仍按内存分档。单连接缓冲保持受控值，避免 1000 个连接并发时产生不可控的额外内存放大。
 
@@ -216,7 +221,7 @@ PostgreSQL 可以直接使用官方 release 源码包，不要求用户预先制
 
 1. 在连接远端前校验压缩包路径安全、单一顶层目录和官方源码结构。
 2. 默认选择第一个数据节点作为构建节点，也可用 `--postgresql-build-node` 指定当前数据节点清单中的另一台。
-3. 只在构建节点编译一次，安装前缀固定为 `/opt/clusterguard/postgresql/<端口>/software`。
+3. 只在构建节点编译一次，安装前缀固定为 `/opt/clusterguard/postgresql/<PORT>/software`。
 4. 构建 `contrib`，校验 `initdb`、`postgres`、`psql`、`pg_basebackup`、`pg_rewind`、`pg_controldata` 和 `pg_config`。
 5. 生成 `BUILD-MANIFEST.json`、统一二进制 tar 包和 SHA256 摘要。
 6. 把完全相同的制品分发给全部控制节点和数据节点，再初始化及同步流复制。
@@ -416,7 +421,7 @@ https://192.168.102.152:3000/
 
 ### 6.3 MySQL 8.4 部署
 
-将以上命令的两项替换为实际值即可。若 `/opt` 同时有多个 MySQL 8.4 包，可显式增加 `-r /opt/准确文件名`：
+将以上命令的两项替换为实际值即可。若 `/opt` 同时有多个 MySQL 8.4 包，可显式增加 `-r /opt/EXACT_FILENAME`：
 
 ```text
 --database-version 8.4.10
@@ -562,7 +567,7 @@ ip -o -4 addr show dev ens160 | grep '192.168.102.155/24' || true
 
 ### 12.4 数据库包依赖缺失
 
-MySQL 或控制面运行库缺失时，在同发行版、同架构的镜像机收集签名 RPM，并通过 `--dependencies dependencies` 重试。PostgreSQL 源码编译依赖联网解析失败时，制作并上传独立附属包，再通过 `--postgresql-dependencies <解压目录>/dependencies` 重试。不要混用两个参数，也不要跳过校验。
+MySQL 或控制面运行库缺失时，在同发行版、同架构的镜像机收集签名 RPM，并通过 `--dependencies dependencies` 重试。PostgreSQL 源码编译依赖联网解析失败时，制作并上传独立附属包，再通过 `--postgresql-dependencies <EXTRACTED_DIRECTORY>/dependencies` 重试。不要混用两个参数，也不要跳过校验。
 
 ### 12.5 Console 无法登录
 
@@ -573,7 +578,7 @@ systemctl status clusterguard-ha.service --no-pager
 journalctl -u clusterguard-ha.service -n 200 --no-pager
 ```
 
-新建集群只生成一次 `admin` 的随机初始密码；首次登录后必须更改密码。若已改过密码，应使用新密码，不会因服务重启生成新的默认密码。
+新建集群的初始账号为 `admin`，初始密码为 `admin123`；首次登录后必须立即更改密码。若已改过密码，应使用新密码，服务重启不会恢复默认密码。
 
 ### 12.6 VIP 未绑定或出现多个 Owner
 
@@ -595,7 +600,7 @@ dnf remove clusterguard-ha
 - 所有节点时钟已同步。
 - SSH 主机密钥已独立核对。
 - VIP 未被外部 HA 工具管理。
-- 数据库软件及离线依赖已经过企业批准和 SHA256 校验。
+- 数据库软件及离线依赖已经过企业审批和 SHA256 校验。
 - 站点状态、秘密和证书已加密备份。
 - 首次管理员密码已修改。
 - 已完成一次受控切换、旧主回挂、节点重启恢复和 VIP 唯一性验证。

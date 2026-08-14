@@ -1,148 +1,151 @@
-# ClusterGuard HA Console 对标与超越设计
+# ClusterGuard HA Console Benchmark and Superiority Design
 
-**日期：** 2026-07-15  
-**范围：** 只重构 ClusterGuard HA Web Console，不新增数据库执行能力，不改变现有 API 语义。
+<!-- LANGUAGE-SWITCH -->
+> **Language:** English | [简体中文](../zh-CN/specs/2026-07-15-console-benchmark-and-superiority-design.md)
+<!-- /LANGUAGE-SWITCH -->
 
-## 目标
+**Date:** 2026-07-15
+**Scope:** Only refactor the ClusterGuard HA Web Console, no new database execution capabilities are added, and the existing API semantics are not changed.
 
-把当前“功能可用”的控制台升级为面向 DBA 日常值守的企业级工作台。页面必须同时满足：
+## Objective
 
-1. 首屏能判断整个数据库舰队是否健康。
-2. 切换目标、影响范围和执行状态没有歧义。
-3. 只有后端验证通过才显示成功。
-4. 复杂证据默认收起，但任何操作都能追溯。
-5. 主机名、IP、端口变化不掩盖不可变资源身份。
-6. 桌面、窄屏和移动端不重排成失控的长页面。
+Upgrade the current "functionally available" console into an enterprise-grade workstation for DBA daily operations. The page must simultaneously satisfy:
 
-## 对标审计
+1. The first screen can determine whether the entire database fleet is healthy.
+2. Target switching, impact scope, and execution status have no ambiguity.
+3. Only show success after backend validation passes.
+4. Complex evidence is collapsed by default, but any operation can be traced.
+5. Hostnames, IPs, and port changes do not obscure immutable resource identities.
+6. Desktop, narrow screen, and mobile views do not rearrange into uncontrollable long pages.
 
-| 维度 | 旧版原型优势 | 旧版原型问题 | ClusterGuard HA 超越方式 |
+## Benchmark Audit
+
+| Dimension | Old Prototype Advantages | Old Prototype Issues | ClusterGuard HA Superiority Approach |
 | --- | --- | --- | --- |
-| 能力覆盖 | 拓扑、VIP、切换、修复、节点、审计齐全 | 检查、计划、门禁、执行按钮混在同一块 | 用户只选择场景和目标；系统自动展示工作流阶段 |
-| 总览 | 能看到当前集群状态 | 容易把所选集群误当作全局状态 | 舰队级统计、集群目录、异常优先、观测新鲜度 |
-| 拓扑 | 主从关系直观 | 卡片过大、连线易错位、身份信息层级混乱 | 紧凑对齐节点、稳定 CSS 网格连线、身份详情表 |
-| 切换 | 能执行真实主库与 VIP 联动 | “请求已受理”曾被误解为成功，门禁概念暴露过多 | 五阶段实时进度；VERIFY 通过后才宣告完成 |
-| 恢复 | 旧主回挂和复制修复入口齐全 | 候选来源和不可执行原因不够直观 | 仅展示本集群可恢复对象，并直接说明阻断原因 |
-| 节点生命周期 | 安装、同步、恢复有统一入口 | 大表单一次展开，日常浏览和高风险输入混杂 | 清单优先，动作表单分组，能力与约束就地说明 |
-| 元数据 | 支持修正主机名、IP、端口 | 可变 endpoint 与不可变身份容易混淆 | 弹窗明确分区，身份只读，变更只作用于 endpoint |
-| 日志 | 有原始返回 | 原始 JSON 抢占视觉，筛选能力不足 | 人类可读摘要、状态过滤、原始证据默认折叠 |
-| 视觉 | 功能密度高 | 红绿粗边框、大按钮、卡片嵌套和不齐缝 | 轻边框、8px 小圆角、统一 40px 控件和 8px 网格 |
-| 国际化 | 中英文入口存在 | 仅导航翻译，正文语言混杂 | 所有用户可见静态文案和动态状态统一翻译入口 |
+| Capability Coverage | Topology, VIP, Switching, Recovery, Nodes, Audit are complete | Check, Plan, Gatekeeping, and Execute buttons are mixed in the same block | Users only select scenarios and targets; the system automatically displays workflow stages |
+| Overview | Can see the current cluster status | Easy to mistake the selected cluster as the global status | Fleet-level statistics, cluster directory, anomaly prioritization, and observation freshness |
+| Topology | Master-slave relationships are intuitive | Cards are too large, connections are easily misaligned, and identity information hierarchy is confusing | Compact node alignment, stable CSS grid connections, and identity detail tables |
+| Switching | Can execute a real coordinated primary and VIP switch | "Request Accepted" was once misunderstood as success, and gatekeeping concepts were exposed too much | Five-stage real-time progress; only declare completion after VERIFY passes |
+| Recovery | Old master reattachment and replication recovery entries are complete | Candidate sources and reasons for inexecutable actions are not intuitive enough | Only display recoverable objects within the cluster and directly explain blocking reasons |
+| Node Lifecycle | Installation, synchronization, and recovery have a unified entry | Large forms are expanded at once, mixing daily browsing and high-risk inputs | List priority, action forms grouped, capabilities and constraints explained on-site |
+| Metadata | Supports correction of hostnames, IPs, and ports | Mutable endpoints and immutable identities are easily confused | Pop-up clearly partitioned, identity is read-only, and changes only affect endpoints |
+| Logs | Has raw returns | Raw JSON dominates the visual, and filtering capabilities are insufficient | Human-readable summary, status filtering, and raw evidence is collapsed by default |
+| Visual | High functional density | Red and green thick borders, large buttons, card nesting, and misaligned seams | Light borders, 8px small rounded corners, unified 40px controls and 8px grid |
+| Internationalization | Chinese and English entries exist | Only navigation is translated, while body content mixes languages | All user-visible static text and dynamic states have a unified translation entry |
 
-## 方案比较
+## Solution Comparison
 
-### 方案 A：只换色和间距
+### Solution A: Only Change Color and Spacing
 
-风险最低，但无法解决操作状态歧义、总览误导和复杂表单问题，不能达到“超越”。不采用。
+Lowest risk, but cannot resolve operational status ambiguity, overview misguidance, and complex form issues, and cannot achieve "superiority." Not adopted.
 
-### 方案 B：重做前端并引入构建工具链
+### Solution B: Redesign the Frontend and Introduce a Build Toolchain
 
-长期模块化最佳，但会立即增加 Node 构建、静态资源缓存和离线安装复杂度。当前阶段不采用。
+Best for long-term modularity, but will immediately increase Node build, static resource caching, and offline installation complexity. Not adopted at this stage.
 
-### 方案 C：保留嵌入式单页交付，重构信息架构和状态模型
+### Solution C: Retain Embedded Single-Page Delivery, Refactor Information Architecture and State Model
 
-保留当前单二进制、无 CDN、无外部资源的交付优势，在现有自包含页面内建立清晰的布局组件、状态语义和渲染边界。风险可控，能最快提升真实运维体验。本阶段采用。
+Retain the current single-binary, no CDN, no external resources delivery advantages, and establish clear layout components, state semantics, and rendering boundaries within the existing self-contained page. Risk is controllable, and can quickly improve real operations experience. Adopted at this stage.
 
-## 信息架构
+## Information Architecture
 
-### 1. 总览
+### 1. Overview
 
-- 舰队摘要：集群、健康、异常、实例、控制节点、待处理操作。
-- 集群目录：集群名、引擎、主库、实例数、风险、观测时间。
-- 支持关键字和健康状态筛选。
-- 点击集群行会选择集群并进入拓扑，不依赖隐藏的当前选择。
+- Fleet Summary: Clusters, health, anomalies, instances, control nodes, pending operations.
+- Cluster Directory: Cluster name, engine, master, number of instances, risk, observation time.
+- Supports keyword and health status filtering.
+- Clicking on a cluster row selects the cluster and enters the topology, without relying on a hidden current selection.
 
-### 2. 拓扑
+### 2. Topology
 
-- 顶部显示集群名、引擎、观测时间和异常数量。
-- 主库在左、复制节点在右，使用稳定网格和逐行连接线。
-- 节点卡仅保留三行：固定节点名/endpoint/延迟；主机/IP/端口；版本/角色。
-- 主库卡显示 VIP；候选卡显示“首选候选”。
-- 完整 resource_id、原生身份和 endpoint 信息留在下方身份表。
-- 元数据修改入口固定在拓扑右上角，弹窗区分不可变身份和可变 endpoint。
+- Top displays cluster name, engine, observation time, and number of anomalies.
+- Master on the left, replication nodes on the right, using stable grids and row-by-row connection lines.
+- Node cards only retain three lines: fixed node name/endpoint/delay; host/IP/port; version/role.
+- Master card displays VIP; candidate card displays "Preferred Candidate."
+- Complete resource_id, native identity, and endpoint information remain in the identity table below.
+- Metadata modification entry is fixed in the top-right corner of the topology, with pop-up distinguishing immutable identity and mutable endpoint.
 
-### 3. 操作
+### 3. Operations
 
-- 顶部上下文只显示：集群、当前主库、候选主库、VIP、延迟。
-- 本地防误触按钮只负责解锁 UI，不冒充后端 Operation Lock。
-- 主库切换只有一个执行按钮。
-- 点击后自动呈现：预检查、计划、安全门禁、执行、验证五个阶段。
-- 后端返回 `succeeded` 且验证完成才显示“切换成功”。
-- `blocked`、`unsupported`、`indeterminate` 和网络中断分别展示，不统一包装成失败或成功。
-- 旧主回挂与复制修复独立，候选严格限定在当前集群。
+- Top context only displays: cluster, current master, candidate master, VIP, delay.
+- Local anti-misoperation buttons only unlock the UI, not impersonating backend Operation Lock.
+- Master switch has only one execute button.
+- After clicking, automatically display: pre-check, plan, safety gatekeeping, execution, and verification five stages.
+- Only show "Switch Successful" after backend returns `succeeded` and verification is complete.
+- `blocked`, `unsupported`, `indeterminate`, and network interruption are displayed separately, not uniformly packaged as failure or success.
+- Old master reattachment and replication recovery are independent, and candidates are strictly limited to the current cluster.
 
-### 4. 节点
+### 4. Nodes
 
-- 节点清单优先展示固定节点名、资源 ID、类型、endpoint 和状态。
-- 添加与重建共用一条流程，但动作、固定身份、连接信息、数据库参数分组。
-- 重建必须复用资源 ID 和固定节点名。
-- 控制节点最终数量必须为不小于 3 的奇数；数据节点数量不限制。
-- 任务进度以时间线表达，报告和失败阶段可见。
+- Node list prioritizes displaying fixed node name, resource ID, type, endpoint, and status.
+- Adding and rebuilding share a single process, but actions, fixed identity, connection information, and database parameters are grouped.
+- Rebuilding must reuse resource ID and fixed node name.
+- Control node final count must be an odd number not less than 3; data node count is unrestricted.
+- Task progress is expressed as a timeline, with reports and failure stages visible.
 
-### 5. 指标
+### 5. Metrics
 
-- 仅展示真实 API 当前采样，不伪造历史曲线。
-- 摘要和实例明细使用相同指标名与单位。
-- 明示观测时间；采样缺失显示“无数据”，不显示 0。
+- Only display real-time API sampling, not fabricated historical curves.
+- Summary and instance details use the same metric names and units.
+- Clearly indicate observation time; missing sampling displays "No Data," not 0.
 
-### 6. 操作日志
+### 6. Operation Logs
 
-- 提供操作类型、状态和关键词筛选。
-- 默认显示时间、集群、源节点、目标节点、类型、状态。
-- 原始工作流对象默认折叠；报告链接和阶段时间线在有数据时出现。
+- Provide operation type, status, and keyword filtering.
+- Default display time, cluster, source node, target node, type, and status.
+- Original workflow objects are collapsed by default; report links and stage timelines appear when data is present.
 
-### 7. 设置与关于
+### 7. Settings and About
 
-- 控制令牌、审批令牌只存在页面内存。
-- 语言、刷新间隔为当前会话偏好，不写浏览器持久存储。
-- 关于页明确四种一等数据库适配器及其真实 capability。
+- Control tokens and approval tokens only exist in page memory.
+- Language and refresh interval are current session preferences, not written to browser persistent storage.
+- The About page clearly states the four first-class database adapters and their real capabilities.
 
-## 状态语义
+## State Semantics
 
-| 状态 | UI 语义 |
+| State | UI Semantics |
 | --- | --- |
-| idle | 尚未执行 |
-| running | 请求正在进行，按钮禁用 |
-| succeeded | 后端执行和 VERIFY 均通过 |
-| blocked | Safety Guard、Lock 或 Approval 阻断，给出原因 |
-| unsupported | 适配器未实现，不提供假执行 |
-| indeterminate | 执行结果不确定，禁止自动重试高风险动作 |
-| failed | 有明确失败证据 |
+| idle | Not executed yet |
+| running | Request in progress, button disabled |
+| succeeded | Backend execution and VERIFY both passed |
+| blocked | Blocked by Safety Guard, Lock, or Approval, reason provided |
+| unsupported | Adapter not implemented, no fake execution provided |
+| indeterminate | Execution result is uncertain, automatic retry of high-risk actions prohibited |
+| failed | Clear failure evidence present |
 
-高风险切换只允许对“陈旧计划”做有限重建计划重试；网络中断或不确定结果不得自动重复执行。
+High-risk switching only allows limited rebuild plan retries for "outdated plans"; network interruption or uncertain results must not be automatically repeated.
 
-## 视觉系统
+## Visual System
 
-- 8px 基础间距；卡片最大圆角 8px。
-- 侧栏 224px，内容最大宽度 1600px。
-- 主要操作色使用深绿，危险只用于 badge 和明确失败状态。
-- 不使用渐变、装饰球、粗红绿整卡描边和大面积彩色按钮。
-- 标题、表格和工作区采用紧凑字号，不使用营销式大标题。
-- 所有动态长身份使用省略或安全换行，不推动布局宽度。
+- 8px base spacing; maximum card corner radius 8px.
+- Sidebar 224px, content maximum width 1600px.
+- Main operation color uses dark green; danger is only used for badges and clear failure states.
+- No gradients, decorative balls, thick red/green card outlines, or large colored buttons.
+- Titles, tables, and work areas use compact font sizes, no marketing-style large titles.
+- All dynamic long identities use ellipsis or safe line breaks, not pushing layout width.
 
-## 响应式规则
+## Responsive Rules
 
-- `>= 1280px`：完整侧栏、双列工作台、主从横向拓扑。
-- `900px - 1279px`：状态条折行，操作卡仍保持清晰分组。
-- `< 900px`：侧栏变为横向导航，拓扑改为纵向且隐藏装饰连线。
-- `< 680px`：摘要两列，表格放入自身横向滚动容器，页面本身不得横向滚动。
+- `>= 1280px`: Full sidebar, dual-column workstation, master-slave horizontal topology.
+- `900px - 1279px`: Status bar line wrap, operation cards still keep clear grouping.
+- `< 900px`: Sidebar becomes horizontal navigation, topology becomes vertical and hides decorative connections.
+- `< 680px`: Summary two columns, tables placed in their own horizontal scrolling containers, page itself does not horizontally scroll.
 
-## 安全与可访问性
+## Security and Accessibility
 
-- API 返回内容只通过 `textContent` 写入 DOM。
-- 凭据不进入 URL、日志、DOM dataset 和持久存储。
-- 动作结果使用 `aria-live`；所有按钮、下拉和详情支持键盘焦点。
-- 解锁是一次性状态，切换成功或集群变化后自动锁回。
-- 集群变化会取消旧请求渲染，避免跨集群串数据。
+- API return content is only written to DOM through `textContent`.
+- Credentials do not enter URL, logs, DOM dataset, or persistent storage.
+- Action results use `aria-live`; all buttons, dropdowns, and details support keyboard focus.
+- Unlock is a one-time state, automatically locked back after switch success or cluster change.
+- Cluster changes cancel stale request rendering, preventing data from one cluster from appearing in another cluster's view.
 
-## 可验收的超越标准
+## Acceptable Superiority Criteria
 
-1. 总览不渲染拓扑，且能聚合全部已注册集群。
-2. 切换区只有一个真实切换入口，并显示五阶段进度。
-3. 不确定结果不会显示成功，也不会自动重复高风险执行。
-4. 拓扑连接线和节点卡在桌面及移动断点下有确定布局规则。
-5. 所有动态集群数据带观测时间或明确“无证据”。
-6. 操作日志可筛选且原始证据默认折叠。
-7. 节点、元数据、指标、日志都使用真实 API，不提供模拟动作。
-8. 页面无旧产品名称、无外部前端依赖、无浏览器持久化秘密。
-
+1. Overview does not render topology and can aggregate all registered clusters.
+2. Switching area has only one real switching entry and displays five-stage progress.
+3. Uncertain results do not display success and do not automatically repeat high-risk execution.
+4. Topology connection lines and node cards have definite layout rules at desktop and mobile breakpoints.
+5. All dynamic cluster data includes observation time or clearly states "No Evidence."
+6. Operation logs can be filtered and original evidence is collapsed by default.
+7. Nodes, metadata, metrics, and logs all use real APIs, no simulated actions are provided.
+8. Page has no old product names, no external frontend dependencies, and no browser persistent secrets.

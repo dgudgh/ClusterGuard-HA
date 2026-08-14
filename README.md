@@ -1,5 +1,10 @@
 # ClusterGuard HA
 
+<!-- LANGUAGE-SWITCH -->
+> **Language:** English | [简体中文](README.zh-CN.md)
+<!-- /LANGUAGE-SWITCH -->
+
+
 ClusterGuard HA requires Go 1.22 or newer.
 
 **ClusterGuard HA 多数据库企业级高可用控制平台**
@@ -10,6 +15,15 @@ ClusterGuard HA is an independent, clean-room high-availability control plane.
 The stable 2.1 line is the MySQL HA product line. PostgreSQL delivery starts in
 2.2. Oracle Data Guard Broker and SQL Server Always On remain separately gated
 future product lines and are not part of the 2.1 support scope.
+
+## Console Preview
+
+![ClusterGuard HA operations workbench](docs/assets/screenshots/ha-operation-workbench.png)
+
+The console keeps cluster context, primary and candidate selection, VIP state,
+controlled execution, recovery, topology, and audit evidence in one operator
+workflow. See the bilingual [product tour](docs/en-US/product-tour.md) for the
+topology, node lifecycle, and operation-log views.
 
 ## Current Release
 
@@ -204,24 +218,20 @@ lifecycle helper; it is not the initial multi-node production bootstrap tool.
 
 Use `scripts/install_clusterguard.sh` and the complete offline kit for the
 initial production deployment. It creates the control plane, fixed resource
-identities, certificates, database topology, Agent configuration and VIP
-reconciliation policy as one audited workflow. See
-`docs/zh-CN/offline-rpm-install.md` for the current offline deployment guide.
+identities, certificates, database topology, Agent configuration, and VIP
+reconciliation policy as one audited workflow.
 
-Chinese delivery documentation:
+## Documentation
 
-- `docs/zh-CN/README.md`: Chinese documentation entry point and recommended
-  reading order.
-- `docs/zh-CN/release-2.1.45.md`: sealed 2.1 release assets, checksums,
-  supported scope and upgrade boundary.
-- `docs/zh-CN/version-release-policy.md`: version numbering, immutable release
-  rules, branch policy and release gates.
-- `docs/zh-CN/offline-rpm-install.md`: RPM build, verification, installation,
-  three-controller rollout, upgrade, uninstall, and rollback.
-- `docs/zh-CN/database-preparation.md`: database-side accounts, permissions,
-  replication prerequisites, and validation for all four engines.
-- `docs/zh-CN/operations-manual.md`: console login, cluster onboarding,
-  switching, recovery, expansion, audit, backup, and emergency handling.
+The [bilingual documentation center](docs/README.md) maps every maintained
+English document to its Simplified Chinese counterpart. Recommended entry
+points:
+
+- [English documentation](docs/en-US/README.md) / [中文文档](docs/zh-CN/README.md)
+- [English product tour](docs/en-US/product-tour.md) / [中文产品导览](docs/zh-CN/product-tour.md)
+- [English offline installation](docs/en-US/offline-rpm-install.md) / [中文离线安装](docs/zh-CN/offline-rpm-install.md)
+- [English operations manual](docs/en-US/operations-manual.md) / [中文运维手册](docs/zh-CN/operations-manual.md)
+- [English release policy](docs/en-US/version-release-policy.md) / [中文版本规范](docs/zh-CN/version-release-policy.md)
 
 ## Register and Refresh a MySQL Cluster
 

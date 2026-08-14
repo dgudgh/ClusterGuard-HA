@@ -1,5 +1,10 @@
 # ClusterGuard HA 生产前破坏性测试报告
 
+<!-- LANGUAGE-SWITCH -->
+> **语言：** [English](../en-US/production-chaos-test-report-2026-08-09.md) | 简体中文
+<!-- /LANGUAGE-SWITCH -->
+
+
 - 日期：2026-08-09
 - 环境：`192.168.102.152`、`192.168.102.153`、`192.168.102.154`
 - 控制面：3 节点 Raft

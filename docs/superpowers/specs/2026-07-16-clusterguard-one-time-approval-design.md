@@ -1,5 +1,10 @@
 # ClusterGuard HA One-Time Approval and Automatic Recovery Authorization Design
 
+<!-- LANGUAGE-SWITCH -->
+> **Language:** English | [简体中文](../zh-CN/specs/2026-07-16-clusterguard-one-time-approval-design.md)
+<!-- /LANGUAGE-SWITCH -->
+
+
 ## Status
 
 Approved for implementation on 2026-07-16.

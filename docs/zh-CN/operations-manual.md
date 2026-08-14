@@ -1,5 +1,10 @@
 # ClusterGuard HA 运维操作手册
 
+<!-- LANGUAGE-SWITCH -->
+> **语言：** [English](../en-US/operations-manual.md) | 简体中文
+<!-- /LANGUAGE-SWITCH -->
+
+
 本文用于日常值守、变更、故障处理和审计。所有高可用操作都必须经过平台统一工作流：
 
 ```text
@@ -81,9 +86,9 @@ Follower 收到写请求时会向当前 Leader 转发。Leader 不明或失去�
 cgctl --server https://127.0.0.1:3000 \
   --ca-file /etc/clusterguard/tls/ca.crt clusters
 cgctl --server https://127.0.0.1:3000 \
-  --ca-file /etc/clusterguard/tls/ca.crt topology <集群UUID>
+  --ca-file /etc/clusterguard/tls/ca.crt topology <CLUSTER_UUID>
 cgctl --server https://127.0.0.1:3000 \
-  --ca-file /etc/clusterguard/tls/ca.crt health <集群UUID>
+  --ca-file /etc/clusterguard/tls/ca.crt health <CLUSTER_UUID>
 ```
 
 ## 4. 元数据变更
@@ -180,7 +185,7 @@ cgctl --server https://127.0.0.1:3000 \
 
 引擎策略：
 
-- MySQL：GTID 和 binlog 完整时增量回挂；binlog 缺口或 errant GTID 时自动进入批准的全量重建流程。
+- MySQL：GTID 和 binlog 完整时增量回挂；binlog 缺口或 errant GTID 时自动进入审批的全量重建流程。
 - PostgreSQL：满足条件优先 `pg_rewind`，否则 `pg_basebackup`。
 - Oracle：由 Data Guard Broker reinstate/validate。
 - SQL Server：按 AG 副本状态恢复同步，不能把未同步副本伪装成健康。
@@ -193,7 +198,7 @@ cgctl --server https://127.0.0.1:3000 \
 2. 输入永久固定节点名和平台 UUID。
 3. 输入 SSH endpoint。
 4. 选择数据库版本和端口。
-5. 上传或选择批准的软件包。
+5. 上传或选择审批的软件包。
 6. 预检查磁盘、端口、依赖、身份和来源节点。
 7. 安装数据库。
 8. 选择 clone、xtrabackup、mysqldump、pg_basebackup 或 pg_rewind。
@@ -287,7 +292,7 @@ cgctl cluster shutdown --cluster <集群显示名> --mode service --dry-run
 完整执行流程（任何一步失败都会中断并保留保护，见 11.4）：
 
 1. 刷新拓扑（discover），由每台签名 Agent 原子写入
-   `/etc/clusterguard/power-snapshots/<集群UUID>.json`（目录 0700、文件 0600）。
+   `/etc/clusterguard/power-snapshots/<CLUSTER_UUID>.json`（目录 0700、文件 0600）。
    同一主机上的多个集群不会互相覆盖快照。
 2. 冻结自动恢复（recovery-freeze）：自动故障切换、重启引导、手动切换全部阻断。
 3. 对所有实例打维护标记（maintenance）。
@@ -318,7 +323,7 @@ VMware 自动启动/API、IPMI/iDRAC/iLO、Wake-on-LAN 或 BIOS 来电自启；�
 ```bash
 curl -sk -X POST -H "Authorization: Bearer ${CG_CONTROL_TOKEN}" \
   -H 'Content-Type: application/json' \
-  -d '{"freeze":false}' https://127.0.0.1:3000/api/v1/clusters/<集群UUID>/recovery-freeze
+  -d '{"freeze":false}' https://127.0.0.1:3000/api/v1/clusters/<CLUSTER_UUID>/recovery-freeze
 ```
 
 - 删除快照后两个恢复单元自动变为 no-op；对已 finalize 的快照重复执行 restore/finalize 也是幂等 no-op。
@@ -326,7 +331,7 @@ curl -sk -X POST -H "Authorization: Bearer ${CG_CONTROL_TOKEN}" \
 ### 11.5 查看恢复状态
 
 ```bash
-cgctl cluster restore-status [--cluster <集群UUID>]
+cgctl cluster restore-status [--cluster <CLUSTER_UUID>]
 ```
 
 输出快照是否存在、集群信息、`recovered_at`、恢复冻结状态（`frozen`/`active`）、每个实例的角色/健康/复制延迟/维护标记，以及按状态给出的恢复建议（advice）。未指定 `--cluster` 时默认使用本机快照中的集群 UUID。
@@ -378,7 +383,7 @@ cgctl cluster restore-status [--cluster <集群UUID>]
 ### 13.4 数据库客户端缺失
 
 - 控制面应返回明确阻断
-- 从批准的离线源安装匹配版本客户端
+- 从审批的离线源安装匹配版本客户端
 - 执行 `clusterguard --check-config`
 - 重启 follower 验证后再滚动其他控制节点
 

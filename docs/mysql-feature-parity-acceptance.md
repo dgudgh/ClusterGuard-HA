@@ -1,5 +1,10 @@
 # ClusterGuard HA MySQL Acceptance
 
+<!-- LANGUAGE-SWITCH -->
+> **Language:** English | [简体中文](zh-CN/mysql-feature-parity-acceptance.md)
+<!-- /LANGUAGE-SWITCH -->
+
+
 Date: 2026-07-15
 
 This record captures the destructive laboratory acceptance for the independent
@@ -125,9 +130,9 @@ status, and a collapsed raw workflow object that expands on demand.
 The 2026-07-16 authorization update adds Raft-replicated platform users and
 sessions while retaining hash-only, one-time operation grants:
 
-- a new metadata store bootstraps `admin` with temporary password `admin123`
-  and `MustChangePassword=true`;
-- the bootstrap password must be changed before any database or administrative
+- a new metadata store bootstraps `admin` with the documented `admin123`
+  first-login password and `MustChangePassword=true`;
+- the first password change is mandatory before any database or administrative
   mutation is accepted;
 - passwords use Argon2id, browser sessions have an eight-hour absolute
   lifetime, and password change or logout revokes the active session;

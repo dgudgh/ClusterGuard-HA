@@ -1,5 +1,10 @@
 # ClusterGuard HA 数据库接入手册
 
+<!-- LANGUAGE-SWITCH -->
+> **语言：** [English](../en-US/database-preparation.md) | 简体中文
+<!-- /LANGUAGE-SWITCH -->
+
+
 本文说明 MySQL、PostgreSQL、Oracle Data Guard Broker 和 SQL Server Always On 在数据库侧需要完成的配置、最小权限和验证。示例中的网段、密码、服务名和资源 ID 必须替换为现场值。
 
 版本边界：`2.1-45` 的正式数据库支持范围是 MySQL；PostgreSQL 从 2.2 开始。
@@ -63,13 +68,13 @@ MySQL 5.7 使用 `SHOW SLAVE STATUS\G`，配置项 `log_slave_updates`。
 - `table_open_cache`、`thread_cache_size`、临时表和 redo 容量随内存分档
 - 排序、连接和读缓冲使用受控的小值，避免每连接大缓冲在高并发下耗尽内存
 
-生成配置位于 `/etc/clusterguard/mysql/<端口>.cnf`。参数是安装基线，不替代上线前按业务 SQL、连接池、存储延迟和容量做压测。
+生成配置位于 `/etc/clusterguard/mysql/<PORT>.cnf`。参数是安装基线，不替代上线前按业务 SQL、连接池、存储延迟和容量做压测。
 
 该规则要求 MySQL 数据节点至少具备 5 GiB 物理内存。低于此容量时不存在同时满足“4 GiB 的倍数”和“不超过 80%”的有效 buffer pool，安装器会阻断并要求扩容。
 
-新实例默认监听 `0.0.0.0:<端口>`。ClusterGuard 创建的发现、执行和复制账号允许通过 TCP 连接；主机防火墙仍只应放通数据库节点、控制节点和批准的业务网段。默认 root 只允许本机 socket 和 `127.0.0.1`，远程管理使用专用账号。只有安装命令显式传入 `--mysql-root-remote-host HOST` 时，安装器才创建或更新对应的 `root`@`HOST`，例如 `--mysql-root-remote-host '%'`；省略参数时不操作远程 root。
+新实例默认监听 `0.0.0.0:<PORT>`。ClusterGuard 创建的发现、执行和复制账号允许通过 TCP 连接；主机防火墙仍只应放通数据库节点、控制节点和审批的业务网段。默认 root 只允许本机 socket 和 `127.0.0.1`，远程管理使用专用账号。只有安装命令显式传入 `--mysql-root-remote-host HOST` 时，安装器才创建或更新对应的 `root`@`HOST`，例如 `--mysql-root-remote-host '%'`；省略参数时不操作远程 root。
 
-受管实例的运行时 socket 为 `/run/clusterguard/mysql/<端口>/mysql.sock`，由 systemd `RuntimeDirectory` 创建，不应放入数据库数据目录。安装器会发布本机客户端默认配置；标准 3306 实例可直接使用 `mysql -uroot -p`，同时保留重启后自动恢复的 `/tmp/mysql.sock` 兼容链接。平台内部始终使用绝对二进制、明确的 defaults 文件或 TCP，不依赖该兼容链接。
+受管实例的运行时 socket 为 `/run/clusterguard/mysql/<PORT>/mysql.sock`，由 systemd `RuntimeDirectory` 创建，不应放入数据库数据目录。安装器会发布本机客户端默认配置；标准 3306 实例可直接使用 `mysql -uroot -p`，同时保留重启后自动恢复的 `/tmp/mysql.sock` 兼容链接。平台内部始终使用绝对二进制、明确的 defaults 文件或 TCP，不依赖该兼容链接。
 
 认证插件按数据库版本处理：
 

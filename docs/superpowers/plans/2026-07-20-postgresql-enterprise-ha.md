@@ -1,5 +1,10 @@
 # PostgreSQL Enterprise HA Implementation Plan
 
+<!-- LANGUAGE-SWITCH -->
+> **Language:** English | [简体中文](../zh-CN/plans/2026-07-20-postgresql-enterprise-ha.md)
+<!-- /LANGUAGE-SWITCH -->
+
+
 > **For agentic workers:** Follow TDD. Observe each focused test fail before
 > adding production behavior, then run the complete gate before delivery.
 

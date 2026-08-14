@@ -1,5 +1,10 @@
 # ClusterGuard HA Console Cluster Management Design
 
+<!-- LANGUAGE-SWITCH -->
+> **Language:** English | [简体中文](../zh-CN/specs/2026-07-17-console-cluster-management-design.md)
+<!-- /LANGUAGE-SWITCH -->
+
+
 ## Goal
 
 Add an administrator-only cluster management dialog to the ClusterGuard HA

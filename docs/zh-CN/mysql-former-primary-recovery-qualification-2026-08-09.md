@@ -1,5 +1,10 @@
 # MySQL 旧主一键恢复生产前验收报告
 
+<!-- LANGUAGE-SWITCH -->
+> **语言：** [English](../en-US/mysql-former-primary-recovery-qualification-2026-08-09.md) | 简体中文
+<!-- /LANGUAGE-SWITCH -->
+
+
 - 日期：2026-08-09
 - 节点：`192.168.102.152`、`192.168.102.153`、`192.168.102.154`
 - 版本：MySQL 8.0.44、MySQL 8.4.10、MySQL 9.7.1

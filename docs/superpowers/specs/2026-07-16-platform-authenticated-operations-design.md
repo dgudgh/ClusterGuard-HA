@@ -1,5 +1,10 @@
 # ClusterGuard HA Platform Authentication Design
 
+<!-- LANGUAGE-SWITCH -->
+> **Language:** English | [简体中文](../zh-CN/specs/2026-07-16-platform-authenticated-operations-design.md)
+<!-- /LANGUAGE-SWITCH -->
+
+
 ## Goal
 
 Replace manual approval-token entry in the ClusterGuard HA web console with
@@ -10,7 +15,7 @@ grant internally. The browser never receives or stores that grant.
 The initial platform administrator is:
 
 - username: `admin`
-- password: `admin123`
+- password: `generated-bootstrap-password`
 - role: `admin`
 
 The bootstrap password is stored only as a password hash. The initial
@@ -55,7 +60,7 @@ New passwords must:
 
 - contain at least 12 characters;
 - differ from the current password;
-- not equal the bootstrap password `admin123`.
+- not equal the bootstrap password `generated-bootstrap-password`.
 
 ### Bootstrap Administrator
 
@@ -181,7 +186,7 @@ Login request:
 ```json
 {
   "username": "admin",
-  "password": "admin123"
+  "password": "generated-bootstrap-password"
 }
 ```
 

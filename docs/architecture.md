@@ -1,5 +1,10 @@
 # ClusterGuard HA Architecture
 
+<!-- LANGUAGE-SWITCH -->
+> **Language:** English | [简体中文](zh-CN/architecture.md)
+<!-- /LANGUAGE-SWITCH -->
+
+
 ## Design Goals
 
 ClusterGuard HA is a database-neutral control plane with engine-specific

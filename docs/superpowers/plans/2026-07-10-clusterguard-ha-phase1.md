@@ -1,5 +1,10 @@
 # ClusterGuard HA Phase 1 Implementation Plan
 
+<!-- LANGUAGE-SWITCH -->
+> **Language:** English | [简体中文](../zh-CN/plans/2026-07-10-clusterguard-ha-phase1.md)
+<!-- /LANGUAGE-SWITCH -->
+
+
 > **For agentic workers:** Follow test-driven development for every behavior. Each completed step must have a failing test observed before its implementation.
 
 **Goal:** Deliver the independent ClusterGuard HA Phase 1 control kernel.

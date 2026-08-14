@@ -1,5 +1,10 @@
 # ClusterGuard HA Phase 1 Design
 
+<!-- LANGUAGE-SWITCH -->
+> **Language:** English | [简体中文](../zh-CN/specs/2026-07-10-clusterguard-ha-phase1-design.md)
+<!-- /LANGUAGE-SWITCH -->
+
+
 ## Goal
 
 Build an independent multi-database high-availability control kernel for

@@ -1,5 +1,10 @@
 # PostgreSQL HA
 
+<!-- LANGUAGE-SWITCH -->
+> **Language:** English | [简体中文](zh-CN/postgresql-ha.md)
+<!-- /LANGUAGE-SWITCH -->
+
+
 This runbook describes the native PostgreSQL control path in ClusterGuard HA.
 It uses PostgreSQL streaming replication directly and does not require Patroni,
 repmgr, or a vendor control API.

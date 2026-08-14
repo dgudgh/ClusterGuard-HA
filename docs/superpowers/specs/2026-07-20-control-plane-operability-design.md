@@ -1,5 +1,10 @@
 # ClusterGuard HA Control-Plane Operability Design
 
+<!-- LANGUAGE-SWITCH -->
+> **Language:** English | [简体中文](../zh-CN/specs/2026-07-20-control-plane-operability-design.md)
+<!-- /LANGUAGE-SWITCH -->
+
+
 ## Goal
 
 Make controller availability, consensus safety, metadata freshness, and in-flight work observable through one consistent contract. This change does not alter database adapter execution or the HA workflow state machine.
@@ -35,4 +40,3 @@ Every HTTP response carries `X-Request-ID`. A safe caller-provided ID is preserv
 - Public probes expose no controller addresses, resource IDs, inventory, or credentials.
 - Detailed status remains behind existing platform authentication.
 - Existing MySQL HA workflow, approval, lock, verification, and audit behavior is unchanged.
-

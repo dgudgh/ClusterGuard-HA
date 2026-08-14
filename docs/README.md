@@ -1,0 +1,52 @@
+# ClusterGuard HA Documentation / 文档中心
+
+ClusterGuard HA product documentation is maintained in English and Simplified Chinese. Choose one language and keep the paired page open during installation or operations.
+
+ClusterGuard HA 产品文档同时维护英文和简体中文版本。安装、变更和排障时请选择对应语言，并以同版本文档为准。
+
+## Product Documentation / 产品文档
+
+| Topic / 主题 | English | 简体中文 |
+| --- | --- | --- |
+| Documentation index / 文档索引 | [English](en-US/README.md) | [中文](zh-CN/README.md) |
+| Product tour / 产品导览 | [English](en-US/product-tour.md) | [中文](zh-CN/product-tour.md) |
+| Architecture / 架构 | [English](architecture.md) | [中文](zh-CN/architecture.md) |
+| 2.1.45 release notes / 2.1.45 发布说明 | [English](en-US/release-2.1.45.md) | [中文](zh-CN/release-2.1.45.md) |
+| Offline RPM installation / 离线 RPM 安装 | [English](en-US/offline-rpm-install.md) | [中文](zh-CN/offline-rpm-install.md) |
+| Database preparation / 数据库接入 | [English](en-US/database-preparation.md) | [中文](zh-CN/database-preparation.md) |
+| Operations manual / 运维手册 | [English](en-US/operations-manual.md) | [中文](zh-CN/operations-manual.md) |
+| PostgreSQL HA / PostgreSQL 高可用 | [English](postgresql-ha.md) | [中文](zh-CN/postgresql-ha.md) |
+| MySQL proven methods / MySQL 已验证方法 | [English](proven-mysql-ha-methods.md) | [中文](zh-CN/proven-mysql-ha-methods.md) |
+| MySQL feature acceptance / MySQL 功能验收 | [English](mysql-feature-parity-acceptance.md) | [中文](zh-CN/mysql-feature-parity-acceptance.md) |
+| Version and release policy / 版本发布规范 | [English](en-US/version-release-policy.md) | [中文](zh-CN/version-release-policy.md) |
+
+## Qualification Evidence / 验收证据
+
+| Evidence / 证据 | English | 简体中文 |
+| --- | --- | --- |
+| Former-primary recovery / 旧主恢复 | [English](en-US/mysql-former-primary-recovery-qualification-2026-08-09.md) | [中文](zh-CN/mysql-former-primary-recovery-qualification-2026-08-09.md) |
+| Production chaos tests / 生产故障测试 | [English](en-US/production-chaos-test-report-2026-08-09.md) | [中文](zh-CN/production-chaos-test-report-2026-08-09.md) |
+| Planned shutdown lifecycle / 计划关机生命周期 | [English](en-US/power-lifecycle-test-report.md) | [中文](zh-CN/power-lifecycle-test-report.md) |
+| MySQL production qualification / MySQL 生产验收 | [English](mysql-production-qualification-2026-07-28.md) | [中文](zh-CN/mysql-production-qualification-2026-07-28.md) |
+
+Qualification reports record a specific laboratory build and date. They do not replace site acceptance after changing the database version, operating system, storage, network, VIP interface, or fencing policy.
+
+验收报告只代表特定实验室版本和日期下的结果。数据库版本、操作系统、存储、网络、VIP 网卡或隔离策略变化后，必须重新执行现场验收。
+
+## Internal Engineering Records / 内部工程记录
+
+`docs/superpowers/` contains design specifications and implementation plans for traceability. Each English record has a Simplified Chinese counterpart under `docs/superpowers/zh-CN/`. These records are historical engineering evidence, not current production runbooks.
+
+`docs/superpowers/` 保存设计规格和实施计划，用于工程追溯。每份英文记录在 `docs/superpowers/zh-CN/` 下都有中文对应版本。这些文件属于历史工程证据，不是当前生产操作手册。
+
+## Documentation Rules / 文档规则
+
+- Never publish secrets, credentials, private keys, session cookies, or complete secret files.
+- Commands, paths, API names, versions, and configuration keys must remain identical across languages.
+- Product screenshots must come from the real console and must not imply unsupported capability.
+- A feature is considered documented only when both language versions and their links pass validation.
+
+- 禁止发布密码、令牌、私钥、会话 Cookie 或完整秘密文件。
+- 命令、路径、API 名称、版本号和配置键在两个语言版本中必须一致。
+- 产品截图必须来自真实控制台，不得暗示尚未交付的能力。
+- 只有中英文版本及其链接都通过校验，功能文档才算完成。

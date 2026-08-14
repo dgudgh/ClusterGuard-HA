@@ -1,5 +1,10 @@
 # Console Cluster Management Implementation Plan
 
+<!-- LANGUAGE-SWITCH -->
+> **Language:** English | [简体中文](../zh-CN/plans/2026-07-17-console-cluster-management.md)
+<!-- /LANGUAGE-SWITCH -->
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add safe cluster registration and retirement to the authenticated ClusterGuard HA console.

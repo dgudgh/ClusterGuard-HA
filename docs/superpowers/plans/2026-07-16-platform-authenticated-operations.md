@@ -1,5 +1,10 @@
 # Platform Authenticated Operations Implementation Plan
 
+<!-- LANGUAGE-SWITCH -->
+> **Language:** English | [简体中文](../zh-CN/plans/2026-07-16-platform-authenticated-operations.md)
+<!-- /LANGUAGE-SWITCH -->
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add Raft-replicated platform users and sessions so a logged-in ClusterGuard HA operator can execute MySQL operations without manually entering an approval token, while the server still issues and atomically consumes a plan-bound one-time grant.
@@ -11,7 +16,7 @@
 ## Global Constraints
 
 - Default administrator username is exactly `admin`.
-- Default administrator password is exactly `admin123`.
+- Default administrator password is exactly `generated-bootstrap-password`.
 - The bootstrap password is never persisted or logged as plaintext.
 - The bootstrap administrator must change the default password before mutations.
 - Password storage uses Argon2id with a random salt.
@@ -66,7 +71,7 @@ func TestPlatformUserAndSessionReplicateWithoutPlaintextSecrets(t *testing.T) {
         t.Fatal(err)
     }
     encoded, _ := leader.ReplicatedState()
-    if bytes.Contains(encoded, []byte("admin123")) || bytes.Contains(encoded, []byte("session-secret")) {
+    if bytes.Contains(encoded, []byte("generated-bootstrap-password")) || bytes.Contains(encoded, []byte("session-secret")) {
         t.Fatal("replicated auth state contains plaintext secret")
     }
     if _, found := follower.PlatformUser(user.ResourceID); !found {
@@ -243,14 +248,14 @@ func TestLoginIssuesHashedSessionAndPasswordChangeRevokesIt(t *testing.T) {
     if err != nil {
         t.Fatal(err)
     }
-    login, err := service.Login(context.Background(), "admin", "admin123")
+    login, err := service.Login(context.Background(), "admin", "generated-bootstrap-password")
     if err != nil {
         t.Fatal(err)
     }
     if login.SessionToken == "" || login.CSRFToken == "" {
         t.Fatal("login did not return opaque secrets")
     }
-    if _, err := service.ChangePassword(context.Background(), login.SessionToken, "admin123", "A-new-secure-password-123"); err != nil {
+    if _, err := service.ChangePassword(context.Background(), login.SessionToken, "generated-bootstrap-password", "A-new-secure-password-123"); err != nil {
         t.Fatal(err)
     }
     if _, err := service.Authenticate(context.Background(), login.SessionToken); !errors.Is(err, auth.ErrUnauthenticated) {
@@ -701,7 +706,7 @@ go test ./scripts -run 'Authentication|Approval|Matrix' -count=1
 
 Document:
 
-- initial `admin/admin123`;
+- initial `admin/generated-bootstrap-password`;
 - mandatory first password change;
 - session lifetime;
 - logout and session revocation;
@@ -752,7 +757,7 @@ for file in scripts/*.sh; do bash -n "$file" || exit 1; done
 - [ ] **Step 3: Run security scans**
 
 ```bash
-rg -n 'admin123|password_hash|token_hash|csrf_hash' . \
+rg -n 'generated-bootstrap-password|password_hash|token_hash|csrf_hash' . \
   --glob '!docs/**' --glob '!**/*_test.go'
 rg -n 'approval-token|admin-token|lifecycle-token|state\\.approvalToken' \
   internal/api/console.html
@@ -760,7 +765,7 @@ rg -n 'approval-token|admin-token|lifecycle-token|state\\.approvalToken' \
 
 Expected:
 
-- `admin123` appears only in the bootstrap constant and migration/bootstrap
+- `generated-bootstrap-password` appears only in the bootstrap constant and migration/bootstrap
   logic, never in generated metadata;
 - hashes never appear in public API response types;
 - console token-input scan returns no matches.
