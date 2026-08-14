@@ -1,5 +1,9 @@
 # ClusterGuard HA Operations
 
+Version boundary: `v2.1.45` is the sealed MySQL release. PostgreSQL operations
+belong to the 2.2 line. Oracle and SQL Server procedures remain separately
+gated until their own production qualification is complete.
+
 ## 1. Configure the Control Plane
 
 Use `configs/clusterguard.example.json` as the configuration shape. The loader
@@ -20,7 +24,7 @@ Implemented keys:
 | `mysql.discovery` | When enabled | Dedicated read-only discovery username and password environment reference. |
 | `mysql.operation` | When enabled | Dedicated administrative operation username and password environment reference. |
 | `mysql.replication` | When enabled | Dedicated replication username and password environment reference. |
-| `mysql.automatic_failover_enabled` | No | Enables leader-only automatic failover; defaults to `false`. |
+| `mysql.automatic_failover_enabled` | No | Enables leader-only automatic failover. The raw configuration default is `false`; the supported multi-node installer enables it for VIP-backed MySQL HA with Agent quorum fencing. |
 | `mysql.automatic_failover_interval_seconds` | No | Recovery-controller poll interval; defaults to 5 seconds. |
 | `mysql.automatic_failover_retry_seconds` | No | Backoff after a blocked or failed incident attempt; defaults to 30 seconds. |
 | `postgresql.enabled` | No | Enables native PostgreSQL discovery and configured HA capabilities; defaults to `false`. |
@@ -34,11 +38,14 @@ Implemented keys:
 | `postgresql.replication` | For PostgreSQL mutation and node sync | Dedicated replication username, database, and password environment reference. Must be configured together with `postgresql.operation`. |
 | `consensus` | For real HA mutation | Odd Raft controller membership, persistent state, and majority authority. |
 | `consensus.snapshot_cas_enabled` | For replicated mutation | Explicitly activates snapshot content compare-and-swap on an all-upgraded controller set. Missing or `false` keeps metadata mutation fail-closed. |
+| `consensus.replicated_log_compression_enabled` | Recommended after rolling upgrade | Compresses full-state Raft log entries while continuing to read legacy uncompressed entries. Activate only after every voter runs a supporting binary. |
 | `consensus.tls_cert_file`, `tls_key_file`, `tls_ca_file` | For non-loopback Raft | Mutual-TLS identity and private CA for controller-to-controller Raft traffic. All three are required together. |
 | `consensus.peers[].api_address` | Recommended | Trusted HTTPS address used to forward mutations to that controller when it is Leader. It is never derived from the inbound HTTP Host header. |
 | `consensus.allow_insecure_transport` | Lab only | Explicitly permits non-loopback plaintext Raft and emits a startup warning. |
 | `agent` | For VIP mutation | Restricted signed node command transport for VIP ownership, role status, and in-band self-isolation. |
-| `fencing` | For partition-safe failover | Site-specific external fence/status command used when the old-primary agent cannot prove isolation. |
+| `fencing.agent_quorum_enabled` | For MySQL automatic failover | Uses a short Raft-majority authorization and local Agent fail-closed reconciliation before promotion. |
+| `fencing` | Optional stronger isolation | Site-specific external fence/status command for BMC, PDU, cloud, or hypervisor isolation. |
+| `mysql.semi_sync_required` | Recommended for production MySQL | Requires current semi-sync source acknowledgement and replica readiness evidence during discovery, candidate selection, precheck, and post-operation verification. Missing evidence blocks promotion. |
 
 In a multi-controller deployment, `http_address` must listen on an address
 reachable by the configured peer API addresses; a loopback-only listener cannot
@@ -87,10 +94,10 @@ MustChangePassword: true
 ```
 
 The first login succeeds only far enough to change the password. Every other
-platform API returns `password_change_required` until that change completes.
-The password is stored as an Argon2id hash in the replicated metadata snapshot;
-plaintext is never written to configuration, environment files, audit events,
-or reports.
+platform API returns `password_change_required` until that first password change
+completes. The password is stored as an Argon2id hash in the replicated
+metadata snapshot; plaintext is never written to configuration, environment
+files, audit events, or reports.
 
 Browser sessions have an eight-hour absolute lifetime. The session secret is
 kept in an HttpOnly SameSite cookie, mutating requests require the matching
@@ -145,7 +152,7 @@ change, writes a security event, and every controller then deletes its local
 artifact. The artifact expires after 24 hours.
 
 Log in as `admin` with the temporary password and replace it immediately. Do
-not reuse `admin123`, delete `PlatformUser` records, edit password hashes, or
+not create a shared default password, delete `PlatformUser` records, edit password hashes, or
 reset only one controller's metadata snapshot. If the one-time artifact cannot
 be committed with quorum, restore a protected metadata backup through the
 offline disaster-recovery procedure.
@@ -173,6 +180,15 @@ the binary on every controller, then set `consensus.snapshot_cas_enabled` to
 with the key missing or set to `false` remains readable but rejects replicated
 metadata mutation. Never enable the key while an older controller can still
 become leader.
+
+Use the same two-stage rollout for
+`consensus.replicated_log_compression_enabled`: first replace the binary on
+every voter while the key remains `false`, then enable the key on every
+controller and restart followers before the current Leader. New controllers
+continue to read uncompressed entries, but an older binary cannot read a newly
+compressed entry. Raft stores larger than 256 MiB are compacted atomically
+before they are opened at startup; keep enough free disk space for the compact
+copy during the first rolling restart.
 
 Controller state is capped at 16 MiB on disk, in Raft log entries, and in Raft
 snapshots. Before upgrading, verify that the protected metadata file is below
@@ -475,6 +491,22 @@ snapshots keep the newest 128 planned operations, 512 terminal operations,
 1,024 audit events, 512 reports, and 2,048 security events. Export records
 before those bounds when policy requires a longer audit-retention period.
 
+For an immutable external archive, fetch the current audit window as NDJSON
+with an authenticated control session or service bearer before it reaches the
+bound:
+
+```bash
+curl --fail --silent --show-error \
+  -H "Authorization: Bearer $CG_CONTROL_TOKEN" \
+  https://controller.example:3000/api/v1/audits/export \
+  >> /secure/archive/clusterguard-audit.ndjson
+```
+
+The exporter is read-only and never returns credentials, approval secrets, or
+session tokens. The retention cap remains intentional protection for the
+replicated control-state size; long-term retention belongs in a dedicated,
+append-only archive.
+
 ## 7. Use `cgctl`
 
 `cgctl` defaults to `http://127.0.0.1:8088` and prints concise human-readable
@@ -628,12 +660,92 @@ resource UUID. A changed hostname, IP, or port must not create a duplicate
 resource. Native-identity mismatches, duplicate endpoint ownership, cross-
 cluster updates, and ambiguous endpoint selection are blocked.
 
-## 10. Automatic Failover and Safety Boundary
+## 10. Built-in Node Installation and Synchronization
 
-Automatic failover is disabled by default. Enabling it requires Raft consensus,
-the restricted node agent, an active VIP resource, and all three
-purpose-specific MySQL credentials. It does not require a human approval token.
-Startup rejects incomplete consensus or fencing configuration.
+The Console **Nodes** view drives one ClusterGuard lifecycle for adding a new
+node and rebuilding a physically replaced node. This is a control-plane
+workflow, not a collection of operator-run remote commands. It performs:
+
+1. inventory, immutable node UUID, SSH host-key, privilege, port, and package
+   preflight;
+2. SHA-256 verified package selection from the approved offline repository;
+3. MySQL or PostgreSQL installation, or reconciliation of a registered
+   existing installation;
+4. version-aware data copy and replication configuration;
+5. native identity, read-only state, replication, lag, and VIP-absence
+   verification; and
+6. Raft-backed metadata commit, audit, and report generation.
+
+MySQL chooses an allowed clone, xtrabackup, or logical-dump path. PostgreSQL
+uses `pg_rewind` when its safety preconditions hold and otherwise uses
+`pg_basebackup`. A task exposes separate preflight, install, synchronize,
+configure-replication, verify, and metadata-commit states. No metadata is
+committed after a failed or indeterminate target mutation.
+
+Data-node cardinality is unrestricted. Controller membership must remain an
+odd set of at least three. A 3-to-5 expansion therefore accepts two distinct
+controller targets in one guarded operation, installs the controller and
+adapter runtime on both, issues unique API and Raft mTLS identities, and asks
+the current Leader to add both voters. A failed paired install stops newly
+staged controller roles in reverse order. A partial Raft addition removes
+voters added by that call before returning the failure.
+
+For dynamic controller enrollment, deliver all four issuer files in the
+offline runtime assets directory:
+
+```text
+assets/pki/api-issuer.crt       0644
+assets/pki/api-issuer.key       0640 root:clusterguard
+assets/pki/raft-issuer.crt      0644
+assets/pki/raft-issuer.key      0640 root:clusterguard
+```
+
+The API issuer must chain to `tls_ca_file`; the Raft issuer must chain to
+`consensus.tls_ca_file`. Configure all four issuer paths together. Issuer keys
+must never be returned through the API, browser, audit stream, task log, or
+report.
+
+## 11. Automatic Failover and Safety Boundary
+
+The raw configuration-loader default remains disabled so that an incomplete
+hand-written configuration cannot silently become destructive. The supported
+multi-node installer defaults a VIP-backed MySQL HA deployment to automatic
+failover with `fencing.agent_quorum_enabled=true`. Operators may explicitly
+choose `--manual-failover-only`.
+Automatic failover requires Raft consensus, the restricted node agent, an
+active VIP resource, all three purpose-specific MySQL credentials, stable
+database failure evidence, and verified old-primary isolation. It does not
+require a human approval token. Startup rejects incomplete consensus or fencing
+configuration.
+
+Agent quorum fencing does not equate TCP failure with isolation. Each Agent
+receives a leader-signed decision valid for at most 10 seconds and reconciles
+every 5 seconds. After publishing the exact failover transition lease, the
+controller waits at least 15 seconds, revalidates majority authority, stable
+failure evidence, and the unchanged lease, and rejects promotion if the old
+primary is reachable but still owns the VIP or remains writable. A node that
+cannot obtain majority authorization releases the VIP and persists read-only
+intent locally. `--fencer FILE` remains available as an optional stronger layer
+when the Agent or whole operating system may fail while the database can still
+serve traffic.
+
+For production MySQL, set `mysql.semi_sync_required=true` on every controller
+only after all managed instances load and enable the source/replica semi-sync
+plugins. ClusterGuard then treats semi-sync as required evidence: the current
+primary must have at least the configured number of acknowledging clients, a
+candidate must be actively acknowledging its source and already have
+promotion-side source settings, and the promoted primary must regain an active
+acknowledging client during verification. Unknown, malformed, disabled, or
+stale evidence fails closed. The managed MySQL installer configures one
+acknowledging replica with `AFTER_SYNC` and a 10-second source timeout for
+MySQL 8.x (and the equivalent master/slave names for 5.7).
+
+Semi-sync substantially reduces acknowledged-transaction loss but does not by
+itself prove strict RPO zero: after its configured timeout MySQL may fall back
+to asynchronous commits, and storage, operating-system, and network failures
+remain outside the database acknowledgement protocol. Production SLOs must
+therefore document the timeout/fallback policy and validate it with client-side
+transaction IDs during destructive failover tests.
 
 The recovery controller executes only on the majority Leader. Discovery records
 one incident after six follow-up failed-primary samples span 30 seconds. The
@@ -743,7 +855,104 @@ MySQL multi-source replication is detected but not modeled in this phase. If
 discovery fails closed and does not publish partial health, topology, or
 promotion eligibility.
 
-## 11. PostgreSQL HA
+## 12. Planned Shutdown and Automatic Recovery
+
+Use this for maintenance windows, rack moves, and full power-down of a MySQL
+primary/replica cluster. The platform applies protection before shutdown and
+systemd units restore the cluster automatically after boot, without operator
+intervention.
+
+### 11.1 Shutdown modes
+
+| Mode | Behavior | Use case |
+|------|----------|----------|
+| `service` | Stops MySQL only (replicas first, primary last); hosts stay up | Software upgrade, config change, short maintenance window |
+| `poweroff` | Power-off every node in parallel | Rack power maintenance, relocation |
+
+### 11.2 Initiating shutdown
+
+Use **Topology -> Power lifecycle -> One-click shutdown** in the Web console.
+The default `service` mode stops the database but leaves the hosts running. A
+logged-in platform administrator receives a short-lived, single-use approval
+inside the server; no approval secret is exposed to the browser.
+
+CLI automation uses the same API workflow and requires an explicitly issued
+one-time approval token:
+
+```bash
+cgctl cluster shutdown --cluster <display name> --mode service|poweroff \
+  --approval-token <single-use-token>
+cgctl cluster shutdown --cluster <display name> --mode service --dry-run
+```
+
+`--dry-run` performs precheck and immediately cancels the temporary lifecycle;
+it changes no database or host state. There is no direct-shell bypass.
+
+The full flow (any failure interrupts and keeps protection, see 11.4):
+
+1. Refresh topology (`discover`) and have every signed Agent atomically persist
+   its cluster snapshot at `/etc/clusterguard/power-snapshots/<cluster-uuid>.json`
+   (directory 0700, file 0600). Multiple clusters on one host cannot overwrite
+   each other.
+2. Freeze automatic recovery (`recovery-freeze`): automatic failover, reboot
+   bootstrap, and manual switchover are all blocked.
+3. Mark every instance in maintenance.
+4. Run `SET PERSIST_ONLY read_only=ON; SET PERSIST_ONLY super_read_only=ON`
+   on every node — no runtime effect, but durable across reboot so the
+   restored cluster cannot accept stray writes.
+5. Stop per mode: `service` stops replicas then the primary; `poweroff`
+   powers off all nodes in parallel.
+
+### 11.3 Automatic restore after reboot
+
+Both units ship enabled. They scan the per-cluster snapshot directory at boot
+and are no-ops when it is empty:
+
+- `clusterguard-cluster-restore.service` — first confirms that the live control
+  plane still records an active planned-recovery state, starts the local
+  database service, and waits for readiness. For MySQL, only the immutable-ID
+  designated primary clears persisted and runtime read-only flags. It then
+  reports boot/recovery and triggers discovery. A stale snapshot on an ordinary
+  reboot is rejected before any role mutation.
+- `clusterguard-cluster-finalize.service` — waits for control-plane health
+  (`/healthz`, up to 60 s), then polls the topology until the primary instance
+  reports healthy (every 5 s, up to 600 s); on success it unfreezes automatic
+  recovery, clears cluster maintenance protection, and writes `recovered_at`
+  to that cluster's snapshot.
+
+`poweroff` cannot turn a physically powered-off server back on by itself.
+Automatic power-on requires VMware autostart/API, IPMI/iDRAC/iLO, Wake-on-LAN,
+or firmware restore-on-AC. Once the OS boots, ClusterGuard recovery is automatic.
+
+### 11.4 Timeout and failure fallback (fail-closed)
+
+- If finalize times out with the primary still unhealthy, protection is
+  **not** released: the script logs CRITICAL, exits cleanly, and waits for an
+  operator.
+- After the problem is confirmed resolved, release protection manually:
+
+```bash
+curl -sk -X POST -H "Authorization: Bearer ${CG_CONTROL_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -d '{"freeze":false}' https://127.0.0.1:3000/api/v1/clusters/<cluster-uuid>/recovery-freeze
+```
+
+- Deleting the snapshot makes both units no-ops; re-running restore/finalize
+  against an already-finalized snapshot (`recovered_at` present) is also an
+  idempotent no-op.
+
+### 11.5 Inspecting restore state
+
+```bash
+cgctl cluster restore-status [--cluster <cluster-uuid>]
+```
+
+Prints snapshot presence, cluster identity, `recovered_at`, recovery-freeze
+state (`frozen`/`active`), and per-instance role/health/replication
+lag/maintenance, plus mode-specific advice. Without `--cluster`, the local
+snapshot's cluster UUID is used.
+
+## 13. PostgreSQL HA
 
 PostgreSQL is an engine-native ClusterGuard HA implementation. It provides
 identity-safe discovery, primary/standby topology, health, native metrics,
@@ -774,7 +983,7 @@ qualification checklist. Unknown lag and optional metrics remain unknown; the
 platform never converts missing evidence to a synthetic zero or reports a
 simulated success.
 
-## 12. Adapter Roadmap
+## 14. Adapter Roadmap
 
 ### MySQL
 
@@ -786,6 +995,17 @@ clusters, repeated real switchovers, quorum loss, a primary network partition,
 former-primary rejoin, a full host reboot, divergent-node rebuild, and mutable
 hostname/IP/port reconciliation. See `docs/mysql-feature-parity-acceptance.md`
 for the evidence and bundle hashes.
+
+Every MySQL Agent policy used for automatic failover must declare
+`mysql_service`, `mysql_server_binary`, and `mysql_server_defaults_file`.
+ClusterGuard inspects the local systemd unit and the effective `mysqld
+--verbose --help` output before accepting in-band fencing. Both
+`read_only=ON` and `super_read_only=ON` must be effective restart defaults on
+every managed instance. The Agent records the isolation intent before it tries
+the live SQL mutation, so a stopped old primary can be fenced and verified
+without making network unreachability a fencing signal. A recovered instance
+therefore starts read-only and becomes writable only through a leader-backed
+ClusterGuard role transition.
 
 Production deployments must configure and exercise a site-specific out-of-band
 provider through the fencing contract above, and qualify a physical-copy method

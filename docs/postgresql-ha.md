@@ -4,6 +4,10 @@ This runbook describes the native PostgreSQL control path in ClusterGuard HA.
 It uses PostgreSQL streaming replication directly and does not require Patroni,
 repmgr, or a vendor control API.
 
+This capability belongs to the 2.2 release line. It is not part of the sealed
+`v2.1.45` MySQL support boundary. Do not enable PostgreSQL mutation until the
+exact 2.2 package and site acceptance matrix have passed.
+
 ## Delivered Capability
 
 | Area | Status |

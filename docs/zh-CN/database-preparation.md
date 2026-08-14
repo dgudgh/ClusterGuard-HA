@@ -2,6 +2,10 @@
 
 本文说明 MySQL、PostgreSQL、Oracle Data Guard Broker 和 SQL Server Always On 在数据库侧需要完成的配置、最小权限和验证。示例中的网段、密码、服务名和资源 ID 必须替换为现场值。
 
+版本边界：`2.1-45` 的正式数据库支持范围是 MySQL；PostgreSQL 从 2.2 开始。
+Oracle 与 SQL Server 章节用于后续独立能力线准备，完成对应版本发布和现场验收前
+不得据此宣称已进入 2.1 生产支持范围。
+
 ## 1. 通用要求
 
 所有数据库节点必须满足：
@@ -50,7 +54,43 @@ SHOW REPLICA STATUS\G
 
 MySQL 5.7 使用 `SHOW SLAVE STATUS\G`，配置项 `log_slave_updates`。
 
-### 2.2 最小权限账号
+### 2.2 ClusterGuard 安装实例的默认连接与内存参数
+
+通过 ClusterGuard 离线安装器新建 MySQL 时，安装脚本会在目标数据库节点读取 `/proc/meminfo`，按物理内存生成保守的生产基线：
+
+- `innodb_buffer_pool_size`：默认取物理内存的 70% 并向上取整到 4 GiB 的整数倍；若结果超过物理内存的 80%，则取不超过 80% 的最大 4 GiB 倍数，不设置固定容量上限
+- `max_connections`：默认固定为 1000
+- `table_open_cache`、`thread_cache_size`、临时表和 redo 容量随内存分档
+- 排序、连接和读缓冲使用受控的小值，避免每连接大缓冲在高并发下耗尽内存
+
+生成配置位于 `/etc/clusterguard/mysql/<端口>.cnf`。参数是安装基线，不替代上线前按业务 SQL、连接池、存储延迟和容量做压测。
+
+该规则要求 MySQL 数据节点至少具备 5 GiB 物理内存。低于此容量时不存在同时满足“4 GiB 的倍数”和“不超过 80%”的有效 buffer pool，安装器会阻断并要求扩容。
+
+新实例默认监听 `0.0.0.0:<端口>`。ClusterGuard 创建的发现、执行和复制账号允许通过 TCP 连接；主机防火墙仍只应放通数据库节点、控制节点和批准的业务网段。默认 root 只允许本机 socket 和 `127.0.0.1`，远程管理使用专用账号。只有安装命令显式传入 `--mysql-root-remote-host HOST` 时，安装器才创建或更新对应的 `root`@`HOST`，例如 `--mysql-root-remote-host '%'`；省略参数时不操作远程 root。
+
+受管实例的运行时 socket 为 `/run/clusterguard/mysql/<端口>/mysql.sock`，由 systemd `RuntimeDirectory` 创建，不应放入数据库数据目录。安装器会发布本机客户端默认配置；标准 3306 实例可直接使用 `mysql -uroot -p`，同时保留重启后自动恢复的 `/tmp/mysql.sock` 兼容链接。平台内部始终使用绝对二进制、明确的 defaults 文件或 TCP，不依赖该兼容链接。
+
+认证插件按数据库版本处理：
+
+- MySQL 8.0/5.7：配置 `default_authentication_plugin=mysql_native_password`
+- MySQL 8.4：配置 `mysql_native_password=ON`，并为 ClusterGuard 管理账号显式指定 `mysql_native_password`
+- MySQL 9.x：不写已经移除的 native password 参数，使用服务器支持的默认认证插件
+
+验证自动生成的参数和账号：
+
+```sql
+SHOW VARIABLES WHERE Variable_name IN (
+  'bind_address', 'max_connections', 'innodb_buffer_pool_size',
+  'table_open_cache', 'thread_cache_size'
+);
+SELECT user, host, plugin
+FROM mysql.user
+WHERE user IN ('cg_discovery', 'cg_operator', 'cg_replication', 'root')
+ORDER BY user, host;
+```
+
+### 2.3 最小权限账号
 
 以下示例把控制节点网段限制为 `192.168.102.%`。生产环境应进一步收紧到具体控制节点地址，并使用随机长密码。
 
@@ -89,7 +129,7 @@ ALTER USER 'cg_operator'@'192.168.102.%' REQUIRE SSL;
 ALTER USER 'cg_replication'@'192.168.102.%' REQUIRE SSL;
 ```
 
-### 2.3 建立复制
+### 2.4 建立复制
 
 MySQL 8：
 

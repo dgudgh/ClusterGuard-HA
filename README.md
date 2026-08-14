@@ -7,17 +7,51 @@ ClusterGuard HA requires Go 1.22 or newer.
 **ClusterGuard HA — Multi-Database High Availability Control Plane**
 
 ClusterGuard HA is an independent, clean-room high-availability control plane.
-The current release delivers guarded MySQL and PostgreSQL control paths, and
-adds controlled role-transition adapters for Oracle Data Guard Broker and SQL
-Server Always On when their native command runners are configured.
+The stable 2.1 line is the MySQL HA product line. PostgreSQL delivery starts in
+2.2. Oracle Data Guard Broker and SQL Server Always On remain separately gated
+future product lines and are not part of the 2.1 support scope.
 
 ## Current Release
 
-> **Qualification status:** The capabilities below are implemented and covered
-> by automated tests. They are not a substitute for production qualification.
-> PostgreSQL mutation must remain disabled until the exact database package,
-> service layout, storage, network, fencing provider, VIP provider, and
-> three-controller deployment pass the live acceptance matrix in
+Release policy and support boundary:
+
+- `v2.1.45` is the immutable final release of the 2.1 line.
+- The supported 2.1 database engine is MySQL, including approved compatible
+  MySQL distributions validated by the site acceptance matrix.
+- PostgreSQL delivery and all subsequent feature work start from `2.2-1` on
+  branch `codex/2.2-postgresql`.
+- Any shipped feature or behavior change increments the package release; an
+  existing RPM, offline archive, tag, or GitHub Release is never overwritten.
+- Oracle and SQL Server code may exist behind capability gates, but it is not a
+  production claim for the sealed 2.1 line.
+
+| Line | Status | Production support boundary |
+| --- | --- | --- |
+| `2.1.45` | Stable and sealed | MySQL HA control plane |
+| `2.2.x` | Active development | PostgreSQL delivery plus retained MySQL capabilities |
+| Later lines | Roadmap | Oracle Data Guard Broker and SQL Server Always On after separate qualification |
+
+Download the sealed release from
+[ClusterGuard HA 2.1-45](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.1.45):
+
+```bash
+curl -fLO https://github.com/dgudgh/ClusterGuard-HA/releases/download/v2.1.45/clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz
+curl -fLO https://github.com/dgudgh/ClusterGuard-HA/releases/download/v2.1.45/clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz.sha256
+sha256sum -c clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz.sha256
+```
+
+Published SHA-256 values:
+
+```text
+d4a46bdfa4c95bb641a7d19f063d2f43219177658b01b914a31a1cd5d06ec590  clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz
+1bc70109b556e973744bb05b5be0f53b075260910ae5def25518631ff8629a1c  clusterguard-ha-2.1-45.x86_64.rpm
+```
+
+> **Qualification status:** Automated tests and laboratory acceptance do not
+> replace site qualification. Before production use, validate the exact MySQL
+> package, operating system, storage, network, fencing policy, VIP provider and
+> three-controller deployment. PostgreSQL acceptance belongs to the 2.2 line
+> and is documented separately in
 > [postgresql-ha.md](docs/postgresql-ha.md).
 
 The current MySQL adapter provides:
@@ -46,17 +80,22 @@ The current MySQL adapter provides:
 - tested MySQL 5.7/8.x/9.x mutation dialects behind an independent adapter and
   writer-endpoint contract.
 
-The PostgreSQL adapter provides inventory-scoped discovery, immutable node
-identity, `system_identifier` cluster binding, primary/standby topology,
+## 2.2 Development Scope
+
+The PostgreSQL adapter under 2.2 development provides inventory-scoped
+discovery, immutable node identity, `system_identifier` cluster binding,
+primary/standby topology,
 streaming health, timeline and WAL evidence, native metrics, deterministic
 candidate assessment, guarded planned switchover and failover, former-primary
 `pg_rewind` recovery, allowlisted low-risk repair, writer-VIP coupling, and
 `pg_basebackup`/`pg_rewind` node lifecycle, plus optional 30-second stable-failure
 automatic failover. Mutations are advertised only when
 the restricted Agent, operation credentials, endpoint provider, controller
-quorum, and required fencing evidence are configured.
+quorum, and required fencing evidence are configured. These capabilities are
+not retroactively added to `v2.1.45`.
 
-The Oracle adapter supports signed-Agent Data Guard Broker discovery, health,
+The Oracle adapter is a future gated integration for signed-Agent Data Guard
+Broker discovery, health,
 topology, standby candidate assessment, precheck, plan, execute, and dual-node
 verification for controlled switchover. A dedicated password-file
 `SYSDG` account is used instead of `SYS`; the local Agent runs DGMGRL as the
@@ -64,10 +103,10 @@ Oracle operating-system account and accepts only configured Broker members.
 ClusterGuard never edits Oracle data files directly. Failure failover remains
 blocked until old-primary fencing is configured.
 
-The SQL Server adapter supports Always On read-only discovery, health,
-topology, synchronized-secondary candidate assessment, precheck, plan, execute,
-verify, and send/redo queue metrics for planned failover to a synchronized
-synchronous-commit secondary.
+The SQL Server adapter is a future gated integration for Always On read-only
+discovery, health, topology, synchronized-secondary candidate assessment,
+precheck, plan, execute, verify, and send/redo queue metrics for planned
+failover to a synchronized synchronous-commit secondary.
 Discovery and execution are advertised only when `sqlcmd` is available or a SQL
 Server runner is injected. Forced failover remains blocked by default unless a
 future explicit data-loss approval policy is configured.
@@ -83,19 +122,22 @@ evidence blocks the operation; it never produces a simulated success.
 
 Automatic failover is separately opt-in. It requires six follow-up failure
 observations across 30 seconds, the rank-one eligible candidate, current
-controller quorum, old-primary isolation, and an exclusive VIP lease. A whole-
-host network partition is eligible only when the configured external fencer
-isolates the old primary and a separate status call proves that isolation.
-Without that evidence the operation remains blocked. The platform prefers
-temporary unavailability over a second writer or VIP owner.
+controller quorum, old-primary isolation, and an exclusive VIP lease. MySQL can
+use short-lived Raft-majority Agent authorization: stale authorization expires,
+the old node fails closed to no VIP plus persistent read-only, and the Leader
+revalidates the exact transition lease before promotion. An external BMC, PDU,
+cloud, or hypervisor fencer remains an optional stronger layer. The platform
+prefers temporary unavailability over a second writer or VIP owner.
 
 The browser console authenticates against platform users stored in the
 replicated metadata snapshot. A fresh installation creates `admin` with the
-temporary password `admin123` and `MustChangePassword=true`. The first login
-must replace it before any platform operation is accepted. Passwords are stored
-only as Argon2id hashes. Sessions have an eight-hour absolute lifetime, use
-HttpOnly SameSite cookies plus CSRF validation, and are revoked by password
-change or logout.
+documented first-login password `admin123` and `MustChangePassword=true`. The
+first password change is mandatory: until it succeeds, all cluster and metadata
+API reads and every mutation are blocked. The default is stored only as an
+Argon2id hash; it is never written to configuration, environment files, audit
+events, or reports. Sessions have an eight-hour absolute lifetime, use HttpOnly
+SameSite cookies plus CSRF validation, and are revoked by password change or
+logout.
 
 For an authenticated administrator or operator, the server builds the exact
 plan and internally issues and consumes a one-time grant; the browser never
@@ -137,10 +179,11 @@ export CG_SQLSERVER_OPERATION_PASSWORD='replace-with-the-ag-operation-secret'
 go run ./cmd/clusterguard --config configs/clusterguard.example.json
 ```
 
-The console and API are served from `http://127.0.0.1:8088/` by default.
-Open the console and sign in with `admin` / `admin123` on a new metadata store.
-The console immediately requires a new password and does not load cluster data
-until that change succeeds.
+When started directly from the source configuration, the console and API are
+served from `http://127.0.0.1:8088/` by default. The supported RPM/offline
+deployment serves HTTPS on port `3000`. On a new metadata store, sign in as
+`admin` with `admin123`. The console immediately requires a new password and
+does not load cluster data until that first password change succeeds.
 
 Service managers should use `/healthz` for liveness and `/readyz` for
 fail-closed control-plane readiness. Authenticated operators can use
@@ -156,18 +199,23 @@ uses `/etc/clusterguard/`, `/var/lib/clusterguard/`, and
 
 `scripts/build-clusterguard-bundle.sh` produces the controller, CLI, restricted
 agent, lifecycle helpers, systemd units, log rotation, configuration samples,
-and a full SHA-256 manifest. `scripts/clusterguard-install.sh` is preflight-only
-unless `--execute` is supplied and installs protected TLS, SSH, and per-version
-MySQL client assets from an explicit allowlisted runtime directory. Agent VIP
-reconciliation is deferred by default and requires the explicit
-`--activate-agent-reconcile` flag after endpoint metadata and majority leases
-have been verified.
+and a full SHA-256 manifest. `scripts/clusterguard-install.sh` is a per-node
+lifecycle helper; it is not the initial multi-node production bootstrap tool.
 
-See `docs/offline-install.md` for the air-gapped build, transfer, dependency,
-preflight, installation, Raft rollout, and rollback procedure.
+Use `scripts/install_clusterguard.sh` and the complete offline kit for the
+initial production deployment. It creates the control plane, fixed resource
+identities, certificates, database topology, Agent configuration and VIP
+reconciliation policy as one audited workflow. See
+`docs/zh-CN/offline-rpm-install.md` for the current offline deployment guide.
 
 Chinese delivery documentation:
 
+- `docs/zh-CN/README.md`: Chinese documentation entry point and recommended
+  reading order.
+- `docs/zh-CN/release-2.1.45.md`: sealed 2.1 release assets, checksums,
+  supported scope and upgrade boundary.
+- `docs/zh-CN/version-release-policy.md`: version numbering, immutable release
+  rules, branch policy and release gates.
 - `docs/zh-CN/offline-rpm-install.md`: RPM build, verification, installation,
   three-controller rollout, upgrade, uninstall, and rollback.
 - `docs/zh-CN/database-preparation.md`: database-side accounts, permissions,
@@ -277,8 +325,8 @@ artifact to all controllers as `clusterguard:clusterguard` mode `0600`, and
 restart them one at a time. The Raft Leader applies its recovery ID once,
 revokes existing sessions, forces a password change, audits the action, and
 removes the artifact on every node. See [operations.md](docs/operations.md) for
-the complete procedure. Never edit password hashes or re-enable `admin123` in
-a live Raft set.
+the complete procedure. Never edit password hashes or create a shared default
+password in a live Raft set.
 
 The HA matrix supports browser-equivalent session execution:
 

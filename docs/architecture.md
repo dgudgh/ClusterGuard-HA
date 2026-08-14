@@ -7,8 +7,11 @@ adapters. Platform identity, inventory authority, workflow gates, persistence,
 API behavior, audit, and reports belong to the control kernel. Database
 protocol details belong to adapters.
 
-The current release enables MySQL and PostgreSQL discovery, health, native
-metrics, deterministic candidate evaluation, guarded switchover and failover,
+The sealed 2.1 line enables the MySQL control path. PostgreSQL delivery starts
+in the 2.2 line. Oracle and SQL Server remain separately qualified future
+product lines; code behind a capability gate is not a production support claim.
+The active development tree contains discovery, health, native metrics,
+deterministic candidate evaluation, guarded switchover and failover,
 former-primary rejoin, allowlisted repair, Linux VIP ownership, and node
 lifecycle. Mutation remains capability- and configuration-gated: a missing
 majority, fence, restricted Agent policy, credential, endpoint provider, or
@@ -204,11 +207,12 @@ as MySQL.
 
 ## Platform Authentication
 
-A new metadata store bootstraps `admin` with temporary password `admin123`,
-role `admin`, and `MustChangePassword=true`. Existing users are never
-overwritten during restart or Leader change. Passwords use Argon2id and sessions
-store only SHA-256 token and CSRF hashes in the same replicated snapshot as
-other control metadata.
+A new metadata store bootstraps `admin` with the first-login password
+`admin123`, role `admin`, and `MustChangePassword=true`. Existing users are
+never overwritten during restart or Leader change. The first password change is
+required before any platform data is readable. Passwords use Argon2id and
+sessions store only SHA-256 token and CSRF hashes in the same replicated
+snapshot as other control metadata.
 
 The browser receives an opaque HttpOnly SameSite session cookie and a separate
 CSRF cookie. Mutating requests must present the cookie value in
