@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="Release 2.1.45 - ClusterGuard HA operational documentation">
+  <title>Release 2.1.45 | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">Skip to content</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>Search documentation</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="Filter by title">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45" aria-current="page" class="active">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
+      <div class="sidebar-meta">
+        <span>Offline documentation build</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">Open navigation</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>Release 2.1.45</strong></div>
+        <div class="header-actions">
+          <a href="../zh-CN/release-2.1.45.html" lang="zh-CN">简体中文</a>
+          <button id="print-button" type="button">Print</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha-2-1-45-release-notes">ClusterGuard HA 2.1-45 Release Notes<a class="heading-anchor" href="#clusterguard-ha-2-1-45-release-notes" aria-label="Link to ClusterGuard HA 2.1-45 Release Notes">#</a></h1>
+<h2 id="1-release-positioning">1. Release Positioning<a class="heading-anchor" href="#1-release-positioning" aria-label="Link to 1. Release Positioning">#</a></h2>
+<p><code>2.1-45</code> is the final release version of the ClusterGuard HA 2.1 series. The corresponding Git tag is
+<code>v2.1.45</code>, and the corresponding source code commit is:</p>
+<pre><code class="language-text">28425925a321655f38686942c6b081d235b0d288
+</code></pre>
+<p>GitHub Release:</p>
+<p><a href="https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.1.45">https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.1.45</a></p>
+<p>This version remains immutable after release. It is not allowed to overwrite tags, replace attachments, or reuse the filename <code>2.1-45</code> to publish different content. Any defects discovered should be fixed in subsequent version lines and re-released.</p>
+<h2 id="2-formal-deliverables">2. Formal Deliverables<a class="heading-anchor" href="#2-formal-deliverables" aria-label="Link to 2. Formal Deliverables">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+<th>SHA-256</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz</code></td>
+<td>Recommended complete offline deployment package</td>
+<td><code>d4a46bdfa4c95bb641a7d19f063d2f43219177658b01b914a31a1cd5d06ec590</code></td>
+</tr>
+<tr>
+<td><code>clusterguard-ha-2.1-45.x86_64.rpm</code></td>
+<td>ClusterGuard node package</td>
+<td><code>1bc70109b556e973744bb05b5be0f53b075260910ae5def25518631ff8629a1c</code></td>
+</tr>
+</tbody></table>
+<p>The complete offline package also includes two <code>.sha256</code> files. Before production deployment, verify the digest:</p>
+<pre><code class="language-bash">sha256sum -c clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz.sha256
+tar -xzf clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz
+cd clusterguard-ha-2.1-45-offline-linux-x86_64
+sha256sum -c SHA256SUMS
+</code></pre>
+<p>Only installing RPM does not automatically form a three-node control plane, database replication, and VIP arbitration. For new production clusters, use the <code>install_clusterguard.sh</code> from the complete offline package.</p>
+<h2 id="3-2-1-support-scope">3. 2.1 Support Scope<a class="heading-anchor" href="#3-2-1-support-scope" aria-label="Link to 3. 2.1 Support Scope">#</a></h2>
+<p>The formal database support scope for the 2.1 release line is MySQL high availability control, including:</p>
+<ul>
+<li>A Raft control plane composed of three or more odd-numbered control nodes;</li>
+<li>MySQL topology discovery, health checks, candidate evaluation, and replication diagnostics;</li>
+<li>Controlled primary switch, automatic failover, and migration of primary and VIP consistency;</li>
+<li>Full rebuild when old primary reattachment and incremental recovery are not feasible;</li>
+<li>Fixed platform node identity, MySQL <code>server_uuid</code> identity, and endpoint alias correction;</li>
+<li>Safety Guard, operation locks, approvals, verification, audit, and reports;</li>
+<li>Agent local disconnection isolation, VIP unique ownership, and restart convergence;</li>
+<li>Node addition, repair, installation, synchronization, and lifecycle tasks;</li>
+<li>Chinese console, API, <code>cgctl</code>, systemd, and offline installation delivery.</li>
+</ul>
+<p>MySQL compatible versions still require on-site actual database packages to complete acceptance. Although the version names are the same, different compilation options, authentication plugins, system libraries, storage, and network configurations make them not directly considered as the same set of production evidence.</p>
+<h2 id="4-not-included-in-2-1-scope">4. Not Included in 2.1 Scope<a class="heading-anchor" href="#4-not-included-in-2-1-scope" aria-label="Link to 4. Not Included in 2.1 Scope">#</a></h2>
+<p>The following capabilities must not be promised or delivered under the name of <code>2.1-45</code>:</p>
+<ul>
+<li>PostgreSQL formal installation, switchover, failure recovery, and node synchronization;</li>
+<li>Oracle Data Guard Broker formal production takeover;</li>
+<li>SQL Server Always On formal production takeover;</li>
+<li>Adding new scripts, new dependencies, or new behaviors to the already published attachments.</li>
+</ul>
+<p>PostgreSQL is delivered starting from <code>2.2-1</code>. Oracle and SQL Server must enter subsequent versions only after completing independent test matrices and on-site acceptance.</p>
+<h2 id="5-new-installation-entry">5. New Installation Entry<a class="heading-anchor" href="#5-new-installation-entry" aria-label="Link to 5. New Installation Entry">#</a></h2>
+<p>For complete parameters and production checks, see <a href="offline-rpm-install.html">Offline Installation and Deployment Manual</a>. For a typical MySQL three-node hybrid deployment, first execute the read-only plan:</p>
+<pre><code class="language-bash">./install_clusterguard.sh \
+  -l 192.168.102.152,192.168.102.153,192.168.102.154 \
+  -n 192.168.102.152,192.168.102.153,192.168.102.154 \
+  -u root \
+  -P &#39;SSH_PASSWORD&#39; \
+  -ld /var/lib/clusterguard \
+  -nd /data \
+  --engine mysql \
+  --database-version 8.0.44 \
+  --cluster-name production-mysql \
+  --vip 192.168.102.155 \
+  --interface ens160 \
+  --known-hosts ./site/known_hosts \
+  --plan
+</code></pre>
+<p>After verifying the nodes, versions, ports, VIPs, network cards, data directories, and installation media, change the end to
+<code>--execute</code>. Do not execute <code>--execute</code> as a separate Shell command.</p>
+<h2 id="6-production-admission">6. Production Admission<a class="heading-anchor" href="#6-production-admission" aria-label="Link to 6. Production Admission">#</a></h2>
+<p>Before formal business access, at least confirm the following:</p>
+<ol>
+<li>Three control nodes are healthy, the Leader is unique, and the Raft majority is available.</li>
+<li>Three database instance identities are unique, replication threads are normal, and the delay meets business requirements.</li>
+<li>The VIP exists only on the current primary, and after any node loses the majority authorization, it can locally revoke the VIP and remain read-only.</li>
+<li>The planned switchover, primary failure, old primary recovery, node restart, and complete shutdown process have all been verified on-site.</li>
+<li>Operation logs, audit, reports, monitoring interfaces, and backup recovery processes are available.</li>
+<li>Production network partition, storage anomalies, and concurrent operation tests meet on-site RTO/RPO requirements.</li>
+</ol>
+<p>The <code>2.1-45</code> release does not equate to waiving on-site acceptance. On-site differences must be recorded as separate acceptance records.</p>
+<h2 id="7-subsequent-versions">7. Subsequent Versions<a class="heading-anchor" href="#7-subsequent-versions" aria-label="Link to 7. Subsequent Versions">#</a></h2>
+<ul>
+<li>The 2.1 series will no longer add new features.</li>
+<li>PostgreSQL and subsequent changes will be included in <code>codex/2.2-postgresql</code>.</li>
+<li>The first 2.2 formal package will use <code>2.2-1</code>, and subsequent deliveries will use <code>2.2-2</code>, <code>2.2-3</code> in sequence, without overwriting old packages.</li>
+<li>Detailed rules can be found in <a href="version-release-policy.html">Version and Release Policy</a>.</li>
+</ul>
+
+          <footer class="document-footer">
+            <span>Source: <code>docs/en-US/release-2.1.45.md</code></span>
+            <a href="../index.html">Documentation language home</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="On this page">
+          <strong>On this page</strong>
+          <a class="toc-level-2" href="#1-release-positioning">1. Release Positioning</a><a class="toc-level-2" href="#2-formal-deliverables">2. Formal Deliverables</a><a class="toc-level-2" href="#3-2-1-support-scope">3. 2.1 Support Scope</a><a class="toc-level-2" href="#4-not-included-in-2-1-scope">4. Not Included in 2.1 Scope</a><a class="toc-level-2" href="#5-new-installation-entry">5. New Installation Entry</a><a class="toc-level-2" href="#6-production-admission">6. Production Admission</a><a class="toc-level-2" href="#7-subsequent-versions">7. Subsequent Versions</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

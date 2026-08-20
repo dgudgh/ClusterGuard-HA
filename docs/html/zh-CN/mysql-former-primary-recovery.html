@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="旧主恢复专项验收 - ClusterGuard HA operational documentation">
+  <title>旧主恢复专项验收 | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">跳到正文</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>搜索文档</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="输入标题关键词">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>开始使用</h2><a href="index.html" data-doc-title="clusterguard ha 中文文档">ClusterGuard HA 中文文档</a><a href="product-overview.html" data-doc-title="产品概览">产品概览</a><a href="product-tour.html" data-doc-title="控制台产品导览">控制台产品导览</a><a href="architecture.html" data-doc-title="系统架构">系统架构</a><a href="release-2.1.45.html" data-doc-title="2.1.45 发布说明">2.1.45 发布说明</a></section><section><h2>部署与迁移</h2><a href="offline-rpm-install.html" data-doc-title="离线 rpm 安装">离线 RPM 安装</a><a href="database-preparation.html" data-doc-title="数据库接入">数据库接入</a><a href="orchestrator-migration.html" data-doc-title="从 orchestrator 迁移">从 Orchestrator 迁移</a></section><section><h2>日常运维</h2><a href="operations-manual.html" data-doc-title="运维操作手册">运维操作手册</a><a href="api-operations.html" data-doc-title="api 运维参考">API 运维参考</a><a href="postgresql-ha.html" data-doc-title="postgresql 高可用">PostgreSQL 高可用</a><a href="version-release-policy.html" data-doc-title="版本与发版规范">版本与发版规范</a></section><section><h2>验收证据</h2><a href="proven-mysql-ha-methods.html" data-doc-title="mysql 已验证方法">MySQL 已验证方法</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql 功能验收">MySQL 功能验收</a><a href="mysql-former-primary-recovery.html" data-doc-title="旧主恢复专项验收" aria-current="page" class="active">旧主恢复专项验收</a><a href="mysql-production-qualification.html" data-doc-title="mysql 生产验收">MySQL 生产验收</a><a href="production-chaos-test.html" data-doc-title="生产故障测试报告">生产故障测试报告</a><a href="power-lifecycle-test.html" data-doc-title="计划关机测试报告">计划关机测试报告</a></section></nav>
+      <div class="sidebar-meta">
+        <span>离线文档构建</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">打开目录</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>旧主恢复专项验收</strong></div>
+        <div class="header-actions">
+          <a href="../en-US/mysql-former-primary-recovery.html" lang="en-US">English</a>
+          <button id="print-button" type="button">打印</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="mysql-旧主一键恢复生产前验收报告">MySQL 旧主一键恢复生产前验收报告<a class="heading-anchor" href="#mysql-旧主一键恢复生产前验收报告" aria-label="Link to MySQL 旧主一键恢复生产前验收报告">#</a></h1>
+<ul>
+<li>日期：2026-08-09</li>
+<li>节点：<code>192.168.102.152</code>、<code>192.168.102.153</code>、<code>192.168.102.154</code></li>
+<li>版本：MySQL 8.0.44、MySQL 8.4.10、MySQL 9.7.1</li>
+<li>结论：进程故障后的 GTID 增量回挂、binlog 缺口后的全量重建、errant GTID
+分叉后的全量重建均通过真实三节点验证。</li>
+</ul>
+<h2 id="1-一键恢复行为">1. 一键恢复行为<a class="heading-anchor" href="#1-一键恢复行为" aria-label="Link to 1. 一键恢复行为">#</a></h2>
+<p>控制台“一键恢复为从库”执行以下固定流程：</p>
+<ol>
+<li>主动刷新集群发现，读取旧主刚启动后的最新只读和复制状态。</li>
+<li>校验旧主固定资源 ID、MySQL <code>server_uuid</code>、集群清单和当前主库身份。</li>
+<li>比较旧主与当前主库的 GTID 集合。</li>
+<li>判断旧主追平所需 binlog 是否仍可从当前主库取得。</li>
+<li>GTID 是子集且 binlog 完整时执行增量回挂。</li>
+<li>binlog 已清理或存在 errant GTID 时，自动执行全量重建和复制恢复。</li>
+<li>验证旧主只读、复制线程、复制源、延迟、单主和 VIP 唯一性。</li>
+<li>写入审计、验证和报告；任何关键证据缺失时阻断。</li>
+</ol>
+<p>平台不会用 <code>sql_slave_skip_counter</code>、GTID 注入或强制重置来掩盖数据分叉。</p>
+<h2 id="2-真实测试矩阵">2. 真实测试矩阵<a class="heading-anchor" href="#2-真实测试矩阵" aria-label="Link to 2. 真实测试矩阵">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>版本</th>
+<th>故障与数据条件</th>
+<th>恢复路径</th>
+<th>结果</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>8.0.44</td>
+<td>当前主库进程直接停止</td>
+<td>自动故障切换后 GTID 增量回挂</td>
+<td>通过；约 65-70 秒形成唯一新主，旧主启动后保持只读并完成增量回挂</td>
+</tr>
+<tr>
+<td>8.4.10</td>
+<td>故障期间继续写入，并 purge 旧主追平所需 binlog</td>
+<td>自动判定 <code>required_binlog_available=fail</code>，执行全量重建</td>
+<td>通过；未尝试不安全增量回挂，全量同步、复制恢复和验证完成</td>
+</tr>
+<tr>
+<td>9.7.1</td>
+<td>隔离旧主上写入当前主库不存在的 errant GTID</td>
+<td>自动判定 GTID 非子集，执行全量重建</td>
+<td>通过；分叉行未带入新拓扑，旧主按当前主库重建</td>
+</tr>
+<tr>
+<td>8.4.10</td>
+<td>主库数据目录变为只读，systemd 处于 <code>activating/auto-restart</code> 且无存活 PID</td>
+<td>Agent 认定数据库已停止，允许已隔离故障切换</td>
+<td>通过；修复空 auto-restart 状态误阻断后完成切换和旧主回挂</td>
+</tr>
+<tr>
+<td>8.0/9.7</td>
+<td>当前主库与其余两节点网络隔离</td>
+<td>无外部 fencing 时停止写入，不提升无法确认已隔离的旧主</td>
+<td>通过；全节点只读且 VIP 释放，网络恢复后收敛为唯一主库</td>
+</tr>
+<tr>
+<td>8.0</td>
+<td>当前主机整机断电</td>
+<td>无 VMware/BMC fencing 证据时阻断自动提升</td>
+<td>通过安全门禁；恢复虚拟机后服务自动启动并保持旧主只读</td>
+</tr>
+</tbody></table>
+<h2 id="3-并发与数据一致性">3. 并发与数据一致性<a class="heading-anchor" href="#3-并发与数据一致性" aria-label="Link to 3. 并发与数据一致性">#</a></h2>
+<p>同一集群两个并发切换请求中，仅一个取得操作锁并成功，另一个以 HTTP 409
+阻断。不同集群的 8.0 与 8.4 切换同时执行并均通过：</p>
+<ul>
+<li>8.0 operation：<code>7b112de1-537a-4157-ae83-74d2e4372063</code></li>
+<li>8.4 operation：<code>e34b49d2-36b1-4948-b493-f202a051786b</code></li>
+<li>两个 execution 均为 <code>succeeded</code></li>
+<li>两个 verification 均为 <code>passed=true</code></li>
+<li>每个操作均通过源只读、目标可写、复制重挂、半同步、单主和 VIP owner 验证</li>
+</ul>
+<p>最终三副本确定性数据校验。摘要统一按
+<code>SUM(CRC32(CONCAT(id,marker,HEX(payload))))</code> 计算，便于在任一副本直接复算：</p>
+<table>
+<thead>
+<tr>
+<th>集群</th>
+<th align="right">每节点行数</th>
+<th align="right">每节点摘要</th>
+<th>当前主库</th>
+<th>VIP owner</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>8.0 / 3306</td>
+<td align="right">2007</td>
+<td align="right"><code>4323827613648</code></td>
+<td><code>.153</code></td>
+<td><code>.153</code> 持有 <code>.155</code></td>
+</tr>
+<tr>
+<td>8.4 / 3384</td>
+<td align="right">2006</td>
+<td align="right"><code>4341221981770</code></td>
+<td><code>.154</code></td>
+<td><code>.154</code> 持有 <code>.160</code></td>
+</tr>
+<tr>
+<td>9.7 / 3397</td>
+<td align="right">2005</td>
+<td align="right"><code>4304498633408</code></td>
+<td><code>.152</code></td>
+<td><code>.152</code> 持有 <code>.164</code></td>
+</tr>
+</tbody></table>
+<p>三个集群其余节点均为 <code>read_only=1</code>、<code>super_read_only=1</code>，测试结束时无双主、
+无双 VIP、无只读测试挂载、无网络故障规则。</p>
+<p>最终收口阶段又执行 60 秒、7 个采样点的连续观察。每一轮都满足：每集群恰好
+1 个 primary、2 个 replica、复制 IO/SQL 线程运行、复制链路健康、最大延迟 0 秒，
+且主库身份没有后台漂移。</p>
+<h2 id="4-本轮代码修复">4. 本轮代码修复<a class="heading-anchor" href="#4-本轮代码修复" aria-label="Link to 4. 本轮代码修复">#</a></h2>
+<ol>
+<li>MySQL probe 采集 <code>gtid_purged</code>，恢复预检查增加
+<code>former_primary_gtid_subset</code>、<code>required_binlog_available</code> 和 <code>rebuild_required</code>。</li>
+<li>控制台根据预检查自动选择增量回挂或节点全量重建。</li>
+<li>控制台在恢复决策前主动执行 discover，消除旧主刚启动时第一次点击读取旧快照的问题。</li>
+<li>MySQL 9.7 复制状态采集使用兼容的垂直输出，不向客户端发送 <code>\\G</code>。</li>
+<li>Agent 将“systemd auto-restart、MainPID=0、ControlGroup 为空”识别为已停止；存在
+任意存活 PID 或 cgroup 时仍 fail-closed。</li>
+</ol>
+<h2 id="5-构建与测试">5. 构建与测试<a class="heading-anchor" href="#5-构建与测试" aria-label="Link to 5. 构建与测试">#</a></h2>
+<pre><code class="language-text">go test ./... -count=1                                      PASS
+go test -race ./adapters/mysql ./internal/api \
+  ./internal/agent ./internal/coordination \
+  ./internal/lifecycle ./internal/workflow -count=1          PASS
+go vet ./...                                                 PASS
+go build ./...                                               PASS
+git diff --check                                             PASS
+</code></pre>
+<p>三台控制面滚动部署后的 Linux 二进制 SHA-256：</p>
+<pre><code class="language-text">clusterguard       d9a4d49c2e02d624307b8d2219cc70911cde5bbf63a7e52f8a9d4e70af4c1214
+clusterguard-agent 29791923d37286172f23c923a61d9227c1d9d98360959069ba843baa959434fb
+</code></pre>
+<p>滚动部署期间始终保持 3 voters、quorum confirmed、mutation authority 和
+<code>commit_index=applied_index</code>。</p>
+<h2 id="6-生产边界">6. 生产边界<a class="heading-anchor" href="#6-生产边界" aria-label="Link to 6. 生产边界">#</a></h2>
+<p>该结果证明软件在当前实验室对上述故障的安全处理，不表示基础设施风险为零。
+完全失联或整机断电的主库若无法从独立通道确认已关机，ClusterGuard HA 会选择
+停止写入而不是冒险产生双主。生产环境要在保持此门禁的前提下接入独立
+BMC/IPMI、虚拟化平台或存储 fencing，才能同时取得自动接管和脑裂防护。</p>
+<p>上线前还必须使用生产存储复测 I/O hang、磁盘满、inode 满、fsync 高延迟，并用
+生产备份完成一次裸机恢复和时间点恢复。复制恢复不能替代备份恢复验收。</p>
+
+          <footer class="document-footer">
+            <span>源文件: <code>docs/zh-CN/mysql-former-primary-recovery-qualification-2026-08-09.md</code></span>
+            <a href="../index.html">文档语言入口</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="本页目录">
+          <strong>本页目录</strong>
+          <a class="toc-level-2" href="#1-一键恢复行为">1. 一键恢复行为</a><a class="toc-level-2" href="#2-真实测试矩阵">2. 真实测试矩阵</a><a class="toc-level-2" href="#3-并发与数据一致性">3. 并发与数据一致性</a><a class="toc-level-2" href="#4-本轮代码修复">4. 本轮代码修复</a><a class="toc-level-2" href="#5-构建与测试">5. 构建与测试</a><a class="toc-level-2" href="#6-生产边界">6. 生产边界</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="Console Product Tour - ClusterGuard HA operational documentation">
+  <title>Console Product Tour | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">Skip to content</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>Search documentation</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="Filter by title">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour" aria-current="page" class="active">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
+      <div class="sidebar-meta">
+        <span>Offline documentation build</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">Open navigation</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>Console Product Tour</strong></div>
+        <div class="header-actions">
+          <a href="../zh-CN/product-tour.html" lang="zh-CN">简体中文</a>
+          <button id="print-button" type="button">Print</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha-product-tour">ClusterGuard HA Product Tour<a class="heading-anchor" href="#clusterguard-ha-product-tour" aria-label="Link to ClusterGuard HA Product Tour">#</a></h1>
+<p>This guide introduces the primary ClusterGuard HA console surfaces with screenshots from the laboratory environment. Cluster names, node addresses, and runtime states are examples only. Production behavior must be qualified against the actual topology, database build, and site safety policy.</p>
+<h2 id="high-availability-operations-workbench">High-Availability Operations Workbench<a class="heading-anchor" href="#high-availability-operations-workbench" aria-label="Link to High-Availability Operations Workbench">#</a></h2>
+<p>The Operations page is scoped to the selected cluster. Its context bar keeps the current primary, candidate primary, VIP, and replication lag visible. Controlled switchover, former-primary recovery, safety gates, and verification are stages of one backend workflow; a button click alone is never reported as success.</p>
+<p><img src="../assets/screenshots/ha-operation-workbench.png" alt="ClusterGuard HA high-availability operations workbench"></p>
+<p>The workbench provides:</p>
+<ul>
+<li>candidate selection restricted to the active cluster inventory;</li>
+<li>coupled database-role and VIP-ownership transition;</li>
+<li>identity, replication, Raft majority, operation-lock, and safety checks before mutation;</li>
+<li>post-operation rediscovery and verification of the primary, replicas, VIP, and replication links;</li>
+<li>incremental rejoin or full rebuild for a recovered former primary.</li>
+</ul>
+<h2 id="cluster-topology">Cluster Topology<a class="heading-anchor" href="#cluster-topology" aria-label="Link to Cluster Topology">#</a></h2>
+<p>The Topology page is organized by immutable resource identity. Hostname, IP address, and port are correctable endpoints rather than resource keys. Node cards show role, health, version, endpoint, and VIP ownership. Status must come from current probe evidence; an unreachable node is shown as unknown or unavailable instead of inheriting a stale healthy state.</p>
+<p><img src="../assets/screenshots/cluster-topology.png" alt="ClusterGuard HA cluster topology"></p>
+<p>The topology answers four operational questions:</p>
+<ol>
+<li>Which instance is the currently observed primary?</li>
+<li>Which instances are replicating, and in which direction?</li>
+<li>Which node currently owns the VIP?</li>
+<li>Which nodes are unreachable, degraded, or require attention?</li>
+</ol>
+<h2 id="node-lifecycle">Node Lifecycle<a class="heading-anchor" href="#node-lifecycle" aria-label="Link to Node Lifecycle">#</a></h2>
+<p>The Nodes page separates inventory from lifecycle tasks. Add, replace, and rebuild parameters are collected in a modal and then submitted as an auditable task, keeping long installation forms out of the main workspace.</p>
+<p><img src="../assets/screenshots/node-lifecycle.png" alt="ClusterGuard HA node lifecycle"></p>
+<p>Lifecycle tasks cover:</p>
+<ul>
+<li>data, controller, and mixed node roles;</li>
+<li>fixed node names and immutable resource IDs;</li>
+<li>SSH access, database media, port, and data directory;</li>
+<li>synchronization selection, replication restoration, and completion verification;</li>
+<li>odd controller-count enforcement and Raft membership checks.</li>
+</ul>
+<h2 id="operation-log">Operation Log<a class="heading-anchor" href="#operation-log" aria-label="Link to Operation Log">#</a></h2>
+<p>The Operation Log separates concise events from raw evidence. The default view shows time, cluster, source primary, target node, operation type, and final status. Operators can expand an entry to inspect raw output, operation UUID, workflow stages, checks, and report links.</p>
+<p><img src="../assets/screenshots/operation-log.png" alt="ClusterGuard HA operation log"></p>
+<p>A successful event requires both execution and post-operation verification. If a database role changed but verification did not complete, the result must remain review-required or failed rather than being inferred from the command exit code alone.</p>
+<h2 id="screenshot-maintenance-policy">Screenshot Maintenance Policy<a class="heading-anchor" href="#screenshot-maintenance-policy" aria-label="Link to Screenshot Maintenance Policy">#</a></h2>
+<ul>
+<li>Use real product screens; never present a design mockup as a delivered capability.</li>
+<li>Never expose passwords, tokens, private keys, cookies, or database connection secrets.</li>
+<li>Label screenshots as laboratory examples, not production acceptance evidence.</li>
+<li>Update both language indexes and screenshots when the console structure changes materially.</li>
+<li>Reuse each screenshot across both languages so the documentation cannot show conflicting product states.</li>
+</ul>
+
+          <footer class="document-footer">
+            <span>Source: <code>docs/en-US/product-tour.md</code></span>
+            <a href="../index.html">Documentation language home</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="On this page">
+          <strong>On this page</strong>
+          <a class="toc-level-2" href="#high-availability-operations-workbench">High-Availability Operations Workbench</a><a class="toc-level-2" href="#cluster-topology">Cluster Topology</a><a class="toc-level-2" href="#node-lifecycle">Node Lifecycle</a><a class="toc-level-2" href="#operation-log">Operation Log</a><a class="toc-level-2" href="#screenshot-maintenance-policy">Screenshot Maintenance Policy</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

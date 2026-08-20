@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="生产故障测试报告 - ClusterGuard HA operational documentation">
+  <title>生产故障测试报告 | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">跳到正文</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>搜索文档</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="输入标题关键词">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>开始使用</h2><a href="index.html" data-doc-title="clusterguard ha 中文文档">ClusterGuard HA 中文文档</a><a href="product-overview.html" data-doc-title="产品概览">产品概览</a><a href="product-tour.html" data-doc-title="控制台产品导览">控制台产品导览</a><a href="architecture.html" data-doc-title="系统架构">系统架构</a><a href="release-2.1.45.html" data-doc-title="2.1.45 发布说明">2.1.45 发布说明</a></section><section><h2>部署与迁移</h2><a href="offline-rpm-install.html" data-doc-title="离线 rpm 安装">离线 RPM 安装</a><a href="database-preparation.html" data-doc-title="数据库接入">数据库接入</a><a href="orchestrator-migration.html" data-doc-title="从 orchestrator 迁移">从 Orchestrator 迁移</a></section><section><h2>日常运维</h2><a href="operations-manual.html" data-doc-title="运维操作手册">运维操作手册</a><a href="api-operations.html" data-doc-title="api 运维参考">API 运维参考</a><a href="postgresql-ha.html" data-doc-title="postgresql 高可用">PostgreSQL 高可用</a><a href="version-release-policy.html" data-doc-title="版本与发版规范">版本与发版规范</a></section><section><h2>验收证据</h2><a href="proven-mysql-ha-methods.html" data-doc-title="mysql 已验证方法">MySQL 已验证方法</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql 功能验收">MySQL 功能验收</a><a href="mysql-former-primary-recovery.html" data-doc-title="旧主恢复专项验收">旧主恢复专项验收</a><a href="mysql-production-qualification.html" data-doc-title="mysql 生产验收">MySQL 生产验收</a><a href="production-chaos-test.html" data-doc-title="生产故障测试报告" aria-current="page" class="active">生产故障测试报告</a><a href="power-lifecycle-test.html" data-doc-title="计划关机测试报告">计划关机测试报告</a></section></nav>
+      <div class="sidebar-meta">
+        <span>离线文档构建</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">打开目录</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>生产故障测试报告</strong></div>
+        <div class="header-actions">
+          <a href="../en-US/production-chaos-test.html" lang="en-US">English</a>
+          <button id="print-button" type="button">打印</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha-生产前破坏性测试报告">ClusterGuard HA 生产前破坏性测试报告<a class="heading-anchor" href="#clusterguard-ha-生产前破坏性测试报告" aria-label="Link to ClusterGuard HA 生产前破坏性测试报告">#</a></h1>
+<ul>
+<li>日期：2026-08-09</li>
+<li>环境：<code>192.168.102.152</code>、<code>192.168.102.153</code>、<code>192.168.102.154</code></li>
+<li>控制面：3 节点 Raft</li>
+<li>重点集群：MySQL 8.0.44（3306）、MySQL 8.4.10（3384）和 MySQL 9.7.1（3397）</li>
+<li>结论：本轮软件测试矩阵通过；生产上线仍应配置外部 fencing，并完成生产网络、存储和备份恢复专项验收。</li>
+</ul>
+<h2 id="1-测试目标">1. 测试目标<a class="heading-anchor" href="#1-测试目标" aria-label="Link to 1. 测试目标">#</a></h2>
+<p>本轮验证以下生产不变量：</p>
+<ol>
+<li>任意时刻每个数据库集群最多只有一个可写主库。</li>
+<li>每个 HA VIP 最多只由一台主机持有，并且必须跟随当前主库。</li>
+<li>控制面无 quorum、无法确认 fencing 或状态不确定时必须 fail-closed。</li>
+<li>故障节点恢复后先保持只读，经验证后才能重新加入复制拓扑。</li>
+<li>同一集群并发操作、重复请求和过期计划不能造成重复执行。</li>
+<li>节点重启后控制面、Agent、数据库角色、复制链路和 VIP 能自动收敛。</li>
+</ol>
+<h2 id="2-测试矩阵与结果">2. 测试矩阵与结果<a class="heading-anchor" href="#2-测试矩阵与结果" aria-label="Link to 2. 测试矩阵与结果">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>执行方式</th>
+<th>结果</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>三节点整机关机与恢复</td>
+<td>连续 3 轮关闭全部虚拟机，并使用不同开机顺序恢复</td>
+<td>通过；Raft 恢复 3 voters，数据库角色、复制和 VIP 自动收敛，无双主、双 VIP</td>
+</tr>
+<tr>
+<td>当前主库网络分区</td>
+<td>隔离 3306 当前主库约 90 秒</td>
+<td>通过；节点约 34 秒后本地隔离并释放 VIP，因缺少外部 fencing 不进行不安全提升；网络恢复后约 16 秒重新取得唯一 VIP 和写权限</td>
+</tr>
+<tr>
+<td>9.7 当前主库网络分区</td>
+<td>将 3397 当前主库与另外两个节点双向隔离</td>
+<td>通过；三实例均只读且 VIP 释放，没有提升无法确认已隔离的旧主；清理规则后恢复为唯一主库和唯一 VIP</td>
+</tr>
+<tr>
+<td>Leader 与主库同时分区</td>
+<td>隔离当时兼任 Raft Leader 和 3384 主库的 <code>.153</code> 约 75 秒</td>
+<td>通过；<code>.154</code> 在 5 秒内成为 Leader，2 节点保持 quorum；孤立节点自隔离，恢复后安全收敛</td>
+</tr>
+<tr>
+<td>副本存储不可用</td>
+<td>停止 <code>.154:3306</code>，将 <code>/data/mysql8/data</code> 权限改为 <code>000</code> 后启动</td>
+<td>通过；实例不可用并失去候选资格，预检查失败，真实执行在变更前返回 HTTP 409</td>
+</tr>
+<tr>
+<td>8.4 主库存储只读</td>
+<td>将当前主库数据目录 bind-remount 为只读，systemd 进入无 PID auto-restart</td>
+<td>通过；故障节点确认无存活数据库进程后完成安全接管；存储恢复后旧主增量回挂</td>
+</tr>
+<tr>
+<td>存储恢复与追平</td>
+<td>恢复目录权限和服务，故障期间在主库写入 500 行</td>
+<td>通过；副本恢复后 IO/SQL 线程运行、延迟归零、500 行完整追平，临时库已清理</td>
+</tr>
+<tr>
+<td>8.4 binlog 缺口</td>
+<td>故障期间写入后 purge 旧主追平所需 binlog</td>
+<td>通过；<code>required_binlog_available</code> 和 <code>rebuild_required</code> 阻断增量回挂，自动全量重建成功</td>
+</tr>
+<tr>
+<td>9.7 errant GTID</td>
+<td>在隔离旧主制造当前主库不存在的事务</td>
+<td>通过；GTID 子集检查失败，自动全量重建，分叉事务未带回当前拓扑</td>
+</tr>
+<tr>
+<td>同集群并发切换</td>
+<td>同时向两个不同候选提交 3306 切换</td>
+<td>通过；一个操作成功，一个被 HTTP 409 阻断，只发生一次主库变更</td>
+</tr>
+<tr>
+<td>相同幂等键并发提交</td>
+<td>两个请求使用同一 idempotency key</td>
+<td>通过；共享同一 operation ID，一个执行，一个返回 <code>operation is running</code>，仅生成一套执行/验证/报告</td>
+</tr>
+<tr>
+<td>跨集群并发切换</td>
+<td>3306 与 3384 同时操作</td>
+<td>通过；8.0 operation <code>7b112de1-...</code> 与 8.4 operation <code>e34b49d2-...</code> 均 succeeded，执行后验证全部通过</td>
+</tr>
+<tr>
+<td>真实控制台切换</td>
+<td>在 Web 控制台锁定并执行 3306 主库和 VIP 联动切换</td>
+<td>通过；五阶段全部成功，操作日志记录源/目标/时间，原始报告可展开，最终拓扑验证通过</td>
+</tr>
+<tr>
+<td>最终稳定观察</td>
+<td>连续 60 秒采集 8.0、8.4、9.7 的角色、只读状态、复制线程、链路和延迟</td>
+<td>通过；7 个采样点均为单主、双只读副本、线程运行、链路健康、最大延迟 0 秒</td>
+</tr>
+</tbody></table>
+<h2 id="3-本轮发现并修复">3. 本轮发现并修复<a class="heading-anchor" href="#3-本轮发现并修复" aria-label="Link to 3. 本轮发现并修复">#</a></h2>
+<h3 id="控制台未处理安全的-stale-plan">控制台未处理安全的 <code>stale_plan</code><a class="heading-anchor" href="#控制台未处理安全的-stale-plan" aria-label="Link to 控制台未处理安全的 stale_plan">#</a></h3>
+<p>跨集群并发时，拓扑版本可能在计划生成后、执行提交前发生变化。后端正确地以 <code>stale_plan</code> 阻断，但控制台原先只显示失败，必须由操作员重新点击。</p>
+<p>修复后的控制台仅在以下条件全部满足时自动重建计划并重试：</p>
+<ul>
+<li>HTTP 409；</li>
+<li><code>failure_class=stale_plan</code>；</li>
+<li><code>status=blocked</code>；</li>
+<li>阶段为 <code>precheck</code> 或 <code>plan</code>；</li>
+<li><code>committed</code> 不为 <code>true</code>；</li>
+<li>最多 3 次；</li>
+<li>始终保留用户最初选择的目标节点；</li>
+<li>每次使用新的幂等键。</li>
+</ul>
+<p>执行阶段错误、已提交操作、<code>indeterminate</code>、一般 409 和其他失败不会自动重试。</p>
+<p>部署后已通过真实控制台完成 3306 切换，结果为 <code>操作完成，验证通过</code>。操作日志记录：</p>
+<ul>
+<li>时间：2026-08-09 19:18:59 CST</li>
+<li>源节点：<code>orch-mysql03:3306</code></li>
+<li>目标节点：<code>orch-mysql01:3306</code></li>
+<li>状态：成功</li>
+</ul>
+<h3 id="旧主恢复首次点击读取旧快照">旧主恢复首次点击读取旧快照<a class="heading-anchor" href="#旧主恢复首次点击读取旧快照" aria-label="Link to 旧主恢复首次点击读取旧快照">#</a></h3>
+<p>旧主服务刚恢复时，控制台可能仍持有停机前的拓扑快照，导致第一次点击“一键恢复为从库”错误读取旧主只读状态并被预检查阻断。</p>
+<p>修复后，旧主恢复固定先调用当前集群的 discover，再重新加载所选集群，随后才执行恢复预检查。该顺序由控制台契约测试覆盖；discover 或重新加载失败时不会继续执行恢复。</p>
+<h3 id="手工部署产物架构检查">手工部署产物架构检查<a class="heading-anchor" href="#手工部署产物架构检查" aria-label="Link to 手工部署产物架构检查">#</a></h3>
+<p>测试中曾误将 macOS 构建产物复制到 Linux 节点，systemd 以 <code>203/EXEC</code> 拒绝启动。Raft 多数派和数据库服务未受影响，随后使用以下参数重新构建并滚动部署：</p>
+<pre><code class="language-bash">GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o clusterguard ./cmd/clusterguard
+</code></pre>
+<p>三节点最终滚动部署后二进制 SHA-256 一致：</p>
+<pre><code class="language-text">clusterguard       d9a4d49c2e02d624307b8d2219cc70911cde5bbf63a7e52f8a9d4e70af4c1214
+clusterguard-agent 29791923d37286172f23c923a61d9227c1d9d98360959069ba843baa959434fb
+</code></pre>
+<p>正式交付必须使用 RPM/离线包构建流程，并在部署前校验 ELF 架构和摘要，禁止直接复制开发机默认产物。</p>
+<h2 id="4-最终现场状态">4. 最终现场状态<a class="heading-anchor" href="#4-最终现场状态" aria-label="Link to 4. 最终现场状态">#</a></h2>
+<h3 id="控制面">控制面<a class="heading-anchor" href="#控制面" aria-label="Link to 控制面">#</a></h3>
+<ul>
+<li>当前 Leader：<code>192.168.102.154</code></li>
+<li>Raft：3 voters，quorum confirmed</li>
+<li><code>mutation_authority=true</code></li>
+<li><code>snapshot_cas_active=true</code></li>
+<li><code>commit_index=applied_index</code></li>
+<li><code>ready=true</code></li>
+<li>活动操作：0</li>
+<li>活动节点任务：0</li>
+<li><code>clusterguard-ha.service</code>：三台均 active/enabled</li>
+<li><code>clusterguard-agent.service</code>：三台均 active/enabled</li>
+<li><code>clusterguard-agent-reconcile.timer</code>：三台均 active/waiting/enabled</li>
+<li><code>systemctl --failed</code>：三台均为空</li>
+</ul>
+<p>测试元数据中仍保留 15 条历史 <code>indeterminate</code> operation 和 14 条历史
+<code>indeterminate</code> 节点任务，当前没有活动执行。它们应保留审计或在生产迁移前
+逐条完成处置，不应通过删除审计记录伪装为零。</p>
+<h3 id="mysql-8-0-44-3306">MySQL 8.0.44 / 3306<a class="heading-anchor" href="#mysql-8-0-44-3306" aria-label="Link to MySQL 8.0.44 / 3306">#</a></h3>
+<ul>
+<li>主库：<code>192.168.102.153</code>（<code>orch-mysql02:3306</code>），可写</li>
+<li>从库：<code>.152</code>、<code>.154</code>，均 <code>read_only=true</code>、<code>super_read_only=true</code></li>
+<li>两个从库 IO/SQL 线程均 running，延迟 0</li>
+<li>半同步主端状态正常，客户端数 2</li>
+<li>VIP：<code>192.168.102.155</code>，仅 <code>.153</code> 持有</li>
+<li>VIP 握手：MySQL protocol 10，server <code>8.0.44</code></li>
+</ul>
+<h3 id="mysql-8-4-10-3384">MySQL 8.4.10 / 3384<a class="heading-anchor" href="#mysql-8-4-10-3384" aria-label="Link to MySQL 8.4.10 / 3384">#</a></h3>
+<ul>
+<li>主库：<code>192.168.102.154</code>（<code>orch-mysql03:3384</code>），可写</li>
+<li>从库：<code>.152</code>、<code>.153</code>，均 <code>read_only=true</code>、<code>super_read_only=true</code></li>
+<li>两个从库 IO/SQL 线程均 running，延迟 0</li>
+<li>半同步主端状态正常，客户端数 2</li>
+<li>VIP：<code>192.168.102.160</code>，仅 <code>.154</code> 持有</li>
+<li>VIP 握手：MySQL protocol 10，server <code>8.4.10</code></li>
+</ul>
+<h3 id="mysql-9-7-1-3397">MySQL 9.7.1 / 3397<a class="heading-anchor" href="#mysql-9-7-1-3397" aria-label="Link to MySQL 9.7.1 / 3397">#</a></h3>
+<ul>
+<li>主库：<code>192.168.102.152</code>（<code>orch-mysql01:3397</code>），可写</li>
+<li>从库：<code>.153</code>、<code>.154</code>，均 <code>read_only=true</code>、<code>super_read_only=true</code></li>
+<li>两个从库复制线程均 running，延迟 0</li>
+<li>VIP：<code>192.168.102.164</code>，仅 <code>.152</code> 持有</li>
+<li>三节点确定性数据均为 2005 行，按
+<code>SUM(CRC32(CONCAT(id,marker,HEX(payload))))</code> 计算的摘要均为 <code>4304498633408</code></li>
+</ul>
+<p>同一公式下，8.0 三副本均为 2007 行、摘要 <code>4323827613648</code>；8.4 三副本
+均为 2006 行、摘要 <code>4341221981770</code>。</p>
+<p>平台同时注册的 Oracle、PostgreSQL 和 UPSQL 当前健康；SQL Server 集群当前为 degraded（database probe failed），不属于本轮 MySQL 生产矩阵，正式平台上线前必须单独处置。</p>
+<h2 id="5-代码门禁">5. 代码门禁<a class="heading-anchor" href="#5-代码门禁" aria-label="Link to 5. 代码门禁">#</a></h2>
+<p>以下检查均通过：</p>
+<pre><code class="language-bash">go test ./... -count=1
+go test -race ./adapters/mysql ./internal/api ./internal/agent \
+  ./internal/coordination ./internal/lifecycle ./internal/workflow -count=1
+go build ./...
+go vet ./...
+git diff --check
+</code></pre>
+<p>控制台契约测试同时覆盖 <code>stale_plan</code> 安全重试边界和旧主恢复前强制刷新发现；执行阶段、已提交、不确定操作以及 discover 失败均不会继续执行变更。</p>
+<h2 id="6-生产上线边界">6. 生产上线边界<a class="heading-anchor" href="#6-生产上线边界" aria-label="Link to 6. 生产上线边界">#</a></h2>
+<p>本轮证明 ClusterGuard HA 在当前三节点实验室中满足安全优先的不变量，但不能据此声明所有生产风险为零。</p>
+<p>上线前必须完成：</p>
+<ol>
+<li>配置独立于业务网络的 BMC/IPMI、存储侧或虚拟化侧 fencing。当前没有可靠外部 fencing 时，完全隔离的主库会选择停止写服务，不会冒险提升新主；这避免脑裂，但会牺牲可用性。</li>
+<li>在生产交换机、防火墙和真实链路上复跑单向丢包、双向隔离、抖动和延迟测试。</li>
+<li>在生产存储类型上复跑只读文件系统、I/O hang、空间耗尽、inode 耗尽和 fsync 延迟测试。</li>
+<li>用生产备份执行一次裸机恢复和时间点恢复，验证 RPO/RTO，而不只是复制恢复。</li>
+<li>使用全新的生产元数据存储，或对 15 条历史 <code>indeterminate</code> 测试记录逐条形成处置结论。</li>
+<li>单独修复并验收当前 SQL Server probe degraded，避免平台总览带病上线。</li>
+</ol>
+<h2 id="7-判定">7. 判定<a class="heading-anchor" href="#7-判定" aria-label="Link to 7. 判定">#</a></h2>
+<p><strong>MySQL 8.0、8.4 和 9.7 当前软件版本在本实验室的关机恢复、网络分区、存储故障、并发操作、旧主增量回挂和全量重建测试通过。生产准入判定为“软件门禁通过，外部 fencing 与生产基础设施专项验收待完成”。</strong></p>
+
+          <footer class="document-footer">
+            <span>源文件: <code>docs/zh-CN/production-chaos-test-report-2026-08-09.md</code></span>
+            <a href="../index.html">文档语言入口</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="本页目录">
+          <strong>本页目录</strong>
+          <a class="toc-level-2" href="#1-测试目标">1. 测试目标</a><a class="toc-level-2" href="#2-测试矩阵与结果">2. 测试矩阵与结果</a><a class="toc-level-2" href="#3-本轮发现并修复">3. 本轮发现并修复</a><a class="toc-level-3" href="#控制台未处理安全的-stale-plan">控制台未处理安全的 stale_plan</a><a class="toc-level-3" href="#旧主恢复首次点击读取旧快照">旧主恢复首次点击读取旧快照</a><a class="toc-level-3" href="#手工部署产物架构检查">手工部署产物架构检查</a><a class="toc-level-2" href="#4-最终现场状态">4. 最终现场状态</a><a class="toc-level-3" href="#控制面">控制面</a><a class="toc-level-3" href="#mysql-8-0-44-3306">MySQL 8.0.44 / 3306</a><a class="toc-level-3" href="#mysql-8-4-10-3384">MySQL 8.4.10 / 3384</a><a class="toc-level-3" href="#mysql-9-7-1-3397">MySQL 9.7.1 / 3397</a><a class="toc-level-2" href="#5-代码门禁">5. 代码门禁</a><a class="toc-level-2" href="#6-生产上线边界">6. 生产上线边界</a><a class="toc-level-2" href="#7-判定">7. 判定</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

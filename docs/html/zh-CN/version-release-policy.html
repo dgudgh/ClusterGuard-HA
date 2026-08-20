@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="版本与发版规范 - ClusterGuard HA operational documentation">
+  <title>版本与发版规范 | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">跳到正文</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>搜索文档</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="输入标题关键词">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>开始使用</h2><a href="index.html" data-doc-title="clusterguard ha 中文文档">ClusterGuard HA 中文文档</a><a href="product-overview.html" data-doc-title="产品概览">产品概览</a><a href="product-tour.html" data-doc-title="控制台产品导览">控制台产品导览</a><a href="architecture.html" data-doc-title="系统架构">系统架构</a><a href="release-2.1.45.html" data-doc-title="2.1.45 发布说明">2.1.45 发布说明</a></section><section><h2>部署与迁移</h2><a href="offline-rpm-install.html" data-doc-title="离线 rpm 安装">离线 RPM 安装</a><a href="database-preparation.html" data-doc-title="数据库接入">数据库接入</a><a href="orchestrator-migration.html" data-doc-title="从 orchestrator 迁移">从 Orchestrator 迁移</a></section><section><h2>日常运维</h2><a href="operations-manual.html" data-doc-title="运维操作手册">运维操作手册</a><a href="api-operations.html" data-doc-title="api 运维参考">API 运维参考</a><a href="postgresql-ha.html" data-doc-title="postgresql 高可用">PostgreSQL 高可用</a><a href="version-release-policy.html" data-doc-title="版本与发版规范" aria-current="page" class="active">版本与发版规范</a></section><section><h2>验收证据</h2><a href="proven-mysql-ha-methods.html" data-doc-title="mysql 已验证方法">MySQL 已验证方法</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql 功能验收">MySQL 功能验收</a><a href="mysql-former-primary-recovery.html" data-doc-title="旧主恢复专项验收">旧主恢复专项验收</a><a href="mysql-production-qualification.html" data-doc-title="mysql 生产验收">MySQL 生产验收</a><a href="production-chaos-test.html" data-doc-title="生产故障测试报告">生产故障测试报告</a><a href="power-lifecycle-test.html" data-doc-title="计划关机测试报告">计划关机测试报告</a></section></nav>
+      <div class="sidebar-meta">
+        <span>离线文档构建</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">打开目录</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>版本与发版规范</strong></div>
+        <div class="header-actions">
+          <a href="../en-US/version-release-policy.html" lang="en-US">English</a>
+          <button id="print-button" type="button">打印</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha-版本与发版规范">ClusterGuard HA 版本与发版规范<a class="heading-anchor" href="#clusterguard-ha-版本与发版规范" aria-label="Link to ClusterGuard HA 版本与发版规范">#</a></h1>
+<h2 id="1-版本格式">1. 版本格式<a class="heading-anchor" href="#1-版本格式" aria-label="Link to 1. 版本格式">#</a></h2>
+<p>ClusterGuard HA 的安装包使用：</p>
+<pre><code class="language-text">主版本.功能版本-发行序号
+</code></pre>
+<p>例如：</p>
+<pre><code class="language-text">2.1-45
+2.2-1
+2.2-2
+</code></pre>
+<p>对应 Git 标签使用点分格式：</p>
+<pre><code class="language-text">v2.1.45
+v2.2.1
+v2.2.2
+</code></pre>
+<p>规则如下：</p>
+<ul>
+<li>主版本变化表示控制内核、数据模型或兼容边界发生重大变化。</li>
+<li>功能版本变化表示开始新的产品能力线，例如 PostgreSQL 从 2.2 开始。</li>
+<li>发行序号在同一功能版本内严格递增。修复、功能、安装器、配置、依赖和交付
+文档发生影响用户的变化，都必须增加发行序号。</li>
+</ul>
+<h2 id="2-当前版本线">2. 当前版本线<a class="heading-anchor" href="#2-当前版本线" aria-label="Link to 2. 当前版本线">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>版本线</th>
+<th>状态</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>2.1-45</code></td>
+<td>已封板</td>
+<td>MySQL 稳定线，不再增加功能</td>
+</tr>
+<tr>
+<td><code>2.2-N</code></td>
+<td>开发线</td>
+<td>PostgreSQL 能力及 2.1 之后的新功能</td>
+</tr>
+</tbody></table>
+<p><code>v2.1.45</code> 永久指向提交
+<code>28425925a321655f38686942c6b081d235b0d288</code>。后续修复不得移动该标签。</p>
+<h2 id="3-不可变发布规则">3. 不可变发布规则<a class="heading-anchor" href="#3-不可变发布规则" aria-label="Link to 3. 不可变发布规则">#</a></h2>
+<p>正式发布完成后，以下对象都不可覆盖：</p>
+<ul>
+<li>Git 标签；</li>
+<li>GitHub Release；</li>
+<li>RPM；</li>
+<li>完整离线包；</li>
+<li>PostgreSQL 独立依赖包；</li>
+<li>SHA256 文件；</li>
+<li>Release Notes。</li>
+</ul>
+<p>同名文件内容发生任何变化都视为新版本。即使只修改安装脚本或包内操作手册，
+也必须增加发行序号，因为交付包已经发生变化。</p>
+<p>禁止使用以下做法：</p>
+<ul>
+<li>删除旧标签后重新创建同名标签；</li>
+<li>用 <code>--clobber</code> 替换正式 Release 附件；</li>
+<li>修改 RPM 内容但保留相同 NEVRA；</li>
+<li>手工替换离线包中的脚本而不更新摘要；</li>
+<li>把未提交工作树构建成正式发布并让 Release 指向另一个提交。</li>
+</ul>
+<h2 id="4-分支规则">4. 分支规则<a class="heading-anchor" href="#4-分支规则" aria-label="Link to 4. 分支规则">#</a></h2>
+<ul>
+<li><code>main</code> 保存已审查、可追溯的正式代码。</li>
+<li><code>codex/2.2-postgresql</code> 是 2.2 PostgreSQL 开发起点，基线为
+<code>v2.1.45</code>。</li>
+<li>功能和修复先形成独立提交，再合入对应版本线。</li>
+<li>构建正式包前工作树必须干净；<code>RELEASE-INFO</code> 中的提交必须与发布标签一致。</li>
+</ul>
+<p>不得把 2.2 的 PostgreSQL 改动回写到 <code>v2.1.45</code>，也不得用 2.1 文件名交付
+2.2 代码。</p>
+<h2 id="5-postgresql-2-2-交付规则">5. PostgreSQL 2.2 交付规则<a class="heading-anchor" href="#5-postgresql-2-2-交付规则" aria-label="Link to 5. PostgreSQL 2.2 交付规则">#</a></h2>
+<p>2.2 的主离线包只包含 ClusterGuard 与数据库运行所需的小型签名依赖。PostgreSQL
+官方源码编译依赖采用以下策略：</p>
+<ol>
+<li>明确指定 <code>--engine postgresql</code> 时，默认从构建节点已配置的软件源联网解析。</li>
+<li>编译依赖安装到一次性 DNF installroot，不修改生产宿主机 RPM 数据库。</li>
+<li>联网失败时明确停止，提示用户上传独立 PostgreSQL 依赖包。</li>
+<li>纯离线现场通过 <code>--postgresql-dependencies</code> 指定解压后的独立依赖仓库。</li>
+<li>主包与依赖包分别校验 SHA256、RPM 签名、架构、系统主版本和仓库元数据。</li>
+</ol>
+<p>典型 2.2 附属包名称：</p>
+<pre><code class="language-text">clusterguard-ha-2.2-1-postgresql-build-deps-rocky-8-x86_64.tar.gz
+</code></pre>
+<p>该附属包不得重新塞回主离线包，以免所有 MySQL 用户承担 PostgreSQL 编译工具链
+的体积。</p>
+<h2 id="6-正式发版门禁">6. 正式发版门禁<a class="heading-anchor" href="#6-正式发版门禁" aria-label="Link to 6. 正式发版门禁">#</a></h2>
+<p>每个正式版本至少完成：</p>
+<pre><code class="language-bash">go test ./...
+go vet ./...
+find scripts -type f -name &#39;*.sh&#39; -print0 | xargs -0 -n1 bash -n
+git diff --check
+</code></pre>
+<p>并验证：</p>
+<ol>
+<li>Git 工作树干净，标签指向当前提交。</li>
+<li>RPM 名称、版本和架构正确。</li>
+<li>离线包内外两层 SHA256 全部通过。</li>
+<li>RPM 签名、依赖、systemd 单元和配置权限正确。</li>
+<li>安装器只读计划与真实安装均在干净三节点环境通过。</li>
+<li>对应数据库版本完成切换、故障、旧主恢复、重启、网络分区和并发测试。</li>
+<li>安全门禁、Leader 转发、Raft 多数、VIP 唯一性、审计和报告均通过。</li>
+<li>Release Notes 明确支持范围、已知边界和升级方法。</li>
+</ol>
+<p>任一门禁失败时只能生成内部候选包，不能创建正式标签或 GitHub Release。</p>
+<h2 id="7-发布步骤">7. 发布步骤<a class="heading-anchor" href="#7-发布步骤" aria-label="Link to 7. 发布步骤">#</a></h2>
+<p>正式发布按以下顺序执行：</p>
+<ol>
+<li>整理并提交本版本全部变更。</li>
+<li>执行全量测试和现场验收。</li>
+<li>从干净提交构建 RPM、主离线包和必要的独立依赖包。</li>
+<li>验证摘要、签名、包内容和安装流程。</li>
+<li>创建注释标签，例如 <code>v2.2.1</code>。</li>
+<li>推送提交和标签。</li>
+<li>创建 GitHub Release 并上传只读附件。</li>
+<li>从 GitHub 重新下载附件，再执行一次摘要和安装冒烟验证。</li>
+</ol>
+<p>发布完成后，只允许通过新版本修复问题。</p>
+
+          <footer class="document-footer">
+            <span>源文件: <code>docs/zh-CN/version-release-policy.md</code></span>
+            <a href="../index.html">文档语言入口</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="本页目录">
+          <strong>本页目录</strong>
+          <a class="toc-level-2" href="#1-版本格式">1. 版本格式</a><a class="toc-level-2" href="#2-当前版本线">2. 当前版本线</a><a class="toc-level-2" href="#3-不可变发布规则">3. 不可变发布规则</a><a class="toc-level-2" href="#4-分支规则">4. 分支规则</a><a class="toc-level-2" href="#5-postgresql-2-2-交付规则">5. PostgreSQL 2.2 交付规则</a><a class="toc-level-2" href="#6-正式发版门禁">6. 正式发版门禁</a><a class="toc-level-2" href="#7-发布步骤">7. 发布步骤</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

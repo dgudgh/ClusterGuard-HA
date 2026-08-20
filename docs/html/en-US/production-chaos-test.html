@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="Production Chaos Test Report - ClusterGuard HA operational documentation">
+  <title>Production Chaos Test Report | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">Skip to content</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>Search documentation</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="Filter by title">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report" aria-current="page" class="active">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
+      <div class="sidebar-meta">
+        <span>Offline documentation build</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">Open navigation</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>Production Chaos Test Report</strong></div>
+        <div class="header-actions">
+          <a href="../zh-CN/production-chaos-test.html" lang="zh-CN">简体中文</a>
+          <button id="print-button" type="button">Print</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha-pre-production-chaos-test-report">ClusterGuard HA Pre-Production Chaos Test Report<a class="heading-anchor" href="#clusterguard-ha-pre-production-chaos-test-report" aria-label="Link to ClusterGuard HA Pre-Production Chaos Test Report">#</a></h1>
+<ul>
+<li>Date: 2026-08-09</li>
+<li>Environment: <code>192.168.102.152</code>, <code>192.168.102.153</code>, <code>192.168.102.154</code></li>
+<li>Control Plane: 3-node Raft</li>
+<li>Focus Clusters: MySQL 8.0.44 (3306), MySQL 8.4.10 (3384), and MySQL 9.7.1 (3397)</li>
+<li>Conclusion: This round of software test matrix passed; production deployment should still configure external fencing and complete production network, storage, and backup recovery special acceptance.</li>
+</ul>
+<h2 id="1-test-objectives">1. Test Objectives<a class="heading-anchor" href="#1-test-objectives" aria-label="Link to 1. Test Objectives">#</a></h2>
+<p>This round verifies the following production invariants:</p>
+<ol>
+<li>At any time, each database cluster can have at most one writable primary.</li>
+<li>Each HA VIP can be held by at most one host, and must follow the current primary.</li>
+<li>When the control plane has no quorum, cannot confirm fencing, or the state is uncertain, it must fail-closed.</li>
+<li>After a failed node recovers, it should remain read-only until verified and then rejoin the replication topology.</li>
+<li>Concurrent operations, duplicate requests, and expired plans in the same cluster must not cause duplicate execution.</li>
+<li>After node restarts, the control plane, Agent, database roles, replication links, and VIPs should automatically converge.</li>
+</ol>
+<h2 id="2-test-matrix-and-results">2. Test Matrix and Results<a class="heading-anchor" href="#2-test-matrix-and-results" aria-label="Link to 2. Test Matrix and Results">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>Execution Method</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Power off and recovery of all three nodes</td>
+<td>Continuously power off all VMs in three rounds and recover with different boot orders</td>
+<td>Passed; Raft recovered 3 voters, database roles, replication, and VIPs automatically converged, no dual primary or dual VIP</td>
+</tr>
+<tr>
+<td>Current primary network partition</td>
+<td>Isolate the current primary of 3306 for about 90 seconds</td>
+<td>Passed; the node locally isolated and released VIP after about 34 seconds; no unsafe promotion due to lack of external fencing; VIP and write permissions were regained after about 16 seconds upon network recovery</td>
+</tr>
+<tr>
+<td>9.7 current primary network partition</td>
+<td>Bidirectionally isolate the current primary of 3397 from the other two nodes</td>
+<td>Passed; all three instances were read-only and VIPs were released; no promotion occurred for the old primary that was confirmed to be isolated; after cleanup rules, it was restored as the sole primary and VIP</td>
+</tr>
+<tr>
+<td>Leader and primary simultaneously partitioned</td>
+<td>Isolate <code>.153</code>, which was concurrently serving as Raft Leader and 3384 primary, for about 75 seconds</td>
+<td>Passed; <code>.154</code> became Leader within 5 seconds, 2 nodes maintained quorum; isolated node self-isolated, and converged safely upon recovery</td>
+</tr>
+<tr>
+<td>Replica storage unavailable</td>
+<td>Stop <code>.154:3306</code>, change <code>/data/mysql8/data</code>&#39;s permissions to <code>000</code>, and then start</td>
+<td>Passed; the instance became unavailable and lost candidacy, pre-check failed, and real execution returned HTTP 409 before the change</td>
+</tr>
+<tr>
+<td>8.4 primary storage read-only</td>
+<td>Bind-remount the data directory of the current primary as read-only, and systemd enters no PID auto-restart</td>
+<td>Passed; the faulty node confirmed no surviving database processes and completed a safe takeover; after storage recovery, the old primary incrementally reattached</td>
+</tr>
+<tr>
+<td>Storage recovery and catch-up</td>
+<td>Restore directory permissions and services, and write 500 rows on the primary during the outage</td>
+<td>Passed; after replica recovery, IO/SQL threads ran, delay zeroed out, 500 rows fully caught up, and temporary databases were cleaned</td>
+</tr>
+<tr>
+<td>8.4 binlog gap</td>
+<td>Purge old primary binlog required for catch-up during the outage</td>
+<td>Passed; <code>required_binlog_available</code> and <code>rebuild_required</code> blocked incremental reattachment, and automatic full rebuild succeeded</td>
+</tr>
+<tr>
+<td>9.7 errant GTID</td>
+<td>Create a transaction that does not exist on the current primary by isolating the old primary</td>
+<td>Passed; GTID subset check failed, automatic full rebuild occurred, and forked transactions were not brought back into the current topology</td>
+</tr>
+<tr>
+<td>Concurrent switchover within the same cluster</td>
+<td>Submit a switchover to two different candidates for 3306 simultaneously</td>
+<td>Passed; one operation succeeded, one was blocked by HTTP 409, and only one primary change occurred</td>
+</tr>
+<tr>
+<td>Concurrent submission with the same idempotency key</td>
+<td>Two requests use the same idempotency key</td>
+<td>Passed; share the same operation ID, one executed, one returned <code>operation is running</code>, and only one set of execution/verification/report was generated</td>
+</tr>
+<tr>
+<td>Cross-cluster concurrent switchover</td>
+<td>3306 and 3384 operated simultaneously</td>
+<td>Passed; both 8.0 operation <code>7b112de1-...</code> and 8.4 operation <code>e34b49d2-...</code> succeeded, and all post-execution verifications passed</td>
+</tr>
+<tr>
+<td>Real console switchover</td>
+<td>Lock and execute a coupled switchover of the 3306 primary and VIP in the Web console</td>
+<td>Passed; all five stages succeeded, operation logs recorded source/target/time, original reports could be expanded, and final topology verification passed</td>
+</tr>
+<tr>
+<td>Final stable observation</td>
+<td>Continuously collect roles, read-only status, replication threads, links, and delays for 8.0, 8.4, and 9.7 for 60 seconds</td>
+<td>Passed; all seven sampling points were single primary, dual read-only replicas, threads running, links healthy, and maximum delay 0 seconds</td>
+</tr>
+</tbody></table>
+<h2 id="3-issues-found-and-resolved-in-this-round">3. Issues Found and Resolved in This Round<a class="heading-anchor" href="#3-issues-found-and-resolved-in-this-round" aria-label="Link to 3. Issues Found and Resolved in This Round">#</a></h2>
+<h3 id="console-did-not-handle-safe-stale-plan">Console did not handle safe <code>stale_plan</code><a class="heading-anchor" href="#console-did-not-handle-safe-stale-plan" aria-label="Link to Console did not handle safe stale_plan">#</a></h3>
+<p>During cross-cluster concurrency, the topology version may change after the plan was generated but before execution was submitted. The backend correctly blocked with <code>stale_plan</code>, but the console previously only displayed failure, requiring the operator to click again.</p>
+<p>After the fix, the console automatically rebuilds the plan and retries only if all the following conditions are met:</p>
+<ul>
+<li>HTTP 409;</li>
+<li><code>failure_class=stale_plan</code>;</li>
+<li><code>status=blocked</code>;</li>
+<li>Stage is <code>precheck</code> or <code>plan</code>;</li>
+<li><code>committed</code> is not <code>true</code>;</li>
+<li>Maximum of 3 retries;</li>
+<li>Always retain the user&#39;s originally selected target node;</li>
+<li>Each time use a new idempotency key.</li>
+</ul>
+<p>Execution stage errors, submitted operations, <code>indeterminate</code>, general 409, and other failures do not automatically retry.</p>
+<p>After deployment, a real console switchover for 3306 completed successfully with the result <code>operation completed and verification passed</code>. Operation logs recorded:</p>
+<ul>
+<li>Time: 2026-08-09 19:18:59 CST</li>
+<li>Source node: <code>orch-mysql03:3306</code></li>
+<li>Target node: <code>orch-mysql01:3306</code></li>
+<li>Status: Success</li>
+</ul>
+<h3 id="old-primary-recovery-first-click-reads-old-snapshot">Old primary recovery first click reads old snapshot<a class="heading-anchor" href="#old-primary-recovery-first-click-reads-old-snapshot" aria-label="Link to Old primary recovery first click reads old snapshot">#</a></h3>
+<p>When the old primary service just recovers, the console may still hold the topology snapshot from before the outage, leading to the first click on &quot;One-click recovery to slave&quot; erroneously reading the old primary&#39;s read-only status and being blocked by pre-check.</p>
+<p>After the fix, old primary recovery now always first calls the current cluster&#39;s discover, then reloads the selected cluster, and only then performs the recovery pre-check. This sequence is covered by console contract testing; if discover or reload fails, recovery does not proceed.</p>
+<h3 id="manual-deployment-artifact-architecture-check">Manual deployment artifact architecture check<a class="heading-anchor" href="#manual-deployment-artifact-architecture-check" aria-label="Link to Manual deployment artifact architecture check">#</a></h3>
+<p>During testing, macOS build artifacts were mistakenly copied to Linux nodes, and systemd rejected startup with <code>203/EXEC</code>. Raft majority and database services were unaffected, and the following parameters were used to rebuild and roll out again:</p>
+<pre><code class="language-bash">GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o clusterguard ./cmd/clusterguard
+</code></pre>
+<p>After the three-node final rolling deployment, the binary SHA-256 was consistent:</p>
+<pre><code class="language-text">clusterguard       d9a4d49c2e02d624307b8d2219cc70911cde5bbf63a7e52f8a9d4e70af4c1214
+clusterguard-agent 29791923d37286172f23c923a61d9227c1d9d98360959069ba843baa959434fb
+</code></pre>
+<p>Formal delivery must use the RPM/offline package build process and verify ELF architecture and digest before deployment, prohibiting direct copying of default artifacts from development machines.</p>
+<h2 id="4-final-on-site-status">4. Final On-site Status<a class="heading-anchor" href="#4-final-on-site-status" aria-label="Link to 4. Final On-site Status">#</a></h2>
+<h3 id="control-plane">Control Plane<a class="heading-anchor" href="#control-plane" aria-label="Link to Control Plane">#</a></h3>
+<ul>
+<li>Current Leader: <code>192.168.102.154</code></li>
+<li>Raft: 3 voters, quorum confirmed</li>
+<li><code>mutation_authority=true</code></li>
+<li><code>snapshot_cas_active=true</code></li>
+<li><code>commit_index=applied_index</code></li>
+<li><code>ready=true</code></li>
+<li>Active operations: 0</li>
+<li>Active node tasks: 0</li>
+<li><code>clusterguard-ha.service</code>: All three are active/enabled</li>
+<li><code>clusterguard-agent.service</code>: All three are active/enabled</li>
+<li><code>clusterguard-agent-reconcile.timer</code>: All three are active/waiting/enabled</li>
+<li><code>systemctl --failed</code>: All three are empty</li>
+</ul>
+<p>There are still 15 historical <code>indeterminate</code> operations and 14 historical
+<code>indeterminate</code> node tasks in the test metadata, with no active execution currently. They should be retained for audit or completed one by one before production migration, and should not be disguised as zero by deleting audit records.</p>
+<h3 id="mysql-8-0-44-3306">MySQL 8.0.44 / 3306<a class="heading-anchor" href="#mysql-8-0-44-3306" aria-label="Link to MySQL 8.0.44 / 3306">#</a></h3>
+<ul>
+<li>Primary: <code>192.168.102.153</code> (<code>orch-mysql02:3306</code>), writable</li>
+<li>Replicas: <code>.152</code>, <code>.154</code>, both <code>read_only=true</code>, <code>super_read_only=true</code></li>
+<li>Both replicas&#39; IO/SQL threads are running, delay 0</li>
+<li>Semi-synchronous master status is normal, client count 2</li>
+<li>VIP: <code>192.168.102.155</code>, only held by <code>.153</code></li>
+<li>VIP handshake: MySQL protocol 10, server <code>8.0.44</code></li>
+</ul>
+<h3 id="mysql-8-4-10-3384">MySQL 8.4.10 / 3384<a class="heading-anchor" href="#mysql-8-4-10-3384" aria-label="Link to MySQL 8.4.10 / 3384">#</a></h3>
+<ul>
+<li>Primary: <code>192.168.102.154</code> (<code>orch-mysql03:3384</code>), writable</li>
+<li>Replicas: <code>.152</code>, <code>.153</code>, both <code>read_only=true</code>, <code>super_read_only=true</code></li>
+<li>Both replicas&#39; IO/SQL threads are running, delay 0</li>
+<li>Semi-synchronous master status is normal, client count 2</li>
+<li>VIP: <code>192.168.102.160</code>, only held by <code>.154</code></li>
+<li>VIP handshake: MySQL protocol 10, server <code>8.4.10</code></li>
+</ul>
+<h3 id="mysql-9-7-1-3397">MySQL 9.7.1 / 3397<a class="heading-anchor" href="#mysql-9-7-1-3397" aria-label="Link to MySQL 9.7.1 / 3397">#</a></h3>
+<ul>
+<li>Primary: <code>192.168.102.152</code> (<code>orch-mysql01:3397</code>), writable</li>
+<li>Replicas: <code>.153</code>, <code>.154</code>, both <code>read_only=true</code>, <code>super_read_only=true</code></li>
+<li>Both replicas&#39; replication threads are running, delay 0</li>
+<li>VIP: <code>192.168.102.164</code>, only held by <code>.152</code></li>
+<li>Deterministic data on all three nodes is 2005 rows, and the digest calculated by
+<code>SUM(CRC32(CONCAT(id,marker,HEX(payload))))</code> is all <code>4304498633408</code></li>
+</ul>
+<p>Under the same formula, the three replicas of 8.0 are all 2007 rows, with digest <code>4323827613648</code>; the three replicas of 8.4 are all 2006 rows, with digest <code>4341221981770</code>.</p>
+<p>Oracle, PostgreSQL, and UPSQL currently registered on the platform are healthy; SQL Server cluster is currently degraded (database probe failed), not part of this round&#39;s MySQL production matrix, and must be addressed separately before formal platform deployment.</p>
+<h2 id="5-code-gatekeeping">5. Code Gatekeeping<a class="heading-anchor" href="#5-code-gatekeeping" aria-label="Link to 5. Code Gatekeeping">#</a></h2>
+<p>All the following checks passed:</p>
+<pre><code class="language-bash">go test ./... -count=1
+go test -race ./adapters/mysql ./internal/api ./internal/agent \
+  ./internal/coordination ./internal/lifecycle ./internal/workflow -count=1
+go build ./...
+go vet ./...
+git diff --check
+</code></pre>
+<p>Console contract testing also covers the safety retry boundary of <code>stale_plan</code> and the forced refresh discovery before old primary recovery; execution stage, submitted, uncertain operations, and discover failure will not continue to execute changes.</p>
+<h2 id="6-production-deployment-boundaries">6. Production Deployment Boundaries<a class="heading-anchor" href="#6-production-deployment-boundaries" aria-label="Link to 6. Production Deployment Boundaries">#</a></h2>
+<p>This round proves that ClusterGuard HA meets the safety-priority invariants in the current three-node lab, but this does not mean all production risks are zero.</p>
+<p>Before deployment, the following must be completed:</p>
+<ol>
+<li>Configure BMC/IPMI, storage-side, or virtualization-side fencing independent of the business network. When there is no reliable external fencing, fully isolated primary will choose to stop write services and will not risk promoting a new primary; this avoids brain split but sacrifices availability.</li>
+<li>Re-run unidirectional packet loss, bidirectional isolation, jitter, and delay tests on production switches, firewalls, and real links.</li>
+<li>Re-run read-only file system, I/O hang, space exhaustion, inode exhaustion, and fsync delay tests on production storage types.</li>
+<li>Perform one full machine recovery and point-in-time recovery using production backups to verify RPO/RTO, not just replication recovery.</li>
+<li>Use a new production metadata storage or form a disposal conclusion for each of the 15 historical <code>indeterminate</code> test records.</li>
+<li>Repair and accept the current SQL Server probe degraded status separately to avoid platform-wide deployment with issues.</li>
+</ol>
+<h2 id="7-judgment">7. Judgment<a class="heading-anchor" href="#7-judgment" aria-label="Link to 7. Judgment">#</a></h2>
+<p><strong>The current software versions of MySQL 8.0, 8.4, and 9.7 passed the shutdown recovery, network partition, storage failure, concurrent operation, old primary incremental reattachment, and full rebuild tests in this lab. The production access judgment is &quot;software gate passed, external fencing and production infrastructure special acceptance pending.&quot;</strong></p>
+
+          <footer class="document-footer">
+            <span>Source: <code>docs/en-US/production-chaos-test-report-2026-08-09.md</code></span>
+            <a href="../index.html">Documentation language home</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="On this page">
+          <strong>On this page</strong>
+          <a class="toc-level-2" href="#1-test-objectives">1. Test Objectives</a><a class="toc-level-2" href="#2-test-matrix-and-results">2. Test Matrix and Results</a><a class="toc-level-2" href="#3-issues-found-and-resolved-in-this-round">3. Issues Found and Resolved in This Round</a><a class="toc-level-3" href="#console-did-not-handle-safe-stale-plan">Console did not handle safe stale_plan</a><a class="toc-level-3" href="#old-primary-recovery-first-click-reads-old-snapshot">Old primary recovery first click reads old snapshot</a><a class="toc-level-3" href="#manual-deployment-artifact-architecture-check">Manual deployment artifact architecture check</a><a class="toc-level-2" href="#4-final-on-site-status">4. Final On-site Status</a><a class="toc-level-3" href="#control-plane">Control Plane</a><a class="toc-level-3" href="#mysql-8-0-44-3306">MySQL 8.0.44 / 3306</a><a class="toc-level-3" href="#mysql-8-4-10-3384">MySQL 8.4.10 / 3384</a><a class="toc-level-3" href="#mysql-9-7-1-3397">MySQL 9.7.1 / 3397</a><a class="toc-level-2" href="#5-code-gatekeeping">5. Code Gatekeeping</a><a class="toc-level-2" href="#6-production-deployment-boundaries">6. Production Deployment Boundaries</a><a class="toc-level-2" href="#7-judgment">7. Judgment</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

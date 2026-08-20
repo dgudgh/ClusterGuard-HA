@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="Database Preparation - ClusterGuard HA operational documentation">
+  <title>Database Preparation | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">Skip to content</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>Search documentation</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="Filter by title">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation" aria-current="page" class="active">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
+      <div class="sidebar-meta">
+        <span>Offline documentation build</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">Open navigation</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>Database Preparation</strong></div>
+        <div class="header-actions">
+          <a href="../zh-CN/database-preparation.html" lang="zh-CN">简体中文</a>
+          <button id="print-button" type="button">Print</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha-database-integration-manual">ClusterGuard HA Database Integration Manual<a class="heading-anchor" href="#clusterguard-ha-database-integration-manual" aria-label="Link to ClusterGuard HA Database Integration Manual">#</a></h1>
+<p>This document describes the configuration, minimal permissions, and verification required on the database side for MySQL, PostgreSQL, Oracle Data Guard Broker, and SQL Server Always On. The network segments, passwords, service names, and resource IDs in the examples must be replaced with on-site values.</p>
+<p>Version Boundary: The formal database support range for <code>2.1-45</code> is MySQL; PostgreSQL from version 2.2 onwards.
+The Oracle and SQL Server sections are for subsequent independent capability line preparations. No claims can be made that it has entered the 2.1 production support range before the corresponding version is released and on-site acceptance is completed.</p>
+<h2 id="1-general-requirements">1. General Requirements<a class="heading-anchor" href="#1-general-requirements" aria-label="Link to 1. General Requirements">#</a></h2>
+<p>All database nodes must meet the following:</p>
+<ul>
+<li>NTP/Chrony is functioning normally, and clock deviation is controlled</li>
+<li>Hostnames, IPs, database ports, and platform fixed node names are registered</li>
+<li>Platform <code>resource_id</code> remains permanent; hostname, IP, and port are only variable endpoints</li>
+<li>Native database identity is unique and stable</li>
+<li>Control nodes must have access to the database port and SSH/Agent port</li>
+<li>Discovery account and execution account are separated</li>
+<li>Passwords are stored only in protected environment files or native database secure storage</li>
+<li>TLS is enforced when available, and source network segments are restricted</li>
+<li>Automatic failover must not be enabled before topology, replication, identity, and write endpoint verification are passed</li>
+</ul>
+<h2 id="2-mysql">2. MySQL<a class="heading-anchor" href="#2-mysql" aria-label="Link to 2. MySQL">#</a></h2>
+<h3 id="2-1-replication-basics">2.1 Replication Basics<a class="heading-anchor" href="#2-1-replication-basics" aria-label="Link to 2.1 Replication Basics">#</a></h3>
+<p>Each instance must have a unique <code>server_id</code>. The <code>server_uuid</code> of the same data directory must not be replicated to another node.</p>
+<p>Recommended for MySQL 8.0/8.4:</p>
+<pre><code class="language-ini">[mysqld]
+server_id=1523306
+log_bin=mysql-bin
+binlog_format=ROW
+gtid_mode=ON
+enforce_gtid_consistency=ON
+log_replica_updates=ON
+relay_log_recovery=ON
+read_only=ON
+super_read_only=ON
+</code></pre>
+<p>After the primary database is online, the controlled process will disable <code>read_only</code> and <code>super_read_only</code>. Do not copy <code>auto.cnf</code> to new nodes, otherwise duplicate <code>server_uuid</code> will be generated.</p>
+<p>Verification:</p>
+<pre><code class="language-sql">SELECT @@server_uuid, @@server_id, @@hostname, @@port, @@version;
+SELECT @@global.gtid_mode, @@global.enforce_gtid_consistency;
+SELECT @@global.read_only, @@global.super_read_only;
+SHOW REPLICA STATUS\G
+</code></pre>
+<p>MySQL 5.7 uses <code>SHOW SLAVE STATUS\G</code>, with configuration item <code>log_slave_updates</code>.</p>
+<h3 id="2-2-default-connection-and-memory-parameters-for-clusterguard-installati">2.2 Default Connection and Memory Parameters for ClusterGuard Installation Instances<a class="heading-anchor" href="#2-2-default-connection-and-memory-parameters-for-clusterguard-installati" aria-label="Link to 2.2 Default Connection and Memory Parameters for ClusterGuard Installation Instances">#</a></h3>
+<p>When creating a new MySQL instance through the ClusterGuard offline installer, the installation script will read <code>/proc/meminfo</code> on the target database node and generate a conservative production baseline based on physical memory:</p>
+<ul>
+<li><code>innodb_buffer_pool_size</code>: By default, it takes 70% of the physical memory and rounds up to the nearest integer multiple of 4 GiB; if the result exceeds 80% of the physical memory, it takes the maximum multiple of 4 GiB that does not exceed 80%, without setting a fixed capacity upper limit</li>
+<li><code>max_connections</code>: By default, it is fixed at 1000</li>
+<li><code>table_open_cache</code>, <code>thread_cache_size</code>, temporary tables, and redo capacity vary with memory tiers</li>
+<li>Sorting, joining, and read buffer use controlled small values to avoid exhausting memory under high concurrency due to large buffers per connection</li>
+</ul>
+<p>The generated configuration is located at <code>/etc/clusterguard/mysql/&lt;PORT&gt;.cnf</code>. These parameters are installation baselines and do not replace pre-deployment performance testing based on business SQL, connection pools, storage latency, and capacity.</p>
+<p>This rule requires that MySQL data nodes have at least 5 GiB of physical memory. If the capacity is below this, there is no valid buffer pool that simultaneously meets &quot;a multiple of 4 GiB&quot; and &quot;does not exceed 80%&quot;, and the installer will block and request expansion.</p>
+<p>The new instance listens by default on <code>0.0.0.0:&lt;PORT&gt;</code>. The discovery, execution, and replication accounts created by ClusterGuard allow TCP connections; the host firewall should still only allow traffic from the database node, control node, and approved business network segments. The default root is only allowed to connect via local socket and <code>127.0.0.1</code>; remote management uses a dedicated account. The installer will only create or update the corresponding <code>root</code>@<code>HOST</code> when the <code>--mysql-root-remote-host HOST</code> is explicitly passed in the installation command, for example, <code>--mysql-root-remote-host &#39;%&#39;</code>; if the parameter is omitted, the remote root is not operated on.</p>
+<p>The runtime socket for managed instances is <code>/run/clusterguard/mysql/&lt;PORT&gt;/mysql.sock</code>, created by systemd <code>RuntimeDirectory</code>, and should not be placed in the database data directory. The installer will publish the default client configuration on the local machine; standard 3306 instances can directly use <code>mysql -uroot -p</code>, while retaining the <code>/tmp/mysql.sock</code> compatibility link that automatically recovers after reboot. The platform always uses absolute binaries, explicit defaults files, or TCP, and does not rely on this compatibility link.</p>
+<p>Authentication plugins are handled by the database version:</p>
+<ul>
+<li>MySQL 8.0/5.7: Configure <code>default_authentication_plugin=mysql_native_password</code></li>
+<li>MySQL 8.4: Configure <code>mysql_native_password=ON</code>, and explicitly specify <code>mysql_native_password</code> for the ClusterGuard management account</li>
+<li>MySQL 9.x: Do not write the native password parameter that has been removed, and use the default authentication plugin supported by the server</li>
+</ul>
+<p>Verify the automatically generated parameters and accounts:</p>
+<pre><code class="language-sql">SHOW VARIABLES WHERE Variable_name IN (
+  &#39;bind_address&#39;, &#39;max_connections&#39;, &#39;innodb_buffer_pool_size&#39;,
+  &#39;table_open_cache&#39;, &#39;thread_cache_size&#39;
+);
+SELECT user, host, plugin
+FROM mysql.user
+WHERE user IN (&#39;cg_discovery&#39;, &#39;cg_operator&#39;, &#39;cg_replication&#39;, &#39;root&#39;)
+ORDER BY user, host;
+</code></pre>
+<h3 id="2-3-minimal-permission-accounts">2.3 Minimal Permission Accounts<a class="heading-anchor" href="#2-3-minimal-permission-accounts" aria-label="Link to 2.3 Minimal Permission Accounts">#</a></h3>
+<p>The following example restricts the control node network segment to <code>192.168.102.%</code>. In production environments, it should be further tightened to specific control node addresses and use random long passwords.</p>
+<p>MySQL 8.0/8.4:</p>
+<pre><code class="language-sql">CREATE USER &#39;cg_discovery&#39;@&#39;192.168.102.%&#39;
+  IDENTIFIED BY &#39;&lt;DISCOVERY_PASSWORD&gt;&#39;;
+GRANT PROCESS, REPLICATION CLIENT ON *.* TO
+  &#39;cg_discovery&#39;@&#39;192.168.102.%&#39;;
+
+CREATE USER &#39;cg_operator&#39;@&#39;192.168.102.%&#39;
+  IDENTIFIED BY &#39;&lt;OPERATION_PASSWORD&gt;&#39;;
+GRANT PROCESS, REPLICATION CLIENT, CONNECTION_ADMIN,
+  SYSTEM_VARIABLES_ADMIN, REPLICATION_SLAVE_ADMIN ON *.* TO
+  &#39;cg_operator&#39;@&#39;192.168.102.%&#39;;
+
+CREATE USER &#39;cg_replication&#39;@&#39;192.168.102.%&#39;
+  IDENTIFIED BY &#39;&lt;REPLICATION_PASSWORD&gt;&#39;;
+GRANT REPLICATION SLAVE ON *.* TO
+  &#39;cg_replication&#39;@&#39;192.168.102.%&#39;;
+</code></pre>
+<p>MySQL 5.7 does not have detailed management permissions, and the execution account requires <code>SUPER</code>. This expands the permission surface, so it should be restricted in source, use a dedicated password, and enable auditing:</p>
+<pre><code class="language-sql">GRANT PROCESS, REPLICATION CLIENT, SUPER ON *.* TO
+  &#39;cg_operator&#39;@&#39;192.168.102.%&#39;;
+</code></pre>
+<p>If the server has enabled TLS:</p>
+<pre><code class="language-sql">ALTER USER &#39;cg_discovery&#39;@&#39;192.168.102.%&#39; REQUIRE SSL;
+ALTER USER &#39;cg_operator&#39;@&#39;192.168.102.%&#39; REQUIRE SSL;
+ALTER USER &#39;cg_replication&#39;@&#39;192.168.102.%&#39; REQUIRE SSL;
+</code></pre>
+<h3 id="2-4-establishing-replication">2.4 Establishing Replication<a class="heading-anchor" href="#2-4-establishing-replication" aria-label="Link to 2.4 Establishing Replication">#</a></h3>
+<p>MySQL 8:</p>
+<pre><code class="language-sql">CHANGE REPLICATION SOURCE TO
+  SOURCE_HOST=&#39;192.168.102.152&#39;,
+  SOURCE_PORT=3306,
+  SOURCE_USER=&#39;cg_replication&#39;,
+  SOURCE_PASSWORD=&#39;&lt;REPLICATION_PASSWORD&gt;&#39;,
+  SOURCE_AUTO_POSITION=1,
+  GET_SOURCE_PUBLIC_KEY=1;
+START REPLICA;
+</code></pre>
+<p>MySQL 5.7:</p>
+<pre><code class="language-sql">CHANGE MASTER TO
+  MASTER_HOST=&#39;192.168.102.152&#39;,
+  MASTER_PORT=3306,
+  MASTER_USER=&#39;cg_replication&#39;,
+  MASTER_PASSWORD=&#39;&lt;REPLICATION_PASSWORD&gt;&#39;,
+  MASTER_AUTO_POSITION=1;
+START SLAVE;
+</code></pre>
+<p>Before integration, the following must be confirmed:</p>
+<ul>
+<li>Only one writable primary database</li>
+<li>No errant GTID on candidate nodes</li>
+<li>IO/SQL threads are normal</li>
+<li>Delay meets the switchover strategy</li>
+<li>Each cluster uses an independent VIP</li>
+<li>VIP is only bound to the current primary database</li>
+</ul>
+<h2 id="3-postgresql">3. PostgreSQL<a class="heading-anchor" href="#3-postgresql" aria-label="Link to 3. PostgreSQL">#</a></h2>
+<h3 id="3-1-identity-and-replication-basics">3.1 Identity and Replication Basics<a class="heading-anchor" href="#3-1-identity-and-replication-basics" aria-label="Link to 3.1 Identity and Replication Basics">#</a></h3>
+<p>ClusterGuard HA uses <code>system_identifier</code> to identify the database cluster and the platform UUID to identify the node. Do not use hostname:port as the primary key.</p>
+<p>Primary database recommendation:</p>
+<pre><code class="language-conf">wal_level = replica
+max_wal_senders = 10
+max_replication_slots = 10
+hot_standby = on
+wal_log_hints = on
+password_encryption = scram-sha-256
+</code></pre>
+<p>You can also use data checksums instead of <code>wal_log_hints</code> to meet the <code>pg_rewind</code> prerequisite.</p>
+<p>Register a stable platform identity for each node:</p>
+<pre><code class="language-sql">ALTER SYSTEM SET clusterguard.node_id =
+  &#39;11111111-1111-4111-8111-111111111111&#39;;
+SELECT pg_reload_conf();
+</code></pre>
+<p>Replicas also need to be maintained by a controlled process for <code>clusterguard.primary_node_id</code> and <code>primary_conninfo</code>.</p>
+<h3 id="3-2-minimal-permission-accounts">3.2 Minimal Permission Accounts<a class="heading-anchor" href="#3-2-minimal-permission-accounts" aria-label="Link to 3.2 Minimal Permission Accounts">#</a></h3>
+<pre><code class="language-sql">CREATE ROLE cg_monitor LOGIN PASSWORD &#39;&lt;DISCOVERY_PASSWORD&gt;&#39;;
+GRANT pg_monitor TO cg_monitor;
+
+CREATE ROLE cg_operator LOGIN PASSWORD &#39;&lt;OPERATION_PASSWORD&gt;&#39;;
+GRANT pg_monitor, pg_signal_backend TO cg_operator;
+GRANT ALTER SYSTEM ON PARAMETER default_transaction_read_only TO cg_operator;
+GRANT EXECUTE ON FUNCTION pg_reload_conf() TO cg_operator;
+
+CREATE ROLE clusterguard_repl
+  WITH LOGIN REPLICATION PASSWORD &#39;&lt;REPLICATION_PASSWORD&gt;&#39;;
+</code></pre>
+<p><code>pg_hba.conf</code> example:</p>
+<pre><code class="language-conf">hostssl all         cg_monitor         192.168.102.152/32 scram-sha-256
+hostssl all         cg_operator        192.168.102.152/32 scram-sha-256
+hostssl replication clusterguard_repl  192.168.102.0/24   scram-sha-256
+</code></pre>
+<p>Add equivalent rules for the other two control nodes and then reload:</p>
+<pre><code class="language-sql">SELECT pg_reload_conf();
+</code></pre>
+<h3 id="3-3-verification">3.3 Verification<a class="heading-anchor" href="#3-3-verification" aria-label="Link to 3.3 Verification">#</a></h3>
+<pre><code class="language-sql">SELECT system_identifier FROM pg_control_system();
+SELECT pg_is_in_recovery();
+SHOW default_transaction_read_only;
+SELECT * FROM pg_stat_replication;
+SELECT * FROM pg_stat_wal_receiver;
+SELECT has_parameter_privilege(
+  &#39;cg_operator&#39;, &#39;default_transaction_read_only&#39;, &#39;ALTER SYSTEM&#39;);
+SELECT has_function_privilege(
+  &#39;cg_operator&#39;, &#39;pg_reload_conf()&#39;, &#39;EXECUTE&#39;);
+</code></pre>
+<p>Node recovery prioritizes <code>pg_rewind</code>; if the system identifier, major version, data checksum, or <code>wal_log_hints</code> is not met, a full <code>pg_basebackup</code> must be used to rebuild.</p>
+<h2 id="4-oracle-data-guard-broker">4. Oracle Data Guard Broker<a class="heading-anchor" href="#4-oracle-data-guard-broker" aria-label="Link to 4. Oracle Data Guard Broker">#</a></h2>
+<h3 id="4-1-broker-prerequisites">4.1 Broker Prerequisites<a class="heading-anchor" href="#4-1-broker-prerequisites" aria-label="Link to 4.1 Broker Prerequisites">#</a></h3>
+<p>Both primary and standby databases are set:</p>
+<pre><code class="language-sql">ALTER SYSTEM SET DG_BROKER_START=TRUE SCOPE=BOTH;
+SELECT DBID, DB_UNIQUE_NAME, DATABASE_ROLE, OPEN_MODE FROM V$DATABASE;
+</code></pre>
+<p>Requirements:</p>
+<ul>
+<li>Data Guard Broker configuration has been created and is in the state of <code>SUCCESS</code></li>
+<li>Primary and standby use consistent password file authentication</li>
+<li>Each database has a stable <code>DB_UNIQUE_NAME</code></li>
+<li>Broker connect identifier is resolvable on all nodes</li>
+<li>Standby redo log, transport, and apply are normal</li>
+<li>Switch service name is decoupled from the database role</li>
+</ul>
+<h3 id="4-2-dedicated-sysdg-account">4.2 Dedicated SYSDG Account<a class="heading-anchor" href="#4-2-dedicated-sysdg-account" aria-label="Link to 4.2 Dedicated SYSDG Account">#</a></h3>
+<p>Do not write the <code>SYS</code> password into ClusterGuard HA. Create a dedicated account:</p>
+<pre><code class="language-sql">CREATE USER CLUSTERGUARD_DG IDENTIFIED BY &quot;&lt;STRONG_PASSWORD&gt;&quot;;
+GRANT CREATE SESSION TO CLUSTERGUARD_DG;
+GRANT SYSDG TO CLUSTERGUARD_DG;
+</code></pre>
+<p>The same account must be included in the password files of the primary and standby databases and verified separately:</p>
+<pre><code class="language-bash">sqlplus &#39;CLUSTERGUARD_DG/&lt;STRONG_PASSWORD&gt;@MESDB as sysdg&#39;
+sqlplus &#39;CLUSTERGUARD_DG/&lt;STRONG_PASSWORD&gt;@MESDB_B as sysdg&#39;
+</code></pre>
+<p>The Agent mode runs <code>dgmgrl</code> on the database node as the <code>oracle</code> operating system account. The protected environment file on the database node is set:</p>
+<pre><code class="language-bash">CG_ORACLE_BROKER_PASSWORD=&#39;&lt;STRONG_PASSWORD&gt;&#39;
+</code></pre>
+<p>Permissions should be <code>0600</code> and must not appear in command line parameters, audit raw returns, or shell history.</p>
+<h3 id="4-3-broker-verification">4.3 Broker Verification<a class="heading-anchor" href="#4-3-broker-verification" aria-label="Link to 4.3 Broker Verification">#</a></h3>
+<pre><code class="language-bash">dgmgrl &#39;CLUSTERGUARD_DG/&lt;STRONG_PASSWORD&gt;@MESDB as sysdg&#39;
+</code></pre>
+<p>In DGMGRL:</p>
+<pre><code class="language-text">SHOW CONFIGURATION;
+SHOW DATABASE VERBOSE &#39;MESDB&#39;;
+VALIDATE DATABASE VERBOSE &#39;MESDB&#39;;
+VALIDATE DATABASE VERBOSE &#39;MESDB_B&#39;;
+</code></pre>
+<p>Before planned switching, the protection mode, transport lag, apply lag, switchover status, and target database status must all meet the strategy. ClusterGuard HA will not mark a switch reported as failed by the Broker as successful.</p>
+<p>Business access should use role-based service names and VIP/SCAN/Listener, and should not expose the fixed host SID to the application. After switching, the service role and listener endpoint will direct the connection to the new primary database.</p>
+<h2 id="5-sql-server-always-on">5. SQL Server Always On<a class="heading-anchor" href="#5-sql-server-always-on" aria-label="Link to 5. SQL Server Always On">#</a></h2>
+<h3 id="5-1-always-on-prerequisites">5.1 Always On Prerequisites<a class="heading-anchor" href="#5-1-always-on-prerequisites" aria-label="Link to 5.1 Always On Prerequisites">#</a></h3>
+<p>Requirements:</p>
+<ul>
+<li>Windows Failover Cluster and Availability Group are healthy</li>
+<li>Each replica <code>replica_id</code> is stable</li>
+<li>AG <code>group_id</code> is stable</li>
+<li>The planned switch target uses synchronous commit and is in <code>SYNCHRONIZED</code></li>
+<li>Listener name, IP, and port are configured</li>
+<li>Control accounts are consistent and source-restricted on each replica</li>
+</ul>
+<h3 id="5-2-minimal-permission-accounts">5.2 Minimal Permission Accounts<a class="heading-anchor" href="#5-2-minimal-permission-accounts" aria-label="Link to 5.2 Minimal Permission Accounts">#</a></h3>
+<p>Execute on each SQL Server instance, using on-site password policies:</p>
+<pre><code class="language-sql">USE master;
+CREATE LOGIN cg_monitor WITH PASSWORD = &#39;&lt;DISCOVERY_PASSWORD&gt;&#39;;
+CREATE USER cg_monitor FOR LOGIN cg_monitor;
+GRANT VIEW SERVER STATE TO cg_monitor;
+GRANT VIEW ANY DEFINITION TO cg_monitor;
+
+CREATE LOGIN cg_operator WITH PASSWORD = &#39;&lt;OPERATION_PASSWORD&gt;&#39;;
+CREATE USER cg_operator FOR LOGIN cg_operator;
+GRANT VIEW SERVER STATE TO cg_operator;
+GRANT VIEW ANY DEFINITION TO cg_operator;
+GRANT ALTER ANY AVAILABILITY GROUP TO cg_operator;
+</code></pre>
+<p>If SQL Server 2022 detects insufficient performance DMV permissions, it will assess and grant according to the official permission model:</p>
+<pre><code class="language-sql">GRANT VIEW SERVER PERFORMANCE STATE TO cg_monitor;
+GRANT VIEW SERVER PERFORMANCE STATE TO cg_operator;
+</code></pre>
+<p>Do not directly grant <code>sysadmin</code> as a regular solution.</p>
+<h3 id="5-3-verification">5.3 Verification<a class="heading-anchor" href="#5-3-verification" aria-label="Link to 5.3 Verification">#</a></h3>
+<pre><code class="language-sql">SELECT group_id, name FROM sys.availability_groups;
+SELECT replica_id, replica_server_name, availability_mode_desc,
+       failover_mode_desc
+FROM sys.availability_replicas;
+
+SELECT ar.replica_server_name, rs.role_desc,
+       rs.connected_state_desc, rs.recovery_health_desc,
+       rs.synchronization_health_desc
+FROM sys.dm_hadr_availability_replica_states rs
+JOIN sys.availability_replicas ar
+  ON ar.replica_id = rs.replica_id;
+</code></pre>
+<p>Planned switching is only allowed to execute when the target replica is synchronized and healthy. Forced failover may cause data loss, and the current product strategy will explicitly block actions that do not meet the conditions, without providing fake execution.</p>
+<h2 id="6-control-node-environment-variables">6. Control Node Environment Variables<a class="heading-anchor" href="#6-control-node-environment-variables" aria-label="Link to 6. Control Node Environment Variables">#</a></h2>
+<p>Write the database password into <code>/etc/clusterguard/clusterguard.env</code>, with permissions <code>0640</code>, and owner <code>root:clusterguard</code>:</p>
+<pre><code class="language-bash">CG_MYSQL_DISCOVERY_PASSWORD=&#39;&lt;...&gt;&#39;
+CG_MYSQL_OPERATION_PASSWORD=&#39;&lt;...&gt;&#39;
+CG_MYSQL_REPLICATION_PASSWORD=&#39;&lt;...&gt;&#39;
+CG_POSTGRESQL_DISCOVERY_PASSWORD=&#39;&lt;...&gt;&#39;
+CG_POSTGRESQL_OPERATION_PASSWORD=&#39;&lt;...&gt;&#39;
+CG_POSTGRESQL_REPLICATION_PASSWORD=&#39;&lt;...&gt;&#39;
+CG_ORACLE_DISCOVERY_PASSWORD=&#39;&lt;...&gt;&#39;
+CG_ORACLE_OPERATION_PASSWORD=&#39;&lt;...&gt;&#39;
+CG_SQLSERVER_DISCOVERY_PASSWORD=&#39;&lt;...&gt;&#39;
+CG_SQLSERVER_OPERATION_PASSWORD=&#39;&lt;...&gt;&#39;
+</code></pre>
+<p>When changing passwords, first create or update the account in parallel on the database side, then roll out the three control nodes, and finally revoke the old credentials. The entire process must maintain Raft majority availability.</p>
+<h2 id="7-integration-acceptance-completion">7. Integration Acceptance Completion<a class="heading-anchor" href="#7-integration-acceptance-completion" aria-label="Link to 7. Integration Acceptance Completion">#</a></h2>
+<p>Each cluster must verify at least the following:</p>
+<ol>
+<li>Native identity corresponds one-to-one with platform resources.</li>
+<li>After modifying hostname, IP, and port, <code>resource_id</code> remains unchanged, and the old endpoint enters the alias.</li>
+<li>The primary database, replicas, and replication source in the topology are correct.</li>
+<li>The discovery account cannot perform switching.</li>
+<li>The execution account cannot bypass the platform Safety Guard, Lock, Approval, and Verify.</li>
+<li>The writer endpoint only points to the current writable primary database.</li>
+<li>Operation logs include time, original primary database, target primary database, result, verification, and report.</li>
+<li>Capabilities that are not implemented or unsafe return <code>unsupported</code> or <code>blocked</code>, and cannot return pseudo-success.</li>
+</ol>
+
+          <footer class="document-footer">
+            <span>Source: <code>docs/en-US/database-preparation.md</code></span>
+            <a href="../index.html">Documentation language home</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="On this page">
+          <strong>On this page</strong>
+          <a class="toc-level-2" href="#1-general-requirements">1. General Requirements</a><a class="toc-level-2" href="#2-mysql">2. MySQL</a><a class="toc-level-3" href="#2-1-replication-basics">2.1 Replication Basics</a><a class="toc-level-3" href="#2-2-default-connection-and-memory-parameters-for-clusterguard-installati">2.2 Default Connection and Memory Parameters for ClusterGuard Installation Instances</a><a class="toc-level-3" href="#2-3-minimal-permission-accounts">2.3 Minimal Permission Accounts</a><a class="toc-level-3" href="#2-4-establishing-replication">2.4 Establishing Replication</a><a class="toc-level-2" href="#3-postgresql">3. PostgreSQL</a><a class="toc-level-3" href="#3-1-identity-and-replication-basics">3.1 Identity and Replication Basics</a><a class="toc-level-3" href="#3-2-minimal-permission-accounts">3.2 Minimal Permission Accounts</a><a class="toc-level-3" href="#3-3-verification">3.3 Verification</a><a class="toc-level-2" href="#4-oracle-data-guard-broker">4. Oracle Data Guard Broker</a><a class="toc-level-3" href="#4-1-broker-prerequisites">4.1 Broker Prerequisites</a><a class="toc-level-3" href="#4-2-dedicated-sysdg-account">4.2 Dedicated SYSDG Account</a><a class="toc-level-3" href="#4-3-broker-verification">4.3 Broker Verification</a><a class="toc-level-2" href="#5-sql-server-always-on">5. SQL Server Always On</a><a class="toc-level-3" href="#5-1-always-on-prerequisites">5.1 Always On Prerequisites</a><a class="toc-level-3" href="#5-2-minimal-permission-accounts">5.2 Minimal Permission Accounts</a><a class="toc-level-3" href="#5-3-verification">5.3 Verification</a><a class="toc-level-2" href="#6-control-node-environment-variables">6. Control Node Environment Variables</a><a class="toc-level-2" href="#7-integration-acceptance-completion">7. Integration Acceptance Completion</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

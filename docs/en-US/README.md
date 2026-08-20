@@ -1,5 +1,7 @@
 # ClusterGuard HA English Documentation
 
+The offline HTML documentation center starts at [`../html/index.html`](../html/index.html). It includes this manual, the migration runbook, qualification evidence, local search, and print-friendly pages without an external network dependency.
+
 <!-- LANGUAGE-SWITCH -->
 > **Language:** English | [简体中文](../zh-CN/README.md)
 <!-- /LANGUAGE-SWITCH -->
@@ -28,9 +30,11 @@ Do not use historical candidate packages with numbers higher than `2.1-45` in th
    Complete the deployment of control nodes, data nodes, databases, Agent, Raft, VIP, and certificates.
 4. [Database Preparation Manual](database-preparation.md)
    Prepare native database identity, minimal permissions, replication, and health check conditions.
-5. [Operations Manual](operations-manual.md)
+5. [Migration from Orchestrator](orchestrator-migration.md)
+   Onboard existing MySQL clusters without reinstalling data and transfer exclusive recovery and VIP authority safely.
+6. [Operations Manual](operations-manual.md)
    Execute failover, old primary recovery, node expansion, planned shutdown, audit, and emergency handling.
-6. [Version and Release Policy](version-release-policy.md)
+7. [Version and Release Policy](version-release-policy.md)
    Use when building new versions, maintaining tags, and releasing PostgreSQL 2.2.
 
 ## Acceptance Evidence

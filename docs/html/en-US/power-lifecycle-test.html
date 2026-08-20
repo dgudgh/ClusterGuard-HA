@@ -1,0 +1,654 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="Power Lifecycle Test Report - ClusterGuard HA operational documentation">
+  <title>Power Lifecycle Test Report | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">Skip to content</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>Search documentation</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="Filter by title">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report" aria-current="page" class="active">Power Lifecycle Test Report</a></section></nav>
+      <div class="sidebar-meta">
+        <span>Offline documentation build</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">Open navigation</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>Power Lifecycle Test Report</strong></div>
+        <div class="header-actions">
+          <a href="../zh-CN/power-lifecycle-test.html" lang="zh-CN">简体中文</a>
+          <button id="print-button" type="button">Print</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha-cluster-power-down-and-automatic-recovery-power-lifecycl">ClusterGuard HA — Cluster Power-Down and Automatic Recovery (Power Lifecycle Management) Test Report<a class="heading-anchor" href="#clusterguard-ha-cluster-power-down-and-automatic-recovery-power-lifecycl" aria-label="Link to ClusterGuard HA — Cluster Power-Down and Automatic Recovery (Power Lifecycle Management) Test Report">#</a></h1>
+<ul>
+<li>Production Candidate Version: <code>1.0.0-rc.20260809.13</code></li>
+<li>Date: 2026-08-09</li>
+<li>Scope: State Machine + Storage + API + Real Agent Power-Down + Automatic Recovery + Multi-Engine + Console + Report + End-to-End Testing</li>
+<li>Result: <strong>All warehouse <code>go test ./...</code>, key package race, <code>go build ./...</code>, <code>go vet ./...</code>, <code>git diff --check</code>, and lifecycle script <code>bash -n</code> passed; 152–154 real one-click power-down, control plane independent restart, three-node simultaneous restart, sudden primary failure, automatic takeover, and old primary reattachment all passed</strong></li>
+</ul>
+<h2 id="pre-production-special-revalidation-1-0-0-rc-20260809-13">Pre-Production Special Revalidation (<code>1.0.0-rc.20260809.13</code>)<a class="heading-anchor" href="#pre-production-special-revalidation-1-0-0-rc-20260809-13" aria-label="Link to Pre-Production Special Revalidation (1.0.0-rc.20260809.13)">#</a></h2>
+<h3 id="planned-power-down-and-sudden-failure-identification">Planned Power-Down and Sudden Failure Identification<a class="heading-anchor" href="#planned-power-down-and-sudden-failure-identification" aria-label="Link to Planned Power-Down and Sudden Failure Identification">#</a></h3>
+<ul>
+<li>Planned power-down is jointly identified by persistent <code>PowerOperation</code>, Recovery Freeze, and instance Maintenance; the state interface returns <code>planned_shutdown</code>, operator, request time, database state, and <code>automatic_failover_suppressed=true</code>.</li>
+<li>If there is no planned power-down and the primary database fails healthily, <code>unexpected_failure</code> is returned, automatic takeover remains enabled, and human-caused power-down is not misjudged as a failure, nor is a sudden failure misjudged as maintenance.</li>
+<li>Fixed the protection state reading of the latest failed lifecycle: as long as Freeze/Maintenance still exists, it continues to show as protected, until a subsequent completed lifecycle explicitly replaces it.</li>
+<li>The console displays four facts: &quot;Power-Down Determination / Database State / Automatic Takeover / Control Plane Management&quot;; the pop-up defaults to &quot;Stop Database Service,&quot; clearly indicating that the ClusterGuard control plane remains running.</li>
+</ul>
+<h3 id="real-failure-timeline-beijing-time">Real Failure Timeline (Beijing Time)<a class="heading-anchor" href="#real-failure-timeline-beijing-time" aria-label="Link to Real Failure Timeline (Beijing Time)">#</a></h3>
+<table>
+<thead>
+<tr>
+<th>Time</th>
+<th>Action</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>16:05</td>
+<td>Execute <code>mysql-ha-3306</code> one-click power-down (service mode) from the console</td>
+<td>Three 3306 instances stop, VIP <code>.155</code> released; Power state is planned power-down, automatic takeover frozen</td>
+</tr>
+<tr>
+<td>During power-down</td>
+<td>Check ClusterGuard with another 3384 cluster</td>
+<td>All three control planes are online; 3384 three instances and VIP <code>.160</code> are unaffected</td>
+</tr>
+<tr>
+<td>During power-down</td>
+<td>Send SIGTERM to <code>.154</code> control process</td>
+<td>systemd automatically restarts, new PID takes effect, <code>NRestarts=1</code></td>
+</tr>
+<tr>
+<td>16:08:10</td>
+<td>Three operating systems restart simultaneously</td>
+<td>Approximately 10 seconds to recover 2/3 control planes, approximately 17 seconds to recover 3/3; 3306/3384, roles, replication, and VIP automatically recover</td>
+</tr>
+<tr>
+<td>16:10:12</td>
+<td>Bypass the platform to stop the original primary <code>.154</code> of 3306, simulate a sudden failure</td>
+<td>Console determines <code>unexpected_failure</code>, automatic takeover not frozen</td>
+</tr>
+<tr>
+<td>16:10:51–16:11:14</td>
+<td>Automatic failover</td>
+<td><code>.152</code> becomes the only writable primary and takes over VIP <code>.155</code>; from failure to verification completion is approximately 62 seconds</td>
+</tr>
+<tr>
+<td>16:12:04</td>
+<td>Start the old primary <code>.154</code> after recovery</td>
+<td>Maintain <code>read_only=1/super_read_only=1</code>, no VIP, no write contention</td>
+</tr>
+<tr>
+<td>16:15:15–16:15:29</td>
+<td>Page performs old primary reattachment</td>
+<td>Operation <code>succeeded</code> and Verification passed; <code>.154</code> replicates from <code>.152</code>, IO/SQL=Yes/Yes, delay 0</td>
+</tr>
+</tbody></table>
+<p>Final facts: <code>.152</code> is the only writable 3306 primary and holds the only VIP <code>.155</code>; <code>.153/.154</code> are all read-only, replication threads are running, delay 0. Raft Leader is <code>.153</code>, 3 voters, quorum confirmed, no active operations or lifecycle tasks.</p>
+<p>After the upgrade, a 60-second stability observation was conducted (sampled every 10 seconds, a total of 7 times): 3306 and 3384 clusters consistently maintained one primary and two replicas, healthy replicas, and zero delay. Raft commit/applied were consistent. All three <code>systemctl --failed</code> were empty, restore/finalize units were <code>Result=success/ExecMainStatus=0</code>, reconcile timer was enabled+active, control plane, Agent, and MySQL recent error-level logs were empty.</p>
+<h3 id="issues-discovered-and-fixed-in-this-round">Issues Discovered and Fixed in This Round<a class="heading-anchor" href="#issues-discovered-and-fixed-in-this-round" aria-label="Link to Issues Discovered and Fixed in This Round">#</a></h3>
+<ul>
+<li>In old primary reattachment, the dropdown list previously mistakenly listed healthy replicas as recovery candidates due to &quot;historically being a primary&quot; or missing thread fields. Now, only instances under maintenance, with health anomalies, replication threads explicitly abnormal, or historical primary with replication not yet recovered are accepted.</li>
+<li>After deploying <code>1.0.0-rc.20260809.13</code>, the old primary reattachment list in a healthy topology only displays &quot;No recoverable nodes found&quot;; the candidate primary list still correctly displays two healthy replicas.</li>
+<li><code>clusterguard-ha.service</code> uses <code>Restart=always</code>, not relying on MySQL systemd unit; the management control plane can still run independently and self-recover when the database service is stopped.</li>
+</ul>
+<h3 id="deliverables">Deliverables<a class="heading-anchor" href="#deliverables" aria-label="Link to Deliverables">#</a></h3>
+<p>All three current soft links point to <code>/opt/clusterguard/releases/1.0.0-rc.20260809.13</code>. The final offline package path and SHA-256 are recorded in the external delivery list after the build is completed, avoiding self-referential summaries in the archive itself.</p>
+<blockquote>
+<p>This round of real testing covered &quot;only stop database service&quot; and &quot;three operating systems restart simultaneously.&quot; Automatic power-on after complete power-off still depends on VMware, IPMI, BMC, or BIOS, which is not the capability of the ClusterGuard process on the powered-off node. This round did not simulate it as verified.</p>
+</blockquote>
+<h2 id="previous-production-candidate-revalidation-2026-08-09">Previous Production Candidate Revalidation (2026-08-09)<a class="heading-anchor" href="#previous-production-candidate-revalidation-2026-08-09" aria-label="Link to Previous Production Candidate Revalidation (2026-08-09)">#</a></h2>
+<h3 id="fixes">Fixes<a class="heading-anchor" href="#fixes" aria-label="Link to Fixes">#</a></h3>
+<ol>
+<li>Before stopping the MySQL service, all nodes execute VIP release and local isolation; if any node isolation fails, the service stop phase is not entered.</li>
+<li>The latest power operation is stably sorted by update time, creation time, and resource ID to avoid <code>/power/status</code> randomly returning old operations.</li>
+<li>During the simultaneous boot of the three control nodes, <code>power/boot-detected</code>, <code>power/recovering</code>, topology discovery, <code>power/verify</code>, <code>power/complete</code>, and state reading of <code>000/500/502/503/504</code> perform bounded retries.</li>
+<li>When the follower HTTP is ready but Raft logs are not yet caught up, the recovery script only reads <code>prechecking/shutdown_planned/shutting_down</code> and does not confirm <code>power_off/boot_detected/recovering/verifying</code> before prohibiting role changes and recovery actions; active operations, illegal states, and timeouts still fail-closed.</li>
+<li>After recovery completion, a shutdown snapshot identity access control is added: the same <code>resource_id</code> in the snapshot must be recovered as a healthy primary, and all snapshot replicas must appear as healthy replica/standby roles; even if another node has become a healthy primary, the recovery freeze cannot be released prematurely.</li>
+</ol>
+<h3 id="real-server-results">Real Server Results<a class="heading-anchor" href="#real-server-results" aria-label="Link to Real Server Results">#</a></h3>
+<p>Test nodes: <code>192.168.102.152</code>, <code>192.168.102.153</code>, <code>192.168.102.154</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Cluster</th>
+<th>Primary</th>
+<th>Replica</th>
+<th>VIP</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>mysql-ha-3306</code> (MySQL 8.0.44)</td>
+<td>154:3306</td>
+<td>152/153:3306</td>
+<td><code>192.168.102.155</code></td>
+<td>Passed</td>
+</tr>
+<tr>
+<td><code>mysql-test-8.4</code> (MySQL 8.4.10)</td>
+<td>153:3384</td>
+<td>152/154:3384</td>
+<td><code>192.168.102.160</code></td>
+<td>Passed</td>
+</tr>
+</tbody></table>
+<ul>
+<li>Both clusters executed <code>precheck -&gt; plan -&gt; execute</code> via non-Leader 152 console sessions; execute returned HTTP 200, <code>power_off</code>, verification passed, recovery freeze active, 3 instances maintenance active.</li>
+<li>After power-down, all 6 MySQL services were <code>inactive</code>, two VIPs did not exist on all three nodes, and each node persisted two independent cluster snapshots.</li>
+<li>After the three simultaneous reboots, the boot ID changed on all three; control plane, Agent, reconcile timer, MySQL 3306, and MySQL 3384 all automatically started and were enabled.</li>
+<li>The first execution of restore/finalize was <code>Result=success</code>, <code>ExecMainStatus=0</code>, <code>NRestarts=0</code>; 153 encountered an HTTP 503 once within the Leader election window and successfully retried within the same oneshot, with no unit reboots or failure states on all three.</li>
+<li>Raft had 3 voters, Leader quorum confirmed, three nodes <code>state_revision=1068910</code>, <code>commit_index=applied_index=1283781</code>, no active operation/lifecycle task.</li>
+<li>3306 primary <code>read_only=0/super_read_only=0</code>, two replicas were <code>1/1</code>, receiver/applier were ON, error code 0; 3384 also passed.</li>
+<li>Direct connection to VIP returned <code>orch-mysql03:3306:0:0</code> and <code>orch-mysql02:3384:0:0</code>, proving that VIP only points to the corresponding writable primary.</li>
+<li>Sampled every 10 seconds for 60 seconds, a total of 7 times: Raft, two three-node topologies, health status, single primary constraint, replication delay 0, power lifecycle completed, and VIP writable entry all passed.</li>
+<li>Three <code>systemctl --failed</code> were empty, MySQL current startup log error scan was clean.</li>
+</ul>
+<h3 id="deliverables-2">Deliverables<a class="heading-anchor" href="#deliverables-2" aria-label="Link to Deliverables">#</a></h3>
+<pre><code class="language-text">/tmp/clusterguard-release-v11-final-20260809/clusterguard-ha-1.0.0-rc.20260809.11-linux-amd64.tar.gz
+SHA-256: f614cfb5d9b36230d9dbb701e2151c8e2e4c669fa2b2b83b8b7941b2250871e3
+</code></pre>
+<p>At the time of this test, the three soft links all pointed to <code>/opt/clusterguard/releases/1.0.0-rc.20260809.11</code>; the current deployment version is based on the pre-production special revalidation at the top of the document.</p>
+<blockquote>
+<p>The acceptance scope is &quot;console one-click safe shutdown of the database cluster + automatic startup and recovery after operating system restart.&quot; Automatic power-on after complete power-off is the capability of VMware/IPMI/server BIOS, not the capability of the local process on the powered-off node, and this round did not simulate it as a software capability.</p>
+</blockquote>
+<hr>
+<h2 id="i-overview-of-deliverables-by-phase">I. Overview of Deliverables (by Phase)<a class="heading-anchor" href="#i-overview-of-deliverables-by-phase" aria-label="Link to I. Overview of Deliverables (by Phase)">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
+<th>Deliverables</th>
+<th>Verification</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1</td>
+<td>PowerState state machine + PowerOperation model + protection markers (RecoveryFreeze/Maintenance) + power API framework + cgctl power subcommand</td>
+<td>State machine testing + API testing</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Real agent shutdown: <code>mysql_service_stop</code>/<code>mysql_service_start</code>/<code>mysql_power_status</code>/<code>node_poweroff</code> commands + LinuxPowerController + HMAC signed agent requests + four-phase real execution (persist → stop replica → stop primary → optional full power-down)</td>
+<td>Agent + workflow + integration testing</td>
+</tr>
+<tr>
+<td>3</td>
+<td>(Merged into Phase 2/4) Agent power state commands + boot-detected reporting</td>
+<td>Same as above</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Automatic recovery: <code>clusterguard-cluster-restore.sh</code> (B4 calls power/boot-detected + power/recovering) + <code>clusterguard-cluster-finalize.sh</code> (power/verify + power/complete polling + stamp_recovered_at), protection release atomic delegation to Go side</td>
+<td>Script <code>bash -n</code> + Go integration testing covers equivalent paths</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Multi-engine dispatch: PostgreSQL skips persist_read_only, <code>postgresql_stop</code>/<code>postgresql_status</code>, engine-aware plan steps</td>
+<td>Workflow + API testing</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Web console: Read-only &quot;Power Lifecycle&quot; panel (status badge, protection marker, recent operation, history table), Chinese labels, does not handle approval token (design contract)</td>
+<td>Console testing</td>
+</tr>
+<tr>
+<td>7</td>
+<td>Report: Durable workflow atomic disk terminal report + audit; <code>/api/v1/reports/{id}</code> JSON + HTML</td>
+<td>Integration testing assertions (added)</td>
+</tr>
+<tr>
+<td>8</td>
+<td>End-to-end integration testing: 3 Go full-stack scenarios (service mode / poweroff mode / agent failure fail-closed) + lab bash script <code>scripts/integration/power-lifecycle-lab.sh</code></td>
+<td><code>go test</code> + <code>bash -n</code></td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="ii-full-warehouse-test-results-go-test-count-1">II. Full Warehouse Test Results (go test ./... -count=1)<a class="heading-anchor" href="#ii-full-warehouse-test-results-go-test-count-1" aria-label="Link to II. Full Warehouse Test Results (go test ./... -count=1)">#</a></h2>
+<pre><code>ok  	clusterguard.io/ha/cmd/cgctl	10.772s
+ok  	clusterguard.io/ha/cmd/clusterguard	4.576s
+ok  	clusterguard.io/ha/cmd/clusterguard-agent	1.160s
+ok  	clusterguard.io/ha/internal/agent	3.486s
+ok  	clusterguard.io/ha/internal/api	3.275s
+ok  	clusterguard.io/ha/internal/approval	2.293s
+ok  	clusterguard.io/ha/internal/auth	4.020s
+ok  	clusterguard.io/ha/internal/config	4.776s
+ok  	clusterguard.io/ha/internal/consensus	5.064s
+?   	clusterguard.io/ha/internal/controlstate	[no test files]
+ok  	clusterguard.io/ha/internal/coordination	3.917s
+ok  	clusterguard.io/ha/internal/discovery	5.750s
+ok  	clusterguard.io/ha/internal/endpoint	5.152s
+ok  	clusterguard.io/ha/internal/lifecycle	5.120s
+ok  	clusterguard.io/ha/internal/metrics	5.080s
+ok  	clusterguard.io/ha/internal/observability	4.813s
+ok  	clusterguard.io/ha/internal/recovery	4.995s
+ok  	clusterguard.io/ha/internal/report	4.939s
+ok  	clusterguard.io/ha/internal/runtime	5.632s
+ok  	clusterguard.io/ha/internal/store	6.768s
+ok  	clusterguard.io/ha/internal/workflow	5.319s
+ok  	clusterguard.io/ha/pkg/adapter	5.368s
+ok  	clusterguard.io/ha/pkg/identity	5.288s
+ok  	clusterguard.io/ha/pkg/model	5.531s
+ok  	clusterguard.io/ha/scripts	17.895s
+</code></pre>
+<p>Key packages (agent / workflow / api / endpoint / cgctl) have <strong>495 test cases all passed, 0 failed</strong>.</p>
+<hr>
+<h2 id="iii-power-lifecycle-special-test-matrix">III. Power Lifecycle Special Test Matrix<a class="heading-anchor" href="#iii-power-lifecycle-special-test-matrix" aria-label="Link to III. Power Lifecycle Special Test Matrix">#</a></h2>
+<h3 id="3-1-agent-side-internal-agent">3.1 Agent Side (internal/agent)<a class="heading-anchor" href="#3-1-agent-side-internal-agent" aria-label="Link to 3.1 Agent Side (internal/agent)">#</a></h3>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Assertion</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>TestPowerControllerStopServiceRunsSystemctl / StartServiceRunsSystemctl / PowerOffRunsSystemctl</td>
+<td>Exact commands (systemctl stop/start/poweroff) + stub runner</td>
+</tr>
+<tr>
+<td>TestPowerControllerServiceStatusParsesIsActive / ReportsStoppedService</td>
+<td>is-active output parsing, stopped → ServiceRunning=false</td>
+</tr>
+<tr>
+<td>TestPowerControllerRejectsMissingServiceName</td>
+<td>Unconfigured service name fail-closed</td>
+</tr>
+<tr>
+<td>TestAgentPowerCommandsDispatchToController</td>
+<td>Handle dispatches 4 new commands</td>
+</tr>
+<tr>
+<td>TestAgentPowerCommandsBlockWithoutController</td>
+<td>No controller → reject (fail-closed)</td>
+</tr>
+<tr>
+<td>TestAgentPowerMutationRequiresPlanDigest</td>
+<td>mutation (stop/start/poweroff) forces sha256 plan digest</td>
+</tr>
+</tbody></table>
+<h3 id="3-2-workflow-side-internal-workflow-powershutdownadapter">3.2 Workflow Side (internal/workflow, PowerShutdownAdapter)<a class="heading-anchor" href="#3-2-workflow-side-internal-workflow-powershutdownadapter" aria-label="Link to 3.2 Workflow Side (internal/workflow, PowerShutdownAdapter)">#</a></h3>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Assertion</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>TestPowerShutdownAdapterBuildPlan / BuildPlanPostgreSQLSkipsPersist</td>
+<td>MySQL 5 steps / PostgreSQL 4 steps (no persist_read_only, renumbered)</td>
+</tr>
+<tr>
+<td>TestPowerShutdownAdapterExecuteAppliesProtectionsAndAdvancesState</td>
+<td>Protection + state transition + nil transport degradation</td>
+</tr>
+<tr>
+<td>TestPowerShutdownAdapterExecuteRunsAgentShutdown</td>
+<td>Four-phase real execution: persist×3 → replica×2 → primary last</td>
+</tr>
+<tr>
+<td>TestPowerShutdownAdapterExecuteAgentFailureKeepsProtections</td>
+<td>Agent failure → stays in shutting_down, protection remains</td>
+</tr>
+<tr>
+<td>TestPowerShutdownAdapterExecutePoweroffModePowersOffNodes</td>
+<td>node_poweroff after all stop</td>
+</tr>
+<tr>
+<td>TestPowerShutdownAdapterExecuteRejectsUnplannedState</td>
+<td>Non-shutdown_planned rejected</td>
+</tr>
+<tr>
+<td>TestPowerShutdownAdapterExecutePostgreSQLEngine</td>
+<td>No persist_role; postgresql_stop×2 first replica then primary; engine=postgresql</td>
+</tr>
+<tr>
+<td>TestPowerShutdownAdapterVerify / VerifyUsesAgentStatus / VerifyPoweroffModeAcceptsUnreachable / VerifyUsesEngineStatusCommand</td>
+<td>Agent status verification; poweroff mode considers unreachable as passed; PG uses postgresql_status</td>
+</tr>
+<tr>
+<td>TestPowerShutdownAdapterPrecheckRequiresShutdownPlanned / EngineAndCapabilities</td>
+<td>Precondition + engine capability declaration</td>
+</tr>
+</tbody></table>
+<h3 id="3-3-api-side-internal-api">3.3 API Side (internal/api)<a class="heading-anchor" href="#3-3-api-side-internal-api" aria-label="Link to 3.3 API Side (internal/api)">#</a></h3>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>Assertion</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>TestPowerLifecycleEndToEnd</td>
+<td>Complete state machine flow (including cancel path)</td>
+</tr>
+<tr>
+<td>TestPowerExecuteRequiresApprovalAndPlannedState</td>
+<td>Approval + state gate</td>
+</tr>
+<tr>
+<td>TestPowerFailKeepsProtectionsActive</td>
+<td>Fail keeps protections active</td>
+</tr>
+<tr>
+<td>TestPowerPrecheckUnknownCluster</td>
+<td>Unknown cluster 404</td>
+</tr>
+<tr>
+<td>TestConsoleShowsPowerLifecyclePanel</td>
+<td>Read-only panel contract: Power Lifecycle / power-state-badge / power-protection / power-history / powerStateLabels / loadPowerStatus(clusterId) / power/status fetch / state.powerStatus; <strong>No approval-token (design contract TestConsoleOperationDoesNotHandleApprovalToken also passed)</strong></td>
+</tr>
+</tbody></table>
+<h3 id="3-4-end-to-end-integration-testing-internal-api-power-lifecycle-integrat">3.4 End-to-End Integration Testing (internal/api/power_lifecycle_integration_test.go, added)<a class="heading-anchor" href="#3-4-end-to-end-integration-testing-internal-api-power-lifecycle-integrat" aria-label="Link to 3.4 End-to-End Integration Testing (internal/api/power_lifecycle_integration_test.go, added)">#</a></h3>
+<p>Real HTTP surface + recordable fake agent transport + durable workflow:</p>
+<p><strong>TestPowerLifecycleIntegrationFullShutdownAndRecovery</strong> (full service mode workflow)</p>
+<ul>
+<li>persist_role×3 → mysql_service_stop×3 (replica before primary, primary last) → no node_poweroff</li>
+<li>Each agent request: signature, OperationID, <code>sha256:</code> plan digest, engine=mysql</li>
+<li>After execute: RecoveryFreeze + 3 instances Maintenance all activated; state power_off</li>
+<li>boot-detected → recovering → verify → complete: protections all released, state completed</li>
+<li><strong>Phase 7 assertion (added)</strong>: durable process disk terminal report (status=succeeded), <code>GET /api/v1/reports/{id}</code> returns non-empty audits, <code>/html</code> returns 200</li>
+</ul>
+<p><strong>TestPowerLifecycleIntegrationPoweroffMode</strong></p>
+<ul>
+<li>node_poweroff×3, and each after the last mysql_service_stop</li>
+<li>After shutdown, mysql_power_status transport failed (&quot;ssh: host is down&quot;) → verify considered passed</li>
+<li>State power_off</li>
+</ul>
+<p><strong>TestPowerLifecycleIntegrationAgentFailureIsFailClosed</strong></p>
+<ul>
+<li>First replica mysql_service_stop failed → execute 409 (error)</li>
+<li>State stays in shutting_down; RecoveryFreeze remains; only 1 stop sent (fail-fast)</li>
+<li>power/fail → failed (terminal state); complete 409 rejected</li>
+<li>New precheck → 200 prechecking, <strong>blocking_reasons non-empty</strong> (survival protection reported accurately)</li>
+</ul>
+<hr>
+<h2 id="iv-real-defects-discovered-and-fixed-in-integration-testing">IV. Real Defects Discovered and Fixed in Integration Testing<a class="heading-anchor" href="#iv-real-defects-discovered-and-fixed-in-integration-testing" aria-label="Link to IV. Real Defects Discovered and Fixed in Integration Testing">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Defect</th>
+<th>Root Cause</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1</td>
+<td>durable post-execute verify always fails → execute returns 500 indeterminate</td>
+<td><code>powerFrozenInstance</code> requires <code>frozen.MetadataRevision == instance.MetadataRevision</code>, but <code>ApplyPowerProtections → SetMaintenance</code> bumps each instance&#39;s revision</td>
+<td>Remove revision equality check; identity coordinates (hostname/IP/engine/port) still capture drift</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Integration test execute 500</td>
+<td>Test fixture resolver did not set <code>OperationID</code> (production code <code>internal/workflow/resolver.go:251</code> sets <code>request.Resolved.OperationID = request.Operation.ResourceID</code>)</td>
+<td>Add to resolver in <code>newPowerIntegrationServer</code></td>
+</tr>
+</tbody></table>
+<p>Both defects were exposed at the Go integration testing (non-mock unit test) level — proving the value of full-stack testing.</p>
+<hr>
+<h2 id="v-automatic-recovery-script-phase-4">V. Automatic Recovery Script (Phase 4)<a class="heading-anchor" href="#v-automatic-recovery-script-phase-4" aria-label="Link to V. Automatic Recovery Script (Phase 4)">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Script</th>
+<th>Key Changes</th>
+<th>Verification</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>scripts/clusterguard-cluster-restore.sh</code></td>
+<td>B4 calls power/boot-detected → power/recovering (tolerates 409, idempotent) → discover</td>
+<td><code>bash -n</code> clean</td>
+</tr>
+<tr>
+<td><code>scripts/clusterguard-cluster-finalize.sh</code></td>
+<td>F4 goes power/verify → power/complete polling (0=complete / 2=lifecycle failure→protection remains / 1=continue polling); stamp_recovered_at; F5 CRITICAL path retains fail-closed explanation</td>
+<td><code>bash -n</code> clean</td>
+</tr>
+<tr>
+<td><code>scripts/integration/power-lifecycle-lab.sh</code></td>
+<td><strong>Added</strong>: L1–L6 end-to-end lab acceptance script (see below)</td>
+<td><code>bash -n</code> clean</td>
+</tr>
+</tbody></table>
+<p>Design highlights:</p>
+<ul>
+<li>B3 local read_only persistence clearance retained (still robust when local node or control plane is unavailable)</li>
+<li>Protection release uniformly delegated to Go side <code>powerComplete</code> atomic release (no longer raw curl per node)</li>
+<li>verify idempotent (tolerates 200/409); complete blocks and polls until timeout, fail-closed</li>
+</ul>
+<hr>
+<h2 id="vi-lab-execution-list-152-154">VI. Lab Execution List (152–154)<a class="heading-anchor" href="#vi-lab-execution-list-152-154" aria-label="Link to VI. Lab Execution List (152–154)">#</a></h2>
+<h3 id="6-1-real-execution-results-2026-08-07-utc-152-154-executed">6.1 Real Execution Results (2026-08-07 UTC, 152–154 ✅ executed)<a class="heading-anchor" href="#6-1-real-execution-results-2026-08-07-utc-152-154-executed" aria-label="Link to 6.1 Real Execution Results (2026-08-07 UTC, 152–154 ✅ executed)">#</a></h3>
+<p>Complete acceptance was performed in the real three-node lab: cluster <code>8785b695-40f3-4892-825d-3f784a6ca95d</code> (mysql-ha-3306, engine=mysql), nodes orch-mysql01/02/03 (192.168.102.152/153/154), VIP 192.168.102.155, and control-plane Leader 152 (<code>https://192.168.102.152:3000</code>, TLS plus Bearer token). The test used service mode, and all timestamps are node UTC.</p>
+<h3 id="6-2-end-to-end-acceptance-script-driven">6.2 End-to-End Acceptance (Script-Driven)<a class="heading-anchor" href="#6-2-end-to-end-acceptance-script-driven" aria-label="Link to 6.2 End-to-End Acceptance (Script-Driven)">#</a></h3>
+<pre><code class="language-bash"># Prerequisites: control plane on port 3000, a registered healthy cluster, and an agent on every node (agent.json includes MySQLService)
+export CG_CONTROL_TOKEN=&#39;...&#39;                # Control token; keep it in the environment and never commit it
+export CG_LAB_SSH_TARGETS=&quot;root@192.168.102.152 root@192.168.102.153 root@192.168.102.154&quot;
+bash scripts/integration/power-lifecycle-lab.sh service     # Complete service-mode workflow
+bash scripts/integration/power-lifecycle-lab.sh poweroff    # Full-host poweroff mode; nodes must support remote power-on
+</code></pre>
+<p>Script assertions (exit 0 only if all pass):</p>
+<ul>
+<li>L1 cluster healthy → L2 precheck/plan → shutdown_planned</li>
+<li>L3 approval + execute → power_off and recovery_freeze=true</li>
+<li>L4 SSH probe: service mode all nodes MySQL stopped / poweroff mode nodes unreachable</li>
+<li>L5 restart nodes → boot-detected → recovering → verify → complete → completed</li>
+<li>L6 all protections released (frozen=false, protected=false)</li>
+</ul>
+<blockquote>
+<p>Note: The complete lifecycle (L1–L6 equivalent path) in 6.1 was manually executed and passed on real 152–154; 6.2 script is a repeatable automated acceptance entry.</p>
+</blockquote>
+<h3 id="6-3-real-full-machine-shutdown-and-vmware-out-of-band-startup-2026-08-09">6.3 Real Full Machine Shutdown and VMware Out-of-Band Startup (2026-08-09, 152–154 ✅ executed)<a class="heading-anchor" href="#6-3-real-full-machine-shutdown-and-vmware-out-of-band-startup-2026-08-09" aria-label="Link to 6.3 Real Full Machine Shutdown and VMware Out-of-Band Startup (2026-08-09, 152–154 ✅ executed)">#</a></h3>
+<p>This round executed <code>poweroff</code>, not a database service shutdown simulation. Before initiating a full machine shutdown on 3306, the platform first included MySQL 8.4, UPSQL 2.3, and PostgreSQL 16 on the same host in planned shutdown; then all three Linux virtual machines were shut down. The VMware host was <code>192.168.102.68</code>, and only the following three confirmed VMX were operated:</p>
+<ul>
+<li><code>G:\ibfluxdb+es\influxdb02\influxdb02.vmx</code> (192.168.102.152)</li>
+<li><code>G:\ibfluxdb+es\influxdb03\influxdb03.vmx</code> (192.168.102.153)</li>
+<li><code>G:\ibfluxdb+es\influxdb04\orch-db03.vmx</code> (192.168.102.154)</li>
+</ul>
+<p><strong>On-site Results (Asia/Shanghai)</strong></p>
+<table>
+<thead>
+<tr>
+<th>Time</th>
+<th>Verification</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>17:46–17:47</td>
+<td>Safety Guard, Lock, Approval, Execute, Verify, Audit, Report</td>
+<td>workflow operation <code>138a0235-0c08-49ef-a023-556e09452f9d</code> succeeded; 12 audit stages complete; report <code>6479e2b7-4eda-43cb-992b-f3378ff7f382</code> succeeded</td>
+</tr>
+<tr>
+<td>17:47</td>
+<td>Delayed full machine shutdown</td>
+<td>All three SSH, 3000, and database ports unreachable; three target VMX disappeared from <code>vmrun list</code></td>
+</tr>
+<tr>
+<td>17:50</td>
+<td>VMware out-of-band startup</td>
+<td>After confirming no running processes on the target VM, clear the three remaining <code>.vmx.lck</code>; only start the above three VMX, no other virtual machines were operated</td>
+</tr>
+<tr>
+<td>17:51:10 / 17:51:21 / 17:51:29</td>
+<td>System startup</td>
+<td>152, 153, 154 started respectively; <code>clusterguard-ha</code>, Agent, and reconcile timer all automatically recovered</td>
+</tr>
+<tr>
+<td>18:10</td>
+<td>Recovery closure</td>
+<td>power operation <code>81f78b12-a6ee-4b84-8d85-8e8cd0d809e9</code> → completed; <code>protected=false</code>, <code>recovery_freeze=false</code>, maintenance empty</td>
+</tr>
+</tbody></table>
+<p><strong>Issues discovered and fixed in this round</strong></p>
+<ol>
+<li>One replica of MySQL 3306 was already caught up, but because it was not the current semi-synchronous ACK node, it showed degraded, causing the recovery verification to be stuck. Now, recovery closure is allowed only when the primary semi-synchronous confirmation count is met, replication threads are normal, delay is 0, source is consistent, and GTID is completely identical; even if GTID is missing one entry, it will still block.</li>
+<li>UPSQL 2.3 (MySQL 5.7.23 branch) does not support <code>SET PERSIST_ONLY</code>. The recovery script now first independently removes runtime read-only, then decides whether to clear persistent read-only based on the server&#39;s main version; 5.7 skips persistent syntax, 8.x continues execution.</li>
+<li>The shutdown state classification reuses the same strict semi-synchronous evidence, no longer misreporting safe standby ACK idle state as <code>unexpected_failure</code>.</li>
+</ol>
+<p><strong>Database and Access Verification After Recovery</strong></p>
+<table>
+<thead>
+<tr>
+<th>Cluster</th>
+<th>Primary</th>
+<th>Replica</th>
+<th>VIP</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>MySQL 8.0 / 3306</td>
+<td>152, writable</td>
+<td>153/154, read-only, IO/SQL running, lag 0</td>
+<td>192.168.102.155, only 152 holds</td>
+<td>Passed; standby ACK node remains visible degraded prompt, but shutdown classification is normal/running</td>
+</tr>
+<tr>
+<td>MySQL 8.4 / 3384</td>
+<td>153, writable</td>
+<td>152/154, read-only, IO/SQL running, lag 0</td>
+<td>192.168.102.160, only 153 holds</td>
+<td>Healthy</td>
+</tr>
+<tr>
+<td>UPSQL 2.3 / 3360</td>
+<td>152, writable</td>
+<td>153/154, read-only, IO/SQL running, lag 0</td>
+<td>192.168.102.165, only 152 holds</td>
+<td>Healthy</td>
+</tr>
+<tr>
+<td>PostgreSQL 16 / 5432</td>
+<td>152, primary</td>
+<td>153/154, streaming standby, WAL receive=replay</td>
+<td>192.168.102.166, only 152 holds</td>
+<td>Healthy</td>
+</tr>
+</tbody></table>
+<p>All four VIP service ports established actual TCP connections from the client. All three machines&#39; 3000/3306/3360/3384/5432 ports are listening; systemd failed unit count is 0. Final Raft is 3 voters, quorum confirmed, mutation authority=true, ready=true.</p>
+<h3 id="6-4-manual-spot-checks">6.4 Manual Spot Checks<a class="heading-anchor" href="#6-4-manual-spot-checks" aria-label="Link to 6.4 Manual Spot Checks">#</a></h3>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Command</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Node read_only has been persisted</td>
+<td><code>ssh 152 cat /var/lib/mysql/mysqld-auto.cnf | grep read_only</code></td>
+</tr>
+<tr>
+<td>Agent command direct test</td>
+<td><code>ssh 152 &quot;/usr/local/libexec/clusterguard-agent-stdio --config /etc/clusterguard/agent.json&quot; &lt;&lt;&lt; &#39;{&quot;command&quot;:&quot;mysql_power_status&quot;,...}&#39;</code></td>
+</tr>
+<tr>
+<td>Report viewing</td>
+<td>`curl -sk -H &quot;Authorization: Bearer $CG_CONTROL_TOKEN&quot; <a href="https://127.0.0.1:3000/api/v1/reports">https://127.0.0.1:3000/api/v1/reports</a></td>
+</tr>
+</tbody></table>
+<h3 id="6-5-fault-simulation">6.5 Fault Simulation<a class="heading-anchor" href="#6-5-fault-simulation" aria-label="Link to 6.5 Fault Simulation">#</a></h3>
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>Expected</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>SSH disconnected during shutdown</td>
+<td>execute 409; state shutting_down; protection remains; <code>power/fail</code> → failed; new precheck reports blocking reasons</td>
+</tr>
+<tr>
+<td>Primary not ready during recovery</td>
+<td>verify fails; complete polling does not end; protection not released (fail-closed)</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="vii-fail-closed-guarantee-regression-assertion">VII. fail-closed Guarantee (Regression Assertion)<a class="heading-anchor" href="#vii-fail-closed-guarantee-regression-assertion" aria-label="Link to VII. fail-closed Guarantee (Regression Assertion)">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>Behavior</th>
+<th>Test</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Agent step failure</td>
+<td>Execute fails; stays in shutting_down; protection remains</td>
+<td>Adapter + integration test</td>
+</tr>
+<tr>
+<td>Agent not equipped with controller</td>
+<td>Command rejected</td>
+<td>TestAgentPowerCommandsBlockWithoutController</td>
+</tr>
+<tr>
+<td>Transport not configured</td>
+<td>Degraded to only protection marker (Phase 1 behavior)</td>
+<td>ExecuteAppliesProtectionsAndAdvancesState</td>
+</tr>
+<tr>
+<td>After power/fail</td>
+<td>Terminal state failed; complete 409</td>
+<td>Integration test</td>
+</tr>
+<tr>
+<td>New lifecycle after failure</td>
+<td>precheck 200 + blocking_reasons non-empty</td>
+<td>Integration test</td>
+</tr>
+<tr>
+<td>Console</td>
+<td>Read-only panel, does not carry approval</td>
+<td>TestConsoleShowsPowerLifecyclePanel</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="viii-known-boundaries-and-next-steps">VIII. Known Boundaries and Next Steps<a class="heading-anchor" href="#viii-known-boundaries-and-next-steps" aria-label="Link to VIII. Known Boundaries and Next Steps">#</a></h2>
+<ul>
+<li>✅ <strong>Real lab acceptance has been completed (Task #19)</strong>: The complete lifecycle (precheck → plan → approval → execute → power_off → recovery → verify → complete → completed → protection release) in service mode has passed on 152–154, including fail-closed demonstration and report generation, see 6.1.</li>
+<li>Phase 3 (periodic health reporting) is merged into Phase 2/4 as planned, no independent delivery.</li>
+<li>✅ <strong>Real poweroff acceptance has been completed</strong>: Three virtual machine full machine shutdown, VMware out-of-band startup, systemd self-start, Raft recovery, four co-hosted databases recovery, VIP unique ownership, and protection release have been tested, see 6.3.</li>
+<li>Multi-engine adaptation currently covers MySQL + PostgreSQL; Oracle shutdown is not in the scope of this version (broker shutdown process is retained for future).</li>
+</ul>
+
+          <footer class="document-footer">
+            <span>Source: <code>docs/en-US/power-lifecycle-test-report.md</code></span>
+            <a href="../index.html">Documentation language home</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="On this page">
+          <strong>On this page</strong>
+          <a class="toc-level-2" href="#pre-production-special-revalidation-1-0-0-rc-20260809-13">Pre-Production Special Revalidation (1.0.0-rc.20260809.13)</a><a class="toc-level-3" href="#planned-power-down-and-sudden-failure-identification">Planned Power-Down and Sudden Failure Identification</a><a class="toc-level-3" href="#real-failure-timeline-beijing-time">Real Failure Timeline (Beijing Time)</a><a class="toc-level-3" href="#issues-discovered-and-fixed-in-this-round">Issues Discovered and Fixed in This Round</a><a class="toc-level-3" href="#deliverables">Deliverables</a><a class="toc-level-2" href="#previous-production-candidate-revalidation-2026-08-09">Previous Production Candidate Revalidation (2026-08-09)</a><a class="toc-level-3" href="#fixes">Fixes</a><a class="toc-level-3" href="#real-server-results">Real Server Results</a><a class="toc-level-3" href="#deliverables-2">Deliverables</a><a class="toc-level-2" href="#i-overview-of-deliverables-by-phase">I. Overview of Deliverables (by Phase)</a><a class="toc-level-2" href="#ii-full-warehouse-test-results-go-test-count-1">II. Full Warehouse Test Results (go test ./... -count=1)</a><a class="toc-level-2" href="#iii-power-lifecycle-special-test-matrix">III. Power Lifecycle Special Test Matrix</a><a class="toc-level-3" href="#3-1-agent-side-internal-agent">3.1 Agent Side (internal/agent)</a><a class="toc-level-3" href="#3-2-workflow-side-internal-workflow-powershutdownadapter">3.2 Workflow Side (internal/workflow, PowerShutdownAdapter)</a><a class="toc-level-3" href="#3-3-api-side-internal-api">3.3 API Side (internal/api)</a><a class="toc-level-3" href="#3-4-end-to-end-integration-testing-internal-api-power-lifecycle-integrat">3.4 End-to-End Integration Testing (internal/api/power_lifecycle_integration_test.go, added)</a><a class="toc-level-2" href="#iv-real-defects-discovered-and-fixed-in-integration-testing">IV. Real Defects Discovered and Fixed in Integration Testing</a><a class="toc-level-2" href="#v-automatic-recovery-script-phase-4">V. Automatic Recovery Script (Phase 4)</a><a class="toc-level-2" href="#vi-lab-execution-list-152-154">VI. Lab Execution List (152–154)</a><a class="toc-level-3" href="#6-1-real-execution-results-2026-08-07-utc-152-154-executed">6.1 Real Execution Results (2026-08-07 UTC, 152–154 ✅ executed)</a><a class="toc-level-3" href="#6-2-end-to-end-acceptance-script-driven">6.2 End-to-End Acceptance (Script-Driven)</a><a class="toc-level-3" href="#6-3-real-full-machine-shutdown-and-vmware-out-of-band-startup-2026-08-09">6.3 Real Full Machine Shutdown and VMware Out-of-Band Startup (2026-08-09, 152–154 ✅ executed)</a><a class="toc-level-3" href="#6-4-manual-spot-checks">6.4 Manual Spot Checks</a><a class="toc-level-3" href="#6-5-fault-simulation">6.5 Fault Simulation</a><a class="toc-level-2" href="#vii-fail-closed-guarantee-regression-assertion">VII. fail-closed Guarantee (Regression Assertion)</a><a class="toc-level-2" href="#viii-known-boundaries-and-next-steps">VIII. Known Boundaries and Next Steps</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

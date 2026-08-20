@@ -1,0 +1,1119 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="API Operations Reference - ClusterGuard HA operational documentation">
+  <title>API Operations Reference | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">Skip to content</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>Search documentation</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="Filter by title">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference" aria-current="page" class="active">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
+      <div class="sidebar-meta">
+        <span>Offline documentation build</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">Open navigation</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>API Operations Reference</strong></div>
+        <div class="header-actions">
+          <a href="../zh-CN/api-operations.html" lang="zh-CN">简体中文</a>
+          <button id="print-button" type="button">Print</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha-operations">ClusterGuard HA Operations<a class="heading-anchor" href="#clusterguard-ha-operations" aria-label="Link to ClusterGuard HA Operations">#</a></h1>
+<p>Version boundary: <code>v2.1.45</code> is the sealed MySQL release. PostgreSQL operations
+belong to the 2.2 line. Oracle and SQL Server procedures remain separately
+gated until their own production qualification is complete.</p>
+<h2 id="1-configure-the-control-plane">1. Configure the Control Plane<a class="heading-anchor" href="#1-configure-the-control-plane" aria-label="Link to 1. Configure the Control Plane">#</a></h2>
+<p>Use <code>configs/clusterguard.example.json</code> as the configuration shape. The loader
+rejects unknown keys and multiple JSON values.</p>
+<p>Implemented keys:</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Required</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>http_address</code></td>
+<td>No</td>
+<td>HTTP listen address; blank defaults to <code>127.0.0.1:8088</code>.</td>
+</tr>
+<tr>
+<td><code>tls_cert_file</code>, <code>tls_key_file</code></td>
+<td>For non-loopback API access</td>
+<td>Server certificate and key. Non-loopback plaintext is rejected unless the unsafe lab override is explicit.</td>
+</tr>
+<tr>
+<td><code>tls_ca_file</code></td>
+<td>For HTTPS controller RPC</td>
+<td>CA used to verify the configured Leader API address during mutation forwarding.</td>
+</tr>
+<tr>
+<td><code>allow_insecure_http</code></td>
+<td>Lab only</td>
+<td>Explicitly permits non-loopback plaintext HTTP and emits a startup warning. Never enable where credentials or sessions cross an untrusted network.</td>
+</tr>
+<tr>
+<td><code>metadata_path</code></td>
+<td>Yes</td>
+<td>Durable metadata snapshot path.</td>
+</tr>
+<tr>
+<td><code>control_token_env</code></td>
+<td>No</td>
+<td>Environment variable containing the Bearer token for control API <code>POST</code> requests. Without it, all control <code>POST</code> routes fail closed with <code>503</code>.</td>
+</tr>
+<tr>
+<td><code>approval_token_env</code></td>
+<td>Deprecated</td>
+<td>Legacy node-lifecycle approval only. It is ignored by database operations and automatic recovery; new database execution uses one-time grants.</td>
+</tr>
+<tr>
+<td><code>mysql.enabled</code></td>
+<td>No</td>
+<td>Enables server-side MySQL discovery and operation credentials.</td>
+</tr>
+<tr>
+<td><code>mysql.discovery</code></td>
+<td>When enabled</td>
+<td>Dedicated read-only discovery username and password environment reference.</td>
+</tr>
+<tr>
+<td><code>mysql.operation</code></td>
+<td>When enabled</td>
+<td>Dedicated administrative operation username and password environment reference.</td>
+</tr>
+<tr>
+<td><code>mysql.replication</code></td>
+<td>When enabled</td>
+<td>Dedicated replication username and password environment reference.</td>
+</tr>
+<tr>
+<td><code>mysql.automatic_failover_enabled</code></td>
+<td>No</td>
+<td>Enables leader-only automatic failover. The raw configuration default is <code>false</code>; the supported multi-node installer enables it for VIP-backed MySQL HA with Agent quorum fencing.</td>
+</tr>
+<tr>
+<td><code>mysql.automatic_failover_interval_seconds</code></td>
+<td>No</td>
+<td>Recovery-controller poll interval; defaults to 5 seconds.</td>
+</tr>
+<tr>
+<td><code>mysql.automatic_failover_retry_seconds</code></td>
+<td>No</td>
+<td>Backoff after a blocked or failed incident attempt; defaults to 30 seconds.</td>
+</tr>
+<tr>
+<td><code>postgresql.enabled</code></td>
+<td>No</td>
+<td>Enables native PostgreSQL discovery and configured HA capabilities; defaults to <code>false</code>.</td>
+</tr>
+<tr>
+<td><code>postgresql.discovery_interval_seconds</code></td>
+<td>No</td>
+<td>PostgreSQL scheduler interval; defaults to 5 seconds and is independent of MySQL.</td>
+</tr>
+<tr>
+<td><code>postgresql.discovery_timeout_seconds</code></td>
+<td>No</td>
+<td>Per-endpoint PostgreSQL probe timeout; defaults to 4 seconds.</td>
+</tr>
+<tr>
+<td><code>postgresql.automatic_failover_enabled</code></td>
+<td>No</td>
+<td>Enables leader-only PostgreSQL automatic failover; defaults to <code>false</code>.</td>
+</tr>
+<tr>
+<td><code>postgresql.automatic_failover_interval_seconds</code></td>
+<td>No</td>
+<td>PostgreSQL recovery-controller poll interval; defaults to 5 seconds.</td>
+</tr>
+<tr>
+<td><code>postgresql.automatic_failover_retry_seconds</code></td>
+<td>No</td>
+<td>Backoff after a blocked or failed PostgreSQL incident attempt; defaults to 30 seconds.</td>
+</tr>
+<tr>
+<td><code>postgresql.discovery</code></td>
+<td>When enabled</td>
+<td>Dedicated monitor username, database, and password environment reference.</td>
+</tr>
+<tr>
+<td><code>postgresql.operation</code></td>
+<td>For PostgreSQL mutation</td>
+<td>Dedicated operation username, database, and password environment reference. Must be configured together with <code>postgresql.replication</code>.</td>
+</tr>
+<tr>
+<td><code>postgresql.replication</code></td>
+<td>For PostgreSQL mutation and node sync</td>
+<td>Dedicated replication username, database, and password environment reference. Must be configured together with <code>postgresql.operation</code>.</td>
+</tr>
+<tr>
+<td><code>consensus</code></td>
+<td>For real HA mutation</td>
+<td>Odd Raft controller membership, persistent state, and majority authority.</td>
+</tr>
+<tr>
+<td><code>consensus.snapshot_cas_enabled</code></td>
+<td>For replicated mutation</td>
+<td>Explicitly activates snapshot content compare-and-swap on an all-upgraded controller set. Missing or <code>false</code> keeps metadata mutation fail-closed.</td>
+</tr>
+<tr>
+<td><code>consensus.replicated_log_compression_enabled</code></td>
+<td>Recommended after rolling upgrade</td>
+<td>Compresses full-state Raft log entries while continuing to read legacy uncompressed entries. Activate only after every voter runs a supporting binary.</td>
+</tr>
+<tr>
+<td><code>consensus.tls_cert_file</code>, <code>tls_key_file</code>, <code>tls_ca_file</code></td>
+<td>For non-loopback Raft</td>
+<td>Mutual-TLS identity and private CA for controller-to-controller Raft traffic. All three are required together.</td>
+</tr>
+<tr>
+<td><code>consensus.peers[].api_address</code></td>
+<td>Recommended</td>
+<td>Trusted HTTPS address used to forward mutations to that controller when it is Leader. It is never derived from the inbound HTTP Host header.</td>
+</tr>
+<tr>
+<td><code>consensus.allow_insecure_transport</code></td>
+<td>Lab only</td>
+<td>Explicitly permits non-loopback plaintext Raft and emits a startup warning.</td>
+</tr>
+<tr>
+<td><code>agent</code></td>
+<td>For VIP mutation</td>
+<td>Restricted signed node command transport for VIP ownership, role status, and in-band self-isolation.</td>
+</tr>
+<tr>
+<td><code>fencing.agent_quorum_enabled</code></td>
+<td>For MySQL automatic failover</td>
+<td>Uses a short Raft-majority authorization and local Agent fail-closed reconciliation before promotion.</td>
+</tr>
+<tr>
+<td><code>fencing</code></td>
+<td>Optional stronger isolation</td>
+<td>Site-specific external fence/status command for BMC, PDU, cloud, or hypervisor isolation.</td>
+</tr>
+<tr>
+<td><code>mysql.semi_sync_required</code></td>
+<td>Recommended for production MySQL</td>
+<td>Requires current semi-sync source acknowledgement and replica readiness evidence during discovery, candidate selection, precheck, and post-operation verification. Missing evidence blocks promotion.</td>
+</tr>
+</tbody></table>
+<p>In a multi-controller deployment, <code>http_address</code> must listen on an address
+reachable by the configured peer API addresses; a loopback-only listener cannot
+receive follower-to-Leader mutation RPCs.</p>
+<p>The JSON file contains environment-variable names only. Set secrets in the
+service environment:</p>
+<pre><code class="language-bash">export CG_CONTROL_TOKEN=&#39;replace-with-a-control-api-secret&#39;
+export CG_MYSQL_DISCOVERY_PASSWORD=&#39;replace-with-the-read-only-secret&#39;
+export CG_POSTGRESQL_DISCOVERY_PASSWORD=&#39;replace-with-the-pg-monitor-secret&#39;
+export CG_POSTGRESQL_OPERATION_PASSWORD=&#39;replace-with-the-pg-operation-secret&#39;
+export CG_POSTGRESQL_REPLICATION_PASSWORD=&#39;replace-with-the-pg-replication-secret&#39;
+export CG_ORACLE_DISCOVERY_PASSWORD=&#39;replace-with-the-dedicated-sysdg-secret&#39;
+export CG_ORACLE_OPERATION_PASSWORD=&#39;replace-with-the-dedicated-sysdg-secret&#39;
+go run ./cmd/clusterguard --config configs/clusterguard.example.json
+</code></pre>
+<p>The server rejects startup when an enabled engine lacks its required username,
+<code>password_env</code>, or resolved password. MySQL and PostgreSQL passwords are passed
+to their client processes through environment variables and are not placed in
+command-line arguments, API payloads, or persisted metadata.</p>
+<p>Production layout:</p>
+<pre><code class="language-text">/etc/clusterguard/clusterguard.json
+/etc/clusterguard/clusterguard.env
+/var/lib/clusterguard/metadata.json
+/var/lib/clusterguard/admin-recovery.json  # one-time, normally absent
+/var/log/clusterguard/
+/usr/local/bin/clusterguard
+/usr/local/bin/cgctl
+</code></pre>
+<h3 id="platform-login">Platform Login<a class="heading-anchor" href="#platform-login" aria-label="Link to Platform Login">#</a></h3>
+<p>On an empty metadata store, the Leader creates one bootstrap administrator:</p>
+<pre><code class="language-text">username: admin
+temporary password: admin123
+role: admin
+MustChangePassword: true
+</code></pre>
+<p>The first login succeeds only far enough to change the password. Every other
+platform API returns <code>password_change_required</code> until that first password change
+completes. The password is stored as an Argon2id hash in the replicated
+metadata snapshot; plaintext is never written to configuration, environment
+files, audit events, or reports.</p>
+<p>Browser sessions have an eight-hour absolute lifetime. The session secret is
+kept in an HttpOnly SameSite cookie, mutating requests require the matching
+<code>clusterguard_csrf</code> cookie and <code>X-CSRF-Token</code> header, and password change or
+logout revokes the session. Roles are:</p>
+<table>
+<thead>
+<tr>
+<th>Role</th>
+<th>Access</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>admin</code></td>
+<td>Full platform access, including metadata and node lifecycle.</td>
+</tr>
+<tr>
+<td><code>operator</code></td>
+<td>Read access plus guarded database operations and discovery refresh.</td>
+</tr>
+<tr>
+<td><code>viewer</code></td>
+<td>Read-only access.</td>
+</tr>
+</tbody></table>
+<p>The console never asks for a control token, lifecycle token, or one-time
+approval token. A logged-in platform operation creates and consumes its
+plan-bound one-time authorization inside the server.</p>
+<p>The destructive matrix can exercise the same session path:</p>
+<pre><code class="language-bash">export CG_PLATFORM_USERNAME=&#39;admin&#39;
+export CG_PLATFORM_PASSWORD=&#39;&lt;current-platform-password&gt;&#39;
+
+scripts/clusterguard-ha-matrix.sh \
+  --api http://127.0.0.1:8088 \
+  --clusters &#39;&lt;cluster-uuid&gt;&#39; \
+  --platform-session
+</code></pre>
+<p>For a fresh metadata store, also set
+<code>CG_PLATFORM_NEW_PASSWORD=&#39;&lt;replacement-password&gt;&#39;</code>. The matrix changes the
+bootstrap password, logs in again, and then executes without an
+<code>approval_token</code> field. Without <code>--platform-session</code>, the matrix retains the
+explicit one-time grant path used to validate service-client replay rejection.</p>
+<p>Password-loss recovery is deliberately local, one-time, and fail-closed. There
+is no remote reset endpoint. First pause control-plane mutations and back up the
+current metadata and Raft directories. On one controller, generate an artifact
+as the service account:</p>
+<pre><code class="language-bash">sudo -u clusterguard /usr/local/bin/clusterguard admin prepare-recovery
+</code></pre>
+<p>The command prints a strong temporary password exactly once and writes only its
+Argon2id hash to <code>/var/lib/clusterguard/admin-recovery.json</code>. Copy the exact same
+artifact to every controller and install it as
+<code>clusterguard:clusterguard</code> with mode <code>0600</code>. Restart the controller services
+one at a time so quorum remains available. A controller reads an artifact only
+when it was present at process startup; the current Raft Leader commits the
+recovery ID once, revokes all administrator sessions, requires a password
+change, writes a security event, and every controller then deletes its local
+artifact. The artifact expires after 24 hours.</p>
+<p>Log in as <code>admin</code> with the temporary password and replace it immediately. Do
+not create a shared default password, delete <code>PlatformUser</code> records, edit password hashes, or
+reset only one controller&#39;s metadata snapshot. If the one-time artifact cannot
+be committed with quorum, restore a protected metadata backup through the
+offline disaster-recovery procedure.</p>
+<p>Use <code>packaging/systemd/clusterguard-ha.service</code> and
+<code>packaging/systemd/clusterguard.env.example</code> as the service templates. The
+server binary defaults to <code>/etc/clusterguard/clusterguard.json</code> when <code>--config</code>
+is omitted. Validate the exact production file before restarting a controller:</p>
+<pre><code class="language-bash">/usr/local/bin/clusterguard \
+  --config /etc/clusterguard/clusterguard.json \
+  --check-config
+</code></pre>
+<p>The packaged systemd unit runs this validation as <code>ExecStartPre</code>; an invalid
+configuration therefore fails before the serving process replaces a healthy
+controller.</p>
+<p>When upgrading an existing Raft controller set to a release that supports
+snapshot content compare-and-swap, do not enable the protocol during a mixed
+version rollout. Pause metadata mutations and periodic reconcilers, replace
+the binary on every controller, then set <code>consensus.snapshot_cas_enabled</code> to
+<code>true</code> on every controller and restart the full controller set. A new binary
+with the key missing or set to <code>false</code> remains readable but rejects replicated
+metadata mutation. Never enable the key while an older controller can still
+become leader.</p>
+<p>Use the same two-stage rollout for
+<code>consensus.replicated_log_compression_enabled</code>: first replace the binary on
+every voter while the key remains <code>false</code>, then enable the key on every
+controller and restart followers before the current Leader. New controllers
+continue to read uncompressed entries, but an older binary cannot read a newly
+compressed entry. Raft stores larger than 256 MiB are compacted atomically
+before they are opened at startup; keep enough free disk space for the compact
+copy during the first rolling restart.</p>
+<p>Controller state is capped at 16 MiB on disk, in Raft log entries, and in Raft
+snapshots. Before upgrading, verify that the protected metadata file is below
+that limit and back it up. Audit, report, session, approval, operation,
+lifecycle, and security-event history is bounded automatically; export records
+to an external retention system when longer history is required.</p>
+<p>For Raft mTLS rollout, install the private CA and per-controller certificates
+on every controller before changing configuration. Certificates must include
+the advertised peer IP or DNS name and both client and server usages. Restart
+one controller at a time and verify a writable majority after every restart.
+Do not rotate the CA and all controller identities in one unverified step.</p>
+<p>Build one self-verifying Linux bundle, then run the installer in its default
+read-only preflight mode before permitting mutation:</p>
+<pre><code class="language-bash">./scripts/build-clusterguard-bundle.sh --output ./dist --version 1.0.0
+tar -xzf ./dist/clusterguard-ha-1.0.0-linux-amd64.tar.gz
+cd ./clusterguard-ha-1.0.0-linux-amd64
+./scripts/clusterguard-install.sh \
+  --bundle-dir &quot;$PWD&quot; --role mixed \
+  --node-name cg-node-0001 --node-id &lt;platform-node-uuid&gt; \
+  --config /secure/input/clusterguard.json \
+  --env-file /secure/input/clusterguard.env \
+  --agent-config /secure/input/agent.json \
+  --assets-dir /secure/input/assets
+</code></pre>
+<p>After reviewing the plan, repeat the command with <code>--execute</code>. Runtime assets
+use an allowlisted layout: <code>tls/*.crt</code>, <code>tls/*.key</code>, <code>ssh/*_ed25519</code>,
+<code>ssh/*known_hosts</code>, and <code>mysql/*-client.cnf</code>. The installer rejects symlinks,
+unknown asset types, bad checksums, invalid JSON, and mutable node names before
+changing the host. It installs service keys group-readable only where the
+unprivileged controller requires them, while MySQL client credentials remain
+root-only for the restricted data-node agent.</p>
+<p>For data and mixed nodes, installation starts the restricted agent but keeps
+the periodic VIP reconciler disabled. Register the cluster HA endpoint, prove
+that its canonical owner is the current writable primary, establish the
+majority ownership lease, and complete one successful reconcile on every
+node. Only then repeat the installer with <code>--activate-agent-reconcile --execute</code>, or enable the timer through the lifecycle workflow. This prevents
+a partially configured deployment from changing MySQL role state during
+bootstrap.</p>
+<p>Browser <code>/api/v1/</code> requests require a valid platform session; mutating requests
+also require CSRF and role authorization. External service clients use
+<code>Authorization: Bearer &lt;control-token&gt;</code>. Explicit service database execution
+also requires its matching one-time approval grant and deliberately does not
+accept the control credential as an approval substitute. Missing or invalid
+credentials fail before database access. Keep the default loopback listener for
+local operation. Before exposing the API on another interface, enable TLS and
+network access controls; never transmit credentials over plain HTTP.</p>
+<h2 id="2-inspect-engines-and-capabilities">2. Inspect Engines and Capabilities<a class="heading-anchor" href="#2-inspect-engines-and-capabilities" aria-label="Link to 2. Inspect Engines and Capabilities">#</a></h2>
+<pre><code class="language-bash">curl -sS http://127.0.0.1:8088/api/v1/engines
+curl -sS http://127.0.0.1:8088/api/v1/capabilities
+</code></pre>
+<p>Both routes list the registered engines and the explicit availability,
+mutation flag, and reason for each capability.</p>
+<h2 id="3-register-authoritative-inventory">3. Register Authoritative Inventory<a class="heading-anchor" href="#3-register-authoritative-inventory" aria-label="Link to 3. Register Authoritative Inventory">#</a></h2>
+<p>Register each physical host once with a fixed globally unique <code>node_name</code> before
+attaching database endpoints. The platform returns an immutable <code>resource_id</code>:</p>
+<pre><code class="language-bash">curl -sS -X POST http://127.0.0.1:8088/api/v1/nodes \
+  -H &#39;content-type: application/json&#39; \
+  -H &quot;Authorization: Bearer ${CG_CONTROL_TOKEN}&quot; \
+  -d &#39;{
+    &quot;resource_id&quot;:&quot;&lt;preallocated-platform-node-uuid&gt;&quot;,
+    &quot;node_name&quot;:&quot;cg-data-0001&quot;,
+    &quot;display_name&quot;:&quot;MySQL host 1&quot;,
+    &quot;hostname&quot;:&quot;mysql-a&quot;,
+    &quot;ip_address&quot;:&quot;192.0.2.10&quot;,
+    &quot;kind&quot;:&quot;data&quot;,
+    &quot;active&quot;:true
+  }&#39;
+</code></pre>
+<p><code>resource_id</code> may be preallocated by the signed installation manifest; when it
+is omitted, the control plane generates it. <code>node_name</code> and <code>resource_id</code> never
+change. A hostname or IP change uses
+<code>PUT /api/v1/nodes/{resource_id}</code> with the same <code>node_name</code>; the previous
+coordinates become aliases. Rebuild requests must supply the original node UUID
+and fixed name, so a repaired host reuses the existing slot instead of appearing
+as an extra node.</p>
+<p>Register the cluster display name, engine, and every database endpoint that the
+controller is allowed to probe:</p>
+<pre><code class="language-bash">curl -sS -X POST http://127.0.0.1:8088/api/v1/clusters \
+  -H &#39;content-type: application/json&#39; \
+  -H &quot;Authorization: Bearer ${CG_CONTROL_TOKEN}&quot; \
+  -d &#39;{
+    &quot;display_name&quot;:&quot;payments-mysql&quot;,
+    &quot;engine&quot;:&quot;mysql&quot;,
+    &quot;endpoints&quot;:[
+      {&quot;hostname&quot;:&quot;mysql-a&quot;,&quot;ip_address&quot;:&quot;192.0.2.10&quot;,&quot;port&quot;:3306},
+      {&quot;hostname&quot;:&quot;mysql-b&quot;,&quot;ip_address&quot;:&quot;192.0.2.11&quot;,&quot;port&quot;:3306},
+      {&quot;hostname&quot;:&quot;mysql-c&quot;,&quot;ip_address&quot;:&quot;192.0.2.12&quot;,&quot;port&quot;:3306}
+    ]
+  }&#39;
+</code></pre>
+<p>The response returns the new cluster platform UUID and endpoint UUIDs. Cluster
+display names are unique, endpoint coordinates cannot conflict with existing
+inventory, and at least one endpoint is required.</p>
+<p>List and inspect inventory:</p>
+<pre><code class="language-bash">curl -sS http://127.0.0.1:8088/api/v1/clusters
+curl -sS http://127.0.0.1:8088/api/v1/clusters/&lt;cluster-uuid&gt;
+</code></pre>
+<p>The cluster detail route returns <code>cluster</code>, <code>instances</code>, and <code>endpoints</code>.</p>
+<p>Administrators can perform the same registration from <strong>Cluster Management</strong>
+beside the console cluster selector. The focused dialog registers one or more
+discovery endpoints, immediately requests a discovery refresh, and selects the
+new cluster. Database credentials remain server-side and are never collected
+by the browser.</p>
+<p>The dialog&#39;s <strong>Retire Cluster</strong> tab removes a cluster from active ClusterGuard
+management after the administrator types its exact display name. Retirement
+does not stop a database, delete database data, or mutate an operating-system
+VIP. It removes live inventory and coordination state while preserving audit,
+report, operation, and completed lifecycle history. A running database
+operation, unexpired operation lock, active node lifecycle task, or any active
+HA ownership lease blocks retirement. Before retiring a cluster with managed
+HA endpoints, stop its agent reconciliation and wait for the ownership lease
+to expire. This keeps retirement from indirectly triggering host-side VIP
+changes after the inventory disappears.</p>
+<p>The equivalent service API is:</p>
+<pre><code class="language-bash">curl -sS -X DELETE \
+  http://127.0.0.1:8088/api/v1/clusters/&lt;cluster-uuid&gt; \
+  -H &#39;content-type: application/json&#39; \
+  -H &quot;Authorization: Bearer ${CG_CONTROL_TOKEN}&quot; \
+  -d &#39;{&quot;confirm_display_name&quot;:&quot;payments-mysql&quot;}&#39;
+</code></pre>
+<h2 id="4-refresh-mysql-topology">4. Refresh MySQL Topology<a class="heading-anchor" href="#4-refresh-mysql-topology" aria-label="Link to 4. Refresh MySQL Topology">#</a></h2>
+<p>Refresh only the registered inventory. Send exactly an empty JSON object:</p>
+<pre><code class="language-bash">curl -sS -X POST \
+  http://127.0.0.1:8088/api/v1/clusters/&lt;cluster-uuid&gt;/discover \
+  -H &#39;content-type: application/json&#39; \
+  -H &quot;Authorization: Bearer ${CG_CONTROL_TOKEN}&quot; \
+  -d &#39;{}&#39;
+</code></pre>
+<p>Do not send credentials or endpoint coordinates. The server rejects such
+overrides and resolves MySQL credentials from configuration. A refresh probes
+all active database endpoints and atomically commits instances, links, probe
+evidence, health, anomalies, and metrics.</p>
+<p>Concurrent refreshes are serialized per cluster. The commit requires both:</p>
+<ul>
+<li>an observation timestamp newer than the durable cluster watermark;</li>
+<li>the exact inventory generation captured before probing.</li>
+</ul>
+<p>An equal/older observation or an inventory change during an in-flight refresh
+returns <code>409</code> and publishes no partial result.</p>
+<h2 id="5-check-control-plane-health-and-readiness">5. Check Control-Plane Health and Readiness<a class="heading-anchor" href="#5-check-control-plane-health-and-readiness" aria-label="Link to 5. Check Control-Plane Health and Readiness">#</a></h2>
+<p>ClusterGuard exposes two minimal, unauthenticated probes for service managers
+and load balancers:</p>
+<pre><code class="language-bash">curl -fsS http://127.0.0.1:8088/healthz
+curl -fsS http://127.0.0.1:8088/readyz
+</code></pre>
+<p><code>/healthz</code> proves only that the HTTP process is alive. <code>/readyz</code> returns HTTP
+<code>503</code> when a Raft controller has no known Leader, a Leader cannot confirm
+quorum, a follower cannot identify the trusted Leader API, or local metadata is
+still catching up. Database health does not change either control-plane probe.
+Both routes support <code>HEAD</code> and intentionally omit controller addresses,
+resource IDs, counters, and configuration details.</p>
+<p>Authenticated operators can inspect the full state through the console
+Settings page, the API, or <code>cgctl</code>:</p>
+<pre><code class="language-bash">cgctl --server http://127.0.0.1:8088 status
+cgctl --server http://127.0.0.1:8088 --json status
+curl -sS http://127.0.0.1:8088/api/v1/control-plane/status \
+  -H &#39;Cookie: clusterguard_session=&lt;session&gt;&#39;
+</code></pre>
+<p>The detailed response includes the local role, Leader identity and address,
+voter count, quorum and mutation authority, Raft indexes, durable metadata
+revision, uptime, active operations, indeterminate operations, and active node
+lifecycle tasks. Every HTTP response carries <code>X-Request-ID</code>; a caller-supplied
+safe ID is preserved across follower-to-Leader forwarding and the same value is
+included in JSON error envelopes.</p>
+<p><code>active_operations</code> counts only records whose status is <code>running</code>. A durable
+<code>planned</code> record is historical work waiting for an explicit execution request;
+it does not consume the active-operation limit and does not make readiness look
+busy. <code>indeterminate_operations</code> remains separate because each such record
+requires operator review before retrying or changing topology.</p>
+<p>Background ownership and automatic-recovery loops report a new failure
+immediately. An unchanged failure is then suppressed and reminded every five
+minutes; a changed failure is reported immediately, and one successful cycle
+resets the suppression state. A retry-backoff cycle for the same stable
+incident is not treated as success, so the 30-second safety retry remains
+active without producing the same journal entry every 30 seconds. The reminder
+state resets only after the incident clears. This limits journal noise without
+hiding a persistent incident or delaying a recurrence after recovery.</p>
+<h2 id="6-read-topology-health-candidates-and-metrics">6. Read Topology, Health, Candidates, and Metrics<a class="heading-anchor" href="#6-read-topology-health-candidates-and-metrics" aria-label="Link to 6. Read Topology, Health, Candidates, and Metrics">#</a></h2>
+<pre><code class="language-bash">curl -sS http://127.0.0.1:8088/api/v1/clusters/&lt;cluster-uuid&gt;/topology
+curl -sS http://127.0.0.1:8088/api/v1/clusters/&lt;cluster-uuid&gt;/health
+curl -sS http://127.0.0.1:8088/api/v1/clusters/&lt;cluster-uuid&gt;/candidates
+curl -sS http://127.0.0.1:8088/api/v1/clusters/&lt;cluster-uuid&gt;/metrics
+curl -sS http://127.0.0.1:8088/api/v1/clusters/&lt;cluster-uuid&gt;/metrics/prometheus
+curl -sS http://127.0.0.1:8088/api/v1/monitoring/prometheus \
+  -H &quot;Authorization: Bearer ${CG_MONITORING_TOKEN}&quot;
+</code></pre>
+<p>The candidate route accepts optional bounded policy values:</p>
+<pre><code class="language-text">?maximum_lag_seconds=10&amp;require_gtid=true
+</code></pre>
+<p>Candidate evaluation requires exactly one current primary and complete probe
+coverage. It checks reachability evidence, cluster membership, role,
+maintenance, promotion eligibility, IO/SQL replication threads, source
+identity, lag, GTID mode and consistency, errant and missing transactions, data
+loss risk, and MySQL version family. It returns rankings only; it cannot promote
+a node.</p>
+<p>Snapshot-derived reads accept <code>observation_id=&lt;RFC3339 timestamp&gt;</code>. The web
+console reads topology first and pins health, candidates, and metrics to that
+same observation. If a concurrent refresh changes the snapshot, the complete
+console read is retried instead of combining evidence from different cycles.</p>
+<p>The MySQL read-only probe and metrics path is covered by 5.7, 8.0, 8.4, and 9.7
+fixtures. Replication collection handles legacy and current terminology.</p>
+<p>The per-cluster Prometheus endpoint exports database metrics for one cluster.
+The protected <code>/api/v1/monitoring/prometheus</code> fleet endpoint exports all
+cluster alert and database series plus the local control-plane state. Metric
+names include:</p>
+<pre><code class="language-text">clusterguard_mysql_qps
+clusterguard_mysql_tps
+clusterguard_mysql_slow_queries_per_second
+clusterguard_mysql_connections
+clusterguard_mysql_running_threads
+clusterguard_mysql_buffer_pool_hit_ratio
+clusterguard_mysql_replication_lag_seconds
+clusterguard_control_plane_ready
+clusterguard_control_plane_leader
+clusterguard_control_plane_quorum_confirmed
+clusterguard_control_plane_metadata_revision
+clusterguard_control_plane_operations
+clusterguard_control_plane_lifecycle_tasks
+</code></pre>
+<p>Alert immediately when <code>clusterguard_control_plane_ready</code> is <code>0</code>. A Leader with
+<code>clusterguard_control_plane_quorum_confirmed == 0</code> is not allowed to mutate
+metadata. Track metadata revision per controller and investigate a follower
+that does not converge. Active and indeterminate operation gauges distinguish
+normal work from an operation that requires human review.</p>
+<p>Database series are labeled with stable platform <code>cluster_id</code> and
+<code>instance_id</code> values. Control-plane gauges are intentionally local to the
+scraped controller and carry no mutable hostname label; assign the controller
+identity in the Prometheus scrape target configuration. No external exporter,
+monitoring agent, or metrics database is required by the ClusterGuard HA
+runtime.</p>
+<p>The console operation log loads 50 events initially and adds 50 events per
+request when the operator selects <strong>Load more</strong>. Repeated blocked retries for
+one automatic-recovery incident appear as one incident with an attempt count;
+the durable operation records remain separate and auditable. Manual operations
+and different incidents are never consolidated. Raw request and response data
+is collapsed by default and an incident opens on its newest attempt. Durable
+snapshots keep the newest 128 planned operations, 512 terminal operations,
+1,024 audit events, 512 reports, and 2,048 security events. Export records
+before those bounds when policy requires a longer audit-retention period.</p>
+<p>For an immutable external archive, fetch the current audit window as NDJSON
+with an authenticated control session or service bearer before it reaches the
+bound:</p>
+<pre><code class="language-bash">curl --fail --silent --show-error \
+  -H &quot;Authorization: Bearer $CG_CONTROL_TOKEN&quot; \
+  https://controller.example:3000/api/v1/audits/export \
+  &gt;&gt; /secure/archive/clusterguard-audit.ndjson
+</code></pre>
+<p>The exporter is read-only and never returns credentials, approval secrets, or
+session tokens. The retention cap remains intentional protection for the
+replicated control-state size; long-term retention belongs in a dedicated,
+append-only archive.</p>
+<h2 id="7-use-cgctl">7. Use <code>cgctl</code><a class="heading-anchor" href="#7-use-cgctl" aria-label="Link to 7. Use cgctl">#</a></h2>
+<p><code>cgctl</code> defaults to <code>http://127.0.0.1:8088</code> and prints concise human-readable
+output:</p>
+<pre><code class="language-bash">go run ./cmd/cgctl status
+go run ./cmd/cgctl engines
+go run ./cmd/cgctl clusters
+go run ./cmd/cgctl topology &lt;cluster-uuid&gt;
+go run ./cmd/cgctl health &lt;cluster-uuid&gt;
+go run ./cmd/cgctl candidates &lt;cluster-uuid&gt;
+go run ./cmd/cgctl metrics &lt;cluster-uuid&gt;
+go run ./cmd/cgctl refresh &lt;cluster-uuid&gt;
+go run ./cmd/cgctl operation &lt;operation-uuid&gt;
+go run ./cmd/cgctl approval issue --cluster &lt;cluster-uuid&gt; --engine mysql \
+  --kind switchover --target &lt;instance-uuid&gt; --issued-by &lt;administrator&gt; --ttl 5m
+go run ./cmd/cgctl approval list
+go run ./cmd/cgctl approval show &lt;grant-uuid&gt;
+</code></pre>
+<p>Global flags must appear before the command:</p>
+<pre><code class="language-bash">go run ./cmd/cgctl --json clusters
+go run ./cmd/cgctl --json candidates &lt;cluster-uuid&gt;
+go run ./cmd/cgctl --server http://127.0.0.1:8088 topology &lt;cluster-uuid&gt;
+</code></pre>
+<p><code>cgctl</code> attaches the configured control credential to authenticated reads and
+writes. <code>refresh</code> sends <code>POST</code> with the exact body <code>{}</code>. Approval issuance builds the
+durable plan and returns the plaintext grant once. Both commands read the
+administrator Bearer credential from <code>CG_CONTROL_TOKEN</code>; select another
+environment variable with <code>--token-env &lt;name&gt;</code> before the command. Approval
+list/show never expose the persisted token hash. The console uses its platform
+session and never receives either credential.</p>
+<h2 id="8-prepare-a-guarded-mysql-switchover">8. Prepare A Guarded MySQL Switchover<a class="heading-anchor" href="#8-prepare-a-guarded-mysql-switchover" aria-label="Link to 8. Prepare A Guarded MySQL Switchover">#</a></h2>
+<h3 id="browser-console">Browser Console<a class="heading-anchor" href="#browser-console" aria-label="Link to Browser Console">#</a></h3>
+<p>An authenticated <code>admin</code> or <code>operator</code> selects the candidate, unlocks the local
+anti-mistake control, and clicks execute. The request contains cluster, engine,
+operation kind, target UUID, idempotency key, and the logged-in username. It
+contains no approval token. The server persists the plan, issues a one-time
+grant internally, consumes it under the operation lock, and returns only the
+operation result.</p>
+<h3 id="external-service-api">External Service API<a class="heading-anchor" href="#external-service-api" aria-label="Link to External Service API">#</a></h3>
+<p>An administrator first selects the exact cluster and candidate and asks
+ClusterGuard to build the durable plan and issue a single-use grant:</p>
+<pre><code class="language-bash">curl -sS -X POST http://127.0.0.1:8088/api/v1/approvals \
+  -H &#39;content-type: application/json&#39; \
+  -H &quot;Authorization: Bearer ${CG_CONTROL_TOKEN}&quot; \
+  -d &#39;{
+    &quot;cluster_id&quot;:&quot;&lt;cluster-uuid&gt;&quot;,
+    &quot;engine&quot;:&quot;mysql&quot;,
+    &quot;operation_kind&quot;:&quot;switchover&quot;,
+    &quot;target_id&quot;:&quot;&lt;candidate-instance-uuid&gt;&quot;,
+    &quot;issued_by&quot;:&quot;platform-admin&quot;,
+    &quot;ttl_seconds&quot;:300,
+    &quot;idempotency_key&quot;:&quot;change-20260712-001&quot;
+  }&#39;
+</code></pre>
+<p>The response contains <code>result.operation</code>, sanitized <code>result.grant</code> metadata,
+and <code>result.approval_token</code>. The plaintext token is returned once. ClusterGuard
+stores only its SHA-256 hash and binds the grant to the operation UUID,
+cluster, engine, kind, candidate UUID, topology observation, and plan digest.
+The default TTL is five minutes and the maximum is fifteen minutes.</p>
+<p>The target is an inventory UUID. Caller-supplied primary/target hostname, IP,
+or port parameters are rejected. The issuance route has already completed
+precheck and planning. Review the returned operation or retrieve it by UUID:</p>
+<pre><code class="language-bash">curl -sS http://127.0.0.1:8088/api/v1/operations/&lt;operation-uuid&gt;
+go run ./cmd/cgctl operation &lt;operation-uuid&gt;
+</code></pre>
+<p>The guarded release supports one primary and multiple inventory replicas. Checks
+require one healthy writable primary, a selected eligible replica, bounded lag,
+running IO/SQL threads, GTID mode <code>ON</code>, compatible GTID history, binary logging,
+current probe coverage, compatible MySQL release families, and a verified
+writer-endpoint provider. The immutable plan includes every follower that must
+be reparented.</p>
+<p>The operation resource response also includes <code>timeline.audits</code> and
+<code>timeline.reports</code>, filtered by the immutable operation UUID.</p>
+<p>The DBA consumes the grant without sending the administrator Bearer credential:</p>
+<pre><code class="language-bash">curl -sS -X POST http://127.0.0.1:8088/api/v1/operations/&lt;operation-uuid&gt;/execute \
+  -H &#39;content-type: application/json&#39; \
+  -d &#39;{&quot;approval_token&quot;:&quot;cgag_&lt;grant-uuid&gt;.&lt;secret&gt;&quot;}&#39;
+</code></pre>
+<p>Grant consumption and the durable <code>APPROVE</code> transition are atomic under the
+operation lock. The token cannot be reused. Expired, consumed, mismatched, or
+stale-plan grants are blocked and require a newly issued grant. The web console
+never receives the token and relocks the selected target after every attempt.</p>
+<p>When Agent, Raft, HA endpoint inventory, or operation credentials are absent,
+ClusterGuard HA persists a blocked or unsupported result before issuing a
+mutating SQL statement. With those dependencies configured, execution fences
+the source, promotes the selected target, reparents reachable followers,
+transfers the VIP, verifies postconditions, and writes the audit/report timeline.</p>
+<p>Replication statement selection uses <code>STOP/RESET SLAVE</code> through MySQL 8.0.21
+and <code>STOP/RESET REPLICA</code> from MySQL 8.0.22 onward. Before any write, the kernel
+re-probes source and target identity, roles, GTID history, replication threads,
+lag, binary logging, and release compatibility under the operation lock.</p>
+<h2 id="9-reconcile-mutable-metadata">9. Reconcile Mutable Metadata<a class="heading-anchor" href="#9-reconcile-mutable-metadata" aria-label="Link to 9. Reconcile Mutable Metadata">#</a></h2>
+<p>Platform UUID and native engine identity are immutable. For MySQL, native
+identity is <code>engine_identity.server_uuid</code>. Hostname, IP address, port, display
+name, and aliases are mutable coordinates.</p>
+<p>When a known MySQL server moves:</p>
+<ol>
+<li>Read the current instance and endpoint UUIDs from the cluster detail route.</li>
+<li>Submit the same platform instance UUID, cluster UUID, engine, and
+<code>server_uuid</code> with the new coordinates.</li>
+<li>Include <code>endpoint_id</code> when the instance owns more than one database endpoint.</li>
+<li>Run metadata <code>precheck</code>, <code>plan</code>, <code>execute</code>, then <code>verify</code> as required by the
+operator workflow.</li>
+</ol>
+<p>Routes:</p>
+<pre><code class="language-text">POST /api/v1/metadata/reconcile/precheck
+POST /api/v1/metadata/reconcile/plan
+POST /api/v1/metadata/reconcile/execute
+POST /api/v1/metadata/reconcile/verify
+GET  /api/v1/metadata/anomalies
+</code></pre>
+<p>Reconciliation never changes the MySQL server. It validates the immutable
+native identity, updates the selected endpoint and canonical coordinates in one
+repository transaction, retains previous coordinates as aliases, increments
+metadata revision and inventory generation, invalidates the old topology, and
+requires a new refresh.</p>
+<p>An observed known <code>server_uuid</code> automatically binds to its existing platform
+resource UUID. A changed hostname, IP, or port must not create a duplicate
+resource. Native-identity mismatches, duplicate endpoint ownership, cross-
+cluster updates, and ambiguous endpoint selection are blocked.</p>
+<h2 id="10-built-in-node-installation-and-synchronization">10. Built-in Node Installation and Synchronization<a class="heading-anchor" href="#10-built-in-node-installation-and-synchronization" aria-label="Link to 10. Built-in Node Installation and Synchronization">#</a></h2>
+<p>The Console <strong>Nodes</strong> view drives one ClusterGuard lifecycle for adding a new
+node and rebuilding a physically replaced node. This is a control-plane
+workflow, not a collection of operator-run remote commands. It performs:</p>
+<ol>
+<li>inventory, immutable node UUID, SSH host-key, privilege, port, and package
+preflight;</li>
+<li>SHA-256 verified package selection from the approved offline repository;</li>
+<li>MySQL or PostgreSQL installation, or reconciliation of a registered
+existing installation;</li>
+<li>version-aware data copy and replication configuration;</li>
+<li>native identity, read-only state, replication, lag, and VIP-absence
+verification; and</li>
+<li>Raft-backed metadata commit, audit, and report generation.</li>
+</ol>
+<p>MySQL chooses an allowed clone, xtrabackup, or logical-dump path. PostgreSQL
+uses <code>pg_rewind</code> when its safety preconditions hold and otherwise uses
+<code>pg_basebackup</code>. A task exposes separate preflight, install, synchronize,
+configure-replication, verify, and metadata-commit states. No metadata is
+committed after a failed or indeterminate target mutation.</p>
+<p>Data-node cardinality is unrestricted. Controller membership must remain an
+odd set of at least three. A 3-to-5 expansion therefore accepts two distinct
+controller targets in one guarded operation, installs the controller and
+adapter runtime on both, issues unique API and Raft mTLS identities, and asks
+the current Leader to add both voters. A failed paired install stops newly
+staged controller roles in reverse order. A partial Raft addition removes
+voters added by that call before returning the failure.</p>
+<p>For dynamic controller enrollment, deliver all four issuer files in the
+offline runtime assets directory:</p>
+<pre><code class="language-text">assets/pki/api-issuer.crt       0644
+assets/pki/api-issuer.key       0640 root:clusterguard
+assets/pki/raft-issuer.crt      0644
+assets/pki/raft-issuer.key      0640 root:clusterguard
+</code></pre>
+<p>The API issuer must chain to <code>tls_ca_file</code>; the Raft issuer must chain to
+<code>consensus.tls_ca_file</code>. Configure all four issuer paths together. Issuer keys
+must never be returned through the API, browser, audit stream, task log, or
+report.</p>
+<h2 id="11-automatic-failover-and-safety-boundary">11. Automatic Failover and Safety Boundary<a class="heading-anchor" href="#11-automatic-failover-and-safety-boundary" aria-label="Link to 11. Automatic Failover and Safety Boundary">#</a></h2>
+<p>The raw configuration-loader default remains disabled so that an incomplete
+hand-written configuration cannot silently become destructive. The supported
+multi-node installer defaults a VIP-backed MySQL HA deployment to automatic
+failover with <code>fencing.agent_quorum_enabled=true</code>. Operators may explicitly
+choose <code>--manual-failover-only</code>.
+Automatic failover requires Raft consensus, the restricted node agent, an
+active VIP resource, all three purpose-specific MySQL credentials, stable
+database failure evidence, and verified old-primary isolation. It does not
+require a human approval token. Startup rejects incomplete consensus or fencing
+configuration.</p>
+<p>Agent quorum fencing does not equate TCP failure with isolation. Each Agent
+receives a leader-signed decision valid for at most 10 seconds and reconciles
+every 5 seconds. After publishing the exact failover transition lease, the
+controller waits at least 15 seconds, revalidates majority authority, stable
+failure evidence, and the unchanged lease, and rejects promotion if the old
+primary is reachable but still owns the VIP or remains writable. A node that
+cannot obtain majority authorization releases the VIP and persists read-only
+intent locally. <code>--fencer FILE</code> remains available as an optional stronger layer
+when the Agent or whole operating system may fail while the database can still
+serve traffic.</p>
+<p>For production MySQL, set <code>mysql.semi_sync_required=true</code> on every controller
+only after all managed instances load and enable the source/replica semi-sync
+plugins. ClusterGuard then treats semi-sync as required evidence: the current
+primary must have at least the configured number of acknowledging clients, a
+candidate must be actively acknowledging its source and already have
+promotion-side source settings, and the promoted primary must regain an active
+acknowledging client during verification. Unknown, malformed, disabled, or
+stale evidence fails closed. The managed MySQL installer configures one
+acknowledging replica with <code>AFTER_SYNC</code> and a 10-second source timeout for
+MySQL 8.x (and the equivalent master/slave names for 5.7).</p>
+<p>Semi-sync substantially reduces acknowledged-transaction loss but does not by
+itself prove strict RPO zero: after its configured timeout MySQL may fall back
+to asynchronous commits, and storage, operating-system, and network failures
+remain outside the database acknowledgement protocol. Production SLOs must
+therefore document the timeout/fallback policy and validate it with client-side
+transaction IDs during destructive failover tests.</p>
+<p>The recovery controller executes only on the majority Leader. Discovery records
+one incident after six follow-up failed-primary samples span 30 seconds. The
+controller chooses only the rank-one eligible candidate and submits a normal
+durable <code>failover</code> operation through a private internal authorization path.
+Public JSON cannot select this mode. The incident ID is audited at <code>APPROVE</code>;
+Safety Guard, lock, fencing, execution, verification, audit, and report remain
+mandatory. Incident-derived idempotency keys prevent a Leader change from
+repeating a successful or indeterminate failover. Blocked attempts wait at
+least the configured retry period.</p>
+<p>The operation lock is stored in the Raft-replicated metadata snapshot and
+renewed while its holder remains the majority Leader. The Safety Guard checks
+majority again before lock and approval. VIP ownership is separately protected
+by a short exclusive endpoint lease and cluster-wide owner verification.</p>
+<h3 id="external-fencing-contract">External fencing contract<a class="heading-anchor" href="#external-fencing-contract" aria-label="Link to External fencing contract">#</a></h3>
+<p>Set <code>fencing.enabled=true</code> only after installing an absolute, regular,
+executable provider path. Startup fails when the provider is missing or is not
+executable. ClusterGuard invokes it with exactly one argument, either <code>fence</code>
+or <code>status</code>, and writes one JSON object to stdin:</p>
+<pre><code class="language-json">{
+  &quot;cluster_id&quot;: &quot;&lt;cluster-uuid&gt;&quot;,
+  &quot;operation_id&quot;: &quot;&lt;operation-uuid&gt;&quot;,
+  &quot;lease_id&quot;: &quot;&lt;lease-uuid-when-fencing&gt;&quot;,
+  &quot;instance&quot;: {
+    &quot;resource_id&quot;: &quot;&lt;old-primary-uuid&gt;&quot;,
+    &quot;hostname&quot;: &quot;mysql-01&quot;,
+    &quot;ip_address&quot;: &quot;192.0.2.10&quot;,
+    &quot;port&quot;: 3306
+  }
+}
+</code></pre>
+<p>The provider must emit one JSON object and nothing else on stdout:</p>
+<pre><code class="language-json">{&quot;status&quot;:&quot;ok&quot;,&quot;fenced&quot;:true,&quot;message&quot;:&quot;power isolation confirmed&quot;}
+</code></pre>
+<p>Logs belong on stderr. Output is capped at 64 KiB and each call is bounded by
+<code>fencing.timeout_seconds</code>. A successful <code>fence</code> call is not sufficient:
+ClusterGuard immediately calls <code>status</code> and proceeds only when that independent
+call also returns <code>fenced:true</code>. Any timeout, malformed output, unknown field,
+process failure, or ambiguous status blocks promotion. The provider should key
+status by the immutable instance resource UUID and verify a real out-of-band
+mechanism such as a hypervisor, cloud, PDU, or BMC; network reachability alone
+is not fencing.</p>
+<p>The provider does not inherit database passwords, control tokens, or the full
+service environment. Put provider-specific credentials in variables prefixed
+with <code>CG_FENCER_</code>; only that prefix plus <code>PATH</code>, locale, and timezone variables
+is passed to the child process. Prefer a root-owned credential file when the
+provider supports one.</p>
+<p>Oracle and SQL Server mutation is available only through their native HA
+control planes. Oracle role transition uses Data Guard Broker through DGMGRL.
+SQL Server planned role transition uses Always On availability-group failover
+through sqlcmd/T-SQL. A MySQL, PostgreSQL, Oracle, or SQL Server action whose
+required runner, Agent, endpoint, identity, topology, quorum, fencing,
+credential, lock, approval, or verification evidence is missing is blocked
+before the unsafe step. Unsupported or blocked never means partially successful.</p>
+<p>The guarded kernel pins the exact topology observation used for precheck as
+<code>cluster_id@observed_at</code> and revalidates it after acquiring the operation lock.
+Discovery publication uses that same cluster lock, so it cannot replace the
+validated observation during execution. A changed or invalidated observation
+blocks approval and execution. Completed steps are durable. An already-fenced
+source is accepted only when this operation owns the durable <code>fence_source</code>
+step; recovery then revalidates immutable source and target identities, fencing,
+GTID history, binary logging, release compatibility, replication state, and
+endpoint ownership before another mutation. If a journal write fails before
+mutation, the workflow stops. If it fails after the mutation commit point,
+verification still runs and the API returns an <code>indeterminate</code> execution with
+HTTP <code>500</code>. An atomic metadata rename followed by a directory-sync warning is
+also reported as committed but <code>indeterminate</code>, including the reconciled
+instance and endpoint in the response. Treat <code>indeterminate</code> as a manual-review
+state; do not automatically retry the operation.</p>
+<p>Post-commit verification uses a bounded context detached from the caller. A
+failed verification is persisted with its checks and remains <code>indeterminate</code>.
+Verification keeps the immutable plan digest and source/target UUID scope but
+accepts a newer topology observation and metadata revisions after promotion;
+the refreshed endpoints must still return the planned native identities and
+the expected live roles.
+Calling the operation <code>verify</code> action again may reconcile that record to
+<code>succeeded</code> only when explicit verification evidence passes; all other terminal
+states remain immutable. The terminal operation record, terminal audit events,
+and operation report are published in one repository snapshot, so readers
+cannot observe a succeeded report with a running operation or the reverse.
+Manual verification reconciliation uses the same atomic finalization path.</p>
+<p>Cluster registration and discovery publication follow the same rule. A
+post-rename durability warning returns HTTP <code>500</code> plus the committed resource or
+observation in <code>result</code>. Reconcile the returned cluster/endpoint UUIDs or the
+observation token <code>cluster_id@observed_at</code> before retrying; creating another
+cluster or publishing as though the observation were absent can duplicate user
+intent. Non-operation metadata workflows first persist a conservative report
+fallback and then replace it with the terminal outcome under the same report
+UUID.</p>
+<p>MySQL multi-source replication is detected but not modeled in this phase. If
+<code>SHOW REPLICA STATUS</code> or its legacy equivalent returns more than one channel,
+discovery fails closed and does not publish partial health, topology, or
+promotion eligibility.</p>
+<h2 id="12-planned-shutdown-and-automatic-recovery">12. Planned Shutdown and Automatic Recovery<a class="heading-anchor" href="#12-planned-shutdown-and-automatic-recovery" aria-label="Link to 12. Planned Shutdown and Automatic Recovery">#</a></h2>
+<p>Use this for maintenance windows, rack moves, and full power-down of a MySQL
+primary/replica cluster. The platform applies protection before shutdown and
+systemd units restore the cluster automatically after boot, without operator
+intervention.</p>
+<h3 id="11-1-shutdown-modes">11.1 Shutdown modes<a class="heading-anchor" href="#11-1-shutdown-modes" aria-label="Link to 11.1 Shutdown modes">#</a></h3>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Behavior</th>
+<th>Use case</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>service</code></td>
+<td>Stops MySQL only (replicas first, primary last); hosts stay up</td>
+<td>Software upgrade, config change, short maintenance window</td>
+</tr>
+<tr>
+<td><code>poweroff</code></td>
+<td>Power-off every node in parallel</td>
+<td>Rack power maintenance, relocation</td>
+</tr>
+</tbody></table>
+<h3 id="11-2-initiating-shutdown">11.2 Initiating shutdown<a class="heading-anchor" href="#11-2-initiating-shutdown" aria-label="Link to 11.2 Initiating shutdown">#</a></h3>
+<p>Use <strong>Topology -&gt; Power lifecycle -&gt; One-click shutdown</strong> in the Web console.
+The default <code>service</code> mode stops the database but leaves the hosts running. A
+logged-in platform administrator receives a short-lived, single-use approval
+inside the server; no approval secret is exposed to the browser.</p>
+<p>CLI automation uses the same API workflow and requires an explicitly issued
+one-time approval token:</p>
+<pre><code class="language-bash">cgctl cluster shutdown --cluster &lt;display name&gt; --mode service|poweroff \
+  --approval-token &lt;single-use-token&gt;
+cgctl cluster shutdown --cluster &lt;display name&gt; --mode service --dry-run
+</code></pre>
+<p><code>--dry-run</code> performs precheck and immediately cancels the temporary lifecycle;
+it changes no database or host state. There is no direct-shell bypass.</p>
+<p>The full flow (any failure interrupts and keeps protection, see 11.4):</p>
+<ol>
+<li>Refresh topology (<code>discover</code>) and have every signed Agent atomically persist
+its cluster snapshot at <code>/etc/clusterguard/power-snapshots/&lt;cluster-uuid&gt;.json</code>
+(directory 0700, file 0600). Multiple clusters on one host cannot overwrite
+each other.</li>
+<li>Freeze automatic recovery (<code>recovery-freeze</code>): automatic failover, reboot
+bootstrap, and manual switchover are all blocked.</li>
+<li>Mark every instance in maintenance.</li>
+<li>Run <code>SET PERSIST_ONLY read_only=ON; SET PERSIST_ONLY super_read_only=ON</code>
+on every node — no runtime effect, but durable across reboot so the
+restored cluster cannot accept stray writes.</li>
+<li>Stop per mode: <code>service</code> stops replicas then the primary; <code>poweroff</code>
+powers off all nodes in parallel.</li>
+</ol>
+<h3 id="11-3-automatic-restore-after-reboot">11.3 Automatic restore after reboot<a class="heading-anchor" href="#11-3-automatic-restore-after-reboot" aria-label="Link to 11.3 Automatic restore after reboot">#</a></h3>
+<p>Both units ship enabled. They scan the per-cluster snapshot directory at boot
+and are no-ops when it is empty:</p>
+<ul>
+<li><code>clusterguard-cluster-restore.service</code> — first confirms that the live control
+plane still records an active planned-recovery state, starts the local
+database service, and waits for readiness. For MySQL, only the immutable-ID
+designated primary clears persisted and runtime read-only flags. It then
+reports boot/recovery and triggers discovery. A stale snapshot on an ordinary
+reboot is rejected before any role mutation.</li>
+<li><code>clusterguard-cluster-finalize.service</code> — waits for control-plane health
+(<code>/healthz</code>, up to 60 s), then polls the topology until the primary instance
+reports healthy (every 5 s, up to 600 s); on success it unfreezes automatic
+recovery, clears cluster maintenance protection, and writes <code>recovered_at</code>
+to that cluster&#39;s snapshot.</li>
+</ul>
+<p><code>poweroff</code> cannot turn a physically powered-off server back on by itself.
+Automatic power-on requires VMware autostart/API, IPMI/iDRAC/iLO, Wake-on-LAN,
+or firmware restore-on-AC. Once the OS boots, ClusterGuard recovery is automatic.</p>
+<h3 id="11-4-timeout-and-failure-fallback-fail-closed">11.4 Timeout and failure fallback (fail-closed)<a class="heading-anchor" href="#11-4-timeout-and-failure-fallback-fail-closed" aria-label="Link to 11.4 Timeout and failure fallback (fail-closed)">#</a></h3>
+<ul>
+<li>If finalize times out with the primary still unhealthy, protection is
+<strong>not</strong> released: the script logs CRITICAL, exits cleanly, and waits for an
+operator.</li>
+<li>After the problem is confirmed resolved, release protection manually:</li>
+</ul>
+<pre><code class="language-bash">curl -sk -X POST -H &quot;Authorization: Bearer ${CG_CONTROL_TOKEN}&quot; \
+  -H &#39;Content-Type: application/json&#39; \
+  -d &#39;{&quot;freeze&quot;:false}&#39; https://127.0.0.1:3000/api/v1/clusters/&lt;cluster-uuid&gt;/recovery-freeze
+</code></pre>
+<ul>
+<li>Deleting the snapshot makes both units no-ops; re-running restore/finalize
+against an already-finalized snapshot (<code>recovered_at</code> present) is also an
+idempotent no-op.</li>
+</ul>
+<h3 id="11-5-inspecting-restore-state">11.5 Inspecting restore state<a class="heading-anchor" href="#11-5-inspecting-restore-state" aria-label="Link to 11.5 Inspecting restore state">#</a></h3>
+<pre><code class="language-bash">cgctl cluster restore-status [--cluster &lt;cluster-uuid&gt;]
+</code></pre>
+<p>Prints snapshot presence, cluster identity, <code>recovered_at</code>, recovery-freeze
+state (<code>frozen</code>/<code>active</code>), and per-instance role/health/replication
+lag/maintenance, plus mode-specific advice. Without <code>--cluster</code>, the local
+snapshot&#39;s cluster UUID is used.</p>
+<h2 id="13-postgresql-ha">13. PostgreSQL HA<a class="heading-anchor" href="#13-postgresql-ha" aria-label="Link to 13. PostgreSQL HA">#</a></h2>
+<p>PostgreSQL is an engine-native ClusterGuard HA implementation. It provides
+identity-safe discovery, primary/standby topology, health, native metrics,
+timeline-aware candidate evaluation, controlled switchover, guarded failover,
+former-primary rewind/rejoin, allowlisted repair, Linux VIP coupling, and
+<code>pg_basebackup</code> node synchronization.</p>
+<p>Optional automatic failover runs in a PostgreSQL-only recovery controller. It
+requires six consecutive primary-failure observations (30 seconds at the
+default cadence), a current topology snapshot, a rank-one standby with known
+zero replay lag, Raft leader and majority authority, restricted-Agent or
+external-fencer proof that the old primary cannot write, and the complete
+common workflow through verification, audit, and report. The controller never
+uses network unreachability as fencing evidence and never retries an
+indeterminate post-promotion result.</p>
+<p>Execution is never inferred from the engine name alone. ClusterGuard advertises
+each mutation capability only when dedicated operation and replication
+credentials, a restricted signed Agent policy, an executable endpoint provider,
+current topology evidence, and the required controller quorum are present.
+Failover additionally requires stable failure evidence and successful external
+fencing when the old primary cannot prove isolation.</p>
+<p>Use <a href="postgresql-ha.html">PostgreSQL HA Operations</a> for the complete identity SQL,
+least-privilege account model, <code>pg_hba.conf</code> requirements, controller and Agent
+configuration, node lifecycle settings, operation flow, metrics, and destructive
+qualification checklist. Unknown lag and optional metrics remain unknown; the
+platform never converts missing evidence to a synthetic zero or reports a
+simulated success.</p>
+<h2 id="14-adapter-roadmap">14. Adapter Roadmap<a class="heading-anchor" href="#14-adapter-roadmap" aria-label="Link to 14. Adapter Roadmap">#</a></h2>
+<h3 id="mysql">MySQL<a class="heading-anchor" href="#mysql" aria-label="Link to MySQL">#</a></h3>
+<p>The independent MySQL path now includes discovery, candidate evaluation,
+planned switchover, guarded failover, former-primary rejoin, allowlisted repair,
+Linux VIP ownership, self-isolation, staged node lifecycle, delivery packaging,
+and destructive three-host acceptance. The laboratory acceptance covers six
+clusters, repeated real switchovers, quorum loss, a primary network partition,
+former-primary rejoin, a full host reboot, divergent-node rebuild, and mutable
+hostname/IP/port reconciliation. See <code>docs/mysql-feature-parity-acceptance.md</code>
+for the evidence and bundle hashes.</p>
+<p>Every MySQL Agent policy used for automatic failover must declare
+<code>mysql_service</code>, <code>mysql_server_binary</code>, and <code>mysql_server_defaults_file</code>.
+ClusterGuard inspects the local systemd unit and the effective <code>mysqld --verbose --help</code> output before accepting in-band fencing. Both
+<code>read_only=ON</code> and <code>super_read_only=ON</code> must be effective restart defaults on
+every managed instance. The Agent records the isolation intent before it tries
+the live SQL mutation, so a stopped old primary can be fenced and verified
+without making network unreachability a fencing signal. A recovered instance
+therefore starts read-only and becomes writable only through a leader-backed
+ClusterGuard role transition.</p>
+<p>Production deployments must configure and exercise a site-specific out-of-band
+provider through the fencing contract above, and qualify a physical-copy method
+such as Clone or XtraBackup. The bundled logical
+dump rebuild is a destructive fallback: before importing donor data it removes
+all non-system schemas on the target so target-only data cannot survive behind
+a reset GTID history.</p>
+<h3 id="postgresql">PostgreSQL<a class="heading-anchor" href="#postgresql" aria-label="Link to PostgreSQL">#</a></h3>
+<p>Discovery, stable identity, primary/standby topology, native monitoring,
+timeline-aware candidate evaluation, controlled switchover/failover,
+promotion/repoint, independent verification, former-primary rewind/rejoin,
+allowlisted repair, VIP coupling, and base-backup node lifecycle are implemented.
+The next production step is destructive qualification across supported
+PostgreSQL release families and site-specific fencing, service, storage, TLS,
+backup, and restore layouts; capabilities that have not passed local policy
+remain disabled rather than emulated.</p>
+<h3 id="oracle">Oracle<a class="heading-anchor" href="#oracle" aria-label="Link to Oracle">#</a></h3>
+<p>ClusterGuard supports Data Guard Broker controlled switchover through the
+restricted signed node Agent. The Agent combines local SQLPlus identity
+evidence with Broker state, so <code>DBID + DB_UNIQUE_NAME</code> stays stable even when a
+hostname, IP address, listener endpoint, or role changes. It runs DGMGRL as the
+Oracle operating-system account and connects with a dedicated password-file
+<code>SYSDG</code> user. Do not configure <code>SYS</code> for routine platform operation.</p>
+<p>Every switchover requires a healthy primary, a broker-healthy standby, zero
+transport and apply lag, <code>Ready for Switchover</code>, a frozen topology revision,
+controller quorum, Safety Guard, a durable operation lock, and a plan-bound
+one-time approval. The mutation is accepted only by the source node Agent for
+the configured Broker member allowlist. Completion requires independent status
+checks on both nodes: the target must be <code>PRIMARY</code>, the former primary must be
+a standby, Broker status must be <code>SUCCESS</code>, and lag must converge to zero.</p>
+<p>The controller configuration enables Oracle and references secrets:</p>
+<pre><code class="language-json">{
+  &quot;oracle&quot;: {
+    &quot;enabled&quot;: true,
+    &quot;discovery_interval_seconds&quot;: 15,
+    &quot;discovery_timeout_seconds&quot;: 15,
+    &quot;discovery&quot;: {
+      &quot;username&quot;: &quot;CLUSTERGUARD_DG&quot;,
+      &quot;database&quot;: &quot;DB_UNIQUE_NAME&quot;,
+      &quot;password_env&quot;: &quot;CG_ORACLE_DISCOVERY_PASSWORD&quot;
+    },
+    &quot;operation&quot;: {
+      &quot;username&quot;: &quot;CLUSTERGUARD_DG&quot;,
+      &quot;database&quot;: &quot;DB_UNIQUE_NAME&quot;,
+      &quot;password_env&quot;: &quot;CG_ORACLE_OPERATION_PASSWORD&quot;
+    }
+  }
+}
+</code></pre>
+<p>Each Oracle node uses its own Agent policy with the same platform cluster UUID,
+its platform instance UUID, local <code>DB_UNIQUE_NAME</code>, connect identifier, Oracle
+home, SID, Broker configuration, and complete member allowlist. Store the
+database secret only in <code>CG_ORACLE_BROKER_PASSWORD</code> in the Agent environment.
+The same account and password-file entry must exist on every Broker member.</p>
+<p>Failure failover deliberately remains blocked until external old-primary
+fencing is configured. ClusterGuard does not edit Oracle data files, archive
+logs, or RAC resources directly. Remaining Oracle expansion work is RAC
+instance modeling, archive destination checks, listener endpoint correction,
+and a destructive acceptance matrix with site-specific fencing rules.</p>
+<h3 id="sql-server">SQL Server<a class="heading-anchor" href="#sql-server" aria-label="Link to SQL Server">#</a></h3>
+<p>ClusterGuard supports a guarded Always On planned-failover path for SQL Server.
+When <code>sqlcmd</code> is present on the controller or a SQL Server runner is injected,
+the SQL Server adapter can discover the local Always On replica from AG DMVs,
+read synchronization health and send/redo queue metrics, model
+primary-to-secondary topology, assess synchronized synchronous-commit
+candidates, and precheck, plan, execute, and verify
+<code>ALTER AVAILABILITY GROUP [name] FAILOVER</code>. The immutable operation plan pins
+the AG and replica identities, topology observation, resource revisions, and
+plan digest before the common safety, lock, approval, execution, verification,
+audit, and report stages.</p>
+<p>Execution requires a stable AG <code>group_id</code>, replica <code>replica_id</code>, healthy
+current primary evidence, a healthy promotion-eligible secondary, synchronous
+commit, synchronized target state, and a durable operation lease. Verification
+polls until it observes exactly one primary, confirms the selected target owns
+that role, and confirms every AG replica reports healthy. An asynchronous or
+synchronizing replica remains visible and healthy when appropriate, but is not
+promotion eligible. Forced failover remains blocked by default because it can
+lose data; it needs a separate explicit data-loss approval policy before
+execution is allowed.</p>
+<p>Remaining SQL Server production work is native Listener endpoint ownership
+modeling, WSFC quorum evidence, and site-specific fencing for forced failover.</p>
+
+          <footer class="document-footer">
+            <span>Source: <code>docs/operations.md</code></span>
+            <a href="../index.html">Documentation language home</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="On this page">
+          <strong>On this page</strong>
+          <a class="toc-level-2" href="#1-configure-the-control-plane">1. Configure the Control Plane</a><a class="toc-level-3" href="#platform-login">Platform Login</a><a class="toc-level-2" href="#2-inspect-engines-and-capabilities">2. Inspect Engines and Capabilities</a><a class="toc-level-2" href="#3-register-authoritative-inventory">3. Register Authoritative Inventory</a><a class="toc-level-2" href="#4-refresh-mysql-topology">4. Refresh MySQL Topology</a><a class="toc-level-2" href="#5-check-control-plane-health-and-readiness">5. Check Control-Plane Health and Readiness</a><a class="toc-level-2" href="#6-read-topology-health-candidates-and-metrics">6. Read Topology, Health, Candidates, and Metrics</a><a class="toc-level-2" href="#7-use-cgctl">7. Use cgctl</a><a class="toc-level-2" href="#8-prepare-a-guarded-mysql-switchover">8. Prepare A Guarded MySQL Switchover</a><a class="toc-level-3" href="#browser-console">Browser Console</a><a class="toc-level-3" href="#external-service-api">External Service API</a><a class="toc-level-2" href="#9-reconcile-mutable-metadata">9. Reconcile Mutable Metadata</a><a class="toc-level-2" href="#10-built-in-node-installation-and-synchronization">10. Built-in Node Installation and Synchronization</a><a class="toc-level-2" href="#11-automatic-failover-and-safety-boundary">11. Automatic Failover and Safety Boundary</a><a class="toc-level-3" href="#external-fencing-contract">External fencing contract</a><a class="toc-level-2" href="#12-planned-shutdown-and-automatic-recovery">12. Planned Shutdown and Automatic Recovery</a><a class="toc-level-3" href="#11-1-shutdown-modes">11.1 Shutdown modes</a><a class="toc-level-3" href="#11-2-initiating-shutdown">11.2 Initiating shutdown</a><a class="toc-level-3" href="#11-3-automatic-restore-after-reboot">11.3 Automatic restore after reboot</a><a class="toc-level-3" href="#11-4-timeout-and-failure-fallback-fail-closed">11.4 Timeout and failure fallback (fail-closed)</a><a class="toc-level-3" href="#11-5-inspecting-restore-state">11.5 Inspecting restore state</a><a class="toc-level-2" href="#13-postgresql-ha">13. PostgreSQL HA</a><a class="toc-level-2" href="#14-adapter-roadmap">14. Adapter Roadmap</a><a class="toc-level-3" href="#mysql">MySQL</a><a class="toc-level-3" href="#postgresql">PostgreSQL</a><a class="toc-level-3" href="#oracle">Oracle</a><a class="toc-level-3" href="#sql-server">SQL Server</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

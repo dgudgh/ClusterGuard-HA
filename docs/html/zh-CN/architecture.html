@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="系统架构 - ClusterGuard HA operational documentation">
+  <title>系统架构 | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">跳到正文</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>搜索文档</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="输入标题关键词">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>开始使用</h2><a href="index.html" data-doc-title="clusterguard ha 中文文档">ClusterGuard HA 中文文档</a><a href="product-overview.html" data-doc-title="产品概览">产品概览</a><a href="product-tour.html" data-doc-title="控制台产品导览">控制台产品导览</a><a href="architecture.html" data-doc-title="系统架构" aria-current="page" class="active">系统架构</a><a href="release-2.1.45.html" data-doc-title="2.1.45 发布说明">2.1.45 发布说明</a></section><section><h2>部署与迁移</h2><a href="offline-rpm-install.html" data-doc-title="离线 rpm 安装">离线 RPM 安装</a><a href="database-preparation.html" data-doc-title="数据库接入">数据库接入</a><a href="orchestrator-migration.html" data-doc-title="从 orchestrator 迁移">从 Orchestrator 迁移</a></section><section><h2>日常运维</h2><a href="operations-manual.html" data-doc-title="运维操作手册">运维操作手册</a><a href="api-operations.html" data-doc-title="api 运维参考">API 运维参考</a><a href="postgresql-ha.html" data-doc-title="postgresql 高可用">PostgreSQL 高可用</a><a href="version-release-policy.html" data-doc-title="版本与发版规范">版本与发版规范</a></section><section><h2>验收证据</h2><a href="proven-mysql-ha-methods.html" data-doc-title="mysql 已验证方法">MySQL 已验证方法</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql 功能验收">MySQL 功能验收</a><a href="mysql-former-primary-recovery.html" data-doc-title="旧主恢复专项验收">旧主恢复专项验收</a><a href="mysql-production-qualification.html" data-doc-title="mysql 生产验收">MySQL 生产验收</a><a href="production-chaos-test.html" data-doc-title="生产故障测试报告">生产故障测试报告</a><a href="power-lifecycle-test.html" data-doc-title="计划关机测试报告">计划关机测试报告</a></section></nav>
+      <div class="sidebar-meta">
+        <span>离线文档构建</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">打开目录</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>系统架构</strong></div>
+        <div class="header-actions">
+          <a href="../en-US/architecture.html" lang="en-US">English</a>
+          <button id="print-button" type="button">打印</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha-架构">ClusterGuard HA 架构<a class="heading-anchor" href="#clusterguard-ha-架构" aria-label="Link to ClusterGuard HA 架构">#</a></h1>
+<h2 id="设计目标">设计目标<a class="heading-anchor" href="#设计目标" aria-label="Link to 设计目标">#</a></h2>
+<p>ClusterGuard HA 是一个与数据库无关的控制平面，具有特定于引擎的适配器。平台身份、清单权威、工作流门、持久化、API 行为、审计和报告属于控制内核。数据库协议细节属于适配器。</p>
+<p>已封板的 2.1 系列启用了 MySQL 控制路径，PostgreSQL 从 2.2 系列开始交付。Oracle 和 SQL Server 仍属于后续独立认证的产品线；能力入口存在并不代表已获得生产支持。当前开发分支包含发现、健康、原生指标、确定性候选评估、受控切换和故障切换、旧主重新加入、白名单修复、Linux VIP 所有权和节点生命周期。变更操作始终受能力和配置门禁约束：缺少多数派、隔离证据、受限 Agent 策略、凭据、端点提供器或当前观测时，系统会在进入不安全步骤前阻断操作。Oracle 和 SQL Server 角色转换通过各自的原生 HA 控制面集成：Oracle Data Guard Broker 使用 DGMGRL，SQL Server Always On 使用 sqlcmd/T-SQL。SQL Server 的发现、健康、候选、队列指标、执行和验证路径已实现。Oracle 的发现和受控 Broker 执行通过受限节点 Agent 实现；Oracle 指标扩展仍在路线图中。未配置完整原生执行器和安全依赖时，相关变更能力不会启用。</p>
+<h2 id="资源模型">资源模型<a class="heading-anchor" href="#资源模型" aria-label="Link to 资源模型">#</a></h2>
+<p>每个持久资源都有一个不可变的平台 UUID 和修订元数据。主要资源如下：</p>
+<table>
+<thead>
+<tr>
+<th>资源</th>
+<th>责任</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>Platform</code></td>
+<td>高级管理边界。</td>
+</tr>
+<tr>
+<td><code>Controller</code></td>
+<td>控制平面成员和服务端点。</td>
+</tr>
+<tr>
+<td><code>DatabaseCluster</code></td>
+<td>引擎、显示名称、集群身份和聚合健康。</td>
+</tr>
+<tr>
+<td><code>DatabaseNode</code></td>
+<td>与数据库进程身份无关的主机级放置。</td>
+</tr>
+<tr>
+<td><code>DatabaseInstance</code></td>
+<td>引擎原生数据库进程身份和观察运行时状态。</td>
+</tr>
+<tr>
+<td><code>Endpoint</code></td>
+<td>可变的主机名、IP、端口和端点类型。</td>
+</tr>
+<tr>
+<td><code>EndpointAlias</code></td>
+<td>端点的历史或替代坐标。</td>
+</tr>
+<tr>
+<td><code>ReplicationLink</code></td>
+<td>源到目标的关系、延迟和链接健康。</td>
+</tr>
+<tr>
+<td><code>HAEndpoint</code></td>
+<td>VIP、监听器或服务端点的期望所有者和健康状态。</td>
+</tr>
+<tr>
+<td><code>OperationRecord</code> / <code>OperationPlan</code></td>
+<td>幂等意图、持久阶段进度和不可变执行计划。</td>
+</tr>
+<tr>
+<td><code>ApprovalGrant</code></td>
+<td>与一个操作计划和目标绑定的单次使用、过期授权。</td>
+</tr>
+<tr>
+<td><code>PlatformUser</code></td>
+<td>平台用户名、角色、Argon2id 密码哈希、<code>MustChangePassword</code> 和认证修订。</td>
+</tr>
+<tr>
+<td><code>PlatformSession</code></td>
+<td>仅保存哈希、八小时过期的不透明会话和 CSRF 身份。</td>
+</tr>
+<tr>
+<td><code>SecurityEvent</code></td>
+<td>登录、注销、密码和授权安全证据。</td>
+</tr>
+<tr>
+<td><code>Execution</code> / <code>Verification</code></td>
+<td>执行结果和后置条件证据。</td>
+</tr>
+<tr>
+<td><code>AuditEvent</code> / <code>Report</code></td>
+<td>持久操作跟踪和可读结果。</td>
+</tr>
+</tbody></table>
+<p><code>resource_id</code> 是由 API、持久化、链接、指标和工作流使用的稳定引用。每个物理节点也有一个全局唯一不可变的 <code>node_name</code>，例如 <code>cg-data-0001</code>。主机名、IP 地址、端口、显示名称和别名可以更改，而无需创建新节点或数据库实例。</p>
+<h2 id="引擎身份">引擎身份<a class="heading-anchor" href="#引擎身份" aria-label="Link to 引擎身份">#</a></h2>
+<p>原生身份将观察绑定到稳定的平台资源：</p>
+<table>
+<thead>
+<tr>
+<th>引擎</th>
+<th>原生身份合同</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>MySQL</td>
+<td>实例身份是 <code>server_uuid</code>；主机名和端口是端点。</td>
+</tr>
+<tr>
+<td>PostgreSQL</td>
+<td>集群身份是 <code>system_identifier</code>；每个节点提供一个不可变的 <code>clusterguard.node_id</code> UUID，每个备用节点提供其主节点 UUID。</td>
+</tr>
+<tr>
+<td>Oracle</td>
+<td>数据库身份使用 <code>DBID + DB_UNIQUE_NAME</code>；RAC 实例是单独的资源。</td>
+</tr>
+<tr>
+<td>SQL Server</td>
+<td>可用性组身份使用 <code>group_id</code>；副本身份使用 <code>replica_id</code>。</td>
+</tr>
+</tbody></table>
+<p>当 MySQL 发现看到已知的 <code>server_uuid</code> 在新坐标时，现有资源 UUID 保留。旧坐标变为别名。冲突的原生身份、重复的活动端点所有权和模糊的别名更新被阻止，而不是启发式地合并。</p>
+<p>PostgreSQL 发现应用相同的规则，使用配置的节点 UUID。主机名、IP 或端口更改更新绑定的端点，而无需创建新实例。如果活动端点报告混合的 <code>system_identifier</code> 值、与集群的持久身份冲突或第一个身份绑定缺乏完整的活动端点覆盖，则完全刷新被拒绝。</p>
+<h2 id="适配器注册表">适配器注册表<a class="heading-anchor" href="#适配器注册表" aria-label="Link to 适配器注册表">#</a></h2>
+<p><code>DatabaseHAAdapter</code> 定义了引擎、能力、发现、拓扑、健康、预检查、计划、执行、验证、节点同步、元数据协调、指标和候选方法。注册表为所有四个引擎暴露了统一的能力映射。</p>
+<p>能力状态是显式的。不可用能力返回 <code>unsupported</code>，不存在猜测引擎行为的兜底路径。MySQL 适配器启用了原生复制拓扑、健康、指标、候选、元数据修正、受控切换/故障切换、旧主重新加入和白名单修复。只有配置变更 SQL 执行器和可执行写入端点提供器后，MySQL 执行能力才会声明为可用。节点生命周期由平台任务引擎负责，不能绕过通用门禁。PostgreSQL 适配器启用了身份安全的发现、拓扑、健康、原生指标、元数据检查、时间线感知候选评估、受控切换/故障切换、旧主回滚和重新加入、白名单修复和基础备份节点同步。只有所需操作凭据、受限节点控制器、端点提供器和集群安全证据全部可用时，PostgreSQL 变更能力才会声明为可用。Oracle 适配器在配置 DGMGRL 后提供 Data Guard Broker 发现、拓扑、健康、备库候选评估、预检查、计划、执行和验证；否则，依赖执行器的读取与执行返回 <code>unsupported</code>。SQL Server 适配器在配置 sqlcmd 后提供 Always On 发现、拓扑、健康、同步辅助副本候选评估、计划故障转移预检查、计划、执行、验证以及发送/重做队列指标；没有明确的数据丢失审批策略时，强制故障转移保持阻断。Oracle 指标和 Oracle/SQL Server 节点同步继续返回 <code>unsupported</code>，直至完成对应引擎实现。</p>
+<p>适配器拓扑链接使用引擎原生的源和目标身份。资源注册表在发布 <code>ReplicationLink</code> 资源之前将这些身份解析为不可变的平台 UUID。这将可变主机坐标排除在拓扑身份合同之外。</p>
+<h2 id="清单权威">清单权威<a class="heading-anchor" href="#清单权威" aria-label="Link to 清单权威">#</a></h2>
+<p>集群注册创建了活动数据库端点的权威集合。发现仅接收集群 UUID 和使用服务器端凭证注册的清单。注册和刷新是受专用 Bearer 令牌保护的控制操作。刷新调用者不能添加端点或在其请求中提供凭证。</p>
+<p>每个集群都有一个持久化的清单代次。任何活动数据库端点变更或元数据坐标修正都会递增代次，并使已发布拓扑失效。刷新在探测前捕获代次，提交时必须仍与该非零代次完全一致。探测期间清单发生变化时，整次刷新都会被拒绝。</p>
+<h2 id="刷新事务">刷新事务<a class="heading-anchor" href="#刷新事务" aria-label="Link to 刷新事务">#</a></h2>
+<p>MySQL 刷新遵循以下顺序：</p>
+<ol>
+<li>解析集群及其活动注册的数据库端点。</li>
+<li>捕获确切的清单代次，并按集群串行执行刷新。</li>
+<li>使用服务器端只读凭证探测每个端点。</li>
+<li>通过 MySQL <code>server_uuid</code> 协调观察，保留平台 UUID 和别名。</li>
+<li>构建实例、复制链接、探测覆盖、健康、异常和指标样本。</li>
+<li>原子地持久化完整的观察并发布一个拓扑快照。</li>
+</ol>
+<p>存储层保留持久化的观测时间水印。刷新必须严格推进该水印；时间相同或更早的观测会被拒绝。水印和清单代次在拓扑失效及进程重启后仍然保留。持久化失败会回滚整次刷新，因此读取方不会看到旧复制链接与新实例混合的状态。</p>
+<p>多个注册的别名可能解析到一个实例。它们的观察共享一个平台 UUID，指标持久化在每个周期中为解析的实例选择一个确定的完整样本。</p>
+<p>PostgreSQL 刷新使用一个单独的引擎过滤调度器和 PostgreSQL 凭据集。它从每个权威端点读取 <code>system_identifier</code>、主/恢复状态、只读状态、WAL 接收器状态、接收/重放 LSN、时间线和重放延迟。集群身份、端点绑定、实例、链接、探测和健康原子提交。缺少节点 UUID、混合系统身份、畸形时间线或 LSN、部分首次绑定失败时阻断，而不会发布一个半当前的拓扑。</p>
+<h2 id="候选智能">候选智能<a class="heading-anchor" href="#候选智能" aria-label="Link to 候选智能">#</a></h2>
+<p>候选评估仅使用最新的持久完整拓扑和显式探测证据。它需要恰好一个当前观察到的主节点。每个副本被评估以下内容：</p>
+<ul>
+<li>所选集群清单成员资格和健康的绑定探测证据；</li>
+<li>可达性和观察到的角色；</li>
+<li>维护状态和晋升资格；</li>
+<li>当前只读状态和来自确切发布的周期的探测证据；</li>
+<li>复制 IO 和 SQL 线程状态；</li>
+<li>复制源身份匹配当前主节点；</li>
+<li>在配置策略内已知的非负延迟；</li>
+<li>GTID 模式和可解析的执行集；</li>
+<li>错误事务和缺失事务/数据丢失风险；</li>
+<li>兼容的 MySQL 发布系列。</li>
+</ul>
+<p>阻止证据产生不合格的候选。警告、缺失事务计数、延迟、精确版本偏好和平台 UUID 提供合格候选之间的确定性排序。候选输出对 API 读者是建议性的；自动恢复控制器可能仅在稳定故障事件和所有通用门之后消费排名一的合格结果。</p>
+<p>PostgreSQL 候选是来自相同持久集群身份和时间线的备用节点，其源 UUID 匹配观察到的主节点。候选需要新鲜的绑定探测证据、流式 WAL 接收、活动重放、已知延迟和晋升资格。排序优先考虑最大的重放 LSN，然后是较低的延迟，然后是稳定的资源 UUID。所选资源 UUID 和观察绑定到不可变计划；在晋升前，操作锁下重新验证两者。</p>
+<h2 id="指标">指标<a class="heading-anchor" href="#指标" aria-label="Link to 指标">#</a></h2>
+<p>MySQL 发现存储有界累积和仪表样本。指标层推导出 QPS、TPS、每秒慢查询、当前连接数、运行线程数、缓冲池命中率和复制延迟。它发布：</p>
+<ul>
+<li>来自 <code>/api/v1/clusters/{id}/metrics</code> 的 JSON；</li>
+<li>来自 <code>/api/v1/clusters/{id}/metrics/prometheus</code> 的 Prometheus 文本。</li>
+</ul>
+<p>Prometheus 端点使用稳定的 <code>cluster_id</code> 和 <code>instance_id</code> 标签，可以直接抓取。ClusterGuard HA 没有第三方监控运行时依赖。</p>
+<p>PostgreSQL 存储原生连接、事务、死锁、临时字节、块读取、块命中、数据库大小、复制客户端、缓存命中和可选最长事务样本，以及拓扑派生的复制延迟。Prometheus 系列使用 <code>clusterguard_postgresql_*</code> 命名空间，Zabbix 键使用 <code>clusterguard.postgresql.*</code>。未知延迟或可选事务年龄被省略而不是报告为零，PostgreSQL 数据永远不会标记为 MySQL。</p>
+<h2 id="平台认证">平台认证<a class="heading-anchor" href="#平台认证" aria-label="Link to 平台认证">#</a></h2>
+<p>一个新的元数据存储使用首次登录密码 <code>admin123</code>、角色 <code>admin</code> 和 <code>MustChangePassword=true</code> 引导 <code>admin</code>。在重启或 Leader 更改期间，现有用户永远不会被覆盖。在任何平台数据可读之前，必须进行首次密码更改。密码使用 Argon2id，会话仅在与其它控制元数据相同的复制快照中存储 SHA-256 令牌和 CSRF 哈希。</p>
+<p>浏览器接收一个不透明的 HttpOnly SameSite 会话 Cookie 和一个独立的 CSRF Cookie。变更请求必须在 <code>X-CSRF-Token</code> 中提交对应 Cookie 值。会话绝对有效期为八小时；修改密码或注销会立即撤销会话。<code>admin</code> 拥有完整访问权限，<code>operator</code> 可以执行受控数据库操作，<code>viewer</code> 仅可读取。</p>
+<p>浏览器从不接收审批密钥。对于登录操作，API 使用认证的参与者创建持久计划，内部发出一次性授权，并直接传递给未更改的审批消耗阶段。服务客户端保持独立：控制 Bearer 认证客户端，显式的一次性授权授权确切的数据库计划。</p>
+<p>没有在线忘记密码绕过。恢复需要停止控制平面变更操作并恢复受保护的元数据，其管理员凭证已知；<code>PlatformUser</code> 记录的实时删除或直接哈希编辑超出安全模型。</p>
+<h2 id="工作流门">工作流门<a class="heading-anchor" href="#工作流门" aria-label="Link to 工作流门">#</a></h2>
+<p>所有实现的数据库变更操作使用：</p>
+<pre><code class="language-text">DISCOVER -&gt; PRECHECK -&gt; PLAN -&gt; SAFETY_GUARD -&gt; LOCK -&gt; APPROVE -&gt; EXECUTE -&gt; VERIFY -&gt; AUDIT -&gt; REPORT
+</code></pre>
+<p>适配器无法获取平台锁、审批操作、抑制审计或跳过验证。安全门是一个显式阶段，有自己的审计事件，并且总是在操作锁之前运行。工作流核心在任何门或适配器变更操作之前检查所有必需的预检查、计划、执行和验证能力。它固定操作使用的拓扑观察，记录集群 UUID 和观察时间戳，并在审批前在操作锁下重新验证相同的令牌。发现发布和操作执行使用相同的每集群隔离，因此刷新不能在重新验证和执行之间发布新快照。</p>
+<p>每个操作都有一个持久的 UUID 和调用者提供的幂等键。仓库原子地持久化其观察令牌、不可变计划摘要、引用的元数据修订、工作流阶段、完成的步骤尝试、执行和验证。重复使用相同的键用于相同的意图返回现有操作；重复使用它用于其他目标或操作类型是冲突。同一进程的重复不能终止活动操作，重启可以从观察到的步骤后置条件恢复。</p>
+<p>高风险数据库执行使用一次性 <code>ApprovalGrant</code>。平台会话在服务器内部创建和消费它。显式的服务请求返回一个随机的 <code>cgag_...</code> 令牌一次。复制的仓库仅存储其 SHA-256 哈希。授权默认为五分钟，不能超过十五分钟，并绑定到操作 UUID、集群、引擎、操作类型、目标 UUID、观察和计划摘要。在操作锁下，授权消耗和持久 <code>APPROVE</code> 过渡原子提交。重复使用、过期、目标不匹配或陈旧计划失败时阻断。服务执行路由不接受管理员控制凭证作为审批替代。</p>
+<p>MySQL 切换支持一个主节点和多个副本。执行要求选定目标合格、GTID 历史兼容、探测证据为当前状态、复制线程运行正常、版本系列兼容，并且端点提供器可执行。晋升前先隔离源节点，再将每个可达副本重新指向新主。只有独立验证出唯一可写实例和唯一目标 VIP 所有者后，操作才算成功。</p>
+<p>自动故障转移使用发现记录的 30 秒稳定事件。只有多数 Leader 可以提交持久操作。相同的事件在成功或不确定结果后不能重复。操作锁是 Raft 复制和续订的，安全门重新检查多数，端点变更操作需要一个单独的短租约。受限的数据节点代理在节点无法获得有效签名保持决策时移除陈旧的 VIP 并持久化两个 MySQL 只读标志。</p>
+<p>自动恢复通过独立的内部入口进入工作流。它不签发或消费人工审批授权，也不能通过 HTTP 字段选择。事件 ID 会记录在 <code>APPROVE</code> 阶段，共识、安全门禁、复制操作锁、隔离、执行、验证、审计和报告仍全部强制执行。</p>
+<p>恢复从不将预先存在的源隔离本身视为足够。持久操作必须拥有完成的 <code>fence_source</code> 步骤，适配器在继续之前重新检查源和目标原生身份、源隔离、GTID 历史、二进制日志、版本兼容性、目标复制状态和写入端点后置条件。</p>
+<p>提交后验证绑定到不可变计划摘要和计划的源/目标 UUID，而不是预变更操作观察时间戳。这允许在不削弱原生身份、角色、只读、复制或端点所有者检查的情况下验证刷新后的拓扑。</p>
+<p>审计和报告持久化在变更操作提交点之前采用失败时阻断（fail-closed）机制。
+变更操作提交之后，日志失败不会跳过验证。工作流完成验证并返回 <code>indeterminate</code>，保留该操作可能已更改数据库状态，且不能盲目重试。
+如果原子元数据重命名成功，但目录同步无法确认崩溃耐久性，提交的结果将被保留，验证仍然执行，API 返回协调后的资源和 <code>indeterminate</code> 执行。终端报告使用一个报告 UUID 下的崩溃可恢复的两阶段协议，用于非操作元数据工作流。持久数据库操作则在同一个仓库快照中发布其终端记录、最终审计事件和报告。失败的发布不会暴露这些终端记录；成功的发布则会暴露所有这些记录。</p>
+<p>集群注册和拓扑发布使用相同的重命名后语义。如果目录同步无法确认崩溃耐久性，API 返回 HTTP <code>500</code>，包含已提交的集群和端点 UUID，或拓扑观察令牌 <code>cluster_id@observed_at</code>，而不是丢弃它们并邀请进行不安全的重试。</p>
+<p>平台元数据修正不同于数据库变更操作。它可以在原生身份校验通过后更新已知资源的可变坐标，将旧坐标记录为别名，推进清单代次，并在重新信任拓扑前强制执行一次新观测。</p>
+
+          <footer class="document-footer">
+            <span>源文件: <code>docs/zh-CN/architecture.md</code></span>
+            <a href="../index.html">文档语言入口</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="本页目录">
+          <strong>本页目录</strong>
+          <a class="toc-level-2" href="#设计目标">设计目标</a><a class="toc-level-2" href="#资源模型">资源模型</a><a class="toc-level-2" href="#引擎身份">引擎身份</a><a class="toc-level-2" href="#适配器注册表">适配器注册表</a><a class="toc-level-2" href="#清单权威">清单权威</a><a class="toc-level-2" href="#刷新事务">刷新事务</a><a class="toc-level-2" href="#候选智能">候选智能</a><a class="toc-level-2" href="#指标">指标</a><a class="toc-level-2" href="#平台认证">平台认证</a><a class="toc-level-2" href="#工作流门">工作流门</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

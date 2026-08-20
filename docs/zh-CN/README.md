@@ -1,5 +1,7 @@
 # ClusterGuard HA 中文文档
 
+离线 HTML 文档中心入口为 [`../html/index.html`](../html/index.html)，包含本手册、迁移流程、验收证据、本地搜索和打印页面，不依赖外部网络。
+
 <!-- LANGUAGE-SWITCH -->
 > **语言：** [English](../en-US/README.md) | 简体中文
 <!-- /LANGUAGE-SWITCH -->
@@ -30,9 +32,11 @@
    完成控制节点、数据节点、数据库、Agent、Raft、VIP 和证书部署。
 4. [数据库接入手册](database-preparation.md)
    准备数据库原生身份、最小权限、复制和健康检查条件。
-5. [运维操作手册](operations-manual.md)
+5. [从 Orchestrator 迁移](orchestrator-migration.md)
+   在不重装已有数据库的前提下接入 MySQL，并安全转移唯一恢复与 VIP 控制权。
+6. [运维操作手册](operations-manual.md)
    执行切换、旧主恢复、节点扩容、计划关机、审计和应急处理。
-6. [版本与发版规范](version-release-policy.md)
+7. [版本与发版规范](version-release-policy.md)
    构建新版本、维护标签和发布 PostgreSQL 2.2 时使用。
 
 ## 验收证据

@@ -1,0 +1,11 @@
+{
+  "name": "clusterguard-ha-docs",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:html": "node build-html-docs.mjs"
+  },
+  "devDependencies": {
+    "marked": "17.0.5"
+  }
+}

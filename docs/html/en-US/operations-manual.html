@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="Operations Manual - ClusterGuard HA operational documentation">
+  <title>Operations Manual | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">Skip to content</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>Search documentation</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="Filter by title">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual" aria-current="page" class="active">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
+      <div class="sidebar-meta">
+        <span>Offline documentation build</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">Open navigation</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>Operations Manual</strong></div>
+        <div class="header-actions">
+          <a href="../zh-CN/operations-manual.html" lang="zh-CN">简体中文</a>
+          <button id="print-button" type="button">Print</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha-operations-manual">ClusterGuard HA Operations Manual<a class="heading-anchor" href="#clusterguard-ha-operations-manual" aria-label="Link to ClusterGuard HA Operations Manual">#</a></h1>
+<p>This document is used for daily duty, changes, fault handling, and auditing. All high-availability operations must go through the platform&#39;s unified workflow:</p>
+<pre><code class="language-text">DISCOVER -&gt; PRECHECK -&gt; PLAN -&gt; SAFETY_GUARD -&gt; LOCK
+-&gt; APPROVE -&gt; EXECUTE -&gt; VERIFY -&gt; AUDIT -&gt; REPORT
+</code></pre>
+<p>Adapters must not bypass this process and directly modify the database.</p>
+<p>Version boundary: <code>2.1-45</code> is the MySQL sealed version; PostgreSQL operations start from 2.2. The content of Oracle and SQL Server in this document can only be executed after the corresponding official version is released and on-site acceptance is completed.</p>
+<h2 id="1-login">1. Login<a class="heading-anchor" href="#1-login" aria-label="Link to 1. Login">#</a></h2>
+<p>Access:</p>
+<pre><code class="language-text">https://&lt;ANY_CONTROLLER&gt;:3000/
+</code></pre>
+<p>Temporary account for new metadata storage:</p>
+<pre><code class="language-text">Username: admin
+Initial password: admin123
+</code></pre>
+<p>Password must be changed on first login; before changing the password, all cluster, topology, audit read, and change operations except authentication interfaces are rejected. The default password is only stored as an Argon2id hash and is not written into configuration, environment files, audit, or reports. Operations initiated within the platform use authenticated sessions, CSRF, and role authorization; users do not need to manually input control tokens or one-time approval tokens. External APIs use Bearer control tokens; high-risk service calls still require a one-time Approval bound to the operation.</p>
+<p>Modifying the administrator password is prohibited when the backend JSON or password hash is forgotten. Follow the local one-time recovery process:</p>
+<pre><code class="language-bash">sudo -u clusterguard /usr/local/bin/clusterguard admin prepare-recovery
+</code></pre>
+<p>Place the generated recovery artifact with <code>0600</code> permissions on all control nodes, perform a rolling restart, and immediately change the password after logging in with a one-time temporary password.</p>
+<h2 id="2-control-plane-health">2. Control Plane Health<a class="heading-anchor" href="#2-control-plane-health" aria-label="Link to 2. Control Plane Health">#</a></h2>
+<p>Check the control plane daily, not directly switch:</p>
+<pre><code class="language-bash">curl --fail --cacert /etc/clusterguard/tls/ca.crt \
+  https://127.0.0.1:3000/healthz
+curl --fail --cacert /etc/clusterguard/tls/ca.crt \
+  https://127.0.0.1:3000/readyz
+cgctl --server https://127.0.0.1:3000 \
+  --ca-file /etc/clusterguard/tls/ca.crt status
+</code></pre>
+<p>Normal standards:</p>
+<ul>
+<li>Only one Raft Leader</li>
+<li>Voter count is odd</li>
+<li>quorum confirmed is yes</li>
+<li>mutation authority is yes</li>
+<li>active/indeterminate operation count is as expected</li>
+<li>Three-node metadata revision is eventually consistent</li>
+</ul>
+<p>When a Follower receives a write request, it forwards it to the current Leader. If the Leader is unknown or has lost the majority, writes must be blocked and cannot be silently executed on the local machine.</p>
+<h2 id="3-cluster-access">3. Cluster Access<a class="heading-anchor" href="#3-cluster-access" aria-label="Link to 3. Cluster Access">#</a></h2>
+<p>Go to &quot;Cluster Management&quot; on the console:</p>
+<ol>
+<li>Select the database type.</li>
+<li>Enter the fixed cluster name.</li>
+<li>Add the complete instance list.</li>
+<li>Select a fixed node name and platform UUID for each node.</li>
+<li>Fill in the hostname, IP, port, and native identity of the database.</li>
+<li>Configure VIP, Oracle service, or SQL Server Listener.</li>
+<li>After saving, immediately perform discovery and health checks.</li>
+</ol>
+<p>The database list is the control boundary. The platform must not operate on nodes outside the list.</p>
+<p>Command line view:</p>
+<pre><code class="language-bash">cgctl --server https://127.0.0.1:3000 \
+  --ca-file /etc/clusterguard/tls/ca.crt clusters
+cgctl --server https://127.0.0.1:3000 \
+  --ca-file /etc/clusterguard/tls/ca.crt topology &lt;CLUSTER_UUID&gt;
+cgctl --server https://127.0.0.1:3000 \
+  --ca-file /etc/clusterguard/tls/ca.crt health &lt;CLUSTER_UUID&gt;
+</code></pre>
+<h2 id="4-metadata-changes">4. Metadata Changes<a class="heading-anchor" href="#4-metadata-changes" aria-label="Link to 4. Metadata Changes">#</a></h2>
+<p>When modifying hostname, IP, or port:</p>
+<ol>
+<li>Open &quot;Modify Metadata&quot; in the top right corner of &quot;Topology&quot;.</li>
+<li>Select existing platform resources, do not create new nodes.</li>
+<li>Enter the new endpoint and reason for the change.</li>
+<li>Run metadata pre-check.</li>
+<li>Confirm that the native database identity matches existing resources.</li>
+<li>Execute reconcile.</li>
+<li>Verify that the old endpoint has been saved as an alias, and <code>resource_id</code> has not changed.</li>
+</ol>
+<p>When the same engine identity is discovered, it must be merged into existing resources. If identity mismatch, duplicate resources, or cross-cluster node reuse are encountered, block the operation first, then have the administrator merge the alias or retire the incorrect endpoint.</p>
+<h2 id="5-planned-switch">5. Planned Switch<a class="heading-anchor" href="#5-planned-switch" aria-label="Link to 5. Planned Switch">#</a></h2>
+<p>Applicable to scenarios where the current primary is healthy and a controlled switch is needed.</p>
+<ol>
+<li>Select the target cluster in the top left.</li>
+<li>Confirm the current primary, candidate primary, VIP/service, and delay.</li>
+<li>Select the target node from the candidate list.</li>
+<li>Click &quot;Unlock Operation&quot;; the lock is only valid for the current session and a short time window.</li>
+<li>Click &quot;Execute Switch&quot;.</li>
+<li>The page should display the pre-check, plan, safety gate, execution, and verification stages.</li>
+<li>Wait for the final state to be successful, do not consider &quot;Submitted&quot; as successful.</li>
+</ol>
+<p>Success must be simultaneously satisfied:</p>
+<ul>
+<li>New primary is writable</li>
+<li>Old primary is read-only or isolated</li>
+<li>Replicas follow the new primary</li>
+<li>VIP/Oracle service/SQL Server Listener points to the new primary</li>
+<li>Operation lock has been released</li>
+<li>Audit and reports have been committed to the database</li>
+</ul>
+<p>If the status is <code>indeterminate</code> or &quot;Needs Review&quot;, immediately stop repeating clicks and query the current status by operation UUID:</p>
+<pre><code class="language-bash">cgctl --server https://127.0.0.1:3000 \
+  --ca-file /etc/clusterguard/tls/ca.crt operation &lt;OPERATION_UUID&gt;
+</code></pre>
+<h2 id="6-failover">6. Failover<a class="heading-anchor" href="#6-failover" aria-label="Link to 6. Failover">#</a></h2>
+<p>Failover is used for scenarios where the original primary is unreachable or has lost write capability, and it is not equivalent to a planned switch.</p>
+<p>Confirm before execution:</p>
+<ul>
+<li>Control nodes still have a Raft majority</li>
+<li>The original primary has been proven unable to continue writing through fencing, network isolation, or power isolation</li>
+<li>Candidate node replication status and data loss risk have been assessed</li>
+<li>Writer endpoint will not remain on the old primary</li>
+<li>There is no current cluster operation lock</li>
+</ul>
+<p>Automatic failover does not require manual input of tokens, but it still must pass Safety Guard, Raft Leader, majority, idempotency key, Operation Lock, verification, and audit. If any of these conditions are not met, the operation should be blocked.</p>
+<p>After network partition recovery, the old primary must not automatically resume writing. It can only enter the old primary recovery process as a pending repair node.</p>
+<h2 id="7-old-primary-recovery">7. Old Primary Recovery<a class="heading-anchor" href="#7-old-primary-recovery" aria-label="Link to 7. Old Primary Recovery">#</a></h2>
+<p>&quot;Old Primary Recovery&quot; is used to re-add the old primary to the current primary after a switch. MySQL 8.0, 8.4, and 9.7 use the same &quot;One-Click Recovery to Slave&quot; entry, and operators do not need to first determine whether incremental re-attachment or full rebuild is needed.</p>
+<ol>
+<li>Confirm that the current primary and Writer endpoint are normal.</li>
+<li>Select the registered out-of-cluster old primary.</li>
+<li>Start the repaired database service; the old primary must maintain <code>read_only=ON</code> and
+<code>super_read_only=ON</code>, and must not manually restore write permissions or bind VIP.</li>
+<li>Unlock the operation on the console, select the old primary, and click &quot;One-Click Recovery to Slave&quot;.</li>
+<li>The console first actively refreshes cluster discovery to avoid using old health snapshots when the service is just started.</li>
+<li>The platform verifies fixed resource identity, current primary, read-only status, GTID set, required binlog,
+cluster list, and Writer endpoint uniqueness.</li>
+<li>The platform automatically selects incremental re-attachment or full rebuild.</li>
+<li>Finally, verify replication threads, delay, read-only status, replication source, single primary, and VIP uniqueness.</li>
+</ol>
+<h3 id="7-1-mysql-automatic-recovery-decision">7.1 MySQL Automatic Recovery Decision<a class="heading-anchor" href="#7-1-mysql-automatic-recovery-decision" aria-label="Link to 7.1 MySQL Automatic Recovery Decision">#</a></h3>
+<table>
+<thead>
+<tr>
+<th>Evidence</th>
+<th>Automatic Action</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Old primary GTID is a subset of the current primary GTID, and the required binlog to catch up still exists</td>
+<td>GTID incremental re-attachment</td>
+<td>Re-point to the current primary and start replication, fastest speed</td>
+</tr>
+<tr>
+<td>The current primary has already purged the binlog required for the old primary to catch up</td>
+<td>Full rebuild</td>
+<td>Resynchronize complete data from the current primary and establish replication</td>
+</tr>
+<tr>
+<td>The old primary has errant GTID that the current primary does not have</td>
+<td>Full rebuild</td>
+<td>Do not attempt to skip transactions or forcibly merge forked data</td>
+</tr>
+<tr>
+<td>The old primary is still writable, native identity does not match, is not on the cluster list, current primary or Writer endpoint is not unique</td>
+<td>Block</td>
+<td>Re-execute after fixing the facts, no speculative changes</td>
+</tr>
+</tbody></table>
+<p>&quot;Lost binlog&quot; refers to the current primary having purged the binary logs required for the old primary to catch up. The platform cannot and will not fabricate missing transactions; the safe recovery method is to preserve audit evidence, clean up the old primary&#39;s data copy, use the current primary as the donor to complete full synchronization, and then rejoin as a read-only replica. Full rebuild requires platform administrator permissions, node lifecycle execution capability, and complete verification; if any condition is not met, it will fail-closed.</p>
+<p>After recovery, you must simultaneously see: the current primary is the only writable, the recovered node is read-only, replication IO/SQL threads are running, delay is zero, data verification has passed, VIP is only on the current primary, and the operation report status is succeeded. Seeing &quot;Service has started&quot; does not equal recovery success.</p>
+<p>Engine strategies:</p>
+<ul>
+<li>MySQL: Incremental re-attachment when GTID and binlog are complete; automatically enter the approved full rebuild process when there is a binlog gap or errant GTID.</li>
+<li>PostgreSQL: Prefer <code>pg_rewind</code> if conditions are met, otherwise <code>pg_basebackup</code>.</li>
+<li>Oracle: Reinstated/validated by Data Guard Broker.</li>
+<li>SQL Server: Recover synchronization based on AG replica status, cannot fake healthy replicas that are not synchronized.</li>
+</ul>
+<h2 id="8-node-expansion-and-repair">8. Node Expansion and Repair<a class="heading-anchor" href="#8-node-expansion-and-repair" aria-label="Link to 8. Node Expansion and Repair">#</a></h2>
+<p>The &quot;Add or Repair Node&quot; page on the console&#39;s &quot;Node&quot; page uses the same lifecycle process:</p>
+<ol>
+<li>Select data node, control node, or hybrid node.</li>
+<li>Enter the permanent fixed node name and platform UUID.</li>
+<li>Enter the SSH endpoint.</li>
+<li>Select the database version and port.</li>
+<li>Upload or select an approved package.</li>
+<li>Pre-check disk, port, dependencies, identity, and source node.</li>
+<li>Install the database.</li>
+<li>Select clone, xtrabackup, mysqldump, pg_basebackup, or pg_rewind.</li>
+<li>Synchronize data and establish replication.</li>
+<li>Submit metadata after verification.</li>
+</ol>
+<p>All of the above steps are built-in ClusterGuard workflows and do not require operators to manually execute installation or replication commands on the target node. Task details will separately display &quot;Pre-check, Install, Data Synchronization, Replication Configuration, Verification, Metadata Submission&quot;; if any step fails, subsequent submissions will be stopped, and sanitized logs and reports will be retained for review.</p>
+<p>The number of data nodes is unlimited. Raft control nodes must maintain an odd number, commonly 3 or 5. When expanding from 3 control nodes, the console requires entering two different fixed node names, platform UUIDs, hostnames, and IPs in one controlled task and completing them:</p>
+<ol>
+<li>Verify the SSH identity, fixed node list, and address uniqueness of the two target machines.</li>
+<li>Install ClusterGuard control service and selected database Adapter Runtime.</li>
+<li>Issue independent API and Raft mTLS certificates for each control node.</li>
+<li>Start the service and verify the node identity.</li>
+<li>The current Leader sequentially executes Raft <code>AddVoter</code>, and the final member count must be 5.</li>
+<li>After verifying majority, Leader, member list, and metadata revision convergence, submit the node metadata.</li>
+</ol>
+<p>If any node fails during paired installation, the platform will stop the new installation control role in reverse order; if Raft member submission fails midway, the already joined voter will be removed in reverse order, and even members will not be left. If the target state is unclear, the task is marked as &quot;Needs Review&quot; and will not falsely report success.</p>
+<p>Control node dynamically issued materials are delivered through the offline installation asset directory:</p>
+<pre><code class="language-text">assets/pki/api-issuer.crt       0644
+assets/pki/api-issuer.key       0640 root:clusterguard
+assets/pki/raft-issuer.crt      0644
+assets/pki/raft-issuer.key      0640 root:clusterguard
+</code></pre>
+<p>The API issuer must be trusted by the trust chain pointed to by <code>tls_ca_file</code>, and the Raft issuer must be trusted by the trust chain pointed to by <code>consensus.tls_ca_file</code>. All four paths must be configured simultaneously; private keys must not be placed in browsers, task requests, audit, reports, or regular logs. After physical damage to a node, the original platform UUID is reused; if the native database identity changes due to reconstruction, it must go through a clear replacement/reconciliation process.</p>
+<h2 id="9-operation-logs">9. Operation Logs<a class="heading-anchor" href="#9-operation-logs" aria-label="Link to 9. Operation Logs">#</a></h2>
+<p>&quot;Operation Logs&quot; is an independent menu and is not embedded in the operation page. Each record must display at least:</p>
+<ul>
+<li>Time</li>
+<li>Cluster name and UUID</li>
+<li>Original primary</li>
+<li>Target primary</li>
+<li>Operation type</li>
+<li>Operator or automated identity</li>
+<li>Execution mode</li>
+<li>Risk level</li>
+<li>Status</li>
+<li>Operation UUID, report UUID</li>
+</ul>
+<p>The original return is folded by default and displayed after clicking. The original return must not leak passwords, sessions, Bearer tokens, one-time approvals, or Agent secrets.</p>
+<p>The cluster field in the logs must display the fixed cluster name and must not incorrectly display hostname:port. Historical records should be linked by resource UUID, and even if the hostname or port changes later, they should be correctly restored.</p>
+<h2 id="10-metrics-and-monitoring">10. Metrics and Monitoring<a class="heading-anchor" href="#10-metrics-and-monitoring" aria-label="Link to 10. Metrics and Monitoring">#</a></h2>
+<p>Read-only monitoring uses an independent monitoring token and does not use control tokens. Monitoring must cover at least:</p>
+<ul>
+<li>Control service, Leader, quorum, metadata revision</li>
+<li>Cluster health, primary, candidate nodes</li>
+<li>Replication delay and thread/process status</li>
+<li>VIP/service/Listener owner</li>
+<li>Active, failed, and indeterminate operations</li>
+<li>Agent reconcile status</li>
+</ul>
+<p>Prometheus can read the monitoring interface exposed by the platform and does not require additional deployment of database exporters. Zabbix pulls the same health and performance data through the read-only JSON API.</p>
+<h2 id="11-scheduled-shutdown-and-automatic-recovery">11. Scheduled Shutdown and Automatic Recovery<a class="heading-anchor" href="#11-scheduled-shutdown-and-automatic-recovery" aria-label="Link to 11. Scheduled Shutdown and Automatic Recovery">#</a></h2>
+<p>Applicable to scenarios such as data center maintenance, whole machine migration, and business windows that require safely shutting down the entire MySQL master-slave cluster. Before shutdown, the platform automatically adds protection, and after reboot, systemd units automatically recover, with no manual intervention required throughout the process.</p>
+<h3 id="11-1-two-shutdown-modes">11.1 Two Shutdown Modes<a class="heading-anchor" href="#11-1-two-shutdown-modes" aria-label="Link to 11.1 Two Shutdown Modes">#</a></h3>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Behavior</th>
+<th>Applicable Scenarios</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>service</code></td>
+<td>Only stop MySQL service (first replicas, then primary), host remains on</td>
+<td>Database software upgrade, configuration change, short downtime window</td>
+</tr>
+<tr>
+<td><code>poweroff</code></td>
+<td>All nodes power off in parallel</td>
+<td>Data center power outage maintenance, rack migration</td>
+</tr>
+</tbody></table>
+<h3 id="11-2-execute-shutdown">11.2 Execute Shutdown<a class="heading-anchor" href="#11-2-execute-shutdown" aria-label="Link to 11.2 Execute Shutdown">#</a></h3>
+<p>Daily operations use the console <strong>Topology -&gt; Power Lifecycle -&gt; One-Click Shutdown</strong>. The default selects
+<code>service</code>, only stopping the database service, keeping the server on. Logged-in platform administrators are issued and
+consume short-term one-time approvals by the backend, and the approval key is not exposed in the browser.</p>
+<p>Automated commands also go through the unified Power API; actual execution must explicitly provide a one-time approval token:</p>
+<pre><code class="language-bash">cgctl cluster shutdown --cluster &lt;CLUSTER_DISPLAY_NAME&gt; --mode service|poweroff \
+  --approval-token &lt;ONE_TIME_TOKEN&gt;
+cgctl cluster shutdown --cluster &lt;CLUSTER_DISPLAY_NAME&gt; --mode service --dry-run
+</code></pre>
+<p><code>--dry-run</code> only performs pre-checks, then automatically cancels the temporary lifecycle, without changing the database or host status.
+There is no direct script entry that bypasses Safety Guard, locks, approvals, audit, and Agent whitelist.</p>
+<p>Complete execution process (any step failure will interrupt and retain protection, see 11.4):</p>
+<ol>
+<li>Refresh topology (discover), with each signed Agent atomically writing to
+<code>/etc/clusterguard/power-snapshots/&lt;CLUSTER_UUID&gt;.json</code> (directory 0700, file 0600).
+Multiple clusters on the same host will not overwrite each other&#39;s snapshots.</li>
+<li>Freeze automatic recovery (recovery-freeze): automatic failover, reboot bootstrapping, manual switch all blocked.</li>
+<li>Mark all instances as maintenance.</li>
+<li>Execute <code>SET PERSIST_ONLY read_only=ON; SET PERSIST_ONLY super_read_only=ON</code> on all nodes: not effective during runtime, persisted after reboot, to prevent accidental writes.</li>
+<li>Stop by mode: <code>service</code> stops replicas first, then the primary; <code>poweroff</code> powers off all nodes in parallel.</li>
+</ol>
+<h3 id="11-3-automatic-recovery-after-reboot">11.3 Automatic Recovery After Reboot<a class="heading-anchor" href="#11-3-automatic-recovery-after-reboot" aria-label="Link to 11.3 Automatic Recovery After Reboot">#</a></h3>
+<p>Two systemd units are enabled by default with installation. During boot, it scans each cluster&#39;s snapshot directory; if the directory is empty, it skips directly:</p>
+<ul>
+<li><code>clusterguard-cluster-restore.service</code>: First confirms with the online control plane that this snapshot still corresponds to an ongoing
+planned recovery, then starts the local database service and waits for readiness. MySQL only allows the immutable instance ID
+specified in the snapshot to release the persistent and runtime read-only status of the primary; ordinary reboots encountering old snapshots will reject execution before changing roles.
+Then reports boot/recovering and triggers topology discovery.</li>
+<li><code>clusterguard-cluster-finalize.service</code>: Waits for control plane health (<code>/healthz</code>, maximum 60 seconds),
+then polls the topology until the primary instance is healthy (every 5 seconds, maximum 600 seconds); after confirming health, completes verification,
+releases recovery freeze and cluster maintenance protection, and writes <code>recovered_at</code> only in the corresponding cluster snapshot.</li>
+</ul>
+<p>Note: <code>poweroff</code> can only safely power off, software cannot power on a machine that has already physically powered off. Automatic power-on requires
+VMware auto-start/API, IPMI/iDRAC/iLO, Wake-on-LAN, or BIOS power-on on resume; once the operating system is
+started, ClusterGuard will automatically complete database, topology, replication, and protection status recovery.</p>
+<h3 id="11-4-timeout-and-fail-closed">11.4 Timeout and Fail-Closed<a class="heading-anchor" href="#11-4-timeout-and-fail-closed" aria-label="Link to 11.4 Timeout and Fail-Closed">#</a></h3>
+<ul>
+<li>If finalize times out and the primary is still not healthy: <strong>Protection is not released</strong>, the script outputs CRITICAL logs and exits normally, waiting for manual handling.</li>
+<li>After manually confirming that the problem has been resolved, protection can be manually released:</li>
+</ul>
+<pre><code class="language-bash">curl -sk -X POST -H &quot;Authorization: Bearer ${CG_CONTROL_TOKEN}&quot; \
+  -H &#39;Content-Type: application/json&#39; \
+  -d &#39;{&quot;freeze&quot;:false}&#39; https://127.0.0.1:3000/api/v1/clusters/&lt;CLUSTER_UUID&gt;/recovery-freeze
+</code></pre>
+<ul>
+<li>After deleting the snapshot, the two recovery units automatically become no-ops; repeating restore/finalize on an already finalized snapshot is also an idempotent no-op.</li>
+</ul>
+<h3 id="11-5-view-recovery-status">11.5 View Recovery Status<a class="heading-anchor" href="#11-5-view-recovery-status" aria-label="Link to 11.5 View Recovery Status">#</a></h3>
+<pre><code class="language-bash">cgctl cluster restore-status [--cluster &lt;CLUSTER_UUID&gt;]
+</code></pre>
+<p>Output whether the snapshot exists, cluster information, <code>recovered_at</code>, recovery freeze status (<code>frozen</code>/<code>active</code>), each instance&#39;s role/health/replication delay/maintenance mark, and recovery advice based on status. If <code>--cluster</code> is not specified, the local snapshot&#39;s cluster UUID is used by default.</p>
+<h2 id="12-backup-and-recovery">12. Backup and Recovery<a class="heading-anchor" href="#12-backup-and-recovery" aria-label="Link to 12. Backup and Recovery">#</a></h2>
+<p>Daily backup:</p>
+<ul>
+<li><code>/etc/clusterguard/</code>, key and password files separately encrypted</li>
+<li><code>/var/lib/clusterguard/metadata.json</code></li>
+<li>Raft data directory</li>
+<li>Operation audit and report export</li>
+<li>Current RPM, SHA-256, configuration version, and BUILD-INFO</li>
+</ul>
+<p>The database itself must still use the formal backup system of each engine; control plane metadata backup cannot replace database backup.</p>
+<p>Recovery requirements:</p>
+<ul>
+<li>Single control node configuration recovery can use <code>config-backups</code></li>
+<li>Raft metadata recovery must stop all control nodes and use a consistent recovery point</li>
+<li>Do not hot copy an old Raft directory from one node to a running cluster</li>
+<li>After recovery, first verify Leader/quorum, then enable any automatic switch or VIP reconcile</li>
+</ul>
+<h2 id="13-emergency-handling">13. Emergency Handling<a class="heading-anchor" href="#13-emergency-handling" aria-label="Link to 13. Emergency Handling">#</a></h2>
+<h3 id="13-1-unknown-leader-or-lost-quorum">13.1 Unknown Leader or Lost Quorum<a class="heading-anchor" href="#13-1-unknown-leader-or-lost-quorum" aria-label="Link to 13.1 Unknown Leader or Lost Quorum">#</a></h3>
+<ul>
+<li>Stop all manual and automatic database switches</li>
+<li>Check 10009/TCP, certificates, clocks, and voter status</li>
+<li>After recovering the majority of nodes, confirm mutation authority</li>
+<li>Prohibit bypassing gates on followers</li>
+</ul>
+<h3 id="13-2-dual-vip-or-writer-endpoint-misalignment">13.2 Dual VIP or Writer endpoint Misalignment<a class="heading-anchor" href="#13-2-dual-vip-or-writer-endpoint-misalignment" aria-label="Link to 13.2 Dual VIP or Writer endpoint Misalignment">#</a></h3>
+<ul>
+<li>Immediately isolate business write traffic</li>
+<li>Execute endpoint owner detection on all listed nodes</li>
+<li>Remove VIP/Listener ownership on non-primary nodes</li>
+<li>Confirm the unique writable primary and reacquire the majority lease</li>
+<li>Restore business after completing verification</li>
+</ul>
+<h3 id="13-3-operation-timeout-or-uncertain-status">13.3 Operation Timeout or Uncertain Status<a class="heading-anchor" href="#13-3-operation-timeout-or-uncertain-status" aria-label="Link to 13.3 Operation Timeout or Uncertain Status">#</a></h3>
+<ul>
+<li>Do not repeatedly click continuously</li>
+<li>Query using operation UUID or idempotency key</li>
+<li>Check the real database role and endpoint owner</li>
+<li>Handle based on verification failed checks</li>
+<li>Only re-initiate after confirming that the previous operation has not executed or has safely ended</li>
+</ul>
+<h3 id="13-4-missing-database-client">13.4 Missing Database Client<a class="heading-anchor" href="#13-4-missing-database-client" aria-label="Link to 13.4 Missing Database Client">#</a></h3>
+<ul>
+<li>Control plane should return a clear block</li>
+<li>Install a matching version client from an approved offline source</li>
+<li>Execute <code>clusterguard --check-config</code></li>
+<li>Restart follower for verification and then roll out other control nodes</li>
+</ul>
+<h3 id="13-5-lost-administrator-password">13.5 Lost Administrator Password<a class="heading-anchor" href="#13-5-lost-administrator-password" aria-label="Link to 13.5 Lost Administrator Password">#</a></h3>
+<ul>
+<li>Pause control plane changes</li>
+<li>Backup metadata and Raft</li>
+<li>Use local one-time recovery artifact</li>
+<li>Keep majority nodes using the same artifact</li>
+<li>Immediately change the password after logging in and check security audit</li>
+</ul>
+<h2 id="14-duty-checklist">14. Duty Checklist<a class="heading-anchor" href="#14-duty-checklist" aria-label="Link to 14. Duty Checklist">#</a></h2>
+<p>Daily:</p>
+<ul>
+<li>Leader, quorum, readyz</li>
+<li>All cluster primaries and Writer endpoints are consistent</li>
+<li>Replication delay and abnormal threads</li>
+<li>Failed or indeterminate operations</li>
+<li>Agent reconcile and certificate expiration</li>
+</ul>
+<p>Weekly:</p>
+<ul>
+<li>Execute read-only health check and candidate evaluation</li>
+<li>Export audit, report</li>
+<li>Verify backup readability</li>
+<li>Check database account and SSH key expiration time</li>
+</ul>
+<p>Monthly:</p>
+<ul>
+<li>Execute planned switch and old primary recovery in test environment</li>
+<li>Verify control node rolling restart</li>
+<li>Verify metadata hostname/IP/port reconcile</li>
+<li>Conduct a recovery drill with one control plane backup and one database backup</li>
+<li>Review least privilege, network ACL, and automatic switch strategy</li>
+</ul>
+
+          <footer class="document-footer">
+            <span>Source: <code>docs/en-US/operations-manual.md</code></span>
+            <a href="../index.html">Documentation language home</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="On this page">
+          <strong>On this page</strong>
+          <a class="toc-level-2" href="#1-login">1. Login</a><a class="toc-level-2" href="#2-control-plane-health">2. Control Plane Health</a><a class="toc-level-2" href="#3-cluster-access">3. Cluster Access</a><a class="toc-level-2" href="#4-metadata-changes">4. Metadata Changes</a><a class="toc-level-2" href="#5-planned-switch">5. Planned Switch</a><a class="toc-level-2" href="#6-failover">6. Failover</a><a class="toc-level-2" href="#7-old-primary-recovery">7. Old Primary Recovery</a><a class="toc-level-3" href="#7-1-mysql-automatic-recovery-decision">7.1 MySQL Automatic Recovery Decision</a><a class="toc-level-2" href="#8-node-expansion-and-repair">8. Node Expansion and Repair</a><a class="toc-level-2" href="#9-operation-logs">9. Operation Logs</a><a class="toc-level-2" href="#10-metrics-and-monitoring">10. Metrics and Monitoring</a><a class="toc-level-2" href="#11-scheduled-shutdown-and-automatic-recovery">11. Scheduled Shutdown and Automatic Recovery</a><a class="toc-level-3" href="#11-1-two-shutdown-modes">11.1 Two Shutdown Modes</a><a class="toc-level-3" href="#11-2-execute-shutdown">11.2 Execute Shutdown</a><a class="toc-level-3" href="#11-3-automatic-recovery-after-reboot">11.3 Automatic Recovery After Reboot</a><a class="toc-level-3" href="#11-4-timeout-and-fail-closed">11.4 Timeout and Fail-Closed</a><a class="toc-level-3" href="#11-5-view-recovery-status">11.5 View Recovery Status</a><a class="toc-level-2" href="#12-backup-and-recovery">12. Backup and Recovery</a><a class="toc-level-2" href="#13-emergency-handling">13. Emergency Handling</a><a class="toc-level-3" href="#13-1-unknown-leader-or-lost-quorum">13.1 Unknown Leader or Lost Quorum</a><a class="toc-level-3" href="#13-2-dual-vip-or-writer-endpoint-misalignment">13.2 Dual VIP or Writer endpoint Misalignment</a><a class="toc-level-3" href="#13-3-operation-timeout-or-uncertain-status">13.3 Operation Timeout or Uncertain Status</a><a class="toc-level-3" href="#13-4-missing-database-client">13.4 Missing Database Client</a><a class="toc-level-3" href="#13-5-lost-administrator-password">13.5 Lost Administrator Password</a><a class="toc-level-2" href="#14-duty-checklist">14. Duty Checklist</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

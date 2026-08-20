@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="产品概览 - ClusterGuard HA operational documentation">
+  <title>产品概览 | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">跳到正文</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>搜索文档</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="输入标题关键词">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>开始使用</h2><a href="index.html" data-doc-title="clusterguard ha 中文文档">ClusterGuard HA 中文文档</a><a href="product-overview.html" data-doc-title="产品概览" aria-current="page" class="active">产品概览</a><a href="product-tour.html" data-doc-title="控制台产品导览">控制台产品导览</a><a href="architecture.html" data-doc-title="系统架构">系统架构</a><a href="release-2.1.45.html" data-doc-title="2.1.45 发布说明">2.1.45 发布说明</a></section><section><h2>部署与迁移</h2><a href="offline-rpm-install.html" data-doc-title="离线 rpm 安装">离线 RPM 安装</a><a href="database-preparation.html" data-doc-title="数据库接入">数据库接入</a><a href="orchestrator-migration.html" data-doc-title="从 orchestrator 迁移">从 Orchestrator 迁移</a></section><section><h2>日常运维</h2><a href="operations-manual.html" data-doc-title="运维操作手册">运维操作手册</a><a href="api-operations.html" data-doc-title="api 运维参考">API 运维参考</a><a href="postgresql-ha.html" data-doc-title="postgresql 高可用">PostgreSQL 高可用</a><a href="version-release-policy.html" data-doc-title="版本与发版规范">版本与发版规范</a></section><section><h2>验收证据</h2><a href="proven-mysql-ha-methods.html" data-doc-title="mysql 已验证方法">MySQL 已验证方法</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql 功能验收">MySQL 功能验收</a><a href="mysql-former-primary-recovery.html" data-doc-title="旧主恢复专项验收">旧主恢复专项验收</a><a href="mysql-production-qualification.html" data-doc-title="mysql 生产验收">MySQL 生产验收</a><a href="production-chaos-test.html" data-doc-title="生产故障测试报告">生产故障测试报告</a><a href="power-lifecycle-test.html" data-doc-title="计划关机测试报告">计划关机测试报告</a></section></nav>
+      <div class="sidebar-meta">
+        <span>离线文档构建</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">打开目录</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>产品概览</strong></div>
+        <div class="header-actions">
+          <a href="../en-US/product-overview.html" lang="en-US">English</a>
+          <button id="print-button" type="button">打印</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha">ClusterGuard HA<a class="heading-anchor" href="#clusterguard-ha" aria-label="Link to ClusterGuard HA">#</a></h1>
+<p>ClusterGuard HA 需要 Go 1.22 或更新版本。</p>
+<p><strong>ClusterGuard HA 多数据库企业级高可用控制平台</strong></p>
+<p><strong>ClusterGuard HA — Multi-Database High Availability Control Plane</strong></p>
+<p>ClusterGuard HA 是一个独立、洁净室的高可用控制平面。
+稳定版 2.1 系列是 MySQL HA 产品线。PostgreSQL 的交付从
+2.2 开始。Oracle Data Guard Broker 和 SQL Server Always On 仍分别作为
+未来产品线，且不属于 2.1 支持范围。</p>
+<h2 id="控制台预览">控制台预览<a class="heading-anchor" href="#控制台预览" aria-label="Link to 控制台预览">#</a></h2>
+<p><img src="../assets/screenshots/ha-operation-workbench.png" alt="ClusterGuard HA 高可用操作工作台"></p>
+<p>控制台将集群上下文、主库与候选节点、VIP 状态、受控执行、旧主恢复、
+拓扑和审计证据组织在同一套运维流程中。拓扑、节点生命周期和操作日志等
+页面见中英文<a href="product-tour.html">产品导览</a>。</p>
+<h2 id="当前发布版本">当前发布版本<a class="heading-anchor" href="#当前发布版本" aria-label="Link to 当前发布版本">#</a></h2>
+<p>发布策略和支持边界：</p>
+<ul>
+<li><code>v2.1.45</code> 是 2.1 系列的不可变最终发布版本。</li>
+<li>支持的 2.1 数据库引擎是 MySQL，包括通过站点验收矩阵验证的已审批兼容
+MySQL 发行版。</li>
+<li>PostgreSQL 交付和所有后续功能工作从 <code>2.2-1</code> 开始
+在分支 <code>codex/2.2-postgresql</code> 上。</li>
+<li>任何已发布的功能或行为更改都会增加包的发布版本；一个
+已发布的 RPM、离线包、标签或 GitHub Release 都不会被覆盖。</li>
+<li>Oracle 和 SQL Server 代码可能存在于能力门后，但不是
+已封板 2.1 系列的生产支持声明。</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>系列</th>
+<th>状态</th>
+<th>生产支持边界</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>2.1.45</code></td>
+<td>稳定封板</td>
+<td>MySQL HA 控制平面</td>
+</tr>
+<tr>
+<td><code>2.2.x</code></td>
+<td>活动开发</td>
+<td>PostgreSQL 交付加保留的 MySQL 功能</td>
+</tr>
+<tr>
+<td>后续系列</td>
+<td>路线图</td>
+<td>Oracle Data Guard Broker 和 SQL Server Always On 在单独认证后</td>
+</tr>
+</tbody></table>
+<p>从
+<a href="https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.1.45">ClusterGuard HA 2.1-45</a> 下载封板版本：</p>
+<pre><code class="language-bash">curl -fLO https://github.com/dgudgh/ClusterGuard-HA/releases/download/v2.1.45/clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz
+curl -fLO https://github.com/dgudgh/ClusterGuard-HA/releases/download/v2.1.45/clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz.sha256
+sha256sum -c clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz.sha256
+</code></pre>
+<p>已发布的 SHA-256 值：</p>
+<pre><code class="language-text">d4a46bdfa4c95bb641a7d19f063d2f43219177658b01b914a31a1cd5d06ec590  clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz
+1bc70109b556e973744bb05b5be0f53b075260910ae5def25518631ff8629a1c  clusterguard-ha-2.1-45.x86_64.rpm
+</code></pre>
+<blockquote>
+<p><strong>认证状态：</strong> 自动测试和实验室验收不能
+替代现场认证。在生产使用前，验证确切的 MySQL
+包、操作系统、存储、网络、隔离策略、VIP 提供商和
+三控制器部署。PostgreSQL 验收属于 2.2 系列
+并在
+<a href="postgresql-ha.html">PostgreSQL 高可用</a>中单独记录。</p>
+</blockquote>
+<p>当前的 MySQL 适配器提供：</p>
+<ul>
+<li>面向 MySQL 5.7、8.0、8.4 和 9.7 的清单内发现；</li>
+<li>全局唯一不可变节点名称、平台 UUID 和原生 MySQL
+<code>server_uuid</code> 身份；</li>
+<li>持久化的拓扑、健康、复制链接、探测证据和指标；</li>
+<li>候选提升评估，包括 GTID 和复制安全检查；</li>
+<li>通过主节点和 VIP 所有权耦合的受保护的三节点计划切换；</li>
+<li>旧主重新加入和白名单内复制修复；</li>
+<li>30 秒稳定故障检测和可选自动故障转移；</li>
+<li>通过受限节点代理的 Raft 支持操作锁、端点租约、本地自我隔离和
+重启时的 VIP 收敛；</li>
+<li>带固定节点插槽重用、分阶段安装、同步、验证、审计和报告输出的添加/重建生命周期任务；</li>
+<li>不改变不可变资源身份的端点元数据修正；</li>
+<li>JSON、Prometheus 和监控安全的健康输出；</li>
+<li>失败时阻断的存活/就绪检查、Raft 角色和多数派诊断、有界历史、分页操作日志和限速事件提醒；</li>
+<li>带基于角色访问、强制引导密码更改、CSRF 保护和 <code>cgctl</code> 服务 CLI 的认证中文控制台；</li>
+<li>持久操作 UUID、幂等键、阶段进度、审计和报告；</li>
+<li>用于手动高风险数据库操作的计划绑定、五分钟、单次使用审批授权；</li>
+<li>在独立适配器和写入端点契约下验证的 MySQL 5.7/8.x/9.x 变更语法。</li>
+</ul>
+<h2 id="2-2-开发范围">2.2 开发范围<a class="heading-anchor" href="#2-2-开发范围" aria-label="Link to 2.2 开发范围">#</a></h2>
+<p>2.2 开发线的 PostgreSQL 适配器提供清单内发现、不可变节点身份、<code>system_identifier</code> 集群绑定、主/备拓扑、
+流复制健康、时间线和 WAL 证据、原生指标、确定性候选评估、受保护的计划切换和故障切换、旧主
+<code>pg_rewind</code> 恢复、允许列表低风险修复、写入器-VIP 耦合，以及
+<code>pg_basebackup</code>/<code>pg_rewind</code> 节点生命周期，加上可选的 30 秒稳定故障自动故障转移。变更仅在
+受限 Agent、操作凭据、端点提供器、控制器多数派和所需隔离证据全部配置完成时，相关能力才会对外标记为可用。这些功能不会
+回溯添加到 <code>v2.1.45</code>。</p>
+<p>Oracle 适配器是未来受控集成，用于签名代理 Data Guard Broker 发现、健康、
+拓扑、备选候选评估、预检查、计划、执行和受控切换的双节点验证。使用专用密码文件
+<code>SYSDG</code> 账户，而不是 <code>SYS</code>；本地代理以
+Oracle 操作系统账户运行 DGMGRL，并且只接受配置的 Broker 成员。
+ClusterGuard 从不直接编辑 Oracle 数据文件。在配置旧主隔离之前，故障转移仍被阻止。</p>
+<p>SQL Server 适配器是未来受控集成，用于 Always On 只读发现、健康、拓扑、同步次级候选评估、
+预检查、计划、执行、验证和计划故障转移到同步提交次级的发送/重做队列指标。
+仅当 <code>sqlcmd</code> 可用或注入 SQL Server 执行器时才进行发现和执行。默认情况下，强制故障转移仍被阻止，除非配置了未来的显式数据丢失审批策略。</p>
+<h2 id="安全边界">安全边界<a class="heading-anchor" href="#安全边界" aria-label="Link to 安全边界">#</a></h2>
+<p>示例配置保持受限节点代理和自动故障转移禁用。真正的 MySQL 角色或 VIP 变更只有在
+集群具有完整的 HA 端点清单、奇数个 Raft 控制器、当前 Leader 支持的多数派权威、专用 MySQL 凭据、
+代理签名材料、操作锁和审批时才可执行。缺少或未知的证据会阻止操作；它永远不会产生模拟成功。</p>
+<p>自动故障切换需要显式启用。它要求在 30 秒内连续观察到六次故障、存在排名第一且满足条件的候选节点、控制器保持多数派、旧主已隔离，并取得独占 VIP 租约。MySQL 可以使用短期 Raft 多数派 Agent 授权：授权过期即失效，旧节点会移除 VIP 并持久保持只读，Leader 在提升前再次验证本次转换租约。外部 BMC、PDU、云平台或虚拟化隔离器仍可作为更强的第二层隔离。平台宁可暂时不可用，也不允许出现第二个写节点或 VIP Owner。</p>
+<p>浏览器控制台会针对存储在复制元数据快照中的平台用户进行身份验证。全新安装会创建 <code>admin</code>，使用文档中指定的首次登录密码 <code>admin123</code> 和 <code>MustChangePassword=true</code>。首次密码更改是强制性的：直到成功，所有集群和元数据 API 读取和每个变更都会被阻止。默认值仅存储为 Argon2id 哈希；它永远不会写入配置、环境文件、审计事件或报告。会话具有八小时的绝对生命周期，使用 HttpOnly SameSite Cookie 加 CSRF 验证，并在密码更改或注销时被撤销。</p>
+<p>对于已认证的管理员或操作员，服务端会生成确定的计划，并在内部签发和消费一次性授权；浏览器不会接触审批密钥。外部服务自动化继续使用显式审批 API：复制存储中只保存授权哈希，明文只返回一次，消费动作与工作流审批阶段原子提交。自动故障切换使用内部事件授权路径，不依赖可重复使用的人工令牌。</p>
+<p>常见工作流程保持不变：</p>
+<pre><code class="language-text">DISCOVER -&gt; PRECHECK -&gt; PLAN -&gt; SAFETY_GUARD -&gt; LOCK -&gt; APPROVE -&gt; EXECUTE -&gt; VERIFY -&gt; AUDIT -&gt; REPORT
+</code></pre>
+<p>所有已实现的变更都通过同一工作流。除非配置了原生 Broker/AG 命令执行器，并且平台具备当前身份、角色、健康、锁、审批和验证证据，否则 Oracle 和 SQL Server 执行路径保持阻断。</p>
+<h2 id="启动">启动<a class="heading-anchor" href="#启动" aria-label="Link to 启动">#</a></h2>
+<p>创建一个仅具有文档中只读查询所需权限的专用 MySQL 账户。将秘密保存在环境变量中，而不是 JSON 配置中。</p>
+<pre><code class="language-bash">export CG_CONTROL_TOKEN=&#39;replace-with-a-control-api-secret&#39;
+export CG_MYSQL_DISCOVERY_PASSWORD=&#39;replace-with-the-read-only-secret&#39;
+export CG_POSTGRESQL_DISCOVERY_PASSWORD=&#39;replace-with-the-pg-monitor-secret&#39;
+export CG_POSTGRESQL_OPERATION_PASSWORD=&#39;replace-with-the-pg-operation-secret&#39;
+export CG_POSTGRESQL_REPLICATION_PASSWORD=&#39;replace-with-the-pg-replication-secret&#39;
+export CG_ORACLE_DISCOVERY_PASSWORD=&#39;replace-with-the-dgbroker-monitor-secret&#39;
+export CG_ORACLE_OPERATION_PASSWORD=&#39;replace-with-the-dgbroker-operation-secret&#39;
+export CG_SQLSERVER_DISCOVERY_PASSWORD=&#39;replace-with-the-ag-monitor-secret&#39;
+export CG_SQLSERVER_OPERATION_PASSWORD=&#39;replace-with-the-ag-operation-secret&#39;
+# Optional, only on controllers that execute these engines:
+# export PATH=&quot;/opt/oracle/product/bin:/opt/mssql-tools18/bin:$PATH&quot;
+go run ./cmd/clusterguard --config configs/clusterguard.example.json
+</code></pre>
+<p>从源配置直接启动时，默认情况下控制台和 API 由 <code>http://127.0.0.1:8088/</code> 提供。支持的 RPM/离线
+部署在端口 <code>3000</code> 上提供 HTTPS。在新的元数据存储中，以
+<code>admin</code> 和 <code>admin123</code> 登录。控制台立即要求新密码，并且
+直到首次密码更改成功之前不会加载集群数据。</p>
+<p>服务管理器应使用 <code>/healthz</code> 进行活性检查，使用 <code>/readyz</code> 进行
+失败时阻断的控制平面就绪性检查。已认证的操作员可以使用
+<code>cgctl status</code> 或 <code>/api/v1/control-plane/status</code> 进行 Raft 角色、Leader、多数、
+元数据修订、活动工作和运行时间诊断。每个 API 响应都有一个 <code>X-Request-ID</code>，当跟随者将变更转发到
+当前 Leader 时，该值会被保留。</p>
+<p>生产二进制文件是 <code>clusterguard</code>；CLI 是 <code>cgctl</code>。该发行版
+使用 <code>/etc/clusterguard/</code>、<code>/var/lib/clusterguard/</code> 和
+<code>/var/log/clusterguard/</code>。systemd 单元是
+<code>packaging/systemd/clusterguard-ha.service</code>。</p>
+<p><code>scripts/build-clusterguard-bundle.sh</code> 生成控制器、CLI、受限
+代理、生命周期助手、systemd 单元、日志轮转、配置示例，
+以及完整的 SHA-256 清单。<code>scripts/clusterguard-install.sh</code> 是每个节点的
+生命周期助手；它不是初始多节点生产引导工具。</p>
+<p>使用 <code>scripts/install_clusterguard.sh</code> 和完整离线包完成首次生产部署。
+安装流程会在同一条可审计工作流中建立控制平面、固定资源身份、证书、
+数据库拓扑、Agent 配置和 VIP 收敛策略。</p>
+<h2 id="文档">文档<a class="heading-anchor" href="#文档" aria-label="Link to 文档">#</a></h2>
+<p><a href="../index.html">中英文文档中心</a>列出了每份英文文档及其简体中文对应版本。
+推荐入口：</p>
+<ul>
+<li><a href="../en-US/index.html">English documentation</a> / <a href="index.html">中文文档</a></li>
+<li><a href="../en-US/product-tour.html">English product tour</a> / <a href="product-tour.html">中文产品导览</a></li>
+<li><a href="../en-US/offline-rpm-install.html">English offline installation</a> / <a href="offline-rpm-install.html">中文离线安装</a></li>
+<li><a href="../en-US/operations-manual.html">English operations manual</a> / <a href="operations-manual.html">中文运维手册</a></li>
+<li><a href="../en-US/version-release-policy.html">English release policy</a> / <a href="version-release-policy.html">中文版本规范</a></li>
+</ul>
+<h2 id="注册和刷新-mysql-集群">注册和刷新 MySQL 集群<a class="heading-anchor" href="#注册和刷新-mysql-集群" aria-label="Link to 注册和刷新 MySQL 集群">#</a></h2>
+<p>注册会建立权威端点清单。主机名、IP 和
+端口是坐标，而不是资源标识符。</p>
+<pre><code class="language-bash">curl -sS -X POST http://127.0.0.1:8088/api/v1/clusters \
+  -H &#39;content-type: application/json&#39; \
+  -H &quot;Authorization: Bearer ${CG_CONTROL_TOKEN}&quot; \
+  -d &#39;{
+    &quot;display_name&quot;:&quot;payments-mysql&quot;,
+    &quot;engine&quot;:&quot;mysql&quot;,
+    &quot;endpoints&quot;:[
+      {&quot;hostname&quot;:&quot;mysql-a&quot;,&quot;ip_address&quot;:&quot;192.0.2.10&quot;,&quot;port&quot;:3306},
+      {&quot;hostname&quot;:&quot;mysql-b&quot;,&quot;ip_address&quot;:&quot;192.0.2.11&quot;,&quot;port&quot;:3306},
+      {&quot;hostname&quot;:&quot;mysql-c&quot;,&quot;ip_address&quot;:&quot;192.0.2.12&quot;,&quot;port&quot;:3306}
+    ]
+  }&#39;
+</code></pre>
+<p>使用返回的平台集群 UUID 刷新已注册清单。
+正文正好是一个空的 JSON 对象；凭据和端点覆盖被拒绝，因为凭据在服务器上解析。</p>
+<pre><code class="language-bash">curl -sS -X POST \
+  http://127.0.0.1:8088/api/v1/clusters/&lt;cluster-uuid&gt;/discover \
+  -H &#39;content-type: application/json&#39; \
+  -H &quot;Authorization: Bearer ${CG_CONTROL_TOKEN}&quot; \
+  -d &#39;{}&#39;
+</code></pre>
+<h2 id="注册和刷新-postgresql-集群">注册和刷新 PostgreSQL 集群<a class="heading-anchor" href="#注册和刷新-postgresql-集群" aria-label="Link to 注册和刷新 PostgreSQL 集群">#</a></h2>
+<p>每个 PostgreSQL 实例必须具有唯一的不可变
+<code>clusterguard.node_id</code>。每个备库节点还需在 <code>clusterguard.primary_node_id</code> 中声明当前主节点的节点
+UUID。ClusterGuard 将集群绑定到
+<code>pg_control_system().system_identifier</code>；更改主机名、IP 或端口会更新
+端点并保留相同的平台实例 UUID。</p>
+<p>启用 <code>postgresql</code> 配置块，设置专用发现、
+操作和复制凭据环境，并仅注册权威端点：</p>
+<pre><code class="language-bash">curl -sS -X POST http://127.0.0.1:8088/api/v1/clusters \
+  -H &#39;content-type: application/json&#39; \
+  -H &quot;Authorization: Bearer ${CG_CONTROL_TOKEN}&quot; \
+  -d &#39;{
+    &quot;display_name&quot;:&quot;payments-postgresql&quot;,
+    &quot;engine&quot;:&quot;postgresql&quot;,
+    &quot;endpoints&quot;:[
+      {&quot;hostname&quot;:&quot;pg-a&quot;,&quot;ip_address&quot;:&quot;192.0.2.20&quot;,&quot;port&quot;:5432},
+      {&quot;hostname&quot;:&quot;pg-b&quot;,&quot;ip_address&quot;:&quot;192.0.2.21&quot;,&quot;port&quot;:5432}
+    ]
+  }&#39;
+
+curl -sS -X POST \
+  http://127.0.0.1:8088/api/v1/clusters/&lt;cluster-uuid&gt;/discover \
+  -H &#39;content-type: application/json&#39; \
+  -H &quot;Authorization: Bearer ${CG_CONTROL_TOKEN}&quot; \
+  -d &#39;{}&#39;
+</code></pre>
+<p>控制台提供 PostgreSQL 拓扑、健康、原生指标、候选证据、受控操作、节点同步、审计和报告。对应的运行时能力与安全证据未就绪前，变更操作保持禁用；控制台不会显示模拟成功。数据库授权、受限 Agent 策略、生命周期、隔离和生产验收要求见<a href="postgresql-ha.html">PostgreSQL 高可用</a>。</p>
+<h2 id="cli">CLI<a class="heading-anchor" href="#cli" aria-label="Link to CLI">#</a></h2>
+<pre><code class="language-bash">go run ./cmd/cgctl engines
+go run ./cmd/cgctl clusters
+go run ./cmd/cgctl topology &lt;cluster-uuid&gt;
+go run ./cmd/cgctl health &lt;cluster-uuid&gt;
+go run ./cmd/cgctl candidates &lt;cluster-uuid&gt;
+go run ./cmd/cgctl metrics &lt;cluster-uuid&gt;
+go run ./cmd/cgctl refresh &lt;cluster-uuid&gt;
+go run ./cmd/cgctl operation &lt;operation-uuid&gt;
+go run ./cmd/cgctl approval issue --cluster &lt;cluster-uuid&gt; --engine mysql \
+  --kind switchover --target &lt;instance-uuid&gt; --issued-by &lt;administrator&gt; --ttl 5m
+go run ./cmd/cgctl approval list
+go run ./cmd/cgctl approval show &lt;grant-uuid&gt;
+</code></pre>
+<p><code>cgctl</code> 使用来自 <code>CG_CONTROL_TOKEN</code> 的控制令牌进行认证读取
+和写入。在命令前使用
+<code>--token-env &lt;name&gt;</code> 选择其他环境变量；密钥不接受命令行明文参数。审批签发同样使用此管理员凭据。返回的审批令牌只打印一次，且 <code>cgctl</code> 不会持久化。</p>
+<p>如果管理员密码丢失，平台没有在线绕过或重置 API。备份元数据并暂停变更后，使用 <code>clusterguard admin prepare-recovery</code> 创建私有的一次性恢复文件，将同一文件以所有者 <code>clusterguard:clusterguard</code>、权限 <code>0600</code> 分发到所有控制器，并
+逐一重启。Raft Leader 只应用一次恢复 ID，撤销现有会话，强制修改密码，记录审计，并在每个节点删除恢复文件。详细流程见<a href="api-operations.html">操作说明</a>。活动 Raft 集群中禁止直接编辑密码哈希或创建共享默认密码。</p>
+<p>HA 矩阵支持浏览器等效的会话执行：</p>
+<pre><code class="language-bash">export CG_PLATFORM_USERNAME=&#39;admin&#39;
+export CG_PLATFORM_PASSWORD=&#39;&lt;current-platform-password&gt;&#39;
+scripts/clusterguard-ha-matrix.sh \
+  --api http://127.0.0.1:8088 \
+  --clusters &#39;&lt;cluster-uuid&gt;&#39; \
+  --platform-session
+</code></pre>
+<p>在新的元数据存储中，设置 <code>CG_PLATFORM_NEW_PASSWORD</code>。省略
+<code>--platform-session</code> 会保持服务自动化测试的显式一次性授权模式。</p>
+<p>将全局标志放在命令之前：</p>
+<pre><code class="language-bash">go run ./cmd/cgctl --json topology &lt;cluster-uuid&gt;
+go run ./cmd/cgctl --server http://127.0.0.1:8088 clusters
+</code></pre>
+<p>完整 API 工作流和操作员流程见<a href="api-operations.html">操作说明</a>。资源身份、适配器、持久化、候选评估和安全设计见<a href="architecture.html">架构说明</a>。</p>
+
+          <footer class="document-footer">
+            <span>源文件: <code>README.zh-CN.md</code></span>
+            <a href="../index.html">文档语言入口</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="本页目录">
+          <strong>本页目录</strong>
+          <a class="toc-level-2" href="#控制台预览">控制台预览</a><a class="toc-level-2" href="#当前发布版本">当前发布版本</a><a class="toc-level-2" href="#2-2-开发范围">2.2 开发范围</a><a class="toc-level-2" href="#安全边界">安全边界</a><a class="toc-level-2" href="#启动">启动</a><a class="toc-level-2" href="#文档">文档</a><a class="toc-level-2" href="#注册和刷新-mysql-集群">注册和刷新 MySQL 集群</a><a class="toc-level-2" href="#注册和刷新-postgresql-集群">注册和刷新 PostgreSQL 集群</a><a class="toc-level-2" href="#cli">CLI</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

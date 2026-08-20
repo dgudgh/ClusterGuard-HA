@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="MySQL Production Qualification - ClusterGuard HA operational documentation">
+  <title>MySQL Production Qualification | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">Skip to content</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>Search documentation</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="Filter by title">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification" aria-current="page" class="active">MySQL Production Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
+      <div class="sidebar-meta">
+        <span>Offline documentation build</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">Open navigation</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>MySQL Production Qualification</strong></div>
+        <div class="header-actions">
+          <a href="../zh-CN/mysql-production-qualification.html" lang="zh-CN">简体中文</a>
+          <button id="print-button" type="button">Print</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha-mysql-8-0-8-4-production-qualification">ClusterGuard HA MySQL 8.0 / 8.4 Production Qualification<a class="heading-anchor" href="#clusterguard-ha-mysql-8-0-8-4-production-qualification" aria-label="Link to ClusterGuard HA MySQL 8.0 / 8.4 Production Qualification">#</a></h1>
+<p>Date: 2026-07-28
+Environment: 192.168.102.152-154, three control nodes, three data nodes
+Version: MySQL 8.0.44 (3306), MySQL 8.4.10 (3384)</p>
+<h2 id="conclusion">Conclusion<a class="heading-anchor" href="#conclusion" aria-label="Link to Conclusion">#</a></h2>
+<p>The current version has passed functional, failure, security, and data integrity verification and can enter controlled production trial operation. It is not defined as &quot;unconditional production ready&quot; until all the following deployment conditions are fully implemented:</p>
+<ol>
+<li>In network-isolation scenarios without external STONITH or fencing, the system blocks takeover to prevent dual primaries. If the service must remain available in this scenario, integrate an independent power, virtualization, or switch-level fencing mechanism.</li>
+<li>All six instances use semi-synchronous replication. Planned and unplanned failover verifies the new primary&#39;s semi-synchronous status and ACK clients before VIP migration. These tests found no loss of acknowledged transactions, but semi-synchronous replication does not guarantee an absolute RPO of zero across every failure mode.</li>
+<li>The maximum measured client interruption for automatic fault recovery is 51.729-60.108 seconds. If the production SLA requires automatic recovery RTO not to exceed 30 seconds, the current version does not meet the requirement and cannot be directly deployed.</li>
+<li>Application connection pools must set connection and read/write timeouts, and must support reconnects and idempotent retries. VIP migration cannot repair an already established, stalled TCP session.</li>
+<li>The laboratory console uses an untrusted self-signed certificate, and browser automation correctly refuses to bypass certificate validation. Production must use a client-trusted TLS certificate with the correct SANs, followed by a real console switchover acceptance test.</li>
+</ol>
+<h2 id="final-concurrent-failure-verification">Final Concurrent Failure Verification<a class="heading-anchor" href="#final-concurrent-failure-verification" aria-label="Link to Final Concurrent Failure Verification">#</a></h2>
+<p>Both primaries were hard-failed concurrently while 16 write streams remained active (eight per version). The former primaries were then restarted and recovered through the supported rejoin workflow.</p>
+<table>
+<thead>
+<tr>
+<th>Version</th>
+<th align="right">Write Streams</th>
+<th align="right">Attempts</th>
+<th align="right">Confirmed</th>
+<th align="right">Failed Retries</th>
+<th align="right">Max Interruption</th>
+<th>Integrity</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>MySQL 8.0.44</td>
+<td align="right">8</td>
+<td align="right">14,378</td>
+<td align="right">13,948</td>
+<td align="right">430</td>
+<td align="right">60.236s</td>
+<td>Passed</td>
+</tr>
+<tr>
+<td>MySQL 8.4.10</td>
+<td align="right">8</td>
+<td align="right">14,058</td>
+<td align="right">13,850</td>
+<td align="right">208</td>
+<td align="right">60.057s</td>
+<td>Passed</td>
+</tr>
+</tbody></table>
+<p>Integrity judgment:</p>
+<ul>
+<li>16/16 reports were successfully generated.</li>
+<li>All streams <code>observed.count == acknowledged</code>.</li>
+<li>All stream numbers are continuous from 1 to <code>acknowledged</code>.</li>
+<li>0 verification failures, 0 count inconsistencies, 0 sequence gaps.</li>
+<li>No interval was observed in which the VIP had moved while the former primary remained writable.</li>
+</ul>
+<p>Final status:</p>
+<ul>
+<li>MySQL 8.0: 192.168.102.154 is the primary, VIP 192.168.102.155 is uniquely bound; the other two nodes are healthy replicas with 0 delay.</li>
+<li>MySQL 8.4: 192.168.102.153 is the primary, VIP 192.168.102.160 is uniquely bound; the other two nodes are healthy replicas with 0 delay.</li>
+<li>Both former primaries were restored through the supported rejoin workflow, and their replication IO/SQL threads are running.</li>
+<li>The three ClusterGuard control nodes are <code>active</code>, <code>live</code>, and <code>ready</code>.</li>
+</ul>
+<h2 id="defect-fixes-and-regression-in-this-round">Defect Fixes and Regression in This Round<a class="heading-anchor" href="#defect-fixes-and-regression-in-this-round" aria-label="Link to Defect Fixes and Regression in This Round">#</a></h2>
+<h3 id="dual-cluster-automatic-recovery-head-of-line-blocking">Dual-Cluster Automatic-Recovery Head-of-Line Blocking<a class="heading-anchor" href="#dual-cluster-automatic-recovery-head-of-line-blocking" aria-label="Link to Dual-Cluster Automatic-Recovery Head-of-Line Blocking">#</a></h3>
+<p>The recovery scheduler previously waited synchronously for one cluster&#39;s complete <code>RunOnce</code>, causing another cluster&#39;s recovery to wait behind it. The corrected behavior is:</p>
+<ul>
+<li>Each cluster independently executes the recovery cycle asynchronously.</li>
+<li>The same cluster avoids duplicate recovery with the <code>inFlight</code> status.</li>
+<li>Global recovery concurrency uses a bounded gate with a capacity of 4.</li>
+<li>A staggered dual-cluster failure test proves that the second cluster can enter its workflow before the first cluster completes.</li>
+</ul>
+<p>Regression results after stopping both sets of primary databases post-fix:</p>
+<table>
+<thead>
+<tr>
+<th>Version</th>
+<th align="right">Attempts</th>
+<th align="right">Confirmed</th>
+<th align="right">Failed Retries</th>
+<th align="right">Max Interruption</th>
+<th>Integrity</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>MySQL 8.0.44</td>
+<td align="right">1,396</td>
+<td align="right">1,331</td>
+<td align="right">65</td>
+<td align="right">58.126s</td>
+<td>Passed</td>
+</tr>
+<tr>
+<td>MySQL 8.4.10</td>
+<td align="right">1,350</td>
+<td align="right">1,319</td>
+<td align="right">31</td>
+<td align="right">60.108s</td>
+<td>Passed</td>
+</tr>
+</tbody></table>
+<p>Both write streams satisfy <code>observed.count == acknowledged</code>, with uninterrupted sequence numbers from 1 through the last acknowledged transaction. After restart, each former primary remains at <code>read_only=1</code> and <code>super_read_only=1</code>, owns no VIP, and is then restored through the supported rejoin workflow.</p>
+<h3 id="semi-synchronous-switch-gate">Semi-Synchronous Switch Gate<a class="heading-anchor" href="#semi-synchronous-switch-gate" aria-label="Link to Semi-Synchronous Switch Gate">#</a></h3>
+<ul>
+<li>Planned switchover and failover activate and verify semi-synchronous replication on the new primary before VIP transfer.</li>
+<li>If semi-synchronous activation fails, the new primary reverts to read-only and blocks VIP transfer.</li>
+<li>Smoke tests verify the primary&#39;s semi-synchronous source state, ACK-client count, and replica state on each secondary.</li>
+</ul>
+<h3 id="candidate-and-approval-timing">Candidate and Approval Timing<a class="heading-anchor" href="#candidate-and-approval-timing" aria-label="Link to Candidate and Approval Timing">#</a></h3>
+<ul>
+<li>After manually stopping the SQL thread of the candidate node, pre-checks block before authorization and execution; the primary and VIP remain unchanged.</li>
+<li>After generating a one-time approval for a healthy candidate, stop its SQL thread; using an old approval results in <code>stale_plan</code>, with no role or VIP change.</li>
+<li>Regression tests cover automatic recovery scheduling, candidate blocking, and invalidation of stale approvals.</li>
+</ul>
+<h2 id="covered-failure-matrix">Covered Failure Matrix<a class="heading-anchor" href="#covered-failure-matrix" aria-label="Link to Covered Failure Matrix">#</a></h2>
+<ul>
+<li>Planned switchover, dual cluster simultaneous switchover, and intra-cluster concurrent switchover mutual exclusion.</li>
+<li>Primary process hard stop, concurrent hard stops of two primaries, former-primary recovery, and supported rejoin.</li>
+<li>Primary planned restart, secondary restart, full site MySQL cold shutdown and restart.</li>
+<li>ClusterGuard process SIGKILL, Raft Leader stop and re-election.</li>
+<li>Control node majority loss, single node real network isolation, and convergence after recovery.</li>
+<li>VIP uniqueness, strong binding between primary and VIP, restart write protection, and self-isolation without majority.</li>
+<li>Replication IO/SQL thread stop, candidate node blocking, and re-evaluation after recovery.</li>
+<li>GTID, replication position, candidate eligibility, former-primary rejoin, and replication-link verification.</li>
+<li>Switchover under 273/300 connection pressure.</li>
+<li>Simultaneous failure switchover under 8 concurrent write paths per version.</li>
+<li>MySQL persistent parameters, memory configuration, systemd stop semantics, and cold start roles.</li>
+<li>Semi-synchronous source/replica, ACK client, and rollback on activation failure before switchover.</li>
+<li>Candidate SQL-thread stop and stale-approval invalidation after a topology change.</li>
+<li>Recovery scheduling concurrency for staggered failures in dual clusters, avoiding head-of-line blocking across clusters.</li>
+<li>Three-node logs, failed unit, panic/fatal, and InnoDB damage keyword inspection.</li>
+</ul>
+<h2 id="key-real-world-testing">Key Real-World Testing<a class="heading-anchor" href="#key-real-world-testing" aria-label="Link to Key Real-World Testing">#</a></h2>
+<ul>
+<li>15-minute dual version failure traversal:<ul>
+<li>8.0: 9,602 confirmed writes, maximum interruption 64.625s, integrity passed.</li>
+<li>8.4: 9,721 confirmed writes, maximum interruption 58.061s, integrity passed.</li>
+</ul>
+</li>
+<li>Planned primary restart:<ul>
+<li>8.0: maximum interruption 22.601s, integrity passed.</li>
+<li>8.4: maximum interruption 18.924s, integrity passed.</li>
+</ul>
+</li>
+<li>Connection pressure switchover:<ul>
+<li>8.0: maximum interruption 6.503s.</li>
+<li>8.4: maximum interruption 7.130s.</li>
+</ul>
+</li>
+<li>Control majority loss:<ul>
+<li>Both VIPs removed, original primary enters read-only; integrity passed after recovery.</li>
+</ul>
+</li>
+<li>Three MySQL instances cold shutdown and restart simultaneously:<ul>
+<li>8.0 maximum interruption 92.047s, 8.4 maximum interruption 75.364s, integrity passed.</li>
+</ul>
+</li>
+</ul>
+<h2 id="data-persistence-and-configuration">Data Persistence and Configuration<a class="heading-anchor" href="#data-persistence-and-configuration" aria-label="Link to Data Persistence and Configuration">#</a></h2>
+<p>All six instances confirmed:</p>
+<ul>
+<li><code>sync_binlog=1</code></li>
+<li><code>innodb_flush_log_at_trx_commit=1</code></li>
+<li><code>relay_log_recovery=1</code></li>
+<li><code>log_replica_updates=1</code></li>
+<li>GTID enabled</li>
+<li>binlog format is ROW</li>
+<li>Semi-synchronous replication plugin is enabled</li>
+<li>Current primary&#39;s semi-synchronous source is ON, with 2 ACK clients</li>
+<li>Both secondaries report their semi-synchronous replica status as ON</li>
+</ul>
+<p>When the old primary or node restarts, disk-persisted read-only configuration takes effect before service recovery; write permissions will not be automatically restored before topology convergence.</p>
+<h2 id="code-verification">Code Verification<a class="heading-anchor" href="#code-verification" aria-label="Link to Code Verification">#</a></h2>
+<pre><code class="language-text">go test ./...          PASS
+go test -race ./...    PASS
+go vet ./...           PASS
+go build ./...         PASS
+git diff --check       PASS
+</code></pre>
+<p>Covered MySQL adapter, agent role persistence, Raft, lease, Safety Guard, VIP, workflow, API, installation scripts, and lifecycle testing.</p>
+<h2 id="pre-production-actions">Pre-Production Actions<a class="heading-anchor" href="#pre-production-actions" aria-label="Link to Pre-Production Actions">#</a></h2>
+<ol>
+<li>Clarify network partition availability policy: accept fail-closed, or integrate and practice external fencing.</li>
+<li>Clarify RTO: current automatic failure recovery maximum interruption is about 60 seconds; if the hard requirement is 30 seconds, optimization and full matrix re-run must continue.</li>
+<li>Clarify RPO: accept the boundary of semi-synchronous replication, and develop recovery strategies for storage, network, and dual-node failures.</li>
+<li>Verify connection/read/write timeout, disconnection reconnection, and idempotent retry on the application side.</li>
+<li>Deploy trusted TLS certificates and complete switchover, rollback, and audit viewing using the official browser console.</li>
+<li>Review the 15 historical <code>indeterminate</code> audit records. They are not active operations, but their disposition should be documented and archived before go-live.</li>
+<li>Monitor Raft data files, disk space, VIP uniqueness, semi-synchronous status, replication threads, and replication delay.</li>
+<li>Begin with a phased rollout on a non-critical service, retain a rollback window, and expand production scope gradually.</li>
+</ol>
+
+          <footer class="document-footer">
+            <span>Source: <code>docs/mysql-production-qualification-2026-07-28.md</code></span>
+            <a href="../index.html">Documentation language home</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="On this page">
+          <strong>On this page</strong>
+          <a class="toc-level-2" href="#conclusion">Conclusion</a><a class="toc-level-2" href="#final-concurrent-failure-verification">Final Concurrent Failure Verification</a><a class="toc-level-2" href="#defect-fixes-and-regression-in-this-round">Defect Fixes and Regression in This Round</a><a class="toc-level-3" href="#dual-cluster-automatic-recovery-head-of-line-blocking">Dual-Cluster Automatic-Recovery Head-of-Line Blocking</a><a class="toc-level-3" href="#semi-synchronous-switch-gate">Semi-Synchronous Switch Gate</a><a class="toc-level-3" href="#candidate-and-approval-timing">Candidate and Approval Timing</a><a class="toc-level-2" href="#covered-failure-matrix">Covered Failure Matrix</a><a class="toc-level-2" href="#key-real-world-testing">Key Real-World Testing</a><a class="toc-level-2" href="#data-persistence-and-configuration">Data Persistence and Configuration</a><a class="toc-level-2" href="#code-verification">Code Verification</a><a class="toc-level-2" href="#pre-production-actions">Pre-Production Actions</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

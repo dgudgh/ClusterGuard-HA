@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="MySQL 已验证方法 - ClusterGuard HA operational documentation">
+  <title>MySQL 已验证方法 | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">跳到正文</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>搜索文档</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="输入标题关键词">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>开始使用</h2><a href="index.html" data-doc-title="clusterguard ha 中文文档">ClusterGuard HA 中文文档</a><a href="product-overview.html" data-doc-title="产品概览">产品概览</a><a href="product-tour.html" data-doc-title="控制台产品导览">控制台产品导览</a><a href="architecture.html" data-doc-title="系统架构">系统架构</a><a href="release-2.1.45.html" data-doc-title="2.1.45 发布说明">2.1.45 发布说明</a></section><section><h2>部署与迁移</h2><a href="offline-rpm-install.html" data-doc-title="离线 rpm 安装">离线 RPM 安装</a><a href="database-preparation.html" data-doc-title="数据库接入">数据库接入</a><a href="orchestrator-migration.html" data-doc-title="从 orchestrator 迁移">从 Orchestrator 迁移</a></section><section><h2>日常运维</h2><a href="operations-manual.html" data-doc-title="运维操作手册">运维操作手册</a><a href="api-operations.html" data-doc-title="api 运维参考">API 运维参考</a><a href="postgresql-ha.html" data-doc-title="postgresql 高可用">PostgreSQL 高可用</a><a href="version-release-policy.html" data-doc-title="版本与发版规范">版本与发版规范</a></section><section><h2>验收证据</h2><a href="proven-mysql-ha-methods.html" data-doc-title="mysql 已验证方法" aria-current="page" class="active">MySQL 已验证方法</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql 功能验收">MySQL 功能验收</a><a href="mysql-former-primary-recovery.html" data-doc-title="旧主恢复专项验收">旧主恢复专项验收</a><a href="mysql-production-qualification.html" data-doc-title="mysql 生产验收">MySQL 生产验收</a><a href="production-chaos-test.html" data-doc-title="生产故障测试报告">生产故障测试报告</a><a href="power-lifecycle-test.html" data-doc-title="计划关机测试报告">计划关机测试报告</a></section></nav>
+      <div class="sidebar-meta">
+        <span>离线文档构建</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">打开目录</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>MySQL 已验证方法</strong></div>
+        <div class="header-actions">
+          <a href="../en-US/proven-mysql-ha-methods.html" lang="en-US">English</a>
+          <button id="print-button" type="button">打印</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="已验证的-mysql-高可用方法">已验证的 MySQL 高可用方法<a class="heading-anchor" href="#已验证的-mysql-高可用方法" aria-label="Link to 已验证的 MySQL 高可用方法">#</a></h1>
+<h2 id="目的">目的<a class="heading-anchor" href="#目的" aria-label="Link to 目的">#</a></h2>
+<p>本文档记录了在之前的原型中验证过的生产行为和实验室场景，并有意在独立的 ClusterGuard HA 控制平面中重新实现。它仅作为行为参考。不继承任何源代码包、API、表、配置键、可执行文件或产品名称。</p>
+<h2 id="稳定资源标识">稳定资源标识<a class="heading-anchor" href="#稳定资源标识" aria-label="Link to 稳定资源标识">#</a></h2>
+<p>在物理主机能够被管理之前，它会获得两个稳定的标识：</p>
+<ul>
+<li>不可变的平台 <code>resource_id</code> UUID；</li>
+<li>全局唯一且不可变的操作员面向的 <code>node_name</code>，例如 <code>cg-data-0001</code>。</li>
+</ul>
+<p>MySQL 实例另外绑定到原生的 <code>server_uuid</code>。主机名、IP、端口、显示名称和端点别名是可变的坐标。坐标更改会更新现有资源并保留旧地址作为别名；它不能创建另一个节点或实例。</p>
+<p>当前实现：</p>
+<ul>
+<li><code>internal/store/nodes.go</code> 强制全局节点名称唯一性和不可变性；</li>
+<li>发现过程通过 MySQL <code>server_uuid</code> 绑定观察结果，然后关联注册的节点 UUID；</li>
+<li>元数据同步在更新数据库端点时保留平台和原生标识；</li>
+<li>控制台分别显示 <code>node_name</code>、资源 UUID、<code>server_uuid</code> 和可变坐标。</li>
+</ul>
+<h2 id="集群清单边界">集群清单边界<a class="heading-anchor" href="#集群清单边界" aria-label="Link to 集群清单边界">#</a></h2>
+<p>ClusterGuard 仅控制所选集群清单中的资源。请求不能在发现或执行期间引入任意端点。操作计划携带集群、源、目标、拓扑观察和资源修订。坐标或清单更改会使旧计划失效。</p>
+<p>集群显示名称是稳定的操作员标签。选择集群从不依赖于当前主主机名，因此切换主节点不会重命名或复制集群。</p>
+<h2 id="故障观察窗口">故障观察窗口<a class="heading-anchor" href="#故障观察窗口" aria-label="Link to 故障观察窗口">#</a></h2>
+<p>自动恢复使用稳定的事件而不是单个失败的探测。默认的证据窗口是 30 秒，由六个五秒的观察表示。对于相同的源主节点和事件，成功的或不确定的恢复不能再次提交。失败的预提交尝试只能在配置的回退后重试。</p>
+<p>自动恢复还需要以下内容：</p>
+<ul>
+<li>当前的 Raft 主节点；</li>
+<li>控制器多数；</li>
+<li>新鲜完整的拓扑证据；</li>
+<li>恰好一个失败或未知的记录主节点；</li>
+<li>合格的一级候选者；</li>
+<li>隔离和端点租约证据；</li>
+<li>正常的持久操作工作流程。</li>
+</ul>
+<h2 id="写主与-vip-绑定">写主与 VIP 绑定<a class="heading-anchor" href="#写主与-vip-绑定" aria-label="Link to 写主与 VIP 绑定">#</a></h2>
+<p>写主角色更改和 VIP 转移是一次操作。执行后，成功需要以下所有条件：</p>
+<ul>
+<li>恰好一个可写的 MySQL 实例；</li>
+<li>恰好一个 VIP 拥有者；</li>
+<li>VIP 拥有者是已验证的主节点；</li>
+<li>每个可到达的从节点都连接到该主节点；</li>
+<li>不完整的主机探测不被视为成功。</li>
+</ul>
+<p>端点租约由多数支持并由主节点签发。无法续订有效多数租约的节点会移除本地 VIP 并强制只读。因此，恢复的旧主节点不能作为第二个写主返回或保留写主端点。</p>
+<h2 id="受控切换与旧主节点恢复">受控切换与旧主节点恢复<a class="heading-anchor" href="#受控切换与旧主节点恢复" aria-label="Link to 受控切换与旧主节点恢复">#</a></h2>
+<p>计划切换遵循共享工作流程：</p>
+<p><code>DISCOVER -&gt; PRECHECK -&gt; PLAN -&gt; SAFETY_GUARD -&gt; LOCK -&gt; APPROVE -&gt; EXECUTE -&gt; VERIFY -&gt; AUDIT -&gt; REPORT</code></p>
+<p>MySQL 适配器对源进行隔离，追赶选定的候选者，提升它，重新父化从节点，转移 VIP，并验证最终不变量。提交后验证间隙是 <code>indeterminate</code>，从不成功。</p>
+<p>旧主节点恢复始终将节点作为当前主节点的只读副本返回。安全的 GTID 子集可能使用快速重新连接。数据不一致、缺失或物理替换使用与添加节点相同的重建管道。</p>
+<h2 id="节点添加与重建管道">节点添加与重建管道<a class="heading-anchor" href="#节点添加与重建管道" aria-label="Link to 节点添加与重建管道">#</a></h2>
+<p>添加节点和修复物理损坏的节点使用一个持久生命周期工作流程：</p>
+<ol>
+<li>验证注册的集群、固定的节点标识、端点唯一性、包可用性、供体健康状况和操作并发性；</li>
+<li>安装选定的 MySQL 版本，但不创建独立的写主；</li>
+<li>保持目标只读；</li>
+<li>从显式能力中选择 Clone、XtraBackup 或逻辑转储；</li>
+<li>配置与当前主节点版本兼容的复制；</li>
+<li>验证原生标识、源、线程、延迟、只读状态和本地 VIP 的缺失；</li>
+<li>仅在验证后提交节点和实例元数据。</li>
+</ol>
+<p>重建会重用原始资源 UUID 和固定节点名称。数据节点数量不受限制。控制器或混合节点更改必须以至少三个的奇数成员结束，并作为一次验证的成员更改提交。</p>
+<p>逻辑转储回退故意在供体导入前清除目标上的每个非系统模式。这防止物理替换或数据不一致的目标在 GTID 状态重置后保留仅目标数据。它仅在受保护的重建工作流程中允许，且从不作为隐式修复运行。</p>
+<h2 id="计划重启">计划重启<a class="heading-anchor" href="#计划重启" aria-label="Link to 计划重启">#</a></h2>
+<p>受管理的 MySQL 重启是一个操作，而不是原始服务重启。它将实例置于维护状态，抑制审批窗口内的自动恢复，重启 MySQL，验证就绪状态和发现，验证 VIP 唯一性，然后才移除维护状态。失败会使恢复抑制可见，并需要操作员审查，而不是静默重新开启自动操作。</p>
+<h2 id="安装与配置">安装与配置<a class="heading-anchor" href="#安装与配置" aria-label="Link to 安装与配置">#</a></h2>
+<p>最终安装程序必须接受准备好的 ClusterGuard 包和目标主机清单，在变更操作前执行所有预检，并为服务器、代理、端点同步和 systemd 单元生成一个共享配置源。秘密通过受保护的服务器端环境引用提供，从不写入任务历史或 API 响应。</p>
+<p>安装流程是分阶段且幂等的：预检、复制、安装、配置、启动、注册、同步、验证和报告。重新运行已完成的阶段会检查其后置条件，而不是盲目重放它。</p>
+<h2 id="操作员可见性">操作员可见性<a class="heading-anchor" href="#操作员可见性" aria-label="Link to 操作员可见性">#</a></h2>
+<p>控制台为全局概览、选定集群拓扑、受保护操作、节点生命周期、指标、操作日志、产品信息和设置提供独立视图。每个可见的执行操作要么调用真实的 ClusterGuard API，要么由于后端能力原因被禁用。原始操作证据默认折叠，但可用于审计。</p>
+<h2 id="验证交付">验证交付<a class="heading-anchor" href="#验证交付" aria-label="Link to 验证交付">#</a></h2>
+<p>RC58 包包含控制器、CLI、受限代理、生命周期执行器、systemd 单元、定时器、日志轮转、配置模板和安装程序。它被部署到三个控制器和三个共置的数据节点上。接受矩阵验证了六个集群、50 次重复的真实切换、多数丢失的自我隔离、主网络故障、旧主节点返回、重复重启、完整主机重启、数据不一致重建和端点元数据同步。详细证据记录在 <code>docs/mysql-feature-parity-acceptance.md</code> 中。</p>
+<p>仍需环境特定的生产强化：</p>
+<ul>
+<li>配置并测试外部隔离提供者，以部署平台的虚拟化器、云、PDU 或 BMC API；</li>
+<li>为每个支持的 MySQL 家族验证 Clone 或确切的 XtraBackup 构建；</li>
+<li>建立备份/恢复、保留和恢复时间目标；</li>
+<li>集成外部警报传递和长期指标保留；</li>
+<li>在生产启用前，在目标内核、网络、存储和 MySQL 包上重复破坏性矩阵。</li>
+</ul>
+
+          <footer class="document-footer">
+            <span>源文件: <code>docs/zh-CN/proven-mysql-ha-methods.md</code></span>
+            <a href="../index.html">文档语言入口</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="本页目录">
+          <strong>本页目录</strong>
+          <a class="toc-level-2" href="#目的">目的</a><a class="toc-level-2" href="#稳定资源标识">稳定资源标识</a><a class="toc-level-2" href="#集群清单边界">集群清单边界</a><a class="toc-level-2" href="#故障观察窗口">故障观察窗口</a><a class="toc-level-2" href="#写主与-vip-绑定">写主与 VIP 绑定</a><a class="toc-level-2" href="#受控切换与旧主节点恢复">受控切换与旧主节点恢复</a><a class="toc-level-2" href="#节点添加与重建管道">节点添加与重建管道</a><a class="toc-level-2" href="#计划重启">计划重启</a><a class="toc-level-2" href="#安装与配置">安装与配置</a><a class="toc-level-2" href="#操作员可见性">操作员可见性</a><a class="toc-level-2" href="#验证交付">验证交付</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

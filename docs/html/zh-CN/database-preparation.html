@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="数据库接入 - ClusterGuard HA operational documentation">
+  <title>数据库接入 | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">跳到正文</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>搜索文档</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="输入标题关键词">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>开始使用</h2><a href="index.html" data-doc-title="clusterguard ha 中文文档">ClusterGuard HA 中文文档</a><a href="product-overview.html" data-doc-title="产品概览">产品概览</a><a href="product-tour.html" data-doc-title="控制台产品导览">控制台产品导览</a><a href="architecture.html" data-doc-title="系统架构">系统架构</a><a href="release-2.1.45.html" data-doc-title="2.1.45 发布说明">2.1.45 发布说明</a></section><section><h2>部署与迁移</h2><a href="offline-rpm-install.html" data-doc-title="离线 rpm 安装">离线 RPM 安装</a><a href="database-preparation.html" data-doc-title="数据库接入" aria-current="page" class="active">数据库接入</a><a href="orchestrator-migration.html" data-doc-title="从 orchestrator 迁移">从 Orchestrator 迁移</a></section><section><h2>日常运维</h2><a href="operations-manual.html" data-doc-title="运维操作手册">运维操作手册</a><a href="api-operations.html" data-doc-title="api 运维参考">API 运维参考</a><a href="postgresql-ha.html" data-doc-title="postgresql 高可用">PostgreSQL 高可用</a><a href="version-release-policy.html" data-doc-title="版本与发版规范">版本与发版规范</a></section><section><h2>验收证据</h2><a href="proven-mysql-ha-methods.html" data-doc-title="mysql 已验证方法">MySQL 已验证方法</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql 功能验收">MySQL 功能验收</a><a href="mysql-former-primary-recovery.html" data-doc-title="旧主恢复专项验收">旧主恢复专项验收</a><a href="mysql-production-qualification.html" data-doc-title="mysql 生产验收">MySQL 生产验收</a><a href="production-chaos-test.html" data-doc-title="生产故障测试报告">生产故障测试报告</a><a href="power-lifecycle-test.html" data-doc-title="计划关机测试报告">计划关机测试报告</a></section></nav>
+      <div class="sidebar-meta">
+        <span>离线文档构建</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">打开目录</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>数据库接入</strong></div>
+        <div class="header-actions">
+          <a href="../en-US/database-preparation.html" lang="en-US">English</a>
+          <button id="print-button" type="button">打印</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha-数据库接入手册">ClusterGuard HA 数据库接入手册<a class="heading-anchor" href="#clusterguard-ha-数据库接入手册" aria-label="Link to ClusterGuard HA 数据库接入手册">#</a></h1>
+<p>本文说明 MySQL、PostgreSQL、Oracle Data Guard Broker 和 SQL Server Always On 在数据库侧需要完成的配置、最小权限和验证。示例中的网段、密码、服务名和资源 ID 必须替换为现场值。</p>
+<p>版本边界：<code>2.1-45</code> 的正式数据库支持范围是 MySQL；PostgreSQL 从 2.2 开始。
+Oracle 与 SQL Server 章节用于后续独立能力线准备，完成对应版本发布和现场验收前
+不得据此宣称已进入 2.1 生产支持范围。</p>
+<h2 id="1-通用要求">1. 通用要求<a class="heading-anchor" href="#1-通用要求" aria-label="Link to 1. 通用要求">#</a></h2>
+<p>所有数据库节点必须满足：</p>
+<ul>
+<li>NTP/Chrony 正常，时钟偏差受控</li>
+<li>主机名、IP、数据库端口和平台固定节点名已登记</li>
+<li>平台 <code>resource_id</code> 永久不变，hostname、IP、port 只是可变 endpoint</li>
+<li>数据库原生身份唯一且稳定</li>
+<li>控制节点到数据库端口和 SSH/Agent 端口可达</li>
+<li>发现账号与执行账号分离</li>
+<li>密码只保存在受保护的环境文件或数据库原生安全存储中</li>
+<li>TLS 可用时强制 TLS，并限制来源网段</li>
+<li>未通过拓扑、复制、身份和写入端点验证前不得启用自动故障切换</li>
+</ul>
+<h2 id="2-mysql">2. MySQL<a class="heading-anchor" href="#2-mysql" aria-label="Link to 2. MySQL">#</a></h2>
+<h3 id="2-1-复制基础">2.1 复制基础<a class="heading-anchor" href="#2-1-复制基础" aria-label="Link to 2.1 复制基础">#</a></h3>
+<p>每台实例必须有唯一 <code>server_id</code>，同一数据目录的 <code>server_uuid</code> 不得复制到另一节点。</p>
+<p>MySQL 8.0/8.4 推荐：</p>
+<pre><code class="language-ini">[mysqld]
+server_id=1523306
+log_bin=mysql-bin
+binlog_format=ROW
+gtid_mode=ON
+enforce_gtid_consistency=ON
+log_replica_updates=ON
+relay_log_recovery=ON
+read_only=ON
+super_read_only=ON
+</code></pre>
+<p>主库上线后由受控流程关闭 <code>read_only</code> 和 <code>super_read_only</code>。不要把 <code>auto.cnf</code> 复制到新节点，否则会产生重复 <code>server_uuid</code>。</p>
+<p>验证：</p>
+<pre><code class="language-sql">SELECT @@server_uuid, @@server_id, @@hostname, @@port, @@version;
+SELECT @@global.gtid_mode, @@global.enforce_gtid_consistency;
+SELECT @@global.read_only, @@global.super_read_only;
+SHOW REPLICA STATUS\G
+</code></pre>
+<p>MySQL 5.7 使用 <code>SHOW SLAVE STATUS\G</code>，配置项 <code>log_slave_updates</code>。</p>
+<h3 id="2-2-clusterguard-安装实例的默认连接与内存参数">2.2 ClusterGuard 安装实例的默认连接与内存参数<a class="heading-anchor" href="#2-2-clusterguard-安装实例的默认连接与内存参数" aria-label="Link to 2.2 ClusterGuard 安装实例的默认连接与内存参数">#</a></h3>
+<p>通过 ClusterGuard 离线安装器新建 MySQL 时，安装脚本会在目标数据库节点读取 <code>/proc/meminfo</code>，按物理内存生成保守的生产基线：</p>
+<ul>
+<li><code>innodb_buffer_pool_size</code>：默认取物理内存的 70% 并向上取整到 4 GiB 的整数倍；若结果超过物理内存的 80%，则取不超过 80% 的最大 4 GiB 倍数，不设置固定容量上限</li>
+<li><code>max_connections</code>：默认固定为 1000</li>
+<li><code>table_open_cache</code>、<code>thread_cache_size</code>、临时表和 redo 容量随内存分档</li>
+<li>排序、连接和读缓冲使用受控的小值，避免每连接大缓冲在高并发下耗尽内存</li>
+</ul>
+<p>生成配置位于 <code>/etc/clusterguard/mysql/&lt;PORT&gt;.cnf</code>。参数是安装基线，不替代上线前按业务 SQL、连接池、存储延迟和容量做压测。</p>
+<p>该规则要求 MySQL 数据节点至少具备 5 GiB 物理内存。低于此容量时不存在同时满足“4 GiB 的倍数”和“不超过 80%”的有效 buffer pool，安装器会阻断并要求扩容。</p>
+<p>新实例默认监听 <code>0.0.0.0:&lt;PORT&gt;</code>。ClusterGuard 创建的发现、执行和复制账号允许通过 TCP 连接；主机防火墙仍只应放通数据库节点、控制节点和审批的业务网段。默认 root 只允许本机 socket 和 <code>127.0.0.1</code>，远程管理使用专用账号。只有安装命令显式传入 <code>--mysql-root-remote-host HOST</code> 时，安装器才创建或更新对应的 <code>root</code>@<code>HOST</code>，例如 <code>--mysql-root-remote-host &#39;%&#39;</code>；省略参数时不操作远程 root。</p>
+<p>受管实例的运行时 socket 为 <code>/run/clusterguard/mysql/&lt;PORT&gt;/mysql.sock</code>，由 systemd <code>RuntimeDirectory</code> 创建，不应放入数据库数据目录。安装器会发布本机客户端默认配置；标准 3306 实例可直接使用 <code>mysql -uroot -p</code>，同时保留重启后自动恢复的 <code>/tmp/mysql.sock</code> 兼容链接。平台内部始终使用绝对二进制、明确的 defaults 文件或 TCP，不依赖该兼容链接。</p>
+<p>认证插件按数据库版本处理：</p>
+<ul>
+<li>MySQL 8.0/5.7：配置 <code>default_authentication_plugin=mysql_native_password</code></li>
+<li>MySQL 8.4：配置 <code>mysql_native_password=ON</code>，并为 ClusterGuard 管理账号显式指定 <code>mysql_native_password</code></li>
+<li>MySQL 9.x：不写已经移除的 native password 参数，使用服务器支持的默认认证插件</li>
+</ul>
+<p>验证自动生成的参数和账号：</p>
+<pre><code class="language-sql">SHOW VARIABLES WHERE Variable_name IN (
+  &#39;bind_address&#39;, &#39;max_connections&#39;, &#39;innodb_buffer_pool_size&#39;,
+  &#39;table_open_cache&#39;, &#39;thread_cache_size&#39;
+);
+SELECT user, host, plugin
+FROM mysql.user
+WHERE user IN (&#39;cg_discovery&#39;, &#39;cg_operator&#39;, &#39;cg_replication&#39;, &#39;root&#39;)
+ORDER BY user, host;
+</code></pre>
+<h3 id="2-3-最小权限账号">2.3 最小权限账号<a class="heading-anchor" href="#2-3-最小权限账号" aria-label="Link to 2.3 最小权限账号">#</a></h3>
+<p>以下示例把控制节点网段限制为 <code>192.168.102.%</code>。生产环境应进一步收紧到具体控制节点地址，并使用随机长密码。</p>
+<p>MySQL 8.0/8.4：</p>
+<pre><code class="language-sql">CREATE USER &#39;cg_discovery&#39;@&#39;192.168.102.%&#39;
+  IDENTIFIED BY &#39;&lt;DISCOVERY_PASSWORD&gt;&#39;;
+GRANT PROCESS, REPLICATION CLIENT ON *.* TO
+  &#39;cg_discovery&#39;@&#39;192.168.102.%&#39;;
+
+CREATE USER &#39;cg_operator&#39;@&#39;192.168.102.%&#39;
+  IDENTIFIED BY &#39;&lt;OPERATION_PASSWORD&gt;&#39;;
+GRANT PROCESS, REPLICATION CLIENT, CONNECTION_ADMIN,
+  SYSTEM_VARIABLES_ADMIN, REPLICATION_SLAVE_ADMIN ON *.* TO
+  &#39;cg_operator&#39;@&#39;192.168.102.%&#39;;
+
+CREATE USER &#39;cg_replication&#39;@&#39;192.168.102.%&#39;
+  IDENTIFIED BY &#39;&lt;REPLICATION_PASSWORD&gt;&#39;;
+GRANT REPLICATION SLAVE ON *.* TO
+  &#39;cg_replication&#39;@&#39;192.168.102.%&#39;;
+</code></pre>
+<p>MySQL 5.7 没有细分管理权限，执行账号需要 <code>SUPER</code>。这会扩大权限面，应限制来源、使用专用密码并开启审计：</p>
+<pre><code class="language-sql">GRANT PROCESS, REPLICATION CLIENT, SUPER ON *.* TO
+  &#39;cg_operator&#39;@&#39;192.168.102.%&#39;;
+</code></pre>
+<p>如果服务器启用了 TLS：</p>
+<pre><code class="language-sql">ALTER USER &#39;cg_discovery&#39;@&#39;192.168.102.%&#39; REQUIRE SSL;
+ALTER USER &#39;cg_operator&#39;@&#39;192.168.102.%&#39; REQUIRE SSL;
+ALTER USER &#39;cg_replication&#39;@&#39;192.168.102.%&#39; REQUIRE SSL;
+</code></pre>
+<h3 id="2-4-建立复制">2.4 建立复制<a class="heading-anchor" href="#2-4-建立复制" aria-label="Link to 2.4 建立复制">#</a></h3>
+<p>MySQL 8：</p>
+<pre><code class="language-sql">CHANGE REPLICATION SOURCE TO
+  SOURCE_HOST=&#39;192.168.102.152&#39;,
+  SOURCE_PORT=3306,
+  SOURCE_USER=&#39;cg_replication&#39;,
+  SOURCE_PASSWORD=&#39;&lt;REPLICATION_PASSWORD&gt;&#39;,
+  SOURCE_AUTO_POSITION=1,
+  GET_SOURCE_PUBLIC_KEY=1;
+START REPLICA;
+</code></pre>
+<p>MySQL 5.7：</p>
+<pre><code class="language-sql">CHANGE MASTER TO
+  MASTER_HOST=&#39;192.168.102.152&#39;,
+  MASTER_PORT=3306,
+  MASTER_USER=&#39;cg_replication&#39;,
+  MASTER_PASSWORD=&#39;&lt;REPLICATION_PASSWORD&gt;&#39;,
+  MASTER_AUTO_POSITION=1;
+START SLAVE;
+</code></pre>
+<p>接入前必须确认：</p>
+<ul>
+<li>只有一个可写主库</li>
+<li>候选节点无 errant GTID</li>
+<li>IO/SQL 线程正常</li>
+<li>延迟满足切换策略</li>
+<li>每套集群使用独立 VIP</li>
+<li>VIP 只绑定在当前主库</li>
+</ul>
+<h2 id="3-postgresql">3. PostgreSQL<a class="heading-anchor" href="#3-postgresql" aria-label="Link to 3. PostgreSQL">#</a></h2>
+<h3 id="3-1-身份和复制基础">3.1 身份和复制基础<a class="heading-anchor" href="#3-1-身份和复制基础" aria-label="Link to 3.1 身份和复制基础">#</a></h3>
+<p>ClusterGuard HA 使用 <code>system_identifier</code> 识别数据库集群，使用平台 UUID 识别节点。不能把 hostname:port 当成主键。</p>
+<p>主库建议：</p>
+<pre><code class="language-conf">wal_level = replica
+max_wal_senders = 10
+max_replication_slots = 10
+hot_standby = on
+wal_log_hints = on
+password_encryption = scram-sha-256
+</code></pre>
+<p>也可以使用数据校验和代替 <code>wal_log_hints</code> 满足 <code>pg_rewind</code> 前提。</p>
+<p>为每个节点登记稳定的平台身份：</p>
+<pre><code class="language-sql">ALTER SYSTEM SET clusterguard.node_id =
+  &#39;11111111-1111-4111-8111-111111111111&#39;;
+SELECT pg_reload_conf();
+</code></pre>
+<p>副本还需要由受控流程维护 <code>clusterguard.primary_node_id</code> 和 <code>primary_conninfo</code>。</p>
+<h3 id="3-2-最小权限账号">3.2 最小权限账号<a class="heading-anchor" href="#3-2-最小权限账号" aria-label="Link to 3.2 最小权限账号">#</a></h3>
+<pre><code class="language-sql">CREATE ROLE cg_monitor LOGIN PASSWORD &#39;&lt;DISCOVERY_PASSWORD&gt;&#39;;
+GRANT pg_monitor TO cg_monitor;
+
+CREATE ROLE cg_operator LOGIN PASSWORD &#39;&lt;OPERATION_PASSWORD&gt;&#39;;
+GRANT pg_monitor, pg_signal_backend TO cg_operator;
+GRANT ALTER SYSTEM ON PARAMETER default_transaction_read_only TO cg_operator;
+GRANT EXECUTE ON FUNCTION pg_reload_conf() TO cg_operator;
+
+CREATE ROLE clusterguard_repl
+  WITH LOGIN REPLICATION PASSWORD &#39;&lt;REPLICATION_PASSWORD&gt;&#39;;
+</code></pre>
+<p><code>pg_hba.conf</code> 示例：</p>
+<pre><code class="language-conf">hostssl all         cg_monitor         192.168.102.152/32 scram-sha-256
+hostssl all         cg_operator        192.168.102.152/32 scram-sha-256
+hostssl replication clusterguard_repl  192.168.102.0/24   scram-sha-256
+</code></pre>
+<p>对另外两个控制节点增加等价规则，然后 reload：</p>
+<pre><code class="language-sql">SELECT pg_reload_conf();
+</code></pre>
+<h3 id="3-3-验证">3.3 验证<a class="heading-anchor" href="#3-3-验证" aria-label="Link to 3.3 验证">#</a></h3>
+<pre><code class="language-sql">SELECT system_identifier FROM pg_control_system();
+SELECT pg_is_in_recovery();
+SHOW default_transaction_read_only;
+SELECT * FROM pg_stat_replication;
+SELECT * FROM pg_stat_wal_receiver;
+SELECT has_parameter_privilege(
+  &#39;cg_operator&#39;, &#39;default_transaction_read_only&#39;, &#39;ALTER SYSTEM&#39;);
+SELECT has_function_privilege(
+  &#39;cg_operator&#39;, &#39;pg_reload_conf()&#39;, &#39;EXECUTE&#39;);
+</code></pre>
+<p>节点恢复优先使用 <code>pg_rewind</code>；不满足同一 system identifier、同一大版本、数据校验和或 <code>wal_log_hints</code> 时，必须使用完整 <code>pg_basebackup</code> 重建。</p>
+<h2 id="4-oracle-data-guard-broker">4. Oracle Data Guard Broker<a class="heading-anchor" href="#4-oracle-data-guard-broker" aria-label="Link to 4. Oracle Data Guard Broker">#</a></h2>
+<h3 id="4-1-broker-前提">4.1 Broker 前提<a class="heading-anchor" href="#4-1-broker-前提" aria-label="Link to 4.1 Broker 前提">#</a></h3>
+<p>主备库都设置：</p>
+<pre><code class="language-sql">ALTER SYSTEM SET DG_BROKER_START=TRUE SCOPE=BOTH;
+SELECT DBID, DB_UNIQUE_NAME, DATABASE_ROLE, OPEN_MODE FROM V$DATABASE;
+</code></pre>
+<p>要求：</p>
+<ul>
+<li>Data Guard Broker configuration 已创建且状态为 <code>SUCCESS</code></li>
+<li>主备使用一致的密码文件认证</li>
+<li>每个库有稳定 <code>DB_UNIQUE_NAME</code></li>
+<li>Broker connect identifier 在所有节点都可解析</li>
+<li>standby redo log、transport 和 apply 正常</li>
+<li>切换服务名与数据库角色解耦</li>
+</ul>
+<h3 id="4-2-专用-sysdg-账号">4.2 专用 SYSDG 账号<a class="heading-anchor" href="#4-2-专用-sysdg-账号" aria-label="Link to 4.2 专用 SYSDG 账号">#</a></h3>
+<p>不要把 <code>SYS</code> 密码写入 ClusterGuard HA。创建专用账号：</p>
+<pre><code class="language-sql">CREATE USER CLUSTERGUARD_DG IDENTIFIED BY &quot;&lt;STRONG_PASSWORD&gt;&quot;;
+GRANT CREATE SESSION TO CLUSTERGUARD_DG;
+GRANT SYSDG TO CLUSTERGUARD_DG;
+</code></pre>
+<p>主备密码文件中必须包含同一账号，并分别验证：</p>
+<pre><code class="language-bash">sqlplus &#39;CLUSTERGUARD_DG/&lt;STRONG_PASSWORD&gt;@MESDB as sysdg&#39;
+sqlplus &#39;CLUSTERGUARD_DG/&lt;STRONG_PASSWORD&gt;@MESDB_B as sysdg&#39;
+</code></pre>
+<p>Agent 模式在数据库节点以 <code>oracle</code> 操作系统账号运行 <code>dgmgrl</code>。数据库节点的受保护环境文件设置：</p>
+<pre><code class="language-bash">CG_ORACLE_BROKER_PASSWORD=&#39;&lt;STRONG_PASSWORD&gt;&#39;
+</code></pre>
+<p>权限应为 <code>0600</code>，不得出现在命令行参数、审计原始返回或 shell history。</p>
+<h3 id="4-3-broker-验证">4.3 Broker 验证<a class="heading-anchor" href="#4-3-broker-验证" aria-label="Link to 4.3 Broker 验证">#</a></h3>
+<pre><code class="language-bash">dgmgrl &#39;CLUSTERGUARD_DG/&lt;STRONG_PASSWORD&gt;@MESDB as sysdg&#39;
+</code></pre>
+<p>在 DGMGRL 中：</p>
+<pre><code class="language-text">SHOW CONFIGURATION;
+SHOW DATABASE VERBOSE &#39;MESDB&#39;;
+VALIDATE DATABASE VERBOSE &#39;MESDB&#39;;
+VALIDATE DATABASE VERBOSE &#39;MESDB_B&#39;;
+</code></pre>
+<p>计划切换前，保护模式、transport lag、apply lag、switchover status 和目标库状态必须全部满足策略。ClusterGuard HA 不会把 Broker 报告失败的切换标记为成功。</p>
+<p>业务访问应使用角色型服务名和 VIP/SCAN/Listener，不应把固定主机 SID 暴露给应用。切换后由服务角色和监听端点把连接引向新主库。</p>
+<h2 id="5-sql-server-always-on">5. SQL Server Always On<a class="heading-anchor" href="#5-sql-server-always-on" aria-label="Link to 5. SQL Server Always On">#</a></h2>
+<h3 id="5-1-always-on-前提">5.1 Always On 前提<a class="heading-anchor" href="#5-1-always-on-前提" aria-label="Link to 5.1 Always On 前提">#</a></h3>
+<p>要求：</p>
+<ul>
+<li>Windows Failover Cluster 和 Availability Group 健康</li>
+<li>每个副本 <code>replica_id</code> 稳定</li>
+<li>AG <code>group_id</code> 稳定</li>
+<li>计划切换目标使用同步提交并处于 <code>SYNCHRONIZED</code></li>
+<li>Listener 名称、IP 和端口已配置</li>
+<li>各副本上的控制账号一致且来源受限</li>
+</ul>
+<h3 id="5-2-最小权限账号">5.2 最小权限账号<a class="heading-anchor" href="#5-2-最小权限账号" aria-label="Link to 5.2 最小权限账号">#</a></h3>
+<p>在每个 SQL Server 实例执行，使用现场密码策略：</p>
+<pre><code class="language-sql">USE master;
+CREATE LOGIN cg_monitor WITH PASSWORD = &#39;&lt;DISCOVERY_PASSWORD&gt;&#39;;
+CREATE USER cg_monitor FOR LOGIN cg_monitor;
+GRANT VIEW SERVER STATE TO cg_monitor;
+GRANT VIEW ANY DEFINITION TO cg_monitor;
+
+CREATE LOGIN cg_operator WITH PASSWORD = &#39;&lt;OPERATION_PASSWORD&gt;&#39;;
+CREATE USER cg_operator FOR LOGIN cg_operator;
+GRANT VIEW SERVER STATE TO cg_operator;
+GRANT VIEW ANY DEFINITION TO cg_operator;
+GRANT ALTER ANY AVAILABILITY GROUP TO cg_operator;
+</code></pre>
+<p>SQL Server 2022 如发现性能 DMV 权限不足，再按官方权限模型评估授予：</p>
+<pre><code class="language-sql">GRANT VIEW SERVER PERFORMANCE STATE TO cg_monitor;
+GRANT VIEW SERVER PERFORMANCE STATE TO cg_operator;
+</code></pre>
+<p>不要直接授予 <code>sysadmin</code> 作为常规解决方案。</p>
+<h3 id="5-3-验证">5.3 验证<a class="heading-anchor" href="#5-3-验证" aria-label="Link to 5.3 验证">#</a></h3>
+<pre><code class="language-sql">SELECT group_id, name FROM sys.availability_groups;
+SELECT replica_id, replica_server_name, availability_mode_desc,
+       failover_mode_desc
+FROM sys.availability_replicas;
+
+SELECT ar.replica_server_name, rs.role_desc,
+       rs.connected_state_desc, rs.recovery_health_desc,
+       rs.synchronization_health_desc
+FROM sys.dm_hadr_availability_replica_states rs
+JOIN sys.availability_replicas ar
+  ON ar.replica_id = rs.replica_id;
+</code></pre>
+<p>计划切换只允许目标副本同步并健康时执行。强制故障转移可能造成数据丢失，当前产品策略会明确阻断不满足条件的动作，不提供假执行。</p>
+<h2 id="6-控制节点环境变量">6. 控制节点环境变量<a class="heading-anchor" href="#6-控制节点环境变量" aria-label="Link to 6. 控制节点环境变量">#</a></h2>
+<p>把数据库密码写入 <code>/etc/clusterguard/clusterguard.env</code>，权限 <code>0640</code>，所有者 <code>root:clusterguard</code>：</p>
+<pre><code class="language-bash">CG_MYSQL_DISCOVERY_PASSWORD=&#39;&lt;...&gt;&#39;
+CG_MYSQL_OPERATION_PASSWORD=&#39;&lt;...&gt;&#39;
+CG_MYSQL_REPLICATION_PASSWORD=&#39;&lt;...&gt;&#39;
+CG_POSTGRESQL_DISCOVERY_PASSWORD=&#39;&lt;...&gt;&#39;
+CG_POSTGRESQL_OPERATION_PASSWORD=&#39;&lt;...&gt;&#39;
+CG_POSTGRESQL_REPLICATION_PASSWORD=&#39;&lt;...&gt;&#39;
+CG_ORACLE_DISCOVERY_PASSWORD=&#39;&lt;...&gt;&#39;
+CG_ORACLE_OPERATION_PASSWORD=&#39;&lt;...&gt;&#39;
+CG_SQLSERVER_DISCOVERY_PASSWORD=&#39;&lt;...&gt;&#39;
+CG_SQLSERVER_OPERATION_PASSWORD=&#39;&lt;...&gt;&#39;
+</code></pre>
+<p>修改密码时先在数据库侧并行创建或更新账号，再滚动更新三个控制节点，最后撤销旧凭据。整个过程必须保持 Raft 多数可用。</p>
+<h2 id="7-接入完成验收">7. 接入完成验收<a class="heading-anchor" href="#7-接入完成验收" aria-label="Link to 7. 接入完成验收">#</a></h2>
+<p>每个集群至少验证：</p>
+<ol>
+<li>原生身份与平台资源一一对应。</li>
+<li>修改 hostname、IP、port 后 <code>resource_id</code> 不变，旧 endpoint 进入 alias。</li>
+<li>拓扑中的主库、副本和复制源正确。</li>
+<li>发现账号不能执行切换。</li>
+<li>执行账号不能绕过平台 Safety Guard、Lock、Approval 和 Verify。</li>
+<li>Writer endpoint 只指向当前可写主库。</li>
+<li>操作日志包含时间、原主库、目标主库、结果、验证和报告。</li>
+<li>未实现或不安全的能力返回 <code>unsupported</code> 或 <code>blocked</code>，不能返回伪成功。</li>
+</ol>
+
+          <footer class="document-footer">
+            <span>源文件: <code>docs/zh-CN/database-preparation.md</code></span>
+            <a href="../index.html">文档语言入口</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="本页目录">
+          <strong>本页目录</strong>
+          <a class="toc-level-2" href="#1-通用要求">1. 通用要求</a><a class="toc-level-2" href="#2-mysql">2. MySQL</a><a class="toc-level-3" href="#2-1-复制基础">2.1 复制基础</a><a class="toc-level-3" href="#2-2-clusterguard-安装实例的默认连接与内存参数">2.2 ClusterGuard 安装实例的默认连接与内存参数</a><a class="toc-level-3" href="#2-3-最小权限账号">2.3 最小权限账号</a><a class="toc-level-3" href="#2-4-建立复制">2.4 建立复制</a><a class="toc-level-2" href="#3-postgresql">3. PostgreSQL</a><a class="toc-level-3" href="#3-1-身份和复制基础">3.1 身份和复制基础</a><a class="toc-level-3" href="#3-2-最小权限账号">3.2 最小权限账号</a><a class="toc-level-3" href="#3-3-验证">3.3 验证</a><a class="toc-level-2" href="#4-oracle-data-guard-broker">4. Oracle Data Guard Broker</a><a class="toc-level-3" href="#4-1-broker-前提">4.1 Broker 前提</a><a class="toc-level-3" href="#4-2-专用-sysdg-账号">4.2 专用 SYSDG 账号</a><a class="toc-level-3" href="#4-3-broker-验证">4.3 Broker 验证</a><a class="toc-level-2" href="#5-sql-server-always-on">5. SQL Server Always On</a><a class="toc-level-3" href="#5-1-always-on-前提">5.1 Always On 前提</a><a class="toc-level-3" href="#5-2-最小权限账号">5.2 最小权限账号</a><a class="toc-level-3" href="#5-3-验证">5.3 验证</a><a class="toc-level-2" href="#6-控制节点环境变量">6. 控制节点环境变量</a><a class="toc-level-2" href="#7-接入完成验收">7. 接入完成验收</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

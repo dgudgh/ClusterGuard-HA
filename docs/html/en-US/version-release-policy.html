@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="Version and Release Policy - ClusterGuard HA operational documentation">
+  <title>Version and Release Policy | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">Skip to content</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>Search documentation</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="Filter by title">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="version-release-policy.html" data-doc-title="version and release policy" aria-current="page" class="active">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
+      <div class="sidebar-meta">
+        <span>Offline documentation build</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">Open navigation</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>Version and Release Policy</strong></div>
+        <div class="header-actions">
+          <a href="../zh-CN/version-release-policy.html" lang="zh-CN">简体中文</a>
+          <button id="print-button" type="button">Print</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha-version-and-release-policy">ClusterGuard HA Version and Release Policy<a class="heading-anchor" href="#clusterguard-ha-version-and-release-policy" aria-label="Link to ClusterGuard HA Version and Release Policy">#</a></h1>
+<h2 id="1-version-format">1. Version Format<a class="heading-anchor" href="#1-version-format" aria-label="Link to 1. Version Format">#</a></h2>
+<p>ClusterGuard HA packages use the following format:</p>
+<pre><code class="language-text">MAJOR.FEATURE-RELEASE
+</code></pre>
+<p>For example:</p>
+<pre><code class="language-text">2.1-45
+2.2-1
+2.2-2
+</code></pre>
+<p>The corresponding Git tag uses a dot-separated format:</p>
+<pre><code class="language-text">v2.1.45
+v2.2.1
+v2.2.2
+</code></pre>
+<p>The rules are as follows:</p>
+<ul>
+<li>A major version change indicates a significant change in the control kernel, data model, or compatibility boundary.</li>
+<li>A feature version change indicates the start of a new product capability line, for example, PostgreSQL starting from 2.2.</li>
+<li>The release number strictly increments within the same feature version. Any changes affecting users, such as fixes, features, installers, configurations, dependencies, and delivery documentation, must increase the release number.</li>
+</ul>
+<h2 id="2-current-version-lines">2. Current Version Lines<a class="heading-anchor" href="#2-current-version-lines" aria-label="Link to 2. Current Version Lines">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Version Line</th>
+<th>Status</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>2.1-45</code></td>
+<td>Frozen</td>
+<td>MySQL stable line, no new features will be added</td>
+</tr>
+<tr>
+<td><code>2.2-N</code></td>
+<td>Development Line</td>
+<td>PostgreSQL capabilities and new features after 2.1</td>
+</tr>
+</tbody></table>
+<p><code>v2.1.45</code> permanently points to the commit
+<code>28425925a321655f38686942c6b081d235b0d288</code>. Subsequent fixes must not move this tag.</p>
+<h2 id="3-immutable-release-rules">3. Immutable Release Rules<a class="heading-anchor" href="#3-immutable-release-rules" aria-label="Link to 3. Immutable Release Rules">#</a></h2>
+<p>After a formal release is completed, the following objects must not be overwritten:</p>
+<ul>
+<li>Git tags;</li>
+<li>GitHub Releases;</li>
+<li>RPMs;</li>
+<li>Complete offline packages;</li>
+<li>Independent PostgreSQL dependency packages;</li>
+<li>SHA256 files;</li>
+<li>Release Notes.</li>
+</ul>
+<p>Any changes to the content of files with the same name are considered a new version. Even if only the installation script or operation manual inside the package is modified, the release number must be increased because the delivery package has changed.</p>
+<p>The following practices are prohibited:</p>
+<ul>
+<li>Deleting old tags and recreating tags with the same name;</li>
+<li>Replacing formal Release attachments with <code>--clobber</code>;</li>
+<li>Modifying RPM content but keeping the same NEVRA;</li>
+<li>Manually replacing scripts in the offline package without updating the summary;</li>
+<li>Building a formal release from an uncommitted working tree and making the Release point to another commit.</li>
+</ul>
+<h2 id="4-branch-rules">4. Branch Rules<a class="heading-anchor" href="#4-branch-rules" aria-label="Link to 4. Branch Rules">#</a></h2>
+<ul>
+<li><code>main</code> stores formally reviewed, traceable code.</li>
+<li><code>codex/2.2-postgresql</code> is the starting point for 2.2 PostgreSQL development, with the baseline being
+<code>v2.1.45</code>.</li>
+<li>Features and fixes are first formed as independent commits and then merged into the corresponding version line.</li>
+<li>The working tree must be clean before building a formal package; the commits in <code>RELEASE-INFO</code> must be consistent with the release tag.</li>
+</ul>
+<p>Do not rewrite changes for 2.2 PostgreSQL back to <code>v2.1.45</code>, nor deliver 2.2 code using 2.1 filenames.</p>
+<h2 id="5-postgresql-2-2-delivery-rules">5. PostgreSQL 2.2 Delivery Rules<a class="heading-anchor" href="#5-postgresql-2-2-delivery-rules" aria-label="Link to 5. PostgreSQL 2.2 Delivery Rules">#</a></h2>
+<p>The main offline package for 2.2 contains only a minimal set of signed dependencies required for ClusterGuard and database operation. PostgreSQL official source code compilation dependencies use the following strategy:</p>
+<ol>
+<li>When <code>--engine postgresql</code> is explicitly specified, the default is to resolve from the software source configured on the build node over the network.</li>
+<li>Compilation dependencies are installed into a temporary DNF installroot, without modifying the production host&#39;s RPM database.</li>
+<li>If the network connection fails, the process must explicitly stop and prompt the user to upload an independent PostgreSQL dependency package.</li>
+<li>In purely offline environments, <code>--postgresql-dependencies</code> is used to specify the decompressed independent dependency repository.</li>
+<li>The main package and dependency packages are separately verified for SHA256, RPM signature, architecture, system major version, and repository metadata.</li>
+</ol>
+<p>Typical 2.2 dependency add-on package name:</p>
+<pre><code class="language-text">clusterguard-ha-2.2-1-postgresql-build-deps-rocky-8-x86_64.tar.gz
+</code></pre>
+<p>This dependency add-on package must not be repackaged into the main offline package, so MySQL-only deployments do not carry the PostgreSQL build toolchain.</p>
+<h2 id="6-formal-release-gate">6. Formal Release Gate<a class="heading-anchor" href="#6-formal-release-gate" aria-label="Link to 6. Formal Release Gate">#</a></h2>
+<p>Each formal version must complete at least:</p>
+<pre><code class="language-bash">go test ./...
+go vet ./...
+find scripts -type f -name &#39;*.sh&#39; -print0 | xargs -0 -n1 bash -n
+git diff --check
+</code></pre>
+<p>And verify:</p>
+<ol>
+<li>Git working tree is clean, and the tag points to the current commit.</li>
+<li>RPM name, version, and architecture are correct.</li>
+<li>Both layers of SHA256 inside and outside the offline package pass.</li>
+<li>RPM signature, dependencies, systemd unit, and configuration permissions are correct.</li>
+<li>The installer&#39;s read-only plan and actual installation both pass in a clean three-node environment.</li>
+<li>Corresponding database versions complete switching, failure, old master recovery, restart, network partition, and concurrency testing.</li>
+<li>Security gate, Leader forwarding, Raft majority, VIP uniqueness, audit, and report all pass.</li>
+<li>Release Notes clearly specify the supported scope, known boundaries, and upgrade methods.</li>
+</ol>
+<p>If any gate fails, only an internal candidate package can be generated, and formal tags or GitHub Releases cannot be created.</p>
+<h2 id="7-release-steps">7. Release Steps<a class="heading-anchor" href="#7-release-steps" aria-label="Link to 7. Release Steps">#</a></h2>
+<p>Formal release is executed in the following order:</p>
+<ol>
+<li>Gather and submit all changes for this version.</li>
+<li>Execute full testing and on-site acceptance.</li>
+<li>Build RPM, main offline package, and necessary independent dependency packages from a clean commit.</li>
+<li>Verify the summary, signature, package content, and installation process.</li>
+<li>Create an annotated tag, for example, <code>v2.2.1</code>.</li>
+<li>Push the commit and tag.</li>
+<li>Create a GitHub Release and upload read-only attachments.</li>
+<li>Redownload the attachments from GitHub and perform a summary and installation smoke test again.</li>
+</ol>
+<p>After the release is completed, only new versions are allowed to fix issues.</p>
+
+          <footer class="document-footer">
+            <span>Source: <code>docs/en-US/version-release-policy.md</code></span>
+            <a href="../index.html">Documentation language home</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="On this page">
+          <strong>On this page</strong>
+          <a class="toc-level-2" href="#1-version-format">1. Version Format</a><a class="toc-level-2" href="#2-current-version-lines">2. Current Version Lines</a><a class="toc-level-2" href="#3-immutable-release-rules">3. Immutable Release Rules</a><a class="toc-level-2" href="#4-branch-rules">4. Branch Rules</a><a class="toc-level-2" href="#5-postgresql-2-2-delivery-rules">5. PostgreSQL 2.2 Delivery Rules</a><a class="toc-level-2" href="#6-formal-release-gate">6. Formal Release Gate</a><a class="toc-level-2" href="#7-release-steps">7. Release Steps</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

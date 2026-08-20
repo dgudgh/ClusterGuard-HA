@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="从 Orchestrator 迁移 - ClusterGuard HA operational documentation">
+  <title>从 Orchestrator 迁移 | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">跳到正文</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>搜索文档</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="输入标题关键词">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>开始使用</h2><a href="index.html" data-doc-title="clusterguard ha 中文文档">ClusterGuard HA 中文文档</a><a href="product-overview.html" data-doc-title="产品概览">产品概览</a><a href="product-tour.html" data-doc-title="控制台产品导览">控制台产品导览</a><a href="architecture.html" data-doc-title="系统架构">系统架构</a><a href="release-2.1.45.html" data-doc-title="2.1.45 发布说明">2.1.45 发布说明</a></section><section><h2>部署与迁移</h2><a href="offline-rpm-install.html" data-doc-title="离线 rpm 安装">离线 RPM 安装</a><a href="database-preparation.html" data-doc-title="数据库接入">数据库接入</a><a href="orchestrator-migration.html" data-doc-title="从 orchestrator 迁移" aria-current="page" class="active">从 Orchestrator 迁移</a></section><section><h2>日常运维</h2><a href="operations-manual.html" data-doc-title="运维操作手册">运维操作手册</a><a href="api-operations.html" data-doc-title="api 运维参考">API 运维参考</a><a href="postgresql-ha.html" data-doc-title="postgresql 高可用">PostgreSQL 高可用</a><a href="version-release-policy.html" data-doc-title="版本与发版规范">版本与发版规范</a></section><section><h2>验收证据</h2><a href="proven-mysql-ha-methods.html" data-doc-title="mysql 已验证方法">MySQL 已验证方法</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql 功能验收">MySQL 功能验收</a><a href="mysql-former-primary-recovery.html" data-doc-title="旧主恢复专项验收">旧主恢复专项验收</a><a href="mysql-production-qualification.html" data-doc-title="mysql 生产验收">MySQL 生产验收</a><a href="production-chaos-test.html" data-doc-title="生产故障测试报告">生产故障测试报告</a><a href="power-lifecycle-test.html" data-doc-title="计划关机测试报告">计划关机测试报告</a></section></nav>
+      <div class="sidebar-meta">
+        <span>离线文档构建</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">打开目录</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>从 Orchestrator 迁移</strong></div>
+        <div class="header-actions">
+          <a href="../en-US/orchestrator-migration.html" lang="en-US">English</a>
+          <button id="print-button" type="button">打印</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="从-orchestrator-迁移到-clusterguard-ha">从 Orchestrator 迁移到 ClusterGuard HA<a class="heading-anchor" href="#从-orchestrator-迁移到-clusterguard-ha" aria-label="Link to 从 Orchestrator 迁移到 ClusterGuard HA">#</a></h1>
+<p>本文用于把已经由 Orchestrator 管理的 MySQL 集群，逐套迁移到 ClusterGuard HA。迁移对象是数据库集群的管理权，不是导入旧控制器的代码、API 或元数据。</p>
+<p>ClusterGuard HA 是独立控制平台，不读取或兼容 Orchestrator 的后端表、配置文件、恢复记录、Raft 状态、Hook、CLI 或 API。现有 MySQL 数据不需要重装；平台通过权威清单和 MySQL <code>server_uuid</code> 重新发现并绑定已有实例。</p>
+<h2 id="1-不可违反的迁移原则">1. 不可违反的迁移原则<a class="heading-anchor" href="#1-不可违反的迁移原则" aria-label="Link to 1. 不可违反的迁移原则">#</a></h2>
+<p>同一套数据库集群在任何时刻只能有一个系统拥有以下变更权限：</p>
+<ul>
+<li>自动故障切换</li>
+<li>计划切换和提升主库</li>
+<li>修改复制源</li>
+<li>恢复旧主</li>
+<li>绑定、漂移或撤销 VIP</li>
+<li>执行数据库角色变更 Hook</li>
+</ul>
+<p>迁移观察期可以同时运行两个控制器的只读发现，但不能让两者同时执行恢复或 VIP 变更。若无法证明旧控制器已经失去变更能力，ClusterGuard HA 必须保持只读观察或人工切换关闭状态。</p>
+<h2 id="2-迁移前先确定应用接入方式">2. 迁移前先确定应用接入方式<a class="heading-anchor" href="#2-迁移前先确定应用接入方式" aria-label="Link to 2. 迁移前先确定应用接入方式">#</a></h2>
+<p>历史业务通常使用以下三种连接方式：</p>
+<table>
+<thead>
+<tr>
+<th>当前接入方式</th>
+<th>迁移处理</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>应用连接 VIP</td>
+<td>保留原 VIP；切权前由旧系统管理，切权后只允许 ClusterGuard Agent 管理</td>
+</tr>
+<tr>
+<td>应用连接独立代理或负载均衡</td>
+<td>本次迁移只接管数据库 HA；代理配置另行变更，不能同时改两层</td>
+</tr>
+<tr>
+<td>应用直连物理主库 IP</td>
+<td>先建立稳定 HA Endpoint，再分批修改连接串；不要把控制节点地址当数据库地址</td>
+</tr>
+</tbody></table>
+<p>如果保留原 VIP，业务连接串通常不需要修改。迁移的是 VIP 和数据库角色的控制权，不是业务访问地址。</p>
+<h2 id="3-阶段-0-冻结和备份旧环境">3. 阶段 0：冻结和备份旧环境<a class="heading-anchor" href="#3-阶段-0-冻结和备份旧环境" aria-label="Link to 3. 阶段 0：冻结和备份旧环境">#</a></h2>
+<p>逐套集群建立迁移清单，至少记录：</p>
+<ul>
+<li>集群名称、MySQL 完整版本和端口</li>
+<li>当前主库、全部副本、复制源和候选优先级</li>
+<li>每台实例的 <code>server_uuid</code>、<code>server_id</code>、hostname、IP 和端口</li>
+<li>GTID、binlog、复制线程、延迟和 errant transaction 状态</li>
+<li>VIP、网卡、CIDR、当前 VIP Owner 和 ARP 行为</li>
+<li>Orchestrator 控制节点、Leader、后端数据库和恢复配置</li>
+<li><code>PreFailoverProcesses</code>、<code>PostFailoverProcesses</code>、<code>PostGracefulTakeoverProcesses</code> 等 Hook</li>
+<li>自定义 VIP 脚本、systemd service/timer、cron、Keepalived 或其他自动化</li>
+<li>Orchestrator 使用的数据库执行账号和来源地址</li>
+</ul>
+<p>保存只读回退资料：</p>
+<pre><code class="language-bash">mysqldump --single-transaction &lt;ORCHESTRATOR_BACKEND_DATABASE&gt; \
+  &gt; orchestrator-backend-before-clusterguard.sql
+
+tar -C / -czf orchestrator-config-before-clusterguard.tar.gz \
+  etc/orchestrator.conf.json \
+  etc/systemd/system
+</code></pre>
+<p>现场路径可能不同。备份中不得包含未加密外传的密码、私钥或控制令牌。</p>
+<p>同时保存数据库证据：</p>
+<pre><code class="language-sql">SELECT @@server_uuid, @@server_id, @@hostname, @@port, @@version;
+SELECT @@global.gtid_mode, @@global.enforce_gtid_consistency;
+SELECT @@global.read_only, @@global.super_read_only;
+SHOW REPLICA STATUS\G
+</code></pre>
+<p>MySQL 5.7 使用 <code>SHOW SLAVE STATUS\G</code>。</p>
+<h2 id="4-阶段-1-独立部署-clusterguard-控制面">4. 阶段 1：独立部署 ClusterGuard 控制面<a class="heading-anchor" href="#4-阶段-1-独立部署-clusterguard-控制面" aria-label="Link to 4. 阶段 1：独立部署 ClusterGuard 控制面">#</a></h2>
+<p>对已有生产数据库，先只安装三节点控制面，不要调用数据库安装和数据同步流程：</p>
+<pre><code class="language-bash">./install_clusterguard.sh \
+  -l 192.0.2.21,192.0.2.22,192.0.2.23 \
+  -u root \
+  -ld /var/lib/clusterguard \
+  --engine none \
+  --control-only \
+  --known-hosts /secure/clusterguard/control-plane/known_hosts \
+  --state-file /secure/clusterguard/control-plane/deployment-state.json \
+  --secrets-file /secure/clusterguard/control-plane/deployment-secrets.env \
+  --work-dir /secure/clusterguard/control-plane/site \
+  --plan
+</code></pre>
+<p>核对计划后把 <code>--plan</code> 改成 <code>--execute</code>。控制节点必须为奇数且不少于 3 个。</p>
+<p>已有数据库接管禁止执行以下行为：</p>
+<ul>
+<li>不运行 MySQL 初始化</li>
+<li>不清空或覆盖现有数据目录</li>
+<li>不复制 <code>auto.cnf</code></li>
+<li>不自动重建复制</li>
+<li>不自动绑定 VIP</li>
+<li>不立即启用自动故障切换</li>
+</ul>
+<h2 id="5-阶段-2-准备已有-mysql-集群">5. 阶段 2：准备已有 MySQL 集群<a class="heading-anchor" href="#5-阶段-2-准备已有-mysql-集群" aria-label="Link to 5. 阶段 2：准备已有 MySQL 集群">#</a></h2>
+<h3 id="5-1-验证数据库原生身份">5.1 验证数据库原生身份<a class="heading-anchor" href="#5-1-验证数据库原生身份" aria-label="Link to 5.1 验证数据库原生身份">#</a></h3>
+<p>在每台实例执行：</p>
+<pre><code class="language-sql">SELECT @@server_uuid, @@server_id, @@hostname, @@port, @@version;
+</code></pre>
+<p>要求：</p>
+<ul>
+<li>每台实例 <code>server_uuid</code> 唯一</li>
+<li>每台实例 <code>server_id</code> 唯一</li>
+<li>只有一个可写主库</li>
+<li>所有副本指向同一当前主库</li>
+<li>GTID 配置满足现场切换策略</li>
+<li>旧 endpoint 与新 endpoint 都能追溯到同一 <code>server_uuid</code></li>
+</ul>
+<p>ClusterGuard 使用不可变平台 <code>resource_id</code> 保存节点，用 <code>server_uuid</code> 识别 MySQL 实例。hostname、IP 和 port 变化时只更新 endpoint 并保留 alias，不能创建新的逻辑节点。</p>
+<h3 id="5-2-创建用途分离的账号">5.2 创建用途分离的账号<a class="heading-anchor" href="#5-2-创建用途分离的账号" aria-label="Link to 5.2 创建用途分离的账号">#</a></h3>
+<p>推荐使用独立发现、执行和复制账号。以下来源网段必须替换为控制节点和数据节点的实际地址范围：</p>
+<pre><code class="language-sql">CREATE USER &#39;cg_discovery&#39;@&#39;192.0.2.%&#39; IDENTIFIED BY &#39;&lt;DISCOVERY_PASSWORD&gt;&#39;;
+GRANT PROCESS, REPLICATION CLIENT ON *.* TO &#39;cg_discovery&#39;@&#39;192.0.2.%&#39;;
+
+CREATE USER &#39;cg_operator&#39;@&#39;192.0.2.%&#39; IDENTIFIED BY &#39;&lt;OPERATION_PASSWORD&gt;&#39;;
+GRANT PROCESS, REPLICATION CLIENT, CONNECTION_ADMIN,
+  SYSTEM_VARIABLES_ADMIN, REPLICATION_SLAVE_ADMIN ON *.*
+  TO &#39;cg_operator&#39;@&#39;192.0.2.%&#39;;
+
+CREATE USER &#39;cg_replication&#39;@&#39;192.0.2.%&#39; IDENTIFIED BY &#39;&lt;REPLICATION_PASSWORD&gt;&#39;;
+GRANT REPLICATION SLAVE ON *.* TO &#39;cg_replication&#39;@&#39;192.0.2.%&#39;;
+</code></pre>
+<p>MySQL 5.7 的执行账号需要受限来源的 <code>SUPER</code>。完整版本差异和 TLS 配置见<a href="database-preparation.html">数据库接入手册</a>。</p>
+<p>密码写入控制节点受保护的环境文件，并由 <code>/etc/clusterguard/clusterguard.json</code> 中的 <code>password_env</code> 引用。浏览器登记集群时不输入数据库密码，发现 API 也拒绝请求体覆盖凭据。</p>
+<h2 id="6-阶段-3-登记权威清单">6. 阶段 3：登记权威清单<a class="heading-anchor" href="#6-阶段-3-登记权威清单" aria-label="Link to 6. 阶段 3：登记权威清单">#</a></h2>
+<p>登录控制台后进入 <strong>集群管理 -&gt; 新增集群</strong>：</p>
+<ol>
+<li>数据库类型选择 MySQL。</li>
+<li>输入固定且唯一的集群显示名称。</li>
+<li>登记全部主库和副本 endpoint，不能只登记当前主库。</li>
+<li>为每台物理主机登记固定节点名和平台 UUID。</li>
+<li>保存后执行一次发现。</li>
+<li>核对发现到的 <code>server_uuid</code>、角色、复制源、版本和延迟。</li>
+</ol>
+<p>等效 API 示例：</p>
+<pre><code class="language-bash">curl -sS -X POST http://127.0.0.1:8088/api/v1/clusters \
+  -H &#39;content-type: application/json&#39; \
+  -H &quot;Authorization: Bearer ${CG_CONTROL_TOKEN}&quot; \
+  -d &#39;{
+    &quot;display_name&quot;:&quot;payments-mysql&quot;,
+    &quot;engine&quot;:&quot;mysql&quot;,
+    &quot;endpoints&quot;:[
+      {&quot;hostname&quot;:&quot;mysql-a&quot;,&quot;ip_address&quot;:&quot;192.0.2.31&quot;,&quot;port&quot;:3306},
+      {&quot;hostname&quot;:&quot;mysql-b&quot;,&quot;ip_address&quot;:&quot;192.0.2.32&quot;,&quot;port&quot;:3306},
+      {&quot;hostname&quot;:&quot;mysql-c&quot;,&quot;ip_address&quot;:&quot;192.0.2.33&quot;,&quot;port&quot;:3306}
+    ]
+  }&#39;
+</code></pre>
+<p>刷新发现时只发送空对象：</p>
+<pre><code class="language-bash">curl -sS -X POST \
+  http://127.0.0.1:8088/api/v1/clusters/&lt;CLUSTER_UUID&gt;/discover \
+  -H &#39;content-type: application/json&#39; \
+  -H &quot;Authorization: Bearer ${CG_CONTROL_TOKEN}&quot; \
+  -d &#39;{}&#39;
+</code></pre>
+<p>不要导入 Orchestrator 后端表，也不要把 <code>hostname:port</code> 当成 ClusterGuard 资源主键。</p>
+<h2 id="7-阶段-4-并行只读观察">7. 阶段 4：并行只读观察<a class="heading-anchor" href="#7-阶段-4-并行只读观察" aria-label="Link to 7. 阶段 4：并行只读观察">#</a></h2>
+<p>在旧系统仍拥有执行权时，ClusterGuard 只做发现、健康检查、拓扑和候选评估。建议至少覆盖一个业务高峰和一个备份窗口。</p>
+<p>每轮比较以下结果：</p>
+<table>
+<thead>
+<tr>
+<th>检查项</th>
+<th>必须一致或可解释</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>当前主库</td>
+<td>两边识别同一 <code>server_uuid</code></td>
+</tr>
+<tr>
+<td>副本集合</td>
+<td>不缺节点、不串集群</td>
+</tr>
+<tr>
+<td>复制源</td>
+<td>全部指向当前主库</td>
+</tr>
+<tr>
+<td>复制状态</td>
+<td>IO/SQL 线程、GTID、延迟一致</td>
+</tr>
+<tr>
+<td>候选排序</td>
+<td>版本、延迟、GTID 和维护状态可解释</td>
+</tr>
+<tr>
+<td>VIP Owner</td>
+<td>只有当前主库持有</td>
+</tr>
+<tr>
+<td>元数据</td>
+<td>hostname/IP/port 与权威清单一致</td>
+</tr>
+</tbody></table>
+<p>若出现重复节点、身份不匹配、清单外 endpoint、多个可写主库、VIP 多 Owner 或观察覆盖不完整，先修正元数据或数据库状态，不得进入切权。</p>
+<h2 id="8-阶段-5-切换唯一执行权">8. 阶段 5：切换唯一执行权<a class="heading-anchor" href="#8-阶段-5-切换唯一执行权" aria-label="Link to 8. 阶段 5：切换唯一执行权">#</a></h2>
+<p>在维护窗口内按以下顺序执行，每次只迁移一套集群：</p>
+<ol>
+<li>暂停业务变更和计划切换。</li>
+<li>确认 ClusterGuard Raft 只有一个 Leader 且多数派健康。</li>
+<li>停止所有 Orchestrator 实例的恢复能力。</li>
+<li>停止并禁用旧 VIP Hook、timer、cron、Keepalived 或其他漂移脚本。</li>
+<li>验证旧系统不能再提升主库、修改复制源或变更 VIP。</li>
+<li>保持当前 MySQL 主从关系和 VIP 位置不变。</li>
+<li>在数据节点安装并配置受限 ClusterGuard Agent，只登记已有数据库路径和 service，不执行数据库初始化。</li>
+<li>在 ClusterGuard 登记原 VIP、网卡和 CIDR，启用 HA Endpoint 所有权协调。</li>
+<li>重新发现并执行 VIP 唯一性、主库可写、副本跟随和 Agent 覆盖验证。</li>
+<li>先开放人工受控切换；现场验收通过后再单独启用自动故障切换。</li>
+</ol>
+<p>旧系统的 service 名称和 Hook 位置因部署而异。停止前先盘点：</p>
+<pre><code class="language-bash">systemctl list-unit-files | grep -Ei &#39;orchestrator|vip|reconcile|keepalived&#39;
+systemctl list-timers --all | grep -Ei &#39;orchestrator|vip|reconcile&#39;
+crontab -l
+ps -ef | grep -Ei &#39;[o]rchestrator|[v]ip.*(move|reconcile)&#39;
+</code></pre>
+<p>典型停止命令需要按现场名称调整：</p>
+<pre><code class="language-bash">systemctl stop orchestrator.service
+systemctl disable orchestrator.service
+systemctl stop &lt;OLD_VIP_TIMER_OR_SERVICE&gt;
+systemctl disable &lt;OLD_VIP_TIMER_OR_SERVICE&gt;
+</code></pre>
+<p>仅从负载均衡摘除旧控制器不等于关闭恢复能力。必须在每个旧控制节点验证进程、Hook、timer 和 cron 都不能再执行变更。必要时临时撤销旧控制器数据库执行账号或限制其来源地址，形成第二道防线。</p>
+<h2 id="9-阶段-6-执行首次受控切换验收">9. 阶段 6：执行首次受控切换验收<a class="heading-anchor" href="#9-阶段-6-执行首次受控切换验收" aria-label="Link to 9. 阶段 6：执行首次受控切换验收">#</a></h2>
+<p>首次切换应在业务低峰进行：</p>
+<ol>
+<li>刷新拓扑并锁定同一观察快照。</li>
+<li>选择无 GTID 缺口、复制线程正常且延迟满足策略的候选节点。</li>
+<li>解锁操作并执行“主库与 VIP 同步切换”。</li>
+<li>等待完整工作流结束，不把“请求已提交”当作成功。</li>
+<li>检查新主可写、旧主只读、全部副本跟随新主。</li>
+<li>检查 VIP 全集群只有一个 Owner 且 Owner 为新主。</li>
+<li>检查操作锁释放、审计和报告完成。</li>
+</ol>
+<p>成功标准：</p>
+<pre><code class="language-text">DISCOVER -&gt; PRECHECK -&gt; PLAN -&gt; SAFETY_GUARD -&gt; LOCK
+-&gt; APPROVE -&gt; EXECUTE -&gt; VERIFY -&gt; AUDIT -&gt; REPORT
+</code></pre>
+<p>任一阶段为 <code>blocked</code>、<code>failed</code> 或 <code>indeterminate</code> 时，不要重复点击。使用操作 UUID 查询原始返回，先确认数据库真实状态。</p>
+<h2 id="10-阶段-7-启用自动故障切换">10. 阶段 7：启用自动故障切换<a class="heading-anchor" href="#10-阶段-7-启用自动故障切换" aria-label="Link to 10. 阶段 7：启用自动故障切换">#</a></h2>
+<p>自动故障切换应作为独立变更启用。至少确认：</p>
+<ul>
+<li>三个或更多奇数控制节点已形成稳定 Raft 多数</li>
+<li>Agent 在全部数据节点启用并能完成本地失多数只读隔离</li>
+<li>当前主库、候选和 VIP Owner 识别正确</li>
+<li>30 秒稳定故障检测窗口已现场验证</li>
+<li>网络分区、Agent 失联和控制节点失多数时均 fail-closed</li>
+<li>旧主恢复只能走“恢复为当前主库的从库”流程</li>
+<li>外部 BMC、PDU、云 API 或虚拟化 fencing 已按现场风险决定是否启用</li>
+</ul>
+<p>启用前保留 <code>automatic_failover_enabled=false</code>。验收通过后再修改配置并滚动重启控制节点。不要通过重新运行数据库安装器来切换该开关。</p>
+<h2 id="11-回退策略">11. 回退策略<a class="heading-anchor" href="#11-回退策略" aria-label="Link to 11. 回退策略">#</a></h2>
+<h3 id="11-1-clusterguard-尚未执行角色变更">11.1 ClusterGuard 尚未执行角色变更<a class="heading-anchor" href="#11-1-clusterguard-尚未执行角色变更" aria-label="Link to 11.1 ClusterGuard 尚未执行角色变更">#</a></h3>
+<p>如果仍处于只读观察期：</p>
+<ol>
+<li>关闭 ClusterGuard 自动故障切换和 HA Endpoint 协调。</li>
+<li>停止 ClusterGuard Agent 的 VIP reconcile。</li>
+<li>确认 VIP 和数据库角色仍与切权前一致。</li>
+<li>恢复 Orchestrator service、Hook 和 VIP 自动化。</li>
+<li>验证旧系统重新发现完整拓扑后再恢复其执行权。</li>
+</ol>
+<h3 id="11-2-clusterguard-已经切换过主库">11.2 ClusterGuard 已经切换过主库<a class="heading-anchor" href="#11-2-clusterguard-已经切换过主库" aria-label="Link to 11.2 ClusterGuard 已经切换过主库">#</a></h3>
+<p>不能直接启动旧 Orchestrator。旧系统可能仍把历史主库当作恢复目标或写入端点。</p>
+<p>先完成以下任一方案：</p>
+<ul>
+<li>保持 ClusterGuard 当前拓扑，清空旧系统陈旧发现并重新发现全部节点；或</li>
+<li>通过 ClusterGuard 受控切回原拓扑，再验证 VIP 和复制关系；或</li>
+<li>在维护窗口人工修正旧系统元数据，并确认它识别当前真实主库。</li>
+</ul>
+<p>只有在数据库角色、复制源、VIP Owner 和旧系统视图完全一致后，才能恢复旧系统执行权。回退过程中仍然只能有一个变更控制器。</p>
+<h2 id="12-迁移验收清单">12. 迁移验收清单<a class="heading-anchor" href="#12-迁移验收清单" aria-label="Link to 12. 迁移验收清单">#</a></h2>
+<ul>
+<li><input disabled="" type="checkbox"> ClusterGuard 与旧系统没有共享代码、后端表或运行状态</li>
+<li><input disabled="" type="checkbox"> 所有实例按 <code>server_uuid</code> 绑定到唯一平台 <code>resource_id</code></li>
+<li><input disabled="" type="checkbox"> hostname、IP、port 只是可变 endpoint，历史地址进入 alias</li>
+<li><input disabled="" type="checkbox"> 权威清单包含全部实例，没有清单外控制</li>
+<li><input disabled="" type="checkbox"> 旧控制器、Hook、timer、cron 和 VIP 自动化已停止</li>
+<li><input disabled="" type="checkbox"> 当前只有一个可写主库</li>
+<li><input disabled="" type="checkbox"> 所有副本跟随当前主库且复制线程正常</li>
+<li><input disabled="" type="checkbox"> VIP 只有一个 Owner 且位于当前主库</li>
+<li><input disabled="" type="checkbox"> ClusterGuard Leader 和 quorum 健康</li>
+<li><input disabled="" type="checkbox"> 首次计划切换通过并生成完整审计和报告</li>
+<li><input disabled="" type="checkbox"> 旧主可以受控恢复为从库</li>
+<li><input disabled="" type="checkbox"> 自动故障切换在独立现场验收后才启用</li>
+<li><input disabled="" type="checkbox"> 回退步骤和负责人已经演练</li>
+</ul>
+<h2 id="13-旧能力与新能力对应关系">13. 旧能力与新能力对应关系<a class="heading-anchor" href="#13-旧能力与新能力对应关系" aria-label="Link to 13. 旧能力与新能力对应关系">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>历史 Orchestrator 能力</th>
+<th>ClusterGuard HA 对应能力</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>拓扑发现</td>
+<td>权威清单内发现和不可变身份绑定</td>
+</tr>
+<tr>
+<td>候选排序</td>
+<td>Adapter 候选评估和风险证据</td>
+</tr>
+<tr>
+<td>Graceful takeover</td>
+<td>受控主库与 VIP 同步切换</td>
+</tr>
+<tr>
+<td>Recovery</td>
+<td>统一故障切换工作流和旧主回挂</td>
+</tr>
+<tr>
+<td>Hook</td>
+<td>受限 Agent 和签名执行契约</td>
+</tr>
+<tr>
+<td>Audit</td>
+<td>Raft 复制审计、操作日志和报告</td>
+</tr>
+<tr>
+<td>hostname:port 标识</td>
+<td>平台 UUID + 数据库原生身份 + endpoint alias</td>
+</tr>
+</tbody></table>
+<p>迁移不是接口替换，也不存在原地升级。历史项目需要做的是让 ClusterGuard 重新发现数据库、验证身份和拓扑，然后在明确的维护窗口转移唯一执行权。</p>
+
+          <footer class="document-footer">
+            <span>源文件: <code>docs/zh-CN/orchestrator-migration.md</code></span>
+            <a href="../index.html">文档语言入口</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="本页目录">
+          <strong>本页目录</strong>
+          <a class="toc-level-2" href="#1-不可违反的迁移原则">1. 不可违反的迁移原则</a><a class="toc-level-2" href="#2-迁移前先确定应用接入方式">2. 迁移前先确定应用接入方式</a><a class="toc-level-2" href="#3-阶段-0-冻结和备份旧环境">3. 阶段 0：冻结和备份旧环境</a><a class="toc-level-2" href="#4-阶段-1-独立部署-clusterguard-控制面">4. 阶段 1：独立部署 ClusterGuard 控制面</a><a class="toc-level-2" href="#5-阶段-2-准备已有-mysql-集群">5. 阶段 2：准备已有 MySQL 集群</a><a class="toc-level-3" href="#5-1-验证数据库原生身份">5.1 验证数据库原生身份</a><a class="toc-level-3" href="#5-2-创建用途分离的账号">5.2 创建用途分离的账号</a><a class="toc-level-2" href="#6-阶段-3-登记权威清单">6. 阶段 3：登记权威清单</a><a class="toc-level-2" href="#7-阶段-4-并行只读观察">7. 阶段 4：并行只读观察</a><a class="toc-level-2" href="#8-阶段-5-切换唯一执行权">8. 阶段 5：切换唯一执行权</a><a class="toc-level-2" href="#9-阶段-6-执行首次受控切换验收">9. 阶段 6：执行首次受控切换验收</a><a class="toc-level-2" href="#10-阶段-7-启用自动故障切换">10. 阶段 7：启用自动故障切换</a><a class="toc-level-2" href="#11-回退策略">11. 回退策略</a><a class="toc-level-3" href="#11-1-clusterguard-尚未执行角色变更">11.1 ClusterGuard 尚未执行角色变更</a><a class="toc-level-3" href="#11-2-clusterguard-已经切换过主库">11.2 ClusterGuard 已经切换过主库</a><a class="toc-level-2" href="#12-迁移验收清单">12. 迁移验收清单</a><a class="toc-level-2" href="#13-旧能力与新能力对应关系">13. 旧能力与新能力对应关系</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

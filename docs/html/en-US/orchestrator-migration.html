@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="Migration from Orchestrator - ClusterGuard HA operational documentation">
+  <title>Migration from Orchestrator | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">Skip to content</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>Search documentation</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="Filter by title">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator" aria-current="page" class="active">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
+      <div class="sidebar-meta">
+        <span>Offline documentation build</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">Open navigation</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>Migration from Orchestrator</strong></div>
+        <div class="header-actions">
+          <a href="../zh-CN/orchestrator-migration.html" lang="zh-CN">简体中文</a>
+          <button id="print-button" type="button">Print</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="migrating-from-orchestrator-to-clusterguard-ha">Migrating from Orchestrator to ClusterGuard HA<a class="heading-anchor" href="#migrating-from-orchestrator-to-clusterguard-ha" aria-label="Link to Migrating from Orchestrator to ClusterGuard HA">#</a></h1>
+<p>This guide migrates an existing MySQL cluster from Orchestrator management to ClusterGuard HA. The migration transfers control authority for the database cluster. It does not import the previous controller&#39;s code, APIs, or metadata.</p>
+<p>ClusterGuard HA is an independent control plane. It does not read or preserve Orchestrator backend tables, configuration, recovery records, Raft state, hooks, CLI behavior, or APIs. Existing MySQL data does not need to be reinstalled. ClusterGuard discovers the registered inventory and binds each existing instance by MySQL <code>server_uuid</code>.</p>
+<h2 id="1-non-negotiable-migration-rule">1. Non-negotiable migration rule<a class="heading-anchor" href="#1-non-negotiable-migration-rule" aria-label="Link to 1. Non-negotiable migration rule">#</a></h2>
+<p>Only one system may hold mutation authority for a database cluster at any time. Mutation authority includes:</p>
+<ul>
+<li>automatic failover;</li>
+<li>planned switchover and primary promotion;</li>
+<li>replication source changes;</li>
+<li>former-primary recovery;</li>
+<li>VIP bind, move, or removal;</li>
+<li>database role mutation hooks.</li>
+</ul>
+<p>Both controllers may perform read-only discovery during the observation period. They must never both execute recovery or VIP changes. If the old controller cannot be proven unable to mutate the cluster, ClusterGuard HA must remain in observation mode with automatic and manual mutations disabled.</p>
+<h2 id="2-identify-the-application-connection-path">2. Identify the application connection path<a class="heading-anchor" href="#2-identify-the-application-connection-path" aria-label="Link to 2. Identify the application connection path">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Current application path</th>
+<th>Migration treatment</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Application connects to a VIP</td>
+<td>Retain the VIP. The old system owns it before cutover; only ClusterGuard Agent owns it after cutover.</td>
+</tr>
+<tr>
+<td>Application connects through a separate proxy or load balancer</td>
+<td>Migrate database HA only. Change the proxy in a separate controlled change.</td>
+</tr>
+<tr>
+<td>Application connects directly to a physical primary IP</td>
+<td>Establish a stable HA endpoint first, then change connection strings in batches. Never use a controller address as the database endpoint.</td>
+</tr>
+</tbody></table>
+<p>When the existing VIP is retained, application connection strings normally remain unchanged. The migration changes ownership of the database role and VIP, not the business endpoint.</p>
+<h2 id="3-phase-0-freeze-and-back-up-the-old-environment">3. Phase 0: freeze and back up the old environment<a class="heading-anchor" href="#3-phase-0-freeze-and-back-up-the-old-environment" aria-label="Link to 3. Phase 0: freeze and back up the old environment">#</a></h2>
+<p>Create a migration inventory for each cluster:</p>
+<ul>
+<li>cluster name, full MySQL version, and port;</li>
+<li>current primary, all replicas, replication sources, and candidate priority;</li>
+<li><code>server_uuid</code>, <code>server_id</code>, hostname, IP address, and port for every instance;</li>
+<li>GTID, binlog, replication thread, lag, and errant transaction state;</li>
+<li>VIP, interface, CIDR, current VIP owner, and ARP behavior;</li>
+<li>Orchestrator controllers, leader, backend database, and recovery settings;</li>
+<li>failover, graceful takeover, and recovery hooks;</li>
+<li>custom VIP scripts, systemd services and timers, cron jobs, Keepalived, and other automation;</li>
+<li>database mutation accounts and allowed source addresses used by Orchestrator.</li>
+</ul>
+<p>Retain read-only rollback artifacts. Adjust paths for the site:</p>
+<pre><code class="language-bash">mysqldump --single-transaction &lt;ORCHESTRATOR_BACKEND_DATABASE&gt; \
+  &gt; orchestrator-backend-before-clusterguard.sql
+
+tar -C / -czf orchestrator-config-before-clusterguard.tar.gz \
+  etc/orchestrator.conf.json \
+  etc/systemd/system
+</code></pre>
+<p>Do not move unencrypted passwords, private keys, or control tokens outside the protected site backup.</p>
+<p>Capture database evidence as well:</p>
+<pre><code class="language-sql">SELECT @@server_uuid, @@server_id, @@hostname, @@port, @@version;
+SELECT @@global.gtid_mode, @@global.enforce_gtid_consistency;
+SELECT @@global.read_only, @@global.super_read_only;
+SHOW REPLICA STATUS\G
+</code></pre>
+<p>Use <code>SHOW SLAVE STATUS\G</code> on MySQL 5.7.</p>
+<h2 id="4-phase-1-deploy-an-independent-clusterguard-control-plane">4. Phase 1: deploy an independent ClusterGuard control plane<a class="heading-anchor" href="#4-phase-1-deploy-an-independent-clusterguard-control-plane" aria-label="Link to 4. Phase 1: deploy an independent ClusterGuard control plane">#</a></h2>
+<p>For an existing production database, install only the three-controller control plane first. Do not invoke database installation or synchronization:</p>
+<pre><code class="language-bash">./install_clusterguard.sh \
+  -l 192.0.2.21,192.0.2.22,192.0.2.23 \
+  -u root \
+  -ld /var/lib/clusterguard \
+  --engine none \
+  --control-only \
+  --known-hosts /secure/clusterguard/control-plane/known_hosts \
+  --state-file /secure/clusterguard/control-plane/deployment-state.json \
+  --secrets-file /secure/clusterguard/control-plane/deployment-secrets.env \
+  --work-dir /secure/clusterguard/control-plane/site \
+  --plan
+</code></pre>
+<p>Review the plan, then replace <code>--plan</code> with <code>--execute</code>. The voter count must be odd and at least three.</p>
+<p>Onboarding an existing database must not:</p>
+<ul>
+<li>initialize MySQL;</li>
+<li>erase or overwrite an existing data directory;</li>
+<li>copy <code>auto.cnf</code>;</li>
+<li>rebuild replication automatically;</li>
+<li>bind the VIP automatically;</li>
+<li>enable automatic failover immediately.</li>
+</ul>
+<h2 id="5-phase-2-prepare-the-existing-mysql-cluster">5. Phase 2: prepare the existing MySQL cluster<a class="heading-anchor" href="#5-phase-2-prepare-the-existing-mysql-cluster" aria-label="Link to 5. Phase 2: prepare the existing MySQL cluster">#</a></h2>
+<h3 id="5-1-verify-native-database-identity">5.1 Verify native database identity<a class="heading-anchor" href="#5-1-verify-native-database-identity" aria-label="Link to 5.1 Verify native database identity">#</a></h3>
+<p>Run on every instance:</p>
+<pre><code class="language-sql">SELECT @@server_uuid, @@server_id, @@hostname, @@port, @@version;
+</code></pre>
+<p>Requirements:</p>
+<ul>
+<li>each <code>server_uuid</code> is unique;</li>
+<li>each <code>server_id</code> is unique;</li>
+<li>exactly one primary is writable;</li>
+<li>every replica follows the same current primary;</li>
+<li>GTID configuration satisfies the site switchover policy;</li>
+<li>old and new endpoints for an instance resolve to the same <code>server_uuid</code>.</li>
+</ul>
+<p>ClusterGuard stores an immutable platform <code>resource_id</code> and identifies a MySQL instance by <code>server_uuid</code>. A hostname, IP address, or port change updates the endpoint and retains the previous address as an alias. It must not create another logical node.</p>
+<h3 id="5-2-create-purpose-specific-accounts">5.2 Create purpose-specific accounts<a class="heading-anchor" href="#5-2-create-purpose-specific-accounts" aria-label="Link to 5.2 Create purpose-specific accounts">#</a></h3>
+<p>Use separate discovery, operation, and replication accounts. Replace the source network with the approved controller and data-node ranges:</p>
+<pre><code class="language-sql">CREATE USER &#39;cg_discovery&#39;@&#39;192.0.2.%&#39; IDENTIFIED BY &#39;&lt;DISCOVERY_PASSWORD&gt;&#39;;
+GRANT PROCESS, REPLICATION CLIENT ON *.* TO &#39;cg_discovery&#39;@&#39;192.0.2.%&#39;;
+
+CREATE USER &#39;cg_operator&#39;@&#39;192.0.2.%&#39; IDENTIFIED BY &#39;&lt;OPERATION_PASSWORD&gt;&#39;;
+GRANT PROCESS, REPLICATION CLIENT, CONNECTION_ADMIN,
+  SYSTEM_VARIABLES_ADMIN, REPLICATION_SLAVE_ADMIN ON *.*
+  TO &#39;cg_operator&#39;@&#39;192.0.2.%&#39;;
+
+CREATE USER &#39;cg_replication&#39;@&#39;192.0.2.%&#39; IDENTIFIED BY &#39;&lt;REPLICATION_PASSWORD&gt;&#39;;
+GRANT REPLICATION SLAVE ON *.* TO &#39;cg_replication&#39;@&#39;192.0.2.%&#39;;
+</code></pre>
+<p>The MySQL 5.7 operation account needs source-restricted <code>SUPER</code>. See the <a href="database-preparation.html">Database Preparation Manual</a> for version differences and TLS requirements.</p>
+<p>Store passwords in a protected controller environment file and reference them through <code>password_env</code> in <code>/etc/clusterguard/clusterguard.json</code>. The browser registration dialog does not collect database passwords, and the discovery API rejects request-body credential overrides.</p>
+<h2 id="6-phase-3-register-the-authoritative-inventory">6. Phase 3: register the authoritative inventory<a class="heading-anchor" href="#6-phase-3-register-the-authoritative-inventory" aria-label="Link to 6. Phase 3: register the authoritative inventory">#</a></h2>
+<p>In the console, open <strong>Cluster Management -&gt; Add Cluster</strong>:</p>
+<ol>
+<li>Select MySQL.</li>
+<li>Enter a stable, unique display name.</li>
+<li>Register every primary and replica endpoint, not only the current primary.</li>
+<li>Register an immutable node name and platform UUID for each physical host.</li>
+<li>Save and run discovery once.</li>
+<li>Compare discovered <code>server_uuid</code>, role, source, version, and lag with the migration inventory.</li>
+</ol>
+<p>Equivalent API example:</p>
+<pre><code class="language-bash">curl -sS -X POST http://127.0.0.1:8088/api/v1/clusters \
+  -H &#39;content-type: application/json&#39; \
+  -H &quot;Authorization: Bearer ${CG_CONTROL_TOKEN}&quot; \
+  -d &#39;{
+    &quot;display_name&quot;:&quot;payments-mysql&quot;,
+    &quot;engine&quot;:&quot;mysql&quot;,
+    &quot;endpoints&quot;:[
+      {&quot;hostname&quot;:&quot;mysql-a&quot;,&quot;ip_address&quot;:&quot;192.0.2.31&quot;,&quot;port&quot;:3306},
+      {&quot;hostname&quot;:&quot;mysql-b&quot;,&quot;ip_address&quot;:&quot;192.0.2.32&quot;,&quot;port&quot;:3306},
+      {&quot;hostname&quot;:&quot;mysql-c&quot;,&quot;ip_address&quot;:&quot;192.0.2.33&quot;,&quot;port&quot;:3306}
+    ]
+  }&#39;
+</code></pre>
+<p>Refresh discovery with an empty object only:</p>
+<pre><code class="language-bash">curl -sS -X POST \
+  http://127.0.0.1:8088/api/v1/clusters/&lt;CLUSTER_UUID&gt;/discover \
+  -H &#39;content-type: application/json&#39; \
+  -H &quot;Authorization: Bearer ${CG_CONTROL_TOKEN}&quot; \
+  -d &#39;{}&#39;
+</code></pre>
+<p>Do not import Orchestrator backend tables and do not use <code>hostname:port</code> as a ClusterGuard resource key.</p>
+<h2 id="7-phase-4-run-parallel-read-only-observation">7. Phase 4: run parallel read-only observation<a class="heading-anchor" href="#7-phase-4-run-parallel-read-only-observation" aria-label="Link to 7. Phase 4: run parallel read-only observation">#</a></h2>
+<p>While the old system still owns execution authority, ClusterGuard performs discovery, health, topology, and candidate assessment only. The observation period should cover at least one business peak and one backup window.</p>
+<table>
+<thead>
+<tr>
+<th>Check</th>
+<th>Required result</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Current primary</td>
+<td>Both systems identify the same <code>server_uuid</code>.</td>
+</tr>
+<tr>
+<td>Replica set</td>
+<td>No missing instance and no cross-cluster node.</td>
+</tr>
+<tr>
+<td>Replication source</td>
+<td>Every replica follows the current primary.</td>
+</tr>
+<tr>
+<td>Replication state</td>
+<td>Thread, GTID, and lag evidence agree.</td>
+</tr>
+<tr>
+<td>Candidate ranking</td>
+<td>Version, lag, GTID, and maintenance decisions are explainable.</td>
+</tr>
+<tr>
+<td>VIP owner</td>
+<td>Only the current primary owns the VIP.</td>
+</tr>
+<tr>
+<td>Metadata</td>
+<td>Hostname, IP address, and port match the authoritative inventory.</td>
+</tr>
+</tbody></table>
+<p>Do not proceed when there are duplicate resources, identity mismatches, unregistered endpoints, multiple writable primaries, multiple VIP owners, or incomplete probe coverage.</p>
+<h2 id="8-phase-5-transfer-exclusive-execution-authority">8. Phase 5: transfer exclusive execution authority<a class="heading-anchor" href="#8-phase-5-transfer-exclusive-execution-authority" aria-label="Link to 8. Phase 5: transfer exclusive execution authority">#</a></h2>
+<p>During a maintenance window, migrate one cluster at a time:</p>
+<ol>
+<li>Freeze application topology changes and planned switchovers.</li>
+<li>Verify one ClusterGuard Raft leader and a confirmed majority.</li>
+<li>Stop recovery authority on every Orchestrator process.</li>
+<li>Stop and disable old VIP hooks, timers, cron jobs, Keepalived, and move scripts.</li>
+<li>Prove the old system can no longer promote, reparent, or move the VIP.</li>
+<li>Leave the current MySQL roles and VIP location unchanged.</li>
+<li>Install the restricted ClusterGuard Agent on data nodes and register existing database paths and services. Do not initialize the database.</li>
+<li>Register the existing VIP, interface, and CIDR as the ClusterGuard HA endpoint, then enable ownership coordination.</li>
+<li>Rediscover and verify VIP uniqueness, primary writability, replica following, and Agent coverage.</li>
+<li>Enable controlled manual switchover first. Enable automatic failover only after separate site qualification.</li>
+</ol>
+<p>Old service and hook names vary. Inventory them before stopping anything:</p>
+<pre><code class="language-bash">systemctl list-unit-files | grep -Ei &#39;orchestrator|vip|reconcile|keepalived&#39;
+systemctl list-timers --all | grep -Ei &#39;orchestrator|vip|reconcile&#39;
+crontab -l
+ps -ef | grep -Ei &#39;[o]rchestrator|[v]ip.*(move|reconcile)&#39;
+</code></pre>
+<p>Typical commands must be adjusted to local names:</p>
+<pre><code class="language-bash">systemctl stop orchestrator.service
+systemctl disable orchestrator.service
+systemctl stop &lt;OLD_VIP_TIMER_OR_SERVICE&gt;
+systemctl disable &lt;OLD_VIP_TIMER_OR_SERVICE&gt;
+</code></pre>
+<p>Removing an old controller from a load balancer is not sufficient. Verify on every old controller that its process, hooks, timers, and cron jobs cannot mutate the cluster. Temporarily revoke its database mutation account or source network as a second barrier when appropriate.</p>
+<h2 id="9-phase-6-qualify-the-first-controlled-switchover">9. Phase 6: qualify the first controlled switchover<a class="heading-anchor" href="#9-phase-6-qualify-the-first-controlled-switchover" aria-label="Link to 9. Phase 6: qualify the first controlled switchover">#</a></h2>
+<p>Run the first switchover in a low-traffic window:</p>
+<ol>
+<li>Refresh topology and pin all decisions to the same observation.</li>
+<li>Select a candidate with no GTID gap, healthy replication threads, and acceptable lag.</li>
+<li>Unlock the operation and execute the coupled primary and VIP switchover.</li>
+<li>Wait for the full workflow. A submitted request is not a successful operation.</li>
+<li>Verify the new primary is writable, the former primary is read-only, and every replica follows the new primary.</li>
+<li>Verify exactly one VIP owner and that it is the new primary.</li>
+<li>Verify lock release, audit persistence, and report creation.</li>
+</ol>
+<p>The required workflow is:</p>
+<pre><code class="language-text">DISCOVER -&gt; PRECHECK -&gt; PLAN -&gt; SAFETY_GUARD -&gt; LOCK
+-&gt; APPROVE -&gt; EXECUTE -&gt; VERIFY -&gt; AUDIT -&gt; REPORT
+</code></pre>
+<p>For <code>blocked</code>, <code>failed</code>, or <code>indeterminate</code>, do not click repeatedly. Query the operation UUID and establish the real database state first.</p>
+<h2 id="10-phase-7-enable-automatic-failover-separately">10. Phase 7: enable automatic failover separately<a class="heading-anchor" href="#10-phase-7-enable-automatic-failover-separately" aria-label="Link to 10. Phase 7: enable automatic failover separately">#</a></h2>
+<p>Automatic failover is a separate production change. Confirm at least:</p>
+<ul>
+<li>three or more odd-numbered controllers form a stable Raft majority;</li>
+<li>Agent runs on every data node and enforces local read-only isolation after authority expires;</li>
+<li>current primary, candidate, and VIP owner are correct;</li>
+<li>the 30-second stable failure window has been tested on site;</li>
+<li>network partitions, Agent loss, and controller quorum loss fail closed;</li>
+<li>a recovered old primary can only enter the former-primary recovery workflow;</li>
+<li>the site has decided whether BMC, PDU, cloud, or hypervisor fencing is required.</li>
+</ul>
+<p>Keep <code>automatic_failover_enabled=false</code> until qualification passes. Change the controller configuration and perform a controlled rolling restart to enable it. Do not rerun the database installer to change this flag.</p>
+<h2 id="11-rollback">11. Rollback<a class="heading-anchor" href="#11-rollback" aria-label="Link to 11. Rollback">#</a></h2>
+<h3 id="11-1-clusterguard-has-not-changed-database-roles">11.1 ClusterGuard has not changed database roles<a class="heading-anchor" href="#11-1-clusterguard-has-not-changed-database-roles" aria-label="Link to 11.1 ClusterGuard has not changed database roles">#</a></h3>
+<p>During observation-only rollback:</p>
+<ol>
+<li>Disable ClusterGuard automatic failover and HA endpoint coordination.</li>
+<li>Stop ClusterGuard Agent VIP reconciliation.</li>
+<li>Verify the VIP and database roles still match the pre-cutover evidence.</li>
+<li>Restore Orchestrator services, hooks, and VIP automation.</li>
+<li>Let the old system rediscover the complete topology before restoring mutation authority.</li>
+</ol>
+<h3 id="11-2-clusterguard-has-already-switched-the-primary">11.2 ClusterGuard has already switched the primary<a class="heading-anchor" href="#11-2-clusterguard-has-already-switched-the-primary" aria-label="Link to 11.2 ClusterGuard has already switched the primary">#</a></h3>
+<p>Do not simply start Orchestrator. Its stored view may still treat a historical primary as the recovery target or writer endpoint.</p>
+<p>Complete one of these first:</p>
+<ul>
+<li>retain the ClusterGuard topology, clear stale old-system discovery, and rediscover every node;</li>
+<li>use ClusterGuard to switch back under control, then verify replication and VIP ownership; or</li>
+<li>reconcile old-system metadata in a maintenance window and verify it identifies the real current primary.</li>
+</ul>
+<p>Restore old-system mutation authority only after database roles, replication sources, VIP ownership, and the old-system view agree. A rollback still permits only one mutation controller.</p>
+<h2 id="12-acceptance-checklist">12. Acceptance checklist<a class="heading-anchor" href="#12-acceptance-checklist" aria-label="Link to 12. Acceptance checklist">#</a></h2>
+<ul>
+<li><input disabled="" type="checkbox"> ClusterGuard shares no code, backend tables, or runtime state with the old controller.</li>
+<li><input disabled="" type="checkbox"> Every instance is bound by <code>server_uuid</code> to one platform <code>resource_id</code>.</li>
+<li><input disabled="" type="checkbox"> Hostname, IP address, and port are mutable endpoints; previous coordinates are aliases.</li>
+<li><input disabled="" type="checkbox"> The authoritative inventory contains every instance and blocks out-of-inventory control.</li>
+<li><input disabled="" type="checkbox"> Old controllers, hooks, timers, cron jobs, and VIP automation are stopped.</li>
+<li><input disabled="" type="checkbox"> Exactly one primary is writable.</li>
+<li><input disabled="" type="checkbox"> Every replica follows the current primary with healthy replication threads.</li>
+<li><input disabled="" type="checkbox"> Exactly one VIP owner exists and it is the current primary.</li>
+<li><input disabled="" type="checkbox"> ClusterGuard leader and quorum are healthy.</li>
+<li><input disabled="" type="checkbox"> The first planned switchover produces complete audit and report evidence.</li>
+<li><input disabled="" type="checkbox"> The former primary can be recovered as a replica.</li>
+<li><input disabled="" type="checkbox"> Automatic failover is enabled only after separate site qualification.</li>
+<li><input disabled="" type="checkbox"> Rollback steps and responsible operators have been rehearsed.</li>
+</ul>
+<h2 id="13-capability-mapping">13. Capability mapping<a class="heading-anchor" href="#13-capability-mapping" aria-label="Link to 13. Capability mapping">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Historical Orchestrator capability</th>
+<th>ClusterGuard HA capability</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Topology discovery</td>
+<td>Inventory-scoped discovery and immutable identity binding</td>
+</tr>
+<tr>
+<td>Candidate ranking</td>
+<td>Adapter candidate assessment with risk evidence</td>
+</tr>
+<tr>
+<td>Graceful takeover</td>
+<td>Coupled controlled primary and VIP switchover</td>
+</tr>
+<tr>
+<td>Recovery</td>
+<td>Unified failover workflow and former-primary recovery</td>
+</tr>
+<tr>
+<td>Hook</td>
+<td>Restricted Agent and signed execution contract</td>
+</tr>
+<tr>
+<td>Audit</td>
+<td>Raft-replicated audit, operation log, and reports</td>
+</tr>
+<tr>
+<td><code>hostname:port</code> identity</td>
+<td>Platform UUID, native database identity, and endpoint aliases</td>
+</tr>
+</tbody></table>
+<p>This is not an API replacement or an in-place upgrade. A historical project is migrated by registering and rediscovering its databases, validating identity and topology, and transferring exclusive execution authority during a controlled maintenance window.</p>
+
+          <footer class="document-footer">
+            <span>Source: <code>docs/en-US/orchestrator-migration.md</code></span>
+            <a href="../index.html">Documentation language home</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="On this page">
+          <strong>On this page</strong>
+          <a class="toc-level-2" href="#1-non-negotiable-migration-rule">1. Non-negotiable migration rule</a><a class="toc-level-2" href="#2-identify-the-application-connection-path">2. Identify the application connection path</a><a class="toc-level-2" href="#3-phase-0-freeze-and-back-up-the-old-environment">3. Phase 0: freeze and back up the old environment</a><a class="toc-level-2" href="#4-phase-1-deploy-an-independent-clusterguard-control-plane">4. Phase 1: deploy an independent ClusterGuard control plane</a><a class="toc-level-2" href="#5-phase-2-prepare-the-existing-mysql-cluster">5. Phase 2: prepare the existing MySQL cluster</a><a class="toc-level-3" href="#5-1-verify-native-database-identity">5.1 Verify native database identity</a><a class="toc-level-3" href="#5-2-create-purpose-specific-accounts">5.2 Create purpose-specific accounts</a><a class="toc-level-2" href="#6-phase-3-register-the-authoritative-inventory">6. Phase 3: register the authoritative inventory</a><a class="toc-level-2" href="#7-phase-4-run-parallel-read-only-observation">7. Phase 4: run parallel read-only observation</a><a class="toc-level-2" href="#8-phase-5-transfer-exclusive-execution-authority">8. Phase 5: transfer exclusive execution authority</a><a class="toc-level-2" href="#9-phase-6-qualify-the-first-controlled-switchover">9. Phase 6: qualify the first controlled switchover</a><a class="toc-level-2" href="#10-phase-7-enable-automatic-failover-separately">10. Phase 7: enable automatic failover separately</a><a class="toc-level-2" href="#11-rollback">11. Rollback</a><a class="toc-level-3" href="#11-1-clusterguard-has-not-changed-database-roles">11.1 ClusterGuard has not changed database roles</a><a class="toc-level-3" href="#11-2-clusterguard-has-already-switched-the-primary">11.2 ClusterGuard has already switched the primary</a><a class="toc-level-2" href="#12-acceptance-checklist">12. Acceptance checklist</a><a class="toc-level-2" href="#13-capability-mapping">13. Capability mapping</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

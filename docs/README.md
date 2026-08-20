@@ -4,6 +4,22 @@ ClusterGuard HA product documentation is maintained in English and Simplified Ch
 
 ClusterGuard HA 产品文档同时维护英文和简体中文版本。安装、变更和排障时请选择对应语言，并以同版本文档为准。
 
+## Offline HTML / 离线 HTML
+
+Open [`html/index.html`](html/index.html) directly in a browser. The generated documentation center contains 37 bilingual pages, local search, print styles, responsive navigation, and bundled screenshots; it does not require a web server or external CDN.
+
+直接使用浏览器打开 [`html/index.html`](html/index.html)。生成的文档中心包含 37 个中英文页面、本地搜索、打印样式、响应式目录和随包截图，不依赖 Web 服务或外部 CDN。
+
+Rebuild after changing Markdown:
+
+修改 Markdown 后重新生成：
+
+```bash
+cd docs
+npm install
+npm run build:html
+```
+
 ## Product Documentation / 产品文档
 
 | Topic / 主题 | English | 简体中文 |
@@ -14,6 +30,7 @@ ClusterGuard HA 产品文档同时维护英文和简体中文版本。安装、�
 | 2.1.45 release notes / 2.1.45 发布说明 | [English](en-US/release-2.1.45.md) | [中文](zh-CN/release-2.1.45.md) |
 | Offline RPM installation / 离线 RPM 安装 | [English](en-US/offline-rpm-install.md) | [中文](zh-CN/offline-rpm-install.md) |
 | Database preparation / 数据库接入 | [English](en-US/database-preparation.md) | [中文](zh-CN/database-preparation.md) |
+| Migration from Orchestrator / 从 Orchestrator 迁移 | [English](en-US/orchestrator-migration.md) | [中文](zh-CN/orchestrator-migration.md) |
 | Operations manual / 运维手册 | [English](en-US/operations-manual.md) | [中文](zh-CN/operations-manual.md) |
 | PostgreSQL HA / PostgreSQL 高可用 | [English](postgresql-ha.md) | [中文](zh-CN/postgresql-ha.md) |
 | MySQL proven methods / MySQL 已验证方法 | [English](proven-mysql-ha-methods.md) | [中文](zh-CN/proven-mysql-ha-methods.md) |

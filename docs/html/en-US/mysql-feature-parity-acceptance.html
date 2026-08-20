@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="MySQL Feature Acceptance - ClusterGuard HA operational documentation">
+  <title>MySQL Feature Acceptance | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">Skip to content</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>Search documentation</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="Filter by title">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance" aria-current="page" class="active">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
+      <div class="sidebar-meta">
+        <span>Offline documentation build</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">Open navigation</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>MySQL Feature Acceptance</strong></div>
+        <div class="header-actions">
+          <a href="../zh-CN/mysql-feature-parity-acceptance.html" lang="zh-CN">简体中文</a>
+          <button id="print-button" type="button">Print</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha-mysql-acceptance">ClusterGuard HA MySQL Acceptance<a class="heading-anchor" href="#clusterguard-ha-mysql-acceptance" aria-label="Link to ClusterGuard HA MySQL Acceptance">#</a></h1>
+<p>Date: 2026-07-15</p>
+<p>This record captures the destructive laboratory acceptance for the independent
+ClusterGuard HA MySQL control path. It is evidence for this build, not a
+substitute for environment-specific production qualification.</p>
+<h2 id="build-under-test">Build Under Test<a class="heading-anchor" href="#build-under-test" aria-label="Link to Build Under Test">#</a></h2>
+<ul>
+<li>branch: <code>codex/mysql-feature-parity</code></li>
+<li>bundle: <code>clusterguard-ha-mysql-parity-rc61-linux-amd64.tar.gz</code></li>
+<li>bundle SHA-256:
+<code>f8724fb4d79e3af57c32c4c5fb8be13d266a246b39752f5b6430cebd69ac7860</code></li>
+<li>server binary SHA-256:
+<code>03eac92b7013f3788957fbe6b60c32cb291c6c4bc242b0ff12933c71c73c7539</code></li>
+<li>MySQL sync helper SHA-256:
+<code>35d1c9e2bb9d2da4b61c01b7ec124c5ca5128b877e1ffde460a720c5126e529e</code></li>
+</ul>
+<p>The archive manifest contains 20 entries and verifies with
+<code>shasum -a 256 -c SHA256SUMS</code>.</p>
+<h2 id="laboratory-topology">Laboratory Topology<a class="heading-anchor" href="#laboratory-topology" aria-label="Link to Laboratory Topology">#</a></h2>
+<p>Controllers and colocated data nodes:</p>
+<table>
+<thead>
+<tr>
+<th>Address</th>
+<th>Fixed node name</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>192.168.102.152</code></td>
+<td><code>cg-node-0001</code></td>
+<td>controller + data</td>
+</tr>
+<tr>
+<td><code>192.168.102.153</code></td>
+<td><code>cg-node-0002</code></td>
+<td>controller + data</td>
+</tr>
+<tr>
+<td><code>192.168.102.154</code></td>
+<td><code>cg-node-0003</code></td>
+<td>controller + data</td>
+</tr>
+</tbody></table>
+<p>Registered clusters:</p>
+<table>
+<thead>
+<tr>
+<th>Cluster</th>
+<th align="right">Port</th>
+<th>VIP</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>mysql-ha-3306</code></td>
+<td align="right">3306</td>
+<td><code>192.168.102.155</code></td>
+</tr>
+<tr>
+<td><code>mysql-ha-3307</code></td>
+<td align="right">3307</td>
+<td><code>192.168.102.156</code></td>
+</tr>
+<tr>
+<td><code>mysql-test-5.7</code></td>
+<td align="right">3357</td>
+<td><code>192.168.102.157</code></td>
+</tr>
+<tr>
+<td><code>mysql-test-8.0</code></td>
+<td align="right">3380</td>
+<td><code>192.168.102.158</code></td>
+</tr>
+<tr>
+<td><code>mysql-test-8.4</code></td>
+<td align="right">3384</td>
+<td><code>192.168.102.160</code></td>
+</tr>
+<tr>
+<td><code>mysql-test-9.7</code></td>
+<td align="right">3397</td>
+<td><code>192.168.102.164</code></td>
+</tr>
+</tbody></table>
+<p>Every cluster had three native-identity-verified instances and one dedicated
+VIP. Resource identity used immutable platform UUIDs and MySQL <code>server_uuid</code>,
+not hostname and port.</p>
+<h2 id="acceptance-results">Acceptance Results<a class="heading-anchor" href="#acceptance-results" aria-label="Link to Acceptance Results">#</a></h2>
+<ul>
+<li>Six-cluster baseline smoke checks passed.</li>
+<li>Twenty round-robin and thirty random real switchovers completed: <code>50/50</code>.</li>
+<li>Primaries were distributed across nodes and distinct cluster VIPs remained
+isolated during concurrent activity.</li>
+<li>Leader service loss elected a replacement and all controller snapshots
+converged.</li>
+<li>Loss of controller quorum failed closed: all 18 instances became read-only
+and all six VIPs were removed. Quorum restoration converged automatically.</li>
+<li>A real primary network partition triggered an 8.0 failover after about 55
+seconds. The new primary owned the only VIP and all replicas followed it.</li>
+<li>The recovered former primary passed fast rejoin and remained read-only.</li>
+<li>A full reboot of <code>192.168.102.154</code> restored controller, agent, and reconciliation
+timer services; six-cluster health and VIP uniqueness recovered.</li>
+<li>Repeated recovered-primary MySQL restarts did not create a writer or VIP
+conflict.</li>
+<li>Divergent-node rebuild reused the original platform UUID and fixed node name.
+A deliberately injected target-only schema was removed before donor import;
+GTID sets then matched in both directions, replication threads were running,
+lag was zero, and no VIP remained on the rebuilt replica.</li>
+<li>Actual hostname, IP, and MySQL port were changed and reconciled, then restored.
+The same resource UUID and <code>server_uuid</code> remained; old endpoints became
+aliases and no duplicate node was created.</li>
+<li>Final topology snapshots were identical on all three controllers and all six
+cluster smoke checks passed after cleanup.</li>
+<li>The console fleet overview, compact topology, operation workbench, node
+lifecycle, metrics, searchable operation log, settings, and metadata dialog
+were exercised against the live three-controller API rather than fixture
+data.</li>
+<li>A browser-driven real switchover completed through all five visible stages:
+precheck, plan, safety gate, execute, and verify. The result was not declared
+successful until the durable operation reached <code>succeeded/report</code> and its
+verification passed.</li>
+<li>A stale read-after-write window was reproduced during a real switch, covered
+by a regression test, and fixed. The console now waits for the expected
+primary before rendering the verified result instead of replacing it with a
+transient follower snapshot.</li>
+<li>Read-only automatic refresh was then observed for 40 seconds after a second
+real switch. The verified result, five completed stages, selected cluster,
+and new primary remained intact across the 30-second refresh interval.</li>
+<li>A mutation sent to a follower failed closed and returned the current Leader
+API address. The same operation was executed on the Leader and recorded as
+operation <code>fd5e2277-efe0-46bb-b690-c55da3935783</code>.</li>
+<li>After final cleanup, every controller reported <code>orch-mysql03</code> at
+<code>192.168.102.154:3306</code> as the only primary for <code>mysql-ha-3306</code>; only that host
+owned VIP <code>192.168.102.155</code>, and the latest operation remained verified.</li>
+</ul>
+<h2 id="local-verification">Local Verification<a class="heading-anchor" href="#local-verification" aria-label="Link to Local Verification">#</a></h2>
+<p>The release candidate is gated by:</p>
+<pre><code class="language-bash">gofmt -w $(rg --files -g &#39;*.go&#39;)
+go test ./... -count=1
+go test -race ./... -count=1
+go vet ./...
+go build ./cmd/clusterguard
+go build ./cmd/cgctl
+go build ./cmd/clusterguard-agent
+git diff --check
+</code></pre>
+<p>Configuration JSON, shell syntax, clean-room naming, dependency hygiene, bundle
+contents, and manifest checks are also part of the final release gate.</p>
+<p>The live laboratory root served the expected <code>ClusterGuard HA Console</code> title,
+Chinese default language, and six-cluster API directory. Browser automation was
+performed through a loopback-only TLS-terminating test bridge to the active
+controller; it did not change the laboratory servers or production network
+path. Visual checks covered the overview, topology, operation workbench, nodes,
+metrics, logs, settings, about page, and metadata dialog. The operation log was
+confirmed to show the local time, stable cluster name, source and target nodes,
+status, and a collapsed raw workflow object that expands on demand.</p>
+<h2 id="platform-authentication-and-one-time-approval-update">Platform Authentication And One-Time Approval Update<a class="heading-anchor" href="#platform-authentication-and-one-time-approval-update" aria-label="Link to Platform Authentication And One-Time Approval Update">#</a></h2>
+<p>The 2026-07-16 authorization update adds Raft-replicated platform users and
+sessions while retaining hash-only, one-time operation grants:</p>
+<ul>
+<li>a new metadata store bootstraps <code>admin</code> with the documented <code>admin123</code>
+first-login password and <code>MustChangePassword=true</code>;</li>
+<li>the first password change is mandatory before any database or administrative
+mutation is accepted;</li>
+<li>passwords use Argon2id, browser sessions have an eight-hour absolute
+lifetime, and password change or logout revokes the active session;</li>
+<li>session-authenticated <code>admin</code> and <code>operator</code> execution builds the exact
+durable operation plan, creates a one-time grant inside the server, consumes
+it atomically at <code>APPROVE</code>, and never sends the approval secret to the
+browser;</li>
+<li>explicit service automation remains separate: the control Bearer
+authenticates the client, a plaintext grant is returned once, and the grant
+remains bound to cluster, engine, operation kind, target, observation, and
+plan;</li>
+<li>consumed, expired, mismatched, replayed, and stale-plan grants fail closed;</li>
+<li>the HA matrix supports browser-equivalent platform-session execution and
+preserves a separate explicit-grant mode for service-client replay tests;</li>
+<li>automatic failover uses a private incident authorization path and no human
+token, while retaining quorum, fencing, lock, verification, audit, and report.</li>
+</ul>
+<p>Local API verification covered bootstrap login, mutation blocking before the
+password change, session revocation, re-login, CSRF-protected reads and writes,
+and sanitized responses.</p>
+<p>The authenticated control path completed a new three-host destructive
+acceptance on 2026-07-17 CST:</p>
+<ul>
+<li>branch <code>codex/platform-auth-session</code>, workflow fix commits <code>545c44c</code> and
+<code>4b5e5df</code>;</li>
+<li>release archive
+<code>clusterguard-ha-platform-auth-rc4-linux-amd64.tar.gz</code>, SHA-256
+<code>ac97e44af9727c45214bb5c4e793aa30bc40feaf509250f2ece3a25304ee3dfc</code>;</li>
+<li>the temporary bootstrap password was changed before business API access was
+allowed; the old session was revoked, re-login succeeded, logout revoked its
+session, and unauthenticated business reads returned <code>401</code>;</li>
+<li>the dedicated monitoring bearer remained GET-only and returned <code>200</code> on all
+three controllers after the rolling upgrade;</li>
+<li>a first real session switchover exposed a workflow defect: periodic discovery
+advanced metadata revisions without changing the semantic topology digest,
+while execution rebuilt an already approved immutable plan and rejected its
+new digest;</li>
+<li>regression test
+<code>TestDurableWorkflowReusesPersistedPlanWhenOnlyMetadataRevisionsAdvance</code>
+reproduced the defect before the fix and passed after execution was changed
+to reuse the exact persisted plan while retaining current precheck, safety,
+lock, topology revalidation, approval, verification, audit, and report gates;</li>
+<li>regression test
+<code>TestPutDurablePlanPreservesOperationIdentityOnPersistenceFailure</code> also
+proves that plan-store errors retain the durable operation UUID and revision
+so blocked outcomes and audits can be persisted against the correct record;</li>
+<li>operation <code>92ec6cda-c2b6-4fbb-aca5-27c1848aa29a</code> then completed through
+<code>succeeded/report</code> with verification passed, moving <code>mysql-ha-3306</code> from
+<code>192.168.102.154:3306</code> to <code>192.168.102.152:3306</code>;</li>
+<li>VIP <code>192.168.102.155</code> existed only on the new primary. Both
+<code>192.168.102.153:3306</code> and the former primary
+<code>192.168.102.154:3306</code> were read-only, followed
+<code>192.168.102.152:3306</code>, had both replication threads running, and reported
+zero lag;</li>
+<li>every workflow audit stage recorded actor <code>admin</code>, the switchover report was
+<code>succeeded</code>, and the server-issued approval grant was stored as <code>consumed</code>;</li>
+<li>an unauthenticated forged execute request returned <code>401</code>, and a service
+control Bearer without a one-time grant also returned <code>401</code>;</li>
+<li>the terminal operation and consumed grant were present on all three
+controller metadata replicas.</li>
+</ul>
+<p>RC4 was rolled across <code>192.168.102.152</code> through <code>.154</code> after the destructive
+switchover and all three controllers ran server binary SHA-256
+<code>15c6ec6b62f52b775b69f3a66a15937420f555f9f15f5578c30ad19f47e98f79</code>.</p>
+<p>The full Go suite, race suite, shell matrix suite, static checks, source scans,
+and Linux amd64 builds gate this update.</p>
+<h2 id="production-qualification-still-required">Production Qualification Still Required<a class="heading-anchor" href="#production-qualification-still-required" aria-label="Link to Production Qualification Still Required">#</a></h2>
+<ul>
+<li>ClusterGuard self-isolation and quorum gates are present, but production must
+integrate an independent out-of-band fence for failed hosts.</li>
+<li>The accepted rebuild used the logical-dump fallback. Clone and version-matched
+XtraBackup helpers must be qualified before selecting them in production.</li>
+<li>Backup retention, disaster recovery, external alert delivery, and long-term
+metrics retention remain deployment responsibilities.</li>
+<li>The destructive matrix must be repeated on the target hardware, storage,
+network, operating system, and exact MySQL packages.</li>
+</ul>
+
+          <footer class="document-footer">
+            <span>Source: <code>docs/mysql-feature-parity-acceptance.md</code></span>
+            <a href="../index.html">Documentation language home</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="On this page">
+          <strong>On this page</strong>
+          <a class="toc-level-2" href="#build-under-test">Build Under Test</a><a class="toc-level-2" href="#laboratory-topology">Laboratory Topology</a><a class="toc-level-2" href="#acceptance-results">Acceptance Results</a><a class="toc-level-2" href="#local-verification">Local Verification</a><a class="toc-level-2" href="#platform-authentication-and-one-time-approval-update">Platform Authentication And One-Time Approval Update</a><a class="toc-level-2" href="#production-qualification-still-required">Production Qualification Still Required</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

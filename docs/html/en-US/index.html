@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="ClusterGuard HA Documentation - ClusterGuard HA operational documentation">
+  <title>ClusterGuard HA Documentation | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">Skip to content</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>Search documentation</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="Filter by title">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation" aria-current="page" class="active">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
+      <div class="sidebar-meta">
+        <span>Offline documentation build</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">Open navigation</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>ClusterGuard HA Documentation</strong></div>
+        <div class="header-actions">
+          <a href="../zh-CN/index.html" lang="zh-CN">简体中文</a>
+          <button id="print-button" type="button">Print</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha-english-documentation">ClusterGuard HA English Documentation<a class="heading-anchor" href="#clusterguard-ha-english-documentation" aria-label="Link to ClusterGuard HA English Documentation">#</a></h1>
+<p>The offline HTML documentation center starts at <a href="../index.html"><code>../html/index.html</code></a>. It includes this manual, the migration runbook, qualification evidence, local search, and print-friendly pages without an external network dependency.</p>
+<h2 id="current-version">Current Version<a class="heading-anchor" href="#current-version" aria-label="Link to Current Version">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Version</th>
+<th>Status</th>
+<th>Database Support Boundary</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>2.1-45</code></td>
+<td>Officially Released</td>
+<td>MySQL High Availability Control Platform</td>
+</tr>
+<tr>
+<td><code>2.2.x</code></td>
+<td>Development and Acceptance</td>
+<td>PostgreSQL, retaining MySQL 2.1 capability</td>
+</tr>
+<tr>
+<td>Subsequent Versions</td>
+<td>Planning</td>
+<td>Oracle Data Guard Broker, SQL Server Always On independent acceptance</td>
+</tr>
+</tbody></table>
+<p>2.1 Final Version Download:</p>
+<p><a href="https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.1.45">https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.1.45</a></p>
+<p>Do not use historical candidate packages with numbers higher than <code>2.1-45</code> in the local directory to replace the official release. The official deliverables must come from GitHub Release and be verified with the included SHA256 checksum.</p>
+<h2 id="recommended-reading-order">Recommended Reading Order<a class="heading-anchor" href="#recommended-reading-order" aria-label="Link to Recommended Reading Order">#</a></h2>
+<ol>
+<li><a href="release-2.1.45.html">2.1-45 Release Notes</a>
+Confirm the official package, summary, support scope, and production admission boundary.</li>
+<li><a href="product-tour.html">Product Tour</a>
+Understand the topology, operations, node lifecycle, and operation logs through actual control console screenshots.</li>
+<li><a href="offline-rpm-install.html">Offline Installation and Deployment Manual</a>
+Complete the deployment of control nodes, data nodes, databases, Agent, Raft, VIP, and certificates.</li>
+<li><a href="database-preparation.html">Database Preparation Manual</a>
+Prepare native database identity, minimal permissions, replication, and health check conditions.</li>
+<li><a href="orchestrator-migration.html">Migration from Orchestrator</a>
+Onboard existing MySQL clusters without reinstalling data and transfer exclusive recovery and VIP authority safely.</li>
+<li><a href="operations-manual.html">Operations Manual</a>
+Execute failover, old primary recovery, node expansion, planned shutdown, audit, and emergency handling.</li>
+<li><a href="version-release-policy.html">Version and Release Policy</a>
+Use when building new versions, maintaining tags, and releasing PostgreSQL 2.2.</li>
+</ol>
+<h2 id="acceptance-evidence">Acceptance Evidence<a class="heading-anchor" href="#acceptance-evidence" aria-label="Link to Acceptance Evidence">#</a></h2>
+<ul>
+<li><a href="mysql-former-primary-recovery.html">MySQL Former-Primary Recovery Qualification</a></li>
+<li><a href="production-chaos-test.html">Production Chaos and Concurrency Test Report</a></li>
+<li><a href="power-lifecycle-test.html">Planned Shutdown and Automatic Recovery Report</a></li>
+</ul>
+<p>These reports record results under specific laboratories, database packages, and dates. After changing the database minor version, Linux distribution, storage, network, VIP NIC, or isolation method, on-site acceptance must be re-executed.</p>
+<h2 id="postgresql-2-2">PostgreSQL 2.2<a class="heading-anchor" href="#postgresql-2-2" aria-label="Link to PostgreSQL 2.2">#</a></h2>
+<p>Starting from version 2.2, PostgreSQL will not be rolled back to <code>v2.1.45</code>. The 2.2 main offline package remains streamlined: when explicitly specifying <code>--engine postgresql</code>, it defaults to resolving source code compilation dependencies online within the isolated build root. When on-site internet access is unavailable, upload a separate PostgreSQL dependency package and use <code>--postgresql-dependencies</code>.</p>
+<p>Database permissions, native identity, streaming replication, and recovery requirements for PostgreSQL are detailed in the <a href="database-preparation.html">Database Preparation Manual</a>; complete installation parameters are detailed in the <a href="offline-rpm-install.html">Offline Installation and Deployment Manual</a>.</p>
+<h2 id="document-validity">Document Validity<a class="heading-anchor" href="#document-validity" aria-label="Link to Document Validity">#</a></h2>
+<p>The following documents are the production delivery entry points:</p>
+<ul>
+<li><code>docs/en-US/release-*.md</code></li>
+<li><code>docs/en-US/offline-rpm-install.md</code></li>
+<li><code>docs/en-US/database-preparation.md</code></li>
+<li><code>docs/en-US/operations-manual.md</code></li>
+<li><code>docs/en-US/version-release-policy.md</code></li>
+</ul>
+<p><code>docs/superpowers/</code> preserves historical design and implementation plans and is only used for traceability, not as the current installation or production operation manual. When documents are inconsistent with the official release, the corresponding <code>RELEASE-INFO</code>, summary file, and release notes of that version shall prevail.</p>
+<h2 id="information-required-for-issue-feedback">Information Required for Issue Feedback<a class="heading-anchor" href="#information-required-for-issue-feedback" aria-label="Link to Information Required for Issue Feedback">#</a></h2>
+<p>When submitting an issue, provide at least the following:</p>
+<ul>
+<li>Complete ClusterGuard version and Git commit;</li>
+<li>Database engine, complete version, port, and cluster UUID;</li>
+<li>Control node Leader, Raft members, and quorum status;</li>
+<li>Operation UUID, request ID, occurrence time, and operation type;</li>
+<li>De-identified operation report, audit records, and Agent/systemd logs;</li>
+<li>Primary, replication source, and VIP Owner before and after the issue occurred.</li>
+</ul>
+<p>Do not submit database passwords, control tokens, approval tokens, private keys, or complete <code>deployment-secrets.env</code> in tickets, screenshots, or chat records.</p>
+
+          <footer class="document-footer">
+            <span>Source: <code>docs/en-US/README.md</code></span>
+            <a href="../index.html">Documentation language home</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="On this page">
+          <strong>On this page</strong>
+          <a class="toc-level-2" href="#current-version">Current Version</a><a class="toc-level-2" href="#recommended-reading-order">Recommended Reading Order</a><a class="toc-level-2" href="#acceptance-evidence">Acceptance Evidence</a><a class="toc-level-2" href="#postgresql-2-2">PostgreSQL 2.2</a><a class="toc-level-2" href="#document-validity">Document Validity</a><a class="toc-level-2" href="#information-required-for-issue-feedback">Information Required for Issue Feedback</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

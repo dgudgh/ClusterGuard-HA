@@ -1,0 +1,527 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="离线 RPM 安装 - ClusterGuard HA operational documentation">
+  <title>离线 RPM 安装 | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">跳到正文</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>搜索文档</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="输入标题关键词">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>开始使用</h2><a href="index.html" data-doc-title="clusterguard ha 中文文档">ClusterGuard HA 中文文档</a><a href="product-overview.html" data-doc-title="产品概览">产品概览</a><a href="product-tour.html" data-doc-title="控制台产品导览">控制台产品导览</a><a href="architecture.html" data-doc-title="系统架构">系统架构</a><a href="release-2.1.45.html" data-doc-title="2.1.45 发布说明">2.1.45 发布说明</a></section><section><h2>部署与迁移</h2><a href="offline-rpm-install.html" data-doc-title="离线 rpm 安装" aria-current="page" class="active">离线 RPM 安装</a><a href="database-preparation.html" data-doc-title="数据库接入">数据库接入</a><a href="orchestrator-migration.html" data-doc-title="从 orchestrator 迁移">从 Orchestrator 迁移</a></section><section><h2>日常运维</h2><a href="operations-manual.html" data-doc-title="运维操作手册">运维操作手册</a><a href="api-operations.html" data-doc-title="api 运维参考">API 运维参考</a><a href="postgresql-ha.html" data-doc-title="postgresql 高可用">PostgreSQL 高可用</a><a href="version-release-policy.html" data-doc-title="版本与发版规范">版本与发版规范</a></section><section><h2>验收证据</h2><a href="proven-mysql-ha-methods.html" data-doc-title="mysql 已验证方法">MySQL 已验证方法</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql 功能验收">MySQL 功能验收</a><a href="mysql-former-primary-recovery.html" data-doc-title="旧主恢复专项验收">旧主恢复专项验收</a><a href="mysql-production-qualification.html" data-doc-title="mysql 生产验收">MySQL 生产验收</a><a href="production-chaos-test.html" data-doc-title="生产故障测试报告">生产故障测试报告</a><a href="power-lifecycle-test.html" data-doc-title="计划关机测试报告">计划关机测试报告</a></section></nav>
+      <div class="sidebar-meta">
+        <span>离线文档构建</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">打开目录</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>离线 RPM 安装</strong></div>
+        <div class="header-actions">
+          <a href="../en-US/offline-rpm-install.html" lang="en-US">English</a>
+          <button id="print-button" type="button">打印</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha-离线安装与部署手册">ClusterGuard HA 离线安装与部署手册<a class="heading-anchor" href="#clusterguard-ha-离线安装与部署手册" aria-label="Link to ClusterGuard HA 离线安装与部署手册">#</a></h1>
+<p>适用产品：ClusterGuard HA 2.1-45（MySQL 封板版）及 2.2.x x86_64
+适用系统：RHEL、Rocky Linux、AlmaLinux、Oracle Linux 8/9，systemd，x86_64
+部署方式：一台运维机通过 SSH 远程安装多个控制节点和数据库节点</p>
+<p>版本边界：<code>2.1-45</code> 只按 MySQL 正式线交付；PostgreSQL 安装与切换从
+<code>2.2-1</code> 开始。不要使用 2.1 包执行本手册的 PostgreSQL 章节。2.1 封板信息见
+<a href="release-2.1.45.html">2.1-45 发布说明</a>，不可变规则见
+<a href="version-release-policy.html">版本与发版规范</a>。</p>
+<p>本文只描述当前正式交付的多节点安装器 <code>install_clusterguard.sh</code>。它是推荐的生产安装方式：统一生成节点身份、证书、Raft 配置、数据库配置、复制拓扑、Agent 和 VIP 收敛配置。</p>
+<p>不要把本手册与旧版 Orchestrator、单机 RPM 手工配置文档混用。</p>
+<p><code>clusterguard-configure</code> 是安装器在远端调用的节点级配置程序。初次部署不应由运维人员逐台手工调用它；只有平台节点生命周期、受控恢复流程或工程支持明确要求时才使用该程序。</p>
+<h2 id="1-交付物与安装方式">1. 交付物与安装方式<a class="heading-anchor" href="#1-交付物与安装方式" aria-label="Link to 1. 交付物与安装方式">#</a></h2>
+<p>正式交付目录包含：</p>
+<pre><code class="language-text">clusterguard-ha-2.1-45-offline-linux-x86_64/
+  clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz
+  clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz.sha256
+  clusterguard-ha-2.1-45.x86_64.rpm
+  clusterguard-ha-2.1-45.x86_64.rpm.sha256
+  docs/ClusterGuard-HA-离线安装与部署手册.md
+</code></pre>
+<p>生产部署应使用完整离线包，不是单独手工安装 RPM：</p>
+<pre><code class="language-bash">sha256sum -c clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz.sha256
+tar -xzf clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz
+cd clusterguard-ha-2.1-45-offline-linux-x86_64
+sha256sum -c SHA256SUMS
+</code></pre>
+<p>安装前可额外检查 RPM 的签名和内容，不要以解包后的同名文件替换正式 RPM：</p>
+<pre><code class="language-bash">rpm -K packages/clusterguard-ha-2.1-45.x86_64.rpm
+rpm -qpl packages/clusterguard-ha-2.1-45.x86_64.rpm
+</code></pre>
+<p>离线包包含 ClusterGuard HA、安装器、静态 <code>jq</code>、MySQL 与控制面所需的基础运行依赖、示例配置和中文手册。体积较大的 PostgreSQL 源码编译依赖闭包单独交付；主离线包不包含 MySQL、UPSQL、PostgreSQL、Oracle 或 SQL Server 的厂商补丁与许可证。</p>
+<h2 id="2-角色与部署拓扑">2. 角色与部署拓扑<a class="heading-anchor" href="#2-角色与部署拓扑" aria-label="Link to 2. 角色与部署拓扑">#</a></h2>
+<p>ClusterGuard HA 有三种节点角色：</p>
+<table>
+<thead>
+<tr>
+<th>角色</th>
+<th>作用</th>
+<th>数量规则</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>控制节点</td>
+<td>运行 API、Web Console、Raft、审计和工作流</td>
+<td>必须为至少 3 个的奇数</td>
+</tr>
+<tr>
+<td>数据节点</td>
+<td>运行 MySQL 或 PostgreSQL 及受限 Agent</td>
+<td>不要求奇数</td>
+</tr>
+<tr>
+<td>混合节点</td>
+<td>同时是控制节点和数据节点</td>
+<td>控制节点集合仍必须为奇数</td>
+</tr>
+</tbody></table>
+<p>常用部署模式：</p>
+<p>| 模式 | <code>-l</code> 控制节点 | <code>-n</code> 数据节点 | 使用场景 |
+| --- | --- | --- |
+| 三节点混合 | 三台相同主机 | 三台相同主机 | 小型生产和测试环境 |
+| 控制与数据库分离 | 三台仲裁主机 | 两台或更多数据库主机 | 推荐的生产隔离模式 |
+| 仅控制面 | 三台仲裁主机 | 不传 | 先部署控制面，后续从控制台接入数据库 |</p>
+<p>示例中的三台主机对应关系：</p>
+<table>
+<thead>
+<tr>
+<th>IP</th>
+<th>主机名</th>
+<th>固定节点名</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>192.168.102.152</code></td>
+<td><code>orch-mysql01</code></td>
+<td><code>cg-node-0001</code></td>
+</tr>
+<tr>
+<td><code>192.168.102.153</code></td>
+<td><code>orch-mysql02</code></td>
+<td><code>cg-node-0002</code></td>
+</tr>
+<tr>
+<td><code>192.168.102.154</code></td>
+<td><code>orch-mysql03</code></td>
+<td><code>cg-node-0003</code></td>
+</tr>
+</tbody></table>
+<p>安装器会记录不可变 UUID。后续修改主机名、IP 或端口时，应从 Console 的元数据修正流程处理，不能删除本地部署状态后重新安装。</p>
+<h2 id="3-部署前检查">3. 部署前检查<a class="heading-anchor" href="#3-部署前检查" aria-label="Link to 3. 部署前检查">#</a></h2>
+<h3 id="3-1-运维机要求">3.1 运维机要求<a class="heading-anchor" href="#3-1-运维机要求" aria-label="Link to 3.1 运维机要求">#</a></h3>
+<p>运维机应能 SSH 到所有目标节点，并具备：</p>
+<pre><code class="language-text">bash, ssh, scp, ssh-keyscan, ssh-keygen, openssl, curl, tar
+</code></pre>
+<p>运维机需要保存部署状态、站点秘密和证书工作目录。它们是后续幂等执行、扩容、节点恢复和管理员接管所必需的资料，必须放在受保护且已备份的位置。</p>
+<h3 id="3-2-目标节点要求">3.2 目标节点要求<a class="heading-anchor" href="#3-2-目标节点要求" aria-label="Link to 3.2 目标节点要求">#</a></h3>
+<ul>
+<li>使用同一 Linux 发行版主版本和 x86_64 架构。</li>
+<li>每个节点使用唯一、稳定的主机名。</li>
+<li>控制节点至少预留 2 GiB 可用空间；数据库数据目录至少预留 10 GiB，生产按容量规划增加。</li>
+<li>所有节点之间时钟同步。安装器会检查 NTP 状态；生产环境必须先修复未同步状态。</li>
+<li>root 可通过 SSH 登录，或提供具备 sudo 权限的专用运维账户。</li>
+<li>网络和安全策略允许如下连接。</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>端口</th>
+<th>方向</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>22/TCP</td>
+<td>运维机到全部节点</td>
+<td>安装、同步与恢复</td>
+</tr>
+<tr>
+<td>3000/TCP</td>
+<td>管理员和控制节点之间</td>
+<td>Console、API、Leader 转发</td>
+</tr>
+<tr>
+<td>10009/TCP</td>
+<td>控制节点互通</td>
+<td>Raft 共识</td>
+</tr>
+<tr>
+<td>3306/TCP</td>
+<td>MySQL 数据节点互通及控制面访问</td>
+<td>MySQL 复制和管理</td>
+</tr>
+<tr>
+<td>5432/TCP</td>
+<td>PostgreSQL 数据节点互通及控制面访问</td>
+<td>PostgreSQL 复制和管理</td>
+</tr>
+</tbody></table>
+<p>安装器会在启用且运行中的 firewalld 内自动配置它管理的端口。外部防火墙、安全组、ACL 和交换网络仍需由运维团队提前放通。安装器会调用受限离线 <code>dnf install</code> 或 <code>yum localinstall</code> 安装经校验的本地 RPM，运维人员不需要逐台手工执行 RPM 安装。</p>
+<h3 id="3-3-主机名与-vip">3.3 主机名与 VIP<a class="heading-anchor" href="#3-3-主机名与-vip" aria-label="Link to 3.3 主机名与 VIP">#</a></h3>
+<p>先在目标节点确认主机名正确，例如：</p>
+<pre><code class="language-bash">hostnamectl set-hostname orch-mysql01
+hostnamectl --static
+</code></pre>
+<p>VIP 必须是当前二层网络中未被其他设备使用的地址。不要预先手动将 VIP 配置到任一网卡；安装后由 ClusterGuard Agent 依据主库角色、Raft 多数和租约负责唯一绑定。</p>
+<p>带 VIP 的 MySQL HA 部署默认启用数据库层自动故障切换，不依赖 VMware 虚拟机名称或 VMX 路径。控制面每 5 秒探测 MySQL 端口和 SQL 健康；主库连续 6 次失败并覆盖 30 秒后，Raft Leader 才能发布候选主库过渡租约。旧主 Agent 最多只缓存 10 秒多数派授权，并每 5 秒本地核对一次；失去授权后会撤销 VIP、记录持久隔离意图，并把 MySQL 保持为只读。控制面等待 15 秒隔离窗口并再次确认 Raft 多数、故障证据和精确过渡租约后，才允许候选库提升。</p>
+<p>因此安装命令默认不需要 <code>--fencer</code>。这不是把“3306 不通”直接当成旧主已断电，而是使用短期多数派授权和节点本地 fail-closed 机制防止失去多数派的节点继续持有写入口。若操作系统、Agent 定时器和管理网络也可能同时失效，生产环境仍建议增加 BMC、PDU、云 API 或虚拟化平台作为第二层外部隔离增强。显式添加 <code>--manual-failover-only</code> 可关闭自动恢复，仅保留人工受控切换。</p>
+<h4 id="可选-vmware-workstation-ssh-外部隔离增强">可选：VMware Workstation SSH 外部隔离增强<a class="heading-anchor" href="#可选-vmware-workstation-ssh-外部隔离增强" aria-label="Link to 可选：VMware Workstation SSH 外部隔离增强">#</a></h4>
+<p>离线介质的 <code>examples/fencing/</code> 提供可选的 VMware Workstation SSH 隔离器。它不参与数据库节点身份、主从拓扑或默认切换判定，只在站点明确传入 <code>--fencer</code> 时作为更强的旧主断电证明。它通过独立管理网登录 Windows VMware 宿主机，使用 <code>vmrun list</code> 核对固定的 IP 到 VMX 白名单；只有 <code>fence</code> 动作会执行 <code>vmrun stop ... hard</code>，<code>status</code> 动作始终只读。</p>
+<p>必须先满足以下条件：</p>
+<ol>
+<li>VMware 宿主机启用 OpenSSH Server，并从三台控制节点的管理网可达。</li>
+<li>使用 SSH 密钥登录。禁止把 Windows 密码写进隔离脚本、环境变量或配置文件。</li>
+<li>SSH 账号必须能看到并管理目标 VMware Workstation 虚拟机；通常应是启动这些虚拟机的同一 Windows 账号，或企业已配置的专用 VMware 管理账号。</li>
+<li><code>vmware_known_hosts</code> 必须预先固定宿主机 SSH 公钥；禁止 <code>StrictHostKeyChecking=no</code>。</li>
+<li>每个数据库实例 IP 必须在 <code>vmware-targets.tsv</code> 中恰好映射一个绝对 <code>.vmx</code> 路径。</li>
+</ol>
+<p>在安全目录准备文件：</p>
+<pre><code class="language-bash">install -d -m 0700 /secure/clusterguard/fencing/site-config
+cp examples/fencing/vmware-workstation.conf.example \
+  /secure/clusterguard/fencing/site-config/vmware-workstation.conf
+cp examples/fencing/vmware-targets.tsv.example \
+  /secure/clusterguard/fencing/site-config/vmware-targets.tsv
+install -m 0600 /secure/source/vmware_ed25519 \
+  /secure/clusterguard/fencing/site-config/vmware_ed25519
+ssh-keyscan -H 192.168.102.68 &gt; \
+  /secure/clusterguard/fencing/site-config/vmware_known_hosts
+chmod 0600 /secure/clusterguard/fencing/site-config/*
+</code></pre>
+<p>编辑 <code>vmware-workstation.conf</code>，其中运行时路径必须保持为：</p>
+<pre><code class="language-text">identity_file=/etc/clusterguard/fencing/vmware_ed25519
+known_hosts_file=/etc/clusterguard/fencing/vmware_known_hosts
+targets_file=/etc/clusterguard/fencing/vmware-targets.tsv
+</code></pre>
+<p>然后在原安装命令中增加：</p>
+<pre><code class="language-bash">--fencer ./examples/fencing/vmware-workstation-ssh-fencer \
+--fencer-assets /secure/clusterguard/fencing/site-config
+</code></pre>
+<p>安装器会把隔离器安装到 <code>/usr/local/libexec/clusterguard-fencer</code>，把站点文件以 <code>0640 root:clusterguard</code> 安装到 <code>/etc/clusterguard/fencing/</code>。上线前必须先以 <code>status</code> 契约验证每个映射，再在隔离测试环境验证一次真实关机；不能仅以 SSH 可连通作为验收依据。</p>
+<h2 id="4-准备数据库介质与离线依赖">4. 准备数据库介质与离线依赖<a class="heading-anchor" href="#4-准备数据库介质与离线依赖" aria-label="Link to 4. 准备数据库介质与离线依赖">#</a></h2>
+<p>正式离线包可以在构建时通过可重复的 <code>--database-package</code> 直接嵌入审批的数据库介质。安装器在未传 <code>-r</code> 时，会自动从离线包的 <code>packages/database/</code> 和统一目录 <code>/opt</code> 查找匹配的 tar 包。也可以通过 <code>--database-package-dir /secure/database-media</code> 指定企业统一介质目录。</p>
+<p>安装器要求介质是可读取的 <code>tar</code>、<code>tar.gz</code>、<code>tgz</code>、<code>tar.xz</code>、<code>tar.bz2</code> 或 <code>tbz2</code>，并且压缩包只有一个安全的顶层目录。它使用 <code>--engine</code> 与 <code>--database-version</code> 匹配文件名；例如 MySQL 8.0.44 将匹配文件名中同时包含 <code>mysql</code> 或 <code>upsql</code> 和 <code>8.0.44</code> 的包。找到多个候选时会拒绝执行，要求使用 <code>-r</code> 明确指定，绝不会随意选择一个版本。</p>
+<p>MySQL 8.0 示例：</p>
+<pre><code class="language-bash">sha256sum /opt/mysql-8.0.44-linux-glibc2.17-x86_64.tar.xz
+</code></pre>
+<p>MySQL 8.4 仅需替换文件名、<code>--database-version</code> 和集群名。UPSQL 使用其企业审批的兼容 MySQL tar 包，并在 <code>--engine mysql</code> 下部署。</p>
+<p>安装器会在每个 MySQL 数据节点读取物理内存并自动生成该节点的参数。<code>innodb_buffer_pool_size</code> 默认取物理内存的 70% 并向上取整到 4 GiB 的整数倍；若取整后超过物理内存的 80%，则取不超过 80% 的最大 4 GiB 倍数，不设置固定容量上限。例如 256 GiB 内存会配置为 180 GiB。<code>max_connections</code> 默认固定为 1000。缓存、临时表和 redo 仍按内存分档。单连接缓冲保持受控值，避免 1000 个连接并发时产生不可控的额外内存放大。</p>
+<p>MySQL 数据节点至少需要 5 GiB 物理内存；低于此容量时无法同时满足 4 GiB 对齐和 80% 上限，安装器会在初始化数据目录前阻断。</p>
+<p>MySQL 默认监听数据库端口的所有 IPv4 地址，ClusterGuard 管理账号可直接通过 TCP 连接。为兼容传统驱动，MySQL 8.0 使用 <code>default_authentication_plugin=mysql_native_password</code>；MySQL 8.4 使用其支持的 <code>mysql_native_password=ON</code> 并显式设置平台账号插件。默认不会创建或修改任何远程 <code>root</code> 账户，远程控制使用独立的发现、执行和复制账号。</p>
+<p>现场确实需要远程 root 时，必须显式加入参数。<code>%</code> 表示允许任意来源，生产环境更建议限制到管理网段：</p>
+<pre><code class="language-bash"># 明确允许 root 从任意来源登录
+--mysql-root-remote-host &#39;%&#39;
+
+# 更收敛的管理网段示例
+--mysql-root-remote-host &#39;192.168.102.%&#39;
+</code></pre>
+<p>安装计划会明确显示 <code>MySQL 远程 root : 关闭（默认）</code> 或 <code>root@...（显式启用）</code>。该策略会写入部署状态和控制节点生命周期配置，后续从 Console 添加或重建 MySQL 节点时保持一致。省略参数不会删除现场原有的远程 root，也不会重置其密码或权限。</p>
+<p>如果 MySQL 二进制依赖目标操作系统没有提供的库，必须把同发行版、同主版本、同架构、已签名的 RPM 放进 <code>dependencies/</code>。可在联网的同版本镜像机上使用离线包内工具收集：</p>
+<pre><code class="language-bash">tools/收集RHEL离线依赖.sh --help
+</code></pre>
+<p>不要使用 <code>--nogpgcheck</code> 或关闭依赖检查。这里的 <code>--dependencies</code> 只用于 ClusterGuard 和 MySQL 的基础运行依赖，不承载 PostgreSQL 源码编译工具链。</p>
+<h3 id="postgresql-官方源码安装">PostgreSQL 官方源码安装<a class="heading-anchor" href="#postgresql-官方源码安装" aria-label="Link to PostgreSQL 官方源码安装">#</a></h3>
+<p>PostgreSQL 可以直接使用官方 release 源码包，不要求用户预先制作二进制包。例如：</p>
+<pre><code class="language-text">/opt/postgresql-16.4.tar.bz2
+</code></pre>
+<p>源码模式不是让三台服务器分别编译。ClusterGuard 会执行以下受控流程：</p>
+<ol>
+<li>在连接远端前校验压缩包路径安全、单一顶层目录和官方源码结构。</li>
+<li>默认选择第一个数据节点作为构建节点，也可用 <code>--postgresql-build-node</code> 指定当前数据节点清单中的另一台。</li>
+<li>只在构建节点编译一次，安装前缀固定为 <code>/opt/clusterguard/postgresql/&lt;PORT&gt;/software</code>。</li>
+<li>构建 <code>contrib</code>，校验 <code>initdb</code>、<code>postgres</code>、<code>psql</code>、<code>pg_basebackup</code>、<code>pg_rewind</code>、<code>pg_controldata</code> 和 <code>pg_config</code>。</li>
+<li>生成 <code>BUILD-MANIFEST.json</code>、统一二进制 tar 包和 SHA256 摘要。</li>
+<li>把完全相同的制品分发给全部控制节点和数据节点，再初始化及同步流复制。</li>
+</ol>
+<p>源码制品会动态链接目标系统库，因此所有控制/数据节点必须使用相同 CPU 架构、发行版版本和 glibc。安装器会在编译前检查，不一致时直接阻断。</p>
+<p>构建节点需要至少 6 GiB 临时空间。安装中断后重跑时，只有源码摘要、构建器摘要和制品 SHA256 都一致才会复用缓存；任何一项不一致都会重新编译，避免把旧制品误发到新集群。</p>
+<p>主离线包不再内置体积较大的 PostgreSQL 源码编译依赖闭包。明确指定
+<code>--engine postgresql</code> 且使用官方源码包时，安装器默认在选定的构建节点上使用
+该节点已配置的软件源联网解析依赖。所有编译依赖只安装到一次性 DNF installroot，
+不会写入生产宿主机的软件包数据库；仓库签名校验保持启用。</p>
+<p>安装计划会显示 <code>PG 编译依赖 : 默认联网安装到隔离构建根</code>。如果现场仓库、DNS
+或网络不可用，安装会停止并明确提示上传独立的 PostgreSQL 依赖包。可在与生产节点
+同发行版、同主版本、同架构的联网镜像机上制作该附属包：</p>
+<pre><code class="language-bash">tools/收集RHEL离线依赖.sh \
+  --output /tmp/clusterguard-pg-source-deps \
+  --postgresql-source-build
+
+tools/构建PostgreSQL依赖包.sh \
+  --input /tmp/clusterguard-pg-source-deps \
+  --output /secure/release \
+  --version 2.2 \
+  --release 1 \
+  --platform rocky-8 \
+  --arch x86_64
+</code></pre>
+<p>生成的文件名类似
+<code>clusterguard-ha-2.2-1-postgresql-build-deps-rocky-8-x86_64.tar.gz</code>。
+上传并校验旁边的 <code>.sha256</code> 文件，解压后在安装命令中增加：</p>
+<pre><code class="language-bash">--postgresql-dependencies ./clusterguard-ha-2.2-1-postgresql-build-deps-rocky-8-x86_64/dependencies
+</code></pre>
+<p>安装器会校验附属包的 SHA256、RPM 签名、CPU 架构、操作系统主版本和仓库元数据，
+随后只启用这个本地仓库完成隔离构建。缺少签名、摘要、仓库元数据或依赖时会明确
+报错并停止。</p>
+<p>三节点 PostgreSQL 16.4 计划示例：</p>
+<pre><code class="language-bash">./install_clusterguard.sh \
+  -l 192.168.102.152,192.168.102.153,192.168.102.154 \
+  -n 192.168.102.152,192.168.102.153,192.168.102.154 \
+  -u root \
+  -P &#39;SSH密码&#39; \
+  -r /opt/postgresql-16.4.tar.bz2 \
+  -ld /var/lib/clusterguard \
+  -nd /data \
+  --engine postgresql \
+  --database-version 16.4 \
+  --cluster-name pg16-production \
+  --postgresql-allowed-cidr 192.168.102.0/24 \
+  --accept-host-keys \
+  --plan
+</code></pre>
+<p>确认计划中显示“PostgreSQL 官方源码”“仅编译一次”、正确的构建节点，以及“默认联网安装到隔离构建根”后，将最后一行改为 <code>--execute</code> 执行。纯离线现场则追加上面的 <code>--postgresql-dependencies</code> 参数。</p>
+<h2 id="5-ssh-主机密钥与密码处理">5. SSH 主机密钥与密码处理<a class="heading-anchor" href="#5-ssh-主机密钥与密码处理" aria-label="Link to 5. SSH 主机密钥与密码处理">#</a></h2>
+<p>推荐提前审核目标主机 SSH 指纹并准备 <code>known_hosts</code> 文件：</p>
+<pre><code class="language-bash">ssh-keyscan -H 192.168.102.152 192.168.102.153 192.168.102.154 &gt; site/known_hosts
+# 必须通过独立可信渠道核对每台主机的 SSH 指纹后，才可使用该文件。
+chmod 0600 site/known_hosts
+</code></pre>
+<p>首次实验环境可使用 <code>--accept-host-keys</code> 让安装器采集当前主机密钥。生产环境优先使用 <code>--known-hosts site/known_hosts</code>。</p>
+<p>真实安装时，如果没有传 <code>--ssh-key</code>、<code>-P</code> 或 <code>CG_SSH_PASSWORD</code>，安装器会在开始阶段只提示一次隐藏密码，随后自动复用到所有 SSH 和 SCP 操作。最简单的交互方式是直接执行安装命令，不需要额外处理密码。</p>
+<p>不要把 SSH 密码写进命令行、Shell 历史或变更单。需要无交互执行时，可在当前 Shell 中输入并导出环境变量：</p>
+<pre><code class="language-bash">read -r -s -p &#39;SSH 密码: &#39; CG_SSH_PASSWORD
+printf &#39;\n&#39;
+export CG_SSH_PASSWORD
+</code></pre>
+<p>也可使用 <code>--ssh-key /secure/keys/clusterguard-deploy_ed25519</code>。<code>-P</code> / <code>--ssh-password</code> 仅为兼容已有自动化保留，不建议在共享终端、Shell 历史或进程列表可见的环境中使用。</p>
+<h3 id="多台服务器密码不同">多台服务器密码不同<a class="heading-anchor" href="#多台服务器密码不同" aria-label="Link to 多台服务器密码不同">#</a></h3>
+<p>可直接按节点顺序传入密码。例如 <code>-l/-n</code> 去重后顺序为 <code>152,153,154</code>，则：</p>
+<pre><code class="language-bash">./install_clusterguard.sh \
+  -l 192.168.102.152,192.168.102.153,192.168.102.154 \
+  -n 192.168.102.152,192.168.102.153,192.168.102.154 \
+  -u root \
+  -p &#39;152的密码,153的密码,154的密码&#39;
+</code></pre>
+<p>小写 <code>-p</code> 表示“节点密码列表”；大写 <code>-P</code> 表示“所有节点使用同一个密码”。密码数量必须与去重后的节点数量完全一致，安装器会在计划阶段显示节点顺序但不会显示密码。密码中包含英文逗号时请使用下方凭据文件方式。</p>
+<p>为每个节点创建一个仅 root 可读的凭据文件，例如 <code>/root/clusterguard-node-ssh.credentials</code>：</p>
+<pre><code class="language-text"># 节点地址=该节点的 SSH 密码
+192.168.102.152=first-node-password
+192.168.102.153=second-node-password
+192.168.102.154=third-node-password
+</code></pre>
+<pre><code class="language-bash">chmod 600 /root/clusterguard-node-ssh.credentials
+</code></pre>
+<p>随后在安装命令中加入：</p>
+<pre><code class="language-bash">--ssh-credentials-file /root/clusterguard-node-ssh.credentials
+</code></pre>
+<p>该文件必须包含本次 <code>-l</code> 和 <code>-n</code> 涉及的每台服务器；安装器会在开始前检查完整性和 <code>0600</code> 权限。密码不会显示在部署计划、日志、状态文件或命令行中。节点地址中不能包含空格；密码可以包含 <code>=</code>，但不能换行。</p>
+<h2 id="6-三节点-mysql-混合部署">6. 三节点 MySQL 混合部署<a class="heading-anchor" href="#6-三节点-mysql-混合部署" aria-label="Link to 6. 三节点 MySQL 混合部署">#</a></h2>
+<p>这是最常用的完整安装流程。三台机器既运行 ClusterGuard 控制面，也运行 MySQL 与 Agent。</p>
+<p>先创建持久化站点目录：</p>
+<pre><code class="language-bash">install -d -m 0700 /secure/clusterguard/mysql-ha-3306
+</code></pre>
+<h3 id="6-1-只读计划">6.1 只读计划<a class="heading-anchor" href="#6-1-只读计划" aria-label="Link to 6.1 只读计划">#</a></h3>
+<p>以下命令不会修改远端主机：</p>
+<pre><code class="language-bash">./install_clusterguard.sh \
+  -l 192.168.102.152,192.168.102.153,192.168.102.154 \
+  -n 192.168.102.152,192.168.102.153,192.168.102.154 \
+  -u root \
+  -ld /var/lib/clusterguard \
+  -nd /data \
+  --engine mysql \
+  --database-version 8.0.44 \
+  --database-port 3306 \
+  --cluster-name mysql-ha-3306 \
+  --vip 192.168.102.155 \
+  --interface ens160 \
+  --prefix 24 \
+  --dependencies dependencies \
+  --known-hosts /secure/clusterguard/mysql-ha-3306/known_hosts \
+  --state-file /secure/clusterguard/mysql-ha-3306/deployment-state.json \
+  --secrets-file /secure/clusterguard/mysql-ha-3306/deployment-secrets.env \
+  --work-dir /secure/clusterguard/mysql-ha-3306/site \
+  --plan
+</code></pre>
+<p>核对计划中的控制节点、数据节点、数据库版本、端口、网卡、VIP 和数据目录。若有任何错误，修改参数后重新运行只读计划。</p>
+<h3 id="6-2-真实安装">6.2 真实安装<a class="heading-anchor" href="#6-2-真实安装" aria-label="Link to 6.2 真实安装">#</a></h3>
+<p>将同一命令最后的 <code>--plan</code> 改为 <code>--execute</code>。交互执行时，安装器会要求输入集群名称确认：</p>
+<pre><code class="language-bash">./install_clusterguard.sh \
+  -l 192.168.102.152,192.168.102.153,192.168.102.154 \
+  -n 192.168.102.152,192.168.102.153,192.168.102.154 \
+  -u root \
+  -ld /var/lib/clusterguard \
+  -nd /data \
+  --engine mysql \
+  --database-version 8.0.44 \
+  --database-port 3306 \
+  --cluster-name mysql-ha-3306 \
+  --vip 192.168.102.155 \
+  --interface ens160 \
+  --prefix 24 \
+  --dependencies dependencies \
+  --known-hosts /secure/clusterguard/mysql-ha-3306/known_hosts \
+  --state-file /secure/clusterguard/mysql-ha-3306/deployment-state.json \
+  --secrets-file /secure/clusterguard/mysql-ha-3306/deployment-secrets.env \
+  --work-dir /secure/clusterguard/mysql-ha-3306/site \
+  --execute
+</code></pre>
+<p>非交互自动化可额外增加 <code>-y</code>，但只应在已审阅的变更作业中使用。</p>
+<p>安装完成后，控制台地址为：</p>
+<pre><code class="language-text">https://192.168.102.152:3000/
+</code></pre>
+<p>初始账号为 <code>admin</code>，首次密码为 <code>admin123</code>。首次登录后必须立即修改密码；改密前控制台和 API 仅允许认证与改密，不能查看或操作集群数据。</p>
+<h3 id="6-3-mysql-8-4-部署">6.3 MySQL 8.4 部署<a class="heading-anchor" href="#6-3-mysql-8-4-部署" aria-label="Link to 6.3 MySQL 8.4 部署">#</a></h3>
+<p>将以上命令的两项替换为实际值即可。若 <code>/opt</code> 同时有多个 MySQL 8.4 包，可显式增加 <code>-r /opt/EXACT_FILENAME</code>：</p>
+<pre><code class="language-text">--database-version 8.4.10
+--cluster-name mysql-ha-3306-84
+</code></pre>
+<p>同一个 IP:端口只属于一个 ClusterGuard 集群。若 8.0 和 8.4 共存，必须使用不同端口、独立数据目录、独立 VIP、独立 <code>--state-file</code>、<code>--secrets-file</code> 和 <code>--work-dir</code>。</p>
+<h2 id="7-控制节点与数据节点分离部署">7. 控制节点与数据节点分离部署<a class="heading-anchor" href="#7-控制节点与数据节点分离部署" aria-label="Link to 7. 控制节点与数据节点分离部署">#</a></h2>
+<p>以下示例使用三台仲裁控制节点和三台独立 MySQL 数据节点：</p>
+<pre><code class="language-bash">./install_clusterguard.sh \
+  -l 192.168.40.81,192.168.40.82,192.168.40.83 \
+  -n 192.168.40.91,192.168.40.92,192.168.40.93 \
+  -u root \
+  -ld /var/lib/clusterguard \
+  -nd /data \
+  --engine mysql \
+  --database-version 8.4.10 \
+  --database-port 3306 \
+  --cluster-name mysql-production \
+  --vip 192.168.40.100 \
+  --interface ens160 \
+  --prefix 24 \
+  --known-hosts /secure/clusterguard/mysql-production/known_hosts \
+  --state-file /secure/clusterguard/mysql-production/deployment-state.json \
+  --secrets-file /secure/clusterguard/mysql-production/deployment-secrets.env \
+  --work-dir /secure/clusterguard/mysql-production/site \
+  --plan
+</code></pre>
+<p>先执行 <code>--plan</code>，确认无误后改成 <code>--execute</code>。控制节点数量必须保持奇数；数据节点数量可为 1、2、3 或更多。</p>
+<h2 id="8-仅部署三节点控制面">8. 仅部署三节点控制面<a class="heading-anchor" href="#8-仅部署三节点控制面" aria-label="Link to 8. 仅部署三节点控制面">#</a></h2>
+<p>不部署数据库和 Agent 时：</p>
+<pre><code class="language-bash">./install_clusterguard.sh \
+  -l 192.168.40.81,192.168.40.82,192.168.40.83 \
+  -u root \
+  -ld /var/lib/clusterguard \
+  --engine none \
+  --control-only \
+  --known-hosts /secure/clusterguard/control-plane/known_hosts \
+  --state-file /secure/clusterguard/control-plane/deployment-state.json \
+  --secrets-file /secure/clusterguard/control-plane/deployment-secrets.env \
+  --work-dir /secure/clusterguard/control-plane/site \
+  --plan
+</code></pre>
+<p>确认后追加 <code>--execute</code>。后续通过 Console 的“集群管理”和“节点”页面接入 MySQL、PostgreSQL、Oracle Data Guard 或 SQL Server Always On，不要重新创建控制面状态文件。</p>
+<h2 id="9-安装后的验收">9. 安装后的验收<a class="heading-anchor" href="#9-安装后的验收" aria-label="Link to 9. 安装后的验收">#</a></h2>
+<h3 id="9-1-服务和-raft">9.1 服务和 Raft<a class="heading-anchor" href="#9-1-服务和-raft" aria-label="Link to 9.1 服务和 Raft">#</a></h3>
+<p>每台控制节点执行：</p>
+<pre><code class="language-bash">systemctl is-enabled clusterguard-ha.service
+systemctl is-active clusterguard-ha.service
+systemctl status clusterguard-ha.service --no-pager
+</code></pre>
+<p>每台数据节点执行：</p>
+<pre><code class="language-bash">systemctl is-enabled clusterguard-agent.service
+systemctl is-active clusterguard-agent.service
+systemctl status clusterguard-agent.service --no-pager
+</code></pre>
+<p>MySQL 混合节点还应验证：</p>
+<pre><code class="language-bash">systemctl is-enabled clusterguard-mysql-3306.service
+systemctl is-active clusterguard-mysql-3306.service
+ss -lnt | grep &#39;:3306&#39;
+mysql -uroot -p -e &#39;SELECT @@hostname, @@port, @@read_only, @@super_read_only;&#39;
+readlink /tmp/mysql.sock
+</code></pre>
+<p>ClusterGuard 管理的服务端 socket 位于 <code>/run/clusterguard/mysql/3306/mysql.sock</code>，不放在数据目录中。安装器会创建不含密码的 <code>/etc/clusterguard/mysql/default-client.cnf</code>，并从 <code>/etc/my.cnf</code> 和 <code>/root/.my.cnf</code> 的末尾包含该文件，因此已有配置中的旧 socket 不会继续覆盖当前实例。标准 3306 端口还会通过 <code>/etc/tmpfiles.d/clusterguard-mysql-3306.conf</code> 维护 <code>/tmp/mysql.sock</code> 兼容链接，重启后自动恢复。受管 root 密码仍只保存在权限为 <code>0600</code> 的 <code>/etc/clusterguard/mysql/3306-client.cnf</code> 和站点秘密文件中。</p>
+<p>控制台中应看到：三名控制节点、一个 Raft Leader、两个 Follower、一个主库、其余副本，以及唯一的 VIP Owner。</p>
+<h3 id="9-2-vip-唯一性">9.2 VIP 唯一性<a class="heading-anchor" href="#9-2-vip-唯一性" aria-label="Link to 9.2 VIP 唯一性">#</a></h3>
+<p>在三台数据节点分别执行：</p>
+<pre><code class="language-bash">ip -o -4 addr show dev ens160 | grep &#39;192.168.102.155/24&#39; || true
+</code></pre>
+<p>必须只在当前主库节点返回一次。不要手工 <code>ip addr add</code> 绑定 VIP，也不要通过 keepalived、Pacemaker 或其他工具同时管理同一 VIP。</p>
+<h3 id="9-3-重启恢复">9.3 重启恢复<a class="heading-anchor" href="#9-3-重启恢复" aria-label="Link to 9.3 重启恢复">#</a></h3>
+<p>计划维护或内核升级后，依次重启一个 Follower、另一个 Follower、最后再重启 Leader。每次恢复后确认控制台有 quorum、数据库复制正常、VIP 仍只在主库。禁止在失去多数控制节点后进行主库切换。</p>
+<h2 id="10-必须保存的站点资料">10. 必须保存的站点资料<a class="heading-anchor" href="#10-必须保存的站点资料" aria-label="Link to 10. 必须保存的站点资料">#</a></h2>
+<p>以下文件包含集群身份、证书、控制令牌和数据库受管密码，必须 0600 权限并纳入加密备份：</p>
+<pre><code class="language-text">/secure/clusterguard/&lt;集群名&gt;/deployment-state.json
+/secure/clusterguard/&lt;集群名&gt;/deployment-secrets.env
+/secure/clusterguard/&lt;集群名&gt;/site/
+/secure/clusterguard/&lt;集群名&gt;/known_hosts
+</code></pre>
+<p>再次执行同一集群安装器、进行受控修复或扩容时，必须复用同一组文件。不要删除、复制到其他集群，或以空状态文件覆盖已运行集群，否则会破坏资源 UUID、证书和受管凭据的一致性。</p>
+<h2 id="11-后续操作边界">11. 后续操作边界<a class="heading-anchor" href="#11-后续操作边界" aria-label="Link to 11. 后续操作边界">#</a></h2>
+<p>安装完成后，以下操作通过 Console 执行：</p>
+<ul>
+<li>受控主库与 VIP 同步切换。</li>
+<li>旧主恢复并回挂为从库。</li>
+<li>添加数据节点，自动安装数据库、同步数据、验证复制并提交元数据。</li>
+<li>添加控制节点，控制节点总数必须维持奇数。</li>
+<li>修改主机名、IP、端口、endpoint alias 和其他元数据。</li>
+<li>计划关机、整机恢复、审计、报告和操作日志查看。</li>
+</ul>
+<p>数据库节点故障、磁盘替换或系统重装后，应从 Console 的节点恢复流程发起，不要手工复制数据目录或自行修改 ClusterGuard 元数据库。</p>
+<h2 id="12-常见问题">12. 常见问题<a class="heading-anchor" href="#12-常见问题" aria-label="Link to 12. 常见问题">#</a></h2>
+<h3 id="12-1-安装器只输出计划">12.1 安装器只输出计划<a class="heading-anchor" href="#12-1-安装器只输出计划" aria-label="Link to 12.1 安装器只输出计划">#</a></h3>
+<p>这是正常行为。安装器默认只读，只有追加 <code>--execute</code> 才会改动远端主机。</p>
+<h3 id="12-2-报错-首次执行必须提供-known-hosts-或显式使用-accept-host-keys">12.2 报错“首次执行必须提供 --known-hosts 或显式使用 --accept-host-keys”<a class="heading-anchor" href="#12-2-报错-首次执行必须提供-known-hosts-或显式使用-accept-host-keys" aria-label="Link to 12.2 报错“首次执行必须提供 --known-hosts 或显式使用 --accept-host-keys”">#</a></h3>
+<p>生产环境应提供经过指纹审核的 <code>--known-hosts</code> 文件。实验环境可追加 <code>--accept-host-keys</code>。</p>
+<h3 id="12-3-报错-状态文件与本次集群名称-引擎或端口不一致">12.3 报错“状态文件与本次集群名称、引擎或端口不一致”<a class="heading-anchor" href="#12-3-报错-状态文件与本次集群名称-引擎或端口不一致" aria-label="Link to 12.3 报错“状态文件与本次集群名称、引擎或端口不一致”">#</a></h3>
+<p>说明复用了不属于当前集群的 <code>--state-file</code>。停止执行，恢复正确的站点目录；不要删除原状态文件规避检查。</p>
+<h3 id="12-4-数据库包依赖缺失">12.4 数据库包依赖缺失<a class="heading-anchor" href="#12-4-数据库包依赖缺失" aria-label="Link to 12.4 数据库包依赖缺失">#</a></h3>
+<p>MySQL 或控制面运行库缺失时，在同发行版、同架构的镜像机收集签名 RPM，并通过 <code>--dependencies dependencies</code> 重试。PostgreSQL 源码编译依赖联网解析失败时，制作并上传独立附属包，再通过 <code>--postgresql-dependencies &lt;EXTRACTED_DIRECTORY&gt;/dependencies</code> 重试。不要混用两个参数，也不要跳过校验。</p>
+<h3 id="12-5-console-无法登录">12.5 Console 无法登录<a class="heading-anchor" href="#12-5-console-无法登录" aria-label="Link to 12.5 Console 无法登录">#</a></h3>
+<p>检查控制面服务、Raft quorum 和浏览器访问的节点地址：</p>
+<pre><code class="language-bash">systemctl status clusterguard-ha.service --no-pager
+journalctl -u clusterguard-ha.service -n 200 --no-pager
+</code></pre>
+<p>新建集群的初始账号为 <code>admin</code>，初始密码为 <code>admin123</code>；首次登录后必须立即更改密码。若已改过密码，应使用新密码，服务重启不会恢复默认密码。</p>
+<h3 id="12-6-vip-未绑定或出现多个-owner">12.6 VIP 未绑定或出现多个 Owner<a class="heading-anchor" href="#12-6-vip-未绑定或出现多个-owner" aria-label="Link to 12.6 VIP 未绑定或出现多个 Owner">#</a></h3>
+<p>先停止任何外部 VIP 管理工具，再检查控制节点多数、当前主库角色、Agent 服务、网卡名和 CIDR。VIP 只允许 ClusterGuard Agent 管理；没有 quorum 时高风险操作必须被拒绝。</p>
+<h2 id="13-卸载与回滚">13. 卸载与回滚<a class="heading-anchor" href="#13-卸载与回滚" aria-label="Link to 13. 卸载与回滚">#</a></h2>
+<p>单独卸载 RPM 不会删除 <code>/etc/clusterguard/</code>、<code>/var/lib/clusterguard/</code> 和审计资料：</p>
+<pre><code class="language-bash">dnf remove clusterguard-ha
+</code></pre>
+<p>不要在仍运行的 Raft 集群中通过删除状态目录回滚。升级、回滚、控制节点退役和灾难恢复均应在 Console 的受控工作流中完成，并先导出审计和报告。</p>
+<h2 id="14-安全检查清单">14. 安全检查清单<a class="heading-anchor" href="#14-安全检查清单" aria-label="Link to 14. 安全检查清单">#</a></h2>
+<ul>
+<li>控制节点始终为至少 3 个的奇数。</li>
+<li>所有节点时钟已同步。</li>
+<li>SSH 主机密钥已独立核对。</li>
+<li>VIP 未被外部 HA 工具管理。</li>
+<li>数据库软件及离线依赖已经过企业审批和 SHA256 校验。</li>
+<li>站点状态、秘密和证书已加密备份。</li>
+<li>首次管理员密码已修改。</li>
+<li>已完成一次受控切换、旧主回挂、节点重启恢复和 VIP 唯一性验证。</li>
+</ul>
+
+          <footer class="document-footer">
+            <span>源文件: <code>docs/zh-CN/offline-rpm-install.md</code></span>
+            <a href="../index.html">文档语言入口</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="本页目录">
+          <strong>本页目录</strong>
+          <a class="toc-level-2" href="#1-交付物与安装方式">1. 交付物与安装方式</a><a class="toc-level-2" href="#2-角色与部署拓扑">2. 角色与部署拓扑</a><a class="toc-level-2" href="#3-部署前检查">3. 部署前检查</a><a class="toc-level-3" href="#3-1-运维机要求">3.1 运维机要求</a><a class="toc-level-3" href="#3-2-目标节点要求">3.2 目标节点要求</a><a class="toc-level-3" href="#3-3-主机名与-vip">3.3 主机名与 VIP</a><a class="toc-level-4" href="#可选-vmware-workstation-ssh-外部隔离增强">可选：VMware Workstation SSH 外部隔离增强</a><a class="toc-level-2" href="#4-准备数据库介质与离线依赖">4. 准备数据库介质与离线依赖</a><a class="toc-level-3" href="#postgresql-官方源码安装">PostgreSQL 官方源码安装</a><a class="toc-level-2" href="#5-ssh-主机密钥与密码处理">5. SSH 主机密钥与密码处理</a><a class="toc-level-3" href="#多台服务器密码不同">多台服务器密码不同</a><a class="toc-level-2" href="#6-三节点-mysql-混合部署">6. 三节点 MySQL 混合部署</a><a class="toc-level-3" href="#6-1-只读计划">6.1 只读计划</a><a class="toc-level-3" href="#6-2-真实安装">6.2 真实安装</a><a class="toc-level-3" href="#6-3-mysql-8-4-部署">6.3 MySQL 8.4 部署</a><a class="toc-level-2" href="#7-控制节点与数据节点分离部署">7. 控制节点与数据节点分离部署</a><a class="toc-level-2" href="#8-仅部署三节点控制面">8. 仅部署三节点控制面</a><a class="toc-level-2" href="#9-安装后的验收">9. 安装后的验收</a><a class="toc-level-3" href="#9-1-服务和-raft">9.1 服务和 Raft</a><a class="toc-level-3" href="#9-2-vip-唯一性">9.2 VIP 唯一性</a><a class="toc-level-3" href="#9-3-重启恢复">9.3 重启恢复</a><a class="toc-level-2" href="#10-必须保存的站点资料">10. 必须保存的站点资料</a><a class="toc-level-2" href="#11-后续操作边界">11. 后续操作边界</a><a class="toc-level-2" href="#12-常见问题">12. 常见问题</a><a class="toc-level-3" href="#12-1-安装器只输出计划">12.1 安装器只输出计划</a><a class="toc-level-3" href="#12-2-报错-首次执行必须提供-known-hosts-或显式使用-accept-host-keys">12.2 报错“首次执行必须提供 --known-hosts 或显式使用 --accept-host-keys”</a><a class="toc-level-3" href="#12-3-报错-状态文件与本次集群名称-引擎或端口不一致">12.3 报错“状态文件与本次集群名称、引擎或端口不一致”</a><a class="toc-level-3" href="#12-4-数据库包依赖缺失">12.4 数据库包依赖缺失</a><a class="toc-level-3" href="#12-5-console-无法登录">12.5 Console 无法登录</a><a class="toc-level-3" href="#12-6-vip-未绑定或出现多个-owner">12.6 VIP 未绑定或出现多个 Owner</a><a class="toc-level-2" href="#13-卸载与回滚">13. 卸载与回滚</a><a class="toc-level-2" href="#14-安全检查清单">14. 安全检查清单</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

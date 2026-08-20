@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="Former-Primary Recovery Qualification - ClusterGuard HA operational documentation">
+  <title>Former-Primary Recovery Qualification | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">Skip to content</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>Search documentation</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="Filter by title">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification" aria-current="page" class="active">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
+      <div class="sidebar-meta">
+        <span>Offline documentation build</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">Open navigation</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>Former-Primary Recovery Qualification</strong></div>
+        <div class="header-actions">
+          <a href="../zh-CN/mysql-former-primary-recovery.html" lang="zh-CN">简体中文</a>
+          <button id="print-button" type="button">Print</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="mysql-former-primary-one-click-recovery-production-acceptance-report">MySQL Former Primary One-Click Recovery Production Acceptance Report<a class="heading-anchor" href="#mysql-former-primary-one-click-recovery-production-acceptance-report" aria-label="Link to MySQL Former Primary One-Click Recovery Production Acceptance Report">#</a></h1>
+<ul>
+<li>Date: 2026-08-09</li>
+<li>Nodes: <code>192.168.102.152</code>, <code>192.168.102.153</code>, <code>192.168.102.154</code></li>
+<li>Version: MySQL 8.0.44, MySQL 8.4.10, MySQL 9.7.1</li>
+<li>Conclusion: GTID incremental resynchronization after process failure, full rebuild after binlog gap, and full rebuild after errant GTID fork have all passed real three-node verification.</li>
+</ul>
+<h2 id="1-one-click-recovery-behavior">1. One-Click Recovery Behavior<a class="heading-anchor" href="#1-one-click-recovery-behavior" aria-label="Link to 1. One-Click Recovery Behavior">#</a></h2>
+<p>The console &quot;One-Click Recovery to Slave&quot; executes the following fixed process:</p>
+<ol>
+<li>Proactively refresh cluster discovery, read the latest read-only and replication status of the former primary after startup.</li>
+<li>Validate the fixed resource ID of the former primary, MySQL <code>server_uuid</code>, cluster manifest, and current primary identity.</li>
+<li>Compare the GTID sets of the former primary and the current primary.</li>
+<li>Determine whether the binlog required for the former primary to catch up is still available from the current primary.</li>
+<li>When GTID is a subset and binlog is complete, perform incremental resynchronization.</li>
+<li>When binlog has been purged or there are errant GTID, automatically perform full rebuild and replication recovery.</li>
+<li>Verify read-only status, replication threads, replication source, delay, single primary, and VIP uniqueness of the former primary.</li>
+<li>Write audit, verification, and report; block if any critical evidence is missing.</li>
+</ol>
+<p>The platform does not use <code>sql_slave_skip_counter</code>, GTID injection, or forced reset to mask data forks.</p>
+<h2 id="2-real-test-matrix">2. Real Test Matrix<a class="heading-anchor" href="#2-real-test-matrix" aria-label="Link to 2. Real Test Matrix">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Version</th>
+<th>Failure and Data Conditions</th>
+<th>Recovery Path</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>8.0.44</td>
+<td>Current primary process stops directly</td>
+<td>GTID incremental resynchronization after automatic failover</td>
+<td>Passed; a new unique primary is formed in about 65-70 seconds, and the former primary remains read-only and completes incremental resynchronization after startup</td>
+</tr>
+<tr>
+<td>8.4.10</td>
+<td>Write continues during failure and binlog required for former primary to catch up is purged</td>
+<td>Automatically detects <code>required_binlog_available=fail</code> and performs full rebuild</td>
+<td>Passed; unsafe incremental resynchronization was not attempted, full synchronization, replication recovery, and verification were completed</td>
+</tr>
+<tr>
+<td>9.7.1</td>
+<td>Errant GTID is written on the former primary that does not exist on the current primary</td>
+<td>Automatically detects GTID is not a subset and performs full rebuild</td>
+<td>Passed; forked behavior was not introduced into the new topology, and the former primary was rebuilt based on the current primary</td>
+</tr>
+<tr>
+<td>8.4.10</td>
+<td>Data directory of the primary becomes read-only, systemd is in <code>activating/auto-restart</code> and no live PID exists</td>
+<td>Agent determines the database has stopped and allows isolated failover</td>
+<td>Passed; after fixing the false block of empty auto-restart state, failover and former primary resynchronization were completed</td>
+</tr>
+<tr>
+<td>8.0/9.7</td>
+<td>Current primary is network-isolated from the other two nodes</td>
+<td>Writing stops without external fencing, and the former primary that is isolated but not confirmed is not promoted</td>
+<td>Passed; all nodes are read-only and VIP is released, and after network recovery, it converges to a single primary</td>
+</tr>
+<tr>
+<td>8.0</td>
+<td>Current host is completely powered off</td>
+<td>Automatic promotion is blocked without VMware/BMC fencing evidence</td>
+<td>Passed through security gate; after restoring the virtual machine, the service automatically starts and keeps the former primary read-only</td>
+</tr>
+</tbody></table>
+<h2 id="3-concurrency-and-data-consistency">3. Concurrency and Data Consistency<a class="heading-anchor" href="#3-concurrency-and-data-consistency" aria-label="Link to 3. Concurrency and Data Consistency">#</a></h2>
+<p>In two concurrent switch requests in the same cluster, only one obtains the operation lock and succeeds, and the other is blocked with HTTP 409. Switches for 8.0 and 8.4 in different clusters are executed simultaneously and both pass:</p>
+<ul>
+<li>8.0 operation: <code>7b112de1-537a-4157-ae83-74d2e4372063</code></li>
+<li>8.4 operation: <code>e34b49d2-36b1-4948-b493-f202a051786b</code></li>
+<li>Both executions are <code>succeeded</code></li>
+<li>Both verifications are <code>passed=true</code></li>
+<li>Each operation passes source read-only, target writable, replication resynchronization, semi-synchronous, single primary, and VIP owner verification</li>
+</ul>
+<p>Final three-replica deterministic data verification. Summary is uniformly calculated as <code>SUM(CRC32(CONCAT(id,marker,HEX(payload))))</code>, which facilitates direct recalculation on any replica:</p>
+<table>
+<thead>
+<tr>
+<th>Cluster</th>
+<th align="right">Rows per Node</th>
+<th align="right">Summary per Node</th>
+<th>Current Primary</th>
+<th>VIP Owner</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>8.0 / 3306</td>
+<td align="right">2007</td>
+<td align="right"><code>4323827613648</code></td>
+<td><code>.153</code></td>
+<td><code>.153</code> holds <code>.155</code></td>
+</tr>
+<tr>
+<td>8.4 / 3384</td>
+<td align="right">2006</td>
+<td align="right"><code>4341221981770</code></td>
+<td><code>.154</code></td>
+<td><code>.154</code> holds <code>.160</code></td>
+</tr>
+<tr>
+<td>9.7 / 3397</td>
+<td align="right">2005</td>
+<td align="right"><code>4304498633408</code></td>
+<td><code>.152</code></td>
+<td><code>.152</code> holds <code>.164</code></td>
+</tr>
+</tbody></table>
+<p>Other nodes in the three clusters are <code>read_only=1</code>, <code>super_read_only=1</code>, and there are no dual primaries, no dual VIPs, no read-only test mounts, and no network failure rules at the end of the test.</p>
+<p>In the final closing phase, another 60 seconds and 7 sampling points of continuous observation were executed. Each round met the following: exactly one primary per cluster, two replicas, replication IO/SQL threads running, replication link healthy, maximum delay 0 seconds, and the primary identity did not drift in the background.</p>
+<h2 id="4-this-round-of-code-fixes">4. This Round of Code Fixes<a class="heading-anchor" href="#4-this-round-of-code-fixes" aria-label="Link to 4. This Round of Code Fixes">#</a></h2>
+<ol>
+<li>MySQL probe collects <code>gtid_purged</code>, and the recovery pre-check adds <code>former_primary_gtid_subset</code>, <code>required_binlog_available</code>, and <code>rebuild_required</code>.</li>
+<li>The console automatically selects incremental resynchronization or node full rebuild based on the pre-check.</li>
+<li>The console proactively executes discover before recovery decision to eliminate the problem of reading old snapshots when the former primary is first clicked after startup.</li>
+<li>MySQL 9.7 replication status collection uses compatible vertical output and does not send <code>\\G</code> to the client.</li>
+<li>Agent identifies &quot;systemd auto-restart, MainPID=0, ControlGroup is empty&quot; as stopped; if any live PID or cgroup exists, it still fails closed.</li>
+</ol>
+<h2 id="5-build-and-testing">5. Build and Testing<a class="heading-anchor" href="#5-build-and-testing" aria-label="Link to 5. Build and Testing">#</a></h2>
+<pre><code class="language-text">go test ./... -count=1                                      PASS
+go test -race ./adapters/mysql ./internal/api \
+  ./internal/agent ./internal/coordination \
+  ./internal/lifecycle ./internal/workflow -count=1          PASS
+go vet ./...                                                 PASS
+go build ./...                                               PASS
+git diff --check                                             PASS
+</code></pre>
+<p>Linux binary SHA-256 after rolling deployment of three control planes:</p>
+<pre><code class="language-text">clusterguard       d9a4d49c2e02d624307b8d2219cc70911cde5bbf63a7e52f8a9d4e70af4c1214
+clusterguard-agent 29791923d37286172f23c923a61d9227c1d9d98360959069ba843baa959434fb
+</code></pre>
+<p>During the rolling deployment, 3 voters, quorum confirmed, mutation authority, and <code>commit_index=applied_index</code> were maintained.</p>
+<h2 id="6-production-boundary">6. Production Boundary<a class="heading-anchor" href="#6-production-boundary" aria-label="Link to 6. Production Boundary">#</a></h2>
+<p>This result proves the software&#39;s safe handling of the above failures in the current laboratory, but it does not indicate that infrastructure risks are zero. If the primary that is completely disconnected or completely powered off cannot be confirmed to have shut down through an independent channel, ClusterGuard HA will choose to stop writing rather than risk creating a dual primary. In production environments, independent BMC/IPMI, virtualization platforms, or storage fencing must be integrated while maintaining this gate to simultaneously achieve automatic takeover and split-brain protection.</p>
+<p>Before going live, it is also necessary to retest I/O hang, full disk, full inode, and high fsync latency using production storage, and perform a bare-metal recovery and point-in-time recovery using production backup. Replication recovery cannot replace backup recovery acceptance.</p>
+
+          <footer class="document-footer">
+            <span>Source: <code>docs/en-US/mysql-former-primary-recovery-qualification-2026-08-09.md</code></span>
+            <a href="../index.html">Documentation language home</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="On this page">
+          <strong>On this page</strong>
+          <a class="toc-level-2" href="#1-one-click-recovery-behavior">1. One-Click Recovery Behavior</a><a class="toc-level-2" href="#2-real-test-matrix">2. Real Test Matrix</a><a class="toc-level-2" href="#3-concurrency-and-data-consistency">3. Concurrency and Data Consistency</a><a class="toc-level-2" href="#4-this-round-of-code-fixes">4. This Round of Code Fixes</a><a class="toc-level-2" href="#5-build-and-testing">5. Build and Testing</a><a class="toc-level-2" href="#6-production-boundary">6. Production Boundary</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

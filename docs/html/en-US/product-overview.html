@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="Product Overview - ClusterGuard HA operational documentation">
+  <title>Product Overview | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">Skip to content</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>Search documentation</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="Filter by title">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview" aria-current="page" class="active">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
+      <div class="sidebar-meta">
+        <span>Offline documentation build</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">Open navigation</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>Product Overview</strong></div>
+        <div class="header-actions">
+          <a href="../zh-CN/product-overview.html" lang="zh-CN">简体中文</a>
+          <button id="print-button" type="button">Print</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha">ClusterGuard HA<a class="heading-anchor" href="#clusterguard-ha" aria-label="Link to ClusterGuard HA">#</a></h1>
+<p>ClusterGuard HA requires Go 1.22 or newer.</p>
+<p><strong>ClusterGuard HA 多数据库企业级高可用控制平台</strong></p>
+<p><strong>ClusterGuard HA — Multi-Database High Availability Control Plane</strong></p>
+<p>ClusterGuard HA is an independent, clean-room high-availability control plane.
+The stable 2.1 line is the MySQL HA product line. PostgreSQL delivery starts in
+2.2. Oracle Data Guard Broker and SQL Server Always On remain separately gated
+future product lines and are not part of the 2.1 support scope.</p>
+<h2 id="console-preview">Console Preview<a class="heading-anchor" href="#console-preview" aria-label="Link to Console Preview">#</a></h2>
+<p><img src="../assets/screenshots/ha-operation-workbench.png" alt="ClusterGuard HA operations workbench"></p>
+<p>The console keeps cluster context, primary and candidate selection, VIP state,
+controlled execution, recovery, topology, and audit evidence in one operator
+workflow. See the bilingual <a href="product-tour.html">product tour</a> for the
+topology, node lifecycle, and operation-log views.</p>
+<h2 id="current-release">Current Release<a class="heading-anchor" href="#current-release" aria-label="Link to Current Release">#</a></h2>
+<p>Release policy and support boundary:</p>
+<ul>
+<li><code>v2.1.45</code> is the immutable final release of the 2.1 line.</li>
+<li>The supported 2.1 database engine is MySQL, including approved compatible
+MySQL distributions validated by the site acceptance matrix.</li>
+<li>PostgreSQL delivery and all subsequent feature work start from <code>2.2-1</code> on
+branch <code>codex/2.2-postgresql</code>.</li>
+<li>Any shipped feature or behavior change increments the package release; an
+existing RPM, offline archive, tag, or GitHub Release is never overwritten.</li>
+<li>Oracle and SQL Server code may exist behind capability gates, but it is not a
+production claim for the sealed 2.1 line.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Line</th>
+<th>Status</th>
+<th>Production support boundary</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>2.1.45</code></td>
+<td>Stable and sealed</td>
+<td>MySQL HA control plane</td>
+</tr>
+<tr>
+<td><code>2.2.x</code></td>
+<td>Active development</td>
+<td>PostgreSQL delivery plus retained MySQL capabilities</td>
+</tr>
+<tr>
+<td>Later lines</td>
+<td>Roadmap</td>
+<td>Oracle Data Guard Broker and SQL Server Always On after separate qualification</td>
+</tr>
+</tbody></table>
+<p>Download the sealed release from
+<a href="https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.1.45">ClusterGuard HA 2.1-45</a>:</p>
+<pre><code class="language-bash">curl -fLO https://github.com/dgudgh/ClusterGuard-HA/releases/download/v2.1.45/clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz
+curl -fLO https://github.com/dgudgh/ClusterGuard-HA/releases/download/v2.1.45/clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz.sha256
+sha256sum -c clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz.sha256
+</code></pre>
+<p>Published SHA-256 values:</p>
+<pre><code class="language-text">d4a46bdfa4c95bb641a7d19f063d2f43219177658b01b914a31a1cd5d06ec590  clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz
+1bc70109b556e973744bb05b5be0f53b075260910ae5def25518631ff8629a1c  clusterguard-ha-2.1-45.x86_64.rpm
+</code></pre>
+<blockquote>
+<p><strong>Qualification status:</strong> Automated tests and laboratory acceptance do not
+replace site qualification. Before production use, validate the exact MySQL
+package, operating system, storage, network, fencing policy, VIP provider and
+three-controller deployment. PostgreSQL acceptance belongs to the 2.2 line
+and is documented separately in
+<a href="postgresql-ha.html">postgresql-ha.md</a>.</p>
+</blockquote>
+<p>The current MySQL adapter provides:</p>
+<ul>
+<li>inventory-scoped discovery for MySQL 5.7, 8.0, 8.4, and 9.7;</li>
+<li>globally unique immutable node names, platform UUIDs, and native MySQL
+<code>server_uuid</code> identity;</li>
+<li>persisted topology, health, replication links, probe evidence, and metrics;</li>
+<li>promotion-candidate assessment with GTID and replication safety checks;</li>
+<li>guarded three-node planned switchover with primary and VIP ownership coupled;</li>
+<li>former-primary rejoin and allowlisted replication repair;</li>
+<li>30-second stable-failure detection and optional automatic failover;</li>
+<li>Raft-backed operation locks, endpoint leases, local self-isolation, and
+reboot-time VIP convergence through the restricted node agent;</li>
+<li>add/rebuild lifecycle tasks with fixed node-slot reuse, staged install,
+synchronization, verification, audit, and report output;</li>
+<li>endpoint metadata reconciliation without changing immutable resource identity;</li>
+<li>JSON, Prometheus, and monitoring-safe health output;</li>
+<li>fail-closed liveness/readiness separation, Raft role and quorum diagnostics,
+bounded history, paginated operation logs, and rate-limited incident reminders;</li>
+<li>an authenticated Chinese console with role-based access, mandatory bootstrap
+password change, CSRF protection, and the <code>cgctl</code> service CLI;</li>
+<li>durable operation UUIDs, idempotency keys, stage progress, audit, and reports;</li>
+<li>plan-bound, five-minute, single-use approval grants for manual high-risk
+database operations;</li>
+<li>tested MySQL 5.7/8.x/9.x mutation dialects behind an independent adapter and
+writer-endpoint contract.</li>
+</ul>
+<h2 id="2-2-development-scope">2.2 Development Scope<a class="heading-anchor" href="#2-2-development-scope" aria-label="Link to 2.2 Development Scope">#</a></h2>
+<p>The PostgreSQL adapter under 2.2 development provides inventory-scoped
+discovery, immutable node identity, <code>system_identifier</code> cluster binding,
+primary/standby topology,
+streaming health, timeline and WAL evidence, native metrics, deterministic
+candidate assessment, guarded planned switchover and failover, former-primary
+<code>pg_rewind</code> recovery, allowlisted low-risk repair, writer-VIP coupling, and
+<code>pg_basebackup</code>/<code>pg_rewind</code> node lifecycle, plus optional 30-second stable-failure
+automatic failover. Mutations are advertised only when
+the restricted Agent, operation credentials, endpoint provider, controller
+quorum, and required fencing evidence are configured. These capabilities are
+not retroactively added to <code>v2.1.45</code>.</p>
+<p>The Oracle adapter is a future gated integration for signed-Agent Data Guard
+Broker discovery, health,
+topology, standby candidate assessment, precheck, plan, execute, and dual-node
+verification for controlled switchover. A dedicated password-file
+<code>SYSDG</code> account is used instead of <code>SYS</code>; the local Agent runs DGMGRL as the
+Oracle operating-system account and accepts only configured Broker members.
+ClusterGuard never edits Oracle data files directly. Failure failover remains
+blocked until old-primary fencing is configured.</p>
+<p>The SQL Server adapter is a future gated integration for Always On read-only
+discovery, health, topology, synchronized-secondary candidate assessment,
+precheck, plan, execute, verify, and send/redo queue metrics for planned
+failover to a synchronized synchronous-commit secondary.
+Discovery and execution are advertised only when <code>sqlcmd</code> is available or a SQL
+Server runner is injected. Forced failover remains blocked by default unless a
+future explicit data-loss approval policy is configured.</p>
+<h2 id="safety-boundary">Safety Boundary<a class="heading-anchor" href="#safety-boundary" aria-label="Link to Safety Boundary">#</a></h2>
+<p>The example configuration keeps the restricted node agent and automatic
+failover disabled. Real MySQL role or VIP mutation becomes executable only when
+the cluster has a complete HA endpoint inventory, an odd Raft controller set,
+current leader-backed majority authority, purpose-specific MySQL credentials,
+agent signing material, an operation lock, and approval. Missing or unknown
+evidence blocks the operation; it never produces a simulated success.</p>
+<p>Automatic failover is separately opt-in. It requires six follow-up failure
+observations across 30 seconds, the rank-one eligible candidate, current
+controller quorum, old-primary isolation, and an exclusive VIP lease. MySQL can
+use short-lived Raft-majority Agent authorization: stale authorization expires,
+the old node fails closed to no VIP plus persistent read-only, and the Leader
+revalidates the exact transition lease before promotion. An external BMC, PDU,
+cloud, or hypervisor fencer remains an optional stronger layer. The platform
+prefers temporary unavailability over a second writer or VIP owner.</p>
+<p>The browser console authenticates against platform users stored in the
+replicated metadata snapshot. A fresh installation creates <code>admin</code> with the
+documented first-login password <code>admin123</code> and <code>MustChangePassword=true</code>. The
+first password change is mandatory: until it succeeds, all cluster and metadata
+API reads and every mutation are blocked. The default is stored only as an
+Argon2id hash; it is never written to configuration, environment files, audit
+events, or reports. Sessions have an eight-hour absolute lifetime, use HttpOnly
+SameSite cookies plus CSRF validation, and are revoked by password change or
+logout.</p>
+<p>For an authenticated administrator or operator, the server builds the exact
+plan and internally issues and consumes a one-time grant; the browser never
+sees an approval secret. External service automation keeps the explicit grant
+API: only the grant hash is replicated, plaintext is returned once, and
+consumption is atomic with the workflow approval stage. Automatic failover uses
+an internal incident authorization path and does not depend on a reusable human
+token.</p>
+<p>The common workflow remains:</p>
+<pre><code class="language-text">DISCOVER -&gt; PRECHECK -&gt; PLAN -&gt; SAFETY_GUARD -&gt; LOCK -&gt; APPROVE -&gt; EXECUTE -&gt; VERIFY -&gt; AUDIT -&gt; REPORT
+</code></pre>
+<p>Every implemented mutation passes the same workflow. Oracle and SQL Server
+execution remains fail-closed unless the native broker/AG command runner is
+configured and the platform has current identity, role, health, lock, approval,
+and verification evidence.</p>
+<h2 id="start">Start<a class="heading-anchor" href="#start" aria-label="Link to Start">#</a></h2>
+<p>Create a dedicated MySQL account with only the permissions needed by the
+documented read-only queries. Keep secrets in environment variables, never in
+the JSON configuration.</p>
+<pre><code class="language-bash">export CG_CONTROL_TOKEN=&#39;replace-with-a-control-api-secret&#39;
+export CG_MYSQL_DISCOVERY_PASSWORD=&#39;replace-with-the-read-only-secret&#39;
+export CG_POSTGRESQL_DISCOVERY_PASSWORD=&#39;replace-with-the-pg-monitor-secret&#39;
+export CG_POSTGRESQL_OPERATION_PASSWORD=&#39;replace-with-the-pg-operation-secret&#39;
+export CG_POSTGRESQL_REPLICATION_PASSWORD=&#39;replace-with-the-pg-replication-secret&#39;
+export CG_ORACLE_DISCOVERY_PASSWORD=&#39;replace-with-the-dgbroker-monitor-secret&#39;
+export CG_ORACLE_OPERATION_PASSWORD=&#39;replace-with-the-dgbroker-operation-secret&#39;
+export CG_SQLSERVER_DISCOVERY_PASSWORD=&#39;replace-with-the-ag-monitor-secret&#39;
+export CG_SQLSERVER_OPERATION_PASSWORD=&#39;replace-with-the-ag-operation-secret&#39;
+# Optional, only on controllers that execute these engines:
+# export PATH=&quot;/opt/oracle/product/bin:/opt/mssql-tools18/bin:$PATH&quot;
+go run ./cmd/clusterguard --config configs/clusterguard.example.json
+</code></pre>
+<p>When started directly from the source configuration, the console and API are
+served from <code>http://127.0.0.1:8088/</code> by default. The supported RPM/offline
+deployment serves HTTPS on port <code>3000</code>. On a new metadata store, sign in as
+<code>admin</code> with <code>admin123</code>. The console immediately requires a new password and
+does not load cluster data until that first password change succeeds.</p>
+<p>Service managers should use <code>/healthz</code> for liveness and <code>/readyz</code> for
+fail-closed control-plane readiness. Authenticated operators can use
+<code>cgctl status</code> or <code>/api/v1/control-plane/status</code> for Raft role, Leader, quorum,
+metadata revision, active work, and uptime diagnostics. Every API response has
+an <code>X-Request-ID</code> that is preserved when a follower forwards a mutation to the
+current Leader.</p>
+<p>The production binary is <code>clusterguard</code>; the CLI is <code>cgctl</code>. The distribution
+uses <code>/etc/clusterguard/</code>, <code>/var/lib/clusterguard/</code>, and
+<code>/var/log/clusterguard/</code>. The systemd unit is
+<code>packaging/systemd/clusterguard-ha.service</code>.</p>
+<p><code>scripts/build-clusterguard-bundle.sh</code> produces the controller, CLI, restricted
+agent, lifecycle helpers, systemd units, log rotation, configuration samples,
+and a full SHA-256 manifest. <code>scripts/clusterguard-install.sh</code> is a per-node
+lifecycle helper; it is not the initial multi-node production bootstrap tool.</p>
+<p>Use <code>scripts/install_clusterguard.sh</code> and the complete offline kit for the
+initial production deployment. It creates the control plane, fixed resource
+identities, certificates, database topology, Agent configuration, and VIP
+reconciliation policy as one audited workflow.</p>
+<h2 id="documentation">Documentation<a class="heading-anchor" href="#documentation" aria-label="Link to Documentation">#</a></h2>
+<p>The <a href="../index.html">bilingual documentation center</a> maps every maintained
+English document to its Simplified Chinese counterpart. Recommended entry
+points:</p>
+<ul>
+<li><a href="index.html">English documentation</a> / <a href="../zh-CN/index.html">中文文档</a></li>
+<li><a href="product-tour.html">English product tour</a> / <a href="../zh-CN/product-tour.html">中文产品导览</a></li>
+<li><a href="offline-rpm-install.html">English offline installation</a> / <a href="../zh-CN/offline-rpm-install.html">中文离线安装</a></li>
+<li><a href="operations-manual.html">English operations manual</a> / <a href="../zh-CN/operations-manual.html">中文运维手册</a></li>
+<li><a href="version-release-policy.html">English release policy</a> / <a href="../zh-CN/version-release-policy.html">中文版本规范</a></li>
+</ul>
+<h2 id="register-and-refresh-a-mysql-cluster">Register and Refresh a MySQL Cluster<a class="heading-anchor" href="#register-and-refresh-a-mysql-cluster" aria-label="Link to Register and Refresh a MySQL Cluster">#</a></h2>
+<p>Registration creates the authoritative endpoint inventory. Hostname, IP, and
+port are coordinates, not resource identifiers.</p>
+<pre><code class="language-bash">curl -sS -X POST http://127.0.0.1:8088/api/v1/clusters \
+  -H &#39;content-type: application/json&#39; \
+  -H &quot;Authorization: Bearer ${CG_CONTROL_TOKEN}&quot; \
+  -d &#39;{
+    &quot;display_name&quot;:&quot;payments-mysql&quot;,
+    &quot;engine&quot;:&quot;mysql&quot;,
+    &quot;endpoints&quot;:[
+      {&quot;hostname&quot;:&quot;mysql-a&quot;,&quot;ip_address&quot;:&quot;192.0.2.10&quot;,&quot;port&quot;:3306},
+      {&quot;hostname&quot;:&quot;mysql-b&quot;,&quot;ip_address&quot;:&quot;192.0.2.11&quot;,&quot;port&quot;:3306},
+      {&quot;hostname&quot;:&quot;mysql-c&quot;,&quot;ip_address&quot;:&quot;192.0.2.12&quot;,&quot;port&quot;:3306}
+    ]
+  }&#39;
+</code></pre>
+<p>Use the returned platform cluster UUID to refresh the registered inventory.
+The body is exactly an empty JSON object; credentials and endpoint overrides
+are rejected because credentials are resolved on the server.</p>
+<pre><code class="language-bash">curl -sS -X POST \
+  http://127.0.0.1:8088/api/v1/clusters/&lt;cluster-uuid&gt;/discover \
+  -H &#39;content-type: application/json&#39; \
+  -H &quot;Authorization: Bearer ${CG_CONTROL_TOKEN}&quot; \
+  -d &#39;{}&#39;
+</code></pre>
+<h2 id="register-and-refresh-a-postgresql-cluster">Register and Refresh a PostgreSQL Cluster<a class="heading-anchor" href="#register-and-refresh-a-postgresql-cluster" aria-label="Link to Register and Refresh a PostgreSQL Cluster">#</a></h2>
+<p>Each PostgreSQL instance must have a unique immutable
+<code>clusterguard.node_id</code>. Every standby also declares the current primary&#39;s node
+UUID in <code>clusterguard.primary_node_id</code>. ClusterGuard binds the cluster to
+<code>pg_control_system().system_identifier</code>; changing hostname, IP, or port updates
+the endpoint and retains the same platform instance UUID.</p>
+<p>Enable the <code>postgresql</code> configuration block, set the dedicated discovery,
+operation, and replication credential environments, and register only
+authoritative endpoints:</p>
+<pre><code class="language-bash">curl -sS -X POST http://127.0.0.1:8088/api/v1/clusters \
+  -H &#39;content-type: application/json&#39; \
+  -H &quot;Authorization: Bearer ${CG_CONTROL_TOKEN}&quot; \
+  -d &#39;{
+    &quot;display_name&quot;:&quot;payments-postgresql&quot;,
+    &quot;engine&quot;:&quot;postgresql&quot;,
+    &quot;endpoints&quot;:[
+      {&quot;hostname&quot;:&quot;pg-a&quot;,&quot;ip_address&quot;:&quot;192.0.2.20&quot;,&quot;port&quot;:5432},
+      {&quot;hostname&quot;:&quot;pg-b&quot;,&quot;ip_address&quot;:&quot;192.0.2.21&quot;,&quot;port&quot;:5432}
+    ]
+  }&#39;
+
+curl -sS -X POST \
+  http://127.0.0.1:8088/api/v1/clusters/&lt;cluster-uuid&gt;/discover \
+  -H &#39;content-type: application/json&#39; \
+  -H &quot;Authorization: Bearer ${CG_CONTROL_TOKEN}&quot; \
+  -d &#39;{}&#39;
+</code></pre>
+<p>The console exposes PostgreSQL topology, health, native metrics, candidate
+evidence, guarded operations, node synchronization, audit, and reports. Every
+mutating control remains disabled until the corresponding runtime capability
+and safety evidence are real; the console never presents simulated success.
+See <a href="postgresql-ha.html">postgresql-ha.md</a> for database grants, restricted
+Agent policy, lifecycle, fencing, and production qualification.</p>
+<h2 id="cli">CLI<a class="heading-anchor" href="#cli" aria-label="Link to CLI">#</a></h2>
+<pre><code class="language-bash">go run ./cmd/cgctl engines
+go run ./cmd/cgctl clusters
+go run ./cmd/cgctl topology &lt;cluster-uuid&gt;
+go run ./cmd/cgctl health &lt;cluster-uuid&gt;
+go run ./cmd/cgctl candidates &lt;cluster-uuid&gt;
+go run ./cmd/cgctl metrics &lt;cluster-uuid&gt;
+go run ./cmd/cgctl refresh &lt;cluster-uuid&gt;
+go run ./cmd/cgctl operation &lt;operation-uuid&gt;
+go run ./cmd/cgctl approval issue --cluster &lt;cluster-uuid&gt; --engine mysql \
+  --kind switchover --target &lt;instance-uuid&gt; --issued-by &lt;administrator&gt; --ttl 5m
+go run ./cmd/cgctl approval list
+go run ./cmd/cgctl approval show &lt;grant-uuid&gt;
+</code></pre>
+<p><code>cgctl</code> uses the control token from <code>CG_CONTROL_TOKEN</code> for authenticated reads
+and writes. Use
+<code>--token-env &lt;name&gt;</code> before the command to select a different environment
+variable; the secret is never accepted as a command-line value. Approval
+issuance also reads this administrator credential. The returned approval token
+is printed once and is never persisted by <code>cgctl</code>.</p>
+<p>If the administrator password is lost, there is no online bypass or reset API.
+After backing up metadata and pausing mutations, create a private one-time
+artifact with <code>clusterguard admin prepare-recovery</code>, distribute that same
+artifact to all controllers as <code>clusterguard:clusterguard</code> mode <code>0600</code>, and
+restart them one at a time. The Raft Leader applies its recovery ID once,
+revokes existing sessions, forces a password change, audits the action, and
+removes the artifact on every node. See <a href="api-operations.html">operations.md</a> for
+the complete procedure. Never edit password hashes or create a shared default
+password in a live Raft set.</p>
+<p>The HA matrix supports browser-equivalent session execution:</p>
+<pre><code class="language-bash">export CG_PLATFORM_USERNAME=&#39;admin&#39;
+export CG_PLATFORM_PASSWORD=&#39;&lt;current-platform-password&gt;&#39;
+scripts/clusterguard-ha-matrix.sh \
+  --api http://127.0.0.1:8088 \
+  --clusters &#39;&lt;cluster-uuid&gt;&#39; \
+  --platform-session
+</code></pre>
+<p>On a fresh metadata store, set <code>CG_PLATFORM_NEW_PASSWORD</code> as well. Omitting
+<code>--platform-session</code> keeps the explicit one-time grant mode for service
+automation tests.</p>
+<p>Place global flags before the command:</p>
+<pre><code class="language-bash">go run ./cmd/cgctl --json topology &lt;cluster-uuid&gt;
+go run ./cmd/cgctl --server http://127.0.0.1:8088 clusters
+</code></pre>
+<p>See <a href="api-operations.html">operations.md</a> for the complete API workflow and
+operator procedures. See <a href="architecture.html">architecture.md</a> for resource
+identity, adapter, persistence, candidate, and safety design.</p>
+
+          <footer class="document-footer">
+            <span>Source: <code>README.md</code></span>
+            <a href="../index.html">Documentation language home</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="On this page">
+          <strong>On this page</strong>
+          <a class="toc-level-2" href="#console-preview">Console Preview</a><a class="toc-level-2" href="#current-release">Current Release</a><a class="toc-level-2" href="#2-2-development-scope">2.2 Development Scope</a><a class="toc-level-2" href="#safety-boundary">Safety Boundary</a><a class="toc-level-2" href="#start">Start</a><a class="toc-level-2" href="#documentation">Documentation</a><a class="toc-level-2" href="#register-and-refresh-a-mysql-cluster">Register and Refresh a MySQL Cluster</a><a class="toc-level-2" href="#register-and-refresh-a-postgresql-cluster">Register and Refresh a PostgreSQL Cluster</a><a class="toc-level-2" href="#cli">CLI</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

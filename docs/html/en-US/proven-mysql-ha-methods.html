@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="Proven MySQL HA Methods - ClusterGuard HA operational documentation">
+  <title>Proven MySQL HA Methods | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">Skip to content</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>Search documentation</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="Filter by title">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods" aria-current="page" class="active">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
+      <div class="sidebar-meta">
+        <span>Offline documentation build</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">Open navigation</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>Proven MySQL HA Methods</strong></div>
+        <div class="header-actions">
+          <a href="../zh-CN/proven-mysql-ha-methods.html" lang="zh-CN">简体中文</a>
+          <button id="print-button" type="button">Print</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="proven-mysql-ha-methods">Proven MySQL HA Methods<a class="heading-anchor" href="#proven-mysql-ha-methods" aria-label="Link to Proven MySQL HA Methods">#</a></h1>
+<h2 id="purpose">Purpose<a class="heading-anchor" href="#purpose" aria-label="Link to Purpose">#</a></h2>
+<p>This document records production behaviors and laboratory scenarios that were
+validated in the previous prototype and are intentionally reimplemented in the
+independent ClusterGuard HA control plane. It is a behavioral reference only.
+No source package, API, table, configuration key, executable, or product name
+is inherited.</p>
+<h2 id="stable-resource-identity">Stable Resource Identity<a class="heading-anchor" href="#stable-resource-identity" aria-label="Link to Stable Resource Identity">#</a></h2>
+<p>Every physical host receives two stable identities before it can be managed:</p>
+<ul>
+<li>an immutable platform <code>resource_id</code> UUID;</li>
+<li>a globally unique, immutable operator-facing <code>node_name</code>, for example
+<code>cg-data-0001</code>.</li>
+</ul>
+<p>MySQL instances additionally bind to the native <code>server_uuid</code>. Hostname, IP,
+port, display name, and endpoint aliases are mutable coordinates. A coordinate
+change updates the existing resource and retains the old address as an alias;
+it must not create another node or instance.</p>
+<p>Current implementation:</p>
+<ul>
+<li><code>internal/store/nodes.go</code> enforces global node-name uniqueness and
+immutability;</li>
+<li>discovery binds observations by MySQL <code>server_uuid</code> and then associates the
+registered node UUID;</li>
+<li>metadata reconciliation preserves both platform and native identity while
+updating the database endpoint atomically;</li>
+<li>the console displays <code>node_name</code>, resource UUID, <code>server_uuid</code>, and mutable
+coordinates separately.</li>
+</ul>
+<h2 id="cluster-inventory-boundary">Cluster Inventory Boundary<a class="heading-anchor" href="#cluster-inventory-boundary" aria-label="Link to Cluster Inventory Boundary">#</a></h2>
+<p>ClusterGuard controls only resources in the selected cluster inventory. A
+request cannot introduce an arbitrary endpoint during discovery or execution.
+The operation plan carries cluster, source, target, topology observation, and
+resource revisions. A coordinate or inventory change invalidates a stale plan.</p>
+<p>Cluster display names are stable operator labels. Selecting a cluster never
+depends on the current primary hostname, so switching the primary does not
+rename or duplicate the cluster.</p>
+<h2 id="failure-observation-window">Failure Observation Window<a class="heading-anchor" href="#failure-observation-window" aria-label="Link to Failure Observation Window">#</a></h2>
+<p>Automatic recovery uses a stable incident rather than a single failed probe.
+The default evidence window is 30 seconds, represented by six five-second
+observations. A successful or indeterminate recovery for the same source
+primary and incident cannot be submitted again. Failed pre-commit attempts can
+retry only after the configured backoff.</p>
+<p>Automatic recovery additionally requires:</p>
+<ul>
+<li>the current Raft leader;</li>
+<li>controller majority;</li>
+<li>fresh complete topology evidence;</li>
+<li>exactly one failed or unknown recorded primary;</li>
+<li>an eligible rank-one candidate;</li>
+<li>fencing and endpoint lease evidence;</li>
+<li>the normal durable operation workflow.</li>
+</ul>
+<h2 id="writer-and-vip-coupling">Writer And VIP Coupling<a class="heading-anchor" href="#writer-and-vip-coupling" aria-label="Link to Writer And VIP Coupling">#</a></h2>
+<p>A writer-role change and VIP transfer are one operation. Success requires all
+of the following after execution:</p>
+<ul>
+<li>exactly one writable MySQL instance;</li>
+<li>exactly one VIP owner;</li>
+<li>the VIP owner is the verified primary;</li>
+<li>every reachable follower is attached to that primary;</li>
+<li>incomplete host probes are not treated as success.</li>
+</ul>
+<p>The endpoint lease is majority-backed and leader-issued. A node that cannot
+renew a valid majority lease removes its local VIP and enforces read-only. A
+recovered former primary therefore cannot return as a second writer or retain
+the writer endpoint.</p>
+<h2 id="controlled-switch-and-former-primary-recovery">Controlled Switch And Former-Primary Recovery<a class="heading-anchor" href="#controlled-switch-and-former-primary-recovery" aria-label="Link to Controlled Switch And Former-Primary Recovery">#</a></h2>
+<p>Planned switching follows the shared workflow:</p>
+<p><code>DISCOVER -&gt; PRECHECK -&gt; PLAN -&gt; SAFETY_GUARD -&gt; LOCK -&gt; APPROVE -&gt; EXECUTE -&gt; VERIFY -&gt; AUDIT -&gt; REPORT</code></p>
+<p>The MySQL adapter fences the source, catches up the selected candidate,
+promotes it, reparents followers, transfers the VIP, and verifies the final
+invariants. A post-commit verification gap is <code>indeterminate</code>, never success.</p>
+<p>Former-primary recovery always returns the node as a read-only replica of the
+current primary. A safe GTID subset may use fast reattachment. Divergent,
+missing, or physically replaced data uses the same rebuild pipeline as adding
+a node.</p>
+<h2 id="node-add-and-rebuild-pipeline">Node Add And Rebuild Pipeline<a class="heading-anchor" href="#node-add-and-rebuild-pipeline" aria-label="Link to Node Add And Rebuild Pipeline">#</a></h2>
+<p>Adding a node and repairing a physically damaged node use one durable lifecycle
+workflow:</p>
+<ol>
+<li>validate registered cluster, fixed node identity, endpoint uniqueness,
+package availability, donor health, and operation concurrency;</li>
+<li>install the selected MySQL version without creating an independent writer;</li>
+<li>keep the target read-only;</li>
+<li>choose Clone, XtraBackup, or logical dump from explicit capabilities;</li>
+<li>configure version-compatible replication from the current primary;</li>
+<li>verify native identity, source, threads, lag, read-only state, and absence of
+a local VIP;</li>
+<li>commit node and instance metadata only after verification.</li>
+</ol>
+<p>A rebuild reuses the original resource UUID and fixed node name. Data-node
+count is unrestricted. Controller or mixed-node changes must end with an odd
+membership of at least three and are committed as one verified membership
+change.</p>
+<p>The logical-dump fallback deliberately purges every non-system schema on the
+target before donor import. This prevents a physically replaced or divergent
+target from retaining target-only data after GTID state is reset. It is allowed
+only inside the guarded rebuild workflow and never runs as an implicit repair.</p>
+<h2 id="planned-restart">Planned Restart<a class="heading-anchor" href="#planned-restart" aria-label="Link to Planned Restart">#</a></h2>
+<p>A managed MySQL restart is an operation, not a raw service restart. It places
+the instance in maintenance, suppresses automatic recovery for the approved
+window, restarts MySQL, verifies readiness and discovery, verifies VIP
+uniqueness, and only then removes maintenance. Failure leaves recovery
+suppression visible and requires operator review rather than silently reopening
+automatic actions.</p>
+<h2 id="installation-and-configuration">Installation And Configuration<a class="heading-anchor" href="#installation-and-configuration" aria-label="Link to Installation And Configuration">#</a></h2>
+<p>The final installer must accept a prepared ClusterGuard bundle and target host
+inventory, perform all preflight checks before mutation, and render one shared
+configuration source for the server, agent, endpoint reconciliation, and
+systemd units. Secrets are provided through protected server-side environment
+references and never written to task history or API responses.</p>
+<p>The installation flow is staged and idempotent: preflight, copy, install,
+configure, start, register, synchronize, verify, and report. Re-running a
+completed stage checks its postcondition instead of blindly replaying it.</p>
+<h2 id="operator-visibility">Operator Visibility<a class="heading-anchor" href="#operator-visibility" aria-label="Link to Operator Visibility">#</a></h2>
+<p>The console exposes separate views for fleet overview, selected-cluster
+topology, guarded operations, node lifecycle, metrics, operation logs, product
+information, and settings. Every visible execution action either calls a real
+ClusterGuard API or is disabled with the backend capability reason. Raw
+operation evidence is collapsed by default but remains available for audit.</p>
+<h2 id="validated-delivery">Validated Delivery<a class="heading-anchor" href="#validated-delivery" aria-label="Link to Validated Delivery">#</a></h2>
+<p>The RC58 bundle contains the controller, CLI, restricted agent, lifecycle
+executor, systemd units, timers, log rotation, configuration templates, and
+installer. It was deployed to three controllers and three colocated data nodes.
+The acceptance matrix verified six clusters, 50 repeated real switchovers,
+quorum-loss self-isolation, primary network failure, former-primary return,
+repeated restart, full-host reboot, divergent rebuild, and endpoint metadata
+reconciliation. Detailed evidence is recorded in
+<code>docs/mysql-feature-parity-acceptance.md</code>.</p>
+<p>Production hardening that remains environment-specific:</p>
+<ul>
+<li>configure and exercise the external fencing provider against the deployment
+platform&#39;s hypervisor, cloud, PDU, or BMC API;</li>
+<li>qualify Clone or the exact XtraBackup build for each supported MySQL family;</li>
+<li>establish backup/restore, retention, and recovery-time objectives;</li>
+<li>integrate external alert delivery and long-term metrics retention;</li>
+<li>repeat the destructive matrix on the target kernel, network, storage, and
+MySQL packages before production enablement.</li>
+</ul>
+
+          <footer class="document-footer">
+            <span>Source: <code>docs/proven-mysql-ha-methods.md</code></span>
+            <a href="../index.html">Documentation language home</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="On this page">
+          <strong>On this page</strong>
+          <a class="toc-level-2" href="#purpose">Purpose</a><a class="toc-level-2" href="#stable-resource-identity">Stable Resource Identity</a><a class="toc-level-2" href="#cluster-inventory-boundary">Cluster Inventory Boundary</a><a class="toc-level-2" href="#failure-observation-window">Failure Observation Window</a><a class="toc-level-2" href="#writer-and-vip-coupling">Writer And VIP Coupling</a><a class="toc-level-2" href="#controlled-switch-and-former-primary-recovery">Controlled Switch And Former-Primary Recovery</a><a class="toc-level-2" href="#node-add-and-rebuild-pipeline">Node Add And Rebuild Pipeline</a><a class="toc-level-2" href="#planned-restart">Planned Restart</a><a class="toc-level-2" href="#installation-and-configuration">Installation And Configuration</a><a class="toc-level-2" href="#operator-visibility">Operator Visibility</a><a class="toc-level-2" href="#validated-delivery">Validated Delivery</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

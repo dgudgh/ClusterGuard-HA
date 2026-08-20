@@ -1,0 +1,549 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="Offline RPM Installation - ClusterGuard HA operational documentation">
+  <title>Offline RPM Installation | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">Skip to content</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>Search documentation</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="Filter by title">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation" aria-current="page" class="active">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
+      <div class="sidebar-meta">
+        <span>Offline documentation build</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">Open navigation</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>Offline RPM Installation</strong></div>
+        <div class="header-actions">
+          <a href="../zh-CN/offline-rpm-install.html" lang="zh-CN">简体中文</a>
+          <button id="print-button" type="button">Print</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha-offline-installation-and-deployment-manual">ClusterGuard HA Offline Installation and Deployment Manual<a class="heading-anchor" href="#clusterguard-ha-offline-installation-and-deployment-manual" aria-label="Link to ClusterGuard HA Offline Installation and Deployment Manual">#</a></h1>
+<p>Applicable releases: ClusterGuard HA 2.1-45 (final MySQL-only release) and 2.2.x x86_64
+Supported systems: RHEL, Rocky Linux, AlmaLinux, Oracle Linux 8/9, systemd, x86_64
+Deployment Method: One operations machine installs multiple control nodes and database nodes remotely via SSH</p>
+<p>Version boundary: <code>2.1-45</code> is the final release of the MySQL-only 2.1 line; PostgreSQL installation and switching start with
+<code>2.2-1</code>. Do not use 2.1 packages to execute the PostgreSQL section of this manual. The final 2.1 release is documented in the
+<a href="release-2.1.45.html">2.1-45 Release Notes</a>, and the immutable release rules are documented in the
+<a href="version-release-policy.html">Version and Release Policy</a>.</p>
+<p>This document only describes the current official multi-node installer <code>install_clusterguard.sh</code>. It is the recommended production installation method: uniformly generating node identities, certificates, Raft configurations, database configurations, replication topologies, Agent, and VIP convergence configurations.</p>
+<p>Do not mix this manual with old versions of Orchestrator, single-machine RPM manual configurations.</p>
+<p><code>clusterguard-configure</code> is the node-level configuration program called by the installer on remote nodes. During the initial deployment, it should not be manually invoked by the operations personnel one by one; it is only used when the platform node lifecycle, controlled recovery process, or engineering support explicitly requires it.</p>
+<h2 id="1-deliverables-and-installation-methods">1. Deliverables and Installation Methods<a class="heading-anchor" href="#1-deliverables-and-installation-methods" aria-label="Link to 1. Deliverables and Installation Methods">#</a></h2>
+<p>The official delivery directory includes:</p>
+<pre><code class="language-text">clusterguard-ha-2.1-45-offline-linux-x86_64/
+  clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz
+  clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz.sha256
+  clusterguard-ha-2.1-45.x86_64.rpm
+  clusterguard-ha-2.1-45.x86_64.rpm.sha256
+  docs/ClusterGuard-HA-离线安装与部署手册.md
+</code></pre>
+<p>Production deployment should use the complete offline package, not manually install RPM individually:</p>
+<pre><code class="language-bash">sha256sum -c clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz.sha256
+tar -xzf clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz
+cd clusterguard-ha-2.1-45-offline-linux-x86_64
+sha256sum -c SHA256SUMS
+</code></pre>
+<p>Before installation, you can optionally check the RPM signature and content, but do not replace the official RPM with files of the same name after unpacking:</p>
+<pre><code class="language-bash">rpm -K packages/clusterguard-ha-2.1-45.x86_64.rpm
+rpm -qpl packages/clusterguard-ha-2.1-45.x86_64.rpm
+</code></pre>
+<p>The offline package includes ClusterGuard HA, the installer, static <code>jq</code>, basic runtime dependencies required for MySQL and the control plane, sample configurations, and Chinese manuals. The larger PostgreSQL source code compilation dependency closure is delivered separately; the main offline package does not include MySQL, UPSQL, PostgreSQL, Oracle, or SQL Server vendor patches and licenses.</p>
+<h2 id="2-roles-and-deployment-topology">2. Roles and Deployment Topology<a class="heading-anchor" href="#2-roles-and-deployment-topology" aria-label="Link to 2. Roles and Deployment Topology">#</a></h2>
+<p>ClusterGuard HA has three node roles:</p>
+<table>
+<thead>
+<tr>
+<th>Role</th>
+<th>Function</th>
+<th>Quantity Rules</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Control Node</td>
+<td>Runs API, Web Console, Raft, audit, and workflow</td>
+<td>Must be an odd number of at least 3</td>
+</tr>
+<tr>
+<td>Data Node</td>
+<td>Runs MySQL or PostgreSQL and restricted Agent</td>
+<td>No requirement for odd numbers</td>
+</tr>
+<tr>
+<td>Hybrid Node</td>
+<td>Simultaneously a control node and a data node</td>
+<td>The control node set must still be an odd number</td>
+</tr>
+</tbody></table>
+<p>Common deployment modes:</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th><code>-l</code> Control Nodes</th>
+<th><code>-n</code> Data Nodes</th>
+<th>Use Cases</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Three-node hybrid</td>
+<td>Three identical hosts</td>
+<td>Three identical hosts</td>
+<td>Small production and testing environments</td>
+</tr>
+<tr>
+<td>Control and database separation</td>
+<td>Three arbitration hosts</td>
+<td>Two or more database hosts</td>
+<td>Recommended production isolation mode</td>
+</tr>
+<tr>
+<td>Only control plane</td>
+<td>Three arbitration hosts</td>
+<td>Not transmitted</td>
+<td>Deploy the control plane first, then connect to the database from the console later</td>
+</tr>
+</tbody></table>
+<p>The correspondence of the three hosts in the example:</p>
+<table>
+<thead>
+<tr>
+<th>IP</th>
+<th>Hostname</th>
+<th>Fixed Node Name</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>192.168.102.152</code></td>
+<td><code>orch-mysql01</code></td>
+<td><code>cg-node-0001</code></td>
+</tr>
+<tr>
+<td><code>192.168.102.153</code></td>
+<td><code>orch-mysql02</code></td>
+<td><code>cg-node-0002</code></td>
+</tr>
+<tr>
+<td><code>192.168.102.154</code></td>
+<td><code>orch-mysql03</code></td>
+<td><code>cg-node-0003</code></td>
+</tr>
+</tbody></table>
+<p>The installer will record an immutable UUID. When modifying the hostname, IP, or port later, it should be handled through the metadata correction process in the Console, not by reinstalling after deleting the local deployment status.</p>
+<h2 id="3-pre-deployment-checks">3. Pre-Deployment Checks<a class="heading-anchor" href="#3-pre-deployment-checks" aria-label="Link to 3. Pre-Deployment Checks">#</a></h2>
+<h3 id="3-1-operations-machine-requirements">3.1 Operations Machine Requirements<a class="heading-anchor" href="#3-1-operations-machine-requirements" aria-label="Link to 3.1 Operations Machine Requirements">#</a></h3>
+<p>The operations machine should be able to SSH into all target nodes and have:</p>
+<pre><code class="language-text">bash, ssh, scp, ssh-keyscan, ssh-keygen, openssl, curl, tar
+</code></pre>
+<p>The operations machine needs to save deployment status, site secrets, and certificate working directories. These are essential materials for subsequent idempotent execution, expansion, node recovery, and administrator takeover, and must be placed in a protected and backed-up location.</p>
+<h3 id="3-2-target-node-requirements">3.2 Target Node Requirements<a class="heading-anchor" href="#3-2-target-node-requirements" aria-label="Link to 3.2 Target Node Requirements">#</a></h3>
+<ul>
+<li>Use the same Linux distribution main version and x86_64 architecture.</li>
+<li>Each node uses a unique and stable hostname.</li>
+<li>Control nodes must reserve at least 2 GiB of available space; the database data directory must reserve at least 10 GiB, and production environments should increase based on capacity planning.</li>
+<li>Clock synchronization is required between all nodes. The installer will check the NTP status; in production environments, unsynchronized states must be fixed first.</li>
+<li>Root should be able to log in via SSH, or a dedicated operations account with sudo privileges should be provided.</li>
+<li>Network and security policies must allow the following connections.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Port</th>
+<th>Direction</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>22/TCP</td>
+<td>Operations machine to all nodes</td>
+<td>Installation, synchronization, and recovery</td>
+</tr>
+<tr>
+<td>3000/TCP</td>
+<td>Between administrator and control nodes</td>
+<td>Console, API, Leader forwarding</td>
+</tr>
+<tr>
+<td>10009/TCP</td>
+<td>Control nodes communicate with each other</td>
+<td>Raft consensus</td>
+</tr>
+<tr>
+<td>3306/TCP</td>
+<td>MySQL data nodes communicate with each other and with the control plane</td>
+<td>MySQL replication and management</td>
+</tr>
+<tr>
+<td>5432/TCP</td>
+<td>PostgreSQL data nodes communicate with each other and with the control plane</td>
+<td>PostgreSQL replication and management</td>
+</tr>
+</tbody></table>
+<p>The installer will automatically configure the ports it manages within the enabled and running firewalld. External firewalls, security groups, ACLs, and switch networks still need to be opened by the operations team in advance. The installer will call the restricted offline <code>dnf install</code> or <code>yum localinstall</code> to install verified local RPMs, and operations personnel do not need to manually execute RPM installation on each node.</p>
+<h3 id="3-3-hostname-and-vip">3.3 Hostname and VIP<a class="heading-anchor" href="#3-3-hostname-and-vip" aria-label="Link to 3.3 Hostname and VIP">#</a></h3>
+<p>First, confirm the hostname is correct on the target node, for example:</p>
+<pre><code class="language-bash">hostnamectl set-hostname orch-mysql01
+hostnamectl --static
+</code></pre>
+<p>The VIP must be an address not used by other devices in the current Layer 2 network. Do not manually configure the VIP on any network interface in advance; after installation, ClusterGuard Agent will bind it uniquely based on the primary database role, Raft majority, and lease.</p>
+<p>The default MySQL HA deployment with VIP enables automatic database-level failover, not relying on VMware virtual machine names or VMX paths. The control plane detects the MySQL port and SQL health every 5 seconds; after the primary database fails six times consecutively and covers 30 seconds, the Raft Leader can issue a candidate primary database transition lease. The old primary Agent caches the majority authorization for a maximum of 10 seconds and checks it locally every 5 seconds; after losing authorization, it will revoke the VIP, record the persistent isolation intent, and keep MySQL read-only. The control plane waits for a 15-second isolation window and confirms the Raft majority, fault evidence, and precise transition lease again before allowing the candidate database to promote.</p>
+<p>Therefore, the installation command by default does not require <code>--fencer</code>. This is not directly treating &quot;3306 not reachable&quot; as the old primary having powered off, but using short-term majority authorization and node-local fail-closed mechanisms to prevent nodes that have lost the majority from continuing to hold write entry points. If the operating system, Agent timer, and management network may also fail simultaneously, production environments are still recommended to add BMC, PDU, cloud API, or virtualization platform as a second layer of external isolation enhancement. Explicitly adding <code>--manual-failover-only</code> can disable automatic recovery, retaining only manual controlled switching.</p>
+<h4 id="optional-vmware-workstation-ssh-external-isolation-enhancement">Optional: VMware Workstation SSH External Isolation Enhancement<a class="heading-anchor" href="#optional-vmware-workstation-ssh-external-isolation-enhancement" aria-label="Link to Optional: VMware Workstation SSH External Isolation Enhancement">#</a></h4>
+<p>The offline medium&#39;s <code>examples/fencing/</code> provides an optional VMware Workstation SSH isolator. It does not participate in the identity of database nodes, master-slave topology, or default switching determination, but acts as a stronger proof of old primary power-off when the site explicitly passes in <code>--fencer</code>. It logs into the Windows VMware host through an independent management network, verifies the fixed IP to VMX whitelist using <code>vmrun list</code>; only <code>fence</code> actions will execute <code>vmrun stop ... hard</code>, and <code>status</code> actions are always read-only.</p>
+<p>The following conditions must be met first:</p>
+<ol>
+<li>The VMware host must enable OpenSSH Server and be reachable from the management network of the three control nodes.</li>
+<li>Use SSH key login. Prohibit writing Windows passwords into isolation scripts, environment variables, or configuration files.</li>
+<li>The SSH account must be able to see and manage the target VMware Workstation virtual machine; it is usually the same Windows account that starts these virtual machines, or a dedicated VMware management account configured by the enterprise.</li>
+<li><code>vmware_known_hosts</code> must be pre-fixed with the host SSH public key; prohibit <code>StrictHostKeyChecking=no</code>.</li>
+<li>Each database instance IP must map exactly one absolute <code>.vmx</code> path in <code>vmware-targets.tsv</code>.</li>
+</ol>
+<p>Prepare the file in the secure directory:</p>
+<pre><code class="language-bash">install -d -m 0700 /secure/clusterguard/fencing/site-config
+cp examples/fencing/vmware-workstation.conf.example \
+  /secure/clusterguard/fencing/site-config/vmware-workstation.conf
+cp examples/fencing/vmware-targets.tsv.example \
+  /secure/clusterguard/fencing/site-config/vmware-targets.tsv
+install -m 0600 /secure/source/vmware_ed25519 \
+  /secure/clusterguard/fencing/site-config/vmware_ed25519
+ssh-keyscan -H 192.168.102.68 &gt; \
+  /secure/clusterguard/fencing/site-config/vmware_known_hosts
+chmod 0600 /secure/clusterguard/fencing/site-config/*
+</code></pre>
+<p>Edit <code>vmware-workstation.conf</code>, where the runtime path must remain:</p>
+<pre><code class="language-text">identity_file=/etc/clusterguard/fencing/vmware_ed25519
+known_hosts_file=/etc/clusterguard/fencing/vmware_known_hosts
+targets_file=/etc/clusterguard/fencing/vmware-targets.tsv
+</code></pre>
+<p>Then add the following to the original installation command:</p>
+<pre><code class="language-bash">--fencer ./examples/fencing/vmware-workstation-ssh-fencer \
+--fencer-assets /secure/clusterguard/fencing/site-config
+</code></pre>
+<p>The installer will install the isolator to <code>/usr/local/libexec/clusterguard-fencer</code>, and install the site files as <code>0640 root:clusterguard</code> to <code>/etc/clusterguard/fencing/</code>. Before going live, each mapping must be verified with <code>status</code>, and then verified once in an isolation test environment with a real shutdown; it cannot be accepted solely based on SSH connectivity.</p>
+<h2 id="4-prepare-database-media-and-offline-dependencies">4. Prepare Database Media and Offline Dependencies<a class="heading-anchor" href="#4-prepare-database-media-and-offline-dependencies" aria-label="Link to 4. Prepare Database Media and Offline Dependencies">#</a></h2>
+<p>The official offline package can embed approved database media directly through repeatable <code>--database-package</code> during construction. When the installer does not receive <code>-r</code>, it will automatically search for matching tar packages from <code>packages/database/</code> and unified directory <code>/opt</code> in the offline package. It is also possible to specify the enterprise unified media directory through <code>--database-package-dir /secure/database-media</code>.</p>
+<p>The installer requires the media to be readable <code>tar</code>, <code>tar.gz</code>, <code>tgz</code>, <code>tar.xz</code>, <code>tar.bz2</code>, or <code>tbz2</code>, and the compressed package must have only one secure top-level directory. It uses <code>--engine</code> and <code>--database-version</code> to match filenames; for example, MySQL 8.0.44 will match packages with filenames that simultaneously include <code>mysql</code> or <code>upsql</code> and <code>8.0.44</code>. If multiple candidates are found, it will refuse to execute and require the use of <code>-r</code> to explicitly specify, and will never randomly choose a version.</p>
+<p>MySQL 8.0 example:</p>
+<pre><code class="language-bash">sha256sum /opt/mysql-8.0.44-linux-glibc2.17-x86_64.tar.xz
+</code></pre>
+<p>MySQL 8.4 only needs to replace the filename, <code>--database-version</code>, and cluster name. UPSQL uses its enterprise-approved compatible MySQL tar package and deploys it under <code>--engine mysql</code>.</p>
+<p>The installer will read the physical memory on each MySQL data node and automatically generate the parameters for that node. <code>innodb_buffer_pool_size</code> defaults to 70% of the physical memory and rounds up to the nearest integer multiple of 4 GiB; if the rounded value exceeds 80% of the physical memory, it will take the maximum 4 GiB multiple that does not exceed 80%, without setting a fixed capacity upper limit. For example, 256 GiB of memory will be configured as 180 GiB. <code>max_connections</code> defaults to 1000. Caching, temporary tables, and redo still follow memory tiers. Single connection buffering remains controlled, avoiding uncontrollable additional memory amplification when 1000 connections are concurrent.</p>
+<p>MySQL data nodes require at least 5 GiB of physical memory; if the capacity is below this, the installer will block before initializing the data directory as it cannot simultaneously satisfy 4 GiB alignment and 80% upper limit.</p>
+<p>MySQL by default listens on all IPv4 addresses of the database port, and the ClusterGuard management account can directly connect via TCP. To be compatible with traditional drivers, MySQL 8.0 uses <code>default_authentication_plugin=mysql_native_password</code>; MySQL 8.4 uses its supported <code>mysql_native_password=ON</code> and explicitly sets the platform account plugin. By default, no remote <code>root</code> account will be created or modified, and remote control uses independent discovery, execution, and replication accounts.</p>
+<p>If remote root is indeed required on-site, the parameter must be explicitly added. <code>%</code> indicates allowing any source, and production environments are more recommended to restrict to the management network segment:</p>
+<pre><code class="language-bash"># Explicitly allow root login from any source
+--mysql-root-remote-host &#39;%&#39;
+
+# More restrictive management subnet example
+--mysql-root-remote-host &#39;192.168.102.%&#39;
+</code></pre>
+<p>The installation plan will explicitly show whether remote MySQL root access is disabled by default or explicitly enabled for <code>root@...</code>. This policy is written to the deployment state and control-node lifecycle configuration, and remains consistent when MySQL nodes are later added or rebuilt from the Console. Omitting the parameter does not delete an existing remote root account or reset its password or privileges.</p>
+<p>If the MySQL binary depends on libraries not provided by the target operating system, the same distribution, main version, architecture, and signed RPMs must be placed in <code>dependencies/</code>. You can use the offline package&#39;s tools on a connected same version mirror machine to collect:</p>
+<pre><code class="language-bash">tools/收集RHEL离线依赖.sh --help
+</code></pre>
+<p>Do not use <code>--nogpgcheck</code> or disable dependency checks. The <code>--dependencies</code> here is only used for the basic runtime dependencies of ClusterGuard and MySQL, not for the PostgreSQL source code compilation toolchain.</p>
+<h3 id="official-postgresql-source-code-installation">Official PostgreSQL Source Code Installation<a class="heading-anchor" href="#official-postgresql-source-code-installation" aria-label="Link to Official PostgreSQL Source Code Installation">#</a></h3>
+<p>PostgreSQL can directly use the official release source code package, and does not require users to pre-make binary packages. For example:</p>
+<pre><code class="language-text">/opt/postgresql-16.4.tar.bz2
+</code></pre>
+<p>The source code mode is not for three servers to compile separately. ClusterGuard will execute the following controlled process:</p>
+<ol>
+<li>Before connecting to the remote, verify the safety of the compressed package path, single top-level directory, and official source code structure.</li>
+<li>By default, the first data node is selected as the build node, or another one can be specified using <code>--postgresql-build-node</code>.</li>
+<li>Compile only once on the build node, with the installation prefix fixed as <code>/opt/clusterguard/postgresql/&lt;PORT&gt;/software</code>.</li>
+<li>Build <code>contrib</code>, verify <code>initdb</code>, <code>postgres</code>, <code>psql</code>, <code>pg_basebackup</code>, <code>pg_rewind</code>, <code>pg_controldata</code>, and <code>pg_config</code>.</li>
+<li>Generate <code>BUILD-MANIFEST.json</code>, unified binary tar package, and SHA256 digest.</li>
+<li>Distribute the identical products to all control nodes and data nodes, then initialize and synchronize stream replication.</li>
+</ol>
+<p>The source code products will dynamically link to the target system libraries, so all control/data nodes must use the same CPU architecture, distribution version, and glibc. The installer will check before compiling, and will block directly if they are inconsistent.</p>
+<p>The build node needs at least 6 GiB of temporary space. When rerunning after an interruption, only if the source code digest, builder digest, and product SHA256 are all consistent will the cache be reused; any inconsistency will recompile, avoiding mistakenly sending old products to new clusters.</p>
+<p>The main offline package no longer includes the large PostgreSQL source code compilation dependency closure. When explicitly specifying
+<code>--engine postgresql</code> and using the official source code package, the installer defaults to using
+the software source already configured on the selected build node to resolve dependencies online. All compilation dependencies are only installed to a one-time DNF installroot,
+and will not be written to the production host&#39;s software package database; repository signature verification remains enabled.</p>
+<p>The installation plan states that PostgreSQL build dependencies are resolved online into an isolated build root by default. If the on-site repository, DNS,
+or network is unavailable, installation stops and explicitly requests an independent PostgreSQL dependency package. Create this dependency add-on package on a connected mirror machine with the same distribution, major version, and architecture as the production node:</p>
+<pre><code class="language-bash">tools/收集RHEL离线依赖.sh \
+  --output /tmp/clusterguard-pg-source-deps \
+  --postgresql-source-build
+
+tools/构建PostgreSQL依赖包.sh \
+  --input /tmp/clusterguard-pg-source-deps \
+  --output /secure/release \
+  --version 2.2 \
+  --release 1 \
+  --platform rocky-8 \
+  --arch x86_64
+</code></pre>
+<p>The generated filename is similar to
+<code>clusterguard-ha-2.2-1-postgresql-build-deps-rocky-8-x86_64.tar.gz</code>.
+Upload and verify the adjacent <code>.sha256</code> file, then extract and add the following to the installation command:</p>
+<pre><code class="language-bash">--postgresql-dependencies ./clusterguard-ha-2.2-1-postgresql-build-deps-rocky-8-x86_64/dependencies
+</code></pre>
+<p>The installer verifies the dependency add-on package&#39;s SHA256, RPM signature, CPU architecture, operating-system major version, and repository metadata,
+and then only enable this local repository to complete the isolated build. If the signature, digest, repository metadata, or dependencies are missing, it will explicitly
+report an error and stop.</p>
+<p>Example of a three-node PostgreSQL 16.4 plan:</p>
+<pre><code class="language-bash">./install_clusterguard.sh \
+  -l 192.168.102.152,192.168.102.153,192.168.102.154 \
+  -n 192.168.102.152,192.168.102.153,192.168.102.154 \
+  -u root \
+  -P &#39;SSH_PASSWORD&#39; \
+  -r /opt/postgresql-16.4.tar.bz2 \
+  -ld /var/lib/clusterguard \
+  -nd /data \
+  --engine postgresql \
+  --database-version 16.4 \
+  --cluster-name pg16-production \
+  --postgresql-allowed-cidr 192.168.102.0/24 \
+  --accept-host-keys \
+  --plan
+</code></pre>
+<p>After confirming that the plan displays &quot;PostgreSQL official source code&quot;, &quot;compile only once&quot;, the correct build node, and &quot;default online installation to isolated build root&quot;, change the last line to <code>--execute</code> to execute. For a purely offline site, append the above <code>--postgresql-dependencies</code> parameter.</p>
+<h2 id="5-ssh-host-key-and-password-handling">5. SSH Host Key and Password Handling<a class="heading-anchor" href="#5-ssh-host-key-and-password-handling" aria-label="Link to 5. SSH Host Key and Password Handling">#</a></h2>
+<p>It is recommended to review the target host SSH fingerprint in advance and prepare the <code>known_hosts</code> file:</p>
+<pre><code class="language-bash">ssh-keyscan -H 192.168.102.152 192.168.102.153 192.168.102.154 &gt; site/known_hosts
+# Verify every host fingerprint through an independent trusted channel before using this file.
+chmod 0600 site/known_hosts
+</code></pre>
+<p>For the first experimental environment, you can use <code>--accept-host-keys</code> to let the installer collect the current host key. Production environments prioritize using <code>--known-hosts site/known_hosts</code>.</p>
+<p>During real installation, if <code>--ssh-key</code>, <code>-P</code>, or <code>CG_SSH_PASSWORD</code> are not passed, the installer will only prompt for a hidden password once at the beginning, and then automatically reuse it for all SSH and SCP operations. The simplest interaction is to directly execute the installation command without additional password handling.</p>
+<p>Do not write the SSH password into the command line, Shell history, or change orders. When no interactive execution is needed, you can input and export the environment variable in the current Shell:</p>
+<pre><code class="language-bash">read -r -s -p &#39;SSH password: &#39; CG_SSH_PASSWORD
+printf &#39;\n&#39;
+export CG_SSH_PASSWORD
+</code></pre>
+<p>You can also use <code>--ssh-key /secure/keys/clusterguard-deploy_ed25519</code>. <code>-P</code> / <code>--ssh-password</code> are retained only for compatibility with existing automation and are not recommended in shared terminals, shell history, or environments where process arguments are visible.</p>
+<h3 id="different-passwords-on-multiple-servers">Different Passwords on Multiple Servers<a class="heading-anchor" href="#different-passwords-on-multiple-servers" aria-label="Link to Different Passwords on Multiple Servers">#</a></h3>
+<p>You can directly pass in passwords in order of nodes. For example, after deduplication, the order of <code>-l/-n</code> is <code>152,153,154</code>, then:</p>
+<pre><code class="language-bash">./install_clusterguard.sh \
+  -l 192.168.102.152,192.168.102.153,192.168.102.154 \
+  -n 192.168.102.152,192.168.102.153,192.168.102.154 \
+  -u root \
+  -p &#39;PASSWORD_FOR_152,PASSWORD_FOR_153,PASSWORD_FOR_154&#39;
+</code></pre>
+<p>Lowercase <code>-p</code> indicates &quot;node password list&quot;; uppercase <code>-P</code> indicates &quot;all nodes use the same password&quot;. The number of passwords must be exactly the same as the number of deduplicated nodes, and the installer will display the node order in the plan but will not display the password. If the password contains English commas, please use the credential file method below.</p>
+<p>Create a credential file readable only by root for each node, for example <code>/root/clusterguard-node-ssh.credentials</code>:</p>
+<pre><code class="language-text"># NODE_ADDRESS=SSH_PASSWORD_FOR_THAT_NODE
+192.168.102.152=first-node-password
+192.168.102.153=second-node-password
+192.168.102.154=third-node-password
+</code></pre>
+<pre><code class="language-bash">chmod 600 /root/clusterguard-node-ssh.credentials
+</code></pre>
+<p>Then add the following to the installation command:</p>
+<pre><code class="language-bash">--ssh-credentials-file /root/clusterguard-node-ssh.credentials
+</code></pre>
+<p>This file must include each server involved in this <code>-l</code> and <code>-n</code>; the installer will check the integrity and <code>0600</code> permissions before starting. The password will not be displayed in the deployment plan, logs, status files, or command line. The node address cannot contain spaces; the password can contain <code>=</code>, but cannot have line breaks.</p>
+<h2 id="6-three-node-mysql-hybrid-deployment">6. Three-node MySQL Hybrid Deployment<a class="heading-anchor" href="#6-three-node-mysql-hybrid-deployment" aria-label="Link to 6. Three-node MySQL Hybrid Deployment">#</a></h2>
+<p>This is the most commonly used complete installation process. Three machines run both the ClusterGuard control plane and MySQL with Agent.</p>
+<p>First, create a persistent site directory:</p>
+<pre><code class="language-bash">install -d -m 0700 /secure/clusterguard/mysql-ha-3306
+</code></pre>
+<h3 id="6-1-read-only-plan">6.1 Read-only Plan<a class="heading-anchor" href="#6-1-read-only-plan" aria-label="Link to 6.1 Read-only Plan">#</a></h3>
+<p>The following command will not modify remote hosts:</p>
+<pre><code class="language-bash">./install_clusterguard.sh \
+  -l 192.168.102.152,192.168.102.153,192.168.102.154 \
+  -n 192.168.102.152,192.168.102.153,192.168.102.154 \
+  -u root \
+  -ld /var/lib/clusterguard \
+  -nd /data \
+  --engine mysql \
+  --database-version 8.0.44 \
+  --database-port 3306 \
+  --cluster-name mysql-ha-3306 \
+  --vip 192.168.102.155 \
+  --interface ens160 \
+  --prefix 24 \
+  --dependencies dependencies \
+  --known-hosts /secure/clusterguard/mysql-ha-3306/known_hosts \
+  --state-file /secure/clusterguard/mysql-ha-3306/deployment-state.json \
+  --secrets-file /secure/clusterguard/mysql-ha-3306/deployment-secrets.env \
+  --work-dir /secure/clusterguard/mysql-ha-3306/site \
+  --plan
+</code></pre>
+<p>Verify the control nodes, data nodes, database version, port, network card, VIP, and data directory in the plan. If there are any errors, modify the parameters and rerun the read-only plan.</p>
+<h3 id="6-2-real-installation">6.2 Real Installation<a class="heading-anchor" href="#6-2-real-installation" aria-label="Link to 6.2 Real Installation">#</a></h3>
+<p>Change the last <code>--plan</code> of the same command to <code>--execute</code>. During interactive execution, the installer will prompt for the cluster name to confirm:</p>
+<pre><code class="language-bash">./install_clusterguard.sh \
+  -l 192.168.102.152,192.168.102.153,192.168.102.154 \
+  -n 192.168.102.152,192.168.102.153,192.168.102.154 \
+  -u root \
+  -ld /var/lib/clusterguard \
+  -nd /data \
+  --engine mysql \
+  --database-version 8.0.44 \
+  --database-port 3306 \
+  --cluster-name mysql-ha-3306 \
+  --vip 192.168.102.155 \
+  --interface ens160 \
+  --prefix 24 \
+  --dependencies dependencies \
+  --known-hosts /secure/clusterguard/mysql-ha-3306/known_hosts \
+  --state-file /secure/clusterguard/mysql-ha-3306/deployment-state.json \
+  --secrets-file /secure/clusterguard/mysql-ha-3306/deployment-secrets.env \
+  --work-dir /secure/clusterguard/mysql-ha-3306/site \
+  --execute
+</code></pre>
+<p>For non-interactive automation, you can additionally add <code>-y</code>, but it should only be used in reviewed change jobs.</p>
+<p>After installation is complete, the console address is:</p>
+<pre><code class="language-text">https://192.168.102.152:3000/
+</code></pre>
+<p>The initial account is <code>admin</code>, and the initial password is <code>admin123</code>. You must immediately change the password after the first login; before changing the password, the console and API only allow authentication and password change, and cannot view or operate cluster data.</p>
+<h3 id="6-3-mysql-8-4-deployment">6.3 MySQL 8.4 Deployment<a class="heading-anchor" href="#6-3-mysql-8-4-deployment" aria-label="Link to 6.3 MySQL 8.4 Deployment">#</a></h3>
+<p>Replace the two items in the above command with actual values. If <code>/opt</code> has multiple MySQL 8.4 packages, explicitly add <code>-r /opt/EXACT_FILENAME</code>:</p>
+<pre><code class="language-text">--database-version 8.4.10
+--cluster-name mysql-ha-3306-84
+</code></pre>
+<p>Only one ClusterGuard cluster can belong to one IP:port. If 8.0 and 8.4 coexist, they must use different ports, independent data directories, independent VIP, independent <code>--state-file</code>, <code>--secrets-file</code>, and <code>--work-dir</code>.</p>
+<h2 id="7-separated-deployment-of-control-nodes-and-data-nodes">7. Separated Deployment of Control Nodes and Data Nodes<a class="heading-anchor" href="#7-separated-deployment-of-control-nodes-and-data-nodes" aria-label="Link to 7. Separated Deployment of Control Nodes and Data Nodes">#</a></h2>
+<p>The following example uses three arbitration control nodes and three independent MySQL data nodes:</p>
+<pre><code class="language-bash">./install_clusterguard.sh \
+  -l 192.168.40.81,192.168.40.82,192.168.40.83 \
+  -n 192.168.40.91,192.168.40.92,192.168.40.93 \
+  -u root \
+  -ld /var/lib/clusterguard \
+  -nd /data \
+  --engine mysql \
+  --database-version 8.4.10 \
+  --database-port 3306 \
+  --cluster-name mysql-production \
+  --vip 192.168.40.100 \
+  --interface ens160 \
+  --prefix 24 \
+  --known-hosts /secure/clusterguard/mysql-production/known_hosts \
+  --state-file /secure/clusterguard/mysql-production/deployment-state.json \
+  --secrets-file /secure/clusterguard/mysql-production/deployment-secrets.env \
+  --work-dir /secure/clusterguard/mysql-production/site \
+  --plan
+</code></pre>
+<p>First, execute <code>--plan</code>, confirm it is correct, and then change it to <code>--execute</code>. The number of control nodes must remain odd; the number of data nodes can be 1, 2, 3, or more.</p>
+<h2 id="8-deploying-only-three-node-control-plane">8. Deploying Only Three-node Control Plane<a class="heading-anchor" href="#8-deploying-only-three-node-control-plane" aria-label="Link to 8. Deploying Only Three-node Control Plane">#</a></h2>
+<p>When not deploying databases and Agents:</p>
+<pre><code class="language-bash">./install_clusterguard.sh \
+  -l 192.168.40.81,192.168.40.82,192.168.40.83 \
+  -u root \
+  -ld /var/lib/clusterguard \
+  --engine none \
+  --control-only \
+  --known-hosts /secure/clusterguard/control-plane/known_hosts \
+  --state-file /secure/clusterguard/control-plane/deployment-state.json \
+  --secrets-file /secure/clusterguard/control-plane/deployment-secrets.env \
+  --work-dir /secure/clusterguard/control-plane/site \
+  --plan
+</code></pre>
+<p>After confirmation, append <code>--execute</code>. Subsequently, connect to MySQL, PostgreSQL, Oracle Data Guard, or SQL Server Always On through the Console&#39;s &quot;Cluster Management&quot; and &quot;Nodes&quot; pages, and do not recreate the control plane status file.</p>
+<h2 id="9-post-installation-acceptance">9. Post-Installation Acceptance<a class="heading-anchor" href="#9-post-installation-acceptance" aria-label="Link to 9. Post-Installation Acceptance">#</a></h2>
+<h3 id="9-1-services-and-raft">9.1 Services and Raft<a class="heading-anchor" href="#9-1-services-and-raft" aria-label="Link to 9.1 Services and Raft">#</a></h3>
+<p>Execute on each control node:</p>
+<pre><code class="language-bash">systemctl is-enabled clusterguard-ha.service
+systemctl is-active clusterguard-ha.service
+systemctl status clusterguard-ha.service --no-pager
+</code></pre>
+<p>Execute on each data node:</p>
+<pre><code class="language-bash">systemctl is-enabled clusterguard-agent.service
+systemctl is-active clusterguard-agent.service
+systemctl status clusterguard-agent.service --no-pager
+</code></pre>
+<p>MySQL hybrid nodes should also verify:</p>
+<pre><code class="language-bash">systemctl is-enabled clusterguard-mysql-3306.service
+systemctl is-active clusterguard-mysql-3306.service
+ss -lnt | grep &#39;:3306&#39;
+mysql -uroot -p -e &#39;SELECT @@hostname, @@port, @@read_only, @@super_read_only;&#39;
+readlink /tmp/mysql.sock
+</code></pre>
+<p>The ClusterGuard management service socket is located at <code>/run/clusterguard/mysql/3306/mysql.sock</code>, not in the data directory. The installer will create a password-free <code>/etc/clusterguard/mysql/default-client.cnf</code>, and include this file at the end of <code>/etc/my.cnf</code> and <code>/root/.my.cnf</code>, so existing configuration&#39;s old socket will not continue to overwrite the current instance. The standard 3306 port will also maintain <code>/tmp/mysql.sock</code> compatibility links through <code>/etc/tmpfiles.d/clusterguard-mysql-3306.conf</code>, and will automatically recover after reboot. The managed root password is still only saved in <code>/etc/clusterguard/mysql/3306-client.cnf</code> and site secret files with permissions of <code>0600</code>.</p>
+<p>In the console, you should see: three control nodes, one Raft Leader, two Followers, one primary database, the rest of the replicas, and the unique VIP Owner.</p>
+<h3 id="9-2-vip-uniqueness">9.2 VIP Uniqueness<a class="heading-anchor" href="#9-2-vip-uniqueness" aria-label="Link to 9.2 VIP Uniqueness">#</a></h3>
+<p>Execute on the three data nodes separately:</p>
+<pre><code class="language-bash">ip -o -4 addr show dev ens160 | grep &#39;192.168.102.155/24&#39; || true
+</code></pre>
+<p>It must return only once on the current primary database node. Do not manually <code>ip addr add</code> bind the VIP, and do not manage the same VIP simultaneously through keepalived, Pacemaker, or other tools.</p>
+<h3 id="9-3-restart-recovery">9.3 Restart Recovery<a class="heading-anchor" href="#9-3-restart-recovery" aria-label="Link to 9.3 Restart Recovery">#</a></h3>
+<p>After planned maintenance or kernel upgrades, restart one Follower, then another Follower, and finally the Leader. After each recovery, confirm that the console has quorum, database replication is normal, and the VIP is still only on the primary database. Do not perform primary database switching after losing the majority of control nodes.</p>
+<h2 id="10-must-be-kept-site-data">10. Must-be-kept Site Data<a class="heading-anchor" href="#10-must-be-kept-site-data" aria-label="Link to 10. Must-be-kept Site Data">#</a></h2>
+<p>The following files contain cluster identity, certificates, control tokens, and database managed passwords, and must be 0600 permissions and included in encrypted backups:</p>
+<pre><code class="language-text">/secure/clusterguard/&lt;CLUSTER_NAME&gt;/deployment-state.json
+/secure/clusterguard/&lt;CLUSTER_NAME&gt;/deployment-secrets.env
+/secure/clusterguard/&lt;CLUSTER_NAME&gt;/site/
+/secure/clusterguard/&lt;CLUSTER_NAME&gt;/known_hosts
+</code></pre>
+<p>When re-executing the same cluster installer, performing controlled repairs, or expanding, the same set of files must be reused. Do not delete, copy to other clusters, or overwrite existing running clusters with empty status files, otherwise it will destroy the consistency of resource UUIDs, certificates, and managed credentials.</p>
+<h2 id="11-post-installation-operation-boundaries">11. Post-Installation Operation Boundaries<a class="heading-anchor" href="#11-post-installation-operation-boundaries" aria-label="Link to 11. Post-Installation Operation Boundaries">#</a></h2>
+<p>After installation is complete, the following operations are performed through the Console:</p>
+<ul>
+<li>Controlled primary database and VIP synchronization switching.</li>
+<li>Recovery of old primary and reattachment as a slave.</li>
+<li>Adding data nodes, automatically installing the database, synchronizing data, verifying replication, and submitting metadata.</li>
+<li>Adding control nodes, the total number of control nodes must remain odd.</li>
+<li>Modifying hostname, IP, port, endpoint alias, and other metadata.</li>
+<li>Scheduled shutdown, whole machine recovery, audit, report, and operation log viewing.</li>
+</ul>
+<p>After database node failure, disk replacement, or system reinstallation, it should be initiated from the node recovery process in the Console, not manually copying the data directory or modifying the ClusterGuard metadata database by yourself.</p>
+<h2 id="12-common-issues">12. Common Issues<a class="heading-anchor" href="#12-common-issues" aria-label="Link to 12. Common Issues">#</a></h2>
+<h3 id="12-1-installer-only-outputs-plan">12.1 Installer Only Outputs Plan<a class="heading-anchor" href="#12-1-installer-only-outputs-plan" aria-label="Link to 12.1 Installer Only Outputs Plan">#</a></h3>
+<p>This is normal behavior. The installer defaults to read-only, and only appending <code>--execute</code> will modify remote hosts.</p>
+<h3 id="12-2-error-first-execution-must-provide-known-hosts-or-explicitly-use-ac">12.2 Error: &quot;First execution must provide --known-hosts or explicitly use --accept-host-keys&quot;<a class="heading-anchor" href="#12-2-error-first-execution-must-provide-known-hosts-or-explicitly-use-ac" aria-label="Link to 12.2 Error: &quot;First execution must provide --known-hosts or explicitly use --accept-host-keys&quot;">#</a></h3>
+<p>In production environments, provide the <code>--known-hosts</code> file that has been fingerprint-reviewed. In experimental environments, append <code>--accept-host-keys</code>.</p>
+<h3 id="12-3-error-status-file-is-inconsistent-with-the-current-cluster-name-eng">12.3 Error: &quot;Status file is inconsistent with the current cluster name, engine, or port&quot;<a class="heading-anchor" href="#12-3-error-status-file-is-inconsistent-with-the-current-cluster-name-eng" aria-label="Link to 12.3 Error: &quot;Status file is inconsistent with the current cluster name, engine, or port&quot;">#</a></h3>
+<p>This indicates that <code>--state-file</code> from a different cluster has been reused. Stop execution, restore the correct site directory; do not delete the original status file to bypass checks.</p>
+<h3 id="12-4-missing-database-package-dependencies">12.4 Missing Database Package Dependencies<a class="heading-anchor" href="#12-4-missing-database-package-dependencies" aria-label="Link to 12.4 Missing Database Package Dependencies">#</a></h3>
+<p>When MySQL or control-plane runtime libraries are missing, collect signed RPMs on a mirror machine with the same distribution and architecture, and retry with <code>--dependencies dependencies</code>. When PostgreSQL source-build dependencies cannot be resolved online, create and upload an independent dependency add-on package, then retry with <code>--postgresql-dependencies &lt;EXTRACTED_DIRECTORY&gt;/dependencies</code>. Do not mix the two parameters, and do not skip verification.</p>
+<h3 id="12-5-unable-to-log-in-to-console">12.5 Unable to Log in to Console<a class="heading-anchor" href="#12-5-unable-to-log-in-to-console" aria-label="Link to 12.5 Unable to Log in to Console">#</a></h3>
+<p>Check the control plane service, Raft quorum, and the node address accessed by the browser:</p>
+<pre><code class="language-bash">systemctl status clusterguard-ha.service --no-pager
+journalctl -u clusterguard-ha.service -n 200 --no-pager
+</code></pre>
+<p>A new cluster starts with account <code>admin</code> and password <code>admin123</code>. The password must be changed immediately after the first login. After it has been changed, use the new password; restarting the service does not restore the default password.</p>
+<h3 id="12-6-vip-not-bound-or-multiple-owners">12.6 VIP Not Bound or Multiple Owners<a class="heading-anchor" href="#12-6-vip-not-bound-or-multiple-owners" aria-label="Link to 12.6 VIP Not Bound or Multiple Owners">#</a></h3>
+<p>First, stop any external VIP management tools, then check the control node majority, current primary database role, Agent service, network card name, and CIDR. VIP is only allowed to be managed by ClusterGuard Agent; high-risk operations must be rejected when there is no quorum.</p>
+<h2 id="13-uninstallation-and-rollback">13. Uninstallation and Rollback<a class="heading-anchor" href="#13-uninstallation-and-rollback" aria-label="Link to 13. Uninstallation and Rollback">#</a></h2>
+<p>Uninstalling RPM individually will not delete <code>/etc/clusterguard/</code>, <code>/var/lib/clusterguard/</code>, and audit data:</p>
+<pre><code class="language-bash">dnf remove clusterguard-ha
+</code></pre>
+<p>Do not roll back by deleting the status directory in a running Raft cluster. Upgrades, rollbacks, control node retirement, and disaster recovery should all be completed in the controlled workflow of the Console, and audit and reports should be exported first.</p>
+<h2 id="14-security-checklist">14. Security Checklist<a class="heading-anchor" href="#14-security-checklist" aria-label="Link to 14. Security Checklist">#</a></h2>
+<ul>
+<li>Control nodes are always an odd number of at least 3.</li>
+<li>All nodes have synchronized clocks.</li>
+<li>SSH host keys have been independently verified.</li>
+<li>VIP is not managed by external HA tools.</li>
+<li>Database software and offline dependencies have been enterprise-approved and SHA256 verified.</li>
+<li>Site status, secrets, and certificates have been encrypted and backed up.</li>
+<li>The initial administrator password has been changed.</li>
+<li>A controlled switch, old primary reattachment, node restart recovery, and VIP uniqueness verification have been completed.</li>
+</ul>
+
+          <footer class="document-footer">
+            <span>Source: <code>docs/en-US/offline-rpm-install.md</code></span>
+            <a href="../index.html">Documentation language home</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="On this page">
+          <strong>On this page</strong>
+          <a class="toc-level-2" href="#1-deliverables-and-installation-methods">1. Deliverables and Installation Methods</a><a class="toc-level-2" href="#2-roles-and-deployment-topology">2. Roles and Deployment Topology</a><a class="toc-level-2" href="#3-pre-deployment-checks">3. Pre-Deployment Checks</a><a class="toc-level-3" href="#3-1-operations-machine-requirements">3.1 Operations Machine Requirements</a><a class="toc-level-3" href="#3-2-target-node-requirements">3.2 Target Node Requirements</a><a class="toc-level-3" href="#3-3-hostname-and-vip">3.3 Hostname and VIP</a><a class="toc-level-4" href="#optional-vmware-workstation-ssh-external-isolation-enhancement">Optional: VMware Workstation SSH External Isolation Enhancement</a><a class="toc-level-2" href="#4-prepare-database-media-and-offline-dependencies">4. Prepare Database Media and Offline Dependencies</a><a class="toc-level-3" href="#official-postgresql-source-code-installation">Official PostgreSQL Source Code Installation</a><a class="toc-level-2" href="#5-ssh-host-key-and-password-handling">5. SSH Host Key and Password Handling</a><a class="toc-level-3" href="#different-passwords-on-multiple-servers">Different Passwords on Multiple Servers</a><a class="toc-level-2" href="#6-three-node-mysql-hybrid-deployment">6. Three-node MySQL Hybrid Deployment</a><a class="toc-level-3" href="#6-1-read-only-plan">6.1 Read-only Plan</a><a class="toc-level-3" href="#6-2-real-installation">6.2 Real Installation</a><a class="toc-level-3" href="#6-3-mysql-8-4-deployment">6.3 MySQL 8.4 Deployment</a><a class="toc-level-2" href="#7-separated-deployment-of-control-nodes-and-data-nodes">7. Separated Deployment of Control Nodes and Data Nodes</a><a class="toc-level-2" href="#8-deploying-only-three-node-control-plane">8. Deploying Only Three-node Control Plane</a><a class="toc-level-2" href="#9-post-installation-acceptance">9. Post-Installation Acceptance</a><a class="toc-level-3" href="#9-1-services-and-raft">9.1 Services and Raft</a><a class="toc-level-3" href="#9-2-vip-uniqueness">9.2 VIP Uniqueness</a><a class="toc-level-3" href="#9-3-restart-recovery">9.3 Restart Recovery</a><a class="toc-level-2" href="#10-must-be-kept-site-data">10. Must-be-kept Site Data</a><a class="toc-level-2" href="#11-post-installation-operation-boundaries">11. Post-Installation Operation Boundaries</a><a class="toc-level-2" href="#12-common-issues">12. Common Issues</a><a class="toc-level-3" href="#12-1-installer-only-outputs-plan">12.1 Installer Only Outputs Plan</a><a class="toc-level-3" href="#12-2-error-first-execution-must-provide-known-hosts-or-explicitly-use-ac">12.2 Error: &quot;First execution must provide --known-hosts or explicitly use --accept-host-keys&quot;</a><a class="toc-level-3" href="#12-3-error-status-file-is-inconsistent-with-the-current-cluster-name-eng">12.3 Error: &quot;Status file is inconsistent with the current cluster name, engine, or port&quot;</a><a class="toc-level-3" href="#12-4-missing-database-package-dependencies">12.4 Missing Database Package Dependencies</a><a class="toc-level-3" href="#12-5-unable-to-log-in-to-console">12.5 Unable to Log in to Console</a><a class="toc-level-3" href="#12-6-vip-not-bound-or-multiple-owners">12.6 VIP Not Bound or Multiple Owners</a><a class="toc-level-2" href="#13-uninstallation-and-rollback">13. Uninstallation and Rollback</a><a class="toc-level-2" href="#14-security-checklist">14. Security Checklist</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

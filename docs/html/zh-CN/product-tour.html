@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="控制台产品导览 - ClusterGuard HA operational documentation">
+  <title>控制台产品导览 | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">跳到正文</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>搜索文档</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="输入标题关键词">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>开始使用</h2><a href="index.html" data-doc-title="clusterguard ha 中文文档">ClusterGuard HA 中文文档</a><a href="product-overview.html" data-doc-title="产品概览">产品概览</a><a href="product-tour.html" data-doc-title="控制台产品导览" aria-current="page" class="active">控制台产品导览</a><a href="architecture.html" data-doc-title="系统架构">系统架构</a><a href="release-2.1.45.html" data-doc-title="2.1.45 发布说明">2.1.45 发布说明</a></section><section><h2>部署与迁移</h2><a href="offline-rpm-install.html" data-doc-title="离线 rpm 安装">离线 RPM 安装</a><a href="database-preparation.html" data-doc-title="数据库接入">数据库接入</a><a href="orchestrator-migration.html" data-doc-title="从 orchestrator 迁移">从 Orchestrator 迁移</a></section><section><h2>日常运维</h2><a href="operations-manual.html" data-doc-title="运维操作手册">运维操作手册</a><a href="api-operations.html" data-doc-title="api 运维参考">API 运维参考</a><a href="postgresql-ha.html" data-doc-title="postgresql 高可用">PostgreSQL 高可用</a><a href="version-release-policy.html" data-doc-title="版本与发版规范">版本与发版规范</a></section><section><h2>验收证据</h2><a href="proven-mysql-ha-methods.html" data-doc-title="mysql 已验证方法">MySQL 已验证方法</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql 功能验收">MySQL 功能验收</a><a href="mysql-former-primary-recovery.html" data-doc-title="旧主恢复专项验收">旧主恢复专项验收</a><a href="mysql-production-qualification.html" data-doc-title="mysql 生产验收">MySQL 生产验收</a><a href="production-chaos-test.html" data-doc-title="生产故障测试报告">生产故障测试报告</a><a href="power-lifecycle-test.html" data-doc-title="计划关机测试报告">计划关机测试报告</a></section></nav>
+      <div class="sidebar-meta">
+        <span>离线文档构建</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">打开目录</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>控制台产品导览</strong></div>
+        <div class="header-actions">
+          <a href="../en-US/product-tour.html" lang="en-US">English</a>
+          <button id="print-button" type="button">打印</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha-产品导览">ClusterGuard HA 产品导览<a class="heading-anchor" href="#clusterguard-ha-产品导览" aria-label="Link to ClusterGuard HA 产品导览">#</a></h1>
+<p>本文通过实际测试环境截图介绍 ClusterGuard HA 控制台的核心页面。截图中的集群名称、节点地址和运行状态来自实验室环境，仅用于说明界面结构；生产环境应以现场拓扑、版本和安全策略为准。</p>
+<h2 id="高可用操作工作台">高可用操作工作台<a class="heading-anchor" href="#高可用操作工作台" aria-label="Link to 高可用操作工作台">#</a></h2>
+<p>操作页围绕当前选中的集群组织信息，顶部固定显示当前主库、候选主库、VIP 和复制延迟。受控切换、旧主恢复、安全门禁和验证属于同一条后端工作流，页面不会仅凭按钮点击宣告成功。</p>
+<p><img src="../assets/screenshots/ha-operation-workbench.png" alt="ClusterGuard HA 高可用操作工作台"></p>
+<p>主要能力：</p>
+<ul>
+<li>从当前集群清单中选择候选主库，禁止跨集群操作节点；</li>
+<li>将数据库角色切换与 VIP 所有权作为同一个受控操作处理；</li>
+<li>执行前检查身份、复制状态、Raft 多数派、操作锁和安全门禁；</li>
+<li>执行后重新发现拓扑，并验证新主、从库、VIP 和复制链路；</li>
+<li>旧主恢复后可按增量回挂或全量重建流程重新加入。</li>
+</ul>
+<h2 id="集群拓扑">集群拓扑<a class="heading-anchor" href="#集群拓扑" aria-label="Link to 集群拓扑">#</a></h2>
+<p>拓扑页以不可变资源身份组织节点，主机名、IP 和端口属于可修正端点，不作为资源主键。节点卡片展示角色、健康、版本、端点和 VIP，异常信息必须来自最新探测证据，无法探测时显示未知或不可达，不沿用旧状态伪装正常。</p>
+<p><img src="../assets/screenshots/cluster-topology.png" alt="ClusterGuard HA 集群拓扑"></p>
+<p>拓扑页用于回答四个问题：</p>
+<ol>
+<li>当前可观测主库是谁；</li>
+<li>哪些节点正在复制，以及复制方向是否正确；</li>
+<li>VIP 当前归属于哪个节点；</li>
+<li>哪些节点不可达、降级或需要人工关注。</li>
+</ol>
+<h2 id="节点生命周期">节点生命周期<a class="heading-anchor" href="#节点生命周期" aria-label="Link to 节点生命周期">#</a></h2>
+<p>节点页将节点清单和生命周期任务分开。新增、替换或重建节点通过弹窗收集参数，提交后进入可审计任务，不在主页面长期堆放安装表单。</p>
+<p><img src="../assets/screenshots/node-lifecycle.png" alt="ClusterGuard HA 节点生命周期"></p>
+<p>节点任务可覆盖：</p>
+<ul>
+<li>数据节点、控制节点和混合节点；</li>
+<li>固定节点名称与不可变资源 ID；</li>
+<li>SSH 连接、数据库介质、端口和数据目录；</li>
+<li>数据同步方式选择、复制恢复和完成验证；</li>
+<li>控制节点奇数约束以及 Raft 成员变更检查。</li>
+</ul>
+<h2 id="操作日志">操作日志<a class="heading-anchor" href="#操作日志" aria-label="Link to 操作日志">#</a></h2>
+<p>操作日志将高层事件与原始返回分开。默认列表展示时间、集群、原主库、目标节点、操作类型和最终状态；需要排障时再展开原始返回、操作 UUID、工作流阶段、检查项和报告链接。</p>
+<p><img src="../assets/screenshots/operation-log.png" alt="ClusterGuard HA 操作日志"></p>
+<p>日志中的“成功”必须同时满足执行与后置验证。数据库角色已发生变化但验证未完成时，应显示“需复核”或“失败”，不能只依据命令退出码写成成功。</p>
+<h2 id="截图维护规则">截图维护规则<a class="heading-anchor" href="#截图维护规则" aria-label="Link to 截图维护规则">#</a></h2>
+<ul>
+<li>只使用真实产品页面，不使用设计稿冒充已交付能力；</li>
+<li>不展示密码、令牌、私钥、Cookie 或数据库连接密钥；</li>
+<li>截图应注明来自测试环境，不作为生产验收证据；</li>
+<li>页面结构发生明显变化时同步更新中英文文档和截图；</li>
+<li>同一张截图由中英文文档共用，避免两个语言版本出现不同产品状态。</li>
+</ul>
+
+          <footer class="document-footer">
+            <span>源文件: <code>docs/zh-CN/product-tour.md</code></span>
+            <a href="../index.html">文档语言入口</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="本页目录">
+          <strong>本页目录</strong>
+          <a class="toc-level-2" href="#高可用操作工作台">高可用操作工作台</a><a class="toc-level-2" href="#集群拓扑">集群拓扑</a><a class="toc-level-2" href="#节点生命周期">节点生命周期</a><a class="toc-level-2" href="#操作日志">操作日志</a><a class="toc-level-2" href="#截图维护规则">截图维护规则</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

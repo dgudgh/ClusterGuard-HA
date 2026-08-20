@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="MySQL 生产验收 - ClusterGuard HA operational documentation">
+  <title>MySQL 生产验收 | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">跳到正文</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>搜索文档</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="输入标题关键词">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>开始使用</h2><a href="index.html" data-doc-title="clusterguard ha 中文文档">ClusterGuard HA 中文文档</a><a href="product-overview.html" data-doc-title="产品概览">产品概览</a><a href="product-tour.html" data-doc-title="控制台产品导览">控制台产品导览</a><a href="architecture.html" data-doc-title="系统架构">系统架构</a><a href="release-2.1.45.html" data-doc-title="2.1.45 发布说明">2.1.45 发布说明</a></section><section><h2>部署与迁移</h2><a href="offline-rpm-install.html" data-doc-title="离线 rpm 安装">离线 RPM 安装</a><a href="database-preparation.html" data-doc-title="数据库接入">数据库接入</a><a href="orchestrator-migration.html" data-doc-title="从 orchestrator 迁移">从 Orchestrator 迁移</a></section><section><h2>日常运维</h2><a href="operations-manual.html" data-doc-title="运维操作手册">运维操作手册</a><a href="api-operations.html" data-doc-title="api 运维参考">API 运维参考</a><a href="postgresql-ha.html" data-doc-title="postgresql 高可用">PostgreSQL 高可用</a><a href="version-release-policy.html" data-doc-title="版本与发版规范">版本与发版规范</a></section><section><h2>验收证据</h2><a href="proven-mysql-ha-methods.html" data-doc-title="mysql 已验证方法">MySQL 已验证方法</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql 功能验收">MySQL 功能验收</a><a href="mysql-former-primary-recovery.html" data-doc-title="旧主恢复专项验收">旧主恢复专项验收</a><a href="mysql-production-qualification.html" data-doc-title="mysql 生产验收" aria-current="page" class="active">MySQL 生产验收</a><a href="production-chaos-test.html" data-doc-title="生产故障测试报告">生产故障测试报告</a><a href="power-lifecycle-test.html" data-doc-title="计划关机测试报告">计划关机测试报告</a></section></nav>
+      <div class="sidebar-meta">
+        <span>离线文档构建</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">打开目录</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>MySQL 生产验收</strong></div>
+        <div class="header-actions">
+          <a href="../en-US/mysql-production-qualification.html" lang="en-US">English</a>
+          <button id="print-button" type="button">打印</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha-mysql-8-0-8-4-生产资格验证">ClusterGuard HA MySQL 8.0 / 8.4 生产资格验证<a class="heading-anchor" href="#clusterguard-ha-mysql-8-0-8-4-生产资格验证" aria-label="Link to ClusterGuard HA MySQL 8.0 / 8.4 生产资格验证">#</a></h1>
+<p>日期：2026-07-28
+环境：192.168.102.152-154，三控制节点、三数据节点
+版本：MySQL 8.0.44（3306）、MySQL 8.4.10（3384）</p>
+<h2 id="结论">结论<a class="heading-anchor" href="#结论" aria-label="Link to 结论">#</a></h2>
+<p>当前版本通过功能、故障、安全和数据完整性验证，可进入受控生产试运行。
+在以下上线条件全部落实前，不定义为“无条件生产就绪”：</p>
+<ol>
+<li>网络隔离场景没有外部 STONITH/fencing 时，系统选择阻断接管以避免双主；若业务要求该场景仍可用，必须接入独立电源、虚拟化或交换机 fencing。</li>
+<li>六个实例已启用半同步复制，切换和故障接管会在 VIP 漂移前验证新主半同步状态和 ACK 客户端；本次测试未发现已确认事务丢失，但半同步仍不等于跨所有故障类型的绝对 RPO=0。</li>
+<li>自动故障恢复的客户端最大中断实测为 51.729-60.108 秒。若生产 SLA 要求自动恢复 RTO 不超过 30 秒，当前版本不满足，不能直接上线。</li>
+<li>业务连接池必须设置连接、读写超时并支持断线重连和幂等重试；VIP 漂移不会自动修复已建立且卡住的 TCP 会话。</li>
+<li>测试控制台使用未受信任的自签名证书，浏览器自动化拒绝绕过证书校验。生产部署必须使用受客户端信任、SAN 正确的 TLS 证书后，再完成一次真实页面切换验收。</li>
+</ol>
+<h2 id="最终并发故障验证">最终并发故障验证<a class="heading-anchor" href="#最终并发故障验证" aria-label="Link to 最终并发故障验证">#</a></h2>
+<p>同时对两套主库执行硬故障，持续运行 16 路写入（每个版本 8 路），随后启动旧主并通过正式回挂工作流恢复。</p>
+<table>
+<thead>
+<tr>
+<th>版本</th>
+<th align="right">写入流</th>
+<th align="right">尝试</th>
+<th align="right">已确认</th>
+<th align="right">失败重试</th>
+<th align="right">最大中断</th>
+<th>完整性</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>MySQL 8.0.44</td>
+<td align="right">8</td>
+<td align="right">14,378</td>
+<td align="right">13,948</td>
+<td align="right">430</td>
+<td align="right">60.236s</td>
+<td>通过</td>
+</tr>
+<tr>
+<td>MySQL 8.4.10</td>
+<td align="right">8</td>
+<td align="right">14,058</td>
+<td align="right">13,850</td>
+<td align="right">208</td>
+<td align="right">60.057s</td>
+<td>通过</td>
+</tr>
+</tbody></table>
+<p>完整性判定：</p>
+<ul>
+<li>16/16 报告生成成功。</li>
+<li>所有流 <code>observed.count == acknowledged</code>。</li>
+<li>所有流序号从 1 连续到 <code>acknowledged</code>。</li>
+<li>0 个校验失败，0 个计数不一致，0 个序号缺口。</li>
+<li>故障期间未观察到“VIP 已离开但旧主仍可写”。</li>
+</ul>
+<p>最终状态：</p>
+<ul>
+<li>MySQL 8.0：192.168.102.154 为主库，VIP 192.168.102.155 唯一绑定；其余两节点为健康从库，延迟 0。</li>
+<li>MySQL 8.4：192.168.102.153 为主库，VIP 192.168.102.160 唯一绑定；其余两节点为健康从库，延迟 0。</li>
+<li>两个旧主均通过正式回挂工作流恢复，复制 IO/SQL 线程运行。</li>
+<li>三个 ClusterGuard 控制节点均为 <code>active</code>、<code>live</code>、<code>ready</code>。</li>
+</ul>
+<h2 id="本轮缺陷修复与回归">本轮缺陷修复与回归<a class="heading-anchor" href="#本轮缺陷修复与回归" aria-label="Link to 本轮缺陷修复与回归">#</a></h2>
+<h3 id="双集群自动恢复队头阻塞">双集群自动恢复队头阻塞<a class="heading-anchor" href="#双集群自动恢复队头阻塞" aria-label="Link to 双集群自动恢复队头阻塞">#</a></h3>
+<p>恢复调度器原先会同步等待一个集群的完整 <code>RunOnce</code>，导致另一集群的故障恢复被前一个集群阻塞。本轮改为：</p>
+<ul>
+<li>每个集群独立异步执行恢复周期。</li>
+<li>同一集群以 <code>inFlight</code> 状态避免重复恢复。</li>
+<li>全局恢复并发使用容量为 4 的有界门控。</li>
+<li>新增错峰双集群故障测试，证明第二个集群可在第一个集群完成前进入工作流。</li>
+</ul>
+<p>修复后同时停止两套主库的回归结果：</p>
+<table>
+<thead>
+<tr>
+<th>版本</th>
+<th align="right">尝试</th>
+<th align="right">已确认</th>
+<th align="right">失败重试</th>
+<th align="right">最大中断</th>
+<th>完整性</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>MySQL 8.0.44</td>
+<td align="right">1,396</td>
+<td align="right">1,331</td>
+<td align="right">65</td>
+<td align="right">58.126s</td>
+<td>通过</td>
+</tr>
+<tr>
+<td>MySQL 8.4.10</td>
+<td align="right">1,350</td>
+<td align="right">1,319</td>
+<td align="right">31</td>
+<td align="right">60.108s</td>
+<td>通过</td>
+</tr>
+</tbody></table>
+<p>两个写入流均满足 <code>observed.count == acknowledged</code>，序号从 1 连续到最后一个已确认事务。旧主启动后保持 <code>read_only=1</code>、<code>super_read_only=1</code> 且不持有 VIP，随后通过正式回挂工作流恢复。</p>
+<h3 id="半同步切换门禁">半同步切换门禁<a class="heading-anchor" href="#半同步切换门禁" aria-label="Link to 半同步切换门禁">#</a></h3>
+<ul>
+<li>计划切换和故障接管在 VIP 转移前激活并确认新主半同步状态。</li>
+<li>半同步激活失败时，新主重新进入只读并阻断 VIP 转移。</li>
+<li>smoke 检查主库半同步 source、ACK 客户端数量和从库半同步 replica 状态。</li>
+</ul>
+<h3 id="候选和审批时序">候选和审批时序<a class="heading-anchor" href="#候选和审批时序" aria-label="Link to 候选和审批时序">#</a></h3>
+<ul>
+<li>人工停止候选节点 SQL 线程后，预检查在授权和执行前阻断，主库与 VIP 均未变化。</li>
+<li>对健康候选生成一次性审批后，再停止其 SQL 线程；使用旧审批执行时被判定为 <code>stale_plan</code>，未发生角色或 VIP 变更。</li>
+<li>自动恢复调度、候选阻断和旧审批失效均增加了回归测试。</li>
+</ul>
+<h2 id="已覆盖故障矩阵">已覆盖故障矩阵<a class="heading-anchor" href="#已覆盖故障矩阵" aria-label="Link to 已覆盖故障矩阵">#</a></h2>
+<ul>
+<li>计划切换、双集群同时切换、同集群并发切换互斥。</li>
+<li>主库进程硬停止、两套主库同时硬停止、旧主恢复与正式回挂。</li>
+<li>主库计划重启、从库重启、全站 MySQL 冷停冷启。</li>
+<li>ClusterGuard 进程 SIGKILL、Raft Leader 停止和重新选举。</li>
+<li>控制节点多数丢失、单节点真实网络隔离、恢复后收敛。</li>
+<li>VIP 唯一性、主库与 VIP 强绑定、重启防写、无多数派自隔离。</li>
+<li>复制 IO/SQL 线程停止、候选节点阻断、恢复后重新评估。</li>
+<li>GTID、复制位点、候选资格、旧主回挂和复制链路验证。</li>
+<li>273/300 连接压力下切换。</li>
+<li>每版本 8 路持续并发写入下的同时故障切换。</li>
+<li>MySQL 持久化参数、内存配置、systemd 停止语义和冷启动角色。</li>
+<li>半同步 source/replica、ACK 客户端和切换前激活失败回滚。</li>
+<li>候选 SQL 线程停止、拓扑变化后的旧审批失效。</li>
+<li>双集群错峰故障的恢复调度并发，避免跨集群队头阻塞。</li>
+<li>三节点日志、failed unit、panic/fatal、InnoDB 损坏关键字巡检。</li>
+</ul>
+<h2 id="关键实测">关键实测<a class="heading-anchor" href="#关键实测" aria-label="Link to 关键实测">#</a></h2>
+<ul>
+<li>15 分钟双版本故障穿越：<ul>
+<li>8.0：9,602 次已确认写入，最大中断 64.625s，完整性通过。</li>
+<li>8.4：9,721 次已确认写入，最大中断 58.061s，完整性通过。</li>
+</ul>
+</li>
+<li>计划主库重启：<ul>
+<li>8.0：最大中断 22.601s，完整性通过。</li>
+<li>8.4：最大中断 18.924s，完整性通过。</li>
+</ul>
+</li>
+<li>连接压力切换：<ul>
+<li>8.0：最大中断 6.503s。</li>
+<li>8.4：最大中断 7.130s。</li>
+</ul>
+</li>
+<li>控制多数派丢失：<ul>
+<li>两个 VIP 均移除，原主均进入只读；恢复后完整性通过。</li>
+</ul>
+</li>
+<li>三台 MySQL 同时冷停冷启：<ul>
+<li>8.0 最大中断 92.047s，8.4 最大中断 75.364s，完整性通过。</li>
+</ul>
+</li>
+</ul>
+<h2 id="数据持久性与配置">数据持久性与配置<a class="heading-anchor" href="#数据持久性与配置" aria-label="Link to 数据持久性与配置">#</a></h2>
+<p>六个实例均确认：</p>
+<ul>
+<li><code>sync_binlog=1</code></li>
+<li><code>innodb_flush_log_at_trx_commit=1</code></li>
+<li><code>relay_log_recovery=1</code></li>
+<li><code>log_replica_updates=1</code></li>
+<li>GTID 开启</li>
+<li>binlog format 为 ROW</li>
+<li>半同步复制插件已启用</li>
+<li>当前主库半同步 source 为 ON，且有 2 个 ACK 客户端</li>
+<li>两个从库半同步 replica 状态为 ON</li>
+</ul>
+<p>旧主或节点重启时，磁盘持久化只读配置先于服务恢复生效；拓扑收敛前不会自动恢复写权限。</p>
+<h2 id="代码验证">代码验证<a class="heading-anchor" href="#代码验证" aria-label="Link to 代码验证">#</a></h2>
+<pre><code class="language-text">go test ./...          PASS
+go test -race ./...    PASS
+go vet ./...           PASS
+go build ./...         PASS
+git diff --check       PASS
+</code></pre>
+<p>覆盖了 MySQL adapter、agent 角色持久化、Raft、租约、Safety Guard、VIP、
+workflow、API、安装脚本和生命周期测试。</p>
+<h2 id="上线前动作">上线前动作<a class="heading-anchor" href="#上线前动作" aria-label="Link to 上线前动作">#</a></h2>
+<ol>
+<li>明确网络分区可用性策略：接受 fail-closed，或接入并演练外部 fencing。</li>
+<li>明确 RTO：当前自动故障恢复最大中断约 60 秒；硬性要求 30 秒时必须继续优化并重新跑完整矩阵。</li>
+<li>明确 RPO：接受半同步复制的边界，并为存储、网络和双节点故障制定恢复策略。</li>
+<li>在应用侧验证连接/读/写超时、断线重连和幂等重试。</li>
+<li>部署受信任 TLS 证书，并用正式浏览器控制台完成切换、回切和审计查看。</li>
+<li>复核历史审计中的 15 条 <code>indeterminate</code> 记录；它们不是当前活动操作，但上线前应完成归档说明。</li>
+<li>监控 Raft 数据文件、磁盘余量、VIP 唯一性、半同步状态、复制线程和复制延迟。</li>
+<li>先灰度一套非核心业务，保留回退窗口，再逐步扩大生产范围。</li>
+</ol>
+
+          <footer class="document-footer">
+            <span>源文件: <code>docs/zh-CN/mysql-production-qualification-2026-07-28.md</code></span>
+            <a href="../index.html">文档语言入口</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="本页目录">
+          <strong>本页目录</strong>
+          <a class="toc-level-2" href="#结论">结论</a><a class="toc-level-2" href="#最终并发故障验证">最终并发故障验证</a><a class="toc-level-2" href="#本轮缺陷修复与回归">本轮缺陷修复与回归</a><a class="toc-level-3" href="#双集群自动恢复队头阻塞">双集群自动恢复队头阻塞</a><a class="toc-level-3" href="#半同步切换门禁">半同步切换门禁</a><a class="toc-level-3" href="#候选和审批时序">候选和审批时序</a><a class="toc-level-2" href="#已覆盖故障矩阵">已覆盖故障矩阵</a><a class="toc-level-2" href="#关键实测">关键实测</a><a class="toc-level-2" href="#数据持久性与配置">数据持久性与配置</a><a class="toc-level-2" href="#代码验证">代码验证</a><a class="toc-level-2" href="#上线前动作">上线前动作</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

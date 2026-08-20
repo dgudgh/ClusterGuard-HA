@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="Architecture - ClusterGuard HA operational documentation">
+  <title>Architecture | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">Skip to content</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>Search documentation</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="Filter by title">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture" aria-current="page" class="active">Architecture</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
+      <div class="sidebar-meta">
+        <span>Offline documentation build</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">Open navigation</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>Architecture</strong></div>
+        <div class="header-actions">
+          <a href="../zh-CN/architecture.html" lang="zh-CN">简体中文</a>
+          <button id="print-button" type="button">Print</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha-architecture">ClusterGuard HA Architecture<a class="heading-anchor" href="#clusterguard-ha-architecture" aria-label="Link to ClusterGuard HA Architecture">#</a></h1>
+<h2 id="design-goals">Design Goals<a class="heading-anchor" href="#design-goals" aria-label="Link to Design Goals">#</a></h2>
+<p>ClusterGuard HA is a database-neutral control plane with engine-specific
+adapters. Platform identity, inventory authority, workflow gates, persistence,
+API behavior, audit, and reports belong to the control kernel. Database
+protocol details belong to adapters.</p>
+<p>The sealed 2.1 line enables the MySQL control path. PostgreSQL delivery starts
+in the 2.2 line. Oracle and SQL Server remain separately qualified future
+product lines; code behind a capability gate is not a production support claim.
+The active development tree contains discovery, health, native metrics,
+deterministic candidate evaluation, guarded switchover and failover,
+former-primary rejoin, allowlisted repair, Linux VIP ownership, and node
+lifecycle. Mutation remains capability- and configuration-gated: a missing
+majority, fence, restricted Agent policy, credential, endpoint provider, or
+current observation blocks the operation before the unsafe step. Oracle and SQL
+Server role transitions are integrated through their native HA control planes:
+Oracle Data Guard Broker via DGMGRL and SQL Server Always On via sqlcmd/T-SQL.
+SQL Server discovery, health, candidate, queue-metric, execution, and
+verification paths are implemented. Oracle discovery and guarded Broker
+execution are implemented through the restricted node Agent; Oracle metric
+expansion remains roadmap work. Mutation stays unavailable unless every native
+runner and safety dependency is configured.</p>
+<h2 id="resource-model">Resource Model<a class="heading-anchor" href="#resource-model" aria-label="Link to Resource Model">#</a></h2>
+<p>Every durable resource has an immutable platform UUID and revision metadata.
+The main resources are:</p>
+<table>
+<thead>
+<tr>
+<th>Resource</th>
+<th>Responsibility</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>Platform</code></td>
+<td>Top-level administrative boundary.</td>
+</tr>
+<tr>
+<td><code>Controller</code></td>
+<td>Control-plane member and service endpoint.</td>
+</tr>
+<tr>
+<td><code>DatabaseCluster</code></td>
+<td>Engine, display name, cluster identity, and aggregate health.</td>
+</tr>
+<tr>
+<td><code>DatabaseNode</code></td>
+<td>Host-level placement independent of database process identity.</td>
+</tr>
+<tr>
+<td><code>DatabaseInstance</code></td>
+<td>Engine-native database process identity and observed runtime state.</td>
+</tr>
+<tr>
+<td><code>Endpoint</code></td>
+<td>Mutable hostname, IP, port, and endpoint kind.</td>
+</tr>
+<tr>
+<td><code>EndpointAlias</code></td>
+<td>Historical or alternate coordinates for an endpoint.</td>
+</tr>
+<tr>
+<td><code>ReplicationLink</code></td>
+<td>Source-to-target relationship, lag, and link health.</td>
+</tr>
+<tr>
+<td><code>HAEndpoint</code></td>
+<td>Desired owner and health of a VIP, listener, or service endpoint.</td>
+</tr>
+<tr>
+<td><code>OperationRecord</code> / <code>OperationPlan</code></td>
+<td>Idempotent intent, durable stage progress, and immutable execution plan.</td>
+</tr>
+<tr>
+<td><code>ApprovalGrant</code></td>
+<td>Single-use, expiring authorization bound to one operation plan and target.</td>
+</tr>
+<tr>
+<td><code>PlatformUser</code></td>
+<td>Platform username, role, Argon2id password hash, <code>MustChangePassword</code>, and auth revision.</td>
+</tr>
+<tr>
+<td><code>PlatformSession</code></td>
+<td>Hash-only opaque session and CSRF identity with an eight-hour expiry.</td>
+</tr>
+<tr>
+<td><code>SecurityEvent</code></td>
+<td>Login, logout, password, and authorization security evidence.</td>
+</tr>
+<tr>
+<td><code>Execution</code> / <code>Verification</code></td>
+<td>Execution result and postcondition evidence.</td>
+</tr>
+<tr>
+<td><code>AuditEvent</code> / <code>Report</code></td>
+<td>Durable operator trace and human-readable outcome.</td>
+</tr>
+</tbody></table>
+<p><code>resource_id</code> is the stable reference used by APIs, persistence, links, metrics,
+and workflows. Each physical node also has a globally unique immutable
+<code>node_name</code> such as <code>cg-data-0001</code>. Hostname, IP address, port, display name, and
+aliases can change without creating a new node or database instance.</p>
+<h2 id="engine-identity">Engine Identity<a class="heading-anchor" href="#engine-identity" aria-label="Link to Engine Identity">#</a></h2>
+<p>Native identity binds observations to the stable platform resource:</p>
+<table>
+<thead>
+<tr>
+<th>Engine</th>
+<th>Native identity contract</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>MySQL</td>
+<td>Instance identity is <code>server_uuid</code>; hostname and port are endpoints.</td>
+</tr>
+<tr>
+<td>PostgreSQL</td>
+<td>Cluster identity is <code>system_identifier</code>; each node supplies an immutable <code>clusterguard.node_id</code> UUID and each standby supplies its primary node UUID.</td>
+</tr>
+<tr>
+<td>Oracle</td>
+<td>Database identity uses <code>DBID + DB_UNIQUE_NAME</code>; RAC instances are separate resources.</td>
+</tr>
+<tr>
+<td>SQL Server</td>
+<td>Availability-group identity uses <code>group_id</code>; replica identity uses <code>replica_id</code>.</td>
+</tr>
+</tbody></table>
+<p>When MySQL discovery sees a known <code>server_uuid</code> at new coordinates, the
+existing resource UUID is retained. Previous coordinates become aliases.
+Conflicting native identities, duplicate active endpoint ownership, and
+ambiguous alias updates are blocked instead of merged heuristically.</p>
+<p>PostgreSQL discovery applies the same rule with the configured node UUID. A
+hostname, IP, or port change updates the bound endpoint without creating a new
+instance. The complete refresh is rejected if active endpoints report mixed
+<code>system_identifier</code> values, if the value conflicts with the cluster&#39;s durable
+identity, or if the first identity bind lacks full active-endpoint coverage.</p>
+<h2 id="adapter-registry">Adapter Registry<a class="heading-anchor" href="#adapter-registry" aria-label="Link to Adapter Registry">#</a></h2>
+<p><code>DatabaseHAAdapter</code> defines engine, capability, discovery, topology, health,
+precheck, plan, execute, verify, node synchronization, metadata reconciliation,
+metrics, and candidate methods. The registry exposes a uniform capability map
+for all four engines.</p>
+<p>Capabilities are explicit. An unavailable capability returns <code>unsupported</code>;
+there is no fallback that guesses an engine behavior. The MySQL adapter enables
+native replication topology, health, metrics, candidates, metadata
+reconciliation, guarded switchover/failover, former-primary rejoin, and
+allowlisted repair. MySQL execution is advertised only when both a mutating SQL
+executor and an executable writer-endpoint provider are configured. Node
+lifecycle is owned by the platform task engine rather than bypassing the common
+gates. The PostgreSQL adapter enables identity-safe discovery, topology, health,
+native metrics, metadata checks, timeline-aware candidate assessment, guarded
+switchover/failover, former-primary rewind and rejoin, allowlisted repair, and
+base-backup node synchronization. PostgreSQL mutation is advertised only when
+the required operation credentials, restricted node controller, endpoint
+provider, and cluster safety evidence are available. The Oracle adapter
+provides Data Guard Broker discovery, topology, health, standby candidate
+assessment, precheck, plan, execute, and verify when DGMGRL is configured;
+otherwise runner-backed reads and execution return <code>unsupported</code>. The SQL
+Server adapter provides Always On discovery, topology, health,
+synchronized-secondary candidate assessment, planned failover precheck, plan,
+execute, verify, and send/redo queue metrics when sqlcmd is configured; forced
+failover remains blocked without an explicit data-loss approval policy. Oracle
+metrics and Oracle/SQL Server node sync continue to return <code>unsupported</code> until
+their engine-specific implementations are added.</p>
+<p>Adapter topology links use engine-native source and target identities. The
+resource registry resolves those identities to immutable platform UUIDs before
+publishing <code>ReplicationLink</code> resources. This keeps mutable host coordinates
+out of the topology identity contract.</p>
+<h2 id="inventory-authority">Inventory Authority<a class="heading-anchor" href="#inventory-authority" aria-label="Link to Inventory Authority">#</a></h2>
+<p>Cluster registration creates the authoritative set of active database
+endpoints. Discovery receives only a cluster UUID and probes that registered
+inventory with server-side credentials. Registration and refresh are control
+operations protected by a dedicated Bearer token. A refresh caller cannot add
+an endpoint or supply credentials in its request.</p>
+<p>Each cluster has a durable inventory generation. Any active database endpoint
+change or metadata-coordinate reconciliation increments the generation and
+invalidates the published topology. A refresh captures the generation before
+probing and must commit against that exact nonzero generation. If inventory
+changes while the probes are in flight, the complete refresh is rejected.</p>
+<h2 id="refresh-transaction">Refresh Transaction<a class="heading-anchor" href="#refresh-transaction" aria-label="Link to Refresh Transaction">#</a></h2>
+<p>A MySQL refresh follows this sequence:</p>
+<ol>
+<li>Resolve the cluster and its active registered database endpoints.</li>
+<li>Capture the exact inventory generation and serialize refreshes per cluster.</li>
+<li>Probe every endpoint with server-side read-only credentials.</li>
+<li>Reconcile observations by MySQL <code>server_uuid</code>, preserving platform UUIDs and aliases.</li>
+<li>Build instances, replication links, probe coverage, health, anomalies, and metric samples.</li>
+<li>Atomically persist the complete observation and publish one topology snapshot.</li>
+</ol>
+<p>The repository keeps a durable observation-time watermark. A refresh must be
+strictly newer than that watermark; equal or older observations are rejected.
+The watermark and inventory generation survive topology invalidation and
+process restart. Persistence failure rolls back the whole refresh, so readers
+never see a mixture of old links and new instances.</p>
+<p>Multiple registered aliases may resolve to one instance. Their observations
+share one platform UUID, and metrics persistence selects one deterministic,
+complete sample for the resolved instance in each cycle.</p>
+<p>A PostgreSQL refresh uses a separate engine-filtered scheduler and PostgreSQL
+credential set. It reads <code>system_identifier</code>, primary/recovery state, read-only
+state, WAL receiver status, receive/replay LSN, timeline, and replay lag from
+each authoritative endpoint. Cluster identity, endpoint bindings, instances,
+links, probes, and health are committed atomically. Missing node UUIDs, mixed
+system identities, malformed timelines or LSNs, and partial first binding fail
+closed without publishing a half-current topology.</p>
+<h2 id="candidate-intelligence">Candidate Intelligence<a class="heading-anchor" href="#candidate-intelligence" aria-label="Link to Candidate Intelligence">#</a></h2>
+<p>Candidate assessment uses only the latest persisted complete topology and
+explicit probe evidence. It requires exactly one currently observed primary.
+Each replica is evaluated for:</p>
+<ul>
+<li>selected-cluster inventory membership and healthy bound probe evidence;</li>
+<li>reachability and observed role;</li>
+<li>maintenance state and promotion eligibility;</li>
+<li>current read-only state and probe evidence from the exact published cycle;</li>
+<li>replication IO and SQL thread state;</li>
+<li>replication source identity matching the current primary;</li>
+<li>known, nonnegative lag within the configured policy;</li>
+<li>GTID mode and parseable executed sets;</li>
+<li>errant transactions and missing transactions/data-loss risk;</li>
+<li>compatible MySQL release family.</li>
+</ul>
+<p>Blocking evidence produces an ineligible candidate. Warnings, missing
+transaction count, lag, exact-version preference, and platform UUID provide a
+deterministic ordering among eligible candidates. Candidate output is advisory
+for API readers; the automatic recovery controller may consume only the rank-one
+eligible result after a stable failure incident and all common gates.</p>
+<p>PostgreSQL candidates are standbys from the same durable cluster identity and
+timeline whose source UUID matches the observed primary. A candidate requires
+fresh bound probe evidence, streaming WAL receive, active replay, known lag,
+and promotion eligibility. Ranking prefers the greatest replay LSN, then lower
+lag, then stable resource UUID. The selected resource UUID and observation are
+bound into the immutable plan; execution revalidates both under the operation
+lock before promotion.</p>
+<h2 id="metrics">Metrics<a class="heading-anchor" href="#metrics" aria-label="Link to Metrics">#</a></h2>
+<p>MySQL discovery stores bounded cumulative and gauge samples. The metrics layer
+derives QPS, TPS, slow queries per second, current connections, running threads,
+buffer-pool hit ratio, and replication lag. It publishes:</p>
+<ul>
+<li>JSON from <code>/api/v1/clusters/{id}/metrics</code>;</li>
+<li>Prometheus text from <code>/api/v1/clusters/{id}/metrics/prometheus</code>.</li>
+</ul>
+<p>The Prometheus endpoint uses stable <code>cluster_id</code> and <code>instance_id</code> labels and
+can be scraped directly. ClusterGuard HA has no third-party monitoring runtime
+dependency.</p>
+<p>PostgreSQL stores native connection, transaction, deadlock, temporary-byte,
+block-read, block-hit, database-size, replication-client, cache-hit, and
+optional longest-transaction samples alongside topology-derived replication
+lag. Prometheus series use the <code>clusterguard_postgresql_*</code> namespace and Zabbix
+keys use <code>clusterguard.postgresql.*</code>. Unknown lag or optional transaction age
+is omitted rather than reported as zero, and PostgreSQL data is never labeled
+as MySQL.</p>
+<h2 id="platform-authentication">Platform Authentication<a class="heading-anchor" href="#platform-authentication" aria-label="Link to Platform Authentication">#</a></h2>
+<p>A new metadata store bootstraps <code>admin</code> with the first-login password
+<code>admin123</code>, role <code>admin</code>, and <code>MustChangePassword=true</code>. Existing users are
+never overwritten during restart or Leader change. The first password change is
+required before any platform data is readable. Passwords use Argon2id and
+sessions store only SHA-256 token and CSRF hashes in the same replicated
+snapshot as other control metadata.</p>
+<p>The browser receives an opaque HttpOnly SameSite session cookie and a separate
+CSRF cookie. Mutating requests must present the cookie value in
+<code>X-CSRF-Token</code>. An eight-hour absolute lifetime bounds a session; password
+change and logout revoke it. <code>admin</code> has full access, <code>operator</code> can run guarded
+database operations, and <code>viewer</code> remains read-only.</p>
+<p>The browser never receives an approval secret. For a logged-in operation, the
+API uses the authenticated actor to create the durable plan, issue a one-time
+grant internally, and pass it directly to the unchanged approval-consumption
+stage. Service clients remain separate: the control Bearer authenticates the
+client, and an explicit one-time grant authorizes the exact database plan.</p>
+<p>There is no online forgotten-password bypass. Recovery requires stopping
+control-plane mutation and restoring protected metadata whose administrator
+credential is known; live deletion of <code>PlatformUser</code> records or direct hash
+editing is outside the safety model.</p>
+<h2 id="workflow-gates">Workflow Gates<a class="heading-anchor" href="#workflow-gates" aria-label="Link to Workflow Gates">#</a></h2>
+<p>All implemented database mutations use:</p>
+<pre><code class="language-text">DISCOVER -&gt; PRECHECK -&gt; PLAN -&gt; SAFETY_GUARD -&gt; LOCK -&gt; APPROVE -&gt; EXECUTE -&gt; VERIFY -&gt; AUDIT -&gt; REPORT
+</code></pre>
+<p>Adapters cannot acquire a platform lock, approve an operation, suppress audit,
+or skip verification. Safety Guard is an explicit stage with its own audit
+events and always runs before the operation lock. The workflow core checks
+all required precheck, plan, execute, and verify capabilities before any gate
+or adapter mutation. It pins the topology observation used by the operation,
+records the cluster UUID and observation timestamp, and revalidates the same
+token under the operation lock before approval. Discovery publication and
+operation execution use the same per-cluster fence, so a refresh cannot publish
+a new snapshot between revalidation and execution.</p>
+<p>Each operation has a durable UUID and caller-supplied idempotency key. The
+repository atomically persists its observation token, immutable plan digest,
+referenced metadata revisions, workflow stage, completed step attempts,
+execution, and verification. Reusing a key for the same intent returns the
+existing operation; reusing it for another target or operation kind is a
+conflict. A same-process duplicate cannot terminalize the active operation, and
+a restart can resume from observed step postconditions.</p>
+<p>High-risk database execution uses a one-time <code>ApprovalGrant</code>. A platform
+session creates and consumes it entirely inside the server. An explicit service
+request instead returns a random <code>cgag_...</code> token once. The replicated
+repository stores only its SHA-256 hash. A grant defaults to five minutes,
+cannot exceed fifteen minutes, and is bound to the operation UUID, cluster,
+engine, operation kind, target UUID, observation, and plan digest. Under the
+operation lock, grant consumption and the durable <code>APPROVE</code> transition commit
+atomically. Reuse, expiry, target mismatch, or a stale plan fails closed. The
+service execute route does not accept the administrator control credential as
+an approval substitute.</p>
+<p>MySQL switchover supports one primary with multiple replicas. It requires an
+eligible selected target, compatible GTID history, current probe evidence,
+running replication threads, compatible release families, and an executable
+endpoint provider. The source is fenced before promotion, every reachable
+follower is reparented, and success requires independent proof of one writable
+instance and one target VIP owner.</p>
+<p>Automatic failover uses a 30-second stable incident recorded by discovery. Only
+the majority Leader may submit the durable operation. The same incident cannot
+be repeated after success or an indeterminate outcome. Operation locks are
+Raft-replicated and renewed, Safety Guard rechecks majority, and endpoint
+mutation requires a separate short lease. The restricted data-node agent
+removes a stale VIP and persists both MySQL read-only flags when the node cannot
+obtain a valid signed keep decision.</p>
+<p>Automatic recovery enters the workflow through a separate internal method. It
+does not mint or consume a human approval grant and cannot be selected by an
+HTTP field. The incident ID is recorded at <code>APPROVE</code>, while consensus, Safety
+Guard, the replicated operation lock, fencing, execution, verification, audit,
+and report remain mandatory.</p>
+<p>Recovery never treats a pre-existing source fence as sufficient by itself. The
+durable operation must own the completed <code>fence_source</code> step, and the adapter
+rechecks source and target native identities, source fencing, GTID history,
+binary logging, version compatibility, target replication state, and writer
+endpoint postconditions before it can continue.</p>
+<p>Post-commit verification binds to the immutable plan digest and planned
+source/target UUIDs rather than the pre-mutation observation timestamp. This
+allows a refreshed post-promotion topology to be verified without weakening
+live native-identity, role, read-only, replication, or endpoint-owner checks.</p>
+<p>Audit and report persistence is fail-closed before the mutation commit point.
+After a mutation has committed, journal failure never skips verification. The
+workflow completes verification and returns <code>indeterminate</code>, preserving that
+the action may have changed database state and must not be retried blindly.
+If the atomic metadata rename succeeds but directory synchronization cannot
+confirm crash durability, the committed result is retained, verification still
+runs, and the API returns the reconciled resources with an <code>indeterminate</code>
+execution. Terminal reports use a crash-recoverable two-phase protocol under one
+report UUID for non-operation metadata workflows. Durable database operations
+instead publish their terminal record, final audit events, and report in one
+repository snapshot. A failed publication exposes none of those terminal
+records; a successful publication exposes all of them.</p>
+<p>Cluster registration and topology publication use the same post-rename
+semantics. If directory synchronization cannot confirm crash durability, the
+API returns HTTP <code>500</code> with committed cluster and endpoint UUIDs, or the
+topology observation token <code>cluster_id@observed_at</code>, instead of discarding them
+and inviting an unsafe retry.</p>
+<p>Platform metadata reconciliation is distinct from a database mutation. It may
+update a known resource&#39;s mutable coordinates after native identity validation,
+records old coordinates as aliases, advances inventory generation, and forces
+a fresh observation before topology is trusted again.</p>
+
+          <footer class="document-footer">
+            <span>Source: <code>docs/architecture.md</code></span>
+            <a href="../index.html">Documentation language home</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="On this page">
+          <strong>On this page</strong>
+          <a class="toc-level-2" href="#design-goals">Design Goals</a><a class="toc-level-2" href="#resource-model">Resource Model</a><a class="toc-level-2" href="#engine-identity">Engine Identity</a><a class="toc-level-2" href="#adapter-registry">Adapter Registry</a><a class="toc-level-2" href="#inventory-authority">Inventory Authority</a><a class="toc-level-2" href="#refresh-transaction">Refresh Transaction</a><a class="toc-level-2" href="#candidate-intelligence">Candidate Intelligence</a><a class="toc-level-2" href="#metrics">Metrics</a><a class="toc-level-2" href="#platform-authentication">Platform Authentication</a><a class="toc-level-2" href="#workflow-gates">Workflow Gates</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="PostgreSQL HA - ClusterGuard HA operational documentation">
+  <title>PostgreSQL HA | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">Skip to content</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>Search documentation</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="Filter by title">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha" aria-current="page" class="active">PostgreSQL HA</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
+      <div class="sidebar-meta">
+        <span>Offline documentation build</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">Open navigation</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>PostgreSQL HA</strong></div>
+        <div class="header-actions">
+          <a href="../zh-CN/postgresql-ha.html" lang="zh-CN">简体中文</a>
+          <button id="print-button" type="button">Print</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="postgresql-ha">PostgreSQL HA<a class="heading-anchor" href="#postgresql-ha" aria-label="Link to PostgreSQL HA">#</a></h1>
+<p>This runbook describes the native PostgreSQL control path in ClusterGuard HA.
+It uses PostgreSQL streaming replication directly and does not require Patroni,
+repmgr, or a vendor control API.</p>
+<p>This capability belongs to the 2.2 release line. It is not part of the sealed
+<code>v2.1.45</code> MySQL support boundary. Do not enable PostgreSQL mutation until the
+exact 2.2 package and site acceptance matrix have passed.</p>
+<h2 id="delivered-capability">Delivered Capability<a class="heading-anchor" href="#delivered-capability" aria-label="Link to Delivered Capability">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Area</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Identity and inventory</td>
+<td>Immutable platform UUID plus <code>clusterguard.node_id</code>; <code>system_identifier</code> binds the cluster.</td>
+</tr>
+<tr>
+<td>Discovery and topology</td>
+<td>Primary/standby role, source identity, timeline, receive/replay LSN, replay lag, and probe coverage.</td>
+</tr>
+<tr>
+<td>Health and candidates</td>
+<td>Streaming/read-only checks, promotion eligibility, deterministic WAL/lag ranking.</td>
+</tr>
+<tr>
+<td>Planned switchover</td>
+<td>Restricted service stop, WAL catch-up, promotion, sibling repoint, VIP transfer, and verification.</td>
+</tr>
+<tr>
+<td>Guarded failover</td>
+<td>Stable failure, Raft majority, lease, source isolation or external fencing, promotion, endpoint transfer, and verification.</td>
+</tr>
+<tr>
+<td>Former-primary recovery</td>
+<td>Explicit <code>pg_rewind</code> workflow; unsafe rewind is blocked with a rebuild recommendation.</td>
+</tr>
+<tr>
+<td>Node lifecycle</td>
+<td>Staged install plus <code>pg_basebackup</code>, or <code>pg_rewind</code> for a registered rebuild target.</td>
+</tr>
+<tr>
+<td>Repair</td>
+<td>Allowlisted replay resume and configuration reload only.</td>
+</tr>
+<tr>
+<td>Metrics</td>
+<td>Connections, active connections, transactions, deadlocks, temporary bytes, block/cache activity, database size, replication clients, and longest transaction.</td>
+</tr>
+<tr>
+<td>Audit and reports</td>
+<td>Common durable operation, verification, audit, and report pipeline.</td>
+</tr>
+</tbody></table>
+<p>Capability is configuration-derived. Missing operation credentials, Agent
+policy, writer endpoint, quorum, lifecycle helpers, or fencing evidence keeps
+the corresponding control disabled and returns an explicit blocking reason.</p>
+<h2 id="safety-invariants">Safety Invariants<a class="heading-anchor" href="#safety-invariants" aria-label="Link to Safety Invariants">#</a></h2>
+<ul>
+<li>Hostname, IP address, and port are mutable coordinates. They are never the
+database resource key.</li>
+<li>Every instance has one immutable platform <code>resource_id</code> and one immutable
+<code>clusterguard.node_id</code> UUID.</li>
+<li>All members of a cluster must report the same PostgreSQL
+<code>system_identifier</code>.</li>
+<li>A standby must report the current primary&#39;s immutable node UUID through
+<code>clusterguard.primary_node_id</code>.</li>
+<li>Planned switchover stops and proves the old primary inactive before
+promotion. Read-only mode alone is not treated as a hard fence.</li>
+<li>Failover requires majority authority and verified old-primary isolation.
+Unreachability is not proof of fencing.</li>
+<li>Success requires one writable primary, one writer-VIP owner, the planned
+target identity, and verified follower state. Crossing promotion without
+complete verification yields <code>indeterminate</code>, never success.</li>
+</ul>
+<h2 id="postgresql-prerequisites">PostgreSQL Prerequisites<a class="heading-anchor" href="#postgresql-prerequisites" aria-label="Link to PostgreSQL Prerequisites">#</a></h2>
+<p>Use the same PostgreSQL major release across a primary and every synchronization
+target. Enable settings required by streaming replication and rewind:</p>
+<pre><code class="language-conf">wal_level = replica
+hot_standby = on
+max_wal_senders = 10
+max_replication_slots = 10
+wal_log_hints = on
+</code></pre>
+<p>Data checksums may satisfy the rewind prerequisite instead of
+<code>wal_log_hints</code>, but enabling both provides stronger evidence. Qualify WAL
+retention or archive behavior for the largest expected outage and base-backup
+window.</p>
+<h3 id="stable-node-identity">Stable Node Identity<a class="heading-anchor" href="#stable-node-identity" aria-label="Link to Stable Node Identity">#</a></h3>
+<p>Generate a different UUID for each physical PostgreSQL instance and retain it
+through hostname, IP, and port changes:</p>
+<pre><code class="language-sql">ALTER SYSTEM SET clusterguard.node_id = &#39;11111111-1111-4111-8111-111111111111&#39;;
+ALTER SYSTEM SET clusterguard.primary_node_id = &#39;&#39;;
+ALTER SYSTEM SET clusterguard.hostname = &#39;pg-01&#39;;
+SELECT pg_reload_conf();
+</code></pre>
+<p>On a standby, set its own node UUID and the current primary UUID:</p>
+<pre><code class="language-sql">ALTER SYSTEM SET clusterguard.node_id = &#39;22222222-2222-4222-8222-222222222222&#39;;
+ALTER SYSTEM SET clusterguard.primary_node_id = &#39;11111111-1111-4111-8111-111111111111&#39;;
+ALTER SYSTEM SET clusterguard.hostname = &#39;pg-02&#39;;
+SELECT pg_reload_conf();
+</code></pre>
+<p>Verify the values from a new session. ClusterGuard rejects blank or malformed
+UUIDs, mixed system identifiers, and a standby without a valid primary node
+identity.</p>
+<h2 id="database-accounts">Database Accounts<a class="heading-anchor" href="#database-accounts" aria-label="Link to Database Accounts">#</a></h2>
+<p>Use separate credentials for observation, administrative mutation, and
+streaming replication. Restrict <code>pg_hba.conf</code> to controller and database-node
+addresses, require TLS where available, and use SCRAM secrets.</p>
+<h3 id="discovery-account">Discovery Account<a class="heading-anchor" href="#discovery-account" aria-label="Link to Discovery Account">#</a></h3>
+<pre><code class="language-sql">CREATE ROLE cg_monitor LOGIN PASSWORD &#39;&lt;random-monitor-secret&gt;&#39;;
+GRANT CONNECT ON DATABASE postgres TO cg_monitor;
+GRANT pg_monitor TO cg_monitor;
+</code></pre>
+<p>Test this account against every registered endpoint. It must read control
+system/checkpoint functions, <code>pg_stat_activity</code>, <code>pg_stat_database</code>,
+<code>pg_stat_replication</code>, <code>pg_stat_wal_receiver</code>, and WAL LSN functions.</p>
+<h3 id="operation-account">Operation Account<a class="heading-anchor" href="#operation-account" aria-label="Link to Operation Account">#</a></h3>
+<p>The current guarded path uses <code>ALTER SYSTEM</code> for the controlled read-only fence
+and terminates client backends before stopping the source. Use a dedicated
+administrative login. On PostgreSQL releases supporting parameter-level SET
+privileges, grant only the required parameter and signaling rights; otherwise
+the site must explicitly qualify a tightly held administrative role.</p>
+<pre><code class="language-sql">CREATE ROLE cg_operator LOGIN PASSWORD &#39;&lt;random-operation-secret&gt;&#39;;
+GRANT CONNECT ON DATABASE postgres TO cg_operator;
+GRANT pg_monitor TO cg_operator;
+GRANT pg_signal_backend TO cg_operator;
+GRANT ALTER SYSTEM ON PARAMETER default_transaction_read_only TO cg_operator;
+GRANT EXECUTE ON FUNCTION pg_reload_conf() TO cg_operator;
+</code></pre>
+<p><code>SET</code> parameter privilege is not sufficient for ClusterGuard HA because the
+planned switchover fence must persist across new sessions with <code>ALTER SYSTEM</code>.
+The PostgreSQL precheck verifies these privileges with the configured operation
+account and blocks execution before a lease or database state is changed when
+any privilege is missing.</p>
+<p>Do not silently replace a failed least-privilege qualification with a shared
+application or replication account. An operation-account permission failure
+must block precheck or execution.</p>
+<h3 id="replication-account">Replication Account<a class="heading-anchor" href="#replication-account" aria-label="Link to Replication Account">#</a></h3>
+<pre><code class="language-sql">CREATE ROLE clusterguard_repl WITH REPLICATION LOGIN PASSWORD &#39;&lt;random-replication-secret&gt;&#39;;
+</code></pre>
+<p>The same identity is used by managed <code>primary_conninfo</code> and
+<code>pg_basebackup</code>. Keep the secret in protected environment files and PostgreSQL
+passfiles, never in command arguments or browser fields.</p>
+<h2 id="controller-configuration">Controller Configuration<a class="heading-anchor" href="#controller-configuration" aria-label="Link to Controller Configuration">#</a></h2>
+<pre><code class="language-json">&quot;postgresql&quot;: {
+  &quot;enabled&quot;: true,
+  &quot;discovery_interval_seconds&quot;: 5,
+  &quot;discovery_timeout_seconds&quot;: 4,
+  &quot;automatic_failover_enabled&quot;: false,
+  &quot;automatic_failover_interval_seconds&quot;: 5,
+  &quot;automatic_failover_retry_seconds&quot;: 30,
+  &quot;discovery&quot;: {
+    &quot;username&quot;: &quot;cg_monitor&quot;,
+    &quot;database&quot;: &quot;postgres&quot;,
+    &quot;password_env&quot;: &quot;CG_POSTGRESQL_DISCOVERY_PASSWORD&quot;
+  },
+  &quot;operation&quot;: {
+    &quot;username&quot;: &quot;cg_operator&quot;,
+    &quot;database&quot;: &quot;postgres&quot;,
+    &quot;password_env&quot;: &quot;CG_POSTGRESQL_OPERATION_PASSWORD&quot;
+  },
+  &quot;replication&quot;: {
+    &quot;username&quot;: &quot;clusterguard_repl&quot;,
+    &quot;database&quot;: &quot;postgres&quot;,
+    &quot;password_env&quot;: &quot;CG_POSTGRESQL_REPLICATION_PASSWORD&quot;
+  }
+}
+</code></pre>
+<p>Operation and replication credentials are an all-or-nothing pair. Discovery
+can remain read-only without them, but mutating capabilities stay unavailable.
+Automatic failover additionally requires both credentials, a healthy odd Raft
+control plane, and the restricted Agent. Invalid combinations fail at startup.</p>
+<h3 id="automatic-failover-contract">Automatic Failover Contract<a class="heading-anchor" href="#automatic-failover-contract" aria-label="Link to Automatic Failover Contract">#</a></h3>
+<p>Set <code>automatic_failover_enabled</code> only after the destructive qualification
+matrix below passes for the exact PostgreSQL packages, service units, network,
+storage, and fencing provider used in production. At the default cadence the
+controller requires six consecutive failed primary observations, giving a
+30-second stable-failure window before it evaluates a takeover.</p>
+<p>The PostgreSQL recovery controller is isolated from the MySQL controller. It
+selects only a rank-one standby from the same <code>system_identifier</code>, with current
+probe evidence, matching upstream node UUID and timeline, active WAL receive
+and replay, and known zero replay lag. Before promotion it requires Raft leader
+and majority authority plus verified old-primary isolation through the signed
+Agent or an external fencer. It then follows the common safety guard, operation
+lock, internal one-time incident approval, execution, verification, audit, and
+report pipeline.</p>
+<p>A blocked or failed pre-promotion attempt may be reconsidered only after the
+configured retry interval. A running, succeeded, or indeterminate attempt is
+never replayed blindly. Promotion waits until <code>pg_is_in_recovery()</code> is false;
+repoint and former-primary recovery wait until the approved immutable source
+UUID and <code>primary_conninfo</code> have both converged.</p>
+<h2 id="restricted-agent-policy">Restricted Agent Policy<a class="heading-anchor" href="#restricted-agent-policy" aria-label="Link to Restricted Agent Policy">#</a></h2>
+<p>Every database node runs <code>clusterguard-agent</code> with a cluster-specific policy.
+The policy fixes the cluster UUID, platform instance UUID, PostgreSQL native
+node UUID, engine, service, OS user, data directory, binary directory,
+database, passfile, port, VIP, and peer allowlist.
+Signed requests are short-lived and plan-bound. The Agent exposes fixed command
+vectors only; it is not a remote shell.</p>
+<pre><code class="language-json">{
+  &quot;cluster_id&quot;: &quot;33333333-3333-4333-8333-333333333333&quot;,
+  &quot;instance_id&quot;: &quot;44444444-4444-4444-8444-444444444444&quot;,
+  &quot;engine&quot;: &quot;postgresql&quot;,
+  &quot;postgresql_node_id&quot;: &quot;66666666-6666-4666-8666-666666666666&quot;,
+  &quot;vip&quot;: &quot;192.0.2.110&quot;,
+  &quot;interface&quot;: &quot;ens160&quot;,
+  &quot;prefix&quot;: 24,
+  &quot;postgresql_port&quot;: 5432,
+  &quot;postgresql_service&quot;: &quot;clusterguard-postgresql-5432.service&quot;,
+  &quot;postgresql_user&quot;: &quot;postgres&quot;,
+  &quot;postgresql_data_directory&quot;: &quot;/var/lib/clusterguard/postgresql/5432/data&quot;,
+  &quot;postgresql_binary_directory&quot;: &quot;/opt/clusterguard/postgresql/5432/software/bin&quot;,
+  &quot;postgresql_passfile&quot;: &quot;/etc/clusterguard/postgresql/5432.pass&quot;,
+  &quot;postgresql_database&quot;: &quot;postgres&quot;,
+  &quot;postgresql_replication_user&quot;: &quot;clusterguard_repl&quot;,
+  &quot;postgresql_peers&quot;: [
+    {
+      &quot;instance_id&quot;: &quot;55555555-5555-4555-8555-555555555555&quot;,
+      &quot;node_id&quot;: &quot;77777777-7777-4777-8777-777777777777&quot;,
+      &quot;hostname&quot;: &quot;pg-02&quot;,
+      &quot;ip_address&quot;: &quot;192.0.2.21&quot;,
+      &quot;port&quot;: 5432
+    }
+  ]
+}
+</code></pre>
+<p>The passfile must be owned by the configured PostgreSQL OS user, mode <code>0600</code>,
+and contain the required local administrative and peer replication entries.
+<code>instance_id</code> is the immutable ClusterGuard platform resource used for
+routing, leases, and responses. <code>postgresql_node_id</code> and each peer <code>node_id</code>
+are the immutable database-native identities written to
+<code>clusterguard.node_id</code>, <code>clusterguard.primary_node_id</code>, and replication
+<code>application_name</code>. They are deliberately different identifiers. Unknown
+service state, an unlisted platform or native source identity, changed source
+coordinates, or a request/plan identity mismatch fails closed.</p>
+<h2 id="node-lifecycle">Node Lifecycle<a class="heading-anchor" href="#node-lifecycle" aria-label="Link to Node Lifecycle">#</a></h2>
+<p>Enable the common lifecycle executor only on a three-or-more odd Raft control
+plane and provide the PostgreSQL helpers and write-only secret environments:</p>
+<pre><code class="language-json">&quot;node_lifecycle&quot;: {
+  &quot;enabled&quot;: true,
+  &quot;executor_path&quot;: &quot;/usr/local/libexec/clusterguard-node-lifecycle.sh&quot;,
+  &quot;package_repository&quot;: &quot;/opt/clusterguard/packages&quot;,
+  &quot;known_hosts_file&quot;: &quot;/etc/clusterguard/known_hosts&quot;,
+  &quot;identity_file&quot;: &quot;/etc/clusterguard/lifecycle_ed25519&quot;,
+  &quot;jq_binary&quot;: &quot;/usr/local/libexec/jq-linux-amd64&quot;,
+  &quot;mysql_root_password_env&quot;: &quot;CG_NODE_MYSQL_ROOT_PASSWORD&quot;,
+  &quot;replication_password_env&quot;: &quot;CG_NODE_MYSQL_REPLICATION_PASSWORD&quot;,
+  &quot;postgresql_install_helper&quot;: &quot;/usr/local/libexec/clusterguard-postgresql-install.sh&quot;,
+  &quot;postgresql_sync_helper&quot;: &quot;/usr/local/libexec/clusterguard-postgresql-sync.sh&quot;,
+  &quot;postgresql_admin_password_env&quot;: &quot;CG_NODE_POSTGRESQL_ADMIN_PASSWORD&quot;,
+  &quot;postgresql_replication_password_env&quot;: &quot;CG_NODE_POSTGRESQL_REPLICATION_PASSWORD&quot;,
+  &quot;postgresql_basebackup_available&quot;: true,
+  &quot;postgresql_rewind_available&quot;: true
+}
+</code></pre>
+<p>The console shows only methods enabled by this capability response:</p>
+<ul>
+<li><code>pg_basebackup</code> is the baseline for a new or divergent node;</li>
+<li><code>pg_rewind</code> is available only for a registered rebuild target with compatible
+system identity and rewind prerequisites.</li>
+</ul>
+<p>The helper stops the target, stages data outside the live directory, validates
+<code>PG_VERSION</code> and <code>system_identifier</code>, atomically swaps the data directory,
+starts the service, and verifies read-only recovery, upstream UUID, streaming,
+and absence of the writer VIP. Failed verification leaves the target stopped.</p>
+<h2 id="register-observe-and-operate">Register, Observe, and Operate<a class="heading-anchor" href="#register-observe-and-operate" aria-label="Link to Register, Observe, and Operate">#</a></h2>
+<p>Register only authoritative database endpoints with <code>engine: &quot;postgresql&quot;</code>,
+then publish a current observation:</p>
+<pre><code class="language-bash">curl -sS -X POST https://controller.example/api/v1/clusters \
+  -H &quot;Authorization: Bearer ${CG_CONTROL_TOKEN}&quot; \
+  -H &#39;content-type: application/json&#39; \
+  -d &#39;{
+    &quot;display_name&quot;:&quot;payments-postgresql&quot;,
+    &quot;engine&quot;:&quot;postgresql&quot;,
+    &quot;endpoints&quot;:[
+      {&quot;hostname&quot;:&quot;pg-01&quot;,&quot;ip_address&quot;:&quot;192.0.2.20&quot;,&quot;port&quot;:5432},
+      {&quot;hostname&quot;:&quot;pg-02&quot;,&quot;ip_address&quot;:&quot;192.0.2.21&quot;,&quot;port&quot;:5432},
+      {&quot;hostname&quot;:&quot;pg-03&quot;,&quot;ip_address&quot;:&quot;192.0.2.22&quot;,&quot;port&quot;:5432}
+    ]
+  }&#39;
+
+curl -sS -X POST https://controller.example/api/v1/clusters/&lt;cluster-uuid&gt;/discover \
+  -H &quot;Authorization: Bearer ${CG_CONTROL_TOKEN}&quot; \
+  -H &#39;content-type: application/json&#39; -d &#39;{}&#39;
+</code></pre>
+<p>The first successful observation binds <code>system_identifier</code> only after full
+active-endpoint coverage. A later hostname, IP, or port change reconciles the
+same node resource and records the previous coordinate as an alias.</p>
+<p>Manual switchover uses the common <code>/api/v1/operations/execute</code> route or the
+authenticated console. The server builds the immutable plan and internally
+consumes a one-time approval grant for an authorized platform user. Service
+automation uses the explicit plan-bound grant API. Neither path accepts a
+reusable approval password.</p>
+<h2 id="failover-and-fencing">Failover and Fencing<a class="heading-anchor" href="#failover-and-fencing" aria-label="Link to Failover and Fencing">#</a></h2>
+<p>A planned switchover can prove isolation by stopping and rechecking the source
+through the restricted Agent. An unreachable primary cannot provide that
+proof. Guarded failover therefore also requires a site-specific external
+fencer that isolates power, hypervisor, cloud instance, PDU, BMC, or equivalent
+write access and then independently reports <code>fenced:true</code>.</p>
+<p>Network reachability, ICMP failure, database timeout, read-only settings, and
+VIP absence are not fencing. Without majority authority and verified isolation,
+ClusterGuard chooses unavailability over a possible second writer.</p>
+<h2 id="metrics-and-monitoring">Metrics and Monitoring<a class="heading-anchor" href="#metrics-and-monitoring" aria-label="Link to Metrics and Monitoring">#</a></h2>
+<p>Use these dependency-free endpoints:</p>
+<pre><code class="language-text">GET /api/v1/clusters/{id}/health
+GET /api/v1/clusters/{id}/metrics
+GET /api/v1/clusters/{id}/metrics/prometheus
+GET /api/v1/monitoring/health
+</code></pre>
+<p>The console renders PostgreSQL-native names and cumulative values rather than
+labeling them as MySQL QPS/TPS. Unknown lag or optional transaction age is
+omitted instead of being synthesized as zero.</p>
+<h2 id="production-qualification">Production Qualification<a class="heading-anchor" href="#production-qualification" aria-label="Link to Production Qualification">#</a></h2>
+<p>Before enabling mutation on a production cluster, prove all of the following
+in an isolated environment built from the same PostgreSQL packages and service
+layout:</p>
+<ol>
+<li>Full discovery binds exactly one primary and all standby node identities.</li>
+<li>Candidate rejection works for timeline mismatch, paused replay, unknown lag,
+stale probe evidence, and a foreign system identifier.</li>
+<li>Planned switchover rotates through every node while preserving one writer
+and one VIP owner.</li>
+<li>Old-primary recovery succeeds with rewind and blocks to rebuild when rewind
+prerequisites are absent.</li>
+<li><code>pg_basebackup</code> rebuild leaves no target-only data and rejoins streaming.</li>
+<li>Controller minority cannot execute a mutation.</li>
+<li>A primary network partition remains blocked until the external fencer proves
+isolation.</li>
+<li>Process and host restarts preserve resource identity, operation history,
+audit, reports, endpoint lease, and control-plane quorum.</li>
+<li>Failure after promotion is reported <code>indeterminate</code> and is never retried
+blindly.</li>
+<li>Backups and point-in-time recovery remain independently tested; HA is not a
+substitute for backup.</li>
+</ol>
+
+          <footer class="document-footer">
+            <span>Source: <code>docs/postgresql-ha.md</code></span>
+            <a href="../index.html">Documentation language home</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="On this page">
+          <strong>On this page</strong>
+          <a class="toc-level-2" href="#delivered-capability">Delivered Capability</a><a class="toc-level-2" href="#safety-invariants">Safety Invariants</a><a class="toc-level-2" href="#postgresql-prerequisites">PostgreSQL Prerequisites</a><a class="toc-level-3" href="#stable-node-identity">Stable Node Identity</a><a class="toc-level-2" href="#database-accounts">Database Accounts</a><a class="toc-level-3" href="#discovery-account">Discovery Account</a><a class="toc-level-3" href="#operation-account">Operation Account</a><a class="toc-level-3" href="#replication-account">Replication Account</a><a class="toc-level-2" href="#controller-configuration">Controller Configuration</a><a class="toc-level-3" href="#automatic-failover-contract">Automatic Failover Contract</a><a class="toc-level-2" href="#restricted-agent-policy">Restricted Agent Policy</a><a class="toc-level-2" href="#node-lifecycle">Node Lifecycle</a><a class="toc-level-2" href="#register-observe-and-operate">Register, Observe, and Operate</a><a class="toc-level-2" href="#failover-and-fencing">Failover and Fencing</a><a class="toc-level-2" href="#metrics-and-monitoring">Metrics and Monitoring</a><a class="toc-level-2" href="#production-qualification">Production Qualification</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>
