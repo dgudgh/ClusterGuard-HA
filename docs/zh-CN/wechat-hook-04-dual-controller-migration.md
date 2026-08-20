@@ -1,5 +1,7 @@
 # 迁移高可用工具时，别让两个控制器同时能切
 
+![迁移高可用工具时，别让两个控制器同时能切](../assets/wechat-covers/hook-04-dual-controller-migration.jpg)
+
 从 Orchestrator 或 MHA 迁移到新的高可用平台时，最容易被低估的是中间阶段。
 
 旧系统还在监控和自动恢复，新系统也已经发现拓扑、安装 Agent、准备接管 VIP。两边页面都显示健康，看起来多了一层保险。

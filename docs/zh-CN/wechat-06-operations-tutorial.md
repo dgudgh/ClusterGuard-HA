@@ -1,5 +1,7 @@
 # 装好 ClusterGuard HA 以后，第一天该怎么用
 
+![装好 ClusterGuard HA 以后，第一天该怎么用](../assets/wechat-covers/series-06-first-day-operations.jpg)
+
 安装完成以后，先别切。
 
 第一天最重要的工作，是确认控制面、数据库拓扑和业务入口看到的是同一套事实，随后完成一次人工受控切换，再把旧主安全恢复到当前主库下面。这套过程跑通以后，才有条件继续做故障测试。

@@ -1,5 +1,7 @@
 # ClusterGuard HA 是怎样管住数据库切换这件事的
 
+![ClusterGuard HA 是怎样管住数据库切换这件事的](../assets/wechat-covers/series-04-controlled-switchover.jpg)
+
 本文是 ClusterGuard HA 公众号系列第四篇。前三篇介绍了产品来路，也分别讨论了 MHA 和 Orchestrator。接下来进入控制内核，看看一次切换怎样从按钮走到可复核的最终状态。
 
 数据库高可用最麻烦的时刻，往往从主库不可达之后才开始。

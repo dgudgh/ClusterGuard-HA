@@ -1,5 +1,7 @@
 # 改个主机名，数据库怎么就多了一台
 
+![改个主机名，数据库怎么就多了一台](../assets/wechat-covers/hook-01-hostname-duplicate.jpg)
+
 一台 MySQL 没有重装，数据也没有搬家，只改了主机名。
 
 高可用平台一刷新，节点重复了。

@@ -1,5 +1,7 @@
 # 从 MHA 走向完整的高可用控制平台
 
+![从 MHA 走向完整的高可用控制平台](../assets/wechat-covers/series-02-mha-comparison.jpg)
+
 谈 MySQL 高可用，很难绕开 MHA。
 
 在大量 MySQL 主从架构里，MHA 把故障切换从一套临时脚本变成了可以复用的工程方案。它能监控主库，选择候选节点，补齐差异 relay log，提升新主，并让剩余从库重新指向新的复制源。计划维护时，它也提供在线切换能力。

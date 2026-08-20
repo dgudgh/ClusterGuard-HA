@@ -1,5 +1,7 @@
 # Orchestrator 给了我们什么启发
 
+![Orchestrator 给了我们什么启发](../assets/wechat-covers/series-03-orchestrator-comparison.jpg)
+
 MHA 让很多团队第一次把 MySQL 主库故障切换做成了可复用流程。Orchestrator 又向前走了一步，它持续发现复制关系，把拓扑画出来，并依据实例状态分析可以怎样重构或恢复集群。
 
 对 DBA 来说，这种变化很重要。拓扑不再只存在于配置文件和脑海里。每台实例的复制来源、延迟、线程状态和候选关系都可以从一个控制面观察，计划切换和故障恢复也有了统一入口。

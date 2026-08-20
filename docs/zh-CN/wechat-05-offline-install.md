@@ -1,5 +1,7 @@
 # 三台服务器，从零装好 ClusterGuard HA
 
+![三台服务器，从零装好 ClusterGuard HA](../assets/wechat-covers/series-05-offline-install.jpg)
+
 这一篇直接完成一次三节点 MySQL 离线部署。
 
 示例使用 ClusterGuard HA `2.1.45`。三台服务器同时承担控制节点、MySQL 数据节点和 Agent，VIP 为 `192.168.102.155`。正式执行前，先把示例地址、网卡和目录替换成现场值。

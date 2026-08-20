@@ -1,5 +1,7 @@
 # 主库切过去了，旧主为什么加不回来
 
+![主库切过去了，旧主为什么加不回来](../assets/wechat-covers/hook-03-former-primary-rejoin.jpg)
+
 新主库已经上线，VIP 也跟了过去。故障似乎结束了。
 
 旧主恢复以后，`SHOW REPLICA STATUS` 却是空的。它没有复制源，仍然保留自己的 binlog 和事务历史。直接执行 `CHANGE REPLICATION SOURCE` 有时能追上，有时会报错，还有时候表面开始复制，后面才发现数据已经分叉。

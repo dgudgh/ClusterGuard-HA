@@ -1,5 +1,7 @@
 # 我为什么做 ClusterGuard HA
 
+![我为什么做 ClusterGuard HA](../assets/wechat-covers/series-01-why-clusterguard-ha.jpg)
+
 这个项目最早没有一个宏大的多数据库平台计划。
 
 当时要解决的事情很具体。三台 MySQL 服务器需要自动安装，主从关系要能建立，主库故障后 VIP 要跟着新主移动。机器重新启动以后，VIP 应该自动回到当前可写主库。旧主恢复时，最好在页面上点一下，就能判断它适合增量回挂，还是需要重新同步数据。

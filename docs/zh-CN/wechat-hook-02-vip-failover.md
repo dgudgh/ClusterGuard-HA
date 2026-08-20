@@ -1,5 +1,7 @@
 # VIP 漂过去了，切换就算成功了吗
 
+![VIP 漂过去了，切换就算成功了吗](../assets/wechat-covers/hook-02-vip-failover.jpg)
+
 一次 MySQL 切换结束以后，新主库已经可以写，VIP 也出现在新节点上。
 
 看起来一切正常。
