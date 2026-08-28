@@ -2697,7 +2697,9 @@
       byId('software-update-source-version').textContent = record.source_version || '不限';
       byId('software-update-target-version').textContent = record.target_version || '-';
       byId('software-update-size').textContent = formatBytes(Number(record.size_bytes));
-      byId('software-update-signature').textContent = record.signature_verified ? '已通过' : '未通过';
+      byId('software-update-signature').textContent = record.signature_verified
+        ? record.bootstrap_available ? `已通过 · 引导器 v${record.bootstrap_protocol || 1}` : '已通过 · 历史兼容包'
+        : '未通过';
       byId('software-update-rolling').textContent = record.rolling ? '支持' : '不支持';
       byId('software-update-rollback').textContent = record.rollback_available ? '可回退' : '不可回退';
       byId('software-update-uploaded-at').textContent = record.uploaded_at ? new Date(record.uploaded_at).toLocaleString(state.language) : '-';

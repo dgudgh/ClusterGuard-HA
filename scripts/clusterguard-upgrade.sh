@@ -2,6 +2,7 @@
 set -euo pipefail
 umask 077
 
+declare -a original_arguments=("$@")
 patch_file=""
 trust_key=""
 state_file="${PWD}/clusterguard-deployment-state.json"
@@ -75,11 +76,17 @@ configured_data_addresses=""
 update_root="/var/lib/clusterguard/updates"
 update_mode="execute"
 progress_replication_enabled=false
+bootstrap_available=false
+bootstrap_entrypoint=""
+bootstrap_sha=""
+bootstrap_protocol=0
+bootstrap_depth="${CG_UPDATE_BOOTSTRAP_DEPTH:-0}"
 cluster_idle_attempts="${CG_UPDATE_CLUSTER_IDLE_ATTEMPTS:-30}"
 cluster_idle_delay_seconds="${CG_UPDATE_CLUSTER_IDLE_DELAY_SECONDS:-2}"
 
 [[ "${cluster_idle_attempts}" =~ ^[1-9][0-9]*$ ]] || { printf 'CG_UPDATE_CLUSTER_IDLE_ATTEMPTS 必须为正整数\n' >&2; exit 1; }
 [[ "${cluster_idle_delay_seconds}" =~ ^[0-9]+$ ]] || { printf 'CG_UPDATE_CLUSTER_IDLE_DELAY_SECONDS 必须为非负整数\n' >&2; exit 1; }
+[[ "${bootstrap_depth}" == 0 || "${bootstrap_depth}" == 1 ]] || { printf 'CG_UPDATE_BOOTSTRAP_DEPTH 必须为 0 或 1\n' >&2; exit 1; }
 
 timestamp() { date '+%Y-%m-%d %H:%M:%S'; }
 log() { printf '[%s] %s\n' "$(timestamp)" "$*"; }
@@ -197,10 +204,12 @@ safe_extract_patch() {
 }
 
 verify_patch() {
-  local manifest signature manifest_sha actual_source actual_target
+  local manifest signature checksums manifest_sha actual_source actual_target actual_bootstrap
   manifest="${patch_root}/PATCH-MANIFEST.json"
   signature="${patch_root}/PATCH-MANIFEST.sig"
-  [[ -f "${manifest}" && ! -L "${manifest}" && -f "${signature}" && ! -L "${signature}" ]] || die "补丁缺少签名清单"
+  checksums="${patch_root}/SHA256SUMS"
+  [[ -f "${manifest}" && ! -L "${manifest}" && -f "${signature}" && ! -L "${signature}" && -f "${checksums}" && ! -L "${checksums}" ]] ||
+    die "补丁缺少签名清单"
   openssl dgst -sha256 -verify "${trust_key}" -signature "${signature}" "${manifest}" >/dev/null 2>&1 ||
     die "patch signature verification failed"
   jq -e '
@@ -248,7 +257,24 @@ verify_patch() {
   [[ "${actual_source}" == "${source_sha}" ]] || die "rollback RPM checksum mismatch"
   [[ "${actual_target}" == "${target_sha}" ]] || die "target RPM checksum mismatch"
   manifest_sha="$(sha256_file "${manifest}")"
-  grep -Fqx "${manifest_sha}  PATCH-MANIFEST.json" "${patch_root}/SHA256SUMS" || die "manifest checksum mismatch"
+  grep -Fqx "${manifest_sha}  PATCH-MANIFEST.json" "${checksums}" || die "manifest checksum mismatch"
+
+  if jq -e 'has("bootstrap")' "${manifest}" >/dev/null; then
+    jq -e '
+      .bootstrap.protocol == 1 and
+      .bootstrap.entrypoint == "bootstrap/clusterguard-upgrade.sh" and
+      (.bootstrap.sha256 | type == "string" and test("^[0-9a-f]{64}$"))
+    ' "${manifest}" >/dev/null || die "补丁引导升级合同无效"
+    bootstrap_protocol="$(jq -r '.bootstrap.protocol' "${manifest}")"
+    bootstrap_entrypoint="$(jq -r '.bootstrap.entrypoint' "${manifest}")"
+    bootstrap_sha="$(jq -r '.bootstrap.sha256' "${manifest}")"
+    [[ -f "${patch_root}/${bootstrap_entrypoint}" && ! -L "${patch_root}/${bootstrap_entrypoint}" ]] ||
+      die "补丁缺少签名引导升级器"
+    actual_bootstrap="$(sha256_file "${patch_root}/${bootstrap_entrypoint}")"
+    [[ "${actual_bootstrap}" == "${bootstrap_sha}" ]] || die "bootstrap upgrader checksum mismatch"
+    grep -Fqx "${bootstrap_sha}  ${bootstrap_entrypoint}" "${checksums}" || die "bootstrap upgrader checksum manifest mismatch"
+    bootstrap_available=true
+  fi
 }
 
 cleanup() {
@@ -272,7 +298,23 @@ if ${inspect_only}; then
   printf 'rollback=available\n'
   printf 'rolling=true\n'
   printf 'database_mutation=false\n'
+  if ${bootstrap_available}; then
+    printf 'bootstrap=available\n'
+    printf 'bootstrap_protocol=%s\n' "${bootstrap_protocol}"
+  else
+    printf 'bootstrap=unavailable\n'
+    printf 'bootstrap_protocol=0\n'
+  fi
   exit 0
+fi
+
+if ${bootstrap_available} && [[ "${bootstrap_depth}" == 0 ]]; then
+  log "签名引导升级器校验通过，切换到升级包内执行器"
+  set +e
+  CG_UPDATE_BOOTSTRAP_DEPTH=1 bash "${patch_root}/${bootstrap_entrypoint}" "${original_arguments[@]}"
+  bootstrap_exit=$?
+  set -e
+  exit "${bootstrap_exit}"
 fi
 
 if ${rollback_requested}; then

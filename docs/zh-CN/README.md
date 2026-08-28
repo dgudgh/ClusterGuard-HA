@@ -24,21 +24,25 @@
 
 ## 推荐阅读顺序
 
-1. [2.2.39 发布说明](release-2.2.39.md)
+1. [2.2.43 发布说明](release-2.2.43.md)
    确认正式包、摘要、支持范围和生产准入边界。
-2. [产品导览](product-tour.md)
+2. [2.2.42 发布说明](release-2.2.42.md)
+3. [2.2.41 发布说明](release-2.2.41.md)
+4. [2.2.40 发布说明](release-2.2.40.md)
+5. [2.2.39 发布说明](release-2.2.39.md)
+6. [产品导览](product-tour.md)
    通过实际控制台截图了解拓扑、操作、节点生命周期和操作日志。
-3. [离线安装与部署手册](offline-rpm-install.md)
+7. [离线安装与部署手册](offline-rpm-install.md)
    完成控制节点、数据节点、数据库、Agent、Raft、VIP 和证书部署。
-4. [数据库接入手册](database-preparation.md)
+8. [数据库接入手册](database-preparation.md)
    准备数据库原生身份、最小权限、复制和健康检查条件。
-5. [从 Orchestrator 迁移](orchestrator-migration.md)
+9. [从 Orchestrator 迁移](orchestrator-migration.md)
    在不重装已有数据库的前提下接入 MySQL，并安全转移唯一恢复与 VIP 控制权。
-6. [运维操作手册](operations-manual.md)
+10. [运维操作手册](operations-manual.md)
    执行切换、旧主恢复、节点扩容、计划关机、审计和应急处理。
-7. [版本升级与回退手册](update-and-patch.md)
+11. [版本升级与回退手册](update-and-patch.md)
    验证签名升级包、生成变更计划、滚动升级、断点续跑和受控回退。
-8. [版本与发版规范](version-release-policy.md)
+12. [版本与发版规范](version-release-policy.md)
    构建新版本、维护标签和发布 PostgreSQL 2.2 时使用。
 
 ## 验收证据

@@ -182,10 +182,40 @@ func TestUpgradePackageBuilderAndInspectorVerifySignedDualRPMBundle(t *testing.T
 	if err != nil {
 		t.Fatalf("inspect patch: %v\n%s", err, output)
 	}
-	for _, expected := range []string{"signature=verified", "patch_id=cgupgrade-2.2-28-to-2.2-29-x86_64", "source=2.2-28", "target=2.2-29", "rollback=available", "database_mutation=false"} {
+	for _, expected := range []string{"signature=verified", "patch_id=cgupgrade-2.2-28-to-2.2-29-x86_64", "source=2.2-28", "target=2.2-29", "rollback=available", "database_mutation=false", "bootstrap=available", "bootstrap_protocol=1"} {
 		if !strings.Contains(string(output), expected) {
 			t.Fatalf("inspect output missing %q:\n%s", expected, output)
 		}
+	}
+}
+
+func TestUpgradePackageHandsOffToVerifiedEmbeddedUpgrader(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq is required")
+	}
+	privateKey, publicKey := generatePatchSigningKey(t)
+	root := t.TempDir()
+	fromRPM := filepath.Join(root, "clusterguard-ha-2.2-28.x86_64.rpm")
+	toRPM := filepath.Join(root, "clusterguard-ha-2.2-29.x86_64.rpm")
+	writeFile(t, fromRPM, "rollback-rpm", 0o644)
+	writeFile(t, toRPM, "target-rpm", 0o644)
+	marker := filepath.Join(root, "bootstrap-called")
+	bootstrap := filepath.Join(root, "target-upgrader.sh")
+	writeFile(t, bootstrap, "#!/usr/bin/env bash\nset -eu\nprintf '%s\\n' signed-bootstrap >\"${BOOTSTRAP_MARKER:?}\"\n", 0o755)
+	patchPath := filepath.Join(root, "patch.cgupgrade")
+	if output, err := exec.Command("bash", "build-clusterguard-patch.sh",
+		"--from-rpm", fromRPM, "--to-rpm", toRPM, "--signing-key", privateKey,
+		"--bootstrap-upgrader", bootstrap, "--output", patchPath).CombinedOutput(); err != nil {
+		t.Fatalf("build patch: %v\n%s", err, output)
+	}
+	command := exec.Command("bash", "clusterguard-upgrade.sh", "--patch", patchPath, "--trust-key", publicKey, "--plan")
+	command.Env = append(os.Environ(), "BOOTSTRAP_MARKER="+marker)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("bootstrap handoff: %v\n%s", err, output)
+	}
+	contents, err := os.ReadFile(marker)
+	if err != nil || strings.TrimSpace(string(contents)) != "signed-bootstrap" {
+		t.Fatalf("signed bootstrap was not executed: contents=%q err=%v", contents, err)
 	}
 }
 
@@ -229,6 +259,38 @@ func TestPatchInspectorRejectsTamperedPayload(t *testing.T) {
 	output, err := exec.Command("bash", "clusterguard-upgrade.sh", "--patch", tampered, "--trust-key", publicKey, "--inspect").CombinedOutput()
 	if err == nil || !strings.Contains(string(output), "checksum") {
 		t.Fatalf("tampered patch was not rejected: err=%v output=%s", err, output)
+	}
+}
+
+func TestPatchInspectorRejectsTamperedBootstrapUpgrader(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq is required")
+	}
+	privateKey, publicKey := generatePatchSigningKey(t)
+	root := t.TempDir()
+	fromRPM := filepath.Join(root, "clusterguard-ha-2.2-28.x86_64.rpm")
+	toRPM := filepath.Join(root, "clusterguard-ha-2.2-29.x86_64.rpm")
+	writeFile(t, fromRPM, "rollback-rpm", 0o644)
+	writeFile(t, toRPM, "target-rpm", 0o644)
+	patchPath := filepath.Join(root, "patch.cgupgrade")
+	if output, err := exec.Command("bash", "build-clusterguard-patch.sh", "--from-rpm", fromRPM, "--to-rpm", toRPM, "--signing-key", privateKey, "--output", patchPath).CombinedOutput(); err != nil {
+		t.Fatalf("build patch: %v\n%s", err, output)
+	}
+	extracted := filepath.Join(root, "extracted")
+	if err := os.MkdirAll(extracted, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command("tar", "-xzf", patchPath, "-C", extracted).CombinedOutput(); err != nil {
+		t.Fatalf("extract patch: %v\n%s", err, output)
+	}
+	writeFile(t, filepath.Join(extracted, "clusterguard-patch", "bootstrap", "clusterguard-upgrade.sh"), "#!/bin/sh\nexit 99\n", 0o755)
+	tampered := filepath.Join(root, "tampered.cgupgrade")
+	if output, err := exec.Command("tar", "-C", extracted, "-czf", tampered, "clusterguard-patch").CombinedOutput(); err != nil {
+		t.Fatalf("repack patch: %v\n%s", err, output)
+	}
+	output, err := exec.Command("bash", "clusterguard-upgrade.sh", "--patch", tampered, "--trust-key", publicKey, "--inspect").CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "bootstrap upgrader checksum mismatch") {
+		t.Fatalf("tampered bootstrap was not rejected: err=%v output=%s", err, output)
 	}
 }
 

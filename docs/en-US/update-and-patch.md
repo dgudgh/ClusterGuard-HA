@@ -48,23 +48,28 @@ curl --cacert /etc/clusterguard/tls/ca.crt \
   https://127.0.0.1:3000/api/v1/platform/version
 ```
 
-A `.cgupgrade` contains the target RPM, rollback RPM, compatibility manifest, SHA-256 checksums, and release signature. Sites retain only the release public key. The private signing key must remain offline and must never be shipped to customer systems. The legacy `.cgpatch` suffix is accepted only for compatibility.
+A `.cgupgrade` contains the target RPM, rollback RPM, embedded bootstrap updater, compatibility manifest, SHA-256 checksums, and release signature. Sites retain only the release public key. The private signing key must remain offline and must never be shipped to customer systems. The legacy `.cgpatch` suffix is accepted only for compatibility.
 
 ```text
 clusterguard-patch/
 ├── PATCH-MANIFEST.json
 ├── PATCH-MANIFEST.sig
 ├── SHA256SUMS
+├── bootstrap/
+│   └── clusterguard-upgrade.sh
 └── payload/
     ├── clusterguard-ha-old.rpm
     └── clusterguard-ha-new.rpm
 ```
 
-Three independent contracts protect a site update:
+The updater already installed on the source node is limited to safe extraction, release-signature verification, and bootstrap SHA-256 verification. Planning, rolling execution, convergence waits, resume, and rollback are delegated to the verified updater embedded in the package. Orchestration fixes therefore take effect before the target RPM is installed instead of inheriting stale source-version behavior. A modified, missing, or incompatible bootstrap is rejected before maintenance gates are created.
+
+Four independent contracts protect a site update:
 
 1. **Version contract**: the RPM, running binary, and update-package manifest must agree on version, architecture, `state_format`, and `update_protocol`.
 2. **Node identity contract**: the deployment inventory, immutable UUID in `/etc/clusterguard/node.json`, live Raft voters, and active data-node inventory must match exactly. Hostname, IP, and membership changes are never inferred optimistically.
 3. **Maintenance transaction contract**: every controller receives a durable marker for the same `patch_id` before rolling work starts. Markers are released only after end-to-end verification; a partial release triggers compensating re-lock on every controller.
+4. **Bootstrap execution contract**: every new `.cgupgrade` must contain a manifest-declared bootstrap updater covered by the release signature. The console rejects a new package without a verified bootstrap; `.cgpatch` remains a legacy compatibility path only.
 
 The initial installer registers immutable controller, data, and mixed-node identities before database discovery. Later expansion, retirement, or replacement must update the resource inventory through the node lifecycle workflow; the updater will not silently omit an active node.
 
@@ -123,7 +128,9 @@ clusterguard-upgrade \
   --inspect
 ```
 
-Require `signature=verified`, the expected source and target, `rollback=available`, and `database_mutation=false`.
+Require `signature=verified`, the expected source and target, `rollback=available`, `database_mutation=false`, `bootstrap=available`, and `bootstrap_protocol=1`.
+
+During plan or execution, the source updater logs that the signed bootstrap was verified and execution is being handed to the package updater. Do not proceed with a production change if this handoff record is absent.
 
 ### Plan
 

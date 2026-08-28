@@ -15,6 +15,16 @@ type inspectorStub struct {
 	err    error
 }
 
+type countingInspector struct {
+	result Package
+	calls  int
+}
+
+func (inspector *countingInspector) Inspect(context.Context, string, string) (Package, error) {
+	inspector.calls++
+	return inspector.result, nil
+}
+
 func (stub inspectorStub) Inspect(context.Context, string, string) (Package, error) {
 	return stub.result, stub.err
 }
@@ -42,6 +52,7 @@ func TestManagerUploadVerifiesAndPersistsSignedUpgradePackage(t *testing.T) {
 		WithInspector(inspectorStub{result: Package{
 			PatchID: "cg-2.2-1-to-2.2-2", SourceVersion: "2.2-1", TargetVersion: "2.2-2",
 			Architecture: "x86_64", SignatureVerified: true, RollbackAvailable: true, Rolling: true,
+			BootstrapAvailable: true, BootstrapProtocol: 1,
 		}}), WithHelper(helper), WithClock(func() time.Time { return time.Unix(100, 0).UTC() }))
 
 	result, err := manager.Upload(context.Background(), "release.cgupgrade", strings.NewReader("signed package"))
@@ -57,6 +68,115 @@ func TestManagerUploadVerifiesAndPersistsSignedUpgradePackage(t *testing.T) {
 	snapshot := manager.Snapshot(context.Background())
 	if !snapshot.Available || len(snapshot.Packages) != 1 || snapshot.Packages[0].Package.PatchID != result.PatchID {
 		t.Fatalf("unexpected snapshot: %+v", snapshot)
+	}
+}
+
+func TestManagerRequiresBootstrapForPreferredUpgradePackage(t *testing.T) {
+	root := t.TempDir()
+	trust := filepath.Join(root, "public.pem")
+	if err := os.WriteFile(trust, []byte("public"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	manager := NewManager(Config{RootDirectory: root, TrustKeyPath: trust, MaximumUploadBytes: 1024},
+		WithInspector(inspectorStub{result: Package{
+			PatchID: "cg-2.2-1-to-2.2-2", SourceVersion: "2.2-1", TargetVersion: "2.2-2",
+			SignatureVerified: true, RollbackAvailable: true, Rolling: true,
+		}}), WithHelper(&helperStub{}))
+	if _, err := manager.Upload(context.Background(), "release.cgupgrade", strings.NewReader("signed package")); !errors.Is(err, ErrBootstrapRequired) {
+		t.Fatalf("preferred package without bootstrap err=%v", err)
+	}
+	if _, err := manager.Upload(context.Background(), "legacy.cgpatch", strings.NewReader("signed package")); err != nil {
+		t.Fatalf("legacy package should remain compatible: %v", err)
+	}
+}
+
+func TestManagerRefusesPreviouslyUploadedUpgradePackageWithoutBootstrap(t *testing.T) {
+	manager, _, patchID := preparedManager(t)
+	packagePath := filepath.Join(manager.config.RootDirectory, patchID, packageFileName)
+	softwarePackage, found := manager.Package(patchID)
+	if !found {
+		t.Fatal("prepared package not found")
+	}
+	softwarePackage.FileName = "old-release.cgupgrade"
+	softwarePackage.BootstrapAvailable = false
+	softwarePackage.BootstrapProtocol = 0
+	if err := writeJSONAtomic(packagePath, softwarePackage); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Start(context.Background(), ModePlan, patchID, ""); !errors.Is(err, ErrBootstrapRequired) {
+		t.Fatalf("stored package without bootstrap err=%v", err)
+	}
+}
+
+func TestManagerReverifiesAndBackfillsBootstrapFromOlderPackageMetadata(t *testing.T) {
+	manager, _, patchID := preparedManager(t)
+	packagePath := filepath.Join(manager.config.RootDirectory, patchID, packageFileName)
+	softwarePackage, found := manager.Package(patchID)
+	if !found {
+		t.Fatal("prepared package not found")
+	}
+	softwarePackage.FileName = "uploaded-by-2.2-42.cgupgrade"
+	softwarePackage.BootstrapAvailable = false
+	softwarePackage.BootstrapProtocol = 0
+	if err := writeJSONAtomic(packagePath, softwarePackage); err != nil {
+		t.Fatal(err)
+	}
+	manager.inspector = inspectorStub{result: Package{
+		PatchID: patchID, SourceVersion: softwarePackage.SourceVersion, TargetVersion: softwarePackage.TargetVersion,
+		Architecture: softwarePackage.Architecture, SignatureVerified: true, RollbackAvailable: true, Rolling: true,
+		BootstrapAvailable: true, BootstrapProtocol: 1,
+	}}
+	snapshot := manager.Snapshot(context.Background())
+	if len(snapshot.Packages) != 1 || !snapshot.Packages[0].Package.BootstrapAvailable || snapshot.Packages[0].Package.BootstrapProtocol != 1 {
+		t.Fatalf("snapshot did not reconcile older package metadata: %+v", snapshot)
+	}
+	persisted, found := manager.Package(patchID)
+	if !found || !persisted.BootstrapAvailable || persisted.BootstrapProtocol != 1 {
+		t.Fatalf("bootstrap contract was not persisted: found=%t package=%+v", found, persisted)
+	}
+	if _, err := manager.Start(context.Background(), ModePlan, patchID, ""); err != nil {
+		t.Fatalf("reconciled package should be plannable: %v", err)
+	}
+}
+
+func TestManagerCachesVerifiedBootstrapWhenRootHistoryCannotBeRewritten(t *testing.T) {
+	manager, _, patchID := preparedManager(t)
+	packageDirectory := filepath.Join(manager.config.RootDirectory, patchID)
+	packagePath := filepath.Join(packageDirectory, packageFileName)
+	softwarePackage, found := manager.Package(patchID)
+	if !found {
+		t.Fatal("prepared package not found")
+	}
+	softwarePackage.FileName = "uploaded-by-older-release.cgupgrade"
+	softwarePackage.BootstrapAvailable = false
+	softwarePackage.BootstrapProtocol = 0
+	if err := writeJSONAtomic(packagePath, softwarePackage); err != nil {
+		t.Fatal(err)
+	}
+	inspector := &countingInspector{result: Package{
+		PatchID: patchID, SourceVersion: softwarePackage.SourceVersion, TargetVersion: softwarePackage.TargetVersion,
+		Architecture: softwarePackage.Architecture, SignatureVerified: true, RollbackAvailable: true, Rolling: true,
+		BootstrapAvailable: true, BootstrapProtocol: 1,
+	}}
+	manager.inspector = inspector
+	if err := os.Chmod(packageDirectory, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(packageDirectory, 0o750)
+	for attempt := 0; attempt < 2; attempt++ {
+		snapshot := manager.Snapshot(context.Background())
+		if len(snapshot.Packages) != 1 || !snapshot.Packages[0].Package.BootstrapAvailable || snapshot.Packages[0].Package.BootstrapProtocol != 1 {
+			t.Fatalf("snapshot %d lost verified bootstrap: %+v", attempt+1, snapshot)
+		}
+	}
+	if inspector.calls != 1 {
+		t.Fatalf("verified bootstrap should be cached after one inspection, calls=%d", inspector.calls)
+	}
+	if err := os.Chmod(packageDirectory, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Start(context.Background(), ModePlan, patchID, ""); err != nil {
+		t.Fatalf("cached bootstrap should remain plannable: %v", err)
 	}
 }
 
@@ -188,6 +308,23 @@ func TestManagerStatusIncludesOutputAndJournalEventsWithoutSecrets(t *testing.T)
 	}
 	if len(job.Progress.CompletedNodes) != 1 || job.Progress.CompletedNodes[0] != "node-2" {
 		t.Fatalf("unexpected completed nodes: %+v", job.Progress.CompletedNodes)
+	}
+}
+
+func TestManagerSurfacesUnreadableOrCorruptJobInsteadOfUploaded(t *testing.T) {
+	manager, _, patchID := preparedManager(t)
+	jobPath := filepath.Join(manager.config.RootDirectory, patchID, jobFileName)
+	if err := os.WriteFile(jobPath, []byte("not-json\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	job, found := manager.Job(patchID)
+	if !found || job.Status != StatusFailed || !job.MaintenanceActive || job.AutomaticFailoverAvailable ||
+		!strings.Contains(job.Message, "操作结果需要验证") {
+		t.Fatalf("corrupt job was hidden as uploaded: found=%t job=%+v", found, job)
+	}
+	snapshot := manager.Snapshot(context.Background())
+	if len(snapshot.Packages) != 1 || snapshot.Packages[0].Job == nil || snapshot.Packages[0].Job.Status != StatusFailed {
+		t.Fatalf("snapshot hid corrupt job: %+v", snapshot)
 	}
 }
 

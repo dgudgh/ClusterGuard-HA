@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 umask 077
+unset CG_UPDATE_BOOTSTRAP_DEPTH
 
 root="${CG_UPDATE_ROOT:-/var/lib/clusterguard/updates}"
 config="${CG_UPDATE_CONFIG:-/etc/clusterguard/update.json}"

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -35,10 +36,12 @@ func (inspector CommandInspector) Inspect(ctx context.Context, patchPath, trustK
 			values[strings.TrimSpace(key)] = strings.TrimSpace(value)
 		}
 	}
+	bootstrapProtocol, _ := strconv.Atoi(values["bootstrap_protocol"])
 	return Package{
 		PatchID: values["patch_id"], SourceVersion: values["source"], TargetVersion: values["target"],
 		Architecture: values["architecture"], SignatureVerified: values["signature"] == "verified",
 		RollbackAvailable: values["rollback"] == "available", Rolling: values["rolling"] == "true",
-		DatabaseMutation: values["database_mutation"] != "false",
+		DatabaseMutation:   values["database_mutation"] != "false",
+		BootstrapAvailable: values["bootstrap"] == "available", BootstrapProtocol: bootstrapProtocol,
 	}, nil
 }

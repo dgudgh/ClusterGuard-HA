@@ -27,6 +27,10 @@ npm run build:html
 | Documentation index / 文档索引 | [English](en-US/README.md) | [中文](zh-CN/README.md) |
 | Product tour / 产品导览 | [English](en-US/product-tour.md) | [中文](zh-CN/product-tour.md) |
 | Architecture / 架构 | [English](architecture.md) | [中文](zh-CN/architecture.md) |
+| 2.2.43 release notes / 2.2.43 发布说明 | [English](en-US/release-2.2.43.md) | [中文](zh-CN/release-2.2.43.md) |
+| 2.2.42 release notes / 2.2.42 发布说明 | [English](en-US/release-2.2.42.md) | [中文](zh-CN/release-2.2.42.md) |
+| 2.2.41 release notes / 2.2.41 发布说明 | [English](en-US/release-2.2.41.md) | [中文](zh-CN/release-2.2.41.md) |
+| 2.2.40 release notes / 2.2.40 发布说明 | [English](en-US/release-2.2.40.md) | [中文](zh-CN/release-2.2.40.md) |
 | 2.2.39 release notes / 2.2.39 发布说明 | [English](en-US/release-2.2.39.md) | [中文](zh-CN/release-2.2.39.md) |
 | 2.1.45 release notes / 2.1.45 发布说明 | [English](en-US/release-2.1.45.md) | [中文](zh-CN/release-2.1.45.md) |
 | Offline RPM installation / 离线 RPM 安装 | [English](en-US/offline-rpm-install.md) | [中文](zh-CN/offline-rpm-install.md) |

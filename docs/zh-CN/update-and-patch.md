@@ -55,23 +55,28 @@ curl --cacert /etc/clusterguard/tls/ca.crt \
   https://127.0.0.1:3000/api/v1/platform/version
 ```
 
-签名升级包使用 `.cgupgrade` 后缀，包含目标 RPM、回退 RPM、兼容性清单、SHA-256 摘要和发布签名。现场只保存发布公钥，发布私钥必须离线保管，不得放入安装包或客户服务器。旧 `.cgpatch` 后缀只作为兼容入口保留。
+签名升级包使用 `.cgupgrade` 后缀，包含目标 RPM、回退 RPM、包内引导升级器、兼容性清单、SHA-256 摘要和发布签名。现场只保存发布公钥，发布私钥必须离线保管，不得放入安装包或客户服务器。旧 `.cgpatch` 后缀只作为兼容入口保留。
 
 ```text
 clusterguard-patch/
 ├── PATCH-MANIFEST.json
 ├── PATCH-MANIFEST.sig
 ├── SHA256SUMS
+├── bootstrap/
+│   └── clusterguard-upgrade.sh
 └── payload/
     ├── clusterguard-ha-旧版本.rpm
     └── clusterguard-ha-新版本.rpm
 ```
 
-现场升级由三层合同共同约束：
+当前节点已经安装的升级器只负责安全解包、发布签名和引导器 SHA-256 校验。计划、滚动、收敛等待、断点续跑和回退由验签后的包内引导升级器执行。这样修复升级编排逻辑时，不必等目标 RPM 安装完成后才能生效，也不会继续使用源版本中已经过时的滚动逻辑。引导器被篡改、清单缺失或协议不兼容时，升级在建立维护门禁前失败。
+
+现场升级由四层合同共同约束：
 
 1. **版本合同**：RPM、运行中二进制和升级包清单的版本、架构、`state_format`、`update_protocol` 必须一致。
 2. **节点身份合同**：部署清单、每台节点 `/etc/clusterguard/node.json` 中的不可变 UUID、实时 Raft voter 和活动数据节点清单必须完全一致。hostname、IP 或节点数量变化不会靠猜测处理。
 3. **维护事务合同**：升级前在所有控制节点建立同一 `patch_id` 的持久维护标记，滚动完成并复核后才整体释放。任一节点释放失败会触发全节点补偿回锁。
+4. **引导执行合同**：新 `.cgupgrade` 必须携带清单声明且经过发布签名覆盖的引导升级器。控制台拒绝缺少有效引导器的新升级包；旧 `.cgpatch` 仅用于历史兼容。
 
 初始安装器会先登记控制节点、数据节点和混合节点的不可变身份，再进行数据库集群发现。后续扩容、退役或替换节点必须通过节点生命周期流程更新资源清单，升级器不会遗漏清单外的活动节点。
 
@@ -130,7 +135,9 @@ clusterguard-upgrade \
   --inspect
 ```
 
-必须看到 `signature=verified`、正确的源/目标版本、`rollback=available` 和 `database_mutation=false`。
+必须看到 `signature=verified`、正确的源/目标版本、`rollback=available`、`database_mutation=false`、`bootstrap=available` 和 `bootstrap_protocol=1`。
+
+执行计划或升级时，原版本升级器完成同样的验签后会输出“签名引导升级器校验通过，切换到升级包内执行器”。未出现该记录时不得执行正式变更。
 
 ### 生成现场计划
 

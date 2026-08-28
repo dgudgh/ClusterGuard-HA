@@ -2,6 +2,7 @@
 set -euo pipefail
 export COPYFILE_DISABLE=1
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 from_rpm=""
 to_rpm=""
 signing_key=""
@@ -9,6 +10,7 @@ output=""
 channel="stable"
 state_format=1
 update_protocol=1
+bootstrap_upgrader="${script_dir}/clusterguard-upgrade.sh"
 
 usage() {
   cat <<'EOF'
@@ -21,6 +23,8 @@ usage() {
   --channel NAME        发布通道，默认 stable
   --state-format N      元数据格式，默认 1
   --update-protocol N   升级协议，默认 1
+  --bootstrap-upgrader FILE
+                        写入签名包的引导升级器，默认使用同目录 clusterguard-upgrade.sh
 EOF
 }
 
@@ -36,6 +40,7 @@ while (($#)); do
     --channel) need_value "$@"; channel="$2"; shift 2 ;;
     --state-format) need_value "$@"; state_format="$2"; shift 2 ;;
     --update-protocol) need_value "$@"; update_protocol="$2"; shift 2 ;;
+    --bootstrap-upgrader) need_value "$@"; bootstrap_upgrader="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) die "未知参数：$1" ;;
   esac
@@ -47,6 +52,7 @@ command -v tar >/dev/null 2>&1 || die "需要 tar"
 [[ -f "${from_rpm}" && ! -L "${from_rpm}" ]] || die "回退 RPM 不存在或不是普通文件"
 [[ -f "${to_rpm}" && ! -L "${to_rpm}" ]] || die "目标 RPM 不存在或不是普通文件"
 [[ -f "${signing_key}" && ! -L "${signing_key}" ]] || die "补丁签名私钥不存在或不是普通文件"
+[[ -f "${bootstrap_upgrader}" && ! -L "${bootstrap_upgrader}" ]] || die "引导升级器不存在或不是普通文件"
 [[ -n "${output}" ]] || die "必须指定 --output"
 [[ "${channel}" =~ ^[A-Za-z0-9._-]+$ ]] || die "发布通道格式无效"
 [[ "${state_format}" =~ ^[1-9][0-9]*$ ]] || die "state format 必须为正整数"
@@ -88,12 +94,14 @@ output="${output_dir}/$(basename "${output}")"
 stage="$(mktemp -d /tmp/clusterguard-patch.XXXXXX)"
 trap 'rm -rf "${stage}"' EXIT
 root="${stage}/clusterguard-patch"
-mkdir -p "${root}/payload"
+mkdir -p "${root}/payload" "${root}/bootstrap"
 install -m 0644 "${from_rpm}" "${root}/payload/${from_name}"
 install -m 0644 "${to_rpm}" "${root}/payload/${to_name}"
+install -m 0755 "${bootstrap_upgrader}" "${root}/bootstrap/clusterguard-upgrade.sh"
 
 from_sha="$(sha256_file "${root}/payload/${from_name}")"
 to_sha="$(sha256_file "${root}/payload/${to_name}")"
+bootstrap_sha="$(sha256_file "${root}/bootstrap/clusterguard-upgrade.sh")"
 created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 patch_id="cgupgrade-${from_version}-${from_release}-to-${to_version}-${to_release}-${from_arch}"
 
@@ -107,6 +115,7 @@ jq -n \
   --arg architecture "${from_arch}" \
   --arg from_rpm "${from_name}" --arg from_sha "${from_sha}" \
   --arg to_rpm "${to_name}" --arg to_sha "${to_sha}" \
+  --arg bootstrap_entrypoint "bootstrap/clusterguard-upgrade.sh" --arg bootstrap_sha "${bootstrap_sha}" \
   --argjson state_format "${state_format}" --argjson update_protocol "${update_protocol}" \
   '{
     schema_version: 1,
@@ -130,6 +139,11 @@ jq -n \
       target_state_format: $state_format,
       update_protocol: $update_protocol
     },
+    bootstrap: {
+      protocol: 1,
+      entrypoint: $bootstrap_entrypoint,
+      sha256: $bootstrap_sha
+    },
     policy: {
       rolling: true,
       rollback_supported: true,
@@ -145,6 +159,7 @@ openssl dgst -sha256 -sign "${signing_key}" -out "${root}/PATCH-MANIFEST.sig" "$
   printf '%s  %s\n' "$(sha256_file "${root}/PATCH-MANIFEST.json")" "PATCH-MANIFEST.json"
   printf '%s  %s\n' "${from_sha}" "payload/${from_name}"
   printf '%s  %s\n' "${to_sha}" "payload/${to_name}"
+  printf '%s  %s\n' "${bootstrap_sha}" "bootstrap/clusterguard-upgrade.sh"
 } >"${root}/SHA256SUMS"
 
 temporary_output="${output}.tmp.$$"
@@ -159,3 +174,4 @@ printf 'source=%s-%s\n' "${from_version}" "${from_release}"
 printf 'target=%s-%s\n' "${to_version}" "${to_release}"
 printf 'signature=created\n'
 printf 'rollback=embedded\n'
+printf 'bootstrap=embedded\n'

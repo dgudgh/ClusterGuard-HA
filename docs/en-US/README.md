@@ -22,21 +22,25 @@ Do not use historical candidate packages with numbers higher than `2.1-45` in th
 
 ## Recommended Reading Order
 
-1. [2.2.39 Release Notes](release-2.2.39.md)
+1. [2.2.43 Release Notes](release-2.2.43.md)
    Confirm the official package, summary, support scope, and production admission boundary.
-2. [Product Tour](product-tour.md)
+2. [2.2.42 Release Notes](release-2.2.42.md)
+3. [2.2.41 Release Notes](release-2.2.41.md)
+4. [2.2.40 Release Notes](release-2.2.40.md)
+5. [2.2.39 Release Notes](release-2.2.39.md)
+6. [Product Tour](product-tour.md)
    Understand the topology, operations, node lifecycle, and operation logs through actual control console screenshots.
-3. [Offline Installation and Deployment Manual](offline-rpm-install.md)
+7. [Offline Installation and Deployment Manual](offline-rpm-install.md)
    Complete the deployment of control nodes, data nodes, databases, Agent, Raft, VIP, and certificates.
-4. [Database Preparation Manual](database-preparation.md)
+8. [Database Preparation Manual](database-preparation.md)
    Prepare native database identity, minimal permissions, replication, and health check conditions.
-5. [Migration from Orchestrator](orchestrator-migration.md)
+9. [Migration from Orchestrator](orchestrator-migration.md)
    Onboard existing MySQL clusters without reinstalling data and transfer exclusive recovery and VIP authority safely.
-6. [Operations Manual](operations-manual.md)
+10. [Operations Manual](operations-manual.md)
    Execute failover, old primary recovery, node expansion, planned shutdown, audit, and emergency handling.
-7. [Version Update and Rollback Guide](update-and-patch.md)
+11. [Version Update and Rollback Guide](update-and-patch.md)
    Verify signed update packages, review the plan, roll nodes, resume interrupted work, and perform controlled rollback.
-8. [Version and Release Policy](version-release-policy.md)
+12. [Version and Release Policy](version-release-policy.md)
    Use when building new versions, maintaining tags, and releasing PostgreSQL 2.2.
 
 ## Acceptance Evidence

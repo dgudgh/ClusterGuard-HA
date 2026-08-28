@@ -43,6 +43,7 @@ var (
 	ErrPlanRequired         = errors.New("a successful update plan is required before execution")
 	ErrConfirmationRequired = errors.New("typed update package confirmation is required")
 	ErrJobActive            = errors.New("another software update job is already active")
+	ErrBootstrapRequired    = errors.New("signed .cgupgrade package does not contain a verified bootstrap upgrader")
 	patchIDPattern          = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 )
 
@@ -75,18 +76,20 @@ const (
 )
 
 type Package struct {
-	PatchID           string    `json:"patch_id"`
-	FileName          string    `json:"file_name"`
-	SizeBytes         int64     `json:"size_bytes"`
-	SHA256            string    `json:"sha256"`
-	SourceVersion     string    `json:"source_version"`
-	TargetVersion     string    `json:"target_version"`
-	Architecture      string    `json:"architecture"`
-	SignatureVerified bool      `json:"signature_verified"`
-	RollbackAvailable bool      `json:"rollback_available"`
-	Rolling           bool      `json:"rolling"`
-	DatabaseMutation  bool      `json:"database_mutation"`
-	UploadedAt        time.Time `json:"uploaded_at"`
+	PatchID            string    `json:"patch_id"`
+	FileName           string    `json:"file_name"`
+	SizeBytes          int64     `json:"size_bytes"`
+	SHA256             string    `json:"sha256"`
+	SourceVersion      string    `json:"source_version"`
+	TargetVersion      string    `json:"target_version"`
+	Architecture       string    `json:"architecture"`
+	SignatureVerified  bool      `json:"signature_verified"`
+	RollbackAvailable  bool      `json:"rollback_available"`
+	Rolling            bool      `json:"rolling"`
+	DatabaseMutation   bool      `json:"database_mutation"`
+	BootstrapAvailable bool      `json:"bootstrap_available"`
+	BootstrapProtocol  int       `json:"bootstrap_protocol,omitempty"`
+	UploadedAt         time.Time `json:"uploaded_at"`
 }
 
 type Event struct {
@@ -159,11 +162,12 @@ type Helper interface {
 }
 
 type Manager struct {
-	config    Config
-	inspector Inspector
-	helper    Helper
-	now       func() time.Time
-	mu        sync.Mutex
+	config             Config
+	inspector          Inspector
+	helper             Helper
+	now                func() time.Time
+	verifiedBootstraps map[string]struct{}
+	mu                 sync.Mutex
 }
 
 type Option func(*Manager)
@@ -190,7 +194,7 @@ func NewManager(config Config, options ...Option) *Manager {
 	if config.MaximumUploadBytes <= 0 {
 		config.MaximumUploadBytes = DefaultMaximumUpload
 	}
-	manager := &Manager{config: config, now: time.Now}
+	manager := &Manager{config: config, now: time.Now, verifiedBootstraps: make(map[string]struct{})}
 	manager.inspector = CommandInspector{UpgradeBinaryPath: config.UpgradeBinaryPath}
 	manager.helper = NewUnixHelperClient(config.HelperSocketPath)
 	for _, option := range options {
@@ -202,6 +206,8 @@ func NewManager(config Config, options ...Option) *Manager {
 }
 
 func (manager *Manager) Snapshot(ctx context.Context) Snapshot {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
 	result := Snapshot{Warning: AutomaticFailoverWarning, MaximumUploadBytes: manager.config.MaximumUploadBytes, Packages: []PackageStatus{}}
 	if err := manager.readiness(ctx); err != nil {
 		result.Reason = err.Error()
@@ -223,6 +229,9 @@ func (manager *Manager) Snapshot(ctx context.Context) Snapshot {
 		candidate, found := manager.Package(entry.Name())
 		if !found {
 			continue
+		}
+		if reconciled, reconcileErr := manager.reconcileStoredBootstrap(ctx, candidate); reconcileErr == nil {
+			candidate = reconciled
 		}
 		status := PackageStatus{Package: candidate}
 		if job, jobFound := manager.Job(candidate.PatchID); jobFound {
@@ -275,6 +284,10 @@ func (manager *Manager) Upload(ctx context.Context, fileName string, source io.R
 		!inspected.RollbackAvailable || inspected.DatabaseMutation || strings.TrimSpace(inspected.TargetVersion) == "" {
 		return Package{}, ErrInvalidPatch
 	}
+	if strings.HasSuffix(strings.ToLower(filepath.Base(fileName)), PreferredPackageExtension) &&
+		(!inspected.BootstrapAvailable || inspected.BootstrapProtocol != 1) {
+		return Package{}, ErrBootstrapRequired
+	}
 	destinationDirectory := filepath.Join(manager.config.RootDirectory, inspected.PatchID)
 	if info, statErr := os.Lstat(destinationDirectory); statErr == nil && !info.IsDir() {
 		return Package{}, ErrInvalidPatch
@@ -313,8 +326,13 @@ func (manager *Manager) Start(ctx context.Context, mode Mode, patchID, confirmat
 	if !validPatchID(patchID) {
 		return Job{}, ErrPackageNotFound
 	}
-	if _, found := manager.Package(patchID); !found {
+	softwarePackage, found := manager.Package(patchID)
+	if !found {
 		return Job{}, ErrPackageNotFound
+	}
+	softwarePackage, err := manager.reconcileStoredBootstrap(ctx, softwarePackage)
+	if err != nil {
+		return Job{}, err
 	}
 	current, found := manager.Job(patchID)
 	if found && (current.Status == StatusQueued || current.Status == StatusRunning) {
@@ -368,14 +386,72 @@ func (manager *Manager) Package(patchID string) (Package, bool) {
 	return result, true
 }
 
+func (manager *Manager) reconcileStoredBootstrap(ctx context.Context, softwarePackage Package) (Package, error) {
+	if !strings.HasSuffix(strings.ToLower(filepath.Base(softwarePackage.FileName)), PreferredPackageExtension) {
+		return softwarePackage, nil
+	}
+	if softwarePackage.BootstrapAvailable && softwarePackage.BootstrapProtocol == 1 {
+		return softwarePackage, nil
+	}
+	cacheKey := softwarePackage.PatchID + "\x00" + softwarePackage.SHA256
+	if _, verified := manager.verifiedBootstraps[cacheKey]; verified {
+		softwarePackage.BootstrapAvailable = true
+		softwarePackage.BootstrapProtocol = 1
+		return softwarePackage, nil
+	}
+	patchPath := filepath.Join(manager.config.RootDirectory, softwarePackage.PatchID, patchFileName)
+	inspected, err := manager.inspector.Inspect(ctx, patchPath, manager.config.TrustKeyPath)
+	if err != nil || inspected.PatchID != softwarePackage.PatchID ||
+		inspected.SourceVersion != softwarePackage.SourceVersion || inspected.TargetVersion != softwarePackage.TargetVersion ||
+		inspected.Architecture != softwarePackage.Architecture || !inspected.SignatureVerified ||
+		!inspected.RollbackAvailable || !inspected.Rolling || inspected.DatabaseMutation ||
+		!inspected.BootstrapAvailable || inspected.BootstrapProtocol != 1 {
+		return softwarePackage, ErrBootstrapRequired
+	}
+	softwarePackage.BootstrapAvailable = true
+	softwarePackage.BootstrapProtocol = inspected.BootstrapProtocol
+	manager.verifiedBootstraps[cacheKey] = struct{}{}
+	// Root owns completed update history so the unprivileged API cannot forge it.
+	// Persist when the upload directory is still API-owned, otherwise retain the
+	// verified contract in memory and re-verify it once after a process restart.
+	_ = writeJSONAtomic(filepath.Join(manager.config.RootDirectory, softwarePackage.PatchID, packageFileName), softwarePackage)
+	return softwarePackage, nil
+}
+
 func (manager *Manager) Job(patchID string) (Job, bool) {
 	if !validPatchID(patchID) {
 		return Job{}, false
 	}
 	directory := filepath.Join(manager.config.RootDirectory, patchID)
+	jobPath := filepath.Join(directory, jobFileName)
 	result := Job{}
-	if err := readJSONFile(filepath.Join(directory, jobFileName), &result); err != nil || result.PatchID != patchID {
-		return Job{}, false
+	readErr := readJSONFile(jobPath, &result)
+	if readErr == nil && result.PatchID != patchID {
+		readErr = errors.New("任务记录中的升级包 ID 与目录不一致")
+	}
+	if readErr != nil {
+		info, statErr := os.Lstat(jobPath)
+		if errors.Is(statErr, os.ErrNotExist) {
+			return Job{}, false
+		}
+		updatedAt := manager.now().UTC()
+		if statErr == nil {
+			updatedAt = info.ModTime().UTC()
+		}
+		message := "升级任务状态存在但不可读取或解析，操作结果需要验证"
+		if detail := strings.TrimSpace(readErr.Error()); detail != "" {
+			if len(detail) > 256 {
+				detail = detail[:256]
+			}
+			message += "：" + detail
+		}
+		result = Job{
+			PatchID: patchID, Mode: ModeExecute, Status: StatusFailed, Message: message,
+			Warning: AutomaticFailoverWarning, MaintenanceActive: true,
+			AutomaticFailoverAvailable: false, UpdatedAt: updatedAt,
+		}
+		deriveJobProgress(&result)
+		return result, true
 	}
 	result.OutputTail = readTail(filepath.Join(directory, outputFileName), maximumTailLines)
 	eventsPath := filepath.Join(directory, eventsFileName)
