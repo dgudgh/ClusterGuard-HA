@@ -44,10 +44,11 @@
 <ul>
 <li><code>clusterguard-ha-2.2-39-offline-linux-x86_64.tar.gz</code> for installation, reinstallation, and offline deployment;</li>
 <li><code>clusterguard-ha-2.2-39.x86_64.rpm</code> containing the controllers, Agent, update helper, and operational scripts;</li>
-<li><code>clusterguard-ha-2.2-38_to_2.2-39.x86_64.cgupgrade</code> for signed rolling updates from the formal <code>2.2-38</code> release only;</li>
+<li><code>clusterguard-ha-2.2-update-signing-public.pem</code>, the update-package release public key established by this version;</li>
 <li>a <code>.sha256</code> file for every artifact and these release notes.</li>
 </ul>
 <p><code>.cgupgrade</code> is a complete signed rolling-update package, not a small binary delta. It contains the target RPM, rollback RPM, compatibility contract, SHA-256 checksums, and release signature. The full offline archive is for installation or reinstallation and cannot be uploaded directly to the Version Update page.</p>
+<p><code>2.2.39</code> establishes the managed-update protocol and the formal release key. This Release does not publish a generic <code>.cgupgrade</code> from historical laboratory media: the standard <code>2.2-38</code> package does not contain the managed-update framework, while the laboratory <code>2.2-38.field3</code> runtime does not match its RPM database contract. Beginning with the next formal version, Releases will include a <code>.cgupgrade</code> whose source version is <code>2.2.39</code>.</p>
 <h2 id="major-capabilities">Major Capabilities<a class="heading-anchor" href="#major-capabilities" aria-label="Link to Major Capabilities">#</a></h2>
 <ul>
 <li>MySQL 5.7, 8.0, 8.4, and approved compatible distributions: discovery, planned switchover, automatic failover, exclusive VIP ownership, former-primary recovery, and node lifecycle;</li>
@@ -71,7 +72,7 @@
 cd clusterguard-ha-2.2-39-offline-linux-x86_64
 ./install_clusterguard.sh --help
 </code></pre>
-<p>A formal <code>2.2-38</code> cluster can upload the <code>.cgupgrade</code> from the same GitHub Release under <strong>Settings → Version Update</strong>, generate a plan, and then execute the rolling update.</p>
+<p>Historical <code>2.2-38</code> and laboratory <code>2.2-38.field3</code> installations must first use the bridge maintenance procedure to install the formal <code>2.2.39</code> RPM one node at a time, or redeploy from the full offline archive. After every node passes version, Raft quorum, Agent, and database-ingress verification, later versions can be applied under <strong>Settings → Version Update</strong> with the corresponding <code>.cgupgrade</code>.</p>
 <blockquote>
 <p><strong>Important: automatic failover is unavailable while a system update is in progress. Monitor the platform and database service throughout the maintenance window.</strong></p>
 </blockquote>

@@ -8,6 +8,8 @@ This guide defines how a customer site updates the ClusterGuard HA control plane
 
 > **Artifact naming:** `.cgupgrade` is a complete signed rolling-update package, not a small binary delta. It contains both the target RPM and the current-version RPM for automatic rollback. `*-offline-linux-*.tar.gz` is intended for installation or reinstallation and cannot be uploaded directly to the rolling-update page. Legacy `.cgpatch` packages remain supported.
 
+> **Version baseline:** `2.2.39` is the first formal managed-update baseline. Standard `2.2-38` does not include the managed-update framework, and the laboratory `2.2-38.field3` RPM record does not match its binary contract. Neither can enter `2.2.39` by uploading a generic update package. Migrate each node to the formal `2.2.39` RPM with the historical-version bridge procedure first; later formal versions can use a `.cgupgrade` whose source version is `2.2.39`.
+
 > **Important: automatic failover is unavailable while a system update is in progress. Monitor the platform and database service throughout the maintenance window.**
 >
 > Once the maintenance marker is established, planned switchovers, failovers, automatic failover, and node mutations are blocked by Safety Guard. Read-only topology, health, metrics, and operation logs remain available. Automatic failover resumes only after every node passes update verification and the maintenance marker is released. An interrupted or failed update keeps the marker in place and remains fail-closed until the same update package is resumed or rolled back.

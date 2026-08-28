@@ -43,6 +43,9 @@
 <p><strong>Artifact naming:</strong> <code>.cgupgrade</code> is a complete signed rolling-update package, not a small binary delta. It contains both the target RPM and the current-version RPM for automatic rollback. <code>*-offline-linux-*.tar.gz</code> is intended for installation or reinstallation and cannot be uploaded directly to the rolling-update page. Legacy <code>.cgpatch</code> packages remain supported.</p>
 </blockquote>
 <blockquote>
+<p><strong>Version baseline:</strong> <code>2.2.39</code> is the first formal managed-update baseline. Standard <code>2.2-38</code> does not include the managed-update framework, and the laboratory <code>2.2-38.field3</code> RPM record does not match its binary contract. Neither can enter <code>2.2.39</code> by uploading a generic update package. Migrate each node to the formal <code>2.2.39</code> RPM with the historical-version bridge procedure first; later formal versions can use a <code>.cgupgrade</code> whose source version is <code>2.2.39</code>.</p>
+</blockquote>
+<blockquote>
 <p><strong>Important: automatic failover is unavailable while a system update is in progress. Monitor the platform and database service throughout the maintenance window.</strong></p>
 <p>Once the maintenance marker is established, planned switchovers, failovers, automatic failover, and node mutations are blocked by Safety Guard. Read-only topology, health, metrics, and operation logs remain available. Automatic failover resumes only after every node passes update verification and the maintenance marker is released. An interrupted or failed update keeps the marker in place and remains fail-closed until the same update package is resumed or rolled back.</p>
 </blockquote>

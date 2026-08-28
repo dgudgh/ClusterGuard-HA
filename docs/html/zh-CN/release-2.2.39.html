@@ -44,10 +44,11 @@
 <ul>
 <li><code>clusterguard-ha-2.2-39-offline-linux-x86_64.tar.gz</code>：新装、重装和离线部署介质；</li>
 <li><code>clusterguard-ha-2.2-39.x86_64.rpm</code>：ClusterGuard 控制器、Agent、升级 Helper 和配套脚本；</li>
-<li><code>clusterguard-ha-2.2-38_to_2.2-39.x86_64.cgupgrade</code>：仅供正式 <code>2.2-38</code> 集群滚动升级的签名升级包；</li>
+<li><code>clusterguard-ha-2.2-update-signing-public.pem</code>：从本版本开始固定使用的升级包发布公钥；</li>
 <li>每个制品对应的 <code>.sha256</code> 摘要和本发布说明。</li>
 </ul>
 <p><code>.cgupgrade</code> 是完整的签名滚动升级包，不是二进制差分小补丁。它包含目标 RPM、回退 RPM、兼容合同、SHA-256 和发布签名。完整离线包用于新装或重装，不能直接上传到版本更新页面。</p>
+<p><code>2.2.39</code> 是受控升级协议和正式发布公钥的起始基线。本次 Release 不发布从历史实验介质直接进入 <code>2.2.39</code> 的通用 <code>.cgupgrade</code>，因为标准 <code>2.2-38</code> 不包含受控升级框架，而实验室 <code>2.2-38.field3</code> 的 RPM 记录与二进制合同也不一致。从下一个正式版本开始，Release 将提供以 <code>2.2.39</code> 为来源版本的 <code>.cgupgrade</code>。</p>
 <h2 id="主要能力">主要能力<a class="heading-anchor" href="#主要能力" aria-label="Link to 主要能力">#</a></h2>
 <ul>
 <li>MySQL 5.7、8.0、8.4 和已审批兼容发行版的发现、计划切换、自动故障切换、VIP 唯一所有权、旧主恢复和节点生命周期；</li>
@@ -71,7 +72,7 @@
 cd clusterguard-ha-2.2-39-offline-linux-x86_64
 ./install_clusterguard.sh --help
 </code></pre>
-<p>正式 <code>2.2-38</code> 集群可在 <strong>设置 → 版本更新</strong> 上传同一 Release 中的 <code>.cgupgrade</code>，先生成计划，再执行滚动升级。</p>
+<p>历史 <code>2.2-38</code> 或实验室 <code>2.2-38.field3</code> 必须先按桥接维护流程逐节点安装正式 <code>2.2.39</code> RPM，或使用完整离线介质重新部署。所有节点完成版本、Raft 多数派、Agent 和数据库业务入口验收后，后续版本即可在 <strong>设置 → 版本更新</strong> 上传对应 <code>.cgupgrade</code>，先生成计划，再执行滚动升级。</p>
 <blockquote>
 <p><strong>重要：系统升级期间无法进行自动切换，请注意关注。</strong></p>
 </blockquote>

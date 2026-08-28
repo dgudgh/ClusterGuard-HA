@@ -12,10 +12,12 @@
 
 - `clusterguard-ha-2.2-39-offline-linux-x86_64.tar.gz`：新装、重装和离线部署介质；
 - `clusterguard-ha-2.2-39.x86_64.rpm`：ClusterGuard 控制器、Agent、升级 Helper 和配套脚本；
-- `clusterguard-ha-2.2-38_to_2.2-39.x86_64.cgupgrade`：仅供正式 `2.2-38` 集群滚动升级的签名升级包；
+- `clusterguard-ha-2.2-update-signing-public.pem`：从本版本开始固定使用的升级包发布公钥；
 - 每个制品对应的 `.sha256` 摘要和本发布说明。
 
 `.cgupgrade` 是完整的签名滚动升级包，不是二进制差分小补丁。它包含目标 RPM、回退 RPM、兼容合同、SHA-256 和发布签名。完整离线包用于新装或重装，不能直接上传到版本更新页面。
+
+`2.2.39` 是受控升级协议和正式发布公钥的起始基线。本次 Release 不发布从历史实验介质直接进入 `2.2.39` 的通用 `.cgupgrade`，因为标准 `2.2-38` 不包含受控升级框架，而实验室 `2.2-38.field3` 的 RPM 记录与二进制合同也不一致。从下一个正式版本开始，Release 将提供以 `2.2.39` 为来源版本的 `.cgupgrade`。
 
 ## 主要能力
 
@@ -44,7 +46,7 @@ cd clusterguard-ha-2.2-39-offline-linux-x86_64
 ./install_clusterguard.sh --help
 ```
 
-正式 `2.2-38` 集群可在 **设置 → 版本更新** 上传同一 Release 中的 `.cgupgrade`，先生成计划，再执行滚动升级。
+历史 `2.2-38` 或实验室 `2.2-38.field3` 必须先按桥接维护流程逐节点安装正式 `2.2.39` RPM，或使用完整离线介质重新部署。所有节点完成版本、Raft 多数派、Agent 和数据库业务入口验收后，后续版本即可在 **设置 → 版本更新** 上传对应 `.cgupgrade`，先生成计划，再执行滚动升级。
 
 > **重要：系统升级期间无法进行自动切换，请注意关注。**
 

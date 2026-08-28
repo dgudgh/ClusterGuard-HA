@@ -12,10 +12,12 @@ Release date: 2026-08-28
 
 - `clusterguard-ha-2.2-39-offline-linux-x86_64.tar.gz` for installation, reinstallation, and offline deployment;
 - `clusterguard-ha-2.2-39.x86_64.rpm` containing the controllers, Agent, update helper, and operational scripts;
-- `clusterguard-ha-2.2-38_to_2.2-39.x86_64.cgupgrade` for signed rolling updates from the formal `2.2-38` release only;
+- `clusterguard-ha-2.2-update-signing-public.pem`, the update-package release public key established by this version;
 - a `.sha256` file for every artifact and these release notes.
 
 `.cgupgrade` is a complete signed rolling-update package, not a small binary delta. It contains the target RPM, rollback RPM, compatibility contract, SHA-256 checksums, and release signature. The full offline archive is for installation or reinstallation and cannot be uploaded directly to the Version Update page.
+
+`2.2.39` establishes the managed-update protocol and the formal release key. This Release does not publish a generic `.cgupgrade` from historical laboratory media: the standard `2.2-38` package does not contain the managed-update framework, while the laboratory `2.2-38.field3` runtime does not match its RPM database contract. Beginning with the next formal version, Releases will include a `.cgupgrade` whose source version is `2.2.39`.
 
 ## Major Capabilities
 
@@ -44,7 +46,7 @@ cd clusterguard-ha-2.2-39-offline-linux-x86_64
 ./install_clusterguard.sh --help
 ```
 
-A formal `2.2-38` cluster can upload the `.cgupgrade` from the same GitHub Release under **Settings → Version Update**, generate a plan, and then execute the rolling update.
+Historical `2.2-38` and laboratory `2.2-38.field3` installations must first use the bridge maintenance procedure to install the formal `2.2.39` RPM one node at a time, or redeploy from the full offline archive. After every node passes version, Raft quorum, Agent, and database-ingress verification, later versions can be applied under **Settings → Version Update** with the corresponding `.cgupgrade`.
 
 > **Important: automatic failover is unavailable while a system update is in progress. Monitor the platform and database service throughout the maintenance window.**
 
