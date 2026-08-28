@@ -85,6 +85,12 @@ func (launcher CommandLauncher) Start(mode Mode, patchID, outputPath string, don
 	if err != nil {
 		return err
 	}
+	// The privileged helper owns this file, while the unprivileged console
+	// service needs group-read access to render the live output and history.
+	if err := output.Chmod(0o640); err != nil {
+		_ = output.Close()
+		return err
+	}
 	command := exec.Command(launcher.RunnerPath, "--mode", string(mode), "--patch-id", patchID)
 	command.Stdout = output
 	command.Stderr = output

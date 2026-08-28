@@ -54,8 +54,22 @@ write_status() {
       automatic_failover_available:($maintenance_active | not),
       started_at:$started_at,updated_at:$updated_at,
       finished_at:(if $finished_at == "" then null else $finished_at end)}' >"${temporary}"
-  chmod 0600 "${temporary}"
+  chown root:clusterguard "${temporary}"
+  chmod 0640 "${temporary}"
   mv -f "${temporary}" "${status_file}"
+
+  # The helper runs as root:clusterguard, while the console API runs as the
+  # clusterguard account. Publish only update history artifacts to that group.
+  local artifact
+  shopt -s nullglob
+  for artifact in "${job_dir}/output.log" \
+    "${job_dir}"/clusterguard-update-*.json \
+    "${job_dir}"/clusterguard-update-*.events.jsonl; do
+    [[ -f "${artifact}" && ! -L "${artifact}" ]] || continue
+    chown root:clusterguard "${artifact}"
+    chmod 0640 "${artifact}"
+  done
+  shopt -u nullglob
 }
 
 cleanup() { [[ -z "${tool_dir}" || ! -d "${tool_dir}" ]] || rm -rf "${tool_dir}"; }

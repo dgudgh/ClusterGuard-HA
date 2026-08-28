@@ -3445,6 +3445,38 @@ func TestSoftwareUpdateHelperSystemdUnitAllowsControlledPrivilegedUpdate(t *test
 	}
 }
 
+func TestSoftwareUpdateArtifactsRemainReadableByConsoleService(t *testing.T) {
+	job, err := os.ReadFile("clusterguard-update-job.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobText := string(job)
+	for _, required := range []string{
+		"chown root:clusterguard",
+		"chmod 0640",
+		"output.log",
+		"clusterguard-update-*.events.jsonl",
+	} {
+		if !strings.Contains(jobText, required) {
+			t.Fatalf("update job does not publish %q for the console service", required)
+		}
+	}
+
+	upgrader, err := os.ReadFile("clusterguard-upgrade.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	upgraderText := string(upgrader)
+	for _, forbidden := range []string{
+		`chmod 0600 "${journal_events_file}"`,
+		`chmod 0600 "${journal_file}.tmp"`,
+	} {
+		if strings.Contains(upgraderText, forbidden) {
+			t.Fatalf("update journal remains private to the helper: %q", forbidden)
+		}
+	}
+}
+
 func TestChineseDeliveryManualsCoverInstallDatabasePreparationAndOperations(t *testing.T) {
 	expectations := map[string][]string{
 		"../docs/zh-CN/offline-rpm-install.md": {

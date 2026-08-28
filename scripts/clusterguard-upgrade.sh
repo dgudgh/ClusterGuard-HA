@@ -617,11 +617,11 @@ write_journal() {
   jq -n --arg patch_id "${patch_id}" --arg status "${status}" --arg node "${node}" --arg message "${message}" \
     --arg source "${source_version}" --arg target "${target_version}" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     '{patch_id:$patch_id,status:$status,node:$node,message:$message,source:$source,target:$target,updated_at:$at}' >"${event_tmp}"
-  chmod 0600 "${event_tmp}"
+  chmod 0640 "${event_tmp}"
   cat "${event_tmp}" >>"${journal_events_file}"
-  chmod 0600 "${journal_events_file}"
+  chmod 0640 "${journal_events_file}"
   cp "${event_tmp}" "${journal_file}.tmp"
-  chmod 0600 "${journal_file}.tmp"
+  chmod 0640 "${journal_file}.tmp"
   mv -f "${journal_file}.tmp" "${journal_file}"
   rm -f "${event_tmp}"
 }

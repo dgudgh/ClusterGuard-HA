@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 type launcherStub struct {
@@ -82,6 +83,39 @@ func TestHelperHandlerSerializesJobsAndReleasesSlotOnCompletion(t *testing.T) {
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/jobs", bytes.NewBufferString(requestBody)))
 	if response.Code != http.StatusAccepted {
 		t.Fatalf("released status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestCommandLauncherPublishesGroupReadableOutput(t *testing.T) {
+	root := t.TempDir()
+	runner := filepath.Join(root, "runner.sh")
+	if err := os.WriteFile(runner, []byte("#!/bin/sh\nprintf 'planned\\n'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	outputPath := filepath.Join(root, "output.log")
+	done := make(chan error, 1)
+	launcher := CommandLauncher{RunnerPath: runner}
+	if err := launcher.Start(ModePlan, "patch", outputPath, func(err error) { done <- err }); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("runner did not finish")
+	}
+	info, err := os.Stat(outputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o640 {
+		t.Fatalf("output mode=%#o, want 0640", info.Mode().Perm())
+	}
+	contents, err := os.ReadFile(outputPath)
+	if err != nil || string(contents) != "planned\n" {
+		t.Fatalf("output=%q err=%v", contents, err)
 	}
 }
 

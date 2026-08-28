@@ -6,7 +6,7 @@
 
 Release date: 2026-08-28
 
-`v2.2.40` fixes two blockers in graphical rolling updates for container data planes. It does not change database replication, business ingress, or HA policy.
+`v2.2.40` fixes three blockers in graphical rolling updates for container data planes. It does not change database replication, business ingress, or HA policy.
 
 ## Fixes
 
@@ -14,6 +14,7 @@ Release date: 2026-08-28
 - immutable host UUIDs and Docker Swarm or Kubernetes Agent logical UUIDs are validated independently;
 - every controller must observe the same logical data-node set, and every logical-node `ip_address` must map to an explicitly supplied host;
 - multiple container database instances may share one host, while unknown hosts, extra Raft members, duplicate logical UUIDs, and inconsistent observations remain rejected;
+- status, output, and event artifacts written by the privileged update Helper are published as `root:clusterguard 0640`, so the console can display the actual plan and result instead of losing a successful backend outcome;
 - the rolling order remains Followers, data-only nodes, and Leader, with automatic stop and embedded-RPM rollback on failure.
 
 ## Update Guidance
