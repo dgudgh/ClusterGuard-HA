@@ -71,6 +71,7 @@ journal_file=""
 journal_events_file=""
 upgrade_lock_name=""
 configured_data_members=""
+configured_data_addresses=""
 
 timestamp() { date '+%Y-%m-%d %H:%M:%S'; }
 log() { printf '[%s] %s\n' "$(timestamp)" "$*"; }
@@ -400,6 +401,7 @@ load_runtime_data_members() {
   local host identity resource_id role expected_id members=""
   if ((${#data_nodes[@]} == 0)); then
     configured_data_members=""
+    configured_data_addresses=""
     return 0
   fi
   for host in "${data_nodes[@]}"; do
@@ -425,9 +427,12 @@ load_runtime_data_members() {
     members="${members}${resource_id}"$'\n'
   done
   configured_data_members="$(printf '%s' "${members}" | sed '/^$/d' | LC_ALL=C sort -u)"
+  configured_data_addresses="$(printf '%s\n' "${data_nodes[@]}" | sed '/^$/d' | LC_ALL=C sort -u)"
   [[ -n "${configured_data_members}" ]] || die "数据节点清单为空"
   [[ "$(printf '%s\n' "${configured_data_members}" | sed '/^$/d' | wc -l | tr -d ' ')" == "${#data_nodes[@]}" ]] ||
     die "数据节点清单包含重复的不可变 resource_id"
+  [[ "$(printf '%s\n' "${configured_data_addresses}" | sed '/^$/d' | wc -l | tr -d ' ')" == "${#data_nodes[@]}" ]] ||
+    die "数据节点清单包含重复地址"
 }
 
 control_status() {
@@ -441,22 +446,26 @@ control_status() {
 verify_cluster_idle() {
 	local expected_leader="${1:-}" expected_maintenance="${2:-false}" host status leaders=0 role observed_leader=""
 	local local_controller_id live_members current_live_members configured_members live_data_members current_live_data_members
+	local live_data_addresses current_live_data_addresses
   [[ "${expected_maintenance}" == "true" || "${expected_maintenance}" == "false" || "${expected_maintenance}" == "any" ]] ||
     die "内部维护状态参数无效"
 	live_members=""
 	live_data_members=""
+	live_data_addresses=""
 	configured_members=""
 	for host in "${controllers[@]}"; do
 		status="$(control_status "${host}")" || die "无法读取控制节点状态：${host}"
     jq -e --arg maintenance "${expected_maintenance}" '
       .status == "ok" and .result.ready == true and .result.leader_known == true and
-      .result.quorum_confirmed == true and .result.voter_count >= 3 and (.result.voter_count % 2 == 1) and
+      (.result.role != "leader" or .result.quorum_confirmed == true) and
+      .result.voter_count >= 3 and (.result.voter_count % 2 == 1) and
       .result.active_operations == 0 and .result.indeterminate_operations == 0 and
 		  .result.active_lifecycle_tasks == 0 and
 		  (.result.controller_members | type == "array") and
 		  (.result.controller_members | length) == .result.voter_count and
 		  (.result.data_node_members | type == "array") and
 		  ((.result.data_node_members | map(.resource_id) | unique | length) == (.result.data_node_members | length)) and
+		  ((.result.data_node_members | map(.ip_address) | all(type == "string" and length > 0))) and
 		  ($maintenance == "any" or ((.result.update_maintenance_active // false) == ($maintenance == "true")))
 		' <<<"${status}" >/dev/null || die "控制面未就绪、无多数派、维护状态不一致或仍有活动任务：${host}"
 		local_controller_id="$(jq -r '.result.local_controller_id // empty' <<<"${status}")"
@@ -475,14 +484,23 @@ verify_cluster_idle() {
 		elif [[ "${live_data_members}" != "${current_live_data_members}" ]]; then
 			die "控制节点对活动数据节点清单的观测不一致：${host}"
 		fi
+		current_live_data_addresses="$(jq -r '.result.data_node_members[].ip_address' <<<"${status}" | LC_ALL=C sort -u)"
+		if [[ -z "${live_data_addresses}" ]]; then
+			live_data_addresses="${current_live_data_addresses}"
+		elif [[ "${live_data_addresses}" != "${current_live_data_addresses}" ]]; then
+			die "控制节点对活动数据节点宿主机映射的观测不一致：${host}"
+		fi
 		role="$(jq -r '.result.role' <<<"${status}")"
     if [[ "${role}" == "leader" ]]; then leaders=$((leaders + 1)); observed_leader="${host}"; fi
 	done
 	configured_members="$(printf '%s' "${configured_members}" | sed '/^$/d' | LC_ALL=C sort -u)"
 	[[ "${configured_members}" == "${live_members}" ]] ||
 		die "静态控制节点清单与实时 Raft 成员不一致；请使用当前部署状态或 --controllers 提供全部控制节点后重试"
-	[[ "${configured_data_members}" == "${live_data_members}" ]] ||
-		die "静态数据节点清单与实时活动节点清单不一致；请使用当前部署状态或 --data-nodes 提供全部活动数据节点后重试"
+	[[ "${configured_data_addresses}" == "${live_data_addresses}" ]] ||
+		die "静态数据节点地址与实时活动节点宿主机映射不一致；请使用 --data-nodes 提供全部活动宿主机后重试"
+	if [[ "${configured_data_members}" != "${live_data_members}" ]]; then
+		log "检测到容器数据节点独立逻辑身份；控制节点观测一致，且宿主机映射已严格核对"
+	fi
   ((leaders == 1)) || die "控制面必须且只能识别一个 Leader，当前 ${leaders} 个"
   if [[ -n "${expected_leader}" && "${observed_leader}" != "${expected_leader}" ]]; then
     die "升级期间 Leader 意外变化：期望 ${expected_leader}，实际 ${observed_leader}"

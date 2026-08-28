@@ -255,6 +255,7 @@ func TestUpgradeScriptEnforcesMaintenanceAndVersionContracts(t *testing.T) {
 		"--resume",
 		"events.jsonl",
 		"data_node_members",
+		"ip_address",
 		"clusterguard-agent-reconcile.timer",
 		"补偿回锁",
 		`[[ -z "${controllers_raw}" ]] || csv_to_array "${controllers_raw}" controllers`,
@@ -327,15 +328,20 @@ elif [[ "$command" == *"cgctl"*" status"* ]]; then
   [[ "$host" != c3 ]] || role=leader
   voter_count=3
   members='[{"resource_id":"11111111-1111-4111-8111-111111111111"},{"resource_id":"22222222-2222-4222-8222-222222222222"},{"resource_id":"33333333-3333-4333-8333-333333333333"}]'
-  data_members='[{"resource_id":"11111111-1111-4111-8111-111111111111"},{"resource_id":"22222222-2222-4222-8222-222222222222"},{"resource_id":"33333333-3333-4333-8333-333333333333"},{"resource_id":"44444444-4444-4444-8444-444444444444"}]'
+  data_members='[{"resource_id":"11111111-1111-4111-8111-111111111111","ip_address":"c1"},{"resource_id":"22222222-2222-4222-8222-222222222222","ip_address":"c2"},{"resource_id":"33333333-3333-4333-8333-333333333333","ip_address":"c3"},{"resource_id":"44444444-4444-4444-8444-444444444444","ip_address":"d1"}]'
+  quorum=false
+  [[ "$role" != leader ]] || quorum=true
+  if [[ "${FAKE_CONTAINER_DATA:-}" == true ]]; then
+    data_members='[{"resource_id":"71111111-1111-4111-8111-111111111111","ip_address":"c1"},{"resource_id":"71111111-1111-4111-8111-111111111112","ip_address":"c1"},{"resource_id":"72222222-2222-4222-8222-222222222222","ip_address":"c2"},{"resource_id":"73333333-3333-4333-8333-333333333333","ip_address":"c3"},{"resource_id":"74444444-4444-4444-8444-444444444444","ip_address":"d1"}]'
+  fi
   if [[ "${FAKE_EXTRA_VOTERS:-}" == true ]]; then
     voter_count=5
     members='[{"resource_id":"11111111-1111-4111-8111-111111111111"},{"resource_id":"22222222-2222-4222-8222-222222222222"},{"resource_id":"33333333-3333-4333-8333-333333333333"},{"resource_id":"55555555-5555-4555-8555-555555555555"},{"resource_id":"66666666-6666-4666-8666-666666666666"}]'
   fi
   if [[ "${FAKE_EXTRA_DATA_NODE:-}" == true ]]; then
-    data_members='[{"resource_id":"11111111-1111-4111-8111-111111111111"},{"resource_id":"22222222-2222-4222-8222-222222222222"},{"resource_id":"33333333-3333-4333-8333-333333333333"},{"resource_id":"44444444-4444-4444-8444-444444444444"},{"resource_id":"77777777-7777-4777-8777-777777777777"}]'
+    data_members='[{"resource_id":"11111111-1111-4111-8111-111111111111","ip_address":"c1"},{"resource_id":"22222222-2222-4222-8222-222222222222","ip_address":"c2"},{"resource_id":"33333333-3333-4333-8333-333333333333","ip_address":"c3"},{"resource_id":"44444444-4444-4444-8444-444444444444","ip_address":"d1"},{"resource_id":"77777777-7777-4777-8777-777777777777","ip_address":"d2"}]'
   fi
-  printf '{"status":"ok","result":{"ready":true,"leader_known":true,"quorum_confirmed":true,"voter_count":%s,"active_operations":0,"indeterminate_operations":0,"active_lifecycle_tasks":0,"update_maintenance_active":%s,"role":"%s","local_controller_id":"%s","controller_members":%s,"data_node_members":%s}}\n' "$voter_count" "$maintenance" "$role" "$node_id" "$members" "$data_members"
+  printf '{"status":"ok","result":{"ready":true,"leader_known":true,"quorum_confirmed":%s,"voter_count":%s,"active_operations":0,"indeterminate_operations":0,"active_lifecycle_tasks":0,"update_maintenance_active":%s,"role":"%s","local_controller_id":"%s","controller_members":%s,"data_node_members":%s}}\n' "$quorum" "$voter_count" "$maintenance" "$role" "$node_id" "$members" "$data_members"
 elif [[ "$command" == *".cluster-update.lock/patch-id"* && "$command" == *"grep -Fq"* ]]; then
   test -f "$state/$host.maintenance"
 elif [[ "$command" == *"update-maintenance.json"* && "$command" == *"rolling_update"* ]]; then
@@ -472,8 +478,19 @@ fi
 	command.Dir = root
 	command.Env = append(os.Environ(), "PATH="+fakeBin+":"+os.Getenv("PATH"), "FAKE_REMOTE_STATE="+state, "FAKE_EXTRA_DATA_NODE=true")
 	output, err = command.CombinedOutput()
-	if err == nil || !strings.Contains(string(output), "静态数据节点清单与实时活动节点清单不一致") {
+	if err == nil || !strings.Contains(string(output), "静态数据节点地址与实时活动节点宿主机映射不一致") {
 		t.Fatalf("stale data-node inventory was not rejected: err=%v\n%s", err, output)
+	}
+
+	command = exec.Command("bash", upgradeScript,
+		"--patch", patchPath, "--trust-key", publicKey,
+		"--controllers", "c1,c2,c3", "--data-nodes", "c1,c2,c3,d1",
+		"--known-hosts", knownHosts, "-u", "root", "--plan")
+	command.Dir = root
+	command.Env = append(os.Environ(), "PATH="+fakeBin+":"+os.Getenv("PATH"), "FAKE_REMOTE_STATE="+state, "FAKE_CONTAINER_DATA=true")
+	output, err = command.CombinedOutput()
+	if err != nil || !strings.Contains(string(output), "检测到容器数据节点独立逻辑身份") {
+		t.Fatalf("container logical identities were not mapped by host: err=%v\n%s", err, output)
 	}
 
 	command = exec.Command("bash", upgradeScript,
