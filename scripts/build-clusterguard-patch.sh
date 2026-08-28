@@ -149,7 +149,7 @@ openssl dgst -sha256 -sign "${signing_key}" -out "${root}/PATCH-MANIFEST.sig" "$
 
 temporary_output="${output}.tmp.$$"
 rm -f "${temporary_output}"
-tar -C "${stage}" -czf "${temporary_output}" clusterguard-patch
+tar --no-xattrs -C "${stage}" -czf "${temporary_output}" clusterguard-patch
 chmod 0644 "${temporary_output}"
 mv -f "${temporary_output}" "${output}"
 

@@ -13,6 +13,11 @@ if ! getent passwd clusterguard >/dev/null 2>&1; then
     clusterguard
 fi
 
+if [ -e /usr/local/sbin/clusterguard-upgrade ]; then
+  chown root:clusterguard /usr/local/sbin/clusterguard-upgrade
+  chmod 0750 /usr/local/sbin/clusterguard-upgrade
+fi
+
 install -d -m 0751 -o root -g clusterguard /etc/clusterguard
 install -d -o root -g clusterguard -m 0750 /etc/clusterguard/trust
 install -d -m 0700 -o root -g root /etc/clusterguard/power-snapshots

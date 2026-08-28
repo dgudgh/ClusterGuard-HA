@@ -20,6 +20,9 @@ func (inspector CommandInspector) Inspect(ctx context.Context, patchPath, trustK
 	output, err := command.CombinedOutput()
 	if err != nil {
 		message := strings.TrimSpace(string(output))
+		if message == "" {
+			message = err.Error()
+		}
 		if len(message) > 2048 {
 			message = message[len(message)-2048:]
 		}

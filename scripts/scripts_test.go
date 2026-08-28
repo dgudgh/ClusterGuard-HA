@@ -189,6 +189,16 @@ func TestUpgradePackageBuilderAndInspectorVerifySignedDualRPMBundle(t *testing.T
 	}
 }
 
+func TestUpgradePackageBuilderDoesNotArchiveHostExtendedAttributes(t *testing.T) {
+	contents, err := os.ReadFile("build-clusterguard-patch.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(contents), "tar --no-xattrs") {
+		t.Fatal("upgrade package builder must exclude host extended attributes")
+	}
+}
+
 func TestPatchInspectorRejectsTamperedPayload(t *testing.T) {
 	if _, err := exec.LookPath("jq"); err != nil {
 		t.Skip("jq is required")
@@ -3442,6 +3452,8 @@ func TestRPMDeliveryIsCompleteAndDoesNotStartUnconfiguredServices(t *testing.T) 
 	}
 	for _, expected := range []string{
 		"useradd",
+		"chown root:clusterguard /usr/local/sbin/clusterguard-upgrade",
+		"chmod 0750 /usr/local/sbin/clusterguard-upgrade",
 		"/var/lib/clusterguard",
 		"/var/log/clusterguard",
 		"/etc/clusterguard/trust",
