@@ -681,8 +681,12 @@ publish_update_progress() {
 
 write_journal() {
   local status="$1" node="${2:-}" message="${3:-}" phase="${4:-}" current="${5:-0}" total="${6:-0}"
-  local event_tmp job_status maintenance finished_at started_at
+  local event_tmp job_status maintenance finished_at started_at percent=0
   [[ -n "${journal_file}" ]] || return 0
+  if ((total > 0)); then
+    percent=$((current * 100 / total))
+    ((percent <= 100)) || percent=100
+  fi
   event_tmp="${journal_file}.event.tmp"
   jq -n --arg patch_id "${patch_id}" --arg mode "${update_mode}" --arg status "${status}" --arg node "${node}" --arg message "${message}" \
     --arg phase "${phase}" --argjson current "${current}" --argjson total "${total}" \
@@ -711,11 +715,11 @@ write_journal() {
   jq -n --arg patch_id "${patch_id}" --arg mode "${update_mode}" --arg status "${job_status}" \
     --arg node "${node}" --arg message "${message}" --arg phase "${phase}" \
     --arg started_at "${started_at}" --arg updated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg finished_at "${finished_at}" \
-    --argjson maintenance_active "${maintenance}" --argjson current "${current}" --argjson total "${total}" \
+    --argjson maintenance_active "${maintenance}" --argjson current "${current}" --argjson total "${total}" --argjson percent "${percent}" \
     '{patch_id:$patch_id,mode:$mode,status:$status,node:$node,message:$message,
       maintenance_active:$maintenance_active,automatic_failover_available:($maintenance_active | not),
       started_at:$started_at,updated_at:$updated_at,finished_at:(if $finished_at == "" then null else $finished_at end),
-      progress:{phase:$phase,current:$current,total:$total,percent:0}}' >"${PWD}/status.json.tmp"
+      progress:{phase:$phase,current:$current,total:$total,percent:$percent}}' >"${PWD}/status.json.tmp"
   chown root:clusterguard "${PWD}/status.json.tmp" 2>/dev/null || true
   chmod 0640 "${PWD}/status.json.tmp"
   mv -f "${PWD}/status.json.tmp" "${PWD}/status.json"
