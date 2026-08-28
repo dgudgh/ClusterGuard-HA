@@ -196,6 +196,8 @@
     .update-maintenance-copy strong { font-size:13px; }
     .update-maintenance-copy span { margin-top:2px; color:#806126; font-size:11px; }
     .update-maintenance-state { flex:0 0 auto; color:#6b4609; font-size:11px; font-weight:780; white-space:nowrap; }
+    .update-maintenance-actions { display:flex; flex:0 0 auto; align-items:center; gap:10px; }
+    .update-maintenance-actions button { min-height:32px; padding:6px 11px; border-color:#d9b66f; background:#fff; color:#6b4609; font-size:11px; }
     .content { width:min(1600px,100%); margin:0 auto; padding:24px 32px 48px; }
     .view[hidden] { display:none; }
     .view-heading { display:flex; align-items:end; justify-content:space-between; gap:18px; margin-bottom:14px; }
@@ -464,6 +466,45 @@
     .software-update-history-table .history-message { max-width:340px; overflow:hidden; color:var(--muted); text-overflow:ellipsis; white-space:nowrap; }
     .software-update-confirmation { display:grid; gap:12px; }
     .software-update-confirmation .confirmation-state { margin:0; }
+    .software-update-progress-dialog { width:min(880px,calc(100vw - 32px)); overflow:hidden; }
+    .software-update-progress-dialog[open] { display:grid; grid-template-rows:auto minmax(0,1fr) auto; height:min(760px,calc(100vh - 48px)); }
+    .software-update-progress-dialog .dialog-head { align-items:flex-start; background:#fff; }
+    .software-update-progress-body { display:grid; min-height:0; gap:14px; overflow:auto; background:#f7faf8; }
+    .software-update-progress-summary { overflow:hidden; border:1px solid var(--line); border-radius:8px; background:#fff; }
+    .software-update-progress-titlebar { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; padding:15px 16px 12px; }
+    .software-update-progress-titlebar span { display:block; color:var(--muted); font-size:11px; }
+    .software-update-progress-titlebar strong { display:block; max-width:680px; margin-top:3px; overflow:hidden; font-size:13px; text-overflow:ellipsis; white-space:nowrap; }
+    .software-update-progress-meter { padding:0 16px 15px; }
+    .software-update-progress-meter-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:7px; color:var(--muted); font-size:11px; }
+    .software-update-progress-meter-head strong { color:var(--ink); font-size:12px; }
+    .software-update-progress-track { height:9px; overflow:hidden; border-radius:5px; background:#e5ebe8; }
+    .software-update-progress-bar { width:0; height:100%; border-radius:5px; background:var(--accent); transition:width .28s ease; }
+    .software-update-progress-track.indeterminate .software-update-progress-bar { width:32%; animation:update-progress-indeterminate 1.25s ease-in-out infinite; }
+    @keyframes update-progress-indeterminate { 0% { transform:translateX(-110%); } 100% { transform:translateX(330%); } }
+    .software-update-stages { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); border-top:1px solid var(--line); }
+    .software-update-stage { position:relative; min-width:0; padding:13px 12px 12px 30px; border-right:1px solid var(--line); color:var(--muted); font-size:11px; }
+    .software-update-stage:last-child { border-right:0; }
+    .software-update-stage::before { position:absolute; top:13px; left:12px; display:grid; width:12px; height:12px; place-items:center; border:1px solid #aab7b1; border-radius:50%; background:#fff; content:''; }
+    .software-update-stage.active { color:var(--accent); font-weight:760; }
+    .software-update-stage.active::before { border:4px solid var(--accent); }
+    .software-update-stage.done { color:#217b4b; font-weight:720; }
+    .software-update-stage.done::before { border-color:#278b57; background:#278b57; box-shadow:inset 0 0 0 3px #fff; }
+    .software-update-progress-facts { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); border-top:1px solid var(--line); }
+    .software-update-progress-fact { min-width:0; padding:12px 14px; border-right:1px solid var(--line); }
+    .software-update-progress-fact:last-child { border-right:0; }
+    .software-update-progress-fact span, .software-update-progress-fact strong { display:block; }
+    .software-update-progress-fact span { color:var(--muted); font-size:10px; }
+    .software-update-progress-fact strong { margin-top:4px; overflow:hidden; font-size:12px; text-overflow:ellipsis; white-space:nowrap; }
+    .software-update-progress-events { overflow:hidden; border:1px solid var(--line); border-radius:8px; background:#fff; }
+    .software-update-progress-events-head { display:flex; min-height:46px; align-items:center; justify-content:space-between; gap:12px; padding:0 14px; border-bottom:1px solid var(--line); }
+    .software-update-progress-events-head h3 { margin:0; font-size:13px; }
+    .software-update-progress-event-list { display:grid; }
+    .software-update-progress-event { display:grid; grid-template-columns:100px 132px minmax(0,1fr); gap:10px; align-items:center; min-height:42px; padding:8px 14px; border-bottom:1px solid var(--line); font-size:11px; }
+    .software-update-progress-event:last-child { border-bottom:0; }
+    .software-update-progress-event time { color:var(--muted); }
+    .software-update-progress-event strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .software-update-progress-event span { color:var(--muted); }
+    .software-update-progress-dialog .dialog-actions { align-items:center; justify-content:space-between; padding:14px 18px; border-top:1px solid var(--line); background:#fff; }
     .settings-account-summary { display:flex; min-height:76px; align-items:center; gap:12px; }
     .settings-account-avatar { display:grid; width:42px; height:42px; flex:0 0 42px; place-items:center; border-radius:8px; background:#1d1d1f; color:#fff; font-size:13px; font-weight:800; }
     .settings-account-copy { min-width:0; }
@@ -618,6 +659,12 @@
       .software-update-metadata .identity-cell:nth-last-child(-n+4) { border-bottom:1px solid var(--line); }
       .software-update-metadata .identity-cell:nth-last-child(-n+2) { border-bottom:0; }
       .software-update-event { grid-template-columns:1fr; gap:2px; }
+      .software-update-progress-dialog[open] { height:calc(100vh - 24px); }
+      .software-update-stages, .software-update-progress-facts { grid-template-columns:repeat(2,minmax(0,1fr)); }
+      .software-update-stage:nth-child(2), .software-update-progress-fact:nth-child(2) { border-right:0; }
+      .software-update-stage:nth-child(-n+2), .software-update-progress-fact:nth-child(-n+2) { border-bottom:1px solid var(--line); }
+      .software-update-progress-event { grid-template-columns:88px minmax(0,1fr); }
+      .software-update-progress-event span { grid-column:1 / -1; }
       .form-grid .span-2 { grid-column:auto; }
       .node-lifecycle-dialog .dialog-actions { align-items:stretch; flex-direction:column; }
       .cluster-management-dialog .dialog-actions { align-items:stretch; flex-direction:column; }
@@ -647,6 +694,14 @@
       .software-update-metadata .identity-cell:nth-last-child(-n+2) { border-bottom:1px solid var(--line); }
       .software-update-metadata .identity-cell:last-child { border-bottom:0; }
       .settings-version-summary { display:none; }
+      .update-maintenance-banner { align-items:flex-start; }
+      .update-maintenance-actions { align-items:flex-end; flex-direction:column; }
+      .software-update-progress-titlebar { align-items:flex-start; flex-direction:column; }
+      .software-update-progress-facts, .software-update-stages { grid-template-columns:1fr; }
+      .software-update-stage, .software-update-progress-fact { border-right:0; border-bottom:1px solid var(--line); }
+      .software-update-stage:last-child, .software-update-progress-fact:last-child { border-bottom:0; }
+      .software-update-progress-dialog .dialog-actions { align-items:stretch; flex-direction:column; }
+      .software-update-progress-dialog .dialog-buttons, .software-update-progress-dialog .dialog-buttons button { width:100%; }
     }
   </style>
 </head>
@@ -721,7 +776,7 @@
           <span class="update-maintenance-icon" aria-hidden="true">!</span>
           <div><strong>系统升级期间无法进行自动切换，请注意关注。</strong><span id="software-update-global-detail">控制面正在执行受控滚动升级。</span></div>
         </div>
-        <span class="update-maintenance-state" id="software-update-global-state">升级维护中</span>
+        <div class="update-maintenance-actions"><span class="update-maintenance-state" id="software-update-global-state">升级维护中</span><button id="open-software-update-progress" type="button">查看进度</button></div>
       </div>
 
       <div class="content">
@@ -1176,6 +1231,49 @@
     </div>
   </dialog>
 
+  <dialog id="software-update-progress-dialog" class="software-update-progress-dialog" role="dialog" aria-modal="true" aria-labelledby="software-update-progress-title">
+    <div class="dialog-head">
+      <div class="dialog-title"><h2 id="software-update-progress-title">滚动升级进度</h2><p id="software-update-progress-subtitle">正在读取控制面的持久化升级任务。</p></div>
+      <button class="dialog-close" id="close-software-update-progress" type="button" aria-label="转到后台">×</button>
+    </div>
+    <div class="dialog-body software-update-progress-body">
+      <div class="software-update-warning">
+        <span class="update-maintenance-icon" aria-hidden="true">!</span>
+        <div><strong>升级完成并释放维护门禁前，自动故障切换保持暂停。</strong><span>关闭此窗口不会停止升级，可随时通过顶部维护条重新打开。</span></div>
+      </div>
+      <section class="software-update-progress-summary" aria-label="升级任务摘要">
+        <div class="software-update-progress-titlebar">
+          <div><span>升级包</span><strong class="mono" id="software-update-progress-patch-id">-</strong></div>
+          <span class="badge warning" id="software-update-progress-status">读取中</span>
+        </div>
+        <div class="software-update-progress-meter">
+          <div class="software-update-progress-meter-head"><strong id="software-update-progress-label">正在建立维护门禁</strong><span id="software-update-progress-percent">等待节点进度</span></div>
+          <div class="software-update-progress-track indeterminate" id="software-update-progress-track" role="progressbar" aria-label="滚动升级完成度"><div class="software-update-progress-bar" id="software-update-progress-bar"></div></div>
+        </div>
+        <div class="software-update-stages" aria-label="升级阶段">
+          <div class="software-update-stage active" data-update-progress-stage="prepare">安全准备</div>
+          <div class="software-update-stage" data-update-progress-stage="nodes">节点滚动</div>
+          <div class="software-update-stage" data-update-progress-stage="verify">集群验证</div>
+          <div class="software-update-stage" data-update-progress-stage="complete">完成</div>
+        </div>
+        <div class="software-update-progress-facts">
+          <div class="software-update-progress-fact"><span>版本变化</span><strong id="software-update-progress-version">-</strong></div>
+          <div class="software-update-progress-fact"><span>当前节点</span><strong id="software-update-progress-node">等待调度</strong></div>
+          <div class="software-update-progress-fact"><span>节点完成</span><strong id="software-update-progress-nodes">0 / -</strong></div>
+          <div class="software-update-progress-fact"><span>自动故障切换</span><strong id="software-update-progress-failover">已暂停</strong></div>
+        </div>
+      </section>
+      <section class="software-update-progress-events" aria-labelledby="software-update-progress-events-title">
+        <div class="software-update-progress-events-head"><h3 id="software-update-progress-events-title">实时事件</h3><span class="badge" id="software-update-progress-event-count">0 条</span></div>
+        <div class="software-update-progress-event-list" id="software-update-progress-event-list"><div class="software-update-empty">正在等待升级器上报节点事件。</div></div>
+      </section>
+    </div>
+    <div class="dialog-actions">
+      <span class="dialog-action-note" id="software-update-progress-updated-at">状态每 2 秒刷新；进度表示已完成的安全步骤，不代表预计耗时。</span>
+      <div class="dialog-buttons"><button id="background-software-update-progress" type="button">转到后台</button></div>
+    </div>
+  </dialog>
+
   <dialog id="operation-review-dialog" class="operation-review-dialog" role="dialog" aria-modal="true" aria-labelledby="operation-review-title">
     <div class="dialog-head">
       <div class="dialog-title"><h2 id="operation-review-title">复核不确定操作</h2><p>确认已通过数据库、复制链路和业务入口完成线下核验。</p></div>
@@ -1211,6 +1309,7 @@
       controlPlane: null, platformVersion: null, powerStatus: null, powerRunning: false,
       softwareUpdates: { available:false, reason:'尚未检查升级服务', warning:'系统升级期间无法进行自动切换，请注意关注。', packages:[] },
       softwareUpdateRunning: false, softwareUpdateAction: '', softwareUpdatePollingTimer: null,
+      softwareUpdateProgressDismissed: '', softwareUpdateProgressWasActive: false,
       selectedClusterId: '', selectedCandidateId: '', selectedRejoinId: '', topologySection: 'map', settingsSection: 'status', switchUnlocked: false, operationRunning: false,
       operationReviewRunning: false, operationReviewTargetId: '',
       currentUser: null, passwordChangeRequired: false, authenticating: false, lifecycleRunning: false, clusterMutationRunning: false, clusterManagementMode: 'create', retireConfirmationClusterId: '',
@@ -1372,6 +1471,10 @@
       if (passwordDialog.open) passwordDialog.close();
       const powerDialog = byId('power-shutdown-dialog');
       if (powerDialog.open) powerDialog.close();
+      const updateConfirmation = byId('software-update-confirmation-dialog');
+      if (updateConfirmation.open) updateConfirmation.close();
+      const updateProgress = byId('software-update-progress-dialog');
+      if (updateProgress.open) updateProgress.close();
       window.setTimeout(() => byId('login-username').focus(), 0);
     };
 
@@ -2359,6 +2462,23 @@
     };
     const latestSoftwareUpdate = () => (state.softwareUpdates && state.softwareUpdates.packages && state.softwareUpdates.packages[0]) || null;
     const softwareUpdateIsActive = job => !!(job && (job.maintenance_active || (job.mode !== 'plan' && ['queued', 'running'].includes(job.status))));
+    const activeSoftwareUpdate = () => (state.softwareUpdates.packages || []).find(item => softwareUpdateIsActive(item.job)) || null;
+    const softwareUpdateProgressKey = item => {
+      const record = item && item.package || {};
+      const job = item && item.job || {};
+      return [record.patch_id || 'maintenance', job.mode || 'execute', job.started_at || job.updated_at || 'active'].join('|');
+    };
+    const softwareUpdateEventText = value => ({
+      running:'开始滚动升级', updating:'正在更新', verified:'节点验证通过', finalizing:'正在完成集群验证',
+      rolling_back:'正在回退', rollback_verified:'回退验证通过', succeeded:'升级完成', failed:'升级失败',
+      rolled_back:'已完成回退', rollback_failed:'回退未完成', rollback_lock_release_failed:'维护门禁释放失败'
+    })[value] || value || '状态更新';
+    const softwareUpdatePhaseText = phase => ({
+      queued:'任务已进入队列', preparing:'正在核对升级合同与节点状态', locking:'正在建立集群维护门禁',
+      updating:'正在滚动更新控制节点', verifying:'正在验证控制面与节点合同', finalizing:'正在完成集群验证并释放维护门禁',
+      rollback:'正在受控回退已更新节点', completed:'全部节点升级完成', rolled_back:'已回退并释放维护门禁',
+      failed:'升级被阻断，需要人工处理'
+    })[phase] || '正在等待升级器上报节点进度';
     const renderSoftwareUpdateHistory = snapshot => {
       const packages = (snapshot && snapshot.packages) || [];
       const body = byId('software-update-history');
@@ -2400,21 +2520,127 @@
         : '支持 .cgupgrade，兼容旧 .cgpatch';
     };
 
+    const renderSoftwareUpdateProgress = () => {
+      const dialog = byId('software-update-progress-dialog');
+      const latest = latestSoftwareUpdate();
+      const activeItem = activeSoftwareUpdate();
+      const maintenanceActive = !!(state.controlPlane && state.controlPlane.update_maintenance_active);
+      const active = !!activeItem || maintenanceActive;
+      const item = activeItem || latest;
+      const record = item && item.package || {};
+      const job = item && item.job || null;
+      const progress = job && job.progress || {};
+      const status = job && job.status || (active ? 'running' : 'uploaded');
+      const terminal = ['succeeded', 'failed', 'rolled_back'].includes(status) && !active;
+      const phase = progress.phase || (status === 'succeeded' ? 'completed' : status === 'rolled_back' ? 'rolled_back' : status === 'failed' ? 'failed' : active ? 'preparing' : 'queued');
+      const total = Math.max(0, Number(progress.total) || 0);
+      const current = Math.min(total || Number(progress.current) || 0, Math.max(0, Number(progress.current) || 0));
+      const structured = total > 0 || ['succeeded', 'rolled_back'].includes(status);
+      const percent = Math.max(0, Math.min(100, Number(progress.percent) || (['succeeded', 'rolled_back'].includes(status) ? 100 : 0)));
+      const key = softwareUpdateProgressKey(item);
+
+      byId('software-update-progress-title').textContent = job && job.mode === 'rollback' ? '受控回退进度' : '滚动升级进度';
+      byId('software-update-progress-subtitle').textContent = active
+        ? '任务由当前 Raft Leader 编排；控制节点切换后会从持久化事件继续显示。'
+        : terminal ? '任务已结束，最终状态和节点事件将保留在升级历史中。' : '当前没有正在执行的升级任务。';
+      byId('software-update-progress-patch-id').textContent = record.patch_id || '控制面维护任务';
+      byId('software-update-progress-version').textContent = `${record.source_version || '-'} → ${record.target_version || '-'}`;
+      const statusElement = byId('software-update-progress-status');
+      statusElement.textContent = softwareUpdateStatusText(status);
+      statusElement.className = `badge ${softwareUpdateBadgeClass(status)}`;
+      byId('software-update-progress-label').textContent = active && !job
+        ? '控制节点正在切换，等待当前 Leader 接续任务状态'
+        : softwareUpdatePhaseText(phase);
+      byId('software-update-progress-node').textContent = job && job.node || (active ? '等待节点调度' : '-');
+      byId('software-update-progress-nodes').textContent = total ? `${current} / ${total}` : (structured ? `${current}` : '等待节点清单');
+      byId('software-update-progress-failover').textContent = active || (job && job.maintenance_active) ? '已暂停' : terminal ? '已恢复' : '可用';
+
+      const track = byId('software-update-progress-track');
+      track.classList.toggle('indeterminate', active && !structured);
+      byId('software-update-progress-bar').style.width = structured ? `${percent}%` : '';
+      byId('software-update-progress-percent').textContent = structured ? `${percent}%` : '等待节点进度';
+      if (structured) {
+        track.setAttribute('aria-valuenow', String(percent));
+        track.setAttribute('aria-valuemin', '0');
+        track.setAttribute('aria-valuemax', '100');
+      } else {
+        track.removeAttribute('aria-valuenow');
+        track.removeAttribute('aria-valuemin');
+        track.removeAttribute('aria-valuemax');
+      }
+
+      const stageIndex = ['completed', 'rolled_back'].includes(phase) ? 3
+        : ['verifying', 'finalizing'].includes(phase) ? 2
+          : ['updating', 'rollback'].includes(phase) ? 1 : 0;
+      document.querySelectorAll('[data-update-progress-stage]').forEach((stage, index) => {
+        stage.classList.toggle('done', ['succeeded', 'rolled_back'].includes(status) || index < stageIndex);
+        stage.classList.toggle('active', !['succeeded', 'rolled_back'].includes(status) && index === stageIndex);
+      });
+
+      const events = job && job.events || [];
+      byId('software-update-progress-event-count').textContent = `${events.length} 条`;
+      const eventList = byId('software-update-progress-event-list');
+      eventList.replaceChildren();
+      if (!events.length) {
+        eventList.append(text('div', 'software-update-empty', active ? '控制节点可能正在切换，正在等待当前 Leader 返回升级事件。' : '尚无升级事件。'));
+      } else {
+        events.slice(-8).reverse().forEach(event => {
+          const row = text('div', 'software-update-progress-event', '');
+          const eventTime = event.updated_at ? new Date(event.updated_at) : null;
+          row.append(
+            text('time', '', eventTime ? eventTime.toLocaleTimeString(state.language) : '-'),
+            text('strong', '', event.node || softwareUpdateEventText(event.status)),
+            text('span', '', event.node ? `${softwareUpdateEventText(event.status)} · ${event.message || '-'}` : (event.message || softwareUpdateEventText(event.status)))
+          );
+          eventList.append(row);
+        });
+      }
+      const updatedAt = job && (job.updated_at || job.started_at);
+      byId('software-update-progress-updated-at').textContent = updatedAt
+        ? `最近更新 ${new Date(updatedAt).toLocaleString(state.language)}；进度表示已完成的安全步骤，不代表预计耗时。`
+        : '状态每 2 秒刷新；进度表示已完成的安全步骤，不代表预计耗时。';
+      byId('background-software-update-progress').textContent = terminal ? '关闭' : '转到后台';
+
+      if (active && canAdministerPlatform() && !dialog.open && !byId('software-update-confirmation-dialog').open && state.softwareUpdateProgressDismissed !== key) {
+        dialog.showModal();
+      }
+      state.softwareUpdateProgressWasActive = active;
+    };
+
+    const openSoftwareUpdateProgress = () => {
+      const item = activeSoftwareUpdate() || latestSoftwareUpdate();
+      state.softwareUpdateProgressDismissed = '';
+      renderSoftwareUpdateProgress();
+      const dialog = byId('software-update-progress-dialog');
+      if (!dialog.open && (item || (state.controlPlane && state.controlPlane.update_maintenance_active))) dialog.showModal();
+    };
+
+    const closeSoftwareUpdateProgress = () => {
+      const dialog = byId('software-update-progress-dialog');
+      const item = activeSoftwareUpdate() || latestSoftwareUpdate();
+      state.softwareUpdateProgressDismissed = softwareUpdateProgressKey(item);
+      if (dialog.open) dialog.close();
+    };
+
     const renderSoftwareUpdateGlobalWarning = () => {
       const latest = latestSoftwareUpdate();
-      const activePackage = (state.softwareUpdates.packages || []).find(item => softwareUpdateIsActive(item.job));
+      const activePackage = activeSoftwareUpdate();
       const statusActive = !!(state.controlPlane && state.controlPlane.update_maintenance_active);
       const active = activePackage || (statusActive ? latest : null);
       const banner = byId('software-update-global-warning');
       banner.hidden = !(active || statusActive);
-      if (!(active || statusActive)) return;
+      if (!(active || statusActive)) {
+        renderSoftwareUpdateProgress();
+        return;
+      }
       const job = active && active.job;
       const patchID = active && active.package ? active.package.patch_id : '';
       const node = job && job.node ? ` · 当前节点 ${job.node}` : '';
       byId('software-update-global-detail').textContent = patchID
-        ? `升级包 ${patchID} · ${softwareUpdateStatusText(job && job.status)}${node}`
+        ? `升级包 ${patchID} · ${job ? softwareUpdateStatusText(job.status) : '正在等待当前 Leader 的任务状态'}${node}`
         : '控制面升级维护标记已生效，自动故障切换已暂停。';
       byId('software-update-global-state').textContent = job && job.mode === 'rollback' ? '受控回退中' : '升级维护中';
+      renderSoftwareUpdateProgress();
     };
 
     const renderSoftwareUpdates = () => {
@@ -2487,7 +2713,8 @@
       if (state.softwareUpdatePollingTimer) window.clearTimeout(state.softwareUpdatePollingTimer);
       state.softwareUpdatePollingTimer = null;
       if (!canAdministerPlatform()) return;
-      const active = (state.softwareUpdates.packages || []).some(item => softwareUpdateIsActive(item.job) || (item.job && ['queued', 'running'].includes(item.job.status)));
+      const active = !!(state.controlPlane && state.controlPlane.update_maintenance_active) ||
+        (state.softwareUpdates.packages || []).some(item => softwareUpdateIsActive(item.job) || (item.job && ['queued', 'running'].includes(item.job.status)));
       state.softwareUpdatePollingTimer = window.setTimeout(() => loadSoftwareUpdates(false), active ? 2000 : 30000);
     };
 
@@ -2608,7 +2835,10 @@
       if (!patchID || byId('software-update-confirmation-input').value !== patchID) return;
       const mode = state.softwareUpdateAction;
       const accepted = await startSoftwareUpdate(mode, patchID);
-      if (accepted && !state.softwareUpdateRunning && byId('software-update-confirmation-dialog').open) closeSoftwareUpdateConfirmation();
+      if (accepted && !state.softwareUpdateRunning) {
+        if (byId('software-update-confirmation-dialog').open) closeSoftwareUpdateConfirmation();
+        openSoftwareUpdateProgress();
+      }
     };
 
     const metricDefinitionForEngine = engine => engine === 'postgresql' ? {
@@ -3974,6 +4204,10 @@
     byId('cancel-software-update-confirmation').addEventListener('click', closeSoftwareUpdateConfirmation);
     byId('confirm-software-update-action').addEventListener('click', confirmSoftwareUpdateAction);
     byId('software-update-confirmation-dialog').addEventListener('cancel', event => { if (state.softwareUpdateRunning) event.preventDefault(); });
+    byId('open-software-update-progress').addEventListener('click', openSoftwareUpdateProgress);
+    byId('close-software-update-progress').addEventListener('click', closeSoftwareUpdateProgress);
+    byId('background-software-update-progress').addEventListener('click', closeSoftwareUpdateProgress);
+    byId('software-update-progress-dialog').addEventListener('cancel', event => { event.preventDefault(); closeSoftwareUpdateProgress(); });
     byId('logout-button').addEventListener('click', () => { setAccountMenuOpen(false); logout(); });
     byId('settings-logout').addEventListener('click', logout);
     byId('close-password-modal').addEventListener('click', () => { if (!state.passwordChangeRequired) byId('password-modal').close(); });

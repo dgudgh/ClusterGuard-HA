@@ -1320,6 +1320,9 @@ func TestConsoleProvidesAdminOnlySignedSoftwareUpdateWorkflow(t *testing.T) {
 		`id="rollback-software-update"`,
 		`id="software-update-confirmation-dialog"`,
 		`id="software-update-confirmation-input"`,
+		`id="software-update-progress-dialog"`,
+		`id="software-update-progress-track" role="progressbar"`,
+		`id="software-update-progress-event-list"`,
 		"form.append('package', file, file.name)",
 		"fetchResult('/api/v1/platform/updates'",
 		"state.softwareUpdateAction = mode",
@@ -1332,6 +1335,27 @@ func TestConsoleProvidesAdminOnlySignedSoftwareUpdateWorkflow(t *testing.T) {
 	}
 	if !strings.Contains(settings, "版本更新") || !strings.Contains(settings, "支持 .cgupgrade，兼容旧 .cgpatch") {
 		t.Fatal("software update controls must be presented in settings")
+	}
+}
+
+func TestConsoleShowsRecoverableStructuredSoftwareUpdateProgress(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		`id="open-software-update-progress"`,
+		`id="background-software-update-progress"`,
+		`data-update-progress-stage="prepare"`,
+		`data-update-progress-stage="nodes"`,
+		`data-update-progress-stage="verify"`,
+		`data-update-progress-stage="complete"`,
+		"job && job.progress || {}",
+		"控制节点正在切换，等待当前 Leader 接续任务状态",
+		"events.slice(-8).reverse()",
+		"state.softwareUpdateProgressDismissed !== key",
+		"openSoftwareUpdateProgress()",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing recoverable software update progress contract %q", contract)
+		}
 	}
 }
 

@@ -173,12 +173,47 @@ func TestManagerStatusIncludesOutputAndJournalEventsWithoutSecrets(t *testing.T)
 	if err := os.WriteFile(filepath.Join(jobDir, outputFileName), []byte("line one\nline two\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(jobDir, eventsFileName), []byte("{\"status\":\"updating\",\"node\":\"node-2\"}\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(jobDir, eventsFileName), []byte(
+		"{\"status\":\"updating\",\"node\":\"node-2\",\"phase\":\"updating\",\"current\":1,\"total\":3}\n"+
+			"{\"status\":\"verified\",\"node\":\"node-2\",\"phase\":\"updating\",\"current\":2,\"total\":3}\n",
+	), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	job, found := manager.Job(patchID)
-	if !found || len(job.OutputTail) != 2 || len(job.Events) != 1 || job.Events[0].Node != "node-2" {
+	if !found || len(job.OutputTail) != 2 || len(job.Events) != 2 || job.Events[0].Node != "node-2" {
 		t.Fatalf("unexpected job evidence: found=%t job=%+v", found, job)
+	}
+	if job.Progress.Phase != "updating" || job.Progress.Current != 2 || job.Progress.Total != 3 || job.Progress.Percent != 61 {
+		t.Fatalf("unexpected structured progress: %+v", job.Progress)
+	}
+	if len(job.Progress.CompletedNodes) != 1 || job.Progress.CompletedNodes[0] != "node-2" {
+		t.Fatalf("unexpected completed nodes: %+v", job.Progress.CompletedNodes)
+	}
+}
+
+func TestJobProgressUsesTerminalStateAndLegacyEvents(t *testing.T) {
+	job := Job{
+		Status: StatusSucceeded,
+		Events: []Event{{Status: "verified", Node: "node-1"}, {Status: "verified", Node: "node-2"}},
+	}
+	deriveJobProgress(&job)
+	if job.Progress.Phase != "completed" || job.Progress.Percent != 100 || job.Progress.Current != 2 {
+		t.Fatalf("unexpected terminal progress: %+v", job.Progress)
+	}
+}
+
+func TestJobProgressUsesNewerReplicatedLeaderEvent(t *testing.T) {
+	started := time.Date(2026, 8, 28, 8, 0, 0, 0, time.UTC)
+	job := Job{
+		Mode: ModePlan, Status: StatusPlanned, UpdatedAt: started,
+		Events: []Event{{
+			Mode: ModeExecute, Status: "updating", Node: "node-3", Phase: "updating", Current: 1, Total: 3,
+			UpdatedAt: started.Add(time.Minute),
+		}},
+	}
+	deriveJobProgress(&job)
+	if job.Mode != ModeExecute || job.Status != StatusRunning || job.Node != "node-3" || !job.MaintenanceActive {
+		t.Fatalf("newer replicated event did not replace stale local plan: %+v", job)
 	}
 }
 

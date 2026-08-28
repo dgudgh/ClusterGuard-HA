@@ -91,12 +91,24 @@ type Package struct {
 
 type Event struct {
 	PatchID   string    `json:"patch_id,omitempty"`
+	Mode      Mode      `json:"mode,omitempty"`
 	Status    string    `json:"status"`
 	Node      string    `json:"node,omitempty"`
 	Message   string    `json:"message,omitempty"`
+	Phase     string    `json:"phase,omitempty"`
+	Current   int       `json:"current,omitempty"`
+	Total     int       `json:"total,omitempty"`
 	Source    string    `json:"source,omitempty"`
 	Target    string    `json:"target,omitempty"`
 	UpdatedAt time.Time `json:"updated_at,omitempty"`
+}
+
+type Progress struct {
+	Phase          string   `json:"phase,omitempty"`
+	Current        int      `json:"current"`
+	Total          int      `json:"total"`
+	Percent        int      `json:"percent"`
+	CompletedNodes []string `json:"completed_nodes,omitempty"`
 }
 
 type Job struct {
@@ -113,6 +125,7 @@ type Job struct {
 	FinishedAt                 time.Time `json:"finished_at,omitempty"`
 	Events                     []Event   `json:"events,omitempty"`
 	OutputTail                 []string  `json:"output_tail,omitempty"`
+	Progress                   Progress  `json:"progress"`
 }
 
 type PackageStatus struct {
@@ -370,7 +383,131 @@ func (manager *Manager) Job(patchID string) (Job, bool) {
 		eventsPath = filepath.Join(directory, "clusterguard-update-"+patchID+".events.jsonl")
 	}
 	result.Events = readEvents(eventsPath, maximumTailLines)
+	deriveJobProgress(&result)
 	return result, true
+}
+
+func deriveJobProgress(job *Job) {
+	if job == nil {
+		return
+	}
+	progress := job.Progress
+	completed := append([]string(nil), progress.CompletedNodes...)
+	seen := make(map[string]struct{})
+	for _, node := range completed {
+		seen[node] = struct{}{}
+	}
+	for _, event := range job.Events {
+		if strings.TrimSpace(event.Node) != "" {
+			job.Node = event.Node
+		}
+		if event.Total > progress.Total {
+			progress.Total = event.Total
+		}
+		if event.Current > progress.Current {
+			progress.Current = event.Current
+		}
+		if strings.TrimSpace(event.Phase) != "" {
+			progress.Phase = event.Phase
+		}
+		if event.Status == "verified" && strings.TrimSpace(event.Node) != "" {
+			if _, found := seen[event.Node]; !found {
+				seen[event.Node] = struct{}{}
+				completed = append(completed, event.Node)
+			}
+		}
+	}
+	if len(job.Events) > 0 {
+		latest := job.Events[len(job.Events)-1]
+		if !latest.UpdatedAt.IsZero() && (job.UpdatedAt.IsZero() || latest.UpdatedAt.After(job.UpdatedAt)) {
+			job.UpdatedAt = latest.UpdatedAt
+			if latest.Mode != "" {
+				job.Mode = latest.Mode
+			}
+			if status, found := jobStatusForEvent(latest.Status); found {
+				job.Status = status
+				job.MaintenanceActive = status == StatusRunning || status == StatusQueued || status == StatusFailed
+				job.AutomaticFailoverAvailable = !job.MaintenanceActive
+			}
+		}
+	}
+	progress.CompletedNodes = completed
+	if progress.Current < len(completed) {
+		progress.Current = len(completed)
+	}
+	if progress.Total > 0 && progress.Current > progress.Total {
+		progress.Current = progress.Total
+	}
+	if progress.Phase == "" {
+		progress.Phase = progressPhaseForStatus(job.Status)
+	}
+	progress.Percent = progressPercent(job.Status, progress)
+	job.Progress = progress
+}
+
+func jobStatusForEvent(status string) (Status, bool) {
+	switch status {
+	case "running", "updating", "verified", "finalizing", "rolling_back", "rollback_verified":
+		return StatusRunning, true
+	case "succeeded":
+		return StatusSucceeded, true
+	case "rolled_back":
+		return StatusRolledBack, true
+	case "failed", "rollback_failed", "rollback_lock_release_failed":
+		return StatusFailed, true
+	default:
+		return "", false
+	}
+}
+
+func progressPhaseForStatus(status Status) string {
+	switch status {
+	case StatusQueued:
+		return "queued"
+	case StatusRunning:
+		return "preparing"
+	case StatusSucceeded:
+		return "completed"
+	case StatusRolledBack:
+		return "rolled_back"
+	case StatusFailed:
+		return "failed"
+	default:
+		return string(status)
+	}
+}
+
+func progressPercent(status Status, progress Progress) int {
+	switch status {
+	case StatusQueued:
+		return 3
+	case StatusSucceeded, StatusRolledBack:
+		return 100
+	}
+	switch progress.Phase {
+	case "queued":
+		return 3
+	case "preparing", "locking":
+		return 8
+	case "updating":
+		if progress.Total > 0 {
+			return 15 + (progress.Current * 70 / progress.Total)
+		}
+		return 15
+	case "verifying", "finalizing":
+		return 92
+	case "completed", "rolled_back":
+		return 100
+	case "rollback":
+		return 85
+	}
+	if status == StatusFailed {
+		if progress.Total > 0 {
+			return 15 + (progress.Current * 70 / progress.Total)
+		}
+		return 15
+	}
+	return 0
 }
 
 func (manager *Manager) readiness(ctx context.Context) error {

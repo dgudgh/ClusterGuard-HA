@@ -72,6 +72,9 @@ journal_events_file=""
 upgrade_lock_name=""
 configured_data_members=""
 configured_data_addresses=""
+update_root="/var/lib/clusterguard/updates"
+update_mode="execute"
+progress_replication_enabled=false
 
 timestamp() { date '+%Y-%m-%d %H:%M:%S'; }
 log() { printf '[%s] %s\n' "$(timestamp)" "$*"; }
@@ -107,6 +110,7 @@ ClusterGuard HA 客户现场签名升级包与滚动升级器
   --known-hosts FILE            已审核的 known_hosts
   --accept-host-keys            首次采集当前节点 SSH 主机密钥
   --api-port PORT               控制面 API 端口，默认 3000
+  --update-root DIR             控制面升级状态目录，默认 /var/lib/clusterguard/updates
   --plan                        输出升级顺序但不改节点（默认）
   --execute                     真实滚动升级
   --rollback                    使用升级包内回退 RPM 执行受控回退
@@ -136,6 +140,7 @@ while (($#)); do
     --known-hosts) need_value "$@"; known_hosts="$2"; shift 2 ;;
     --accept-host-keys) accept_host_keys=true; shift ;;
     --api-port) need_value "$@"; api_port="$2"; shift 2 ;;
+    --update-root) need_value "$@"; update_root="$2"; shift 2 ;;
     --remote-stage) need_value "$@"; remote_stage="$2"; shift 2 ;;
     --plan) execute=false; shift ;;
     --execute) execute=true; shift ;;
@@ -157,6 +162,8 @@ command -v tar >/dev/null 2>&1 || die "需要 tar"
 [[ "${ssh_user}" =~ ^[A-Za-z_][A-Za-z0-9_.-]*$ ]] || die "SSH 用户名格式无效"
 [[ "${remote_stage}" =~ ^/[A-Za-z0-9._/-]+$ && "${remote_stage}" != *"//"* && "${remote_stage}" != *"/../"* && "${remote_stage}" != */.. ]] ||
   die "远端暂存目录必须是无空格、无相对跳转的绝对路径"
+[[ "${update_root}" =~ ^/[A-Za-z0-9._/-]+$ && "${update_root}" != *"//"* && "${update_root}" != *"/../"* && "${update_root}" != */.. ]] ||
+  die "升级状态目录必须是无空格、无相对跳转的绝对路径"
 
 sha256_file() {
   if command -v sha256sum >/dev/null 2>&1; then
@@ -261,6 +268,12 @@ if ${inspect_only}; then
   printf 'rolling=true\n'
   printf 'database_mutation=false\n'
   exit 0
+fi
+
+if ${rollback_requested}; then
+  update_mode="rollback"
+elif ${resume_requested}; then
+  update_mode="resume"
 fi
 
 append_unique() {
@@ -610,13 +623,51 @@ release_update_locks() {
 	update_locks_acquired=false
 }
 
+publish_update_metadata() {
+  local host remote_dir="${update_root}/${patch_id}" temporary
+  [[ "${PWD}" == "${remote_dir}" && -f "${PWD}/package.json" && ! -L "${PWD}/package.json" ]] || return 0
+  progress_replication_enabled=true
+  for host in "${controllers[@]}"; do
+    temporary="${remote_dir}/.package.json.tmp"
+    if ! remote_run "${host}" "install -d -o root -g clusterguard -m 0750 '${remote_dir}'" >/dev/null 2>&1 ||
+      ! remote_copy "${host}" "${PWD}/package.json" "${temporary}" >/dev/null 2>&1 ||
+      ! remote_run "${host}" "chown root:clusterguard '${temporary}'; chmod 0640 '${temporary}'; mv -f '${temporary}' '${remote_dir}/package.json'" >/dev/null 2>&1; then
+      log "警告：无法向控制节点 ${host} 发布升级包元数据；升级任务继续，但该节点可能暂时无法展示进度"
+    fi
+  done
+}
+
+publish_update_progress() {
+  local host remote_dir="${update_root}/${patch_id}" status_source="${PWD}/status.json" temporary
+  [[ -f "${status_source}" && -f "${journal_events_file}" ]] || return 0
+  for host in "${controllers[@]}"; do
+    if ! remote_run "${host}" "install -d -o root -g clusterguard -m 0750 '${remote_dir}'" >/dev/null 2>&1; then
+      log "警告：控制节点 ${host} 暂时无法接收升级进度"
+      continue
+    fi
+    temporary="${remote_dir}/.status.json.tmp"
+    if ! remote_copy "${host}" "${status_source}" "${temporary}" >/dev/null 2>&1 ||
+      ! remote_run "${host}" "chown root:clusterguard '${temporary}'; chmod 0640 '${temporary}'; mv -f '${temporary}' '${remote_dir}/status.json'" >/dev/null 2>&1; then
+      log "警告：控制节点 ${host} 的升级状态同步失败"
+      continue
+    fi
+    temporary="${remote_dir}/.events.jsonl.tmp"
+    if ! remote_copy "${host}" "${journal_events_file}" "${temporary}" >/dev/null 2>&1 ||
+      ! remote_run "${host}" "chown root:clusterguard '${temporary}'; chmod 0640 '${temporary}'; mv -f '${temporary}' '${remote_dir}/events.jsonl'" >/dev/null 2>&1; then
+      log "警告：控制节点 ${host} 的升级事件同步失败"
+    fi
+  done
+}
+
 write_journal() {
-  local status="$1" node="${2:-}" message="${3:-}" event_tmp
+  local status="$1" node="${2:-}" message="${3:-}" phase="${4:-}" current="${5:-0}" total="${6:-0}"
+  local event_tmp job_status maintenance finished_at started_at
   [[ -n "${journal_file}" ]] || return 0
   event_tmp="${journal_file}.event.tmp"
-  jq -n --arg patch_id "${patch_id}" --arg status "${status}" --arg node "${node}" --arg message "${message}" \
+  jq -n --arg patch_id "${patch_id}" --arg mode "${update_mode}" --arg status "${status}" --arg node "${node}" --arg message "${message}" \
+    --arg phase "${phase}" --argjson current "${current}" --argjson total "${total}" \
     --arg source "${source_version}" --arg target "${target_version}" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    '{patch_id:$patch_id,status:$status,node:$node,message:$message,source:$source,target:$target,updated_at:$at}' >"${event_tmp}"
+    '{patch_id:$patch_id,mode:$mode,status:$status,node:$node,message:$message,phase:$phase,current:$current,total:$total,source:$source,target:$target,updated_at:$at}' >"${event_tmp}"
   chmod 0640 "${event_tmp}"
   cat "${event_tmp}" >>"${journal_events_file}"
   chmod 0640 "${journal_events_file}"
@@ -624,6 +675,31 @@ write_journal() {
   chmod 0640 "${journal_file}.tmp"
   mv -f "${journal_file}.tmp" "${journal_file}"
   rm -f "${event_tmp}"
+
+  ${progress_replication_enabled} || return 0
+
+  job_status="running"
+  maintenance=true
+  finished_at=""
+  case "${status}" in
+    succeeded) job_status="succeeded"; maintenance=false; finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" ;;
+    rolled_back) job_status="rolled_back"; maintenance=false; finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" ;;
+    failed|rollback_failed|rollback_lock_release_failed) job_status="failed" ;;
+  esac
+  started_at="$(jq -r '.started_at // empty' "${PWD}/status.json" 2>/dev/null || true)"
+  [[ -n "${started_at}" ]] || started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  jq -n --arg patch_id "${patch_id}" --arg mode "${update_mode}" --arg status "${job_status}" \
+    --arg node "${node}" --arg message "${message}" --arg phase "${phase}" \
+    --arg started_at "${started_at}" --arg updated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg finished_at "${finished_at}" \
+    --argjson maintenance_active "${maintenance}" --argjson current "${current}" --argjson total "${total}" \
+    '{patch_id:$patch_id,mode:$mode,status:$status,node:$node,message:$message,
+      maintenance_active:$maintenance_active,automatic_failover_available:($maintenance_active | not),
+      started_at:$started_at,updated_at:$updated_at,finished_at:(if $finished_at == "" then null else $finished_at end),
+      progress:{phase:$phase,current:$current,total:$total,percent:0}}' >"${PWD}/status.json.tmp"
+  chown root:clusterguard "${PWD}/status.json.tmp" 2>/dev/null || true
+  chmod 0640 "${PWD}/status.json.tmp"
+  mv -f "${PWD}/status.json.tmp" "${PWD}/status.json"
+  publish_update_progress
 }
 
 wait_node_ready() {
@@ -681,16 +757,20 @@ install_node_rpm() {
 }
 
 rollback_updated_nodes() {
-  local index host failures=0
+  local index host failures=0 current=0 total="${#updated_nodes[@]}"
   ((${#updated_nodes[@]} > 0)) || return 0
   log "开始自动回退已更新节点"
   for ((index=${#updated_nodes[@]}-1; index>=0; index--)); do
     host="${updated_nodes[${index}]}"
     log "回退 ${host} -> ${rollback_version}"
+    write_journal rolling_back "${host}" "restoring previous RPM" rollback "${current}" "${total}"
     if ! install_node_rpm "${host}" "${rollback_rpm}" "${rollback_version}"; then
       log "警告：${host} 自动回退失败，需要人工处置"
       failures=$((failures + 1))
+      continue
     fi
+    current=$((current + 1))
+    write_journal rollback_verified "${host}" "rollback version and readiness verified" rollback "${current}" "${total}"
   done
   ((failures == 0))
 }
@@ -760,45 +840,52 @@ fi
 
 journal_file="${PWD}/clusterguard-update-${patch_id}.json"
 journal_events_file="${PWD}/clusterguard-update-${patch_id}.events.jsonl"
-write_journal running "" "rolling update started"
+total_nodes="${#ordered_nodes[@]}"
+publish_update_metadata
+write_journal running "" "rolling update started" preparing 0 "${total_nodes}"
+write_journal running "" "maintenance gates are being acquired" locking 0 "${total_nodes}"
 acquire_update_locks
 verify_cluster_idle "${leader_host}" true
 retain_update_locks=true
 upgrade_failed=false
 failure_node=""
+node_index=0
 for host in "${ordered_nodes[@]}"; do
+	node_index=$((node_index + 1))
   installed="$(remote_package_version "${host}")"
   if [[ "${installed}" == "${desired_version}" ]]; then
     log "跳过已达到目标版本的节点：${host}"
     if ${resume_requested}; then updated_nodes[${#updated_nodes[@]}]="${host}"; fi
+    write_journal verified "${host}" "node already matches target contract" updating "${node_index}" "${total_nodes}"
     continue
   fi
   verify_cluster_idle "${leader_host}" true
   log "更新节点：${host} (${installed} -> ${desired_version})"
-  write_journal updating "${host}" "installing target RPM"
+  write_journal updating "${host}" "installing target RPM" updating "$((node_index - 1))" "${total_nodes}"
   updated_nodes[${#updated_nodes[@]}]="${host}"
   if ! install_node_rpm "${host}" "${desired_rpm}" "${desired_version}"; then
     upgrade_failed=true; failure_node="${host}"; break
   fi
-  write_journal verified "${host}" "node version and readiness verified"
+  write_journal verified "${host}" "node version and readiness verified" updating "${node_index}" "${total_nodes}"
   if [[ "${host}" != "${leader_host}" ]]; then verify_cluster_idle "${leader_host}" true; fi
 done
 
 if ${upgrade_failed}; then
-  write_journal failed "${failure_node}" "node update failed; automatic rollback started"
+  write_journal failed "${failure_node}" "node update failed; automatic rollback started" rollback "${#updated_nodes[@]}" "${#updated_nodes[@]}"
   if ! rollback_updated_nodes; then
-    write_journal rollback_failed "${failure_node}" "automatic rollback incomplete; maintenance gate retained"
+    write_journal rollback_failed "${failure_node}" "automatic rollback incomplete; maintenance gate retained" rollback 0 "${#updated_nodes[@]}"
     die "节点 ${failure_node} 更新失败且自动回退不完整；维护门禁已保留，请人工处置后使用 --resume"
   fi
   if ! release_update_locks; then
-    write_journal rollback_lock_release_failed "${failure_node}" "rollback succeeded but maintenance release failed"
+    write_journal rollback_lock_release_failed "${failure_node}" "rollback succeeded but maintenance release failed" rollback "${#updated_nodes[@]}" "${#updated_nodes[@]}"
     die "自动回退完成，但部分维护锁释放失败；变更仍被安全阻断，请修复连通性后使用 --resume"
   fi
   retain_update_locks=false
-  write_journal rolled_back "${failure_node}" "automatic rollback completed and maintenance released"
+  write_journal rolled_back "${failure_node}" "automatic rollback completed and maintenance released" rolled_back "${#updated_nodes[@]}" "${#updated_nodes[@]}"
   die "节点 ${failure_node} 更新失败，已完成自动回退"
 fi
 
+write_journal finalizing "" "verifying all node contracts and maintenance release" finalizing "${total_nodes}" "${total_nodes}"
 verify_cluster_idle "" true
 for host in "${all_nodes[@]}"; do
   installed="$(remote_package_version "${host}")"
@@ -809,5 +896,5 @@ done
 release_update_locks || die "部分控制节点未能释放维护锁；变更操作仍被安全阻断，请修复连通性后使用 --resume"
 retain_update_locks=false
 verify_cluster_idle "" false
-write_journal succeeded "" "all nodes and maintenance release verified"
+write_journal succeeded "" "all nodes and maintenance release verified" completed "${total_nodes}" "${total_nodes}"
 log "补丁完成：所有节点均为 ${desired_version}，控制面多数派和就绪状态已复核"

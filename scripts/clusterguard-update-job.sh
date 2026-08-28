@@ -91,7 +91,7 @@ data_nodes="$("${jq_binary}" -r '(.data_nodes // []) | join(",")' "${config}")"
 [[ -z "${known_hosts}" || ( -f "${known_hosts}" && ! -L "${known_hosts}" ) ]] || die "known_hosts 无效"
 [[ -z "${ssh_credentials}" || ( -f "${ssh_credentials}" && ! -L "${ssh_credentials}" ) ]] || die "SSH 凭据文件无效"
 
-arguments=(--patch "${patch}" --trust-key "${trust_key}" --state "${state_file}" -u "${ssh_user}" --ssh-port "${ssh_port}" --api-port "${api_port}")
+arguments=(--patch "${patch}" --trust-key "${trust_key}" --state "${state_file}" --update-root "${root}" -u "${ssh_user}" --ssh-port "${ssh_port}" --api-port "${api_port}")
 [[ -z "${controllers}" ]] || arguments+=(--controllers "${controllers}")
 [[ -z "${data_nodes}" ]] || arguments+=(--data-nodes "${data_nodes}")
 [[ -z "${ssh_key}" ]] || arguments+=(--ssh-key "${ssh_key}")
@@ -117,6 +117,12 @@ if (cd "${job_dir}" && "${upgrader}" "${arguments[@]}"); then
   esac
 else
   exit_code=$?
+  journal_events="${job_dir}/clusterguard-update-${patch_id}.events.jsonl"
+  last_event_status="$(tail -n 1 "${journal_events}" 2>/dev/null | "${jq_binary}" -r '.status // empty' 2>/dev/null || true)"
+  if [[ "${last_event_status}" == "rolled_back" ]]; then
+    write_status rolled_back "升级未完成，已自动回退全部节点并释放维护门禁" false "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    exit "${exit_code}"
+  fi
   maintenance_after_failure=false
   [[ -f /etc/clusterguard/update-maintenance.json ]] && maintenance_after_failure=true
   write_status failed "升级任务失败或被阻断；请查看输出和事件记录，确认维护门禁状态后再续跑或回退" "${maintenance_after_failure}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"

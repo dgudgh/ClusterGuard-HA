@@ -3477,6 +3477,44 @@ func TestSoftwareUpdateArtifactsRemainReadableByConsoleService(t *testing.T) {
 	}
 }
 
+func TestRollingUpdaterPublishesStructuredProgressAcrossControllers(t *testing.T) {
+	upgrader, err := os.ReadFile("clusterguard-upgrade.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(upgrader)
+	for _, required := range []string{
+		"publish_update_metadata",
+		"publish_update_progress",
+		`--arg phase "${phase}"`,
+		`--argjson current "${current}"`,
+		`--argjson total "${total}"`,
+		`'${remote_dir}/events.jsonl'`,
+		`write_journal updating`,
+		`write_journal verified`,
+		`write_journal finalizing`,
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("rolling updater is missing structured progress contract %q", required)
+		}
+	}
+
+	job, err := os.ReadFile("clusterguard-update-job.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobText := string(job)
+	for _, required := range []string{
+		`--update-root "${root}"`,
+		`last_event_status`,
+		`write_status rolled_back`,
+	} {
+		if !strings.Contains(jobText, required) {
+			t.Fatalf("update job is missing progress continuity contract %q", required)
+		}
+	}
+}
+
 func TestChineseDeliveryManualsCoverInstallDatabasePreparationAndOperations(t *testing.T) {
 	expectations := map[string][]string{
 		"../docs/zh-CN/offline-rpm-install.md": {
