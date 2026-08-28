@@ -324,6 +324,7 @@ elif [[ "$command" == *"cat /etc/clusterguard/node.json"* ]]; then
 elif [[ "$command" == *"cgctl"*" status"* ]]; then
   maintenance=false
   [[ ! -f "$state/$host.maintenance" ]] || maintenance=true
+  ready=true
   role=follower
   [[ "$host" != c3 ]] || role=leader
   voter_count=3
@@ -341,7 +342,13 @@ elif [[ "$command" == *"cgctl"*" status"* ]]; then
   if [[ "${FAKE_EXTRA_DATA_NODE:-}" == true ]]; then
     data_members='[{"resource_id":"11111111-1111-4111-8111-111111111111","ip_address":"c1"},{"resource_id":"22222222-2222-4222-8222-222222222222","ip_address":"c2"},{"resource_id":"33333333-3333-4333-8333-333333333333","ip_address":"c3"},{"resource_id":"44444444-4444-4444-8444-444444444444","ip_address":"d1"},{"resource_id":"77777777-7777-4777-8777-777777777777","ip_address":"d2"}]'
   fi
-  printf '{"status":"ok","result":{"ready":true,"leader_known":true,"quorum_confirmed":%s,"voter_count":%s,"active_operations":0,"indeterminate_operations":0,"active_lifecycle_tasks":0,"update_maintenance_active":%s,"role":"%s","local_controller_id":"%s","controller_members":%s,"data_node_members":%s}}\n' "$quorum" "$voter_count" "$maintenance" "$role" "$node_id" "$members" "$data_members"
+  if [[ "$host" == "${FAKE_PERSISTENT_STATUS_HOST:-}" && "$(tr -d '\n' <"$state/c1.version")" == 2.2-29 ]]; then
+    ready=false
+  elif [[ "$host" == "${FAKE_TRANSIENT_STATUS_HOST:-}" && "$(tr -d '\n' <"$state/c1.version")" == 2.2-29 && ! -f "$state/transient-status-injected" ]]; then
+    ready=false
+    : >"$state/transient-status-injected"
+  fi
+  printf '{"status":"ok","result":{"ready":%s,"leader_known":true,"quorum_confirmed":%s,"voter_count":%s,"active_operations":0,"indeterminate_operations":0,"active_lifecycle_tasks":0,"update_maintenance_active":%s,"role":"%s","local_controller_id":"%s","controller_members":%s,"data_node_members":%s}}\n' "$ready" "$quorum" "$voter_count" "$maintenance" "$role" "$node_id" "$members" "$data_members"
 elif [[ "$command" == *".cluster-update.lock/patch-id"* && "$command" == *"grep -Fq"* ]]; then
   test -f "$state/$host.maintenance"
 elif [[ "$command" == *"update-maintenance.json"* && "$command" == *"rolling_update"* ]]; then
@@ -406,8 +413,66 @@ fi
 		"--controllers", "c1,c2,c3", "--data-nodes", "c1,c2,c3,d1",
 		"--known-hosts", knownHosts, "-u", "root", "--execute", "--yes")
 	command.Dir = root
-	command.Env = append(os.Environ(), "PATH="+fakeBin+":"+os.Getenv("PATH"), "FAKE_REMOTE_STATE="+state, "FAKE_FAIL_HOST=c2")
+	command.Env = append(os.Environ(), "PATH="+fakeBin+":"+os.Getenv("PATH"), "FAKE_REMOTE_STATE="+state, "FAKE_TRANSIENT_STATUS_HOST=c2")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("transient control-plane convergence should retry: %v\n%s", err, output)
+	}
+	if _, err := os.Stat(filepath.Join(state, "transient-status-injected")); err != nil {
+		t.Fatalf("transient status failure was not exercised: %v", err)
+	}
+	if err := os.Remove(filepath.Join(state, "transient-status-injected")); err != nil {
+		t.Fatal(err)
+	}
+	for _, host := range []string{"c1", "c2", "c3", "d1"} {
+		version, readErr := os.ReadFile(filepath.Join(state, host+".version"))
+		if readErr != nil || strings.TrimSpace(string(version)) != "2.2-29" {
+			t.Fatalf("%s transient-retry version=%q err=%v", host, version, readErr)
+		}
+		if _, statErr := os.Stat(filepath.Join(state, host+".maintenance")); !os.IsNotExist(statErr) {
+			t.Fatalf("%s transient-retry maintenance marker was not released: %v", host, statErr)
+		}
+	}
+
+	if err := os.Remove(filepath.Join(state, "install-order")); err != nil {
+		t.Fatal(err)
+	}
+	for _, host := range []string{"c1", "c2", "c3", "d1"} {
+		writeFile(t, filepath.Join(state, host+".version"), "2.2-28\n", 0o600)
+	}
+	command = exec.Command("bash", upgradeScript,
+		"--patch", patchPath, "--trust-key", publicKey,
+		"--controllers", "c1,c2,c3", "--data-nodes", "c1,c2,c3,d1",
+		"--known-hosts", knownHosts, "-u", "root", "--execute", "--yes")
+	command.Dir = root
+	command.Env = append(os.Environ(), "PATH="+fakeBin+":"+os.Getenv("PATH"), "FAKE_REMOTE_STATE="+state,
+		"FAKE_PERSISTENT_STATUS_HOST=c2", "CG_UPDATE_CLUSTER_IDLE_ATTEMPTS=2", "CG_UPDATE_CLUSTER_IDLE_DELAY_SECONDS=0")
 	output, err := command.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "已完成自动回退") {
+		t.Fatalf("persistent convergence failure bypassed rollback: err=%v\n%s", err, output)
+	}
+	for _, host := range []string{"c1", "c2", "c3", "d1"} {
+		version, readErr := os.ReadFile(filepath.Join(state, host+".version"))
+		if readErr != nil || strings.TrimSpace(string(version)) != "2.2-28" {
+			t.Fatalf("%s convergence rollback version=%q err=%v", host, version, readErr)
+		}
+		if _, statErr := os.Stat(filepath.Join(state, host+".maintenance")); !os.IsNotExist(statErr) {
+			t.Fatalf("%s convergence rollback maintenance marker was not released: %v", host, statErr)
+		}
+	}
+
+	if err := os.Remove(filepath.Join(state, "install-order")); err != nil {
+		t.Fatal(err)
+	}
+	for _, host := range []string{"c1", "c2", "c3", "d1"} {
+		writeFile(t, filepath.Join(state, host+".version"), "2.2-28\n", 0o600)
+	}
+	command = exec.Command("bash", upgradeScript,
+		"--patch", patchPath, "--trust-key", publicKey,
+		"--controllers", "c1,c2,c3", "--data-nodes", "c1,c2,c3,d1",
+		"--known-hosts", knownHosts, "-u", "root", "--execute", "--yes")
+	command.Dir = root
+	command.Env = append(os.Environ(), "PATH="+fakeBin+":"+os.Getenv("PATH"), "FAKE_REMOTE_STATE="+state, "FAKE_FAIL_HOST=c2")
+	output, err = command.CombinedOutput()
 	if err == nil || !strings.Contains(string(output), "已完成自动回退") {
 		t.Fatalf("failed rolling patch did not report rollback: err=%v\n%s", err, output)
 	}

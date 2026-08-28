@@ -391,8 +391,13 @@
     .settings-version-summary { display:flex; min-width:180px; min-height:48px; flex-direction:column; align-items:flex-end; justify-content:center; }
     .settings-version-summary span { color:var(--muted); font-size:10px; font-weight:700; }
     .settings-version-summary strong { margin-top:3px; font-size:14px; }
-    .settings-account-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; align-items:stretch; }
+    .settings-account-grid { display:block; }
     .settings-account-grid[hidden] { display:none; }
+    .settings-preference-sheet { overflow:hidden; border:1px solid var(--line); border-radius:8px; background:#fff; }
+    .settings-preference-row { display:grid; grid-template-columns:220px minmax(280px,1fr) auto; gap:20px; align-items:center; min-height:112px; padding:18px 20px; }
+    .settings-preference-row + .settings-preference-row { border-top:1px solid var(--line); }
+    .settings-preference-heading h3 { margin:0; font-size:14px; }
+    .settings-preference-heading p { margin:4px 0 0; color:var(--muted); font-size:11px; line-height:1.5; }
     .settings-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
     .settings-note { margin:12px 0 0; color:var(--muted); font-size:12px; }
     .settings-panel { overflow:hidden; box-shadow:none; }
@@ -505,17 +510,18 @@
     .software-update-progress-event strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .software-update-progress-event span { color:var(--muted); }
     .software-update-progress-dialog .dialog-actions { align-items:center; justify-content:space-between; padding:14px 18px; border-top:1px solid var(--line); background:#fff; }
-    .settings-account-summary { display:flex; min-height:76px; align-items:center; gap:12px; }
+    .settings-account-summary { display:flex; min-width:0; align-items:center; gap:12px; }
     .settings-account-avatar { display:grid; width:42px; height:42px; flex:0 0 42px; place-items:center; border-radius:8px; background:#1d1d1f; color:#fff; font-size:13px; font-weight:800; }
     .settings-account-copy { min-width:0; }
     .settings-account-copy span, .settings-account-copy strong { display:block; }
     .settings-account-copy span { color:var(--muted); font-size:11px; }
     .settings-account-copy strong { margin-top:2px; font-size:14px; }
     .settings-account-role { margin-left:auto; }
-    .settings-inline-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; padding-top:14px; border-top:1px solid var(--line); }
+    .settings-security-inline { display:block; max-width:620px; margin-top:5px; overflow:hidden; color:var(--muted); font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
+    .settings-security-inline::before { margin-right:5px; color:var(--success); content:"✓"; font-weight:800; }
+    .settings-inline-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; }
     .settings-fields { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-    .settings-security-note { display:flex; gap:8px; margin:14px 0 0; padding-top:12px; border-top:1px solid var(--line); color:var(--muted); font-size:11px; }
-    .settings-security-note::before { color:var(--success); content:"✓"; font-weight:800; }
+    .settings-preference-row .settings-fields { grid-column:2 / -1; }
     dialog { width:min(760px,calc(100vw - 32px)); max-height:calc(100vh - 48px); padding:0; overflow:auto; border:1px solid var(--line-strong); border-radius:8px; box-shadow:0 24px 70px rgba(15,32,25,.22); }
     dialog::backdrop { background:rgba(16,32,25,.44); }
     .dialog-head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:16px 18px; border-bottom:1px solid var(--line); }
@@ -600,7 +606,7 @@
     .live-status[hidden] { display:none; }
     .live-status.error { border-left-color:var(--danger); color:#903434; }
     @media (max-width:1220px) {
-      .settings-account-grid { grid-template-columns:1fr; }
+      .settings-preference-row { grid-template-columns:180px minmax(240px,1fr) auto; }
     }
     @media (max-width:1160px) {
       .summary-grid, .metric-grid { grid-template-columns:repeat(3,1fr); }
@@ -637,6 +643,9 @@
       .topology-heading-main { width:100%; align-items:stretch; flex-direction:column; gap:7px; }
       .topology-section-tabs { width:100%; }
       .topology-view-heading > button { align-self:flex-end; }
+      .settings-preference-row { grid-template-columns:1fr; gap:14px; }
+      .settings-preference-row .settings-fields { grid-column:auto; }
+      .settings-inline-actions { justify-content:flex-start; }
     }
     @media (max-width:680px) {
       .page-header { display:block; }
@@ -1013,8 +1022,17 @@
           </div>
 
           <div class="settings-account-grid" id="settings-account-panel" role="tabpanel" aria-labelledby="settings-account-tab" hidden>
-            <div class="panel settings-panel"><div class="panel-header"><div><h3 class="panel-title">账户与安全</h3><p>当前登录身份和账户操作</p></div></div><div class="panel-body"><div class="settings-account-summary"><span class="settings-account-avatar" aria-hidden="true">A</span><div class="settings-account-copy"><span>当前用户</span><strong id="settings-user-name">-</strong></div><div class="settings-account-role"><span class="badge" id="settings-user-role">-</span></div></div><div class="settings-inline-actions"><button id="settings-change-password" type="button">修改密码</button><button id="settings-logout" type="button">退出当前账户</button></div><p class="settings-security-note">高风险操作受登录态、角色权限、CSRF、Safety Guard 和集群操作锁保护。</p></div></div>
-            <div class="panel settings-panel"><div class="panel-header"><div><h3 class="panel-title">显示偏好</h3><p>仅影响当前浏览器中的控制台体验</p></div></div><div class="panel-body settings-fields"><label for="language-select">界面语言<select id="language-select"><option value="zh-CN">中文</option><option value="en-US">English</option></select></label><label for="refresh-interval">自动刷新<select id="refresh-interval"><option value="30000">30 秒</option><option value="60000" selected>60 秒</option><option value="120000">2 分钟</option><option value="0">关闭</option></select></label></div></div>
+            <div class="settings-preference-sheet">
+              <div class="settings-preference-row" role="group" aria-labelledby="settings-account-title">
+                <div class="settings-preference-heading"><h3 id="settings-account-title">账户与安全</h3><p>当前登录身份和账户操作</p></div>
+                <div class="settings-account-summary"><span class="settings-account-avatar" aria-hidden="true">A</span><div class="settings-account-copy"><span>当前用户</span><strong id="settings-user-name">-</strong><span class="settings-security-inline">登录态、角色权限、CSRF、Safety Guard 和集群操作锁保护已启用</span></div><div class="settings-account-role"><span class="badge" id="settings-user-role">-</span></div></div>
+                <div class="settings-inline-actions"><button id="settings-change-password" type="button">修改密码</button><button id="settings-logout" type="button">退出当前账户</button></div>
+              </div>
+              <div class="settings-preference-row" role="group" aria-labelledby="settings-display-title">
+                <div class="settings-preference-heading"><h3 id="settings-display-title">显示偏好</h3><p>仅影响当前浏览器中的控制台体验</p></div>
+                <div class="settings-fields"><label for="language-select">界面语言<select id="language-select"><option value="zh-CN">中文</option><option value="en-US">English</option></select></label><label for="refresh-interval">自动刷新<select id="refresh-interval"><option value="30000">30 秒</option><option value="60000" selected>60 秒</option><option value="120000">2 分钟</option><option value="0">关闭</option></select></label></div>
+              </div>
+            </div>
           </div>
         </section>
       </div>
@@ -2444,10 +2462,10 @@
 
     const softwareUpdateStatusText = value => ({
       uploaded:'已上传', queued:'排队中', running:'升级中', planned:'计划已通过',
-      succeeded:'升级成功', failed:'升级失败', rolled_back:'已回退'
+      succeeded:'升级成功', failed:'升级失败', rolled_back:'已回退', interrupted:'状态待确认'
     })[value] || value || '尚未计划';
     const softwareUpdateModeText = value => ({ plan:'只读计划', execute:'滚动升级', resume:'续跑升级', rollback:'受控回退' })[value] || value || '-';
-    const softwareUpdateBadgeClass = value => ({ succeeded:'success', planned:'success', rolled_back:'warning', failed:'danger', running:'warning', queued:'warning' })[value] || '';
+    const softwareUpdateBadgeClass = value => ({ succeeded:'success', planned:'success', rolled_back:'warning', failed:'danger', interrupted:'warning', running:'warning', queued:'warning' })[value] || '';
     const platformVersionText = () => {
       const version = state.platformVersion || {};
       if (!version.version) return '版本未知';
@@ -2528,9 +2546,10 @@
       const active = !!activeItem || maintenanceActive;
       const item = activeItem || latest;
       const record = item && item.package || {};
-      const job = item && item.job || null;
+      const orphanedMaintenance = maintenanceActive && !activeItem;
+      const job = orphanedMaintenance ? null : (item && item.job || null);
       const progress = job && job.progress || {};
-      const status = job && job.status || (active ? 'running' : 'uploaded');
+      const status = orphanedMaintenance ? 'interrupted' : (job && job.status || (active ? 'running' : 'uploaded'));
       const terminal = ['succeeded', 'failed', 'rolled_back'].includes(status) && !active;
       const phase = progress.phase || (status === 'succeeded' ? 'completed' : status === 'rolled_back' ? 'rolled_back' : status === 'failed' ? 'failed' : active ? 'preparing' : 'queued');
       const total = Math.max(0, Number(progress.total) || 0);
@@ -2548,8 +2567,8 @@
       const statusElement = byId('software-update-progress-status');
       statusElement.textContent = softwareUpdateStatusText(status);
       statusElement.className = `badge ${softwareUpdateBadgeClass(status)}`;
-      byId('software-update-progress-label').textContent = active && !job
-        ? '控制节点正在切换，等待当前 Leader 接续任务状态'
+      byId('software-update-progress-label').textContent = orphanedMaintenance
+        ? '维护门禁仍然生效，但当前 Leader 没有活动升级记录；请核对各节点版本后续跑或回退'
         : softwareUpdatePhaseText(phase);
       byId('software-update-progress-node').textContent = job && job.node || (active ? '等待节点调度' : '-');
       byId('software-update-progress-nodes').textContent = total ? `${current} / ${total}` : (structured ? `${current}` : '等待节点清单');
@@ -2582,7 +2601,7 @@
       const eventList = byId('software-update-progress-event-list');
       eventList.replaceChildren();
       if (!events.length) {
-        eventList.append(text('div', 'software-update-empty', active ? '控制节点可能正在切换，正在等待当前 Leader 返回升级事件。' : '尚无升级事件。'));
+        eventList.append(text('div', 'software-update-empty', orphanedMaintenance ? '未找到活动升级事件。维护门禁不会自动清除，请先核对节点版本。' : active ? '控制节点可能正在切换，正在等待当前 Leader 返回升级事件。' : '尚无升级事件。'));
       } else {
         events.slice(-8).reverse().forEach(event => {
           const row = text('div', 'software-update-progress-event', '');
@@ -2626,6 +2645,7 @@
       const latest = latestSoftwareUpdate();
       const activePackage = activeSoftwareUpdate();
       const statusActive = !!(state.controlPlane && state.controlPlane.update_maintenance_active);
+      const orphanedMaintenance = statusActive && !activePackage;
       const active = activePackage || (statusActive ? latest : null);
       const banner = byId('software-update-global-warning');
       banner.hidden = !(active || statusActive);
@@ -2633,13 +2653,16 @@
         renderSoftwareUpdateProgress();
         return;
       }
-      const job = active && active.job;
+      const job = orphanedMaintenance ? null : (active && active.job);
       const patchID = active && active.package ? active.package.patch_id : '';
       const node = job && job.node ? ` · 当前节点 ${job.node}` : '';
-      byId('software-update-global-detail').textContent = patchID
+      byId('software-update-global-detail').textContent = orphanedMaintenance
+        ? `升级维护未闭环${patchID ? ` · 最近升级包 ${patchID}` : ''}。当前 Leader 未发现活动任务，请核对节点版本后续跑或回退。`
+        : patchID
         ? `升级包 ${patchID} · ${job ? softwareUpdateStatusText(job.status) : '正在等待当前 Leader 的任务状态'}${node}`
         : '控制面升级维护标记已生效，自动故障切换已暂停。';
-      byId('software-update-global-state').textContent = job && job.mode === 'rollback' ? '受控回退中' : '升级维护中';
+      byId('software-update-global-state').textContent = job && job.mode === 'rollback' ? '受控回退中'
+        : orphanedMaintenance ? '升级待确认' : job && job.status === 'failed' ? '升级失败待处理' : '升级维护中';
       renderSoftwareUpdateProgress();
     };
 

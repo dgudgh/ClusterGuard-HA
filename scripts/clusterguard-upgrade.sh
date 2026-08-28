@@ -75,6 +75,11 @@ configured_data_addresses=""
 update_root="/var/lib/clusterguard/updates"
 update_mode="execute"
 progress_replication_enabled=false
+cluster_idle_attempts="${CG_UPDATE_CLUSTER_IDLE_ATTEMPTS:-30}"
+cluster_idle_delay_seconds="${CG_UPDATE_CLUSTER_IDLE_DELAY_SECONDS:-2}"
+
+[[ "${cluster_idle_attempts}" =~ ^[1-9][0-9]*$ ]] || { printf 'CG_UPDATE_CLUSTER_IDLE_ATTEMPTS 必须为正整数\n' >&2; exit 1; }
+[[ "${cluster_idle_delay_seconds}" =~ ^[0-9]+$ ]] || { printf 'CG_UPDATE_CLUSTER_IDLE_DELAY_SECONDS 必须为非负整数\n' >&2; exit 1; }
 
 timestamp() { date '+%Y-%m-%d %H:%M:%S'; }
 log() { printf '[%s] %s\n' "$(timestamp)" "$*"; }
@@ -521,6 +526,21 @@ verify_cluster_idle() {
   leader_host="${observed_leader}"
 }
 
+wait_cluster_idle() {
+  local expected_leader="${1:-}" expected_maintenance="${2:-false}" attempt output=""
+  for attempt in $(seq 1 "${cluster_idle_attempts}"); do
+    if output="$(trap - EXIT; verify_cluster_idle "${expected_leader}" "${expected_maintenance}" 2>&1)"; then
+      return 0
+    fi
+    if ((attempt == 1 || attempt % 5 == 0)); then
+      log "等待控制面收敛（${attempt}/${cluster_idle_attempts}）：${output##*$'\n'}"
+    fi
+    sleep "${cluster_idle_delay_seconds}"
+  done
+  log "错误：控制面在 $((cluster_idle_attempts * cluster_idle_delay_seconds)) 秒内未恢复一致：${output##*$'\n'}" >&2
+  return 1
+}
+
 remote_package_version() {
   remote_run "$1" "rpm -q --qf '%{VERSION}-%{RELEASE}\\n' clusterguard-ha"
 }
@@ -845,7 +865,7 @@ publish_update_metadata
 write_journal running "" "rolling update started" preparing 0 "${total_nodes}"
 write_journal running "" "maintenance gates are being acquired" locking 0 "${total_nodes}"
 acquire_update_locks
-verify_cluster_idle "${leader_host}" true
+wait_cluster_idle "${leader_host}" true || die "维护门禁建立后控制面未在时限内恢复一致"
 retain_update_locks=true
 upgrade_failed=false
 failure_node=""
@@ -859,7 +879,9 @@ for host in "${ordered_nodes[@]}"; do
     write_journal verified "${host}" "node already matches target contract" updating "${node_index}" "${total_nodes}"
     continue
   fi
-  verify_cluster_idle "${leader_host}" true
+  if ! wait_cluster_idle "${leader_host}" true; then
+    upgrade_failed=true; failure_node="${host}"; break
+  fi
   log "更新节点：${host} (${installed} -> ${desired_version})"
   write_journal updating "${host}" "installing target RPM" updating "$((node_index - 1))" "${total_nodes}"
   updated_nodes[${#updated_nodes[@]}]="${host}"
@@ -867,8 +889,18 @@ for host in "${ordered_nodes[@]}"; do
     upgrade_failed=true; failure_node="${host}"; break
   fi
   write_journal verified "${host}" "node version and readiness verified" updating "${node_index}" "${total_nodes}"
-  if [[ "${host}" != "${leader_host}" ]]; then verify_cluster_idle "${leader_host}" true; fi
+  if [[ "${host}" != "${leader_host}" ]] && ! wait_cluster_idle "${leader_host}" true; then
+    upgrade_failed=true; failure_node="${host}"; break
+  fi
 done
+
+if ! ${upgrade_failed}; then
+  write_journal finalizing "" "verifying all node contracts and maintenance release" finalizing "${total_nodes}" "${total_nodes}"
+  if ! wait_cluster_idle "" true; then
+    upgrade_failed=true
+    failure_node="control-plane"
+  fi
+fi
 
 if ${upgrade_failed}; then
   write_journal failed "${failure_node}" "node update failed; automatic rollback started" rollback "${#updated_nodes[@]}" "${#updated_nodes[@]}"
@@ -885,8 +917,6 @@ if ${upgrade_failed}; then
   die "节点 ${failure_node} 更新失败，已完成自动回退"
 fi
 
-write_journal finalizing "" "verifying all node contracts and maintenance release" finalizing "${total_nodes}" "${total_nodes}"
-verify_cluster_idle "" true
 for host in "${all_nodes[@]}"; do
   installed="$(remote_package_version "${host}")"
   [[ "${installed}" == "${desired_version}" ]] || die "最终版本校验失败：${host}=${installed}"
@@ -895,6 +925,6 @@ for host in "${all_nodes[@]}"; do
 done
 release_update_locks || die "部分控制节点未能释放维护锁；变更操作仍被安全阻断，请修复连通性后使用 --resume"
 retain_update_locks=false
-verify_cluster_idle "" false
+wait_cluster_idle "" false || die "维护门禁释放后控制面未在时限内恢复一致"
 write_journal succeeded "" "all nodes and maintenance release verified" completed "${total_nodes}" "${total_nodes}"
 log "补丁完成：所有节点均为 ${desired_version}，控制面多数派和就绪状态已复核"
