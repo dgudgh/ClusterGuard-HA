@@ -27,6 +27,7 @@ depends:
   - tar
 
 scripts:
+  preinstall: ./preinstall.sh
   postinstall: ./postinstall.sh
   preremove: ./preremove.sh
   postremove: ./postremove.sh
@@ -73,6 +74,8 @@ contents:
     expand: true
     file_info:
       mode: 0750
+      owner: root
+      group: clusterguard
   - src: ${CG_RPM_STAGE}/scripts/clusterguard-update-job.sh
     dst: /usr/local/libexec/clusterguard-update-job.sh
     expand: true

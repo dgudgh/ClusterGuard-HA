@@ -3379,6 +3379,7 @@ exit 0
 func TestRPMDeliveryIsCompleteAndDoesNotStartUnconfiguredServices(t *testing.T) {
 	requiredFiles := []string{
 		"../packaging/rpm/nfpm.yaml",
+		"../packaging/rpm/preinstall.sh",
 		"../packaging/rpm/postinstall.sh",
 		"../packaging/rpm/preremove.sh",
 		"../packaging/rpm/postremove.sh",
@@ -3451,7 +3452,6 @@ func TestRPMDeliveryIsCompleteAndDoesNotStartUnconfiguredServices(t *testing.T) 
 		}
 	}
 	for _, expected := range []string{
-		"useradd",
 		"chown root:clusterguard /usr/local/sbin/clusterguard-upgrade",
 		"chmod 0750 /usr/local/sbin/clusterguard-upgrade",
 		"/var/lib/clusterguard",
@@ -3464,6 +3464,21 @@ func TestRPMDeliveryIsCompleteAndDoesNotStartUnconfiguredServices(t *testing.T) 
 		if !strings.Contains(postinstallText, expected) {
 			t.Fatalf("RPM postinstall is missing %q", expected)
 		}
+	}
+
+	preinstall, err := os.ReadFile("../packaging/rpm/preinstall.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	preinstallText := string(preinstall)
+	for _, expected := range []string{"groupadd --system clusterguard", "useradd --system", "--gid clusterguard"} {
+		if !strings.Contains(preinstallText, expected) {
+			t.Fatalf("RPM preinstall is missing %q", expected)
+		}
+	}
+	if !strings.Contains(text, "preinstall: ./preinstall.sh") ||
+		!strings.Contains(text, "group: clusterguard") {
+		t.Fatal("RPM metadata must create and assign the clusterguard execution group before payload installation")
 	}
 }
 
