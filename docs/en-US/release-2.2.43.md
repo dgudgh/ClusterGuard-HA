@@ -16,7 +16,6 @@ This release updates only ClusterGuard controllers, agents, and update tooling. 
 - Each new `.cgupgrade` declares an embedded bootstrap updater, protocol, and SHA-256 in its release-signed manifest. A missing or modified bootstrap is rejected before maintenance begins.
 - The source-node updater is limited to safe extraction plus signature and checksum verification, then delegates planning, rolling execution, convergence waits, resume, and rollback to the verified in-package updater.
 - The console enforces the bootstrap contract at both upload and execution, so a previously stored `.cgupgrade` without a bootstrap cannot bypass the new check. Legacy `.cgpatch` remains a compatibility path only.
-- When `2.2-42` uploaded a package that already contained the bootstrap but could not record the new metadata fields, `2.2-43` re-verifies and caches the contract, backfilling the metadata when directory ownership permits, so an interrupted upgrade can still resume or roll back.
 - If a durable job record exists but is unreadable, corrupt, or contains a mismatched package ID, the control API reports that the outcome requires verification and conservatively retains the maintenance warning instead of presenting the package as merely uploaded.
 - Rolling progress is calculated from the current active-node inventory and remains at `100%` after every node completes.
 
