@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"strings"
 	"testing"
@@ -700,6 +701,7 @@ func TestTopologyDiscoveryIgnoresVolatilePostgreSQLWALPositions(t *testing.T) {
 			EngineMetadata: map[string]string{
 				"version": "16.14", "timeline_id": "1", "in_recovery": "false",
 				"current_lsn": "0/405D728", "receive_lsn": "", "replay_lsn": "",
+				"receiver_latest_end_lsn": "0/405D728",
 			},
 		}},
 		ObservedAt: workflowTestObservation,
@@ -718,6 +720,7 @@ func TestTopologyDiscoveryIgnoresVolatilePostgreSQLWALPositions(t *testing.T) {
 	refreshed.Instances[0].EngineMetadata = map[string]string{
 		"version": "16.14", "timeline_id": "1", "in_recovery": "false",
 		"current_lsn": "0/405E000", "receive_lsn": "0/405E000", "replay_lsn": "0/405DFF8",
+		"receiver_latest_end_lsn": "0/405E000",
 	}
 	gate.Reader = topologyReaderStub{found: true, snapshot: refreshed}
 	if err := gate.RevalidateObservation(context.Background(), operation, token); err != nil {
@@ -729,10 +732,61 @@ func TestTopologyDiscoveryIgnoresVolatilePostgreSQLWALPositions(t *testing.T) {
 	changed.Instances[0].EngineMetadata = map[string]string{
 		"version": "16.14", "timeline_id": "2", "in_recovery": "false",
 		"current_lsn": "0/405E000", "receive_lsn": "0/405E000", "replay_lsn": "0/405DFF8",
+		"receiver_latest_end_lsn": "0/405E000",
 	}
 	gate.Reader = topologyReaderStub{found: true, snapshot: changed}
 	if err := gate.RevalidateObservation(context.Background(), operation, token); err == nil {
 		t.Fatal("PostgreSQL timeline change passed observation revalidation")
+	}
+}
+
+func TestTopologyDiscoveryIgnoresMySQLReconnectAttemptCounter(t *testing.T) {
+	clusterID := model.NewResourceID()
+	instanceID := model.NewResourceID()
+	operation := model.Operation{ClusterID: clusterID}
+	reconnectError := func(attempt int) string {
+		return fmt.Sprintf(
+			"Error reconnecting to source 'cg_replication@192.0.2.10:3306'. This was attempt %d/86400, with a delay of 5 seconds between attempts. Message: Can't connect to MySQL server on '192.0.2.10:3306' (111)",
+			attempt,
+		)
+	}
+	snapshot := model.TopologySnapshot{
+		ClusterID: clusterID,
+		Instances: []model.DatabaseInstance{{
+			ResourceMeta: model.ResourceMeta{ResourceID: instanceID},
+			ClusterID:    clusterID,
+			Engine:       model.EngineMySQL,
+			Role:         model.RoleReplica,
+			Health:       model.Health{State: model.HealthDegraded, Replication: "running"},
+			Replication: model.ReplicationStatus{
+				IOThread:  model.ThreadConnecting,
+				SQLThread: model.ThreadRunning,
+				LastError: reconnectError(46),
+			},
+		}},
+		ObservedAt: workflowTestObservation,
+	}
+	gate := TopologyDiscovery{Reader: topologyReaderStub{found: true, snapshot: snapshot}}
+	token, err := gate.CaptureObservation(context.Background(), operation)
+	if err != nil {
+		t.Fatalf("capture MySQL reconnect observation: %v", err)
+	}
+
+	refreshed := snapshot
+	refreshed.ObservedAt = snapshot.ObservedAt.Add(5 * time.Second)
+	refreshed.Instances = append([]model.DatabaseInstance{}, snapshot.Instances...)
+	refreshed.Instances[0].Replication.LastError = reconnectError(47)
+	gate.Reader = topologyReaderStub{found: true, snapshot: refreshed}
+	if err := gate.RevalidateObservation(context.Background(), operation, token); err != nil {
+		t.Fatalf("MySQL reconnect attempt heartbeat invalidated equivalent topology: %v", err)
+	}
+
+	changed := refreshed
+	changed.Instances = append([]model.DatabaseInstance{}, refreshed.Instances...)
+	changed.Instances[0].Replication.LastError = "Relay log read failure: corrupted event"
+	gate.Reader = topologyReaderStub{found: true, snapshot: changed}
+	if err := gate.RevalidateObservation(context.Background(), operation, token); err == nil {
+		t.Fatal("meaningful MySQL replication error change passed observation revalidation")
 	}
 }
 

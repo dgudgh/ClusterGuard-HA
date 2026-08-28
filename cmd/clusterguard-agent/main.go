@@ -15,10 +15,20 @@ type runtimeControllers struct {
 	roles      agent.RoleController
 	postgresql agent.PostgreSQLController
 	oracle     agent.OracleController
+	power      agent.PowerController
 }
 
 func newRuntimeControllers(configuration agent.Config, runner agent.CommandRunner) (runtimeControllers, error) {
-	postgresql, err := agent.NewDefaultPostgreSQLController(runner)
+	if configuration.DockerConfigDirectory != "" {
+		if err := os.MkdirAll(configuration.DockerConfigDirectory, 0o750); err != nil {
+			return runtimeControllers{}, fmt.Errorf("create Docker CLI configuration directory: %w", err)
+		}
+	}
+	linuxPostgreSQL, err := agent.NewDefaultPostgreSQLController(runner)
+	if err != nil {
+		return runtimeControllers{}, err
+	}
+	dockerPostgreSQL, err := agent.NewDockerPostgreSQLController(runner, configuration.DockerBinary, configuration.DockerConfigDirectory)
 	if err != nil {
 		return runtimeControllers{}, err
 	}
@@ -26,11 +36,17 @@ func newRuntimeControllers(configuration agent.Config, runner agent.CommandRunne
 	if err != nil {
 		return runtimeControllers{}, err
 	}
+	linuxRoles := agent.NewMySQLRoleController(runner, configuration.MySQLBinary, configuration.RoleStateDirectory)
+	dockerRoles := agent.NewDockerMySQLRoleController(runner, configuration.DockerBinary, configuration.RoleStateDirectory, configuration.DockerConfigDirectory)
 	return runtimeControllers{
 		vip:        agent.NewLinuxVIPController(runner, configuration.IPBinary, configuration.ARPingBinary),
-		roles:      agent.NewMySQLRoleController(runner, configuration.MySQLBinary, configuration.RoleStateDirectory),
-		postgresql: postgresql,
+		roles:      agent.NewRuntimeRoleController(linuxRoles, dockerRoles),
+		postgresql: agent.NewRuntimePostgreSQLController(linuxPostgreSQL, dockerPostgreSQL),
 		oracle:     oracle,
+		power: agent.NewRuntimePowerController(
+			agent.NewLinuxPowerController(runner),
+			agent.NewDockerPowerController(runner, configuration.DockerBinary, dockerRoles),
+		),
 	}, nil
 }
 
@@ -102,6 +118,7 @@ func main() {
 		configuration, controllers.vip, controllers.roles, nil,
 		agent.WithPostgreSQLController(controllers.postgresql),
 		agent.WithOracleController(controllers.oracle),
+		agent.WithPowerController(controllers.power),
 		agent.WithMutationLedger(mutationLedger),
 	)
 	if err != nil {

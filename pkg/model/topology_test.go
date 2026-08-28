@@ -30,6 +30,7 @@ func TestProbeStatusCarriesDurableCurrentCycleEvidence(t *testing.T) {
 	probe := ProbeStatus{
 		EndpointID:          NewResourceID(),
 		InstanceID:          NewResourceID(),
+		Outcome:             ProbeOutcomeReachable,
 		DiscoveryObservedAt: discoveryObservedAt,
 		MetricsObservedAt:   metricsObservedAt,
 		Health:              Health{State: HealthHealthy, ObservedAt: discoveryObservedAt},
@@ -38,7 +39,7 @@ func TestProbeStatusCarriesDurableCurrentCycleEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal probe evidence: %v", err)
 	}
-	for _, field := range []string{`"discovery_observed_at"`, `"metrics_observed_at"`} {
+	for _, field := range []string{`"outcome"`, `"discovery_observed_at"`, `"metrics_observed_at"`} {
 		if !strings.Contains(string(encoded), field) {
 			t.Fatalf("probe evidence JSON missing %s: %s", field, encoded)
 		}

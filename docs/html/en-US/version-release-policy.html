@@ -21,7 +21,7 @@
         <span>Search documentation</span>
         <input id="docs-search" type="search" autocomplete="off" placeholder="Filter by title">
       </label>
-      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="version-release-policy.html" data-doc-title="version and release policy" aria-current="page" class="active">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.2.39.html" data-doc-title="release 2.2.39">Release 2.2.39</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="docker-swarm-mysql.html" data-doc-title="docker swarm mysql">Docker Swarm MySQL</a><a href="kubernetes-mysql.html" data-doc-title="kubernetes mysql">Kubernetes MySQL</a><a href="update-and-patch.html" data-doc-title="version update and rollback">Version Update and Rollback</a><a href="version-release-policy.html" data-doc-title="version and release policy" aria-current="page" class="active">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="postgresql-production-qualification.html" data-doc-title="postgresql 16.4 production qualification">PostgreSQL 16.4 Production Qualification</a><a href="docker-swarm-mysql-validation.html" data-doc-title="docker swarm mysql lab qualification">Docker Swarm MySQL Lab Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
       <div class="sidebar-meta">
         <span>Offline documentation build</span>
         <strong>2.1 / 2.2</strong>
@@ -87,6 +87,7 @@ v2.2.2
 <li>GitHub Releases;</li>
 <li>RPMs;</li>
 <li>Complete offline packages;</li>
+<li>Signed <code>.cgupgrade</code> update packages, with legacy <code>.cgpatch</code> compatibility;</li>
 <li>Independent PostgreSQL dependency packages;</li>
 <li>SHA256 files;</li>
 <li>Release Notes.</li>
@@ -139,6 +140,7 @@ git diff --check
 <li>Corresponding database versions complete switching, failure, old master recovery, restart, network partition, and concurrency testing.</li>
 <li>Security gate, Leader forwarding, Raft majority, VIP uniqueness, audit, and report all pass.</li>
 <li>Release Notes clearly specify the supported scope, known boundaries, and upgrade methods.</li>
+<li>The patch contains target and rollback RPMs, and passes signature, compatibility, rolling-order, resume, and automatic-rollback tests.</li>
 </ol>
 <p>If any gate fails, only an internal candidate package can be generated, and formal tags or GitHub Releases cannot be created.</p>
 <h2 id="7-release-steps">7. Release Steps<a class="heading-anchor" href="#7-release-steps" aria-label="Link to 7. Release Steps">#</a></h2>
@@ -146,7 +148,7 @@ git diff --check
 <ol>
 <li>Gather and submit all changes for this version.</li>
 <li>Execute full testing and on-site acceptance.</li>
-<li>Build RPM, main offline package, and necessary independent dependency packages from a clean commit.</li>
+<li>Build RPM, main offline package, signed update package, and necessary independent dependency packages from a clean commit.</li>
 <li>Verify the summary, signature, package content, and installation process.</li>
 <li>Create an annotated tag, for example, <code>v2.2.1</code>.</li>
 <li>Push the commit and tag.</li>
@@ -154,6 +156,9 @@ git diff --check
 <li>Redownload the attachments from GitHub and perform a summary and installation smoke test again.</li>
 </ol>
 <p>After the release is completed, only new versions are allowed to fix issues.</p>
+<p>See the <a href="update-and-patch.html">Version Update and Rollback Guide</a> for field update, resume,
+and rollback commands. The release private key must never enter the repository,
+RPM, offline kit, or a customer server.</p>
 
           <footer class="document-footer">
             <span>Source: <code>docs/en-US/version-release-policy.md</code></span>

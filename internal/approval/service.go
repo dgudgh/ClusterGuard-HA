@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 
@@ -25,12 +26,13 @@ const (
 )
 
 var (
-	ErrRequired  = errors.New("approval grant is required")
-	ErrInvalid   = errors.New("approval grant is invalid")
-	ErrExpired   = errors.New("approval grant has expired")
-	ErrConsumed  = errors.New("approval grant has already been consumed")
-	ErrMismatch  = errors.New("approval grant does not match this operation")
-	ErrStalePlan = errors.New("approval grant plan is stale")
+	ErrRequired       = errors.New("approval grant is required")
+	ErrInvalid        = errors.New("approval grant is invalid")
+	ErrExpired        = errors.New("approval grant has expired")
+	ErrConsumed       = errors.New("approval grant has already been consumed")
+	ErrMismatch       = errors.New("approval grant does not match this operation")
+	ErrStalePlan      = errors.New("approval grant plan is stale")
+	ErrBlockingChecks = errors.New("operation plan contains blocking checks")
 )
 
 type Service struct {
@@ -90,7 +92,7 @@ func publicGrant(grant model.ApprovalGrant) model.ApprovalGrant {
 	return grant
 }
 
-func validPlannedOperation(record model.OperationRecord) bool {
+func hasDurableOperationPlan(record model.OperationRecord) bool {
 	return model.ValidResourceID(record.ResourceID) &&
 		model.ValidResourceID(record.Operation.ClusterID) &&
 		model.ValidResourceID(record.TargetID) &&
@@ -99,18 +101,29 @@ func validPlannedOperation(record model.OperationRecord) bool {
 		strings.TrimSpace(record.Observation) != "" &&
 		strings.TrimSpace(record.Plan.Digest) != "" &&
 		record.Plan.OperationID == record.ResourceID &&
-		record.Plan.TargetID == record.TargetID &&
-		!hasBlockingChecks(record.Precheck) &&
-		!hasBlockingChecks(record.Plan.Checks)
+		record.Plan.TargetID == record.TargetID
 }
 
-func hasBlockingChecks(checks []model.Check) bool {
-	for _, check := range checks {
-		if check.Status == model.CheckFail {
-			return true
+func blockingCheckNames(checkSets ...[]model.Check) []string {
+	unique := map[string]struct{}{}
+	for _, checks := range checkSets {
+		for _, check := range checks {
+			if check.Status != model.CheckFail {
+				continue
+			}
+			name := strings.TrimSpace(check.Name)
+			if name == "" {
+				name = "unnamed_check"
+			}
+			unique[name] = struct{}{}
 		}
 	}
-	return false
+	names := make([]string, 0, len(unique))
+	for name := range unique {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func (service *Service) Issue(ctx context.Context, request IssueRequest) (IssuedGrant, error) {
@@ -124,8 +137,11 @@ func (service *Service) Issue(ctx context.Context, request IssueRequest) (Issued
 	if request.IssuedBy == "" {
 		return IssuedGrant{}, fmt.Errorf("approval issuer is required")
 	}
-	if !validPlannedOperation(request.Operation) {
+	if !hasDurableOperationPlan(request.Operation) {
 		return IssuedGrant{}, fmt.Errorf("a durable planned operation is required")
+	}
+	if names := blockingCheckNames(request.Operation.Precheck, request.Operation.Plan.Checks); len(names) > 0 {
+		return IssuedGrant{}, fmt.Errorf("%w: %s", ErrBlockingChecks, strings.Join(names, ","))
 	}
 	ttl := request.TTL
 	if ttl == 0 {

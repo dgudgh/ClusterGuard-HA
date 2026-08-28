@@ -203,6 +203,9 @@ func TestAgentReconcileRequiresLeaderQuorumAndReturnsSignedOwnershipDecision(t *
 	if keep.Action != agent.ReconcileKeepVIP || keep.LeaseID != lease.ResourceID || keep.ControllerID != leaderID || agent.VerifyReconcileResponse(keep, request, "agent-secret", now) != nil {
 		t.Fatalf("keep decision=%+v", keep)
 	}
+	if lifetime := keep.ValidUntil.Sub(now); lifetime <= 0 || lifetime > 11*time.Second {
+		t.Fatalf("leader authorization lifetime=%s, want at most 10 seconds plus test scheduling tolerance", lifetime)
+	}
 
 	lease.OwnerID = model.NewResourceID()
 	if err := repository.PutCoordinationLease(coordination.LeaseRecord{Lease: lease, CreatedAt: now, UpdatedAt: now}); err != nil {
@@ -218,6 +221,37 @@ func TestAgentReconcileRequiresLeaderQuorumAndReturnsSignedOwnershipDecision(t *
 	response = callAgentReconcile(t, server, request)
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("minority decision status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestAgentReconcileRecordsPositiveAuthorizationForFailoverFencing(t *testing.T) {
+	now := time.Now().UTC()
+	repository := store.NewMemory()
+	cluster, primary, _, _ := seedAgentReconcileState(t, repository, now)
+	tracker := coordination.NewAgentAuthorizationTracker()
+	authority := &apiMutationAuthorityStub{
+		term: 17, leaderID: model.NewResourceID(), leaderAddress: "controller-a:10009",
+	}
+	server := newAPIServer(
+		t, repository, adapter.NewUnsupported(model.EngineMySQL), &fakeRefresher{},
+		WithMutationAuthority(authority), WithAgentReconcileSecret("agent-secret"),
+		WithAgentAuthorizationTracker(tracker),
+	)
+	request := agent.ReconcileRequest{
+		ClusterID: cluster.ResourceID, InstanceID: primary.ResourceID,
+		RequestedAt: now, Nonce: "record-authorization-0001",
+	}
+	if err := agent.SignReconcileRequest(&request, "agent-secret"); err != nil {
+		t.Fatal(err)
+	}
+
+	response := callAgentReconcile(t, server, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("agent reconcile status=%d body=%s", response.Code, response.Body.String())
+	}
+	validUntil, found := tracker.AuthorizationUntil(cluster.ResourceID, primary.ResourceID, 17)
+	if !found || !validUntil.After(now) || validUntil.After(now.Add(11*time.Second)) {
+		t.Fatalf("recorded authorization=(%s,%t)", validUntil, found)
 	}
 }
 
@@ -331,6 +365,76 @@ func TestAgentReconcileKeepsPreparedTransitionTargetOnlyAtExecuteStage(t *testin
 	decision = agent.ReconcileResponse{}
 	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &decision) != nil || decision.Action != agent.ReconcileKeepVIP || decision.LeaseID != lease.ResourceID {
 		t.Fatalf("stable handoff decision status=%d response=%+v body=%s", response.Code, decision, response.Body.String())
+	}
+}
+
+func TestAgentReconcileKeepsPromotedUnverifiedAutomaticFailoverTarget(t *testing.T) {
+	now := time.Now().UTC()
+	repository := store.NewMemory()
+	cluster, formerPrimary, lease := seedRebootBootstrapState(t, repository, now)
+	snapshot, found := repository.TopologySnapshot(cluster.ResourceID)
+	if !found {
+		t.Fatal("topology snapshot is missing")
+	}
+	var target model.DatabaseInstance
+	for _, instance := range snapshot.Instances {
+		if instance.ResourceID != formerPrimary.ResourceID {
+			target = instance
+		}
+	}
+	record, _, err := repository.CreateOperation(model.OperationRecord{
+		Operation: model.Operation{
+			ClusterID: cluster.ResourceID, Engine: model.EngineMySQL,
+			Kind: model.OperationFailover, RequestedBy: "clusterguard-automatic-recovery",
+		},
+		TargetID: target.ResourceID, IdempotencyKey: "automatic-promoted-unverified",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := model.OperationPlan{
+		OperationID: record.ResourceID, ClusterID: cluster.ResourceID,
+		SourceID: formerPrimary.ResourceID, TargetID: target.ResourceID,
+		Stage: model.StagePlan, ObservationToken: "automatic-resume-observation",
+		ResourceRevisions: map[model.ResourceID]uint64{
+			cluster.ResourceID:       cluster.MetadataRevision,
+			formerPrimary.ResourceID: formerPrimary.MetadataRevision,
+			target.ResourceID:        target.MetadataRevision,
+		},
+		Steps:  []model.PlanStep{{Index: 1, Name: "promote target", Owner: "mysql", TargetID: target.ResourceID, Mutating: true}},
+		Digest: "sha256:automatic-resume", Mutating: true,
+	}
+	record, err = repository.PutOperationPlan(record.ResourceID, record.MetadataRevision, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err = repository.TransitionOperation(record.ResourceID, record.MetadataRevision, model.OperationTransition{
+		Stage: model.StageVerify, Status: model.OperationIndeterminate,
+		FailureClass: "promoted_unverified", Message: "promotion committed; verification incomplete",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease.OperationID = record.ResourceID
+	lease.OwnerID = target.ResourceID
+	lease.PreviousOwnerID = formerPrimary.ResourceID
+	if err := repository.PutCoordinationLease(coordination.LeaseRecord{Lease: lease, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	authority := &apiMutationAuthorityStub{leaderID: model.NewResourceID(), leaderAddress: "controller-a:10009"}
+	server := newAPIServer(t, repository, adapter.NewUnsupported(model.EngineMySQL), &fakeRefresher{}, WithMutationAuthority(authority), WithAgentReconcileSecret("agent-secret"))
+	request := agent.ReconcileRequest{
+		ClusterID: cluster.ResourceID, InstanceID: target.ResourceID,
+		RequestedAt: now, Nonce: "resume-target-0001",
+	}
+	if err := agent.SignReconcileRequest(&request, "agent-secret"); err != nil {
+		t.Fatal(err)
+	}
+	response := callAgentReconcile(t, server, request)
+	decision := agent.ReconcileResponse{}
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &decision) != nil ||
+		decision.Action != agent.ReconcileTransitionTarget || decision.LeaseID != lease.ResourceID {
+		t.Fatalf("resumed target decision status=%d response=%+v body=%s", response.Code, decision, response.Body.String())
 	}
 }
 

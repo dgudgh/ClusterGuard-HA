@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="Docker Swarm MySQL - ClusterGuard HA operational documentation">
+  <title>Docker Swarm MySQL | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">跳到正文</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>搜索文档</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="输入标题关键词">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>开始使用</h2><a href="index.html" data-doc-title="clusterguard ha 中文文档">ClusterGuard HA 中文文档</a><a href="product-overview.html" data-doc-title="产品概览">产品概览</a><a href="product-tour.html" data-doc-title="控制台产品导览">控制台产品导览</a><a href="architecture.html" data-doc-title="系统架构">系统架构</a><a href="release-2.2.39.html" data-doc-title="2.2.39 发布说明">2.2.39 发布说明</a><a href="release-2.1.45.html" data-doc-title="2.1.45 发布说明">2.1.45 发布说明</a></section><section><h2>部署与迁移</h2><a href="offline-rpm-install.html" data-doc-title="离线 rpm 安装">离线 RPM 安装</a><a href="database-preparation.html" data-doc-title="数据库接入">数据库接入</a><a href="orchestrator-migration.html" data-doc-title="从 orchestrator 迁移">从 Orchestrator 迁移</a></section><section><h2>日常运维</h2><a href="operations-manual.html" data-doc-title="运维操作手册">运维操作手册</a><a href="api-operations.html" data-doc-title="api 运维参考">API 运维参考</a><a href="postgresql-ha.html" data-doc-title="postgresql 高可用">PostgreSQL 高可用</a><a href="docker-swarm-mysql.html" data-doc-title="docker swarm mysql" aria-current="page" class="active">Docker Swarm MySQL</a><a href="kubernetes-mysql.html" data-doc-title="kubernetes mysql">Kubernetes MySQL</a><a href="update-and-patch.html" data-doc-title="版本升级与回退">版本升级与回退</a><a href="version-release-policy.html" data-doc-title="版本与发版规范">版本与发版规范</a></section><section><h2>验收证据</h2><a href="proven-mysql-ha-methods.html" data-doc-title="mysql 已验证方法">MySQL 已验证方法</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql 功能验收">MySQL 功能验收</a><a href="mysql-former-primary-recovery.html" data-doc-title="旧主恢复专项验收">旧主恢复专项验收</a><a href="mysql-production-qualification.html" data-doc-title="mysql 生产验收">MySQL 生产验收</a><a href="postgresql-production-qualification.html" data-doc-title="postgresql 16.4 生产验收">PostgreSQL 16.4 生产验收</a><a href="docker-swarm-mysql-validation.html" data-doc-title="docker swarm mysql 实机验证">Docker Swarm MySQL 实机验证</a><a href="production-chaos-test.html" data-doc-title="生产故障测试报告">生产故障测试报告</a><a href="power-lifecycle-test.html" data-doc-title="计划关机测试报告">计划关机测试报告</a></section></nav>
+      <div class="sidebar-meta">
+        <span>离线文档构建</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">打开目录</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>Docker Swarm MySQL</strong></div>
+        <div class="header-actions">
+          <a href="../en-US/docker-swarm-mysql.html" lang="en-US">English</a>
+          <button id="print-button" type="button">打印</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha-接管-docker-swarm-mysql">ClusterGuard HA 接管 Docker Swarm MySQL<a class="heading-anchor" href="#clusterguard-ha-接管-docker-swarm-mysql" aria-label="Link to ClusterGuard HA 接管 Docker Swarm MySQL">#</a></h1>
+<h2 id="1-交付范围">1. 交付范围<a class="heading-anchor" href="#1-交付范围" aria-label="Link to 1. 交付范围">#</a></h2>
+<p>本阶段支持 ClusterGuard HA 接管运行在 Docker Swarm 上的 MySQL 8.0 主从集群，并使用宿主机 VIP 对外提供稳定地址。数据库容器由 Swarm 管理，ClusterGuard 控制面和受限 Agent 继续运行在宿主机。</p>
+<p>本模式不把 VIP 放进容器，也不允许数据库 Adapter 直接调用 Docker API。Kubernetes MySQL 已由独立的 Service/EndpointSlice Provider 接管，部署方式见 <code>kubernetes-mysql.md</code>，不能与本页的宿主机 VIP 模式混用。</p>
+<h2 id="2-统一控制面与集群选择">2. 统一控制面与集群选择<a class="heading-anchor" href="#2-统一控制面与集群选择" aria-label="Link to 2. 统一控制面与集群选择">#</a></h2>
+<p>主机、Docker Swarm 和 Kubernetes 是数据库集群的运行时属性，不是拆分控制面的依据。一个站点只部署一套奇数节点 ClusterGuard Raft 控制面，所有数据库集群共用同一组 HTTPS API/控制台端口，默认是 <code>3000</code>。控制台按集群资源展示独立条目，例如 <code>pg16-ha</code> 与 <code>swarm-mysql-8.0</code>，运维人员在顶部集群选择器中切换。</p>
+<p>同一宿主机上的 <code>clusterguard-agent</code> 也只运行一份。<code>/etc/clusterguard/agent.json</code> 的 <code>clusters</code> 数组可以同时包含宿主机 PostgreSQL、宿主机 MySQL 和 Docker MySQL 策略；每条策略用不同的 <code>cluster_id</code>、<code>instance_id</code> 和 <code>runtime_kind</code> 区分。数据库端口可以相同，不能据此推断运行时或集群身份。</p>
+<p><code>3100</code> 等第二控制端口只允许用于有明确销毁计划的隔离破坏性实验。验收结束后必须把已验证集群登记到统一控制面、迁移 Agent 策略和所有权租约，并停用临时 Raft、Agent timer 与监听端口。生产交付不得长期运行两套控制面管理同一站点。</p>
+<h2 id="3-主机层与容器层的边界">3. 主机层与容器层的边界<a class="heading-anchor" href="#3-主机层与容器层的边界" aria-label="Link to 3. 主机层与容器层的边界">#</a></h2>
+<p>ClusterGuard 所说的“主机层”包括物理机和虚拟机。两者都由宿主操作系统直接运行数据库进程。“容器层”表示数据库进程由 Docker Swarm Service 管理，但 Agent、VIP 和隔离证据仍位于宿主机。两种模式不能只看数据库 IP 或端口判断，必须由 RuntimeTarget 和 WorkloadBinding 明确登记。</p>
+<table>
+<thead>
+<tr>
+<th>边界</th>
+<th>主机层（物理机/虚拟机）</th>
+<th>容器层（Docker Swarm）</th>
+<th>Kubernetes</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>数据库进程</td>
+<td>宿主机上的 systemd 服务或受控进程</td>
+<td>固定 Swarm Service 的 task/container</td>
+<td>StatefulSet Pod</td>
+</tr>
+<tr>
+<td>稳定数据库身份</td>
+<td><code>resource_id</code> + MySQL <code>server_uuid</code></td>
+<td>同左，容器重建不能改变数据库身份</td>
+<td>同左，Pod UID 不是数据库身份</td>
+</tr>
+<tr>
+<td>可变运行位置</td>
+<td>主机名、IP、进程 PID</td>
+<td>宿主节点、task ID、container ID</td>
+<td>Node、Pod UID</td>
+</tr>
+<tr>
+<td>数据持久化</td>
+<td>宿主机数据目录或块存储</td>
+<td>明确登记的持久卷，禁止容器可写层</td>
+<td>PVC UID</td>
+</tr>
+<tr>
+<td>生命周期管理</td>
+<td>systemd/主机命令</td>
+<td>Docker Swarm Service</td>
+<td>Kubernetes 控制器</td>
+</tr>
+<tr>
+<td>ClusterGuard Agent</td>
+<td>安装在数据库主机</td>
+<td>安装在容器宿主机，不进入数据库容器</td>
+<td>控制面通过受限 Kubernetes API 和 Pod 启动守卫执行</td>
+</tr>
+<tr>
+<td>业务入口</td>
+<td>宿主机网卡上的 VIP</td>
+<td>仍是当前主库宿主机网卡上的 VIP</td>
+<td>Service/EndpointSlice，不使用宿主机 VIP</td>
+</tr>
+<tr>
+<td>角色与隔离</td>
+<td>修改本机数据库角色并管理 VIP</td>
+<td>写宿主机 fence 文件，再修改固定 Service 内的数据库角色</td>
+<td>StatefulSet 持久角色、scale 0 隔离和 EndpointSlice 切换</td>
+</tr>
+<tr>
+<td>当前支持状态</td>
+<td>支持</td>
+<td>MySQL 8.0 Docker Swarm 接管</td>
+<td>MySQL 首批开放，约束见 Kubernetes 文档</td>
+</tr>
+</tbody></table>
+<p>容器层不等于把 VIP 绑进容器。业务始终连接 <code>VIP:数据库端口</code>，VIP 在宿主机之间迁移；Swarm 只负责容器期望状态。ClusterGuard 控制面继续作为独立宿主机服务运行，数据库容器停止不应导致管理面同时消失。</p>
+<h2 id="4-资源与身份">4. 资源与身份<a class="heading-anchor" href="#4-资源与身份" aria-label="Link to 4. 资源与身份">#</a></h2>
+<p>平台同时保存三层身份：</p>
+<table>
+<thead>
+<tr>
+<th>层级</th>
+<th>稳定身份</th>
+<th>可变属性</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>数据库实例</td>
+<td><code>resource_id</code> + MySQL <code>server_uuid</code></td>
+<td>hostname、IP、port、角色</td>
+</tr>
+<tr>
+<td>运行时目标</td>
+<td><code>RuntimeTarget.resource_id</code></td>
+<td>Docker endpoint、标签、凭据引用</td>
+</tr>
+<tr>
+<td>工作负载</td>
+<td><code>WorkloadBinding.resource_id</code></td>
+<td>container ID、task ID、观测时间</td>
+</tr>
+</tbody></table>
+<p>容器删除并重建后，<code>container_id</code> 可以变化，数据库 <code>resource_id</code> 和 <code>server_uuid</code> 不得变化。相同实例只能有一个活动 WorkloadBinding。</p>
+<h2 id="5-高可用边界">5. 高可用边界<a class="heading-anchor" href="#5-高可用边界" aria-label="Link to 5. 高可用边界">#</a></h2>
+<ol>
+<li>Swarm 负责容器进程重启和固定节点调度。</li>
+<li>MySQL 原生 GTID 复制负责数据同步。</li>
+<li>ClusterGuard 负责候选评估、切换流程、旧主隔离、VIP、审计和验证。</li>
+<li>Raft 多数派决定谁有权执行切换和签发 VIP 所有权租约。</li>
+<li>宿主机 Agent 通过本机 Docker socket 管理固定 Service，不接受 API 传入的容器 ID 或任意命令。</li>
+</ol>
+<p>数据库 Service 使用 <code>mode: host</code> 发布 3306。VIP 始终绑定到当前主库所在宿主机网卡，因此业务地址在切换前后保持不变。</p>
+<h2 id="6-双主防护">6. 双主防护<a class="heading-anchor" href="#6-双主防护" aria-label="Link to 6. 双主防护">#</a></h2>
+<p>每个 MySQL 节点在宿主机保存 <code>/etc/clusterguard/docker/mysql-fence.cnf</code>。整个 <code>/etc/clusterguard/docker</code> 目录只读挂载到容器的 <code>/etc/mysql/conf.d</code>，确保 Agent 原子替换角色文件后容器看到的是新文件，而不是文件级 bind mount 固定的旧 inode。旧主隔离按以下顺序执行：</p>
+<ol>
+<li>先把隔离文件原子写为 <code>read_only=ON</code> 和 <code>super_read_only=ON</code>。</li>
+<li>再写入 Agent 本地持久角色记录并执行 MySQL <code>SET PERSIST_ONLY</code>。</li>
+<li>最后设置当前进程的全局只读状态并摘除 VIP。</li>
+</ol>
+<p>即使 Swarm 在隔离后重新创建容器，新任务也会先读取宿主机隔离文件，以只读方式启动。Docker daemon 不可达、匹配到多个容器、容器标签不一致或运行中的数据库无法确认角色时，故障切换全部 fail-closed。</p>
+<h2 id="7-swarm-约束">7. Swarm 约束<a class="heading-anchor" href="#7-swarm-约束" aria-label="Link to 7. Swarm 约束">#</a></h2>
+<ul>
+<li>生产至少 3 个奇数 Manager，Manager 仲裁与 ClusterGuard Raft 仲裁相互独立。</li>
+<li>每个数据库 Service 固定到一个带 <code>clusterguard.mysql.slot</code> 标签的节点。</li>
+<li>数据目录使用本地持久卷或经过验证的块存储，不使用容器可写层。</li>
+<li>Agent 运行在宿主机，仅允许 root 或受限 sudo 账号访问 Docker socket。</li>
+<li>计划停库通过 <code>docker service scale SERVICE=0</code> 修改期望状态，禁止使用 <code>docker stop</code>。</li>
+<li>数据库故障不等同于宿主机故障。3306 探测失败可触发数据库恢复，整机关机仍走单独的电源工作流。</li>
+</ul>
+<h2 id="8-部署顺序">8. 部署顺序<a class="heading-anchor" href="#8-部署顺序" aria-label="Link to 8. 部署顺序">#</a></h2>
+<p>仓库交付文件位于 <code>deploy/docker-swarm/</code>。</p>
+<ol>
+<li>把官方 Docker x86_64 静态包和 MySQL 8.0.44 镜像 tar 复制到离线环境。</li>
+<li>三台宿主机运行 <code>install-docker-static.sh</code>。</li>
+<li>在 01 初始化 Swarm，把 02、03 以 Manager 身份加入。</li>
+<li>每台宿主机运行 <code>mysql/prepare-host.sh SLOT NODE_IP</code>。</li>
+<li>每个控制节点运行 <code>mysql/install-mysql-client.sh MYSQL_TAR</code>，安装独立客户端。控制面不得借用本机数据库容器中的 <code>mysql</code>，否则本机容器停止时会同时失去探测和恢复能力。</li>
+<li>在 Manager 创建 <code>cg_mysql_root_password</code> 和 <code>cg_mysql_operator_cnf</code> 两个 Swarm secret。</li>
+<li>导出集群 UUID 和三个临时实例 UUID，执行 <code>docker stack deploy -c mysql-stack.yml cgmysql</code>。</li>
+<li>先在 01 执行 <code>bootstrap-replication.sh 01</code>，再分别在 02、03 执行 <code>bootstrap-replication.sh 02|03</code>，建立账号、GTID 复制和验收数据。该脚本只操作所在宿主机的本地任务，不会把远程容器误当成本地容器。</li>
+<li>在站点现有的统一 ClusterGuard 控制面登记一个新的 Docker MySQL 集群、三个宿主机 endpoint 并执行发现；不要新建第二套 API/Raft 端口。</li>
+<li>使用发现后的真实实例 UUID 重新部署 Service 标签，把 Docker 策略合并进三台现有 <code>/etc/clusterguard/agent.json</code> 的 <code>clusters</code> 数组。</li>
+<li>创建 RuntimeTarget、WorkloadBinding 和 HAEndpoint，运行预检查后启用自动故障切换。</li>
+</ol>
+<h2 id="9-验收计划">9. 验收计划<a class="heading-anchor" href="#9-验收计划" aria-label="Link to 9. 验收计划">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>预期结果</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>计划切换 01→02→03→01</td>
+<td>主库、复制源和 VIP 同步收敛，业务地址不变</td>
+</tr>
+<tr>
+<td>停止主库容器</td>
+<td>旧主持久隔离，候选提升，VIP 在 30 秒内迁移</td>
+</tr>
+<tr>
+<td>重启旧主 Service</td>
+<td>容器先以只读状态启动，再自动挂回复制</td>
+</tr>
+<tr>
+<td>Docker daemon 停止</td>
+<td>不伪造容器状态；未满足隔离证据时阻断切换</td>
+</tr>
+<tr>
+<td>两个容器标签指向同一实例</td>
+<td>Agent 报身份冲突并阻断变更</td>
+</tr>
+<tr>
+<td>失去 ClusterGuard Raft 多数派</td>
+<td>禁止主库切换和 VIP 获取</td>
+</tr>
+<tr>
+<td>失去 Swarm Manager 多数派</td>
+<td>禁止 Service 扩缩；现有数据库与 VIP 不被误改</td>
+</tr>
+</tbody></table>
+<p>本次 <code>192.168.102.152-154</code> 实验环境的可执行步骤、通过标准和证据清单见
+<a href="docker-swarm-mysql-validation.html"><code>docker-swarm-mysql-validation-plan.md</code></a>。</p>
+<h2 id="10-kubernetes-独立模式">10. Kubernetes 独立模式<a class="heading-anchor" href="#10-kubernetes-独立模式" aria-label="Link to 10. Kubernetes 独立模式">#</a></h2>
+<p>Kubernetes 使用同一 <code>DatabaseInstance</code>，工作负载绑定改为 StatefulSet ordinal、Pod UID、Node 名和 PVC UID。ClusterGuard 只在 Raft 授权后修改 selectorless Service 的 EndpointSlice；外部地址可由云 LoadBalancer 或 MetalLB 提供。Pod 标签、Service selector 或普通 Operator 不得自行决定写端点所有权。完整部署见 <a href="kubernetes-mysql.html"><code>kubernetes-mysql.md</code></a>。</p>
+
+          <footer class="document-footer">
+            <span>源文件: <code>docs/zh-CN/docker-swarm-mysql.md</code></span>
+            <a href="../index.html">文档语言入口</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="本页目录">
+          <strong>本页目录</strong>
+          <a class="toc-level-2" href="#1-交付范围">1. 交付范围</a><a class="toc-level-2" href="#2-统一控制面与集群选择">2. 统一控制面与集群选择</a><a class="toc-level-2" href="#3-主机层与容器层的边界">3. 主机层与容器层的边界</a><a class="toc-level-2" href="#4-资源与身份">4. 资源与身份</a><a class="toc-level-2" href="#5-高可用边界">5. 高可用边界</a><a class="toc-level-2" href="#6-双主防护">6. 双主防护</a><a class="toc-level-2" href="#7-swarm-约束">7. Swarm 约束</a><a class="toc-level-2" href="#8-部署顺序">8. 部署顺序</a><a class="toc-level-2" href="#9-验收计划">9. 验收计划</a><a class="toc-level-2" href="#10-kubernetes-独立模式">10. Kubernetes 独立模式</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

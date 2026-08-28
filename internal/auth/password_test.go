@@ -52,13 +52,25 @@ func TestArgon2HasherRejectsMalformedAndOversizedHashes(t *testing.T) {
 	}
 }
 
-func TestPasswordPolicyRejectsBootstrapAndWeakPasswords(t *testing.T) {
-	for _, password := range []string{"", "admin123", "short-pass"} {
+func TestPasswordPolicyRejectsWeakPasswords(t *testing.T) {
+	for _, password := range []string{"", "short-pass"} {
 		if err := ValidateNewPassword(password); err == nil {
 			t.Fatalf("password %q was accepted", password)
 		}
 	}
 	if err := ValidateNewPassword("A-new-secure-password-123"); err != nil {
 		t.Fatalf("secure password rejected: %v", err)
+	}
+}
+
+func TestBootstrapPasswordOnlyExemptsDocumentedFirstLoginCredential(t *testing.T) {
+	if err := ValidateNewPassword(DefaultBootstrapPassword); err == nil {
+		t.Fatal("default bootstrap password unexpectedly met the regular password policy")
+	}
+	if err := ValidateBootstrapPassword(DefaultBootstrapPassword); err != nil {
+		t.Fatalf("default bootstrap password was rejected: %v", err)
+	}
+	if err := ValidateBootstrapPassword("admin124"); err == nil {
+		t.Fatal("arbitrary short bootstrap password was accepted")
 	}
 }

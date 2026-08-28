@@ -9,10 +9,12 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"clusterguard.io/ha/internal/approval"
 	platformauth "clusterguard.io/ha/internal/auth"
+	"clusterguard.io/ha/internal/coordination"
 	"clusterguard.io/ha/internal/lifecycle"
 	"clusterguard.io/ha/internal/store"
 	"clusterguard.io/ha/internal/workflow"
@@ -26,23 +28,28 @@ const maximumJSONBodyBytes = 1 << 20
 const requestIDHeader = "X-Request-ID"
 
 type Server struct {
-	registry       *adapter.Registry
-	store          *store.Repository
-	workflow       *workflow.Service
-	approvals      *approval.Service
-	authentication *platformauth.Service
-	refresher      Refresher
-	controlToken   string
-	monitorToken   string
-	agentSecret    string
-	lifecycle      NodeLifecycleManager
-	lifecycleCap   lifecycle.Capabilities
-	lifecycleSec   LifecycleSecretProvider
-	authority      MutationAuthority
-	mutationRPC    MutationRPC
-	secureCookies  bool
-	controlPlane   ControlPlaneStatusProvider
-	startedAt      time.Time
+	registry              *adapter.Registry
+	store                 *store.Repository
+	workflow              *workflow.Service
+	approvals             *approval.Service
+	authentication        *platformauth.Service
+	refresher             Refresher
+	controlToken          string
+	monitorToken          string
+	agentSecret           string
+	agentAuthz            *coordination.AgentAuthorizationTracker
+	lifecycle             NodeLifecycleManager
+	lifecycleCap          lifecycle.Capabilities
+	lifecycleSec          LifecycleSecretProvider
+	authority             MutationAuthority
+	mutationRPC           MutationRPC
+	secureCookies         bool
+	controlPlane          ControlPlaneStatusProvider
+	maintenance           MutationMaintenance
+	softwareUpdates       SoftwareUpdateManager
+	sessionOperationMu    sync.Mutex
+	sessionOperationGates map[string]*sessionOperationExecutionGate
+	startedAt             time.Time
 }
 
 type Refresher interface {
@@ -51,6 +58,10 @@ type Refresher interface {
 
 type MutationAuthority interface {
 	RequireMutationAuthority(context.Context) error
+}
+
+type MutationMaintenance interface {
+	Check(context.Context) error
 }
 
 type LeaderLocator interface {
@@ -83,6 +94,10 @@ func WithAgentReconcileSecret(secret string) ServerOption {
 	return func(server *Server) { server.agentSecret = strings.TrimSpace(secret) }
 }
 
+func WithAgentAuthorizationTracker(tracker *coordination.AgentAuthorizationTracker) ServerOption {
+	return func(server *Server) { server.agentAuthz = tracker }
+}
+
 func WithNodeLifecycle(manager NodeLifecycleManager, capabilities lifecycle.Capabilities, secrets LifecycleSecretProvider) ServerOption {
 	return func(server *Server) {
 		server.lifecycle = manager
@@ -105,6 +120,14 @@ func WithSecureCookies(enabled bool) ServerOption {
 
 func WithControlPlaneStatus(provider ControlPlaneStatusProvider) ServerOption {
 	return func(server *Server) { server.controlPlane = provider }
+}
+
+func WithMutationMaintenance(gate MutationMaintenance) ServerOption {
+	return func(server *Server) { server.maintenance = gate }
+}
+
+func WithSoftwareUpdates(manager SoftwareUpdateManager) ServerOption {
+	return func(server *Server) { server.softwareUpdates = manager }
 }
 
 func NewServer(registry *adapter.Registry, repository *store.Repository, service *workflow.Service, refresher Refresher, options ...ServerOption) *Server {
@@ -265,6 +288,7 @@ func (server *Server) route(writer http.ResponseWriter, request *http.Request) {
 	switch {
 	case (request.Method == http.MethodGet || request.Method == http.MethodHead) && path == "/":
 		writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+		writer.Header().Set("Cache-Control", "no-store")
 		writer.WriteHeader(http.StatusOK)
 		if request.Method != http.MethodHead {
 			_, _ = writer.Write(consoleHTML)
@@ -275,16 +299,30 @@ func (server *Server) route(writer http.ResponseWriter, request *http.Request) {
 		server.capabilities(writer)
 	case request.Method == http.MethodGet && path == "/api/v1/control-plane/status":
 		server.controlPlaneStatusRoute(writer, request)
+	case request.Method == http.MethodGet && path == "/api/v1/platform/version":
+		server.platformVersionRoute(writer)
+	case path == "/api/v1/platform/updates" || strings.HasPrefix(path, "/api/v1/platform/updates/"):
+		server.softwareUpdateRoute(writer, request, strings.TrimPrefix(path, "/api/v1/platform/updates"))
 	case request.Method == http.MethodGet && path == "/api/v1/clusters":
 		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": server.store.Clusters()})
 	case request.Method == http.MethodPost && path == "/api/v1/clusters":
 		server.registerCluster(writer, request)
+	case path == "/api/v1/runtime-targets":
+		server.runtimeTargetsCollection(writer, request)
+	case strings.HasPrefix(path, "/api/v1/runtime-targets/"):
+		server.runtimeTargetResource(writer, request, strings.TrimPrefix(path, "/api/v1/runtime-targets/"))
+	case path == "/api/v1/workload-bindings":
+		server.workloadBindingsCollection(writer, request)
+	case strings.HasPrefix(path, "/api/v1/workload-bindings/"):
+		server.workloadBindingResource(writer, request, strings.TrimPrefix(path, "/api/v1/workload-bindings/"))
 	case path == "/api/v1/nodes":
 		server.nodesCollection(writer, request)
 	case strings.HasPrefix(path, "/api/v1/nodes/") && !strings.HasPrefix(path, "/api/v1/nodes/sync/"):
 		server.nodeResource(writer, request, strings.TrimPrefix(path, "/api/v1/nodes/"))
 	case request.Method == http.MethodGet && path == "/api/v1/metadata/anomalies":
 		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": server.store.Anomalies()})
+	case path == "/api/v1/audits/export":
+		server.auditExportRoute(writer, request)
 	case path == "/api/v1/approvals" || strings.HasPrefix(path, "/api/v1/approvals/"):
 		server.approvalRoute(writer, request, strings.TrimPrefix(path, "/api/v1/approvals"))
 	case request.Method == http.MethodGet && (path == "/api/v1/reports" || strings.HasPrefix(path, "/api/v1/reports/")):
@@ -380,6 +418,14 @@ func (server *Server) authorizeMonitoring(writer http.ResponseWriter, request *h
 }
 
 func (server *Server) authorizeMutation(writer http.ResponseWriter, request *http.Request) bool {
+	if server.maintenance != nil && !softwareUpdateRecoveryRoute(request.Method, request.URL.Path) {
+		if err := server.maintenance.Check(request.Context()); err != nil {
+			writeJSON(writer, http.StatusLocked, map[string]interface{}{
+				"status": "blocked", "message": "software update maintenance is active; mutating operations are temporarily locked",
+			})
+			return false
+		}
+	}
 	if server.authority == nil {
 		return true
 	}
@@ -421,7 +467,10 @@ func (server *Server) authorizeMutation(writer http.ResponseWriter, request *htt
 func (server *Server) engines(writer http.ResponseWriter) {
 	result := make([]adapter.Capabilities, 0, len(server.registry.Engines()))
 	for _, engine := range server.registry.Engines() {
-		candidate, _ := server.registry.Get(engine)
+		candidate, found := server.registry.Get(engine)
+		if !found || candidate == nil {
+			continue
+		}
 		result = append(result, candidate.Capabilities(context.Background()))
 	}
 	writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": result})
@@ -465,6 +514,10 @@ func (server *Server) operationRoute(writer http.ResponseWriter, request *http.R
 	authentication, platformSession := requestAuthentication(request)
 	if platformSession && authentication.viaSession {
 		payload.Operation.RequestedBy = authentication.principal.Username
+	}
+	if action == "execute" && platformSession && authentication.viaSession {
+		release := server.lockSessionOperationExecution(payload.IdempotencyKey)
+		defer release()
 	}
 	adapterRequest := adapter.OperationRequest{
 		Operation: payload.Operation, TargetID: payload.TargetID,
@@ -601,14 +654,76 @@ func (server *Server) metadataRoute(writer http.ResponseWriter, request *http.Re
 		}
 		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": map[string]interface{}{"execution": execution, "reconciled": reconciled, "endpoint": endpoint}})
 	case "verify":
-		if _, err := candidate.ReconcileMetadata(request.Context(), metadataRequest); err != nil {
-			writeError(writer, http.StatusBadGateway, err.Error())
+		checks, verified, err := server.verifyMetadata(request.Context(), payload, candidate, metadataRequest)
+		if err != nil {
+			writeError(writer, http.StatusBadGateway, "live metadata verification failed")
 			return
 		}
-		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": "metadata identity is valid"})
+		if !verified {
+			writeJSON(writer, http.StatusConflict, map[string]interface{}{
+				"status": "blocked", "message": "live database identity or endpoint does not match registered metadata", "result": checks,
+			})
+			return
+		}
+		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": checks})
 	default:
 		writeError(writer, http.StatusNotFound, "metadata route not found")
 	}
+}
+
+func (server *Server) verifyMetadata(ctx context.Context, payload metadataPayload, candidate adapter.DatabaseHAAdapter, request adapter.MetadataRequest) ([]model.Check, bool, error) {
+	checks, err := candidate.MetadataPrecheck(ctx, request)
+	if err != nil {
+		return nil, false, err
+	}
+	for _, check := range checks {
+		if check.Status == model.CheckFail {
+			return checks, false, nil
+		}
+	}
+	if server.refresher == nil {
+		return nil, false, errors.New("live discovery is not configured")
+	}
+	snapshot, err := server.refresher.Refresh(ctx, payload.Instance.ClusterID)
+	if err != nil {
+		return nil, false, err
+	}
+	var observed model.DatabaseInstance
+	for _, instance := range snapshot.Instances {
+		if instance.ResourceID == payload.Instance.ResourceID {
+			observed = instance
+			break
+		}
+	}
+	if observed.ResourceID == "" {
+		return append(checks, model.Check{Name: "metadata_live_resource", Status: model.CheckFail, Message: "registered resource was not rediscovered"}), false, nil
+	}
+	expectedIdentity, err := identity.InstanceKey(payload.Instance.Engine, payload.Instance.EngineIdentity)
+	if err != nil {
+		return nil, false, err
+	}
+	observedIdentity, err := identity.InstanceKey(observed.Engine, observed.EngineIdentity)
+	if err != nil || expectedIdentity != observedIdentity {
+		return append(checks, model.Check{Name: "metadata_live_identity", Status: model.CheckFail, Message: "database native identity does not match the registered resource"}), false, nil
+	}
+	checks = append(checks, model.Check{Name: "metadata_live_identity", Status: model.CheckPass, Message: "database native identity matches the registered resource"})
+	coordinatesMatch := observed.Port == payload.Instance.Port &&
+		(strings.TrimSpace(payload.Instance.Hostname) == "" || strings.EqualFold(strings.TrimSpace(observed.Hostname), strings.TrimSpace(payload.Instance.Hostname))) &&
+		(strings.TrimSpace(payload.Instance.IPAddress) == "" || strings.TrimSpace(observed.IPAddress) == strings.TrimSpace(payload.Instance.IPAddress))
+	if !coordinatesMatch {
+		return append(checks, model.Check{Name: "metadata_live_endpoint", Status: model.CheckFail, Message: "live database endpoint does not match registered metadata"}), false, nil
+	}
+	if payload.EndpointID != "" {
+		endpoint, found := server.store.Endpoint(payload.EndpointID)
+		if !found || endpoint.InstanceID != payload.Instance.ResourceID || endpoint.ClusterID != payload.Instance.ClusterID ||
+			endpoint.Port != payload.Instance.Port ||
+			(strings.TrimSpace(payload.Instance.Hostname) != "" && !strings.EqualFold(endpoint.Hostname, strings.TrimSpace(payload.Instance.Hostname))) ||
+			(strings.TrimSpace(payload.Instance.IPAddress) != "" && endpoint.IPAddress != strings.TrimSpace(payload.Instance.IPAddress)) {
+			return append(checks, model.Check{Name: "metadata_registry_endpoint", Status: model.CheckFail, Message: "active registry endpoint is not bound to the verified resource coordinates"}), false, nil
+		}
+	}
+	checks = append(checks, model.Check{Name: "metadata_live_endpoint", Status: model.CheckPass, Message: "live database endpoint matches registered metadata"})
+	return checks, true, nil
 }
 
 func writeMetadataExecutionFailure(writer http.ResponseWriter, execution model.Execution, reconciled model.DatabaseInstance, endpoint model.Endpoint, commitErr error, executionErr error) bool {

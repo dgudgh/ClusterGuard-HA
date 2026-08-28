@@ -251,6 +251,29 @@ func TestRegisterClusterAndRefreshOnlyRegisteredInventory(t *testing.T) {
 	}
 }
 
+func TestRegisterClusterAcceptsStableClientGeneratedResourceID(t *testing.T) {
+	repository := store.NewMemory()
+	server := newAPIServer(t, repository, newCandidateAdapterSpy(), &fakeRefresher{})
+	clusterID := model.NewResourceID()
+	response := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/clusters", map[string]interface{}{
+		"resource_id": clusterID, "display_name": "offline-bootstrap", "engine": "mysql",
+		"endpoints": []map[string]interface{}{{"hostname": "mysql-a", "ip_address": "192.0.2.10", "port": 3306}},
+	})
+	if response.Code != http.StatusCreated || !strings.Contains(response.Body.String(), string(clusterID)) {
+		t.Fatalf("stable registration status=%d body=%s", response.Code, response.Body.String())
+	}
+	if stored, found := repository.Cluster(clusterID); !found || stored.DisplayName != "offline-bootstrap" {
+		t.Fatalf("stable cluster identity was not persisted: found=%t cluster=%+v", found, stored)
+	}
+	invalid := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/clusters", map[string]interface{}{
+		"resource_id": "not-a-uuid", "display_name": "invalid-bootstrap", "engine": "mysql",
+		"endpoints": []map[string]interface{}{{"hostname": "mysql-b", "port": 3306}},
+	})
+	if invalid.Code != http.StatusBadRequest {
+		t.Fatalf("invalid client identity status=%d body=%s", invalid.Code, invalid.Body.String())
+	}
+}
+
 func TestDeleteClusterRetiresInventoryAndReturnsSummary(t *testing.T) {
 	repository := store.NewMemory()
 	server := newAPIServer(t, repository, newCandidateAdapterSpy(), &fakeRefresher{})
@@ -708,6 +731,16 @@ func TestCandidateReadUsesPersistedProbesAndBoundedPolicyWithoutDatabaseProbes(t
 	if response.Code != http.StatusOK {
 		t.Fatalf("candidate status: %d %s", response.Code, response.Body.String())
 	}
+	var candidateEnvelope struct {
+		ObservationID string                      `json:"observation_id"`
+		Result        []model.CandidateAssessment `json:"result"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &candidateEnvelope); err != nil {
+		t.Fatalf("decode candidate envelope: %v", err)
+	}
+	if candidateEnvelope.ObservationID != snapshot.ObservedAt.Format(time.RFC3339Nano) {
+		t.Fatalf("candidate observation_id=%q, want %q", candidateEnvelope.ObservationID, snapshot.ObservedAt.Format(time.RFC3339Nano))
+	}
 	requests, databaseCalls := candidate.captured()
 	if len(requests) != 1 || databaseCalls != 0 {
 		t.Fatalf("candidate read invoked wrong adapter paths: requests=%d database_calls=%d", len(requests), databaseCalls)
@@ -885,7 +918,7 @@ func TestCandidateReadFailsClosedBeforeAdapterInvocation(t *testing.T) {
 	}
 }
 
-func TestCandidateReadRejectsRetainedPrimaryWithoutCurrentRoleEvidence(t *testing.T) {
+func TestCandidateReadRejectsUnavailableInstanceWithoutCurrentRoleEvidence(t *testing.T) {
 	repository := store.NewMemory()
 	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{
 		Engine: model.EngineMySQL, DisplayName: "stale-primary",
@@ -935,8 +968,10 @@ func TestCandidateReadRejectsRetainedPrimaryWithoutCurrentRoleEvidence(t *testin
 	if err != nil {
 		t.Fatalf("publish failed-primary observation: %v", err)
 	}
-	if len(snapshot.Instances) != 2 || snapshot.Instances[0].Role != model.RolePrimary && snapshot.Instances[1].Role != model.RolePrimary {
-		t.Fatalf("last-known primary was not retained in topology: %+v", snapshot.Instances)
+	for _, instance := range snapshot.Instances {
+		if instance.ResourceID == primary.ResourceID && instance.Role != model.RoleUnknown {
+			t.Fatalf("unavailable instance retained a fabricated current role: %+v", instance)
+		}
 	}
 
 	candidate := newCandidateAdapterSpy()

@@ -21,7 +21,7 @@
         <span>搜索文档</span>
         <input id="docs-search" type="search" autocomplete="off" placeholder="输入标题关键词">
       </label>
-      <nav class="docs-nav" aria-label="Documentation"><section><h2>开始使用</h2><a href="index.html" data-doc-title="clusterguard ha 中文文档">ClusterGuard HA 中文文档</a><a href="product-overview.html" data-doc-title="产品概览">产品概览</a><a href="product-tour.html" data-doc-title="控制台产品导览">控制台产品导览</a><a href="architecture.html" data-doc-title="系统架构" aria-current="page" class="active">系统架构</a><a href="release-2.1.45.html" data-doc-title="2.1.45 发布说明">2.1.45 发布说明</a></section><section><h2>部署与迁移</h2><a href="offline-rpm-install.html" data-doc-title="离线 rpm 安装">离线 RPM 安装</a><a href="database-preparation.html" data-doc-title="数据库接入">数据库接入</a><a href="orchestrator-migration.html" data-doc-title="从 orchestrator 迁移">从 Orchestrator 迁移</a></section><section><h2>日常运维</h2><a href="operations-manual.html" data-doc-title="运维操作手册">运维操作手册</a><a href="api-operations.html" data-doc-title="api 运维参考">API 运维参考</a><a href="postgresql-ha.html" data-doc-title="postgresql 高可用">PostgreSQL 高可用</a><a href="version-release-policy.html" data-doc-title="版本与发版规范">版本与发版规范</a></section><section><h2>验收证据</h2><a href="proven-mysql-ha-methods.html" data-doc-title="mysql 已验证方法">MySQL 已验证方法</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql 功能验收">MySQL 功能验收</a><a href="mysql-former-primary-recovery.html" data-doc-title="旧主恢复专项验收">旧主恢复专项验收</a><a href="mysql-production-qualification.html" data-doc-title="mysql 生产验收">MySQL 生产验收</a><a href="production-chaos-test.html" data-doc-title="生产故障测试报告">生产故障测试报告</a><a href="power-lifecycle-test.html" data-doc-title="计划关机测试报告">计划关机测试报告</a></section></nav>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>开始使用</h2><a href="index.html" data-doc-title="clusterguard ha 中文文档">ClusterGuard HA 中文文档</a><a href="product-overview.html" data-doc-title="产品概览">产品概览</a><a href="product-tour.html" data-doc-title="控制台产品导览">控制台产品导览</a><a href="architecture.html" data-doc-title="系统架构" aria-current="page" class="active">系统架构</a><a href="release-2.2.39.html" data-doc-title="2.2.39 发布说明">2.2.39 发布说明</a><a href="release-2.1.45.html" data-doc-title="2.1.45 发布说明">2.1.45 发布说明</a></section><section><h2>部署与迁移</h2><a href="offline-rpm-install.html" data-doc-title="离线 rpm 安装">离线 RPM 安装</a><a href="database-preparation.html" data-doc-title="数据库接入">数据库接入</a><a href="orchestrator-migration.html" data-doc-title="从 orchestrator 迁移">从 Orchestrator 迁移</a></section><section><h2>日常运维</h2><a href="operations-manual.html" data-doc-title="运维操作手册">运维操作手册</a><a href="api-operations.html" data-doc-title="api 运维参考">API 运维参考</a><a href="postgresql-ha.html" data-doc-title="postgresql 高可用">PostgreSQL 高可用</a><a href="docker-swarm-mysql.html" data-doc-title="docker swarm mysql">Docker Swarm MySQL</a><a href="kubernetes-mysql.html" data-doc-title="kubernetes mysql">Kubernetes MySQL</a><a href="update-and-patch.html" data-doc-title="版本升级与回退">版本升级与回退</a><a href="version-release-policy.html" data-doc-title="版本与发版规范">版本与发版规范</a></section><section><h2>验收证据</h2><a href="proven-mysql-ha-methods.html" data-doc-title="mysql 已验证方法">MySQL 已验证方法</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql 功能验收">MySQL 功能验收</a><a href="mysql-former-primary-recovery.html" data-doc-title="旧主恢复专项验收">旧主恢复专项验收</a><a href="mysql-production-qualification.html" data-doc-title="mysql 生产验收">MySQL 生产验收</a><a href="postgresql-production-qualification.html" data-doc-title="postgresql 16.4 生产验收">PostgreSQL 16.4 生产验收</a><a href="docker-swarm-mysql-validation.html" data-doc-title="docker swarm mysql 实机验证">Docker Swarm MySQL 实机验证</a><a href="production-chaos-test.html" data-doc-title="生产故障测试报告">生产故障测试报告</a><a href="power-lifecycle-test.html" data-doc-title="计划关机测试报告">计划关机测试报告</a></section></nav>
       <div class="sidebar-meta">
         <span>离线文档构建</span>
         <strong>2.1 / 2.2</strong>
@@ -41,6 +41,15 @@
 <h2 id="设计目标">设计目标<a class="heading-anchor" href="#设计目标" aria-label="Link to 设计目标">#</a></h2>
 <p>ClusterGuard HA 是一个与数据库无关的控制平面，具有特定于引擎的适配器。平台身份、清单权威、工作流门、持久化、API 行为、审计和报告属于控制内核。数据库协议细节属于适配器。</p>
 <p>已封板的 2.1 系列启用了 MySQL 控制路径，PostgreSQL 从 2.2 系列开始交付。Oracle 和 SQL Server 仍属于后续独立认证的产品线；能力入口存在并不代表已获得生产支持。当前开发分支包含发现、健康、原生指标、确定性候选评估、受控切换和故障切换、旧主重新加入、白名单修复、Linux VIP 所有权和节点生命周期。变更操作始终受能力和配置门禁约束：缺少多数派、隔离证据、受限 Agent 策略、凭据、端点提供器或当前观测时，系统会在进入不安全步骤前阻断操作。Oracle 和 SQL Server 角色转换通过各自的原生 HA 控制面集成：Oracle Data Guard Broker 使用 DGMGRL，SQL Server Always On 使用 sqlcmd/T-SQL。SQL Server 的发现、健康、候选、队列指标、执行和验证路径已实现。Oracle 的发现和受控 Broker 执行通过受限节点 Agent 实现；Oracle 指标扩展仍在路线图中。未配置完整原生执行器和安全依赖时，相关变更能力不会启用。</p>
+<h2 id="软件升级平面">软件升级平面<a class="heading-anchor" href="#软件升级平面" aria-label="Link to 软件升级平面">#</a></h2>
+<p>ClusterGuard HA 将控制软件升级与数据库变更完全分离。每个二进制公开版本、发行序号、构建提交、<code>state_format</code> 和 <code>update_protocol</code>；每个 <code>.cgupgrade</code> 签名升级包同时携带目标 RPM、回退 RPM、兼容性清单、SHA-256 摘要和离线发布签名。现场升级器只管理 ClusterGuard 控制器和 Agent，不调用数据库客户端，也不修改数据库软件、数据目录、复制关系或 VIP 配置。旧 <code>.cgpatch</code> 后缀仅作兼容。</p>
+<p>升级状态机固定为：</p>
+<pre><code class="language-text">VERIFY_SIGNATURE -&gt; CHECK_COMPATIBILITY -&gt; CHECK_QUORUM -&gt; CHECK_IDLE -&gt; CHECK_INVENTORY
+-&gt; ENTER_MAINTENANCE -&gt; FOLLOWERS -&gt; DATA_ONLY -&gt; LEADER
+-&gt; VERIFY_VERSIONS -&gt; VERIFY_NODE_SERVICES -&gt; VERIFY_QUORUM -&gt; LEAVE_MAINTENANCE
+</code></pre>
+<p><code>CHECK_INVENTORY</code> 同时核对部署目标、每台节点的不可变 UUID、实时 Raft voter 和活动数据节点清单。扩容、退役、替换、hostname/IP 变化或旧状态文件都不能使活动节点被静默漏过。<code>VERIFY_NODE_SERVICES</code> 对控制节点检查控制面重新入群，对数据节点检查 Agent 与 reconcile timer；混合节点必须同时满足两组条件。</p>
+<p>维护标记是所有变更入口共享的 fail-closed 门禁。滚动期间，发现、健康、指标和只读审计保持可用；切换、恢复、节点同步、元数据修正和生命周期变更返回维护中。任一步失败都会停止前进并按相反顺序使用升级包内旧 RPM 回退。只有完整升级或完整回退通过版本、节点服务和多数派验证后才释放门禁。释放前会预检全部控制节点；若释放中途失败，则把同一升级锁补偿写回全部控制节点。进程中断、最终验证失败、补偿不完整或回退不完整时均保留门禁，并通过同一签名升级包的 <code>--resume</code> 续跑。完整现场流程见<a href="update-and-patch.html">版本升级与回退手册</a>。</p>
 <h2 id="资源模型">资源模型<a class="heading-anchor" href="#资源模型" aria-label="Link to 资源模型">#</a></h2>
 <p>每个持久资源都有一个不可变的平台 UUID 和修订元数据。主要资源如下：</p>
 <table>
@@ -87,6 +96,14 @@
 <td>VIP、监听器或服务端点的期望所有者和健康状态。</td>
 </tr>
 <tr>
+<td><code>RuntimeTarget</code></td>
+<td>主机、Docker Swarm 或 Kubernetes API 的受管运行边界。</td>
+</tr>
+<tr>
+<td><code>WorkloadBinding</code></td>
+<td>数据库实例与宿主节点、Swarm Service 或 StatefulSet/Pod/PVC 不可变身份的绑定。</td>
+</tr>
+<tr>
 <td><code>OperationRecord</code> / <code>OperationPlan</code></td>
 <td>幂等意图、持久阶段进度和不可变执行计划。</td>
 </tr>
@@ -116,6 +133,29 @@
 </tr>
 </tbody></table>
 <p><code>resource_id</code> 是由 API、持久化、链接、指标和工作流使用的稳定引用。每个物理节点也有一个全局唯一不可变的 <code>node_name</code>，例如 <code>cg-data-0001</code>。主机名、IP 地址、端口、显示名称和别名可以更改，而无需创建新节点或数据库实例。</p>
+<h2 id="运行层与业务入口">运行层与业务入口<a class="heading-anchor" href="#运行层与业务入口" aria-label="Link to 运行层与业务入口">#</a></h2>
+<p>ClusterGuard 不根据端口或进程名称猜测部署模式。每个数据库实例必须通过 <code>WorkloadBinding</code> 关联一个明确的 <code>RuntimeTarget</code>，每个集群必须只有一个活动写入口 Provider。</p>
+<pre><code class="language-mermaid">flowchart TB
+  CP[三节点 Raft 控制面] --&gt; ROUTER[写入口 Provider Router]
+  ROUTER --&gt; VIP[linux_vip]
+  ROUTER --&gt; KSVC[kubernetes_service]
+
+  VIP --&gt; HOST[物理机或虚拟机&lt;br/&gt;systemd 数据库]
+  VIP --&gt; SWARM[Docker Swarm&lt;br/&gt;固定单副本 Service]
+  HOST --&gt; HVIP[宿主机网卡 VIP]
+  SWARM --&gt; HVIP
+
+  KSVC --&gt; K8S[Kubernetes&lt;br/&gt;独立单副本 StatefulSet]
+  K8S --&gt; EPS[selectorless Service&lt;br/&gt;单后端 EndpointSlice]
+
+  CP -. mTLS 或 HTTPS .-&gt; AGENT[受限 Agent / Kubernetes API]
+  AGENT --&gt; HOST
+  AGENT --&gt; SWARM
+  AGENT --&gt; K8S
+</code></pre>
+<p>物理机和虚拟机模式由 Agent 持久化数据库重启角色并迁移宿主机网卡 VIP。Docker Swarm 模式仍迁移宿主机 VIP，不修改容器内部地址，也不依赖 Swarm routing mesh；Agent 只控制固定宿主机上的 allowlisted Service、只读角色和重启 fence。</p>
+<p>Kubernetes 模式不迁移宿主机 VIP，不修改 CoreDNS，也不靠普通 Service selector 猜测主库。MySQL 角色切换完成后，Provider 持久化两个 StatefulSet 的重启角色，再使用 <code>resourceVersion</code> 原子更新 selectorless Service 的单个 EndpointSlice 后端。Pod UID、Node 名和 PVC UID 必须与登记身份一致。故障切换先持久 fence 并将旧主独立 StatefulSet 缩到 0；旧主 Node 无法证明 Ready 时必须由云平台、BMC 或虚拟化隔离器提供额外证据。</p>
+<p>当前 Kubernetes 执行范围为 MySQL。PostgreSQL 的 Kubernetes 资源可以登记，但在 PostgreSQL Pod 角色控制器完成前保持 fail-closed。完整约束和部署资源见 <a href="kubernetes-mysql.html">Kubernetes MySQL 接管手册</a>。</p>
 <h2 id="引擎身份">引擎身份<a class="heading-anchor" href="#引擎身份" aria-label="Link to 引擎身份">#</a></h2>
 <p>原生身份将观察绑定到稳定的平台资源：</p>
 <table>
@@ -201,7 +241,8 @@
 <p>每个操作都有一个持久的 UUID 和调用者提供的幂等键。仓库原子地持久化其观察令牌、不可变计划摘要、引用的元数据修订、工作流阶段、完成的步骤尝试、执行和验证。重复使用相同的键用于相同的意图返回现有操作；重复使用它用于其他目标或操作类型是冲突。同一进程的重复不能终止活动操作，重启可以从观察到的步骤后置条件恢复。</p>
 <p>高风险数据库执行使用一次性 <code>ApprovalGrant</code>。平台会话在服务器内部创建和消费它。显式的服务请求返回一个随机的 <code>cgag_...</code> 令牌一次。复制的仓库仅存储其 SHA-256 哈希。授权默认为五分钟，不能超过十五分钟，并绑定到操作 UUID、集群、引擎、操作类型、目标 UUID、观察和计划摘要。在操作锁下，授权消耗和持久 <code>APPROVE</code> 过渡原子提交。重复使用、过期、目标不匹配或陈旧计划失败时阻断。服务执行路由不接受管理员控制凭证作为审批替代。</p>
 <p>MySQL 切换支持一个主节点和多个副本。执行要求选定目标合格、GTID 历史兼容、探测证据为当前状态、复制线程运行正常、版本系列兼容，并且端点提供器可执行。晋升前先隔离源节点，再将每个可达副本重新指向新主。只有独立验证出唯一可写实例和唯一目标 VIP 所有者后，操作才算成功。</p>
-<p>自动故障转移使用发现记录的 30 秒稳定事件。只有多数 Leader 可以提交持久操作。相同的事件在成功或不确定结果后不能重复。操作锁是 Raft 复制和续订的，安全门重新检查多数，端点变更操作需要一个单独的短租约。受限的数据节点代理在节点无法获得有效签名保持决策时移除陈旧的 VIP 并持久化两个 MySQL 只读标志。</p>
+<p>自动故障转移在连续得到 3 次当前主库失败观测且时间跨度不少于 3 秒后，记录一个稳定事件。只有多数 Leader 可以提交持久操作。相同的事件在成功或不确定结果后不能重复。操作锁由 Raft 复制并续期，安全门禁会重新检查多数派，端点变更需要独立短租约。受限数据节点 Agent 在无法获得有效签名保持决策时移除陈旧 VIP，并持久化 MySQL 只读标志。</p>
+<p>稳定事件窗口、15 秒 Agent 授权失效隔离宽限和 30 秒失败重试退避是三项独立控制，不能把其中任一值当作端到端 RTO。</p>
 <p>自动恢复通过独立的内部入口进入工作流。它不签发或消费人工审批授权，也不能通过 HTTP 字段选择。事件 ID 会记录在 <code>APPROVE</code> 阶段，共识、安全门禁、复制操作锁、隔离、执行、验证、审计和报告仍全部强制执行。</p>
 <p>恢复从不将预先存在的源隔离本身视为足够。持久操作必须拥有完成的 <code>fence_source</code> 步骤，适配器在继续之前重新检查源和目标原生身份、源隔离、GTID 历史、二进制日志、版本兼容性、目标复制状态和写入端点后置条件。</p>
 <p>提交后验证绑定到不可变计划摘要和计划的源/目标 UUID，而不是预变更操作观察时间戳。这允许在不削弱原生身份、角色、只读、复制或端点所有者检查的情况下验证刷新后的拓扑。</p>
@@ -218,7 +259,7 @@
         </article>
         <aside class="page-toc" aria-label="本页目录">
           <strong>本页目录</strong>
-          <a class="toc-level-2" href="#设计目标">设计目标</a><a class="toc-level-2" href="#资源模型">资源模型</a><a class="toc-level-2" href="#引擎身份">引擎身份</a><a class="toc-level-2" href="#适配器注册表">适配器注册表</a><a class="toc-level-2" href="#清单权威">清单权威</a><a class="toc-level-2" href="#刷新事务">刷新事务</a><a class="toc-level-2" href="#候选智能">候选智能</a><a class="toc-level-2" href="#指标">指标</a><a class="toc-level-2" href="#平台认证">平台认证</a><a class="toc-level-2" href="#工作流门">工作流门</a>
+          <a class="toc-level-2" href="#设计目标">设计目标</a><a class="toc-level-2" href="#软件升级平面">软件升级平面</a><a class="toc-level-2" href="#资源模型">资源模型</a><a class="toc-level-2" href="#运行层与业务入口">运行层与业务入口</a><a class="toc-level-2" href="#引擎身份">引擎身份</a><a class="toc-level-2" href="#适配器注册表">适配器注册表</a><a class="toc-level-2" href="#清单权威">清单权威</a><a class="toc-level-2" href="#刷新事务">刷新事务</a><a class="toc-level-2" href="#候选智能">候选智能</a><a class="toc-level-2" href="#指标">指标</a><a class="toc-level-2" href="#平台认证">平台认证</a><a class="toc-level-2" href="#工作流门">工作流门</a>
         </aside>
       </main>
     </div>

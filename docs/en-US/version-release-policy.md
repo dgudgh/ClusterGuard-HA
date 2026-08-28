@@ -52,6 +52,7 @@ After a formal release is completed, the following objects must not be overwritt
 - GitHub Releases;
 - RPMs;
 - Complete offline packages;
+- Signed `.cgupgrade` update packages, with legacy `.cgpatch` compatibility;
 - Independent PostgreSQL dependency packages;
 - SHA256 files;
 - Release Notes.
@@ -115,6 +116,7 @@ And verify:
 6. Corresponding database versions complete switching, failure, old master recovery, restart, network partition, and concurrency testing.
 7. Security gate, Leader forwarding, Raft majority, VIP uniqueness, audit, and report all pass.
 8. Release Notes clearly specify the supported scope, known boundaries, and upgrade methods.
+9. The patch contains target and rollback RPMs, and passes signature, compatibility, rolling-order, resume, and automatic-rollback tests.
 
 If any gate fails, only an internal candidate package can be generated, and formal tags or GitHub Releases cannot be created.
 
@@ -124,7 +126,7 @@ Formal release is executed in the following order:
 
 1. Gather and submit all changes for this version.
 2. Execute full testing and on-site acceptance.
-3. Build RPM, main offline package, and necessary independent dependency packages from a clean commit.
+3. Build RPM, main offline package, signed update package, and necessary independent dependency packages from a clean commit.
 4. Verify the summary, signature, package content, and installation process.
 5. Create an annotated tag, for example, `v2.2.1`.
 6. Push the commit and tag.
@@ -132,3 +134,7 @@ Formal release is executed in the following order:
 8. Redownload the attachments from GitHub and perform a summary and installation smoke test again.
 
 After the release is completed, only new versions are allowed to fix issues.
+
+See the [Version Update and Rollback Guide](update-and-patch.md) for field update, resume,
+and rollback commands. The release private key must never enter the repository,
+RPM, offline kit, or a customer server.

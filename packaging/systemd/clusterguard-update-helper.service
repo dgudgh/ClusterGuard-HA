@@ -1,0 +1,24 @@
+[Unit]
+Description=ClusterGuard HA Privileged Software Update Helper
+After=local-fs.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=clusterguard
+ExecStart=/usr/local/libexec/clusterguard-update-helper --socket /run/clusterguard/update-helper.sock --root /var/lib/clusterguard/updates --runner /usr/local/libexec/clusterguard-update-job.sh
+Restart=on-failure
+RestartSec=3s
+RuntimeDirectory=clusterguard
+RuntimeDirectoryMode=0750
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=false
+ReadWritePaths=/run/clusterguard /var/lib/clusterguard/updates /etc/clusterguard /var/lib/clusterguard /var/log/clusterguard
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

@@ -39,7 +39,7 @@ func TestDiscoverPrimaryUsesStableNodeAndSystemIdentities(t *testing.T) {
 	if instance.EngineIdentity["resource_id"] != testPostgreSQLNodeID || instance.EngineIdentity["system_identifier"] != "7428625847249870011" {
 		t.Fatalf("unexpected identities: %+v", instance.EngineIdentity)
 	}
-	if instance.Hostname != "pg-renamed" || instance.IPAddress != "192.0.2.30" || instance.Port != 5440 {
+	if instance.Hostname != "pg-renamed" || instance.IPAddress != "192.0.2.30" || instance.Port != 5432 {
 		t.Fatalf("unexpected mutable endpoint: %+v", instance)
 	}
 	if instance.EngineMetadata["timeline_id"] != "7" || instance.EngineMetadata["current_lsn"] != "0/5000060" {
@@ -50,6 +50,20 @@ func TestDiscoverPrimaryUsesStableNodeAndSystemIdentities(t *testing.T) {
 	}
 	if len(runner.queries) != 1 || strings.Contains(strings.ToLower(runner.queries[0]), "primary_conninfo") {
 		t.Fatalf("probe must be single-shot and must not read secrets: %v", runner.queries)
+	}
+}
+
+func TestDiscoverKeepsPublishedContainerPort(t *testing.T) {
+	request := postgresqlRequest()
+	request.Endpoint.Port = 55432
+	row := primaryProbeRow()
+	row["port"] = "5432"
+	result, err := discover(context.Background(), &fakeRunner{rows: []Row{row}}, request)
+	if err != nil {
+		t.Fatalf("discover published PostgreSQL endpoint: %v", err)
+	}
+	if result.Instance.Port != 55432 {
+		t.Fatalf("published PostgreSQL port was replaced by container port: %+v", result.Instance)
 	}
 }
 
@@ -86,16 +100,40 @@ func TestDiscoverStandbyWithUnknownLagDoesNotInventZero(t *testing.T) {
 	}
 }
 
+func TestDiscoverStandbyRetainsReceiverEndEvidenceAfterTimelineChange(t *testing.T) {
+	row := standbyProbeRow()
+	row["receive_lsn"] = "0/5000000"
+	row["replay_lsn"] = "0/5000050"
+	row["receiver_latest_end_lsn"] = "0/5000050"
+	row["lag_seconds"] = "0"
+	result, err := discover(context.Background(), &fakeRunner{rows: []Row{row}}, postgresqlRequest())
+	if err != nil {
+		t.Fatalf("discover standby after timeline change: %v", err)
+	}
+	if result.Instance.Replication.LagSeconds == nil || *result.Instance.Replication.LagSeconds != 0 {
+		t.Fatalf("receiver end evidence did not preserve zero lag: %+v", result.Instance.Replication)
+	}
+	if result.Instance.EngineMetadata["receiver_latest_end_lsn"] != row["replay_lsn"] {
+		t.Fatalf("receiver end LSN evidence is missing: %+v", result.Instance.EngineMetadata)
+	}
+}
+
 func TestIdentityQueryReportsZeroLagWhenStandbyReplayedAllReceivedWAL(t *testing.T) {
 	replayedAll := "pg_last_wal_receive_lsn() = pg_last_wal_replay_lsn()"
+	receiverStreaming := "(SELECT status FROM receiver) = 'streaming'"
+	receiverCaughtUp := "(SELECT latest_end_lsn FROM receiver) = pg_last_wal_replay_lsn()"
 	timestampFallback := "pg_last_xact_replay_timestamp() IS NOT NULL"
 	replayedAllIndex := strings.Index(identityQuery, replayedAll)
+	receiverCaughtUpIndex := strings.Index(identityQuery, receiverCaughtUp)
 	timestampFallbackIndex := strings.Index(identityQuery, timestampFallback)
 	if replayedAllIndex < 0 {
 		t.Fatalf("identity query does not detect a fully replayed standby: %s", identityQuery)
 	}
 	if timestampFallbackIndex < 0 || replayedAllIndex > timestampFallbackIndex {
 		t.Fatalf("fully replayed WAL must take precedence over timestamp lag: %s", identityQuery)
+	}
+	if !strings.Contains(identityQuery, receiverStreaming) || receiverCaughtUpIndex < 0 || receiverCaughtUpIndex > timestampFallbackIndex {
+		t.Fatalf("streaming receiver end LSN must recover zero-lag evidence after a timeline change: %s", identityQuery)
 	}
 }
 
@@ -116,9 +154,10 @@ func TestIdentityQueryOnlyChecksReplayPauseDuringRecovery(t *testing.T) {
 }
 
 func TestIdentityQueryUsesReceivedTimelineForStreamingStandby(t *testing.T) {
-	receiverTimeline := "SELECT received_tli::text FROM pg_stat_wal_receiver"
+	receiverSnapshot := "SELECT status, received_tli, latest_end_lsn\n  FROM pg_stat_wal_receiver"
+	receiverTimeline := "SELECT received_tli::text FROM receiver"
 	checkpointTimeline := "(pg_control_checkpoint()).timeline_id::text"
-	if !strings.Contains(identityQuery, receiverTimeline) {
+	if !strings.Contains(identityQuery, receiverSnapshot) || !strings.Contains(identityQuery, receiverTimeline) {
 		t.Fatalf("identity query must use the WAL receiver timeline for a streaming standby: %s", identityQuery)
 	}
 	if !strings.Contains(identityQuery, "COALESCE(") || strings.Index(identityQuery, receiverTimeline) > strings.LastIndex(identityQuery, checkpointTimeline) {
@@ -156,6 +195,7 @@ func TestDiscoverRejectsInvalidStableIdentityAndLSN(t *testing.T) {
 		"node UUID":         func(row Row) { row["node_id"] = "pg-01" },
 		"system identifier": func(row Row) { row["system_identifier"] = "not-a-number" },
 		"replay LSN":        func(row Row) { row["replay_lsn"] = "broken" },
+		"receiver end LSN":  func(row Row) { row["receiver_latest_end_lsn"] = "broken" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			row := standbyProbeRow()
@@ -169,45 +209,47 @@ func TestDiscoverRejectsInvalidStableIdentityAndLSN(t *testing.T) {
 
 func primaryProbeRow() Row {
 	return Row{
-		"node_id":               testPostgreSQLNodeID,
-		"primary_node_id":       "",
-		"system_identifier":     "7428625847249870011",
-		"hostname":              "pg-renamed",
-		"port":                  "5440",
-		"version":               "16.3",
-		"in_recovery":           "false",
-		"transaction_read_only": "off",
-		"replay_paused":         "false",
-		"wal_receiver_status":   "",
-		"current_lsn":           "0/5000060",
-		"receive_lsn":           "",
-		"replay_lsn":            "",
-		"lag_seconds":           "",
-		"timeline_id":           "7",
-		"wal_log_hints":         "true",
-		"data_checksum_version": "1",
+		"node_id":                 testPostgreSQLNodeID,
+		"primary_node_id":         "",
+		"system_identifier":       "7428625847249870011",
+		"hostname":                "pg-renamed",
+		"port":                    "5440",
+		"version":                 "16.3",
+		"in_recovery":             "false",
+		"transaction_read_only":   "off",
+		"replay_paused":           "false",
+		"wal_receiver_status":     "",
+		"current_lsn":             "0/5000060",
+		"receive_lsn":             "",
+		"replay_lsn":              "",
+		"receiver_latest_end_lsn": "",
+		"lag_seconds":             "",
+		"timeline_id":             "7",
+		"wal_log_hints":           "true",
+		"data_checksum_version":   "1",
 	}
 }
 
 func standbyProbeRow() Row {
 	return Row{
-		"node_id":               testPostgreSQLNodeID,
-		"primary_node_id":       testPostgreSQLPrimaryID,
-		"system_identifier":     "7428625847249870011",
-		"hostname":              "pg-standby-renamed",
-		"port":                  "5440",
-		"version":               "16.3",
-		"in_recovery":           "true",
-		"transaction_read_only": "on",
-		"replay_paused":         "false",
-		"wal_receiver_status":   "streaming",
-		"current_lsn":           "",
-		"receive_lsn":           "0/5000050",
-		"replay_lsn":            "0/5000040",
-		"lag_seconds":           "2",
-		"timeline_id":           "7",
-		"wal_log_hints":         "true",
-		"data_checksum_version": "1",
+		"node_id":                 testPostgreSQLNodeID,
+		"primary_node_id":         testPostgreSQLPrimaryID,
+		"system_identifier":       "7428625847249870011",
+		"hostname":                "pg-standby-renamed",
+		"port":                    "5440",
+		"version":                 "16.3",
+		"in_recovery":             "true",
+		"transaction_read_only":   "on",
+		"replay_paused":           "false",
+		"wal_receiver_status":     "streaming",
+		"current_lsn":             "",
+		"receive_lsn":             "0/5000050",
+		"replay_lsn":              "0/5000040",
+		"receiver_latest_end_lsn": "0/5000050",
+		"lag_seconds":             "2",
+		"timeline_id":             "7",
+		"wal_log_hints":           "true",
+		"data_checksum_version":   "1",
 	}
 }
 

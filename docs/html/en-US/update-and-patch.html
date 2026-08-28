@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="Version Update and Rollback - ClusterGuard HA operational documentation">
+  <title>Version Update and Rollback | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">Skip to content</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>Search documentation</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="Filter by title">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.2.39.html" data-doc-title="release 2.2.39">Release 2.2.39</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="docker-swarm-mysql.html" data-doc-title="docker swarm mysql">Docker Swarm MySQL</a><a href="kubernetes-mysql.html" data-doc-title="kubernetes mysql">Kubernetes MySQL</a><a href="update-and-patch.html" data-doc-title="version update and rollback" aria-current="page" class="active">Version Update and Rollback</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="postgresql-production-qualification.html" data-doc-title="postgresql 16.4 production qualification">PostgreSQL 16.4 Production Qualification</a><a href="docker-swarm-mysql-validation.html" data-doc-title="docker swarm mysql lab qualification">Docker Swarm MySQL Lab Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
+      <div class="sidebar-meta">
+        <span>Offline documentation build</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">Open navigation</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>Version Update and Rollback</strong></div>
+        <div class="header-actions">
+          <a href="../zh-CN/update-and-patch.html" lang="zh-CN">简体中文</a>
+          <button id="print-button" type="button">Print</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha-version-update-and-rollback-guide">ClusterGuard HA Version Update and Rollback Guide<a class="heading-anchor" href="#clusterguard-ha-version-update-and-rollback-guide" aria-label="Link to ClusterGuard HA Version Update and Rollback Guide">#</a></h1>
+<p>This guide defines how a customer site updates the ClusterGuard HA control plane. Control-plane software updates are strictly separate from database upgrades. The updater does not invoke MySQL, PostgreSQL, Oracle, or SQL Server clients and does not stop databases or modify database software, data directories, replication, or VIP configuration.</p>
+<blockquote>
+<p><strong>Artifact naming:</strong> <code>.cgupgrade</code> is a complete signed rolling-update package, not a small binary delta. It contains both the target RPM and the current-version RPM for automatic rollback. <code>*-offline-linux-*.tar.gz</code> is intended for installation or reinstallation and cannot be uploaded directly to the rolling-update page. Legacy <code>.cgpatch</code> packages remain supported.</p>
+</blockquote>
+<blockquote>
+<p><strong>Important: automatic failover is unavailable while a system update is in progress. Monitor the platform and database service throughout the maintenance window.</strong></p>
+<p>Once the maintenance marker is established, planned switchovers, failovers, automatic failover, and node mutations are blocked by Safety Guard. Read-only topology, health, metrics, and operation logs remain available. Automatic failover resumes only after every node passes update verification and the maintenance marker is released. An interrupted or failed update keeps the marker in place and remains fail-closed until the same update package is resumed or rolled back.</p>
+</blockquote>
+<h2 id="console-based-update">Console-Based Update<a class="heading-anchor" href="#console-based-update" aria-label="Link to Console-Based Update">#</a></h2>
+<p>An administrator can complete the workflow under <strong>Settings → Version Update</strong> without assembling shell commands:</p>
+<ol>
+<li>Upload an officially released, signed <code>.cgupgrade</code>. The server validates format, SHA-256, release signature, architecture, source and target versions, and state protocol before accepting it.</li>
+<li>Select <strong>Generate Update Plan</strong> and review the update package ID, source, target, rolling order, rollback availability, and node inventory.</li>
+<li>Select <strong>Execute Rolling Update</strong>. The confirmation dialog repeats the automatic-failover warning and requires the complete update package ID.</li>
+<li>A persistent banner remains visible for the entire maintenance transaction while node events, status, and raw output update in place.</li>
+<li>After success, confirm the banner is gone and recheck topology, VIP, and replication. On failure, use <strong>Resume Update</strong> or <strong>Controlled Rollback</strong>; never delete maintenance markers manually.</li>
+</ol>
+<p>Upload and orchestration endpoints require an authenticated administrator and enforce CSRF, Raft Leader forwarding, signature trust, a constrained root helper, and audit recording. An update package ID cannot be overwritten with different content.</p>
+<p>Provide the release public key during initial installation. A formal offline kit may carry the public key; the private key must never be shipped to customer systems:</p>
+<pre><code class="language-bash">./install_clusterguard.sh \
+  ... \
+  --patch-trust-key ./trust/patch-signing-public.pem \
+  --execute
+</code></pre>
+<p>The installer configures <code>/etc/clusterguard/update.json</code>, the trusted public key, and <code>clusterguard-update-helper.service</code> on every controller. Without a trusted key, the console reports Version Update as unavailable and never falls back to unsigned installation.</p>
+<h2 id="1-update-architecture">1. Update Architecture<a class="heading-anchor" href="#1-update-architecture" aria-label="Link to 1. Update Architecture">#</a></h2>
+<p>Every release RPM embeds an immutable runtime contract containing product, version, release, Git commit, build time, platform, RPM architecture, metadata <code>state_format</code>, and <code>update_protocol</code>.</p>
+<pre><code class="language-bash">clusterguard --version-json
+cgctl version --json
+curl --cacert /etc/clusterguard/tls/ca.crt \
+  https://127.0.0.1:3000/api/v1/platform/version
+</code></pre>
+<p>A <code>.cgupgrade</code> contains the target RPM, rollback RPM, compatibility manifest, SHA-256 checksums, and release signature. Sites retain only the release public key. The private signing key must remain offline and must never be shipped to customer systems. The legacy <code>.cgpatch</code> suffix is accepted only for compatibility.</p>
+<pre><code class="language-text">clusterguard-patch/
+├── PATCH-MANIFEST.json
+├── PATCH-MANIFEST.sig
+├── SHA256SUMS
+└── payload/
+    ├── clusterguard-ha-old.rpm
+    └── clusterguard-ha-new.rpm
+</code></pre>
+<p>Three independent contracts protect a site update:</p>
+<ol>
+<li><strong>Version contract</strong>: the RPM, running binary, and update-package manifest must agree on version, architecture, <code>state_format</code>, and <code>update_protocol</code>.</li>
+<li><strong>Node identity contract</strong>: the deployment inventory, immutable UUID in <code>/etc/clusterguard/node.json</code>, live Raft voters, and active data-node inventory must match exactly. Hostname, IP, and membership changes are never inferred optimistically.</li>
+<li><strong>Maintenance transaction contract</strong>: every controller receives a durable marker for the same <code>patch_id</code> before rolling work starts. Markers are released only after end-to-end verification; a partial release triggers compensating re-lock on every controller.</li>
+</ol>
+<p>The initial installer registers immutable controller, data, and mixed-node identities before database discovery. Later expansion, retirement, or replacement must update the resource inventory through the node lifecycle workflow; the updater will not silently omit an active node.</p>
+<h2 id="2-supported-boundaries">2. Supported Boundaries<a class="heading-anchor" href="#2-supported-boundaries" aria-label="Link to 2. Supported Boundaries">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Change</th>
+<th>Method</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Version update such as <code>2.2-28</code> to <code>2.2-29</code></td>
+<td>Signed <code>.cgupgrade</code> rolling update</td>
+</tr>
+<tr>
+<td>Feature-line update with unchanged state contract</td>
+<td>Signed update package after compatibility qualification</td>
+</tr>
+<tr>
+<td>Incompatible <code>state_format</code> or <code>update_protocol</code></td>
+<td>Rejected; use a dedicated migration release</td>
+</tr>
+<tr>
+<td>Database engine upgrade</td>
+<td>Separate database upgrade workflow</td>
+</tr>
+<tr>
+<td>No controller quorum, active operation, or lifecycle task</td>
+<td>Update is blocked</td>
+</tr>
+</tbody></table>
+<p>Update protocol v1 does not perform destructive metadata downgrade. A future state-format change must use an expand/read, switch/write, and contract/cleanup migration sequence rather than a regular update package.</p>
+<h2 id="3-build-a-signed-update-package">3. Build a Signed Update Package<a class="heading-anchor" href="#3-build-a-signed-update-package" aria-label="Link to 3. Build a Signed Update Package">#</a></h2>
+<p>Build old and new RPMs from clean, qualified commits, then sign the update package with the offline release key:</p>
+<pre><code class="language-bash">scripts/build-clusterguard-patch.sh \
+  --from-rpm dist/clusterguard-ha-2.2-28.x86_64.rpm \
+  --to-rpm dist/clusterguard-ha-2.2-29.x86_64.rpm \
+  --signing-key /secure/offline/clusterguard-patch-signing.key \
+  --output dist/clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade
+</code></pre>
+<p>Ship the update package, its SHA-256 file, release notes, and a signing-key fingerprint through an independent channel. Never overwrite an existing update artifact.</p>
+<h2 id="4-site-preparation">4. Site Preparation<a class="heading-anchor" href="#4-site-preparation" aria-label="Link to 4. Site Preparation">#</a></h2>
+<ol>
+<li><p>Install the trusted public key:</p>
+<pre><code class="language-bash">install -d -m 0750 -o root -g clusterguard /etc/clusterguard/trust
+install -m 0640 -o root -g clusterguard clusterguard-patch-signing-public.pem \
+  /etc/clusterguard/trust/patch-signing-public.pem
+</code></pre>
+</li>
+<li><p>Keep the generated <code>clusterguard-deployment-state.json</code>. After expansion, retirement, or replacement, use the current inventory or pass complete <code>--controllers</code> and <code>--data-nodes</code> lists explicitly. Explicit lists take precedence over a stale state file.</p>
+</li>
+<li><p>Verify all controllers are online, the Raft voter set is odd and at least three, and exactly one Leader exists.</p>
+</li>
+<li><p>Verify there are no running or indeterminate database operations and no node add, rebuild, or synchronization tasks.</p>
+</li>
+<li><p>Back up <code>/etc/clusterguard/</code>, <code>/var/lib/clusterguard/</code>, and the deployment state.</p>
+</li>
+<li><p>Use reviewed SSH host keys and preferably a dedicated SSH key.</p>
+</li>
+</ol>
+<h2 id="5-four-step-update">5. Four-Step Update<a class="heading-anchor" href="#5-four-step-update" aria-label="Link to 5. Four-Step Update">#</a></h2>
+<h3 id="inspect">Inspect<a class="heading-anchor" href="#inspect" aria-label="Link to Inspect">#</a></h3>
+<p>This step does not contact remote nodes:</p>
+<pre><code class="language-bash">clusterguard-upgrade \
+  --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
+  --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
+  --inspect
+</code></pre>
+<p>Require <code>signature=verified</code>, the expected source and target, <code>rollback=available</code>, and <code>database_mutation=false</code>.</p>
+<h3 id="plan">Plan<a class="heading-anchor" href="#plan" aria-label="Link to Plan">#</a></h3>
+<pre><code class="language-bash">clusterguard-upgrade \
+  --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
+  --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
+  --state ./clusterguard-deployment-state.json \
+  --ssh-key /root/.ssh/clusterguard_update \
+  --known-hosts /etc/clusterguard/ssh_known_hosts \
+  --plan
+</code></pre>
+<p>The fixed order is controller followers, data-only Agent nodes, then the current Leader. Every node must run either the declared source or target and pass the embedded binary contract check. The updater reads each data node&#39;s immutable UUID, compares controller UUIDs with live Raft voters, and compares data-node UUIDs with the live active inventory. Divergent controller views, duplicate UUIDs, role mismatches, or stale membership are rejected before maintenance locks are created, preventing missed nodes, cross-cluster targeting, and partial gating.</p>
+<h3 id="execute">Execute<a class="heading-anchor" href="#execute" aria-label="Link to Execute">#</a></h3>
+<pre><code class="language-bash">clusterguard-upgrade \
+  --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
+  --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
+  --state ./clusterguard-deployment-state.json \
+  --ssh-key /root/.ssh/clusterguard_update \
+  --known-hosts /etc/clusterguard/ssh_known_hosts \
+  --execute
+</code></pre>
+<p>Before every node, the updater rechecks quorum, Leader identity, readiness, active operations, and lifecycle tasks. It writes <code>/etc/clusterguard/update-maintenance.json</code> on every controller:</p>
+<ul>
+<li>mutating UI and API requests return <code>423 Locked</code>;</li>
+<li>automatic failover is blocked by the same Safety Guard;</li>
+<li>node add, rebuild, and synchronization are blocked;</li>
+<li>topology, health, metrics, logs, and control status remain readable;</li>
+<li>only the ClusterGuard service on the current node is restarted; databases are not restarted.</li>
+</ul>
+<p>Node readiness is more than an RPM version check. A controller must rejoin and observe a stable Leader. A data node must restore both <code>clusterguard-agent.service</code> and <code>clusterguard-agent-reconcile.timer</code>. A mixed node must satisfy both sets of checks; failure stops forward progress and enters rollback.</p>
+<h3 id="verify">Verify<a class="heading-anchor" href="#verify" aria-label="Link to Verify">#</a></h3>
+<pre><code class="language-bash">cgctl version --json
+cgctl status --json
+systemctl --no-pager --full status clusterguard-ha
+test ! -e /etc/clusterguard/update-maintenance.json
+</code></pre>
+<p>The execution directory receives a current-state JSON and an append-only event stream:</p>
+<pre><code class="language-text">clusterguard-update-PATCH-ID.json
+clusterguard-update-PATCH-ID.events.jsonl
+</code></pre>
+<p>Archive them with the patch, release notes, and change ticket.</p>
+<h2 id="6-resume-and-rollback">6. Resume and Rollback<a class="heading-anchor" href="#6-resume-and-rollback" aria-label="Link to 6. Resume and Rollback">#</a></h2>
+<p>An ordinary error, termination signal, or node failure stops forward progress and rolls nodes updated by this run back in reverse order with the embedded old RPM. The failed node is included in the rollback set.</p>
+<p>If the updater host loses power or the process is killed, the maintenance marker intentionally remains and keeps the platform fail-closed. Resume with the same signed update package:</p>
+<pre><code class="language-bash">clusterguard-upgrade \
+  --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
+  --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
+  --state ./clusterguard-deployment-state.json \
+  --ssh-key /root/.ssh/clusterguard_update \
+  --known-hosts /etc/clusterguard/ssh_known_hosts \
+  --resume --execute
+</code></pre>
+<p><code>--resume</code> accepts only the same <code>patch_id</code> stored in the lock. Do not manually remove maintenance markers or locks. On normal completion, the updater preflights every controller marker before releasing any of them. If a release fails partway through, it writes the same lock back to every controller and remains fail-closed until connectivity is repaired and the run is resumed.</p>
+<p>To deliberately return to the old RPM:</p>
+<pre><code class="language-bash">clusterguard-upgrade \
+  --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
+  --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
+  --state ./clusterguard-deployment-state.json \
+  --ssh-key /root/.ssh/clusterguard_update \
+  --known-hosts /etc/clusterguard/ssh_known_hosts \
+  --rollback --execute
+</code></pre>
+<h2 id="7-first-adoption">7. First Adoption<a class="heading-anchor" href="#7-first-adoption" aria-label="Link to 7. First Adoption">#</a></h2>
+<p>Versions predating the managed update protocol do not expose <code>--version-json</code> or the unified maintenance gate and cannot consume <code>.cgupgrade</code> directly. Use the bridge maintenance procedure from that release, disable automatic mutation ingress, install the bridge RPM one controller at a time, and verify on every node:</p>
+<pre><code class="language-bash">clusterguard --version-json
+cgctl status --json | jq &#39;{maintenance:.result.update_maintenance_active, controllers:.result.controller_members, data_nodes:.result.data_node_members}&#39;
+</code></pre>
+<p>Managed patching starts only after every node has the same <code>state_format</code> and <code>update_protocol</code>. The updater fails closed when it encounters an older binary; it never silently drops version verification.</p>
+<h2 id="8-production-admission-checklist">8. Production Admission Checklist<a class="heading-anchor" href="#8-production-admission-checklist" aria-label="Link to 8. Production Admission Checklist">#</a></h2>
+<ul>
+<li>Patch is from an official release; signature and SHA-256 pass.</li>
+<li>Public-key fingerprint is verified out of band.</li>
+<li>Source, target, architecture, state format, and protocol match.</li>
+<li>At least three odd-numbered controllers have stable quorum.</li>
+<li>Immutable node UUIDs, live Raft voters, active data nodes, and update targets match exactly.</li>
+<li>No running or indeterminate operation and no lifecycle task exists.</li>
+<li>Control service, Agent, and reconcile timer are healthy on every mixed node.</li>
+<li>Update, rollback, resume, and Leader-last order passed in a production-like staging environment.</li>
+<li>Recovery procedures exist for updater-host loss, node reboot, low disk space, and network interruption.</li>
+<li>After update, sample topology, VIP uniqueness, automatic failover, and former-primary recovery again.</li>
+</ul>
+
+          <footer class="document-footer">
+            <span>Source: <code>docs/en-US/update-and-patch.md</code></span>
+            <a href="../index.html">Documentation language home</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="On this page">
+          <strong>On this page</strong>
+          <a class="toc-level-2" href="#console-based-update">Console-Based Update</a><a class="toc-level-2" href="#1-update-architecture">1. Update Architecture</a><a class="toc-level-2" href="#2-supported-boundaries">2. Supported Boundaries</a><a class="toc-level-2" href="#3-build-a-signed-update-package">3. Build a Signed Update Package</a><a class="toc-level-2" href="#4-site-preparation">4. Site Preparation</a><a class="toc-level-2" href="#5-four-step-update">5. Four-Step Update</a><a class="toc-level-3" href="#inspect">Inspect</a><a class="toc-level-3" href="#plan">Plan</a><a class="toc-level-3" href="#execute">Execute</a><a class="toc-level-3" href="#verify">Verify</a><a class="toc-level-2" href="#6-resume-and-rollback">6. Resume and Rollback</a><a class="toc-level-2" href="#7-first-adoption">7. First Adoption</a><a class="toc-level-2" href="#8-production-admission-checklist">8. Production Admission Checklist</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

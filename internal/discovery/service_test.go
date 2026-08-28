@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"clusterguard.io/ha/internal/coordination"
 	"clusterguard.io/ha/internal/store"
 	workflowcore "clusterguard.io/ha/internal/workflow"
 	"clusterguard.io/ha/pkg/adapter"
@@ -736,11 +737,11 @@ func TestRefreshRepresentsFirstAndKnownProbeFailuresWithoutInventingInstancesOrL
 		t.Fatalf("first refresh: %v", err)
 	}
 	firstProbes := probesByEndpoint(first.Probes)
-	if len(first.Instances) != 1 || len(first.Links) != 0 || firstProbes[never.ResourceID].InstanceID != "" || firstProbes[never.ResourceID].Health.State != model.HealthUnknown {
+	if len(first.Instances) != 1 || len(first.Links) != 0 || firstProbes[never.ResourceID].InstanceID != "" || firstProbes[never.ResourceID].Health.State != model.HealthUnhealthy || firstProbes[never.ResourceID].Outcome != model.ProbeOutcomeDatabaseUnavailable {
 		t.Fatalf("never-successful endpoint invented topology: %+v", first)
 	}
 	knownID := firstProbes[known.ResourceID].InstanceID
-	if knownID == "" || firstProbes[known.ResourceID].Health.State != model.HealthHealthy {
+	if knownID == "" || firstProbes[known.ResourceID].Health.State != model.HealthHealthy || firstProbes[known.ResourceID].Outcome != model.ProbeOutcomeReachable {
 		t.Fatalf("successful endpoint was not bound: %+v", firstProbes[known.ResourceID])
 	}
 
@@ -753,10 +754,10 @@ func TestRefreshRepresentsFirstAndKnownProbeFailuresWithoutInventingInstancesOrL
 	if len(second.Instances) != 1 || len(second.Links) != 0 {
 		t.Fatalf("failed bound member disappeared or invented a relation: %+v", second)
 	}
-	if secondProbes[known.ResourceID].InstanceID != knownID || secondProbes[known.ResourceID].Health.State != model.HealthUnknown {
+	if secondProbes[known.ResourceID].InstanceID != knownID || secondProbes[known.ResourceID].Health.State != model.HealthUnhealthy || secondProbes[known.ResourceID].Outcome != model.ProbeOutcomeDatabaseUnavailable {
 		t.Fatalf("known failed probe lost its UUID or health state: %+v", secondProbes[known.ResourceID])
 	}
-	if second.Instances[0].ResourceID != knownID || second.Instances[0].Health.State != model.HealthUnknown {
+	if second.Instances[0].ResourceID != knownID || second.Instances[0].Role != model.RoleUnknown || second.Instances[0].Health.State != model.HealthUnhealthy {
 		t.Fatalf("failed bound member exposed stale topology health: %+v", second.Instances)
 	}
 	if secondProbes[never.ResourceID].InstanceID != "" || len(repository.Instances(cluster.ResourceID)) != 1 {
@@ -769,7 +770,7 @@ func TestRefreshRepresentsFirstAndKnownProbeFailuresWithoutInventingInstancesOrL
 		t.Fatalf("recovery refresh: %v", err)
 	}
 	thirdProbe := probesByEndpoint(third.Probes)[known.ResourceID]
-	if thirdProbe.InstanceID != knownID || thirdProbe.Health.State != model.HealthHealthy {
+	if thirdProbe.InstanceID != knownID || thirdProbe.Health.State != model.HealthHealthy || thirdProbe.Outcome != model.ProbeOutcomeReachable {
 		t.Fatalf("recovered endpoint did not resume its stable identity: %+v", thirdProbe)
 	}
 }
@@ -821,6 +822,155 @@ func TestRefreshPublishesPrimaryFailureEvidenceOnlyAfterDurableTopologyRefresh(t
 	}
 }
 
+func TestDatabasePortFailureFeedsStableAutomaticFailoverWindow(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "database-port-failure"})
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	primaryEndpoint := addEndpoint(t, repository, cluster.ResourceID, "mysql-a", 3306, model.EndpointDatabase, true)
+	replicaEndpoint := addEndpoint(t, repository, cluster.ResourceID, "mysql-b", 3306, model.EndpointDatabase, true)
+	candidate := newFakeAdapter()
+	candidate.results[primaryEndpoint.Hostname] = discoveredInstance(primaryEndpoint.Hostname, primaryEndpoint.Port, "native-a", model.RolePrimary, "")
+	candidate.results[replicaEndpoint.Hostname] = discoveredInstance(replicaEndpoint.Hostname, replicaEndpoint.Port, "native-b", model.RoleReplica, "native-a")
+	registry := adapter.NewRegistry()
+	if err := registry.Register(candidate); err != nil {
+		t.Fatalf("register fake adapter: %v", err)
+	}
+	window := coordination.NewFailureWindow(6, 30*time.Second)
+	now := discoveryTestTime.Add(-5 * time.Second)
+	service := New(registry, repository, CredentialResolverFunc(func(context.Context, model.DatabaseCluster, model.Endpoint) (adapter.Credentials, error) {
+		return adapter.Credentials{Username: "probe", Password: "secret"}, nil
+	}), func() time.Time {
+		now = now.Add(5 * time.Second)
+		return now
+	}, WithPrimaryFailureObserver(window))
+
+	if _, err := service.Refresh(context.Background(), cluster.ResourceID); err != nil {
+		t.Fatalf("healthy refresh: %v", err)
+	}
+	candidate.setFailure(primaryEndpoint.Hostname, errors.New("dial tcp 192.0.2.10:3306: connect: connection refused"))
+	for check := 0; check < 7; check++ {
+		if _, err := service.Refresh(context.Background(), cluster.ResourceID); err != nil {
+			t.Fatalf("database-port failure refresh %d: %v", check+1, err)
+		}
+		if check < 6 && window.Stable(cluster.ResourceID, now) {
+			t.Fatalf("database-port failure became stable after only %d checks", check+1)
+		}
+	}
+	if !window.Stable(cluster.ResourceID, now) {
+		t.Fatal("six follow-up database-port failures across 30 seconds did not open the automatic failover window")
+	}
+
+	candidate.setFailure(primaryEndpoint.Hostname, nil)
+	if _, err := service.Refresh(context.Background(), cluster.ResourceID); err != nil {
+		t.Fatalf("database recovery refresh: %v", err)
+	}
+	if window.Stable(cluster.ResourceID, now) {
+		t.Fatal("one successful database probe did not close the automatic failover window")
+	}
+}
+
+func TestSlowUnavailablePrimaryDoesNotConsumeTheWholeRefreshDeadline(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "bounded-primary-probe"})
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	primaryEndpoint := addEndpoint(t, repository, cluster.ResourceID, "mysql-a", 3306, model.EndpointDatabase, true)
+	replicaEndpoint := addEndpoint(t, repository, cluster.ResourceID, "mysql-b", 3306, model.EndpointDatabase, true)
+	candidate := newFakeAdapter()
+	candidate.results[primaryEndpoint.Hostname] = discoveredInstance(primaryEndpoint.Hostname, primaryEndpoint.Port, "native-a", model.RolePrimary, "")
+	candidate.results[replicaEndpoint.Hostname] = discoveredInstance(replicaEndpoint.Hostname, replicaEndpoint.Port, "native-b", model.RoleReplica, "native-a")
+	service := newTestService(t, repository, candidate)
+	if _, err := service.Refresh(context.Background(), cluster.ResourceID); err != nil {
+		t.Fatalf("seed refresh: %v", err)
+	}
+
+	candidate.releases[primaryEndpoint.Hostname] = make(chan struct{})
+	ctx, cancel := context.WithTimeout(context.Background(), 1200*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	snapshot, err := service.Refresh(ctx, cluster.ResourceID)
+	if err != nil {
+		t.Fatalf("bounded failed-primary refresh: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed >= 1200*time.Millisecond {
+		t.Fatalf("refresh consumed the caller deadline: %s", elapsed)
+	}
+	probes := probesByEndpoint(snapshot.Probes)
+	if probes[primaryEndpoint.ResourceID].Outcome != model.ProbeOutcomeDatabaseUnavailable {
+		t.Fatalf("slow primary probe outcome=%s, want database unavailable", probes[primaryEndpoint.ResourceID].Outcome)
+	}
+	if probes[replicaEndpoint.ResourceID].Outcome != model.ProbeOutcomeReachable || probes[replicaEndpoint.ResourceID].DiscoveryObservedAt.IsZero() {
+		t.Fatalf("reachable replica observation was discarded: %+v", probes[replicaEndpoint.ResourceID])
+	}
+}
+
+func TestPrimaryFailureEvidenceUsesHAOwnerAfterDiscoveryServiceRestart(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "restart-failure-evidence"})
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+	primaryEndpoint := addEndpoint(t, repository, cluster.ResourceID, "mysql-a", 3306, model.EndpointDatabase, true)
+	replicaEndpoint := addEndpoint(t, repository, cluster.ResourceID, "mysql-b", 3306, model.EndpointDatabase, true)
+	candidate := newFakeAdapter()
+	candidate.results[primaryEndpoint.Hostname] = discoveredInstance(primaryEndpoint.Hostname, primaryEndpoint.Port, "native-a", model.RolePrimary, "")
+	candidate.results[replicaEndpoint.Hostname] = discoveredInstance(replicaEndpoint.Hostname, replicaEndpoint.Port, "native-b", model.RoleReplica, "native-a")
+	registry := adapter.NewRegistry()
+	if err := registry.Register(candidate); err != nil {
+		t.Fatalf("register fake adapter: %v", err)
+	}
+	credentials := CredentialResolverFunc(func(context.Context, model.DatabaseCluster, model.Endpoint) (adapter.Credentials, error) {
+		return adapter.Credentials{Username: "probe", Password: "secret"}, nil
+	})
+	now := discoveryTestTime
+	firstService := New(registry, repository, credentials, func() time.Time {
+		observedAt := now
+		now = now.Add(5 * time.Second)
+		return observedAt
+	})
+	healthy, err := firstService.Refresh(context.Background(), cluster.ResourceID)
+	if err != nil {
+		t.Fatalf("healthy refresh: %v", err)
+	}
+	primaryID, ok := currentObservedPrimaryID(healthy)
+	if !ok {
+		t.Fatalf("healthy primary not observed: %+v", healthy)
+	}
+	if _, _, err := repository.PutHAEndpoint(store.HAEndpointSpec{
+		ClusterID: cluster.ResourceID, Kind: model.EndpointVIP, IPAddress: "192.0.2.100", Interface: "eth0", Prefix: 24, OwnerID: primaryID, Active: true,
+	}); err != nil {
+		t.Fatalf("register HA endpoint: %v", err)
+	}
+
+	candidate.setFailure(primaryEndpoint.Hostname, errors.New("primary unavailable"))
+	if _, err := firstService.Refresh(context.Background(), cluster.ResourceID); err != nil {
+		t.Fatalf("first failed refresh: %v", err)
+	}
+	stale, _ := repository.TopologySnapshot(cluster.ResourceID)
+	for _, instance := range stale.Instances {
+		if instance.ResourceID == primaryID && instance.Role != model.RoleUnknown {
+			t.Fatalf("failed primary retained a current role before restart: %+v", instance)
+		}
+	}
+
+	observer := &primaryFailureObserverStub{}
+	restartedService := New(registry, repository, credentials, func() time.Time {
+		observedAt := now
+		now = now.Add(5 * time.Second)
+		return observedAt
+	}, WithPrimaryFailureObserver(observer))
+	if _, err := restartedService.Refresh(context.Background(), cluster.ResourceID); err != nil {
+		t.Fatalf("failed refresh after service restart: %v", err)
+	}
+	want := []primaryFailureObservation{{clusterID: cluster.ResourceID, failed: true, observedAt: discoveryTestTime.Add(10 * time.Second)}}
+	if !reflect.DeepEqual(observer.observations, want) {
+		t.Fatalf("failure evidence after restart = %+v, want %+v", observer.observations, want)
+	}
+}
+
 func TestRefreshRetainsFailedMemberRelationAsUnhealthyUntilSuccessfulObservationUpdatesIt(t *testing.T) {
 	repository := store.NewMemory()
 	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "relation-failure"})
@@ -856,7 +1006,7 @@ func TestRefreshRetainsFailedMemberRelationAsUnhealthyUntilSuccessfulObservation
 	for _, instance := range second.Instances {
 		instances[instance.ResourceID] = instance
 	}
-	if instances[replicaID].Health.State != model.HealthUnknown {
+	if instances[replicaID].Health.State != model.HealthUnhealthy {
 		t.Fatalf("failed replica retained stale health: %+v", instances[replicaID])
 	}
 
@@ -1135,11 +1285,15 @@ func TestRefreshSanitizesCredentialAndDatabaseProbeErrors(t *testing.T) {
 	for _, testCase := range []struct {
 		name        string
 		wantSummary string
+		wantState   model.HealthState
+		wantOutcome model.ProbeOutcome
 		configure   func(*testing.T, *store.Repository, model.DatabaseCluster, model.Endpoint, *fakeDiscoveryAdapter) *Service
 	}{
 		{
 			name:        "credential resolver",
 			wantSummary: "discovery credentials unavailable",
+			wantState:   model.HealthUnknown,
+			wantOutcome: model.ProbeOutcomeCredentialsUnavailable,
 			configure: func(t *testing.T, repository *store.Repository, _ model.DatabaseCluster, _ model.Endpoint, candidate *fakeDiscoveryAdapter) *Service {
 				registry := adapter.NewRegistry()
 				if err := registry.Register(candidate); err != nil {
@@ -1153,6 +1307,8 @@ func TestRefreshSanitizesCredentialAndDatabaseProbeErrors(t *testing.T) {
 		{
 			name:        "database adapter",
 			wantSummary: "database probe failed",
+			wantState:   model.HealthUnhealthy,
+			wantOutcome: model.ProbeOutcomeDatabaseUnavailable,
 			configure: func(t *testing.T, repository *store.Repository, _ model.DatabaseCluster, endpoint model.Endpoint, candidate *fakeDiscoveryAdapter) *Service {
 				candidate.failures[endpoint.Hostname] = errors.New("client leaked " + secret)
 				return newTestService(t, repository, candidate)
@@ -1173,7 +1329,7 @@ func TestRefreshSanitizesCredentialAndDatabaseProbeErrors(t *testing.T) {
 			if err != nil {
 				t.Fatalf("refresh: %v", err)
 			}
-			if len(snapshot.Probes) != 1 || snapshot.Probes[0].Health.State != model.HealthUnknown || snapshot.Probes[0].Health.Summary != testCase.wantSummary {
+			if len(snapshot.Probes) != 1 || snapshot.Probes[0].Health.State != testCase.wantState || snapshot.Probes[0].Health.Summary != testCase.wantSummary || snapshot.Probes[0].Outcome != testCase.wantOutcome {
 				t.Fatalf("unexpected sanitized probe status: %+v", snapshot.Probes)
 			}
 			if strings.Contains(strings.ToLower(fmtSnapshot(snapshot)), strings.ToLower(secret)) {

@@ -22,6 +22,10 @@ func (postgresqlEndpointStub) AuthorizeTransition(ctx context.Context, _ adapter
 	guarded, cancel := context.WithCancel(ctx)
 	return adapter.TransitionAuthorization{Context: guarded, Cancel: cancel, Abort: func(context.Context) error { return nil }, Finalize: func(context.Context) error { return nil }, LeaseID: model.NewResourceID()}, nil
 }
+func (postgresqlEndpointStub) AuthorizeStableOwner(ctx context.Context, _ adapter.ResolvedOperation) (adapter.StableOwnershipAuthorization, error) {
+	guarded, cancel := context.WithCancel(ctx)
+	return adapter.StableOwnershipAuthorization{Context: guarded, Cancel: cancel, LeaseID: model.NewResourceID()}, nil
+}
 func (postgresqlEndpointStub) Transfer(context.Context, adapter.ResolvedOperation) error { return nil }
 func (postgresqlEndpointStub) Verify(context.Context, adapter.ResolvedOperation) model.Check {
 	return model.Check{Name: "writer_endpoint_owner", Status: model.CheckPass, Message: "target owns VIP"}
@@ -236,6 +240,75 @@ func TestPostgreSQLVerificationUsesNativeNodeAndSourceIdentities(t *testing.T) {
 	}
 }
 
+type postgresqlTransientVerificationRunner struct {
+	row               Row
+	transientFailures int
+	calls             int
+}
+
+func (runner *postgresqlTransientVerificationRunner) Query(_ context.Context, _ adapter.Endpoint, _ adapter.Credentials, query string) ([]Row, error) {
+	if query != identityQuery {
+		return nil, errors.New("unexpected query")
+	}
+	runner.calls++
+	if runner.calls <= runner.transientFailures {
+		return nil, errors.New("PostgreSQL is still starting")
+	}
+	return []Row{runner.row}, nil
+}
+
+func (*postgresqlTransientVerificationRunner) Exec(context.Context, adapter.Endpoint, adapter.Credentials, string) error {
+	return nil
+}
+
+func TestPostgreSQLInstanceVerificationWaitsForTransientStartup(t *testing.T) {
+	request := postgresqlOperationRequest(model.OperationSwitchover)
+	runner := &postgresqlTransientVerificationRunner{
+		row:               postgresqlLiveRow(request.Resolved.Target, request.Resolved.Primary.ResourceID, false),
+		transientFailures: 2,
+	}
+	instance := NewWithProviders(runner, postgresqlEndpointStub{executable: true}, &postgresqlNodeControllerStub{executable: true}, postgresqlFailoverSafetyStub{})
+
+	check := instance.postgresqlInstanceVerificationCheck(
+		context.Background(), *request.Resolved, "target", request.Resolved.Target, model.RoleStandby, request.Resolved.Primary.ResourceID,
+	)
+	if check.Status != model.CheckPass || runner.calls != 3 {
+		t.Fatalf("transient PostgreSQL startup was not allowed to converge: check=%+v calls=%d", check, runner.calls)
+	}
+}
+
+func TestPostgreSQLInstanceVerificationAcceptsStreamingStandbyWithoutTimeLag(t *testing.T) {
+	request := postgresqlOperationRequest(model.OperationSwitchover)
+	row := postgresqlLiveRow(request.Resolved.Target, request.Resolved.Primary.ResourceID, false)
+	row["lag_seconds"] = ""
+	runner := &postgresqlTransientVerificationRunner{row: row}
+	instance := NewWithProviders(runner, postgresqlEndpointStub{executable: true}, &postgresqlNodeControllerStub{executable: true}, postgresqlFailoverSafetyStub{})
+
+	check := instance.postgresqlInstanceVerificationCheck(
+		context.Background(), *request.Resolved, "target", request.Resolved.Target, model.RoleStandby, request.Resolved.Primary.ResourceID,
+	)
+	if check.Status != model.CheckPass || runner.calls != 1 {
+		t.Fatalf("healthy streaming standby without a replay timestamp was rejected: check=%+v calls=%d", check, runner.calls)
+	}
+}
+
+func TestPostgreSQLInstanceVerificationFailsClosedOnIdentityMismatch(t *testing.T) {
+	request := postgresqlOperationRequest(model.OperationSwitchover)
+	foreign := request.Resolved.Target
+	foreign.ResourceID = model.NewResourceID()
+	runner := &postgresqlTransientVerificationRunner{
+		row: postgresqlLiveRow(foreign, request.Resolved.Primary.ResourceID, false),
+	}
+	instance := NewWithProviders(runner, postgresqlEndpointStub{executable: true}, &postgresqlNodeControllerStub{executable: true}, postgresqlFailoverSafetyStub{})
+
+	check := instance.postgresqlInstanceVerificationCheck(
+		context.Background(), *request.Resolved, "target", request.Resolved.Target, model.RoleStandby, request.Resolved.Primary.ResourceID,
+	)
+	if check.Status != model.CheckFail || runner.calls != 1 {
+		t.Fatalf("foreign PostgreSQL identity was retried or accepted: check=%+v calls=%d", check, runner.calls)
+	}
+}
+
 func TestPostgreSQLPlanAcceptsEquivalentRefreshedResourceRevision(t *testing.T) {
 	request := postgresqlOperationRequest(model.OperationSwitchover)
 	instance := NewWithProviders(&postgresqlExecutableRunner{}, postgresqlEndpointStub{executable: true}, &postgresqlNodeControllerStub{executable: true}, postgresqlFailoverSafetyStub{})
@@ -314,6 +387,7 @@ func TestPostgreSQLFailoverPlanFencesAndVerifiesOldPrimaryBeforePromotion(t *tes
 func postgresqlSourceLossFailoverRequest() adapter.OperationRequest {
 	request := postgresqlFailoverOperationRequest()
 	request.Resolved.Primary.Health.State = model.HealthUnknown
+	request.Resolved.Primary.Role = model.RoleUnknown
 	request.Resolved.Target.Health.State = model.HealthDegraded
 	request.Resolved.Target.PromotionEligible = false
 	request.Resolved.Target.Replication.IOThread = model.ThreadStopped
@@ -463,6 +537,142 @@ func TestPostgreSQLSwitchoverPrecheckFailsClosedWhenPrivilegeProbeFails(t *testi
 	t.Fatalf("PostgreSQL operation privilege check is missing: %+v", checks)
 }
 
+func TestPostgreSQLSwitchoverPrecheckRefreshesTransientTimelineMismatch(t *testing.T) {
+	request := postgresqlOperationRequest(model.OperationSwitchover)
+	request.Resolved.Primary.EngineMetadata["timeline_id"] = "8"
+	request.Resolved.Target.EngineMetadata["timeline_id"] = "7"
+
+	primaryRow := postgresqlLiveRow(request.Resolved.Primary, "", true)
+	primaryRow["timeline_id"] = "8"
+	targetRow := postgresqlLiveRow(request.Resolved.Target, postgresqlNativeNodeID(request.Resolved.Primary), false)
+	targetRow["timeline_id"] = "8"
+	runner := &postgresqlExecutableRunner{rowsByHost: map[string][]Row{
+		request.Resolved.Primary.Hostname: {primaryRow},
+		request.Resolved.Target.Hostname:  {targetRow},
+	}}
+	instance := NewWithProviders(runner, postgresqlEndpointStub{executable: true}, &postgresqlNodeControllerStub{executable: true}, postgresqlFailoverSafetyStub{})
+
+	checks, err := instance.Precheck(context.Background(), request)
+	if err != nil {
+		t.Fatalf("precheck: %v", err)
+	}
+	for _, check := range checks {
+		if check.Name != "timeline" {
+			continue
+		}
+		if check.Status != model.CheckPass || !strings.Contains(check.Message, "live") {
+			t.Fatalf("live timeline evidence did not clear the stale snapshot: %+v", check)
+		}
+		return
+	}
+	t.Fatalf("timeline check is missing: %+v", checks)
+}
+
+func TestPostgreSQLSwitchoverPrecheckKeepsTimelineBlockedWhenLiveProbeFails(t *testing.T) {
+	request := postgresqlOperationRequest(model.OperationSwitchover)
+	request.Resolved.Primary.EngineMetadata["timeline_id"] = "8"
+	request.Resolved.Target.EngineMetadata["timeline_id"] = "7"
+
+	primaryRow := postgresqlLiveRow(request.Resolved.Primary, "", true)
+	primaryRow["timeline_id"] = "8"
+	runner := &postgresqlExecutableRunner{rowsByHost: map[string][]Row{
+		request.Resolved.Primary.Hostname: {primaryRow},
+	}}
+	instance := NewWithProviders(runner, postgresqlEndpointStub{executable: true}, &postgresqlNodeControllerStub{executable: true}, postgresqlFailoverSafetyStub{})
+
+	checks, err := instance.Precheck(context.Background(), request)
+	if err != nil {
+		t.Fatalf("precheck: %v", err)
+	}
+	if status := postgresqlOperationCheckStatus(t, checks, "timeline"); status != model.CheckFail {
+		t.Fatalf("unavailable live evidence must fail closed, got %s", status)
+	}
+}
+
+func TestPostgreSQLSwitchoverPrecheckKeepsTimelineBlockedOnLiveIdentityMismatch(t *testing.T) {
+	request := postgresqlOperationRequest(model.OperationSwitchover)
+	request.Resolved.Primary.EngineMetadata["timeline_id"] = "8"
+	request.Resolved.Target.EngineMetadata["timeline_id"] = "7"
+
+	primaryRow := postgresqlLiveRow(request.Resolved.Primary, "", true)
+	primaryRow["timeline_id"] = "8"
+	targetRow := postgresqlLiveRow(request.Resolved.Target, postgresqlNativeNodeID(request.Resolved.Primary), false)
+	targetRow["timeline_id"] = "8"
+	targetRow["node_id"] = string(model.NewResourceID())
+	runner := &postgresqlExecutableRunner{rowsByHost: map[string][]Row{
+		request.Resolved.Primary.Hostname: {primaryRow},
+		request.Resolved.Target.Hostname:  {targetRow},
+	}}
+	instance := NewWithProviders(runner, postgresqlEndpointStub{executable: true}, &postgresqlNodeControllerStub{executable: true}, postgresqlFailoverSafetyStub{})
+
+	checks, err := instance.Precheck(context.Background(), request)
+	if err != nil {
+		t.Fatalf("precheck: %v", err)
+	}
+	if status := postgresqlOperationCheckStatus(t, checks, "timeline"); status != model.CheckFail {
+		t.Fatalf("mismatched live identity must fail closed, got %s", status)
+	}
+}
+
+func TestPostgreSQLSwitchoverPrecheckRefreshesTransientWALPositionLag(t *testing.T) {
+	request := postgresqlOperationRequest(model.OperationSwitchover)
+	request.Resolved.Primary.EngineMetadata["current_lsn"] = "0/5000070"
+
+	primaryRow := postgresqlLiveRow(request.Resolved.Primary, "", true)
+	primaryRow["current_lsn"] = "0/5000070"
+	targetRow := postgresqlLiveRow(request.Resolved.Target, postgresqlNativeNodeID(request.Resolved.Primary), false)
+	targetRow["receive_lsn"] = "0/5000070"
+	targetRow["replay_lsn"] = "0/5000070"
+	runner := &postgresqlExecutableRunner{rowsByHost: map[string][]Row{
+		request.Resolved.Primary.Hostname: {primaryRow},
+		request.Resolved.Target.Hostname:  {targetRow},
+	}}
+	instance := NewWithProviders(runner, postgresqlEndpointStub{executable: true}, &postgresqlNodeControllerStub{executable: true}, postgresqlFailoverSafetyStub{})
+
+	checks, err := instance.Precheck(context.Background(), request)
+	if err != nil {
+		t.Fatalf("precheck: %v", err)
+	}
+	for _, check := range checks {
+		if check.Name != "wal_position" {
+			continue
+		}
+		if check.Status != model.CheckPass || !strings.Contains(check.Message, "live") {
+			t.Fatalf("live WAL evidence did not clear the stale snapshot: %+v", check)
+		}
+		return
+	}
+	t.Fatalf("WAL position check is missing: %+v", checks)
+}
+
+func TestPostgreSQLSwitchoverPrecheckDoesNotRefreshMultipleSnapshotFailures(t *testing.T) {
+	request := postgresqlOperationRequest(model.OperationSwitchover)
+	request.Resolved.Primary.EngineMetadata["current_lsn"] = "0/5000070"
+	request.Resolved.Target.EngineMetadata["timeline_id"] = "6"
+
+	primaryRow := postgresqlLiveRow(request.Resolved.Primary, "", true)
+	primaryRow["current_lsn"] = "0/5000070"
+	targetRow := postgresqlLiveRow(request.Resolved.Target, postgresqlNativeNodeID(request.Resolved.Primary), false)
+	targetRow["receive_lsn"] = "0/5000070"
+	targetRow["replay_lsn"] = "0/5000070"
+	runner := &postgresqlExecutableRunner{rowsByHost: map[string][]Row{
+		request.Resolved.Primary.Hostname: {primaryRow},
+		request.Resolved.Target.Hostname:  {targetRow},
+	}}
+	instance := NewWithProviders(runner, postgresqlEndpointStub{executable: true}, &postgresqlNodeControllerStub{executable: true}, postgresqlFailoverSafetyStub{})
+
+	checks, err := instance.Precheck(context.Background(), request)
+	if err != nil {
+		t.Fatalf("precheck: %v", err)
+	}
+	if status := postgresqlOperationCheckStatus(t, checks, "timeline"); status != model.CheckFail {
+		t.Fatalf("multiple snapshot failures must keep timeline blocked, got %s", status)
+	}
+	if status := postgresqlOperationCheckStatus(t, checks, "wal_position"); status != model.CheckFail {
+		t.Fatalf("multiple snapshot failures must keep WAL position blocked, got %s", status)
+	}
+}
+
 func postgresqlOperationRequest(kind model.OperationKind) adapter.OperationRequest {
 	now := time.Now().UTC().Truncate(time.Second)
 	clusterID := model.ResourceID(testPostgreSQLClusterID)
@@ -505,13 +715,19 @@ type postgresqlExecutionState struct {
 	followers            map[model.ResourceID]model.ResourceID
 	targetID             model.ResourceID
 	stopErr              error
+	startErr             error
 	stopNoEffect         bool
+	targetUnavailable    bool
 	repointErr           error
+	rewindErr            error
+	basebackupErr        error
 	fenceErr             error
 	captureErr           error
 	finalLSN             string
 	systemIDs            map[model.ResourceID]string
 	receivers            map[model.ResourceID]string
+	transferIsolatedID   model.ResourceID
+	verifyIsolatedID     model.ResourceID
 }
 
 const postgresqlFollowerID = "55555555-5555-4555-8555-555555555555"
@@ -611,15 +827,82 @@ func TestPostgreSQLFormerPrimaryRejoinExecuteAndVerify(t *testing.T) {
 		t.Fatalf("rejoin execute=%+v err=%v trace=%v", execution, err, state.trace)
 	}
 	joined := strings.Join(state.trace, "\n")
+	stableIndex := strings.Index(joined, "authorize_stable_owner")
 	stopIndex := strings.Index(joined, "stop_source")
 	verifyIndex := strings.Index(joined, "verify_source_stopped")
 	rewindIndex := strings.Index(joined, "rewind_source")
-	if stopIndex < 0 || verifyIndex <= stopIndex || rewindIndex <= verifyIndex {
+	if stableIndex < 0 || stopIndex <= stableIndex || verifyIndex <= stopIndex || rewindIndex <= verifyIndex {
 		t.Fatalf("unsafe PostgreSQL rejoin order:\n%s", joined)
+	}
+	check, retryable := instance.postgresqlInstanceVerificationCheckOnce(
+		context.Background(), *request.Resolved, "former_primary_database", request.Resolved.Target, model.RoleStandby, request.Resolved.Primary.ResourceID,
+	)
+	if check.Status != model.CheckPass || retryable {
+		t.Fatalf("rejoined PostgreSQL node did not satisfy the immediate database postcondition: check=%+v retryable=%t trace=%v", check, retryable, state.trace)
 	}
 	verification, err := instance.Verify(context.Background(), request)
 	if err != nil || !verification.Passed {
 		t.Fatalf("rejoin verify=%+v err=%v trace=%v", verification, err, state.trace)
+	}
+}
+
+func TestPostgreSQLFormerPrimaryRejoinFallsBackToBaseBackup(t *testing.T) {
+	request := postgresqlRejoinOperationRequest()
+	request.Credentials = adapter.Credentials{Username: "operator", Database: "postgres"}
+	request.ReplicationCredentials = adapter.Credentials{Username: "replicator", Database: "postgres"}
+	request.Resolved.Credentials = request.Credentials
+	request.Resolved.ReplicationCredentials = request.ReplicationCredentials
+	state := &postgresqlExecutionState{
+		promoted: true, endpoint: true, finalLSN: "0/6000060",
+		rewindErr: errors.New("required WAL segment is unavailable"),
+	}
+	instance := NewWithProviders(&postgresqlExecutionRunner{state: state}, &postgresqlExecutionEndpointProvider{state: state}, &postgresqlExecutionNodeController{state: state}, &postgresqlExecutionFailoverSafety{state: state})
+	plan, err := instance.BuildPlan(context.Background(), request)
+	if err != nil {
+		t.Fatalf("build rejoin plan: %v", err)
+	}
+	progress := &postgresqlProgressCollector{}
+	request.Plan = &plan
+	request.Resolved.PlanDigest = plan.Digest
+	request.Progress = progress
+
+	execution, err := instance.Execute(context.Background(), request)
+	if err != nil || execution.Status != model.OperationRunning {
+		t.Fatalf("rejoin execute=%+v err=%v trace=%v", execution, err, state.trace)
+	}
+	joined := strings.Join(state.trace, "\n")
+	if rewind := strings.Index(joined, "rewind_source"); rewind < 0 || strings.Index(joined, "basebackup_source") <= rewind {
+		t.Fatalf("full base backup did not safely follow failed rewind: trace=%v", state.trace)
+	}
+	if message := progress.steps["rewind_former_primary"]; !strings.Contains(message, "full base backup") {
+		t.Fatalf("fallback rejoin was not recorded durably: steps=%+v", progress.steps)
+	}
+}
+
+func TestPostgreSQLFormerPrimaryRejoinReportsBothRecoveryFailures(t *testing.T) {
+	request := postgresqlRejoinOperationRequest()
+	request.Credentials = adapter.Credentials{Username: "operator", Database: "postgres"}
+	request.ReplicationCredentials = adapter.Credentials{Username: "replicator", Database: "postgres"}
+	request.Resolved.Credentials = request.Credentials
+	request.Resolved.ReplicationCredentials = request.ReplicationCredentials
+	state := &postgresqlExecutionState{
+		promoted: true, endpoint: true, finalLSN: "0/6000060",
+		rewindErr: errors.New("rewind failed"), basebackupErr: errors.New("base backup failed"),
+	}
+	instance := NewWithProviders(&postgresqlExecutionRunner{state: state}, &postgresqlExecutionEndpointProvider{state: state}, &postgresqlExecutionNodeController{state: state}, &postgresqlExecutionFailoverSafety{state: state})
+	plan, err := instance.BuildPlan(context.Background(), request)
+	if err != nil {
+		t.Fatalf("build rejoin plan: %v", err)
+	}
+	request.Plan = &plan
+	request.Resolved.PlanDigest = plan.Digest
+
+	execution, err := instance.Execute(context.Background(), request)
+	if err == nil || execution.Status != model.OperationIndeterminate {
+		t.Fatalf("rejoin execute=%+v err=%v trace=%v", execution, err, state.trace)
+	}
+	if !strings.Contains(err.Error(), "rewind") || !strings.Contains(err.Error(), "base backup") {
+		t.Fatalf("combined recovery failure is incomplete: %v", err)
 	}
 }
 
@@ -833,9 +1116,84 @@ func (runner *postgresqlExecutionRunner) Query(_ context.Context, endpoint adapt
 		return []Row{{"current_lsn": state.finalLSN}}, nil
 	case strings.Contains(query, "pg_last_wal_receive_lsn"):
 		state.trace = append(state.trace, "wait_wal")
-		return []Row{{"receive_lsn": state.finalLSN, "replay_lsn": state.finalLSN, "replay_paused": "false"}}, nil
+		return []Row{{
+			"receive_lsn": state.finalLSN, "replay_lsn": state.finalLSN,
+			"receiver_status": "streaming", "receiver_latest_end_lsn": state.finalLSN,
+			"replay_paused": "false",
+		}}, nil
 	default:
 		return nil, fmt.Errorf("unexpected PostgreSQL query: %s", query)
+	}
+}
+
+func TestPostgreSQLReplayReachedUsesDurableReplayBoundary(t *testing.T) {
+	expected, err := parseLSN("0/150005A8")
+	if err != nil {
+		t.Fatalf("parse expected LSN: %v", err)
+	}
+	tests := []struct {
+		name string
+		row  Row
+		want bool
+	}{
+		{
+			name: "legacy receive and replay are current",
+			row:  Row{"receive_lsn": "0/150005A8", "replay_lsn": "0/150005A8", "replay_paused": "false"},
+			want: true,
+		},
+		{
+			name: "streaming receiver end proves current timeline is received",
+			row: Row{
+				"receive_lsn": "0/15000000", "replay_lsn": "0/150005A8", "replay_paused": "false",
+				"receiver_status": "streaming", "receiver_latest_end_lsn": "0/150005A8",
+			},
+			want: true,
+		},
+		{
+			name: "stopped receiver does not invalidate completed replay",
+			row: Row{
+				"receive_lsn": "0/15000000", "replay_lsn": "0/150005A8", "replay_paused": "false",
+				"receiver_status": "stopped", "receiver_latest_end_lsn": "0/150005A8",
+			},
+			want: true,
+		},
+		{
+			name: "missing receiver evidence does not invalidate completed replay",
+			row: Row{
+				"receive_lsn": "", "replay_lsn": "0/150005A8", "replay_paused": "false",
+				"receiver_status": "", "receiver_latest_end_lsn": "",
+			},
+			want: true,
+		},
+		{
+			name: "replay must reach the fenced position",
+			row: Row{
+				"receive_lsn": "0/150005A8", "replay_lsn": "0/150005A0", "replay_paused": "false",
+				"receiver_status": "streaming", "receiver_latest_end_lsn": "0/150005A8",
+			},
+		},
+		{
+			name: "paused replay is never accepted",
+			row: Row{
+				"receive_lsn": "0/150005A8", "replay_lsn": "0/150005A8", "replay_paused": "true",
+				"receiver_status": "streaming", "receiver_latest_end_lsn": "0/150005A8",
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := postgresqlReplayReached(test.row, expected); got != test.want {
+				t.Fatalf("postgresqlReplayReached()=%t want=%t row=%+v", got, test.want, test.row)
+			}
+		})
+	}
+}
+
+func TestPostgreSQLReplayQueryCarriesReceiverEndEvidence(t *testing.T) {
+	for _, fragment := range []string{"pg_stat_wal_receiver", "receiver_status", "receiver_latest_end_lsn", "pg_last_wal_replay_lsn"} {
+		if !strings.Contains(postgresqlReplayWALQuery, fragment) {
+			t.Fatalf("PostgreSQL replay query is missing %q: %s", fragment, postgresqlReplayWALQuery)
+		}
 	}
 }
 
@@ -878,6 +1236,9 @@ func (*postgresqlExecutionNodeController) Precheck(context.Context, adapter.Reso
 }
 func (controller *postgresqlExecutionNodeController) Status(_ context.Context, resolved adapter.ResolvedOperation, instance model.DatabaseInstance) (bool, bool, error) {
 	if instance.ResourceID == resolved.Target.ResourceID {
+		if controller.state.targetUnavailable {
+			return false, true, nil
+		}
 		if instance.ResourceID == model.ResourceID(testPostgreSQLPrimaryID) {
 			if controller.state.stopped && !controller.state.rewound {
 				return false, false, nil
@@ -929,15 +1290,26 @@ func (controller *postgresqlExecutionNodeController) Repoint(_ context.Context, 
 }
 func (controller *postgresqlExecutionNodeController) Rewind(_ context.Context, _ adapter.ResolvedOperation, _ model.DatabaseInstance, _ model.DatabaseInstance, _ model.ResourceID) error {
 	controller.state.trace = append(controller.state.trace, "rewind_source")
+	if controller.state.rewindErr != nil {
+		return controller.state.rewindErr
+	}
 	controller.state.rewound = true
 	return nil
 }
 func (controller *postgresqlExecutionNodeController) BaseBackup(_ context.Context, _ adapter.ResolvedOperation, _ model.DatabaseInstance, _ model.DatabaseInstance, _ model.ResourceID) error {
 	controller.state.trace = append(controller.state.trace, "basebackup_source")
+	if controller.state.basebackupErr != nil {
+		return controller.state.basebackupErr
+	}
 	controller.state.rewound = true
 	return nil
 }
-func (*postgresqlExecutionNodeController) Start(context.Context, adapter.ResolvedOperation, model.DatabaseInstance, model.ResourceID) error {
+func (controller *postgresqlExecutionNodeController) Start(context.Context, adapter.ResolvedOperation, model.DatabaseInstance, model.ResourceID) error {
+	controller.state.trace = append(controller.state.trace, "start_source")
+	if controller.state.startErr != nil {
+		return controller.state.startErr
+	}
+	controller.state.stopped = false
 	return nil
 }
 
@@ -962,15 +1334,22 @@ func (provider *postgresqlExecutionEndpointProvider) AuthorizeTransition(ctx con
 		},
 	}, nil
 }
-func (provider *postgresqlExecutionEndpointProvider) Transfer(context.Context, adapter.ResolvedOperation) error {
+func (provider *postgresqlExecutionEndpointProvider) AuthorizeStableOwner(ctx context.Context, _ adapter.ResolvedOperation) (adapter.StableOwnershipAuthorization, error) {
+	provider.state.trace = append(provider.state.trace, "authorize_stable_owner")
+	guarded, cancel := context.WithCancel(ctx)
+	return adapter.StableOwnershipAuthorization{Context: guarded, Cancel: cancel, LeaseID: model.NewResourceID()}, nil
+}
+func (provider *postgresqlExecutionEndpointProvider) Transfer(_ context.Context, resolved adapter.ResolvedOperation) error {
 	provider.state.trace = append(provider.state.trace, "transfer_endpoint")
+	provider.state.transferIsolatedID = resolved.VerifiedIsolatedSourceID
 	if !provider.state.promoted {
 		return errors.New("target is not promoted")
 	}
 	provider.state.endpoint = true
 	return nil
 }
-func (provider *postgresqlExecutionEndpointProvider) Verify(context.Context, adapter.ResolvedOperation) model.Check {
+func (provider *postgresqlExecutionEndpointProvider) Verify(_ context.Context, resolved adapter.ResolvedOperation) model.Check {
+	provider.state.verifyIsolatedID = resolved.VerifiedIsolatedSourceID
 	if provider.state.endpoint {
 		return model.Check{Name: "writer_endpoint_owner", Status: model.CheckPass, Message: "target owns endpoint"}
 	}
@@ -1065,9 +1444,74 @@ func TestPostgreSQLSwitchoverExecuteAndVerifyRealOrdering(t *testing.T) {
 	}
 }
 
+func TestPostgreSQLSwitchoverRollsBackStoppedSourceBeforePromotion(t *testing.T) {
+	instance, request, state := postgresqlExecutableOperationFixture(t)
+	state.targetUnavailable = true
+
+	execution, err := instance.Execute(context.Background(), request)
+	if err == nil || execution.Status != model.OperationFailed {
+		t.Fatalf("safe rollback must return a failed operation: execution=%+v err=%v trace=%v", execution, err, state.trace)
+	}
+	if state.stopped || state.promoted {
+		t.Fatalf("rollback left an unsafe database role: stopped=%t promoted=%t trace=%v", state.stopped, state.promoted, state.trace)
+	}
+	joined := strings.Join(state.trace, "\n")
+	for _, expected := range []string{"stop_source", "verify_source_stopped", "start_source", "activate_writes:pg-01", "abort_transition"} {
+		if !strings.Contains(joined, expected) {
+			t.Fatalf("safe rollback is missing %q: trace=%v", expected, state.trace)
+		}
+	}
+	if strings.Index(joined, "start_source") > strings.Index(joined, "abort_transition") {
+		t.Fatalf("transition lease was released before the source was restored: trace=%v", state.trace)
+	}
+}
+
 func TestPostgreSQLSwitchoverMutationBudgetCoversPhysicalRejoin(t *testing.T) {
 	if postgresqlSwitchoverMutationTimeout() < 30*time.Minute {
 		t.Fatalf("PostgreSQL switchover mutation budget is too short for VIP transfer and physical rejoin: %s", postgresqlSwitchoverMutationTimeout())
+	}
+}
+
+func TestPostgreSQLSwitchoverFallsBackToBaseBackupWhenRewindCannotReadOldWAL(t *testing.T) {
+	instance, request, state := postgresqlExecutableOperationFixture(t)
+	state.rewindErr = errors.New("could not find previous WAL record")
+	progress := &postgresqlProgressCollector{}
+	request.Progress = progress
+
+	execution, err := instance.Execute(context.Background(), request)
+	if err != nil || execution.Status != model.OperationRunning {
+		t.Fatalf("execute=%+v err=%v trace=%v", execution, err, state.trace)
+	}
+	joined := strings.Join(state.trace, "\n")
+	rewind := strings.Index(joined, "rewind_source")
+	basebackup := strings.Index(joined, "basebackup_source")
+	if rewind < 0 || basebackup <= rewind {
+		t.Fatalf("full synchronization did not follow failed rewind: trace=%v", state.trace)
+	}
+	if message := progress.steps["rewind_former_primary"]; !strings.Contains(message, "full base backup") {
+		t.Fatalf("fallback recovery was not recorded durably: steps=%+v", progress.steps)
+	}
+	verification, verifyErr := instance.Verify(context.Background(), request)
+	if verifyErr != nil || !verification.Passed {
+		t.Fatalf("verify=%+v err=%v trace=%v", verification, verifyErr, state.trace)
+	}
+}
+
+func TestPostgreSQLSwitchoverRemainsIndeterminateWhenRewindAndBaseBackupFail(t *testing.T) {
+	instance, request, state := postgresqlExecutableOperationFixture(t)
+	state.rewindErr = errors.New("could not find previous WAL record")
+	state.basebackupErr = errors.New("base backup failed")
+
+	execution, err := instance.Execute(context.Background(), request)
+	if err == nil || execution.Status != model.OperationIndeterminate {
+		t.Fatalf("execute=%+v err=%v trace=%v", execution, err, state.trace)
+	}
+	if !strings.Contains(err.Error(), "rewind") || !strings.Contains(err.Error(), "base backup") {
+		t.Fatalf("combined recovery failure is incomplete: %v", err)
+	}
+	joined := strings.Join(state.trace, "\n")
+	if !strings.Contains(joined, "rewind_source") || !strings.Contains(joined, "basebackup_source") {
+		t.Fatalf("both safe recovery methods were not attempted: trace=%v", state.trace)
 	}
 }
 
@@ -1197,6 +1641,9 @@ func TestPostgreSQLFailoverExecuteAndVerifyRealOrdering(t *testing.T) {
 	if err != nil || execution.Status != model.OperationRunning {
 		t.Fatalf("failover execute=%+v err=%v trace=%v", execution, err, state.trace)
 	}
+	if state.transferIsolatedID != request.Resolved.Primary.ResourceID {
+		t.Fatalf("failover endpoint transfer did not receive verified isolated source: got=%s want=%s", state.transferIsolatedID, request.Resolved.Primary.ResourceID)
+	}
 	joined := strings.Join(state.trace, "\n")
 	ordered := []string{"fence_old_primary", "authorize_transition", "promote_target", "activate_writes:pg-02", "transfer_endpoint", "finalize_transition"}
 	previous := -1
@@ -1211,6 +1658,9 @@ func TestPostgreSQLFailoverExecuteAndVerifyRealOrdering(t *testing.T) {
 	if err != nil || !verification.Passed {
 		t.Fatalf("failover verify=%+v err=%v trace=%v", verification, err, state.trace)
 	}
+	if state.verifyIsolatedID != request.Resolved.Primary.ResourceID {
+		t.Fatalf("failover endpoint verification did not receive verified isolated source: got=%s want=%s", state.verifyIsolatedID, request.Resolved.Primary.ResourceID)
+	}
 	state.followers[follower.ResourceID] = request.Resolved.Primary.ResourceID
 	verification, err = instance.Verify(context.Background(), request)
 	if err != nil {
@@ -1218,6 +1668,182 @@ func TestPostgreSQLFailoverExecuteAndVerifyRealOrdering(t *testing.T) {
 	}
 	if verification.Passed {
 		t.Fatalf("failover verification passed while sibling follows old primary: %+v", verification.Checks)
+	}
+}
+
+func TestPostgreSQLFailoverSkipsFollowerAlreadyUnavailableAtDecisionTime(t *testing.T) {
+	request := postgresqlFailoverOperationRequest()
+	follower := addPostgreSQLFollower(&request)
+	for index := range request.Resolved.Snapshot.Instances {
+		if request.Resolved.Snapshot.Instances[index].ResourceID == follower.ResourceID {
+			request.Resolved.Snapshot.Instances[index].Role = model.RoleUnknown
+			request.Resolved.Snapshot.Instances[index].Health = model.Health{
+				State: model.HealthUnhealthy, Summary: "service unavailable", ObservedAt: request.Resolved.Snapshot.ObservedAt,
+			}
+		}
+	}
+	for index := range request.Resolved.Snapshot.Probes {
+		if request.Resolved.Snapshot.Probes[index].InstanceID == follower.ResourceID {
+			request.Resolved.Snapshot.Probes[index].Outcome = model.ProbeOutcomeDatabaseUnavailable
+			request.Resolved.Snapshot.Probes[index].Health = model.Health{
+				State: model.HealthUnhealthy, Summary: "service unavailable", ObservedAt: request.Resolved.Snapshot.ObservedAt,
+			}
+		}
+	}
+	request.Credentials = adapter.Credentials{Username: "operator", Database: "postgres"}
+	request.ReplicationCredentials = adapter.Credentials{Username: "replicator", Database: "postgres"}
+	request.Resolved.Credentials = request.Credentials
+	request.Resolved.ReplicationCredentials = request.ReplicationCredentials
+	state := &postgresqlExecutionState{
+		finalLSN: "0/5000060", followers: make(map[model.ResourceID]model.ResourceID),
+		repointErr: errors.New("unavailable follower must not be repointed during core failover"),
+	}
+	instance := NewWithProviders(
+		&postgresqlExecutionRunner{state: state},
+		&postgresqlExecutionEndpointProvider{state: state},
+		&postgresqlExecutionNodeController{state: state},
+		&postgresqlExecutionFailoverSafety{state: state},
+	)
+	plan, err := instance.BuildPlan(context.Background(), request)
+	if err != nil {
+		t.Fatalf("build failover plan: %v", err)
+	}
+	for _, step := range plan.Steps {
+		if step.Name == "repoint_follower_"+string(follower.ResourceID) {
+			t.Fatalf("unavailable follower was included in the failover mutation plan: %+v", plan.Steps)
+		}
+	}
+	request.Plan = &plan
+	request.Resolved.PlanDigest = plan.Digest
+	request.Progress = &postgresqlProgressCollector{}
+
+	execution, err := instance.Execute(context.Background(), request)
+	if err != nil || execution.Status != model.OperationRunning {
+		t.Fatalf("failover execute=%+v err=%v trace=%v", execution, err, state.trace)
+	}
+	verification, err := instance.Verify(context.Background(), request)
+	if err != nil || !verification.Passed {
+		t.Fatalf("core failover must verify with an already unavailable follower: verification=%+v err=%v", verification, err)
+	}
+	if status := postgresqlOperationCheckStatus(t, verification.Checks, "standby_unavailable_"+string(follower.ResourceID)); status != model.CheckWarn {
+		t.Fatalf("unavailable follower must be reported as a warning, got %s: %+v", status, verification.Checks)
+	}
+}
+
+func TestPostgreSQLFailoverContinuationSkipsExpiredPrecheckAfterPromotion(t *testing.T) {
+	request := postgresqlFailoverOperationRequest()
+	follower := addPostgreSQLFollower(&request)
+	request.Credentials = adapter.Credentials{Username: "operator", Database: "postgres"}
+	request.ReplicationCredentials = adapter.Credentials{Username: "replicator", Database: "postgres"}
+	request.Resolved.Credentials = request.Credentials
+	request.Resolved.ReplicationCredentials = request.ReplicationCredentials
+	state := &postgresqlExecutionState{
+		finalLSN:   "0/5000060",
+		followers:  make(map[model.ResourceID]model.ResourceID),
+		repointErr: errors.New("follower became unavailable after promotion"),
+	}
+	instance := NewWithProviders(
+		&postgresqlExecutionRunner{state: state},
+		&postgresqlExecutionEndpointProvider{state: state},
+		&postgresqlExecutionNodeController{state: state},
+		&postgresqlExecutionFailoverSafety{state: state},
+	)
+	plan, err := instance.BuildPlan(context.Background(), request)
+	if err != nil {
+		t.Fatalf("build failover plan: %v", err)
+	}
+	progress := &postgresqlProgressCollector{steps: map[string]string{
+		"fence_old_primary":           "completed",
+		"verify_old_primary_fenced":   "completed",
+		"authorize_target_transition": "completed",
+		"promote_target":              "completed",
+		"activate_target_writes":      "completed",
+		"transfer_writer_endpoint":    "completed",
+	}}
+	request.Plan = &plan
+	request.Resolved.PlanDigest = plan.Digest
+	request.Progress = progress
+	state.fenced = true
+	state.promoted = true
+	state.endpoint = true
+
+	request.Resolved.Target.Role = model.RolePrimary
+	request.Resolved.Target.Replication = model.ReplicationStatus{}
+	for index := range request.Resolved.Snapshot.Instances {
+		snapshotInstance := &request.Resolved.Snapshot.Instances[index]
+		switch snapshotInstance.ResourceID {
+		case request.Resolved.Target.ResourceID:
+			snapshotInstance.Role = model.RolePrimary
+			snapshotInstance.Replication = model.ReplicationStatus{}
+		case follower.ResourceID:
+			snapshotInstance.Role = model.RoleUnknown
+			snapshotInstance.Health = model.Health{State: model.HealthUnhealthy, Summary: "service unavailable", ObservedAt: request.Resolved.Snapshot.ObservedAt}
+		}
+	}
+	for index := range request.Resolved.Snapshot.Probes {
+		if request.Resolved.Snapshot.Probes[index].InstanceID == follower.ResourceID {
+			request.Resolved.Snapshot.Probes[index].Outcome = model.ProbeOutcomeDatabaseUnavailable
+			request.Resolved.Snapshot.Probes[index].Health = model.Health{State: model.HealthUnhealthy, Summary: "service unavailable", ObservedAt: request.Resolved.Snapshot.ObservedAt}
+		}
+	}
+
+	execution, err := instance.Execute(context.Background(), request)
+	if err != nil || execution.Status != model.OperationRunning {
+		t.Fatalf("post-promotion continuation reran an expired precheck: execution=%+v err=%v trace=%v", execution, err, state.trace)
+	}
+	if strings.Contains(strings.Join(state.trace, ","), "repoint:"+string(follower.ResourceID)) {
+		t.Fatalf("continuation tried to mutate an unavailable follower: %v", state.trace)
+	}
+}
+
+func TestPostgreSQLFailoverContinuationRestoresMissingRecordedWriterEndpoint(t *testing.T) {
+	request := postgresqlFailoverOperationRequest()
+	request.Credentials = adapter.Credentials{Username: "operator", Database: "postgres"}
+	request.ReplicationCredentials = adapter.Credentials{Username: "replicator", Database: "postgres"}
+	request.Resolved.Credentials = request.Credentials
+	request.Resolved.ReplicationCredentials = request.ReplicationCredentials
+	state := &postgresqlExecutionState{
+		finalLSN: "0/5000060", followers: make(map[model.ResourceID]model.ResourceID),
+	}
+	instance := NewWithProviders(
+		&postgresqlExecutionRunner{state: state},
+		&postgresqlExecutionEndpointProvider{state: state},
+		&postgresqlExecutionNodeController{state: state},
+		&postgresqlExecutionFailoverSafety{state: state},
+	)
+	plan, err := instance.BuildPlan(context.Background(), request)
+	if err != nil {
+		t.Fatalf("build failover plan: %v", err)
+	}
+	progress := &postgresqlProgressCollector{steps: make(map[string]string)}
+	for _, step := range plan.Steps {
+		if step.Mutating {
+			progress.steps[step.Name] = "completed"
+		}
+	}
+	request.Plan = &plan
+	request.Resolved.PlanDigest = plan.Digest
+	request.Progress = progress
+	state.fenced = true
+	state.promoted = true
+	state.endpoint = false
+	request.Resolved.Target.Role = model.RolePrimary
+	request.Resolved.Target.Replication = model.ReplicationStatus{}
+	for index := range request.Resolved.Snapshot.Instances {
+		if request.Resolved.Snapshot.Instances[index].ResourceID == request.Resolved.Target.ResourceID {
+			request.Resolved.Snapshot.Instances[index] = request.Resolved.Target
+		}
+	}
+
+	execution, err := instance.Execute(context.Background(), request)
+	if err != nil || execution.Status != model.OperationRunning {
+		t.Fatalf("continuation did not reconcile missing endpoint: execution=%+v err=%v trace=%v", execution, err, state.trace)
+	}
+	if !state.endpoint {
+		t.Fatal("continuation trusted historical progress instead of restoring the missing writer endpoint")
+	}
+	if !strings.Contains(strings.Join(state.trace, ","), "transfer_endpoint") {
+		t.Fatalf("continuation did not perform an idempotent endpoint transfer: %v", state.trace)
 	}
 }
 

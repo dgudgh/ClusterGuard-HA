@@ -26,13 +26,13 @@
 | `mysql.operation` | 启用时 | 专用管理操作用户名和密码环境引用。 |
 | `mysql.replication` | 启用时 | 专用复制用户名和密码环境引用。 |
 | `mysql.automatic_failover_enabled` | 否 | 启用仅 Leader 的自动故障转移。原始配置默认为 `false`；支持多节点安装程序在 VIP 支持的 MySQL HA 中启用它，并使用 Agent 仲裁隔离。 |
-| `mysql.automatic_failover_interval_seconds` | 否 | 恢复控制器轮询间隔；默认为 5 秒。 |
+| `mysql.automatic_failover_interval_seconds` | 否 | 恢复控制器轮询间隔；默认为 1 秒。 |
 | `mysql.automatic_failover_retry_seconds` | 否 | 阻塞或失败事件尝试后的退避时间；默认为 30 秒。 |
 | `postgresql.enabled` | 否 | 启用原生 PostgreSQL 发现和配置的 HA 功能；默认为 `false`。 |
-| `postgresql.discovery_interval_seconds` | 否 | PostgreSQL 调度器间隔；默认为 5 秒，与 MySQL 独立。 |
-| `postgresql.discovery_timeout_seconds` | 否 | 每个端点的 PostgreSQL 探针超时；默认为 4 秒。 |
+| `postgresql.discovery_interval_seconds` | 否 | PostgreSQL 调度器间隔；默认为 1 秒，与 MySQL 独立。 |
+| `postgresql.discovery_timeout_seconds` | 否 | 每个端点的 PostgreSQL 探针超时；默认为 1 秒。 |
 | `postgresql.automatic_failover_enabled` | 否 | 启用仅 Leader 的 PostgreSQL 自动故障转移；默认为 `false`。 |
-| `postgresql.automatic_failover_interval_seconds` | 否 | PostgreSQL 恢复控制器轮询间隔；默认为 5 秒。 |
+| `postgresql.automatic_failover_interval_seconds` | 否 | PostgreSQL 恢复控制器轮询间隔；默认为 1 秒。 |
 | `postgresql.automatic_failover_retry_seconds` | 否 | 阻塞或失败的 PostgreSQL 事件尝试后的退避时间；默认为 30 秒。 |
 | `postgresql.discovery` | 启用时 | 专用监控用户名、数据库和密码环境引用。 |
 | `postgresql.operation` | PostgreSQL 变更操作 | 专用操作用户名、数据库和密码环境引用。必须与 `postgresql.replication` 一起配置。 |
@@ -286,8 +286,7 @@ curl -sS http://127.0.0.1:8088/api/v1/control-plane/status \
 
 `active_operations` 仅统计状态为 `running` 的记录。一个持久的
 `planned` 记录是等待显式执行请求的历史工作；
-它不会消耗主动操作限制，也不会使就绪状态看起来繁忙。`indeterminate_operations` 保持独立，因为每条这样的记录
-在重试或更改拓扑之前都需要操作员审查。
+它不会消耗主动操作限制，也不会使就绪状态看起来繁忙。`indeterminate_operations` 只统计尚未完成人工复核的 `indeterminate` 记录。已经复核的记录仍保留原状态和全部证据，但不会永久污染当前待处理计数。
 
 背景所有权和自动恢复循环会立即报告新的故障。
 未更改的故障随后被抑制，并每隔五分钟提醒一次；更改的故障会立即报告，一个成功的周期
@@ -578,7 +577,7 @@ API 发行者必须链接到 `tls_ca_file`；Raft 发行者必须链接到
 
 半同步显著减少了确认事务的丢失，但本身并不能证明严格的 RPO 零：在配置的超时后，MySQL 可能回退到异步提交，存储、操作系统和网络故障仍超出数据库确认协议。因此，生产 SLO 必须记录超时/回退策略，并在破坏性故障转移测试期间使用客户端事务 ID 进行验证。
 
-恢复控制器仅在多数 Leader 上执行。发现记录在六次后续失败主样本跨越 30 秒后记录一次事件。控制器仅选择排名第一的合格候选者，并通过私有内部授权路径提交一个正常的持久 `failover` 操作。公共 JSON 无法选择此模式。事件 ID 在 `APPROVE` 上进行审计；安全防护、锁定、隔离、执行、验证、审计和报告仍然是强制性的。事件派生的幂等性密钥防止 Leader 更改重复成功或不确定的故障转移。被阻止的尝试至少等待配置的重试周期。
+恢复控制器仅在多数 Leader 上执行。发现连续记录 3 次当前主库失败，且观测跨度不少于 3 秒后，才生成一个事件。控制器仅选择排名第一的合格候选者，并通过私有内部授权路径提交一个正常的持久 `failover` 操作。公共 JSON 无法选择此模式。事件 ID 在 `APPROVE` 上进行审计；安全防护、锁定、隔离、执行、验证、审计和报告仍然是强制性的。事件派生的幂等性密钥防止 Leader 变更后重复成功或不确定的故障转移。被阻止的尝试至少等待配置的重试周期。
 
 操作锁存储在 Raft 复制的元数据快照中，并在其持有者仍然是多数 Leader 时更新。安全防护在锁定和审批前再次检查多数。VIP 所有权通过短的独占端点租约和集群范围的拥有者验证单独保护。
 
@@ -622,6 +621,8 @@ Oracle 和 SQL Server 的更改仅可通过其原生 HA
 受保护的内核将用于预检查的精确拓扑观测标记为`cluster_id@observed_at`，并在获取操作锁后重新验证它。发现发布使用相同的集群锁，因此在执行过程中无法替换已验证的观测。更改或失效的观测会阻止审批和执行。已完成的步骤是持久的。只有当此操作拥有持久的`fence_source`步骤时，已被隔离的源才被接受；恢复时会重新验证不可变的源和目标身份、隔离、GTID历史、二进制日志、发布兼容性、复制状态和端点所有权，然后再进行另一次变更操作。如果变更操作前日志写入失败，工作流将停止。如果变更操作提交点后日志写入失败，验证仍会运行，API返回`indeterminate`执行，并带有HTTP `500`。原子元数据重命名后紧接着目录同步警告也会被报告为已提交，但为`indeterminate`，包括响应中的已协调实例和端点。将`indeterminate`视为需要人工审核的状态；不要自动重试该操作。
 
 提交后验证使用与调用者分离的有界上下文。验证失败后会持久化其检查，并保持为`indeterminate`。验证保留不可变的计划摘要和源/目标UUID范围，但在提升后接受更新的拓扑观测和元数据修订；刷新后的端点仍必须返回计划的原生身份和预期的实时角色。再次调用`verify`操作动作仅在显式验证证据通过时，才能将该记录协调为`succeeded`；所有其他终端状态保持不可变。终端操作记录、终端审计事件和操作报告发布在一个仓库快照中，因此读者无法观察到成功报告与运行中的操作或相反的情况。人工验证协调使用相同的原子最终化路径。
+
+如果历史拓扑已经变化，原计划无法再通过完整验证，操作员可调用 `POST /api/v1/operations/{operation_uuid}/review`，请求体为 `{"note":"现场核验依据"}`。该接口仅接受 `indeterminate` 记录，复核说明不能为空且首次提交后不可覆盖；它原子写入复核元数据、审计和报告，但不改变操作状态。控制台“操作日志”的“标记已复核”使用同一接口。
 
 集群注册和发现发布遵循相同的规则。重命名后的持久性警告返回HTTP `500`以及`result`中的已提交资源或观测。在重试之前，需要协调返回的集群/端点UUID或观测令牌`cluster_id@observed_at`；创建另一个集群或假装观测不存在进行发布可能会重复用户意图。非操作元数据工作流首先持久化一个保守的报告回退，然后在相同的报告UUID下将其替换为终端结果。
 

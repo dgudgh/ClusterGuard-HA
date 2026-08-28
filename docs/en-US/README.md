@@ -11,18 +11,18 @@ The offline HTML documentation center starts at [`../html/index.html`](../html/i
 | Version | Status | Database Support Boundary |
 | --- | --- | --- |
 | `2.1-45` | Officially Released | MySQL High Availability Control Platform |
-| `2.2.x` | Development and Acceptance | PostgreSQL, retaining MySQL 2.1 capability |
+| `2.2-39` | Formal Release | PostgreSQL 16.4, Docker Swarm, and retained MySQL 2.1 capability |
 | Subsequent Versions | Planning | Oracle Data Guard Broker, SQL Server Always On independent acceptance |
 
-2.1 Final Version Download:
+Current Formal Release:
 
-<https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.1.45>
+<https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.39>
 
 Do not use historical candidate packages with numbers higher than `2.1-45` in the local directory to replace the official release. The official deliverables must come from GitHub Release and be verified with the included SHA256 checksum.
 
 ## Recommended Reading Order
 
-1. [2.1-45 Release Notes](release-2.1.45.md)
+1. [2.2.39 Release Notes](release-2.2.39.md)
    Confirm the official package, summary, support scope, and production admission boundary.
 2. [Product Tour](product-tour.md)
    Understand the topology, operations, node lifecycle, and operation logs through actual control console screenshots.
@@ -34,7 +34,9 @@ Do not use historical candidate packages with numbers higher than `2.1-45` in th
    Onboard existing MySQL clusters without reinstalling data and transfer exclusive recovery and VIP authority safely.
 6. [Operations Manual](operations-manual.md)
    Execute failover, old primary recovery, node expansion, planned shutdown, audit, and emergency handling.
-7. [Version and Release Policy](version-release-policy.md)
+7. [Version Update and Rollback Guide](update-and-patch.md)
+   Verify signed update packages, review the plan, roll nodes, resume interrupted work, and perform controlled rollback.
+8. [Version and Release Policy](version-release-policy.md)
    Use when building new versions, maintaining tags, and releasing PostgreSQL 2.2.
 
 ## Acceptance Evidence
@@ -42,6 +44,9 @@ Do not use historical candidate packages with numbers higher than `2.1-45` in th
 - [MySQL Former-Primary Recovery Qualification](mysql-former-primary-recovery-qualification-2026-08-09.md)
 - [Production Chaos and Concurrency Test Report](production-chaos-test-report-2026-08-09.md)
 - [Planned Shutdown and Automatic Recovery Report](power-lifecycle-test-report.md)
+- [PostgreSQL 16.4 Production Qualification](postgresql-production-qualification-2026-08-23.md)
+- [Docker Swarm MySQL Lab Qualification](docker-swarm-mysql-validation-plan.md)
+- [Kubernetes MySQL Guide](kubernetes-mysql.md)
 
 These reports record results under specific laboratories, database packages, and dates. After changing the database minor version, Linux distribution, storage, network, VIP NIC, or isolation method, on-site acceptance must be re-executed.
 
@@ -51,6 +56,21 @@ Starting from version 2.2, PostgreSQL will not be rolled back to `v2.1.45`. The 
 
 Database permissions, native identity, streaming replication, and recovery requirements for PostgreSQL are detailed in the [Database Preparation Manual](database-preparation.md); complete installation parameters are detailed in the [Offline Installation and Deployment Manual](offline-rpm-install.md).
 
+The three-node PostgreSQL 16.4 matrix, including planned rotations, hard
+power-off, network partition, quorum loss, concurrent operations, writer-VIP
+uniqueness, and former-primary `pg_rewind`, is recorded in the
+[PostgreSQL Production Qualification Report](postgresql-production-qualification-2026-08-23.md).
+
+## Docker Swarm MySQL
+
+The first Docker Swarm phase uses host Agents, fixed Service slots, MySQL GTID replication, and a host VIP. See the
+[Docker Swarm MySQL Guide](docker-swarm-mysql.md) for architecture, deployment order, and safety constraints. The
+[Docker Swarm MySQL Lab Qualification](docker-swarm-mysql-validation-plan.md) records three-node planned switchovers, automatic failover, former-writer rejoin, manager interruption, Raft quorum loss, and duplicate-VIP results from `192.168.102.152-154`.
+
+## Kubernetes MySQL
+
+Kubernetes mode does not move a host VIP or change CoreDNS. ClusterGuard uses a Raft-authorized selectorless Service/EndpointSlice, dedicated one-replica StatefulSets, durable role annotations, and a fail-closed start guard. See the [Kubernetes MySQL Guide](kubernetes-mysql.md) for RBAC, registration, deployment constraints, and the current acceptance boundary. This feature currently has code-level automated tests but no real Kubernetes production qualification report.
+
 ## Document Validity
 
 The following documents are the production delivery entry points:
@@ -59,6 +79,7 @@ The following documents are the production delivery entry points:
 - `docs/en-US/offline-rpm-install.md`
 - `docs/en-US/database-preparation.md`
 - `docs/en-US/operations-manual.md`
+- `docs/en-US/update-and-patch.md`
 - `docs/en-US/version-release-policy.md`
 
 `docs/superpowers/` preserves historical design and implementation plans and is only used for traceability, not as the current installation or production operation manual. When documents are inconsistent with the official release, the corresponding `RELEASE-INFO`, summary file, and release notes of that version shall prevail.

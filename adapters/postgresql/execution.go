@@ -13,12 +13,14 @@ import (
 )
 
 const (
-	postgresqlFenceWritesSQL      = `ALTER SYSTEM SET default_transaction_read_only = 'on'`
-	postgresqlActivateWritesSQL   = `ALTER SYSTEM RESET default_transaction_read_only`
-	postgresqlReloadConfigSQL     = `SELECT pg_reload_conf()`
-	postgresqlTerminateClientsSQL = `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND backend_type = 'client backend'`
-	postgresqlCaptureWALQuery     = `SELECT row_to_json(clusterguard_wal) FROM (SELECT pg_current_wal_flush_lsn()::text AS current_lsn) AS clusterguard_wal`
-	postgresqlReplayWALQuery      = `SELECT row_to_json(clusterguard_wal) FROM (SELECT COALESCE(pg_last_wal_receive_lsn()::text, '') AS receive_lsn, COALESCE(pg_last_wal_replay_lsn()::text, '') AS replay_lsn, pg_is_wal_replay_paused() AS replay_paused) AS clusterguard_wal`
+	postgresqlFenceWritesSQL                 = `ALTER SYSTEM SET default_transaction_read_only = 'on'`
+	postgresqlActivateWritesSQL              = `ALTER SYSTEM RESET default_transaction_read_only`
+	postgresqlReloadConfigSQL                = `SELECT pg_reload_conf()`
+	postgresqlTerminateClientsSQL            = `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND backend_type = 'client backend'`
+	postgresqlCaptureWALQuery                = `SELECT row_to_json(clusterguard_wal) FROM (SELECT pg_current_wal_flush_lsn()::text AS current_lsn) AS clusterguard_wal`
+	postgresqlReplayWALQuery                 = `WITH receiver AS (SELECT status, latest_end_lsn FROM pg_stat_wal_receiver LIMIT 1) SELECT row_to_json(clusterguard_wal) FROM (SELECT COALESCE(pg_last_wal_receive_lsn()::text, '') AS receive_lsn, COALESCE(pg_last_wal_replay_lsn()::text, '') AS replay_lsn, COALESCE((SELECT status FROM receiver), '') AS receiver_status, COALESCE((SELECT latest_end_lsn::text FROM receiver), '') AS receiver_latest_end_lsn, pg_is_wal_replay_paused() AS replay_paused) AS clusterguard_wal`
+	postgresqlVerificationConvergenceTimeout = 15 * time.Second
+	postgresqlVerificationRetryInterval      = 250 * time.Millisecond
 )
 
 func postgresqlSwitchoverMutationTimeout() time.Duration {
@@ -239,13 +241,8 @@ func waitForPostgreSQLReplay(ctx context.Context, runner SQLRunner, resolved ada
 	defer ticker.Stop()
 	for {
 		rows, queryErr := runner.Query(waitCtx, postgresqlInstanceEndpoint(resolved.Target), resolved.Credentials, postgresqlReplayWALQuery)
-		if queryErr == nil && len(rows) == 1 {
-			receive, receiveErr := parseLSN(rows[0]["receive_lsn"])
-			replay, replayErr := parseLSN(rows[0]["replay_lsn"])
-			paused, pausedErr := parsePostgreSQLBoolean(rows[0]["replay_paused"])
-			if receiveErr == nil && replayErr == nil && pausedErr == nil && !paused && receive >= expected && replay >= expected {
-				return nil
-			}
+		if queryErr == nil && len(rows) == 1 && postgresqlReplayReached(rows[0], expected) {
+			return nil
 		}
 		select {
 		case <-waitCtx.Done():
@@ -253,6 +250,15 @@ func waitForPostgreSQLReplay(ctx context.Context, runner SQLRunner, resolved ada
 		case <-ticker.C:
 		}
 	}
+}
+
+func postgresqlReplayReached(row Row, expected uint64) bool {
+	replay, replayErr := parseLSN(row["replay_lsn"])
+	paused, pausedErr := parsePostgreSQLBoolean(row["replay_paused"])
+	// Replay is the durable promotion boundary. pg_last_wal_receive_lsn() can
+	// reset after a standby restart and the receiver row disappears once the
+	// fenced source stops, even though recovery already replayed that WAL.
+	return replayErr == nil && pausedErr == nil && !paused && replay >= expected
 }
 
 func (adapterInstance *Adapter) restorePostgreSQLSourceWrites(ctx context.Context, resolved adapter.ResolvedOperation) error {
@@ -322,6 +328,60 @@ func (adapterInstance *Adapter) authorizePostgreSQLTransition(ctx context.Contex
 	return authorization, nil
 }
 
+func postgresqlWriterEndpointVerified(check model.Check) bool {
+	return check.Name == "writer_endpoint_owner" && check.Status == model.CheckPass
+}
+
+func postgresqlOnlyWriterEndpointFailed(verification model.Verification) bool {
+	found := false
+	for _, check := range verification.Checks {
+		if check.Status != model.CheckFail {
+			continue
+		}
+		if check.Name != "writer_endpoint_owner" {
+			return false
+		}
+		found = true
+	}
+	return found
+}
+
+func (adapterInstance *Adapter) reconcilePostgreSQLWriterEndpoint(ctx context.Context, request adapter.OperationRequest, resolved adapter.ResolvedOperation, recorded bool, operation string) error {
+	check := adapterInstance.endpointProvider.Verify(ctx, resolved)
+	if !postgresqlWriterEndpointVerified(check) {
+		if err := adapterInstance.endpointProvider.Transfer(ctx, resolved); err != nil {
+			return fmt.Errorf("transfer %s writer endpoint: %w", operation, err)
+		}
+		check = adapterInstance.endpointProvider.Verify(ctx, resolved)
+	}
+	if !postgresqlWriterEndpointVerified(check) {
+		return fmt.Errorf("%s writer endpoint ownership is unverified: %s", operation, strings.TrimSpace(check.Message))
+	}
+	if !recorded {
+		if err := postgresqlCompleteStep(context.WithoutCancel(ctx), request, "transfer_writer_endpoint", "writer endpoint follows the new primary"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (adapterInstance *Adapter) reconcileCompletedPostgreSQLWriterEndpoint(ctx context.Context, request adapter.OperationRequest, resolved adapter.ResolvedOperation, operation string) error {
+	mutationCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	authorization, err := adapterInstance.authorizePostgreSQLTransition(mutationCtx, request, resolved)
+	if err != nil {
+		return fmt.Errorf("authorize %s endpoint reconciliation: %w", operation, err)
+	}
+	defer authorization.Cancel()
+	if err := adapterInstance.reconcilePostgreSQLWriterEndpoint(authorization.Context, request, resolved, true, operation); err != nil {
+		return err
+	}
+	if err := authorization.Finalize(authorization.Context); err != nil {
+		return fmt.Errorf("stabilize %s endpoint lease: %w", operation, err)
+	}
+	return nil
+}
+
 func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request adapter.OperationRequest) (model.Execution, error) {
 	started := time.Now().UTC()
 	if adapterInstance.executor == nil || adapterInstance.nodeController == nil || !adapterInstance.nodeController.Executable(ctx) || adapterInstance.endpointProvider == nil || !adapterInstance.endpointProvider.Executable(ctx) {
@@ -336,6 +396,14 @@ func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request a
 	}
 	if completed {
 		verification, verifyErr := adapterInstance.switchoverVerify(ctx, request)
+		if verifyErr == nil && postgresqlOnlyWriterEndpointFailed(verification) {
+			resolved := *request.Resolved
+			resolved.PlanDigest = request.Plan.Digest
+			if reconcileErr := adapterInstance.reconcileCompletedPostgreSQLWriterEndpoint(ctx, request, resolved, "PostgreSQL switchover"); reconcileErr != nil {
+				return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", reconcileErr)
+			}
+			return newPostgreSQLExecution(request.Operation.ResourceID, model.OperationRunning, started, "PostgreSQL switchover writer endpoint was reconciled; verification is required"), nil
+		}
 		if verifyErr != nil || !verification.Passed {
 			if verifyErr == nil {
 				verifyErr = fmt.Errorf("completed PostgreSQL switchover is not verified")
@@ -376,6 +444,36 @@ func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request a
 		}
 		if cleanupFailed {
 			return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "fence_unknown", errors.Join(failures...))
+		}
+		return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationFailed, "pre_commit", cause)
+	}
+	rollbackAfterSourceStop := func(cause error) (model.Execution, error) {
+		recoveryCtx, recoveryCancel := context.WithTimeout(context.WithoutCancel(ctx), 45*time.Second)
+		defer recoveryCancel()
+		failures := []error{cause}
+		cleanupFailed := false
+		if startErr := adapterInstance.nodeController.Start(recoveryCtx, resolved, resolved.Primary, leaseID); startErr != nil {
+			failures = append(failures, fmt.Errorf("restart PostgreSQL source: %w", startErr))
+			cleanupFailed = true
+		} else {
+			running, inRecovery, statusErr := adapterInstance.nodeController.Status(recoveryCtx, resolved, resolved.Primary)
+			if statusErr != nil || !running || inRecovery {
+				if statusErr == nil {
+					statusErr = fmt.Errorf("restarted PostgreSQL source role is not a running primary")
+				}
+				failures = append(failures, statusErr)
+				cleanupFailed = true
+			} else if restoreErr := adapterInstance.restorePostgreSQLSourceWrites(recoveryCtx, resolved); restoreErr != nil {
+				failures = append(failures, fmt.Errorf("restore PostgreSQL source writes: %w", restoreErr))
+				cleanupFailed = true
+			}
+		}
+		if abortErr := authorization.Abort(recoveryCtx); abortErr != nil {
+			failures = append(failures, fmt.Errorf("rollback PostgreSQL transition lease: %w", abortErr))
+			cleanupFailed = true
+		}
+		if cleanupFailed {
+			return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "source_stopped", errors.Join(failures...))
 		}
 		return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationFailed, "pre_commit", cause)
 	}
@@ -434,13 +532,13 @@ func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request a
 		return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "source_stopped", err)
 	}
 	if err := postgresqlCompleteStep(context.WithoutCancel(mutationCtx), request, "verify_source_stopped", "source service is stopped and cannot accept writes"); err != nil {
-		return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "source_stopped", err)
+		return rollbackAfterSourceStop(err)
 	}
 	if err := waitForPostgreSQLReplay(mutationCtx, adapterInstance.runner, resolved, position); err != nil {
-		return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "source_stopped", err)
+		return rollbackAfterSourceStop(err)
 	}
 	if err := postgresqlCompleteStep(context.WithoutCancel(mutationCtx), request, "wait_target_wal", position); err != nil {
-		return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "source_stopped", err)
+		return rollbackAfterSourceStop(err)
 	}
 
 	promoted, err := postgresqlStepCompleted(mutationCtx, request, "promote_target")
@@ -453,7 +551,7 @@ func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request a
 			if statusErr == nil {
 				statusErr = fmt.Errorf("target is not a running standby before promotion")
 			}
-			return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "source_stopped", statusErr)
+			return rollbackAfterSourceStop(statusErr)
 		}
 		if err := adapterInstance.nodeController.Promote(mutationCtx, resolved, resolved.Target, leaseID); err != nil {
 			return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "source_stopped", fmt.Errorf("promote PostgreSQL target: %w", err))
@@ -487,19 +585,8 @@ func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request a
 	if err != nil {
 		return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", err)
 	}
-	if !transferred {
-		if err := adapterInstance.endpointProvider.Transfer(mutationCtx, resolved); err != nil {
-			return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("transfer PostgreSQL writer endpoint: %w", err))
-		}
-	}
-	if check := adapterInstance.endpointProvider.Verify(mutationCtx, resolved); check.Name != "writer_endpoint_owner" || check.Status != model.CheckPass {
-		return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("PostgreSQL writer endpoint ownership is unverified"))
-	}
-	if !transferred {
-		if err := postgresqlCompleteStep(context.WithoutCancel(mutationCtx), request, "transfer_writer_endpoint", "writer endpoint follows the new primary"); err != nil {
-			return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", err)
-		}
-		transferred = true
+	if err := adapterInstance.reconcilePostgreSQLWriterEndpoint(mutationCtx, request, resolved, transferred, "PostgreSQL switchover"); err != nil {
+		return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", err)
 	}
 	if err := authorization.Finalize(mutationCtx); err != nil {
 		return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("stabilize PostgreSQL writer endpoint lease: %w", err))
@@ -532,10 +619,23 @@ func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request a
 		return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", err)
 	}
 	if !rewound {
-		if err := adapterInstance.nodeController.Rewind(mutationCtx, resolved, resolved.Primary, resolved.Target, leaseID); err != nil {
-			return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("rewind PostgreSQL former primary: %w", err))
+		recoveryMessage := "former primary follows the new primary after pg_rewind"
+		if rewindErr := adapterInstance.nodeController.Rewind(mutationCtx, resolved, resolved.Primary, resolved.Target, leaseID); rewindErr != nil {
+			if baseBackupErr := adapterInstance.nodeController.BaseBackup(mutationCtx, resolved, resolved.Primary, resolved.Target, leaseID); baseBackupErr != nil {
+				return postgresqlExecutionFailure(
+					request.Operation.ResourceID,
+					started,
+					model.OperationIndeterminate,
+					"promoted_unverified",
+					errors.Join(
+						fmt.Errorf("rewind PostgreSQL former primary: %w", rewindErr),
+						fmt.Errorf("full base backup of PostgreSQL former primary: %w", baseBackupErr),
+					),
+				)
+			}
+			recoveryMessage = "former primary follows the new primary after full base backup fallback"
 		}
-		if err := postgresqlCompleteStep(context.WithoutCancel(mutationCtx), request, "rewind_former_primary", "former primary follows the new primary"); err != nil {
+		if err := postgresqlCompleteStep(context.WithoutCancel(mutationCtx), request, "rewind_former_primary", recoveryMessage); err != nil {
 			return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", err)
 		}
 	}
@@ -556,6 +656,19 @@ func (adapterInstance *Adapter) failoverExecute(ctx context.Context, request ada
 	}
 	if completed {
 		verification, verifyErr := adapterInstance.failoverVerify(ctx, request)
+		if verifyErr == nil && postgresqlOnlyWriterEndpointFailed(verification) {
+			resolved := *request.Resolved
+			resolved.PlanDigest = request.Plan.Digest
+			isolationCheck := adapterInstance.failoverSafety.Verify(ctx, resolved)
+			if isolationCheck.Name != "old_primary_fenced" || isolationCheck.Status != model.CheckPass {
+				return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "fence_unknown", fmt.Errorf("PostgreSQL old-primary isolation is unverified during endpoint reconciliation"))
+			}
+			resolved.VerifiedIsolatedSourceID = resolved.Primary.ResourceID
+			if reconcileErr := adapterInstance.reconcileCompletedPostgreSQLWriterEndpoint(ctx, request, resolved, "PostgreSQL failover"); reconcileErr != nil {
+				return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", reconcileErr)
+			}
+			return newPostgreSQLExecution(request.Operation.ResourceID, model.OperationRunning, started, "PostgreSQL failover writer endpoint was reconciled; verification is required"), nil
+		}
 		if verifyErr != nil || !verification.Passed {
 			if verifyErr == nil {
 				verifyErr = fmt.Errorf("completed PostgreSQL failover is not verified")
@@ -566,15 +679,21 @@ func (adapterInstance *Adapter) failoverExecute(ctx context.Context, request ada
 	}
 	resolved := *request.Resolved
 	resolved.PlanDigest = request.Plan.Digest
-	checks, err := adapterInstance.failoverPrecheck(ctx, request)
-	if err != nil || postgresqlBlockingChecks(checks) {
-		if err == nil {
-			err = fmt.Errorf("PostgreSQL failover precheck changed or is blocked")
-		}
-		return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationFailed, "pre_commit", err)
+	promotedBeforeContinuation, err := postgresqlStepCompleted(ctx, request, "promote_target")
+	if err != nil {
+		return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", err)
 	}
-	if err := adapterInstance.postgresqlLiveFailoverTargetPrecheck(ctx, resolved); err != nil {
-		return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationFailed, "pre_commit", err)
+	if !promotedBeforeContinuation {
+		checks, precheckErr := adapterInstance.failoverPrecheck(ctx, request)
+		if precheckErr != nil || postgresqlBlockingChecks(checks) {
+			if precheckErr == nil {
+				precheckErr = fmt.Errorf("PostgreSQL failover precheck changed or is blocked")
+			}
+			return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationFailed, "pre_commit", precheckErr)
+		}
+		if err := adapterInstance.postgresqlLiveFailoverTargetPrecheck(ctx, resolved); err != nil {
+			return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationFailed, "pre_commit", err)
+		}
 	}
 
 	mutationCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Minute)
@@ -594,6 +713,7 @@ func (adapterInstance *Adapter) failoverExecute(ctx context.Context, request ada
 	if check := adapterInstance.failoverSafety.Verify(mutationCtx, resolved); check.Name != "old_primary_fenced" || check.Status != model.CheckPass {
 		return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "fence_unknown", fmt.Errorf("PostgreSQL old-primary isolation is unverified"))
 	}
+	resolved.VerifiedIsolatedSourceID = resolved.Primary.ResourceID
 	if err := postgresqlCompleteStep(context.WithoutCancel(mutationCtx), request, "verify_old_primary_fenced", "old primary cannot serve writes or own the VIP"); err != nil {
 		return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "fence_unknown", err)
 	}
@@ -650,19 +770,8 @@ func (adapterInstance *Adapter) failoverExecute(ctx context.Context, request ada
 	if err != nil {
 		return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", err)
 	}
-	if !transferred {
-		if err := adapterInstance.endpointProvider.Transfer(mutationCtx, resolved); err != nil {
-			return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("transfer PostgreSQL failover writer endpoint: %w", err))
-		}
-	}
-	if check := adapterInstance.endpointProvider.Verify(mutationCtx, resolved); check.Name != "writer_endpoint_owner" || check.Status != model.CheckPass {
-		return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("PostgreSQL failover writer endpoint ownership is unverified"))
-	}
-	if !transferred {
-		if err := postgresqlCompleteStep(context.WithoutCancel(mutationCtx), request, "transfer_writer_endpoint", "writer endpoint follows the new primary"); err != nil {
-			return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", err)
-		}
-		transferred = true
+	if err := adapterInstance.reconcilePostgreSQLWriterEndpoint(mutationCtx, request, resolved, transferred, "PostgreSQL failover"); err != nil {
+		return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", err)
 	}
 	if err := authorization.Finalize(mutationCtx); err != nil {
 		return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("stabilize PostgreSQL failover endpoint lease: %w", err))
@@ -670,7 +779,7 @@ func (adapterInstance *Adapter) failoverExecute(ctx context.Context, request ada
 
 	followers := make([]model.DatabaseInstance, 0)
 	for _, instance := range resolved.Snapshot.Instances {
-		if instance.ResourceID != resolved.Primary.ResourceID && instance.ResourceID != resolved.Target.ResourceID {
+		if instance.ResourceID != resolved.Primary.ResourceID && instance.ResourceID != resolved.Target.ResourceID && postgresqlFailoverFollowerAvailable(&resolved, instance) {
 			followers = append(followers, instance)
 		}
 	}
@@ -772,6 +881,14 @@ func (adapterInstance *Adapter) failoverVerify(ctx context.Context, request adap
 	}
 	sort.Slice(followers, func(i, j int) bool { return followers[i].ResourceID < followers[j].ResourceID })
 	for _, follower := range followers {
+		if !postgresqlFailoverFollowerAvailable(&resolved, follower) {
+			verification.Checks = append(verification.Checks, model.Check{
+				Name:    "standby_unavailable_" + string(follower.ResourceID),
+				Status:  model.CheckWarn,
+				Message: "PostgreSQL standby was already unavailable at failover decision time and requires a separate recovery operation",
+			})
+			continue
+		}
 		running, recovery, statusErr := adapterInstance.nodeController.Status(ctx, resolved, follower)
 		status, message := model.CheckPass, "PostgreSQL standby service is running in recovery"
 		if statusErr != nil || !running || !recovery {
@@ -782,7 +899,11 @@ func (adapterInstance *Adapter) failoverVerify(ctx context.Context, request adap
 			adapterInstance.postgresqlInstanceVerificationCheck(ctx, resolved, "standby_database_"+string(follower.ResourceID), follower, model.RoleStandby, resolved.Target.ResourceID),
 		)
 	}
-	verification.Checks = append(verification.Checks, adapterInstance.failoverSafety.Verify(ctx, resolved))
+	isolationCheck := adapterInstance.failoverSafety.Verify(ctx, resolved)
+	verification.Checks = append(verification.Checks, isolationCheck)
+	if isolationCheck.Name == "old_primary_fenced" && isolationCheck.Status == model.CheckPass {
+		resolved.VerifiedIsolatedSourceID = resolved.Primary.ResourceID
+	}
 	verification.Checks = append(verification.Checks, adapterInstance.endpointProvider.Verify(ctx, resolved))
 	verification.Passed = !postgresqlBlockingChecks(verification.Checks)
 	return verification, nil
@@ -796,36 +917,79 @@ func (adapterInstance *Adapter) postgresqlInstanceVerificationCheck(
 	expectedRole model.InstanceRole,
 	expectedSourceID model.ResourceID,
 ) model.Check {
+	verifyCtx, cancel := context.WithTimeout(ctx, postgresqlVerificationConvergenceTimeout)
+	defer cancel()
+
+	for {
+		check, retryable := adapterInstance.postgresqlInstanceVerificationCheckOnce(
+			verifyCtx, resolved, name, expected, expectedRole, expectedSourceID,
+		)
+		if check.Status == model.CheckPass || !retryable {
+			return check
+		}
+
+		timer := time.NewTimer(postgresqlVerificationRetryInterval)
+		select {
+		case <-verifyCtx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			check.Message += " before the bounded convergence deadline"
+			return check
+		case <-timer.C:
+		}
+	}
+}
+
+func (adapterInstance *Adapter) postgresqlInstanceVerificationCheckOnce(
+	ctx context.Context,
+	resolved adapter.ResolvedOperation,
+	name string,
+	expected model.DatabaseInstance,
+	expectedRole model.InstanceRole,
+	expectedSourceID model.ResourceID,
+) (model.Check, bool) {
 	result, err := adapterInstance.Discover(ctx, adapter.DiscoverRequest{
 		ClusterID:   resolved.Cluster.ResourceID,
 		Endpoint:    postgresqlInstanceEndpoint(expected),
 		Credentials: resolved.Credentials,
 	})
 	if err != nil {
-		return model.Check{Name: name, Status: model.CheckFail, Message: "PostgreSQL database state could not be discovered"}
+		return model.Check{Name: name, Status: model.CheckFail, Message: "PostgreSQL database state could not be discovered"}, true
 	}
 	instance := result.Instance
 	systemIdentifier := resolved.Cluster.EngineIdentity["system_identifier"]
 	identityMatches := postgresqlInstanceIdentityMatches(instance, expected, systemIdentifier)
+	if !identityMatches {
+		return model.Check{Name: name, Status: model.CheckFail, Message: "PostgreSQL database identity does not match the pinned resource"}, false
+	}
 	roleMatches := instance.Role == expectedRole && instance.Health.State == model.HealthHealthy
 
 	if expectedRole == model.RolePrimary {
 		writable := instance.EngineMetadata["in_recovery"] == "false" && instance.EngineMetadata["transaction_read_only"] == "false"
-		if identityMatches && roleMatches && writable {
-			return model.Check{Name: name, Status: model.CheckPass, Message: "database identity and writable primary role are verified"}
+		if roleMatches && writable {
+			return model.Check{Name: name, Status: model.CheckPass, Message: "database identity and writable primary role are verified"}, false
 		}
-		return model.Check{Name: name, Status: model.CheckFail, Message: "database identity or writable primary role is unverified"}
+		return model.Check{Name: name, Status: model.CheckFail, Message: "PostgreSQL database is not the expected writable primary"}, false
+	}
+	if instance.Role != model.RoleStandby || instance.EngineMetadata["in_recovery"] != "true" {
+		return model.Check{Name: name, Status: model.CheckFail, Message: "PostgreSQL database is not the expected standby"}, false
 	}
 
 	streaming := instance.EngineMetadata["in_recovery"] == "true" &&
 		instance.EngineMetadata["transaction_read_only"] == "true" &&
 		instance.Replication.IOThread == model.ThreadRunning &&
-		instance.Replication.SQLThread == model.ThreadRunning &&
-		instance.Replication.LagSeconds != nil && *instance.Replication.LagSeconds >= 0
+		instance.Replication.SQLThread == model.ThreadRunning
 	expectedSource, sourceFound := postgresqlInstanceByResourceID(resolved, expectedSourceID)
-	sourceMatches := sourceFound && postgresqlSourceIdentityMatches(instance.Replication.SourceIdentity, expectedSource, systemIdentifier)
-	if identityMatches && roleMatches && streaming && sourceMatches {
-		return model.Check{Name: name, Status: model.CheckPass, Message: "database identity, streaming state, and replication source are verified"}
+	if !sourceFound {
+		return model.Check{Name: name, Status: model.CheckFail, Message: "expected PostgreSQL replication source is missing from the pinned topology"}, false
 	}
-	return model.Check{Name: name, Status: model.CheckFail, Message: "database identity, streaming state, or replication source is unverified"}
+	sourceMatches := sourceFound && postgresqlSourceIdentityMatches(instance.Replication.SourceIdentity, expectedSource, systemIdentifier)
+	if roleMatches && streaming && sourceMatches {
+		return model.Check{Name: name, Status: model.CheckPass, Message: "database identity, streaming state, and replication source are verified"}, false
+	}
+	if !sourceMatches {
+		return model.Check{Name: name, Status: model.CheckFail, Message: "PostgreSQL standby follows a different replication source"}, false
+	}
+	return model.Check{Name: name, Status: model.CheckFail, Message: "PostgreSQL standby streaming state has not converged"}, true
 }

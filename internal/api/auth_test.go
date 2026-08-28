@@ -24,6 +24,8 @@ type authTestClient struct {
 	csrf    string
 }
 
+const apiBootstrapPassword = "API-bootstrap-password-123"
+
 type authMutationRPCStub struct {
 	calls         int
 	path          string
@@ -52,7 +54,7 @@ func newAuthenticationTestServer(t *testing.T) (*Server, *store.Repository, *pla
 		func() time.Time { return time.Date(2026, time.July, 16, 14, 0, 0, 0, time.UTC) },
 		8*time.Hour,
 	)
-	if _, err := service.EnsureBootstrapAdmin(context.Background()); err != nil {
+	if _, err := service.EnsureBootstrapAdmin(context.Background(), apiBootstrapPassword); err != nil {
 		t.Fatalf("bootstrap administrator: %v", err)
 	}
 	registry := adapter.NewRegistry()
@@ -112,7 +114,7 @@ func TestPlatformLoginUsesGenericFailureAndReturnsSanitizedUser(t *testing.T) {
 	client := &authTestClient{handler: server.Handler()}
 	var failureMessage string
 	for _, attempt := range []struct{ username, password string }{
-		{username: "missing", password: "admin123"},
+		{username: "missing", password: apiBootstrapPassword},
 		{username: "admin", password: "wrong-password"},
 	} {
 		response := client.login(t, attempt.username, attempt.password)
@@ -136,7 +138,7 @@ func TestPlatformLoginUsesGenericFailureAndReturnsSanitizedUser(t *testing.T) {
 			t.Fatalf("login failure reveals account state: first=%q second=%q", failureMessage, failure.Message)
 		}
 	}
-	response := client.login(t, "admin", "admin123")
+	response := client.login(t, "admin", apiBootstrapPassword)
 	if response.Code != http.StatusOK {
 		t.Fatalf("login status=%d body=%s", response.Code, response.Body.String())
 	}
@@ -146,7 +148,7 @@ func TestPlatformLoginUsesGenericFailureAndReturnsSanitizedUser(t *testing.T) {
 			t.Fatalf("login response missing %q: %s", expected, body)
 		}
 	}
-	for _, forbidden := range []string{"password_hash", "token_hash", "csrf_hash", "admin123", "cgs_"} {
+	for _, forbidden := range []string{"password_hash", "token_hash", "csrf_hash", apiBootstrapPassword, "cgs_"} {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("login response exposes %q: %s", forbidden, body)
 		}
@@ -169,7 +171,7 @@ func TestPlatformAuthenticationMutationsProxyToRaftLeader(t *testing.T) {
 	WithMutationRPC(rpc)(server)
 
 	client := &authTestClient{handler: server.Handler()}
-	response := client.login(t, "admin", "admin123")
+	response := client.login(t, "admin", apiBootstrapPassword)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"proxied":true`) {
 		t.Fatalf("proxied login status=%d body=%s", response.Code, response.Body.String())
 	}
@@ -210,7 +212,7 @@ func TestPlatformSessionCookiesFollowTrustedTransportConfiguration(t *testing.T)
 	server, _, _ := newAuthenticationTestServer(t)
 	WithSecureCookies(true)(server)
 	client := &authTestClient{handler: server.Handler()}
-	response := client.login(t, "admin", "admin123")
+	response := client.login(t, "admin", apiBootstrapPassword)
 	if response.Code != http.StatusOK {
 		t.Fatalf("login status=%d body=%s", response.Code, response.Body.String())
 	}
@@ -232,8 +234,11 @@ func TestPlatformSessionCookiesFollowTrustedTransportConfiguration(t *testing.T)
 func TestPlatformSessionRequiresPasswordChangeAndCSRFFOrMutation(t *testing.T) {
 	server, _, _ := newAuthenticationTestServer(t)
 	client := &authTestClient{handler: server.Handler()}
-	if response := client.login(t, "admin", "admin123"); response.Code != http.StatusOK {
+	if response := client.login(t, "admin", apiBootstrapPassword); response.Code != http.StatusOK {
 		t.Fatalf("login status=%d body=%s", response.Code, response.Body.String())
+	}
+	if response := client.request(t, http.MethodGet, "/api/v1/clusters", nil, false); response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), `"password_change_required":true`) {
+		t.Fatalf("bootstrap password read status=%d body=%s", response.Code, response.Body.String())
 	}
 	cluster := map[string]interface{}{
 		"display_name": "secured",
@@ -261,11 +266,11 @@ func TestPlatformSessionRequiresPasswordChangeAndCSRFFOrMutation(t *testing.T) {
 func TestPlatformPasswordChangeRevokesSessionAndAllowsRelogin(t *testing.T) {
 	server, repository, _ := newAuthenticationTestServer(t)
 	client := &authTestClient{handler: server.Handler()}
-	if response := client.login(t, "admin", "admin123"); response.Code != http.StatusOK {
+	if response := client.login(t, "admin", apiBootstrapPassword); response.Code != http.StatusOK {
 		t.Fatalf("login status=%d body=%s", response.Code, response.Body.String())
 	}
 	response := client.request(t, http.MethodPost, "/api/v1/auth/password", map[string]string{
-		"current_password": "admin123",
+		"current_password": apiBootstrapPassword,
 		"new_password":     "A-new-secure-password-123",
 	}, true)
 	if response.Code != http.StatusOK {
@@ -353,7 +358,7 @@ func TestPlatformViewerCanReadButCannotMutate(t *testing.T) {
 func TestPlatformLogoutRevokesSession(t *testing.T) {
 	server, _, _ := newAuthenticationTestServer(t)
 	client := &authTestClient{handler: server.Handler()}
-	if response := client.login(t, "admin", "admin123"); response.Code != http.StatusOK {
+	if response := client.login(t, "admin", apiBootstrapPassword); response.Code != http.StatusOK {
 		t.Fatalf("login status=%d body=%s", response.Code, response.Body.String())
 	}
 	if response := client.request(t, http.MethodPost, "/api/v1/auth/logout", map[string]interface{}{}, true); response.Code != http.StatusOK {

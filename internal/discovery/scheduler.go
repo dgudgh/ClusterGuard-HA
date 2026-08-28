@@ -67,7 +67,7 @@ func NewScheduler(clusters ScheduledClusterSource, refresher ScheduledRefresher,
 }
 
 func (scheduler *Scheduler) reportError(err error) {
-	if err != nil && !errors.Is(err, context.Canceled) && scheduler != nil && scheduler.onError != nil {
+	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, ErrPublicationFenceBusy) && scheduler != nil && scheduler.onError != nil {
 		scheduler.onError(err)
 	}
 }

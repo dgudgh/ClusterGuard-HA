@@ -63,6 +63,96 @@ func TestCompareGTIDSetsFindsMissingAndErrantIntervals(t *testing.T) {
 	}
 }
 
+func TestAssessGTIDRecoveryAllowsTransactionsStillAvailableInBinlog(t *testing.T) {
+	current, err := ParseGTIDSet("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:1-120")
+	if err != nil {
+		t.Fatal(err)
+	}
+	purged, err := ParseGTIDSet("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:1-80")
+	if err != nil {
+		t.Fatal(err)
+	}
+	former, err := ParseGTIDSet("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:1-100")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assessment, err := AssessGTIDRecovery(current, purged, former)
+	if err != nil {
+		t.Fatalf("assess GTID recovery: %v", err)
+	}
+	if !assessment.FastRejoinSafe || assessment.MissingTransactions != 20 ||
+		assessment.ErrantTransactions != 0 || assessment.PurgedMissingTransactions != 0 {
+		t.Fatalf("unexpected recovery assessment: %+v", assessment)
+	}
+}
+
+func TestAssessGTIDRecoveryRequiresRebuildWhenNeededTransactionsWerePurged(t *testing.T) {
+	current, err := ParseGTIDSet("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:1-120")
+	if err != nil {
+		t.Fatal(err)
+	}
+	purged, err := ParseGTIDSet("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:1-110")
+	if err != nil {
+		t.Fatal(err)
+	}
+	former, err := ParseGTIDSet("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:1-100")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assessment, err := AssessGTIDRecovery(current, purged, former)
+	if err != nil {
+		t.Fatalf("assess GTID recovery: %v", err)
+	}
+	if assessment.FastRejoinSafe || assessment.MissingTransactions != 20 ||
+		assessment.ErrantTransactions != 0 || assessment.PurgedMissingTransactions != 10 {
+		t.Fatalf("purged recovery gap was not detected: %+v", assessment)
+	}
+}
+
+func TestAssessGTIDRecoveryRejectsErrantFormerPrimary(t *testing.T) {
+	current, err := ParseGTIDSet("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:1-120")
+	if err != nil {
+		t.Fatal(err)
+	}
+	purged, err := ParseGTIDSet("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:1-80")
+	if err != nil {
+		t.Fatal(err)
+	}
+	former, err := ParseGTIDSet("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:1-100,ffffffff-1111-2222-3333-444444444444:1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assessment, err := AssessGTIDRecovery(current, purged, former)
+	if err != nil {
+		t.Fatalf("assess GTID recovery: %v", err)
+	}
+	if assessment.FastRejoinSafe || assessment.ErrantTransactions != 1 {
+		t.Fatalf("errant former primary was not blocked: %+v", assessment)
+	}
+}
+
+func TestAssessGTIDRecoveryRejectsPurgedSetOutsideCurrentHistory(t *testing.T) {
+	current, err := ParseGTIDSet("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:1-100")
+	if err != nil {
+		t.Fatal(err)
+	}
+	purged, err := ParseGTIDSet("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:1-101")
+	if err != nil {
+		t.Fatal(err)
+	}
+	former, err := ParseGTIDSet("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:1-90")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := AssessGTIDRecovery(current, purged, former); err == nil {
+		t.Fatal("purged GTID outside current executed history was accepted")
+	}
+}
+
 func TestLikelyTemporalGTIDSamplingSkewRequiresStrictPrimaryOwnedSuperset(t *testing.T) {
 	primary, err := ParseGTIDSet("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:1-20")
 	if err != nil {
@@ -94,6 +184,14 @@ func TestLikelyTemporalGTIDSamplingSkewRequiresStrictPrimaryOwnedSuperset(t *tes
 			candidatePosition: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:1-21",
 			primaryObserved:   observedAt,
 			candidateObserved: observedAt,
+			want:              true,
+		},
+		{
+			name:              "health timestamps do not reflect GTID query order",
+			candidatePosition: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:1-21",
+			primaryObserved:   observedAt.Add(time.Millisecond),
+			candidateObserved: observedAt,
+			want:              true,
 		},
 		{
 			name:              "missing and additional transactions",

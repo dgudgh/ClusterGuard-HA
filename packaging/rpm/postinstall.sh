@@ -13,19 +13,17 @@ if ! getent passwd clusterguard >/dev/null 2>&1; then
     clusterguard
 fi
 
-install -d -m 0750 -o root -g clusterguard /etc/clusterguard
-install -d -m 0750 -o clusterguard -g clusterguard \
-  /var/lib/clusterguard \
-  /var/log/clusterguard
+install -d -m 0751 -o root -g clusterguard /etc/clusterguard
+install -d -o root -g clusterguard -m 0750 /etc/clusterguard/trust
+install -d -m 0700 -o root -g root /etc/clusterguard/power-snapshots
+install -d -m 0750 -o clusterguard -g clusterguard /var/lib/clusterguard
+install -d -m 0750 -o clusterguard -g clusterguard /var/lib/clusterguard/updates
+install -d -m 0751 -o clusterguard -g clusterguard /var/log/clusterguard
 install -d -m 0700 -o root -g root /var/lib/clusterguard-agent
 install -d -m 0750 -o root -g clusterguard /opt/clusterguard/packages
 
 if command -v systemctl >/dev/null 2>&1; then
   systemctl daemon-reload >/dev/null 2>&1 || :
-  if [ "${1:-1}" -gt 1 ]; then
-    systemctl try-restart clusterguard-ha.service >/dev/null 2>&1 || :
-    systemctl try-restart clusterguard-agent.service >/dev/null 2>&1 || :
-  fi
 fi
 
 printf '%s\n' \

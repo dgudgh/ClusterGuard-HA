@@ -33,10 +33,11 @@ type StateReader interface {
 	Clusters() []model.DatabaseCluster
 	TopologySnapshot(model.ResourceID) (model.TopologySnapshot, bool)
 	Operations(model.ResourceID) []model.OperationRecord
+	HAEndpoints(model.ResourceID) []model.HAEndpoint
 }
 
 type CandidateSelector interface {
-	Select(context.Context, model.DatabaseCluster, model.TopologySnapshot) (model.ResourceID, error)
+	Select(context.Context, model.DatabaseCluster, model.TopologySnapshot, model.ResourceID) (model.ResourceID, error)
 }
 
 type OperationExecutor interface {
@@ -55,6 +56,9 @@ type Controller struct {
 	now           func() time.Time
 	onError       func(error)
 	errorReminder *observability.ErrorReminder
+	recoveryGate  chan struct{}
+	inFlightMu    sync.Mutex
+	inFlight      map[model.ResourceID]struct{}
 }
 
 type Option func(*Controller)
@@ -93,6 +97,8 @@ func NewController(state StateReader, failures FailureEvidence, selector Candida
 		engine: model.EngineMySQL, retryDelay: retryDelay, interval: 5 * time.Second, now: now,
 		onError:       func(err error) { log.Printf("automatic recovery cycle failed: %v", err) },
 		errorReminder: observability.NewErrorReminder(5*time.Minute, now),
+		recoveryGate:  make(chan struct{}, maximumParallelRecoveries),
+		inFlight:      make(map[model.ResourceID]struct{}),
 	}
 	for _, option := range options {
 		if option != nil {
@@ -156,20 +162,23 @@ func (controller *Controller) RunOnce(ctx context.Context) error {
 		return nil
 	}
 	clusters := controller.state.Clusters()
-	gate := make(chan struct{}, maximumParallelRecoveries)
 	errorsFound := make(chan error, len(clusters))
 	var wait sync.WaitGroup
 	for _, cluster := range clusters {
 		if cluster.Engine != controller.engine || !model.ValidResourceID(cluster.ResourceID) {
 			continue
 		}
+		if !controller.beginRecovery(cluster.ResourceID) {
+			continue
+		}
 		cluster := cluster
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
+			defer controller.finishRecovery(cluster.ResourceID)
 			select {
-			case gate <- struct{}{}:
-				defer func() { <-gate }()
+			case controller.recoveryGate <- struct{}{}:
+				defer func() { <-controller.recoveryGate }()
 			case <-ctx.Done():
 				errorsFound <- ctx.Err()
 				return
@@ -188,30 +197,68 @@ func (controller *Controller) RunOnce(ctx context.Context) error {
 	return errors.Join(failures...)
 }
 
+func (controller *Controller) beginRecovery(clusterID model.ResourceID) bool {
+	controller.inFlightMu.Lock()
+	defer controller.inFlightMu.Unlock()
+	if _, found := controller.inFlight[clusterID]; found {
+		return false
+	}
+	controller.inFlight[clusterID] = struct{}{}
+	return true
+}
+
+func (controller *Controller) finishRecovery(clusterID model.ResourceID) {
+	controller.inFlightMu.Lock()
+	defer controller.inFlightMu.Unlock()
+	delete(controller.inFlight, clusterID)
+}
+
 func (controller *Controller) recoverCluster(ctx context.Context, cluster model.DatabaseCluster) error {
 	now := controller.now().UTC()
-	incident, stable := controller.failures.Incident(cluster.ResourceID, now)
-	if !stable {
+	if cluster.RecoveryFreeze {
+		// Planned-shutdown protection: automatic recovery stays frozen for this
+		// cluster until an operator (or the cluster finalize flow) unfreezes it.
 		return nil
 	}
 	snapshot, found := controller.state.TopologySnapshot(cluster.ResourceID)
 	if !found || snapshot.ObservedAt.IsZero() || snapshot.ObservedAt.After(now) || now.Sub(snapshot.ObservedAt) > maximumTopologyAge {
 		return nil
 	}
-	primaryID, safe := failedPrimary(snapshot)
+	operations := controller.state.Operations(cluster.ResourceID)
+	if previous, incidentID, resumable := promotedUnverifiedContinuation(operations, cluster, snapshot); resumable {
+		request := adapter.OperationRequest{
+			Operation: model.Operation{
+				ClusterID: cluster.ResourceID, Engine: cluster.Engine, Kind: model.OperationFailover,
+				RequestedBy: AutomaticRecoveryActor,
+			},
+			TargetID: previous.TargetID, IdempotencyKey: previous.IdempotencyKey,
+			Parameters: map[string]string{"trigger": "resume_promoted_unverified"},
+		}
+		operationContext, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		defer cancel()
+		if _, err := controller.executor.ExecuteAutomatic(operationContext, request, incidentID); err != nil {
+			return fmt.Errorf("resume automatic failover for %s: %w", cluster.ResourceID, err)
+		}
+		return nil
+	}
+	incident, stable := controller.failures.Incident(cluster.ResourceID, now)
+	if !stable {
+		return nil
+	}
+	primaryID, safe := failedPrimary(snapshot, controller.state.HAEndpoints(cluster.ResourceID))
 	if !safe {
 		return nil
 	}
-	targetID, err := controller.selector.Select(ctx, cluster, snapshot)
+	sourcePrefix := automaticFailoverSourcePrefix(cluster.ResourceID, primaryID)
+	targetID, err := controller.selector.Select(ctx, cluster, snapshot, primaryID)
 	if err != nil {
 		return fmt.Errorf("select automatic failover candidate for %s: %w", cluster.ResourceID, err)
 	}
 	if !model.ValidResourceID(targetID) || targetID == primaryID || !snapshotContains(snapshot, targetID) {
 		return nil
 	}
-	sourcePrefix := automaticFailoverSourcePrefix(cluster.ResourceID, primaryID)
 	prefix := automaticFailoverPrefix(cluster.ResourceID, primaryID, incident)
-	attempt, allowed := nextAutomaticAttempt(controller.state.Operations(cluster.ResourceID), primaryID, sourcePrefix, prefix, incident, now, controller.retryDelay)
+	attempt, allowed := nextAutomaticAttempt(operations, primaryID, sourcePrefix, prefix, incident, now, controller.retryDelay)
 	if !allowed {
 		return nil
 	}
@@ -220,7 +267,7 @@ func (controller *Controller) recoverCluster(ctx context.Context, cluster model.
 			ClusterID: cluster.ResourceID, Engine: cluster.Engine, Kind: model.OperationFailover,
 			RequestedBy: AutomaticRecoveryActor,
 		},
-		TargetID: targetID, IdempotencyKey: prefix + strconv.Itoa(attempt),
+		SourceID: primaryID, TargetID: targetID, IdempotencyKey: prefix + strconv.Itoa(attempt),
 		Parameters: map[string]string{"trigger": "stable_primary_failure"},
 	}
 	operationContext, cancel := context.WithTimeout(ctx, 5*time.Minute)
@@ -233,7 +280,54 @@ func (controller *Controller) recoverCluster(ctx context.Context, cluster model.
 	return nil
 }
 
-func failedPrimary(snapshot model.TopologySnapshot) (model.ResourceID, bool) {
+func promotedUnverifiedContinuation(operations []model.OperationRecord, cluster model.DatabaseCluster, snapshot model.TopologySnapshot) (model.OperationRecord, string, bool) {
+	var selected model.OperationRecord
+	incidentID := ""
+	for _, operation := range operations {
+		sourceID := operation.Plan.SourceID
+		sourceFailed := false
+		for _, instance := range snapshot.Instances {
+			if instance.ResourceID == sourceID && (instance.Health.State == model.HealthUnhealthy || instance.Health.State == model.HealthUnknown) {
+				sourceFailed = true
+				break
+			}
+		}
+		sourcePrefix := automaticFailoverSourcePrefix(cluster.ResourceID, sourceID)
+		if operation.Status != model.OperationIndeterminate || operation.FailureClass != "promoted_unverified" ||
+			operation.Operation.Kind != model.OperationFailover || operation.Operation.RequestedBy != AutomaticRecoveryActor ||
+			operation.Operation.ClusterID != cluster.ResourceID || operation.Operation.Engine != cluster.Engine ||
+			!strings.HasPrefix(operation.IdempotencyKey, sourcePrefix) || !model.ValidResourceID(operation.ResourceID) ||
+			!model.ValidResourceID(sourceID) || operation.Plan.TargetID != operation.TargetID || !sourceFailed ||
+			!model.ValidResourceID(operation.TargetID) || operation.TargetID == sourceID || !snapshotContains(snapshot, operation.TargetID) {
+			continue
+		}
+		newerTerminalOperation := false
+		for _, candidate := range operations {
+			if candidate.Status == model.OperationSucceeded && candidate.UpdatedAt.After(operation.UpdatedAt) &&
+				(candidate.Operation.Kind == model.OperationFailover || candidate.Operation.Kind == model.OperationSwitchover) {
+				newerTerminalOperation = true
+				break
+			}
+		}
+		if newerTerminalOperation {
+			continue
+		}
+		separator := strings.LastIndex(operation.IdempotencyKey, ":")
+		if separator <= 0 {
+			continue
+		}
+		if _, err := strconv.Atoi(operation.IdempotencyKey[separator+1:]); err != nil {
+			continue
+		}
+		if selected.ResourceID == "" || operation.UpdatedAt.After(selected.UpdatedAt) {
+			selected = operation
+			incidentID = operation.IdempotencyKey[:separator]
+		}
+	}
+	return selected, incidentID, selected.ResourceID != ""
+}
+
+func failedPrimary(snapshot model.TopologySnapshot, haEndpoints []model.HAEndpoint) (model.ResourceID, bool) {
 	primaryID := model.ResourceID("")
 	for _, instance := range snapshot.Instances {
 		if instance.Role != model.RolePrimary {
@@ -244,7 +338,46 @@ func failedPrimary(snapshot model.TopologySnapshot) (model.ResourceID, bool) {
 		}
 		primaryID = instance.ResourceID
 	}
-	return primaryID, model.ValidResourceID(primaryID)
+	if model.ValidResourceID(primaryID) {
+		return primaryID, true
+	}
+
+	// Discovery deliberately clears a failed instance's runtime role instead of
+	// presenting stale primary state. The persisted HA endpoint owner remains the
+	// authoritative failed-source identity, but it is usable only with fresh,
+	// explicit database-unavailable evidence from the same topology snapshot.
+	for _, endpoint := range haEndpoints {
+		if endpoint.ClusterID != snapshot.ClusterID || endpoint.DesiredRole != model.RolePrimary || !model.ValidResourceID(endpoint.OwnerID) {
+			continue
+		}
+		if primaryID != "" && primaryID != endpoint.OwnerID {
+			return "", false
+		}
+		primaryID = endpoint.OwnerID
+	}
+	if !model.ValidResourceID(primaryID) {
+		return "", false
+	}
+	for _, instance := range snapshot.Instances {
+		if instance.ResourceID != primaryID {
+			continue
+		}
+		if instance.Health.State != model.HealthUnhealthy && instance.Health.State != model.HealthUnknown {
+			return "", false
+		}
+		return primaryID, hasCurrentDatabaseFailure(snapshot, primaryID)
+	}
+	return "", false
+}
+
+func hasCurrentDatabaseFailure(snapshot model.TopologySnapshot, instanceID model.ResourceID) bool {
+	for _, probe := range snapshot.Probes {
+		if probe.InstanceID != instanceID || probe.Outcome != model.ProbeOutcomeDatabaseUnavailable {
+			continue
+		}
+		return !probe.Health.ObservedAt.IsZero() && probe.Health.ObservedAt.Equal(snapshot.ObservedAt)
+	}
+	return false
 }
 
 func snapshotContains(snapshot model.TopologySnapshot, instanceID model.ResourceID) bool {
@@ -275,7 +408,11 @@ func nextAutomaticAttempt(operations []model.OperationRecord, sourceID model.Res
 		case model.OperationPlanned, model.OperationRunning, model.OperationSucceeded, model.OperationIndeterminate:
 			return next, false
 		case model.OperationBlocked, model.OperationFailed, model.OperationUnsupported:
-			if operation.UpdatedAt.IsZero() || operation.UpdatedAt.After(now) || now.Sub(operation.UpdatedAt) < retryDelay {
+			operationRetryDelay := retryDelay
+			if operation.FailureClass == "pre_commit" && strings.Contains(strings.ToLower(operation.Message), "topology observation changed") && operationRetryDelay > 2*time.Second {
+				operationRetryDelay = 2 * time.Second
+			}
+			if operation.UpdatedAt.IsZero() || operation.UpdatedAt.After(now) || now.Sub(operation.UpdatedAt) < operationRetryDelay {
 				return next, false
 			}
 		default:
@@ -305,15 +442,24 @@ func (controller *Controller) Run(ctx context.Context) {
 	if ctx == nil {
 		return
 	}
-	controller.reportError(controller.RunOnce(ctx))
+	var cycles sync.WaitGroup
+	runCycle := func() {
+		cycles.Add(1)
+		go func() {
+			defer cycles.Done()
+			controller.reportError(controller.RunOnce(ctx))
+		}()
+	}
+	runCycle()
 	ticker := time.NewTicker(controller.interval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
+			cycles.Wait()
 			return
 		case <-ticker.C:
-			controller.reportError(controller.RunOnce(ctx))
+			runCycle()
 		}
 	}
 }

@@ -107,6 +107,25 @@ func (controller *PostgreSQLLocalController) Status(ctx context.Context, policy 
 	}
 }
 
+func (controller *PostgreSQLLocalController) StandbyIntent(policy ClusterPolicy) (bool, error) {
+	dataDirectory, err := safePostgreSQLDataDirectory(policy.PostgreSQLDataDirectory)
+	if err != nil {
+		return false, err
+	}
+	marker := filepath.Join(dataDirectory, "standby.signal")
+	info, err := os.Lstat(marker)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect PostgreSQL standby signal: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return false, fmt.Errorf("PostgreSQL standby signal must be a regular file")
+	}
+	return true, nil
+}
+
 func (controller *PostgreSQLLocalController) Stop(ctx context.Context, policy ClusterPolicy) error {
 	if _, err := controller.runner.Run(ctx, controller.systemctlBinary, "stop", policy.PostgreSQLService); err != nil {
 		return fmt.Errorf("stop PostgreSQL service: %w", err)
@@ -180,6 +199,9 @@ func (controller *PostgreSQLLocalController) Promote(ctx context.Context, policy
 	if _, err := controller.psql(ctx, policy, "ALTER SYSTEM RESET primary_conninfo"); err != nil {
 		return fmt.Errorf("clear PostgreSQL upstream connection after promotion: %w", err)
 	}
+	if _, err := controller.psql(ctx, policy, "ALTER SYSTEM RESET primary_slot_name"); err != nil {
+		return fmt.Errorf("clear PostgreSQL upstream replication slot after promotion: %w", err)
+	}
 	if _, err := controller.psql(ctx, policy, "ALTER SYSTEM RESET clusterguard.primary_node_id"); err != nil {
 		return fmt.Errorf("clear PostgreSQL upstream identity after promotion: %w", err)
 	}
@@ -187,13 +209,15 @@ func (controller *PostgreSQLLocalController) Promote(ctx context.Context, policy
 		return fmt.Errorf("reload PostgreSQL configuration after promotion: %w", err)
 	}
 	settings, err := controller.psql(ctx, policy,
-		"SELECT COALESCE(current_setting('primary_conninfo', true), '') || E'\\t' || COALESCE(current_setting('clusterguard.primary_node_id', true), '')",
+		"SELECT COALESCE(current_setting('primary_conninfo', true), '') || E'\\t' || "+
+			"COALESCE(current_setting('primary_slot_name', true), '') || E'\\t' || "+
+			"COALESCE(current_setting('clusterguard.primary_node_id', true), '')",
 	)
 	if err != nil {
 		return fmt.Errorf("verify PostgreSQL upstream configuration after promotion: %w", err)
 	}
-	parts := strings.SplitN(strings.TrimRight(string(settings), "\r\n"), "\t", 2)
-	if len(parts) != 2 || strings.TrimSpace(parts[0]) != "" || strings.TrimSpace(parts[1]) != "" {
+	parts := strings.Split(strings.TrimRight(string(settings), "\r\n"), "\t")
+	if len(parts) != 3 || strings.TrimSpace(parts[0]) != "" || strings.TrimSpace(parts[1]) != "" || strings.TrimSpace(parts[2]) != "" {
 		return fmt.Errorf("PostgreSQL promotion left stale upstream configuration")
 	}
 	return nil
@@ -260,6 +284,9 @@ func (controller *PostgreSQLLocalController) Repoint(ctx context.Context, policy
 	}
 	if _, err := controller.psql(ctx, policy, "ALTER SYSTEM SET primary_conninfo = "+postgresqlSQLLiteral(connection)); err != nil {
 		return fmt.Errorf("update PostgreSQL primary connection: %w", err)
+	}
+	if _, err := controller.psql(ctx, policy, "ALTER SYSTEM RESET primary_slot_name"); err != nil {
+		return fmt.Errorf("clear PostgreSQL primary replication slot: %w", err)
 	}
 	if _, err := controller.psql(ctx, policy, "ALTER SYSTEM SET clusterguard.primary_node_id = "+postgresqlSQLLiteral(string(source.NodeID))); err != nil {
 		return fmt.Errorf("update PostgreSQL primary node identity: %w", err)
@@ -375,8 +402,12 @@ func appendPostgreSQLRecoveryIdentity(path, connection string, policy ClusterPol
 	}
 	configuration := "\n# Managed by ClusterGuard HA.\n" +
 		"clusterguard.node_id = " + postgresqlSQLLiteral(string(policy.PostgreSQLNodeID)) + "\n" +
-		"clusterguard.primary_node_id = " + postgresqlSQLLiteral(string(source.NodeID)) + "\n" +
-		"primary_conninfo = " + postgresqlSQLLiteral(connection) + "\n"
+		"clusterguard.primary_node_id = " + postgresqlSQLLiteral(string(source.NodeID)) + "\n"
+	if hostname := strings.TrimSpace(policy.PostgreSQLHostname); hostname != "" {
+		configuration += "clusterguard.hostname = " + postgresqlSQLLiteral(hostname) + "\n"
+	}
+	configuration += "primary_conninfo = " + postgresqlSQLLiteral(connection) + "\n"
+	configuration += "primary_slot_name = ''\n"
 	if _, err := file.WriteString(configuration); err != nil {
 		_ = file.Close()
 		return fmt.Errorf("write PostgreSQL recovery configuration: %w", err)

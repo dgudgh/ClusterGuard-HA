@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="Release 2.2.39 - ClusterGuard HA operational documentation">
+  <title>Release 2.2.39 | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">Skip to content</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>Search documentation</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="Filter by title">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.2.39.html" data-doc-title="release 2.2.39" aria-current="page" class="active">Release 2.2.39</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="docker-swarm-mysql.html" data-doc-title="docker swarm mysql">Docker Swarm MySQL</a><a href="kubernetes-mysql.html" data-doc-title="kubernetes mysql">Kubernetes MySQL</a><a href="update-and-patch.html" data-doc-title="version update and rollback">Version Update and Rollback</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="postgresql-production-qualification.html" data-doc-title="postgresql 16.4 production qualification">PostgreSQL 16.4 Production Qualification</a><a href="docker-swarm-mysql-validation.html" data-doc-title="docker swarm mysql lab qualification">Docker Swarm MySQL Lab Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
+      <div class="sidebar-meta">
+        <span>Offline documentation build</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">Open navigation</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>Release 2.2.39</strong></div>
+        <div class="header-actions">
+          <a href="../zh-CN/release-2.2.39.html" lang="zh-CN">简体中文</a>
+          <button id="print-button" type="button">Print</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha-2-2-39-release-notes">ClusterGuard HA 2.2.39 Release Notes<a class="heading-anchor" href="#clusterguard-ha-2-2-39-release-notes" aria-label="Link to ClusterGuard HA 2.2.39 Release Notes">#</a></h1>
+<p>Release date: 2026-08-28</p>
+<p><code>v2.2.39</code> is the first formal release of the ClusterGuard HA 2.2 line. It retains the MySQL HA capabilities of 2.1 and adds native PostgreSQL 16.4 HA, Docker Swarm database adoption, a Kubernetes writer-endpoint provider, graphical software updates, and runtime-aware node identity.</p>
+<h2 id="release-artifacts">Release Artifacts<a class="heading-anchor" href="#release-artifacts" aria-label="Link to Release Artifacts">#</a></h2>
+<ul>
+<li><code>clusterguard-ha-2.2-39-offline-linux-x86_64.tar.gz</code> for installation, reinstallation, and offline deployment;</li>
+<li><code>clusterguard-ha-2.2-39.x86_64.rpm</code> containing the controllers, Agent, update helper, and operational scripts;</li>
+<li><code>clusterguard-ha-2.2-38_to_2.2-39.x86_64.cgupgrade</code> for signed rolling updates from the formal <code>2.2-38</code> release only;</li>
+<li>a <code>.sha256</code> file for every artifact and these release notes.</li>
+</ul>
+<p><code>.cgupgrade</code> is a complete signed rolling-update package, not a small binary delta. It contains the target RPM, rollback RPM, compatibility contract, SHA-256 checksums, and release signature. The full offline archive is for installation or reinstallation and cannot be uploaded directly to the Version Update page.</p>
+<h2 id="major-capabilities">Major Capabilities<a class="heading-anchor" href="#major-capabilities" aria-label="Link to Major Capabilities">#</a></h2>
+<ul>
+<li>MySQL 5.7, 8.0, 8.4, and approved compatible distributions: discovery, planned switchover, automatic failover, exclusive VIP ownership, former-primary recovery, and node lifecycle;</li>
+<li>PostgreSQL 16.4: native identity, streaming replication, WAL/timeline evidence, planned switchover, failover, <code>pg_rewind</code>/<code>pg_basebackup</code>, and former-primary rejoin;</li>
+<li>three-node Raft control plane, mutual TLS, Leader quorum verification, durable operation state, approval, audit, and fail-closed Safety Guard;</li>
+<li>Docker Swarm MySQL and PostgreSQL with fixed service slots, host Agents, a host VIP, and runtime-specific operations;</li>
+<li>Kubernetes selectorless Service/EndpointSlice writer ingress, RBAC, runtime bindings, and a fail-closed start guard;</li>
+<li>graphical signed updates, read-only planning, Follower-to-Leader rolling order, resume, automatic rollback, and update history;</li>
+<li>authenticated console, mandatory first-login password change, role enforcement, CSRF, operation review, and bilingual offline documentation.</li>
+</ul>
+<h2 id="qualification-boundary">Qualification Boundary<a class="heading-anchor" href="#qualification-boundary" aria-label="Link to Qualification Boundary">#</a></h2>
+<ul>
+<li>Native MySQL and PostgreSQL 16.4 have three-node laboratory evidence covering switching, failure, former-primary recovery, network partition, quorum loss, and VIP uniqueness;</li>
+<li>Docker Swarm support is implemented and laboratory-tested, but each site must requalify its exact image, volume, port mapping, and network;</li>
+<li>Kubernetes support has code-level automated tests but no real-cluster production qualification report;</li>
+<li>Oracle Data Guard Broker and SQL Server Always On remain separate future product lines and are not formal capabilities of this release.</li>
+</ul>
+<h2 id="installation-and-update">Installation and Update<a class="heading-anchor" href="#installation-and-update" aria-label="Link to Installation and Update">#</a></h2>
+<p>Install with the full offline archive:</p>
+<pre><code class="language-bash">tar -xzf clusterguard-ha-2.2-39-offline-linux-x86_64.tar.gz
+cd clusterguard-ha-2.2-39-offline-linux-x86_64
+./install_clusterguard.sh --help
+</code></pre>
+<p>A formal <code>2.2-38</code> cluster can upload the <code>.cgupgrade</code> from the same GitHub Release under <strong>Settings → Version Update</strong>, generate a plan, and then execute the rolling update.</p>
+<blockquote>
+<p><strong>Important: automatic failover is unavailable while a system update is in progress. Monitor the platform and database service throughout the maintenance window.</strong></p>
+</blockquote>
+<p>The laboratory-only <code>2.2-38.field3</code> binary is not a formal RPM release: the RPM database still reports <code>2.2-38</code>, so it does not satisfy the exact source-version contract. Restore that environment to a traceable RPM through the bridge procedure or redeploy <code>2.2.39</code>; do not bypass version checks.</p>
+<p>See the <a href="offline-rpm-install.html">Offline Installation Guide</a> and <a href="update-and-patch.html">Version Update and Rollback Guide</a>.</p>
+<h2 id="release-verification">Release Verification<a class="heading-anchor" href="#release-verification" aria-label="Link to Release Verification">#</a></h2>
+<p>Download formal artifacts from GitHub Release and verify each adjacent <code>.sha256</code> file. Tags, attachments, and checksums are immutable; any code, script, or documentation change requires a new version.</p>
+
+          <footer class="document-footer">
+            <span>Source: <code>docs/en-US/release-2.2.39.md</code></span>
+            <a href="../index.html">Documentation language home</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="On this page">
+          <strong>On this page</strong>
+          <a class="toc-level-2" href="#release-artifacts">Release Artifacts</a><a class="toc-level-2" href="#major-capabilities">Major Capabilities</a><a class="toc-level-2" href="#qualification-boundary">Qualification Boundary</a><a class="toc-level-2" href="#installation-and-update">Installation and Update</a><a class="toc-level-2" href="#release-verification">Release Verification</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

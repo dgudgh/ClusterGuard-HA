@@ -115,10 +115,10 @@ CREATE ROLE clusterguard_repl WITH REPLICATION LOGIN PASSWORD '<random-replicati
 ```json
 "postgresql": {
   "enabled": true,
-  "discovery_interval_seconds": 5,
-  "discovery_timeout_seconds": 4,
+  "discovery_interval_seconds": 1,
+  "discovery_timeout_seconds": 1,
   "automatic_failover_enabled": false,
-  "automatic_failover_interval_seconds": 5,
+  "automatic_failover_interval_seconds": 1,
   "automatic_failover_retry_seconds": 30,
   "discovery": {
     "username": "cg_monitor",
@@ -142,7 +142,9 @@ CREATE ROLE clusterguard_repl WITH REPLICATION LOGIN PASSWORD '<random-replicati
 
 ### 自动故障转移合同
 
-在以下破坏性资格矩阵通过后，仅设置 `automatic_failover_enabled`，用于生产中使用的具体 PostgreSQL 包、服务单元、网络、存储和隔离提供程序。在默认节奏下，控制器需要连续六次失败的主节点观察，给出 30 秒的稳定故障窗口，然后评估接管。
+只有生产现场使用的 PostgreSQL 包、服务单元、网络、存储和隔离方式通过下述破坏性验收矩阵后，才能设置 `automatic_failover_enabled`。默认节奏下，控制器需要连续 3 次主库失败观测且时间跨度不少于 3 秒，才会评估接管。这里的 3 秒是故障证据窗口，不是端到端 RTO 承诺。Agent 另有 15 秒授权失效隔离宽限，用来防止失联旧主继续持有写角色或 VIP。
+
+PostgreSQL 16.4 实验室验收中，客户端使用 `connect_timeout=2` 时，写入口中断实测为 17.973 秒。未设置有界连接超时时，曾有一次连接调用阻塞约 32 秒，尽管控制面操作更早完成。因此生产连接串必须设置有界连接超时和重试策略，并从应用写入口测量 RTO，不能只看审计时间。
 
 PostgreSQL 恢复控制器与 MySQL 控制器隔离。它仅从相同的 `system_identifier` 中选择一个排名为一的备用节点，具有当前探测证据、匹配的上游节点 UUID 和时间线、活跃的 WAL 接收和重放、已知零重放延迟。在晋升前，它需要 Raft Leader和多数权限，以及通过签名的 Agent 或外部隔离验证的旧主节点隔离。然后它遵循通用的安全保护、操作锁、内部一次性事件审批、执行、验证、审计和报告流水线。
 

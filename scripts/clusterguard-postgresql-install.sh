@@ -12,7 +12,7 @@ cleanup() {
 chmod 0600 "${payload}"
 trap cleanup EXIT
 cat >"${payload}"
-jq -e '.target.node_id and .target.node_name and .target.hostname and .target.postgresql_version and .target.postgresql_port and .secrets.postgresql_admin_password' "${payload}" >/dev/null
+jq -e '.target.node_id and .target.node_name and .target.hostname and .target.postgresql_version and .target.postgresql_port and .secrets.postgresql_admin_password and .secrets.postgresql_replication_password' "${payload}" >/dev/null
 
 node_id="$(jq -r '.target.node_id' "${payload}")"
 node_name="$(jq -r '.target.node_name' "${payload}")"
@@ -23,6 +23,8 @@ port="$(jq -r '.target.postgresql_port' "${payload}")"
 package_path="$(jq -r '.target.package_path // ""' "${payload}")"
 rebuild="$(jq -r '.target.rebuild // false' "${payload}")"
 admin_secret="$(jq -r '.secrets.postgresql_admin_password' "${payload}")"
+replication_secret="$(jq -r '.secrets.postgresql_replication_password' "${payload}")"
+replication_user="clusterguard_repl"
 requested_service="$(jq -r '.target.postgresql_service // ""' "${payload}")"
 requested_data_directory="$(jq -r '.target.postgresql_data_directory // ""' "${payload}")"
 
@@ -35,7 +37,7 @@ valid_platform_uuid "${node_id}" || { echo "invalid PostgreSQL platform node ide
 [[ "${hostname_value}" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "invalid PostgreSQL hostname" >&2; exit 2; }
 [[ "${requested_version}" =~ ^[0-9]+([.][0-9]+)*$ ]] || { echo "invalid PostgreSQL version" >&2; exit 2; }
 [[ "${port}" =~ ^[0-9]+$ && "${port}" -ge 1 && "${port}" -le 65535 ]] || { echo "invalid PostgreSQL port" >&2; exit 2; }
-[[ -n "${admin_secret}" ]] || { echo "PostgreSQL administrator credential is required" >&2; exit 2; }
+[[ -n "${admin_secret}" && -n "${replication_secret}" ]] || { echo "PostgreSQL administrator and replication credentials are required" >&2; exit 2; }
 
 install_root="/opt/clusterguard/postgresql/${port}"
 software_root="${install_root}/software"
@@ -66,16 +68,33 @@ pgpass_escape() {
 }
 
 mkdir -p "${config_directory}" "${log_directory}" "${run_directory}" "$(dirname "${data_directory}")" "${install_root}"
-chmod 0750 "${config_directory}" "${log_directory}" "$(dirname "${data_directory}")"
+chmod 0750 "${config_directory}" "${log_directory}"
+chmod 0750 "$(dirname "${data_directory}")"
+# PostgreSQL credentials remain private to postgres. The product root grants
+# execute-only traversal to other service accounts without exposing listings.
+chmod 0751 /etc/clusterguard
+# PostgreSQL owns only its leaf log directory. Parent directories expose
+# traversal, not directory listings or file contents, to the service account.
+chmod 0751 /var/log/clusterguard "$(dirname "${log_directory}")"
 if ! getent group postgres >/dev/null 2>&1; then groupadd --system postgres; fi
 if ! id postgres >/dev/null 2>&1; then useradd --system --gid postgres --home-dir /var/lib/postgresql --shell /sbin/nologin postgres; fi
+if ! getent group clusterguard >/dev/null 2>&1; then groupadd --system clusterguard; fi
+usermod -a -G clusterguard postgres
 chown root:postgres "${config_directory}"
+# pg_basebackup is activated with an atomic sibling-directory swap. PostgreSQL
+# therefore owns the managed PGDATA parent, while the parent remains private.
+chown postgres:postgres "$(dirname "${data_directory}")"
 
 umask 077
 printf '127.0.0.1:%s:*:postgres:%s\n' "${port}" "$(pgpass_escape "${admin_secret}")" >"${pass_file}"
 printf '*:*:*:postgres:%s\n' "$(pgpass_escape "${admin_secret}")" >>"${pass_file}"
+printf '*:*:*:%s:%s\n' "${replication_user}" "$(pgpass_escape "${replication_secret}")" >>"${pass_file}"
 chmod 0600 "${pass_file}"
 chown postgres:postgres "${pass_file}"
+runuser -u postgres -- test -r "${pass_file}" || {
+  echo "PostgreSQL service account cannot read its protected passfile" >&2
+  exit 3
+}
 
 managed_psql="${software_root}/bin/psql"
 psql_binary=""
@@ -115,8 +134,23 @@ if [[ -z "${package_path}" && "${rebuild}" == "true" && -f "${data_directory}/PG
 fi
 
 [[ -n "${package_path}" && -f "${package_path}" ]] || { echo "a local PostgreSQL binary package is required" >&2; exit 3; }
-if tar -tf "${package_path}" | awk '/(^\/|(^|\/)\.\.($|\/))/{bad=1} END{exit !bad}'; then
-  echo "PostgreSQL package contains an unsafe archive path" >&2
+tar -tf "${package_path}" >/dev/null 2>&1 || { echo "PostgreSQL package is not a readable tar archive" >&2; exit 3; }
+if ! tar -tf "${package_path}" | awk '
+  /(^\/|(^|\/)\.\.($|\/))/ {bad=1}
+  {
+    original=$0
+    path=$0
+    sub(/^\.\//, "", path)
+    sub(/\/$/, "", path)
+    if (path == "") next
+    count=split(path, parts, "/")
+    if (root == "") root=parts[1]
+    if (parts[1] != root) bad=1
+    if (count == 1 && original !~ /\/$/) bad=1
+  }
+  END {exit !(root != "" && !bad)}
+'; then
+  echo "PostgreSQL package must contain one safe top-level directory" >&2
   exit 3
 fi
 
@@ -127,10 +161,15 @@ if [[ -f "${data_directory}/PG_VERSION" ]]; then
 else
   mkdir -p "${data_directory}"
 fi
+install -d -m 0750 -o postgres -g postgres "${run_directory}"
 
 rm -rf "${software_root}"
 mkdir -p "${software_root}"
-tar -xf "${package_path}" -C "${software_root}" --strip-components=1
+tar --no-same-owner --no-same-permissions -xf "${package_path}" -C "${software_root}" --strip-components=1
+# The installer runs with umask 077. Preserve that extraction boundary, then
+# expose only read/traverse and package-declared execute bits to the postgres
+# service account. Database data and credentials remain outside this tree.
+chmod -R a+rX "${software_root}"
 for binary in initdb postgres psql pg_ctl pg_basebackup pg_rewind pg_controldata; do
   [[ -x "${software_root}/bin/${binary}" ]] || { echo "PostgreSQL package does not contain ${binary}" >&2; exit 3; }
 done
@@ -142,6 +181,7 @@ if [[ ! -f "${data_directory}/PG_VERSION" ]]; then
   init_secret_file="$(mktemp /tmp/clusterguard-postgresql-init.XXXXXX)"
   chmod 0600 "${init_secret_file}"
   printf '%s\n' "${admin_secret}" >"${init_secret_file}"
+  chown postgres:postgres "${init_secret_file}"
   chown -R postgres:postgres "${data_directory}" "${log_directory}" "${run_directory}"
   runuser -u postgres -- "${software_root}/bin/initdb" --pgdata="${data_directory}" --username=postgres \
     --pwfile="${init_secret_file}" --auth-local=peer --auth-host=scram-sha-256 --encoding=UTF8 >/dev/null
@@ -176,6 +216,8 @@ hot_standby = on
 wal_log_hints = on
 max_wal_senders = 16
 max_replication_slots = 16
+wal_receiver_timeout = '5s'
+wal_retrieve_retry_interval = '1s'
 password_encryption = 'scram-sha-256'
 unix_socket_directories = '${run_directory}'
 logging_collector = on
@@ -206,6 +248,7 @@ Wants=network-online.target
 Type=simple
 User=postgres
 Group=postgres
+SupplementaryGroups=clusterguard
 RuntimeDirectory=clusterguard/postgresql/${port}
 RuntimeDirectoryMode=0750
 ExecStart=${software_root}/bin/postgres -D ${data_directory}

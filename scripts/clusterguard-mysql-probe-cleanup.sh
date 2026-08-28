@@ -24,7 +24,7 @@ legacy_probe_schemas=(
 mysql_args=(--protocol=tcp --host="${host}" --port="${port}" --batch --skip-column-names)
 if [[ -n "${defaults_file}" ]]; then
   [[ -f "${defaults_file}" ]] || { echo "defaults file does not exist" >&2; exit 2; }
-  mysql_args=(--defaults-extra-file="${defaults_file}" "${mysql_args[@]}")
+  mysql_args=(--defaults-file="${defaults_file}" "${mysql_args[@]}")
 else
   [[ -n "${user}" ]] || { echo "MySQL user is required" >&2; exit 2; }
   mysql_args+=(--user="${user}")

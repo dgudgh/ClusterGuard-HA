@@ -26,7 +26,16 @@ func (service *Service) Verify(ctx context.Context, request adapter.OperationReq
 	if !found {
 		return model.Verification{}, fmt.Errorf("operation does not exist")
 	}
-	candidate, found := service.registry.Get(record.Operation.Engine)
+	// A successful durable operation already owns immutable verification
+	// evidence. Re-running the adapter against the post-operation topology can
+	// invalidate the original observation token and incorrectly turn a proven
+	// success into a verification failure. Only indeterminate operations need a
+	// fresh probe; completed operations return their persisted evidence.
+	if record.Status == model.OperationSucceeded && record.Verification.Passed &&
+		record.Verification.OperationID == record.ResourceID {
+		return record.Verification, nil
+	}
+	candidate, found := service.resolveAdapter(record.Operation)
 	if !found || !candidate.Capabilities(ctx).Supports(adapter.CapabilityVerify) {
 		return model.Verification{}, adapter.ErrUnsupported
 	}
@@ -119,7 +128,7 @@ func (service *Service) prepare(ctx context.Context, request adapter.OperationRe
 	request.Operation = record.Operation
 	request.Operation.ResourceID = record.ResourceID
 	request.TargetID = record.TargetID
-	candidate, found := service.registry.Get(request.Operation.Engine)
+	candidate, found := service.resolveAdapter(request.Operation)
 	if !found || !candidate.Capabilities(ctx).Supports(adapter.CapabilityPrecheck) {
 		return record, nil, model.OperationPlan{}, adapter.ErrUnsupported
 	}

@@ -34,19 +34,21 @@ func (OSProcessRunner) Run(ctx context.Context, input []byte, name string, argum
 }
 
 type SSHAgentTransportConfig struct {
-	SSHBinary       string
-	User            string
-	IdentityFile    string
-	KnownHostsFile  string
-	AgentBinary     string
-	AgentConfigPath string
-	CommandTimeout  time.Duration
-	MutationTimeout time.Duration
+	SSHBinary             string
+	User                  string
+	IdentityFile          string
+	KnownHostsFile        string
+	AgentBinary           string
+	AgentConfigPath       string
+	CommandTimeout        time.Duration
+	MutationTimeout       time.Duration
+	MaxConcurrentSessions int
 }
 
 type SSHAgentTransport struct {
 	configuration SSHAgentTransportConfig
 	runner        ProcessRunner
+	sessions      chan struct{}
 }
 
 func NewSSHAgentTransport(configuration SSHAgentTransportConfig, runner ProcessRunner) (*SSHAgentTransport, error) {
@@ -71,16 +73,27 @@ func NewSSHAgentTransport(configuration SSHAgentTransportConfig, runner ProcessR
 	if configuration.MutationTimeout <= 0 {
 		configuration.MutationTimeout = 30 * time.Minute
 	}
+	if configuration.MaxConcurrentSessions <= 0 {
+		configuration.MaxConcurrentSessions = 4
+	}
+	if configuration.MaxConcurrentSessions > 32 {
+		return nil, fmt.Errorf("maximum concurrent SSH sessions must not exceed 32")
+	}
 	if configuration.User == "" || configuration.IdentityFile == "" || configuration.KnownHostsFile == "" || runner == nil {
 		return nil, fmt.Errorf("SSH agent transport configuration is incomplete")
 	}
-	return &SSHAgentTransport{configuration: configuration, runner: runner}, nil
+	return &SSHAgentTransport{
+		configuration: configuration,
+		runner:        runner,
+		sessions:      make(chan struct{}, configuration.MaxConcurrentSessions),
+	}, nil
 }
 
 func (transport *SSHAgentTransport) Send(ctx context.Context, instance model.DatabaseInstance, request agent.Request) (agent.Response, error) {
 	timeout := transport.configuration.CommandTimeout
 	switch {
-	case postgresqlAgentMutationCommand(request.Command) || request.Command == agent.CommandOracleBrokerSwitchover:
+	case postgresqlAgentMutationCommand(request.Command) || request.Command == agent.CommandOracleBrokerSwitchover ||
+		powerAgentMutationCommand(request.Command):
 		timeout = transport.configuration.MutationTimeout
 	case request.Command == agent.CommandOracleBrokerDiscover || request.Command == agent.CommandOracleBrokerStatus:
 		if timeout < oracleBrokerQueryTimeout {
@@ -115,6 +128,12 @@ func (transport *SSHAgentTransport) Send(ctx context.Context, instance model.Dat
 		transport.configuration.User + "@" + host,
 		transport.configuration.AgentBinary, "--config", transport.configuration.AgentConfigPath,
 	}
+	select {
+	case transport.sessions <- struct{}{}:
+		defer func() { <-transport.sessions }()
+	case <-commandContext.Done():
+		return agent.Response{}, commandContext.Err()
+	}
 	output, err := transport.runner.Run(commandContext, contents, transport.configuration.SSHBinary, arguments...)
 	if err != nil {
 		return agent.Response{}, err
@@ -129,6 +148,19 @@ func (transport *SSHAgentTransport) Send(ctx context.Context, instance model.Dat
 		return agent.Response{}, fmt.Errorf("agent response contains multiple JSON values")
 	}
 	return response, nil
+}
+
+// powerAgentMutationCommand reports whether the command mutates the database
+// service or the host itself and therefore deserves the long mutation timeout:
+// service stop/start can wait on the service manager and poweroff may stall the
+// SSH session while the host drains.
+func powerAgentMutationCommand(command string) bool {
+	switch command {
+	case agent.CommandMySQLServiceStop, agent.CommandMySQLServiceStart, agent.CommandNodePoweroff:
+		return true
+	default:
+		return false
+	}
 }
 
 func postgresqlAgentMutationCommand(command string) bool {

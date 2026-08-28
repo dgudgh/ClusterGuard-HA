@@ -73,6 +73,28 @@ func TestQueryCommandSpecUsesIPAddressAndBoundedTimeout(t *testing.T) {
 	}
 }
 
+func TestQueryCommandSpecPrefersRegisteredIPAddressOverHostname(t *testing.T) {
+	spec, err := queryCommandSpec(
+		context.Background(),
+		"",
+		adapter.Endpoint{Hostname: "renamed-host-not-in-dns", IPAddress: "192.0.2.25", Port: 5432},
+		adapter.Credentials{Username: "cg"},
+		"SELECT 1",
+	)
+	if err != nil {
+		t.Fatalf("build command spec: %v", err)
+	}
+	for index, argument := range spec.Arguments {
+		if argument == "--host" && index+1 < len(spec.Arguments) {
+			if spec.Arguments[index+1] != "192.0.2.25" {
+				t.Fatalf("PostgreSQL connected through mutable hostname %q instead of registered IP", spec.Arguments[index+1])
+			}
+			return
+		}
+	}
+	t.Fatalf("PostgreSQL command is missing --host: %v", spec.Arguments)
+}
+
 func TestExecutionCommandSpecUsesDedicatedApplicationNameAndNoPasswordArgument(t *testing.T) {
 	credentials := adapter.Credentials{Username: "operator", Password: "control-secret", Database: "postgres"}
 	spec, err := postgresqlCommandSpec(context.Background(), "/usr/bin/psql", adapter.Endpoint{IPAddress: "192.0.2.30", Port: 5432}, credentials, "SELECT pg_reload_conf()", "clusterguard-control")

@@ -29,6 +29,45 @@ execution are implemented through the restricted node Agent; Oracle metric
 expansion remains roadmap work. Mutation stays unavailable unless every native
 runner and safety dependency is configured.
 
+## Software Update Plane
+
+ClusterGuard HA separates control-plane software updates from database
+mutation. Every binary exposes its version, release, build commit,
+`state_format`, and `update_protocol`. Every `.cgpatch` carries the target RPM,
+rollback RPM, compatibility manifest, SHA-256 checksums, and an offline release
+signature. The site updater manages only ClusterGuard controllers and Agents;
+it does not invoke database clients or alter database software, data
+directories, replication, or VIP configuration.
+
+The update state machine is fixed:
+
+```text
+VERIFY_SIGNATURE -> CHECK_COMPATIBILITY -> CHECK_QUORUM -> CHECK_IDLE -> CHECK_INVENTORY
+-> ENTER_MAINTENANCE -> FOLLOWERS -> DATA_ONLY -> LEADER
+-> VERIFY_VERSIONS -> VERIFY_NODE_SERVICES -> VERIFY_QUORUM -> LEAVE_MAINTENANCE
+```
+
+`CHECK_INVENTORY` compares update targets, each host's immutable UUID, live Raft
+voters, and the active data-node inventory. Expansion, retirement, replacement,
+hostname/IP changes, or a stale state file cannot silently omit an active node.
+`VERIFY_NODE_SERVICES` requires controllers to rejoin the control plane and data
+nodes to restore both the Agent and reconcile timer; mixed nodes must satisfy
+both contracts.
+
+The maintenance marker is a fail-closed gate shared by every mutation ingress.
+Discovery, health, metrics, and read-only audit remain available while
+switchover, recovery, node sync, metadata reconciliation, and lifecycle
+mutation return maintenance status. Any failed step stops progression and uses
+the bundled old RPM to roll updated nodes back in reverse order. Maintenance is
+released only after a complete update or complete rollback passes version,
+node-service, and quorum verification. Every controller marker is preflighted
+before release; a partial release causes compensating re-lock on every
+controller. Interruption, final verification failure, incomplete compensation,
+or incomplete rollback retains the gate; the same signed patch can continue
+with `--resume`.
+See the [Update and Patch Guide](en-US/update-and-patch.md) for the field
+procedure.
+
 ## Resource Model
 
 Every durable resource has an immutable platform UUID and revision metadata.
@@ -45,6 +84,8 @@ The main resources are:
 | `EndpointAlias` | Historical or alternate coordinates for an endpoint. |
 | `ReplicationLink` | Source-to-target relationship, lag, and link health. |
 | `HAEndpoint` | Desired owner and health of a VIP, listener, or service endpoint. |
+| `RuntimeTarget` | Managed host, Docker Swarm, or Kubernetes API runtime boundary. |
+| `WorkloadBinding` | Binds a database instance to immutable host, Swarm Service, or StatefulSet/Pod/PVC identity. |
 | `OperationRecord` / `OperationPlan` | Idempotent intent, durable stage progress, and immutable execution plan. |
 | `ApprovalGrant` | Single-use, expiring authorization bound to one operation plan and target. |
 | `PlatformUser` | Platform username, role, Argon2id password hash, `MustChangePassword`, and auth revision. |
@@ -57,6 +98,36 @@ The main resources are:
 and workflows. Each physical node also has a globally unique immutable
 `node_name` such as `cg-data-0001`. Hostname, IP address, port, display name, and
 aliases can change without creating a new node or database instance.
+
+## Runtime and Writer Endpoint Layers
+
+ClusterGuard never infers a deployment mode from a port or process name. Every database instance is associated with an explicit `RuntimeTarget` through a `WorkloadBinding`, and every cluster has exactly one active writer-endpoint Provider.
+
+```mermaid
+flowchart TB
+  CP[Three-node Raft control plane] --> ROUTER[Writer endpoint Provider Router]
+  ROUTER --> VIP[linux_vip]
+  ROUTER --> KSVC[kubernetes_service]
+
+  VIP --> HOST[Bare metal or VM<br/>systemd database]
+  VIP --> SWARM[Docker Swarm<br/>fixed one-replica Service]
+  HOST --> HVIP[Host interface VIP]
+  SWARM --> HVIP
+
+  KSVC --> K8S[Kubernetes<br/>dedicated one-replica StatefulSet]
+  K8S --> EPS[Selectorless Service<br/>single-backend EndpointSlice]
+
+  CP -. mTLS or HTTPS .-> CONTROL[Restricted Agent / Kubernetes API]
+  CONTROL --> HOST
+  CONTROL --> SWARM
+  CONTROL --> K8S
+```
+
+Bare-metal and VM mode persists restart roles through the Agent and moves a host-interface VIP. Docker Swarm also moves the host VIP; it does not mutate container addresses or depend on the Swarm routing mesh. The Agent controls only the allowlisted fixed-host Service, database role, and restart fence.
+
+Kubernetes does not move a host VIP, rewrite CoreDNS, or infer a writer from an ordinary Service selector. After the MySQL role transition, the Provider persists both StatefulSet restart roles and atomically updates the selectorless Service's single EndpointSlice backend with `resourceVersion`. Pod UID, Node name, and PVC UID must match registered identity. Failover first persists a fence and scales the old primary's dedicated StatefulSet to zero. A Node that cannot be proven Ready requires additional cloud, BMC, or hypervisor fencing evidence.
+
+Kubernetes execution currently covers MySQL. PostgreSQL Kubernetes resources may be registered but remain fail-closed until the PostgreSQL Pod role controller is complete. See the [Kubernetes MySQL Guide](en-US/kubernetes-mysql.md) for deployment assets and constraints.
 
 ## Engine Identity
 
@@ -280,13 +351,18 @@ endpoint provider. The source is fenced before promotion, every reachable
 follower is reparented, and success requires independent proof of one writable
 instance and one target VIP owner.
 
-Automatic failover uses a 30-second stable incident recorded by discovery. Only
+Automatic failover uses three failed-primary observations spanning at least
+three seconds to record a stable incident. Only
 the majority Leader may submit the durable operation. The same incident cannot
 be repeated after success or an indeterminate outcome. Operation locks are
 Raft-replicated and renewed, Safety Guard rechecks majority, and endpoint
 mutation requires a separate short lease. The restricted data-node agent
 removes a stale VIP and persists both MySQL read-only flags when the node cannot
 obtain a valid signed keep decision.
+
+The stable-incident window is independent from the 15-second restricted-Agent
+authorization-expiry fence and the 30-second retry backoff. These are separate
+safety and scheduling controls, not a single end-to-end RTO value.
 
 Automatic recovery enters the workflow through a separate internal method. It
 does not mint or consume a human approval grant and cannot be selected by an

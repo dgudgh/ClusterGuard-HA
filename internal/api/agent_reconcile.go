@@ -10,6 +10,10 @@ import (
 	"clusterguard.io/ha/pkg/model"
 )
 
+type leadershipEpochProvider interface {
+	LeadershipEpoch() uint64
+}
+
 func topologyPrimaryID(snapshot model.TopologySnapshot) model.ResourceID {
 	var primaryID model.ResourceID
 	for _, instance := range snapshot.Instances {
@@ -59,6 +63,20 @@ func (server *Server) activeOwnershipLease(clusterID, endpointID model.ResourceI
 func (server *Server) transitionAuthorizes(instanceID model.ResourceID, lease endpoint.Lease) bool {
 	operation, found := server.store.Operation(lease.OperationID)
 	if found && operation.TargetID == instanceID && operation.Status == model.OperationRunning && (operation.Stage == model.StageExecute || operation.Stage == model.StageVerify) {
+		return true
+	}
+	// An automatic failover whose promotion committed but whose verification
+	// did not finish is resumed under the immutable original operation ID. Its
+	// durable record intentionally remains terminal until continuation verifies
+	// the complete topology. Keep the target authorized only while a fresh,
+	// majority-replicated transition lease names that exact operation and target.
+	if found && operation.TargetID == instanceID && operation.Status == model.OperationIndeterminate &&
+		operation.Stage == model.StageVerify && operation.FailureClass == "promoted_unverified" &&
+		operation.Operation.Kind == model.OperationFailover &&
+		operation.Operation.RequestedBy == "clusterguard-automatic-recovery" &&
+		operation.Plan.OperationID == operation.ResourceID && operation.Plan.ClusterID == operation.Operation.ClusterID &&
+		operation.Plan.TargetID == operation.TargetID && model.ValidResourceID(operation.Plan.SourceID) &&
+		lease.PreviousOwnerID == operation.Plan.SourceID && lease.OwnerID == operation.TargetID {
 		return true
 	}
 	if lease.OperationID != lease.HAEndpointID || lease.OwnerID != instanceID {
@@ -123,6 +141,11 @@ func (server *Server) agentReconcileRoute(writer http.ResponseWriter, request *h
 	if !server.authorizeMutation(writer, request) {
 		return
 	}
+	releaseDecision := func() {}
+	if server.agentAuthz != nil {
+		releaseDecision = server.agentAuthz.BeginDecision()
+	}
+	defer releaseDecision()
 	locator, ok := server.authority.(LeaderLocator)
 	if !ok {
 		writeError(writer, http.StatusServiceUnavailable, "controller leader identity is unavailable")
@@ -132,6 +155,10 @@ func (server *Server) agentReconcileRoute(writer http.ResponseWriter, request *h
 	if !leaderKnown {
 		writeError(writer, http.StatusServiceUnavailable, "controller leader identity is unavailable")
 		return
+	}
+	leadershipEpoch := uint64(0)
+	if provider, found := server.authority.(leadershipEpochProvider); found {
+		leadershipEpoch = provider.LeadershipEpoch()
 	}
 
 	evidence := coordination.SelfIsolationEvidence{LocalInstanceID: payload.InstanceID, Now: now}
@@ -174,8 +201,8 @@ func (server *Server) agentReconcileRoute(writer http.ResponseWriter, request *h
 		}
 		response.LeaseID = evidence.Lease.ResourceID
 		response.ValidUntil = evidence.Lease.ExpiresAt
-		if response.ValidUntil.After(now.Add(30 * time.Second)) {
-			response.ValidUntil = now.Add(30 * time.Second)
+		if response.ValidUntil.After(now.Add(10 * time.Second)) {
+			response.ValidUntil = now.Add(10 * time.Second)
 		}
 	} else {
 		response.Action = agent.ReconcileSelfIsolate
@@ -183,6 +210,14 @@ func (server *Server) agentReconcileRoute(writer http.ResponseWriter, request *h
 	if err := agent.SignReconcileResponse(&response, server.agentSecret); err != nil {
 		writeError(writer, http.StatusInternalServerError, "sign agent reconcile response failed")
 		return
+	}
+	if server.agentAuthz != nil && leadershipEpoch > 0 {
+		provider, found := server.authority.(leadershipEpochProvider)
+		if !found || provider.LeadershipEpoch() != leadershipEpoch {
+			writeError(writer, http.StatusServiceUnavailable, "controller leadership changed while issuing Agent authorization")
+			return
+		}
+		server.agentAuthz.Record(response, leadershipEpoch)
 	}
 	writeJSON(writer, http.StatusOK, response)
 }

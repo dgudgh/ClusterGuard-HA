@@ -171,3 +171,18 @@ func TestSchedulerRunReportsRefreshFailures(t *testing.T) {
 		t.Fatal("scheduler did not stop after error test cancellation")
 	}
 }
+
+func TestSchedulerDoesNotReportExpectedPublicationFenceContention(t *testing.T) {
+	reported := 0
+	scheduler := NewScheduler(nil, nil, nil, time.Second, time.Second,
+		WithSchedulerErrorHandler(func(error) { reported++ }),
+	)
+	scheduler.reportError(errors.Join(ErrPublicationFenceBusy, context.DeadlineExceeded))
+	if reported != 0 {
+		t.Fatalf("expected operation publication-fence contention to be silent, reports=%d", reported)
+	}
+	scheduler.reportError(errors.New("discovery backend unavailable"))
+	if reported != 1 {
+		t.Fatalf("unexpected discovery failures must still be reported, reports=%d", reported)
+	}
+}

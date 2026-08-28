@@ -9,13 +9,17 @@ import (
 )
 
 type HAEndpointSpec struct {
-	ClusterID model.ResourceID
-	Kind      model.EndpointKind
-	IPAddress string
-	Interface string
-	Prefix    int
-	OwnerID   model.ResourceID
-	Active    bool
+	ClusterID   model.ResourceID
+	Kind        model.EndpointKind
+	Hostname    string
+	IPAddress   string
+	Port        int
+	Interface   string
+	Prefix      int
+	Provider    model.EndpointProviderKind
+	ProviderRef string
+	OwnerID     model.ResourceID
+	Active      bool
 }
 
 func validateHAEndpointSpec(current snapshot, spec HAEndpointSpec) error {
@@ -25,18 +29,41 @@ func validateHAEndpointSpec(current snapshot, spec HAEndpointSpec) error {
 	if _, found := current.Clusters[spec.ClusterID]; !found {
 		return validationError("HA endpoint cluster is unknown")
 	}
-	if spec.Kind != model.EndpointVIP {
-		return validationError("only VIP HA endpoints are supported")
+	provider := spec.Provider
+	if provider == "" {
+		provider = model.EndpointProviderLinuxVIP
 	}
-	ip := net.ParseIP(strings.TrimSpace(spec.IPAddress))
-	if ip == nil || ip.To4() == nil {
-		return validationError("HA endpoint requires a valid IPv4 address")
+	if !provider.Valid() {
+		return validationError("HA endpoint provider is invalid")
 	}
-	if strings.TrimSpace(spec.Interface) == "" {
-		return validationError("HA endpoint interface is required")
+	if provider == model.EndpointProviderLinuxVIP {
+		if spec.Kind != model.EndpointVIP {
+			return validationError("Linux VIP provider requires a VIP endpoint")
+		}
+		ip := net.ParseIP(strings.TrimSpace(spec.IPAddress))
+		if ip == nil || ip.To4() == nil {
+			return validationError("Linux VIP endpoint requires a valid IPv4 address")
+		}
+		if strings.TrimSpace(spec.Interface) == "" {
+			return validationError("Linux VIP endpoint interface is required")
+		}
+		if spec.Prefix < 1 || spec.Prefix > 32 {
+			return validationError("Linux VIP endpoint prefix must be between 1 and 32")
+		}
 	}
-	if spec.Prefix < 1 || spec.Prefix > 32 {
-		return validationError("HA endpoint prefix must be between 1 and 32")
+	if provider == model.EndpointProviderKubernetesService {
+		if spec.Kind != model.EndpointService {
+			return validationError("Kubernetes Service provider requires a service endpoint")
+		}
+		if strings.TrimSpace(spec.ProviderRef) == "" || strings.TrimSpace(spec.Hostname) == "" || spec.Port < 1 || spec.Port > 65535 {
+			return validationError("Kubernetes Service endpoint requires provider reference, hostname, and port")
+		}
+		if address := strings.TrimSpace(spec.IPAddress); address != "" && net.ParseIP(address) == nil {
+			return validationError("Kubernetes Service endpoint IP address is invalid")
+		}
+		if strings.TrimSpace(spec.Interface) != "" || spec.Prefix != 0 {
+			return validationError("Kubernetes Service endpoint cannot declare a Linux interface or prefix")
+		}
 	}
 	owner, found := current.Instances[spec.OwnerID]
 	if !found || owner.ClusterID != spec.ClusterID {
@@ -47,7 +74,12 @@ func validateHAEndpointSpec(current snapshot, spec HAEndpointSpec) error {
 
 func (repository *Repository) PutHAEndpoint(spec HAEndpointSpec) (model.HAEndpoint, model.Endpoint, error) {
 	spec.IPAddress = strings.TrimSpace(spec.IPAddress)
+	spec.Hostname = strings.TrimSpace(spec.Hostname)
 	spec.Interface = strings.TrimSpace(spec.Interface)
+	spec.ProviderRef = strings.TrimSpace(spec.ProviderRef)
+	if spec.Provider == "" {
+		spec.Provider = model.EndpointProviderLinuxVIP
+	}
 	repository.mutationMu.Lock()
 	defer repository.mutationMu.Unlock()
 	repository.mu.Lock()
@@ -90,9 +122,9 @@ func (repository *Repository) PutHAEndpoint(spec HAEndpointSpec) (model.HAEndpoi
 	endpoint.ClusterID = spec.ClusterID
 	endpoint.InstanceID = spec.OwnerID
 	endpoint.Kind = spec.Kind
-	endpoint.Hostname = ""
+	endpoint.Hostname = spec.Hostname
 	endpoint.IPAddress = spec.IPAddress
-	endpoint.Port = 0
+	endpoint.Port = spec.Port
 	endpoint.Active = spec.Active
 	resource.ClusterID = spec.ClusterID
 	resource.EndpointID = endpoint.ResourceID
@@ -101,6 +133,8 @@ func (repository *Repository) PutHAEndpoint(spec HAEndpointSpec) (model.HAEndpoi
 	resource.OwnerID = spec.OwnerID
 	resource.Interface = spec.Interface
 	resource.Prefix = spec.Prefix
+	resource.Provider = spec.Provider
+	resource.ProviderRef = spec.ProviderRef
 	resource.Healthy = false
 
 	next := repository.snapshot

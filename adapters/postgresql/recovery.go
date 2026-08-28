@@ -2,6 +2,7 @@ package postgresql
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -48,6 +49,22 @@ func (adapterInstance *Adapter) rejoinExecute(ctx context.Context, request adapt
 	defer cancel()
 	resolved := *request.Resolved
 	resolved.PlanDigest = request.Plan.Digest
+	stableAuthorizer, ok := adapterInstance.endpointProvider.(adapter.StableHAEndpointAuthorizer)
+	if !ok {
+		return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationUnsupported, "pre_commit", fmt.Errorf("writer endpoint cannot protect stable primary ownership during recovery"))
+	}
+	stableAuthorization, err := stableAuthorizer.AuthorizeStableOwner(mutationCtx, resolved)
+	if err != nil {
+		return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationFailed, "pre_commit", fmt.Errorf("protect current PostgreSQL primary endpoint: %w", err))
+	}
+	if stableAuthorization.Context == nil || stableAuthorization.Cancel == nil || !model.ValidResourceID(stableAuthorization.LeaseID) {
+		if stableAuthorization.Cancel != nil {
+			stableAuthorization.Cancel()
+		}
+		return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationFailed, "pre_commit", fmt.Errorf("writer endpoint returned an incomplete stable ownership authorization"))
+	}
+	defer stableAuthorization.Cancel()
+	mutationCtx = stableAuthorization.Context
 	permitID := request.Operation.ResourceID
 
 	stoppedStep, err := postgresqlStepCompleted(mutationCtx, request, "stop_former_primary")
@@ -84,10 +101,23 @@ func (adapterInstance *Adapter) rejoinExecute(ctx context.Context, request adapt
 		return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "fenced", err)
 	}
 	if !rewound {
-		if err := adapterInstance.nodeController.Rewind(mutationCtx, resolved, resolved.Target, resolved.Primary, permitID); err != nil {
-			return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "rebuild_required", fmt.Errorf("rewind PostgreSQL former primary: %w", err))
+		recoveryMessage := "former primary follows the current primary after pg_rewind"
+		if rewindErr := adapterInstance.nodeController.Rewind(mutationCtx, resolved, resolved.Target, resolved.Primary, permitID); rewindErr != nil {
+			if baseBackupErr := adapterInstance.nodeController.BaseBackup(mutationCtx, resolved, resolved.Target, resolved.Primary, permitID); baseBackupErr != nil {
+				return postgresqlExecutionFailure(
+					request.Operation.ResourceID,
+					started,
+					model.OperationIndeterminate,
+					"rebuild_failed",
+					errors.Join(
+						fmt.Errorf("rewind PostgreSQL former primary: %w", rewindErr),
+						fmt.Errorf("full base backup of PostgreSQL former primary: %w", baseBackupErr),
+					),
+				)
+			}
+			recoveryMessage = "former primary follows the current primary after full base backup fallback"
 		}
-		if err := postgresqlCompleteStep(context.WithoutCancel(mutationCtx), request, "rewind_former_primary", "former primary follows the current primary in recovery"); err != nil {
+		if err := postgresqlCompleteStep(context.WithoutCancel(mutationCtx), request, "rewind_former_primary", recoveryMessage); err != nil {
 			return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "rewind_unknown", err)
 		}
 	}
@@ -98,7 +128,7 @@ func (adapterInstance *Adapter) rejoinExecute(ctx context.Context, request adapt
 		}
 		return postgresqlExecutionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "rewind_unknown", err)
 	}
-	return newPostgreSQLExecution(request.Operation.ResourceID, model.OperationRunning, started, "PostgreSQL former primary was rewound; verification is required"), nil
+	return newPostgreSQLExecution(request.Operation.ResourceID, model.OperationRunning, started, "PostgreSQL former primary was synchronized; verification is required"), nil
 }
 
 func (adapterInstance *Adapter) rejoinVerify(ctx context.Context, request adapter.OperationRequest) (model.Verification, error) {

@@ -21,7 +21,7 @@
         <span>搜索文档</span>
         <input id="docs-search" type="search" autocomplete="off" placeholder="输入标题关键词">
       </label>
-      <nav class="docs-nav" aria-label="Documentation"><section><h2>开始使用</h2><a href="index.html" data-doc-title="clusterguard ha 中文文档">ClusterGuard HA 中文文档</a><a href="product-overview.html" data-doc-title="产品概览">产品概览</a><a href="product-tour.html" data-doc-title="控制台产品导览">控制台产品导览</a><a href="architecture.html" data-doc-title="系统架构">系统架构</a><a href="release-2.1.45.html" data-doc-title="2.1.45 发布说明">2.1.45 发布说明</a></section><section><h2>部署与迁移</h2><a href="offline-rpm-install.html" data-doc-title="离线 rpm 安装">离线 RPM 安装</a><a href="database-preparation.html" data-doc-title="数据库接入">数据库接入</a><a href="orchestrator-migration.html" data-doc-title="从 orchestrator 迁移">从 Orchestrator 迁移</a></section><section><h2>日常运维</h2><a href="operations-manual.html" data-doc-title="运维操作手册">运维操作手册</a><a href="api-operations.html" data-doc-title="api 运维参考" aria-current="page" class="active">API 运维参考</a><a href="postgresql-ha.html" data-doc-title="postgresql 高可用">PostgreSQL 高可用</a><a href="version-release-policy.html" data-doc-title="版本与发版规范">版本与发版规范</a></section><section><h2>验收证据</h2><a href="proven-mysql-ha-methods.html" data-doc-title="mysql 已验证方法">MySQL 已验证方法</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql 功能验收">MySQL 功能验收</a><a href="mysql-former-primary-recovery.html" data-doc-title="旧主恢复专项验收">旧主恢复专项验收</a><a href="mysql-production-qualification.html" data-doc-title="mysql 生产验收">MySQL 生产验收</a><a href="production-chaos-test.html" data-doc-title="生产故障测试报告">生产故障测试报告</a><a href="power-lifecycle-test.html" data-doc-title="计划关机测试报告">计划关机测试报告</a></section></nav>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>开始使用</h2><a href="index.html" data-doc-title="clusterguard ha 中文文档">ClusterGuard HA 中文文档</a><a href="product-overview.html" data-doc-title="产品概览">产品概览</a><a href="product-tour.html" data-doc-title="控制台产品导览">控制台产品导览</a><a href="architecture.html" data-doc-title="系统架构">系统架构</a><a href="release-2.2.39.html" data-doc-title="2.2.39 发布说明">2.2.39 发布说明</a><a href="release-2.1.45.html" data-doc-title="2.1.45 发布说明">2.1.45 发布说明</a></section><section><h2>部署与迁移</h2><a href="offline-rpm-install.html" data-doc-title="离线 rpm 安装">离线 RPM 安装</a><a href="database-preparation.html" data-doc-title="数据库接入">数据库接入</a><a href="orchestrator-migration.html" data-doc-title="从 orchestrator 迁移">从 Orchestrator 迁移</a></section><section><h2>日常运维</h2><a href="operations-manual.html" data-doc-title="运维操作手册">运维操作手册</a><a href="api-operations.html" data-doc-title="api 运维参考" aria-current="page" class="active">API 运维参考</a><a href="postgresql-ha.html" data-doc-title="postgresql 高可用">PostgreSQL 高可用</a><a href="docker-swarm-mysql.html" data-doc-title="docker swarm mysql">Docker Swarm MySQL</a><a href="kubernetes-mysql.html" data-doc-title="kubernetes mysql">Kubernetes MySQL</a><a href="update-and-patch.html" data-doc-title="版本升级与回退">版本升级与回退</a><a href="version-release-policy.html" data-doc-title="版本与发版规范">版本与发版规范</a></section><section><h2>验收证据</h2><a href="proven-mysql-ha-methods.html" data-doc-title="mysql 已验证方法">MySQL 已验证方法</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql 功能验收">MySQL 功能验收</a><a href="mysql-former-primary-recovery.html" data-doc-title="旧主恢复专项验收">旧主恢复专项验收</a><a href="mysql-production-qualification.html" data-doc-title="mysql 生产验收">MySQL 生产验收</a><a href="postgresql-production-qualification.html" data-doc-title="postgresql 16.4 生产验收">PostgreSQL 16.4 生产验收</a><a href="docker-swarm-mysql-validation.html" data-doc-title="docker swarm mysql 实机验证">Docker Swarm MySQL 实机验证</a><a href="production-chaos-test.html" data-doc-title="生产故障测试报告">生产故障测试报告</a><a href="power-lifecycle-test.html" data-doc-title="计划关机测试报告">计划关机测试报告</a></section></nav>
       <div class="sidebar-meta">
         <span>离线文档构建</span>
         <strong>2.1 / 2.2</strong>
@@ -113,7 +113,7 @@
 <tr>
 <td><code>mysql.automatic_failover_interval_seconds</code></td>
 <td>否</td>
-<td>恢复控制器轮询间隔；默认为 5 秒。</td>
+<td>恢复控制器轮询间隔；默认为 1 秒。</td>
 </tr>
 <tr>
 <td><code>mysql.automatic_failover_retry_seconds</code></td>
@@ -128,12 +128,12 @@
 <tr>
 <td><code>postgresql.discovery_interval_seconds</code></td>
 <td>否</td>
-<td>PostgreSQL 调度器间隔；默认为 5 秒，与 MySQL 独立。</td>
+<td>PostgreSQL 调度器间隔；默认为 1 秒，与 MySQL 独立。</td>
 </tr>
 <tr>
 <td><code>postgresql.discovery_timeout_seconds</code></td>
 <td>否</td>
-<td>每个端点的 PostgreSQL 探针超时；默认为 4 秒。</td>
+<td>每个端点的 PostgreSQL 探针超时；默认为 1 秒。</td>
 </tr>
 <tr>
 <td><code>postgresql.automatic_failover_enabled</code></td>
@@ -143,7 +143,7 @@
 <tr>
 <td><code>postgresql.automatic_failover_interval_seconds</code></td>
 <td>否</td>
-<td>PostgreSQL 恢复控制器轮询间隔；默认为 5 秒。</td>
+<td>PostgreSQL 恢复控制器轮询间隔；默认为 1 秒。</td>
 </tr>
 <tr>
 <td><code>postgresql.automatic_failover_retry_seconds</code></td>
@@ -393,8 +393,7 @@ curl -sS http://127.0.0.1:8088/api/v1/control-plane/status \
 <p>详细响应包括本地角色、Leader 身份和地址、投票者数量、多数和变更操作权威、Raft 索引、持久化元数据修订、运行时间、活动操作、不确定操作和活动节点生命周期任务。每个 HTTP 响应都携带 <code>X-Request-ID</code>；调用者提供的安全 ID 在跟随者到 Leader 转发过程中保留，并且相同的值包含在 JSON 错误信封中。</p>
 <p><code>active_operations</code> 仅统计状态为 <code>running</code> 的记录。一个持久的
 <code>planned</code> 记录是等待显式执行请求的历史工作；
-它不会消耗主动操作限制，也不会使就绪状态看起来繁忙。<code>indeterminate_operations</code> 保持独立，因为每条这样的记录
-在重试或更改拓扑之前都需要操作员审查。</p>
+它不会消耗主动操作限制，也不会使就绪状态看起来繁忙。<code>indeterminate_operations</code> 只统计尚未完成人工复核的 <code>indeterminate</code> 记录。已经复核的记录仍保留原状态和全部证据，但不会永久污染当前待处理计数。</p>
 <p>背景所有权和自动恢复循环会立即报告新的故障。
 未更改的故障随后被抑制，并每隔五分钟提醒一次；更改的故障会立即报告，一个成功的周期
 会重置抑制状态。对于相同稳定事件的重试退避周期不被视为成功，因此 30 秒的安全重试仍然
@@ -618,7 +617,7 @@ assets/pki/raft-issuer.key      0640 root:clusterguard
 <p>对于生产 MySQL，在所有管理实例加载并启用源/副本半同步插件后，设置 <code>mysql.semi_sync_required=true</code> 在每个控制器上。ClusterGuard 然后将半同步视为必需的证据：当前主节点必须至少有配置数量的确认客户端，候选者必须主动确认其源并已拥有
 提升侧源设置，且提升后的主节点必须在验证期间重新获得一个活动的确认客户端。未知、格式错误、禁用或过时的证据失败时阻断。管理的 MySQL 安装程序使用 <code>AFTER_SYNC</code> 配置一个确认副本，并为 MySQL 8.x 设置 10 秒的源超时（以及 5.7 的等效主/从名称）。</p>
 <p>半同步显著减少了确认事务的丢失，但本身并不能证明严格的 RPO 零：在配置的超时后，MySQL 可能回退到异步提交，存储、操作系统和网络故障仍超出数据库确认协议。因此，生产 SLO 必须记录超时/回退策略，并在破坏性故障转移测试期间使用客户端事务 ID 进行验证。</p>
-<p>恢复控制器仅在多数 Leader 上执行。发现记录在六次后续失败主样本跨越 30 秒后记录一次事件。控制器仅选择排名第一的合格候选者，并通过私有内部授权路径提交一个正常的持久 <code>failover</code> 操作。公共 JSON 无法选择此模式。事件 ID 在 <code>APPROVE</code> 上进行审计；安全防护、锁定、隔离、执行、验证、审计和报告仍然是强制性的。事件派生的幂等性密钥防止 Leader 更改重复成功或不确定的故障转移。被阻止的尝试至少等待配置的重试周期。</p>
+<p>恢复控制器仅在多数 Leader 上执行。发现连续记录 3 次当前主库失败，且观测跨度不少于 3 秒后，才生成一个事件。控制器仅选择排名第一的合格候选者，并通过私有内部授权路径提交一个正常的持久 <code>failover</code> 操作。公共 JSON 无法选择此模式。事件 ID 在 <code>APPROVE</code> 上进行审计；安全防护、锁定、隔离、执行、验证、审计和报告仍然是强制性的。事件派生的幂等性密钥防止 Leader 变更后重复成功或不确定的故障转移。被阻止的尝试至少等待配置的重试周期。</p>
 <p>操作锁存储在 Raft 复制的元数据快照中，并在其持有者仍然是多数 Leader 时更新。安全防护在锁定和审批前再次检查多数。VIP 所有权通过短的独占端点租约和集群范围的拥有者验证单独保护。</p>
 <h3 id="外部隔离合同">外部隔离合同<a class="heading-anchor" href="#外部隔离合同" aria-label="Link to 外部隔离合同">#</a></h3>
 <p>仅在安装了绝对、常规、可执行提供者路径后设置 <code>fencing.enabled=true</code>。启动时如果提供者缺失或不可执行则失败。ClusterGuard 使用恰好一个参数调用它，即 <code>fence</code>
@@ -649,6 +648,7 @@ assets/pki/raft-issuer.key      0640 root:clusterguard
 控制平面进行。Oracle 角色转换通过 DGMGRL 使用 Data Guard Broker。SQL Server 计划的角色转换通过 sqlcmd/T-SQL 使用 Always On 可用性组故障转移。一个 MySQL、PostgreSQL、Oracle 或 SQL Server 操作，其所需的执行器、Agent、端点、身份、拓扑、多数、隔离、凭证、锁、审批或验证证据缺失，会在不安全步骤之前被阻止。不支持或被阻止从不意味着部分成功。</p>
 <p>受保护的内核将用于预检查的精确拓扑观测标记为<code>cluster_id@observed_at</code>，并在获取操作锁后重新验证它。发现发布使用相同的集群锁，因此在执行过程中无法替换已验证的观测。更改或失效的观测会阻止审批和执行。已完成的步骤是持久的。只有当此操作拥有持久的<code>fence_source</code>步骤时，已被隔离的源才被接受；恢复时会重新验证不可变的源和目标身份、隔离、GTID历史、二进制日志、发布兼容性、复制状态和端点所有权，然后再进行另一次变更操作。如果变更操作前日志写入失败，工作流将停止。如果变更操作提交点后日志写入失败，验证仍会运行，API返回<code>indeterminate</code>执行，并带有HTTP <code>500</code>。原子元数据重命名后紧接着目录同步警告也会被报告为已提交，但为<code>indeterminate</code>，包括响应中的已协调实例和端点。将<code>indeterminate</code>视为需要人工审核的状态；不要自动重试该操作。</p>
 <p>提交后验证使用与调用者分离的有界上下文。验证失败后会持久化其检查，并保持为<code>indeterminate</code>。验证保留不可变的计划摘要和源/目标UUID范围，但在提升后接受更新的拓扑观测和元数据修订；刷新后的端点仍必须返回计划的原生身份和预期的实时角色。再次调用<code>verify</code>操作动作仅在显式验证证据通过时，才能将该记录协调为<code>succeeded</code>；所有其他终端状态保持不可变。终端操作记录、终端审计事件和操作报告发布在一个仓库快照中，因此读者无法观察到成功报告与运行中的操作或相反的情况。人工验证协调使用相同的原子最终化路径。</p>
+<p>如果历史拓扑已经变化，原计划无法再通过完整验证，操作员可调用 <code>POST /api/v1/operations/{operation_uuid}/review</code>，请求体为 <code>{&quot;note&quot;:&quot;现场核验依据&quot;}</code>。该接口仅接受 <code>indeterminate</code> 记录，复核说明不能为空且首次提交后不可覆盖；它原子写入复核元数据、审计和报告，但不改变操作状态。控制台“操作日志”的“标记已复核”使用同一接口。</p>
 <p>集群注册和发现发布遵循相同的规则。重命名后的持久性警告返回HTTP <code>500</code>以及<code>result</code>中的已提交资源或观测。在重试之前，需要协调返回的集群/端点UUID或观测令牌<code>cluster_id@observed_at</code>；创建另一个集群或假装观测不存在进行发布可能会重复用户意图。非操作元数据工作流首先持久化一个保守的报告回退，然后在相同的报告UUID下将其替换为终端结果。</p>
 <p>MySQL多源复制在此阶段被检测但未建模。如果<code>SHOW REPLICA STATUS</code>或其遗留等价物返回多于一个通道，发现将关闭并不发布部分健康、拓扑或提升资格。</p>
 <h2 id="12-计划关闭和自动恢复">12. 计划关闭和自动恢复<a class="heading-anchor" href="#12-计划关闭和自动恢复" aria-label="Link to 12. 计划关闭和自动恢复">#</a></h2>

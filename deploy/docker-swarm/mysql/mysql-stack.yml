@@ -1,0 +1,142 @@
+version: "3.9"
+
+x-mysql-service: &mysql-service
+  image: ${MYSQL_IMAGE:-mysql:8.0.44}
+  networks:
+    - replication
+  environment:
+    MYSQL_ROOT_PASSWORD_FILE: /run/secrets/mysql_root_password
+    # Each independently initialized image would otherwise load time-zone
+    # tables into its own GTID domain. ClusterGuard loads shared data only
+    # through the primary so replicas begin with no errant local GTIDs.
+    MYSQL_INITDB_SKIP_TZINFO: "1"
+  secrets:
+    - source: mysql_root_password
+      target: mysql_root_password
+      mode: 0400
+    - source: mysql_operator_cnf
+      target: clusterguard-operation.cnf
+      mode: 0400
+  volumes:
+    - type: bind
+      source: /data/clusterguard-swarm/mysql/3306
+      target: /var/lib/mysql
+    # Bind the directory, not the individual files. The Agent commits the
+    # restart fence with atomic rename; a file bind mount pins the old inode
+    # and a running/recreated task can otherwise observe a stale role file.
+    - type: bind
+      source: /etc/clusterguard/docker
+      target: /etc/mysql/conf.d
+      read_only: true
+  ports:
+    - target: 3306
+      published: 3306
+      protocol: tcp
+      mode: host
+  stop_grace_period: 2m
+  healthcheck:
+    test: ["CMD-SHELL", "MYSQL_PWD=$$(cat /run/secrets/mysql_root_password) mysqladmin --protocol=tcp -h 127.0.0.1 -uroot ping --silent"]
+    interval: 5s
+    timeout: 3s
+    retries: 20
+    start_period: 60s
+  deploy:
+    replicas: 1
+    endpoint_mode: dnsrr
+    restart_policy:
+      condition: any
+      delay: 5s
+      max_attempts: 0
+    update_config:
+      parallelism: 1
+      order: stop-first
+      failure_action: pause
+      monitor: 30s
+    rollback_config:
+      parallelism: 1
+      order: stop-first
+
+services:
+  mysql01:
+    <<: *mysql-service
+    hostname: orch-mysql01
+    labels:
+      clusterguard.cluster_id: ${CG_CLUSTER_ID}
+      clusterguard.instance_id: ${CG_INSTANCE_01_ID}
+      clusterguard.runtime: docker-swarm
+    deploy:
+      replicas: 1
+      endpoint_mode: dnsrr
+      placement:
+        constraints:
+          - node.labels.clusterguard.mysql.slot == 01
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 0
+      update_config:
+        parallelism: 1
+        order: stop-first
+        failure_action: pause
+        monitor: 30s
+
+  mysql02:
+    <<: *mysql-service
+    hostname: orch-mysql02
+    labels:
+      clusterguard.cluster_id: ${CG_CLUSTER_ID}
+      clusterguard.instance_id: ${CG_INSTANCE_02_ID}
+      clusterguard.runtime: docker-swarm
+    deploy:
+      replicas: 1
+      endpoint_mode: dnsrr
+      placement:
+        constraints:
+          - node.labels.clusterguard.mysql.slot == 02
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 0
+      update_config:
+        parallelism: 1
+        order: stop-first
+        failure_action: pause
+        monitor: 30s
+
+  mysql03:
+    <<: *mysql-service
+    hostname: orch-mysql03
+    labels:
+      clusterguard.cluster_id: ${CG_CLUSTER_ID}
+      clusterguard.instance_id: ${CG_INSTANCE_03_ID}
+      clusterguard.runtime: docker-swarm
+    deploy:
+      replicas: 1
+      endpoint_mode: dnsrr
+      placement:
+        constraints:
+          - node.labels.clusterguard.mysql.slot == 03
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 0
+      update_config:
+        parallelism: 1
+        order: stop-first
+        failure_action: pause
+        monitor: 30s
+
+networks:
+  replication:
+    driver: overlay
+    attachable: false
+    driver_opts:
+      encrypted: "true"
+
+secrets:
+  mysql_root_password:
+    external: true
+    name: cg_mysql_root_password
+  mysql_operator_cnf:
+    external: true
+    name: cg_mysql_operator_cnf

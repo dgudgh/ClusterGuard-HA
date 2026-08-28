@@ -46,17 +46,17 @@ ClusterGuard HA 继续采用几项已经被实践证明有价值的思路。
 
 ## 两套系统关注的层次不同
 
-| 关注点 | Orchestrator | ClusterGuard HA 2.1 |
+| 关注点 | Orchestrator | ClusterGuard HA |
 | --- | --- | --- |
-| 核心能力 | MySQL 拓扑发现、分析、重构和恢复 | MySQL 高可用控制、端点协调和生产交付 |
-| 资源身份 | 主要围绕 `hostname:port` | 不可变 `resource_id` 与 `server_uuid` |
+| 核心能力 | MySQL 拓扑发现、分析、重构和恢复 | 数据库高可用控制、端点协调和生产交付 |
+| 资源身份 | 主要围绕 `hostname:port` | 不可变 `resource_id` 与数据库原生身份 |
 | 控制面高可用 | 共享后端或 Raft | 强制奇数控制节点、Raft 与 mTLS |
 | 服务入口 | 通过 Hook 和外部集成更新 | HA Endpoint 纳入统一工作流与验证 |
 | 高风险执行 | 恢复规则、命令和审计 | Safety Guard、锁、授权、验证、审计、报告 |
 | 数据节点保护 | 依赖恢复逻辑及现场集成 | 受限 Agent、短租约、本地失权隔离 |
-| 旧主恢复 | 提供拓扑操作，具体流程依现场 | GTID 评估、增量回挂或全量重建 |
+| 旧主恢复 | 提供拓扑操作，具体流程依现场 | MySQL GTID 恢复，PostgreSQL `pg_rewind` 或全量重建 |
 | 节点生命周期 | 以数据库拓扑管理为主 | 安装、同步、修复、任务进度和报告 |
-| 多数据库边界 | 面向 MySQL | 通用 Adapter SDK，2.1 正式支持 MySQL |
+| 多数据库边界 | 面向 MySQL | 通用 Adapter SDK，2.1 稳定支持 MySQL，2.2 已验收 PostgreSQL 16.4 |
 
 Orchestrator 的拓扑能力更加成熟，周边生态也积累多年。ClusterGuard HA 目前的优势集中在一体化交付和执行控制。它不应该用一张对比表掩盖自己的版本边界。
 
@@ -101,7 +101,7 @@ Adapter 只负责数据库动作。它不能自行跳过锁，也不能因为命
 
 独立实现并不会自动带来可靠性。每一种数据库版本、操作系统、网络和存储组合都要重新测试。控制节点多数派、Agent 失联、VIP 唯一性、旧主分叉、binlog 缺口、断电恢复和并发操作都需要现场证据。
 
-2.1.45 的正式交付边界是 MySQL。PostgreSQL 从 2.2 开始开发和验收。Oracle Data Guard Broker 与 SQL Server Always On 仍需独立测试矩阵。未通过认证的 Adapter 能注册和报告能力边界，不能假装已经具备生产执行能力。
+2.1.45 的正式交付边界是 MySQL。2.2 候选版本线已经完成 PostgreSQL 原生高可用功能，并通过 PostgreSQL 16.4 三节点实验室矩阵。Oracle Data Guard Broker 与 SQL Server Always On 仍需独立测试矩阵。未通过认证的 Adapter 能注册和报告能力边界，不能假装已经具备生产执行能力。
 
 下一篇进入 ClusterGuard HA 内部，看看一次按钮操作怎样经过发现、门禁、执行和验证，也看看主库、VIP 与旧主恢复为什么必须放在同一套流程里。
 

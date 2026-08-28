@@ -14,9 +14,13 @@ import (
 	"clusterguard.io/ha/pkg/model"
 )
 
-type failoverAuthorityStub struct{ err error }
+type failoverAuthorityStub struct {
+	err  error
+	term uint64
+}
 
 func (stub failoverAuthorityStub) RequireMutationAuthority(context.Context) error { return stub.err }
+func (stub failoverAuthorityStub) LeadershipEpoch() uint64                        { return stub.term }
 
 type failoverInventoryStub struct {
 	haEndpoint model.HAEndpoint
@@ -32,9 +36,12 @@ func (stub failoverInventoryStub) Endpoint(resourceID model.ResourceID) (model.E
 }
 
 type failoverLeaseStub struct {
-	calls *[]string
-	lease endpoint.Lease
-	err   error
+	calls        *[]string
+	lease        endpoint.Lease
+	currentLease *endpoint.Lease
+	err          error
+	validateErr  error
+	currentErr   error
 }
 
 func (stub *failoverLeaseStub) Acquire(_ context.Context, request endpoint.LeaseRequest) (endpoint.Lease, error) {
@@ -46,10 +53,22 @@ func (stub *failoverLeaseStub) Acquire(_ context.Context, request endpoint.Lease
 	stub.lease.HAEndpointID = request.HAEndpointID
 	stub.lease.OperationID = request.OperationID
 	stub.lease.OwnerID = request.OwnerID
+	stub.lease.PreviousOwnerID = request.PreviousOwnerID
 	return stub.lease, nil
 }
 
-func (*failoverLeaseStub) Validate(context.Context, endpoint.Lease) error { return nil }
+func (stub *failoverLeaseStub) Validate(context.Context, endpoint.Lease) error {
+	return stub.validateErr
+}
+func (stub *failoverLeaseStub) Current(_ context.Context, _, _ model.ResourceID) (endpoint.Lease, error) {
+	if stub.calls != nil {
+		*stub.calls = append(*stub.calls, "current_lease")
+	}
+	if stub.currentLease != nil {
+		return *stub.currentLease, stub.currentErr
+	}
+	return stub.lease, stub.currentErr
+}
 func (*failoverLeaseStub) FinalizeTransition(_ context.Context, lease endpoint.Lease, _ time.Duration) (endpoint.Lease, error) {
 	return lease, nil
 }
@@ -59,14 +78,19 @@ func (*failoverLeaseStub) RollbackTransition(_ context.Context, lease endpoint.L
 func (*failoverLeaseStub) Release(context.Context, model.ResourceID) error { return nil }
 
 type failoverAgentTransportStub struct {
-	calls          *[]string
-	requests       []agent.Request
-	ownsVIP        bool
-	readOnly       bool
-	superReadOnly  bool
-	serviceRunning bool
-	inRecovery     bool
-	err            error
+	calls             *[]string
+	requests          []agent.Request
+	ownsVIP           bool
+	readOnly          bool
+	superReadOnly     bool
+	serviceRunning    bool
+	databaseReachable bool
+	restartReadOnly   bool
+	persistedReadOnly bool
+	durableEvidence   bool
+	inRecovery        bool
+	err               error
+	onSend            func(agent.Request)
 }
 
 type failoverExternalFencerStub struct {
@@ -93,18 +117,31 @@ func (stub *failoverExternalFencerStub) Status(_ context.Context, _ ExternalFenc
 func (stub *failoverAgentTransportStub) Send(_ context.Context, _ model.DatabaseInstance, request agent.Request) (agent.Response, error) {
 	*stub.calls = append(*stub.calls, request.Command)
 	stub.requests = append(stub.requests, request)
+	if stub.onSend != nil {
+		stub.onSend(request)
+	}
 	if stub.err != nil {
 		return agent.Response{}, stub.err
 	}
 	switch request.Command {
 	case agent.CommandSelfIsolate:
+		stub.persistedReadOnly = true
 		return agent.Response{Status: agent.StatusOK}, nil
 	case agent.CommandVIPStatus:
 		owns := stub.ownsVIP
 		return agent.Response{Status: agent.StatusOK, OwnsVIP: &owns}, nil
 	case agent.CommandRoleStatus:
 		readOnly, superReadOnly := stub.readOnly, stub.superReadOnly
-		return agent.Response{Status: agent.StatusOK, ReadOnly: &readOnly, SuperReadOnly: &superReadOnly}, nil
+		if !stub.durableEvidence {
+			return agent.Response{Status: agent.StatusOK, ReadOnly: &readOnly, SuperReadOnly: &superReadOnly}, nil
+		}
+		running, reachable := stub.serviceRunning, stub.databaseReachable
+		restartReadOnly, persistedReadOnly := stub.restartReadOnly, stub.persistedReadOnly
+		return agent.Response{
+			Status: agent.StatusOK, ReadOnly: &readOnly, SuperReadOnly: &superReadOnly,
+			ServiceRunning: &running, DatabaseReachable: &reachable,
+			RestartReadOnly: &restartReadOnly, PersistedReadOnly: &persistedReadOnly,
+		}, nil
 	case agent.CommandPostgreSQLStatus:
 		running, inRecovery := stub.serviceRunning, stub.inRecovery
 		return agent.Response{Status: agent.StatusOK, ServiceRunning: &running, InRecovery: &inRecovery}, nil
@@ -221,6 +258,43 @@ func TestGuardedFailoverSafetyAcquiresLeaseBeforeFencingAndVerifiesIsolation(t *
 	}
 }
 
+func TestGuardedFailoverSafetyFencesStoppedMySQLWithReadOnlyRestartDefaults(t *testing.T) {
+	resolved, inventory, window, now := failoverSafetyFixture(t)
+	recordStableFailure(window, resolved.Cluster.ResourceID, now)
+	calls := []string{}
+	leases := &failoverLeaseStub{calls: &calls, lease: endpoint.Lease{ResourceID: model.NewResourceID(), Active: true, ExpiresAt: now.Add(30 * time.Second)}}
+	transport := &failoverAgentTransportStub{
+		calls: &calls, ownsVIP: false, serviceRunning: false, databaseReachable: false,
+		restartReadOnly: true, persistedReadOnly: false, durableEvidence: true,
+	}
+	provider := NewGuardedFailoverSafety(window, failoverAuthorityStub{}, inventory, leases, transport, "agent-secret", func() time.Time { return now })
+	checks := provider.Precheck(context.Background(), resolved)
+	if failoverCheckStatus(checks, "old_primary_fenced") != model.CheckPass {
+		t.Fatalf("stopped MySQL durable fencing path was rejected: %+v", checks)
+	}
+	if err := provider.Fence(context.Background(), resolved); err != nil {
+		t.Fatalf("fence stopped MySQL: %v", err)
+	}
+	if check := provider.Verify(context.Background(), resolved); check.Status != model.CheckPass || !strings.Contains(check.Message, "restart") {
+		t.Fatalf("stopped MySQL durable isolation verification=%+v", check)
+	}
+}
+
+func TestGuardedFailoverSafetyRejectsStoppedMySQLWithWritableRestartDefaults(t *testing.T) {
+	resolved, inventory, window, now := failoverSafetyFixture(t)
+	recordStableFailure(window, resolved.Cluster.ResourceID, now)
+	calls := []string{}
+	transport := &failoverAgentTransportStub{
+		calls: &calls, ownsVIP: false, serviceRunning: false, databaseReachable: false,
+		restartReadOnly: false, persistedReadOnly: false, durableEvidence: true,
+	}
+	provider := NewGuardedFailoverSafety(window, failoverAuthorityStub{}, inventory, &failoverLeaseStub{calls: &calls}, transport, "agent-secret", func() time.Time { return now })
+	checks := provider.Precheck(context.Background(), resolved)
+	if failoverCheckStatus(checks, "old_primary_fenced") != model.CheckFail {
+		t.Fatalf("writable MySQL restart defaults were accepted: %+v", checks)
+	}
+}
+
 func TestGuardedFailoverSafetyLeaseCanBeReusedByEndpointTransitionAuthorization(t *testing.T) {
 	resolved, inventory, window, now := failoverSafetyFixture(t)
 	recordStableFailure(window, resolved.Cluster.ResourceID, now)
@@ -280,6 +354,256 @@ func TestGuardedFailoverSafetyFailsClosedWhenAgentIsUnavailable(t *testing.T) {
 	provider := NewGuardedFailoverSafety(window, failoverAuthorityStub{}, inventory, &failoverLeaseStub{calls: &calls}, &failoverAgentTransportStub{calls: &calls, err: errors.New("unreachable")}, "agent-secret", func() time.Time { return now })
 	if check := provider.Verify(context.Background(), resolved); check.Status != model.CheckFail {
 		t.Fatalf("unreachable old primary was accepted as isolated: %+v", check)
+	}
+}
+
+func TestGuardedFailoverSafetyUsesMajorityLeaseAfterAgentAuthorizationExpires(t *testing.T) {
+	resolved, inventory, window, now := failoverSafetyFixture(t)
+	recordStableFailure(window, resolved.Cluster.ResourceID, now)
+	calls := []string{}
+	leases := &failoverLeaseStub{
+		calls: &calls,
+		lease: endpoint.Lease{ResourceID: model.NewResourceID(), Active: true, ExpiresAt: now.Add(30 * time.Second)},
+	}
+	transport := &failoverAgentTransportStub{
+		calls: &calls, err: errors.New("old node is unreachable"),
+		onSend: func(request agent.Request) {
+			if request.Command == agent.CommandSelfIsolate {
+				now = now.Add(4 * time.Second)
+			}
+		},
+	}
+	waited := time.Duration(0)
+	provider := NewGuardedFailoverSafety(
+		window, failoverAuthorityStub{}, inventory, leases, transport, "agent-secret", func() time.Time { return now },
+		WithAgentQuorumFencing(15*time.Second),
+		withFailoverWaiter(func(_ context.Context, duration time.Duration) error { waited = duration; return nil }),
+	)
+	checks := provider.Precheck(context.Background(), resolved)
+	if failoverCheckStatus(checks, "old_primary_fenced") != model.CheckPass {
+		t.Fatalf("agent quorum fencing path was rejected: %+v", checks)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("agent-quorum precheck contacted failed primary: %v", calls)
+	}
+	if err := provider.Fence(context.Background(), resolved); err != nil {
+		t.Fatalf("agent quorum fence old primary: %v", err)
+	}
+	if waited != 11*time.Second {
+		t.Fatalf("remaining agent quorum grace=%s, want 11s after a 4s isolation attempt", waited)
+	}
+	if check := provider.Verify(context.Background(), resolved); check.Status != model.CheckPass || !strings.Contains(check.Message, "majority") {
+		t.Fatalf("agent quorum fencing verification=%+v", check)
+	}
+	if !reflect.DeepEqual(calls, []string{
+		"lease", agent.CommandSelfIsolate, "lease", "current_lease", agent.CommandVIPStatus,
+		agent.CommandVIPStatus, "current_lease",
+	}) {
+		t.Fatalf("agent quorum fencing calls=%v", calls)
+	}
+}
+
+func TestGuardedFailoverSafetyWaitsOnlyForTrackedAuthorizationInCurrentLeadershipTerm(t *testing.T) {
+	resolved, inventory, window, now := failoverSafetyFixture(t)
+	recordStableFailure(window, resolved.Cluster.ResourceID, now)
+	calls := []string{}
+	leases := &failoverLeaseStub{
+		calls: &calls,
+		lease: endpoint.Lease{ResourceID: model.NewResourceID(), Active: true, ExpiresAt: now.Add(30 * time.Second)},
+	}
+	tracker := NewAgentAuthorizationTracker()
+	tracker.Record(agent.ReconcileResponse{
+		ClusterID: resolved.Cluster.ResourceID, InstanceID: resolved.Primary.ResourceID,
+		Action: agent.ReconcileKeepVIP, LeaseID: model.NewResourceID(), ValidUntil: now.Add(7 * time.Second),
+	}, 11)
+	transport := &failoverAgentTransportStub{
+		calls: &calls, err: errors.New("old node is unreachable"),
+		onSend: func(request agent.Request) {
+			if request.Command == agent.CommandSelfIsolate {
+				now = now.Add(4 * time.Second)
+			}
+		},
+	}
+	waited := time.Duration(0)
+	provider := NewGuardedFailoverSafety(
+		window, failoverAuthorityStub{term: 11}, inventory, leases, transport, "agent-secret", func() time.Time { return now },
+		WithAgentQuorumFencing(15*time.Second), WithAgentAuthorizationTracker(tracker),
+		withFailoverWaiter(func(_ context.Context, duration time.Duration) error { waited = duration; return nil }),
+	)
+
+	if err := provider.Fence(context.Background(), resolved); err != nil {
+		t.Fatalf("tracked agent-quorum fence old primary: %v", err)
+	}
+	if waited != 4*time.Second {
+		t.Fatalf("tracked authorization wait=%s, want 4s including one-second expiry margin", waited)
+	}
+}
+
+func TestGuardedFailoverSafetyFallsBackToFullGraceAfterLeadershipTermChanges(t *testing.T) {
+	resolved, inventory, window, now := failoverSafetyFixture(t)
+	recordStableFailure(window, resolved.Cluster.ResourceID, now)
+	calls := []string{}
+	tracker := NewAgentAuthorizationTracker()
+	tracker.Record(agent.ReconcileResponse{
+		ClusterID: resolved.Cluster.ResourceID, InstanceID: resolved.Primary.ResourceID,
+		Action: agent.ReconcileKeepVIP, LeaseID: model.NewResourceID(), ValidUntil: now.Add(7 * time.Second),
+	}, 10)
+	waited := time.Duration(0)
+	provider := NewGuardedFailoverSafety(
+		window, failoverAuthorityStub{term: 11}, inventory,
+		&failoverLeaseStub{calls: &calls, lease: endpoint.Lease{ResourceID: model.NewResourceID(), Active: true, ExpiresAt: now.Add(30 * time.Second)}},
+		&failoverAgentTransportStub{calls: &calls, err: errors.New("old node is unreachable")},
+		"agent-secret", func() time.Time { return now }, WithAgentQuorumFencing(15*time.Second),
+		WithAgentAuthorizationTracker(tracker),
+		withFailoverWaiter(func(_ context.Context, duration time.Duration) error { waited = duration; return nil }),
+	)
+
+	if err := provider.Fence(context.Background(), resolved); err != nil {
+		t.Fatalf("fallback agent-quorum fence old primary: %v", err)
+	}
+	if waited != 15*time.Second {
+		t.Fatalf("leadership-term fallback wait=%s, want 15s", waited)
+	}
+}
+
+func TestGuardedFailoverSafetyKeepsAdmittedFailureThroughAgentGrace(t *testing.T) {
+	resolved, inventory, window, initial := failoverSafetyFixture(t)
+	recordStableFailure(window, resolved.Cluster.ResourceID, initial)
+	now := initial
+	leases := endpoint.NewMemoryLeaseStore(func() time.Time { return now })
+	calls := []string{}
+	transport := &failoverAgentTransportStub{calls: &calls, err: errors.New("old node is unreachable")}
+	provider := NewGuardedFailoverSafety(
+		window, failoverAuthorityStub{}, inventory, leases, transport, "agent-secret", func() time.Time { return now },
+		WithAgentQuorumFencing(15*time.Second),
+		withFailoverWaiter(func(_ context.Context, duration time.Duration) error {
+			now = now.Add(duration)
+			return nil
+		}),
+	)
+
+	// Discovery publication is intentionally held by the workflow while the
+	// Agent grace runs. The last observation therefore becomes older than the
+	// FailureWindow's normal ten-second publication interval.
+	if !window.Stable(resolved.Cluster.ResourceID, now) {
+		t.Fatal("fixture must begin with a stable failure")
+	}
+	if err := provider.Fence(context.Background(), resolved); err != nil {
+		t.Fatalf("agent-quorum failover rejected its admitted failure during grace: %v", err)
+	}
+	if window.Stable(resolved.Cluster.ResourceID, now) {
+		t.Fatal("failure evidence should be stale after the Agent grace without a discovery publication")
+	}
+	if check := provider.Verify(context.Background(), resolved); check.Status != model.CheckPass {
+		t.Fatalf("agent-quorum failover verification=%+v", check)
+	}
+}
+
+func TestAgentQuorumFencingAuthorizesPostgreSQLAfterWriterSelfIsolationGrace(t *testing.T) {
+	resolved, inventory, window, now := failoverSafetyFixture(t)
+	resolved.Cluster.Engine = model.EnginePostgreSQL
+	resolved.Primary.Engine = model.EnginePostgreSQL
+	resolved.Primary.Port = 5432
+	resolved.Target.Engine = model.EnginePostgreSQL
+	resolved.Target.Port = 5432
+	recordStableFailure(window, resolved.Cluster.ResourceID, now)
+	calls := []string{}
+	leases := &failoverLeaseStub{
+		calls: &calls,
+		lease: endpoint.Lease{ResourceID: model.NewResourceID(), Active: true, ExpiresAt: now.Add(time.Minute)},
+	}
+	waited := time.Duration(0)
+	provider := NewGuardedFailoverSafety(
+		window, failoverAuthorityStub{}, inventory, leases,
+		&failoverAgentTransportStub{calls: &calls, err: errors.New("old PostgreSQL node is unreachable")},
+		"agent-secret", func() time.Time { return now }, WithAgentQuorumFencing(15*time.Second),
+		withFailoverWaiter(func(_ context.Context, duration time.Duration) error { waited = duration; return nil }),
+	)
+	checks := provider.Precheck(context.Background(), resolved)
+	if failoverCheckStatus(checks, "old_primary_fenced") != model.CheckPass {
+		t.Fatalf("PostgreSQL Agent quorum fencing path was rejected: %+v", checks)
+	}
+	if err := provider.Fence(context.Background(), resolved); err != nil {
+		t.Fatalf("PostgreSQL Agent quorum fence: %v", err)
+	}
+	if waited != 15*time.Second {
+		t.Fatalf("PostgreSQL Agent fencing grace=%s, want 15s", waited)
+	}
+	if check := provider.Verify(context.Background(), resolved); check.Status != model.CheckPass {
+		t.Fatalf("PostgreSQL Agent quorum verification=%+v", check)
+	}
+}
+
+func TestGuardedFailoverSafetyRejectsReachableWritableOldPrimaryAfterAgentGrace(t *testing.T) {
+	resolved, inventory, window, now := failoverSafetyFixture(t)
+	recordStableFailure(window, resolved.Cluster.ResourceID, now)
+	calls := []string{}
+	leases := &failoverLeaseStub{
+		calls: &calls,
+		lease: endpoint.Lease{ResourceID: model.NewResourceID(), Active: true, ExpiresAt: now.Add(30 * time.Second)},
+	}
+	transport := &failoverAgentTransportStub{calls: &calls, err: errors.New("temporarily unreachable")}
+	provider := NewGuardedFailoverSafety(
+		window, failoverAuthorityStub{}, inventory, leases, transport, "agent-secret", func() time.Time { return now },
+		WithAgentQuorumFencing(15*time.Second),
+		withFailoverWaiter(func(context.Context, time.Duration) error {
+			transport.err = nil
+			transport.ownsVIP = true
+			transport.readOnly = false
+			transport.superReadOnly = false
+			return nil
+		}),
+	)
+	if err := provider.Fence(context.Background(), resolved); err == nil || !strings.Contains(err.Error(), "remains reachable") {
+		t.Fatalf("reachable writable old primary error=%v", err)
+	}
+}
+
+func TestGuardedFailoverSafetyRejectsChangedMajorityLease(t *testing.T) {
+	resolved, inventory, window, now := failoverSafetyFixture(t)
+	recordStableFailure(window, resolved.Cluster.ResourceID, now)
+	calls := []string{}
+	leases := &failoverLeaseStub{
+		calls: &calls,
+		lease: endpoint.Lease{ResourceID: model.NewResourceID(), Active: true, ExpiresAt: now.Add(30 * time.Second)},
+	}
+	transport := &failoverAgentTransportStub{calls: &calls, err: errors.New("old node is unreachable")}
+	provider := NewGuardedFailoverSafety(
+		window, failoverAuthorityStub{}, inventory, leases, transport, "agent-secret", func() time.Time { return now },
+		WithAgentQuorumFencing(15*time.Second),
+		withFailoverWaiter(func(context.Context, time.Duration) error {
+			changed := leases.lease
+			changed.OwnerID = model.NewResourceID()
+			leases.currentLease = &changed
+			return nil
+		}),
+	)
+	if err := provider.Fence(context.Background(), resolved); err == nil || !strings.Contains(err.Error(), "exact failover transition") {
+		t.Fatalf("changed majority lease error=%v", err)
+	}
+}
+
+func TestGuardedFailoverSafetyVerifiesFinalizedMajorityOwnership(t *testing.T) {
+	resolved, inventory, window, now := failoverSafetyFixture(t)
+	recordStableFailure(window, resolved.Cluster.ResourceID, now)
+	inventory.haEndpoint.OwnerID = resolved.Target.ResourceID
+	inventory.endpoint.InstanceID = resolved.Target.ResourceID
+	calls := []string{}
+	leases := &failoverLeaseStub{
+		calls: &calls,
+		lease: endpoint.Lease{
+			ResourceID: model.NewResourceID(), ClusterID: resolved.Cluster.ResourceID,
+			HAEndpointID: inventory.haEndpoint.ResourceID, OperationID: inventory.haEndpoint.ResourceID,
+			OwnerID: resolved.Target.ResourceID, Active: true, ExpiresAt: now.Add(30 * time.Second),
+		},
+	}
+	provider := NewGuardedFailoverSafety(
+		window, failoverAuthorityStub{}, inventory, leases,
+		&failoverAgentTransportStub{calls: &calls, err: errors.New("old node remains unavailable")},
+		"agent-secret", func() time.Time { return now }, WithAgentQuorumFencing(15*time.Second),
+	)
+	if check := provider.Verify(context.Background(), resolved); check.Status != model.CheckPass {
+		t.Fatalf("finalized majority ownership verification=%+v", check)
 	}
 }
 

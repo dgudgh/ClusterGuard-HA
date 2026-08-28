@@ -21,7 +21,7 @@
         <span>Search documentation</span>
         <input id="docs-search" type="search" autocomplete="off" placeholder="Filter by title">
       </label>
-      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture" aria-current="page" class="active">Architecture</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture" aria-current="page" class="active">Architecture</a><a href="release-2.2.39.html" data-doc-title="release 2.2.39">Release 2.2.39</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="docker-swarm-mysql.html" data-doc-title="docker swarm mysql">Docker Swarm MySQL</a><a href="kubernetes-mysql.html" data-doc-title="kubernetes mysql">Kubernetes MySQL</a><a href="update-and-patch.html" data-doc-title="version update and rollback">Version Update and Rollback</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="postgresql-production-qualification.html" data-doc-title="postgresql 16.4 production qualification">PostgreSQL 16.4 Production Qualification</a><a href="docker-swarm-mysql-validation.html" data-doc-title="docker swarm mysql lab qualification">Docker Swarm MySQL Lab Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
       <div class="sidebar-meta">
         <span>Offline documentation build</span>
         <strong>2.1 / 2.2</strong>
@@ -59,6 +59,38 @@ verification paths are implemented. Oracle discovery and guarded Broker
 execution are implemented through the restricted node Agent; Oracle metric
 expansion remains roadmap work. Mutation stays unavailable unless every native
 runner and safety dependency is configured.</p>
+<h2 id="software-update-plane">Software Update Plane<a class="heading-anchor" href="#software-update-plane" aria-label="Link to Software Update Plane">#</a></h2>
+<p>ClusterGuard HA separates control-plane software updates from database
+mutation. Every binary exposes its version, release, build commit,
+<code>state_format</code>, and <code>update_protocol</code>. Every <code>.cgpatch</code> carries the target RPM,
+rollback RPM, compatibility manifest, SHA-256 checksums, and an offline release
+signature. The site updater manages only ClusterGuard controllers and Agents;
+it does not invoke database clients or alter database software, data
+directories, replication, or VIP configuration.</p>
+<p>The update state machine is fixed:</p>
+<pre><code class="language-text">VERIFY_SIGNATURE -&gt; CHECK_COMPATIBILITY -&gt; CHECK_QUORUM -&gt; CHECK_IDLE -&gt; CHECK_INVENTORY
+-&gt; ENTER_MAINTENANCE -&gt; FOLLOWERS -&gt; DATA_ONLY -&gt; LEADER
+-&gt; VERIFY_VERSIONS -&gt; VERIFY_NODE_SERVICES -&gt; VERIFY_QUORUM -&gt; LEAVE_MAINTENANCE
+</code></pre>
+<p><code>CHECK_INVENTORY</code> compares update targets, each host&#39;s immutable UUID, live Raft
+voters, and the active data-node inventory. Expansion, retirement, replacement,
+hostname/IP changes, or a stale state file cannot silently omit an active node.
+<code>VERIFY_NODE_SERVICES</code> requires controllers to rejoin the control plane and data
+nodes to restore both the Agent and reconcile timer; mixed nodes must satisfy
+both contracts.</p>
+<p>The maintenance marker is a fail-closed gate shared by every mutation ingress.
+Discovery, health, metrics, and read-only audit remain available while
+switchover, recovery, node sync, metadata reconciliation, and lifecycle
+mutation return maintenance status. Any failed step stops progression and uses
+the bundled old RPM to roll updated nodes back in reverse order. Maintenance is
+released only after a complete update or complete rollback passes version,
+node-service, and quorum verification. Every controller marker is preflighted
+before release; a partial release causes compensating re-lock on every
+controller. Interruption, final verification failure, incomplete compensation,
+or incomplete rollback retains the gate; the same signed patch can continue
+with <code>--resume</code>.
+See the <a href="update-and-patch.html">Update and Patch Guide</a> for the field
+procedure.</p>
 <h2 id="resource-model">Resource Model<a class="heading-anchor" href="#resource-model" aria-label="Link to Resource Model">#</a></h2>
 <p>Every durable resource has an immutable platform UUID and revision metadata.
 The main resources are:</p>
@@ -106,6 +138,14 @@ The main resources are:</p>
 <td>Desired owner and health of a VIP, listener, or service endpoint.</td>
 </tr>
 <tr>
+<td><code>RuntimeTarget</code></td>
+<td>Managed host, Docker Swarm, or Kubernetes API runtime boundary.</td>
+</tr>
+<tr>
+<td><code>WorkloadBinding</code></td>
+<td>Binds a database instance to immutable host, Swarm Service, or StatefulSet/Pod/PVC identity.</td>
+</tr>
+<tr>
 <td><code>OperationRecord</code> / <code>OperationPlan</code></td>
 <td>Idempotent intent, durable stage progress, and immutable execution plan.</td>
 </tr>
@@ -138,6 +178,29 @@ The main resources are:</p>
 and workflows. Each physical node also has a globally unique immutable
 <code>node_name</code> such as <code>cg-data-0001</code>. Hostname, IP address, port, display name, and
 aliases can change without creating a new node or database instance.</p>
+<h2 id="runtime-and-writer-endpoint-layers">Runtime and Writer Endpoint Layers<a class="heading-anchor" href="#runtime-and-writer-endpoint-layers" aria-label="Link to Runtime and Writer Endpoint Layers">#</a></h2>
+<p>ClusterGuard never infers a deployment mode from a port or process name. Every database instance is associated with an explicit <code>RuntimeTarget</code> through a <code>WorkloadBinding</code>, and every cluster has exactly one active writer-endpoint Provider.</p>
+<pre><code class="language-mermaid">flowchart TB
+  CP[Three-node Raft control plane] --&gt; ROUTER[Writer endpoint Provider Router]
+  ROUTER --&gt; VIP[linux_vip]
+  ROUTER --&gt; KSVC[kubernetes_service]
+
+  VIP --&gt; HOST[Bare metal or VM&lt;br/&gt;systemd database]
+  VIP --&gt; SWARM[Docker Swarm&lt;br/&gt;fixed one-replica Service]
+  HOST --&gt; HVIP[Host interface VIP]
+  SWARM --&gt; HVIP
+
+  KSVC --&gt; K8S[Kubernetes&lt;br/&gt;dedicated one-replica StatefulSet]
+  K8S --&gt; EPS[Selectorless Service&lt;br/&gt;single-backend EndpointSlice]
+
+  CP -. mTLS or HTTPS .-&gt; CONTROL[Restricted Agent / Kubernetes API]
+  CONTROL --&gt; HOST
+  CONTROL --&gt; SWARM
+  CONTROL --&gt; K8S
+</code></pre>
+<p>Bare-metal and VM mode persists restart roles through the Agent and moves a host-interface VIP. Docker Swarm also moves the host VIP; it does not mutate container addresses or depend on the Swarm routing mesh. The Agent controls only the allowlisted fixed-host Service, database role, and restart fence.</p>
+<p>Kubernetes does not move a host VIP, rewrite CoreDNS, or infer a writer from an ordinary Service selector. After the MySQL role transition, the Provider persists both StatefulSet restart roles and atomically updates the selectorless Service&#39;s single EndpointSlice backend with <code>resourceVersion</code>. Pod UID, Node name, and PVC UID must match registered identity. Failover first persists a fence and scales the old primary&#39;s dedicated StatefulSet to zero. A Node that cannot be proven Ready requires additional cloud, BMC, or hypervisor fencing evidence.</p>
+<p>Kubernetes execution currently covers MySQL. PostgreSQL Kubernetes resources may be registered but remain fail-closed until the PostgreSQL Pod role controller is complete. See the <a href="kubernetes-mysql.html">Kubernetes MySQL Guide</a> for deployment assets and constraints.</p>
 <h2 id="engine-identity">Engine Identity<a class="heading-anchor" href="#engine-identity" aria-label="Link to Engine Identity">#</a></h2>
 <p>Native identity binds observations to the stable platform resource:</p>
 <table>
@@ -343,13 +406,17 @@ running replication threads, compatible release families, and an executable
 endpoint provider. The source is fenced before promotion, every reachable
 follower is reparented, and success requires independent proof of one writable
 instance and one target VIP owner.</p>
-<p>Automatic failover uses a 30-second stable incident recorded by discovery. Only
+<p>Automatic failover uses three failed-primary observations spanning at least
+three seconds to record a stable incident. Only
 the majority Leader may submit the durable operation. The same incident cannot
 be repeated after success or an indeterminate outcome. Operation locks are
 Raft-replicated and renewed, Safety Guard rechecks majority, and endpoint
 mutation requires a separate short lease. The restricted data-node agent
 removes a stale VIP and persists both MySQL read-only flags when the node cannot
 obtain a valid signed keep decision.</p>
+<p>The stable-incident window is independent from the 15-second restricted-Agent
+authorization-expiry fence and the 30-second retry backoff. These are separate
+safety and scheduling controls, not a single end-to-end RTO value.</p>
 <p>Automatic recovery enters the workflow through a separate internal method. It
 does not mint or consume a human approval grant and cannot be selected by an
 HTTP field. The incident ID is recorded at <code>APPROVE</code>, while consensus, Safety
@@ -393,7 +460,7 @@ a fresh observation before topology is trusted again.</p>
         </article>
         <aside class="page-toc" aria-label="On this page">
           <strong>On this page</strong>
-          <a class="toc-level-2" href="#design-goals">Design Goals</a><a class="toc-level-2" href="#resource-model">Resource Model</a><a class="toc-level-2" href="#engine-identity">Engine Identity</a><a class="toc-level-2" href="#adapter-registry">Adapter Registry</a><a class="toc-level-2" href="#inventory-authority">Inventory Authority</a><a class="toc-level-2" href="#refresh-transaction">Refresh Transaction</a><a class="toc-level-2" href="#candidate-intelligence">Candidate Intelligence</a><a class="toc-level-2" href="#metrics">Metrics</a><a class="toc-level-2" href="#platform-authentication">Platform Authentication</a><a class="toc-level-2" href="#workflow-gates">Workflow Gates</a>
+          <a class="toc-level-2" href="#design-goals">Design Goals</a><a class="toc-level-2" href="#software-update-plane">Software Update Plane</a><a class="toc-level-2" href="#resource-model">Resource Model</a><a class="toc-level-2" href="#runtime-and-writer-endpoint-layers">Runtime and Writer Endpoint Layers</a><a class="toc-level-2" href="#engine-identity">Engine Identity</a><a class="toc-level-2" href="#adapter-registry">Adapter Registry</a><a class="toc-level-2" href="#inventory-authority">Inventory Authority</a><a class="toc-level-2" href="#refresh-transaction">Refresh Transaction</a><a class="toc-level-2" href="#candidate-intelligence">Candidate Intelligence</a><a class="toc-level-2" href="#metrics">Metrics</a><a class="toc-level-2" href="#platform-authentication">Platform Authentication</a><a class="toc-level-2" href="#workflow-gates">Workflow Gates</a>
         </aside>
       </main>
     </div>

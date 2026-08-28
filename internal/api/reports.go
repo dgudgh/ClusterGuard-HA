@@ -1,12 +1,31 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 
 	reportview "clusterguard.io/ha/internal/report"
 	"clusterguard.io/ha/pkg/model"
 )
+
+func (server *Server) auditExportRoute(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodGet {
+		writeError(writer, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !server.authorizeControl(writer, request) {
+		return
+	}
+	writer.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
+	writer.Header().Set("Content-Disposition", `attachment; filename="clusterguard-audit.ndjson"`)
+	encoder := json.NewEncoder(writer)
+	for _, event := range server.store.Audits() {
+		if err := encoder.Encode(event); err != nil {
+			return
+		}
+	}
+}
 
 func (server *Server) reportRoute(writer http.ResponseWriter, request *http.Request, tail string) {
 	if !server.authorizeControl(writer, request) {

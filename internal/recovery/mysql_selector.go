@@ -42,7 +42,7 @@ func NewPostgreSQLCandidateSelector(evaluator CandidateEvaluator) *DatabaseCandi
 	}
 }
 
-func (selector *DatabaseCandidateSelector) Select(ctx context.Context, cluster model.DatabaseCluster, snapshot model.TopologySnapshot) (model.ResourceID, error) {
+func (selector *DatabaseCandidateSelector) Select(ctx context.Context, cluster model.DatabaseCluster, snapshot model.TopologySnapshot, sourceID model.ResourceID) (model.ResourceID, error) {
 	if selector == nil || selector.evaluator == nil {
 		return "", fmt.Errorf("database candidate evaluator is not configured")
 	}
@@ -55,23 +55,29 @@ func (selector *DatabaseCandidateSelector) Select(ctx context.Context, cluster m
 	if len(snapshot.Instances) == 0 {
 		return "", fmt.Errorf("automatic failover requires a non-empty topology snapshot")
 	}
+	if !model.ValidResourceID(sourceID) {
+		return "", fmt.Errorf("automatic failover requires an explicit failed source")
+	}
 	primary := model.DatabaseInstance{}
 	candidates := make([]model.DatabaseInstance, 0, len(snapshot.Instances))
 	for _, instance := range snapshot.Instances {
 		if !model.ValidResourceID(instance.ResourceID) || instance.ClusterID != cluster.ResourceID || instance.Engine != cluster.Engine {
 			return "", fmt.Errorf("candidate topology contains an out-of-scope instance")
 		}
-		if instance.Role == model.RolePrimary {
-			if primary.ResourceID != "" {
-				return "", fmt.Errorf("automatic failover requires exactly one recorded primary")
-			}
+		if instance.ResourceID == sourceID {
 			primary = instance
 			continue
+		}
+		if instance.Role == model.RolePrimary {
+			return "", fmt.Errorf("automatic failover is blocked because another primary is already observed")
 		}
 		candidates = append(candidates, instance)
 	}
 	if !model.ValidResourceID(primary.ResourceID) {
-		return "", fmt.Errorf("automatic failover requires one recorded primary")
+		return "", fmt.Errorf("automatic failover source is outside the selected topology")
+	}
+	if primary.Health.State != model.HealthUnhealthy && primary.Health.State != model.HealthUnknown {
+		return "", fmt.Errorf("automatic failover source is not failed")
 	}
 	assessments, err := selector.evaluator.EvaluateCandidates(ctx, adapter.CandidateRequest{
 		Cluster: cluster, Primary: primary, Instances: candidates, Links: snapshot.Links,
@@ -86,5 +92,5 @@ func (selector *DatabaseCandidateSelector) Select(ctx context.Context, cluster m
 			return assessment.InstanceID, nil
 		}
 	}
-	return "", nil
+	return "", fmt.Errorf("no eligible %s failover candidate is currently available", selector.engine)
 }

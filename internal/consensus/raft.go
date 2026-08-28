@@ -2,15 +2,20 @@ package consensus
 
 import (
 	"bytes"
+	"compress/flate"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,6 +25,7 @@ import (
 	"clusterguard.io/ha/pkg/model"
 	"github.com/hashicorp/raft"
 	raftboltdb "github.com/hashicorp/raft-boltdb/v2"
+	bolt "go.etcd.io/bbolt"
 )
 
 var (
@@ -31,10 +37,20 @@ var (
 const maximumReplicatedStateBytes = controlstate.MaximumBytes
 
 const (
-	raftSnapshotThreshold = 64
-	raftTrailingLogs      = 32
-	raftSnapshotInterval  = 30 * time.Second
+	raftSnapshotThreshold             = 64
+	raftTrailingLogs                  = 32
+	raftSnapshotInterval              = 30 * time.Second
+	raftStoreCompactionThresholdBytes = 256 << 20
+	raftStoreCompactionTransactionMax = 64 << 20
 )
+
+var replicatedLogCompressedMagic = []byte{'C', 'G', 'H', 'A', 'R', 'A', 'F', 'T', 1}
+
+// Hashicorp Raft futures do not expose cancellation. A request can therefore
+// time out while its future still completes in the background. Bound those
+// waiters so repeated timed-out client requests cannot grow goroutines without
+// limit while the local Raft transport is unhealthy.
+var futureWaiterSlots = make(chan struct{}, 64)
 
 type Peer struct {
 	ResourceID model.ResourceID `json:"resource_id"`
@@ -42,19 +58,29 @@ type Peer struct {
 	APIAddress string           `json:"api_address,omitempty"`
 }
 
+// ControllerMember is the durable identity and network location used when
+// changing the live Raft voter set. ResourceID is immutable; addresses may be
+// reconciled during a controlled replacement.
+type ControllerMember struct {
+	ResourceID model.ResourceID `json:"resource_id"`
+	Address    string           `json:"address"`
+	APIAddress string           `json:"api_address,omitempty"`
+}
+
 type Config struct {
-	LocalID                model.ResourceID
-	BindAddress            string
-	AdvertiseAddress       string
-	DataDirectory          string
-	Peers                  []Peer
-	Bootstrap              bool
-	ApplyTimeout           time.Duration
-	SnapshotCASEnabled     bool
-	AllowInsecureTransport bool
-	TLSCertFile            string
-	TLSKeyFile             string
-	TLSCAFile              string
+	LocalID                         model.ResourceID
+	BindAddress                     string
+	AdvertiseAddress                string
+	DataDirectory                   string
+	Peers                           []Peer
+	Bootstrap                       bool
+	ApplyTimeout                    time.Duration
+	SnapshotCASEnabled              bool
+	ReplicatedLogCompressionEnabled bool
+	AllowInsecureTransport          bool
+	TLSCertFile                     string
+	TLSKeyFile                      string
+	TLSCAFile                       string
 }
 
 type StateMachine interface {
@@ -327,9 +353,44 @@ func (layer *raftTLSStreamLayer) Dial(address raft.ServerAddress, timeout time.D
 	return connection, nil
 }
 
-func encodeReplicatedLog(state []byte) ([]byte, error) {
+func encodeReplicatedLog(state []byte, compression ...bool) ([]byte, error) {
 	if len(state) == 0 || len(state) > maximumReplicatedStateBytes {
 		return nil, fmt.Errorf("replicated state is invalid")
+	}
+	if len(compression) == 0 || !compression[0] {
+		return append([]byte{}, state...), nil
+	}
+	var encoded bytes.Buffer
+	encoded.Write(replicatedLogCompressedMagic)
+	writer, err := flate.NewWriter(&encoded, flate.BestSpeed)
+	if err != nil {
+		return nil, fmt.Errorf("initialize replicated state compression: %w", err)
+	}
+	if _, err := writer.Write(state); err != nil {
+		_ = writer.Close()
+		return nil, fmt.Errorf("compress replicated state: %w", err)
+	}
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("finish replicated state compression: %w", err)
+	}
+	if encoded.Len() >= len(state) {
+		return append([]byte{}, state...), nil
+	}
+	return encoded.Bytes(), nil
+}
+
+func decodeCompressedReplicatedLog(contents []byte) ([]byte, error) {
+	reader := flate.NewReader(bytes.NewReader(contents[len(replicatedLogCompressedMagic):]))
+	state, readErr := io.ReadAll(io.LimitReader(reader, maximumReplicatedStateBytes+1))
+	closeErr := reader.Close()
+	if readErr != nil {
+		return nil, fmt.Errorf("decompress replicated state: %w", readErr)
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("close replicated state decompressor: %w", closeErr)
+	}
+	if len(state) == 0 || len(state) > maximumReplicatedStateBytes {
+		return nil, fmt.Errorf("decompressed replicated state size is invalid")
 	}
 	return append([]byte{}, state...), nil
 }
@@ -337,6 +398,12 @@ func encodeReplicatedLog(state []byte) ([]byte, error) {
 func decodeReplicatedLog(contents []byte) ([]byte, error) {
 	if len(contents) == 0 || len(contents) > maximumReplicatedStateBytes {
 		return nil, fmt.Errorf("replicated state size is invalid")
+	}
+	if bytes.HasPrefix(contents, replicatedLogCompressedMagic) {
+		if len(contents) == len(replicatedLogCompressedMagic) {
+			return nil, fmt.Errorf("compressed replicated state is empty")
+		}
+		return decodeCompressedReplicatedLog(contents)
 	}
 	return append([]byte{}, contents...), nil
 }
@@ -422,10 +489,15 @@ type Node struct {
 	store                  *raftboltdb.BoltStore
 	fsm                    *replicatedFSM
 	localID                model.ResourceID
-	voterCount             int
+	configuredVoterCount   int
 	applyTimeout           time.Duration
 	snapshotCAS            bool
+	compressReplicatedLog  bool
 	leaderAPIs             map[model.ResourceID]string
+	leaderAPIsMu           sync.RWMutex
+	leaderAPIScheme        string
+	leaderAPIPort          string
+	membershipMu           sync.Mutex
 	commitMu               sync.Mutex
 	synchronizeMu          sync.Mutex
 	synchronizedCommitTerm uint64
@@ -440,6 +512,453 @@ func newRaftRuntimeConfiguration(localID model.ResourceID) *raft.Config {
 	configuration.TrailingLogs = raftTrailingLogs
 	configuration.SnapshotInterval = raftSnapshotInterval
 	return configuration
+}
+
+type boltStoreCopier struct {
+	destination *bolt.DB
+	transaction *bolt.Tx
+	bytes       int64
+	maxBytes    int64
+}
+
+type raftTailRepair struct {
+	Repaired          bool
+	RemovedIndex      uint64
+	FirstRemovedIndex uint64
+	RemovedCount      int
+	RetainedIndex     uint64
+	BackupPath        string
+}
+
+func raftLogIndex(key []byte) (uint64, error) {
+	if len(key) != 8 {
+		return 0, fmt.Errorf("Raft log key has %d bytes, want 8", len(key))
+	}
+	return binary.BigEndian.Uint64(key), nil
+}
+
+func raftTailKeys(path string) ([]byte, []byte, error) {
+	database, err := bolt.Open(path, 0o600, &bolt.Options{ReadOnly: true, Timeout: time.Second})
+	if err != nil {
+		return nil, nil, err
+	}
+	defer database.Close()
+	var lastKey, previousKey []byte
+	err = database.View(func(transaction *bolt.Tx) error {
+		bucket := transaction.Bucket([]byte("logs"))
+		if bucket == nil {
+			return fmt.Errorf("Raft logs bucket is missing")
+		}
+		cursor := bucket.Cursor()
+		last, _ := cursor.Last()
+		if last == nil {
+			return nil
+		}
+		lastKey = append([]byte{}, last...)
+		previous, _ := cursor.Prev()
+		if previous != nil {
+			previousKey = append([]byte{}, previous...)
+		}
+		return nil
+	})
+	return lastKey, previousKey, err
+}
+
+func raftTailKeySuffix(path string, limit int) ([][]byte, error) {
+	database, err := bolt.Open(path, 0o600, &bolt.Options{ReadOnly: true, Timeout: time.Second})
+	if err != nil {
+		return nil, err
+	}
+	defer database.Close()
+	keys := make([][]byte, 0, limit)
+	err = database.View(func(transaction *bolt.Tx) error {
+		bucket := transaction.Bucket([]byte("logs"))
+		if bucket == nil {
+			return fmt.Errorf("Raft logs bucket is missing")
+		}
+		cursor := bucket.Cursor()
+		for key, _ := cursor.Last(); key != nil && len(keys) < limit; key, _ = cursor.Prev() {
+			keys = append(keys, append([]byte{}, key...))
+		}
+		return nil
+	})
+	return keys, err
+}
+
+func readRaftLog(path string, index uint64) (raft.Log, error) {
+	store, err := raftboltdb.New(raftboltdb.Options{
+		Path: path, BoltOptions: &bolt.Options{ReadOnly: true, Timeout: time.Second},
+	})
+	if err != nil {
+		return raft.Log{}, err
+	}
+	defer store.Close()
+	entry := raft.Log{}
+	if err := store.GetLog(index, &entry); err != nil {
+		return raft.Log{}, err
+	}
+	if entry.Index != index {
+		return raft.Log{}, fmt.Errorf("Raft log payload index %d does not match key index %d", entry.Index, index)
+	}
+	return entry, nil
+}
+
+func backupRaftStore(path string, now func() time.Time) (string, error) {
+	if now == nil {
+		now = time.Now
+	}
+	backupPath := fmt.Sprintf("%s.corrupt-tail-%s.bak", path, now().UTC().Format("20060102T150405.000000000Z"))
+	source, err := bolt.Open(path, 0o600, &bolt.Options{ReadOnly: true, Timeout: time.Second})
+	if err != nil {
+		return "", fmt.Errorf("open Raft store for backup: %w", err)
+	}
+	destination, err := os.OpenFile(backupPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		_ = source.Close()
+		return "", fmt.Errorf("create Raft repair backup: %w", err)
+	}
+	writeErr := source.View(func(transaction *bolt.Tx) error {
+		_, err := transaction.WriteTo(destination)
+		return err
+	})
+	syncErr := destination.Sync()
+	closeDestinationErr := destination.Close()
+	closeSourceErr := source.Close()
+	if writeErr != nil || syncErr != nil || closeDestinationErr != nil || closeSourceErr != nil {
+		_ = os.Remove(backupPath)
+		return "", fmt.Errorf("write Raft repair backup: %w", errors.Join(writeErr, syncErr, closeDestinationErr, closeSourceErr))
+	}
+	if err := syncMetadataDirectory(filepath.Dir(path)); err != nil {
+		_ = os.Remove(backupPath)
+		return "", fmt.Errorf("sync Raft repair backup: %w", err)
+	}
+	return backupPath, nil
+}
+
+func syncMetadataDirectory(path string) error {
+	directory, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	syncErr := directory.Sync()
+	closeErr := directory.Close()
+	return errors.Join(syncErr, closeErr)
+}
+
+func repairRaftOutlierTail(path string, trustedSnapshotIndex uint64, now func() time.Time) (raftTailRepair, error) {
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return raftTailRepair{}, nil
+	} else if err != nil {
+		return raftTailRepair{}, fmt.Errorf("inspect Raft store: %w", err)
+	}
+	keys, err := raftTailKeySuffix(path, 256)
+	if err != nil {
+		return raftTailRepair{}, fmt.Errorf("inspect Raft log tail: %w", err)
+	}
+	if len(keys) == 0 {
+		return raftTailRepair{}, nil
+	}
+	lastKey := keys[0]
+	lastIndex, keyErr := raftLogIndex(lastKey)
+	if keyErr == nil {
+		if _, logErr := readRaftLog(path, lastIndex); logErr == nil {
+			return raftTailRepair{}, nil
+		} else {
+			err = logErr
+		}
+	} else {
+		err = keyErr
+	}
+	corruptKeys := [][]byte{lastKey}
+	corruptIndexes := []uint64{lastIndex}
+	retainedIndex := uint64(0)
+	for _, key := range keys[1:] {
+		index, indexErr := raftLogIndex(key)
+		if indexErr != nil {
+			return raftTailRepair{}, fmt.Errorf("Raft tail contains a malformed key below corruption: %w", indexErr)
+		}
+		if _, logErr := readRaftLog(path, index); logErr == nil {
+			retainedIndex = index
+			break
+		}
+		corruptKeys = append(corruptKeys, key)
+		corruptIndexes = append(corruptIndexes, index)
+	}
+	if retainedIndex == 0 {
+		return raftTailRepair{}, fmt.Errorf("Raft tail is corrupt and no valid predecessor was found within %d entries: %w", len(keys), err)
+	}
+	contiguous := false
+	firstRemovedIndex := corruptIndexes[0]
+	for _, index := range corruptIndexes {
+		if index <= retainedIndex {
+			return raftTailRepair{}, fmt.Errorf("Raft corrupt suffix crosses retained index %d", retainedIndex)
+		}
+		if index < firstRemovedIndex {
+			firstRemovedIndex = index
+		}
+		if index == retainedIndex+1 {
+			contiguous = true
+		}
+	}
+	if contiguous && trustedSnapshotIndex == 0 {
+		return raftTailRepair{}, fmt.Errorf("Raft tail at contiguous index %d is corrupt; automatic truncation is refused without a validated snapshot: %w", retainedIndex+1, err)
+	}
+	if trustedSnapshotIndex > retainedIndex {
+		return raftTailRepair{}, fmt.Errorf("Raft valid predecessor index %d is older than validated snapshot index %d", retainedIndex, trustedSnapshotIndex)
+	}
+	backupPath, backupErr := backupRaftStore(path, now)
+	if backupErr != nil {
+		return raftTailRepair{}, backupErr
+	}
+	database, openErr := bolt.Open(path, 0o600, &bolt.Options{Timeout: time.Second})
+	if openErr != nil {
+		return raftTailRepair{}, fmt.Errorf("open Raft store for outlier repair: %w", openErr)
+	}
+	deleteErr := database.Update(func(transaction *bolt.Tx) error {
+		bucket := transaction.Bucket([]byte("logs"))
+		if bucket == nil {
+			return fmt.Errorf("Raft logs bucket is missing")
+		}
+		currentLast, _ := bucket.Cursor().Last()
+		if !bytes.Equal(currentLast, lastKey) {
+			return fmt.Errorf("Raft log tail changed during repair")
+		}
+		for _, key := range corruptKeys {
+			if err := bucket.Delete(key); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	syncErr := database.Sync()
+	closeErr := database.Close()
+	if deleteErr != nil || syncErr != nil || closeErr != nil {
+		return raftTailRepair{}, fmt.Errorf("remove corrupt Raft outlier: %w", errors.Join(deleteErr, syncErr, closeErr))
+	}
+	if directoryErr := syncMetadataDirectory(filepath.Dir(path)); directoryErr != nil {
+		return raftTailRepair{}, fmt.Errorf("sync repaired Raft directory: %w", directoryErr)
+	}
+	return raftTailRepair{
+		Repaired: true, RemovedIndex: lastIndex, FirstRemovedIndex: firstRemovedIndex,
+		RemovedCount: len(corruptKeys), RetainedIndex: retainedIndex, BackupPath: backupPath,
+	}, nil
+}
+
+func latestValidatedSnapshotIndex(snapshotStore raft.SnapshotStore, machine StateMachine) (uint64, error) {
+	snapshots, err := snapshotStore.List()
+	if err != nil {
+		return 0, fmt.Errorf("list Raft snapshots: %w", err)
+	}
+	for _, snapshot := range snapshots {
+		_, reader, openErr := snapshotStore.Open(snapshot.ID)
+		if openErr != nil {
+			continue
+		}
+		state, readErr := io.ReadAll(io.LimitReader(reader, maximumReplicatedStateBytes+1))
+		closeErr := reader.Close()
+		if readErr != nil || closeErr != nil || len(state) == 0 || len(state) > maximumReplicatedStateBytes {
+			continue
+		}
+		if validateErr := machine.ValidateReplicatedState(state); validateErr != nil {
+			continue
+		}
+		return snapshot.Index, nil
+	}
+	if len(snapshots) > 0 {
+		return 0, fmt.Errorf("no Raft snapshot passed checksum and replicated-state validation")
+	}
+	return 0, nil
+}
+
+func (copier *boltStoreCopier) flush() error {
+	if copier.transaction == nil {
+		return nil
+	}
+	err := copier.transaction.Commit()
+	copier.transaction = nil
+	copier.bytes = 0
+	return err
+}
+
+func (copier *boltStoreCopier) rollback() {
+	if copier.transaction != nil {
+		_ = copier.transaction.Rollback()
+		copier.transaction = nil
+		copier.bytes = 0
+	}
+}
+
+func (copier *boltStoreCopier) ensureBucket(path [][]byte, sequence uint64) error {
+	if err := copier.flush(); err != nil {
+		return err
+	}
+	return copier.destination.Update(func(transaction *bolt.Tx) error {
+		var bucket *bolt.Bucket
+		for index, name := range path {
+			var err error
+			if index == 0 {
+				bucket, err = transaction.CreateBucketIfNotExists(name)
+			} else {
+				bucket, err = bucket.CreateBucketIfNotExists(name)
+			}
+			if err != nil {
+				return err
+			}
+		}
+		return bucket.SetSequence(sequence)
+	})
+}
+
+func destinationBucket(transaction *bolt.Tx, path [][]byte) *bolt.Bucket {
+	bucket := transaction.Bucket(path[0])
+	for _, name := range path[1:] {
+		if bucket == nil {
+			return nil
+		}
+		bucket = bucket.Bucket(name)
+	}
+	return bucket
+}
+
+func (copier *boltStoreCopier) put(path [][]byte, key, value []byte) error {
+	entryBytes := int64(len(key) + len(value))
+	if copier.transaction != nil && copier.bytes > 0 && copier.bytes+entryBytes > copier.maxBytes {
+		if err := copier.flush(); err != nil {
+			return err
+		}
+	}
+	if copier.transaction == nil {
+		transaction, err := copier.destination.Begin(true)
+		if err != nil {
+			return err
+		}
+		copier.transaction = transaction
+	}
+	bucket := destinationBucket(copier.transaction, path)
+	if bucket == nil {
+		return fmt.Errorf("destination bucket %q is missing", bytes.Join(path, []byte("/")))
+	}
+	if err := bucket.Put(key, value); err != nil {
+		return err
+	}
+	copier.bytes += entryBytes
+	return nil
+}
+
+func copyBoltBucket(copier *boltStoreCopier, source *bolt.Bucket, path [][]byte) error {
+	if err := copier.ensureBucket(path, source.Sequence()); err != nil {
+		return err
+	}
+	cursor := source.Cursor()
+	for key, value := cursor.First(); key != nil; key, value = cursor.Next() {
+		if value != nil {
+			if err := copier.put(path, key, value); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := copier.flush(); err != nil {
+			return err
+		}
+		child := source.Bucket(key)
+		if child == nil {
+			return fmt.Errorf("source bucket %q disappeared during compaction", key)
+		}
+		childPath := append(append([][]byte{}, path...), append([]byte{}, key...))
+		if err := copyBoltBucket(copier, child, childPath); err != nil {
+			return err
+		}
+	}
+	return copier.flush()
+}
+
+func copyBoltStore(destination, source *bolt.DB, transactionMaxBytes int64) error {
+	if transactionMaxBytes <= 0 {
+		transactionMaxBytes = raftStoreCompactionTransactionMax
+	}
+	copier := &boltStoreCopier{destination: destination, maxBytes: transactionMaxBytes}
+	defer copier.rollback()
+	return source.View(func(transaction *bolt.Tx) error {
+		if err := transaction.ForEach(func(name []byte, bucket *bolt.Bucket) error {
+			return copyBoltBucket(copier, bucket, [][]byte{append([]byte{}, name...)})
+		}); err != nil {
+			return err
+		}
+		return copier.flush()
+	})
+}
+
+func verifyBoltStore(database *bolt.DB) error {
+	return database.View(func(transaction *bolt.Tx) error {
+		var firstError error
+		for err := range transaction.Check() {
+			if err != nil && firstError == nil {
+				firstError = err
+			}
+		}
+		return firstError
+	})
+}
+
+func compactRaftStore(path string, minimumBytes int64) (int64, int64, bool, error) {
+	stat, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return 0, 0, false, nil
+	}
+	if err != nil {
+		return 0, 0, false, fmt.Errorf("inspect Raft store for compaction: %w", err)
+	}
+	before := stat.Size()
+	if before < minimumBytes {
+		return before, before, false, nil
+	}
+	temporaryPath := path + ".compact"
+	if err := os.Remove(temporaryPath); err != nil && !os.IsNotExist(err) {
+		return before, before, false, fmt.Errorf("remove stale Raft compaction file: %w", err)
+	}
+	source, err := bolt.Open(path, stat.Mode().Perm(), &bolt.Options{ReadOnly: true, Timeout: time.Second})
+	if err != nil {
+		return before, before, false, fmt.Errorf("open Raft store for compaction: %w", err)
+	}
+	destination, err := bolt.Open(temporaryPath, stat.Mode().Perm(), &bolt.Options{Timeout: time.Second})
+	if err != nil {
+		_ = source.Close()
+		return before, before, false, fmt.Errorf("create compacted Raft store: %w", err)
+	}
+	compactErr := copyBoltStore(destination, source, raftStoreCompactionTransactionMax)
+	verifyErr := verifyBoltStore(destination)
+	syncDestinationErr := destination.Sync()
+	closeDestinationErr := destination.Close()
+	closeSourceErr := source.Close()
+	if compactErr != nil || verifyErr != nil || syncDestinationErr != nil || closeDestinationErr != nil || closeSourceErr != nil {
+		_ = os.Remove(temporaryPath)
+		return before, before, false, fmt.Errorf(
+			"compact Raft store: %w",
+			errors.Join(compactErr, verifyErr, syncDestinationErr, closeDestinationErr, closeSourceErr),
+		)
+	}
+	if err := os.Chmod(temporaryPath, stat.Mode().Perm()); err != nil {
+		_ = os.Remove(temporaryPath)
+		return before, before, false, fmt.Errorf("preserve compacted Raft store permissions: %w", err)
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		_ = os.Remove(temporaryPath)
+		return before, before, false, fmt.Errorf("publish compacted Raft store: %w", err)
+	}
+	directory, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return before, before, true, fmt.Errorf("open Raft directory after compaction: %w", err)
+	}
+	syncErr := directory.Sync()
+	closeErr := directory.Close()
+	if syncErr != nil || closeErr != nil {
+		return before, before, true, fmt.Errorf("sync Raft directory after compaction: %w", errors.Join(syncErr, closeErr))
+	}
+	compacted, err := os.Stat(path)
+	if err != nil {
+		return before, before, true, fmt.Errorf("inspect compacted Raft store: %w", err)
+	}
+	return before, compacted.Size(), true, nil
 }
 
 func Open(configuration Config, machine StateMachine) (*Node, error) {
@@ -458,14 +977,34 @@ func Open(configuration Config, machine StateMachine) (*Node, error) {
 	if err := os.Chmod(configuration.DataDirectory, 0700); err != nil {
 		return nil, fmt.Errorf("secure Raft data directory: %w", err)
 	}
-	boltStore, err := raftboltdb.NewBoltStore(filepath.Join(configuration.DataDirectory, "raft.db"))
-	if err != nil {
-		return nil, fmt.Errorf("open Raft store: %w", err)
-	}
 	snapshotStore, err := raft.NewFileSnapshotStore(configuration.DataDirectory, 3, io.Discard)
 	if err != nil {
-		_ = boltStore.Close()
 		return nil, fmt.Errorf("open Raft snapshot store: %w", err)
+	}
+	trustedSnapshotIndex, err := latestValidatedSnapshotIndex(snapshotStore, machine)
+	if err != nil {
+		return nil, fmt.Errorf("validate Raft recovery snapshot: %w", err)
+	}
+	raftStorePath := filepath.Join(configuration.DataDirectory, "raft.db")
+	tailRepair, err := repairRaftOutlierTail(raftStorePath, trustedSnapshotIndex, time.Now)
+	if err != nil {
+		return nil, fmt.Errorf("validate Raft store tail: %w", err)
+	}
+	if tailRepair.Repaired {
+		log.Printf("repaired corrupt Raft suffix indexes %d..%d (%d entries); retained index %d; validated snapshot index %d; backup=%s",
+			tailRepair.FirstRemovedIndex, tailRepair.RemovedIndex, tailRepair.RemovedCount,
+			tailRepair.RetainedIndex, trustedSnapshotIndex, tailRepair.BackupPath)
+	}
+	beforeBytes, afterBytes, compacted, err := compactRaftStore(raftStorePath, raftStoreCompactionThresholdBytes)
+	if err != nil {
+		return nil, err
+	}
+	if compacted {
+		log.Printf("compacted Raft store from %d to %d bytes", beforeBytes, afterBytes)
+	}
+	boltStore, err := raftboltdb.NewBoltStore(raftStorePath)
+	if err != nil {
+		return nil, fmt.Errorf("open Raft store: %w", err)
 	}
 	advertise, err := net.ResolveTCPAddr("tcp", configuration.AdvertiseAddress)
 	if err != nil {
@@ -492,13 +1031,13 @@ func Open(configuration Config, machine StateMachine) (*Node, error) {
 	}
 	node := &Node{
 		transport: transport, store: boltStore, applyTimeout: configuration.ApplyTimeout,
-		localID: configuration.LocalID, voterCount: len(configuration.Peers),
-		snapshotCAS: configuration.SnapshotCASEnabled, leaderAPIs: make(map[model.ResourceID]string, len(configuration.Peers)),
+		localID: configuration.LocalID, configuredVoterCount: len(configuration.Peers),
+		snapshotCAS:           configuration.SnapshotCASEnabled,
+		compressReplicatedLog: configuration.ReplicatedLogCompressionEnabled,
+		leaderAPIs:            make(map[model.ResourceID]string, len(configuration.Peers)),
 	}
 	for _, peer := range configuration.Peers {
-		if address := strings.TrimRight(strings.TrimSpace(peer.APIAddress), "/"); address != "" {
-			node.leaderAPIs[peer.ResourceID] = address
-		}
+		node.rememberControllerAPI(peer.ResourceID, peer.APIAddress)
 	}
 	node.fsm = &replicatedFSM{machine: machine}
 	raftConfiguration := newRaftRuntimeConfiguration(configuration.LocalID)
@@ -537,21 +1076,22 @@ func (node *Node) SnapshotCASActive() bool {
 }
 
 type Status struct {
-	Enabled           bool             `json:"enabled"`
-	LocalControllerID model.ResourceID `json:"local_controller_id,omitempty"`
-	Role              string           `json:"role"`
-	LeaderID          model.ResourceID `json:"leader_id,omitempty"`
-	LeaderAddress     string           `json:"leader_address,omitempty"`
-	LeaderAPIAddress  string           `json:"leader_api_address,omitempty"`
-	LeaderKnown       bool             `json:"leader_known"`
-	VoterCount        int              `json:"voter_count"`
-	QuorumConfirmed   bool             `json:"quorum_confirmed"`
-	MutationAuthority bool             `json:"mutation_authority"`
-	SnapshotCASActive bool             `json:"snapshot_cas_active"`
-	Term              uint64           `json:"term"`
-	LastIndex         uint64           `json:"last_index"`
-	CommitIndex       uint64           `json:"commit_index"`
-	AppliedIndex      uint64           `json:"applied_index"`
+	Enabled                        bool             `json:"enabled"`
+	LocalControllerID              model.ResourceID `json:"local_controller_id,omitempty"`
+	Role                           string           `json:"role"`
+	LeaderID                       model.ResourceID `json:"leader_id,omitempty"`
+	LeaderAddress                  string           `json:"leader_address,omitempty"`
+	LeaderAPIAddress               string           `json:"leader_api_address,omitempty"`
+	LeaderKnown                    bool             `json:"leader_known"`
+	VoterCount                     int              `json:"voter_count"`
+	QuorumConfirmed                bool             `json:"quorum_confirmed"`
+	MutationAuthority              bool             `json:"mutation_authority"`
+	SnapshotCASActive              bool             `json:"snapshot_cas_active"`
+	ReplicatedLogCompressionActive bool             `json:"replicated_log_compression_active"`
+	Term                           uint64           `json:"term"`
+	LastIndex                      uint64           `json:"last_index"`
+	CommitIndex                    uint64           `json:"commit_index"`
+	AppliedIndex                   uint64           `json:"applied_index"`
 }
 
 // Status returns a point-in-time control-plane view. QuorumConfirmed is true
@@ -565,8 +1105,12 @@ func (node *Node) Status(ctx context.Context) Status {
 	status.Enabled = true
 	status.LocalControllerID = node.localID
 	status.Role = strings.ToLower(node.raft.State().String())
-	status.VoterCount = node.voterCount
+	status.VoterCount = node.configuredVoterCount
+	if members, err := node.ControllerMembers(ctx); err == nil && len(members) > 0 {
+		status.VoterCount = len(members)
+	}
 	status.SnapshotCASActive = node.snapshotCAS
+	status.ReplicatedLogCompressionActive = node.compressReplicatedLog
 	status.Term = node.raft.CurrentTerm()
 	status.LastIndex = node.raft.LastIndex()
 	status.CommitIndex, _ = strconv.ParseUint(node.raft.Stats()["commit_index"], 10, 64)
@@ -589,8 +1133,19 @@ func (node *Node) Status(ctx context.Context) Status {
 }
 
 func waitFuture(ctx context.Context, future raft.Future) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case futureWaiterSlots <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 	result := make(chan error, 1)
-	go func() { result <- future.Error() }()
+	go func() {
+		defer func() { <-futureWaiterSlots }()
+		result <- future.Error()
+	}()
 	select {
 	case err := <-result:
 		return err
@@ -670,7 +1225,7 @@ func (node *Node) Commit(state []byte) error {
 	}
 	node.commitMu.Lock()
 	defer node.commitMu.Unlock()
-	command, err := encodeReplicatedLog(state)
+	command, err := encodeReplicatedLog(state, node.compressReplicatedLog)
 	if err != nil {
 		return err
 	}
@@ -693,6 +1248,229 @@ func (node *Node) Commit(state []byte) error {
 	return nil
 }
 
+func validateControllerMember(member ControllerMember) error {
+	if !model.ValidResourceID(member.ResourceID) {
+		return fmt.Errorf("controller resource UUID is invalid")
+	}
+	member.Address = strings.TrimSpace(member.Address)
+	if _, _, err := net.SplitHostPort(member.Address); err != nil {
+		return fmt.Errorf("controller Raft address is invalid")
+	}
+	if strings.ContainsAny(strings.TrimSpace(member.APIAddress), "\r\n") {
+		return fmt.Errorf("controller API address is invalid")
+	}
+	if address := strings.TrimSpace(member.APIAddress); address != "" {
+		parsed, err := url.Parse(address)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" {
+			return fmt.Errorf("controller API address is invalid")
+		}
+	}
+	return nil
+}
+
+func (node *Node) rememberControllerAPI(controllerID model.ResourceID, address string) {
+	if node == nil || !model.ValidResourceID(controllerID) {
+		return
+	}
+	address = strings.TrimRight(strings.TrimSpace(address), "/")
+	if address == "" {
+		return
+	}
+	node.leaderAPIsMu.Lock()
+	defer node.leaderAPIsMu.Unlock()
+	node.leaderAPIs[controllerID] = address
+	if node.leaderAPIScheme != "" {
+		return
+	}
+	parsed, err := url.Parse(address)
+	if err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Hostname() != "" {
+		node.leaderAPIScheme = parsed.Scheme
+		node.leaderAPIPort = parsed.Port()
+	}
+}
+
+// ControllerMembers reads the live Raft configuration. It intentionally does
+// not use the static startup peer list, because membership survives restarts
+// in Raft's own durable log.
+func (node *Node) ControllerMembers(ctx context.Context) ([]ControllerMember, error) {
+	if node == nil || node.raft == nil {
+		return nil, ErrNotLeader
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	future := node.raft.GetConfiguration()
+	if err := waitFuture(ctx, future); err != nil {
+		return nil, fmt.Errorf("read live Raft membership: %w", err)
+	}
+	configuration := future.Configuration()
+	members := make([]ControllerMember, 0, len(configuration.Servers))
+	node.leaderAPIsMu.RLock()
+	for _, server := range configuration.Servers {
+		if server.Suffrage != raft.Voter {
+			continue
+		}
+		resourceID := model.ResourceID(server.ID)
+		members = append(members, ControllerMember{
+			ResourceID: resourceID,
+			Address:    string(server.Address),
+			APIAddress: strings.TrimSpace(node.leaderAPIs[resourceID]),
+		})
+	}
+	node.leaderAPIsMu.RUnlock()
+	sort.Slice(members, func(left, right int) bool { return members[left].ResourceID < members[right].ResourceID })
+	return members, nil
+}
+
+func controllerMembershipIndex(members []ControllerMember) (map[model.ResourceID]ControllerMember, map[string]model.ResourceID) {
+	byID := make(map[model.ResourceID]ControllerMember, len(members))
+	byAddress := make(map[string]model.ResourceID, len(members))
+	for _, member := range members {
+		byID[member.ResourceID] = member
+		byAddress[member.Address] = member.ResourceID
+	}
+	return byID, byAddress
+}
+
+func (node *Node) rollbackAddedControllerVoters(ctx context.Context, added []model.ResourceID) error {
+	var rollbackErr error
+	for index := len(added) - 1; index >= 0; index-- {
+		future := node.raft.RemoveServer(raft.ServerID(added[index]), 0, node.applyTimeout)
+		if err := waitFuture(ctx, future); err != nil {
+			rollbackErr = errors.Join(rollbackErr, fmt.Errorf("rollback controller %s: %w", added[index], err))
+		}
+	}
+	return rollbackErr
+}
+
+// AddControllerVoters adds a complete controller expansion set. The final
+// membership must remain an odd set of at least three. If any addition fails,
+// voters added by this call are removed before the error is returned.
+func (node *Node) AddControllerVoters(ctx context.Context, requested []ControllerMember) error {
+	if ctx == nil {
+		return fmt.Errorf("controller membership context is required")
+	}
+	if len(requested) == 0 {
+		return nil
+	}
+	node.membershipMu.Lock()
+	defer node.membershipMu.Unlock()
+	if err := node.RequireMutationAuthority(ctx); err != nil {
+		return err
+	}
+	current, err := node.ControllerMembers(ctx)
+	if err != nil {
+		return err
+	}
+	byID, byAddress := controllerMembershipIndex(current)
+	seenIDs := make(map[model.ResourceID]struct{}, len(requested))
+	seenAddresses := make(map[string]struct{}, len(requested))
+	additions := make([]ControllerMember, 0, len(requested))
+	for _, member := range requested {
+		member.Address = strings.TrimSpace(member.Address)
+		member.APIAddress = strings.TrimRight(strings.TrimSpace(member.APIAddress), "/")
+		if err := validateControllerMember(member); err != nil {
+			return err
+		}
+		if _, duplicate := seenIDs[member.ResourceID]; duplicate {
+			return fmt.Errorf("controller expansion contains duplicate resource UUID %s", member.ResourceID)
+		}
+		if _, duplicate := seenAddresses[member.Address]; duplicate {
+			return fmt.Errorf("controller expansion contains duplicate Raft address %s", member.Address)
+		}
+		seenIDs[member.ResourceID] = struct{}{}
+		seenAddresses[member.Address] = struct{}{}
+		if existing, found := byID[member.ResourceID]; found {
+			if existing.Address != member.Address {
+				return fmt.Errorf("controller %s is already registered at %s", member.ResourceID, existing.Address)
+			}
+			node.rememberControllerAPI(member.ResourceID, member.APIAddress)
+			continue
+		}
+		if existingID, found := byAddress[member.Address]; found && existingID != member.ResourceID {
+			return fmt.Errorf("Raft address %s already belongs to controller %s", member.Address, existingID)
+		}
+		additions = append(additions, member)
+	}
+	finalCount := len(current) + len(additions)
+	if finalCount < 3 || finalCount%2 == 0 {
+		return fmt.Errorf("final Raft controller membership must be an odd set of at least three voters, got %d", finalCount)
+	}
+	added := make([]model.ResourceID, 0, len(additions))
+	for _, member := range additions {
+		future := node.raft.AddVoter(raft.ServerID(member.ResourceID), raft.ServerAddress(member.Address), 0, node.applyTimeout)
+		if err := waitFuture(ctx, future); err != nil {
+			rollbackErr := node.rollbackAddedControllerVoters(ctx, added)
+			return errors.Join(fmt.Errorf("add controller voter %s: %w", member.ResourceID, err), rollbackErr)
+		}
+		added = append(added, member.ResourceID)
+		node.rememberControllerAPI(member.ResourceID, member.APIAddress)
+	}
+	if err := node.RequireMutationAuthority(ctx); err != nil {
+		rollbackErr := node.rollbackAddedControllerVoters(ctx, added)
+		return errors.Join(fmt.Errorf("verify controller quorum after expansion: %w", err), rollbackErr)
+	}
+	updated, err := node.ControllerMembers(ctx)
+	if err != nil || len(updated) != finalCount {
+		rollbackErr := node.rollbackAddedControllerVoters(ctx, added)
+		return errors.Join(fmt.Errorf("verify final controller membership: count=%d want=%d: %w", len(updated), finalCount, err), rollbackErr)
+	}
+	return nil
+}
+
+// RemoveControllerVoters removes a complete retirement set. Removing the
+// active leader is rejected so callers can transfer leadership and retry.
+func (node *Node) RemoveControllerVoters(ctx context.Context, resourceIDs []model.ResourceID) error {
+	if ctx == nil {
+		return fmt.Errorf("controller membership context is required")
+	}
+	if len(resourceIDs) == 0 {
+		return nil
+	}
+	node.membershipMu.Lock()
+	defer node.membershipMu.Unlock()
+	if err := node.RequireMutationAuthority(ctx); err != nil {
+		return err
+	}
+	current, err := node.ControllerMembers(ctx)
+	if err != nil {
+		return err
+	}
+	byID, _ := controllerMembershipIndex(current)
+	unique := make([]model.ResourceID, 0, len(resourceIDs))
+	seen := make(map[model.ResourceID]struct{}, len(resourceIDs))
+	for _, resourceID := range resourceIDs {
+		if !model.ValidResourceID(resourceID) {
+			return fmt.Errorf("controller resource UUID is invalid")
+		}
+		if _, duplicate := seen[resourceID]; duplicate {
+			return fmt.Errorf("controller retirement contains duplicate resource UUID %s", resourceID)
+		}
+		seen[resourceID] = struct{}{}
+		if _, found := byID[resourceID]; !found {
+			continue
+		}
+		if resourceID == node.localID {
+			return fmt.Errorf("active Raft leader cannot remove itself; transfer leadership and retry")
+		}
+		unique = append(unique, resourceID)
+	}
+	finalCount := len(current) - len(unique)
+	if finalCount < 3 || finalCount%2 == 0 {
+		return fmt.Errorf("final Raft controller membership must be an odd set of at least three voters, got %d", finalCount)
+	}
+	for _, resourceID := range unique {
+		future := node.raft.RemoveServer(raft.ServerID(resourceID), 0, node.applyTimeout)
+		if err := waitFuture(ctx, future); err != nil {
+			return fmt.Errorf("remove controller voter %s: %w", resourceID, err)
+		}
+		node.leaderAPIsMu.Lock()
+		delete(node.leaderAPIs, resourceID)
+		node.leaderAPIsMu.Unlock()
+	}
+	return node.RequireMutationAuthority(ctx)
+}
+
 func (node *Node) Leader() (model.ResourceID, string, bool) {
 	if node == nil || node.raft == nil {
 		return "", "", false
@@ -702,12 +1480,39 @@ func (node *Node) Leader() (model.ResourceID, string, bool) {
 	return resourceID, string(address), model.ValidResourceID(resourceID) && address != ""
 }
 
+func (node *Node) LeadershipEpoch() uint64 {
+	if node == nil || node.raft == nil {
+		return 0
+	}
+	return node.raft.CurrentTerm()
+}
+
 func (node *Node) LeaderAPIAddress(controllerID model.ResourceID) (string, bool) {
 	if node == nil || !model.ValidResourceID(controllerID) {
 		return "", false
 	}
+	node.leaderAPIsMu.RLock()
 	address := strings.TrimSpace(node.leaderAPIs[controllerID])
-	return address, address != ""
+	scheme, port := node.leaderAPIScheme, node.leaderAPIPort
+	node.leaderAPIsMu.RUnlock()
+	if address != "" {
+		return address, true
+	}
+	leaderID, raftAddress, leaderKnown := node.Leader()
+	if !leaderKnown || leaderID != controllerID || scheme == "" {
+		return "", false
+	}
+	host, _, err := net.SplitHostPort(raftAddress)
+	if err != nil || strings.TrimSpace(host) == "" {
+		return "", false
+	}
+	hostPort := host
+	if port != "" {
+		hostPort = net.JoinHostPort(host, port)
+	} else if strings.Contains(host, ":") {
+		hostPort = "[" + host + "]"
+	}
+	return (&url.URL{Scheme: scheme, Host: hostPort}).String(), true
 }
 
 func (node *Node) Close() error {

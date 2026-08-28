@@ -91,6 +91,75 @@ func TestRepositoryResolverResolvesUUIDScopedContext(t *testing.T) {
 	}
 }
 
+func TestRepositoryResolverResolvesAutomaticFailoverSourceAfterRuntimeRoleIsCleared(t *testing.T) {
+	reader, request := resolvedOperationFixture()
+	sourceID := reader.snapshot.Instances[0].ResourceID
+	observedAt := reader.snapshot.ObservedAt
+	reader.snapshot.Instances[0].Role = model.RoleUnknown
+	reader.snapshot.Instances[0].Health = model.Health{State: model.HealthUnhealthy, ObservedAt: observedAt}
+	reader.snapshot.Probes = []model.ProbeStatus{
+		{
+			InstanceID: sourceID,
+			Outcome:    model.ProbeOutcomeDatabaseUnavailable,
+			Health:     model.Health{State: model.HealthUnhealthy, ObservedAt: observedAt},
+		},
+		{
+			InstanceID:          reader.snapshot.Instances[1].ResourceID,
+			Outcome:             model.ProbeOutcomeReachable,
+			Health:              model.Health{State: model.HealthHealthy, ObservedAt: observedAt},
+			DiscoveryObservedAt: observedAt,
+		},
+	}
+	request.Operation.Kind = model.OperationFailover
+	request.Operation.RequestedBy = AutomaticRecoveryActor
+	request.SourceID = sourceID
+	resolver := RepositoryResolver{
+		Reader: reader,
+		Credentials: CredentialProviderFunc(func(context.Context, model.DatabaseCluster) (adapter.OperationCredentials, error) {
+			return adapter.OperationCredentials{
+				Administrative: adapter.Credentials{Username: "clusterguard"},
+				Replication:    adapter.Credentials{Username: "replicator"},
+			}, nil
+		}),
+	}
+
+	resolved, err := resolver.Resolve(context.Background(), request)
+	if err != nil {
+		t.Fatalf("resolve automatic failover source: %v", err)
+	}
+	if resolved.Resolved == nil || resolved.Resolved.Primary.ResourceID != sourceID {
+		t.Fatalf("resolved automatic failover source=%+v, want %s", resolved.Resolved, sourceID)
+	}
+}
+
+func TestRepositoryResolverRejectsAutomaticFailoverSourceWithoutCurrentDatabaseFailure(t *testing.T) {
+	reader, request := resolvedOperationFixture()
+	sourceID := reader.snapshot.Instances[0].ResourceID
+	reader.snapshot.Instances[0].Role = model.RoleUnknown
+	reader.snapshot.Instances[0].Health = model.Health{State: model.HealthUnknown, ObservedAt: reader.snapshot.ObservedAt}
+	reader.snapshot.Probes = []model.ProbeStatus{{
+		InstanceID: sourceID,
+		Outcome:    model.ProbeOutcomeCredentialsUnavailable,
+		Health:     model.Health{State: model.HealthUnknown, ObservedAt: reader.snapshot.ObservedAt},
+	}}
+	request.Operation.Kind = model.OperationFailover
+	request.Operation.RequestedBy = AutomaticRecoveryActor
+	request.SourceID = sourceID
+	resolver := RepositoryResolver{
+		Reader: reader,
+		Credentials: CredentialProviderFunc(func(context.Context, model.DatabaseCluster) (adapter.OperationCredentials, error) {
+			return adapter.OperationCredentials{
+				Administrative: adapter.Credentials{Username: "clusterguard"},
+				Replication:    adapter.Credentials{Username: "replicator"},
+			}, nil
+		}),
+	}
+
+	if _, err := resolver.Resolve(context.Background(), request); err == nil || !strings.Contains(err.Error(), "current database-failure evidence") {
+		t.Fatalf("automatic failover without database-failure evidence error=%v", err)
+	}
+}
+
 func TestRepositoryResolverAllowsAdministrativeOnlyCredentialsForOracle(t *testing.T) {
 	reader, request := resolvedOperationFixture()
 	reader.cluster.Engine = model.EngineOracle

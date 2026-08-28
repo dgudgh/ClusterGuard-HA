@@ -9,6 +9,7 @@ import (
 	"io"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"clusterguard.io/ha/pkg/model"
@@ -78,11 +79,18 @@ type ShellEnvironment struct {
 	KnownHostsFile          string
 	IdentityFile            string
 	JQBinary                string
+	AdapterRuntimeHelper    string
 	ControlJoinHelper       string
+	ControlAPIIssuerCert    string
+	ControlAPIIssuerKey     string
+	ControlRaftIssuerCert   string
+	ControlRaftIssuerKey    string
+	ControlCertValidityDays int
 	CloneHelper             string
 	XtraBackupHelper        string
 	PostgreSQLInstallHelper string
 	PostgreSQLSyncHelper    string
+	MySQLRootRemoteHost     string
 }
 
 type ShellExecutorOption func(*ShellExecutor) error
@@ -97,7 +105,12 @@ func WithShellEnvironment(configuration ShellEnvironment) ShellExecutorOption {
 			{"CG_SSH_KNOWN_HOSTS", configuration.KnownHostsFile},
 			{"CG_SSH_IDENTITY_FILE", configuration.IdentityFile},
 			{"CG_JQ_BINARY", configuration.JQBinary},
+			{"CG_ADAPTER_RUNTIME_HELPER", configuration.AdapterRuntimeHelper},
 			{"CG_CONTROL_JOIN_HELPER", configuration.ControlJoinHelper},
+			{"CG_CONTROL_API_ISSUER_CERT", configuration.ControlAPIIssuerCert},
+			{"CG_CONTROL_API_ISSUER_KEY", configuration.ControlAPIIssuerKey},
+			{"CG_CONTROL_RAFT_ISSUER_CERT", configuration.ControlRaftIssuerCert},
+			{"CG_CONTROL_RAFT_ISSUER_KEY", configuration.ControlRaftIssuerKey},
 			{"CG_MYSQL_CLONE_HELPER", configuration.CloneHelper},
 			{"CG_MYSQL_XTRABACKUP_HELPER", configuration.XtraBackupHelper},
 			{"CG_POSTGRESQL_INSTALL_HELPER", configuration.PostgreSQLInstallHelper},
@@ -113,8 +126,39 @@ func WithShellEnvironment(configuration ShellEnvironment) ShellExecutorOption {
 			}
 			executor.environment = append(executor.environment, value.name+"="+path)
 		}
+		if configuration.ControlCertValidityDays > 0 {
+			if configuration.ControlCertValidityDays > 3650 {
+				return fmt.Errorf("control certificate validity exceeds 3650 days")
+			}
+			executor.environment = append(executor.environment, "CG_CONTROL_CERT_VALIDITY_DAYS="+strconv.Itoa(configuration.ControlCertValidityDays))
+		}
+		remoteRootHost := strings.TrimSpace(configuration.MySQLRootRemoteHost)
+		if remoteRootHost != "" {
+			if !validMySQLAccountHost(remoteRootHost) {
+				return fmt.Errorf("lifecycle MySQL root remote host is invalid")
+			}
+			executor.environment = append(executor.environment, "CG_MYSQL_ROOT_REMOTE_HOST="+remoteRootHost)
+		}
 		return nil
 	}
+}
+
+func validMySQLAccountHost(value string) bool {
+	if value == "" || len(value) > 255 {
+		return false
+	}
+	for _, character := range value {
+		if character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' {
+			continue
+		}
+		switch character {
+		case '.', '_', ':', '%', '-', '/':
+			continue
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func NewShellExecutor(script string, runner ProcessRunner, options ...ShellExecutorOption) (*ShellExecutor, error) {
@@ -158,6 +202,11 @@ func (executor *ShellExecutor) Execute(ctx context.Context, request Request, pla
 	environment = append(environment,
 		"CG_SSH_PASSWORD="+secrets.SSHPassword,
 		"CG_MYSQL_ROOT_PASSWORD="+secrets.MySQLRootPassword,
+		"CG_MYSQL_DISCOVERY_USERNAME="+secrets.MySQLDiscoveryUsername,
+		"CG_MYSQL_DISCOVERY_PASSWORD="+secrets.MySQLDiscoveryPassword,
+		"CG_MYSQL_OPERATION_USERNAME="+secrets.MySQLOperationUsername,
+		"CG_MYSQL_OPERATION_PASSWORD="+secrets.MySQLOperationPassword,
+		"CG_MYSQL_REPLICATION_USERNAME="+secrets.MySQLReplicationUsername,
 		"CG_MYSQL_REPLICATION_PASSWORD="+secrets.ReplicationPassword,
 		"CG_POSTGRESQL_ADMIN_PASSWORD="+secrets.PostgreSQLAdminPassword,
 		"CG_POSTGRESQL_REPLICATION_PASSWORD="+secrets.PostgreSQLReplicationPassword,

@@ -135,6 +135,18 @@ type lifecycleCommitterStub struct {
 	err   error
 }
 
+type lifecycleControllerMembershipStub struct {
+	targets []ControllerTarget
+	calls   int
+	err     error
+}
+
+func (membership *lifecycleControllerMembershipStub) AddControllers(_ context.Context, targets []ControllerTarget) error {
+	membership.calls++
+	membership.targets = append([]ControllerTarget{}, targets...)
+	return membership.err
+}
+
 func (committer *lifecycleCommitterStub) Commit(_ context.Context, task Task, _ ExecutionResult) error {
 	committer.calls++
 	committer.task = task
@@ -192,6 +204,70 @@ func TestManagerCommitsMetadataOnlyAfterVerification(t *testing.T) {
 	}
 	if len(store.reports) != 1 || store.reports[0].OperationID != task.OperationID || store.reports[0].Status != model.OperationSucceeded || task.ReportID != store.reports[0].ResourceID {
 		t.Fatalf("lifecycle report task=%+v reports=%+v", task, store.reports)
+	}
+	foundCommit := false
+	for _, stage := range task.Stages {
+		if stage.Stage == StageCommit && stage.Status == StageSucceeded {
+			foundCommit = true
+			break
+		}
+	}
+	if !foundCommit {
+		t.Fatalf("successful lifecycle task must persist a completed metadata stage: %+v", task.Stages)
+	}
+}
+
+func TestManagerAddsVerifiedControllerPairBeforeMetadataCommit(t *testing.T) {
+	request := Request{
+		ClusterID: model.NewResourceID(), Engine: model.EngineMySQL, Action: ActionAdd,
+		CurrentControllerCount: 3, RequestedBy: "admin", SyncMethod: SyncAuto,
+		Targets: []Target{
+			{NodeName: "cg-control-0004", Kind: model.NodeController, Hostname: "controller-4", IPAddress: "192.0.2.14", SSHUser: "root", SSHPort: 22},
+			{NodeName: "cg-control-0005", Kind: model.NodeController, Hostname: "controller-5", IPAddress: "192.0.2.15", SSHUser: "root", SSHPort: 22},
+		},
+	}
+	plan := BuildPlan(request, Capabilities{})
+	if plan.Blocked || plan.FinalControllerCount != 5 {
+		t.Fatalf("controller expansion plan=%+v", plan)
+	}
+	store := &taskStoreStub{tasks: map[model.ResourceID]Task{}}
+	membership := &lifecycleControllerMembershipStub{}
+	committer := &lifecycleCommitterStub{}
+	manager := NewManager(
+		store, lifecycleAuthorityStub{}, lifecycleSafetyStub{}, &lifecycleLockStub{}, &lifecycleApprovalStub{},
+		&lifecycleExecutorStub{result: ExecutionResult{Verified: true}}, committer, time.Now,
+		WithControllerMembership(membership),
+	)
+	task, err := manager.ExecuteAuthorized(context.Background(), request, plan, ExecutionSecrets{}, "admin")
+	if err != nil || task.Status != TaskSucceeded || membership.calls != 1 || committer.calls != 1 {
+		t.Fatalf("controller lifecycle task=%+v membership=%+v commits=%d err=%v", task, membership, committer.calls, err)
+	}
+	if len(membership.targets) != 2 || membership.targets[0].ResourceID != plan.Targets[0].NodeID || membership.targets[1].ResourceID != plan.Targets[1].NodeID {
+		t.Fatalf("controller membership targets=%+v plan=%+v", membership.targets, plan.Targets)
+	}
+}
+
+func TestManagerDoesNotCommitControllerMetadataWhenRaftJoinFails(t *testing.T) {
+	request := Request{
+		ClusterID: model.NewResourceID(), Engine: model.EngineMySQL, Action: ActionAdd,
+		CurrentControllerCount: 3, SyncMethod: SyncAuto,
+		Targets: []Target{
+			{NodeName: "cg-control-0004", Kind: model.NodeController, Hostname: "controller-4", IPAddress: "192.0.2.14"},
+			{NodeName: "cg-control-0005", Kind: model.NodeController, Hostname: "controller-5", IPAddress: "192.0.2.15"},
+		},
+	}
+	plan := BuildPlan(request, Capabilities{})
+	store := &taskStoreStub{tasks: map[model.ResourceID]Task{}}
+	membership := &lifecycleControllerMembershipStub{err: errors.New("second voter did not join")}
+	committer := &lifecycleCommitterStub{}
+	manager := NewManager(
+		store, lifecycleAuthorityStub{}, lifecycleSafetyStub{}, &lifecycleLockStub{}, &lifecycleApprovalStub{},
+		&lifecycleExecutorStub{result: ExecutionResult{Verified: true}}, committer, time.Now,
+		WithControllerMembership(membership),
+	)
+	task, err := manager.Execute(context.Background(), request, plan, ExecutionSecrets{}, "approved")
+	if err == nil || task.Status != TaskIndeterminate || membership.calls != 1 || committer.calls != 0 || !strings.Contains(task.Message, "membership") {
+		t.Fatalf("failed controller join task=%+v membership=%+v commits=%d err=%v", task, membership, committer.calls, err)
 	}
 }
 

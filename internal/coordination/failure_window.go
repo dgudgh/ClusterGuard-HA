@@ -21,7 +21,20 @@ type FailureWindow struct {
 	series           map[model.ResourceID]failureSeries
 }
 
-func NewFailureWindow(requiredChecks int, requiredDuration time.Duration) *FailureWindow {
+type FailureWindowOption func(*FailureWindow)
+
+// WithMaximumObservationGap configures how long a series can go without a
+// fresh observation. It lets the safety window follow the discovery cadence
+// without treating a normal scheduler interval as a recovered primary.
+func WithMaximumObservationGap(maximumGap time.Duration) FailureWindowOption {
+	return func(window *FailureWindow) {
+		if maximumGap > 0 {
+			window.maximumGap = maximumGap
+		}
+	}
+}
+
+func NewFailureWindow(requiredChecks int, requiredDuration time.Duration, options ...FailureWindowOption) *FailureWindow {
 	if requiredChecks <= 0 {
 		requiredChecks = 6
 	}
@@ -29,7 +42,13 @@ func NewFailureWindow(requiredChecks int, requiredDuration time.Duration) *Failu
 		requiredDuration = 30 * time.Second
 	}
 	maximumGap := 2 * requiredDuration / time.Duration(requiredChecks)
-	return &FailureWindow{requiredChecks: requiredChecks, requiredDuration: requiredDuration, maximumGap: maximumGap, series: make(map[model.ResourceID]failureSeries)}
+	window := &FailureWindow{requiredChecks: requiredChecks, requiredDuration: requiredDuration, maximumGap: maximumGap, series: make(map[model.ResourceID]failureSeries)}
+	for _, option := range options {
+		if option != nil {
+			option(window)
+		}
+	}
+	return window
 }
 
 func (window *FailureWindow) Record(clusterID model.ResourceID, failed bool, observedAt time.Time) {

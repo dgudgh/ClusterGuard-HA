@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/binary"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -22,7 +23,135 @@ import (
 
 	"clusterguard.io/ha/pkg/model"
 	"github.com/hashicorp/raft"
+	raftboltdb "github.com/hashicorp/raft-boltdb/v2"
+	bolt "go.etcd.io/bbolt"
 )
+
+func putCorruptRaftLog(t *testing.T, path string, index uint64) {
+	t.Helper()
+	database, err := bolt.Open(path, 0o600, nil)
+	if err != nil {
+		t.Fatalf("open Raft store for corruption: %v", err)
+	}
+	defer database.Close()
+	key := make([]byte, 8)
+	binary.BigEndian.PutUint64(key, index)
+	if err := database.Update(func(transaction *bolt.Tx) error {
+		bucket := transaction.Bucket([]byte("logs"))
+		if bucket == nil {
+			return fmt.Errorf("logs bucket is missing")
+		}
+		return bucket.Put(key, []byte("power-loss-torn-log"))
+	}); err != nil {
+		t.Fatalf("inject corrupt Raft log: %v", err)
+	}
+}
+
+func seedRaftLogs(t *testing.T, path string, indexes ...uint64) {
+	t.Helper()
+	store, err := raftboltdb.NewBoltStore(path)
+	if err != nil {
+		t.Fatalf("open Raft store: %v", err)
+	}
+	for _, index := range indexes {
+		if err := store.StoreLog(&raft.Log{Index: index, Term: 7, Type: raft.LogCommand, Data: []byte(`{"state":"ok"}`)}); err != nil {
+			_ = store.Close()
+			t.Fatalf("seed Raft log %d: %v", index, err)
+		}
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close seeded Raft store: %v", err)
+	}
+}
+
+func TestRepairRaftOutlierTailBacksUpAndRemovesOnlyImpossibleIndex(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "raft.db")
+	seedRaftLogs(t, path, 100, 101)
+	putCorruptRaftLog(t, path, 1<<61)
+
+	repair, err := repairRaftOutlierTail(path, 0, time.Now)
+	if err != nil {
+		t.Fatalf("repair outlier tail: %v", err)
+	}
+	if !repair.Repaired || repair.RemovedIndex != 1<<61 || repair.RetainedIndex != 101 || repair.BackupPath == "" {
+		t.Fatalf("unexpected repair result: %+v", repair)
+	}
+	store, err := raftboltdb.New(raftboltdb.Options{Path: path, BoltOptions: &bolt.Options{ReadOnly: true}})
+	if err != nil {
+		t.Fatalf("reopen repaired Raft store: %v", err)
+	}
+	defer store.Close()
+	if last, err := store.LastIndex(); err != nil || last != 101 {
+		t.Fatalf("repaired last index=%d err=%v, want 101", last, err)
+	}
+	backup, err := raftboltdb.New(raftboltdb.Options{Path: repair.BackupPath, BoltOptions: &bolt.Options{ReadOnly: true}})
+	if err != nil {
+		t.Fatalf("open pre-repair backup: %v", err)
+	}
+	defer backup.Close()
+	if last, err := backup.LastIndex(); err != nil || last != 1<<61 {
+		t.Fatalf("backup last index=%d err=%v, want corrupt outlier retained", last, err)
+	}
+}
+
+func TestRepairRaftOutlierTailRefusesContiguousCorruptLog(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "raft.db")
+	seedRaftLogs(t, path, 100)
+	putCorruptRaftLog(t, path, 101)
+
+	repair, err := repairRaftOutlierTail(path, 0, time.Now)
+	if err == nil || repair.Repaired || !strings.Contains(err.Error(), "contiguous") {
+		t.Fatalf("contiguous corrupt tail repair=%+v err=%v", repair, err)
+	}
+	store, openErr := raftboltdb.New(raftboltdb.Options{Path: path, BoltOptions: &bolt.Options{ReadOnly: true}})
+	if openErr != nil {
+		t.Fatalf("reopen refused Raft store: %v", openErr)
+	}
+	defer store.Close()
+	if last, lastErr := store.LastIndex(); lastErr != nil || last != 101 {
+		t.Fatalf("refused repair changed last index=%d err=%v", last, lastErr)
+	}
+}
+
+func TestRepairRaftTailUsesValidatedSnapshotToRemoveTornSuffix(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "raft.db")
+	seedRaftLogs(t, path, 99, 100)
+	putCorruptRaftLog(t, path, 101)
+	putCorruptRaftLog(t, path, 1<<61)
+
+	repair, err := repairRaftOutlierTail(path, 100, time.Now)
+	if err != nil {
+		t.Fatalf("repair torn suffix protected by snapshot: %v", err)
+	}
+	if !repair.Repaired || repair.RemovedCount != 2 || repair.FirstRemovedIndex != 101 || repair.RemovedIndex != 1<<61 || repair.RetainedIndex != 100 || repair.BackupPath == "" {
+		t.Fatalf("unexpected torn suffix repair: %+v", repair)
+	}
+	store, err := raftboltdb.New(raftboltdb.Options{Path: path, BoltOptions: &bolt.Options{ReadOnly: true}})
+	if err != nil {
+		t.Fatalf("reopen repaired Raft store: %v", err)
+	}
+	defer store.Close()
+	if last, err := store.LastIndex(); err != nil || last != 100 {
+		t.Fatalf("repaired last index=%d err=%v, want 100", last, err)
+	}
+	backup, err := raftboltdb.New(raftboltdb.Options{Path: repair.BackupPath, BoltOptions: &bolt.Options{ReadOnly: true}})
+	if err != nil {
+		t.Fatalf("open torn suffix backup: %v", err)
+	}
+	defer backup.Close()
+	if last, err := backup.LastIndex(); err != nil || last != 1<<61 {
+		t.Fatalf("backup last index=%d err=%v, want corrupt suffix retained", last, err)
+	}
+}
+
+func TestRepairRaftOutlierTailLeavesHealthyStoreUntouched(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "raft.db")
+	seedRaftLogs(t, path, 100, 101)
+	repair, err := repairRaftOutlierTail(path, 0, time.Now)
+	if err != nil || repair.Repaired || repair.BackupPath != "" {
+		t.Fatalf("healthy Raft store repair=%+v err=%v", repair, err)
+	}
+}
 
 func writeTestRaftTLSIdentity(t *testing.T) (string, string, string) {
 	return writeTestRaftTLSIdentityWith(t,
@@ -254,6 +383,98 @@ func TestReplicatedLogRemainsReadableByLegacySnapshotDecoder(t *testing.T) {
 	}
 	if len(legacy.Clusters) != 1 {
 		t.Fatalf("legacy decoder saw clusters=%v, want the original snapshot payload", legacy.Clusters)
+	}
+}
+
+func TestReplicatedLogCompressionRoundTripsAndStillAcceptsLegacyEntries(t *testing.T) {
+	state := []byte(`{"clusters":{"cluster-1":{"display_name":"` + strings.Repeat("mysql-ha-", 4096) + `"}}}`)
+	command, err := encodeReplicatedLog(state, true)
+	if err != nil {
+		t.Fatalf("encode compressed replicated log: %v", err)
+	}
+	if len(command) >= len(state)/4 {
+		t.Fatalf("compressed command bytes=%d original=%d", len(command), len(state))
+	}
+	decoded, err := decodeReplicatedLog(command)
+	if err != nil {
+		t.Fatalf("decode compressed replicated log: %v", err)
+	}
+	if string(decoded) != string(state) {
+		t.Fatal("compressed replicated log did not round-trip")
+	}
+	legacy, err := encodeReplicatedLog(state)
+	if err != nil {
+		t.Fatalf("encode legacy replicated log: %v", err)
+	}
+	decoded, err = decodeReplicatedLog(legacy)
+	if err != nil || string(decoded) != string(state) {
+		t.Fatalf("decode legacy replicated log after compression support: err=%v", err)
+	}
+}
+
+func TestCompactRaftStoreAtomicallyReclaimsDeletedPages(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "raft.db")
+	database, err := bolt.Open(path, 0o600, nil)
+	if err != nil {
+		t.Fatalf("open test Raft store: %v", err)
+	}
+	payload := []byte(strings.Repeat("x", 128*1024))
+	if err := database.Update(func(transaction *bolt.Tx) error {
+		bucket, err := transaction.CreateBucketIfNotExists([]byte("logs"))
+		if err != nil {
+			return err
+		}
+		for index := 0; index < 64; index++ {
+			if err := bucket.Put([]byte(fmt.Sprintf("entry-%03d", index)), payload); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("seed test Raft store: %v", err)
+	}
+	if err := database.Update(func(transaction *bolt.Tx) error {
+		bucket := transaction.Bucket([]byte("logs"))
+		for index := 1; index < 64; index++ {
+			if err := bucket.Delete([]byte(fmt.Sprintf("entry-%03d", index))); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("delete test Raft log pages: %v", err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatalf("close test Raft store: %v", err)
+	}
+
+	before, after, compacted, err := compactRaftStore(path, 1)
+	if err != nil {
+		t.Fatalf("compact test Raft store: %v", err)
+	}
+	if !compacted || after >= before/2 {
+		t.Fatalf("Raft store compaction before=%d after=%d compacted=%t", before, after, compacted)
+	}
+	reopened, err := bolt.Open(path, 0o600, &bolt.Options{ReadOnly: true})
+	if err != nil {
+		t.Fatalf("reopen compacted Raft store: %v", err)
+	}
+	defer reopened.Close()
+	if err := reopened.View(func(transaction *bolt.Tx) error {
+		value := transaction.Bucket([]byte("logs")).Get([]byte("entry-000"))
+		if string(value) != string(payload) {
+			return fmt.Errorf("retained Raft entry changed")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRaftStoreCompactionThresholdLeavesOperationalHeadroom(t *testing.T) {
+	const maximumStartupThreshold = 256 << 20
+	if raftStoreCompactionThresholdBytes > maximumStartupThreshold {
+		t.Fatalf("Raft store compaction threshold=%d exceeds production headroom=%d", raftStoreCompactionThresholdBytes, maximumStartupThreshold)
 	}
 }
 
@@ -518,6 +739,119 @@ func TestThreeNodeRaftCommitsToFollowersAndLosesAuthorityWithoutQuorum(t *testin
 		time.Sleep(100 * time.Millisecond)
 	}
 	t.Fatal("isolated leader retained mutation authority without a majority")
+}
+
+func TestRaftLeaderAddsControllerPairAndReportsLiveMembership(t *testing.T) {
+	addresses := []string{freeTCPAddress(t), freeTCPAddress(t), freeTCPAddress(t), freeTCPAddress(t), freeTCPAddress(t)}
+	peers := make([]Peer, 3)
+	for index := range peers {
+		peers[index] = Peer{ResourceID: model.NewResourceID(), Address: addresses[index], APIAddress: "https://127.0.0.1:3300"}
+	}
+	nodes := make([]*Node, 3)
+	for _, index := range []int{1, 2, 0} {
+		node, err := Open(Config{
+			LocalID: peers[index].ResourceID, BindAddress: addresses[index], AdvertiseAddress: addresses[index],
+			DataDirectory: filepath.Join(t.TempDir(), "raft"), Peers: peers, Bootstrap: index == 0,
+			ApplyTimeout: 5 * time.Second,
+		}, &stateRecorder{})
+		if err != nil {
+			t.Fatalf("open initial Raft node %d: %v", index, err)
+		}
+		nodes[index] = node
+		defer node.Close()
+	}
+	leader := waitForRaftLeader(t, nodes)
+	joining := make([]ControllerMember, 0, 2)
+	for index := 3; index < 5; index++ {
+		member := ControllerMember{
+			ResourceID: model.NewResourceID(), Address: addresses[index],
+			APIAddress: "https://127.0.0.1:3300",
+		}
+		bootstrapView := []Peer{peers[0], peers[1], Peer{ResourceID: member.ResourceID, Address: member.Address, APIAddress: member.APIAddress}}
+		node, err := Open(Config{
+			LocalID: member.ResourceID, BindAddress: member.Address, AdvertiseAddress: member.Address,
+			DataDirectory: filepath.Join(t.TempDir(), "raft"), Peers: bootstrapView, Bootstrap: false,
+			ApplyTimeout: 5 * time.Second,
+		}, &stateRecorder{})
+		if err != nil {
+			t.Fatalf("open joining Raft node %d: %v", index, err)
+		}
+		nodes = append(nodes, node)
+		defer node.Close()
+		joining = append(joining, member)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := leader.AddControllerVoters(ctx, joining); err != nil {
+		t.Fatalf("add controller pair: %v", err)
+	}
+	members, err := leader.ControllerMembers(ctx)
+	if err != nil {
+		t.Fatalf("read live controller membership: %v", err)
+	}
+	if len(members) != 5 || leader.Status(ctx).VoterCount != 5 {
+		t.Fatalf("members=%+v status=%+v, want five voters", members, leader.Status(ctx))
+	}
+	for _, member := range joining {
+		address, found := leader.LeaderAPIAddress(member.ResourceID)
+		if !found || address != member.APIAddress {
+			t.Fatalf("dynamic controller API address=%q found=%t, want %q", address, found, member.APIAddress)
+		}
+	}
+	var staticFollower *Node
+	for _, candidate := range nodes[:3] {
+		if candidate != leader {
+			staticFollower = candidate
+			break
+		}
+	}
+	if staticFollower == nil {
+		t.Fatal("test cluster has no static follower")
+	}
+	transfer := leader.raft.LeadershipTransferToServer(raft.ServerID(joining[0].ResourceID), raft.ServerAddress(joining[0].Address))
+	if err := waitFuture(ctx, transfer); err != nil {
+		t.Fatalf("transfer leadership to dynamically joined controller: %v", err)
+	}
+	newLeader := waitForRaftLeader(t, nodes)
+	if newLeader.localID != joining[0].ResourceID {
+		t.Fatalf("leader after transfer=%s, want dynamic controller %s", newLeader.localID, joining[0].ResourceID)
+	}
+	address, found := staticFollower.LeaderAPIAddress(joining[0].ResourceID)
+	if !found || address != joining[0].APIAddress {
+		t.Fatalf("static follower dynamic leader API address=%q found=%t, want %q", address, found, joining[0].APIAddress)
+	}
+}
+
+func TestRaftLeaderRejectsEvenFinalControllerMembershipBeforeMutation(t *testing.T) {
+	addresses := []string{freeTCPAddress(t), freeTCPAddress(t), freeTCPAddress(t)}
+	peers := make([]Peer, 3)
+	for index := range peers {
+		peers[index] = Peer{ResourceID: model.NewResourceID(), Address: addresses[index]}
+	}
+	nodes := make([]*Node, 3)
+	for _, index := range []int{1, 2, 0} {
+		node, err := Open(Config{
+			LocalID: peers[index].ResourceID, BindAddress: addresses[index], AdvertiseAddress: addresses[index],
+			DataDirectory: filepath.Join(t.TempDir(), "raft"), Peers: peers, Bootstrap: index == 0,
+			ApplyTimeout: 3 * time.Second,
+		}, &stateRecorder{})
+		if err != nil {
+			t.Fatalf("open Raft node %d: %v", index, err)
+		}
+		nodes[index] = node
+		defer node.Close()
+	}
+	leader := waitForRaftLeader(t, nodes)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := leader.AddControllerVoters(ctx, []ControllerMember{{ResourceID: model.NewResourceID(), Address: freeTCPAddress(t)}})
+	if err == nil || !strings.Contains(err.Error(), "odd") {
+		t.Fatalf("unsafe single-controller addition error=%v", err)
+	}
+	members, readErr := leader.ControllerMembers(ctx)
+	if readErr != nil || len(members) != 3 {
+		t.Fatalf("membership changed after rejected add: members=%+v err=%v", members, readErr)
+	}
 }
 
 func TestThreeNodeRaftCommitsOverMutualTLS(t *testing.T) {

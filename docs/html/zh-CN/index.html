@@ -21,7 +21,7 @@
         <span>搜索文档</span>
         <input id="docs-search" type="search" autocomplete="off" placeholder="输入标题关键词">
       </label>
-      <nav class="docs-nav" aria-label="Documentation"><section><h2>开始使用</h2><a href="index.html" data-doc-title="clusterguard ha 中文文档" aria-current="page" class="active">ClusterGuard HA 中文文档</a><a href="product-overview.html" data-doc-title="产品概览">产品概览</a><a href="product-tour.html" data-doc-title="控制台产品导览">控制台产品导览</a><a href="architecture.html" data-doc-title="系统架构">系统架构</a><a href="release-2.1.45.html" data-doc-title="2.1.45 发布说明">2.1.45 发布说明</a></section><section><h2>部署与迁移</h2><a href="offline-rpm-install.html" data-doc-title="离线 rpm 安装">离线 RPM 安装</a><a href="database-preparation.html" data-doc-title="数据库接入">数据库接入</a><a href="orchestrator-migration.html" data-doc-title="从 orchestrator 迁移">从 Orchestrator 迁移</a></section><section><h2>日常运维</h2><a href="operations-manual.html" data-doc-title="运维操作手册">运维操作手册</a><a href="api-operations.html" data-doc-title="api 运维参考">API 运维参考</a><a href="postgresql-ha.html" data-doc-title="postgresql 高可用">PostgreSQL 高可用</a><a href="version-release-policy.html" data-doc-title="版本与发版规范">版本与发版规范</a></section><section><h2>验收证据</h2><a href="proven-mysql-ha-methods.html" data-doc-title="mysql 已验证方法">MySQL 已验证方法</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql 功能验收">MySQL 功能验收</a><a href="mysql-former-primary-recovery.html" data-doc-title="旧主恢复专项验收">旧主恢复专项验收</a><a href="mysql-production-qualification.html" data-doc-title="mysql 生产验收">MySQL 生产验收</a><a href="production-chaos-test.html" data-doc-title="生产故障测试报告">生产故障测试报告</a><a href="power-lifecycle-test.html" data-doc-title="计划关机测试报告">计划关机测试报告</a></section></nav>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>开始使用</h2><a href="index.html" data-doc-title="clusterguard ha 中文文档" aria-current="page" class="active">ClusterGuard HA 中文文档</a><a href="product-overview.html" data-doc-title="产品概览">产品概览</a><a href="product-tour.html" data-doc-title="控制台产品导览">控制台产品导览</a><a href="architecture.html" data-doc-title="系统架构">系统架构</a><a href="release-2.2.39.html" data-doc-title="2.2.39 发布说明">2.2.39 发布说明</a><a href="release-2.1.45.html" data-doc-title="2.1.45 发布说明">2.1.45 发布说明</a></section><section><h2>部署与迁移</h2><a href="offline-rpm-install.html" data-doc-title="离线 rpm 安装">离线 RPM 安装</a><a href="database-preparation.html" data-doc-title="数据库接入">数据库接入</a><a href="orchestrator-migration.html" data-doc-title="从 orchestrator 迁移">从 Orchestrator 迁移</a></section><section><h2>日常运维</h2><a href="operations-manual.html" data-doc-title="运维操作手册">运维操作手册</a><a href="api-operations.html" data-doc-title="api 运维参考">API 运维参考</a><a href="postgresql-ha.html" data-doc-title="postgresql 高可用">PostgreSQL 高可用</a><a href="docker-swarm-mysql.html" data-doc-title="docker swarm mysql">Docker Swarm MySQL</a><a href="kubernetes-mysql.html" data-doc-title="kubernetes mysql">Kubernetes MySQL</a><a href="update-and-patch.html" data-doc-title="版本升级与回退">版本升级与回退</a><a href="version-release-policy.html" data-doc-title="版本与发版规范">版本与发版规范</a></section><section><h2>验收证据</h2><a href="proven-mysql-ha-methods.html" data-doc-title="mysql 已验证方法">MySQL 已验证方法</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql 功能验收">MySQL 功能验收</a><a href="mysql-former-primary-recovery.html" data-doc-title="旧主恢复专项验收">旧主恢复专项验收</a><a href="mysql-production-qualification.html" data-doc-title="mysql 生产验收">MySQL 生产验收</a><a href="postgresql-production-qualification.html" data-doc-title="postgresql 16.4 生产验收">PostgreSQL 16.4 生产验收</a><a href="docker-swarm-mysql-validation.html" data-doc-title="docker swarm mysql 实机验证">Docker Swarm MySQL 实机验证</a><a href="production-chaos-test.html" data-doc-title="生产故障测试报告">生产故障测试报告</a><a href="power-lifecycle-test.html" data-doc-title="计划关机测试报告">计划关机测试报告</a></section></nav>
       <div class="sidebar-meta">
         <span>离线文档构建</span>
         <strong>2.1 / 2.2</strong>
@@ -54,9 +54,9 @@
 <td>MySQL 高可用控制平台</td>
 </tr>
 <tr>
-<td><code>2.2.x</code></td>
-<td>开发与验收</td>
-<td>PostgreSQL，保留 2.1 MySQL 能力</td>
+<td><code>2.2-39</code></td>
+<td>正式发布</td>
+<td>PostgreSQL 16.4、Docker Swarm，并保留 2.1 MySQL 能力</td>
 </tr>
 <tr>
 <td>后续版本</td>
@@ -64,13 +64,13 @@
 <td>Oracle Data Guard Broker、SQL Server Always On 独立验收</td>
 </tr>
 </tbody></table>
-<p>2.1 最终版本下载：</p>
-<p><a href="https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.1.45">https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.1.45</a></p>
+<p>当前正式版本下载：</p>
+<p><a href="https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.39">https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.39</a></p>
 <p>不要使用本地目录中编号高于 <code>2.1-45</code> 的历史候选包替代正式 Release。正式交付物
 必须来自 GitHub Release，并通过随包 SHA256 校验。</p>
 <h2 id="推荐阅读顺序">推荐阅读顺序<a class="heading-anchor" href="#推荐阅读顺序" aria-label="Link to 推荐阅读顺序">#</a></h2>
 <ol>
-<li><a href="release-2.1.45.html">2.1-45 发布说明</a>
+<li><a href="release-2.2.39.html">2.2.39 发布说明</a>
 确认正式包、摘要、支持范围和生产准入边界。</li>
 <li><a href="product-tour.html">产品导览</a>
 通过实际控制台截图了解拓扑、操作、节点生命周期和操作日志。</li>
@@ -82,6 +82,8 @@
 在不重装已有数据库的前提下接入 MySQL，并安全转移唯一恢复与 VIP 控制权。</li>
 <li><a href="operations-manual.html">运维操作手册</a>
 执行切换、旧主恢复、节点扩容、计划关机、审计和应急处理。</li>
+<li><a href="update-and-patch.html">版本升级与回退手册</a>
+验证签名升级包、生成变更计划、滚动升级、断点续跑和受控回退。</li>
 <li><a href="version-release-policy.html">版本与发版规范</a>
 构建新版本、维护标签和发布 PostgreSQL 2.2 时使用。</li>
 </ol>
@@ -90,6 +92,9 @@
 <li><a href="mysql-former-primary-recovery.html">MySQL 旧主恢复专项验收</a></li>
 <li><a href="production-chaos-test.html">生产故障与并发测试报告</a></li>
 <li><a href="power-lifecycle-test.html">计划关机和自动恢复报告</a></li>
+<li><a href="postgresql-production-qualification.html">PostgreSQL 16.4 生产验收报告</a></li>
+<li><a href="docker-swarm-mysql-validation.html">Docker Swarm MySQL 实机验证</a></li>
+<li><a href="kubernetes-mysql.html">Kubernetes MySQL 接管手册</a></li>
 </ul>
 <p>这些报告记录特定实验室、数据库包和日期下的结果。更换数据库小版本、Linux
 发行版、存储、网络、VIP 网卡或隔离方式后，必须重新执行现场验收。</p>
@@ -100,6 +105,19 @@
 <p>PostgreSQL 数据库权限、原生身份、流复制和恢复要求见
 <a href="database-preparation.html">数据库接入手册</a>；完整安装参数见
 <a href="offline-rpm-install.html">离线安装与部署手册</a>。</p>
+<p>三节点 PostgreSQL 16.4 的计划轮换、虚拟机强制断电、网络分区、失去多数派、并发操作、写 VIP 唯一性和旧主 <code>pg_rewind</code> 结果，见
+<a href="postgresql-production-qualification.html">PostgreSQL 生产验收报告</a>。</p>
+<h2 id="docker-swarm-mysql">Docker Swarm MySQL<a class="heading-anchor" href="#docker-swarm-mysql" aria-label="Link to Docker Swarm MySQL">#</a></h2>
+<p>Docker Swarm 第一阶段采用宿主机 Agent、固定 Service slot、MySQL GTID 复制和宿主机 VIP。设计边界、部署顺序与安全约束见
+<a href="docker-swarm-mysql.html">Docker Swarm MySQL 接管手册</a>，<code>192.168.102.152-154</code> 三节点的计划切换、自动故障切换、旧主回挂、Manager 中断、Raft 无多数派和重复 VIP 结果见
+<a href="docker-swarm-mysql-validation.html">Docker Swarm MySQL 实机验证</a>。</p>
+<h2 id="kubernetes-mysql">Kubernetes MySQL<a class="heading-anchor" href="#kubernetes-mysql" aria-label="Link to Kubernetes MySQL">#</a></h2>
+<p>Kubernetes 模式不迁移宿主机 VIP，也不修改 CoreDNS。ClusterGuard 使用 Raft 授权的
+selectorless Service/EndpointSlice、独立单副本 StatefulSet、持久角色注解和启动守卫完成 MySQL 切换。
+部署约束、RBAC、资源登记和当前验收边界见
+<a href="kubernetes-mysql.html">Kubernetes MySQL 接管手册</a>。该功能目前只有代码级自动化测试，尚无真实 Kubernetes 生产验收报告。</p>
+<h2 id="公众号系列">公众号系列<a class="heading-anchor" href="#公众号系列" aria-label="Link to 公众号系列">#</a></h2>
+<p><a href="wechat-series.md">ClusterGuard HA 公众号系列</a> 已更新 PostgreSQL 2.2 专题，适合用于产品介绍、技术选型和上线前沟通。正式部署参数仍以本手册和对应版本发布说明为准。</p>
 <h2 id="文档效力">文档效力<a class="heading-anchor" href="#文档效力" aria-label="Link to 文档效力">#</a></h2>
 <p>以下文件是生产交付入口：</p>
 <ul>
@@ -107,6 +125,7 @@
 <li><code>docs/zh-CN/offline-rpm-install.md</code></li>
 <li><code>docs/zh-CN/database-preparation.md</code></li>
 <li><code>docs/zh-CN/operations-manual.md</code></li>
+<li><code>docs/zh-CN/update-and-patch.md</code></li>
 <li><code>docs/zh-CN/version-release-policy.md</code></li>
 </ul>
 <p><code>docs/superpowers/</code> 保存历史设计和实施计划，只用于追溯，不是当前安装或生产操作
@@ -132,7 +151,7 @@
         </article>
         <aside class="page-toc" aria-label="本页目录">
           <strong>本页目录</strong>
-          <a class="toc-level-2" href="#当前版本">当前版本</a><a class="toc-level-2" href="#推荐阅读顺序">推荐阅读顺序</a><a class="toc-level-2" href="#验收证据">验收证据</a><a class="toc-level-2" href="#postgresql-2-2">PostgreSQL 2.2</a><a class="toc-level-2" href="#文档效力">文档效力</a><a class="toc-level-2" href="#问题反馈所需信息">问题反馈所需信息</a>
+          <a class="toc-level-2" href="#当前版本">当前版本</a><a class="toc-level-2" href="#推荐阅读顺序">推荐阅读顺序</a><a class="toc-level-2" href="#验收证据">验收证据</a><a class="toc-level-2" href="#postgresql-2-2">PostgreSQL 2.2</a><a class="toc-level-2" href="#docker-swarm-mysql">Docker Swarm MySQL</a><a class="toc-level-2" href="#kubernetes-mysql">Kubernetes MySQL</a><a class="toc-level-2" href="#公众号系列">公众号系列</a><a class="toc-level-2" href="#文档效力">文档效力</a><a class="toc-level-2" href="#问题反馈所需信息">问题反馈所需信息</a>
         </aside>
       </main>
     </div>

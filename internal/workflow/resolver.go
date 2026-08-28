@@ -99,6 +99,23 @@ func resolverCurrentFailedProbe(snapshot model.TopologySnapshot, instanceID mode
 	return found
 }
 
+func resolverCurrentDatabaseFailureProbe(snapshot model.TopologySnapshot, instanceID model.ResourceID) bool {
+	found := false
+	for _, probe := range snapshot.Probes {
+		if probe.InstanceID != instanceID {
+			continue
+		}
+		found = true
+		if probe.Outcome != model.ProbeOutcomeDatabaseUnavailable ||
+			!probe.DiscoveryObservedAt.IsZero() ||
+			!probe.Health.ObservedAt.Equal(snapshot.ObservedAt) ||
+			(probe.Health.State != model.HealthUnknown && probe.Health.State != model.HealthUnhealthy) {
+			return false
+		}
+	}
+	return found
+}
+
 func resolverPrimaryProvenWritable(instance model.DatabaseInstance) bool {
 	switch instance.Engine {
 	case model.EngineMySQL:
@@ -164,6 +181,9 @@ func (resolver RepositoryResolver) resolve(ctx context.Context, request adapter.
 	if rejectsEndpointParameters(request.Parameters) {
 		return adapter.OperationRequest{}, fmt.Errorf("endpoint parameters are not accepted; select inventory resources by UUID")
 	}
+	if request.SourceID != "" && (request.Operation.Kind != model.OperationFailover || request.Operation.RequestedBy != AutomaticRecoveryActor) {
+		return adapter.OperationRequest{}, fmt.Errorf("explicit operation source is reserved for automatic failover")
+	}
 	cluster, found := resolver.Reader.Cluster(request.Operation.ClusterID)
 	if !found {
 		return adapter.OperationRequest{}, fmt.Errorf("selected cluster does not exist")
@@ -188,13 +208,16 @@ func (resolver RepositoryResolver) resolve(ctx context.Context, request adapter.
 
 	var primary model.DatabaseInstance
 	var target model.DatabaseInstance
+	var explicitSource model.DatabaseInstance
 	primaryCount := 0
 	postCommitResolution := request.Plan != nil
 	if postCommitResolution {
 		if !model.ValidResourceID(request.Plan.SourceID) || !model.ValidResourceID(request.Plan.TargetID) || request.Plan.TargetID != request.TargetID {
 			return adapter.OperationRequest{}, fmt.Errorf("operation plan resources are invalid for verification")
 		}
-		if request.Plan.SourceID == request.Plan.TargetID {
+		// Power shutdown is a whole-cluster operation: the target is the primary
+		// being stopped, so a single-resource plan is valid.
+		if request.Plan.SourceID == request.Plan.TargetID && request.Operation.Kind != model.OperationPowerShutdown {
 			return adapter.OperationRequest{}, fmt.Errorf("operation plan source and target must differ")
 		}
 	}
@@ -211,13 +234,32 @@ func (resolver RepositoryResolver) resolve(ctx context.Context, request adapter.
 		if instance.ResourceID == request.TargetID {
 			target = instance
 		}
+		if instance.ResourceID == request.SourceID {
+			explicitSource = instance
+		}
 	}
 	if postCommitResolution {
 		if primary.ResourceID == "" {
 			return adapter.OperationRequest{}, fmt.Errorf("operation plan source is not in the selected cluster inventory")
 		}
 	} else {
-		if request.Operation.Kind == model.OperationFormerPrimaryRejoin {
+		if request.Operation.Kind == model.OperationFailover && request.SourceID != "" {
+			if !model.ValidResourceID(request.SourceID) || explicitSource.ResourceID == "" {
+				return adapter.OperationRequest{}, fmt.Errorf("automatic failover source is not in the selected cluster inventory")
+			}
+			if explicitSource.Health.State != model.HealthUnknown && explicitSource.Health.State != model.HealthUnhealthy {
+				return adapter.OperationRequest{}, fmt.Errorf("automatic failover source is not failed")
+			}
+			if !resolverCurrentDatabaseFailureProbe(snapshot, explicitSource.ResourceID) {
+				return adapter.OperationRequest{}, fmt.Errorf("automatic failover source has no current database-failure evidence")
+			}
+			for _, instance := range snapshot.Instances {
+				if instance.Role == model.RolePrimary && instance.ResourceID != explicitSource.ResourceID {
+					return adapter.OperationRequest{}, fmt.Errorf("automatic failover is blocked because another primary is already observed")
+				}
+			}
+			primary = explicitSource
+		} else if request.Operation.Kind == model.OperationFormerPrimaryRejoin {
 			var resolved bool
 			primary, resolved = resolveFormerPrimaryRejoinPrimary(snapshot, target)
 			if !resolved {
@@ -230,7 +272,7 @@ func (resolver RepositoryResolver) resolve(ctx context.Context, request adapter.
 	if target.ResourceID == "" {
 		return adapter.OperationRequest{}, fmt.Errorf("target is not in the selected cluster inventory")
 	}
-	if !postCommitResolution && target.ResourceID == primary.ResourceID {
+	if !postCommitResolution && target.ResourceID == primary.ResourceID && request.Operation.Kind != model.OperationPowerShutdown {
 		return adapter.OperationRequest{}, fmt.Errorf("target must differ from the current primary")
 	}
 	credentials, err := resolver.Credentials.Credentials(ctx, cluster)

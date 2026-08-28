@@ -3,7 +3,7 @@ arch: ${CG_RPM_GOARCH}
 platform: linux
 version: ${CG_RPM_VERSION}
 release: ${CG_RPM_RELEASE}
-version_schema: semver
+version_schema: none
 maintainer: ClusterGuard HA Engineering
 description: |
   ClusterGuard HA 多数据库企业级高可用控制平台。
@@ -21,6 +21,7 @@ depends:
   - iproute
   - iputils
   - openssh-clients
+  - openssl
   - shadow-utils
   - systemd
   - tar
@@ -46,6 +47,16 @@ contents:
     expand: true
     file_info:
       mode: 0755
+  - src: ${CG_RPM_STAGE}/bin/clusterguard-update-helper
+    dst: /usr/local/libexec/clusterguard-update-helper
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${CG_RPM_STAGE}/bin/clusterguard-k8s-fence-guard
+    dst: /usr/local/libexec/clusterguard-k8s-fence-guard
+    expand: true
+    file_info:
+      mode: 0755
   - src: ${CG_RPM_STAGE}/bin/jq
     dst: /usr/local/libexec/jq-linux-amd64
     expand: true
@@ -57,6 +68,16 @@ contents:
     expand: true
     file_info:
       mode: 0755
+  - src: ${CG_RPM_STAGE}/scripts/clusterguard-upgrade.sh
+    dst: /usr/local/sbin/clusterguard-upgrade
+    expand: true
+    file_info:
+      mode: 0750
+  - src: ${CG_RPM_STAGE}/scripts/clusterguard-update-job.sh
+    dst: /usr/local/libexec/clusterguard-update-job.sh
+    expand: true
+    file_info:
+      mode: 0750
   - src: ${CG_RPM_STAGE}/scripts/clusterguard-agent-stdio.sh
     dst: /usr/local/libexec/clusterguard-agent-stdio
     expand: true
@@ -64,6 +85,21 @@ contents:
       mode: 0750
   - src: ${CG_RPM_STAGE}/scripts/clusterguard-node-lifecycle.sh
     dst: /usr/local/libexec/clusterguard-node-lifecycle.sh
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${CG_RPM_STAGE}/scripts/clusterguard-package-resolve.sh
+    dst: /usr/local/libexec/clusterguard-package-resolve.sh
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${CG_RPM_STAGE}/scripts/clusterguard-adapter-runtime-install.sh
+    dst: /usr/local/libexec/clusterguard-adapter-runtime-install.sh
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${CG_RPM_STAGE}/scripts/clusterguard-control-join.sh
+    dst: /usr/local/libexec/clusterguard-control-join.sh
     expand: true
     file_info:
       mode: 0755
@@ -87,6 +123,11 @@ contents:
     expand: true
     file_info:
       mode: 0755
+  - src: ${CG_RPM_STAGE}/scripts/clusterguard-postgresql-build.sh
+    dst: /usr/local/libexec/clusterguard-postgresql-build.sh
+    expand: true
+    file_info:
+      mode: 0755
   - src: ${CG_RPM_STAGE}/scripts/clusterguard-postgresql-sync.sh
     dst: /usr/local/libexec/clusterguard-postgresql-sync.sh
     expand: true
@@ -107,6 +148,26 @@ contents:
     expand: true
     file_info:
       mode: 0755
+  - src: ${CG_RPM_STAGE}/scripts/clusterguard-mysql-qualification.sh
+    dst: /usr/local/libexec/clusterguard-mysql-qualification.sh
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${CG_RPM_STAGE}/scripts/clusterguard-cluster-shutdown.sh
+    dst: /usr/local/libexec/clusterguard-cluster-shutdown.sh
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${CG_RPM_STAGE}/scripts/clusterguard-cluster-restore.sh
+    dst: /usr/local/libexec/clusterguard-cluster-restore.sh
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${CG_RPM_STAGE}/scripts/clusterguard-cluster-finalize.sh
+    dst: /usr/local/libexec/clusterguard-cluster-finalize.sh
+    expand: true
+    file_info:
+      mode: 0755
 
   - src: ${CG_RPM_STAGE}/configs/clusterguard.example.json
     dst: /etc/clusterguard/clusterguard.json.example
@@ -116,6 +177,18 @@ contents:
       mode: 0640
   - src: ${CG_RPM_STAGE}/configs/clusterguard-agent.example.json
     dst: /etc/clusterguard/agent.json.example
+    type: config|noreplace
+    expand: true
+    file_info:
+      mode: 0640
+  - src: ${CG_RPM_STAGE}/configs/clusterguard-agent.docker-swarm.example.json
+    dst: /etc/clusterguard/agent.docker-swarm.json.example
+    type: config|noreplace
+    expand: true
+    file_info:
+      mode: 0640
+  - src: ${CG_RPM_STAGE}/configs/clusterguard-update.example.json
+    dst: /etc/clusterguard/update.json.example
     type: config|noreplace
     expand: true
     file_info:
@@ -147,6 +220,21 @@ contents:
     expand: true
     file_info:
       mode: 0644
+  - src: ${CG_RPM_STAGE}/packaging/clusterguard-cluster-restore.service
+    dst: /usr/lib/systemd/system/clusterguard-cluster-restore.service
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${CG_RPM_STAGE}/packaging/clusterguard-cluster-finalize.service
+    dst: /usr/lib/systemd/system/clusterguard-cluster-finalize.service
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${CG_RPM_STAGE}/packaging/clusterguard-update-helper.service
+    dst: /usr/lib/systemd/system/clusterguard-update-helper.service
+    expand: true
+    file_info:
+      mode: 0644
   - src: ${CG_RPM_STAGE}/packaging/clusterguard-ha.logrotate
     dst: /etc/logrotate.d/clusterguard-ha
     type: config|noreplace
@@ -174,6 +262,121 @@ contents:
     expand: true
     file_info:
       mode: 0644
+  - src: ${CG_RPM_STAGE}/docs/update-and-patch.md
+    dst: /usr/share/doc/clusterguard-ha/版本升级与回退手册.md
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${CG_RPM_STAGE}/docs/docker-swarm-mysql.md
+    dst: /usr/share/doc/clusterguard-ha/Docker-Swarm-MySQL.md
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${CG_RPM_STAGE}/docs/kubernetes-mysql.md
+    dst: /usr/share/doc/clusterguard-ha/Kubernetes-MySQL.md
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${CG_RPM_STAGE}/docs/postgresql-ha.md
+    dst: /usr/share/doc/clusterguard-ha/PostgreSQL-高可用手册.md
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${CG_RPM_STAGE}/docs/postgresql-production-qualification-2026-08-23.md
+    dst: /usr/share/doc/clusterguard-ha/PostgreSQL-生产验收报告.md
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${CG_RPM_STAGE}/deploy/docker-swarm/install-docker-static.sh
+    dst: /usr/share/clusterguard/docker-swarm/install-docker-static.sh
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${CG_RPM_STAGE}/deploy/docker-swarm/mysql/prepare-host.sh
+    dst: /usr/share/clusterguard/docker-swarm/mysql/prepare-host.sh
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${CG_RPM_STAGE}/deploy/docker-swarm/mysql/install-mysql-client.sh
+    dst: /usr/share/clusterguard/docker-swarm/mysql/install-mysql-client.sh
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${CG_RPM_STAGE}/deploy/docker-swarm/mysql/bootstrap-replication.sh
+    dst: /usr/share/clusterguard/docker-swarm/mysql/bootstrap-replication.sh
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${CG_RPM_STAGE}/deploy/docker-swarm/mysql/mysql-stack.yml
+    dst: /usr/share/clusterguard/docker-swarm/mysql/mysql-stack.yml
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${CG_RPM_STAGE}/deploy/docker-swarm/postgresql/10-clusterguard-init.sh
+    dst: /usr/share/clusterguard/docker-swarm/postgresql/10-clusterguard-init.sh
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${CG_RPM_STAGE}/deploy/docker-swarm/postgresql/clusterguard-postgres-entrypoint.sh
+    dst: /usr/share/clusterguard/docker-swarm/postgresql/clusterguard-postgres-entrypoint.sh
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${CG_RPM_STAGE}/deploy/docker-swarm/postgresql/maintenance-rollout.sh
+    dst: /usr/share/clusterguard/docker-swarm/postgresql/maintenance-rollout.sh
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${CG_RPM_STAGE}/deploy/docker-swarm/postgresql/prepare-host.sh
+    dst: /usr/share/clusterguard/docker-swarm/postgresql/prepare-host.sh
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${CG_RPM_STAGE}/deploy/docker-swarm/postgresql/verify-replication.sh
+    dst: /usr/share/clusterguard/docker-swarm/postgresql/verify-replication.sh
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${CG_RPM_STAGE}/deploy/docker-swarm/postgresql/postgresql-stack.yml
+    dst: /usr/share/clusterguard/docker-swarm/postgresql/postgresql-stack.yml
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${CG_RPM_STAGE}/deploy/kubernetes/clusterguard-rbac.yaml
+    dst: /usr/share/clusterguard/kubernetes/clusterguard-rbac.yaml
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${CG_RPM_STAGE}/deploy/kubernetes/kubernetes-credentials.example.json
+    dst: /usr/share/clusterguard/kubernetes/kubernetes-credentials.example.json
+    expand: true
+    file_info:
+      mode: 0600
+  - src: ${CG_RPM_STAGE}/deploy/kubernetes/fence-guard/Dockerfile
+    dst: /usr/share/clusterguard/kubernetes/fence-guard/Dockerfile
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${CG_RPM_STAGE}/deploy/kubernetes/mysql/writer-service.yaml
+    dst: /usr/share/clusterguard/kubernetes/mysql/writer-service.yaml
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${CG_RPM_STAGE}/deploy/kubernetes/mysql/fence-guard-rbac.yaml
+    dst: /usr/share/clusterguard/kubernetes/mysql/fence-guard-rbac.yaml
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${CG_RPM_STAGE}/deploy/kubernetes/mysql/statefulset-fence-guard-patch.yaml
+    dst: /usr/share/clusterguard/kubernetes/mysql/statefulset-fence-guard-patch.yaml
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${CG_RPM_STAGE}/deploy/kubernetes/mysql/bootstrap-writer-endpoint.sh
+    dst: /usr/share/clusterguard/kubernetes/mysql/bootstrap-writer-endpoint.sh
+    expand: true
+    file_info:
+      mode: 0755
   - src: ${CG_RPM_STAGE}/BUILD-INFO
     dst: /usr/share/doc/clusterguard-ha/BUILD-INFO
     expand: true

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -18,13 +19,90 @@ import (
 )
 
 const (
-	DefaultAdminRecoveryFile = "/var/lib/clusterguard/admin-recovery.json"
-	adminRecoveryVersion     = 1
-	adminRecoveryMaximumAge  = 24 * time.Hour
-	adminRecoveryFutureSkew  = 5 * time.Minute
-	adminRecoveryMaxBytes    = 64 << 10
-	temporaryPasswordBytes   = 24
+	DefaultAdminRecoveryFile     = "/var/lib/clusterguard/admin-recovery.json"
+	DefaultBootstrapPasswordFile = "/var/lib/clusterguard/bootstrap-admin-password"
+	adminRecoveryVersion         = 1
+	adminRecoveryMaximumAge      = 24 * time.Hour
+	adminRecoveryFutureSkew      = 5 * time.Minute
+	adminRecoveryMaxBytes        = 64 << 10
+	temporaryPasswordBytes       = 24
 )
+
+// ReadOrCreateBootstrapPassword creates the initial administrator credential in
+// a root-only file. It deliberately stores the plaintext only until the first
+// password change; the platform metadata always stores an Argon2id hash.
+func ReadOrCreateBootstrapPassword(path string, random io.Reader) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", fmt.Errorf("bootstrap administrator password path is required")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return "", fmt.Errorf("create bootstrap administrator password directory: %w", err)
+	}
+	read := func() (string, error) {
+		info, err := os.Stat(path)
+		if err != nil {
+			return "", err
+		}
+		if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || info.Size() < 12 || info.Size() > 4096 {
+			return "", fmt.Errorf("bootstrap administrator password file must be a private regular file with mode 0600")
+		}
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("read bootstrap administrator password: %w", err)
+		}
+		password := strings.TrimSpace(string(contents))
+		if err := ValidateNewPassword(password); err != nil {
+			return "", fmt.Errorf("bootstrap administrator password file is invalid: %w", err)
+		}
+		return password, nil
+	}
+	if password, err := read(); err == nil {
+		return password, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	password, err := GenerateTemporaryPassword(random)
+	if err != nil {
+		return "", err
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return read()
+		}
+		return "", fmt.Errorf("create bootstrap administrator password file: %w", err)
+	}
+	remove := true
+	defer func() {
+		_ = file.Close()
+		if remove {
+			_ = os.Remove(path)
+		}
+	}()
+	if _, err := io.WriteString(file, password+"\n"); err != nil {
+		return "", fmt.Errorf("write bootstrap administrator password: %w", err)
+	}
+	if err := file.Sync(); err != nil {
+		return "", fmt.Errorf("sync bootstrap administrator password: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return "", fmt.Errorf("close bootstrap administrator password: %w", err)
+	}
+	remove = false
+	return password, nil
+}
+
+func RemoveBootstrapPassword(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove bootstrap administrator password file: %w", err)
+	}
+	return nil
+}
 
 type AdminRecoveryArtifact struct {
 	Version      int              `json:"version"`

@@ -23,6 +23,7 @@ type Credential struct {
 
 type MySQL struct {
 	Enabled                          bool       `json:"enabled"`
+	SemiSyncRequired                 bool       `json:"semi_sync_required,omitempty"`
 	DiscoveryIntervalSeconds         int        `json:"discovery_interval_seconds,omitempty"`
 	DiscoveryTimeoutSeconds          int        `json:"discovery_timeout_seconds,omitempty"`
 	AutomaticFailoverEnabled         bool       `json:"automatic_failover_enabled,omitempty"`
@@ -71,6 +72,7 @@ type Agent struct {
 	AgentConfigPath        string `json:"agent_config_path,omitempty"`
 	CommandTimeoutSeconds  int    `json:"command_timeout_seconds,omitempty"`
 	MutationTimeoutSeconds int    `json:"mutation_timeout_seconds,omitempty"`
+	MaxConcurrentSessions  int    `json:"max_concurrent_sessions,omitempty"`
 	SharedSecretEnv        string `json:"shared_secret_env"`
 	SharedSecret           string `json:"-"`
 }
@@ -82,19 +84,20 @@ type ConsensusPeer struct {
 }
 
 type Consensus struct {
-	Enabled                bool             `json:"enabled"`
-	SnapshotCASEnabled     bool             `json:"snapshot_cas_enabled"`
-	AllowInsecureTransport bool             `json:"allow_insecure_transport,omitempty"`
-	TLSCertFile            string           `json:"tls_cert_file,omitempty"`
-	TLSKeyFile             string           `json:"tls_key_file,omitempty"`
-	TLSCAFile              string           `json:"tls_ca_file,omitempty"`
-	LocalID                model.ResourceID `json:"local_id"`
-	BindAddress            string           `json:"bind_address"`
-	AdvertiseAddress       string           `json:"advertise_address"`
-	DataDirectory          string           `json:"data_directory"`
-	Bootstrap              bool             `json:"bootstrap"`
-	ApplyTimeoutSeconds    int              `json:"apply_timeout_seconds,omitempty"`
-	Peers                  []ConsensusPeer  `json:"peers"`
+	Enabled                         bool             `json:"enabled"`
+	SnapshotCASEnabled              bool             `json:"snapshot_cas_enabled"`
+	ReplicatedLogCompressionEnabled bool             `json:"replicated_log_compression_enabled,omitempty"`
+	AllowInsecureTransport          bool             `json:"allow_insecure_transport,omitempty"`
+	TLSCertFile                     string           `json:"tls_cert_file,omitempty"`
+	TLSKeyFile                      string           `json:"tls_key_file,omitempty"`
+	TLSCAFile                       string           `json:"tls_ca_file,omitempty"`
+	LocalID                         model.ResourceID `json:"local_id"`
+	BindAddress                     string           `json:"bind_address"`
+	AdvertiseAddress                string           `json:"advertise_address"`
+	DataDirectory                   string           `json:"data_directory"`
+	Bootstrap                       bool             `json:"bootstrap"`
+	ApplyTimeoutSeconds             int              `json:"apply_timeout_seconds,omitempty"`
+	Peers                           []ConsensusPeer  `json:"peers"`
 }
 
 type NodeLifecycle struct {
@@ -104,13 +107,20 @@ type NodeLifecycle struct {
 	KnownHostsFile                   string          `json:"known_hosts_file"`
 	IdentityFile                     string          `json:"identity_file,omitempty"`
 	JQBinary                         string          `json:"jq_binary"`
+	AdapterRuntimeHelper             string          `json:"adapter_runtime_helper,omitempty"`
 	ControlJoinHelper                string          `json:"control_join_helper,omitempty"`
+	ControlAPIIssuerCertFile         string          `json:"control_api_issuer_cert_file,omitempty"`
+	ControlAPIIssuerKeyFile          string          `json:"control_api_issuer_key_file,omitempty"`
+	ControlRaftIssuerCertFile        string          `json:"control_raft_issuer_cert_file,omitempty"`
+	ControlRaftIssuerKeyFile         string          `json:"control_raft_issuer_key_file,omitempty"`
+	ControlCertificateValidityDays   int             `json:"control_certificate_validity_days,omitempty"`
 	CloneHelper                      string          `json:"clone_helper,omitempty"`
 	XtraBackupHelper                 string          `json:"xtrabackup_helper,omitempty"`
 	PostgreSQLInstallHelper          string          `json:"postgresql_install_helper,omitempty"`
 	PostgreSQLSyncHelper             string          `json:"postgresql_sync_helper,omitempty"`
 	SSHPasswordEnv                   string          `json:"ssh_password_env,omitempty"`
 	MySQLRootPasswordEnv             string          `json:"mysql_root_password_env"`
+	MySQLRootRemoteHost              string          `json:"mysql_root_remote_host,omitempty"`
 	ReplicationPasswordEnv           string          `json:"replication_password_env"`
 	PostgreSQLAdminPasswordEnv       string          `json:"postgresql_admin_password_env,omitempty"`
 	PostgreSQLReplicationPasswordEnv string          `json:"postgresql_replication_password_env,omitempty"`
@@ -127,33 +137,44 @@ type NodeLifecycle struct {
 }
 
 type Fencing struct {
-	Enabled        bool   `json:"enabled"`
-	ExecutablePath string `json:"executable_path"`
-	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
+	Enabled                 bool   `json:"enabled"`
+	ExecutablePath          string `json:"executable_path"`
+	TimeoutSeconds          int    `json:"timeout_seconds,omitempty"`
+	AgentQuorumEnabled      bool   `json:"agent_quorum_enabled,omitempty"`
+	AgentQuorumGraceSeconds int    `json:"agent_quorum_grace_seconds,omitempty"`
+}
+
+type Kubernetes struct {
+	Enabled               bool `json:"enabled"`
+	RequestTimeoutSeconds int  `json:"request_timeout_seconds,omitempty"`
+	FenceTimeoutSeconds   int  `json:"fence_timeout_seconds,omitempty"`
 }
 
 type File struct {
-	HTTPAddress         string        `json:"http_address"`
-	AllowInsecureHTTP   bool          `json:"allow_insecure_http,omitempty"`
-	TLSCertFile         string        `json:"tls_cert_file,omitempty"`
-	TLSKeyFile          string        `json:"tls_key_file,omitempty"`
-	TLSCAFile           string        `json:"tls_ca_file,omitempty"`
-	MetadataPath        string        `json:"metadata_path"`
-	ControlTokenEnv     string        `json:"control_token_env"`
-	ControlToken        string        `json:"-"`
-	MonitoringTokenEnv  string        `json:"monitoring_token_env"`
-	MonitoringToken     string        `json:"-"`
-	ApprovalTokenEnv    string        `json:"approval_token_env"`
-	ApprovalToken       string        `json:"-"`
-	DeprecationWarnings []string      `json:"-"`
-	MySQL               MySQL         `json:"mysql"`
-	PostgreSQL          PostgreSQL    `json:"postgresql"`
-	Oracle              Oracle        `json:"oracle"`
-	SQLServer           SQLServer     `json:"sqlserver"`
-	Agent               Agent         `json:"agent"`
-	Consensus           Consensus     `json:"consensus"`
-	Fencing             Fencing       `json:"fencing"`
-	NodeLifecycle       NodeLifecycle `json:"node_lifecycle"`
+	HTTPAddress               string        `json:"http_address"`
+	AllowInsecureHTTP         bool          `json:"allow_insecure_http,omitempty"`
+	TLSCertFile               string        `json:"tls_cert_file,omitempty"`
+	TLSKeyFile                string        `json:"tls_key_file,omitempty"`
+	TLSCAFile                 string        `json:"tls_ca_file,omitempty"`
+	MetadataPath              string        `json:"metadata_path"`
+	ControlTokenEnv           string        `json:"control_token_env"`
+	ControlToken              string        `json:"-"`
+	BootstrapAdminPasswordEnv string        `json:"bootstrap_admin_password_env,omitempty"`
+	BootstrapAdminPassword    string        `json:"-"`
+	MonitoringTokenEnv        string        `json:"monitoring_token_env"`
+	MonitoringToken           string        `json:"-"`
+	ApprovalTokenEnv          string        `json:"approval_token_env"`
+	ApprovalToken             string        `json:"-"`
+	DeprecationWarnings       []string      `json:"-"`
+	MySQL                     MySQL         `json:"mysql"`
+	PostgreSQL                PostgreSQL    `json:"postgresql"`
+	Oracle                    Oracle        `json:"oracle"`
+	SQLServer                 SQLServer     `json:"sqlserver"`
+	Agent                     Agent         `json:"agent"`
+	Consensus                 Consensus     `json:"consensus"`
+	Fencing                   Fencing       `json:"fencing"`
+	Kubernetes                Kubernetes    `json:"kubernetes"`
+	NodeLifecycle             NodeLifecycle `json:"node_lifecycle"`
 }
 
 func Load(path string) (File, error) {
@@ -209,6 +230,13 @@ func Load(path string) (File, error) {
 			return File{}, fmt.Errorf("control token environment variable %s is empty", environment)
 		}
 	}
+	if environment := strings.TrimSpace(configuration.BootstrapAdminPasswordEnv); environment != "" {
+		configuration.BootstrapAdminPasswordEnv = environment
+		configuration.BootstrapAdminPassword = os.Getenv(environment)
+		if strings.TrimSpace(configuration.BootstrapAdminPassword) == "" {
+			return File{}, fmt.Errorf("bootstrap administrator password environment variable %s is empty", environment)
+		}
+	}
 	if environment := strings.TrimSpace(configuration.MonitoringTokenEnv); environment != "" {
 		configuration.MonitoringTokenEnv = environment
 		configuration.MonitoringToken = os.Getenv(environment)
@@ -230,13 +258,13 @@ func Load(path string) (File, error) {
 	}
 	if configuration.MySQL.Enabled {
 		if configuration.MySQL.DiscoveryIntervalSeconds <= 0 {
-			configuration.MySQL.DiscoveryIntervalSeconds = 5
+			configuration.MySQL.DiscoveryIntervalSeconds = 1
 		}
 		if configuration.MySQL.DiscoveryTimeoutSeconds <= 0 {
-			configuration.MySQL.DiscoveryTimeoutSeconds = 4
+			configuration.MySQL.DiscoveryTimeoutSeconds = 1
 		}
 		if configuration.MySQL.AutomaticFailoverIntervalSeconds <= 0 {
-			configuration.MySQL.AutomaticFailoverIntervalSeconds = 5
+			configuration.MySQL.AutomaticFailoverIntervalSeconds = 1
 		}
 		if configuration.MySQL.AutomaticFailoverRetrySeconds <= 0 {
 			configuration.MySQL.AutomaticFailoverRetrySeconds = 30
@@ -253,13 +281,13 @@ func Load(path string) (File, error) {
 	}
 	if configuration.PostgreSQL.Enabled {
 		if configuration.PostgreSQL.DiscoveryIntervalSeconds <= 0 {
-			configuration.PostgreSQL.DiscoveryIntervalSeconds = 5
+			configuration.PostgreSQL.DiscoveryIntervalSeconds = 1
 		}
 		if configuration.PostgreSQL.DiscoveryTimeoutSeconds <= 0 {
-			configuration.PostgreSQL.DiscoveryTimeoutSeconds = 4
+			configuration.PostgreSQL.DiscoveryTimeoutSeconds = 1
 		}
 		if configuration.PostgreSQL.AutomaticFailoverIntervalSeconds <= 0 {
-			configuration.PostgreSQL.AutomaticFailoverIntervalSeconds = 5
+			configuration.PostgreSQL.AutomaticFailoverIntervalSeconds = 1
 		}
 		if configuration.PostgreSQL.AutomaticFailoverRetrySeconds <= 0 {
 			configuration.PostgreSQL.AutomaticFailoverRetrySeconds = 30
@@ -340,10 +368,16 @@ func Load(path string) (File, error) {
 		configuration.Agent.KnownHostsFile = strings.TrimSpace(configuration.Agent.KnownHostsFile)
 		configuration.Agent.SharedSecretEnv = strings.TrimSpace(configuration.Agent.SharedSecretEnv)
 		if configuration.Agent.CommandTimeoutSeconds <= 0 {
-			configuration.Agent.CommandTimeoutSeconds = 30
+			configuration.Agent.CommandTimeoutSeconds = 5
 		}
 		if configuration.Agent.MutationTimeoutSeconds <= 0 {
 			configuration.Agent.MutationTimeoutSeconds = 1800
+		}
+		if configuration.Agent.MaxConcurrentSessions <= 0 {
+			configuration.Agent.MaxConcurrentSessions = 4
+		}
+		if configuration.Agent.MaxConcurrentSessions > 32 {
+			return File{}, fmt.Errorf("agent max_concurrent_sessions must not exceed 32")
 		}
 		if configuration.Agent.User == "" || configuration.Agent.IdentityFile == "" || configuration.Agent.KnownHostsFile == "" || configuration.Agent.SharedSecretEnv == "" {
 			return File{}, fmt.Errorf("agent user, identity_file, known_hosts_file, and shared_secret_env are required when agent transport is enabled")
@@ -390,10 +424,46 @@ func Load(path string) (File, error) {
 			configuration.Fencing.TimeoutSeconds = 30
 		}
 	}
-	if configuration.MySQL.AutomaticFailoverEnabled || configuration.PostgreSQL.AutomaticFailoverEnabled {
+	if configuration.Fencing.AgentQuorumEnabled {
 		if !configuration.Consensus.Enabled || !configuration.Agent.Enabled {
-			return File{}, fmt.Errorf("automatic failover requires controller consensus and the restricted node agent")
+			return File{}, fmt.Errorf("agent quorum fencing requires controller consensus and the restricted node agent")
 		}
+		if configuration.Fencing.AgentQuorumGraceSeconds <= 0 {
+			configuration.Fencing.AgentQuorumGraceSeconds = 15
+		}
+		if configuration.Fencing.AgentQuorumGraceSeconds < 15 || configuration.Fencing.AgentQuorumGraceSeconds > 60 {
+			return File{}, fmt.Errorf("agent quorum fencing grace must be between 15 and 60 seconds")
+		}
+	}
+	if configuration.Kubernetes.Enabled {
+		if !configuration.Consensus.Enabled {
+			return File{}, fmt.Errorf("Kubernetes endpoint execution requires Raft consensus")
+		}
+		if configuration.Kubernetes.RequestTimeoutSeconds <= 0 {
+			configuration.Kubernetes.RequestTimeoutSeconds = 10
+		}
+		if configuration.Kubernetes.FenceTimeoutSeconds <= 0 {
+			configuration.Kubernetes.FenceTimeoutSeconds = 60
+		}
+		if configuration.Kubernetes.RequestTimeoutSeconds > 60 || configuration.Kubernetes.FenceTimeoutSeconds > 600 {
+			return File{}, fmt.Errorf("Kubernetes request or fencing timeout exceeds the supported safety limit")
+		}
+	}
+	if configuration.MySQL.AutomaticFailoverEnabled {
+		if !configuration.Consensus.Enabled || (!configuration.Agent.Enabled && !configuration.Kubernetes.Enabled) {
+			return File{}, fmt.Errorf("automatic failover for MySQL requires controller consensus and either restricted node-agent or Kubernetes fencing")
+		}
+	}
+	if configuration.PostgreSQL.AutomaticFailoverEnabled {
+		if !configuration.Consensus.Enabled || !configuration.Agent.Enabled {
+			return File{}, fmt.Errorf("automatic failover for PostgreSQL requires controller consensus and the restricted node agent")
+		}
+	}
+	if configuration.MySQL.AutomaticFailoverEnabled && !configuration.Fencing.Enabled && !configuration.Fencing.AgentQuorumEnabled && !configuration.Kubernetes.Enabled {
+		return File{}, fmt.Errorf("MySQL automatic failover requires agent quorum fencing, Kubernetes fencing, or an external fencer")
+	}
+	if configuration.PostgreSQL.AutomaticFailoverEnabled && !configuration.Fencing.Enabled && !configuration.Fencing.AgentQuorumEnabled {
+		return File{}, fmt.Errorf("PostgreSQL automatic failover requires agent quorum fencing or an external fencer")
 	}
 	return configuration, nil
 }
@@ -557,13 +627,40 @@ func resolveNodeLifecycle(configuration *NodeLifecycle) error {
 		}
 	}
 	for _, value := range []*string{
-		&configuration.IdentityFile, &configuration.ControlJoinHelper, &configuration.CloneHelper, &configuration.XtraBackupHelper,
+		&configuration.IdentityFile, &configuration.AdapterRuntimeHelper, &configuration.ControlJoinHelper, &configuration.CloneHelper, &configuration.XtraBackupHelper,
 		&configuration.PostgreSQLInstallHelper, &configuration.PostgreSQLSyncHelper,
+		&configuration.ControlAPIIssuerCertFile, &configuration.ControlAPIIssuerKeyFile,
+		&configuration.ControlRaftIssuerCertFile, &configuration.ControlRaftIssuerKeyFile,
 	} {
 		*value = strings.TrimSpace(*value)
 		if *value != "" && !filepath.IsAbs(*value) {
 			return fmt.Errorf("node lifecycle helper paths must be absolute")
 		}
+	}
+	if configuration.AdapterRuntimeHelper == "" {
+		configuration.AdapterRuntimeHelper = "/usr/local/libexec/clusterguard-adapter-runtime-install.sh"
+	}
+	if configuration.ControlJoinHelper == "" {
+		configuration.ControlJoinHelper = "/usr/local/libexec/clusterguard-control-join.sh"
+	}
+	issuerPaths := []string{
+		configuration.ControlAPIIssuerCertFile, configuration.ControlAPIIssuerKeyFile,
+		configuration.ControlRaftIssuerCertFile, configuration.ControlRaftIssuerKeyFile,
+	}
+	configuredIssuerPaths := 0
+	for _, path := range issuerPaths {
+		if path != "" {
+			configuredIssuerPaths++
+		}
+	}
+	if configuredIssuerPaths != 0 && configuredIssuerPaths != len(issuerPaths) {
+		return fmt.Errorf("node lifecycle control API and Raft issuer certificate/key paths must be configured together")
+	}
+	if configuration.ControlCertificateValidityDays == 0 {
+		configuration.ControlCertificateValidityDays = 825
+	}
+	if configuration.ControlCertificateValidityDays < 1 || configuration.ControlCertificateValidityDays > 3650 {
+		return fmt.Errorf("node lifecycle control certificate validity must be between 1 and 3650 days")
 	}
 	configuration.SSHPasswordEnv = strings.TrimSpace(configuration.SSHPasswordEnv)
 	if configuration.IdentityFile == "" && configuration.SSHPasswordEnv == "" {
@@ -576,6 +673,10 @@ func resolveNodeLifecycle(configuration *NodeLifecycle) error {
 		}
 	}
 	configuration.MySQLRootPasswordEnv = strings.TrimSpace(configuration.MySQLRootPasswordEnv)
+	configuration.MySQLRootRemoteHost = strings.TrimSpace(configuration.MySQLRootRemoteHost)
+	if configuration.MySQLRootRemoteHost != "" && !validMySQLAccountHost(configuration.MySQLRootRemoteHost) {
+		return fmt.Errorf("node lifecycle MySQL root remote host is invalid")
+	}
 	configuration.ReplicationPasswordEnv = strings.TrimSpace(configuration.ReplicationPasswordEnv)
 	if configuration.MySQLRootPasswordEnv == "" || configuration.ReplicationPasswordEnv == "" {
 		return fmt.Errorf("node lifecycle MySQL root and replication password environments are required")
@@ -607,6 +708,24 @@ func resolveNodeLifecycle(configuration *NodeLifecycle) error {
 		configuration.XtraBackupVersions = map[string]bool{}
 	}
 	return nil
+}
+
+func validMySQLAccountHost(value string) bool {
+	if value == "" || len(value) > 255 {
+		return false
+	}
+	for _, character := range value {
+		if character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' {
+			continue
+		}
+		switch character {
+		case '.', '_', ':', '%', '-', '/':
+			continue
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func resolveCredential(engine string, name string, credential *Credential) error {

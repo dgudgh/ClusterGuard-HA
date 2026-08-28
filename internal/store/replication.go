@@ -93,8 +93,30 @@ func normalizeSnapshot(value snapshot) (snapshot, error) {
 	if normalized.Nodes == nil {
 		normalized.Nodes = map[model.ResourceID]model.DatabaseNode{}
 	}
+	if normalized.RuntimeTargets == nil {
+		normalized.RuntimeTargets = map[model.ResourceID]model.RuntimeTarget{}
+	}
+	if normalized.WorkloadBindings == nil {
+		normalized.WorkloadBindings = map[model.ResourceID]model.WorkloadBinding{}
+	}
 	if normalized.Instances == nil {
 		normalized.Instances = map[model.ResourceID]model.DatabaseInstance{}
+	}
+	for resourceID, target := range normalized.RuntimeTargets {
+		if target.ResourceID != resourceID {
+			return snapshot{}, fmt.Errorf("invalid runtime target record")
+		}
+		if err := validateRuntimeTarget(target); err != nil {
+			return snapshot{}, err
+		}
+	}
+	for resourceID, binding := range normalized.WorkloadBindings {
+		if binding.ResourceID != resourceID {
+			return snapshot{}, fmt.Errorf("invalid workload binding record")
+		}
+		if err := validateWorkloadBinding(normalized, binding); err != nil {
+			return snapshot{}, err
+		}
 	}
 	if normalized.Endpoints == nil {
 		normalized.Endpoints = map[model.ResourceID]map[model.ResourceID]model.Endpoint{}
@@ -215,6 +237,9 @@ func normalizeSnapshot(value snapshot) (snapshot, error) {
 		key := strings.TrimSpace(operation.IdempotencyKey)
 		if operation.ResourceID != resourceID || !model.ValidResourceID(resourceID) || key == "" {
 			return snapshot{}, fmt.Errorf("invalid operation record")
+		}
+		if err := validatePersistedOperationReview(operation); err != nil {
+			return snapshot{}, fmt.Errorf("invalid operation review: %w", err)
 		}
 		if existing, found := normalized.OperationKeys[key]; found && existing != resourceID {
 			return snapshot{}, fmt.Errorf("duplicate operation idempotency key")

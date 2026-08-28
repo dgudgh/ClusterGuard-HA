@@ -46,6 +46,12 @@ func publicSwitchoverError(err error) string {
 		return "MySQL switchover step timed out"
 	}
 	message := strings.TrimSpace(err.Error())
+	// Old-primary fencing is an authenticated control-plane gate. Its reasons
+	// contain no SQL or credential output and are needed by an operator to
+	// distinguish a missing quorum/lease from a reachable writable old primary.
+	if detail, found := strings.CutPrefix(message, "fence old primary: "); found {
+		return "old-primary fencing blocked: " + detail
+	}
 	if separator := strings.Index(message, ": "); separator > 0 {
 		message = message[:separator]
 		var queryError *QueryError
@@ -181,6 +187,9 @@ func (adapterInstance *Adapter) switchoverPrecheck(ctx context.Context, request 
 	} else {
 		appendSwitchoverCheck(&checks, "target_maintenance", model.CheckPass, "selected target is not in maintenance")
 	}
+	if adapterInstance.semiSyncRequired {
+		checks = append(checks, semiSyncSwitchoverCheck(resolved.Primary, resolved.Target))
+	}
 
 	if resolved.Target.Replication.IOThread == model.ThreadRunning && resolved.Target.Replication.SQLThread == model.ThreadRunning {
 		appendSwitchoverCheck(&checks, "replication_threads", model.CheckPass, "replication IO and SQL threads are running")
@@ -194,10 +203,23 @@ func (adapterInstance *Adapter) switchoverPrecheck(ctx context.Context, request 
 	} else {
 		appendSwitchoverCheck(&checks, "replication_source", model.CheckFail, "selected target must directly follow the current primary")
 	}
-	if resolved.Target.Replication.LagSeconds != nil && *resolved.Target.Replication.LagSeconds == 0 {
+	maximumLag := adapterInstance.replicationLagMaximum()
+	switch {
+	case resolved.Target.Replication.LagSeconds == nil || *resolved.Target.Replication.LagSeconds < 0:
+		appendSwitchoverCheck(&checks, "replication_lag", model.CheckFail, "selected target must have known non-negative replication lag")
+	case *resolved.Target.Replication.LagSeconds > maximumLag:
+		appendSwitchoverCheck(&checks, "replication_lag", model.CheckFail, fmt.Sprintf(
+			"selected target lag %ds exceeds the %ds switchover maximum",
+			*resolved.Target.Replication.LagSeconds,
+			maximumLag,
+		))
+	case *resolved.Target.Replication.LagSeconds > 0:
+		appendSwitchoverCheck(&checks, "replication_lag", model.CheckWarn, fmt.Sprintf(
+			"selected target is %ds behind and must catch up after source fencing",
+			*resolved.Target.Replication.LagSeconds,
+		))
+	default:
 		appendSwitchoverCheck(&checks, "replication_lag", model.CheckPass, "selected target has zero observed replication lag")
-	} else {
-		appendSwitchoverCheck(&checks, "replication_lag", model.CheckFail, "selected target must have known zero replication lag")
 	}
 
 	primaryGTID := strings.EqualFold(strings.TrimSpace(resolved.Primary.EngineMetadata["gtid_mode"]), "ON")
@@ -269,7 +291,7 @@ func (adapterInstance *Adapter) switchoverPrecheck(ctx context.Context, request 
 		if instance.ResourceID == resolved.Primary.ResourceID || instance.ResourceID == resolved.Target.ResourceID {
 			continue
 		}
-		checks = append(checks, followerReadinessCheck(resolved.Primary, instance))
+		checks = append(checks, adapterInstance.followerReadinessCheck(resolved.Primary, instance))
 	}
 
 	provider := adapterInstance.endpointProvider
@@ -289,7 +311,7 @@ func (adapterInstance *Adapter) switchoverPrecheck(ctx context.Context, request 
 	return checks, nil
 }
 
-func followerReadinessCheck(primary model.DatabaseInstance, follower model.DatabaseInstance) model.Check {
+func (adapterInstance *Adapter) followerReadinessCheck(primary model.DatabaseInstance, follower model.DatabaseInstance) model.Check {
 	name := "follower_readiness_" + string(follower.ResourceID)
 	fail := func(message string) model.Check {
 		return model.Check{Name: name, Status: model.CheckFail, Message: message}
@@ -308,8 +330,12 @@ func followerReadinessCheck(primary model.DatabaseInstance, follower model.Datab
 	if primaryUUID == "" || strings.ToLower(strings.TrimSpace(follower.Replication.SourceIdentity["server_uuid"])) != primaryUUID {
 		return fail("follower must directly follow the current primary")
 	}
-	if follower.Replication.LagSeconds == nil || *follower.Replication.LagSeconds != 0 {
-		return fail("follower replication lag must be known and zero")
+	maximumLag := adapterInstance.replicationLagMaximum()
+	if follower.Replication.LagSeconds == nil || *follower.Replication.LagSeconds < 0 {
+		return fail("follower replication lag must be known and non-negative")
+	}
+	if *follower.Replication.LagSeconds > maximumLag {
+		return fail(fmt.Sprintf("follower replication lag %ds exceeds the %ds switchover maximum", *follower.Replication.LagSeconds, maximumLag))
 	}
 	if !strings.EqualFold(strings.TrimSpace(follower.EngineMetadata["gtid_mode"]), "ON") {
 		return fail("follower GTID mode must be ON")
@@ -347,6 +373,12 @@ func followerReadinessCheck(primary model.DatabaseInstance, follower model.Datab
 	followerFamily, followerVersionErr := mysqlReleaseFamily(follower.EngineMetadata["version"])
 	if primaryVersionErr != nil || followerVersionErr != nil || primaryFamily != followerFamily {
 		return fail("follower MySQL release family is incompatible")
+	}
+	if *follower.Replication.LagSeconds > 0 {
+		return model.Check{Name: name, Status: model.CheckWarn, Message: fmt.Sprintf(
+			"follower is %ds behind and must catch up after source fencing",
+			*follower.Replication.LagSeconds,
+		)}
 	}
 	return model.Check{Name: name, Status: model.CheckPass, Message: "follower is safe to reparent after promotion"}
 }
@@ -411,6 +443,12 @@ func (adapterInstance *Adapter) switchoverPlan(ctx context.Context, request adap
 		steps = append(steps, model.PlanStep{
 			Index: len(steps) + 1, Name: "reparent_follower_" + string(follower.ResourceID), Owner: "mysql",
 			TargetID: follower.ResourceID, Mutating: true, Postcondition: "follower is read-only and replicates from the selected target",
+		})
+	}
+	if adapterInstance.semiSyncRequired {
+		steps = append(steps, model.PlanStep{
+			Index: len(steps) + 1, Name: "activate_semisync_source", Owner: "mysql",
+			TargetID: resolved.Target.ResourceID, Mutating: true, Postcondition: "promoted source has an active semi-sync replica acknowledgement",
 		})
 	}
 	steps = append(steps,
@@ -647,6 +685,9 @@ func (adapterInstance *Adapter) liveSwitchoverPrecheck(ctx context.Context, reso
 	if err != nil {
 		return fmt.Errorf("probe live target identity: %w", err)
 	}
+	if err := verifyTargetReplicationCredentials(ctx, adapterInstance.runner, targetEndpoint, resolved.ReplicationCredentials); err != nil {
+		return err
+	}
 	if sourceIdentity.serverUUID != strings.ToLower(strings.TrimSpace(resolved.Primary.EngineIdentity["server_uuid"])) ||
 		targetIdentity.serverUUID != strings.ToLower(strings.TrimSpace(resolved.Target.EngineIdentity["server_uuid"])) {
 		return fmt.Errorf("live MySQL identity no longer matches the immutable operation resources")
@@ -771,6 +812,9 @@ func (adapterInstance *Adapter) liveSwitchoverResumePrecheck(ctx context.Context
 	targetIdentity, err := probeIdentity(ctx, adapterInstance.runner, targetEndpoint, credentials)
 	if err != nil {
 		return fmt.Errorf("probe live target identity: %w", err)
+	}
+	if err := verifyTargetReplicationCredentials(ctx, adapterInstance.runner, targetEndpoint, resolved.ReplicationCredentials); err != nil {
+		return err
 	}
 	if sourceIdentity.serverUUID != strings.ToLower(strings.TrimSpace(resolved.Primary.EngineIdentity["server_uuid"])) ||
 		targetIdentity.serverUUID != strings.ToLower(strings.TrimSpace(resolved.Target.EngineIdentity["server_uuid"])) {
@@ -1102,6 +1146,30 @@ func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request a
 			}
 		}
 	}
+	if adapterInstance.semiSyncRequired {
+		stepCompleted, progressErr := operationStepCompleted(mutationContext, request, "activate_semisync_source")
+		if progressErr != nil {
+			_ = adapterInstance.fenceInstance(mutationContext, targetEndpoint, credentials)
+			return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("read semi-sync activation progress: %w", progressErr))
+		}
+		if err := activateSemiSyncSource(
+			mutationContext,
+			adapterInstance.runner,
+			adapterInstance.executor,
+			targetEndpoint,
+			credentials,
+			resolved.Target.EngineMetadata["version"],
+		); err != nil {
+			_ = adapterInstance.fenceInstance(mutationContext, targetEndpoint, credentials)
+			return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("activate promoted semi-sync source: %w", err))
+		}
+		if !stepCompleted {
+			if err := completeOperationStep(mutationContext, request, "activate_semisync_source", "promoted source has an active semi-sync replica acknowledgement"); err != nil {
+				_ = adapterInstance.fenceInstance(mutationContext, targetEndpoint, credentials)
+				return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("persist semi-sync activation progress: %w", err))
+			}
+		}
+	}
 	endpointEvidence := sanitizeEndpointCheck(adapterInstance.endpointProvider.Verify(mutationContext, resolved), "writer_endpoint_owner")
 	if !endpointOwnerVerified(endpointEvidence) {
 		if endpointEvidence.Name != "writer_endpoint_owner" || endpointEvidence.Status != model.CheckFail {
@@ -1140,7 +1208,51 @@ func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request a
 	return newExecution(request.Operation.ResourceID, model.OperationRunning, started, "MySQL role transition and writer endpoint transfer completed; verification is required"), nil
 }
 
+func followerReplicationConvergencePending(checks []model.Check) bool {
+	pending := false
+	for _, check := range checks {
+		if check.Status == model.CheckPass {
+			continue
+		}
+		if check.Status == model.CheckFail &&
+			(strings.HasPrefix(check.Name, "follower_replication_") || check.Name == "semi_sync_new_primary") {
+			pending = true
+			continue
+		}
+		return false
+	}
+	return pending
+}
+
 func (adapterInstance *Adapter) switchoverVerify(ctx context.Context, request adapter.OperationRequest) (model.Verification, error) {
+	attempts := adapterInstance.verificationAttempts
+	if attempts < 1 {
+		attempts = 1
+	}
+	var verification model.Verification
+	var err error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		verification, err = adapterInstance.switchoverVerifyOnce(ctx, request)
+		if err != nil || verification.Passed || !followerReplicationConvergencePending(verification.Checks) || attempt == attempts {
+			return verification, err
+		}
+		if adapterInstance.verificationInterval <= 0 {
+			continue
+		}
+		timer := time.NewTimer(adapterInstance.verificationInterval)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return verification, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return verification, err
+}
+
+func (adapterInstance *Adapter) switchoverVerifyOnce(ctx context.Context, request adapter.OperationRequest) (model.Verification, error) {
 	now := time.Now().UTC()
 	verification := model.Verification{
 		ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID(), MetadataRevision: 1, CreatedAt: now, UpdatedAt: now},
@@ -1197,6 +1309,9 @@ func (adapterInstance *Adapter) switchoverVerify(ctx context.Context, request ad
 		verification.Checks = append(verification.Checks, model.Check{Name: "target_replication_detached", Status: model.CheckFail, Message: "selected target is still configured as a replica"})
 	} else {
 		verification.Checks = append(verification.Checks, model.Check{Name: "target_replication_detached", Status: model.CheckPass, Message: "selected target is no longer configured as a replica"})
+	}
+	if adapterInstance.semiSyncRequired {
+		verification.Checks = append(verification.Checks, verifySemiSyncPrimary(ctx, adapterInstance.runner, targetEndpoint, credentials))
 	}
 	writableCount := 0
 	if targetErr == nil && !targetIdentity.readOnly && !targetIdentity.superReadOnly {

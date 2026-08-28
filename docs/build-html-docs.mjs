@@ -19,16 +19,16 @@ const sourceAssets = path.join(docsDirectory, "html-src");
 
 const groups = {
   "en-US": [
-    ["Start Here", ["index", "product-overview", "product-tour", "architecture", "release-2.1.45"]],
+    ["Start Here", ["index", "product-overview", "product-tour", "architecture", "release-2.2.39", "release-2.1.45"]],
     ["Deploy and Migrate", ["offline-rpm-install", "database-preparation", "orchestrator-migration"]],
-    ["Operate", ["operations-manual", "api-operations", "postgresql-ha", "version-release-policy"]],
-    ["Qualification", ["proven-mysql-ha-methods", "mysql-feature-parity-acceptance", "mysql-former-primary-recovery", "mysql-production-qualification", "production-chaos-test", "power-lifecycle-test"]]
+    ["Operate", ["operations-manual", "api-operations", "postgresql-ha", "docker-swarm-mysql", "kubernetes-mysql", "update-and-patch", "version-release-policy"]],
+    ["Qualification", ["proven-mysql-ha-methods", "mysql-feature-parity-acceptance", "mysql-former-primary-recovery", "mysql-production-qualification", "postgresql-production-qualification", "docker-swarm-mysql-validation", "production-chaos-test", "power-lifecycle-test"]]
   ],
   "zh-CN": [
-    ["开始使用", ["index", "product-overview", "product-tour", "architecture", "release-2.1.45"]],
+    ["开始使用", ["index", "product-overview", "product-tour", "architecture", "release-2.2.39", "release-2.1.45"]],
     ["部署与迁移", ["offline-rpm-install", "database-preparation", "orchestrator-migration"]],
-    ["日常运维", ["operations-manual", "api-operations", "postgresql-ha", "version-release-policy"]],
-    ["验收证据", ["proven-mysql-ha-methods", "mysql-feature-parity-acceptance", "mysql-former-primary-recovery", "mysql-production-qualification", "production-chaos-test", "power-lifecycle-test"]]
+    ["日常运维", ["operations-manual", "api-operations", "postgresql-ha", "docker-swarm-mysql", "kubernetes-mysql", "update-and-patch", "version-release-policy"]],
+    ["验收证据", ["proven-mysql-ha-methods", "mysql-feature-parity-acceptance", "mysql-former-primary-recovery", "mysql-production-qualification", "postgresql-production-qualification", "docker-swarm-mysql-validation", "production-chaos-test", "power-lifecycle-test"]]
   ]
 };
 
@@ -37,6 +37,7 @@ const entries = [
   entry("en-US", "product-overview", "Product Overview", "README.md"),
   entry("en-US", "product-tour", "Console Product Tour", "docs/en-US/product-tour.md"),
   entry("en-US", "architecture", "Architecture", "docs/architecture.md"),
+  entry("en-US", "release-2.2.39", "Release 2.2.39", "docs/en-US/release-2.2.39.md"),
   entry("en-US", "release-2.1.45", "Release 2.1.45", "docs/en-US/release-2.1.45.md"),
   entry("en-US", "offline-rpm-install", "Offline RPM Installation", "docs/en-US/offline-rpm-install.md"),
   entry("en-US", "database-preparation", "Database Preparation", "docs/en-US/database-preparation.md"),
@@ -44,11 +45,16 @@ const entries = [
   entry("en-US", "operations-manual", "Operations Manual", "docs/en-US/operations-manual.md"),
   entry("en-US", "api-operations", "API Operations Reference", "docs/operations.md"),
   entry("en-US", "postgresql-ha", "PostgreSQL HA", "docs/postgresql-ha.md"),
+  entry("en-US", "docker-swarm-mysql", "Docker Swarm MySQL", "docs/en-US/docker-swarm-mysql.md"),
+  entry("en-US", "kubernetes-mysql", "Kubernetes MySQL", "docs/en-US/kubernetes-mysql.md"),
+  entry("en-US", "update-and-patch", "Version Update and Rollback", "docs/en-US/update-and-patch.md"),
   entry("en-US", "version-release-policy", "Version and Release Policy", "docs/en-US/version-release-policy.md"),
   entry("en-US", "proven-mysql-ha-methods", "Proven MySQL HA Methods", "docs/proven-mysql-ha-methods.md"),
   entry("en-US", "mysql-feature-parity-acceptance", "MySQL Feature Acceptance", "docs/mysql-feature-parity-acceptance.md"),
   entry("en-US", "mysql-former-primary-recovery", "Former-Primary Recovery Qualification", "docs/en-US/mysql-former-primary-recovery-qualification-2026-08-09.md"),
   entry("en-US", "mysql-production-qualification", "MySQL Production Qualification", "docs/mysql-production-qualification-2026-07-28.md"),
+  entry("en-US", "postgresql-production-qualification", "PostgreSQL 16.4 Production Qualification", "docs/en-US/postgresql-production-qualification-2026-08-23.md"),
+  entry("en-US", "docker-swarm-mysql-validation", "Docker Swarm MySQL Lab Qualification", "docs/en-US/docker-swarm-mysql-validation-plan.md"),
   entry("en-US", "production-chaos-test", "Production Chaos Test Report", "docs/en-US/production-chaos-test-report-2026-08-09.md"),
   entry("en-US", "power-lifecycle-test", "Power Lifecycle Test Report", "docs/en-US/power-lifecycle-test-report.md"),
 
@@ -56,6 +62,7 @@ const entries = [
   entry("zh-CN", "product-overview", "产品概览", "README.zh-CN.md"),
   entry("zh-CN", "product-tour", "控制台产品导览", "docs/zh-CN/product-tour.md"),
   entry("zh-CN", "architecture", "系统架构", "docs/zh-CN/architecture.md"),
+  entry("zh-CN", "release-2.2.39", "2.2.39 发布说明", "docs/zh-CN/release-2.2.39.md"),
   entry("zh-CN", "release-2.1.45", "2.1.45 发布说明", "docs/zh-CN/release-2.1.45.md"),
   entry("zh-CN", "offline-rpm-install", "离线 RPM 安装", "docs/zh-CN/offline-rpm-install.md"),
   entry("zh-CN", "database-preparation", "数据库接入", "docs/zh-CN/database-preparation.md"),
@@ -63,11 +70,16 @@ const entries = [
   entry("zh-CN", "operations-manual", "运维操作手册", "docs/zh-CN/operations-manual.md"),
   entry("zh-CN", "api-operations", "API 运维参考", "docs/zh-CN/operations.md"),
   entry("zh-CN", "postgresql-ha", "PostgreSQL 高可用", "docs/zh-CN/postgresql-ha.md"),
+  entry("zh-CN", "docker-swarm-mysql", "Docker Swarm MySQL", "docs/zh-CN/docker-swarm-mysql.md"),
+  entry("zh-CN", "kubernetes-mysql", "Kubernetes MySQL", "docs/zh-CN/kubernetes-mysql.md"),
+  entry("zh-CN", "update-and-patch", "版本升级与回退", "docs/zh-CN/update-and-patch.md"),
   entry("zh-CN", "version-release-policy", "版本与发版规范", "docs/zh-CN/version-release-policy.md"),
   entry("zh-CN", "proven-mysql-ha-methods", "MySQL 已验证方法", "docs/zh-CN/proven-mysql-ha-methods.md"),
   entry("zh-CN", "mysql-feature-parity-acceptance", "MySQL 功能验收", "docs/zh-CN/mysql-feature-parity-acceptance.md"),
   entry("zh-CN", "mysql-former-primary-recovery", "旧主恢复专项验收", "docs/zh-CN/mysql-former-primary-recovery-qualification-2026-08-09.md"),
   entry("zh-CN", "mysql-production-qualification", "MySQL 生产验收", "docs/zh-CN/mysql-production-qualification-2026-07-28.md"),
+  entry("zh-CN", "postgresql-production-qualification", "PostgreSQL 16.4 生产验收", "docs/zh-CN/postgresql-production-qualification-2026-08-23.md"),
+  entry("zh-CN", "docker-swarm-mysql-validation", "Docker Swarm MySQL 实机验证", "docs/zh-CN/docker-swarm-mysql-validation-plan.md"),
   entry("zh-CN", "production-chaos-test", "生产故障测试报告", "docs/zh-CN/production-chaos-test-report-2026-08-09.md"),
   entry("zh-CN", "power-lifecycle-test", "计划关机测试报告", "docs/zh-CN/power-lifecycle-test-report.md")
 ];

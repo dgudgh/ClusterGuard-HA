@@ -105,6 +105,29 @@ type reconcileDecisionStub struct {
 	err      error
 }
 
+type durableReconcileRoleStub struct {
+	*reconcileRoleStub
+	status    MySQLIsolationStatus
+	statusErr error
+}
+
+func (roles *durableReconcileRoleStub) PersistReadOnly(ctx context.Context, policy ClusterPolicy, readOnly bool) error {
+	if err := roles.reconcileRoleStub.PersistReadOnly(ctx, policy, readOnly); err != nil {
+		return err
+	}
+	roles.status.DatabaseReachable = true
+	roles.status.ServiceRunning = true
+	roles.status.ReadOnly = readOnly
+	roles.status.SuperReadOnly = readOnly
+	roles.status.RestartReadOnly = readOnly
+	roles.status.PersistedReadOnly = readOnly
+	return nil
+}
+
+func (roles *durableReconcileRoleStub) IsolationStatus(context.Context, ClusterPolicy) (MySQLIsolationStatus, error) {
+	return roles.status, roles.statusErr
+}
+
 func (client reconcileDecisionStub) Decision(context.Context, ClusterPolicy) (ReconcileResponse, error) {
 	return client.response, client.err
 }
@@ -140,7 +163,7 @@ func TestReconcilerPostgreSQLKeepVIPRequiresRunningPrimary(t *testing.T) {
 	}
 }
 
-func TestReconcilerPostgreSQLSelfIsolationReleasesVIPWithoutStoppingWriter(t *testing.T) {
+func TestReconcilerPostgreSQLSelfIsolationReleasesVIPAndStopsWriter(t *testing.T) {
 	policy := reconcilePostgreSQLPolicy()
 	events := []string{}
 	vip := &reconcileVIPStub{owns: true, events: &events}
@@ -152,11 +175,11 @@ func TestReconcilerPostgreSQLSelfIsolationReleasesVIPWithoutStoppingWriter(t *te
 	if err == nil || len(results) != 1 || results[0].Action != ReconcileSelfIsolate {
 		t.Fatalf("PostgreSQL self isolation results=%+v err=%v", results, err)
 	}
-	if strings.Contains(strings.Join(events, ","), "postgresql_stop") || len(events) != 2 || events[0] != "vip_release" || events[1] != "postgresql_status" || len(roles.persisted) != 0 {
-		t.Fatalf("PostgreSQL reconcile self-isolation stopped the service: events=%v roles=%+v", events, roles)
+	if len(events) != 4 || events[0] != "vip_release" || events[1] != "postgresql_status" || events[2] != "postgresql_stop" || events[3] != "postgresql_status" || len(roles.persisted) != 0 {
+		t.Fatalf("PostgreSQL reconcile self-isolation did not stop the writer after releasing VIP: events=%v roles=%+v", events, roles)
 	}
-	if !strings.Contains(results[0].Message, "left running without VIP") {
-		t.Fatalf("PostgreSQL self-isolation did not explain the bounded state: %+v", results[0])
+	if postgresql.running || !strings.Contains(results[0].Message, "writer stopped") {
+		t.Fatalf("PostgreSQL self-isolation did not prove the writer stopped: running=%t result=%+v", postgresql.running, results[0])
 	}
 }
 
@@ -191,6 +214,31 @@ func TestReconcilerPostgreSQLSelfIsolationDoesNotStopTransientService(t *testing
 	}
 	if strings.Contains(strings.Join(events, ","), "postgresql_stop") || len(events) != 2 || events[0] != "vip_release" || events[1] != "postgresql_status" {
 		t.Fatalf("transitioning PostgreSQL service was stopped: events=%v", events)
+	}
+}
+
+func TestReconcilerPostgreSQLSelfIsolationPreservesStartingStandby(t *testing.T) {
+	policy := reconcilePostgreSQLPolicy()
+	events := []string{}
+	vip := &reconcileVIPStub{owns: true, events: &events}
+	roles := &reconcileRoleStub{events: &events}
+	postgresql := &fakePostgreSQLController{
+		calls: &events, running: true, statusErr: errors.New("database system is starting up"), standbyIntent: true,
+	}
+	results, err := NewReconciler(vip, roles, reconcileDecisionStub{err: errors.New("VIP owned by current primary")}, WithPostgreSQLReconcileController(postgresql)).ReconcileAll(
+		context.Background(), map[model.ResourceID]ClusterPolicy{policy.ClusterID: policy},
+	)
+	if err == nil || len(results) != 1 || results[0].Action != ReconcileSelfIsolate {
+		t.Fatalf("PostgreSQL standby startup results=%+v err=%v", results, err)
+	}
+	if strings.Contains(strings.Join(events, ","), "postgresql_stop") || !postgresql.running {
+		t.Fatalf("safe PostgreSQL standby startup was stopped: events=%v", events)
+	}
+	if len(events) != 3 || events[0] != "vip_release" || events[1] != "postgresql_status" || events[2] != "postgresql_standby_intent" {
+		t.Fatalf("PostgreSQL standby startup evidence order=%v", events)
+	}
+	if vip.owns || !strings.Contains(results[0].Message, "standby startup") {
+		t.Fatalf("standby startup was not isolated from the VIP: vip=%+v result=%+v", vip, results[0])
 	}
 }
 
@@ -229,6 +277,57 @@ func TestReconcilerBootstrapsVIPOnlyWithSignedKeepDecisionAndWritableMySQL(t *te
 	reconciler = NewReconciler(vip, roles, reconcileDecisionStub{response: ReconcileResponse{ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileKeepVIP, LeaseID: model.NewResourceID()}})
 	if _, err := reconciler.ReconcileAll(context.Background(), map[model.ResourceID]ClusterPolicy{policy.ClusterID: policy}); err == nil || vip.acquires != 0 {
 		t.Fatalf("read-only instance acquired VIP: vip=%+v err=%v", vip, err)
+	}
+}
+
+func TestReconcilerCommitsWritableRestartStateOnlyAfterStableKeepDecision(t *testing.T) {
+	policy := reconcilePolicy()
+	vip := &reconcileVIPStub{}
+	base := &reconcileRoleStub{readOnly: true, superReadOnly: true}
+	roles := &durableReconcileRoleStub{
+		reconcileRoleStub: base,
+		status: MySQLIsolationStatus{
+			DatabaseReachable: true, ServiceRunning: true,
+			RestartReadOnly: true, PersistedReadOnly: true,
+		},
+	}
+	decision := reconcileDecisionStub{response: ReconcileResponse{
+		ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileKeepVIP, LeaseID: model.NewResourceID(),
+	}}
+
+	results, err := NewReconciler(vip, roles, decision).ReconcileAll(context.Background(), map[model.ResourceID]ClusterPolicy{policy.ClusterID: policy})
+	if err != nil || len(results) != 1 || results[0].Action != ReconcileKeepVIP {
+		t.Fatalf("stable keep results=%+v err=%v", results, err)
+	}
+	if len(base.persisted) != 1 || base.persisted[0] || !vip.owns || vip.acquires != 1 {
+		t.Fatalf("writable restart state did not converge before VIP acquisition: roles=%+v vip=%+v", base, vip)
+	}
+	if base.statusCalls == 0 {
+		t.Fatal("runtime writability was not verified after clearing the restart fence")
+	}
+}
+
+func TestReconcilerSelfIsolatesWhenWritableRestartStateCannotBeCommitted(t *testing.T) {
+	policy := reconcilePolicy()
+	vip := &reconcileVIPStub{owns: true}
+	base := &reconcileRoleStub{persistWritableErr: errors.New("durable write failed")}
+	roles := &durableReconcileRoleStub{
+		reconcileRoleStub: base,
+		status: MySQLIsolationStatus{
+			DatabaseReachable: true, ServiceRunning: true,
+			RestartReadOnly: true, PersistedReadOnly: true,
+		},
+	}
+	decision := reconcileDecisionStub{response: ReconcileResponse{
+		ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileKeepVIP, LeaseID: model.NewResourceID(),
+	}}
+
+	results, err := NewReconciler(vip, roles, decision).ReconcileAll(context.Background(), map[model.ResourceID]ClusterPolicy{policy.ClusterID: policy})
+	if err == nil || len(results) != 1 || results[0].Action != ReconcileSelfIsolate {
+		t.Fatalf("durable failure results=%+v err=%v", results, err)
+	}
+	if vip.owns || vip.releases != 1 || len(base.persisted) != 2 || base.persisted[0] || !base.persisted[1] || !base.readOnly || !base.superReadOnly {
+		t.Fatalf("durable failure did not fail closed: roles=%+v vip=%+v", base, vip)
 	}
 }
 
@@ -350,7 +449,7 @@ func TestReconcilerBootstrapsRebootedPrimaryInLeaseAuthorizedOrder(t *testing.T)
 	if err != nil || len(results) != 1 || results[0].Action != ReconcileBootstrapPrimary {
 		t.Fatalf("bootstrap results=%+v err=%v", results, err)
 	}
-	wantEvents := []string{"role_status", "vip_status", "vip_acquire", "role_writable", "role_status", "vip_status"}
+	wantEvents := []string{"role_status", "vip_status", "role_writable", "role_status", "vip_acquire", "vip_status"}
 	if len(events) != len(wantEvents) {
 		t.Fatalf("bootstrap events=%v want=%v", events, wantEvents)
 	}
@@ -361,6 +460,28 @@ func TestReconcilerBootstrapsRebootedPrimaryInLeaseAuthorizedOrder(t *testing.T)
 	}
 	if !vip.owns || roles.readOnly || roles.superReadOnly || vip.releases != 0 || len(roles.persisted) != 1 || roles.persisted[0] {
 		t.Fatalf("bootstrap vip=%+v roles=%+v", vip, roles)
+	}
+}
+
+func TestReconcilerBootstrapRemovesStaleVIPBeforeMakingMySQLWritable(t *testing.T) {
+	policy := reconcilePolicy()
+	events := []string{}
+	vip := &reconcileVIPStub{owns: true, events: &events}
+	roles := &reconcileRoleStub{readOnly: true, superReadOnly: true, events: &events}
+	decision := reconcileDecisionStub{response: ReconcileResponse{
+		ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileBootstrapPrimary, LeaseID: model.NewResourceID(),
+	}}
+
+	results, err := NewReconciler(vip, roles, decision).ReconcileAll(context.Background(), map[model.ResourceID]ClusterPolicy{policy.ClusterID: policy})
+	if err != nil || len(results) != 1 || results[0].Action != ReconcileBootstrapPrimary {
+		t.Fatalf("bootstrap results=%+v err=%v", results, err)
+	}
+	wantEvents := []string{"role_status", "vip_status", "vip_release", "role_writable", "role_status", "vip_acquire", "vip_status"}
+	if strings.Join(events, ",") != strings.Join(wantEvents, ",") {
+		t.Fatalf("bootstrap events=%v want=%v", events, wantEvents)
+	}
+	if !vip.owns || vip.releases != 1 || vip.acquires != 1 || roles.readOnly || roles.superReadOnly {
+		t.Fatalf("bootstrap did not converge safely: vip=%+v roles=%+v", vip, roles)
 	}
 }
 

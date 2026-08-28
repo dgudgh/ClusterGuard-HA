@@ -11,6 +11,47 @@ import (
 
 type PlanSafetyGuard struct{}
 
+type MaintenanceChecker interface {
+	Check(context.Context) error
+}
+
+type MaintenanceSafetyGuard struct {
+	Gate MaintenanceChecker
+}
+
+func (guard MaintenanceSafetyGuard) EvaluateLifecycle(ctx context.Context, _ Request, _ Plan) error {
+	if guard.Gate == nil {
+		return fmt.Errorf("software update maintenance guard is not configured")
+	}
+	if err := guard.Gate.Check(ctx); err != nil {
+		return fmt.Errorf("software update maintenance gate blocked lifecycle execution: %w", err)
+	}
+	return nil
+}
+
+type CompositeSafetyGuard struct {
+	guards []SafetyGuard
+}
+
+func NewCompositeSafetyGuard(guards ...SafetyGuard) CompositeSafetyGuard {
+	return CompositeSafetyGuard{guards: append([]SafetyGuard{}, guards...)}
+}
+
+func (guard CompositeSafetyGuard) EvaluateLifecycle(ctx context.Context, request Request, plan Plan) error {
+	if len(guard.guards) == 0 {
+		return fmt.Errorf("no lifecycle safety guards are configured")
+	}
+	for _, candidate := range guard.guards {
+		if candidate == nil {
+			return fmt.Errorf("nil lifecycle safety guard is configured")
+		}
+		if err := candidate.EvaluateLifecycle(ctx, request, plan); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func sameLifecycleTarget(request Target, planned TargetPlan) bool {
 	if strings.TrimSpace(request.NodeName) != strings.TrimSpace(planned.NodeName) || request.Kind != planned.Kind || !strings.EqualFold(strings.TrimSpace(request.Hostname), strings.TrimSpace(planned.Hostname)) || strings.TrimSpace(request.IPAddress) != strings.TrimSpace(planned.IPAddress) || request.MySQLPort != planned.MySQLPort || request.Rebuild != planned.Rebuild {
 		return false

@@ -11,6 +11,7 @@
   "ip_binary": "/sbin/ip",
   "arping_binary": "/usr/sbin/arping",
   "mysql_binary": "/usr/local/mysql/bin/mysql",
+  "docker_config_directory": "/var/lib/clusterguard-agent/docker-cli",
   "role_state_directory": "/var/lib/clusterguard-agent/roles",
   "decision_state_directory": "/var/lib/clusterguard-agent/decisions",
   "mutation_state_directory": "/var/lib/clusterguard-agent/mutations",
@@ -23,7 +24,10 @@
       "prefix": 24,
       "mysql_port": 3306,
       "mysql_binary": "/opt/clusterguard/mysql/3306/software/bin/mysql",
-      "mysql_defaults_file": "/etc/clusterguard/mysql/3306-client.cnf"
+      "mysql_defaults_file": "/etc/clusterguard/mysql/3306-client.cnf",
+      "mysql_service": "clusterguard-mysql-3306.service",
+      "mysql_server_binary": "/opt/clusterguard/mysql/3306/software/bin/mysqld",
+      "mysql_server_defaults_file": "/etc/clusterguard/mysql/3306-server.cnf"
     },
     {
       "cluster_id": "33333333-3333-4333-8333-333333333333",

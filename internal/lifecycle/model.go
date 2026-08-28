@@ -69,6 +69,11 @@ type Request struct {
 type ExecutionSecrets struct {
 	SSHPassword                   string `json:"-"`
 	MySQLRootPassword             string `json:"-"`
+	MySQLDiscoveryUsername        string `json:"-"`
+	MySQLDiscoveryPassword        string `json:"-"`
+	MySQLOperationUsername        string `json:"-"`
+	MySQLOperationPassword        string `json:"-"`
+	MySQLReplicationUsername      string `json:"-"`
 	ReplicationPassword           string `json:"-"`
 	PostgreSQLAdminPassword       string `json:"-"`
 	PostgreSQLReplicationPassword string `json:"-"`

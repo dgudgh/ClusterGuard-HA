@@ -137,7 +137,7 @@ func (service *Service) advanceDurable(resourceID model.ResourceID, stage model.
 		return model.OperationRecord{}, err
 	}
 	if durableStageOrder(record.Stage) > durableStageOrder(stage) {
-		return record, nil
+		stage = record.Stage
 	}
 	transition.Stage = stage
 	if transition.Status == "" {
@@ -317,7 +317,7 @@ func (service *Service) executeDurable(ctx context.Context, request adapter.Oper
 	}
 	defer service.releaseOperation(record.ResourceID)
 
-	candidate, registered := service.registry.Get(operation.Engine)
+	candidate, registered := service.resolveAdapter(operation)
 	if !registered {
 		execution := newDurableExecution(operation.ResourceID, model.OperationUnsupported, "no adapter is registered for the requested engine", service.now)
 		return service.finishDurable(record.ResourceID, operation, model.StagePrecheck, execution, "unsupported", adapter.ErrUnsupported, false)

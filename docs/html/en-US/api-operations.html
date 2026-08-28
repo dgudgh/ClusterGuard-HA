@@ -21,7 +21,7 @@
         <span>Search documentation</span>
         <input id="docs-search" type="search" autocomplete="off" placeholder="Filter by title">
       </label>
-      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference" aria-current="page" class="active">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.2.39.html" data-doc-title="release 2.2.39">Release 2.2.39</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference" aria-current="page" class="active">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="docker-swarm-mysql.html" data-doc-title="docker swarm mysql">Docker Swarm MySQL</a><a href="kubernetes-mysql.html" data-doc-title="kubernetes mysql">Kubernetes MySQL</a><a href="update-and-patch.html" data-doc-title="version update and rollback">Version Update and Rollback</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="postgresql-production-qualification.html" data-doc-title="postgresql 16.4 production qualification">PostgreSQL 16.4 Production Qualification</a><a href="docker-swarm-mysql-validation.html" data-doc-title="docker swarm mysql lab qualification">Docker Swarm MySQL Lab Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
       <div class="sidebar-meta">
         <span>Offline documentation build</span>
         <strong>2.1 / 2.2</strong>
@@ -116,7 +116,7 @@ rejects unknown keys and multiple JSON values.</p>
 <tr>
 <td><code>mysql.automatic_failover_interval_seconds</code></td>
 <td>No</td>
-<td>Recovery-controller poll interval; defaults to 5 seconds.</td>
+<td>Recovery-controller poll interval; defaults to 1 second.</td>
 </tr>
 <tr>
 <td><code>mysql.automatic_failover_retry_seconds</code></td>
@@ -131,12 +131,12 @@ rejects unknown keys and multiple JSON values.</p>
 <tr>
 <td><code>postgresql.discovery_interval_seconds</code></td>
 <td>No</td>
-<td>PostgreSQL scheduler interval; defaults to 5 seconds and is independent of MySQL.</td>
+<td>PostgreSQL scheduler interval; defaults to 1 second and is independent of MySQL.</td>
 </tr>
 <tr>
 <td><code>postgresql.discovery_timeout_seconds</code></td>
 <td>No</td>
-<td>Per-endpoint PostgreSQL probe timeout; defaults to 4 seconds.</td>
+<td>Per-endpoint PostgreSQL probe timeout; defaults to 1 second.</td>
 </tr>
 <tr>
 <td><code>postgresql.automatic_failover_enabled</code></td>
@@ -146,7 +146,7 @@ rejects unknown keys and multiple JSON values.</p>
 <tr>
 <td><code>postgresql.automatic_failover_interval_seconds</code></td>
 <td>No</td>
-<td>PostgreSQL recovery-controller poll interval; defaults to 5 seconds.</td>
+<td>PostgreSQL recovery-controller poll interval; defaults to 1 second.</td>
 </tr>
 <tr>
 <td><code>postgresql.automatic_failover_retry_seconds</code></td>
@@ -512,8 +512,9 @@ included in JSON error envelopes.</p>
 <p><code>active_operations</code> counts only records whose status is <code>running</code>. A durable
 <code>planned</code> record is historical work waiting for an explicit execution request;
 it does not consume the active-operation limit and does not make readiness look
-busy. <code>indeterminate_operations</code> remains separate because each such record
-requires operator review before retrying or changing topology.</p>
+busy. <code>indeterminate_operations</code> counts only <code>indeterminate</code> records that have
+not been reviewed. A reviewed record keeps its original status and evidence but
+does not permanently inflate the current review-required counter.</p>
 <p>Background ownership and automatic-recovery loops report a new failure
 immediately. An unchanged failure is then suppressed and reminded every five
 minutes; a changed failure is reported immediately, and one successful cycle
@@ -791,7 +792,7 @@ remain outside the database acknowledgement protocol. Production SLOs must
 therefore document the timeout/fallback policy and validate it with client-side
 transaction IDs during destructive failover tests.</p>
 <p>The recovery controller executes only on the majority Leader. Discovery records
-one incident after six follow-up failed-primary samples span 30 seconds. The
+one incident after three current failed-primary samples span at least three seconds. The
 controller chooses only the rank-one eligible candidate and submits a normal
 durable <code>failover</code> operation through a private internal authorization path.
 Public JSON cannot select this mode. The incident ID is audited at <code>APPROVE</code>;
@@ -870,6 +871,13 @@ states remain immutable. The terminal operation record, terminal audit events,
 and operation report are published in one repository snapshot, so readers
 cannot observe a succeeded report with a running operation or the reverse.
 Manual verification reconciliation uses the same atomic finalization path.</p>
+<p>When later topology changes make the immutable historical plan impossible to
+verify, an operator may call <code>POST /api/v1/operations/{operation_uuid}/review</code>
+with <code>{&quot;note&quot;:&quot;site verification evidence&quot;}</code>. The route accepts only
+<code>indeterminate</code> records, requires a non-empty note, and makes the first review
+immutable. It atomically stores review metadata, an audit event, and a report
+without changing the operation status. The console&#39;s <strong>Mark reviewed</strong> action
+uses the same route.</p>
 <p>Cluster registration and discovery publication follow the same rule. A
 post-rename durability warning returns HTTP <code>500</code> plus the committed resource or
 observation in <code>result</code>. Reconcile the returned cluster/endpoint UUIDs or the
@@ -984,13 +992,18 @@ timeline-aware candidate evaluation, controlled switchover, guarded failover,
 former-primary rewind/rejoin, allowlisted repair, Linux VIP coupling, and
 <code>pg_basebackup</code> node synchronization.</p>
 <p>Optional automatic failover runs in a PostgreSQL-only recovery controller. It
-requires six consecutive primary-failure observations (30 seconds at the
-default cadence), a current topology snapshot, a rank-one standby with known
+requires three consecutive primary-failure observations spanning at least
+three seconds at the default cadence, a current topology snapshot, a rank-one standby with known
 zero replay lag, Raft leader and majority authority, restricted-Agent or
 external-fencer proof that the old primary cannot write, and the complete
 common workflow through verification, audit, and report. The controller never
 uses network unreachability as fencing evidence and never retries an
 indeterminate post-promotion result.</p>
+<p>The three-second evidence window is separate from the 15-second Agent
+authorization-expiry fence and from the configured 30-second retry backoff.
+None of those values alone is an application RTO. PostgreSQL clients must use a
+bounded connection timeout and retry policy; measure site RTO at the writer
+endpoint.</p>
 <p>Execution is never inferred from the engine name alone. ClusterGuard advertises
 each mutation capability only when dedicated operation and replication
 credentials, a restricted signed Agent policy, an executable endpoint provider,

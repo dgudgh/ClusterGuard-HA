@@ -142,7 +142,7 @@ func (service *Service) clearLoginFailures(key string) {
 	service.loginMu.Unlock()
 }
 
-func (service *Service) EnsureBootstrapAdmin(ctx context.Context) (model.PlatformUser, error) {
+func (service *Service) EnsureBootstrapAdmin(ctx context.Context, bootstrapPassword string) (model.PlatformUser, error) {
 	if err := ctx.Err(); err != nil {
 		return model.PlatformUser{}, err
 	}
@@ -152,7 +152,10 @@ func (service *Service) EnsureBootstrapAdmin(ctx context.Context) (model.Platfor
 	if user, found := service.store.PlatformUserByUsername(DefaultAdminUsername); found {
 		return user, nil
 	}
-	passwordHash, err := service.hasher.Hash(DefaultAdminPassword)
+	if err := ValidateBootstrapPassword(bootstrapPassword); err != nil {
+		return model.PlatformUser{}, fmt.Errorf("bootstrap administrator password: %w", err)
+	}
+	passwordHash, err := service.hasher.Hash(bootstrapPassword)
 	if err != nil {
 		return model.PlatformUser{}, fmt.Errorf("hash bootstrap administrator password: %w", err)
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,6 +29,43 @@ func (blockingProcessRunner) Run(ctx context.Context, _ []byte, _ string, _ ...s
 type contextCaptureRunner struct {
 	deadline time.Time
 	ok       bool
+}
+
+type concurrencyCaptureRunner struct {
+	mu      sync.Mutex
+	active  int
+	maximum int
+	started chan struct{}
+	release chan struct{}
+}
+
+func (runner *concurrencyCaptureRunner) Run(ctx context.Context, _ []byte, _ string, _ ...string) ([]byte, error) {
+	runner.mu.Lock()
+	runner.active++
+	if runner.active > runner.maximum {
+		runner.maximum = runner.active
+	}
+	runner.mu.Unlock()
+	select {
+	case runner.started <- struct{}{}:
+	case <-ctx.Done():
+		runner.mu.Lock()
+		runner.active--
+		runner.mu.Unlock()
+		return nil, ctx.Err()
+	}
+	select {
+	case <-runner.release:
+	case <-ctx.Done():
+		runner.mu.Lock()
+		runner.active--
+		runner.mu.Unlock()
+		return nil, ctx.Err()
+	}
+	runner.mu.Lock()
+	runner.active--
+	runner.mu.Unlock()
+	return json.Marshal(agent.Response{Status: agent.StatusOK})
 }
 
 func (runner *contextCaptureRunner) Run(ctx context.Context, _ []byte, _ string, _ ...string) ([]byte, error) {
@@ -86,6 +124,56 @@ func TestSSHAgentTransportBoundsRemoteCommandDuration(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed > time.Second {
 		t.Fatalf("agent command exceeded timeout: %s", elapsed)
+	}
+}
+
+func TestSSHAgentTransportBoundsConcurrentSSHHandshakes(t *testing.T) {
+	runner := &concurrencyCaptureRunner{
+		started: make(chan struct{}, 12),
+		release: make(chan struct{}),
+	}
+	transport, err := NewSSHAgentTransport(SSHAgentTransportConfig{
+		User: "root", IdentityFile: "/key", KnownHostsFile: "/known",
+		CommandTimeout: 2 * time.Second, MaxConcurrentSessions: 3,
+	}, runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wait sync.WaitGroup
+	errorsSeen := make(chan error, 12)
+	for index := 0; index < 12; index++ {
+		wait.Add(1)
+		go func(index int) {
+			defer wait.Done()
+			_, sendErr := transport.Send(context.Background(), model.DatabaseInstance{IPAddress: "192.0.2." + string(rune('A'+index))}, agent.Request{})
+			errorsSeen <- sendErr
+		}(index)
+	}
+	for index := 0; index < 3; index++ {
+		select {
+		case <-runner.started:
+		case <-time.After(time.Second):
+			t.Fatal("bounded transport did not fill its configured session capacity")
+		}
+	}
+	select {
+	case <-runner.started:
+		t.Fatal("transport opened more SSH handshakes than configured")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(runner.release)
+	wait.Wait()
+	close(errorsSeen)
+	for sendErr := range errorsSeen {
+		if sendErr != nil {
+			t.Fatalf("bounded send failed: %v", sendErr)
+		}
+	}
+	runner.mu.Lock()
+	maximum := runner.maximum
+	runner.mu.Unlock()
+	if maximum != 3 {
+		t.Fatalf("maximum concurrent SSH sessions=%d, want 3", maximum)
 	}
 }
 

@@ -21,7 +21,7 @@
         <span>Search documentation</span>
         <input id="docs-search" type="search" autocomplete="off" placeholder="Filter by title">
       </label>
-      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview" aria-current="page" class="active">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview" aria-current="page" class="active">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.2.39.html" data-doc-title="release 2.2.39">Release 2.2.39</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="docker-swarm-mysql.html" data-doc-title="docker swarm mysql">Docker Swarm MySQL</a><a href="kubernetes-mysql.html" data-doc-title="kubernetes mysql">Kubernetes MySQL</a><a href="update-and-patch.html" data-doc-title="version update and rollback">Version Update and Rollback</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="postgresql-production-qualification.html" data-doc-title="postgresql 16.4 production qualification">PostgreSQL 16.4 Production Qualification</a><a href="docker-swarm-mysql-validation.html" data-doc-title="docker swarm mysql lab qualification">Docker Swarm MySQL Lab Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
       <div class="sidebar-meta">
         <span>Offline documentation build</span>
         <strong>2.1 / 2.2</strong>
@@ -57,8 +57,8 @@ topology, node lifecycle, and operation-log views.</p>
 <li><code>v2.1.45</code> is the immutable final release of the 2.1 line.</li>
 <li>The supported 2.1 database engine is MySQL, including approved compatible
 MySQL distributions validated by the site acceptance matrix.</li>
-<li>PostgreSQL delivery and all subsequent feature work start from <code>2.2-1</code> on
-branch <code>codex/2.2-postgresql</code>.</li>
+<li><code>v2.2.39</code> is the first formal 2.2 release, delivering PostgreSQL 16.4,
+Docker Swarm adoption, and the Kubernetes writer-endpoint foundation.</li>
 <li>Any shipped feature or behavior change increments the package release; an
 existing RPM, offline archive, tag, or GitHub Release is never overwritten.</li>
 <li>Oracle and SQL Server code may exist behind capability gates, but it is not a
@@ -78,9 +78,9 @@ production claim for the sealed 2.1 line.</li>
 <td>MySQL HA control plane</td>
 </tr>
 <tr>
-<td><code>2.2.x</code></td>
-<td>Active development</td>
-<td>PostgreSQL delivery plus retained MySQL capabilities</td>
+<td><code>2.2.39</code></td>
+<td>Formal release</td>
+<td>PostgreSQL 16.4, Docker Swarm, and retained MySQL HA capabilities</td>
 </tr>
 <tr>
 <td>Later lines</td>
@@ -88,7 +88,13 @@ production claim for the sealed 2.1 line.</li>
 <td>Oracle Data Guard Broker and SQL Server Always On after separate qualification</td>
 </tr>
 </tbody></table>
-<p>Download the sealed release from
+<p>Download the current formal release from
+<a href="https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.39">ClusterGuard HA 2.2.39</a>:</p>
+<pre><code class="language-bash">curl -fLO https://github.com/dgudgh/ClusterGuard-HA/releases/download/v2.2.39/clusterguard-ha-2.2-39-offline-linux-x86_64.tar.gz
+curl -fLO https://github.com/dgudgh/ClusterGuard-HA/releases/download/v2.2.39/clusterguard-ha-2.2-39-offline-linux-x86_64.tar.gz.sha256
+sha256sum -c clusterguard-ha-2.2-39-offline-linux-x86_64.tar.gz.sha256
+</code></pre>
+<p>The sealed 2.1 MySQL release remains available from
 <a href="https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.1.45">ClusterGuard HA 2.1-45</a>:</p>
 <pre><code class="language-bash">curl -fLO https://github.com/dgudgh/ClusterGuard-HA/releases/download/v2.1.45/clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz
 curl -fLO https://github.com/dgudgh/ClusterGuard-HA/releases/download/v2.1.45/clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz.sha256
@@ -115,7 +121,7 @@ and is documented separately in
 <li>promotion-candidate assessment with GTID and replication safety checks;</li>
 <li>guarded three-node planned switchover with primary and VIP ownership coupled;</li>
 <li>former-primary rejoin and allowlisted replication repair;</li>
-<li>30-second stable-failure detection and optional automatic failover;</li>
+<li>three observations across a three-second stable-failure window and optional automatic failover;</li>
 <li>Raft-backed operation locks, endpoint leases, local self-isolation, and
 reboot-time VIP convergence through the restricted node agent;</li>
 <li>add/rebuild lifecycle tasks with fixed node-slot reuse, staged install,
@@ -132,14 +138,14 @@ database operations;</li>
 <li>tested MySQL 5.7/8.x/9.x mutation dialects behind an independent adapter and
 writer-endpoint contract.</li>
 </ul>
-<h2 id="2-2-development-scope">2.2 Development Scope<a class="heading-anchor" href="#2-2-development-scope" aria-label="Link to 2.2 Development Scope">#</a></h2>
-<p>The PostgreSQL adapter under 2.2 development provides inventory-scoped
+<h2 id="2-2-release-scope">2.2 Release Scope<a class="heading-anchor" href="#2-2-release-scope" aria-label="Link to 2.2 Release Scope">#</a></h2>
+<p>The PostgreSQL adapter in 2.2 provides inventory-scoped
 discovery, immutable node identity, <code>system_identifier</code> cluster binding,
 primary/standby topology,
 streaming health, timeline and WAL evidence, native metrics, deterministic
 candidate assessment, guarded planned switchover and failover, former-primary
 <code>pg_rewind</code> recovery, allowlisted low-risk repair, writer-VIP coupling, and
-<code>pg_basebackup</code>/<code>pg_rewind</code> node lifecycle, plus optional 30-second stable-failure
+<code>pg_basebackup</code>/<code>pg_rewind</code> node lifecycle, plus optional three-second stable-failure
 automatic failover. Mutations are advertised only when
 the restricted Agent, operation credentials, endpoint provider, controller
 quorum, and required fencing evidence are configured. These capabilities are
@@ -166,14 +172,21 @@ the cluster has a complete HA endpoint inventory, an odd Raft controller set,
 current leader-backed majority authority, purpose-specific MySQL credentials,
 agent signing material, an operation lock, and approval. Missing or unknown
 evidence blocks the operation; it never produces a simulated success.</p>
-<p>Automatic failover is separately opt-in. It requires six follow-up failure
-observations across 30 seconds, the rank-one eligible candidate, current
+<p>Automatic failover is separately opt-in. It requires three current failure
+observations spanning at least three seconds, the rank-one eligible candidate, current
 controller quorum, old-primary isolation, and an exclusive VIP lease. MySQL can
 use short-lived Raft-majority Agent authorization: stale authorization expires,
 the old node fails closed to no VIP plus persistent read-only, and the Leader
 revalidates the exact transition lease before promotion. An external BMC, PDU,
 cloud, or hypervisor fencer remains an optional stronger layer. The platform
 prefers temporary unavailability over a second writer or VIP owner.</p>
+<p>The three-second interval is the controller&#39;s stable-failure evidence window,
+not an end-to-end RTO promise. The restricted Agent retains a separate 15-second
+authorization-expiry fence before an isolated old primary can no longer serve
+as writer or VIP owner. PostgreSQL 16.4 laboratory qualification measured
+17.973 seconds of writer-endpoint interruption with a two-second client connect
+timeout; every production site must repeat that test with its own network,
+storage, database package, client timeout, and fencing policy.</p>
 <p>The browser console authenticates against platform users stored in the
 replicated metadata snapshot. A fresh installation creates <code>admin</code> with the
 documented first-login password <code>admin123</code> and <code>MustChangePassword=true</code>. The
@@ -246,6 +259,7 @@ points:</p>
 <li><a href="product-tour.html">English product tour</a> / <a href="../zh-CN/product-tour.html">中文产品导览</a></li>
 <li><a href="offline-rpm-install.html">English offline installation</a> / <a href="../zh-CN/offline-rpm-install.html">中文离线安装</a></li>
 <li><a href="operations-manual.html">English operations manual</a> / <a href="../zh-CN/operations-manual.html">中文运维手册</a></li>
+<li><a href="update-and-patch.html">English version update guide</a> / <a href="../zh-CN/update-and-patch.html">中文版本升级与回退手册</a></li>
 <li><a href="version-release-policy.html">English release policy</a> / <a href="../zh-CN/version-release-policy.html">中文版本规范</a></li>
 </ul>
 <h2 id="register-and-refresh-a-mysql-cluster">Register and Refresh a MySQL Cluster<a class="heading-anchor" href="#register-and-refresh-a-mysql-cluster" aria-label="Link to Register and Refresh a MySQL Cluster">#</a></h2>
@@ -361,7 +375,7 @@ identity, adapter, persistence, candidate, and safety design.</p>
         </article>
         <aside class="page-toc" aria-label="On this page">
           <strong>On this page</strong>
-          <a class="toc-level-2" href="#console-preview">Console Preview</a><a class="toc-level-2" href="#current-release">Current Release</a><a class="toc-level-2" href="#2-2-development-scope">2.2 Development Scope</a><a class="toc-level-2" href="#safety-boundary">Safety Boundary</a><a class="toc-level-2" href="#start">Start</a><a class="toc-level-2" href="#documentation">Documentation</a><a class="toc-level-2" href="#register-and-refresh-a-mysql-cluster">Register and Refresh a MySQL Cluster</a><a class="toc-level-2" href="#register-and-refresh-a-postgresql-cluster">Register and Refresh a PostgreSQL Cluster</a><a class="toc-level-2" href="#cli">CLI</a>
+          <a class="toc-level-2" href="#console-preview">Console Preview</a><a class="toc-level-2" href="#current-release">Current Release</a><a class="toc-level-2" href="#2-2-release-scope">2.2 Release Scope</a><a class="toc-level-2" href="#safety-boundary">Safety Boundary</a><a class="toc-level-2" href="#start">Start</a><a class="toc-level-2" href="#documentation">Documentation</a><a class="toc-level-2" href="#register-and-refresh-a-mysql-cluster">Register and Refresh a MySQL Cluster</a><a class="toc-level-2" href="#register-and-refresh-a-postgresql-cluster">Register and Refresh a PostgreSQL Cluster</a><a class="toc-level-2" href="#cli">CLI</a>
         </aside>
       </main>
     </div>

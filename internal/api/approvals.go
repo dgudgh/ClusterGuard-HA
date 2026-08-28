@@ -71,7 +71,7 @@ func (server *Server) issueApproval(writer http.ResponseWriter, request *http.Re
 	if key == "" {
 		key = "approval-" + string(model.NewResourceID())
 	}
-	record, _, err := server.workflow.Plan(request.Context(), adapter.OperationRequest{
+	record, err := server.plannedOperationForApproval(request.Context(), adapter.OperationRequest{
 		Operation: model.Operation{
 			ClusterID: payload.ClusterID, Engine: payload.Engine,
 			Kind: payload.OperationKind, RequestedBy: payload.IssuedBy,
@@ -88,6 +88,14 @@ func (server *Server) issueApproval(writer http.ResponseWriter, request *http.Re
 		TTL:       time.Duration(payload.TTLSeconds) * time.Second,
 	})
 	if err != nil {
+		if errors.Is(err, approval.ErrBlockingChecks) {
+			writeJSON(writer, http.StatusConflict, map[string]interface{}{
+				"status":  "blocked",
+				"message": "operation precheck contains blocking checks",
+				"result":  publicOperationRecord(record),
+			})
+			return
+		}
 		writeError(writer, http.StatusConflict, err.Error())
 		return
 	}

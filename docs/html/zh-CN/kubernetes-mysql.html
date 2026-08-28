@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="Kubernetes MySQL - ClusterGuard HA operational documentation">
+  <title>Kubernetes MySQL | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">跳到正文</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>搜索文档</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="输入标题关键词">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>开始使用</h2><a href="index.html" data-doc-title="clusterguard ha 中文文档">ClusterGuard HA 中文文档</a><a href="product-overview.html" data-doc-title="产品概览">产品概览</a><a href="product-tour.html" data-doc-title="控制台产品导览">控制台产品导览</a><a href="architecture.html" data-doc-title="系统架构">系统架构</a><a href="release-2.2.39.html" data-doc-title="2.2.39 发布说明">2.2.39 发布说明</a><a href="release-2.1.45.html" data-doc-title="2.1.45 发布说明">2.1.45 发布说明</a></section><section><h2>部署与迁移</h2><a href="offline-rpm-install.html" data-doc-title="离线 rpm 安装">离线 RPM 安装</a><a href="database-preparation.html" data-doc-title="数据库接入">数据库接入</a><a href="orchestrator-migration.html" data-doc-title="从 orchestrator 迁移">从 Orchestrator 迁移</a></section><section><h2>日常运维</h2><a href="operations-manual.html" data-doc-title="运维操作手册">运维操作手册</a><a href="api-operations.html" data-doc-title="api 运维参考">API 运维参考</a><a href="postgresql-ha.html" data-doc-title="postgresql 高可用">PostgreSQL 高可用</a><a href="docker-swarm-mysql.html" data-doc-title="docker swarm mysql">Docker Swarm MySQL</a><a href="kubernetes-mysql.html" data-doc-title="kubernetes mysql" aria-current="page" class="active">Kubernetes MySQL</a><a href="update-and-patch.html" data-doc-title="版本升级与回退">版本升级与回退</a><a href="version-release-policy.html" data-doc-title="版本与发版规范">版本与发版规范</a></section><section><h2>验收证据</h2><a href="proven-mysql-ha-methods.html" data-doc-title="mysql 已验证方法">MySQL 已验证方法</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql 功能验收">MySQL 功能验收</a><a href="mysql-former-primary-recovery.html" data-doc-title="旧主恢复专项验收">旧主恢复专项验收</a><a href="mysql-production-qualification.html" data-doc-title="mysql 生产验收">MySQL 生产验收</a><a href="postgresql-production-qualification.html" data-doc-title="postgresql 16.4 生产验收">PostgreSQL 16.4 生产验收</a><a href="docker-swarm-mysql-validation.html" data-doc-title="docker swarm mysql 实机验证">Docker Swarm MySQL 实机验证</a><a href="production-chaos-test.html" data-doc-title="生产故障测试报告">生产故障测试报告</a><a href="power-lifecycle-test.html" data-doc-title="计划关机测试报告">计划关机测试报告</a></section></nav>
+      <div class="sidebar-meta">
+        <span>离线文档构建</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">打开目录</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>Kubernetes MySQL</strong></div>
+        <div class="header-actions">
+          <a href="../en-US/kubernetes-mysql.html" lang="en-US">English</a>
+          <button id="print-button" type="button">打印</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha-接管-kubernetes-mysql">ClusterGuard HA 接管 Kubernetes MySQL<a class="heading-anchor" href="#clusterguard-ha-接管-kubernetes-mysql" aria-label="Link to ClusterGuard HA 接管 Kubernetes MySQL">#</a></h1>
+<h2 id="1-当前交付范围">1. 当前交付范围<a class="heading-anchor" href="#1-当前交付范围" aria-label="Link to 1. 当前交付范围">#</a></h2>
+<p>ClusterGuard HA 2.2 首批开放 Kubernetes 上 MySQL 的计划切换和受保护故障切换。数据库复制仍由 MySQL GTID 管理，Kubernetes 管理 Pod 生命周期，ClusterGuard 管理数据库角色、持久重启角色、旧主隔离、Service 后端、Raft 租约、审计和验证。</p>
+<p>本实现不修改 CoreDNS，也不把宿主机 VIP 绑进 Pod。集群内应用连接固定的 selectorless Service；集群外应用连接固定的 LoadBalancer IP 或由 MetalLB 提供的地址。切换时只更新该 Service 对应的 EndpointSlice 后端。</p>
+<p>PostgreSQL 的 Kubernetes 入口模型可以登记，但 PostgreSQL Pod 角色控制器尚未开放执行，因此当前会 fail-closed，不应按本文启用自动故障切换。</p>
+<h2 id="2-三种运行模式">2. 三种运行模式<a class="heading-anchor" href="#2-三种运行模式" aria-label="Link to 2. 三种运行模式">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>模式</th>
+<th>数据库进程</th>
+<th>业务入口</th>
+<th>ClusterGuard 迁移动作</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>物理机或虚拟机</td>
+<td>systemd/宿主机进程</td>
+<td>宿主机 VIP</td>
+<td>迁移网卡 VIP</td>
+</tr>
+<tr>
+<td>Docker Swarm</td>
+<td>固定宿主机上的 Service</td>
+<td>宿主机 VIP</td>
+<td>固化容器只读角色并迁移宿主机 VIP</td>
+</tr>
+<tr>
+<td>Kubernetes</td>
+<td>独立单副本 StatefulSet Pod</td>
+<td>selectorless Service</td>
+<td>固化 StatefulSet 角色并迁移 EndpointSlice</td>
+</tr>
+</tbody></table>
+<p>RuntimeTarget 和 WorkloadBinding 是强制边界标记。平台不会根据端口、主机名或容器名称猜测运行模式。</p>
+<h2 id="3-强制安全约束">3. 强制安全约束<a class="heading-anchor" href="#3-强制安全约束" aria-label="Link to 3. 强制安全约束">#</a></h2>
+<ol>
+<li>每个数据库实例使用独立的单副本 StatefulSet，ordinal 必须为 0。禁止用一个三副本 StatefulSet 表示一主两从，因为缩容旧主会同时影响其他实例。</li>
+<li>每个实例必须有独立 PVC，数据库 <code>server_uuid</code> 不因 Pod 重建改变。</li>
+<li>WorkloadBinding 必须登记 StatefulSet、Pod 名、不可变 Pod UID、Node 名和 PVC UID。</li>
+<li>writer Service 必须没有 selector；EndpointSlice 必须标记 <code>endpointslice.kubernetes.io/managed-by=clusterguard.io/ha</code>。</li>
+<li>StatefulSet 必须启用启动守卫，并登记 <code>clusterguard.io/mysql-role=primary|replica</code>。</li>
+<li>Controller 在数据库命名空间内只取得 <code>get</code> Service/Pod/PVC、<code>get/update</code> EndpointSlice、<code>get/patch</code> StatefulSet 和 <code>get/update</code> scale 子资源权限；集群级权限只有 <code>get Node</code>。</li>
+<li>Kubernetes API 必须使用 HTTPS、CA 校验和短期 ServiceAccount token 或客户端证书。token 文件每次请求都会重新读取，支持轮换。</li>
+<li>数据库 Pod 禁止自动挂载 ServiceAccount token；短期 token 只投影给启动守卫 init container，MySQL 主容器不可见。</li>
+</ol>
+<h2 id="4-切换顺序">4. 切换顺序<a class="heading-anchor" href="#4-切换顺序" aria-label="Link to 4. 切换顺序">#</a></h2>
+<p>计划切换执行以下顺序：</p>
+<ol>
+<li>验证 MySQL 身份、GTID、复制状态、Raft 多数派和 EndpointSlice 唯一所有者。</li>
+<li>将旧主实时设置为只读并等待目标追平。</li>
+<li>提升目标 MySQL 为可写主库。</li>
+<li>把旧主 StatefulSet 持久角色写为 <code>replica</code>，目标写为 <code>primary</code>。</li>
+<li>使用带 <code>resourceVersion</code> 的 PUT 把 EndpointSlice 原子改为目标 Pod UID 和 Pod IP。</li>
+<li>验证目标可写、Service 只有一个后端、旧主只读及 Raft 所有权元数据一致。</li>
+</ol>
+<p>故障切换会先给旧主写入 <code>clusterguard.io/fenced=true</code>，再把该独立 StatefulSet 缩到 0。只有在 Pod 已消失、scale 状态为 0、旧主 Node 仍为 Ready 且 Raft 目标租约有效时才允许提升候选。Node 为 NotReady 或 API 不可达时，平台不会把“未知”伪造成“已隔离”，必须配置额外的云平台、BMC 或虚拟化节点隔离能力。</p>
+<h2 id="5-部署资源">5. 部署资源<a class="heading-anchor" href="#5-部署资源" aria-label="Link to 5. 部署资源">#</a></h2>
+<p>RPM 安装后，资源位于 <code>/usr/share/clusterguard/kubernetes/</code>；源码目录为 <code>deploy/kubernetes/</code>。</p>
+<pre><code class="language-bash">kubectl apply -f deploy/kubernetes/clusterguard-rbac.yaml
+kubectl apply -f deploy/kubernetes/mysql/fence-guard-rbac.yaml
+kubectl apply -f deploy/kubernetes/mysql/writer-service.yaml
+</code></pre>
+<p>示例 Role 固定在 <code>database</code> 命名空间。数据库位于其他命名空间时，应复制该 Role 和 RoleBinding 并修改命名空间，不能把写权限扩大为全局 ClusterRole。</p>
+<p>构建并预加载启动守卫镜像：</p>
+<pre><code class="language-bash">docker build -f deploy/kubernetes/fence-guard/Dockerfile \
+  -t clusterguard/k8s-fence-guard:2.2.0 .
+</code></pre>
+<p>复制 <code>statefulset-fence-guard-patch.yaml</code>，替换 StatefulSet 名和 MySQL 容器名。当前主库设置 <code>clusterguard.io/mysql-role=primary</code>，两个从库设置为 <code>replica</code>。补丁会把生成的 <code>99-clusterguard-role.cnf</code> 挂载到 <code>/etc/mysql/conf.d/</code>。必须先在测试命名空间确认所用 MySQL 镜像会读取该目录。</p>
+<p>初始化 writer EndpointSlice：</p>
+<pre><code class="language-bash">deploy/kubernetes/mysql/bootstrap-writer-endpoint.sh \
+  database mysql-a-0 mysql-writer-clusterguard
+</code></pre>
+<h2 id="6-控制面配置">6. 控制面配置<a class="heading-anchor" href="#6-控制面配置" aria-label="Link to 6. 控制面配置">#</a></h2>
+<p>控制节点配置启用：</p>
+<pre><code class="language-json">&quot;kubernetes&quot;: {
+  &quot;enabled&quot;: true,
+  &quot;request_timeout_seconds&quot;: 10,
+  &quot;fence_timeout_seconds&quot;: 60
+}
+</code></pre>
+<p>在每个控制节点准备权限为 <code>0600</code> 的凭据描述文件、CA 和 token。<code>credential_ref</code> 只保存凭据描述文件的绝对路径，不把 token 写入 ClusterGuard 元数据。</p>
+<pre><code class="language-json">{
+  &quot;ca_file&quot;: &quot;/etc/clusterguard/kubernetes/ca.crt&quot;,
+  &quot;bearer_token_file&quot;: &quot;/etc/clusterguard/kubernetes/token&quot;,
+  &quot;server_name&quot;: &quot;kubernetes.default.svc&quot;
+}
+</code></pre>
+<p>三个 Raft 控制节点必须能访问相同 Kubernetes API，并各自具有等价的本地凭据文件。</p>
+<h2 id="7-资源登记">7. 资源登记<a class="heading-anchor" href="#7-资源登记" aria-label="Link to 7. 资源登记">#</a></h2>
+<p>先通过已认证的控制 API 创建 Kubernetes RuntimeTarget：</p>
+<pre><code class="language-json">{
+  &quot;display_name&quot;: &quot;production-k8s&quot;,
+  &quot;kind&quot;: &quot;kubernetes&quot;,
+  &quot;endpoint&quot;: &quot;https://kubernetes.example.internal:6443&quot;,
+  &quot;credential_ref&quot;: &quot;/etc/clusterguard/kubernetes/credentials.json&quot;,
+  &quot;active&quot;: true
+}
+</code></pre>
+<p>每个实例创建一个 WorkloadBinding：</p>
+<pre><code class="language-json">{
+  &quot;instance_id&quot;: &quot;INSTANCE_UUID&quot;,
+  &quot;runtime_target_id&quot;: &quot;RUNTIME_UUID&quot;,
+  &quot;runtime_kind&quot;: &quot;kubernetes&quot;,
+  &quot;active&quot;: true,
+  &quot;kubernetes&quot;: {
+    &quot;cluster_name&quot;: &quot;production&quot;,
+    &quot;namespace&quot;: &quot;database&quot;,
+    &quot;stateful_set&quot;: &quot;mysql-a&quot;,
+    &quot;ordinal&quot;: 0,
+    &quot;pod_name&quot;: &quot;mysql-a-0&quot;,
+    &quot;pod_uid&quot;: &quot;LIVE_POD_UID&quot;,
+    &quot;node_name&quot;: &quot;worker-a&quot;,
+    &quot;pvc_uid&quot;: &quot;MYSQL_DATA_PVC_UID&quot;
+  }
+}
+</code></pre>
+<p>数据库实例自身的探测地址应使用每个 Pod 的 headless Service DNS，不能把三个实例都登记为 writer Service。最后创建 HAEndpoint：</p>
+<pre><code class="language-json">{
+  &quot;kind&quot;: &quot;service&quot;,
+  &quot;provider&quot;: &quot;kubernetes_service&quot;,
+  &quot;provider_ref&quot;: &quot;database/mysql-writer/mysql-writer-clusterguard&quot;,
+  &quot;hostname&quot;: &quot;mysql-writer.database.svc&quot;,
+  &quot;port&quot;: 3306,
+  &quot;owner_id&quot;: &quot;CURRENT_PRIMARY_INSTANCE_UUID&quot;,
+  &quot;active&quot;: true
+}
+</code></pre>
+<h2 id="8-验收边界">8. 验收边界<a class="heading-anchor" href="#8-验收边界" aria-label="Link to 8. 验收边界">#</a></h2>
+<p>上线前至少验证计划切换循环、主 Pod 删除、kube-apiserver 暂时不可达、EndpointSlice 冲突、旧主 Node NotReady、Pod UID 变化、StatefulSet 被误扩为两副本、Raft 少数派和守卫镜像拉取失败。</p>
+<p>当前代码与单元测试已覆盖 API TLS、token 轮换、selector 阻断、Pod UID 绑定、单后端迁移、角色注解、持久 fence、缩容和 NotReady 阻断。尚未在真实 Kubernetes 集群执行端到端验收，不能把代码测试等同于生产验收。</p>
+<p>故障切换后的旧主会保持 <code>fenced=true</code> 且副本数为 0。重新加入前必须通过受控维护流程确认其持久角色为 <code>replica</code>、清除 fence、扩容到 1，再进行 GTID 旧主恢复；该图形化维护动作仍需后续接入，当前不得手工跳过数据校验直接恢复为可写。</p>
+
+          <footer class="document-footer">
+            <span>源文件: <code>docs/zh-CN/kubernetes-mysql.md</code></span>
+            <a href="../index.html">文档语言入口</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="本页目录">
+          <strong>本页目录</strong>
+          <a class="toc-level-2" href="#1-当前交付范围">1. 当前交付范围</a><a class="toc-level-2" href="#2-三种运行模式">2. 三种运行模式</a><a class="toc-level-2" href="#3-强制安全约束">3. 强制安全约束</a><a class="toc-level-2" href="#4-切换顺序">4. 切换顺序</a><a class="toc-level-2" href="#5-部署资源">5. 部署资源</a><a class="toc-level-2" href="#6-控制面配置">6. 控制面配置</a><a class="toc-level-2" href="#7-资源登记">7. 资源登记</a><a class="toc-level-2" href="#8-验收边界">8. 验收边界</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

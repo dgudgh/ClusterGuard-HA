@@ -6,11 +6,13 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"clusterguard.io/ha/internal/controlstate"
+	"clusterguard.io/ha/internal/platformupdate"
 )
 
 const (
@@ -56,23 +58,18 @@ func (client *LeaderMutationRPCClient) Forward(writer http.ResponseWriter, reque
 		Scheme: leader.Scheme, Host: leader.Host,
 		Path: request.URL.Path, RawPath: request.URL.RawPath, RawQuery: request.URL.RawQuery,
 	}
-	var body []byte
-	if request.Body != nil {
-		body, err = io.ReadAll(io.LimitReader(request.Body, maximumJSONBodyBytes+1))
-		if err != nil {
-			return fmt.Errorf("read mutation RPC request: %w", err)
-		}
-		if len(body) > maximumJSONBodyBytes {
-			return fmt.Errorf("mutation RPC request exceeds maximum size")
-		}
+	body, bodyLength, cleanup, err := stageRPCRequestBody(request)
+	if err != nil {
+		return err
 	}
-	forwarded, err := http.NewRequestWithContext(request.Context(), request.Method, target.String(), bytes.NewReader(body))
+	defer cleanup()
+	forwarded, err := http.NewRequestWithContext(request.Context(), request.Method, target.String(), body)
 	if err != nil {
 		return fmt.Errorf("create mutation RPC request: %w", err)
 	}
 	copyRPCHeaders(forwarded.Header, request.Header)
 	forwarded.Header.Set(mutationRPCForwardedHeader, "1")
-	forwarded.ContentLength = int64(len(body))
+	forwarded.ContentLength = bodyLength
 
 	response, err := client.client.Do(forwarded)
 	if err != nil {
@@ -104,6 +101,12 @@ func (client *LeaderMutationRPCClient) Forward(writer http.ResponseWriter, reque
 }
 
 func (client *LeaderMutationRPCClient) waitForMetadataRevision(request *http.Request, status int, value string) (string, error) {
+	if !mutatingMethod(request.Method) {
+		if client.revisions == nil {
+			return "", nil
+		}
+		return strconv.FormatUint(client.revisions.StateRevision(), 10), nil
+	}
 	if status < 200 || status >= 300 {
 		if client.revisions == nil {
 			return "", nil
@@ -138,6 +141,53 @@ func (client *LeaderMutationRPCClient) waitForMetadataRevision(request *http.Req
 		case <-ticker.C:
 		}
 	}
+}
+
+func stageRPCRequestBody(request *http.Request) (io.ReadCloser, int64, func(), error) {
+	if request == nil || request.Body == nil {
+		return io.NopCloser(bytes.NewReader(nil)), 0, func() {}, nil
+	}
+	limit := int64(maximumJSONBodyBytes)
+	largeUpload := request.Method == http.MethodPost && strings.TrimSuffix(request.URL.Path, "/") == "/api/v1/platform/updates"
+	if largeUpload {
+		limit = platformupdate.DefaultMaximumUpload + (1 << 20)
+	}
+	if request.ContentLength > limit {
+		return nil, 0, func() {}, fmt.Errorf("mutation RPC request exceeds maximum size")
+	}
+	if !largeUpload {
+		contents, err := io.ReadAll(io.LimitReader(request.Body, limit+1))
+		if err != nil {
+			return nil, 0, func() {}, fmt.Errorf("read mutation RPC request: %w", err)
+		}
+		if int64(len(contents)) > limit {
+			return nil, 0, func() {}, fmt.Errorf("mutation RPC request exceeds maximum size")
+		}
+		return io.NopCloser(bytes.NewReader(contents)), int64(len(contents)), func() {}, nil
+	}
+	temporary, err := os.CreateTemp("", "clusterguard-update-rpc-*.upload")
+	if err != nil {
+		return nil, 0, func() {}, fmt.Errorf("stage mutation RPC upload: %w", err)
+	}
+	path := temporary.Name()
+	cleanup := func() {
+		_ = temporary.Close()
+		_ = os.Remove(path)
+	}
+	_ = temporary.Chmod(0o600)
+	written, err := io.Copy(temporary, io.LimitReader(request.Body, limit+1))
+	if err != nil || written > limit {
+		cleanup()
+		if written > limit {
+			return nil, 0, func() {}, fmt.Errorf("mutation RPC request exceeds maximum size")
+		}
+		return nil, 0, func() {}, fmt.Errorf("stage mutation RPC upload: %w", err)
+	}
+	if _, err := temporary.Seek(0, io.SeekStart); err != nil {
+		cleanup()
+		return nil, 0, func() {}, fmt.Errorf("rewind mutation RPC upload: %w", err)
+	}
+	return temporary, written, cleanup, nil
 }
 
 type mutationRPCRevisionWriter struct {

@@ -45,22 +45,62 @@ type MetadataCommitter interface {
 	Commit(context.Context, Task, ExecutionResult) error
 }
 
-type Manager struct {
-	store     TaskStore
-	authority MutationAuthority
-	safety    SafetyGuard
-	locks     ClusterLocker
-	approval  ApprovalGate
-	executor  Executor
-	committer MetadataCommitter
-	now       func() time.Time
+type ControllerTarget struct {
+	ResourceID model.ResourceID
+	NodeName   string
+	Hostname   string
+	IPAddress  string
 }
 
-func NewManager(store TaskStore, authority MutationAuthority, safety SafetyGuard, locks ClusterLocker, approval ApprovalGate, executor Executor, committer MetadataCommitter, now func() time.Time) *Manager {
+type ControllerMembership interface {
+	AddControllers(context.Context, []ControllerTarget) error
+}
+
+type ManagerOption func(*Manager)
+
+func WithControllerMembership(membership ControllerMembership) ManagerOption {
+	return func(manager *Manager) { manager.membership = membership }
+}
+
+type Manager struct {
+	store      TaskStore
+	authority  MutationAuthority
+	safety     SafetyGuard
+	locks      ClusterLocker
+	approval   ApprovalGate
+	executor   Executor
+	committer  MetadataCommitter
+	membership ControllerMembership
+	now        func() time.Time
+}
+
+func NewManager(store TaskStore, authority MutationAuthority, safety SafetyGuard, locks ClusterLocker, approval ApprovalGate, executor Executor, committer MetadataCommitter, now func() time.Time, options ...ManagerOption) *Manager {
 	if now == nil {
 		now = time.Now
 	}
-	return &Manager{store: store, authority: authority, safety: safety, locks: locks, approval: approval, executor: executor, committer: committer, now: now}
+	manager := &Manager{store: store, authority: authority, safety: safety, locks: locks, approval: approval, executor: executor, committer: committer, now: now}
+	for _, option := range options {
+		if option != nil {
+			option(manager)
+		}
+	}
+	return manager
+}
+
+func controllerTargetsForMembership(plan Plan) []ControllerTarget {
+	targets := make([]ControllerTarget, 0, len(plan.Targets))
+	for _, target := range plan.Targets {
+		if target.ReusesNodeSlot || (target.Kind != model.NodeController && target.Kind != model.NodeMixed) {
+			continue
+		}
+		targets = append(targets, ControllerTarget{
+			ResourceID: target.NodeID,
+			NodeName:   target.NodeName,
+			Hostname:   target.Hostname,
+			IPAddress:  target.IPAddress,
+		})
+	}
+	return targets
 }
 
 func (manager *Manager) configured() bool {
@@ -247,6 +287,18 @@ func (manager *Manager) execute(ctx context.Context, request Request, plan Plan,
 	if !result.Verified {
 		return indeterminate("lifecycle verification failed; metadata was not changed", fmt.Errorf("lifecycle verification failed"))
 	}
+	controllerTargets := controllerTargetsForMembership(plan)
+	if len(controllerTargets) > 0 {
+		if manager.membership == nil {
+			return indeterminate("controller lifecycle verification passed but Raft membership integration is unavailable", fmt.Errorf("controller membership integration is not configured"))
+		}
+		if err := manager.membership.AddControllers(leaseCtx, controllerTargets); err != nil {
+			return indeterminate("controller service installation completed but Raft membership was not committed", err)
+		}
+		if err := recordAudit(model.StageExecute, fmt.Sprintf("%d controller voter(s) joined the live Raft membership", len(controllerTargets))); err != nil {
+			return indeterminate("controller membership was committed but its audit could not be persisted", err)
+		}
+	}
 	if err := recordAudit(model.StageVerify, "lifecycle execution verification passed"); err != nil {
 		return indeterminate("lifecycle verification passed but its audit could not be persisted", err)
 	}
@@ -266,6 +318,10 @@ func (manager *Manager) execute(ctx context.Context, request Request, plan Plan,
 			message += ": " + detail
 		}
 		return indeterminate(message, commitErr)
+	}
+	emit(Event{Stage: StageCommit, Status: StageSucceeded, Message: "verified lifecycle metadata committed"})
+	if eventPersistenceError != nil {
+		return indeterminate("lifecycle metadata was committed but its completed stage could not be persisted", eventPersistenceError)
 	}
 	if err := recordAudit(model.StageAudit, "lifecycle execution audit trail completed"); err != nil {
 		return indeterminate("lifecycle metadata was committed but audit finalization failed", err)
@@ -297,7 +353,8 @@ func (manager *Manager) execute(ctx context.Context, request Request, plan Plan,
 
 func redactLifecycleMessage(message string, secrets ExecutionSecrets) string {
 	for _, secret := range []string{
-		secrets.SSHPassword, secrets.MySQLRootPassword, secrets.ReplicationPassword,
+		secrets.SSHPassword, secrets.MySQLRootPassword,
+		secrets.MySQLDiscoveryPassword, secrets.MySQLOperationPassword, secrets.ReplicationPassword,
 		secrets.PostgreSQLAdminPassword, secrets.PostgreSQLReplicationPassword,
 	} {
 		if strings.TrimSpace(secret) != "" {

@@ -13,6 +13,8 @@ import (
 	"clusterguard.io/ha/pkg/model"
 )
 
+const testBootstrapPassword = "Test-bootstrap-password-123"
+
 func newTestService(t *testing.T) (*Service, *store.Repository, *time.Time) {
 	t.Helper()
 	now := time.Date(2026, time.July, 16, 13, 0, 0, 0, time.UTC)
@@ -25,11 +27,11 @@ func newTestService(t *testing.T) (*Service, *store.Repository, *time.Time) {
 
 func TestEnsureBootstrapAdminIsIdempotentAndStoresOnlyHash(t *testing.T) {
 	service, repository, _ := newTestService(t)
-	first, err := service.EnsureBootstrapAdmin(context.Background())
+	first, err := service.EnsureBootstrapAdmin(context.Background(), testBootstrapPassword)
 	if err != nil {
 		t.Fatalf("ensure bootstrap admin: %v", err)
 	}
-	second, err := service.EnsureBootstrapAdmin(context.Background())
+	second, err := service.EnsureBootstrapAdmin(context.Background(), testBootstrapPassword)
 	if err != nil {
 		t.Fatalf("ensure bootstrap admin again: %v", err)
 	}
@@ -37,7 +39,7 @@ func TestEnsureBootstrapAdminIsIdempotentAndStoresOnlyHash(t *testing.T) {
 		first.Role != model.PlatformRoleAdmin || !first.MustChangePassword {
 		t.Fatalf("unexpected bootstrap admin: first=%+v second=%+v", first, second)
 	}
-	if first.PasswordHash == "" || strings.Contains(first.PasswordHash, DefaultAdminPassword) {
+	if first.PasswordHash == "" || strings.Contains(first.PasswordHash, testBootstrapPassword) {
 		t.Fatal("bootstrap password was not stored as a one-way hash")
 	}
 	if users := repository.PlatformUsers(); len(users) != 1 {
@@ -47,18 +49,32 @@ func TestEnsureBootstrapAdminIsIdempotentAndStoresOnlyHash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encode replicated state: %v", err)
 	}
-	if bytes.Contains(raw, []byte(DefaultAdminPassword)) {
+	if bytes.Contains(raw, []byte(testBootstrapPassword)) {
 		t.Fatal("replicated metadata contains bootstrap plaintext password")
+	}
+}
+
+func TestEnsureBootstrapAdminAcceptsOnlyDocumentedDefaultPasswordException(t *testing.T) {
+	service, repository, _ := newTestService(t)
+	user, err := service.EnsureBootstrapAdmin(context.Background(), DefaultBootstrapPassword)
+	if err != nil {
+		t.Fatalf("ensure default bootstrap administrator: %v", err)
+	}
+	if !user.MustChangePassword || !service.hasher.Verify(user.PasswordHash, DefaultBootstrapPassword) {
+		t.Fatalf("default bootstrap account is not forced-reset or hash-verifiable: %+v", user)
+	}
+	if state, err := repository.ReplicatedState(); err != nil || bytes.Contains(state, []byte(DefaultBootstrapPassword)) {
+		t.Fatalf("replicated state exposes default bootstrap password: err=%v", err)
 	}
 }
 
 func TestLoginUsesGenericFailureAndIssuesHashedSession(t *testing.T) {
 	service, repository, _ := newTestService(t)
-	if _, err := service.EnsureBootstrapAdmin(context.Background()); err != nil {
+	if _, err := service.EnsureBootstrapAdmin(context.Background(), testBootstrapPassword); err != nil {
 		t.Fatalf("ensure bootstrap admin: %v", err)
 	}
 	for _, attempt := range []struct{ username, password string }{
-		{username: "missing", password: "admin123"},
+		{username: "missing", password: "wrong-password"},
 		{username: "admin", password: "wrong-password"},
 	} {
 		if _, err := service.Login(context.Background(), attempt.username, attempt.password); !errors.Is(err, ErrInvalidCredentials) {
@@ -66,7 +82,7 @@ func TestLoginUsesGenericFailureAndIssuesHashedSession(t *testing.T) {
 		}
 	}
 
-	login, err := service.Login(context.Background(), " ADMIN ", DefaultAdminPassword)
+	login, err := service.Login(context.Background(), " ADMIN ", testBootstrapPassword)
 	if err != nil {
 		t.Fatalf("login bootstrap admin: %v", err)
 	}
@@ -92,7 +108,7 @@ func TestLoginUsesGenericFailureAndIssuesHashedSession(t *testing.T) {
 
 func TestLoginThrottlesRepeatedFailuresAndRecoversAfterCooldown(t *testing.T) {
 	service, _, now := newTestService(t)
-	if _, err := service.EnsureBootstrapAdmin(context.Background()); err != nil {
+	if _, err := service.EnsureBootstrapAdmin(context.Background(), testBootstrapPassword); err != nil {
 		t.Fatalf("ensure bootstrap admin: %v", err)
 	}
 	for attempt := 0; attempt < maximumLoginFailures; attempt++ {
@@ -100,22 +116,22 @@ func TestLoginThrottlesRepeatedFailuresAndRecoversAfterCooldown(t *testing.T) {
 			t.Fatalf("failed login %d error=%v", attempt, err)
 		}
 	}
-	if _, err := service.Login(context.Background(), DefaultAdminUsername, DefaultAdminPassword); !errors.Is(err, ErrLoginThrottled) {
+	if _, err := service.Login(context.Background(), DefaultAdminUsername, testBootstrapPassword); !errors.Is(err, ErrLoginThrottled) {
 		t.Fatalf("throttled login error=%v", err)
 	}
 	*now = now.Add(LoginThrottleRetryAfter + time.Second)
-	if _, err := service.Login(context.Background(), DefaultAdminUsername, DefaultAdminPassword); err != nil {
+	if _, err := service.Login(context.Background(), DefaultAdminUsername, testBootstrapPassword); err != nil {
 		t.Fatalf("login after cooldown: %v", err)
 	}
 }
 
 func TestAuthenticateChecksExpiryRevocationAndUserRevision(t *testing.T) {
 	service, repository, now := newTestService(t)
-	user, err := service.EnsureBootstrapAdmin(context.Background())
+	user, err := service.EnsureBootstrapAdmin(context.Background(), testBootstrapPassword)
 	if err != nil {
 		t.Fatalf("ensure bootstrap admin: %v", err)
 	}
-	login, err := service.Login(context.Background(), user.Username, DefaultAdminPassword)
+	login, err := service.Login(context.Background(), user.Username, testBootstrapPassword)
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
@@ -136,7 +152,7 @@ func TestAuthenticateChecksExpiryRevocationAndUserRevision(t *testing.T) {
 	}
 
 	*now = now.Add(-9 * time.Hour)
-	second, err := service.Login(context.Background(), user.Username, DefaultAdminPassword)
+	second, err := service.Login(context.Background(), user.Username, testBootstrapPassword)
 	if err != nil {
 		t.Fatalf("login second session: %v", err)
 	}
@@ -147,7 +163,7 @@ func TestAuthenticateChecksExpiryRevocationAndUserRevision(t *testing.T) {
 		t.Fatalf("revoked session error=%v", err)
 	}
 
-	third, err := service.Login(context.Background(), user.Username, DefaultAdminPassword)
+	third, err := service.Login(context.Background(), user.Username, testBootstrapPassword)
 	if err != nil {
 		t.Fatalf("login third session: %v", err)
 	}
@@ -168,24 +184,24 @@ func TestAuthenticateChecksExpiryRevocationAndUserRevision(t *testing.T) {
 
 func TestChangePasswordRejectsWeakOrWrongCurrentAndRevokesAllSessions(t *testing.T) {
 	service, repository, _ := newTestService(t)
-	if _, err := service.EnsureBootstrapAdmin(context.Background()); err != nil {
+	if _, err := service.EnsureBootstrapAdmin(context.Background(), testBootstrapPassword); err != nil {
 		t.Fatalf("ensure bootstrap admin: %v", err)
 	}
-	first, err := service.Login(context.Background(), DefaultAdminUsername, DefaultAdminPassword)
+	first, err := service.Login(context.Background(), DefaultAdminUsername, testBootstrapPassword)
 	if err != nil {
 		t.Fatalf("login first: %v", err)
 	}
-	second, err := service.Login(context.Background(), DefaultAdminUsername, DefaultAdminPassword)
+	second, err := service.Login(context.Background(), DefaultAdminUsername, testBootstrapPassword)
 	if err != nil {
 		t.Fatalf("login second: %v", err)
 	}
 	if _, err := service.ChangePassword(context.Background(), first.SessionToken, "wrong", "A-new-secure-password-123"); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("wrong current password error=%v", err)
 	}
-	if _, err := service.ChangePassword(context.Background(), first.SessionToken, DefaultAdminPassword, "short"); !errors.Is(err, ErrPasswordPolicy) {
+	if _, err := service.ChangePassword(context.Background(), first.SessionToken, testBootstrapPassword, "short"); !errors.Is(err, ErrPasswordPolicy) {
 		t.Fatalf("weak new password error=%v", err)
 	}
-	changed, err := service.ChangePassword(context.Background(), first.SessionToken, DefaultAdminPassword, "A-new-secure-password-123")
+	changed, err := service.ChangePassword(context.Background(), first.SessionToken, testBootstrapPassword, "A-new-secure-password-123")
 	if err != nil {
 		t.Fatalf("change password: %v", err)
 	}
@@ -197,7 +213,7 @@ func TestChangePasswordRejectsWeakOrWrongCurrentAndRevokesAllSessions(t *testing
 			t.Fatalf("old session survived password change: %v", err)
 		}
 	}
-	if _, err := service.Login(context.Background(), DefaultAdminUsername, DefaultAdminPassword); !errors.Is(err, ErrInvalidCredentials) {
+	if _, err := service.Login(context.Background(), DefaultAdminUsername, testBootstrapPassword); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("old password still works: %v", err)
 	}
 	if _, err := service.Login(context.Background(), DefaultAdminUsername, "A-new-secure-password-123"); err != nil {
@@ -210,11 +226,11 @@ func TestChangePasswordRejectsWeakOrWrongCurrentAndRevokesAllSessions(t *testing
 
 func TestDisabledUserCannotLoginOrUseExistingSession(t *testing.T) {
 	service, repository, now := newTestService(t)
-	user, err := service.EnsureBootstrapAdmin(context.Background())
+	user, err := service.EnsureBootstrapAdmin(context.Background(), testBootstrapPassword)
 	if err != nil {
 		t.Fatalf("ensure bootstrap admin: %v", err)
 	}
-	login, err := service.Login(context.Background(), user.Username, DefaultAdminPassword)
+	login, err := service.Login(context.Background(), user.Username, testBootstrapPassword)
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
@@ -225,7 +241,7 @@ func TestDisabledUserCannotLoginOrUseExistingSession(t *testing.T) {
 	if err := repository.ReplacePlatformUser(user.MetadataRevision, disabled); err != nil {
 		t.Fatalf("disable user: %v", err)
 	}
-	if _, err := service.Login(context.Background(), user.Username, DefaultAdminPassword); !errors.Is(err, ErrInvalidCredentials) {
+	if _, err := service.Login(context.Background(), user.Username, testBootstrapPassword); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("disabled login error=%v", err)
 	}
 	if _, err := service.Authenticate(context.Background(), login.SessionToken); !errors.Is(err, ErrUnauthenticated) {

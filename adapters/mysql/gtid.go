@@ -17,6 +17,13 @@ type GTIDComparison struct {
 	ErrantTransactions  uint64
 }
 
+type GTIDRecoveryAssessment struct {
+	MissingTransactions       uint64
+	ErrantTransactions        uint64
+	PurgedMissingTransactions uint64
+	FastRejoinSafe            bool
+}
+
 type gtidInterval struct {
 	start uint64
 	end   uint64
@@ -77,10 +84,38 @@ func CompareGTIDSets(primary, candidate GTIDSet) (GTIDComparison, error) {
 	return GTIDComparison{MissingTransactions: missing, ErrantTransactions: errant}, nil
 }
 
-func likelyTemporalGTIDSamplingSkew(primary, candidate GTIDSet, primaryUUID string, primaryObservedAt, candidateObservedAt time.Time) (bool, error) {
-	if primaryObservedAt.IsZero() || candidateObservedAt.IsZero() || !candidateObservedAt.After(primaryObservedAt) {
-		return false, nil
+// AssessGTIDRecovery decides whether a former primary can safely resume with
+// auto-position. Transactions already executed by the former primary may be
+// purged, but every transaction it still needs must remain available in the
+// current primary's binary logs.
+func AssessGTIDRecovery(currentExecuted, currentPurged, formerExecuted GTIDSet) (GTIDRecoveryAssessment, error) {
+	purgedHistory, err := CompareGTIDSets(currentExecuted, currentPurged)
+	if err != nil {
+		return GTIDRecoveryAssessment{}, fmt.Errorf("validate purged GTID history: %w", err)
 	}
+	if purgedHistory.ErrantTransactions != 0 {
+		return GTIDRecoveryAssessment{}, fmt.Errorf("purged GTID history is not a subset of current executed history")
+	}
+
+	comparison, err := CompareGTIDSets(currentExecuted, formerExecuted)
+	if err != nil {
+		return GTIDRecoveryAssessment{}, fmt.Errorf("compare former-primary GTID history: %w", err)
+	}
+	purgedMissing, err := transactionDifference(currentPurged, formerExecuted)
+	if err != nil {
+		return GTIDRecoveryAssessment{}, fmt.Errorf("count purged transactions missing from former primary: %w", err)
+	}
+	return GTIDRecoveryAssessment{
+		MissingTransactions:       comparison.MissingTransactions,
+		ErrantTransactions:        comparison.ErrantTransactions,
+		PurgedMissingTransactions: purgedMissing,
+		FastRejoinSafe:            comparison.ErrantTransactions == 0 && purgedMissing == 0,
+	}, nil
+}
+
+func likelyTemporalGTIDSamplingSkew(primary, candidate GTIDSet, primaryUUID string, _, _ time.Time) (bool, error) {
+	// Health timestamps come from independent probes and do not establish the
+	// order of the GTID queries within a topology refresh.
 	comparison, err := CompareGTIDSets(primary, candidate)
 	if err != nil {
 		return false, err
@@ -88,9 +123,12 @@ func likelyTemporalGTIDSamplingSkew(primary, candidate GTIDSet, primaryUUID stri
 	if comparison.MissingTransactions != 0 || comparison.ErrantTransactions == 0 {
 		return false, nil
 	}
+	return hasOnlyGTIDAdditionsFromSource(primary, candidate, primaryUUID)
+}
 
-	primaryUUID = strings.ToLower(strings.TrimSpace(primaryUUID))
-	if !validGTIDUUID(primaryUUID) {
+func hasOnlyGTIDAdditionsFromSource(baseline, candidate GTIDSet, sourceUUID string) (bool, error) {
+	sourceUUID = strings.ToLower(strings.TrimSpace(sourceUUID))
+	if !validGTIDUUID(sourceUUID) {
 		return false, nil
 	}
 	for source, candidateIntervals := range candidate.intervals {
@@ -98,11 +136,11 @@ func likelyTemporalGTIDSamplingSkew(primary, candidate GTIDSet, primaryUUID stri
 		if err != nil {
 			return false, err
 		}
-		overlap, err := overlapTransactionCount(candidateIntervals, primary.intervals[source])
+		overlap, err := overlapTransactionCount(candidateIntervals, baseline.intervals[source])
 		if err != nil {
 			return false, err
 		}
-		if candidateCount > overlap && gtidSourceUUID(source) != primaryUUID {
+		if candidateCount > overlap && gtidSourceUUID(source) != sourceUUID {
 			return false, nil
 		}
 	}

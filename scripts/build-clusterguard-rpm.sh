@@ -5,7 +5,7 @@ export COPYFILE_DISABLE=1
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 repository="$(cd "${script_dir}/.." && pwd)"
 output="${repository}/dist"
-version="1.0.0"
+version="2.2"
 release="1"
 goarch="${CG_RPM_GOARCH:-amd64}"
 nfpm_binary="${CG_NFPM_BINARY:-$(command -v nfpm 2>/dev/null || true)}"
@@ -17,8 +17,8 @@ usage: build-clusterguard-rpm.sh [options]
 
 Options:
   --output DIR          RPM output directory
-  --version VERSION     RPM version, for example 1.0.0
-  --release RELEASE     RPM release, for example 1 or 0.1.rc1
+  --version VERSION     RPM version, for example 2.2
+  --release RELEASE     RPM release, for example 1
   --goarch ARCH         amd64 or arm64
   --nfpm-binary FILE    trusted nFPM executable
   --jq-binary FILE      static Linux jq matching --goarch
@@ -70,19 +70,29 @@ mkdir -p \
   "${root}/bin" \
   "${root}/scripts" \
   "${root}/configs" \
+  "${root}/deploy/docker-swarm/mysql" \
+  "${root}/deploy/docker-swarm/postgresql" \
+  "${root}/deploy/kubernetes/fence-guard" \
+  "${root}/deploy/kubernetes/mysql" \
   "${root}/packaging" \
   "${root}/docs"
+
+commit="$(git -C "${repository}" rev-parse HEAD 2>/dev/null || printf unknown)"
+build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+version_ldflags="-s -w -X clusterguard.io/ha/internal/buildinfo.Version=${version} -X clusterguard.io/ha/internal/buildinfo.Release=${release} -X clusterguard.io/ha/internal/buildinfo.Commit=${commit} -X clusterguard.io/ha/internal/buildinfo.BuiltAt=${build_time}"
 
 build_targets=(
   "clusterguard:./cmd/clusterguard"
   "cgctl:./cmd/cgctl"
   "clusterguard-agent:./cmd/clusterguard-agent"
+  "clusterguard-k8s-fence-guard:./cmd/clusterguard-k8s-fence-guard"
+  "clusterguard-update-helper:./cmd/clusterguard-update-helper"
 )
 for target in "${build_targets[@]}"; do
   command_path="${target%%:*}"
   package_path="${target#*:}"
   CGO_ENABLED=0 GOOS=linux GOARCH="${goarch}" \
-    go -C "${repository}" build -trimpath -ldflags "-s -w" \
+    go -C "${repository}" build -trimpath -ldflags "${version_ldflags}" \
       -o "${root}/bin/${command_path}" "${package_path}"
 done
 install -m 0755 "${jq_binary}" "${root}/bin/jq"
@@ -91,14 +101,24 @@ helpers=(
   clusterguard-configure.sh
   clusterguard-agent-stdio.sh
   clusterguard-node-lifecycle.sh
+  clusterguard-package-resolve.sh
+  clusterguard-adapter-runtime-install.sh
+  clusterguard-control-join.sh
   clusterguard-mysql-install.sh
   clusterguard-mysql-sync.sh
   clusterguard-mysql-probe-cleanup.sh
+  clusterguard-mysql-qualification.sh
+  clusterguard-postgresql-build.sh
   clusterguard-postgresql-install.sh
   clusterguard-postgresql-sync.sh
   clusterguard-preflight.sh
   clusterguard-smoke.sh
   clusterguard-ha-matrix.sh
+  clusterguard-cluster-shutdown.sh
+  clusterguard-cluster-restore.sh
+  clusterguard-cluster-finalize.sh
+  clusterguard-upgrade.sh
+  clusterguard-update-job.sh
 )
 for helper in "${helpers[@]}"; do
   install -m 0755 "${repository}/scripts/${helper}" "${root}/scripts/${helper}"
@@ -106,6 +126,8 @@ done
 
 install -m 0644 "${repository}/configs/clusterguard.example.json" "${root}/configs/"
 install -m 0644 "${repository}/configs/clusterguard-agent.example.json" "${root}/configs/"
+install -m 0644 "${repository}/configs/clusterguard-agent.docker-swarm.example.json" "${root}/configs/"
+install -m 0644 "${repository}/configs/clusterguard-update.example.json" "${root}/configs/"
 install -m 0644 "${repository}/packaging/systemd/clusterguard.env.example" "${root}/packaging/"
 install -m 0644 "${repository}/packaging/systemd/"*.service "${root}/packaging/"
 install -m 0644 "${repository}/packaging/systemd/"*.timer "${root}/packaging/"
@@ -114,9 +136,28 @@ install -m 0644 "${repository}/README.md" "${root}/docs/README.md"
 install -m 0644 "${repository}/docs/zh-CN/offline-rpm-install.md" "${root}/docs/"
 install -m 0644 "${repository}/docs/zh-CN/database-preparation.md" "${root}/docs/"
 install -m 0644 "${repository}/docs/zh-CN/operations-manual.md" "${root}/docs/"
+install -m 0644 "${repository}/docs/zh-CN/update-and-patch.md" "${root}/docs/"
+install -m 0644 "${repository}/docs/zh-CN/docker-swarm-mysql.md" "${root}/docs/"
+install -m 0644 "${repository}/docs/zh-CN/kubernetes-mysql.md" "${root}/docs/"
+install -m 0644 "${repository}/docs/zh-CN/postgresql-ha.md" "${root}/docs/"
+install -m 0644 "${repository}/docs/zh-CN/postgresql-production-qualification-2026-08-23.md" "${root}/docs/"
+install -m 0755 "${repository}/deploy/docker-swarm/install-docker-static.sh" "${root}/deploy/docker-swarm/"
+install -m 0755 "${repository}/deploy/docker-swarm/mysql/prepare-host.sh" "${root}/deploy/docker-swarm/mysql/"
+install -m 0755 "${repository}/deploy/docker-swarm/mysql/install-mysql-client.sh" "${root}/deploy/docker-swarm/mysql/"
+install -m 0755 "${repository}/deploy/docker-swarm/mysql/bootstrap-replication.sh" "${root}/deploy/docker-swarm/mysql/"
+install -m 0644 "${repository}/deploy/docker-swarm/mysql/mysql-stack.yml" "${root}/deploy/docker-swarm/mysql/"
+install -m 0755 "${repository}/deploy/docker-swarm/postgresql/10-clusterguard-init.sh" "${root}/deploy/docker-swarm/postgresql/"
+install -m 0755 "${repository}/deploy/docker-swarm/postgresql/clusterguard-postgres-entrypoint.sh" "${root}/deploy/docker-swarm/postgresql/"
+install -m 0755 "${repository}/deploy/docker-swarm/postgresql/maintenance-rollout.sh" "${root}/deploy/docker-swarm/postgresql/"
+install -m 0755 "${repository}/deploy/docker-swarm/postgresql/prepare-host.sh" "${root}/deploy/docker-swarm/postgresql/"
+install -m 0755 "${repository}/deploy/docker-swarm/postgresql/verify-replication.sh" "${root}/deploy/docker-swarm/postgresql/"
+install -m 0644 "${repository}/deploy/docker-swarm/postgresql/postgresql-stack.yml" "${root}/deploy/docker-swarm/postgresql/"
+install -m 0644 "${repository}/deploy/kubernetes/clusterguard-rbac.yaml" "${root}/deploy/kubernetes/"
+install -m 0644 "${repository}/deploy/kubernetes/kubernetes-credentials.example.json" "${root}/deploy/kubernetes/"
+install -m 0644 "${repository}/deploy/kubernetes/fence-guard/Dockerfile" "${root}/deploy/kubernetes/fence-guard/"
+install -m 0644 "${repository}/deploy/kubernetes/mysql/"*.yaml "${root}/deploy/kubernetes/mysql/"
+install -m 0755 "${repository}/deploy/kubernetes/mysql/bootstrap-writer-endpoint.sh" "${root}/deploy/kubernetes/mysql/"
 
-commit="$(git -C "${repository}" rev-parse HEAD 2>/dev/null || printf unknown)"
-build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 cat >"${root}/BUILD-INFO" <<EOF
 product=ClusterGuard HA
 version=${version}

@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: REPLACE_WITH_STATEFULSET_NAME
+  namespace: database
+  annotations:
+    clusterguard.io/fence-guard: enabled
+    clusterguard.io/fenced: "false"
+    clusterguard.io/mysql-role: replica
+spec:
+  # Each database instance must use a dedicated one-replica StatefulSet.
+  replicas: 1
+  template:
+    spec:
+      serviceAccountName: clusterguard-db-fence-guard
+      automountServiceAccountToken: false
+      securityContext:
+        fsGroup: 65532
+      initContainers:
+        - name: clusterguard-fence-guard
+          image: clusterguard/k8s-fence-guard:2.2.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - --credentials=/etc/clusterguard/kubernetes-credentials.json
+            - --mysql-config=/var/lib/clusterguard-role/99-clusterguard-role.cnf
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          volumeMounts:
+            - name: clusterguard-kubernetes-credentials
+              mountPath: /etc/clusterguard
+              readOnly: true
+            - name: clusterguard-mysql-role
+              mountPath: /var/lib/clusterguard-role
+            - name: clusterguard-service-account
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
+      containers:
+        - name: REPLACE_WITH_MYSQL_CONTAINER_NAME
+          volumeMounts:
+            - name: clusterguard-mysql-role
+              mountPath: /etc/mysql/conf.d/99-clusterguard-role.cnf
+              subPath: 99-clusterguard-role.cnf
+              readOnly: true
+      volumes:
+        - name: clusterguard-service-account
+          projected:
+            defaultMode: 0400
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 3600
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+        - name: clusterguard-kubernetes-credentials
+          configMap:
+            name: clusterguard-kubernetes-credentials
+        - name: clusterguard-mysql-role
+          emptyDir: {}

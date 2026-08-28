@@ -75,7 +75,7 @@ func TestPlatformUserAndSessionRoundTripWithoutPlaintextSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encode replicated state: %v", err)
 	}
-	for _, plaintext := range []string{"admin123", "session-plaintext", "csrf-plaintext"} {
+	for _, plaintext := range []string{"bootstrap-password", "session-plaintext", "csrf-plaintext"} {
 		if bytes.Contains(raw, []byte(plaintext)) {
 			t.Fatalf("replicated auth state contains plaintext %q", plaintext)
 		}

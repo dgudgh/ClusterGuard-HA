@@ -53,15 +53,38 @@ func (reconciler *Reconciler) convergeSelfIsolation(ctx context.Context, policy 
 		}
 		running, inRecovery, statusErr := reconciler.postgresql.Status(ctx, policy)
 		if statusErr != nil {
-			return ReconcileResult{ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileSelfIsolate, Message: "VIP released; PostgreSQL status is unknown"}, errors.Join(releaseErr, statusErr)
+			var intentErr error
+			if running {
+				if inspector, ok := reconciler.postgresql.(PostgreSQLStandbyIntentInspector); ok {
+					var standbyIntent bool
+					standbyIntent, intentErr = inspector.StandbyIntent(policy)
+					if intentErr == nil && standbyIntent {
+						return ReconcileResult{
+							ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileSelfIsolate,
+							Message: "VIP released; PostgreSQL standby startup remains isolated without a writer endpoint",
+						}, errors.Join(releaseErr, statusErr)
+					}
+				}
+			}
+			stopErr := reconciler.postgresql.Stop(ctx, policy)
+			stopped, _, verifyErr := reconciler.postgresql.Status(ctx, policy)
+			if verifyErr == nil && stopped {
+				verifyErr = fmt.Errorf("PostgreSQL writer remains active after self-isolation")
+			}
+			return ReconcileResult{ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileSelfIsolate, Message: "VIP released; unknown PostgreSQL role forced the local service to stop"}, errors.Join(releaseErr, statusErr, intentErr, stopErr, verifyErr)
 		}
-		if statusErr == nil && running && inRecovery {
+		if running && inRecovery {
 			return ReconcileResult{ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileSelfIsolate, Message: "VIP released; PostgreSQL streaming standby remains active"}, releaseErr
 		}
-		if statusErr == nil && !running {
+		if !running {
 			return ReconcileResult{ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileSelfIsolate, Message: "VIP released; PostgreSQL is not currently eligible for ownership"}, releaseErr
 		}
-		return ReconcileResult{ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileSelfIsolate, Message: "VIP released; PostgreSQL writer left running without VIP pending controller authorization"}, releaseErr
+		stopErr := reconciler.postgresql.Stop(ctx, policy)
+		stillRunning, _, verifyErr := reconciler.postgresql.Status(ctx, policy)
+		if verifyErr == nil && stillRunning {
+			verifyErr = fmt.Errorf("PostgreSQL writer remains active after self-isolation")
+		}
+		return ReconcileResult{ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileSelfIsolate, Message: "VIP released and PostgreSQL writer stopped after majority authorization loss"}, errors.Join(releaseErr, stopErr, verifyErr)
 	}
 	roleErr := reconciler.roles.PersistReadOnly(ctx, policy, true)
 	message := "VIP released and MySQL persisted read-only"
@@ -102,6 +125,14 @@ func (reconciler *Reconciler) reconcile(ctx context.Context, policy ClusterPolic
 	if decision.Action == ReconcileBootstrapPrimary {
 		return reconciler.bootstrapPrimary(ctx, policy)
 	}
+	// A fail-closed Agent can persist a read-only restart fence while the
+	// database task is unavailable. Once the controller has re-established a
+	// stable keep lease for the same owner, converge that durable fence before
+	// testing runtime writability. Checking the runtime first would trap a
+	// restarted primary in read-only mode forever.
+	if err := reconciler.convergeWritableRestartState(ctx, policy); err != nil {
+		return reconciler.selfIsolate(ctx, policy, err)
+	}
 	readOnly, superReadOnly, err := reconciler.roles.Status(ctx, policy)
 	if err != nil || readOnly || superReadOnly {
 		if err == nil {
@@ -119,6 +150,35 @@ func (reconciler *Reconciler) reconcile(ctx context.Context, policy ClusterPolic
 		}
 	}
 	return ReconcileResult{ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileKeepVIP, Message: "active majority lease authorizes local VIP ownership"}, nil
+}
+
+// convergeWritableRestartState commits a promoted MySQL primary's durable role
+// only after the controller has finalized a stable ownership lease. Transition
+// targets intentionally remain restart-fenced until this point. A failure to
+// prove the durable state is handled by the caller through self-isolation.
+func (reconciler *Reconciler) convergeWritableRestartState(ctx context.Context, policy ClusterPolicy) error {
+	durable, supported := reconciler.roles.(DurableRoleController)
+	if !supported {
+		return nil
+	}
+	status, err := durable.IsolationStatus(ctx, policy)
+	if err != nil {
+		return fmt.Errorf("inspect writable MySQL restart state: %w", err)
+	}
+	if !status.RestartReadOnly && !status.PersistedReadOnly {
+		return nil
+	}
+	if err := reconciler.roles.PersistReadOnly(ctx, policy, false); err != nil {
+		return fmt.Errorf("commit writable MySQL restart state: %w", err)
+	}
+	status, err = durable.IsolationStatus(ctx, policy)
+	if err != nil {
+		return fmt.Errorf("verify writable MySQL restart state: %w", err)
+	}
+	if status.RestartReadOnly || status.PersistedReadOnly || !status.DatabaseReachable || status.ReadOnly || status.SuperReadOnly {
+		return fmt.Errorf("writable MySQL restart state did not converge")
+	}
+	return nil
 }
 
 func (reconciler *Reconciler) reconcilePostgreSQL(ctx context.Context, policy ClusterPolicy, action ReconcileAction) (ReconcileResult, error) {
@@ -240,9 +300,12 @@ func (reconciler *Reconciler) bootstrapPrimary(ctx context.Context, policy Clust
 	if err != nil {
 		return reconciler.selfIsolate(ctx, policy, err)
 	}
-	if !ownsVIP {
-		if err := reconciler.vip.Acquire(ctx, policy); err != nil {
-			return reconciler.selfIsolate(ctx, policy, fmt.Errorf("acquire reboot bootstrap VIP: %w", err))
+	// Never expose the writer endpoint while MySQL is read-only. A stale VIP
+	// may survive a reboot or an interrupted bootstrap, so remove it before
+	// activating the database and reacquire it only after writability is proven.
+	if ownsVIP {
+		if err := reconciler.vip.Release(ctx, policy); err != nil {
+			return reconciler.selfIsolate(ctx, policy, fmt.Errorf("release read-only reboot bootstrap VIP: %w", err))
 		}
 	}
 	if err := reconciler.roles.PersistReadOnly(ctx, policy, false); err != nil {
@@ -254,6 +317,9 @@ func (reconciler *Reconciler) bootstrapPrimary(ctx context.Context, policy Clust
 			err = fmt.Errorf("rebooted primary did not become fully writable")
 		}
 		return reconciler.selfIsolate(ctx, policy, err)
+	}
+	if err := reconciler.vip.Acquire(ctx, policy); err != nil {
+		return reconciler.selfIsolate(ctx, policy, fmt.Errorf("acquire reboot bootstrap VIP: %w", err))
 	}
 	ownsVIP, err = reconciler.vip.Status(ctx, policy)
 	if err != nil || !ownsVIP {

@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: clusterguard-db-fence-guard
+  namespace: database
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: clusterguard-db-fence-guard
+  namespace: database
+rules:
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: clusterguard-db-fence-guard
+  namespace: database
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: clusterguard-db-fence-guard
+subjects:
+  - kind: ServiceAccount
+    name: clusterguard-db-fence-guard
+    namespace: database
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: clusterguard-kubernetes-credentials
+  namespace: database
+data:
+  kubernetes-credentials.json: |
+    {
+      "ca_file": "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
+      "bearer_token_file": "/var/run/secrets/kubernetes.io/serviceaccount/token"
+    }

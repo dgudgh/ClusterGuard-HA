@@ -1,8 +1,12 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -20,12 +24,14 @@ type nodeLifecycleManagerSpy struct {
 	secrets         lifecycle.ExecutionSecrets
 	approvalToken   string
 	actor           string
+	contextErr      error
 	task            lifecycle.Task
 	err             error
 }
 
-func (manager *nodeLifecycleManagerSpy) Execute(_ context.Context, request lifecycle.Request, plan lifecycle.Plan, secrets lifecycle.ExecutionSecrets, approvalToken string) (lifecycle.Task, error) {
+func (manager *nodeLifecycleManagerSpy) Execute(ctx context.Context, request lifecycle.Request, plan lifecycle.Plan, secrets lifecycle.ExecutionSecrets, approvalToken string) (lifecycle.Task, error) {
 	manager.calls++
+	manager.contextErr = ctx.Err()
 	manager.request = request
 	manager.plan = plan
 	manager.secrets = secrets
@@ -36,8 +42,9 @@ func (manager *nodeLifecycleManagerSpy) Execute(_ context.Context, request lifec
 	return manager.task, manager.err
 }
 
-func (manager *nodeLifecycleManagerSpy) ExecuteAuthorized(_ context.Context, request lifecycle.Request, plan lifecycle.Plan, secrets lifecycle.ExecutionSecrets, actor string) (lifecycle.Task, error) {
+func (manager *nodeLifecycleManagerSpy) ExecuteAuthorized(ctx context.Context, request lifecycle.Request, plan lifecycle.Plan, secrets lifecycle.ExecutionSecrets, actor string) (lifecycle.Task, error) {
 	manager.authorizedCalls++
+	manager.contextErr = ctx.Err()
 	manager.request = request
 	manager.plan = plan
 	manager.secrets = secrets
@@ -122,6 +129,28 @@ func TestNodeSyncAPIPlansFromCanonicalPrimaryAndExecutesWithoutEchoingSecrets(t 
 	}
 }
 
+func TestNodeSyncExecutionSurvivesClientRequestCancellation(t *testing.T) {
+	server, _, cluster, manager := prepareNodeSyncAPI(t)
+	payload := nodeSyncRequestBody(cluster.ResourceID)
+	payload["approval_token"] = "approved-lifecycle"
+	contents, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestContext, cancel := context.WithCancel(context.Background())
+	cancel()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/nodes/sync/execute", bytes.NewReader(contents)).WithContext(requestContext)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+testControlToken)
+	response := httptest.NewRecorder()
+
+	server.Handler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || manager.calls != 1 || manager.contextErr != nil {
+		t.Fatalf("canceled client interrupted accepted lifecycle work: code=%d calls=%d context_err=%v body=%s", response.Code, manager.calls, manager.contextErr, response.Body.String())
+	}
+}
+
 func TestSessionLifecycleUsesPlatformAdminAuthorizationWithoutClientToken(t *testing.T) {
 	server, _, cluster, manager := prepareNodeSyncAPI(t)
 	client, username := attachAuthenticatedTestClient(t, server, server.store, model.PlatformRoleAdmin)
@@ -166,6 +195,40 @@ func TestNodeSyncCapabilitiesReportWhetherRealExecutionIsConfigured(t *testing.T
 	response = callJSON(t, unconfigured.Handler(), http.MethodGet, "/api/v1/nodes/sync/capabilities", nil)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"available":false`) || !strings.Contains(response.Body.String(), "not configured") {
 		t.Fatalf("unconfigured lifecycle capabilities: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestControllerOnlyExpansionDoesNotRequireDatabaseTopologyOrDonor(t *testing.T) {
+	server, repository := newTestServer(t)
+	cluster, _, err := repository.CreateClusterWithEndpoints(
+		model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "control-plane-only"},
+		[]model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-unobserved", Port: 3306, Active: true}},
+	)
+	if err != nil {
+		t.Fatalf("create controller-only lifecycle cluster: %v", err)
+	}
+	for index := 1; index <= 3; index++ {
+		if _, err := repository.PutNode(model.DatabaseNode{
+			NodeName: fmt.Sprintf("cg-control-%04d", index), Kind: model.NodeController,
+			Hostname: fmt.Sprintf("controller-%d", index), IPAddress: fmt.Sprintf("192.0.2.%d", 10+index), Active: true,
+		}); err != nil {
+			t.Fatalf("register controller %d: %v", index, err)
+		}
+	}
+	manager := &nodeLifecycleManagerSpy{}
+	WithNodeLifecycle(manager, lifecycle.Capabilities{}, LifecycleSecretProviderFunc(func(context.Context, lifecycle.Request) (lifecycle.ExecutionSecrets, error) {
+		return lifecycle.ExecutionSecrets{SSHPassword: "write-only"}, nil
+	}))(server)
+	payload := map[string]interface{}{
+		"cluster_id": cluster.ResourceID, "action": "add", "sync_method": "auto",
+		"targets": []map[string]interface{}{
+			{"node_name": "cg-control-0004", "kind": "controller", "hostname": "controller-4", "ip_address": "192.0.2.14", "ssh_user": "root", "ssh_port": 22},
+			{"node_name": "cg-control-0005", "kind": "controller", "hostname": "controller-5", "ip_address": "192.0.2.15", "ssh_user": "root", "ssh_port": 22},
+		},
+	}
+	response := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/nodes/sync/plan", payload)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"blocked":false`) || !strings.Contains(response.Body.String(), `"final_controller_count":5`) {
+		t.Fatalf("controller-only lifecycle required database topology: %d %s", response.Code, response.Body.String())
 	}
 }
 

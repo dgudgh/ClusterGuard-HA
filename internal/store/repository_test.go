@@ -47,6 +47,98 @@ func TestPersistentSnapshotSyncsFileAndDirectoryBeforeSuccess(t *testing.T) {
 	}
 }
 
+func TestPersistentSnapshotKeepsPreviousValidatedGeneration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metadata.json")
+	repository, err := Open(path)
+	if err != nil {
+		t.Fatalf("open repository: %v", err)
+	}
+	first, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "first"})
+	if err != nil {
+		t.Fatalf("persist first generation: %v", err)
+	}
+	if _, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "second"}); err != nil {
+		t.Fatalf("persist second generation: %v", err)
+	}
+	previous, err := Open(previousSnapshotPath(path))
+	if err != nil {
+		t.Fatalf("open previous generation: %v", err)
+	}
+	if stored, found := previous.Cluster(first.ResourceID); !found || stored.DisplayName != "first" {
+		t.Fatalf("previous generation lost the committed cluster: %+v found=%t", stored, found)
+	}
+	if len(previous.Clusters()) != 1 {
+		t.Fatalf("previous generation clusters=%d, want 1", len(previous.Clusters()))
+	}
+}
+
+func TestOpenFallsBackToPreviousGenerationAfterPowerLossCorruption(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metadata.json")
+	repository, err := Open(path)
+	if err != nil {
+		t.Fatalf("open repository: %v", err)
+	}
+	first, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "survives"})
+	if err != nil {
+		t.Fatalf("persist first generation: %v", err)
+	}
+	if _, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "latest"}); err != nil {
+		t.Fatalf("persist latest generation: %v", err)
+	}
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("open current generation for corruption: %v", err)
+	}
+	if _, err := file.Write([]byte{0, 0, 0}); err != nil {
+		_ = file.Close()
+		t.Fatalf("corrupt current generation: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close corrupt current generation: %v", err)
+	}
+
+	recovered, err := Open(path)
+	if err != nil {
+		t.Fatalf("recover from previous generation: %v", err)
+	}
+	if stored, found := recovered.Cluster(first.ResourceID); !found || stored.DisplayName != "survives" {
+		t.Fatalf("recovered generation lost the durable cluster: %+v found=%t", stored, found)
+	}
+	if len(recovered.Clusters()) != 1 {
+		t.Fatalf("recovered generation clusters=%d, want the previous complete generation", len(recovered.Clusters()))
+	}
+	if _, err := recovered.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "after-recovery"}); err != nil {
+		t.Fatalf("replace corrupt current generation after fallback: %v", err)
+	}
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen repaired current generation: %v", err)
+	}
+	if len(reopened.Clusters()) != 2 {
+		t.Fatalf("repaired generation clusters=%d, want 2", len(reopened.Clusters()))
+	}
+	previous, err := Open(previousSnapshotPath(path))
+	if err != nil {
+		t.Fatalf("reopen retained previous generation: %v", err)
+	}
+	if len(previous.Clusters()) != 1 {
+		t.Fatalf("fallback previous generation was overwritten: %+v", previous.Clusters())
+	}
+}
+
+func TestOpenRejectsCurrentAndPreviousGenerationWhenBothAreCorrupt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metadata.json")
+	if err := os.WriteFile(path, []byte(`{"clusters":`), 0o600); err != nil {
+		t.Fatalf("write corrupt current generation: %v", err)
+	}
+	if err := os.WriteFile(previousSnapshotPath(path), []byte(`{"clusters":`), 0o600); err != nil {
+		t.Fatalf("write corrupt previous generation: %v", err)
+	}
+	if _, err := Open(path); err == nil || !strings.Contains(err.Error(), "previous generation") {
+		t.Fatalf("open two corrupt generations error=%v", err)
+	}
+}
+
 func TestPersistentSnapshotFileSyncFailureDoesNotPublishLiveState(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "metadata.json")
 	repository, err := Open(path)
@@ -1557,6 +1649,9 @@ func TestDiscoverySnapshotPersistsCompleteInventoryTopologyAcrossRestart(t *test
 	if instances[replicaID].Health.State != model.HealthUnknown || instances[replicaID].Health.ObservedAt != secondObservedAt {
 		t.Fatalf("failed member exposed stale health: %+v", instances[replicaID].Health)
 	}
+	if instances[replicaID].Role != model.RoleUnknown || instances[replicaID].PromotionEligible || instances[replicaID].Replication.IOThread != model.ThreadUnknown || instances[replicaID].Replication.SQLThread != model.ThreadUnknown {
+		t.Fatalf("failed member exposed stale runtime role or replication state: %+v", instances[replicaID])
+	}
 	secondProbes := probeStatusesByEndpoint(second.Probes)
 	if secondProbes[endpoints[1].ResourceID].InstanceID != replicaID {
 		t.Fatalf("failed bound endpoint lost stable instance UUID: %+v", secondProbes[endpoints[1].ResourceID])
@@ -1581,6 +1676,197 @@ func TestDiscoverySnapshotPersistsCompleteInventoryTopologyAcrossRestart(t *test
 	}
 	if samples := reopened.MetricSamples(cluster.ResourceID); len(samples) != 1 || samples[0].InstanceID == "" {
 		t.Fatalf("topology metrics did not persist atomically: %+v", samples)
+	}
+}
+
+func TestApplyDiscoveryRefreshRetiresStalePrimaryAfterVerifiedHAOwnerMoves(t *testing.T) {
+	repository := NewMemory()
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{
+		Engine: model.EngineMySQL, DisplayName: "verified-owner-failover",
+	}, []model.Endpoint{
+		{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true},
+		{Kind: model.EndpointDatabase, Hostname: "mysql-b", Port: 3306, Active: true},
+		{Kind: model.EndpointDatabase, Hostname: "mysql-c", Port: 3306, Active: true},
+	})
+	if err != nil {
+		t.Fatalf("create inventory: %v", err)
+	}
+
+	primary := mysqlInstance(cluster.ResourceID, "mysql-a", "192.0.2.10", 3306)
+	primary.EngineIdentity["server_uuid"] = "mysql-a-native"
+	primary.Role = model.RolePrimary
+	primary.PromotionEligible = true
+	primary.EngineMetadata = map[string]string{
+		"version": "8.0.44", "read_only": "false", "super_read_only": "false",
+		"semi_sync_source_status": "true",
+	}
+	replicaB := mysqlInstance(cluster.ResourceID, "mysql-b", "192.0.2.11", 3306)
+	replicaB.EngineIdentity["server_uuid"] = "mysql-b-native"
+	replicaB.Replication = model.ReplicationStatus{
+		SourceIdentity: model.EngineIdentity{"server_uuid": "mysql-a-native"},
+		IOThread:       model.ThreadRunning, SQLThread: model.ThreadRunning,
+	}
+	replicaC := mysqlInstance(cluster.ResourceID, "mysql-c", "192.0.2.12", 3306)
+	replicaC.EngineIdentity["server_uuid"] = "mysql-c-native"
+	replicaC.Replication = model.ReplicationStatus{
+		SourceIdentity: model.EngineIdentity{"server_uuid": "mysql-a-native"},
+		IOThread:       model.ThreadRunning, SQLThread: model.ThreadRunning,
+	}
+	firstObservedAt := time.Date(2026, time.August, 13, 7, 0, 0, 0, time.UTC)
+	first, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{
+		ClusterID: cluster.ResourceID, InventoryGeneration: currentInventoryGeneration(t, repository, cluster.ResourceID),
+		ObservedAt: firstObservedAt,
+		Observations: []DiscoveryObservation{
+			{EndpointID: endpoints[0].ResourceID, Instance: primary},
+			{EndpointID: endpoints[1].ResourceID, Instance: replicaB},
+			{EndpointID: endpoints[2].ResourceID, Instance: replicaC},
+		},
+		Probes: []model.ProbeStatus{
+			{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}},
+			{EndpointID: endpoints[1].ResourceID, Health: model.Health{State: model.HealthHealthy}},
+			{EndpointID: endpoints[2].ResourceID, Health: model.Health{State: model.HealthHealthy}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("seed topology: %v", err)
+	}
+	firstProbes := probeStatusesByEndpoint(first.Probes)
+	oldPrimaryID := firstProbes[endpoints[0].ResourceID].InstanceID
+	newPrimaryID := firstProbes[endpoints[2].ResourceID].InstanceID
+	haEndpoint, _, err := repository.PutHAEndpoint(HAEndpointSpec{
+		ClusterID: cluster.ResourceID, Kind: model.EndpointVIP, IPAddress: "192.0.2.100",
+		Interface: "eth0", Prefix: 24, OwnerID: oldPrimaryID, Active: true,
+	})
+	if err != nil {
+		t.Fatalf("register VIP: %v", err)
+	}
+	if err := repository.CommitHAEndpointOwner(cluster.ResourceID, haEndpoint.ResourceID, newPrimaryID, true); err != nil {
+		t.Fatalf("commit verified VIP owner: %v", err)
+	}
+
+	newPrimary := mysqlInstance(cluster.ResourceID, "mysql-c", "192.0.2.12", 3306)
+	newPrimary.EngineIdentity["server_uuid"] = "mysql-c-native"
+	newPrimary.Role = model.RolePrimary
+	newPrimary.EngineMetadata = map[string]string{"version": "8.0.44", "read_only": "false", "super_read_only": "false"}
+	replicaB.Replication.SourceIdentity = model.EngineIdentity{"server_uuid": "mysql-c-native"}
+	secondObservedAt := firstObservedAt.Add(time.Minute)
+	second, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{
+		ClusterID: cluster.ResourceID, InventoryGeneration: currentInventoryGeneration(t, repository, cluster.ResourceID),
+		ObservedAt: secondObservedAt,
+		Observations: []DiscoveryObservation{
+			{EndpointID: endpoints[1].ResourceID, Instance: replicaB},
+			{EndpointID: endpoints[2].ResourceID, Instance: newPrimary},
+		},
+		Probes: []model.ProbeStatus{
+			{EndpointID: endpoints[0].ResourceID, Outcome: model.ProbeOutcomeDatabaseUnavailable, Health: model.Health{State: model.HealthUnhealthy, Summary: "database probe failed"}},
+			{EndpointID: endpoints[1].ResourceID, Health: model.Health{State: model.HealthHealthy}},
+			{EndpointID: endpoints[2].ResourceID, Outcome: model.ProbeOutcomeMetricsUnavailable, Health: model.Health{State: model.HealthDegraded, Summary: "performance metrics unavailable"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("publish post-failover topology: %v", err)
+	}
+
+	instances := instancesByID(second.Instances)
+	oldPrimary := instances[oldPrimaryID]
+	if oldPrimary.Role != model.RoleUnknown || oldPrimary.Health.State != model.HealthUnhealthy {
+		t.Fatalf("stale former primary retained runtime ownership: %+v", oldPrimary)
+	}
+	if oldPrimary.PromotionEligible || oldPrimary.Replication.IOThread != model.ThreadUnknown || oldPrimary.Replication.SQLThread != model.ThreadUnknown {
+		t.Fatalf("stale former primary retained executable runtime state: %+v", oldPrimary)
+	}
+	if probeStatusesByEndpoint(second.Probes)[endpoints[0].ResourceID].Outcome != model.ProbeOutcomeDatabaseUnavailable {
+		t.Fatalf("offline former primary lost typed probe evidence: %+v", second.Probes)
+	}
+	if oldPrimary.EngineMetadata["version"] != "8.0.44" || oldPrimary.EngineMetadata["read_only"] != "" || oldPrimary.EngineMetadata["super_read_only"] != "" || oldPrimary.EngineMetadata["semi_sync_source_status"] != "" {
+		t.Fatalf("stale former primary runtime metadata was not sanitized: %+v", oldPrimary.EngineMetadata)
+	}
+	primaryCount := 0
+	for _, instance := range second.Instances {
+		if instance.Role == model.RolePrimary {
+			primaryCount++
+			if instance.ResourceID != newPrimaryID {
+				t.Fatalf("unexpected authoritative primary: %+v", instance)
+			}
+		}
+	}
+	if primaryCount != 1 {
+		t.Fatalf("published topology has %d primaries, want exactly one: %+v", primaryCount, second.Instances)
+	}
+	persisted := instancesByID(repository.Instances(cluster.ResourceID))
+	if persisted[oldPrimaryID].Role != model.RoleUnknown || persisted[newPrimaryID].Role != model.RolePrimary {
+		t.Fatalf("canonical roles were not persisted: %+v", persisted)
+	}
+}
+
+func TestApplyDiscoveryRefreshClearsUnavailablePrimaryWithoutReplacementWriter(t *testing.T) {
+	repository := NewMemory()
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{
+		Engine: model.EngineMySQL, DisplayName: "primary-unavailable",
+	}, []model.Endpoint{
+		{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true},
+		{Kind: model.EndpointDatabase, Hostname: "mysql-b", Port: 3306, Active: true},
+	})
+	if err != nil {
+		t.Fatalf("create inventory: %v", err)
+	}
+
+	primary := mysqlInstance(cluster.ResourceID, "mysql-a", "192.0.2.10", 3306)
+	primary.EngineIdentity["server_uuid"] = "mysql-a-native"
+	primary.Role = model.RolePrimary
+	primary.PromotionEligible = true
+	primary.EngineMetadata = map[string]string{
+		"version": "8.0.44", "read_only": "false", "super_read_only": "false",
+		"semi_sync_source_status": "true",
+	}
+	replica := mysqlInstance(cluster.ResourceID, "mysql-b", "192.0.2.11", 3306)
+	replica.EngineIdentity["server_uuid"] = "mysql-b-native"
+	replica.Replication = model.ReplicationStatus{
+		SourceIdentity: model.EngineIdentity{"server_uuid": "mysql-a-native"},
+		IOThread:       model.ThreadRunning, SQLThread: model.ThreadRunning,
+	}
+	firstObservedAt := time.Date(2026, time.August, 13, 8, 0, 0, 0, time.UTC)
+	first, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{
+		ClusterID: cluster.ResourceID, InventoryGeneration: currentInventoryGeneration(t, repository, cluster.ResourceID),
+		ObservedAt: firstObservedAt,
+		Observations: []DiscoveryObservation{
+			{EndpointID: endpoints[0].ResourceID, Instance: primary},
+			{EndpointID: endpoints[1].ResourceID, Instance: replica},
+		},
+		Probes: []model.ProbeStatus{
+			{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}},
+			{EndpointID: endpoints[1].ResourceID, Health: model.Health{State: model.HealthHealthy}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("seed topology: %v", err)
+	}
+	primaryID := probeStatusesByEndpoint(first.Probes)[endpoints[0].ResourceID].InstanceID
+
+	second, err := repository.ApplyDiscoveryRefresh(DiscoveryRefresh{
+		ClusterID: cluster.ResourceID, InventoryGeneration: currentInventoryGeneration(t, repository, cluster.ResourceID),
+		ObservedAt: firstObservedAt.Add(time.Minute),
+		Observations: []DiscoveryObservation{
+			{EndpointID: endpoints[1].ResourceID, Instance: replica},
+		},
+		Probes: []model.ProbeStatus{
+			{EndpointID: endpoints[0].ResourceID, Outcome: model.ProbeOutcomeDatabaseUnavailable, Health: model.Health{State: model.HealthUnhealthy, Summary: "database probe failed"}},
+			{EndpointID: endpoints[1].ResourceID, Outcome: model.ProbeOutcomeReachable, Health: model.Health{State: model.HealthHealthy}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("publish unavailable-primary topology: %v", err)
+	}
+
+	unavailablePrimary := instancesByID(second.Instances)[primaryID]
+	if unavailablePrimary.Role != model.RoleUnknown || unavailablePrimary.Health.State != model.HealthUnhealthy {
+		t.Fatalf("unavailable primary retained a fabricated current role: %+v", unavailablePrimary)
+	}
+	if unavailablePrimary.PromotionEligible || unavailablePrimary.Replication.IOThread != model.ThreadUnknown || unavailablePrimary.Replication.SQLThread != model.ThreadUnknown {
+		t.Fatalf("unavailable primary retained executable runtime state: %+v", unavailablePrimary)
+	}
+	if unavailablePrimary.EngineMetadata["version"] != "8.0.44" || unavailablePrimary.EngineMetadata["read_only"] != "" || unavailablePrimary.EngineMetadata["super_read_only"] != "" || unavailablePrimary.EngineMetadata["semi_sync_source_status"] != "" {
+		t.Fatalf("unavailable primary did not preserve identity metadata while clearing runtime metadata: %+v", unavailablePrimary.EngineMetadata)
 	}
 }
 
@@ -2130,7 +2416,7 @@ func TestReconcileMetadataCoordinatesUpdatesBoundEndpointAndPreservesRuntimeFact
 		t.Fatalf("publish failed discovery: %v", err)
 	}
 	failedInstance := failed.Instances[0]
-	if failedInstance.Role != model.RolePrimary || failedInstance.Health.State != model.HealthUnknown || failedInstance.Replication.IOThread != model.ThreadRunning || !failedInstance.Maintenance || !failedInstance.PromotionEligible || failedInstance.EngineMetadata["version"] != "8.4" {
+	if failedInstance.Role != model.RoleUnknown || failedInstance.Health.State != model.HealthUnknown || failedInstance.Replication.IOThread != model.ThreadUnknown || !failedInstance.Maintenance || failedInstance.PromotionEligible || failedInstance.EngineMetadata["version"] != "8.4" {
 		t.Fatalf("malicious metadata leaked into failed discovery topology: %+v", failedInstance)
 	}
 	reopened, err = Open(path)
@@ -2138,7 +2424,7 @@ func TestReconcileMetadataCoordinatesUpdatesBoundEndpointAndPreservesRuntimeFact
 		t.Fatalf("reopen failed discovery: %v", err)
 	}
 	persistedFailed, found := reopened.TopologySnapshot(cluster.ResourceID)
-	if !found || persistedFailed.Instances[0].Role != model.RolePrimary || persistedFailed.Instances[0].Health.State != model.HealthUnknown {
+	if !found || persistedFailed.Instances[0].Role != model.RoleUnknown || persistedFailed.Instances[0].Health.State != model.HealthUnknown {
 		t.Fatalf("failed discovery runtime authority not durable: %+v found=%t", persistedFailed, found)
 	}
 }

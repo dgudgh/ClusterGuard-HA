@@ -88,6 +88,13 @@ printf '%s:%s:*:%s:%s\n' "$(pgpass_escape "${source_host}")" "${source_port}" "$
 printf '*:*:*:%s:%s\n' "${replication_user}" "$(pgpass_escape "${replication_secret}")" >>"${replication_pass}"
 chmod 0600 "${donor_admin_pass}" "${donor_replication_pass}" "${target_pass}" "${replication_pass}"
 chown postgres:postgres "${target_pass}"
+chmod 0751 /etc/clusterguard
+chmod 0750 "$(dirname "${target_pass}")"
+chown root:postgres "$(dirname "${target_pass}")"
+runuser -u postgres -- test -r "${target_pass}" || {
+  echo "PostgreSQL service account cannot read its protected passfile" >&2
+  exit 3
+}
 
 psql_binary=""
 for candidate in "${software_root}/bin/psql" "${CG_POSTGRESQL_PSQL:-}" "$(command -v psql 2>/dev/null || true)"; do

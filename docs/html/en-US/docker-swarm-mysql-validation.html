@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="Docker Swarm MySQL Lab Qualification - ClusterGuard HA operational documentation">
+  <title>Docker Swarm MySQL Lab Qualification | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">Skip to content</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>Search documentation</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="Filter by title">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.2.39.html" data-doc-title="release 2.2.39">Release 2.2.39</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="docker-swarm-mysql.html" data-doc-title="docker swarm mysql">Docker Swarm MySQL</a><a href="kubernetes-mysql.html" data-doc-title="kubernetes mysql">Kubernetes MySQL</a><a href="update-and-patch.html" data-doc-title="version update and rollback">Version Update and Rollback</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="postgresql-production-qualification.html" data-doc-title="postgresql 16.4 production qualification">PostgreSQL 16.4 Production Qualification</a><a href="docker-swarm-mysql-validation.html" data-doc-title="docker swarm mysql lab qualification" aria-current="page" class="active">Docker Swarm MySQL Lab Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
+      <div class="sidebar-meta">
+        <span>Offline documentation build</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">Open navigation</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>Docker Swarm MySQL Lab Qualification</strong></div>
+        <div class="header-actions">
+          <a href="../zh-CN/docker-swarm-mysql-validation.html" lang="zh-CN">简体中文</a>
+          <button id="print-button" type="button">Print</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="docker-swarm-mysql-validation-plan">Docker Swarm MySQL Validation Plan<a class="heading-anchor" href="#docker-swarm-mysql-validation-plan" aria-label="Link to Docker Swarm MySQL Validation Plan">#</a></h1>
+<h2 id="scope">Scope<a class="heading-anchor" href="#scope" aria-label="Link to Scope">#</a></h2>
+<p>Build a three-manager Docker Swarm on <code>192.168.102.152-154</code> and deploy MySQL 8.0.44 with one writer and two replicas. A temporary isolated control plane protects the running PostgreSQL cluster during destructive qualification. After qualification, the MySQL cluster must move into the site&#39;s unified ClusterGuard HA control plane so one API, Raft group, and host Agent manage both independent database clusters.</p>
+<table>
+<thead>
+<tr>
+<th>Resource</th>
+<th>Lab value</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Swarm managers / MySQL hosts</td>
+<td><code>192.168.102.152-154</code></td>
+</tr>
+<tr>
+<td>MySQL</td>
+<td><code>8.0.44:3306</code></td>
+</tr>
+<tr>
+<td>Writer VIP</td>
+<td><code>192.168.102.156/24</code> on <code>ens160</code></td>
+</tr>
+<tr>
+<td>Temporary destructive-test console</td>
+<td><code>https://192.168.102.152:3100/</code>, test phase only</td>
+</tr>
+<tr>
+<td>Temporary test Raft transport</td>
+<td><code>11009/tcp</code>, disabled after qualification</td>
+</tr>
+<tr>
+<td>Final unified control plane</td>
+<td><code>https://192.168.102.152-154:3000/</code>, Raft <code>10009/tcp</code></td>
+</tr>
+<tr>
+<td>Console cluster entries</td>
+<td><code>pg16-ha</code> and <code>swarm-mysql-8.0</code></td>
+</tr>
+</tbody></table>
+<h2 id="execution-phases">Execution phases<a class="heading-anchor" href="#execution-phases" aria-label="Link to Execution phases">#</a></h2>
+<ol>
+<li>Pin the Docker static archive and <code>mysql:8.0.44</code> linux/amd64 manifest and build identical offline media.</li>
+<li>Install Docker and verify clock, firewall, SELinux, overlay networking, and three-manager quorum.</li>
+<li>Label fixed slots and deploy three MySQL Services with durable host data.</li>
+<li>Bootstrap host 01 first, then 02 and 03; verify GTID auto-position, both replication threads, and validation data.</li>
+<li>Start an isolated three-node ClusterGuard Raft group, discover MySQL, and persist the <code>server_uuid -&gt; resource_id -&gt; Swarm Service</code> mapping.</li>
+<li>Register RuntimeTarget, WorkloadBinding, and the Linux VIP HAEndpoint; start host Agents and converge the ownership lease.</li>
+<li>Qualify planned switchovers, failover, former-writer recovery, VIP uniqueness, data convergence, audit, and reports.</li>
+<li>Move Docker MySQL resources, runtime bindings, the HA endpoint, and Agent policies into the unified <code>3000</code> control plane. Verify both clusters and then shut down the temporary <code>3100/11009</code> control plane.</li>
+</ol>
+<h2 id="pass-criteria">Pass criteria<a class="heading-anchor" href="#pass-criteria" aria-label="Link to Pass criteria">#</a></h2>
+<ul>
+<li>All three Swarm managers are Ready and Reachable, and Service management survives one manager loss.</li>
+<li>Exactly one MySQL instance is writable and exactly its host owns the VIP.</li>
+<li><code>01 -&gt; 02 -&gt; 03 -&gt; 01</code> planned switchovers pass and both replicas follow the new writer.</li>
+<li>Scaling the writer Service to zero promotes a candidate only with ClusterGuard Raft majority and fencing evidence; target VIP recovery is within 30 seconds.</li>
+<li>A restarted former-writer task first starts with both read-only controls enabled, catches up, and rejoins the new writer.</li>
+<li>Duplicate VIP, dual writer, duplicate labels, runtime identity mismatch, Agent loss, and Raft quorum loss all fail closed.</li>
+<li>Every mutation produces an Operation, Execution, Verification, AuditEvent, and Report whose outcome agrees with the observed MySQL state.</li>
+</ul>
+<h2 id="evidence">Evidence<a class="heading-anchor" href="#evidence" aria-label="Link to Evidence">#</a></h2>
+<p>Retain Swarm node/service/task output, MySQL server UUID and GTID state, replication and read-only status, VIP ownership, transition timing, former-writer recovery details, ClusterGuard audit/reports, and the exact reason for every injected failure that was blocked. A scenario without this evidence is not counted as passed.</p>
+<h2 id="lab-results-on-2026-08-27">Lab results on 2026-08-27<a class="heading-anchor" href="#lab-results-on-2026-08-27" aria-label="Link to Lab results on 2026-08-27">#</a></h2>
+<p>This run used MySQL 8.0.44, three Swarm managers, three ClusterGuard Raft voters, and host Agents. At completion, host 01 was the only writable primary and owned <code>192.168.102.156/24</code>; hosts 02 and 03 had both read-only controls enabled and running replication threads.</p>
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>Observed result</th>
+<th>Outcome</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Planned <code>01 -&gt; 02 -&gt; 03 -&gt; 01</code> switchovers</td>
+<td>Each completed in about 8 seconds; writer, both replication sources, and VIP converged together</td>
+<td>Pass</td>
+</tr>
+<tr>
+<td>Planned restart of the writer Service</td>
+<td>VIP did not drift while recovery was frozen; the task started from the durable role file and writable state converged after the stable lease returned</td>
+<td>Pass</td>
+</tr>
+<tr>
+<td>Abrupt removal of writer Service 02</td>
+<td>End-to-end recovery from 02 to 01 completed within 21 seconds; workflow execution and verification took about 12.2 seconds</td>
+<td>Pass</td>
+</tr>
+<tr>
+<td>Pre-failure data consistency</td>
+<td>Marker <code>abrupt-failover-1787762799</code> existed on the promoted writer and both rejoined replicas</td>
+<td>Pass</td>
+</tr>
+<tr>
+<td>Former writer 02 rejoin</td>
+<td>Built-in <code>former_primary_rejoin</code> completed in 3 seconds with four persisted verification checks passing</td>
+<td>Pass</td>
+</tr>
+<tr>
+<td>Repeated verification of a succeeded operation</td>
+<td><code>/operations/{id}/verify</code> returned the immutable stored evidence instead of applying the old plan to the new topology</td>
+<td>Pass</td>
+</tr>
+<tr>
+<td>One Docker manager stopped</td>
+<td>Writer 01 and its VIP stayed in place while 03 was unavailable; 03 returned automatically as a read-only replica after Docker restarted</td>
+<td>Pass</td>
+</tr>
+<tr>
+<td>ClusterGuard Raft majority lost</td>
+<td>The switchover plan returned HTTP 503 and no database mutation was created or executed</td>
+<td>Pass</td>
+</tr>
+<tr>
+<td>Unauthorized duplicate VIP</td>
+<td>After the VIP was injected on host 153, its Agent removed it within 3 seconds while the authorized VIP on 152 remained</td>
+<td>Pass</td>
+</tr>
+</tbody></table>
+<p>Primary evidence includes automatic failover operation <code>eb8cd08d-11ad-4cc5-9326-069ad2aa2a52</code> and former-writer rejoin operation <code>63c026dc-fc6a-49bd-b6f9-3fffa26aa68b</code>. Both <code>go test ./... -count=1</code> and <code>go vet ./...</code> passed.</p>
+<p>This qualifies the first Docker Swarm MySQL implementation phase; it is not a substitute for production-equivalent endurance testing. Full host power loss, cross-switch network partition, read-only or full storage, one hundred consecutive transitions, and MySQL 8.4 remain separate target-environment qualifications.</p>
+<h2 id="unified-control-plane-handoff">Unified-control-plane handoff<a class="heading-anchor" href="#unified-control-plane-handoff" aria-label="Link to Unified-control-plane handoff">#</a></h2>
+<p>The isolated <code>3100</code> lab was handed into the production-shaped <code>3000</code> control plane on the same date. The unified <code>/api/v1/clusters</code> response contains healthy <code>pg16-ha</code> and <code>swarm-mysql-8.0</code> resources. PostgreSQL VIP <code>192.168.102.155</code> is attached to its current primary host, Docker MySQL VIP <code>192.168.102.156</code> is attached to its current writer host, and one Agent configuration on each host reconciles both clusters.</p>
+<p>A Docker MySQL <code>01 -&gt; 02 -&gt; 01</code> controlled-switchover regression passed after the handoff; writer role, both replicas, VIP placement, and the pre-transition validation row converged. The temporary <code>clusterguard-swarm-lab.service</code> and dedicated Agent timer are disabled, no host listens on <code>3100</code>, and all three unified controllers serve the console on <code>3000</code>.</p>
+<p>The handoff exposed and fixed two delivery defects. Container labels must be updated to the instance UUIDs assigned by the unified control plane before the Agent takes ownership, otherwise its identity allowlist correctly rejects the task. In addition, the Agent systemd unit uses <code>ProtectSystem=strict</code> and therefore must explicitly allow writes below <code>/etc/clusterguard/docker</code> so it can atomically replace the restart-fence file. Configuration validation and regression tests now enforce these runtime contracts.</p>
+
+          <footer class="document-footer">
+            <span>Source: <code>docs/en-US/docker-swarm-mysql-validation-plan.md</code></span>
+            <a href="../index.html">Documentation language home</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="On this page">
+          <strong>On this page</strong>
+          <a class="toc-level-2" href="#scope">Scope</a><a class="toc-level-2" href="#execution-phases">Execution phases</a><a class="toc-level-2" href="#pass-criteria">Pass criteria</a><a class="toc-level-2" href="#evidence">Evidence</a><a class="toc-level-2" href="#lab-results-on-2026-08-27">Lab results on 2026-08-27</a><a class="toc-level-2" href="#unified-control-plane-handoff">Unified-control-plane handoff</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

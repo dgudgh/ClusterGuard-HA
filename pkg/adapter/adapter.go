@@ -90,8 +90,12 @@ type TopologyResult struct {
 }
 
 type OperationRequest struct {
-	Operation              model.Operation      `json:"operation"`
-	TargetID               model.ResourceID     `json:"target_id,omitempty"`
+	Operation model.Operation  `json:"operation"`
+	TargetID  model.ResourceID `json:"target_id,omitempty"`
+	// SourceID is controller-derived recovery evidence. It is never accepted
+	// from the external API and is used only to bind automatic failover to the
+	// exact failed inventory resource after discovery clears its runtime role.
+	SourceID               model.ResourceID     `json:"-"`
 	IdempotencyKey         string               `json:"idempotency_key,omitempty"`
 	Parameters             map[string]string    `json:"parameters,omitempty"`
 	Credentials            Credentials          `json:"-"`
@@ -114,15 +118,16 @@ type OperationProgressResultReader interface {
 }
 
 type ResolvedOperation struct {
-	OperationID            model.ResourceID       `json:"operation_id"`
-	ObservationToken       string                 `json:"-"`
-	Cluster                model.DatabaseCluster  `json:"cluster"`
-	Snapshot               model.TopologySnapshot `json:"snapshot"`
-	Primary                model.DatabaseInstance `json:"primary"`
-	Target                 model.DatabaseInstance `json:"target"`
-	Credentials            Credentials            `json:"-"`
-	ReplicationCredentials Credentials            `json:"-"`
-	PlanDigest             string                 `json:"-"`
+	OperationID              model.ResourceID       `json:"operation_id"`
+	ObservationToken         string                 `json:"-"`
+	Cluster                  model.DatabaseCluster  `json:"cluster"`
+	Snapshot                 model.TopologySnapshot `json:"snapshot"`
+	Primary                  model.DatabaseInstance `json:"primary"`
+	Target                   model.DatabaseInstance `json:"target"`
+	Credentials              Credentials            `json:"-"`
+	ReplicationCredentials   Credentials            `json:"-"`
+	PlanDigest               string                 `json:"-"`
+	VerifiedIsolatedSourceID model.ResourceID       `json:"-"`
 }
 
 type TransitionAuthorization struct {
@@ -131,6 +136,19 @@ type TransitionAuthorization struct {
 	Abort    func(context.Context) error
 	Finalize func(context.Context) error
 	LeaseID  model.ResourceID
+}
+
+// StableOwnershipAuthorization keeps an existing stable writer-endpoint lease
+// alive while an operation changes only a non-owner node. It cannot create or
+// hand off endpoint ownership.
+type StableOwnershipAuthorization struct {
+	Context context.Context
+	Cancel  context.CancelFunc
+	LeaseID model.ResourceID
+}
+
+type StableHAEndpointAuthorizer interface {
+	AuthorizeStableOwner(context.Context, ResolvedOperation) (StableOwnershipAuthorization, error)
 }
 
 type HAEndpointProvider interface {

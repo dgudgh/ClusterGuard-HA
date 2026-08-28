@@ -9,6 +9,7 @@
   "consensus": {
     "enabled": true,
     "snapshot_cas_enabled": true,
+    "replicated_log_compression_enabled": true,
     "local_id": "c1520000-0000-4000-8000-000000000152",
     "bind_address": "0.0.0.0:10009",
     "advertise_address": "192.168.102.152:10009",
@@ -26,10 +27,11 @@
   },
   "mysql": {
     "enabled": true,
-    "discovery_interval_seconds": 5,
-    "discovery_timeout_seconds": 4,
+    "semi_sync_required": true,
+    "discovery_interval_seconds": 1,
+    "discovery_timeout_seconds": 1,
     "automatic_failover_enabled": false,
-    "automatic_failover_interval_seconds": 5,
+    "automatic_failover_interval_seconds": 1,
     "automatic_failover_retry_seconds": 30,
     "discovery": {
       "username": "cg_discovery",
@@ -46,10 +48,10 @@
   },
   "postgresql": {
     "enabled": false,
-    "discovery_interval_seconds": 5,
-    "discovery_timeout_seconds": 4,
+    "discovery_interval_seconds": 1,
+    "discovery_timeout_seconds": 1,
     "automatic_failover_enabled": false,
-    "automatic_failover_interval_seconds": 5,
+    "automatic_failover_interval_seconds": 1,
     "automatic_failover_retry_seconds": 30,
     "discovery": {
       "username": "cg_monitor",
@@ -105,14 +107,22 @@
     "ssh_binary": "/usr/bin/ssh",
     "agent_binary": "/usr/local/libexec/clusterguard-agent-stdio",
     "agent_config_path": "/etc/clusterguard/agent.json",
-    "command_timeout_seconds": 30,
+    "command_timeout_seconds": 5,
     "mutation_timeout_seconds": 1800,
+    "max_concurrent_sessions": 4,
     "shared_secret_env": "CG_AGENT_SHARED_SECRET"
   },
   "fencing": {
     "enabled": false,
     "executable_path": "/usr/local/libexec/clusterguard-fencer",
-    "timeout_seconds": 30
+    "timeout_seconds": 30,
+    "agent_quorum_enabled": false,
+    "agent_quorum_grace_seconds": 15
+  },
+  "kubernetes": {
+    "enabled": false,
+    "request_timeout_seconds": 10,
+    "fence_timeout_seconds": 60
   },
   "node_lifecycle": {
     "enabled": false,
@@ -121,8 +131,16 @@
     "known_hosts_file": "/etc/clusterguard/ssh/controller_known_hosts",
     "identity_file": "/etc/clusterguard/ssh/controller_ed25519",
     "jq_binary": "/usr/local/libexec/jq-linux-amd64",
+    "adapter_runtime_helper": "/usr/local/libexec/clusterguard-adapter-runtime-install.sh",
+    "control_join_helper": "/usr/local/libexec/clusterguard-control-join.sh",
+    "control_api_issuer_cert_file": "/etc/clusterguard/pki/api-issuer.crt",
+    "control_api_issuer_key_file": "/etc/clusterguard/pki/api-issuer.key",
+    "control_raft_issuer_cert_file": "/etc/clusterguard/pki/raft-issuer.crt",
+    "control_raft_issuer_key_file": "/etc/clusterguard/pki/raft-issuer.key",
+    "control_certificate_validity_days": 825,
     "ssh_password_env": "CG_NODE_SSH_PASSWORD",
     "mysql_root_password_env": "CG_NODE_MYSQL_ROOT_PASSWORD",
+    "mysql_root_remote_host": "",
     "replication_password_env": "CG_NODE_MYSQL_REPLICATION_PASSWORD",
     "postgresql_install_helper": "/usr/local/libexec/clusterguard-postgresql-install.sh",
     "postgresql_sync_helper": "/usr/local/libexec/clusterguard-postgresql-sync.sh",

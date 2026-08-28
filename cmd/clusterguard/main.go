@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	platformauth "clusterguard.io/ha/internal/auth"
+	"clusterguard.io/ha/internal/buildinfo"
 	"clusterguard.io/ha/internal/config"
 	"clusterguard.io/ha/internal/runtime"
 )
@@ -117,6 +119,16 @@ func runAdmin(arguments []string, stdout, stderr io.Writer, random io.Reader, no
 }
 
 func main() {
+	if len(os.Args) == 2 && (os.Args[1] == "--version" || os.Args[1] == "version") {
+		info := buildinfo.Current("clusterguard")
+		fmt.Printf("%s %s-%s (%s, state-format=%d, update-protocol=%d)\n",
+			info.Product, info.Version, info.Release, info.Commit, info.StateFormat, info.UpdateProtocol)
+		return
+	}
+	if len(os.Args) == 2 && os.Args[1] == "--version-json" {
+		_ = json.NewEncoder(os.Stdout).Encode(buildinfo.Current("clusterguard"))
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "admin" {
 		os.Exit(runAdmin(os.Args[2:], os.Stdout, os.Stderr, rand.Reader, time.Now))
 	}

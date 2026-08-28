@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="PostgreSQL 16.4 Production Qualification - ClusterGuard HA operational documentation">
+  <title>PostgreSQL 16.4 Production Qualification | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">Skip to content</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>Search documentation</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="Filter by title">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.2.39.html" data-doc-title="release 2.2.39">Release 2.2.39</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="docker-swarm-mysql.html" data-doc-title="docker swarm mysql">Docker Swarm MySQL</a><a href="kubernetes-mysql.html" data-doc-title="kubernetes mysql">Kubernetes MySQL</a><a href="update-and-patch.html" data-doc-title="version update and rollback">Version Update and Rollback</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="postgresql-production-qualification.html" data-doc-title="postgresql 16.4 production qualification" aria-current="page" class="active">PostgreSQL 16.4 Production Qualification</a><a href="docker-swarm-mysql-validation.html" data-doc-title="docker swarm mysql lab qualification">Docker Swarm MySQL Lab Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
+      <div class="sidebar-meta">
+        <span>Offline documentation build</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">Open navigation</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>PostgreSQL 16.4 Production Qualification</strong></div>
+        <div class="header-actions">
+          <a href="../zh-CN/postgresql-production-qualification.html" lang="zh-CN">简体中文</a>
+          <button id="print-button" type="button">Print</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="postgresql-16-4-production-qualification-report">PostgreSQL 16.4 Production Qualification Report<a class="heading-anchor" href="#postgresql-16-4-production-qualification-report" aria-label="Link to PostgreSQL 16.4 Production Qualification Report">#</a></h1>
+<ul>
+<li>Date: 2026-08-23</li>
+<li>Candidate line: ClusterGuard HA <code>2.2</code></li>
+<li>Environment: <code>192.168.102.152</code>, <code>192.168.102.153</code>, <code>192.168.102.154</code></li>
+<li>Database: PostgreSQL 16.4 on port 5432</li>
+<li>Control plane: three Raft voters and a restricted Agent on every data node</li>
+<li>Cluster: <code>pg16-ha</code></li>
+<li>Writer endpoint: <code>192.168.102.155/24</code> on <code>ens160</code></li>
+<li>Result: the laboratory matrix passed; site qualification is still required before production admission.</li>
+</ul>
+<h2 id="qualification-boundary">Qualification Boundary<a class="heading-anchor" href="#qualification-boundary" aria-label="Link to Qualification Boundary">#</a></h2>
+<p>This report covers the native PostgreSQL streaming-replication adapter, not
+Patroni, repmgr, or an external database controller. It verifies discovery,
+identity, topology, planned switchover, automatic failover, writer-VIP
+ownership, former-primary <code>pg_rewind</code> recovery, Raft quorum behavior, audit,
+and report creation on the exact three-node lab above.</p>
+<p>The result does not qualify another PostgreSQL build, operating system,
+storage, network, interface, client driver, or fencing policy. Backups and
+point-in-time recovery remain separate production requirements.</p>
+<h2 id="safety-invariants">Safety Invariants<a class="heading-anchor" href="#safety-invariants" aria-label="Link to Safety Invariants">#</a></h2>
+<ol>
+<li>At most one PostgreSQL instance is writable.</li>
+<li>At most one host owns the writer VIP, and that host is the verified primary.</li>
+<li>A controller without Raft majority cannot execute a mutation.</li>
+<li>A data node without current majority authorization removes the VIP and
+stops serving as writer.</li>
+<li>A recovered old primary does not restart as a competing writer; it rejoins
+only after a guarded <code>pg_rewind</code> workflow and verification.</li>
+<li>Concurrent operations for one cluster serialize through the replicated
+operation lock and stale topology evidence blocks execution.</li>
+</ol>
+<h2 id="test-matrix">Test Matrix<a class="heading-anchor" href="#test-matrix" aria-label="Link to Test Matrix">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>Result</th>
+<th>Evidence</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Clean snapshot restore and PostgreSQL installation</td>
+<td>Passed</td>
+<td>Three PostgreSQL 16.4 services, controllers, and Agents started from restored VMs.</td>
+</tr>
+<tr>
+<td>Identity, discovery, topology, and health</td>
+<td>Passed</td>
+<td>One <code>system_identifier</code>, three immutable node IDs, one primary, two streaming standbys, zero replay lag.</td>
+</tr>
+<tr>
+<td>Planned switchover</td>
+<td>Passed</td>
+<td>Initial switch completed in about 8 seconds; five further rotations across all three nodes completed in about 10 seconds each.</td>
+</tr>
+<tr>
+<td>Concurrent switch requests</td>
+<td>Passed</td>
+<td>One request completed and the competing request was blocked after lock/topology revalidation; only one role transition occurred.</td>
+</tr>
+<tr>
+<td>Primary VM hard power-off</td>
+<td>Passed</td>
+<td>Writer interruption was 15.1 seconds; hypervisor marker to first successful write was about 24.97 seconds. No duplicate primary or VIP owner appeared.</td>
+</tr>
+<tr>
+<td>Primary network partition</td>
+<td>Passed</td>
+<td>With PostgreSQL <code>connect_timeout=2</code>, writer interruption was 17.973 seconds and partition marker to first successful write was 17.942 seconds.</td>
+</tr>
+<tr>
+<td>Unbounded client connection attempt</td>
+<td>Observed constraint</td>
+<td>One connection without a bounded connect timeout waited about 31.97 seconds although the control-plane operation completed earlier.</td>
+</tr>
+<tr>
+<td>Controller quorum loss</td>
+<td>Passed fail-closed</td>
+<td>Mutation authority disappeared; the isolated primary Agent stopped PostgreSQL and removed the VIP. Recovery resumed only after quorum returned.</td>
+</tr>
+<tr>
+<td>Raft Leader restart</td>
+<td>Passed</td>
+<td>A new Leader was elected while the database primary, VIP ownership, and row count remained stable.</td>
+</tr>
+<tr>
+<td>Former-primary recovery</td>
+<td>Passed</td>
+<td>The old primary remained inactive after return, then completed guarded <code>pg_rewind</code>, started as standby, and caught up.</td>
+</tr>
+<tr>
+<td>Operation audit and report</td>
+<td>Passed</td>
+<td>Planned and automatic operations produced durable operation IDs, stage progress, verification, audit events, and reports.</td>
+</tr>
+</tbody></table>
+<h2 id="automatic-failover-timing">Automatic Failover Timing<a class="heading-anchor" href="#automatic-failover-timing" aria-label="Link to Automatic Failover Timing">#</a></h2>
+<p>The candidate configuration uses:</p>
+<pre><code class="language-text">discovery interval                 1 second
+per-endpoint discovery timeout    1 second
+stable failure evidence           3 observations spanning at least 3 seconds
+Agent authorization-expiry fence  15 seconds
+blocked-attempt retry backoff      30 seconds
+PostgreSQL wal_receiver_timeout    5 seconds
+PostgreSQL WAL retry interval      1 second
+</code></pre>
+<p>These timers are independent. The three-second value establishes stable
+failure evidence; it does not bypass old-primary isolation. The 15-second
+Agent window is a split-brain safety control. The 30-second value applies only
+after a blocked or failed attempt and is not added to every successful
+failover.</p>
+<p>Application RTO depends on client behavior. The accepted baseline uses a
+connection timeout no greater than two seconds plus retry and reconnect logic.
+Measure RTO from the failed writer request to the first committed request on
+the new writer endpoint.</p>
+<h2 id="final-state">Final State<a class="heading-anchor" href="#final-state" aria-label="Link to Final State">#</a></h2>
+<p>After cleanup and former-primary recovery:</p>
+<table>
+<thead>
+<tr>
+<th>Host</th>
+<th>Role</th>
+<th align="right">Validation rows</th>
+<th>VIP</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>192.168.102.152</code></td>
+<td>streaming standby</td>
+<td align="right">3512</td>
+<td>absent</td>
+</tr>
+<tr>
+<td><code>192.168.102.153</code></td>
+<td>streaming standby</td>
+<td align="right">3512</td>
+<td>absent</td>
+</tr>
+<tr>
+<td><code>192.168.102.154</code></td>
+<td>writable primary</td>
+<td align="right">3512</td>
+<td>sole owner</td>
+</tr>
+</tbody></table>
+<p>All three PostgreSQL services were active, both standbys were streaming, and
+the validation table row count matched on every node. Temporary partition
+rules and workload processes were removed.</p>
+<h2 id="production-admission-requirements">Production Admission Requirements<a class="heading-anchor" href="#production-admission-requirements" aria-label="Link to Production Admission Requirements">#</a></h2>
+<p>Before production use:</p>
+<ol>
+<li>Repeat the matrix with the exact site PostgreSQL package, Linux release,
+storage, switches, firewall, VIP interface, TLS trust, and client driver.</li>
+<li>Set a bounded client connection timeout and retry policy, then measure the
+writer endpoint RTO under real application load.</li>
+<li>Qualify asynchronous-replication RPO with committed transaction IDs. The
+current result does not claim synchronous zero data loss.</li>
+<li>Qualify <code>pg_rewind</code>, WAL retention or archive behavior, full base backup,
+restore, and point-in-time recovery for the longest expected outage.</li>
+<li>Replace or trust the laboratory self-signed console certificate before
+browser-based production operations.</li>
+<li>Add BMC, PDU, cloud, hypervisor, or equivalent external fencing when the
+site threat model includes simultaneous Agent, operating-system, and
+management-network failure.</li>
+</ol>
+<h2 id="judgment">Judgment<a class="heading-anchor" href="#judgment" aria-label="Link to Judgment">#</a></h2>
+<p><strong>The PostgreSQL 16.4 software path passed the current three-node laboratory
+qualification, including sub-30-second writer recovery with bounded client
+timeouts, split-brain prevention, Raft fail-closed behavior, and former-primary
+rejoin. Production admission remains conditional on site-specific RPO/RTO,
+storage, network, backup, TLS, and fencing qualification.</strong></p>
+
+          <footer class="document-footer">
+            <span>Source: <code>docs/en-US/postgresql-production-qualification-2026-08-23.md</code></span>
+            <a href="../index.html">Documentation language home</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="On this page">
+          <strong>On this page</strong>
+          <a class="toc-level-2" href="#qualification-boundary">Qualification Boundary</a><a class="toc-level-2" href="#safety-invariants">Safety Invariants</a><a class="toc-level-2" href="#test-matrix">Test Matrix</a><a class="toc-level-2" href="#automatic-failover-timing">Automatic Failover Timing</a><a class="toc-level-2" href="#final-state">Final State</a><a class="toc-level-2" href="#production-admission-requirements">Production Admission Requirements</a><a class="toc-level-2" href="#judgment">Judgment</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

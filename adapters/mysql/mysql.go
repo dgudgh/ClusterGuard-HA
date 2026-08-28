@@ -8,12 +8,23 @@ import (
 	"clusterguard.io/ha/pkg/model"
 )
 
+const defaultMaximumReplicationLagSeconds int64 = 10
+
 type Adapter struct {
-	runner           SQLRunner
-	executor         SQLExecutor
-	endpointProvider adapter.HAEndpointProvider
-	maintenance      MaintenanceStore
-	failoverSafety   FailoverSafetyProvider
+	runner                       SQLRunner
+	executor                     SQLExecutor
+	endpointProvider             adapter.HAEndpointProvider
+	maintenance                  MaintenanceStore
+	failoverSafety               FailoverSafetyProvider
+	verificationAttempts         int
+	verificationInterval         time.Duration
+	maximumReplicationLagSeconds int64
+	semiSyncRequired             bool
+}
+
+func (adapterInstance *Adapter) RequireSemiSync(required bool) *Adapter {
+	adapterInstance.semiSyncRequired = required
+	return adapterInstance
 }
 
 func New(runner SQLRunner) *Adapter {
@@ -42,7 +53,23 @@ func NewWithSafetyProviders(runner SQLRunner, endpointProvider adapter.HAEndpoin
 		failoverSafety = UnsupportedFailoverSafetyProvider{}
 	}
 	executor, _ := runner.(SQLExecutor)
-	return &Adapter{runner: runner, executor: executor, endpointProvider: endpointProvider, maintenance: maintenance, failoverSafety: failoverSafety}
+	return &Adapter{
+		runner:                       runner,
+		executor:                     executor,
+		endpointProvider:             endpointProvider,
+		maintenance:                  maintenance,
+		failoverSafety:               failoverSafety,
+		verificationAttempts:         15,
+		verificationInterval:         time.Second,
+		maximumReplicationLagSeconds: defaultMaximumReplicationLagSeconds,
+	}
+}
+
+func (adapterInstance *Adapter) replicationLagMaximum() int64 {
+	if adapterInstance.maximumReplicationLagSeconds < 0 {
+		return 0
+	}
+	return adapterInstance.maximumReplicationLagSeconds
 }
 
 func (adapterInstance *Adapter) Engine() model.Engine { return model.EngineMySQL }
@@ -69,7 +96,7 @@ func (adapterInstance *Adapter) Capabilities(ctx context.Context) adapter.Capabi
 }
 
 func (adapterInstance *Adapter) Discover(ctx context.Context, request adapter.DiscoverRequest) (adapter.DiscoveryResult, error) {
-	return discover(ctx, adapterInstance.runner, request)
+	return discover(ctx, adapterInstance.runner, request, adapterInstance.semiSyncRequired)
 }
 
 func (adapterInstance *Adapter) Topology(_ context.Context, _ adapter.DiscoverRequest, discovery adapter.DiscoveryResult) (adapter.TopologyResult, error) {

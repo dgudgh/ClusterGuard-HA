@@ -30,8 +30,8 @@ ClusterGuard HA 是一个独立、洁净室的高可用控制平面。
 - `v2.1.45` 是 2.1 系列的不可变最终发布版本。
 - 支持的 2.1 数据库引擎是 MySQL，包括通过站点验收矩阵验证的已审批兼容
   MySQL 发行版。
-- PostgreSQL 交付和所有后续功能工作从 `2.2-1` 开始
-  在分支 `codex/2.2-postgresql` 上。
+- `v2.2.39` 是 2.2 系列首个正式版本，交付 PostgreSQL 16.4、
+  Docker Swarm 接管和 Kubernetes 写入口基础能力。
 - 任何已发布的功能或行为更改都会增加包的发布版本；一个
   已发布的 RPM、离线包、标签或 GitHub Release 都不会被覆盖。
 - Oracle 和 SQL Server 代码可能存在于能力门后，但不是
@@ -40,11 +40,19 @@ ClusterGuard HA 是一个独立、洁净室的高可用控制平面。
 | 系列 | 状态 | 生产支持边界 |
 | --- | --- | --- |
 | `2.1.45` | 稳定封板 | MySQL HA 控制平面 |
-| `2.2.x` | 活动开发 | PostgreSQL 交付加保留的 MySQL 功能 |
+| `2.2.39` | 正式发布 | PostgreSQL 16.4、Docker Swarm，以及保留的 MySQL HA 能力 |
 | 后续系列 | 路线图 | Oracle Data Guard Broker 和 SQL Server Always On 在单独认证后 |
 
-从
-[ClusterGuard HA 2.1-45](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.1.45) 下载封板版本：
+从 [ClusterGuard HA 2.2.39](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.39) 下载当前正式版本：
+
+```bash
+curl -fLO https://github.com/dgudgh/ClusterGuard-HA/releases/download/v2.2.39/clusterguard-ha-2.2-39-offline-linux-x86_64.tar.gz
+curl -fLO https://github.com/dgudgh/ClusterGuard-HA/releases/download/v2.2.39/clusterguard-ha-2.2-39-offline-linux-x86_64.tar.gz.sha256
+sha256sum -c clusterguard-ha-2.2-39-offline-linux-x86_64.tar.gz.sha256
+```
+
+2.1 MySQL 产品线的封板版本仍可从
+[ClusterGuard HA 2.1-45](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.1.45) 下载：
 
 ```bash
 curl -fLO https://github.com/dgudgh/ClusterGuard-HA/releases/download/v2.1.45/clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz
@@ -75,7 +83,7 @@ d4a46bdfa4c95bb641a7d19f063d2f43219177658b01b914a31a1cd5d06ec590  clusterguard-h
 - 候选提升评估，包括 GTID 和复制安全检查；
 - 通过主节点和 VIP 所有权耦合的受保护的三节点计划切换；
 - 旧主重新加入和白名单内复制修复；
-- 30 秒稳定故障检测和可选自动故障转移；
+- 连续 3 次且跨越 3 秒的稳定故障检测和可选自动故障转移；
 - 通过受限节点代理的 Raft 支持操作锁、端点租约、本地自我隔离和
   重启时的 VIP 收敛；
 - 带固定节点插槽重用、分阶段安装、同步、验证、审计和报告输出的添加/重建生命周期任务；
@@ -87,12 +95,12 @@ d4a46bdfa4c95bb641a7d19f063d2f43219177658b01b914a31a1cd5d06ec590  clusterguard-h
 - 用于手动高风险数据库操作的计划绑定、五分钟、单次使用审批授权；
 - 在独立适配器和写入端点契约下验证的 MySQL 5.7/8.x/9.x 变更语法。
 
-## 2.2 开发范围
+## 2.2 发布范围
 
-2.2 开发线的 PostgreSQL 适配器提供清单内发现、不可变节点身份、`system_identifier` 集群绑定、主/备拓扑、
+2.2 的 PostgreSQL 适配器提供清单内发现、不可变节点身份、`system_identifier` 集群绑定、主/备拓扑、
 流复制健康、时间线和 WAL 证据、原生指标、确定性候选评估、受保护的计划切换和故障切换、旧主
 `pg_rewind` 恢复、允许列表低风险修复、写入器-VIP 耦合，以及
-`pg_basebackup`/`pg_rewind` 节点生命周期，加上可选的 30 秒稳定故障自动故障转移。变更仅在
+`pg_basebackup`/`pg_rewind` 节点生命周期，加上可选的 3 秒稳定故障自动故障转移。变更仅在
 受限 Agent、操作凭据、端点提供器、控制器多数派和所需隔离证据全部配置完成时，相关能力才会对外标记为可用。这些功能不会
 回溯添加到 `v2.1.45`。
 
@@ -112,7 +120,9 @@ SQL Server 适配器是未来受控集成，用于 Always On 只读发现、健�
 集群具有完整的 HA 端点清单、奇数个 Raft 控制器、当前 Leader 支持的多数派权威、专用 MySQL 凭据、
 代理签名材料、操作锁和审批时才可执行。缺少或未知的证据会阻止操作；它永远不会产生模拟成功。
 
-自动故障切换需要显式启用。它要求在 30 秒内连续观察到六次故障、存在排名第一且满足条件的候选节点、控制器保持多数派、旧主已隔离，并取得独占 VIP 租约。MySQL 可以使用短期 Raft 多数派 Agent 授权：授权过期即失效，旧节点会移除 VIP 并持久保持只读，Leader 在提升前再次验证本次转换租约。外部 BMC、PDU、云平台或虚拟化隔离器仍可作为更强的第二层隔离。平台宁可暂时不可用，也不允许出现第二个写节点或 VIP Owner。
+自动故障切换需要显式启用。它要求连续观察到 3 次故障且时间跨度不少于 3 秒、存在排名第一且满足条件的候选节点、控制器保持多数派、旧主已隔离，并取得独占 VIP 租约。MySQL 可以使用短期 Raft 多数派 Agent 授权：授权过期即失效，旧节点会移除 VIP 并持久保持只读，Leader 在提升前再次验证本次转换租约。外部 BMC、PDU、云平台或虚拟化隔离器仍可作为更强的第二层隔离。平台宁可暂时不可用，也不允许出现第二个写节点或 VIP Owner。
+
+3 秒是控制器确认稳定故障的证据窗口，不是端到端 RTO 承诺。受限 Agent 另有 15 秒授权失效隔离宽限，用于保证失联旧主不能继续持有写角色或 VIP。PostgreSQL 16.4 实验室验收在客户端连接超时为 2 秒时测得写入口中断 17.973 秒；每个生产现场仍需按自己的网络、存储、数据库包、客户端超时和隔离策略重新测试。
 
 浏览器控制台会针对存储在复制元数据快照中的平台用户进行身份验证。全新安装会创建 `admin`，使用文档中指定的首次登录密码 `admin123` 和 `MustChangePassword=true`。首次密码更改是强制性的：直到成功，所有集群和元数据 API 读取和每个变更都会被阻止。默认值仅存储为 Argon2id 哈希；它永远不会写入配置、环境文件、审计事件或报告。会话具有八小时的绝对生命周期，使用 HttpOnly SameSite Cookie 加 CSRF 验证，并在密码更改或注销时被撤销。
 
@@ -179,6 +189,7 @@ go run ./cmd/clusterguard --config configs/clusterguard.example.json
 - [English product tour](docs/en-US/product-tour.md) / [中文产品导览](docs/zh-CN/product-tour.md)
 - [English offline installation](docs/en-US/offline-rpm-install.md) / [中文离线安装](docs/zh-CN/offline-rpm-install.md)
 - [English operations manual](docs/en-US/operations-manual.md) / [中文运维手册](docs/zh-CN/operations-manual.md)
+- [English update guide](docs/en-US/update-and-patch.md) / [中文版本升级与回退手册](docs/zh-CN/update-and-patch.md)
 - [English release policy](docs/en-US/version-release-policy.md) / [中文版本规范](docs/zh-CN/version-release-policy.md)
 
 ## 注册和刷新 MySQL 集群

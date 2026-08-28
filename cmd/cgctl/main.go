@@ -63,9 +63,12 @@ func requestFor(arguments []string) (method string, path string, err error) {
 	}
 	command := arguments[0]
 	switch command {
-	case "status", "engines", "clusters":
+	case "version", "status", "engines", "clusters":
 		if len(arguments) != 1 {
 			return "", "", fmt.Errorf("%s does not accept arguments", command)
+		}
+		if command == "version" {
+			return http.MethodGet, "/api/v1/platform/version", nil
 		}
 		if command == "status" {
 			return http.MethodGet, "/api/v1/control-plane/status", nil
@@ -165,7 +168,14 @@ func run(arguments []string, stdout io.Writer, stderr io.Writer, client httpDoer
 		}
 		client = configuredClient
 	}
-	method, path, err := requestFor(flags.Args())
+	arguments = flags.Args()
+	if len(arguments) > 0 && arguments[0] == "cluster" {
+		return runCluster(arguments[1:], stdout, stderr, *serverURL, *controlTokenEnv, client)
+	}
+	if len(arguments) > 0 && arguments[0] == "power" {
+		return runPower(arguments[1:], stdout, stderr, *serverURL, *controlTokenEnv, *jsonOutput, client)
+	}
+	method, path, err := requestFor(arguments)
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, "cgctl:", err)
 		return 2
@@ -260,6 +270,26 @@ func run(arguments []string, stdout io.Writer, stderr io.Writer, client httpDoer
 
 func writeHuman(writer io.Writer, command string, result json.RawMessage) error {
 	switch command {
+	case "version":
+		var version struct {
+			Product         string `json:"product"`
+			Binary          string `json:"binary"`
+			Version         string `json:"version"`
+			Release         string `json:"release"`
+			Commit          string `json:"commit"`
+			BuiltAt         string `json:"built_at"`
+			RPMArchitecture string `json:"rpm_architecture"`
+			StateFormat     int    `json:"state_format"`
+			UpdateProtocol  int    `json:"update_protocol"`
+		}
+		if err := json.Unmarshal(result, &version); err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(writer, "%s\tbinary=%s\tversion=%s-%s\tarch=%s\n",
+			valueOrUnknown(version.Product), valueOrUnknown(version.Binary),
+			valueOrUnknown(version.Version), valueOrUnknown(version.Release), valueOrUnknown(version.RPMArchitecture))
+		_, _ = fmt.Fprintf(writer, "state_format=%d\tupdate_protocol=%d\tcommit=%s\tbuilt_at=%s\n",
+			version.StateFormat, version.UpdateProtocol, valueOrUnknown(version.Commit), valueOrUnknown(version.BuiltAt))
 	case "status":
 		var status struct {
 			Mode                    string           `json:"mode"`
@@ -481,4 +511,588 @@ func valueOrUnknown(value string) string {
 func main() {
 	client := &http.Client{Timeout: 10 * time.Second}
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, client))
+}
+
+// clusterSnapshotDocument is the recovery contract written by
+// clusterguard-cluster-shutdown.sh and consumed by restore-status.
+type clusterSnapshotDocument struct {
+	ClusterID   string `json:"cluster_id"`
+	RecoveredAt string `json:"recovered_at"`
+	Cluster     struct {
+		ClusterName string `json:"cluster_name"`
+		Primary     struct {
+			Host string `json:"host"`
+			Port int    `json:"port"`
+		} `json:"primary"`
+		Replicas []struct {
+			Host string `json:"host"`
+			Port int    `json:"port"`
+		} `json:"replicas"`
+	} `json:"cluster"`
+}
+
+func runCluster(arguments []string, stdout io.Writer, stderr io.Writer, serverURL string, tokenEnv string, client httpDoer) int {
+	if len(arguments) == 0 {
+		_, _ = fmt.Fprintln(stderr, "cgctl: cluster requires a subcommand: shutdown, restore-status")
+		return 2
+	}
+	switch arguments[0] {
+	case "shutdown":
+		return runClusterShutdown(arguments[1:], stdout, stderr, serverURL, tokenEnv, client)
+	case "restore-status":
+		return runClusterRestoreStatus(arguments[1:], stdout, stderr, serverURL, tokenEnv, client)
+	default:
+		_, _ = fmt.Fprintf(stderr, "cgctl: unknown cluster subcommand %q\n", arguments[0])
+		return 2
+	}
+}
+
+// runClusterShutdown is a compatibility alias for the durable power
+// lifecycle. It intentionally does not execute the legacy local shell helper:
+// every mutation must pass through the same control-plane gates as the Web UI.
+func runClusterShutdown(arguments []string, stdout io.Writer, stderr io.Writer, serverURL string, tokenEnv string, client httpDoer) int {
+	flags := flag.NewFlagSet("cgctl cluster shutdown", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	clusterName := flags.String("cluster", "", "cluster display name to shut down")
+	mode := flags.String("mode", "service", "shutdown mode: service or poweroff")
+	dryRun := flags.Bool("dry-run", false, "run the control-plane precheck without changing anything")
+	approvalToken := flags.String("approval-token", "", "one-time approval token for real execution")
+	if err := flags.Parse(arguments); err != nil {
+		return 2
+	}
+	if flags.NArg() != 0 {
+		_, _ = fmt.Fprintln(stderr, "cgctl: cluster shutdown does not accept positional arguments")
+		return 2
+	}
+	name := strings.TrimSpace(*clusterName)
+	if name == "" {
+		_, _ = fmt.Fprintln(stderr, "cgctl: cluster shutdown requires --cluster <display name>")
+		return 2
+	}
+	modeValue := strings.TrimSpace(*mode)
+	if modeValue != "service" && modeValue != "poweroff" {
+		_, _ = fmt.Fprintln(stderr, "cgctl: shutdown mode must be service or poweroff")
+		return 2
+	}
+	clusterID, err := powerClusterUUID(client, serverURL, tokenEnv, name)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "cgctl:", err)
+		return 2
+	}
+	basePath := "/api/v1/clusters/" + url.PathEscape(string(clusterID)) + "/power/"
+	precheck, err := powerAPIPost(client, serverURL, tokenEnv, basePath+"precheck", map[string]interface{}{"mode": modeValue})
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "cgctl:", err)
+		return 1
+	}
+	var precheckResult struct {
+		BlockingReasons []string `json:"blocking_reasons"`
+	}
+	if err := json.Unmarshal(precheck.Result, &precheckResult); err != nil {
+		_, _ = fmt.Fprintln(stderr, "cgctl: invalid power precheck response")
+		return 1
+	}
+	if *dryRun {
+		_, _ = powerAPIPost(client, serverURL, tokenEnv, basePath+"cancel", map[string]interface{}{})
+		return powerResponse(stdout, stderr, false, precheck, "precheck")
+	}
+	if len(precheckResult.BlockingReasons) > 0 {
+		_, _ = powerAPIPost(client, serverURL, tokenEnv, basePath+"cancel", map[string]interface{}{})
+		_, _ = fmt.Fprintln(stderr, "cgctl: shutdown blocked: "+strings.Join(precheckResult.BlockingReasons, "; "))
+		return 1
+	}
+	token := strings.TrimSpace(*approvalToken)
+	if token == "" {
+		_, _ = powerAPIPost(client, serverURL, tokenEnv, basePath+"cancel", map[string]interface{}{})
+		_, _ = fmt.Fprintln(stderr, "cgctl: cluster shutdown requires --approval-token for real execution")
+		return 2
+	}
+	if _, err := powerAPIPost(client, serverURL, tokenEnv, basePath+"plan", map[string]interface{}{"mode": modeValue}); err != nil {
+		_, _ = fmt.Fprintln(stderr, "cgctl:", err)
+		return 1
+	}
+	executed, err := powerAPIPost(client, serverURL, tokenEnv, basePath+"execute", map[string]interface{}{"approval_token": token})
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "cgctl:", err)
+		return 1
+	}
+	return powerResponse(stdout, stderr, false, executed, "execute")
+}
+
+// cgctlAPIGet performs a read-only API request with the configured control
+// credential and returns the decoded envelope.
+func cgctlAPIGet(client httpDoer, serverURL string, tokenEnv string, path string) (apiEnvelope, error) {
+	var envelope apiEnvelope
+	environment := strings.TrimSpace(tokenEnv)
+	controlToken := ""
+	if environment != "" {
+		controlToken = strings.TrimSpace(os.Getenv(environment))
+	}
+	request, err := http.NewRequest(http.MethodGet, strings.TrimRight(serverURL, "/")+path, nil)
+	if err != nil {
+		return envelope, fmt.Errorf("invalid server URL")
+	}
+	request.Header.Set("Accept", "application/json")
+	if controlToken != "" {
+		request.Header.Set("Authorization", "Bearer "+controlToken)
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return envelope, fmt.Errorf("API request failed")
+	}
+	defer response.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(response.Body, maximumAPIResponseBytes+1))
+	if err != nil || len(raw) > maximumAPIResponseBytes {
+		return envelope, fmt.Errorf("invalid API response")
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return envelope, fmt.Errorf("invalid API response")
+	}
+	if response.StatusCode >= http.StatusBadRequest || envelope.Status == "error" {
+		message := strings.TrimSpace(envelope.Message)
+		if message == "" {
+			message = response.Status
+		}
+		return envelope, fmt.Errorf("%s", message)
+	}
+	return envelope, nil
+}
+
+func runClusterRestoreStatus(arguments []string, stdout io.Writer, stderr io.Writer, serverURL string, tokenEnv string, client httpDoer) int {
+	flags := flag.NewFlagSet("cgctl cluster restore-status", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	clusterID := flags.String("cluster", "", "platform cluster UUID (defaults to the local snapshot)")
+	if err := flags.Parse(arguments); err != nil {
+		return 2
+	}
+	if flags.NArg() != 0 {
+		_, _ = fmt.Fprintln(stderr, "cgctl: cluster restore-status does not accept positional arguments")
+		return 2
+	}
+	snapshotPath := strings.TrimSpace(os.Getenv("CLUSTER_SNAPSHOT_PATH"))
+	if snapshotPath == "" {
+		snapshotPath = "/etc/clusterguard/cluster-topology.json"
+	}
+	var document clusterSnapshotDocument
+	snapshotExists := false
+	if contents, err := os.ReadFile(snapshotPath); err == nil {
+		if jsonErr := json.Unmarshal(contents, &document); jsonErr == nil && document.ClusterID != "" {
+			snapshotExists = true
+		}
+	}
+	_, _ = fmt.Fprintf(stdout, "snapshot\t%s\t%s\n", snapshotPath, map[bool]string{true: "present", false: "absent"}[snapshotExists])
+	if snapshotExists {
+		_, _ = fmt.Fprintf(stdout, "cluster\t%s\tdisplay=%s\trecovered_at=%s\n",
+			valueOrDash(document.ClusterID), valueOrDash(document.Cluster.ClusterName), valueOrDash(document.RecoveredAt))
+	} else {
+		_, _ = fmt.Fprintln(stdout, "snapshot_missing\tno planned shutdown recorded on this node")
+	}
+
+	targetID := strings.TrimSpace(*clusterID)
+	if targetID == "" {
+		targetID = document.ClusterID
+	}
+	if targetID == "" {
+		_, _ = fmt.Fprintln(stdout, "cluster\t-\tno cluster UUID available (pass --cluster or create a snapshot first)")
+		return 0
+	}
+	if !model.ValidResourceID(model.ResourceID(targetID)) {
+		_, _ = fmt.Fprintf(stderr, "cgctl: invalid cluster UUID: %s\n", targetID)
+		return 2
+	}
+
+	detail, err := cgctlAPIGet(client, serverURL, tokenEnv, "/api/v1/clusters/"+url.PathEscape(targetID))
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "cgctl:", err)
+		return 1
+	}
+	var detailView struct {
+		Cluster struct {
+			RecoveryFreeze bool   `json:"recovery_freeze"`
+			DisplayName    string `json:"display_name"`
+		} `json:"cluster"`
+	}
+	if err := json.Unmarshal(detail.Result, &detailView); err != nil {
+		_, _ = fmt.Fprintln(stderr, "cgctl: invalid API result")
+		return 1
+	}
+	topology, err := cgctlAPIGet(client, serverURL, tokenEnv, "/api/v1/clusters/"+url.PathEscape(targetID)+"/topology")
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "cgctl:", err)
+		return 1
+	}
+	var snapshot model.TopologySnapshot
+	if err := json.Unmarshal(topology.Result, &snapshot); err != nil {
+		_, _ = fmt.Fprintln(stderr, "cgctl: invalid API result")
+		return 1
+	}
+
+	freezeState := "active"
+	if detailView.Cluster.RecoveryFreeze {
+		freezeState = "frozen"
+	}
+	_, _ = fmt.Fprintf(stdout, "recovery_freeze\t%s\n", freezeState)
+	primaryHealthy := false
+	for _, instance := range snapshot.Instances {
+		_, _ = fmt.Fprintf(stdout, "%s\t%s\trole=%s\thealth=%s\tlag=%s\tmaintenance=%s\n",
+			instance.ResourceID, displayEndpoint(instance), valueOrUnknown(string(instance.Role)),
+			valueOrUnknown(string(instance.Health.State)), lagText(instance.Replication.LagSeconds), yesNo(instance.Maintenance))
+		if instance.Role == model.RolePrimary && instance.Health.State == model.HealthHealthy {
+			primaryHealthy = true
+		}
+	}
+	var advice string
+	switch {
+	case !snapshotExists:
+		advice = "no planned shutdown snapshot on this node"
+	case document.RecoveredAt != "":
+		advice = "snapshot already finalized — planned-shutdown protection was released"
+	case detailView.Cluster.RecoveryFreeze && primaryHealthy:
+		advice = "cluster healthy but recovery freeze still active — clusterguard-cluster-finalize will release it"
+	case detailView.Cluster.RecoveryFreeze && !primaryHealthy:
+		advice = "primary offline — protection stays active (fail-closed); fix the primary, then restore/finalize resume"
+	default:
+		advice = "no recovery freeze recorded; verify instance health per line above"
+	}
+	_, _ = fmt.Fprintf(stdout, "advice\t%s\n", advice)
+	return 0
+}
+
+// runPower drives the power lifecycle API from the CLI. Every subcommand
+// resolves --cluster as a display name or UUID against the control plane.
+func runPower(arguments []string, stdout io.Writer, stderr io.Writer, serverURL string, tokenEnv string, jsonOutput bool, client httpDoer) int {
+	if len(arguments) == 0 {
+		_, _ = fmt.Fprintln(stderr, "cgctl: power requires a subcommand: precheck, plan, execute, cancel, boot-detected, recovering, verify, complete, fail, status")
+		return 2
+	}
+	switch arguments[0] {
+	case "precheck", "plan":
+		return runPowerModeAction(arguments[1:], stdout, stderr, serverURL, tokenEnv, jsonOutput, client, arguments[0])
+	case "execute":
+		return runPowerExecute(arguments[1:], stdout, stderr, serverURL, tokenEnv, jsonOutput, client)
+	case "cancel", "boot-detected", "recovering", "verify", "complete":
+		return runPowerSimpleAction(arguments[1:], stdout, stderr, serverURL, tokenEnv, jsonOutput, client, arguments[0])
+	case "fail":
+		return runPowerFail(arguments[1:], stdout, stderr, serverURL, tokenEnv, jsonOutput, client)
+	case "status":
+		return runPowerStatus(arguments[1:], stdout, stderr, serverURL, tokenEnv, jsonOutput, client)
+	default:
+		_, _ = fmt.Fprintf(stderr, "cgctl: unknown power subcommand %q\n", arguments[0])
+		return 2
+	}
+}
+
+// powerClusterUUID accepts a platform UUID directly, or resolves a display
+// name against the cluster inventory.
+func powerClusterUUID(client httpDoer, serverURL string, tokenEnv string, nameOrID string) (model.ResourceID, error) {
+	value := strings.TrimSpace(nameOrID)
+	if value == "" {
+		return "", fmt.Errorf("--cluster is required")
+	}
+	if model.ValidResourceID(model.ResourceID(value)) {
+		return model.ResourceID(value), nil
+	}
+	envelope, err := cgctlAPIGet(client, serverURL, tokenEnv, "/api/v1/clusters")
+	if err != nil {
+		return "", err
+	}
+	var clusters []model.DatabaseCluster
+	if err := json.Unmarshal(envelope.Result, &clusters); err != nil {
+		return "", fmt.Errorf("invalid API result")
+	}
+	for _, cluster := range clusters {
+		if strings.EqualFold(cluster.DisplayName, value) {
+			return cluster.ResourceID, nil
+		}
+	}
+	return "", fmt.Errorf("no cluster named %q", value)
+}
+
+// powerAPIPost sends a control-plane mutation with the administrative token
+// and decodes the envelope.
+func powerAPIPost(client httpDoer, serverURL string, tokenEnv string, path string, body map[string]interface{}) (apiEnvelope, error) {
+	var envelope apiEnvelope
+	environment := strings.TrimSpace(tokenEnv)
+	if environment == "" {
+		return envelope, fmt.Errorf("control token environment variable name is required")
+	}
+	controlToken := strings.TrimSpace(os.Getenv(environment))
+	if controlToken == "" {
+		return envelope, fmt.Errorf("control token environment variable %s is empty", environment)
+	}
+	contents, err := json.Marshal(body)
+	if err != nil {
+		return envelope, fmt.Errorf("invalid request body")
+	}
+	request, err := http.NewRequest(http.MethodPost, strings.TrimRight(serverURL, "/")+path, bytes.NewReader(contents))
+	if err != nil {
+		return envelope, fmt.Errorf("invalid server URL")
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+controlToken)
+	response, err := client.Do(request)
+	if err != nil {
+		return envelope, fmt.Errorf("API request failed")
+	}
+	defer response.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(response.Body, maximumAPIResponseBytes+1))
+	if err != nil || len(raw) > maximumAPIResponseBytes {
+		return envelope, fmt.Errorf("invalid API response")
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return envelope, fmt.Errorf("invalid API response")
+	}
+	if response.StatusCode >= http.StatusBadRequest || envelope.Status == "error" {
+		message := strings.TrimSpace(envelope.Message)
+		if message == "" {
+			message = response.Status
+		}
+		return envelope, fmt.Errorf("%s", message)
+	}
+	return envelope, nil
+}
+
+// powerResponse renders the envelope as indented JSON (--json) or the
+// tab-separated human view.
+func powerResponse(stdout io.Writer, stderr io.Writer, jsonOutput bool, envelope apiEnvelope, action string) int {
+	if jsonOutput {
+		var formatted bytes.Buffer
+		if err := json.Indent(&formatted, envelope.Result, "", "  "); err != nil {
+			_, _ = fmt.Fprintln(stderr, "cgctl: invalid API response")
+			return 1
+		}
+		formatted.WriteByte('\n')
+		_, _ = formatted.WriteTo(stdout)
+		return 0
+	}
+	if err := writePowerHuman(stdout, action, envelope.Result); err != nil {
+		_, _ = fmt.Fprintln(stderr, "cgctl: invalid API result")
+		return 1
+	}
+	return 0
+}
+
+func runPowerModeAction(arguments []string, stdout io.Writer, stderr io.Writer, serverURL string, tokenEnv string, jsonOutput bool, client httpDoer, action string) int {
+	flags := flag.NewFlagSet("cgctl power "+action, flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	clusterName := flags.String("cluster", "", "cluster display name or UUID")
+	mode := flags.String("mode", "service", "shutdown mode: service or poweroff")
+	if err := flags.Parse(arguments); err != nil {
+		return 2
+	}
+	if flags.NArg() != 0 {
+		_, _ = fmt.Fprintf(stderr, "cgctl: power %s does not accept positional arguments\n", action)
+		return 2
+	}
+	clusterID, err := powerClusterUUID(client, serverURL, tokenEnv, *clusterName)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "cgctl:", err)
+		return 2
+	}
+	modeValue := strings.TrimSpace(*mode)
+	if modeValue != "service" && modeValue != "poweroff" {
+		_, _ = fmt.Fprintln(stderr, "cgctl: power mode must be service or poweroff")
+		return 2
+	}
+	envelope, err := powerAPIPost(client, serverURL, tokenEnv,
+		"/api/v1/clusters/"+url.PathEscape(string(clusterID))+"/power/"+action, map[string]interface{}{"mode": modeValue})
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "cgctl:", err)
+		return 1
+	}
+	return powerResponse(stdout, stderr, jsonOutput, envelope, action)
+}
+
+func runPowerExecute(arguments []string, stdout io.Writer, stderr io.Writer, serverURL string, tokenEnv string, jsonOutput bool, client httpDoer) int {
+	flags := flag.NewFlagSet("cgctl power execute", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	clusterName := flags.String("cluster", "", "cluster display name or UUID")
+	approvalToken := flags.String("approval-token", "", "approval token issued by cgctl approval issue")
+	if err := flags.Parse(arguments); err != nil {
+		return 2
+	}
+	if flags.NArg() != 0 {
+		_, _ = fmt.Fprintln(stderr, "cgctl: power execute does not accept positional arguments")
+		return 2
+	}
+	clusterID, err := powerClusterUUID(client, serverURL, tokenEnv, *clusterName)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "cgctl:", err)
+		return 2
+	}
+	token := strings.TrimSpace(*approvalToken)
+	if token == "" {
+		_, _ = fmt.Fprintln(stderr, "cgctl: power execute requires --approval-token")
+		return 2
+	}
+	envelope, err := powerAPIPost(client, serverURL, tokenEnv,
+		"/api/v1/clusters/"+url.PathEscape(string(clusterID))+"/power/execute", map[string]interface{}{"approval_token": token})
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "cgctl:", err)
+		return 1
+	}
+	return powerResponse(stdout, stderr, jsonOutput, envelope, "execute")
+}
+
+func runPowerSimpleAction(arguments []string, stdout io.Writer, stderr io.Writer, serverURL string, tokenEnv string, jsonOutput bool, client httpDoer, action string) int {
+	flags := flag.NewFlagSet("cgctl power "+action, flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	clusterName := flags.String("cluster", "", "cluster display name or UUID")
+	if err := flags.Parse(arguments); err != nil {
+		return 2
+	}
+	if flags.NArg() != 0 {
+		_, _ = fmt.Fprintf(stderr, "cgctl: power %s does not accept positional arguments\n", action)
+		return 2
+	}
+	clusterID, err := powerClusterUUID(client, serverURL, tokenEnv, *clusterName)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "cgctl:", err)
+		return 2
+	}
+	envelope, err := powerAPIPost(client, serverURL, tokenEnv,
+		"/api/v1/clusters/"+url.PathEscape(string(clusterID))+"/power/"+action, map[string]interface{}{})
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "cgctl:", err)
+		return 1
+	}
+	return powerResponse(stdout, stderr, jsonOutput, envelope, action)
+}
+
+func runPowerFail(arguments []string, stdout io.Writer, stderr io.Writer, serverURL string, tokenEnv string, jsonOutput bool, client httpDoer) int {
+	flags := flag.NewFlagSet("cgctl power fail", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	clusterName := flags.String("cluster", "", "cluster display name or UUID")
+	reason := flags.String("reason", "", "failure reason recorded on the operation")
+	if err := flags.Parse(arguments); err != nil {
+		return 2
+	}
+	if flags.NArg() != 0 {
+		_, _ = fmt.Fprintln(stderr, "cgctl: power fail does not accept positional arguments")
+		return 2
+	}
+	clusterID, err := powerClusterUUID(client, serverURL, tokenEnv, *clusterName)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "cgctl:", err)
+		return 2
+	}
+	envelope, err := powerAPIPost(client, serverURL, tokenEnv,
+		"/api/v1/clusters/"+url.PathEscape(string(clusterID))+"/power/fail", map[string]interface{}{"reason": strings.TrimSpace(*reason)})
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "cgctl:", err)
+		return 1
+	}
+	return powerResponse(stdout, stderr, jsonOutput, envelope, "fail")
+}
+
+func runPowerStatus(arguments []string, stdout io.Writer, stderr io.Writer, serverURL string, tokenEnv string, jsonOutput bool, client httpDoer) int {
+	flags := flag.NewFlagSet("cgctl power status", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	clusterName := flags.String("cluster", "", "cluster display name or UUID")
+	if err := flags.Parse(arguments); err != nil {
+		return 2
+	}
+	if flags.NArg() != 0 {
+		_, _ = fmt.Fprintln(stderr, "cgctl: power status does not accept positional arguments")
+		return 2
+	}
+	clusterID, err := powerClusterUUID(client, serverURL, tokenEnv, *clusterName)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "cgctl:", err)
+		return 2
+	}
+	envelope, err := cgctlAPIGet(client, serverURL, tokenEnv, "/api/v1/clusters/"+url.PathEscape(string(clusterID))+"/power/status")
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "cgctl:", err)
+		return 1
+	}
+	return powerResponse(stdout, stderr, jsonOutput, envelope, "status")
+}
+
+// writePowerHuman renders the power lifecycle result as tab-separated lines
+// that follow the other cgctl commands.
+func writePowerHuman(writer io.Writer, action string, result json.RawMessage) error {
+	var view struct {
+		PowerOperation  *model.PowerOperation  `json:"power_operation"`
+		BlockingReasons []string               `json:"blocking_reasons"`
+		Risk            string                 `json:"risk"`
+		Healthy         *bool                  `json:"healthy"`
+		Protected       *bool                  `json:"protected"`
+		RecoveryFreeze  *bool                  `json:"recovery_freeze"`
+		ManualRecovery  *bool                  `json:"manual_recovery_required"`
+		Snapshot        *model.PowerSnapshot   `json:"snapshot"`
+		Cluster         *model.DatabaseCluster `json:"cluster"`
+		Protection      *struct {
+			RecoveryFreeze         bool               `json:"recovery_freeze"`
+			InstancesInMaintenance []model.ResourceID `json:"instances_in_maintenance"`
+		} `json:"protection"`
+	}
+	if err := json.Unmarshal(result, &view); err != nil {
+		return err
+	}
+	if view.PowerOperation != nil {
+		_, _ = fmt.Fprintf(writer, "state\t%s\n", valueOrUnknown(string(view.PowerOperation.State)))
+		_, _ = fmt.Fprintf(writer, "mode\t%s\n", valueOrDash(view.PowerOperation.Mode))
+		_, _ = fmt.Fprintf(writer, "operation\t%s\trequested_by=%s\n",
+			view.PowerOperation.ResourceID, valueOrUnknown(view.PowerOperation.RequestedBy))
+	}
+	switch action {
+	case "precheck":
+		reasons := "<none>"
+		if len(view.BlockingReasons) > 0 {
+			reasons = strings.Join(view.BlockingReasons, "; ")
+		}
+		_, _ = fmt.Fprintf(writer, "risk\t%s\nblocking_reasons\t%s\n", valueOrDash(view.Risk), reasons)
+	case "plan":
+		if view.Snapshot != nil {
+			_, _ = fmt.Fprintf(writer, "snapshot\tprimary=%s\treplicas=%d\tcaptured_at=%s\n",
+				valueOrDash(string(view.Snapshot.Primary.InstanceID)), len(view.Snapshot.Replicas),
+				view.Snapshot.CapturedAt.UTC().Format(time.RFC3339))
+		}
+	case "execute":
+		if view.Protection != nil {
+			instances := "<none>"
+			if len(view.Protection.InstancesInMaintenance) > 0 {
+				ids := make([]string, 0, len(view.Protection.InstancesInMaintenance))
+				for _, id := range view.Protection.InstancesInMaintenance {
+					ids = append(ids, string(id))
+				}
+				instances = strings.Join(ids, ",")
+			}
+			_, _ = fmt.Fprintf(writer, "recovery_freeze\t%s\ninstances_in_maintenance\t%s\n",
+				yesNo(view.Protection.RecoveryFreeze), instances)
+		}
+	case "verify":
+		_, _ = fmt.Fprintf(writer, "healthy\t%s\n", boolPointerText(view.Healthy))
+		reasons := "<none>"
+		if len(view.BlockingReasons) > 0 {
+			reasons = strings.Join(view.BlockingReasons, "; ")
+		}
+		_, _ = fmt.Fprintf(writer, "blocking_reasons\t%s\n", reasons)
+	case "fail":
+		_, _ = fmt.Fprintf(writer, "manual_recovery_required\t%s\n", boolPointerText(view.ManualRecovery))
+	case "status":
+		if view.Cluster != nil {
+			_, _ = fmt.Fprintf(writer, "cluster\t%s\tdisplay=%s\tengine=%s\n",
+				view.Cluster.ResourceID, valueOrDash(view.Cluster.DisplayName), view.Cluster.Engine)
+		}
+		_, _ = fmt.Fprintf(writer, "protected\t%s\nrecovery_freeze\t%s\n", boolPointerText(view.Protected), boolPointerText(view.RecoveryFreeze))
+		if view.PowerOperation != nil {
+			if !view.PowerOperation.StartedAt.IsZero() {
+				_, _ = fmt.Fprintf(writer, "started_at\t%s\n", view.PowerOperation.StartedAt.UTC().Format(time.RFC3339))
+			}
+			if !view.PowerOperation.CompletedAt.IsZero() {
+				_, _ = fmt.Fprintf(writer, "completed_at\t%s\n", view.PowerOperation.CompletedAt.UTC().Format(time.RFC3339))
+			}
+		}
+	}
+	return nil
+}
+
+func boolPointerText(value *bool) string {
+	if value == nil {
+		return valueOrUnknown("")
+	}
+	return yesNo(*value)
 }

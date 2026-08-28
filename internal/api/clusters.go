@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -18,8 +19,9 @@ const maximumCandidateLagSeconds = int64(86400)
 const maximumDiscoveryBodyBytes = 1024
 
 type clusterRegistrationPayload struct {
-	DisplayName string       `json:"display_name"`
-	Engine      model.Engine `json:"engine"`
+	ResourceID  model.ResourceID `json:"resource_id,omitempty"`
+	DisplayName string           `json:"display_name"`
+	Engine      model.Engine     `json:"engine"`
 	Endpoints   []struct {
 		Hostname  string `json:"hostname"`
 		IPAddress string `json:"ip_address"`
@@ -31,6 +33,71 @@ type clusterRetirementPayload struct {
 	ConfirmDisplayName string `json:"confirm_display_name"`
 }
 
+// clusterRuntimeProfile makes the execution and traffic boundaries explicit
+// without treating legacy, unbound inventory as a Linux-host deployment.
+type clusterRuntimeProfile struct {
+	Kinds              []model.RuntimeKind          `json:"kinds"`
+	UnboundInstanceIDs []model.ResourceID           `json:"unbound_instance_ids"`
+	EndpointProviders  []model.EndpointProviderKind `json:"endpoint_providers"`
+	Mixed              bool                         `json:"mixed"`
+	Complete           bool                         `json:"complete"`
+}
+
+func (server *Server) clusterRuntimeProfile(clusterID model.ResourceID) clusterRuntimeProfile {
+	instances := server.store.Instances(clusterID)
+	bindings := server.store.WorkloadBindingsForCluster(clusterID)
+	boundInstances := make(map[model.ResourceID]struct{}, len(bindings))
+	kindSet := make(map[model.RuntimeKind]struct{}, len(bindings))
+	for _, binding := range bindings {
+		if !binding.Active {
+			continue
+		}
+		boundInstances[binding.InstanceID] = struct{}{}
+		kindSet[binding.RuntimeKind] = struct{}{}
+	}
+
+	profile := clusterRuntimeProfile{
+		Kinds:              make([]model.RuntimeKind, 0, len(kindSet)),
+		UnboundInstanceIDs: make([]model.ResourceID, 0),
+		EndpointProviders:  make([]model.EndpointProviderKind, 0),
+	}
+	for kind := range kindSet {
+		profile.Kinds = append(profile.Kinds, kind)
+	}
+	for _, instance := range instances {
+		if _, found := boundInstances[instance.ResourceID]; !found {
+			profile.UnboundInstanceIDs = append(profile.UnboundInstanceIDs, instance.ResourceID)
+		}
+	}
+
+	providerSet := make(map[model.EndpointProviderKind]struct{})
+	for _, resource := range server.store.HAEndpoints(clusterID) {
+		endpoint, found := server.store.Endpoint(resource.EndpointID)
+		if !found || !endpoint.Active {
+			continue
+		}
+		provider := resource.Provider
+		if provider == "" {
+			provider = model.EndpointProviderLinuxVIP
+		}
+		providerSet[provider] = struct{}{}
+	}
+	for provider := range providerSet {
+		profile.EndpointProviders = append(profile.EndpointProviders, provider)
+	}
+
+	sort.Slice(profile.Kinds, func(left, right int) bool { return profile.Kinds[left] < profile.Kinds[right] })
+	sort.Slice(profile.UnboundInstanceIDs, func(left, right int) bool {
+		return profile.UnboundInstanceIDs[left] < profile.UnboundInstanceIDs[right]
+	})
+	sort.Slice(profile.EndpointProviders, func(left, right int) bool {
+		return profile.EndpointProviders[left] < profile.EndpointProviders[right]
+	})
+	profile.Mixed = len(profile.Kinds) > 1
+	profile.Complete = len(instances) > 0 && len(profile.UnboundInstanceIDs) == 0
+	return profile
+}
+
 func (server *Server) registerCluster(writer http.ResponseWriter, request *http.Request) {
 	payload := clusterRegistrationPayload{}
 	if err := decode(request, &payload); err != nil {
@@ -40,6 +107,10 @@ func (server *Server) registerCluster(writer http.ResponseWriter, request *http.
 	payload.DisplayName = strings.TrimSpace(payload.DisplayName)
 	if payload.DisplayName == "" {
 		writeError(writer, http.StatusBadRequest, "cluster display name is required")
+		return
+	}
+	if payload.ResourceID != "" && !model.ValidResourceID(payload.ResourceID) {
+		writeError(writer, http.StatusBadRequest, "valid cluster resource UUID is required")
 		return
 	}
 	if !payload.Engine.Valid() {
@@ -62,7 +133,8 @@ func (server *Server) registerCluster(writer http.ResponseWriter, request *http.
 		}
 	}
 	cluster, createdEndpoints, err := server.store.CreateClusterWithEndpoints(model.DatabaseCluster{
-		Engine: payload.Engine, DisplayName: payload.DisplayName, Health: model.Health{State: model.HealthUnknown},
+		ResourceMeta: model.ResourceMeta{ResourceID: payload.ResourceID},
+		Engine:       payload.Engine, DisplayName: payload.DisplayName, Health: model.Health{State: model.HealthUnknown},
 	}, endpoints)
 	if writeClusterRegistrationFailure(writer, cluster, createdEndpoints, err) {
 		return
@@ -92,6 +164,65 @@ func writeClusterRegistrationFailure(writer http.ResponseWriter, cluster model.D
 	return true
 }
 
+type clusterRecoveryFreezePayload struct {
+	Freeze bool `json:"freeze"`
+}
+
+func (server *Server) setClusterRecoveryFreeze(writer http.ResponseWriter, request *http.Request, clusterID model.ResourceID) {
+	if request.Method != http.MethodPost {
+		writeError(writer, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	payload := clusterRecoveryFreezePayload{}
+	if err := decode(request, &payload); err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid recovery freeze payload")
+		return
+	}
+	if _, found := server.store.Cluster(clusterID); !found {
+		writeError(writer, http.StatusNotFound, "cluster not found")
+		return
+	}
+	if err := server.store.SetRecoveryFreeze(request.Context(), clusterID, payload.Freeze); err != nil {
+		writeError(writer, http.StatusInternalServerError, "set recovery freeze failed")
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "recovery_freeze": payload.Freeze})
+}
+
+type clusterMaintenancePayload struct {
+	InstanceID  model.ResourceID `json:"instance_id"`
+	Maintenance bool             `json:"maintenance"`
+}
+
+func (server *Server) setClusterMaintenance(writer http.ResponseWriter, request *http.Request, clusterID model.ResourceID) {
+	if request.Method != http.MethodPost {
+		writeError(writer, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	payload := clusterMaintenancePayload{}
+	if err := decode(request, &payload); err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid maintenance payload")
+		return
+	}
+	if !model.ValidResourceID(payload.InstanceID) {
+		writeError(writer, http.StatusBadRequest, "valid instance UUID is required")
+		return
+	}
+	if _, found := server.store.Cluster(clusterID); !found {
+		writeError(writer, http.StatusNotFound, "cluster not found")
+		return
+	}
+	if err := server.store.SetMaintenance(request.Context(), clusterID, payload.InstanceID, payload.Maintenance); err != nil {
+		if errors.Is(err, store.ErrValidation) {
+			writeError(writer, http.StatusBadRequest, "maintenance target is not in the selected cluster")
+			return
+		}
+		writeError(writer, http.StatusInternalServerError, "set maintenance failed")
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "maintenance": payload.Maintenance})
+}
+
 func (server *Server) clusterRoute(writer http.ResponseWriter, request *http.Request, suffix string) {
 	parts := strings.Split(suffix, "/")
 	if len(parts) == 0 || len(parts) > 3 || !model.ValidResourceID(model.ResourceID(parts[0])) {
@@ -116,6 +247,8 @@ func (server *Server) clusterRoute(writer http.ResponseWriter, request *http.Req
 		writeJSON(writer, http.StatusOK, map[string]interface{}{
 			"status": "ok", "result": map[string]interface{}{
 				"cluster": cluster, "instances": server.store.Instances(clusterID), "endpoints": server.store.Endpoints(clusterID),
+				"ha_endpoints": server.store.HAEndpoints(clusterID), "workload_bindings": server.store.WorkloadBindingsForCluster(clusterID),
+				"runtime_profile": server.clusterRuntimeProfile(clusterID),
 			},
 		})
 		return
@@ -128,6 +261,22 @@ func (server *Server) clusterRoute(writer http.ResponseWriter, request *http.Req
 	}
 	if action == "ha-endpoints" {
 		server.clusterHAEndpoints(writer, request, clusterID)
+		return
+	}
+	if action == "ha-ownership" {
+		server.clusterHAOwnership(writer, request, clusterID)
+		return
+	}
+	if action == "recovery-freeze" {
+		server.setClusterRecoveryFreeze(writer, request, clusterID)
+		return
+	}
+	if action == "maintenance" {
+		server.setClusterMaintenance(writer, request, clusterID)
+		return
+	}
+	if strings.HasPrefix(action, "power/") {
+		server.powerRoute(writer, request, clusterID, action)
 		return
 	}
 	if request.Method != http.MethodGet {
@@ -243,17 +392,30 @@ func writeClusterRetirementFailure(writer http.ResponseWriter, result store.Clus
 }
 
 type haEndpointPayload struct {
-	Kind      model.EndpointKind `json:"kind"`
-	IPAddress string             `json:"ip_address"`
-	Interface string             `json:"interface"`
-	Prefix    int                `json:"prefix"`
-	OwnerID   model.ResourceID   `json:"owner_id"`
-	Active    bool               `json:"active"`
+	Kind        model.EndpointKind         `json:"kind"`
+	Hostname    string                     `json:"hostname,omitempty"`
+	IPAddress   string                     `json:"ip_address"`
+	Port        int                        `json:"port,omitempty"`
+	Interface   string                     `json:"interface"`
+	Prefix      int                        `json:"prefix"`
+	Provider    model.EndpointProviderKind `json:"provider,omitempty"`
+	ProviderRef string                     `json:"provider_ref,omitempty"`
+	OwnerID     model.ResourceID           `json:"owner_id"`
+	Active      bool                       `json:"active"`
 }
 
 type haEndpointView struct {
 	Resource model.HAEndpoint `json:"resource"`
 	Endpoint model.Endpoint   `json:"endpoint"`
+}
+
+// haOwnershipView exposes the canonical VIP and its current, non-expired
+// ownership lease. It is intentionally read-only so installation and support
+// tooling can confirm that the control plane is ready before agents reconcile.
+type haOwnershipView struct {
+	Resource    model.HAEndpoint `json:"resource"`
+	Endpoint    model.Endpoint   `json:"endpoint"`
+	ActiveLease interface{}      `json:"active_lease"`
 }
 
 func (server *Server) clusterHAEndpoints(writer http.ResponseWriter, request *http.Request, clusterID model.ResourceID) {
@@ -281,8 +443,9 @@ func (server *Server) clusterHAEndpoints(writer http.ResponseWriter, request *ht
 			return
 		}
 		resource, endpoint, err := server.store.PutHAEndpoint(store.HAEndpointSpec{
-			ClusterID: clusterID, Kind: payload.Kind, IPAddress: payload.IPAddress,
-			Interface: payload.Interface, Prefix: payload.Prefix, OwnerID: payload.OwnerID, Active: payload.Active,
+			ClusterID: clusterID, Kind: payload.Kind, Hostname: payload.Hostname, IPAddress: payload.IPAddress, Port: payload.Port,
+			Interface: payload.Interface, Prefix: payload.Prefix, Provider: payload.Provider,
+			ProviderRef: payload.ProviderRef, OwnerID: payload.OwnerID, Active: payload.Active,
 		})
 		if err != nil {
 			switch {
@@ -299,6 +462,31 @@ func (server *Server) clusterHAEndpoints(writer http.ResponseWriter, request *ht
 	default:
 		writeError(writer, http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+func (server *Server) clusterHAOwnership(writer http.ResponseWriter, request *http.Request, clusterID model.ResourceID) {
+	if request.Method != http.MethodGet {
+		writer.Header().Set("Allow", http.MethodGet)
+		writeError(writer, http.StatusMethodNotAllowed, "HA ownership supports GET only")
+		return
+	}
+	if _, found := server.store.Cluster(clusterID); !found {
+		writeError(writer, http.StatusNotFound, "cluster not found")
+		return
+	}
+	resource, endpointResource, found := server.activeVIP(clusterID)
+	if !found {
+		writeError(writer, http.StatusNotFound, "active VIP endpoint not found")
+		return
+	}
+	var activeLease interface{}
+	if record, found := server.activeOwnershipLease(clusterID, resource.ResourceID, time.Now().UTC()); found {
+		activeLease = record.Lease
+	}
+	writeJSON(writer, http.StatusOK, map[string]interface{}{
+		"status": "ok",
+		"result": haOwnershipView{Resource: resource, Endpoint: endpointResource, ActiveLease: activeLease},
+	})
 }
 
 func (server *Server) discoverCluster(writer http.ResponseWriter, request *http.Request, clusterID model.ResourceID) {
@@ -466,7 +654,11 @@ func (server *Server) clusterCandidates(writer http.ResponseWriter, request *htt
 		writeError(writer, http.StatusBadGateway, "candidate evaluation failed")
 		return
 	}
-	writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": assessments})
+	writeJSON(writer, http.StatusOK, map[string]interface{}{
+		"status":         "ok",
+		"observation_id": snapshot.ObservedAt.Format(time.RFC3339Nano),
+		"result":         assessments,
+	})
 }
 
 func hasCurrentDiscoveryProbe(probes []model.ProbeStatus, instanceID model.ResourceID, observedAt time.Time) bool {

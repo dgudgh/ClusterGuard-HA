@@ -19,17 +19,18 @@ type LeaseRequest struct {
 	OwnerID         model.ResourceID
 	PreviousOwnerID model.ResourceID
 	TTL             time.Duration
+	RenewOnly       bool
 }
 
 type Lease struct {
-	ResourceID      model.ResourceID
-	ClusterID       model.ResourceID
-	HAEndpointID    model.ResourceID
-	OperationID     model.ResourceID
-	OwnerID         model.ResourceID
-	PreviousOwnerID model.ResourceID
-	ExpiresAt       time.Time
-	Active          bool
+	ResourceID      model.ResourceID `json:"resource_id"`
+	ClusterID       model.ResourceID `json:"cluster_id"`
+	HAEndpointID    model.ResourceID `json:"ha_endpoint_id"`
+	OperationID     model.ResourceID `json:"operation_id"`
+	OwnerID         model.ResourceID `json:"owner_id"`
+	PreviousOwnerID model.ResourceID `json:"previous_owner_id,omitempty"`
+	ExpiresAt       time.Time        `json:"expires_at"`
+	Active          bool             `json:"active"`
 }
 
 func SameLeaseIdentity(current, presented Lease) bool {
@@ -56,6 +57,12 @@ type LeaseStore interface {
 	FinalizeTransition(context.Context, Lease, time.Duration) (Lease, error)
 	RollbackTransition(context.Context, Lease, time.Duration) (Lease, error)
 	Release(context.Context, model.ResourceID) error
+}
+
+// CurrentLeaseReader exposes the active majority-backed ownership decision to
+// fencing verification without creating or renewing a lease.
+type CurrentLeaseReader interface {
+	Current(context.Context, model.ResourceID, model.ResourceID) (Lease, error)
 }
 
 type MemoryLeaseStore struct {
@@ -94,7 +101,9 @@ func (store *MemoryLeaseStore) Acquire(ctx context.Context, request LeaseRequest
 			continue
 		}
 		if lease.OperationID == request.OperationID && lease.OwnerID == request.OwnerID && lease.PreviousOwnerID == request.PreviousOwnerID {
-			lease.ExpiresAt = now.Add(request.TTL)
+			if requestedExpiry := now.Add(request.TTL); requestedExpiry.After(lease.ExpiresAt) {
+				lease.ExpiresAt = requestedExpiry
+			}
 			store.leases[resourceID] = lease
 			return lease, nil
 		}
@@ -128,6 +137,33 @@ func (store *MemoryLeaseStore) Validate(ctx context.Context, lease Lease) error 
 		return fmt.Errorf("%w: endpoint lease is missing, expired, or changed", ErrLeaseConflict)
 	}
 	return nil
+}
+
+func (store *MemoryLeaseStore) Current(ctx context.Context, clusterID, haEndpointID model.ResourceID) (Lease, error) {
+	if err := ctx.Err(); err != nil {
+		return Lease{}, err
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	now := store.now().UTC()
+	var selected Lease
+	for resourceID, lease := range store.leases {
+		if !lease.Active || !lease.ExpiresAt.After(now) {
+			delete(store.leases, resourceID)
+			continue
+		}
+		if lease.ClusterID != clusterID || lease.HAEndpointID != haEndpointID {
+			continue
+		}
+		if selected.ResourceID != "" {
+			return Lease{}, fmt.Errorf("%w: multiple active endpoint leases", ErrLeaseConflict)
+		}
+		selected = lease
+	}
+	if selected.ResourceID == "" {
+		return Lease{}, fmt.Errorf("%w: active endpoint lease is missing", ErrLeaseConflict)
+	}
+	return selected, nil
 }
 
 func (store *MemoryLeaseStore) FinalizeTransition(ctx context.Context, transition Lease, ttl time.Duration) (Lease, error) {

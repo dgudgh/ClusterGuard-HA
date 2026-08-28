@@ -2,10 +2,15 @@ package lifecycle
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"clusterguard.io/ha/pkg/model"
 )
+
+type lifecycleMaintenanceStub struct{ err error }
+
+func (stub lifecycleMaintenanceStub) Check(context.Context) error { return stub.err }
 
 func TestPlanSafetyGuardRejectsBlockedFailedOrIdentityChangingPlans(t *testing.T) {
 	request, plan := executableLifecyclePlan()
@@ -42,5 +47,16 @@ func TestTokenApprovalFailsClosedAndUsesExactToken(t *testing.T) {
 	}
 	if err := approval.ValidateLifecycle(context.Background(), request, plan, "approved-secret"); err != nil {
 		t.Fatalf("valid approval token was rejected: %v", err)
+	}
+}
+
+func TestCompositeSafetyGuardBlocksLifecycleDuringSoftwareUpdate(t *testing.T) {
+	request, plan := executableLifecyclePlan()
+	guard := NewCompositeSafetyGuard(
+		PlanSafetyGuard{},
+		MaintenanceSafetyGuard{Gate: lifecycleMaintenanceStub{err: errors.New("update active")}},
+	)
+	if err := guard.EvaluateLifecycle(context.Background(), request, plan); err == nil {
+		t.Fatal("lifecycle execution bypassed software update maintenance")
 	}
 }

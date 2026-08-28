@@ -14,14 +14,18 @@ import (
 	"clusterguard.io/ha/pkg/model"
 )
 
-var ErrInventoryRequired = errors.New("active database endpoint inventory is required")
+var (
+	ErrInventoryRequired    = errors.New("active database endpoint inventory is required")
+	ErrPublicationFenceBusy = errors.New("discovery publication fence is held by a cluster operation")
+)
 
 const (
-	maximumParallelProbes    = 4
-	credentialFailureSummary = "discovery credentials unavailable"
-	databaseFailureSummary   = "database probe failed"
-	metricsFailureSummary    = "performance metrics unavailable"
-	topologyFailureSummary   = "database topology probe failed"
+	maximumParallelProbes         = 4
+	maximumProbeCompletionReserve = time.Second
+	credentialFailureSummary      = "discovery credentials unavailable"
+	databaseFailureSummary        = "database probe failed"
+	metricsFailureSummary         = "performance metrics unavailable"
+	topologyFailureSummary        = "database topology probe failed"
 )
 
 type CredentialResolver interface {
@@ -65,6 +69,8 @@ type Service struct {
 	now                    func() time.Time
 	clusterLocksMu         sync.Mutex
 	clusterLocks           map[model.ResourceID]*clusterLock
+	primaryEvidenceMu      sync.Mutex
+	lastObservedPrimary    map[model.ResourceID]model.ResourceID
 }
 
 type clusterLock struct {
@@ -77,11 +83,12 @@ func New(registry *adapter.Registry, repository *store.Repository, credentials C
 		clock = time.Now
 	}
 	service := &Service{
-		registry:     registry,
-		repository:   repository,
-		credentials:  credentials,
-		now:          clock,
-		clusterLocks: make(map[model.ResourceID]*clusterLock),
+		registry:            registry,
+		repository:          repository,
+		credentials:         credentials,
+		now:                 clock,
+		clusterLocks:        make(map[model.ResourceID]*clusterLock),
+		lastObservedPrimary: make(map[model.ResourceID]model.ResourceID),
 	}
 	for _, option := range options {
 		if option != nil {
@@ -128,8 +135,9 @@ func (service *Service) Refresh(ctx context.Context, clusterID model.ResourceID)
 	if err != nil {
 		return model.TopologySnapshot{}, err
 	}
+	failureTarget := service.primaryFailureTarget(clusterID)
 	snapshot, err := service.repository.ApplyDiscoveryRefresh(refresh)
-	return service.finishRefresh(clusterID, refresh.ObservedAt, snapshot, err)
+	return service.finishRefresh(clusterID, failureTarget, refresh.ObservedAt, snapshot, err)
 }
 
 func (service *Service) prepareRefresh(ctx context.Context, clusterID model.ResourceID) (store.DiscoveryRefresh, error) {
@@ -169,16 +177,18 @@ func (service *Service) prepareRefresh(ctx context.Context, clusterID model.Reso
 		if probe.failure == probeUnsupported {
 			return store.DiscoveryRefresh{}, adapter.ErrUnsupported
 		}
-		status := model.ProbeStatus{EndpointID: probe.endpoint.ResourceID, InstanceID: probe.endpoint.InstanceID}
+		status := model.ProbeStatus{EndpointID: probe.endpoint.ResourceID, InstanceID: probe.endpoint.InstanceID, Outcome: model.ProbeOutcomeUnknown}
 		if probe.failure == probeCredentialsFailed {
 			credentialFailures++
+			status.Outcome = model.ProbeOutcomeCredentialsUnavailable
 			status.Health = model.Health{State: model.HealthUnknown, Summary: credentialFailureSummary, ObservedAt: observedAt}
 			probes = append(probes, status)
 			continue
 		}
 		if probe.failure == probeDatabaseFailed {
 			databaseFailures++
-			status.Health = model.Health{State: model.HealthUnknown, Summary: databaseFailureSummary, ObservedAt: observedAt}
+			status.Outcome = model.ProbeOutcomeDatabaseUnavailable
+			status.Health = model.Health{State: model.HealthUnhealthy, Summary: databaseFailureSummary, ObservedAt: observedAt}
 			probes = append(probes, status)
 			continue
 		}
@@ -204,8 +214,10 @@ func (service *Service) prepareRefresh(ctx context.Context, clusterID model.Reso
 		if probe.failure == probeMetricsFailed {
 			metricFailures++
 			metrics = nil
+			status.Outcome = model.ProbeOutcomeMetricsUnavailable
 			status.Health = model.Health{State: model.HealthDegraded, Summary: metricsFailureSummary, ObservedAt: observedAt}
 		} else {
+			status.Outcome = model.ProbeOutcomeReachable
 			status.Health = discovered.Health
 			for _, sample := range metrics {
 				if sample.ObservedAt.After(status.MetricsObservedAt) {
@@ -337,6 +349,9 @@ func (service *Service) acquirePublicationFence(ctx context.Context, clusterID m
 	if service.publicationFence != nil {
 		_, releasePublicationFence, err := service.publicationFence.AcquireCluster(ctx, clusterID)
 		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				return nil, fmt.Errorf("%w: cluster %s", ErrPublicationFenceBusy, clusterID)
+			}
 			return nil, fmt.Errorf("acquire discovery publication fence: %w", err)
 		}
 		return releasePublicationFence, nil
@@ -344,7 +359,7 @@ func (service *Service) acquirePublicationFence(ctx context.Context, clusterID m
 	return func() {}, nil
 }
 
-func (service *Service) finishRefresh(clusterID model.ResourceID, observedAt time.Time, snapshot model.TopologySnapshot, err error) (model.TopologySnapshot, error) {
+func (service *Service) finishRefresh(clusterID, failureTarget model.ResourceID, observedAt time.Time, snapshot model.TopologySnapshot, err error) (model.TopologySnapshot, error) {
 	if err != nil {
 		if errors.Is(err, store.ErrPostCommitDurability) {
 			sortSnapshotResources(snapshot.Instances, snapshot.Links, snapshot.Probes, snapshot.Anomalies)
@@ -354,16 +369,15 @@ func (service *Service) finishRefresh(clusterID model.ResourceID, observedAt tim
 	}
 
 	sortSnapshotResources(snapshot.Instances, snapshot.Links, snapshot.Probes, snapshot.Anomalies)
-	if service.primaryFailureObserver != nil {
-		service.primaryFailureObserver.Record(clusterID, primaryProbeUnavailable(snapshot), observedAt)
-	}
+	service.recordPrimaryFailure(clusterID, failureTarget, snapshot, observedAt)
 	return snapshot, nil
 }
 
 type preparedRefresh struct {
-	refresh store.DiscoveryRefresh
-	release func()
-	err     error
+	refresh       store.DiscoveryRefresh
+	failureTarget model.ResourceID
+	release       func()
+	err           error
 }
 
 // RefreshBatch probes clusters concurrently and publishes the complete
@@ -424,7 +438,8 @@ func (service *Service) RefreshBatch(ctx context.Context, clusterIDs []model.Res
 				return
 			}
 			results[index] = preparedRefresh{
-				refresh: refresh,
+				refresh:       refresh,
+				failureTarget: service.primaryFailureTarget(clusterID),
 				release: func() {
 					releaseFence()
 					unlock()
@@ -435,6 +450,7 @@ func (service *Service) RefreshBatch(ctx context.Context, clusterIDs []model.Res
 	wait.Wait()
 
 	refreshes := make([]store.DiscoveryRefresh, 0, len(results))
+	failureTargets := make(map[model.ResourceID]model.ResourceID, len(results))
 	failures := make([]error, 0)
 	for _, result := range results {
 		if result.release != nil {
@@ -445,6 +461,7 @@ func (service *Service) RefreshBatch(ctx context.Context, clusterIDs []model.Res
 			continue
 		}
 		refreshes = append(refreshes, result.refresh)
+		failureTargets[result.refresh.ClusterID] = result.failureTarget
 	}
 	if len(refreshes) == 0 {
 		return nil, errors.Join(failures...)
@@ -460,8 +477,8 @@ func (service *Service) RefreshBatch(ctx context.Context, clusterIDs []model.Res
 		}
 		sortSnapshotResources(snapshot.Instances, snapshot.Links, snapshot.Probes, snapshot.Anomalies)
 		published[refresh.ClusterID] = snapshot
-		if service.primaryFailureObserver != nil {
-			service.primaryFailureObserver.Record(refresh.ClusterID, primaryProbeUnavailable(snapshot), refresh.ObservedAt)
+		if publishErr == nil {
+			service.recordPrimaryFailure(refresh.ClusterID, failureTargets[refresh.ClusterID], snapshot, refresh.ObservedAt)
 		}
 	}
 	if publishErr != nil {
@@ -470,31 +487,99 @@ func (service *Service) RefreshBatch(ctx context.Context, clusterIDs []model.Res
 	return published, errors.Join(failures...)
 }
 
-func primaryProbeUnavailable(snapshot model.TopologySnapshot) bool {
+func currentObservedPrimaryID(snapshot model.TopologySnapshot) (model.ResourceID, bool) {
 	primaryID := model.ResourceID("")
 	for _, instance := range snapshot.Instances {
-		if instance.Role != model.RolePrimary {
+		if instance.Role != model.RolePrimary || !hasCurrentDatabaseObservation(snapshot, instance.ResourceID) {
 			continue
 		}
 		if primaryID != "" {
-			return false
+			return "", false
 		}
 		primaryID = instance.ResourceID
 	}
-	if primaryID == "" {
-		return false
-	}
-	boundProbeFound := false
+	return primaryID, primaryID != ""
+}
+
+func hasCurrentDatabaseObservation(snapshot model.TopologySnapshot, instanceID model.ResourceID) bool {
 	for _, probe := range snapshot.Probes {
-		if probe.InstanceID != primaryID {
+		if probe.InstanceID != instanceID || probe.DiscoveryObservedAt.IsZero() || !probe.DiscoveryObservedAt.Equal(snapshot.ObservedAt) {
+			continue
+		}
+		if probe.Outcome == model.ProbeOutcomeReachable || probe.Outcome == model.ProbeOutcomeMetricsUnavailable {
+			return true
+		}
+	}
+	return false
+}
+
+func primaryDatabaseUnavailable(snapshot model.TopologySnapshot, instanceID model.ResourceID) bool {
+	boundProbeFound := false
+	unavailable := false
+	for _, probe := range snapshot.Probes {
+		if probe.InstanceID != instanceID {
 			continue
 		}
 		boundProbeFound = true
-		if !probe.DiscoveryObservedAt.IsZero() && probe.DiscoveryObservedAt.Equal(snapshot.ObservedAt) {
+		switch probe.Outcome {
+		case model.ProbeOutcomeReachable, model.ProbeOutcomeMetricsUnavailable:
+			return false
+		case model.ProbeOutcomeDatabaseUnavailable:
+			unavailable = true
+		default:
 			return false
 		}
 	}
-	return boundProbeFound
+	return boundProbeFound && unavailable
+}
+
+func (service *Service) primaryFailureTarget(clusterID model.ResourceID) model.ResourceID {
+	if snapshot, found := service.repository.TopologySnapshot(clusterID); found {
+		if primaryID, ok := currentObservedPrimaryID(snapshot); ok {
+			return primaryID
+		}
+	}
+
+	activeEndpoints := make(map[model.ResourceID]bool)
+	for _, endpoint := range service.repository.Endpoints(clusterID) {
+		activeEndpoints[endpoint.ResourceID] = endpoint.Active
+	}
+	ownerID := model.ResourceID("")
+	for _, resource := range service.repository.HAEndpoints(clusterID) {
+		if resource.OwnerID == "" || !activeEndpoints[resource.EndpointID] {
+			continue
+		}
+		if ownerID != "" && ownerID != resource.OwnerID {
+			return ""
+		}
+		ownerID = resource.OwnerID
+	}
+	if ownerID != "" {
+		return ownerID
+	}
+
+	service.primaryEvidenceMu.Lock()
+	defer service.primaryEvidenceMu.Unlock()
+	return service.lastObservedPrimary[clusterID]
+}
+
+func (service *Service) recordPrimaryFailure(clusterID, failureTarget model.ResourceID, snapshot model.TopologySnapshot, observedAt time.Time) {
+	if service.primaryFailureObserver == nil {
+		return
+	}
+	if currentPrimaryID, ok := currentObservedPrimaryID(snapshot); ok {
+		service.primaryEvidenceMu.Lock()
+		service.lastObservedPrimary[clusterID] = currentPrimaryID
+		service.primaryEvidenceMu.Unlock()
+		service.primaryFailureObserver.Record(clusterID, false, observedAt)
+		return
+	}
+	if failureTarget == "" {
+		service.primaryEvidenceMu.Lock()
+		failureTarget = service.lastObservedPrimary[clusterID]
+		service.primaryEvidenceMu.Unlock()
+	}
+	service.primaryFailureObserver.Record(clusterID, failureTarget != "" && primaryDatabaseUnavailable(snapshot, failureTarget), observedAt)
 }
 
 func (service *Service) lockCluster(ctx context.Context, clusterID model.ResourceID) (func(), error) {
@@ -566,10 +651,12 @@ func (service *Service) probeEndpoints(ctx context.Context, candidate adapter.Da
 				results[index].failure = probeDatabaseFailed
 				return
 			}
+			probeContext, cancelProbe := boundedEndpointProbeContext(ctx)
+			defer cancelProbe()
 
 			credentials := adapter.Credentials{}
 			if service.credentials != nil {
-				resolved, err := service.credentials.Resolve(ctx, cluster, endpoint)
+				resolved, err := service.credentials.Resolve(probeContext, cluster, endpoint)
 				if err != nil {
 					results[index].failure = probeCredentialsFailed
 					return
@@ -585,7 +672,7 @@ func (service *Service) probeEndpoints(ctx context.Context, candidate adapter.Da
 				},
 				Credentials: credentials,
 			}
-			discovered, err := candidate.Discover(ctx, request)
+			discovered, err := candidate.Discover(probeContext, request)
 			if err != nil {
 				if errors.Is(err, adapter.ErrUnsupported) {
 					results[index].failure = probeUnsupported
@@ -596,7 +683,7 @@ func (service *Service) probeEndpoints(ctx context.Context, candidate adapter.Da
 			}
 			results[index].discovery = discovered
 			if topologyAvailable {
-				topology, err := candidate.Topology(ctx, request, discovered)
+				topology, err := candidate.Topology(probeContext, request, discovered)
 				if err != nil {
 					if errors.Is(err, adapter.ErrUnsupported) {
 						results[index].failure = probeUnsupported
@@ -608,7 +695,7 @@ func (service *Service) probeEndpoints(ctx context.Context, candidate adapter.Da
 				results[index].topology = topology
 			}
 			if metricsAvailable {
-				metrics, err := candidate.Metrics(ctx, request)
+				metrics, err := candidate.Metrics(probeContext, request)
 				if err != nil {
 					results[index].failure = probeMetricsFailed
 					return
@@ -619,6 +706,26 @@ func (service *Service) probeEndpoints(ctx context.Context, candidate adapter.Da
 	}
 	wait.Wait()
 	return results
+}
+
+func boundedEndpointProbeContext(parent context.Context) (context.Context, context.CancelFunc) {
+	deadline, bounded := parent.Deadline()
+	if !bounded {
+		return context.WithCancel(parent)
+	}
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return context.WithCancel(parent)
+	}
+	reserve := maximumProbeCompletionReserve
+	if proportional := remaining / 4; proportional < reserve {
+		reserve = proportional
+	}
+	budget := remaining - reserve
+	if budget <= 0 {
+		return context.WithCancel(parent)
+	}
+	return context.WithTimeout(parent, budget)
 }
 
 func cloneLagSeconds(value *int64) *int64 {

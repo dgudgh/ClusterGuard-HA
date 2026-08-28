@@ -13,6 +13,7 @@ type ClusterRetirement struct {
 	Cluster                 model.DatabaseCluster `json:"cluster"`
 	RetiredAt               time.Time             `json:"retired_at"`
 	InstancesRemoved        int                   `json:"instances_removed"`
+	WorkloadBindingsRemoved int                   `json:"workload_bindings_removed"`
 	EndpointsRemoved        int                   `json:"endpoints_removed"`
 	HAEndpointsRemoved      int                   `json:"ha_endpoints_removed"`
 	ReplicationLinksRemoved int                   `json:"replication_links_removed"`
@@ -80,6 +81,11 @@ func (repository *Repository) RetireCluster(clusterID model.ResourceID, confirmD
 			result.InstancesRemoved++
 		}
 	}
+	for _, binding := range repository.snapshot.WorkloadBindings {
+		if instance, found := repository.snapshot.Instances[binding.InstanceID]; found && instance.ClusterID == clusterID {
+			result.WorkloadBindingsRemoved++
+		}
+	}
 	for _, resource := range repository.snapshot.HAEndpoints {
 		if resource.ClusterID == clusterID {
 			result.HAEndpointsRemoved++
@@ -94,6 +100,12 @@ func (repository *Repository) RetireCluster(clusterID model.ResourceID, confirmD
 	next := repository.snapshot
 	next.Clusters = cloneClusterMap(repository.snapshot.Clusters)
 	delete(next.Clusters, clusterID)
+	next.WorkloadBindings = cloneWorkloadBindingMap(repository.snapshot.WorkloadBindings)
+	for resourceID, binding := range next.WorkloadBindings {
+		if instance, found := repository.snapshot.Instances[binding.InstanceID]; found && instance.ClusterID == clusterID {
+			delete(next.WorkloadBindings, resourceID)
+		}
+	}
 	next.Instances = cloneInstanceMap(repository.snapshot.Instances)
 	for resourceID, instance := range next.Instances {
 		if instance.ClusterID == clusterID {

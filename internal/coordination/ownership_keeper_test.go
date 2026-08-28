@@ -13,11 +13,12 @@ import (
 )
 
 type ownershipInventoryStub struct {
-	clusters  []model.DatabaseCluster
-	snapshots map[model.ResourceID]model.TopologySnapshot
-	resources map[model.ResourceID][]model.HAEndpoint
-	endpoints map[model.ResourceID]model.Endpoint
-	commits   int
+	clusters   []model.DatabaseCluster
+	snapshots  map[model.ResourceID]model.TopologySnapshot
+	resources  map[model.ResourceID][]model.HAEndpoint
+	endpoints  map[model.ResourceID]model.Endpoint
+	operations map[model.ResourceID][]model.OperationRecord
+	commits    int
 }
 
 var errStaleOwnershipObservation = errors.New("stale ownership observation")
@@ -35,6 +36,9 @@ func (inventory *ownershipInventoryStub) HAEndpoints(clusterID model.ResourceID)
 func (inventory *ownershipInventoryStub) Endpoint(resourceID model.ResourceID) (model.Endpoint, bool) {
 	value, found := inventory.endpoints[resourceID]
 	return value, found
+}
+func (inventory *ownershipInventoryStub) Operations(clusterID model.ResourceID) []model.OperationRecord {
+	return append([]model.OperationRecord{}, inventory.operations[clusterID]...)
 }
 func (inventory *ownershipInventoryStub) CommitHAEndpointOwner(clusterID, resourceID, ownerID model.ResourceID, healthy bool) error {
 	resources := inventory.resources[clusterID]
@@ -184,6 +188,41 @@ func TestWritablePrimaryAcceptsHealthyPostgreSQLWriter(t *testing.T) {
 	}
 }
 
+func TestOwnershipKeeperDefersToActivePostgreSQLEndpointMutation(t *testing.T) {
+	now := time.Date(2026, time.August, 27, 7, 30, 0, 0, time.UTC)
+	inventory, observer, leases, primary, _ := ownershipKeeperFixture(now)
+	clusterID := inventory.clusters[0].ResourceID
+	inventory.clusters[0].Engine = model.EnginePostgreSQL
+	primary.Engine = model.EnginePostgreSQL
+	primary.EngineMetadata = map[string]string{"in_recovery": "false", "transaction_read_only": "false"}
+	inventory.snapshots[clusterID] = model.TopologySnapshot{
+		ClusterID: clusterID, ObservedAt: now, Instances: []model.DatabaseInstance{primary},
+		Probes: []model.ProbeStatus{{InstanceID: primary.ResourceID, DiscoveryObservedAt: now, Health: primary.Health}},
+	}
+	inventory.operations = map[model.ResourceID][]model.OperationRecord{clusterID: {{
+		Operation: model.Operation{ClusterID: clusterID, Engine: model.EnginePostgreSQL, Kind: model.OperationFormerPrimaryRejoin},
+		Status:    model.OperationRunning,
+	}}}
+
+	keeper := NewOwnershipKeeper(inventory, observer, leases, ownershipAuthorityStub{}, func() time.Time { return now }, 5*time.Second, 15*time.Second)
+	if err := keeper.RunOnce(context.Background()); err != nil {
+		t.Fatalf("active PostgreSQL endpoint operation should defer background ownership reconciliation: %v", err)
+	}
+	if observer.calls != 0 || leases.batches != 0 {
+		t.Fatalf("background ownership raced active PostgreSQL operation: observer_calls=%d lease_batches=%d", observer.calls, leases.batches)
+	}
+
+	record := inventory.operations[clusterID][0]
+	record.Status = model.OperationSucceeded
+	inventory.operations[clusterID][0] = record
+	if err := keeper.RunOnce(context.Background()); err != nil {
+		t.Fatalf("ownership reconciliation did not resume after operation completion: %v", err)
+	}
+	if observer.calls != 1 || leases.batches != 1 {
+		t.Fatalf("ownership reconciliation did not resume: observer_calls=%d lease_batches=%d", observer.calls, leases.batches)
+	}
+}
+
 func TestWritablePrimaryAllowsCurrentFailedProbeForFormerPrimary(t *testing.T) {
 	now := time.Date(2026, time.July, 21, 6, 35, 0, 0, time.UTC)
 	current := model.DatabaseInstance{
@@ -324,6 +363,10 @@ func TestRebootBootstrapCandidateRequiresCompleteReadOnlyCanonicalTopology(t *te
 			value.Links[0].LagSeconds = &lag
 		}},
 		{name: "replica thread stopped", mutate: func(value *model.TopologySnapshot) { value.Instances[1].Replication.SQLThread = model.ThreadStopped }},
+		{name: "unrelated replica degradation", mutate: func(value *model.TopologySnapshot) {
+			value.Instances[1].Health = model.Health{State: model.HealthDegraded, Summary: "replica health is unsafe"}
+			value.Probes[1].Health = value.Instances[1].Health
+		}},
 		{name: "incomplete probe coverage", mutate: func(value *model.TopologySnapshot) { value.Probes = value.Probes[:1] }},
 		{name: "wrong canonical owner", mutate: func(value *model.TopologySnapshot) { value.Instances[0].ResourceID = model.NewResourceID() }},
 		{name: "unexpected replication edge", mutate: func(value *model.TopologySnapshot) { value.Links[0].SourceInstanceID = replica.ResourceID }},
@@ -344,6 +387,89 @@ func TestRebootBootstrapCandidateRequiresCompleteReadOnlyCanonicalTopology(t *te
 				t.Fatalf("unsafe candidate=%+v err=%v", candidate, err)
 			}
 		})
+	}
+}
+
+func TestRebootBootstrapCandidateAllowsCurrentFailedProbeForKnownReadOnlyReplica(t *testing.T) {
+	now := time.Date(2026, time.August, 11, 3, 15, 41, 0, time.UTC)
+	inventory, _, _, canonical, _ := rebootBootstrapFixture(now)
+	snapshot := inventory.snapshots[canonical.ClusterID]
+	lag := int64(0)
+	offline := model.DatabaseInstance{
+		ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, ClusterID: canonical.ClusterID, Engine: model.EngineMySQL,
+		EngineIdentity: model.EngineIdentity{"server_uuid": "dddddddd-eeee-ffff-aaaa-bbbbbbbbbbbb"},
+		Role:           model.RoleReplica,
+		Health:         model.Health{State: model.HealthUnknown, Summary: "database probe failed", ObservedAt: now},
+		Replication: model.ReplicationStatus{
+			SourceIdentity: canonical.EngineIdentity.Clone(), IOThread: model.ThreadRunning, SQLThread: model.ThreadRunning, LagSeconds: &lag,
+		},
+		EngineMetadata: map[string]string{"read_only": "true", "super_read_only": "true"},
+	}
+	snapshot.Instances = append(snapshot.Instances, offline)
+	snapshot.Probes = append(snapshot.Probes, model.ProbeStatus{
+		InstanceID: offline.ResourceID,
+		Health:     offline.Health,
+	})
+	snapshot.Links = append(snapshot.Links, model.ReplicationLink{
+		ClusterID: canonical.ClusterID, SourceInstanceID: canonical.ResourceID, TargetInstanceID: offline.ResourceID,
+		Healthy: false, LagSeconds: &lag,
+	})
+
+	candidate, err := RebootBootstrapCandidate(snapshot, canonical.ResourceID, now, 15*time.Second)
+	if err != nil || candidate.ResourceID != canonical.ResourceID {
+		t.Fatalf("known read-only offline replica blocked reboot candidate=%+v err=%v", candidate, err)
+	}
+
+	unsafeWritable := snapshot
+	unsafeWritable.Instances = append([]model.DatabaseInstance{}, snapshot.Instances...)
+	unsafeWritable.Instances[2].EngineMetadata = cloneStringMap(snapshot.Instances[2].EngineMetadata)
+	unsafeWritable.Instances[2].EngineMetadata["read_only"] = "false"
+	if candidate, err := RebootBootstrapCandidate(unsafeWritable, canonical.ResourceID, now, 15*time.Second); err == nil || candidate.ResourceID != "" {
+		t.Fatalf("last-known writable offline replica accepted candidate=%+v err=%v", candidate, err)
+	}
+
+	unsafePrimary := snapshot
+	unsafePrimary.Instances = append([]model.DatabaseInstance{}, snapshot.Instances...)
+	unsafePrimary.Instances[2].Role = model.RolePrimary
+	if candidate, err := RebootBootstrapCandidate(unsafePrimary, canonical.ResourceID, now, 15*time.Second); err == nil || candidate.ResourceID != "" {
+		t.Fatalf("offline primary accepted candidate=%+v err=%v", candidate, err)
+	}
+}
+
+func TestRebootBootstrapCandidateAcceptsSemisyncIdleReplicaWithMatchingGTID(t *testing.T) {
+	now := time.Date(2026, time.August, 9, 9, 53, 0, 0, time.UTC)
+	inventory, _, _, canonical, _ := rebootBootstrapFixture(now)
+	snapshot := inventory.snapshots[canonical.ClusterID]
+	gtid := "83baf934-7556-11f1-ae21-000c29938c48:1-97997"
+	snapshot.Instances[0].EngineMetadata["gtid_executed"] = gtid
+	snapshot.Instances[0].EngineMetadata["semi_sync_required"] = "true"
+	snapshot.Instances[0].EngineMetadata["semi_sync_available"] = "true"
+	snapshot.Instances[0].EngineMetadata["semi_sync_source_enabled"] = "true"
+	snapshot.Instances[0].EngineMetadata["semi_sync_source_status"] = "true"
+	snapshot.Instances[0].EngineMetadata["semi_sync_source_clients"] = "1"
+	snapshot.Instances[0].EngineMetadata["semi_sync_wait_for_replica_count"] = "1"
+	replica := &snapshot.Instances[1]
+	replica.Health = model.Health{
+		State:   model.HealthDegraded,
+		Summary: "MySQL replica is not actively acknowledging semi-sync transactions",
+	}
+	replica.Replication.ExecutedPosition = gtid
+	replica.EngineMetadata["gtid_executed"] = gtid
+	replica.EngineMetadata["semi_sync_required"] = "true"
+	replica.EngineMetadata["semi_sync_available"] = "true"
+	replica.EngineMetadata["semi_sync_source_enabled"] = "true"
+	replica.EngineMetadata["semi_sync_replica_enabled"] = "true"
+	replica.EngineMetadata["semi_sync_replica_status"] = "false"
+	snapshot.Probes[1].Health = replica.Health
+
+	candidate, err := RebootBootstrapCandidate(snapshot, canonical.ResourceID, now, 15*time.Second)
+	if err != nil || candidate.ResourceID != canonical.ResourceID {
+		t.Fatalf("semi-sync idle replica blocked safe reboot candidate=%+v err=%v", candidate, err)
+	}
+
+	snapshot.Instances[1].Replication.ExecutedPosition = gtid + ",aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:1"
+	if candidate, err := RebootBootstrapCandidate(snapshot, canonical.ResourceID, now, 15*time.Second); err == nil || candidate.ResourceID != "" {
+		t.Fatalf("GTID-divergent degraded replica accepted candidate=%+v err=%v", candidate, err)
 	}
 }
 
@@ -368,12 +494,65 @@ func TestOwnershipKeeperGrantsBootstrapLeaseOnlyToRebootedCanonicalPrimary(t *te
 	if inventory.resources[canonical.ClusterID][0].Healthy {
 		t.Fatal("zero-owner bootstrap was incorrectly marked healthy before agent verification")
 	}
+}
 
-	inventory, observer, leases, _, _ = rebootBootstrapFixture(now)
+func TestOwnershipKeeperRenewsExistingBootstrapLeaseDuringDiscoveryConvergence(t *testing.T) {
+	now := time.Date(2026, time.July, 28, 8, 30, 0, 0, time.UTC)
+	inventory, observer, leases, canonical, _ := rebootBootstrapFixture(now)
 	observer.result.OwnerIDs = []model.ResourceID{canonical.ResourceID}
-	_ = NewOwnershipKeeper(inventory, observer, leases, ownershipAuthorityStub{}, func() time.Time { return now }, 5*time.Second, 15*time.Second).RunOnce(context.Background())
-	if len(leases.requests) != 0 {
-		t.Fatalf("non-zero-owner reboot bootstrap leases=%+v", leases.requests)
+	if err := NewOwnershipKeeper(inventory, observer, leases, ownershipAuthorityStub{}, func() time.Time { return now }, 5*time.Second, 15*time.Second).RunOnce(context.Background()); err != nil {
+		t.Fatalf("post-bootstrap convergence renewal: %v", err)
+	}
+	if len(leases.requests) != 1 || leases.requests[0].OwnerID != canonical.ResourceID || !leases.requests[0].RenewOnly {
+		t.Fatalf("post-bootstrap convergence requests=%+v", leases.requests)
+	}
+	if inventory.commits != 0 {
+		t.Fatalf("post-bootstrap convergence changed metadata commits=%d", inventory.commits)
+	}
+}
+
+func TestOwnershipKeeperBlocksUnsafeBootstrapConvergenceRenewal(t *testing.T) {
+	now := time.Date(2026, time.July, 28, 8, 35, 0, 0, time.UTC)
+	tests := []struct {
+		name   string
+		mutate func(*ownershipInventoryStub, *ownershipObserverStub, model.DatabaseInstance)
+	}{
+		{
+			name: "owner is not canonical",
+			mutate: func(_ *ownershipInventoryStub, observer *ownershipObserverStub, _ model.DatabaseInstance) {
+				observer.result.OwnerIDs = []model.ResourceID{model.NewResourceID()}
+			},
+		},
+		{
+			name: "multiple owners",
+			mutate: func(_ *ownershipInventoryStub, observer *ownershipObserverStub, canonical model.DatabaseInstance) {
+				observer.result.OwnerIDs = []model.ResourceID{canonical.ResourceID, model.NewResourceID()}
+			},
+		},
+		{
+			name: "replica lag",
+			mutate: func(inventory *ownershipInventoryStub, observer *ownershipObserverStub, canonical model.DatabaseInstance) {
+				observer.result.OwnerIDs = []model.ResourceID{canonical.ResourceID}
+				snapshot := inventory.snapshots[canonical.ClusterID]
+				lag := int64(1)
+				snapshot.Instances[1].Replication.LagSeconds = &lag
+				snapshot.Links[0].LagSeconds = &lag
+				inventory.snapshots[canonical.ClusterID] = snapshot
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			inventory, observer, leases, canonical, _ := rebootBootstrapFixture(now)
+			test.mutate(inventory, observer, canonical)
+			err := NewOwnershipKeeper(inventory, observer, leases, ownershipAuthorityStub{}, func() time.Time { return now }, 5*time.Second, 15*time.Second).RunOnce(context.Background())
+			if err == nil {
+				t.Fatal("unsafe post-bootstrap convergence renewal was accepted")
+			}
+			if len(leases.requests) != 0 || inventory.commits != 0 {
+				t.Fatalf("unsafe convergence requests=%+v commits=%d", leases.requests, inventory.commits)
+			}
+		})
 	}
 }
 
@@ -391,8 +570,89 @@ func TestOwnershipKeeperRenewsOnlyHealthyWritableCurrentPrimary(t *testing.T) {
 		t.Fatalf("stable leases used %d batches, want one", leases.batches)
 	}
 	request := leases.requests[0]
-	if request.OwnerID != primary.ResourceID || request.HAEndpointID != resource.ResourceID || request.OperationID != resource.ResourceID || request.TTL != 30*time.Second {
+	if request.OwnerID != primary.ResourceID || request.HAEndpointID != resource.ResourceID || request.OperationID != resource.ResourceID || request.TTL != time.Minute {
 		t.Fatalf("stable ownership lease=%+v", request)
+	}
+}
+
+func addOwnershipReplica(inventory *ownershipInventoryStub, primary model.DatabaseInstance, now time.Time, suffix string) model.DatabaseInstance {
+	lag := int64(0)
+	replica := model.DatabaseInstance{
+		ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, ClusterID: primary.ClusterID, Engine: model.EngineMySQL,
+		EngineIdentity: model.EngineIdentity{"server_uuid": suffix + "-bbbb-cccc-dddd-eeeeeeeeeeee"},
+		Role:           model.RoleReplica, Health: model.Health{State: model.HealthHealthy},
+		Replication: model.ReplicationStatus{
+			SourceIdentity: primary.EngineIdentity.Clone(), IOThread: model.ThreadRunning, SQLThread: model.ThreadRunning, LagSeconds: &lag,
+		},
+		EngineMetadata: map[string]string{"read_only": "true", "super_read_only": "true"},
+	}
+	snapshot := inventory.snapshots[primary.ClusterID]
+	snapshot.Instances = append(snapshot.Instances, replica)
+	snapshot.Probes = append(snapshot.Probes, model.ProbeStatus{InstanceID: replica.ResourceID, DiscoveryObservedAt: now, Health: replica.Health})
+	inventory.snapshots[primary.ClusterID] = snapshot
+	return replica
+}
+
+func TestOwnershipKeeperRenewsExistingLeaseWithMajorityCoverageWhenMissingNodeIsNotOwner(t *testing.T) {
+	now := time.Date(2026, time.July, 28, 7, 10, 0, 0, time.UTC)
+	inventory, observer, leases, primary, _ := ownershipKeeperFixture(now)
+	firstReplica := addOwnershipReplica(inventory, primary, now, "bbbbbbbb")
+	_ = addOwnershipReplica(inventory, primary, now, "cccccccc")
+	observer.result.Complete = false
+	observer.result.ObservedInstanceIDs = []model.ResourceID{primary.ResourceID, firstReplica.ResourceID}
+
+	keeper := NewOwnershipKeeper(inventory, observer, leases, ownershipAuthorityStub{}, func() time.Time { return now }, 5*time.Second, 15*time.Second)
+	if err := keeper.RunOnce(context.Background()); err != nil {
+		t.Fatalf("majority ownership renewal: %v", err)
+	}
+	if len(leases.requests) != 1 || !leases.requests[0].RenewOnly {
+		t.Fatalf("partial coverage requests=%+v", leases.requests)
+	}
+}
+
+func TestOwnershipKeeperRejectsUnsafePartialCoverage(t *testing.T) {
+	now := time.Date(2026, time.July, 28, 7, 15, 0, 0, time.UTC)
+	tests := []struct {
+		name   string
+		mutate func(*ownershipObserverStub, model.DatabaseInstance, model.DatabaseInstance, model.DatabaseInstance)
+	}{
+		{
+			name: "owner probe is missing",
+			mutate: func(observer *ownershipObserverStub, primary, first, second model.DatabaseInstance) {
+				observer.result.ObservedInstanceIDs = []model.ResourceID{first.ResourceID, second.ResourceID}
+				observer.result.OwnerIDs = []model.ResourceID{primary.ResourceID}
+			},
+		},
+		{
+			name: "data node probe coverage is not a majority",
+			mutate: func(observer *ownershipObserverStub, primary, _, _ model.DatabaseInstance) {
+				observer.result.ObservedInstanceIDs = []model.ResourceID{primary.ResourceID}
+			},
+		},
+		{
+			name: "incomplete zero owner evidence cannot bootstrap",
+			mutate: func(observer *ownershipObserverStub, primary, first, _ model.DatabaseInstance) {
+				observer.result.ObservedInstanceIDs = []model.ResourceID{primary.ResourceID, first.ResourceID}
+				observer.result.OwnerIDs = nil
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			inventory, observer, leases, primary, _ := ownershipKeeperFixture(now)
+			firstReplica := addOwnershipReplica(inventory, primary, now, "bbbbbbbb")
+			secondReplica := addOwnershipReplica(inventory, primary, now, "cccccccc")
+			observer.result.Complete = false
+			test.mutate(observer, primary, firstReplica, secondReplica)
+
+			err := NewOwnershipKeeper(inventory, observer, leases, ownershipAuthorityStub{}, func() time.Time { return now }, 5*time.Second, 15*time.Second).RunOnce(context.Background())
+			if err == nil {
+				t.Fatal("unsafe partial ownership coverage was accepted")
+			}
+			if len(leases.requests) != 0 {
+				t.Fatalf("unsafe partial coverage requests=%+v", leases.requests)
+			}
+		})
 	}
 }
 
@@ -529,6 +789,26 @@ func TestOwnershipKeeperProbesClustersConcurrently(t *testing.T) {
 	unblock()
 	if err := <-done; err == nil {
 		t.Fatal("released probes unexpectedly succeeded")
+	}
+}
+
+func TestOwnershipKeeperSkipsEnginesWithoutAgentOwnershipProtocol(t *testing.T) {
+	now := time.Now().UTC()
+	inventory, observer, leases, _, _ := ownershipKeeperFixture(now)
+	inventory.clusters = append(inventory.clusters,
+		model.DatabaseCluster{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, Engine: model.EngineOracle},
+		model.DatabaseCluster{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, Engine: model.EngineSQLServer},
+	)
+
+	keeper := NewOwnershipKeeper(
+		inventory, observer, leases, ownershipAuthorityStub{}, func() time.Time { return now },
+		5*time.Second, 15*time.Second,
+	)
+	if err := keeper.RunOnce(context.Background()); err != nil {
+		t.Fatalf("ownership keeper should ignore engines without this ownership protocol: %v", err)
+	}
+	if observer.calls != 1 || len(leases.requests) != 1 {
+		t.Fatalf("observer calls=%d leases=%+v", observer.calls, leases.requests)
 	}
 }
 

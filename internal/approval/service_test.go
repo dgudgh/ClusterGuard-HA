@@ -120,8 +120,10 @@ func TestIssueRejectsPlanWithBlockingChecks(t *testing.T) {
 		Message: "target is not ready",
 	}}
 
-	if _, err := service.Issue(context.Background(), IssueRequest{Operation: record, IssuedBy: "approver"}); err == nil {
-		t.Fatal("operation plan with blocking checks received an approval grant")
+	if _, err := service.Issue(context.Background(), IssueRequest{Operation: record, IssuedBy: "approver"}); !errors.Is(err, ErrBlockingChecks) {
+		t.Fatalf("blocking operation error=%v, want ErrBlockingChecks", err)
+	} else if !strings.Contains(err.Error(), "target_ready") {
+		t.Fatalf("blocking operation error omitted safe check name: %v", err)
 	}
 	if grants := repository.ApprovalGrants(); len(grants) != 0 {
 		t.Fatalf("blocking plan persisted approval grants: %+v", grants)

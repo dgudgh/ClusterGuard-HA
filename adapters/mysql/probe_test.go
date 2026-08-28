@@ -13,6 +13,95 @@ import (
 	"clusterguard.io/ha/pkg/model"
 )
 
+type semiSyncRunner struct {
+	base          *fakeRunner
+	variableRows  []Row
+	statusRows    []Row
+	variablesErr  error
+	statusRowsErr error
+}
+
+func (runner *semiSyncRunner) Query(ctx context.Context, endpoint adapter.Endpoint, credentials adapter.Credentials, query string) ([]Row, error) {
+	switch query {
+	case semiSyncVariablesQuery:
+		return runner.variableRows, runner.variablesErr
+	case semiSyncStatusQuery:
+		return runner.statusRows, runner.statusRowsErr
+	default:
+		return runner.base.Query(ctx, endpoint, credentials, query)
+	}
+}
+
+func readySemiSyncRows(modern bool) ([]Row, []Row) {
+	source, replica := "source", "replica"
+	if !modern {
+		source, replica = "master", "slave"
+	}
+	variables := []Row{
+		{"Variable_name": "rpl_semi_sync_" + source + "_enabled", "Value": "ON"},
+		{"Variable_name": "rpl_semi_sync_" + replica + "_enabled", "Value": "ON"},
+		{"Variable_name": "rpl_semi_sync_" + source + "_wait_for_" + replica + "_count", "Value": "1"},
+		{"Variable_name": "rpl_semi_sync_" + source + "_timeout", "Value": "10000"},
+		{"Variable_name": "rpl_semi_sync_" + source + "_wait_no_" + replica, "Value": "ON"},
+		{"Variable_name": "rpl_semi_sync_" + source + "_wait_point", "Value": "AFTER_SYNC"},
+	}
+	status := []Row{
+		{"Variable_name": "Rpl_semi_sync_" + source + "_status", "Value": "ON"},
+		{"Variable_name": "Rpl_semi_sync_" + source + "_clients", "Value": "2"},
+		{"Variable_name": "Rpl_semi_sync_" + replica + "_status", "Value": "ON"},
+	}
+	return variables, status
+}
+
+func TestProbeSemiSyncAcceptsModernAndLegacyTerminology(t *testing.T) {
+	for _, modern := range []bool{true, false} {
+		variables, status := readySemiSyncRows(modern)
+		probe, err := parseSemiSync(variables, status)
+		if err != nil {
+			t.Fatalf("parse semi-sync modern=%t: %v", modern, err)
+		}
+		if !probe.available || !probe.sourceEnabled || !probe.sourceStatus || probe.sourceClients != 2 ||
+			!probe.replicaEnabled || !probe.replicaStatus || probe.waitForReplicaCount != 1 ||
+			probe.sourceTimeoutMS != 10000 || !probe.waitNoReplica || probe.waitPoint != "AFTER_SYNC" {
+			t.Fatalf("unexpected semi-sync probe modern=%t: %+v", modern, probe)
+		}
+	}
+}
+
+func TestDiscoverRequiredSemiSyncFailsClosedWhenPluginIsMissing(t *testing.T) {
+	runner := &semiSyncRunner{base: healthyReplicaRunner("8.4.10", modernReplicationRow())}
+	result, err := New(runner).RequireSemiSync(true).Discover(context.Background(), adapterRequest())
+	if err != nil {
+		t.Fatalf("discover without semi-sync plugin: %v", err)
+	}
+	if result.Instance.Health.State != model.HealthDegraded || result.Instance.PromotionEligible {
+		t.Fatalf("required missing semi-sync must degrade and block promotion: %+v", result.Instance)
+	}
+	if result.Instance.EngineMetadata["semi_sync_available"] != "false" {
+		t.Fatalf("missing semi-sync evidence was not persisted: %+v", result.Instance.EngineMetadata)
+	}
+}
+
+func TestDiscoverRequiredSemiSyncAcceptsReadyReplica(t *testing.T) {
+	variables, status := readySemiSyncRows(true)
+	runner := &semiSyncRunner{
+		base:         healthyReplicaRunner("8.4.10", modernReplicationRow()),
+		variableRows: variables,
+		statusRows:   status,
+	}
+	result, err := New(runner).RequireSemiSync(true).Discover(context.Background(), adapterRequest())
+	if err != nil {
+		t.Fatalf("discover ready semi-sync replica: %v", err)
+	}
+	if result.Instance.Health.State != model.HealthHealthy || !result.Instance.PromotionEligible {
+		t.Fatalf("ready semi-sync replica must remain healthy and promotable: %+v", result.Instance)
+	}
+	if result.Instance.EngineMetadata["semi_sync_replica_status"] != "true" ||
+		result.Instance.EngineMetadata["semi_sync_source_enabled"] != "true" {
+		t.Fatalf("semi-sync evidence was not persisted: %+v", result.Instance.EngineMetadata)
+	}
+}
+
 func TestParseReplicationAcceptsBothTerminologyFamilies(t *testing.T) {
 	legacy := legacyReplicationRow()
 	modern := modernReplicationRow()
@@ -202,21 +291,27 @@ func TestDiscoverIdentifiesPrimaryOnlyWhenWritableAndUnreplicated(t *testing.T) 
 	}
 }
 
-func TestCLIQueryRunnerUsesPasswordEnvironmentAndParsesTSV(t *testing.T) {
+func TestCLIQueryRunnerUsesPrivateCredentialFileAndParsesTSV(t *testing.T) {
 	tempDir := t.TempDir()
 	argsPath := filepath.Join(tempDir, "args")
-	passwordPath := filepath.Join(tempDir, "password")
+	credentialPath := filepath.Join(tempDir, "credential")
+	modePath := filepath.Join(tempDir, "mode")
 	binaryPath := filepath.Join(tempDir, "mysql")
 	script := `#!/bin/sh
 printf '%s\n' "$@" > "$MYSQL_TEST_ARGS"
-printf '%s' "$MYSQL_PWD" > "$MYSQL_TEST_PASSWORD"
+credential_file="${1#--defaults-file=}"
+cat "$credential_file" > "$MYSQL_TEST_CREDENTIAL"
+ls -ld "$credential_file" | cut -c1-10 > "$MYSQL_TEST_MODE"
+test -z "${MYSQL_PWD+x}" || exit 42
 printf '%s\n' 'server_uuid	hostname	note' 'source-uuid	mysql-a	' 'source-uuid-2	mysql-b	line1\nline2'
 `
 	if err := os.WriteFile(binaryPath, []byte(script), 0o700); err != nil {
 		t.Fatalf("write fake mysql: %v", err)
 	}
 	t.Setenv("MYSQL_TEST_ARGS", argsPath)
-	t.Setenv("MYSQL_TEST_PASSWORD", passwordPath)
+	t.Setenv("MYSQL_TEST_CREDENTIAL", credentialPath)
+	t.Setenv("MYSQL_TEST_MODE", modePath)
+	t.Setenv("MYSQL_PWD", "stale-password-must-not-be-inherited")
 	password := "p@ss word --password=visible"
 	endpoint := adapter.Endpoint{Hostname: "localhost", Port: 4407}
 	rows, err := (CLIQueryRunner{Binary: binaryPath}).Query(context.Background(), endpoint, adapter.Credentials{Username: "monitor", Password: password}, "SELECT 1")
@@ -234,8 +329,8 @@ printf '%s\n' 'server_uuid	hostname	note' 'source-uuid	mysql-a	' 'source-uuid-2	
 		t.Fatalf("read args: %v", err)
 	}
 	argumentLines := strings.Split(strings.TrimSpace(string(args)), "\n")
-	if len(argumentLines) == 0 || argumentLines[0] != "--no-defaults" {
-		t.Fatalf("mysql option files were not disabled before all other arguments: %q", args)
+	if len(argumentLines) == 0 || !strings.HasPrefix(argumentLines[0], "--defaults-file=") {
+		t.Fatalf("private credential option file was not the first argument: %q", args)
 	}
 	if strings.Contains(string(args), password) || strings.Contains(string(args), "--password") {
 		t.Fatalf("password leaked into command arguments: %q", args)
@@ -251,12 +346,23 @@ printf '%s\n' 'server_uuid	hostname	note' 'source-uuid	mysql-a	' 'source-uuid-2	
 	if strings.Contains(string(args), "--skip-column-names") {
 		t.Fatalf("headers were disabled: %q", args)
 	}
-	storedPassword, err := os.ReadFile(passwordPath)
+	storedCredential, err := os.ReadFile(credentialPath)
 	if err != nil {
-		t.Fatalf("read password: %v", err)
+		t.Fatalf("read credential file copy: %v", err)
 	}
-	if string(storedPassword) != password {
-		t.Fatalf("MYSQL_PWD mismatch: %q", storedPassword)
+	if !strings.Contains(string(storedCredential), `password="p@ss word --password=visible"`) {
+		t.Fatalf("credential file does not contain the expected password: %q", storedCredential)
+	}
+	mode, err := os.ReadFile(modePath)
+	if err != nil {
+		t.Fatalf("read credential mode: %v", err)
+	}
+	if strings.TrimSpace(string(mode)) != "-rw-------" {
+		t.Fatalf("credential file mode = %q, want -rw-------", mode)
+	}
+	credentialFile := strings.TrimPrefix(argumentLines[0], "--defaults-file=")
+	if _, err := os.Stat(credentialFile); !os.IsNotExist(err) {
+		t.Fatalf("credential file was not removed after query: %v", err)
 	}
 }
 

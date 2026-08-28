@@ -3,8 +3,10 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 
 	"clusterguard.io/ha/internal/approval"
 	"clusterguard.io/ha/internal/store"
@@ -39,11 +41,25 @@ func (server *Server) issuePlatformSessionOperationApproval(
 	authentication requestAuthenticationState,
 	request adapter.OperationRequest,
 ) (model.OperationRecord, string, error) {
-	if server.approvals == nil || server.workflow == nil {
+	if server.approvals == nil || server.workflow == nil || server.store == nil {
 		return model.OperationRecord{}, "", errors.New("approval service is not configured")
 	}
 	request.Operation.RequestedBy = authentication.principal.Username
-	record, _, err := server.workflow.Plan(ctx, request)
+	if key := strings.TrimSpace(request.IdempotencyKey); key != "" {
+		if existing, found := server.store.OperationByIdempotencyKey(key); found {
+			if !operationRecordMatchesRequest(existing, request) || existing.Operation.RequestedBy != authentication.principal.Username {
+				return existing, "", fmt.Errorf("%w: operation idempotency key belongs to another intent", store.ErrConflict)
+			}
+			// A repeated browser POST can arrive when the writer VIP moves while the
+			// original response is in flight. Durable workflow execution already
+			// joins running operations and returns terminal operations idempotently,
+			// so only a still-planned operation needs another approval grant.
+			if existing.Status != model.OperationPlanned {
+				return existing, "", nil
+			}
+		}
+	}
+	record, err := server.plannedOperationForApproval(ctx, request)
 	if err != nil {
 		return record, "", err
 	}
@@ -62,6 +78,75 @@ func (server *Server) issuePlatformSessionOperationApproval(
 		"one-time platform operation approval issued",
 	)
 	return record, issued.Token, nil
+}
+
+func operationRecordMatchesRequest(record model.OperationRecord, request adapter.OperationRequest) bool {
+	return record.Operation.ClusterID == request.Operation.ClusterID &&
+		record.Operation.Engine == request.Operation.Engine &&
+		record.Operation.Kind == request.Operation.Kind &&
+		record.TargetID == request.TargetID
+}
+
+type sessionOperationExecutionGate struct {
+	mutex      sync.Mutex
+	references int
+}
+
+// lockSessionOperationExecution serializes automatic session approval and
+// execution for one idempotency key. All mutating requests reach the Raft
+// leader, so this closes the small gap before durable workflow execution can
+// apply its own idempotent in-progress/terminal handling.
+func (server *Server) lockSessionOperationExecution(idempotencyKey string) func() {
+	key := strings.TrimSpace(idempotencyKey)
+	if key == "" {
+		return func() {}
+	}
+	server.sessionOperationMu.Lock()
+	if server.sessionOperationGates == nil {
+		server.sessionOperationGates = make(map[string]*sessionOperationExecutionGate)
+	}
+	gate := server.sessionOperationGates[key]
+	if gate == nil {
+		gate = &sessionOperationExecutionGate{}
+		server.sessionOperationGates[key] = gate
+	}
+	gate.references++
+	server.sessionOperationMu.Unlock()
+
+	gate.mutex.Lock()
+	return func() {
+		gate.mutex.Unlock()
+		server.sessionOperationMu.Lock()
+		gate.references--
+		if gate.references == 0 && server.sessionOperationGates[key] == gate {
+			delete(server.sessionOperationGates, key)
+		}
+		server.sessionOperationMu.Unlock()
+	}
+}
+
+// plannedOperationForApproval binds approval to an already persisted immutable
+// plan when one exists. Routine discovery may advance resource revisions
+// between the plan response and approval request even when the stable topology
+// digest is unchanged. Execute still revalidates topology under the cluster
+// lock before consuming the one-time grant.
+func (server *Server) plannedOperationForApproval(ctx context.Context, request adapter.OperationRequest) (model.OperationRecord, error) {
+	key := strings.TrimSpace(request.IdempotencyKey)
+	if key != "" {
+		if existing, found := server.store.OperationByIdempotencyKey(key); found {
+			if !operationRecordMatchesRequest(existing, request) {
+				return existing, fmt.Errorf("%w: operation idempotency key belongs to another intent", store.ErrConflict)
+			}
+			if existing.Status != model.OperationPlanned {
+				return existing, fmt.Errorf("%w: operation is not awaiting approval", store.ErrConflict)
+			}
+			if strings.TrimSpace(existing.Observation) != "" && strings.TrimSpace(existing.Plan.Digest) != "" {
+				return existing, nil
+			}
+		}
+	}
+	record, _, err := server.workflow.Plan(ctx, request)
+	return record, err
 }
 
 func (server *Server) operationsCollection(writer http.ResponseWriter, request *http.Request) {
@@ -130,6 +215,8 @@ func (server *Server) writeOperationStoreError(writer http.ResponseWriter, err e
 	switch {
 	case errors.Is(err, store.ErrValidation):
 		writeError(writer, http.StatusBadRequest, err.Error())
+	case errors.Is(err, store.ErrNotFound):
+		writeError(writer, http.StatusNotFound, "operation not found")
 	case errors.Is(err, store.ErrConflict):
 		writeError(writer, http.StatusConflict, err.Error())
 	case errors.Is(err, store.ErrPostCommitDurability):
@@ -141,6 +228,10 @@ func (server *Server) writeOperationStoreError(writer http.ResponseWriter, err e
 
 type operationActionPayload struct {
 	ApprovalToken string `json:"approval_token,omitempty"`
+}
+
+type operationReviewPayload struct {
+	Note string `json:"note"`
 }
 
 type operationExecutionResponse struct {
@@ -170,6 +261,26 @@ func publicOperationStatusMessage(status model.OperationStatus) string {
 	}
 }
 
+func publicOperationOutcomeMessage(status model.OperationStatus, failureClass string) string {
+	if status != model.OperationIndeterminate {
+		return publicOperationStatusMessage(status)
+	}
+	switch strings.TrimSpace(failureClass) {
+	case "rebuild_failed":
+		return "former-primary synchronization failed; verify the current primary is reachable and retry recovery"
+	case "rewind_unknown":
+		return "former-primary synchronization outcome requires verification before retrying recovery"
+	case "fenced", "fence_unknown":
+		return "former-primary isolation outcome requires verification before recovery can continue"
+	case "promoted_unverified":
+		return "primary transition completed, but post-operation verification requires review"
+	case "verification_failed", "verification_unknown":
+		return "operation changed state, but post-operation verification did not pass"
+	default:
+		return publicOperationStatusMessage(status)
+	}
+}
+
 func publicCheckMessage(status model.CheckStatus) string {
 	switch status {
 	case model.CheckPass:
@@ -183,10 +294,10 @@ func publicCheckMessage(status model.CheckStatus) string {
 
 func publicOperationRecord(record model.OperationRecord) model.OperationRecord {
 	if record.Message != "" {
-		record.Message = publicOperationStatusMessage(record.Status)
+		record.Message = publicOperationOutcomeMessage(record.Status, record.FailureClass)
 	}
 	if record.Execution.Message != "" {
-		record.Execution.Message = publicOperationStatusMessage(record.Execution.Status)
+		record.Execution.Message = publicOperationOutcomeMessage(record.Execution.Status, record.FailureClass)
 	}
 	record.Precheck = append([]model.Check{}, record.Precheck...)
 	for index := range record.Precheck {
@@ -209,8 +320,15 @@ func publicOperationRecord(record model.OperationRecord) model.OperationRecord {
 	record.Attempts = append([]model.StepAttempt{}, record.Attempts...)
 	for index := range record.Attempts {
 		if record.Attempts[index].Message != "" {
-			record.Attempts[index].Message = publicOperationStatusMessage(record.Attempts[index].Status)
+			record.Attempts[index].Message = publicOperationOutcomeMessage(record.Attempts[index].Status, record.Attempts[index].FailureClass)
 		}
+	}
+	if record.Review != nil {
+		review := *record.Review
+		if review.Note != "" {
+			review.Note = "operator review note recorded"
+		}
+		record.Review = &review
 	}
 	return record
 }
@@ -221,7 +339,7 @@ func publicOperationErrorMessage(err error, record model.OperationRecord) string
 	}
 	switch {
 	case record.Status == model.OperationIndeterminate:
-		return publicOperationStatusMessage(model.OperationIndeterminate)
+		return publicOperationOutcomeMessage(model.OperationIndeterminate, record.FailureClass)
 	case errors.Is(err, adapter.ErrUnsupported):
 		return publicOperationStatusMessage(model.OperationUnsupported)
 	case errors.Is(err, workflow.ErrOperationInProgress):
@@ -244,7 +362,7 @@ func classifyOperationExecution(err error, execution model.Execution, record mod
 	case errors.Is(err, workflow.ErrOperationInProgress):
 		return operationExecutionResponse{code: http.StatusConflict, status: "running", message: publicOperationStatusMessage(model.OperationRunning)}
 	case execution.Status == model.OperationIndeterminate || record.Status == model.OperationIndeterminate:
-		return operationExecutionResponse{code: http.StatusInternalServerError, status: "indeterminate", message: publicOperationStatusMessage(model.OperationIndeterminate)}
+		return operationExecutionResponse{code: http.StatusInternalServerError, status: "indeterminate", message: publicOperationOutcomeMessage(model.OperationIndeterminate, record.FailureClass)}
 	case errors.Is(err, workflow.ErrJournalPersistence):
 		return operationExecutionResponse{code: http.StatusInternalServerError, status: "error", message: publicOperationErrorMessage(err, record)}
 	case err != nil:
@@ -312,6 +430,24 @@ func (server *Server) operationResourceRoute(writer http.ResponseWriter, request
 		writeError(writer, http.StatusNotFound, "operation action not found")
 		return
 	}
+	if parts[1] == "review" {
+		payload := operationReviewPayload{}
+		if err := decode(request, &payload); err != nil {
+			writeError(writer, http.StatusBadRequest, "invalid operation review payload")
+			return
+		}
+		actor := "service-api"
+		if authentication, authenticated := requestAuthentication(request); authenticated && strings.TrimSpace(authentication.principal.Username) != "" {
+			actor = authentication.principal.Username
+		}
+		updated, err := server.store.ReviewIndeterminateOperation(operationID, record.MetadataRevision, actor, payload.Note)
+		if err != nil {
+			server.writeOperationStoreError(writer, err)
+			return
+		}
+		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": publicOperationRecord(updated)})
+		return
+	}
 	payload := operationActionPayload{}
 	if err := decode(request, &payload); err != nil {
 		writeError(writer, http.StatusBadRequest, err.Error())
@@ -356,6 +492,8 @@ func (server *Server) operationResourceRoute(writer http.ResponseWriter, request
 	}
 	approvalToken := payload.ApprovalToken
 	if authentication, authenticated := requestAuthentication(request); authenticated && authentication.viaSession {
+		release := server.lockSessionOperationExecution(record.IdempotencyKey)
+		defer release()
 		planned, token, err := server.issuePlatformSessionOperationApproval(request.Context(), authentication, adapterRequest)
 		if err != nil {
 			server.writeOperationActionError(writer, err, planned)

@@ -89,7 +89,7 @@ if [[ -n "${assets_dir}" ]]; then
     relative="${asset#"${assets_dir}"/}"
     case "${relative}" in
       ._*|*/._*|.DS_Store|*/.DS_Store) continue ;;
-      tls/*.crt|tls/*.key|ssh/*known_hosts|ssh/*_ed25519|mysql/*-client.cnf|postgresql/*.pass) ;;
+      tls/*.crt|tls/*.key|pki/*.crt|pki/*.key|ssh/*known_hosts|ssh/*_ed25519|mysql/*-client.cnf|postgresql/*.pass|fencing/clusterguard-fencer|fencing/*) ;;
       *) echo "不支持的运行资产：${relative}" >&2; exit 3 ;;
     esac
   done < <(find "${assets_dir}" -mindepth 2 -maxdepth 2 -type f -print0 | sort -z)
@@ -181,6 +181,14 @@ for path in "${configuration_paths[@]}"; do
 done
 installed_asset_paths=()
 
+asset_destination() {
+  if [[ "$1" == "fencing/clusterguard-fencer" ]]; then
+    printf '/usr/local/libexec/clusterguard-fencer'
+  else
+    printf '/etc/clusterguard/%s' "$1"
+  fi
+}
+
 restore_configuration() {
   local path target backup relative
   for path in "${configuration_paths[@]}"; do
@@ -195,7 +203,7 @@ restore_configuration() {
   done
   if ((${#installed_asset_paths[@]} > 0)); then
     for relative in "${installed_asset_paths[@]}"; do
-      target="$(target_path "/etc/clusterguard/${relative}")"
+      target="$(target_path "$(asset_destination "${relative}")")"
       backup="${backup_root}/assets/${relative}"
       if [[ -f "${backup}" ]]; then
         mkdir -p "$(dirname "${target}")"
@@ -217,9 +225,11 @@ recover_services_after_rollback() {
   fi
 }
 
-install -d -m 0750 "$(target_path /etc/clusterguard)"
-install -d -m 0750 "$(target_path /var/lib/clusterguard)" "$(target_path /var/log/clusterguard)"
+install -d -m 0751 "$(target_path /etc/clusterguard)"
+install -d -m 0750 "$(target_path /var/lib/clusterguard)"
+install -d -m 0751 "$(target_path /var/log/clusterguard)"
 install -d -m 0700 "$(target_path /var/lib/clusterguard-agent)"
+install -d -m 0700 "$(target_path /etc/clusterguard/power-snapshots)"
 
 if [[ "${role}" == "controller" || "${role}" == "mixed" ]]; then
   install_file 0640 "${config_file}" /etc/clusterguard/clusterguard.json
@@ -238,18 +248,21 @@ if [[ -n "${assets_dir}" ]]; then
     relative="${asset#"${assets_dir}"/}"
     case "${relative}" in
       ._*|*/._*|.DS_Store|*/.DS_Store) continue ;;
-      tls/*.crt|ssh/*known_hosts) mode=0644 ;;
-      tls/*.key) mode=0640 ;;
+      tls/*.crt|pki/*.crt|ssh/*known_hosts) mode=0644 ;;
+      tls/*.key|pki/*.key) mode=0640 ;;
       ssh/*_ed25519|mysql/*-client.cnf|postgresql/*.pass) mode=0600 ;;
+      fencing/clusterguard-fencer) mode=0750 ;;
+      fencing/*) mode=0640 ;;
       *) echo "不支持的运行资产：${relative}" >&2; exit 3 ;;
     esac
     installed_asset_paths+=("${relative}")
-    existing_asset="$(target_path "/etc/clusterguard/${relative}")"
+    destination="$(asset_destination "${relative}")"
+    existing_asset="$(target_path "${destination}")"
     if [[ -f "${existing_asset}" ]]; then
       mkdir -p "${backup_root}/assets/$(dirname "${relative}")"
       cp -p "${existing_asset}" "${backup_root}/assets/${relative}"
     fi
-    install_file "${mode}" "${asset}" "/etc/clusterguard/${relative}"
+    install_file "${mode}" "${asset}" "${destination}"
   done < <(find "${assets_dir}" -mindepth 2 -maxdepth 2 -type f -print0 | sort -z)
 fi
 
@@ -259,17 +272,26 @@ if [[ -z "${install_root}" ]]; then
   [[ ! -f /etc/clusterguard/clusterguard.env ]] || chown root:clusterguard /etc/clusterguard/clusterguard.env
   chown root:clusterguard /etc/clusterguard/node.json
   [[ ! -d /etc/clusterguard/tls ]] || chown -R root:clusterguard /etc/clusterguard/tls
+  [[ ! -d /etc/clusterguard/pki ]] || chown -R root:clusterguard /etc/clusterguard/pki
   [[ ! -d /etc/clusterguard/ssh ]] || chown -R root:clusterguard /etc/clusterguard/ssh
+  [[ ! -d /etc/clusterguard/fencing ]] || chown -R root:clusterguard /etc/clusterguard/fencing
+  [[ ! -f /usr/local/libexec/clusterguard-fencer ]] || chown root:clusterguard /usr/local/libexec/clusterguard-fencer
   if [[ -d /etc/clusterguard/ssh ]]; then
     find /etc/clusterguard/ssh -maxdepth 1 -type f -name '*_ed25519' \
       -exec chown clusterguard:clusterguard {} + \
       -exec chmod 0600 {} +
+	find /etc/clusterguard/ssh -maxdepth 1 -type f -name '*known_hosts' \
+	  -exec chown root:clusterguard {} + \
+	  -exec chmod 0644 {} +
   fi
-  chown -R clusterguard:clusterguard /var/lib/clusterguard /var/log/clusterguard
+  chown -R clusterguard:clusterguard /var/lib/clusterguard
+  chown clusterguard:clusterguard /var/log/clusterguard
+  find /var/log/clusterguard -maxdepth 1 -type f -exec chown clusterguard:clusterguard {} +
 fi
 
 activate_services() {
-  "${systemctl_binary}" daemon-reload || return 1
+	"${systemctl_binary}" daemon-reload || return 1
+	"${systemctl_binary}" enable clusterguard-cluster-restore.service clusterguard-cluster-finalize.service || return 1
   if [[ "${role}" == "controller" || "${role}" == "mixed" ]]; then
     "${systemctl_binary}" restart clusterguard-ha.service || return 1
     "${systemctl_binary}" enable clusterguard-ha.service || return 1

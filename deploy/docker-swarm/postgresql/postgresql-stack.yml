@@ -1,0 +1,223 @@
+version: "3.9"
+
+x-postgresql-environment: &postgresql-environment
+  PGDATA: /var/lib/postgresql/data
+  POSTGRES_USER: postgres
+  POSTGRES_DB: postgres
+  POSTGRES_PASSWORD_FILE: /run/secrets/postgres_superuser_password
+  POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256 --data-checksums
+  CG_PG_SOURCE_HOST: ${CG_PG_SOURCE_HOST:-192.168.102.152}
+  CG_PG_SOURCE_PORT: ${CG_PG_SOURCE_PORT:-55432}
+  CG_PG_REPLICATION_USER: cg_replication
+  CG_PG_REPLICATION_CIDR: ${CG_PG_REPLICATION_CIDR:-192.168.102.0/24}
+
+x-postgresql-service: &postgresql-service
+  image: ${POSTGRES_IMAGE:-postgres:16.4}
+  entrypoint:
+    - /usr/local/bin/clusterguard-postgres-entrypoint.sh
+  command:
+    - postgres
+    - -c
+    - listen_addresses=*
+    - -c
+    - wal_level=replica
+    - -c
+    - wal_log_hints=on
+    - -c
+    - max_wal_senders=10
+    - -c
+    - max_replication_slots=10
+    - -c
+    - hot_standby=on
+    - -c
+    - password_encryption=scram-sha-256
+  networks:
+    - replication
+  secrets:
+    - source: postgres_superuser_password
+      target: postgres_superuser_password
+      uid: "999"
+      gid: "999"
+      mode: 0400
+    - source: postgres_discovery_password
+      target: postgres_discovery_password
+      uid: "999"
+      gid: "999"
+      mode: 0400
+    - source: postgres_operator_password
+      target: postgres_operator_password
+      uid: "999"
+      gid: "999"
+      mode: 0400
+    - source: postgres_replication_password
+      target: postgres_replication_password
+      uid: "999"
+      gid: "999"
+      mode: 0400
+  configs:
+    - source: postgres_entrypoint
+      target: /usr/local/bin/clusterguard-postgres-entrypoint.sh
+      mode: 0555
+    - source: postgres_init
+      target: /docker-entrypoint-initdb.d/10-clusterguard-init.sh
+      mode: 0555
+  volumes:
+    - type: bind
+      source: /data/clusterguard-swarm/postgresql/55432
+      target: /var/lib/postgresql/data
+    - type: bind
+      source: /etc/clusterguard/postgresql/55432.pass
+      target: /etc/clusterguard/postgresql/55432.pass
+      read_only: true
+  ports:
+    - target: 5432
+      published: 55432
+      protocol: tcp
+      mode: host
+  stop_grace_period: 2m
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U postgres -d postgres"]
+    interval: 5s
+    timeout: 3s
+    retries: 30
+    start_period: 90s
+  deploy:
+    replicas: 1
+    endpoint_mode: dnsrr
+    restart_policy:
+      condition: any
+      delay: 5s
+      max_attempts: 0
+    update_config:
+      parallelism: 1
+      order: stop-first
+      failure_action: pause
+      monitor: 30s
+    rollback_config:
+      parallelism: 1
+      order: stop-first
+
+services:
+  postgresql01:
+    <<: *postgresql-service
+    hostname: orch-pg01
+    environment:
+      <<: *postgresql-environment
+      CG_PG_SLOT: "01"
+      CG_PG_NODE_ID: ${CG_PG_NODE_01_ID}
+      CG_PG_PRIMARY_NODE_ID: ""
+      CG_PG_HOSTNAME: orch-pg01
+      CG_PG_APPLICATION_NAME: ${CG_PG_NODE_01_ID}
+    labels:
+      clusterguard.cluster_id: ${CG_CLUSTER_ID}
+      clusterguard.instance_id: ${CG_INSTANCE_01_ID}
+      clusterguard.engine: postgresql
+      clusterguard.runtime: docker-swarm
+    deploy:
+      replicas: 1
+      endpoint_mode: dnsrr
+      placement:
+        constraints:
+          - node.labels.clusterguard.postgresql.slot == 01
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 0
+      update_config:
+        parallelism: 1
+        order: stop-first
+        failure_action: pause
+        monitor: 30s
+
+  postgresql02:
+    <<: *postgresql-service
+    hostname: orch-pg02
+    environment:
+      <<: *postgresql-environment
+      CG_PG_SLOT: "02"
+      CG_PG_NODE_ID: ${CG_PG_NODE_02_ID}
+      CG_PG_PRIMARY_NODE_ID: ${CG_PG_NODE_01_ID}
+      CG_PG_HOSTNAME: orch-pg02
+      CG_PG_APPLICATION_NAME: ${CG_PG_NODE_02_ID}
+      CG_PG_PRIMARY_SLOT: cg_slot_02
+    labels:
+      clusterguard.cluster_id: ${CG_CLUSTER_ID}
+      clusterguard.instance_id: ${CG_INSTANCE_02_ID}
+      clusterguard.engine: postgresql
+      clusterguard.runtime: docker-swarm
+    deploy:
+      replicas: 1
+      endpoint_mode: dnsrr
+      placement:
+        constraints:
+          - node.labels.clusterguard.postgresql.slot == 02
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 0
+      update_config:
+        parallelism: 1
+        order: stop-first
+        failure_action: pause
+        monitor: 30s
+
+  postgresql03:
+    <<: *postgresql-service
+    hostname: orch-pg03
+    environment:
+      <<: *postgresql-environment
+      CG_PG_SLOT: "03"
+      CG_PG_NODE_ID: ${CG_PG_NODE_03_ID}
+      CG_PG_PRIMARY_NODE_ID: ${CG_PG_NODE_01_ID}
+      CG_PG_HOSTNAME: orch-pg03
+      CG_PG_APPLICATION_NAME: ${CG_PG_NODE_03_ID}
+      CG_PG_PRIMARY_SLOT: cg_slot_03
+    labels:
+      clusterguard.cluster_id: ${CG_CLUSTER_ID}
+      clusterguard.instance_id: ${CG_INSTANCE_03_ID}
+      clusterguard.engine: postgresql
+      clusterguard.runtime: docker-swarm
+    deploy:
+      replicas: 1
+      endpoint_mode: dnsrr
+      placement:
+        constraints:
+          - node.labels.clusterguard.postgresql.slot == 03
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 0
+      update_config:
+        parallelism: 1
+        order: stop-first
+        failure_action: pause
+        monitor: 30s
+
+networks:
+  replication:
+    driver: overlay
+    attachable: false
+    driver_opts:
+      encrypted: "true"
+
+configs:
+  postgres_entrypoint:
+    name: ${CG_PG_CONFIG_NAME_PREFIX:-cgpg16}_postgres_entrypoint_${CG_PG_CONFIG_REVISION:-v1}
+    file: ./clusterguard-postgres-entrypoint.sh
+  postgres_init:
+    name: ${CG_PG_CONFIG_NAME_PREFIX:-cgpg16}_postgres_init_${CG_PG_CONFIG_REVISION:-v1}
+    file: ./10-clusterguard-init.sh
+
+secrets:
+  postgres_superuser_password:
+    external: true
+    name: ${CG_PG_SUPERUSER_SECRET_NAME:-cg_pg_55432_superuser_password}
+  postgres_discovery_password:
+    external: true
+    name: cg_pg_55432_discovery_password
+  postgres_operator_password:
+    external: true
+    name: cg_pg_55432_operator_password
+  postgres_replication_password:
+    external: true
+    name: cg_pg_55432_replication_password

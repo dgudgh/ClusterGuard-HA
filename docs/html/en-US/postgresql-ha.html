@@ -21,7 +21,7 @@
         <span>Search documentation</span>
         <input id="docs-search" type="search" autocomplete="off" placeholder="Filter by title">
       </label>
-      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha" aria-current="page" class="active">PostgreSQL HA</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.2.39.html" data-doc-title="release 2.2.39">Release 2.2.39</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha" aria-current="page" class="active">PostgreSQL HA</a><a href="docker-swarm-mysql.html" data-doc-title="docker swarm mysql">Docker Swarm MySQL</a><a href="kubernetes-mysql.html" data-doc-title="kubernetes mysql">Kubernetes MySQL</a><a href="update-and-patch.html" data-doc-title="version update and rollback">Version Update and Rollback</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="postgresql-production-qualification.html" data-doc-title="postgresql 16.4 production qualification">PostgreSQL 16.4 Production Qualification</a><a href="docker-swarm-mysql-validation.html" data-doc-title="docker swarm mysql lab qualification">Docker Swarm MySQL Lab Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
       <div class="sidebar-meta">
         <span>Offline documentation build</span>
         <strong>2.1 / 2.2</strong>
@@ -186,10 +186,10 @@ passfiles, never in command arguments or browser fields.</p>
 <h2 id="controller-configuration">Controller Configuration<a class="heading-anchor" href="#controller-configuration" aria-label="Link to Controller Configuration">#</a></h2>
 <pre><code class="language-json">&quot;postgresql&quot;: {
   &quot;enabled&quot;: true,
-  &quot;discovery_interval_seconds&quot;: 5,
-  &quot;discovery_timeout_seconds&quot;: 4,
+  &quot;discovery_interval_seconds&quot;: 1,
+  &quot;discovery_timeout_seconds&quot;: 1,
   &quot;automatic_failover_enabled&quot;: false,
-  &quot;automatic_failover_interval_seconds&quot;: 5,
+  &quot;automatic_failover_interval_seconds&quot;: 1,
   &quot;automatic_failover_retry_seconds&quot;: 30,
   &quot;discovery&quot;: {
     &quot;username&quot;: &quot;cg_monitor&quot;,
@@ -216,8 +216,18 @@ control plane, and the restricted Agent. Invalid combinations fail at startup.</
 <p>Set <code>automatic_failover_enabled</code> only after the destructive qualification
 matrix below passes for the exact PostgreSQL packages, service units, network,
 storage, and fencing provider used in production. At the default cadence the
-controller requires six consecutive failed primary observations, giving a
-30-second stable-failure window before it evaluates a takeover.</p>
+controller requires three current failed-primary observations spanning at
+least three seconds before it evaluates a takeover. This is an evidence window,
+not an end-to-end RTO promise. A separate 15-second Agent authorization-expiry
+fence protects against a disconnected old primary retaining writer or VIP
+ownership.</p>
+<p>The PostgreSQL 16.4 laboratory matrix measured 17.973 seconds of writer-endpoint
+interruption when clients used <code>connect_timeout=2</code>. Without a bounded client
+connect timeout, one blocked connection attempt lasted about 32 seconds even
+though the control-plane operation completed earlier. Production connection
+strings must therefore use a bounded connect timeout and retry policy, and the
+site must measure RTO from the application endpoint rather than from an audit
+timestamp alone.</p>
 <p>The PostgreSQL recovery controller is isolated from the MySQL controller. It
 selects only a rank-one standby from the same <code>system_identifier</code>, with current
 probe evidence, matching upstream node UUID and timeline, active WAL receive

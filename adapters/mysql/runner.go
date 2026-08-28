@@ -51,8 +51,11 @@ func (queryError *QueryError) Is(target error) bool {
 }
 
 type CLIQueryRunner struct {
-	Binary string
+	Binary       string
+	QueryTimeout time.Duration
 }
+
+const defaultMySQLQueryTimeout = 30 * time.Second
 
 func (runner CLIQueryRunner) Query(ctx context.Context, endpoint adapter.Endpoint, credentials adapter.Credentials, query string) ([]Row, error) {
 	output, err := runner.execute(ctx, endpoint, credentials, query)
@@ -68,30 +71,96 @@ func (runner CLIQueryRunner) Exec(ctx context.Context, endpoint adapter.Endpoint
 }
 
 func (runner CLIQueryRunner) execute(ctx context.Context, endpoint adapter.Endpoint, credentials adapter.Credentials, query string) ([]byte, error) {
+	if _, bounded := ctx.Deadline(); !bounded {
+		timeout := runner.QueryTimeout
+		if timeout <= 0 {
+			timeout = defaultMySQLQueryTimeout
+		}
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
 	binary := runner.Binary
 	if binary == "" {
 		binary = "mysql"
 	}
-	host := endpoint.Hostname
+	// The resource registry owns the database endpoint. Prefer its concrete IP so
+	// hostname changes or incomplete DNS cannot turn a healthy registered node
+	// into an unreachable one. Hostname remains a fallback for DNS-only assets.
+	host := endpoint.IPAddress
 	if host == "" {
-		host = endpoint.IPAddress
+		host = endpoint.Hostname
 	}
 	if host == "" || endpoint.Port <= 0 || credentials.Username == "" {
 		return nil, fmt.Errorf("database endpoint, port, and username are required")
 	}
+	credentialFile, err := mysqlCredentialOptionFile(credentials.Password)
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(credentialFile)
 	connectTimeout := mysqlConnectTimeoutSeconds(ctx)
-	command := exec.CommandContext(ctx, binary, "--no-defaults", "--batch", "--protocol=TCP", "--connect-timeout="+strconv.Itoa(connectTimeout), "-h", host, "-P", strconv.Itoa(endpoint.Port), "-u", credentials.Username)
+	command := exec.CommandContext(ctx, binary, "--defaults-file="+credentialFile, "--batch", "--protocol=TCP", "--connect-timeout="+strconv.Itoa(connectTimeout), "-h", host, "-P", strconv.Itoa(endpoint.Port), "-u", credentials.Username)
 	command.Stdin = strings.NewReader(query + "\n")
-	command.Env = append(os.Environ(), "MYSQL_PWD="+credentials.Password)
+	command.Env = environmentWithout("MYSQL_PWD")
 	output, err := command.CombinedOutput()
 	if err != nil {
+		cause := err
+		if contextErr := ctx.Err(); contextErr != nil {
+			cause = contextErr
+		}
 		return nil, &QueryError{
 			Code:   mysqlErrorCode(output),
 			Output: strings.TrimSpace(string(output)),
-			Err:    err,
+			Err:    cause,
 		}
 	}
 	return output, nil
+}
+
+func mysqlCredentialOptionFile(password string) (string, error) {
+	file, err := os.CreateTemp("", ".clusterguard-mysql-*.cnf")
+	if err != nil {
+		return "", fmt.Errorf("create MySQL credential file: %w", err)
+	}
+	path := file.Name()
+	cleanup := func(cause error) (string, error) {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return "", cause
+	}
+	if err := file.Chmod(0o600); err != nil {
+		return cleanup(fmt.Errorf("secure MySQL credential file: %w", err))
+	}
+	escapedPassword := strings.NewReplacer(
+		`\`, `\\`,
+		`"`, `\"`,
+		"\n", `\n`,
+		"\r", `\r`,
+		"\t", `\t`,
+	).Replace(password)
+	if _, err := fmt.Fprintf(file, "[client]\npassword=\"%s\"\n", escapedPassword); err != nil {
+		return cleanup(fmt.Errorf("write MySQL credential file: %w", err))
+	}
+	if err := file.Sync(); err != nil {
+		return cleanup(fmt.Errorf("sync MySQL credential file: %w", err))
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return "", fmt.Errorf("close MySQL credential file: %w", err)
+	}
+	return path, nil
+}
+
+func environmentWithout(name string) []string {
+	prefix := name + "="
+	filtered := make([]string, 0, len(os.Environ()))
+	for _, entry := range os.Environ() {
+		if !strings.HasPrefix(entry, prefix) {
+			filtered = append(filtered, entry)
+		}
+	}
+	return filtered
 }
 
 func mysqlConnectTimeoutSeconds(ctx context.Context) int {
@@ -139,6 +208,9 @@ func parseTSV(output []byte) ([]Row, error) {
 			return nil, fmt.Errorf("parse MySQL headers: column %d is empty", index+1)
 		}
 	}
+	if len(headers) == 1 {
+		return parseSingleColumnTSVRows(output, headers[0])
+	}
 
 	var rows []Row
 	for {
@@ -157,6 +229,36 @@ func parseTSV(output []byte) ([]Row, error) {
 			row[header] = decodeMySQLBatchValue(values[index])
 		}
 		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
+func parseSingleColumnTSVRows(output []byte, header string) ([]Row, error) {
+	headerEnd := bytes.IndexByte(output, '\n')
+	if headerEnd < 0 || headerEnd+1 == len(output) {
+		return nil, nil
+	}
+	data := output[headerEnd+1:]
+	if len(data) > 0 && data[len(data)-1] == '\n' {
+		data = data[:len(data)-1]
+	}
+	records := bytes.Split(data, []byte{'\n'})
+	rows := make([]Row, 0, len(records))
+	for _, record := range records {
+		record = bytes.TrimSuffix(record, []byte{'\r'})
+		value := ""
+		if len(record) > 0 {
+			reader := csv.NewReader(bytes.NewReader(record))
+			reader.Comma = '\t'
+			reader.FieldsPerRecord = 1
+			reader.LazyQuotes = true
+			values, err := reader.Read()
+			if err != nil {
+				return nil, fmt.Errorf("parse MySQL row: %w", err)
+			}
+			value = values[0]
+		}
+		rows = append(rows, Row{header: decodeMySQLBatchValue(value)})
 	}
 	return rows, nil
 }

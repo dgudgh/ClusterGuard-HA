@@ -6,9 +6,9 @@ ClusterGuard HA 产品文档同时维护英文和简体中文版本。安装、�
 
 ## Offline HTML / 离线 HTML
 
-Open [`html/index.html`](html/index.html) directly in a browser. The generated documentation center contains 37 bilingual pages, local search, print styles, responsive navigation, and bundled screenshots; it does not require a web server or external CDN.
+Open [`html/index.html`](html/index.html) directly in a browser. The generated documentation center contains 41 bilingual pages, local search, print styles, responsive navigation, and bundled screenshots; it does not require a web server or external CDN.
 
-直接使用浏览器打开 [`html/index.html`](html/index.html)。生成的文档中心包含 37 个中英文页面、本地搜索、打印样式、响应式目录和随包截图，不依赖 Web 服务或外部 CDN。
+直接使用浏览器打开 [`html/index.html`](html/index.html)。生成的文档中心包含 41 个中英文页面、本地搜索、打印样式、响应式目录和随包截图，不依赖 Web 服务或外部 CDN。
 
 Rebuild after changing Markdown:
 
@@ -27,12 +27,14 @@ npm run build:html
 | Documentation index / 文档索引 | [English](en-US/README.md) | [中文](zh-CN/README.md) |
 | Product tour / 产品导览 | [English](en-US/product-tour.md) | [中文](zh-CN/product-tour.md) |
 | Architecture / 架构 | [English](architecture.md) | [中文](zh-CN/architecture.md) |
+| 2.2.39 release notes / 2.2.39 发布说明 | [English](en-US/release-2.2.39.md) | [中文](zh-CN/release-2.2.39.md) |
 | 2.1.45 release notes / 2.1.45 发布说明 | [English](en-US/release-2.1.45.md) | [中文](zh-CN/release-2.1.45.md) |
 | Offline RPM installation / 离线 RPM 安装 | [English](en-US/offline-rpm-install.md) | [中文](zh-CN/offline-rpm-install.md) |
 | Database preparation / 数据库接入 | [English](en-US/database-preparation.md) | [中文](zh-CN/database-preparation.md) |
 | Migration from Orchestrator / 从 Orchestrator 迁移 | [English](en-US/orchestrator-migration.md) | [中文](zh-CN/orchestrator-migration.md) |
 | Operations manual / 运维手册 | [English](en-US/operations-manual.md) | [中文](zh-CN/operations-manual.md) |
 | PostgreSQL HA / PostgreSQL 高可用 | [English](postgresql-ha.md) | [中文](zh-CN/postgresql-ha.md) |
+| Version update and rollback / 版本升级与回退手册 | [English](en-US/update-and-patch.md) | [中文](zh-CN/update-and-patch.md) |
 | MySQL proven methods / MySQL 已验证方法 | [English](proven-mysql-ha-methods.md) | [中文](zh-CN/proven-mysql-ha-methods.md) |
 | MySQL feature acceptance / MySQL 功能验收 | [English](mysql-feature-parity-acceptance.md) | [中文](zh-CN/mysql-feature-parity-acceptance.md) |
 | Version and release policy / 版本发布规范 | [English](en-US/version-release-policy.md) | [中文](zh-CN/version-release-policy.md) |
@@ -45,6 +47,7 @@ npm run build:html
 | Production chaos tests / 生产故障测试 | [English](en-US/production-chaos-test-report-2026-08-09.md) | [中文](zh-CN/production-chaos-test-report-2026-08-09.md) |
 | Planned shutdown lifecycle / 计划关机生命周期 | [English](en-US/power-lifecycle-test-report.md) | [中文](zh-CN/power-lifecycle-test-report.md) |
 | MySQL production qualification / MySQL 生产验收 | [English](mysql-production-qualification-2026-07-28.md) | [中文](zh-CN/mysql-production-qualification-2026-07-28.md) |
+| PostgreSQL 16.4 production qualification / PostgreSQL 16.4 生产验收 | [English](en-US/postgresql-production-qualification-2026-08-23.md) | [中文](zh-CN/postgresql-production-qualification-2026-08-23.md) |
 
 Qualification reports record a specific laboratory build and date. They do not replace site acceptance after changing the database version, operating system, storage, network, VIP interface, or fencing policy.
 

@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="Kubernetes MySQL - ClusterGuard HA operational documentation">
+  <title>Kubernetes MySQL | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">Skip to content</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>Search documentation</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="Filter by title">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.2.39.html" data-doc-title="release 2.2.39">Release 2.2.39</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="docker-swarm-mysql.html" data-doc-title="docker swarm mysql">Docker Swarm MySQL</a><a href="kubernetes-mysql.html" data-doc-title="kubernetes mysql" aria-current="page" class="active">Kubernetes MySQL</a><a href="update-and-patch.html" data-doc-title="version update and rollback">Version Update and Rollback</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="postgresql-production-qualification.html" data-doc-title="postgresql 16.4 production qualification">PostgreSQL 16.4 Production Qualification</a><a href="docker-swarm-mysql-validation.html" data-doc-title="docker swarm mysql lab qualification">Docker Swarm MySQL Lab Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
+      <div class="sidebar-meta">
+        <span>Offline documentation build</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">Open navigation</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>Kubernetes MySQL</strong></div>
+        <div class="header-actions">
+          <a href="../zh-CN/kubernetes-mysql.html" lang="zh-CN">简体中文</a>
+          <button id="print-button" type="button">Print</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha-for-kubernetes-mysql">ClusterGuard HA for Kubernetes MySQL<a class="heading-anchor" href="#clusterguard-ha-for-kubernetes-mysql" aria-label="Link to ClusterGuard HA for Kubernetes MySQL">#</a></h1>
+<h2 id="delivered-scope">Delivered scope<a class="heading-anchor" href="#delivered-scope" aria-label="Link to Delivered scope">#</a></h2>
+<p>ClusterGuard HA 2.2 initially enables planned switchover and guarded failover for MySQL on Kubernetes. MySQL GTID owns replication, Kubernetes owns Pod lifecycle, and ClusterGuard owns database roles, durable restart roles, old-primary fencing, the writer Service backend, Raft leases, audit, and verification.</p>
+<p>ClusterGuard does not switch CoreDNS and does not place a host VIP in a Pod. In-cluster clients use one selectorless Service. External clients use a stable LoadBalancer address, optionally announced by MetalLB. A transition changes only the managed EndpointSlice backend.</p>
+<p>Kubernetes PostgreSQL endpoint metadata can be registered, but the PostgreSQL Pod role controller is not executable yet and therefore remains fail-closed.</p>
+<h2 id="runtime-boundaries">Runtime boundaries<a class="heading-anchor" href="#runtime-boundaries" aria-label="Link to Runtime boundaries">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Runtime</th>
+<th>Process owner</th>
+<th>Client entry</th>
+<th>Transition action</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Bare metal or VM</td>
+<td>host service</td>
+<td>host VIP</td>
+<td>move the interface VIP</td>
+</tr>
+<tr>
+<td>Docker Swarm</td>
+<td>pinned Service</td>
+<td>host VIP</td>
+<td>persist the container role and move the host VIP</td>
+</tr>
+<tr>
+<td>Kubernetes</td>
+<td>dedicated one-replica StatefulSet</td>
+<td>selectorless Service</td>
+<td>persist StatefulSet roles and replace one EndpointSlice backend</td>
+</tr>
+</tbody></table>
+<p>RuntimeTarget and WorkloadBinding are mandatory. ClusterGuard never infers a runtime from a port, hostname, or container name.</p>
+<h2 id="mandatory-safety-contract">Mandatory safety contract<a class="heading-anchor" href="#mandatory-safety-contract" aria-label="Link to Mandatory safety contract">#</a></h2>
+<ul>
+<li>Each database instance has its own one-replica StatefulSet at ordinal zero and its own PVC.</li>
+<li>WorkloadBinding records StatefulSet, Pod name, immutable Pod UID, Node name, and PVC UID.</li>
+<li>The writer Service is selectorless, and its EndpointSlice is labeled as managed by <code>clusterguard.io/ha</code>.</li>
+<li>Each StatefulSet enables the start guard and records <code>clusterguard.io/mysql-role=primary|replica</code>.</li>
+<li>Inside the database namespace, the Controller receives only <code>get</code> for Service/Pod/PVC, <code>get/update</code> for EndpointSlice, <code>get/patch</code> for StatefulSet, and <code>get/update</code> for the scale subresource. Its only cluster-scoped permission is <code>get Node</code>.</li>
+<li>The Kubernetes API uses HTTPS with CA validation and a rotating token file or client certificate.</li>
+<li>Database Pods disable automatic ServiceAccount token mounting. A short-lived token is projected only into the start-guard init container and is not visible to the MySQL container.</li>
+<li>A NotReady old-primary Node is unknown, not fenced. An external cloud, BMC, or hypervisor fencer is required for that failure class.</li>
+</ul>
+<h2 id="transition-protocol">Transition protocol<a class="heading-anchor" href="#transition-protocol" aria-label="Link to Transition protocol">#</a></h2>
+<p>A planned switchover verifies identity, GTID, replication, quorum, and one EndpointSlice owner; makes the old primary read-only; promotes the candidate; persists the old StatefulSet role as <code>replica</code> and the target as <code>primary</code>; atomically updates the EndpointSlice with its current <code>resourceVersion</code>; then verifies SQL role, endpoint uniqueness, and canonical ownership.</p>
+<p>A failover first writes <code>clusterguard.io/fenced=true</code> and scales the dedicated old-primary StatefulSet to zero. Promotion is allowed only after the Pod is absent, scale status is zero, the recorded Node is still Ready, and the exact target lease remains backed by the Raft majority.</p>
+<h2 id="deployment">Deployment<a class="heading-anchor" href="#deployment" aria-label="Link to Deployment">#</a></h2>
+<p>Assets are installed under <code>/usr/share/clusterguard/kubernetes/</code> and live in <code>deploy/kubernetes/</code> in the source tree.</p>
+<pre><code class="language-bash">kubectl apply -f deploy/kubernetes/clusterguard-rbac.yaml
+kubectl apply -f deploy/kubernetes/mysql/fence-guard-rbac.yaml
+kubectl apply -f deploy/kubernetes/mysql/writer-service.yaml
+
+docker build -f deploy/kubernetes/fence-guard/Dockerfile \
+  -t clusterguard/k8s-fence-guard:2.2.0 .
+</code></pre>
+<p>The example Role is scoped to the <code>database</code> namespace. Duplicate the Role and RoleBinding for another database namespace instead of broadening write access into a cluster-wide role.</p>
+<p>Adapt <code>statefulset-fence-guard-patch.yaml</code> for each StatefulSet and MySQL container. Set the current writer annotation to <code>primary</code> and replicas to <code>replica</code>. Confirm that the MySQL image reads <code>/etc/mysql/conf.d/</code>, then bootstrap the initial endpoint:</p>
+<pre><code class="language-bash">deploy/kubernetes/mysql/bootstrap-writer-endpoint.sh \
+  database mysql-a-0 mysql-writer-clusterguard
+</code></pre>
+<p>Enable the provider in every controller:</p>
+<pre><code class="language-json">&quot;kubernetes&quot;: {
+  &quot;enabled&quot;: true,
+  &quot;request_timeout_seconds&quot;: 10,
+  &quot;fence_timeout_seconds&quot;: 60
+}
+</code></pre>
+<p>Register one Kubernetes RuntimeTarget whose <code>endpoint</code> is the API HTTPS origin and whose <code>credential_ref</code> is an absolute local JSON profile containing <code>ca_file</code> and <code>bearer_token_file</code>. Register one Kubernetes WorkloadBinding per database instance, including live Pod UID and Node name. Finally register a <code>service</code> HAEndpoint with provider <code>kubernetes_service</code>, provider reference <code>namespace/service/endpoint-slice</code>, the Service DNS hostname, database port, and current primary owner ID.</p>
+<p>Use per-Pod headless Service DNS names for the three database discovery endpoints. Never register all database instances through the writer Service.</p>
+<h2 id="acceptance-boundary">Acceptance boundary<a class="heading-anchor" href="#acceptance-boundary" aria-label="Link to Acceptance boundary">#</a></h2>
+<p>Code tests cover API TLS, token rotation, selector rejection, immutable Pod identity, single-backend transfer, durable role annotations, persistent fencing, scale-down, and NotReady-node rejection. A real Kubernetes end-to-end qualification has not yet been run, so these tests are not production acceptance evidence.</p>
+<p>After failover, the old StatefulSet remains fenced at zero replicas. A controlled maintenance workflow must verify the durable <code>replica</code> role, clear the fence, scale it to one, and then run GTID former-primary recovery. The graphical maintenance action is still pending; do not bypass data validation and restart it writable.</p>
+
+          <footer class="document-footer">
+            <span>Source: <code>docs/en-US/kubernetes-mysql.md</code></span>
+            <a href="../index.html">Documentation language home</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="On this page">
+          <strong>On this page</strong>
+          <a class="toc-level-2" href="#delivered-scope">Delivered scope</a><a class="toc-level-2" href="#runtime-boundaries">Runtime boundaries</a><a class="toc-level-2" href="#mandatory-safety-contract">Mandatory safety contract</a><a class="toc-level-2" href="#transition-protocol">Transition protocol</a><a class="toc-level-2" href="#deployment">Deployment</a><a class="toc-level-2" href="#acceptance-boundary">Acceptance boundary</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

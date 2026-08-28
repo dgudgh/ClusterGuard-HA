@@ -1,0 +1,4 @@
+# Database instance IP|absolute VMX path on the VMware Workstation host
+192.168.102.152|G:\mysql\mysql01\mysql01.vmx
+192.168.102.153|G:\mysql\mysql02\mysql02.vmx
+192.168.102.154|G:\mysql\mysql03\mysql03.vmx

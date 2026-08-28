@@ -73,7 +73,9 @@ func (store *LeaseStore) Acquire(ctx context.Context, request endpoint.LeaseRequ
 			continue
 		}
 		if lease.OperationID == request.OperationID && lease.OwnerID == request.OwnerID && lease.PreviousOwnerID == request.PreviousOwnerID {
-			lease.ExpiresAt = now.Add(request.TTL)
+			if requestedExpiry := now.Add(request.TTL); requestedExpiry.After(lease.ExpiresAt) {
+				lease.ExpiresAt = requestedExpiry
+			}
 			record.Lease = lease
 			record.UpdatedAt = now
 			if err := store.records.PutCoordinationLease(record); err != nil {
@@ -168,10 +170,20 @@ func (store *LeaseStore) AcquireStableBatch(ctx context.Context, requests []endp
 				failures = append(failures, fmt.Errorf("cluster %s: %w: active quorum lease belongs to another operation", request.ClusterID, endpoint.ErrLeaseConflict))
 				continue
 			}
+			// The ownership keeper runs more frequently than the lease TTL so it
+			// can react quickly to a changed owner. Do not replicate an otherwise
+			// identical lease until half of its TTL has elapsed.
+			if record.Lease.ExpiresAt.Sub(now) > ttl/2 {
+				continue
+			}
 			record.Lease.ExpiresAt = now.Add(ttl)
 			record.UpdatedAt = now
 			next[resourceID] = record
 			changed = true
+			continue
+		}
+		if request.RenewOnly {
+			failures = append(failures, fmt.Errorf("cluster %s: %w: stable quorum lease is missing or expired", request.ClusterID, endpoint.ErrLeaseConflict))
 			continue
 		}
 		lease := endpoint.Lease{
@@ -211,6 +223,30 @@ func (store *LeaseStore) Validate(ctx context.Context, lease endpoint.Lease) err
 		}
 	}
 	return fmt.Errorf("%w: quorum lease is missing, expired, or changed", endpoint.ErrLeaseConflict)
+}
+
+func (store *LeaseStore) Current(ctx context.Context, clusterID, haEndpointID model.ResourceID) (endpoint.Lease, error) {
+	if err := store.authorize(ctx); err != nil {
+		return endpoint.Lease{}, err
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	now := store.now().UTC()
+	var selected endpoint.Lease
+	for _, record := range store.records.CoordinationLeases() {
+		lease := record.Lease
+		if !lease.Active || !lease.ExpiresAt.After(now) || lease.ClusterID != clusterID || lease.HAEndpointID != haEndpointID {
+			continue
+		}
+		if selected.ResourceID != "" {
+			return endpoint.Lease{}, fmt.Errorf("%w: multiple active quorum leases", endpoint.ErrLeaseConflict)
+		}
+		selected = lease
+	}
+	if selected.ResourceID == "" {
+		return endpoint.Lease{}, fmt.Errorf("%w: active quorum lease is missing", endpoint.ErrLeaseConflict)
+	}
+	return selected, nil
 }
 
 func (store *LeaseStore) FinalizeTransition(ctx context.Context, transition endpoint.Lease, ttl time.Duration) (endpoint.Lease, error) {

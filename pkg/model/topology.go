@@ -29,12 +29,23 @@ type MetricSample struct {
 	Values     map[string]float64 `json:"values"`
 }
 
+type ProbeOutcome string
+
+const (
+	ProbeOutcomeUnknown                ProbeOutcome = "unknown"
+	ProbeOutcomeReachable              ProbeOutcome = "reachable"
+	ProbeOutcomeCredentialsUnavailable ProbeOutcome = "credentials_unavailable"
+	ProbeOutcomeDatabaseUnavailable    ProbeOutcome = "database_unavailable"
+	ProbeOutcomeMetricsUnavailable     ProbeOutcome = "metrics_unavailable"
+)
+
 type ProbeStatus struct {
-	EndpointID          ResourceID `json:"endpoint_id"`
-	InstanceID          ResourceID `json:"instance_id,omitempty"`
-	DiscoveryObservedAt time.Time  `json:"discovery_observed_at,omitempty"`
-	MetricsObservedAt   time.Time  `json:"metrics_observed_at,omitempty"`
-	Health              Health     `json:"health"`
+	EndpointID          ResourceID   `json:"endpoint_id"`
+	InstanceID          ResourceID   `json:"instance_id,omitempty"`
+	Outcome             ProbeOutcome `json:"outcome,omitempty"`
+	DiscoveryObservedAt time.Time    `json:"discovery_observed_at,omitempty"`
+	MetricsObservedAt   time.Time    `json:"metrics_observed_at,omitempty"`
+	Health              Health       `json:"health"`
 }
 
 type NativeReplicationLink struct {

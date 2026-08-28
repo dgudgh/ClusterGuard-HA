@@ -36,6 +36,18 @@ func postgresqlBlockingChecks(checks []model.Check) bool {
 	return false
 }
 
+func postgresqlFailoverFollowerAvailable(resolved *adapter.ResolvedOperation, instance model.DatabaseInstance) bool {
+	if resolved == nil || instance.Role != model.RoleStandby || instance.Maintenance {
+		return false
+	}
+	switch instance.Health.State {
+	case model.HealthHealthy, model.HealthDegraded:
+	default:
+		return false
+	}
+	return hasCurrentReachableProbe(resolved.Snapshot.Probes, instance.ResourceID, resolved.Snapshot.ObservedAt)
+}
+
 func postgresqlObservationToken(resolved *adapter.ResolvedOperation) string {
 	if resolved == nil {
 		return ""
@@ -151,6 +163,102 @@ func postgresqlCoreChecks(request adapter.OperationRequest) ([]model.Check, erro
 	return checks, nil
 }
 
+func postgresqlOnlyFailedCheck(checks []model.Check, expected string) bool {
+	found := false
+	for _, check := range checks {
+		if check.Status != model.CheckFail {
+			continue
+		}
+		if check.Name != expected {
+			return false
+		}
+		found = true
+	}
+	return found
+}
+
+func postgresqlLiveReplicationFailure(name string) model.Check {
+	message := "target WAL position is behind the current primary and live evidence did not resolve the mismatch"
+	if name == "timeline" {
+		message = "target timeline differs from the current primary and live evidence did not resolve the mismatch"
+	}
+	return model.Check{Name: name, Status: model.CheckFail, Message: message}
+}
+
+func (adapterInstance *Adapter) postgresqlLiveReplicationCheck(ctx context.Context, resolved adapter.ResolvedOperation, name string) model.Check {
+	failed := postgresqlLiveReplicationFailure(name)
+	if name != "timeline" && name != "wal_position" {
+		return failed
+	}
+	if adapterInstance.runner == nil {
+		return failed
+	}
+	probeContext, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	primaryResult, err := discover(probeContext, adapterInstance.runner, adapter.DiscoverRequest{
+		ClusterID: resolved.Cluster.ResourceID, Endpoint: postgresqlInstanceEndpoint(resolved.Primary), Credentials: resolved.Credentials,
+	})
+	if err != nil {
+		return failed
+	}
+	primary := primaryResult.Instance
+	systemIdentifier := strings.TrimSpace(resolved.Cluster.EngineIdentity["system_identifier"])
+	if !postgresqlInstanceIdentityMatches(primary, resolved.Primary, systemIdentifier) ||
+		primary.Role != model.RolePrimary || primary.Health.State != model.HealthHealthy {
+		return failed
+	}
+	primaryTimeline, primaryTimelineErr := strconv.ParseUint(strings.TrimSpace(primary.EngineMetadata["timeline_id"]), 10, 32)
+	primaryLSN, primaryLSNErr := parseLSN(primary.EngineMetadata["current_lsn"])
+	if primaryTimelineErr != nil || primaryTimeline == 0 || primaryLSNErr != nil {
+		return failed
+	}
+
+	for {
+		targetResult, err := discover(probeContext, adapterInstance.runner, adapter.DiscoverRequest{
+			ClusterID: resolved.Cluster.ResourceID, Endpoint: postgresqlInstanceEndpoint(resolved.Target), Credentials: resolved.Credentials,
+		})
+		if err != nil {
+			return failed
+		}
+		target := targetResult.Instance
+		if !postgresqlInstanceIdentityMatches(target, resolved.Target, systemIdentifier) ||
+			target.Role != model.RoleStandby || target.Health.State != model.HealthHealthy || !target.PromotionEligible ||
+			!postgresqlSourceIdentityMatches(target.Replication.SourceIdentity, primary, systemIdentifier) ||
+			target.Replication.IOThread != model.ThreadRunning || target.Replication.SQLThread != model.ThreadRunning ||
+			target.Replication.LagSeconds == nil || *target.Replication.LagSeconds != 0 {
+			return failed
+		}
+		targetTimeline, targetTimelineErr := strconv.ParseUint(strings.TrimSpace(target.EngineMetadata["timeline_id"]), 10, 32)
+		targetReceiveLSN, targetReceiveErr := parseLSN(target.Replication.RetrievedPosition)
+		targetReplayLSN, targetReplayErr := parseLSN(target.Replication.ExecutedPosition)
+		if targetTimelineErr != nil || primaryTimeline != targetTimeline || targetReceiveErr != nil || targetReplayErr != nil {
+			return failed
+		}
+		if targetReceiveLSN == targetReplayLSN && targetReplayLSN >= primaryLSN {
+			message := "target replay reached a live sampled primary WAL position"
+			if name == "timeline" {
+				message = "target timeline was confirmed by live primary and streaming WAL evidence"
+			}
+			return model.Check{Name: name, Status: model.CheckPass, Message: message}
+		}
+
+		select {
+		case <-probeContext.Done():
+			return failed
+		case <-time.After(150 * time.Millisecond):
+		}
+	}
+}
+
+func replacePostgreSQLCheck(checks []model.Check, replacement model.Check) {
+	for index := range checks {
+		if checks[index].Name == replacement.Name {
+			checks[index] = replacement
+			return
+		}
+	}
+}
+
 func (adapterInstance *Adapter) postgresqlOperationPrivileges(ctx context.Context, resolved adapter.ResolvedOperation, instance model.DatabaseInstance, requireBackendSignal bool) model.Check {
 	check := model.Check{Name: "postgresql_operation_privileges", Status: model.CheckFail}
 	if adapterInstance.executor == nil {
@@ -194,6 +302,11 @@ func (adapterInstance *Adapter) switchoverPrecheck(ctx context.Context, request 
 	checks, err := postgresqlCoreChecks(request)
 	if err != nil {
 		return nil, err
+	}
+	for _, checkName := range []string{"timeline", "wal_position"} {
+		if postgresqlOnlyFailedCheck(checks, checkName) {
+			replacePostgreSQLCheck(checks, adapterInstance.postgresqlLiveReplicationCheck(ctx, *request.Resolved, checkName))
+		}
 	}
 	checks = append(checks, adapterInstance.nodeController.Precheck(ctx, *request.Resolved)...)
 	checks = append(checks, adapterInstance.endpointProvider.Precheck(ctx, *request.Resolved)...)
@@ -340,7 +453,7 @@ func (adapterInstance *Adapter) failoverPlan(ctx context.Context, request adapte
 	}
 	followers := make([]model.DatabaseInstance, 0)
 	for _, instance := range resolved.Snapshot.Instances {
-		if instance.ResourceID != resolved.Primary.ResourceID && instance.ResourceID != resolved.Target.ResourceID {
+		if instance.ResourceID != resolved.Primary.ResourceID && instance.ResourceID != resolved.Target.ResourceID && postgresqlFailoverFollowerAvailable(resolved, instance) {
 			followers = append(followers, instance)
 		}
 	}

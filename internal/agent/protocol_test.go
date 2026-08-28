@@ -43,17 +43,31 @@ type fakeRoleController struct {
 	calls         *[]string
 	readOnly      bool
 	superReadOnly bool
+	persistErr    error
+}
+
+type fakeDurableRoleController struct {
+	fakeRoleController
+	isolation    MySQLIsolationStatus
+	isolationErr error
 }
 
 type fakePostgreSQLController struct {
-	calls      *[]string
-	running    bool
-	inRecovery bool
+	calls            *[]string
+	running          bool
+	inRecovery       bool
+	statusErr        error
+	standbyIntent    bool
+	standbyIntentErr error
 }
 
 func (controller *fakePostgreSQLController) Status(context.Context, ClusterPolicy) (bool, bool, error) {
 	*controller.calls = append(*controller.calls, "postgresql_status")
-	return controller.running, controller.inRecovery, nil
+	return controller.running, controller.inRecovery, controller.statusErr
+}
+func (controller *fakePostgreSQLController) StandbyIntent(ClusterPolicy) (bool, error) {
+	*controller.calls = append(*controller.calls, "postgresql_standby_intent")
+	return controller.standbyIntent, controller.standbyIntentErr
 }
 func (controller *fakePostgreSQLController) Stop(context.Context, ClusterPolicy) error {
 	*controller.calls = append(*controller.calls, "postgresql_stop")
@@ -85,12 +99,17 @@ func (controller *fakePostgreSQLController) BaseBackup(_ context.Context, _ Clus
 
 func (controller fakeRoleController) PersistReadOnly(_ context.Context, _ ClusterPolicy, readOnly bool) error {
 	*controller.calls = append(*controller.calls, "read_only")
-	return nil
+	return controller.persistErr
 }
 
 func (controller fakeRoleController) Status(context.Context, ClusterPolicy) (bool, bool, error) {
 	*controller.calls = append(*controller.calls, "role_status")
 	return controller.readOnly, controller.superReadOnly, nil
+}
+
+func (controller fakeDurableRoleController) IsolationStatus(context.Context, ClusterPolicy) (MySQLIsolationStatus, error) {
+	*controller.calls = append(*controller.calls, "isolation_status")
+	return controller.isolation, controller.isolationErr
 }
 
 func testAgentService(t *testing.T, vip *fakeVIPController, roles RoleController) (*Service, ClusterPolicy, time.Time) {
@@ -161,6 +180,154 @@ func TestAgentRequiresLeaseForVIPMutation(t *testing.T) {
 	}
 }
 
+type fakePowerController struct {
+	calls      *[]string
+	running    bool
+	reachable  bool
+	statusErr  error
+	controlErr error
+	prepared   *model.PowerSnapshot
+}
+
+func (controller *fakePowerController) PrepareRecoverySnapshot(_ context.Context, _ ClusterPolicy, snapshot model.PowerSnapshot) error {
+	if controller.calls != nil {
+		*controller.calls = append(*controller.calls, "prepare")
+	}
+	controller.prepared = &snapshot
+	return controller.controlErr
+}
+
+func (controller *fakePowerController) StopService(_ context.Context, _ ClusterPolicy) error {
+	if controller.calls != nil {
+		*controller.calls = append(*controller.calls, "stop")
+	}
+	return controller.controlErr
+}
+
+func (controller *fakePowerController) StartService(_ context.Context, _ ClusterPolicy) error {
+	if controller.calls != nil {
+		*controller.calls = append(*controller.calls, "start")
+	}
+	return controller.controlErr
+}
+
+func (controller *fakePowerController) ServiceStatus(_ context.Context, _ ClusterPolicy) (bool, bool, error) {
+	if controller.calls != nil {
+		*controller.calls = append(*controller.calls, "status")
+	}
+	return controller.running, controller.reachable, controller.statusErr
+}
+
+func (controller *fakePowerController) PowerOff(_ context.Context, _ ClusterPolicy) error {
+	if controller.calls != nil {
+		*controller.calls = append(*controller.calls, "poweroff")
+	}
+	return controller.controlErr
+}
+
+func TestAgentPowerCommandsDispatchToController(t *testing.T) {
+	now := time.Date(2026, time.July, 13, 12, 0, 0, 0, time.UTC)
+	clusterID := model.NewResourceID()
+	policy := ClusterPolicy{ClusterID: clusterID, InstanceID: model.NewResourceID(), MySQLPort: 3306}
+	calls := []string{}
+	power := &fakePowerController{calls: &calls, running: false, reachable: false}
+	service, err := NewService(
+		Config{SharedSecret: "agent-secret", Clusters: map[model.ResourceID]ClusterPolicy{clusterID: policy}},
+		&fakeVIPController{}, fakeRoleController{}, func() time.Time { return now },
+		WithPowerController(power), WithMutationLedger(testMutationLedger(t)),
+	)
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+
+	snapshot := model.PowerSnapshot{
+		ClusterID: clusterID, ClusterName: "production", Engine: model.EngineMySQL,
+		Primary:    model.PowerInstanceRef{InstanceID: policy.InstanceID, Hostname: "mysql-a", IPAddress: "192.0.2.10", Port: 3306},
+		CapturedAt: now,
+	}
+	prepare := signedAgentRequest(t, Request{Command: CommandPowerPrepare, ClusterID: clusterID, ExpiresAt: now.Add(time.Minute), PowerSnapshot: &snapshot})
+	if response := service.Handle(context.Background(), prepare); response.Status != StatusOK {
+		t.Fatalf("power prepare response=%+v", response)
+	}
+	if power.prepared == nil || power.prepared.ClusterID != clusterID {
+		t.Fatalf("power snapshot was not dispatched: %+v", power.prepared)
+	}
+
+	stop := signedAgentRequest(t, Request{Command: CommandMySQLServiceStop, ClusterID: clusterID, ExpiresAt: now.Add(time.Minute)})
+	if response := service.Handle(context.Background(), stop); response.Status != StatusOK {
+		t.Fatalf("service stop response=%+v", response)
+	}
+
+	status := signedAgentRequest(t, Request{Command: CommandMySQLPowerStatus, ClusterID: clusterID, ExpiresAt: now.Add(time.Minute)})
+	if response := service.Handle(context.Background(), status); response.Status != StatusOK || response.ServiceRunning == nil || response.DatabaseReachable == nil {
+		t.Fatalf("power status response=%+v", response)
+	}
+
+	start := signedAgentRequest(t, Request{Command: CommandMySQLServiceStart, ClusterID: clusterID, ExpiresAt: now.Add(time.Minute)})
+	if response := service.Handle(context.Background(), start); response.Status != StatusOK {
+		t.Fatalf("service start response=%+v", response)
+	}
+
+	poweroff := signedAgentRequest(t, Request{Command: CommandNodePoweroff, ClusterID: clusterID, ExpiresAt: now.Add(time.Minute)})
+	if response := service.Handle(context.Background(), poweroff); response.Status != StatusOK {
+		t.Fatalf("node poweroff response=%+v", response)
+	}
+
+	joined := strings.Join(calls, ",")
+	if joined != "prepare,stop,status,start,poweroff" {
+		t.Fatalf("dispatch order=%q, want prepare,stop,status,start,poweroff", joined)
+	}
+}
+
+func TestAgentPowerCommandsBlockWithoutController(t *testing.T) {
+	service, policy, now := testAgentService(t, &fakeVIPController{}, fakeRoleController{calls: &[]string{}})
+	request := signedAgentRequest(t, Request{Command: CommandMySQLServiceStop, ClusterID: policy.ClusterID, ExpiresAt: now.Add(time.Minute)})
+	response := service.Handle(context.Background(), request)
+	if response.Status != StatusBlocked || !strings.Contains(response.Message, "power controller") {
+		t.Fatalf("unconfigured power response=%+v", response)
+	}
+}
+
+func TestAgentPowerMutationRequiresPlanDigest(t *testing.T) {
+	service, policy, now := testAgentService(t, &fakeVIPController{}, fakeRoleController{calls: &[]string{}})
+	request := signedAgentRequest(t, Request{Command: CommandMySQLServiceStop, ClusterID: policy.ClusterID, ExpiresAt: now.Add(time.Minute)})
+	request.PlanDigest = "plain"
+	// Re-signing with the plain digest would still pass signature validation;
+	// the plan digest gate is what must reject the mutation.
+	request.Signature = ""
+	request = signedAgentRequest(t, request)
+	response := service.Handle(context.Background(), request)
+	if response.Status != StatusBlocked || !strings.Contains(response.Message, "plan digest") {
+		t.Fatalf("plain digest response=%+v", response)
+	}
+}
+
+func TestAgentPowerPrepareRequiresSnapshotBoundToSignature(t *testing.T) {
+	now := time.Now().UTC()
+	clusterID := model.NewResourceID()
+	instanceID := model.NewResourceID()
+	snapshot := model.PowerSnapshot{
+		ClusterID: clusterID, ClusterName: "production", Engine: model.EngineMySQL,
+		Primary:    model.PowerInstanceRef{InstanceID: instanceID, Hostname: "mysql-a", IPAddress: "192.0.2.10", Port: 3306},
+		CapturedAt: now,
+	}
+	request := signedAgentRequest(t, Request{
+		Command: CommandPowerPrepare, ClusterID: clusterID, OperationID: model.NewResourceID(),
+		PlanDigest: "sha256:" + strings.Repeat("a", 64), ExpiresAt: now.Add(time.Minute), PowerSnapshot: &snapshot,
+	})
+	changed := request
+	tampered := snapshot
+	tampered.Primary.IPAddress = "192.0.2.99"
+	changed.PowerSnapshot = &tampered
+	signature, err := SignRequest(changed, "agent-secret")
+	if err != nil {
+		t.Fatalf("sign tampered request: %v", err)
+	}
+	if signature == request.Signature {
+		t.Fatal("power recovery snapshot must be covered by the HMAC signature")
+	}
+}
+
 func TestAgentRejectsUnknownCommand(t *testing.T) {
 	service, policy, now := testAgentService(t, &fakeVIPController{}, fakeRoleController{calls: &[]string{}})
 	request := signedAgentRequest(t, Request{Command: "shell", ClusterID: policy.ClusterID, ExpiresAt: now.Add(time.Minute)})
@@ -225,6 +392,29 @@ func TestAgentSelfIsolationEnforcesReadOnlyWhenVIPReleaseFails(t *testing.T) {
 	}
 }
 
+func TestAgentSelfIsolationAcceptsStoppedMySQLOnlyWithDurableRestartFence(t *testing.T) {
+	calls := []string{}
+	vip := &fakeVIPController{owns: true, calls: &calls}
+	roles := fakeDurableRoleController{
+		fakeRoleController: fakeRoleController{calls: &calls, persistErr: errors.New("database is stopped")},
+		isolation: MySQLIsolationStatus{
+			ServiceRunning:    false,
+			DatabaseReachable: false,
+			RestartReadOnly:   true,
+			PersistedReadOnly: true,
+		},
+	}
+	service, policy, now := testAgentService(t, vip, roles)
+	request := signedAgentRequest(t, Request{Command: CommandSelfIsolate, ClusterID: policy.ClusterID, ExpiresAt: now.Add(time.Minute), VIP: policy.VIP, Interface: policy.Interface, Prefix: policy.Prefix})
+	response := service.Handle(context.Background(), request)
+	if response.Status != StatusOK {
+		t.Fatalf("durably fenced stopped MySQL response=%+v", response)
+	}
+	if strings.Join(calls, ",") != "release,read_only,isolation_status" {
+		t.Fatalf("durable self-isolation order=%v", calls)
+	}
+}
+
 func TestAgentRoleStatusReportsBothMySQLReadOnlyFlags(t *testing.T) {
 	calls := []string{}
 	roles := fakeRoleController{calls: &calls, readOnly: true, superReadOnly: true}
@@ -236,6 +426,31 @@ func TestAgentRoleStatusReportsBothMySQLReadOnlyFlags(t *testing.T) {
 	}
 	if strings.Join(calls, ",") != "role_status" {
 		t.Fatalf("role status calls=%v", calls)
+	}
+}
+
+func TestAgentRoleStatusReportsOfflineRestartFenceEvidence(t *testing.T) {
+	calls := []string{}
+	roles := fakeDurableRoleController{
+		fakeRoleController: fakeRoleController{calls: &calls},
+		isolation: MySQLIsolationStatus{
+			ServiceRunning:    false,
+			DatabaseReachable: false,
+			RestartReadOnly:   true,
+			PersistedReadOnly: true,
+		},
+	}
+	service, policy, now := testAgentService(t, &fakeVIPController{}, roles)
+	request := signedAgentRequest(t, Request{Command: CommandRoleStatus, ClusterID: policy.ClusterID, ExpiresAt: now.Add(time.Minute)})
+	response := service.Handle(context.Background(), request)
+	if response.Status != StatusOK || response.ServiceRunning == nil || *response.ServiceRunning ||
+		response.DatabaseReachable == nil || *response.DatabaseReachable ||
+		response.RestartReadOnly == nil || !*response.RestartReadOnly ||
+		response.PersistedReadOnly == nil || !*response.PersistedReadOnly {
+		t.Fatalf("offline role isolation response=%+v", response)
+	}
+	if strings.Join(calls, ",") != "isolation_status" {
+		t.Fatalf("offline role status calls=%v", calls)
 	}
 }
 
@@ -399,5 +614,31 @@ func TestAgentMutationLedgerPreventsDuplicateHostMutationAcrossProcesses(t *test
 	}
 	if got := strings.Join(calls, ","); got != "postgresql_promote" {
 		t.Fatalf("durable replay executed mutation more than once: %s", got)
+	}
+}
+
+func TestAgentVIPAcquireReplayReconvergesDriftedPhysicalState(t *testing.T) {
+	calls := []string{}
+	vip := &fakeVIPController{calls: &calls}
+	roles := fakeRoleController{calls: &calls}
+	service, policy, now := testAgentService(t, vip, roles)
+	request := signedAgentRequest(t, Request{
+		Command: CommandVIPAcquire, ClusterID: policy.ClusterID,
+		OperationID: model.NewResourceID(), LeaseID: model.NewResourceID(),
+		PlanDigest: "sha256:" + strings.Repeat("a", 64), ExpiresAt: now.Add(time.Minute),
+		VIP: policy.VIP, Interface: policy.Interface, Prefix: policy.Prefix,
+	})
+	if response := service.Handle(context.Background(), request); response.Status != StatusOK {
+		t.Fatalf("initial acquire response=%+v", response)
+	}
+	vip.owns = false
+	request.LeaseID = model.NewResourceID()
+	request.Signature = ""
+	request = signedAgentRequest(t, request)
+	if response := service.Handle(context.Background(), request); response.Status != StatusOK {
+		t.Fatalf("replayed acquire response=%+v", response)
+	}
+	if !vip.owns || strings.Join(calls, ",") != "acquire,status,acquire" {
+		t.Fatalf("replayed acquire did not reconverge VIP: owns=%t calls=%v", vip.owns, calls)
 	}
 }

@@ -6,9 +6,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"sync"
 
+	"clusterguard.io/ha/pkg/adapter"
 	"clusterguard.io/ha/pkg/model"
 )
 
@@ -29,6 +31,47 @@ func (guard AuthoritySafetyGuard) Evaluate(ctx context.Context, operation model.
 	}
 	if err := guard.Authority.RequireMutationAuthority(ctx); err != nil {
 		return fmt.Errorf("leader-backed controller majority is required: %w", err)
+	}
+	return nil
+}
+
+type MaintenanceChecker interface {
+	Check(context.Context) error
+}
+
+type MaintenanceSafetyGuard struct {
+	Gate MaintenanceChecker
+}
+
+func (guard MaintenanceSafetyGuard) Evaluate(ctx context.Context, _ model.Operation) error {
+	if guard.Gate == nil {
+		return fmt.Errorf("software update maintenance guard is not configured")
+	}
+	if err := guard.Gate.Check(ctx); err != nil {
+		return fmt.Errorf("software update maintenance gate blocked execution: %w", err)
+	}
+	return nil
+}
+
+type CompositeSafetyGuard struct {
+	guards []SafetyGuard
+}
+
+func NewCompositeSafetyGuard(guards ...SafetyGuard) CompositeSafetyGuard {
+	return CompositeSafetyGuard{guards: append([]SafetyGuard{}, guards...)}
+}
+
+func (guard CompositeSafetyGuard) Evaluate(ctx context.Context, operation model.Operation) error {
+	if len(guard.guards) == 0 {
+		return fmt.Errorf("no safety guards are configured")
+	}
+	for _, candidate := range guard.guards {
+		if candidate == nil {
+			return fmt.Errorf("nil safety guard is configured")
+		}
+		if err := candidate.Evaluate(ctx, operation); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -98,6 +141,12 @@ type topologyObservationAnomaly struct {
 	Message   string           `json:"message"`
 }
 
+var mysqlReconnectAttemptPattern = regexp.MustCompile(`(?i)(\bthis was attempt )\d+(/\d+\b)`)
+
+func stableReplicationError(value string) string {
+	return mysqlReconnectAttemptPattern.ReplaceAllString(value, "${1}*${2}")
+}
+
 func stableHealth(value model.Health) topologyObservationHealth {
 	return topologyObservationHealth{State: value.State, Replication: value.Replication}
 }
@@ -107,7 +156,7 @@ func stableEngineMetadata(values map[string]string) map[string]string {
 	for key, value := range values {
 		switch key {
 		case "gtid_executed", "current_lsn", "receive_lsn", "replay_lsn",
-			"transport_lag_seconds", "apply_lag_seconds":
+			"receiver_latest_end_lsn", "transport_lag_seconds", "apply_lag_seconds":
 			continue
 		}
 		result[key] = value
@@ -139,7 +188,7 @@ func topologyDigest(snapshot model.TopologySnapshot) (string, error) {
 			Engine: instance.Engine, EngineIdentity: instance.EngineIdentity.Clone(), DisplayName: instance.DisplayName,
 			Hostname: instance.Hostname, IPAddress: instance.IPAddress, Port: instance.Port, Aliases: aliases,
 			Role: instance.Role, Health: stableHealth(instance.Health), SourceIdentity: instance.Replication.SourceIdentity.Clone(),
-			IOThread: instance.Replication.IOThread, SQLThread: instance.Replication.SQLThread, LastError: instance.Replication.LastError,
+			IOThread: instance.Replication.IOThread, SQLThread: instance.Replication.SQLThread, LastError: stableReplicationError(instance.Replication.LastError),
 			Maintenance: instance.Maintenance, PromotionEligible: stablePromotionEligible(instance),
 			EngineMetadata: stableEngineMetadata(instance.EngineMetadata),
 		})
@@ -241,7 +290,11 @@ func (AllowAllSafety) Evaluate(context.Context, model.Operation) error { return 
 type MemoryLocks struct {
 	mu      sync.Mutex
 	active  map[string]bool
-	waiters map[string]chan struct{}
+	waiters map[string][]*memoryLockWaiter
+}
+
+type memoryLockWaiter struct {
+	ready chan struct{}
 }
 
 type ClusterLockManager interface {
@@ -306,7 +359,7 @@ func acquireComposite(ctx context.Context, acquireLocal, acquireQuorum func(cont
 }
 
 func NewMemoryLocks() *MemoryLocks {
-	return &MemoryLocks{active: map[string]bool{}, waiters: map[string]chan struct{}{}}
+	return &MemoryLocks{active: map[string]bool{}, waiters: map[string][]*memoryLockWaiter{}}
 }
 
 func (locks *MemoryLocks) Acquire(ctx context.Context, operation model.Operation) (context.Context, func(), error) {
@@ -325,45 +378,85 @@ func (locks *MemoryLocks) acquire(ctx context.Context, key string) (context.Cont
 	if key == "" {
 		return nil, nil, fmt.Errorf("operation lock resource is required")
 	}
-	for {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	locks.mu.Lock()
+	if locks.active == nil {
+		locks.active = map[string]bool{}
+	}
+	if locks.waiters == nil {
+		locks.waiters = map[string][]*memoryLockWaiter{}
+	}
+	if !locks.active[key] && len(locks.waiters[key]) == 0 {
+		locks.active[key] = true
+		locks.mu.Unlock()
+		leaseCtx, release := locks.memoryLease(ctx, key)
+		return leaseCtx, release, nil
+	}
+	waiter := &memoryLockWaiter{ready: make(chan struct{})}
+	locks.waiters[key] = append(locks.waiters[key], waiter)
+	locks.mu.Unlock()
+
+	select {
+	case <-waiter.ready:
 		if err := ctx.Err(); err != nil {
+			locks.releaseMemoryLease(key)
 			return nil, nil, err
 		}
+		leaseCtx, release := locks.memoryLease(ctx, key)
+		return leaseCtx, release, nil
+	case <-ctx.Done():
 		locks.mu.Lock()
-		if locks.active == nil {
-			locks.active = map[string]bool{}
-		}
-		if locks.waiters == nil {
-			locks.waiters = map[string]chan struct{}{}
-		}
-		if !locks.active[key] {
-			locks.active[key] = true
+		queue := locks.waiters[key]
+		for index, candidate := range queue {
+			if candidate != waiter {
+				continue
+			}
+			queue = append(queue[:index], queue[index+1:]...)
+			if len(queue) == 0 {
+				delete(locks.waiters, key)
+			} else {
+				locks.waiters[key] = queue
+			}
 			locks.mu.Unlock()
-			var once sync.Once
-			return ctx, func() {
-				once.Do(func() {
-					locks.mu.Lock()
-					defer locks.mu.Unlock()
-					delete(locks.active, key)
-					if waiting, found := locks.waiters[key]; found {
-						delete(locks.waiters, key)
-						close(waiting)
-					}
-				})
-			}, nil
-		}
-		waiting := locks.waiters[key]
-		if waiting == nil {
-			waiting = make(chan struct{})
-			locks.waiters[key] = waiting
+			return nil, nil, ctx.Err()
 		}
 		locks.mu.Unlock()
-		select {
-		case <-ctx.Done():
-			return nil, nil, ctx.Err()
-		case <-waiting:
-		}
+		// The release path granted this waiter at the same instant its
+		// context was canceled. Pass the grant on so the queue cannot stall.
+		locks.releaseMemoryLease(key)
+		return nil, nil, ctx.Err()
 	}
+}
+
+func (locks *MemoryLocks) memoryLease(ctx context.Context, key string) (context.Context, func()) {
+	var once sync.Once
+	leaseCtx := adapter.WithOperationLeaseID(ctx, model.NewResourceID())
+	return leaseCtx, func() {
+		once.Do(func() { locks.releaseMemoryLease(key) })
+	}
+}
+
+func (locks *MemoryLocks) releaseMemoryLease(key string) {
+	locks.mu.Lock()
+	defer locks.mu.Unlock()
+	queue := locks.waiters[key]
+	if len(queue) == 0 {
+		delete(locks.active, key)
+		delete(locks.waiters, key)
+		return
+	}
+	next := queue[0]
+	queue = queue[1:]
+	if len(queue) == 0 {
+		delete(locks.waiters, key)
+	} else {
+		locks.waiters[key] = queue
+	}
+	// The active marker remains set while ownership is handed to the oldest
+	// waiter. This prevents a new recovery loop from jumping the queue.
+	close(next.ready)
 }
 
 type AllowAllApproval struct{}

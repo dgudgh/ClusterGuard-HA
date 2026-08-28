@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -72,10 +73,17 @@ func TestAuthenticatedControlPlaneStatusReturnsOperationalEvidence(t *testing.T)
 	want := ControlPlaneStatus{
 		Mode: "raft", LocalControllerID: model.NewResourceID(), Role: "leader",
 		LeaderID: model.NewResourceID(), LeaderKnown: true, VoterCount: 3,
-		QuorumConfirmed: true, MutationAuthority: true, SnapshotCASActive: true,
+		QuorumConfirmed: true, MutationAuthority: true, SnapshotCASActive: true, ReplicatedLogCompressionActive: true,
 		Term: 9, LastIndex: 71, AppliedIndex: 71, StateRevision: 42,
 		Ready: true, ReadinessReason: "ready", StartedAt: startedAt, UptimeSeconds: 600,
 		ClusterCount: 2, ActiveOperations: 1, IndeterminateOperations: 1, ActiveLifecycleTasks: 1,
+		ControllerMembers: []ControllerMemberStatus{{
+			ResourceID: model.NewResourceID(), RaftAddress: "192.0.2.11:10009", APIAddress: "https://192.0.2.11:3000",
+		}},
+		DataNodeMembers: []DataNodeMemberStatus{{
+			ResourceID: model.NewResourceID(), NodeName: "cg-data-0001", Kind: model.NodeData,
+			Hostname: "database-a", IPAddress: "192.0.2.31",
+		}},
 	}
 	server := NewServer(adapter.NewRegistry(), store.NewMemory(), nil, nil,
 		WithControlToken(testControlToken),
@@ -92,8 +100,34 @@ func TestAuthenticatedControlPlaneStatusReturnsOperationalEvidence(t *testing.T)
 	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
 		t.Fatalf("decode control-plane status: %v", err)
 	}
-	if envelope.Status != "ok" || envelope.Result != want {
+	if envelope.Status != "ok" || !reflect.DeepEqual(envelope.Result, want) {
 		t.Fatalf("control-plane status=%+v want=%+v", envelope.Result, want)
+	}
+}
+
+func TestAuthenticatedPlatformVersionExposesPatchCompatibility(t *testing.T) {
+	server := NewServer(adapter.NewRegistry(), store.NewMemory(), nil, nil, WithControlToken(testControlToken))
+	response := callJSON(t, server.Handler(), http.MethodGet, "/api/v1/platform/version", nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("platform version=%d body=%s", response.Code, response.Body.String())
+	}
+	var envelope struct {
+		Status string `json:"status"`
+		Result struct {
+			Product        string `json:"product"`
+			Binary         string `json:"binary"`
+			Version        string `json:"version"`
+			Release        string `json:"release"`
+			StateFormat    int    `json:"state_format"`
+			UpdateProtocol int    `json:"update_protocol"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode platform version: %v", err)
+	}
+	if envelope.Status != "ok" || envelope.Result.Product != "ClusterGuard HA" || envelope.Result.Binary != "clusterguard" ||
+		envelope.Result.Version == "" || envelope.Result.Release == "" || envelope.Result.StateFormat < 1 || envelope.Result.UpdateProtocol < 1 {
+		t.Fatalf("platform version=%+v", envelope)
 	}
 }
 
@@ -109,6 +143,36 @@ func TestStandaloneControlPlaneStatusDoesNotTreatDormantPlansAsActive(t *testing
 	server := NewServer(adapter.NewRegistry(), repository, nil, nil)
 	if status := server.localControlPlaneStatus(); status.ActiveOperations != 0 {
 		t.Fatalf("planned history reported as active work: %+v", status)
+	}
+}
+
+func TestStandaloneControlPlaneCountsOnlyUnreviewedIndeterminateOperations(t *testing.T) {
+	repository := store.NewMemory()
+	create := func(key string) model.OperationRecord {
+		record, _, err := repository.CreateOperation(model.OperationRecord{
+			Operation: model.Operation{ClusterID: model.NewResourceID(), Engine: model.EngineMySQL, Kind: model.OperationSwitchover},
+			TargetID:  model.NewResourceID(), IdempotencyKey: key,
+		})
+		if err != nil {
+			t.Fatalf("create %s: %v", key, err)
+		}
+		record, err = repository.TransitionOperation(record.ResourceID, record.MetadataRevision, model.OperationTransition{
+			Stage: model.StageVerify, Status: model.OperationIndeterminate, Message: "review required",
+		})
+		if err != nil {
+			t.Fatalf("mark %s indeterminate: %v", key, err)
+		}
+		return record
+	}
+	unreviewed := create("control-plane-unreviewed")
+	reviewed := create("control-plane-reviewed")
+	if _, err := repository.ReviewIndeterminateOperation(reviewed.ResourceID, reviewed.MetadataRevision, "dba", "verified against the live database"); err != nil {
+		t.Fatalf("review operation: %v", err)
+	}
+	server := NewServer(adapter.NewRegistry(), repository, nil, nil)
+	status := server.localControlPlaneStatus()
+	if status.IndeterminateOperations != 1 || !unreviewed.RequiresReview() {
+		t.Fatalf("control-plane review count=%+v", status)
 	}
 }
 

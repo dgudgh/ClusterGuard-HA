@@ -13,7 +13,7 @@ EnvironmentFile=-/etc/clusterguard/clusterguard.env
 Environment=PATH=/usr/local/mysql/bin:/usr/pgsql-16/bin:/usr/lib/postgresql/16/bin:/opt/mssql-tools18/bin:/opt/mssql-tools/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
 ExecStartPre=/usr/local/bin/clusterguard --config /etc/clusterguard/clusterguard.json --check-config
 ExecStart=/usr/local/bin/clusterguard --config /etc/clusterguard/clusterguard.json
-Restart=on-failure
+Restart=always
 RestartSec=5s
 TimeoutStopSec=35s
 LimitNOFILE=65536
@@ -23,7 +23,9 @@ ConfigurationDirectoryMode=0750
 StateDirectory=clusterguard
 StateDirectoryMode=0750
 LogsDirectory=clusterguard
-LogsDirectoryMode=0750
+# Database service accounts own engine-specific log subdirectories. Keep the
+# shared root non-listable while allowing them to traverse to those leaves.
+LogsDirectoryMode=0751
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true

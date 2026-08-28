@@ -65,3 +65,50 @@ func TestFailureWindowExposesStableIncidentIdentityUntilRecovery(t *testing.T) {
 		t.Fatalf("healthy observation retained incident=(%s,%t)", incident, stable)
 	}
 }
+
+func TestFailureWindowAcceptsFourConsecutiveSamplesAcrossSixSeconds(t *testing.T) {
+	window := NewFailureWindow(3, 6*time.Second)
+	clusterID := model.NewResourceID()
+	start := time.Date(2026, time.August, 13, 16, 0, 0, 0, time.UTC)
+	window.Record(clusterID, true, start)
+	for index := 1; index <= 3; index++ {
+		observedAt := start.Add(time.Duration(index) * 2 * time.Second)
+		window.Record(clusterID, true, observedAt)
+		if index < 3 && window.Stable(clusterID, observedAt) {
+			t.Fatalf("fast failure window became stable after %d observations", index+1)
+		}
+	}
+	if !window.Stable(clusterID, start.Add(6*time.Second)) {
+		t.Fatal("four consecutive observations across six seconds were not stable")
+	}
+}
+
+func TestFailureWindowAcceptsConfiguredFiveSecondDiscoveryCadence(t *testing.T) {
+	window := NewFailureWindow(3, 6*time.Second, WithMaximumObservationGap(10*time.Second))
+	clusterID := model.NewResourceID()
+	start := time.Date(2026, time.August, 23, 10, 0, 0, 0, time.UTC)
+	window.Record(clusterID, true, start)
+	for index := 1; index <= 3; index++ {
+		observedAt := start.Add(time.Duration(index) * 5 * time.Second)
+		window.Record(clusterID, true, observedAt)
+		if index < 3 && window.Stable(clusterID, observedAt) {
+			t.Fatalf("failure became stable after only %d observations", index+1)
+		}
+	}
+	if !window.Stable(clusterID, start.Add(15*time.Second)) {
+		t.Fatal("four consecutive five-second observations did not become stable")
+	}
+}
+
+func TestFailureWindowConfiguredGapStillRejectsStaleEvidence(t *testing.T) {
+	window := NewFailureWindow(3, 6*time.Second, WithMaximumObservationGap(10*time.Second))
+	clusterID := model.NewResourceID()
+	start := time.Date(2026, time.August, 23, 10, 0, 0, 0, time.UTC)
+	window.Record(clusterID, true, start)
+	window.Record(clusterID, true, start.Add(5*time.Second))
+	window.Record(clusterID, true, start.Add(10*time.Second))
+	window.Record(clusterID, true, start.Add(15*time.Second))
+	if window.Stable(clusterID, start.Add(26*time.Second)) {
+		t.Fatal("failure evidence remained stable after the configured observation gap expired")
+	}
+}

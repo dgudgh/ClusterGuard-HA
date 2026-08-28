@@ -30,13 +30,13 @@ Implemented keys:
 | `mysql.operation` | When enabled | Dedicated administrative operation username and password environment reference. |
 | `mysql.replication` | When enabled | Dedicated replication username and password environment reference. |
 | `mysql.automatic_failover_enabled` | No | Enables leader-only automatic failover. The raw configuration default is `false`; the supported multi-node installer enables it for VIP-backed MySQL HA with Agent quorum fencing. |
-| `mysql.automatic_failover_interval_seconds` | No | Recovery-controller poll interval; defaults to 5 seconds. |
+| `mysql.automatic_failover_interval_seconds` | No | Recovery-controller poll interval; defaults to 1 second. |
 | `mysql.automatic_failover_retry_seconds` | No | Backoff after a blocked or failed incident attempt; defaults to 30 seconds. |
 | `postgresql.enabled` | No | Enables native PostgreSQL discovery and configured HA capabilities; defaults to `false`. |
-| `postgresql.discovery_interval_seconds` | No | PostgreSQL scheduler interval; defaults to 5 seconds and is independent of MySQL. |
-| `postgresql.discovery_timeout_seconds` | No | Per-endpoint PostgreSQL probe timeout; defaults to 4 seconds. |
+| `postgresql.discovery_interval_seconds` | No | PostgreSQL scheduler interval; defaults to 1 second and is independent of MySQL. |
+| `postgresql.discovery_timeout_seconds` | No | Per-endpoint PostgreSQL probe timeout; defaults to 1 second. |
 | `postgresql.automatic_failover_enabled` | No | Enables leader-only PostgreSQL automatic failover; defaults to `false`. |
-| `postgresql.automatic_failover_interval_seconds` | No | PostgreSQL recovery-controller poll interval; defaults to 5 seconds. |
+| `postgresql.automatic_failover_interval_seconds` | No | PostgreSQL recovery-controller poll interval; defaults to 1 second. |
 | `postgresql.automatic_failover_retry_seconds` | No | Backoff after a blocked or failed PostgreSQL incident attempt; defaults to 30 seconds. |
 | `postgresql.discovery` | When enabled | Dedicated monitor username, database, and password environment reference. |
 | `postgresql.operation` | For PostgreSQL mutation | Dedicated operation username, database, and password environment reference. Must be configured together with `postgresql.replication`. |
@@ -407,8 +407,9 @@ included in JSON error envelopes.
 `active_operations` counts only records whose status is `running`. A durable
 `planned` record is historical work waiting for an explicit execution request;
 it does not consume the active-operation limit and does not make readiness look
-busy. `indeterminate_operations` remains separate because each such record
-requires operator review before retrying or changing topology.
+busy. `indeterminate_operations` counts only `indeterminate` records that have
+not been reviewed. A reviewed record keeps its original status and evidence but
+does not permanently inflate the current review-required counter.
 
 Background ownership and automatic-recovery loops report a new failure
 immediately. An unchanged failure is then suppressed and reminded every five
@@ -753,7 +754,7 @@ therefore document the timeout/fallback policy and validate it with client-side
 transaction IDs during destructive failover tests.
 
 The recovery controller executes only on the majority Leader. Discovery records
-one incident after six follow-up failed-primary samples span 30 seconds. The
+one incident after three current failed-primary samples span at least three seconds. The
 controller chooses only the rank-one eligible candidate and submits a normal
 durable `failover` operation through a private internal authorization path.
 Public JSON cannot select this mode. The incident ID is audited at `APPROVE`;
@@ -845,6 +846,14 @@ states remain immutable. The terminal operation record, terminal audit events,
 and operation report are published in one repository snapshot, so readers
 cannot observe a succeeded report with a running operation or the reverse.
 Manual verification reconciliation uses the same atomic finalization path.
+
+When later topology changes make the immutable historical plan impossible to
+verify, an operator may call `POST /api/v1/operations/{operation_uuid}/review`
+with `{"note":"site verification evidence"}`. The route accepts only
+`indeterminate` records, requires a non-empty note, and makes the first review
+immutable. It atomically stores review metadata, an audit event, and a report
+without changing the operation status. The console's **Mark reviewed** action
+uses the same route.
 
 Cluster registration and discovery publication follow the same rule. A
 post-rename durability warning returns HTTP `500` plus the committed resource or
@@ -966,13 +975,19 @@ former-primary rewind/rejoin, allowlisted repair, Linux VIP coupling, and
 `pg_basebackup` node synchronization.
 
 Optional automatic failover runs in a PostgreSQL-only recovery controller. It
-requires six consecutive primary-failure observations (30 seconds at the
-default cadence), a current topology snapshot, a rank-one standby with known
+requires three consecutive primary-failure observations spanning at least
+three seconds at the default cadence, a current topology snapshot, a rank-one standby with known
 zero replay lag, Raft leader and majority authority, restricted-Agent or
 external-fencer proof that the old primary cannot write, and the complete
 common workflow through verification, audit, and report. The controller never
 uses network unreachability as fencing evidence and never retries an
 indeterminate post-promotion result.
+
+The three-second evidence window is separate from the 15-second Agent
+authorization-expiry fence and from the configured 30-second retry backoff.
+None of those values alone is an application RTO. PostgreSQL clients must use a
+bounded connection timeout and retry policy; measure site RTO at the writer
+endpoint.
 
 Execution is never inferred from the engine name alone. ClusterGuard advertises
 each mutation capability only when dedicated operation and replication

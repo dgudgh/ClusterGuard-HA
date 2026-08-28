@@ -20,6 +20,7 @@ func TestLoadReadsConfigurationAndEnvironmentSecret(t *testing.T) {
   "approval_token_env": "CG_TEST_APPROVAL",
   "mysql": {
     "enabled": true,
+    "semi_sync_required": true,
     "discovery": {"username": "discover", "password_env": "CG_TEST_MYSQL_DISCOVERY"},
     "operation": {"username": "operator", "password_env": "CG_TEST_MYSQL_OPERATION"},
     "replication": {"username": "replicator", "password_env": "CG_TEST_MYSQL_REPLICATION"}
@@ -45,10 +46,13 @@ func TestLoadReadsConfigurationAndEnvironmentSecret(t *testing.T) {
 	if loaded.MySQL.Discovery.Password != "discovery-secret" || loaded.MySQL.Operation.Password != "operation-secret" || loaded.MySQL.Replication.Password != "replication-secret" || !loaded.MySQL.Enabled {
 		t.Fatalf("expected MySQL secret to be resolved: %+v", loaded.MySQL)
 	}
-	if loaded.MySQL.DiscoveryIntervalSeconds != 5 || loaded.MySQL.DiscoveryTimeoutSeconds != 4 {
+	if !loaded.MySQL.SemiSyncRequired {
+		t.Fatalf("expected required semi-sync policy: %+v", loaded.MySQL)
+	}
+	if loaded.MySQL.DiscoveryIntervalSeconds != 1 || loaded.MySQL.DiscoveryTimeoutSeconds != 1 {
 		t.Fatalf("unexpected discovery schedule: %+v", loaded.MySQL)
 	}
-	if loaded.MySQL.AutomaticFailoverEnabled || loaded.MySQL.AutomaticFailoverIntervalSeconds != 5 || loaded.MySQL.AutomaticFailoverRetrySeconds != 30 {
+	if loaded.MySQL.AutomaticFailoverEnabled || loaded.MySQL.AutomaticFailoverIntervalSeconds != 1 || loaded.MySQL.AutomaticFailoverRetrySeconds != 30 {
 		t.Fatalf("unexpected automatic failover defaults: %+v", loaded.MySQL)
 	}
 }
@@ -118,10 +122,10 @@ func TestLoadResolvesPostgreSQLReadOnlyDiscoveryConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load PostgreSQL configuration: %v", err)
 	}
-	if !loaded.PostgreSQL.Enabled || loaded.PostgreSQL.DiscoveryIntervalSeconds != 5 || loaded.PostgreSQL.DiscoveryTimeoutSeconds != 4 {
+	if !loaded.PostgreSQL.Enabled || loaded.PostgreSQL.DiscoveryIntervalSeconds != 1 || loaded.PostgreSQL.DiscoveryTimeoutSeconds != 1 {
 		t.Fatalf("unexpected PostgreSQL schedule: %+v", loaded.PostgreSQL)
 	}
-	if loaded.PostgreSQL.AutomaticFailoverEnabled || loaded.PostgreSQL.AutomaticFailoverIntervalSeconds != 5 || loaded.PostgreSQL.AutomaticFailoverRetrySeconds != 30 {
+	if loaded.PostgreSQL.AutomaticFailoverEnabled || loaded.PostgreSQL.AutomaticFailoverIntervalSeconds != 1 || loaded.PostgreSQL.AutomaticFailoverRetrySeconds != 30 {
 		t.Fatalf("unexpected PostgreSQL automatic failover defaults: %+v", loaded.PostgreSQL)
 	}
 	if loaded.PostgreSQL.Discovery.Username != "cg_monitor" || loaded.PostgreSQL.Discovery.Database != "clusterguard" || loaded.PostgreSQL.Discovery.Password != "postgresql-secret" {
@@ -232,7 +236,7 @@ func TestLoadAllowsPostgreSQLAutomaticFailoverWithoutStaticApproval(t *testing.T
 	if err != nil {
 		t.Fatalf("load PostgreSQL automatic failover configuration: %v", err)
 	}
-	if !loaded.PostgreSQL.AutomaticFailoverEnabled || loaded.PostgreSQL.AutomaticFailoverIntervalSeconds != 5 || loaded.PostgreSQL.AutomaticFailoverRetrySeconds != 30 || loaded.ApprovalToken != "" {
+	if !loaded.PostgreSQL.AutomaticFailoverEnabled || loaded.PostgreSQL.AutomaticFailoverIntervalSeconds != 1 || loaded.PostgreSQL.AutomaticFailoverRetrySeconds != 30 || loaded.ApprovalToken != "" {
 		t.Fatalf("PostgreSQL automatic failover configuration=%+v approval=%q", loaded.PostgreSQL, loaded.ApprovalToken)
 	}
 }
@@ -284,6 +288,7 @@ func writePostgreSQLAutomaticFailoverConfig(t *testing.T, mutationCredentials, i
 			"identity_file": "/etc/clusterguard/agent_ed25519", "known_hosts_file": "/etc/clusterguard/agent_known_hosts",
 			"shared_secret_env": "CG_AUTO_PG_AGENT",
 		}
+		configuration["fencing"] = map[string]any{"agent_quorum_enabled": true}
 	}
 	encoded, err := json.Marshal(configuration)
 	if err != nil {
@@ -630,6 +635,43 @@ func TestLoadRejectsAutomaticFailoverWithoutConsensusAndAgent(t *testing.T) {
 	}
 }
 
+func TestLoadKubernetesExecutionRequiresConsensusAndAppliesSafeTimeouts(t *testing.T) {
+	write := func(contents string) string {
+		path := filepath.Join(t.TempDir(), "control.json")
+		if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	if _, err := Load(write(`{"metadata_path":"/tmp/metadata.json","kubernetes":{"enabled":true}}`)); err == nil || !strings.Contains(err.Error(), "Raft consensus") {
+		t.Fatalf("Kubernetes execution without consensus error=%v", err)
+	}
+	localID := "11111111-1111-4111-8111-111111111111"
+	contents := `{
+  "metadata_path":"/tmp/metadata.json",
+  "kubernetes":{"enabled":true},
+  "consensus":{
+    "enabled":true,
+    "local_id":"` + localID + `",
+    "bind_address":"127.0.0.1:10009",
+    "advertise_address":"127.0.0.1:10009",
+    "data_directory":"` + filepath.Join(t.TempDir(), "raft") + `",
+    "peers":[
+      {"resource_id":"` + localID + `","address":"127.0.0.1:10009"},
+      {"resource_id":"22222222-2222-4222-8222-222222222222","address":"127.0.0.1:10019"},
+      {"resource_id":"33333333-3333-4333-8333-333333333333","address":"127.0.0.1:10029"}
+    ]
+  }
+}`
+	loaded, err := Load(write(contents))
+	if err != nil {
+		t.Fatalf("load Kubernetes execution configuration: %v", err)
+	}
+	if !loaded.Kubernetes.Enabled || loaded.Kubernetes.RequestTimeoutSeconds != 10 || loaded.Kubernetes.FenceTimeoutSeconds != 60 {
+		t.Fatalf("Kubernetes execution defaults=%+v", loaded.Kubernetes)
+	}
+}
+
 func TestLoadAllowsAutomaticFailoverWithoutStaticApproval(t *testing.T) {
 	for name, value := range map[string]string{
 		"CG_AUTO_DISCOVERY":   "discovery-secret",
@@ -664,6 +706,9 @@ func TestLoadAllowsAutomaticFailoverWithoutStaticApproval(t *testing.T) {
     "known_hosts_file":"/etc/clusterguard/agent_known_hosts",
     "shared_secret_env":"CG_AUTO_AGENT"
   },
+  "fencing": {
+    "agent_quorum_enabled":true
+  },
   "mysql": {
     "enabled":true,
     "automatic_failover_enabled":true,
@@ -679,8 +724,70 @@ func TestLoadAllowsAutomaticFailoverWithoutStaticApproval(t *testing.T) {
 	if err != nil {
 		t.Fatalf("automatic failover should not depend on a static approval token: %v", err)
 	}
-	if !loaded.MySQL.AutomaticFailoverEnabled || loaded.ApprovalToken != "" {
+	if !loaded.MySQL.AutomaticFailoverEnabled || !loaded.Fencing.AgentQuorumEnabled || loaded.Fencing.AgentQuorumGraceSeconds != 15 || loaded.ApprovalToken != "" {
 		t.Fatalf("automatic failover configuration=%+v approval=%q", loaded.MySQL, loaded.ApprovalToken)
+	}
+}
+
+func TestLoadRequiresPostgreSQLAutomaticFailoverFencing(t *testing.T) {
+	for name, value := range map[string]string{
+		"CG_PG_AUTO_DISCOVERY":   "discovery-secret",
+		"CG_PG_AUTO_OPERATION":   "operation-secret",
+		"CG_PG_AUTO_REPLICATION": "replication-secret",
+		"CG_PG_AUTO_AGENT":       "agent-secret",
+	} {
+		t.Setenv(name, value)
+	}
+	localID := "11111111-1111-4111-8111-111111111111"
+	path := filepath.Join(t.TempDir(), "control.json")
+	contents := `{
+  "metadata_path":"` + filepath.Join(t.TempDir(), "metadata.json") + `",
+  "consensus": {
+    "enabled":true,
+    "snapshot_cas_enabled":true,
+    "local_id":"` + localID + `",
+    "bind_address":"127.0.0.1:10009",
+    "advertise_address":"127.0.0.1:10009",
+    "data_directory":"` + filepath.Join(t.TempDir(), "raft") + `",
+    "bootstrap":true,
+    "peers":[
+      {"resource_id":"` + localID + `","address":"127.0.0.1:10009"},
+      {"resource_id":"22222222-2222-4222-8222-222222222222","address":"127.0.0.1:10019"},
+      {"resource_id":"33333333-3333-4333-8333-333333333333","address":"127.0.0.1:10029"}
+    ]
+  },
+  "agent": {
+    "enabled":true,
+    "user":"cg-agent",
+    "identity_file":"/etc/clusterguard/agent_ed25519",
+    "known_hosts_file":"/etc/clusterguard/agent_known_hosts",
+    "shared_secret_env":"CG_PG_AUTO_AGENT"
+  },
+  "postgresql": {
+    "enabled":true,
+    "automatic_failover_enabled":true,
+    "discovery":{"username":"discover","password_env":"CG_PG_AUTO_DISCOVERY"},
+    "operation":{"username":"operator","password_env":"CG_PG_AUTO_OPERATION"},
+    "replication":{"username":"replicator","password_env":"CG_PG_AUTO_REPLICATION"}
+  }
+}`
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "PostgreSQL automatic failover requires agent quorum fencing or an external fencer") {
+		t.Fatalf("unsafe PostgreSQL automatic failover configuration error=%v", err)
+	}
+
+	contents = strings.Replace(contents, `"postgresql": {`, `"fencing":{"agent_quorum_enabled":true},"postgresql": {`, 1)
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("PostgreSQL Agent quorum failover configuration: %v", err)
+	}
+	if !loaded.PostgreSQL.AutomaticFailoverEnabled || !loaded.Fencing.AgentQuorumEnabled {
+		t.Fatalf("PostgreSQL automatic failover configuration=%+v fencing=%+v", loaded.PostgreSQL, loaded.Fencing)
 	}
 }
 
@@ -696,6 +803,7 @@ func TestLoadResolvesAgentTransportSecret(t *testing.T) {
     "known_hosts_file": "/etc/clusterguard/agent_known_hosts",
     "command_timeout_seconds": 37,
     "mutation_timeout_seconds": 901,
+	"max_concurrent_sessions": 5,
     "shared_secret_env": "CG_TEST_AGENT_SECRET"
   }
 }`
@@ -707,7 +815,7 @@ func TestLoadResolvesAgentTransportSecret(t *testing.T) {
 		t.Fatalf("load agent transport: %v", err)
 	}
 	if !loaded.Agent.Enabled || loaded.Agent.SharedSecret != "agent-secret" || loaded.Agent.User != "cg-agent" ||
-		loaded.Agent.CommandTimeoutSeconds != 37 || loaded.Agent.MutationTimeoutSeconds != 901 {
+		loaded.Agent.CommandTimeoutSeconds != 37 || loaded.Agent.MutationTimeoutSeconds != 901 || loaded.Agent.MaxConcurrentSessions != 5 {
 		t.Fatalf("unexpected agent configuration: %+v", loaded.Agent)
 	}
 	encoded, err := json.Marshal(loaded)
@@ -732,6 +840,7 @@ func TestLoadResolvesRaftAndWriteOnlyNodeLifecycleConfiguration(t *testing.T) {
   "consensus": {
     "enabled": true,
     "snapshot_cas_enabled": true,
+    "replicated_log_compression_enabled": true,
     "local_id":"` + localID + `",
     "bind_address":"127.0.0.1:10009",
     "advertise_address":"127.0.0.1:10009",
@@ -749,8 +858,14 @@ func TestLoadResolvesRaftAndWriteOnlyNodeLifecycleConfiguration(t *testing.T) {
     "package_repository":"/opt/clusterguard/packages",
     "known_hosts_file":"/etc/clusterguard/known_hosts",
     "jq_binary":"/usr/local/libexec/jq-linux-amd64",
+    "control_api_issuer_cert_file":"/etc/clusterguard/pki/api-issuer.crt",
+    "control_api_issuer_key_file":"/etc/clusterguard/pki/api-issuer.key",
+    "control_raft_issuer_cert_file":"/etc/clusterguard/pki/raft-issuer.crt",
+    "control_raft_issuer_key_file":"/etc/clusterguard/pki/raft-issuer.key",
+    "control_certificate_validity_days":397,
     "ssh_password_env":"CG_TEST_SSH",
     "mysql_root_password_env":"CG_TEST_INSTALL_ROOT",
+    "mysql_root_remote_host":"%",
     "replication_password_env":"CG_TEST_INSTALL_REPLICATION",
     "postgresql_install_helper":"/usr/local/libexec/clusterguard-postgresql-install.sh",
     "postgresql_sync_helper":"/usr/local/libexec/clusterguard-postgresql-sync.sh",
@@ -770,7 +885,7 @@ func TestLoadResolvesRaftAndWriteOnlyNodeLifecycleConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load Raft lifecycle configuration: %v", err)
 	}
-	if !loaded.Consensus.Enabled || !loaded.Consensus.SnapshotCASEnabled || string(loaded.Consensus.LocalID) != localID || len(loaded.Consensus.Peers) != 3 || !loaded.NodeLifecycle.Enabled || loaded.NodeLifecycle.SSHPassword != "ssh-secret" || loaded.NodeLifecycle.MySQLRootPassword != "install-root-secret" || loaded.NodeLifecycle.ReplicationPassword != "install-replication-secret" || loaded.NodeLifecycle.PostgreSQLAdminPassword != "postgresql-admin-secret" || loaded.NodeLifecycle.PostgreSQLReplicationPassword != "postgresql-replication-secret" || !loaded.NodeLifecycle.PostgreSQLBaseBackupAvailable || !loaded.NodeLifecycle.PostgreSQLRewindAvailable {
+	if !loaded.Consensus.Enabled || !loaded.Consensus.SnapshotCASEnabled || !loaded.Consensus.ReplicatedLogCompressionEnabled || string(loaded.Consensus.LocalID) != localID || len(loaded.Consensus.Peers) != 3 || !loaded.NodeLifecycle.Enabled || loaded.NodeLifecycle.SSHPassword != "ssh-secret" || loaded.NodeLifecycle.MySQLRootPassword != "install-root-secret" || loaded.NodeLifecycle.MySQLRootRemoteHost != "%" || loaded.NodeLifecycle.ReplicationPassword != "install-replication-secret" || loaded.NodeLifecycle.PostgreSQLAdminPassword != "postgresql-admin-secret" || loaded.NodeLifecycle.PostgreSQLReplicationPassword != "postgresql-replication-secret" || loaded.NodeLifecycle.AdapterRuntimeHelper != "/usr/local/libexec/clusterguard-adapter-runtime-install.sh" || loaded.NodeLifecycle.ControlJoinHelper != "/usr/local/libexec/clusterguard-control-join.sh" || loaded.NodeLifecycle.ControlAPIIssuerKeyFile != "/etc/clusterguard/pki/api-issuer.key" || loaded.NodeLifecycle.ControlRaftIssuerKeyFile != "/etc/clusterguard/pki/raft-issuer.key" || loaded.NodeLifecycle.ControlCertificateValidityDays != 397 || !loaded.NodeLifecycle.PostgreSQLBaseBackupAvailable || !loaded.NodeLifecycle.PostgreSQLRewindAvailable {
 		t.Fatalf("loaded Raft lifecycle configuration=%+v", loaded)
 	}
 	encoded, err := json.Marshal(loaded)
@@ -780,6 +895,39 @@ func TestLoadResolvesRaftAndWriteOnlyNodeLifecycleConfiguration(t *testing.T) {
 	for _, secret := range []string{"ssh-secret", "install-root-secret", "install-replication-secret", "postgresql-admin-secret", "postgresql-replication-secret"} {
 		if strings.Contains(string(encoded), secret) {
 			t.Fatalf("serialized lifecycle configuration exposed %q: %s", secret, encoded)
+		}
+	}
+}
+
+func TestResolveNodeLifecycleRequiresCompleteControlCertificateIssuers(t *testing.T) {
+	configuration := NodeLifecycle{
+		ExecutorPath:             "/usr/local/libexec/clusterguard-node-lifecycle.sh",
+		PackageRepository:        "/opt/clusterguard/packages",
+		KnownHostsFile:           "/etc/clusterguard/known_hosts",
+		JQBinary:                 "/usr/local/libexec/jq-linux-amd64",
+		ControlAPIIssuerCertFile: "/etc/clusterguard/pki/api-issuer.crt",
+	}
+	if err := resolveNodeLifecycle(&configuration); err == nil || !strings.Contains(err.Error(), "configured together") {
+		t.Fatalf("partial controller issuer configuration error=%v", err)
+	}
+	configuration.ControlAPIIssuerKeyFile = "/etc/clusterguard/pki/api-issuer.key"
+	configuration.ControlRaftIssuerCertFile = "/etc/clusterguard/pki/raft-issuer.crt"
+	configuration.ControlRaftIssuerKeyFile = "/etc/clusterguard/pki/raft-issuer.key"
+	configuration.ControlCertificateValidityDays = 3651
+	if err := resolveNodeLifecycle(&configuration); err == nil || !strings.Contains(err.Error(), "validity") {
+		t.Fatalf("unsafe controller certificate validity error=%v", err)
+	}
+}
+
+func TestMySQLRootRemoteHostValidation(t *testing.T) {
+	for _, valid := range []string{"%", "192.168.102.%", "db-admin.example.com", "10.0.0.0/255.255.255.0"} {
+		if !validMySQLAccountHost(valid) {
+			t.Fatalf("valid MySQL account host %q was rejected", valid)
+		}
+	}
+	for _, invalid := range []string{"", "bad host", "bad\nhost", "root'@'%'", strings.Repeat("a", 256)} {
+		if validMySQLAccountHost(invalid) {
+			t.Fatalf("invalid MySQL account host %q was accepted", invalid)
 		}
 	}
 }
@@ -896,7 +1044,7 @@ func TestOfficialDistributionUsesClusterGuardPathsAndServiceName(t *testing.T) {
 	if configuration.HTTPAddress != "0.0.0.0:8088" {
 		t.Fatalf("clustered example HTTP address = %q, want a peer-reachable TLS listener", configuration.HTTPAddress)
 	}
-	if configuration.MySQL.AutomaticFailoverEnabled || configuration.MySQL.AutomaticFailoverIntervalSeconds != 5 || configuration.MySQL.AutomaticFailoverRetrySeconds != 30 {
+	if configuration.MySQL.AutomaticFailoverEnabled || configuration.MySQL.AutomaticFailoverIntervalSeconds != 1 || configuration.MySQL.AutomaticFailoverRetrySeconds != 30 {
 		t.Fatalf("distribution automatic failover defaults=%+v", configuration.MySQL)
 	}
 
@@ -914,10 +1062,20 @@ func TestOfficialDistributionUsesClusterGuardPathsAndServiceName(t *testing.T) {
 		"StateDirectory=clusterguard",
 		"StateDirectoryMode=0750",
 		"LogsDirectory=clusterguard",
-		"LogsDirectoryMode=0750",
+		"LogsDirectoryMode=0751",
+		"Restart=always",
 	} {
 		if !strings.Contains(string(service), contract) {
 			t.Fatalf("systemd service missing %q", contract)
+		}
+	}
+	for _, forbidden := range []string{
+		"Requires=mysqld.service", "Requires=mysql.service", "Requires=postgresql.service",
+		"Wants=mysqld.service", "Wants=mysql.service", "Wants=postgresql.service",
+		"After=mysqld.service", "After=mysql.service", "After=postgresql.service",
+	} {
+		if strings.Contains(string(service), forbidden) {
+			t.Fatalf("control plane must start independently of database services, found %q", forbidden)
 		}
 	}
 }

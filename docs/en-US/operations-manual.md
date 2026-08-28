@@ -131,6 +131,8 @@ cgctl --server https://127.0.0.1:3000 \
   --ca-file /etc/clusterguard/tls/ca.crt operation <OPERATION_UUID>
 ```
 
+First inspect the persisted checks, live database roles, replication state, and unique Writer endpoint ownership. If the immutable plan still matches the current topology, run `verify` again; the record can become `succeeded` only when explicit verification evidence passes. If topology has moved on and the old plan can no longer be proven, but the site inspection is complete, use **Mark reviewed** in Operation Log and record the evidence. This stores an immutable reviewer, timestamp, note, audit event, and report while keeping the original status `indeterminate`; it never fabricates success.
+
 ## 6. Failover
 
 Failover is used for scenarios where the original primary is unreachable or has lost write capability, and it is not equivalent to a planned switch.
@@ -239,6 +241,8 @@ The API issuer must be trusted by the trust chain pointed to by `tls_ca_file`, a
 The original return is folded by default and displayed after clicking. The original return must not leak passwords, sessions, Bearer tokens, one-time approvals, or Agent secrets.
 
 The cluster field in the logs must display the fixed cluster name and must not incorrectly display hostname:port. Historical records should be linked by resource UUID, and even if the hostname or port changes later, they should be correctly restored.
+
+An unreviewed `indeterminate` entry exposes **Mark reviewed**. Before submitting it, verify the actual database roles, replication path, business endpoint, and endpoint owner. The reviewed entry displays the reviewer and timestamp and no longer contributes to the control-plane review-required count. Its note is immutable, and all original execution, failure classification, plan, verification checks, and audit evidence remain intact.
 
 ## 10. Metrics and Monitoring
 
@@ -371,6 +375,8 @@ Recovery requirements:
 - Check the real database role and endpoint owner
 - Handle based on verification failed checks
 - Only re-initiate after confirming that the previous operation has not executed or has safely ended
+- Prefer running `verify` again while the live topology still matches the original plan
+- When the old plan is stale but the site inspection is complete, record an operator review in Operation Log; review is not success
 
 ### 13.4 Missing Database Client
 
@@ -411,3 +417,26 @@ Monthly:
 - Verify metadata hostname/IP/port reconcile
 - Conduct a recovery drill with one control plane backup and one database backup
 - Review least privilege, network ACL, and automatic switch strategy
+
+## 15. Software Updates and Patches
+
+Do not run `rpm -Uvh` concurrently on all controllers. An official update uses
+a signed `.cgupgrade` update package, rolls followers, data-only nodes, and the Leader in that
+order, and rechecks the version contract, Raft quorum, active work, and
+maintenance state at every step. Databases continue running while all
+ClusterGuard mutation ingress is held by the shared maintenance gate.
+
+```bash
+sudo clusterguard-upgrade \
+  --package ./clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
+  --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
+  --state ./clusterguard-deployment-state.json \
+  --ssh-key /root/.ssh/clusterguard_update \
+  --known-hosts /etc/clusterguard/ssh_known_hosts \
+  --execute
+```
+
+After host loss or network interruption, rerun the same patch with `--resume`.
+Maintenance is released only after a complete update or complete rollback is
+verified. See the [Version Update and Rollback Guide](update-and-patch.md) for preparation,
+inspection, planning, rollback, and production admission requirements.

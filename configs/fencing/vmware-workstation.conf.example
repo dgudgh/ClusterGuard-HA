@@ -1,0 +1,10 @@
+# The Windows VMware Workstation host must be reachable through an independent
+# management network. Authenticate with a dedicated SSH key, never a password.
+vmware_host=192.168.102.68
+vmware_user=clusterguard-fencer
+vmrun_path=D:\vmware\vmrun.exe
+ssh_port=22
+connect_timeout_seconds=5
+identity_file=/etc/clusterguard/fencing/vmware_ed25519
+known_hosts_file=/etc/clusterguard/fencing/vmware_known_hosts
+targets_file=/etc/clusterguard/fencing/vmware-targets.tsv

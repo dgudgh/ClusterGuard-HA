@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+config_file="${CG_FENCER_CONFIG:-/etc/clusterguard/fencing/vmware-workstation.conf}"
+jq_binary="${CG_FENCER_JQ_BINARY:-/usr/local/libexec/jq-linux-amd64}"
+ssh_binary="${CG_FENCER_SSH_BINARY:-/usr/bin/ssh}"
+
+fail() {
+  printf 'VMware fencing error: %s\n' "$*" >&2
+  exit 1
+}
+
+config_value() {
+  local key="$1" value count
+  count="$(awk -F= -v expected="${key}" '
+    /^[[:space:]]*(#|$)/ { next }
+    {
+      name=$1
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", name)
+      if (name == expected) found++
+    }
+    END { print found+0 }
+  ' "${config_file}")"
+  [[ "${count}" == "1" ]] || fail "configuration key ${key} must appear exactly once"
+  value="$(awk -F= -v expected="${key}" '
+    /^[[:space:]]*(#|$)/ { next }
+    {
+      name=$1
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", name)
+      if (name == expected) {
+        value=substr($0, index($0, "=")+1)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+        print value
+      }
+    }
+  ' "${config_file}")"
+  [[ -n "${value}" ]] || fail "configuration key ${key} is empty"
+  printf '%s' "${value}"
+}
+
+valid_ipv4() {
+  local address="$1" octet
+  [[ "${address}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
+  IFS=. read -r -a octets <<<"${address}"
+  for octet in "${octets[@]}"; do
+    ((10#${octet} <= 255)) || return 1
+  done
+}
+
+powershell_literal() {
+  local value="${1//\'/\'\'}"
+  printf "'%s'" "${value}"
+}
+
+run_remote_powershell() {
+  local script="$1" encoded output marker
+  encoded="$(printf '%s' "${script}" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\r\n')"
+  output="$("${ssh_binary}" \
+    -F /dev/null \
+    -p "${ssh_port}" \
+    -i "${identity_file}" \
+    -o BatchMode=yes \
+    -o IdentitiesOnly=yes \
+    -o StrictHostKeyChecking=yes \
+    -o "UserKnownHostsFile=${known_hosts_file}" \
+    -o "ConnectTimeout=${connect_timeout}" \
+    -o ConnectionAttempts=1 \
+    "${vmware_user}@${vmware_host}" \
+    powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand "${encoded}")" ||
+    fail "independent VMware management channel is unavailable"
+  marker="$(printf '%s\n' "${output}" | tr -d '\r' | awk '/^(RUNNING|FENCED)$/ { value=$0 } END { print value }')"
+  [[ "${marker}" == "RUNNING" || "${marker}" == "FENCED" ]] ||
+    fail "VMware provider returned no trustworthy state marker"
+  printf '%s' "${marker}"
+}
+
+[[ $# == 1 ]] || fail "expected exactly one action: fence or status"
+action="$1"
+[[ "${action}" == "fence" || "${action}" == "status" ]] || fail "unsupported action ${action}"
+[[ -f "${config_file}" && ! -L "${config_file}" ]] || fail "configuration file is missing or unsafe: ${config_file}"
+[[ -x "${jq_binary}" && -x "${ssh_binary}" ]] || fail "jq and ssh executables are required"
+
+request="$("${jq_binary}" -ce '
+  . as $root |
+  select(($root.cluster_id | type) == "string" and ($root.cluster_id | length) > 0) |
+  select(($root.operation_id | type) == "string" and ($root.operation_id | length) > 0) |
+  select(($root.instance.ip_address | type) == "string" and ($root.instance.ip_address | length) > 0)
+' 2>/dev/null)" || fail "invalid structured fence request"
+instance_ip="$(printf '%s' "${request}" | "${jq_binary}" -er '.instance.ip_address')"
+valid_ipv4 "${instance_ip}" || fail "instance IP address is invalid"
+
+vmware_host="$(config_value vmware_host)"
+vmware_user="$(config_value vmware_user)"
+vmrun_path="$(config_value vmrun_path)"
+identity_file="$(config_value identity_file)"
+known_hosts_file="$(config_value known_hosts_file)"
+targets_file="$(config_value targets_file)"
+ssh_port="$(config_value ssh_port)"
+connect_timeout="$(config_value connect_timeout_seconds)"
+
+[[ "${vmware_host}" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || fail "vmware_host is invalid"
+[[ "${vmware_user}" =~ ^[A-Za-z_][A-Za-z0-9_.-]*$ ]] || fail "vmware_user is invalid"
+[[ "${ssh_port}" =~ ^[0-9]+$ && "${ssh_port}" -ge 1 && "${ssh_port}" -le 65535 ]] || fail "ssh_port is invalid"
+[[ "${connect_timeout}" =~ ^[1-9][0-9]*$ && "${connect_timeout}" -le 20 ]] || fail "connect_timeout_seconds is invalid"
+[[ "${vmrun_path}" =~ \.exe$ && "${vmrun_path}" != *$'\n'* ]] || fail "vmrun_path is invalid"
+[[ "${identity_file}" == /* && -f "${identity_file}" && ! -L "${identity_file}" ]] || fail "SSH identity file is missing or unsafe"
+[[ "${known_hosts_file}" == /* && -f "${known_hosts_file}" && ! -L "${known_hosts_file}" ]] || fail "known_hosts file is missing or unsafe"
+[[ "${targets_file}" == /* && -f "${targets_file}" && ! -L "${targets_file}" ]] || fail "target mapping file is missing or unsafe"
+
+target_count="$(awk -F'|' -v address="${instance_ip}" '
+  /^[[:space:]]*(#|$)/ { next }
+  $1 == address { found++ }
+  END { print found+0 }
+' "${targets_file}")"
+[[ "${target_count}" == "1" ]] || fail "instance ${instance_ip} must map to exactly one VMware VM"
+vmx_path="$(awk -F'|' -v address="${instance_ip}" '
+  /^[[:space:]]*(#|$)/ { next }
+  $1 == address { print substr($0, index($0, "|")+1) }
+' "${targets_file}")"
+[[ "${vmx_path}" =~ \.vmx$ && "${vmx_path}" != *$'\n'* ]] || fail "VMX mapping for ${instance_ip} is invalid"
+
+vmrun_literal="$(powershell_literal "${vmrun_path}")"
+vmx_literal="$(powershell_literal "${vmx_path}")"
+status_script="\$ErrorActionPreference='Stop'; \$ProgressPreference='SilentlyContinue'; \$vmrun=${vmrun_literal}; \$vmx=${vmx_literal}; \$lines=@(& \$vmrun list 2>&1); if (\$LASTEXITCODE -ne 0) { throw 'vmrun list failed' }; if (@(\$lines | Where-Object { \$_.ToString().Trim() -ieq \$vmx }).Count -gt 0) { [Console]::Out.WriteLine('RUNNING') } else { [Console]::Out.WriteLine('FENCED') }"
+
+if [[ "${action}" == "status" ]]; then
+  state="$(run_remote_powershell "${status_script}")"
+else
+  fence_script="\$ErrorActionPreference='Stop'; \$ProgressPreference='SilentlyContinue'; \$vmrun=${vmrun_literal}; \$vmx=${vmx_literal}; \$lines=@(& \$vmrun list 2>&1); if (\$LASTEXITCODE -ne 0) { throw 'vmrun list failed' }; if (@(\$lines | Where-Object { \$_.ToString().Trim() -ieq \$vmx }).Count -gt 0) { & \$vmrun stop \$vmx hard 2>&1 | Out-Null }; for (\$attempt=0; \$attempt -lt 10; \$attempt++) { Start-Sleep -Seconds 1; \$lines=@(& \$vmrun list 2>&1); if (\$LASTEXITCODE -ne 0) { throw 'vmrun list failed' }; if (@(\$lines | Where-Object { \$_.ToString().Trim() -ieq \$vmx }).Count -eq 0) { [Console]::Out.WriteLine('FENCED'); exit 0 } }; [Console]::Out.WriteLine('RUNNING'); exit 21"
+  state="$(run_remote_powershell "${fence_script}")"
+fi
+
+if [[ "${state}" == "FENCED" ]]; then
+  printf '{"status":"ok","fenced":true,"message":"VMware reports the mapped virtual machine is powered off"}\n'
+else
+  printf '{"status":"ok","fenced":false,"message":"VMware reports the mapped virtual machine is still running"}\n'
+fi

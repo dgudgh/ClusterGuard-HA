@@ -21,7 +21,7 @@
         <span>Search documentation</span>
         <input id="docs-search" type="search" autocomplete="off" placeholder="Filter by title">
       </label>
-      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation" aria-current="page" class="active">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation" aria-current="page" class="active">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.2.39.html" data-doc-title="release 2.2.39">Release 2.2.39</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="docker-swarm-mysql.html" data-doc-title="docker swarm mysql">Docker Swarm MySQL</a><a href="kubernetes-mysql.html" data-doc-title="kubernetes mysql">Kubernetes MySQL</a><a href="update-and-patch.html" data-doc-title="version update and rollback">Version Update and Rollback</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="postgresql-production-qualification.html" data-doc-title="postgresql 16.4 production qualification">PostgreSQL 16.4 Production Qualification</a><a href="docker-swarm-mysql-validation.html" data-doc-title="docker swarm mysql lab qualification">Docker Swarm MySQL Lab Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
       <div class="sidebar-meta">
         <span>Offline documentation build</span>
         <strong>2.1 / 2.2</strong>
@@ -54,9 +54,9 @@
 <td>MySQL High Availability Control Platform</td>
 </tr>
 <tr>
-<td><code>2.2.x</code></td>
-<td>Development and Acceptance</td>
-<td>PostgreSQL, retaining MySQL 2.1 capability</td>
+<td><code>2.2-39</code></td>
+<td>Formal Release</td>
+<td>PostgreSQL 16.4, Docker Swarm, and retained MySQL 2.1 capability</td>
 </tr>
 <tr>
 <td>Subsequent Versions</td>
@@ -64,12 +64,12 @@
 <td>Oracle Data Guard Broker, SQL Server Always On independent acceptance</td>
 </tr>
 </tbody></table>
-<p>2.1 Final Version Download:</p>
-<p><a href="https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.1.45">https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.1.45</a></p>
+<p>Current Formal Release:</p>
+<p><a href="https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.39">https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.39</a></p>
 <p>Do not use historical candidate packages with numbers higher than <code>2.1-45</code> in the local directory to replace the official release. The official deliverables must come from GitHub Release and be verified with the included SHA256 checksum.</p>
 <h2 id="recommended-reading-order">Recommended Reading Order<a class="heading-anchor" href="#recommended-reading-order" aria-label="Link to Recommended Reading Order">#</a></h2>
 <ol>
-<li><a href="release-2.1.45.html">2.1-45 Release Notes</a>
+<li><a href="release-2.2.39.html">2.2.39 Release Notes</a>
 Confirm the official package, summary, support scope, and production admission boundary.</li>
 <li><a href="product-tour.html">Product Tour</a>
 Understand the topology, operations, node lifecycle, and operation logs through actual control console screenshots.</li>
@@ -81,6 +81,8 @@ Prepare native database identity, minimal permissions, replication, and health c
 Onboard existing MySQL clusters without reinstalling data and transfer exclusive recovery and VIP authority safely.</li>
 <li><a href="operations-manual.html">Operations Manual</a>
 Execute failover, old primary recovery, node expansion, planned shutdown, audit, and emergency handling.</li>
+<li><a href="update-and-patch.html">Version Update and Rollback Guide</a>
+Verify signed update packages, review the plan, roll nodes, resume interrupted work, and perform controlled rollback.</li>
 <li><a href="version-release-policy.html">Version and Release Policy</a>
 Use when building new versions, maintaining tags, and releasing PostgreSQL 2.2.</li>
 </ol>
@@ -89,11 +91,24 @@ Use when building new versions, maintaining tags, and releasing PostgreSQL 2.2.<
 <li><a href="mysql-former-primary-recovery.html">MySQL Former-Primary Recovery Qualification</a></li>
 <li><a href="production-chaos-test.html">Production Chaos and Concurrency Test Report</a></li>
 <li><a href="power-lifecycle-test.html">Planned Shutdown and Automatic Recovery Report</a></li>
+<li><a href="postgresql-production-qualification.html">PostgreSQL 16.4 Production Qualification</a></li>
+<li><a href="docker-swarm-mysql-validation.html">Docker Swarm MySQL Lab Qualification</a></li>
+<li><a href="kubernetes-mysql.html">Kubernetes MySQL Guide</a></li>
 </ul>
 <p>These reports record results under specific laboratories, database packages, and dates. After changing the database minor version, Linux distribution, storage, network, VIP NIC, or isolation method, on-site acceptance must be re-executed.</p>
 <h2 id="postgresql-2-2">PostgreSQL 2.2<a class="heading-anchor" href="#postgresql-2-2" aria-label="Link to PostgreSQL 2.2">#</a></h2>
 <p>Starting from version 2.2, PostgreSQL will not be rolled back to <code>v2.1.45</code>. The 2.2 main offline package remains streamlined: when explicitly specifying <code>--engine postgresql</code>, it defaults to resolving source code compilation dependencies online within the isolated build root. When on-site internet access is unavailable, upload a separate PostgreSQL dependency package and use <code>--postgresql-dependencies</code>.</p>
 <p>Database permissions, native identity, streaming replication, and recovery requirements for PostgreSQL are detailed in the <a href="database-preparation.html">Database Preparation Manual</a>; complete installation parameters are detailed in the <a href="offline-rpm-install.html">Offline Installation and Deployment Manual</a>.</p>
+<p>The three-node PostgreSQL 16.4 matrix, including planned rotations, hard
+power-off, network partition, quorum loss, concurrent operations, writer-VIP
+uniqueness, and former-primary <code>pg_rewind</code>, is recorded in the
+<a href="postgresql-production-qualification.html">PostgreSQL Production Qualification Report</a>.</p>
+<h2 id="docker-swarm-mysql">Docker Swarm MySQL<a class="heading-anchor" href="#docker-swarm-mysql" aria-label="Link to Docker Swarm MySQL">#</a></h2>
+<p>The first Docker Swarm phase uses host Agents, fixed Service slots, MySQL GTID replication, and a host VIP. See the
+<a href="docker-swarm-mysql.html">Docker Swarm MySQL Guide</a> for architecture, deployment order, and safety constraints. The
+<a href="docker-swarm-mysql-validation.html">Docker Swarm MySQL Lab Qualification</a> records three-node planned switchovers, automatic failover, former-writer rejoin, manager interruption, Raft quorum loss, and duplicate-VIP results from <code>192.168.102.152-154</code>.</p>
+<h2 id="kubernetes-mysql">Kubernetes MySQL<a class="heading-anchor" href="#kubernetes-mysql" aria-label="Link to Kubernetes MySQL">#</a></h2>
+<p>Kubernetes mode does not move a host VIP or change CoreDNS. ClusterGuard uses a Raft-authorized selectorless Service/EndpointSlice, dedicated one-replica StatefulSets, durable role annotations, and a fail-closed start guard. See the <a href="kubernetes-mysql.html">Kubernetes MySQL Guide</a> for RBAC, registration, deployment constraints, and the current acceptance boundary. This feature currently has code-level automated tests but no real Kubernetes production qualification report.</p>
 <h2 id="document-validity">Document Validity<a class="heading-anchor" href="#document-validity" aria-label="Link to Document Validity">#</a></h2>
 <p>The following documents are the production delivery entry points:</p>
 <ul>
@@ -101,6 +116,7 @@ Use when building new versions, maintaining tags, and releasing PostgreSQL 2.2.<
 <li><code>docs/en-US/offline-rpm-install.md</code></li>
 <li><code>docs/en-US/database-preparation.md</code></li>
 <li><code>docs/en-US/operations-manual.md</code></li>
+<li><code>docs/en-US/update-and-patch.md</code></li>
 <li><code>docs/en-US/version-release-policy.md</code></li>
 </ul>
 <p><code>docs/superpowers/</code> preserves historical design and implementation plans and is only used for traceability, not as the current installation or production operation manual. When documents are inconsistent with the official release, the corresponding <code>RELEASE-INFO</code>, summary file, and release notes of that version shall prevail.</p>
@@ -123,7 +139,7 @@ Use when building new versions, maintaining tags, and releasing PostgreSQL 2.2.<
         </article>
         <aside class="page-toc" aria-label="On this page">
           <strong>On this page</strong>
-          <a class="toc-level-2" href="#current-version">Current Version</a><a class="toc-level-2" href="#recommended-reading-order">Recommended Reading Order</a><a class="toc-level-2" href="#acceptance-evidence">Acceptance Evidence</a><a class="toc-level-2" href="#postgresql-2-2">PostgreSQL 2.2</a><a class="toc-level-2" href="#document-validity">Document Validity</a><a class="toc-level-2" href="#information-required-for-issue-feedback">Information Required for Issue Feedback</a>
+          <a class="toc-level-2" href="#current-version">Current Version</a><a class="toc-level-2" href="#recommended-reading-order">Recommended Reading Order</a><a class="toc-level-2" href="#acceptance-evidence">Acceptance Evidence</a><a class="toc-level-2" href="#postgresql-2-2">PostgreSQL 2.2</a><a class="toc-level-2" href="#docker-swarm-mysql">Docker Swarm MySQL</a><a class="toc-level-2" href="#kubernetes-mysql">Kubernetes MySQL</a><a class="toc-level-2" href="#document-validity">Document Validity</a><a class="toc-level-2" href="#information-required-for-issue-feedback">Information Required for Issue Feedback</a>
         </aside>
       </main>
     </div>

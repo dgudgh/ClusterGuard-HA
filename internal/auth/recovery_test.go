@@ -57,16 +57,16 @@ func TestAdminRecoveryArtifactContainsOnlyHashAndRequiresPrivateFile(t *testing.
 
 func TestApplyAdminRecoveryArtifactRevokesSessionsAndForcesChange(t *testing.T) {
 	service, repository, now := newTestService(t)
-	user, err := service.EnsureBootstrapAdmin(context.Background())
+	user, err := service.EnsureBootstrapAdmin(context.Background(), testBootstrapPassword)
 	if err != nil {
 		t.Fatalf("ensure bootstrap admin: %v", err)
 	}
-	login, err := service.Login(context.Background(), user.Username, DefaultAdminPassword)
+	login, err := service.Login(context.Background(), user.Username, testBootstrapPassword)
 	if err != nil {
 		t.Fatalf("login bootstrap admin: %v", err)
 	}
 	changed, err := service.ChangePassword(
-		context.Background(), login.SessionToken, DefaultAdminPassword, "Original-secure-password-123",
+		context.Background(), login.SessionToken, testBootstrapPassword, "Original-secure-password-123",
 	)
 	if err != nil {
 		t.Fatalf("change bootstrap password: %v", err)
@@ -102,7 +102,7 @@ func TestApplyAdminRecoveryArtifactRevokesSessionsAndForcesChange(t *testing.T) 
 
 func TestAdminRecoveryArtifactRejectsWeakPasswordAndStaleArtifact(t *testing.T) {
 	now := time.Date(2026, time.July, 17, 2, 30, 0, 0, time.UTC)
-	if _, err := NewAdminRecoveryArtifact(DefaultAdminPassword, testArgon2Hasher(), func() time.Time { return now }); !errors.Is(err, ErrPasswordPolicy) {
+	if _, err := NewAdminRecoveryArtifact("short", testArgon2Hasher(), func() time.Time { return now }); !errors.Is(err, ErrPasswordPolicy) {
 		t.Fatalf("weak recovery password error=%v", err)
 	}
 	artifact, err := NewAdminRecoveryArtifact("Recovery-temporary-password-123", testArgon2Hasher(), func() time.Time { return now })
@@ -115,5 +115,40 @@ func TestAdminRecoveryArtifactRejectsWeakPasswordAndStaleArtifact(t *testing.T) 
 	}
 	if _, err := ReadAdminRecoveryArtifact(path, now.Add(25*time.Hour)); err == nil {
 		t.Fatal("stale recovery artifact was accepted")
+	}
+}
+
+func TestBootstrapPasswordArtifactIsPrivateIdempotentAndRemovedAfterUse(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "private", "bootstrap-password")
+	first, err := ReadOrCreateBootstrapPassword(path, bytes.NewReader(bytes.Repeat([]byte{0x6e}, 128)))
+	if err != nil {
+		t.Fatalf("create bootstrap password: %v", err)
+	}
+	if err := ValidateNewPassword(first); err != nil {
+		t.Fatalf("generated bootstrap password rejected: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("bootstrap password mode=%v err=%v", info.Mode().Perm(), err)
+	}
+	second, err := ReadOrCreateBootstrapPassword(path, bytes.NewReader(bytes.Repeat([]byte{0x2a}, 128)))
+	if err != nil || second != first {
+		t.Fatalf("bootstrap password was not idempotent: first=%q second=%q err=%v", first, second, err)
+	}
+	if err := RemoveBootstrapPassword(path); err != nil {
+		t.Fatalf("remove bootstrap password: %v", err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("bootstrap password was not removed: %v", err)
+	}
+}
+
+func TestBootstrapPasswordArtifactRejectsUnsafePermissions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bootstrap-password")
+	if err := os.WriteFile(path, []byte(testBootstrapPassword+"\n"), 0o644); err != nil {
+		t.Fatalf("write unsafe bootstrap artifact: %v", err)
+	}
+	if _, err := ReadOrCreateBootstrapPassword(path, nil); err == nil {
+		t.Fatal("world-readable bootstrap password was accepted")
 	}
 }

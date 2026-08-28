@@ -35,13 +35,20 @@ const testControlToken = "test-control-token"
 
 type apiRunner struct{}
 
+type mutationMaintenanceStub struct{ err error }
+
+func (stub mutationMaintenanceStub) Check(context.Context) error { return stub.err }
+
 type apiMutationAuthorityStub struct {
 	err           error
 	calls         int
+	term          uint64
 	leaderID      model.ResourceID
 	leaderAddress string
 	leaderAPI     string
 }
+
+func (authority *apiMutationAuthorityStub) LeadershipEpoch() uint64 { return authority.term }
 
 func (authority *apiMutationAuthorityStub) RequireMutationAuthority(context.Context) error {
 	authority.calls++
@@ -58,8 +65,10 @@ func (authority *apiMutationAuthorityStub) LeaderAPIAddress(model.ResourceID) (s
 
 type metadataAdapterSpy struct {
 	adapter.UnsupportedAdapter
-	mu    sync.Mutex
-	calls int
+	mu         sync.Mutex
+	calls      int
+	prechecks  int
+	reconciles int
 }
 
 type strictAdministrativeApproval struct {
@@ -106,6 +115,7 @@ func (candidate *metadataAdapterSpy) MetadataPrecheck(context.Context, adapter.M
 	candidate.mu.Lock()
 	defer candidate.mu.Unlock()
 	candidate.calls++
+	candidate.prechecks++
 	return nil, nil
 }
 
@@ -113,6 +123,7 @@ func (candidate *metadataAdapterSpy) ReconcileMetadata(context.Context, adapter.
 	candidate.mu.Lock()
 	defer candidate.mu.Unlock()
 	candidate.calls++
+	candidate.reconciles++
 	return adapter.MetadataResult{}, nil
 }
 
@@ -120,6 +131,12 @@ func (candidate *metadataAdapterSpy) callCount() int {
 	candidate.mu.Lock()
 	defer candidate.mu.Unlock()
 	return candidate.calls
+}
+
+func (candidate *metadataAdapterSpy) reconcileCallCount() int {
+	candidate.mu.Lock()
+	defer candidate.mu.Unlock()
+	return candidate.reconciles
 }
 
 type fakeRefresher struct {
@@ -227,6 +244,30 @@ func TestControlAPIPostsRequireConfiguredBearerToken(t *testing.T) {
 	server.Handler().ServeHTTP(discoveryResponse, discovery)
 	if discoveryResponse.Code != http.StatusUnauthorized || refresher.callCount() != 0 {
 		t.Fatalf("anonymous discovery reached refresher: %d %s calls=%d", discoveryResponse.Code, discoveryResponse.Body.String(), refresher.callCount())
+	}
+}
+
+func TestSoftwareUpdateMaintenanceBlocksMutationsButKeepsReadsAvailable(t *testing.T) {
+	repository := store.NewMemory()
+	server := NewServer(
+		adapter.NewRegistry(), repository, nil, nil,
+		WithControlToken(testControlToken),
+		WithMutationMaintenance(mutationMaintenanceStub{err: errors.New("software update active")}),
+	)
+
+	response := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/clusters", map[string]interface{}{
+		"display_name": "blocked", "engine": "mysql",
+	})
+	if response.Code != http.StatusLocked || !strings.Contains(response.Body.String(), "software update maintenance") {
+		t.Fatalf("maintenance mutation status=%d body=%s", response.Code, response.Body.String())
+	}
+	if len(repository.Clusters()) != 0 {
+		t.Fatal("maintenance-blocked request changed repository")
+	}
+
+	response = callJSON(t, server.Handler(), http.MethodGet, "/api/v1/clusters", nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("maintenance blocked read status=%d body=%s", response.Code, response.Body.String())
 	}
 }
 
@@ -554,6 +595,28 @@ func TestMutationRPCRejectsOversizedRequestBeforeCallingLeader(t *testing.T) {
 	}
 }
 
+func TestLeaderMutationRPCStreamsSoftwareUpdateUploadBeyondJSONLimit(t *testing.T) {
+	payload := bytes.Repeat([]byte("p"), maximumJSONBodyBytes+4096)
+	leader := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		contents, err := io.ReadAll(request.Body)
+		if err != nil || !bytes.Equal(contents, payload) {
+			t.Errorf("forwarded upload bytes=%d err=%v", len(contents), err)
+		}
+		writer.Header().Set(mutationRPCRevisionHeader, "1")
+		writeJSON(writer, http.StatusCreated, map[string]interface{}{"status": "ok"})
+	}))
+	defer leader.Close()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/platform/updates", bytes.NewReader(payload))
+	request.Header.Set("Content-Type", "multipart/form-data; boundary=update")
+	response := httptest.NewRecorder()
+	if err := NewLeaderMutationRPCClient(leader.Client(), &mutationRevisionStub{revision: 1}).Forward(response, request, leader.URL); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestMutationRPCRejectsOversizedLeaderResponseBeforeWritingFollowerResponse(t *testing.T) {
 	leader := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set(mutationRPCRevisionHeader, "1")
@@ -706,6 +769,92 @@ func TestMetadataExecuteReusesResourceIDForRenamedMySQLEndpoint(t *testing.T) {
 	}
 	if _, found := repository.TopologySnapshot(cluster.ResourceID); found {
 		t.Fatal("metadata execute must invalidate topology")
+	}
+}
+
+func TestMetadataVerifyUsesLiveDiscoveryInsteadOfRebuildingPlan(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(
+		model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "metadata-live-verify"},
+		[]model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-new", IPAddress: "192.0.2.20", Port: 3310, Active: true}},
+	)
+	if err != nil {
+		t.Fatalf("create inventory: %v", err)
+	}
+	instance := model.DatabaseInstance{
+		ResourceMeta:   model.ResourceMeta{ResourceID: model.NewResourceID()},
+		ClusterID:      cluster.ResourceID,
+		Engine:         model.EngineMySQL,
+		EngineIdentity: model.EngineIdentity{"server_uuid": "metadata-live-native"},
+		DisplayName:    "mysql-new",
+		Hostname:       "mysql-new",
+		IPAddress:      "192.0.2.20",
+		Port:           3310,
+		Role:           model.RolePrimary,
+		Health:         model.Health{State: model.HealthHealthy},
+	}
+	observedAt := time.Now().UTC()
+	seed, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{
+		ClusterID: cluster.ResourceID, InventoryGeneration: testInventoryGeneration(t, repository, cluster.ResourceID), ObservedAt: observedAt,
+		Observations: []store.DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: instance}},
+		Probes:       []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, DiscoveryObservedAt: observedAt, Health: model.Health{State: model.HealthHealthy}}},
+	})
+	if err != nil {
+		t.Fatalf("seed topology: %v", err)
+	}
+	instance = seed.Instances[0]
+	refresher := &fakeRefresher{refresh: func(context.Context, model.ResourceID) (model.TopologySnapshot, error) {
+		return model.TopologySnapshot{ClusterID: cluster.ResourceID, Instances: []model.DatabaseInstance{instance}, ObservedAt: time.Now().UTC()}, nil
+	}}
+	candidate := newMetadataAdapterSpy()
+	server := newAPIServer(t, repository, candidate, refresher)
+	payload := map[string]interface{}{
+		"operation":   map[string]interface{}{"engine": "mysql", "kind": "metadata_reconciliation", "requested_by": "dba"},
+		"endpoint_id": endpoints[0].ResourceID,
+		"instance":    instance,
+	}
+	response := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/metadata/reconcile/verify", payload)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "metadata_live_identity") || !strings.Contains(response.Body.String(), "metadata_live_endpoint") {
+		t.Fatalf("live metadata verify = %d %s", response.Code, response.Body.String())
+	}
+	if refresher.callCount() != 1 || candidate.reconcileCallCount() != 0 {
+		t.Fatalf("verify calls: refresh=%d reconcile=%d", refresher.callCount(), candidate.reconcileCallCount())
+	}
+}
+
+func TestMetadataVerifyBlocksLiveIdentityMismatch(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(
+		model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "metadata-live-mismatch"},
+		[]model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true}},
+	)
+	if err != nil {
+		t.Fatalf("create inventory: %v", err)
+	}
+	observedAt := time.Now().UTC()
+	seed, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{
+		ClusterID: cluster.ResourceID, InventoryGeneration: testInventoryGeneration(t, repository, cluster.ResourceID), ObservedAt: observedAt,
+		Observations: []store.DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: model.DatabaseInstance{
+			ClusterID: cluster.ResourceID, Engine: model.EngineMySQL, EngineIdentity: model.EngineIdentity{"server_uuid": "expected-native"}, Hostname: "mysql-a", Port: 3306,
+		}}},
+		Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, DiscoveryObservedAt: observedAt, Health: model.Health{State: model.HealthHealthy}}},
+	})
+	if err != nil {
+		t.Fatalf("seed topology: %v", err)
+	}
+	expected := seed.Instances[0]
+	unexpected := expected
+	unexpected.EngineIdentity = model.EngineIdentity{"server_uuid": "unexpected-native"}
+	refresher := &fakeRefresher{refresh: func(context.Context, model.ResourceID) (model.TopologySnapshot, error) {
+		return model.TopologySnapshot{ClusterID: cluster.ResourceID, Instances: []model.DatabaseInstance{unexpected}}, nil
+	}}
+	server := newAPIServer(t, repository, newMetadataAdapterSpy(), refresher)
+	response := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/metadata/reconcile/verify", map[string]interface{}{
+		"operation": map[string]interface{}{"engine": "mysql", "kind": "metadata_reconciliation", "requested_by": "dba"},
+		"instance":  expected,
+	})
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "metadata_live_identity") {
+		t.Fatalf("identity mismatch verify = %d %s", response.Code, response.Body.String())
 	}
 }
 
@@ -998,6 +1147,9 @@ func TestConsoleIsServedAtRoot(t *testing.T) {
 	}
 	if !strings.Contains(response.Body.String(), "ClusterGuard HA") {
 		t.Fatalf("expected standalone product console, got %s", response.Body.String())
+	}
+	if cacheControl := response.Header().Get("Cache-Control"); cacheControl != "no-store" {
+		t.Fatalf("console Cache-Control=%q want no-store", cacheControl)
 	}
 	head := httptest.NewRecorder()
 	server.Handler().ServeHTTP(head, httptest.NewRequest(http.MethodHead, "/", nil))

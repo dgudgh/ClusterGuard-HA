@@ -256,11 +256,11 @@ func TestEvaluateCandidatesUsesPrimaryGlobalGTIDAndReplicaExecutedGTID(t *testin
 	}
 }
 
-func TestEvaluateCandidatesWarnsForPrimaryOwnedGTIDFromLaterReplicaSample(t *testing.T) {
+func TestEvaluateCandidatesWarnsForPrimaryOwnedGTIDWhenHealthTimestampsAreNotQueryOrder(t *testing.T) {
 	instance := candidateInstance("00000000-0000-4000-8000-000000000010", "8.0.44", 0, testPrimaryServerUUID+":1-21")
 	request := candidateEvaluationRequest(instance)
-	request.Primary.Health.ObservedAt = request.ObservedAt.Add(-25 * time.Millisecond)
-	request.Instances[0].Health.ObservedAt = request.ObservedAt
+	request.Primary.Health.ObservedAt = request.ObservedAt
+	request.Instances[0].Health.ObservedAt = request.ObservedAt.Add(-25 * time.Millisecond)
 
 	assessments, err := New(nil).EvaluateCandidates(context.Background(), request)
 	if err != nil {

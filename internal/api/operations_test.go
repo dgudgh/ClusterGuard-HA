@@ -62,6 +62,69 @@ func TestPublicOperationRecordPreservesPrecheckOutcomeAndRedactsMessage(t *testi
 	}
 }
 
+func TestPublicOperationRecordExplainsIndeterminateOutcomeWithoutLeakingDetails(t *testing.T) {
+	secret := "password=private /var/lib/postgresql"
+	tests := []struct {
+		name         string
+		failureClass string
+		want         string
+	}{
+		{name: "former primary rebuild", failureClass: "rebuild_failed", want: "former-primary synchronization failed"},
+		{name: "promotion verification", failureClass: "promoted_unverified", want: "primary transition completed"},
+		{name: "rewind verification", failureClass: "rewind_unknown", want: "former-primary synchronization outcome requires verification"},
+		{name: "unknown", failureClass: "unexpected", want: "operation outcome requires verification"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			record := model.OperationRecord{
+				Status:       model.OperationIndeterminate,
+				FailureClass: test.failureClass,
+				Message:      secret,
+				Execution: model.Execution{
+					Status:  model.OperationIndeterminate,
+					Message: secret,
+				},
+			}
+
+			public := publicOperationRecord(record)
+			if !strings.Contains(public.Message, test.want) || !strings.Contains(public.Execution.Message, test.want) {
+				t.Fatalf("public outcome=%q execution=%q, want %q", public.Message, public.Execution.Message, test.want)
+			}
+			if strings.Contains(public.Message, "private") || strings.Contains(public.Execution.Message, "/var/lib/postgresql") {
+				t.Fatalf("public operation leaked private details: %+v", public)
+			}
+		})
+	}
+}
+
+func TestPublicOperationRecordExposesReviewEvidenceWithoutFreeformNote(t *testing.T) {
+	reviewedAt := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	record := model.OperationRecord{
+		Status: model.OperationIndeterminate,
+		Review: &model.OperationReview{
+			ReviewedAt: reviewedAt, ReviewedBy: "dba", Disposition: model.OperationReviewAcknowledgedIndeterminate,
+			Note: "password=private /var/lib/mysql",
+		},
+	}
+	public := publicOperationRecord(record)
+	if public.Review == nil || public.Review.ReviewedAt != reviewedAt || public.Review.ReviewedBy != "dba" || public.Review.Note != "operator review note recorded" {
+		t.Fatalf("public review evidence=%+v", public.Review)
+	}
+	if record.Review.Note != "password=private /var/lib/mysql" {
+		t.Fatalf("public projection mutated stored review: %+v", record.Review)
+	}
+}
+
+func TestClassifyOperationExecutionUsesSafeFailureClassGuidance(t *testing.T) {
+	record := model.OperationRecord{Status: model.OperationIndeterminate, FailureClass: "rebuild_failed"}
+	execution := model.Execution{Status: model.OperationIndeterminate}
+	response := classifyOperationExecution(errors.New("password=private"), execution, record)
+	if response.code != http.StatusInternalServerError || response.status != "indeterminate" ||
+		!strings.Contains(response.message, "current primary is reachable") || strings.Contains(response.message, "private") {
+		t.Fatalf("unexpected classified response: %+v", response)
+	}
+}
+
 func newDurableOperationAPIServer(t *testing.T) (*Server, *store.Repository) {
 	t.Helper()
 	registry := adapter.NewRegistry()
@@ -240,6 +303,61 @@ func TestOperationAPIMapsIndeterminateExecutionToServerError(t *testing.T) {
 	response := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/operations/"+string(created.ResourceID)+"/execute", map[string]string{"approval_token": "approved"})
 	if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), "approval grant") {
 		t.Fatalf("indeterminate execute status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestOperationAPIReviewsIndeterminateOutcomeWithoutChangingItsStatus(t *testing.T) {
+	server, repository := newDurableOperationAPIServer(t)
+	createdResponse := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/operations", operationRequestBody(model.NewResourceID(), model.NewResourceID(), "api-review-indeterminate"))
+	created := decodeOperationResult(t, createdResponse.Body.Bytes())
+	indeterminate, err := repository.TransitionOperation(created.ResourceID, created.MetadataRevision, model.OperationTransition{
+		Stage: model.StageVerify, Status: model.OperationIndeterminate, FailureClass: "verification_unknown", Message: "manual review required",
+	})
+	if err != nil {
+		t.Fatalf("mark indeterminate: %v", err)
+	}
+
+	response := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/operations/"+string(created.ResourceID)+"/review", map[string]string{
+		"note": "database role and writer endpoint verified",
+	})
+	if response.Code != http.StatusOK {
+		t.Fatalf("review status=%d body=%s", response.Code, response.Body.String())
+	}
+	result := decodeOperationResult(t, response.Body.Bytes())
+	if result.Status != model.OperationIndeterminate || result.Review == nil || result.Review.ReviewedBy != "service-api" || result.Review.Note != "operator review note recorded" || result.RequiresReview() {
+		t.Fatalf("review API rewrote or omitted evidence: %+v", result)
+	}
+	persisted, found := repository.Operation(created.ResourceID)
+	if !found || persisted.Review == nil || persisted.Review.Note != "database role and writer endpoint verified" || len(repository.Audits()) != 1 || len(repository.Reports()) != 1 {
+		t.Fatalf("review was not durably recorded: %+v audits=%+v reports=%+v", persisted, repository.Audits(), repository.Reports())
+	}
+
+	retry := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/operations/"+string(created.ResourceID)+"/review", map[string]string{
+		"note": "database role and writer endpoint verified",
+	})
+	if retry.Code != http.StatusOK || len(repository.Audits()) != 1 || len(repository.Reports()) != 1 {
+		t.Fatalf("review retry status=%d body=%s", retry.Code, retry.Body.String())
+	}
+	conflict := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/operations/"+string(created.ResourceID)+"/review", map[string]string{"note": "replace note"})
+	if conflict.Code != http.StatusConflict {
+		t.Fatalf("review overwrite status=%d body=%s", conflict.Code, conflict.Body.String())
+	}
+	if persisted.MetadataRevision != indeterminate.MetadataRevision+1 {
+		t.Fatalf("review metadata revision=%d want=%d", persisted.MetadataRevision, indeterminate.MetadataRevision+1)
+	}
+}
+
+func TestOperationAPIRejectsInvalidReviewRequests(t *testing.T) {
+	server, _ := newDurableOperationAPIServer(t)
+	createdResponse := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/operations", operationRequestBody(model.NewResourceID(), model.NewResourceID(), "api-review-invalid"))
+	created := decodeOperationResult(t, createdResponse.Body.Bytes())
+	planned := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/operations/"+string(created.ResourceID)+"/review", map[string]string{"note": "reviewed"})
+	if planned.Code != http.StatusConflict {
+		t.Fatalf("planned review status=%d body=%s", planned.Code, planned.Body.String())
+	}
+	missing := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/operations/"+string(created.ResourceID)+"/review", map[string]string{})
+	if missing.Code != http.StatusBadRequest {
+		t.Fatalf("missing note status=%d body=%s", missing.Code, missing.Body.String())
 	}
 }
 

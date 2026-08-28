@@ -8,10 +8,12 @@ import (
 	"clusterguard.io/ha/pkg/model"
 )
 
+const maximumOperationReviewNoteLength = 1024
+
 func validOperationKind(kind model.OperationKind) bool {
 	switch kind {
 	case model.OperationSwitchover, model.OperationFailover, model.OperationNodeSync, model.OperationMetadataReconciliation,
-		model.OperationFormerPrimaryRejoin, model.OperationReplicationRepair:
+		model.OperationFormerPrimaryRejoin, model.OperationReplicationRepair, model.OperationPowerShutdown:
 		return true
 	default:
 		return false
@@ -386,6 +388,102 @@ func (repository *Repository) TransitionOperation(resourceID model.ResourceID, e
 	next := repository.snapshot
 	next.Operations = cloneOperationMap(repository.snapshot.Operations)
 	next.Operations[resourceID] = cloneOperationRecord(operation)
+	if err := repository.commitSnapshotLocked(next); err != nil {
+		return cloneOperationRecord(operation), err
+	}
+	return cloneOperationRecord(operation), nil
+}
+
+func normalizeOperationReviewInput(reviewedBy, note string) (string, string, error) {
+	reviewedBy = strings.TrimSpace(reviewedBy)
+	note = strings.TrimSpace(note)
+	if reviewedBy == "" || len(reviewedBy) > maximumAuditActorLength {
+		return "", "", validationError("operation review actor is invalid")
+	}
+	if note == "" || len(note) > maximumOperationReviewNoteLength {
+		return "", "", validationError("operation review note is required and must not exceed %d characters", maximumOperationReviewNoteLength)
+	}
+	return reviewedBy, note, nil
+}
+
+func validatePersistedOperationReview(operation model.OperationRecord) error {
+	if operation.Review == nil {
+		return nil
+	}
+	review := operation.Review
+	if (operation.Status != model.OperationIndeterminate && operation.Status != model.OperationSucceeded) || review.ReviewedAt.IsZero() ||
+		review.Disposition != model.OperationReviewAcknowledgedIndeterminate {
+		return validationError("operation review is inconsistent with the operation outcome")
+	}
+	_, _, err := normalizeOperationReviewInput(review.ReviewedBy, review.Note)
+	return err
+}
+
+// ReviewIndeterminateOperation acknowledges an unresolved historical outcome
+// without rewriting it as successful or deleting its original evidence.
+func (repository *Repository) ReviewIndeterminateOperation(resourceID model.ResourceID, expectedRevision uint64, reviewedBy, note string) (model.OperationRecord, error) {
+	reviewedBy, note, err := normalizeOperationReviewInput(reviewedBy, note)
+	if err != nil {
+		return model.OperationRecord{}, err
+	}
+
+	repository.mutationMu.Lock()
+	defer repository.mutationMu.Unlock()
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	operation, found := repository.snapshot.Operations[resourceID]
+	if !found {
+		return model.OperationRecord{}, notFoundError("operation does not exist")
+	}
+	if operation.Review != nil {
+		if operation.Review.ReviewedBy == reviewedBy && operation.Review.Note == note &&
+			operation.Review.Disposition == model.OperationReviewAcknowledgedIndeterminate {
+			return cloneOperationRecord(operation), nil
+		}
+		return model.OperationRecord{}, conflictError("operation review is immutable")
+	}
+	if operation.MetadataRevision != expectedRevision {
+		return model.OperationRecord{}, conflictError("operation metadata revision changed")
+	}
+	if operation.Status != model.OperationIndeterminate {
+		return model.OperationRecord{}, conflictError("only an indeterminate operation can be acknowledged")
+	}
+
+	now := repository.now().UTC()
+	operation.Review = &model.OperationReview{
+		ReviewedAt: now, ReviewedBy: reviewedBy,
+		Disposition: model.OperationReviewAcknowledgedIndeterminate, Note: note,
+	}
+	operation.MetadataRevision++
+	operation.UpdatedAt = now
+	operation.Operation.MetadataRevision = operation.MetadataRevision
+	operation.Operation.UpdatedAt = now
+
+	audit, err := normalizeFinalAudit(model.AuditEvent{
+		OperationID: operation.ResourceID,
+		Stage:       model.StageReport,
+		Actor:       reviewedBy,
+		Message:     "indeterminate outcome acknowledged after operator review: " + note,
+	}, operation.ResourceID, now)
+	if err != nil {
+		return model.OperationRecord{}, err
+	}
+	report := model.Report{
+		OperationID: operation.ResourceID,
+		Title:       "indeterminate operation review",
+		Status:      model.OperationIndeterminate,
+		Summary:     "operator acknowledged the unresolved outcome: " + note,
+	}
+
+	next := repository.snapshot
+	next.Operations = cloneOperationMap(repository.snapshot.Operations)
+	next.Operations[resourceID] = cloneOperationRecord(operation)
+	next.Audits = append(append([]model.AuditEvent{}, repository.snapshot.Audits...), audit)
+	next.Reports = append([]model.Report{}, repository.snapshot.Reports...)
+	next.Reports, err = upsertFinalReport(next.Reports, report, operation.ResourceID, now)
+	if err != nil {
+		return model.OperationRecord{}, err
+	}
 	if err := repository.commitSnapshotLocked(next); err != nil {
 		return cloneOperationRecord(operation), err
 	}

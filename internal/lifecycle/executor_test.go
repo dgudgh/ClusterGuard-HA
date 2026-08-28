@@ -36,7 +36,10 @@ func TestShellExecutorPassesSecretsOnlyThroughEnvironmentAndEmitsStages(t *testi
 	}
 	request, plan := executableLifecyclePlan()
 	secrets := ExecutionSecrets{
-		SSHPassword: "ssh-secret", MySQLRootPassword: "mysql-root-secret", ReplicationPassword: "replication-secret",
+		SSHPassword: "ssh-secret", MySQLRootPassword: "mysql-root-secret",
+		MySQLDiscoveryUsername: "cg_discovery", MySQLDiscoveryPassword: "discovery-secret",
+		MySQLOperationUsername: "cg_operator", MySQLOperationPassword: "operation-secret",
+		MySQLReplicationUsername: "cg_replication", ReplicationPassword: "replication-secret",
 		PostgreSQLAdminPassword: "pg-admin-secret", PostgreSQLReplicationPassword: "pg-replication-secret",
 	}
 	events := []Event{}
@@ -45,7 +48,7 @@ func TestShellExecutorPassesSecretsOnlyThroughEnvironmentAndEmitsStages(t *testi
 		t.Fatalf("execute result=%+v events=%+v err=%v", result, events, err)
 	}
 	unsafe := string(runner.input) + " " + runner.name + " " + strings.Join(runner.args, " ")
-	for _, secret := range []string{"ssh-secret", "mysql-root-secret", "replication-secret", "pg-admin-secret", "pg-replication-secret"} {
+	for _, secret := range []string{"ssh-secret", "mysql-root-secret", "discovery-secret", "operation-secret", "replication-secret", "pg-admin-secret", "pg-replication-secret"} {
 		if strings.Contains(unsafe, secret) {
 			t.Fatalf("secret %q appeared in stdin or command arguments: %s", secret, unsafe)
 		}
@@ -53,6 +56,9 @@ func TestShellExecutorPassesSecretsOnlyThroughEnvironmentAndEmitsStages(t *testi
 	joinedEnvironment := strings.Join(runner.env, "\n")
 	for _, expected := range []string{
 		"CG_SSH_PASSWORD=ssh-secret", "CG_MYSQL_ROOT_PASSWORD=mysql-root-secret", "CG_MYSQL_REPLICATION_PASSWORD=replication-secret",
+		"CG_MYSQL_DISCOVERY_USERNAME=cg_discovery", "CG_MYSQL_DISCOVERY_PASSWORD=discovery-secret",
+		"CG_MYSQL_OPERATION_USERNAME=cg_operator", "CG_MYSQL_OPERATION_PASSWORD=operation-secret",
+		"CG_MYSQL_REPLICATION_USERNAME=cg_replication",
 		"CG_POSTGRESQL_ADMIN_PASSWORD=pg-admin-secret", "CG_POSTGRESQL_REPLICATION_PASSWORD=pg-replication-secret",
 	} {
 		if !strings.Contains(joinedEnvironment, expected) {
@@ -71,11 +77,18 @@ func TestShellExecutorPassesOnlyTypedStaticLifecyclePaths(t *testing.T) {
 		KnownHostsFile:          "/etc/clusterguard/known_hosts",
 		IdentityFile:            "/etc/clusterguard/lifecycle_ed25519",
 		JQBinary:                "/usr/local/libexec/jq-linux-amd64",
+		AdapterRuntimeHelper:    "/usr/local/libexec/clusterguard-adapter-runtime-install.sh",
 		ControlJoinHelper:       "/usr/local/libexec/clusterguard-control-join",
+		ControlAPIIssuerCert:    "/etc/clusterguard/pki/api-issuer.crt",
+		ControlAPIIssuerKey:     "/etc/clusterguard/pki/api-issuer.key",
+		ControlRaftIssuerCert:   "/etc/clusterguard/pki/raft-issuer.crt",
+		ControlRaftIssuerKey:    "/etc/clusterguard/pki/raft-issuer.key",
+		ControlCertValidityDays: 397,
 		CloneHelper:             "/usr/local/libexec/clusterguard-mysql-clone",
 		XtraBackupHelper:        "/usr/local/libexec/clusterguard-mysql-xtrabackup",
 		PostgreSQLInstallHelper: "/usr/local/libexec/clusterguard-postgresql-install.sh",
 		PostgreSQLSyncHelper:    "/usr/local/libexec/clusterguard-postgresql-sync.sh",
+		MySQLRootRemoteHost:     "%",
 	}))
 	if err != nil {
 		t.Fatalf("new configured shell executor: %v", err)
@@ -90,15 +103,33 @@ func TestShellExecutorPassesOnlyTypedStaticLifecyclePaths(t *testing.T) {
 		"CG_SSH_KNOWN_HOSTS=/etc/clusterguard/known_hosts",
 		"CG_SSH_IDENTITY_FILE=/etc/clusterguard/lifecycle_ed25519",
 		"CG_JQ_BINARY=/usr/local/libexec/jq-linux-amd64",
+		"CG_ADAPTER_RUNTIME_HELPER=/usr/local/libexec/clusterguard-adapter-runtime-install.sh",
 		"CG_CONTROL_JOIN_HELPER=/usr/local/libexec/clusterguard-control-join",
+		"CG_CONTROL_API_ISSUER_CERT=/etc/clusterguard/pki/api-issuer.crt",
+		"CG_CONTROL_API_ISSUER_KEY=/etc/clusterguard/pki/api-issuer.key",
+		"CG_CONTROL_RAFT_ISSUER_CERT=/etc/clusterguard/pki/raft-issuer.crt",
+		"CG_CONTROL_RAFT_ISSUER_KEY=/etc/clusterguard/pki/raft-issuer.key",
+		"CG_CONTROL_CERT_VALIDITY_DAYS=397",
 		"CG_MYSQL_CLONE_HELPER=/usr/local/libexec/clusterguard-mysql-clone",
 		"CG_MYSQL_XTRABACKUP_HELPER=/usr/local/libexec/clusterguard-mysql-xtrabackup",
 		"CG_POSTGRESQL_INSTALL_HELPER=/usr/local/libexec/clusterguard-postgresql-install.sh",
 		"CG_POSTGRESQL_SYNC_HELPER=/usr/local/libexec/clusterguard-postgresql-sync.sh",
+		"CG_MYSQL_ROOT_REMOTE_HOST=%",
 	} {
 		if !strings.Contains(joined, expected) {
 			t.Fatalf("static lifecycle environment missing %q: %v", expected, runner.env)
 		}
+	}
+}
+
+func TestShellExecutorRejectsUnsafeMySQLRootRemoteHost(t *testing.T) {
+	_, err := NewShellExecutor(
+		"/usr/local/libexec/clusterguard-node-lifecycle.sh",
+		&lifecycleProcessRunnerStub{},
+		WithShellEnvironment(ShellEnvironment{MySQLRootRemoteHost: "root'@'%"}),
+	)
+	if err == nil || !strings.Contains(err.Error(), "root remote host") {
+		t.Fatalf("unsafe MySQL root host error=%v", err)
 	}
 }
 

@@ -16,6 +16,10 @@ type consensusStatusReader interface {
 	Status(context.Context) consensus.Status
 }
 
+type consensusMembershipReader interface {
+	ControllerMembers(context.Context) ([]consensus.ControllerMember, error)
+}
+
 type controlPlaneStatusProvider struct {
 	repository *store.Repository
 	consensus  consensusStatusReader
@@ -33,7 +37,7 @@ func newControlPlaneStatusProvider(repository *store.Repository, reader consensu
 func (provider *controlPlaneStatusProvider) ControlPlaneStatus(ctx context.Context) (api.ControlPlaneStatus, error) {
 	status := api.ControlPlaneStatus{
 		Mode: "standalone", Role: "standalone", Ready: true, ReadinessReason: "ready",
-		StartedAt: provider.startedAt,
+		StartedAt: provider.startedAt, DataNodeMembers: []api.DataNodeMemberStatus{},
 	}
 	if provider.now != nil {
 		status.UptimeSeconds = int64(provider.now().UTC().Sub(provider.startedAt).Seconds())
@@ -44,12 +48,15 @@ func (provider *controlPlaneStatusProvider) ControlPlaneStatus(ctx context.Conte
 	if provider.repository != nil {
 		status.StateRevision = provider.repository.StateRevision()
 		status.ClusterCount = len(provider.repository.Clusters())
+		status.DataNodeMembers = api.ActiveDataNodeMembers(provider.repository.Nodes())
 		for _, operation := range provider.repository.Operations("") {
 			switch operation.Status {
 			case model.OperationRunning:
 				status.ActiveOperations++
 			case model.OperationIndeterminate:
-				status.IndeterminateOperations++
+				if operation.RequiresReview() {
+					status.IndeterminateOperations++
+				}
 			}
 		}
 		for _, task := range provider.repository.LifecycleTasks() {
@@ -77,10 +84,22 @@ func (provider *controlPlaneStatusProvider) ControlPlaneStatus(ctx context.Conte
 	status.QuorumConfirmed = raftStatus.QuorumConfirmed
 	status.MutationAuthority = raftStatus.MutationAuthority
 	status.SnapshotCASActive = raftStatus.SnapshotCASActive
+	status.ReplicatedLogCompressionActive = raftStatus.ReplicatedLogCompressionActive
 	status.Term = raftStatus.Term
 	status.LastIndex = raftStatus.LastIndex
 	status.CommitIndex = raftStatus.CommitIndex
 	status.AppliedIndex = raftStatus.AppliedIndex
+	if membership, ok := provider.consensus.(consensusMembershipReader); ok {
+		members, err := membership.ControllerMembers(ctx)
+		if err == nil {
+			status.ControllerMembers = make([]api.ControllerMemberStatus, 0, len(members))
+			for _, member := range members {
+				status.ControllerMembers = append(status.ControllerMembers, api.ControllerMemberStatus{
+					ResourceID: member.ResourceID, RaftAddress: member.Address, APIAddress: member.APIAddress,
+				})
+			}
+		}
+	}
 	status.Ready, status.ReadinessReason = raftReadiness(raftStatus)
 	return status, nil
 }

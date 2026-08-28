@@ -93,9 +93,12 @@ func postgresqlCommandSpec(ctx context.Context, binary string, endpoint adapter.
 	if binary == "" {
 		binary = "psql"
 	}
-	host := strings.TrimSpace(endpoint.Hostname)
+	// The registered address is the authoritative connection endpoint. Hostnames
+	// are mutable metadata and may resolve to stale, IPv6-only, or unrelated
+	// addresses after a rename; retain them only as a fallback for DNS-only assets.
+	host := strings.TrimSpace(endpoint.IPAddress)
 	if host == "" {
-		host = strings.TrimSpace(endpoint.IPAddress)
+		host = strings.TrimSpace(endpoint.Hostname)
 	}
 	username := strings.TrimSpace(credentials.Username)
 	if host == "" || endpoint.Port <= 0 || username == "" {

@@ -26,6 +26,7 @@ const (
 	OperationMetadataReconciliation OperationKind = "metadata_reconciliation"
 	OperationFormerPrimaryRejoin    OperationKind = "former_primary_rejoin"
 	OperationReplicationRepair      OperationKind = "replication_repair"
+	OperationPowerShutdown          OperationKind = "power_shutdown"
 )
 
 type OperationStatus string
@@ -131,21 +132,41 @@ type StepAttempt struct {
 	FailureClass string          `json:"failure_class,omitempty"`
 }
 
+type OperationReviewDisposition string
+
+const (
+	OperationReviewAcknowledgedIndeterminate OperationReviewDisposition = "acknowledged_indeterminate"
+)
+
+// OperationReview records an operator's acknowledgement of an outcome that
+// could not be proven automatically. It does not change the operation result.
+type OperationReview struct {
+	ReviewedAt  time.Time                  `json:"reviewed_at"`
+	ReviewedBy  string                     `json:"reviewed_by"`
+	Disposition OperationReviewDisposition `json:"disposition"`
+	Note        string                     `json:"note,omitempty"`
+}
+
 type OperationRecord struct {
 	ResourceMeta
-	Operation      Operation       `json:"operation"`
-	TargetID       ResourceID      `json:"target_id"`
-	IdempotencyKey string          `json:"idempotency_key"`
-	Stage          WorkflowStage   `json:"stage"`
-	Status         OperationStatus `json:"status"`
-	Observation    string          `json:"observation_token,omitempty"`
-	Precheck       []Check         `json:"precheck,omitempty"`
-	Plan           OperationPlan   `json:"plan"`
-	Attempts       []StepAttempt   `json:"attempts,omitempty"`
-	Execution      Execution       `json:"execution"`
-	Verification   Verification    `json:"verification"`
-	FailureClass   string          `json:"failure_class,omitempty"`
-	Message        string          `json:"message,omitempty"`
+	Operation      Operation        `json:"operation"`
+	TargetID       ResourceID       `json:"target_id"`
+	IdempotencyKey string           `json:"idempotency_key"`
+	Stage          WorkflowStage    `json:"stage"`
+	Status         OperationStatus  `json:"status"`
+	Observation    string           `json:"observation_token,omitempty"`
+	Precheck       []Check          `json:"precheck,omitempty"`
+	Plan           OperationPlan    `json:"plan"`
+	Attempts       []StepAttempt    `json:"attempts,omitempty"`
+	Execution      Execution        `json:"execution"`
+	Verification   Verification     `json:"verification"`
+	Review         *OperationReview `json:"review,omitempty"`
+	FailureClass   string           `json:"failure_class,omitempty"`
+	Message        string           `json:"message,omitempty"`
+}
+
+func (operation OperationRecord) RequiresReview() bool {
+	return operation.Status == OperationIndeterminate && operation.Review == nil
 }
 
 type OperationTransition struct {

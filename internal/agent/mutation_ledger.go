@@ -17,10 +17,11 @@ import (
 )
 
 const (
-	mutationReceiptVersion = 1
-	mutationStateStarted   = "started"
-	mutationStateCompleted = "completed"
-	maximumMutationReceipt = 64 * 1024
+	legacyMutationReceiptVersion = 1
+	mutationReceiptVersion       = 2
+	mutationStateStarted         = "started"
+	mutationStateCompleted       = "completed"
+	maximumMutationReceipt       = 64 * 1024
 )
 
 // MutationLedger closes the agent crash window between a host mutation and
@@ -77,10 +78,18 @@ func NewFileMutationLedger(directory string) (*FileMutationLedger, error) {
 	return &FileMutationLedger{directory: directory}, nil
 }
 
-func mutationFingerprint(request Request, policy ClusterPolicy) (string, error) {
+func mutationFingerprintForVersion(request Request, policy ClusterPolicy, version int) (string, error) {
+	leaseID := request.LeaseID
+	// A VIP lease is deliberately short-lived and is renewed while one
+	// operation is still converging. Version 2 binds the durable action to the
+	// operation and plan but not to that ephemeral lease UUID. Every request is
+	// still independently HMAC authenticated and must carry a valid lease UUID.
+	if version >= mutationReceiptVersion && (request.Command == CommandVIPAcquire || request.Command == CommandVIPRelease) {
+		leaseID = ""
+	}
 	contents, err := json.Marshal(mutationIntent{
 		Command: request.Command, Engine: request.Engine, ClusterID: request.ClusterID, InstanceID: policy.InstanceID,
-		OperationID: request.OperationID, LeaseID: request.LeaseID, PlanDigest: request.PlanDigest,
+		OperationID: request.OperationID, LeaseID: leaseID, PlanDigest: request.PlanDigest,
 		VIP: request.VIP, Interface: request.Interface, Prefix: request.Prefix, ReadOnly: request.ReadOnly,
 		SourceInstanceID: request.SourceInstanceID, SourceNodeID: request.SourceNodeID, SourceHostname: request.SourceHostname,
 		SourceIPAddress: request.SourceIPAddress, SourcePort: request.SourcePort, OracleTarget: request.OracleTarget,
@@ -90,6 +99,32 @@ func mutationFingerprint(request Request, policy ClusterPolicy) (string, error) 
 	}
 	digest := sha256.Sum256(contents)
 	return hex.EncodeToString(digest[:]), nil
+}
+
+func mutationFingerprint(request Request, policy ClusterPolicy) (string, error) {
+	return mutationFingerprintForVersion(request, policy, mutationReceiptVersion)
+}
+
+func replayIntentMatches(existing mutationReceipt, request Request, policy ClusterPolicy, currentFingerprint string) (bool, error) {
+	if existing.Version == mutationReceiptVersion {
+		return existing.Fingerprint == currentFingerprint, nil
+	}
+	if existing.Version != legacyMutationReceiptVersion {
+		return false, nil
+	}
+	legacy, err := mutationFingerprintForVersion(request, policy, legacyMutationReceiptVersion)
+	if err != nil {
+		return false, err
+	}
+	if existing.Fingerprint == legacy {
+		return true, nil
+	}
+	// Version 1 bound VIP actions to a short-lived lease UUID. Permit only a
+	// completed successful, state-convergent VIP receipt to cross that legacy
+	// boundary; the receipt path still binds cluster, instance, operation and
+	// command, and the new request has already passed HMAC and lease checks.
+	return existing.State == mutationStateCompleted && existing.Response.Status == StatusOK &&
+		(request.Command == CommandVIPAcquire || request.Command == CommandVIPRelease), nil
 }
 
 func (ledger *FileMutationLedger) receiptPath(request Request, policy ClusterPolicy) (string, error) {
@@ -138,7 +173,11 @@ func (ledger *FileMutationLedger) Begin(request Request, policy ClusterPolicy) (
 	if err != nil {
 		return Response{}, false, err
 	}
-	if existing.Fingerprint != fingerprint {
+	matches, err := replayIntentMatches(existing, request, policy, fingerprint)
+	if err != nil {
+		return Response{}, false, err
+	}
+	if !matches {
 		return Response{}, false, fmt.Errorf("existing mutation intent does not match the signed request")
 	}
 	switch existing.State {
@@ -183,13 +222,19 @@ func (ledger *FileMutationLedger) Complete(request Request, policy ClusterPolicy
 	if err != nil {
 		return err
 	}
-	if existing.Fingerprint != fingerprint {
+	matches, err := replayIntentMatches(existing, request, policy, fingerprint)
+	if err != nil {
+		return err
+	}
+	if !matches {
 		return fmt.Errorf("existing mutation intent does not match the signed request")
 	}
-	if existing.State == mutationStateCompleted {
+	if existing.State == mutationStateCompleted && existing.Version == mutationReceiptVersion {
 		return nil
 	}
-	if existing.State != mutationStateStarted {
+	legacyCompletedVIP := existing.Version == legacyMutationReceiptVersion && existing.State == mutationStateCompleted &&
+		existing.Response.Status == StatusOK && (request.Command == CommandVIPAcquire || request.Command == CommandVIPRelease)
+	if existing.State != mutationStateStarted && !legacyCompletedVIP {
 		return fmt.Errorf("mutation receipt state is invalid")
 	}
 	receipt := mutationReceipt{
@@ -243,7 +288,7 @@ func (ledger *FileMutationLedger) load(path string) (mutationReceipt, error) {
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return mutationReceipt{}, fmt.Errorf("mutation receipt contains trailing data")
 	}
-	if receipt.Version != mutationReceiptVersion || receipt.Fingerprint == "" {
+	if (receipt.Version != legacyMutationReceiptVersion && receipt.Version != mutationReceiptVersion) || receipt.Fingerprint == "" {
 		return mutationReceipt{}, fmt.Errorf("mutation receipt version or fingerprint is invalid")
 	}
 	return receipt, nil

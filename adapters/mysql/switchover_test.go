@@ -51,6 +51,30 @@ func passingEndpointProvider() endpointProviderStub {
 	}
 }
 
+func addReadySemiSyncEvidence(instance *model.DatabaseInstance, primary bool) {
+	if instance.EngineMetadata == nil {
+		instance.EngineMetadata = map[string]string{}
+	}
+	for key, value := range map[string]string{
+		"semi_sync_available":              "true",
+		"semi_sync_source_enabled":         "true",
+		"semi_sync_source_status":          "false",
+		"semi_sync_source_clients":         "0",
+		"semi_sync_replica_enabled":        "true",
+		"semi_sync_wait_for_replica_count": "1",
+		"semi_sync_source_timeout_ms":      "10000",
+		"semi_sync_wait_no_replica":        "true",
+		"semi_sync_wait_point":             "AFTER_SYNC",
+		"semi_sync_replica_status":         "true",
+	} {
+		instance.EngineMetadata[key] = value
+	}
+	if primary {
+		instance.EngineMetadata["semi_sync_source_status"] = "true"
+		instance.EngineMetadata["semi_sync_source_clients"] = "2"
+	}
+}
+
 func switchoverRequestFixture() adapter.OperationRequest {
 	observedAt := time.Date(2026, 7, 12, 10, 0, 0, 0, time.UTC)
 	clusterID := model.NewResourceID()
@@ -160,6 +184,30 @@ func threeNodeSwitchoverRequestFixture() adapter.OperationRequest {
 	return request
 }
 
+func TestSwitchoverPrecheckRequiresReadySemiSyncEvidenceWhenConfigured(t *testing.T) {
+	request := switchoverRequestFixture()
+	addReadySemiSyncEvidence(&request.Resolved.Primary, true)
+	addReadySemiSyncEvidence(&request.Resolved.Target, false)
+	adapterInstance := NewWithEndpointProvider(nil, passingEndpointProvider()).RequireSemiSync(true)
+
+	checks, err := adapterInstance.Precheck(context.Background(), request)
+	if err != nil {
+		t.Fatalf("precheck ready semi-sync topology: %v", err)
+	}
+	if !passedCheckNamed(checks, "semi_sync_durability") {
+		t.Fatalf("ready semi-sync topology was not accepted: %+v", checks)
+	}
+
+	delete(request.Resolved.Target.EngineMetadata, "semi_sync_replica_status")
+	checks, err = adapterInstance.Precheck(context.Background(), request)
+	if err != nil {
+		t.Fatalf("precheck missing semi-sync evidence: %v", err)
+	}
+	if !failedCheckNamed(checks, "semi_sync_durability") {
+		t.Fatalf("missing target semi-sync evidence was not blocked: %+v", checks)
+	}
+}
+
 func TestSwitchoverPrecheckAcceptsHealthyThreeNodeTopology(t *testing.T) {
 	request := threeNodeSwitchoverRequestFixture()
 	checks, err := NewWithEndpointProvider(nil, passingEndpointProvider()).Precheck(context.Background(), request)
@@ -205,10 +253,44 @@ func TestSwitchoverPrecheckAllowsMissingTransactionsThatExecutionCanCatchUp(t *t
 	}
 }
 
-func TestSwitchoverPrecheckWarnsForPrimaryOwnedGTIDFromLaterTargetSample(t *testing.T) {
+func TestSwitchoverPrecheckAllowsBoundedLagThatExecutionCanCatchUp(t *testing.T) {
+	request := threeNodeSwitchoverRequestFixture()
+	targetLag := int64(1)
+	followerLag := defaultMaximumReplicationLagSeconds
+	request.Resolved.Target.Replication.LagSeconds = &targetLag
+	sibling := &request.Resolved.Snapshot.Instances[2]
+	sibling.Replication.LagSeconds = &followerLag
+
+	adapterInstance := NewWithEndpointProvider(nil, passingEndpointProvider())
+	checks, err := adapterInstance.Precheck(context.Background(), request)
+	if err != nil {
+		t.Fatalf("precheck: %v", err)
+	}
+	warnings := map[string]bool{}
+	for _, check := range checks {
+		if check.Status == model.CheckFail {
+			t.Fatalf("bounded-lag topology failed check %+v", check)
+		}
+		if check.Status == model.CheckWarn {
+			warnings[check.Name] = true
+		}
+	}
+	if !warnings["replication_lag"] || !warnings["follower_readiness_"+string(sibling.ResourceID)] {
+		t.Fatalf("missing bounded-lag warnings: %+v", checks)
+	}
+	plan, err := adapterInstance.BuildPlan(context.Background(), request)
+	if err != nil {
+		t.Fatalf("build bounded-lag plan: %v", err)
+	}
+	if plan.Summary != "guarded MySQL planned switchover is ready" {
+		t.Fatalf("bounded-lag plan was blocked: %+v", plan)
+	}
+}
+
+func TestSwitchoverPrecheckWarnsForPrimaryOwnedGTIDWhenHealthTimestampsAreNotQueryOrder(t *testing.T) {
 	request := switchoverRequestFixture()
-	request.Resolved.Primary.Health.ObservedAt = request.Resolved.Snapshot.ObservedAt.Add(-25 * time.Millisecond)
-	request.Resolved.Target.Health.ObservedAt = request.Resolved.Snapshot.ObservedAt
+	request.Resolved.Primary.Health.ObservedAt = request.Resolved.Snapshot.ObservedAt
+	request.Resolved.Target.Health.ObservedAt = request.Resolved.Snapshot.ObservedAt.Add(-25 * time.Millisecond)
 	request.Resolved.Target.Replication.ExecutedPosition = primaryUUID + ":1-101"
 
 	checks, err := NewWithEndpointProvider(nil, passingEndpointProvider()).Precheck(context.Background(), request)
@@ -226,11 +308,11 @@ func TestSwitchoverPrecheckWarnsForPrimaryOwnedGTIDFromLaterTargetSample(t *test
 	t.Fatalf("GTID consistency check is missing: %+v", checks)
 }
 
-func TestSwitchoverPrecheckWarnsForPrimaryOwnedGTIDFromLaterFollowerSample(t *testing.T) {
+func TestSwitchoverPrecheckWarnsForPrimaryOwnedFollowerGTIDWhenHealthTimestampsAreNotQueryOrder(t *testing.T) {
 	request := threeNodeSwitchoverRequestFixture()
-	request.Resolved.Primary.Health.ObservedAt = request.Resolved.Snapshot.ObservedAt.Add(-25 * time.Millisecond)
+	request.Resolved.Primary.Health.ObservedAt = request.Resolved.Snapshot.ObservedAt
 	sibling := &request.Resolved.Snapshot.Instances[2]
-	sibling.Health.ObservedAt = request.Resolved.Snapshot.ObservedAt
+	sibling.Health.ObservedAt = request.Resolved.Snapshot.ObservedAt.Add(-25 * time.Millisecond)
 	sibling.Replication.ExecutedPosition = primaryUUID + ":1-101"
 
 	checks, err := NewWithEndpointProvider(nil, passingEndpointProvider()).Precheck(context.Background(), request)
@@ -321,8 +403,8 @@ func TestSwitchoverPrecheckBlocksUnsafeEvidence(t *testing.T) {
 		check  string
 		mutate func(*adapter.OperationRequest)
 	}{
-		{name: "nonzero lag", check: "replication_lag", mutate: func(request *adapter.OperationRequest) {
-			value := int64(1)
+		{name: "lag above policy", check: "replication_lag", mutate: func(request *adapter.OperationRequest) {
+			value := defaultMaximumReplicationLagSeconds + 1
 			request.Resolved.Target.Replication.LagSeconds = &value
 		}},
 		{name: "unknown lag", check: "replication_lag", mutate: func(request *adapter.OperationRequest) { request.Resolved.Target.Replication.LagSeconds = nil }},

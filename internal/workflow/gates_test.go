@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"clusterguard.io/ha/pkg/adapter"
 	"clusterguard.io/ha/pkg/model"
 )
 
@@ -19,6 +20,10 @@ type compositeLockStub struct {
 type workflowAuthorityStub struct{ err error }
 
 func (stub workflowAuthorityStub) RequireMutationAuthority(context.Context) error { return stub.err }
+
+type workflowMaintenanceStub struct{ err error }
+
+func (stub workflowMaintenanceStub) Check(context.Context) error { return stub.err }
 
 func (stub compositeLockStub) Acquire(ctx context.Context, _ model.Operation) (context.Context, func(), error) {
 	return stub.acquire(ctx)
@@ -39,9 +44,12 @@ func (stub compositeLockStub) acquire(ctx context.Context) (context.Context, fun
 func TestMemoryLockReleaseIsIdempotent(t *testing.T) {
 	locks := NewMemoryLocks()
 	clusterID := model.NewResourceID()
-	_, firstRelease, err := locks.AcquireCluster(context.Background(), clusterID)
+	firstContext, firstRelease, err := locks.AcquireCluster(context.Background(), clusterID)
 	if err != nil {
 		t.Fatalf("acquire first lock: %v", err)
+	}
+	if !model.ValidResourceID(adapter.OperationLeaseID(firstContext)) {
+		t.Fatal("memory lock did not attach a valid operation lease ID")
 	}
 	firstRelease()
 	_, secondRelease, err := locks.AcquireCluster(context.Background(), clusterID)
@@ -102,6 +110,119 @@ func TestMemoryLockWaitsForCurrentHolderAndHonorsContext(t *testing.T) {
 	}
 }
 
+func TestMemoryLockGrantsContendersInArrivalOrder(t *testing.T) {
+	locks := NewMemoryLocks()
+	clusterID := model.NewResourceID()
+	_, releaseHolder, err := locks.AcquireCluster(context.Background(), clusterID)
+	if err != nil {
+		t.Fatalf("acquire holder: %v", err)
+	}
+
+	type result struct {
+		name    string
+		release func()
+		err     error
+	}
+	acquired := make(chan result, 2)
+	queue := func(name string) {
+		go func() {
+			_, release, acquireErr := locks.AcquireCluster(context.Background(), clusterID)
+			acquired <- result{name: name, release: release, err: acquireErr}
+		}()
+	}
+	queue("discovery")
+	waitForMemoryLockQueueLength(t, locks, clusterID, 1)
+	queue("automatic-resume")
+	waitForMemoryLockQueueLength(t, locks, clusterID, 2)
+
+	releaseHolder()
+	first := <-acquired
+	if first.err != nil {
+		t.Fatalf("first contender failed: %v", first.err)
+	}
+	if first.name != "discovery" {
+		first.release()
+		t.Fatalf("lock granted to %s before the older discovery waiter", first.name)
+	}
+	select {
+	case unexpected := <-acquired:
+		unexpected.release()
+		first.release()
+		t.Fatalf("second contender acquired before first released: %s", unexpected.name)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	first.release()
+	second := <-acquired
+	if second.err != nil {
+		t.Fatalf("second contender failed: %v", second.err)
+	}
+	if second.name != "automatic-resume" {
+		second.release()
+		t.Fatalf("unexpected second contender: %s", second.name)
+	}
+	second.release()
+}
+
+func TestMemoryLockCanceledWaiterDoesNotBlockNextContender(t *testing.T) {
+	locks := NewMemoryLocks()
+	clusterID := model.NewResourceID()
+	_, releaseHolder, err := locks.AcquireCluster(context.Background(), clusterID)
+	if err != nil {
+		t.Fatalf("acquire holder: %v", err)
+	}
+
+	canceledContext, cancel := context.WithCancel(context.Background())
+	canceled := make(chan error, 1)
+	go func() {
+		_, _, acquireErr := locks.AcquireCluster(canceledContext, clusterID)
+		canceled <- acquireErr
+	}()
+	waitForMemoryLockQueueLength(t, locks, clusterID, 1)
+
+	next := make(chan func(), 1)
+	go func() {
+		_, release, acquireErr := locks.AcquireCluster(context.Background(), clusterID)
+		if acquireErr != nil {
+			next <- nil
+			return
+		}
+		next <- release
+	}()
+	waitForMemoryLockQueueLength(t, locks, clusterID, 2)
+	cancel()
+	if err := <-canceled; !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled waiter error=%v, want context canceled", err)
+	}
+	waitForMemoryLockQueueLength(t, locks, clusterID, 1)
+
+	releaseHolder()
+	select {
+	case release := <-next:
+		if release == nil {
+			t.Fatal("next contender failed after canceled waiter was removed")
+		}
+		release()
+	case <-time.After(time.Second):
+		t.Fatal("canceled waiter blocked the next contender")
+	}
+}
+
+func waitForMemoryLockQueueLength(t *testing.T, locks *MemoryLocks, clusterID model.ResourceID, want int) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		locks.mu.Lock()
+		got := len(locks.waiters[string(clusterID)])
+		locks.mu.Unlock()
+		if got == want {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("memory lock queue did not reach length %d", want)
+}
+
 func TestCompositeLocksAcquireLocalThenQuorumAndReleaseInReverse(t *testing.T) {
 	calls := []string{}
 	locks := NewCompositeLocks(
@@ -144,5 +265,21 @@ func TestAuthoritySafetyGuardRequiresCurrentLeaderMajority(t *testing.T) {
 	}
 	if err := (AuthoritySafetyGuard{}).Evaluate(context.Background(), operation); err == nil {
 		t.Fatal("unconfigured authority safety guard allowed mutation")
+	}
+}
+
+func TestCompositeSafetyGuardBlocksSoftwareUpdateMaintenance(t *testing.T) {
+	operation := model.Operation{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID()}, ClusterID: model.NewResourceID()}
+	guard := NewCompositeSafetyGuard(
+		AllowAllSafety{},
+		MaintenanceSafetyGuard{Gate: workflowMaintenanceStub{err: errors.New("update active")}},
+	)
+	if err := guard.Evaluate(context.Background(), operation); err == nil {
+		t.Fatal("software update maintenance failed open")
+	}
+
+	guard = NewCompositeSafetyGuard(AllowAllSafety{}, MaintenanceSafetyGuard{Gate: workflowMaintenanceStub{}})
+	if err := guard.Evaluate(context.Background(), operation); err != nil {
+		t.Fatalf("inactive maintenance blocked operation: %v", err)
 	}
 }

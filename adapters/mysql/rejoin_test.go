@@ -17,6 +17,7 @@ func formerPrimaryRejoinFixture() adapter.OperationRequest {
 	currentPrimary.EngineMetadata["read_only"] = "false"
 	currentPrimary.EngineMetadata["super_read_only"] = "false"
 	currentPrimary.EngineMetadata["gtid_executed"] = primaryUUID + ":1-120," + targetUUID + ":1-20"
+	currentPrimary.EngineMetadata["gtid_purged"] = primaryUUID + ":1-80"
 	formerPrimary.Role = model.RoleUnknown
 	formerPrimary.Replication = model.ReplicationStatus{}
 	formerPrimary.EngineMetadata["read_only"] = "true"
@@ -68,6 +69,18 @@ func TestFormerPrimaryWithErrantGTIDRequiresRebuild(t *testing.T) {
 	}
 }
 
+func TestFormerPrimaryMissingPurgedGTIDRequiresRebuild(t *testing.T) {
+	request := formerPrimaryRejoinFixture()
+	request.Resolved.Primary.EngineMetadata["gtid_purged"] = primaryUUID + ":1-110"
+	checks, err := NewWithEndpointProvider(nil, passingEndpointProvider()).Precheck(context.Background(), request)
+	if err != nil {
+		t.Fatalf("precheck: %v", err)
+	}
+	if !passedCheck(checks, "former_primary_gtid_subset") || !failedCheck(checks, "required_binlog_available") || !failedCheck(checks, "rebuild_required") {
+		t.Fatalf("purged former-primary recovery gap did not require rebuild: %+v", checks)
+	}
+}
+
 func TestFormerPrimaryRejoinRefusesLocalVIP(t *testing.T) {
 	request := formerPrimaryRejoinFixture()
 	provider := endpointProviderStub{executable: true, checks: []model.Check{{Name: "writer_endpoint_provider", Status: model.CheckFail, Message: "VIP has multiple owners"}}}
@@ -75,8 +88,15 @@ func TestFormerPrimaryRejoinRefusesLocalVIP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("precheck: %v", err)
 	}
-	if !failedCheck(checks, "former_primary_vip_absent") {
-		t.Fatalf("former-primary VIP ownership was not blocked: %+v", checks)
+	if !failedCheck(checks, "former_primary_endpoint_absent") {
+		t.Fatalf("former-primary writer endpoint ownership was not blocked: %+v", checks)
+	}
+}
+
+func TestFormerPrimaryRejoinAcceptsGenericWriterEndpointEvidence(t *testing.T) {
+	checks := []model.Check{{Name: "former_primary_endpoint_absent", Status: model.CheckPass}}
+	if !rejoinEndpointSafe(checks) {
+		t.Fatal("generic writer endpoint evidence was not accepted for former-primary rejoin")
 	}
 }
 

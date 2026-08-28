@@ -12,7 +12,7 @@ import (
 	"clusterguard.io/ha/pkg/model"
 )
 
-const identityQuery = "SELECT @@server_uuid AS server_uuid, @@hostname AS hostname, @@port AS port, @@server_id AS server_id, @@version AS version, @@read_only AS read_only, @@super_read_only AS super_read_only, @@gtid_mode AS gtid_mode, @@GLOBAL.gtid_executed AS gtid_executed, @@log_bin AS log_bin, @@binlog_format AS binlog_format"
+const identityQuery = "SELECT @@server_uuid AS server_uuid, @@hostname AS hostname, @@port AS port, @@server_id AS server_id, @@version AS version, @@read_only AS read_only, @@super_read_only AS super_read_only, @@gtid_mode AS gtid_mode, @@GLOBAL.gtid_executed AS gtid_executed, @@GLOBAL.gtid_purged AS gtid_purged, @@log_bin AS log_bin, @@binlog_format AS binlog_format"
 
 const (
 	replicaStatusQuery = "SHOW REPLICA STATUS"
@@ -29,6 +29,7 @@ type identityProbe struct {
 	superReadOnly bool
 	gtidMode      string
 	gtidExecuted  string
+	gtidPurged    string
 	logBin        string
 	binlogFormat  string
 }
@@ -75,6 +76,7 @@ func parseIdentity(row Row) (identityProbe, error) {
 		superReadOnly: superReadOnly,
 		gtidMode:      first(row, "gtid_mode"),
 		gtidExecuted:  first(row, "gtid_executed"),
+		gtidPurged:    first(row, "gtid_purged"),
 		logBin:        first(row, "log_bin"),
 		binlogFormat:  first(row, "binlog_format"),
 	}, nil
@@ -164,12 +166,13 @@ func first(row Row, names ...string) string {
 	return ""
 }
 
-func discover(ctx context.Context, runner SQLRunner, request adapter.DiscoverRequest) (adapter.DiscoveryResult, error) {
+func discover(ctx context.Context, runner SQLRunner, request adapter.DiscoverRequest, semiSyncRequired bool) (adapter.DiscoveryResult, error) {
 	started := time.Now()
 	identity, err := probeIdentity(ctx, runner, request.Endpoint, request.Credentials)
 	if err != nil {
 		return adapter.DiscoveryResult{}, err
 	}
+	semiSync, semiSyncErr := probeSemiSync(ctx, runner, request.Endpoint, request.Credentials)
 	replication, configured, err := probeReplication(ctx, runner, request.Endpoint, request.Credentials)
 	if err != nil {
 		return adapter.DiscoveryResult{}, err
@@ -195,6 +198,41 @@ func discover(ctx context.Context, runner SQLRunner, request adapter.DiscoverReq
 		healthState = model.HealthHealthy
 		healthSummary = "MySQL primary is reachable and writable"
 	}
+	promotionEligible := configured && replicaReadOnly && healthState == model.HealthHealthy
+	if semiSyncRequired {
+		switch {
+		case semiSyncErr != nil:
+			healthState = model.HealthDegraded
+			healthSummary = "MySQL semi-sync durability evidence is unavailable"
+			promotionEligible = false
+		case role == model.RolePrimary && !semiSync.sourceReady():
+			healthState = model.HealthDegraded
+			healthSummary = "MySQL primary has no active semi-sync replica acknowledgement"
+		case role == model.RoleReplica && !semiSync.replicaReady():
+			healthState = model.HealthDegraded
+			healthSummary = "MySQL replica is not actively acknowledging semi-sync transactions"
+			promotionEligible = false
+		}
+	}
+
+	engineMetadata := map[string]string{
+		"server_id":       identity.serverID,
+		"version":         identity.version,
+		"gtid_mode":       identity.gtidMode,
+		"gtid_executed":   identity.gtidExecuted,
+		"gtid_purged":     identity.gtidPurged,
+		"log_bin":         identity.logBin,
+		"binlog_format":   identity.binlogFormat,
+		"read_only":       strconv.FormatBool(identity.readOnly),
+		"super_read_only": strconv.FormatBool(identity.superReadOnly),
+	}
+	for key, value := range semiSync.metadata() {
+		engineMetadata[key] = value
+	}
+	engineMetadata["semi_sync_required"] = strconv.FormatBool(semiSyncRequired)
+	if semiSyncErr != nil {
+		engineMetadata["semi_sync_probe_error"] = "true"
+	}
 
 	displayName := identity.hostname
 	if displayName == "" {
@@ -219,17 +257,8 @@ func discover(ctx context.Context, runner SQLRunner, request adapter.DiscoverReq
 			Replication: string(replication.SQLThread),
 		},
 		Replication:       replication,
-		PromotionEligible: configured && replicaReadOnly && healthState == model.HealthHealthy,
-		EngineMetadata: map[string]string{
-			"server_id":       identity.serverID,
-			"version":         identity.version,
-			"gtid_mode":       identity.gtidMode,
-			"gtid_executed":   identity.gtidExecuted,
-			"log_bin":         identity.logBin,
-			"binlog_format":   identity.binlogFormat,
-			"read_only":       strconv.FormatBool(identity.readOnly),
-			"super_read_only": strconv.FormatBool(identity.superReadOnly),
-		},
+		PromotionEligible: promotionEligible,
+		EngineMetadata:    engineMetadata,
 	}
 	return adapter.DiscoveryResult{Instance: instance}, nil
 }

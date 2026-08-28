@@ -88,6 +88,9 @@ func (adapterInstance *Adapter) failoverPrecheck(ctx context.Context, request ad
 	assessment, found := adapterInstance.selectedFailoverCandidate(resolved)
 	appendResult("recommended_candidate", found && assessment.Eligible && assessment.Rank == 1, "selected target is the lowest-risk eligible candidate", "selected target is not the lowest-risk eligible candidate")
 	appendResult("data_loss_risk_known", found && assessment.DataLossRisk != dataLossRiskUnknown, "candidate data-loss risk is known: "+assessment.DataLossRisk, "candidate data-loss risk is unknown")
+	if adapterInstance.semiSyncRequired {
+		checks = append(checks, semiSyncFailoverCheck(resolved.Target))
+	}
 	for _, check := range adapterInstance.failoverSafety.Precheck(ctx, *resolved) {
 		checks = append(checks, check)
 	}
@@ -107,14 +110,27 @@ func (adapterInstance *Adapter) failoverPlan(ctx context.Context, request adapte
 		{Index: 3, Name: "authorize_target_transition", Owner: "endpoint", TargetID: resolved.Target.ResourceID, Mutating: true, Postcondition: "target has an active transition lease"},
 		{Index: 4, Name: "promote_failover_target", Owner: "mysql", TargetID: resolved.Target.ResourceID, Mutating: true, Postcondition: "selected target is detached and writable"},
 	}
+	if !adapterInstance.semiSyncRequired {
+		steps = append(steps, model.PlanStep{
+			Index: len(steps) + 1, Name: "transfer_failover_endpoint", Owner: "endpoint",
+			TargetID: resolved.Target.ResourceID, Mutating: true, Postcondition: "writer endpoint has one new-primary owner",
+		})
+	}
 	followers := adapterInstance.eligibleFailoverFollowers(resolved)
 	for _, follower := range followers {
 		steps = append(steps, model.PlanStep{Index: len(steps) + 1, Name: "reparent_failover_follower_" + string(follower.ResourceID), Owner: "mysql", TargetID: follower.ResourceID, Mutating: true, Postcondition: "reachable follower follows the new primary"})
 	}
-	steps = append(steps,
-		model.PlanStep{Index: len(steps) + 1, Name: "transfer_failover_endpoint", Owner: "endpoint", TargetID: resolved.Target.ResourceID, Mutating: true, Postcondition: "writer endpoint has one new-primary owner"},
-		model.PlanStep{Index: len(steps) + 2, Name: "verify_failover", Owner: "platform", TargetID: resolved.Target.ResourceID, Postcondition: "one writer, one endpoint owner, and old-primary isolation are verified"},
-	)
+	if adapterInstance.semiSyncRequired {
+		steps = append(steps, model.PlanStep{
+			Index: len(steps) + 1, Name: "activate_failover_semisync_source", Owner: "mysql",
+			TargetID: resolved.Target.ResourceID, Mutating: true, Postcondition: "promoted source has an active semi-sync replica acknowledgement",
+		})
+		steps = append(steps, model.PlanStep{
+			Index: len(steps) + 1, Name: "transfer_failover_endpoint", Owner: "endpoint",
+			TargetID: resolved.Target.ResourceID, Mutating: true, Postcondition: "writer endpoint has one new-primary owner",
+		})
+	}
+	steps = append(steps, model.PlanStep{Index: len(steps) + 1, Name: "verify_failover", Owner: "platform", TargetID: resolved.Target.ResourceID, Postcondition: "one writer, one endpoint owner, and old-primary isolation are verified"})
 	plan := model.OperationPlan{
 		OperationID: request.Operation.ResourceID, ClusterID: resolved.Cluster.ResourceID, SourceID: resolved.Primary.ResourceID, TargetID: resolved.Target.ResourceID,
 		Stage: model.StagePlan, ObservationToken: resolvedObservationToken(resolved),
@@ -150,14 +166,26 @@ func (adapterInstance *Adapter) failoverExecute(ctx context.Context, request ada
 		return newExecution(request.Operation.ResourceID, model.OperationRunning, started, "MySQL failover was already completed and remains verified"), nil
 	}
 	resolved := *request.Resolved
-	if err := adapterInstance.failoverSafety.Fence(ctx, resolved); err != nil {
-		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "pre_commit", fmt.Errorf("fence old primary: %w", err))
+	if err := verifyTargetReplicationCredentials(ctx, adapterInstance.runner, instanceEndpoint(resolved.Target), resolved.ReplicationCredentials); err != nil {
+		return executionFailure(request.Operation.ResourceID, started, model.OperationFailed, "pre_commit", err)
 	}
+	fenced, err := operationStepCompleted(ctx, request, "fence_old_primary")
+	if err != nil {
+		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "pre_commit", fmt.Errorf("read old-primary fencing progress: %w", err))
+	}
+	if !fenced {
+		if err := adapterInstance.failoverSafety.Fence(ctx, resolved); err != nil {
+			return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "pre_commit", fmt.Errorf("fence old primary: %w", err))
+		}
+	}
+	resolved.VerifiedIsolatedSourceID = resolved.Primary.ResourceID
 	if check := adapterInstance.failoverSafety.Verify(ctx, resolved); check.Name != "old_primary_fenced" || check.Status != model.CheckPass {
 		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "pre_commit", fmt.Errorf("old-primary isolation could not be verified"))
 	}
-	if err := completeOperationStep(context.WithoutCancel(ctx), request, "fence_old_primary", "old primary is isolated"); err != nil {
-		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "pre_commit", err)
+	if !fenced {
+		if err := completeOperationStep(context.WithoutCancel(ctx), request, "fence_old_primary", "old primary is isolated"); err != nil {
+			return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "pre_commit", err)
+		}
 	}
 	promoted, err := operationStepCompleted(ctx, request, "promote_failover_target")
 	if err != nil {
@@ -232,16 +260,48 @@ func (adapterInstance *Adapter) failoverExecute(ctx context.Context, request ada
 		_ = adapterInstance.fenceInstance(ctx, targetEndpoint, resolved.Credentials)
 		return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", err)
 	}
+	endpointCommitted := false
+	fenceTargetIfEndpointUnpublished := func() {
+		if !endpointCommitted {
+			_ = adapterInstance.fenceInstance(ctx, targetEndpoint, resolved.Credentials)
+		}
+	}
+	transferEndpoint := func() error {
+		if err := adapterInstance.endpointProvider.Transfer(ctx, resolved); err != nil {
+			fenceTargetIfEndpointUnpublished()
+			return fmt.Errorf("transfer failover endpoint: %w", err)
+		}
+		if check := adapterInstance.endpointProvider.Verify(ctx, resolved); !endpointOwnerVerified(check) {
+			fenceTargetIfEndpointUnpublished()
+			return fmt.Errorf("failover endpoint ownership is unverified")
+		}
+		if err := authorization.Finalize(ctx); err != nil {
+			if fenceErr := adapterInstance.fenceInstance(ctx, targetEndpoint, resolved.Credentials); fenceErr != nil {
+				err = fmt.Errorf("%v; target fencing failed: %w", err, fenceErr)
+			}
+			return fmt.Errorf("stabilize failover endpoint lease: %w", err)
+		}
+		endpointCommitted = true
+		if err := completeOperationStep(context.WithoutCancel(ctx), request, "transfer_failover_endpoint", "writer endpoint follows the new primary"); err != nil {
+			return err
+		}
+		return nil
+	}
+	if !adapterInstance.semiSyncRequired {
+		if err := transferEndpoint(); err != nil {
+			return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", err)
+		}
+	}
 	for _, follower := range adapterInstance.eligibleFailoverFollowers(&resolved) {
 		step := "reparent_failover_follower_" + string(follower.ResourceID)
 		completed, progressErr := operationStepCompleted(ctx, request, step)
 		if progressErr != nil {
-			_ = adapterInstance.fenceInstance(ctx, targetEndpoint, resolved.Credentials)
+			fenceTargetIfEndpointUnpublished()
 			return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("read failover follower progress: %w", progressErr))
 		}
 		if !completed {
 			if err := adapterInstance.reparentFollower(ctx, follower, resolved.Target, resolved.Credentials, resolved.ReplicationCredentials); err != nil {
-				_ = adapterInstance.fenceInstance(ctx, targetEndpoint, resolved.Credentials)
+				fenceTargetIfEndpointUnpublished()
 				return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("reparent reachable follower: %w", err))
 			}
 			if err := completeOperationStep(context.WithoutCancel(ctx), request, step, "reachable follower follows the new primary"); err != nil {
@@ -249,16 +309,32 @@ func (adapterInstance *Adapter) failoverExecute(ctx context.Context, request ada
 			}
 		}
 	}
-	if err := adapterInstance.endpointProvider.Transfer(ctx, resolved); err != nil {
-		_ = adapterInstance.fenceInstance(ctx, targetEndpoint, resolved.Credentials)
-		return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("transfer failover endpoint: %w", err))
-	}
-	if check := adapterInstance.endpointProvider.Verify(ctx, resolved); !endpointOwnerVerified(check) {
-		_ = adapterInstance.fenceInstance(ctx, targetEndpoint, resolved.Credentials)
-		return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("failover endpoint ownership is unverified"))
-	}
-	if err := completeOperationStep(context.WithoutCancel(ctx), request, "transfer_failover_endpoint", "writer endpoint follows the new primary"); err != nil {
-		return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", err)
+	if adapterInstance.semiSyncRequired {
+		stepCompleted, progressErr := operationStepCompleted(ctx, request, "activate_failover_semisync_source")
+		if progressErr != nil {
+			fenceTargetIfEndpointUnpublished()
+			return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("read failover semi-sync activation progress: %w", progressErr))
+		}
+		if err := activateSemiSyncSource(
+			ctx,
+			adapterInstance.runner,
+			adapterInstance.executor,
+			targetEndpoint,
+			resolved.Credentials,
+			identity.version,
+		); err != nil {
+			fenceTargetIfEndpointUnpublished()
+			return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("activate promoted failover semi-sync source: %w", err))
+		}
+		if !stepCompleted {
+			if err := completeOperationStep(context.WithoutCancel(ctx), request, "activate_failover_semisync_source", "promoted source has an active semi-sync replica acknowledgement"); err != nil {
+				fenceTargetIfEndpointUnpublished()
+				return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", fmt.Errorf("persist failover semi-sync activation progress: %w", err))
+			}
+		}
+		if err := transferEndpoint(); err != nil {
+			return executionFailure(request.Operation.ResourceID, started, model.OperationIndeterminate, "promoted_unverified", err)
+		}
 	}
 	return newExecution(request.Operation.ResourceID, model.OperationRunning, started, "MySQL failover completed; verification is required"), nil
 }
@@ -270,20 +346,53 @@ func (adapterInstance *Adapter) failoverVerify(ctx context.Context, request adap
 		verification.Checks = []model.Check{{Name: "plan_integrity", Status: model.CheckFail, Message: err.Error()}}
 		return verification, nil
 	}
-	resolved := request.Resolved
+	resolved := *request.Resolved
 	targetIdentity, err := probeIdentity(ctx, adapterInstance.runner, instanceEndpoint(resolved.Target), resolved.Credentials)
+	writableCount := 0
+	writerStateComplete := err == nil
 	if err == nil && targetIdentity.serverUUID == strings.ToLower(strings.TrimSpace(resolved.Target.EngineIdentity["server_uuid"])) && !targetIdentity.readOnly && !targetIdentity.superReadOnly {
-		verification.Checks = append(verification.Checks, model.Check{Name: "new_primary_writable", Status: model.CheckPass, Message: "selected target is the only controlled writable candidate"})
+		verification.Checks = append(verification.Checks, model.Check{Name: "new_primary_writable", Status: model.CheckPass, Message: "selected target identity is verified and writable"})
 	} else {
 		verification.Checks = append(verification.Checks, model.Check{Name: "new_primary_writable", Status: model.CheckFail, Message: "selected target writable state is unverified"})
 	}
-	for _, follower := range adapterInstance.eligibleFailoverFollowers(resolved) {
-		checks, _ := adapterInstance.verifyFollower(ctx, follower, resolved.Target, resolved.Credentials)
-		verification.Checks = append(verification.Checks, checks...)
+	if err == nil && !targetIdentity.readOnly && !targetIdentity.superReadOnly {
+		writableCount++
 	}
-	verification.Checks = append(verification.Checks, adapterInstance.failoverSafety.Verify(ctx, *resolved))
-	verification.Checks = append(verification.Checks, sanitizeEndpointCheck(adapterInstance.endpointProvider.Verify(ctx, *resolved), "writer_endpoint_owner"))
-	verification.Passed = !planHasBlockingChecks(verification.Checks)
+	if adapterInstance.semiSyncRequired {
+		verification.Checks = append(verification.Checks, verifySemiSyncPrimary(ctx, adapterInstance.runner, instanceEndpoint(resolved.Target), resolved.Credentials))
+	}
+	eligibleFollowers := make(map[model.ResourceID]bool)
+	for _, follower := range adapterInstance.eligibleFailoverFollowers(&resolved) {
+		eligibleFollowers[follower.ResourceID] = true
+	}
+	for _, follower := range resolved.Snapshot.Instances {
+		if follower.ResourceID == resolved.Primary.ResourceID || follower.ResourceID == resolved.Target.ResourceID {
+			continue
+		}
+		checks, writable, observed := adapterInstance.verifyFollowerWriterState(ctx, follower, resolved.Credentials)
+		verification.Checks = append(verification.Checks, checks...)
+		writerStateComplete = writerStateComplete && observed
+		if writable {
+			writableCount++
+		}
+		if eligibleFollowers[follower.ResourceID] && observed {
+			verification.Checks = append(verification.Checks, adapterInstance.verifyFollowerReplication(ctx, follower, resolved.Target, resolved.Credentials))
+		}
+	}
+	if writerStateComplete && writableCount == 1 {
+		verification.Checks = append(verification.Checks, model.Check{Name: "writable_primary_uniqueness", Status: model.CheckPass, Message: "exactly one non-isolated controlled instance is writable"})
+	} else if !writerStateComplete {
+		verification.Checks = append(verification.Checks, model.Check{Name: "writable_primary_uniqueness", Status: model.CheckFail, Message: "writable state could not be verified across all non-isolated controlled instances"})
+	} else {
+		verification.Checks = append(verification.Checks, model.Check{Name: "writable_primary_uniqueness", Status: model.CheckFail, Message: fmt.Sprintf("%d non-isolated controlled instances are writable", writableCount)})
+	}
+	isolation := adapterInstance.failoverSafety.Verify(ctx, resolved)
+	verification.Checks = append(verification.Checks, isolation)
+	if isolation.Name == "old_primary_fenced" && isolation.Status == model.CheckPass {
+		resolved.VerifiedIsolatedSourceID = resolved.Primary.ResourceID
+	}
+	verification.Checks = append(verification.Checks, sanitizeEndpointCheck(adapterInstance.endpointProvider.Verify(ctx, resolved), "writer_endpoint_owner"))
+	verification.Passed = !planHasBlockingChecks(verification.Checks) && passedCheckNamed(verification.Checks, "writable_primary_uniqueness") && passedCheckNamed(verification.Checks, "writer_endpoint_owner")
 	return verification, nil
 }
 
@@ -302,5 +411,12 @@ func safeLiveFailoverReplication(primary model.DatabaseInstance, identity identi
 		return false
 	}
 	comparison, err := CompareGTIDSets(primaryGTID, candidateGTID)
-	return err == nil && comparison.ErrantTransactions == 0
+	if err != nil {
+		return false
+	}
+	if comparison.ErrantTransactions == 0 {
+		return true
+	}
+	sourceOwned, sourceErr := hasOnlyGTIDAdditionsFromSource(primaryGTID, candidateGTID, primaryUUID)
+	return sourceErr == nil && sourceOwned
 }

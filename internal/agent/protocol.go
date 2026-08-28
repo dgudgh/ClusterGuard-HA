@@ -33,6 +33,11 @@ const (
 	CommandOracleBrokerDiscover   = "oracle_broker_discover"
 	CommandOracleBrokerStatus     = "oracle_broker_status"
 	CommandOracleBrokerSwitchover = "oracle_broker_switchover"
+	CommandMySQLServiceStop       = "mysql_service_stop"
+	CommandMySQLServiceStart      = "mysql_service_start"
+	CommandMySQLPowerStatus       = "mysql_power_status"
+	CommandPowerPrepare           = "power_prepare_recovery"
+	CommandNodePoweroff           = "node_poweroff"
 
 	StatusOK      = "ok"
 	StatusBlocked = "blocked"
@@ -40,24 +45,25 @@ const (
 )
 
 type Request struct {
-	Command          string           `json:"command"`
-	Engine           model.Engine     `json:"engine,omitempty"`
-	ClusterID        model.ResourceID `json:"cluster_id"`
-	OperationID      model.ResourceID `json:"operation_id"`
-	LeaseID          model.ResourceID `json:"lease_id,omitempty"`
-	PlanDigest       string           `json:"plan_digest"`
-	ExpiresAt        time.Time        `json:"expires_at"`
-	VIP              string           `json:"vip,omitempty"`
-	Interface        string           `json:"interface,omitempty"`
-	Prefix           int              `json:"prefix,omitempty"`
-	ReadOnly         bool             `json:"read_only,omitempty"`
-	SourceInstanceID model.ResourceID `json:"source_instance_id,omitempty"`
-	SourceNodeID     model.ResourceID `json:"source_node_id,omitempty"`
-	SourceHostname   string           `json:"source_hostname,omitempty"`
-	SourceIPAddress  string           `json:"source_ip_address,omitempty"`
-	SourcePort       int              `json:"source_port,omitempty"`
-	OracleTarget     string           `json:"oracle_target,omitempty"`
-	Signature        string           `json:"signature"`
+	Command          string               `json:"command"`
+	Engine           model.Engine         `json:"engine,omitempty"`
+	ClusterID        model.ResourceID     `json:"cluster_id"`
+	OperationID      model.ResourceID     `json:"operation_id"`
+	LeaseID          model.ResourceID     `json:"lease_id,omitempty"`
+	PlanDigest       string               `json:"plan_digest"`
+	ExpiresAt        time.Time            `json:"expires_at"`
+	VIP              string               `json:"vip,omitempty"`
+	Interface        string               `json:"interface,omitempty"`
+	Prefix           int                  `json:"prefix,omitempty"`
+	ReadOnly         bool                 `json:"read_only,omitempty"`
+	SourceInstanceID model.ResourceID     `json:"source_instance_id,omitempty"`
+	SourceNodeID     model.ResourceID     `json:"source_node_id,omitempty"`
+	SourceHostname   string               `json:"source_hostname,omitempty"`
+	SourceIPAddress  string               `json:"source_ip_address,omitempty"`
+	SourcePort       int                  `json:"source_port,omitempty"`
+	OracleTarget     string               `json:"oracle_target,omitempty"`
+	PowerSnapshot    *model.PowerSnapshot `json:"power_snapshot,omitempty"`
+	Signature        string               `json:"signature"`
 }
 
 type Response struct {
@@ -68,6 +74,9 @@ type Response struct {
 	ReadOnly                  *bool            `json:"read_only,omitempty"`
 	SuperReadOnly             *bool            `json:"super_read_only,omitempty"`
 	ServiceRunning            *bool            `json:"service_running,omitempty"`
+	DatabaseReachable         *bool            `json:"database_reachable,omitempty"`
+	RestartReadOnly           *bool            `json:"restart_read_only,omitempty"`
+	PersistedReadOnly         *bool            `json:"persisted_read_only,omitempty"`
 	InRecovery                *bool            `json:"in_recovery,omitempty"`
 	ClusterID                 model.ResourceID `json:"cluster_id,omitempty"`
 	InstanceID                model.ResourceID `json:"instance_id,omitempty"`
@@ -84,23 +93,24 @@ type Response struct {
 }
 
 type unsignedRequest struct {
-	Command          string           `json:"command"`
-	Engine           model.Engine     `json:"engine,omitempty"`
-	ClusterID        model.ResourceID `json:"cluster_id"`
-	OperationID      model.ResourceID `json:"operation_id"`
-	LeaseID          model.ResourceID `json:"lease_id,omitempty"`
-	PlanDigest       string           `json:"plan_digest"`
-	ExpiresAt        time.Time        `json:"expires_at"`
-	VIP              string           `json:"vip,omitempty"`
-	Interface        string           `json:"interface,omitempty"`
-	Prefix           int              `json:"prefix,omitempty"`
-	ReadOnly         bool             `json:"read_only,omitempty"`
-	SourceInstanceID model.ResourceID `json:"source_instance_id,omitempty"`
-	SourceNodeID     model.ResourceID `json:"source_node_id,omitempty"`
-	SourceHostname   string           `json:"source_hostname,omitempty"`
-	SourceIPAddress  string           `json:"source_ip_address,omitempty"`
-	SourcePort       int              `json:"source_port,omitempty"`
-	OracleTarget     string           `json:"oracle_target,omitempty"`
+	Command          string               `json:"command"`
+	Engine           model.Engine         `json:"engine,omitempty"`
+	ClusterID        model.ResourceID     `json:"cluster_id"`
+	OperationID      model.ResourceID     `json:"operation_id"`
+	LeaseID          model.ResourceID     `json:"lease_id,omitempty"`
+	PlanDigest       string               `json:"plan_digest"`
+	ExpiresAt        time.Time            `json:"expires_at"`
+	VIP              string               `json:"vip,omitempty"`
+	Interface        string               `json:"interface,omitempty"`
+	Prefix           int                  `json:"prefix,omitempty"`
+	ReadOnly         bool                 `json:"read_only,omitempty"`
+	SourceInstanceID model.ResourceID     `json:"source_instance_id,omitempty"`
+	SourceNodeID     model.ResourceID     `json:"source_node_id,omitempty"`
+	SourceHostname   string               `json:"source_hostname,omitempty"`
+	SourceIPAddress  string               `json:"source_ip_address,omitempty"`
+	SourcePort       int                  `json:"source_port,omitempty"`
+	OracleTarget     string               `json:"oracle_target,omitempty"`
+	PowerSnapshot    *model.PowerSnapshot `json:"power_snapshot,omitempty"`
 }
 
 func canonicalRequest(request Request) ([]byte, error) {
@@ -110,7 +120,7 @@ func canonicalRequest(request Request) ([]byte, error) {
 		Engine: request.Engine, VIP: request.VIP, Interface: request.Interface, Prefix: request.Prefix, ReadOnly: request.ReadOnly,
 		SourceInstanceID: request.SourceInstanceID, SourceNodeID: request.SourceNodeID,
 		SourceHostname: request.SourceHostname, SourceIPAddress: request.SourceIPAddress, SourcePort: request.SourcePort,
-		OracleTarget: request.OracleTarget,
+		OracleTarget: request.OracleTarget, PowerSnapshot: request.PowerSnapshot,
 	})
 }
 
@@ -135,6 +145,10 @@ type RoleController interface {
 	Status(context.Context, ClusterPolicy) (bool, bool, error)
 }
 
+type DurableRoleController interface {
+	IsolationStatus(context.Context, ClusterPolicy) (MySQLIsolationStatus, error)
+}
+
 type PostgreSQLController interface {
 	Status(context.Context, ClusterPolicy) (bool, bool, error)
 	Stop(context.Context, ClusterPolicy) error
@@ -143,6 +157,13 @@ type PostgreSQLController interface {
 	Repoint(context.Context, ClusterPolicy, PostgreSQLPeer) error
 	Rewind(context.Context, ClusterPolicy, PostgreSQLPeer) error
 	BaseBackup(context.Context, ClusterPolicy, PostgreSQLPeer) error
+}
+
+// PostgreSQLStandbyIntentInspector provides filesystem-backed proof that a
+// starting service is configured to remain in recovery. Reconcilers use this
+// only to avoid killing a safe standby during its short startup window.
+type PostgreSQLStandbyIntentInspector interface {
+	StandbyIntent(ClusterPolicy) (bool, error)
 }
 
 type OracleController interface {
@@ -165,12 +186,17 @@ func WithMutationLedger(ledger MutationLedger) ServiceOption {
 	return func(service *Service) { service.mutations = ledger }
 }
 
+func WithPowerController(controller PowerController) ServiceOption {
+	return func(service *Service) { service.power = controller }
+}
+
 type Service struct {
 	configuration Config
 	vip           VIPController
 	roles         RoleController
 	postgresql    PostgreSQLController
 	oracle        OracleController
+	power         PowerController
 	mutations     MutationLedger
 	now           func() time.Time
 }
@@ -254,6 +280,9 @@ func (service *Service) validate(request Request) (ClusterPolicy, Response, bool
 	if request.Command == CommandOracleBrokerDiscover && strings.TrimSpace(request.OracleTarget) != "" {
 		return ClusterPolicy{}, blocked("Oracle discovery does not accept a target database"), false
 	}
+	if request.Command == CommandPowerPrepare && request.PowerSnapshot == nil {
+		return ClusterPolicy{}, blocked("power recovery snapshot is required"), false
+	}
 	if request.Command == CommandOracleBrokerStatus || request.Command == CommandOracleBrokerSwitchover {
 		if !oracleTargetAllowed(policy, request.OracleTarget) {
 			return ClusterPolicy{}, blocked("Oracle target is outside the agent allowlist"), false
@@ -283,7 +312,9 @@ func postgresqlMutationCommand(command string) bool {
 
 func agentMutationCommand(command string) bool {
 	switch command {
-	case CommandVIPAcquire, CommandVIPRelease, CommandSelfIsolate, CommandPersistRole, CommandOracleBrokerSwitchover:
+	case CommandVIPAcquire, CommandVIPRelease, CommandSelfIsolate, CommandPersistRole, CommandOracleBrokerSwitchover,
+		CommandPowerPrepare,
+		CommandMySQLServiceStop, CommandMySQLServiceStart, CommandNodePoweroff:
 		return true
 	default:
 		return postgresqlMutationCommand(command)
@@ -350,7 +381,23 @@ func (service *Service) Handle(ctx context.Context, request Request) Response {
 			return blocked("agent mutation blocked: " + publicAgentError(err))
 		}
 		if found {
-			return replayed
+			// VIP acquire/release are state-convergent commands. A completed
+			// receipt proves the prior command outcome, but an independent
+			// reconciler or host restart may have changed physical ownership
+			// afterwards. Re-check physical state and repeat only this
+			// idempotent mutation when the signed desired state has drifted.
+			if replayed.Status == StatusOK && (request.Command == CommandVIPAcquire || request.Command == CommandVIPRelease) {
+				owns, statusErr := service.vip.Status(ctx, policy)
+				if statusErr != nil {
+					return blocked("replayed VIP mutation cannot verify current ownership: " + publicAgentError(statusErr))
+				}
+				desired := request.Command == CommandVIPAcquire
+				if owns == desired {
+					return replayed
+				}
+			} else {
+				return replayed
+			}
 		}
 	}
 	response := Response{Status: StatusOK, ClusterID: policy.ClusterID, InstanceID: policy.InstanceID}
@@ -372,17 +419,36 @@ func (service *Service) Handle(ctx context.Context, request Request) Response {
 		if policy.Engine == model.EnginePostgreSQL {
 			err = errors.Join(releaseErr, service.postgresql.Stop(ctx, policy))
 		} else {
-			err = errors.Join(releaseErr, service.roles.PersistReadOnly(ctx, policy, true))
+			roleErr := service.roles.PersistReadOnly(ctx, policy, true)
+			if roleErr != nil {
+				if durable, ok := service.roles.(DurableRoleController); ok {
+					if isolation, isolationErr := durable.IsolationStatus(ctx, policy); isolationErr == nil && isolation.Isolated() {
+						roleErr = nil
+					}
+				}
+			}
+			err = errors.Join(releaseErr, roleErr)
 		}
 		response.Message = "instance self-isolated"
 	case CommandPersistRole:
 		err = service.roles.PersistReadOnly(ctx, policy, request.ReadOnly)
 		response.Message = "MySQL role persisted"
 	case CommandRoleStatus:
-		var readOnly, superReadOnly bool
-		readOnly, superReadOnly, err = service.roles.Status(ctx, policy)
-		response.ReadOnly = &readOnly
-		response.SuperReadOnly = &superReadOnly
+		if durable, ok := service.roles.(DurableRoleController); ok {
+			var isolation MySQLIsolationStatus
+			isolation, err = durable.IsolationStatus(ctx, policy)
+			response.ReadOnly = &isolation.ReadOnly
+			response.SuperReadOnly = &isolation.SuperReadOnly
+			response.ServiceRunning = &isolation.ServiceRunning
+			response.DatabaseReachable = &isolation.DatabaseReachable
+			response.RestartReadOnly = &isolation.RestartReadOnly
+			response.PersistedReadOnly = &isolation.PersistedReadOnly
+		} else {
+			var readOnly, superReadOnly bool
+			readOnly, superReadOnly, err = service.roles.Status(ctx, policy)
+			response.ReadOnly = &readOnly
+			response.SuperReadOnly = &superReadOnly
+		}
 		response.Message = "MySQL role status collected"
 	case CommandPostgreSQLStatus:
 		var running, inRecovery bool
@@ -424,6 +490,39 @@ func (service *Service) Handle(ctx context.Context, request Request) Response {
 	case CommandOracleBrokerSwitchover:
 		err = service.oracle.Switchover(ctx, policy, request.OracleTarget)
 		response.Message = "Oracle Data Guard Broker switchover completed"
+	case CommandPowerPrepare:
+		if service.power == nil {
+			return blocked("power controller is not configured")
+		}
+		err = service.power.PrepareRecoverySnapshot(ctx, policy, *request.PowerSnapshot)
+		response.Message = "power recovery snapshot prepared"
+	case CommandMySQLServiceStop:
+		if service.power == nil {
+			return blocked("power controller is not configured")
+		}
+		err = service.power.StopService(ctx, policy)
+		response.Message = "MySQL service stopped"
+	case CommandMySQLServiceStart:
+		if service.power == nil {
+			return blocked("power controller is not configured")
+		}
+		err = service.power.StartService(ctx, policy)
+		response.Message = "MySQL service started"
+	case CommandMySQLPowerStatus:
+		if service.power == nil {
+			return blocked("power controller is not configured")
+		}
+		var running, reachable bool
+		running, reachable, err = service.power.ServiceStatus(ctx, policy)
+		response.ServiceRunning = &running
+		response.DatabaseReachable = &reachable
+		response.Message = "MySQL power status collected"
+	case CommandNodePoweroff:
+		if service.power == nil {
+			return blocked("power controller is not configured")
+		}
+		err = service.power.PowerOff(ctx, policy)
+		response.Message = "node poweroff initiated"
 	default:
 		return blocked("agent command is unsupported")
 	}

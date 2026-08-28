@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="Docker Swarm MySQL - ClusterGuard HA operational documentation">
+  <title>Docker Swarm MySQL | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">Skip to content</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>Search documentation</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="Filter by title">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.2.39.html" data-doc-title="release 2.2.39">Release 2.2.39</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="docker-swarm-mysql.html" data-doc-title="docker swarm mysql" aria-current="page" class="active">Docker Swarm MySQL</a><a href="kubernetes-mysql.html" data-doc-title="kubernetes mysql">Kubernetes MySQL</a><a href="update-and-patch.html" data-doc-title="version update and rollback">Version Update and Rollback</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="postgresql-production-qualification.html" data-doc-title="postgresql 16.4 production qualification">PostgreSQL 16.4 Production Qualification</a><a href="docker-swarm-mysql-validation.html" data-doc-title="docker swarm mysql lab qualification">Docker Swarm MySQL Lab Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
+      <div class="sidebar-meta">
+        <span>Offline documentation build</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">Open navigation</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>Docker Swarm MySQL</strong></div>
+        <div class="header-actions">
+          <a href="../zh-CN/docker-swarm-mysql.html" lang="zh-CN">简体中文</a>
+          <button id="print-button" type="button">Print</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha-for-docker-swarm-mysql">ClusterGuard HA for Docker Swarm MySQL<a class="heading-anchor" href="#clusterguard-ha-for-docker-swarm-mysql" aria-label="Link to ClusterGuard HA for Docker Swarm MySQL">#</a></h1>
+<h2 id="scope">Scope<a class="heading-anchor" href="#scope" aria-label="Link to Scope">#</a></h2>
+<p>This phase manages a MySQL 8.0 primary-replica cluster running on Docker Swarm and exposes the writer through a host VIP. Swarm owns container process recovery, MySQL GTID owns data replication, and ClusterGuard owns candidate evaluation, fencing, writer transition, verification, audit, and VIP leases.</p>
+<p>Kubernetes MySQL now uses a separate Service/EndpointSlice provider documented in <code>kubernetes-mysql.md</code>; it must not be mixed with the host-VIP Swarm mode on this page.</p>
+<h2 id="unified-control-plane-and-cluster-selection">Unified control plane and cluster selection<a class="heading-anchor" href="#unified-control-plane-and-cluster-selection" aria-label="Link to Unified control plane and cluster selection">#</a></h2>
+<p>Host, Docker Swarm, and Kubernetes are runtime properties of a database cluster; they are not reasons to split the control plane. A site runs one odd-sized ClusterGuard Raft control plane. Every database cluster uses the same HTTPS API and console ports, <code>3000</code> by default, and appears as a separate resource in the cluster selector, for example <code>pg16-ha</code> and <code>swarm-mysql-8.0</code>.</p>
+<p>Each host also runs one <code>clusterguard-agent</code>. The <code>clusters</code> array in <code>/etc/clusterguard/agent.json</code> may contain host PostgreSQL, host MySQL, and Docker MySQL policies together. Distinct <code>cluster_id</code>, <code>instance_id</code>, and <code>runtime_kind</code> values identify them; equal database ports do not imply equal clusters or runtimes.</p>
+<p>A second port such as <code>3100</code> is permitted only for a temporary destructive lab with an explicit teardown. Qualification must finish by registering the tested cluster in the unified control plane, merging Agent policies and ownership leases, and disabling the temporary Raft group, Agent timer, and listener. A production site must not retain two ClusterGuard control planes for these runtimes.</p>
+<h2 id="host-and-container-boundaries">Host and container boundaries<a class="heading-anchor" href="#host-and-container-boundaries" aria-label="Link to Host and container boundaries">#</a></h2>
+<p>The host runtime includes both bare metal and virtual machines: the operating system directly owns the database process. In the container runtime, Docker Swarm owns the database Service while the ClusterGuard Agent, VIP, and durable fencing evidence remain on the host. Runtime placement must be registered through RuntimeTarget and WorkloadBinding; it must never be inferred from an address or port.</p>
+<table>
+<thead>
+<tr>
+<th>Boundary</th>
+<th>Host (bare metal or VM)</th>
+<th>Container (Docker Swarm)</th>
+<th>Kubernetes</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Database process</td>
+<td>systemd service or controlled host process</td>
+<td>task/container of one allowlisted Swarm Service</td>
+<td>StatefulSet Pod</td>
+</tr>
+<tr>
+<td>Stable database identity</td>
+<td><code>resource_id</code> plus MySQL <code>server_uuid</code></td>
+<td>Same; replacement containers do not replace database identity</td>
+<td>Same; Pod UID is not database identity</td>
+</tr>
+<tr>
+<td>Replaceable placement</td>
+<td>hostname, IP, and process PID</td>
+<td>host node, task ID, and container ID</td>
+<td>Node and Pod UID</td>
+</tr>
+<tr>
+<td>Durable data</td>
+<td>host data directory or block storage</td>
+<td>registered persistent volume, never the container writable layer</td>
+<td>PVC UID</td>
+</tr>
+<tr>
+<td>Lifecycle owner</td>
+<td>systemd or host commands</td>
+<td>Docker Swarm Service</td>
+<td>Kubernetes controller</td>
+</tr>
+<tr>
+<td>ClusterGuard Agent</td>
+<td>database host</td>
+<td>container host, outside the database container</td>
+<td>restricted Kubernetes API plus a Pod start guard</td>
+</tr>
+<tr>
+<td>Client entry</td>
+<td>VIP on a host network interface</td>
+<td>VIP on the current writer host network interface</td>
+<td>Service/EndpointSlice, not a host VIP</td>
+</tr>
+<tr>
+<td>Role and fencing</td>
+<td>change the local database role and manage the VIP</td>
+<td>write the host fence file, then change the database role in the fixed Service</td>
+<td>durable StatefulSet role, scale-to-zero fencing, and EndpointSlice transfer</td>
+</tr>
+<tr>
+<td>Current support</td>
+<td>Supported</td>
+<td>MySQL 8.0 Docker Swarm takeover</td>
+<td>Initial MySQL support with constraints in the Kubernetes guide</td>
+</tr>
+</tbody></table>
+<p>Container mode does not place the VIP inside a container. Applications still connect to <code>VIP:database-port</code>; the VIP moves between hosts while Swarm manages desired container state. The ClusterGuard control plane remains an independent host service, so stopping a database container must not also remove management access.</p>
+<h2 id="identity-and-placement">Identity and placement<a class="heading-anchor" href="#identity-and-placement" aria-label="Link to Identity and placement">#</a></h2>
+<p><code>DatabaseInstance.resource_id</code> and MySQL <code>server_uuid</code> remain stable when a container is replaced. <code>RuntimeTarget</code> describes the Docker control boundary. <code>WorkloadBinding</code> binds an instance to one host and allowlisted Swarm Service while recording replaceable task and container observations.</p>
+<p>Only one active binding is accepted for an instance. A container ID is never accepted from a mutation request.</p>
+<h2 id="fencing-contract">Fencing contract<a class="heading-anchor" href="#fencing-contract" aria-label="Link to Fencing contract">#</a></h2>
+<p>The host Agent atomically writes <code>/etc/clusterguard/docker/mysql-fence.cnf</code> before changing the live server. The whole <code>/etc/clusterguard/docker</code> directory is mounted read-only at <code>/etc/mysql/conf.d</code>, so an atomic role-file replacement is visible through the directory mount instead of being hidden behind a file bind mount pinned to an old inode. The Agent then records the durable local role, applies MySQL <code>SET PERSIST_ONLY</code>, changes the live read-only flags, and releases the VIP. A Swarm-recreated former primary therefore starts read-only.</p>
+<p>An unavailable Docker daemon, ambiguous container labels, an identity mismatch, or an unreachable role on a running task blocks failover.</p>
+<h2 id="operational-constraints">Operational constraints<a class="heading-anchor" href="#operational-constraints" aria-label="Link to Operational constraints">#</a></h2>
+<ul>
+<li>Use at least three odd-numbered Swarm Managers. Swarm quorum and ClusterGuard Raft quorum are separate safety domains.</li>
+<li>Pin one MySQL Service to each labeled node and publish 3306 in host mode.</li>
+<li>Store data on a durable bind mount or qualified block storage, never in the container writable layer.</li>
+<li>Run the restricted Agent on the host. Do not expose the Docker socket to the database container.</li>
+<li>Planned database stop changes Swarm desired replicas to zero. <code>docker stop</code> is not an accepted lifecycle operation.</li>
+<li>The VIP is attached to the current writer host, not to a container overlay interface.</li>
+</ul>
+<h2 id="deployment-and-validation">Deployment and validation<a class="heading-anchor" href="#deployment-and-validation" aria-label="Link to Deployment and validation">#</a></h2>
+<p>Deployment assets are under <code>deploy/docker-swarm/</code>. Install Docker from the pinned static archive, create a three-manager Swarm, prepare each host, and install an independent native client on every controller with <code>mysql/install-mysql-client.sh MYSQL_TAR</code>. The control plane must not borrow the client from its local database container because losing that task would also remove discovery and recovery access. Load the MySQL image, create the external secrets, and deploy <code>mysql-stack.yml</code>. Run <code>bootstrap-replication.sh 01</code> on host 01 first, followed by <code>bootstrap-replication.sh 02</code> and <code>03</code> on the corresponding hosts. Each invocation deliberately controls only the local Swarm task. Register a new Docker MySQL cluster in the site&#39;s existing control plane, discover the instances, merge each Docker policy into the existing host Agent configuration, and then register RuntimeTarget and WorkloadBinding records. Do not create a second API or Raft port.</p>
+<p>Qualification covers round-robin switchovers, primary task loss, Docker daemon loss, former-primary restart, duplicate container identity, Raft quorum loss, Swarm manager quorum loss, VIP uniqueness, replication convergence, and audit/report completeness.</p>
+<p>The executable lab plan and evidence checklist for <code>192.168.102.152-154</code> are in
+<a href="docker-swarm-mysql-validation.html"><code>docker-swarm-mysql-validation-plan.md</code></a>.</p>
+<h2 id="separate-kubernetes-mode">Separate Kubernetes mode<a class="heading-anchor" href="#separate-kubernetes-mode" aria-label="Link to Separate Kubernetes mode">#</a></h2>
+<p>The Kubernetes provider binds an instance to StatefulSet ordinal, Pod UID, Node name, and PVC UID. ClusterGuard updates a selectorless Service EndpointSlice only after Raft authorization; a cloud load balancer or MetalLB can provide the external address. Pod labels and ordinary Service selectors do not own writer routing. See <a href="kubernetes-mysql.html"><code>kubernetes-mysql.md</code></a>.</p>
+
+          <footer class="document-footer">
+            <span>Source: <code>docs/en-US/docker-swarm-mysql.md</code></span>
+            <a href="../index.html">Documentation language home</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="On this page">
+          <strong>On this page</strong>
+          <a class="toc-level-2" href="#scope">Scope</a><a class="toc-level-2" href="#unified-control-plane-and-cluster-selection">Unified control plane and cluster selection</a><a class="toc-level-2" href="#host-and-container-boundaries">Host and container boundaries</a><a class="toc-level-2" href="#identity-and-placement">Identity and placement</a><a class="toc-level-2" href="#fencing-contract">Fencing contract</a><a class="toc-level-2" href="#operational-constraints">Operational constraints</a><a class="toc-level-2" href="#deployment-and-validation">Deployment and validation</a><a class="toc-level-2" href="#separate-kubernetes-mode">Separate Kubernetes mode</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

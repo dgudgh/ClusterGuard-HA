@@ -111,8 +111,33 @@ func TestQuorumLeaseRenewsSameStableOwnershipIntent(t *testing.T) {
 	}
 }
 
+func TestQuorumLeaseRenewalNeverShortensExistingExpiry(t *testing.T) {
+	now := time.Date(2026, time.August, 23, 10, 0, 0, 0, time.UTC)
+	startedAt := now
+	records := &leaseRecordStore{records: map[model.ResourceID]LeaseRecord{}}
+	store := NewLeaseStore(records, authoritativeMembership(t), func() time.Time { return now })
+	request := endpoint.LeaseRequest{
+		ClusterID: model.NewResourceID(), HAEndpointID: model.NewResourceID(),
+		OperationID: model.NewResourceID(), OwnerID: model.NewResourceID(), TTL: time.Minute,
+	}
+	first, err := store.Acquire(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(5 * time.Second)
+	request.TTL = 30 * time.Second
+	renewed, err := store.Acquire(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !renewed.ExpiresAt.Equal(startedAt.Add(time.Minute)) || renewed.ExpiresAt.Before(first.ExpiresAt) {
+		t.Fatalf("short renewal reduced lease expiry: first=%s renewed=%s", first.ExpiresAt, renewed.ExpiresAt)
+	}
+}
+
 func TestQuorumLeaseBatchesStableOwnershipRenewalsInOneDurableMutation(t *testing.T) {
-	now := time.Date(2026, time.July, 14, 12, 0, 0, 0, time.UTC)
+	startedAt := time.Date(2026, time.July, 14, 12, 0, 0, 0, time.UTC)
+	now := startedAt
 	records := &leaseRecordStore{records: map[model.ResourceID]LeaseRecord{}}
 	store := NewLeaseStore(records, authoritativeMembership(t), func() time.Time { return now })
 	requests := make([]endpoint.LeaseRequest, 0, 6)
@@ -132,15 +157,64 @@ func TestQuorumLeaseBatchesStableOwnershipRenewalsInOneDurableMutation(t *testin
 
 	now = now.Add(10 * time.Second)
 	if err := store.AcquireStableBatch(context.Background(), requests); err != nil {
-		t.Fatalf("batch renewal: %v", err)
+		t.Fatalf("batch with renewal headroom: %v", err)
+	}
+	if records.replaceCalls != 1 {
+		t.Fatalf("leases with twenty seconds of headroom used %d durable mutations, want one initial mutation", records.replaceCalls)
+	}
+	for _, record := range records.records {
+		if !record.Lease.ExpiresAt.Equal(startedAt.Add(30*time.Second)) || !record.UpdatedAt.Equal(startedAt) {
+			t.Fatalf("lease changed before entering its renewal window: %+v", record)
+		}
+	}
+
+	now = startedAt.Add(16 * time.Second)
+	if err := store.AcquireStableBatch(context.Background(), requests); err != nil {
+		t.Fatalf("batch renewal near expiry: %v", err)
 	}
 	if records.replaceCalls != 2 {
-		t.Fatalf("six lease renewals used %d durable mutations, want two total batch mutations", records.replaceCalls)
+		t.Fatalf("six near-expiry renewals used %d durable mutations, want one additional batch mutation", records.replaceCalls)
 	}
 	for _, record := range records.records {
 		if !record.Lease.ExpiresAt.Equal(now.Add(30*time.Second)) || !record.UpdatedAt.Equal(now) {
-			t.Fatalf("batch-renewed record=%+v", record)
+			t.Fatalf("near-expiry lease was not renewed: %+v", record)
 		}
+	}
+}
+
+func TestQuorumLeaseRenewOnlyRequiresAnExistingStableLease(t *testing.T) {
+	now := time.Date(2026, time.July, 28, 7, 0, 0, 0, time.UTC)
+	records := &leaseRecordStore{records: map[model.ResourceID]LeaseRecord{}}
+	store := NewLeaseStore(records, authoritativeMembership(t), func() time.Time { return now })
+	endpointID := model.NewResourceID()
+	request := endpoint.LeaseRequest{
+		ClusterID: model.NewResourceID(), HAEndpointID: endpointID, OperationID: endpointID,
+		OwnerID: model.NewResourceID(), TTL: 30 * time.Second, RenewOnly: true,
+	}
+
+	if err := store.AcquireStableBatch(context.Background(), []endpoint.LeaseRequest{request}); !errors.Is(err, endpoint.ErrLeaseConflict) {
+		t.Fatalf("renew-only missing lease error=%v", err)
+	}
+	if len(records.records) != 0 {
+		t.Fatalf("renew-only request created a lease: %+v", records.records)
+	}
+
+	request.RenewOnly = false
+	if err := store.AcquireStableBatch(context.Background(), []endpoint.LeaseRequest{request}); err != nil {
+		t.Fatalf("seed stable lease: %v", err)
+	}
+	var seeded LeaseRecord
+	for _, record := range records.records {
+		seeded = record
+	}
+	now = now.Add(16 * time.Second)
+	request.RenewOnly = true
+	if err := store.AcquireStableBatch(context.Background(), []endpoint.LeaseRequest{request}); err != nil {
+		t.Fatalf("renew existing stable lease: %v", err)
+	}
+	renewed := records.records[seeded.Lease.ResourceID]
+	if renewed.Lease.ResourceID != seeded.Lease.ResourceID || !renewed.Lease.ExpiresAt.Equal(now.Add(30*time.Second)) {
+		t.Fatalf("renew-only lease=%+v, seeded=%+v", renewed, seeded)
 	}
 }
 

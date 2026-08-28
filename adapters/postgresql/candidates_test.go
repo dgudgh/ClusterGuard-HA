@@ -88,6 +88,7 @@ func TestEvaluateCandidatesAllowsCaughtUpStandbyAfterConfirmedSourceLoss(t *test
 	candidate.Replication.IOThread = model.ThreadStopped
 	candidate.Replication.RetrievedPosition = "0/5000070"
 	request.Primary.Health.State = model.HealthUnknown
+	request.Primary.Role = model.RoleUnknown
 	request.Instances = []model.DatabaseInstance{candidate}
 	probe := postgresqlCandidateProbe(postgresqlCandidateA, request.ObservedAt)
 	probe.Health.State = model.HealthDegraded
@@ -123,6 +124,9 @@ func TestEvaluateSourceLossCandidateKeepsUnsafeEvidenceBlocked(t *testing.T) {
 	}{
 		{name: "primary still healthy", mutate: func(request *adapter.CandidateRequest, _ *model.DatabaseInstance, _ *model.ProbeStatus) {
 			request.Primary.Health.State = model.HealthHealthy
+		}},
+		{name: "source reports standby", mutate: func(request *adapter.CandidateRequest, _ *model.DatabaseInstance, _ *model.ProbeStatus) {
+			request.Primary.Role = model.RoleStandby
 		}},
 		{name: "stale bound probe", mutate: func(request *adapter.CandidateRequest, _ *model.DatabaseInstance, probe *model.ProbeStatus) {
 			probe.DiscoveryObservedAt = request.ObservedAt.Add(-time.Second)
@@ -165,9 +169,10 @@ func TestEvaluateSourceLossCandidateKeepsUnsafeEvidenceBlocked(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			request := postgresqlCandidateRequest()
-			request.Primary.Health.State = model.HealthUnknown
-			request.Policy.AllowSourceDisconnected = true
+				request := postgresqlCandidateRequest()
+				request.Primary.Health.State = model.HealthUnknown
+				request.Primary.Role = model.RoleUnknown
+				request.Policy.AllowSourceDisconnected = true
 			candidate := postgresqlCandidate(postgresqlCandidateA, "0/5000070", 0)
 			candidate.Health.State = model.HealthDegraded
 			candidate.PromotionEligible = false

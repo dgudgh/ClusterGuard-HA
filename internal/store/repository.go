@@ -107,6 +107,8 @@ const discoveryMetricSampleLimit = 60
 type snapshot struct {
 	Clusters              map[model.ResourceID]model.DatabaseCluster               `json:"clusters"`
 	Nodes                 map[model.ResourceID]model.DatabaseNode                  `json:"nodes"`
+	RuntimeTargets        map[model.ResourceID]model.RuntimeTarget                 `json:"runtime_targets"`
+	WorkloadBindings      map[model.ResourceID]model.WorkloadBinding               `json:"workload_bindings"`
 	Instances             map[model.ResourceID]model.DatabaseInstance              `json:"instances"`
 	Endpoints             map[model.ResourceID]map[model.ResourceID]model.Endpoint `json:"endpoints"`
 	HAEndpoints           map[model.ResourceID]model.HAEndpoint                    `json:"ha_endpoints"`
@@ -124,6 +126,7 @@ type snapshot struct {
 	Anomalies             map[model.ResourceID]model.MetadataAnomaly               `json:"anomalies"`
 	Operations            map[model.ResourceID]model.OperationRecord               `json:"operations"`
 	OperationKeys         map[string]model.ResourceID                              `json:"operation_keys"`
+	PowerOperations       map[model.ResourceID]model.PowerOperation                `json:"power_operations"`
 	Audits                []model.AuditEvent                                       `json:"audits"`
 	Reports               []model.Report                                           `json:"reports"`
 	SecurityEvents        []model.SecurityEvent                                    `json:"security_events"`
@@ -147,6 +150,8 @@ func emptySnapshot() snapshot {
 	return snapshot{
 		Clusters:              map[model.ResourceID]model.DatabaseCluster{},
 		Nodes:                 map[model.ResourceID]model.DatabaseNode{},
+		RuntimeTargets:        map[model.ResourceID]model.RuntimeTarget{},
+		WorkloadBindings:      map[model.ResourceID]model.WorkloadBinding{},
 		Instances:             map[model.ResourceID]model.DatabaseInstance{},
 		Endpoints:             map[model.ResourceID]map[model.ResourceID]model.Endpoint{},
 		HAEndpoints:           map[model.ResourceID]model.HAEndpoint{},
@@ -164,6 +169,7 @@ func emptySnapshot() snapshot {
 		Anomalies:             map[model.ResourceID]model.MetadataAnomaly{},
 		Operations:            map[model.ResourceID]model.OperationRecord{},
 		OperationKeys:         map[string]model.ResourceID{},
+		PowerOperations:       map[model.ResourceID]model.PowerOperation{},
 		Audits:                []model.AuditEvent{},
 		Reports:               []model.Report{},
 		SecurityEvents:        []model.SecurityEvent{},
@@ -203,44 +209,120 @@ func syncMetadataDirectory(path string) error {
 	return directory.Close()
 }
 
-func Open(path string) (*Repository, error) {
-	repository := NewMemory()
-	repository.path = strings.TrimSpace(path)
-	if repository.path == "" {
-		return repository, nil
-	}
-	file, err := os.Open(repository.path)
-	if os.IsNotExist(err) {
-		return repository, nil
-	}
+func previousSnapshotPath(path string) string {
+	return path + ".previous"
+}
+
+func readSnapshotFile(path string) (snapshot, snapshotRevisionMetadata, error) {
+	file, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("read metadata snapshot: %w", err)
+		return snapshot{}, snapshotRevisionMetadata{}, err
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
-		return nil, fmt.Errorf("inspect metadata snapshot: %w", err)
+		return snapshot{}, snapshotRevisionMetadata{}, fmt.Errorf("inspect metadata snapshot: %w", err)
 	}
 	if info.Size() > maximumSnapshotBytes {
-		return nil, validationError("metadata snapshot exceeds maximum size")
+		return snapshot{}, snapshotRevisionMetadata{}, validationError("metadata snapshot exceeds maximum size")
 	}
 	contents, err := io.ReadAll(io.LimitReader(file, maximumSnapshotBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("read metadata snapshot: %w", err)
+		return snapshot{}, snapshotRevisionMetadata{}, fmt.Errorf("read metadata snapshot: %w", err)
 	}
 	if len(contents) > maximumSnapshotBytes {
-		return nil, validationError("metadata snapshot exceeds maximum size")
+		return snapshot{}, snapshotRevisionMetadata{}, validationError("metadata snapshot exceeds maximum size")
 	}
 	decoded, metadata, err := decodeSnapshotState(contents)
 	if err != nil {
-		return nil, fmt.Errorf("decode metadata snapshot: %w", err)
+		return snapshot{}, snapshotRevisionMetadata{}, fmt.Errorf("decode metadata snapshot: %w", err)
+	}
+	return decoded, metadata, nil
+}
+
+func loadRepositorySnapshot(repository *Repository, path string) error {
+	decoded, metadata, err := readSnapshotFile(path)
+	if err != nil {
+		return err
 	}
 	repository.snapshot = decoded
 	repository.stateDigest = metadata.ContentsDigest
 	if metadata.StateRevision != nil {
 		repository.stateRevision = *metadata.StateRevision
 	}
+	return nil
+}
+
+func Open(path string) (*Repository, error) {
+	repository := NewMemory()
+	repository.path = strings.TrimSpace(path)
+	if repository.path == "" {
+		return repository, nil
+	}
+	currentErr := loadRepositorySnapshot(repository, repository.path)
+	if currentErr == nil {
+		return repository, nil
+	}
+	previousPath := previousSnapshotPath(repository.path)
+	if errors.Is(currentErr, os.ErrNotExist) {
+		previousErr := loadRepositorySnapshot(repository, previousPath)
+		if previousErr == nil {
+			return repository, nil
+		}
+		if errors.Is(previousErr, os.ErrNotExist) {
+			return repository, nil
+		}
+		return nil, fmt.Errorf("read metadata snapshot; previous generation is unusable: %w", previousErr)
+	}
+	if previousErr := loadRepositorySnapshot(repository, previousPath); previousErr != nil {
+		return nil, fmt.Errorf("read metadata snapshot: %v; previous generation is unusable: %w", currentErr, previousErr)
+	}
 	return repository, nil
+}
+
+func preservePreviousSnapshot(path string) error {
+	if _, _, err := readSnapshotFile(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		// Open only reaches persistence with a corrupt current generation when
+		// it has already restored the repository from a validated previous
+		// generation. Keep that recovery copy in place and allow the new,
+		// fsynced temporary file to replace the damaged current generation.
+		if _, _, previousErr := readSnapshotFile(previousSnapshotPath(path)); previousErr == nil {
+			return nil
+		} else {
+			return fmt.Errorf("validate current metadata generation: %v; previous generation is unusable: %w", err, previousErr)
+		}
+	}
+	previousPath := previousSnapshotPath(path)
+	temporaryPath := previousPath + ".next"
+	if err := os.Remove(temporaryPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove stale metadata backup: %w", err)
+	}
+	defer os.Remove(temporaryPath)
+	if err := os.Link(path, temporaryPath); err != nil {
+		source, openErr := os.Open(path)
+		if openErr != nil {
+			return fmt.Errorf("open current metadata generation: %w", openErr)
+		}
+		destination, createErr := os.OpenFile(temporaryPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if createErr != nil {
+			_ = source.Close()
+			return fmt.Errorf("create metadata backup: %w", createErr)
+		}
+		_, copyErr := io.Copy(destination, io.LimitReader(source, maximumSnapshotBytes+1))
+		syncErr := destination.Sync()
+		closeDestinationErr := destination.Close()
+		closeSourceErr := source.Close()
+		if copyErr != nil || syncErr != nil || closeDestinationErr != nil || closeSourceErr != nil {
+			return fmt.Errorf("copy metadata backup: %w", errors.Join(copyErr, syncErr, closeDestinationErr, closeSourceErr))
+		}
+	}
+	if err := os.Rename(temporaryPath, previousPath); err != nil {
+		return fmt.Errorf("publish previous metadata generation: %w", err)
+	}
+	return nil
 }
 
 func terminalReportStatus(status model.OperationStatus) bool {
@@ -324,6 +406,10 @@ func cloneOperationRecord(operation model.OperationRecord) model.OperationRecord
 	copy.Plan = cloneOperationPlan(operation.Plan)
 	copy.Attempts = append([]model.StepAttempt{}, operation.Attempts...)
 	copy.Verification.Checks = append([]model.Check{}, operation.Verification.Checks...)
+	if operation.Review != nil {
+		review := *operation.Review
+		copy.Review = &review
+	}
 	return copy
 }
 
@@ -403,6 +489,8 @@ func cloneDiscoverySnapshot(value snapshot) snapshot {
 	copy := value
 	copy.Clusters = cloneClusterMap(value.Clusters)
 	copy.Nodes = cloneNodeMap(value.Nodes)
+	copy.RuntimeTargets = cloneRuntimeTargetMap(value.RuntimeTargets)
+	copy.WorkloadBindings = cloneWorkloadBindingMap(value.WorkloadBindings)
 	copy.Instances = cloneInstanceMap(value.Instances)
 	copy.Endpoints = cloneEndpointMap(value.Endpoints)
 	copy.HAEndpoints = cloneHAEndpointMap(value.HAEndpoints)
@@ -420,6 +508,7 @@ func cloneDiscoverySnapshot(value snapshot) snapshot {
 	copy.Anomalies = cloneAnomalyMap(value.Anomalies)
 	copy.Operations = cloneOperationMap(value.Operations)
 	copy.OperationKeys = cloneOperationKeyMap(value.OperationKeys)
+	copy.PowerOperations = clonePowerOperationMap(value.PowerOperations)
 	copy.SecurityEvents = append([]model.SecurityEvent{}, value.SecurityEvents...)
 	return copy
 }
@@ -438,6 +527,44 @@ func cloneNodeMap(nodes map[model.ResourceID]model.DatabaseNode) map[model.Resou
 	return copy
 }
 
+func cloneRuntimeTarget(value model.RuntimeTarget) model.RuntimeTarget {
+	copy := value
+	copy.Labels = make(map[string]string, len(value.Labels))
+	for key, label := range value.Labels {
+		copy.Labels[key] = label
+	}
+	return copy
+}
+
+func cloneWorkloadBinding(value model.WorkloadBinding) model.WorkloadBinding {
+	copy := value
+	if value.Docker != nil {
+		docker := *value.Docker
+		copy.Docker = &docker
+	}
+	if value.Kubernetes != nil {
+		kubernetes := *value.Kubernetes
+		copy.Kubernetes = &kubernetes
+	}
+	return copy
+}
+
+func cloneRuntimeTargetMap(values map[model.ResourceID]model.RuntimeTarget) map[model.ResourceID]model.RuntimeTarget {
+	copy := make(map[model.ResourceID]model.RuntimeTarget, len(values))
+	for key, value := range values {
+		copy[key] = cloneRuntimeTarget(value)
+	}
+	return copy
+}
+
+func cloneWorkloadBindingMap(values map[model.ResourceID]model.WorkloadBinding) map[model.ResourceID]model.WorkloadBinding {
+	copy := make(map[model.ResourceID]model.WorkloadBinding, len(values))
+	for key, value := range values {
+		copy[key] = cloneWorkloadBinding(value)
+	}
+	return copy
+}
+
 func cloneHAEndpointMap(values map[model.ResourceID]model.HAEndpoint) map[model.ResourceID]model.HAEndpoint {
 	copy := make(map[model.ResourceID]model.HAEndpoint, len(values))
 	for resourceID, endpoint := range values {
@@ -450,6 +577,28 @@ func cloneApprovalGrantMap(values map[model.ResourceID]model.ApprovalGrant) map[
 	copy := make(map[model.ResourceID]model.ApprovalGrant, len(values))
 	for resourceID, grant := range values {
 		copy[resourceID] = grant
+	}
+	return copy
+}
+
+func clonePowerOperation(value model.PowerOperation) model.PowerOperation {
+	copy := value
+	if value.Snapshot != nil {
+		snapshot := *value.Snapshot
+		snapshot.Replicas = append([]model.PowerInstanceRef{}, value.Snapshot.Replicas...)
+		if value.Snapshot.VIP != nil {
+			vip := *value.Snapshot.VIP
+			snapshot.VIP = &vip
+		}
+		copy.Snapshot = &snapshot
+	}
+	return copy
+}
+
+func clonePowerOperationMap(values map[model.ResourceID]model.PowerOperation) map[model.ResourceID]model.PowerOperation {
+	copy := make(map[model.ResourceID]model.PowerOperation, len(values))
+	for resourceID, operation := range values {
+		copy[resourceID] = clonePowerOperation(operation)
 	}
 	return copy
 }
@@ -559,6 +708,9 @@ func (repository *Repository) persistSnapshotRevisionLocked(value snapshot, stat
 	}
 	if err := temporary.Close(); err != nil {
 		return fmt.Errorf("close metadata snapshot: %w", err)
+	}
+	if err := preservePreviousSnapshot(repository.path); err != nil {
+		return err
 	}
 	if err := os.Rename(temporaryPath, repository.path); err != nil {
 		return fmt.Errorf("publish metadata snapshot: %w", err)
@@ -1531,6 +1683,26 @@ func hasCurrentDiscoveryEvidence(probes []model.ProbeStatus, instanceID model.Re
 	return false
 }
 
+func normalizedProbeOutcome(probe model.ProbeStatus) model.ProbeOutcome {
+	if probe.Outcome != "" {
+		return probe.Outcome
+	}
+	if !probe.DiscoveryObservedAt.IsZero() {
+		if probe.Health.State == model.HealthDegraded && probe.Health.Summary == "performance metrics unavailable" {
+			return model.ProbeOutcomeMetricsUnavailable
+		}
+		return model.ProbeOutcomeReachable
+	}
+	switch probe.Health.Summary {
+	case "discovery credentials unavailable":
+		return model.ProbeOutcomeCredentialsUnavailable
+	case "database probe failed":
+		return model.ProbeOutcomeDatabaseUnavailable
+	default:
+		return model.ProbeOutcomeUnknown
+	}
+}
+
 func strictTopologyHealth(observedAt time.Time, fallback model.Health, probes []model.ProbeStatus, instances []model.DatabaseInstance, links []model.ReplicationLink) model.Health {
 	healthy := len(probes) > 0 && len(instances) > 0
 	for _, probe := range probes {
@@ -1575,6 +1747,43 @@ func strictTopologyHealth(observedAt time.Time, fallback model.Health, probes []
 		summary = fallback.Summary
 	}
 	return model.Health{State: model.HealthDegraded, Summary: summary, ObservedAt: observedAt}
+}
+
+func clearUnobservedRuntimeState(instance model.DatabaseInstance, observedAt time.Time) model.DatabaseInstance {
+	instance = cloneInstance(instance)
+	changed := instance.Role != model.RoleUnknown ||
+		len(instance.Replication.SourceIdentity) > 0 ||
+		instance.Replication.IOThread != model.ThreadUnknown ||
+		instance.Replication.SQLThread != model.ThreadUnknown ||
+		instance.Replication.LagSeconds != nil ||
+		instance.Replication.RetrievedPosition != "" ||
+		instance.Replication.ExecutedPosition != "" ||
+		instance.Replication.LastIOError != "" ||
+		instance.Replication.LastSQLError != "" ||
+		instance.Replication.LastError != "" ||
+		instance.PromotionEligible
+	instance.Role = model.RoleUnknown
+	instance.Replication = model.ReplicationStatus{IOThread: model.ThreadUnknown, SQLThread: model.ThreadUnknown}
+	instance.PromotionEligible = false
+	if instance.Engine == model.EngineMySQL {
+		for _, key := range []string{"read_only", "super_read_only"} {
+			if _, exists := instance.EngineMetadata[key]; exists {
+				changed = true
+				delete(instance.EngineMetadata, key)
+			}
+		}
+		for key := range instance.EngineMetadata {
+			if strings.HasPrefix(key, "semi_sync_") {
+				changed = true
+				delete(instance.EngineMetadata, key)
+			}
+		}
+	}
+	if changed {
+		instance.MetadataRevision++
+		instance.UpdatedAt = observedAt
+	}
+	return instance
 }
 
 func (repository *Repository) ApplyDiscoveryRefresh(refresh DiscoveryRefresh) (model.TopologySnapshot, error) {
@@ -1696,13 +1905,15 @@ func (repository *Repository) ApplyDiscoveryRefresh(refresh DiscoveryRefresh) (m
 	probes := make([]model.ProbeStatus, 0, len(activeEndpoints))
 	currentHealth := make(map[model.ResourceID]model.Health)
 	probeHealthy := make(map[model.ResourceID]bool)
+	probeObserved := make(map[model.ResourceID]bool)
 	probeSeen := make(map[model.ResourceID]bool)
 	for endpointID, endpoint := range activeEndpoints {
 		probe, provided := providedProbes[endpointID]
 		if !provided {
-			probe = model.ProbeStatus{EndpointID: endpointID, Health: model.Health{State: model.HealthUnknown, ObservedAt: observedAt}}
+			probe = model.ProbeStatus{EndpointID: endpointID, Outcome: model.ProbeOutcomeUnknown, Health: model.Health{State: model.HealthUnknown, ObservedAt: observedAt}}
 			if instanceID, observed := observedByEndpoint[endpointID]; observed {
 				probe.InstanceID = instanceID
+				probe.Outcome = model.ProbeOutcomeReachable
 				probe.Health = observedInstances[instanceID].Health
 			}
 		}
@@ -1710,6 +1921,7 @@ func (repository *Repository) ApplyDiscoveryRefresh(refresh DiscoveryRefresh) (m
 		probe.InstanceID = endpoint.InstanceID
 		probe.DiscoveryObservedAt = discoveryEvidence[endpointID]
 		probe.MetricsObservedAt = metricsEvidence[endpointID]
+		probe.Outcome = normalizedProbeOutcome(probe)
 		if probe.Health.ObservedAt.IsZero() {
 			probe.Health.ObservedAt = observedAt
 		}
@@ -1718,6 +1930,9 @@ func (repository *Repository) ApplyDiscoveryRefresh(refresh DiscoveryRefresh) (m
 			continue
 		}
 		probeSeen[probe.InstanceID] = true
+		if probe.Outcome == model.ProbeOutcomeReachable || probe.Outcome == model.ProbeOutcomeMetricsUnavailable {
+			probeObserved[probe.InstanceID] = true
+		}
 		if !probeHealthy[probe.InstanceID] && healthPriority(probe.Health.State) == healthPriority(model.HealthHealthy) {
 			probeHealthy[probe.InstanceID] = true
 		}
@@ -1749,8 +1964,11 @@ func (repository *Repository) ApplyDiscoveryRefresh(refresh DiscoveryRefresh) (m
 		}
 		if health, ok := currentHealth[instance.ResourceID]; ok {
 			instance.Health = health
-			next.Instances[instance.ResourceID] = cloneInstance(instance)
 		}
+		if !probeObserved[instance.ResourceID] {
+			instance = clearUnobservedRuntimeState(instance, observedAt)
+		}
+		next.Instances[instance.ResourceID] = cloneInstance(instance)
 		activeInstanceIDs[instance.ResourceID] = struct{}{}
 		instances = append(instances, cloneInstance(instance))
 		if key, err := identity.InstanceKey(instance.Engine, instance.EngineIdentity); err == nil {

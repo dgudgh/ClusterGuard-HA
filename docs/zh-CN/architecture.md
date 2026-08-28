@@ -10,6 +10,22 @@ ClusterGuard HA 是一个与数据库无关的控制平面，具有特定于引�
 
 已封板的 2.1 系列启用了 MySQL 控制路径，PostgreSQL 从 2.2 系列开始交付。Oracle 和 SQL Server 仍属于后续独立认证的产品线；能力入口存在并不代表已获得生产支持。当前开发分支包含发现、健康、原生指标、确定性候选评估、受控切换和故障切换、旧主重新加入、白名单修复、Linux VIP 所有权和节点生命周期。变更操作始终受能力和配置门禁约束：缺少多数派、隔离证据、受限 Agent 策略、凭据、端点提供器或当前观测时，系统会在进入不安全步骤前阻断操作。Oracle 和 SQL Server 角色转换通过各自的原生 HA 控制面集成：Oracle Data Guard Broker 使用 DGMGRL，SQL Server Always On 使用 sqlcmd/T-SQL。SQL Server 的发现、健康、候选、队列指标、执行和验证路径已实现。Oracle 的发现和受控 Broker 执行通过受限节点 Agent 实现；Oracle 指标扩展仍在路线图中。未配置完整原生执行器和安全依赖时，相关变更能力不会启用。
 
+## 软件升级平面
+
+ClusterGuard HA 将控制软件升级与数据库变更完全分离。每个二进制公开版本、发行序号、构建提交、`state_format` 和 `update_protocol`；每个 `.cgupgrade` 签名升级包同时携带目标 RPM、回退 RPM、兼容性清单、SHA-256 摘要和离线发布签名。现场升级器只管理 ClusterGuard 控制器和 Agent，不调用数据库客户端，也不修改数据库软件、数据目录、复制关系或 VIP 配置。旧 `.cgpatch` 后缀仅作兼容。
+
+升级状态机固定为：
+
+```text
+VERIFY_SIGNATURE -> CHECK_COMPATIBILITY -> CHECK_QUORUM -> CHECK_IDLE -> CHECK_INVENTORY
+-> ENTER_MAINTENANCE -> FOLLOWERS -> DATA_ONLY -> LEADER
+-> VERIFY_VERSIONS -> VERIFY_NODE_SERVICES -> VERIFY_QUORUM -> LEAVE_MAINTENANCE
+```
+
+`CHECK_INVENTORY` 同时核对部署目标、每台节点的不可变 UUID、实时 Raft voter 和活动数据节点清单。扩容、退役、替换、hostname/IP 变化或旧状态文件都不能使活动节点被静默漏过。`VERIFY_NODE_SERVICES` 对控制节点检查控制面重新入群，对数据节点检查 Agent 与 reconcile timer；混合节点必须同时满足两组条件。
+
+维护标记是所有变更入口共享的 fail-closed 门禁。滚动期间，发现、健康、指标和只读审计保持可用；切换、恢复、节点同步、元数据修正和生命周期变更返回维护中。任一步失败都会停止前进并按相反顺序使用升级包内旧 RPM 回退。只有完整升级或完整回退通过版本、节点服务和多数派验证后才释放门禁。释放前会预检全部控制节点；若释放中途失败，则把同一升级锁补偿写回全部控制节点。进程中断、最终验证失败、补偿不完整或回退不完整时均保留门禁，并通过同一签名升级包的 `--resume` 续跑。完整现场流程见[版本升级与回退手册](update-and-patch.md)。
+
 ## 资源模型
 
 每个持久资源都有一个不可变的平台 UUID 和修订元数据。主要资源如下：
@@ -25,6 +41,8 @@ ClusterGuard HA 是一个与数据库无关的控制平面，具有特定于引�
 | `EndpointAlias` | 端点的历史或替代坐标。 |
 | `ReplicationLink` | 源到目标的关系、延迟和链接健康。 |
 | `HAEndpoint` | VIP、监听器或服务端点的期望所有者和健康状态。 |
+| `RuntimeTarget` | 主机、Docker Swarm 或 Kubernetes API 的受管运行边界。 |
+| `WorkloadBinding` | 数据库实例与宿主节点、Swarm Service 或 StatefulSet/Pod/PVC 不可变身份的绑定。 |
 | `OperationRecord` / `OperationPlan` | 幂等意图、持久阶段进度和不可变执行计划。 |
 | `ApprovalGrant` | 与一个操作计划和目标绑定的单次使用、过期授权。 |
 | `PlatformUser` | 平台用户名、角色、Argon2id 密码哈希、`MustChangePassword` 和认证修订。 |
@@ -34,6 +52,36 @@ ClusterGuard HA 是一个与数据库无关的控制平面，具有特定于引�
 | `AuditEvent` / `Report` | 持久操作跟踪和可读结果。 |
 
 `resource_id` 是由 API、持久化、链接、指标和工作流使用的稳定引用。每个物理节点也有一个全局唯一不可变的 `node_name`，例如 `cg-data-0001`。主机名、IP 地址、端口、显示名称和别名可以更改，而无需创建新节点或数据库实例。
+
+## 运行层与业务入口
+
+ClusterGuard 不根据端口或进程名称猜测部署模式。每个数据库实例必须通过 `WorkloadBinding` 关联一个明确的 `RuntimeTarget`，每个集群必须只有一个活动写入口 Provider。
+
+```mermaid
+flowchart TB
+  CP[三节点 Raft 控制面] --> ROUTER[写入口 Provider Router]
+  ROUTER --> VIP[linux_vip]
+  ROUTER --> KSVC[kubernetes_service]
+
+  VIP --> HOST[物理机或虚拟机<br/>systemd 数据库]
+  VIP --> SWARM[Docker Swarm<br/>固定单副本 Service]
+  HOST --> HVIP[宿主机网卡 VIP]
+  SWARM --> HVIP
+
+  KSVC --> K8S[Kubernetes<br/>独立单副本 StatefulSet]
+  K8S --> EPS[selectorless Service<br/>单后端 EndpointSlice]
+
+  CP -. mTLS 或 HTTPS .-> AGENT[受限 Agent / Kubernetes API]
+  AGENT --> HOST
+  AGENT --> SWARM
+  AGENT --> K8S
+```
+
+物理机和虚拟机模式由 Agent 持久化数据库重启角色并迁移宿主机网卡 VIP。Docker Swarm 模式仍迁移宿主机 VIP，不修改容器内部地址，也不依赖 Swarm routing mesh；Agent 只控制固定宿主机上的 allowlisted Service、只读角色和重启 fence。
+
+Kubernetes 模式不迁移宿主机 VIP，不修改 CoreDNS，也不靠普通 Service selector 猜测主库。MySQL 角色切换完成后，Provider 持久化两个 StatefulSet 的重启角色，再使用 `resourceVersion` 原子更新 selectorless Service 的单个 EndpointSlice 后端。Pod UID、Node 名和 PVC UID 必须与登记身份一致。故障切换先持久 fence 并将旧主独立 StatefulSet 缩到 0；旧主 Node 无法证明 Ready 时必须由云平台、BMC 或虚拟化隔离器提供额外证据。
+
+当前 Kubernetes 执行范围为 MySQL。PostgreSQL 的 Kubernetes 资源可以登记，但在 PostgreSQL Pod 角色控制器完成前保持 fail-closed。完整约束和部署资源见 [Kubernetes MySQL 接管手册](kubernetes-mysql.md)。
 
 ## 引擎身份
 
@@ -137,7 +185,9 @@ DISCOVER -> PRECHECK -> PLAN -> SAFETY_GUARD -> LOCK -> APPROVE -> EXECUTE -> VE
 
 MySQL 切换支持一个主节点和多个副本。执行要求选定目标合格、GTID 历史兼容、探测证据为当前状态、复制线程运行正常、版本系列兼容，并且端点提供器可执行。晋升前先隔离源节点，再将每个可达副本重新指向新主。只有独立验证出唯一可写实例和唯一目标 VIP 所有者后，操作才算成功。
 
-自动故障转移使用发现记录的 30 秒稳定事件。只有多数 Leader 可以提交持久操作。相同的事件在成功或不确定结果后不能重复。操作锁是 Raft 复制和续订的，安全门重新检查多数，端点变更操作需要一个单独的短租约。受限的数据节点代理在节点无法获得有效签名保持决策时移除陈旧的 VIP 并持久化两个 MySQL 只读标志。
+自动故障转移在连续得到 3 次当前主库失败观测且时间跨度不少于 3 秒后，记录一个稳定事件。只有多数 Leader 可以提交持久操作。相同的事件在成功或不确定结果后不能重复。操作锁由 Raft 复制并续期，安全门禁会重新检查多数派，端点变更需要独立短租约。受限数据节点 Agent 在无法获得有效签名保持决策时移除陈旧 VIP，并持久化 MySQL 只读标志。
+
+稳定事件窗口、15 秒 Agent 授权失效隔离宽限和 30 秒失败重试退避是三项独立控制，不能把其中任一值当作端到端 RTO。
 
 自动恢复通过独立的内部入口进入工作流。它不签发或消费人工审批授权，也不能通过 HTTP 字段选择。事件 ID 会记录在 `APPROVE` 阶段，共识、安全门禁、复制操作锁、隔离、执行、验证、审计和报告仍全部强制执行。
 

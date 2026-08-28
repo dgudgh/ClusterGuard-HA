@@ -3,6 +3,7 @@ package mysql
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -12,11 +13,68 @@ import (
 
 func rejoinEndpointSafe(checks []model.Check) bool {
 	for _, check := range checks {
-		if check.Name == "writer_endpoint_provider" && check.Status == model.CheckPass {
+		if (check.Name == "writer_endpoint_provider" || check.Name == "former_primary_endpoint_absent" || check.Name == "former_primary_vip_absent") && check.Status == model.CheckPass {
 			return true
 		}
 	}
 	return false
+}
+
+type formerPrimaryEndpointPrechecker interface {
+	FormerPrimaryPrecheck(context.Context, adapter.ResolvedOperation) []model.Check
+}
+
+func (adapterInstance *Adapter) rejoinEndpointChecks(ctx context.Context, resolved adapter.ResolvedOperation) []model.Check {
+	if provider, ok := adapterInstance.endpointProvider.(formerPrimaryEndpointPrechecker); ok {
+		checks := provider.FormerPrimaryPrecheck(ctx, resolved)
+		if len(checks) > 0 {
+			return checks
+		}
+		return []model.Check{{Name: "former_primary_endpoint_absent", Status: model.CheckFail, Message: "former-primary writer endpoint safety provider returned no evidence"}}
+	}
+	providerChecks := adapterInstance.endpointProvider.Precheck(ctx, resolved)
+	message := "writer endpoint ownership is incomplete or includes the former primary"
+	for _, check := range providerChecks {
+		if check.Status == model.CheckFail && strings.TrimSpace(check.Message) != "" {
+			message = check.Message
+			break
+		}
+	}
+	status := model.CheckFail
+	if rejoinEndpointSafe(providerChecks) {
+		status = model.CheckPass
+		message = "writer endpoint is owned only by the current primary"
+	}
+	return []model.Check{{Name: "former_primary_endpoint_absent", Status: status, Message: message}}
+}
+
+func rejoinEndpointFailure(checks []model.Check) error {
+	for _, check := range checks {
+		if check.Status == model.CheckFail {
+			message := strings.TrimSpace(check.Message)
+			if message == "" {
+				message = check.Name
+			}
+			return fmt.Errorf("writer endpoint ownership is unsafe for former-primary rejoin: %s", message)
+		}
+	}
+	return nil
+}
+
+func assessFormerPrimaryGTID(currentExecuted, currentPurged, formerExecuted string) (GTIDRecoveryAssessment, error) {
+	currentSet, err := ParseGTIDSet(currentExecuted)
+	if err != nil {
+		return GTIDRecoveryAssessment{}, fmt.Errorf("parse current primary GTID history: %w", err)
+	}
+	purgedSet, err := ParseGTIDSet(currentPurged)
+	if err != nil {
+		return GTIDRecoveryAssessment{}, fmt.Errorf("parse current primary purged GTID history: %w", err)
+	}
+	formerSet, err := ParseGTIDSet(formerExecuted)
+	if err != nil {
+		return GTIDRecoveryAssessment{}, fmt.Errorf("parse former primary GTID history: %w", err)
+	}
+	return AssessGTIDRecovery(currentSet, purgedSet, formerSet)
 }
 
 func (adapterInstance *Adapter) rejoinPrecheck(ctx context.Context, request adapter.OperationRequest) ([]model.Check, error) {
@@ -40,17 +98,20 @@ func (adapterInstance *Adapter) rejoinPrecheck(ctx context.Context, request adap
 	targetReachable := resolved.Target.Health.State == model.HealthHealthy || resolved.Target.Health.State == model.HealthDegraded
 	appendCheck("former_primary_read_only", targetReachable && targetReadOnlyKnown && targetSuperReadOnlyKnown && targetReadOnly && targetSuperReadOnly, "former primary is reachable and fully read-only", "former primary must be reachable and fully read-only")
 	appendCheck("mysql_identity", strings.TrimSpace(resolved.Primary.EngineIdentity["server_uuid"]) != "" && strings.TrimSpace(resolved.Target.EngineIdentity["server_uuid"]) != "", "native MySQL identities are present", "native MySQL identities are required")
-	primarySet, primaryErr := ParseGTIDSet(resolved.Primary.EngineMetadata["gtid_executed"])
-	formerSet, formerErr := ParseGTIDSet(resolved.Target.EngineMetadata["gtid_executed"])
-	comparison, compareErr := CompareGTIDSets(primarySet, formerSet)
-	subset := primaryErr == nil && formerErr == nil && compareErr == nil && comparison.ErrantTransactions == 0
+	assessment, assessmentErr := assessFormerPrimaryGTID(
+		resolved.Primary.EngineMetadata["gtid_executed"],
+		resolved.Primary.EngineMetadata["gtid_purged"],
+		resolved.Target.EngineMetadata["gtid_executed"],
+	)
+	subset := assessmentErr == nil && assessment.ErrantTransactions == 0
 	appendCheck("former_primary_gtid_subset", subset, "former primary GTID history is a subset of the current primary", "former primary has invalid or errant GTID history")
-	appendCheck("rebuild_required", subset, "fast rejoin is safe; rebuild is not required", "fast rejoin is blocked; rebuild the former primary from a current source")
+	binlogAvailable := assessmentErr == nil && assessment.PurgedMissingTransactions == 0
+	appendCheck("required_binlog_available", binlogAvailable, "all transactions needed by the former primary remain available", "transactions required by the former primary have been purged from current primary binlogs")
+	appendCheck("rebuild_required", assessmentErr == nil && assessment.FastRejoinSafe, "fast rejoin is safe; rebuild is not required", "fast rejoin is blocked; rebuild the former primary from a current source")
 	primaryFamily, primaryVersionErr := mysqlReleaseFamily(resolved.Primary.EngineMetadata["version"])
 	targetFamily, targetVersionErr := mysqlReleaseFamily(resolved.Target.EngineMetadata["version"])
 	appendCheck("version_compatibility", primaryVersionErr == nil && targetVersionErr == nil && primaryFamily == targetFamily, "current and former primary release families are compatible", "current and former primary release families are incompatible")
-	providerChecks := adapterInstance.endpointProvider.Precheck(ctx, *resolved)
-	appendCheck("former_primary_vip_absent", rejoinEndpointSafe(providerChecks), "VIP is owned only by the current primary", "VIP ownership is incomplete or includes the former primary")
+	checks = append(checks, adapterInstance.rejoinEndpointChecks(ctx, *resolved)...)
 	return checks, nil
 }
 
@@ -94,14 +155,12 @@ func (adapterInstance *Adapter) rejoinLivePrecheck(ctx context.Context, resolved
 	if primary.readOnly || primary.superReadOnly || !former.readOnly || !former.superReadOnly {
 		return fmt.Errorf("current or former primary read-only state is unsafe")
 	}
-	primarySet, primaryErr := ParseGTIDSet(primary.gtidExecuted)
-	formerSet, formerErr := ParseGTIDSet(former.gtidExecuted)
-	comparison, compareErr := CompareGTIDSets(primarySet, formerSet)
-	if primaryErr != nil || formerErr != nil || compareErr != nil || comparison.ErrantTransactions != 0 {
+	assessment, assessmentErr := assessFormerPrimaryGTID(primary.gtidExecuted, primary.gtidPurged, former.gtidExecuted)
+	if assessmentErr != nil || !assessment.FastRejoinSafe {
 		return fmt.Errorf("former primary GTID history requires rebuild")
 	}
-	if !rejoinEndpointSafe(adapterInstance.endpointProvider.Precheck(ctx, *resolved)) {
-		return fmt.Errorf("VIP ownership is unsafe for former-primary rejoin")
+	if err := rejoinEndpointFailure(adapterInstance.rejoinEndpointChecks(ctx, *resolved)); err != nil {
+		return err
 	}
 	return nil
 }
@@ -132,6 +191,7 @@ func (adapterInstance *Adapter) rejoinExecute(ctx context.Context, request adapt
 		return executionFailure(request.Operation.ResourceID, started, model.OperationFailed, "pre_commit", err)
 	}
 	if err := adapterInstance.reparentFollower(ctx, request.Resolved.Target, request.Resolved.Primary, request.Resolved.Credentials, request.Resolved.ReplicationCredentials); err != nil {
+		log.Printf("former-primary rejoin mutation failed: operation_id=%s target_id=%s cause=%v", request.Operation.ResourceID, request.Resolved.Target.ResourceID, err)
 		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("attach former primary: %w", err))
 	}
 	if err := completeOperationStep(context.WithoutCancel(ctx), request, "attach_former_primary", "former primary follows the current primary"); err != nil {
@@ -152,11 +212,7 @@ func (adapterInstance *Adapter) rejoinVerify(ctx context.Context, request adapte
 	if writable {
 		verification.Checks = append(verification.Checks, model.Check{Name: "former_primary_writable", Status: model.CheckFail, Message: "former primary is writable"})
 	}
-	if rejoinEndpointSafe(adapterInstance.endpointProvider.Precheck(ctx, *request.Resolved)) {
-		verification.Checks = append(verification.Checks, model.Check{Name: "former_primary_vip_absent", Status: model.CheckPass, Message: "VIP remains owned only by the current primary"})
-	} else {
-		verification.Checks = append(verification.Checks, model.Check{Name: "former_primary_vip_absent", Status: model.CheckFail, Message: "VIP ownership is unsafe"})
-	}
+	verification.Checks = append(verification.Checks, adapterInstance.rejoinEndpointChecks(ctx, *request.Resolved)...)
 	verification.Passed = !planHasBlockingChecks(verification.Checks)
 	return verification, nil
 }

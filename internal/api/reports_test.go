@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +10,27 @@ import (
 	"clusterguard.io/ha/internal/lifecycle"
 	"clusterguard.io/ha/pkg/model"
 )
+
+func TestAuditExportRequiresControlAuthAndStreamsNDJSON(t *testing.T) {
+	server, repository := newTestServer(t)
+	if err := repository.RecordAudit(model.AuditEvent{OperationID: model.NewResourceID(), Stage: model.StageAudit, Actor: "dba", Message: "archive me"}); err != nil {
+		t.Fatalf("record audit: %v", err)
+	}
+	unauthorized := httptest.NewRecorder()
+	server.Handler().ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/v1/audits/export", nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous export status=%d body=%s", unauthorized.Code, unauthorized.Body.String())
+	}
+	response := callJSON(t, server.Handler(), http.MethodGet, "/api/v1/audits/export", nil)
+	if response.Code != http.StatusOK || !strings.Contains(response.Header().Get("Content-Type"), "application/x-ndjson") {
+		t.Fatalf("audit export status=%d content-type=%q body=%s", response.Code, response.Header().Get("Content-Type"), response.Body.String())
+	}
+	decoder := json.NewDecoder(response.Body)
+	event := model.AuditEvent{}
+	if err := decoder.Decode(&event); err != nil || event.Message != "archive me" || event.Actor != "dba" {
+		t.Fatalf("audit export event=%+v err=%v", event, err)
+	}
+}
 
 func TestReportJSONAndHTMLRequireControlAuthAndRenderTimeline(t *testing.T) {
 	server, repository := newTestServer(t)

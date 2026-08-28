@@ -87,6 +87,44 @@ func TestSettingsShowsAuthenticatedControlPlaneDiagnostics(t *testing.T) {
 	}
 }
 
+func TestSettingsUsesThreeSwitchableAdministrativeSections(t *testing.T) {
+	page := string(consoleHTML)
+	view := consoleView(t, "settings")
+	for _, contract := range []string{
+		`class="view settings-view"`, `class="topology-section-tabs settings-section-tabs" role="tablist"`,
+		`id="settings-status-tab" type="button" role="tab" aria-controls="settings-status-panel" aria-selected="true"`,
+		`id="software-update-tab" type="button" role="tab" aria-controls="software-update-panel" aria-selected="false"`,
+		`id="settings-account-tab" type="button" role="tab" aria-controls="settings-account-panel" aria-selected="false"`,
+		`id="settings-status-panel" role="tabpanel" aria-labelledby="settings-status-tab"`,
+		`id="software-update-panel" role="tabpanel" aria-labelledby="software-update-tab" hidden`,
+		`id="settings-account-panel" role="tabpanel" aria-labelledby="settings-account-tab" hidden`,
+		`class="control-plane-strip"`,
+		`class="software-update-file-picker"`, `id="software-update-file-name"`,
+		`class="software-update-metadata"`,
+		`id="platform-current-version"`, `id="software-update-history"`,
+		`id="software-update-package-file" type="file" accept=".cgupgrade,.cgpatch,application/octet-stream"`,
+	} {
+		if !strings.Contains(view, contract) {
+			t.Fatalf("settings missing switchable administrative section contract %q", contract)
+		}
+	}
+	for _, contract := range []string{
+		"--accent:#0071e3", "--canvas:#f5f5f7", "renderSelectedSoftwareUpdateFile",
+		"const setSettingsSection = (section, focus = false) =>", "settingsSection: 'status'",
+		"fetchResult('/api/v1/platform/version')", "renderSoftwareUpdateHistory(snapshot)",
+		"系统升级期间无法进行自动切换，请注意关注。",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing settings design contract %q", contract)
+		}
+	}
+	for _, forbidden := range []string{`class="settings-workspace"`, `class="settings-column settings-column-summary"`, `class="settings-column settings-column-tools"`} {
+		if strings.Contains(view, forbidden) {
+			t.Fatalf("settings must not retain the stacked all-functions layout %q", forbidden)
+		}
+	}
+}
+
 func TestMobileNavigationKeepsHorizontalSwipeWithoutVisibleScrollbar(t *testing.T) {
 	page := string(consoleHTML)
 	for _, contract := range []string{"scrollbar-width:none", "-ms-overflow-style:none", ".nav::-webkit-scrollbar { display:none; }"} {
@@ -133,6 +171,49 @@ func TestStatusBadgesDoNotWrapInCompactLayouts(t *testing.T) {
 	}
 }
 
+func TestTopologyUsesThreeSwitchableHorizontalSections(t *testing.T) {
+	page := string(consoleHTML)
+	view := consoleView(t, "topology")
+	for _, contract := range []string{
+		`class="topology-section-tabs" role="tablist"`,
+		`id="topology-map-tab" type="button" role="tab" aria-controls="topology-map-panel" aria-selected="true"`,
+		`id="topology-power-tab" type="button" role="tab" aria-controls="topology-power-panel" aria-selected="false"`,
+		`id="topology-identity-tab" type="button" role="tab" aria-controls="topology-identity-panel" aria-selected="false"`,
+		`id="topology-map-panel" role="tabpanel" aria-labelledby="topology-map-tab"`,
+		`id="topology-power-panel" role="tabpanel" aria-labelledby="topology-power-tab" hidden`,
+		`id="topology-identity-panel" role="tabpanel" aria-labelledby="topology-identity-tab" hidden`,
+	} {
+		if !strings.Contains(view, contract) {
+			t.Fatalf("topology view missing switchable section contract %q", contract)
+		}
+	}
+	for _, contract := range []string{
+		".topology-section-tabs { display:grid; grid-template-columns:repeat(3,minmax(0,1fr));",
+		"const setTopologySection = (section, focus = false) =>",
+		"topologySection: 'map'",
+		"event.key === 'ArrowRight'",
+		"event.key === 'ArrowLeft'",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing topology section switching contract %q", contract)
+		}
+	}
+}
+
+func TestDetachedTopologyNodesStackWithoutShrinkingTheGraph(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		".topology-frame {\n      display:flex;\n      height:420px;\n      flex-direction:column;",
+		"max-width:980px;\n      min-width:760px;\n      flex:0 0 auto;",
+		".replica-row .node-card { width:100%; }",
+		".detached-nodes { width:100%; max-width:980px; flex:0 0 auto;",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("topology canvas must keep normal card geometry when detached nodes are visible; missing %q", contract)
+		}
+	}
+}
+
 func TestOverviewContainsFleetSummaryButNoTopologyGraph(t *testing.T) {
 	view := consoleView(t, "overview")
 	for _, label := range []string{"集群总数", "健康集群", "异常集群", "数据库实例", "控制节点", "待复核操作"} {
@@ -149,7 +230,7 @@ func TestOverviewContainsFleetSummaryButNoTopologyGraph(t *testing.T) {
 
 func TestOverviewCountsOnlyActionableOperationStates(t *testing.T) {
 	page := string(consoleHTML)
-	if !strings.Contains(page, "['running', 'indeterminate'].includes(operation.status)") {
+	if !strings.Contains(page, "operation.status === 'running' || (operation.status === 'indeterminate' && !operation.review)") {
 		t.Fatal("fleet summary must count only operations that still require operator action")
 	}
 	if strings.Contains(page, "['planned', 'running', 'blocked', 'indeterminate'].includes(operation.status)") {
@@ -199,6 +280,37 @@ func TestConsoleClusterManagementUsesFocusedAdministratorModal(t *testing.T) {
 	for _, forbidden := range []string{`id="cluster-password"`, `id="cluster-username"`, "cluster_credentials"} {
 		if strings.Contains(page, forbidden) {
 			t.Fatalf("cluster management modal must not collect database credentials %q", forbidden)
+		}
+	}
+}
+
+func TestConsoleMovesAccountActionsIntoCompactSidebarMenu(t *testing.T) {
+	page := string(consoleHTML)
+	asideEnd := strings.Index(page, "</aside>")
+	headerStart := strings.Index(page, `<header class="page-header">`)
+	headerEnd := strings.Index(page[headerStart:], "</header>")
+	if asideEnd < 0 || headerStart < 0 || headerEnd < 0 {
+		t.Fatal("console shell regions are missing")
+	}
+	sidebar := page[:asideEnd]
+	header := page[headerStart : headerStart+headerEnd]
+	for _, contract := range []string{
+		`id="account-menu-toggle"`, `id="current-user-avatar"`, `id="current-user-name"`,
+		`id="current-user-role"`, `id="account-menu"`, `id="open-password-change"`, `id="logout-button"`,
+	} {
+		if !strings.Contains(sidebar, contract) {
+			t.Fatalf("sidebar account menu missing %q", contract)
+		}
+		if strings.Contains(header, contract) {
+			t.Fatalf("page header still contains account control %q", contract)
+		}
+	}
+	for _, contract := range []string{
+		"const setAccountMenuOpen = open =>", "setAccountMenuOpen(byId('account-menu').hidden)",
+		"document.addEventListener('click', () => setAccountMenuOpen(false))", "event.key === 'Escape'",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("account menu interaction missing %q", contract)
 		}
 	}
 }
@@ -269,7 +381,7 @@ func TestConsoleClusterManagementKeepsActionsVisibleOnSmallScreens(t *testing.T)
 func TestTopologyShowsStableAndNativeIdentityAndMetadataModal(t *testing.T) {
 	page := string(consoleHTML)
 	view := consoleView(t, "topology")
-	for _, label := range []string{"固定节点名", "资源 ID", "原生身份", "主机名", "IP", "端口", "版本", "角色", "延迟", "VIP"} {
+	for _, label := range []string{"固定节点名", "资源 ID", "原生身份", "主机名", "IP", "端口", "版本", "角色", "延迟", "业务入口"} {
 		if !strings.Contains(view, label) {
 			t.Fatalf("topology missing identity label %q", label)
 		}
@@ -331,7 +443,7 @@ func TestAboutDistinguishesConfiguredExecutionFromReadOnlyAndUnsupportedAdapters
 func TestOperationsViewRunsOneRealGuardedSwitchover(t *testing.T) {
 	page := string(consoleHTML)
 	view := consoleView(t, "operations")
-	for _, label := range []string{"集群", "当前主库", "候选主库", "VIP", "延迟", "执行切换", "旧主回挂恢复"} {
+	for _, label := range []string{"集群", "当前主库", "候选主库", "业务入口", "延迟", "执行切换", "旧主一键恢复"} {
 		if !strings.Contains(view, label) {
 			t.Fatalf("operations view missing %q", label)
 		}
@@ -353,8 +465,38 @@ func TestOperationsViewRunsOneRealGuardedSwitchover(t *testing.T) {
 			t.Fatalf("console must not expose simulated execution %q", forbidden)
 		}
 	}
-	if strings.Contains(page, "attempt < 3") {
-		t.Fatal("a plan-bound one-time approval must not be retried against a different plan")
+}
+
+func TestConsoleRetriesOnlyPreCommitStalePlanConflicts(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		"const maxStalePlanAttempts = 3;",
+		"const isRetryablePreCommitStalePlan = error =>",
+		"error instanceof APIError && error.status === 409",
+		"result.failure_class === 'stale_plan'",
+		"result.status === 'blocked'",
+		"['precheck', 'plan'].includes(result.stage)",
+		"kind === 'switchover'",
+		"attempt < maxStalePlanAttempts",
+		"await loadSelectedCluster({ preserveOperationResult:true });",
+		"target_id: targetID",
+		"console-${kind}-${cluster.resource_id}-${targetID}-${Date.now()}-${attempt}",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing bounded pre-commit stale-plan retry contract %q", contract)
+		}
+	}
+
+	predicateStart := strings.Index(page, "const isRetryablePreCommitStalePlan = error =>")
+	predicateEnd := strings.Index(page[predicateStart:], "const executeOperation = async")
+	if predicateStart < 0 || predicateEnd < 0 {
+		t.Fatal("unable to inspect stale-plan retry predicate")
+	}
+	predicate := page[predicateStart : predicateStart+predicateEnd]
+	for _, forbidden := range []string{"indeterminate", "execute", "failed"} {
+		if strings.Contains(predicate, forbidden) {
+			t.Fatalf("stale-plan retry predicate must not accept post-commit state %q", forbidden)
+		}
 	}
 }
 
@@ -397,11 +539,22 @@ func TestConsoleExplainsUnavailableExecutionAndFiltersFormerPrimaryCandidates(t 
 	page := string(consoleHTML)
 	for _, contract := range []string{
 		"const capabilityReason =", "当前环境不可执行：${capabilityReason('execute')}",
+		"const replicaIsRunning =", "health.replication === 'running'",
+		"replication.io_thread === 'running' && replication.sql_thread === 'running'",
 		"const formerPrimaryCandidates =", "historicalSourceIDs.has(instance.resource_id)",
-		"instance.maintenance || instance.health.state !== 'healthy'", "replication.io_thread !== 'running'", "replication.sql_thread !== 'running'",
+		"const explicitlyBrokenReplication =", "const historicalPrimaryNeedsRecovery =",
+		"return Boolean(instance.maintenance) || healthState !== 'healthy' || explicitlyBrokenReplication || historicalPrimaryNeedsRecovery",
 	} {
 		if !strings.Contains(page, contract) {
 			t.Fatalf("console missing unavailable-action or former-primary filter contract %q", contract)
+		}
+	}
+	for _, unsafeContract := range []string{
+		"replication.io_thread !== 'running' || replication.sql_thread !== 'running'",
+		"historicalSourceIDs.has(instance.resource_id) || instance.maintenance",
+	} {
+		if strings.Contains(page, unsafeContract) {
+			t.Fatalf("console must not classify a healthy running replica as a former primary from missing or historical fields: found %q", unsafeContract)
 		}
 	}
 }
@@ -409,14 +562,57 @@ func TestConsoleExplainsUnavailableExecutionAndFiltersFormerPrimaryCandidates(t 
 func TestFormerPrimaryRejoinAndNodeLifecycleUseRealAPIs(t *testing.T) {
 	page := string(consoleHTML)
 	for _, contract := range []string{
-		"executeOperation('former_primary_rejoin'", `id="execute-rejoin"`,
+		"recoverFormerPrimary(state.selectedRejoinId)", `id="execute-rejoin"`, "一键恢复为从库",
 		"/api/v1/nodes/sync/capabilities", "/api/v1/nodes/sync/precheck", "/api/v1/nodes/sync/execute", "/api/v1/nodes/sync/tasks",
 		`value="data"`, `value="controller"`, `value="mixed"`, `value="rebuild"`,
 		`id="node-name"`, `id="node-resource-id"`, `id="sync-method"`,
 		"控制节点最终数量必须为大于等于 3 的奇数", "修复节点复用原资源 ID 和固定节点名", "state.lifecycleCapability.available",
+		"const formerPrimaryRebuildPayload =", "action:'rebuild'", "sync_method:'auto'", "rebuild:true",
+		"const recoverFormerPrimary = async targetID =>", "/api/v1/operations/precheck", "required_binlog_available", "rebuild_required",
+		"await runNodeSyncPayload(formerPrimaryRebuildPayload(targetID))", "检测到 binlog 缺口或 GTID 分叉",
+		"task.status !== 'succeeded'", "全量重建并恢复为从库完成",
 	} {
 		if !strings.Contains(page, contract) {
 			t.Fatalf("console missing real node/rejoin contract %q", contract)
+		}
+	}
+}
+
+func TestFormerPrimaryRecoveryRefreshesDiscoveryBeforePrecheck(t *testing.T) {
+	page := string(consoleHTML)
+	start := strings.Index(page, "const recoverFormerPrimary = async targetID =>")
+	if start < 0 {
+		t.Fatal("console missing former-primary recovery function")
+	}
+	end := strings.Index(page[start:], "const formatMetric =")
+	if end < 0 {
+		t.Fatal("console former-primary recovery function has no stable end marker")
+	}
+	recovery := page[start : start+end]
+	discover := strings.Index(recovery, "fetchResult(`/api/v1/clusters/${cluster.resource_id}/discover`, mutationOptions({}))")
+	precheck := strings.Index(recovery, "fetchResult('/api/v1/operations/precheck', mutationOptions(operationPayload))")
+	if discover < 0 {
+		t.Fatal("former-primary recovery must refresh cluster discovery before making a recovery decision")
+	}
+	if precheck < 0 || discover > precheck {
+		t.Fatal("former-primary recovery must refresh discovery before the recovery precheck")
+	}
+}
+
+func TestFormerPrimaryRecoverySupportsPostgreSQLThroughUnifiedWorkflow(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		"!['mysql', 'postgresql'].includes(cluster.engine)",
+		"正在检查旧主 WAL 时间线及增量回挂条件",
+		"正在执行 pg_rewind 增量回挂，必要时自动回退 pg_basebackup 全量同步",
+		"旧主回挂完成，节点已作为只读流复制从库重新加入",
+		"const operationFailureGuidance = error =>",
+		"rebuild_failed:'旧主同步失败",
+		"旧主同步失败，请确认当前主库、目标节点数据库服务和 Agent 均可达后重试",
+		"operationFailureGuidance(error)",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing PostgreSQL former-primary recovery contract %q", contract)
 		}
 	}
 }
@@ -455,6 +651,36 @@ func TestNodeLifecycleModalKeepsActionsVisibleOnSmallScreens(t *testing.T) {
 	} {
 		if !strings.Contains(page, contract) {
 			t.Fatalf("console missing responsive node modal contract %q", contract)
+		}
+	}
+}
+
+func TestNodeLifecycleAddsControllerMembersAsAnAtomicPair(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		`id="controller-pair-group"`, `id="node-pair-name"`, `id="node-pair-resource-id"`,
+		`id="node-pair-hostname"`, `id="node-pair-ip"`, `id="node-pair-ssh-user"`, `id="node-pair-ssh-port"`,
+		"const controllerPairRequired = () =>", "kind: 'controller'", "targets.push(pairTarget)",
+		"控制节点按一对加入", "保持 Raft 投票节点为大于等于 3 的奇数",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing paired controller lifecycle contract %q", contract)
+		}
+	}
+	if !strings.Contains(page, "byId('node-kind').addEventListener('change', updateControllerPairMode)") {
+		t.Fatal("controller pair form does not react to node kind changes")
+	}
+}
+
+func TestNodeLifecycleTasksExposeEveryBuiltInExecutionStage(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		"const lifecycleStageOrder = ['preflight', 'install', 'synchronize', 'configure_replication', 'verify', 'metadata_commit']",
+		"安全预检", "安装运行时", "数据同步", "配置复制", "健康验证", "提交元数据",
+		"lifecycle-stage-flow", "查看执行明细", "task.log_tail", "task.checks",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing lifecycle stage evidence contract %q", contract)
 		}
 	}
 }
@@ -626,7 +852,7 @@ func TestConsoleShowsAuthenticatedUserAndLogout(t *testing.T) {
 func TestConsoleUsesCompactAlignedResponsiveEnterpriseLayout(t *testing.T) {
 	page := string(consoleHTML)
 	for _, contract := range []string{
-		"--radius:8px", "grid-template-columns:220px minmax(0,1fr)", "border-radius:8px",
+		"--radius:8px", "grid-template-columns:232px minmax(0,1fr)", "border-radius:8px",
 		"grid-template-columns:minmax(0,1fr) 72px minmax(0,1fr)", "@media (max-width:900px)", "grid-template-columns:minmax(0,1fr);",
 		".topology-connector { display:none; }", "letter-spacing:0",
 	} {
@@ -687,6 +913,42 @@ func TestConsoleOperationRendersDurableWorkflowProgressAndIndeterminateState(t *
 	}
 }
 
+func TestConsoleRecoversOperationOutcomeWhenDatabaseVIPMoves(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		"const recoverOperationAfterConnectionLoss = async (idempotencyKey, label) =>",
+		"const operationResponseTrackingDelayMs = 12000;",
+		"const operationOutcomeTrackingTimeoutMs = 30 * 60 * 1000;",
+		"const controlEntryRecoveryTimeoutMs = 2 * 60 * 1000;",
+		"const operationStatusRequestTimeoutMs = 5000;",
+		"const fetchTrackedOperation = async idempotencyKey =>",
+		"window.setTimeout(() => controller.abort(), operationStatusRequestTimeoutMs)",
+		"const operation = await fetchTrackedOperation(idempotencyKey);",
+		"后台正在执行，正在持续跟踪操作状态",
+		"/api/v1/operations?idempotency_key=${encodeURIComponent(idempotencyKey)}",
+		"{ signal:controller.signal }",
+		"controlEntryUnavailableSince = 0;",
+		"Date.now() - controlEntryUnavailableSince >= controlEntryRecoveryTimeoutMs",
+		"terminalOperationStatuses.has(operation.status)",
+		"[0, 404, 502, 503, 504].includes(error.status)",
+		"const executionOutcome = fetchResult('/api/v1/operations/execute', mutationOptions(payload)).then(",
+		"const initialOutcome = await Promise.race([",
+		"resolve({ tracking:true })",
+		"const isRecoverableOperationSubmissionError = error =>",
+		"error.message === 'operation state conflict'",
+		"error.result && error.result.status === 'running'",
+		"if (!isRecoverableOperationSubmissionError(initialOutcome.error)) throw initialOutcome.error;",
+		"operation = await recoverOperationAfterConnectionLoss(idempotencyKey, label);",
+		"控制入口恢复超时，操作结果待确认，请查看操作日志",
+		"操作已超过页面跟踪时限，后台仍可能继续执行",
+		"error.committed && error.status === 0",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing VIP-move outcome recovery contract %q", contract)
+		}
+	}
+}
+
 func TestConsolePreservesVerifiedOutcomeUntilReadAfterWriteTopologyConverges(t *testing.T) {
 	page := string(consoleHTML)
 	for _, contract := range []string{
@@ -711,12 +973,15 @@ func TestConsolePreservesVerifiedOutcomeUntilReadAfterWriteTopologyConverges(t *
 func TestConsoleReadOnlyRefreshPreservesLatestVerifiedOutcome(t *testing.T) {
 	page := string(consoleHTML)
 	for _, contract := range []string{
-		"if (state.selectedClusterId && !state.switchUnlocked && !state.operationRunning) loadSelectedCluster({ preserveOperationResult:true });",
+		"if (state.selectedClusterId && !state.operationRunning) loadSelectedCluster({ preserveOperationResult:true });",
 		"await loadSelectedCluster({ preserveOperationResult:true });",
 	} {
 		if !strings.Contains(page, contract) {
 			t.Fatalf("console read-only refresh must preserve the latest operation result: missing %q", contract)
 		}
+	}
+	if strings.Contains(page, "state.selectedClusterId && !state.switchUnlocked && !state.operationRunning") {
+		t.Fatal("unlocking a destructive action must not pause topology auto-refresh")
 	}
 }
 
@@ -740,7 +1005,7 @@ func TestConsoleTopologyUsesStableCompactConnectorsAndAnomalyEvidence(t *testing
 	view := consoleView(t, "topology")
 	for _, contract := range []string{
 		`id="topology-freshness"`, `id="topology-anomalies"`, "const renderTopologyAnomalies =",
-		"--topology-node-height:104px", "height:var(--topology-node-height)",
+		"--topology-node-height:116px", "height:var(--topology-node-height)",
 		"grid-template-columns:minmax(0,1fr) 72px minmax(0,1fr)",
 		"top:calc(var(--topology-node-height) / 2)", ".node-title, .node-line, .vip-chip { flex:0 0 auto; }",
 	} {
@@ -751,11 +1016,54 @@ func TestConsoleTopologyUsesStableCompactConnectorsAndAnomalyEvidence(t *testing
 	if !strings.Contains(view, "拓扑异常") || !strings.Contains(view, "观测新鲜度") {
 		t.Fatal("topology must expose anomaly and observation evidence")
 	}
-	if !strings.Contains(page, "card.append(lineOne, lineTwo);") {
-		t.Fatal("compact topology cards must keep immutable identity in the inventory instead of squeezing it into the card")
+	if !strings.Contains(page, "card.append(lineOne, lineTwo, lineThree);") {
+		t.Fatal("compact topology cards must show placement while keeping immutable identity in the inventory")
 	}
 	if strings.Contains(page, "card.append(lineOne, lineTwo, identity)") {
 		t.Fatal("topology card must not compress resource identity and VIP into the fixed-height node card")
+	}
+}
+
+func TestConsoleDistinguishesHostContainerAndKubernetesRuntimeLayers(t *testing.T) {
+	page := string(consoleHTML)
+	if strings.Contains(page, "Kubernetes（当前不支持接管）") || strings.Contains(page, "Kubernetes · 不支持接管") {
+		t.Fatal("console still labels the implemented Kubernetes MySQL runtime as unsupported")
+	}
+	topology := consoleView(t, "topology")
+	operations := consoleView(t, "operations")
+	for _, contract := range []string{
+		`id="topology-runtime"`,
+		`id="topology-entry"`,
+		`id="operation-runtime"`,
+		"const runtimeProfileForDetail = detail =>",
+		"const runtimeProfileLabel = detail =>",
+		"const instanceRuntimePlacement = (instance, detail = state.clusterDetail) =>",
+		"const activeWriterEndpoint = (detail = state.clusterDetail) =>",
+		"const writerEndpointLabel = writer =>",
+		"主机层（物理机/虚拟机）",
+		"容器层（Docker Swarm）",
+		"Kubernetes StatefulSet",
+		"宿主机 VIP",
+		"Kubernetes Service",
+		"运行层未登记",
+		"workload_bindings",
+		"runtime_profile",
+		"ha_endpoints",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing runtime boundary contract %q", contract)
+		}
+	}
+	for _, heading := range []string{"运行层", "工作负载", "宿主/调度位置", "业务入口"} {
+		if !strings.Contains(topology, heading) {
+			t.Fatalf("topology identity table missing runtime heading %q", heading)
+		}
+	}
+	if !strings.Contains(operations, "运行与入口边界") {
+		t.Fatal("operations view must expose the workload runtime and client entry boundary")
+	}
+	if !strings.Contains(operations, "主库与业务入口同步切换") || strings.Contains(operations, "主库与 VIP 同步切换") {
+		t.Fatal("operations view must describe both VIP and Kubernetes Service through the generic writer endpoint")
 	}
 }
 
@@ -797,6 +1105,56 @@ func TestConsoleDerivesTopologyAttentionFromObservedInstanceHealth(t *testing.T)
 	} {
 		if !strings.Contains(page, contract) {
 			t.Fatalf("topology must not report healthy when observed instances are degraded or unknown: missing %q", contract)
+		}
+	}
+}
+
+func TestConsoleUsesAuthoritativeReplicationLinksForPostgreSQLStandbys(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		"const replicasForPrimary = (instances, primary, topology = state.topology) =>",
+		"topology.links || []",
+		"link.source_instance_id === primary.resource_id",
+		"linkedTargetIDs.has(instance.resource_id)",
+		"['replica', 'standby'].includes(instance.role)",
+		"const replicas = replicasForPrimary(instances, primary, state.topology);",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console must derive database-neutral replica placement from topology links: missing %q", contract)
+		}
+	}
+}
+
+func TestConsoleRendersTypedProbeEvidenceWithoutInventingRuntimeState(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		"const probeOutcome = probe =>",
+		"summary.includes('database probe failed')",
+		"const instanceAvailability = (instance, topology = state.topology) =>",
+		"probeOutcome(probe) === 'database_unavailable'",
+		"label:'数据库未启动或不可达'",
+		"probeOutcome(probe) === 'credentials_unavailable'",
+		"label:'凭据不可用'",
+		"label:'尚未采集'",
+		"if (!instanceAvailability(instance).available) return '无当前角色'",
+		"instanceAvailability(instance, topology).available &&",
+		"['replica', 'standby'].includes(instance.role)",
+		"detachedNodes.hidden = detached.length === 0",
+		"const observedPrimaryInstances = (instances, topology = state.topology) =>",
+		"instance.role === 'primary' && instanceAvailability(instance, topology).available",
+		"return primaries.length === 1 ? primaries[0] : undefined",
+		"return '冲突写主'",
+		"已拒绝选择当前主库",
+		"const instanceOwnsActiveWriterEndpoint = instance =>",
+		"writer.endpoint.instance_id === instance.resource_id",
+		"const candidate = availability.available && assessment && assessment.eligible && assessment.rank === 1",
+		"if (writerEndpoint && instanceOwnsActiveWriterEndpoint(instance))",
+		"instance ? instanceRoleText(instance) : '-'",
+		"const primary = currentObservedPrimary(instances);",
+		"currentObservedPrimary(topology.instances || [], topology)",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console must render probe evidence explicitly instead of showing an offline node as unknown: missing %q", contract)
 		}
 	}
 }
@@ -887,5 +1245,161 @@ func TestConsoleTranslatesPrimaryWorkspaceLanguageInsteadOfOnlyNavigation(t *tes
 		if !strings.Contains(page, contract) {
 			t.Fatalf("console missing full workspace translation contract %q", contract)
 		}
+	}
+}
+
+// TestConsoleShowsPowerLifecyclePanel verifies the topology view surfaces the
+// power lifecycle: a dedicated panel fed by power/status, per-state Chinese
+// labels and protection markers, plus one controlled shutdown entry point.
+// The browser never asks the operator to paste an approval token: an
+// administrator session receives a server-issued one-time approval.
+func TestConsoleShowsPowerLifecyclePanel(t *testing.T) {
+	page := string(consoleHTML)
+	topology := consoleView(t, "topology")
+	for _, contract := range []string{
+		"数据库启停",
+		`id="power-state-badge"`,
+		`id="power-protection"`,
+		`id="power-history"`,
+		`id="power-outage-kind"`,
+		`id="power-database-state"`,
+		`id="power-failover-policy"`,
+		`id="power-control-plane"`,
+		"powerStateLabels",
+		"powerModeLabel",
+		"outage_classification",
+		"计划停库",
+		"突发故障",
+		"管理控制面保持运行",
+		"loadPowerStatus(clusterId)",
+		"/api/v1/clusters/${clusterId}/power/status",
+		"state.powerStatus",
+		"powerStatus.power_operation",
+		"recovery_freeze",
+		"已下电",
+		"恢复验证中",
+		"已失败（需人工介入）",
+		`id="open-power-shutdown"`,
+		`id="power-shutdown-dialog"`,
+		`id="power-confirm-name"`,
+		`id="confirm-power-shutdown"`,
+		`id="power-shared-clusters"`,
+		`/power/cancel`,
+		"coResidentPowerClusters",
+		"co_resident_clusters",
+		"同宿主集群已安全停库",
+		"power/precheck",
+		"power/plan",
+		"power/execute",
+		"输入完整集群名称",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console power lifecycle missing %q", contract)
+		}
+	}
+	if !strings.Contains(topology, "数据库启停") {
+		t.Fatalf("power lifecycle panel must live in the topology view")
+	}
+	for _, forbidden := range []string{`id="approval-token"`, `name="approval_token"`} {
+		if strings.Contains(topology, forbidden) {
+			t.Fatalf("console must not expose raw approval tokens, found %q", forbidden)
+		}
+	}
+}
+
+func TestConsoleProvidesAdminOnlySignedSoftwareUpdateWorkflow(t *testing.T) {
+	page := string(consoleHTML)
+	settings := consoleView(t, "settings")
+	for _, contract := range []string{
+		`id="software-update-panel"`,
+		`id="software-update-package-file"`,
+		`id="upload-software-update"`,
+		`id="plan-software-update"`,
+		`id="execute-software-update"`,
+		`id="resume-software-update"`,
+		`id="rollback-software-update"`,
+		`id="software-update-confirmation-dialog"`,
+		`id="software-update-confirmation-input"`,
+		"form.append('package', file, file.name)",
+		"fetchResult('/api/v1/platform/updates'",
+		"state.softwareUpdateAction = mode",
+		"byId('software-update-tab').hidden = !canAdministerPlatform()",
+		"setSettingsSection(state.settingsSection)",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing signed software update contract %q", contract)
+		}
+	}
+	if !strings.Contains(settings, "版本更新") || !strings.Contains(settings, "支持 .cgupgrade，兼容旧 .cgpatch") {
+		t.Fatal("software update controls must be presented in settings")
+	}
+}
+
+func TestConsoleMakesAutomaticFailoverWarningPersistentDuringUpgrade(t *testing.T) {
+	page := string(consoleHTML)
+	const warning = "系统升级期间无法进行自动切换，请注意关注。"
+	if strings.Count(page, warning) < 3 {
+		t.Fatalf("mandatory update warning must appear in settings, confirmation, and the global maintenance banner")
+	}
+	for _, contract := range []string{
+		`id="software-update-global-warning"`,
+		`role="alert" aria-live="assertive"`,
+		"state.controlPlane.update_maintenance_active",
+		"softwareUpdateIsActive(item.job)",
+		"banner.hidden = !(active || statusActive)",
+		"active ? 2000 : 30000",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing persistent update warning contract %q", contract)
+		}
+	}
+}
+
+func TestConsoleRequiresTypedUpgradePackageIDBeforeMutatingSoftwareUpdate(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		"byId('software-update-confirmation-input').value === patchID",
+		"尚未输入完整升级包 ID，不能执行。",
+		"await startSoftwareUpdate(mode, patchID)",
+		"mode === 'rollback' ? 'danger-button' : 'primary-button'",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console must require typed patch confirmation before execute/resume/rollback: missing %q", contract)
+		}
+	}
+}
+
+func TestConsoleExplainsInstallAndRollingUpgradePackages(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		"选择 ClusterGuard 签名升级包",
+		"这是用于新装或重装的完整离线安装包，不能直接用于滚动升级。",
+		"请选择同一 Release 提供的 .cgupgrade 签名升级包。",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console must explain package purpose: missing %q", contract)
+		}
+	}
+}
+
+func TestConsoleProvidesAuditableIndeterminateOperationReview(t *testing.T) {
+	page := string(consoleHTML)
+	logView := consoleView(t, "operation-log")
+	for _, contract := range []string{
+		`id="operation-review-dialog"`,
+		`id="operation-review-note" maxlength="1024"`,
+		`id="submit-operation-review"`,
+		"复核不会把该操作改成成功。",
+		"原始“结果不确定”状态和全部执行证据继续保留",
+		"operation.status === 'indeterminate' && !operation.review",
+		"fetchResult(`/api/v1/operations/${operationId}/review`",
+		"已复核 · 结果不确定",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing operation review contract %q", contract)
+		}
+	}
+	if !strings.Contains(logView, "操作日志") || !strings.Contains(page, "✓ 标记已复核") {
+		t.Fatal("operation review entry must be available from the operation log")
 	}
 }

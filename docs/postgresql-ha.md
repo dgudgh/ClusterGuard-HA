@@ -153,10 +153,10 @@ passfiles, never in command arguments or browser fields.
 ```json
 "postgresql": {
   "enabled": true,
-  "discovery_interval_seconds": 5,
-  "discovery_timeout_seconds": 4,
+  "discovery_interval_seconds": 1,
+  "discovery_timeout_seconds": 1,
   "automatic_failover_enabled": false,
-  "automatic_failover_interval_seconds": 5,
+  "automatic_failover_interval_seconds": 1,
   "automatic_failover_retry_seconds": 30,
   "discovery": {
     "username": "cg_monitor",
@@ -186,8 +186,19 @@ control plane, and the restricted Agent. Invalid combinations fail at startup.
 Set `automatic_failover_enabled` only after the destructive qualification
 matrix below passes for the exact PostgreSQL packages, service units, network,
 storage, and fencing provider used in production. At the default cadence the
-controller requires six consecutive failed primary observations, giving a
-30-second stable-failure window before it evaluates a takeover.
+controller requires three current failed-primary observations spanning at
+least three seconds before it evaluates a takeover. This is an evidence window,
+not an end-to-end RTO promise. A separate 15-second Agent authorization-expiry
+fence protects against a disconnected old primary retaining writer or VIP
+ownership.
+
+The PostgreSQL 16.4 laboratory matrix measured 17.973 seconds of writer-endpoint
+interruption when clients used `connect_timeout=2`. Without a bounded client
+connect timeout, one blocked connection attempt lasted about 32 seconds even
+though the control-plane operation completed earlier. Production connection
+strings must therefore use a bounded connect timeout and retry policy, and the
+site must measure RTO from the application endpoint rather than from an audit
+timestamp alone.
 
 The PostgreSQL recovery controller is isolated from the MySQL controller. It
 selects only a rank-one standby from the same `system_identifier`, with current

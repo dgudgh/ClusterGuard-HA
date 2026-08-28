@@ -133,6 +133,8 @@ cgctl --server https://127.0.0.1:3000 \
   --ca-file /etc/clusterguard/tls/ca.crt operation <操作UUID>
 ```
 
+先按持久化检查项核对数据库真实角色、复制状态和 Writer endpoint 唯一归属。如果原不可变计划仍与当前拓扑一致，应再次执行 `verify`，只有验证证据全部通过才会把记录协调为 `succeeded`。如果拓扑已经继续变化、旧计划无法再被证明，但现场核验已经完成，可在“操作日志”选择“标记已复核”，填写复核依据。该动作只写入不可变的复核人、时间、说明、审计和报告，原状态仍为 `indeterminate`，不会伪造成功。
+
 ## 6. 故障切换
 
 故障切换用于原主库不可达或失去写入能力的场景，不等同于计划切换。
@@ -247,6 +249,8 @@ API issuer 必须被 `tls_ca_file` 指向的信任链信任，Raft issuer 必须
 原始返回默认折叠，点击后显示。原始返回不得泄漏密码、session、Bearer token、一次性 Approval 或 Agent secret。
 
 日志中集群字段必须显示固定集群名称，不能错误显示 hostname:port。历史记录应按资源 UUID 关联，即使主机名或端口后来变化也能正确还原。
+
+未复核的 `indeterminate` 记录显示“标记已复核”。提交前必须核验实际数据库角色、复制链路、业务入口和 endpoint owner；提交后页面显示复核人和时间，记录不再计入控制面“待复核”数量。复核说明不可覆盖，原始执行结果、失败分类、计划、验证检查和审计仍完整保留。
 
 ## 10. 指标与监控
 
@@ -379,6 +383,8 @@ cgctl cluster restore-status [--cluster <CLUSTER_UUID>]
 - 查看数据库真实角色和 endpoint owner
 - 根据 verification failed checks 处理
 - 只有确认前一次没有执行或已安全结束后才能重新发起
+- 当前拓扑仍符合原计划时，优先重新执行 `verify`
+- 原计划已失效但现场核验完成时，在操作日志提交人工复核说明；不要把复核当作成功
 
 ### 13.4 数据库客户端缺失
 
@@ -419,3 +425,19 @@ cgctl cluster restore-status [--cluster <CLUSTER_UUID>]
 - 验证元数据 hostname/IP/port reconcile
 - 恢复演练一份控制面备份和一份数据库备份
 - 复核最小权限、网络 ACL 和自动切换策略
+
+## 15. 软件升级与补丁
+
+现场不得使用 `rpm -Uvh` 同时覆盖全部控制节点。正式版本更新使用签名 `.cgupgrade` 升级包，按 follower、纯数据节点、Leader 的顺序滚动处理，并在每一步重新验证版本合同、Raft 多数派、活动任务和维护状态。升级期间数据库继续运行，ClusterGuard 的所有变更入口进入统一维护门禁。
+
+```bash
+sudo clusterguard-upgrade \
+  --package ./clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
+  --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
+  --state ./clusterguard-deployment-state.json \
+  --ssh-key /root/.ssh/clusterguard_update \
+  --known-hosts /etc/clusterguard/ssh_known_hosts \
+  --execute
+```
+
+断电或网络中断后使用同一个升级包追加 `--resume`。只有完整升级或完整回退验证成功才释放维护门禁。详细准备、检查、计划、回退和生产准入要求见[版本升级与回退手册](update-and-patch.md)。

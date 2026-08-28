@@ -14,7 +14,6 @@ jq() { "${jq_binary}" "$@"; }
 
 request_file="$(mktemp /tmp/clusterguard-lifecycle.XXXXXX)"
 chmod 0600 "${request_file}"
-trap 'rm -f "${request_file}"' EXIT
 cat >"${request_file}"
 jq -e '.request.cluster_id and (.plan.targets | length > 0)' "${request_file}" >/dev/null
 
@@ -23,10 +22,36 @@ mysql_install_helper="${CG_MYSQL_INSTALL_HELPER:-${script_dir}/clusterguard-mysq
 mysql_sync_helper="${CG_MYSQL_SYNC_HELPER:-${script_dir}/clusterguard-mysql-sync.sh}"
 postgresql_install_helper="${CG_POSTGRESQL_INSTALL_HELPER:-${script_dir}/clusterguard-postgresql-install.sh}"
 postgresql_sync_helper="${CG_POSTGRESQL_SYNC_HELPER:-${script_dir}/clusterguard-postgresql-sync.sh}"
+package_resolve_helper="${CG_PACKAGE_RESOLVE_HELPER:-${script_dir}/clusterguard-package-resolve.sh}"
+adapter_runtime_helper="${CG_ADAPTER_RUNTIME_HELPER:-${script_dir}/clusterguard-adapter-runtime-install.sh}"
 control_helper="${CG_CONTROL_JOIN_HELPER:-}"
 package_repository="${CG_PACKAGE_REPOSITORY:-/opt/clusterguard/packages}"
 known_hosts="${CG_SSH_KNOWN_HOSTS:-/etc/clusterguard/known_hosts}"
 identity_file="${CG_SSH_IDENTITY_FILE:-}"
+installed_control_indexes=()
+ssh_command=()
+scp_command=()
+
+rollback_installed_controls() {
+  [[ -n "${control_helper}" && -x "${control_helper}" ]] || return 0
+  local array_index target_index
+  for ((array_index=${#installed_control_indexes[@]}-1; array_index>=0; array_index--)); do
+    target_index="${installed_control_indexes[${array_index}]}"
+    "${control_helper}" "${request_file}" "${target_index}" rollback >/dev/null 2>&1 ||
+      printf 'control-node rollback requires operator review for target index %s\n' "${target_index}" >&2
+  done
+}
+
+cleanup_lifecycle() {
+  local exit_status=$?
+  trap - EXIT
+  if [[ "${exit_status}" -ne 0 && ${#installed_control_indexes[@]} -gt 0 ]]; then
+    rollback_installed_controls
+  fi
+  rm -f "${request_file}"
+  exit "${exit_status}"
+}
+trap cleanup_lifecycle EXIT
 
 emit_event() {
   local stage="$1" status="$2" message="$3"
@@ -43,60 +68,55 @@ validate_remote_identity() {
 }
 
 ssh_prefix() {
-  local -n result=$1
-  local port="$2"
-  result=(ssh -o BatchMode=yes -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=${known_hosts}")
+  local port="$1"
+  ssh_command=(ssh -o BatchMode=yes -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=${known_hosts}")
   if [[ -n "${identity_file}" ]]; then
-    result+=(-i "${identity_file}")
+    ssh_command+=(-i "${identity_file}")
   elif [[ -n "${CG_SSH_PASSWORD:-}" ]]; then
     command -v sshpass >/dev/null 2>&1 || { echo "sshpass is required for transient password bootstrap" >&2; return 1; }
     export SSHPASS="${CG_SSH_PASSWORD}"
-    result=(sshpass -e ssh -o BatchMode=no -o PasswordAuthentication=yes -o KbdInteractiveAuthentication=no -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=${known_hosts}")
+    ssh_command=(sshpass -e ssh -o BatchMode=no -o PasswordAuthentication=yes -o KbdInteractiveAuthentication=no -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=${known_hosts}")
   else
     echo "SSH identity file or transient password is required" >&2
     return 1
   fi
-  result+=(-p "${port}")
+  ssh_command+=(-p "${port}")
 }
 
 scp_prefix() {
-  local -n result=$1
-  local port="$2"
-  result=(scp -q -o BatchMode=yes -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=${known_hosts}")
+  local port="$1"
+  scp_command=(scp -q -o BatchMode=yes -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=${known_hosts}")
   if [[ -n "${identity_file}" ]]; then
-    result+=(-i "${identity_file}")
+    scp_command+=(-i "${identity_file}")
   else
     command -v sshpass >/dev/null 2>&1 || return 1
     export SSHPASS="${CG_SSH_PASSWORD:-}"
-    result=(sshpass -e scp -q -o BatchMode=no -o PasswordAuthentication=yes -o KbdInteractiveAuthentication=no -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=${known_hosts}")
+    scp_command=(sshpass -e scp -q -o BatchMode=no -o PasswordAuthentication=yes -o KbdInteractiveAuthentication=no -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=${known_hosts}")
   fi
-  result+=(-P "${port}")
+  scp_command+=(-P "${port}")
 }
 
 remote_exec() {
   local host="$1" user="$2" port="$3" command_text="$4"
-  local -a prefix
   validate_remote_identity "${host}" "${user}" "${port}"
-  ssh_prefix prefix "${port}"
-  "${prefix[@]}" "${user}@${host}" "${command_text}"
+  ssh_prefix "${port}"
+  "${ssh_command[@]}" "${user}@${host}" "${command_text}"
 }
 
 remote_stdin() {
   local payload="$1" host="$2" user="$3" port="$4" command_text="$5"
-  local -a prefix
   validate_remote_identity "${host}" "${user}" "${port}"
-  ssh_prefix prefix "${port}"
-  printf '%s\n' "${payload}" | "${prefix[@]}" "${user}@${host}" "${command_text}"
+  ssh_prefix "${port}"
+  printf '%s\n' "${payload}" | "${ssh_command[@]}" "${user}@${host}" "${command_text}"
 }
 
 copy_remote() {
   local source="$1" host="$2" user="$3" port="$4" target="$5"
-  local -a prefix
   local destination_host="${host}"
   validate_remote_identity "${host}" "${user}" "${port}"
-  scp_prefix prefix "${port}"
+  scp_prefix "${port}"
   [[ "${host}" != *:* ]] || destination_host="[${host}]"
-  "${prefix[@]}" "${source}" "${user}@${destination_host}:${target}"
+  "${scp_command[@]}" "${source}" "${user}@${destination_host}:${target}"
 }
 
 emit_event preflight running "checking approved lifecycle targets"
@@ -114,13 +134,19 @@ for ((index=0; index<target_count; index++)); do
   node_name="$(jq -r '.node_name' <<<"${target}")"
   kind="$(jq -r '.kind' <<<"${target}")"
   reuses_node_slot="$(jq -r '.reuses_node_slot // false' <<<"${target}")"
+  package_name="$(jq -r '.package_name // ""' <<<"${target}")"
+  remote_package=""
+  case "${engine}" in
+    mysql) database_version="$(jq -r '.mysql_version // ""' <<<"${target}")" ;;
+    postgresql) database_version="$(jq -r '.postgresql_version // ""' <<<"${target}")" ;;
+  esac
   validate_remote_identity "${host}" "${user}" "${port}"
   remote_exec "${host}" "${user}" "${port}" "test \"\$(id -u)\" -eq 0 && command -v bash >/dev/null"
   remote_exec "${host}" "${user}" "${port}" "install -d -m 0700 /var/lib/clusterguard/stage"
-  if ! remote_exec "${host}" "${user}" "${port}" "command -v jq >/dev/null 2>&1"; then
-    copy_remote "${jq_binary}" "${host}" "${user}" "${port}" "/var/lib/clusterguard/stage/jq"
-    remote_exec "${host}" "${user}" "${port}" "chmod 0700 /var/lib/clusterguard/stage/jq"
-  fi
+	# Every helper consumes the same controller-validated jq path. Always stage it
+	# so behavior does not depend on which packages happen to exist on the target.
+	copy_remote "${jq_binary}" "${host}" "${user}" "${port}" "/var/lib/clusterguard/stage/jq"
+	remote_exec "${host}" "${user}" "${port}" "chmod 0700 /var/lib/clusterguard/stage/jq"
   emit_event preflight succeeded "target ${node_name} passed SSH and privilege checks"
 
   if [[ "${kind}" == "data" || "${kind}" == "mixed" ]]; then
@@ -141,18 +167,18 @@ for ((index=0; index<target_count; index++)); do
     [[ -x "${install_helper}" && -x "${sync_helper}" ]] || { echo "${engine} lifecycle helpers are unavailable" >&2; exit 3; }
     copy_remote "${install_helper}" "${host}" "${user}" "${port}" "${remote_install_helper}"
     copy_remote "${sync_helper}" "${host}" "${user}" "${port}" "${remote_sync_helper}"
-    package_name="$(jq -r '.package_name // ""' <<<"${target}")"
-    remote_package=""
-    if [[ -n "${package_name}" ]]; then
-      [[ "${package_name}" == "$(basename "${package_name}")" ]] || { echo "package must be selected by basename" >&2; exit 3; }
-      package_path="${package_repository}/${package_name}"
-      [[ -f "${package_path}" ]] || { echo "selected database package is unavailable" >&2; exit 3; }
+    package_manifest="${CG_PACKAGE_MANIFEST:-${package_repository}/manifest.json}"
+    if [[ -n "${package_name}" || -f "${package_manifest}" ]]; then
+      [[ -x "${package_resolve_helper}" ]] || { echo "package resolver is unavailable" >&2; exit 3; }
+      package_path="$(CG_PACKAGE_REPOSITORY="${package_repository}" CG_PACKAGE_MANIFEST="${package_manifest}" CG_JQ_BINARY="${jq_binary}" "${package_resolve_helper}" "${engine}" "${database_version}" "${package_name}")"
+      package_name="$(basename "${package_path}")"
       remote_package="/var/lib/clusterguard/stage/${package_name}"
       copy_remote "${package_path}" "${host}" "${user}" "${port}" "${remote_package}"
+      emit_event install running "verified ${engine} ${database_version} package selected for ${node_name}"
     fi
 	payload="$(TARGET_JSON="${target}" REMOTE_PACKAGE="${remote_package}" jq -nc \
 	  --argjson request "$(jq -c '.request' "${request_file}")" \
-	  '{request:$request,target:((env.TARGET_JSON|fromjson)+{package_path:env.REMOTE_PACKAGE}),secrets:{mysql_root_password:env.CG_MYSQL_ROOT_PASSWORD,replication_password:env.CG_MYSQL_REPLICATION_PASSWORD,postgresql_admin_password:env.CG_POSTGRESQL_ADMIN_PASSWORD,postgresql_replication_password:env.CG_POSTGRESQL_REPLICATION_PASSWORD}}')"
+	  '{request:$request,target:((env.TARGET_JSON|fromjson)+{package_path:env.REMOTE_PACKAGE,mysql_root_remote_host:(env.CG_MYSQL_ROOT_REMOTE_HOST // "")}),secrets:{mysql_root_password:env.CG_MYSQL_ROOT_PASSWORD,mysql_discovery_username:env.CG_MYSQL_DISCOVERY_USERNAME,mysql_discovery_password:env.CG_MYSQL_DISCOVERY_PASSWORD,mysql_operation_username:env.CG_MYSQL_OPERATION_USERNAME,mysql_operation_password:env.CG_MYSQL_OPERATION_PASSWORD,mysql_replication_username:env.CG_MYSQL_REPLICATION_USERNAME,replication_password:env.CG_MYSQL_REPLICATION_PASSWORD,postgresql_admin_password:env.CG_POSTGRESQL_ADMIN_PASSWORD,postgresql_replication_password:env.CG_POSTGRESQL_REPLICATION_PASSWORD}}')"
 
     emit_event install running "installing ${engine} on ${node_name}"
     remote_stdin "${payload}" "${host}" "${user}" "${port}" "chmod 0700 '${remote_install_helper}' && PATH=/var/lib/clusterguard/stage:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin '${remote_install_helper}'" >/dev/null
@@ -170,17 +196,74 @@ for ((index=0; index<target_count; index++)); do
     emit_event synchronize succeeded "data synchronization completed for ${node_name}"
     emit_event configure_replication succeeded "replication follows the selected current primary"
     emit_event verify succeeded "replication, read-only state, identity, and VIP absence verified"
+
+    # A rebuilt host may retain a valid data-node Agent installation while its
+    # systemd enablement is lost (for example after an operating-system repair).
+    # Reactivate only a complete, already-enrolled Agent; first-time enrollment
+    # remains a separate fail-closed step because it needs node-specific policy.
+    if remote_exec "${host}" "${user}" "${port}" \
+      "test -x /usr/local/bin/clusterguard-agent && test -s /etc/clusterguard/agent.json && test -s /etc/clusterguard/agent.env && systemctl cat clusterguard-agent.service >/dev/null 2>&1"; then
+      emit_event install running "reactivating the enrolled data-node agent on ${node_name}"
+      remote_exec "${host}" "${user}" "${port}" \
+        "systemctl daemon-reload && systemctl enable --now clusterguard-agent.service && systemctl is-active --quiet clusterguard-agent.service"
+      emit_event install succeeded "enrolled data-node agent is active on ${node_name}"
+      emit_event verify succeeded "data-node agent configuration and boot activation verified"
+    fi
   fi
 
   if [[ "${kind}" == "controller" || "${kind}" == "mixed" ]]; then
+    [[ -x "${adapter_runtime_helper}" ]] || { echo "adapter runtime installer is unavailable" >&2; exit 4; }
+    remote_adapter_helper="/var/lib/clusterguard/stage/clusterguard-adapter-runtime-install.sh"
+    copy_remote "${adapter_runtime_helper}" "${host}" "${user}" "${port}" "${remote_adapter_helper}"
+    if [[ -z "${remote_package}" ]]; then
+      case "${engine}" in
+        mysql)
+          runtime_probe="command -v mysql >/dev/null 2>&1 || test -x /usr/local/mysql/bin/mysql || find /opt/clusterguard/mysql -type f -path '*/software/bin/mysql' -perm -u+x -print -quit 2>/dev/null | grep -q ."
+          ;;
+        postgresql)
+          runtime_probe="command -v psql >/dev/null 2>&1 || test -x /usr/local/bin/psql || find /usr/pgsql-* /usr/lib/postgresql /opt/clusterguard/postgresql -type f -path '*/bin/psql' -perm -u+x -print -quit 2>/dev/null | grep -q ."
+          ;;
+      esac
+      if ! remote_exec "${host}" "${user}" "${port}" "${runtime_probe}"; then
+        package_manifest="${CG_PACKAGE_MANIFEST:-${package_repository}/manifest.json}"
+        [[ -x "${package_resolve_helper}" ]] || { echo "package resolver is unavailable" >&2; exit 4; }
+        package_path="$(CG_PACKAGE_REPOSITORY="${package_repository}" CG_PACKAGE_MANIFEST="${package_manifest}" CG_JQ_BINARY="${jq_binary}" "${package_resolve_helper}" "${engine}" "${database_version}" "${package_name}")"
+        package_name="$(basename "${package_path}")"
+        remote_package="/var/lib/clusterguard/stage/${package_name}"
+        copy_remote "${package_path}" "${host}" "${user}" "${port}" "${remote_package}"
+        emit_event install running "verified ${engine} ${database_version} adapter package selected for ${node_name}"
+      fi
+    fi
+    runtime_payload="$(TARGET_JSON="${target}" REMOTE_PACKAGE="${remote_package}" jq -nc \
+      --argjson request "$(jq -c '.request' "${request_file}")" \
+      '{request:$request,target:((env.TARGET_JSON|fromjson)+{package_path:env.REMOTE_PACKAGE})}')"
+	    emit_event install running "preparing ${engine} adapter runtime on ${node_name}"
+	    runtime_result="$(remote_stdin "${runtime_payload}" "${host}" "${user}" "${port}" "chmod 0700 '${remote_adapter_helper}' && CG_JQ_BINARY=/var/lib/clusterguard/stage/jq '${remote_adapter_helper}'")"
+	    jq -e --arg engine "${engine}" '.ready == true and .engine == $engine and (.binary | length > 0)' <<<"${runtime_result}" >/dev/null
+	    emit_event install succeeded "${engine} adapter runtime is ready on ${node_name}"
+	    emit_event verify succeeded "controller adapter runtime is ready on ${node_name}"
     if [[ "${reuses_node_slot}" == "true" ]] && remote_exec "${host}" "${user}" "${port}" \
-      "systemctl is-active --quiet clusterguard-ha.service && test \"\$(jq -r '.consensus.local_id // empty' /etc/clusterguard/clusterguard.json)\" = '${node_id}'"; then
-      emit_event verify succeeded "existing controller role preserved on ${node_name}"
+      "test \"\$(jq -r '.consensus.local_id // empty' /etc/clusterguard/clusterguard.json)\" = '${node_id}'"; then
+      if remote_exec "${host}" "${user}" "${port}" "systemctl is-active --quiet clusterguard-ha.service"; then
+        emit_event verify succeeded "existing controller role preserved on ${node_name}"
+	      else
+	        emit_event install running "reactivating the existing controller role on ${node_name}"
+	        remote_exec "${host}" "${user}" "${port}" "systemctl enable --now clusterguard-ha.service && systemctl is-active --quiet clusterguard-ha.service"
+	        emit_event install succeeded "existing controller role reactivated on ${node_name}"
+	        emit_event verify succeeded "existing controller role reactivated after adapter readiness on ${node_name}"
+      fi
     else
       [[ -n "${control_helper}" && -x "${control_helper}" ]] || { echo "control-node join executor is not configured" >&2; exit 4; }
       emit_event install running "installing controller role on ${node_name}"
-      "${control_helper}" "${request_file}" "${index}"
-      emit_event verify succeeded "controller role joined the verified odd membership"
+      installed_control_indexes+=("${index}")
+      control_result="$("${control_helper}" "${request_file}" "${index}" join)"
+      jq -e '.ready == true and (.new_install | type == "boolean")' <<<"${control_result}" >/dev/null
+	      if ! jq -e '.new_install == true' <<<"${control_result}" >/dev/null; then
+	        last_installed_index=$((${#installed_control_indexes[@]} - 1))
+	        unset "installed_control_indexes[${last_installed_index}]"
+	      fi
+	      emit_event install succeeded "controller role installed on ${node_name}"
+	      emit_event verify succeeded "controller identity is running and ready for the leader to commit Raft membership"
     fi
   fi
 done

@@ -50,13 +50,15 @@ ClusterGuard HA 由此形成。
 
 ![ClusterGuard HA 集群拓扑](../assets/screenshots/cluster-topology.png)
 
-## 为什么现在先把 MySQL 做完整
+## MySQL 做稳以后，PostgreSQL 接上来了
 
 ClusterGuard HA 的资源模型和 Adapter SDK 为 PostgreSQL、Oracle 与 SQL Server 留出了边界。产品名称也没有绑定某一种数据库。
 
-不过，架构能注册四种数据库，不等于四种数据库已经完成同等生产认证。MySQL 是最早积累安装、切换、VIP、旧主恢复和暴力测试场景的一条线，因此 2.1.45 只把 MySQL 列为正式支持范围。
+不过，架构能注册四种数据库，不等于四种数据库已经完成同等生产认证。MySQL 是最早积累安装、切换、VIP、旧主恢复和破坏性测试场景的一条线，因此 2.1.45 只把 MySQL 列为正式支持范围。
 
-PostgreSQL 从 2.2 系列开始开发和验收。Oracle Data Guard Broker 与 SQL Server Always On 需要各自的身份模型、端点机制、切换语义和故障矩阵。未完成的能力会明确返回 `unsupported`，不会做一个看起来能点、后台却没有真实执行的按钮。
+进入 2.2 以后，PostgreSQL 原生流复制适配器完成了发现、身份、拓扑、候选评估、计划切换、自动故障切换、写 VIP 和旧主回挂。PostgreSQL 16.4 三节点环境已经通过连续切换、主库强制断电、网络分区、Raft 失多数、并发操作和 `pg_rewind` 回挂测试。这个结果证明 2.2 的核心流程已经成立，生产使用仍要按客户现场条件重新验收。
+
+Oracle Data Guard Broker 与 SQL Server Always On 需要各自的身份模型、端点机制、切换语义和故障矩阵。未完成的能力会明确返回 `unsupported`，不会做一个看起来能点、后台却没有真实执行的按钮。
 
 这个节奏可能显得保守。高可用产品最怕的恰恰是界面走在证据前面。
 

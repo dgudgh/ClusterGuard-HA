@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -552,6 +553,42 @@ func TestDurableWorkflowPersistsBlockingPrecheckEvidence(t *testing.T) {
 	}
 }
 
+func TestDurableWorkflowRefreshesBlockingPrecheckEvidenceAfterPlan(t *testing.T) {
+	request, resolved := durableRequestFixture()
+	repository := store.NewMemory()
+	candidate := newDurableAdapter()
+	service := newDurableWorkflowService(t, repository, candidate, request, resolved)
+
+	planned, _, err := service.Plan(context.Background(), request)
+	if err != nil || planned.Stage != model.StagePlan || len(planned.Precheck) != 1 ||
+		planned.Precheck[0].Status != model.CheckPass {
+		t.Fatalf("initial plan did not persist passing precheck evidence: record=%+v err=%v", planned, err)
+	}
+
+	candidate.precheckChecks = []model.Check{
+		{Name: "replication_threads", Status: model.CheckPass, Message: "replication is healthy"},
+		{Name: "replication_lag", Status: model.CheckFail, Message: "target lag is not yet zero"},
+	}
+	execution, err := service.Execute(context.Background(), request, "approved")
+	if err == nil || execution.Status != model.OperationBlocked || candidate.executeCalls != 0 {
+		t.Fatalf("blocking execution precheck result=%+v calls=%d err=%v", execution, candidate.executeCalls, err)
+	}
+
+	record, found := repository.OperationByIdempotencyKey(request.IdempotencyKey)
+	if !found || record.Status != model.OperationBlocked || record.Stage != model.StagePlan {
+		t.Fatalf("planned operation did not retain its stage when blocked: found=%t record=%+v", found, record)
+	}
+	if len(record.Precheck) != 2 ||
+		record.Precheck[1].Name != "replication_lag" ||
+		record.Precheck[1].Status != model.CheckFail ||
+		record.Precheck[1].Message != "target lag is not yet zero" {
+		t.Fatalf("execution precheck evidence did not replace stale planning evidence: %+v", record.Precheck)
+	}
+	if record.Plan.Digest == "" {
+		t.Fatalf("immutable plan was lost while refreshing precheck evidence: %+v", record.Plan)
+	}
+}
+
 func TestDurableWorkflowDoesNotTreatBlockedAdapterExecutionAsCommitted(t *testing.T) {
 	request, resolved := durableRequestFixture()
 	repository := store.NewMemory()
@@ -598,6 +635,109 @@ func TestDurableWorkflowStillVerifiesAfterCommittedAdapterError(t *testing.T) {
 	record, found := repository.OperationByIdempotencyKey(request.IdempotencyKey)
 	if !found || !record.Verification.Passed || record.Status != model.OperationIndeterminate {
 		t.Fatalf("post-commit verification evidence was not durable: found=%t record=%+v", found, record)
+	}
+}
+
+func TestAutomaticFailoverResumesPromotedUnverifiedOperation(t *testing.T) {
+	request, resolved := durableRequestFixture()
+	request.Operation.Kind = model.OperationFailover
+	resolved.Primary.Health.State = model.HealthUnhealthy
+	request.IdempotencyKey = "automatic-failover:" + string(request.Operation.ClusterID) + ":" + string(resolved.Primary.ResourceID) + ":1786471200000000000:1"
+	repository := store.NewMemory()
+	candidate := newDurableAdapter()
+	candidate.executeError = durableCommittedFailure{}
+	candidate.verificationResult = &model.Verification{
+		Passed: false,
+		Checks: []model.Check{{Name: "writer_endpoint_owner", Status: model.CheckFail}},
+	}
+	service := newDurableWorkflowService(t, repository, candidate, request, resolved)
+
+	if execution, err := service.ExecuteAutomatic(context.Background(), request, "incident-1"); err == nil || execution.Status != model.OperationIndeterminate {
+		t.Fatalf("initial promoted-unverified execution=%+v err=%v", execution, err)
+	}
+	record, found := repository.OperationByIdempotencyKey(request.IdempotencyKey)
+	if !found || record.Status != model.OperationIndeterminate || record.FailureClass != "promoted_unverified" {
+		t.Fatalf("initial promoted-unverified record found=%t record=%+v", found, record)
+	}
+
+	candidate.executeError = nil
+	candidate.verificationResult = &model.Verification{
+		Passed: true,
+		Checks: []model.Check{{Name: "writer_endpoint_owner", Status: model.CheckPass}},
+	}
+	execution, err := service.ExecuteAutomatic(context.Background(), request, "incident-1")
+	if err != nil || execution.Status != model.OperationSucceeded {
+		t.Fatalf("resumed automatic failover execution=%+v err=%v", execution, err)
+	}
+	if candidate.executeCalls != 2 || candidate.verifyCalls != 2 {
+		t.Fatalf("resume calls execute=%d verify=%d", candidate.executeCalls, candidate.verifyCalls)
+	}
+	record, found = repository.OperationByIdempotencyKey(request.IdempotencyKey)
+	if !found || record.Status != model.OperationSucceeded || record.Stage != model.StageReport || !record.Verification.Passed {
+		t.Fatalf("resumed operation did not reconcile: found=%t record=%+v", found, record)
+	}
+}
+
+func TestAutomaticFailoverResumeStopsBeforeVerificationWhenContinuationIsBlocked(t *testing.T) {
+	request, resolved := durableRequestFixture()
+	request.Operation.Kind = model.OperationFailover
+	resolved.Primary.Health.State = model.HealthUnhealthy
+	request.IdempotencyKey = "automatic-failover:" + string(request.Operation.ClusterID) + ":" + string(resolved.Primary.ResourceID) + ":1786471200000000000:1"
+	repository := store.NewMemory()
+	candidate := newDurableAdapter()
+	candidate.executeError = durableCommittedFailure{}
+	candidate.verificationResult = &model.Verification{
+		Passed: false,
+		Checks: []model.Check{{Name: "writer_endpoint_owner", Status: model.CheckFail}},
+	}
+	service := newDurableWorkflowService(t, repository, candidate, request, resolved)
+
+	if execution, err := service.ExecuteAutomatic(context.Background(), request, "incident-1"); err == nil || execution.Status != model.OperationIndeterminate {
+		t.Fatalf("initial promoted-unverified execution=%+v err=%v", execution, err)
+	}
+	record, found := repository.OperationByIdempotencyKey(request.IdempotencyKey)
+	if !found || record.Status != model.OperationIndeterminate || record.FailureClass != "promoted_unverified" {
+		t.Fatalf("initial promoted-unverified record found=%t record=%+v", found, record)
+	}
+	initialRevision := record.MetadataRevision
+	initialVerifyCalls := candidate.verifyCalls
+
+	candidate.executeError = nil
+	candidate.executeResult = &model.Execution{Status: model.OperationBlocked, Message: "continuation gate blocked"}
+	execution, err := service.ExecuteAutomatic(context.Background(), request, "incident-1")
+	if err == nil || execution.Status != model.OperationBlocked {
+		t.Fatalf("blocked continuation execution=%+v err=%v", execution, err)
+	}
+	if candidate.verifyCalls != initialVerifyCalls {
+		t.Fatalf("blocked continuation verification calls=%d, want %d", candidate.verifyCalls, initialVerifyCalls)
+	}
+	record, found = repository.OperationByIdempotencyKey(request.IdempotencyKey)
+	if !found || record.MetadataRevision != initialRevision || record.Status != model.OperationIndeterminate || record.FailureClass != "promoted_unverified" {
+		t.Fatalf("blocked continuation mutated the durable operation: found=%t record=%+v", found, record)
+	}
+}
+
+func TestAutomaticFailoverDoesNotResumeOtherIndeterminateFailures(t *testing.T) {
+	request, resolved := durableRequestFixture()
+	request.Operation.Kind = model.OperationFailover
+	request.IdempotencyKey = "automatic-failover:" + string(request.Operation.ClusterID) + ":" + string(resolved.Primary.ResourceID) + ":1786471200000000000:1"
+	repository := store.NewMemory()
+	candidate := newDurableAdapter()
+	candidate.verificationResult = &model.Verification{
+		Passed: false,
+		Checks: []model.Check{{Name: "writer_endpoint_owner", Status: model.CheckFail}},
+	}
+	service := newDurableWorkflowService(t, repository, candidate, request, resolved)
+
+	if execution, err := service.ExecuteAutomatic(context.Background(), request, "incident-1"); err == nil || execution.Status != model.OperationIndeterminate {
+		t.Fatalf("initial verification failure execution=%+v err=%v", execution, err)
+	}
+	before := candidate.executeCalls
+	if execution, err := service.ExecuteAutomatic(context.Background(), request, "incident-1"); err == nil || execution.Status != model.OperationIndeterminate {
+		t.Fatalf("terminal retry execution=%+v err=%v", execution, err)
+	}
+	if candidate.executeCalls != before {
+		t.Fatalf("non-resumable operation executed again: before=%d after=%d", before, candidate.executeCalls)
 	}
 }
 
@@ -652,6 +792,38 @@ func TestManualVerificationReconcilesIndeterminateOperation(t *testing.T) {
 	record, found := repository.OperationByIdempotencyKey(request.IdempotencyKey)
 	if !found || record.Status != model.OperationSucceeded || record.Stage != model.StageReport || !record.Verification.Passed {
 		t.Fatalf("manual verification did not reconcile operation: found=%t record=%+v", found, record)
+	}
+}
+
+func TestManualVerificationReturnsPersistedEvidenceForSucceededOperation(t *testing.T) {
+	request, resolved := durableRequestFixture()
+	repository := store.NewMemory()
+	candidate := newDurableAdapter()
+	service := newDurableWorkflowService(t, repository, candidate, request, resolved)
+
+	execution, err := service.Execute(context.Background(), request, "approved")
+	if err != nil || execution.Status != model.OperationSucceeded {
+		t.Fatalf("initial execution result=%+v err=%v", execution, err)
+	}
+	record, found := repository.OperationByIdempotencyKey(request.IdempotencyKey)
+	if !found || !record.Verification.Passed {
+		t.Fatalf("successful verification evidence was not persisted: found=%t record=%+v", found, record)
+	}
+	persisted := record.Verification
+	candidate.verificationResult = &model.Verification{
+		Passed: false,
+		Checks: []model.Check{{Name: "post_mutation_plan_integrity", Status: model.CheckFail}},
+	}
+
+	verification, err := service.Verify(context.Background(), request)
+	if err != nil {
+		t.Fatalf("idempotent verification failed: %v", err)
+	}
+	if !reflect.DeepEqual(verification, persisted) {
+		t.Fatalf("verification=%+v, want persisted evidence %+v", verification, persisted)
+	}
+	if candidate.verifyCalls != 1 {
+		t.Fatalf("adapter verification calls=%d, want only the execution-time call", candidate.verifyCalls)
 	}
 }
 

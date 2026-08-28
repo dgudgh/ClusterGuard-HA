@@ -97,15 +97,26 @@ func (server *Server) prepareNodeSync(payload nodeSyncPayload) (lifecycle.Reques
 		return lifecycle.Request{}, lifecycle.Plan{}, fmt.Errorf("registered MySQL or PostgreSQL cluster is required")
 	}
 	request.Engine = cluster.Engine
-	topology, found := server.store.TopologySnapshot(request.ClusterID)
-	if !found || topology.ObservedAt.IsZero() {
-		return lifecycle.Request{}, lifecycle.Plan{}, fmt.Errorf("a current topology observation is required")
+	requiresDataLifecycle := false
+	for _, target := range request.Targets {
+		if target.Kind == model.NodeData || target.Kind == model.NodeMixed {
+			requiresDataLifecycle = true
+			break
+		}
 	}
-	donor, err := primaryLifecycleDonor(topology, cluster.Engine)
-	if err != nil {
-		return lifecycle.Request{}, lifecycle.Plan{}, err
+	var donor lifecycle.Donor
+	if requiresDataLifecycle {
+		topology, topologyFound := server.store.TopologySnapshot(request.ClusterID)
+		if !topologyFound || topology.ObservedAt.IsZero() {
+			return lifecycle.Request{}, lifecycle.Plan{}, fmt.Errorf("a current topology observation is required for data-node lifecycle")
+		}
+		var err error
+		donor, err = primaryLifecycleDonor(topology, cluster.Engine)
+		if err != nil {
+			return lifecycle.Request{}, lifecycle.Plan{}, err
+		}
+		request.Donor = donor
 	}
-	request.Donor = donor
 	for _, node := range server.store.Nodes() {
 		if node.Active && (node.Kind == model.NodeController || node.Kind == model.NodeMixed) {
 			request.CurrentControllerCount++
@@ -124,7 +135,9 @@ func (server *Server) prepareNodeSync(payload nodeSyncPayload) (lifecycle.Reques
 		return lifecycle.Request{}, lifecycle.Plan{}, fmt.Errorf("cluster has multiple active HA endpoints")
 	}
 	capabilities := server.lifecycleCap
-	capabilities.SourceVersion = donor.Version
+	if requiresDataLifecycle {
+		capabilities.SourceVersion = donor.Version
+	}
 	if capabilities.XtraBackupVersions != nil {
 		copyVersions := make(map[string]bool, len(capabilities.XtraBackupVersions))
 		for version, available := range capabilities.XtraBackupVersions {
@@ -197,16 +210,19 @@ func (server *Server) nodeSyncRoute(writer http.ResponseWriter, request *http.Re
 			writeError(writer, http.StatusServiceUnavailable, "node lifecycle execution is not configured")
 			return
 		}
-		secrets, err := server.lifecycleSec.ResolveLifecycleSecrets(request.Context(), prepared)
+		// Once an authorized lifecycle request reaches execution, browser refreshes and
+		// transport disconnects must not terminate a partially mutated database node.
+		executionContext := context.WithoutCancel(request.Context())
+		secrets, err := server.lifecycleSec.ResolveLifecycleSecrets(executionContext, prepared)
 		if err != nil {
 			writeError(writer, http.StatusServiceUnavailable, "node lifecycle credentials are unavailable")
 			return
 		}
 		var task lifecycle.Task
 		if platformSession && authentication.viaSession {
-			task, err = server.lifecycle.ExecuteAuthorized(request.Context(), prepared, plan, secrets, authentication.principal.Username)
+			task, err = server.lifecycle.ExecuteAuthorized(executionContext, prepared, plan, secrets, authentication.principal.Username)
 		} else {
-			task, err = server.lifecycle.Execute(request.Context(), prepared, plan, secrets, payload.ApprovalToken)
+			task, err = server.lifecycle.Execute(executionContext, prepared, plan, secrets, payload.ApprovalToken)
 		}
 		secrets = lifecycle.ExecutionSecrets{}
 		if err != nil {

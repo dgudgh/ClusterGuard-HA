@@ -259,7 +259,8 @@ Automatic failover is a separate production change. Confirm at least:
 - three or more odd-numbered controllers form a stable Raft majority;
 - Agent runs on every data node and enforces local read-only isolation after authority expires;
 - current primary, candidate, and VIP owner are correct;
-- the 30-second stable failure window has been tested on site;
+- the default three-observation, three-second stable-failure evidence window and the separate 15-second Agent isolation fence have been tested on site;
+- application writer-endpoint RTO has been measured with bounded client connection timeouts and retries;
 - network partitions, Agent loss, and controller quorum loss fail closed;
 - a recovered old primary can only enter the former-primary recovery workflow;
 - the site has decided whether BMC, PDU, cloud, or hypervisor fencing is required.

@@ -21,6 +21,8 @@ var (
 	hostnamePattern        = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$`)
 )
 
+const dockerFenceDirectory = "/etc/clusterguard/docker"
+
 type PostgreSQLPeer struct {
 	InstanceID model.ResourceID `json:"instance_id"`
 	NodeID     model.ResourceID `json:"node_id"`
@@ -30,37 +32,48 @@ type PostgreSQLPeer struct {
 }
 
 type ClusterPolicy struct {
-	ClusterID                 model.ResourceID `json:"cluster_id"`
-	InstanceID                model.ResourceID `json:"instance_id"`
-	VIP                       string           `json:"vip"`
-	Interface                 string           `json:"interface"`
-	Prefix                    int              `json:"prefix"`
-	MySQLPort                 int              `json:"mysql_port"`
-	MySQLBinary               string           `json:"mysql_binary,omitempty"`
-	MySQLDefaultsFile         string           `json:"mysql_defaults_file"`
-	Engine                    model.Engine     `json:"engine,omitempty"`
-	PostgreSQLNodeID          model.ResourceID `json:"postgresql_node_id,omitempty"`
-	PostgreSQLPort            int              `json:"postgresql_port,omitempty"`
-	PostgreSQLService         string           `json:"postgresql_service,omitempty"`
-	PostgreSQLUser            string           `json:"postgresql_user,omitempty"`
-	PostgreSQLDataDirectory   string           `json:"postgresql_data_directory,omitempty"`
-	PostgreSQLBinaryDirectory string           `json:"postgresql_binary_directory,omitempty"`
-	PostgreSQLPassfile        string           `json:"postgresql_passfile,omitempty"`
-	PostgreSQLDatabase        string           `json:"postgresql_database,omitempty"`
-	PostgreSQLReplicationUser string           `json:"postgresql_replication_user,omitempty"`
-	PostgreSQLPeers           []PostgreSQLPeer `json:"postgresql_peers,omitempty"`
-	OracleHome                string           `json:"oracle_home,omitempty"`
-	OracleSID                 string           `json:"oracle_sid,omitempty"`
-	OracleOSUser              string           `json:"oracle_os_user,omitempty"`
-	OracleDGMGRLBinary        string           `json:"oracle_dgmgrl_binary,omitempty"`
-	OracleUsername            string           `json:"oracle_username,omitempty"`
-	OracleAuthenticationRole  string           `json:"oracle_authentication_role,omitempty"`
-	OraclePasswordEnv         string           `json:"oracle_password_env,omitempty"`
-	OraclePassword            string           `json:"-"`
-	OracleConnectIdentifier   string           `json:"oracle_connect_identifier,omitempty"`
-	OracleDatabaseUniqueName  string           `json:"oracle_database_unique_name,omitempty"`
-	OracleBrokerConfiguration string           `json:"oracle_broker_configuration,omitempty"`
-	OracleMembers             []string         `json:"oracle_members,omitempty"`
+	ClusterID                     model.ResourceID  `json:"cluster_id"`
+	InstanceID                    model.ResourceID  `json:"instance_id"`
+	RuntimeKind                   model.RuntimeKind `json:"runtime_kind,omitempty"`
+	VIP                           string            `json:"vip"`
+	Interface                     string            `json:"interface"`
+	Prefix                        int               `json:"prefix"`
+	MySQLPort                     int               `json:"mysql_port"`
+	MySQLBinary                   string            `json:"mysql_binary,omitempty"`
+	MySQLDefaultsFile             string            `json:"mysql_defaults_file"`
+	MySQLService                  string            `json:"mysql_service,omitempty"`
+	MySQLServerBinary             string            `json:"mysql_server_binary,omitempty"`
+	MySQLServerDefaultsFile       string            `json:"mysql_server_defaults_file,omitempty"`
+	DockerSwarmService            string            `json:"docker_swarm_service,omitempty"`
+	DockerSwarmServiceID          string            `json:"docker_swarm_service_id,omitempty"`
+	DockerMySQLBinary             string            `json:"docker_mysql_binary,omitempty"`
+	DockerFenceFile               string            `json:"docker_fence_file,omitempty"`
+	Engine                        model.Engine      `json:"engine,omitempty"`
+	PostgreSQLNodeID              model.ResourceID  `json:"postgresql_node_id,omitempty"`
+	PostgreSQLHostname            string            `json:"postgresql_hostname,omitempty"`
+	PostgreSQLPort                int               `json:"postgresql_port,omitempty"`
+	DockerPostgreSQLPort          int               `json:"docker_postgresql_port,omitempty"`
+	PostgreSQLService             string            `json:"postgresql_service,omitempty"`
+	PostgreSQLUser                string            `json:"postgresql_user,omitempty"`
+	PostgreSQLDataDirectory       string            `json:"postgresql_data_directory,omitempty"`
+	DockerPostgreSQLDataDirectory string            `json:"docker_postgresql_data_directory,omitempty"`
+	PostgreSQLBinaryDirectory     string            `json:"postgresql_binary_directory,omitempty"`
+	PostgreSQLPassfile            string            `json:"postgresql_passfile,omitempty"`
+	PostgreSQLDatabase            string            `json:"postgresql_database,omitempty"`
+	PostgreSQLReplicationUser     string            `json:"postgresql_replication_user,omitempty"`
+	PostgreSQLPeers               []PostgreSQLPeer  `json:"postgresql_peers,omitempty"`
+	OracleHome                    string            `json:"oracle_home,omitempty"`
+	OracleSID                     string            `json:"oracle_sid,omitempty"`
+	OracleOSUser                  string            `json:"oracle_os_user,omitempty"`
+	OracleDGMGRLBinary            string            `json:"oracle_dgmgrl_binary,omitempty"`
+	OracleUsername                string            `json:"oracle_username,omitempty"`
+	OracleAuthenticationRole      string            `json:"oracle_authentication_role,omitempty"`
+	OraclePasswordEnv             string            `json:"oracle_password_env,omitempty"`
+	OraclePassword                string            `json:"-"`
+	OracleConnectIdentifier       string            `json:"oracle_connect_identifier,omitempty"`
+	OracleDatabaseUniqueName      string            `json:"oracle_database_unique_name,omitempty"`
+	OracleBrokerConfiguration     string            `json:"oracle_broker_configuration,omitempty"`
+	OracleMembers                 []string          `json:"oracle_members,omitempty"`
 }
 
 type Config struct {
@@ -74,6 +87,8 @@ type Config struct {
 	IPBinary                string
 	ARPingBinary            string
 	MySQLBinary             string
+	DockerBinary            string
+	DockerConfigDirectory   string
 	RoleStateDirectory      string
 	DecisionStateDirectory  string
 	MutationStateDirectory  string
@@ -89,6 +104,8 @@ type fileConfig struct {
 	IPBinary                string          `json:"ip_binary"`
 	ARPingBinary            string          `json:"arping_binary"`
 	MySQLBinary             string          `json:"mysql_binary"`
+	DockerBinary            string          `json:"docker_binary,omitempty"`
+	DockerConfigDirectory   string          `json:"docker_config_directory,omitempty"`
 	RoleStateDirectory      string          `json:"role_state_directory"`
 	DecisionStateDirectory  string          `json:"decision_state_directory,omitempty"`
 	MutationStateDirectory  string          `json:"mutation_state_directory,omitempty"`
@@ -116,7 +133,9 @@ func LoadConfig(path string) (Config, error) {
 		ControllerServerName: strings.TrimSpace(file.ControllerServerName), AllowInsecureHTTP: file.AllowInsecureHTTP,
 		ReconcileTimeoutSeconds: file.ReconcileTimeoutSeconds,
 		IPBinary:                strings.TrimSpace(file.IPBinary), ARPingBinary: strings.TrimSpace(file.ARPingBinary),
-		MySQLBinary: strings.TrimSpace(file.MySQLBinary), RoleStateDirectory: strings.TrimSpace(file.RoleStateDirectory),
+		MySQLBinary: strings.TrimSpace(file.MySQLBinary), DockerBinary: strings.TrimSpace(file.DockerBinary),
+		DockerConfigDirectory:  strings.TrimSpace(file.DockerConfigDirectory),
+		RoleStateDirectory:     strings.TrimSpace(file.RoleStateDirectory),
 		DecisionStateDirectory: strings.TrimSpace(file.DecisionStateDirectory),
 		MutationStateDirectory: strings.TrimSpace(file.MutationStateDirectory),
 	}
@@ -132,8 +151,23 @@ func LoadConfig(path string) (Config, error) {
 	if configuration.MySQLBinary == "" {
 		configuration.MySQLBinary = "/usr/local/mysql/bin/mysql"
 	}
+	if configuration.DockerBinary == "" {
+		configuration.DockerBinary = "/usr/bin/docker"
+	}
+	if !filepath.IsAbs(configuration.DockerBinary) || filepath.Base(configuration.DockerBinary) != "docker" {
+		return Config{}, fmt.Errorf("docker_binary must be an absolute docker path")
+	}
 	if configuration.RoleStateDirectory == "" {
 		configuration.RoleStateDirectory = "/var/lib/clusterguard-agent/roles"
+	}
+	if !filepath.IsAbs(configuration.RoleStateDirectory) {
+		return Config{}, fmt.Errorf("role_state_directory must be an absolute path")
+	}
+	if configuration.DockerConfigDirectory == "" {
+		configuration.DockerConfigDirectory = filepath.Join(filepath.Dir(configuration.RoleStateDirectory), "docker-cli")
+	}
+	if !filepath.IsAbs(configuration.DockerConfigDirectory) {
+		return Config{}, fmt.Errorf("docker_config_directory must be an absolute path")
 	}
 	if configuration.DecisionStateDirectory == "" {
 		configuration.DecisionStateDirectory = "/var/lib/clusterguard-agent/decisions"
@@ -174,8 +208,25 @@ func LoadConfig(path string) (Config, error) {
 		if policy.Engine == "" {
 			policy.Engine = model.EngineMySQL
 		}
+		if policy.RuntimeKind == "" {
+			policy.RuntimeKind = model.RuntimeLinux
+		}
+		if !policy.RuntimeKind.Valid() {
+			return Config{}, fmt.Errorf("agent runtime_kind must be linux, docker, or kubernetes")
+		}
 		if !policy.Engine.Valid() || (policy.Engine != model.EngineMySQL && policy.Engine != model.EnginePostgreSQL && policy.Engine != model.EngineOracle) {
 			return Config{}, fmt.Errorf("agent cluster engine must be mysql, postgresql, or oracle")
+		}
+		if policy.RuntimeKind == model.RuntimeKubernetes {
+			return Config{}, fmt.Errorf("kubernetes workloads require the Kubernetes runtime controller and cannot use the host Agent")
+		}
+		if policy.RuntimeKind == model.RuntimeDocker && policy.Engine != model.EngineMySQL && policy.Engine != model.EnginePostgreSQL {
+			return Config{}, fmt.Errorf("Docker host Agent supports MySQL and PostgreSQL policies only")
+		}
+		if policy.Engine == model.EngineMySQL {
+			if err := validateMySQLPolicy(&policy); err != nil {
+				return Config{}, err
+			}
 		}
 		if policy.Engine == model.EnginePostgreSQL {
 			if err := validatePostgreSQLPolicy(&policy); err != nil {
@@ -193,6 +244,69 @@ func LoadConfig(path string) (Config, error) {
 		return Config{}, fmt.Errorf("at least one agent cluster policy is required")
 	}
 	return configuration, nil
+}
+
+func validateMySQLPolicy(policy *ClusterPolicy) error {
+	if policy == nil {
+		return fmt.Errorf("MySQL agent policy is required")
+	}
+	policy.MySQLService = strings.TrimSpace(policy.MySQLService)
+	policy.MySQLServerBinary = strings.TrimSpace(policy.MySQLServerBinary)
+	policy.MySQLServerDefaultsFile = strings.TrimSpace(policy.MySQLServerDefaultsFile)
+	policy.MySQLDefaultsFile = strings.TrimSpace(policy.MySQLDefaultsFile)
+	policy.DockerSwarmService = strings.TrimSpace(policy.DockerSwarmService)
+	policy.DockerSwarmServiceID = strings.TrimSpace(policy.DockerSwarmServiceID)
+	policy.DockerMySQLBinary = strings.TrimSpace(policy.DockerMySQLBinary)
+	policy.DockerFenceFile = strings.TrimSpace(policy.DockerFenceFile)
+	if policy.RuntimeKind == model.RuntimeDocker {
+		if policy.MySQLPort < 1 || policy.MySQLPort > 65535 {
+			return fmt.Errorf("Docker MySQL policy requires a valid port")
+		}
+		if !serviceNamePattern.MatchString(policy.DockerSwarmService) {
+			return fmt.Errorf("Docker Swarm service allowlist entry is invalid")
+		}
+		if policy.DockerSwarmServiceID != "" && !serviceNamePattern.MatchString(policy.DockerSwarmServiceID) {
+			return fmt.Errorf("Docker Swarm service identity is invalid")
+		}
+		if policy.DockerMySQLBinary == "" {
+			policy.DockerMySQLBinary = "/usr/bin/mysql"
+		}
+		if !filepath.IsAbs(policy.DockerMySQLBinary) || filepath.Base(policy.DockerMySQLBinary) != "mysql" {
+			return fmt.Errorf("Docker MySQL client binary must be an absolute mysql path inside the container")
+		}
+		if !filepath.IsAbs(policy.MySQLDefaultsFile) {
+			return fmt.Errorf("Docker MySQL defaults file must be an absolute path inside the container")
+		}
+		if !filepath.IsAbs(policy.DockerFenceFile) {
+			return fmt.Errorf("Docker restart fence file must be an absolute host path")
+		}
+		policy.DockerFenceFile = filepath.Clean(policy.DockerFenceFile)
+		relativeFencePath, err := filepath.Rel(dockerFenceDirectory, policy.DockerFenceFile)
+		if err != nil || relativeFencePath == "." || relativeFencePath == ".." || strings.HasPrefix(relativeFencePath, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("Docker restart fence file must be below %s", dockerFenceDirectory)
+		}
+		if policy.MySQLService != "" || policy.MySQLServerBinary != "" || policy.MySQLServerDefaultsFile != "" {
+			return fmt.Errorf("Docker MySQL policy must use docker_swarm_service and docker_fence_file instead of systemd restart fields")
+		}
+		return nil
+	}
+	configured := policy.MySQLService != "" || policy.MySQLServerBinary != "" || policy.MySQLServerDefaultsFile != ""
+	if !configured {
+		return nil
+	}
+	if policy.MySQLPort < 1 || policy.MySQLPort > 65535 {
+		return fmt.Errorf("MySQL durable restart fence requires a valid port")
+	}
+	if !serviceNamePattern.MatchString(policy.MySQLService) {
+		return fmt.Errorf("MySQL durable restart fence service is invalid")
+	}
+	if !filepath.IsAbs(policy.MySQLServerBinary) || filepath.Base(policy.MySQLServerBinary) != "mysqld" {
+		return fmt.Errorf("MySQL durable restart fence server binary must be an absolute mysqld path")
+	}
+	if !filepath.IsAbs(policy.MySQLServerDefaultsFile) {
+		return fmt.Errorf("MySQL durable restart fence defaults file must be absolute")
+	}
+	return nil
 }
 
 func validateOraclePolicy(policy *ClusterPolicy) error {
@@ -268,8 +382,17 @@ func validatePostgreSQLPolicy(policy *ClusterPolicy) error {
 		return fmt.Errorf("PostgreSQL agent policy is required")
 	}
 	policy.PostgreSQLService = strings.TrimSpace(policy.PostgreSQLService)
+	policy.PostgreSQLHostname = strings.TrimSpace(policy.PostgreSQLHostname)
+	if policy.PostgreSQLHostname == "" {
+		hostname, err := os.Hostname()
+		if err != nil {
+			return fmt.Errorf("resolve PostgreSQL local hostname: %w", err)
+		}
+		policy.PostgreSQLHostname = strings.TrimSpace(hostname)
+	}
 	policy.PostgreSQLUser = strings.TrimSpace(policy.PostgreSQLUser)
 	policy.PostgreSQLDataDirectory = strings.TrimSpace(policy.PostgreSQLDataDirectory)
+	policy.DockerPostgreSQLDataDirectory = strings.TrimSpace(policy.DockerPostgreSQLDataDirectory)
 	policy.PostgreSQLBinaryDirectory = strings.TrimSpace(policy.PostgreSQLBinaryDirectory)
 	policy.PostgreSQLPassfile = strings.TrimSpace(policy.PostgreSQLPassfile)
 	policy.PostgreSQLDatabase = strings.TrimSpace(policy.PostgreSQLDatabase)
@@ -277,11 +400,14 @@ func validatePostgreSQLPolicy(policy *ClusterPolicy) error {
 	if !model.ValidResourceID(policy.PostgreSQLNodeID) {
 		return fmt.Errorf("PostgreSQL native node UUID is required")
 	}
+	if !hostnamePattern.MatchString(policy.PostgreSQLHostname) {
+		return fmt.Errorf("PostgreSQL local hostname is invalid")
+	}
 	if policy.PostgreSQLPort < 1 || policy.PostgreSQLPort > 65535 {
 		return fmt.Errorf("PostgreSQL agent port is invalid")
 	}
-	if !serviceNamePattern.MatchString(policy.PostgreSQLService) || !osUserPattern.MatchString(policy.PostgreSQLUser) {
-		return fmt.Errorf("PostgreSQL service or operating-system user is invalid")
+	if !osUserPattern.MatchString(policy.PostgreSQLUser) {
+		return fmt.Errorf("PostgreSQL operating-system user is invalid")
 	}
 	if !postgresSQLNamePattern.MatchString(policy.PostgreSQLDatabase) || !postgresSQLNamePattern.MatchString(policy.PostgreSQLReplicationUser) {
 		return fmt.Errorf("PostgreSQL database or replication user is invalid")
@@ -291,6 +417,32 @@ func validatePostgreSQLPolicy(policy *ClusterPolicy) error {
 	} {
 		if !filepath.IsAbs(path) {
 			return fmt.Errorf("PostgreSQL %s must be an absolute path", name)
+		}
+	}
+	policy.DockerSwarmService = strings.TrimSpace(policy.DockerSwarmService)
+	policy.DockerSwarmServiceID = strings.TrimSpace(policy.DockerSwarmServiceID)
+	if policy.RuntimeKind == model.RuntimeDocker {
+		if policy.DockerPostgreSQLPort < 1 || policy.DockerPostgreSQLPort > 65535 {
+			return fmt.Errorf("Docker PostgreSQL container port is invalid")
+		}
+		if !serviceNamePattern.MatchString(policy.DockerSwarmService) {
+			return fmt.Errorf("Docker Swarm service allowlist entry is invalid")
+		}
+		if policy.DockerSwarmServiceID != "" && !serviceNamePattern.MatchString(policy.DockerSwarmServiceID) {
+			return fmt.Errorf("Docker Swarm service identity is invalid")
+		}
+		if policy.PostgreSQLService != "" {
+			return fmt.Errorf("Docker PostgreSQL policy must use docker_swarm_service instead of a systemd service")
+		}
+		if !filepath.IsAbs(policy.DockerPostgreSQLDataDirectory) || filepath.Clean(policy.DockerPostgreSQLDataDirectory) == string(filepath.Separator) {
+			return fmt.Errorf("Docker PostgreSQL data directory inside the container must be a safe absolute path")
+		}
+	} else {
+		if !serviceNamePattern.MatchString(policy.PostgreSQLService) {
+			return fmt.Errorf("PostgreSQL service is invalid")
+		}
+		if policy.DockerPostgreSQLPort != 0 || policy.DockerPostgreSQLDataDirectory != "" || policy.DockerSwarmService != "" || policy.DockerSwarmServiceID != "" {
+			return fmt.Errorf("Linux PostgreSQL policy cannot contain Docker runtime fields")
 		}
 	}
 	seen := make(map[model.ResourceID]struct{}, len(policy.PostgreSQLPeers))

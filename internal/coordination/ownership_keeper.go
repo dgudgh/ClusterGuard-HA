@@ -22,6 +22,10 @@ type OwnershipInventory interface {
 	CommitObservedHAEndpointOwner(model.ResourceID, model.ResourceID, uint64, uint64, model.ResourceID, bool) error
 }
 
+type OwnershipOperationInventory interface {
+	Operations(model.ResourceID) []model.OperationRecord
+}
+
 type OwnershipObserver interface {
 	ObserveOwnership(context.Context, model.DatabaseCluster, model.TopologySnapshot) (endpoint.OwnershipObservation, error)
 }
@@ -164,6 +168,59 @@ func primaryProvenWritable(primary model.DatabaseInstance) bool {
 	}
 }
 
+func agentOwnershipProtocolSupported(engine model.Engine) bool {
+	return engine == model.EngineMySQL || engine == model.EnginePostgreSQL
+}
+
+func controlledPostgreSQLEndpointMutationActive(inventory OwnershipInventory, cluster model.DatabaseCluster) bool {
+	if cluster.Engine != model.EnginePostgreSQL {
+		return false
+	}
+	operations, ok := inventory.(OwnershipOperationInventory)
+	if !ok {
+		return false
+	}
+	for _, record := range operations.Operations(cluster.ResourceID) {
+		if record.Status != model.OperationRunning {
+			continue
+		}
+		switch record.Operation.Kind {
+		case model.OperationSwitchover, model.OperationFailover, model.OperationFormerPrimaryRejoin:
+			return true
+		}
+	}
+	return false
+}
+
+func safePartialOwnershipCoverage(snapshot model.TopologySnapshot, observation endpoint.OwnershipObservation, primaryID model.ResourceID) bool {
+	if observation.Complete || !model.ValidResourceID(primaryID) ||
+		observation.CanonicalOwnerID != primaryID || observation.EndpointOwnerID != primaryID ||
+		len(observation.OwnerIDs) != 1 || observation.OwnerIDs[0] != primaryID {
+		return false
+	}
+	instanceIDs := make(map[model.ResourceID]bool, len(snapshot.Instances))
+	for _, instance := range snapshot.Instances {
+		if !model.ValidResourceID(instance.ResourceID) || instanceIDs[instance.ResourceID] {
+			return false
+		}
+		instanceIDs[instance.ResourceID] = true
+	}
+	if len(instanceIDs) == 0 {
+		return false
+	}
+	observedIDs := make(map[model.ResourceID]bool, len(observation.ObservedInstanceIDs))
+	for _, instanceID := range observation.ObservedInstanceIDs {
+		if !model.ValidResourceID(instanceID) || !instanceIDs[instanceID] || observedIDs[instanceID] {
+			return false
+		}
+		observedIDs[instanceID] = true
+	}
+	if !observedIDs[primaryID] {
+		return false
+	}
+	return len(observedIDs) > len(instanceIDs)/2
+}
+
 func (keeper *OwnershipKeeper) reconcileCluster(ctx context.Context, cluster model.DatabaseCluster, now time.Time) (endpoint.LeaseRequest, error) {
 	snapshot, found := keeper.inventory.TopologySnapshot(cluster.ResourceID)
 	if !found || snapshot.ObservedAt.IsZero() || now.Sub(snapshot.ObservedAt) > keeper.maxAge || snapshot.ObservedAt.After(now.Add(keeper.interval)) {
@@ -173,20 +230,42 @@ func (keeper *OwnershipKeeper) reconcileCluster(ctx context.Context, cluster mod
 	if err != nil {
 		return endpoint.LeaseRequest{}, fmt.Errorf("cluster %s VIP observation: %w", cluster.ResourceID, err)
 	}
-	if !observation.Complete || !model.ValidResourceID(observation.HAEndpointID) || len(observation.OwnerIDs) > 1 {
+	if !model.ValidResourceID(observation.HAEndpointID) || len(observation.OwnerIDs) > 1 {
 		return endpoint.LeaseRequest{}, fmt.Errorf("cluster %s VIP ownership coverage is unsafe", cluster.ResourceID)
 	}
 	primary, primaryErr := writablePrimary(snapshot)
 	bootstrap := false
+	bootstrapConvergenceRenewal := false
 	if primaryErr != nil {
-		if len(observation.OwnerIDs) != 0 || observation.CanonicalOwnerID != observation.EndpointOwnerID {
-			return endpoint.LeaseRequest{}, fmt.Errorf("cluster %s reboot bootstrap requires zero VIP owners and matching canonical metadata", cluster.ResourceID)
+		if !observation.Complete {
+			return endpoint.LeaseRequest{}, fmt.Errorf(
+				"cluster %s VIP ownership coverage is unsafe for reboot bootstrap (%d/%d instance probes succeeded)",
+				cluster.ResourceID, len(observation.ObservedInstanceIDs), len(snapshot.Instances),
+			)
+		}
+		if observation.CanonicalOwnerID != observation.EndpointOwnerID {
+			return endpoint.LeaseRequest{}, fmt.Errorf("cluster %s reboot bootstrap requires matching canonical metadata", cluster.ResourceID)
+		}
+		switch len(observation.OwnerIDs) {
+		case 0:
+			bootstrap = true
+		case 1:
+			if observation.OwnerIDs[0] != observation.CanonicalOwnerID {
+				return endpoint.LeaseRequest{}, fmt.Errorf("cluster %s reboot bootstrap owner does not match canonical metadata", cluster.ResourceID)
+			}
+			bootstrapConvergenceRenewal = true
+		default:
+			return endpoint.LeaseRequest{}, fmt.Errorf("cluster %s reboot bootstrap ownership is unsafe", cluster.ResourceID)
 		}
 		primary, err = RebootBootstrapCandidate(snapshot, observation.CanonicalOwnerID, now, keeper.maxAge)
 		if err != nil {
 			return endpoint.LeaseRequest{}, fmt.Errorf("cluster %s: %w; reboot bootstrap blocked: %v", cluster.ResourceID, primaryErr, err)
 		}
-		bootstrap = true
+	}
+	partialRenewal := !observation.Complete
+	renewOnly := partialRenewal || bootstrapConvergenceRenewal
+	if partialRenewal && !safePartialOwnershipCoverage(snapshot, observation, primary.ResourceID) {
+		return endpoint.LeaseRequest{}, fmt.Errorf("cluster %s VIP ownership majority coverage is unsafe", cluster.ResourceID)
 	}
 	if len(observation.OwnerIDs) == 1 && observation.OwnerIDs[0] != primary.ResourceID {
 		return endpoint.LeaseRequest{}, fmt.Errorf("cluster %s VIP is owned by a non-primary instance", cluster.ResourceID)
@@ -197,17 +276,20 @@ func (keeper *OwnershipKeeper) reconcileCluster(ctx context.Context, cluster mod
 	if bootstrap && len(observation.OwnerIDs) != 0 {
 		return endpoint.LeaseRequest{}, fmt.Errorf("cluster %s reboot bootstrap requires zero VIP owners", cluster.ResourceID)
 	}
-	healthy := len(observation.OwnerIDs) == 1
-	if err := keeper.inventory.CommitObservedHAEndpointOwner(
-		cluster.ResourceID, observation.HAEndpointID,
-		observation.HAEndpointRevision, observation.EndpointRevision,
-		primary.ResourceID, healthy,
-	); err != nil {
-		return endpoint.LeaseRequest{}, fmt.Errorf("cluster %s commit VIP owner: %w", cluster.ResourceID, err)
+	if !renewOnly {
+		healthy := len(observation.OwnerIDs) == 1
+		if err := keeper.inventory.CommitObservedHAEndpointOwner(
+			cluster.ResourceID, observation.HAEndpointID,
+			observation.HAEndpointRevision, observation.EndpointRevision,
+			primary.ResourceID, healthy,
+		); err != nil {
+			return endpoint.LeaseRequest{}, fmt.Errorf("cluster %s commit VIP owner: %w", cluster.ResourceID, err)
+		}
 	}
 	return endpoint.LeaseRequest{
 		ClusterID: cluster.ResourceID, HAEndpointID: observation.HAEndpointID,
-		OperationID: observation.HAEndpointID, OwnerID: primary.ResourceID, TTL: 30 * time.Second,
+		OperationID: observation.HAEndpointID, OwnerID: primary.ResourceID, TTL: time.Minute,
+		RenewOnly: renewOnly,
 	}, nil
 }
 
@@ -222,7 +304,13 @@ func (keeper *OwnershipKeeper) RunOnce(ctx context.Context) error {
 		return nil
 	}
 	now := keeper.now().UTC()
-	clusters := keeper.inventory.Clusters()
+	registeredClusters := keeper.inventory.Clusters()
+	clusters := make([]model.DatabaseCluster, 0, len(registeredClusters))
+	for _, cluster := range registeredClusters {
+		if agentOwnershipProtocolSupported(cluster.Engine) && !controlledPostgreSQLEndpointMutationActive(keeper.inventory, cluster) {
+			clusters = append(clusters, cluster)
+		}
+	}
 	failures := make([]error, len(clusters))
 	requests := make([]endpoint.LeaseRequest, len(clusters))
 	var wait sync.WaitGroup

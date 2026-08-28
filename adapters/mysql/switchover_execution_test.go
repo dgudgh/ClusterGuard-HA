@@ -15,53 +15,55 @@ import (
 )
 
 type switchoverSQLClient struct {
-	mu                    sync.Mutex
-	primaryHost           string
-	targetHost            string
-	version               string
-	primaryReadOnly       bool
-	primarySuperReadOnly  bool
-	primaryReplication    bool
-	primarySourceUUID     string
-	primaryIO             bool
-	primarySQL            bool
-	targetReadOnly        bool
-	targetSuperReadOnly   bool
-	targetReplication     bool
-	targetLag             int64
-	targetIO              bool
-	targetSQL             bool
-	primaryUUID           string
-	targetUUID            string
-	primaryGTID           string
-	refreshedSourceGTID   string
-	targetExecuted        string
-	executed              []string
-	failStatement         string
-	failStatementConsumed bool
-	failAfterStatement    string
-	failTargetStatement   string
-	ignoreTargetPromotion bool
-	onTargetPromotion     func()
-	onTargetReset         func()
+	mu                      sync.Mutex
+	primaryHost             string
+	targetHost              string
+	version                 string
+	primaryReadOnly         bool
+	primarySuperReadOnly    bool
+	primaryReplication      bool
+	primarySourceUUID       string
+	primaryIO               bool
+	primarySQL              bool
+	targetReadOnly          bool
+	targetSuperReadOnly     bool
+	targetReplication       bool
+	targetLag               int64
+	targetIO                bool
+	targetSQL               bool
+	primaryUUID             string
+	targetUUID              string
+	primaryGTID             string
+	refreshedSourceGTID     string
+	targetExecuted          string
+	executed                []string
+	failStatement           string
+	failStatementConsumed   bool
+	failAfterStatement      string
+	failTargetStatement     string
+	ignoreTargetPromotion   bool
+	replicationCredentialOK bool
+	onTargetPromotion       func()
+	onTargetReset           func()
 }
 
 func newSwitchoverSQLClient(request adapter.OperationRequest) *switchoverSQLClient {
 	return &switchoverSQLClient{
-		primaryHost:          request.Resolved.Primary.Hostname,
-		targetHost:           request.Resolved.Target.Hostname,
-		version:              request.Resolved.Target.EngineMetadata["version"],
-		primaryReadOnly:      false,
-		primarySuperReadOnly: false,
-		targetReadOnly:       true,
-		targetSuperReadOnly:  true,
-		targetReplication:    true,
-		targetIO:             true,
-		targetSQL:            true,
-		primaryUUID:          primaryUUID,
-		targetUUID:           targetUUID,
-		primaryGTID:          request.Resolved.Primary.EngineMetadata["gtid_executed"],
-		targetExecuted:       request.Resolved.Target.Replication.ExecutedPosition,
+		primaryHost:             request.Resolved.Primary.Hostname,
+		targetHost:              request.Resolved.Target.Hostname,
+		version:                 request.Resolved.Target.EngineMetadata["version"],
+		primaryReadOnly:         false,
+		primarySuperReadOnly:    false,
+		targetReadOnly:          true,
+		targetSuperReadOnly:     true,
+		targetReplication:       true,
+		targetIO:                true,
+		targetSQL:               true,
+		replicationCredentialOK: true,
+		primaryUUID:             primaryUUID,
+		targetUUID:              targetUUID,
+		primaryGTID:             request.Resolved.Primary.EngineMetadata["gtid_executed"],
+		targetExecuted:          request.Resolved.Target.Replication.ExecutedPosition,
 	}
 }
 
@@ -72,7 +74,7 @@ func boolString(value bool) string {
 	return "0"
 }
 
-func (client *switchoverSQLClient) Query(ctx context.Context, endpoint adapter.Endpoint, _ adapter.Credentials, query string) ([]Row, error) {
+func (client *switchoverSQLClient) Query(ctx context.Context, endpoint adapter.Endpoint, credentials adapter.Credentials, query string) ([]Row, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -81,6 +83,12 @@ func (client *switchoverSQLClient) Query(ctx context.Context, endpoint adapter.E
 	host := endpoint.Hostname
 	if host == "" {
 		host = endpoint.IPAddress
+	}
+	if query == replicationCredentialProbeQuery {
+		if host != client.targetHost || credentials.Username != "replicator" || credentials.Password != "replication-secret" || !client.replicationCredentialOK {
+			return nil, &QueryError{Code: 1045, Output: "ERROR 1045 access denied", Err: errors.New("exit status 1")}
+		}
+		return []Row{{"credential_ready": "1"}}, nil
 	}
 	if query == identityQuery {
 		isPrimary := host == client.primaryHost
@@ -253,6 +261,109 @@ func (client *switchoverSQLClient) statements() []string {
 	return append([]string{}, client.executed...)
 }
 
+type delayedFollowerVerificationClient struct {
+	*switchoverSQLClient
+	mu        sync.Mutex
+	remaining int
+	reads     int
+}
+
+func (client *delayedFollowerVerificationClient) Query(ctx context.Context, endpoint adapter.Endpoint, credentials adapter.Credentials, query string) ([]Row, error) {
+	rows, err := client.switchoverSQLClient.Query(ctx, endpoint, credentials, query)
+	if err != nil || (query != replicaStatusQuery && query != slaveStatusQuery) {
+		return rows, err
+	}
+	host := endpoint.Hostname
+	if host == "" {
+		host = endpoint.IPAddress
+	}
+	if host != client.primaryHost {
+		return rows, nil
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	client.reads++
+	if client.remaining == 0 || len(rows) == 0 {
+		return rows, nil
+	}
+	client.remaining--
+	copyRows := make([]Row, len(rows))
+	for index, row := range rows {
+		copyRows[index] = Row{}
+		for key, value := range row {
+			copyRows[index][key] = value
+		}
+		copyRows[index]["Replica_IO_Running"] = "No"
+		copyRows[index]["Slave_IO_Running"] = "No"
+	}
+	return copyRows, nil
+}
+
+type reactivatingSemiSyncClient struct {
+	*switchoverSQLClient
+	mu            sync.Mutex
+	sourceEnabled bool
+	sourceStatus  bool
+	sourceClients int
+	statements    []string
+}
+
+func (client *reactivatingSemiSyncClient) Query(ctx context.Context, endpoint adapter.Endpoint, credentials adapter.Credentials, query string) ([]Row, error) {
+	switch query {
+	case semiSyncVariablesQuery:
+		client.mu.Lock()
+		enabled := client.sourceEnabled
+		client.mu.Unlock()
+		return []Row{
+			{"Variable_name": "rpl_semi_sync_source_enabled", "Value": boolString(enabled)},
+			{"Variable_name": "rpl_semi_sync_replica_enabled", "Value": "ON"},
+			{"Variable_name": "rpl_semi_sync_source_wait_for_replica_count", "Value": "1"},
+			{"Variable_name": "rpl_semi_sync_source_timeout", "Value": "10000"},
+			{"Variable_name": "rpl_semi_sync_source_wait_no_replica", "Value": "ON"},
+			{"Variable_name": "rpl_semi_sync_source_wait_point", "Value": "AFTER_SYNC"},
+		}, nil
+	case semiSyncStatusQuery:
+		client.mu.Lock()
+		status := client.sourceStatus
+		clients := client.sourceClients
+		client.mu.Unlock()
+		return []Row{
+			{"Variable_name": "Rpl_semi_sync_source_status", "Value": boolString(status)},
+			{"Variable_name": "Rpl_semi_sync_source_clients", "Value": strconv.Itoa(clients)},
+			{"Variable_name": "Rpl_semi_sync_replica_status", "Value": "ON"},
+		}, nil
+	default:
+		return client.switchoverSQLClient.Query(ctx, endpoint, credentials, query)
+	}
+}
+
+func (client *reactivatingSemiSyncClient) Exec(ctx context.Context, endpoint adapter.Endpoint, credentials adapter.Credentials, statement string) error {
+	switch statement {
+	case "SET GLOBAL rpl_semi_sync_source_enabled = OFF":
+		client.mu.Lock()
+		client.sourceEnabled = false
+		client.sourceStatus = false
+		client.statements = append(client.statements, statement)
+		client.mu.Unlock()
+		return nil
+	case "SET GLOBAL rpl_semi_sync_source_enabled = ON":
+		client.mu.Lock()
+		client.sourceEnabled = true
+		client.sourceStatus = client.sourceClients > 0
+		client.statements = append(client.statements, statement)
+		client.mu.Unlock()
+		return nil
+	default:
+		return client.switchoverSQLClient.Exec(ctx, endpoint, credentials, statement)
+	}
+}
+
+func (client *reactivatingSemiSyncClient) semiSyncStatements() []string {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	return append([]string{}, client.statements...)
+}
+
 type recordingEndpointProvider struct {
 	mu                  sync.Mutex
 	owner               model.ResourceID
@@ -357,6 +468,103 @@ func TestSwitchoverVerifyRequiresExplicitEndpointOwnershipPass(t *testing.T) {
 	}
 }
 
+func TestSwitchoverVerifyWaitsForFollowerReplicationConvergence(t *testing.T) {
+	request := switchoverRequestFixture()
+	baseClient := newSwitchoverSQLClient(request)
+	client := &delayedFollowerVerificationClient{switchoverSQLClient: baseClient}
+	provider := &recordingEndpointProvider{}
+	adapterInstance := NewWithEndpointProvider(client, provider)
+	adapterInstance.verificationAttempts = 3
+	adapterInstance.verificationInterval = 0
+	plan, err := adapterInstance.BuildPlan(context.Background(), request)
+	if err != nil {
+		t.Fatalf("build plan: %v", err)
+	}
+	request.Plan = &plan
+	if _, err := adapterInstance.Execute(context.Background(), request); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	client.mu.Lock()
+	client.remaining = 2
+	client.reads = 0
+	client.mu.Unlock()
+
+	verification, err := adapterInstance.Verify(context.Background(), request)
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	if !verification.Passed {
+		t.Fatalf("transient follower convergence failed verification: %+v", verification.Checks)
+	}
+	client.mu.Lock()
+	reads := client.reads
+	client.mu.Unlock()
+	if reads != 3 {
+		t.Fatalf("follower verification reads=%d, want 3", reads)
+	}
+}
+
+func TestSwitchoverReactivatesSemiSyncBeforeEndpointTransfer(t *testing.T) {
+	request := switchoverRequestFixture()
+	addReadySemiSyncEvidence(&request.Resolved.Primary, true)
+	addReadySemiSyncEvidence(&request.Resolved.Target, false)
+	for index := range request.Resolved.Snapshot.Instances {
+		switch request.Resolved.Snapshot.Instances[index].ResourceID {
+		case request.Resolved.Primary.ResourceID:
+			request.Resolved.Snapshot.Instances[index] = request.Resolved.Primary
+		case request.Resolved.Target.ResourceID:
+			request.Resolved.Snapshot.Instances[index] = request.Resolved.Target
+		}
+	}
+	baseClient := newSwitchoverSQLClient(request)
+	client := &reactivatingSemiSyncClient{
+		switchoverSQLClient: baseClient,
+		sourceEnabled:       true,
+		sourceStatus:        false,
+		sourceClients:       1,
+	}
+	provider := &recordingEndpointProvider{}
+	adapterInstance := NewWithEndpointProvider(client, provider).RequireSemiSync(true)
+	adapterInstance.verificationAttempts = 1
+	adapterInstance.verificationInterval = 0
+	plan, err := adapterInstance.BuildPlan(context.Background(), request)
+	if err != nil {
+		t.Fatalf("build plan: %v", err)
+	}
+	request.Plan = &plan
+	collector := &progressCollector{}
+	request.Progress = collector
+
+	execution, err := adapterInstance.Execute(context.Background(), request)
+	if err != nil || execution.Status != model.OperationRunning {
+		t.Fatalf("execute: result=%+v err=%v", execution, err)
+	}
+	verification, err := adapterInstance.Verify(context.Background(), request)
+	if err != nil || !verification.Passed {
+		t.Fatalf("verify: result=%+v err=%v", verification, err)
+	}
+	wantStatements := []string{
+		"SET GLOBAL rpl_semi_sync_source_enabled = OFF",
+		"SET GLOBAL rpl_semi_sync_source_enabled = ON",
+	}
+	if got := client.semiSyncStatements(); fmt.Sprint(got) != fmt.Sprint(wantStatements) {
+		t.Fatalf("semi-sync statements=%v, want %v", got, wantStatements)
+	}
+	activationIndex := -1
+	transferIndex := -1
+	for index, step := range collector.steps {
+		switch step {
+		case "activate_semisync_source":
+			activationIndex = index
+		case "transfer_writer_endpoint":
+			transferIndex = index
+		}
+	}
+	if activationIndex < 0 || transferIndex < 0 || activationIndex >= transferIndex {
+		t.Fatalf("semi-sync activation must be durable before endpoint transfer: %v", collector.steps)
+	}
+}
+
 func executableSwitchoverFixture(t *testing.T) (*Adapter, adapter.OperationRequest, *switchoverSQLClient, *recordingEndpointProvider) {
 	t.Helper()
 	request := switchoverRequestFixture()
@@ -428,7 +636,7 @@ func TestSwitchoverExecuteAndVerifyHappyPath(t *testing.T) {
 		"db-replica " + setReadOnlyOff,
 		"db-primary " + setSuperReadOnlyOn,
 		"db-primary " + setReadOnlyOn,
-		"db-primary CHANGE REPLICATION SOURCE TO SOURCE_HOST='192.0.2.11', SOURCE_PORT=3306, SOURCE_USER='replicator', SOURCE_PASSWORD='replication-secret', SOURCE_AUTO_POSITION=1, GET_SOURCE_PUBLIC_KEY=1",
+		"db-primary CHANGE REPLICATION SOURCE TO SOURCE_HOST='192.0.2.11', SOURCE_PORT=3306, SOURCE_USER='replicator', SOURCE_PASSWORD='replication-secret', SOURCE_AUTO_POSITION=1, SOURCE_CONNECT_RETRY=5, SOURCE_RETRY_COUNT=86400, GET_SOURCE_PUBLIC_KEY=1",
 		"db-primary START REPLICA",
 	}
 	got := client.statements()
@@ -669,6 +877,13 @@ func TestSwitchoverExecutionDoesNotExposeProviderErrorDetails(t *testing.T) {
 	}
 }
 
+func TestPublicSwitchoverErrorKeepsOldPrimaryFencingReason(t *testing.T) {
+	message := publicSwitchoverError(errors.New("fence old primary: current majority lease does not authorize the exact failover transition"))
+	if message != "old-primary fencing blocked: current majority lease does not authorize the exact failover transition" {
+		t.Fatalf("public fencing error=%q", message)
+	}
+}
+
 func TestSwitchoverDoesNotJournalEndpointTransferBeforePostcondition(t *testing.T) {
 	adapterInstance, request, client, provider := executableSwitchoverFixture(t)
 	provider.transferNoEffect = true
@@ -817,6 +1032,22 @@ func TestSwitchoverExecuteRevalidatesLiveReplicationBeforeFirstMutation(t *testi
 	}
 	if len(client.statements()) != 0 {
 		t.Fatalf("live precheck failure issued mutating SQL: %v", client.statements())
+	}
+}
+
+func TestSwitchoverExecuteRejectsMissingTargetReplicationAccountBeforeFencing(t *testing.T) {
+	adapterInstance, request, client, _ := executableSwitchoverFixture(t)
+	client.replicationCredentialOK = false
+
+	execution, err := adapterInstance.Execute(context.Background(), request)
+	if err == nil || execution.Status != model.OperationFailed || failureClass(err) != "pre_commit" {
+		t.Fatalf("missing target replication account execution=%+v err=%v", execution, err)
+	}
+	if len(client.statements()) != 0 {
+		t.Fatalf("credential precheck failure issued mutating SQL: %v", client.statements())
+	}
+	if client.primaryReadOnly || client.primarySuperReadOnly {
+		t.Fatal("credential precheck failure fenced the source")
 	}
 }
 

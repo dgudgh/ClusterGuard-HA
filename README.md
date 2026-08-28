@@ -32,8 +32,8 @@ Release policy and support boundary:
 - `v2.1.45` is the immutable final release of the 2.1 line.
 - The supported 2.1 database engine is MySQL, including approved compatible
   MySQL distributions validated by the site acceptance matrix.
-- PostgreSQL delivery and all subsequent feature work start from `2.2-1` on
-  branch `codex/2.2-postgresql`.
+- `v2.2.39` is the first formal 2.2 release, delivering PostgreSQL 16.4,
+  Docker Swarm adoption, and the Kubernetes writer-endpoint foundation.
 - Any shipped feature or behavior change increments the package release; an
   existing RPM, offline archive, tag, or GitHub Release is never overwritten.
 - Oracle and SQL Server code may exist behind capability gates, but it is not a
@@ -42,10 +42,19 @@ Release policy and support boundary:
 | Line | Status | Production support boundary |
 | --- | --- | --- |
 | `2.1.45` | Stable and sealed | MySQL HA control plane |
-| `2.2.x` | Active development | PostgreSQL delivery plus retained MySQL capabilities |
+| `2.2.39` | Formal release | PostgreSQL 16.4, Docker Swarm, and retained MySQL HA capabilities |
 | Later lines | Roadmap | Oracle Data Guard Broker and SQL Server Always On after separate qualification |
 
-Download the sealed release from
+Download the current formal release from
+[ClusterGuard HA 2.2.39](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.39):
+
+```bash
+curl -fLO https://github.com/dgudgh/ClusterGuard-HA/releases/download/v2.2.39/clusterguard-ha-2.2-39-offline-linux-x86_64.tar.gz
+curl -fLO https://github.com/dgudgh/ClusterGuard-HA/releases/download/v2.2.39/clusterguard-ha-2.2-39-offline-linux-x86_64.tar.gz.sha256
+sha256sum -c clusterguard-ha-2.2-39-offline-linux-x86_64.tar.gz.sha256
+```
+
+The sealed 2.1 MySQL release remains available from
 [ClusterGuard HA 2.1-45](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.1.45):
 
 ```bash
@@ -77,7 +86,7 @@ The current MySQL adapter provides:
 - promotion-candidate assessment with GTID and replication safety checks;
 - guarded three-node planned switchover with primary and VIP ownership coupled;
 - former-primary rejoin and allowlisted replication repair;
-- 30-second stable-failure detection and optional automatic failover;
+- three observations across a three-second stable-failure window and optional automatic failover;
 - Raft-backed operation locks, endpoint leases, local self-isolation, and
   reboot-time VIP convergence through the restricted node agent;
 - add/rebuild lifecycle tasks with fixed node-slot reuse, staged install,
@@ -94,15 +103,15 @@ The current MySQL adapter provides:
 - tested MySQL 5.7/8.x/9.x mutation dialects behind an independent adapter and
   writer-endpoint contract.
 
-## 2.2 Development Scope
+## 2.2 Release Scope
 
-The PostgreSQL adapter under 2.2 development provides inventory-scoped
+The PostgreSQL adapter in 2.2 provides inventory-scoped
 discovery, immutable node identity, `system_identifier` cluster binding,
 primary/standby topology,
 streaming health, timeline and WAL evidence, native metrics, deterministic
 candidate assessment, guarded planned switchover and failover, former-primary
 `pg_rewind` recovery, allowlisted low-risk repair, writer-VIP coupling, and
-`pg_basebackup`/`pg_rewind` node lifecycle, plus optional 30-second stable-failure
+`pg_basebackup`/`pg_rewind` node lifecycle, plus optional three-second stable-failure
 automatic failover. Mutations are advertised only when
 the restricted Agent, operation credentials, endpoint provider, controller
 quorum, and required fencing evidence are configured. These capabilities are
@@ -134,14 +143,22 @@ current leader-backed majority authority, purpose-specific MySQL credentials,
 agent signing material, an operation lock, and approval. Missing or unknown
 evidence blocks the operation; it never produces a simulated success.
 
-Automatic failover is separately opt-in. It requires six follow-up failure
-observations across 30 seconds, the rank-one eligible candidate, current
+Automatic failover is separately opt-in. It requires three current failure
+observations spanning at least three seconds, the rank-one eligible candidate, current
 controller quorum, old-primary isolation, and an exclusive VIP lease. MySQL can
 use short-lived Raft-majority Agent authorization: stale authorization expires,
 the old node fails closed to no VIP plus persistent read-only, and the Leader
 revalidates the exact transition lease before promotion. An external BMC, PDU,
 cloud, or hypervisor fencer remains an optional stronger layer. The platform
 prefers temporary unavailability over a second writer or VIP owner.
+
+The three-second interval is the controller's stable-failure evidence window,
+not an end-to-end RTO promise. The restricted Agent retains a separate 15-second
+authorization-expiry fence before an isolated old primary can no longer serve
+as writer or VIP owner. PostgreSQL 16.4 laboratory qualification measured
+17.973 seconds of writer-endpoint interruption with a two-second client connect
+timeout; every production site must repeat that test with its own network,
+storage, database package, client timeout, and fencing policy.
 
 The browser console authenticates against platform users stored in the
 replicated metadata snapshot. A fresh installation creates `admin` with the
@@ -231,6 +248,7 @@ points:
 - [English product tour](docs/en-US/product-tour.md) / [中文产品导览](docs/zh-CN/product-tour.md)
 - [English offline installation](docs/en-US/offline-rpm-install.md) / [中文离线安装](docs/zh-CN/offline-rpm-install.md)
 - [English operations manual](docs/en-US/operations-manual.md) / [中文运维手册](docs/zh-CN/operations-manual.md)
+- [English version update guide](docs/en-US/update-and-patch.md) / [中文版本升级与回退手册](docs/zh-CN/update-and-patch.md)
 - [English release policy](docs/en-US/version-release-policy.md) / [中文版本规范](docs/zh-CN/version-release-policy.md)
 
 ## Register and Refresh a MySQL Cluster

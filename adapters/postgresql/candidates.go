@@ -215,7 +215,8 @@ func hasCurrentReachableProbe(probes []model.ProbeStatus, instanceID model.Resou
 
 func postgresqlSafeSourceLossEvidence(systemIdentifier string, primary, candidate model.DatabaseInstance) bool {
 	primaryFailed := primary.Health.State == model.HealthUnhealthy || primary.Health.State == model.HealthUnknown
-	if !primaryFailed || primary.Role != model.RolePrimary || candidate.Role != model.RoleStandby ||
+	primaryRoleIsHistoricalOrCleared := primary.Role == model.RolePrimary || primary.Role == model.RoleUnknown
+	if !primaryFailed || !primaryRoleIsHistoricalOrCleared || candidate.Role != model.RoleStandby ||
 		(candidate.Health.State != model.HealthHealthy && candidate.Health.State != model.HealthDegraded) ||
 		candidate.Engine != model.EnginePostgreSQL || primary.Engine != model.EnginePostgreSQL ||
 		candidate.ClusterID != primary.ClusterID || candidate.Maintenance {

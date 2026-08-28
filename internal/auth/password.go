@@ -15,7 +15,10 @@ import (
 
 const (
 	DefaultAdminUsername = "admin"
-	DefaultAdminPassword = "admin123"
+	// DefaultBootstrapPassword is intentionally short-lived: a newly created
+	// administrator is forced to replace it before any platform data can be read
+	// or changed. It is never persisted as plaintext.
+	DefaultBootstrapPassword = "admin123"
 
 	maximumPasswordLength = 1024
 	maximumArgon2Memory   = 256 * 1024
@@ -156,8 +159,17 @@ func (hasher Argon2Hasher) Verify(encoded, password string) bool {
 }
 
 func ValidateNewPassword(password string) error {
-	if len(password) < 12 || len(password) > maximumPasswordLength || password == DefaultAdminPassword {
+	if len(password) < 12 || len(password) > maximumPasswordLength {
 		return ErrPasswordPolicy
 	}
 	return nil
+}
+
+// ValidateBootstrapPassword accepts the documented first-login password and
+// otherwise enforces the normal password policy for site-supplied overrides.
+func ValidateBootstrapPassword(password string) error {
+	if password == DefaultBootstrapPassword {
+		return nil
+	}
+	return ValidateNewPassword(password)
 }

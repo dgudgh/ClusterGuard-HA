@@ -309,7 +309,22 @@ func (service *Service) ExecuteAutomatic(ctx context.Context, request adapter.Op
 		return model.Execution{}, fmt.Errorf("automatic recovery incident identity is required")
 	}
 	request.Operation.RequestedBy = AutomaticRecoveryActor
+	if service.operations != nil {
+		if record, found := service.operations.OperationByIdempotencyKey(request.IdempotencyKey); found && automaticResumeEligible(record, request) {
+			return service.resumeIndeterminateAutomatic(ctx, record, request, incidentID)
+		}
+	}
 	return service.execute(ctx, request, executionAuthorization{automatic: true, incidentID: incidentID})
+}
+
+// resolveAdapter selects the adapter for an operation. Power lifecycle
+// operations are engine-independent and always resolve to the wildcard
+// adapter; every other operation resolves by engine.
+func (service *Service) resolveAdapter(operation model.Operation) (adapter.DatabaseHAAdapter, bool) {
+	if operation.Kind == model.OperationPowerShutdown {
+		return service.registry.Get(adapter.WildcardEngine)
+	}
+	return service.registry.Get(operation.Engine)
 }
 
 func (service *Service) execute(ctx context.Context, request adapter.OperationRequest, authorization executionAuthorization) (model.Execution, error) {
@@ -331,7 +346,7 @@ func (service *Service) executeLegacy(ctx context.Context, request adapter.Opera
 		operation.ResourceID = model.NewResourceID()
 	}
 	operation.Status = model.OperationRunning
-	candidate, ok := service.registry.Get(operation.Engine)
+	candidate, ok := service.resolveAdapter(operation)
 	if !ok {
 		return service.unsupported(operation, "no adapter is registered for the requested engine")
 	}

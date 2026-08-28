@@ -1,0 +1,27 @@
+[Unit]
+Description=ClusterGuard HA Cluster Restore Bootstrap
+After=network-online.target mysqld.service mysql.service clusterguard-ha.service
+Wants=network-online.target
+RequiresMountsFor=/etc/clusterguard
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+EnvironmentFile=-/etc/clusterguard/clusterguard.env
+EnvironmentFile=-/etc/clusterguard/agent.env
+Environment=PATH=/usr/local/mysql/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+ExecStart=/usr/local/libexec/clusterguard-cluster-restore.sh
+Restart=on-failure
+RestartSec=10s
+TimeoutStartSec=300
+StandardOutput=journal
+StandardError=journal
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/etc/clusterguard
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

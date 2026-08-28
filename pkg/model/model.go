@@ -98,6 +98,7 @@ type DatabaseCluster struct {
 	EngineIdentity EngineIdentity `json:"engine_identity"`
 	DisplayName    string         `json:"display_name"`
 	Health         Health         `json:"health"`
+	RecoveryFreeze bool           `json:"recovery_freeze"`
 }
 
 type NodeKind string
@@ -123,6 +124,67 @@ type DatabaseNode struct {
 	Kind        NodeKind   `json:"kind"`
 	HostClass   string     `json:"host_class,omitempty"`
 	Active      bool       `json:"active"`
+}
+
+type RuntimeKind string
+
+const (
+	RuntimeLinux      RuntimeKind = "linux"
+	RuntimeDocker     RuntimeKind = "docker"
+	RuntimeKubernetes RuntimeKind = "kubernetes"
+)
+
+func (kind RuntimeKind) Valid() bool {
+	return kind == RuntimeLinux || kind == RuntimeDocker || kind == RuntimeKubernetes
+}
+
+// RuntimeTarget identifies a control boundary such as a Linux host, Docker
+// engine, or Kubernetes API. Credentials are referenced, never embedded.
+type RuntimeTarget struct {
+	ResourceMeta
+	DisplayName   string            `json:"display_name"`
+	Kind          RuntimeKind       `json:"kind"`
+	Endpoint      string            `json:"endpoint,omitempty"`
+	CredentialRef string            `json:"credential_ref,omitempty"`
+	TLSProfile    string            `json:"tls_profile,omitempty"`
+	Labels        map[string]string `json:"labels,omitempty"`
+	Active        bool              `json:"active"`
+}
+
+type DockerWorkloadRef struct {
+	SwarmServiceID   string `json:"swarm_service_id,omitempty"`
+	SwarmServiceName string `json:"swarm_service_name"`
+	NodeID           string `json:"node_id,omitempty"`
+	ContainerName    string `json:"container_name,omitempty"`
+	ContainerID      string `json:"container_id,omitempty"`
+	VolumeIdentity   string `json:"volume_identity,omitempty"`
+}
+
+type KubernetesWorkloadRef struct {
+	ClusterName string `json:"cluster_name"`
+	Namespace   string `json:"namespace"`
+	StatefulSet string `json:"stateful_set"`
+	Ordinal     int    `json:"ordinal"`
+	PodName     string `json:"pod_name,omitempty"`
+	PodUID      string `json:"pod_uid,omitempty"`
+	NodeName    string `json:"node_name,omitempty"`
+	PVCUID      string `json:"pvc_uid,omitempty"`
+}
+
+// WorkloadBinding keeps an immutable database resource separate from its
+// replaceable process/container/pod placement.
+type WorkloadBinding struct {
+	ResourceMeta
+	InstanceID        ResourceID             `json:"instance_id"`
+	RuntimeTargetID   ResourceID             `json:"runtime_target_id"`
+	RuntimeKind       RuntimeKind            `json:"runtime_kind"`
+	HostNodeID        ResourceID             `json:"host_node_id,omitempty"`
+	Docker            *DockerWorkloadRef     `json:"docker,omitempty"`
+	Kubernetes        *KubernetesWorkloadRef `json:"kubernetes,omitempty"`
+	ObservedRuntimeID string                 `json:"observed_runtime_id,omitempty"`
+	Generation        uint64                 `json:"generation"`
+	ObservedAt        time.Time              `json:"observed_at,omitempty"`
+	Active            bool                   `json:"active"`
 }
 
 type InstanceRole string
@@ -179,6 +241,17 @@ const (
 	EndpointService  EndpointKind = "service"
 )
 
+type EndpointProviderKind string
+
+const (
+	EndpointProviderLinuxVIP          EndpointProviderKind = "linux_vip"
+	EndpointProviderKubernetesService EndpointProviderKind = "kubernetes_service"
+)
+
+func (kind EndpointProviderKind) Valid() bool {
+	return kind == EndpointProviderLinuxVIP || kind == EndpointProviderKubernetesService
+}
+
 type Endpoint struct {
 	ResourceMeta
 	ClusterID  ResourceID   `json:"cluster_id"`
@@ -208,14 +281,16 @@ type ReplicationLink struct {
 
 type HAEndpoint struct {
 	ResourceMeta
-	ClusterID   ResourceID   `json:"cluster_id"`
-	EndpointID  ResourceID   `json:"endpoint_id"`
-	Kind        EndpointKind `json:"kind"`
-	DesiredRole InstanceRole `json:"desired_role"`
-	OwnerID     ResourceID   `json:"owner_id,omitempty"`
-	Interface   string       `json:"interface,omitempty"`
-	Prefix      int          `json:"prefix,omitempty"`
-	Healthy     bool         `json:"healthy"`
+	ClusterID   ResourceID           `json:"cluster_id"`
+	EndpointID  ResourceID           `json:"endpoint_id"`
+	Kind        EndpointKind         `json:"kind"`
+	DesiredRole InstanceRole         `json:"desired_role"`
+	OwnerID     ResourceID           `json:"owner_id,omitempty"`
+	Interface   string               `json:"interface,omitempty"`
+	Prefix      int                  `json:"prefix,omitempty"`
+	Provider    EndpointProviderKind `json:"provider,omitempty"`
+	ProviderRef string               `json:"provider_ref,omitempty"`
+	Healthy     bool                 `json:"healthy"`
 }
 
 func EndpointAddress(hostname string, ipAddress string, port int) []string {

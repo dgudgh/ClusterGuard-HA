@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,7 +21,12 @@ import (
 
 type approvalAPIAdapter struct {
 	adapter.UnsupportedAdapter
-	executeCalls int
+	executeCalls   int
+	buildPlanCalls int
+	precheck       []model.Check
+	executeStarted chan struct{}
+	executeRelease chan struct{}
+	executeOnce    sync.Once
 }
 
 func newApprovalAPIAdapter() *approvalAPIAdapter {
@@ -37,10 +43,14 @@ func (candidate *approvalAPIAdapter) Capabilities(context.Context) adapter.Capab
 }
 
 func (candidate *approvalAPIAdapter) Precheck(context.Context, adapter.OperationRequest) ([]model.Check, error) {
+	if candidate.precheck != nil {
+		return append([]model.Check{}, candidate.precheck...), nil
+	}
 	return []model.Check{{Name: "candidate_ready", Status: model.CheckPass}}, nil
 }
 
 func (candidate *approvalAPIAdapter) BuildPlan(_ context.Context, request adapter.OperationRequest) (model.OperationPlan, error) {
+	candidate.buildPlanCalls++
 	resolved := request.Resolved
 	return model.OperationPlan{
 		OperationID:      request.Operation.ResourceID,
@@ -62,6 +72,16 @@ func (candidate *approvalAPIAdapter) BuildPlan(_ context.Context, request adapte
 
 func (candidate *approvalAPIAdapter) Execute(ctx context.Context, request adapter.OperationRequest) (model.Execution, error) {
 	candidate.executeCalls++
+	if candidate.executeStarted != nil {
+		candidate.executeOnce.Do(func() { close(candidate.executeStarted) })
+	}
+	if candidate.executeRelease != nil {
+		select {
+		case <-ctx.Done():
+			return model.Execution{Status: model.OperationFailed, Message: ctx.Err().Error()}, ctx.Err()
+		case <-candidate.executeRelease:
+		}
+	}
 	if err := request.Progress.CompleteStep(ctx, "switch_primary", "switched"); err != nil {
 		return model.Execution{Status: model.OperationIndeterminate, Message: err.Error()}, err
 	}
@@ -216,6 +236,43 @@ func TestApprovalIssuanceRequiresAdministrativeCredentialAndReturnsSecretOnce(t 
 	}
 }
 
+func TestApprovalBlockingPlanReturnsSafeOperationEvidence(t *testing.T) {
+	server, repository, candidate, clusterID, targetID := newApprovalAPIServer(t)
+	candidate.precheck = []model.Check{{
+		Name: "replication_lag", Status: model.CheckFail,
+		Message: "candidate password=secret is behind",
+	}}
+	response := requestJSON(
+		t, server.Handler(), http.MethodPost, "/api/v1/approvals",
+		approvalIssueBody(clusterID, targetID),
+		"Bearer "+testControlToken,
+	)
+	if response.Code != http.StatusConflict {
+		t.Fatalf("blocking approval status=%d body=%s", response.Code, response.Body.String())
+	}
+	var envelope struct {
+		Status  string                `json:"status"`
+		Message string                `json:"message"`
+		Result  model.OperationRecord `json:"result"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode blocking approval: %v", err)
+	}
+	if envelope.Status != "blocked" || envelope.Message != "operation precheck contains blocking checks" {
+		t.Fatalf("blocking approval envelope=%+v", envelope)
+	}
+	if len(envelope.Result.Precheck) != 1 || envelope.Result.Precheck[0].Name != "replication_lag" ||
+		envelope.Result.Precheck[0].Status != model.CheckFail || envelope.Result.Precheck[0].Message != "check failed" {
+		t.Fatalf("blocking approval evidence=%+v", envelope.Result.Precheck)
+	}
+	if strings.Contains(response.Body.String(), "password=secret") || strings.Contains(response.Body.String(), "approval_token") {
+		t.Fatalf("blocking approval leaked sensitive data: %s", response.Body.String())
+	}
+	if grants := repository.ApprovalGrants(); len(grants) != 0 {
+		t.Fatalf("blocking approval persisted grants: %+v", grants)
+	}
+}
+
 func TestApprovalGrantExecutesWithoutControlTokenAndRejectsReuse(t *testing.T) {
 	server, repository, candidate, clusterID, targetID := newApprovalAPIServer(t)
 	issued := requestJSON(
@@ -267,6 +324,31 @@ func TestApprovalGrantExecutesWithoutControlTokenAndRejectsReuse(t *testing.T) {
 	}
 }
 
+func TestApprovalIssuanceReusesPersistedImmutablePlan(t *testing.T) {
+	server, _, candidate, clusterID, targetID := newApprovalAPIServer(t)
+	planBody := map[string]interface{}{
+		"operation": map[string]interface{}{
+			"cluster_id": clusterID, "engine": "mysql", "kind": "switchover", "requested_by": "dba-admin",
+		},
+		"target_id": targetID, "idempotency_key": "approval-api-switch",
+	}
+	planned := requestJSON(t, server.Handler(), http.MethodPost, "/api/v1/operations/plan", planBody, "Bearer "+testControlToken)
+	if planned.Code != http.StatusOK {
+		t.Fatalf("plan status=%d body=%s", planned.Code, planned.Body.String())
+	}
+	issued := requestJSON(
+		t, server.Handler(), http.MethodPost, "/api/v1/approvals",
+		approvalIssueBody(clusterID, targetID),
+		"Bearer "+testControlToken,
+	)
+	if issued.Code != http.StatusCreated {
+		t.Fatalf("approval status=%d body=%s", issued.Code, issued.Body.String())
+	}
+	if candidate.buildPlanCalls != 1 {
+		t.Fatalf("persisted immutable plan was rebuilt: calls=%d", candidate.buildPlanCalls)
+	}
+}
+
 func TestPlatformSessionAutomaticallyIssuesAndConsumesOneTimeApproval(t *testing.T) {
 	for _, role := range []model.PlatformRole{model.PlatformRoleAdmin, model.PlatformRoleOperator} {
 		t.Run(string(role), func(t *testing.T) {
@@ -305,6 +387,62 @@ func TestPlatformSessionAutomaticallyIssuesAndConsumesOneTimeApproval(t *testing
 				t.Fatalf("approval grant=%+v", grants[0])
 			}
 		})
+	}
+}
+
+func TestPlatformSessionDuplicateExecuteJoinsOneIdempotentOperation(t *testing.T) {
+	client, repository, candidate, clusterID, targetID, _ := newAuthenticatedApprovalAPIClient(t, model.PlatformRoleAdmin)
+	candidate.executeStarted = make(chan struct{})
+	candidate.executeRelease = make(chan struct{})
+	body := map[string]interface{}{
+		"operation": map[string]interface{}{
+			"cluster_id": clusterID, "engine": "mysql", "kind": "switchover", "requested_by": "ignored",
+		},
+		"target_id": targetID, "idempotency_key": "session-duplicate-switch",
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal duplicate execute request: %v", err)
+	}
+	request := func() *httptest.ResponseRecorder {
+		httpRequest := httptest.NewRequest(http.MethodPost, "/api/v1/operations/execute", bytes.NewReader(payload))
+		httpRequest.Header.Set("Content-Type", "application/json")
+		httpRequest.Header.Set("X-CSRF-Token", client.csrf)
+		for _, cookie := range client.cookies {
+			httpRequest.AddCookie(cookie)
+		}
+		response := httptest.NewRecorder()
+		client.handler.ServeHTTP(response, httpRequest)
+		return response
+	}
+
+	firstResult := make(chan *httptest.ResponseRecorder, 1)
+	go func() { firstResult <- request() }()
+	select {
+	case <-candidate.executeStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first session execution did not reach the adapter")
+	}
+	secondResult := make(chan *httptest.ResponseRecorder, 1)
+	go func() { secondResult <- request() }()
+	time.Sleep(10 * time.Millisecond)
+	close(candidate.executeRelease)
+
+	first := <-firstResult
+	second := <-secondResult
+	if first.Code != http.StatusOK || second.Code != http.StatusOK {
+		t.Fatalf("duplicate session execution responses: first=%d %s second=%d %s", first.Code, first.Body.String(), second.Code, second.Body.String())
+	}
+	firstOperation := decodeOperationResult(t, first.Body.Bytes())
+	secondOperation := decodeOperationResult(t, second.Body.Bytes())
+	if firstOperation.ResourceID != secondOperation.ResourceID || firstOperation.Status != model.OperationSucceeded || secondOperation.Status != model.OperationSucceeded {
+		t.Fatalf("duplicate session operations: first=%+v second=%+v", firstOperation, secondOperation)
+	}
+	if candidate.executeCalls != 1 {
+		t.Fatalf("duplicate session request executed adapter %d times", candidate.executeCalls)
+	}
+	if grants := repository.ApprovalGrants(); len(grants) != 1 || grants[0].Status != model.ApprovalGrantConsumed {
+		t.Fatalf("duplicate session approval grants=%+v", grants)
 	}
 }
 

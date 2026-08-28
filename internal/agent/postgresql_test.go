@@ -222,9 +222,10 @@ func TestPostgreSQLControllerPromoteVerifiesRecoveryEnded(t *testing.T) {
 		{contains: "systemctl show", output: "active\n"},
 		{contains: "SELECT pg_is_in_recovery()", output: "f\n"},
 		{contains: "ALTER SYSTEM RESET primary_conninfo"},
+		{contains: "ALTER SYSTEM RESET primary_slot_name"},
 		{contains: "ALTER SYSTEM RESET clusterguard.primary_node_id"},
 		{contains: "SELECT pg_reload_conf()"},
-		{contains: "current_setting('primary_conninfo', true)", output: "\t\n"},
+		{contains: "current_setting('primary_conninfo', true)", output: "\t\t\n"},
 	}}
 	controller, _ := NewPostgreSQLController(runner, "/usr/bin/systemctl", "/usr/sbin/runuser")
 	if err := controller.Promote(context.Background(), postgresqlControllerPolicy()); err != nil {
@@ -243,9 +244,10 @@ func TestPostgreSQLControllerPromoteWaitsForRecoveryToEnd(t *testing.T) {
 		{contains: "systemctl show", output: "active\n"},
 		{contains: "SELECT pg_is_in_recovery()", output: "f\n"},
 		{contains: "ALTER SYSTEM RESET primary_conninfo"},
+		{contains: "ALTER SYSTEM RESET primary_slot_name"},
 		{contains: "ALTER SYSTEM RESET clusterguard.primary_node_id"},
 		{contains: "SELECT pg_reload_conf()"},
-		{contains: "current_setting('primary_conninfo', true)", output: "\t\n"},
+		{contains: "current_setting('primary_conninfo', true)", output: "\t\t\n"},
 	}}
 	controller, _ := NewPostgreSQLController(runner, "/usr/bin/systemctl", "/usr/sbin/runuser")
 	controller.pollInterval = 0
@@ -263,9 +265,10 @@ func TestPostgreSQLControllerPromoteRejectsStaleUpstreamConfiguration(t *testing
 		{contains: "systemctl show", output: "active\n"},
 		{contains: "SELECT pg_is_in_recovery()", output: "f\n"},
 		{contains: "ALTER SYSTEM RESET primary_conninfo"},
+		{contains: "ALTER SYSTEM RESET primary_slot_name"},
 		{contains: "ALTER SYSTEM RESET clusterguard.primary_node_id"},
 		{contains: "SELECT pg_reload_conf()"},
-		{contains: "current_setting('primary_conninfo', true)", output: "postgresql://stale-primary\t\n"},
+		{contains: "current_setting('primary_conninfo', true)", output: "postgresql://stale-primary\t\t\n"},
 	}}
 	controller, _ := NewPostgreSQLController(runner, "/usr/bin/systemctl", "/usr/sbin/runuser")
 	err := controller.Promote(context.Background(), postgresqlControllerPolicy())
@@ -284,6 +287,7 @@ func TestPostgreSQLControllerRepointUsesAllowlistedPasswordlessSourceURI(t *test
 	}
 	runner := &orderedCommandRunner{t: t, expected: []commandExpectation{
 		{contains: "ALTER SYSTEM SET primary_conninfo =", output: ""},
+		{contains: "ALTER SYSTEM RESET primary_slot_name", output: ""},
 		{contains: "ALTER SYSTEM SET clusterguard.primary_node_id =", output: ""},
 		{contains: "SELECT pg_reload_conf()", output: ""},
 		{contains: "systemctl show", output: "active\n"},
@@ -295,7 +299,7 @@ func TestPostgreSQLControllerRepointUsesAllowlistedPasswordlessSourceURI(t *test
 		t.Fatalf("repoint: %v", err)
 	}
 	runner.assertComplete()
-	commands := strings.Join(runner.commands[:2], "\n")
+	commands := strings.Join(runner.commands[:3], "\n")
 	for _, required := range []string{
 		"host=''192.0.2.20''",
 		"passfile=''/etc/clusterguard/postgresql.pass''",
@@ -324,6 +328,7 @@ func TestPostgreSQLControllerKeepsPlatformAndNativeNodeIdentitiesSeparate(t *tes
 	}
 	runner := &orderedCommandRunner{t: t, expected: []commandExpectation{
 		{contains: "ALTER SYSTEM SET primary_conninfo ="},
+		{contains: "ALTER SYSTEM RESET primary_slot_name"},
 		{contains: "ALTER SYSTEM SET clusterguard.primary_node_id ="},
 		{contains: "SELECT pg_reload_conf()"},
 		{contains: "systemctl show", output: "active\n"},
@@ -336,7 +341,7 @@ func TestPostgreSQLControllerKeepsPlatformAndNativeNodeIdentitiesSeparate(t *tes
 		t.Fatalf("repoint with distinct identities: %v", err)
 	}
 	runner.assertComplete()
-	commands := strings.Join(runner.commands[:2], "\n")
+	commands := strings.Join(runner.commands[:3], "\n")
 	for _, required := range []string{
 		"application_name=''" + string(policy.PostgreSQLNodeID) + "''",
 		"ALTER SYSTEM SET clusterguard.primary_node_id = '" + string(peer.NodeID) + "'",
@@ -361,6 +366,7 @@ func TestPostgreSQLControllerRepointWaitsForApprovedSourceIdentity(t *testing.T)
 	}
 	runner := &orderedCommandRunner{t: t, expected: []commandExpectation{
 		{contains: "ALTER SYSTEM SET primary_conninfo ="},
+		{contains: "ALTER SYSTEM RESET primary_slot_name"},
 		{contains: "ALTER SYSTEM SET clusterguard.primary_node_id ="},
 		{contains: "SELECT pg_reload_conf()"},
 		{contains: "systemctl show", output: "active\n"},
@@ -387,6 +393,7 @@ func TestPostgreSQLControllerRepointWaitsForApprovedSourceToStream(t *testing.T)
 	}
 	runner := &orderedCommandRunner{t: t, expected: []commandExpectation{
 		{contains: "ALTER SYSTEM SET primary_conninfo ="},
+		{contains: "ALTER SYSTEM RESET primary_slot_name"},
 		{contains: "ALTER SYSTEM SET clusterguard.primary_node_id ="},
 		{contains: "SELECT pg_reload_conf()"},
 		{contains: "systemctl show", output: "active\n"},
@@ -457,6 +464,7 @@ func TestPostgreSQLControllerBaseBackupAtomicallyReplacesDataAndPreservesTargetI
 	}
 	policy := postgresqlControllerPolicy()
 	policy.PostgreSQLDataDirectory = dataDirectory
+	policy.PostgreSQLHostname = "pg-target"
 	peer := PostgreSQLPeer{InstanceID: model.NewResourceID(), NodeID: model.NewResourceID(), IPAddress: "192.0.2.22", Port: 5432}
 	connection, err := postgresqlSourceURI(policy, peer)
 	if err != nil {
@@ -472,7 +480,7 @@ func TestPostgreSQLControllerBaseBackupAtomicallyReplacesDataAndPreservesTargetI
 		t.Fatal(err)
 	}
 	configuration := string(contents)
-	for _, expected := range []string{string(policy.PostgreSQLNodeID), string(peer.NodeID), "primary_conninfo"} {
+	for _, expected := range []string{string(policy.PostgreSQLNodeID), string(peer.NodeID), "clusterguard.hostname = 'pg-target'", "primary_conninfo"} {
 		if !strings.Contains(configuration, expected) {
 			t.Fatalf("identity override missing %q: %s", expected, configuration)
 		}
@@ -567,6 +575,34 @@ func TestPostgreSQLControllerRejectsUnexpectedRecoveryOutput(t *testing.T) {
 	_, _, err := controller.Status(context.Background(), postgresqlControllerPolicy())
 	if err == nil || !strings.Contains(err.Error(), "unexpected pg_is_in_recovery") {
 		t.Fatalf("unexpected recovery error=%v", err)
+	}
+}
+
+func TestPostgreSQLControllerStandbyIntentRequiresRegularSignalFile(t *testing.T) {
+	policy := postgresqlControllerPolicy()
+	policy.PostgreSQLDataDirectory = filepath.Join(t.TempDir(), "postgresql", "data")
+	if err := os.MkdirAll(policy.PostgreSQLDataDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	controller, _ := NewPostgreSQLController(&orderedCommandRunner{t: t}, "/usr/bin/systemctl", "/usr/sbin/runuser")
+	if intended, err := controller.StandbyIntent(policy); err != nil || intended {
+		t.Fatalf("missing standby signal intended=%v err=%v", intended, err)
+	}
+	marker := filepath.Join(policy.PostgreSQLDataDirectory, "standby.signal")
+	if err := os.WriteFile(marker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if intended, err := controller.StandbyIntent(policy); err != nil || !intended {
+		t.Fatalf("regular standby signal intended=%v err=%v", intended, err)
+	}
+	if err := os.Remove(marker); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("elsewhere", marker); err != nil {
+		t.Fatal(err)
+	}
+	if intended, err := controller.StandbyIntent(policy); err == nil || intended {
+		t.Fatalf("symbolic standby signal intended=%v err=%v", intended, err)
 	}
 }
 

@@ -71,7 +71,7 @@ func TestDiscoverUsesMySQLServerUUIDNotHostnameAsIdentity(t *testing.T) {
 	if result.Instance.Replication.SourceIdentity["server_uuid"] != "source-uuid" {
 		t.Fatalf("unexpected replication state: %+v", result.Instance.Replication)
 	}
-	if got := result.Instance.EngineMetadata; got["version"] != "8.0.44" || got["gtid_mode"] != "ON" || got["log_bin"] != "1" || got["binlog_format"] != "ROW" {
+	if got := result.Instance.EngineMetadata; got["version"] != "8.0.44" || got["gtid_mode"] != "ON" || got["gtid_purged"] != testPrimaryServerUUID+":1-5" || got["log_bin"] != "1" || got["binlog_format"] != "ROW" {
 		t.Fatalf("unexpected engine metadata: %+v", got)
 	}
 }
@@ -145,6 +145,9 @@ func TestDiscoverCapturesGlobalGTIDExecutedForWritablePrimary(t *testing.T) {
 	if len(runner.queries) == 0 || !strings.Contains(runner.queries[0], "@@GLOBAL.gtid_executed AS gtid_executed") {
 		t.Fatalf("identity query did not read global GTID state: %v", runner.queries)
 	}
+	if !strings.Contains(runner.queries[0], "@@GLOBAL.gtid_purged AS gtid_purged") {
+		t.Fatalf("identity query did not read purged GTID state: %v", runner.queries)
+	}
 }
 
 func TestDiscoverDoesNotInferGlobalGTIDFromReplicaStatus(t *testing.T) {
@@ -194,6 +197,8 @@ func identityRow(version, readOnly, superReadOnly string) Row {
 		"read_only":       readOnly,
 		"super_read_only": superReadOnly,
 		"gtid_mode":       "ON",
+		"gtid_executed":   testPrimaryServerUUID + ":1-10",
+		"gtid_purged":     testPrimaryServerUUID + ":1-5",
 		"log_bin":         "1",
 		"binlog_format":   "ROW",
 	}

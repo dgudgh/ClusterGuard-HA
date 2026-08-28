@@ -1,0 +1,8 @@
+generated_at=2026-08-14T06:40:09Z
+os_release=Rocky Linux release 8.10 (Green Obsidian)
+architecture=x86_64
+packages=libaio ncurses-compat-libs numactl-libs
+runtime_minimal=true
+postgresql_source_build=false
+signature_verification=passed
+repository_metadata=repodata/repomd.xml

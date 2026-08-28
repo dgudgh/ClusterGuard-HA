@@ -7,6 +7,7 @@ node_name=""
 node_id=""
 config_file=""
 environment_file=""
+agent_environment_file=""
 agent_config_file=""
 assets_dir=""
 
@@ -14,7 +15,7 @@ usage() {
   cat <<'EOF'
 usage: clusterguard-preflight.sh --bundle-dir DIR --role controller|data|mixed
        --node-name NAME --node-id UUID [--config FILE] --env-file FILE
-       [--agent-config FILE] [--assets-dir DIR]
+       [--agent-env-file FILE] [--agent-config FILE] [--assets-dir DIR]
 EOF
 }
 
@@ -26,6 +27,7 @@ while (($#)); do
     --node-id) node_id="${2:-}"; shift 2 ;;
     --config) config_file="${2:-}"; shift 2 ;;
     --env-file) environment_file="${2:-}"; shift 2 ;;
+    --agent-env-file) agent_environment_file="${2:-}"; shift 2 ;;
     --agent-config) agent_config_file="${2:-}"; shift 2 ;;
     --assets-dir) assets_dir="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -38,6 +40,9 @@ case "${role}" in controller|data|mixed) ;; *) echo "role must be controller, da
 [[ "${node_name}" =~ ^[a-z][a-z0-9-]{2,62}$ ]] || { echo "node name must be a stable lowercase global name" >&2; exit 2; }
 [[ "${node_id}" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ ]] || { echo "node ID must be a platform UUID" >&2; exit 2; }
 [[ -f "${environment_file}" && ! -L "${environment_file}" ]] || { echo "protected environment file is required" >&2; exit 2; }
+if [[ -z "${agent_environment_file}" ]]; then
+  agent_environment_file="${environment_file}"
+fi
 if [[ -n "${assets_dir}" ]]; then
   [[ -d "${assets_dir}" && ! -L "${assets_dir}" ]] || { echo "runtime assets directory is invalid" >&2; exit 2; }
   [[ -z "$(find "${assets_dir}" -mindepth 1 -type l -print -quit)" ]] || { echo "runtime assets must not contain symlinks" >&2; exit 3; }
@@ -46,7 +51,7 @@ if [[ -n "${assets_dir}" ]]; then
     relative="${asset#"${assets_dir}"/}"
     case "${relative}" in
       ._*|*/._*|.DS_Store|*/.DS_Store) continue ;;
-      tls/*.crt|tls/*.key|ssh/*known_hosts|ssh/*_ed25519|mysql/*-client.cnf|postgresql/*.pass) ;;
+      tls/*.crt|tls/*.key|pki/*.crt|pki/*.key|ssh/*known_hosts|ssh/*_ed25519|mysql/*-client.cnf|postgresql/*.pass|fencing/clusterguard-fencer|fencing/*) ;;
       *) echo "unsupported runtime asset: ${relative}" >&2; exit 3 ;;
     esac
   done < <(find "${assets_dir}" -mindepth 2 -maxdepth 2 -type f -print0 | sort -z)
@@ -60,13 +65,19 @@ required=(
   scripts/clusterguard-mysql-install.sh
   scripts/clusterguard-mysql-sync.sh
   scripts/clusterguard-mysql-probe-cleanup.sh
+  scripts/clusterguard-postgresql-build.sh
   scripts/clusterguard-postgresql-install.sh
   scripts/clusterguard-postgresql-sync.sh
   scripts/clusterguard-agent-stdio.sh
+  scripts/clusterguard-cluster-shutdown.sh
+  scripts/clusterguard-cluster-restore.sh
+  scripts/clusterguard-cluster-finalize.sh
   packaging/systemd/clusterguard-ha.service
   packaging/systemd/clusterguard-agent.service
   packaging/systemd/clusterguard-agent-reconcile.service
   packaging/systemd/clusterguard-agent-reconcile.timer
+  packaging/systemd/clusterguard-cluster-restore.service
+  packaging/systemd/clusterguard-cluster-finalize.service
   packaging/logrotate/clusterguard-ha
 )
 if [[ "${role}" == "controller" || "${role}" == "mixed" ]]; then
@@ -74,6 +85,7 @@ if [[ "${role}" == "controller" || "${role}" == "mixed" ]]; then
 fi
 if [[ "${role}" == "data" || "${role}" == "mixed" ]]; then
   [[ -f "${agent_config_file}" && ! -L "${agent_config_file}" ]] || { echo "data-node agent configuration file is required" >&2; exit 2; }
+  [[ -f "${agent_environment_file}" && ! -L "${agent_environment_file}" ]] || { echo "protected agent environment file is required" >&2; exit 2; }
 fi
 for relative in "${required[@]}"; do
   [[ -f "${bundle_dir}/${relative}" && ! -L "${bundle_dir}/${relative}" ]] || {

@@ -6,3 +6,8 @@
 .DS_Store
 .worktrees/
 .superpowers/
+/.build/
+/release/
+/cgctl
+/docs/node_modules/
+/packaging/offline-dependencies/rocky-8-x86_64/

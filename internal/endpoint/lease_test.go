@@ -48,6 +48,29 @@ func TestMemoryLeaseStoreRenewsSameStableOwnershipIntent(t *testing.T) {
 	}
 }
 
+func TestMemoryLeaseStoreRenewalNeverShortensExistingExpiry(t *testing.T) {
+	now := time.Date(2026, time.August, 23, 10, 0, 0, 0, time.UTC)
+	startedAt := now
+	store := NewMemoryLeaseStore(func() time.Time { return now })
+	request := LeaseRequest{
+		ClusterID: model.NewResourceID(), HAEndpointID: model.NewResourceID(),
+		OperationID: model.NewResourceID(), OwnerID: model.NewResourceID(), TTL: time.Minute,
+	}
+	first, err := store.Acquire(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(5 * time.Second)
+	request.TTL = 30 * time.Second
+	renewed, err := store.Acquire(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !renewed.ExpiresAt.Equal(startedAt.Add(time.Minute)) || renewed.ExpiresAt.Before(first.ExpiresAt) {
+		t.Fatalf("short renewal reduced lease expiry: first=%s renewed=%s", first.ExpiresAt, renewed.ExpiresAt)
+	}
+}
+
 func TestMemoryLeaseStoreAtomicallyHandsStableOwnershipToTransition(t *testing.T) {
 	now := time.Date(2026, time.July, 13, 13, 0, 0, 0, time.UTC)
 	store := NewMemoryLeaseStore(func() time.Time { return now })

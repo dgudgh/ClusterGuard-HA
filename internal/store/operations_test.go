@@ -196,6 +196,95 @@ func TestIndeterminateOperationCanOnlyBeReconciledByPersistedVerification(t *tes
 	}
 }
 
+func TestIndeterminateOperationReviewPreservesOutcomeAndPublishesAuditAtomically(t *testing.T) {
+	repository := NewMemory()
+	request := operationFixture()
+	request.IdempotencyKey = "acknowledge-indeterminate"
+	created, _, err := repository.CreateOperation(request)
+	if err != nil {
+		t.Fatalf("create operation: %v", err)
+	}
+	indeterminate, err := repository.TransitionOperation(created.ResourceID, created.MetadataRevision, model.OperationTransition{
+		Stage: model.StageVerify, Status: model.OperationIndeterminate, FailureClass: "verification_unknown", Message: "manual review required",
+	})
+	if err != nil {
+		t.Fatalf("mark indeterminate: %v", err)
+	}
+	if !indeterminate.RequiresReview() {
+		t.Fatal("unreviewed indeterminate operation did not require review")
+	}
+
+	reviewed, err := repository.ReviewIndeterminateOperation(indeterminate.ResourceID, indeterminate.MetadataRevision, "dba", "database role and writer endpoint were checked")
+	if err != nil {
+		t.Fatalf("review operation: %v", err)
+	}
+	if reviewed.Status != model.OperationIndeterminate || reviewed.RequiresReview() || reviewed.Review == nil ||
+		reviewed.Review.Disposition != model.OperationReviewAcknowledgedIndeterminate || reviewed.Review.ReviewedBy != "dba" || reviewed.Review.ReviewedAt.IsZero() {
+		t.Fatalf("review changed or omitted outcome evidence: %+v", reviewed)
+	}
+	if len(repository.Audits()) != 1 || len(repository.Reports()) != 1 || repository.Reports()[0].Status != model.OperationIndeterminate {
+		t.Fatalf("review audit/report evidence missing: audits=%+v reports=%+v", repository.Audits(), repository.Reports())
+	}
+
+	// A lost response may be retried with the original revision. Identical input
+	// is idempotent, while a different review cannot overwrite the first one.
+	retried, err := repository.ReviewIndeterminateOperation(indeterminate.ResourceID, indeterminate.MetadataRevision, "dba", "database role and writer endpoint were checked")
+	if err != nil || retried.MetadataRevision != reviewed.MetadataRevision || len(repository.Audits()) != 1 || len(repository.Reports()) != 1 {
+		t.Fatalf("idempotent review retry failed: record=%+v err=%v", retried, err)
+	}
+	if _, err := repository.ReviewIndeterminateOperation(reviewed.ResourceID, reviewed.MetadataRevision, "dba", "replace the original note"); !errors.Is(err, ErrConflict) {
+		t.Fatalf("immutable review was overwritten: %v", err)
+	}
+
+	reviewed.Review.Note = "mutated caller copy"
+	persisted, found := repository.Operation(reviewed.ResourceID)
+	if !found || persisted.Review == nil || persisted.Review.Note != "database role and writer endpoint were checked" {
+		t.Fatalf("review pointer escaped repository cloning: %+v", persisted)
+	}
+}
+
+func TestOperationReviewRejectsNonIndeterminateOutcomeAndMissingNote(t *testing.T) {
+	repository := NewMemory()
+	created, _, err := repository.CreateOperation(operationFixture())
+	if err != nil {
+		t.Fatalf("create operation: %v", err)
+	}
+	if _, err := repository.ReviewIndeterminateOperation(created.ResourceID, created.MetadataRevision, "dba", "reviewed"); !errors.Is(err, ErrConflict) {
+		t.Fatalf("planned operation accepted a review: %v", err)
+	}
+	if _, err := repository.ReviewIndeterminateOperation(created.ResourceID, created.MetadataRevision, "dba", " "); !errors.Is(err, ErrValidation) {
+		t.Fatalf("blank review note was accepted: %v", err)
+	}
+}
+
+func TestReviewedIndeterminateOperationCanStillReconcileToVerifiedSuccess(t *testing.T) {
+	repository := NewMemory()
+	created, _, err := repository.CreateOperation(operationFixture())
+	if err != nil {
+		t.Fatalf("create operation: %v", err)
+	}
+	indeterminate, err := repository.TransitionOperation(created.ResourceID, created.MetadataRevision, model.OperationTransition{
+		Stage: model.StageVerify, Status: model.OperationIndeterminate, Message: "review required",
+	})
+	if err != nil {
+		t.Fatalf("mark indeterminate: %v", err)
+	}
+	reviewed, err := repository.ReviewIndeterminateOperation(indeterminate.ResourceID, indeterminate.MetadataRevision, "dba", "live topology checked")
+	if err != nil {
+		t.Fatalf("review operation: %v", err)
+	}
+	verification := model.Verification{Passed: true, Checks: []model.Check{{Name: "writer_endpoint_owner", Status: model.CheckPass}}}
+	succeeded, err := repository.TransitionOperation(reviewed.ResourceID, reviewed.MetadataRevision, model.OperationTransition{
+		Stage: reviewed.Stage, Status: model.OperationSucceeded, Verification: &verification, Message: "verification passed",
+	})
+	if err != nil {
+		t.Fatalf("reconcile reviewed operation: %v", err)
+	}
+	if succeeded.Status != model.OperationSucceeded || succeeded.Review == nil || succeeded.RequiresReview() {
+		t.Fatalf("reconciled operation lost outcome or review evidence: %+v", succeeded)
+	}
+}
+
 func TestFinalizeOperationAtomicallyPersistsTerminalTimeline(t *testing.T) {
 	repository := NewMemory()
 	created, _, err := repository.CreateOperation(operationFixture())

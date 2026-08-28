@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="Docker Swarm MySQL 实机验证 - ClusterGuard HA operational documentation">
+  <title>Docker Swarm MySQL 实机验证 | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">跳到正文</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>搜索文档</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="输入标题关键词">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>开始使用</h2><a href="index.html" data-doc-title="clusterguard ha 中文文档">ClusterGuard HA 中文文档</a><a href="product-overview.html" data-doc-title="产品概览">产品概览</a><a href="product-tour.html" data-doc-title="控制台产品导览">控制台产品导览</a><a href="architecture.html" data-doc-title="系统架构">系统架构</a><a href="release-2.2.39.html" data-doc-title="2.2.39 发布说明">2.2.39 发布说明</a><a href="release-2.1.45.html" data-doc-title="2.1.45 发布说明">2.1.45 发布说明</a></section><section><h2>部署与迁移</h2><a href="offline-rpm-install.html" data-doc-title="离线 rpm 安装">离线 RPM 安装</a><a href="database-preparation.html" data-doc-title="数据库接入">数据库接入</a><a href="orchestrator-migration.html" data-doc-title="从 orchestrator 迁移">从 Orchestrator 迁移</a></section><section><h2>日常运维</h2><a href="operations-manual.html" data-doc-title="运维操作手册">运维操作手册</a><a href="api-operations.html" data-doc-title="api 运维参考">API 运维参考</a><a href="postgresql-ha.html" data-doc-title="postgresql 高可用">PostgreSQL 高可用</a><a href="docker-swarm-mysql.html" data-doc-title="docker swarm mysql">Docker Swarm MySQL</a><a href="kubernetes-mysql.html" data-doc-title="kubernetes mysql">Kubernetes MySQL</a><a href="update-and-patch.html" data-doc-title="版本升级与回退">版本升级与回退</a><a href="version-release-policy.html" data-doc-title="版本与发版规范">版本与发版规范</a></section><section><h2>验收证据</h2><a href="proven-mysql-ha-methods.html" data-doc-title="mysql 已验证方法">MySQL 已验证方法</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql 功能验收">MySQL 功能验收</a><a href="mysql-former-primary-recovery.html" data-doc-title="旧主恢复专项验收">旧主恢复专项验收</a><a href="mysql-production-qualification.html" data-doc-title="mysql 生产验收">MySQL 生产验收</a><a href="postgresql-production-qualification.html" data-doc-title="postgresql 16.4 生产验收">PostgreSQL 16.4 生产验收</a><a href="docker-swarm-mysql-validation.html" data-doc-title="docker swarm mysql 实机验证" aria-current="page" class="active">Docker Swarm MySQL 实机验证</a><a href="production-chaos-test.html" data-doc-title="生产故障测试报告">生产故障测试报告</a><a href="power-lifecycle-test.html" data-doc-title="计划关机测试报告">计划关机测试报告</a></section></nav>
+      <div class="sidebar-meta">
+        <span>离线文档构建</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">打开目录</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>Docker Swarm MySQL 实机验证</strong></div>
+        <div class="header-actions">
+          <a href="../en-US/docker-swarm-mysql-validation.html" lang="en-US">English</a>
+          <button id="print-button" type="button">打印</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="docker-swarm-mysql-验证计划">Docker Swarm MySQL 验证计划<a class="heading-anchor" href="#docker-swarm-mysql-验证计划" aria-label="Link to Docker Swarm MySQL 验证计划">#</a></h1>
+<h2 id="目标与边界">目标与边界<a class="heading-anchor" href="#目标与边界" aria-label="Link to 目标与边界">#</a></h2>
+<p>在 <code>192.168.102.152-154</code> 上建立三 Manager Docker Swarm，部署 MySQL 8.0.44 一主两从。破坏性测试阶段先用临时隔离控制面避免影响已运行的 PostgreSQL；功能验收后必须迁入站点统一 ClusterGuard HA 控制面，由同一 API、Raft 和 Agent 同时管理两个独立数据库集群。</p>
+<table>
+<thead>
+<tr>
+<th>资源</th>
+<th>验证值</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Swarm Manager / MySQL 节点</td>
+<td><code>192.168.102.152-154</code></td>
+</tr>
+<tr>
+<td>MySQL</td>
+<td><code>8.0.44:3306</code></td>
+</tr>
+<tr>
+<td>业务 VIP</td>
+<td><code>192.168.102.156/24</code> on <code>ens160</code></td>
+</tr>
+<tr>
+<td>临时破坏性测试控制台</td>
+<td><code>https://192.168.102.152:3100/</code>，仅测试阶段</td>
+</tr>
+<tr>
+<td>临时测试 Raft</td>
+<td><code>11009/tcp</code>，验收后停用</td>
+</tr>
+<tr>
+<td>最终统一控制面</td>
+<td><code>https://192.168.102.152-154:3000/</code>，Raft <code>10009/tcp</code></td>
+</tr>
+<tr>
+<td>控制台集群条目</td>
+<td><code>pg16-ha</code>、<code>swarm-mysql-8.0</code></td>
+</tr>
+</tbody></table>
+<h2 id="实施阶段">实施阶段<a class="heading-anchor" href="#实施阶段" aria-label="Link to 实施阶段">#</a></h2>
+<ol>
+<li>固定 Docker 静态介质和 <code>mysql:8.0.44</code> linux/amd64 镜像摘要，制作三节点一致离线介质。</li>
+<li>安装 Docker，校验时钟、防火墙、SELinux、overlay 网络与三 Manager quorum。</li>
+<li>为 01、02、03 创建固定 slot，部署三个独立 MySQL Service 和持久化数据目录。</li>
+<li>先初始化 01，再初始化 02、03，确认 GTID 自动定位、复制双 ON 和验收数据收敛。</li>
+<li>启动独立 ClusterGuard Raft 三节点，发现 MySQL，固化 <code>server_uuid -&gt; resource_id -&gt; Swarm Service</code> 映射。</li>
+<li>登记 RuntimeTarget、WorkloadBinding 和 Linux VIP HAEndpoint，启动宿主机 Agent 和所有权租约收敛。</li>
+<li>完成计划切换、故障切换、旧主恢复、VIP 唯一性、数据一致性、审计和报告验收。</li>
+<li>将 Docker MySQL 资源、运行时绑定、HA 端点和 Agent 策略迁入 <code>3000</code> 统一控制面，验证两个集群均健康后关闭 <code>3100/11009</code> 临时控制面。</li>
+</ol>
+<h2 id="通过标准">通过标准<a class="heading-anchor" href="#通过标准" aria-label="Link to 通过标准">#</a></h2>
+<ul>
+<li>三个 Swarm Manager 均为 <code>Ready/Reachable</code>，任一 Manager 下线后仍可管理 Service。</li>
+<li>任意时刻只有一个 MySQL 可写，只有当前主库宿主机持有 VIP。</li>
+<li><code>01 -&gt; 02 -&gt; 03 -&gt; 01</code> 计划切换全部通过，切换后两个副本重指向新主库。</li>
+<li>当前主库 Service 缩容为 0 后，ClusterGuard 只在 Raft 多数派和隔离证据成立时提升候选，目标 30 秒内恢复 VIP。</li>
+<li>旧主 Service 恢复到 1 时首先以 <code>read_only=ON</code> 和 <code>super_read_only=ON</code> 启动，完成数据补齐后挂回新主。</li>
+<li>双 VIP、双主、标签重复、容器身份不一致、Agent 不可达、Raft 无多数派均必须 fail-closed。</li>
+<li>每次操作必须生成 Operation、Execution、Verification、AuditEvent 和 Report，页面、API 与实际 MySQL 角色一致。</li>
+</ul>
+<h2 id="证据清单">证据清单<a class="heading-anchor" href="#证据清单" aria-label="Link to 证据清单">#</a></h2>
+<p>保存 Swarm node/service/task 输出、MySQL <code>server_uuid</code>、GTID、复制状态、只读状态、VIP 所有者、每次切换耗时、旧主恢复过程、ClusterGuard 审计/报告以及所有失败注入的阻断原因。未保存上述证据的场景不计为通过。</p>
+<h2 id="2026-08-27-实机结果">2026-08-27 实机结果<a class="heading-anchor" href="#2026-08-27-实机结果" aria-label="Link to 2026-08-27 实机结果">#</a></h2>
+<p>本轮使用 MySQL 8.0.44、三个 Swarm Manager、三个 ClusterGuard Raft 投票节点和宿主机 Agent 完成验证。测试结束时 01 为唯一可写主库并持有 <code>192.168.102.156/24</code>，02、03 均为 <code>read_only=ON</code>、<code>super_read_only=ON</code> 且复制线程运行。</p>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>实测结果</th>
+<th>结论</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>计划切换 <code>01 -&gt; 02 -&gt; 03 -&gt; 01</code></td>
+<td>三次均约 8 秒，主库、两个复制源和 VIP 同步收敛</td>
+<td>通过</td>
+</tr>
+<tr>
+<td>计划重启当前主库 Service</td>
+<td>恢复冻结期间 VIP 不误漂移；任务以持久角色文件启动，稳定租约恢复后可写角色自动收敛</td>
+<td>通过</td>
+</tr>
+<tr>
+<td>突发停止 02 主库 Service</td>
+<td>21 秒内完成 02 到 01 的端到端恢复；工作流执行及验证约 12.2 秒</td>
+<td>通过</td>
+</tr>
+<tr>
+<td>故障前数据一致性</td>
+<td>故障前标记 <code>abrupt-failover-1787762799</code> 在新主和两个回挂副本均存在</td>
+<td>通过</td>
+</tr>
+<tr>
+<td>02 旧主恢复</td>
+<td>内置 <code>former_primary_rejoin</code> 在 3 秒内完成，4 项持久化验证全部通过</td>
+<td>通过</td>
+</tr>
+<tr>
+<td>成功操作重复验证</td>
+<td><code>/operations/{id}/verify</code> 幂等返回原验证证据，不再使用旧计划误判新拓扑</td>
+<td>通过</td>
+</tr>
+<tr>
+<td>单个 Docker Manager 停止</td>
+<td>03 不可达时 01 主库和 VIP 保持不变；Docker 恢复后 03 自动恢复为只读副本</td>
+<td>通过</td>
+</tr>
+<tr>
+<td>ClusterGuard Raft 丢失多数派</td>
+<td>切换计划返回 HTTP 503，未生成或执行数据库变更</td>
+<td>通过</td>
+</tr>
+<tr>
+<td>未授权重复 VIP</td>
+<td>在 153 人工添加 VIP 后，宿主机 Agent 在 3 秒内摘除，152 的合法 VIP 保持</td>
+<td>通过</td>
+</tr>
+</tbody></table>
+<p>关键操作证据包括自动故障切换 <code>eb8cd08d-11ad-4cc5-9326-069ad2aa2a52</code> 和旧主回挂 <code>63c026dc-fc6a-49bd-b6f9-3fffa26aa68b</code>。全仓 <code>go test ./... -count=1</code> 与 <code>go vet ./...</code> 均通过。</p>
+<p>本轮证明当前实现满足 Docker Swarm MySQL 第一阶段功能验收，不替代生产环境的长时间压测。整机断电、跨交换机网络分区、存储只读/满盘、连续百次切换和 MySQL 8.4 仍需在目标生产等价环境单独执行。</p>
+<h2 id="统一控制面迁移验收">统一控制面迁移验收<a class="heading-anchor" href="#统一控制面迁移验收" aria-label="Link to 统一控制面迁移验收">#</a></h2>
+<p>同日完成从临时 <code>3100</code> 控制面到正式 <code>3000</code> 控制面的迁移。统一 <code>/api/v1/clusters</code> 同时返回健康的 <code>pg16-ha</code> 和 <code>swarm-mysql-8.0</code>；PostgreSQL VIP <code>192.168.102.155</code> 位于其当前主库宿主机，Docker MySQL VIP <code>192.168.102.156</code> 位于其当前主库宿主机。三台宿主机均由一份 Agent 配置同时处理两个集群。</p>
+<p>迁移后执行 Docker MySQL <code>01 -&gt; 02 -&gt; 01</code> 受控切换回归，主库角色、两个副本、VIP 和切换前验收数据均收敛。临时 <code>clusterguard-swarm-lab.service</code> 与专用 Agent timer 已停用，三台主机 <code>3100</code> 均无监听，<code>3000</code> 均返回控制台。</p>
+<p>迁移中发现并修复两项交付缺口。其一，容器标签中的实例 UUID 必须先更新为统一控制面的资源 UUID，否则 Agent 会因身份不匹配拒绝操作。其二，Agent systemd 单元采用 <code>ProtectSystem=strict</code> 时必须显式允许写入 <code>/etc/clusterguard/docker</code>，否则无法原子更新重启隔离文件。现在配置校验和回归测试共同锁定这两个运行契约。</p>
+
+          <footer class="document-footer">
+            <span>源文件: <code>docs/zh-CN/docker-swarm-mysql-validation-plan.md</code></span>
+            <a href="../index.html">文档语言入口</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="本页目录">
+          <strong>本页目录</strong>
+          <a class="toc-level-2" href="#目标与边界">目标与边界</a><a class="toc-level-2" href="#实施阶段">实施阶段</a><a class="toc-level-2" href="#通过标准">通过标准</a><a class="toc-level-2" href="#证据清单">证据清单</a><a class="toc-level-2" href="#2026-08-27-实机结果">2026-08-27 实机结果</a><a class="toc-level-2" href="#统一控制面迁移验收">统一控制面迁移验收</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

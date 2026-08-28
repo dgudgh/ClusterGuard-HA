@@ -7,27 +7,27 @@
   <style>
     :root {
       color-scheme:light;
-      --ink:#18231e;
-      --muted:#64716b;
-      --subtle:#87938d;
-      --line:#d9e2dd;
-      --line-strong:#becbc4;
-      --canvas:#f3f6f4;
+      --ink:#1d1d1f;
+      --muted:#6e6e73;
+      --subtle:#86868b;
+      --line:rgba(0,0,0,.08);
+      --line-strong:rgba(0,0,0,.14);
+      --canvas:#f5f5f7;
       --panel:#ffffff;
-      --rail:#102019;
-      --accent:#087a68;
-      --accent-strong:#07594d;
-      --accent-soft:#eaf5f1;
-      --blue-soft:#edf5fb;
-      --blue-line:#a9c9df;
-      --warning:#9a6b14;
-      --warning-soft:#fbf6e9;
-      --danger:#b33f3f;
-      --danger-soft:#fff1f1;
-      --success:#23825f;
+      --rail:#ffffff;
+      --accent:#0071e3;
+      --accent-strong:#005bb5;
+      --accent-soft:rgba(0,113,227,.08);
+      --blue-soft:#f2f7fd;
+      --blue-line:#b8d3ed;
+      --warning:#a35400;
+      --warning-soft:#fff8e8;
+      --danger:#d70015;
+      --danger-soft:#fff1f2;
+      --success:#248a3d;
       --radius:8px;
-      --shadow:0 8px 24px rgba(24,49,38,.055);
-      --topology-node-height:104px;
+      --shadow:0 1px 2px rgba(0,0,0,.04);
+      --topology-node-height:116px;
     }
     * { box-sizing:border-box; }
     html { min-width:320px; background:var(--canvas); }
@@ -38,13 +38,13 @@
       font:14px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       letter-spacing:0;
     }
-    button, input, select { font:inherit; letter-spacing:0; }
-    button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible, summary:focus-visible {
-      outline:3px solid rgba(8,122,104,.22);
+    button, input, select, textarea { font:inherit; letter-spacing:0; }
+    button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, a:focus-visible, summary:focus-visible {
+      outline:3px solid rgba(0,113,227,.2);
       outline-offset:2px;
     }
-    button, input, select {
-      min-height:38px;
+    button, input, select, textarea {
+      min-height:34px;
       border:1px solid var(--line-strong);
       border-radius:7px;
       background:#fff;
@@ -53,7 +53,8 @@
     button { display:inline-flex; align-items:center; justify-content:center; gap:7px; padding:0 14px; cursor:pointer; font-weight:720; }
     button:hover:not(:disabled) { border-color:var(--accent); color:var(--accent-strong); }
     button:disabled { cursor:not-allowed; opacity:.48; }
-    input, select { width:100%; padding:0 11px; }
+    input, select, textarea { width:100%; padding:0 11px; }
+    textarea { min-height:108px; padding-top:9px; padding-bottom:9px; resize:vertical; }
     label { display:grid; gap:5px; color:var(--muted); font-size:12px; font-weight:700; }
     .shell[hidden], .auth-shell[hidden] { display:none; }
     .auth-shell {
@@ -78,21 +79,22 @@
     .login-submit { width:100%; margin-top:4px; }
     .login-status { min-height:20px; margin:12px 0 0; color:var(--muted); font-size:12px; }
     .login-status.error { color:var(--danger); }
-    .shell { display:grid; min-height:100vh; grid-template-columns:220px minmax(0,1fr); }
+    .shell { display:grid; min-height:100vh; grid-template-columns:232px minmax(0,1fr); }
     .sidebar {
       position:sticky;
       top:0;
       display:flex;
       height:100vh;
       flex-direction:column;
-      padding:22px 14px;
+      padding:0 12px 16px;
       background:var(--rail);
-      color:#eef5f1;
+      color:var(--ink);
+      border-right:1px solid var(--line);
     }
-    .brand { display:flex; align-items:center; gap:11px; padding:0 4px; margin-bottom:26px; }
-    .brand-mark { display:grid; width:38px; height:38px; place-items:center; border-radius:8px; background:#eef6f2; color:#102019; font-weight:850; }
+    .brand { display:flex; min-height:70px; align-items:center; gap:11px; padding:0 8px; margin-bottom:8px; border-bottom:1px solid var(--line); }
+    .brand-mark { display:grid; width:38px; height:38px; place-items:center; border-radius:8px; background:#1d1d1f; color:#fff; font-weight:850; }
     .brand-name { font-size:15px; font-weight:780; }
-    .brand-subtitle { color:#9fb1a8; font-size:11px; }
+    .brand-subtitle { color:var(--subtle); font-size:11px; }
     .nav { display:grid; gap:4px; scrollbar-width:none; -ms-overflow-style:none; }
     .nav::-webkit-scrollbar { display:none; }
     .nav-link {
@@ -101,54 +103,123 @@
       align-items:center;
       gap:9px;
       padding:0 12px;
-      border-radius:6px;
-      color:#b9c8c1;
+      border-radius:7px;
+      color:#424245;
       text-decoration:none;
     }
-    .nav-link:hover, .nav-link[aria-current="page"] { background:rgba(255,255,255,.11); color:#fff; }
-    .nav-symbol { width:18px; color:#a9bbb2; text-align:center; font-weight:800; }
-    .sidebar-foot { margin-top:auto; padding:12px; border:1px solid rgba(238,246,242,.15); border-radius:7px; color:#9fb1a8; font-size:11px; }
-    .sidebar-foot strong { display:block; margin-top:3px; color:#eef5f1; font-size:13px; }
+    .nav-link:hover { background:#f5f5f7; color:var(--ink); }
+    .nav-link[aria-current="page"] { background:var(--accent-soft); color:var(--accent); font-weight:720; }
+    .nav-symbol { width:18px; color:#6e6e73; text-align:center; font-weight:800; }
+    .nav-link[aria-current="page"] .nav-symbol { color:var(--accent); }
+    .sidebar-bottom { display:grid; gap:8px; margin-top:auto; }
+    .sidebar-foot { padding:10px 12px; border:1px solid var(--line); border-radius:7px; background:#fbfbfd; color:var(--subtle); font-size:10px; }
+    .sidebar-foot strong { display:block; margin-top:3px; color:var(--ink); font-size:13px; }
+    .sidebar-account { position:relative; }
+    .account-trigger {
+      width:100%;
+      min-height:54px;
+      justify-content:flex-start;
+      gap:10px;
+      padding:7px 9px;
+      border-color:var(--line);
+      background:#fff;
+      color:var(--ink);
+      text-align:left;
+    }
+    .account-trigger:hover:not(:disabled) { border-color:rgba(0,113,227,.28); background:var(--accent-soft); color:var(--ink); }
+    .account-avatar { display:grid; width:32px; height:32px; flex:0 0 32px; place-items:center; border-radius:7px; background:#1d1d1f; color:#fff; font-size:12px; font-weight:850; }
+    .account-copy { min-width:0; line-height:1.25; }
+    .account-copy strong, .account-copy span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .account-copy strong { color:var(--ink); font-size:12px; }
+    .account-copy span { margin-top:3px; color:var(--subtle); font-size:10px; font-weight:600; }
+    .account-chevron { margin-left:auto; color:var(--subtle); font-size:11px; transition:transform .16s ease; }
+    .account-trigger[aria-expanded="true"] .account-chevron { transform:rotate(180deg); }
+    .account-menu {
+      position:absolute;
+      right:0;
+      bottom:calc(100% + 8px);
+      left:0;
+      z-index:60;
+      display:grid;
+      gap:2px;
+      padding:6px;
+      border:1px solid var(--line-strong);
+      border-radius:8px;
+      background:#fff;
+      box-shadow:0 16px 36px rgba(0,0,0,.14);
+    }
+    .account-menu[hidden] { display:none; }
+    .account-menu button { width:100%; min-height:36px; justify-content:flex-start; border:0; background:transparent; color:var(--ink); font-size:12px; }
+    .account-menu button:hover:not(:disabled) { background:var(--accent-soft); color:var(--accent); }
+    .account-menu .account-logout { color:#983737; }
     main { min-width:0; }
     .page-header {
       position:sticky;
       top:0;
       z-index:20;
       display:flex;
-      min-height:94px;
+      min-height:72px;
       align-items:center;
       justify-content:space-between;
       gap:24px;
-      padding:18px 28px;
+      padding:12px 28px;
       border-bottom:1px solid var(--line);
       background:rgba(255,255,255,.98);
     }
     .page-title { min-width:210px; }
-    .eyebrow { margin:0 0 3px; color:var(--accent); font-size:11px; font-weight:780; }
-    h1 { margin:0; font-size:22px; }
-    .cluster-toolbar { display:grid; width:min(760px,68vw); grid-template-columns:minmax(240px,1fr) auto; align-items:end; gap:10px; }
+    .eyebrow { margin:0 0 2px; color:var(--accent); font-size:10px; font-weight:780; }
+    h1 { margin:0; font-size:20px; }
+    .cluster-toolbar { display:grid; width:min(700px,64vw); grid-template-columns:minmax(250px,1fr) auto; align-items:end; gap:10px; }
     .toolbar-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; }
-    .account-summary { display:flex; min-height:38px; align-items:center; gap:7px; padding:0 10px; border:1px solid var(--line); border-radius:7px; background:#f8faf9; }
-    .account-summary strong { font-size:12px; }
-    .account-summary span { color:var(--muted); font-size:11px; }
     .primary-button { border-color:var(--accent-strong); background:var(--accent-strong); color:#fff; }
-    .primary-button:hover:not(:disabled) { border-color:#064a41; background:#064a41; color:#fff; }
+    .primary-button:hover:not(:disabled) { border-color:#004f9f; background:#004f9f; color:#fff; }
     .danger-button { border-color:#d9a4a4; color:#9d3030; background:#fff; }
-    .content { width:min(1600px,100%); margin:0 auto; padding:20px 28px 44px; }
+    .update-maintenance-banner {
+      position:sticky;
+      top:72px;
+      z-index:19;
+      display:flex;
+      min-height:58px;
+      align-items:center;
+      justify-content:space-between;
+      gap:18px;
+      padding:10px 28px;
+      border-bottom:1px solid #e2bd75;
+      background:#fff7e6;
+      color:#6b4609;
+      box-shadow:0 5px 16px rgba(78,52,8,.08);
+    }
+    .update-maintenance-banner[hidden] { display:none; }
+    .update-maintenance-copy { display:flex; min-width:0; align-items:center; gap:11px; }
+    .update-maintenance-icon { display:grid; width:34px; height:34px; flex:0 0 34px; place-items:center; border:1px solid #dfba72; border-radius:7px; background:#fff; font-weight:850; }
+    .update-maintenance-copy strong, .update-maintenance-copy span { display:block; }
+    .update-maintenance-copy strong { font-size:13px; }
+    .update-maintenance-copy span { margin-top:2px; color:#806126; font-size:11px; }
+    .update-maintenance-state { flex:0 0 auto; color:#6b4609; font-size:11px; font-weight:780; white-space:nowrap; }
+    .content { width:min(1600px,100%); margin:0 auto; padding:24px 32px 48px; }
     .view[hidden] { display:none; }
     .view-heading { display:flex; align-items:end; justify-content:space-between; gap:18px; margin-bottom:14px; }
     .view-heading h2 { margin:0; font-size:19px; }
     .view-heading p { margin:3px 0 0; color:var(--muted); font-size:12px; }
+    .visually-hidden { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); clip-path:inset(50%); white-space:nowrap; }
+    .topology-view-heading { align-items:center; }
+    .topology-heading-main { display:flex; min-width:0; align-items:center; gap:14px; }
+    .topology-section-tabs { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); width:min(590px,62vw); gap:4px; padding:4px; border:1px solid var(--line); border-radius:8px; background:#e9eeeb; }
+    .topology-section-tabs button { min-height:38px; border:0; background:transparent; color:var(--muted); font-size:12px; box-shadow:none; }
+    .topology-section-tabs button:hover:not(:disabled) { background:rgba(255,255,255,.58); color:var(--ink); }
+    .topology-section-tabs button[aria-selected="true"] { background:#fff; color:var(--accent-strong); box-shadow:0 1px 5px rgba(20,43,33,.10); }
+    .topology-section-panel { margin-top:0 !important; }
     .panel { border:1px solid var(--line); border-radius:var(--radius); background:var(--panel); box-shadow:var(--shadow); }
     .panel + .panel { margin-top:16px; }
     .panel-header { display:flex; min-height:58px; align-items:center; justify-content:space-between; gap:14px; padding:0 18px; border-bottom:1px solid var(--line); }
     .panel-title { margin:0; font-size:15px; }
-    .panel-actions { display:flex; align-items:center; gap:8px; }
+    .panel-actions { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:8px; }
     .panel-body { padding:18px; min-width:0; overflow-x:auto; }
     .badge { display:inline-flex; min-height:24px; flex:0 0 auto; align-items:center; padding:0 8px; border-radius:999px; background:#edf3ef; color:#486057; font-size:11px; font-weight:780; white-space:nowrap; }
     .badge.success { background:var(--accent-soft); color:#176c5d; }
     .badge.warning { background:var(--warning-soft); color:#7c5712; }
     .badge.danger { background:var(--danger-soft); color:#9c3434; }
+    .badge.runtime { background:#edf4fb; color:#245f91; }
     .summary-grid { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); overflow:hidden; }
     .summary-cell { min-width:0; min-height:90px; padding:16px; border-right:1px solid var(--line); }
     .summary-cell:last-child { border-right:0; }
@@ -161,7 +232,7 @@
     .filter-controls .search-field { width:min(320px,34vw); }
     .filter-count { flex:0 0 auto; }
     .cluster-list { display:grid; gap:1px; background:var(--line); }
-    .cluster-row { display:grid; width:100%; grid-template-columns:1.4fr .65fr .8fr 1.1fr .55fr 1fr; gap:14px; align-items:center; min-height:58px; padding:10px 16px; background:#fff; }
+    .cluster-row { display:grid; width:100%; grid-template-columns:1.35fr .55fr .95fr .75fr 1.1fr .5fr .85fr; gap:14px; align-items:center; min-height:58px; padding:10px 16px; background:#fff; }
     .cluster-row.header { min-height:42px; color:var(--muted); font-size:11px; font-weight:750; }
     .cluster-row-action { min-height:58px; border:0; border-radius:0; color:var(--ink); text-align:left; font-weight:400; }
     .cluster-row-action:hover:not(:disabled), .cluster-row-action:focus-visible { position:relative; z-index:1; background:#f4faf7; color:var(--ink); }
@@ -172,6 +243,7 @@
     .topology-frame {
       display:flex;
       height:420px;
+      flex-direction:column;
       align-items:center;
       justify-content:center;
       overflow:auto;
@@ -182,14 +254,16 @@
     }
     .topology-grid {
       display:grid;
-      width:min(980px,100%);
-      min-width:min(980px,100%);
-      min-height:332px;
+      width:100%;
+      max-width:980px;
+      min-width:760px;
+      flex:0 0 auto;
+      min-height:calc(var(--topology-node-height) * 3 + 20px);
       grid-template-columns:minmax(0,1fr) 72px minmax(0,1fr);
       align-items:stretch;
     }
     .primary-column { display:flex; min-width:0; align-items:center; }
-    .replica-list { display:grid; min-width:0; max-height:332px; gap:10px; align-content:center; grid-auto-rows:var(--topology-node-height); overflow:auto; padding-right:2px; }
+    .replica-list { display:grid; min-width:0; max-height:calc(var(--topology-node-height) * 3 + 20px); gap:10px; align-content:center; grid-auto-rows:var(--topology-node-height); overflow:auto; padding-right:2px; }
     .node-card {
       position:relative;
       display:flex;
@@ -207,6 +281,7 @@
     }
     .primary-column .node-card { width:100%; border-color:#9fd2c3; background:#edf8f4; }
     .node-card.candidate { border-color:var(--blue-line); background:var(--blue-soft); }
+    .node-card.unavailable { border-style:dashed; border-color:#d7b9b2; background:#fbf8f7; }
     .node-state { position:absolute; top:8px; right:8px; }
     .node-title, .node-line, .vip-chip { flex:0 0 auto; }
     .node-title { width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; font-weight:800; line-height:16px; }
@@ -217,15 +292,20 @@
     .topology-connector::before { position:absolute; top:50%; left:0; width:100%; height:1px; background:var(--line-strong); content:""; }
     .topology-connector::after { position:absolute; top:calc(var(--topology-node-height) / 2); bottom:calc(var(--topology-node-height) / 2); left:50%; width:1px; background:var(--line-strong); content:""; }
     .replica-row { position:relative; min-width:0; height:var(--topology-node-height); }
+    .replica-row .node-card { width:100%; }
     .replica-row::before { position:absolute; top:50%; right:100%; width:32px; height:1px; background:var(--line-strong); content:""; }
     .topology-grid.no-primary .replica-row::before { display:none; }
+    .detached-nodes { width:100%; max-width:980px; flex:0 0 auto; margin-top:12px; padding-top:12px; border-top:1px solid var(--line); }
+    .detached-nodes-title { margin-bottom:8px; color:var(--muted); font-size:11px; font-weight:760; }
+    .detached-node-list { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+    .detached-node-list .node-card { width:100%; }
     .topology-evidence { display:flex; min-width:0; align-items:center; justify-content:space-between; gap:12px; padding:11px 18px; border-top:1px solid var(--line); background:#fafcfb; }
     .anomaly-list { display:flex; min-width:0; flex-wrap:wrap; gap:7px; }
     .anomaly-item { display:inline-flex; min-height:25px; align-items:center; padding:0 9px; border:1px solid #ead6ac; border-radius:999px; background:var(--warning-soft); color:#735111; font-size:11px; font-weight:700; }
     .anomaly-item.clear { border-color:#cfe5dc; background:var(--accent-soft); color:#176c5d; }
     .freshness { flex:0 0 auto; color:var(--muted); font-size:11px; font-weight:700; }
     .empty-state { display:grid; min-height:96px; place-items:center; border:1px dashed var(--line-strong); border-radius:8px; color:var(--muted); text-align:center; }
-    .operation-context { display:grid; grid-template-columns:1.1fr 1.1fr 1.2fr .9fr .7fr; overflow:hidden; }
+    .operation-context { display:grid; grid-template-columns:1fr 1fr 1.1fr 1.15fr .8fr .6fr; overflow:hidden; }
     .context-cell { min-width:0; min-height:78px; padding:13px 14px; border-right:1px solid var(--line); }
     .context-cell:last-child { border-right:0; }
     .context-cell select { height:34px; min-height:34px; margin-top:4px; }
@@ -261,7 +341,10 @@
     .engine-form-fields { grid-column:1 / -1; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
     .engine-form-fields[hidden] { display:none; }
     .engine-form-fields .span-2 { grid-column:span 2; }
+    .controller-pair-group[hidden] { display:none; }
+    .controller-pair-note { grid-column:1 / -1; margin:0; padding:9px 11px; border-left:3px solid var(--accent); background:var(--accent-soft); color:var(--muted); font-size:11px; line-height:1.5; }
     .inventory-table, .metrics-table { min-width:900px; width:100%; border-collapse:collapse; }
+    .topology-inventory-table { min-width:1280px; }
     .inventory-table th, .inventory-table td, .metrics-table th, .metrics-table td { padding:10px 11px; border-bottom:1px solid var(--line); text-align:left; vertical-align:middle; }
     .inventory-table th, .metrics-table th { color:var(--muted); font-size:11px; }
     .inventory-table tr:last-child td, .metrics-table tr:last-child td { border-bottom:0; }
@@ -273,6 +356,17 @@
     .log-list { display:grid; gap:10px; margin-top:12px; }
     .log-card { border:1px solid var(--line); border-left:3px solid #9fadb7; border-radius:8px; background:#fff; }
     .log-head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 14px 0; }
+    .log-head-actions { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:8px; }
+    .log-review-button { min-height:30px; padding:0 10px; color:var(--accent-strong); }
+    .lifecycle-task-list { display:grid; gap:12px; }
+    .lifecycle-stage-flow { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:7px; padding:12px 14px 14px; }
+    .lifecycle-stage { min-width:0; padding:9px 8px; border:1px solid var(--line); border-radius:7px; background:#f8faf9; color:var(--muted); text-align:center; }
+    .lifecycle-stage strong { display:block; overflow:hidden; font-size:11px; text-overflow:ellipsis; white-space:nowrap; }
+    .lifecycle-stage small { display:block; margin-top:3px; font-size:10px; }
+    .lifecycle-stage[data-state="running"] { border-color:var(--accent); background:var(--accent-soft); color:var(--accent-strong); }
+    .lifecycle-stage[data-state="succeeded"] { border-color:#b9ddcf; background:#f1faf6; color:#216d57; }
+    .lifecycle-stage[data-state="failed"] { border-color:#e8baba; background:var(--danger-soft); color:#913333; }
+    .lifecycle-task-message { margin:0 14px 12px; padding:9px 11px; border-left:3px solid #9aafa4; background:#f8faf9; color:var(--muted); font-size:11px; }
     .log-grid { display:grid; grid-template-columns:1.2fr 1fr 1fr 1fr 1fr 1fr; gap:1px; margin-top:10px; background:var(--line); }
     .log-cell { min-width:0; padding:10px 12px; background:#fff; }
     .log-cell span { display:block; color:var(--muted); font-size:11px; }
@@ -288,8 +382,99 @@
     .capability-list { display:grid; gap:8px; }
     .capability-row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 0; border-bottom:1px solid var(--line); }
     .capability-row:last-child { border-bottom:0; }
+    .settings-view { width:min(1360px,100%); margin:0 auto; }
+    .settings-view .view-heading { align-items:center; margin-bottom:16px; }
+    .settings-section-tabs { width:min(720px,70vw); }
+    .settings-section-panel { margin-top:0 !important; }
+    .settings-version-summary { display:flex; min-width:180px; min-height:48px; flex-direction:column; align-items:flex-end; justify-content:center; }
+    .settings-version-summary span { color:var(--muted); font-size:10px; font-weight:700; }
+    .settings-version-summary strong { margin-top:3px; font-size:14px; }
+    .settings-account-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; align-items:stretch; }
+    .settings-account-grid[hidden] { display:none; }
     .settings-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
-    .settings-note { margin-top:14px; color:var(--muted); font-size:12px; }
+    .settings-note { margin:12px 0 0; color:var(--muted); font-size:12px; }
+    .settings-panel { overflow:hidden; box-shadow:none; }
+    .settings-panel .panel-header { min-height:64px; padding:0 20px; }
+    .settings-panel .panel-header p { margin:3px 0 0; color:var(--muted); font-size:12px; }
+    .settings-kicker { display:block; margin-bottom:4px; color:var(--accent); font-size:10px; font-weight:800; text-transform:uppercase; }
+    .control-plane-strip { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); }
+    .control-plane-group { min-width:0; padding:16px 18px; border-right:1px solid var(--line); }
+    .control-plane-group:nth-child(2n) { border-right:0; }
+    .control-plane-group:nth-child(n+3) { border-top:1px solid var(--line); }
+    .control-plane-group > span { display:block; color:var(--muted); font-size:11px; font-weight:680; }
+    .control-plane-group > strong { display:block; min-height:20px; margin-top:4px; overflow:hidden; color:var(--ink); font-size:13px; text-overflow:ellipsis; white-space:nowrap; }
+    .control-plane-secondary { display:flex; min-width:0; align-items:center; gap:7px; margin-top:10px; padding-top:10px; border-top:1px solid var(--line); color:var(--muted); font-size:11px; }
+    .control-plane-secondary b { min-width:0; overflow:hidden; color:#424245; font-size:11px; text-overflow:ellipsis; white-space:nowrap; }
+    .control-plane-reason { margin:0; padding:10px 18px; border-top:1px solid var(--line); background:#fbfbfd; }
+    .software-update-panel[hidden] { display:none; }
+    .software-update-warning { display:flex; align-items:flex-start; gap:11px; padding:12px 14px; border:1px solid #ead6ac; border-radius:7px; background:var(--warning-soft); color:#65470e; }
+    .software-update-warning strong, .software-update-warning span { display:block; }
+    .software-update-warning strong { font-size:12px; }
+    .software-update-warning span { margin-top:3px; color:#7b622f; font-size:11px; line-height:1.55; }
+    .software-update-entry { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(260px,.65fr); gap:18px; align-items:stretch; margin-top:16px; }
+    .software-update-upload { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px; align-items:center; }
+    .software-update-file-input { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); clip-path:inset(50%); white-space:nowrap; }
+    .software-update-file-picker { display:flex; min-width:0; min-height:72px; align-items:center; gap:12px; padding:12px 14px; border:1px dashed rgba(0,113,227,.34); border-radius:8px; background:rgba(0,113,227,.035); color:var(--ink); cursor:pointer; }
+    .software-update-file-picker:hover { border-color:var(--accent); background:var(--accent-soft); }
+    .software-update-file-icon { display:grid; width:38px; height:38px; flex:0 0 38px; place-items:center; border-radius:8px; background:#fff; color:var(--accent); box-shadow:inset 0 0 0 1px var(--line); font-size:19px; font-weight:800; }
+    .software-update-file-copy { min-width:0; }
+    .software-update-file-copy strong, .software-update-file-copy span { display:block; }
+    .software-update-file-copy strong { color:var(--ink); font-size:13px; }
+    .software-update-file-copy span { margin-top:4px; overflow:hidden; color:var(--muted); font-size:11px; font-weight:550; text-overflow:ellipsis; white-space:nowrap; }
+    .software-update-upload .primary-button { min-width:128px; min-height:42px; align-self:center; }
+    .software-update-channel { display:flex; min-width:0; flex-direction:column; justify-content:center; padding:10px 0 10px 18px; border-left:1px solid var(--line); }
+    .software-update-channel span { color:var(--muted); font-size:11px; }
+    .software-update-channel strong { margin-top:3px; font-size:13px; }
+    .software-update-channel .settings-note { margin-top:6px; font-size:11px; line-height:1.5; }
+    .software-version-strip { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); margin-bottom:14px; overflow:hidden; border:1px solid var(--line); border-radius:7px; }
+    .software-version-cell { min-width:0; min-height:64px; padding:12px 14px; border-right:1px solid var(--line); background:#fbfbfd; }
+    .software-version-cell:last-child { border-right:0; }
+    .software-version-cell span, .software-version-cell strong { display:block; }
+    .software-version-cell span { color:var(--muted); font-size:10px; font-weight:700; }
+    .software-version-cell strong { margin-top:5px; overflow:hidden; font-size:13px; text-overflow:ellipsis; white-space:nowrap; }
+    .software-update-package { display:grid; gap:12px; margin-top:14px; padding-top:14px; border-top:1px solid var(--line); }
+    .software-update-package[hidden] { display:none; }
+    .software-update-metadata { display:grid; grid-template-columns:1.25fr repeat(3,minmax(0,.75fr)); overflow:hidden; border:1px solid var(--line); border-radius:7px; }
+    .software-update-metadata .identity-cell { min-height:62px; border-right:1px solid var(--line); border-bottom:1px solid var(--line); background:#fff; }
+    .software-update-metadata .identity-cell:nth-child(4n) { border-right:0; }
+    .software-update-metadata .identity-cell:nth-last-child(-n+4) { border-bottom:0; }
+    .software-update-actions { display:flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:8px; padding:4px 0; }
+    .software-update-actions .primary-button { min-width:160px; }
+    .software-update-job { display:grid; grid-template-columns:.7fr .8fr 1fr 2fr; overflow:hidden; border:1px solid var(--line); border-radius:7px; }
+    .software-update-job .identity-cell { border-right:1px solid var(--line); background:#fbfbfd; }
+    .software-update-job .identity-cell:last-child { border-right:0; }
+    .software-update-progress { overflow:hidden; border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
+    .software-update-progress-head { display:flex; min-height:46px; align-items:center; justify-content:space-between; gap:12px; padding:0 10px; }
+    .software-update-events { display:grid; gap:6px; }
+    .software-update-event { display:grid; grid-template-columns:150px 110px minmax(0,1fr); gap:10px; align-items:center; padding:8px 10px; border-bottom:1px solid var(--line); color:var(--muted); font-size:11px; }
+    .software-update-event:last-child { border-bottom:0; }
+    .software-update-event strong { color:var(--ink); }
+    .software-update-empty { padding:12px; color:var(--muted); text-align:center; font-size:11px; }
+    .software-update-output { border:1px solid var(--line); border-radius:7px; overflow:hidden; }
+    .software-update-output summary { border:0; }
+    .software-update-history { margin-top:16px; overflow:hidden; border:1px solid var(--line); border-radius:7px; }
+    .software-update-history-head { display:flex; min-height:48px; align-items:center; justify-content:space-between; gap:12px; padding:0 14px; border-bottom:1px solid var(--line); background:#fbfbfd; }
+    .software-update-history-head h4 { margin:0; }
+    .software-update-history-scroll { overflow:auto; }
+    .software-update-history-table { min-width:900px; width:100%; border-collapse:collapse; }
+    .software-update-history-table th, .software-update-history-table td { padding:10px 12px; border-bottom:1px solid var(--line); text-align:left; vertical-align:middle; }
+    .software-update-history-table th { color:var(--muted); font-size:10px; }
+    .software-update-history-table td { font-size:11px; }
+    .software-update-history-table tr:last-child td { border-bottom:0; }
+    .software-update-history-table .history-message { max-width:340px; overflow:hidden; color:var(--muted); text-overflow:ellipsis; white-space:nowrap; }
+    .software-update-confirmation { display:grid; gap:12px; }
+    .software-update-confirmation .confirmation-state { margin:0; }
+    .settings-account-summary { display:flex; min-height:76px; align-items:center; gap:12px; }
+    .settings-account-avatar { display:grid; width:42px; height:42px; flex:0 0 42px; place-items:center; border-radius:8px; background:#1d1d1f; color:#fff; font-size:13px; font-weight:800; }
+    .settings-account-copy { min-width:0; }
+    .settings-account-copy span, .settings-account-copy strong { display:block; }
+    .settings-account-copy span { color:var(--muted); font-size:11px; }
+    .settings-account-copy strong { margin-top:2px; font-size:14px; }
+    .settings-account-role { margin-left:auto; }
+    .settings-inline-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; padding-top:14px; border-top:1px solid var(--line); }
+    .settings-fields { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .settings-security-note { display:flex; gap:8px; margin:14px 0 0; padding-top:12px; border-top:1px solid var(--line); color:var(--muted); font-size:11px; }
+    .settings-security-note::before { color:var(--success); content:"✓"; font-weight:800; }
     dialog { width:min(760px,calc(100vw - 32px)); max-height:calc(100vh - 48px); padding:0; overflow:auto; border:1px solid var(--line-strong); border-radius:8px; box-shadow:0 24px 70px rgba(15,32,25,.22); }
     dialog::backdrop { background:rgba(16,32,25,.44); }
     .dialog-head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:16px 18px; border-bottom:1px solid var(--line); }
@@ -341,9 +526,41 @@
     .dialog-context { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px; padding:11px 13px; border:1px solid #cfe3da; border-radius:7px; background:var(--accent-soft); }
     .dialog-context span { color:var(--muted); font-size:11px; }
     .dialog-context strong { display:block; margin-top:2px; font-size:13px; }
+    .power-dialog { width:min(680px,calc(100vw - 32px)); overflow:hidden; }
+    .power-dialog[open] { display:grid; grid-template-rows:auto minmax(0,1fr) auto; }
+    .power-dialog .dialog-body { display:grid; gap:16px; background:#f7faf8; }
+    .power-dialog .dialog-actions { align-items:center; justify-content:space-between; padding-top:14px; border-top:1px solid var(--line); background:#fff; }
+    .operation-review-dialog { width:min(620px,calc(100vw - 32px)); }
+    .operation-review-dialog .dialog-body { display:grid; gap:14px; background:#f7faf8; }
+    .power-context { display:grid; grid-template-columns:1.1fr 1fr .65fr 1.5fr; gap:1px; overflow:hidden; border:1px solid var(--line); border-radius:7px; background:var(--line); }
+    .power-context .identity-cell { background:#fff; }
+    .power-awareness-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:1px; overflow:hidden; margin-bottom:14px; border:1px solid var(--line); border-radius:7px; background:var(--line); }
+    .power-awareness-cell { min-width:0; min-height:84px; padding:12px 14px; background:#fff; }
+    .power-awareness-cell span { display:block; color:var(--muted); font-size:11px; font-weight:680; }
+    .power-awareness-cell strong { display:block; margin-top:5px; overflow-wrap:anywhere; font-size:14px; }
+    .power-awareness-cell small { display:block; margin-top:4px; color:var(--muted); font-size:10px; line-height:1.45; }
+    .power-awareness-cell strong[data-state="planned_shutdown"] { color:#7c5712; }
+    .power-awareness-cell strong[data-state="planned_shutdown_failed"], .power-awareness-cell strong[data-state="unexpected_failure"] { color:#9c3434; }
+    .power-awareness-cell strong[data-state="normal"] { color:#176c5d; }
+    .power-mode-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+    .power-mode-option { position:relative; display:block; min-height:112px; padding:14px 14px 14px 42px; border:1px solid var(--line); border-radius:8px; background:#fff; cursor:pointer; }
+    .power-mode-option:has(input:checked) { border-color:var(--accent); box-shadow:0 0 0 2px rgba(8,122,104,.10); }
+    .power-mode-option input { position:absolute; top:15px; left:14px; width:18px; min-height:18px; margin:0; accent-color:var(--accent); }
+    .power-mode-option strong { display:block; color:var(--ink); font-size:13px; }
+    .power-mode-option span { display:block; margin-top:6px; color:var(--muted); font-size:11px; font-weight:550; line-height:1.55; }
+    .power-confirmation { display:grid; gap:9px; padding:14px; border:1px solid var(--line); border-radius:8px; background:#fff; }
+    .power-confirmation p { margin:0; color:var(--muted); font-size:12px; }
+    .power-confirmation code { color:var(--ink); font-weight:800; }
+    .power-acknowledgement { display:flex; grid-template-columns:none; align-items:flex-start; gap:9px; color:var(--ink); font-size:12px; font-weight:650; }
+    .power-acknowledgement input { width:17px; min-height:17px; flex:0 0 auto; margin:2px 0 0; accent-color:var(--accent); }
+    .power-action { border-color:#d9a4a4; color:#9d3030; }
+    .power-action:hover:not(:disabled) { border-color:var(--danger); background:var(--danger-soft); color:#8f3131; }
     .live-status { position:fixed; right:22px; bottom:18px; z-index:40; max-width:min(460px,calc(100vw - 44px)); padding:11px 14px; border:1px solid var(--line-strong); border-left:3px solid var(--accent); border-radius:7px; background:#fff; box-shadow:var(--shadow); color:var(--muted); }
     .live-status[hidden] { display:none; }
     .live-status.error { border-left-color:var(--danger); color:#903434; }
+    @media (max-width:1220px) {
+      .settings-account-grid { grid-template-columns:1fr; }
+    }
     @media (max-width:1160px) {
       .summary-grid, .metric-grid { grid-template-columns:repeat(3,1fr); }
       .summary-cell:nth-child(3), .summary-cell:nth-child(6) { border-right:0; }
@@ -360,19 +577,25 @@
       .brand { margin-bottom:10px; }
       .nav { display:flex; overflow-x:auto; }
       .nav-link { flex:0 0 auto; }
-      .sidebar-foot { display:none; }
+      .sidebar-bottom { display:none; }
       .page-header { position:static; align-items:stretch; padding:18px 20px; }
+      .update-maintenance-banner { position:static; padding-inline:20px; }
       .content { padding:18px 20px 38px; }
-      .topology-grid { grid-template-columns:1fr; gap:10px; }
+      .topology-grid { min-width:0; grid-template-columns:1fr; gap:10px; }
       .topology-connector { display:none; }
       .replica-row::before { display:none; }
+      .detached-node-list { grid-template-columns:1fr; }
       .operation-grid, .about-grid { grid-template-columns:1fr; }
       .node-form { grid-template-columns:1fr; }
       .cluster-row { grid-template-columns:1.2fr .8fr 1fr; }
-      .cluster-row > :nth-child(4), .cluster-row > :nth-child(5), .cluster-row > :nth-child(6) { display:none; }
+      .cluster-row > :nth-child(n+4) { display:none; }
       .filter-bar { align-items:stretch; flex-direction:column; }
       .filter-controls { width:100%; }
       .filter-controls .search-field { width:100%; }
+      .topology-view-heading { align-items:stretch; flex-direction:column; }
+      .topology-heading-main { width:100%; align-items:stretch; flex-direction:column; gap:7px; }
+      .topology-section-tabs { width:100%; }
+      .topology-view-heading > button { align-self:flex-end; }
     }
     @media (max-width:680px) {
       .page-header { display:block; }
@@ -383,6 +606,18 @@
       .summary-cell:nth-child(even), .context-cell:nth-child(even) { border-right:0; }
       .summary-cell:nth-child(-n+2), .context-cell:nth-child(-n+2) { border-top:0; }
       .form-grid, .settings-grid { grid-template-columns:1fr; }
+      .software-update-entry, .software-update-job, .software-version-strip { grid-template-columns:1fr; }
+      .software-version-cell { border-right:0; border-bottom:1px solid var(--line); }
+      .software-version-cell:last-child { border-bottom:0; }
+      .software-update-channel { padding:12px 0 0; border-top:1px solid var(--line); border-left:0; }
+      .software-update-job .identity-cell { border-right:0; border-bottom:1px solid var(--line); }
+      .software-update-job .identity-cell:last-child { border-bottom:0; }
+      .software-update-metadata { grid-template-columns:repeat(2,minmax(0,1fr)); }
+      .software-update-metadata .identity-cell:nth-child(4n) { border-right:1px solid var(--line); }
+      .software-update-metadata .identity-cell:nth-child(2n) { border-right:0; }
+      .software-update-metadata .identity-cell:nth-last-child(-n+4) { border-bottom:1px solid var(--line); }
+      .software-update-metadata .identity-cell:nth-last-child(-n+2) { border-bottom:0; }
+      .software-update-event { grid-template-columns:1fr; gap:2px; }
       .form-grid .span-2 { grid-column:auto; }
       .node-lifecycle-dialog .dialog-actions { align-items:stretch; flex-direction:column; }
       .cluster-management-dialog .dialog-actions { align-items:stretch; flex-direction:column; }
@@ -392,12 +627,26 @@
       .dialog-action-note { max-width:none; }
       .dialog-buttons { width:100%; }
       .dialog-buttons button { flex:1; }
+      .power-dialog .dialog-actions { align-items:stretch; flex-direction:column; }
+      .power-mode-grid, .power-context, .power-awareness-grid { grid-template-columns:1fr; }
       .log-grid { grid-template-columns:1fr 1fr; }
+      .lifecycle-stage-flow { grid-template-columns:repeat(3,minmax(0,1fr)); }
       .read-only-identity { grid-template-columns:1fr; }
       .filter-controls { align-items:stretch; flex-direction:column; }
       .filter-controls label { width:100%; }
       .operation-progress { gap:4px; padding-inline:10px; }
       .operation-stage { font-size:9px; }
+    }
+    @media (max-width:520px) {
+      .control-plane-strip { grid-template-columns:1fr; }
+      .control-plane-group { border-right:0; border-top:1px solid var(--line); }
+      .control-plane-group:first-child { border-top:0; }
+      .software-update-upload, .software-update-metadata, .settings-fields { grid-template-columns:1fr; }
+      .software-update-upload .primary-button { min-height:42px; }
+      .software-update-metadata .identity-cell { border-right:0; border-bottom:1px solid var(--line); }
+      .software-update-metadata .identity-cell:nth-last-child(-n+2) { border-bottom:1px solid var(--line); }
+      .software-update-metadata .identity-cell:last-child { border-bottom:0; }
+      .settings-version-summary { display:none; }
     }
   </style>
 </head>
@@ -433,7 +682,20 @@
         <a class="nav-link" href="#about" data-nav="about"><span class="nav-symbol">i</span><span data-i18n="navAbout">关于</span></a>
         <a class="nav-link" href="#settings" data-nav="settings"><span class="nav-symbol">⚙</span><span data-i18n="navSettings">设置</span></a>
       </nav>
-      <div class="sidebar-foot"><span>控制面状态</span><strong id="sidebar-service-state">连接中</strong><span id="sidebar-refresh-time">等待刷新</span></div>
+      <div class="sidebar-bottom">
+        <div class="sidebar-account">
+          <button class="account-trigger" id="account-menu-toggle" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="account-menu">
+            <span class="account-avatar" id="current-user-avatar" aria-hidden="true">A</span>
+            <span class="account-copy"><strong id="current-user-name">-</strong><span id="current-user-role">-</span></span>
+            <span class="account-chevron" aria-hidden="true">▴</span>
+          </button>
+          <div class="account-menu" id="account-menu" role="menu" hidden>
+            <button id="open-password-change" type="button" role="menuitem">修改密码</button>
+            <button class="account-logout" id="logout-button" type="button" role="menuitem">退出登录</button>
+          </div>
+        </div>
+        <div class="sidebar-foot"><span>控制面状态</span><strong id="sidebar-service-state">连接中</strong><span id="sidebar-refresh-time">等待刷新</span></div>
+      </div>
     </aside>
 
     <main>
@@ -450,12 +712,17 @@
             <button id="open-cluster-management-modal" type="button" title="新增或退役集群">＋ <span>集群管理</span></button>
             <button id="refresh-cluster" type="button" aria-label="刷新所选集群">↻ <span data-i18n="refresh">刷新</span></button>
             <button id="inspect-cluster" class="primary-button" type="button">✓ <span data-i18n="inspect">检查</span></button>
-            <div class="account-summary" aria-label="当前账户"><strong id="current-user-name">-</strong><span id="current-user-role">-</span></div>
-            <button id="open-password-change" type="button">修改密码</button>
-            <button id="logout-button" type="button">退出</button>
           </div>
         </div>
       </header>
+
+      <div class="update-maintenance-banner" id="software-update-global-warning" role="alert" aria-live="assertive" hidden>
+        <div class="update-maintenance-copy">
+          <span class="update-maintenance-icon" aria-hidden="true">!</span>
+          <div><strong>系统升级期间无法进行自动切换，请注意关注。</strong><span id="software-update-global-detail">控制面正在执行受控滚动升级。</span></div>
+        </div>
+        <span class="update-maintenance-state" id="software-update-global-state">升级维护中</span>
+      </div>
 
       <div class="content">
         <section class="view" data-view="overview" aria-labelledby="overview-title">
@@ -481,23 +748,35 @@
               </div>
             </div>
             <div class="cluster-list" id="overview-clusters">
-              <div class="cluster-row header"><span>集群</span><span>引擎</span><span>健康</span><span>主库</span><span>实例</span><span>最近观测</span></div>
+              <div class="cluster-row header"><span>集群</span><span>引擎</span><span>运行层</span><span>健康</span><span>主库</span><span>实例</span><span>最近观测</span></div>
             </div>
           </div>
         </section>
 
         <section class="view" data-view="topology" hidden aria-labelledby="topology-title">
-          <div class="view-heading">
-            <div><h2 id="topology-title" data-i18n="topologyTitle">集群拓扑</h2><p id="topology-observed-at">等待拓扑数据</p></div>
+          <div class="view-heading topology-view-heading">
+            <div class="topology-heading-main">
+              <h2 class="visually-hidden" id="topology-title" data-i18n="topologyTitle">集群拓扑</h2>
+              <div class="topology-section-tabs" role="tablist" aria-label="拓扑功能区">
+                <button id="topology-map-tab" type="button" role="tab" aria-controls="topology-map-panel" aria-selected="true" data-topology-section="map" data-i18n="topologyMapTab">集群拓扑</button>
+                <button id="topology-power-tab" type="button" role="tab" aria-controls="topology-power-panel" aria-selected="false" data-topology-section="power" data-i18n="topologyPowerTab" tabindex="-1">数据库启停</button>
+                <button id="topology-identity-tab" type="button" role="tab" aria-controls="topology-identity-panel" aria-selected="false" data-topology-section="identity" data-i18n="topologyIdentityTab" tabindex="-1">节点身份</button>
+              </div>
+              <p id="topology-observed-at">等待拓扑数据</p>
+            </div>
             <button id="open-metadata-modal" type="button">修改元数据</button>
           </div>
-          <div class="panel">
-            <div class="panel-header"><h3 class="panel-title" id="topology-cluster-name">未选择集群</h3><span class="badge" id="topology-risk">未知</span></div>
+          <div class="panel topology-section-panel" id="topology-map-panel" role="tabpanel" aria-labelledby="topology-map-tab">
+            <div class="panel-header"><h3 class="panel-title" id="topology-cluster-name">未选择集群</h3><div class="panel-actions"><span class="badge" id="topology-runtime">运行层未知</span><span class="badge" id="topology-entry">入口未知</span><span class="badge" id="topology-risk">未知</span></div></div>
             <div class="topology-frame">
               <div class="topology-grid" id="topology-grid">
                 <div class="primary-column" id="primary-column"><div class="empty-state">尚未发现主库</div></div>
                 <div class="topology-connector" id="topology-connector" aria-hidden="true"></div>
                 <div class="replica-list" id="replica-list"><div class="empty-state">尚未发现从库</div></div>
+              </div>
+              <div class="detached-nodes" id="detached-nodes" hidden>
+                <div class="detached-nodes-title">未运行或未接入当前复制拓扑</div>
+                <div class="detached-node-list" id="detached-node-list"></div>
               </div>
             </div>
             <div class="topology-evidence">
@@ -505,10 +784,29 @@
               <div class="freshness"><span class="summary-label">观测新鲜度</span><strong id="topology-freshness">无观测证据</strong></div>
             </div>
           </div>
-          <div class="panel">
+          <div class="panel topology-section-panel" id="topology-power-panel" role="tabpanel" aria-labelledby="topology-power-tab" hidden>
+            <div class="panel-header">
+              <div><h3 class="panel-title">数据库启停</h3><span class="summary-label">计划停库与突发故障采用不同的接管策略</span></div>
+              <div class="panel-actions"><span class="badge" id="power-state-badge">未知</span><button id="open-power-shutdown" class="power-action" type="button">⏻ 一键关机</button></div>
+            </div>
+            <div class="panel-body">
+              <div class="power-awareness-grid">
+                <div class="power-awareness-cell"><span>停机判定</span><strong id="power-outage-kind" data-state="unknown">未知</strong><small id="power-outage-detail">等待控制面证据</small></div>
+                <div class="power-awareness-cell"><span>数据库状态</span><strong id="power-database-state">未知</strong><small>仅表示所选数据库集群</small></div>
+                <div class="power-awareness-cell"><span>自动接管</span><strong id="power-failover-policy">未知</strong><small id="power-failover-detail">等待保护状态</small></div>
+                <div class="power-awareness-cell"><span>管理控制面</span><strong id="power-control-plane">在线 · 独立运行</strong><small>不依赖数据库服务启动</small></div>
+              </div>
+              <div class="topology-evidence">
+                <div><span class="summary-label">保护标记</span><div class="anomaly-list" id="power-protection"><span class="anomaly-item clear">恢复冻结关闭，无维护标记</span></div></div>
+                <div class="freshness"><span class="summary-label">最近操作</span><strong id="power-summary">尚未读取电源状态</strong></div>
+              </div>
+              <table class="inventory-table"><thead><tr><th>状态</th><th>类型</th><th>模式</th><th>请求人</th><th>时间</th><th>说明</th></tr></thead><tbody id="power-history"></tbody></table>
+            </div>
+          </div>
+          <div class="panel topology-section-panel" id="topology-identity-panel" role="tabpanel" aria-labelledby="topology-identity-tab" hidden>
             <div class="panel-header"><h3 class="panel-title">节点身份字段</h3></div>
             <div class="panel-body">
-              <table class="inventory-table"><thead><tr><th>固定节点名</th><th>资源 ID</th><th>原生身份</th><th>主机名</th><th>IP</th><th>端口</th><th>版本</th><th>角色</th><th>延迟</th><th>VIP</th></tr></thead><tbody id="topology-inventory"></tbody></table>
+              <table class="inventory-table topology-inventory-table"><thead><tr><th>固定节点名</th><th>资源 ID</th><th>原生身份</th><th>运行层</th><th>工作负载</th><th>宿主/调度位置</th><th>主机名</th><th>IP</th><th>端口</th><th>版本</th><th>角色</th><th>延迟</th><th>业务入口</th></tr></thead><tbody id="topology-inventory"></tbody></table>
             </div>
           </div>
         </section>
@@ -523,13 +821,14 @@
               <div class="context-cell"><span class="summary-label">集群</span><strong class="context-value" id="operation-cluster">-</strong></div>
               <div class="context-cell"><span class="summary-label">当前主库</span><strong class="context-value" id="operation-primary">-</strong></div>
               <div class="context-cell"><label for="candidate-select">候选主库<select id="candidate-select"><option value="">无可用候选</option></select></label></div>
-              <div class="context-cell"><span class="summary-label">VIP</span><strong class="context-value" id="operation-vip">-</strong></div>
+              <div class="context-cell"><span class="summary-label">运行与入口边界</span><strong class="context-value" id="operation-runtime">-</strong></div>
+              <div class="context-cell"><span class="summary-label">业务入口</span><strong class="context-value" id="operation-vip">-</strong></div>
               <div class="context-cell"><span class="summary-label">延迟</span><strong class="context-value" id="operation-lag">-</strong></div>
             </div>
           </div>
           <div class="operation-grid">
             <div class="operation-box">
-              <div class="operation-box-head"><div><span class="summary-label">受控主库切换</span><h3>主库与 VIP 同步切换</h3><p>只有后端完整验证主库角色和 VIP 唯一性后才会返回成功。</p></div><span class="badge danger">高</span></div>
+              <div class="operation-box-head"><div><span class="summary-label">受控主库切换</span><h3>主库与业务入口同步切换</h3><p>只有后端完整验证主库角色和业务入口唯一性后才会返回成功。</p></div><span class="badge danger">高</span></div>
               <div class="operation-progress" id="operation-progress" aria-label="操作执行进度" aria-live="polite">
                 <div class="operation-stage" data-operation-stage="precheck" data-state="idle">预检查</div>
                 <div class="operation-stage" data-operation-stage="plan" data-state="idle">计划</div>
@@ -541,10 +840,10 @@
               <div class="gate-note">后端仍会执行 Safety Guard、集群操作锁、平台身份授权和验证</div>
             </div>
             <div class="operation-box">
-              <div class="operation-box-head"><div><span class="summary-label">旧主回挂恢复</span><h3>恢复为当前主库的从库</h3><p>节点保持只读，并按原生身份重新接入复制拓扑。</p></div><span class="badge warning">中</span></div>
+              <div class="operation-box-head"><div><span class="summary-label">旧主一键恢复</span><h3>恢复为当前主库的从库</h3><p>自动判断增量回挂或全量重建，完成后验证数据、复制和业务入口归属。</p></div><span class="badge warning">中</span></div>
               <div class="operation-box-body">
                 <label for="rejoin-select">恢复旧主候选<select id="rejoin-select"><option value="">未发现可恢复节点</option></select></label>
-                <div class="center-actions"><button id="execute-rejoin" class="execute-button" type="button" disabled>回挂为从库</button><button id="execute-repair" type="button" disabled>修复复制</button></div>
+                <div class="center-actions"><button id="execute-rejoin" class="execute-button" type="button" disabled>一键恢复为从库</button><button id="execute-repair" type="button" disabled>修复复制</button></div>
               </div>
             </div>
           </div>
@@ -562,7 +861,7 @@
           </div>
           <div class="panel">
             <div class="panel-header"><h3 class="panel-title">任务进度</h3><span class="badge" id="lifecycle-task-count">0 条</span></div>
-            <div class="panel-body" id="lifecycle-tasks"><div class="empty-state">暂无节点任务</div></div>
+            <div class="panel-body lifecycle-task-list" id="lifecycle-tasks"><div class="empty-state">暂无节点任务</div></div>
           </div>
         </section>
 
@@ -598,34 +897,70 @@
           </div>
         </section>
 
-        <section class="view" data-view="settings" hidden aria-labelledby="settings-title">
-          <div class="view-heading"><div><h2 id="settings-title">控制台设置</h2><p>账户、安全和本地显示偏好</p></div></div>
-          <div class="panel">
-            <div class="panel-header"><div><h3 class="panel-title">控制面状态</h3><p>当前控制节点的就绪、Leader 与元数据收敛状态</p></div><span class="badge" id="control-plane-ready">未知</span></div>
-            <div class="panel-body">
-              <div class="settings-grid">
-                <div class="identity-cell"><span>本机控制器</span><strong id="control-plane-local">-</strong></div>
-                <div class="identity-cell"><span>Raft 角色</span><strong id="control-plane-role">-</strong></div>
-                <div class="identity-cell"><span>当前 Leader</span><strong id="control-plane-leader">-</strong></div>
-                <div class="identity-cell"><span>Quorum</span><strong id="control-plane-quorum">-</strong></div>
-                <div class="identity-cell"><span>元数据版本</span><strong id="control-plane-revision">-</strong></div>
-                <div class="identity-cell"><span>运行时长</span><strong id="control-plane-uptime">-</strong></div>
-                <div class="identity-cell"><span>活动操作</span><strong id="control-plane-operations">-</strong></div>
-                <div class="identity-cell"><span>节点任务</span><strong id="control-plane-tasks">-</strong></div>
+        <section class="view settings-view" data-view="settings" hidden aria-labelledby="settings-title">
+          <div class="view-heading topology-view-heading">
+            <div class="topology-heading-main">
+              <h2 class="visually-hidden" id="settings-title">控制台设置</h2>
+              <div class="topology-section-tabs settings-section-tabs" role="tablist" aria-label="设置功能区">
+                <button id="settings-status-tab" type="button" role="tab" aria-controls="settings-status-panel" aria-selected="true" data-settings-section="status">控制台状态</button>
+                <button id="software-update-tab" type="button" role="tab" aria-controls="software-update-panel" aria-selected="false" data-settings-section="updates" tabindex="-1">版本更新</button>
+                <button id="settings-account-tab" type="button" role="tab" aria-controls="settings-account-panel" aria-selected="false" data-settings-section="account" tabindex="-1">账户与偏好</button>
               </div>
-              <p class="settings-note" id="control-plane-reason">尚未取得控制面状态。</p>
+              <p id="settings-section-summary">Leader、Raft 多数派与运行任务</p>
+            </div>
+            <div class="settings-version-summary"><span>当前版本</span><strong id="platform-current-version">读取中</strong></div>
+          </div>
+
+          <div class="panel settings-panel settings-section-panel" id="settings-status-panel" role="tabpanel" aria-labelledby="settings-status-tab">
+            <div class="panel-header"><div><h3 class="panel-title">控制面状态</h3><p>Leader、Raft 多数派与运行任务的实时摘要</p></div><span class="badge" id="control-plane-ready">未知</span></div>
+            <div class="control-plane-strip">
+              <div class="control-plane-group"><span>本机控制器</span><strong class="mono" id="control-plane-local">-</strong><div class="control-plane-secondary"><span>Raft 角色</span><b id="control-plane-role">-</b></div></div>
+              <div class="control-plane-group"><span>当前 Leader</span><strong class="mono" id="control-plane-leader">-</strong><div class="control-plane-secondary"><span>Quorum</span><b id="control-plane-quorum">-</b></div></div>
+              <div class="control-plane-group"><span>元数据版本</span><strong id="control-plane-revision">-</strong><div class="control-plane-secondary"><span>运行时长</span><b id="control-plane-uptime">-</b></div></div>
+              <div class="control-plane-group"><span>活动操作</span><strong id="control-plane-operations">-</strong><div class="control-plane-secondary"><span>节点任务</span><b id="control-plane-tasks">-</b></div></div>
+            </div>
+            <p class="settings-note control-plane-reason" id="control-plane-reason">尚未取得控制面状态。</p>
+          </div>
+
+          <div class="panel settings-panel settings-section-panel software-update-panel" id="software-update-panel" role="tabpanel" aria-labelledby="software-update-tab" hidden>
+            <div class="panel-header"><div><h3 class="panel-title">版本更新</h3><p>由 Raft Leader 编排签名校验、滚动升级、断点续跑和受控回退</p></div><span class="badge" id="software-update-readiness">检查中</span></div>
+            <div class="panel-body">
+              <div class="software-version-strip" aria-label="版本摘要">
+                <div class="software-version-cell"><span>当前运行版本</span><strong id="software-update-running-version">读取中</strong></div>
+                <div class="software-version-cell"><span>构建架构</span><strong id="software-update-running-architecture">-</strong></div>
+                <div class="software-version-cell"><span>最近目标版本</span><strong id="software-update-latest-target">尚无升级包</strong></div>
+                <div class="software-version-cell"><span>历史记录</span><strong id="software-update-history-summary">0 次</strong></div>
+              </div>
+              <div class="software-update-warning"><span class="update-maintenance-icon" aria-hidden="true">!</span><div><strong>系统升级期间无法进行自动切换，请注意关注。</strong><span>请安排维护窗口并持续观察数据库主从、VIP、Raft 多数派和各控制节点状态。升级结束并通过验证后，平台才会恢复自动切换。</span></div></div>
+              <div class="software-update-entry">
+                <div class="software-update-upload">
+                  <input class="software-update-file-input" id="software-update-package-file" type="file" accept=".cgupgrade,.cgpatch,application/octet-stream">
+                  <label class="software-update-file-picker" for="software-update-package-file"><span class="software-update-file-icon" aria-hidden="true">↑</span><span class="software-update-file-copy"><strong>选择 ClusterGuard 签名升级包</strong><span id="software-update-file-name">支持 .cgupgrade，兼容旧 .cgpatch</span></span></label>
+                  <button id="upload-software-update" class="primary-button" type="button">上传并校验</button>
+                </div>
+                <div class="software-update-channel"><span>升级通道</span><strong>签名升级包 + 受限 Helper</strong><p class="settings-note" id="software-update-reason">正在检查升级包签名信任和本机升级服务。新装离线包不能直接用于滚动升级。</p></div>
+              </div>
+              <div class="software-update-package" id="software-update-package" hidden>
+                <div class="software-update-metadata">
+                  <div class="identity-cell"><span>升级包 ID</span><strong class="mono" id="software-update-patch-id">-</strong></div><div class="identity-cell"><span>来源版本</span><strong id="software-update-source-version">-</strong></div><div class="identity-cell"><span>目标版本</span><strong id="software-update-target-version">-</strong></div><div class="identity-cell"><span>包大小</span><strong id="software-update-size">-</strong></div>
+                  <div class="identity-cell"><span>签名校验</span><strong id="software-update-signature">-</strong></div><div class="identity-cell"><span>滚动升级</span><strong id="software-update-rolling">-</strong></div><div class="identity-cell"><span>可回退</span><strong id="software-update-rollback">-</strong></div><div class="identity-cell"><span>上传时间</span><strong id="software-update-uploaded-at">-</strong></div>
+                </div>
+                <div class="software-update-actions"><button id="plan-software-update" type="button">生成升级计划</button><button id="execute-software-update" class="primary-button" type="button">执行滚动升级</button><button id="resume-software-update" type="button">续跑升级</button><button id="rollback-software-update" class="danger-button" type="button">受控回退</button></div>
+                <div class="software-update-job"><div class="identity-cell"><span>状态</span><strong id="software-update-job-status">尚未计划</strong></div><div class="identity-cell"><span>模式</span><strong id="software-update-job-mode">-</strong></div><div class="identity-cell"><span>当前节点</span><strong id="software-update-job-node">-</strong></div><div class="identity-cell"><span>说明</span><strong id="software-update-job-message">等待生成只读计划。</strong></div></div>
+                <div class="software-update-progress" aria-label="升级事件"><div class="software-update-progress-head"><h4 class="panel-title">升级进度</h4><span class="badge" id="software-update-event-count">0 条</span></div><div class="software-update-events" id="software-update-events"><div class="software-update-empty">尚无升级事件。</div></div></div>
+                <details class="software-update-output"><summary>查看原始升级输出</summary><pre id="software-update-output">尚无输出。</pre></details>
+              </div>
+              <div class="software-update-history">
+                <div class="software-update-history-head"><h4 class="panel-title">历史升级记录</h4><span class="badge" id="software-update-history-count">0 条</span></div>
+                <div class="software-update-history-scroll"><table class="software-update-history-table"><thead><tr><th>状态</th><th>升级包 ID</th><th>版本变化</th><th>模式</th><th>时间</th><th>结果</th></tr></thead><tbody id="software-update-history"><tr><td colspan="6" class="software-update-empty">尚无升级记录。</td></tr></tbody></table></div>
+              </div>
             </div>
           </div>
-          <div class="panel"><div class="panel-body">
-            <div class="settings-grid">
-              <div class="identity-cell"><span>当前用户</span><strong id="settings-user-name">-</strong></div>
-              <div class="identity-cell"><span>平台角色</span><strong id="settings-user-role">-</strong></div>
-              <label for="language-select">界面语言<select id="language-select"><option value="zh-CN">中文</option><option value="en-US">English</option></select></label>
-              <label for="refresh-interval">自动刷新<select id="refresh-interval"><option value="30000">30 秒</option><option value="60000" selected>60 秒</option><option value="120000">2 分钟</option><option value="0">关闭</option></select></label>
-            </div>
-            <div class="form-actions"><button id="settings-change-password" type="button">修改密码</button><button id="settings-logout" type="button">退出当前账户</button></div>
-            <p class="settings-note">高风险操作由平台登录态、角色权限、CSRF、Safety Guard 和集群操作锁共同保护。</p>
-          </div></div>
+
+          <div class="settings-account-grid" id="settings-account-panel" role="tabpanel" aria-labelledby="settings-account-tab" hidden>
+            <div class="panel settings-panel"><div class="panel-header"><div><h3 class="panel-title">账户与安全</h3><p>当前登录身份和账户操作</p></div></div><div class="panel-body"><div class="settings-account-summary"><span class="settings-account-avatar" aria-hidden="true">A</span><div class="settings-account-copy"><span>当前用户</span><strong id="settings-user-name">-</strong></div><div class="settings-account-role"><span class="badge" id="settings-user-role">-</span></div></div><div class="settings-inline-actions"><button id="settings-change-password" type="button">修改密码</button><button id="settings-logout" type="button">退出当前账户</button></div><p class="settings-security-note">高风险操作受登录态、角色权限、CSRF、Safety Guard 和集群操作锁保护。</p></div></div>
+            <div class="panel settings-panel"><div class="panel-header"><div><h3 class="panel-title">显示偏好</h3><p>仅影响当前浏览器中的控制台体验</p></div></div><div class="panel-body settings-fields"><label for="language-select">界面语言<select id="language-select"><option value="zh-CN">中文</option><option value="en-US">English</option></select></label><label for="refresh-interval">自动刷新<select id="refresh-interval"><option value="30000">30 秒</option><option value="60000" selected>60 秒</option><option value="120000">2 分钟</option><option value="0">关闭</option></select></label></div></div>
+          </div>
         </section>
       </div>
     </main>
@@ -689,6 +1024,46 @@
     </div>
   </dialog>
 
+  <dialog id="power-shutdown-dialog" class="power-dialog" role="dialog" aria-modal="true" aria-labelledby="power-shutdown-title">
+    <div class="dialog-head">
+      <div class="dialog-title"><h2 id="power-shutdown-title">一键关机</h2><p>控制器会自动完成预检查、计划、安全授权、停库和恢复快照持久化。</p></div>
+      <button class="dialog-close" id="close-power-shutdown" type="button" aria-label="关闭">×</button>
+    </div>
+    <div class="dialog-body">
+      <div class="power-context">
+        <div class="identity-cell"><span>集群</span><strong id="power-cluster-name">-</strong></div>
+        <div class="identity-cell"><span>当前主库</span><strong id="power-primary-name">-</strong></div>
+        <div class="identity-cell"><span>数据库节点</span><strong id="power-node-count">0</strong></div>
+        <div class="identity-cell"><span>同宿主集群</span><strong id="power-shared-clusters">无</strong></div>
+      </div>
+      <fieldset class="cluster-management-section">
+        <legend class="summary-label">关机方式</legend>
+        <div class="power-mode-grid">
+          <label class="power-mode-option" for="power-mode-service">
+            <input id="power-mode-service" name="power-mode" type="radio" value="service" checked>
+            <strong>停止数据库服务</strong>
+            <span>推荐。只停止全部数据库实例，ClusterGuard 管理控制面保持运行；主机重启后自动启动数据库并校验角色。</span>
+          </label>
+          <label class="power-mode-option" for="power-mode-poweroff">
+            <input id="power-mode-poweroff" name="power-mode" type="radio" value="poweroff">
+            <strong>整机关机</strong>
+            <span>先安全停止同宿主机上的全部受管集群，再关闭主机。开机后自动恢复每套数据库并分别验证。</span>
+          </label>
+        </div>
+      </fieldset>
+      <div class="power-confirmation">
+        <p>输入完整集群名称 <code id="power-confirm-phrase">-</code> 确认本次操作。</p>
+        <label for="power-confirm-name">集群名称<input id="power-confirm-name" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="输入完整集群名称"></label>
+        <label class="power-acknowledgement" for="power-confirm-impact"><input id="power-confirm-impact" type="checkbox"><span id="power-impact-text">我确认停止该集群的全部数据库服务。</span></label>
+      </div>
+      <div class="result-banner" id="power-shutdown-result" role="status">等待确认。</div>
+    </div>
+    <div class="dialog-actions">
+      <span class="dialog-action-note">平台会自动签发仅限本次关机的一次性授权，不需要手工输入令牌。</span>
+      <div class="dialog-buttons"><button id="cancel-power-shutdown" type="button">取消</button><button id="confirm-power-shutdown" class="danger-button" type="button" disabled>⏻ 确认关机</button></div>
+    </div>
+  </dialog>
+
   <dialog id="node-lifecycle-modal" class="node-lifecycle-dialog" role="dialog" aria-modal="true" aria-labelledby="node-lifecycle-title">
     <div class="dialog-head">
       <div class="dialog-title"><h2 id="node-lifecycle-title">添加或修复节点</h2><p>安装、数据同步、复制接入和元数据更新由同一条受控流程完成。</p></div>
@@ -711,6 +1086,15 @@
           <label>IP<input id="node-ip" autocomplete="off"></label>
           <label>SSH 用户<input id="node-ssh-user" autocomplete="off" value="root"></label>
           <label>SSH 端口<input id="node-ssh-port" type="number" value="22"></label>
+        </div></fieldset>
+        <fieldset class="node-form-group controller-pair-group" id="controller-pair-group" hidden><legend>配对控制节点</legend><div class="form-grid">
+          <p class="controller-pair-note">控制节点按一对加入，平台会在同一任务中安装控制服务、校验身份并从 3 节点安全扩容到 5 节点。</p>
+          <label>固定节点名<input id="node-pair-name" autocomplete="off" placeholder="cg-node-0005"></label>
+          <label>资源 ID<input id="node-pair-resource-id" autocomplete="off" placeholder="新增可留空"></label>
+          <label>主机名<input id="node-pair-hostname" autocomplete="off"></label>
+          <label>IP<input id="node-pair-ip" autocomplete="off"></label>
+          <label>SSH 用户<input id="node-pair-ssh-user" autocomplete="off" value="root"></label>
+          <label>SSH 端口<input id="node-pair-ssh-port" type="number" value="22"></label>
         </div></fieldset>
         <fieldset class="node-form-group"><legend>数据库与同步</legend><div class="form-grid">
           <div class="engine-form-fields" id="mysql-lifecycle-fields">
@@ -770,6 +1154,53 @@
     <div class="dialog-actions"><button id="cancel-password-change" type="button">取消</button><button id="save-password" class="primary-button" type="button">保存新密码</button></div>
   </dialog>
 
+  <dialog id="software-update-confirmation-dialog" role="dialog" aria-modal="true" aria-labelledby="software-update-confirmation-title">
+    <div class="dialog-head">
+      <div class="dialog-title"><h2 id="software-update-confirmation-title">确认滚动升级</h2><p id="software-update-confirmation-subtitle">该操作会逐台更新 ClusterGuard 控制节点。</p></div>
+      <button class="dialog-close" id="close-software-update-confirmation" type="button" aria-label="关闭">×</button>
+    </div>
+    <div class="dialog-body software-update-confirmation">
+      <div class="software-update-warning">
+        <span class="update-maintenance-icon" aria-hidden="true">!</span>
+        <div><strong>系统升级期间无法进行自动切换，请注意关注。</strong><span>维护标记建立后，平台将阻断新的自动故障切换。请确保有人持续观察业务、数据库主从和 VIP。</span></div>
+      </div>
+      <div class="confirmation-phrase">请输入升级包 ID <code id="software-update-confirmation-phrase">-</code> 继续</div>
+      <label for="software-update-confirmation-input">输入确认
+        <input id="software-update-confirmation-input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="手动输入完整升级包 ID">
+      </label>
+      <p class="confirmation-state" id="software-update-confirmation-state">尚未输入完整升级包 ID，不能执行。</p>
+    </div>
+    <div class="dialog-actions">
+      <span class="dialog-action-note">平台会保留升级事件、原始输出和回退状态，用于审计与故障恢复。</span>
+      <div class="dialog-buttons"><button id="cancel-software-update-confirmation" type="button">取消</button><button id="confirm-software-update-action" class="danger-button" type="button" disabled>确认执行</button></div>
+    </div>
+  </dialog>
+
+  <dialog id="operation-review-dialog" class="operation-review-dialog" role="dialog" aria-modal="true" aria-labelledby="operation-review-title">
+    <div class="dialog-head">
+      <div class="dialog-title"><h2 id="operation-review-title">复核不确定操作</h2><p>确认已通过数据库、复制链路和业务入口完成线下核验。</p></div>
+      <button class="dialog-close" id="close-operation-review" type="button" aria-label="关闭">×</button>
+    </div>
+    <div class="dialog-body">
+      <div class="dialog-context">
+        <div><span>操作</span><strong id="operation-review-kind">-</strong></div>
+        <div><span>操作 ID</span><strong class="mono" id="operation-review-id">-</strong></div>
+      </div>
+      <div class="software-update-warning">
+        <span class="update-maintenance-icon" aria-hidden="true">!</span>
+        <div><strong>复核不会把该操作改成成功。</strong><span>原始“结果不确定”状态和全部执行证据继续保留；这里只记录复核人、时间和说明，并从待复核计数中移除。</span></div>
+      </div>
+      <label for="operation-review-note">复核说明
+        <textarea id="operation-review-note" maxlength="1024" required placeholder="例如：已核对当前主库角色、复制状态、VIP 唯一归属及业务读写结果。"></textarea>
+      </label>
+      <div class="result-banner" id="operation-review-result">请填写本次人工核验的依据。</div>
+    </div>
+    <div class="dialog-actions">
+      <span class="dialog-action-note">复核记录提交后不可覆盖，只能继续查看原始审计。</span>
+      <div class="dialog-buttons"><button id="cancel-operation-review" type="button">取消</button><button id="submit-operation-review" class="primary-button" type="button">标记已复核</button></div>
+    </div>
+  </dialog>
+
   <div class="live-status" id="live-status" role="status" aria-live="polite" hidden>正在连接控制 API。</div>
 
   <script>
@@ -777,8 +1208,11 @@
     const operationLogPageSize = 50;
     const state = {
       language: 'zh-CN', clusters: [], clusterDirectory: new Map(), fleetTopology: new Map(), capabilities: [], nodes: [], allOperations: [], lifecycleTasks: [], lifecycleCapability: { available:false, reason:'未配置' },
-      controlPlane: null,
-      selectedClusterId: '', selectedCandidateId: '', selectedRejoinId: '', switchUnlocked: false, operationRunning: false,
+      controlPlane: null, platformVersion: null, powerStatus: null, powerRunning: false,
+      softwareUpdates: { available:false, reason:'尚未检查升级服务', warning:'系统升级期间无法进行自动切换，请注意关注。', packages:[] },
+      softwareUpdateRunning: false, softwareUpdateAction: '', softwareUpdatePollingTimer: null,
+      selectedClusterId: '', selectedCandidateId: '', selectedRejoinId: '', topologySection: 'map', settingsSection: 'status', switchUnlocked: false, operationRunning: false,
+      operationReviewRunning: false, operationReviewTargetId: '',
       currentUser: null, passwordChangeRequired: false, authenticating: false, lifecycleRunning: false, clusterMutationRunning: false, clusterManagementMode: 'create', retireConfirmationClusterId: '',
       requestGeneration: 0, refreshIntervalMs: 60000, refreshTimer: null, liveStatusTimer: null,
       fleetSearch: '', fleetHealth: 'all', logSearch: '', logKind: 'all', logStatus: 'all', logVisibleLimit: operationLogPageSize,
@@ -789,14 +1223,14 @@
       'zh-CN': {
         navOverview:'总览', navTopology:'拓扑', navOperations:'操作', navNodes:'节点', navMetrics:'指标', navLog:'操作日志', navAbout:'关于', navSettings:'设置',
         cluster:'集群', refresh:'刷新', inspect:'检查', overviewTitle:'运行总览', overviewSubtitle:'控制面、集群和待复核操作摘要',
-        topologyTitle:'集群拓扑', operationsTitle:'高可用操作', operationsSubtitle:'所选集群的受控切换与节点恢复', nodesTitle:'节点管理', metricsTitle:'健康与性能',
+        topologyTitle:'集群拓扑', topologyMapTab:'集群拓扑', topologyPowerTab:'数据库启停', topologyIdentityTab:'节点身份', operationsTitle:'高可用操作', operationsSubtitle:'所选集群的受控切换与节点恢复', nodesTitle:'节点管理', metricsTitle:'健康与性能',
         operationSucceeded:'操作完成，验证通过。', unknown:'未知', healthy:'健康', degraded:'降级', unhealthy:'异常',
         succeeded:'成功', failed:'失败', blocked:'阻断', running:'执行中', planned:'已计划', indeterminate:'需复核', unsupported:'不支持'
       },
       'en-US': {
         navOverview:'Overview', navTopology:'Topology', navOperations:'Operations', navNodes:'Nodes', navMetrics:'Metrics', navLog:'Operation Log', navAbout:'About', navSettings:'Settings',
         cluster:'Cluster', refresh:'Refresh', inspect:'Inspect', overviewTitle:'Fleet Overview', overviewSubtitle:'Control plane, clusters, and operations requiring review',
-        topologyTitle:'Cluster Topology', operationsTitle:'HA Operations', operationsSubtitle:'Controlled switchover and node recovery for the selected cluster', nodesTitle:'Node Management', metricsTitle:'Health and Performance',
+        topologyTitle:'Cluster Topology', topologyMapTab:'Topology', topologyPowerTab:'Database Power', topologyIdentityTab:'Node Identity', operationsTitle:'HA Operations', operationsSubtitle:'Controlled switchover and node recovery for the selected cluster', nodesTitle:'Node Management', metricsTitle:'Health and Performance',
         operationSucceeded:'Operation completed and verified.', unknown:'Unknown', healthy:'Healthy', degraded:'Degraded', unhealthy:'Unhealthy',
         succeeded:'Succeeded', failed:'Failed', blocked:'Blocked', running:'Running', planned:'Planned', indeterminate:'Review required', unsupported:'Unsupported'
       }
@@ -874,13 +1308,20 @@
     const renderAuthenticatedUser = () => {
       const user = state.currentUser || {};
       const role = ({ admin:'管理员', operator:'操作员', viewer:'只读用户' })[user.role] || user.role || '-';
-      byId('current-user-name').textContent = user.display_name || user.username || '-';
+      const displayName = user.display_name || user.username || '-';
+      byId('current-user-name').textContent = displayName;
       byId('current-user-role').textContent = role;
+      byId('current-user-avatar').textContent = Array.from(displayName)[0]?.toUpperCase() || 'A';
       byId('settings-user-name').textContent = user.username || '-';
       byId('settings-user-role').textContent = role;
       byId('open-metadata-modal').disabled = !canAdministerPlatform();
       byId('open-cluster-management-modal').hidden = !canAdministerPlatform();
+      byId('software-update-tab').hidden = !canAdministerPlatform();
+      if (!canAdministerPlatform() && state.settingsSection === 'updates') state.settingsSection = 'status';
+      setSettingsSection(state.settingsSection);
+      updatePowerControls();
       updateExecutionButtons();
+      renderSoftwareUpdates();
     };
 
     const renderControlPlaneStatus = () => {
@@ -891,6 +1332,7 @@
         ready.className = 'badge danger';
         ['control-plane-local', 'control-plane-role', 'control-plane-leader', 'control-plane-quorum', 'control-plane-revision', 'control-plane-uptime', 'control-plane-operations', 'control-plane-tasks'].forEach(id => { byId(id).textContent = '-'; });
         byId('control-plane-reason').textContent = '控制面诊断暂时不可用，集群数据仍可独立查看。';
+        renderSoftwareUpdateGlobalWarning();
         return;
       }
       ready.textContent = status.ready ? '就绪' : '未就绪';
@@ -905,6 +1347,7 @@
       byId('control-plane-tasks').textContent = `${status.active_lifecycle_tasks || 0} 活动`;
       const reasons = { ready:'控制节点已准备好处理请求。', leader_unavailable:'当前未发现 Leader。', quorum_unavailable:'Leader 无法确认控制节点多数派。', metadata_catchup:'本机正在追赶已提交元数据。', leader_api_unavailable:'无法确定 Leader API 地址。', leader_election_in_progress:'控制节点正在选举 Leader。', status_unavailable:'状态采集暂时不可用。' };
       byId('control-plane-reason').textContent = reasons[status.readiness_reason] || status.readiness_reason || '状态原因未知。';
+      renderSoftwareUpdateGlobalWarning();
     };
 
     const showLogin = (message = '请输入平台账户。', isError = false) => {
@@ -914,16 +1357,21 @@
       state.operationRunning = false;
       if (state.refreshTimer) window.clearInterval(state.refreshTimer);
       if (state.liveStatusTimer) window.clearTimeout(state.liveStatusTimer);
+      if (state.softwareUpdatePollingTimer) window.clearTimeout(state.softwareUpdatePollingTimer);
       state.refreshTimer = null;
       state.liveStatusTimer = null;
+      state.softwareUpdatePollingTimer = null;
       byId('console-shell').hidden = true;
       byId('login-shell').hidden = false;
       byId('live-status').hidden = true;
+      setAccountMenuOpen(false);
       const status = byId('login-status');
       status.textContent = message;
       status.className = isError ? 'login-status error' : 'login-status';
       const passwordDialog = byId('password-modal');
       if (passwordDialog.open) passwordDialog.close();
+      const powerDialog = byId('power-shutdown-dialog');
+      if (powerDialog.open) powerDialog.close();
       window.setTimeout(() => byId('login-username').focus(), 0);
     };
 
@@ -934,6 +1382,13 @@
       byId('live-status').hidden = false;
       renderAuthenticatedUser();
       window.requestAnimationFrame(() => keepActiveNavigationVisible(document.querySelector('[data-nav][aria-current="page"]')));
+    };
+
+    const setAccountMenuOpen = open => {
+      const menu = byId('account-menu');
+      const trigger = byId('account-menu-toggle');
+      menu.hidden = !open;
+      trigger.setAttribute('aria-expanded', String(open));
     };
 
     const openPasswordChange = (required = false) => {
@@ -996,8 +1451,54 @@
     const kindText = value => ({ switchover:'主库切换', failover:'故障切换', former_primary_rejoin:'旧主回挂', replication_repair:'复制修复', node_sync:'节点同步', metadata_reconciliation:'元数据修正' })[value] || value || '-';
     const nodeKindText = value => ({ data:'数据节点', controller:'控制节点', mixed:'混合节点' })[value] || value || '-';
     const roleText = value => ({ primary:'主库', replica:'从库', standby:'备用', unknown:'未知' })[value] || value || '未知';
+	const probesForInstance = (instance, topology = state.topology) => topology ? (topology.probes || []).filter(probe => probe.instance_id === instance.resource_id) : [];
+	const probeOutcome = probe => {
+	  const outcome = String(probe && probe.outcome || '').trim().toLowerCase();
+	  if (outcome) return outcome;
+	  const summary = String(probe && probe.health && probe.health.summary || '').trim().toLowerCase();
+	  if (summary.includes('database probe failed')) return 'database_unavailable';
+	  if (summary.includes('discovery credentials unavailable')) return 'credentials_unavailable';
+	  if (summary.includes('performance metrics unavailable')) return 'metrics_unavailable';
+	  if (probe && probe.discovery_observed_at) return 'reachable';
+	  return 'unknown';
+	};
+	const instanceAvailability = (instance, topology = state.topology) => {
+	  const probes = probesForInstance(instance, topology);
+	  if (probes.some(probe => probeOutcome(probe) === 'reachable' || probeOutcome(probe) === 'metrics_unavailable')) {
+		return { label:healthText(instance.health && instance.health.state), className:instance.health && instance.health.state === 'healthy' ? 'success' : 'warning', available:true };
+	  }
+	  if (probes.some(probe => probeOutcome(probe) === 'database_unavailable')) return { label:'数据库未启动或不可达', className:'danger', available:false };
+	  if (probes.some(probe => probeOutcome(probe) === 'credentials_unavailable')) return { label:'凭据不可用', className:'warning', available:false };
+	  return { label:'尚未采集', className:'warning', available:false };
+	};
+	const observedPrimaryInstances = (instances, topology = state.topology) =>
+	  (instances || []).filter(instance => instance.role === 'primary' && instanceAvailability(instance, topology).available);
+	const currentObservedPrimary = (instances, topology = state.topology) => {
+	  const primaries = observedPrimaryInstances(instances, topology);
+	  return primaries.length === 1 ? primaries[0] : undefined;
+	};
+	const replicasForPrimary = (instances, primary, topology = state.topology) => {
+	  if (!primary) return [];
+	  const links = topology ? topology.links || [] : [];
+	  const linkedTargetIDs = new Set(links
+		.filter(link => link.source_instance_id === primary.resource_id)
+		.map(link => link.target_instance_id));
+	  if (linkedTargetIDs.size) {
+		return (instances || []).filter(instance =>
+		  instance.resource_id !== primary.resource_id && linkedTargetIDs.has(instance.resource_id));
+	  }
+	  return (instances || []).filter(instance =>
+		instance.resource_id !== primary.resource_id &&
+		instanceAvailability(instance, topology).available &&
+		['replica', 'standby'].includes(instance.role));
+	};
+	const instanceRoleText = instance => {
+	  if (!instanceAvailability(instance).available) return '无当前角色';
+	  if (instance.role === 'primary' && observedPrimaryInstances(state.topology ? state.topology.instances || [] : []).length > 1) return '冲突写主';
+	  return roleText(instance.role);
+	};
     const lagText = instance => {
-      if (!instance || instance.role === 'primary') return '-';
+	  if (!instance || instance.role === 'primary' || !instanceAvailability(instance).available) return '-';
       const lag = instance.replication && instance.replication.lag_seconds;
       return Number.isFinite(lag) ? `${lag}s` : '未知';
     };
@@ -1006,6 +1507,85 @@
     const nodeName = instance => {
       const node = instance && nodeByID(instance.node_id);
       return node ? node.node_name : '未登记';
+    };
+    const runtimeKindText = kind => ({
+      linux:'主机层（物理机/虚拟机）',
+      docker:'容器层（Docker Swarm）',
+      kubernetes:'Kubernetes StatefulSet'
+    })[kind] || '运行层未登记';
+    const runtimeKindShortText = kind => ({ linux:'主机层', docker:'容器层', kubernetes:'Kubernetes' })[kind] || '未登记';
+    const endpointProviderText = provider => ({ linux_vip:'宿主机 VIP', kubernetes_service:'Kubernetes Service' })[provider] || '入口提供方未登记';
+    const activeWorkloadBindings = (detail = state.clusterDetail) => detail ? (detail.workload_bindings || []).filter(binding => binding.active) : [];
+    const workloadBindingForInstance = (instance, detail = state.clusterDetail) =>
+      instance ? activeWorkloadBindings(detail).find(binding => binding.instance_id === instance.resource_id) : undefined;
+    const runtimeProfileForDetail = detail => {
+      const instances = detail ? detail.instances || [] : [];
+      if (detail && detail.runtime_profile) {
+        const profile = detail.runtime_profile;
+        const kinds = Array.isArray(profile.kinds) ? [...profile.kinds] : [];
+        return {
+          kinds,
+          unbound_instance_ids:Array.isArray(profile.unbound_instance_ids) ? [...profile.unbound_instance_ids] : [],
+          endpoint_providers:Array.isArray(profile.endpoint_providers) ? [...profile.endpoint_providers] : [],
+          mixed:profile.mixed === true || kinds.length > 1,
+          complete:profile.complete === true
+        };
+      }
+      const bindings = activeWorkloadBindings(detail);
+      const boundIDs = new Set(bindings.map(binding => binding.instance_id));
+      const kinds = [...new Set(bindings.map(binding => binding.runtime_kind).filter(Boolean))].sort();
+      const activeEndpointIDs = new Set((detail && detail.endpoints || []).filter(endpoint => endpoint.active).map(endpoint => endpoint.resource_id));
+      const endpointProviders = [...new Set((detail && detail.ha_endpoints || [])
+        .filter(endpoint => activeEndpointIDs.has(endpoint.endpoint_id))
+        .map(endpoint => endpoint.provider || 'linux_vip'))].sort();
+      const unbound = instances.filter(instance => !boundIDs.has(instance.resource_id)).map(instance => instance.resource_id).sort();
+      return { kinds, unbound_instance_ids:unbound, endpoint_providers:endpointProviders, mixed:kinds.length > 1, complete:instances.length > 0 && unbound.length === 0 };
+    };
+    const runtimeProfileLabel = detail => {
+      const profile = runtimeProfileForDetail(detail);
+      if (profile.mixed) return '混合运行层';
+      if (!profile.kinds.length) return '运行层未登记';
+      const label = runtimeKindText(profile.kinds[0]);
+      return profile.complete ? label : `${label} · 部分未登记`;
+    };
+    const runtimeProfileShortLabel = detail => {
+      const profile = runtimeProfileForDetail(detail);
+      if (profile.mixed) return '混合运行层';
+      if (!profile.kinds.length) return '运行层未登记';
+      const label = runtimeKindShortText(profile.kinds[0]);
+      return profile.complete ? label : `${label} · 部分未登记`;
+    };
+    const endpointBoundaryLabel = detail => {
+      const providers = runtimeProfileForDetail(detail).endpoint_providers;
+      if (providers.length > 1) return '混合业务入口';
+      return providers.length === 1 ? endpointProviderText(providers[0]) : '入口提供方未登记';
+    };
+    const runtimeBoundaryLabel = detail => `${runtimeProfileLabel(detail)} · ${endpointBoundaryLabel(detail)}`;
+    const runtimeProfileBadgeClass = detail => {
+      const profile = runtimeProfileForDetail(detail);
+      const expectedProvider = profile.kinds.length === 1 && profile.kinds[0] === 'kubernetes' ? 'kubernetes_service' : 'linux_vip';
+      const endpointMismatch = profile.endpoint_providers.length !== 1 || profile.endpoint_providers[0] !== expectedProvider;
+      return !profile.complete || profile.mixed || endpointMismatch ? 'badge warning' : 'badge runtime';
+    };
+    const instanceRuntimePlacement = (instance, detail = state.clusterDetail) => {
+      const binding = workloadBindingForInstance(instance, detail);
+      if (!binding) {
+        return { kind:'unregistered', layer:'运行层未登记', short:'未登记', workload:'未绑定运行目标', host:nodeName(instance) };
+      }
+      const hostNode = nodeByID(binding.host_node_id || (instance && instance.node_id));
+      const host = hostNode ? hostNode.node_name : (binding.runtime_kind === 'kubernetes' ? '由调度器决定' : nodeName(instance));
+      if (binding.runtime_kind === 'docker') {
+        const service = binding.docker && binding.docker.swarm_service_name || 'Swarm Service 未登记';
+        return { kind:'docker', layer:runtimeKindText('docker'), short:runtimeKindShortText('docker'), workload:`Swarm ${service}`, host };
+      }
+      if (binding.runtime_kind === 'kubernetes') {
+        const reference = binding.kubernetes || {};
+        const workload = reference.namespace && reference.stateful_set
+          ? `${reference.namespace}/${reference.stateful_set}-${Number.isInteger(reference.ordinal) ? reference.ordinal : '?'}`
+          : 'Kubernetes 工作负载未登记';
+        return { kind:'kubernetes', layer:runtimeKindText('kubernetes'), short:runtimeKindShortText('kubernetes'), workload, host };
+      }
+      return { kind:'linux', layer:runtimeKindText('linux'), short:runtimeKindShortText('linux'), workload:'本机数据库服务', host };
     };
     const instanceAddress = instance => instance ? `${instance.hostname || instance.ip_address || instance.display_name}:${instance.port}` : '-';
     const instanceDisplayName = instance => instance ? `${instance.display_name || instance.hostname || instance.ip_address || nodeName(instance)}:${instance.port}` : '-';
@@ -1033,10 +1613,27 @@
       if (assessment && assessment.eligible) return assessment.rank === 1 ? `${label}（推荐）` : `${label}（可切换）`;
       return `${label}（不可切换：${candidateBlockReason(assessment)}）`;
     };
-    const activeVIP = () => {
-      const endpoints = state.clusterDetail ? state.clusterDetail.endpoints || [] : [];
-      return endpoints.find(endpoint => endpoint.active && endpoint.kind === 'vip');
-    };
+	const activeWriterEndpoint = (detail = state.clusterDetail) => {
+	  if (!detail) return undefined;
+	  const endpoints = detail.endpoints || [];
+	  const activeByID = new Map(endpoints.filter(endpoint => endpoint.active).map(endpoint => [endpoint.resource_id, endpoint]));
+	  const resources = (detail.ha_endpoints || []).filter(resource => activeByID.has(resource.endpoint_id));
+	  if (resources.length !== 1) return undefined;
+	  const endpoint = activeByID.get(resources[0].endpoint_id);
+	  return endpoint ? { endpoint, resource:resources[0] } : undefined;
+	};
+	const writerEndpointAddress = writer => {
+	  if (!writer) return '-';
+	  const address = writer.endpoint.ip_address || writer.endpoint.hostname || '-';
+	  return writer.endpoint.port ? `${address}:${writer.endpoint.port}` : address;
+	};
+	const writerEndpointLabel = writer => writer
+	  ? `${endpointProviderText(writer.resource.provider || 'linux_vip')} ${writerEndpointAddress(writer)}`
+	  : '-';
+	const instanceOwnsActiveWriterEndpoint = instance => {
+	  const writer = activeWriterEndpoint();
+	  return !!(instance && instanceAvailability(instance).available && writer && writer.endpoint.instance_id === instance.resource_id);
+	};
     const observationAge = value => {
       const observed = value ? new Date(value) : null;
       if (!observed || Number.isNaN(observed.getTime())) return '无观测证据';
@@ -1055,7 +1652,8 @@
       const search = state.fleetSearch.trim().toLowerCase();
       return state.clusters.filter(cluster => {
         const detail = state.clusterDirectory.get(cluster.resource_id);
-        const primary = detail && (detail.instances || []).find(instance => instance.role === 'primary');
+		const topology = state.fleetTopology.get(cluster.resource_id);
+		const primary = detail && currentObservedPrimary(detail.instances || [], topology);
         const searchable = [cluster.display_name, cluster.engine, primary && instanceAddress(primary)].filter(Boolean).join(' ').toLowerCase();
         if (search && !searchable.includes(search)) return false;
         if (state.fleetHealth === 'attention') return clusterNeedsAttention(cluster);
@@ -1070,16 +1668,34 @@
     };
 
     const clearClusterView = (preserveOperationResult = false) => {
-      state.clusterDetail = null; state.topology = null; state.health = null; state.candidates = []; state.metrics = { instances: [] }; state.operations = [];
+      state.clusterDetail = null; state.topology = null; state.health = null; state.candidates = []; state.metrics = { instances: [] }; state.operations = []; state.powerStatus = null;
       state.logVisibleLimit = operationLogPageSize;
       byId('topology-cluster-name').textContent = '未选择集群';
+      byId('topology-runtime').textContent = '运行层未知';
+      byId('topology-runtime').className = 'badge';
+      byId('topology-entry').textContent = '入口未知';
+      byId('topology-entry').className = 'badge';
       byId('topology-observed-at').textContent = '等待拓扑数据';
       byId('topology-freshness').textContent = '无观测证据';
       byId('topology-anomalies').replaceChildren(text('span', 'anomaly-item clear', '暂无异常'));
       byId('primary-column').replaceChildren(text('div', 'empty-state', '尚未发现主库'));
       byId('replica-list').replaceChildren(text('div', 'empty-state', '尚未发现从库'));
+      byId('detached-node-list').replaceChildren();
+      byId('detached-nodes').hidden = true;
       byId('topology-inventory').replaceChildren();
-      byId('operation-cluster').textContent = '-'; byId('operation-primary').textContent = '-'; byId('operation-vip').textContent = '-'; byId('operation-lag').textContent = '-';
+      byId('power-state-badge').textContent = '未知';
+      byId('power-state-badge').className = 'badge';
+      byId('power-outage-kind').textContent = '未知';
+      byId('power-outage-kind').dataset.state = 'unknown';
+      byId('power-outage-detail').textContent = '等待控制面证据';
+      byId('power-database-state').textContent = '未知';
+      byId('power-failover-policy').textContent = '未知';
+      byId('power-failover-detail').textContent = '等待保护状态';
+      byId('power-control-plane').textContent = '在线 · 独立运行';
+      byId('power-protection').replaceChildren(text('span', 'anomaly-item clear', '恢复冻结关闭，无维护标记'));
+      byId('power-summary').textContent = '尚未读取电源状态';
+      byId('power-history').replaceChildren();
+      byId('operation-cluster').textContent = '-'; byId('operation-primary').textContent = '-'; byId('operation-runtime').textContent = '-'; byId('operation-vip').textContent = '-'; byId('operation-lag').textContent = '-';
       byId('candidate-select').replaceChildren(new Option('无可用候选', ''));
       byId('rejoin-select').replaceChildren(new Option('未发现可恢复节点', ''));
       byId('metrics-observed-at').textContent = '无采样证据';
@@ -1088,6 +1704,7 @@
         byId('operation-result').className = 'result-banner';
         renderOperationProgress(null);
       }
+      updatePowerControls();
       updateExecutionButtons();
     };
 
@@ -1133,7 +1750,7 @@
         return total + (detail && detail.instances ? detail.instances.length : 0);
       }, 0);
       const controllers = state.nodes.filter(node => node.active && ['controller', 'mixed'].includes(node.kind)).length;
-      const pending = state.allOperations.filter(operation => ['running', 'indeterminate'].includes(operation.status)).length;
+      const pending = state.allOperations.filter(operation => operation.status === 'running' || (operation.status === 'indeterminate' && !operation.review)).length;
       byId('fleet-clusters').textContent = String(state.clusters.length);
       byId('fleet-healthy').textContent = String(healthy);
       byId('fleet-unhealthy').textContent = String(unhealthy);
@@ -1143,7 +1760,7 @@
       byId('fleet-engine-count').textContent = `${state.capabilities.length || 4} 种引擎`;
       const list = byId('overview-clusters');
       const header = text('div', 'cluster-row header', '');
-      ['集群', '引擎', '健康', '主库', '实例', '最近观测'].forEach(value => header.append(text('span', '', value)));
+      ['集群', '引擎', '运行层', '健康', '主库', '实例', '最近观测'].forEach(value => header.append(text('span', '', value)));
       list.replaceChildren(header);
       const visible = filteredFleetClusters();
       byId('fleet-visible-count').textContent = `${visible.length} / ${state.clusters.length}`;
@@ -1151,13 +1768,14 @@
         const detail = state.clusterDirectory.get(cluster.resource_id);
         const topology = state.fleetTopology.get(cluster.resource_id);
         const instances = detail && detail.instances ? detail.instances : [];
-        const primary = instances.find(instance => instance.role === 'primary');
+		const primary = currentObservedPrimary(instances, topology);
         const row = text('button', 'cluster-row cluster-row-action', '');
         row.type = 'button';
         row.dataset.clusterId = cluster.resource_id;
         row.setAttribute('aria-label', `查看集群 ${cluster.display_name || cluster.resource_id}`);
         row.append(text('span', 'cluster-name', cluster.display_name || cluster.resource_id));
         row.append(text('span', '', cluster.engine));
+        row.append(text('span', '', runtimeProfileShortLabel(detail)));
         row.append(text('span', `row-health ${clusterNeedsAttention(cluster) ? 'attention' : cluster.health && cluster.health.state === 'healthy' ? 'healthy' : ''}`, clusterNeedsAttention(cluster) ? '需要关注' : healthText(cluster.health && cluster.health.state)));
         row.append(text('span', '', primary ? instanceAddress(primary) : '-'));
         row.append(text('span', '', String(instances.length)));
@@ -1168,22 +1786,29 @@
       if (!visible.length) list.append(text('div', 'empty-state', '没有符合条件的集群'));
     };
 
-    const createNodeCard = (instance, primaryVIP) => {
-      const assessment = assessmentByID(instance.resource_id);
-      const candidate = assessment && assessment.eligible && assessment.rank === 1;
+	const createNodeCard = (instance, writerEndpoint) => {
+	  const availability = instanceAvailability(instance);
+	  const assessment = assessmentByID(instance.resource_id);
+	  const candidate = availability.available && assessment && assessment.eligible && assessment.rank === 1;
+	  const placement = instanceRuntimePlacement(instance);
       const card = text('article', candidate ? 'node-card candidate' : 'node-card', '');
-      card.setAttribute('aria-label', `${roleText(instance.role)} ${instanceAddress(instance)}`);
-      card.append(text('span', `badge node-state ${instance.health.state === 'healthy' ? 'success' : 'warning'}`, healthText(instance.health.state)));
+	  card.classList.toggle('unavailable', !availability.available);
+	  card.setAttribute('aria-label', `${instanceRoleText(instance)} ${instanceAddress(instance)} ${placement.layer} ${availability.label}`);
+	  card.append(text('span', `badge node-state ${availability.className}`, availability.label));
       card.append(text('div', 'node-title', `${instanceDisplayName(instance)} · 延迟 ${lagText(instance)}`));
       const lineOne = text('div', 'node-line', '');
       lineOne.append(text('span', '', '主机名 ')); lineOne.append(text('strong', '', instance.hostname || '-'));
       lineOne.append(text('span', '', '   IP ')); lineOne.append(text('strong', '', instance.ip_address || '-'));
       lineOne.append(text('span', '', '   端口 ')); lineOne.append(text('strong', '', String(instance.port || '-')));
       const lineTwo = text('div', 'node-line', '');
-      lineTwo.append(text('span', '', '版本 ')); lineTwo.append(text('strong', '', (instance.engine_metadata && instance.engine_metadata.version) || '-'));
-      lineTwo.append(text('span', '', '   角色 ')); lineTwo.append(text('strong', '', candidate ? '候选主库' : roleText(instance.role)));
-      card.append(lineOne, lineTwo);
-      if (instance.role === 'primary' && primaryVIP) card.append(text('span', 'vip-chip', `VIP ${primaryVIP.ip_address || primaryVIP.hostname}`));
+	  lineTwo.append(text('span', '', '版本 ')); lineTwo.append(text('strong', '', availability.available ? ((instance.engine_metadata && instance.engine_metadata.version) || '-') : '-'));
+	  lineTwo.append(text('span', '', '   角色 ')); lineTwo.append(text('strong', '', candidate ? '候选主库' : instanceRoleText(instance)));
+	  const lineThree = text('div', 'node-line', '');
+	  lineThree.append(text('span', '', '运行 ')); lineThree.append(text('strong', '', placement.short));
+	  lineThree.append(text('span', '', ` · ${placement.workload} · ${placement.host}`));
+	  lineThree.title = `${placement.layer}；工作负载 ${placement.workload}；宿主或调度位置 ${placement.host}`;
+      card.append(lineOne, lineTwo, lineThree);
+	  if (writerEndpoint && instanceOwnsActiveWriterEndpoint(instance)) card.append(text('span', 'vip-chip', writerEndpointLabel(writerEndpoint)));
       return card;
     };
 
@@ -1192,11 +1817,15 @@
       const instances = topology ? topology.instances || [] : [];
       const reasons = (topology && topology.anomalies ? topology.anomalies : []).map(anomaly => typeof anomaly === 'string' ? anomaly : anomaly.message || anomaly.kind || '拓扑异常');
       const clusterState = state.clusterDetail && state.clusterDetail.cluster && state.clusterDetail.cluster.health && state.clusterDetail.cluster.health.state;
-      if (!topology) reasons.push('拓扑观测不可用');
-      else if (!instances.some(instance => instance.role === 'primary')) reasons.push('未发现当前主库');
+	  if (!topology) reasons.push('拓扑观测不可用');
+	  else {
+		const primaries = observedPrimaryInstances(instances);
+		if (!primaries.length) reasons.push('未发现可观测主库');
+		if (primaries.length > 1) reasons.push(`检测到 ${primaries.length} 个可写主库，已拒绝选择当前主库`);
+	  }
       instances.forEach(instance => {
-        const health = instance.health && instance.health.state;
-        if (health !== 'healthy') reasons.push(`${instanceAddress(instance)}：${healthText(health)}`);
+		const availability = instanceAvailability(instance);
+		if (!availability.available || (instance.health && instance.health.state) !== 'healthy') reasons.push(`${instanceAddress(instance)}：${availability.label}`);
       });
       if (['degraded', 'unhealthy'].includes(clusterState) && !reasons.length) reasons.push(`集群健康状态：${healthText(clusterState)}`);
       return [...new Set(reasons)];
@@ -1232,18 +1861,31 @@
 
     const renderTopology = () => {
       const instances = state.topology ? state.topology.instances || [] : [];
-      const primary = instances.find(instance => instance.role === 'primary');
-      const replicas = instances.filter(instance => instance.role !== 'primary');
+	  const primary = currentObservedPrimary(instances);
+	  const replicas = replicasForPrimary(instances, primary, state.topology);
+	  const detached = instances.filter(instance =>
+		(!primary || instance.resource_id !== primary.resource_id) &&
+		!replicas.some(replica => replica.resource_id === instance.resource_id));
       const primaryColumn = byId('primary-column');
       const replicaList = byId('replica-list');
-      primaryColumn.replaceChildren(primary ? createNodeCard(primary, activeVIP()) : text('div', 'empty-state', '尚未发现主库'));
+	  const detachedNodes = byId('detached-nodes');
+	  const detachedNodeList = byId('detached-node-list');
+      primaryColumn.replaceChildren(primary ? createNodeCard(primary, activeWriterEndpoint()) : text('div', 'empty-state', '尚未发现主库'));
       replicaList.replaceChildren();
       if (!replicas.length) replicaList.append(text('div', 'empty-state', '尚未发现从库'));
       replicas.forEach(instance => { const row = text('div', 'replica-row', ''); row.append(createNodeCard(instance)); replicaList.append(row); });
+	  detachedNodeList.replaceChildren();
+	  detached.forEach(instance => detachedNodeList.append(createNodeCard(instance)));
+	  detachedNodes.hidden = detached.length === 0;
       byId('topology-grid').classList.toggle('no-primary', !primary);
       byId('topology-connector').hidden = !primary || replicas.length === 0;
       const cluster = state.clusterDetail && state.clusterDetail.cluster;
       byId('topology-cluster-name').textContent = cluster ? cluster.display_name || cluster.resource_id : '未选择集群';
+	  byId('topology-runtime').textContent = runtimeProfileShortLabel(state.clusterDetail);
+	  byId('topology-runtime').className = runtimeProfileBadgeClass(state.clusterDetail);
+	  byId('topology-runtime').title = runtimeProfileLabel(state.clusterDetail);
+	  byId('topology-entry').textContent = endpointBoundaryLabel(state.clusterDetail);
+	  byId('topology-entry').className = runtimeProfileForDetail(state.clusterDetail).endpoint_providers.length ? 'badge runtime' : 'badge warning';
       const attentionReasons = topologyAttentionReasons();
       byId('topology-risk').textContent = attentionReasons.length ? '需关注' : '健康';
       byId('topology-risk').className = attentionReasons.length ? 'badge warning' : 'badge success';
@@ -1252,16 +1894,26 @@
       const body = byId('topology-inventory'); body.replaceChildren();
       instances.forEach(instance => {
         const row = document.createElement('tr');
-        const values = [nodeName(instance), instance.resource_id, nativeIdentityValue(instance), instance.hostname, instance.ip_address, instance.port, instance.engine_metadata && instance.engine_metadata.version, roleText(instance.role), lagText(instance), instance.role === 'primary' && activeVIP() ? (activeVIP().ip_address || activeVIP().hostname) : '-'];
+		const placement = instanceRuntimePlacement(instance);
+		const writerEndpoint = activeWriterEndpoint();
+		const values = [nodeName(instance), instance.resource_id, nativeIdentityValue(instance), placement.layer, placement.workload, placement.host, instance.hostname, instance.ip_address, instance.port, instance.engine_metadata && instance.engine_metadata.version, instanceRoleText(instance), lagText(instance), instanceOwnsActiveWriterEndpoint(instance) ? writerEndpointLabel(writerEndpoint) : '-'];
         values.forEach((value, index) => row.append(text('td', index === 1 || index === 2 ? 'mono' : '', String(value || '-'))));
         body.append(row);
       });
       renderMetadataSelector();
     };
 
-    const eligibleCandidates = () => {
-      const instances = state.topology ? state.topology.instances || [] : [];
-      return instances.filter(instance => instance.role !== 'primary').map(instance => ({ instance, assessment: assessmentByID(instance.resource_id) }));
+	const eligibleCandidates = () => {
+	  const instances = state.topology ? state.topology.instances || [] : [];
+	  const primary = currentObservedPrimary(instances);
+	  return instances.filter(instance => (!primary || instance.resource_id !== primary.resource_id) && instanceAvailability(instance).available).map(instance => ({ instance, assessment: assessmentByID(instance.resource_id) }));
+    };
+
+    const replicaIsRunning = instance => {
+      const replication = instance.replication || {};
+      const health = instance.health || {};
+      return health.replication === 'running' ||
+        (replication.io_thread === 'running' && replication.sql_thread === 'running');
     };
 
     const formerPrimaryCandidates = () => {
@@ -1273,18 +1925,24 @@
       return instances.filter(instance => {
         if (instance.role === 'primary') return false;
         const replication = instance.replication || {};
-        return historicalSourceIDs.has(instance.resource_id) || instance.maintenance || instance.health.state !== 'healthy' ||
-          replication.io_thread !== 'running' || replication.sql_thread !== 'running';
+        const healthState = instance.health && instance.health.state ? instance.health.state : 'unknown';
+        const brokenThreadStates = new Set(['stopped', 'failed', 'error', 'not_running', 'off']);
+        const explicitlyBrokenReplication = brokenThreadStates.has(String(replication.io_thread || '').toLowerCase()) ||
+          brokenThreadStates.has(String(replication.sql_thread || '').toLowerCase());
+        const historicalPrimaryNeedsRecovery = historicalSourceIDs.has(instance.resource_id) && !replicaIsRunning(instance);
+        return Boolean(instance.maintenance) || healthState !== 'healthy' || explicitlyBrokenReplication || historicalPrimaryNeedsRecovery;
       });
     };
 
     const renderOperationContext = () => {
       const cluster = state.clusterDetail && state.clusterDetail.cluster;
       const instances = state.topology ? state.topology.instances || [] : [];
-      const primary = instances.find(instance => instance.role === 'primary');
+      const primary = currentObservedPrimary(instances);
       byId('operation-cluster').textContent = cluster ? cluster.display_name || cluster.resource_id : '-';
       byId('operation-primary').textContent = instanceAddress(primary);
-      const vip = activeVIP(); byId('operation-vip').textContent = vip ? vip.ip_address || vip.hostname || '-' : '-';
+      byId('operation-runtime').textContent = runtimeBoundaryLabel(state.clusterDetail);
+      byId('operation-runtime').title = runtimeBoundaryLabel(state.clusterDetail);
+      byId('operation-vip').textContent = writerEndpointLabel(activeWriterEndpoint());
       const selector = byId('candidate-select'); selector.replaceChildren();
       const candidates = eligibleCandidates();
       if (!candidates.length) selector.append(new Option('无可用候选', ''));
@@ -1327,9 +1985,40 @@
       const localized = {
         'a mutating SQL executor and writer-endpoint provider are required': '未配置可执行 SQL 通道和 VIP 写入端点',
         'not implemented in phase one': '该数据库适配器尚未实现真实执行',
-        'node lifecycle execution is not configured': '未配置节点安装与同步执行器'
+        'node lifecycle execution is not configured': '未配置节点安装与同步执行器',
+        'operation outcome requires verification': '操作结果需要人工复核',
+        'primary transition completed, but post-operation verification requires review': '主库切换已经发生，但后验检查未全部通过，请停止重复切换并复核拓扑和 VIP',
+        'operation changed state, but post-operation verification did not pass': '操作已改变数据库状态，但后验检查未通过，请复核拓扑后再继续',
+        'former-primary synchronization outcome requires verification before retrying recovery': '旧主同步结果不确定，请先检查该节点是否已经作为从库启动，再决定是否重试',
+        'former-primary isolation outcome requires verification before recovery can continue': '旧主隔离状态不确定，请确认该节点不可写且不持有 VIP 后再继续恢复',
+        'former-primary synchronization failed; verify the current primary is reachable and retry recovery': '旧主同步失败，请确认当前主库、目标节点数据库服务和 Agent 均可达后重试'
       };
       return state.language === 'zh-CN' && localized[reason] ? localized[reason] : reason;
+    };
+
+    const operationFailureGuidance = error => {
+      const result = error && error.result ? error.result : {};
+      const failureClass = String(result.failure_class || '').trim();
+      const messages = state.language === 'zh-CN'
+        ? {
+            rebuild_failed:'旧主同步失败，请确认当前主库、目标节点数据库服务和 Agent 均可达后重试',
+            promoted_unverified:'主库切换已经发生，但后验检查未全部通过，请停止重复切换并复核拓扑和 VIP',
+            rewind_unknown:'旧主同步结果不确定，请先检查该节点是否已经作为从库启动，再决定是否重试',
+            fenced:'旧主已经隔离，但恢复进度未能持久化，请复核节点状态后继续',
+            fence_unknown:'旧主隔离状态不确定，请确认该节点不可写且不持有 VIP 后再继续恢复',
+            verification_failed:'操作已改变数据库状态，但后验检查未通过，请复核拓扑后再继续',
+            verification_unknown:'后验检查无法完成，请确认数据库、Agent 和 VIP 探测均可达'
+          }
+        : {
+            rebuild_failed:'Former-primary synchronization failed. Verify that the current primary, target database service, and agent are reachable, then retry.',
+            promoted_unverified:'The primary transition occurred, but post-operation verification did not fully pass. Stop repeated switching and review topology and VIP ownership.',
+            rewind_unknown:'The former-primary synchronization result is uncertain. Check whether the node is already running as a standby before retrying.',
+            fenced:'The former primary is isolated, but recovery progress was not persisted. Review the node state before continuing.',
+            fence_unknown:'Former-primary isolation is uncertain. Confirm that the node is read-only and does not own the VIP before recovery continues.',
+            verification_failed:'The operation changed database state, but post-operation verification failed. Review topology before continuing.',
+            verification_unknown:'Post-operation verification could not complete. Check database, agent, and VIP probe reachability.'
+          };
+      return messages[failureClass] || localizedReason(error && error.message ? error.message : '控制 API 请求失败');
     };
 
     const capabilityReason = name => {
@@ -1384,12 +2073,27 @@
       });
     };
 
+    const terminalOperationStatuses = new Set(['succeeded', 'blocked', 'failed', 'indeterminate', 'unsupported']);
+    const operationResponseTrackingDelayMs = 12000;
+    const operationOutcomeTrackingTimeoutMs = 30 * 60 * 1000;
+    const controlEntryRecoveryTimeoutMs = 2 * 60 * 1000;
+    const operationStatusRequestTimeoutMs = 5000;
+    const fetchTrackedOperation = async idempotencyKey => {
+      const controller = new AbortController();
+      const requestTimer = window.setTimeout(() => controller.abort(), operationStatusRequestTimeoutMs);
+      try {
+        return await fetchResult(`/api/v1/operations?idempotency_key=${encodeURIComponent(idempotencyKey)}`, { signal:controller.signal });
+      } finally {
+        window.clearTimeout(requestTimer);
+      }
+    };
+
     const pollOperationProgress = async (idempotencyKey, isSettled) => {
       while (!isSettled()) {
         await new Promise(resolve => window.setTimeout(resolve, 350));
         if (isSettled()) return;
         try {
-          const operation = await fetchResult(`/api/v1/operations?idempotency_key=${encodeURIComponent(idempotencyKey)}`);
+          const operation = await fetchTrackedOperation(idempotencyKey);
           renderOperationProgress(operation);
         } catch (error) {
           if (!(error instanceof APIError) || error.status !== 404) return;
@@ -1397,10 +2101,56 @@
       }
     };
 
+    const recoverOperationAfterConnectionLoss = async (idempotencyKey, label) => {
+      const deadline = Date.now() + operationOutcomeTrackingTimeoutMs;
+      let lastOperation = null;
+      let controlEntryUnavailableSince = 0;
+      renderActionResult(`${label}请求已提交，后台正在执行，正在持续跟踪操作状态。`);
+      while (Date.now() < deadline) {
+        await new Promise(resolve => window.setTimeout(resolve, 700));
+        try {
+          const operation = await fetchTrackedOperation(idempotencyKey);
+          controlEntryUnavailableSince = 0;
+          lastOperation = operation;
+          renderOperationProgress(operation);
+          if (terminalOperationStatuses.has(operation.status)) return operation;
+        } catch (error) {
+          if (!(error instanceof APIError)) throw error;
+          if ([0, 404, 502, 503, 504].includes(error.status)) {
+            if (!controlEntryUnavailableSince) {
+              controlEntryUnavailableSince = Date.now();
+              renderActionResult(`${label}仍在后台执行，控制入口暂时不可达，正在重新连接。`);
+            }
+            if (Date.now() - controlEntryUnavailableSince >= controlEntryRecoveryTimeoutMs) {
+              throw new APIError('控制入口恢复超时，操作结果待确认，请查看操作日志', 0, lastOperation, true);
+            }
+            continue;
+          }
+          throw error;
+        }
+      }
+      throw new APIError('操作已超过页面跟踪时限，后台仍可能继续执行，请在操作日志查看最终结果', 0, lastOperation, true);
+    };
+
     const renderActionResult = (message, isError = false) => {
       const target = byId('operation-result');
       target.textContent = message;
       target.className = isError ? 'result-banner error' : 'result-banner success';
+    };
+
+    const maxStalePlanAttempts = 3;
+    const isRecoverableOperationSubmissionError = error => error instanceof APIError && (
+      error.status === 0 ||
+      (error.status === 409 && (error.message === 'operation state conflict' || (error.result && error.result.status === 'running')))
+    );
+    const isRetryablePreCommitStalePlan = error => {
+      const result = error && error.result;
+      return error instanceof APIError && error.status === 409
+        && error.committed !== true
+        && result
+        && result.failure_class === 'stale_plan'
+        && result.status === 'blocked'
+        && ['precheck', 'plan'].includes(result.stage);
     };
 
     const executeOperation = async (kind, targetID, label) => {
@@ -1412,18 +2162,47 @@
       if (kind === 'switchover') renderOperationProgress({ stage:'precheck', status:'running' });
       renderActionResult(`${label}正在执行。`);
       try {
-        const idempotencyKey = `console-${kind}-${cluster.resource_id}-${targetID}-${Date.now()}`;
-        const payload = {
-          operation: { cluster_id: cluster.resource_id, engine: cluster.engine, kind, requested_by: state.currentUser.username },
-          target_id: kind === 'switchover' ? state.selectedCandidateId : targetID,
-          idempotency_key: idempotencyKey
-        };
-        let settled = false;
-        const executionRequest = fetchResult('/api/v1/operations/execute', mutationOptions(payload)).finally(() => { settled = true; });
-        const progressRequest = kind === 'switchover' ? pollOperationProgress(idempotencyKey, () => settled) : Promise.resolve();
         let operation;
-        try { operation = await executionRequest; }
-        finally { settled = true; await progressRequest; }
+        for (let attempt = 1; attempt <= maxStalePlanAttempts; attempt += 1) {
+          const idempotencyKey = `console-${kind}-${cluster.resource_id}-${targetID}-${Date.now()}-${attempt}`;
+          const payload = {
+            operation: { cluster_id: cluster.resource_id, engine: cluster.engine, kind, requested_by: state.currentUser.username },
+            target_id: targetID,
+            idempotency_key: idempotencyKey
+          };
+          let settled = false;
+          const executionOutcome = fetchResult('/api/v1/operations/execute', mutationOptions(payload)).then(
+            operation => ({ operation }),
+            error => ({ error })
+          );
+          const progressRequest = kind === 'switchover' ? pollOperationProgress(idempotencyKey, () => settled) : Promise.resolve();
+          try {
+            try {
+              const initialOutcome = await Promise.race([
+                executionOutcome,
+                new Promise(resolve => window.setTimeout(() => resolve({ tracking:true }), operationResponseTrackingDelayMs))
+              ]);
+              if (initialOutcome.tracking) {
+                operation = await recoverOperationAfterConnectionLoss(idempotencyKey, label);
+              } else if (initialOutcome.error) {
+                if (!isRecoverableOperationSubmissionError(initialOutcome.error)) throw initialOutcome.error;
+                operation = await recoverOperationAfterConnectionLoss(idempotencyKey, label);
+              } else {
+                operation = initialOutcome.operation;
+              }
+            } finally {
+              settled = true;
+              await progressRequest;
+            }
+            break;
+          } catch (error) {
+            if (!(kind === 'switchover' && attempt < maxStalePlanAttempts && isRetryablePreCommitStalePlan(error))) throw error;
+            renderActionResult(`${label}：拓扑已变化，正在刷新并重新校验（${attempt + 1}/${maxStalePlanAttempts}）。`);
+            await loadSelectedCluster({ preserveOperationResult:true });
+            await new Promise(resolve => window.setTimeout(resolve, 300));
+            renderOperationProgress({ stage:'precheck', status:'running' });
+          }
+        }
         if (kind === 'switchover') renderOperationProgress(operation);
         if (!operation || operation.status !== 'succeeded' || !(operation.verification && operation.verification.passed)) throw new APIError(`${label}未完成验证`, 409, operation);
         if (kind === 'switchover') {
@@ -1434,13 +2213,116 @@
         await loadOperationLog();
       } catch (error) {
         if (kind === 'switchover' && error.result) renderOperationProgress(error.result);
+        const outcomeUnknown = error.result && error.result.status === 'indeterminate' || error.committed && error.status === 0;
         const message = error.result && error.result.status === 'indeterminate'
           ? '结果不确定，停止执行并要求人工复核'
           : error.message;
-        renderActionResult(`${label}失败：${message}`, true);
+        renderActionResult(outcomeUnknown ? `${label}结果待确认：${message}` : `${label}失败：${message}`, true);
         setLiveStatus(message, true);
       } finally {
         state.operationRunning = false;
+        relockSwitch();
+      }
+    };
+
+    const formerPrimaryRebuildPayload = targetID => {
+      const instance = state.topology && (state.topology.instances || []).find(item => item.resource_id === targetID);
+      const node = instance && nodeByID(instance.node_id);
+      if (!instance || !node) throw new APIError('恢复节点缺少已登记的固定节点身份', 409);
+      const version = String((instance.engine_metadata && instance.engine_metadata.version) || '').match(/^\d+(?:\.\d+)*/);
+      if (!version || !instance.port) throw new APIError('恢复节点缺少 MySQL 版本或端口证据', 409);
+      return {
+        cluster_id: state.selectedClusterId,
+        action:'rebuild',
+        sync_method:'auto',
+        requested_by: state.currentUser ? state.currentUser.username : '',
+        targets:[{
+          node_id:node.resource_id,
+          node_name:node.node_name,
+          kind:node.kind,
+          hostname:node.hostname || instance.hostname,
+          ip_address:node.ip_address || instance.ip_address || '',
+          ssh_user:'root',
+          ssh_port:22,
+          mysql_version:version[0],
+          mysql_port:Number(instance.port),
+          server_id:Number(instance.engine_metadata && instance.engine_metadata.server_id) || 0,
+          package_name:'',
+          rebuild:true
+        }]
+      };
+    };
+
+    const runNodeSyncPayload = async payload => {
+      const precheck = await fetchResult('/api/v1/nodes/sync/precheck', mutationOptions(payload));
+      if (precheck.blocked) throw new APIError('节点全量重建被安全检查阻断', 409, precheck);
+      const task = await fetchResult('/api/v1/nodes/sync/execute', mutationOptions(payload));
+      if (!task || task.status !== 'succeeded') throw new APIError('节点全量重建未完成验证', 409, task);
+      return task;
+    };
+
+    const recoverFormerPrimary = async targetID => {
+      if (!state.switchUnlocked || !targetID || !state.currentUser || state.operationRunning) return;
+      const cluster = state.clusterDetail && state.clusterDetail.cluster;
+      if (!cluster || !['mysql', 'postgresql'].includes(cluster.engine)) return;
+      const isMySQL = cluster.engine === 'mysql';
+      state.operationRunning = true;
+      updateExecutionButtons();
+      renderActionResult(isMySQL
+        ? '正在判断旧主可使用增量回挂还是需要全量重建。'
+        : '正在检查旧主 WAL 时间线及增量回挂条件。');
+      const idempotencyKey = `console-former-primary-recovery-${cluster.resource_id}-${targetID}-${Date.now()}`;
+      const operationPayload = {
+        operation:{ cluster_id:cluster.resource_id, engine:cluster.engine, kind:'former_primary_rejoin', requested_by:state.currentUser.username },
+        target_id:targetID,
+        idempotency_key:idempotencyKey
+      };
+      try {
+        renderActionResult('正在刷新集群发现，确认旧主当前只读状态和复制证据。');
+        await fetchResult(`/api/v1/clusters/${cluster.resource_id}/discover`, mutationOptions({}));
+        await loadSelectedCluster({ preserveOperationResult:true });
+        const decision = await fetchResult('/api/v1/operations/precheck', mutationOptions(operationPayload));
+        const checks = Array.isArray(decision.checks) ? decision.checks : [];
+        const failed = checks.filter(check => check.status === 'fail');
+        const rebuildChecks = new Set(isMySQL
+          ? ['former_primary_gtid_subset', 'required_binlog_available', 'rebuild_required']
+          : []);
+        const requiresRebuild = failed.some(check => rebuildChecks.has(check.name));
+        const hardBlockers = failed.filter(check => !rebuildChecks.has(check.name));
+        if (hardBlockers.length) throw new APIError(`恢复被安全检查阻断：${hardBlockers.map(check => check.name).join('、')}`, 409, decision);
+
+        if (requiresRebuild) {
+          if (!canAdministerPlatform()) throw new APIError('检测到需要全量重建，仅平台管理员可以继续', 403, decision);
+          if (!state.lifecycleCapability.available) throw new APIError(`检测到需要全量重建，但节点流程不可执行：${localizedReason(state.lifecycleCapability.reason)}`, 503, decision);
+          renderActionResult('检测到 binlog 缺口或 GTID 分叉，正在自动执行全量重建、数据同步和复制恢复。');
+          state.lifecycleRunning = true;
+          updateNodeLifecycleControls();
+          const task = await runNodeSyncPayload(formerPrimaryRebuildPayload(targetID));
+          await loadNodesAndTasks();
+          await loadSelectedCluster({ preserveOperationResult:true });
+          renderActionResult(`全量重建并恢复为从库完成，任务 ${task.resource_id} 已验证。`);
+        } else {
+          renderActionResult(isMySQL
+            ? '所需 binlog 完整，正在执行 GTID 增量回挂。'
+            : '正在执行 pg_rewind 增量回挂，必要时自动回退 pg_basebackup 全量同步。');
+          const operation = await fetchResult('/api/v1/operations/execute', mutationOptions(operationPayload));
+          if (!operation || operation.status !== 'succeeded' || !(operation.verification && operation.verification.passed)) {
+            throw new APIError(isMySQL ? '增量回挂未完成验证' : 'PostgreSQL 旧主回挂未完成验证', 409, operation);
+          }
+          await loadSelectedCluster({ preserveOperationResult:true });
+          renderActionResult(isMySQL
+            ? '增量回挂完成，旧主已作为只读从库重新加入。'
+            : '旧主回挂完成，节点已作为只读流复制从库重新加入。');
+        }
+        await loadOperationLog();
+      } catch (error) {
+        const guidance = operationFailureGuidance(error);
+        renderActionResult(`旧主恢复失败：${guidance}`, true);
+        setLiveStatus(guidance, true);
+      } finally {
+        state.lifecycleRunning = false;
+        state.operationRunning = false;
+        updateNodeLifecycleControls();
         relockSwitch();
       }
     };
@@ -1455,6 +2337,278 @@
       let size = value; let unit = 0;
       while (size >= 1024 && unit < units.length - 1) { size /= 1024; unit += 1; }
       return `${size.toLocaleString(state.language, { maximumFractionDigits:unit ? 1 : 0 })} ${units[unit]}`;
+    };
+
+    const softwareUpdateStatusText = value => ({
+      uploaded:'已上传', queued:'排队中', running:'升级中', planned:'计划已通过',
+      succeeded:'升级成功', failed:'升级失败', rolled_back:'已回退'
+    })[value] || value || '尚未计划';
+    const softwareUpdateModeText = value => ({ plan:'只读计划', execute:'滚动升级', resume:'续跑升级', rollback:'受控回退' })[value] || value || '-';
+    const softwareUpdateBadgeClass = value => ({ succeeded:'success', planned:'success', rolled_back:'warning', failed:'danger', running:'warning', queued:'warning' })[value] || '';
+    const platformVersionText = () => {
+      const version = state.platformVersion || {};
+      if (!version.version) return '版本未知';
+      return version.release && version.release !== '0' ? `${version.version}-${version.release}` : version.version;
+    };
+    const renderPlatformVersion = () => {
+      const label = platformVersionText();
+      const version = state.platformVersion || {};
+      byId('platform-current-version').textContent = label;
+      byId('software-update-running-version').textContent = label;
+      byId('software-update-running-architecture').textContent = version.rpm_architecture || version.architecture || '-';
+    };
+    const latestSoftwareUpdate = () => (state.softwareUpdates && state.softwareUpdates.packages && state.softwareUpdates.packages[0]) || null;
+    const softwareUpdateIsActive = job => !!(job && (job.maintenance_active || (job.mode !== 'plan' && ['queued', 'running'].includes(job.status))));
+    const renderSoftwareUpdateHistory = snapshot => {
+      const packages = (snapshot && snapshot.packages) || [];
+      const body = byId('software-update-history');
+      body.replaceChildren();
+      byId('software-update-history-count').textContent = `${packages.length} 条`;
+      byId('software-update-history-summary').textContent = `${packages.length} 次`;
+      if (!packages.length) {
+        const row = document.createElement('tr');
+        const cell = text('td', 'software-update-empty', '尚无升级记录。');
+        cell.colSpan = 6;
+        row.append(cell);
+        body.append(row);
+        return;
+      }
+      packages.forEach(item => {
+        const record = item.package || {};
+        const job = item.job || null;
+        const status = (job && job.status) || 'uploaded';
+        const occurredAt = (job && (job.finished_at || job.updated_at || job.started_at)) || record.uploaded_at;
+        const row = document.createElement('tr');
+        const statusCell = document.createElement('td');
+        statusCell.append(text('span', `badge ${softwareUpdateBadgeClass(status)}`, softwareUpdateStatusText(status)));
+        row.append(
+          statusCell,
+          text('td', 'mono', record.patch_id || '-'),
+          text('td', '', `${record.source_version || '不限'} → ${record.target_version || '-'}`),
+          text('td', '', softwareUpdateModeText(job && job.mode)),
+          text('td', '', occurredAt ? new Date(occurredAt).toLocaleString(state.language) : '-'),
+          text('td', 'history-message', (job && job.message) || '升级包已上传并通过签名校验')
+        );
+        body.append(row);
+      });
+    };
+    const renderSelectedSoftwareUpdateFile = () => {
+      const input = byId('software-update-package-file');
+      const file = input.files && input.files[0];
+      byId('software-update-file-name').textContent = file
+        ? `${file.name} · ${formatBytes(file.size)}`
+        : '支持 .cgupgrade，兼容旧 .cgpatch';
+    };
+
+    const renderSoftwareUpdateGlobalWarning = () => {
+      const latest = latestSoftwareUpdate();
+      const activePackage = (state.softwareUpdates.packages || []).find(item => softwareUpdateIsActive(item.job));
+      const statusActive = !!(state.controlPlane && state.controlPlane.update_maintenance_active);
+      const active = activePackage || (statusActive ? latest : null);
+      const banner = byId('software-update-global-warning');
+      banner.hidden = !(active || statusActive);
+      if (!(active || statusActive)) return;
+      const job = active && active.job;
+      const patchID = active && active.package ? active.package.patch_id : '';
+      const node = job && job.node ? ` · 当前节点 ${job.node}` : '';
+      byId('software-update-global-detail').textContent = patchID
+        ? `升级包 ${patchID} · ${softwareUpdateStatusText(job && job.status)}${node}`
+        : '控制面升级维护标记已生效，自动故障切换已暂停。';
+      byId('software-update-global-state').textContent = job && job.mode === 'rollback' ? '受控回退中' : '升级维护中';
+    };
+
+    const renderSoftwareUpdates = () => {
+      renderPlatformVersion();
+      if (!canAdministerPlatform()) {
+        renderSoftwareUpdateGlobalWarning();
+        return;
+      }
+      const snapshot = state.softwareUpdates || { available:false, packages:[] };
+      const ready = byId('software-update-readiness');
+      ready.textContent = snapshot.available ? '可用' : '不可用';
+      ready.className = `badge ${snapshot.available ? 'success' : 'danger'}`;
+      byId('software-update-reason').textContent = snapshot.available
+        ? '升级包验签服务和受限升级 Helper 已就绪。支持 .cgupgrade，兼容旧 .cgpatch。'
+        : `升级服务不可用：${snapshot.reason || '未配置升级包信任或升级 Helper'}`;
+      const latest = latestSoftwareUpdate();
+      renderSoftwareUpdateHistory(snapshot);
+      byId('software-update-latest-target').textContent = latest && latest.package && latest.package.target_version || '尚无升级包';
+      const packagePanel = byId('software-update-package');
+      packagePanel.hidden = !latest;
+      const anyActive = (snapshot.packages || []).some(item => item.job && ['queued', 'running'].includes(item.job.status));
+      byId('software-update-package-file').disabled = state.softwareUpdateRunning || anyActive || !snapshot.available;
+      byId('upload-software-update').disabled = state.softwareUpdateRunning || anyActive || !snapshot.available;
+      if (!latest) {
+        renderSoftwareUpdateGlobalWarning();
+        return;
+      }
+      const record = latest.package || {};
+      const job = latest.job || null;
+      byId('software-update-patch-id').textContent = record.patch_id || '-';
+      byId('software-update-source-version').textContent = record.source_version || '不限';
+      byId('software-update-target-version').textContent = record.target_version || '-';
+      byId('software-update-size').textContent = formatBytes(Number(record.size_bytes));
+      byId('software-update-signature').textContent = record.signature_verified ? '已通过' : '未通过';
+      byId('software-update-rolling').textContent = record.rolling ? '支持' : '不支持';
+      byId('software-update-rollback').textContent = record.rollback_available ? '可回退' : '不可回退';
+      byId('software-update-uploaded-at').textContent = record.uploaded_at ? new Date(record.uploaded_at).toLocaleString(state.language) : '-';
+      const status = job && job.status;
+      byId('software-update-job-status').textContent = softwareUpdateStatusText(status || 'uploaded');
+      byId('software-update-job-mode').textContent = softwareUpdateModeText(job && job.mode);
+      byId('software-update-job-node').textContent = (job && job.node) || '-';
+      byId('software-update-job-message').textContent = (job && job.message) || '等待生成只读计划。';
+      const busy = state.softwareUpdateRunning || ['queued', 'running'].includes(status);
+      byId('plan-software-update').disabled = !snapshot.available || busy;
+      byId('execute-software-update').disabled = !snapshot.available || busy || status !== 'planned';
+      byId('resume-software-update').disabled = !snapshot.available || busy || status !== 'failed';
+      byId('rollback-software-update').disabled = !snapshot.available || busy || !record.rollback_available || !['failed', 'succeeded'].includes(status);
+      const events = (job && job.events) || [];
+      byId('software-update-event-count').textContent = `${events.length} 条`;
+      const eventList = byId('software-update-events');
+      eventList.replaceChildren();
+      if (!events.length) {
+        eventList.append(text('div', 'software-update-empty', '尚无升级事件。'));
+      } else {
+        events.forEach(event => {
+          const row = text('div', 'software-update-event', '');
+          row.append(
+            text('span', '', event.updated_at ? new Date(event.updated_at).toLocaleString(state.language) : '-'),
+            text('strong', '', event.node || softwareUpdateStatusText(event.status)),
+            text('span', '', event.message || event.status || '-')
+          );
+          eventList.append(row);
+        });
+      }
+      byId('software-update-output').textContent = job && job.output_tail && job.output_tail.length ? job.output_tail.join('\n') : '尚无输出。';
+      renderSoftwareUpdateGlobalWarning();
+    };
+
+    const scheduleSoftwareUpdatePolling = () => {
+      if (state.softwareUpdatePollingTimer) window.clearTimeout(state.softwareUpdatePollingTimer);
+      state.softwareUpdatePollingTimer = null;
+      if (!canAdministerPlatform()) return;
+      const active = (state.softwareUpdates.packages || []).some(item => softwareUpdateIsActive(item.job) || (item.job && ['queued', 'running'].includes(item.job.status)));
+      state.softwareUpdatePollingTimer = window.setTimeout(() => loadSoftwareUpdates(false), active ? 2000 : 30000);
+    };
+
+    const loadSoftwareUpdates = async (notifyOnError = false) => {
+      if (!canAdministerPlatform()) {
+        state.softwareUpdates = { available:false, reason:'仅管理员可管理平台升级', warning:'系统升级期间无法进行自动切换，请注意关注。', packages:[] };
+        renderSoftwareUpdates();
+        return;
+      }
+      try {
+        state.softwareUpdates = await fetchResult('/api/v1/platform/updates');
+      } catch (error) {
+        state.softwareUpdates = { available:false, reason:error.message, warning:'系统升级期间无法进行自动切换，请注意关注。', packages:[] };
+        if (notifyOnError) setLiveStatus(`读取升级状态失败：${error.message}`, true);
+      } finally {
+        renderSoftwareUpdates();
+        scheduleSoftwareUpdatePolling();
+      }
+    };
+
+    const uploadSoftwareUpdate = async () => {
+      if (!canAdministerPlatform() || state.softwareUpdateRunning) return;
+      const input = byId('software-update-package-file');
+      const file = input.files && input.files[0];
+      const fileName = file && file.name.toLowerCase();
+      if (!file || !(fileName.endsWith('.cgupgrade') || fileName.endsWith('.cgpatch'))) {
+        const message = fileName && (fileName.endsWith('.tar.gz') || fileName.endsWith('.tgz'))
+          ? '这是用于新装或重装的完整离线安装包，不能直接用于滚动升级。请选择同一 Release 提供的 .cgupgrade 签名升级包。'
+          : '请选择 .cgupgrade 签名升级包；旧版本的 .cgpatch 仍可兼容。';
+        setLiveStatus(message, true);
+        return;
+      }
+      const maximum = Number(state.softwareUpdates.maximum_upload_bytes) || 0;
+      if (maximum && file.size > maximum) {
+        setLiveStatus(`升级包超过 ${formatBytes(maximum)} 上传上限。`, true);
+        return;
+      }
+      state.softwareUpdateRunning = true;
+      renderSoftwareUpdates();
+      try {
+        const form = new FormData();
+        form.append('package', file, file.name);
+        const uploaded = await fetchResult('/api/v1/platform/updates', { method:'POST', body:form });
+        input.value = '';
+        renderSelectedSoftwareUpdateFile();
+        setLiveStatus(`升级包 ${uploaded.patch_id} 已通过签名校验。`);
+        await loadSoftwareUpdates(true);
+      } catch (error) {
+        setLiveStatus(`升级包上传失败：${error.message}`, true);
+      } finally {
+        state.softwareUpdateRunning = false;
+        renderSoftwareUpdates();
+      }
+    };
+
+    const startSoftwareUpdate = async (mode, confirmation = '') => {
+      const latest = latestSoftwareUpdate();
+      const patchID = latest && latest.package && latest.package.patch_id;
+      if (!patchID || state.softwareUpdateRunning || !canAdministerPlatform()) return false;
+      let accepted = false;
+      state.softwareUpdateRunning = true;
+      renderSoftwareUpdates();
+      try {
+        await fetchResult(`/api/v1/platform/updates/${encodeURIComponent(patchID)}/${mode}`, mutationOptions({ confirmation }));
+        accepted = true;
+        setLiveStatus(mode === 'plan' ? `升级包 ${patchID} 正在生成升级计划。` : `升级包 ${patchID} 已进入${softwareUpdateModeText(mode)}队列。`);
+        await loadSoftwareUpdates(true);
+      } catch (error) {
+        setLiveStatus(`${softwareUpdateModeText(mode)}失败：${error.message}`, true);
+      } finally {
+        state.softwareUpdateRunning = false;
+        renderSoftwareUpdates();
+      }
+      return accepted;
+    };
+
+    const renderSoftwareUpdateConfirmation = () => {
+      const latest = latestSoftwareUpdate();
+      const patchID = latest && latest.package && latest.package.patch_id || '';
+      const matches = byId('software-update-confirmation-input').value === patchID;
+      const stateElement = byId('software-update-confirmation-state');
+      stateElement.textContent = matches ? '升级包 ID 已确认，可以继续。' : '尚未输入完整升级包 ID，不能执行。';
+      stateElement.className = matches ? 'confirmation-state ready' : 'confirmation-state';
+      byId('confirm-software-update-action').disabled = !matches || state.softwareUpdateRunning;
+    };
+
+    const openSoftwareUpdateConfirmation = mode => {
+      const latest = latestSoftwareUpdate();
+      const patchID = latest && latest.package && latest.package.patch_id;
+      if (!patchID || state.softwareUpdateRunning) return;
+      state.softwareUpdateAction = mode;
+      const labels = {
+        execute:['确认滚动升级', '将按跟随节点、数据节点、Leader 的顺序执行升级。', '确认执行升级'],
+        resume:['确认续跑升级', '将从持久化升级日志中断点续跑。', '确认续跑'],
+        rollback:['确认受控回退', '将根据已签名升级包内的回退工件执行受控回退。', '确认回退']
+      };
+      const copy = labels[mode] || labels.execute;
+      byId('software-update-confirmation-title').textContent = copy[0];
+      byId('software-update-confirmation-subtitle').textContent = copy[1];
+      byId('confirm-software-update-action').textContent = copy[2];
+      byId('confirm-software-update-action').className = mode === 'rollback' ? 'danger-button' : 'primary-button';
+      byId('software-update-confirmation-phrase').textContent = patchID;
+      byId('software-update-confirmation-input').value = '';
+      renderSoftwareUpdateConfirmation();
+      byId('software-update-confirmation-dialog').showModal();
+      window.setTimeout(() => byId('software-update-confirmation-input').focus(), 0);
+    };
+
+    const closeSoftwareUpdateConfirmation = () => {
+      if (state.softwareUpdateRunning) return;
+      state.softwareUpdateAction = '';
+      byId('software-update-confirmation-dialog').close();
+    };
+
+    const confirmSoftwareUpdateAction = async () => {
+      const latest = latestSoftwareUpdate();
+      const patchID = latest && latest.package && latest.package.patch_id || '';
+      if (!patchID || byId('software-update-confirmation-input').value !== patchID) return;
+      const mode = state.softwareUpdateAction;
+      const accepted = await startSoftwareUpdate(mode, patchID);
+      if (accepted && !state.softwareUpdateRunning && byId('software-update-confirmation-dialog').open) closeSoftwareUpdateConfirmation();
     };
 
     const metricDefinitionForEngine = engine => engine === 'postgresql' ? {
@@ -1529,7 +2683,7 @@
         const values = definition.columns.map(item => item.topology === 'lag'
           ? (instance ? lagText(instance) : '-')
           : formatMetricValue(item, sample.values && sample.values[item.key]));
-        [instance ? instanceAddress(instance) : sample.instance_id, instance ? roleText(instance.role) : '-', ...values].forEach(item => row.append(text('td', '', String(item))));
+        [instance ? instanceAddress(instance) : sample.instance_id, instance ? instanceRoleText(instance) : '-', ...values].forEach(item => row.append(text('td', '', String(item))));
         body.append(row);
       });
     };
@@ -1623,6 +2777,19 @@
       byId('node-ip').value = node.ip_address || '';
     };
 
+    const controllerPairRequired = () => byId('node-action').value === 'add' && ['controller', 'mixed'].includes(byId('node-kind').value);
+
+    const updateControllerPairMode = () => {
+      const required = controllerPairRequired();
+      byId('controller-pair-group').hidden = !required;
+      ['node-pair-name', 'node-pair-hostname', 'node-pair-ip'].forEach(id => { byId(id).required = required; });
+      if (required) {
+        byId('lifecycle-gate-note').textContent = '本次会成对加入两个控制成员，保持 Raft 投票节点为大于等于 3 的奇数。数据库安装和同步仅在数据节点或混合节点上执行。';
+      } else {
+        byId('lifecycle-gate-note').textContent = '控制节点最终数量必须为大于等于 3 的奇数。修复节点复用原资源 ID 和固定节点名。';
+      }
+    };
+
     const updateNodeActionMode = () => {
       const rebuilding = byId('node-action').value === 'rebuild';
       byId('rebuild-node-field').hidden = !rebuilding;
@@ -1630,16 +2797,19 @@
       byId('node-name').readOnly = rebuilding;
       byId('node-kind').disabled = rebuilding;
       if (rebuilding) populateRebuildNode();
+      updateControllerPairMode();
     };
 
     const resetNodeLifecycleForm = () => {
       byId('node-action').value = 'add';
       byId('rebuild-node-select').value = '';
       byId('node-kind').value = 'data';
-      ['node-name', 'node-resource-id', 'node-hostname', 'node-ip', 'node-server-id', 'node-package', 'node-postgresql-service', 'node-postgresql-data-directory'].forEach(id => { byId(id).value = ''; });
+      ['node-name', 'node-resource-id', 'node-hostname', 'node-ip', 'node-server-id', 'node-package', 'node-postgresql-service', 'node-postgresql-data-directory', 'node-pair-name', 'node-pair-resource-id', 'node-pair-hostname', 'node-pair-ip'].forEach(id => { byId(id).value = ''; });
       byId('node-ssh-user').value = 'root';
       byId('node-ssh-port').value = '22';
-      const primary = state.topology && (state.topology.instances || []).find(instance => instance.role === 'primary');
+      byId('node-pair-ssh-user').value = 'root';
+      byId('node-pair-ssh-port').value = '22';
+	  const primary = state.topology && currentObservedPrimary(state.topology.instances || []);
       byId('node-mysql-version').value = primary && primary.engine_metadata ? primary.engine_metadata.version || '' : '';
       byId('node-mysql-port').value = primary && primary.port ? String(primary.port) : '3306';
       byId('node-postgresql-version').value = primary && primary.engine_metadata ? primary.engine_metadata.version || '' : '';
@@ -1677,12 +2847,29 @@
       else Object.assign(target, {
         mysql_version: byId('node-mysql-version').value.trim(), mysql_port: Number(byId('node-mysql-port').value), server_id: Number(byId('node-server-id').value)
       });
+      const targets = [target];
+      if (controllerPairRequired()) {
+        const pairTarget = {
+          node_id: byId('node-pair-resource-id').value.trim(), node_name: byId('node-pair-name').value.trim(), kind: 'controller',
+          hostname: byId('node-pair-hostname').value.trim(), ip_address: byId('node-pair-ip').value.trim(), ssh_user: byId('node-pair-ssh-user').value.trim(),
+          ssh_port: Number(byId('node-pair-ssh-port').value), package_name: byId('node-package').value.trim(), rebuild: false
+        };
+        if (lifecycleEngine() === 'postgresql') Object.assign(pairTarget, {
+          postgresql_version: byId('node-postgresql-version').value.trim(), postgresql_port: Number(byId('node-postgresql-port').value)
+        });
+        else Object.assign(pairTarget, {
+          mysql_version: byId('node-mysql-version').value.trim(), mysql_port: Number(byId('node-mysql-port').value)
+        });
+        if (!pairTarget.node_name || !pairTarget.hostname || !pairTarget.ip_address) throw new Error('请填写配对控制节点的固定节点名、主机名和 IP');
+        if (pairTarget.node_name === target.node_name || pairTarget.hostname.toLowerCase() === target.hostname.toLowerCase() || pairTarget.ip_address === target.ip_address) throw new Error('两个控制节点必须使用不同的固定节点名、主机名和 IP');
+        targets.push(pairTarget);
+      }
       return {
         cluster_id: state.selectedClusterId,
         action: byId('node-action').value,
         sync_method: byId('sync-method').value,
         requested_by: state.currentUser ? state.currentUser.username : '',
-        targets: [target]
+        targets
       };
     };
 
@@ -1690,15 +2877,21 @@
       if (!state.lifecycleCapability.available) { setLiveStatus(`节点流程不可执行：${localizedReason(state.lifecycleCapability.reason)}`, true); return; }
       if (!lifecycleEngineSupported()) { setLiveStatus(`节点流程不可执行：${lifecycleUnavailableReason()}`, true); return; }
       if (!canAdministerPlatform() || !state.selectedClusterId) { setLiveStatus('仅管理员可以执行节点流程。', true); return; }
-      const payload = lifecyclePayload();
+      let payload;
+      try {
+        payload = lifecyclePayload();
+      } catch (error) {
+        byId('node-lifecycle-result').textContent = error.message;
+        byId('node-lifecycle-result').className = 'result-banner error';
+        setLiveStatus(error.message, true);
+        return;
+      }
       state.lifecycleRunning = true;
       updateNodeLifecycleControls();
       byId('node-lifecycle-result').textContent = '正在执行预检查、安装、同步和验证，请勿关闭窗口。';
       byId('node-lifecycle-result').className = 'result-banner';
       try {
-        const precheck = await fetchResult('/api/v1/nodes/sync/precheck', mutationOptions(payload));
-        if (precheck.blocked) throw new APIError('节点流程被预检查阻断', 409, precheck);
-        const task = await fetchResult('/api/v1/nodes/sync/execute', mutationOptions(payload));
+        const task = await runNodeSyncPayload(payload);
         setLiveStatus(`节点任务已完成：${task.status}`);
         await loadNodesAndTasks();
         await loadSelectedCluster();
@@ -1713,6 +2906,21 @@
       }
     };
 
+    const lifecycleStageOrder = ['preflight', 'install', 'synchronize', 'configure_replication', 'verify', 'metadata_commit'];
+    const lifecycleStageLabels = { preflight:'安全预检', install:'安装运行时', synchronize:'数据同步', configure_replication:'配置复制', verify:'健康验证', metadata_commit:'提交元数据' };
+    const lifecycleStageStatusText = status => ({ pending:'等待', running:'执行中', succeeded:'完成', failed:'失败' }[status] || '等待');
+    const lifecycleStageState = (task, stage, observed) => {
+      if (observed) return observed.status;
+      if (task.status === 'succeeded') return 'succeeded';
+      const currentIndex = lifecycleStageOrder.indexOf(task.current_stage);
+      const stageIndex = lifecycleStageOrder.indexOf(stage);
+      if (currentIndex >= 0 && stageIndex < currentIndex) return 'succeeded';
+      if (task.current_stage === stage) {
+        if (['failed', 'interrupted', 'indeterminate'].includes(task.status)) return 'failed';
+        if (['running', 'verifying'].includes(task.status)) return 'running';
+      }
+      return 'pending';
+    };
     const renderLifecycleTasks = () => {
       const root = byId('lifecycle-tasks'); root.replaceChildren();
       byId('lifecycle-task-count').textContent = state.lifecycleTasks.length > 8 ? `最近 8 / ${state.lifecycleTasks.length}` : `${state.lifecycleTasks.length} 条`;
@@ -1721,8 +2929,29 @@
         const card = text('div', 'log-card', '');
         const head = text('div', 'log-head', ''); head.append(text('strong', '', `${task.request.action} · ${task.request.targets.map(target => target.node_name).join(', ')}`), text('span', 'badge', statusText(task.status)));
         const grid = text('div', 'log-grid', '');
-        [['时间', new Date(task.created_at).toLocaleString(state.language)], ['集群', clusterDisplayName(task.cluster_id)], ['阶段', task.current_stage || '-'], ['同步', task.request.sync_method], ['操作', task.request.requested_by || '-'], ['报告', task.report_id || '-']].forEach(([label, value]) => { const cell = text('div', 'log-cell', ''); cell.append(text('span', '', label), text('strong', '', String(value))); grid.append(cell); });
-        card.append(head, grid); root.append(card);
+        [['时间', new Date(task.created_at).toLocaleString(state.language)], ['集群', clusterDisplayName(task.cluster_id)], ['节点类型', task.request.targets.map(target => target.kind).join(', ')], ['同步方式', task.request.sync_method], ['操作人', task.request.requested_by || '-'], ['报告', task.report_id || '-']].forEach(([label, value]) => { const cell = text('div', 'log-cell', ''); cell.append(text('span', '', label), text('strong', '', String(value))); grid.append(cell); });
+        const observedStages = new Map((task.stages || []).map(stage => [stage.stage, stage]));
+        const flow = text('div', 'lifecycle-stage-flow', '');
+        lifecycleStageOrder.forEach(stage => {
+          const observed = observedStages.get(stage);
+          const stageState = lifecycleStageState(task, stage, observed);
+          const item = text('div', 'lifecycle-stage', '');
+          item.dataset.state = stageState;
+          item.title = observed && observed.message ? observed.message : lifecycleStageLabels[stage];
+          item.append(text('strong', '', lifecycleStageLabels[stage]), text('small', '', lifecycleStageStatusText(stageState)));
+          flow.append(item);
+        });
+        card.append(head, grid, flow);
+        if (task.message) card.append(text('p', 'lifecycle-task-message', task.message));
+        const evidence = [];
+        if (task.log_tail && task.log_tail.length) evidence.push(...task.log_tail);
+        if (task.checks && task.checks.length) evidence.push('', '验证检查：', ...task.checks.map(check => `${check.status || '-'} ${check.name || '-'}: ${check.message || check.value || ''}`));
+        if (evidence.length) {
+          const details = document.createElement('details');
+          details.append(text('summary', '', '查看执行明细'), text('pre', '', evidence.join('\n')));
+          card.append(details);
+        }
+        root.append(card);
       });
     };
 
@@ -1792,7 +3021,17 @@
       visibleOperations.forEach(operation => {
         const card = text('article', 'log-card', '');
         const head = text('div', 'log-head', '');
-        head.append(text('strong', '', kindText(operation.operation && operation.operation.kind)), text('span', `badge ${operation.status === 'succeeded' ? 'success' : operation.status === 'failed' ? 'danger' : 'warning'}`, statusText(operation.status)));
+        const review = operation.review || null;
+        const operationStatus = operation.status === 'indeterminate' && review ? '已复核 · 结果不确定' : statusText(operation.status);
+        const headActions = text('div', 'log-head-actions', '');
+        headActions.append(text('span', `badge ${operation.status === 'succeeded' ? 'success' : operation.status === 'failed' ? 'danger' : 'warning'}`, operationStatus));
+        if (operation.status === 'indeterminate' && !review && canOperateClusters()) {
+          const reviewButton = text('button', 'log-review-button', '✓ 标记已复核');
+          reviewButton.type = 'button';
+          reviewButton.addEventListener('click', () => openOperationReview(operation));
+          headActions.append(reviewButton);
+        }
+        head.append(text('strong', '', kindText(operation.operation && operation.operation.kind)), headActions);
         const grid = text('div', 'log-grid', '');
         const cluster = state.clusters.find(item => item.resource_id === (operation.operation && operation.operation.cluster_id));
         const fields = [
@@ -1801,7 +3040,7 @@
           ['原主库', instanceLabel(operation.plan.source_id)],
           ['目标节点', instanceLabel(operation.target_id)],
           ['操作类型', kindText(operation.operation && operation.operation.kind)],
-          ['状态', operation.incident_attempt_count > 1 ? `${statusText(operation.status)}（${operation.incident_attempt_count} 次）` : statusText(operation.status)]
+          ['状态', operation.status === 'indeterminate' && review ? `已复核 · ${review.reviewed_by || '-'} · ${new Date(review.reviewed_at).toLocaleString(state.language)}` : (operation.incident_attempt_count > 1 ? `${statusText(operation.status)}（${operation.incident_attempt_count} 次）` : statusText(operation.status))]
         ];
         fields.forEach(([label, value]) => { const cell = text('div', 'log-cell', ''); cell.append(text('span', '', label), text('strong', '', value)); grid.append(cell); });
         const details = document.createElement('details');
@@ -1816,6 +3055,65 @@
       if (!state.selectedClusterId) { state.operations = []; renderOperationLog(); return; }
       state.operations = await fetchResult(`/api/v1/operations?cluster_id=${state.selectedClusterId}`) || [];
       renderOperationLog();
+    };
+
+    const setOperationReviewRunning = running => {
+      state.operationReviewRunning = running;
+      byId('submit-operation-review').disabled = running;
+      byId('cancel-operation-review').disabled = running;
+      byId('close-operation-review').disabled = running;
+      byId('operation-review-note').disabled = running;
+    };
+
+    const openOperationReview = operation => {
+      if (!operation || operation.status !== 'indeterminate' || operation.review || !canOperateClusters()) return;
+      state.operationReviewTargetId = operation.resource_id;
+      byId('operation-review-kind').textContent = kindText(operation.operation && operation.operation.kind);
+      byId('operation-review-id').textContent = operation.resource_id;
+      byId('operation-review-note').value = '';
+      byId('operation-review-result').textContent = '请填写本次人工核验的依据。';
+      byId('operation-review-result').className = 'result-banner';
+      setOperationReviewRunning(false);
+      byId('operation-review-dialog').showModal();
+      window.setTimeout(() => byId('operation-review-note').focus(), 0);
+    };
+
+    const closeOperationReview = () => {
+      if (state.operationReviewRunning) return;
+      state.operationReviewTargetId = '';
+      byId('operation-review-dialog').close();
+    };
+
+    const submitOperationReview = async () => {
+      const operationId = state.operationReviewTargetId;
+      const note = byId('operation-review-note').value.trim();
+      if (!operationId || state.operationReviewRunning) return;
+      if (!note) {
+        byId('operation-review-result').textContent = '必须填写复核说明。';
+        byId('operation-review-result').className = 'result-banner error';
+        return;
+      }
+      try {
+        setOperationReviewRunning(true);
+        byId('operation-review-result').textContent = '正在提交不可变复核记录。';
+        byId('operation-review-result').className = 'result-banner';
+        const reviewed = await fetchResult(`/api/v1/operations/${operationId}/review`, mutationOptions({ note }));
+        state.operations = state.operations.map(operation => operation.resource_id === operationId ? reviewed : operation);
+        state.allOperations = state.allOperations.map(operation => operation.resource_id === operationId ? reviewed : operation);
+        state.controlPlane = await fetchResult('/api/v1/control-plane/status').catch(() => state.controlPlane);
+        renderOperationLog();
+        renderOverview();
+        renderControlPlaneStatus();
+        byId('operation-review-result').textContent = '复核记录已保存，原始结果仍保留为不确定。';
+        byId('operation-review-result').className = 'result-banner success';
+        setLiveStatus('操作已标记为人工复核，原始结果未被改写。');
+        window.setTimeout(closeOperationReview, 450);
+      } catch (error) {
+        byId('operation-review-result').textContent = `提交复核失败：${error.message}`;
+        byId('operation-review-result').className = 'result-banner error';
+      } finally {
+        setOperationReviewRunning(false);
+      }
     };
 
     const renderCapabilities = () => {
@@ -1880,7 +3178,280 @@
       } catch (error) { byId('metadata-result').textContent = `保存失败：${error.message}`; }
     };
 
-    const topologyMatchesExpectedPrimary = (topology, expectedPrimaryID) => !expectedPrimaryID || !!(topology && (topology.instances || []).some(instance => instance.resource_id === expectedPrimaryID && instance.role === 'primary'));
+    const topologyMatchesExpectedPrimary = (topology, expectedPrimaryID) => !expectedPrimaryID || !!(topology && currentObservedPrimary(topology.instances || [], topology)?.resource_id === expectedPrimaryID);
+
+    const powerStateLabels = {
+      normal:'正常', prechecking:'检查中', maintenance:'维护保护', shutdown_planned:'计划停机',
+      shutting_down:'停机中', power_off:'已下电', boot_detected:'已检测启动', recovering:'恢复中',
+      verifying:'恢复验证中', completed:'已完成', failed:'已失败（需人工介入）'
+    };
+    const powerStateBadgeClass = stateLabel => ({
+      normal:'success', completed:'success', prechecking:'', maintenance:'warning',
+      shutdown_planned:'warning', shutting_down:'warning', power_off:'warning',
+      boot_detected:'warning', recovering:'', verifying:'', failed:'danger'
+    })[stateLabel] || '';
+    const powerModeLabel = mode => mode === 'poweroff' ? '整机下电' : (mode === 'service' ? '仅停服务' : (mode || '-'));
+    const formatPowerTimestamp = timestamp => timestamp ? new Date(timestamp).toLocaleString('zh-CN', { hour12:false }) : '-';
+    const powerOutageLabels = {
+      normal:'正常运行', planned_shutdown:'计划停库', planned_shutdown_failed:'计划停库失败',
+      unexpected_failure:'突发故障', unknown:'状态未知'
+    };
+    const powerDatabaseStateLabels = {
+      running:'运行中', stopping:'停止中', stopped:'已停止', recovering:'恢复中', failed:'异常', unknown:'未知'
+    };
+    const powerOutageDetail = classification => {
+      if (!classification) return '等待控制面证据';
+      if (classification.kind === 'planned_shutdown') {
+        const operator = classification.requested_by || '已认证操作员';
+        return `${operator} 于 ${formatPowerTimestamp(classification.requested_at)} 发起`;
+      }
+      if (classification.kind === 'planned_shutdown_failed') return '人工操作链路失败，保护保持且需人工复核';
+      if (classification.kind === 'unexpected_failure') return '没有计划停库记录，按数据库故障处理';
+      if (classification.kind === 'normal') return '无计划停库，数据库拓扑健康';
+      return '缺少足够的拓扑或生命周期证据';
+    };
+
+    const activePowerState = () => {
+      const operation = state.powerStatus && state.powerStatus.power_operation;
+      return operation && operation.state ? operation.state : 'normal';
+    };
+
+    const updatePowerControls = () => {
+      const button = byId('open-power-shutdown');
+      if (!button) return;
+      const powerState = activePowerState();
+      const lifecycleActive = !['normal', 'completed', 'failed'].includes(powerState);
+      button.disabled = state.powerRunning || !state.selectedClusterId || !canAdministerPlatform() || lifecycleActive;
+      button.title = !canAdministerPlatform()
+        ? '仅平台管理员可以执行集群关机'
+        : (lifecycleActive ? `当前电源流程状态：${powerStateLabels[powerState] || powerState}` : '受控停止整个数据库集群');
+    };
+
+    const selectedPowerMode = () => {
+      const selected = document.querySelector('input[name="power-mode"]:checked');
+      return selected ? selected.value : 'service';
+    };
+
+    const powerInstanceHostKeys = instance => {
+      const keys = [];
+      if (instance && instance.node_id) keys.push(`node:${instance.node_id}`);
+      if (instance && instance.ip_address) keys.push(`ip:${String(instance.ip_address).trim().toLowerCase()}`);
+      if (instance && instance.hostname) keys.push(`host:${String(instance.hostname).trim().toLowerCase()}`);
+      return keys;
+    };
+
+    const coResidentPowerClusters = () => {
+      if (!state.selectedClusterId || !state.topology) return [];
+      const selectedHosts = new Set((state.topology.instances || []).flatMap(powerInstanceHostKeys));
+      return state.clusters.filter(cluster => {
+        if (cluster.resource_id === state.selectedClusterId) return false;
+        const topology = state.fleetTopology.get(cluster.resource_id);
+        return !!(topology && (topology.instances || []).some(instance => powerInstanceHostKeys(instance).some(key => selectedHosts.has(key))));
+      });
+    };
+
+    const renderPowerShutdownConfirmation = () => {
+      const cluster = state.clusterDetail && state.clusterDetail.cluster;
+      const expected = cluster ? cluster.display_name || cluster.resource_id : '';
+      const confirmed = byId('power-confirm-name').value.trim() === expected && byId('power-confirm-impact').checked;
+      byId('confirm-power-shutdown').disabled = state.powerRunning || !confirmed || !canAdministerPlatform();
+      const poweroff = selectedPowerMode() === 'poweroff';
+      byId('power-impact-text').textContent = poweroff
+        ? '我确认平台先安全停止同宿主机上的全部受管集群，再关闭主机；带外开机后自动恢复。'
+        : '我确认停止该集群的全部数据库服务，主机重启后自动恢复。';
+    };
+
+    const openPowerShutdownDialog = () => {
+      const cluster = state.clusterDetail && state.clusterDetail.cluster;
+      if (!cluster || !state.topology) { setLiveStatus('请先选择集群并完成拓扑检查。', true); return; }
+      if (!canAdministerPlatform()) { setLiveStatus('仅平台管理员可以执行集群关机。', true); return; }
+      const instances = state.topology.instances || [];
+	  const primary = currentObservedPrimary(instances);
+      byId('power-cluster-name').textContent = cluster.display_name || cluster.resource_id;
+      byId('power-primary-name').textContent = instanceAddress(primary);
+      byId('power-node-count').textContent = `${instances.length} 个`;
+      const coResident = coResidentPowerClusters();
+      byId('power-shared-clusters').textContent = coResident.length
+        ? coResident.map(item => item.display_name || item.resource_id).join('、')
+        : '无';
+      byId('power-confirm-phrase').textContent = cluster.display_name || cluster.resource_id;
+      byId('power-confirm-name').value = '';
+      byId('power-confirm-impact').checked = false;
+      byId('power-mode-service').checked = true;
+      byId('power-shutdown-result').textContent = '等待确认。';
+      byId('power-shutdown-result').className = 'result-banner';
+      renderPowerShutdownConfirmation();
+      byId('power-shutdown-dialog').showModal();
+      window.setTimeout(() => byId('power-confirm-name').focus(), 0);
+    };
+
+    const closePowerShutdownDialog = () => {
+      if (state.powerRunning) return;
+      byId('power-shutdown-dialog').close();
+    };
+
+    const executePowerShutdown = async () => {
+      const cluster = state.clusterDetail && state.clusterDetail.cluster;
+      if (!cluster || state.powerRunning) return;
+      renderPowerShutdownConfirmation();
+      if (byId('confirm-power-shutdown').disabled) return;
+      const mode = selectedPowerMode();
+      const result = byId('power-shutdown-result');
+      state.powerRunning = true;
+      updatePowerControls();
+      renderPowerShutdownConfirmation();
+      result.className = 'result-banner';
+      const planningClusterIDs = new Set();
+      const executedClusters = [];
+      const cancelPlanning = async clusterId => {
+        try { await fetchResult(`/api/v1/clusters/${clusterId}/power/cancel`, mutationOptions({})); }
+        catch (_) {}
+        planningClusterIDs.delete(clusterId);
+      };
+      const precheck = async (clusterId, shutdownMode) => {
+        planningClusterIDs.add(clusterId);
+        return fetchResult(`/api/v1/clusters/${clusterId}/power/precheck`, mutationOptions({ mode:shutdownMode }));
+      };
+      const plan = async (clusterId, shutdownMode) => fetchResult(`/api/v1/clusters/${clusterId}/power/plan`, mutationOptions({ mode:shutdownMode }));
+      const execute = async (clusterId, displayName) => {
+        // Remove before submission. A lost response may mean shutdown already
+        // happened, so the UI must not attempt to cancel this lifecycle.
+        planningClusterIDs.delete(clusterId);
+        executedClusters.push(displayName || clusterId);
+        const executed = await fetchResult(`/api/v1/clusters/${clusterId}/power/execute`, mutationOptions({}));
+        const operation = executed && executed.power_operation;
+        if (!operation || operation.state !== 'power_off') throw new APIError(`后端未确认 ${displayName || clusterId} 已进入关机状态`, 409, executed);
+        return executed;
+      };
+      try {
+        result.textContent = '正在执行安全预检查。';
+        let selectedPrecheck = await precheck(cluster.resource_id, mode);
+        let blockers = Array.isArray(selectedPrecheck.blocking_reasons) ? selectedPrecheck.blocking_reasons : [];
+        const pendingCoResident = mode === 'poweroff'
+          ? (selectedPrecheck.co_resident_clusters || []).filter(item => !item.ready_for_poweroff)
+          : [];
+        const nonCoResidentBlockers = blockers.filter(reason => !String(reason).startsWith('host poweroff affects co-resident cluster '));
+        if (nonCoResidentBlockers.length) throw new APIError(`关机被阻断：${nonCoResidentBlockers.join('；')}`, 409, selectedPrecheck);
+
+        if (pendingCoResident.length) {
+          await cancelPlanning(cluster.resource_id);
+          result.textContent = `检测到 ${pendingCoResident.length} 套同宿主集群，正在逐套生成安全停库计划。`;
+          for (const resident of pendingCoResident) {
+            const residentPrecheck = await precheck(resident.cluster_id, 'service');
+            const residentBlockers = Array.isArray(residentPrecheck.blocking_reasons) ? residentPrecheck.blocking_reasons : [];
+            if (residentBlockers.length) throw new APIError(`${resident.display_name || resident.cluster_id} 停库被阻断：${residentBlockers.join('；')}`, 409, residentPrecheck);
+            await plan(resident.cluster_id, 'service');
+          }
+          for (let index = 0; index < pendingCoResident.length; index += 1) {
+            const resident = pendingCoResident[index];
+            result.textContent = `正在安全停止同宿主集群 ${resident.display_name || resident.cluster_id}（${index + 1}/${pendingCoResident.length}）。`;
+            await execute(resident.cluster_id, resident.display_name);
+          }
+          result.textContent = '同宿主集群已安全停库，正在复核整机关机条件。';
+          selectedPrecheck = await precheck(cluster.resource_id, mode);
+          blockers = Array.isArray(selectedPrecheck.blocking_reasons) ? selectedPrecheck.blocking_reasons : [];
+        }
+        if (blockers.length) throw new APIError(`关机被阻断：${blockers.join('；')}`, 409, selectedPrecheck);
+        result.textContent = '预检查通过，正在生成关机计划和恢复快照。';
+        await plan(cluster.resource_id, mode);
+        result.textContent = '计划已锁定，正在执行集群关机。';
+        await execute(cluster.resource_id, cluster.display_name);
+        result.textContent = mode === 'poweroff'
+          ? '所有同宿主集群已记录并安全停库，整机关机命令已提交。带外开机后将逐套自动恢复和验证。'
+          : '数据库服务已安全停止。主机重启后 ClusterGuard 将自动恢复并验证数据库。';
+        result.className = 'result-banner success';
+        setLiveStatus(mode === 'poweroff' ? '整机关机命令已提交。' : '数据库集群已安全停机。');
+        if (mode !== 'poweroff') await loadPowerStatus(cluster.resource_id);
+      } catch (error) {
+        // Plans that were never submitted can be cancelled. Submitted
+        // lifecycles stay fail-closed because a lost response may still mean
+        // the database or host was stopped.
+        for (const clusterId of [...planningClusterIDs]) await cancelPlanning(clusterId);
+        const partial = executedClusters.length
+          ? ` 已提交：${executedClusters.join('、')}；请通过带外开机触发自动恢复，禁止手工解除保护。`
+          : '';
+        result.textContent = `${error.message}${partial}`;
+        result.className = 'result-banner error';
+        setLiveStatus(`${error.message}${partial}`, true);
+        try { await loadPowerStatus(cluster.resource_id); } catch (_) {}
+      } finally {
+        state.powerRunning = false;
+        updatePowerControls();
+        renderPowerShutdownConfirmation();
+      }
+    };
+
+    const loadPowerStatus = async clusterId => {
+      let powerStatus = null;
+      try {
+        powerStatus = await fetchResult(`/api/v1/clusters/${clusterId}/power/status`);
+      } catch (error) {
+        if (error instanceof APIError && error.status !== 404) throw error;
+      }
+      state.powerStatus = powerStatus || null;
+      renderPowerStatus();
+      updatePowerControls();
+    };
+
+    const renderPowerStatus = () => {
+      const badge = byId('power-state-badge');
+      const protection = byId('power-protection');
+      const summary = byId('power-summary');
+      const history = byId('power-history');
+      if (!badge || !state.powerStatus) return;
+      const operation = state.powerStatus.power_operation;
+      const classification = state.powerStatus.outage_classification || null;
+      const stateLabel = operation && operation.state ? operation.state : 'normal';
+      badge.textContent = powerStateLabels[stateLabel] || stateLabel;
+      badge.className = `badge${powerStateBadgeClass(stateLabel) ? ` ${powerStateBadgeClass(stateLabel)}` : ''}`;
+      const outageKind = classification && classification.kind ? classification.kind : 'unknown';
+      byId('power-outage-kind').textContent = powerOutageLabels[outageKind] || outageKind;
+      byId('power-outage-kind').dataset.state = outageKind;
+      byId('power-outage-detail').textContent = powerOutageDetail(classification);
+      byId('power-database-state').textContent = powerDatabaseStateLabels[classification && classification.database_state] || '未知';
+      const failoverSuppressed = !!(classification && classification.automatic_failover_suppressed);
+      byId('power-failover-policy').textContent = failoverSuppressed ? '已冻结' : '已启用';
+      byId('power-failover-detail').textContent = failoverSuppressed
+        ? '计划停库保护生效，不触发故障切换'
+        : (outageKind === 'unexpected_failure' ? '按突发故障进入稳定性与仲裁检查' : '持续监测主库故障');
+      byId('power-control-plane').textContent = classification && classification.control_plane === 'online_independent'
+        ? '在线 · 独立运行' : '在线';
+      const frozen = !!state.powerStatus.recovery_freeze;
+      const maintenanceCount = Array.isArray(state.powerStatus.instances_in_maintenance)
+        ? state.powerStatus.instances_in_maintenance.length : 0;
+      protection.replaceChildren();
+      if (frozen || maintenanceCount > 0) {
+        if (frozen) protection.append(text('span', 'anomaly-item danger', `恢复冻结激活`));
+        if (maintenanceCount > 0) protection.append(text('span', 'anomaly-item warning', `${maintenanceCount} 个实例维护中`));
+      } else {
+        protection.append(text('span', 'anomaly-item clear', '恢复冻结关闭，无维护标记'));
+      }
+      summary.textContent = operation
+        ? `类型 ${operation.operation_type || '-'} · 模式 ${powerModeLabel(operation.mode)} · ${operation.requested_by || '-'} · ${formatPowerTimestamp(operation.started_at)}`
+        : '该集群尚无电源生命周期操作';
+      history.replaceChildren();
+      const operations = Array.isArray(state.powerStatus.operation_history) ? state.powerStatus.operation_history : [];
+      if (operations.length === 0) {
+        const row = document.createElement('tr');
+        row.append(text('td', '', '暂无电源操作记录'));
+        history.append(row);
+        return;
+      }
+      operations.forEach(item => {
+        const row = document.createElement('tr');
+        const stateCell = text('td', '', powerStateLabels[item.state] || item.state);
+        row.append(
+          stateCell,
+          text('td', '', item.operation_type || '-'),
+          text('td', '', powerModeLabel(item.mode)),
+          text('td', '', item.requested_by || '-'),
+          text('td', '', formatPowerTimestamp(item.started_at)),
+          text('td', '', item.message || '')
+        );
+        history.append(row);
+      });
+      updatePowerControls();
+    };
 
     const loadSelectedCluster = async ({ preserveOperationResult = false, expectedPrimaryID = '' } = {}) => {
       const clusterId = byId('cluster-select').value;
@@ -1922,6 +3493,7 @@
           const clusterIndex = state.clusters.findIndex(cluster => cluster.resource_id === clusterId);
           if (clusterIndex >= 0 && loaded.clusterDetail.cluster) state.clusters[clusterIndex] = loaded.clusterDetail.cluster;
           renderTopology(); renderOperationContext(); renderMetrics(); renderOperationLog(); renderOverview();
+          loadPowerStatus(clusterId);
           if (!topologyConverged) setLiveStatus('操作已验证，但当前控制节点的拓扑视图仍在同步，请刷新复核。', true);
           else setLiveStatus(loaded.unavailableSections.length ? `部分数据不可用：${loaded.unavailableSections.join('、')}。` : '集群状态已更新。');
         });
@@ -2125,17 +3697,18 @@
     };
 
     const loadClusters = async (preferredClusterId = '') => {
-      const [clusters, capabilities, nodes, operations, tasks, lifecycleCapability, controlPlane] = await Promise.all([
-        fetchResult('/api/v1/clusters'), fetchResult('/api/v1/capabilities'), fetchResult('/api/v1/nodes'), fetchResult('/api/v1/operations'), fetchResult('/api/v1/nodes/sync/tasks'), fetchResult('/api/v1/nodes/sync/capabilities'), fetchResult('/api/v1/control-plane/status').catch(() => null)
+      const [clusters, capabilities, nodes, operations, tasks, lifecycleCapability, controlPlane, platformVersion] = await Promise.all([
+        fetchResult('/api/v1/clusters'), fetchResult('/api/v1/capabilities'), fetchResult('/api/v1/nodes'), fetchResult('/api/v1/operations'), fetchResult('/api/v1/nodes/sync/tasks'), fetchResult('/api/v1/nodes/sync/capabilities'), fetchResult('/api/v1/control-plane/status').catch(() => null), fetchResult('/api/v1/platform/version').catch(() => null)
       ]);
       state.clusters = clusters || []; state.capabilities = capabilities || []; state.nodes = nodes || []; state.allOperations = operations || []; state.lifecycleTasks = tasks || []; state.lifecycleCapability = lifecycleCapability || { available:false, reason:'未配置' };
-      state.controlPlane = controlPlane; renderControlPlaneStatus();
+      state.controlPlane = controlPlane; state.platformVersion = platformVersion; renderControlPlaneStatus(); renderPlatformVersion();
       state.clusterDirectory = await loadFleetDetails(state.clusters);
       const selector = byId('cluster-select'); const previous = selector.value; const preferred = preferredClusterId || previous; selector.replaceChildren();
       if (!state.clusters.length) selector.append(new Option('未发现已注册集群', ''));
       state.clusters.forEach(cluster => { const option = document.createElement('option'); option.value = cluster.resource_id; option.textContent = cluster.display_name || cluster.resource_id; selector.append(option); });
       selector.value = state.clusters.some(cluster => cluster.resource_id === preferred) ? preferred : (state.clusters[0] ? state.clusters[0].resource_id : '');
-      renderCapabilities(); renderNodes(); renderLifecycleTasks(); renderOverview(); await loadSelectedCluster();
+      renderCapabilities(); renderNodes(); renderLifecycleTasks(); renderOverview();
+      await Promise.all([loadSelectedCluster(), loadSoftwareUpdates(false)]);
     };
 
     const submitLogin = async event => {
@@ -2230,8 +3803,44 @@
       state.refreshTimer = null;
       if (!state.refreshIntervalMs) return;
       state.refreshTimer = window.setInterval(() => {
-        if (state.selectedClusterId && !state.switchUnlocked && !state.operationRunning) loadSelectedCluster({ preserveOperationResult:true });
+		if (state.selectedClusterId && !state.operationRunning) loadSelectedCluster({ preserveOperationResult:true });
       }, state.refreshIntervalMs);
+    };
+
+    const topologySectionOrder = ['map', 'power', 'identity'];
+    const setTopologySection = (section, focus = false) => {
+      const selected = topologySectionOrder.includes(section) ? section : 'map';
+      state.topologySection = selected;
+      topologySectionOrder.forEach(name => {
+        const tab = byId(`topology-${name}-tab`);
+        const active = name === selected;
+        tab.setAttribute('aria-selected', String(active));
+        tab.tabIndex = active ? 0 : -1;
+        byId(`topology-${name}-panel`).hidden = !active;
+      });
+      if (focus) byId(`topology-${selected}-tab`).focus();
+    };
+
+    const settingsSectionOrder = ['status', 'updates', 'account'];
+    const settingsSectionPanels = { status:'settings-status-panel', updates:'software-update-panel', account:'settings-account-panel' };
+    const setSettingsSection = (section, focus = false) => {
+      let selected = settingsSectionOrder.includes(section) ? section : 'status';
+      if (selected === 'updates' && !canAdministerPlatform()) selected = 'status';
+      state.settingsSection = selected;
+      settingsSectionOrder.forEach(name => {
+        const tab = byId(name === 'updates' ? 'software-update-tab' : `settings-${name}-tab`);
+        const active = name === selected;
+        tab.setAttribute('aria-selected', String(active));
+        tab.tabIndex = active ? 0 : -1;
+        byId(settingsSectionPanels[name]).hidden = !active;
+      });
+      const summaries = {
+        status:'Leader、Raft 多数派与运行任务',
+        updates:'当前版本、升级包校验、滚动升级与历史记录',
+        account:'登录账户、安全操作与本地显示偏好'
+      };
+      byId('settings-section-summary').textContent = summaries[selected];
+      if (focus) byId(selected === 'updates' ? 'software-update-tab' : `settings-${selected}-tab`).focus();
     };
 
     const inspectCluster = () => { showView('topology'); loadSelectedCluster(); };
@@ -2262,8 +3871,44 @@
     byId('add-cluster-endpoint').addEventListener('click', () => addClusterEndpointRow());
     byId('submit-cluster-registration').addEventListener('click', submitClusterRegistration);
     byId('submit-cluster-retirement').addEventListener('click', submitClusterRetirement);
+    byId('open-power-shutdown').addEventListener('click', openPowerShutdownDialog);
+    byId('close-power-shutdown').addEventListener('click', closePowerShutdownDialog);
+    byId('cancel-power-shutdown').addEventListener('click', closePowerShutdownDialog);
+    byId('power-shutdown-dialog').addEventListener('cancel', event => { if (state.powerRunning) event.preventDefault(); });
+    byId('power-confirm-name').addEventListener('input', renderPowerShutdownConfirmation);
+    byId('power-confirm-impact').addEventListener('change', renderPowerShutdownConfirmation);
+    document.querySelectorAll('input[name="power-mode"]').forEach(input => input.addEventListener('change', renderPowerShutdownConfirmation));
+    byId('confirm-power-shutdown').addEventListener('click', executePowerShutdown);
     byId('retire-cluster-confirmation').addEventListener('input', renderClusterRetirementContext);
     byId('cluster-select').addEventListener('change', loadSelectedCluster);
+    document.querySelectorAll('.topology-section-tabs [data-topology-section]').forEach((tab, index) => {
+      tab.addEventListener('click', () => setTopologySection(tab.dataset.topologySection));
+      tab.addEventListener('keydown', event => {
+        let targetIndex = index;
+        if (event.key === 'ArrowRight') targetIndex = (index + 1) % topologySectionOrder.length;
+        else if (event.key === 'ArrowLeft') targetIndex = (index - 1 + topologySectionOrder.length) % topologySectionOrder.length;
+        else if (event.key === 'Home') targetIndex = 0;
+        else if (event.key === 'End') targetIndex = topologySectionOrder.length - 1;
+        else return;
+        event.preventDefault();
+        setTopologySection(topologySectionOrder[targetIndex], true);
+      });
+    });
+    document.querySelectorAll('.settings-section-tabs [role="tab"]').forEach(tab => {
+      tab.addEventListener('click', () => setSettingsSection(tab.dataset.settingsSection));
+      tab.addEventListener('keydown', event => {
+        const available = settingsSectionOrder.filter(name => name !== 'updates' || canAdministerPlatform());
+        const currentIndex = available.indexOf(state.settingsSection);
+        let targetIndex = currentIndex;
+        if (event.key === 'ArrowRight') targetIndex = (currentIndex + 1) % available.length;
+        else if (event.key === 'ArrowLeft') targetIndex = (currentIndex - 1 + available.length) % available.length;
+        else if (event.key === 'Home') targetIndex = 0;
+        else if (event.key === 'End') targetIndex = available.length - 1;
+        else return;
+        event.preventDefault();
+        setSettingsSection(available[targetIndex], true);
+      });
+    });
     byId('fleet-search').addEventListener('input', event => { state.fleetSearch = event.target.value; renderOverview(); });
     byId('fleet-health-filter').addEventListener('change', event => { state.fleetHealth = event.target.value; renderOverview(); });
     byId('refresh-cluster').addEventListener('click', refreshDiscovery);
@@ -2272,7 +3917,7 @@
     byId('rejoin-select').addEventListener('change', event => { state.selectedRejoinId = event.target.value; relockSwitch(); updateExecutionButtons(); });
     byId('switch-lock').addEventListener('click', () => { state.switchUnlocked = !state.switchUnlocked; updateExecutionButtons(); });
     byId('execute-switchover').addEventListener('click', () => executeOperation('switchover', state.selectedCandidateId, '主库切换'));
-    byId('execute-rejoin').addEventListener('click', () => executeOperation('former_primary_rejoin', state.selectedRejoinId, '旧主回挂'));
+    byId('execute-rejoin').addEventListener('click', () => recoverFormerPrimary(state.selectedRejoinId));
     byId('execute-repair').addEventListener('click', () => executeOperation('replication_repair', state.selectedRejoinId, '复制修复'));
     byId('open-node-lifecycle-modal').addEventListener('click', openNodeLifecycleModal);
     byId('close-node-lifecycle-modal').addEventListener('click', () => byId('node-lifecycle-modal').close());
@@ -2287,21 +3932,49 @@
       updateNodeActionMode();
     });
     byId('rebuild-node-select').addEventListener('change', populateRebuildNode);
+    byId('node-kind').addEventListener('change', updateControllerPairMode);
     byId('execute-node-sync').addEventListener('click', executeNodeSync);
     byId('refresh-operation-log').addEventListener('click', loadOperationLog);
     byId('load-more-operation-log').addEventListener('click', () => { state.logVisibleLimit += operationLogPageSize; renderOperationLog(); });
     byId('log-search').addEventListener('input', event => { state.logSearch = event.target.value; state.logVisibleLimit = operationLogPageSize; renderOperationLog(); });
     byId('log-kind-filter').addEventListener('change', event => { state.logKind = event.target.value; state.logVisibleLimit = operationLogPageSize; renderOperationLog(); });
     byId('log-status-filter').addEventListener('change', event => { state.logStatus = event.target.value; state.logVisibleLimit = operationLogPageSize; renderOperationLog(); });
+    byId('close-operation-review').addEventListener('click', closeOperationReview);
+    byId('cancel-operation-review').addEventListener('click', closeOperationReview);
+    byId('submit-operation-review').addEventListener('click', submitOperationReview);
+    byId('operation-review-dialog').addEventListener('cancel', event => { if (state.operationReviewRunning) event.preventDefault(); else state.operationReviewTargetId = ''; });
     byId('open-metadata-modal').addEventListener('click', () => { renderMetadataSelector(); byId('metadata-modal').showModal(); });
     byId('close-metadata-modal').addEventListener('click', () => byId('metadata-modal').close());
     byId('cancel-metadata').addEventListener('click', () => byId('metadata-modal').close());
     byId('metadata-instance-select').addEventListener('change', populateMetadataForm);
     byId('save-metadata').addEventListener('click', saveMetadata);
     byId('login-form').addEventListener('submit', submitLogin);
-    byId('open-password-change').addEventListener('click', () => openPasswordChange(false));
+    byId('account-menu-toggle').addEventListener('click', event => {
+      event.stopPropagation();
+      setAccountMenuOpen(byId('account-menu').hidden);
+    });
+    byId('account-menu').addEventListener('click', event => event.stopPropagation());
+    document.addEventListener('click', () => setAccountMenuOpen(false));
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape') {
+        setAccountMenuOpen(false);
+        byId('account-menu-toggle').focus();
+      }
+    });
+    byId('open-password-change').addEventListener('click', () => { setAccountMenuOpen(false); openPasswordChange(false); });
     byId('settings-change-password').addEventListener('click', () => openPasswordChange(false));
-    byId('logout-button').addEventListener('click', logout);
+    byId('software-update-package-file').addEventListener('change', renderSelectedSoftwareUpdateFile);
+    byId('upload-software-update').addEventListener('click', uploadSoftwareUpdate);
+    byId('plan-software-update').addEventListener('click', () => startSoftwareUpdate('plan'));
+    byId('execute-software-update').addEventListener('click', () => openSoftwareUpdateConfirmation('execute'));
+    byId('resume-software-update').addEventListener('click', () => openSoftwareUpdateConfirmation('resume'));
+    byId('rollback-software-update').addEventListener('click', () => openSoftwareUpdateConfirmation('rollback'));
+    byId('software-update-confirmation-input').addEventListener('input', renderSoftwareUpdateConfirmation);
+    byId('close-software-update-confirmation').addEventListener('click', closeSoftwareUpdateConfirmation);
+    byId('cancel-software-update-confirmation').addEventListener('click', closeSoftwareUpdateConfirmation);
+    byId('confirm-software-update-action').addEventListener('click', confirmSoftwareUpdateAction);
+    byId('software-update-confirmation-dialog').addEventListener('cancel', event => { if (state.softwareUpdateRunning) event.preventDefault(); });
+    byId('logout-button').addEventListener('click', () => { setAccountMenuOpen(false); logout(); });
     byId('settings-logout').addEventListener('click', logout);
     byId('close-password-modal').addEventListener('click', () => { if (!state.passwordChangeRequired) byId('password-modal').close(); });
     byId('cancel-password-change').addEventListener('click', () => { if (!state.passwordChangeRequired) byId('password-modal').close(); });
@@ -2312,6 +3985,8 @@
     window.addEventListener('hashchange', () => showView(window.location.hash.slice(1)));
 
     applyLanguage();
+    setTopologySection(state.topologySection);
+    setSettingsSection(state.settingsSection);
     showView(window.location.hash.slice(1) || 'overview');
     bootstrapConsole();
   </script>
