@@ -116,7 +116,9 @@ func TestSettingsUsesThreeSwitchableAdministrativeSections(t *testing.T) {
 		"const setSettingsSection = (section, focus = false) =>", "settingsSection: 'status'",
 		"const [softwareUpdates, platformVersion] = await Promise.all([",
 		"fetchResult('/api/v1/platform/version').catch(() => state.platformVersion)",
-		"state.platformVersion = platformVersion", "renderSoftwareUpdateHistory(snapshot)",
+		"state.platformVersion = platformVersion", "const previousSoftwareUpdates = state.softwareUpdates",
+		"...previousSoftwareUpdates", "packages:Array.isArray(previousSoftwareUpdates.packages)",
+		"已保留最近一次任务进度并继续重试", "renderSoftwareUpdateHistory(snapshot)",
 		"系统升级期间无法进行自动切换，请注意关注。",
 	} {
 		if !strings.Contains(page, contract) {
