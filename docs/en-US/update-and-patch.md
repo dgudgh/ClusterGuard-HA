@@ -64,7 +64,7 @@ clusterguard-patch/
 
 The updater already installed on the source node is limited to safe extraction, release-signature verification, and bootstrap SHA-256 verification. Planning, rolling execution, convergence waits, resume, and rollback are delegated to the verified updater embedded in the package. Orchestration fixes therefore take effect before the target RPM is installed instead of inheriting stale source-version behavior. A modified, missing, or incompatible bootstrap is rejected before maintenance gates are created.
 
-Six independent contracts protect a site update:
+Seven independent contracts protect a site update:
 
 1. **Version contract**: the RPM, running binary, and update-package manifest must agree on version, architecture, `state_format`, and `update_protocol`.
 2. **Node identity contract**: the deployment inventory, immutable UUID in `/etc/clusterguard/node.json`, live Raft voters, and active data-node inventory must match exactly. Hostname, IP, and membership changes are never inferred optimistically.
@@ -72,6 +72,7 @@ Six independent contracts protect a site update:
 4. **Bootstrap execution contract**: every new `.cgupgrade` must contain a manifest-declared bootstrap updater covered by the release signature. The console rejects a new package without a verified bootstrap; `.cgpatch` remains a legacy compatibility path only.
 5. **Package residency contract**: before a console execute, resume, or rollback starts, `package.cgpatch` and `package.json` must exist in the same protected update directory on every controller. Each remote SHA-256 must match the locally verified artifact before an atomic rename publishes it. Any distribution or digest failure stops before maintenance gates and RPM mutation; already published identical read-only copies are safe to reuse.
 6. **Job evidence contract**: the update directory provides restricted cooperative write access to the root Helper and the `clusterguard` console, while status, output, and events remain group-readable. A planned, succeeded, failed, or rolled-back terminal state written by the runner must not be replaced by a generic process-exit error.
+7. **Mutation admission contract**: execution gates the current Leader first and followers next, then waits for existing work to drain. Release removes follower gates first and the current Leader gate last, preventing automatic recovery from taking the half-complete gate acquisition or release window.
 
 The initial installer registers immutable controller, data, and mixed-node identities before database discovery. Later expansion, retirement, or replacement must update the resource inventory through the node lifecycle workflow; the updater will not silently omit an active node.
 

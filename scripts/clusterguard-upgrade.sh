@@ -504,23 +504,28 @@ control_status() {
 }
 
 verify_cluster_idle() {
-	local expected_leader="${1:-}" expected_maintenance="${2:-false}" host status leaders=0 role observed_leader=""
+	local expected_leader="${1:-}" expected_maintenance="${2:-false}" expected_activity="${3:-idle}"
+	local host status leaders=0 role observed_leader=""
 	local local_controller_id live_members current_live_members configured_members live_data_members current_live_data_members
 	local live_data_addresses current_live_data_addresses
   [[ "${expected_maintenance}" == "true" || "${expected_maintenance}" == "false" || "${expected_maintenance}" == "any" ]] ||
     die "内部维护状态参数无效"
+	[[ "${expected_activity}" == "idle" || "${expected_activity}" == "any" ]] ||
+		die "内部活动任务参数无效"
 	live_members=""
 	live_data_members=""
 	live_data_addresses=""
 	configured_members=""
 	for host in "${controllers[@]}"; do
 		status="$(control_status "${host}")" || die "无法读取控制节点状态：${host}"
-    jq -e --arg maintenance "${expected_maintenance}" '
+    jq -e --arg maintenance "${expected_maintenance}" --arg activity "${expected_activity}" '
       .status == "ok" and .result.ready == true and .result.leader_known == true and
       (.result.role != "leader" or .result.quorum_confirmed == true) and
       .result.voter_count >= 3 and (.result.voter_count % 2 == 1) and
-      .result.active_operations == 0 and .result.indeterminate_operations == 0 and
-		  .result.active_lifecycle_tasks == 0 and
+		  ($activity == "any" or (
+		    .result.active_operations == 0 and .result.indeterminate_operations == 0 and
+		    .result.active_lifecycle_tasks == 0
+		  )) and
 		  (.result.controller_members | type == "array") and
 		  (.result.controller_members | length) == .result.voter_count and
 		  (.result.data_node_members | type == "array") and
@@ -569,9 +574,9 @@ verify_cluster_idle() {
 }
 
 wait_cluster_idle() {
-  local expected_leader="${1:-}" expected_maintenance="${2:-false}" attempt output=""
+	local expected_leader="${1:-}" expected_maintenance="${2:-false}" expected_activity="${3:-idle}" attempt output=""
   for attempt in $(seq 1 "${cluster_idle_attempts}"); do
-    if output="$(trap - EXIT; verify_cluster_idle "${expected_leader}" "${expected_maintenance}" 2>&1)"; then
+		if output="$(trap - EXIT; verify_cluster_idle "${expected_leader}" "${expected_maintenance}" "${expected_activity}" 2>&1)"; then
       return 0
     fi
     if ((attempt == 1 || attempt % 5 == 0)); then
@@ -628,7 +633,11 @@ is_data_node() {
 build_order() {
   local host
   if ${resume_requested}; then
-    verify_cluster_idle "" any
+		verify_cluster_idle "" any any
+	elif ${execute}; then
+		# Topology and quorum must be stable, but an operation that entered before
+		# maintenance is allowed to drain after every controller is gated.
+		verify_cluster_idle "" false any
   else
     verify_cluster_idle "" false
   fi
@@ -638,14 +647,20 @@ build_order() {
 }
 
 acquire_update_locks() {
-  local host command
+	local host command
+	local -a lock_order=("${leader_host}")
   upgrade_lock_name="${remote_stage}/.cluster-update.lock"
   if ${resume_requested}; then
     command="set -eu; install -d -m 0700 '${remote_stage}'; if mkdir '${upgrade_lock_name}' 2>/dev/null; then printf '%s\\n' '${patch_id}' >'${upgrade_lock_name}/patch-id'; else test \"\$(cat '${upgrade_lock_name}/patch-id' 2>/dev/null)\" = '${patch_id}'; fi; umask 077; printf '%s\\n' '{\"schema_version\":1,\"patch_id\":\"${patch_id}\",\"mode\":\"rolling_update\"}' >'${maintenance_marker}.tmp'; mv -f '${maintenance_marker}.tmp' '${maintenance_marker}'"
   else
     command="set -eu; install -d -m 0700 '${remote_stage}'; mkdir '${upgrade_lock_name}'; umask 077; printf '%s\\n' '${patch_id}' >'${upgrade_lock_name}/patch-id'; printf '%s\\n' '{\"schema_version\":1,\"patch_id\":\"${patch_id}\",\"mode\":\"rolling_update\"}' >'${maintenance_marker}.tmp'; mv -f '${maintenance_marker}.tmp' '${maintenance_marker}'"
   fi
-  for host in "${controllers[@]}"; do
+	for host in "${controllers[@]}"; do
+		[[ "${host}" == "${leader_host}" ]] || lock_order[${#lock_order[@]}]="${host}"
+	done
+	# The Leader owns mutation authority. Gate it first so no new automatic
+	# recovery can enter while the remaining controller markers are published.
+	for host in "${lock_order[@]}"; do
     if ! remote_run "${host}" "${command}"; then
       release_update_locks || true
       die "控制节点已有升级任务或无法建立升级锁：${host}"
@@ -657,6 +672,7 @@ acquire_update_locks() {
 
 release_update_locks() {
 	local host relock_host release_failed=false relock_failed=false
+	local -a release_order=()
 	((${#locked_nodes[@]} > 0)) || { update_locks_acquired=false; return 0; }
 	# Verify every marker first. This prevents a partial unlock when one node has
 	# lost its lock identity or is unreachable before release starts.
@@ -664,6 +680,14 @@ release_update_locks() {
 		remote_run "${host}" "set -eu; test \"\$(cat '${upgrade_lock_name}/patch-id')\" = '${patch_id}'; test -f '${maintenance_marker}'; grep -Fq '\"patch_id\":\"${patch_id}\"' '${maintenance_marker}'" >/dev/null 2>&1 || return 1
 	done
 	for host in "${locked_nodes[@]}"; do
+		[[ "${host}" == "${leader_host}" ]] || release_order[${#release_order[@]}]="${host}"
+	done
+	for host in "${locked_nodes[@]}"; do
+		[[ "${host}" != "${leader_host}" ]] || release_order[${#release_order[@]}]="${host}"
+	done
+	# Release the current Leader last so automatic mutations remain blocked
+	# until every follower has already left software-update maintenance.
+	for host in "${release_order[@]}"; do
 		if ! remote_run "${host}" "set -eu; rm -f '${maintenance_marker}.tmp' '${maintenance_marker}'; rm -rf '${upgrade_lock_name}'" >/dev/null 2>&1; then
 			release_failed=true
 			break
@@ -1012,6 +1036,9 @@ for host in "${all_nodes[@]}"; do
 done
 release_update_locks || die "部分控制节点未能释放维护锁；变更操作仍被安全阻断，请修复连通性后使用 --resume"
 retain_update_locks=false
-wait_cluster_idle "" false || die "维护门禁释放后控制面未在时限内恢复一致"
+# Releasing the Leader gate intentionally re-enables automatic recovery. Final
+# update acceptance therefore verifies topology, quorum, versions, and gate
+# release while allowing a newly admitted recovery operation to be active.
+wait_cluster_idle "" false any || die "维护门禁释放后控制面未在时限内恢复一致"
 write_journal succeeded "" "all nodes and maintenance release verified" completed "${total_nodes}" "${total_nodes}"
 log "补丁完成：所有节点均为 ${desired_version}，控制面多数派和就绪状态已复核"

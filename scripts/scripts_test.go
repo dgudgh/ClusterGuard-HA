@@ -405,6 +405,10 @@ elif [[ "$command" == *"cgctl"*" status"* ]]; then
   data_members='[{"resource_id":"11111111-1111-4111-8111-111111111111","ip_address":"c1"},{"resource_id":"22222222-2222-4222-8222-222222222222","ip_address":"c2"},{"resource_id":"33333333-3333-4333-8333-333333333333","ip_address":"c3"},{"resource_id":"44444444-4444-4444-8444-444444444444","ip_address":"d1"}]'
   quorum=false
   [[ "$role" != leader ]] || quorum=true
+	active_operations=0
+	if [[ "${FAKE_ACTIVE_UNTIL_LEADER_LOCK:-}" == true && ! -f "$state/${FAKE_LEADER_HOST:-c3}.maintenance" ]]; then
+		active_operations=1
+	fi
   if [[ "${FAKE_CONTAINER_DATA:-}" == true ]]; then
     data_members='[{"resource_id":"71111111-1111-4111-8111-111111111111","ip_address":"c1"},{"resource_id":"71111111-1111-4111-8111-111111111112","ip_address":"c1"},{"resource_id":"72222222-2222-4222-8222-222222222222","ip_address":"c2"},{"resource_id":"73333333-3333-4333-8333-333333333333","ip_address":"c3"},{"resource_id":"74444444-4444-4444-8444-444444444444","ip_address":"d1"}]'
   fi
@@ -421,11 +425,12 @@ elif [[ "$command" == *"cgctl"*" status"* ]]; then
     ready=false
     : >"$state/transient-status-injected"
   fi
-  printf '{"status":"ok","result":{"ready":%s,"leader_known":true,"quorum_confirmed":%s,"voter_count":%s,"active_operations":0,"indeterminate_operations":0,"active_lifecycle_tasks":0,"update_maintenance_active":%s,"role":"%s","local_controller_id":"%s","controller_members":%s,"data_node_members":%s}}\n' "$ready" "$quorum" "$voter_count" "$maintenance" "$role" "$node_id" "$members" "$data_members"
+  printf '{"status":"ok","result":{"ready":%s,"leader_known":true,"quorum_confirmed":%s,"voter_count":%s,"active_operations":%s,"indeterminate_operations":0,"active_lifecycle_tasks":0,"update_maintenance_active":%s,"role":"%s","local_controller_id":"%s","controller_members":%s,"data_node_members":%s}}\n' "$ready" "$quorum" "$voter_count" "$active_operations" "$maintenance" "$role" "$node_id" "$members" "$data_members"
 elif [[ "$command" == *".cluster-update.lock/patch-id"* && "$command" == *"grep -Fq"* ]]; then
   test -f "$state/$host.maintenance"
 elif [[ "$command" == *"update-maintenance.json"* && "$command" == *"rolling_update"* ]]; then
   : >"$state/$host.maintenance"
+	if [[ "${FAKE_RECORD_LOCK_ORDER:-}" == true ]]; then printf '%s\n' "$host" >>"$state/lock-order"; fi
 elif [[ "$command" == *".package.json."* && "$command" == *"sha256sum -c"* ]]; then
   actual="$(sha256sum "$state/$host.metadata.tmp" | awk '{print $1}')"
   [[ "$actual" == "${FAKE_EXPECTED_METADATA_SHA:?}" ]]
@@ -440,6 +445,7 @@ elif [[ "$command" == *"rm -f '/etc/clusterguard/update-maintenance.json.tmp'"* 
     : >"$state/release-failure-injected"
     exit 44
   fi
+	if [[ "${FAKE_RECORD_LOCK_ORDER:-}" == true ]]; then printf '%s\n' "$host" >>"$state/release-order"; fi
   rm -f "$state/$host.maintenance"
 elif [[ "$command" == *"rpm -Uvh"* ]]; then
   if [[ "$command" == *"2.2-29.x86_64.rpm"* && "$host" == "${FAKE_FAIL_HOST:-}" && ! -f "$state/failure-injected" ]]; then
@@ -498,6 +504,46 @@ esac
 		}
 		if _, err := os.Stat(filepath.Join(state, host+".maintenance")); !os.IsNotExist(err) {
 			t.Fatalf("%s maintenance marker was not released: %v", host, err)
+		}
+	}
+
+	if err := os.Remove(filepath.Join(state, "install-order")); err != nil {
+		t.Fatal(err)
+	}
+	for _, host := range []string{"c1", "c2", "c3", "d1"} {
+		writeFile(t, filepath.Join(state, host+".version"), "2.2-28\n", 0o600)
+	}
+	command = exec.Command("bash", upgradeScript,
+		"--patch", patchPath, "--trust-key", publicKey,
+		"--controllers", "c1,c2,c3", "--data-nodes", "c1,c2,c3,d1",
+		"--known-hosts", knownHosts, "-u", "root", "--execute", "--yes")
+	command.Dir = root
+	command.Env = append(os.Environ(), "PATH="+fakeBin+":"+os.Getenv("PATH"), "FAKE_REMOTE_STATE="+state,
+		"FAKE_ACTIVE_UNTIL_LEADER_LOCK=true", "FAKE_RECORD_LOCK_ORDER=true")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("active operation did not drain behind maintenance gate: %v\n%s", err, output)
+	}
+	lockOrder, err := os.ReadFile(filepath.Join(state, "lock-order"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.TrimSpace(string(lockOrder)), "c3\nc1\nc2"; got != want {
+		t.Fatalf("maintenance lock order=%q want %q", got, want)
+	}
+	releaseOrder, err := os.ReadFile(filepath.Join(state, "release-order"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.TrimSpace(string(releaseOrder)), "c1\nc2\nc3"; got != want {
+		t.Fatalf("maintenance release order=%q want %q", got, want)
+	}
+	for _, host := range []string{"c1", "c2", "c3", "d1"} {
+		version, readErr := os.ReadFile(filepath.Join(state, host+".version"))
+		if readErr != nil || strings.TrimSpace(string(version)) != "2.2-29" {
+			t.Fatalf("%s gated-drain version=%q err=%v", host, version, readErr)
+		}
+		if _, statErr := os.Stat(filepath.Join(state, host+".maintenance")); !os.IsNotExist(statErr) {
+			t.Fatalf("%s gated-drain maintenance marker was not released: %v", host, statErr)
 		}
 	}
 
