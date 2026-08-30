@@ -409,6 +409,10 @@ elif [[ "$command" == *"cgctl"*" status"* ]]; then
 	if [[ "${FAKE_ACTIVE_UNTIL_LEADER_LOCK:-}" == true && ! -f "$state/${FAKE_LEADER_HOST:-c3}.maintenance" ]]; then
 		active_operations=1
 	fi
+	if [[ "$host" == "${FAKE_TRANSIENT_ACTIVE_HOST:-}" && ! -f "$state/transient-active-injected" ]]; then
+		active_operations=1
+		: >"$state/transient-active-injected"
+	fi
   if [[ "${FAKE_CONTAINER_DATA:-}" == true ]]; then
     data_members='[{"resource_id":"71111111-1111-4111-8111-111111111111","ip_address":"c1"},{"resource_id":"71111111-1111-4111-8111-111111111112","ip_address":"c1"},{"resource_id":"72222222-2222-4222-8222-222222222222","ip_address":"c2"},{"resource_id":"73333333-3333-4333-8333-333333333333","ip_address":"c3"},{"resource_id":"74444444-4444-4444-8444-444444444444","ip_address":"d1"}]'
   fi
@@ -454,6 +458,10 @@ elif [[ "$command" == *"rpm -Uvh"* ]]; then
   fi
   if [[ "$command" == *"2.2-29.x86_64.rpm"* ]]; then printf '2.2-29\n' >"$state/$host.version"; else printf '2.2-28\n' >"$state/$host.version"; fi
   printf '%s\n' "$host" >>"$state/install-order"
+elif [[ "$command" == *"systemctl restart 'clusterguard-update-helper.service'"* ]]; then
+  printf '%s\n' "$host" >>"$state/helper-restart-order"
+elif [[ "$command" == *"systemd-run"*"clusterguard-update-helper.service"* ]]; then
+  printf '%s\n' "$host" >>"$state/leader-helper-refresh-order"
 fi
 `, 0o755)
 	writeFile(t, filepath.Join(fakeBin, "scp"), `#!/usr/bin/env bash
@@ -496,6 +504,20 @@ esac
 	}
 	if got, want := strings.TrimSpace(string(order)), "c1\nc2\nd1\nc3"; got != want {
 		t.Fatalf("rolling order=%q want %q", got, want)
+	}
+	helperRestartOrder, err := os.ReadFile(filepath.Join(state, "helper-restart-order"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.TrimSpace(string(helperRestartOrder)), "c1\nc2"; got != want {
+		t.Fatalf("non-leader helper restart order=%q want %q", got, want)
+	}
+	leaderHelperRefreshOrder, err := os.ReadFile(filepath.Join(state, "leader-helper-refresh-order"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.TrimSpace(string(leaderHelperRefreshOrder)), "c3"; got != want {
+		t.Fatalf("Leader helper refresh order=%q want %q", got, want)
 	}
 	for _, host := range []string{"c1", "c2", "c3", "d1"} {
 		version, err := os.ReadFile(filepath.Join(state, host+".version"))
@@ -679,6 +701,21 @@ esac
 	}
 	if err := os.Remove(filepath.Join(state, "release-failure-injected")); err != nil {
 		t.Fatal(err)
+	}
+
+	command = exec.Command("bash", upgradeScript,
+		"--patch", patchPath, "--trust-key", publicKey,
+		"--controllers", "c1,c2,c3", "--data-nodes", "c1,c2,c3,d1",
+		"--known-hosts", knownHosts, "-u", "root", "--plan")
+	command.Dir = root
+	command.Env = append(os.Environ(), "PATH="+fakeBin+":"+os.Getenv("PATH"), "FAKE_REMOTE_STATE="+state,
+		"FAKE_TRANSIENT_ACTIVE_HOST=c2", "CG_UPDATE_CLUSTER_IDLE_DELAY_SECONDS=0")
+	output, err = command.CombinedOutput()
+	if err != nil || !strings.Contains(string(output), "等待控制面收敛") {
+		t.Fatalf("read-only plan did not wait for a transient operation: err=%v\n%s", err, output)
+	}
+	if _, statErr := os.Stat(filepath.Join(state, "transient-active-injected")); statErr != nil {
+		t.Fatalf("transient plan activity was not exercised: %v", statErr)
 	}
 
 	command = exec.Command("bash", upgradeScript,
@@ -3809,6 +3846,9 @@ func TestSoftwareUpdateArtifactsRemainReadableByConsoleService(t *testing.T) {
 		"chmod 0640",
 		"output.log",
 		"clusterguard-update-*.events.jsonl",
+		"schedule_helper_refresh",
+		"--on-active=3s",
+		"restart clusterguard-update-helper.service",
 	} {
 		if !strings.Contains(jobText, required) {
 			t.Fatalf("update job does not publish %q for the console service", required)
@@ -3820,6 +3860,14 @@ func TestSoftwareUpdateArtifactsRemainReadableByConsoleService(t *testing.T) {
 		t.Fatal(err)
 	}
 	upgraderText := string(upgrader)
+	for _, required := range []string{
+		`services="${services} clusterguard-update-helper.service"`,
+		`--on-active=5s /usr/bin/systemctl restart clusterguard-update-helper.service`,
+	} {
+		if !strings.Contains(upgraderText, required) {
+			t.Fatalf("rolling updater is missing Helper refresh contract %q", required)
+		}
+	}
 	for _, forbidden := range []string{
 		`chmod 0600 "${journal_events_file}"`,
 		`chmod 0600 "${journal_file}.tmp"`,

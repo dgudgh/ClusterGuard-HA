@@ -2479,7 +2479,7 @@
       byId('software-update-running-architecture').textContent = version.rpm_architecture || version.architecture || '-';
     };
     const latestSoftwareUpdate = () => (state.softwareUpdates && state.softwareUpdates.packages && state.softwareUpdates.packages[0]) || null;
-    const softwareUpdateIsActive = job => !!(job && (job.maintenance_active || (job.mode !== 'plan' && ['queued', 'running'].includes(job.status))));
+    const softwareUpdateIsActive = job => !!(job && !job.verification_required && (job.maintenance_active || (job.mode !== 'plan' && ['queued', 'running'].includes(job.status))));
     const activeSoftwareUpdate = () => (state.softwareUpdates.packages || []).find(item => softwareUpdateIsActive(item.job)) || null;
     const softwareUpdateProgressKey = item => {
       const record = item && item.package || {};
@@ -2491,6 +2491,16 @@
       rolling_back:'正在回退', rollback_verified:'回退验证通过', succeeded:'升级完成', failed:'升级失败',
       rolled_back:'已完成回退', rollback_failed:'回退未完成', rollback_lock_release_failed:'维护门禁释放失败'
     })[value] || value || '状态更新';
+    const softwareUpdateDateText = value => {
+      if (!value) return '-';
+      const date = new Date(value);
+      return Number.isFinite(date.getTime()) && date.getUTCFullYear() > 1 ? date.toLocaleString(state.language) : '-';
+    };
+    const softwareUpdateTimeText = value => {
+      if (!value) return '-';
+      const date = new Date(value);
+      return Number.isFinite(date.getTime()) && date.getUTCFullYear() > 1 ? date.toLocaleTimeString(state.language) : '-';
+    };
     const softwareUpdatePhaseText = phase => ({
       queued:'任务已进入队列', preparing:'正在核对升级合同与节点状态', locking:'正在建立集群维护门禁',
       updating:'正在滚动更新控制节点', verifying:'正在验证控制面与节点合同', finalizing:'正在完成集群验证并释放维护门禁',
@@ -2524,7 +2534,7 @@
           text('td', 'mono', record.patch_id || '-'),
           text('td', '', `${record.source_version || '不限'} → ${record.target_version || '-'}`),
           text('td', '', softwareUpdateModeText(job && job.mode)),
-          text('td', '', occurredAt ? new Date(occurredAt).toLocaleString(state.language) : '-'),
+          text('td', '', softwareUpdateDateText(occurredAt)),
           text('td', 'history-message', (job && job.message) || '升级包已上传并通过签名校验')
         );
         body.append(row);
@@ -2548,6 +2558,7 @@
       const record = item && item.package || {};
       const orphanedMaintenance = maintenanceActive && !activeItem;
       const job = orphanedMaintenance ? null : (item && item.job || null);
+      const verificationRequired = !!(job && job.verification_required);
       const progress = job && job.progress || {};
       const status = orphanedMaintenance ? 'interrupted' : (job && job.status || (active ? 'running' : 'uploaded'));
       const terminal = ['succeeded', 'failed', 'rolled_back'].includes(status) && !active;
@@ -2561,7 +2572,8 @@
       byId('software-update-progress-title').textContent = job && job.mode === 'rollback' ? '受控回退进度' : '滚动升级进度';
       byId('software-update-progress-subtitle').textContent = active
         ? '任务由当前 Raft Leader 编排；控制节点切换后会从持久化事件继续显示。'
-        : terminal ? '任务已结束，最终状态和节点事件将保留在升级历史中。' : '当前没有正在执行的升级任务。';
+        : verificationRequired ? '任务状态文件不可读取或解析；控制面维护状态与节点版本需要独立核验。'
+          : terminal ? '任务已结束，最终状态和节点事件将保留在升级历史中。' : '当前没有正在执行的升级任务。';
       byId('software-update-progress-patch-id').textContent = record.patch_id || '控制面维护任务';
       byId('software-update-progress-version').textContent = `${record.source_version || '-'} → ${record.target_version || '-'}`;
       const statusElement = byId('software-update-progress-status');
@@ -2572,7 +2584,8 @@
         : softwareUpdatePhaseText(phase);
       byId('software-update-progress-node').textContent = job && job.node || (active ? '等待节点调度' : '-');
       byId('software-update-progress-nodes').textContent = total ? `${current} / ${total}` : (structured ? `${current}` : '等待节点清单');
-      byId('software-update-progress-failover').textContent = active || (job && job.maintenance_active) ? '已暂停' : terminal ? '已恢复' : '可用';
+      byId('software-update-progress-failover').textContent = verificationRequired ? '待核验'
+        : active || (job && job.maintenance_active) ? '已暂停' : terminal ? '已恢复' : '可用';
 
       const track = byId('software-update-progress-track');
       track.classList.toggle('indeterminate', active && !structured);
@@ -2605,9 +2618,8 @@
       } else {
         events.slice(-8).reverse().forEach(event => {
           const row = text('div', 'software-update-progress-event', '');
-          const eventTime = event.updated_at ? new Date(event.updated_at) : null;
           row.append(
-            text('time', '', eventTime ? eventTime.toLocaleTimeString(state.language) : '-'),
+            text('time', '', softwareUpdateTimeText(event.updated_at)),
             text('strong', '', event.node || softwareUpdateEventText(event.status)),
             text('span', '', event.node ? `${softwareUpdateEventText(event.status)} · ${event.message || '-'}` : (event.message || softwareUpdateEventText(event.status)))
           );
@@ -2616,7 +2628,7 @@
       }
       const updatedAt = job && (job.updated_at || job.started_at);
       byId('software-update-progress-updated-at').textContent = updatedAt
-        ? `最近更新 ${new Date(updatedAt).toLocaleString(state.language)}；进度表示已完成的安全步骤，不代表预计耗时。`
+        ? `最近更新 ${softwareUpdateDateText(updatedAt)}；进度表示已完成的安全步骤，不代表预计耗时。`
         : '状态每 2 秒刷新；进度表示已完成的安全步骤，不代表预计耗时。';
       byId('background-software-update-progress').textContent = terminal ? '关闭' : '转到后台';
 

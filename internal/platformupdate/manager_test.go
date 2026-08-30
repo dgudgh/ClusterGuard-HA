@@ -362,7 +362,7 @@ func TestManagerSurfacesUnreadableOrCorruptJobInsteadOfUploaded(t *testing.T) {
 		t.Fatal(err)
 	}
 	job, found := manager.Job(patchID)
-	if !found || job.Status != StatusFailed || !job.MaintenanceActive || job.AutomaticFailoverAvailable ||
+	if !found || job.Status != StatusFailed || job.MaintenanceActive || job.AutomaticFailoverAvailable || !job.VerificationRequired ||
 		!strings.Contains(job.Message, "操作结果需要验证") {
 		t.Fatalf("corrupt job was hidden as uploaded: found=%t job=%+v", found, job)
 	}

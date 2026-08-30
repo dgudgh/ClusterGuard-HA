@@ -639,7 +639,14 @@ build_order() {
 		# maintenance is allowed to drain after every controller is gated.
 		verify_cluster_idle "" false any
   else
-    verify_cluster_idle "" false
+    # A read-only plan must not fail just because a short database operation is
+    # finishing while the operator clicks Generate plan. Keep the same strict
+    # idle contract, but allow the bounded convergence window used elsewhere.
+    wait_cluster_idle "" false || die "生成升级计划前控制面未在时限内恢复空闲"
+    # wait_cluster_idle isolates a failed probe so `die` cannot terminate the
+    # caller. Refresh the stable topology in this shell to retain leader_host;
+    # a newly admitted operation does not invalidate the read-only node order.
+    verify_cluster_idle "" false any
   fi
   for host in "${controllers[@]}"; do [[ "${host}" == "${leader_host}" ]] || ordered_nodes[${#ordered_nodes[@]}]="${host}"; done
   for host in "${data_nodes[@]}"; do is_controller "${host}" || ordered_nodes[${#ordered_nodes[@]}]="${host}"; done
@@ -878,7 +885,12 @@ install_node_rpm() {
   fi
   remote_run "${host}" "chmod 0600 '${remote_file}.tmp'; mv -f '${remote_file}.tmp' '${remote_file}'; rpm -Uvh ${rpm_options} '${remote_file}'; systemctl daemon-reload" || return 1
   services=""
-  if is_controller "${host}"; then services="clusterguard-ha.service"; fi
+  if is_controller "${host}"; then
+    services="clusterguard-ha.service"
+    # The Leader Helper owns this running job and is refreshed asynchronously
+    # by clusterguard-update-job.sh after the terminal status is durable.
+    [[ "${host}" == "${leader_host}" ]] || services="${services} clusterguard-update-helper.service"
+  fi
   if is_data_node "${host}"; then services="${services} clusterguard-agent.service"; fi
   for service in ${services}; do
     remote_run "${host}" "systemctl restart '${service}'" || return 1
@@ -1040,5 +1052,10 @@ retain_update_locks=false
 # update acceptance therefore verifies topology, quorum, versions, and gate
 # release while allowing a newly admitted recovery operation to be active.
 wait_cluster_idle "" false any || die "维护门禁释放后控制面未在时限内恢复一致"
+helper_refresh_unit="clusterguard-update-helper-refresh-$(date +%s)-$$"
+remote_run "${leader_host}" "systemd-run --quiet --unit '${helper_refresh_unit}' --on-active=5s /usr/bin/systemctl restart clusterguard-update-helper.service" || {
+  write_journal failed "${leader_host}" "all node contracts passed, but Leader update Helper refresh could not be scheduled" failed "${total_nodes}" "${total_nodes}"
+  die "所有节点已达到目标版本，但 Leader 软件更新 Helper 自刷新调度失败；请重启 clusterguard-update-helper.service 后核验"
+}
 write_journal succeeded "" "all nodes and maintenance release verified" completed "${total_nodes}" "${total_nodes}"
 log "补丁完成：所有节点均为 ${desired_version}，控制面多数派和就绪状态已复核"

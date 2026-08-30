@@ -126,6 +126,7 @@ type Job struct {
 	Warning                    string    `json:"warning,omitempty"`
 	MaintenanceActive          bool      `json:"maintenance_active"`
 	AutomaticFailoverAvailable bool      `json:"automatic_failover_available"`
+	VerificationRequired       bool      `json:"verification_required,omitempty"`
 	StartedAt                  time.Time `json:"started_at,omitempty"`
 	UpdatedAt                  time.Time `json:"updated_at,omitempty"`
 	FinishedAt                 time.Time `json:"finished_at,omitempty"`
@@ -458,7 +459,7 @@ func (manager *Manager) Job(patchID string) (Job, bool) {
 		}
 		result = Job{
 			PatchID: patchID, Mode: ModeExecute, Status: StatusFailed, Message: message,
-			Warning: AutomaticFailoverWarning, MaintenanceActive: true,
+			Warning: AutomaticFailoverWarning, VerificationRequired: true,
 			AutomaticFailoverAvailable: false, UpdatedAt: updatedAt,
 		}
 		deriveJobProgress(&result)

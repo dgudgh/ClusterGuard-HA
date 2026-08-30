@@ -87,6 +87,23 @@ write_status() {
 cleanup() { [[ -z "${tool_dir}" || ! -d "${tool_dir}" ]] || rm -rf "${tool_dir}"; }
 trap cleanup EXIT
 
+schedule_helper_refresh() {
+  [[ "${mode}" != plan ]] || return 0
+  local systemd_run systemctl_binary unit
+  systemd_run="$(command -v systemd-run 2>/dev/null || true)"
+  systemctl_binary="$(command -v systemctl 2>/dev/null || true)"
+  if [[ -z "${systemd_run}" || -z "${systemctl_binary}" ]]; then
+    printf '警告：升级已记录最终状态，但无法调度软件更新 Helper 自刷新\n' >&2
+    return 1
+  fi
+  unit="clusterguard-update-helper-refresh-$(date +%s)-$$"
+  if ! "${systemd_run}" --quiet --unit "${unit}" --on-active=3s \
+      "${systemctl_binary}" restart clusterguard-update-helper.service; then
+    printf '警告：升级已记录最终状态，但软件更新 Helper 自刷新调度失败\n' >&2
+    return 1
+  fi
+}
+
 trust_key="$("${jq_binary}" -er '.trust_key' "${config}")"
 state_file="$("${jq_binary}" -er '.deployment_state' "${config}")"
 ssh_user="$("${jq_binary}" -r '.ssh_user // "root"' "${config}")"
@@ -127,16 +144,19 @@ if (cd "${job_dir}" && "${upgrader}" "${arguments[@]}"); then
     rollback) write_status rolled_back "受控回退完成，维护门禁已释放" false "${finished}" ;;
     *) write_status succeeded "滚动升级完成，全部节点与控制面已验证，维护门禁已释放" false "${finished}" ;;
   esac
+  schedule_helper_refresh || true
 else
   exit_code=$?
   journal_events="${job_dir}/clusterguard-update-${patch_id}.events.jsonl"
   last_event_status="$(tail -n 1 "${journal_events}" 2>/dev/null | "${jq_binary}" -r '.status // empty' 2>/dev/null || true)"
   if [[ "${last_event_status}" == "rolled_back" ]]; then
     write_status rolled_back "升级未完成，已自动回退全部节点并释放维护门禁" false "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    schedule_helper_refresh || true
     exit "${exit_code}"
   fi
   maintenance_after_failure=false
   [[ -f /etc/clusterguard/update-maintenance.json ]] && maintenance_after_failure=true
   write_status failed "升级任务失败或被阻断；请查看输出和事件记录，确认维护门禁状态后再续跑或回退" "${maintenance_after_failure}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  schedule_helper_refresh || true
   exit "${exit_code}"
 fi

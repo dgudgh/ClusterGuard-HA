@@ -1355,6 +1355,10 @@ func TestConsoleShowsRecoverableStructuredSoftwareUpdateProgress(t *testing.T) {
 		"升级维护未闭环",
 		"升级待确认",
 		"events.slice(-8).reverse()",
+		"job && job.verification_required",
+		"softwareUpdateDateText",
+		"控制面维护状态与节点版本需要独立核验",
+		"verificationRequired ? '待核验'",
 		"state.softwareUpdateProgressDismissed !== key",
 		"openSoftwareUpdateProgress()",
 	} {
