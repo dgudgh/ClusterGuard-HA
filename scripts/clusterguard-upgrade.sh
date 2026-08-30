@@ -685,18 +685,59 @@ release_update_locks() {
 	update_locks_acquired=false
 }
 
-publish_update_metadata() {
-  local host remote_dir="${update_root}/${patch_id}" temporary
-  [[ "${PWD}" == "${remote_dir}" && -f "${PWD}/package.json" && ! -L "${PWD}/package.json" ]] || return 0
-  progress_replication_enabled=true
+cleanup_update_artifact_temps() {
+  local transaction="$1" host remote_dir="${update_root}/${patch_id}"
   for host in "${controllers[@]}"; do
-    temporary="${remote_dir}/.package.json.tmp"
+    remote_run "${host}" "rm -f '${remote_dir}/.package.cgpatch.${transaction}.tmp' '${remote_dir}/.package.json.${transaction}.tmp'" >/dev/null 2>&1 || true
+  done
+}
+
+publish_update_artifacts() {
+  local host remote_dir="${update_root}/${patch_id}"
+  local package_source="${PWD}/package.cgpatch" metadata_source="${PWD}/package.json"
+  local current_directory managed_directory package_sha metadata_sha transaction package_temporary metadata_temporary
+
+  # Direct CLI upgrades keep using the operator-provided package. Console jobs
+  # are identified by their protected update directory and are distributed to
+  # every controller before any maintenance gate or RPM mutation is attempted.
+  current_directory="$(pwd -P)"
+  managed_directory="$(cd "${remote_dir}" 2>/dev/null && pwd -P)" || return 0
+  [[ "${current_directory}" == "${managed_directory}" ]] || return 0
+  [[ -f "${package_source}" && ! -L "${package_source}" && -f "${metadata_source}" && ! -L "${metadata_source}" ]] ||
+    die "控制台升级目录缺少升级包或元数据"
+  [[ "${patch_file}" -ef "${package_source}" ]] || die "控制台升级任务引用的升级包与受保护目录不一致"
+
+  package_sha="$(sha256_file "${package_source}")"
+  metadata_sha="$(sha256_file "${metadata_source}")"
+  jq -e \
+    --arg patch_id "${patch_id}" --arg source "${source_version}" --arg target "${target_version}" \
+    --arg architecture "${rpm_architecture}" --arg sha256 "${package_sha}" \
+    --argjson bootstrap_protocol "${bootstrap_protocol}" '
+      .patch_id == $patch_id and .source_version == $source and .target_version == $target and
+      .architecture == $architecture and .sha256 == $sha256 and
+      .signature_verified == true and .rollback_available == true and .rolling == true and
+      .database_mutation == false and
+      (if $bootstrap_protocol == 1 then
+        .bootstrap_available == true and .bootstrap_protocol == 1
+       else true end)
+    ' "${metadata_source}" >/dev/null || die "控制台升级包元数据与已验签升级包不一致"
+
+  transaction="${patch_id}.$$"
+  package_temporary="${remote_dir}/.package.cgpatch.${transaction}.tmp"
+  metadata_temporary="${remote_dir}/.package.json.${transaction}.tmp"
+  log "向 ${#controllers[@]} 个控制节点分发已验签升级包并校验 SHA-256"
+  for host in "${controllers[@]}"; do
     if ! remote_run "${host}" "install -d -o root -g clusterguard -m 0750 '${remote_dir}'" >/dev/null 2>&1 ||
-      ! remote_copy "${host}" "${PWD}/package.json" "${temporary}" >/dev/null 2>&1 ||
-      ! remote_run "${host}" "chown root:clusterguard '${temporary}'; chmod 0640 '${temporary}'; mv -f '${temporary}' '${remote_dir}/package.json'" >/dev/null 2>&1; then
-      log "警告：无法向控制节点 ${host} 发布升级包元数据；升级任务继续，但该节点可能暂时无法展示进度"
+      ! remote_copy "${host}" "${package_source}" "${package_temporary}" >/dev/null 2>&1 ||
+      ! remote_run "${host}" "set -eu; printf '%s  %s\\n' '${package_sha}' '${package_temporary}' | sha256sum -c - >/dev/null; chown root:clusterguard '${package_temporary}'; chmod 0640 '${package_temporary}'" >/dev/null 2>&1 ||
+      ! remote_copy "${host}" "${metadata_source}" "${metadata_temporary}" >/dev/null 2>&1 ||
+      ! remote_run "${host}" "set -eu; printf '%s  %s\\n' '${metadata_sha}' '${metadata_temporary}' | sha256sum -c - >/dev/null; chown root:clusterguard '${metadata_temporary}'; chmod 0640 '${metadata_temporary}'; mv -f '${package_temporary}' '${remote_dir}/package.cgpatch'; mv -f '${metadata_temporary}' '${remote_dir}/package.json'" >/dev/null 2>&1; then
+      cleanup_update_artifact_temps "${transaction}"
+      die "无法向控制节点 ${host} 分发并验证升级包；尚未建立维护门禁，也未修改任何 RPM"
     fi
   done
+  progress_replication_enabled=true
+  log "升级包已在全部控制节点完成 SHA-256 校验和原子发布"
 }
 
 publish_update_progress() {
@@ -907,7 +948,7 @@ fi
 journal_file="${PWD}/clusterguard-update-${patch_id}.json"
 journal_events_file="${PWD}/clusterguard-update-${patch_id}.events.jsonl"
 total_nodes="${#ordered_nodes[@]}"
-publish_update_metadata
+publish_update_artifacts
 write_journal running "" "rolling update started" preparing 0 "${total_nodes}"
 write_journal running "" "maintenance gates are being acquired" locking 0 "${total_nodes}"
 acquire_update_locks

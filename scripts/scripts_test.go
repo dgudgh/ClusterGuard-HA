@@ -1,6 +1,7 @@
 package scripts
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -398,7 +399,7 @@ elif [[ "$command" == *"cgctl"*" status"* ]]; then
   [[ ! -f "$state/$host.maintenance" ]] || maintenance=true
   ready=true
   role=follower
-  [[ "$host" != c3 ]] || role=leader
+  [[ "$host" != "${FAKE_LEADER_HOST:-c3}" ]] || role=leader
   voter_count=3
   members='[{"resource_id":"11111111-1111-4111-8111-111111111111"},{"resource_id":"22222222-2222-4222-8222-222222222222"},{"resource_id":"33333333-3333-4333-8333-333333333333"}]'
   data_members='[{"resource_id":"11111111-1111-4111-8111-111111111111","ip_address":"c1"},{"resource_id":"22222222-2222-4222-8222-222222222222","ip_address":"c2"},{"resource_id":"33333333-3333-4333-8333-333333333333","ip_address":"c3"},{"resource_id":"44444444-4444-4444-8444-444444444444","ip_address":"d1"}]'
@@ -425,6 +426,15 @@ elif [[ "$command" == *".cluster-update.lock/patch-id"* && "$command" == *"grep 
   test -f "$state/$host.maintenance"
 elif [[ "$command" == *"update-maintenance.json"* && "$command" == *"rolling_update"* ]]; then
   : >"$state/$host.maintenance"
+elif [[ "$command" == *".package.json."* && "$command" == *"sha256sum -c"* ]]; then
+  actual="$(sha256sum "$state/$host.metadata.tmp" | awk '{print $1}')"
+  [[ "$actual" == "${FAKE_EXPECTED_METADATA_SHA:?}" ]]
+  mv -f "$state/$host.package.tmp" "$state/$host.package.cgpatch"
+  mv -f "$state/$host.metadata.tmp" "$state/$host.package.json"
+elif [[ "$command" == *".package.cgpatch."* && "$command" == *"sha256sum -c"* ]]; then
+  [[ "$host" != "${FAKE_PACKAGE_VERIFY_FAIL_HOST:-}" ]] || exit 45
+  actual="$(sha256sum "$state/$host.package.tmp" | awk '{print $1}')"
+  [[ "$actual" == "${FAKE_EXPECTED_PACKAGE_SHA:?}" ]]
 elif [[ "$command" == *"rm -f '/etc/clusterguard/update-maintenance.json.tmp'"* ]]; then
   if [[ "$host" == "${FAKE_RELEASE_FAIL_HOST:-}" && ! -f "$state/release-failure-injected" ]]; then
     : >"$state/release-failure-injected"
@@ -440,7 +450,24 @@ elif [[ "$command" == *"rpm -Uvh"* ]]; then
   printf '%s\n' "$host" >>"$state/install-order"
 fi
 `, 0o755)
-	writeFile(t, filepath.Join(fakeBin, "scp"), "#!/usr/bin/env bash\nexit 0\n", 0o755)
+	writeFile(t, filepath.Join(fakeBin, "scp"), `#!/usr/bin/env bash
+set -euo pipefail
+source_path="${@: -2:1}"
+destination="${@: -1}"
+remote="${destination#*@}"
+host="${remote%%:*}"
+remote_path="${remote#*:}"
+state="${FAKE_REMOTE_STATE:?}"
+case "$remote_path" in
+  */.package.cgpatch.*.tmp)
+    [[ "$host" != "${FAKE_PACKAGE_COPY_FAIL_HOST:-}" ]] || exit 46
+    cp "$source_path" "$state/$host.package.tmp"
+    ;;
+  */.package.json.*.tmp)
+    cp "$source_path" "$state/$host.metadata.tmp"
+    ;;
+esac
+`, 0o755)
 	knownHosts := filepath.Join(root, "known_hosts")
 	writeFile(t, knownHosts, "test host keys\n", 0o600)
 
@@ -639,6 +666,130 @@ fi
 	output, err = command.CombinedOutput()
 	if err == nil || !strings.Contains(string(output), "静态控制节点清单与实时 Raft 成员不一致") {
 		t.Fatalf("stale controller inventory was not rejected: err=%v\n%s", err, output)
+	}
+
+	patchID := "cgupgrade-2.2-28-to-2.2-29-x86_64"
+	updateRoot := filepath.Join(root, "updates")
+	jobDirectory := filepath.Join(updateRoot, patchID)
+	packageBytes, err := os.ReadFile(patchPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packageSHA := fmt.Sprintf("%x", sha256.Sum256(packageBytes))
+	packageMetadata := fmt.Sprintf(`{
+  "patch_id": %q,
+  "file_name": "clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade",
+  "size_bytes": %d,
+  "sha256": %q,
+  "source_version": "2.2-28",
+  "target_version": "2.2-29",
+  "architecture": "x86_64",
+  "signature_verified": true,
+  "rollback_available": true,
+  "rolling": true,
+  "database_mutation": false,
+  "bootstrap_available": true,
+  "bootstrap_protocol": 1
+}
+`, patchID, len(packageBytes), packageSHA)
+	writeFile(t, filepath.Join(jobDirectory, "package.cgpatch"), string(packageBytes), 0o600)
+	writeFile(t, filepath.Join(jobDirectory, "package.json"), packageMetadata, 0o600)
+	metadataSHA := fmt.Sprintf("%x", sha256.Sum256([]byte(packageMetadata)))
+	for _, host := range []string{"c1", "c2", "c3", "d1"} {
+		writeFile(t, filepath.Join(state, host+".version"), "2.2-28\n", 0o600)
+		_ = os.Remove(filepath.Join(state, host+".maintenance"))
+	}
+	_ = os.Remove(filepath.Join(state, "install-order"))
+	managedEnvironment := []string{
+		"PATH=" + fakeBin + ":" + os.Getenv("PATH"),
+		"FAKE_REMOTE_STATE=" + state,
+		"FAKE_EXPECTED_PACKAGE_SHA=" + packageSHA,
+		"FAKE_EXPECTED_METADATA_SHA=" + metadataSHA,
+	}
+	command = exec.Command("bash", upgradeScript,
+		"--patch", filepath.Join(jobDirectory, "package.cgpatch"), "--trust-key", publicKey,
+		"--controllers", "c1,c2,c3", "--data-nodes", "c1,c2,c3,d1",
+		"--known-hosts", knownHosts, "--update-root", updateRoot, "-u", "root", "--execute", "--yes")
+	command.Dir = jobDirectory
+	command.Env = append(os.Environ(), managedEnvironment...)
+	if output, err = command.CombinedOutput(); err != nil {
+		t.Fatalf("managed rolling update with package replication: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "升级包已在全部控制节点完成 SHA-256 校验和原子发布") {
+		t.Fatalf("managed update did not enter artifact replication:\n%s", output)
+	}
+	for _, host := range []string{"c1", "c2", "c3"} {
+		replicatedPackage, readErr := os.ReadFile(filepath.Join(state, host+".package.cgpatch"))
+		if readErr != nil || fmt.Sprintf("%x", sha256.Sum256(replicatedPackage)) != packageSHA {
+			t.Fatalf("%s did not receive the exact signed package: err=%v", host, readErr)
+		}
+		replicatedMetadata, readErr := os.ReadFile(filepath.Join(state, host+".package.json"))
+		if readErr != nil || fmt.Sprintf("%x", sha256.Sum256(replicatedMetadata)) != metadataSHA {
+			t.Fatalf("%s did not receive the exact package metadata: err=%v", host, readErr)
+		}
+	}
+
+	for _, host := range []string{"c1", "c2", "c3", "d1"} {
+		writeFile(t, filepath.Join(state, host+".version"), "2.2-28\n", 0o600)
+		_ = os.Remove(filepath.Join(state, host+".maintenance"))
+	}
+	_ = os.Remove(filepath.Join(state, "install-order"))
+	command = exec.Command("bash", upgradeScript,
+		"--patch", filepath.Join(jobDirectory, "package.cgpatch"), "--trust-key", publicKey,
+		"--controllers", "c1,c2,c3", "--data-nodes", "c1,c2,c3,d1",
+		"--known-hosts", knownHosts, "--update-root", updateRoot, "-u", "root", "--execute", "--yes")
+	command.Dir = jobDirectory
+	command.Env = append(os.Environ(), append(managedEnvironment, "FAKE_PACKAGE_COPY_FAIL_HOST=c2")...)
+	output, err = command.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "尚未建立维护门禁，也未修改任何 RPM") {
+		t.Fatalf("package distribution failure did not fail before mutation: err=%v\n%s", err, output)
+	}
+	if _, statErr := os.Stat(filepath.Join(state, "install-order")); !os.IsNotExist(statErr) {
+		t.Fatalf("an RPM was installed after package distribution failure: %v", statErr)
+	}
+	for _, host := range []string{"c1", "c2", "c3"} {
+		if _, statErr := os.Stat(filepath.Join(state, host+".maintenance")); !os.IsNotExist(statErr) {
+			t.Fatalf("%s entered maintenance after package distribution failure: %v", host, statErr)
+		}
+	}
+
+	// Model an interrupted run resuming after leadership moves from c3 to c2.
+	// The new Leader restores both local artifacts from its replicated copy.
+	newLeaderPackage, err := os.ReadFile(filepath.Join(state, "c2.package.cgpatch"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	newLeaderMetadata, err := os.ReadFile(filepath.Join(state, "c2.package.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(jobDirectory, "package.cgpatch"), string(newLeaderPackage), 0o600)
+	writeFile(t, filepath.Join(jobDirectory, "package.json"), string(newLeaderMetadata), 0o600)
+	for _, host := range []string{"c1", "c2", "c3", "d1"} {
+		version := "2.2-28\n"
+		if host == "c1" {
+			version = "2.2-29\n"
+		}
+		writeFile(t, filepath.Join(state, host+".version"), version, 0o600)
+	}
+	for _, host := range []string{"c1", "c2", "c3"} {
+		writeFile(t, filepath.Join(state, host+".maintenance"), "interrupted\n", 0o600)
+	}
+	_ = os.Remove(filepath.Join(state, "install-order"))
+	command = exec.Command("bash", upgradeScript,
+		"--patch", filepath.Join(jobDirectory, "package.cgpatch"), "--trust-key", publicKey,
+		"--controllers", "c1,c2,c3", "--data-nodes", "c1,c2,c3,d1",
+		"--known-hosts", knownHosts, "--update-root", updateRoot, "-u", "root", "--resume", "--execute", "--yes")
+	command.Dir = jobDirectory
+	command.Env = append(os.Environ(), append(managedEnvironment, "FAKE_LEADER_HOST=c2")...)
+	if output, err = command.CombinedOutput(); err != nil {
+		t.Fatalf("resume from replicated package after Leader change: %v\n%s", err, output)
+	}
+	for _, host := range []string{"c1", "c2", "c3", "d1"} {
+		version, readErr := os.ReadFile(filepath.Join(state, host+".version"))
+		if readErr != nil || strings.TrimSpace(string(version)) != "2.2-29" {
+			t.Fatalf("%s Leader-change resume version=%q err=%v", host, version, readErr)
+		}
 	}
 }
 
@@ -3638,8 +3789,12 @@ func TestRollingUpdaterPublishesStructuredProgressAcrossControllers(t *testing.T
 	}
 	text := string(upgrader)
 	for _, required := range []string{
-		"publish_update_metadata",
+		"publish_update_artifacts",
 		"publish_update_progress",
+		`[[ "${patch_file}" -ef "${package_source}" ]]`,
+		`printf '%s  %s\\n' '${package_sha}' '${package_temporary}' | sha256sum -c -`,
+		`mv -f '${package_temporary}' '${remote_dir}/package.cgpatch'`,
+		`无法向控制节点 ${host} 分发并验证升级包；尚未建立维护门禁，也未修改任何 RPM`,
 		`--arg phase "${phase}"`,
 		`--argjson current "${current}"`,
 		`--argjson total "${total}"`,
@@ -3654,6 +3809,11 @@ func TestRollingUpdaterPublishesStructuredProgressAcrossControllers(t *testing.T
 		if !strings.Contains(text, required) {
 			t.Fatalf("rolling updater is missing structured progress contract %q", required)
 		}
+	}
+	if publish := strings.Index(text, "publish_update_artifacts\n"); publish < 0 {
+		t.Fatal("rolling updater does not publish the signed package before execution")
+	} else if locks := strings.LastIndex(text, "acquire_update_locks\n"); locks < 0 || publish >= locks {
+		t.Fatal("rolling updater must distribute and verify the package before acquiring maintenance locks")
 	}
 
 	job, err := os.ReadFile("clusterguard-update-job.sh")
@@ -3713,6 +3873,7 @@ func TestChineseDeliveryManualsCoverInstallDatabasePreparationAndOperations(t *t
 			"--resume",
 			"--rollback",
 			"维护门禁",
+			"升级包驻留合同",
 			"系统升级期间无法进行自动切换，请注意关注。",
 		},
 	}

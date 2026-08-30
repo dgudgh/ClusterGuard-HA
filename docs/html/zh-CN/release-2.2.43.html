@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="2.2.43 发布说明 - ClusterGuard HA operational documentation">
+  <title>2.2.43 发布说明 | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">跳到正文</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>搜索文档</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="输入标题关键词">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>开始使用</h2><a href="index.html" data-doc-title="clusterguard ha 中文文档">ClusterGuard HA 中文文档</a><a href="product-overview.html" data-doc-title="产品概览">产品概览</a><a href="product-tour.html" data-doc-title="控制台产品导览">控制台产品导览</a><a href="architecture.html" data-doc-title="系统架构">系统架构</a><a href="release-2.2.45.html" data-doc-title="2.2.45 发布说明">2.2.45 发布说明</a><a href="release-2.2.44.html" data-doc-title="2.2.44 发布说明">2.2.44 发布说明</a><a href="release-2.2.43.html" data-doc-title="2.2.43 发布说明" aria-current="page" class="active">2.2.43 发布说明</a><a href="release-2.2.42.html" data-doc-title="2.2.42 发布说明">2.2.42 发布说明</a><a href="release-2.2.41.html" data-doc-title="2.2.41 发布说明">2.2.41 发布说明</a><a href="release-2.2.40.html" data-doc-title="2.2.40 发布说明">2.2.40 发布说明</a><a href="release-2.2.39.html" data-doc-title="2.2.39 发布说明">2.2.39 发布说明</a><a href="release-2.1.45.html" data-doc-title="2.1.45 发布说明">2.1.45 发布说明</a></section><section><h2>部署与迁移</h2><a href="offline-rpm-install.html" data-doc-title="离线 rpm 安装">离线 RPM 安装</a><a href="database-preparation.html" data-doc-title="数据库接入">数据库接入</a><a href="orchestrator-migration.html" data-doc-title="从 orchestrator 迁移">从 Orchestrator 迁移</a></section><section><h2>日常运维</h2><a href="operations-manual.html" data-doc-title="运维操作手册">运维操作手册</a><a href="api-operations.html" data-doc-title="api 运维参考">API 运维参考</a><a href="postgresql-ha.html" data-doc-title="postgresql 高可用">PostgreSQL 高可用</a><a href="docker-swarm-mysql.html" data-doc-title="docker swarm mysql">Docker Swarm MySQL</a><a href="kubernetes-mysql.html" data-doc-title="kubernetes mysql">Kubernetes MySQL</a><a href="update-and-patch.html" data-doc-title="版本升级与回退">版本升级与回退</a><a href="version-release-policy.html" data-doc-title="版本与发版规范">版本与发版规范</a></section><section><h2>验收证据</h2><a href="proven-mysql-ha-methods.html" data-doc-title="mysql 已验证方法">MySQL 已验证方法</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql 功能验收">MySQL 功能验收</a><a href="mysql-former-primary-recovery.html" data-doc-title="旧主恢复专项验收">旧主恢复专项验收</a><a href="mysql-production-qualification.html" data-doc-title="mysql 生产验收">MySQL 生产验收</a><a href="postgresql-production-qualification.html" data-doc-title="postgresql 16.4 生产验收">PostgreSQL 16.4 生产验收</a><a href="docker-swarm-mysql-validation.html" data-doc-title="docker swarm mysql 实机验证">Docker Swarm MySQL 实机验证</a><a href="production-chaos-test.html" data-doc-title="生产故障测试报告">生产故障测试报告</a><a href="power-lifecycle-test.html" data-doc-title="计划关机测试报告">计划关机测试报告</a></section></nav>
+      <div class="sidebar-meta">
+        <span>离线文档构建</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">打开目录</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>2.2.43 发布说明</strong></div>
+        <div class="header-actions">
+          <a href="../en-US/release-2.2.43.html" lang="en-US">English</a>
+          <button id="print-button" type="button">打印</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha-2-2-43-发布说明">ClusterGuard HA 2.2.43 发布说明<a class="heading-anchor" href="#clusterguard-ha-2-2-43-发布说明" aria-label="Link to ClusterGuard HA 2.2.43 发布说明">#</a></h1>
+<blockquote>
+<p><strong>语言：</strong> <a href="../en-US/release-2.2.43.html">English</a> | 简体中文</p>
+</blockquote>
+<p>发布日期：2026-08-28
+版本：<code>2.2-43</code></p>
+<h2 id="版本概述">版本概述<a class="heading-anchor" href="#版本概述" aria-label="Link to 版本概述">#</a></h2>
+<p><code>v2.2.43</code> 修复滚动升级执行后状态退回“已上传”的问题，并建立签名包内升级器合同。升级编排修复从此可以在目标 RPM 安装前生效，不再由源版本中可能已经过时的脚本主持整个升级。</p>
+<p>本版本只更新 ClusterGuard 控制面、Agent 和升级工具，不修改数据库软件、数据目录、复制关系或业务入口。</p>
+<h2 id="主要变化">主要变化<a class="heading-anchor" href="#主要变化" aria-label="Link to 主要变化">#</a></h2>
+<ul>
+<li>新 <code>.cgupgrade</code> 在发布签名覆盖的清单中声明包内引导升级器、协议和 SHA-256，缺失或被篡改时在进入维护状态前拒绝执行。</li>
+<li>源节点升级器只负责安全解包、签名和摘要校验，随后把计划、滚动、收敛等待、续跑和回退交给验签后的包内升级器。</li>
+<li>控制台在上传和执行两个入口同时检查引导升级器合同，历史遗留的无引导器 <code>.cgupgrade</code> 不能绕过新检查；旧 <code>.cgpatch</code> 仅保留兼容入口。</li>
+<li>任务状态文件存在但不可读、损坏或升级包 ID 不一致时，控制 API 返回“操作结果需要验证”，并保守保持维护告警，不再把任务伪装成“已上传”。</li>
+<li>滚动进度按当前活动节点计算，所有节点完成后稳定显示 <code>100%</code>。</li>
+</ul>
+<h2 id="升级边界">升级边界<a class="heading-anchor" href="#升级边界" aria-label="Link to 升级边界">#</a></h2>
+<ul>
+<li>从 <code>2.2-42</code> 升到 <code>2.2-43</code> 时，由 <code>2.2-42</code> 中已经具备重试、续跑和状态权限修复的执行器完成首次升级。</li>
+<li><code>2.2-43</code> 安装完成后，后续签名升级包才会在执行前切换到包内升级器；控制台会显示“引导器 v1”。</li>
+<li>升级维护期间继续暂停自动故障切换，全部节点、数据库主从、业务入口和 Raft 多数派复核通过后才释放维护门禁。</li>
+</ul>
+<h2 id="升级路径">升级路径<a class="heading-anchor" href="#升级路径" aria-label="Link to 升级路径">#</a></h2>
+<p>当前运行 <code>2.2-42</code> 时，上传：</p>
+<pre><code class="language-text">clusterguard-ha-2.2-42_to_2.2-43.x86_64.cgupgrade
+</code></pre>
+<p>先生成只读计划，再于维护窗口执行滚动升级。若状态显示“操作结果需要验证”，不得重复发起升级，应先查看升级事件和原始输出并核对现场版本。</p>
+
+          <footer class="document-footer">
+            <span>源文件: <code>docs/zh-CN/release-2.2.43.md</code></span>
+            <a href="../index.html">文档语言入口</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="本页目录">
+          <strong>本页目录</strong>
+          <a class="toc-level-2" href="#版本概述">版本概述</a><a class="toc-level-2" href="#主要变化">主要变化</a><a class="toc-level-2" href="#升级边界">升级边界</a><a class="toc-level-2" href="#升级路径">升级路径</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

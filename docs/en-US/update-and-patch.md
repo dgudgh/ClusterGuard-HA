@@ -20,7 +20,7 @@ An administrator can complete the workflow under **Settings → Version Update**
 
 1. Upload an officially released, signed `.cgupgrade`. The server validates format, SHA-256, release signature, architecture, source and target versions, and state protocol before accepting it.
 2. Select **Generate Update Plan** and review the update package ID, source, target, rolling order, rollback availability, and node inventory.
-3. Select **Execute Rolling Update**. The confirmation dialog repeats the automatic-failover warning and requires the complete update package ID.
+3. Select **Execute Rolling Update**. The confirmation dialog repeats the automatic-failover warning and requires the complete update package ID. The runner first distributes the same signed package and metadata to every controller, verifies SHA-256 remotely, and publishes each copy atomically before creating maintenance gates.
 4. A persistent banner remains visible for the entire maintenance transaction while node events, status, and raw output update in place.
 5. After success, confirm the banner is gone and recheck topology, VIP, and replication. On failure, use **Resume Update** or **Controlled Rollback**; never delete maintenance markers manually.
 
@@ -70,6 +70,7 @@ Four independent contracts protect a site update:
 2. **Node identity contract**: the deployment inventory, immutable UUID in `/etc/clusterguard/node.json`, live Raft voters, and active data-node inventory must match exactly. Hostname, IP, and membership changes are never inferred optimistically.
 3. **Maintenance transaction contract**: every controller receives a durable marker for the same `patch_id` before rolling work starts. Markers are released only after end-to-end verification; a partial release triggers compensating re-lock on every controller.
 4. **Bootstrap execution contract**: every new `.cgupgrade` must contain a manifest-declared bootstrap updater covered by the release signature. The console rejects a new package without a verified bootstrap; `.cgpatch` remains a legacy compatibility path only.
+5. **Package residency contract**: before a console execute, resume, or rollback starts, `package.cgpatch` and `package.json` must exist in the same protected update directory on every controller. Each remote SHA-256 must match the locally verified artifact before an atomic rename publishes it. Any distribution or digest failure stops before maintenance gates and RPM mutation; already published identical read-only copies are safe to reuse.
 
 The initial installer registers immutable controller, data, and mixed-node identities before database discovery. Later expansion, retirement, or replacement must update the resource inventory through the node lifecycle workflow; the updater will not silently omit an active node.
 
@@ -158,7 +159,9 @@ clusterguard-upgrade \
   --execute
 ```
 
-Before every node, the updater rechecks quorum, Leader identity, readiness, active operations, and lifecycle tasks. It writes `/etc/clusterguard/update-maintenance.json` on every controller:
+Before every node, the updater rechecks quorum, Leader identity, readiness, active operations, and lifecycle tasks. Before writing any maintenance marker, a console update distributes the complete signed package and metadata to all controllers and re-verifies SHA-256 remotely. Copy interruption, insufficient disk space, permission failure, or digest mismatch therefore cannot enter maintenance or install an RPM. If the Raft Leader changes during the update, the new Leader can resume or roll back from the same protected local artifact.
+
+The updater then writes `/etc/clusterguard/update-maintenance.json` on every controller:
 
 - mutating UI and API requests return `423 Locked`;
 - automatic failover is blocked by the same Safety Guard;
@@ -202,7 +205,7 @@ clusterguard-upgrade \
   --resume --execute
 ```
 
-`--resume` accepts only the same `patch_id` stored in the lock. Do not manually remove maintenance markers or locks. On normal completion, the updater preflights every controller marker before releasing any of them. If a release fails partway through, it writes the same lock back to every controller and remains fail-closed until connectivity is repaired and the run is resumed.
+`--resume` accepts only the same `patch_id` stored in the lock. A console update has already copied the package to every controller before creating that lock, so a new Leader resumes from its local artifact after leadership changes; a package or metadata digest mismatch is still rejected. Do not manually remove maintenance markers or locks. On normal completion, the updater preflights every controller marker before releasing any of them. If a release fails partway through, it writes the same lock back to every controller and remains fail-closed until connectivity is repaired and the run is resumed.
 
 To deliberately return to the old RPM:
 

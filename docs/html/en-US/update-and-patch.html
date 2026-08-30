@@ -21,7 +21,7 @@
         <span>Search documentation</span>
         <input id="docs-search" type="search" autocomplete="off" placeholder="Filter by title">
       </label>
-      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.2.39.html" data-doc-title="release 2.2.39">Release 2.2.39</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="docker-swarm-mysql.html" data-doc-title="docker swarm mysql">Docker Swarm MySQL</a><a href="kubernetes-mysql.html" data-doc-title="kubernetes mysql">Kubernetes MySQL</a><a href="update-and-patch.html" data-doc-title="version update and rollback" aria-current="page" class="active">Version Update and Rollback</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="postgresql-production-qualification.html" data-doc-title="postgresql 16.4 production qualification">PostgreSQL 16.4 Production Qualification</a><a href="docker-swarm-mysql-validation.html" data-doc-title="docker swarm mysql lab qualification">Docker Swarm MySQL Lab Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.2.45.html" data-doc-title="release 2.2.45">Release 2.2.45</a><a href="release-2.2.44.html" data-doc-title="release 2.2.44">Release 2.2.44</a><a href="release-2.2.43.html" data-doc-title="release 2.2.43">Release 2.2.43</a><a href="release-2.2.42.html" data-doc-title="release 2.2.42">Release 2.2.42</a><a href="release-2.2.41.html" data-doc-title="release 2.2.41">Release 2.2.41</a><a href="release-2.2.40.html" data-doc-title="release 2.2.40">Release 2.2.40</a><a href="release-2.2.39.html" data-doc-title="release 2.2.39">Release 2.2.39</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="docker-swarm-mysql.html" data-doc-title="docker swarm mysql">Docker Swarm MySQL</a><a href="kubernetes-mysql.html" data-doc-title="kubernetes mysql">Kubernetes MySQL</a><a href="update-and-patch.html" data-doc-title="version update and rollback" aria-current="page" class="active">Version Update and Rollback</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="postgresql-production-qualification.html" data-doc-title="postgresql 16.4 production qualification">PostgreSQL 16.4 Production Qualification</a><a href="docker-swarm-mysql-validation.html" data-doc-title="docker swarm mysql lab qualification">Docker Swarm MySQL Lab Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
       <div class="sidebar-meta">
         <span>Offline documentation build</span>
         <strong>2.1 / 2.2</strong>
@@ -54,7 +54,7 @@
 <ol>
 <li>Upload an officially released, signed <code>.cgupgrade</code>. The server validates format, SHA-256, release signature, architecture, source and target versions, and state protocol before accepting it.</li>
 <li>Select <strong>Generate Update Plan</strong> and review the update package ID, source, target, rolling order, rollback availability, and node inventory.</li>
-<li>Select <strong>Execute Rolling Update</strong>. The confirmation dialog repeats the automatic-failover warning and requires the complete update package ID.</li>
+<li>Select <strong>Execute Rolling Update</strong>. The confirmation dialog repeats the automatic-failover warning and requires the complete update package ID. The runner first distributes the same signed package and metadata to every controller, verifies SHA-256 remotely, and publishes each copy atomically before creating maintenance gates.</li>
 <li>A persistent banner remains visible for the entire maintenance transaction while node events, status, and raw output update in place.</li>
 <li>After success, confirm the banner is gone and recheck topology, VIP, and replication. On failure, use <strong>Resume Update</strong> or <strong>Controlled Rollback</strong>; never delete maintenance markers manually.</li>
 </ol>
@@ -73,20 +73,25 @@ cgctl version --json
 curl --cacert /etc/clusterguard/tls/ca.crt \
   https://127.0.0.1:3000/api/v1/platform/version
 </code></pre>
-<p>A <code>.cgupgrade</code> contains the target RPM, rollback RPM, compatibility manifest, SHA-256 checksums, and release signature. Sites retain only the release public key. The private signing key must remain offline and must never be shipped to customer systems. The legacy <code>.cgpatch</code> suffix is accepted only for compatibility.</p>
+<p>A <code>.cgupgrade</code> contains the target RPM, rollback RPM, embedded bootstrap updater, compatibility manifest, SHA-256 checksums, and release signature. Sites retain only the release public key. The private signing key must remain offline and must never be shipped to customer systems. The legacy <code>.cgpatch</code> suffix is accepted only for compatibility.</p>
 <pre><code class="language-text">clusterguard-patch/
 ├── PATCH-MANIFEST.json
 ├── PATCH-MANIFEST.sig
 ├── SHA256SUMS
+├── bootstrap/
+│   └── clusterguard-upgrade.sh
 └── payload/
     ├── clusterguard-ha-old.rpm
     └── clusterguard-ha-new.rpm
 </code></pre>
-<p>Three independent contracts protect a site update:</p>
+<p>The updater already installed on the source node is limited to safe extraction, release-signature verification, and bootstrap SHA-256 verification. Planning, rolling execution, convergence waits, resume, and rollback are delegated to the verified updater embedded in the package. Orchestration fixes therefore take effect before the target RPM is installed instead of inheriting stale source-version behavior. A modified, missing, or incompatible bootstrap is rejected before maintenance gates are created.</p>
+<p>Four independent contracts protect a site update:</p>
 <ol>
 <li><strong>Version contract</strong>: the RPM, running binary, and update-package manifest must agree on version, architecture, <code>state_format</code>, and <code>update_protocol</code>.</li>
 <li><strong>Node identity contract</strong>: the deployment inventory, immutable UUID in <code>/etc/clusterguard/node.json</code>, live Raft voters, and active data-node inventory must match exactly. Hostname, IP, and membership changes are never inferred optimistically.</li>
 <li><strong>Maintenance transaction contract</strong>: every controller receives a durable marker for the same <code>patch_id</code> before rolling work starts. Markers are released only after end-to-end verification; a partial release triggers compensating re-lock on every controller.</li>
+<li><strong>Bootstrap execution contract</strong>: every new <code>.cgupgrade</code> must contain a manifest-declared bootstrap updater covered by the release signature. The console rejects a new package without a verified bootstrap; <code>.cgpatch</code> remains a legacy compatibility path only.</li>
+<li><strong>Package residency contract</strong>: before a console execute, resume, or rollback starts, <code>package.cgpatch</code> and <code>package.json</code> must exist in the same protected update directory on every controller. Each remote SHA-256 must match the locally verified artifact before an atomic rename publishes it. Any distribution or digest failure stops before maintenance gates and RPM mutation; already published identical read-only copies are safe to reuse.</li>
 </ol>
 <p>The initial installer registers immutable controller, data, and mixed-node identities before database discovery. Later expansion, retirement, or replacement must update the resource inventory through the node lifecycle workflow; the updater will not silently omit an active node.</p>
 <h2 id="2-supported-boundaries">2. Supported Boundaries<a class="heading-anchor" href="#2-supported-boundaries" aria-label="Link to 2. Supported Boundaries">#</a></h2>
@@ -155,7 +160,8 @@ install -m 0640 -o root -g clusterguard clusterguard-patch-signing-public.pem \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --inspect
 </code></pre>
-<p>Require <code>signature=verified</code>, the expected source and target, <code>rollback=available</code>, and <code>database_mutation=false</code>.</p>
+<p>Require <code>signature=verified</code>, the expected source and target, <code>rollback=available</code>, <code>database_mutation=false</code>, <code>bootstrap=available</code>, and <code>bootstrap_protocol=1</code>.</p>
+<p>During plan or execution, the source updater logs that the signed bootstrap was verified and execution is being handed to the package updater. Do not proceed with a production change if this handoff record is absent.</p>
 <h3 id="plan">Plan<a class="heading-anchor" href="#plan" aria-label="Link to Plan">#</a></h3>
 <pre><code class="language-bash">clusterguard-upgrade \
   --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
@@ -175,7 +181,8 @@ install -m 0640 -o root -g clusterguard clusterguard-patch-signing-public.pem \
   --known-hosts /etc/clusterguard/ssh_known_hosts \
   --execute
 </code></pre>
-<p>Before every node, the updater rechecks quorum, Leader identity, readiness, active operations, and lifecycle tasks. It writes <code>/etc/clusterguard/update-maintenance.json</code> on every controller:</p>
+<p>Before every node, the updater rechecks quorum, Leader identity, readiness, active operations, and lifecycle tasks. Before writing any maintenance marker, a console update distributes the complete signed package and metadata to all controllers and re-verifies SHA-256 remotely. Copy interruption, insufficient disk space, permission failure, or digest mismatch therefore cannot enter maintenance or install an RPM. If the Raft Leader changes during the update, the new Leader can resume or roll back from the same protected local artifact.</p>
+<p>The updater then writes <code>/etc/clusterguard/update-maintenance.json</code> on every controller:</p>
 <ul>
 <li>mutating UI and API requests return <code>423 Locked</code>;</li>
 <li>automatic failover is blocked by the same Safety Guard;</li>
@@ -206,7 +213,7 @@ clusterguard-update-PATCH-ID.events.jsonl
   --known-hosts /etc/clusterguard/ssh_known_hosts \
   --resume --execute
 </code></pre>
-<p><code>--resume</code> accepts only the same <code>patch_id</code> stored in the lock. Do not manually remove maintenance markers or locks. On normal completion, the updater preflights every controller marker before releasing any of them. If a release fails partway through, it writes the same lock back to every controller and remains fail-closed until connectivity is repaired and the run is resumed.</p>
+<p><code>--resume</code> accepts only the same <code>patch_id</code> stored in the lock. A console update has already copied the package to every controller before creating that lock, so a new Leader resumes from its local artifact after leadership changes; a package or metadata digest mismatch is still rejected. Do not manually remove maintenance markers or locks. On normal completion, the updater preflights every controller marker before releasing any of them. If a release fails partway through, it writes the same lock back to every controller and remains fail-closed until connectivity is repaired and the run is resumed.</p>
 <p>To deliberately return to the old RPM:</p>
 <pre><code class="language-bash">clusterguard-upgrade \
   --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \

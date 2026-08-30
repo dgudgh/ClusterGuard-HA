@@ -19,13 +19,13 @@ const sourceAssets = path.join(docsDirectory, "html-src");
 
 const groups = {
   "en-US": [
-    ["Start Here", ["index", "product-overview", "product-tour", "architecture", "release-2.2.39", "release-2.1.45"]],
+    ["Start Here", ["index", "product-overview", "product-tour", "architecture", "release-2.2.45", "release-2.2.44", "release-2.2.43", "release-2.2.42", "release-2.2.41", "release-2.2.40", "release-2.2.39", "release-2.1.45"]],
     ["Deploy and Migrate", ["offline-rpm-install", "database-preparation", "orchestrator-migration"]],
     ["Operate", ["operations-manual", "api-operations", "postgresql-ha", "docker-swarm-mysql", "kubernetes-mysql", "update-and-patch", "version-release-policy"]],
     ["Qualification", ["proven-mysql-ha-methods", "mysql-feature-parity-acceptance", "mysql-former-primary-recovery", "mysql-production-qualification", "postgresql-production-qualification", "docker-swarm-mysql-validation", "production-chaos-test", "power-lifecycle-test"]]
   ],
   "zh-CN": [
-    ["开始使用", ["index", "product-overview", "product-tour", "architecture", "release-2.2.39", "release-2.1.45"]],
+    ["开始使用", ["index", "product-overview", "product-tour", "architecture", "release-2.2.45", "release-2.2.44", "release-2.2.43", "release-2.2.42", "release-2.2.41", "release-2.2.40", "release-2.2.39", "release-2.1.45"]],
     ["部署与迁移", ["offline-rpm-install", "database-preparation", "orchestrator-migration"]],
     ["日常运维", ["operations-manual", "api-operations", "postgresql-ha", "docker-swarm-mysql", "kubernetes-mysql", "update-and-patch", "version-release-policy"]],
     ["验收证据", ["proven-mysql-ha-methods", "mysql-feature-parity-acceptance", "mysql-former-primary-recovery", "mysql-production-qualification", "postgresql-production-qualification", "docker-swarm-mysql-validation", "production-chaos-test", "power-lifecycle-test"]]
@@ -37,6 +37,12 @@ const entries = [
   entry("en-US", "product-overview", "Product Overview", "README.md"),
   entry("en-US", "product-tour", "Console Product Tour", "docs/en-US/product-tour.md"),
   entry("en-US", "architecture", "Architecture", "docs/architecture.md"),
+  entry("en-US", "release-2.2.45", "Release 2.2.45", "docs/en-US/release-2.2.45.md"),
+  entry("en-US", "release-2.2.44", "Release 2.2.44", "docs/en-US/release-2.2.44.md"),
+  entry("en-US", "release-2.2.43", "Release 2.2.43", "docs/en-US/release-2.2.43.md"),
+  entry("en-US", "release-2.2.42", "Release 2.2.42", "docs/en-US/release-2.2.42.md"),
+  entry("en-US", "release-2.2.41", "Release 2.2.41", "docs/en-US/release-2.2.41.md"),
+  entry("en-US", "release-2.2.40", "Release 2.2.40", "docs/en-US/release-2.2.40.md"),
   entry("en-US", "release-2.2.39", "Release 2.2.39", "docs/en-US/release-2.2.39.md"),
   entry("en-US", "release-2.1.45", "Release 2.1.45", "docs/en-US/release-2.1.45.md"),
   entry("en-US", "offline-rpm-install", "Offline RPM Installation", "docs/en-US/offline-rpm-install.md"),
@@ -62,6 +68,12 @@ const entries = [
   entry("zh-CN", "product-overview", "产品概览", "README.zh-CN.md"),
   entry("zh-CN", "product-tour", "控制台产品导览", "docs/zh-CN/product-tour.md"),
   entry("zh-CN", "architecture", "系统架构", "docs/zh-CN/architecture.md"),
+  entry("zh-CN", "release-2.2.45", "2.2.45 发布说明", "docs/zh-CN/release-2.2.45.md"),
+  entry("zh-CN", "release-2.2.44", "2.2.44 发布说明", "docs/zh-CN/release-2.2.44.md"),
+  entry("zh-CN", "release-2.2.43", "2.2.43 发布说明", "docs/zh-CN/release-2.2.43.md"),
+  entry("zh-CN", "release-2.2.42", "2.2.42 发布说明", "docs/zh-CN/release-2.2.42.md"),
+  entry("zh-CN", "release-2.2.41", "2.2.41 发布说明", "docs/zh-CN/release-2.2.41.md"),
+  entry("zh-CN", "release-2.2.40", "2.2.40 发布说明", "docs/zh-CN/release-2.2.40.md"),
   entry("zh-CN", "release-2.2.39", "2.2.39 发布说明", "docs/zh-CN/release-2.2.39.md"),
   entry("zh-CN", "release-2.1.45", "2.1.45 发布说明", "docs/zh-CN/release-2.1.45.md"),
   entry("zh-CN", "offline-rpm-install", "离线 RPM 安装", "docs/zh-CN/offline-rpm-install.md"),
