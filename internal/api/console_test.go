@@ -114,7 +114,9 @@ func TestSettingsUsesThreeSwitchableAdministrativeSections(t *testing.T) {
 	for _, contract := range []string{
 		"--accent:#0071e3", "--canvas:#f5f5f7", "renderSelectedSoftwareUpdateFile",
 		"const setSettingsSection = (section, focus = false) =>", "settingsSection: 'status'",
-		"fetchResult('/api/v1/platform/version')", "renderSoftwareUpdateHistory(snapshot)",
+		"const [softwareUpdates, platformVersion] = await Promise.all([",
+		"fetchResult('/api/v1/platform/version').catch(() => state.platformVersion)",
+		"state.platformVersion = platformVersion", "renderSoftwareUpdateHistory(snapshot)",
 		"系统升级期间无法进行自动切换，请注意关注。",
 	} {
 		if !strings.Contains(page, contract) {

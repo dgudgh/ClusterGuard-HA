@@ -2762,7 +2762,12 @@
         return;
       }
       try {
-        state.softwareUpdates = await fetchResult('/api/v1/platform/updates');
+        const [softwareUpdates, platformVersion] = await Promise.all([
+          fetchResult('/api/v1/platform/updates'),
+          fetchResult('/api/v1/platform/version').catch(() => state.platformVersion),
+        ]);
+        state.softwareUpdates = softwareUpdates;
+        state.platformVersion = platformVersion;
       } catch (error) {
         state.softwareUpdates = { available:false, reason:error.message, warning:'系统升级期间无法进行自动切换，请注意关注。', packages:[] };
         if (notifyOnError) setLiveStatus(`读取升级状态失败：${error.message}`, true);

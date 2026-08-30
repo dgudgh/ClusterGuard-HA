@@ -801,6 +801,19 @@ esac
 	if !strings.Contains(string(output), "升级包已在全部控制节点完成 SHA-256 校验和原子发布") {
 		t.Fatalf("managed update did not enter artifact replication:\n%s", output)
 	}
+	events, err := os.ReadFile(filepath.Join(jobDirectory, "clusterguard-update-"+patchID+".events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventLines := strings.Split(strings.TrimSpace(string(events)), "\n")
+	if len(eventLines) < 2 {
+		t.Fatalf("managed update emitted %d progress events, want multiple events", len(eventLines))
+	}
+	for index, line := range eventLines {
+		if !json.Valid([]byte(line)) {
+			t.Fatalf("managed update event line %d is not compact JSON: %q", index+1, line)
+		}
+	}
 	for _, host := range []string{"c1", "c2", "c3"} {
 		replicatedPackage, readErr := os.ReadFile(filepath.Join(state, host+".package.cgpatch"))
 		if readErr != nil || fmt.Sprintf("%x", sha256.Sum256(replicatedPackage)) != packageSHA {

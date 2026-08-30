@@ -802,7 +802,7 @@ write_journal() {
     ((percent <= 100)) || percent=100
   fi
   event_tmp="${journal_file}.event.tmp"
-  jq -n --arg patch_id "${patch_id}" --arg mode "${update_mode}" --arg status "${status}" --arg node "${node}" --arg message "${message}" \
+  jq -cn --arg patch_id "${patch_id}" --arg mode "${update_mode}" --arg status "${status}" --arg node "${node}" --arg message "${message}" \
     --arg phase "${phase}" --argjson current "${current}" --argjson total "${total}" \
     --arg source "${source_version}" --arg target "${target_version}" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     '{patch_id:$patch_id,mode:$mode,status:$status,node:$node,message:$message,phase:$phase,current:$current,total:$total,source:$source,target:$target,updated_at:$at}' >"${event_tmp}"
