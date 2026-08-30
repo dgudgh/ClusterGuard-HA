@@ -31,6 +31,7 @@ func (stub inspectorStub) Inspect(context.Context, string, string) (Package, err
 
 type helperStub struct {
 	readyErr error
+	startErr error
 	started  []Mode
 }
 
@@ -38,7 +39,7 @@ func (stub *helperStub) Ready(context.Context) error { return stub.readyErr }
 
 func (stub *helperStub) Start(_ context.Context, mode Mode, _ string) error {
 	stub.started = append(stub.started, mode)
-	return nil
+	return stub.startErr
 }
 
 func TestManagerUploadVerifiesAndPersistsSignedUpgradePackage(t *testing.T) {
@@ -64,6 +65,22 @@ func TestManagerUploadVerifiesAndPersistsSignedUpgradePackage(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, result.PatchID, patchFileName)); err != nil {
 		t.Fatalf("patch was not persisted: %v", err)
+	}
+	for _, expectation := range []struct {
+		path string
+		mode os.FileMode
+	}{
+		{path: filepath.Join(root, result.PatchID), mode: updateJobDirMode},
+		{path: filepath.Join(root, result.PatchID, patchFileName), mode: updateFileMode},
+		{path: filepath.Join(root, result.PatchID, packageFileName), mode: updateFileMode},
+	} {
+		info, statErr := os.Stat(expectation.path)
+		if statErr != nil {
+			t.Fatal(statErr)
+		}
+		if info.Mode().Perm() != expectation.mode {
+			t.Fatalf("%s mode=%#o want=%#o", expectation.path, info.Mode().Perm(), expectation.mode)
+		}
 	}
 	snapshot := manager.Snapshot(context.Background())
 	if !snapshot.Available || len(snapshot.Packages) != 1 || snapshot.Packages[0].Package.PatchID != result.PatchID {
@@ -264,6 +281,33 @@ func TestManagerRequiresPlanAndTypedConfirmationBeforeExecute(t *testing.T) {
 	}
 	if job.Status != StatusQueued || len(helper.started) != 2 || helper.started[1] != ModeExecute {
 		t.Fatalf("unexpected job/helper state: %+v %+v", job, helper.started)
+	}
+}
+
+func TestManagerHelperStartFailurePublishesReadableTerminalStatus(t *testing.T) {
+	manager, helper, patchID := preparedManager(t)
+	helper.startErr = errors.New("helper launch failed")
+	if _, err := manager.Start(context.Background(), ModePlan, patchID, ""); err == nil || !strings.Contains(err.Error(), "helper launch failed") {
+		t.Fatalf("unexpected start error: %v", err)
+	}
+	job, found := manager.Job(patchID)
+	if !found || job.Status != StatusFailed || job.Message != "helper launch failed" || job.FinishedAt.IsZero() {
+		t.Fatalf("helper failure was not persisted: found=%t job=%+v", found, job)
+	}
+	for _, expectation := range []struct {
+		path string
+		mode os.FileMode
+	}{
+		{path: filepath.Join(manager.config.RootDirectory, patchID), mode: updateJobDirMode},
+		{path: filepath.Join(manager.config.RootDirectory, patchID, jobFileName), mode: updateFileMode},
+	} {
+		info, err := os.Stat(expectation.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != expectation.mode {
+			t.Fatalf("%s mode=%#o want=%#o", expectation.path, info.Mode().Perm(), expectation.mode)
+		}
 	}
 }
 

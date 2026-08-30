@@ -36,6 +36,17 @@ job_dir="${root}/${patch_id}"
 patch="${job_dir}/package.cgpatch"
 status_file="${job_dir}/status.json"
 [[ -d "${job_dir}" && ! -L "${job_dir}" && -f "${patch}" && ! -L "${patch}" ]] || die "补丁暂存目录无效"
+# The console service queues jobs as clusterguard and the privileged helper
+# publishes their results as root. Keep the directory group-writable so a new
+# Raft Leader can resume the same signed package after controller failover.
+chgrp clusterguard "${job_dir}"
+chmod 0770 "${job_dir}"
+chown root:clusterguard "${patch}"
+chmod 0640 "${patch}"
+if [[ -f "${job_dir}/package.json" && ! -L "${job_dir}/package.json" ]]; then
+  chown root:clusterguard "${job_dir}/package.json"
+  chmod 0640 "${job_dir}/package.json"
+fi
 install -d -m 0755 /run/clusterguard
 exec 9>/run/clusterguard/update.lock
 flock -n 9 || die "已有软件更新任务正在运行"

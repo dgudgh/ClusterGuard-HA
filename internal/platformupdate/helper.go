@@ -136,8 +136,17 @@ func (handler *HelperHandler) ServeHTTP(writer http.ResponseWriter, request *htt
 		return
 	}
 	directory := filepath.Join(handler.root, payload.PatchID)
-	if !strictChild(handler.root, directory) || !regularFile(filepath.Join(directory, patchFileName)) {
+	patchPath := filepath.Join(directory, patchFileName)
+	if !strictChild(handler.root, directory) || !regularFile(patchPath) {
 		helperError(writer, http.StatusNotFound, "verified software update package was not found")
+		return
+	}
+	if err := os.Chmod(directory, updateJobDirMode); err != nil {
+		helperError(writer, http.StatusInternalServerError, "unable to prepare software update directory")
+		return
+	}
+	if err := os.Chmod(patchPath, updateFileMode); err != nil {
+		helperError(writer, http.StatusInternalServerError, "unable to prepare software update package")
 		return
 	}
 	handler.mu.Lock()
@@ -167,6 +176,12 @@ func (handler *HelperHandler) ServeHTTP(writer http.ResponseWriter, request *htt
 
 func (handler *HelperHandler) recordLaunchFailure(patchID string, mode Mode, cause error) {
 	path := filepath.Join(handler.root, patchID, jobFileName)
+	// The job runner writes the authoritative terminal state. A non-zero exit is
+	// expected after a safe preflight block or a completed automatic rollback,
+	// so the helper must not replace that evidence with a generic launch error.
+	if jobFileHasTerminalStatus(path) {
+		return
+	}
 	job := Job{}
 	_ = readJSONFile(path, &job)
 	now := time.Now().UTC()

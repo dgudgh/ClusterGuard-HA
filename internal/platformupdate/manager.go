@@ -33,6 +33,9 @@ const (
 	outputFileName   = "output.log"
 	eventsFileName   = "events.jsonl"
 	maximumTailLines = 200
+	updateRootMode   = 0o750
+	updateJobDirMode = 0o770
+	updateFileMode   = 0o640
 )
 
 var (
@@ -254,7 +257,7 @@ func (manager *Manager) Upload(ctx context.Context, fileName string, source io.R
 	if source == nil || !SupportedPackageFileName(fileName) {
 		return Package{}, ErrInvalidPatch
 	}
-	if err := os.MkdirAll(manager.config.RootDirectory, 0o750); err != nil {
+	if err := ensureDirectoryMode(manager.config.RootDirectory, updateRootMode); err != nil {
 		return Package{}, fmt.Errorf("create software update directory: %w", err)
 	}
 	temporary, err := os.CreateTemp(manager.config.RootDirectory, ".upload-*"+PreferredPackageExtension)
@@ -294,7 +297,7 @@ func (manager *Manager) Upload(ctx context.Context, fileName string, source io.R
 	} else if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
 		return Package{}, statErr
 	}
-	if err := os.MkdirAll(destinationDirectory, 0o750); err != nil {
+	if err := ensureDirectoryMode(destinationDirectory, updateJobDirMode); err != nil {
 		return Package{}, fmt.Errorf("create patch directory: %w", err)
 	}
 	inspected.FileName = filepath.Base(fileName)
@@ -306,6 +309,9 @@ func (manager *Manager) Upload(ctx context.Context, fileName string, source io.R
 			return existing, nil
 		}
 		return Package{}, ErrPackageConflict
+	}
+	if err := os.Chmod(temporaryPath, updateFileMode); err != nil {
+		return Package{}, fmt.Errorf("publish software update package permissions: %w", err)
 	}
 	if err := os.Rename(temporaryPath, filepath.Join(destinationDirectory, patchFileName)); err != nil {
 		return Package{}, fmt.Errorf("publish software update package: %w", err)
@@ -361,6 +367,9 @@ func (manager *Manager) Start(ctx context.Context, mode Mode, patchID, confirmat
 		job.Message = "正在生成只读滚动升级计划"
 	}
 	jobPath := filepath.Join(manager.config.RootDirectory, patchID, jobFileName)
+	if err := ensureDirectoryMode(filepath.Dir(jobPath), updateJobDirMode); err != nil {
+		return Job{}, fmt.Errorf("prepare software update job directory: %w", err)
+	}
 	if err := writeJSONAtomic(jobPath, job); err != nil {
 		return Job{}, err
 	}
@@ -369,7 +378,9 @@ func (manager *Manager) Start(ctx context.Context, mode Mode, patchID, confirmat
 		job.Message = err.Error()
 		job.FinishedAt = manager.now().UTC()
 		job.UpdatedAt = job.FinishedAt
-		_ = writeJSONAtomic(jobPath, job)
+		if !jobFileHasTerminalStatus(jobPath) {
+			_ = writeJSONAtomic(jobPath, job)
+		}
 		return Job{}, fmt.Errorf("start software update helper: %w", err)
 	}
 	return job, nil
@@ -624,7 +635,10 @@ func writeJSONAtomic(path string, value interface{}) error {
 	}
 	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
-	_ = temporary.Chmod(0o600)
+	if err = temporary.Chmod(updateFileMode); err != nil {
+		_ = temporary.Close()
+		return err
+	}
 	if _, err = temporary.Write(contents); err == nil {
 		err = temporary.Sync()
 	}
@@ -635,6 +649,33 @@ func writeJSONAtomic(path string, value interface{}) error {
 		return err
 	}
 	return os.Rename(temporaryPath, path)
+}
+
+func ensureDirectoryMode(path string, mode os.FileMode) error {
+	if err := os.MkdirAll(path, mode); err != nil {
+		return err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return ErrInvalidPatch
+	}
+	return os.Chmod(path, mode)
+}
+
+func jobFileHasTerminalStatus(path string) bool {
+	job := Job{}
+	if err := readJSONFile(path, &job); err != nil {
+		return false
+	}
+	switch job.Status {
+	case StatusPlanned, StatusSucceeded, StatusFailed, StatusRolledBack:
+		return true
+	default:
+		return false
+	}
 }
 
 func readJSONFile(path string, destination interface{}) error {

@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="Release 2.2.46 - ClusterGuard HA operational documentation">
+  <title>Release 2.2.46 | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">Skip to content</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>Search documentation</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="Filter by title">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.2.46.html" data-doc-title="release 2.2.46" aria-current="page" class="active">Release 2.2.46</a><a href="release-2.2.45.html" data-doc-title="release 2.2.45">Release 2.2.45</a><a href="release-2.2.44.html" data-doc-title="release 2.2.44">Release 2.2.44</a><a href="release-2.2.43.html" data-doc-title="release 2.2.43">Release 2.2.43</a><a href="release-2.2.42.html" data-doc-title="release 2.2.42">Release 2.2.42</a><a href="release-2.2.41.html" data-doc-title="release 2.2.41">Release 2.2.41</a><a href="release-2.2.40.html" data-doc-title="release 2.2.40">Release 2.2.40</a><a href="release-2.2.39.html" data-doc-title="release 2.2.39">Release 2.2.39</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="docker-swarm-mysql.html" data-doc-title="docker swarm mysql">Docker Swarm MySQL</a><a href="kubernetes-mysql.html" data-doc-title="kubernetes mysql">Kubernetes MySQL</a><a href="update-and-patch.html" data-doc-title="version update and rollback">Version Update and Rollback</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="postgresql-production-qualification.html" data-doc-title="postgresql 16.4 production qualification">PostgreSQL 16.4 Production Qualification</a><a href="docker-swarm-mysql-validation.html" data-doc-title="docker swarm mysql lab qualification">Docker Swarm MySQL Lab Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section></nav>
+      <div class="sidebar-meta">
+        <span>Offline documentation build</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">Open navigation</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>Release 2.2.46</strong></div>
+        <div class="header-actions">
+          <a href="../zh-CN/release-2.2.46.html" lang="zh-CN">简体中文</a>
+          <button id="print-button" type="button">Print</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha-2-2-46-release-notes">ClusterGuard HA 2.2.46 Release Notes<a class="heading-anchor" href="#clusterguard-ha-2-2-46-release-notes" aria-label="Link to ClusterGuard HA 2.2.46 Release Notes">#</a></h1>
+<blockquote>
+<p><strong>Language:</strong> English | <a href="../zh-CN/release-2.2.46.html">简体中文</a></p>
+</blockquote>
+<p>Release date: 2026-08-30
+Version: <code>2.2-46</code></p>
+<h2 id="overview">Overview<a class="heading-anchor" href="#overview" aria-label="Link to Overview">#</a></h2>
+<p><code>v2.2.46</code> fixes the graphical rolling updater incorrectly showing &quot;operation outcome requires verification&quot; or &quot;uploaded&quot; after a safe preflight block or an automatic rollback. The privileged Helper was replacing the authoritative <code>status.json</code> written by the update runner after any non-zero process exit and publishing it with permissions unreadable by the console service.</p>
+<p>This release defines one permission contract for update job directories and evidence files and preserves terminal states written by the update runner. Safety checks continue to fail closed, while the console now reports the actual reason, maintenance state, and automatic-failover availability instead of an unknown outcome.</p>
+<p>This release updates only the ClusterGuard control plane, Agent, and update tools. It does not modify database software, data directories, replication relationships, or the application endpoint.</p>
+<h2 id="changes">Changes<a class="heading-anchor" href="#changes" aria-label="Link to Changes">#</a></h2>
+<ul>
+<li>Update job directories use cooperative mode <code>0770</code>; packages, metadata, status, output, and events use mode <code>0640</code>.</li>
+<li>Existing directories with legacy permissions are normalized during upload, job startup, package distribution, and progress replication.</li>
+<li>Runner terminal states <code>planned</code>, <code>succeeded</code>, <code>failed</code>, and <code>rolled_back</code> are no longer replaced by a generic Helper process error.</li>
+<li>The Helper writes a fallback failure only when the child process leaves no terminal state.</li>
+<li>After a Leader change, the new Leader can read the same signed package and write queued, resume, or rollback status.</li>
+<li>Added regressions for Helper startup failure, safe preflight blocks, automatic rollback terminal state, and directory permissions.</li>
+</ul>
+<h2 id="upgrade-paths">Upgrade paths<a class="heading-anchor" href="#upgrade-paths" aria-label="Link to Upgrade paths">#</a></h2>
+<p>Standard path:</p>
+<pre><code class="language-text">clusterguard-ha-2.2-45_to_2.2-46.x86_64.cgupgrade
+</code></pre>
+<p>Sites still running <code>2.2-44</code> may use the controlled bridge package shipped with this release:</p>
+<pre><code class="language-text">clusterguard-ha-2.2-44_to_2.2-46.x86_64.cgupgrade
+</code></pre>
+<p>Generate a read-only plan first, then execute the rolling update in a maintenance window. Planning does not modify any node. Execution publishes and verifies the same signed package on every controller before it establishes maintenance gates and upgrades nodes one at a time.</p>
+
+          <footer class="document-footer">
+            <span>Source: <code>docs/en-US/release-2.2.46.md</code></span>
+            <a href="../index.html">Documentation language home</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="On this page">
+          <strong>On this page</strong>
+          <a class="toc-level-2" href="#overview">Overview</a><a class="toc-level-2" href="#changes">Changes</a><a class="toc-level-2" href="#upgrade-paths">Upgrade paths</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

@@ -727,7 +727,7 @@ publish_update_artifacts() {
   metadata_temporary="${remote_dir}/.package.json.${transaction}.tmp"
   log "向 ${#controllers[@]} 个控制节点分发已验签升级包并校验 SHA-256"
   for host in "${controllers[@]}"; do
-    if ! remote_run "${host}" "install -d -o root -g clusterguard -m 0750 '${remote_dir}'" >/dev/null 2>&1 ||
+    if ! remote_run "${host}" "set -eu; install -d -o root -g clusterguard -m 0770 '${remote_dir}'; chown root:clusterguard '${remote_dir}'; chmod 0770 '${remote_dir}'" >/dev/null 2>&1 ||
       ! remote_copy "${host}" "${package_source}" "${package_temporary}" >/dev/null 2>&1 ||
       ! remote_run "${host}" "set -eu; printf '%s  %s\\n' '${package_sha}' '${package_temporary}' | sha256sum -c - >/dev/null; chown root:clusterguard '${package_temporary}'; chmod 0640 '${package_temporary}'" >/dev/null 2>&1 ||
       ! remote_copy "${host}" "${metadata_source}" "${metadata_temporary}" >/dev/null 2>&1 ||
@@ -744,7 +744,7 @@ publish_update_progress() {
   local host remote_dir="${update_root}/${patch_id}" status_source="${PWD}/status.json" temporary
   [[ -f "${status_source}" && -f "${journal_events_file}" ]] || return 0
   for host in "${controllers[@]}"; do
-    if ! remote_run "${host}" "install -d -o root -g clusterguard -m 0750 '${remote_dir}'" >/dev/null 2>&1; then
+    if ! remote_run "${host}" "set -eu; install -d -o root -g clusterguard -m 0770 '${remote_dir}'; chown root:clusterguard '${remote_dir}'; chmod 0770 '${remote_dir}'" >/dev/null 2>&1; then
       log "警告：控制节点 ${host} 暂时无法接收升级进度"
       continue
     fi

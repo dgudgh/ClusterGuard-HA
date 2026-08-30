@@ -86,6 +86,70 @@ func TestHelperHandlerSerializesJobsAndReleasesSlotOnCompletion(t *testing.T) {
 	}
 }
 
+func TestHelperPreservesRunnerTerminalStatusAndPublishesFallbackReadably(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		initial     Job
+		wantMessage string
+	}{
+		{
+			name: "runner terminal status is authoritative",
+			initial: Job{PatchID: "cg-2.2-1-to-2.2-2", Mode: ModeExecute, Status: StatusRolledBack,
+				Message: "升级未完成，已自动回退全部节点并释放维护门禁"},
+			wantMessage: "升级未完成，已自动回退全部节点并释放维护门禁",
+		},
+		{
+			name:        "missing runner terminal status gets helper fallback",
+			initial:     Job{PatchID: "cg-2.2-1-to-2.2-2", Mode: ModeExecute, Status: StatusRunning},
+			wantMessage: "特权更新任务启动或执行失败：exit status 1",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			directory := filepath.Join(root, test.initial.PatchID)
+			if err := os.MkdirAll(directory, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(directory, patchFileName), []byte("patch"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := writeJSONAtomic(filepath.Join(directory, jobFileName), test.initial); err != nil {
+				t.Fatal(err)
+			}
+			launcher := &launcherStub{}
+			handler := NewHelperHandler(root, launcher)
+			body, _ := json.Marshal(helperRequest{Mode: ModeExecute, PatchID: test.initial.PatchID})
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/jobs", bytes.NewReader(body)))
+			if response.Code != http.StatusAccepted {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+			launcher.done(errors.New("exit status 1"))
+			job := Job{}
+			if err := readJSONFile(filepath.Join(directory, jobFileName), &job); err != nil {
+				t.Fatal(err)
+			}
+			if job.Message != test.wantMessage {
+				t.Fatalf("message=%q want=%q", job.Message, test.wantMessage)
+			}
+			statusInfo, err := os.Stat(filepath.Join(directory, jobFileName))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if statusInfo.Mode().Perm() != updateFileMode {
+				t.Fatalf("status mode=%#o want=%#o", statusInfo.Mode().Perm(), updateFileMode)
+			}
+			directoryInfo, err := os.Stat(directory)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if directoryInfo.Mode().Perm() != updateJobDirMode {
+				t.Fatalf("directory mode=%#o want=%#o", directoryInfo.Mode().Perm(), updateJobDirMode)
+			}
+		})
+	}
+}
+
 func TestCommandLauncherPublishesGroupReadableOutput(t *testing.T) {
 	root := t.TempDir()
 	runner := filepath.Join(root, "runner.sh")

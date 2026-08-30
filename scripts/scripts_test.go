@@ -3758,6 +3758,8 @@ func TestSoftwareUpdateArtifactsRemainReadableByConsoleService(t *testing.T) {
 	jobText := string(job)
 	for _, required := range []string{
 		"chown root:clusterguard",
+		"chgrp clusterguard",
+		"chmod 0770",
 		"chmod 0640",
 		"output.log",
 		"clusterguard-update-*.events.jsonl",
@@ -3791,6 +3793,8 @@ func TestRollingUpdaterPublishesStructuredProgressAcrossControllers(t *testing.T
 	for _, required := range []string{
 		"publish_update_artifacts",
 		"publish_update_progress",
+		`install -d -o root -g clusterguard -m 0770 '${remote_dir}'`,
+		`chown root:clusterguard '${remote_dir}'; chmod 0770 '${remote_dir}'`,
 		`[[ "${patch_file}" -ef "${package_source}" ]]`,
 		`printf '%s  %s\\n' '${package_sha}' '${package_temporary}' | sha256sum -c -`,
 		`mv -f '${package_temporary}' '${remote_dir}/package.cgpatch'`,
