@@ -74,6 +74,8 @@ upgrade_lock_name=""
 configured_data_members=""
 configured_data_addresses=""
 update_root="/var/lib/clusterguard/updates"
+update_pruner="/usr/local/libexec/clusterguard-update-prune.sh"
+retained_versions="${CG_UPDATE_RETAINED_VERSIONS:-3}"
 update_mode="execute"
 progress_replication_enabled=false
 bootstrap_available=false
@@ -123,6 +125,7 @@ ClusterGuard HA 客户现场签名升级包与滚动升级器
   --accept-host-keys            首次采集当前节点 SSH 主机密钥
   --api-port PORT               控制面 API 端口，默认 3000
   --update-root DIR             控制面升级状态目录，默认 /var/lib/clusterguard/updates
+  --retain-versions COUNT       成功后保留最近升级版本数，默认 3
   --plan                        输出升级顺序但不改节点（默认）
   --execute                     真实滚动升级
   --rollback                    使用升级包内回退 RPM 执行受控回退
@@ -153,6 +156,7 @@ while (($#)); do
     --accept-host-keys) accept_host_keys=true; shift ;;
     --api-port) need_value "$@"; api_port="$2"; shift 2 ;;
     --update-root) need_value "$@"; update_root="$2"; shift 2 ;;
+    --retain-versions) need_value "$@"; retained_versions="$2"; shift 2 ;;
     --remote-stage) need_value "$@"; remote_stage="$2"; shift 2 ;;
     --plan) execute=false; shift ;;
     --execute) execute=true; shift ;;
@@ -171,6 +175,7 @@ command -v tar >/dev/null 2>&1 || die "需要 tar"
 [[ -f "${trust_key}" && ! -L "${trust_key}" ]] || die "可信签名公钥不存在或不是普通文件"
 [[ "${ssh_port}" =~ ^[0-9]+$ && "${ssh_port}" -ge 1 && "${ssh_port}" -le 65535 ]] || die "SSH 端口无效"
 [[ "${api_port}" =~ ^[0-9]+$ && "${api_port}" -ge 1 && "${api_port}" -le 65535 ]] || die "API 端口无效"
+[[ "${retained_versions}" =~ ^[1-9][0-9]*$ ]] || die "保留版本数必须为正整数"
 [[ "${ssh_user}" =~ ^[A-Za-z_][A-Za-z0-9_.-]*$ ]] || die "SSH 用户名格式无效"
 [[ "${remote_stage}" =~ ^/[A-Za-z0-9._/-]+$ && "${remote_stage}" != *"//"* && "${remote_stage}" != *"/../"* && "${remote_stage}" != */.. ]] ||
   die "远端暂存目录必须是无空格、无相对跳转的绝对路径"
@@ -455,6 +460,18 @@ remote_copy() {
   else
     scp -q -P "${ssh_port}" "${options[@]}" -o BatchMode=yes -- "${source}" "${ssh_user}@${host}:${destination}"
   fi
+}
+
+prune_update_artifacts() {
+  local host failed=false
+  for host in "${all_nodes[@]}"; do
+    if ! remote_run "${host}" "test -x '${update_pruner}' && '${update_pruner}' --update-root '${update_root}' --history-root '${remote_stage}' --retain-versions '${retained_versions}' --protect '${patch_id}'"; then
+      failed=true
+      log "警告：节点 ${host} 未能完成升级材料保留清理"
+    fi
+  done
+  ${failed} && return 1
+  log "升级材料已在全部节点按最近 ${retained_versions} 个版本完成清理"
 }
 
 load_runtime_data_members() {
@@ -1037,6 +1054,7 @@ if ${upgrade_failed}; then
   fi
   retain_update_locks=false
   write_journal rolled_back "${failure_node}" "automatic rollback completed and maintenance released" rolled_back "${#updated_nodes[@]}" "${#updated_nodes[@]}"
+  prune_update_artifacts || log "警告：自动回退已完成，但部分旧升级材料需要稍后清理"
   die "节点 ${failure_node} 更新失败，已完成自动回退"
 fi
 
@@ -1058,4 +1076,5 @@ remote_run "${leader_host}" "systemd-run --quiet --unit '${helper_refresh_unit}'
   die "所有节点已达到目标版本，但 Leader 软件更新 Helper 自刷新调度失败；请重启 clusterguard-update-helper.service 后核验"
 }
 write_journal succeeded "" "all nodes and maintenance release verified" completed "${total_nodes}" "${total_nodes}"
+prune_update_artifacts || log "警告：升级已成功，但部分旧升级材料需要稍后清理"
 log "补丁完成：所有节点均为 ${desired_version}，控制面多数派和就绪状态已复核"

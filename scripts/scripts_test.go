@@ -3,6 +3,7 @@ package scripts
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -91,6 +92,7 @@ func TestDeliveryScriptsAreSyntaxValid(t *testing.T) {
 		"clusterguard-ha-matrix.sh",
 		"clusterguard-upgrade.sh",
 		"clusterguard-update-job.sh",
+		"clusterguard-update-prune.sh",
 		"clusterguard-mysql-qualification.sh",
 		"../deploy/docker-swarm/mysql/bootstrap-replication.sh",
 		"../deploy/docker-swarm/mysql/install-mysql-client.sh",
@@ -100,6 +102,102 @@ func TestDeliveryScriptsAreSyntaxValid(t *testing.T) {
 		if output, err := exec.Command("bash", "-n", path).CombinedOutput(); err != nil {
 			t.Fatalf("bash -n %s: %v\n%s", path, err, output)
 		}
+	}
+}
+
+func TestUpdatePrunerKeepsThreeNewestVersionsAndProtectsUnfinishedWork(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq is required")
+	}
+	root := t.TempDir()
+	updateRoot := filepath.Join(root, "updates")
+	historyRoot := filepath.Join(root, "update-history")
+	operationLogRoot := filepath.Join(root, "operation-log")
+	if err := os.MkdirAll(updateRoot, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(historyRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for index := 1; index <= 8; index++ {
+		writeFile(t, filepath.Join(operationLogRoot, fmt.Sprintf("operation-%02d.json", index)), "{}\n", 0o640)
+	}
+
+	base := time.Unix(1_700_000_000, 0)
+	for index := 1; index <= 5; index++ {
+		patchID := fmt.Sprintf("cgupgrade-%02d", index)
+		updateDirectory := filepath.Join(updateRoot, patchID)
+		historyDirectory := filepath.Join(historyRoot, patchID)
+		writeFile(t, filepath.Join(updateDirectory, "status.json"), `{"status":"succeeded","maintenance_active":false}`+"\n", 0o640)
+		writeFile(t, filepath.Join(historyDirectory, "rollback.rpm"), "rpm\n", 0o600)
+		modified := base.Add(time.Duration(index) * time.Minute)
+		if err := os.Chtimes(updateDirectory, modified, modified); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(historyDirectory, modified, modified); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	activeID := "cgupgrade-active"
+	activeDirectory := filepath.Join(updateRoot, activeID)
+	writeFile(t, filepath.Join(activeDirectory, "status.json"), `{"status":"failed","maintenance_active":true}`+"\n", 0o640)
+	if err := os.Chtimes(activeDirectory, base, base); err != nil {
+		t.Fatal(err)
+	}
+	reviewID := "cgupgrade-review"
+	reviewDirectory := filepath.Join(updateRoot, reviewID)
+	writeFile(t, filepath.Join(reviewDirectory, "status.json"), `{"status":"failed","maintenance_active":false,"verification_required":true}`+"\n", 0o640)
+	if err := os.Chtimes(reviewDirectory, base.Add(time.Second), base.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(root, "outside")
+	if err := os.Mkdir(outside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(updateRoot, "cgupgrade-symlink")); err != nil {
+		t.Fatal(err)
+	}
+
+	command := exec.Command("bash", "clusterguard-update-prune.sh",
+		"--update-root", updateRoot,
+		"--history-root", historyRoot,
+		"--protect", "cgupgrade-01")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("prune update packages: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "保留最近 3 个版本") {
+		t.Fatalf("default retention was not reported:\n%s", output)
+	}
+
+	for _, rootPath := range []string{updateRoot, historyRoot} {
+		for _, patchID := range []string{"cgupgrade-01", "cgupgrade-03", "cgupgrade-04", "cgupgrade-05"} {
+			if _, err := os.Stat(filepath.Join(rootPath, patchID)); err != nil {
+				t.Fatalf("%s should be retained in %s: %v", patchID, rootPath, err)
+			}
+		}
+		if _, err := os.Stat(filepath.Join(rootPath, "cgupgrade-02")); !os.IsNotExist(err) {
+			t.Fatalf("old fourth unprotected version remains in %s: %v", rootPath, err)
+		}
+	}
+	for _, patchID := range []string{activeID, reviewID} {
+		if _, err := os.Stat(filepath.Join(updateRoot, patchID)); err != nil {
+			t.Fatalf("unfinished package %s was removed: %v", patchID, err)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(updateRoot, "cgupgrade-symlink")); err != nil {
+		t.Fatalf("symlink entry outside retention scope was changed: %v", err)
+	}
+	if _, err := os.Stat(outside); err != nil {
+		t.Fatalf("symlink target outside retention root was changed: %v", err)
+	}
+	operationLogs, err := os.ReadDir(operationLogRoot)
+	if err != nil {
+		t.Fatalf("read operation logs after package pruning: %v", err)
+	}
+	if len(operationLogs) != 8 {
+		t.Fatalf("package retention changed operation logs: got %d want 8", len(operationLogs))
 	}
 }
 
@@ -174,7 +272,8 @@ func TestUpgradePackageBuilderAndInspectorVerifySignedDualRPMBundle(t *testing.T
 	patchPath := filepath.Join(root, "clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade")
 
 	command := exec.Command("bash", "build-clusterguard-patch.sh",
-		"--from-rpm", fromRPM, "--to-rpm", toRPM, "--signing-key", privateKey, "--output", patchPath)
+		"--from-rpm", fromRPM, "--to-rpm", toRPM, "--signing-key", privateKey,
+		"--expected-public-key", publicKey, "--output", patchPath)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("build patch: %v\n%s", err, output)
 	}
@@ -187,6 +286,30 @@ func TestUpgradePackageBuilderAndInspectorVerifySignedDualRPMBundle(t *testing.T
 		if !strings.Contains(string(output), expected) {
 			t.Fatalf("inspect output missing %q:\n%s", expected, output)
 		}
+	}
+}
+
+func TestUpgradePackageBuilderRejectsSigningKeyOutsideExpectedTrustChain(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq is required")
+	}
+	privateKey, _ := generatePatchSigningKey(t)
+	_, unrelatedPublicKey := generatePatchSigningKey(t)
+	root := t.TempDir()
+	fromRPM := filepath.Join(root, "clusterguard-ha-2.2-28.x86_64.rpm")
+	toRPM := filepath.Join(root, "clusterguard-ha-2.2-29.x86_64.rpm")
+	patchPath := filepath.Join(root, "patch.cgupgrade")
+	writeFile(t, fromRPM, "rollback-rpm", 0o644)
+	writeFile(t, toRPM, "target-rpm", 0o644)
+
+	output, err := exec.Command("bash", "build-clusterguard-patch.sh",
+		"--from-rpm", fromRPM, "--to-rpm", toRPM, "--signing-key", privateKey,
+		"--expected-public-key", unrelatedPublicKey, "--output", patchPath).CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "补丁签名私钥与预期受信公钥不匹配") {
+		t.Fatalf("mismatched release key was not rejected: err=%v output=%s", err, output)
+	}
+	if _, statErr := os.Stat(patchPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("mismatched release key produced an artifact: %v", statErr)
 	}
 }
 
@@ -3411,6 +3534,7 @@ func TestOfflineKitBuilderIncludesBothInstallFormatsAndChineseManuals(t *testing
 		"--patch-trust-key",
 		"trust/patch-signing-public.pem",
 		"update.json.example",
+		"clusterguard-update-prune.sh",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("offline kit builder is missing %q", expected)
@@ -3453,6 +3577,7 @@ func TestMultiNodeInstallerAutoUsesBundledDependenciesAndReportsRemoteFailures(t
 		"discover_bundled_patch_trust_key",
 		"configure_platform_updates",
 		"/etc/clusterguard/update.json",
+		"retained_versions",
 		"systemctl enable --now clusterguard-update-helper.service",
 		"图形化补丁升级",
 	} {
@@ -3715,6 +3840,7 @@ func TestRPMDeliveryIsCompleteAndDoesNotStartUnconfiguredServices(t *testing.T) 
 		"/usr/local/libexec/clusterguard-k8s-fence-guard",
 		"/usr/local/libexec/clusterguard-update-helper",
 		"/usr/local/libexec/clusterguard-update-job.sh",
+		"/usr/local/libexec/clusterguard-update-prune.sh",
 		"/usr/local/sbin/clusterguard-upgrade",
 		"/usr/local/sbin/clusterguard-configure",
 		"/usr/lib/systemd/system/clusterguard-ha.service",
@@ -3806,6 +3932,7 @@ func TestRPMBuildEmbedsVersionContractAndPackagesUpdater(t *testing.T) {
 		"clusterguard-update-helper:./cmd/clusterguard-update-helper",
 		"clusterguard-k8s-fence-guard:./cmd/clusterguard-k8s-fence-guard",
 		"clusterguard-update-job.sh",
+		"clusterguard-update-prune.sh",
 		"clusterguard-update.example.json",
 		"deploy/docker-swarm/postgresql/postgresql-stack.yml",
 		"deploy/docker-swarm/postgresql/verify-replication.sh",
@@ -3916,6 +4043,7 @@ func TestRollingUpdaterPublishesStructuredProgressAcrossControllers(t *testing.T
 		`write_journal updating`,
 		`write_journal verified`,
 		`write_journal finalizing`,
+		`prune_update_artifacts`,
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("rolling updater is missing structured progress contract %q", required)
@@ -3926,6 +4054,11 @@ func TestRollingUpdaterPublishesStructuredProgressAcrossControllers(t *testing.T
 	} else if locks := strings.LastIndex(text, "acquire_update_locks\n"); locks < 0 || publish >= locks {
 		t.Fatal("rolling updater must distribute and verify the package before acquiring maintenance locks")
 	}
+	if succeeded := strings.LastIndex(text, `write_journal succeeded`); succeeded < 0 {
+		t.Fatal("rolling updater does not publish a durable success state")
+	} else if prune := strings.LastIndex(text, `prune_update_artifacts ||`); prune <= succeeded {
+		t.Fatal("rolling updater must prune old packages only after durable success")
+	}
 
 	job, err := os.ReadFile("clusterguard-update-job.sh")
 	if err != nil {
@@ -3934,11 +4067,29 @@ func TestRollingUpdaterPublishesStructuredProgressAcrossControllers(t *testing.T
 	jobText := string(job)
 	for _, required := range []string{
 		`--update-root "${root}"`,
+		`--retain-versions "${retained_versions}"`,
+		`.retained_versions // 3`,
 		`last_event_status`,
 		`write_status rolled_back`,
 	} {
 		if !strings.Contains(jobText, required) {
 			t.Fatalf("update job is missing progress continuity contract %q", required)
+		}
+	}
+
+	pruner, err := os.ReadFile("clusterguard-update-prune.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	prunerText := string(pruner)
+	for _, required := range []string{
+		`retained_versions="${CG_UPDATE_RETAINED_VERSIONS:-3}"`,
+		`maintenance_active`,
+		`verification_required`,
+		`--protect`,
+	} {
+		if !strings.Contains(prunerText, required) {
+			t.Fatalf("update pruner is missing retention safety contract %q", required)
 		}
 	}
 }
@@ -3985,6 +4136,7 @@ func TestChineseDeliveryManualsCoverInstallDatabasePreparationAndOperations(t *t
 			"--rollback",
 			"维护门禁",
 			"升级包驻留合同",
+			"retained_versions",
 			"系统升级期间无法进行自动切换，请注意关注。",
 		},
 	}

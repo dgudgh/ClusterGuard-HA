@@ -81,6 +81,11 @@ contents:
     expand: true
     file_info:
       mode: 0750
+  - src: ${CG_RPM_STAGE}/scripts/clusterguard-update-prune.sh
+    dst: /usr/local/libexec/clusterguard-update-prune.sh
+    expand: true
+    file_info:
+      mode: 0750
   - src: ${CG_RPM_STAGE}/scripts/clusterguard-agent-stdio.sh
     dst: /usr/local/libexec/clusterguard-agent-stdio
     expand: true
@@ -267,6 +272,11 @@ contents:
       mode: 0644
   - src: ${CG_RPM_STAGE}/docs/update-and-patch.md
     dst: /usr/share/doc/clusterguard-ha/版本升级与回退手册.md
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${CG_RPM_STAGE}/docs/update-signature-incident-2026-08-31.md
+    dst: /usr/share/doc/clusterguard-ha/升级包验签失败复盘-2026-08-31.md
     expand: true
     file_info:
       mode: 0644

@@ -653,6 +653,10 @@ func writeJSONAtomic(path string, value interface{}) error {
 }
 
 func ensureDirectoryMode(path string, mode os.FileMode) error {
+	return ensureDirectoryModeWithChmod(path, mode, os.Chmod)
+}
+
+func ensureDirectoryModeWithChmod(path string, mode os.FileMode, chmod func(string, os.FileMode) error) error {
 	if err := os.MkdirAll(path, mode); err != nil {
 		return err
 	}
@@ -663,7 +667,10 @@ func ensureDirectoryMode(path string, mode os.FileMode) error {
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return ErrInvalidPatch
 	}
-	return os.Chmod(path, mode)
+	if info.Mode().Perm() == mode.Perm() {
+		return nil
+	}
+	return chmod(path, mode)
 }
 
 func jobFileHasTerminalStatus(path string) bool {

@@ -102,16 +102,19 @@ func TestSettingsUsesThreeSwitchableAdministrativeSections(t *testing.T) {
 		`class="settings-preference-row" role="group" aria-labelledby="settings-account-title"`,
 		`class="settings-preference-row" role="group" aria-labelledby="settings-display-title"`,
 		`class="control-plane-strip"`,
-		`class="software-update-file-picker"`, `id="software-update-file-name"`,
-		`class="software-update-metadata"`,
+		`id="open-software-update-dialog" class="primary-button" type="button">升级</button>`,
+		`class="software-update-runtime" id="software-update-runtime" hidden`,
 		`id="platform-current-version"`, `id="software-update-history"`,
-		`id="software-update-package-file" type="file" accept=".cgupgrade,.cgpatch,application/octet-stream"`,
 	} {
 		if !strings.Contains(view, contract) {
 			t.Fatalf("settings missing switchable administrative section contract %q", contract)
 		}
 	}
 	for _, contract := range []string{
+		`id="software-update-dialog" class="software-update-dialog"`,
+		`class="software-update-file-picker"`, `id="software-update-file-name"`,
+		`class="software-update-metadata"`,
+		`id="software-update-package-file" type="file" accept=".cgupgrade,.cgpatch,application/octet-stream"`,
 		"--accent:#0071e3", "--canvas:#f5f5f7", "renderSelectedSoftwareUpdateFile",
 		"const setSettingsSection = (section, focus = false) =>", "settingsSection: 'status'",
 		"const [softwareUpdates, platformVersion] = await Promise.all([",
@@ -474,6 +477,38 @@ func TestOperationsViewRunsOneRealGuardedSwitchover(t *testing.T) {
 	}
 }
 
+func TestOperationsViewUsesSwitchableSwitchoverAndRecoverySections(t *testing.T) {
+	page := string(consoleHTML)
+	view := consoleView(t, "operations")
+	for _, contract := range []string{
+		`class="topology-section-tabs operations-section-tabs" role="tablist"`,
+		`id="operations-switchover-tab" type="button" role="tab" aria-controls="operations-switchover-panel" aria-selected="true"`,
+		`id="operations-recovery-tab" type="button" role="tab" aria-controls="operations-recovery-panel" aria-selected="false"`,
+		`id="operations-switchover-panel" role="tabpanel" aria-labelledby="operations-switchover-tab"`,
+		`id="operations-recovery-panel" role="tabpanel" aria-labelledby="operations-recovery-tab" hidden`,
+		`id="operation-switchover-target"`, `id="operation-recovery-target" hidden`,
+		`id="operations-section-summary"`,
+	} {
+		if !strings.Contains(view, contract) {
+			t.Fatalf("operations view missing switchable section contract %q", contract)
+		}
+	}
+	for _, contract := range []string{
+		"operationsSection: 'switchover'",
+		"const operationsSectionOrder = ['switchover', 'recovery']",
+		"const setOperationsSection = (section, focus = false) =>",
+		"tab.addEventListener('click', () => setOperationsSection(tab.dataset.operationsSection))",
+		"setOperationsSection(operationsSectionOrder[targetIndex], true)",
+		"byId('operation-switchover-target').hidden = recovery",
+		"byId('operation-recovery-target').hidden = !recovery",
+		"recovery ? state.selectedRejoinId : state.selectedCandidateId",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing operations section switching contract %q", contract)
+		}
+	}
+}
+
 func TestConsoleRetriesOnlyPreCommitStalePlanConflicts(t *testing.T) {
 	page := string(consoleHTML)
 	for _, contract := range []string{
@@ -701,7 +736,7 @@ func TestOperationLogShowsUsefulSummaryAndKeepsRawEvidenceCollapsed(t *testing.T
 		}
 	}
 	for _, contract := range []string{
-		"/api/v1/operations?cluster_id=${state.selectedClusterId}",
+		"state.allOperations = await fetchResult('/api/v1/operations') || [];",
 		"operation.plan.source_id", "operation.target_id", "operation.operation.kind", "operation.status",
 		"document.createElement('details')", "document.createElement('summary')", "JSON.stringify(operation, null, 2)",
 	} {
@@ -711,6 +746,29 @@ func TestOperationLogShowsUsefulSummaryAndKeepsRawEvidenceCollapsed(t *testing.T
 	}
 	if strings.Contains(page, "details.open = true") {
 		t.Fatal("raw operation evidence must be collapsed by default")
+	}
+}
+
+func TestOperationLogDefaultsToAllClustersAndKeepsClusterScopeIndependent(t *testing.T) {
+	page := string(consoleHTML)
+	view := consoleView(t, "operation-log")
+	for _, contract := range []string{
+		`id="log-cluster-filter"`, `<option value="all">全部集群</option>`,
+		"logClusterId: 'all'", "const renderOperationLogClusterFilter = () =>",
+		"consolidateOperationIncidents(state.allOperations)",
+		"state.logClusterId !== 'all' && record.cluster_id !== state.logClusterId",
+		"const scopeLabel = operationLogScopeLabel();",
+		"renderLifecycleTasks(); renderOperationLog(); renderOverview();",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("operation log must default to an explicit all-cluster scope: missing %q", contract)
+		}
+	}
+	if !strings.Contains(view, "集群范围") {
+		t.Fatal("operation log does not explain that its cluster scope is independent")
+	}
+	if strings.Contains(page, "/api/v1/operations?cluster_id=${state.selectedClusterId}") {
+		t.Fatal("operation log refresh must not silently follow the header cluster selector")
 	}
 }
 
@@ -1089,7 +1147,7 @@ func TestConsoleOrganizesNodeWorkflowAndFiltersOperationEvidence(t *testing.T) {
 		}
 	}
 	for _, contract := range []string{
-		`id="log-search"`, `id="log-kind-filter"`, `id="log-status-filter"`,
+		`id="log-search"`, `id="log-cluster-filter"`, `id="log-kind-filter"`, `id="log-status-filter"`,
 		"const filteredOperations =", "renderOperationLog();", `id="metrics-observed-at"`,
 		`id="refresh-interval"`, "const scheduleAutoRefresh =", "state.refreshTimer",
 	} {
@@ -1334,9 +1392,10 @@ func TestConsoleProvidesAdminOnlySignedSoftwareUpdateWorkflow(t *testing.T) {
 	settings := consoleView(t, "settings")
 	for _, contract := range []string{
 		`id="software-update-panel"`,
+		`id="open-software-update-dialog"`,
+		`id="software-update-dialog" class="software-update-dialog"`,
 		`id="software-update-package-file"`,
 		`id="upload-software-update"`,
-		`id="plan-software-update"`,
 		`id="execute-software-update"`,
 		`id="resume-software-update"`,
 		`id="rollback-software-update"`,
@@ -1345,8 +1404,22 @@ func TestConsoleProvidesAdminOnlySignedSoftwareUpdateWorkflow(t *testing.T) {
 		`id="software-update-progress-dialog"`,
 		`id="software-update-progress-track" role="progressbar"`,
 		`id="software-update-progress-event-list"`,
+		`<div class="software-update-progress" id="software-update-inline-progress">`,
+		`id="toggle-software-update-progress" type="button" aria-expanded="false" aria-controls="software-update-events"`,
+		`id="software-update-events" hidden`,
+		`id="software-update-progress-toggle-label">展开</span>`,
+		`const setInlineSoftwareUpdateProgressExpanded = expanded => {`,
+		`byId('software-update-progress-toggle-label').textContent = expanded ? '收起' : '展开'`,
+		`events.hidden = !expanded`,
+		`setInlineSoftwareUpdateProgressExpanded(!expanded)`,
+		`setInlineSoftwareUpdateProgressExpanded(false)`,
 		"form.append('package', file, file.name)",
 		"fetchResult('/api/v1/platform/updates'",
+		"const prepareSoftwareUpdateExecution = async () =>",
+		"const planned = await startSoftwareUpdate('plan')",
+		"const waitForSoftwareUpdatePlan = async (patchID, attempts = 20) =>",
+		"prepared = await waitForSoftwareUpdatePlan(patchID)",
+		"byId('execute-software-update').addEventListener('click', prepareSoftwareUpdateExecution)",
 		"state.softwareUpdateAction = mode",
 		"byId('software-update-tab').hidden = !canAdministerPlatform()",
 		"setSettingsSection(state.settingsSection)",
@@ -1355,8 +1428,134 @@ func TestConsoleProvidesAdminOnlySignedSoftwareUpdateWorkflow(t *testing.T) {
 			t.Fatalf("console missing signed software update contract %q", contract)
 		}
 	}
-	if !strings.Contains(settings, "版本更新") || !strings.Contains(settings, "支持 .cgupgrade，兼容旧 .cgpatch") {
-		t.Fatal("software update controls must be presented in settings")
+	if !strings.Contains(settings, "版本更新") || !strings.Contains(page, "支持 .cgupgrade，兼容旧 .cgpatch") {
+		t.Fatal("software update entry must be presented in settings and upload guidance must be presented in the dialog")
+	}
+	if strings.Contains(settings, `id="software-update-package-file"`) {
+		t.Fatal("software update upload controls must not remain inline in the settings panel")
+	}
+	if strings.Contains(page, `id="plan-software-update"`) {
+		t.Fatal("read-only planning must be folded into the rolling-upgrade action")
+	}
+	if strings.Contains(page, `<details class="software-update-progress"`) {
+		t.Fatal("inline software update progress must use an explicit expand/collapse button")
+	}
+}
+
+func TestSoftwareUpdateDialogPresentsWarningUploadMetadataAndActionInOrder(t *testing.T) {
+	page := string(consoleHTML)
+	start := strings.Index(page, `<dialog id="software-update-dialog"`)
+	if start < 0 {
+		t.Fatal("software update dialog is missing")
+	}
+	endOffset := strings.Index(page[start:], `</dialog>`)
+	if endOffset < 0 {
+		t.Fatal("software update dialog is not closed")
+	}
+	dialog := page[start : start+endOffset]
+	positions := []struct {
+		name     string
+		contract string
+	}{
+		{name: "operation alert", contract: `id="software-update-dialog-alert"`},
+		{name: "maintenance warning", contract: `class="software-update-warning"`},
+		{name: "package file", contract: `id="software-update-package-file"`},
+		{name: "validated package metadata", contract: `id="software-update-package" hidden`},
+		{name: "validation result", contract: `id="software-update-validation" data-state="idle"`},
+		{name: "rolling upgrade action", contract: `id="execute-software-update"`},
+	}
+	previous := -1
+	for _, item := range positions {
+		current := strings.Index(dialog, item.contract)
+		if current < 0 {
+			t.Fatalf("software update dialog missing %s", item.name)
+		}
+		if current <= previous {
+			t.Fatalf("software update dialog must place %s after the preceding workflow step", item.name)
+		}
+		previous = current
+	}
+}
+
+func TestSoftwareUpdateDialogEnablesRollingUpgradeOnlyAfterValidation(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		`id="software-update-validation-title">等待上传校验`,
+		`id="execute-software-update" class="primary-button" type="button" disabled>滚动升级`,
+		`softwareUpdateValidationState: 'idle'`,
+		`state.softwareUpdateValidationState = file ? 'selected'`,
+		`state.softwareUpdateValidationState = 'validating'`,
+		`state.softwareUpdateValidationState = 'verified'`,
+		`state.softwareUpdateValidationState = 'failed'`,
+		`validating: ['正在校验'`,
+		`verified: ['校验完成'`,
+		`failed: ['校验失败'`,
+		`.software-update-actions button[hidden] { display:none; }`,
+		`packagePanel.hidden = !(pending && !selectedFile && validationState === 'verified')`,
+		`validationState !== 'verified'`,
+		`state.softwareUpdateValidationMessage = ` + "`" + `升级包 ${uploaded.patch_id} 已通过签名与兼容性校验。` + "`" + `;`,
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("software update validation workflow is missing %q", contract)
+		}
+	}
+	if !strings.Contains(page, `</div>
+      <div class="software-update-validation" id="software-update-validation"`) {
+		t.Fatal("validation status and rolling action must remain visible outside the hidden package metadata container")
+	}
+}
+
+func TestSoftwareUpdateSummaryDistinguishesPendingAndCompletedTargets(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		`id="software-update-target-label">待升级目标版本`,
+		`id="software-update-latest-target">尚无待升级包`,
+		"const renderSoftwareUpdateTargetSummary = (latest, pending) =>",
+		"label.textContent = pending ? '待升级目标版本' : status === 'succeeded' ? '最近完成版本' : '最近处理版本'",
+		"value.textContent = `${latest.package.target_version || '-'} · ${softwareUpdateStatusText(status)}`",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("software update summary must explain target-version state: missing %q", contract)
+		}
+	}
+	if strings.Contains(page, `<span>最近目标版本</span>`) {
+		t.Fatal("ambiguous recent target version label must not return")
+	}
+}
+
+func TestSoftwareUpdateErrorsStayAtTopOfOpenDialog(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		`id="software-update-dialog-alert" data-level="error" role="alert" aria-live="assertive" hidden`,
+		`.software-update-dialog-alert[hidden] { display:none; }`,
+		"const setSoftwareUpdateDialogAlert = (message = '', level = 'error') =>",
+		"if (message && !(dialog && dialog.open)) setLiveStatus(message, level !== 'info')",
+		"setSoftwareUpdateDialogAlert('升级计划仍在生成，平台会继续刷新状态，请稍后再次点击滚动升级。', 'warning')",
+		"setSoftwareUpdateDialogAlert(`升级计划生成失败：${error.message}`)",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("software update warning must stay visible inside the modal: missing %q", contract)
+		}
+	}
+	if strings.Contains(page, "setLiveStatus('升级计划尚未准备完成，请检查升级状态后重试。', true)") {
+		t.Fatal("plan readiness warning must not be rendered behind the modal")
+	}
+}
+
+func TestSoftwareUpdateDialogDoesNotPresentCompletedHistoryAsPendingPackage(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		"const pendingSoftwareUpdate = () => {",
+		"!['succeeded', 'rolled_back'].includes(job.status) ? latest : null",
+		"const pending = pendingSoftwareUpdate()",
+		"packagePanel.hidden = !(pending && !selectedFile && validationState === 'verified')",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("software update dialog must separate pending packages from completed history: missing %q", contract)
+		}
+	}
+	if strings.Contains(page, "packagePanel.hidden = !latest") {
+		t.Fatal("completed latest history must not automatically populate the software update dialog")
 	}
 }
 
@@ -1369,11 +1568,31 @@ func TestConsoleShowsRecoverableStructuredSoftwareUpdateProgress(t *testing.T) {
 		`data-update-progress-stage="nodes"`,
 		`data-update-progress-stage="verify"`,
 		`data-update-progress-stage="complete"`,
+		`class="software-update-stage-marker"`,
+		`class="software-update-stage-copy"`,
+		`dialog.software-update-progress-dialog[open] { display:grid; height:min(760px,calc(100vh - 24px));`,
+		`dialog.software-update-progress-dialog[open] > .software-update-progress-body { display:grid; min-height:0; max-height:none; grid-template-rows:max-content max-content minmax(0,1fr); align-content:stretch; gap:12px; overflow:hidden;`,
+		`.software-update-progress-events { display:grid; min-height:0; max-height:100%; grid-template-rows:auto minmax(0,1fr); overflow:hidden;`,
+		`.software-update-progress-event-list { display:grid; height:100%; min-height:0; max-height:100%; align-content:start; overflow-x:hidden; overflow-y:scroll;`,
+		`.software-update-events { display:grid; max-height:280px; gap:6px; overflow-y:auto;`,
+		`.software-update-events[hidden] { display:none; }`,
+		`.software-update-progress-toggle[aria-expanded="true"] .software-update-progress-toggle-icon`,
+		`.software-update-stage { position:relative; display:grid; min-width:0; min-height:70px; justify-items:center; align-content:start; gap:7px;`,
+		`.software-update-stage:not(:last-child)::after { position:absolute; z-index:0; top:13px; left:calc(50% + 18px);`,
+		`.software-update-stage.done:not(:last-child)::after { background:#278b57; }`,
+		`.software-update-stage-marker { position:relative; z-index:1; display:grid; width:28px; height:28px; place-items:center; border:2px solid #c3cec9; border-radius:50%;`,
+		`.software-update-stage.active .software-update-stage-marker { border-color:var(--accent); background:var(--accent); color:#fff; box-shadow:0 0 0 4px var(--accent-soft); }`,
+		`.software-update-stage.error .software-update-stage-marker { border-color:var(--danger); background:var(--danger); color:#fff; box-shadow:0 0 0 4px var(--danger-soft); }`,
+		"stage.setAttribute('aria-current', 'step')",
+		"stage.removeAttribute('aria-current')",
+		"row.dataset.status = event.status || ''",
 		"job && job.progress || {}",
 		"维护门禁仍然生效，但当前 Leader 没有活动升级记录",
 		"升级维护未闭环",
 		"升级待确认",
-		"events.slice(-8).reverse()",
+		"events.slice().reverse()",
+		"const pinnedToLatest = previousScrollTop <= 4",
+		"eventList.scrollTop = pinnedToLatest ? 0 : Math.max(0, previousScrollTop + (eventList.scrollHeight - previousScrollHeight))",
 		"job && job.verification_required",
 		"softwareUpdateDateText",
 		"控制面维护状态与节点版本需要独立核验",
@@ -1384,6 +1603,9 @@ func TestConsoleShowsRecoverableStructuredSoftwareUpdateProgress(t *testing.T) {
 		if !strings.Contains(page, contract) {
 			t.Fatalf("console missing recoverable software update progress contract %q", contract)
 		}
+	}
+	if strings.Contains(page, "events.slice(-8)") {
+		t.Fatal("software update progress must keep the full event history inside the scrollable log viewport")
 	}
 }
 

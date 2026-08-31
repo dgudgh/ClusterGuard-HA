@@ -2112,8 +2112,9 @@ configure_platform_updates() {
     --argjson data_nodes "${data_nodes_json}" \
     --argjson ssh_port "${ssh_port}" \
     --argjson api_port "${api_port}" \
+    --argjson retained_versions 3 \
     --arg ssh_user "${ssh_user}" \
-    '{trust_key:"/etc/clusterguard/trust/patch-signing-public.pem",deployment_state:"/etc/clusterguard/deployment-state.json",ssh_user:$ssh_user,ssh_key:"/etc/clusterguard/ssh/controller_ed25519",known_hosts:"/etc/clusterguard/ssh/controller_known_hosts",ssh_port:$ssh_port,api_port:$api_port,controllers:$controllers,data_nodes:$data_nodes}' \
+    '{trust_key:"/etc/clusterguard/trust/patch-signing-public.pem",deployment_state:"/etc/clusterguard/deployment-state.json",ssh_user:$ssh_user,ssh_key:"/etc/clusterguard/ssh/controller_ed25519",known_hosts:"/etc/clusterguard/ssh/controller_known_hosts",ssh_port:$ssh_port,api_port:$api_port,retained_versions:$retained_versions,controllers:$controllers,data_nodes:$data_nodes}' \
     >"${update_config}"
   chmod 0600 "${update_config}"
   for host in "${controller_nodes[@]}"; do

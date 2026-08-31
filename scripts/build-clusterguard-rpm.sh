@@ -119,6 +119,7 @@ helpers=(
   clusterguard-cluster-finalize.sh
   clusterguard-upgrade.sh
   clusterguard-update-job.sh
+  clusterguard-update-prune.sh
 )
 for helper in "${helpers[@]}"; do
   install -m 0755 "${repository}/scripts/${helper}" "${root}/scripts/${helper}"
@@ -137,6 +138,7 @@ install -m 0644 "${repository}/docs/zh-CN/offline-rpm-install.md" "${root}/docs/
 install -m 0644 "${repository}/docs/zh-CN/database-preparation.md" "${root}/docs/"
 install -m 0644 "${repository}/docs/zh-CN/operations-manual.md" "${root}/docs/"
 install -m 0644 "${repository}/docs/zh-CN/update-and-patch.md" "${root}/docs/"
+install -m 0644 "${repository}/docs/zh-CN/update-signature-incident-2026-08-31.md" "${root}/docs/"
 install -m 0644 "${repository}/docs/zh-CN/docker-swarm-mysql.md" "${root}/docs/"
 install -m 0644 "${repository}/docs/zh-CN/kubernetes-mysql.md" "${root}/docs/"
 install -m 0644 "${repository}/docs/zh-CN/postgresql-ha.md" "${root}/docs/"

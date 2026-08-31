@@ -259,6 +259,7 @@ if [[ -f "${release_notes}" ]]; then
   install -m 0644 "${release_notes}" "${kit}/docs/ClusterGuard-HA-${version}.${release}-发布说明.md"
 fi
 install -m 0755 "${script_dir}/clusterguard-upgrade.sh" "${kit}/tools/clusterguard-upgrade.sh"
+install -m 0755 "${script_dir}/clusterguard-update-prune.sh" "${kit}/tools/clusterguard-update-prune.sh"
 install -m 0755 "${script_dir}/clusterguard-offline-deps.sh" "${kit}/tools/收集RHEL离线依赖.sh"
 install -m 0755 "${script_dir}/build-clusterguard-postgresql-deps-pack.sh" "${kit}/tools/构建PostgreSQL依赖包.sh"
 install -m 0755 "${script_dir}/fencing/vmware-workstation-ssh-fencer" "${kit}/examples/fencing/vmware-workstation-ssh-fencer"

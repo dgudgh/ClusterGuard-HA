@@ -112,6 +112,7 @@ known_hosts="$("${jq_binary}" -r '.known_hosts // empty' "${config}")"
 ssh_credentials="$("${jq_binary}" -r '.ssh_credentials_file // empty' "${config}")"
 ssh_port="$("${jq_binary}" -r '.ssh_port // 22' "${config}")"
 api_port="$("${jq_binary}" -r '.api_port // 3000' "${config}")"
+retained_versions="$("${jq_binary}" -r '.retained_versions // 3' "${config}")"
 controllers="$("${jq_binary}" -r '(.controllers // []) | join(",")' "${config}")"
 data_nodes="$("${jq_binary}" -r '(.data_nodes // []) | join(",")' "${config}")"
 [[ -f "${trust_key}" && ! -L "${trust_key}" ]] || die "可信签名公钥无效"
@@ -119,8 +120,9 @@ data_nodes="$("${jq_binary}" -r '(.data_nodes // []) | join(",")' "${config}")"
 [[ -z "${ssh_key}" || ( -f "${ssh_key}" && ! -L "${ssh_key}" ) ]] || die "SSH 私钥无效"
 [[ -z "${known_hosts}" || ( -f "${known_hosts}" && ! -L "${known_hosts}" ) ]] || die "known_hosts 无效"
 [[ -z "${ssh_credentials}" || ( -f "${ssh_credentials}" && ! -L "${ssh_credentials}" ) ]] || die "SSH 凭据文件无效"
+[[ "${retained_versions}" =~ ^[1-9][0-9]*$ ]] || die "retained_versions 必须为正整数"
 
-arguments=(--patch "${patch}" --trust-key "${trust_key}" --state "${state_file}" --update-root "${root}" -u "${ssh_user}" --ssh-port "${ssh_port}" --api-port "${api_port}")
+arguments=(--patch "${patch}" --trust-key "${trust_key}" --state "${state_file}" --update-root "${root}" --retain-versions "${retained_versions}" -u "${ssh_user}" --ssh-port "${ssh_port}" --api-port "${api_port}")
 [[ -z "${controllers}" ]] || arguments+=(--controllers "${controllers}")
 [[ -z "${data_nodes}" ]] || arguments+=(--data-nodes "${data_nodes}")
 [[ -z "${ssh_key}" ]] || arguments+=(--ssh-key "${ssh_key}")

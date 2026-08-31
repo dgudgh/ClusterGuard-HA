@@ -37,6 +37,22 @@
 
 安装器会在所有控制节点配置 `/etc/clusterguard/update.json`、发布公钥和 `clusterguard-update-helper.service`。未配置可信公钥时，控制台会明确显示版本更新不可用，不会降级为未验签安装。
 
+### 升级包保留策略
+
+升级材料默认保留最近 **3 个版本**。配置项位于每个控制节点的 `/etc/clusterguard/update.json`：
+
+```json
+{
+  "retained_versions": 3
+}
+```
+
+完整升级或自动回退结束并释放维护门禁后，特权升级链路会在所有节点清理旧目录。控制节点的上传包、状态和事件位于 `/var/lib/clusterguard/updates/<patch_id>/`，各节点用于受控回退的 RPM 和配置备份位于 `/var/lib/clusterguard/update-history/<patch_id>/`。只生成计划不会触发清理，保证只读计划不修改节点。
+
+这里的“3 个版本”只指升级安装包、回退 RPM、配置备份和对应的升级状态事件，不是操作日志条数。高可用切换与审计日志不参与升级包清理，也不会因为 `retained_versions` 被截断；控制台操作日志默认查看全部集群，并可单独按集群筛选。
+
+当前执行包始终受保护。处于排队或运行状态、仍有维护门禁，或标记为“操作结果需要验证”的包不会计入 3 个普通保留名额，也不会被自动删除。因此事故未闭环时磁盘上可能暂时多于 3 个版本，安全状态处理完成后，下一次成功升级或完整回退会再次执行清理。修改 `retained_versions` 时必须使用大于 0 的整数。
+
 ## 1. 升级架构
 
 每个正式 RPM 都内嵌以下不可变运行合同：
@@ -104,8 +120,13 @@ scripts/build-clusterguard-patch.sh \
   --from-rpm dist/clusterguard-ha-2.2-28.x86_64.rpm \
   --to-rpm dist/clusterguard-ha-2.2-29.x86_64.rpm \
   --signing-key /secure/offline/clusterguard-patch-signing.key \
+  --expected-public-key site-trust/patch-signing-public.pem \
   --output dist/clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade
 ```
+
+发布前必须从现场所有控制节点读取 `update.json` 指向的实际受信公钥，并确认三节点公钥指纹、离线私钥导出的公钥指纹和升级包验签公钥指纹完全一致。不得因为历史发布目录中的公钥文件名看起来正确，就把它当作现场信任链。构建完成后还必须登录当前 Leader 的控制台真实上传一次，只生成“已上传并通过签名校验”的记录，不执行升级。现场上传没有成功前，不得把升级包标记为可交付。
+
+`2.2-59` 到 `2.2-60` 的现场验签失败、流程根因和强制发布门禁见 [升级包验签失败复盘（2026-08-31）](update-signature-incident-2026-08-31.md)。
 
 发布物必须同时交付升级包、升级包 SHA-256、发布说明和独立渠道提供的签名公钥指纹。不得覆盖同名升级包。
 

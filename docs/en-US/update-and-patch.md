@@ -37,6 +37,22 @@ Provide the release public key during initial installation. A formal offline kit
 
 The installer configures `/etc/clusterguard/update.json`, the trusted public key, and `clusterguard-update-helper.service` on every controller. Without a trusted key, the console reports Version Update as unavailable and never falls back to unsigned installation.
 
+### Update Package Retention
+
+ClusterGuard retains the latest **3 update versions** by default. The setting is stored in `/etc/clusterguard/update.json` on every controller:
+
+```json
+{
+  "retained_versions": 3
+}
+```
+
+After a complete update or automatic rollback releases the maintenance gate, the privileged update path removes older artifacts on every node. Controller uploads, status, and events live under `/var/lib/clusterguard/updates/<patch_id>/`; rollback RPMs and configuration backups live under `/var/lib/clusterguard/update-history/<patch_id>/` on each node. Generating a read-only plan does not trigger cleanup and therefore does not mutate nodes.
+
+The three-version limit applies only to update packages, rollback RPMs, configuration backups, and their update-status events. It does not limit HA operation or audit logs. Those logs are outside package pruning; the console shows all clusters by default and provides a separate cluster filter.
+
+The package used by the current run is always protected. Queued or running packages, packages with an active maintenance gate, and packages marked as requiring verification neither consume the three ordinary retention slots nor get deleted automatically. A site can therefore temporarily contain more than three versions while an incident is unresolved. The next successful update or complete rollback applies retention again after the safety state is closed. `retained_versions` must be a positive integer.
+
 ## 1. Update Architecture
 
 Every release RPM embeds an immutable runtime contract containing product, version, release, Git commit, build time, platform, RPM architecture, metadata `state_format`, and `update_protocol`.
@@ -97,8 +113,13 @@ scripts/build-clusterguard-patch.sh \
   --from-rpm dist/clusterguard-ha-2.2-28.x86_64.rpm \
   --to-rpm dist/clusterguard-ha-2.2-29.x86_64.rpm \
   --signing-key /secure/offline/clusterguard-patch-signing.key \
+  --expected-public-key site-trust/patch-signing-public.pem \
   --output dist/clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade
 ```
+
+Before release, read the public key actually referenced by `update.json` on every site controller. The three site fingerprints, the public fingerprint derived from the offline private key, and the key used to verify the package must match exactly. A public key from an older release directory must never be treated as the site trust anchor merely because its file name looks correct. After the package is built, log in to the current Leader and perform one real console upload. Stop after the console records that the package was uploaded and its signature was verified. The package is not deliverable until this upload succeeds.
+
+See [Update Package Signature Verification Incident (2026-08-31)](update-signature-incident-2026-08-31.md) for the `2.2-59` to `2.2-60` failure, process cause, and mandatory release gates.
 
 Ship the update package, its SHA-256 file, release notes, and a signing-key fingerprint through an independent channel. Never overwrite an existing update artifact.
 

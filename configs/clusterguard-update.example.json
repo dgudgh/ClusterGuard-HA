@@ -6,6 +6,7 @@
   "known_hosts": "/etc/clusterguard/ssh/controller_known_hosts",
   "ssh_port": 22,
   "api_port": 3000,
+  "retained_versions": 3,
   "controllers": [],
   "data_nodes": []
 }

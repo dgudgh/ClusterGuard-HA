@@ -6,6 +6,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 from_rpm=""
 to_rpm=""
 signing_key=""
+expected_public_key="${CG_PATCH_EXPECTED_PUBLIC_KEY:-}"
 output=""
 channel="stable"
 state_format=1
@@ -19,6 +20,8 @@ usage() {
   --from-rpm FILE       当前现场版本 RPM，作为自动回退介质
   --to-rpm FILE         目标版本 RPM
   --signing-key FILE    升级包发布私钥（PEM，必须离线保管）
+  --expected-public-key FILE
+                        预期现场受信公钥；指定后私钥不匹配即拒绝构建
   --output FILE         输出 .cgupgrade 签名升级包
   --channel NAME        发布通道，默认 stable
   --state-format N      元数据格式，默认 1
@@ -36,6 +39,7 @@ while (($#)); do
     --from-rpm) need_value "$@"; from_rpm="$2"; shift 2 ;;
     --to-rpm) need_value "$@"; to_rpm="$2"; shift 2 ;;
     --signing-key) need_value "$@"; signing_key="$2"; shift 2 ;;
+    --expected-public-key) need_value "$@"; expected_public_key="$2"; shift 2 ;;
     --output) need_value "$@"; output="$2"; shift 2 ;;
     --channel) need_value "$@"; channel="$2"; shift 2 ;;
     --state-format) need_value "$@"; state_format="$2"; shift 2 ;;
@@ -52,6 +56,14 @@ command -v tar >/dev/null 2>&1 || die "需要 tar"
 [[ -f "${from_rpm}" && ! -L "${from_rpm}" ]] || die "回退 RPM 不存在或不是普通文件"
 [[ -f "${to_rpm}" && ! -L "${to_rpm}" ]] || die "目标 RPM 不存在或不是普通文件"
 [[ -f "${signing_key}" && ! -L "${signing_key}" ]] || die "补丁签名私钥不存在或不是普通文件"
+if [[ -n "${expected_public_key}" ]]; then
+  [[ -f "${expected_public_key}" && ! -L "${expected_public_key}" ]] ||
+    die "预期受信公钥不存在或不是普通文件"
+  signing_fingerprint="$(openssl pkey -in "${signing_key}" -pubout -outform DER 2>/dev/null | openssl dgst -sha256 2>/dev/null | awk '{print $NF}')"
+  expected_fingerprint="$(openssl pkey -pubin -in "${expected_public_key}" -outform DER 2>/dev/null | openssl dgst -sha256 2>/dev/null | awk '{print $NF}')"
+  [[ -n "${signing_fingerprint}" && "${signing_fingerprint}" == "${expected_fingerprint}" ]] ||
+    die "补丁签名私钥与预期受信公钥不匹配"
+fi
 [[ -f "${bootstrap_upgrader}" && ! -L "${bootstrap_upgrader}" ]] || die "引导升级器不存在或不是普通文件"
 [[ -n "${output}" ]] || die "必须指定 --output"
 [[ "${channel}" =~ ^[A-Za-z0-9._-]+$ ]] || die "发布通道格式无效"

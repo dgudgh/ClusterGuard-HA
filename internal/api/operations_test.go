@@ -195,6 +195,45 @@ func TestOperationAPIProvidesIdempotentCreateAndRead(t *testing.T) {
 	}
 }
 
+func TestOperationAPIListsMoreThanThreeAuditRecordsAcrossClusters(t *testing.T) {
+	server, _ := newDurableOperationAPIServer(t)
+	clusterIDs := []model.ResourceID{model.NewResourceID(), model.NewResourceID()}
+	for index := 0; index < 8; index++ {
+		body := operationRequestBody(clusterIDs[index%len(clusterIDs)], model.NewResourceID(), fmt.Sprintf("audit-history-%d", index))
+		response := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/operations", body)
+		if response.Code != http.StatusCreated {
+			t.Fatalf("create operation %d: status=%d body=%s", index, response.Code, response.Body.String())
+		}
+	}
+
+	decodeList := func(response *httptest.ResponseRecorder) []model.OperationRecord {
+		t.Helper()
+		var envelope struct {
+			Result []model.OperationRecord `json:"result"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+			t.Fatalf("decode operation list: %v", err)
+		}
+		return envelope.Result
+	}
+
+	allResponse := callJSON(t, server.Handler(), http.MethodGet, "/api/v1/operations", nil)
+	if allResponse.Code != http.StatusOK {
+		t.Fatalf("list all status=%d body=%s", allResponse.Code, allResponse.Body.String())
+	}
+	if operations := decodeList(allResponse); len(operations) != 8 {
+		t.Fatalf("all-cluster operation history was truncated: got %d want 8", len(operations))
+	}
+
+	clusterResponse := callJSON(t, server.Handler(), http.MethodGet, "/api/v1/operations?cluster_id="+string(clusterIDs[0]), nil)
+	if clusterResponse.Code != http.StatusOK {
+		t.Fatalf("list cluster status=%d body=%s", clusterResponse.Code, clusterResponse.Body.String())
+	}
+	if operations := decodeList(clusterResponse); len(operations) != 4 {
+		t.Fatalf("cluster operation history was truncated: got %d want 4", len(operations))
+	}
+}
+
 func TestOperationAPIReadsSingleOperationByIdempotencyKey(t *testing.T) {
 	server, _ := newDurableOperationAPIServer(t)
 	createdResponse := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/operations", operationRequestBody(model.NewResourceID(), model.NewResourceID(), "api-switch-lookup"))

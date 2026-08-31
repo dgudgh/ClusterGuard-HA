@@ -88,6 +88,57 @@ func TestManagerUploadVerifiesAndPersistsSignedUpgradePackage(t *testing.T) {
 	}
 }
 
+func TestEnsureDirectoryModeDoesNotChmodMatchingPrivilegedDirectory(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "root-owned-update")
+	if err := os.Mkdir(directory, updateJobDirMode); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(directory, updateJobDirMode); err != nil {
+		t.Fatal(err)
+	}
+
+	chmodCalls := 0
+	err := ensureDirectoryModeWithChmod(directory, updateJobDirMode, func(string, os.FileMode) error {
+		chmodCalls++
+		return os.ErrPermission
+	})
+	if err != nil {
+		t.Fatalf("matching directory mode should not require ownership: %v", err)
+	}
+	if chmodCalls != 0 {
+		t.Fatalf("chmod calls=%d want=0", chmodCalls)
+	}
+}
+
+func TestEnsureDirectoryModeRepairsMismatchedDirectoryMode(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "update")
+	if err := os.Mkdir(directory, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(directory, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	chmodCalls := 0
+	err := ensureDirectoryModeWithChmod(directory, updateJobDirMode, func(path string, mode os.FileMode) error {
+		chmodCalls++
+		return os.Chmod(path, mode)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chmodCalls != 1 {
+		t.Fatalf("chmod calls=%d want=1", chmodCalls)
+	}
+	info, err := os.Stat(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != updateJobDirMode {
+		t.Fatalf("directory mode=%#o want=%#o", info.Mode().Perm(), updateJobDirMode)
+	}
+}
+
 func TestManagerRequiresBootstrapForPreferredUpgradePackage(t *testing.T) {
 	root := t.TempDir()
 	trust := filepath.Join(root, "public.pem")
