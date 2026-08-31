@@ -113,6 +113,7 @@ func TestRepositoryResolverResolvesAutomaticFailoverSourceAfterRuntimeRoleIsClea
 	request.Operation.Kind = model.OperationFailover
 	request.Operation.RequestedBy = AutomaticRecoveryActor
 	request.SourceID = sourceID
+	request.AutomaticFailureIncidentAt = observedAt.Add(-30 * time.Second)
 	resolver := RepositoryResolver{
 		Reader: reader,
 		Credentials: CredentialProviderFunc(func(context.Context, model.DatabaseCluster) (adapter.OperationCredentials, error) {
@@ -127,7 +128,8 @@ func TestRepositoryResolverResolvesAutomaticFailoverSourceAfterRuntimeRoleIsClea
 	if err != nil {
 		t.Fatalf("resolve automatic failover source: %v", err)
 	}
-	if resolved.Resolved == nil || resolved.Resolved.Primary.ResourceID != sourceID {
+	if resolved.Resolved == nil || resolved.Resolved.Primary.ResourceID != sourceID ||
+		!resolved.Resolved.AutomaticFailureIncidentAt.Equal(request.AutomaticFailureIncidentAt) {
 		t.Fatalf("resolved automatic failover source=%+v, want %s", resolved.Resolved, sourceID)
 	}
 }

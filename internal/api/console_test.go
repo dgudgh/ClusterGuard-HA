@@ -1210,6 +1210,21 @@ func TestConsoleConsolidatesAutomaticRecoveryRetriesByIncident(t *testing.T) {
 	}
 }
 
+func TestConsoleShowsBlockingCheckWithoutExpandingRawOperationJSON(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		"const operationLogFailureDetail = operation =>",
+		"planChecks.find(check => check.status === 'fail')",
+		"prechecks.find(check => check.status === 'fail')",
+		"operation-log-message",
+		"primary failure has not remained stable for the configured observation window",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("operation log must expose the blocking safety check without raw JSON: missing %q", contract)
+		}
+	}
+}
+
 func TestConsoleExplainsFollowerQuorumAndUsesControllerNames(t *testing.T) {
 	page := string(consoleHTML)
 	for _, contract := range []string{

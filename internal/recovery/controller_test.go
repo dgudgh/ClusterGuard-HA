@@ -166,7 +166,7 @@ func TestControllerExecutesOneAuditedFailoverForStableIncident(t *testing.T) {
 	}
 	request := requests[0]
 	if request.Operation.ClusterID != cluster.ResourceID || request.Operation.Engine != model.EngineMySQL || request.Operation.Kind != model.OperationFailover ||
-		request.Operation.RequestedBy != AutomaticRecoveryActor || request.TargetID != targetID {
+		request.Operation.RequestedBy != AutomaticRecoveryActor || request.TargetID != targetID || !request.AutomaticFailureIncidentAt.Equal(incident) {
 		t.Fatalf("automatic failover request=%+v", request)
 	}
 	prefix := automaticFailoverPrefix(cluster.ResourceID, snapshot.Instances[0].ResourceID, incident)

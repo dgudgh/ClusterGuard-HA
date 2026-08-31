@@ -95,14 +95,18 @@ type OperationRequest struct {
 	// SourceID is controller-derived recovery evidence. It is never accepted
 	// from the external API and is used only to bind automatic failover to the
 	// exact failed inventory resource after discovery clears its runtime role.
-	SourceID               model.ResourceID     `json:"-"`
-	IdempotencyKey         string               `json:"idempotency_key,omitempty"`
-	Parameters             map[string]string    `json:"parameters,omitempty"`
-	Credentials            Credentials          `json:"-"`
-	ReplicationCredentials Credentials          `json:"-"`
-	Resolved               *ResolvedOperation   `json:"-"`
-	Plan                   *model.OperationPlan `json:"-"`
-	Progress               OperationProgress    `json:"-"`
+	SourceID model.ResourceID `json:"-"`
+	// AutomaticFailureIncidentAt binds an internally authorized automatic
+	// failover to the exact stable failure series that triggered it. It is never
+	// accepted from the external API.
+	AutomaticFailureIncidentAt time.Time            `json:"-"`
+	IdempotencyKey             string               `json:"idempotency_key,omitempty"`
+	Parameters                 map[string]string    `json:"parameters,omitempty"`
+	Credentials                Credentials          `json:"-"`
+	ReplicationCredentials     Credentials          `json:"-"`
+	Resolved                   *ResolvedOperation   `json:"-"`
+	Plan                       *model.OperationPlan `json:"-"`
+	Progress                   OperationProgress    `json:"-"`
 }
 
 type OperationProgress interface {
@@ -118,16 +122,17 @@ type OperationProgressResultReader interface {
 }
 
 type ResolvedOperation struct {
-	OperationID              model.ResourceID       `json:"operation_id"`
-	ObservationToken         string                 `json:"-"`
-	Cluster                  model.DatabaseCluster  `json:"cluster"`
-	Snapshot                 model.TopologySnapshot `json:"snapshot"`
-	Primary                  model.DatabaseInstance `json:"primary"`
-	Target                   model.DatabaseInstance `json:"target"`
-	Credentials              Credentials            `json:"-"`
-	ReplicationCredentials   Credentials            `json:"-"`
-	PlanDigest               string                 `json:"-"`
-	VerifiedIsolatedSourceID model.ResourceID       `json:"-"`
+	OperationID                model.ResourceID       `json:"operation_id"`
+	ObservationToken           string                 `json:"-"`
+	AutomaticFailureIncidentAt time.Time              `json:"-"`
+	Cluster                    model.DatabaseCluster  `json:"cluster"`
+	Snapshot                   model.TopologySnapshot `json:"snapshot"`
+	Primary                    model.DatabaseInstance `json:"primary"`
+	Target                     model.DatabaseInstance `json:"target"`
+	Credentials                Credentials            `json:"-"`
+	ReplicationCredentials     Credentials            `json:"-"`
+	PlanDigest                 string                 `json:"-"`
+	VerifiedIsolatedSourceID   model.ResourceID       `json:"-"`
 }
 
 type TransitionAuthorization struct {

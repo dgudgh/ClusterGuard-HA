@@ -23,6 +23,10 @@ type FailureStability interface {
 	Stable(model.ResourceID, time.Time) bool
 }
 
+type stableFailureIncident interface {
+	StableIncident(model.ResourceID, time.Time) bool
+}
+
 type FailoverInventory interface {
 	HAEndpoints(model.ResourceID) []model.HAEndpoint
 	Endpoint(model.ResourceID) (model.Endpoint, bool)
@@ -163,7 +167,12 @@ func (provider *GuardedFailoverSafety) Precheck(ctx context.Context, resolved ad
 			{Name: "old_primary_fenced", Status: model.CheckFail, Message: "old-primary fencing is not configured"},
 		}
 	}
-	if provider.failures.Stable(resolved.Cluster.ResourceID, provider.now().UTC()) {
+	stableFailure := provider.failures.Stable(resolved.Cluster.ResourceID, provider.now().UTC())
+	if !resolved.AutomaticFailureIncidentAt.IsZero() {
+		incidents, supported := provider.failures.(stableFailureIncident)
+		stableFailure = supported && incidents.StableIncident(resolved.Cluster.ResourceID, resolved.AutomaticFailureIncidentAt)
+	}
+	if stableFailure {
 		checks = append(checks, model.Check{Name: "stable_primary_failure", Status: model.CheckPass, Message: "consecutive primary-failure observations satisfy the configured stability window"})
 	} else {
 		checks = append(checks, model.Check{Name: "stable_primary_failure", Status: model.CheckFail, Message: "primary failure has not remained stable for the configured observation window"})

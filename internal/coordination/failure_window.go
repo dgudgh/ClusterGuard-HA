@@ -95,6 +95,23 @@ func (window *FailureWindow) Incident(clusterID model.ResourceID, now time.Time)
 	return series.startedAt, true
 }
 
+// StableIncident reports whether the exact failure series previously qualified
+// for automatic recovery. Unlike Stable, it does not expire merely because the
+// guarded operation itself outlives the discovery freshness gap. A healthy
+// observation or a newly started failure series still invalidates it.
+func (window *FailureWindow) StableIncident(clusterID model.ResourceID, startedAt time.Time) bool {
+	if startedAt.IsZero() {
+		return false
+	}
+	startedAt = startedAt.UTC()
+	window.mu.RLock()
+	defer window.mu.RUnlock()
+	series, found := window.series[clusterID]
+	return found && series.startedAt.Equal(startedAt) &&
+		len(series.checks) >= window.requiredChecks &&
+		series.lastObserved.Sub(series.startedAt) >= window.requiredDuration
+}
+
 func (window *FailureWindow) stableSeries(series failureSeries, now time.Time) bool {
 	if len(series.checks) < window.requiredChecks || now.IsZero() {
 		return false

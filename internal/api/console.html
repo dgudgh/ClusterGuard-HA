@@ -369,6 +369,7 @@
     .lifecycle-stage[data-state="succeeded"] { border-color:#b9ddcf; background:#f1faf6; color:#216d57; }
     .lifecycle-stage[data-state="failed"] { border-color:#e8baba; background:var(--danger-soft); color:#913333; }
     .lifecycle-task-message { margin:0 14px 12px; padding:9px 11px; border-left:3px solid #9aafa4; background:#f8faf9; color:var(--muted); font-size:11px; }
+    .operation-log-message { margin:0; padding:10px 14px; border-top:1px solid #f0d7d7; border-left:3px solid var(--danger); background:#fff8f8; color:#8f3131; font-size:11px; line-height:1.5; }
     .log-grid { display:grid; grid-template-columns:1.2fr 1fr 1fr 1fr 1fr 1fr; gap:1px; margin-top:10px; background:var(--line); }
     .log-cell { min-width:0; padding:10px 12px; background:#fff; }
     .log-cell span { display:block; color:var(--muted); font-size:11px; }
@@ -2112,7 +2113,10 @@
         'operation changed state, but post-operation verification did not pass': '操作已改变数据库状态，但后验检查未通过，请复核拓扑后再继续',
         'former-primary synchronization outcome requires verification before retrying recovery': '旧主同步结果不确定，请先检查该节点是否已经作为从库启动，再决定是否重试',
         'former-primary isolation outcome requires verification before recovery can continue': '旧主隔离状态不确定，请确认该节点不可写且不持有 VIP 后再继续恢复',
-        'former-primary synchronization failed; verify the current primary is reachable and retry recovery': '旧主同步失败，请确认当前主库、目标节点数据库服务和 Agent 均可达后重试'
+        'former-primary synchronization failed; verify the current primary is reachable and retry recovery': '旧主同步失败，请确认当前主库、目标节点数据库服务和 Agent 均可达后重试',
+        'primary failure has not remained stable for the configured observation window': '主库故障尚未持续满足配置的稳定观察窗口',
+        'precheck contains blocking checks': '预检查存在阻断项',
+        'PostgreSQL operation plan contains blocking checks': 'PostgreSQL 执行计划存在阻断项'
       };
       return state.language === 'zh-CN' && localized[reason] ? localized[reason] : reason;
     };
@@ -3275,6 +3279,14 @@
       });
       return consolidated;
     };
+    const operationLogFailureDetail = operation => {
+      if (!operation || !['blocked', 'failed', 'unsupported', 'indeterminate'].includes(operation.status)) return '';
+      const planChecks = operation.plan && Array.isArray(operation.plan.checks) ? operation.plan.checks : [];
+      const prechecks = Array.isArray(operation.precheck) ? operation.precheck : [];
+      const blocker = planChecks.find(check => check.status === 'fail') || prechecks.find(check => check.status === 'fail');
+      if (blocker) return `${blocker.name || '阻断检查'}：${localizedReason(blocker.message || '检查未通过')}`;
+      return localizedReason(operation.message || (operation.execution && operation.execution.message) || '操作未完成');
+    };
     const filteredOperations = () => {
       const search = state.logSearch.trim().toLowerCase();
       return consolidateOperationIncidents(state.operations).filter(operation => {
@@ -3283,7 +3295,7 @@
         if (state.logStatus !== 'all' && operation.status !== state.logStatus) return false;
         if (!search) return true;
         const cluster = state.clusters.find(item => item.resource_id === (operation.operation && operation.operation.cluster_id));
-        const values = [cluster && cluster.display_name, instanceLabel(operation.plan.source_id), instanceLabel(operation.target_id), kindText(kind), statusText(operation.status)];
+        const values = [cluster && cluster.display_name, instanceLabel(operation.plan.source_id), instanceLabel(operation.target_id), kindText(kind), statusText(operation.status), operationLogFailureDetail(operation)];
         return values.filter(Boolean).join(' ').toLowerCase().includes(search);
       });
     };
@@ -3322,6 +3334,8 @@
           ['状态', operation.status === 'indeterminate' && review ? `已复核 · ${review.reviewed_by || '-'} · ${new Date(review.reviewed_at).toLocaleString(state.language)}` : (operation.incident_attempt_count > 1 ? `${statusText(operation.status)}（${operation.incident_attempt_count} 次）` : statusText(operation.status))]
         ];
         fields.forEach(([label, value]) => { const cell = text('div', 'log-cell', ''); cell.append(text('span', '', label), text('strong', '', value)); grid.append(cell); });
+        const failureDetail = operationLogFailureDetail(operation);
+        if (failureDetail) card.append(text('p', 'operation-log-message', failureDetail));
         const details = document.createElement('details');
         const summary = document.createElement('summary'); summary.textContent = operation.incident_attempt_count > 1 ? `原始返回（最近一次，事故共 ${operation.incident_attempt_count} 次）` : '原始返回';
         const raw = document.createElement('pre'); raw.textContent = JSON.stringify(operation, null, 2);

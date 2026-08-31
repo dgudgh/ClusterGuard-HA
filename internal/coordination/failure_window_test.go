@@ -112,3 +112,28 @@ func TestFailureWindowConfiguredGapStillRejectsStaleEvidence(t *testing.T) {
 		t.Fatal("failure evidence remained stable after the configured observation gap expired")
 	}
 }
+
+func TestFailureWindowKeepsExactQualifiedIncidentDuringGuardedOperation(t *testing.T) {
+	window := NewFailureWindow(3, 6*time.Second, WithMaximumObservationGap(10*time.Second))
+	clusterID := model.NewResourceID()
+	start := time.Date(2026, time.August, 31, 2, 30, 0, 0, time.UTC)
+	window.Record(clusterID, true, start)
+	window.Record(clusterID, true, start.Add(5*time.Second))
+	window.Record(clusterID, true, start.Add(10*time.Second))
+	window.Record(clusterID, true, start.Add(15*time.Second))
+
+	if _, stable := window.Incident(clusterID, start.Add(15*time.Second)); !stable {
+		t.Fatal("failure series did not qualify before the operation started")
+	}
+	if window.Stable(clusterID, start.Add(26*time.Second)) {
+		t.Fatal("ambient failure freshness unexpectedly remained valid")
+	}
+	if !window.StableIncident(clusterID, start) {
+		t.Fatal("the qualified incident was lost while the guarded operation was running")
+	}
+
+	window.Record(clusterID, false, start.Add(27*time.Second))
+	if window.StableIncident(clusterID, start) {
+		t.Fatal("a healthy observation did not invalidate the qualified incident")
+	}
+}

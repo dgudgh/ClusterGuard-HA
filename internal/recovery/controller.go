@@ -267,8 +267,9 @@ func (controller *Controller) recoverCluster(ctx context.Context, cluster model.
 			ClusterID: cluster.ResourceID, Engine: cluster.Engine, Kind: model.OperationFailover,
 			RequestedBy: AutomaticRecoveryActor,
 		},
-		SourceID: primaryID, TargetID: targetID, IdempotencyKey: prefix + strconv.Itoa(attempt),
-		Parameters: map[string]string{"trigger": "stable_primary_failure"},
+		SourceID: primaryID, TargetID: targetID, AutomaticFailureIncidentAt: incident,
+		IdempotencyKey: prefix + strconv.Itoa(attempt),
+		Parameters:     map[string]string{"trigger": "stable_primary_failure"},
 	}
 	operationContext, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
