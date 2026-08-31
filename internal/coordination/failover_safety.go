@@ -145,6 +145,15 @@ func (provider *GuardedFailoverSafety) externalAvailable(instanceID model.Resour
 	return true
 }
 
+func (provider *GuardedFailoverSafety) stableFailure(resolved adapter.ResolvedOperation) bool {
+	stable := provider.failures.Stable(resolved.Cluster.ResourceID, provider.now().UTC())
+	if resolved.AutomaticFailureIncidentAt.IsZero() {
+		return stable
+	}
+	incidents, supported := provider.failures.(stableFailureIncident)
+	return supported && incidents.StableIncident(resolved.Cluster.ResourceID, resolved.AutomaticFailureIncidentAt)
+}
+
 func (provider *GuardedFailoverSafety) agentQuorumEnabled(resolved adapter.ResolvedOperation) bool {
 	engineSupported := resolved.Cluster.Engine == model.EngineMySQL || resolved.Cluster.Engine == model.EnginePostgreSQL
 	resource, err := provider.activeVIP(resolved.Cluster.ResourceID)
@@ -167,12 +176,7 @@ func (provider *GuardedFailoverSafety) Precheck(ctx context.Context, resolved ad
 			{Name: "old_primary_fenced", Status: model.CheckFail, Message: "old-primary fencing is not configured"},
 		}
 	}
-	stableFailure := provider.failures.Stable(resolved.Cluster.ResourceID, provider.now().UTC())
-	if !resolved.AutomaticFailureIncidentAt.IsZero() {
-		incidents, supported := provider.failures.(stableFailureIncident)
-		stableFailure = supported && incidents.StableIncident(resolved.Cluster.ResourceID, resolved.AutomaticFailureIncidentAt)
-	}
-	if stableFailure {
+	if provider.stableFailure(resolved) {
 		checks = append(checks, model.Check{Name: "stable_primary_failure", Status: model.CheckPass, Message: "consecutive primary-failure observations satisfy the configured stability window"})
 	} else {
 		checks = append(checks, model.Check{Name: "stable_primary_failure", Status: model.CheckFail, Message: "primary failure has not remained stable for the configured observation window"})
@@ -211,7 +215,7 @@ func (provider *GuardedFailoverSafety) Fence(ctx context.Context, resolved adapt
 	if err := provider.authority.RequireMutationAuthority(ctx); err != nil {
 		return err
 	}
-	if !provider.failures.Stable(resolved.Cluster.ResourceID, provider.now().UTC()) {
+	if !provider.stableFailure(resolved) {
 		return fmt.Errorf("stable primary-failure evidence expired")
 	}
 	resource, err := provider.activeVIP(resolved.Cluster.ResourceID)

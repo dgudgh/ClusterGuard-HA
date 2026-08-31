@@ -244,17 +244,41 @@ func TestGuardedFailoverSafetyKeepsBoundAutomaticIncidentAfterFreshnessExpires(t
 	resolved.AutomaticFailureIncidentAt = now.Add(-30 * time.Second)
 	late := now.Add(11 * time.Second)
 	calls := []string{}
-	provider := NewGuardedFailoverSafety(window, failoverAuthorityStub{}, inventory, &failoverLeaseStub{calls: &calls}, &failoverAgentTransportStub{calls: &calls}, "agent-secret", func() time.Time { return late })
+	leases := &failoverLeaseStub{
+		calls: &calls,
+		lease: endpoint.Lease{ResourceID: model.NewResourceID(), Active: true, ExpiresAt: late.Add(30 * time.Second)},
+	}
+	provider := NewGuardedFailoverSafety(window, failoverAuthorityStub{}, inventory, leases, &failoverAgentTransportStub{calls: &calls}, "agent-secret", func() time.Time { return late })
 
 	checks := provider.Precheck(context.Background(), resolved)
 	if failoverCheckStatus(checks, "stable_primary_failure") != model.CheckPass {
 		t.Fatalf("bound automatic failure incident expired during precheck and planning: %+v", checks)
+	}
+	if err := provider.Fence(context.Background(), resolved); err != nil {
+		t.Fatalf("bound automatic failure incident expired before fencing: %v", err)
 	}
 
 	window.Record(resolved.Cluster.ResourceID, false, late)
 	checks = provider.Precheck(context.Background(), resolved)
 	if failoverCheckStatus(checks, "stable_primary_failure") != model.CheckFail {
 		t.Fatalf("recovered primary did not invalidate the bound incident: %+v", checks)
+	}
+}
+
+func TestGuardedFailoverSafetyRejectsStaleUnboundFailureBeforeFencing(t *testing.T) {
+	resolved, inventory, window, now := failoverSafetyFixture(t)
+	recordStableFailure(window, resolved.Cluster.ResourceID, now)
+	calls := []string{}
+	provider := NewGuardedFailoverSafety(
+		window, failoverAuthorityStub{}, inventory, &failoverLeaseStub{calls: &calls},
+		&failoverAgentTransportStub{calls: &calls}, "agent-secret", func() time.Time { return now.Add(11 * time.Second) },
+	)
+
+	if err := provider.Fence(context.Background(), resolved); err == nil || !strings.Contains(err.Error(), "stable primary-failure evidence expired") {
+		t.Fatalf("stale unbound failure fencing error=%v", err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("stale unbound failure performed fencing calls: %v", calls)
 	}
 }
 
