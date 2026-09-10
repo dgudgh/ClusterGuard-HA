@@ -30,3 +30,5 @@
 首次全仓测试在同时构建期间，未改动的 `TestCommandLauncherPublishesGroupReadableOutput` 触发 5 秒上限；对应生产和测试文件与 HEAD 无差异。该用例独立重复 20 次均通过，每次约 0.11-0.12 秒；未修改超时。单次失败尚不足以证明生产缺陷或排除调度问题，因此完整测试按单包并发重新运行，原失败不计入通过。
 
 本轮 Chrome 隔离 API 的真实点击回归已通过 MySQL/PG 共 48 项，覆盖刷新、退出、过期请求、失败提交和结果不确定时禁止重复执行；它不等于真实数据库恢复验收。控制台 HTML SHA256 与 98 保持一致：`38cd47cd975b7e118bd49956d83d3762f0def29da13c88865573e2c221687ec1`。
+
+首次干净 worktree 构建的应用 buildinfo 正确，但 Go 原生 build settings 没有 vcs.revision，制品校验失败并停止发布。本机 Go 1.26.5 的 `cmd/go/internal/vcs/vcs.go` 根目录识别只接受 `.git` 目录，不接受 worktree 的 `.git` 文件；在嵌套工作树还可能识别外层仓库。最终构建改用独立完整 Git 克隆，保留真实 `.git` 目录，不关闭 VCS 校验、不修改工具链、不改写元数据。只有每个 Go 程序均携带当前提交及 `vcs.modified=false` 才可发布。
