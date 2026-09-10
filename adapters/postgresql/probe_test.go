@@ -154,7 +154,7 @@ func TestIdentityQueryOnlyChecksReplayPauseDuringRecovery(t *testing.T) {
 }
 
 func TestIdentityQueryUsesReceivedTimelineForStreamingStandby(t *testing.T) {
-	receiverSnapshot := "SELECT status, received_tli, latest_end_lsn\n  FROM pg_stat_wal_receiver"
+	receiverSnapshot := "SELECT status, received_tli, latest_end_lsn, sender_host, sender_port\n  FROM pg_stat_wal_receiver"
 	receiverTimeline := "SELECT received_tli::text FROM receiver"
 	checkpointTimeline := "(pg_control_checkpoint()).timeline_id::text"
 	if !strings.Contains(identityQuery, receiverSnapshot) || !strings.Contains(identityQuery, receiverTimeline) {

@@ -216,9 +216,13 @@ func postgresqlRequestWithDistinctNativeNodeIdentities(kind model.OperationKind)
 
 func TestPostgreSQLLiveSwitchoverPrecheckUsesNativeNodeIdentity(t *testing.T) {
 	request, primaryNodeID, targetNodeID := postgresqlRequestWithDistinctNativeNodeIdentities(model.OperationSwitchover)
+	primaryRow := postgresqlLiveRow(model.DatabaseInstance{ResourceMeta: model.ResourceMeta{ResourceID: primaryNodeID}, Hostname: "pg-01", Port: 5432}, "", true)
+	targetRow := postgresqlLiveRow(model.DatabaseInstance{ResourceMeta: model.ResourceMeta{ResourceID: targetNodeID}, Hostname: "pg-02", Port: 5432}, primaryNodeID, false)
+	postgresqlSetSenderEvidence(primaryRow, targetNodeID)
+	postgresqlSetReceiverEvidence(targetRow, request.Resolved.Primary)
 	runner := &postgresqlExecutableRunner{rowsByHost: map[string][]Row{
-		"pg-01": {postgresqlLiveRow(model.DatabaseInstance{ResourceMeta: model.ResourceMeta{ResourceID: primaryNodeID}, Hostname: "pg-01", Port: 5432}, "", true)},
-		"pg-02": {postgresqlLiveRow(model.DatabaseInstance{ResourceMeta: model.ResourceMeta{ResourceID: targetNodeID}, Hostname: "pg-02", Port: 5432}, primaryNodeID, false)},
+		"pg-01": {primaryRow},
+		"pg-02": {targetRow},
 	}}
 	instance := NewWithProviders(runner, postgresqlEndpointStub{executable: true}, &postgresqlNodeControllerStub{executable: true}, postgresqlFailoverSafetyStub{})
 	if err := instance.postgresqlLiveSwitchoverPrecheck(context.Background(), *request.Resolved); err != nil {
@@ -228,8 +232,13 @@ func TestPostgreSQLLiveSwitchoverPrecheckUsesNativeNodeIdentity(t *testing.T) {
 
 func TestPostgreSQLVerificationUsesNativeNodeAndSourceIdentities(t *testing.T) {
 	request, primaryNodeID, targetNodeID := postgresqlRequestWithDistinctNativeNodeIdentities(model.OperationSwitchover)
+	primaryRow := postgresqlLiveRow(model.DatabaseInstance{ResourceMeta: model.ResourceMeta{ResourceID: primaryNodeID}, Hostname: "pg-01", Port: 5432}, "", true)
+	targetRow := postgresqlLiveRow(model.DatabaseInstance{ResourceMeta: model.ResourceMeta{ResourceID: targetNodeID}, Hostname: "pg-02", Port: 5432}, primaryNodeID, false)
+	postgresqlSetSenderEvidence(primaryRow, targetNodeID)
+	postgresqlSetReceiverEvidence(targetRow, request.Resolved.Primary)
 	runner := &postgresqlExecutableRunner{rowsByHost: map[string][]Row{
-		"pg-02": {postgresqlLiveRow(model.DatabaseInstance{ResourceMeta: model.ResourceMeta{ResourceID: targetNodeID}, Hostname: "pg-02", Port: 5432}, primaryNodeID, false)},
+		"pg-01": {primaryRow},
+		"pg-02": {targetRow},
 	}}
 	instance := NewWithProviders(runner, postgresqlEndpointStub{executable: true}, &postgresqlNodeControllerStub{executable: true}, postgresqlFailoverSafetyStub{})
 	check := instance.postgresqlInstanceVerificationCheck(
@@ -241,20 +250,24 @@ func TestPostgreSQLVerificationUsesNativeNodeAndSourceIdentities(t *testing.T) {
 }
 
 type postgresqlTransientVerificationRunner struct {
-	row               Row
+	sourceRow         Row
+	targetRow         Row
 	transientFailures int
 	calls             int
 }
 
-func (runner *postgresqlTransientVerificationRunner) Query(_ context.Context, _ adapter.Endpoint, _ adapter.Credentials, query string) ([]Row, error) {
+func (runner *postgresqlTransientVerificationRunner) Query(_ context.Context, endpoint adapter.Endpoint, _ adapter.Credentials, query string) ([]Row, error) {
 	if query != identityQuery {
 		return nil, errors.New("unexpected query")
+	}
+	if endpoint.Hostname == "pg-01" {
+		return []Row{runner.sourceRow}, nil
 	}
 	runner.calls++
 	if runner.calls <= runner.transientFailures {
 		return nil, errors.New("PostgreSQL is still starting")
 	}
-	return []Row{runner.row}, nil
+	return []Row{runner.targetRow}, nil
 }
 
 func (*postgresqlTransientVerificationRunner) Exec(context.Context, adapter.Endpoint, adapter.Credentials, string) error {
@@ -263,8 +276,10 @@ func (*postgresqlTransientVerificationRunner) Exec(context.Context, adapter.Endp
 
 func TestPostgreSQLInstanceVerificationWaitsForTransientStartup(t *testing.T) {
 	request := postgresqlOperationRequest(model.OperationSwitchover)
+	sourceRow, targetRow := postgresqlBilateralLiveRows(request.Resolved.Primary, request.Resolved.Target, request.Resolved.Primary.ResourceID)
 	runner := &postgresqlTransientVerificationRunner{
-		row:               postgresqlLiveRow(request.Resolved.Target, request.Resolved.Primary.ResourceID, false),
+		sourceRow:         sourceRow,
+		targetRow:         targetRow,
 		transientFailures: 2,
 	}
 	instance := NewWithProviders(runner, postgresqlEndpointStub{executable: true}, &postgresqlNodeControllerStub{executable: true}, postgresqlFailoverSafetyStub{})
@@ -279,9 +294,9 @@ func TestPostgreSQLInstanceVerificationWaitsForTransientStartup(t *testing.T) {
 
 func TestPostgreSQLInstanceVerificationAcceptsStreamingStandbyWithoutTimeLag(t *testing.T) {
 	request := postgresqlOperationRequest(model.OperationSwitchover)
-	row := postgresqlLiveRow(request.Resolved.Target, request.Resolved.Primary.ResourceID, false)
-	row["lag_seconds"] = ""
-	runner := &postgresqlTransientVerificationRunner{row: row}
+	sourceRow, targetRow := postgresqlBilateralLiveRows(request.Resolved.Primary, request.Resolved.Target, request.Resolved.Primary.ResourceID)
+	targetRow["lag_seconds"] = ""
+	runner := &postgresqlTransientVerificationRunner{sourceRow: sourceRow, targetRow: targetRow}
 	instance := NewWithProviders(runner, postgresqlEndpointStub{executable: true}, &postgresqlNodeControllerStub{executable: true}, postgresqlFailoverSafetyStub{})
 
 	check := instance.postgresqlInstanceVerificationCheck(
@@ -296,8 +311,12 @@ func TestPostgreSQLInstanceVerificationFailsClosedOnIdentityMismatch(t *testing.
 	request := postgresqlOperationRequest(model.OperationSwitchover)
 	foreign := request.Resolved.Target
 	foreign.ResourceID = model.NewResourceID()
+	foreign.EngineIdentity = request.Resolved.Target.EngineIdentity.Clone()
+	foreign.EngineIdentity["resource_id"] = string(foreign.ResourceID)
+	sourceRow, targetRow := postgresqlBilateralLiveRows(request.Resolved.Primary, foreign, request.Resolved.Primary.ResourceID)
 	runner := &postgresqlTransientVerificationRunner{
-		row: postgresqlLiveRow(foreign, request.Resolved.Primary.ResourceID, false),
+		sourceRow: sourceRow,
+		targetRow: targetRow,
 	}
 	instance := NewWithProviders(runner, postgresqlEndpointStub{executable: true}, &postgresqlNodeControllerStub{executable: true}, postgresqlFailoverSafetyStub{})
 
@@ -546,6 +565,8 @@ func TestPostgreSQLSwitchoverPrecheckRefreshesTransientTimelineMismatch(t *testi
 	primaryRow["timeline_id"] = "8"
 	targetRow := postgresqlLiveRow(request.Resolved.Target, postgresqlNativeNodeID(request.Resolved.Primary), false)
 	targetRow["timeline_id"] = "8"
+	postgresqlSetSenderEvidence(primaryRow, postgresqlNativeNodeID(request.Resolved.Target))
+	postgresqlSetReceiverEvidence(targetRow, request.Resolved.Primary)
 	runner := &postgresqlExecutableRunner{rowsByHost: map[string][]Row{
 		request.Resolved.Primary.Hostname: {primaryRow},
 		request.Resolved.Target.Hostname:  {targetRow},
@@ -623,6 +644,8 @@ func TestPostgreSQLSwitchoverPrecheckRefreshesTransientWALPositionLag(t *testing
 	targetRow := postgresqlLiveRow(request.Resolved.Target, postgresqlNativeNodeID(request.Resolved.Primary), false)
 	targetRow["receive_lsn"] = "0/5000070"
 	targetRow["replay_lsn"] = "0/5000070"
+	postgresqlSetSenderEvidence(primaryRow, postgresqlNativeNodeID(request.Resolved.Target))
+	postgresqlSetReceiverEvidence(targetRow, request.Resolved.Primary)
 	runner := &postgresqlExecutableRunner{rowsByHost: map[string][]Row{
 		request.Resolved.Primary.Hostname: {primaryRow},
 		request.Resolved.Target.Hostname:  {targetRow},
@@ -1061,6 +1084,7 @@ func postgresqlLiveRow(instance model.DatabaseInstance, sourceID model.ResourceI
 		"port": fmt.Sprintf("%d", instance.Port), "version": "16.3", "timeline_id": "7",
 		"wal_log_hints": "true", "data_checksum_version": "1",
 		"replay_paused": "false", "lag_seconds": "0",
+		"receiver_sender_host": "", "receiver_sender_port": "", "replication_senders": "[]",
 	}
 	if primary {
 		row["primary_node_id"] = ""
@@ -1082,6 +1106,38 @@ func postgresqlLiveRow(instance model.DatabaseInstance, sourceID model.ResourceI
 	return row
 }
 
+func postgresqlSetReceiverEvidence(row Row, source model.DatabaseInstance) {
+	host := source.IPAddress
+	if host == "" {
+		host = source.Hostname
+	}
+	row["receiver_sender_host"] = host
+	row["receiver_sender_port"] = fmt.Sprintf("%d", source.Port)
+}
+
+func postgresqlSetSenderEvidence(row Row, targetNativeIDs ...model.ResourceID) {
+	senders := make([]string, 0, len(targetNativeIDs))
+	for _, targetNativeID := range targetNativeIDs {
+		senders = append(senders, fmt.Sprintf(
+			`{"application_name":%q,"state":"streaming","client_addr":"127.0.0.1","replay_lsn":"0/5000060"}`,
+			targetNativeID,
+		))
+	}
+	row["replication_senders"] = "[" + strings.Join(senders, ",") + "]"
+}
+
+func postgresqlBilateralLiveRows(source, target model.DatabaseInstance, bootstrapSourceID model.ResourceID) (Row, Row) {
+	sourceProbe := source
+	sourceProbe.ResourceID = postgresqlNativeNodeID(source)
+	targetProbe := target
+	targetProbe.ResourceID = postgresqlNativeNodeID(target)
+	sourceRow := postgresqlLiveRow(sourceProbe, "", true)
+	targetRow := postgresqlLiveRow(targetProbe, bootstrapSourceID, false)
+	postgresqlSetSenderEvidence(sourceRow, postgresqlNativeNodeID(target))
+	postgresqlSetReceiverEvidence(targetRow, source)
+	return sourceRow, targetRow
+}
+
 func (runner *postgresqlExecutionRunner) Query(_ context.Context, endpoint adapter.Endpoint, _ adapter.Credentials, query string) ([]Row, error) {
 	state := runner.state
 	switch {
@@ -1092,6 +1148,11 @@ func (runner *postgresqlExecutionRunner) Query(_ context.Context, endpoint adapt
 		switch endpoint.Hostname {
 		case "pg-01":
 			row := postgresqlLiveRow(model.DatabaseInstance{ResourceMeta: model.ResourceMeta{ResourceID: model.ResourceID(testPostgreSQLPrimaryID)}, Hostname: "pg-01", Port: 5432}, model.ResourceID(postgresqlCandidateA), !state.rewound)
+			if !state.rewound {
+				postgresqlSetSenderEvidence(row, model.ResourceID(postgresqlCandidateA), model.ResourceID(postgresqlFollowerID))
+			} else {
+				postgresqlSetReceiverEvidence(row, model.DatabaseInstance{Hostname: "pg-02", Port: 5432})
+			}
 			state.applyPostgreSQLLiveOverrides(model.ResourceID(testPostgreSQLPrimaryID), row)
 			return []Row{row}, nil
 		case "pg-02":
@@ -1100,11 +1161,22 @@ func (runner *postgresqlExecutionRunner) Query(_ context.Context, endpoint adapt
 				targetID = model.ResourceID(postgresqlCandidateA)
 			}
 			row := postgresqlLiveRow(model.DatabaseInstance{ResourceMeta: model.ResourceMeta{ResourceID: targetID}, Hostname: "pg-02", Port: 5432}, model.ResourceID(testPostgreSQLPrimaryID), state.promoted)
+			if state.promoted {
+				postgresqlSetSenderEvidence(row, model.ResourceID(testPostgreSQLPrimaryID), model.ResourceID(postgresqlFollowerID))
+			} else {
+				postgresqlSetReceiverEvidence(row, model.DatabaseInstance{Hostname: "pg-01", Port: 5432})
+			}
 			state.applyPostgreSQLLiveOverrides(targetID, row)
 			return []Row{row}, nil
 		case "pg-03":
 			sourceID := state.followers[model.ResourceID(postgresqlFollowerID)]
-			return []Row{postgresqlLiveRow(model.DatabaseInstance{ResourceMeta: model.ResourceMeta{ResourceID: model.ResourceID(postgresqlFollowerID)}, Hostname: "pg-03", Port: 5432}, sourceID, false)}, nil
+			row := postgresqlLiveRow(model.DatabaseInstance{ResourceMeta: model.ResourceMeta{ResourceID: model.ResourceID(postgresqlFollowerID)}, Hostname: "pg-03", Port: 5432}, sourceID, false)
+			if sourceID == model.ResourceID(postgresqlCandidateA) {
+				postgresqlSetReceiverEvidence(row, model.DatabaseInstance{Hostname: "pg-02", Port: 5432})
+			} else {
+				postgresqlSetReceiverEvidence(row, model.DatabaseInstance{Hostname: "pg-01", Port: 5432})
+			}
+			return []Row{row}, nil
 		default:
 			return nil, fmt.Errorf("unexpected PostgreSQL endpoint %s", endpoint.Hostname)
 		}

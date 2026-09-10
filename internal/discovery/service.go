@@ -118,6 +118,12 @@ const (
 )
 
 func (service *Service) Refresh(ctx context.Context, clusterID model.ResourceID) (model.TopologySnapshot, error) {
+	return service.RefreshAndCommit(ctx, clusterID, nil)
+}
+
+// RefreshAndCommit keeps the cluster publication fence until commit returns.
+// The callback sees a persisted observation and must not recursively refresh.
+func (service *Service) RefreshAndCommit(ctx context.Context, clusterID model.ResourceID, commit func(model.TopologySnapshot) error) (model.TopologySnapshot, error) {
 	if service == nil || service.registry == nil || service.repository == nil {
 		return model.TopologySnapshot{}, fmt.Errorf("discovery service is not configured")
 	}
@@ -137,7 +143,14 @@ func (service *Service) Refresh(ctx context.Context, clusterID model.ResourceID)
 	}
 	failureTarget := service.primaryFailureTarget(clusterID)
 	snapshot, err := service.repository.ApplyDiscoveryRefresh(refresh)
-	return service.finishRefresh(clusterID, failureTarget, refresh.ObservedAt, snapshot, err)
+	snapshot, err = service.finishRefresh(clusterID, failureTarget, refresh.ObservedAt, snapshot, err)
+	if err == nil && commit != nil {
+		if cause := context.Cause(ctx); cause != nil {
+			return snapshot, cause
+		}
+		err = commit(snapshot)
+	}
+	return snapshot, err
 }
 
 func (service *Service) prepareRefresh(ctx context.Context, clusterID model.ResourceID) (store.DiscoveryRefresh, error) {
@@ -165,6 +178,9 @@ func (service *Service) prepareRefresh(ctx context.Context, clusterID model.Reso
 	probeResults := service.probeEndpoints(ctx, candidate, cluster, endpoints, topologyAvailable, metricsAvailable)
 	if err := ctx.Err(); err != nil {
 		return store.DiscoveryRefresh{}, err
+	}
+	if resolver, ok := candidate.(adapter.TopologyObservationResolver); ok && topologyAvailable {
+		resolveTopologyObservations(resolver, probeResults)
 	}
 	observations := make([]store.DiscoveryObservation, 0, len(probeResults))
 	writablePrimaryIdentities := make(map[string]struct{})
@@ -250,6 +266,15 @@ func (service *Service) prepareRefresh(ctx context.Context, clusterID model.Reso
 	}
 
 	anomalies := make([]model.MetadataAnomaly, 0, 1)
+	for _, observation := range observations {
+		if cluster.Engine == model.EnginePostgreSQL && observation.Instance.EngineMetadata["topology_identity_conflict"] == "duplicate_native_identity" {
+			anomalies = append(anomalies, model.MetadataAnomaly{
+				ClusterID: clusterID, Engine: cluster.Engine, Kind: "duplicate_native_identity", Severity: "critical",
+				Message: "distinct PostgreSQL endpoints report the same native identity; alias ownership is not verified",
+			})
+			break
+		}
+	}
 	writablePrimaries := len(writablePrimaryIdentities)
 	if writablePrimaries > 1 {
 		anomalies = append(anomalies, model.MetadataAnomaly{
@@ -726,6 +751,26 @@ func boundedEndpointProbeContext(parent context.Context) (context.Context, conte
 		return context.WithCancel(parent)
 	}
 	return context.WithTimeout(parent, budget)
+}
+
+func resolveTopologyObservations(resolver adapter.TopologyObservationResolver, probes []endpointProbe) {
+	observations := make([]adapter.TopologyObservation, 0, len(probes))
+	indices := make([]int, 0, len(probes))
+	for index, probe := range probes {
+		if probe.failure != probeSucceeded && probe.failure != probeMetricsFailed {
+			continue
+		}
+		indices = append(indices, index)
+		observations = append(observations, adapter.TopologyObservation{
+			Endpoint:  adapter.Endpoint{Hostname: probe.endpoint.Hostname, IPAddress: probe.endpoint.IPAddress, Port: probe.endpoint.Port},
+			Discovery: probe.discovery, Topology: probe.topology,
+		})
+	}
+	resolver.ResolveTopologyObservations(observations)
+	for index, observation := range observations {
+		probes[indices[index]].discovery = observation.Discovery
+		probes[indices[index]].topology = observation.Topology
+	}
 }
 
 func cloneLagSeconds(value *int64) *int64 {

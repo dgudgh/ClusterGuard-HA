@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ClusterGuard HA Console</title>
-  <style>
+<style>
     :root {
       color-scheme:light;
       --ink:#1d1d1f;
@@ -312,8 +312,9 @@
     .context-cell:last-child { border-right:0; }
     .context-cell select { height:34px; min-height:34px; margin-top:4px; }
     .context-value { display:block; margin-top:5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:15px; font-weight:760; }
-    .operations-view-heading .topology-heading-main { flex:1; }
-    .operations-section-tabs { width:min(500px,54vw); grid-template-columns:repeat(2,minmax(0,1fr)); }
+    .operations-view-heading .topology-heading-main { flex:1; align-items:stretch; flex-direction:column; gap:7px; }
+    .operations-section-tabs { width:min(720px,100%); grid-template-columns:repeat(3,minmax(0,1fr)); }
+    .operations-section-tabs button { min-width:0; padding-inline:8px; white-space:nowrap; }
     .operation-target-context[hidden], .operation-section-panel[hidden] { display:none; }
     .operation-grid { display:block; margin-top:16px; }
     .operation-box { min-height:0; border:1px solid var(--line); border-radius:8px; background:#fff; }
@@ -379,6 +380,18 @@
     .log-cell strong { display:block; margin-top:3px; overflow-wrap:anywhere; font-size:12px; }
     .log-load-more { display:flex; justify-content:center; padding:16px 0 2px; }
     .log-load-more button { min-width:180px; }
+    .log-load-more button[hidden] { display:none; }
+    .log-toolbar { display:grid; grid-template-columns:minmax(250px,1fr) minmax(0,680px); align-items:center; gap:14px 20px; min-width:0; min-height:76px; margin-bottom:14px; padding:16px 18px; border:1px solid var(--line); border-radius:var(--radius); background:var(--panel); }
+    .log-filters { display:grid; grid-template-columns:minmax(160px,1fr) 124px 112px 106px; gap:10px; align-items:center; min-width:0; }
+    .log-filters label { display:block; min-width:0; }
+    .log-filters input, .log-filters select { height:36px; min-width:0; font-size:12px; font-weight:500; }
+    .log-search-field { position:relative; }
+    .log-search-field input { padding-left:36px; }
+    .log-search-field input::placeholder { color:var(--muted); opacity:1; }
+    .log-result-count { display:flex; flex-wrap:wrap; align-items:center; gap:4px 9px; min-width:0; padding-left:14px; border-left:1px solid var(--line-strong); color:var(--muted); font-size:11px; font-weight:550; font-variant-numeric:tabular-nums; }
+    .log-result-count strong { font-weight:550; white-space:nowrap; }
+    .log-record-count { white-space:nowrap; }
+    .log-record-count::before { content:'\00b7'; margin-right:9px; }
     details { border-top:1px solid var(--line); }
     summary { padding:10px 14px; cursor:pointer; color:var(--muted); font-weight:700; }
     pre { max-height:360px; margin:0; overflow:auto; padding:14px; background:#102019; color:#eaf4ef; font:12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space:pre-wrap; }
@@ -499,6 +512,7 @@
     .software-update-history-table .history-message { max-width:340px; overflow:hidden; color:var(--muted); text-overflow:ellipsis; white-space:nowrap; }
     .software-update-confirmation { display:grid; gap:12px; }
     .software-update-confirmation .confirmation-state { margin:0; }
+    #software-update-confirmation-dialog .confirmation-phrase code { min-width:0; overflow-wrap:anywhere; }
     .software-update-dialog { width:min(900px,calc(100vw - 32px)); overflow:hidden; }
     dialog.software-update-dialog[open] { display:grid; max-height:calc(100vh - 32px); max-height:calc(100dvh - 32px); grid-template-rows:auto minmax(0,1fr) auto; overflow:hidden; }
     .software-update-dialog .dialog-head { align-items:flex-start; background:#fff; }
@@ -557,7 +571,7 @@
     .software-update-progress-events { display:grid; min-height:0; max-height:100%; grid-template-rows:auto minmax(0,1fr); overflow:hidden; border:1px solid var(--line); border-radius:8px; background:#fff; }
     .software-update-progress-events-head { display:flex; min-height:46px; align-items:center; justify-content:space-between; gap:12px; padding:0 14px; border-bottom:1px solid var(--line); }
     .software-update-progress-events-head h3 { margin:0; font-size:13px; }
-    .software-update-progress-event-list { display:grid; height:100%; min-height:0; max-height:100%; align-content:start; overflow-x:hidden; overflow-y:scroll; overscroll-behavior:contain; scrollbar-gutter:stable; }
+    .software-update-progress-event-list { display:grid; height:100%; min-height:0; max-height:100%; align-content:start; overflow-x:hidden; overflow-y:scroll; grid-auto-rows:max-content; overscroll-behavior:contain; scrollbar-gutter:stable; }
     .software-update-progress-event { display:grid; grid-template-columns:10px 76px 132px minmax(0,1fr); gap:10px; align-items:center; min-height:44px; padding:8px 14px; border-bottom:1px solid var(--line); font-size:11px; }
     .software-update-progress-event::before { width:8px; height:8px; border:2px solid #8aa6c1; border-radius:50%; background:#fff; content:''; }
     .software-update-progress-event[data-status="verified"]::before, .software-update-progress-event[data-status="succeeded"]::before, .software-update-progress-event[data-status="rollback_verified"]::before { border-color:var(--success); background:var(--success); }
@@ -632,6 +646,22 @@
     .dialog-context span { color:var(--muted); font-size:11px; }
     .dialog-context strong { display:block; margin-top:2px; font-size:13px; }
     .power-dialog { width:min(680px,calc(100vw - 32px)); overflow:hidden; }
+    .disaster-dialog { width:min(900px,calc(100vw - 24px)); height:min(800px,calc(100dvh - 24px)); overflow:hidden; }
+    .disaster-dialog[open] { display:grid; grid-template-rows:auto minmax(0,1fr) auto; }
+    .disaster-dialog [hidden] { display:none !important; }
+    .disaster-dialog .dialog-body { display:flex; flex-direction:column; min-height:0; overflow:hidden; gap:12px; }
+    .disaster-dialog .dialog-body > :not(.disaster-events) { flex-shrink:0; }
+    .disaster-events { min-height:70px; overflow:auto; overscroll-behavior:contain; border-top:1px solid var(--line); }
+    .disaster-event { display:grid; grid-template-columns:72px 120px minmax(0,1fr); gap:12px; padding:10px 0; border-bottom:1px solid var(--line); font-size:12px; }
+    .disaster-event > * { min-width:0; overflow-wrap:anywhere; }
+    .disaster-members { display:flex; gap:12px; flex-wrap:wrap; margin:0; padding:0; list-style:none; font-size:12px; }
+    .disaster-dialog .dialog-actions { border-top:1px solid var(--line); }
+    @media (max-width:600px), (max-height:600px) {
+      .disaster-dialog .dialog-body { gap:8px; padding:12px; }
+      .disaster-dialog .power-confirmation { padding:8px; gap:6px; }
+      .disaster-event { grid-template-columns:60px minmax(0,1fr); gap:8px; }
+      .disaster-event > :last-child { grid-column:1 / -1; }
+    }
     .power-dialog[open] { display:grid; grid-template-rows:auto minmax(0,1fr) auto; }
     .power-dialog .dialog-body { display:grid; gap:16px; background:#f7faf8; }
     .power-dialog .dialog-actions { align-items:center; justify-content:space-between; padding-top:14px; border-top:1px solid var(--line); background:#fff; }
@@ -663,10 +693,32 @@
     .live-status { position:fixed; right:22px; bottom:18px; z-index:40; max-width:min(460px,calc(100vw - 44px)); padding:11px 14px; border:1px solid var(--line-strong); border-left:3px solid var(--accent); border-radius:7px; background:#fff; box-shadow:var(--shadow); color:var(--muted); }
     .live-status[hidden] { display:none; }
     .live-status.error { border-left-color:var(--danger); color:#903434; }
+    .fleet-toolbar { display:grid; grid-template-columns:minmax(230px,1fr) minmax(320px,470px); gap:16px 20px; min-height:76px; padding:16px 18px; }
+    .fleet-heading { display:flex; min-width:0; align-items:center; gap:14px; }
+    .fleet-heading .panel-title { flex:0 0 auto; }
+    .fleet-meta { display:flex; align-items:center; gap:9px; min-width:0; padding-left:14px; border-left:1px solid var(--line-strong); color:var(--muted); font-size:11px; font-weight:550; white-space:nowrap; font-variant-numeric:tabular-nums; }
+    .fleet-filters { display:grid; min-width:0; grid-template-columns:minmax(0,1fr) 144px; align-items:center; gap:10px; }
+    .fleet-search-field { position:relative; display:block; min-width:0; }
+    .fleet-search-icon { position:absolute; top:50%; left:12px; width:16px; height:16px; transform:translateY(-50%); color:var(--muted); pointer-events:none; }
+    .fleet-search-field input { min-height:36px; padding-left:36px; font-size:12px; font-weight:500; }
+    .fleet-search-field input::placeholder { color:var(--muted); opacity:1; }
+    .fleet-health-field { display:block; min-width:0; }
+    .fleet-health-field select { min-height:36px; font-size:12px; font-weight:550; }
+    .cluster-load-notice { display:flex; align-items:center; justify-content:space-between; gap:16px; margin:0 0 18px; padding:12px 14px; border-left:3px solid var(--accent); background:var(--accent-soft); color:var(--accent-strong); font-size:12px; }
+    .cluster-load-notice[hidden] { display:none; }
+    .cluster-load-notice[data-state="error"], .cluster-load-notice[data-state="partial"] { border-color:var(--warning); background:var(--warning-soft); color:var(--warning); }
+    .cluster-load-notice span { min-width:0; overflow-wrap:anywhere; }
+    .cluster-load-notice button { flex:0 0 auto; }
+    .cluster-load-notice button[hidden] { display:none; }
+    .log-card button[hidden] { display:none; }
+    @media (prefers-reduced-motion:reduce) {
+      *, *::before, *::after { animation:none !important; transition:none !important; scroll-behavior:auto !important; }
+    }
     @media (max-width:1220px) {
       .settings-preference-row { grid-template-columns:180px minmax(240px,1fr) auto; }
     }
     @media (max-width:1160px) {
+      .log-toolbar { grid-template-columns:minmax(0,1fr); }
       .summary-grid, .metric-grid { grid-template-columns:repeat(3,1fr); }
       .summary-cell:nth-child(3), .summary-cell:nth-child(6) { border-right:0; }
       .summary-cell:nth-child(n+4) { border-top:1px solid var(--line); }
@@ -706,6 +758,8 @@
       .settings-inline-actions { justify-content:flex-start; }
     }
     @media (max-width:680px) {
+      .log-filters { grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+      .log-search-field { grid-column:1 / -1; }
       .page-header { display:block; }
       .cluster-toolbar { width:100%; grid-template-columns:1fr; margin-top:14px; }
       .toolbar-actions { justify-content:flex-end; }
@@ -738,6 +792,8 @@
       .node-lifecycle-dialog .dialog-actions { align-items:stretch; flex-direction:column; }
       .cluster-management-dialog .dialog-actions { align-items:stretch; flex-direction:column; }
       .software-update-dialog .dialog-actions { align-items:stretch; flex-direction:column; }
+      #software-update-confirmation-dialog .dialog-actions { align-items:stretch; flex-direction:column; }
+      #software-update-confirmation-dialog .dialog-buttons button { height:36px; }
       .software-update-dialog .dialog-buttons,
       .software-update-dialog .dialog-buttons button { width:100%; }
       .cluster-endpoint-row { grid-template-columns:1fr 1fr; }
@@ -756,7 +812,14 @@
       .operation-progress { gap:4px; padding-inline:10px; }
       .operation-stage { font-size:9px; }
     }
+    @media (max-width:760px) {
+      .fleet-toolbar { grid-template-columns:minmax(0,1fr); gap:14px; padding:16px; }
+      .fleet-filters { grid-template-columns:minmax(0,1fr) 132px; }
+    }
     @media (max-width:520px) {
+      .log-filters { grid-template-columns:repeat(2,minmax(0,1fr)); }
+      .log-cluster-field { grid-column:1 / -1; }
+      .log-toolbar { padding:16px; }
       .control-plane-strip { grid-template-columns:1fr; }
       .control-plane-group { border-right:0; border-top:1px solid var(--line); }
       .control-plane-group:first-child { border-top:0; }
@@ -769,9 +832,16 @@
       .settings-version-summary { display:none; }
       .update-maintenance-banner { align-items:flex-start; }
       .update-maintenance-actions { align-items:flex-end; flex-direction:column; }
-      .software-update-progress-titlebar { align-items:flex-start; flex-direction:column; }
-      .software-update-stages { grid-template-columns:repeat(2,minmax(0,1fr)); padding-inline:10px; }
+      .software-update-progress-titlebar { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:center; padding:12px 12px 8px; }
+      .software-update-progress-titlebar > div { min-width:0; }
+      .software-update-stages { grid-template-columns:repeat(4,minmax(0,1fr)); padding:12px 8px 8px; }
+      .software-update-stage { min-height:66px; gap:6px; padding:0 2px; }
+      .software-update-stage-copy small { white-space:normal; overflow-wrap:anywhere; }
+      .software-update-stage:not(:last-child)::after { display:block; }
       .software-update-progress-facts { grid-template-columns:repeat(2,minmax(0,1fr)); }
+      .software-update-progress-fact { min-height:50px; padding:8px 10px; }
+      .software-update-progress-body > .software-update-warning { gap:8px; padding:8px 10px; }
+      dialog.software-update-progress-dialog[open] > .software-update-progress-body { gap:10px; padding:12px; }
       .software-update-progress-dialog .dialog-actions { align-items:stretch; flex-direction:column; }
       .software-update-progress-dialog .dialog-buttons, .software-update-progress-dialog .dialog-buttons button { width:100%; }
     }
@@ -852,6 +922,9 @@
       </div>
 
       <div class="content">
+        <div class="cluster-load-notice" id="cluster-load-notice" role="status" aria-live="polite" hidden>
+          <span id="cluster-load-message"></span><button id="retry-cluster-load" type="button"><span aria-hidden="true">↻</span>重试</button>
+        </div>
         <section class="view" data-view="overview" aria-labelledby="overview-title">
           <div class="view-heading"><div><h2 id="overview-title" data-i18n="overviewTitle">运行总览</h2><p data-i18n="overviewSubtitle">控制面、集群和待复核操作摘要</p></div></div>
           <div class="panel">
@@ -865,16 +938,24 @@
             </div>
           </div>
           <div class="panel">
-            <div class="panel-header filter-bar">
-              <div><h3 class="panel-title">数据库集群</h3><span class="summary-label">异常优先 · 点击集群进入拓扑</span></div>
-              <div class="filter-controls" aria-label="筛选集群">
-                <label class="search-field" for="fleet-search">筛选集群<input id="fleet-search" type="search" autocomplete="off" placeholder="集群名、引擎或主库"></label>
-                <label for="fleet-health-filter">健康状态<select id="fleet-health-filter"><option value="all">全部状态</option><option value="attention">需要关注</option><option value="healthy">健康</option><option value="unknown">未知</option></select></label>
-                <span class="badge filter-count" id="fleet-visible-count">0 / 0</span>
-                <span class="badge" id="fleet-engine-count">4 种引擎</span>
+            <div class="panel-header fleet-toolbar">
+              <div class="fleet-heading">
+                <h3 class="panel-title">数据库集群</h3>
+                <div class="fleet-meta" aria-live="polite" aria-atomic="true">
+                  <span id="fleet-visible-count" aria-label="当前显示与全部集群数量">0 / 0</span>
+                  <span aria-hidden="true">·</span><span id="fleet-engine-count">4 种引擎</span>
+                </div>
+              </div>
+              <div class="fleet-filters" role="search" aria-label="筛选集群">
+                <label class="fleet-search-field" for="fleet-search">
+                  <span class="visually-hidden">筛选集群</span>
+                  <svg class="fleet-search-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                  <input id="fleet-search" type="search" autocomplete="off" placeholder="搜索集群" title="按集群名、引擎或主库筛选">
+                </label>
+                <label class="fleet-health-field" for="fleet-health-filter"><span class="visually-hidden">健康状态</span><select id="fleet-health-filter"><option value="all">全部状态</option><option value="attention">需要关注</option><option value="healthy">健康</option><option value="unknown">未知</option></select></label>
               </div>
             </div>
-            <div class="cluster-list" id="overview-clusters">
+            <div class="cluster-list" id="overview-clusters" aria-label="数据库集群，异常优先">
               <div class="cluster-row header"><span>集群</span><span>引擎</span><span>运行层</span><span>健康</span><span>主库</span><span>实例</span><span>最近观测</span></div>
             </div>
           </div>
@@ -945,6 +1026,7 @@
               <div class="topology-section-tabs operations-section-tabs" role="tablist" aria-label="高可用操作功能区">
                 <button id="operations-switchover-tab" type="button" role="tab" aria-controls="operations-switchover-panel" aria-selected="true" data-operations-section="switchover" data-i18n="operationsSwitchTab">主库切换</button>
                 <button id="operations-recovery-tab" type="button" role="tab" aria-controls="operations-recovery-panel" aria-selected="false" data-operations-section="recovery" data-i18n="operationsRecoveryTab" tabindex="-1">旧主恢复</button>
+                <button id="operations-disaster-tab" type="button" role="tab" aria-controls="operations-disaster-panel" aria-selected="false" data-operations-section="disaster" tabindex="-1">灾难恢复</button>
               </div>
               <p id="operations-section-summary">同步切换主库角色与业务入口</p>
             </div>
@@ -981,6 +1063,11 @@
               </div>
             </div>
           </div>
+          <section class="operation-section-panel" id="operations-disaster-panel" role="tabpanel" aria-labelledby="operations-disaster-tab" hidden>
+            <div class="operation-box-head"><h3>集群灾难恢复</h3><span class="badge danger">高风险</span></div>
+            <div class="center-actions"><button id="open-disaster-recovery" class="primary-button" type="button">一键灾难恢复</button></div>
+            <div id="disaster-availability" class="result-banner" role="status"></div>
+          </section>
           <div class="result-banner" id="operation-result" role="status">等待操作。</div>
         </section>
 
@@ -1007,15 +1094,20 @@
 
         <section class="view" data-view="operation-log" hidden aria-labelledby="log-title">
           <div class="view-heading"><div><h2 id="log-title">操作日志</h2><p>切换与审计记录</p></div><button id="refresh-operation-log" type="button">↻ 刷新日志</button></div>
-          <div class="panel">
-            <div class="panel-body filter-bar" aria-label="筛选操作日志">
-              <div class="filter-controls">
-                <label class="search-field" for="log-search">筛选操作日志<input id="log-search" type="search" autocomplete="off" placeholder="集群、源节点、目标节点"></label>
-                <label for="log-cluster-filter">集群范围<select id="log-cluster-filter"><option value="all">全部集群</option></select></label>
-                <label for="log-kind-filter">操作类型<select id="log-kind-filter"><option value="all">全部类型</option><option value="switchover">主库切换</option><option value="failover">故障切换</option><option value="former_primary_rejoin">旧主回挂</option><option value="replication_repair">复制修复</option><option value="node_sync">节点同步</option></select></label>
-                <label for="log-status-filter">状态<select id="log-status-filter"><option value="all">全部状态</option><option value="succeeded">成功</option><option value="running">执行中</option><option value="blocked">阻断</option><option value="indeterminate">需复核</option><option value="failed">失败</option></select></label>
-              </div>
-              <span class="badge filter-count" id="log-visible-count">0 条</span>
+          <div class="log-toolbar">
+            <div class="fleet-heading">
+              <h3 class="panel-title">操作记录</h3>
+              <div class="log-result-count" id="log-visible-count" role="status" aria-live="polite" aria-atomic="true">尚未读取</div>
+            </div>
+            <div class="log-filters" role="search" aria-label="筛选操作日志">
+              <label class="log-search-field" for="log-search">
+                <span class="visually-hidden">筛选操作日志</span>
+                <svg class="fleet-search-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                <input id="log-search" type="search" autocomplete="off" placeholder="搜索集群或节点">
+              </label>
+              <label class="log-cluster-field" for="log-cluster-filter"><span class="visually-hidden">集群范围</span><select id="log-cluster-filter"><option value="all">全部集群</option></select></label>
+              <label for="log-kind-filter"><span class="visually-hidden">操作类型</span><select id="log-kind-filter"><option value="all">全部类型</option><option value="switchover">主库切换</option><option value="failover">故障切换</option><option value="former_primary_rejoin">旧主回挂</option><option value="replication_repair">复制修复</option><option value="node_sync">节点同步</option></select></label>
+              <label for="log-status-filter"><span class="visually-hidden">状态</span><select id="log-status-filter"><option value="all">全部状态</option><option value="succeeded">成功</option><option value="running">执行中</option><option value="blocked">阻断</option><option value="indeterminate">需复核</option><option value="failed">失败</option></select></label>
             </div>
           </div>
           <div class="log-list" id="operation-log-list">
@@ -1155,6 +1247,22 @@
         <button id="submit-cluster-retirement" class="danger-button" type="button" hidden disabled>确认退役</button>
       </div>
     </div>
+  </dialog>
+
+  <dialog id="disaster-dialog" class="disaster-dialog" aria-modal="true" aria-labelledby="disaster-title">
+    <div class="dialog-head"><h2 id="disaster-title">集群灾难恢复</h2><button id="close-disaster" class="dialog-close" type="button" aria-label="关闭灾难恢复窗口">×</button></div>
+    <div class="dialog-body">
+      <div id="disaster-alert" class="result-banner" role="alert">正在读取恢复状态。</div>
+      <div class="result-banner">恢复将隔离全部节点并暂停业务写入。存在独立提交分支或证据不完整时自动阻断；只有恢复提交与唯一主库验证通过后才恢复业务入口。</div>
+      <div><strong id="disaster-cluster-name">-</strong><ul id="disaster-members" class="disaster-members"></ul></div>
+      <div class="power-confirmation" id="disaster-confirmation" hidden>
+        <label for="disaster-confirm-name">确认集群名称<input id="disaster-confirm-name" autocomplete="off" spellcheck="false"></label>
+        <label class="power-acknowledgement"><input id="disaster-confirm-impact" type="checkbox"><span>我确认隔离全部节点；从库可能需要全量重建。</span></label>
+      </div>
+      <div><strong id="disaster-stage">未开始</strong><span id="disaster-primary" class="muted"></span></div>
+      <div id="disaster-events" class="disaster-events" role="log" aria-live="polite"></div>
+    </div>
+    <div class="dialog-actions"><button id="disaster-replan" type="button" hidden>重新预检</button><button id="disaster-execute" class="primary-button" type="button" disabled>执行恢复</button><button id="cancel-disaster" type="button">关闭</button></div>
   </dialog>
 
   <dialog id="power-shutdown-dialog" class="power-dialog" role="dialog" aria-modal="true" aria-labelledby="power-shutdown-title">
@@ -1332,7 +1440,7 @@
       <label for="software-update-confirmation-input">输入确认
         <input id="software-update-confirmation-input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="手动输入完整升级包 ID">
       </label>
-      <p class="confirmation-state" id="software-update-confirmation-state">尚未输入完整升级包 ID，不能执行。</p>
+      <p class="confirmation-state" id="software-update-confirmation-state" role="status" aria-live="polite">尚未输入完整升级包 ID，不能执行。</p>
     </div>
     <div class="dialog-actions">
       <span class="dialog-action-note">平台会保留升级事件、原始输出和回退状态，用于审计与故障恢复。</span>
@@ -1424,20 +1532,27 @@
 
   <script>
     const byId = id => document.getElementById(id);
-    const operationLogPageSize = 50;
+    const operationLogPageSize = 20;
     const state = {
       language: 'zh-CN', clusters: [], clusterDirectory: new Map(), fleetTopology: new Map(), capabilities: [], nodes: [], allOperations: [], lifecycleTasks: [], lifecycleCapability: { available:false, reason:'未配置' },
       controlPlane: null, platformVersion: null, powerStatus: null, powerRunning: false,
+      disaster: null, disasterEpoch:0, disasterTimer:null,
       softwareUpdates: { available:false, reason:'尚未检查升级服务', warning:'系统升级期间无法进行自动切换，请注意关注。', packages:[] },
       softwareUpdateRunning: false, softwareUpdateAction: '', softwareUpdatePollingTimer: null,
+      softwareUpdateReadEpoch: 0, softwareUpdatePlanWait: null, softwareUpdateSubmission: null,
+      softwareUpdateConfirmationPatchID: '', softwareUpdateConfirmationMessage: '',
       softwareUpdateValidationState: 'idle', softwareUpdateValidationMessage: '',
       softwareUpdateDialogAlert: '', softwareUpdateDialogAlertLevel: 'error',
       softwareUpdateProgressDismissed: '', softwareUpdateProgressWasActive: false,
-      selectedClusterId: '', selectedCandidateId: '', selectedRejoinId: '', topologySection: 'map', operationsSection: 'switchover', settingsSection: 'status', switchUnlocked: false, operationRunning: false,
+      selectedClusterId: '', selectedCandidateId: '', selectedRejoinId: '', topologySection: 'map', operationsSection: 'switchover', settingsSection: 'status', switchUnlocked: false, operationLockEpoch: 0, operationRunning: false, activeOperationIntent: null,
       operationReviewRunning: false, operationReviewTargetId: '',
-      currentUser: null, passwordChangeRequired: false, authenticating: false, lifecycleRunning: false, clusterMutationRunning: false, clusterManagementMode: 'create', retireConfirmationClusterId: '',
+      operationContext: null, fleetOperationContext: null, fleetContextError: '', fleetContextController: null,
+      logLoaded: false, logError: '', logController: null,
+      logNextCursor: '', logRemaining: 0, logTotal: 0, logRecordCount: 0, logQueryKey: '', logFilterTimer: null,
+      currentUser: null, authEpoch: 0, loggingOut: false, passwordChangeRequired: false, authenticating: false, lifecycleRunning: false, clusterMutationRunning: false, clusterManagementMode: 'create', retireConfirmationClusterId: '',
       requestGeneration: 0, refreshIntervalMs: 60000, refreshTimer: null, liveStatusTimer: null,
-      fleetSearch: '', fleetHealth: 'all', logSearch: '', logClusterId: 'all', logKind: 'all', logStatus: 'all', logVisibleLimit: operationLogPageSize,
+      clusterLoading: false, clusterLoadError: '', clusterDataReady: false, clusterReadController: null,
+      fleetSearch: '', fleetHealth: 'all', logSearch: '', logClusterId: '', logKind: 'all', logStatus: 'all',
       clusterDetail: null, topology: null, health: null, candidates: [], metrics: { instances: [] }, operations: []
     };
 
@@ -1508,8 +1623,8 @@
     });
     const deletionOptions = body => ({ ...mutationOptions(body), method:'DELETE' });
 
-    const canOperateClusters = () => !!(state.currentUser && ['admin', 'operator'].includes(state.currentUser.role));
-    const canAdministerPlatform = () => !!(state.currentUser && state.currentUser.role === 'admin');
+    const canOperateClusters = () => !!(!state.loggingOut && state.currentUser && ['admin', 'operator'].includes(state.currentUser.role));
+    const canAdministerPlatform = () => !!(!state.loggingOut && state.currentUser && state.currentUser.role === 'admin');
     const controllerDisplayName = controllerID => {
       const node = state.nodes.find(item => item.resource_id === controllerID);
       if (!node) return controllerID || '-';
@@ -1573,10 +1688,28 @@
     };
 
     const showLogin = (message = '请输入平台账户。', isError = false) => {
+      state.authEpoch++;
+      state.loggingOut = false;
+      state.requestGeneration++;
+      state.clusterReadController?.abort(); state.clusterReadController = null;
+      state.clusterDataReady = false;
+      state.softwareUpdateReadEpoch += 1;
+      if (state.softwareUpdatePlanWait) state.softwareUpdatePlanWait.cancelled = true;
+      state.logController?.abort(); state.logController = null;
+      if (state.logFilterTimer) window.clearTimeout(state.logFilterTimer);
+      state.logFilterTimer = null; state.logNextCursor = ''; state.logQueryKey = '';
+      state.logClusterId = '';
+      state.logRemaining = 0; state.logTotal = 0; state.logRecordCount = 0;
+      state.fleetContextController?.abort(); state.fleetContextController = null;
+      state.allOperations = []; state.logLoaded = false; state.logError = '';
+      state.operationContext = null; state.fleetOperationContext = null; state.fleetContextError = '';
       state.currentUser = null;
+      if (state.activeOperationIntent) state.activeOperationIntent.cancelled = true;
+      state.activeOperationIntent = null;
       state.passwordChangeRequired = false;
       state.switchUnlocked = false;
       state.operationRunning = false;
+      state.lifecycleRunning = false;
       if (state.refreshTimer) window.clearInterval(state.refreshTimer);
       if (state.liveStatusTimer) window.clearTimeout(state.liveStatusTimer);
       if (state.softwareUpdatePollingTimer) window.clearTimeout(state.softwareUpdatePollingTimer);
@@ -1594,6 +1727,7 @@
       if (passwordDialog.open) passwordDialog.close();
       const powerDialog = byId('power-shutdown-dialog');
       if (powerDialog.open) powerDialog.close();
+      if (byId('disaster-dialog').open) closeDisaster();
       const updateConfirmation = byId('software-update-confirmation-dialog');
       if (updateConfirmation.open) updateConfirmation.close();
       const updateDialog = byId('software-update-dialog');
@@ -1604,6 +1738,15 @@
     };
 
     const showAuthenticatedConsole = user => {
+      state.authEpoch++;
+      state.loggingOut = false;
+      state.requestGeneration++;
+      state.clusterReadController?.abort(); state.clusterReadController = null;
+      state.clusterDataReady = false;
+      relockSwitch();
+      state.activeOperationIntent = null;
+      state.operationRunning = false;
+      if (byId('disaster-dialog').open) closeDisaster();
       state.currentUser = user;
       byId('login-shell').hidden = true;
       byId('console-shell').hidden = false;
@@ -1634,6 +1777,14 @@
     };
 
     const fetchResult = async (path, options = {}) => {
+      const authEpoch = state.authEpoch;
+      const user = state.currentUser;
+      const requireCurrentSession = () => {
+        if (authEpoch === state.authEpoch && user === state.currentUser) return;
+        const error = new APIError('请求所属登录会话已变化，忽略旧响应。', 409);
+        error.staleSession = true;
+        throw error;
+      };
       const method = String(options.method || 'GET').toUpperCase();
       const headers = { Accept:'application/json', ...(options.headers || {}) };
       if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
@@ -1642,9 +1793,10 @@
       }
       const requestOptions = { ...options, method, headers, credentials:'same-origin' };
       let response;
-      try { response = await fetch(path, requestOptions); } catch (_) { throw new APIError('无法连接控制 API'); }
+      try { response = await fetch(path, requestOptions); } catch (_) { requireCurrentSession(); throw new APIError('无法连接控制 API'); }
       let payload;
-      try { payload = await response.json(); } catch (_) { throw new APIError('控制 API 返回了无效数据', response.status); }
+      try { payload = await response.json(); } catch (_) { requireCurrentSession(); throw new APIError('控制 API 返回了无效数据', response.status); }
+      requireCurrentSession();
       if (response.status === 401) showLogin('登录已失效，请重新登录。', true);
       if (payload.password_change_required) openPasswordChange(true);
       if (!response.ok || ['error', 'blocked', 'unsupported', 'indeterminate'].includes(payload.status)) {
@@ -1659,10 +1811,30 @@
       return true;
     };
 
-    const evidenceResult = async (path, fallback, section) => {
-      try { return { value: await fetchResult(path), unavailable: '' }; }
+    const readClusterResult = async (path, signal) => {
+      const controller = new AbortController();
+      const cancel = () => controller.abort();
+      if (signal && signal.aborted) cancel();
+      else if (signal) signal.addEventListener('abort', cancel, { once:true });
+      const timer = window.setTimeout(() => controller.abort(), 15000);
+      try { return await fetchResult(path, { signal:controller.signal }); }
+      catch (error) {
+        if (controller.signal.aborted) throw new APIError('读取集群状态超时，请重试。');
+        throw error;
+      } finally {
+        window.clearTimeout(timer);
+        if (signal) signal.removeEventListener('abort', cancel);
+      }
+    };
+
+    const evidenceResult = async (path, fallback, section, signal) => {
+      try {
+        const value = await readClusterResult(path, signal);
+        return { value:value == null ? fallback : value, unavailable:value == null ? section : '' };
+      }
       catch (error) {
         if (error instanceof APIError && error.status === 409 && noEvidenceMessages.has(error.message)) return { value: fallback, unavailable: section };
+        if (section !== '拓扑' && error instanceof APIError && (error.status === 0 || error.status === 404 || error.status >= 500)) return { value:fallback, unavailable:section };
         throw error;
       }
     };
@@ -1896,18 +2068,22 @@
     };
 
     const clearClusterView = (preserveOperationResult = false) => {
-      state.clusterDetail = null; state.topology = null; state.health = null; state.candidates = []; state.metrics = { instances: [] }; state.operations = []; state.powerStatus = null;
-      state.logVisibleLimit = operationLogPageSize;
-      byId('topology-cluster-name').textContent = '未选择集群';
+      state.clusterDetail = null; state.topology = null; state.health = null; state.candidates = []; state.metrics = { instances: [] }; state.operations = []; state.operationContext = null; state.powerStatus = null;
+      const cluster = state.clusters.find(item => item.resource_id === state.selectedClusterId);
+      byId('topology-cluster-name').textContent = cluster ? cluster.display_name || cluster.resource_id : '未选择集群';
+      byId('topology-risk').textContent = '未知';
+      byId('topology-risk').className = 'badge';
+      byId('topology-grid').classList.add('no-primary');
+      byId('topology-connector').hidden = true;
       byId('topology-runtime').textContent = '运行层未知';
       byId('topology-runtime').className = 'badge';
       byId('topology-entry').textContent = '入口未知';
       byId('topology-entry').className = 'badge';
       byId('topology-observed-at').textContent = '等待拓扑数据';
       byId('topology-freshness').textContent = '无观测证据';
-      byId('topology-anomalies').replaceChildren(text('span', 'anomaly-item clear', '暂无异常'));
-      byId('primary-column').replaceChildren(text('div', 'empty-state', '尚未发现主库'));
-      byId('replica-list').replaceChildren(text('div', 'empty-state', '尚未发现从库'));
+      byId('topology-anomalies').replaceChildren(text('span', 'anomaly-item', '尚未取得观测证据'));
+      byId('primary-column').replaceChildren(text('div', 'empty-state', cluster ? '正在读取主库状态' : '请选择集群'));
+      byId('replica-list').replaceChildren(text('div', 'empty-state', cluster ? '正在读取从库状态' : '请选择集群'));
       byId('detached-node-list').replaceChildren();
       byId('detached-nodes').hidden = true;
       byId('topology-inventory').replaceChildren();
@@ -1920,7 +2096,7 @@
       byId('power-failover-policy').textContent = '未知';
       byId('power-failover-detail').textContent = '等待保护状态';
       byId('power-control-plane').textContent = '在线 · 独立运行';
-      byId('power-protection').replaceChildren(text('span', 'anomaly-item clear', '恢复冻结关闭，无维护标记'));
+      byId('power-protection').replaceChildren(text('span', 'anomaly-item', '尚未取得保护状态'));
       byId('power-summary').textContent = '尚未读取电源状态';
       byId('power-history').replaceChildren();
       byId('operation-cluster').textContent = '-'; byId('operation-primary').textContent = '-'; byId('operation-runtime').textContent = '-'; byId('operation-vip').textContent = '-'; byId('operation-lag').textContent = '-';
@@ -1934,23 +2110,66 @@
       }
       updatePowerControls();
       updateExecutionButtons();
+      renderMetrics();
     };
 
-    const relockSwitch = () => {
+    const renderClusterLoadStatus = (status, message = '') => {
+      const notice = byId('cluster-load-notice');
+      notice.hidden = status === 'ready' || status === 'idle';
+      notice.dataset.state = status;
+      byId('cluster-load-message').textContent = message;
+      byId('retry-cluster-load').hidden = status === 'loading';
+      byId('topology-map-panel').setAttribute('aria-busy', String(status === 'loading'));
+      if (['loading', 'error', 'partial'].includes(status)) {
+        byId('topology-risk').textContent = status === 'loading' ? '读取中' : '未验证';
+        byId('topology-risk').className = 'badge warning';
+        if (state.topology) {
+          byId('topology-freshness').textContent = `上次观测 · ${observationAge(state.topology.observed_at)}`;
+        } else {
+          byId('topology-observed-at').textContent = status === 'loading' ? '正在读取拓扑数据' : '拓扑数据未就绪';
+          const empty = status === 'loading' ? '正在读取观测证据' : '未取得拓扑数据，请重试';
+          byId('primary-column').replaceChildren(text('div', 'empty-state', empty));
+          byId('replica-list').replaceChildren(text('div', 'empty-state', empty));
+        }
+      }
+    };
+
+    const relockSwitch = (preserveIntent = null) => {
       state.switchUnlocked = false;
+      state.operationLockEpoch++;
+      if (state.activeOperationIntent && state.activeOperationIntent !== preserveIntent) state.activeOperationIntent.cancelled = true;
+      if (state.disaster) {
+        state.disaster.ready = false;
+        byId('disaster-confirm-name').value = '';
+        byId('disaster-confirm-impact').checked = false;
+      }
       updateExecutionButtons();
     };
 
-    const beginClusterRequest = (clusterId, preserveOperationResult = false) => {
+    const beginClusterRequest = (clusterId, preserveOperationResult = false, operationIntent = null) => {
       const generation = ++state.requestGeneration;
+      if (state.clusterReadController) state.clusterReadController.abort();
+      state.clusterReadController = new AbortController();
+      window.clearTimeout(state.liveStatusTimer);
+      byId('live-status').hidden = true;
+      const sameCluster = state.clusterDetail && state.clusterDetail.cluster && state.clusterDetail.cluster.resource_id === clusterId;
+      const selectionChanged = state.selectedClusterId !== clusterId;
+      if (selectionChanged && state.disaster) closeDisaster();
       state.selectedClusterId = clusterId;
       updateNodeLifecycleControls();
-      relockSwitch();
-      clearClusterView(preserveOperationResult);
+      if (selectionChanged) followOperationLogCluster(clusterId);
+      state.clusterLoading = Boolean(clusterId);
+      state.clusterLoadError = '';
+      state.clusterDataReady = false;
+      relockSwitch(operationIntent?.clusterID === clusterId ? operationIntent : null);
+      if (!sameCluster) clearClusterView(preserveOperationResult);
+      const cluster = state.clusters.find(item => item.resource_id === clusterId);
+      renderClusterLoadStatus(clusterId ? 'loading' : 'idle', `正在读取 ${cluster ? cluster.display_name || clusterId : clusterId} 的状态${sameCluster ? '，当前保留上次观测' : ''}。`);
       return generation;
     };
 
     const loadFleetDetails = async clusters => {
+      const authEpoch = state.authEpoch;
       const entries = await Promise.all(clusters.map(async cluster => {
         const [detail, topology] = await Promise.all([
           fetchResult(`/api/v1/clusters/${cluster.resource_id}`).catch(() => null),
@@ -1958,7 +2177,7 @@
         ]);
         return [cluster.resource_id, detail, topology];
       }));
-      state.fleetTopology = new Map(entries.map(([resourceID, _, topology]) => [resourceID, topology]));
+      if (authEpoch === state.authEpoch) state.fleetTopology = new Map(entries.map(([resourceID, _, topology]) => [resourceID, topology]));
       return new Map(entries.map(([resourceID, detail]) => [resourceID, detail]));
     };
 
@@ -1978,14 +2197,14 @@
         return total + (detail && detail.instances ? detail.instances.length : 0);
       }, 0);
       const controllers = state.nodes.filter(node => node.active && ['controller', 'mixed'].includes(node.kind)).length;
-      const pending = state.allOperations.filter(operation => operation.status === 'running' || (operation.status === 'indeterminate' && !operation.review)).length;
+      const pending = state.fleetOperationContext ? state.fleetOperationContext.running_count + state.fleetOperationContext.unreviewed_count : '-';
       byId('fleet-clusters').textContent = String(state.clusters.length);
       byId('fleet-healthy').textContent = String(healthy);
       byId('fleet-unhealthy').textContent = String(unhealthy);
       byId('fleet-instances').textContent = String(totalInstances);
       byId('fleet-controllers').textContent = String(controllers);
       byId('fleet-operations').textContent = String(pending);
-      byId('fleet-engine-count').textContent = `${state.capabilities.length || 4} 种引擎`;
+      byId('fleet-engine-count').textContent = `${new Set(state.clusters.map(cluster => cluster.engine)).size} 种引擎`;
       const list = byId('overview-clusters');
       const header = text('div', 'cluster-row header', '');
       ['集群', '引擎', '运行层', '健康', '主库', '实例', '最近观测'].forEach(value => header.append(text('span', '', value)));
@@ -2115,8 +2334,9 @@
 	  byId('topology-entry').textContent = endpointBoundaryLabel(state.clusterDetail);
 	  byId('topology-entry').className = runtimeProfileForDetail(state.clusterDetail).endpoint_providers.length ? 'badge runtime' : 'badge warning';
       const attentionReasons = topologyAttentionReasons();
-      byId('topology-risk').textContent = attentionReasons.length ? '需关注' : '健康';
-      byId('topology-risk').className = attentionReasons.length ? 'badge warning' : 'badge success';
+      const evidencePending = state.clusterLoading || !state.clusterDataReady;
+      byId('topology-risk').textContent = evidencePending ? (state.clusterLoading ? '读取中' : '未验证') : attentionReasons.length ? '需关注' : '健康';
+      byId('topology-risk').className = evidencePending || attentionReasons.length ? 'badge warning' : 'badge success';
       byId('topology-observed-at').textContent = state.topology && state.topology.observed_at ? `采集时间 ${new Date(state.topology.observed_at).toLocaleString(state.language)}` : '尚未采集拓扑';
       renderTopologyAnomalies(attentionReasons);
       const body = byId('topology-inventory'); body.replaceChildren();
@@ -2145,10 +2365,7 @@
     };
 
     const formerPrimaryCandidates = () => {
-      const historicalSourceIDs = new Set((state.operations || [])
-        .filter(operation => operation.operation && ['switchover', 'failover'].includes(operation.operation.kind))
-        .map(operation => operation.plan && operation.plan.source_id)
-        .filter(Boolean));
+      const historicalSourceIDs = new Set(state.operationContext?.historical_source_ids || []);
       const instances = state.topology ? state.topology.instances || [] : [];
       return instances.filter(instance => {
         if (instance.role === 'primary') return false;
@@ -2257,16 +2474,58 @@
       return localizedReason(reason);
     };
 
+    const disasterContextReady = () => {
+      const cluster = selectedCluster();
+      return Boolean(cluster && ['mysql', 'postgresql'].includes(cluster.engine)
+        && cluster.resource_id === byId('cluster-select').value && cluster.resource_id === state.selectedClusterId
+        && state.clusterDetail?.cluster?.resource_id === cluster.resource_id && !state.clusterLoading && !state.clusterLoadError);
+    };
+    const operationLockAvailable = () => !state.operationRunning && (state.operationsSection === 'disaster'
+      ? canAdministerPlatform() && disasterContextReady() : canOperateClusters() && state.clusterDataReady);
+    const disasterActionAllowed = clusterID => state.switchUnlocked && !state.operationRunning && canAdministerPlatform()
+      && disasterContextReady() && (!clusterID || clusterID === state.selectedClusterId);
+    const disasterConfirmationValid = () => {
+      const recovery = state.disaster;
+      return Boolean(recovery && disasterActionAllowed(recovery.clusterID) && recovery.ready && !recovery.busy
+        && recovery.pendingRevision == null && recovery.task?.cluster_id === recovery.clusterID
+        && ['planned', 'blocked'].includes(recovery.task.stage)
+        && byId('disaster-confirm-name').value === recovery.name && byId('disaster-confirm-impact').checked);
+    };
+    const ordinaryOperationContextReady = (kind, targetID) => {
+      const cluster = state.clusterDetail?.cluster;
+      const selectedTarget = kind === 'switchover' ? state.selectedCandidateId : state.selectedRejoinId;
+      return Boolean(['switchover', 'former_primary_rejoin', 'replication_repair'].includes(kind)
+        && canOperateClusters() && state.clusterDataReady && !state.clusterLoading && !state.clusterLoadError
+        && capabilityAvailable('execute') && cluster && cluster.resource_id === state.selectedClusterId
+        && cluster.resource_id === byId('cluster-select').value && targetID && targetID === selectedTarget
+        && state.topology?.instances?.some(instance => instance.resource_id === targetID));
+    };
+    const ordinaryOperationAllowed = (kind, targetID) => !state.operationRunning && state.switchUnlocked
+      && ordinaryOperationContextReady(kind, targetID);
+    const beginOperationIntent = (kind, targetID) => {
+      if (!ordinaryOperationAllowed(kind, targetID)) return null;
+      const intent = { kind, targetID, clusterID:state.selectedClusterId, user:state.currentUser, cancelled:false };
+      state.activeOperationIntent = intent;
+      state.operationRunning = true;
+      return intent;
+    };
+    const requireOperationIntent = intent => {
+      if (state.activeOperationIntent !== intent || intent.cancelled || state.currentUser !== intent.user
+        || state.selectedClusterId !== intent.clusterID || !ordinaryOperationContextReady(intent.kind, intent.targetID)) {
+        throw new APIError('操作已重新锁定或上下文已变化，请重新解锁后执行。', 409);
+      }
+    };
     const updateExecutionButtons = () => {
-      const executable = capabilityAvailable('execute');
-      const allowed = canOperateClusters();
       const execute = byId('execute-switchover');
-      execute.disabled = state.operationRunning || !state.switchUnlocked || !state.selectedCandidateId || !executable || !allowed;
-      byId('execute-rejoin').disabled = state.operationRunning || !state.switchUnlocked || !state.selectedRejoinId || !executable || !allowed;
-      byId('execute-repair').disabled = state.operationRunning || !state.switchUnlocked || !state.selectedRejoinId || !executable || !allowed;
-      byId('switch-lock').disabled = state.operationRunning || !allowed;
+      execute.disabled = !ordinaryOperationAllowed('switchover', state.selectedCandidateId);
+      byId('execute-rejoin').disabled = !ordinaryOperationAllowed('former_primary_rejoin', state.selectedRejoinId);
+      byId('execute-repair').disabled = !ordinaryOperationAllowed('replication_repair', state.selectedRejoinId);
+      byId('switch-lock').disabled = !operationLockAvailable();
       byId('switch-lock').textContent = state.switchUnlocked ? '✓ 已解锁' : '锁 操作锁定';
       byId('switch-lock').className = state.switchUnlocked ? 'danger-button' : '';
+      byId('switch-lock').setAttribute('aria-pressed', String(state.switchUnlocked));
+      byId('open-disaster-recovery').disabled = !disasterActionAllowed();
+      renderDisaster();
     };
 
     const workflowStageOrder = ['discover', 'precheck', 'plan', 'safety_guard', 'lock', 'approve', 'execute', 'verify', 'audit', 'report'];
@@ -2384,16 +2643,16 @@
     };
 
     const executeOperation = async (kind, targetID, label) => {
-      if (!state.switchUnlocked || !targetID || !state.currentUser) return;
-      const cluster = state.clusterDetail && state.clusterDetail.cluster;
-      if (!cluster) return;
-      state.operationRunning = true;
+      const intent = beginOperationIntent(kind, targetID);
+      if (!intent) return;
+      const cluster = state.clusterDetail.cluster;
       updateExecutionButtons();
       if (kind === 'switchover') renderOperationProgress({ stage:'precheck', status:'running' });
       renderActionResult(`${label}正在执行。`);
       try {
         let operation;
         for (let attempt = 1; attempt <= maxStalePlanAttempts; attempt += 1) {
+          requireOperationIntent(intent);
           const idempotencyKey = `console-${kind}-${cluster.resource_id}-${targetID}-${Date.now()}-${attempt}`;
           const payload = {
             operation: { cluster_id: cluster.resource_id, engine: cluster.engine, kind, requested_by: state.currentUser.username },
@@ -2427,12 +2686,14 @@
             break;
           } catch (error) {
             if (!(kind === 'switchover' && attempt < maxStalePlanAttempts && isRetryablePreCommitStalePlan(error))) throw error;
+            requireOperationIntent(intent);
             renderActionResult(`${label}：拓扑已变化，正在刷新并重新校验（${attempt + 1}/${maxStalePlanAttempts}）。`);
-            await loadSelectedCluster({ preserveOperationResult:true });
+            await loadSelectedCluster({ preserveOperationResult:true, operationIntent:intent });
             await new Promise(resolve => window.setTimeout(resolve, 300));
             renderOperationProgress({ stage:'precheck', status:'running' });
           }
         }
+        if (state.currentUser !== intent.user || state.selectedClusterId !== intent.clusterID) return;
         if (kind === 'switchover') renderOperationProgress(operation);
         if (!operation || operation.status !== 'succeeded' || !(operation.verification && operation.verification.passed)) throw new APIError(`${label}未完成验证`, 409, operation);
         if (kind === 'switchover') {
@@ -2442,6 +2703,7 @@
         renderActionResult(`${label}：${t('operationSucceeded')}`);
         await loadOperationLog();
       } catch (error) {
+        if (state.currentUser !== intent.user || state.selectedClusterId !== intent.clusterID) return;
         if (kind === 'switchover' && error.result) renderOperationProgress(error.result);
         const outcomeUnknown = error.result && error.result.status === 'indeterminate' || error.committed && error.status === 0;
         const message = error.result && error.result.status === 'indeterminate'
@@ -2450,8 +2712,11 @@
         renderActionResult(outcomeUnknown ? `${label}结果待确认：${message}` : `${label}失败：${message}`, true);
         setLiveStatus(message, true);
       } finally {
-        state.operationRunning = false;
-        relockSwitch();
+        if (state.activeOperationIntent === intent) {
+          state.activeOperationIntent = null;
+          state.operationRunning = false;
+          relockSwitch();
+        }
       }
     };
 
@@ -2483,20 +2748,25 @@
       };
     };
 
-    const runNodeSyncPayload = async payload => {
+    const runNodeSyncPayload = async (payload, operationIntent = null) => {
+      if (operationIntent) requireOperationIntent(operationIntent);
       const precheck = await fetchResult('/api/v1/nodes/sync/precheck', mutationOptions(payload));
       if (precheck.blocked) throw new APIError('节点全量重建被安全检查阻断', 409, precheck);
+      if (operationIntent) {
+        requireOperationIntent(operationIntent);
+        if (!canAdministerPlatform() || !state.lifecycleCapability.available) throw new APIError('节点全量重建授权已失效', 403);
+      }
       const task = await fetchResult('/api/v1/nodes/sync/execute', mutationOptions(payload));
       if (!task || task.status !== 'succeeded') throw new APIError('节点全量重建未完成验证', 409, task);
       return task;
     };
 
     const recoverFormerPrimary = async targetID => {
-      if (!state.switchUnlocked || !targetID || !state.currentUser || state.operationRunning) return;
       const cluster = state.clusterDetail && state.clusterDetail.cluster;
       if (!cluster || !['mysql', 'postgresql'].includes(cluster.engine)) return;
+      const intent = beginOperationIntent('former_primary_rejoin', targetID);
+      if (!intent) return;
       const isMySQL = cluster.engine === 'mysql';
-      state.operationRunning = true;
       updateExecutionButtons();
       renderActionResult(isMySQL
         ? '正在判断旧主可使用增量回挂还是需要全量重建。'
@@ -2509,9 +2779,14 @@
       };
       try {
         renderActionResult('正在刷新集群发现，确认旧主当前只读状态和复制证据。');
+        requireOperationIntent(intent);
         await fetchResult(`/api/v1/clusters/${cluster.resource_id}/discover`, mutationOptions({}));
-        await loadSelectedCluster({ preserveOperationResult:true });
+        requireOperationIntent(intent);
+        // Refresh this authorized workflow's evidence without authorizing another action.
+        await loadSelectedCluster({ preserveOperationResult:true, operationIntent:intent });
+        requireOperationIntent(intent);
         const decision = await fetchResult('/api/v1/operations/precheck', mutationOptions(operationPayload));
+        requireOperationIntent(intent);
         const checks = Array.isArray(decision.checks) ? decision.checks : [];
         const failed = checks.filter(check => check.status === 'fail');
         const rebuildChecks = new Set(isMySQL
@@ -2527,7 +2802,8 @@
           renderActionResult('检测到 binlog 缺口或 GTID 分叉，正在自动执行全量重建、数据同步和复制恢复。');
           state.lifecycleRunning = true;
           updateNodeLifecycleControls();
-          const task = await runNodeSyncPayload(formerPrimaryRebuildPayload(targetID));
+          const task = await runNodeSyncPayload(formerPrimaryRebuildPayload(targetID), intent);
+          if (state.currentUser !== intent.user || state.selectedClusterId !== intent.clusterID) return;
           await loadNodesAndTasks();
           await loadSelectedCluster({ preserveOperationResult:true });
           renderActionResult(`全量重建并恢复为从库完成，任务 ${task.resource_id} 已验证。`);
@@ -2536,6 +2812,7 @@
             ? '所需 binlog 完整，正在执行 GTID 增量回挂。'
             : '正在执行 pg_rewind 增量回挂，必要时自动回退 pg_basebackup 全量同步。');
           const operation = await fetchResult('/api/v1/operations/execute', mutationOptions(operationPayload));
+          if (state.currentUser !== intent.user || state.selectedClusterId !== intent.clusterID) return;
           if (!operation || operation.status !== 'succeeded' || !(operation.verification && operation.verification.passed)) {
             throw new APIError(isMySQL ? '增量回挂未完成验证' : 'PostgreSQL 旧主回挂未完成验证', 409, operation);
           }
@@ -2546,14 +2823,18 @@
         }
         await loadOperationLog();
       } catch (error) {
+        if (state.currentUser !== intent.user || state.selectedClusterId !== intent.clusterID) return;
         const guidance = operationFailureGuidance(error);
         renderActionResult(`旧主恢复失败：${guidance}`, true);
         setLiveStatus(guidance, true);
       } finally {
-        state.lifecycleRunning = false;
-        state.operationRunning = false;
-        updateNodeLifecycleControls();
-        relockSwitch();
+        if (state.activeOperationIntent === intent) {
+          state.activeOperationIntent = null;
+          state.lifecycleRunning = false;
+          state.operationRunning = false;
+          updateNodeLifecycleControls();
+          relockSwitch();
+        }
       }
     };
 
@@ -2594,8 +2875,23 @@
       const job = latest.job || null;
       return !job || job.verification_required || !['succeeded', 'rolled_back'].includes(job.status) ? latest : null;
     };
-    const softwareUpdateIsActive = job => !!(job && !job.verification_required && (job.maintenance_active || (job.mode !== 'plan' && ['queued', 'running'].includes(job.status))));
-    const activeSoftwareUpdate = () => (state.softwareUpdates.packages || []).find(item => softwareUpdateIsActive(item.job)) || null;
+    const softwareUpdateJobTime = item => {
+      const job = item.job || {};
+      const times = [job.updated_at, job.started_at].map(value => Date.parse(value)).filter(value => Number.isFinite(value) && value > 0);
+      return times.length ? Math.max(...times) : (Date.parse(item.package && item.package.uploaded_at) || 0);
+    };
+    const latestSoftwareUpdateJob = (includePlans = false) => (state.softwareUpdates.packages || [])
+      .filter(item => item.job && (includePlans || item.job.mode !== 'plan'))
+      .slice().sort((left, right) => softwareUpdateJobTime(right) - softwareUpdateJobTime(left))[0] || null;
+    const softwareUpdateIsActive = job => !!(job && !job.verification_required && (
+      (job.mode !== 'plan' && ['queued', 'running'].includes(job.status)) ||
+      (job.maintenance_active && (!state.controlPlane || state.controlPlane.update_maintenance_active !== false))
+    ));
+    const activeSoftwareUpdate = () => {
+      // A newer completed execution supersedes historical failure markers.
+      const item = latestSoftwareUpdateJob();
+      return item && softwareUpdateIsActive(item.job) ? item : null;
+    };
     const softwareUpdateProgressKey = item => {
       const record = item && item.package || {};
       const job = item && item.job || {};
@@ -2861,6 +3157,7 @@
     const renderSoftwareUpdates = () => {
       renderPlatformVersion();
       renderSoftwareUpdateDialogAlert();
+      renderSoftwareUpdateConfirmation();
       if (!canAdministerPlatform()) {
         renderSoftwareUpdateGlobalWarning();
         return;
@@ -2897,7 +3194,8 @@
       renderSoftwareUpdateTargetSummary(latest, pending);
       const packagePanel = byId('software-update-package');
       packagePanel.hidden = !(pending && !selectedFile && validationState === 'verified');
-      const anyActive = (snapshot.packages || []).some(item => item.job && ['queued', 'running'].includes(item.job.status));
+      const latestJobItem = latestSoftwareUpdateJob(true);
+      const anyActive = !!(latestJobItem && ['queued', 'running'].includes(latestJobItem.job.status));
       byId('open-software-update-dialog').disabled = state.softwareUpdateRunning || anyActive || !snapshot.available;
       fileInput.disabled = state.softwareUpdateRunning || anyActive || !snapshot.available;
       byId('upload-software-update').disabled = state.softwareUpdateRunning || anyActive || !snapshot.available;
@@ -2957,10 +3255,18 @@
     const scheduleSoftwareUpdatePolling = () => {
       if (state.softwareUpdatePollingTimer) window.clearTimeout(state.softwareUpdatePollingTimer);
       state.softwareUpdatePollingTimer = null;
-      if (!canAdministerPlatform()) return;
-      const active = !!(state.controlPlane && state.controlPlane.update_maintenance_active) ||
-        (state.softwareUpdates.packages || []).some(item => softwareUpdateIsActive(item.job) || (item.job && ['queued', 'running'].includes(item.job.status)));
+      if (!canAdministerPlatform() || state.softwareUpdatePlanWait) return;
+      const latestJobItem = latestSoftwareUpdateJob(true);
+      const active = !!(state.controlPlane && state.controlPlane.update_maintenance_active) || !!activeSoftwareUpdate() ||
+        !!(latestJobItem && ['queued', 'running'].includes(latestJobItem.job.status));
       state.softwareUpdatePollingTimer = window.setTimeout(() => loadSoftwareUpdates(false), active ? 2000 : 30000);
+    };
+
+    const softwareUpdateRequest = async (path, options = {}) => {
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => controller.abort(), options.method === 'POST' ? 30000 : 15000);
+      try { return await fetchResult(path, { ...options, signal:controller.signal }); }
+      finally { window.clearTimeout(timer); }
     };
 
     const loadSoftwareUpdates = async (notifyOnError = false) => {
@@ -2969,15 +3275,25 @@
         renderSoftwareUpdates();
         return;
       }
+      const epoch = ++state.softwareUpdateReadEpoch;
       const previousSoftwareUpdates = state.softwareUpdates || { packages:[] };
+      // Ancillary reads must not delay job acknowledgement or plan readiness.
+      void softwareUpdateRequest('/api/v1/platform/version').then(version => {
+        if (epoch !== state.softwareUpdateReadEpoch || !canAdministerPlatform()) return;
+        state.platformVersion = version;
+        renderPlatformVersion();
+      }).catch(() => {});
+      void softwareUpdateRequest('/api/v1/control-plane/status').then(controlPlane => {
+        if (epoch !== state.softwareUpdateReadEpoch || !canAdministerPlatform()) return;
+        state.controlPlane = controlPlane;
+        renderSoftwareUpdateGlobalWarning();
+      }).catch(() => {});
       try {
-        const [softwareUpdates, platformVersion] = await Promise.all([
-          fetchResult('/api/v1/platform/updates'),
-          fetchResult('/api/v1/platform/version').catch(() => state.platformVersion),
-        ]);
+        const softwareUpdates = await softwareUpdateRequest('/api/v1/platform/updates');
+        if (epoch !== state.softwareUpdateReadEpoch || !canAdministerPlatform()) return;
         state.softwareUpdates = softwareUpdates;
-        state.platformVersion = platformVersion;
       } catch (error) {
+        if (epoch !== state.softwareUpdateReadEpoch || !canAdministerPlatform()) return;
         state.softwareUpdates = {
           ...previousSoftwareUpdates,
           available:false,
@@ -2987,8 +3303,10 @@
         };
         if (notifyOnError) setSoftwareUpdateDialogAlert(`读取升级状态失败：${error.message}`);
       } finally {
-        renderSoftwareUpdates();
-        scheduleSoftwareUpdatePolling();
+        if (epoch === state.softwareUpdateReadEpoch && canAdministerPlatform()) {
+          renderSoftwareUpdates();
+          scheduleSoftwareUpdatePolling();
+        }
       }
     };
 
@@ -3040,31 +3358,61 @@
       }
     };
 
-    const startSoftwareUpdate = async (mode, confirmation = '') => {
-      const latest = latestSoftwareUpdate();
-      const patchID = latest && latest.package && latest.package.patch_id;
+    const rememberSoftwareUpdateJob = (patchID, job) => {
+      if (!job || job.patch_id !== patchID || !['plan', 'execute', 'resume', 'rollback'].includes(job.mode) ||
+          !['queued', 'running', 'planned', 'succeeded', 'failed', 'rolled_back'].includes(job.status) || job.verification_required) {
+        throw new APIError('升级任务状态尚未得到确认');
+      }
+      // Discard snapshots started before this acknowledged or directly observed job.
+      state.softwareUpdateReadEpoch += 1;
+      state.softwareUpdates.packages = (state.softwareUpdates.packages || []).map(item =>
+        item.package.patch_id === patchID ? { ...item, job } : item);
+    };
+
+    const startSoftwareUpdate = async (mode, confirmation = '', patchID = latestSoftwareUpdate()?.package?.patch_id) => {
       if (!patchID || state.softwareUpdateRunning || !canAdministerPlatform()) return false;
+      if (state.softwareUpdateSubmission) return false;
       let accepted = false;
+      const item = (state.softwareUpdates.packages || []).find(candidate => candidate.package.patch_id === patchID);
+      if (!item) return false;
+      const submission = mode === 'plan' ? null : { patchID, mode, previousJob:item.job, phase:'submitting' };
+      state.softwareUpdateSubmission = submission;
+      state.softwareUpdateConfirmationMessage = '';
       state.softwareUpdateRunning = true;
       renderSoftwareUpdates();
       try {
-        await fetchResult(`/api/v1/platform/updates/${encodeURIComponent(patchID)}/${mode}`, mutationOptions({ confirmation }));
+        const job = await softwareUpdateRequest(`/api/v1/platform/updates/${encodeURIComponent(patchID)}/${mode}`, mutationOptions({ confirmation }));
+        if (job?.mode !== mode) throw new APIError('返回的升级任务与确认动作不一致');
+        rememberSoftwareUpdateJob(patchID, job);
         accepted = true;
+        state.softwareUpdateSubmission = null;
         const message = mode === 'plan' ? `升级包 ${patchID} 正在生成升级计划。` : `升级包 ${patchID} 已进入${softwareUpdateModeText(mode)}队列。`;
         if (mode === 'plan') setSoftwareUpdateDialogAlert(message, 'info');
         else setLiveStatus(message);
-        await loadSoftwareUpdates(true);
       } catch (error) {
-        setSoftwareUpdateDialogAlert(`${softwareUpdateModeText(mode)}失败：${error.message}`);
+        if (submission) {
+          if (!(error instanceof APIError) || error.status < 400 || error.status >= 500 || [408, 409].includes(error.status) || error.committed) {
+            submission.phase = 'uncertain';
+            state.softwareUpdateConfirmationMessage = `提交结果待确认：${error.message}。请核对任务状态；不会重复提交升级。`;
+          } else {
+            state.softwareUpdateSubmission = null;
+            state.softwareUpdateConfirmationMessage = `${softwareUpdateModeText(mode)}失败：${error.message}`;
+          }
+        } else setSoftwareUpdateDialogAlert(`${softwareUpdateModeText(mode)}失败：${error.message}`);
       } finally {
         state.softwareUpdateRunning = false;
         renderSoftwareUpdates();
+        scheduleSoftwareUpdatePolling();
       }
       return accepted;
     };
 
     const openSoftwareUpdateDialog = () => {
       if (!canAdministerPlatform() || state.softwareUpdateRunning) return;
+      if (state.softwareUpdateSubmission) {
+        openSoftwareUpdateConfirmation(state.softwareUpdateSubmission.mode, state.softwareUpdateSubmission.patchID);
+        return;
+      }
       const input = byId('software-update-package-file');
       input.value = '';
       state.softwareUpdateValidationState = pendingSoftwareUpdate() ? 'verified' : 'idle';
@@ -3077,20 +3425,32 @@
     };
 
     const closeSoftwareUpdateDialog = () => {
-      if (state.softwareUpdateRunning) return;
+      if (state.softwareUpdatePlanWait) state.softwareUpdatePlanWait.cancelled = true;
+      else if (state.softwareUpdateRunning) return;
       const dialog = byId('software-update-dialog');
       if (dialog.open) dialog.close();
     };
 
-    const waitForSoftwareUpdatePlan = async (patchID, attempts = 20) => {
-      for (let attempt = 0; attempt < attempts; attempt += 1) {
-        await loadSoftwareUpdates(false);
-        const item = (state.softwareUpdates.packages || []).find(candidate => candidate.package && candidate.package.patch_id === patchID);
-        const job = item && item.job;
-        if (job && job.status === 'planned') return item;
-        if (job && ['failed', 'interrupted'].includes(job.status)) throw new APIError(job.message || '升级计划生成失败', 409, item);
-        if (attempt < attempts - 1) await new Promise(resolve => window.setTimeout(resolve, 500));
+    const waitForSoftwareUpdatePlan = async (patchID, waiting) => {
+      const deadline = Date.now() + 300000;
+      while (!waiting.cancelled && canAdministerPlatform() && Date.now() < deadline) {
+        let item;
+        try { item = await softwareUpdateRequest(`/api/v1/platform/updates/${encodeURIComponent(patchID)}`); }
+        catch (error) {
+          if (!waiting.cancelled && canAdministerPlatform()) setSoftwareUpdateDialogAlert(`升级计划状态暂不可读：${error.message}。正在继续核对，不需要重复点击。`, 'warning');
+        }
+        if (waiting.cancelled || !canAdministerPlatform()) return null;
+        const job = item?.package?.patch_id === patchID ? item.job : null;
+        if (job && !job.verification_required) {
+          rememberSoftwareUpdateJob(patchID, job);
+          if (job.mode !== 'plan') throw new APIError('升级包已有其他执行任务，请查看升级进度', 409);
+          if (job.status === 'planned') return item;
+          if (['failed', 'interrupted'].includes(job.status)) throw new APIError(job.message || '升级计划生成失败', 409, item);
+          setSoftwareUpdateDialogAlert('只读升级计划正在生成，完成后将自动打开确认框。', 'info');
+        }
+        await new Promise(resolve => window.setTimeout(resolve, 2000));
       }
+      if (!waiting.cancelled && canAdministerPlatform()) throw new APIError('升级计划超过 5 分钟仍未就绪，请检查计划任务输出；尚未执行升级。');
       return null;
     };
 
@@ -3098,50 +3458,63 @@
       const latest = latestSoftwareUpdate();
       const patchID = latest && latest.package && latest.package.patch_id;
       const status = latest && latest.job && latest.job.status || 'uploaded';
-      if (!latest || !patchID || state.softwareUpdateRunning) return;
+      if (!latest || !patchID || state.softwareUpdateRunning || state.softwareUpdateSubmission) return;
       setSoftwareUpdateDialogAlert();
       if (status !== 'planned') {
         setSoftwareUpdateDialogAlert(`正在为升级包 ${patchID} 生成只读升级计划，请稍候。`, 'info');
-        const planned = await startSoftwareUpdate('plan');
+        const planned = await startSoftwareUpdate('plan', '', patchID);
         if (!planned) return;
         state.softwareUpdateRunning = true;
+        const waiting = { cancelled:false };
+        state.softwareUpdatePlanWait = waiting;
+        scheduleSoftwareUpdatePolling();
         renderSoftwareUpdates();
         let prepared = null;
         try {
-          prepared = await waitForSoftwareUpdatePlan(patchID);
+          prepared = await waitForSoftwareUpdatePlan(patchID, waiting);
         } catch (error) {
           setSoftwareUpdateDialogAlert(`升级计划生成失败：${error.message}`);
           return;
         } finally {
           state.softwareUpdateRunning = false;
+          state.softwareUpdatePlanWait = null;
           renderSoftwareUpdates();
+          scheduleSoftwareUpdatePolling();
         }
         if (!prepared) {
-          setSoftwareUpdateDialogAlert('升级计划仍在生成，平台会继续刷新状态，请稍后再次点击滚动升级。', 'warning');
           return;
         }
       }
       setSoftwareUpdateDialogAlert();
       closeSoftwareUpdateDialog();
-      openSoftwareUpdateConfirmation('execute');
+      openSoftwareUpdateConfirmation('execute', patchID);
     };
 
     const renderSoftwareUpdateConfirmation = () => {
-      const latest = latestSoftwareUpdate();
-      const patchID = latest && latest.package && latest.package.patch_id || '';
-      const matches = byId('software-update-confirmation-input').value === patchID;
+      const patchID = state.softwareUpdateConfirmationPatchID;
+      const matches = !!patchID && byId('software-update-confirmation-input').value === patchID;
+      const busy = state.softwareUpdateRunning;
+      const uncertain = state.softwareUpdateSubmission?.phase === 'uncertain';
       const stateElement = byId('software-update-confirmation-state');
-      stateElement.textContent = matches ? '升级包 ID 已确认，可以继续。' : '尚未输入完整升级包 ID，不能执行。';
-      stateElement.className = matches ? 'confirmation-state ready' : 'confirmation-state';
-      byId('confirm-software-update-action').disabled = !matches || state.softwareUpdateRunning;
+      stateElement.textContent = busy ? (uncertain ? '正在核对已提交任务的状态，不会重复提交升级。' : '正在提交升级请求，请勿重复点击。')
+        : state.softwareUpdateConfirmationMessage || (matches ? '升级包 ID 已确认，可以继续。' : '尚未输入完整升级包 ID，不能执行。');
+      stateElement.className = busy ? 'confirmation-state' : state.softwareUpdateConfirmationMessage ? 'result-banner error' : matches ? 'confirmation-state ready' : 'confirmation-state';
+      const button = byId('confirm-software-update-action');
+      button.disabled = !matches || busy;
+      button.textContent = busy ? (uncertain ? '核对中…' : '正在提交…') : uncertain ? '核对任务状态'
+        : ({ execute:'确认执行升级', resume:'确认续跑', rollback:'确认回退' }[state.softwareUpdateAction] || '确认执行');
+      button.setAttribute('aria-busy', String(busy));
+      byId('software-update-confirmation-input').disabled = busy;
+      byId('close-software-update-confirmation').disabled = busy;
+      byId('cancel-software-update-confirmation').disabled = busy;
     };
 
-    const openSoftwareUpdateConfirmation = mode => {
-      const latest = latestSoftwareUpdate();
-      const patchID = latest && latest.package && latest.package.patch_id;
+    const openSoftwareUpdateConfirmation = (mode, patchID = latestSoftwareUpdate()?.package?.patch_id) => {
       if (!patchID || state.softwareUpdateRunning) return;
       closeSoftwareUpdateDialog();
       state.softwareUpdateAction = mode;
+      state.softwareUpdateConfirmationPatchID = patchID;
+      if (!state.softwareUpdateSubmission) state.softwareUpdateConfirmationMessage = '';
       const labels = {
         execute:['确认滚动升级', '将按跟随节点、数据节点、Leader 的顺序执行升级。', '确认执行升级'],
         resume:['确认续跑升级', '将从持久化升级日志中断点续跑。', '确认续跑'],
@@ -3162,16 +3535,44 @@
     const closeSoftwareUpdateConfirmation = () => {
       if (state.softwareUpdateRunning) return;
       state.softwareUpdateAction = '';
+      state.softwareUpdateConfirmationPatchID = '';
       byId('software-update-confirmation-dialog').close();
     };
 
+    const reconcileSoftwareUpdateSubmission = async () => {
+      const submission = state.softwareUpdateSubmission;
+      if (!submission || state.softwareUpdateRunning) return false;
+      state.softwareUpdateRunning = true;
+      renderSoftwareUpdateConfirmation();
+      try {
+        const item = await softwareUpdateRequest(`/api/v1/platform/updates/${encodeURIComponent(submission.patchID)}`);
+        const job = item?.job;
+        const previous = submission.previousJob;
+        if (item?.package?.patch_id !== submission.patchID || !job || job.verification_required || job.mode !== submission.mode ||
+            !job.started_at || (previous?.mode === job.mode && previous?.started_at === job.started_at)) {
+          throw new APIError('尚未查到本次动作的新任务，请继续核对或检查 Leader 的升级记录');
+        }
+        rememberSoftwareUpdateJob(submission.patchID, job);
+        state.softwareUpdateSubmission = null;
+        state.softwareUpdateConfirmationMessage = '';
+        return true;
+      } catch (error) {
+        state.softwareUpdateConfirmationMessage = `提交结果待确认：${error.message}。不会重复提交升级。`;
+        return false;
+      } finally {
+        state.softwareUpdateRunning = false;
+        renderSoftwareUpdates();
+        scheduleSoftwareUpdatePolling();
+      }
+    };
+
     const confirmSoftwareUpdateAction = async () => {
-      const latest = latestSoftwareUpdate();
-      const patchID = latest && latest.package && latest.package.patch_id || '';
-      if (!patchID || byId('software-update-confirmation-input').value !== patchID) return;
+      const patchID = state.softwareUpdateConfirmationPatchID;
+      if (!patchID || state.softwareUpdateRunning || !canAdministerPlatform() || byId('software-update-confirmation-input').value !== patchID) return;
       const mode = state.softwareUpdateAction;
-      const accepted = await startSoftwareUpdate(mode, patchID);
-      if (accepted && !state.softwareUpdateRunning) {
+      if (!['execute', 'resume', 'rollback'].includes(mode)) return;
+      const accepted = state.softwareUpdateSubmission ? await reconcileSoftwareUpdateSubmission() : await startSoftwareUpdate(mode, patchID, patchID);
+      if (accepted && !state.softwareUpdateRunning && canAdministerPlatform()) {
         if (byId('software-update-confirmation-dialog').open) closeSoftwareUpdateConfirmation();
         openSoftwareUpdateProgress();
       }
@@ -3529,39 +3930,6 @@
     const timeValue = value => { const parsed = Date.parse(value || ''); return Number.isFinite(parsed) ? parsed : 0; };
     const newestTaskFirst = (left, right) => timeValue(right.created_at) - timeValue(left.created_at);
     const operationTime = operation => operation.created_at || (operation.operation && operation.operation.created_at) || '';
-    const newestOperationFirst = (left, right) => timeValue(operationTime(right)) - timeValue(operationTime(left));
-    const automaticRecoveryIncidentKey = operation => {
-      const record = operation.operation || {};
-      const key = String(operation.idempotency_key || '');
-      if (record.requested_by !== 'clusterguard-automatic-recovery' || !key.startsWith('automatic-failover:')) return '';
-      const separator = key.lastIndexOf(':');
-      if (separator <= 'automatic-failover:'.length) return '';
-      const attempt = Number(key.slice(separator + 1));
-      return Number.isInteger(attempt) && attempt > 0 ? key.slice(0, separator) : '';
-    };
-    const consolidateOperationIncidents = operations => {
-      const consolidated = [];
-      const incidents = new Map();
-      operations.slice().sort(newestOperationFirst).forEach(operation => {
-        const incidentKey = automaticRecoveryIncidentKey(operation);
-        if (!incidentKey) { consolidated.push(operation); return; }
-        const existing = incidents.get(incidentKey);
-        if (existing) {
-          existing.incident_attempt_count += 1;
-          existing.incident_first_at = operationTime(operation) || existing.incident_first_at;
-          return;
-        }
-        const incident = Object.assign({}, operation, {
-          incident_key: incidentKey,
-          incident_attempt_count: 1,
-          incident_first_at: operationTime(operation),
-          incident_last_at: operationTime(operation)
-        });
-        incidents.set(incidentKey, incident);
-        consolidated.push(incident);
-      });
-      return consolidated;
-    };
     const operationLogFailureDetail = operation => {
       if (!operation || !['blocked', 'failed', 'unsupported', 'indeterminate'].includes(operation.status)) return '';
       const planChecks = operation.plan && Array.isArray(operation.plan.checks) ? operation.plan.checks : [];
@@ -3570,12 +3938,19 @@
       if (blocker) return `${blocker.name || '阻断检查'}：${localizedReason(blocker.message || '检查未通过')}`;
       return localizedReason(operation.message || (operation.execution && operation.execution.message) || '操作未完成');
     };
+    const followOperationLogCluster = clusterId => {
+      if (state.logClusterId === clusterId) return;
+      state.logClusterId = clusterId;
+      byId('log-cluster-filter').value = clusterId;
+      refreshOperationLogFilters();
+    };
     const renderOperationLogClusterFilter = () => {
       const selector = byId('log-cluster-filter');
       const previous = state.logClusterId;
-      selector.replaceChildren(new Option('全部集群', 'all'));
+      const placeholder = new Option('请选择集群', ''); placeholder.disabled = true;
+      selector.replaceChildren(placeholder, new Option('全部集群', 'all'));
       state.clusters.forEach(cluster => selector.append(new Option(cluster.display_name || cluster.resource_id, cluster.resource_id)));
-      state.logClusterId = previous !== 'all' && state.clusters.some(cluster => cluster.resource_id === previous) ? previous : 'all';
+      if (state.selectedClusterId !== byId('cluster-select').value || (previous !== 'all' && !state.clusters.some(cluster => cluster.resource_id === previous))) followOperationLogCluster(byId('cluster-select').value);
       selector.value = state.logClusterId;
     };
     const operationLogScopeLabel = () => {
@@ -3583,33 +3958,46 @@
       const cluster = state.clusters.find(item => item.resource_id === state.logClusterId);
       return cluster ? cluster.display_name || cluster.resource_id : state.logClusterId;
     };
-    const filteredOperations = () => {
-      const search = state.logSearch.trim().toLowerCase();
-      return consolidateOperationIncidents(state.allOperations).filter(operation => {
-        const record = operation.operation || {};
-        const kind = record.kind;
-        if (state.logClusterId !== 'all' && record.cluster_id !== state.logClusterId) return false;
-        if (state.logKind !== 'all' && kind !== state.logKind) return false;
-        if (state.logStatus !== 'all' && operation.status !== state.logStatus) return false;
-        if (!search) return true;
-        const cluster = state.clusters.find(item => item.resource_id === record.cluster_id);
-        const values = [cluster && cluster.display_name, instanceLabel(operation.plan.source_id), instanceLabel(operation.target_id), kindText(kind), statusText(operation.status), operationLogFailureDetail(operation)];
-        return values.filter(Boolean).join(' ').toLowerCase().includes(search);
-      });
-    };
-    const renderOperationLog = () => {
-      const root = byId('operation-log-list'); root.replaceChildren();
-      const operations = filteredOperations().slice().sort(newestOperationFirst);
-      const visibleOperations = operations.slice(0, state.logVisibleLimit);
+    const renderOperationLog = (preserveRows = false) => {
+      const root = byId('operation-log-list');
+      const count = byId('log-visible-count');
+      count.removeAttribute('aria-label');
+      if (!preserveRows) root.replaceChildren();
+      root.querySelector('.operation-log-load-status')?.remove();
+      byId('refresh-operation-log').disabled = Boolean(state.logController);
+      if (!state.logClusterId) {
+        root.replaceChildren(text('div', 'empty-state', '请选择顶部集群。'));
+        count.textContent = '未选择集群';
+        byId('load-more-operation-log').hidden = true;
+        return;
+      }
+      if (state.logController || state.logError || !state.logLoaded) {
+        const message = state.logError || (state.logController ? '正在读取操作日志。' : '尚未读取操作日志。');
+        root.prepend(text('div', `operation-log-load-status result-banner${state.logError ? ' error' : ''}`, message));
+        if (!state.logLoaded) {
+          byId('log-visible-count').textContent = state.logError ? '读取失败' : '读取中';
+          byId('load-more-operation-log').hidden = true;
+          return;
+        }
+      }
+      const visibleOperations = state.allOperations;
       const loadMore = byId('load-more-operation-log');
-      const rawRecordCount = operations.reduce((total, operation) => total + (operation.incident_attempt_count || 1), 0);
       const scopeLabel = operationLogScopeLabel();
-      byId('log-visible-count').textContent = operations.length > visibleOperations.length ? `${scopeLabel} · 显示 ${visibleOperations.length} / ${operations.length} 个事件 · ${rawRecordCount} 条原始记录` : `${scopeLabel} · ${operations.length} 个事件 · ${rawRecordCount} 条原始记录`;
-      loadMore.hidden = visibleOperations.length >= operations.length;
-      loadMore.textContent = `加载更多（剩余 ${Math.max(0, operations.length - visibleOperations.length)} 条）`;
-      if (!operations.length) { root.append(text('div', 'empty-state', state.allOperations.length ? '没有符合筛选条件的记录' : '暂无操作记录')); return; }
+      count.replaceChildren(text('span', 'visually-hidden', '已加载 '), text('strong', '', `${visibleOperations.length} / ${state.logTotal}`), text('span', 'visually-hidden', ' 个事件'), text('span', 'log-record-count', `${state.logRecordCount} 条原始记录`));
+      count.setAttribute('aria-label', `${scopeLabel}，已加载 ${visibleOperations.length} / ${state.logTotal} 个事件，${state.logRecordCount} 条原始记录`);
+      loadMore.hidden = !state.logNextCursor;
+      loadMore.disabled = Boolean(state.logController);
+      loadMore.textContent = state.logController ? '正在加载…' : state.logError ? '重试加载更多' : `加载更多（剩余 ${state.logRemaining} 条）`;
+      if (!visibleOperations.length) {
+        if (!root.querySelector('.empty-state')) root.append(text('div', 'empty-state', '没有符合筛选条件的记录'));
+        return;
+      }
+      root.querySelector('.empty-state')?.remove();
+      const existing = new Set(Array.from(root.querySelectorAll('[data-operation-id]'), card => card.dataset.operationId));
       visibleOperations.forEach(operation => {
+        if (existing.has(operation.resource_id)) return;
         const card = text('article', 'log-card', '');
+        card.dataset.operationId = operation.resource_id;
         const head = text('div', 'log-head', '');
         const review = operation.review || null;
         const operationStatus = operation.status === 'indeterminate' && review ? '已复核 · 结果不确定' : statusText(operation.status);
@@ -3626,9 +4014,9 @@
         const cluster = state.clusters.find(item => item.resource_id === (operation.operation && operation.operation.cluster_id));
         const fields = [
           ['时间', operationTime(operation) ? new Date(operationTime(operation)).toLocaleString(state.language, { dateStyle:'medium', timeStyle:'medium' }) : '-'],
-          ['集群', cluster ? cluster.display_name : (operation.operation && operation.operation.cluster_id) || '-'],
-          ['原主库', instanceLabel(operation.plan.source_id)],
-          ['目标节点', instanceLabel(operation.target_id)],
+          ['集群', operation.cluster_label || (cluster ? cluster.display_name : (operation.operation && operation.operation.cluster_id) || '-')],
+          ['原主库', operation.source_label || instanceLabel(operation.plan.source_id)],
+          ['目标节点', operation.target_label || instanceLabel(operation.target_id)],
           ['操作类型', kindText(operation.operation && operation.operation.kind)],
           ['状态', operation.status === 'indeterminate' && review ? `已复核 · ${review.reviewed_by || '-'} · ${new Date(review.reviewed_at).toLocaleString(state.language)}` : (operation.incident_attempt_count > 1 ? `${statusText(operation.status)}（${operation.incident_attempt_count} 次）` : statusText(operation.status))]
         ];
@@ -3637,15 +4025,110 @@
         if (failureDetail) card.append(text('p', 'operation-log-message', failureDetail));
         const details = document.createElement('details');
         const summary = document.createElement('summary'); summary.textContent = operation.incident_attempt_count > 1 ? `原始返回（最近一次，事故共 ${operation.incident_attempt_count} 次）` : '原始返回';
-        const raw = document.createElement('pre'); raw.textContent = JSON.stringify(operation, null, 2);
-        details.append(summary, raw); card.append(head, grid, details); root.append(card);
+        const raw = document.createElement('pre');
+        const retry = text('button', '', '重试读取'); retry.type = 'button'; retry.hidden = true;
+        let rawLoaded = false, rawLoading = false;
+        const loadRaw = async () => {
+          if (!details.open || rawLoaded || rawLoading) return;
+          rawLoading = true; retry.hidden = true; raw.textContent = '正在读取原始记录。';
+          try {
+            const record = operation.summary ? await readClusterResult(`/api/v1/operations/${encodeURIComponent(operation.resource_id)}`) : operation;
+            if (!record || record.resource_id !== operation.resource_id) throw new APIError('原始记录与所选操作不一致。');
+            raw.textContent = JSON.stringify(record, null, 2); rawLoaded = true;
+          } catch (error) { raw.textContent = error.message; retry.hidden = false; }
+          finally { rawLoading = false; }
+        };
+        details.addEventListener('toggle', loadRaw); retry.addEventListener('click', loadRaw);
+        details.append(summary, raw, retry); card.append(head, grid, details); root.append(card);
       });
     };
 
-    const loadOperationLog = async () => {
-      state.logVisibleLimit = operationLogPageSize;
-      state.allOperations = await fetchResult('/api/v1/operations') || [];
+    const readOperationContext = async (clusterId = '', signal) => {
+      const result = await readClusterResult(`/api/v1/operations?view=context${clusterId ? `&cluster_id=${encodeURIComponent(clusterId)}` : ''}`, signal);
+      if (!result || result.view !== 'context' || result.cluster_id !== clusterId ||
+          !['operation_count', 'running_count', 'unreviewed_count'].every(key => Number.isSafeInteger(result[key]) && result[key] >= 0) ||
+          result.running_count + result.unreviewed_count > result.operation_count ||
+          !Array.isArray(result.historical_source_ids) || !result.historical_source_ids.every(id => typeof id === 'string' && id.length > 0) ||
+          !Array.isArray(result.recent) || result.recent.length > 5 || result.recent.some(item => !item || !item.resource_id || !item.operation)) {
+        throw new APIError('操作上下文无效或版本不兼容，操作保持锁定。');
+      }
+      return result;
+    };
+
+    const loadFleetOperationContext = async () => {
+      if (!state.currentUser) return;
+      state.fleetContextController?.abort();
+      const controller = new AbortController(); state.fleetContextController = controller;
+      try {
+        const context = await readOperationContext('', controller.signal);
+        if (state.fleetContextController !== controller) return;
+        state.fleetOperationContext = context; state.fleetContextError = '';
+      } catch (error) {
+        if (state.fleetContextController !== controller) return;
+        state.fleetOperationContext = null; state.fleetContextError = `近期操作读取失败：${error.message}`;
+      } finally {
+        if (state.fleetContextController === controller) { state.fleetContextController = null; renderOverview(); }
+      }
+    };
+
+    const operationLogQuery = () => {
+      const query = new URLSearchParams({ view:'page', limit:String(operationLogPageSize) });
+      if (state.logClusterId !== 'all') query.set('cluster_id', state.logClusterId);
+      if (state.logKind !== 'all') query.set('kind', state.logKind);
+      if (state.logStatus !== 'all') query.set('status', state.logStatus);
+      if (state.logSearch.trim()) query.set('q', state.logSearch.trim());
+      return query;
+    };
+
+    const loadOperationLog = async (force = true, append = false) => {
+      if (force) { state.logController?.abort(); state.logController = null; void loadFleetOperationContext(); }
+      if (!state.currentUser || document.querySelector('[data-view="operation-log"]').hidden || state.logController || (state.logLoaded && !force && !append)) return;
+      if (!state.logClusterId) { renderOperationLog(); return; }
+      const query = operationLogQuery();
+      const requestedClusterId = query.get('cluster_id');
+      const queryKey = query.toString();
+      if (queryKey !== state.logQueryKey) {
+        state.allOperations = []; state.logLoaded = false; state.logNextCursor = '';
+        state.logTotal = 0; state.logRecordCount = 0; state.logRemaining = 0; state.logQueryKey = queryKey;
+        append = false;
+      }
+      const cursor = append ? state.logNextCursor : '';
+      if (append && !cursor) return;
+      if (cursor) query.set('cursor', cursor);
+      const controller = new AbortController(); state.logController = controller; state.logError = '';
+      renderOperationLog(append || state.logLoaded);
+      try {
+        const page = await readClusterResult(`/api/v1/operations?${query}`, controller.signal);
+        if (state.logController !== controller) return;
+        if (!page || page.view !== 'page' || page.limit !== operationLogPageSize || !Array.isArray(page.items) || page.items.length > operationLogPageSize ||
+            page.items.some(item => !item || !item.resource_id || !item.operation || !item.plan || item.summary !== true) ||
+            new Set(page.items.map(item => item.resource_id)).size !== page.items.length ||
+            !['total', 'record_count', 'remaining'].every(key => Number.isSafeInteger(page[key]) && page[key] >= 0) || page.record_count < page.total ||
+            typeof page.next_cursor !== 'string' || page.next_cursor.length > 1024 || Boolean(page.remaining) !== Boolean(page.next_cursor) ||
+            (page.next_cursor && (page.next_cursor === cursor || !page.items.length))) {
+          throw new APIError('操作日志分页响应无效或版本不兼容。');
+        }
+        if (requestedClusterId && page.items.some(item => item.operation.cluster_id !== requestedClusterId)) throw new APIError('日志响应与所选集群不一致，请重试。');
+        const existing = new Set(append ? state.allOperations.map(item => item.resource_id) : []);
+        state.allOperations = [...(append ? state.allOperations : []), ...page.items.filter(item => !existing.has(item.resource_id))];
+        state.logNextCursor = page.next_cursor; state.logRemaining = page.remaining;
+        state.logTotal = page.total; state.logRecordCount = page.record_count; state.logLoaded = true;
+        renderOperationLog(append);
+      } catch (error) {
+        if (state.logController !== controller) return;
+        state.logError = `操作日志读取失败：${error.message} ${append ? '已保留当前记录，可以重试加载更多。' : '请点击刷新日志重试。'}`;
+      } finally {
+        if (state.logController === controller) { state.logController = null; renderOperationLog(true); }
+      }
+    };
+
+    const refreshOperationLogFilters = (debounce = false) => {
+      state.logController?.abort(); state.logController = null;
+      if (state.logFilterTimer) window.clearTimeout(state.logFilterTimer);
+      state.logFilterTimer = null; state.logLoaded = false; state.allOperations = []; state.logNextCursor = ''; state.logError = '';
       renderOperationLog();
+      if (debounce) state.logFilterTimer = window.setTimeout(() => { state.logFilterTimer = null; void loadOperationLog(false); }, 250);
+      else void loadOperationLog(false);
     };
 
     const setOperationReviewRunning = running => {
@@ -3689,8 +4172,8 @@
         byId('operation-review-result').textContent = '正在提交不可变复核记录。';
         byId('operation-review-result').className = 'result-banner';
         const reviewed = await fetchResult(`/api/v1/operations/${operationId}/review`, mutationOptions({ note }));
-        state.operations = state.operations.map(operation => operation.resource_id === operationId ? reviewed : operation);
-        state.allOperations = state.allOperations.map(operation => operation.resource_id === operationId ? reviewed : operation);
+        state.allOperations = state.allOperations.map(operation => operation.resource_id === operationId ? { ...operation, ...reviewed } : operation);
+        void loadFleetOperationContext();
         state.controlPlane = await fetchResult('/api/v1/control-plane/status').catch(() => state.controlPlane);
         renderOperationLog();
         renderOverview();
@@ -3973,15 +4456,19 @@
     };
 
     const loadPowerStatus = async clusterId => {
+      const generation = state.requestGeneration;
       let powerStatus = null;
       try {
-        powerStatus = await fetchResult(`/api/v1/clusters/${clusterId}/power/status`);
+        powerStatus = await readClusterResult(`/api/v1/clusters/${clusterId}/power/status`, state.clusterReadController && state.clusterReadController.signal);
       } catch (error) {
         if (error instanceof APIError && error.status !== 404) throw error;
       }
-      state.powerStatus = powerStatus || null;
-      renderPowerStatus();
-      updatePowerControls();
+      if (clusterId !== state.selectedClusterId) return;
+      commitIfCurrent(generation, () => {
+        state.powerStatus = powerStatus || null;
+        renderPowerStatus();
+        updatePowerControls();
+      });
     };
 
     const renderPowerStatus = () => {
@@ -4044,33 +4531,49 @@
       updatePowerControls();
     };
 
-    const loadSelectedCluster = async ({ preserveOperationResult = false, expectedPrimaryID = '' } = {}) => {
+    const loadSelectedCluster = async ({ preserveOperationResult = false, expectedPrimaryID = '', operationIntent = null } = {}) => {
       const clusterId = byId('cluster-select').value;
-      const generation = beginClusterRequest(clusterId, preserveOperationResult);
+      const generation = beginClusterRequest(clusterId, preserveOperationResult, operationIntent);
+      const signal = state.clusterReadController.signal;
       if (!clusterId) { commitIfCurrent(generation, () => setLiveStatus('请选择已注册的数据库集群。')); return; }
       try {
         let loaded;
         let topologyConverged = !expectedPrimaryID;
         for (let convergenceAttempt = 0; convergenceAttempt < (expectedPrimaryID ? 10 : 1); convergenceAttempt += 1) {
           loaded = undefined;
-          for (let observationAttempt = 0; observationAttempt < 2; observationAttempt += 1) {
+          for (let observationAttempt = 0; observationAttempt < 3; observationAttempt += 1) {
             try {
-              const clusterDetail = await fetchResult(`/api/v1/clusters/${clusterId}`);
-              const topologySection = await evidenceResult(`/api/v1/clusters/${clusterId}/topology`, null, '拓扑');
+              if (generation !== state.requestGeneration) return;
+              const [clusterDetail, topologySection] = await Promise.all([
+                readClusterResult(`/api/v1/clusters/${clusterId}`, signal),
+                evidenceResult(`/api/v1/clusters/${clusterId}/topology`, null, '拓扑', signal)
+              ]);
+              if (generation !== state.requestGeneration) return;
+              if (!clusterDetail || !clusterDetail.cluster || clusterDetail.cluster.resource_id !== clusterId) throw new APIError('集群详情与所选集群不一致，请重试。');
               const topology = topologySection.value;
               if (!topology) { loaded = { clusterDetail, topology:null, health:null, candidates:[], metrics:{ instances:[] }, unavailableSections:['拓扑', '健康状态', '候选评估', '性能指标'] }; break; }
+              // Draw the received topology while all action evidence remains locked.
+              commitIfCurrent(generation, () => {
+                state.clusterDetail = clusterDetail; state.topology = topology;
+                state.health = null; state.candidates = []; state.metrics = { instances:[] };
+                renderTopology(); renderOperationContext();
+                renderClusterLoadStatus('loading', '拓扑已读取，正在核对健康、候选和操作上下文；操作保持锁定。');
+              });
               const observationQuery = `observation_id=${encodeURIComponent(topology.observed_at)}`;
-              const [healthSection, candidateSection, metricsSection, operations] = await Promise.all([
-                evidenceResult(`/api/v1/clusters/${clusterId}/health?${observationQuery}`, null, '健康状态'),
-                evidenceResult(`/api/v1/clusters/${clusterId}/candidates?${observationQuery}`, [], '候选评估'),
-                evidenceResult(`/api/v1/clusters/${clusterId}/metrics?${observationQuery}`, { instances:[] }, '性能指标'),
-                fetchResult(`/api/v1/operations?cluster_id=${clusterId}`)
+              const [healthSection, candidateSection, metricsSection, operationSection] = await Promise.all([
+                evidenceResult(`/api/v1/clusters/${clusterId}/health?${observationQuery}`, null, '健康状态', signal),
+                evidenceResult(`/api/v1/clusters/${clusterId}/candidates?${observationQuery}`, [], '候选评估', signal),
+                evidenceResult(`/api/v1/clusters/${clusterId}/metrics?${observationQuery}`, { instances:[] }, '性能指标', signal),
+                readOperationContext(clusterId, signal).then(value => ({ value })).catch(error => {
+                  if (signal.aborted || [401, 403].includes(error.status)) throw error;
+                  return { value:null, unavailable:`操作上下文（${error.message}）` };
+                })
               ]);
-              loaded = { clusterDetail, topology, health:healthSection.value, candidates:candidateSection.value, metrics:metricsSection.value, operations, unavailableSections:[healthSection.unavailable, candidateSection.unavailable, metricsSection.unavailable].filter(Boolean) };
+              loaded = { clusterDetail, topology, health:healthSection.value, candidates:candidateSection.value, metrics:metricsSection.value, operationContext:operationSection.value, unavailableSections:[healthSection.unavailable, candidateSection.unavailable, metricsSection.unavailable, operationSection.unavailable].filter(Boolean) };
               break;
             } catch (error) {
               if (generation !== state.requestGeneration) return;
-              if (error instanceof APIError && error.status === 409 && error.message === 'topology observation changed' && observationAttempt === 0) continue;
+              if (error instanceof APIError && error.status === 409 && error.message === 'topology observation changed' && observationAttempt < 2) continue;
               throw error;
             }
           }
@@ -4080,15 +4583,27 @@
           await new Promise(resolve => window.setTimeout(resolve, 400));
         }
         commitIfCurrent(generation, () => {
-          state.clusterDetail = loaded.clusterDetail; state.clusterDirectory.set(clusterId, loaded.clusterDetail); state.fleetTopology.set(clusterId, loaded.topology); state.topology = loaded.topology; state.health = loaded.health; state.candidates = loaded.candidates || []; state.metrics = loaded.metrics || { instances:[] }; state.operations = loaded.operations || []; state.logVisibleLimit = operationLogPageSize;
+          state.clusterLoading = false;
+          state.clusterDataReady = Boolean(loaded.topology) && topologyConverged && loaded.unavailableSections.length === 0;
+          state.clusterDetail = loaded.clusterDetail; state.clusterDirectory.set(clusterId, loaded.clusterDetail); state.fleetTopology.set(clusterId, loaded.topology); state.topology = loaded.topology; state.health = loaded.health; state.candidates = loaded.candidates || []; state.metrics = loaded.metrics || { instances:[] }; state.operationContext = loaded.operationContext || null;
           const clusterIndex = state.clusters.findIndex(cluster => cluster.resource_id === clusterId);
           if (clusterIndex >= 0 && loaded.clusterDetail.cluster) state.clusters[clusterIndex] = loaded.clusterDetail.cluster;
-          renderTopology(); renderOperationContext(); renderMetrics(); renderOperationLog(); renderOverview();
-          loadPowerStatus(clusterId);
+          renderTopology(); renderOperationContext(); renderMetrics(); renderOverview();
+          renderClusterLoadStatus(state.clusterDataReady ? 'ready' : 'partial', !topologyConverged ? '拓扑视图仍在同步，操作已锁定，请刷新复核。' : `部分数据不可用：${loaded.unavailableSections.join('、')}；操作已锁定，可重试读取。`);
+          loadPowerStatus(clusterId).catch(error => commitIfCurrent(generation, () => setLiveStatus(`启停状态读取失败：${error.message}`, true)));
           if (!topologyConverged) setLiveStatus('操作已验证，但当前控制节点的拓扑视图仍在同步，请刷新复核。', true);
           else setLiveStatus(loaded.unavailableSections.length ? `部分数据不可用：${loaded.unavailableSections.join('、')}。` : '集群状态已更新。');
         });
-      } catch (error) { commitIfCurrent(generation, () => { clearClusterView(preserveOperationResult); renderOverview(); setLiveStatus(error.message, true); }); }
+      } catch (error) {
+        commitIfCurrent(generation, () => {
+          state.clusterLoading = false;
+          state.clusterLoadError = error.message;
+          state.clusterDataReady = false;
+          renderClusterLoadStatus('error', `${error.message}${state.topology ? ' 当前显示上次观测，不代表最新状态；操作已锁定。' : ' 未取得当前集群的拓扑，操作已锁定。'}`);
+          updateExecutionButtons();
+          setLiveStatus(error.message, true);
+        });
+      }
     };
 
     const selectedCluster = () => state.clusters.find(cluster => cluster.resource_id === (byId('cluster-select').value || state.selectedClusterId));
@@ -4288,18 +4803,24 @@
     };
 
     const loadClusters = async (preferredClusterId = '') => {
-      const [clusters, capabilities, nodes, operations, tasks, lifecycleCapability, controlPlane, platformVersion] = await Promise.all([
-        fetchResult('/api/v1/clusters'), fetchResult('/api/v1/capabilities'), fetchResult('/api/v1/nodes'), fetchResult('/api/v1/operations'), fetchResult('/api/v1/nodes/sync/tasks'), fetchResult('/api/v1/nodes/sync/capabilities'), fetchResult('/api/v1/control-plane/status').catch(() => null), fetchResult('/api/v1/platform/version').catch(() => null)
+      const authEpoch = state.authEpoch;
+      void loadFleetOperationContext();
+      const [clusters, capabilities, nodes, tasks, lifecycleCapability, controlPlane, platformVersion] = await Promise.all([
+        fetchResult('/api/v1/clusters'), fetchResult('/api/v1/capabilities'), fetchResult('/api/v1/nodes'), fetchResult('/api/v1/nodes/sync/tasks'), fetchResult('/api/v1/nodes/sync/capabilities'), fetchResult('/api/v1/control-plane/status').catch(() => null), fetchResult('/api/v1/platform/version').catch(() => null)
       ]);
-      state.clusters = clusters || []; state.capabilities = capabilities || []; state.nodes = nodes || []; state.allOperations = operations || []; state.lifecycleTasks = tasks || []; state.lifecycleCapability = lifecycleCapability || { available:false, reason:'未配置' };
+      if (authEpoch !== state.authEpoch) return;
+      state.clusters = clusters || []; state.capabilities = capabilities || []; state.nodes = nodes || []; state.lifecycleTasks = tasks || []; state.lifecycleCapability = lifecycleCapability || { available:false, reason:'未配置' };
       state.controlPlane = controlPlane; state.platformVersion = platformVersion; renderControlPlaneStatus(); renderPlatformVersion();
-      state.clusterDirectory = await loadFleetDetails(state.clusters);
+      const directory = await loadFleetDetails(state.clusters);
+      if (authEpoch !== state.authEpoch) return;
+      state.clusterDirectory = directory;
       const selector = byId('cluster-select'); const previous = selector.value; const preferred = preferredClusterId || previous; selector.replaceChildren();
       if (!state.clusters.length) selector.append(new Option('未发现已注册集群', ''));
       state.clusters.forEach(cluster => { const option = document.createElement('option'); option.value = cluster.resource_id; option.textContent = cluster.display_name || cluster.resource_id; selector.append(option); });
       selector.value = state.clusters.some(cluster => cluster.resource_id === preferred) ? preferred : (state.clusters[0] ? state.clusters[0].resource_id : '');
       renderOperationLogClusterFilter();
-      renderCapabilities(); renderNodes(); renderLifecycleTasks(); renderOperationLog(); renderOverview();
+      renderCapabilities(); renderNodes(); renderLifecycleTasks(); renderOverview();
+      void loadOperationLog(false);
       await Promise.all([loadSelectedCluster(), loadSoftwareUpdates(false)]);
     };
 
@@ -4323,7 +4844,7 @@
         await loadClusters();
         scheduleAutoRefresh();
       } catch (error) {
-        showLogin(error.status === 401 ? '用户名或密码不正确。' : error.message, true);
+        if (!error.staleSession) showLogin(error.status === 401 ? '用户名或密码不正确。' : error.message, true);
       } finally {
         byId('login-password').value = '';
         byId('login-submit').disabled = false;
@@ -4359,11 +4880,20 @@
     };
 
     const logout = async () => {
+      if (state.loggingOut) return;
+      const authEpoch = state.authEpoch;
+      state.loggingOut = true;
+      relockSwitch();
       try {
         await fetchResult('/api/v1/auth/logout', mutationOptions({}));
         showLogin('已退出平台账户。');
       } catch (error) {
-        if (error.status !== 401) setLiveStatus(`退出失败：${error.message}`, true);
+        if (!error.staleSession && error.status !== 401) setLiveStatus(`退出失败：${error.message}，操作保持锁定。`, true);
+      } finally {
+        if (authEpoch === state.authEpoch) {
+          state.loggingOut = false;
+          updateExecutionButtons();
+        }
       }
     };
 
@@ -4378,16 +4908,28 @@
         await loadClusters();
         scheduleAutoRefresh();
       } catch (error) {
-        if (error.status !== 401) showLogin(error.message, true);
+        if (!error.staleSession && error.status !== 401) showLogin(error.message, true);
       }
     };
 
     const refreshDiscovery = async () => {
       if (!state.selectedClusterId || !canOperateClusters()) return;
+      const clusterID = state.selectedClusterId;
+      const generation = beginClusterRequest(clusterID, true);
       try {
-        await fetchResult(`/api/v1/clusters/${state.selectedClusterId}/discover`, mutationOptions({}));
+        await fetchResult(`/api/v1/clusters/${clusterID}/discover`, mutationOptions({}));
+        if (generation !== state.requestGeneration) return;
         await loadSelectedCluster({ preserveOperationResult:true });
-      } catch (error) { setLiveStatus(error.message, true); }
+      } catch (error) {
+        commitIfCurrent(generation, () => {
+          state.clusterLoading = false;
+          state.clusterLoadError = error.message;
+          state.clusterDataReady = false;
+          renderClusterLoadStatus('error', `${error.message} 当前显示上次观测，不代表最新状态；操作已锁定。`);
+          updateExecutionButtons();
+          setLiveStatus(error.message, true);
+        });
+      }
     };
 
     const scheduleAutoRefresh = () => {
@@ -4395,7 +4937,7 @@
       state.refreshTimer = null;
       if (!state.refreshIntervalMs) return;
       state.refreshTimer = window.setInterval(() => {
-		if (state.selectedClusterId && !state.operationRunning) loadSelectedCluster({ preserveOperationResult:true });
+        if (state.selectedClusterId && !state.operationRunning && !state.clusterLoading) loadSelectedCluster({ preserveOperationResult:true });
       }, state.refreshIntervalMs);
     };
 
@@ -4413,7 +4955,149 @@
       if (focus) byId(`topology-${selected}-tab`).focus();
     };
 
-    const operationsSectionOrder = ['switchover', 'recovery'];
+    const disasterStages = { planned:'待确认', fencing:'隔离全部节点', inspecting:'采集恢复证据', selecting:'比较事务历史', starting_primary:'启动权威主库', rebuilding_replicas:'重建从库', verifying:'验证复制与拓扑', committed:'恢复已提交，验证业务入口', succeeded:'恢复成功', blocked:'恢复已阻断' };
+    const disasterActive = task => task && !['planned', 'blocked', 'succeeded'].includes(task.stage);
+    const disasterMessage = message => ({
+      'recovery freeze acquired; every member must be fenced':'已进入恢复冻结，正在逐台隔离节点。',
+      'isolating member and verifying persistent write fence':'正在隔离该节点，并验证重启后仍保持写入保护。',
+      'member write fence verified':'该节点写入保护已验证。',
+      'all members fenced; collecting recoverable history':'全部节点已隔离，正在采集可恢复的事务历史。',
+      'collecting native identity and recoverable transaction history':'正在采集该节点的原生身份和事务证据。',
+      'comparing committed history of every member':'正在比较全部节点的已提交事务历史。',
+      'authoritative primary selected from complete committed history':'已根据完整事务证据选出权威主库。',
+      'selected primary started under recovery-only authorization':'权威主库已在恢复专用授权下启动。',
+      'reconstructing replica from the selected authoritative primary':'正在从权威主库重建该从库。',
+      'replica reconstruction and upstream identity verified':'该从库已重建，上游身份已验证。',
+      'verifying every role, replication link and catch-up position':'正在验证主从角色、复制链路和追平位置。',
+      'Recovery Commit persisted; business entry remains protected until activation verification':'恢复状态已原子提交，正在验证唯一业务入口。',
+      'all members, replication, writer and business entry verified; recovery protections released':'全部节点、复制和唯一写入口已验证，恢复保护已解除。'
+    }[message] || message || '');
+    const renderDisaster = () => {
+      const recovery = state.disaster;
+      if (!recovery) return;
+      const task = recovery.task;
+      const allowed = disasterActionAllowed(recovery.clusterID);
+      const lockMessage = !allowed && (!task || ['planned', 'blocked'].includes(task.stage)) ? '操作已锁定，请关闭窗口，解锁后重新预检。' : '';
+      byId('disaster-cluster-name').textContent = recovery.name;
+      byId('disaster-alert').textContent = lockMessage || recovery.error || (recovery.pendingRevision != null ? '恢复请求已提交，正在等待新的执行状态。' : recovery.busy ? '正在检查，请稍候。' : recovery.ready ? '预检完成，等待确认。' : task ? disasterMessage(task.message) || disasterStages[task.stage] : '尚无恢复任务。');
+      byId('disaster-alert').className = `result-banner${recovery.error || task?.stage === 'blocked' ? ' error' : ''}`;
+      const members = task?.members || [];
+      byId('disaster-members').replaceChildren(...members.map(member => text('li', '', member.ip_address || member.hostname || member.resource_id)));
+      byId('disaster-stage').textContent = task ? disasterStages[task.stage] || task.stage : '未开始';
+      const primary = members.find(member => member.resource_id === task?.primary_id);
+      byId('disaster-primary').textContent = primary ? ` · 权威主库：${primary.ip_address || primary.hostname || primary.resource_id}` : '';
+      const confirmable = allowed && recovery.ready && task && ['planned', 'blocked'].includes(task.stage);
+      byId('disaster-confirmation').hidden = !confirmable;
+      byId('disaster-execute').hidden = !!task && !['planned', 'blocked'].includes(task.stage);
+      byId('disaster-execute').disabled = !disasterConfirmationValid();
+      byId('disaster-replan').hidden = recovery.busy || disasterActive(task);
+      byId('disaster-replan').disabled = !allowed;
+      byId('disaster-events').replaceChildren(...(task?.events || []).slice().reverse().map(event => {
+        const row = text('div', 'disaster-event', '');
+        const member = members.find(item => item.resource_id === event.instance_id);
+        const label = member ? `${member.ip_address || member.hostname || member.resource_id} · ${disasterStages[event.stage] || event.stage}` : disasterStages[event.stage] || event.stage;
+        row.append(text('time', '', new Date(event.at).toLocaleTimeString()), text('strong', '', label), text('span', '', disasterMessage(event.message)));
+        return row;
+      }));
+    };
+    const closeDisaster = () => {
+      byId('disaster-dialog').close();
+      clearTimeout(state.disasterTimer);
+      state.disasterEpoch++;
+      state.disaster = null;
+      relockSwitch();
+    };
+    const pollDisaster = async epoch => {
+      const recovery = state.disaster;
+      if (!recovery || epoch !== state.disasterEpoch) return;
+      try {
+        const result = await fetchResult(`/api/v1/clusters/${recovery.clusterID}/recovery/status`);
+        if (epoch !== state.disasterEpoch) return;
+        const observed = (result.tasks || []).find(item => item.resource_id === recovery.task?.resource_id);
+        if (observed && Number(observed.metadata_revision) >= Number(recovery.task?.metadata_revision || 0)) recovery.task = observed;
+        const task = recovery.task;
+        if (recovery.pendingRevision != null && Number(task?.metadata_revision) > recovery.pendingRevision) recovery.pendingRevision = null;
+        recovery.error = '';
+        recovery.busy = recovery.pendingRevision != null;
+        renderDisaster();
+        if (!recovery.busy && task && ['succeeded', 'blocked'].includes(task.stage)) return;
+      } catch (error) {
+        if (epoch !== state.disasterEpoch) return;
+        recovery.error = `状态读取失败：${error.message}。任务未被取消。`;
+        renderDisaster();
+      }
+      state.disasterTimer = setTimeout(() => pollDisaster(epoch), 2000);
+    };
+    const planDisaster = async () => {
+      const recovery = state.disaster;
+      if (!recovery || recovery.busy || disasterActive(recovery.task) || !disasterActionAllowed(recovery.clusterID)) return;
+      const epoch = state.disasterEpoch;
+      const lockEpoch = state.operationLockEpoch;
+      recovery.busy = true; recovery.ready = false; recovery.error = '';
+      byId('disaster-confirm-name').value = '';
+      byId('disaster-confirm-impact').checked = false;
+      renderDisaster();
+      try {
+        const result = await fetchResult(`/api/v1/clusters/${recovery.clusterID}/recovery/plan`, mutationOptions({}));
+        if (epoch !== state.disasterEpoch) return;
+        if (lockEpoch !== state.operationLockEpoch || !disasterActionAllowed(recovery.clusterID)) {
+          recovery.error = '操作锁或集群上下文已变化，请解锁后重新预检。';
+          return;
+        }
+        if (result.task?.cluster_id !== recovery.clusterID) throw new APIError('恢复预检与所选集群不一致，请重新预检。');
+        recovery.task = result.task; recovery.ready = result.ready === true; recovery.error = result.message || '';
+      } catch (error) { if (epoch === state.disasterEpoch) recovery.error = error.message; }
+      finally { if (epoch === state.disasterEpoch) { recovery.busy = false; renderDisaster(); } }
+    };
+    const openDisaster = async () => {
+      const cluster = selectedCluster();
+      if (!cluster || !disasterActionAllowed(cluster.resource_id) || byId('disaster-dialog').open) return;
+      clearTimeout(state.disasterTimer);
+      const epoch = ++state.disasterEpoch;
+      const recovery = state.disaster = { clusterID:cluster.resource_id, name:cluster.display_name, task:null, ready:false, busy:true, error:'' };
+      byId('disaster-confirm-name').value = '';
+      byId('disaster-confirm-impact').checked = false;
+      renderDisaster(); byId('disaster-dialog').showModal();
+      try {
+        const result = await fetchResult(`/api/v1/clusters/${recovery.clusterID}/recovery/status`);
+        if (epoch !== state.disasterEpoch) return;
+        if (!result.available) throw new Error('当前控制端未启用灾难恢复执行器。');
+        recovery.task = (result.tasks || []).find(task => task.resource_id === result.recovery?.task_id) || null;
+        recovery.busy = false;
+        if (recovery.task && recovery.task.stage !== 'succeeded') {
+          renderDisaster();
+          if (disasterActive(recovery.task)) pollDisaster(epoch);
+        } else await planDisaster();
+      } catch (error) { if (epoch === state.disasterEpoch) { recovery.error = error.message; recovery.busy = false; renderDisaster(); } }
+    };
+    const executeDisaster = async () => {
+      const recovery = state.disaster;
+      if (!disasterConfirmationValid()) { renderDisaster(); return; }
+      const epoch = state.disasterEpoch;
+      recovery.pendingRevision = Number(recovery.task.metadata_revision);
+      recovery.busy = true; recovery.ready = false; recovery.error = ''; renderDisaster();
+      try {
+        await fetchResult(`/api/v1/clusters/${recovery.clusterID}/recovery/execute`, mutationOptions({ task_id:recovery.task.resource_id, revision:recovery.task.metadata_revision, confirm_cluster:byId('disaster-confirm-name').value, acknowledge_fencing:byId('disaster-confirm-impact').checked }));
+        if (epoch !== state.disasterEpoch) return;
+        await pollDisaster(epoch);
+      } catch (error) {
+        if (epoch !== state.disasterEpoch) return;
+        if (!error.committed && [400, 403, 404, 409, 422, 423, 429].includes(error.status)) {
+          recovery.pendingRevision = null;
+          recovery.busy = false;
+          recovery.ready = false;
+          byId('disaster-confirm-name').value = '';
+          byId('disaster-confirm-impact').checked = false;
+          recovery.error = `恢复请求被拒绝：${error.message}。请重新预检后确认。`;
+          renderDisaster();
+          return;
+        }
+        recovery.error = `提交结果需确认：${error.message}。正在查询持久化状态。`; renderDisaster();
+        state.disasterTimer = setTimeout(() => pollDisaster(epoch), 2000);
+      }
+    };
+
+    const operationsSectionOrder = ['switchover', 'recovery', 'disaster'];
     const setOperationsSection = (section, focus = false) => {
       const selected = operationsSectionOrder.includes(section) ? section : 'switchover';
       state.operationsSection = selected;
@@ -4425,13 +5109,17 @@
         byId(`operations-${name}-panel`).hidden = !active;
       });
       const recovery = selected === 'recovery';
-      byId('operation-switchover-target').hidden = recovery;
+      const disaster = selected === 'disaster';
+      byId('operation-switchover-target').hidden = recovery || disaster;
       byId('operation-recovery-target').hidden = !recovery;
+      const supported = ['mysql', 'postgresql'].includes(selectedCluster()?.engine);
+      updateExecutionButtons();
+      byId('disaster-availability').textContent = !supported ? '当前集群引擎不支持此恢复流程。' : !canAdministerPlatform() ? '仅管理员可执行灾难恢复。' : '';
       const instances = state.topology ? state.topology.instances || [] : [];
       const targetID = recovery ? state.selectedRejoinId : state.selectedCandidateId;
       byId('operation-lag-label').textContent = recovery ? '恢复节点延迟' : '候选延迟';
       byId('operation-lag').textContent = lagText(instances.find(instance => instance.resource_id === targetID));
-      byId('operations-section-summary').textContent = state.language === 'en-US'
+      byId('operations-section-summary').textContent = disaster ? '集群恢复状态' : state.language === 'en-US'
         ? recovery ? 'Rejoin or repair a former primary under guarded verification' : 'Switch the primary role and writer endpoint together'
         : recovery ? '受控回挂旧主或修复复制关系' : '同步切换主库角色与业务入口';
       if (focus) byId(`operations-${selected}-tab`).focus();
@@ -4475,6 +5163,7 @@
       const activeLink = document.querySelector(`[data-nav="${selected}"]`);
       keepActiveNavigationVisible(activeLink);
       if (window.location.hash !== `#${selected}`) window.history.replaceState(null, '', `#${selected}`);
+      if (selected === 'operation-log' && state.currentUser) void loadOperationLog(false);
     };
 
     byId('open-cluster-management-modal').addEventListener('click', openClusterManagementModal);
@@ -4488,6 +5177,14 @@
     byId('submit-cluster-registration').addEventListener('click', submitClusterRegistration);
     byId('submit-cluster-retirement').addEventListener('click', submitClusterRetirement);
     byId('open-power-shutdown').addEventListener('click', openPowerShutdownDialog);
+    byId('open-disaster-recovery').addEventListener('click', openDisaster);
+    byId('close-disaster').addEventListener('click', closeDisaster);
+    byId('cancel-disaster').addEventListener('click', closeDisaster);
+    byId('disaster-dialog').addEventListener('cancel', event => { event.preventDefault(); closeDisaster(); });
+    byId('disaster-replan').addEventListener('click', planDisaster);
+    byId('disaster-execute').addEventListener('click', executeDisaster);
+    byId('disaster-confirm-name').addEventListener('input', renderDisaster);
+    byId('disaster-confirm-impact').addEventListener('change', renderDisaster);
     byId('close-power-shutdown').addEventListener('click', closePowerShutdownDialog);
     byId('cancel-power-shutdown').addEventListener('click', closePowerShutdownDialog);
     byId('power-shutdown-dialog').addEventListener('cancel', event => { if (state.powerRunning) event.preventDefault(); });
@@ -4497,6 +5194,7 @@
     byId('confirm-power-shutdown').addEventListener('click', executePowerShutdown);
     byId('retire-cluster-confirmation').addEventListener('input', renderClusterRetirementContext);
     byId('cluster-select').addEventListener('change', loadSelectedCluster);
+    byId('retry-cluster-load').addEventListener('click', () => loadSelectedCluster({ preserveOperationResult:true }));
     document.querySelectorAll('.topology-section-tabs [data-topology-section]').forEach((tab, index) => {
       tab.addEventListener('click', () => setTopologySection(tab.dataset.topologySection));
       tab.addEventListener('keydown', event => {
@@ -4544,7 +5242,11 @@
     byId('inspect-cluster').addEventListener('click', inspectCluster);
     byId('candidate-select').addEventListener('change', event => { state.selectedCandidateId = event.target.value; relockSwitch(); renderOperationContext(); });
     byId('rejoin-select').addEventListener('change', event => { state.selectedRejoinId = event.target.value; relockSwitch(); updateExecutionButtons(); setOperationsSection(state.operationsSection); });
-    byId('switch-lock').addEventListener('click', () => { state.switchUnlocked = !state.switchUnlocked; updateExecutionButtons(); });
+    byId('switch-lock').addEventListener('click', () => {
+      if (!operationLockAvailable()) return;
+      if (state.switchUnlocked) relockSwitch();
+      else { state.switchUnlocked = true; updateExecutionButtons(); }
+    });
     byId('execute-switchover').addEventListener('click', () => executeOperation('switchover', state.selectedCandidateId, '主库切换'));
     byId('execute-rejoin').addEventListener('click', () => recoverFormerPrimary(state.selectedRejoinId));
     byId('execute-repair').addEventListener('click', () => executeOperation('replication_repair', state.selectedRejoinId, '复制修复'));
@@ -4563,12 +5265,12 @@
     byId('rebuild-node-select').addEventListener('change', populateRebuildNode);
     byId('node-kind').addEventListener('change', updateControllerPairMode);
     byId('execute-node-sync').addEventListener('click', executeNodeSync);
-    byId('refresh-operation-log').addEventListener('click', loadOperationLog);
-    byId('load-more-operation-log').addEventListener('click', () => { state.logVisibleLimit += operationLogPageSize; renderOperationLog(); });
-    byId('log-search').addEventListener('input', event => { state.logSearch = event.target.value; state.logVisibleLimit = operationLogPageSize; renderOperationLog(); });
-    byId('log-cluster-filter').addEventListener('change', event => { state.logClusterId = event.target.value; state.logVisibleLimit = operationLogPageSize; renderOperationLog(); });
-    byId('log-kind-filter').addEventListener('change', event => { state.logKind = event.target.value; state.logVisibleLimit = operationLogPageSize; renderOperationLog(); });
-    byId('log-status-filter').addEventListener('change', event => { state.logStatus = event.target.value; state.logVisibleLimit = operationLogPageSize; renderOperationLog(); });
+    byId('refresh-operation-log').addEventListener('click', () => loadOperationLog());
+    byId('load-more-operation-log').addEventListener('click', () => loadOperationLog(false, true));
+    byId('log-search').addEventListener('input', event => { state.logSearch = event.target.value; refreshOperationLogFilters(true); });
+    byId('log-cluster-filter').addEventListener('change', event => { state.logClusterId = event.target.value; refreshOperationLogFilters(); });
+    byId('log-kind-filter').addEventListener('change', event => { state.logKind = event.target.value; refreshOperationLogFilters(); });
+    byId('log-status-filter').addEventListener('change', event => { state.logStatus = event.target.value; refreshOperationLogFilters(); });
     byId('close-operation-review').addEventListener('click', closeOperationReview);
     byId('cancel-operation-review').addEventListener('click', closeOperationReview);
     byId('submit-operation-review').addEventListener('click', submitOperationReview);

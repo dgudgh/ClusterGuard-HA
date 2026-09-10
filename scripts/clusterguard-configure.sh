@@ -216,6 +216,9 @@ restore_configuration() {
 }
 
 recover_services_after_rollback() {
+  if [[ -z "${install_root}" && -f /etc/clusterguard/agent.json ]]; then
+    /usr/local/bin/clusterguard-agent --config /etc/clusterguard/agent.json --configure-systemd-sandbox || return 1
+  fi
   "${systemctl_binary}" daemon-reload >/dev/null 2>&1 || :
   if [[ "${role}" == "controller" || "${role}" == "mixed" ]]; then
     "${systemctl_binary}" try-restart clusterguard-ha.service >/dev/null 2>&1 || :
@@ -290,6 +293,9 @@ if [[ -z "${install_root}" ]]; then
 fi
 
 activate_services() {
+	if [[ -z "${install_root}" && -f /etc/clusterguard/agent.json ]]; then
+		/usr/local/bin/clusterguard-agent --config /etc/clusterguard/agent.json --configure-systemd-sandbox || return 1
+	fi
 	"${systemctl_binary}" daemon-reload || return 1
 	"${systemctl_binary}" enable clusterguard-cluster-restore.service clusterguard-cluster-finalize.service || return 1
   if [[ "${role}" == "controller" || "${role}" == "mixed" ]]; then

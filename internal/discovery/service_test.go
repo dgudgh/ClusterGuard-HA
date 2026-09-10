@@ -643,7 +643,7 @@ func TestRefreshBuildsLinksAndMetricsOnlyFromRegisteredInventory(t *testing.T) {
 	}
 
 	serviceType := reflect.TypeOf(service)
-	if got, want := exportedMethodNames(serviceType), []string{"Refresh", "RefreshBatch"}; !reflect.DeepEqual(got, want) {
+	if got, want := exportedMethodNames(serviceType), []string{"Refresh", "RefreshAndCommit", "RefreshBatch"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("service exposes a probe path outside inventory refresh: methods=%v", exportedMethodNames(serviceType))
 	}
 }
@@ -1768,6 +1768,62 @@ func TestRefreshBatchDoesNotProbeWhileWorkflowHoldsClusterFence(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("batch discovery remained blocked after the workflow fence was released")
+	}
+}
+
+func TestRefreshAndCommitPreventsInterveningPublication(t *testing.T) {
+	repository := store.NewMemory()
+	cluster, err := repository.UpsertCluster(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "recovery-completion"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint := addEndpoint(t, repository, cluster.ResourceID, "mysql-a", 3306, model.EndpointDatabase, true)
+	candidate := newFakeAdapter()
+	candidate.results[endpoint.Hostname] = discoveredInstance(endpoint.Hostname, endpoint.Port, "native-a", model.RolePrimary, "")
+	locks := workflowcore.NewMemoryLocks()
+	service := newTestService(t, repository, candidate)
+	service.publicationFence = locks
+	other := newTestService(t, repository, candidate)
+	other.publicationFence = locks
+	other.now = func() time.Time { return discoveryTestTime.Add(time.Second) }
+	commitFailure := errors.New("completion commit rejected")
+	_, err = service.RefreshAndCommit(context.Background(), cluster.ResourceID, func(snapshot model.TopologySnapshot) error {
+		stored, found := repository.TopologySnapshot(cluster.ResourceID)
+		if !found || !stored.ObservedAt.Equal(snapshot.ObservedAt) {
+			t.Fatal("callback ran before the observation was persisted")
+		}
+		for _, publisher := range []*Service{service, other} {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+			_, publishErr := publisher.Refresh(ctx, cluster.ResourceID)
+			cancel()
+			if publishErr == nil {
+				t.Fatal("another observation published before completion committed")
+			}
+		}
+		return commitFailure
+	})
+	if !errors.Is(err, commitFailure) {
+		t.Fatalf("callback failure was hidden: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := other.Refresh(ctx, cluster.ResourceID); err != nil {
+		t.Fatalf("failed completion leaked the publication fence: %v", err)
+	}
+}
+
+func TestRefreshAndCommitDoesNotCommitFailedOrCancelledObservation(t *testing.T) {
+	service := newTestService(t, store.NewMemory(), newFakeAdapter())
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, ctx := range []context.Context{context.Background(), ctx} {
+		_, err := service.RefreshAndCommit(ctx, model.NewResourceID(), func(model.TopologySnapshot) error {
+			t.Fatal("failed refresh invoked completion")
+			return nil
+		})
+		if err == nil {
+			t.Fatal("invalid refresh succeeded")
+		}
 	}
 }
 

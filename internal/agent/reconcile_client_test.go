@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -47,6 +48,49 @@ func TestHTTPReconcileClientTriesControllersAndVerifiesLeaderResponse(t *testing
 	decision, err := client.Decision(context.Background(), policy)
 	if err != nil || decision.Action != ReconcileKeepVIP || calls.Load() != 2 {
 		t.Fatalf("decision=%+v calls=%d err=%v", decision, calls.Load(), err)
+	}
+}
+
+func TestHTTPRecoveryDecisionUsesResponseReceiptTime(t *testing.T) {
+	for _, expired := range []bool{false, true} {
+		t.Run(fmt.Sprintf("expired=%t", expired), func(t *testing.T) {
+			start := time.Date(2026, time.September, 8, 4, 0, 0, 0, time.UTC)
+			var elapsed atomic.Int64
+			now := func() time.Time { return start.Add(time.Duration(elapsed.Load())) }
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var request ReconcileRequest
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Error(err)
+					return
+				}
+				elapsed.Store(int64(100 * time.Millisecond))
+				response := ReconcileResponse{ClusterID: request.ClusterID, InstanceID: request.InstanceID,
+					Action: ReconcileRecoveryPrimary, Reason: "guarded recovery", RecoveryTaskID: model.NewResourceID(),
+					LeaseID: model.NewResourceID(), ControllerID: model.NewResourceID(), ValidUntil: now().Add(10 * time.Second)}
+				if err := SignReconcileResponse(&response, "agent-secret"); err != nil {
+					t.Error(err)
+					return
+				}
+				if expired {
+					elapsed.Store(int64(11 * time.Second))
+				} else {
+					elapsed.Store(int64(150 * time.Millisecond))
+				}
+				_ = json.NewEncoder(w).Encode(response)
+			}))
+			defer server.Close()
+			client, err := NewHTTPReconcileClient([]string{server.URL}, "agent-secret", server.Client(), false, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			decision, err := client.Decision(context.Background(), reconcilePolicy())
+			if expired && err == nil {
+				t.Fatal("accepted authorization that expired during the HTTP request")
+			}
+			if !expired && (err != nil || decision.Action != ReconcileRecoveryPrimary) {
+				t.Fatalf("valid short authorization rejected after network latency: %v", err)
+			}
+		})
 	}
 }
 

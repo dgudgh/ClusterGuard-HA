@@ -27,6 +27,10 @@ type OperationFinalizer interface {
 	FinalizeOperation(model.ResourceID, uint64, model.OperationTransition, []model.AuditEvent, []model.Report) (model.OperationRecord, error)
 }
 
+type AbandonedOperationFinalizer interface {
+	FinalizeAbandonedOperation(model.ResourceID, uint64, time.Time, time.Time, model.OperationTransition, []model.AuditEvent, []model.Report) (model.OperationRecord, bool, error)
+}
+
 type repositoryProgress struct {
 	operations  OperationStore
 	operationID model.ResourceID

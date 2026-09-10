@@ -158,6 +158,12 @@ else
   fi
   maintenance_after_failure=false
   [[ -f /etc/clusterguard/update-maintenance.json ]] && maintenance_after_failure=true
+  # A failed final release can leave only the replicated gate. Preserve the
+  # updater's durable maintenance result when no local marker remains.
+  if "${jq_binary}" -e '.maintenance_active == true' "${status_file}" >/dev/null 2>&1 &&
+      [[ "${last_event_status}" == failed || "${last_event_status}" == rollback_failed || "${last_event_status}" == rollback_lock_release_failed ]]; then
+    maintenance_after_failure=true
+  fi
   write_status failed "升级任务失败或被阻断；请查看输出和事件记录，确认维护门禁状态后再续跑或回退" "${maintenance_after_failure}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   schedule_helper_refresh || true
   exit "${exit_code}"

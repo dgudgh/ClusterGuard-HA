@@ -244,7 +244,7 @@ func (server *Server) clusterRoute(writer http.ResponseWriter, request *http.Req
 			writeError(writer, http.StatusNotFound, "cluster not found")
 			return
 		}
-		writeJSON(writer, http.StatusOK, map[string]interface{}{
+		writeDiagnosticJSON(writer, http.StatusOK, map[string]interface{}{
 			"status": "ok", "result": map[string]interface{}{
 				"cluster": cluster, "instances": server.store.Instances(clusterID), "endpoints": server.store.Endpoints(clusterID),
 				"ha_endpoints": server.store.HAEndpoints(clusterID), "workload_bindings": server.store.WorkloadBindingsForCluster(clusterID),
@@ -277,6 +277,10 @@ func (server *Server) clusterRoute(writer http.ResponseWriter, request *http.Req
 	}
 	if strings.HasPrefix(action, "power/") {
 		server.powerRoute(writer, request, clusterID, action)
+		return
+	}
+	if strings.HasPrefix(action, "recovery/") {
+		server.disasterRecoveryRoute(writer, request, clusterID, action)
 		return
 	}
 	if request.Method != http.MethodGet {
@@ -312,7 +316,7 @@ func (server *Server) clusterRoute(writer http.ResponseWriter, request *http.Req
 			writeError(writer, http.StatusConflict, "cluster has no persisted topology observation")
 			return
 		}
-		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": snapshot})
+		writeDiagnosticJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": snapshot})
 	case "health":
 		expectedObservation, err := requestedObservation(request)
 		if err != nil {
@@ -332,7 +336,7 @@ func (server *Server) clusterRoute(writer http.ResponseWriter, request *http.Req
 			writeError(writer, http.StatusConflict, "topology observation changed")
 			return
 		}
-		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": map[string]interface{}{
+		writeDiagnosticJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": map[string]interface{}{
 			"cluster_id": clusterID, "health": snapshot.Health, "probes": snapshot.Probes, "observed_at": snapshot.ObservedAt,
 		}})
 	case "metrics":
@@ -529,7 +533,7 @@ func (server *Server) discoverCluster(writer http.ResponseWriter, request *http.
 		writeError(writer, http.StatusBadGateway, "discovery refresh failed")
 		return
 	}
-	writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": snapshot})
+	writeDiagnosticJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": snapshot})
 }
 
 func validateDiscoveryBody(request *http.Request) error {

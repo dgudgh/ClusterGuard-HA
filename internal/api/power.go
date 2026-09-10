@@ -823,17 +823,14 @@ func (server *Server) powerComplete(writer http.ResponseWriter, request *http.Re
 		writeError(writer, http.StatusConflict, "power complete requires verifying state, currently "+string(operation.State))
 		return
 	}
+	verifiedTopology, _ := server.store.TopologySnapshot(clusterID)
 	reasons := append(server.powerTopologyChecks(request, clusterID), server.powerRecoverySnapshotChecks(clusterID, operation)...)
 	if len(reasons) > 0 {
 		writeError(writer, http.StatusConflict, "recovery verification failed; protections stay active: "+strings.Join(reasons, "; "))
 		return
 	}
-	if err := server.store.ReleasePowerProtections(request.Context(), clusterID); err != nil {
-		writeError(writer, http.StatusInternalServerError, "release power protections failed")
-		return
-	}
-	next, err := server.store.TransitionPowerOperation(request.Context(), operation.ResourceID,
-		operation.MetadataRevision, model.PowerCompleted, "", "recovery verified; protections released", nil)
+	next, err := server.store.CompletePowerRecovery(request.Context(), operation.ResourceID,
+		operation.MetadataRevision, verifiedTopology.ObservedAt)
 	if err != nil {
 		server.writePowerTransitionError(writer, err)
 		return
@@ -858,6 +855,9 @@ type powerOutageClassification struct {
 }
 
 func classifyPowerOutage(cluster model.DatabaseCluster, topology model.TopologySnapshot, hasTopology bool, operation *model.PowerOperation, protected, recoveryFrozen bool) powerOutageClassification {
+	if recovery := cluster.Recovery; recovery != nil && recovery.LastRecoveryStatus == "succeeded" && recovery.IncidentRecovered && !recoveryFrozen && !protected && operation != nil && recovery.RecoveredAt.After(operation.UpdatedAt) {
+		operation = nil
+	}
 	classification := powerOutageClassification{
 		Kind:                        "normal",
 		DatabaseState:               "running",

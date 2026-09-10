@@ -206,6 +206,68 @@ func TestSSHAgentTransportUsesLongTimeoutForPostgreSQLMutations(t *testing.T) {
 	}
 }
 
+func TestSSHAgentTransportBoundsRecoveryEvidenceWithoutOverridingParent(t *testing.T) {
+	for _, command := range []string{agent.CommandRecoveryInspect, agent.CommandRecoveryWAL, agent.CommandRecoveryQuiesce} {
+		for _, parentShort := range []bool{false, true} {
+			runner := &contextCaptureRunner{}
+			transport, err := NewSSHAgentTransport(SSHAgentTransportConfig{User: "root", IdentityFile: "/key", KnownHostsFile: "/known", CommandTimeout: 5 * time.Second}, runner)
+			if err != nil {
+				t.Fatal(err)
+			}
+			duration := 3 * time.Minute
+			if parentShort {
+				duration = time.Second
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), duration)
+			_, err = transport.Send(ctx, model.DatabaseInstance{IPAddress: "192.0.2.10"}, agent.Request{Command: command})
+			cancel()
+			if err != nil {
+				t.Fatal(err)
+			}
+			remaining := time.Until(runner.deadline)
+			if !runner.ok || (!parentShort && (remaining < 119*time.Second || remaining > 120*time.Second)) || (parentShort && remaining > time.Second) {
+				t.Fatalf("%s deadline escaped recovery or caller budget: %s", command, remaining)
+			}
+		}
+	}
+}
+
+func TestSSHAgentTransportSelfIsolationUsesMutationBudgetAndHonorsCancellation(t *testing.T) {
+	for _, engine := range []model.Engine{model.EngineMySQL, model.EnginePostgreSQL} {
+		t.Run(string(engine), func(t *testing.T) {
+			runner := &contextCaptureRunner{}
+			transport, err := NewSSHAgentTransport(SSHAgentTransportConfig{
+				User: "root", IdentityFile: "/key", KnownHostsFile: "/known",
+				CommandTimeout: 5 * time.Second, MutationTimeout: 12 * time.Minute,
+			}, runner)
+			if err != nil {
+				t.Fatal(err)
+			}
+			member := model.DatabaseInstance{Engine: engine, IPAddress: "192.0.2.10"}
+			request := agent.Request{Command: agent.CommandSelfIsolate, Engine: engine}
+			if _, err := transport.Send(context.Background(), member, request); err != nil {
+				t.Fatal(err)
+			}
+			if remaining := time.Until(runner.deadline); !runner.ok || remaining < 11*time.Minute || remaining > 12*time.Minute {
+				t.Fatalf("service isolation used status-query budget: %s", remaining)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			if _, err := transport.Send(ctx, member, request); err != nil {
+				t.Fatal(err)
+			}
+			if time.Until(runner.deadline) > time.Second {
+				t.Fatal("isolation overrode the caller's authority deadline")
+			}
+			transport.runner = blockingProcessRunner{}
+			cancel()
+			if _, err := transport.Send(ctx, member, request); !errors.Is(err, context.Canceled) {
+				t.Fatalf("canceled isolation continued: %v", err)
+			}
+		})
+	}
+}
+
 func TestSSHAgentTransportAllowsOracleBrokerStatusToConverge(t *testing.T) {
 	runner := &contextCaptureRunner{}
 	transport, err := NewSSHAgentTransport(SSHAgentTransportConfig{

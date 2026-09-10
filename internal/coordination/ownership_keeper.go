@@ -307,6 +307,9 @@ func (keeper *OwnershipKeeper) RunOnce(ctx context.Context) error {
 	registeredClusters := keeper.inventory.Clusters()
 	clusters := make([]model.DatabaseCluster, 0, len(registeredClusters))
 	for _, cluster := range registeredClusters {
+		if cluster.DisasterRecoveryActive() {
+			continue
+		}
 		if agentOwnershipProtocolSupported(cluster.Engine) && !controlledPostgreSQLEndpointMutationActive(keeper.inventory, cluster) {
 			clusters = append(clusters, cluster)
 		}

@@ -13,6 +13,7 @@ clusterguard_hostname="${CG_PG_HOSTNAME:-}"
 data_directory="${PGDATA:-/var/lib/postgresql/data}"
 
 [[ "${slot}" =~ ^0[123]$ ]] || { echo "CG_PG_SLOT must be 01, 02, or 03" >&2; exit 2; }
+if [[ ! -s "${data_directory}/PG_VERSION" ]]; then
 [[ "${source_host}" =~ ^[A-Za-z0-9.-]+$ ]] || { echo "CG_PG_SOURCE_HOST is invalid" >&2; exit 2; }
 [[ "${source_port}" =~ ^[0-9]+$ ]] && ((source_port >= 1 && source_port <= 65535)) || {
   echo "CG_PG_SOURCE_PORT is invalid" >&2
@@ -20,6 +21,7 @@ data_directory="${PGDATA:-/var/lib/postgresql/data}"
 }
 [[ "${replication_user}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo "replication user is invalid" >&2; exit 2; }
 [[ "${application_name}" =~ ^[A-Za-z0-9_.-]+$ ]] || { echo "application name is invalid" >&2; exit 2; }
+fi
 [[ "${clusterguard_hostname}" =~ ^[A-Za-z0-9]$|^[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$ ]] || {
   echo "CG_PG_HOSTNAME is invalid" >&2
   exit 2
@@ -28,7 +30,7 @@ data_directory="${PGDATA:-/var/lib/postgresql/data}"
   echo "CG_PG_NODE_ID must be a lowercase UUIDv4" >&2
   exit 2
 }
-if [[ -n "${primary_node_id}" && ! "${primary_node_id}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]; then
+if [[ ! -s "${data_directory}/PG_VERSION" && -n "${primary_node_id}" && ! "${primary_node_id}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]; then
   echo "CG_PG_PRIMARY_NODE_ID must be empty or a lowercase UUIDv4" >&2
   exit 2
 fi
@@ -57,6 +59,29 @@ write_identity_configuration() {
   chmod 0600 "${temporary}"
   mv -f "${temporary}" "${configuration}"
 }
+
+if [[ -s "${data_directory}/PG_VERSION" ]]; then
+  # Runtime upstream and role are persisted by PostgreSQL/ClusterGuard. The
+  # original stack's source host must never overwrite them after promotion.
+  # Older stacks used an ephemeral passfile outside PGDATA. Recreate only that
+  # missing credential file, without using the bootstrap source as topology.
+  passfile=/var/lib/postgresql/.pgpass
+  secret_file=/run/secrets/postgres_replication_password
+  if [[ ! -s "${passfile}" && -s "${secret_file}" ]]; then
+    [[ "${replication_user}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo "replication user is invalid" >&2; exit 2; }
+    temporary_passfile="$(mktemp /var/lib/postgresql/.pgpass.XXXXXX)"
+    chmod 0600 "${temporary_passfile}"
+    replication_password="$(tr -d '\r\n' <"${secret_file}")"
+    replication_password="${replication_password//\\/\\\\}"
+    replication_password="${replication_password//:/\\:}"
+    printf '*:*:*:%s:%s\n' "${replication_user}" "${replication_password}" >"${temporary_passfile}"
+    unset replication_password
+    chown postgres:postgres "${temporary_passfile}"
+    mv -f "${temporary_passfile}" "${passfile}"
+  fi
+  write_identity_configuration false
+  exec /usr/local/bin/docker-entrypoint.sh "$@"
+fi
 
 if [[ "${slot}" == "01" ]]; then
   write_identity_configuration false

@@ -463,8 +463,10 @@ func (controller *DockerPostgreSQLController) BaseBackup(ctx context.Context, po
 	if err != nil {
 		return err
 	}
-	stageDirectory := dataDirectory + ".clusterguard-stage"
-	backupDirectory := dataDirectory + ".clusterguard-backup"
+	stageDirectory, backupDirectory, err := recoveryPostgreSQLDirectories(policy, dataDirectory)
+	if err != nil {
+		return err
+	}
 	if exists, err := postgreSQLPathExists(backupDirectory); err != nil {
 		return fmt.Errorf("inspect Docker PostgreSQL backup quarantine: %w", err)
 	} else if exists {
@@ -481,9 +483,17 @@ func (controller *DockerPostgreSQLController) BaseBackup(ctx context.Context, po
 		return err
 	}
 	parent := filepath.Dir(dataDirectory)
-	if _, err := controller.runRecoveryTool(ctx, policy, image, "pg_basebackup", parent, parent,
+	backupArgs := []string{
 		"--pgdata", stageDirectory, "--dbname", connection, "--write-recovery-conf",
-		"--checkpoint", "fast", "--wal-method", "stream", "--progress", "--no-password"); err != nil {
+		"--checkpoint", "fast", "--wal-method", "stream", "--progress", "--no-password"}
+	slot, err := recoveryReplicationSlot(policy)
+	if err != nil {
+		return err
+	}
+	if slot != "" {
+		backupArgs = append(backupArgs, "--slot", slot)
+	}
+	if _, err := controller.runRecoveryTool(ctx, policy, image, "pg_basebackup", parent, parent, backupArgs...); err != nil {
 		_ = os.RemoveAll(stageDirectory)
 		return fmt.Errorf("take Docker PostgreSQL base backup: %w", err)
 	}
@@ -527,7 +537,7 @@ func (controller *DockerPostgreSQLController) BaseBackup(ctx context.Context, po
 		}
 		return fmt.Errorf("Docker PostgreSQL base backup verification failed; original data restored and service left stopped: start=%v source=%v", startErr, sourceErr)
 	}
-	if hadOriginal {
+	if hadOriginal && policy.RecoveryArchiveID == "" {
 		if err := os.RemoveAll(backupDirectory); err != nil {
 			return fmt.Errorf("remove verified Docker PostgreSQL backup quarantine: %w", err)
 		}

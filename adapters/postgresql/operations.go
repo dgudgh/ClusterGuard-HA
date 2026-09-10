@@ -195,36 +195,31 @@ func (adapterInstance *Adapter) postgresqlLiveReplicationCheck(ctx context.Conte
 	}
 	probeContext, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	primaryResult, err := discover(probeContext, adapterInstance.runner, adapter.DiscoverRequest{
+	primaryResult, err := adapterInstance.Discover(probeContext, adapter.DiscoverRequest{
 		ClusterID: resolved.Cluster.ResourceID, Endpoint: postgresqlInstanceEndpoint(resolved.Primary), Credentials: resolved.Credentials,
 	})
 	if err != nil {
 		return failed
 	}
-	primary := primaryResult.Instance
+	sampledPrimary := primaryResult.Instance
 	systemIdentifier := strings.TrimSpace(resolved.Cluster.EngineIdentity["system_identifier"])
-	if !postgresqlInstanceIdentityMatches(primary, resolved.Primary, systemIdentifier) ||
-		primary.Role != model.RolePrimary || primary.Health.State != model.HealthHealthy {
+	if !postgresqlInstanceIdentityMatches(sampledPrimary, resolved.Primary, systemIdentifier) ||
+		sampledPrimary.Role != model.RolePrimary || sampledPrimary.Health.State != model.HealthHealthy {
 		return failed
 	}
-	primaryTimeline, primaryTimelineErr := strconv.ParseUint(strings.TrimSpace(primary.EngineMetadata["timeline_id"]), 10, 32)
-	primaryLSN, primaryLSNErr := parseLSN(primary.EngineMetadata["current_lsn"])
+	primaryTimeline, primaryTimelineErr := strconv.ParseUint(strings.TrimSpace(sampledPrimary.EngineMetadata["timeline_id"]), 10, 32)
+	primaryLSN, primaryLSNErr := parseLSN(sampledPrimary.EngineMetadata["current_lsn"])
 	if primaryTimelineErr != nil || primaryTimeline == 0 || primaryLSNErr != nil {
 		return failed
 	}
 
 	for {
-		targetResult, err := discover(probeContext, adapterInstance.runner, adapter.DiscoverRequest{
-			ClusterID: resolved.Cluster.ResourceID, Endpoint: postgresqlInstanceEndpoint(resolved.Target), Credentials: resolved.Credentials,
-		})
+		live, err := adapterInstance.postgresqlResolveLiveStandbyTopology(probeContext, resolved, resolved.Primary, resolved.Target)
 		if err != nil {
 			return failed
 		}
-		target := targetResult.Instance
-		if !postgresqlInstanceIdentityMatches(target, resolved.Target, systemIdentifier) ||
-			target.Role != model.RoleStandby || target.Health.State != model.HealthHealthy || !target.PromotionEligible ||
-			!postgresqlSourceIdentityMatches(target.Replication.SourceIdentity, primary, systemIdentifier) ||
-			target.Replication.IOThread != model.ThreadRunning || target.Replication.SQLThread != model.ThreadRunning ||
+		target := live.target
+		if !postgresqlLiveStandbyTopologyMatches(live, resolved.Primary, resolved.Target, systemIdentifier) ||
 			target.Replication.LagSeconds == nil || *target.Replication.LagSeconds != 0 {
 			return failed
 		}

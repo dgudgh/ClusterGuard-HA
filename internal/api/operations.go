@@ -168,7 +168,7 @@ func (server *Server) operationsCollection(writer http.ResponseWriter, request *
 				writeError(writer, http.StatusNotFound, "operation not found")
 				return
 			}
-			writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": publicOperationRecord(record)})
+			writeDiagnosticJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": publicOperationRecord(record)})
 			return
 		}
 		clusterID := model.ResourceID(strings.TrimSpace(query.Get("cluster_id")))
@@ -176,11 +176,36 @@ func (server *Server) operationsCollection(writer http.ResponseWriter, request *
 			writeError(writer, http.StatusBadRequest, "cluster_id must be a platform UUID")
 			return
 		}
+		if query.Get("view") == "context" {
+			context := server.store.OperationConsoleContext(clusterID)
+			recent := make([]operationListItem, 0, len(context.Recent))
+			for _, operation := range context.Recent {
+				recent = append(recent, summarizeOperation(operation))
+			}
+			writeDiagnosticJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": map[string]interface{}{
+				"view": "context", "cluster_id": clusterID, "operation_count": context.OperationCount,
+				"running_count": context.RunningCount, "unreviewed_count": context.UnreviewedCount,
+				"historical_source_ids": context.HistoricalSourceIDs, "recent": recent,
+			}})
+			return
+		}
+		if query.Get("view") == "page" {
+			server.operationLogPage(writer, request, clusterID)
+			return
+		}
 		operations := server.store.Operations(clusterID)
+		if query.Get("view") == "summary" {
+			summaries := make([]operationListItem, 0, len(operations))
+			for _, operation := range operations {
+				summaries = append(summaries, summarizeOperation(operation))
+			}
+			writeDiagnosticJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": summaries})
+			return
+		}
 		for index := range operations {
 			operations[index] = publicOperationRecord(operations[index])
 		}
-		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": operations})
+		writeDiagnosticJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": operations})
 	case http.MethodPost:
 		payload := operationPayload{}
 		if err := decode(request, &payload); err != nil {
@@ -205,7 +230,7 @@ func (server *Server) operationsCollection(writer http.ResponseWriter, request *
 		if reused {
 			status = http.StatusOK
 		}
-		writeJSON(writer, status, map[string]interface{}{"status": "ok", "reused": reused, "result": record})
+		writeDiagnosticJSON(writer, status, map[string]interface{}{"status": "ok", "reused": reused, "result": record})
 	default:
 		writeError(writer, http.StatusMethodNotAllowed, "method not allowed")
 	}
@@ -290,6 +315,45 @@ func publicCheckMessage(status model.CheckStatus) string {
 	default:
 		return "check failed"
 	}
+}
+
+// List views retain every record, but fetch full execution evidence on expansion.
+type operationListItem struct {
+	model.ResourceMeta
+	Operation      model.Operation        `json:"operation"`
+	TargetID       model.ResourceID       `json:"target_id"`
+	IdempotencyKey string                 `json:"idempotency_key"`
+	Stage          model.WorkflowStage    `json:"stage"`
+	Status         model.OperationStatus  `json:"status"`
+	Plan           operationListPlan      `json:"plan"`
+	Review         *model.OperationReview `json:"review,omitempty"`
+	Message        string                 `json:"message,omitempty"`
+	Summary        bool                   `json:"summary"`
+}
+
+type operationListPlan struct {
+	SourceID model.ResourceID `json:"source_id,omitempty"`
+	Checks   []model.Check    `json:"checks,omitempty"`
+}
+
+func summarizeOperation(record model.OperationRecord) operationListItem {
+	public := publicOperationRecord(record)
+	item := operationListItem{
+		ResourceMeta: public.ResourceMeta, Operation: public.Operation, TargetID: public.TargetID,
+		IdempotencyKey: public.IdempotencyKey, Stage: public.Stage, Status: public.Status,
+		Plan: operationListPlan{SourceID: public.Plan.SourceID}, Review: public.Review,
+		Message: public.Message, Summary: true,
+	}
+	if item.Message == "" && public.Execution.Message != "" {
+		item.Message = public.Execution.Message
+	}
+	for _, check := range append(public.Plan.Checks, public.Precheck...) {
+		if check.Status == model.CheckFail {
+			item.Plan.Checks = []model.Check{{Name: check.Name, Status: check.Status, Message: check.Message}}
+			break
+		}
+	}
+	return item
 }
 
 func publicOperationRecord(record model.OperationRecord) model.OperationRecord {
@@ -378,7 +442,7 @@ func writeOperationExecutionResponse(writer http.ResponseWriter, err error, exec
 	if response.message != "" {
 		payload["message"] = response.message
 	}
-	writeJSON(writer, response.code, payload)
+	writeDiagnosticJSON(writer, response.code, payload)
 }
 
 func publicOperationTimeline(timeline store.OperationTimeline) map[string]interface{} {
@@ -418,7 +482,7 @@ func (server *Server) operationResourceRoute(writer http.ResponseWriter, request
 			writeError(writer, http.StatusNotFound, "operation not found")
 			return
 		}
-		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": publicOperationRecord(timeline.Operation), "timeline": publicOperationTimeline(timeline)})
+		writeDiagnosticJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": publicOperationRecord(timeline.Operation), "timeline": publicOperationTimeline(timeline)})
 		return
 	}
 	record, found := server.store.Operation(operationID)
@@ -445,7 +509,7 @@ func (server *Server) operationResourceRoute(writer http.ResponseWriter, request
 			server.writeOperationStoreError(writer, err)
 			return
 		}
-		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": publicOperationRecord(updated)})
+		writeDiagnosticJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": publicOperationRecord(updated)})
 		return
 	}
 	payload := operationActionPayload{}
@@ -467,7 +531,7 @@ func (server *Server) operationResourceRoute(writer http.ResponseWriter, request
 			server.writeOperationActionError(writer, err, updated)
 			return
 		}
-		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": map[string]interface{}{"operation": updated, "checks": checks}})
+		writeDiagnosticJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": map[string]interface{}{"operation": updated, "checks": checks}})
 		return
 	case "plan":
 		updated, plan, err := server.workflow.Plan(request.Context(), adapterRequest)
@@ -475,7 +539,7 @@ func (server *Server) operationResourceRoute(writer http.ResponseWriter, request
 			server.writeOperationActionError(writer, err, updated)
 			return
 		}
-		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": map[string]interface{}{"operation": updated, "plan": plan}})
+		writeDiagnosticJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": map[string]interface{}{"operation": updated, "plan": plan}})
 		return
 	case "verify":
 		verification, err := server.workflow.Verify(request.Context(), adapterRequest)
@@ -483,7 +547,7 @@ func (server *Server) operationResourceRoute(writer http.ResponseWriter, request
 			server.writeOperationActionError(writer, err, record)
 			return
 		}
-		writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": verification})
+		writeDiagnosticJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": verification})
 		return
 	case "execute":
 	default:
@@ -529,14 +593,14 @@ func (server *Server) writeOperationActionError(writer http.ResponseWriter, err 
 	message := publicOperationErrorMessage(err, record)
 	switch {
 	case record.Status == model.OperationIndeterminate:
-		writeJSON(writer, http.StatusInternalServerError, map[string]interface{}{"status": "indeterminate", "message": message, "result": publicRecord})
+		writeDiagnosticJSON(writer, http.StatusInternalServerError, map[string]interface{}{"status": "indeterminate", "message": message, "result": publicRecord})
 	case errors.Is(err, adapter.ErrUnsupported):
-		writeJSON(writer, http.StatusNotImplemented, map[string]interface{}{"status": "unsupported", "message": message, "result": publicRecord})
+		writeDiagnosticJSON(writer, http.StatusNotImplemented, map[string]interface{}{"status": "unsupported", "message": message, "result": publicRecord})
 	case errors.Is(err, workflow.ErrOperationInProgress), errors.Is(err, store.ErrConflict):
-		writeJSON(writer, http.StatusConflict, map[string]interface{}{"status": "error", "message": message, "result": publicRecord})
+		writeDiagnosticJSON(writer, http.StatusConflict, map[string]interface{}{"status": "error", "message": message, "result": publicRecord})
 	case errors.Is(err, store.ErrValidation):
-		writeJSON(writer, http.StatusBadRequest, map[string]interface{}{"status": "error", "message": message, "result": publicRecord})
+		writeDiagnosticJSON(writer, http.StatusBadRequest, map[string]interface{}{"status": "error", "message": message, "result": publicRecord})
 	default:
-		writeJSON(writer, http.StatusConflict, map[string]interface{}{"status": "error", "message": message, "result": publicRecord})
+		writeDiagnosticJSON(writer, http.StatusConflict, map[string]interface{}{"status": "error", "message": message, "result": publicRecord})
 	}
 }

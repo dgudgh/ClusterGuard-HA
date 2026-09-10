@@ -50,7 +50,7 @@ func (tracker *AgentAuthorizationTracker) BeginTransition() func() {
 
 func positiveAgentAuthorization(action agent.ReconcileAction) bool {
 	switch action {
-	case agent.ReconcileKeepVIP, agent.ReconcileTransitionTarget, agent.ReconcileTransitionSource, agent.ReconcileBootstrapPrimary:
+	case agent.ReconcileKeepVIP, agent.ReconcileTransitionTarget, agent.ReconcileTransitionSource, agent.ReconcileBootstrapPrimary, agent.ReconcileRecoveryPrimary, agent.ReconcileRecoveryActivate, agent.ReconcileRecoveryReplica, agent.ReconcileRecoveryPrepare:
 		return true
 	default:
 		return false

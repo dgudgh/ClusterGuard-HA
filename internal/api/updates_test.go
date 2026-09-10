@@ -108,12 +108,13 @@ func TestSoftwareUpdateActionForwardsConfirmationAndSurfacesWarning(t *testing.T
 	}
 }
 
-func TestSoftwareUpdateMaintenanceBlocksExecuteButAllowsResumeAndRollback(t *testing.T) {
+func TestSoftwareUpdateMaintenanceAllowsOnlyControlledUpdateActions(t *testing.T) {
 	for _, test := range []struct {
 		action string
 		want   int
 	}{
-		{action: "execute", want: http.StatusLocked},
+		{action: "plan", want: http.StatusAccepted},
+		{action: "execute", want: http.StatusAccepted},
 		{action: "resume", want: http.StatusAccepted},
 		{action: "rollback", want: http.StatusAccepted},
 	} {
@@ -136,6 +137,52 @@ func TestSoftwareUpdateMaintenanceBlocksExecuteButAllowsResumeAndRollback(t *tes
 				t.Fatalf("status=%d want=%d body=%s", response.Code, test.want, response.Body.String())
 			}
 		})
+	}
+
+	manager := &softwareUpdateManagerStub{packageValue: platformupdate.Package{
+		PatchID: "cgpatch-2.2-1-to-2.2-2", TargetVersion: "2.2-2", SignatureVerified: true,
+	}}
+	server := NewServer(nil, store.NewMemory(), nil, nil,
+		WithControlToken(testControlToken), WithSoftwareUpdates(manager),
+		WithMutationMaintenance(mutationMaintenanceStub{err: context.DeadlineExceeded}),
+	)
+	body, contentType := updateUploadBody(t, "recovery.cgupgrade", "signed recovery package")
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/platform/updates", bytes.NewReader(body))
+	request.Header.Set("Content-Type", contentType)
+	request.Header.Set("Authorization", "Bearer "+testControlToken)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusCreated || manager.uploadName != "recovery.cgupgrade" {
+		t.Fatalf("maintenance recovery upload status=%d body=%s manager=%+v", response.Code, response.Body.String(), manager)
+	}
+}
+
+func TestSoftwareUpdateReplicatedGateUsesExecutionOwnershipDuringMaintenance(t *testing.T) {
+	repository := store.NewMemory()
+	manager := &softwareUpdateManagerStub{}
+	server := NewServer(nil, repository, nil, nil,
+		WithControlToken(testControlToken), WithSoftwareUpdates(manager),
+		WithMutationMaintenance(mutationMaintenanceStub{err: context.DeadlineExceeded}),
+	)
+	call := func(action, executionID string) *httptest.ResponseRecorder {
+		t.Helper()
+		payload := `{"patch_id":"cgupgrade-2.2-68-to-2.2-72-x86_64","execution_id":"` + executionID + `"}`
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/platform/updates/gate/"+action, strings.NewReader(payload))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Authorization", "Bearer "+testControlToken)
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, request)
+		return response
+	}
+
+	if response := call("acquire", "execution-1"); response.Code != http.StatusOK || !repository.SoftwareUpdateMaintenanceActive() {
+		t.Fatalf("acquire replicated gate: status=%d body=%s", response.Code, response.Body.String())
+	}
+	if response := call("release", "execution-2"); response.Code != http.StatusConflict || !repository.SoftwareUpdateMaintenanceActive() {
+		t.Fatalf("foreign release: status=%d body=%s", response.Code, response.Body.String())
+	}
+	if response := call("release", "execution-1"); response.Code != http.StatusOK || repository.SoftwareUpdateMaintenanceActive() {
+		t.Fatalf("owned release: status=%d body=%s", response.Code, response.Body.String())
 	}
 }
 

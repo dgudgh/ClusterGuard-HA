@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"clusterguard.io/ha/internal/coordination"
 	"clusterguard.io/ha/pkg/model"
 )
 
@@ -305,6 +306,46 @@ func TestFinalizeOperationAtomicallyPersistsTerminalTimeline(t *testing.T) {
 	}
 	if finalized.Status != model.OperationSucceeded || finalized.Stage != model.StageReport || len(repository.Audits()) != 2 || len(repository.Reports()) != 1 {
 		t.Fatalf("atomic finalization mismatch: operation=%+v audits=%+v reports=%+v", finalized, repository.Audits(), repository.Reports())
+	}
+}
+
+func TestFinalizeAbandonedOperationChecksProgressAndLeaseAtomically(t *testing.T) {
+	repository := NewMemory()
+	now := time.Date(2026, 9, 7, 6, 0, 0, 0, time.UTC)
+	repository.now = func() time.Time { return now.Add(-time.Hour) }
+	created, _, err := repository.CreateOperation(operationFixture())
+	if err != nil {
+		t.Fatalf("create operation: %v", err)
+	}
+	created, err = repository.TransitionOperation(created.ResourceID, created.MetadataRevision, model.OperationTransition{
+		Stage: model.StagePlan, Status: model.OperationRunning, Message: "planned",
+	})
+	if err != nil {
+		t.Fatalf("make operation running: %v", err)
+	}
+	repository.now = func() time.Time { return now }
+	transition := model.OperationTransition{Stage: model.StagePlan, Status: model.OperationFailed, FailureClass: "abandoned_pre_commit", Message: "executor stopped"}
+	audits := []model.AuditEvent{{OperationID: created.ResourceID, Stage: model.StagePlan, Message: "executor stopped"}}
+	reports := []model.Report{{OperationID: created.ResourceID, Title: "recovery report", Status: model.OperationFailed, Summary: "executor stopped"}}
+
+	if err := repository.PutCoordinationOperationLock(coordination.OperationLockRecord{
+		ResourceID: model.NewResourceID(), ClusterID: created.Operation.ClusterID, OperationID: created.ResourceID,
+		CreatedAt: now.Add(-time.Minute), UpdatedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("put live operation lock: %v", err)
+	}
+	if _, finalized, err := repository.FinalizeAbandonedOperation(created.ResourceID, created.MetadataRevision, now, now.Add(-30*time.Minute), transition, audits, reports); err != nil || finalized {
+		t.Fatalf("live lease allowed abandoned finalization: finalized=%t err=%v", finalized, err)
+	}
+	if err := repository.DeleteCoordinationOperationLock(repository.CoordinationOperationLocks()[0].ResourceID); err != nil {
+		t.Fatalf("delete operation lock: %v", err)
+	}
+	if _, finalized, err := repository.FinalizeAbandonedOperation(created.ResourceID, created.MetadataRevision+1, now, now.Add(-30*time.Minute), transition, audits, reports); err != nil || finalized {
+		t.Fatalf("revision race allowed abandoned finalization: finalized=%t err=%v", finalized, err)
+	}
+	finalized, applied, err := repository.FinalizeAbandonedOperation(created.ResourceID, created.MetadataRevision, now, now.Add(-30*time.Minute), transition, audits, reports)
+	if err != nil || !applied || finalized.Status != model.OperationFailed || len(repository.Audits()) != 1 || len(repository.Reports()) != 1 {
+		t.Fatalf("abandoned finalization mismatch: applied=%t operation=%+v audits=%d reports=%d err=%v", applied, finalized, len(repository.Audits()), len(repository.Reports()), err)
 	}
 }
 

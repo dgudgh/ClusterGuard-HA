@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"clusterguard.io/ha/pkg/model"
+	"clusterguard.io/ha/pkg/redact"
 )
 
 const maximumAPIResponseBytes = 8 << 20
@@ -244,8 +245,19 @@ func run(arguments []string, stdout io.Writer, stderr io.Writer, client httpDoer
 		if message == "" {
 			message = response.Status
 		}
-		_, _ = fmt.Fprintln(stderr, "cgctl:", message)
+		_, _ = fmt.Fprintln(stderr, "cgctl:", redact.Text(message, controlToken))
 		return 1
+	}
+	issueApproval := len(flags.Args()) >= 2 && flags.Args()[0] == "approval" && flags.Args()[1] == "issue"
+	if !issueApproval {
+		raw, err = redact.JSON(raw)
+		if err != nil {
+			_, _ = fmt.Fprintln(stderr, "cgctl: invalid diagnostic response")
+			return 1
+		}
+		if err = json.Unmarshal(raw, &envelope); err != nil {
+			return 1
+		}
 	}
 	if *jsonOutput {
 		var formatted bytes.Buffer
@@ -856,6 +868,12 @@ func powerAPIPost(client httpDoer, serverURL string, tokenEnv string, path strin
 // powerResponse renders the envelope as indented JSON (--json) or the
 // tab-separated human view.
 func powerResponse(stdout io.Writer, stderr io.Writer, jsonOutput bool, envelope apiEnvelope, action string) int {
+	var err error
+	envelope.Result, err = redact.JSON(envelope.Result)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "cgctl: invalid diagnostic response")
+		return 1
+	}
 	if jsonOutput {
 		var formatted bytes.Buffer
 		if err := json.Indent(&formatted, envelope.Result, "", "  "); err != nil {

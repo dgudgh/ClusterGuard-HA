@@ -341,7 +341,7 @@ func TestRunRefreshFailsBeforeRequestWhenControlTokenEnvironmentIsEmpty(t *testi
 	}
 }
 
-func TestRunJSONPrintsIndentedRawAPIResponse(t *testing.T) {
+func TestRunJSONPrintsIndentedDiagnosticAPIResponse(t *testing.T) {
 	server := testAPIServer(t, `{"status":"ok","result":[{"resource_id":"11111111-1111-4111-8111-111111111111","display_name":"orders","engine":"mysql"}]}`)
 	defer server.Close()
 
@@ -350,9 +350,8 @@ func TestRunJSONPrintsIndentedRawAPIResponse(t *testing.T) {
 	if exitCode != 0 || stderr.Len() != 0 {
 		t.Fatalf("run exit=%d stderr=%q", exitCode, stderr.String())
 	}
-	want := "{\n  \"status\": \"ok\",\n  \"result\": ["
-	if !strings.Contains(stdout.String(), want) || !strings.Contains(stdout.String(), `"display_name": "orders"`) {
-		t.Fatalf("JSON output is not indented raw response:\n%s", stdout.String())
+	if !json.Valid(stdout.Bytes()) || !strings.Contains(stdout.String(), "\n  \"result\": [") || !strings.Contains(stdout.String(), `"display_name": "orders"`) || !strings.Contains(stdout.String(), `"status": "ok"`) {
+		t.Fatalf("JSON output is not an indented diagnostic response:\n%s", stdout.String())
 	}
 }
 

@@ -21,6 +21,7 @@ import (
 	"clusterguard.io/ha/pkg/adapter"
 	"clusterguard.io/ha/pkg/identity"
 	"clusterguard.io/ha/pkg/model"
+	"clusterguard.io/ha/pkg/redact"
 )
 
 const maximumJSONBodyBytes = 1 << 20
@@ -47,6 +48,9 @@ type Server struct {
 	controlPlane          ControlPlaneStatusProvider
 	maintenance           MutationMaintenance
 	softwareUpdates       SoftwareUpdateManager
+	disasterRecovery      DisasterRecoveryManager
+	runRecovery           func(func(context.Context))
+	recoveryExecutions    sync.Map
 	sessionOperationMu    sync.Mutex
 	sessionOperationGates map[string]*sessionOperationExecutionGate
 	startedAt             time.Time
@@ -159,7 +163,19 @@ func writeJSON(writer http.ResponseWriter, status int, value interface{}) {
 }
 
 func writeError(writer http.ResponseWriter, status int, message string) {
-	writeJSON(writer, status, map[string]interface{}{"status": "error", "message": message})
+	writeJSON(writer, status, map[string]interface{}{"status": "error", "message": redact.Text(message)})
+}
+
+func writeDiagnosticJSON(writer http.ResponseWriter, status int, value interface{}) {
+	data, err := json.Marshal(value)
+	if err == nil {
+		data, err = redact.JSON(data)
+	}
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, "diagnostic serialization failed")
+		return
+	}
+	writeJSON(writer, status, json.RawMessage(data))
 }
 
 func decode(request *http.Request, value interface{}) error {
@@ -418,7 +434,7 @@ func (server *Server) authorizeMonitoring(writer http.ResponseWriter, request *h
 }
 
 func (server *Server) authorizeMutation(writer http.ResponseWriter, request *http.Request) bool {
-	if server.maintenance != nil && !softwareUpdateRecoveryRoute(request.Method, request.URL.Path) {
+	if server.maintenance != nil && !softwareUpdateMaintenanceRoute(request.Method, request.URL.Path) {
 		if err := server.maintenance.Check(request.Context()); err != nil {
 			writeJSON(writer, http.StatusLocked, map[string]interface{}{
 				"status": "blocked", "message": "software update maintenance is active; mutating operations are temporarily locked",
@@ -426,6 +442,10 @@ func (server *Server) authorizeMutation(writer http.ResponseWriter, request *htt
 			return false
 		}
 	}
+	return server.authorizeLeaderQuorum(writer, request)
+}
+
+func (server *Server) authorizeLeaderQuorum(writer http.ResponseWriter, request *http.Request) bool {
 	if server.authority == nil {
 		return true
 	}

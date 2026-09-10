@@ -389,6 +389,10 @@ func safePostgreSQLDataDirectory(value string) (string, error) {
 }
 
 func appendPostgreSQLRecoveryIdentity(path, connection string, policy ClusterPolicy, source PostgreSQLPeer) error {
+	slot, err := recoveryReplicationSlot(policy)
+	if err != nil {
+		return err
+	}
 	if info, err := os.Lstat(path); err == nil {
 		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 			return fmt.Errorf("PostgreSQL recovery configuration must be a regular file")
@@ -407,7 +411,7 @@ func appendPostgreSQLRecoveryIdentity(path, connection string, policy ClusterPol
 		configuration += "clusterguard.hostname = " + postgresqlSQLLiteral(hostname) + "\n"
 	}
 	configuration += "primary_conninfo = " + postgresqlSQLLiteral(connection) + "\n"
-	configuration += "primary_slot_name = ''\n"
+	configuration += "primary_slot_name = " + postgresqlSQLLiteral(slot) + "\n"
 	if _, err := file.WriteString(configuration); err != nil {
 		_ = file.Close()
 		return fmt.Errorf("write PostgreSQL recovery configuration: %w", err)
@@ -465,8 +469,10 @@ func (controller *PostgreSQLLocalController) BaseBackup(ctx context.Context, pol
 	if err != nil {
 		return err
 	}
-	stageDirectory := dataDirectory + ".clusterguard-stage"
-	backupDirectory := dataDirectory + ".clusterguard-backup"
+	stageDirectory, backupDirectory, err := recoveryPostgreSQLDirectories(policy, dataDirectory)
+	if err != nil {
+		return err
+	}
 	if exists, err := postgreSQLPathExists(backupDirectory); err != nil {
 		return fmt.Errorf("inspect PostgreSQL backup quarantine: %w", err)
 	} else if exists {
@@ -478,11 +484,19 @@ func (controller *PostgreSQLLocalController) BaseBackup(ctx context.Context, pol
 	if err := controller.Stop(ctx, policy); err != nil {
 		return err
 	}
-	if _, err := controller.runAsPostgreSQLUser(ctx, policy, filepath.Join(policy.PostgreSQLBinaryDirectory, "pg_basebackup"),
+	backupArgs := []string{
 		"--pgdata", stageDirectory,
 		"--dbname", connection,
 		"--write-recovery-conf", "--checkpoint", "fast", "--wal-method", "stream", "--progress", "--no-password",
-	); err != nil {
+	}
+	slot, err := recoveryReplicationSlot(policy)
+	if err != nil {
+		return err
+	}
+	if slot != "" {
+		backupArgs = append(backupArgs, "--slot", slot)
+	}
+	if _, err := controller.runAsPostgreSQLUser(ctx, policy, filepath.Join(policy.PostgreSQLBinaryDirectory, "pg_basebackup"), backupArgs...); err != nil {
 		_ = os.RemoveAll(stageDirectory)
 		return fmt.Errorf("take PostgreSQL base backup: %w", err)
 	}
@@ -526,7 +540,7 @@ func (controller *PostgreSQLLocalController) BaseBackup(ctx context.Context, pol
 		}
 		return fmt.Errorf("PostgreSQL base backup verification failed; original data restored and service left stopped: start=%v source=%v", startErr, sourceErr)
 	}
-	if hadOriginal {
+	if hadOriginal && policy.RecoveryArchiveID == "" {
 		if err := os.RemoveAll(backupDirectory); err != nil {
 			return fmt.Errorf("remove verified PostgreSQL backup quarantine: %w", err)
 		}

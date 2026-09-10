@@ -280,6 +280,16 @@ contents:
     expand: true
     file_info:
       mode: 0644
+  - src: ${CG_RPM_STAGE}/docs/update-maintenance-gate-incident-2026-09-07.md
+    dst: /usr/share/doc/clusterguard-ha/升级维护门禁失败复盘-2026-09-07.md
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${CG_RPM_STAGE}/docs/release-2.2.72.md
+    dst: /usr/share/doc/clusterguard-ha/版本说明-2.2-72.md
+    expand: true
+    file_info:
+      mode: 0644
   - src: ${CG_RPM_STAGE}/docs/docker-swarm-mysql.md
     dst: /usr/share/doc/clusterguard-ha/Docker-Swarm-MySQL.md
     expand: true

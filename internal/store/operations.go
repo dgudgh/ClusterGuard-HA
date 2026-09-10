@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"clusterguard.io/ha/pkg/model"
+	"clusterguard.io/ha/pkg/redact"
 )
 
 const maximumOperationReviewNoteLength = 1024
@@ -185,12 +186,12 @@ func (repository *Repository) OperationTimeline(resourceID model.ResourceID) (Op
 	timeline := OperationTimeline{Operation: cloneOperationRecord(operation), Audits: []model.AuditEvent{}, Reports: []model.Report{}}
 	for _, event := range repository.snapshot.Audits {
 		if event.OperationID == resourceID {
-			timeline.Audits = append(timeline.Audits, event)
+			timeline.Audits = append(timeline.Audits, redactAudit(event))
 		}
 	}
 	for _, report := range repository.snapshot.Reports {
 		if report.OperationID == resourceID {
-			timeline.Reports = append(timeline.Reports, report)
+			timeline.Reports = append(timeline.Reports, redactReport(report))
 		}
 	}
 	return timeline, true
@@ -344,23 +345,33 @@ func applyOperationTransition(operation model.OperationRecord, transition model.
 	}
 	if transition.Precheck != nil {
 		operation.Precheck = append([]model.Check{}, transition.Precheck...)
+		for i := range operation.Precheck {
+			operation.Precheck[i].Message = redact.Text(operation.Precheck[i].Message)
+		}
 	}
 	if transition.Attempt != nil {
 		if err := validateAttempt(operation.Attempts, *transition.Attempt); err != nil {
 			return model.OperationRecord{}, err
 		}
-		operation.Attempts = append(operation.Attempts, *transition.Attempt)
+		attempt := *transition.Attempt
+		attempt.Message = redact.Text(attempt.Message)
+		operation.Attempts = append(operation.Attempts, attempt)
 	}
 	if transition.Execution != nil {
 		operation.Execution = *transition.Execution
 		operation.Execution.OperationID = operation.ResourceID
+		operation.Execution.Message = redact.Text(operation.Execution.Message)
 	}
 	if transition.Verification != nil {
 		operation.Verification = *transition.Verification
 		operation.Verification.OperationID = operation.ResourceID
+		operation.Verification.Checks = append([]model.Check{}, operation.Verification.Checks...)
+		for i := range operation.Verification.Checks {
+			operation.Verification.Checks[i].Message = redact.Text(operation.Verification.Checks[i].Message)
+		}
 	}
 	operation.FailureClass = strings.TrimSpace(transition.FailureClass)
-	operation.Message = strings.TrimSpace(transition.Message)
+	operation.Message = redact.Text(strings.TrimSpace(transition.Message))
 	operation.MetadataRevision++
 	operation.UpdatedAt = now.UTC()
 	operation.Operation.MetadataRevision = operation.MetadataRevision
@@ -491,6 +502,7 @@ func (repository *Repository) ReviewIndeterminateOperation(resourceID model.Reso
 }
 
 func normalizeFinalAudit(event model.AuditEvent, operationID model.ResourceID, now time.Time) (model.AuditEvent, error) {
+	event = redactAudit(event)
 	if event.OperationID != "" && event.OperationID != operationID {
 		return model.AuditEvent{}, validationError("audit operation ID does not match operation")
 	}
@@ -510,6 +522,7 @@ func normalizeFinalAudit(event model.AuditEvent, operationID model.ResourceID, n
 }
 
 func upsertFinalReport(reports []model.Report, report model.Report, operationID model.ResourceID, now time.Time) ([]model.Report, error) {
+	report = redactReport(report)
 	if !terminalReportStatus(report.Status) {
 		return nil, validationError("report status must be terminal")
 	}
@@ -544,13 +557,7 @@ func upsertFinalReport(reports []model.Report, report model.Report, operationID 
 	return append(reports, report), nil
 }
 
-// FinalizeOperation publishes the terminal operation, its audit events, and its
-// reports as one repository snapshot so readers cannot observe a partial result.
-func (repository *Repository) FinalizeOperation(resourceID model.ResourceID, expectedRevision uint64, transition model.OperationTransition, audits []model.AuditEvent, reports []model.Report) (model.OperationRecord, error) {
-	repository.mutationMu.Lock()
-	defer repository.mutationMu.Unlock()
-	repository.mu.Lock()
-	defer repository.mu.Unlock()
+func (repository *Repository) finalizeOperationLocked(resourceID model.ResourceID, expectedRevision uint64, transition model.OperationTransition, audits []model.AuditEvent, reports []model.Report) (model.OperationRecord, error) {
 	operation, found := repository.snapshot.Operations[resourceID]
 	if !found {
 		return model.OperationRecord{}, validationError("operation does not exist")
@@ -586,6 +593,59 @@ func (repository *Repository) FinalizeOperation(resourceID model.ResourceID, exp
 		return cloneOperationRecord(operation), err
 	}
 	return cloneOperationRecord(operation), nil
+}
+
+// FinalizeOperation publishes the terminal operation, its audit events, and its
+// reports as one repository snapshot so readers cannot observe a partial result.
+func (repository *Repository) FinalizeOperation(resourceID model.ResourceID, expectedRevision uint64, transition model.OperationTransition, audits []model.AuditEvent, reports []model.Report) (model.OperationRecord, error) {
+	repository.mutationMu.Lock()
+	defer repository.mutationMu.Unlock()
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	return repository.finalizeOperationLocked(resourceID, expectedRevision, transition, audits, reports)
+}
+
+// FinalizeAbandonedOperation atomically proves that a running operation is
+// stale and does not own an unexpired distributed lease before publishing its
+// terminal timeline. A concurrent progress update or lease acquisition makes
+// the candidate ineligible instead of allowing recovery to race the executor.
+func (repository *Repository) FinalizeAbandonedOperation(
+	resourceID model.ResourceID,
+	expectedRevision uint64,
+	observedAt time.Time,
+	staleBefore time.Time,
+	transition model.OperationTransition,
+	audits []model.AuditEvent,
+	reports []model.Report,
+) (model.OperationRecord, bool, error) {
+	observedAt = observedAt.UTC()
+	staleBefore = staleBefore.UTC()
+	if observedAt.IsZero() || staleBefore.IsZero() || staleBefore.After(observedAt) {
+		return model.OperationRecord{}, false, validationError("abandoned operation recovery window is invalid")
+	}
+	repository.mutationMu.Lock()
+	defer repository.mutationMu.Unlock()
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+
+	operation, found := repository.snapshot.Operations[resourceID]
+	if !found {
+		return model.OperationRecord{}, false, validationError("operation does not exist")
+	}
+	if operation.MetadataRevision != expectedRevision || operation.Status != model.OperationRunning ||
+		operation.UpdatedAt.IsZero() || operation.UpdatedAt.After(staleBefore) {
+		return cloneOperationRecord(operation), false, nil
+	}
+	for _, record := range repository.snapshot.OperationLocks {
+		if record.OperationID == resourceID && record.ExpiresAt.After(observedAt) {
+			return cloneOperationRecord(operation), false, nil
+		}
+	}
+	finalized, err := repository.finalizeOperationLocked(resourceID, expectedRevision, transition, audits, reports)
+	if err != nil {
+		return finalized, false, err
+	}
+	return finalized, true, nil
 }
 
 func (repository *Repository) Operations(clusterID model.ResourceID) []model.OperationRecord {

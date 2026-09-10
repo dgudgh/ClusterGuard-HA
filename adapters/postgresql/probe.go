@@ -12,7 +12,7 @@ import (
 )
 
 const identityQuery = `WITH receiver AS (
-  SELECT status, received_tli, latest_end_lsn
+  SELECT status, received_tli, latest_end_lsn, sender_host, sender_port
   FROM pg_stat_wal_receiver
   LIMIT 1
 )
@@ -30,6 +30,12 @@ SELECT row_to_json(clusterguard_probe) FROM (
     current_setting('transaction_read_only') AS transaction_read_only,
     CASE WHEN pg_is_in_recovery() THEN pg_is_wal_replay_paused() ELSE false END AS replay_paused,
     COALESCE((SELECT status FROM receiver), '') AS wal_receiver_status,
+    COALESCE((SELECT sender_host FROM receiver), '') AS receiver_sender_host,
+    COALESCE((SELECT sender_port::text FROM receiver), '') AS receiver_sender_port,
+    COALESCE((SELECT json_agg(json_build_object(
+      'application_name', application_name, 'state', state,
+      'client_addr', client_addr::text, 'replay_lsn', replay_lsn::text
+    ))::text FROM pg_stat_replication), '[]') AS replication_senders,
     CASE WHEN pg_is_in_recovery() THEN '' ELSE pg_current_wal_lsn()::text END AS current_lsn,
     COALESCE(pg_last_wal_receive_lsn()::text, '') AS receive_lsn,
     COALESCE(pg_last_wal_replay_lsn()::text, '') AS replay_lsn,
@@ -96,6 +102,10 @@ func discover(ctx context.Context, runner SQLRunner, request adapter.DiscoverReq
 	if err != nil {
 		return adapter.DiscoveryResult{}, err
 	}
+	evidence, err := parseStreamingEvidence(rows[0])
+	if err != nil {
+		return adapter.DiscoveryResult{}, err
+	}
 
 	hostname := probe.hostname
 	if hostname == "" {
@@ -155,7 +165,7 @@ func discover(ctx context.Context, runner SQLRunner, request adapter.DiscoverReq
 		instance.Health.State = model.HealthHealthy
 		instance.Health.Summary = "PostgreSQL primary is reachable and writable"
 		instance.Health.Replication = "primary"
-		return adapter.DiscoveryResult{Instance: instance}, nil
+		return adapter.DiscoveryResult{Instance: instance, TopologyEvidence: evidence}, nil
 	}
 	if probe.inRecovery {
 		instance.Role = model.RoleStandby
@@ -181,7 +191,7 @@ func discover(ctx context.Context, runner SQLRunner, request adapter.DiscoverReq
 			instance.Health.Summary = "PostgreSQL standby lacks safe streaming or identity evidence"
 		}
 	}
-	return adapter.DiscoveryResult{Instance: instance}, nil
+	return adapter.DiscoveryResult{Instance: instance, TopologyEvidence: evidence}, nil
 }
 
 func parseIdentityProbe(row Row) (identityProbe, error) {

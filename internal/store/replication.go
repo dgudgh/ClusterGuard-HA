@@ -87,6 +87,14 @@ func snapshotDigest(value snapshot) (string, error) {
 
 func normalizeSnapshot(value snapshot) (snapshot, error) {
 	normalized := value
+	if normalized.RecoveryTasks == nil {
+		normalized.RecoveryTasks = map[model.ResourceID]model.RecoveryTask{}
+	}
+	for id, task := range normalized.RecoveryTasks {
+		if id != task.ResourceID || !model.ValidResourceID(id) || !model.ValidResourceID(task.ClusterID) || !task.Stage.Valid() {
+			return snapshot{}, fmt.Errorf("invalid disaster recovery task")
+		}
+	}
 	if normalized.Clusters == nil {
 		normalized.Clusters = map[model.ResourceID]model.DatabaseCluster{}
 	}
@@ -172,6 +180,13 @@ func normalizeSnapshot(value snapshot) (snapshot, error) {
 	}
 	if normalized.OperationLocks == nil {
 		normalized.OperationLocks = map[model.ResourceID]coordination.OperationLockRecord{}
+	}
+	if normalized.SoftwareUpdateGate != nil {
+		gate := *normalized.SoftwareUpdateGate
+		if err := validateSoftwareUpdateGate(gate); err != nil {
+			return snapshot{}, err
+		}
+		normalized.SoftwareUpdateGate = &gate
 	}
 	if normalized.LifecycleTasks == nil {
 		normalized.LifecycleTasks = map[model.ResourceID]lifecycle.Task{}

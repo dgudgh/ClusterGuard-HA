@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"clusterguard.io/ha/pkg/model"
+	"clusterguard.io/ha/pkg/redact"
 )
 
 const (
@@ -37,6 +38,16 @@ const (
 	CommandMySQLServiceStart      = "mysql_service_start"
 	CommandMySQLPowerStatus       = "mysql_power_status"
 	CommandPowerPrepare           = "power_prepare_recovery"
+	CommandRecoveryInspect        = "recovery_inspect"
+	CommandRecoveryQuiesce        = "recovery_quiesce"
+	CommandRecoveryWAL            = "recovery_wal"
+	CommandRecoveryGuard          = "recovery_guard"
+	CommandRecoveryStart          = "recovery_start"
+	CommandRecoveryCapabilities   = "recovery_capabilities"
+	CommandRecoveryReplicaGuard   = "recovery_replica_guard"
+	CommandRecoveryReplicaRelease = "recovery_replica_release"
+	CommandRecoveryRebuild        = "recovery_rebuild"
+	CommandRecoveryFencedStart    = "recovery_fenced_start"
 	CommandNodePoweroff           = "node_poweroff"
 
 	StatusOK      = "ok"
@@ -45,72 +56,81 @@ const (
 )
 
 type Request struct {
-	Command          string               `json:"command"`
-	Engine           model.Engine         `json:"engine,omitempty"`
-	ClusterID        model.ResourceID     `json:"cluster_id"`
-	OperationID      model.ResourceID     `json:"operation_id"`
-	LeaseID          model.ResourceID     `json:"lease_id,omitempty"`
-	PlanDigest       string               `json:"plan_digest"`
-	ExpiresAt        time.Time            `json:"expires_at"`
-	VIP              string               `json:"vip,omitempty"`
-	Interface        string               `json:"interface,omitempty"`
-	Prefix           int                  `json:"prefix,omitempty"`
-	ReadOnly         bool                 `json:"read_only,omitempty"`
-	SourceInstanceID model.ResourceID     `json:"source_instance_id,omitempty"`
-	SourceNodeID     model.ResourceID     `json:"source_node_id,omitempty"`
-	SourceHostname   string               `json:"source_hostname,omitempty"`
-	SourceIPAddress  string               `json:"source_ip_address,omitempty"`
-	SourcePort       int                  `json:"source_port,omitempty"`
-	OracleTarget     string               `json:"oracle_target,omitempty"`
-	PowerSnapshot    *model.PowerSnapshot `json:"power_snapshot,omitempty"`
-	Signature        string               `json:"signature"`
+	RecoveryTaskID      model.ResourceID          `json:"recovery_task_id,omitempty"`
+	RecoveryFingerprint string                    `json:"recovery_fingerprint,omitempty"`
+	Command             string                    `json:"command"`
+	Engine              model.Engine              `json:"engine,omitempty"`
+	ClusterID           model.ResourceID          `json:"cluster_id"`
+	OperationID         model.ResourceID          `json:"operation_id"`
+	LeaseID             model.ResourceID          `json:"lease_id,omitempty"`
+	PlanDigest          string                    `json:"plan_digest"`
+	ExpiresAt           time.Time                 `json:"expires_at"`
+	VIP                 string                    `json:"vip,omitempty"`
+	Interface           string                    `json:"interface,omitempty"`
+	Prefix              int                       `json:"prefix,omitempty"`
+	ReadOnly            bool                      `json:"read_only,omitempty"`
+	SourceInstanceID    model.ResourceID          `json:"source_instance_id,omitempty"`
+	SourceNodeID        model.ResourceID          `json:"source_node_id,omitempty"`
+	SourceHostname      string                    `json:"source_hostname,omitempty"`
+	SourceIPAddress     string                    `json:"source_ip_address,omitempty"`
+	SourcePort          int                       `json:"source_port,omitempty"`
+	OracleTarget        string                    `json:"oracle_target,omitempty"`
+	PowerSnapshot       *model.PowerSnapshot      `json:"power_snapshot,omitempty"`
+	RecoveryWAL         *model.RecoveryWALRequest `json:"recovery_wal,omitempty"`
+	Signature           string                    `json:"signature"`
 }
 
 type Response struct {
-	Status                    string           `json:"status"`
-	Message                   string           `json:"message"`
-	Error                     string           `json:"error,omitempty"`
-	OwnsVIP                   *bool            `json:"owns_vip,omitempty"`
-	ReadOnly                  *bool            `json:"read_only,omitempty"`
-	SuperReadOnly             *bool            `json:"super_read_only,omitempty"`
-	ServiceRunning            *bool            `json:"service_running,omitempty"`
-	DatabaseReachable         *bool            `json:"database_reachable,omitempty"`
-	RestartReadOnly           *bool            `json:"restart_read_only,omitempty"`
-	PersistedReadOnly         *bool            `json:"persisted_read_only,omitempty"`
-	InRecovery                *bool            `json:"in_recovery,omitempty"`
-	ClusterID                 model.ResourceID `json:"cluster_id,omitempty"`
-	InstanceID                model.ResourceID `json:"instance_id,omitempty"`
-	OracleDBID                string           `json:"oracle_dbid,omitempty"`
-	OracleDatabase            string           `json:"oracle_database,omitempty"`
-	OracleInstanceName        string           `json:"oracle_instance_name,omitempty"`
-	OracleRole                string           `json:"oracle_role,omitempty"`
-	OracleDatabaseStatus      string           `json:"oracle_database_status,omitempty"`
-	OracleConfigurationStatus string           `json:"oracle_configuration_status,omitempty"`
-	OracleBrokerEnabled       bool             `json:"oracle_broker_enabled,omitempty"`
-	OracleReadyForSwitchover  *bool            `json:"oracle_ready_for_switchover,omitempty"`
-	OracleTransportLagSeconds *int64           `json:"oracle_transport_lag_seconds,omitempty"`
-	OracleApplyLagSeconds     *int64           `json:"oracle_apply_lag_seconds,omitempty"`
+	RecoveryVersion           int                      `json:"recovery_version,omitempty"`
+	RecoveryEvidence          *model.RecoveryEvidence  `json:"recovery_evidence,omitempty"`
+	RecoveryWAL               *model.RecoveryWALResult `json:"recovery_wal,omitempty"`
+	Status                    string                   `json:"status"`
+	Message                   string                   `json:"message"`
+	Error                     string                   `json:"error,omitempty"`
+	OwnsVIP                   *bool                    `json:"owns_vip,omitempty"`
+	ReadOnly                  *bool                    `json:"read_only,omitempty"`
+	SuperReadOnly             *bool                    `json:"super_read_only,omitempty"`
+	ServiceRunning            *bool                    `json:"service_running,omitempty"`
+	DatabaseReachable         *bool                    `json:"database_reachable,omitempty"`
+	RestartReadOnly           *bool                    `json:"restart_read_only,omitempty"`
+	PersistedReadOnly         *bool                    `json:"persisted_read_only,omitempty"`
+	InRecovery                *bool                    `json:"in_recovery,omitempty"`
+	ClusterID                 model.ResourceID         `json:"cluster_id,omitempty"`
+	InstanceID                model.ResourceID         `json:"instance_id,omitempty"`
+	OracleDBID                string                   `json:"oracle_dbid,omitempty"`
+	OracleDatabase            string                   `json:"oracle_database,omitempty"`
+	OracleInstanceName        string                   `json:"oracle_instance_name,omitempty"`
+	OracleRole                string                   `json:"oracle_role,omitempty"`
+	OracleDatabaseStatus      string                   `json:"oracle_database_status,omitempty"`
+	OracleConfigurationStatus string                   `json:"oracle_configuration_status,omitempty"`
+	OracleBrokerEnabled       bool                     `json:"oracle_broker_enabled,omitempty"`
+	OracleReadyForSwitchover  *bool                    `json:"oracle_ready_for_switchover,omitempty"`
+	OracleTransportLagSeconds *int64                   `json:"oracle_transport_lag_seconds,omitempty"`
+	OracleApplyLagSeconds     *int64                   `json:"oracle_apply_lag_seconds,omitempty"`
 }
 
 type unsignedRequest struct {
-	Command          string               `json:"command"`
-	Engine           model.Engine         `json:"engine,omitempty"`
-	ClusterID        model.ResourceID     `json:"cluster_id"`
-	OperationID      model.ResourceID     `json:"operation_id"`
-	LeaseID          model.ResourceID     `json:"lease_id,omitempty"`
-	PlanDigest       string               `json:"plan_digest"`
-	ExpiresAt        time.Time            `json:"expires_at"`
-	VIP              string               `json:"vip,omitempty"`
-	Interface        string               `json:"interface,omitempty"`
-	Prefix           int                  `json:"prefix,omitempty"`
-	ReadOnly         bool                 `json:"read_only,omitempty"`
-	SourceInstanceID model.ResourceID     `json:"source_instance_id,omitempty"`
-	SourceNodeID     model.ResourceID     `json:"source_node_id,omitempty"`
-	SourceHostname   string               `json:"source_hostname,omitempty"`
-	SourceIPAddress  string               `json:"source_ip_address,omitempty"`
-	SourcePort       int                  `json:"source_port,omitempty"`
-	OracleTarget     string               `json:"oracle_target,omitempty"`
-	PowerSnapshot    *model.PowerSnapshot `json:"power_snapshot,omitempty"`
+	RecoveryTaskID      model.ResourceID          `json:"recovery_task_id,omitempty"`
+	RecoveryFingerprint string                    `json:"recovery_fingerprint,omitempty"`
+	RecoveryWAL         *model.RecoveryWALRequest `json:"recovery_wal,omitempty"`
+	Command             string                    `json:"command"`
+	Engine              model.Engine              `json:"engine,omitempty"`
+	ClusterID           model.ResourceID          `json:"cluster_id"`
+	OperationID         model.ResourceID          `json:"operation_id"`
+	LeaseID             model.ResourceID          `json:"lease_id,omitempty"`
+	PlanDigest          string                    `json:"plan_digest"`
+	ExpiresAt           time.Time                 `json:"expires_at"`
+	VIP                 string                    `json:"vip,omitempty"`
+	Interface           string                    `json:"interface,omitempty"`
+	Prefix              int                       `json:"prefix,omitempty"`
+	ReadOnly            bool                      `json:"read_only,omitempty"`
+	SourceInstanceID    model.ResourceID          `json:"source_instance_id,omitempty"`
+	SourceNodeID        model.ResourceID          `json:"source_node_id,omitempty"`
+	SourceHostname      string                    `json:"source_hostname,omitempty"`
+	SourceIPAddress     string                    `json:"source_ip_address,omitempty"`
+	SourcePort          int                       `json:"source_port,omitempty"`
+	OracleTarget        string                    `json:"oracle_target,omitempty"`
+	PowerSnapshot       *model.PowerSnapshot      `json:"power_snapshot,omitempty"`
 }
 
 func canonicalRequest(request Request) ([]byte, error) {
@@ -120,7 +140,8 @@ func canonicalRequest(request Request) ([]byte, error) {
 		Engine: request.Engine, VIP: request.VIP, Interface: request.Interface, Prefix: request.Prefix, ReadOnly: request.ReadOnly,
 		SourceInstanceID: request.SourceInstanceID, SourceNodeID: request.SourceNodeID,
 		SourceHostname: request.SourceHostname, SourceIPAddress: request.SourceIPAddress, SourcePort: request.SourcePort,
-		OracleTarget: request.OracleTarget, PowerSnapshot: request.PowerSnapshot,
+		OracleTarget: request.OracleTarget, PowerSnapshot: request.PowerSnapshot, RecoveryWAL: request.RecoveryWAL,
+		RecoveryTaskID: request.RecoveryTaskID, RecoveryFingerprint: request.RecoveryFingerprint,
 	})
 }
 
@@ -190,15 +211,20 @@ func WithPowerController(controller PowerController) ServiceOption {
 	return func(service *Service) { service.power = controller }
 }
 
+func WithRecoveryDecisions(decisions ReconcileDecisionClient) ServiceOption {
+	return func(service *Service) { service.recoveryDecisions = decisions }
+}
+
 type Service struct {
-	configuration Config
-	vip           VIPController
-	roles         RoleController
-	postgresql    PostgreSQLController
-	oracle        OracleController
-	power         PowerController
-	mutations     MutationLedger
-	now           func() time.Time
+	configuration     Config
+	vip               VIPController
+	roles             RoleController
+	postgresql        PostgreSQLController
+	oracle            OracleController
+	power             PowerController
+	mutations         MutationLedger
+	recoveryDecisions ReconcileDecisionClient
+	now               func() time.Time
 }
 
 func NewService(configuration Config, vip VIPController, roles RoleController, now func() time.Time, options ...ServiceOption) (*Service, error) {
@@ -283,6 +309,33 @@ func (service *Service) validate(request Request) (ClusterPolicy, Response, bool
 	if request.Command == CommandPowerPrepare && request.PowerSnapshot == nil {
 		return ClusterPolicy{}, blocked("power recovery snapshot is required"), false
 	}
+	if request.Command == CommandRecoveryWAL && (policy.Engine != model.EnginePostgreSQL || request.RecoveryWAL == nil) {
+		return ClusterPolicy{}, blocked("PostgreSQL WAL proof request is required"), false
+	}
+	if request.Command == CommandRecoveryQuiesce && (policyEngine != model.EngineMySQL || !model.ValidResourceID(request.LeaseID)) {
+		return ClusterPolicy{}, blocked("MySQL recovery quiesce requires a signed operation lease"), false
+	}
+	if request.Command == CommandRecoveryGuard || request.Command == CommandRecoveryStart {
+		if policyEngine != model.EnginePostgreSQL || !model.ValidResourceID(request.LeaseID) || !model.ValidResourceID(request.RecoveryTaskID) || !cryptographicPlanDigest(request.RecoveryFingerprint) {
+			return ClusterPolicy{}, blocked("guarded PostgreSQL recovery requires a task, lease and evidence fingerprint"), false
+		}
+	} else if request.Command == CommandRecoveryRebuild {
+		if policyEngine != model.EnginePostgreSQL || !model.ValidResourceID(request.RecoveryTaskID) || !model.ValidResourceID(request.LeaseID) || !cryptographicPlanDigest(request.RecoveryFingerprint) {
+			return ClusterPolicy{}, blocked("PostgreSQL replica recovery requires a task, operation lease and frozen evidence"), false
+		}
+		if _, found := postgresqlSource(policy, request); !found {
+			return ClusterPolicy{}, blocked("recovery source is outside the fixed peer allowlist"), false
+		}
+	} else if request.Command == CommandRecoveryReplicaGuard || request.Command == CommandRecoveryReplicaRelease || request.Command == CommandRecoveryFencedStart {
+		if policyEngine != model.EngineMySQL || !model.ValidResourceID(request.RecoveryTaskID) || !model.ValidResourceID(request.LeaseID) || request.RecoveryFingerprint != "" {
+			return ClusterPolicy{}, blocked("MySQL replica recovery requires a task and operation lease"), false
+		}
+	} else if request.RecoveryTaskID != "" || request.RecoveryFingerprint != "" {
+		return ClusterPolicy{}, blocked("recovery authority is outside the command scope"), false
+	}
+	if request.RecoveryWAL != nil && request.Command != CommandRecoveryWAL {
+		return ClusterPolicy{}, blocked("WAL proof is outside the command scope"), false
+	}
 	if request.Command == CommandOracleBrokerStatus || request.Command == CommandOracleBrokerSwitchover {
 		if !oracleTargetAllowed(policy, request.OracleTarget) {
 			return ClusterPolicy{}, blocked("Oracle target is outside the agent allowlist"), false
@@ -313,7 +366,7 @@ func postgresqlMutationCommand(command string) bool {
 func agentMutationCommand(command string) bool {
 	switch command {
 	case CommandVIPAcquire, CommandVIPRelease, CommandSelfIsolate, CommandPersistRole, CommandOracleBrokerSwitchover,
-		CommandPowerPrepare,
+		CommandPowerPrepare, CommandRecoveryQuiesce, CommandRecoveryGuard, CommandRecoveryStart, CommandRecoveryReplicaGuard, CommandRecoveryReplicaRelease, CommandRecoveryRebuild, CommandRecoveryFencedStart,
 		CommandMySQLServiceStop, CommandMySQLServiceStart, CommandNodePoweroff:
 		return true
 	default:
@@ -381,6 +434,83 @@ func (service *Service) Handle(ctx context.Context, request Request) Response {
 			return blocked("agent mutation blocked: " + publicAgentError(err))
 		}
 		if found {
+			if replayed.Status == StatusOK {
+				switch request.Command {
+				case CommandRecoveryReplicaGuard, CommandRecoveryReplicaRelease, CommandRecoveryFencedStart:
+					if err := service.requireRecoveryPreparation(ctx, policy, request); err != nil {
+						return blocked(publicAgentError(err))
+					}
+					if owns, err := service.vip.Status(ctx, policy); err != nil || owns {
+						return blocked("recovery replay requires verified absence of VIP")
+					}
+					if request.Command == CommandRecoveryFencedStart {
+						readOnly, superReadOnly, err := service.roles.Status(ctx, policy)
+						if err != nil || !readOnly || !superReadOnly {
+							return blocked("replayed fenced startup is no longer verified read-only")
+						}
+					} else {
+						guard, ok := service.roles.(RecoveryReplicaGuard)
+						if !ok {
+							return blocked("replica guard unavailable")
+						}
+						var err error
+						if request.Command == CommandRecoveryReplicaGuard {
+							err = guard.RecoveryReplicaPrepare(ctx, policy, request.RecoveryTaskID)
+						} else {
+							err = guard.RecoveryReplicaRelease(ctx, policy, request.RecoveryTaskID)
+						}
+						if err != nil {
+							return blocked(publicAgentError(err))
+						}
+					}
+				case CommandRecoveryRebuild:
+					if err := service.requireRecoveryReplica(ctx, policy, request); err != nil {
+						return blocked(publicAgentError(err))
+					}
+					if owns, err := service.vip.Status(ctx, policy); err != nil || owns {
+						return blocked("replica replay requires verified absence of VIP")
+					}
+					controller, ok := service.postgresql.(RecoveryReplicaRebuilder)
+					if !ok {
+						return blocked("replica verification unavailable")
+					}
+					source, _ := postgresqlSource(policy, request)
+					if err := controller.RecoveryVerifyReplica(ctx, policy, request.RecoveryTaskID, source); err != nil {
+						return blocked(publicAgentError(err))
+					}
+				}
+			}
+			if replayed.Status == StatusOK && (request.Command == CommandRecoveryGuard || request.Command == CommandRecoveryStart) {
+				if err := service.requireRecoveryPrimary(ctx, policy, request); err != nil {
+					return blocked(publicAgentError(err))
+				}
+				guard, ok := service.postgresql.(RecoveryPrimaryGuard)
+				if !ok {
+					return blocked("recovery guard is unavailable")
+				}
+				if err := guard.RecoveryGuardVerify(ctx, policy, request.RecoveryTaskID); err != nil {
+					return blocked(publicAgentError(err))
+				}
+				if request.Command == CommandRecoveryStart {
+					running, inRecovery, err := service.postgresql.Status(ctx, policy)
+					if err != nil || !running || inRecovery {
+						return blocked("replayed recovery startup is no longer a guarded primary")
+					}
+				}
+			}
+			if replayed.Status == StatusOK && request.Command == CommandRecoveryQuiesce {
+				if owns, vipErr := service.vip.Status(ctx, policy); vipErr != nil || owns {
+					return blocked("replayed recovery quiesce cannot verify absence of the business VIP")
+				}
+				inspector, ok := service.roles.(RecoveryEvidenceInspector)
+				if !ok {
+					return blocked("replayed recovery quiesce cannot inspect current replication state")
+				}
+				if _, err := inspector.RecoveryInspect(ctx, policy); err != nil {
+					return blocked("replayed recovery quiesce no longer holds: " + publicAgentError(err))
+				}
+				return replayed
+			}
 			// VIP acquire/release are state-convergent commands. A completed
 			// receipt proves the prior command outcome, but an independent
 			// reconciler or host restart may have changed physical ownership
@@ -403,6 +533,157 @@ func (service *Service) Handle(ctx context.Context, request Request) Response {
 	response := Response{Status: StatusOK, ClusterID: policy.ClusterID, InstanceID: policy.InstanceID}
 	var err error
 	switch request.Command {
+	case CommandRecoveryFencedStart:
+		if err = service.requireRecoveryPreparation(ctx, policy, request); err != nil {
+			break
+		}
+		preparer, ok := service.roles.(RecoveryRestartPreparer)
+		if policy.Engine != model.EngineMySQL || !ok || service.power == nil {
+			err = fmt.Errorf("fenced MySQL startup is unavailable")
+			break
+		}
+		if !model.ValidResourceID(request.LeaseID) {
+			err = fmt.Errorf("fenced startup requires an operation lease")
+			break
+		}
+		if owns, e := service.vip.Status(ctx, policy); e != nil || owns {
+			err = fmt.Errorf("fenced startup requires verified absence of VIP")
+			break
+		}
+		_, reachable, statusErr := service.power.ServiceStatus(ctx, policy)
+		if statusErr == nil && reachable {
+			err = service.roles.PersistReadOnly(ctx, policy, true)
+			break
+		}
+		if err = service.power.StopService(ctx, policy); err != nil {
+			break
+		}
+		if err = preparer.RecoveryPrepareRestart(ctx, policy); err != nil {
+			break
+		}
+		if err = service.power.StartService(ctx, policy); err != nil {
+			stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			err = errors.Join(err, service.power.StopService(stopCtx, policy))
+			cancel()
+			break
+		}
+		err = service.requireRecoveryPreparation(ctx, policy, request)
+		if err == nil {
+			err = service.roles.PersistReadOnly(ctx, policy, true)
+		}
+		if err != nil {
+			stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			err = errors.Join(err, service.power.StopService(stopCtx, policy))
+			cancel()
+		}
+	case CommandRecoveryRebuild:
+		controller, ok := service.postgresql.(RecoveryReplicaRebuilder)
+		if !ok {
+			err = fmt.Errorf("PostgreSQL recovery rebuild is unavailable")
+			break
+		}
+		if err = service.requireRecoveryReplica(ctx, policy, request); err != nil {
+			break
+		}
+		if owns, e := service.vip.Status(ctx, policy); e != nil || owns {
+			err = fmt.Errorf("replica reconstruction requires verified absence of VIP")
+			break
+		}
+		source, _ := postgresqlSource(policy, request)
+		err = controller.RecoveryRebuild(ctx, policy, request.RecoveryTaskID, request.RecoveryFingerprint, source, func() error { return service.requireRecoveryReplica(ctx, policy, request) })
+	case CommandRecoveryReplicaGuard, CommandRecoveryReplicaRelease:
+		guard, ok := service.roles.(RecoveryReplicaGuard)
+		if !ok || service.recoveryDecisions == nil {
+			err = fmt.Errorf("MySQL recovery replica authorization is unavailable")
+			break
+		}
+		decision, decisionErr := service.recoveryDecisions.Decision(ctx, policy)
+		if decisionErr != nil {
+			err = decisionErr
+			break
+		}
+		if decision.ClusterID != policy.ClusterID || decision.InstanceID != policy.InstanceID || (decision.Action != ReconcileRecoveryReplica && decision.Action != ReconcileRecoveryPrepare) || decision.RecoveryTaskID != request.RecoveryTaskID || decision.LeaseID != request.LeaseID || !decision.ValidUntil.After(service.now().UTC()) {
+			err = fmt.Errorf("current majority does not authorize this replica reconstruction")
+			break
+		}
+		if owns, e := service.vip.Status(ctx, policy); e != nil || owns {
+			err = fmt.Errorf("replica reconstruction requires verified absence of VIP")
+			break
+		}
+		if request.Command == CommandRecoveryReplicaGuard {
+			err = guard.RecoveryReplicaPrepare(ctx, policy, request.RecoveryTaskID)
+		} else {
+			err = guard.RecoveryReplicaRelease(ctx, policy, request.RecoveryTaskID)
+		}
+	case CommandRecoveryCapabilities:
+		if service.recoveryDecisions == nil {
+			err = fmt.Errorf("recovery authorization client is unavailable")
+		} else if policy.Engine == model.EnginePostgreSQL {
+			if _, ok := service.postgresql.(RecoveryPrimaryStarter); ok {
+				response.RecoveryVersion = 1
+			} else {
+				err = fmt.Errorf("guarded PostgreSQL recovery is unavailable")
+			}
+		} else {
+			response.RecoveryVersion = 1
+		}
+	case CommandRecoveryGuard, CommandRecoveryStart:
+		controller, ok := service.postgresql.(RecoveryPrimaryStarter)
+		if !ok {
+			err = fmt.Errorf("guarded PostgreSQL recovery is unavailable")
+			break
+		}
+		if err = service.requireRecoveryPrimary(ctx, policy, request); err != nil {
+			break
+		}
+		if owns, e := service.vip.Status(ctx, policy); e != nil || owns {
+			err = errors.Join(e, fmt.Errorf("recovery primary must not own VIP"))
+			break
+		}
+		if request.Command == CommandRecoveryGuard {
+			err = controller.RecoveryPreparePrimary(ctx, policy, request.RecoveryTaskID, request.RecoveryFingerprint)
+		} else {
+			err = controller.RecoveryStartPrimary(ctx, policy, request.RecoveryTaskID, request.RecoveryFingerprint, func() error { return service.requireRecoveryPrimary(ctx, policy, request) })
+		}
+	case CommandRecoveryQuiesce:
+		controller, ok := service.roles.(RecoveryQuiescer)
+		if !ok {
+			err = fmt.Errorf("MySQL recovery relay drain is unavailable")
+		} else if owns, vipErr := service.vip.Status(ctx, policy); vipErr != nil || owns {
+			err = fmt.Errorf("MySQL recovery relay drain requires verified absence of the business VIP")
+		} else {
+			_, err = controller.RecoveryQuiesce(ctx, policy)
+		}
+		response.Message = "MySQL received transactions drained behind a durable write fence"
+	case CommandRecoveryInspect:
+		var controller RecoveryEvidenceInspector
+		if policy.Engine == model.EnginePostgreSQL {
+			controller, _ = service.postgresql.(RecoveryEvidenceInspector)
+		} else if policy.Engine == model.EngineMySQL || policy.Engine == "" {
+			controller, _ = service.roles.(RecoveryEvidenceInspector)
+		}
+		if controller == nil {
+			err = fmt.Errorf("recovery evidence collection is unavailable")
+		} else {
+			var evidence model.RecoveryEvidence
+			evidence, err = controller.RecoveryInspect(ctx, policy)
+			if err == nil {
+				response.RecoveryEvidence = &evidence
+			}
+		}
+		response.Message = "fenced database recovery evidence collected"
+	case CommandRecoveryWAL:
+		controller, ok := service.postgresql.(RecoveryWALInspector)
+		if !ok {
+			err = fmt.Errorf("offline WAL verification is unavailable")
+		} else {
+			var result model.RecoveryWALResult
+			result, err = controller.RecoveryWAL(ctx, policy, *request.RecoveryWAL)
+			if err == nil {
+				response.RecoveryWAL = &result
+			}
+		}
+		response.Message = "offline WAL range verified"
 	case CommandVIPStatus:
 		var owns bool
 		owns, err = service.vip.Status(ctx, policy)
@@ -559,9 +840,5 @@ func publicAgentError(err error) string {
 	if err == nil {
 		return ""
 	}
-	message := strings.TrimSpace(err.Error())
-	if len(message) > 240 {
-		message = message[:240]
-	}
-	return message
+	return redact.Bounded(strings.TrimSpace(err.Error()), 2048)
 }

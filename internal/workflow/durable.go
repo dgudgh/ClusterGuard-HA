@@ -188,6 +188,54 @@ func (service *Service) finishDurable(recordID model.ResourceID, operation model
 	return service.finishDurableWithAudits(recordID, operation, stage, execution, failureClass, cause, operationCommitted, nil)
 }
 
+func (service *Service) finishDurableJournalFailure(recordID model.ResourceID, operation model.Operation, stage model.WorkflowStage, journalErr error, operationCommitted bool) (model.Execution, error) {
+	status := model.OperationFailed
+	message := "workflow journal persistence failed before adapter execution"
+	if operationCommitted {
+		status = model.OperationIndeterminate
+		message = "workflow journal persistence failed after adapter execution began"
+	}
+	execution := newDurableExecution(recordID, status, message, service.now)
+	execution, finalizeErr := service.finishDurable(recordID, operation, stage, execution, "journal", nil, operationCommitted)
+	if finalizeErr != nil {
+		journalErr = errors.Join(journalErr, finalizeErr)
+	}
+	return execution, &journalPersistenceError{err: journalErr}
+}
+
+// finalizeRunningOperationOnExit is the last line of defense for an executor
+// that returns after it has already published a running stage. Normal paths
+// publish a terminal state before this defer runs, so they are unaffected.
+func (service *Service) finalizeRunningOperationOnExit(recordID model.ResourceID, operation model.Operation) {
+	if _, ok := service.atomicFinalizer(); !ok {
+		return
+	}
+	record, found := service.operations.Operation(recordID)
+	if !found || record.Status != model.OperationRunning {
+		return
+	}
+	status, failureClass, message, committed, recognized := abandonedOperationOutcome(record)
+	if !recognized {
+		return
+	}
+	if failureClass == "abandoned_pre_commit" {
+		failureClass = "interrupted_pre_commit"
+		message = "workflow executor returned before adapter execution; no database mutation was started"
+	} else if failureClass == "abandoned_post_commit" {
+		failureClass = "interrupted_post_commit"
+		message = "workflow executor returned after adapter execution began; verify database and endpoint state"
+	}
+	execution := newDurableExecution(recordID, status, message, service.now)
+	if !record.Execution.StartedAt.IsZero() {
+		execution.StartedAt = record.Execution.StartedAt.UTC()
+	}
+	stage := record.Stage
+	if status == model.OperationSucceeded {
+		stage = model.StageReport
+	}
+	_, _ = service.finishDurable(recordID, operation, stage, execution, failureClass, nil, committed)
+}
+
 func (service *Service) finishDurableWithAudits(recordID model.ResourceID, operation model.Operation, stage model.WorkflowStage, execution model.Execution, failureClass string, cause error, operationCommitted bool, finalAudits []model.AuditEvent) (model.Execution, error) {
 	record, err := service.durableRecord(recordID)
 	if err != nil {
@@ -316,6 +364,7 @@ func (service *Service) executeDurable(ctx context.Context, request adapter.Oper
 		return execution, ErrOperationInProgress
 	}
 	defer service.releaseOperation(record.ResourceID)
+	defer service.finalizeRunningOperationOnExit(record.ResourceID, operation)
 
 	candidate, registered := service.resolveAdapter(operation)
 	if !registered {
@@ -352,7 +401,7 @@ func (service *Service) executeDurable(ctx context.Context, request adapter.Oper
 		return model.Execution{}, err
 	}
 	if err := service.audit(operation, model.StageDiscover, "topology observation "+observationLabel+" validated"); err != nil {
-		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
+		return service.finishDurableJournalFailure(record.ResourceID, operation, model.StageDiscover, err, false)
 	}
 
 	request, err = resolveCapturedOperation(ctx, service.resolver, request, observation)
@@ -373,7 +422,7 @@ func (service *Service) executeDurable(ctx context.Context, request adapter.Oper
 		return model.Execution{}, err
 	}
 	if err := service.audit(operation, model.StagePrecheck, "adapter precheck completed"); err != nil {
-		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
+		return service.finishDurableJournalFailure(record.ResourceID, operation, model.StagePrecheck, err, false)
 	}
 	if hasBlockingCheck(checks) {
 		execution := newDurableExecution(operation.ResourceID, model.OperationBlocked, "precheck contains blocking checks", service.now)
@@ -397,7 +446,7 @@ func (service *Service) executeDurable(ctx context.Context, request adapter.Oper
 		return service.finishDurable(record.ResourceID, operation, model.StagePlan, execution, "stale_plan", errors.New(execution.Message), false)
 	}
 	if err := service.audit(operation, model.StagePlan, planAuditMessage); err != nil {
-		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
+		return service.finishDurableJournalFailure(record.ResourceID, operation, model.StagePlan, err, false)
 	}
 	if err := service.safety.Evaluate(ctx, operation); err != nil {
 		execution := newDurableExecution(operation.ResourceID, model.OperationBlocked, err.Error(), service.now)
@@ -408,7 +457,7 @@ func (service *Service) executeDurable(ctx context.Context, request adapter.Oper
 		return model.Execution{}, err
 	}
 	if err := service.audit(operation, model.StageSafetyGuard, "safety guard passed"); err != nil {
-		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
+		return service.finishDurableJournalFailure(record.ResourceID, operation, model.StageSafetyGuard, err, false)
 	}
 	leaseCtx, release, err := service.locks.Acquire(ctx, operation)
 	if err != nil {
@@ -421,7 +470,7 @@ func (service *Service) executeDurable(ctx context.Context, request adapter.Oper
 		return model.Execution{}, err
 	}
 	if err := service.audit(operation, model.StageLock, "operation lock acquired"); err != nil {
-		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
+		return service.finishDurableJournalFailure(record.ResourceID, operation, model.StageLock, err, false)
 	}
 	if err := service.discovery.RevalidateObservation(leaseCtx, operation, observation); err != nil {
 		execution := newDurableExecution(operation.ResourceID, model.OperationBlocked, err.Error(), service.now)
@@ -450,7 +499,7 @@ func (service *Service) executeDurable(ctx context.Context, request adapter.Oper
 		approvalMessage = "one-time approval grant " + string(grantID) + " consumed"
 	}
 	if err := service.audit(operation, model.StageApprove, approvalMessage); err != nil {
-		return journalFailure(model.Execution{OperationID: operation.ResourceID}, err)
+		return service.finishDurableJournalFailure(record.ResourceID, operation, model.StageApprove, err, false)
 	}
 	request.Plan = &record.Plan
 	request.Progress = repositoryProgress{operations: service.operations, operationID: record.ResourceID, now: service.now}

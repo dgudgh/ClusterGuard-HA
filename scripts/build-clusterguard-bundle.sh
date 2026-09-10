@@ -6,6 +6,8 @@ script_dir="$(cd "$(dirname "$0")" && pwd)"
 repository="$(cd "${script_dir}/.." && pwd)"
 output="${repository}/dist"
 version="$(git -C "${repository}" describe --always --dirty 2>/dev/null || printf dev)"
+rpm_version=""
+rpm_release=""
 goos="${CG_BUNDLE_GOOS:-linux}"
 goarch="${CG_BUNDLE_GOARCH:-amd64}"
 jq_binary="${CG_JQ_BINARY:-}"
@@ -14,15 +16,34 @@ while (($#)); do
   case "$1" in
     --output) output="${2:-}"; shift 2 ;;
     --version) version="${2:-}"; shift 2 ;;
+    --rpm-version) rpm_version="${2:-}"; shift 2 ;;
+    --rpm-release) rpm_release="${2:-}"; shift 2 ;;
     --goos) goos="${2:-}"; shift 2 ;;
     --goarch) goarch="${2:-}"; shift 2 ;;
     --jq-binary) jq_binary="${2:-}"; shift 2 ;;
-    -h|--help) echo "usage: $0 [--output DIR] [--version VERSION] [--goos OS] [--goarch ARCH] [--jq-binary FILE]"; exit 0 ;;
+    -h|--help) echo "usage: $0 [--output DIR] [--version BUNDLE_VERSION] [--rpm-version VERSION --rpm-release RELEASE] [--goos OS] [--goarch ARCH] [--jq-binary FILE]"; exit 0 ;;
     *) echo "unknown bundle argument: $1" >&2; exit 2 ;;
   esac
 done
 
 [[ "${version}" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "invalid bundle version" >&2; exit 2; }
+if [[ -n "${rpm_version}" || -n "${rpm_release}" ]]; then
+  [[ "${rpm_version}" =~ ^[0-9][0-9A-Za-z._+~]*$ && "${rpm_release}" =~ ^[0-9][0-9A-Za-z._+~]*$ ]] || {
+    echo "both valid --rpm-version and --rpm-release are required" >&2; exit 2;
+  }
+elif [[ "${version}" =~ ^([0-9][0-9A-Za-z._+~]*)-([0-9][0-9A-Za-z._+~]*)$ ]]; then
+  rpm_version="${BASH_REMATCH[1]}"
+  rpm_release="${BASH_REMATCH[2]}"
+else
+  rpm_version="${version}"
+  rpm_release=0
+fi
+commit="$(git -C "${repository}" rev-parse HEAD 2>/dev/null || printf unknown)"
+if [[ "${commit}" != "unknown" && -n "$(git -C "${repository}" status --porcelain --untracked-files=normal)" ]]; then
+  commit="${commit}-dirty"
+fi
+build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+version_ldflags="-s -w -X clusterguard.io/ha/internal/buildinfo.Version=${rpm_version} -X clusterguard.io/ha/internal/buildinfo.Release=${rpm_release} -X clusterguard.io/ha/internal/buildinfo.Commit=${commit} -X clusterguard.io/ha/internal/buildinfo.BuiltAt=${build_time}"
 stage="$(mktemp -d /tmp/clusterguard-bundle.XXXXXX)"
 trap 'rm -rf "${stage}"' EXIT
 root="${stage}/clusterguard-ha-${version}-${goos}-${goarch}"
@@ -36,7 +57,7 @@ build_targets=(
 for target in "${build_targets[@]}"; do
   command_path="${target%%:*}"
   package_path="${target#*:}"
-  CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" go -C "${repository}" build -trimpath -ldflags "-s -w" -o "${root}/bin/${command_path}" "${package_path}"
+  CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" go -C "${repository}" build -trimpath -ldflags "${version_ldflags}" -o "${root}/bin/${command_path}" "${package_path}"
 done
 for helper in install_clusterguard.sh clusterguard-install.sh clusterguard-configure.sh clusterguard-preflight.sh clusterguard-smoke.sh clusterguard-ha-matrix.sh clusterguard-offline-deps.sh clusterguard-clock-mesh.sh clusterguard-node-lifecycle.sh clusterguard-package-resolve.sh clusterguard-adapter-runtime-install.sh clusterguard-control-join.sh clusterguard-mysql-install.sh clusterguard-mysql-sync.sh clusterguard-mysql-probe-cleanup.sh clusterguard-mysql-qualification.sh clusterguard-postgresql-build.sh clusterguard-postgresql-install.sh clusterguard-postgresql-sync.sh clusterguard-agent-stdio.sh clusterguard-cluster-shutdown.sh clusterguard-cluster-restore.sh clusterguard-cluster-finalize.sh; do
   install -m 0755 "${repository}/scripts/${helper}" "${root}/scripts/${helper}"

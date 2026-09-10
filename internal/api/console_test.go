@@ -117,9 +117,9 @@ func TestSettingsUsesThreeSwitchableAdministrativeSections(t *testing.T) {
 		`id="software-update-package-file" type="file" accept=".cgupgrade,.cgpatch,application/octet-stream"`,
 		"--accent:#0071e3", "--canvas:#f5f5f7", "renderSelectedSoftwareUpdateFile",
 		"const setSettingsSection = (section, focus = false) =>", "settingsSection: 'status'",
-		"const [softwareUpdates, platformVersion] = await Promise.all([",
-		"fetchResult('/api/v1/platform/version').catch(() => state.platformVersion)",
-		"state.platformVersion = platformVersion", "const previousSoftwareUpdates = state.softwareUpdates",
+		"const softwareUpdates = await softwareUpdateRequest('/api/v1/platform/updates')",
+		"void softwareUpdateRequest('/api/v1/platform/version').then(version =>",
+		"state.platformVersion = version", "const previousSoftwareUpdates = state.softwareUpdates",
 		"...previousSoftwareUpdates", "packages:Array.isArray(previousSoftwareUpdates.packages)",
 		"已保留最近一次任务进度并继续重试", "renderSoftwareUpdateHistory(snapshot)",
 		"系统升级期间无法进行自动切换，请注意关注。",
@@ -240,7 +240,7 @@ func TestOverviewContainsFleetSummaryButNoTopologyGraph(t *testing.T) {
 
 func TestOverviewCountsOnlyActionableOperationStates(t *testing.T) {
 	page := string(consoleHTML)
-	if !strings.Contains(page, "operation.status === 'running' || (operation.status === 'indeterminate' && !operation.review)") {
+	if !strings.Contains(page, "state.fleetOperationContext.running_count + state.fleetOperationContext.unreviewed_count") {
 		t.Fatal("fleet summary must count only operations that still require operator action")
 	}
 	if strings.Contains(page, "['planned', 'running', 'blocked', 'indeterminate'].includes(operation.status)") {
@@ -495,7 +495,7 @@ func TestOperationsViewUsesSwitchableSwitchoverAndRecoverySections(t *testing.T)
 	}
 	for _, contract := range []string{
 		"operationsSection: 'switchover'",
-		"const operationsSectionOrder = ['switchover', 'recovery']",
+		"const operationsSectionOrder = ['switchover', 'recovery', 'disaster']",
 		"const setOperationsSection = (section, focus = false) =>",
 		"tab.addEventListener('click', () => setOperationsSection(tab.dataset.operationsSection))",
 		"setOperationsSection(operationsSectionOrder[targetIndex], true)",
@@ -545,13 +545,39 @@ func TestConsoleRetriesOnlyPreCommitStalePlanConflicts(t *testing.T) {
 func TestOperationsUseSimpleLocalAntiMistakeLockWithoutBypassingBackendGates(t *testing.T) {
 	page := string(consoleHTML)
 	for _, contract := range []string{
-		`id="switch-lock"`, "switchUnlocked: false", "state.switchUnlocked = !state.switchUnlocked",
-		"execute.disabled = state.operationRunning || !state.switchUnlocked", "操作锁定", "已解锁",
+		`id="switch-lock"`, "switchUnlocked: false", "if (!operationLockAvailable()) return;",
+		"if (state.switchUnlocked) relockSwitch();", "else { state.switchUnlocked = true; updateExecutionButtons(); }",
+		"execute.disabled = !ordinaryOperationAllowed('switchover', state.selectedCandidateId)",
+		"const ordinaryOperationAllowed = (kind, targetID) => !state.operationRunning && state.switchUnlocked", "操作锁定", "已解锁",
 		"后端仍会执行 Safety Guard、集群操作锁、平台身份授权和验证",
 	} {
 		if !strings.Contains(page, contract) {
 			t.Fatalf("console missing anti-mistake lock contract %q", contract)
 		}
+	}
+}
+
+func TestDisasterRecoverySharesOperationLockAcrossEntryPlanAndExecution(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		"const disasterContextReady = () =>", "const disasterActionAllowed = clusterID => state.switchUnlocked",
+		"byId('open-disaster-recovery').disabled = !disasterActionAllowed()",
+		"!disasterActionAllowed(cluster.resource_id) || byId('disaster-dialog').open",
+		"disasterActive(recovery.task) || !disasterActionAllowed(recovery.clusterID)",
+		"const lockEpoch = state.operationLockEpoch", "lockEpoch !== state.operationLockEpoch",
+		"if (!disasterConfirmationValid()) { renderDisaster(); return; }",
+		"byId('disaster-execute').disabled = !disasterConfirmationValid()",
+		"recovery.task?.cluster_id === recovery.clusterID",
+		"byId('disaster-confirm-name').value === recovery.name && byId('disaster-confirm-impact').checked",
+		"if (selectionChanged && state.disaster) closeDisaster()",
+		"state.disaster.ready = false", "state.operationLockEpoch++",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("missing disaster operation-lock contract %q", contract)
+		}
+	}
+	if strings.Contains(page, "byId('switch-lock').hidden = disaster") {
+		t.Fatal("disaster recovery must expose and honor the same operation lock")
 	}
 }
 
@@ -611,7 +637,7 @@ func TestFormerPrimaryRejoinAndNodeLifecycleUseRealAPIs(t *testing.T) {
 		"控制节点最终数量必须为大于等于 3 的奇数", "修复节点复用原资源 ID 和固定节点名", "state.lifecycleCapability.available",
 		"const formerPrimaryRebuildPayload =", "action:'rebuild'", "sync_method:'auto'", "rebuild:true",
 		"const recoverFormerPrimary = async targetID =>", "/api/v1/operations/precheck", "required_binlog_available", "rebuild_required",
-		"await runNodeSyncPayload(formerPrimaryRebuildPayload(targetID))", "检测到 binlog 缺口或 GTID 分叉",
+		"await runNodeSyncPayload(formerPrimaryRebuildPayload(targetID), intent)", "检测到 binlog 缺口或 GTID 分叉",
 		"task.status !== 'succeeded'", "全量重建并恢复为从库完成",
 	} {
 		if !strings.Contains(page, contract) {
@@ -736,9 +762,10 @@ func TestOperationLogShowsUsefulSummaryAndKeepsRawEvidenceCollapsed(t *testing.T
 		}
 	}
 	for _, contract := range []string{
-		"state.allOperations = await fetchResult('/api/v1/operations') || [];",
+		"readClusterResult(`/api/v1/operations?${query}`, controller.signal)", "state.logLoaded = true;",
 		"operation.plan.source_id", "operation.target_id", "operation.operation.kind", "operation.status",
-		"document.createElement('details')", "document.createElement('summary')", "JSON.stringify(operation, null, 2)",
+		"document.createElement('details')", "document.createElement('summary')", "JSON.stringify(record, null, 2)",
+		"details.addEventListener('toggle', loadRaw)", "if (!details.open || rawLoaded || rawLoading) return;",
 	} {
 		if !strings.Contains(page, contract) {
 			t.Fatalf("operation log missing contract %q", contract)
@@ -749,26 +776,30 @@ func TestOperationLogShowsUsefulSummaryAndKeepsRawEvidenceCollapsed(t *testing.T
 	}
 }
 
-func TestOperationLogDefaultsToAllClustersAndKeepsClusterScopeIndependent(t *testing.T) {
+func TestOperationLogDefaultsToHeaderClusterAndRejectsCrossScopeResponses(t *testing.T) {
 	page := string(consoleHTML)
 	view := consoleView(t, "operation-log")
 	for _, contract := range []string{
 		`id="log-cluster-filter"`, `<option value="all">全部集群</option>`,
-		"logClusterId: 'all'", "const renderOperationLogClusterFilter = () =>",
-		"consolidateOperationIncidents(state.allOperations)",
-		"state.logClusterId !== 'all' && record.cluster_id !== state.logClusterId",
+		"logClusterId: ''", "const renderOperationLogClusterFilter = () =>",
+		"if (selectionChanged) followOperationLogCluster(clusterId);",
+		"followOperationLogCluster(byId('cluster-select').value)",
+		"if (!state.logClusterId) { renderOperationLog(); return; }",
+		"item.operation.cluster_id !== requestedClusterId",
+		"const visibleOperations = state.allOperations;",
+		"if (state.logClusterId !== 'all') query.set('cluster_id', state.logClusterId);",
 		"const scopeLabel = operationLogScopeLabel();",
-		"renderLifecycleTasks(); renderOperationLog(); renderOverview();",
+		"if (selected === 'operation-log' && state.currentUser) void loadOperationLog(false);",
 	} {
 		if !strings.Contains(page, contract) {
-			t.Fatalf("operation log must default to an explicit all-cluster scope: missing %q", contract)
+			t.Fatalf("operation log must follow the header unless explicitly overridden: missing %q", contract)
 		}
 	}
 	if !strings.Contains(view, "集群范围") {
-		t.Fatal("operation log does not explain that its cluster scope is independent")
+		t.Fatal("operation log must retain an explicit scope selector")
 	}
-	if strings.Contains(page, "/api/v1/operations?cluster_id=${state.selectedClusterId}") {
-		t.Fatal("operation log refresh must not silently follow the header cluster selector")
+	if strings.Contains(page, "logClusterId: 'all'") {
+		t.Fatal("operation log must not silently default to all clusters")
 	}
 }
 
@@ -1018,8 +1049,8 @@ func TestConsolePreservesVerifiedOutcomeUntilReadAfterWriteTopologyConverges(t *
 	page := string(consoleHTML)
 	for _, contract := range []string{
 		"const clearClusterView = (preserveOperationResult = false) =>",
-		"const beginClusterRequest = (clusterId, preserveOperationResult = false) =>",
-		"const loadSelectedCluster = async ({ preserveOperationResult = false, expectedPrimaryID = '' } = {}) =>",
+		"const beginClusterRequest = (clusterId, preserveOperationResult = false, operationIntent = null) =>",
+		"const loadSelectedCluster = async ({ preserveOperationResult = false, expectedPrimaryID = '', operationIntent = null } = {}) =>",
 		"const topologyMatchesExpectedPrimary =",
 		"convergenceAttempt < (expectedPrimaryID ? 10 : 1)",
 		"await loadSelectedCluster({ preserveOperationResult:true, expectedPrimaryID: operation.target_id });",
@@ -1038,7 +1069,7 @@ func TestConsolePreservesVerifiedOutcomeUntilReadAfterWriteTopologyConverges(t *
 func TestConsoleReadOnlyRefreshPreservesLatestVerifiedOutcome(t *testing.T) {
 	page := string(consoleHTML)
 	for _, contract := range []string{
-		"if (state.selectedClusterId && !state.operationRunning) loadSelectedCluster({ preserveOperationResult:true });",
+		"if (state.selectedClusterId && !state.operationRunning && !state.clusterLoading) loadSelectedCluster({ preserveOperationResult:true });",
 		"await loadSelectedCluster({ preserveOperationResult:true });",
 	} {
 		if !strings.Contains(page, contract) {
@@ -1053,10 +1084,13 @@ func TestConsoleReadOnlyRefreshPreservesLatestVerifiedOutcome(t *testing.T) {
 func TestConsoleRelocksDestructiveActionWhenClusterOrTargetChanges(t *testing.T) {
 	page := string(consoleHTML)
 	for _, contract := range []string{
-		"const relockSwitch = () =>", "relockSwitch();\n      clearClusterView(preserveOperationResult);",
+		"const relockSwitch = (preserveIntent = null) =>", "relockSwitch(operationIntent?.clusterID === clusterId ? operationIntent : null);",
 		"state.selectedCandidateId = event.target.value; relockSwitch(); renderOperationContext();",
 		"state.selectedRejoinId = event.target.value; relockSwitch(); updateExecutionButtons();",
-		"finally {\n        state.operationRunning = false;\n        relockSwitch();",
+		"state.activeOperationIntent !== preserveIntent) state.activeOperationIntent.cancelled = true",
+		"if (state.activeOperationIntent === intent)", "state.operationRunning = false;\n          relockSwitch();",
+		"requireOperationIntent(intent);", "requireOperationIntent(operationIntent);",
+		"state.currentUser !== intent.user", "state.selectedClusterId !== intent.clusterID",
 		"byId('operation-result').textContent = '等待操作。';",
 	} {
 		if !strings.Contains(page, contract) {
@@ -1148,7 +1182,7 @@ func TestConsoleOrganizesNodeWorkflowAndFiltersOperationEvidence(t *testing.T) {
 	}
 	for _, contract := range []string{
 		`id="log-search"`, `id="log-cluster-filter"`, `id="log-kind-filter"`, `id="log-status-filter"`,
-		"const filteredOperations =", "renderOperationLog();", `id="metrics-observed-at"`,
+		"const refreshOperationLogFilters =", "renderOperationLog();", `id="metrics-observed-at"`,
 		`id="refresh-interval"`, "const scheduleAutoRefresh =", "state.refreshTimer",
 	} {
 		if !strings.Contains(page, contract) {
@@ -1240,26 +1274,30 @@ func TestConsolePaginatesLargeOperationLogs(t *testing.T) {
 	page := string(consoleHTML)
 	for _, contract := range []string{
 		`id="load-more-operation-log"`,
-		"const operationLogPageSize = 50;",
-		"logVisibleLimit: operationLogPageSize",
-		"const visibleOperations = operations.slice(0, state.logVisibleLimit);",
-		"state.logVisibleLimit += operationLogPageSize;",
-		"state.logVisibleLimit = operationLogPageSize;",
+		"const operationLogPageSize = 20;",
+		"new URLSearchParams({ view:'page', limit:String(operationLogPageSize) })",
+		"if (cursor) query.set('cursor', cursor);",
+		"loadOperationLog(false, true)",
+		"state.logNextCursor = page.next_cursor; state.logRemaining = page.remaining;",
+		"state.logController !== controller",
+		"page.items.length > operationLogPageSize",
+		"renderOperationLog(append)",
 	} {
 		if !strings.Contains(page, contract) {
 			t.Fatalf("operation evidence must remain responsive with large histories: missing %q", contract)
 		}
+	}
+	if strings.Contains(page, "view=summary") || strings.Contains(page, "logVisibleLimit") {
+		t.Fatal("log pagination must not download all summaries and slice in the browser")
 	}
 }
 
 func TestConsoleConsolidatesAutomaticRecoveryRetriesByIncident(t *testing.T) {
 	page := string(consoleHTML)
 	for _, contract := range []string{
-		"const automaticRecoveryIncidentKey = operation =>",
-		"record.requested_by !== 'clusterguard-automatic-recovery'",
-		"const consolidateOperationIncidents = operations =>",
+		"state.logRecordCount = page.record_count",
 		"incident_attempt_count",
-		"个事件 · ${rawRecordCount} 条原始记录",
+		"'log-record-count', `${state.logRecordCount} 条原始记录`",
 		"原始返回（最近一次，事故共",
 	} {
 		if !strings.Contains(page, contract) {
@@ -1304,7 +1342,7 @@ func TestConsoleFormatsMetricsAndOrdersEvidenceForOperators(t *testing.T) {
 		"const formatMetric = (value, digits = 2) =>",
 		"{ label:'QPS', key:'qps', aggregate:'sum' }", "{ label:'连接', key:'connections', aggregate:'sum', digits:0 }",
 		"{ label:'运行线程', key:'running_threads', aggregate:'sum', digits:0 }", "formatMetricValue(item, aggregate(item))",
-		"const newestOperationFirst =", "filteredOperations().slice().sort(newestOperationFirst)",
+		"const visibleOperations = state.allOperations;", "state.logNextCursor = page.next_cursor;",
 		"const newestTaskFirst =", "state.lifecycleTasks.slice().sort(newestTaskFirst).slice(0, 8)",
 		`id="lifecycle-task-count"`,
 	} {
@@ -1416,9 +1454,9 @@ func TestConsoleProvidesAdminOnlySignedSoftwareUpdateWorkflow(t *testing.T) {
 		"form.append('package', file, file.name)",
 		"fetchResult('/api/v1/platform/updates'",
 		"const prepareSoftwareUpdateExecution = async () =>",
-		"const planned = await startSoftwareUpdate('plan')",
-		"const waitForSoftwareUpdatePlan = async (patchID, attempts = 20) =>",
-		"prepared = await waitForSoftwareUpdatePlan(patchID)",
+		"const planned = await startSoftwareUpdate('plan', '', patchID)",
+		"const waitForSoftwareUpdatePlan = async (patchID, waiting) =>",
+		"prepared = await waitForSoftwareUpdatePlan(patchID, waiting)",
 		"byId('execute-software-update').addEventListener('click', prepareSoftwareUpdateExecution)",
 		"state.softwareUpdateAction = mode",
 		"byId('software-update-tab').hidden = !canAdministerPlatform()",
@@ -1530,7 +1568,7 @@ func TestSoftwareUpdateErrorsStayAtTopOfOpenDialog(t *testing.T) {
 		`.software-update-dialog-alert[hidden] { display:none; }`,
 		"const setSoftwareUpdateDialogAlert = (message = '', level = 'error') =>",
 		"if (message && !(dialog && dialog.open)) setLiveStatus(message, level !== 'info')",
-		"setSoftwareUpdateDialogAlert('升级计划仍在生成，平台会继续刷新状态，请稍后再次点击滚动升级。', 'warning')",
+		"setSoftwareUpdateDialogAlert('只读升级计划正在生成，完成后将自动打开确认框。', 'info')",
 		"setSoftwareUpdateDialogAlert(`升级计划生成失败：${error.message}`)",
 	} {
 		if !strings.Contains(page, contract) {
@@ -1634,7 +1672,7 @@ func TestConsoleRequiresTypedUpgradePackageIDBeforeMutatingSoftwareUpdate(t *tes
 	for _, contract := range []string{
 		"byId('software-update-confirmation-input').value === patchID",
 		"尚未输入完整升级包 ID，不能执行。",
-		"await startSoftwareUpdate(mode, patchID)",
+		"await startSoftwareUpdate(mode, patchID, patchID)",
 		"mode === 'rollback' ? 'danger-button' : 'primary-button'",
 	} {
 		if !strings.Contains(page, contract) {
@@ -1665,7 +1703,7 @@ func TestConsoleProvidesAuditableIndeterminateOperationReview(t *testing.T) {
 		`id="submit-operation-review"`,
 		"复核不会把该操作改成成功。",
 		"原始“结果不确定”状态和全部执行证据继续保留",
-		"operation.status === 'indeterminate' && !operation.review",
+		"operation.status === 'indeterminate' && !review && canOperateClusters()",
 		"fetchResult(`/api/v1/operations/${operationId}/review`",
 		"已复核 · 结果不确定",
 	} {

@@ -164,7 +164,9 @@ func (client *HTTPReconcileClient) Decision(ctx context.Context, policy ClusterP
 			failures = append(failures, fmt.Errorf("controller reconcile response contains trailing data"))
 			continue
 		}
-		if err := VerifyReconcileResponse(decision, payload, client.secret, now); err != nil {
+		// Network and controller fallback time count against the signed permit;
+		// request creation time is not the time at which authorization is used.
+		if err := VerifyReconcileResponse(decision, payload, client.secret, client.now().UTC()); err != nil {
 			failures = append(failures, err)
 			continue
 		}
@@ -174,7 +176,7 @@ func (client *HTTPReconcileClient) Decision(ctx context.Context, policy ClusterP
 		return decision, nil
 	}
 	if client.cache != nil && onlyControllerAvailabilityFailures(failures) {
-		if decision, cacheErr := client.cache.Load(payload, client.secret, now); cacheErr == nil {
+		if decision, cacheErr := client.cache.Load(payload, client.secret, client.now().UTC()); cacheErr == nil {
 			return decision, nil
 		} else {
 			failures = append(failures, cacheErr)

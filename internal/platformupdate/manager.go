@@ -43,6 +43,7 @@ var (
 	ErrInvalidPatch         = errors.New("software update package is invalid")
 	ErrPackageConflict      = errors.New("software update package ID already exists with different content")
 	ErrPackageNotFound      = errors.New("software update package was not found")
+	ErrPackagePruned        = errors.New("安装包已按保留策略清理，历史日志仍保留；请重新上传签名升级包")
 	ErrPlanRequired         = errors.New("a successful update plan is required before execution")
 	ErrConfirmationRequired = errors.New("typed update package confirmation is required")
 	ErrJobActive            = errors.New("another software update job is already active")
@@ -79,6 +80,7 @@ const (
 )
 
 type Package struct {
+	ArtifactsPruned    bool      `json:"artifacts_pruned,omitempty"`
 	PatchID            string    `json:"patch_id"`
 	FileName           string    `json:"file_name"`
 	SizeBytes          int64     `json:"size_bytes"`
@@ -307,9 +309,13 @@ func (manager *Manager) Upload(ctx context.Context, fileName string, source io.R
 	inspected.UploadedAt = manager.now().UTC()
 	if existing, found := manager.Package(inspected.PatchID); found {
 		if existing.SHA256 == inspected.SHA256 && existing.TargetVersion == inspected.TargetVersion && existing.SourceVersion == inspected.SourceVersion {
-			return existing, nil
+			if !existing.ArtifactsPruned {
+				return existing, nil
+			}
+			inspected.UploadedAt = existing.UploadedAt
+		} else {
+			return Package{}, ErrPackageConflict
 		}
-		return Package{}, ErrPackageConflict
 	}
 	if err := os.Chmod(temporaryPath, updateFileMode); err != nil {
 		return Package{}, fmt.Errorf("publish software update package permissions: %w", err)
@@ -319,6 +325,9 @@ func (manager *Manager) Upload(ctx context.Context, fileName string, source io.R
 	}
 	if err := writeJSONAtomic(filepath.Join(destinationDirectory, packageFileName), inspected); err != nil {
 		_ = os.Remove(filepath.Join(destinationDirectory, patchFileName))
+		return Package{}, err
+	}
+	if err := os.Remove(filepath.Join(destinationDirectory, "artifacts-pruned")); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return Package{}, err
 	}
 	return inspected, nil
@@ -336,6 +345,9 @@ func (manager *Manager) Start(ctx context.Context, mode Mode, patchID, confirmat
 	softwarePackage, found := manager.Package(patchID)
 	if !found {
 		return Job{}, ErrPackageNotFound
+	}
+	if softwarePackage.ArtifactsPruned {
+		return Job{}, ErrPackagePruned
 	}
 	softwarePackage, err := manager.reconcileStoredBootstrap(ctx, softwarePackage)
 	if err != nil {
@@ -395,10 +407,16 @@ func (manager *Manager) Package(patchID string) (Package, bool) {
 	if err := readJSONFile(filepath.Join(manager.config.RootDirectory, patchID, packageFileName), &result); err != nil || result.PatchID != patchID {
 		return Package{}, false
 	}
+	if info, err := os.Lstat(filepath.Join(manager.config.RootDirectory, patchID, "artifacts-pruned")); err == nil && info.Mode().IsRegular() {
+		result.ArtifactsPruned = true
+	}
 	return result, true
 }
 
 func (manager *Manager) reconcileStoredBootstrap(ctx context.Context, softwarePackage Package) (Package, error) {
+	if softwarePackage.ArtifactsPruned {
+		return softwarePackage, nil
+	}
 	if !strings.HasSuffix(strings.ToLower(filepath.Base(softwarePackage.FileName)), PreferredPackageExtension) {
 		return softwarePackage, nil
 	}

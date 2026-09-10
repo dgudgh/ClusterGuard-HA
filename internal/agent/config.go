@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -32,6 +33,8 @@ type PostgreSQLPeer struct {
 }
 
 type ClusterPolicy struct {
+	RecoveryArchiveID             model.ResourceID  `json:"-"`
+	RecoveryControllerAddresses   []string          `json:"-"`
 	ClusterID                     model.ResourceID  `json:"cluster_id"`
 	InstanceID                    model.ResourceID  `json:"instance_id"`
 	RuntimeKind                   model.RuntimeKind `json:"runtime_kind,omitempty"`
@@ -231,6 +234,14 @@ func LoadConfig(path string) (Config, error) {
 		if policy.Engine == model.EnginePostgreSQL {
 			if err := validatePostgreSQLPolicy(&policy); err != nil {
 				return Config{}, err
+			}
+			// Only literal hosts from the validated, operator-owned controller
+			// configuration qualify; recovery does not expand DNS or CIDRs.
+			for _, raw := range configuration.ControllerURLs {
+				controller, _ := url.Parse(raw)
+				if address := net.ParseIP(controller.Hostname()); address != nil {
+					policy.RecoveryControllerAddresses = append(policy.RecoveryControllerAddresses, address.String())
+				}
 			}
 		}
 		if policy.Engine == model.EngineOracle {

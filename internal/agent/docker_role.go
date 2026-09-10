@@ -113,6 +113,14 @@ func dockerMySQLClientArguments(policy ClusterPolicy) []string {
 }
 
 func (controller *DockerMySQLRoleController) mysql(ctx context.Context, policy ClusterPolicy, statement string) ([]byte, error) {
+	return controller.mysqlOutput(ctx, policy, statement, false)
+}
+
+func (controller *DockerMySQLRoleController) recoveryQuery(ctx context.Context, policy ClusterPolicy, statement string) ([]byte, error) {
+	return controller.mysqlOutput(ctx, policy, statement, true)
+}
+
+func (controller *DockerMySQLRoleController) mysqlOutput(ctx context.Context, policy ClusterPolicy, statement string, raw bool) ([]byte, error) {
 	containerID, running, err := controller.runningContainer(ctx, policy)
 	if err != nil {
 		return nil, err
@@ -122,6 +130,9 @@ func (controller *DockerMySQLRoleController) mysql(ctx context.Context, policy C
 	}
 	arguments := []string{"exec", containerID, policy.DockerMySQLBinary}
 	arguments = append(arguments, dockerMySQLClientArguments(policy)...)
+	if raw {
+		arguments = append(arguments, "--raw")
+	}
 	arguments = append(arguments, "--execute", statement)
 	output, err := controller.runDocker(ctx, arguments...)
 	if err != nil {

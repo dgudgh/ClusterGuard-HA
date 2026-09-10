@@ -18,17 +18,30 @@ import (
 )
 
 func seedAgentReconcileState(t *testing.T, repository *store.Repository, now time.Time) (model.DatabaseCluster, model.DatabaseInstance, model.HAEndpoint, endpoint.Lease) {
+	return seedAgentReconcileEngineState(t, repository, now, model.EngineMySQL)
+}
+
+func seedAgentReconcileEngineState(t *testing.T, repository *store.Repository, now time.Time, engine model.Engine) (model.DatabaseCluster, model.DatabaseInstance, model.HAEndpoint, endpoint.Lease) {
 	t.Helper()
-	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "payments"}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-a", IPAddress: "192.0.2.10", Port: 3306, Active: true}})
+	identity := model.EngineIdentity{"server_uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}
+	var clusterIdentity model.EngineIdentity
+	metadata := map[string]string{"read_only": "false", "super_read_only": "false"}
+	if engine == model.EnginePostgreSQL {
+		identity = model.EngineIdentity{"resource_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "system_identifier": "12345678"}
+		clusterIdentity = model.EngineIdentity{"system_identifier": "12345678"}
+		metadata = map[string]string{"in_recovery": "false", "transaction_read_only": "false"}
+	}
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: engine, DisplayName: "payments"}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-a", IPAddress: "192.0.2.10", Port: 3306, Active: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	snapshot, err := repository.ApplyDiscoveryRefresh(store.DiscoveryRefresh{
 		ClusterID: cluster.ResourceID, InventoryGeneration: testInventoryGeneration(t, repository, cluster.ResourceID), ObservedAt: now,
+		ClusterIdentity: clusterIdentity,
 		Observations: []store.DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: model.DatabaseInstance{
-			ClusterID: cluster.ResourceID, Engine: model.EngineMySQL, EngineIdentity: model.EngineIdentity{"server_uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},
+			ClusterID: cluster.ResourceID, Engine: engine, EngineIdentity: identity,
 			Hostname: "mysql-a", IPAddress: "192.0.2.10", Port: 3306, Role: model.RolePrimary, Health: model.Health{State: model.HealthHealthy},
-			EngineMetadata: map[string]string{"read_only": "false", "super_read_only": "false"},
+			EngineMetadata: metadata,
 		}}},
 		Probes: []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, DiscoveryObservedAt: now, Health: model.Health{State: model.HealthHealthy}}},
 		Health: model.Health{State: model.HealthHealthy},
@@ -49,6 +62,48 @@ func seedAgentReconcileState(t *testing.T, repository *store.Repository, now tim
 		t.Fatal(err)
 	}
 	return cluster, primary, resource, lease
+}
+
+func TestUpgradeMaintenancePreservesSignedLeaseDecisionsButNotMutations(t *testing.T) {
+	for _, engine := range []model.Engine{model.EngineMySQL, model.EnginePostgreSQL} {
+		t.Run(string(engine), func(t *testing.T) {
+			now := time.Now().UTC()
+			repository := store.NewMemory()
+			cluster, primary, _, lease := seedAgentReconcileEngineState(t, repository, now, engine)
+			authority := &apiMutationAuthorityStub{leaderID: model.NewResourceID(), leaderAddress: "controller:10009"}
+			server := newAPIServer(t, repository, adapter.NewUnsupported(engine), &fakeRefresher{}, WithMutationAuthority(authority), WithAgentReconcileSecret("agent-secret"), WithMutationMaintenance(mutationMaintenanceStub{err: errors.New("upgrade maintenance")}))
+			request := agent.ReconcileRequest{ClusterID: cluster.ResourceID, InstanceID: primary.ResourceID, RequestedAt: now, Nonce: "upgrade-maintenance-reconcile"}
+			if err := agent.SignReconcileRequest(&request, "agent-secret"); err != nil {
+				t.Fatal(err)
+			}
+			response := callAgentReconcile(t, server, request)
+			var decision agent.ReconcileResponse
+			if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &decision) != nil || decision.Action != agent.ReconcileKeepVIP || decision.LeaseID != lease.ResourceID || agent.VerifyReconcileResponse(decision, request, "agent-secret", now) != nil {
+				t.Fatalf("upgrade blocked existing majority lease: %d %s", response.Code, response.Body.String())
+			}
+			if response := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/clusters", map[string]interface{}{"display_name": "blocked", "engine": string(engine)}); response.Code != http.StatusLocked {
+				t.Fatalf("maintenance allowed a new mutation: %d", response.Code)
+			}
+			unsigned := request
+			unsigned.Signature = "invalid"
+			if response := callAgentReconcile(t, server, unsigned); response.Code != http.StatusUnauthorized {
+				t.Fatalf("invalid Agent signature accepted during maintenance: %d", response.Code)
+			}
+			authority.err = errors.New("no majority")
+			if response := callAgentReconcile(t, server, request); response.Code != http.StatusServiceUnavailable {
+				t.Fatalf("minority authorization accepted during maintenance: %d", response.Code)
+			}
+			authority.err = nil
+			lease.ExpiresAt = now.Add(-time.Second)
+			if err := repository.PutCoordinationLease(coordination.LeaseRecord{Lease: lease, CreatedAt: now.Add(-time.Minute), UpdatedAt: now.Add(-30 * time.Second)}); err != nil {
+				t.Fatal(err)
+			}
+			response = callAgentReconcile(t, server, request)
+			if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &decision) != nil || decision.Action != agent.ReconcileSelfIsolate {
+				t.Fatalf("expired lease was extended by maintenance: %d %s", response.Code, response.Body.String())
+			}
+		})
+	}
 }
 
 func seedRebootBootstrapState(t *testing.T, repository *store.Repository, now time.Time) (model.DatabaseCluster, model.DatabaseInstance, endpoint.Lease) {
@@ -155,6 +210,7 @@ func TestAgentReconcileForwardsVerifiedBodyToRaftLeader(t *testing.T) {
 	server := newAPIServer(
 		t, repository, adapter.NewUnsupported(model.EngineMySQL), &fakeRefresher{},
 		WithMutationAuthority(authority), WithAgentReconcileSecret("agent-secret"), WithMutationRPC(rpc),
+		WithMutationMaintenance(mutationMaintenanceStub{err: errors.New("upgrade maintenance")}),
 	)
 	payload := agent.ReconcileRequest{
 		ClusterID: model.NewResourceID(), InstanceID: model.NewResourceID(),

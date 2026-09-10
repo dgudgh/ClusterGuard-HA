@@ -162,31 +162,71 @@ func postgresqlAllMutationsCompleted(ctx context.Context, request adapter.Operat
 	return true, nil
 }
 
-func (adapterInstance *Adapter) postgresqlLiveSwitchoverPrecheck(ctx context.Context, resolved adapter.ResolvedOperation) error {
-	for _, expected := range []struct {
-		instance model.DatabaseInstance
-		role     model.InstanceRole
-		sourceID model.ResourceID
-	}{
-		{instance: resolved.Primary, role: model.RolePrimary},
-		{instance: resolved.Target, role: model.RoleStandby, sourceID: resolved.Primary.ResourceID},
-	} {
+type postgresqlLiveStandbyTopology struct {
+	source         model.DatabaseInstance
+	target         model.DatabaseInstance
+	targetTopology adapter.TopologyResult
+}
+
+func (adapterInstance *Adapter) postgresqlResolveLiveStandbyTopology(
+	ctx context.Context,
+	resolved adapter.ResolvedOperation,
+	expectedSource model.DatabaseInstance,
+	expectedTarget model.DatabaseInstance,
+) (postgresqlLiveStandbyTopology, error) {
+	observations := make([]adapter.TopologyObservation, 0, 2)
+	for _, expected := range []model.DatabaseInstance{expectedSource, expectedTarget} {
 		result, err := adapterInstance.Discover(ctx, adapter.DiscoverRequest{
-			ClusterID: resolved.Cluster.ResourceID, Endpoint: postgresqlInstanceEndpoint(expected.instance), Credentials: resolved.Credentials,
+			ClusterID: resolved.Cluster.ResourceID, Endpoint: postgresqlInstanceEndpoint(expected), Credentials: resolved.Credentials,
 		})
 		if err != nil {
-			return fmt.Errorf("revalidate PostgreSQL node %s: %w", expected.instance.ResourceID, err)
+			return postgresqlLiveStandbyTopology{}, fmt.Errorf("discover pinned PostgreSQL node %s: %w", expected.ResourceID, err)
 		}
-		live := result.Instance
-		if !postgresqlInstanceIdentityMatches(live, expected.instance, resolved.Cluster.EngineIdentity["system_identifier"]) || live.Role != expected.role || live.Health.State != model.HealthHealthy {
-			return fmt.Errorf("live PostgreSQL identity or role changed for node %s", expected.instance.ResourceID)
-		}
-		if expected.sourceID != "" {
-			source, found := postgresqlInstanceByResourceID(resolved, expected.sourceID)
-			if !found || !postgresqlSourceIdentityMatches(live.Replication.SourceIdentity, source, resolved.Cluster.EngineIdentity["system_identifier"]) {
-				return fmt.Errorf("live PostgreSQL target no longer follows the selected primary")
-			}
-		}
+		observations = append(observations, adapter.TopologyObservation{
+			Endpoint:  postgresqlInstanceEndpoint(expected),
+			Discovery: result,
+		})
+	}
+	adapterInstance.ResolveTopologyObservations(observations)
+	return postgresqlLiveStandbyTopology{
+		source:         observations[0].Discovery.Instance,
+		target:         observations[1].Discovery.Instance,
+		targetTopology: observations[1].Topology,
+	}, nil
+}
+
+func postgresqlLiveStandbyTopologyMatches(
+	live postgresqlLiveStandbyTopology,
+	expectedSource model.DatabaseInstance,
+	expectedTarget model.DatabaseInstance,
+	systemIdentifier string,
+) bool {
+	if !postgresqlInstanceIdentityMatches(live.source, expectedSource, systemIdentifier) ||
+		!postgresqlInstanceIdentityMatches(live.target, expectedTarget, systemIdentifier) ||
+		live.source.Role != model.RolePrimary || live.source.Health.State != model.HealthHealthy ||
+		live.target.Role != model.RoleStandby || live.target.Health.State != model.HealthHealthy || !live.target.PromotionEligible ||
+		!postgresqlSourceIdentityMatches(live.target.Replication.SourceIdentity, expectedSource, systemIdentifier) ||
+		len(live.targetTopology.Links) != 1 {
+		return false
+	}
+	link := live.targetTopology.Links[0]
+	return link.Healthy &&
+		postgresqlSourceIdentityMatches(link.SourceIdentity, expectedSource, systemIdentifier) &&
+		postgresqlSourceIdentityMatches(link.TargetIdentity, expectedTarget, systemIdentifier)
+}
+
+func (adapterInstance *Adapter) postgresqlLiveSwitchoverPrecheck(ctx context.Context, resolved adapter.ResolvedOperation) error {
+	live, err := adapterInstance.postgresqlResolveLiveStandbyTopology(ctx, resolved, resolved.Primary, resolved.Target)
+	if err != nil {
+		return fmt.Errorf("revalidate PostgreSQL switchover topology: %w", err)
+	}
+	systemIdentifier := resolved.Cluster.EngineIdentity["system_identifier"]
+	if !postgresqlInstanceIdentityMatches(live.source, resolved.Primary, systemIdentifier) ||
+		!postgresqlInstanceIdentityMatches(live.target, resolved.Target, systemIdentifier) {
+		return fmt.Errorf("live PostgreSQL source or target identity changed")
+	}
+	if !postgresqlLiveStandbyTopologyMatches(live, resolved.Primary, resolved.Target, systemIdentifier) {
+		return fmt.Errorf("live PostgreSQL target is not verified by both peers as following the selected primary")
 	}
 	return nil
 }
@@ -200,16 +240,26 @@ func (adapterInstance *Adapter) postgresqlLiveFailoverTargetPrecheck(ctx context
 	}
 	live := result.Instance
 	identityMatches := postgresqlInstanceIdentityMatches(live, resolved.Target, resolved.Cluster.EngineIdentity["system_identifier"])
-	normalStreaming := live.Role == model.RoleStandby && live.Health.State == model.HealthHealthy &&
-		postgresqlSourceIdentityMatches(live.Replication.SourceIdentity, resolved.Primary, resolved.Cluster.EngineIdentity["system_identifier"]) &&
-		live.Replication.IOThread == model.ThreadRunning && live.Replication.SQLThread == model.ThreadRunning &&
-		live.Replication.LagSeconds != nil && *live.Replication.LagSeconds == 0
 	liveForEvidence := live
 	if identityMatches {
 		liveForEvidence.ResourceID = resolved.Target.ResourceID
 	}
 	safeSourceLoss := postgresqlSafeSourceLossEvidence(resolved.Cluster.EngineIdentity["system_identifier"], resolved.Primary, liveForEvidence)
-	if !identityMatches || (!normalStreaming && !safeSourceLoss) {
+	if !identityMatches {
+		return fmt.Errorf("live PostgreSQL failover target identity, streaming state, or upstream changed")
+	}
+	if safeSourceLoss {
+		return nil
+	}
+
+	liveTopology, err := adapterInstance.postgresqlResolveLiveStandbyTopology(ctx, resolved, resolved.Primary, resolved.Target)
+	if err != nil {
+		return fmt.Errorf("revalidate PostgreSQL failover topology: %w", err)
+	}
+	normalStreaming := postgresqlLiveStandbyTopologyMatches(
+		liveTopology, resolved.Primary, resolved.Target, resolved.Cluster.EngineIdentity["system_identifier"],
+	) && liveTopology.target.Replication.LagSeconds != nil && *liveTopology.target.Replication.LagSeconds == 0
+	if !normalStreaming {
 		return fmt.Errorf("live PostgreSQL failover target identity, streaming state, or upstream changed")
 	}
 	return nil
@@ -949,6 +999,31 @@ func (adapterInstance *Adapter) postgresqlInstanceVerificationCheckOnce(
 	expectedRole model.InstanceRole,
 	expectedSourceID model.ResourceID,
 ) (model.Check, bool) {
+	systemIdentifier := resolved.Cluster.EngineIdentity["system_identifier"]
+	if expectedRole == model.RoleStandby {
+		expectedSource, sourceFound := postgresqlInstanceByResourceID(resolved, expectedSourceID)
+		if !sourceFound {
+			return model.Check{Name: name, Status: model.CheckFail, Message: "expected PostgreSQL replication source is missing from the pinned topology"}, false
+		}
+		live, err := adapterInstance.postgresqlResolveLiveStandbyTopology(ctx, resolved, expectedSource, expected)
+		if err != nil {
+			return model.Check{Name: name, Status: model.CheckFail, Message: "PostgreSQL source and standby state could not be discovered"}, true
+		}
+		if !postgresqlInstanceIdentityMatches(live.target, expected, systemIdentifier) {
+			return model.Check{Name: name, Status: model.CheckFail, Message: "PostgreSQL database identity does not match the pinned resource"}, false
+		}
+		if !postgresqlInstanceIdentityMatches(live.source, expectedSource, systemIdentifier) {
+			return model.Check{Name: name, Status: model.CheckFail, Message: "PostgreSQL replication source identity does not match the pinned resource"}, false
+		}
+		if live.target.Role != model.RoleStandby || live.target.EngineMetadata["in_recovery"] != "true" {
+			return model.Check{Name: name, Status: model.CheckFail, Message: "PostgreSQL database is not the expected standby"}, false
+		}
+		if postgresqlLiveStandbyTopologyMatches(live, expectedSource, expected, systemIdentifier) {
+			return model.Check{Name: name, Status: model.CheckPass, Message: "database identity, streaming state, and bilateral replication source are verified"}, false
+		}
+		return model.Check{Name: name, Status: model.CheckFail, Message: "PostgreSQL standby streaming topology has not converged at both peers"}, true
+	}
+
 	result, err := adapterInstance.Discover(ctx, adapter.DiscoverRequest{
 		ClusterID:   resolved.Cluster.ResourceID,
 		Endpoint:    postgresqlInstanceEndpoint(expected),
@@ -958,7 +1033,6 @@ func (adapterInstance *Adapter) postgresqlInstanceVerificationCheckOnce(
 		return model.Check{Name: name, Status: model.CheckFail, Message: "PostgreSQL database state could not be discovered"}, true
 	}
 	instance := result.Instance
-	systemIdentifier := resolved.Cluster.EngineIdentity["system_identifier"]
 	identityMatches := postgresqlInstanceIdentityMatches(instance, expected, systemIdentifier)
 	if !identityMatches {
 		return model.Check{Name: name, Status: model.CheckFail, Message: "PostgreSQL database identity does not match the pinned resource"}, false
@@ -972,24 +1046,5 @@ func (adapterInstance *Adapter) postgresqlInstanceVerificationCheckOnce(
 		}
 		return model.Check{Name: name, Status: model.CheckFail, Message: "PostgreSQL database is not the expected writable primary"}, false
 	}
-	if instance.Role != model.RoleStandby || instance.EngineMetadata["in_recovery"] != "true" {
-		return model.Check{Name: name, Status: model.CheckFail, Message: "PostgreSQL database is not the expected standby"}, false
-	}
-
-	streaming := instance.EngineMetadata["in_recovery"] == "true" &&
-		instance.EngineMetadata["transaction_read_only"] == "true" &&
-		instance.Replication.IOThread == model.ThreadRunning &&
-		instance.Replication.SQLThread == model.ThreadRunning
-	expectedSource, sourceFound := postgresqlInstanceByResourceID(resolved, expectedSourceID)
-	if !sourceFound {
-		return model.Check{Name: name, Status: model.CheckFail, Message: "expected PostgreSQL replication source is missing from the pinned topology"}, false
-	}
-	sourceMatches := sourceFound && postgresqlSourceIdentityMatches(instance.Replication.SourceIdentity, expectedSource, systemIdentifier)
-	if roleMatches && streaming && sourceMatches {
-		return model.Check{Name: name, Status: model.CheckPass, Message: "database identity, streaming state, and replication source are verified"}, false
-	}
-	if !sourceMatches {
-		return model.Check{Name: name, Status: model.CheckFail, Message: "PostgreSQL standby follows a different replication source"}, false
-	}
-	return model.Check{Name: name, Status: model.CheckFail, Message: "PostgreSQL standby streaming state has not converged"}, true
+	return model.Check{Name: name, Status: model.CheckFail, Message: "PostgreSQL database role is unsupported for verification"}, false
 }

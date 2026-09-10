@@ -777,7 +777,7 @@ func New(configuration config.File) (*Runtime, error) {
 		}
 	}
 	locks := newRuntimeLocks(repository, failoverAuthority)
-	updateMaintenance := maintenance.NewFileGate(maintenance.DefaultMarkerPath)
+	updateMaintenance := maintenance.NewGate(maintenance.DefaultMarkerPath, repository)
 	softwareUpdates := platformupdate.NewManager(platformupdate.Config{})
 	operationCredentials := func(_ context.Context, cluster model.DatabaseCluster) (adapter.OperationCredentials, error) {
 		return databaseOperationCredentials(configuration, cluster)
@@ -797,6 +797,9 @@ func New(configuration config.File) (*Runtime, error) {
 			Credentials: workflow.CredentialProviderFunc(operationCredentials),
 		}),
 	)
+	result.startLoop(func(ctx context.Context) {
+		runAbandonedOperationReconciler(ctx, repository, service, result.consensus)
+	})
 	discoveryOptions := []discovery.Option{discovery.WithPublicationFence(locks.publication)}
 	if failoverRuntime.failureObserver != nil {
 		discoveryOptions = append(discoveryOptions, discovery.WithPrimaryFailureObserver(failoverRuntime.failureObserver))
@@ -813,6 +816,11 @@ func New(configuration config.File) (*Runtime, error) {
 		api.WithControlPlaneStatus(newControlPlaneStatusProvider(repository, result.consensus, startedAt)),
 		api.WithMutationMaintenance(updateMaintenance),
 		api.WithSoftwareUpdates(softwareUpdates),
+	}
+	if agentTransport != nil && result.consensus != nil && ownershipLeases != nil {
+		driver := &disasterDriver{repository: repository, transport: agentTransport, secret: configuration.Agent.SharedSecret, authority: result.consensus, leases: ownershipLeases, refresher: refresher, mysql: mysql.DisasterExecutor{Runner: mysql.CLIQueryRunner{}, SemiSyncRequired: configuration.MySQL.SemiSyncRequired}, credentials: operationCredentials}
+		manager := newDisasterManager(repository, result.consensus, locks, updateMaintenance, driver)
+		options = append(options, api.WithDisasterRecovery(manager, result.startLoop))
 	}
 	if configuration.Agent.Enabled {
 		options = append(options, api.WithAgentReconcileSecret(configuration.Agent.SharedSecret))

@@ -81,6 +81,20 @@ type DiscoverRequest struct {
 
 type DiscoveryResult struct {
 	Instance model.DatabaseInstance `json:"instance"`
+	// TopologyEvidence is adapter-local, same-round evidence, never persisted or serialized.
+	TopologyEvidence any `json:"-"`
+}
+
+type TopologyObservation struct {
+	Endpoint  Endpoint
+	Discovery DiscoveryResult
+	Topology  TopologyResult
+}
+
+// TopologyObservationResolver cross-checks successful probes before publication.
+// Implementations refine entries in place without adding, removing or reordering them.
+type TopologyObservationResolver interface {
+	ResolveTopologyObservations([]TopologyObservation)
 }
 
 type TopologyLink = model.NativeReplicationLink

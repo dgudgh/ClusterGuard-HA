@@ -229,6 +229,10 @@ func (repository *Repository) IsClusterPowerProtected(clusterID model.ResourceID
 	if !found {
 		return false, model.PowerNormal
 	}
+	cluster := repository.snapshot.Clusters[clusterID]
+	if recovery := cluster.Recovery; !cluster.RecoveryFreeze && recovery != nil && recovery.LastRecoveryStatus == "succeeded" && recovery.IncidentRecovered && recovery.RecoveredAt.After(latest.UpdatedAt) {
+		return false, model.PowerNormal
+	}
 	switch latest.State {
 	case model.PowerShuttingDown, model.PowerPoweredOff, model.PowerBootDetected,
 		model.PowerRecovering, model.PowerVerifying, model.PowerFailed:

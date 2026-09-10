@@ -64,7 +64,8 @@ newest_directories() {
 }
 
 update_directory_is_prunable() {
-  local directory="$1" status_file="${directory}/status.json" summary status maintenance verification
+  local directory="$1" status_file summary status maintenance verification
+  status_file="${directory}/status.json"
   [[ -e "${status_file}" ]] || return 0
   [[ -f "${status_file}" && ! -L "${status_file}" && -n "${jq_binary}" ]] || return 1
   summary="$("${jq_binary}" -er '[.status // "", (.maintenance_active // false), (.verification_required // false)] | @tsv' "${status_file}" 2>/dev/null)" || return 1
@@ -78,14 +79,15 @@ update_directory_is_prunable() {
 }
 
 prune_root() {
-  local root="$1" kind="$2" patch_id directory retained=0 removed=0
+  local root="$1" kind="$2" patch_id directory artifact retained=0 removed=0
   while IFS= read -r patch_id; do
     [[ -n "${patch_id}" ]] || continue
     valid_patch_id "${patch_id}" || continue
     directory="${root}/${patch_id}"
     [[ -d "${directory}" && ! -L "${directory}" ]] || continue
+    [[ ! -e "${directory}/artifacts-pruned" && ! -L "${directory}/artifacts-pruned" ]] || continue
 
-    if [[ "${kind}" == update ]] && ! update_directory_is_prunable "${directory}"; then
+    if ! update_directory_is_prunable "${update_root}/${patch_id}"; then
       printf '保护未结束或需要复核的升级包：%s\n' "${patch_id}"
       continue
     fi
@@ -94,11 +96,18 @@ prune_root() {
     if ((retained <= retained_versions)) || [[ "${patch_id}" == "${protected_patch_id}" ]]; then
       continue
     fi
-    rm -rf -- "${directory}"
+    # Installation payload retention is independent of upgrade audit retention.
+    # Keep package/status JSON, event journals, and textual output indefinitely.
+    for artifact in "${directory}"/package.cgpatch "${directory}"/package.cgupgrade \
+      "${directory}"/*.rpm "${directory}"/*.tgz "${directory}"/*.tar.gz; do
+      [[ -f "${artifact}" && ! -L "${artifact}" ]] || continue
+      rm -f -- "${artifact}"
+    done
+    (set -o noclobber; printf '%s\n' 'Installation payloads pruned; upgrade audit retained.' >"${directory}/artifacts-pruned")
     removed=$((removed + 1))
-    printf '已清理旧升级材料：%s\n' "${directory}"
+    printf '已清理旧安装包并保留升级审计：%s\n' "${directory}"
   done < <(newest_directories "${root}")
-  printf '%s：保留最近 %s 个版本，清理 %s 个目录\n' "${root}" "${retained_versions}" "${removed}"
+  printf '%s：保留最近 %s 个版本，清理 %s 组安装材料\n' "${root}" "${retained_versions}" "${removed}"
 }
 
 prune_root "${update_root}" update

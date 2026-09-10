@@ -138,7 +138,9 @@ func (server *Server) agentReconcileRoute(writer http.ResponseWriter, request *h
 		writeError(writer, http.StatusUnauthorized, "agent reconcile request authentication failed")
 		return
 	}
-	if !server.authorizeMutation(writer, request) {
+	// Upgrade maintenance blocks new operations, not signed decisions for an
+	// existing writer lease. Quorum, lease expiry, and local fencing still apply.
+	if !server.authorizeLeaderQuorum(writer, request) {
 		return
 	}
 	releaseDecision := func() {}
@@ -206,6 +208,39 @@ func (server *Server) agentReconcileRoute(writer http.ResponseWriter, request *h
 		}
 	} else {
 		response.Action = agent.ReconcileSelfIsolate
+	}
+	if cluster, found := server.store.Cluster(payload.ClusterID); found && cluster.DisasterRecoveryActive() {
+		response.Action = agent.ReconcileSelfIsolate
+		response.LeaseID = ""
+		response.Reason = "disaster recovery freeze prohibits normal writer and VIP authorization"
+		response.ValidUntil = now.Add(10 * time.Second)
+		if task, expiresAt, allowed := server.store.RecoveryAuthorization(payload.ClusterID, payload.InstanceID, now); allowed {
+			response.RecoveryTaskID = task.ResourceID
+			response.LeaseID = task.LeaseID
+			response.Action = agent.ReconcileRecoveryPrimary
+			response.Reason = "recovery-only primary permit requires a verified local business-access guard; VIP remains prohibited"
+			if task.PrimaryID != payload.InstanceID {
+				response.Action = agent.ReconcileRecoveryReplica
+				response.Reason = "recovery replica reconstruction requires a verified local offline-mode guard; VIP remains prohibited"
+			}
+			if task.Stage == model.RecoveryFencing || task.Stage == model.RecoveryInspecting {
+				response.Action = agent.ReconcileRecoveryPrepare
+				response.Reason = "recovery preparation is isolated by offline mode and does not authorize a primary or VIP"
+			}
+			if expiresAt.Before(response.ValidUntil) {
+				response.ValidUntil = expiresAt
+			}
+			if task.Stage == model.RecoveryCommitted {
+				// A committed topology alone is not a business writer lease.
+				if evidence.CanonicalOwnerID == task.PrimaryID && evidence.EndpointOwnerID == task.PrimaryID && evidence.Lease.OwnerID == task.PrimaryID && evidence.Lease.OperationID == evidence.Lease.HAEndpointID && evidence.Lease.Active && evidence.Lease.ExpiresAt.After(now) {
+					response.Action = agent.ReconcileRecoveryActivate
+					response.Reason = "Recovery Commit and majority writer lease authorize guarded activation"
+					if evidence.Lease.ExpiresAt.Before(response.ValidUntil) {
+						response.ValidUntil = evidence.Lease.ExpiresAt
+					}
+				}
+			}
+		}
 	}
 	if err := agent.SignReconcileResponse(&response, server.agentSecret); err != nil {
 		writeError(writer, http.StatusInternalServerError, "sign agent reconcile response failed")

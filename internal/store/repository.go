@@ -117,6 +117,7 @@ type snapshot struct {
 	ApprovalGrants        map[model.ResourceID]model.ApprovalGrant                 `json:"approval_grants"`
 	CoordinationLeases    map[model.ResourceID]coordination.LeaseRecord            `json:"coordination_leases"`
 	OperationLocks        map[model.ResourceID]coordination.OperationLockRecord    `json:"operation_locks"`
+	SoftwareUpdateGate    *SoftwareUpdateGate                                      `json:"software_update_gate,omitempty"`
 	LifecycleTasks        map[model.ResourceID]lifecycle.Task                      `json:"lifecycle_tasks"`
 	ReplicationLinks      map[model.ResourceID][]model.ReplicationLink             `json:"replication_links"`
 	MetricSamples         map[model.ResourceID][]model.MetricSample                `json:"metric_samples"`
@@ -127,6 +128,7 @@ type snapshot struct {
 	Operations            map[model.ResourceID]model.OperationRecord               `json:"operations"`
 	OperationKeys         map[string]model.ResourceID                              `json:"operation_keys"`
 	PowerOperations       map[model.ResourceID]model.PowerOperation                `json:"power_operations"`
+	RecoveryTasks         map[model.ResourceID]model.RecoveryTask                  `json:"recovery_tasks,omitempty"`
 	Audits                []model.AuditEvent                                       `json:"audits"`
 	Reports               []model.Report                                           `json:"reports"`
 	SecurityEvents        []model.SecurityEvent                                    `json:"security_events"`
@@ -160,6 +162,7 @@ func emptySnapshot() snapshot {
 		ApprovalGrants:        map[model.ResourceID]model.ApprovalGrant{},
 		CoordinationLeases:    map[model.ResourceID]coordination.LeaseRecord{},
 		OperationLocks:        map[model.ResourceID]coordination.OperationLockRecord{},
+		SoftwareUpdateGate:    nil,
 		LifecycleTasks:        map[model.ResourceID]lifecycle.Task{},
 		ReplicationLinks:      map[model.ResourceID][]model.ReplicationLink{},
 		MetricSamples:         map[model.ResourceID][]model.MetricSample{},
@@ -170,6 +173,7 @@ func emptySnapshot() snapshot {
 		Operations:            map[model.ResourceID]model.OperationRecord{},
 		OperationKeys:         map[string]model.ResourceID{},
 		PowerOperations:       map[model.ResourceID]model.PowerOperation{},
+		RecoveryTasks:         map[model.ResourceID]model.RecoveryTask{},
 		Audits:                []model.AuditEvent{},
 		Reports:               []model.Report{},
 		SecurityEvents:        []model.SecurityEvent{},
@@ -353,6 +357,10 @@ func cloneInstance(instance model.DatabaseInstance) model.DatabaseInstance {
 func cloneCluster(cluster model.DatabaseCluster) model.DatabaseCluster {
 	copy := cluster
 	copy.EngineIdentity = cluster.EngineIdentity.Clone()
+	if cluster.Recovery != nil {
+		state := *cluster.Recovery
+		copy.Recovery = &state
+	}
 	return copy
 }
 
@@ -499,6 +507,10 @@ func cloneDiscoverySnapshot(value snapshot) snapshot {
 	copy.ApprovalGrants = cloneApprovalGrantMap(value.ApprovalGrants)
 	copy.CoordinationLeases = cloneCoordinationLeaseMap(value.CoordinationLeases)
 	copy.OperationLocks = cloneOperationLockMap(value.OperationLocks)
+	if value.SoftwareUpdateGate != nil {
+		gate := *value.SoftwareUpdateGate
+		copy.SoftwareUpdateGate = &gate
+	}
 	copy.LifecycleTasks = cloneLifecycleTaskMap(value.LifecycleTasks)
 	copy.ReplicationLinks = cloneReplicationLinkMap(value.ReplicationLinks)
 	copy.MetricSamples = cloneMetricSampleMap(value.MetricSamples)
@@ -509,6 +521,7 @@ func cloneDiscoverySnapshot(value snapshot) snapshot {
 	copy.Operations = cloneOperationMap(value.Operations)
 	copy.OperationKeys = cloneOperationKeyMap(value.OperationKeys)
 	copy.PowerOperations = clonePowerOperationMap(value.PowerOperations)
+	copy.RecoveryTasks = cloneRecoveryTasks(value.RecoveryTasks)
 	copy.SecurityEvents = append([]model.SecurityEvent{}, value.SecurityEvents...)
 	return copy
 }
@@ -1377,6 +1390,9 @@ func reconcileInstanceCandidate(candidate *snapshot, discovered model.DatabaseIn
 		existing.Replication.LagSeconds = &lagSeconds
 	}
 	existing.Maintenance = discovered.Maintenance
+	if cluster := candidate.Clusters[discovered.ClusterID]; cluster.DisasterRecoveryActive() {
+		existing.Maintenance = true
+	}
 	existing.PromotionEligible = discovered.PromotionEligible
 	existing.EngineMetadata = make(map[string]string, len(discovered.EngineMetadata))
 	for key, value := range discovered.EngineMetadata {
@@ -2366,6 +2382,7 @@ func (repository *Repository) RecordAudit(event model.AuditEvent) error {
 	if err := validateAuditText(event); err != nil {
 		return err
 	}
+	event = redactAudit(event)
 	now := repository.now().UTC()
 	if event.ResourceID == "" {
 		event.ResourceID = model.NewResourceID()
@@ -2394,6 +2411,7 @@ func (repository *Repository) RecordReport(report model.Report) error {
 	if err := validateReportText(report); err != nil {
 		return err
 	}
+	report = redactReport(report)
 	now := repository.now().UTC()
 	if report.ResourceID == "" {
 		report.ResourceID = model.NewResourceID()
@@ -2433,13 +2451,21 @@ func (repository *Repository) RecordReport(report model.Report) error {
 func (repository *Repository) Audits() []model.AuditEvent {
 	repository.mu.RLock()
 	defer repository.mu.RUnlock()
-	return append([]model.AuditEvent{}, repository.snapshot.Audits...)
+	result := append([]model.AuditEvent{}, repository.snapshot.Audits...)
+	for i := range result {
+		result[i] = redactAudit(result[i])
+	}
+	return result
 }
 
 func (repository *Repository) Reports() []model.Report {
 	repository.mu.RLock()
 	defer repository.mu.RUnlock()
-	return append([]model.Report{}, repository.snapshot.Reports...)
+	result := append([]model.Report{}, repository.snapshot.Reports...)
+	for i := range result {
+		result[i] = redactReport(result[i])
+	}
+	return result
 }
 
 func (repository *Repository) Report(resourceID model.ResourceID) (model.Report, bool) {
@@ -2447,7 +2473,7 @@ func (repository *Repository) Report(resourceID model.ResourceID) (model.Report,
 	defer repository.mu.RUnlock()
 	for _, report := range repository.snapshot.Reports {
 		if report.ResourceID == resourceID {
-			return report, true
+			return redactReport(report), true
 		}
 	}
 	return model.Report{}, false

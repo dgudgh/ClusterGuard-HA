@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"clusterguard.io/ha/internal/platformupdate"
+	"clusterguard.io/ha/internal/store"
 	"clusterguard.io/ha/pkg/model"
 )
 
@@ -28,13 +29,38 @@ type softwareUpdateActionPayload struct {
 	Confirmation string `json:"confirmation,omitempty"`
 }
 
-func softwareUpdateRecoveryRoute(method, path string) bool {
+type softwareUpdateGatePayload struct {
+	PatchID             string `json:"patch_id"`
+	ExecutionID         string `json:"execution_id"`
+	PreviousPatchID     string `json:"previous_patch_id,omitempty"`
+	PreviousExecutionID string `json:"previous_execution_id,omitempty"`
+}
+
+func softwareUpdateMaintenanceRoute(method, path string) bool {
 	if method != http.MethodPost {
 		return false
 	}
 	path = strings.TrimSuffix(path, "/")
-	return strings.HasPrefix(path, "/api/v1/platform/updates/") &&
-		(strings.HasSuffix(path, "/resume") || strings.HasSuffix(path, "/rollback"))
+	const collection = "/api/v1/platform/updates"
+	if path == collection {
+		return true
+	}
+	if path == collection+"/gate/acquire" || path == collection+"/gate/release" {
+		return true
+	}
+	if !strings.HasPrefix(path, collection+"/") {
+		return false
+	}
+	parts := strings.Split(strings.TrimPrefix(path, collection+"/"), "/")
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" {
+		return false
+	}
+	switch platformupdate.Mode(parts[1]) {
+	case platformupdate.ModePlan, platformupdate.ModeExecute, platformupdate.ModeResume, platformupdate.ModeRollback:
+		return true
+	default:
+		return false
+	}
 }
 
 func (server *Server) softwareUpdateRoute(writer http.ResponseWriter, request *http.Request, tail string) {
@@ -58,6 +84,10 @@ func (server *Server) softwareUpdateRoute(writer http.ResponseWriter, request *h
 		return
 	}
 	parts := strings.Split(tail, "/")
+	if len(parts) == 2 && parts[0] == "gate" && request.Method == http.MethodPost {
+		server.softwareUpdateGateAction(writer, request, parts[1])
+		return
+	}
 	if len(parts) == 1 && request.Method == http.MethodGet {
 		server.softwareUpdateStatus(writer, parts[0])
 		return
@@ -71,6 +101,50 @@ func (server *Server) softwareUpdateRoute(writer http.ResponseWriter, request *h
 		}
 	}
 	writeError(writer, http.StatusNotFound, "software update route not found")
+}
+
+func (server *Server) softwareUpdateGateAction(writer http.ResponseWriter, request *http.Request, action string) {
+	if !server.validControlBearer(request) {
+		writeError(writer, http.StatusForbidden, "software update gate requires the privileged updater")
+		return
+	}
+	if server.store == nil {
+		writeError(writer, http.StatusServiceUnavailable, "software update gate store is unavailable")
+		return
+	}
+	payload := softwareUpdateGatePayload{}
+	if err := decode(request, &payload); err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid software update gate request")
+		return
+	}
+	var err error
+	switch action {
+	case "acquire":
+		_, err = server.store.ClaimSoftwareUpdateGate(payload.PatchID, payload.ExecutionID, payload.PreviousPatchID, payload.PreviousExecutionID)
+	case "release":
+		err = server.store.ReleaseSoftwareUpdateGate(payload.PatchID, payload.ExecutionID)
+	default:
+		writeError(writer, http.StatusNotFound, "software update gate action not found")
+		return
+	}
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrValidation):
+			writeError(writer, http.StatusBadRequest, err.Error())
+		case errors.Is(err, store.ErrConflict):
+			writeError(writer, http.StatusConflict, err.Error())
+		default:
+			writeError(writer, http.StatusServiceUnavailable, "software update gate persistence failed")
+		}
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]interface{}{
+		"status": "ok",
+		"result": map[string]interface{}{
+			"active": action == "acquire", "patch_id": strings.TrimSpace(payload.PatchID),
+			"execution_id": strings.TrimSpace(payload.ExecutionID),
+		},
+	})
 }
 
 func (server *Server) uploadSoftwareUpdate(writer http.ResponseWriter, request *http.Request) {
@@ -171,7 +245,7 @@ func (server *Server) writeSoftwareUpdateError(writer http.ResponseWriter, err e
 		writeError(writer, http.StatusNotFound, err.Error())
 	case errors.Is(err, platformupdate.ErrInvalidPatch), errors.Is(err, platformupdate.ErrBootstrapRequired), errors.Is(err, platformupdate.ErrConfirmationRequired):
 		writeError(writer, http.StatusBadRequest, err.Error())
-	case errors.Is(err, platformupdate.ErrPlanRequired), errors.Is(err, platformupdate.ErrJobActive), errors.Is(err, platformupdate.ErrPackageConflict):
+	case errors.Is(err, platformupdate.ErrPlanRequired), errors.Is(err, platformupdate.ErrJobActive), errors.Is(err, platformupdate.ErrPackageConflict), errors.Is(err, platformupdate.ErrPackagePruned):
 		writeError(writer, http.StatusConflict, err.Error())
 	default:
 		writeError(writer, http.StatusServiceUnavailable, err.Error())

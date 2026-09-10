@@ -78,6 +78,9 @@ mkdir -p \
   "${root}/docs"
 
 commit="$(git -C "${repository}" rev-parse HEAD 2>/dev/null || printf unknown)"
+if [[ "${commit}" != "unknown" && -n "$(git -C "${repository}" status --porcelain --untracked-files=normal)" ]]; then
+  commit="${commit}-dirty"
+fi
 build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 version_ldflags="-s -w -X clusterguard.io/ha/internal/buildinfo.Version=${version} -X clusterguard.io/ha/internal/buildinfo.Release=${release} -X clusterguard.io/ha/internal/buildinfo.Commit=${commit} -X clusterguard.io/ha/internal/buildinfo.BuiltAt=${build_time}"
 
@@ -139,6 +142,8 @@ install -m 0644 "${repository}/docs/zh-CN/database-preparation.md" "${root}/docs
 install -m 0644 "${repository}/docs/zh-CN/operations-manual.md" "${root}/docs/"
 install -m 0644 "${repository}/docs/zh-CN/update-and-patch.md" "${root}/docs/"
 install -m 0644 "${repository}/docs/zh-CN/update-signature-incident-2026-08-31.md" "${root}/docs/"
+install -m 0644 "${repository}/docs/zh-CN/update-maintenance-gate-incident-2026-09-07.md" "${root}/docs/"
+install -m 0644 "${repository}/docs/zh-CN/release-2.2.72.md" "${root}/docs/"
 install -m 0644 "${repository}/docs/zh-CN/docker-swarm-mysql.md" "${root}/docs/"
 install -m 0644 "${repository}/docs/zh-CN/kubernetes-mysql.md" "${root}/docs/"
 install -m 0644 "${repository}/docs/zh-CN/postgresql-ha.md" "${root}/docs/"

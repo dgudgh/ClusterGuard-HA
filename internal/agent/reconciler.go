@@ -110,6 +110,9 @@ func (reconciler *Reconciler) reconcile(ctx context.Context, policy ClusterPolic
 	if decision.Action == ReconcileSelfIsolate {
 		return reconciler.convergeSelfIsolation(ctx, policy)
 	}
+	if decision.Action == ReconcileRecoveryPrimary || decision.Action == ReconcileRecoveryActivate || decision.Action == ReconcileRecoveryReplica || decision.Action == ReconcileRecoveryPrepare {
+		return reconciler.reconcileRecovery(ctx, policy, decision)
+	}
 	if !model.ValidResourceID(decision.LeaseID) || (decision.Action != ReconcileKeepVIP && decision.Action != ReconcileTransitionTarget && decision.Action != ReconcileTransitionSource && decision.Action != ReconcileBootstrapPrimary) {
 		return reconciler.selfIsolate(ctx, policy, fmt.Errorf("controller did not authorize local VIP ownership"))
 	}
@@ -150,6 +153,76 @@ func (reconciler *Reconciler) reconcile(ctx context.Context, policy ClusterPolic
 		}
 	}
 	return ReconcileResult{ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileKeepVIP, Message: "active majority lease authorizes local VIP ownership"}, nil
+}
+
+func (reconciler *Reconciler) reconcileRecovery(ctx context.Context, policy ClusterPolicy, decision ReconcileResponse) (ReconcileResult, error) {
+	if !model.ValidResourceID(decision.LeaseID) || !model.ValidResourceID(decision.RecoveryTaskID) {
+		return reconciler.selfIsolate(ctx, policy, fmt.Errorf("recovery-only authorization scope is invalid"))
+	}
+	if decision.Action == ReconcileRecoveryReplica || decision.Action == ReconcileRecoveryPrepare {
+		if policy.Engine == model.EnginePostgreSQL {
+			return reconciler.convergeSelfIsolation(ctx, policy)
+		}
+		if err := reconciler.vip.Release(ctx, policy); err != nil {
+			return reconciler.selfIsolate(ctx, policy, err)
+		}
+		guard, ok := reconciler.roles.(RecoveryReplicaGuard)
+		if policy.Engine != model.EngineMySQL || !ok {
+			return reconciler.selfIsolate(ctx, policy, fmt.Errorf("recovery replica guard is unavailable"))
+		}
+		if err := guard.RecoveryReplicaVerify(ctx, policy, decision.RecoveryTaskID); err != nil {
+			return reconciler.selfIsolate(ctx, policy, err)
+		}
+		return ReconcileResult{ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: decision.Action, Message: "offline-mode guard isolates replica reconstruction from business access"}, nil
+	}
+	if decision.Action == ReconcileRecoveryPrimary {
+		if err := reconciler.vip.Release(ctx, policy); err != nil {
+			return reconciler.selfIsolate(ctx, policy, err)
+		}
+		if policy.Engine == model.EnginePostgreSQL {
+			guard, ok := reconciler.postgresql.(RecoveryPrimaryGuard)
+			if !ok {
+				return reconciler.selfIsolate(ctx, policy, fmt.Errorf("PostgreSQL recovery access guard is unavailable"))
+			}
+			if err := guard.RecoveryGuardVerify(ctx, policy, decision.RecoveryTaskID); err != nil {
+				return reconciler.selfIsolate(ctx, policy, err)
+			}
+		} else {
+			if err := reconciler.roles.PersistReadOnly(ctx, policy, true); err != nil {
+				return reconciler.selfIsolate(ctx, policy, err)
+			}
+			durable, ok := reconciler.roles.(DurableRoleController)
+			if !ok {
+				return reconciler.selfIsolate(ctx, policy, fmt.Errorf("durable MySQL recovery write fence is unavailable"))
+			}
+			state, err := durable.IsolationStatus(ctx, policy)
+			if err != nil || !state.RestartReadOnly || (state.DatabaseReachable && (!state.ReadOnly || !state.SuperReadOnly)) {
+				return reconciler.selfIsolate(ctx, policy, errors.Join(err, fmt.Errorf("MySQL recovery write fence is not verified")))
+			}
+		}
+		return ReconcileResult{ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: decision.Action, Message: "recovery-only authorization keeps business access fenced and VIP absent"}, nil
+	}
+	if policy.Engine == model.EnginePostgreSQL {
+		guard, ok := reconciler.postgresql.(RecoveryPrimaryGuard)
+		if !ok {
+			return reconciler.selfIsolate(ctx, policy, fmt.Errorf("PostgreSQL recovery access guard is unavailable"))
+		}
+		if err := guard.RecoveryGuardRelease(ctx, policy, decision.RecoveryTaskID); err != nil {
+			return reconciler.selfIsolate(ctx, policy, err)
+		}
+		return reconciler.reconcilePostgreSQL(ctx, policy, ReconcileKeepVIP)
+	}
+	if err := reconciler.convergeWritableRestartState(ctx, policy); err != nil {
+		return reconciler.selfIsolate(ctx, policy, err)
+	}
+	readOnly, superReadOnly, err := reconciler.roles.Status(ctx, policy)
+	if err != nil || readOnly || superReadOnly {
+		return reconciler.selfIsolate(ctx, policy, errors.Join(err, fmt.Errorf("recovery writer activation is not verified")))
+	}
+	if err := reconciler.vip.Acquire(ctx, policy); err != nil {
+		return reconciler.selfIsolate(ctx, policy, err)
+	}
+	return ReconcileResult{ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: decision.Action, Message: "Recovery Commit and majority lease activated the verified MySQL writer"}, nil
 }
 
 // convergeWritableRestartState commits a promoted MySQL primary's durable role

@@ -181,6 +181,9 @@ if [[ -z "${install_root}" ]]; then
   find /var/log/clusterguard -maxdepth 1 -type f -exec chown clusterguard:clusterguard {} +
 fi
 
+if [[ -z "${install_root}" && -f /etc/clusterguard/agent.json ]]; then
+  /usr/local/bin/clusterguard-agent --config /etc/clusterguard/agent.json --configure-systemd-sandbox
+fi
 "${systemctl_binary}" daemon-reload
 if [[ "${role}" == "controller" || "${role}" == "mixed" ]]; then
   "${systemctl_binary}" enable clusterguard-ha.service

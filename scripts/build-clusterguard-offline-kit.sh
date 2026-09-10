@@ -228,6 +228,8 @@ mkdir -p \
 "${script_dir}/build-clusterguard-bundle.sh" \
   --output "${artifacts}" \
   --version "${bundle_version}" \
+  --rpm-version "${version}" \
+  --rpm-release "${release}" \
   --goos linux \
   --goarch "${goarch}" \
   --jq-binary "${jq_binary}"

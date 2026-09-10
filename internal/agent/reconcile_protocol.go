@@ -21,6 +21,10 @@ const (
 	ReconcileTransitionSource ReconcileAction = "transition_source"
 	ReconcileBootstrapPrimary ReconcileAction = "bootstrap_primary"
 	ReconcileSelfIsolate      ReconcileAction = "release_and_read_only"
+	ReconcileRecoveryPrimary  ReconcileAction = "recovery_primary"
+	ReconcileRecoveryActivate ReconcileAction = "recovery_activate"
+	ReconcileRecoveryReplica  ReconcileAction = "recovery_replica"
+	ReconcileRecoveryPrepare ReconcileAction = "recovery_prepare"
 )
 
 type ReconcileRequest struct {
@@ -32,14 +36,15 @@ type ReconcileRequest struct {
 }
 
 type ReconcileResponse struct {
-	ClusterID    model.ResourceID `json:"cluster_id"`
-	InstanceID   model.ResourceID `json:"instance_id"`
-	Action       ReconcileAction  `json:"action"`
-	Reason       string           `json:"reason"`
-	LeaseID      model.ResourceID `json:"lease_id,omitempty"`
-	ValidUntil   time.Time        `json:"valid_until"`
-	ControllerID model.ResourceID `json:"controller_id"`
-	Signature    string           `json:"signature"`
+	RecoveryTaskID model.ResourceID `json:"recovery_task_id,omitempty"`
+	ClusterID      model.ResourceID `json:"cluster_id"`
+	InstanceID     model.ResourceID `json:"instance_id"`
+	Action         ReconcileAction  `json:"action"`
+	Reason         string           `json:"reason"`
+	LeaseID        model.ResourceID `json:"lease_id,omitempty"`
+	ValidUntil     time.Time        `json:"valid_until"`
+	ControllerID   model.ResourceID `json:"controller_id"`
+	Signature      string           `json:"signature"`
 }
 
 type unsignedReconcileRequest struct {
@@ -50,13 +55,14 @@ type unsignedReconcileRequest struct {
 }
 
 type unsignedReconcileResponse struct {
-	ClusterID    model.ResourceID `json:"cluster_id"`
-	InstanceID   model.ResourceID `json:"instance_id"`
-	Action       ReconcileAction  `json:"action"`
-	Reason       string           `json:"reason"`
-	LeaseID      model.ResourceID `json:"lease_id,omitempty"`
-	ValidUntil   time.Time        `json:"valid_until"`
-	ControllerID model.ResourceID `json:"controller_id"`
+	RecoveryTaskID model.ResourceID `json:"recovery_task_id,omitempty"`
+	ClusterID      model.ResourceID `json:"cluster_id"`
+	InstanceID     model.ResourceID `json:"instance_id"`
+	Action         ReconcileAction  `json:"action"`
+	Reason         string           `json:"reason"`
+	LeaseID        model.ResourceID `json:"lease_id,omitempty"`
+	ValidUntil     time.Time        `json:"valid_until"`
+	ControllerID   model.ResourceID `json:"controller_id"`
 }
 
 func reconcileMAC(value interface{}, secret string) (string, error) {
@@ -107,7 +113,8 @@ func SignReconcileResponse(response *ReconcileResponse, secret string) error {
 	response.Reason = strings.TrimSpace(response.Reason)
 	response.ValidUntil = response.ValidUntil.UTC()
 	signature, err := reconcileMAC(unsignedReconcileResponse{
-		ClusterID: response.ClusterID, InstanceID: response.InstanceID, Action: response.Action, Reason: response.Reason,
+		RecoveryTaskID: response.RecoveryTaskID,
+		ClusterID:      response.ClusterID, InstanceID: response.InstanceID, Action: response.Action, Reason: response.Reason,
 		LeaseID: response.LeaseID, ValidUntil: response.ValidUntil, ControllerID: response.ControllerID,
 	}, secret)
 	if err != nil {
@@ -121,7 +128,14 @@ func VerifyReconcileResponse(response ReconcileResponse, request ReconcileReques
 	if response.ClusterID != request.ClusterID || response.InstanceID != request.InstanceID || !model.ValidResourceID(response.ControllerID) || strings.TrimSpace(response.Reason) == "" {
 		return fmt.Errorf("agent reconcile response scope is invalid")
 	}
-	if response.Action != ReconcileKeepVIP && response.Action != ReconcileTransitionTarget && response.Action != ReconcileTransitionSource && response.Action != ReconcileBootstrapPrimary && response.Action != ReconcileSelfIsolate {
+	recovery := response.Action == ReconcileRecoveryPrimary || response.Action == ReconcileRecoveryActivate || response.Action == ReconcileRecoveryReplica || response.Action == ReconcileRecoveryPrepare
+	if recovery && (!model.ValidResourceID(response.RecoveryTaskID) || !model.ValidResourceID(response.LeaseID) || response.ValidUntil.After(now.UTC().Add(10*time.Second))) {
+		return fmt.Errorf("recovery authorization requires a task, lease and short validity")
+	}
+	if !recovery && response.RecoveryTaskID != "" {
+		return fmt.Errorf("unexpected recovery authorization scope")
+	}
+	if !recovery && response.Action != ReconcileKeepVIP && response.Action != ReconcileTransitionTarget && response.Action != ReconcileTransitionSource && response.Action != ReconcileBootstrapPrimary && response.Action != ReconcileSelfIsolate {
 		return fmt.Errorf("agent reconcile response action is invalid")
 	}
 	if (response.Action == ReconcileKeepVIP || response.Action == ReconcileTransitionTarget || response.Action == ReconcileTransitionSource || response.Action == ReconcileBootstrapPrimary) && !model.ValidResourceID(response.LeaseID) {
@@ -131,7 +145,8 @@ func VerifyReconcileResponse(response ReconcileResponse, request ReconcileReques
 		return fmt.Errorf("agent reconcile response is expired or outside the allowed time window")
 	}
 	expected, err := reconcileMAC(unsignedReconcileResponse{
-		ClusterID: response.ClusterID, InstanceID: response.InstanceID, Action: response.Action, Reason: strings.TrimSpace(response.Reason),
+		RecoveryTaskID: response.RecoveryTaskID,
+		ClusterID:      response.ClusterID, InstanceID: response.InstanceID, Action: response.Action, Reason: strings.TrimSpace(response.Reason),
 		LeaseID: response.LeaseID, ValidUntil: response.ValidUntil.UTC(), ControllerID: response.ControllerID,
 	}, secret)
 	if err != nil || subtle.ConstantTimeCompare([]byte(expected), []byte(strings.TrimSpace(response.Signature))) != 1 {

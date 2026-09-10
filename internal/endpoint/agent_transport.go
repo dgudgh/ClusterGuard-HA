@@ -15,6 +15,7 @@ import (
 )
 
 const oracleBrokerQueryTimeout = 90 * time.Second
+const recoveryEvidenceTimeout = 120 * time.Second
 
 type ProcessRunner interface {
 	Run(context.Context, []byte, string, ...string) ([]byte, error)
@@ -92,7 +93,13 @@ func NewSSHAgentTransport(configuration SSHAgentTransportConfig, runner ProcessR
 func (transport *SSHAgentTransport) Send(ctx context.Context, instance model.DatabaseInstance, request agent.Request) (agent.Response, error) {
 	timeout := transport.configuration.CommandTimeout
 	switch {
-	case postgresqlAgentMutationCommand(request.Command) || request.Command == agent.CommandOracleBrokerSwitchover ||
+	case request.Command == agent.CommandRecoveryInspect || request.Command == agent.CommandRecoveryWAL || request.Command == agent.CommandRecoveryQuiesce:
+		// Offline WAL decoding and the bounded relay drain are not five-second
+		// status probes. The caller's operation/authority context still wins.
+		if timeout < recoveryEvidenceTimeout {
+			timeout = recoveryEvidenceTimeout
+		}
+	case postgresqlAgentMutationCommand(request.Command) || request.Command == agent.CommandRecoveryGuard || request.Command == agent.CommandRecoveryStart || request.Command == agent.CommandRecoveryRebuild || request.Command == agent.CommandRecoveryReplicaGuard || request.Command == agent.CommandRecoveryReplicaRelease || request.Command == agent.CommandRecoveryFencedStart || request.Command == agent.CommandOracleBrokerSwitchover ||
 		powerAgentMutationCommand(request.Command):
 		timeout = transport.configuration.MutationTimeout
 	case request.Command == agent.CommandOracleBrokerDiscover || request.Command == agent.CommandOracleBrokerStatus:
@@ -156,7 +163,8 @@ func (transport *SSHAgentTransport) Send(ctx context.Context, instance model.Dat
 // SSH session while the host drains.
 func powerAgentMutationCommand(command string) bool {
 	switch command {
-	case agent.CommandMySQLServiceStop, agent.CommandMySQLServiceStart, agent.CommandNodePoweroff:
+	case agent.CommandMySQLServiceStop, agent.CommandMySQLServiceStart, agent.CommandNodePoweroff,
+		agent.CommandSelfIsolate:
 		return true
 	default:
 		return false

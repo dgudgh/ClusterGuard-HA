@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"clusterguard.io/ha/pkg/adapter"
@@ -213,15 +212,22 @@ func (adapterInstance *Adapter) repairVerify(ctx context.Context, request adapte
 		verification.Checks = []model.Check{{Name: "plan_integrity", Status: model.CheckFail, Message: err.Error()}}
 		return verification, nil
 	}
-	result, err := adapterInstance.Discover(ctx, adapter.DiscoverRequest{ClusterID: request.Resolved.Cluster.ResourceID, Endpoint: postgresqlInstanceEndpoint(request.Resolved.Target), Credentials: request.Resolved.Credentials})
-	passed := err == nil && postgresqlInstanceIdentityMatches(result.Instance, request.Resolved.Target, request.Resolved.Cluster.EngineIdentity["system_identifier"])
+	action := postgresqlRepairAction(request)
+	passed := false
 	message := "PostgreSQL target status was collected"
-	if postgresqlRepairAction(request) == postgresqlRepairResume {
-		passed = passed && result.Instance.Role == model.RoleStandby && result.Instance.Health.State == model.HealthHealthy &&
-			!strings.EqualFold(result.Instance.EngineMetadata["replay_paused"], "true") &&
-			result.Instance.Replication.IOThread == model.ThreadRunning && result.Instance.Replication.SQLThread == model.ThreadRunning &&
-			postgresqlSourceIdentityMatches(result.Instance.Replication.SourceIdentity, request.Resolved.Primary, request.Resolved.Cluster.EngineIdentity["system_identifier"])
+	if action == postgresqlRepairResume {
+		live, err := adapterInstance.postgresqlResolveLiveStandbyTopology(
+			ctx, *request.Resolved, request.Resolved.Primary, request.Resolved.Target,
+		)
+		passed = err == nil && postgresqlLiveStandbyTopologyMatches(
+			live, request.Resolved.Primary, request.Resolved.Target, request.Resolved.Cluster.EngineIdentity["system_identifier"],
+		)
 		message = "PostgreSQL WAL replay is active"
+	} else {
+		result, err := adapterInstance.Discover(ctx, adapter.DiscoverRequest{
+			ClusterID: request.Resolved.Cluster.ResourceID, Endpoint: postgresqlInstanceEndpoint(request.Resolved.Target), Credentials: request.Resolved.Credentials,
+		})
+		passed = err == nil && postgresqlInstanceIdentityMatches(result.Instance, request.Resolved.Target, request.Resolved.Cluster.EngineIdentity["system_identifier"])
 	}
 	status := model.CheckFail
 	if passed {

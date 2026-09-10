@@ -99,6 +99,7 @@ type DatabaseCluster struct {
 	DisplayName    string         `json:"display_name"`
 	Health         Health         `json:"health"`
 	RecoveryFreeze bool           `json:"recovery_freeze"`
+	Recovery       *RecoveryState `json:"recovery,omitempty"`
 }
 
 type NodeKind string
@@ -225,6 +226,7 @@ type DatabaseInstance struct {
 	Port              int               `json:"port"`
 	Aliases           []string          `json:"aliases,omitempty"`
 	Role              InstanceRole      `json:"role"`
+	DesiredRole       InstanceRole      `json:"desired_role,omitempty"`
 	Health            Health            `json:"health"`
 	Replication       ReplicationStatus `json:"replication"`
 	Maintenance       bool              `json:"maintenance"`

@@ -8,6 +8,10 @@ import (
 	"testing"
 )
 
+type replicatedGateStub bool
+
+func (stub replicatedGateStub) SoftwareUpdateMaintenanceActive() bool { return bool(stub) }
+
 func TestFileGateAllowsAbsentMarkerAndBlocksActiveMaintenance(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "update-maintenance.json")
 	gate := NewFileGate(path)
@@ -40,5 +44,16 @@ func TestFileGateFailsClosedForUnsafeMarkerAndContextCancellation(t *testing.T) 
 	cancel()
 	if err := NewFileGate(filepath.Join(root, "absent")).Check(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled check error=%v", err)
+	}
+}
+
+func TestGateBlocksReplicatedMaintenanceWithoutLocalMarker(t *testing.T) {
+	gate := NewGate(filepath.Join(t.TempDir(), "missing.json"), replicatedGateStub(true))
+	if err := gate.Check(context.Background()); !errors.Is(err, ErrActive) {
+		t.Fatalf("replicated update gate error = %v", err)
+	}
+	gate = NewGate(filepath.Join(t.TempDir(), "missing.json"), replicatedGateStub(false))
+	if err := gate.Check(context.Background()); err != nil {
+		t.Fatalf("inactive replicated gate: %v", err)
 	}
 }

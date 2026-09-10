@@ -58,7 +58,15 @@ func main() {
 	configurationPath := flag.String("config", "/etc/clusterguard/agent.json", "agent configuration path")
 	checkConfig := flag.Bool("check-config", false, "validate configuration and exit")
 	reconcile := flag.Bool("reconcile", false, "reconcile local VIP ownership against the majority controller")
+	configureSandbox := flag.Bool("configure-systemd-sandbox", false, "configure narrow PostgreSQL reconcile filesystem access and exit")
 	flag.Parse()
+	if *configureSandbox {
+		if err := agent.ConfigureReconcileSandbox(*configurationPath); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	configuration, err := agent.LoadConfig(*configurationPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -114,12 +122,27 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	var recoveryDecisions agent.ReconcileDecisionClient
+	if len(configuration.ControllerURLs) > 0 {
+		client, clientErr := agent.NewControllerHTTPClient(configuration)
+		if clientErr != nil {
+			fmt.Fprintln(os.Stderr, clientErr)
+			os.Exit(1)
+		}
+		// Mutations require a fresh majority decision, never a cached permit.
+		recoveryDecisions, err = agent.NewHTTPReconcileClient(configuration.ControllerURLs, configuration.SharedSecret, client, configuration.AllowInsecureHTTP, nil)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	}
 	service, err := agent.NewService(
 		configuration, controllers.vip, controllers.roles, nil,
 		agent.WithPostgreSQLController(controllers.postgresql),
 		agent.WithOracleController(controllers.oracle),
 		agent.WithPowerController(controllers.power),
 		agent.WithMutationLedger(mutationLedger),
+		agent.WithRecoveryDecisions(recoveryDecisions),
 	)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

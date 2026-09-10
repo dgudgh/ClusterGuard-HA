@@ -32,6 +32,9 @@ func (repository *Repository) PutCoordinationLease(record coordination.LeaseReco
 	if _, found := repository.snapshot.Clusters[lease.ClusterID]; !found {
 		return notFoundError("coordination lease cluster does not exist")
 	}
+	if !recoveryWriterLeaseAllowed(repository.snapshot, record, repository.now()) {
+		return conflictError("disaster recovery has not committed this writer")
+	}
 	next := repository.snapshot
 	next.CoordinationLeases = cloneCoordinationLeaseMap(repository.snapshot.CoordinationLeases)
 	next.CoordinationLeases[lease.ResourceID] = record
@@ -82,6 +85,9 @@ func (repository *Repository) ReplaceCoordinationLeases(records []coordination.L
 	for _, record := range nextRecords {
 		if _, found := repository.snapshot.Clusters[record.Lease.ClusterID]; !found {
 			return notFoundError("coordination lease cluster does not exist")
+		}
+		if !recoveryWriterLeaseAllowed(repository.snapshot, record, repository.now()) {
+			return conflictError("writer lease batch conflicts with disaster recovery freeze")
 		}
 	}
 	next := repository.snapshot

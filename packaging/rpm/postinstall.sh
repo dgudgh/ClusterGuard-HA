@@ -15,6 +15,10 @@ install -d -m 0751 -o clusterguard -g clusterguard /var/log/clusterguard
 install -d -m 0700 -o root -g root /var/lib/clusterguard-agent
 install -d -m 0750 -o root -g clusterguard /opt/clusterguard/packages
 
+if [ -f /etc/clusterguard/agent.json ]; then
+  /usr/local/bin/clusterguard-agent --config /etc/clusterguard/agent.json --configure-systemd-sandbox || exit 1
+fi
+
 if command -v systemctl >/dev/null 2>&1; then
   systemctl daemon-reload >/dev/null 2>&1 || :
 fi

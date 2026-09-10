@@ -129,7 +129,12 @@ func TestUpdatePrunerKeepsThreeNewestVersionsAndProtectsUnfinishedWork(t *testin
 		updateDirectory := filepath.Join(updateRoot, patchID)
 		historyDirectory := filepath.Join(historyRoot, patchID)
 		writeFile(t, filepath.Join(updateDirectory, "status.json"), `{"status":"succeeded","maintenance_active":false}`+"\n", 0o640)
+		writeFile(t, filepath.Join(updateDirectory, "package.cgpatch"), "signed package\n", 0o640)
+		writeFile(t, filepath.Join(updateDirectory, "package.json"), "{}\n", 0o640)
+		writeFile(t, filepath.Join(updateDirectory, "events.jsonl"), "{\"status\":\"succeeded\"}\n", 0o640)
+		writeFile(t, filepath.Join(updateDirectory, "output.log"), "retained upgrade output\n", 0o640)
 		writeFile(t, filepath.Join(historyDirectory, "rollback.rpm"), "rpm\n", 0o600)
+		writeFile(t, filepath.Join(historyDirectory, "output.log"), "retained node output\n", 0o600)
 		modified := base.Add(time.Duration(index) * time.Minute)
 		if err := os.Chtimes(updateDirectory, modified, modified); err != nil {
 			t.Fatal(err)
@@ -150,6 +155,14 @@ func TestUpdatePrunerKeepsThreeNewestVersionsAndProtectsUnfinishedWork(t *testin
 	writeFile(t, filepath.Join(reviewDirectory, "status.json"), `{"status":"failed","maintenance_active":false,"verification_required":true}`+"\n", 0o640)
 	if err := os.Chtimes(reviewDirectory, base.Add(time.Second), base.Add(time.Second)); err != nil {
 		t.Fatal(err)
+	}
+	for _, patchID := range []string{activeID, reviewID} {
+		writeFile(t, filepath.Join(updateRoot, patchID, "package.cgpatch"), "protected payload\n", 0o640)
+		historyDirectory := filepath.Join(historyRoot, patchID)
+		writeFile(t, filepath.Join(historyDirectory, "rollback.rpm"), "protected rollback\n", 0o600)
+		if err := os.Chtimes(historyDirectory, base, base); err != nil {
+			t.Fatal(err)
+		}
 	}
 	outside := filepath.Join(root, "outside")
 	if err := os.Mkdir(outside, 0o700); err != nil {
@@ -177,13 +190,33 @@ func TestUpdatePrunerKeepsThreeNewestVersionsAndProtectsUnfinishedWork(t *testin
 				t.Fatalf("%s should be retained in %s: %v", patchID, rootPath, err)
 			}
 		}
-		if _, err := os.Stat(filepath.Join(rootPath, "cgupgrade-02")); !os.IsNotExist(err) {
-			t.Fatalf("old fourth unprotected version remains in %s: %v", rootPath, err)
+		if _, err := os.Stat(filepath.Join(rootPath, "cgupgrade-02", "output.log")); err != nil {
+			t.Fatalf("old upgrade audit was removed in %s: %v", rootPath, err)
 		}
 	}
+	for _, path := range []string{filepath.Join(updateRoot, "cgupgrade-02", "package.cgpatch"), filepath.Join(historyRoot, "cgupgrade-02", "rollback.rpm")} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("old installation payload remains: %s", path)
+		}
+	}
+	for _, name := range []string{"package.json", "status.json", "events.jsonl", "output.log"} {
+		if _, err := os.Stat(filepath.Join(updateRoot, "cgupgrade-02", name)); err != nil {
+			t.Fatalf("upgrade audit %s was removed: %v", name, err)
+		}
+	}
+	again := exec.Command("bash", "clusterguard-update-prune.sh", "--update-root", updateRoot, "--history-root", historyRoot, "--protect", "cgupgrade-01")
+	if output, err := again.CombinedOutput(); err != nil {
+		t.Fatalf("repeat prune: %v %s", err, output)
+	}
+	if _, err := os.Stat(filepath.Join(updateRoot, "cgupgrade-03", "package.cgpatch")); err != nil {
+		t.Fatal("archived audit directories consumed retention slots")
+	}
 	for _, patchID := range []string{activeID, reviewID} {
-		if _, err := os.Stat(filepath.Join(updateRoot, patchID)); err != nil {
+		if _, err := os.Stat(filepath.Join(updateRoot, patchID, "package.cgpatch")); err != nil {
 			t.Fatalf("unfinished package %s was removed: %v", patchID, err)
+		}
+		if _, err := os.Stat(filepath.Join(historyRoot, patchID, "rollback.rpm")); err != nil {
+			t.Fatalf("unfinished rollback payload %s was removed: %v", patchID, err)
 		}
 	}
 	if _, err := os.Lstat(filepath.Join(updateRoot, "cgupgrade-symlink")); err != nil {
@@ -452,7 +485,15 @@ func TestUpgradeScriptEnforcesMaintenanceAndVersionContracts(t *testing.T) {
 		"events.jsonl",
 		"data_node_members",
 		"ip_address",
+		"/api/v1/operations",
+		"clusterguard-automatic-recovery",
+		"stale_operation_threshold_seconds=1800",
+		"CG_UPDATE_CLUSTER_IDLE_TIMEOUT_SECONDS",
+		"CG_UPDATE_NODE_READY_TIMEOUT_SECONDS",
+		"stale_automatic",
 		"clusterguard-agent-reconcile.timer",
+		"systemctl enable --now 'clusterguard-agent-reconcile.timer'",
+		"检测到可安全接管的失败升级维护锁",
 		"补偿回锁",
 		`[[ -z "${controllers_raw}" ]] || csv_to_array "${controllers_raw}" controllers`,
 		`[[ -z "${data_nodes_raw}" ]] || csv_to_array "${data_nodes_raw}" data`,
@@ -502,6 +543,7 @@ for value in "$@"; do
   case "$value" in root@*) host="${value#root@}" ;; esac
 done
 command="${!#}"
+bash -n <<<"$command"
 state="${FAKE_REMOTE_STATE:?}"
 version="$(tr -d '\n' <"$state/$host.version")"
 case "$host" in
@@ -514,24 +556,74 @@ esac
 if [[ "$command" == *"rpm -q --qf"* ]]; then
   printf '%s\n' "$version"
 elif [[ "$command" == *"clusterguard --version-json"* ]]; then
-  printf '{"product":"ClusterGuard HA","binary":"clusterguard","version":"%s","release":"%s","rpm_architecture":"x86_64","state_format":1,"update_protocol":1}\n' "${version%-*}" "${version##*-}"
+  gate_protocol="${FAKE_UPDATE_GATE_PROTOCOL:-1}"
+  if [[ "${FAKE_LEGACY_SOURCE:-}" == true && "$version" == 2.2-28 ]]; then gate_protocol=0; fi
+  printf '{"product":"ClusterGuard HA","binary":"clusterguard","version":"%s","release":"%s","rpm_architecture":"x86_64","state_format":1,"update_protocol":1,"update_gate_protocol":%s}\n' "${version%-*}" "${version##*-}" "$gate_protocol"
 elif [[ "$command" == *"cat /etc/clusterguard/node.json"* ]]; then
   printf '{"resource_id":"%s","node_name":"node-%s","role":"%s"}\n' "$node_id" "$host" "$node_role"
+elif [[ "$command" == *"/api/v1/platform/updates/gate/"* ]]; then
+  payload="$(printf '%s\n' "$command" | sed -n "s/^.*--data-binary '\([^']*\)'.*$/\1/p")"
+  owner="$(jq -r .execution_id <<<"$payload")"
+  [[ "$owner" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || exit 60
+  if [[ "$command" == *"/gate/acquire"* ]]; then
+    if [[ -f "$state/replicated-gate" ]]; then
+      existing="$(cat "$state/replicated-gate")"
+      [[ "$existing" == "$owner" || "$existing" == "$(jq -r .previous_execution_id <<<"$payload")" ]] || exit 61
+    fi
+    printf '%s\n' "$owner" >"$state/replicated-gate"
+  else
+    [[ "$(cat "$state/replicated-gate")" == "$owner" ]] || exit 62
+    for controller in c1 c2 c3; do [[ ! -f "$state/$controller.maintenance" ]] || exit 63; done
+    rm -f "$state/replicated-gate"
+  fi
+elif [[ "$command" == *"/api/v1/operations"* ]]; then
+  leader_host="${FAKE_LEADER_HOST:-c3}"
+  [[ ! -f "$state/leader-host" ]] || leader_host="$(tr -d '\n' <"$state/leader-host")"
+  [[ "$host" == "$leader_host" ]] || exit 54
+  printf '%s\n' "$host" >>"$state/operation-query-hosts"
+  mode="${FAKE_OPERATION_MODE:-none}"
+  leader_version="$(tr -d '\n' <"$state/$leader_host.version")"
+  if [[ "$mode" == stale-auto && "$leader_version" == 2.2-29 ]]; then mode=none; fi
+  case "$mode" in
+    none) printf '{"status":"ok","result":[]}\n' ;;
+    unreadable) exit 55 ;;
+    malformed) printf '{"status":"ok","result":[{"status":"running","raw_payload":"must-not-leak","token":"must-not-leak"}]}\n' ;;
+    *)
+      requested_by=clusterguard-automatic-recovery
+      stage=plan
+      updated_at=2020-01-01T00:00:00Z
+      [[ "$mode" != manual ]] || requested_by=manual-secret-operator
+      [[ "$mode" != fresh ]] || updated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      case "$mode" in execute|verify|audit|report) stage="$mode" ;; esac
+      printf '{"status":"ok","result":[{"resource_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","operation":{"cluster_id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","kind":"failover","requested_by":"%s"},"stage":"%s","status":"running","updated_at":"%s","raw_payload":"must-not-leak","credentials":"must-not-leak","token":"must-not-leak"}]}\n' "$requested_by" "$stage" "$updated_at"
+      ;;
+  esac
 elif [[ "$command" == *"cgctl"*" status"* ]]; then
   maintenance=false
-  [[ ! -f "$state/$host.maintenance" ]] || maintenance=true
+  [[ ! -f "$state/$host.maintenance" && ! -f "$state/replicated-gate" ]] || maintenance=true
+  leader_host="${FAKE_LEADER_HOST:-c3}"
+  [[ ! -f "$state/leader-host" ]] || leader_host="$(tr -d '\n' <"$state/leader-host")"
   ready=true
   role=follower
-  [[ "$host" != "${FAKE_LEADER_HOST:-c3}" ]] || role=leader
+  [[ "$host" != "$leader_host" ]] || role=leader
   voter_count=3
   members='[{"resource_id":"11111111-1111-4111-8111-111111111111"},{"resource_id":"22222222-2222-4222-8222-222222222222"},{"resource_id":"33333333-3333-4333-8333-333333333333"}]'
   data_members='[{"resource_id":"11111111-1111-4111-8111-111111111111","ip_address":"c1"},{"resource_id":"22222222-2222-4222-8222-222222222222","ip_address":"c2"},{"resource_id":"33333333-3333-4333-8333-333333333333","ip_address":"c3"},{"resource_id":"44444444-4444-4444-8444-444444444444","ip_address":"d1"}]'
   quorum=false
   [[ "$role" != leader ]] || quorum=true
 	active_operations=0
-	if [[ "${FAKE_ACTIVE_UNTIL_LEADER_LOCK:-}" == true && ! -f "$state/${FAKE_LEADER_HOST:-c3}.maintenance" ]]; then
+	if [[ "${FAKE_ACTIVE_UNTIL_LEADER_LOCK:-}" == true && ! -f "$state/active-operation-drained" ]]; then
 		active_operations=1
 	fi
+	operation_mode="${FAKE_OPERATION_MODE:-none}"
+	leader_version="$(tr -d '\n' <"$state/$leader_host.version")"
+	if [[ "$operation_mode" != none && "$operation_mode" != indeterminate && "$operation_mode" != lifecycle ]]; then
+		if [[ "$operation_mode" != stale-auto || "$leader_version" != 2.2-29 ]]; then active_operations=1; fi
+	fi
+	indeterminate_operations=0
+	active_lifecycle_tasks=0
+	[[ "$operation_mode" != indeterminate ]] || indeterminate_operations=1
+	[[ "$operation_mode" != lifecycle ]] || active_lifecycle_tasks=1
 	if [[ "$host" == "${FAKE_TRANSIENT_ACTIVE_HOST:-}" && ! -f "$state/transient-active-injected" ]]; then
 		active_operations=1
 		: >"$state/transient-active-injected"
@@ -552,11 +644,38 @@ elif [[ "$command" == *"cgctl"*" status"* ]]; then
     ready=false
     : >"$state/transient-status-injected"
   fi
-  printf '{"status":"ok","result":{"ready":%s,"leader_known":true,"quorum_confirmed":%s,"voter_count":%s,"active_operations":%s,"indeterminate_operations":0,"active_lifecycle_tasks":0,"update_maintenance_active":%s,"role":"%s","local_controller_id":"%s","controller_members":%s,"data_node_members":%s}}\n' "$ready" "$quorum" "$voter_count" "$active_operations" "$maintenance" "$role" "$node_id" "$members" "$data_members"
+  if [[ "$host" == "${FAKE_STATUS_FAIL_AFTER_HOST:-}" ]]; then
+    status_calls=0
+    [[ ! -f "$state/$host.status-calls" ]] || status_calls="$(tr -d '\n' <"$state/$host.status-calls")"
+    status_calls=$((status_calls + 1))
+    printf '%s\n' "$status_calls" >"$state/$host.status-calls"
+    if ((status_calls > ${FAKE_STATUS_FAIL_AFTER_CALLS:-999999})); then ready=false; fi
+  fi
+  printf '{"status":"ok","result":{"ready":%s,"leader_known":true,"quorum_confirmed":%s,"voter_count":%s,"active_operations":%s,"indeterminate_operations":%s,"active_lifecycle_tasks":%s,"update_maintenance_active":%s,"role":"%s","local_controller_id":"%s","controller_members":%s,"data_node_members":%s}}\n' "$ready" "$quorum" "$voter_count" "$active_operations" "$indeterminate_operations" "$active_lifecycle_tasks" "$maintenance" "$role" "$node_id" "$members" "$data_members"
+elif [[ "$command" == *".cluster-update.lock"* && "$command" == *"status.json"* && "$command" == *"maintenance_active"* && "$command" != *"patch-id.tmp"* ]]; then
+  [[ -n "${FAKE_FAILED_UPDATE_LOCK:-}" ]] || exit 56
+  printf '%s\n' "${FAKE_FAILED_UPDATE_LOCK}"
 elif [[ "$command" == *".cluster-update.lock/patch-id"* && "$command" == *"grep -Fq"* ]]; then
+  [[ -z "${FAKE_FAILED_UPDATE_LOCK:-}" ]] || exit 56
   test -f "$state/$host.maintenance"
-elif [[ "$command" == *"update-maintenance.json"* && "$command" == *"rolling_update"* ]]; then
+  if [[ -f "$state/$host.execution" ]]; then cat "$state/$host.execution"; else printf 'previous-execution\n'; fi
+elif [[ "$command" == "if test -f"*".cluster-update.lock/execution-id"* ]]; then
+  if [[ -f "$state/$host.execution" ]]; then cat "$state/$host.execution"; else printf 'legacy\n'; fi
+elif [[ "$command" == *"tail -n 1"*"/events.jsonl"* ]]; then
+  [[ "${FAKE_PREVIOUS_EXECUTION_RUNNING:-false}" != true ]] || exit 64
+elif [[ "$command" == *"execution-id.tmp"* ]]; then
+  test -f "$state/$host.maintenance"
+  owner="$(printf '%s\n' "$command" | sed -n 's/.*"execution_id":"\([^"]*\)".*/\1/p' | head -n 1)"
+  [[ -n "$owner" ]] && printf '%s\n' "$owner" >"$state/$host.execution"
+elif [[ "$command" == *"--arg execution"* && "$command" != *"rm -f"* ]]; then
+  test -f "$state/$host.maintenance"
+  owner="$(printf '%s\n' "$command" | sed -n "s/.*--arg execution '\([^']*\)'.*/\1/p")"
+  [[ "$(cat "$state/$host.execution")" == "$owner" ]] || exit 65
+elif [[ "$command" == *".cluster-update.lock"* && "$command" == *"mkdir"* && "$command" == *"update-maintenance.json"* && "$command" == *"rolling_update"* ]]; then
   : >"$state/$host.maintenance"
+  owner="$(printf '%s\n' "$command" | sed -n 's/.*"execution_id":"\([^"]*\)".*/\1/p' | head -n 1)"
+  [[ -n "$owner" ]] && printf '%s\n' "$owner" >"$state/$host.execution"
+	if [[ "${FAKE_ACTIVE_UNTIL_LEADER_LOCK:-}" == true && "$host" == "${FAKE_LEADER_HOST:-c3}" ]]; then : >"$state/active-operation-drained"; fi
 	if [[ "${FAKE_RECORD_LOCK_ORDER:-}" == true ]]; then printf '%s\n' "$host" >>"$state/lock-order"; fi
 elif [[ "$command" == *".package.json."* && "$command" == *"sha256sum -c"* ]]; then
   actual="$(sha256sum "$state/$host.metadata.tmp" | awk '{print $1}')"
@@ -573,14 +692,37 @@ elif [[ "$command" == *"rm -f '/etc/clusterguard/update-maintenance.json.tmp'"* 
     exit 44
   fi
 	if [[ "${FAKE_RECORD_LOCK_ORDER:-}" == true ]]; then printf '%s\n' "$host" >>"$state/release-order"; fi
-  rm -f "$state/$host.maintenance"
+  rm -f "$state/$host.maintenance" "$state/$host.execution"
+  if [[ -n "${FAKE_LEADER_SWITCH_ON_RELEASE:-}" && ! -f "$state/release-election-injected" ]]; then
+    test -f "$state/replicated-gate"
+    printf '%s\n' "$host" >"$state/leader-host"
+    : >"$state/release-election-injected"
+  fi
 elif [[ "$command" == *"rpm -Uvh"* ]]; then
+  [[ "$command" == *"flock -x -w 30 8"* ]] || exit 66
   if [[ "$command" == *"2.2-29.x86_64.rpm"* && "$host" == "${FAKE_FAIL_HOST:-}" && ! -f "$state/failure-injected" ]]; then
     : >"$state/failure-injected"
     exit 42
   fi
-  if [[ "$command" == *"2.2-29.x86_64.rpm"* ]]; then printf '2.2-29\n' >"$state/$host.version"; else printf '2.2-28\n' >"$state/$host.version"; fi
+  if [[ "$command" == *"2.2-29.x86_64.rpm"* ]]; then
+    printf '2.2-29\n' >"$state/$host.version"
+    if [[ "$host" == "${FAKE_LEADER_SWITCH_ON_HOST:-}" && -n "${FAKE_LEADER_SWITCH_TO:-}" ]]; then
+      printf '%s\n' "${FAKE_LEADER_SWITCH_TO}" >"$state/leader-host"
+    fi
+  else
+    printf '2.2-28\n' >"$state/$host.version"
+  fi
   printf '%s\n' "$host" >>"$state/install-order"
+  if [[ "$command" == *"systemctl enable --now 'clusterguard-agent-reconcile.timer'"* ]]; then
+    : >"$state/$host.timer-enabled"
+    printf '%s\n' "$host" >>"$state/timer-enable-order"
+  fi
+  if [[ "$command" == *"systemctl restart 'clusterguard-update-helper.service'"* ]]; then printf '%s\n' "$host" >>"$state/helper-restart-order"; fi
+elif [[ "$command" == *"systemctl enable --now 'clusterguard-agent-reconcile.timer'"* ]]; then
+  : >"$state/$host.timer-enabled"
+  printf '%s\n' "$host" >>"$state/timer-enable-order"
+elif [[ "$command" == *"systemctl is-active --quiet clusterguard-agent.service"* && "$command" == *"systemctl is-active --quiet clusterguard-agent-reconcile.timer"* ]]; then
+  if [[ "${FAKE_TIMER_REQUIRES_ENABLE:-}" == true ]]; then test -f "$state/$host.timer-enabled"; fi
 elif [[ "$command" == *"systemctl restart 'clusterguard-update-helper.service'"* ]]; then
   printf '%s\n' "$host" >>"$state/helper-restart-order"
 elif [[ "$command" == *"systemd-run"*"clusterguard-update-helper.service"* ]]; then
@@ -617,7 +759,7 @@ esac
 		"--controllers", "c1,c2,c3", "--data-nodes", "c1,c2,c3,d1",
 		"--known-hosts", knownHosts, "-u", "root", "--execute", "--yes")
 	command.Dir = root
-	command.Env = append(os.Environ(), "PATH="+fakeBin+":"+os.Getenv("PATH"), "FAKE_REMOTE_STATE="+state)
+	command.Env = append(os.Environ(), "PATH="+fakeBin+":"+os.Getenv("PATH"), "FAKE_REMOTE_STATE="+state, "FAKE_TIMER_REQUIRES_ENABLE=true")
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("execute rolling patch: %v\n%s", err, output)
 	}
@@ -641,6 +783,13 @@ esac
 	}
 	if got, want := strings.TrimSpace(string(leaderHelperRefreshOrder)), "c3"; got != want {
 		t.Fatalf("Leader helper refresh order=%q want %q", got, want)
+	}
+	timerEnableOrder, err := os.ReadFile(filepath.Join(state, "timer-enable-order"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.TrimSpace(string(timerEnableOrder)), "c1\nc2\nd1\nc3"; got != want {
+		t.Fatalf("reconcile timer enable order=%q want %q", got, want)
 	}
 	for _, host := range []string{"c1", "c2", "c3", "d1"} {
 		version, err := os.ReadFile(filepath.Join(state, host+".version"))
@@ -692,6 +841,401 @@ esac
 		}
 	}
 
+	resetFakeCluster := func(t *testing.T) {
+		t.Helper()
+		for _, name := range []string{"install-order", "operation-query-hosts", "timer-enable-order", "lock-order", "release-order", "helper-restart-order", "leader-helper-refresh-order", "leader-host", "replicated-gate", "release-election-injected"} {
+			_ = os.Remove(filepath.Join(state, name))
+		}
+		for _, host := range []string{"c1", "c2", "c3", "d1"} {
+			writeFile(t, filepath.Join(state, host+".version"), "2.2-28\n", 0o600)
+			_ = os.Remove(filepath.Join(state, host+".maintenance"))
+			_ = os.Remove(filepath.Join(state, host+".execution"))
+			_ = os.Remove(filepath.Join(state, host+".timer-enabled"))
+			_ = os.Remove(filepath.Join(state, host+".status-calls"))
+		}
+	}
+	runOperationGate := func(t *testing.T, mode string) ([]byte, error) {
+		t.Helper()
+		command := exec.Command("bash", upgradeScript,
+			"--patch", patchPath, "--trust-key", publicKey,
+			"--controllers", "c1,c2,c3", "--data-nodes", "c1,c2,c3,d1",
+			"--known-hosts", knownHosts, "-u", "root", "--execute", "--yes")
+		command.Dir = root
+		command.Env = append(os.Environ(), "PATH="+fakeBin+":"+os.Getenv("PATH"), "FAKE_REMOTE_STATE="+state,
+			"FAKE_OPERATION_MODE="+mode, "CG_UPDATE_CLUSTER_IDLE_ATTEMPTS=1", "CG_UPDATE_CLUSTER_IDLE_DELAY_SECONDS=0")
+		return command.CombinedOutput()
+	}
+	for _, scenario := range []struct {
+		name  string
+		env   []string
+		fails bool
+	}{
+		{name: "Leader changes during marker release", env: []string{"FAKE_LEADER_SWITCH_ON_RELEASE=true"}},
+		{name: "legacy source adopts replicated gate after all nodes upgrade", env: []string{"FAKE_LEGACY_SOURCE=true"}},
+		{name: "legacy rollback keeps local maintenance", env: []string{"FAKE_LEGACY_SOURCE=true", "FAKE_FAIL_HOST=c1"}, fails: true},
+		{name: "resume rejected while previous execution is rolling back", env: []string{"FAKE_PREVIOUS_EXECUTION_RUNNING=true"}, fails: true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			resetFakeCluster(t)
+			_ = os.Remove(filepath.Join(state, "failure-injected"))
+			args := []string{upgradeScript, "--patch", patchPath, "--trust-key", publicKey, "--controllers", "c1,c2,c3", "--data-nodes", "c1,c2,c3,d1", "--known-hosts", knownHosts, "-u", "root", "--execute", "--yes"}
+			if strings.Contains(scenario.name, "resume") {
+				args = append(args, "--resume")
+				for _, host := range []string{"c1", "c2", "c3"} {
+					writeFile(t, filepath.Join(state, host+".maintenance"), "previous execution\n", 0o600)
+				}
+			}
+			command := exec.Command("bash", args...)
+			command.Dir = root
+			command.Env = append(os.Environ(), "PATH="+fakeBin+":"+os.Getenv("PATH"), "FAKE_REMOTE_STATE="+state, "CG_UPDATE_CLUSTER_IDLE_ATTEMPTS=1")
+			command.Env = append(command.Env, scenario.env...)
+			output, err := command.CombinedOutput()
+			if (err != nil) != scenario.fails {
+				t.Fatalf("err=%v\n%s", err, output)
+			}
+			for _, host := range []string{"c1", "c2", "c3"} {
+				_, statErr := os.Stat(filepath.Join(state, host+".maintenance"))
+				if scenario.fails && statErr != nil {
+					t.Fatalf("%s failure removed maintenance: %v", host, statErr)
+				}
+				if !scenario.fails && !os.IsNotExist(statErr) {
+					t.Fatalf("%s success retained maintenance: %v", host, statErr)
+				}
+			}
+			if strings.Contains(scenario.name, "resume") {
+				if _, err := os.Stat(filepath.Join(state, "install-order")); !os.IsNotExist(err) {
+					t.Fatal("concurrent resume mutated a node")
+				}
+			}
+		})
+	}
+	resetFakeCluster(t)
+	_ = os.Remove(filepath.Join(state, "failure-injected"))
+	runPlanGate := func(t *testing.T, mode string) ([]byte, error) {
+		t.Helper()
+		command := exec.Command("bash", upgradeScript,
+			"--patch", patchPath, "--trust-key", publicKey,
+			"--controllers", "c1,c2,c3", "--data-nodes", "c1,c2,c3,d1",
+			"--known-hosts", knownHosts, "-u", "root", "--plan")
+		command.Dir = root
+		command.Env = append(os.Environ(), "PATH="+fakeBin+":"+os.Getenv("PATH"), "FAKE_REMOTE_STATE="+state,
+			"FAKE_OPERATION_MODE="+mode, "CG_UPDATE_CLUSTER_IDLE_ATTEMPTS=1", "CG_UPDATE_CLUSTER_IDLE_DELAY_SECONDS=0")
+		return command.CombinedOutput()
+	}
+	assertLeaderOnlyOperationQueries := func(t *testing.T) {
+		t.Helper()
+		queries, readErr := os.ReadFile(filepath.Join(state, "operation-query-hosts"))
+		if readErr != nil {
+			t.Fatalf("operation inventory was not queried: %v", readErr)
+		}
+		for _, host := range strings.Fields(string(queries)) {
+			if host != "c3" {
+				t.Fatalf("operation inventory queried non-Leader host %q: %s", host, queries)
+			}
+		}
+	}
+
+	resetFakeCluster(t)
+	output, err := runPlanGate(t, "stale-auto")
+	if err != nil || !strings.Contains(string(output), "只读计划陈旧自动恢复豁免") || !strings.Contains(string(output), "计划完成，未修改任何节点") {
+		t.Fatalf("read-only plan did not break stale-operation bootstrap cycle: err=%v\n%s", err, output)
+	}
+	assertLeaderOnlyOperationQueries(t)
+	if _, statErr := os.Stat(filepath.Join(state, "install-order")); !os.IsNotExist(statErr) {
+		t.Fatalf("read-only stale-operation plan installed an RPM: %v", statErr)
+	}
+	for _, host := range []string{"c1", "c2", "c3"} {
+		if _, statErr := os.Stat(filepath.Join(state, host+".maintenance")); !os.IsNotExist(statErr) {
+			t.Fatalf("read-only stale-operation plan entered maintenance on %s: %v", host, statErr)
+		}
+	}
+
+	resetFakeCluster(t)
+	command = exec.Command("bash", upgradeScript,
+		"--patch", patchPath, "--trust-key", publicKey,
+		"--controllers", "c1,c2,c3", "--data-nodes", "c1,c2,c3,d1",
+		"--known-hosts", knownHosts, "-u", "root", "--resume", "--execute", "--yes")
+	command.Dir = root
+	command.Env = append(os.Environ(), "PATH="+fakeBin+":"+os.Getenv("PATH"), "FAKE_REMOTE_STATE="+state)
+	output, err = command.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "续跑只允许复用全部控制节点上的同一升级包完整维护锁") {
+		t.Fatalf("resume without a complete current-patch lock did not fail closed: err=%v\n%s", err, output)
+	}
+	if _, statErr := os.Stat(filepath.Join(state, "install-order")); !os.IsNotExist(statErr) {
+		t.Fatalf("resume without a lock allowed an RPM mutation: %v", statErr)
+	}
+
+	command = exec.Command("bash", upgradeScript,
+		"--patch", patchPath, "--trust-key", publicKey,
+		"--controllers", "c1,c2,c3", "--data-nodes", "c1,c2,c3,d1",
+		"--known-hosts", knownHosts, "-u", "root", "--resume", "--rollback", "--execute", "--yes")
+	command.Dir = root
+	command.Env = append(os.Environ(), "PATH="+fakeBin+":"+os.Getenv("PATH"), "FAKE_REMOTE_STATE="+state)
+	output, err = command.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "--rollback 与 --resume 不能同时使用") {
+		t.Fatalf("mutually exclusive resume and rollback flags were accepted: err=%v\n%s", err, output)
+	}
+
+	resetFakeCluster(t)
+	writeFile(t, filepath.Join(state, "c1.maintenance"), "partial current patch maintenance\n", 0o600)
+	command = exec.Command("bash", upgradeScript,
+		"--patch", patchPath, "--trust-key", publicKey,
+		"--controllers", "c1,c2,c3", "--data-nodes", "c1,c2,c3,d1",
+		"--known-hosts", knownHosts, "-u", "root", "--rollback", "--execute", "--yes")
+	command.Dir = root
+	command.Env = append(os.Environ(), "PATH="+fakeBin+":"+os.Getenv("PATH"), "FAKE_REMOTE_STATE="+state,
+		"CG_UPDATE_CLUSTER_IDLE_ATTEMPTS=1", "CG_UPDATE_CLUSTER_IDLE_DELAY_SECONDS=0")
+	output, err = command.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "当前升级包维护锁仅在 1/3 个控制节点匹配") ||
+		!strings.Contains(string(output), "当前升级包维护锁不完整") {
+		t.Fatalf("partial same-patch maintenance lock did not fail closed: err=%v\n%s", err, output)
+	}
+	if _, statErr := os.Stat(filepath.Join(state, "install-order")); !os.IsNotExist(statErr) {
+		t.Fatalf("partial same-patch maintenance lock allowed an RPM mutation: %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(state, "c1.maintenance")); statErr != nil {
+		t.Fatalf("partial same-patch maintenance lock was altered during rejection: %v", statErr)
+	}
+	for _, host := range []string{"c2", "c3"} {
+		if _, statErr := os.Stat(filepath.Join(state, host+".maintenance")); !os.IsNotExist(statErr) {
+			t.Fatalf("partial same-patch rejection created a maintenance marker on %s: %v", host, statErr)
+		}
+	}
+
+	resetFakeCluster(t)
+	for _, host := range []string{"c1", "c2", "c3"} {
+		writeFile(t, filepath.Join(state, host+".maintenance"), "current patch maintenance\n", 0o600)
+	}
+	command = exec.Command("bash", upgradeScript,
+		"--patch", patchPath, "--trust-key", publicKey,
+		"--controllers", "c1,c2,c3", "--data-nodes", "c1,c2,c3,d1",
+		"--known-hosts", knownHosts, "-u", "root", "--rollback", "--execute", "--yes")
+	command.Dir = root
+	command.Env = append(os.Environ(), "PATH="+fakeBin+":"+os.Getenv("PATH"), "FAKE_REMOTE_STATE="+state,
+		"FAKE_STATUS_FAIL_AFTER_HOST=c2", "FAKE_STATUS_FAIL_AFTER_CALLS=1",
+		"CG_UPDATE_CLUSTER_IDLE_ATTEMPTS=1", "CG_UPDATE_CLUSTER_IDLE_DELAY_SECONDS=0")
+	output, err = command.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "ready_not_true") {
+		t.Fatalf("post-adoption control-plane failure did not stop rollback: err=%v\n%s", err, output)
+	}
+	for _, host := range []string{"c1", "c2", "c3"} {
+		if _, statErr := os.Stat(filepath.Join(state, host+".maintenance")); statErr != nil {
+			t.Fatalf("adopted maintenance lock on %s was released after a pre-mutation failure: %v", host, statErr)
+		}
+	}
+	if _, statErr := os.Stat(filepath.Join(state, "install-order")); !os.IsNotExist(statErr) {
+		t.Fatalf("post-adoption control-plane failure allowed an RPM mutation: %v", statErr)
+	}
+
+	resetFakeCluster(t)
+	for _, host := range []string{"c1", "c2", "c3"} {
+		writeFile(t, filepath.Join(state, host+".maintenance"), "current patch maintenance\n", 0o600)
+	}
+	command = exec.Command("bash", upgradeScript,
+		"--patch", patchPath, "--trust-key", publicKey,
+		"--controllers", "c1,c2,c3", "--data-nodes", "c1,c2,c3,d1",
+		"--known-hosts", knownHosts, "-u", "root", "--rollback", "--execute", "--yes")
+	command.Dir = root
+	command.Env = append(os.Environ(), "PATH="+fakeBin+":"+os.Getenv("PATH"), "FAKE_REMOTE_STATE="+state,
+		"FAKE_OPERATION_MODE=stale-auto")
+	output, err = command.CombinedOutput()
+	if err != nil || !strings.Contains(string(output), "维护恢复   : 复用当前升级包的现有门禁") ||
+		!strings.Contains(string(output), "受控回退释放后陈旧自动恢复豁免") {
+		t.Fatalf("same-patch rollback did not reuse its maintenance lock: err=%v\n%s", err, output)
+	}
+	if _, statErr := os.Stat(filepath.Join(state, "install-order")); !os.IsNotExist(statErr) {
+		t.Fatalf("same-patch rollback reinstalled an RPM despite every node already matching the source: %v", statErr)
+	}
+	for _, host := range []string{"c1", "c2", "c3", "d1"} {
+		version, readErr := os.ReadFile(filepath.Join(state, host+".version"))
+		if readErr != nil || strings.TrimSpace(string(version)) != "2.2-28" {
+			t.Fatalf("%s same-patch rollback final version=%q err=%v", host, version, readErr)
+		}
+		if _, statErr := os.Stat(filepath.Join(state, host+".maintenance")); !os.IsNotExist(statErr) {
+			t.Fatalf("%s same-patch rollback maintenance marker was not released: %v", host, statErr)
+		}
+	}
+
+	resetFakeCluster(t)
+	command = exec.Command("bash", upgradeScript,
+		"--patch", patchPath, "--trust-key", publicKey,
+		"--controllers", "c1,c2,c3", "--data-nodes", "c1,c2,c3,d1",
+		"--known-hosts", knownHosts, "-u", "root", "--execute", "--yes")
+	command.Dir = root
+	command.Env = append(os.Environ(), "PATH="+fakeBin+":"+os.Getenv("PATH"), "FAKE_REMOTE_STATE="+state,
+		"FAKE_LEADER_SWITCH_ON_HOST=c3", "FAKE_LEADER_SWITCH_TO=c2", "FAKE_RECORD_LOCK_ORDER=true")
+	output, err = command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("rolling update did not tolerate a final-node Leader change: err=%v\n%s", err, output)
+	}
+	releaseOrder, err = os.ReadFile(filepath.Join(state, "release-order"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.TrimSpace(string(releaseOrder)), "c3\nc1\nc2"; got != want {
+		t.Fatalf("post-election maintenance release order=%q want %q", got, want)
+	}
+
+	resetFakeCluster(t)
+	for _, host := range []string{"c1", "c2", "c3"} {
+		writeFile(t, filepath.Join(state, host+".maintenance"), "failed update maintenance\n", 0o600)
+	}
+	previousPatchID := "cgupgrade-2.2-27-to-2.2-28-x86_64"
+	command = exec.Command("bash", upgradeScript,
+		"--patch", patchPath, "--trust-key", publicKey,
+		"--controllers", "c1,c2,c3", "--data-nodes", "c1,c2,c3,d1",
+		"--known-hosts", knownHosts, "-u", "root", "--plan")
+	command.Dir = root
+	command.Env = append(os.Environ(), "PATH="+fakeBin+":"+os.Getenv("PATH"), "FAKE_REMOTE_STATE="+state,
+		"FAKE_FAILED_UPDATE_LOCK="+previousPatchID, "FAKE_OPERATION_MODE=stale-auto",
+		"CG_UPDATE_CLUSTER_IDLE_ATTEMPTS=1", "CG_UPDATE_CLUSTER_IDLE_DELAY_SECONDS=0")
+	output, err = command.CombinedOutput()
+	if err != nil || !strings.Contains(string(output), "维护恢复   : 接管已失败升级 "+previousPatchID+" 的现有门禁") ||
+		!strings.Contains(string(output), "计划完成，未修改任何节点") {
+		t.Fatalf("failed-update maintenance takeover plan was not read-only and actionable: err=%v\n%s", err, output)
+	}
+	if _, statErr := os.Stat(filepath.Join(state, "install-order")); !os.IsNotExist(statErr) {
+		t.Fatalf("failed-update takeover plan installed an RPM: %v", statErr)
+	}
+
+	command = exec.Command("bash", upgradeScript,
+		"--patch", patchPath, "--trust-key", publicKey,
+		"--controllers", "c1,c2,c3", "--data-nodes", "c1,c2,c3,d1",
+		"--known-hosts", knownHosts, "-u", "root", "--execute", "--yes")
+	command.Dir = root
+	command.Env = append(os.Environ(), "PATH="+fakeBin+":"+os.Getenv("PATH"), "FAKE_REMOTE_STATE="+state,
+		"FAKE_FAILED_UPDATE_LOCK="+previousPatchID, "FAKE_OPERATION_MODE=stale-auto", "FAKE_TIMER_REQUIRES_ENABLE=true")
+	output, err = command.CombinedOutput()
+	if err != nil || !strings.Contains(string(output), "已接管失败升级维护锁 previous_patch_id="+previousPatchID) {
+		t.Fatalf("failed-update maintenance takeover execution failed: err=%v\n%s", err, output)
+	}
+	for _, host := range []string{"c1", "c2", "c3", "d1"} {
+		version, readErr := os.ReadFile(filepath.Join(state, host+".version"))
+		if readErr != nil || strings.TrimSpace(string(version)) != "2.2-29" {
+			t.Fatalf("%s takeover final version=%q err=%v", host, version, readErr)
+		}
+		if _, statErr := os.Stat(filepath.Join(state, host+".maintenance")); !os.IsNotExist(statErr) {
+			t.Fatalf("%s takeover maintenance marker was not released: %v", host, statErr)
+		}
+	}
+
+	resetFakeCluster(t)
+	for _, host := range []string{"c1", "c2", "c3"} {
+		writeFile(t, filepath.Join(state, host+".maintenance"), "failed update maintenance\n", 0o600)
+	}
+	writeFile(t, filepath.Join(state, "c1.version"), "2.2-29\n", 0o600)
+	command = exec.Command("bash", upgradeScript,
+		"--patch", patchPath, "--trust-key", publicKey,
+		"--controllers", "c1,c2,c3", "--data-nodes", "c1,c2,c3,d1",
+		"--known-hosts", knownHosts, "-u", "root", "--plan")
+	command.Dir = root
+	command.Env = append(os.Environ(), "PATH="+fakeBin+":"+os.Getenv("PATH"), "FAKE_REMOTE_STATE="+state,
+		"FAKE_FAILED_UPDATE_LOCK="+previousPatchID, "FAKE_OPERATION_MODE=stale-auto")
+	output, err = command.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "所有节点均已回到源版本 2.2-28") {
+		t.Fatalf("mixed-version failed-update maintenance was incorrectly adopted: err=%v\n%s", err, output)
+	}
+
+	resetFakeCluster(t)
+	output, err = runOperationGate(t, "stale-auto")
+	if err != nil {
+		t.Fatalf("stale pre-mutation automatic recovery did not bootstrap under maintenance: %v\n%s", err, output)
+	}
+	for _, expected := range []string{
+		"维护期陈旧自动恢复豁免", "stale_threshold_seconds=1800",
+		`"operation_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"`,
+		`"cluster_id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"`, `"kind":"failover"`,
+		`"stage":"plan"`, `"status":"running"`, `"updated_at":"2020-01-01T00:00:00Z"`,
+	} {
+		if !strings.Contains(string(output), expected) {
+			t.Fatalf("stale-operation bootstrap output missing %q:\n%s", expected, output)
+		}
+	}
+	for _, forbidden := range []string{"must-not-leak", "manual-secret-operator", "raw_payload", "credentials", "token"} {
+		if strings.Contains(string(output), forbidden) {
+			t.Fatalf("operation diagnostics leaked forbidden field/value %q:\n%s", forbidden, output)
+		}
+	}
+	assertLeaderOnlyOperationQueries(t)
+	for _, host := range []string{"c1", "c2", "c3", "d1"} {
+		version, readErr := os.ReadFile(filepath.Join(state, host+".version"))
+		if readErr != nil || strings.TrimSpace(string(version)) != "2.2-29" {
+			t.Fatalf("%s stale-bootstrap final version=%q err=%v", host, version, readErr)
+		}
+	}
+
+	blockedOperations := []struct {
+		name      string
+		mode      string
+		violation string
+	}{
+		{name: "manual", mode: "manual", violation: "requested_by_not_automatic_recovery"},
+		{name: "fresh", mode: "fresh", violation: "operation_not_stale"},
+		{name: "execute", mode: "execute", violation: "stage_not_pre_mutation"},
+		{name: "verify", mode: "verify", violation: "stage_not_pre_mutation"},
+		{name: "audit", mode: "audit", violation: "stage_not_pre_mutation"},
+		{name: "report", mode: "report", violation: "stage_not_pre_mutation"},
+		{name: "malformed", mode: "malformed", violation: "operation_id_missing"},
+		{name: "unreadable", mode: "unreadable", violation: "authenticated_operation_inventory_unreadable"},
+	}
+	for _, test := range blockedOperations {
+		t.Run("operation gate rejects "+test.name, func(t *testing.T) {
+			resetFakeCluster(t)
+			output, err := runOperationGate(t, test.mode)
+			if err == nil || !strings.Contains(string(output), test.violation) {
+				t.Fatalf("%s operation bypassed gate or lacked diagnostics: err=%v\n%s", test.name, err, output)
+			}
+			for _, host := range []string{"c1", "c2", "c3"} {
+				if !strings.Contains(string(output), "host="+host+" facts=") || !strings.Contains(string(output), "active_operations_not_exempt") {
+					t.Fatalf("%s failure lacked per-host activity diagnostics for %s:\n%s", test.name, host, output)
+				}
+			}
+			for _, forbidden := range []string{"must-not-leak", "manual-secret-operator", "raw_payload", "credentials", "token"} {
+				if strings.Contains(string(output), forbidden) {
+					t.Fatalf("%s diagnostics leaked forbidden field/value %q:\n%s", test.name, forbidden, output)
+				}
+			}
+			assertLeaderOnlyOperationQueries(t)
+			if _, statErr := os.Stat(filepath.Join(state, "install-order")); !os.IsNotExist(statErr) {
+				t.Fatalf("%s operation allowed an RPM mutation: %v", test.name, statErr)
+			}
+		})
+	}
+
+	for _, test := range []struct {
+		mode      string
+		violation string
+	}{{mode: "indeterminate", violation: "indeterminate_operations_not_zero"}, {mode: "lifecycle", violation: "active_lifecycle_tasks_not_zero"}} {
+		t.Run("activity gate rejects "+test.mode, func(t *testing.T) {
+			resetFakeCluster(t)
+			output, err := runOperationGate(t, test.mode)
+			if err == nil || !strings.Contains(string(output), test.violation) {
+				t.Fatalf("%s work bypassed gate or lacked diagnostics: err=%v\n%s", test.mode, err, output)
+			}
+			for _, host := range []string{"c1", "c2", "c3"} {
+				if !strings.Contains(string(output), "host="+host+" facts=") {
+					t.Fatalf("%s failure lacked per-host diagnostics for %s:\n%s", test.mode, host, output)
+				}
+			}
+			if _, statErr := os.Stat(filepath.Join(state, "operation-query-hosts")); !os.IsNotExist(statErr) {
+				t.Fatalf("%s-only failure unexpectedly queried operation inventory: %v", test.mode, statErr)
+			}
+		})
+	}
+
+	resetFakeCluster(t)
+	output, err = runOperationGate(t, "stale-auto-persistent")
+	if err == nil || !strings.Contains(string(output), "active_operations_not_zero") || !strings.Contains(string(output), "已完成自动回退") {
+		t.Fatalf("persistent stale operation bypassed strict post-Leader convergence: err=%v\n%s", err, output)
+	}
+	assertLeaderOnlyOperationQueries(t)
+	for _, host := range []string{"c1", "c2", "c3", "d1"} {
+		version, readErr := os.ReadFile(filepath.Join(state, host+".version"))
+		if readErr != nil || strings.TrimSpace(string(version)) != "2.2-28" {
+			t.Fatalf("%s persistent-operation rollback version=%q err=%v", host, version, readErr)
+		}
+	}
+
 	if err := os.Remove(filepath.Join(state, "install-order")); err != nil {
 		t.Fatal(err)
 	}
@@ -736,7 +1280,7 @@ esac
 	command.Dir = root
 	command.Env = append(os.Environ(), "PATH="+fakeBin+":"+os.Getenv("PATH"), "FAKE_REMOTE_STATE="+state,
 		"FAKE_PERSISTENT_STATUS_HOST=c2", "CG_UPDATE_CLUSTER_IDLE_ATTEMPTS=2", "CG_UPDATE_CLUSTER_IDLE_DELAY_SECONDS=0")
-	output, err := command.CombinedOutput()
+	output, err = command.CombinedOutput()
 	if err == nil || !strings.Contains(string(output), "已完成自动回退") {
 		t.Fatalf("persistent convergence failure bypassed rollback: err=%v\n%s", err, output)
 	}
@@ -811,7 +1355,7 @@ esac
 	command.Dir = root
 	command.Env = append(os.Environ(), "PATH="+fakeBin+":"+os.Getenv("PATH"), "FAKE_REMOTE_STATE="+state, "FAKE_RELEASE_FAIL_HOST=c2")
 	output, err = command.CombinedOutput()
-	if err == nil || !strings.Contains(string(output), "维护锁") {
+	if err == nil || !strings.Contains(string(output), "维护门禁") {
 		t.Fatalf("partial maintenance release did not fail closed: err=%v\n%s", err, output)
 	}
 	for _, host := range []string{"c1", "c2", "c3"} {
@@ -824,6 +1368,9 @@ esac
 	}
 	if err := os.Remove(filepath.Join(state, "release-failure-injected")); err != nil {
 		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(state, "replicated-gate")); err != nil {
+		t.Fatalf("partial release did not retain replicated maintenance: %v", err)
 	}
 
 	command = exec.Command("bash", upgradeScript,

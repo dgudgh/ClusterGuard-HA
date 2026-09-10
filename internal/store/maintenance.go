@@ -22,6 +22,9 @@ func (repository *Repository) SetMaintenance(ctx context.Context, clusterID, ins
 	if !found || instance.ClusterID != clusterID {
 		return validationError("maintenance target is not in the selected cluster")
 	}
+	if cluster := repository.snapshot.Clusters[clusterID]; !value && cluster.DisasterRecoveryActive() {
+		return conflictError("disaster recovery member protection cannot be released separately")
+	}
 	if instance.Maintenance == value {
 		return nil
 	}

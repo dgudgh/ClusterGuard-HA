@@ -96,6 +96,7 @@ func (realPostgreSQLCandidateRunner) Query(_ context.Context, endpoint adapter.E
 		"in_recovery": "false", "transaction_read_only": "off", "replay_paused": "false",
 		"wal_receiver_status": "", "current_lsn": "0/5000050", "receive_lsn": "", "replay_lsn": "",
 		"lag_seconds": "", "timeline_id": "7",
+		"replication_senders": `[{"application_name":"22222222-2222-4222-8222-222222222222","state":"streaming","client_addr":"192.0.2.2","replay_lsn":"0/5000050"}]`,
 	}
 	if endpoint.Hostname == "pg-b" {
 		row["node_id"] = standbyID
@@ -107,6 +108,9 @@ func (realPostgreSQLCandidateRunner) Query(_ context.Context, endpoint adapter.E
 		row["receive_lsn"] = "0/5000050"
 		row["replay_lsn"] = "0/5000050"
 		row["lag_seconds"] = "0"
+		row["replication_senders"] = "[]"
+		row["receiver_sender_host"] = "pg-a"
+		row["receiver_sender_port"] = "5432"
 	}
 	return []postgresql.Row{row}, nil
 }

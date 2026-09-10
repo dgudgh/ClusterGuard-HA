@@ -25,6 +25,9 @@ func (repository *Repository) SetRecoveryFreeze(ctx context.Context, clusterID m
 	if !found {
 		return notFoundError("unknown cluster ID: %s", clusterID)
 	}
+	if !value && cluster.RecoveryFreeze && cluster.Recovery != nil && cluster.Recovery.LastRecoveryStatus != "succeeded" {
+		return conflictError("disaster recovery protections require verified completion")
+	}
 	if cluster.RecoveryFreeze == value {
 		return nil
 	}

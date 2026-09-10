@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -10,6 +11,31 @@ import (
 
 	"clusterguard.io/ha/pkg/model"
 )
+
+func TestDockerRecoveryQueryPreservesMultiUUIDGTIDJSON(t *testing.T) {
+	policy := dockerRoleTestPolicy(t)
+	container := "0123456789abcdef"
+	executed := "11111111-1111-4111-8111-111111111111:1-5,\n22222222-2222-4222-8222-222222222222:1"
+	output, err := json.Marshal(map[string]string{"executed": executed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := "SELECT JSON_OBJECT('executed', @@global.gtid_executed)"
+	rawCall := strings.Replace(dockerMySQLCall(policy, container, query), " --execute ", " --raw --execute ", 1)
+	runner := &roleCommandRunner{results: map[string]roleCommandResult{
+		dockerPSCall(policy): {output: container + "\n"},
+		rawCall:              {output: string(output)},
+	}}
+	controller := NewDockerMySQLRoleController(runner, "/usr/bin/docker", t.TempDir())
+	result, err := controller.recoveryQuery(context.Background(), policy, query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state map[string]string
+	if json.Unmarshal(result, &state) != nil || state["executed"] != executed {
+		t.Fatalf("recovery JSON altered GTID history: %q", result)
+	}
+}
 
 func dockerRoleTestPolicy(t *testing.T) ClusterPolicy {
 	t.Helper()

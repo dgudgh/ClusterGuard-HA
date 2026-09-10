@@ -45,23 +45,25 @@ type mutationReceipt struct {
 }
 
 type mutationIntent struct {
-	Command          string           `json:"command"`
-	Engine           model.Engine     `json:"engine"`
-	ClusterID        model.ResourceID `json:"cluster_id"`
-	InstanceID       model.ResourceID `json:"instance_id"`
-	OperationID      model.ResourceID `json:"operation_id"`
-	LeaseID          model.ResourceID `json:"lease_id"`
-	PlanDigest       string           `json:"plan_digest"`
-	VIP              string           `json:"vip,omitempty"`
-	Interface        string           `json:"interface,omitempty"`
-	Prefix           int              `json:"prefix,omitempty"`
-	ReadOnly         bool             `json:"read_only,omitempty"`
-	SourceInstanceID model.ResourceID `json:"source_instance_id,omitempty"`
-	SourceNodeID     model.ResourceID `json:"source_node_id,omitempty"`
-	SourceHostname   string           `json:"source_hostname,omitempty"`
-	SourceIPAddress  string           `json:"source_ip_address,omitempty"`
-	SourcePort       int              `json:"source_port,omitempty"`
-	OracleTarget     string           `json:"oracle_target,omitempty"`
+	RecoveryTaskID      model.ResourceID `json:"recovery_task_id,omitempty"`
+	RecoveryFingerprint string           `json:"recovery_fingerprint,omitempty"`
+	Command             string           `json:"command"`
+	Engine              model.Engine     `json:"engine"`
+	ClusterID           model.ResourceID `json:"cluster_id"`
+	InstanceID          model.ResourceID `json:"instance_id"`
+	OperationID         model.ResourceID `json:"operation_id"`
+	LeaseID             model.ResourceID `json:"lease_id"`
+	PlanDigest          string           `json:"plan_digest"`
+	VIP                 string           `json:"vip,omitempty"`
+	Interface           string           `json:"interface,omitempty"`
+	Prefix              int              `json:"prefix,omitempty"`
+	ReadOnly            bool             `json:"read_only,omitempty"`
+	SourceInstanceID    model.ResourceID `json:"source_instance_id,omitempty"`
+	SourceNodeID        model.ResourceID `json:"source_node_id,omitempty"`
+	SourceHostname      string           `json:"source_hostname,omitempty"`
+	SourceIPAddress     string           `json:"source_ip_address,omitempty"`
+	SourcePort          int              `json:"source_port,omitempty"`
+	OracleTarget        string           `json:"oracle_target,omitempty"`
 }
 
 func NewFileMutationLedger(directory string) (*FileMutationLedger, error) {
@@ -88,6 +90,7 @@ func mutationFingerprintForVersion(request Request, policy ClusterPolicy, versio
 		leaseID = ""
 	}
 	contents, err := json.Marshal(mutationIntent{
+		RecoveryTaskID: request.RecoveryTaskID, RecoveryFingerprint: request.RecoveryFingerprint,
 		Command: request.Command, Engine: request.Engine, ClusterID: request.ClusterID, InstanceID: policy.InstanceID,
 		OperationID: request.OperationID, LeaseID: leaseID, PlanDigest: request.PlanDigest,
 		VIP: request.VIP, Interface: request.Interface, Prefix: request.Prefix, ReadOnly: request.ReadOnly,
