@@ -683,10 +683,6 @@ func cloneUint64Map(values map[model.ResourceID]uint64) map[model.ResourceID]uin
 	return copy
 }
 
-func (repository *Repository) persistSnapshotLocked(value snapshot) error {
-	return repository.persistSnapshotRevisionLocked(value, repository.stateRevision)
-}
-
 func (repository *Repository) persistSnapshotRevisionLocked(value snapshot, stateRevision uint64) error {
 	contents, stateDigest, normalized, err := encodeSnapshotRevisionState(value, stateRevision, "")
 	if err != nil {

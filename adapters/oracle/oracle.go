@@ -950,10 +950,6 @@ func oracleBrokerEnabled(instance model.DatabaseInstance) bool {
 	return false
 }
 
-func oracleBrokerEndpoint(instance model.DatabaseInstance) adapter.Endpoint {
-	return adapter.Endpoint{Hostname: instance.Hostname, IPAddress: instance.IPAddress, Port: instance.Port}
-}
-
 func oracleConnectDescriptor(endpoint adapter.Endpoint, credentials adapter.Credentials) string {
 	host := strings.TrimSpace(endpoint.IPAddress)
 	if host == "" {
@@ -975,12 +971,6 @@ func oracleCredentialConnect(credentials adapter.Credentials, connect string) st
 		return username + "@" + connect
 	}
 	return username + "/" + credentials.Password + "@" + connect
-}
-
-func oracleBrokerOutputHealthy(output []string) bool {
-	joined := strings.ToUpper(strings.Join(output, "\n"))
-	return !strings.Contains(joined, "ORA-") && !strings.Contains(joined, "ERROR") &&
-		(strings.Contains(joined, "SUCCESS") || strings.Contains(joined, "PRIMARY") || strings.Contains(joined, "SUCCESSFUL"))
 }
 
 type oracleBrokerProbe struct {

@@ -2,7 +2,6 @@ package store
 
 import (
 	"errors"
-	"fmt"
 	"net/url"
 	"path/filepath"
 	"sort"
@@ -400,15 +399,4 @@ func (repository *Repository) WorkloadBindingsForCluster(clusterID model.Resourc
 		return result[left].ResourceID < result[right].ResourceID
 	})
 	return result
-}
-
-func runtimeBindingSummary(binding model.WorkloadBinding) string {
-	switch binding.RuntimeKind {
-	case model.RuntimeDocker:
-		return fmt.Sprintf("docker swarm service %s", binding.Docker.SwarmServiceName)
-	case model.RuntimeKubernetes:
-		return fmt.Sprintf("kubernetes %s/%s-%d", binding.Kubernetes.Namespace, binding.Kubernetes.StatefulSet, binding.Kubernetes.Ordinal)
-	default:
-		return "linux host"
-	}
 }

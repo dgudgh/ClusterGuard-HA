@@ -1,7 +1,6 @@
 package store
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
@@ -658,8 +657,4 @@ func (repository *Repository) Operations(clusterID model.ResourceID) []model.Ope
 		}
 	}
 	return result
-}
-
-func operationSummary(operation model.OperationRecord) string {
-	return fmt.Sprintf("%s %s", operation.Operation.Engine, operation.Operation.Kind)
 }

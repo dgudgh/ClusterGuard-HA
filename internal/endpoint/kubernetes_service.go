@@ -180,8 +180,6 @@ func (provider *KubernetesServiceProvider) resource(ctx context.Context, cluster
 	return result, nil
 }
 
-func boolValue(value bool) *bool { return &value }
-
 func podReady(pod kubernetes.Pod) bool {
 	if pod.Metadata.DeletionTimestamp != nil || pod.Status.Phase != "Running" || net.ParseIP(strings.TrimSpace(pod.Status.PodIP)) == nil {
 		return false

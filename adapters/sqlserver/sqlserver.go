@@ -658,12 +658,6 @@ func quoteSQLServerLiteral(value string) string {
 	return "'" + strings.ReplaceAll(strings.TrimSpace(value), "'", "''") + "'"
 }
 
-func sqlServerAlwaysOnOutputHealthy(output string) bool {
-	upper := strings.ToUpper(output)
-	return !strings.Contains(upper, "ERROR") && !strings.Contains(upper, "FAILED") &&
-		strings.Contains(upper, "PRIMARY") && (strings.Contains(upper, "HEALTHY") || strings.Contains(upper, "SYNCHRONIZED"))
-}
-
 func parseSQLServerRows(output string) []Row {
 	lines := strings.Split(strings.TrimSpace(output), "\n")
 	rows := make([]Row, 0, len(lines))

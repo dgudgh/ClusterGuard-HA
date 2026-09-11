@@ -537,33 +537,6 @@ func raftLogIndex(key []byte) (uint64, error) {
 	return binary.BigEndian.Uint64(key), nil
 }
 
-func raftTailKeys(path string) ([]byte, []byte, error) {
-	database, err := bolt.Open(path, 0o600, &bolt.Options{ReadOnly: true, Timeout: time.Second})
-	if err != nil {
-		return nil, nil, err
-	}
-	defer database.Close()
-	var lastKey, previousKey []byte
-	err = database.View(func(transaction *bolt.Tx) error {
-		bucket := transaction.Bucket([]byte("logs"))
-		if bucket == nil {
-			return fmt.Errorf("Raft logs bucket is missing")
-		}
-		cursor := bucket.Cursor()
-		last, _ := cursor.Last()
-		if last == nil {
-			return nil
-		}
-		lastKey = append([]byte{}, last...)
-		previous, _ := cursor.Prev()
-		if previous != nil {
-			previousKey = append([]byte{}, previous...)
-		}
-		return nil
-	})
-	return lastKey, previousKey, err
-}
-
 func raftTailKeySuffix(path string, limit int) ([][]byte, error) {
 	database, err := bolt.Open(path, 0o600, &bolt.Options{ReadOnly: true, Timeout: time.Second})
 	if err != nil {
