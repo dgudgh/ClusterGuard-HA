@@ -237,6 +237,9 @@ func (keeper *OwnershipKeeper) reconcileCluster(ctx context.Context, cluster mod
 	bootstrap := false
 	bootstrapConvergenceRenewal := false
 	if primaryErr != nil {
+		if cluster.Engine != model.EngineMySQL {
+			return endpoint.LeaseRequest{}, fmt.Errorf("cluster %s: %w; %s requires controlled recovery before writer and VIP authorization", cluster.ResourceID, primaryErr, cluster.Engine)
+		}
 		if !observation.Complete {
 			return endpoint.LeaseRequest{}, fmt.Errorf(
 				"cluster %s VIP ownership coverage is unsafe for reboot bootstrap (%d/%d instance probes succeeded)",

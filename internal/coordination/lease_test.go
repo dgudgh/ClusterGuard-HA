@@ -218,6 +218,35 @@ func TestQuorumLeaseRenewOnlyRequiresAnExistingStableLease(t *testing.T) {
 	}
 }
 
+func TestQuorumSingleAcquireRenewOnlyNeverCreatesOrHandsOff(t *testing.T) {
+	now := time.Now()
+	records := &leaseRecordStore{records: map[model.ResourceID]LeaseRecord{}}
+	s := NewLeaseStore(records, authoritativeMembership(t), func() time.Time { return now })
+	req := endpoint.LeaseRequest{ClusterID: model.NewResourceID(), HAEndpointID: model.NewResourceID(), OwnerID: model.NewResourceID(), TTL: time.Second, RenewOnly: true}
+	req.OperationID = req.HAEndpointID
+	if _, err := s.Acquire(context.Background(), req); !errors.Is(err, endpoint.ErrLeaseConflict) {
+		t.Fatalf("missing renew-only: %v", err)
+	}
+	req.RenewOnly = false
+	seed, err := s.Acquire(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.RenewOnly = true
+	if got, err := s.Acquire(context.Background(), req); err != nil || !endpoint.SameLeaseIdentity(seed, got) {
+		t.Fatalf("existing renewal: %+v %v", got, err)
+	}
+	handoff := req
+	handoff.OperationID, handoff.PreviousOwnerID, handoff.OwnerID = model.NewResourceID(), req.OwnerID, model.NewResourceID()
+	if _, err := s.Acquire(context.Background(), handoff); !errors.Is(err, endpoint.ErrLeaseConflict) {
+		t.Fatalf("renew-only handed off: %v", err)
+	}
+	now = now.Add(2 * time.Second)
+	if _, err := s.Acquire(context.Background(), req); !errors.Is(err, endpoint.ErrLeaseConflict) {
+		t.Fatalf("expired renew-only: %v", err)
+	}
+}
+
 func TestQuorumLeaseBatchIsolatesTransitionConflictToOneCluster(t *testing.T) {
 	now := time.Date(2026, time.July, 14, 12, 30, 0, 0, time.UTC)
 	records := &leaseRecordStore{records: map[model.ResourceID]LeaseRecord{}}

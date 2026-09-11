@@ -11,6 +11,7 @@ install -d -o root -g clusterguard -m 0750 /etc/clusterguard/trust
 install -d -m 0700 -o root -g root /etc/clusterguard/power-snapshots
 install -d -m 0750 -o clusterguard -g clusterguard /var/lib/clusterguard
 install -d -m 0750 -o clusterguard -g clusterguard /var/lib/clusterguard/updates
+install -d -m 0700 -o root -g root /var/lib/clusterguard-update-private
 install -d -m 0751 -o clusterguard -g clusterguard /var/log/clusterguard
 install -d -m 0700 -o root -g root /var/lib/clusterguard-agent
 install -d -m 0750 -o root -g clusterguard /opt/clusterguard/packages

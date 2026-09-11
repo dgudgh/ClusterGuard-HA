@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	"clusterguard.io/ha/internal/agent"
@@ -152,6 +153,10 @@ func main() {
 	decoder := json.NewDecoder(os.Stdin)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
+		fmt.Fprintln(os.Stderr, "invalid agent request")
+		os.Exit(2)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		fmt.Fprintln(os.Stderr, "invalid agent request")
 		os.Exit(2)
 	}

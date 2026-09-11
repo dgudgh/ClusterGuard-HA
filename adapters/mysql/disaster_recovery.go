@@ -58,7 +58,7 @@ func (e DisasterExecutor) qualified(ctx context.Context, member model.DatabaseIn
 	if err != nil {
 		return p, err
 	}
-	if p.serverUUID != member.EngineIdentity["server_uuid"] || !p.readOnly || !p.superReadOnly || p.gtidMode != "ON" || (p.logBin != "ON" && p.logBin != "1") {
+	if p.serverUUID != strings.ToLower(strings.TrimSpace(member.EngineIdentity["server_uuid"])) || !p.readOnly || !p.superReadOnly || p.gtidMode != "ON" || (p.logBin != "ON" && p.logBin != "1") {
 		return p, fmt.Errorf("MySQL recovery requires the exact registered native identity, GTID logging, and both write fences")
 	}
 	if !strings.HasPrefix(p.version, "8.0.") && !strings.HasPrefix(p.version, "8.4.") {
@@ -72,7 +72,7 @@ func (e DisasterExecutor) Preflight(ctx context.Context, member model.DatabaseIn
 	if err != nil {
 		return err
 	}
-	if p.serverUUID != member.EngineIdentity["server_uuid"] || p.gtidMode != "ON" || (p.logBin != "ON" && p.logBin != "1") {
+	if p.serverUUID != strings.ToLower(strings.TrimSpace(member.EngineIdentity["server_uuid"])) || p.gtidMode != "ON" || (p.logBin != "ON" && p.logBin != "1") {
 		return fmt.Errorf("MySQL recovery requires registered UUID and GTID/binlog evidence")
 	}
 	if !strings.HasPrefix(p.version, "8.0.") && !strings.HasPrefix(p.version, "8.4.") {

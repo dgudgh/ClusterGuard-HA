@@ -216,6 +216,8 @@
     .panel-header { display:flex; min-height:58px; align-items:center; justify-content:space-between; gap:14px; padding:0 18px; border-bottom:1px solid var(--line); }
     .panel-title { margin:0; font-size:15px; }
     .panel-actions { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:8px; }
+    [data-view="nodes"] .panel-title, #refresh-node-inventory { flex-shrink:0; white-space:nowrap; }
+    [data-view="nodes"] .panel-actions { min-width:0; padding:8px 0; }
     .panel-body { padding:18px; min-width:0; overflow-x:auto; }
     .badge { display:inline-flex; min-height:24px; flex:0 0 auto; align-items:center; padding:0 8px; border-radius:999px; background:#edf3ef; color:#486057; font-size:11px; font-weight:780; white-space:nowrap; }
     .badge.success { background:var(--accent-soft); color:#176c5d; }
@@ -723,8 +725,8 @@
       .summary-cell:nth-child(3), .summary-cell:nth-child(6) { border-right:0; }
       .summary-cell:nth-child(n+4) { border-top:1px solid var(--line); }
       .operation-context { grid-template-columns:repeat(3,1fr); }
-      .context-cell:nth-child(3) { border-right:0; }
-      .context-cell:nth-child(n+4) { border-top:1px solid var(--line); }
+      .context-cell:nth-of-type(3) { border-right:0; }
+      .context-cell:nth-of-type(n+4) { border-top:1px solid var(--line); }
       .form-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
       .log-grid { grid-template-columns:repeat(3,1fr); }
     }
@@ -765,8 +767,8 @@
       .toolbar-actions { justify-content:flex-end; }
       .summary-grid, .metric-grid, .operation-context { grid-template-columns:repeat(2,1fr); }
       .summary-cell, .context-cell { border-top:1px solid var(--line); }
-      .summary-cell:nth-child(even), .context-cell:nth-child(even) { border-right:0; }
-      .summary-cell:nth-child(-n+2), .context-cell:nth-child(-n+2) { border-top:0; }
+      .summary-cell:nth-child(even), .context-cell:nth-of-type(even) { border-right:0; }
+      .summary-cell:nth-child(-n+2), .context-cell:nth-of-type(-n+2) { border-top:0; }
       .form-grid, .settings-grid { grid-template-columns:1fr; }
       .software-update-entry, .software-update-job, .software-version-strip { grid-template-columns:1fr; }
       .software-update-validation { grid-template-columns:auto minmax(0,1fr); }
@@ -845,6 +847,204 @@
       .software-update-progress-dialog .dialog-actions { align-items:stretch; flex-direction:column; }
       .software-update-progress-dialog .dialog-buttons, .software-update-progress-dialog .dialog-buttons button { width:100%; }
     }
+    .review-only { display:none; }
+  </style>
+  <style id="ui-review-theme">
+    /* Opt-in representative-page theme. Default console and API contracts remain unchanged. */
+    html[data-ui="review"] {
+      --ink:#181a1d; --muted:#62656b; --subtle:#72767d; --line:#e4e6e8; --line-strong:#c9ccd0;
+      --canvas:#fff; --panel:#fff; --rail:#fbfbfc; --accent:#20242a; --accent-strong:#181a1d;
+      --accent-soft:#eceef0; --success:#247447; --warning:#885411; --warning-soft:#fff7e7;
+      --danger:#b52e37; --danger-soft:#fff2f2; --radius:6px; --shadow:none;
+      --ux-space:24px; --ux-surface:#f6f7f8;
+    }
+    html[data-ui="review"] body { font-family:Inter,-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif; line-height:1.6; }
+    html[data-ui="review"] .review-only { display:block; }
+    html[data-ui="review"] [hidden] { display:none!important; }
+    html[data-ui="review"] .shell { grid-template-columns:208px minmax(0,1fr); }
+    html[data-ui="review"] .brand { gap:9px; border:0; min-height:80px; }
+    html[data-ui="review"] .brand-name { font-size:14px; font-weight:650; }
+    html[data-ui="review"] .brand-mark { width:34px; height:34px; flex-shrink:0; border-radius:6px; }
+    html[data-ui="review"] .sidebar { padding:0 12px 16px; }
+    html[data-ui="review"] .nav { gap:6px; }
+    html[data-ui="review"] .nav-link { min-height:42px; font-size:13px; }
+    html[data-ui="review"] .nav-link[aria-current="page"] { background:#e9ebee; color:#181a1d; font-weight:600; }
+    html[data-ui="review"] .sidebar-foot, html[data-ui="review"] .account-trigger { background:transparent; border-color:transparent; }
+    html[data-ui="review"] .page-header { min-height:88px; padding:14px 32px; gap:20px; }
+    html[data-ui="review"] .page-header h1 { font-size:16px; font-weight:600; }
+    html[data-ui="review"] .eyebrow { color:var(--muted); font-size:11px; font-weight:500; margin-bottom:4px; }
+    html[data-ui="review"] .cluster-toolbar { width:min(620px,60%); grid-template-columns:minmax(170px,1fr) auto; }
+    html[data-ui="review"] button, html[data-ui="review"] input, html[data-ui="review"] select, html[data-ui="review"] textarea { border-radius:6px; min-height:36px; font-weight:500; }
+    html[data-ui="review"] button { transition:background-color 120ms,color 120ms; }
+    html[data-ui="review"] button:disabled { opacity:1; color:#626871; border-color:#e1e3e6; background:#eceef0; }
+    html[data-ui="review"] .primary-button:hover:not(:disabled) { background:#363c44; border-color:#363c44; color:#fff; }
+    html[data-ui="review"] :is(button,input,select,textarea,a,summary):focus-visible { outline:2px solid #1267c4; outline-offset:3px; }
+    html[data-ui="review"] label { font-weight:500; }
+    html[data-ui="review"] .content { max-width:1440px; padding:32px 32px 48px; }
+    html[data-ui="review"] .view-heading { margin-bottom:24px; }
+    html[data-ui="review"] .view-heading h2 { font-size:24px; font-weight:600; line-height:1.35; }
+    html[data-ui="review"] .view-heading p { font-size:13px; margin-top:8px; }
+    html[data-ui="review"] .panel-title { font-size:15px; font-weight:600; }
+    html[data-ui="review"] .summary-label { font-size:12px; font-weight:500; }
+    html[data-ui="review"] .badge { border-radius:4px; font-weight:500; color:#5b6067; background:#f0f1f3; }
+    html[data-ui="review"] .badge.success { color:#21643e; background:#edf7f0; }
+    html[data-ui="review"] .badge.warning { color:#855016; background:#fff5e3; }
+    html[data-ui="review"] .badge.danger { color:#a62932; background:#fff0f1; }
+    html[data-ui="review"] .result-banner { font-size:13px; overflow-wrap:anywhere; }
+    html[data-ui="review"] .empty-state { color:var(--muted); border:0; padding:32px 16px; }
+    html[data-ui="review"] .ux-icon { width:17px; height:17px; flex-shrink:0; vertical-align:middle; }
+    html[data-ui="review"] dialog { border-color:var(--line-strong); border-radius:8px; box-shadow:0 16px 60px #181a1d24; }
+    html[data-ui="review"] dialog::backdrop { background:rgb(24 26 29 / 32%); }
+    html[data-ui="review"] dialog :is(input,select,textarea) { font-weight:400; }
+    html[data-ui="review"] pre { background:#f5f6f7; color:#30363d; line-height:1.7; }
+    html[data-ui="review"] summary { font-weight:500; font-size:12px; }
+    html[data-ui="review"] [data-view="overview"] > .panel { border:0; border-radius:0; }
+    html[data-ui="review"] [data-view="overview"] .summary-grid { border-block:1px solid var(--line); padding:20px 0; background:transparent; }
+    html[data-ui="review"] [data-view="overview"] .summary-cell { padding:0 20px; min-height:64px; border-top:0; }
+    html[data-ui="review"] [data-view="overview"] .summary-cell:first-child { padding-left:0; }
+    html[data-ui="review"] [data-view="overview"] .summary-value { font-size:28px; font-weight:550; margin-top:7px; line-height:1.2; }
+    html[data-ui="review"] [data-view="overview"] .panel + .panel { margin-top:28px; }
+    html[data-ui="review"] .fleet-toolbar { padding:0 0 16px; min-height:56px; }
+    html[data-ui="review"] .fleet-filters { max-width:470px; }
+    html[data-ui="review"] .fleet-meta { font-weight:400; }
+    html[data-ui="review"] .cluster-row { min-height:68px; padding:14px 12px; gap:16px; }
+    html[data-ui="review"] .cluster-row.header { min-height:42px; padding-block:10px; background:#f6f7f8; font-size:12px; }
+    html[data-ui="review"] .cluster-row:not(.header):hover { background:#f7f8f9; }
+    html[data-ui="review"] .cluster-row-action { border-radius:0; font-weight:400; }
+    html[data-ui="review"] .cluster-row-action .row-health { border-radius:4px; font-weight:500; }
+    html[data-ui="review"] .cluster-row :is(strong,span) { min-width:0; overflow-wrap:anywhere; }
+    html[data-ui="review"] [data-view="operations"]:not([hidden]) { display:grid; grid-template-columns:minmax(0,1fr) 292px; gap:24px 28px; }
+    html[data-ui="review"] .operations-view-heading { display:grid; grid-template-columns:minmax(0,1fr) auto; grid-column:1/-1; margin-bottom:0; align-items:start; gap:24px; }
+    html[data-ui="review"] #operations-title { position:static; width:auto; height:auto; clip:auto; clip-path:none; overflow:visible; white-space:normal; margin-bottom:18px; }
+    html[data-ui="review"] .operations-section-tabs { width:100%; display:flex; gap:28px; padding:0; border:0; border-bottom:1px solid var(--line); border-radius:0; background:transparent; }
+    html[data-ui="review"] .operations-section-tabs button { flex:0 1 auto; border:0; border-bottom:2px solid transparent; border-radius:0; padding:0 0 12px; min-height:40px; background:transparent; font-size:14px; font-weight:500; }
+    html[data-ui="review"] .operations-section-tabs button[aria-selected="true"] { border-bottom-color:var(--ink); color:var(--ink); box-shadow:none; font-weight:600; }
+    html[data-ui="review"] #switch-lock { margin-top:3px; min-width:124px; }
+    html[data-ui="review"] .ux-plan { background:var(--ux-surface); padding:24px; align-self:start; min-width:0; }
+    html[data-ui="review"] .ux-plan-title { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:20px; }
+    html[data-ui="review"] .ux-plan-title h3 { margin:0; font-size:16px; font-weight:600; }
+    html[data-ui="review"] .operation-context { grid-template-columns:minmax(0,1fr) 32px minmax(0,1fr); gap:0 12px; overflow:visible; }
+    html[data-ui="review"] .context-cell { border:0!important; padding:12px 0; min-height:0; min-width:0; }
+    html[data-ui="review"] .context-value { font-size:13px; font-weight:500; overflow:visible; white-space:normal; overflow-wrap:anywhere; text-overflow:clip; }
+    html[data-ui="review"] .ux-context-cluster { grid-column:1/-1; border-bottom:1px solid var(--line)!important; padding-top:0; display:flex; align-items:baseline; gap:14px; }
+    html[data-ui="review"] .ux-context-cluster .context-value { margin:0; font-weight:600; }
+    html[data-ui="review"] .ux-context-primary { grid-column:1; padding-block:28px; }
+    html[data-ui="review"] #operation-primary { font-size:22px; line-height:1.4; color:#51565d; margin-top:10px; }
+    html[data-ui="review"] .ux-migration-arrow { display:grid; place-items:center; grid-column:2; color:#858991; }
+    html[data-ui="review"] .operation-target-context { grid-column:3; padding-block:28px; }
+    html[data-ui="review"] .operation-target-context select { margin-top:7px; height:42px; font-size:14px; background:#fff; }
+    html[data-ui="review"] .ux-context-runtime, html[data-ui="review"] .ux-context-vip { grid-column:1/-1; display:grid; grid-template-columns:112px minmax(0,1fr); align-items:baseline; gap:10px; border-top:1px solid var(--line)!important; }
+    html[data-ui="review"] .ux-context-runtime .context-value, html[data-ui="review"] .ux-context-vip .context-value { margin:0; }
+    html[data-ui="review"] .ux-context-lag { grid-column:1/-1; display:flex; align-items:baseline; gap:18px; }
+    html[data-ui="review"] .ux-context-lag .context-value { margin:0; }
+    html[data-ui="review"] .operation-grid { min-width:0; margin:0; }
+    html[data-ui="review"] #operations-switchover-panel { border:0; background:transparent; }
+    html[data-ui="review"] #operations-switchover-panel .operation-box-head { display:none; }
+    html[data-ui="review"] .ux-checks h3 { font-size:16px; font-weight:600; margin:0 0 16px; }
+    html[data-ui="review"] .ux-checks dl { margin:0; }
+    html[data-ui="review"] .ux-checks dl > div { display:flex; gap:12px; justify-content:space-between; padding:13px 0; border-bottom:1px solid var(--line); font-size:13px; }
+    html[data-ui="review"] .ux-checks dt { color:var(--muted); }
+    html[data-ui="review"] .ux-checks dd { margin:0; text-align:right; font-weight:500; }
+    html[data-ui="review"] .ux-checks [data-state="blocked"] { color:var(--danger); }
+    html[data-ui="review"] .ux-checks [data-state="ready"] { color:var(--success); }
+    html[data-ui="review"] #operations-switchover-panel .center-actions { margin:24px 0 0; padding:0; }
+    html[data-ui="review"] #execute-switchover { min-width:0; width:100%; min-height:44px; }
+    html[data-ui="review"] #operations-switchover-panel .gate-note { display:none; }
+    html[data-ui="review"] .ux-action-reason { margin:10px 0 0; color:var(--muted); font-size:12px; min-height:36px; }
+    html[data-ui="review"] .ux-plan .operation-progress { padding:22px 0 0; gap:10px; border-top:1px solid var(--line); margin-top:8px; }
+    html[data-ui="review"] .operation-stage { font-size:12px; font-weight:500; padding-top:22px; }
+    html[data-ui="review"] .operation-stage::before { height:2px; top:6px; background:#d4d8dc; }
+    html[data-ui="review"] .ux-activity { grid-column:1/-1; padding-top:20px; border-top:1px solid var(--line); }
+    html[data-ui="review"] .ux-activity h3 { margin:0 0 12px; font-size:15px; font-weight:600; }
+    html[data-ui="review"] #operation-result { margin:0; background:#f7f8f9; border-left:2px solid #b5bbc2; }
+    html[data-ui="review"] #operation-result.error { background:var(--danger-soft); border-color:var(--danger); }
+    html[data-ui="review"] [data-review-section="disaster"] .operation-grid { display:none; }
+    html[data-ui="review"] [data-review-section="disaster"] #operations-disaster-panel { align-self:start; }
+    html[data-ui="review"] [data-review-section="disaster"] .ux-migration-arrow { display:none; }
+    html[data-ui="review"] [data-review-section="disaster"] .ux-context-primary { grid-column:1/-1; }
+    html[data-ui="review"] .log-toolbar { border:0; border-bottom:1px solid var(--line); border-radius:0; padding:0 0 18px; grid-template-columns:1fr; gap:16px; }
+    html[data-ui="review"] .log-filters { grid-template-columns:minmax(210px,1.4fr) minmax(170px,1fr) minmax(140px,.7fr) minmax(130px,.65fr); gap:12px; }
+    html[data-ui="review"] .log-result-count { font-weight:400; font-size:12px; }
+    html[data-ui="review"] .log-list { gap:0; margin-top:0; }
+    html[data-ui="review"] .log-list > .log-card { border:0; border-bottom:1px solid var(--line); border-radius:0; padding:18px 0; }
+    html[data-ui="review"] .log-list .log-head { padding:0; font-size:14px; }
+    html[data-ui="review"] .log-list .log-head strong { font-weight:600; }
+    html[data-ui="review"] .log-list .log-grid { grid-template-columns:1.15fr 1fr 1fr 1fr; gap:16px; background:transparent; margin:14px 0 10px; }
+    html[data-ui="review"] .log-list .log-cell { padding:0; }
+    html[data-ui="review"] .log-list .log-cell:nth-child(5) { display:none; }
+    html[data-ui="review"] .log-list .log-cell:nth-child(6) { grid-column:1/-1; }
+    html[data-ui="review"] .log-list .log-cell:nth-child(6):not(:has(strong[data-reviewed])) { display:none; }
+    html[data-ui="review"] .log-list .log-cell strong { font-size:13px; font-weight:500; margin-top:4px; }
+    html[data-ui="review"] .log-list details { border:0; }
+    html[data-ui="review"] .log-list summary { padding:5px 0; width:fit-content; min-height:30px; }
+    html[data-ui="review"] .log-list .operation-log-message { padding:10px 12px; margin-bottom:12px; border-top:0; font-size:12px; }
+    @media(max-width:1200px) {
+      html[data-ui="review"] .page-header { flex-wrap:wrap; gap:12px; }
+      html[data-ui="review"] .cluster-toolbar { width:100%; }
+      html[data-ui="review"] .content { padding:28px 24px 40px; }
+      html[data-ui="review"] [data-view="operations"]:not([hidden]) { grid-template-columns:minmax(0,1fr) 248px; gap:24px 20px; }
+      html[data-ui="review"] .ux-plan { padding:20px; }
+      html[data-ui="review"] .log-filters { grid-template-columns:minmax(0,1.3fr) minmax(0,1fr); }
+    }
+    @media(max-width:900px) {
+      html[data-ui="review"] .shell { display:block; }
+      html[data-ui="review"] .sidebar { position:static; height:auto; padding:0 20px; }
+      html[data-ui="review"] .brand { min-height:64px; margin:0; }
+      html[data-ui="review"] .nav { display:flex; gap:4px; overflow-x:auto; padding-bottom:10px; }
+      html[data-ui="review"] .nav-link { flex-shrink:0; min-height:40px; padding:0 12px; }
+      html[data-ui="review"] .page-header { padding:16px 24px; }
+    }
+    @media(max-width:700px) {
+      html[data-ui="review"] [data-view="operations"]:not([hidden]) { grid-template-columns:minmax(0,1fr); gap:24px; }
+      html[data-ui="review"] .ux-checks dl { display:grid; grid-template-columns:1fr 1fr; column-gap:20px; }
+      html[data-ui="review"] .ux-checks dl > div { flex-direction:column; gap:5px; }
+      html[data-ui="review"] .ux-checks dd { text-align:left; }
+      html[data-ui="review"] #operations-switchover-panel .center-actions { margin-top:18px; }
+      html[data-ui="review"] .log-list .log-grid { grid-template-columns:1fr 1fr; gap:16px; }
+    }
+    @media(max-width:480px) {
+      html[data-ui="review"] .content { padding:24px 16px 36px; }
+      html[data-ui="review"] .sidebar { padding-inline:12px; }
+      html[data-ui="review"] .page-header { padding:14px 16px; }
+      html[data-ui="review"] .page-title { min-width:0; }
+      html[data-ui="review"] .cluster-toolbar { display:block; }
+      html[data-ui="review"] .toolbar-actions { margin-top:10px; justify-content:flex-start; }
+      html[data-ui="review"] :is(button,input,select,summary) { min-height:44px; }
+      html[data-ui="review"] .view-heading h2 { font-size:22px; }
+      html[data-ui="review"] [data-view="overview"] .summary-grid { padding:0; }
+      html[data-ui="review"] [data-view="overview"] .summary-cell, html[data-ui="review"] [data-view="overview"] .summary-cell:first-child { padding:16px 12px; border-bottom:1px solid var(--line); }
+      html[data-ui="review"] .fleet-toolbar { gap:16px; padding-top:4px; }
+      html[data-ui="review"] .operations-view-heading { grid-template-columns:minmax(0,1fr); gap:12px; }
+      html[data-ui="review"] #operations-title { margin-bottom:10px; }
+      html[data-ui="review"] .operations-section-tabs { gap:24px; }
+      html[data-ui="review"] .operations-section-tabs button { font-size:13px; }
+      html[data-ui="review"] #switch-lock { margin:0; justify-self:start; }
+      html[data-ui="review"] .ux-plan { padding:18px; }
+      html[data-ui="review"] .operation-context { grid-template-columns:minmax(0,1fr); }
+      html[data-ui="review"] .ux-context-primary, html[data-ui="review"] .operation-target-context { grid-column:1; padding-block:14px; }
+      html[data-ui="review"] .ux-migration-arrow { grid-column:1; justify-items:start; height:26px; }
+      html[data-ui="review"] .ux-migration-arrow svg { transform:rotate(90deg); }
+      html[data-ui="review"] .ux-context-runtime, html[data-ui="review"] .ux-context-vip { grid-template-columns:1fr; gap:4px; }
+      html[data-ui="review"] .ux-plan .operation-progress { gap:8px; padding-top:16px; }
+      html[data-ui="review"] .operation-stage { font-size:11px; }
+      html[data-ui="review"] .log-filters { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+      html[data-ui="review"] .log-filters :is(.log-search-field,.log-cluster-field) { grid-column:1/-1; }
+      html[data-ui="review"] .log-record-count { white-space:normal; }
+      html[data-ui="review"] .log-list .log-head { align-items:start; }
+      html[data-ui="review"] .cluster-row.header { display:none; }
+      html[data-ui="review"] .cluster-row-action { grid-template-columns:1fr 1fr; gap:12px 20px; padding:18px 0; align-items:start; }
+      html[data-ui="review"] .cluster-row-action > :nth-child(n) { display:block; white-space:normal; }
+      html[data-ui="review"] .cluster-row-action > :first-child { grid-column:1/-1; font-size:15px; }
+      html[data-ui="review"] .cluster-row-action > :nth-child(n+2)::before { display:block; color:var(--muted); font-size:11px; font-weight:400; margin-bottom:3px; }
+      html[data-ui="review"] .cluster-row-action > :nth-child(2)::before { content:'引擎'; }
+      html[data-ui="review"] .cluster-row-action > :nth-child(3)::before { content:'运行层'; }
+      html[data-ui="review"] .cluster-row-action > :nth-child(4)::before { content:'健康状态'; }
+      html[data-ui="review"] .cluster-row-action .row-health { width:auto; min-height:0; padding:0; border-radius:0; background:transparent; font-size:13px; }
+      html[data-ui="review"] .cluster-row-action > :nth-child(5)::before { content:'主库'; }
+      html[data-ui="review"] .cluster-row-action > :nth-child(6)::before { content:'实例'; }
+      html[data-ui="review"] .cluster-row-action > :nth-child(7)::before { content:'最近观测'; }
+    }
+    @media(prefers-reduced-motion:reduce) { html[data-ui="review"] *, html[data-ui="review"] *::before { transition:none!important; animation:none!important; scroll-behavior:auto!important; } }
   </style>
 </head>
 <body>
@@ -1032,20 +1232,31 @@
             </div>
             <button id="switch-lock" type="button">锁 操作锁定</button>
           </div>
-          <div class="panel">
+          <div class="panel ux-plan" id="operation-plan-surface">
+            <div class="review-only ux-plan-title"><h3 id="operation-plan-title">主库迁移计划</h3><span class="badge danger">高风险操作</span></div>
             <div class="operation-context">
-              <div class="context-cell"><span class="summary-label">集群</span><strong class="context-value" id="operation-cluster">-</strong></div>
-              <div class="context-cell"><span class="summary-label">当前主库</span><strong class="context-value" id="operation-primary">-</strong></div>
+              <div class="context-cell ux-context-cluster"><span class="summary-label">集群</span><strong class="context-value" id="operation-cluster">-</strong></div>
+              <div class="context-cell ux-context-primary"><span class="summary-label">当前主库</span><strong class="context-value" id="operation-primary">-</strong></div>
+              <span class="review-only ux-migration-arrow" id="operation-migration-arrow" aria-hidden="true"></span>
               <div class="context-cell operation-target-context" id="operation-switchover-target"><label for="candidate-select">候选主库<select id="candidate-select"><option value="">无可用候选</option></select></label></div>
               <div class="context-cell operation-target-context" id="operation-recovery-target" hidden><label for="rejoin-select">恢复旧主候选<select id="rejoin-select"><option value="">未发现可恢复节点</option></select></label></div>
-              <div class="context-cell"><span class="summary-label">运行与入口边界</span><strong class="context-value" id="operation-runtime">-</strong></div>
-              <div class="context-cell"><span class="summary-label">业务入口</span><strong class="context-value" id="operation-vip">-</strong></div>
-              <div class="context-cell"><span class="summary-label" id="operation-lag-label">候选延迟</span><strong class="context-value" id="operation-lag">-</strong></div>
+              <div class="context-cell ux-context-runtime"><span class="summary-label">运行与入口边界</span><strong class="context-value" id="operation-runtime">-</strong></div>
+              <div class="context-cell ux-context-vip"><span class="summary-label">业务入口</span><strong class="context-value" id="operation-vip">-</strong></div>
+              <div class="context-cell ux-context-lag"><span class="summary-label" id="operation-lag-label">候选延迟</span><strong class="context-value" id="operation-lag">-</strong></div>
             </div>
           </div>
           <div class="operation-grid">
             <div class="operation-box operation-section-panel" id="operations-switchover-panel" role="tabpanel" aria-labelledby="operations-switchover-tab">
               <div class="operation-box-head"><div><span class="summary-label">受控主库切换</span><h3>主库与业务入口同步切换</h3><p>只有后端完整验证主库角色和业务入口唯一性后才会返回成功。</p></div><span class="badge danger">高</span></div>
+              <div class="review-only ux-checks">
+                <h3>执行条件</h3>
+                <dl aria-live="polite">
+                  <div><dt>平台权限</dt><dd id="ux-operation-permission">未读取</dd></div>
+                  <div><dt>集群观测</dt><dd id="ux-operation-observation">未读取</dd></div>
+                  <div><dt>候选评估</dt><dd id="ux-operation-candidate">未读取</dd></div>
+                  <div><dt>操作锁</dt><dd id="ux-operation-lock">已锁定</dd></div>
+                </dl>
+              </div>
               <div class="operation-progress" id="operation-progress" aria-label="操作执行进度" aria-live="polite">
                 <div class="operation-stage" data-operation-stage="precheck" data-state="idle">预检查</div>
                 <div class="operation-stage" data-operation-stage="plan" data-state="idle">计划</div>
@@ -1054,6 +1265,7 @@
                 <div class="operation-stage" data-operation-stage="verify" data-state="idle">验证</div>
               </div>
               <div class="center-actions"><button id="execute-switchover" class="primary-button execute-button" type="button" disabled>⇄ 执行切换</button></div>
+              <p class="review-only ux-action-reason" id="ux-operation-reason" role="status">操作已锁定。</p>
               <div class="gate-note">后端仍会执行 Safety Guard、集群操作锁、平台身份授权和验证</div>
             </div>
             <div class="operation-box operation-section-panel" id="operations-recovery-panel" role="tabpanel" aria-labelledby="operations-recovery-tab" hidden>
@@ -1068,11 +1280,12 @@
             <div class="center-actions"><button id="open-disaster-recovery" class="primary-button" type="button">一键灾难恢复</button></div>
             <div id="disaster-availability" class="result-banner" role="status"></div>
           </section>
-          <div class="result-banner" id="operation-result" role="status">等待操作。</div>
+          <div class="ux-activity"><h3 class="review-only">操作结果</h3><div class="result-banner" id="operation-result" role="status">等待操作。</div></div>
         </section>
 
         <section class="view" data-view="nodes" hidden aria-labelledby="nodes-title">
-          <div class="view-heading"><div><h2 id="nodes-title" data-i18n="nodesTitle">节点管理</h2><p>新增节点与损坏节点恢复使用同一条安装、同步和验证流程</p></div><span class="badge">数据节点不限制 · 控制节点保持奇数</span></div>
+          <div class="view-heading"><div><h2 id="nodes-title" data-i18n="nodesTitle">节点管理</h2><p>新增节点与损坏节点恢复使用同一条安装、同步和验证流程</p></div><button id="refresh-node-inventory" type="button">↻ 刷新节点</button></div>
+          <div id="node-load-error" class="result-banner error" role="status" hidden></div>
           <div class="panel">
             <div class="panel-header">
               <h3 class="panel-title">节点清单</h3>
@@ -1353,6 +1566,7 @@
           <label>安装包名称<input id="node-package" autocomplete="off" placeholder="使用服务器预置安装包时可留空"></label>
         </div></fieldset>
       </div>
+      <label class="power-acknowledgement" for="node-lifecycle-unlock"><input id="node-lifecycle-unlock" type="checkbox"><span>我已核对目标节点，确认安装或重建的数据影响，解锁本次执行。</span></label>
       <div class="result-banner" id="node-lifecycle-result" role="status">请确认固定身份和服务器连接信息后执行。</div>
     </div>
     <div class="dialog-actions">
@@ -1532,6 +1746,7 @@
 
   <script>
     const byId = id => document.getElementById(id);
+    const isUIReview = typeof URLSearchParams !== 'undefined' && new URLSearchParams(window.location.search || '').get('ui') === 'review';
     const operationLogPageSize = 20;
     const state = {
       language: 'zh-CN', clusters: [], clusterDirectory: new Map(), fleetTopology: new Map(), capabilities: [], nodes: [], allOperations: [], lifecycleTasks: [], lifecycleCapability: { available:false, reason:'未配置' },
@@ -1549,7 +1764,7 @@
       operationContext: null, fleetOperationContext: null, fleetContextError: '', fleetContextController: null,
       logLoaded: false, logError: '', logController: null,
       logNextCursor: '', logRemaining: 0, logTotal: 0, logRecordCount: 0, logQueryKey: '', logFilterTimer: null,
-      currentUser: null, authEpoch: 0, loggingOut: false, passwordChangeRequired: false, authenticating: false, lifecycleRunning: false, clusterMutationRunning: false, clusterManagementMode: 'create', retireConfirmationClusterId: '',
+      currentUser: null, authEpoch: 0, fleetReadEpoch: 0, nodeReadEpoch: 0, nodesLoaded: false, nodesLoadError: '', loggingOut: false, passwordChangeRequired: false, authenticating: false, lifecycleRunning: false, nodeLifecycleContext: null, nodeLifecycleIntent: null, clusterMutationRunning: false, clusterManagementMode: 'create', retireConfirmationClusterId: '',
       requestGeneration: 0, refreshIntervalMs: 60000, refreshTimer: null, liveStatusTimer: null,
       clusterLoading: false, clusterLoadError: '', clusterDataReady: false, clusterReadController: null,
       fleetSearch: '', fleetHealth: 'all', logSearch: '', logClusterId: '', logKind: 'all', logStatus: 'all',
@@ -1687,8 +1902,63 @@
       renderSoftwareUpdateGlobalWarning();
     };
 
+    // Clear both cached evidence and rendered rows before another session can see the shell.
+    const clearSessionData = () => {
+      state.fleetReadEpoch++; state.nodeReadEpoch++; state.softwareUpdateReadEpoch++;
+      state.fleetContextController?.abort(); state.fleetContextController = null;
+      state.logController?.abort(); state.logController = null;
+      if (state.logFilterTimer) window.clearTimeout(state.logFilterTimer);
+      state.logFilterTimer = null;
+      if (state.softwareUpdatePlanWait) state.softwareUpdatePlanWait.cancelled = true;
+      state.softwareUpdatePlanWait = null; state.softwareUpdateSubmission = null;
+      state.clusters = []; state.clusterDirectory = new Map(); state.fleetTopology = new Map();
+      state.capabilities = []; state.nodes = []; state.lifecycleTasks = []; state.allOperations = [];
+      state.nodesLoaded = false; state.nodesLoadError = '';
+      state.lifecycleCapability = { available:false, reason:'尚未读取节点能力' };
+      state.controlPlane = null; state.platformVersion = null;
+      state.operationContext = null; state.fleetOperationContext = null; state.fleetContextError = '';
+      state.selectedClusterId = ''; state.selectedCandidateId = ''; state.selectedRejoinId = '';
+      state.clusterLoading = false; state.clusterLoadError = ''; state.clusterDataReady = false;
+      state.logLoaded = false; state.logError = ''; state.logNextCursor = ''; state.logQueryKey = '';
+      state.logRemaining = 0; state.logTotal = 0; state.logRecordCount = 0;
+      state.logSearch = ''; state.logClusterId = ''; state.logKind = 'all'; state.logStatus = 'all';
+      state.fleetSearch = ''; state.fleetHealth = 'all';
+      state.operationReviewRunning = false; state.operationReviewTargetId = '';
+      state.clusterMutationRunning = false; state.retireConfirmationClusterId = ''; state.powerRunning = false;
+      state.softwareUpdates = { available:false, reason:'尚未检查升级服务', packages:[] };
+      state.softwareUpdateRunning = false; state.softwareUpdateAction = '';
+      state.softwareUpdateConfirmationPatchID = ''; state.softwareUpdateConfirmationMessage = '';
+      state.softwareUpdateValidationState = 'idle'; state.softwareUpdateValidationMessage = '';
+      state.softwareUpdateDialogAlert = ''; state.softwareUpdateDialogAlertLevel = 'error';
+      state.softwareUpdateProgressDismissed = ''; state.softwareUpdateProgressWasActive = false;
+      closeDisaster();
+      document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close());
+      document.querySelectorAll('dialog input, dialog textarea').forEach(input => {
+        if (input.type === 'checkbox' || input.type === 'radio') input.checked = input.defaultChecked;
+        else input.value = input.type === 'file' || input.type === 'password' ? '' : input.defaultValue;
+      });
+      byId('cluster-select').replaceChildren(new Option('尚未读取集群', ''));
+      byId('fleet-search').value = ''; byId('fleet-health-filter').value = 'all';
+      byId('log-search').value = ''; byId('log-kind-filter').value = 'all'; byId('log-status-filter').value = 'all';
+      clearClusterView();
+      renderClusterLoadStatus('idle');
+      renderOverview(); renderNodes(); renderLifecycleTasks(); renderCapabilities(); renderMetadataSelector();
+      renderOperationLogClusterFilter(); renderOperationLog(); renderControlPlaneStatus();
+      renderSoftwareUpdateHistory(state.softwareUpdates); renderSoftwareUpdateTargetSummary(null, null);
+      byId('software-update-package').hidden = true; byId('software-update-runtime').hidden = true;
+      byId('software-update-events').replaceChildren(); byId('software-update-output').textContent = '';
+      ['software-update-patch-id', 'software-update-source-version', 'software-update-target-version', 'software-update-size',
+        'software-update-signature', 'software-update-rolling', 'software-update-rollback', 'software-update-uploaded-at',
+        'software-update-job-status', 'software-update-job-mode', 'software-update-job-node', 'software-update-job-message',
+        'node-lifecycle-cluster', 'operation-review-id', 'operation-review-kind', 'disaster-cluster-name', 'disaster-primary']
+        .forEach(id => { byId(id).textContent = '-'; });
+      ['disaster-members', 'disaster-events'].forEach(id => byId(id).replaceChildren());
+      renderSelectedSoftwareUpdateFile();
+    };
+
     const showLogin = (message = '请输入平台账户。', isError = false) => {
       state.authEpoch++;
+      invalidateNodeLifecycle();
       state.loggingOut = false;
       state.requestGeneration++;
       state.clusterReadController?.abort(); state.clusterReadController = null;
@@ -1719,6 +1989,8 @@
       byId('console-shell').hidden = true;
       byId('login-shell').hidden = false;
       byId('live-status').hidden = true;
+      clearSessionData();
+      renderAuthenticatedUser();
       setAccountMenuOpen(false);
       const status = byId('login-status');
       status.textContent = message;
@@ -1739,6 +2011,7 @@
 
     const showAuthenticatedConsole = user => {
       state.authEpoch++;
+      invalidateNodeLifecycle();
       state.loggingOut = false;
       state.requestGeneration++;
       state.clusterReadController?.abort(); state.clusterReadController = null;
@@ -1747,6 +2020,7 @@
       state.activeOperationIntent = null;
       state.operationRunning = false;
       if (byId('disaster-dialog').open) closeDisaster();
+      clearSessionData();
       state.currentUser = user;
       byId('login-shell').hidden = true;
       byId('console-shell').hidden = false;
@@ -1791,13 +2065,18 @@
         const csrf = csrfCookieValue();
         if (csrf) headers['X-CSRF-Token'] = csrf;
       }
-      const requestOptions = { ...options, method, headers, credentials:'same-origin' };
+      const requestOptions = { ...options, method, headers, credentials:'same-origin', cache:'no-store' };
       let response;
       try { response = await fetch(path, requestOptions); } catch (_) { requireCurrentSession(); throw new APIError('无法连接控制 API'); }
+      requireCurrentSession();
+      if (response.status === 401) {
+        showLogin('登录已失效，请重新登录。', true);
+        throw new APIError('登录已失效，请重新登录。', 401);
+      }
       let payload;
       try { payload = await response.json(); } catch (_) { requireCurrentSession(); throw new APIError('控制 API 返回了无效数据', response.status); }
       requireCurrentSession();
-      if (response.status === 401) showLogin('登录已失效，请重新登录。', true);
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new APIError('控制 API 返回了无效数据', response.status);
       if (payload.password_change_required) openPasswordChange(true);
       if (!response.ok || ['error', 'blocked', 'unsupported', 'indeterminate'].includes(payload.status)) {
         throw new APIError(payload.message || '控制 API 请求失败', response.status, payload.result, payload.committed === true);
@@ -2135,6 +2414,7 @@
     };
 
     const relockSwitch = (preserveIntent = null) => {
+      if (!preserveIntent) invalidateNodeLifecycle();
       state.switchUnlocked = false;
       state.operationLockEpoch++;
       if (state.activeOperationIntent && state.activeOperationIntent !== preserveIntent) state.activeOperationIntent.cancelled = true;
@@ -2148,6 +2428,7 @@
 
     const beginClusterRequest = (clusterId, preserveOperationResult = false, operationIntent = null) => {
       const generation = ++state.requestGeneration;
+      invalidateNodeLifecycle();
       if (state.clusterReadController) state.clusterReadController.abort();
       state.clusterReadController = new AbortController();
       window.clearTimeout(state.liveStatusTimer);
@@ -2168,17 +2449,21 @@
       return generation;
     };
 
-    const loadFleetDetails = async clusters => {
+    const loadFleetDetails = async (clusters, fleetReadEpoch) => {
       const authEpoch = state.authEpoch;
-      const entries = await Promise.all(clusters.map(async cluster => {
+      await Promise.all(clusters.map(async cluster => {
+        const previousDetail = state.clusterDirectory.get(cluster.resource_id);
+        const previousTopology = state.fleetTopology.get(cluster.resource_id);
         const [detail, topology] = await Promise.all([
-          fetchResult(`/api/v1/clusters/${cluster.resource_id}`).catch(() => null),
-          fetchResult(`/api/v1/clusters/${cluster.resource_id}/topology`).catch(() => null)
+          readClusterResult(`/api/v1/clusters/${cluster.resource_id}`).catch(() => null),
+          readClusterResult(`/api/v1/clusters/${cluster.resource_id}/topology`).catch(() => null)
         ]);
-        return [cluster.resource_id, detail, topology];
+        if (authEpoch !== state.authEpoch || fleetReadEpoch !== state.fleetReadEpoch) return;
+        // A selected-cluster refresh may have committed newer evidence while this read was pending.
+        if (state.clusterDirectory.get(cluster.resource_id) === previousDetail) state.clusterDirectory.set(cluster.resource_id, detail);
+        if (state.fleetTopology.get(cluster.resource_id) === previousTopology) state.fleetTopology.set(cluster.resource_id, topology);
+        renderOverview();
       }));
-      if (authEpoch === state.authEpoch) state.fleetTopology = new Map(entries.map(([resourceID, _, topology]) => [resourceID, topology]));
-      return new Map(entries.map(([resourceID, detail]) => [resourceID, detail]));
     };
 
     const selectClusterFromFleet = clusterId => {
@@ -2201,8 +2486,8 @@
       byId('fleet-clusters').textContent = String(state.clusters.length);
       byId('fleet-healthy').textContent = String(healthy);
       byId('fleet-unhealthy').textContent = String(unhealthy);
-      byId('fleet-instances').textContent = String(totalInstances);
-      byId('fleet-controllers').textContent = String(controllers);
+      byId('fleet-instances').textContent = state.clusters.every(cluster => state.clusterDirectory.get(cluster.resource_id)) ? String(totalInstances) : '-';
+      byId('fleet-controllers').textContent = state.nodesLoaded ? String(controllers) : '-';
       byId('fleet-operations').textContent = String(pending);
       byId('fleet-engine-count').textContent = `${new Set(state.clusters.map(cluster => cluster.engine)).size} 种引擎`;
       const list = byId('overview-clusters');
@@ -2225,7 +2510,7 @@
         row.append(text('span', '', runtimeProfileShortLabel(detail)));
         row.append(text('span', `row-health ${clusterNeedsAttention(cluster) ? 'attention' : cluster.health && cluster.health.state === 'healthy' ? 'healthy' : ''}`, clusterNeedsAttention(cluster) ? '需要关注' : healthText(cluster.health && cluster.health.state)));
         row.append(text('span', '', primary ? instanceAddress(primary) : '-'));
-        row.append(text('span', '', String(instances.length)));
+        row.append(text('span', '', detail ? String(instances.length) : '-'));
         row.append(text('span', '', observationAge(topology && topology.observed_at)));
         row.addEventListener('click', () => selectClusterFromFleet(cluster.resource_id));
         list.append(row);
@@ -2480,9 +2765,9 @@
         && cluster.resource_id === byId('cluster-select').value && cluster.resource_id === state.selectedClusterId
         && state.clusterDetail?.cluster?.resource_id === cluster.resource_id && !state.clusterLoading && !state.clusterLoadError);
     };
-    const operationLockAvailable = () => !state.operationRunning && (state.operationsSection === 'disaster'
+    const operationLockAvailable = () => !state.operationRunning && !state.lifecycleRunning && !byId('node-lifecycle-modal').open && (state.operationsSection === 'disaster'
       ? canAdministerPlatform() && disasterContextReady() : canOperateClusters() && state.clusterDataReady);
-    const disasterActionAllowed = clusterID => state.switchUnlocked && !state.operationRunning && canAdministerPlatform()
+    const disasterActionAllowed = clusterID => state.switchUnlocked && !state.operationRunning && !state.lifecycleRunning && canAdministerPlatform()
       && disasterContextReady() && (!clusterID || clusterID === state.selectedClusterId);
     const disasterConfirmationValid = () => {
       const recovery = state.disaster;
@@ -2495,12 +2780,13 @@
       const cluster = state.clusterDetail?.cluster;
       const selectedTarget = kind === 'switchover' ? state.selectedCandidateId : state.selectedRejoinId;
       return Boolean(['switchover', 'former_primary_rejoin', 'replication_repair'].includes(kind)
+        && (kind === 'switchover' || ['mysql', 'postgresql'].includes(cluster?.engine))
         && canOperateClusters() && state.clusterDataReady && !state.clusterLoading && !state.clusterLoadError
         && capabilityAvailable('execute') && cluster && cluster.resource_id === state.selectedClusterId
         && cluster.resource_id === byId('cluster-select').value && targetID && targetID === selectedTarget
         && state.topology?.instances?.some(instance => instance.resource_id === targetID));
     };
-    const ordinaryOperationAllowed = (kind, targetID) => !state.operationRunning && state.switchUnlocked
+    const ordinaryOperationAllowed = (kind, targetID) => !state.operationRunning && state.switchUnlocked && !state.lifecycleRunning
       && ordinaryOperationContextReady(kind, targetID);
     const beginOperationIntent = (kind, targetID) => {
       if (!ordinaryOperationAllowed(kind, targetID)) return null;
@@ -2515,17 +2801,67 @@
         throw new APIError('操作已重新锁定或上下文已变化，请重新解锁后执行。', 409);
       }
     };
+    // Selected Lucide icon nodes (ISC, Lucide contributors); no external runtime or font request.
+    const reviewIcon = name => {
+      const nodes = {
+        lock:[['rect',{width:18,height:11,x:3,y:11,rx:2,ry:2}],['path',{d:'M7 11V7a5 5 0 0 1 10 0v4'}]],
+        unlock:[['rect',{width:18,height:11,x:3,y:11,rx:2,ry:2}],['path',{d:'M7 11V7a5 5 0 0 1 9.9-1'}]],
+        arrow:[['path',{d:'M5 12h14'}],['path',{d:'m12 5 7 7-7 7'}]],
+        switch:[['path',{d:'m16 3 4 4-4 4'}],['path',{d:'M20 7H4'}],['path',{d:'m8 21-4-4 4-4'}],['path',{d:'M4 17h16'}]]
+      };
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      for (const [key,value] of Object.entries({viewBox:'0 0 24 24',fill:'none',stroke:'currentColor','stroke-width':1.75,'stroke-linecap':'round','stroke-linejoin':'round','aria-hidden':'true',class:'ux-icon'})) svg.setAttribute(key,String(value));
+      for (const [tag,attributes] of nodes[name]) {
+        const element = document.createElementNS('http://www.w3.org/2000/svg',tag);
+        for (const [key,value] of Object.entries(attributes)) element.setAttribute(key,String(value));
+        svg.append(element);
+      }
+      return svg;
+    };
+    const renderReviewOperationState = () => {
+      if (!isUIReview) return;
+      const ready = state.clusterDataReady && !state.clusterLoading && !state.clusterLoadError;
+      const permitted = canOperateClusters();
+      const supported = capabilityAvailable('execute');
+      const candidate = eligibleCandidates().find(item => item.instance.resource_id === state.selectedCandidateId);
+      const values = {
+        permission:[permitted ? '可操作' : '仅查看', permitted],
+        observation:[state.clusterLoading ? '读取中' : ready ? '已读取' : '证据未就绪', ready],
+        candidate:[candidate?.assessment?.eligible ? ready ? '可用候选' : '等待完整证据' : '无可用候选', ready && candidate?.assessment?.eligible],
+        lock:[state.switchUnlocked ? '已解锁' : '已锁定', state.switchUnlocked]
+      };
+      for (const [name,[label,available]] of Object.entries(values)) {
+        const element = byId(`ux-operation-${name}`);
+        element.textContent = label;
+        element.dataset.state = available ? 'ready' : name === 'permission' && !permitted ? 'blocked' : 'pending';
+      }
+      const reason = state.operationRunning ? '任务执行中，正在等待后端结果。'
+        : !permitted ? '当前账户无执行权限。' : !ready ? '集群状态未就绪，禁止执行。'
+        : !supported ? `执行不可用：${capabilityReason('execute')}` : !state.selectedCandidateId ? '没有满足条件的目标节点。'
+        : !state.switchUnlocked ? '操作已锁定，禁止执行。' : '已解锁；后端预检查与安全门禁尚未执行。';
+      byId('ux-operation-reason').textContent = reason;
+      byId('execute-switchover').setAttribute('aria-describedby','ux-operation-reason');
+      const lockLabel = state.switchUnlocked ? '已解锁 · 重新锁定' : '操作锁定 · 解锁';
+      byId('switch-lock').replaceChildren(reviewIcon(state.switchUnlocked ? 'unlock' : 'lock'), document.createTextNode(lockLabel));
+      byId('switch-lock').title = state.operationsSection === 'switchover' ? reason
+        : !operationLockAvailable() ? '当前条件不允许解锁。' : state.switchUnlocked ? '重新锁定操作' : '解锁当前操作';
+    };
     const updateExecutionButtons = () => {
       const execute = byId('execute-switchover');
       execute.disabled = !ordinaryOperationAllowed('switchover', state.selectedCandidateId);
       byId('execute-rejoin').disabled = !ordinaryOperationAllowed('former_primary_rejoin', state.selectedRejoinId);
       byId('execute-repair').disabled = !ordinaryOperationAllowed('replication_repair', state.selectedRejoinId);
+      const repairReason = ['mysql', 'postgresql'].includes(state.clusterDetail?.cluster?.engine) ? '' : '此引擎尚未实现旧主回挂与复制修复';
+      byId('execute-rejoin').title = repairReason;
+      byId('execute-repair').title = repairReason;
       byId('switch-lock').disabled = !operationLockAvailable();
       byId('switch-lock').textContent = state.switchUnlocked ? '✓ 已解锁' : '锁 操作锁定';
       byId('switch-lock').className = state.switchUnlocked ? 'danger-button' : '';
       byId('switch-lock').setAttribute('aria-pressed', String(state.switchUnlocked));
       byId('open-disaster-recovery').disabled = !disasterActionAllowed();
+      updateNodeLifecycleControls();
       renderDisaster();
+      renderReviewOperationState();
     };
 
     const workflowStageOrder = ['discover', 'precheck', 'plan', 'safety_guard', 'lock', 'approve', 'execute', 'verify', 'audit', 'report'];
@@ -2748,7 +3084,8 @@
       };
     };
 
-    const runNodeSyncPayload = async (payload, operationIntent = null) => {
+    const runNodeSyncPayload = async (payload, operationIntent = null, requireNodeIntent = null) => {
+      if (requireNodeIntent) requireNodeIntent();
       if (operationIntent) requireOperationIntent(operationIntent);
       const precheck = await fetchResult('/api/v1/nodes/sync/precheck', mutationOptions(payload));
       if (precheck.blocked) throw new APIError('节点全量重建被安全检查阻断', 409, precheck);
@@ -2756,6 +3093,7 @@
         requireOperationIntent(operationIntent);
         if (!canAdministerPlatform() || !state.lifecycleCapability.available) throw new APIError('节点全量重建授权已失效', 403);
       }
+      if (requireNodeIntent) requireNodeIntent();
       const task = await fetchResult('/api/v1/nodes/sync/execute', mutationOptions(payload));
       if (!task || task.status !== 'succeeded') throw new APIError('节点全量重建未完成验证', 409, task);
       return task;
@@ -3598,7 +3936,7 @@
         { label:'最长事务', key:'max_transaction_age_seconds', suffix:'s' },
         { label:'延迟', topology:'lag' }
       ]
-    } : {
+    } : engine === 'mysql' ? {
       summary: [
         { label:'QPS', key:'qps', aggregate:'sum' },
         { label:'TPS', key:'tps', aggregate:'sum' },
@@ -3613,9 +3951,39 @@
         { label:'Slow/s', key:'slow_queries_per_second' }, { label:'缓冲命中', key:'buffer_pool_hit_ratio', format:'percent' },
         { label:'延迟', topology:'lag' }
       ]
-    };
+    } : engine === 'oracle' ? {
+      summary: [
+        { label:'最大传输延迟', key:'transport_lag_seconds', aggregate:'max', suffix:'s' },
+        { label:'最大应用延迟', key:'apply_lag_seconds', aggregate:'max', suffix:'s' },
+        { label:'Broker 健康实例', key:'broker_status_healthy', aggregate:'sum', digits:0 },
+        { label:'主库实例', key:'role_primary', aggregate:'sum', digits:0 }
+      ],
+      columns: [
+        { label:'传输延迟', key:'transport_lag_seconds', suffix:'s' },
+        { label:'应用延迟', key:'apply_lag_seconds', suffix:'s' },
+        { label:'Broker 健康', key:'broker_status_healthy', format:'boolean' }
+      ]
+    } : engine === 'sqlserver' ? {
+      summary: [
+        { label:'发送队列', key:'log_send_queue_bytes', aggregate:'sum', format:'bytes' },
+        { label:'重做队列', key:'redo_queue_bytes', aggregate:'sum', format:'bytes' },
+        { label:'健康实例', key:'always_on_healthy', aggregate:'sum', digits:0 },
+        { label:'连接实例', key:'connected', aggregate:'sum', digits:0 },
+        { label:'已同步实例', key:'synchronized', aggregate:'sum', digits:0 },
+        { label:'同步提交实例', key:'synchronous_commit', aggregate:'sum', digits:0 }
+      ],
+      columns: [
+        { label:'发送队列', key:'log_send_queue_bytes', format:'bytes' },
+        { label:'重做队列', key:'redo_queue_bytes', format:'bytes' },
+        { label:'健康', key:'always_on_healthy', format:'boolean' },
+        { label:'已连接', key:'connected', format:'boolean' },
+        { label:'已同步', key:'synchronized', format:'boolean' },
+        { label:'同步提交', key:'synchronous_commit', format:'boolean' }
+      ]
+    } : { summary:[], columns:[] };
 
     const formatMetricValue = (definition, value) => {
+      if (definition.format === 'boolean') return value === 1 ? '是' : value === 0 ? '否' : '-';
       if (definition.format === 'percent') return formatPercent(value);
       if (definition.format === 'bytes') return formatBytes(value);
       const rendered = formatMetric(value, Number.isInteger(definition.digits) ? definition.digits : 2);
@@ -3697,8 +4065,33 @@
       selector.value = methods.some(([, value]) => value === selected) ? selected : 'auto';
     };
 
+    const nodeLifecycleAvailable = () => Boolean(state.lifecycleCapability.available && canAdministerPlatform()
+      && state.selectedClusterId && state.selectedClusterId === byId('cluster-select').value
+      && state.clusterDetail?.cluster?.resource_id === state.selectedClusterId
+      && state.clusterDataReady && !state.clusterLoading && !state.clusterLoadError && !state.operationRunning && lifecycleEngineSupported());
+    const nodeLifecycleContextOwned = context => Boolean(context && context === state.nodeLifecycleContext
+      && context.authEpoch === state.authEpoch && context.user === state.currentUser
+      && context.clusterID === state.selectedClusterId && context.engine === lifecycleEngine()
+      && byId('node-lifecycle-modal').open);
+    const nodeLifecycleContextCurrent = context => nodeLifecycleContextOwned(context) && nodeLifecycleAvailable();
+    const invalidateNodeLifecycle = () => {
+      if (state.nodeLifecycleIntent) {
+        state.nodeLifecycleIntent.cancelled = true;
+        state.lifecycleRunning = false;
+      }
+      state.nodeLifecycleIntent = null;
+      state.nodeLifecycleContext = null;
+      byId('node-lifecycle-unlock').checked = false;
+      if (byId('node-lifecycle-modal').open) byId('node-lifecycle-modal').close();
+    };
+    const requireNodeLifecycleIntent = intent => {
+      if (intent !== state.nodeLifecycleIntent || intent.cancelled || !nodeLifecycleContextCurrent(intent.context)
+        || !byId('node-lifecycle-unlock').checked || JSON.stringify(lifecyclePayload()) !== intent.payloadKey) {
+        throw new APIError('节点操作已锁定或目标已变化，请重新核对并解锁。', 409);
+      }
+    };
     const updateNodeLifecycleControls = () => {
-      const available = state.lifecycleCapability.available && canAdministerPlatform() && Boolean(state.selectedClusterId) && lifecycleEngineSupported();
+      const available = nodeLifecycleAvailable();
       const reason = !state.selectedClusterId
         ? '请先选择目标集群'
         : (!lifecycleEngineSupported()
@@ -3706,7 +4099,7 @@
           : (canAdministerPlatform() ? localizedReason(state.lifecycleCapability.reason) : '仅管理员可以执行节点流程'));
       const disabled = !available || state.lifecycleRunning;
       byId('open-node-lifecycle-modal').disabled = disabled;
-      byId('execute-node-sync').disabled = disabled;
+      byId('execute-node-sync').disabled = disabled || !nodeLifecycleContextCurrent(state.nodeLifecycleContext) || !byId('node-lifecycle-unlock').checked;
       byId('close-node-lifecycle-modal').disabled = state.lifecycleRunning;
       byId('cancel-node-lifecycle').disabled = state.lifecycleRunning;
       byId('open-node-lifecycle-modal').title = available ? '' : reason;
@@ -3720,7 +4113,9 @@
     };
 
     const renderNodes = () => {
-      byId('node-count').textContent = `${state.nodes.length} 个节点`;
+      byId('node-count').textContent = state.nodesLoaded ? `${state.nodes.length} 个节点` : state.nodesLoadError ? '读取失败' : '读取中';
+      byId('node-load-error').hidden = !state.nodesLoadError;
+      byId('node-load-error').textContent = state.nodesLoadError ? `节点与任务读取失败：${state.nodesLoadError}。节点操作已锁定。` : '';
       const body = byId('node-inventory'); body.replaceChildren();
       state.nodes.forEach(node => {
         const row = document.createElement('tr');
@@ -3787,16 +4182,20 @@
     };
 
     const openNodeLifecycleModal = () => {
-      if (!state.lifecycleCapability.available || !canAdministerPlatform() || !state.selectedClusterId || !lifecycleEngineSupported()) {
+      if (!nodeLifecycleAvailable() || state.lifecycleRunning) {
         setLiveStatus(!lifecycleEngineSupported() ? `${lifecycleUnavailableReason()}。` : '当前账户或环境不允许执行节点流程。', true);
         return;
       }
+      relockSwitch();
       const cluster = state.clusters.find(item => item.resource_id === state.selectedClusterId);
       byId('node-lifecycle-cluster').textContent = cluster ? cluster.display_name : state.selectedClusterId;
       byId('node-lifecycle-result').textContent = '请确认固定身份和服务器连接信息后执行。';
       byId('node-lifecycle-result').className = 'result-banner';
       resetNodeLifecycleForm();
+      state.nodeLifecycleContext = { clusterID:state.selectedClusterId, engine:lifecycleEngine(), user:state.currentUser, authEpoch:state.authEpoch };
+      byId('node-lifecycle-unlock').checked = false;
       byId('node-lifecycle-modal').showModal();
+      updateNodeLifecycleControls();
     };
 
     const lifecyclePayload = () => {
@@ -3841,6 +4240,7 @@
     };
 
     const executeNodeSync = async () => {
+      if (state.lifecycleRunning || !nodeLifecycleContextCurrent(state.nodeLifecycleContext) || !byId('node-lifecycle-unlock').checked) return;
       if (!state.lifecycleCapability.available) { setLiveStatus(`节点流程不可执行：${localizedReason(state.lifecycleCapability.reason)}`, true); return; }
       if (!lifecycleEngineSupported()) { setLiveStatus(`节点流程不可执行：${lifecycleUnavailableReason()}`, true); return; }
       if (!canAdministerPlatform() || !state.selectedClusterId) { setLiveStatus('仅管理员可以执行节点流程。', true); return; }
@@ -3853,23 +4253,36 @@
         setLiveStatus(error.message, true);
         return;
       }
+      const intent = { context:state.nodeLifecycleContext, payloadKey:JSON.stringify(payload), cancelled:false };
+      state.nodeLifecycleIntent = intent;
       state.lifecycleRunning = true;
       updateNodeLifecycleControls();
       byId('node-lifecycle-result').textContent = '正在执行预检查、安装、同步和验证，请勿关闭窗口。';
       byId('node-lifecycle-result').className = 'result-banner';
+      let completed = false;
       try {
-        const task = await runNodeSyncPayload(payload);
+        const task = await runNodeSyncPayload(payload, null, () => requireNodeLifecycleIntent(intent));
+        requireNodeLifecycleIntent(intent);
+        completed = true;
+        byId('node-lifecycle-result').textContent = `节点任务已完成：${task.status}，正在刷新状态。`;
         setLiveStatus(`节点任务已完成：${task.status}`);
         await loadNodesAndTasks();
+        requireNodeLifecycleIntent(intent);
+        invalidateNodeLifecycle();
         await loadSelectedCluster();
-        byId('node-lifecycle-modal').close();
       } catch (error) {
-        byId('node-lifecycle-result').textContent = `执行失败：${error.message}`;
+        if (intent !== state.nodeLifecycleIntent || !nodeLifecycleContextOwned(intent.context)) return;
+        byId('node-lifecycle-unlock').checked = false;
+        const message = completed ? `节点流程已完成，但状态刷新失败：${error.message}` : `执行失败：${error.message}`;
+        byId('node-lifecycle-result').textContent = message;
         byId('node-lifecycle-result').className = 'result-banner error';
-        setLiveStatus(error.message, true);
+        setLiveStatus(message, true);
       } finally {
-        state.lifecycleRunning = false;
-        updateNodeLifecycleControls();
+        if (intent === state.nodeLifecycleIntent) {
+          state.nodeLifecycleIntent = null;
+          state.lifecycleRunning = false;
+          updateNodeLifecycleControls();
+        }
       }
     };
 
@@ -3890,6 +4303,11 @@
     };
     const renderLifecycleTasks = () => {
       const root = byId('lifecycle-tasks'); root.replaceChildren();
+      if (!state.nodesLoaded) {
+        byId('lifecycle-task-count').textContent = '-';
+        root.append(text('div', 'empty-state', state.nodesLoadError ? '任务记录暂不可用' : '正在读取任务记录'));
+        return;
+      }
       byId('lifecycle-task-count').textContent = state.lifecycleTasks.length > 8 ? `最近 8 / ${state.lifecycleTasks.length}` : `${state.lifecycleTasks.length} 条`;
       if (!state.lifecycleTasks.length) { root.append(text('div', 'empty-state', '暂无节点任务')); return; }
       state.lifecycleTasks.slice().sort(newestTaskFirst).slice(0, 8).forEach(task => {
@@ -3923,8 +4341,20 @@
     };
 
     const loadNodesAndTasks = async () => {
-      const [nodes, tasks, capability] = await Promise.all([fetchResult('/api/v1/nodes'), fetchResult('/api/v1/nodes/sync/tasks'), fetchResult('/api/v1/nodes/sync/capabilities')]);
-      state.nodes = nodes || []; state.lifecycleTasks = tasks || []; state.lifecycleCapability = capability || { available:false, reason:'未配置' }; renderNodes(); renderLifecycleTasks();
+      const authEpoch = state.authEpoch, nodeReadEpoch = ++state.nodeReadEpoch;
+      const current = () => authEpoch === state.authEpoch && nodeReadEpoch === state.nodeReadEpoch;
+      try {
+        const [nodes, tasks, capability] = await Promise.all([fetchResult('/api/v1/nodes'), fetchResult('/api/v1/nodes/sync/tasks'), fetchResult('/api/v1/nodes/sync/capabilities')]);
+        if (!current()) return;
+        state.nodes = nodes || []; state.lifecycleTasks = tasks || []; state.lifecycleCapability = capability || { available:false, reason:'未配置' };
+        state.nodesLoaded = true; state.nodesLoadError = '';
+      } catch (error) {
+        if (current()) {
+          state.nodesLoaded = false; state.nodesLoadError = error.message;
+          state.lifecycleCapability = { available:false, reason:error.message };
+        }
+        throw error;
+      } finally { if (current()) { renderNodes(); renderLifecycleTasks(); renderOverview(); } }
     };
 
     const timeValue = value => { const parsed = Date.parse(value || ''); return Number.isFinite(parsed) ? parsed : 0; };
@@ -4020,7 +4450,12 @@
           ['操作类型', kindText(operation.operation && operation.operation.kind)],
           ['状态', operation.status === 'indeterminate' && review ? `已复核 · ${review.reviewed_by || '-'} · ${new Date(review.reviewed_at).toLocaleString(state.language)}` : (operation.incident_attempt_count > 1 ? `${statusText(operation.status)}（${operation.incident_attempt_count} 次）` : statusText(operation.status))]
         ];
-        fields.forEach(([label, value]) => { const cell = text('div', 'log-cell', ''); cell.append(text('span', '', label), text('strong', '', value)); grid.append(cell); });
+        fields.forEach(([label, value], index) => {
+          const cell = text('div', 'log-cell', '');
+          const content = text('strong', '', value);
+          if (index === 5 && (review || operation.incident_attempt_count > 1)) content.dataset.reviewed = 'true';
+          cell.append(text('span', '', label), content); grid.append(cell);
+        });
         const failureDetail = operationLogFailureDetail(operation);
         if (failureDetail) card.append(text('p', 'operation-log-message', failureDetail));
         const details = document.createElement('details');
@@ -4803,25 +5238,51 @@
     };
 
     const loadClusters = async (preferredClusterId = '') => {
-      const authEpoch = state.authEpoch;
+      const authEpoch = state.authEpoch, fleetReadEpoch = ++state.fleetReadEpoch;
+      const current = () => authEpoch === state.authEpoch && fleetReadEpoch === state.fleetReadEpoch;
+      invalidateNodeLifecycle();
+      state.clusterDataReady = false;
+      relockSwitch();
       void loadFleetOperationContext();
-      const [clusters, capabilities, nodes, tasks, lifecycleCapability, controlPlane, platformVersion] = await Promise.all([
-        fetchResult('/api/v1/clusters'), fetchResult('/api/v1/capabilities'), fetchResult('/api/v1/nodes'), fetchResult('/api/v1/nodes/sync/tasks'), fetchResult('/api/v1/nodes/sync/capabilities'), fetchResult('/api/v1/control-plane/status').catch(() => null), fetchResult('/api/v1/platform/version').catch(() => null)
+      const [clusters, capabilities] = await Promise.all([
+        fetchResult('/api/v1/clusters'), fetchResult('/api/v1/capabilities')
       ]);
-      if (authEpoch !== state.authEpoch) return;
-      state.clusters = clusters || []; state.capabilities = capabilities || []; state.nodes = nodes || []; state.lifecycleTasks = tasks || []; state.lifecycleCapability = lifecycleCapability || { available:false, reason:'未配置' };
-      state.controlPlane = controlPlane; state.platformVersion = platformVersion; renderControlPlaneStatus(); renderPlatformVersion();
-      const directory = await loadFleetDetails(state.clusters);
-      if (authEpoch !== state.authEpoch) return;
-      state.clusterDirectory = directory;
+      if (!current()) return;
+      state.clusters = clusters || []; state.capabilities = capabilities || [];
+      state.nodes = []; state.lifecycleTasks = []; state.nodesLoaded = false; state.nodesLoadError = '';
+      state.lifecycleCapability = { available:false, reason:'正在读取节点能力' };
+      state.clusterDirectory = new Map(); state.fleetTopology = new Map();
       const selector = byId('cluster-select'); const previous = selector.value; const preferred = preferredClusterId || previous; selector.replaceChildren();
       if (!state.clusters.length) selector.append(new Option('未发现已注册集群', ''));
       state.clusters.forEach(cluster => { const option = document.createElement('option'); option.value = cluster.resource_id; option.textContent = cluster.display_name || cluster.resource_id; selector.append(option); });
       selector.value = state.clusters.some(cluster => cluster.resource_id === preferred) ? preferred : (state.clusters[0] ? state.clusters[0].resource_id : '');
       renderOperationLogClusterFilter();
       renderCapabilities(); renderNodes(); renderLifecycleTasks(); renderOverview();
+      void loadNodesAndTasks().catch(() => {});
+      void Promise.all([fetchResult('/api/v1/control-plane/status').catch(() => null), fetchResult('/api/v1/platform/version').catch(() => null)]).then(([controlPlane, platformVersion]) => {
+        if (!current()) return;
+        state.controlPlane = controlPlane; state.platformVersion = platformVersion; renderControlPlaneStatus(); renderPlatformVersion();
+      });
+      void loadFleetDetails(state.clusters.filter(cluster => cluster.resource_id !== selector.value), fleetReadEpoch);
       void loadOperationLog(false);
       await Promise.all([loadSelectedCluster(), loadSoftwareUpdates(false)]);
+    };
+
+    // A post-authentication data read must not masquerade as session expiry.
+    // Only 401/staleSession still reaches the login screen; any other failure
+    // keeps the authenticated shell visible and reports a retryable error.
+    const loadConsoleAfterAuthentication = async () => {
+      try {
+        await loadClusters();
+      } catch (error) {
+        if (error?.staleSession || error?.status === 401) throw error;
+        // A data-read failure is not session expiry: keep the authenticated
+        // shell, drop any previously rendered cluster view so stale evidence is
+        // not presented as current, and report a retryable error.
+        clearClusterView();
+        setLiveStatus(`集群列表读取失败：${error?.message || '未知错误'}，请刷新页面重试。`, true);
+      }
+      scheduleAutoRefresh();
     };
 
     const submitLogin = async event => {
@@ -4841,8 +5302,7 @@
           openPasswordChange(true);
           return;
         }
-        await loadClusters();
-        scheduleAutoRefresh();
+        await loadConsoleAfterAuthentication();
       } catch (error) {
         if (!error.staleSession) showLogin(error.status === 401 ? '用户名或密码不正确。' : error.message, true);
       } finally {
@@ -4905,8 +5365,7 @@
           openPasswordChange(true);
           return;
         }
-        await loadClusters();
-        scheduleAutoRefresh();
+        await loadConsoleAfterAuthentication();
       } catch (error) {
         if (!error.staleSession && error.status !== 401) showLogin(error.message, true);
       }
@@ -4937,7 +5396,7 @@
       state.refreshTimer = null;
       if (!state.refreshIntervalMs) return;
       state.refreshTimer = window.setInterval(() => {
-        if (state.selectedClusterId && !state.operationRunning && !state.clusterLoading) loadSelectedCluster({ preserveOperationResult:true });
+        if (state.selectedClusterId && !state.operationRunning && !state.lifecycleRunning && !byId('node-lifecycle-modal').open && !state.clusterLoading) loadSelectedCluster({ preserveOperationResult:true });
       }, state.refreshIntervalMs);
     };
 
@@ -5110,6 +5569,11 @@
       });
       const recovery = selected === 'recovery';
       const disaster = selected === 'disaster';
+      if (isUIReview) {
+        document.querySelector('[data-view="operations"]').dataset.reviewSection = selected;
+        byId('operation-plan-title').textContent = disaster ? '集群恢复上下文' : recovery ? '旧主恢复计划' : '主库迁移计划';
+        byId('operation-progress').hidden = selected !== 'switchover';
+      }
       byId('operation-switchover-target').hidden = recovery || disaster;
       byId('operation-recovery-target').hidden = !recovery;
       const supported = ['mysql', 'postgresql'].includes(selectedCluster()?.engine);
@@ -5254,6 +5718,18 @@
     byId('close-node-lifecycle-modal').addEventListener('click', () => byId('node-lifecycle-modal').close());
     byId('cancel-node-lifecycle').addEventListener('click', () => byId('node-lifecycle-modal').close());
     byId('node-lifecycle-modal').addEventListener('cancel', event => { if (state.lifecycleRunning) event.preventDefault(); });
+    byId('node-lifecycle-modal').addEventListener('close', () => {
+      if (!byId('node-lifecycle-modal').open) { invalidateNodeLifecycle(); updateNodeLifecycleControls(); }
+    });
+    byId('node-lifecycle-unlock').addEventListener('change', () => {
+      if (!byId('node-lifecycle-unlock').checked && state.nodeLifecycleIntent) state.nodeLifecycleIntent.cancelled = true;
+      updateNodeLifecycleControls();
+    });
+    byId('node-lifecycle-modal').querySelector('.node-form').addEventListener('input', () => {
+      byId('node-lifecycle-unlock').checked = false;
+      if (state.nodeLifecycleIntent) state.nodeLifecycleIntent.cancelled = true;
+      updateNodeLifecycleControls();
+    });
     byId('node-action').addEventListener('change', () => {
       if (byId('node-action').value === 'add') {
         byId('rebuild-node-select').value = '';
@@ -5265,6 +5741,7 @@
     byId('rebuild-node-select').addEventListener('change', populateRebuildNode);
     byId('node-kind').addEventListener('change', updateControllerPairMode);
     byId('execute-node-sync').addEventListener('click', executeNodeSync);
+    byId('refresh-node-inventory').addEventListener('click', () => { invalidateNodeLifecycle(); void loadNodesAndTasks().catch(() => {}); });
     byId('refresh-operation-log').addEventListener('click', () => loadOperationLog());
     byId('load-more-operation-log').addEventListener('click', () => loadOperationLog(false, true));
     byId('log-search').addEventListener('input', event => { state.logSearch = event.target.value; refreshOperationLogFilters(true); });
@@ -5327,6 +5804,12 @@
     byId('refresh-interval').addEventListener('change', event => { state.refreshIntervalMs = Number(event.target.value); scheduleAutoRefresh(); });
     window.addEventListener('hashchange', () => showView(window.location.hash.slice(1)));
 
+    if (isUIReview) {
+      document.documentElement.dataset.ui = 'review';
+      byId('operation-plan-surface').append(byId('operation-progress'));
+      byId('operation-migration-arrow').replaceChildren(reviewIcon('arrow'));
+      byId('execute-switchover').replaceChildren(reviewIcon('switch'), document.createTextNode('执行切换'));
+    }
     applyLanguage();
     setInlineSoftwareUpdateProgressExpanded(false);
     setTopologySection(state.topologySection);

@@ -6,6 +6,8 @@ unset CG_UPDATE_BOOTSTRAP_DEPTH
 root="${CG_UPDATE_ROOT:-/var/lib/clusterguard/updates}"
 config="${CG_UPDATE_CONFIG:-/etc/clusterguard/update.json}"
 upgrader="${CG_UPDATE_BINARY:-/usr/local/sbin/clusterguard-upgrade}"
+workspace_helper="${CG_UPDATE_WORKSPACE_HELPER:-/usr/local/libexec/clusterguard-update-helper}"
+private_root="${CG_UPDATE_PRIVATE_ROOT:-/var/lib/clusterguard-update-private}"
 mode=""
 patch_id=""
 
@@ -21,6 +23,11 @@ done
 [[ "${patch_id}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die "升级包 ID 无效"
 [[ -f "${config}" && ! -L "${config}" ]] || die "升级配置不存在：${config}"
 [[ -x "${upgrader}" && ! -L "${upgrader}" ]] || die "升级器不存在：${upgrader}"
+"${workspace_helper}" workspace check-file "${config}"
+"${workspace_helper}" workspace check-file "${upgrader}"
+"${workspace_helper}" workspace create-directory "${private_root}"
+exec 9>"${private_root}/update.lock"
+flock -n 9 || die "已有软件更新任务正在运行"
 
 jq_binary="$(command -v jq 2>/dev/null || true)"
 tool_dir=""
@@ -32,24 +39,45 @@ if [[ -z "${jq_binary}" && -x /usr/local/libexec/jq-linux-amd64 ]]; then
 fi
 [[ -x "${jq_binary}" ]] || die "缺少 jq"
 
-job_dir="${root}/${patch_id}"
+public_dir="${root}/${patch_id}"
+job_dir="${private_root}/jobs/${patch_id}"
+"${workspace_helper}" workspace create-directory "${job_dir}"
 patch="${job_dir}/package.cgpatch"
 status_file="${job_dir}/status.json"
-[[ -d "${job_dir}" && ! -L "${job_dir}" && -f "${patch}" && ! -L "${patch}" ]] || die "补丁暂存目录无效"
-# The console service queues jobs as clusterguard and the privileged helper
-# publishes their results as root. Keep the directory group-writable so a new
-# Raft Leader can resume the same signed package after controller failover.
-chgrp clusterguard "${job_dir}"
-chmod 0770 "${job_dir}"
-chown root:clusterguard "${patch}"
-chmod 0640 "${patch}"
-if [[ -f "${job_dir}/package.json" && ! -L "${job_dir}/package.json" ]]; then
-  chown root:clusterguard "${job_dir}/package.json"
-  chmod 0640 "${job_dir}/package.json"
-fi
-install -d -m 0755 /run/clusterguard
-exec 9>/run/clusterguard/update.lock
-flock -n 9 || die "已有软件更新任务正在运行"
+# Never import public status/events as recovery authority. Existing private
+# records survive plan/resume and can only have been written by root.
+"${workspace_helper}" workspace snapshot "${public_dir}/package.cgpatch" "${patch}"
+"${workspace_helper}" workspace snapshot "${public_dir}/package.json" "${job_dir}/package.json"
+
+publish_public_file() {
+  local source="$1" destination="$2"
+  [[ -f "${source}" && ! -L "${source}" ]] || return 0
+  [[ "${destination}" == "$(basename -- "${destination}")" ]] || return 1
+  command -v runuser >/dev/null 2>&1 || return 1
+  runuser -u clusterguard -- bash -c '
+    set -euo pipefail
+    umask 027
+    directory=$1
+    name=$2
+    temporary=$(mktemp "${directory}/.clusterguard-publish.XXXXXXXX")
+    trap '\''rm -f -- "$temporary"'\'' EXIT
+    cat >"$temporary"
+    chmod 0640 "$temporary"
+    mv -fT -- "$temporary" "${directory}/${name}"
+    trap - EXIT
+  ' bash "${public_dir}" "${destination}" <"${source}"
+}
+
+publish_public_artifacts() {
+  local artifact
+  publish_public_file "${status_file}" status.json || return 1
+  publish_public_file "${job_dir}/output.log" output.log || return 1
+  shopt -s nullglob
+  for artifact in "${job_dir}"/clusterguard-update-*.json "${job_dir}"/clusterguard-update-*.events.jsonl; do
+    publish_public_file "${artifact}" "$(basename -- "${artifact}")" || { shopt -u nullglob; return 1; }
+  done
+  shopt -u nullglob
+}
 
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 write_status() {
@@ -66,22 +94,8 @@ write_status() {
       automatic_failover_available:($maintenance_active | not),
       started_at:$started_at,updated_at:$updated_at,
       finished_at:(if $finished_at == "" then null else $finished_at end)}' >"${temporary}"
-  chown root:clusterguard "${temporary}"
-  chmod 0640 "${temporary}"
   mv -f "${temporary}" "${status_file}"
-
-  # The helper runs as root:clusterguard, while the console API runs as the
-  # clusterguard account. Publish only update history artifacts to that group.
-  local artifact
-  shopt -s nullglob
-  for artifact in "${job_dir}/output.log" \
-    "${job_dir}"/clusterguard-update-*.json \
-    "${job_dir}"/clusterguard-update-*.events.jsonl; do
-    [[ -f "${artifact}" && ! -L "${artifact}" ]] || continue
-    chown root:clusterguard "${artifact}"
-    chmod 0640 "${artifact}"
-  done
-  shopt -u nullglob
+  publish_public_artifacts || printf '警告：私有状态已持久化，但控制台状态发布失败\n' >&2
 }
 
 cleanup() { [[ -z "${tool_dir}" || ! -d "${tool_dir}" ]] || rm -rf "${tool_dir}"; }
@@ -121,8 +135,11 @@ data_nodes="$("${jq_binary}" -r '(.data_nodes // []) | join(",")' "${config}")"
 [[ -z "${known_hosts}" || ( -f "${known_hosts}" && ! -L "${known_hosts}" ) ]] || die "known_hosts 无效"
 [[ -z "${ssh_credentials}" || ( -f "${ssh_credentials}" && ! -L "${ssh_credentials}" ) ]] || die "SSH 凭据文件无效"
 [[ "${retained_versions}" =~ ^[1-9][0-9]*$ ]] || die "retained_versions 必须为正整数"
+for privileged_input in "${trust_key}" "${state_file}" "${ssh_key}" "${known_hosts}" "${ssh_credentials}"; do
+  [[ -z "${privileged_input}" ]] || "${workspace_helper}" workspace check-file "${privileged_input}"
+done
 
-arguments=(--patch "${patch}" --trust-key "${trust_key}" --state "${state_file}" --update-root "${root}" --retain-versions "${retained_versions}" -u "${ssh_user}" --ssh-port "${ssh_port}" --api-port "${api_port}")
+arguments=(--patch "${patch}" --expected-patch-id "${patch_id}" --private-root "${private_root}" --managed-job-dir "${public_dir}" --trust-key "${trust_key}" --state "${state_file}" --update-root "${root}" --retain-versions "${retained_versions}" -u "${ssh_user}" --ssh-port "${ssh_port}" --api-port "${api_port}")
 [[ -z "${controllers}" ]] || arguments+=(--controllers "${controllers}")
 [[ -z "${data_nodes}" ]] || arguments+=(--data-nodes "${data_nodes}")
 [[ -z "${ssh_key}" ]] || arguments+=(--ssh-key "${ssh_key}")

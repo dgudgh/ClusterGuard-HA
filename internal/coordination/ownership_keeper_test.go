@@ -188,6 +188,55 @@ func TestWritablePrimaryAcceptsHealthyPostgreSQLWriter(t *testing.T) {
 	}
 }
 
+func TestOwnershipKeeperPostgreSQLWithoutWriterRequiresControlledRecovery(t *testing.T) {
+	now := time.Date(2026, time.September, 10, 3, 0, 0, 0, time.UTC)
+	for _, healthy := range []bool{false, true} {
+		name := "no writable primary"
+		if healthy {
+			name = "healthy writer retains lease"
+		}
+		t.Run(name, func(t *testing.T) {
+			inventory, observer, leases, primary, _ := ownershipKeeperFixture(now)
+			clusterID := inventory.clusters[0].ResourceID
+			inventory.clusters[0].Engine = model.EnginePostgreSQL
+			primary.Engine = model.EnginePostgreSQL
+			primary.EngineMetadata = map[string]string{"in_recovery": "false", "transaction_read_only": "false"}
+			standby := primary
+			standby.ResourceID = model.NewResourceID()
+			standby.Role = model.RoleStandby
+			standby.EngineMetadata = map[string]string{"in_recovery": "true", "transaction_read_only": "true"}
+			if !healthy {
+				primary.Role = model.RoleStandby
+				primary.Health.State = model.HealthDegraded
+				primary.EngineMetadata = standby.EngineMetadata
+				standby.Health.State = model.HealthDegraded
+				observer.result.OwnerIDs = nil
+			}
+			inventory.snapshots[clusterID] = model.TopologySnapshot{
+				ClusterID: clusterID, ObservedAt: now, Instances: []model.DatabaseInstance{primary, standby},
+				Probes: []model.ProbeStatus{
+					{InstanceID: primary.ResourceID, DiscoveryObservedAt: now, Health: primary.Health},
+					{InstanceID: standby.ResourceID, DiscoveryObservedAt: now, Health: standby.Health},
+				},
+			}
+			keeper := NewOwnershipKeeper(inventory, observer, leases, ownershipAuthorityStub{}, func() time.Time { return now }, 5*time.Second, 15*time.Second)
+			err := keeper.RunOnce(context.Background())
+			if healthy {
+				if err != nil || len(leases.requests) != 1 || leases.requests[0].OwnerID != primary.ResourceID || inventory.commits != 1 {
+					t.Fatalf("healthy PG writer rejected: err=%v requests=%+v commits=%d", err, leases.requests, inventory.commits)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "postgresql requires controlled recovery") || strings.Contains(err.Error(), "instance scope is invalid") {
+				t.Errorf("PG no-writer diagnosis used the MySQL bootstrap path: %v", err)
+			}
+			if len(leases.requests) != 0 || leases.batches != 0 || inventory.commits != 0 {
+				t.Fatalf("PG without a writable primary changed authorization: leases=%+v commits=%d", leases, inventory.commits)
+			}
+		})
+	}
+}
+
 func TestOwnershipKeeperDefersToActivePostgreSQLEndpointMutation(t *testing.T) {
 	now := time.Date(2026, time.August, 27, 7, 30, 0, 0, time.UTC)
 	inventory, observer, leases, primary, _ := ownershipKeeperFixture(now)

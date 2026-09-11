@@ -20,6 +20,7 @@ import (
 
 const (
 	DefaultRootDirectory      = "/var/lib/clusterguard/updates"
+	DefaultPrivateRoot        = "/var/lib/clusterguard-update-private"
 	DefaultTrustKeyPath       = "/etc/clusterguard/trust/patch-signing-public.pem"
 	DefaultHelperSocketPath   = "/run/clusterguard/update-helper.sock"
 	DefaultUpgradeBinaryPath  = "/usr/local/sbin/clusterguard-upgrade"

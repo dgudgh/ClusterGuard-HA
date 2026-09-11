@@ -3,6 +3,7 @@ package coordination
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -444,6 +445,102 @@ func TestGuardedFailoverSafetyUsesMajorityLeaseAfterAgentAuthorizationExpires(t 
 		agent.CommandVIPStatus, "current_lease",
 	}) {
 		t.Fatalf("agent quorum fencing calls=%v", calls)
+	}
+}
+
+func TestFailoverGracePreservesExactPersistentLease(t *testing.T) {
+	for _, seconds := range []int{15, 30, 31, 60} {
+		t.Run(fmt.Sprint(seconds), func(t *testing.T) {
+			resolved, inventory, window, now := failoverSafetyFixture(t)
+			recordStableFailure(window, resolved.Cluster.ResourceID, now)
+			records := &leaseRecordStore{records: map[model.ResourceID]LeaseRecord{}}
+			leases := NewLeaseStore(records, authoritativeMembership(t), func() time.Time { return now })
+			calls := []string{}
+			transport := &failoverAgentTransportStub{calls: &calls, err: errors.New("unreachable")}
+			var initial endpoint.Lease
+			var waited time.Duration
+			provider := NewGuardedFailoverSafety(window, failoverAuthorityStub{}, inventory, leases, transport, "agent-secret", func() time.Time { return now },
+				WithAgentQuorumFencing(time.Duration(seconds)*time.Second),
+				withFailoverWaiter(func(_ context.Context, duration time.Duration) error {
+					for _, r := range records.records {
+						if initial.ResourceID == "" {
+							initial = r.Lease
+						}
+						if !endpoint.SameLeaseIdentity(initial, r.Lease) {
+							t.Error("lease identity changed during grace")
+						}
+						if !r.Lease.ExpiresAt.After(now.Add(duration)) {
+							t.Errorf("lease expires during grace: remaining=%s wait=%s", r.Lease.ExpiresAt.Sub(now), duration)
+						}
+					}
+					now = now.Add(duration)
+					waited += duration
+					return nil
+				}),
+			)
+			if err := provider.Fence(context.Background(), resolved); err != nil {
+				t.Fatal(err)
+			}
+			if waited != time.Duration(seconds)*time.Second {
+				t.Fatalf("grace shortened: %s", waited)
+			}
+			if err := leases.Validate(context.Background(), initial); err != nil {
+				t.Fatalf("original lease lost: %v", err)
+			}
+		})
+	}
+}
+
+type revocableFailoverAuthority struct{ err error }
+
+func (a *revocableFailoverAuthority) RequireMutationAuthority(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return a.err
+}
+
+func TestFailoverGraceRejectsLostAuthorityOrLease(t *testing.T) {
+	for _, name := range []string{"majority-lost", "expired", "replaced", "cancelled"} {
+		t.Run(name, func(t *testing.T) {
+			resolved, inventory, window, now := failoverSafetyFixture(t)
+			recordStableFailure(window, resolved.Cluster.ResourceID, now)
+			authority := &revocableFailoverAuthority{}
+			records := &leaseRecordStore{records: map[model.ResourceID]LeaseRecord{}}
+			leases := NewLeaseStore(records, authority, func() time.Time { return now })
+			calls := []string{}
+			transport := &failoverAgentTransportStub{calls: &calls, err: errors.New("unreachable")}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			provider := NewGuardedFailoverSafety(window, authority, inventory, leases, transport, "agent-secret", func() time.Time { return now },
+				WithAgentQuorumFencing(time.Minute), withFailoverWaiter(func(context.Context, time.Duration) error {
+					switch name {
+					case "majority-lost":
+						authority.err = ErrNoQuorum
+					case "expired":
+						now = now.Add(2 * time.Minute)
+					case "cancelled":
+						cancel()
+					case "replaced":
+						for id, record := range records.records {
+							delete(records.records, id)
+							record.Lease.ResourceID = model.NewResourceID()
+							records.records[record.Lease.ResourceID] = record
+							break
+						}
+					}
+					return nil
+				}))
+			if err := provider.Fence(ctx, resolved); err == nil {
+				t.Fatal("lost authorization was accepted as fencing evidence")
+			}
+			if len(transport.requests) != 1 {
+				t.Fatalf("continued probing after authorization loss: %+v", transport.requests)
+			}
+			if name == "expired" && len(records.records) != 0 {
+				t.Fatal("expired transition was recreated")
+			}
+		})
 	}
 }
 

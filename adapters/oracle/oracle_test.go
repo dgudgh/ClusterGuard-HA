@@ -389,6 +389,8 @@ func TestOracleDGBrokerSwitchoverUsesRestrictedControllerAndVerifiesBothRoles(t 
 		t.Fatalf("Oracle plan digest=%q recomputed=%q err=%v", plan.Digest, recomputed, err)
 	}
 	leaseID := model.NewResourceID()
+	request.Plan = &plan
+	request.Resolved.PlanDigest = plan.Digest
 	execution, err := instance.Execute(adapter.WithOperationLeaseID(context.Background(), leaseID), request)
 	if err != nil {
 		t.Fatalf("execute: %v", err)
@@ -530,13 +532,20 @@ func TestOracleVerificationChecksBothBrokerMembersConcurrently(t *testing.T) {
 	}
 	instance := NewWithProviders(UnsupportedBrokerRunner{}, UnsupportedSQLPlusRunner{}, controller)
 	instance.verifyMaxAttempts = 1
+	bindOracleOperationTestPlan(t, instance, &request)
 	done := make(chan model.Verification, 1)
 	go func() {
 		verification, _ := instance.Verify(context.Background(), request)
 		done <- verification
 	}()
 
-	first := <-controller.started
+	var first model.ResourceID
+	select {
+	case first = <-controller.started:
+	case <-time.After(time.Second):
+		close(controller.release)
+		t.Fatal("Oracle verification did not start member probes")
+	}
 	select {
 	case second := <-controller.started:
 		if first == second {
@@ -557,6 +566,7 @@ func TestOracleVerificationChecksBothBrokerMembersConcurrently(t *testing.T) {
 func TestOracleDGBrokerSwitchoverRejectsMissingOperationLease(t *testing.T) {
 	request := oracleOperationRequest(model.OperationSwitchover)
 	instance := NewWithProviders(UnsupportedBrokerRunner{}, UnsupportedSQLPlusRunner{}, &brokerControllerStub{executable: true})
+	bindOracleOperationTestPlan(t, instance, &request)
 	execution, err := instance.Execute(context.Background(), request)
 	if err == nil || execution.Status != model.OperationBlocked || !strings.Contains(err.Error(), "lease") {
 		t.Fatalf("execution=%+v err=%v", execution, err)
@@ -589,6 +599,7 @@ func TestOracleDGBrokerVerifyWaitsForFormerPrimaryApplyConvergence(t *testing.T)
 	}
 	instance := NewWithProviders(UnsupportedBrokerRunner{}, UnsupportedSQLPlusRunner{}, controller)
 	instance.verifyRetryDelay = 0
+	bindOracleOperationTestPlan(t, instance, &request)
 	verification, err := instance.Verify(context.Background(), request)
 	if err != nil || !verification.Passed {
 		t.Fatalf("verify=%+v err=%v", verification, err)
@@ -608,6 +619,10 @@ func TestOracleDGBrokerSwitchoverReturnsErrorWhenFinalPrecheckBlocks(t *testing.
 		}},
 	}
 	instance := NewWithProviders(UnsupportedBrokerRunner{}, UnsupportedSQLPlusRunner{}, controller)
+	finalChecks := controller.checks
+	controller.checks = nil
+	bindOracleOperationTestPlan(t, instance, &request)
+	controller.checks = finalChecks
 	execution, err := instance.Execute(
 		adapter.WithOperationLeaseID(context.Background(), model.NewResourceID()),
 		request,

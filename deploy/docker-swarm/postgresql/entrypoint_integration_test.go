@@ -27,6 +27,12 @@ func TestEntrypointPreservesDynamicPostgreSQLRole(t *testing.T) {
 		t.Fatal("resolve integration test source path")
 	}
 	entrypoint := filepath.Join(filepath.Dir(currentFile), "clusterguard-postgres-entrypoint.sh")
+	if override := os.Getenv("CG_PG_ENTRYPOINT_TEST_SCRIPT"); override != "" {
+		if !filepath.IsAbs(override) {
+			t.Fatal("entrypoint test script must use an absolute path")
+		}
+		entrypoint = override
+	}
 
 	t.Run("existing standby keeps runtime upstream", func(t *testing.T) {
 		output := runEntrypointFixture(t, entrypoint, strings.Join([]string{
@@ -62,6 +68,14 @@ func TestEntrypointPreservesDynamicPostgreSQLRole(t *testing.T) {
 
 func runEntrypointFixture(t *testing.T, entrypoint, autoConfiguration string) string {
 	t.Helper()
+	script, err := os.ReadFile(entrypoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entrypoint = filepath.Join(t.TempDir(), "entrypoint.sh")
+	if err := os.WriteFile(entrypoint, script, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	dataDirectory := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dataDirectory, "PG_VERSION"), []byte("16\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -75,10 +89,12 @@ func runEntrypointFixture(t *testing.T, entrypoint, autoConfiguration string) st
 	}
 
 	args := []string{
-		"run", "--rm",
-		"--mount", "type=bind,src=" + dataDirectory + ",dst=/var/lib/postgresql/data",
-		"--mount", "type=bind,src=" + entrypoint + ",dst=/usr/local/bin/clusterguard-postgres-entrypoint.sh,readonly",
-		"--mount", "type=bind,src=" + secret + ",dst=/run/secrets/postgres_replication_password,readonly",
+		"run", "--rm", "--pull=never", "--network=none", "--memory=128m", "--cpus=0.5",
+		"--label", "clusterguard.test=entrypoint",
+		// Relabel only disposable fixture copies, never repository or live files.
+		"--volume", dataDirectory + ":/var/lib/postgresql/data:Z",
+		"--volume", entrypoint + ":/usr/local/bin/clusterguard-postgres-entrypoint.sh:ro,Z",
+		"--volume", secret + ":/run/secrets/postgres_replication_password:ro,Z",
 		"--entrypoint", "/usr/local/bin/clusterguard-postgres-entrypoint.sh",
 		"-e", "PGDATA=/var/lib/postgresql/data",
 		"-e", "CG_PG_SLOT=03",

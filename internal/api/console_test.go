@@ -1,6 +1,7 @@
 package api
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -8,15 +9,11 @@ import (
 func consoleView(t *testing.T, name string) string {
 	t.Helper()
 	page := string(consoleHTML)
-	startMarker := `data-view="` + name + `"`
-	start := strings.Index(page, startMarker)
-	if start < 0 {
+	section := regexp.MustCompile(`<section\b[^>]*\bdata-view="` + regexp.QuoteMeta(name) + `"[^>]*>`).FindStringIndex(page)
+	if section == nil {
 		t.Fatalf("console view %q not found", name)
 	}
-	start = strings.LastIndex(page[:start], "<section")
-	if start < 0 {
-		t.Fatalf("console view %q section start not found", name)
-	}
+	start := section[0]
 	rest := page[start+len("<section"):]
 	endOffset := strings.Index(rest, "<section")
 	if endOffset < 0 {
@@ -251,8 +248,8 @@ func TestOverviewCountsOnlyActionableOperationStates(t *testing.T) {
 func TestOverviewAggregatesEveryRegisteredClusterInsteadOfOnlySelection(t *testing.T) {
 	page := string(consoleHTML)
 	for _, contract := range []string{
-		"clusterDirectory: new Map()", "const loadFleetDetails = async clusters =>", "clusters.map(async cluster =>",
-		"fetchResult(`/api/v1/clusters/${cluster.resource_id}`)", "state.clusterDirectory.get(cluster.resource_id)",
+		"clusterDirectory: new Map()", "const loadFleetDetails = async (clusters, fleetReadEpoch) =>", "clusters.map(async cluster =>",
+		"readClusterResult(`/api/v1/clusters/${cluster.resource_id}`)", "state.clusterDirectory.get(cluster.resource_id)",
 	} {
 		if !strings.Contains(page, contract) {
 			t.Fatalf("overview missing all-cluster aggregation contract %q", contract)
@@ -976,7 +973,7 @@ func TestConsoleOverviewProvidesFleetTriageAndObservationFreshness(t *testing.T)
 	for _, contract := range []string{
 		`id="fleet-search"`, `id="fleet-health-filter"`, `id="fleet-visible-count"`,
 		"最近观测", "异常优先", "fleetTopology: new Map()", "const filteredFleetClusters =",
-		"fetchResult(`/api/v1/clusters/${cluster.resource_id}/topology`)",
+		"readClusterResult(`/api/v1/clusters/${cluster.resource_id}/topology`)",
 		"row.dataset.clusterId = cluster.resource_id", "const selectClusterFromFleet =",
 	} {
 		if !strings.Contains(page, contract) {
@@ -1069,7 +1066,7 @@ func TestConsolePreservesVerifiedOutcomeUntilReadAfterWriteTopologyConverges(t *
 func TestConsoleReadOnlyRefreshPreservesLatestVerifiedOutcome(t *testing.T) {
 	page := string(consoleHTML)
 	for _, contract := range []string{
-		"if (state.selectedClusterId && !state.operationRunning && !state.clusterLoading) loadSelectedCluster({ preserveOperationResult:true });",
+		"if (state.selectedClusterId && !state.operationRunning && !state.lifecycleRunning && !byId('node-lifecycle-modal').open && !state.clusterLoading) loadSelectedCluster({ preserveOperationResult:true });",
 		"await loadSelectedCluster({ preserveOperationResult:true });",
 	} {
 		if !strings.Contains(page, contract) {

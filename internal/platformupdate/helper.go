@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -81,7 +82,12 @@ type CommandLauncher struct {
 }
 
 func (launcher CommandLauncher) Start(mode Mode, patchID, outputPath string, done func(error)) error {
-	output, err := os.OpenFile(outputPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	directory, err := openHelperDirectory(filepath.Dir(outputPath))
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	output, err := openHelperFile(directory, filepath.Base(outputPath), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return err
 	}
@@ -107,14 +113,22 @@ func (launcher CommandLauncher) Start(mode Mode, patchID, outputPath string, don
 }
 
 type HelperHandler struct {
-	root     string
-	launcher JobLauncher
-	mu       sync.Mutex
-	active   bool
+	root        string
+	privateRoot string
+	launcher    JobLauncher
+	mu          sync.Mutex
+	active      bool
 }
 
 func NewHelperHandler(root string, launcher JobLauncher) *HelperHandler {
+	// Kept for unit tests and embedders that intentionally use a single
+	// already-isolated directory. The packaged helper uses the explicit private
+	// constructor below.
 	return &HelperHandler{root: filepath.Clean(root), launcher: launcher}
+}
+
+func NewHelperHandlerWithPrivateRoot(root, privateRoot string, launcher JobLauncher) *HelperHandler {
+	return &HelperHandler{root: filepath.Clean(root), privateRoot: filepath.Clean(privateRoot), launcher: launcher}
 }
 
 func (handler *HelperHandler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
@@ -135,37 +149,78 @@ func (handler *HelperHandler) ServeHTTP(writer http.ResponseWriter, request *htt
 		helperError(writer, http.StatusBadRequest, "invalid software update request")
 		return
 	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		helperError(writer, http.StatusBadRequest, "invalid software update request")
+		return
+	}
 	directory := filepath.Join(handler.root, payload.PatchID)
-	patchPath := filepath.Join(directory, patchFileName)
-	if !strictChild(handler.root, directory) || !regularFile(patchPath) {
+	if !strictChild(handler.root, directory) {
 		helperError(writer, http.StatusNotFound, "verified software update package was not found")
 		return
 	}
-	if err := os.Chmod(directory, updateJobDirMode); err != nil {
+	jobDirectory, err := openHelperDirectory(directory)
+	if err != nil {
+		helperError(writer, http.StatusNotFound, "verified software update package was not found")
+		return
+	}
+	patch, err := openHelperFile(jobDirectory, patchFileName, os.O_RDONLY, 0)
+	if err != nil {
+		_ = jobDirectory.Close()
+		helperError(writer, http.StatusNotFound, "verified software update package was not found")
+		return
+	}
+	defer patch.Close()
+	if err := jobDirectory.Chmod(updateJobDirMode); err != nil {
+		_ = jobDirectory.Close()
 		helperError(writer, http.StatusInternalServerError, "unable to prepare software update directory")
 		return
 	}
-	if err := os.Chmod(patchPath, updateFileMode); err != nil {
+	if err := patch.Chmod(updateFileMode); err != nil {
+		_ = jobDirectory.Close()
 		helperError(writer, http.StatusInternalServerError, "unable to prepare software update package")
 		return
+	}
+	privatePath := directory
+	privateDirectory := jobDirectory
+	privateSeparate := false
+	if handler.privateRoot != "" {
+		privatePath = filepath.Join(handler.privateRoot, "jobs", payload.PatchID)
+		privateDirectory, err = openTrustedWorkspaceDirectory(privatePath, true)
+		if err != nil {
+			_ = jobDirectory.Close()
+			helperError(writer, http.StatusInternalServerError, "unable to prepare private software update workspace")
+			return
+		}
+		privateSeparate = true
 	}
 	handler.mu.Lock()
 	if handler.active {
 		handler.mu.Unlock()
+		_ = jobDirectory.Close()
+		if privateSeparate {
+			_ = privateDirectory.Close()
+		}
 		helperError(writer, http.StatusConflict, ErrJobActive.Error())
 		return
 	}
 	handler.active = true
 	handler.mu.Unlock()
+	var finished sync.Once
 	done := func(err error) {
-		if err != nil {
-			handler.recordLaunchFailure(payload.PatchID, payload.Mode, err)
-		}
-		handler.mu.Lock()
-		handler.active = false
-		handler.mu.Unlock()
+		finished.Do(func() {
+			defer jobDirectory.Close()
+			if privateSeparate {
+				defer privateDirectory.Close()
+			}
+			if err != nil {
+				handler.recordLaunchFailure(privateDirectory, payload.PatchID, payload.Mode, err)
+			}
+			handler.mu.Lock()
+			handler.active = false
+			handler.mu.Unlock()
+		})
 	}
-	if err := handler.launcher.Start(payload.Mode, payload.PatchID, filepath.Join(directory, outputFileName), done); err != nil {
+	if err := handler.launcher.Start(payload.Mode, payload.PatchID, filepath.Join(privatePath, outputFileName), done); err != nil {
 		done(err)
 		helperError(writer, http.StatusInternalServerError, "unable to start privileged software update job")
 		return
@@ -174,22 +229,34 @@ func (handler *HelperHandler) ServeHTTP(writer http.ResponseWriter, request *htt
 	_, _ = writer.Write([]byte(`{"status":"accepted"}`))
 }
 
-func (handler *HelperHandler) recordLaunchFailure(patchID string, mode Mode, cause error) {
-	path := filepath.Join(handler.root, patchID, jobFileName)
+func (handler *HelperHandler) recordLaunchFailure(directory *os.File, patchID string, mode Mode, cause error) {
+	job := Job{}
+	file, err := openHelperFile(directory, jobFileName, os.O_RDONLY, 0)
+	if err == nil {
+		contents, readErr := io.ReadAll(file)
+		_ = file.Close()
+		if readErr != nil {
+			return
+		}
+		if err := json.Unmarshal(contents, &job); err != nil {
+			job = Job{}
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return
+	}
 	// The job runner writes the authoritative terminal state. A non-zero exit is
 	// expected after a safe preflight block or a completed automatic rollback,
 	// so the helper must not replace that evidence with a generic launch error.
-	if jobFileHasTerminalStatus(path) {
+	switch job.Status {
+	case StatusPlanned, StatusSucceeded, StatusFailed, StatusRolledBack:
 		return
 	}
-	job := Job{}
-	_ = readJSONFile(path, &job)
 	now := time.Now().UTC()
 	job.PatchID, job.Mode, job.Status = patchID, mode, StatusFailed
 	job.Message = "特权更新任务启动或执行失败：" + cause.Error()
 	job.Warning = AutomaticFailoverWarning
 	job.UpdatedAt, job.FinishedAt = now, now
-	_ = writeJSONAtomic(path, job)
+	_ = writeHelperJob(directory, job)
 }
 
 func helperError(writer http.ResponseWriter, status int, message string) {
@@ -204,9 +271,4 @@ func allowedMode(mode Mode) bool {
 func strictChild(root, child string) bool {
 	relative, err := filepath.Rel(filepath.Clean(root), filepath.Clean(child))
 	return err == nil && relative != "." && relative != ".." && !strings.HasPrefix(relative, ".."+string(os.PathSeparator))
-}
-
-func regularFile(path string) bool {
-	info, err := os.Lstat(path)
-	return err == nil && info.Mode().IsRegular()
 }

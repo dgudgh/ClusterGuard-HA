@@ -82,7 +82,10 @@ func startRecoveryPrimary(ctx context.Context, p ClusterPolicy, taskID model.Res
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(f, "\n# ClusterGuard recovery: upstream is selected from frozen WAL evidence.\nprimary_conninfo = ''\nprimary_slot_name = ''\nclusterguard.primary_node_id = '%s'\n", p.PostgreSQLNodeID)
+	// The verified HBA guard still blocks business access. Clear the old SQL
+	// fence only for this authorized primary, or strict topology verification
+	// can never succeed and reach Recovery Commit.
+	_, err = fmt.Fprintf(f, "\n# ClusterGuard recovery: upstream is selected from frozen WAL evidence.\nprimary_conninfo = ''\nprimary_slot_name = ''\nclusterguard.primary_node_id = '%s'\ndefault_transaction_read_only = 'off'\n", p.PostgreSQLNodeID)
 	if err == nil {
 		err = f.Sync()
 	}

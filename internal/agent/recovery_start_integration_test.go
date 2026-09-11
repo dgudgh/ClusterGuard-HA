@@ -123,6 +123,18 @@ func TestRecoveryPostgreSQLActualGuardedStartAndRebuild(t *testing.T) {
 	}
 	f.query("pg02", "INSERT INTO recovery_fixture VALUES(3,'recovery-authority')")
 	f.stop("pg02", "fast")
+	// Reproduce a previous isolation fence surviving a disaster recovery attempt.
+	fencedConfig := filepath.Join(f.dirs["pg02"], "postgresql.auto.conf")
+	config, err := os.OpenFile(fencedConfig, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = config.WriteString("\ndefault_transaction_read_only = 'on'\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err = config.Close(); err != nil {
+		t.Fatal(err)
+	}
 	for name, p := range f.policies {
 		p.PostgreSQLPeers = peers
 		f.policies[name] = p
@@ -196,6 +208,10 @@ func TestRecoveryPostgreSQLActualGuardedStartAndRebuild(t *testing.T) {
 	}
 	call(p, Request{Command: CommandRecoveryGuard})
 	call(p, Request{Command: CommandRecoveryStart})
+	readOnly, err := c.psql(ctx, p, "SHOW transaction_read_only")
+	if err != nil || strings.TrimSpace(string(readOnly)) != "off" {
+		t.Fatalf("selected primary retained the old write fence: %q %v", readOnly, err)
+	}
 	source := PostgreSQLPeer{InstanceID: p.InstanceID, NodeID: p.PostgreSQLNodeID, IPAddress: "127.0.0.1", Port: p.PostgreSQLPort}
 	for _, name := range []string{"pg01", "pg03"} {
 		p := f.policies[name]

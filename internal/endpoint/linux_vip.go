@@ -495,12 +495,15 @@ func (provider *LinuxVIPProvider) AuthorizeTransition(ctx context.Context, resol
 	renewalRequest := LeaseRequest{
 		ClusterID: resolved.Cluster.ResourceID, HAEndpointID: resource.resource.ResourceID,
 		OperationID: resolved.OperationID, OwnerID: resolved.Target.ResourceID,
-		PreviousOwnerID: resolved.Primary.ResourceID, TTL: ttl,
+		PreviousOwnerID: resolved.Primary.ResourceID, TTL: ttl, RenewOnly: true,
 	}
 	renew := func(renewContext context.Context) error {
 		renewalMu.Lock()
 		defer renewalMu.Unlock()
 		renewed, renewErr := provider.leases.Acquire(renewContext, renewalRequest)
+		if renewErr == nil && !SameLeaseIdentity(renewalLease, renewed) {
+			renewErr = fmt.Errorf("target lease identity changed during renewal")
+		}
 		if renewErr == nil {
 			renewalLease = renewed
 		}

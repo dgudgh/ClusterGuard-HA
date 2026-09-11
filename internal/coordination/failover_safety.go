@@ -293,19 +293,13 @@ func (provider *GuardedFailoverSafety) authorizationUntil(resolved adapter.Resol
 	)
 }
 
-// transitionLeaseTTL deliberately covers the Agent fencing grace plus a
-// bounded revalidation margin. A 30-second lease is sufficient for an
-// immediate handoff, but it is too tight when the old node is unreachable and
-// the controller must wait for every stale Agent authorization to expire.
+// Long Agent fencing grace is covered by renewals, not a TTL beyond the
+// quorum store's one-minute limit (which would fall back to thirty seconds).
 func (provider *GuardedFailoverSafety) transitionLeaseTTL(resolved adapter.ResolvedOperation) time.Duration {
 	if !provider.agentQuorumEnabled(resolved) {
 		return 30 * time.Second
 	}
-	ttl := provider.agentQuorumGrace + 30*time.Second
-	if ttl < 60*time.Second {
-		ttl = 60 * time.Second
-	}
-	return ttl
+	return time.Minute
 }
 
 func (provider *GuardedFailoverSafety) Verify(ctx context.Context, resolved adapter.ResolvedOperation) model.Check {
@@ -343,25 +337,32 @@ func (provider *GuardedFailoverSafety) awaitAgentQuorumFence(ctx context.Context
 		fenceDeadline = authorizationUntil.UTC().Add(agentAuthorizationExpiryMargin)
 	}
 	remainingGrace := fenceDeadline.Sub(provider.now().UTC())
-	if remainingGrace > 0 {
-		if err := provider.wait(ctx, remainingGrace); err != nil {
-			return fmt.Errorf("wait for stale Agent authorization expiry: %w", err)
+	request.RenewOnly = true
+	for {
+		wait := min(remainingGrace, request.TTL/2)
+		if wait > 0 {
+			if err := provider.wait(ctx, wait); err != nil {
+				return fmt.Errorf("wait for stale Agent authorization expiry: %w", err)
+			}
+		}
+		if err := provider.authority.RequireMutationAuthority(ctx); err != nil {
+			return fmt.Errorf("revalidate controller majority during Agent fencing grace: %w", err)
+		}
+		// Keep the exact admitted transition alive while publication is fenced.
+		// An expired/replaced lease must not be recreated as a new authorization.
+		renewed, err := provider.leases.Acquire(ctx, request)
+		if err != nil {
+			return fmt.Errorf("renew failover quorum lease during Agent fencing grace: %w", err)
+		}
+		if !endpoint.SameLeaseIdentity(transition, renewed) {
+			return fmt.Errorf("failover quorum lease identity changed during Agent fencing grace")
+		}
+		transition = renewed
+		remainingGrace -= wait
+		if remainingGrace <= 0 {
+			break
 		}
 	}
-	if err := provider.authority.RequireMutationAuthority(ctx); err != nil {
-		return fmt.Errorf("revalidate controller majority after Agent fencing grace: %w", err)
-	}
-	// The workflow holds the discovery publication fence during this grace.
-	// Requiring a new failure observation here would make the operation fail
-	// because its own lock intentionally prevents that publication. Entry into
-	// this method already required stable evidence. Re-acquire the exact lease
-	// from the current leader majority instead, then prove that the unreachable
-	// source has no remaining Agent authorization.
-	renewed, err := provider.leases.Acquire(ctx, request)
-	if err != nil {
-		return fmt.Errorf("renew failover quorum lease after Agent fencing grace: %w", err)
-	}
-	transition = renewed
 	if err := provider.leases.Validate(ctx, transition); err != nil {
 		return fmt.Errorf("revalidate failover quorum lease: %w", err)
 	}

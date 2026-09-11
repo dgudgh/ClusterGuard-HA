@@ -69,6 +69,10 @@ function createConsoleFixture(htmlPath = path.resolve(__dirname, '../internal/ap
     try {
       const url = new URL(req.url, 'http://localhost');
       if (!url.pathname.startsWith('/api/')) {
+        if (process.env.CONSOLE_UI_REVIEW === '1' && url.searchParams.get('ui') !== 'review') {
+          url.searchParams.set('ui', 'review');
+          res.writeHead(302, { Location:url.pathname + url.search }); res.end(); return;
+        }
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         res.setHeader('Cache-Control', 'no-store');
         res.end(fs.readFileSync(htmlPath)); return;

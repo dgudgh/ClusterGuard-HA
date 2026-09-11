@@ -152,6 +152,7 @@ jq -n \
       update_protocol: $update_protocol
     },
     bootstrap: {
+      workspace_protocol: 2,
       protocol: 1,
       entrypoint: $bootstrap_entrypoint,
       sha256: $bootstrap_sha

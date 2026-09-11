@@ -19,16 +19,23 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "workspace" {
+		if err := platformupdate.RunWorkspaceCommand(os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	socketPath := flag.String("socket", platformupdate.DefaultHelperSocketPath, "Unix socket exposed to the ClusterGuard service account")
 	root := flag.String("root", platformupdate.DefaultRootDirectory, "software update staging directory")
 	runner := flag.String("runner", "/usr/local/libexec/clusterguard-update-job.sh", "root-owned update job runner")
+	privateRoot := flag.String("private-root", platformupdate.DefaultPrivateRoot, "root-owned software update execution directory")
 	flag.Parse()
-	if err := run(*socketPath, *root, *runner); err != nil {
+	if err := run(*socketPath, *root, *runner, *privateRoot); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func run(socketPath, root, runner string) error {
+func run(socketPath, root, runner, privateRoot string) error {
 	info, err := os.Stat(runner)
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o022 != 0 || !ownedByRoot(info) {
 		return fmt.Errorf("update runner must be a root-owned, non-writable regular file: %s", runner)
@@ -71,7 +78,7 @@ func run(socketPath, root, runner string) error {
 		return err
 	}
 	secured := &credentialListener{UnixListener: listener, allowedUID: uint32(uid)}
-	handler := platformupdate.NewHelperHandler(root, platformupdate.CommandLauncher{RunnerPath: runner})
+	handler := platformupdate.NewHelperHandlerWithPrivateRoot(root, privateRoot, platformupdate.CommandLauncher{RunnerPath: runner})
 	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 30 * time.Second}
 	terminated := make(chan os.Signal, 1)
 	signal.Notify(terminated, syscall.SIGINT, syscall.SIGTERM)

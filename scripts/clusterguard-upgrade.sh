@@ -4,6 +4,7 @@ umask 077
 
 declare -a original_arguments=("$@")
 patch_file=""
+input_patch_file=""
 trust_key=""
 state_file="${PWD}/clusterguard-deployment-state.json"
 controllers_raw=""
@@ -23,7 +24,11 @@ rollback_requested=false
 rollback_in_progress=false
 assume_yes=false
 resume_requested=false
-remote_stage="/var/lib/clusterguard/update-history"
+private_root="/var/lib/clusterguard-update-private"
+remote_stage=""
+expected_patch_id=""
+managed_job_dir=""
+workspace_protocol=2
 control_status_path="/api/v1/control-plane/status"
 operations_path="/api/v1/operations"
 update_gate_path="/api/v1/platform/updates/gate"
@@ -144,6 +149,9 @@ ClusterGuard HA 客户现场签名升级包与滚动升级器
   --accept-host-keys            首次采集当前节点 SSH 主机密钥
   --api-port PORT               控制面 API 端口，默认 3000
   --update-root DIR             控制面升级状态目录，默认 /var/lib/clusterguard/updates
+  --private-root DIR            root 私有执行与回退材料目录
+  --managed-job-dir DIR         服务账号负责的进度展示目录（仅用于降权发布）
+  --expected-patch-id ID        要求签名清单 ID 与任务 ID 完全一致
   --retain-versions COUNT       成功后保留最近升级版本数，默认 3
   --plan                        输出升级顺序但不改节点（默认）
   --execute                     真实滚动升级
@@ -177,6 +185,9 @@ while (($#)); do
     --update-root) need_value "$@"; update_root="$2"; shift 2 ;;
     --retain-versions) need_value "$@"; retained_versions="$2"; shift 2 ;;
     --remote-stage) need_value "$@"; remote_stage="$2"; shift 2 ;;
+    --private-root) need_value "$@"; private_root="$2"; shift 2 ;;
+    --expected-patch-id) need_value "$@"; expected_patch_id="$2"; shift 2 ;;
+    --managed-job-dir) need_value "$@"; managed_job_dir="$2"; shift 2 ;;
     --plan) execute=false; shift ;;
     --execute) execute=true; shift ;;
     --rollback) rollback_requested=true; shift ;;
@@ -186,6 +197,10 @@ while (($#)); do
     *) die "未知参数：$1" ;;
   esac
 done
+[[ -n "${remote_stage}" ]] || remote_stage="${private_root}/history"
+[[ "${private_root}" =~ ^/[A-Za-z0-9._/-]+$ && "${private_root}" != *"//"* && "${private_root}" != *"/../"* && "${private_root}" != */.. ]] || die "私有执行目录无效"
+[[ -z "${expected_patch_id}" || "${expected_patch_id}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die "请求升级包 ID 无效"
+[[ -z "${managed_job_dir}" || ( "${managed_job_dir}" =~ ^/[A-Za-z0-9._/-]+$ && "${managed_job_dir}" != *"//"* && "${managed_job_dir}" != *"/../"* && "${managed_job_dir}" != */.. ) ]] || die "展示目录无效"
 
 if ${rollback_requested} && ${resume_requested}; then
   die "--rollback 与 --resume 不能同时使用"
@@ -204,6 +219,7 @@ command -v tar >/dev/null 2>&1 || die "需要 tar"
   die "远端暂存目录必须是无空格、无相对跳转的绝对路径"
 [[ "${update_root}" =~ ^/[A-Za-z0-9._/-]+$ && "${update_root}" != *"//"* && "${update_root}" != *"/../"* && "${update_root}" != */.. ]] ||
   die "升级状态目录必须是无空格、无相对跳转的绝对路径"
+input_patch_file="${patch_file}"
 
 sha256_file() {
   if command -v sha256sum >/dev/null 2>&1; then
@@ -215,6 +231,13 @@ sha256_file() {
 
 safe_extract_patch() {
   local entry listing
+  work_dir="$(mktemp -d /tmp/clusterguard-upgrade.XXXXXX)"
+  chmod 0700 "${work_dir}"
+  # Copy before listing, verification or extraction. -R -P preserves special
+  # files instead of opening devices/FIFOs; these are rejected immediately.
+  cp -R -P -- "${patch_file}" "${work_dir}/input.cgpatch"
+  [[ -f "${work_dir}/input.cgpatch" && ! -L "${work_dir}/input.cgpatch" ]] || die "升级包快照不是普通文件"
+  patch_file="${work_dir}/input.cgpatch"
   listing="$(tar -tzf "${patch_file}")" || die "升级包归档无法读取"
   [[ -n "${listing}" ]] || die "升级包归档为空"
   while IFS= read -r entry; do
@@ -222,11 +245,9 @@ safe_extract_patch() {
     [[ "${entry}" != /* && "${entry}" != *"../"* && "${entry}" != *"/.." && "${entry}" != *"//"* ]] ||
       die "升级包包含不安全路径：${entry}"
   done <<<"${listing}"
-  if tar -tvzf "${patch_file}" | awk '$1 ~ /^[lh]/ {found=1} END {exit found ? 0 : 1}'; then
-    die "升级包禁止包含符号链接或硬链接"
+  if tar -tvzf "${patch_file}" | awk 'substr($1,1,1) != "-" && substr($1,1,1) != "d" {found=1} END {exit found ? 0 : 1}'; then
+    die "升级包禁止包含链接或特殊文件"
   fi
-  work_dir="$(mktemp -d /tmp/clusterguard-upgrade.XXXXXX)"
-  chmod 0700 "${work_dir}"
   tar -xzf "${patch_file}" -C "${work_dir}"
   patch_root="${work_dir}/clusterguard-patch"
 }
@@ -273,7 +294,8 @@ verify_patch() {
   source_sha="$(jq -r '.source.sha256' "${manifest}")"
   target_sha="$(jq -r '.target.sha256' "${manifest}")"
   rpm_architecture="$(jq -r '.target.rpm_architecture' "${manifest}")"
-  [[ "${patch_id}" =~ ^[A-Za-z0-9._-]+$ ]] || die "patch id 格式无效"
+  [[ "${patch_id}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die "patch id 格式无效"
+  [[ -z "${expected_patch_id}" || "${expected_patch_id}" == "${patch_id}" ]] || die "签名升级包 ID 与请求不匹配"
   [[ "${source_rpm}" == "$(basename "${source_rpm}")" && "${target_rpm}" == "$(basename "${target_rpm}")" ]] ||
     die "RPM 清单路径无效"
   [[ "${source_rpm}" == clusterguard-ha-*.rpm && "${target_rpm}" == clusterguard-ha-*.rpm ]] || die "RPM 文件名无效"
@@ -305,6 +327,49 @@ verify_patch() {
   fi
 }
 
+trusted_directory() {
+  local requested="$1" create="${2:-false}" current="" part owner permissions
+  local -a parts
+  [[ "$requested" == /* && "$requested" != *"//"* && "$requested" != *"/../"* && "$requested" != */.. ]] || return 1
+  IFS=/ read -r -a parts <<<"$requested"
+  for part in "${parts[@]}"; do
+    [[ -n "$part" && "$part" != . ]] || continue
+    current="${current}/${part}"
+    if [[ ! -e "$current" && ! -L "$current" && "$create" == true ]]; then mkdir -m 0700 -- "$current" || return 1; fi
+    [[ -d "$current" && ! -L "$current" ]] || return 1
+    read -r owner permissions < <(stat -c '%u %a' -- "$current")
+    [[ "$owner" == 0 && "$permissions" =~ ^[0-7]+$ ]] || return 1
+    (( (8#$permissions & 8#022) == 0 )) || return 1
+  done
+}
+
+validate_root_input_patch() {
+  ((EUID == 0)) || return 0
+  local parent owner permissions links metadata
+  [[ "${input_patch_file}" == /* && -f "${input_patch_file}" && ! -L "${input_patch_file}" ]] ||
+    die "root 升级输入包必须是绝对路径普通文件"
+  metadata="$(stat -c '%u %a %h' -- "${input_patch_file}" 2>/dev/null || stat -f '%u %Lp %l' -- "${input_patch_file}")" ||
+    die "无法读取 root 升级输入包属性"
+  read -r owner permissions links <<<"${metadata}"
+  [[ "${owner}" == 0 && "${permissions}" =~ ^[0-7]+$ && "${links}" == 1 ]] ||
+    die "root 升级输入包必须 root 拥有且不可写、不可硬链接"
+  (( (8#${permissions} & 8#022) == 0 )) || die "root 升级输入包不可由组或其他用户写入"
+
+  parent="$(dirname -- "${input_patch_file}")"
+  # The bootstrap hand-off is a root-created 0700 directory under /tmp. It is
+  # accepted only for the exact immutable snapshot name generated above.
+  if [[ "${parent}" == /tmp/clusterguard-upgrade.* ]]; then
+    [[ "$(basename -- "${input_patch_file}")" == input.cgpatch ]] || die "引导升级快照路径无效"
+    metadata="$(stat -c '%u %a' -- "${parent}" 2>/dev/null || stat -f '%u %Lp' -- "${parent}")" ||
+      die "无法读取引导升级快照目录属性"
+    read -r owner permissions <<<"${metadata}"
+    [[ "${owner}" == 0 && "${permissions}" == 700 && -d "${parent}" && ! -L "${parent}" ]] ||
+      die "引导升级快照目录不可信"
+    return 0
+  fi
+  trusted_directory "${parent}" false || die "root 升级必须从可信私有目录读取输入包"
+}
+
 cleanup() {
   local exit_code=$? last_status
   if ((exit_code != 0)) && ${journal_started}; then
@@ -322,6 +387,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
+validate_root_input_patch
 safe_extract_patch
 verify_patch
 
@@ -345,16 +411,43 @@ if ${inspect_only}; then
 fi
 
 if ${bootstrap_available} && [[ "${bootstrap_depth}" == 0 ]]; then
+  jq -e '.bootstrap.workspace_protocol == 2' "${patch_root}/PATCH-MANIFEST.json" >/dev/null || die "旧引导升级器缺少私有执行区安全协议，请重新生成签名升级包"
   log "签名引导升级器校验通过，切换到升级包内执行器"
   set +e
-  CG_UPDATE_BOOTSTRAP_DEPTH=1 bash "${patch_root}/${bootstrap_entrypoint}" "${original_arguments[@]}"
+  CG_UPDATE_BOOTSTRAP_DEPTH=1 bash "${patch_root}/${bootstrap_entrypoint}" "${original_arguments[@]}" --patch "${patch_file}"
   bootstrap_exit=$?
   set -e
   exit "${bootstrap_exit}"
 fi
 
+if ((EUID == 0)); then
+  trusted_directory "$(pwd -P)" || die "root 升级必须在可信私有目录运行，不能使用服务可写目录"
+fi
+
+publish_local_update_file() {
+  local source="$1" destination="$2"
+  [[ -n "${managed_job_dir}" ]] || return 0
+  [[ -f "${source}" && ! -L "${source}" ]] || return 0
+  [[ "${destination}" == "$(basename -- "${destination}")" ]] || return 1
+  command -v runuser >/dev/null 2>&1 || return 1
+  # The service account owns the public projection. Root only feeds the
+  # already-persisted private bytes over stdin; it never opens a public path.
+  runuser -u clusterguard -- bash -c '
+    set -euo pipefail
+    umask 027
+    directory=$1
+    name=$2
+    temporary=$(mktemp "${directory}/.clusterguard-publish.XXXXXXXX")
+    trap '\''rm -f -- "$temporary"'\'' EXIT
+    cat >"$temporary"
+    chmod 0640 "$temporary"
+    mv -fT -- "$temporary" "${directory}/${name}"
+    trap - EXIT
+  ' bash "${managed_job_dir}" "${destination}" <"${source}"
+}
+
 execution_id="update-$(date -u +%Y%m%dT%H%M%SZ)-$$-$(openssl rand -hex 8)"
-mutation_guard="install -d -m 0700 '${remote_stage}'; exec 8>'${remote_stage}/.node-update.lock'; flock -x -w 30 8;"
+mutation_guard="trusted_directory '${remote_stage}' true; exec 8>'${remote_stage}/.node-update.lock'; flock -x -w 30 8;"
 
 if ${rollback_requested}; then
   update_mode="rollback"
@@ -474,6 +567,7 @@ configure_known_hosts() {
 
 remote_run() {
   local host="$1" command="$2"
+  command="set -e; $(declare -f trusted_directory); trusted_directory '${private_root}' true; trusted_directory '${remote_stage}' true; trusted_directory '/etc/clusterguard'; ${command}"
   local -a options=(-F /dev/null -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=${known_hosts_file}" -o GlobalKnownHostsFile=/dev/null -o IdentitiesOnly=yes)
   if [[ -n "${ssh_key}" ]]; then options+=(-i "${ssh_key}"); else options+=(-o IdentityFile=none); fi
   password_for_host "${host}" || die "找不到 ${host} 的 SSH 凭据"
@@ -499,7 +593,7 @@ remote_copy() {
 prune_update_artifacts() {
   local host failed=false
   for host in "${all_nodes[@]}"; do
-    if ! remote_run "${host}" "test -x '${update_pruner}' && '${update_pruner}' --update-root '${update_root}' --history-root '${remote_stage}' --retain-versions '${retained_versions}' --protect '${patch_id}'"; then
+    if ! remote_run "${host}" "test -x '${update_pruner}' && '${update_pruner}' --update-root '${update_root}' --history-root '${remote_stage}' --private-root '${private_root}' --retain-versions '${retained_versions}' --protect '${patch_id}'"; then
       failed=true
       log "警告：节点 ${host} 未能完成升级材料保留清理"
     fi
@@ -977,7 +1071,7 @@ case \"\${old}\" in [A-Za-z0-9]*) ;; *) exit 2 ;; esac
 case \"\${old}\" in *[!A-Za-z0-9._-]*) exit 2 ;; esac
 test \"\${old}\" != '${patch_id}'
 \"\${jq_bin}\" -e --arg patch \"\${old}\" '.patch_id == \$patch and .mode == \"rolling_update\"' \"\${marker}\" >/dev/null
-status='${update_root}/'\"\${old}\"'/status.json'
+status='${private_root}/history/'\"\${old}\"'/status.json'
 test -f \"\${status}\"
 \"\${jq_bin}\" -e --arg patch \"\${old}\" '.patch_id == \$patch and .status == \"failed\" and .maintenance_active == true' \"\${status}\" >/dev/null
 printf '%s\\n' \"\${old}\""
@@ -1102,7 +1196,7 @@ marker='${maintenance_marker}'
 jq_bin=/usr/local/libexec/jq-linux-amd64
 test \"\$(cat \"\${lock}/patch-id\")\" = '${recoverable_previous_patch_id}'
 \"\${jq_bin}\" -e --arg patch '${recoverable_previous_patch_id}' '.patch_id == \$patch and .mode == \"rolling_update\"' \"\${marker}\" >/dev/null
-\"\${jq_bin}\" -e --arg patch '${recoverable_previous_patch_id}' '.patch_id == \$patch and .status == \"failed\" and .maintenance_active == true' '${update_root}/${recoverable_previous_patch_id}/status.json' >/dev/null
+\"\${jq_bin}\" -e --arg patch '${recoverable_previous_patch_id}' '.patch_id == \$patch and .status == \"failed\" and .maintenance_active == true' '${private_root}/history/${recoverable_previous_patch_id}/status.json' >/dev/null
 printf '%s\\n' '${patch_id}' >\"\${lock}/patch-id.tmp\"
 mv -f \"\${lock}/patch-id.tmp\" \"\${lock}/patch-id\"
 printf '%s\\n' '${execution_id}' >\"\${lock}/execution-id.tmp\"
@@ -1156,7 +1250,7 @@ adopt_current_update_locks() {
     remote_run "${host}" "set -eu
 jq_bin=/usr/local/libexec/jq-linux-amd64
 test -x \"\${jq_bin}\"
-tail -n 1 '${update_root}/${patch_id}/events.jsonl' | \"\${jq_bin}\" -e --arg patch '${patch_id}' --arg owner '${previous_owner}' '.patch_id == \$patch and .execution_id == \$owner and (.status == \"failed\" or .status == \"rollback_failed\" or .status == \"rollback_lock_release_failed\")' >/dev/null" >/dev/null 2>&1 ||
+tail -n 1 '${private_root}/history/${patch_id}/events.jsonl' | \"\${jq_bin}\" -e --arg patch '${patch_id}' --arg owner '${previous_owner}' '.patch_id == \$patch and .execution_id == \$owner and (.status == \"failed\" or .status == \"rollback_failed\" or .status == \"rollback_lock_release_failed\")' >/dev/null" >/dev/null 2>&1 ||
       die "升级 ${patch_id} 尚未进入可接管的失败终态；不会并发续跑或回退"
   done
 
@@ -1288,28 +1382,28 @@ release_update_locks() {
 }
 
 cleanup_update_artifact_temps() {
-  local transaction="$1" host remote_dir="${update_root}/${patch_id}"
+  local transaction="$1" host remote_dir="${private_root}/inbox/${patch_id}"
   for host in "${controllers[@]}"; do
-    remote_run "${host}" "rm -f '${remote_dir}/.package.cgpatch.${transaction}.tmp' '${remote_dir}/.package.json.${transaction}.tmp'" >/dev/null 2>&1 || true
+    remote_run "${host}" "rm -f '${remote_dir}/package.cgpatch.${transaction}.tmp' '${remote_dir}/package.json.${transaction}.tmp'" >/dev/null 2>&1 || true
   done
 }
 
 publish_update_artifacts() {
   local host remote_dir="${update_root}/${patch_id}"
   local package_source="${PWD}/package.cgpatch" metadata_source="${PWD}/package.json"
-  local current_directory managed_directory package_sha metadata_sha transaction package_temporary metadata_temporary
+  local package_sha input_sha metadata_sha transaction private_dir package_temporary metadata_temporary
 
-  # Direct CLI upgrades keep using the operator-provided package. Console jobs
-  # are identified by their protected update directory and are distributed to
-  # every controller before any maintenance gate or RPM mutation is attempted.
-  current_directory="$(pwd -P)"
-  managed_directory="$(cd "${remote_dir}" 2>/dev/null && pwd -P)" || return 0
-  [[ "${current_directory}" == "${managed_directory}" ]] || return 0
+  # Direct CLI upgrades keep using the operator-provided package. Managed jobs
+  # use a root-private snapshot as input and publish only through the service
+  # account, so root never opens the shared update directory.
+  [[ -n "${managed_job_dir}" ]] || return 0
   [[ -f "${package_source}" && ! -L "${package_source}" && -f "${metadata_source}" && ! -L "${metadata_source}" ]] ||
     die "控制台升级目录缺少升级包或元数据"
-  [[ "${patch_file}" -ef "${package_source}" ]] || die "控制台升级任务引用的升级包与受保护目录不一致"
+  [[ -f "${input_patch_file}" && ! -L "${input_patch_file}" ]] || die "私有升级任务输入快照不存在"
 
   package_sha="$(sha256_file "${package_source}")"
+  input_sha="$(sha256_file "${input_patch_file}")"
+  [[ "${input_sha}" == "${package_sha}" ]] || die "私有升级任务输入不一致"
   metadata_sha="$(sha256_file "${metadata_source}")"
   jq -e \
     --arg patch_id "${patch_id}" --arg source "${source_version}" --arg target "${target_version}" \
@@ -1325,15 +1419,16 @@ publish_update_artifacts() {
     ' "${metadata_source}" >/dev/null || die "控制台升级包元数据与已验签升级包不一致"
 
   transaction="${patch_id}.$$"
-  package_temporary="${remote_dir}/.package.cgpatch.${transaction}.tmp"
-  metadata_temporary="${remote_dir}/.package.json.${transaction}.tmp"
+  private_dir="${private_root}/inbox/${patch_id}"
+  package_temporary="${private_dir}/package.cgpatch.${transaction}.tmp"
+  metadata_temporary="${private_dir}/package.json.${transaction}.tmp"
   log "向 ${#controllers[@]} 个控制节点分发已验签升级包并校验 SHA-256"
   for host in "${controllers[@]}"; do
-    if ! remote_run "${host}" "set -eu; install -d -o root -g clusterguard -m 0770 '${remote_dir}'; chown root:clusterguard '${remote_dir}'; chmod 0770 '${remote_dir}'" >/dev/null 2>&1 ||
+    if ! remote_run "${host}" "set -eu; install -d -m 0700 '${private_dir}'; runuser -u clusterguard -- install -d -m 0770 '${remote_dir}'" >/dev/null 2>&1 ||
       ! remote_copy "${host}" "${package_source}" "${package_temporary}" >/dev/null 2>&1 ||
-      ! remote_run "${host}" "set -eu; printf '%s  %s\\n' '${package_sha}' '${package_temporary}' | sha256sum -c - >/dev/null; chown root:clusterguard '${package_temporary}'; chmod 0640 '${package_temporary}'" >/dev/null 2>&1 ||
+      ! remote_run "${host}" "set -eu; printf '%s  %s\\n' '${package_sha}' '${package_temporary}' | sha256sum -c - >/dev/null; chmod 0600 '${package_temporary}'; mv -f '${package_temporary}' '${private_dir}/package.cgpatch'" >/dev/null 2>&1 ||
       ! remote_copy "${host}" "${metadata_source}" "${metadata_temporary}" >/dev/null 2>&1 ||
-      ! remote_run "${host}" "set -eu; printf '%s  %s\\n' '${metadata_sha}' '${metadata_temporary}' | sha256sum -c - >/dev/null; chown root:clusterguard '${metadata_temporary}'; chmod 0640 '${metadata_temporary}'; mv -f '${package_temporary}' '${remote_dir}/package.cgpatch'; mv -f '${metadata_temporary}' '${remote_dir}/package.json'" >/dev/null 2>&1; then
+      ! remote_run "${host}" "set -eu; printf '%s  %s\\n' '${metadata_sha}' '${metadata_temporary}' | sha256sum -c - >/dev/null; chmod 0600 '${metadata_temporary}'; mv -f '${metadata_temporary}' '${private_dir}/package.json'; runuser -u clusterguard -- bash -c 'set -eu; d=\"\$1\"; n=\"\$2\"; t=\"\$(mktemp \"\$d/.publish.XXXXXXXX\")\"; trap '\''rm -f -- \"\$t\"'\'' EXIT; cat >\"\$t\"; chmod 0640 \"\$t\"; mv -fT \"\$t\" \"\$d/\$n\"; trap - EXIT' sh '${remote_dir}' package.cgpatch < '${private_dir}/package.cgpatch'; runuser -u clusterguard -- bash -c 'set -eu; d=\"\$1\"; n=\"\$2\"; t=\"\$(mktemp \"\$d/.publish.XXXXXXXX\")\"; trap '\''rm -f -- \"\$t\"'\'' EXIT; cat >\"\$t\"; chmod 0640 \"\$t\"; mv -fT \"\$t\" \"\$d/\$n\"; trap - EXIT' sh '${remote_dir}' package.json < '${private_dir}/package.json'" >/dev/null 2>&1; then
       cleanup_update_artifact_temps "${transaction}"
       die "无法向控制节点 ${host} 分发并验证升级包；尚未建立维护门禁，也未修改任何 RPM"
     fi
@@ -1343,22 +1438,28 @@ publish_update_artifacts() {
 }
 
 publish_update_progress() {
-  local host remote_dir="${update_root}/${patch_id}" status_source="${PWD}/status.json" temporary
+  local host status_source="${PWD}/status.json"
   [[ -f "${status_source}" && -f "${journal_events_file}" ]] || return 0
+  publish_local_update_file "${status_source}" status.json ||
+    log "警告：本机控制台状态投影失败，私有升级记录仍已保留"
+  publish_local_update_file "${journal_events_file}" events.jsonl ||
+    log "警告：本机控制台事件投影失败，私有升级记录仍已保留"
+
+  remote_publish_private_file() {
+    local target_host="$1" source="$2" destination="$3"
+    local remote_dir="${update_root}/${patch_id}"
+    local remote_history="${private_root}/history/${patch_id}"
+    local remote_source="${private_root}/inbox/${patch_id}/.${destination}.$$"
+    remote_copy "${target_host}" "${source}" "${remote_source}" >/dev/null 2>&1 || return 1
+    remote_run "${target_host}" "set -eu; install -d -m 0700 '${remote_history}'; chmod 0600 '${remote_source}'; mv -f '${remote_source}' '${remote_history}/${destination}'; runuser -u clusterguard -- bash -c 'set -eu; d=\"\$1\"; n=\"\$2\"; t=\"\$(mktemp \"\$d/.publish.XXXXXXXX\")\"; trap '\''rm -f -- \"\$t\"'\'' EXIT; cat >\"\$t\"; chmod 0640 \"\$t\"; mv -fT \"\$t\" \"\$d/\$n\"; trap - EXIT' sh '${remote_dir}' '${destination}' < '${remote_history}/${destination}'" >/dev/null 2>&1
+  }
+
   for host in "${controllers[@]}"; do
-    if ! remote_run "${host}" "set -eu; install -d -o root -g clusterguard -m 0770 '${remote_dir}'; chown root:clusterguard '${remote_dir}'; chmod 0770 '${remote_dir}'" >/dev/null 2>&1; then
-      log "警告：控制节点 ${host} 暂时无法接收升级进度"
-      continue
-    fi
-    temporary="${remote_dir}/.status.json.tmp"
-    if ! remote_copy "${host}" "${status_source}" "${temporary}" >/dev/null 2>&1 ||
-      ! remote_run "${host}" "chown root:clusterguard '${temporary}'; chmod 0640 '${temporary}'; mv -f '${temporary}' '${remote_dir}/status.json'" >/dev/null 2>&1; then
+    if ! remote_publish_private_file "${host}" "${status_source}" status.json; then
       log "警告：控制节点 ${host} 的升级状态同步失败"
       continue
     fi
-    temporary="${remote_dir}/.events.jsonl.tmp"
-    if ! remote_copy "${host}" "${journal_events_file}" "${temporary}" >/dev/null 2>&1 ||
-      ! remote_run "${host}" "chown root:clusterguard '${temporary}'; chmod 0640 '${temporary}'; mv -f '${temporary}' '${remote_dir}/events.jsonl'" >/dev/null 2>&1; then
+    if ! remote_publish_private_file "${host}" "${journal_events_file}" events.jsonl; then
       log "警告：控制节点 ${host} 的升级事件同步失败"
     fi
   done

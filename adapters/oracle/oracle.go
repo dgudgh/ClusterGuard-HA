@@ -638,6 +638,43 @@ func oracleOperationPlanDigest(plan model.OperationPlan) (string, error) {
 	return "sha256:" + hex.EncodeToString(digest[:]), nil
 }
 
+func validateOracleOperationPlan(request adapter.OperationRequest, verification bool) error {
+	if request.Operation.Engine != model.EngineOracle || request.Operation.Kind != model.OperationSwitchover || request.Resolved == nil || request.Plan == nil {
+		return fmt.Errorf("an immutable Oracle switchover plan and resolved context are required")
+	}
+	plan, resolved := request.Plan, request.Resolved
+	if plan.OperationID != request.Operation.ResourceID || resolved.OperationID != request.Operation.ResourceID ||
+		plan.ClusterID != request.Operation.ClusterID || plan.ClusterID != resolved.Cluster.ResourceID ||
+		plan.SourceID != resolved.Primary.ResourceID || plan.TargetID != request.TargetID || plan.TargetID != resolved.Target.ResourceID {
+		return fmt.Errorf("Oracle operation plan resource scope changed")
+	}
+	if plan.Stage != model.StagePlan || strings.TrimSpace(plan.ObservationToken) == "" || strings.TrimSpace(plan.Digest) == "" {
+		return fmt.Errorf("Oracle operation plan integrity fields are missing")
+	}
+	if !verification && plan.ObservationToken != strings.TrimSpace(resolved.ObservationToken) {
+		return fmt.Errorf("Oracle operation observation changed")
+	}
+	digest, err := oracleOperationPlanDigest(*plan)
+	if err != nil || digest != plan.Digest || (!verification && resolved.PlanDigest != plan.Digest) {
+		return fmt.Errorf("Oracle operation plan digest changed")
+	}
+	if hasFailedCheck(plan.Checks) {
+		return fmt.Errorf("Oracle operation plan contains blocking checks")
+	}
+	expected := oraclePlanResourceRevisions(resolved)
+	if len(plan.ResourceRevisions) != len(expected) {
+		return fmt.Errorf("Oracle operation resource revisions are incomplete")
+	}
+	for resourceID, revision := range expected {
+		planned, exists := plan.ResourceRevisions[resourceID]
+		if !exists || !model.ValidResourceID(resourceID) || revision == 0 || planned == 0 ||
+			(!verification && resolved.ObservationToken == "" && revision != planned) {
+			return fmt.Errorf("Oracle operation resource revision changed")
+		}
+	}
+	return nil
+}
+
 func (adapterInstance *Adapter) Execute(ctx context.Context, request adapter.OperationRequest) (model.Execution, error) {
 	started := time.Now().UTC()
 	if request.Operation.Kind != model.OperationSwitchover {
@@ -645,6 +682,9 @@ func (adapterInstance *Adapter) Execute(ctx context.Context, request adapter.Ope
 	}
 	if adapterInstance.controller == nil || !adapterInstance.controller.Executable(ctx) {
 		return model.Execution{OperationID: request.Operation.ResourceID, Status: model.OperationUnsupported, StartedAt: started, Message: "restricted Oracle Broker controller is not configured"}, adapter.ErrUnsupported
+	}
+	if err := validateOracleOperationPlan(request, false); err != nil {
+		return model.Execution{OperationID: request.Operation.ResourceID, Status: model.OperationBlocked, StartedAt: started, FinishedAt: time.Now().UTC(), Message: err.Error()}, err
 	}
 	checks, err := adapterInstance.Precheck(ctx, request)
 	if err != nil {
@@ -738,6 +778,9 @@ func (adapterInstance *Adapter) Execute(ctx context.Context, request adapter.Ope
 func (adapterInstance *Adapter) Verify(ctx context.Context, request adapter.OperationRequest) (model.Verification, error) {
 	if request.Operation.Engine != model.EngineOracle || request.Resolved == nil {
 		return model.Verification{}, adapter.ErrUnsupported
+	}
+	if err := validateOracleOperationPlan(request, true); err != nil {
+		return model.Verification{OperationID: request.Operation.ResourceID, ObservedAt: time.Now().UTC(), Checks: []model.Check{{Name: "immutable_operation_plan", Status: model.CheckFail, Message: err.Error()}}}, err
 	}
 	if adapterInstance.controller == nil || !adapterInstance.controller.Executable(ctx) {
 		return model.Verification{OperationID: request.Operation.ResourceID, ObservedAt: time.Now().UTC(), Checks: []model.Check{{Name: "oracle_broker_controller", Status: model.CheckFail, Message: "restricted Oracle Broker controller is not configured"}}}, nil

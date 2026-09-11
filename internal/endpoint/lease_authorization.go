@@ -29,6 +29,7 @@ func authorizeTransitionLease(ctx context.Context, leases LeaseStore, resolved a
 	if err != nil {
 		return adapter.TransitionAuthorization{}, fmt.Errorf("acquire endpoint transition lease: %w", err)
 	}
+	request.RenewOnly = true
 	guarded, cancelCause := context.WithCancelCause(ctx)
 	var leaseMu sync.Mutex
 	current := lease
@@ -48,6 +49,9 @@ func authorizeTransitionLease(ctx context.Context, leases LeaseStore, resolved a
 			case <-ticker.C:
 				leaseMu.Lock()
 				renewed, renewErr := leases.Acquire(guarded, request)
+				if renewErr == nil && !SameLeaseIdentity(current, renewed) {
+					renewErr = fmt.Errorf("endpoint lease identity changed during renewal")
+				}
 				if renewErr == nil {
 					current = renewed
 				}
@@ -80,7 +84,16 @@ func authorizeTransitionLease(ctx context.Context, leases LeaseStore, resolved a
 		}
 		terminalAction = "finalize"
 		leaseMu.Lock()
-		_, terminalErr = leases.FinalizeTransition(finalizeCtx, current, ttl)
+		stable, finalizeErr := leases.FinalizeTransition(finalizeCtx, current, ttl)
+		if finalizeErr == nil {
+			current = stable
+			request = LeaseRequest{
+				ClusterID: stable.ClusterID, HAEndpointID: stable.HAEndpointID,
+				OperationID: stable.HAEndpointID, OwnerID: stable.OwnerID,
+				TTL: ttl, RenewOnly: true,
+			}
+		}
+		terminalErr = finalizeErr
 		leaseMu.Unlock()
 		if terminalErr != nil {
 			cancelCause(fmt.Errorf("finalize endpoint transition lease: %w", terminalErr))

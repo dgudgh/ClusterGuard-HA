@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
@@ -125,6 +126,9 @@ func LoadConfig(path string) (Config, error) {
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&file); err != nil {
 		return Config{}, fmt.Errorf("decode agent configuration: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return Config{}, fmt.Errorf("agent configuration must contain exactly one JSON object")
 	}
 	secretEnvironment := strings.TrimSpace(file.SharedSecretEnv)
 	if secretEnvironment == "" {

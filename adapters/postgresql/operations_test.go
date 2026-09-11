@@ -365,6 +365,22 @@ func TestPostgreSQLPlanRejectsMissingPinnedResourceRevision(t *testing.T) {
 	}
 }
 
+func TestPostgreSQLPlanRejectsTamperedDigest(t *testing.T) {
+	request := postgresqlOperationRequest(model.OperationSwitchover)
+	instance := NewWithProviders(&postgresqlExecutableRunner{}, postgresqlEndpointStub{executable: true}, &postgresqlNodeControllerStub{executable: true}, postgresqlFailoverSafetyStub{})
+	plan, err := instance.BuildPlan(context.Background(), request)
+	if err != nil {
+		t.Fatalf("build plan: %v", err)
+	}
+	// Mutate the plan while keeping the approved digest: the immutable-plan
+	// guard must reject it instead of executing a plan that was never approved.
+	plan.TargetID = model.NewResourceID()
+	request.Plan = &plan
+	if err := validatePostgreSQLPlan(request, model.OperationSwitchover, false); err == nil || !strings.Contains(err.Error(), "digest") {
+		t.Fatalf("tampered plan digest was accepted: %v", err)
+	}
+}
+
 func postgresqlFailoverOperationRequest() adapter.OperationRequest {
 	request := postgresqlOperationRequest(model.OperationFailover)
 	request.Resolved.Primary.Health = model.Health{State: model.HealthUnhealthy, Summary: "primary unreachable", ObservedAt: request.Resolved.Snapshot.ObservedAt}

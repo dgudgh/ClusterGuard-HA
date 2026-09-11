@@ -112,11 +112,15 @@ func TestUpdatePrunerKeepsThreeNewestVersionsAndProtectsUnfinishedWork(t *testin
 	root := t.TempDir()
 	updateRoot := filepath.Join(root, "updates")
 	historyRoot := filepath.Join(root, "update-history")
+	privateRoot := filepath.Join(root, "private-update-state")
 	operationLogRoot := filepath.Join(root, "operation-log")
 	if err := os.MkdirAll(updateRoot, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(historyRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(privateRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	for index := 1; index <= 8; index++ {
@@ -129,6 +133,7 @@ func TestUpdatePrunerKeepsThreeNewestVersionsAndProtectsUnfinishedWork(t *testin
 		updateDirectory := filepath.Join(updateRoot, patchID)
 		historyDirectory := filepath.Join(historyRoot, patchID)
 		writeFile(t, filepath.Join(updateDirectory, "status.json"), `{"status":"succeeded","maintenance_active":false}`+"\n", 0o640)
+		writeFile(t, filepath.Join(privateRoot, "jobs", patchID, "status.json"), `{"status":"succeeded","maintenance_active":false}`+"\n", 0o600)
 		writeFile(t, filepath.Join(updateDirectory, "package.cgpatch"), "signed package\n", 0o640)
 		writeFile(t, filepath.Join(updateDirectory, "package.json"), "{}\n", 0o640)
 		writeFile(t, filepath.Join(updateDirectory, "events.jsonl"), "{\"status\":\"succeeded\"}\n", 0o640)
@@ -147,12 +152,14 @@ func TestUpdatePrunerKeepsThreeNewestVersionsAndProtectsUnfinishedWork(t *testin
 	activeID := "cgupgrade-active"
 	activeDirectory := filepath.Join(updateRoot, activeID)
 	writeFile(t, filepath.Join(activeDirectory, "status.json"), `{"status":"failed","maintenance_active":true}`+"\n", 0o640)
+	writeFile(t, filepath.Join(privateRoot, "jobs", activeID, "status.json"), `{"status":"failed","maintenance_active":true}`+"\n", 0o600)
 	if err := os.Chtimes(activeDirectory, base, base); err != nil {
 		t.Fatal(err)
 	}
 	reviewID := "cgupgrade-review"
 	reviewDirectory := filepath.Join(updateRoot, reviewID)
 	writeFile(t, filepath.Join(reviewDirectory, "status.json"), `{"status":"failed","maintenance_active":false,"verification_required":true}`+"\n", 0o640)
+	writeFile(t, filepath.Join(privateRoot, "jobs", reviewID, "status.json"), `{"status":"failed","maintenance_active":false,"verification_required":true}`+"\n", 0o600)
 	if err := os.Chtimes(reviewDirectory, base.Add(time.Second), base.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
@@ -175,6 +182,7 @@ func TestUpdatePrunerKeepsThreeNewestVersionsAndProtectsUnfinishedWork(t *testin
 	command := exec.Command("bash", "clusterguard-update-prune.sh",
 		"--update-root", updateRoot,
 		"--history-root", historyRoot,
+		"--private-root", privateRoot,
 		"--protect", "cgupgrade-01")
 	output, err := command.CombinedOutput()
 	if err != nil {
@@ -204,7 +212,7 @@ func TestUpdatePrunerKeepsThreeNewestVersionsAndProtectsUnfinishedWork(t *testin
 			t.Fatalf("upgrade audit %s was removed: %v", name, err)
 		}
 	}
-	again := exec.Command("bash", "clusterguard-update-prune.sh", "--update-root", updateRoot, "--history-root", historyRoot, "--protect", "cgupgrade-01")
+	again := exec.Command("bash", "clusterguard-update-prune.sh", "--update-root", updateRoot, "--history-root", historyRoot, "--private-root", privateRoot, "--protect", "cgupgrade-01")
 	if output, err := again.CombinedOutput(); err != nil {
 		t.Fatalf("repeat prune: %v %s", err, output)
 	}
@@ -659,7 +667,7 @@ elif [[ "$command" == *".cluster-update.lock/patch-id"* && "$command" == *"grep 
   [[ -z "${FAKE_FAILED_UPDATE_LOCK:-}" ]] || exit 56
   test -f "$state/$host.maintenance"
   if [[ -f "$state/$host.execution" ]]; then cat "$state/$host.execution"; else printf 'previous-execution\n'; fi
-elif [[ "$command" == "if test -f"*".cluster-update.lock/execution-id"* ]]; then
+elif [[ "$command" == *"if test -f"*".cluster-update.lock/execution-id"*"else printf 'legacy"* ]]; then
   if [[ -f "$state/$host.execution" ]]; then cat "$state/$host.execution"; else printf 'legacy\n'; fi
 elif [[ "$command" == *"tail -n 1"*"/events.jsonl"* ]]; then
   [[ "${FAKE_PREVIOUS_EXECUTION_RUNNING:-false}" != true ]] || exit 64
@@ -677,12 +685,12 @@ elif [[ "$command" == *".cluster-update.lock"* && "$command" == *"mkdir"* && "$c
   [[ -n "$owner" ]] && printf '%s\n' "$owner" >"$state/$host.execution"
 	if [[ "${FAKE_ACTIVE_UNTIL_LEADER_LOCK:-}" == true && "$host" == "${FAKE_LEADER_HOST:-c3}" ]]; then : >"$state/active-operation-drained"; fi
 	if [[ "${FAKE_RECORD_LOCK_ORDER:-}" == true ]]; then printf '%s\n' "$host" >>"$state/lock-order"; fi
-elif [[ "$command" == *".package.json."* && "$command" == *"sha256sum -c"* ]]; then
+elif [[ "$command" == *"package.json."* && "$command" == *"sha256sum -c"* ]]; then
   actual="$(sha256sum "$state/$host.metadata.tmp" | awk '{print $1}')"
   [[ "$actual" == "${FAKE_EXPECTED_METADATA_SHA:?}" ]]
   mv -f "$state/$host.package.tmp" "$state/$host.package.cgpatch"
   mv -f "$state/$host.metadata.tmp" "$state/$host.package.json"
-elif [[ "$command" == *".package.cgpatch."* && "$command" == *"sha256sum -c"* ]]; then
+elif [[ "$command" == *"package.cgpatch."* && "$command" == *"sha256sum -c"* ]]; then
   [[ "$host" != "${FAKE_PACKAGE_VERIFY_FAIL_HOST:-}" ]] || exit 45
   actual="$(sha256sum "$state/$host.package.tmp" | awk '{print $1}')"
   [[ "$actual" == "${FAKE_EXPECTED_PACKAGE_SHA:?}" ]]
@@ -738,11 +746,11 @@ host="${remote%%:*}"
 remote_path="${remote#*:}"
 state="${FAKE_REMOTE_STATE:?}"
 case "$remote_path" in
-  */.package.cgpatch.*.tmp)
+  *package.cgpatch.*.tmp)
     [[ "$host" != "${FAKE_PACKAGE_COPY_FAIL_HOST:-}" ]] || exit 46
     cp "$source_path" "$state/$host.package.tmp"
     ;;
-  */.package.json.*.tmp)
+  *package.json.*.tmp)
     cp "$source_path" "$state/$host.metadata.tmp"
     ;;
 esac
@@ -1462,7 +1470,7 @@ esac
 	command = exec.Command("bash", upgradeScript,
 		"--patch", filepath.Join(jobDirectory, "package.cgpatch"), "--trust-key", publicKey,
 		"--controllers", "c1,c2,c3", "--data-nodes", "c1,c2,c3,d1",
-		"--known-hosts", knownHosts, "--update-root", updateRoot, "-u", "root", "--execute", "--yes")
+		"--known-hosts", knownHosts, "--update-root", updateRoot, "--managed-job-dir", jobDirectory, "-u", "root", "--execute", "--yes")
 	command.Dir = jobDirectory
 	command.Env = append(os.Environ(), managedEnvironment...)
 	if output, err = command.CombinedOutput(); err != nil {
@@ -1503,7 +1511,7 @@ esac
 	command = exec.Command("bash", upgradeScript,
 		"--patch", filepath.Join(jobDirectory, "package.cgpatch"), "--trust-key", publicKey,
 		"--controllers", "c1,c2,c3", "--data-nodes", "c1,c2,c3,d1",
-		"--known-hosts", knownHosts, "--update-root", updateRoot, "-u", "root", "--execute", "--yes")
+		"--known-hosts", knownHosts, "--update-root", updateRoot, "--managed-job-dir", jobDirectory, "-u", "root", "--execute", "--yes")
 	command.Dir = jobDirectory
 	command.Env = append(os.Environ(), append(managedEnvironment, "FAKE_PACKAGE_COPY_FAIL_HOST=c2")...)
 	output, err = command.CombinedOutput()
@@ -1545,7 +1553,7 @@ esac
 	command = exec.Command("bash", upgradeScript,
 		"--patch", filepath.Join(jobDirectory, "package.cgpatch"), "--trust-key", publicKey,
 		"--controllers", "c1,c2,c3", "--data-nodes", "c1,c2,c3,d1",
-		"--known-hosts", knownHosts, "--update-root", updateRoot, "-u", "root", "--resume", "--execute", "--yes")
+		"--known-hosts", knownHosts, "--update-root", updateRoot, "--managed-job-dir", jobDirectory, "-u", "root", "--resume", "--execute", "--yes")
 	command.Dir = jobDirectory
 	command.Env = append(os.Environ(), append(managedEnvironment, "FAKE_LEADER_HOST=c2")...)
 	if output, err = command.CombinedOutput(); err != nil {
@@ -4527,9 +4535,10 @@ func TestSoftwareUpdateArtifactsRemainReadableByConsoleService(t *testing.T) {
 	}
 	jobText := string(job)
 	for _, required := range []string{
-		"chown root:clusterguard",
-		"chgrp clusterguard",
-		"chmod 0770",
+		"workspace snapshot",
+		"private_root=\"${CG_UPDATE_PRIVATE_ROOT:-/var/lib/clusterguard-update-private}\"",
+		"runuser -u clusterguard",
+		"publish_public_file",
 		"chmod 0640",
 		"output.log",
 		"clusterguard-update-*.events.jsonl",
@@ -4539,6 +4548,11 @@ func TestSoftwareUpdateArtifactsRemainReadableByConsoleService(t *testing.T) {
 	} {
 		if !strings.Contains(jobText, required) {
 			t.Fatalf("update job does not publish %q for the console service", required)
+		}
+	}
+	for _, forbidden := range []string{"chown root:clusterguard", "chgrp clusterguard", "chmod 0770 \"${job_dir}\""} {
+		if strings.Contains(jobText, forbidden) {
+			t.Fatalf("root update job still mutates the public projection directly: %q", forbidden)
 		}
 	}
 
@@ -4574,11 +4588,15 @@ func TestRollingUpdaterPublishesStructuredProgressAcrossControllers(t *testing.T
 	for _, required := range []string{
 		"publish_update_artifacts",
 		"publish_update_progress",
-		`install -d -o root -g clusterguard -m 0770 '${remote_dir}'`,
-		`chown root:clusterguard '${remote_dir}'; chmod 0770 '${remote_dir}'`,
-		`[[ "${patch_file}" -ef "${package_source}" ]]`,
+		"validate_root_input_patch",
+		"root 升级必须从可信私有目录读取输入包",
+		`runuser -u clusterguard -- install -d -m 0770 '${remote_dir}'`,
+		`private_root}/inbox/${patch_id}`,
+		`private_root}/history/${patch_id}`,
+		`runuser -u clusterguard -- bash -c`,
+		`input_sha="$(sha256_file "${input_patch_file}")"`,
+		`[[ "${input_sha}" == "${package_sha}" ]]`,
 		`printf '%s  %s\\n' '${package_sha}' '${package_temporary}' | sha256sum -c -`,
-		`mv -f '${package_temporary}' '${remote_dir}/package.cgpatch'`,
 		`无法向控制节点 ${host} 分发并验证升级包；尚未建立维护门禁，也未修改任何 RPM`,
 		`--arg phase "${phase}"`,
 		`--argjson current "${current}"`,
@@ -4586,7 +4604,7 @@ func TestRollingUpdaterPublishesStructuredProgressAcrossControllers(t *testing.T
 		`--argjson percent "${percent}"`,
 		`percent=$((current * 100 / total))`,
 		`percent:$percent`,
-		`'${remote_dir}/events.jsonl'`,
+		`private_root}/history/${patch_id}/events.jsonl`,
 		`write_journal updating`,
 		`write_journal verified`,
 		`write_journal finalizing`,
@@ -4614,6 +4632,8 @@ func TestRollingUpdaterPublishesStructuredProgressAcrossControllers(t *testing.T
 	jobText := string(job)
 	for _, required := range []string{
 		`--update-root "${root}"`,
+		`--private-root "${private_root}"`,
+		`--managed-job-dir "${public_dir}"`,
 		`--retain-versions "${retained_versions}"`,
 		`.retained_versions // 3`,
 		`last_event_status`,
@@ -4631,6 +4651,8 @@ func TestRollingUpdaterPublishesStructuredProgressAcrossControllers(t *testing.T
 	prunerText := string(pruner)
 	for _, required := range []string{
 		`retained_versions="${CG_UPDATE_RETAINED_VERSIONS:-3}"`,
+		`--private-root DIR`,
+		`private_root}/jobs/${patch_id}/status.json`,
 		`maintenance_active`,
 		`verification_required`,
 		`--protect`,

@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 const Replacement = "[REDACTED]"
@@ -92,7 +93,11 @@ func JSON(data []byte) ([]byte, error) {
 
 func Bounded(value string, limit int, secrets ...string) string {
 	value = Text(value, secrets...)
+	value = strings.ToValidUTF8(value, "\uFFFD")
 	if limit > 0 && len(value) > limit {
+		for limit > 0 && !utf8.RuneStart(value[limit]) {
+			limit--
+		}
 		value = value[:limit]
 	}
 	return value

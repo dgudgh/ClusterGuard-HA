@@ -509,6 +509,8 @@ func parseSQLServerVerificationEvidence(output string) (int, bool, bool, bool) {
 }
 
 func (adapterInstance *Adapter) Verify(ctx context.Context, request adapter.OperationRequest) (model.Verification, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	observed := time.Now().UTC()
 	if request.Operation.Engine != model.EngineSQLServer || request.Resolved == nil {
 		return model.Verification{}, adapter.ErrUnsupported
@@ -533,6 +535,9 @@ func (adapterInstance *Adapter) Verify(ctx context.Context, request adapter.Oper
 	}
 	var lastErr error
 	for {
+		if err := ctx.Err(); err != nil {
+			return model.Verification{OperationID: request.Operation.ResourceID, Checks: checks, ObservedAt: time.Now().UTC()}, err
+		}
 		output, err := adapterInstance.runner.Exec(ctx, sqlServerEndpoint(request.Resolved.Target), request.Credentials, query)
 		if err == nil {
 			primaryCount, targetPrimary, allHealthy, parsed := parseSQLServerVerificationEvidence(output)

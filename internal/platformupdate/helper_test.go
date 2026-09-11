@@ -20,13 +20,22 @@ type launcherStub struct {
 	err     error
 }
 
+func helperTestRoot(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
 func (stub *launcherStub) Start(mode Mode, patchID, _ string, done func(error)) error {
 	stub.mode, stub.patchID, stub.done = mode, patchID, done
 	return stub.err
 }
 
 func TestHelperHandlerAcceptsOnlyKnownPackageAndAllowedMode(t *testing.T) {
-	root := t.TempDir()
+	root := helperTestRoot(t)
 	patchID := "cg-2.2-1-to-2.2-2"
 	directory := filepath.Join(root, patchID)
 	if err := os.MkdirAll(directory, 0o750); err != nil {
@@ -55,7 +64,7 @@ func TestHelperHandlerAcceptsOnlyKnownPackageAndAllowedMode(t *testing.T) {
 }
 
 func TestHelperHandlerSerializesJobsAndReleasesSlotOnCompletion(t *testing.T) {
-	root := t.TempDir()
+	root := helperTestRoot(t)
 	patchID := "cg-2.2-1-to-2.2-2"
 	directory := filepath.Join(root, patchID)
 	if err := os.MkdirAll(directory, 0o750); err != nil {
@@ -105,7 +114,7 @@ func TestHelperPreservesRunnerTerminalStatusAndPublishesFallbackReadably(t *test
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			root := t.TempDir()
+			root := helperTestRoot(t)
 			directory := filepath.Join(root, test.initial.PatchID)
 			if err := os.MkdirAll(directory, 0o700); err != nil {
 				t.Fatal(err)
@@ -151,7 +160,7 @@ func TestHelperPreservesRunnerTerminalStatusAndPublishesFallbackReadably(t *test
 }
 
 func TestCommandLauncherPublishesGroupReadableOutput(t *testing.T) {
-	root := t.TempDir()
+	root := helperTestRoot(t)
 	runner := filepath.Join(root, "runner.sh")
 	if err := os.WriteFile(runner, []byte("#!/bin/sh\nprintf 'planned\\n'\n"), 0o700); err != nil {
 		t.Fatal(err)

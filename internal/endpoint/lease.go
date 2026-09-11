@@ -107,7 +107,7 @@ func (store *MemoryLeaseStore) Acquire(ctx context.Context, request LeaseRequest
 			store.leases[resourceID] = lease
 			return lease, nil
 		}
-		if CanHandoffStableLease(lease, request) {
+		if !request.RenewOnly && CanHandoffStableLease(lease, request) {
 			lease.OperationID = request.OperationID
 			lease.OwnerID = request.OwnerID
 			lease.PreviousOwnerID = request.PreviousOwnerID
@@ -116,6 +116,9 @@ func (store *MemoryLeaseStore) Acquire(ctx context.Context, request LeaseRequest
 			return lease, nil
 		}
 		return Lease{}, fmt.Errorf("%w: active endpoint lease belongs to another operation", ErrLeaseConflict)
+	}
+	if request.RenewOnly {
+		return Lease{}, fmt.Errorf("%w: renew-only endpoint lease is missing or expired", ErrLeaseConflict)
 	}
 	lease := Lease{
 		ResourceID: model.NewResourceID(), ClusterID: request.ClusterID, HAEndpointID: request.HAEndpointID,
