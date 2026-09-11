@@ -20,6 +20,109 @@ import (
 	"clusterguard.io/ha/pkg/model"
 )
 
+func TestExecutionAPITimesDoNotChangeSnapshotEncoding(t *testing.T) {
+	for _, diagnostic := range []bool{false, true} {
+		for _, completed := range []bool{false, true} {
+			t.Run(fmt.Sprintf("diagnostic=%t/completed=%t", diagnostic, completed), func(t *testing.T) {
+				execution := model.Execution{Status: model.OperationPlanned, Message: "retained message"}
+				if completed {
+					execution.StartedAt = time.Date(2026, 9, 11, 8, 0, 0, 0, time.UTC)
+					execution.FinishedAt = execution.StartedAt.Add(time.Second)
+				}
+				before, err := json.Marshal(execution)
+				if err != nil {
+					t.Fatal(err)
+				}
+				payload := map[string]interface{}{"result": map[string]interface{}{
+					"execution": execution,
+					"records":   []model.OperationRecord{{Execution: execution}},
+				}}
+				recorder := httptest.NewRecorder()
+				if diagnostic {
+					writeDiagnosticJSON(recorder, http.StatusOK, payload)
+				} else {
+					writeJSON(recorder, http.StatusOK, payload)
+				}
+				if recorder.Code != http.StatusOK {
+					t.Fatalf("response=%d %s", recorder.Code, recorder.Body.String())
+				}
+				var response struct {
+					Result struct {
+						Execution map[string]interface{} `json:"execution"`
+						Records   []struct {
+							Execution map[string]interface{} `json:"execution"`
+						} `json:"records"`
+					} `json:"result"`
+				}
+				if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+					t.Fatal(err)
+				}
+				for _, fields := range []map[string]interface{}{response.Result.Execution, response.Result.Records[0].Execution} {
+					for _, key := range []string{"started_at", "finished_at"} {
+						value, present := fields[key]
+						if present != completed || (present && strings.HasPrefix(value.(string), "0001-")) {
+							t.Fatalf("unexpected %s=%v present=%t completed=%t", key, value, present, completed)
+						}
+					}
+					if fields["status"] != "planned" || fields["message"] != "retained message" {
+						t.Fatalf("other execution fields changed: %+v", fields)
+					}
+				}
+				after, _ := json.Marshal(execution)
+				if string(after) != string(before) || (!completed && !strings.Contains(string(after), `"finished_at":"0001-01-01T00:00:00Z"`)) {
+					t.Fatal("public serialization changed canonical snapshot encoding")
+				}
+			})
+		}
+	}
+}
+
+func TestExecutionResponsePreservesNilAndPartialTimes(t *testing.T) {
+	started := time.Date(2026, 9, 11, 9, 0, 0, 123, time.FixedZone("offset", 8*60*60))
+	execution := model.Execution{Status: model.OperationRunning, StartedAt: started}
+	record := model.OperationRecord{Execution: execution}
+	for _, value := range []interface{}{execution, &execution, record, &record} {
+		response := httptest.NewRecorder()
+		writeJSON(response, http.StatusOK, value)
+		var fields map[string]interface{}
+		if err := json.Unmarshal(response.Body.Bytes(), &fields); err != nil {
+			t.Fatal(err)
+		}
+		if nested, ok := fields["execution"]; ok {
+			fields = nested.(map[string]interface{})
+		}
+		if fields["started_at"] != started.Format(time.RFC3339Nano) || fields["finished_at"] != nil {
+			t.Fatalf("partial timestamps changed: %s", response.Body.String())
+		}
+	}
+	nils := []interface{}{(*model.Execution)(nil), (*model.OperationRecord)(nil), []model.OperationRecord(nil), map[string]interface{}(nil), []interface{}(nil)}
+	response := httptest.NewRecorder()
+	writeJSON(response, http.StatusOK, nils)
+	if strings.TrimSpace(response.Body.String()) != "[null,null,null,null,null]" {
+		t.Fatalf("null response shape changed: %s", response.Body.String())
+	}
+	response = httptest.NewRecorder()
+	writeJSON(response, http.StatusOK, []model.OperationRecord{})
+	if strings.TrimSpace(response.Body.String()) != "[]" {
+		t.Fatalf("empty list changed: %s", response.Body.String())
+	}
+}
+
+func TestOperationHTTPRoutesOmitUnstartedExecutionTimes(t *testing.T) {
+	server, _ := newDurableOperationAPIServer(t)
+	created := callJSON(t, server.Handler(), http.MethodPost, "/api/v1/operations", operationRequestBody(model.NewResourceID(), model.NewResourceID(), "unstarted-time"))
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create status=%d body=%s", created.Code, created.Body.String())
+	}
+	record := decodeOperationResult(t, created.Body.Bytes())
+	for _, path := range []string{"/api/v1/operations", "/api/v1/operations/" + string(record.ResourceID)} {
+		response := callJSON(t, server.Handler(), http.MethodGet, path, nil)
+		if response.Code != http.StatusOK || strings.Contains(response.Body.String(), `"started_at":"0001-`) || strings.Contains(response.Body.String(), `"finished_at":"0001-`) {
+			t.Fatalf("%s status=%d body=%s", path, response.Code, response.Body.String())
+		}
+	}
+}
+
 func TestOperationExecutionResponsePrefersIndeterminateOverJournalFailure(t *testing.T) {
 	secret := "password=top-secret /var/lib/private"
 	execution := model.Execution{Status: model.OperationIndeterminate, Message: secret}

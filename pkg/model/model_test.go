@@ -1,6 +1,38 @@
 package model
 
-import "testing"
+import (
+	"net"
+	"reflect"
+	"testing"
+)
+
+func TestEndpointAddressPreservesLegacyAndFormatsIPv6(t *testing.T) {
+	for _, test := range []struct {
+		name, host, ip string
+		port           int
+		want           []string
+	}{
+		{"dns and IPv4", " DB01 ", " 192.0.2.1 ", 5432, []string{"DB01:5432", "192.0.2.1:5432"}},
+		{"IPv6", "", "2001:0db8:0:0:0:0:0:1", 5432, []string{"[2001:db8::1]:5432"}},
+		{"bracketed IPv6", "[::1]", "", 3306, []string{"[::1]:3306"}},
+		{"scoped IPv6", "", "fe80::1%en0", 5432, []string{"[fe80::1%en0]:5432"}},
+		{"empty", " ", "", 5432, []string{}},
+		{"zero port", "db01", "::1", 0, []string{}},
+		{"negative port", "db01", "::1", -1, []string{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := EndpointAddress(test.host, test.ip, test.port)
+			if !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("addresses=%v want=%v", got, test.want)
+			}
+			for _, address := range got {
+				if _, _, err := net.SplitHostPort(address); err != nil {
+					t.Fatalf("invalid host:port %q: %v", address, err)
+				}
+			}
+		})
+	}
+}
 
 func TestNewResourceIDProducesStableUUIDShape(t *testing.T) {
 	id := NewResourceID()

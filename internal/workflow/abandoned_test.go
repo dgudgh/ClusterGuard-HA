@@ -152,7 +152,10 @@ func TestReconcileAbandonedOperationsPreservesPostCommitEvidence(t *testing.T) {
 		wantStatus       model.OperationStatus
 		wantFailureClass string
 	}{
-		{name: "verified outcome succeeds", verification: model.Verification{Passed: true, ObservedAt: time.Now().UTC()}, wantStatus: model.OperationSucceeded},
+		{name: "verified outcome succeeds", verification: model.Verification{Passed: true, ObservedAt: time.Now().UTC(), Checks: []model.Check{{Status: model.CheckPass}}}, wantStatus: model.OperationSucceeded},
+		{name: "failed evidence requires review", verification: model.Verification{Passed: true, Checks: []model.Check{{Status: model.CheckFail}}}, wantStatus: model.OperationIndeterminate, wantFailureClass: "abandoned_post_commit"},
+		{name: "unknown evidence requires review", verification: model.Verification{Passed: true, Checks: []model.Check{{Status: "unknown"}}}, wantStatus: model.OperationIndeterminate, wantFailureClass: "abandoned_post_commit"},
+		{name: "empty evidence requires review", verification: model.Verification{Passed: true}, wantStatus: model.OperationIndeterminate, wantFailureClass: "abandoned_post_commit"},
 		{name: "automatic promotion remains resumable", failureClass: "promoted_unverified", wantStatus: model.OperationIndeterminate, wantFailureClass: "promoted_unverified"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

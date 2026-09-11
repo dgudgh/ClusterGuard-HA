@@ -89,14 +89,26 @@ func verificationTimeout(engine model.Engine) time.Duration {
 func detachedVerification(ctx context.Context, candidate adapter.DatabaseHAAdapter, request adapter.OperationRequest) (model.Verification, error) {
 	verifyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), verificationTimeout(request.Operation.Engine))
 	defer cancel()
-	return candidate.Verify(verifyCtx, request)
+	return verifyOperation(verifyCtx, candidate, request)
+}
+
+func verifyOperation(ctx context.Context, candidate adapter.DatabaseHAAdapter, request adapter.OperationRequest) (model.Verification, error) {
+	verification, err := candidate.Verify(ctx, request)
+	if verification.OperationID != "" && verification.OperationID != request.Operation.ResourceID {
+		err = errors.Join(err, errors.New("verification belongs to a different operation"))
+	}
+	verification.Passed = err == nil && verification.Successful()
+	if verification.OperationID == "" {
+		verification.OperationID = request.Operation.ResourceID
+	}
+	return verification, err
 }
 
 func verificationOutcomeMessage(verification model.Verification, err error) string {
 	if err != nil {
 		return "post-commit verification failed: " + err.Error()
 	}
-	if !verification.Passed {
+	if !verification.Successful() {
 		return "post-commit verification found failed checks"
 	}
 	return "post-commit verification passed"
@@ -111,6 +123,11 @@ func terminalRecordResult(record model.OperationRecord) (model.Execution, error)
 	}
 	switch record.Status {
 	case model.OperationSucceeded:
+		if !record.Verification.Successful() || record.Verification.OperationID != record.ResourceID {
+			execution.Status = model.OperationIndeterminate
+			execution.Message = "persisted verification is incomplete or inconsistent; operation requires review"
+			return execution, errors.New(execution.Message)
+		}
 		return execution, nil
 	case model.OperationUnsupported:
 		return execution, adapter.ErrUnsupported
@@ -561,7 +578,7 @@ func (service *Service) executeDurable(ctx context.Context, request adapter.Oper
 		cause := executeErr
 		if verifyErr != nil {
 			cause = fmt.Errorf("%w; verification error: %v", executeErr, verifyErr)
-		} else if !verification.Passed {
+		} else if !verification.Successful() {
 			cause = fmt.Errorf("%w; post-commit verification failed", executeErr)
 		}
 		return service.finishDurable(record.ResourceID, operation, model.StageVerify, execution, failureClass, cause, true)
@@ -583,7 +600,7 @@ func (service *Service) executeDurable(ctx context.Context, request adapter.Oper
 		cause := error(leaseErr)
 		if verifyErr != nil {
 			cause = errors.Join(cause, verifyErr)
-		} else if !verification.Passed {
+		} else if !verification.Successful() {
 			cause = errors.Join(cause, errors.New(verificationMessage))
 		}
 		if committedJournalErr != nil {
@@ -591,7 +608,7 @@ func (service *Service) executeDurable(ctx context.Context, request adapter.Oper
 		}
 		return service.finishDurable(record.ResourceID, operation, model.StageVerify, execution, "lock_lease_lost", cause, true)
 	}
-	if verifyErr != nil || !verification.Passed {
+	if verifyErr != nil || !verification.Successful() {
 		execution.Message = verificationMessage
 		execution.Status = model.OperationIndeterminate
 		if verifyErr == nil {

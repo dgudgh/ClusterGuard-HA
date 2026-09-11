@@ -42,7 +42,7 @@ func newRecordingAdapter(trace *[]string, support bool) *recordingAdapter {
 }
 
 func (candidate *recordingAdapter) Capabilities(context.Context) adapter.Capabilities {
-	return adapter.Capabilities{Engine: model.EngineMySQL, Features: map[adapter.Capability]adapter.CapabilityState{
+	return adapter.Capabilities{Engine: candidate.Engine(), Features: map[adapter.Capability]adapter.CapabilityState{
 		adapter.CapabilityPrecheck:          {Available: candidate.support},
 		adapter.CapabilityPlan:              {Available: candidate.support},
 		adapter.CapabilityExecute:           {Available: candidate.support, Mutating: true},

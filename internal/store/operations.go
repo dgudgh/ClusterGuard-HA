@@ -304,7 +304,7 @@ func verificationReconciliationAllowed(operation model.OperationRecord, transiti
 	if transition.Status != model.OperationIndeterminate && transition.Status != model.OperationSucceeded {
 		return false
 	}
-	if transition.Status == model.OperationSucceeded && !transition.Verification.Passed {
+	if transition.Status == model.OperationSucceeded && !transition.Verification.Successful() {
 		return false
 	}
 	if transition.Observation != "" || transition.Attempt != nil {
@@ -362,12 +362,18 @@ func applyOperationTransition(operation model.OperationRecord, transition model.
 		operation.Execution.Message = redact.Text(operation.Execution.Message)
 	}
 	if transition.Verification != nil {
+		if transition.Verification.OperationID != "" && transition.Verification.OperationID != operation.ResourceID {
+			return model.OperationRecord{}, validationError("verification operation ID does not match operation")
+		}
 		operation.Verification = *transition.Verification
 		operation.Verification.OperationID = operation.ResourceID
 		operation.Verification.Checks = append([]model.Check{}, operation.Verification.Checks...)
 		for i := range operation.Verification.Checks {
 			operation.Verification.Checks[i].Message = redact.Text(operation.Verification.Checks[i].Message)
 		}
+	}
+	if operation.Status == model.OperationSucceeded && (!operation.Verification.Successful() || operation.Verification.OperationID != operation.ResourceID) {
+		return model.OperationRecord{}, validationError("successful operation requires consistent verification evidence")
 	}
 	operation.FailureClass = strings.TrimSpace(transition.FailureClass)
 	operation.Message = redact.Text(strings.TrimSpace(transition.Message))

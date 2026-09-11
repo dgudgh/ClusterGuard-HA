@@ -407,6 +407,7 @@ func TestAgentReconcileKeepsPreparedTransitionTargetOnlyAtExecuteStage(t *testin
 
 	record, err = repository.TransitionOperation(record.ResourceID, record.MetadataRevision, model.OperationTransition{
 		Stage: model.StageReport, Status: model.OperationSucceeded, Message: "operation completed before topology convergence",
+		Verification: &model.Verification{Passed: true, Checks: []model.Check{{Name: "writer_endpoint_owner", Status: model.CheckPass}}},
 	})
 	if err != nil {
 		t.Fatal(err)

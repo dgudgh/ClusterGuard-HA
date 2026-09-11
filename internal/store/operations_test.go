@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -323,13 +324,14 @@ func TestFinalizeOperationAtomicallyPersistsTerminalTimeline(t *testing.T) {
 		t.Fatalf("create operation: %v", err)
 	}
 	execution := model.Execution{OperationID: created.ResourceID, Status: model.OperationSucceeded, Message: "verified"}
+	verification := model.Verification{Passed: true, Checks: []model.Check{{Name: "writer_endpoint_owner", Status: model.CheckPass}}}
 	audits := []model.AuditEvent{
 		{OperationID: created.ResourceID, Stage: model.StageVerify, Message: "verification passed"},
 		{OperationID: created.ResourceID, Stage: model.StageReport, Message: "report generated"},
 	}
 	reports := []model.Report{{OperationID: created.ResourceID, Title: "switchover report", Status: model.OperationSucceeded, Summary: "verified"}}
 	finalized, err := repository.FinalizeOperation(created.ResourceID, created.MetadataRevision, model.OperationTransition{
-		Stage: model.StageReport, Status: model.OperationSucceeded, Execution: &execution, Message: "verified",
+		Stage: model.StageReport, Status: model.OperationSucceeded, Execution: &execution, Verification: &verification, Message: "verified",
 	}, audits, reports)
 	if err != nil {
 		t.Fatalf("finalize operation: %v", err)
@@ -386,11 +388,15 @@ func TestFinalizeOperationPublishesNothingWhenSnapshotPersistenceFails(t *testin
 		t.Fatalf("create operation: %v", err)
 	}
 	repository.path = t.TempDir()
+	verification := model.Verification{Passed: true, Checks: []model.Check{{Name: "writer_endpoint_owner", Status: model.CheckPass}}}
 	_, err = repository.FinalizeOperation(created.ResourceID, created.MetadataRevision, model.OperationTransition{
-		Stage: model.StageReport, Status: model.OperationSucceeded, Message: "must not publish",
+		Stage: model.StageReport, Status: model.OperationSucceeded, Verification: &verification, Message: "must not publish",
 	}, []model.AuditEvent{{OperationID: created.ResourceID, Stage: model.StageReport}}, []model.Report{{OperationID: created.ResourceID, Title: "report", Status: model.OperationSucceeded}})
 	if err == nil {
 		t.Fatal("atomic finalization ignored persistence failure")
+	}
+	if errors.Is(err, ErrValidation) {
+		t.Fatalf("fixture failed validation instead of snapshot persistence: %v", err)
 	}
 	persisted, found := repository.Operation(created.ResourceID)
 	if !found || persisted.Status == model.OperationSucceeded || len(repository.Audits()) != 0 || len(repository.Reports()) != 0 {
@@ -405,15 +411,16 @@ func TestOperationTimelineReadsOperationAuditsAndReportsTogether(t *testing.T) {
 		t.Fatalf("create operation: %v", err)
 	}
 	otherOperationID := model.NewResourceID()
+	verification := model.Verification{Passed: true, Checks: []model.Check{{Name: "writer_endpoint_owner", Status: model.CheckPass}}}
 	if _, err := repository.FinalizeOperation(created.ResourceID, created.MetadataRevision, model.OperationTransition{
-		Stage: model.StageReport, Status: model.OperationSucceeded, Message: "verified",
+		Stage: model.StageReport, Status: model.OperationSucceeded, Verification: &verification, Message: "verified",
 	}, []model.AuditEvent{
 		{OperationID: otherOperationID, Stage: model.StageReport, Message: "other"},
 	}, nil); err == nil {
 		t.Fatal("cross-operation audit was accepted")
 	}
 	if _, err := repository.FinalizeOperation(created.ResourceID, created.MetadataRevision, model.OperationTransition{
-		Stage: model.StageReport, Status: model.OperationSucceeded, Message: "verified",
+		Stage: model.StageReport, Status: model.OperationSucceeded, Verification: &verification, Message: "verified",
 	}, []model.AuditEvent{{OperationID: created.ResourceID, Stage: model.StageReport, Message: "report generated"}},
 		[]model.Report{{OperationID: created.ResourceID, Title: "report", Status: model.OperationSucceeded, Summary: "verified"}}); err != nil {
 		t.Fatalf("finalize operation: %v", err)
@@ -421,5 +428,98 @@ func TestOperationTimelineReadsOperationAuditsAndReportsTogether(t *testing.T) {
 	timeline, found := repository.OperationTimeline(created.ResourceID)
 	if !found || timeline.Operation.Status != model.OperationSucceeded || len(timeline.Audits) != 1 || len(timeline.Reports) != 1 {
 		t.Fatalf("timeline=%+v found=%t", timeline, found)
+	}
+}
+
+func TestSuccessfulOperationRequiresConsistentVerificationAtomically(t *testing.T) {
+	for _, status := range []model.OperationStatus{model.OperationRunning, model.OperationIndeterminate} {
+		for _, finalize := range []bool{false, true} {
+			for _, test := range []struct {
+				name         string
+				verification *model.Verification
+				want         bool
+			}{
+				{"missing verification", nil, false},
+				{"empty evidence", &model.Verification{Passed: true}, false},
+				{"failed evidence", &model.Verification{Passed: true, Checks: []model.Check{{Status: model.CheckFail}}}, false},
+				{"unknown evidence", &model.Verification{Passed: true, Checks: []model.Check{{Status: "unknown"}}}, false},
+				{"explicit rejection", &model.Verification{Checks: []model.Check{{Status: model.CheckPass}}}, false},
+				{"foreign evidence", &model.Verification{OperationID: model.NewResourceID(), Passed: true, Checks: []model.Check{{Status: model.CheckPass}}}, false},
+				{"pass", &model.Verification{Passed: true, Checks: []model.Check{{Status: model.CheckPass}}}, true},
+				{"warning", &model.Verification{Passed: true, Checks: []model.Check{{Status: model.CheckPass}, {Status: model.CheckWarn}}}, true},
+			} {
+				t.Run(fmt.Sprintf("%s/finalize=%t/%s", status, finalize, test.name), func(t *testing.T) {
+					repository := NewMemory()
+					record, _, err := repository.CreateOperation(operationFixture())
+					if err != nil {
+						t.Fatal(err)
+					}
+					record, err = repository.TransitionOperation(record.ResourceID, record.MetadataRevision, model.OperationTransition{Stage: model.StageVerify, Status: status})
+					if err != nil {
+						t.Fatal(err)
+					}
+					before, err := repository.ReplicatedState()
+					if err != nil {
+						t.Fatal(err)
+					}
+					transition := model.OperationTransition{Stage: model.StageReport, Status: model.OperationSucceeded, Verification: test.verification}
+					if finalize {
+						_, err = repository.FinalizeOperation(record.ResourceID, record.MetadataRevision, transition,
+							[]model.AuditEvent{{OperationID: record.ResourceID, Stage: model.StageReport}},
+							[]model.Report{{OperationID: record.ResourceID, Title: "verified", Status: model.OperationSucceeded}})
+					} else {
+						_, err = repository.TransitionOperation(record.ResourceID, record.MetadataRevision, transition)
+					}
+					if (err == nil) != test.want {
+						t.Fatalf("success=%t err=%v", test.want, err)
+					}
+					after, snapshotErr := repository.ReplicatedState()
+					if snapshotErr != nil {
+						t.Fatal(snapshotErr)
+					}
+					if !test.want && !reflect.DeepEqual(before, after) {
+						t.Fatal("rejected verification changed snapshot, audit, report or revision")
+					}
+					if test.want {
+						got, _ := repository.Operation(record.ResourceID)
+						if got.Status != model.OperationSucceeded || !got.Verification.Successful() || got.Verification.OperationID != record.ResourceID {
+							t.Fatalf("inconsistent persisted success: %+v", got)
+						}
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestLegacyVerificationSnapshotPreservesEvidence(t *testing.T) {
+	repository := NewMemory()
+	record, _, err := repository.CreateOperation(operationFixture())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Model the on-disk result of an older writer without passing the new write guard.
+	record.Status = model.OperationSucceeded
+	record.Verification = model.Verification{OperationID: record.ResourceID, Passed: true, Checks: []model.Check{{Name: "writer_unique", Status: model.CheckFail}}}
+	repository.snapshot.Operations[record.ResourceID] = record
+	contents, err := repository.ReplicatedState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "metadata.json")
+	restored, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restored.RestoreReplicatedState(contents); err != nil {
+		t.Fatalf("legacy snapshot rejected: %v", err)
+	}
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, found := reopened.Operation(record.ResourceID)
+	if !found || !reflect.DeepEqual(got, record) || got.Verification.Successful() {
+		t.Fatalf("legacy evidence rewritten or trusted: %+v", got)
 	}
 }

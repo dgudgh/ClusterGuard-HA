@@ -37,7 +37,7 @@ func newDurableAdapter() *durableAdapter {
 }
 
 func (candidate *durableAdapter) Capabilities(context.Context) adapter.Capabilities {
-	return adapter.Capabilities{Engine: model.EngineMySQL, Features: map[adapter.Capability]adapter.CapabilityState{
+	return adapter.Capabilities{Engine: candidate.Engine(), Features: map[adapter.Capability]adapter.CapabilityState{
 		adapter.CapabilityPrecheck: {Available: true},
 		adapter.CapabilityPlan:     {Available: true},
 		adapter.CapabilityExecute:  {Available: true, Mutating: true},

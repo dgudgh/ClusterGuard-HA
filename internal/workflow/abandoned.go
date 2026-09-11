@@ -99,7 +99,7 @@ func abandonedOperationOutcome(record model.OperationRecord) (model.OperationSta
 		return model.OperationFailed, "abandoned_pre_commit",
 			"operation executor stopped before adapter execution; no database mutation was started", false, true
 	}
-	if record.Verification.Passed {
+	if record.Verification.Successful() && record.Verification.OperationID == record.ResourceID {
 		return model.OperationSucceeded, "", "persisted verification proves the abandoned operation completed successfully", true, true
 	}
 	if record.FailureClass == "promoted_unverified" {

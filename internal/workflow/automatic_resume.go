@@ -217,9 +217,9 @@ func (service *Service) resumeIndeterminateAutomatic(ctx context.Context, record
 	if leaseErr := lockLeaseFailure(leaseCtx); leaseErr != nil {
 		verifyErr = errors.Join(verifyErr, leaseErr)
 	}
-	success := verifyErr == nil && verification.Passed
+	success := verifyErr == nil && verification.Successful()
 	cause := errors.Join(executeErr, verifyErr)
-	if !verification.Passed && cause == nil {
+	if !verification.Successful() && cause == nil {
 		cause = errors.New("post-commit verification found failed checks")
 	}
 	return service.finalizeAutomaticResume(record, execution, verification, success, cause)

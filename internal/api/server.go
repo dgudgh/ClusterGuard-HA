@@ -159,7 +159,7 @@ func writeJSON(writer http.ResponseWriter, status int, value interface{}) {
 	}
 	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 	writer.WriteHeader(status)
-	_ = json.NewEncoder(writer).Encode(value)
+	_ = json.NewEncoder(writer).Encode(presentOperationResponse(value))
 }
 
 func writeError(writer http.ResponseWriter, status int, message string) {
@@ -167,7 +167,7 @@ func writeError(writer http.ResponseWriter, status int, message string) {
 }
 
 func writeDiagnosticJSON(writer http.ResponseWriter, status int, value interface{}) {
-	data, err := json.Marshal(value)
+	data, err := json.Marshal(presentOperationResponse(value))
 	if err == nil {
 		data, err = redact.JSON(data)
 	}

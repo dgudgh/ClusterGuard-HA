@@ -106,6 +106,20 @@ type Verification struct {
 	ObservedAt  time.Time  `json:"observed_at"`
 }
 
+// Successful requires an explicit verdict backed by nonempty, understood checks.
+// Warnings remain advisory; missing evidence cannot establish success.
+func (verification Verification) Successful() bool {
+	if !verification.Passed || len(verification.Checks) == 0 {
+		return false
+	}
+	for _, check := range verification.Checks {
+		if check.Status != CheckPass && check.Status != CheckWarn {
+			return false
+		}
+	}
+	return true
+}
+
 type AuditEvent struct {
 	ResourceMeta
 	OperationID ResourceID    `json:"operation_id"`

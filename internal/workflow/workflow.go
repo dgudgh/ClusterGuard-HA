@@ -474,14 +474,14 @@ func (service *Service) executeLegacy(ctx context.Context, request adapter.Opera
 	if err := service.audit(operation, model.StageExecute, "adapter execution completed"); err != nil {
 		committedJournalErr = firstJournalError(committedJournalErr, err)
 	}
-	verification, err := candidate.Verify(leaseCtx, request)
+	verification, err := verifyOperation(leaseCtx, candidate, request)
 	if leaseErr := lockLeaseFailure(leaseCtx); leaseErr != nil {
 		execution.Status = model.OperationIndeterminate
 		execution.Message = "operation lock lease was lost during verification; committed state requires review"
 		cause := leaseErr
 		if err != nil {
 			cause = errors.Join(leaseErr, err)
-		} else if !verification.Passed {
+		} else if !verification.Successful() {
 			cause = errors.Join(leaseErr, errors.New("post-commit verification did not pass"))
 		}
 		if auditErr := service.audit(operation, model.StageVerify, execution.Message); auditErr != nil {
@@ -495,7 +495,7 @@ func (service *Service) executeLegacy(ctx context.Context, request adapter.Opera
 		}
 		return execution, cause
 	}
-	if err != nil || !verification.Passed {
+	if err != nil || !verification.Successful() {
 		verificationErr := err
 		if err != nil {
 			execution.Message = err.Error()

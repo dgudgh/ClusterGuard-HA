@@ -31,9 +31,13 @@ func (service *Service) Verify(ctx context.Context, request adapter.OperationReq
 	// invalidate the original observation token and incorrectly turn a proven
 	// success into a verification failure. Only indeterminate operations need a
 	// fresh probe; completed operations return their persisted evidence.
-	if record.Status == model.OperationSucceeded && record.Verification.Passed &&
-		record.Verification.OperationID == record.ResourceID {
-		return record.Verification, nil
+	if record.Status == model.OperationSucceeded {
+		verification := record.Verification
+		verification.Passed = verification.Successful() && verification.OperationID == record.ResourceID
+		if !verification.Passed {
+			return verification, fmt.Errorf("persisted verification is incomplete or inconsistent; operation requires review")
+		}
+		return verification, nil
 	}
 	candidate, found := service.resolveAdapter(record.Operation)
 	if !found || !candidate.Capabilities(ctx).Supports(adapter.CapabilityVerify) {
@@ -51,18 +55,18 @@ func (service *Service) Verify(ctx context.Context, request adapter.OperationReq
 	if err != nil {
 		return model.Verification{}, err
 	}
-	verification, err := candidate.Verify(ctx, request)
+	verification, err := verifyOperation(ctx, candidate, request)
 	if err != nil {
 		return verification, err
 	}
 	message := "manual operation verification failed"
-	if verification.Passed {
+	if verification.Successful() {
 		message = "manual operation verification passed"
 	}
 	if record.Status == model.OperationIndeterminate {
 		status := model.OperationIndeterminate
 		failureClass := record.FailureClass
-		if verification.Passed {
+		if verification.Successful() {
 			status = model.OperationSucceeded
 			failureClass = ""
 		}

@@ -317,6 +317,48 @@ func TestFileRepositoryPersistsReconciledIdentity(t *testing.T) {
 	}
 }
 
+func TestIPv6EndpointCollisionAndAliasCompatibility(t *testing.T) {
+	for _, address := range []string{"2001:db8::1", "[2001:db8::1]", "2001:0db8:0:0:0:0:0:1"} {
+		t.Run(address, func(t *testing.T) {
+			repository := NewMemory()
+			_, _, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "ipv6"}, []model.Endpoint{
+				{Kind: model.EndpointDatabase, IPAddress: "2001:db8::1", Port: 3306, Active: true},
+				{Kind: model.EndpointDatabase, IPAddress: address, Port: 3306, Active: true},
+			})
+			if !errors.Is(err, ErrValidation) || !strings.Contains(err.Error(), "duplicate active endpoint address") {
+				t.Fatalf("duplicate IPv6 endpoint accepted or rejected for wrong reason: %v", err)
+			}
+		})
+	}
+	path := filepath.Join(t.TempDir(), "metadata.json")
+	repository, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance := mysqlInstance(model.NewResourceID(), "mysql-v6", "2001:0db8:0:0:0:0:0:1", 3306)
+	instance.Aliases = []string{"2001:db8::1:3306"}
+	first, err := repository.ReconcileInstance(instance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance.IPAddress = "2001:db8::2"
+	second, err := repository.ReconcileInstance(instance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Instance.ResourceID != second.Instance.ResourceID {
+		t.Fatal("IPv6 update replaced native identity")
+	}
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := reopened.Instances(instance.ClusterID)
+	if len(got) != 1 || !contains(got[0].Aliases, "2001:db8::1:3306") || !contains(got[0].Aliases, "[2001:db8::1]:3306") {
+		t.Fatalf("legacy alias or canonical previous endpoint lost: %+v", got)
+	}
+}
+
 func TestReconcileRejectsEndpointOwnedByDifferentIdentity(t *testing.T) {
 	repository := NewMemory()
 	clusterID := model.NewResourceID()

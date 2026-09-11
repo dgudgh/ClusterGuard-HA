@@ -3,6 +3,9 @@ package model
 import (
 	"crypto/rand"
 	"fmt"
+	"net"
+	"net/netip"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -297,11 +300,22 @@ type HAEndpoint struct {
 
 func EndpointAddress(hostname string, ipAddress string, port int) []string {
 	values := make([]string, 0, 2)
-	if hostname = strings.TrimSpace(hostname); hostname != "" && port > 0 {
-		values = append(values, fmt.Sprintf("%s:%d", hostname, port))
+	if port <= 0 {
+		return values
 	}
-	if ipAddress = strings.TrimSpace(ipAddress); ipAddress != "" && port > 0 {
-		values = append(values, fmt.Sprintf("%s:%d", ipAddress, port))
+	for _, host := range []string{hostname, ipAddress} {
+		host = strings.TrimSpace(host)
+		if host == "" {
+			continue
+		}
+		literal := host
+		if strings.HasPrefix(literal, "[") && strings.HasSuffix(literal, "]") {
+			literal = literal[1 : len(literal)-1]
+		}
+		if address, err := netip.ParseAddr(literal); err == nil {
+			host = address.String()
+		}
+		values = append(values, net.JoinHostPort(host, strconv.Itoa(port)))
 	}
 	return values
 }
