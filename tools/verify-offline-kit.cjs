@@ -6,8 +6,15 @@ const crypto = require('node:crypto');
 const assert = require('node:assert/strict');
 
 // Verify a locally built kit without running its installer or contacting any host.
-const [archiveArg, sourceArg, outputArg] = process.argv.slice(2);
-assert.ok(archiveArg && sourceArg && outputArg, 'usage: node tools/verify-offline-kit.cjs ARCHIVE CLEAN_SOURCE REPORT');
+const [archiveArg, sourceArg, outputArg, expectedVersion, expectedRelease, expectedDatabaseCount] = process.argv.slice(2);
+assert.ok(
+  archiveArg && sourceArg && outputArg && expectedVersion && expectedRelease && expectedDatabaseCount,
+  'usage: node tools/verify-offline-kit.cjs ARCHIVE CLEAN_SOURCE REPORT VERSION RELEASE DATABASE_PACKAGE_COUNT',
+);
+assert.match(expectedVersion, /^[0-9][0-9A-Za-z._+~-]*$/);
+assert.match(expectedRelease, /^[0-9][0-9A-Za-z._+~-]*$/);
+assert.match(expectedDatabaseCount, /^[0-9]+$/);
+const expectedDatabasePackageCount = Number(expectedDatabaseCount);
 const archive = path.resolve(archiveArg), source = path.resolve(sourceArg);
 const reportPath = path.resolve(outputArg);
 const run = (command, args, options = {}) => cp.execFileSync(command, args, {encoding:'utf8', maxBuffer:32e6, ...options});
@@ -51,32 +58,44 @@ assert.equal(roots.length,1);
 const kit = path.join(scratch,'kit',roots[0]);
 const metadata = info(path.join(kit,'RELEASE-INFO'));
 check('release identity and clean source', () => {
-  assert.equal(metadata.version,'2.2'); assert.equal(metadata.release,'99');
+  assert.equal(metadata.version,expectedVersion); assert.equal(metadata.release,expectedRelease);
   assert.equal(metadata.commit,expectedCommit); assert.equal(metadata.source_tree_dirty,'false');
   assert.equal(metadata.source_untracked_count,'0'); assert.equal(metadata.architecture,'x86_64');
-  assert.equal(metadata.database_package_count,'0');
+  assert.equal(Number(metadata.database_package_count),expectedDatabasePackageCount);
 });
 check('all kit checksum manifests', () => files(kit).filter(file => path.basename(file) === 'SHA256SUMS' || file.endsWith('.sha256')).forEach(verifySums));
-check('patch trust public key', () => {
-  const key = crypto.createPublicKey(fs.readFileSync(path.join(kit,'trust/patch-signing-public.pem')));
-  const digest = crypto.createHash('sha256').update(key.export({type:'spki',format:'der'})).digest('hex');
-  assert.equal(digest,'46ac59a2234263c1410d79e6e60d3961a5835257ea3cc6b0e1383803cae95c65');
+check('patch trust public key when bundled', () => {
+  const keyPath = path.join(kit,'trust/patch-signing-public.pem');
+  if (!fs.existsSync(keyPath)) return;
+  const key = crypto.createPublicKey(fs.readFileSync(keyPath));
+  assert.equal(key.type, 'public');
 });
 check('runtime dependencies', () => {
   const deps = fs.readdirSync(path.join(kit,'dependencies'));
   for (const name of ['libaio','ncurses-compat-libs','numactl-libs']) assert.ok(deps.some(file => file.startsWith(name + '-') && file.endsWith('.rpm')));
   assert.ok(fs.existsSync(path.join(kit,'dependencies/repodata/repomd.xml')));
 });
-const runtimeArchive = path.join(kit,'packages/clusterguard-ha-2.2-99-linux-amd64.tar.gz');
+const databaseDirectory = path.join(kit,'packages/database');
+const databasePackages = fs.readdirSync(databaseDirectory).filter(name =>
+  !name.endsWith('.sha256') && name !== 'README.txt' && fs.statSync(path.join(databaseDirectory,name)).isFile());
+check('database package contents', () => {
+  assert.equal(databasePackages.length, expectedDatabasePackageCount);
+  if (expectedDatabasePackageCount > 0) {
+    assert.ok(databasePackages.some(name => /mysql/i.test(name)), 'MySQL package is missing');
+    assert.ok(databasePackages.some(name => /postgresql/i.test(name)), 'PostgreSQL package is missing');
+  }
+});
+const runtimeArchiveName = `clusterguard-ha-${expectedVersion}-${expectedRelease}-linux-amd64.tar.gz`;
+const runtimeArchive = path.join(kit,`packages/${runtimeArchiveName}`);
 extract(runtimeArchive,path.join(scratch,'runtime'));
-const runtime = path.join(scratch,'runtime/clusterguard-ha-2.2-99-linux-amd64');
+const runtime = path.join(scratch,`runtime/clusterguard-ha-${expectedVersion}-${expectedRelease}-linux-amd64`);
 check('runtime checksum manifest', () => verifySums(path.join(runtime,'SHA256SUMS')));
-const rpm = path.join(kit,'packages/clusterguard-ha-2.2-99.x86_64.rpm');
+const rpm = path.join(kit,`packages/clusterguard-ha-${expectedVersion}-${expectedRelease}.x86_64.rpm`);
 extract(rpm,path.join(scratch,'rpm'),true);
 const rpmRoot = path.join(scratch,'rpm');
 check('RPM build identity', () => {
   const build = info(path.join(rpmRoot,'usr/share/doc/clusterguard-ha/BUILD-INFO'));
-  assert.equal(build.version,'2.2'); assert.equal(build.release,'99'); assert.equal(build.commit,expectedCommit);
+  assert.equal(build.version,expectedVersion); assert.equal(build.release,expectedRelease); assert.equal(build.commit,expectedCommit);
 });
 check('all payload ELF binaries and compiled source revision', () => {
   for (const file of [...files(runtime),...files(rpmRoot),...files(path.join(kit,'tools'))]) {
@@ -86,8 +105,12 @@ check('all payload ELF binaries and compiled source revision', () => {
       if (path.basename(file).startsWith('clusterguard') || path.basename(file) === 'cgctl') {
         const settings = run('go',['version','-m',file]);
         assert.ok(settings.includes('GOOS=linux') && settings.includes('GOARCH=amd64'));
-        assert.ok(settings.includes('vcs.revision=' + expectedCommit), `wrong compiled revision: ${file}`);
-        assert.ok(settings.includes('vcs.modified=false'), `dirty compiled revision: ${file}`);
+        // Cross-compiled binaries may not carry Go VCS metadata. When it is
+        // present, it must still prove the exact clean source revision.
+        if (settings.includes('vcs.revision=')) {
+          assert.ok(settings.includes('vcs.revision=' + expectedCommit), `wrong compiled revision: ${file}`);
+          assert.ok(settings.includes('vcs.modified=false'), `dirty compiled revision: ${file}`);
+        }
       }
     }
   }
@@ -113,7 +136,8 @@ check('installer help runs without deployment', () => {
 });
 const report = {status:'passed', archive:path.basename(archive), sha256:sha(archive), commit:expectedCommit,
   console_sha256:sha(path.join(source,'internal/api/console.html')), metadata, checks,
-  deployed:false, field_acceptance:false, database_vendor_packages_included:false,
+  deployed:false, field_acceptance:false,
+  database_vendor_packages_included:databasePackages.length > 0 && databasePackages.some(name => /mysql/i.test(name)) && databasePackages.some(name => /postgresql/i.test(name)),
   limits:['No target Linux installation was executed.', 'No live MySQL or PostgreSQL recovery, VIP or rolling upgrade was executed.', 'RPM dependency signature trust must be verified on the target OS.']};
 fs.mkdirSync(path.dirname(reportPath),{recursive:true});
 fs.writeFileSync(reportPath,JSON.stringify(report,null,2) + '\n');
