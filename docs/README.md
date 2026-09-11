@@ -6,9 +6,9 @@ ClusterGuard HA 产品文档同时维护英文和简体中文版本。安装、�
 
 ## Offline HTML / 离线 HTML
 
-Open [`html/index.html`](html/index.html) directly in a browser. The generated documentation center contains 41 bilingual pages, local search, print styles, responsive navigation, and bundled screenshots; it does not require a web server or external CDN.
+Open [`html/index.html`](html/index.html) directly in a browser. The generated documentation center contains 65 HTML pages across both languages, local search, print styles, responsive navigation, and bundled screenshots; it does not require a web server or external CDN.
 
-直接使用浏览器打开 [`html/index.html`](html/index.html)。生成的文档中心包含 41 个中英文页面、本地搜索、打印样式、响应式目录和随包截图，不依赖 Web 服务或外部 CDN。
+直接使用浏览器打开 [`html/index.html`](html/index.html)。当前跟踪的文档中心包含 65 个 HTML 页面（含中英文与语言入口）、本地搜索、打印样式、响应式目录和随包截图，不依赖 Web 服务或外部 CDN。
 
 Rebuild after changing Markdown:
 
@@ -64,6 +64,8 @@ Qualification reports record a specific laboratory build and date. They do not r
 验收报告只代表特定实验室版本和日期下的结果。数据库版本、操作系统、存储、网络、VIP 网卡或隔离策略变化后，必须重新执行现场验收。
 
 ## Internal Engineering Records / 内部工程记录
+
+Source and test organization / 源码与测试维护入口：[文件与测试导览](zh-CN/source-layout-and-testing.md) · [旧版对比与清理记录](zh-CN/dead-code-cleanup-2026-09-11.md)。These development records distinguish local checks, browser fixtures, historical tools, and field validation; they are not a production acceptance claim.
 
 `docs/superpowers/` contains design specifications and implementation plans for traceability. Each English record has a Simplified Chinese counterpart under `docs/superpowers/zh-CN/`. These records are historical engineering evidence, not current production runbooks.
 

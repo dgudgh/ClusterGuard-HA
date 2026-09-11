@@ -302,7 +302,7 @@ func normalizeSnapshot(value snapshot) (snapshot, error) {
 			normalized.Reports[index].Status = model.OperationIndeterminate
 			continue
 		}
-		if !terminalReportStatus(normalized.Reports[index].Status) {
+		if !terminalOperationStatus(normalized.Reports[index].Status) {
 			return snapshot{}, fmt.Errorf("report status is not terminal")
 		}
 	}

@@ -522,7 +522,7 @@ func normalizeFinalAudit(event model.AuditEvent, operationID model.ResourceID, n
 
 func upsertFinalReport(reports []model.Report, report model.Report, operationID model.ResourceID, now time.Time) ([]model.Report, error) {
 	report = redactReport(report)
-	if !terminalReportStatus(report.Status) {
+	if !terminalOperationStatus(report.Status) {
 		return nil, validationError("report status must be terminal")
 	}
 	if report.OperationID != "" && report.OperationID != operationID {

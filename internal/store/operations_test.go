@@ -24,6 +24,36 @@ func operationFixture() model.OperationRecord {
 	}
 }
 
+func TestTerminalOperationStatusContract(t *testing.T) {
+	for _, test := range []struct {
+		status   model.OperationStatus
+		terminal bool
+	}{
+		{model.OperationPlanned, false},
+		{model.OperationRunning, false},
+		{model.OperationBlocked, true},
+		{model.OperationSucceeded, true},
+		{model.OperationFailed, true},
+		{model.OperationIndeterminate, true},
+		{model.OperationUnsupported, true},
+		{"", false},
+		{"future-status", false},
+	} {
+		t.Run(string(test.status), func(t *testing.T) {
+			if got := terminalOperationStatus(test.status); got != test.terminal {
+				t.Fatalf("terminal(%q)=%t want %t", test.status, got, test.terminal)
+			}
+			report := model.Report{Status: test.status, Title: "status contract", Summary: "retained evidence"}
+			if err := NewMemory().RecordReport(report); (err == nil) != test.terminal {
+				t.Fatalf("report status %q: %v", test.status, err)
+			}
+			if _, err := upsertFinalReport(nil, report, model.NewResourceID(), time.Now()); (err == nil) != test.terminal {
+				t.Fatalf("atomic report status %q: %v", test.status, err)
+			}
+		})
+	}
+}
+
 func TestOperationCreateIsIdempotentAndDurable(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "metadata.json")
 	repository, err := Open(path)

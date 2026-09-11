@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestDiagnosticJSONPreservesProtocolAndRemovesSecrets(t *testing.T) {
@@ -65,5 +66,34 @@ func TestRedactBeforeTruncating(t *testing.T) {
 	}
 	if got := Text("opaque a%26b and a&b", "a&b"); strings.Contains(got, "a%26b") || strings.Contains(got, "a&b") {
 		t.Fatal(got)
+	}
+}
+
+func TestSQLPasswordsAndStoredKeyMaterialAreRedacted(t *testing.T) {
+	for _, input := range []string{
+		"ALTER ROLE replicator PASSWORD 'private-value';",
+		"CREATE USER repl IDENTIFIED BY 'private-value';",
+		"CREATE USER repl IDENTIFIED WITH caching_sha2_password BY 'private-value';",
+		"ALTER USER repl IDENTIFIED WITH mysql_native_password AS 'private-value';",
+		"ALTER ROLE repl PASSWORD 'private-''value';",
+		`ALTER ROLE repl PASSWORD "private-value";`,
+		"SCRAM-SHA-256$4096:c2FsdA==$c3RvcmVk:a2V5",
+		"-----BEGIN PRIVATE KEY-----\nprivate-value\n-----END PRIVATE KEY-----",
+	} {
+		got := Text(input)
+		if strings.Contains(got, "private-") || strings.Contains(got, "c3RvcmVk") || !strings.Contains(got, Replacement) {
+			t.Fatalf("secret material survived redaction: %s", got)
+		}
+	}
+}
+
+func TestBoundedPreservesUTF8AndRedaction(t *testing.T) {
+	for _, input := range []string{"abc", "\u4e3b\u5e93\u6821\u9a8c\u5931\u8d25", "A\u00e9\U0001f512\u4e2dZ", "password=private \u5931\u8d25", "bad\xff\u4e2d"} {
+		for limit := 1; limit <= len(input)+1; limit++ {
+			got := Bounded(input, limit)
+			if len(got) > limit || !utf8.ValidString(got) || strings.Contains(got, "private") {
+				t.Errorf("input=%q limit=%d output=%q", input, limit, got)
+			}
+		}
 	}
 }

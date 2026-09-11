@@ -271,3 +271,77 @@ func TestDisasterRejectsExpiredExecutorAndRedactsEvents(t *testing.T) {
 		t.Fatal("expired executor accepted")
 	}
 }
+
+func TestRecoveryAbandonedExecutorRemainsFenced(t *testing.T) {
+	r, task := disasterFixture(t, model.EnginePostgreSQL)
+	now := r.now()
+	if err := r.BlockAbandonedRecoveries(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	stored, _ := r.RecoveryTask(task.ResourceID)
+	if stored.Stage != model.RecoveryFencing {
+		t.Fatal("live executor was blocked")
+	}
+	r.now = func() time.Time { return now.Add(time.Hour + 14*time.Second) }
+	if err := r.BlockAbandonedRecoveries(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	stored, _ = r.RecoveryTask(task.ResourceID)
+	if stored.Stage != model.RecoveryFencing {
+		t.Fatal("authorization drain interval was skipped")
+	}
+	r.now = func() time.Time { return now.Add(time.Hour + 16*time.Second) }
+	if err := r.BlockAbandonedRecoveries(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	stored, _ = r.RecoveryTask(task.ResourceID)
+	cluster, _ := r.Cluster(task.ClusterID)
+	if stored.Stage != model.RecoveryBlocked || !cluster.RecoveryFreeze || !cluster.Recovery.IncidentActive {
+		t.Fatal("expired task did not retain recovery protection")
+	}
+	if _, _, ok := r.RecoveryAuthorization(task.ClusterID, task.Members[0].ResourceID, r.now()); ok {
+		t.Fatal("abandoned task issued recovery authorization")
+	}
+	for _, member := range r.Instances(task.ClusterID) {
+		if !member.Maintenance {
+			t.Fatal("abandoned recovery cleared maintenance")
+		}
+	}
+}
+
+func TestRecoveryAuthorizationRequiresSelectedInventoryAndLiveLease(t *testing.T) {
+	for _, engine := range []model.Engine{model.EngineMySQL, model.EnginePostgreSQL} {
+		t.Run(string(engine), func(t *testing.T) {
+			r, task := disasterFixture(t, engine)
+			if permit, _, ok := r.RecoveryAuthorization(task.ClusterID, task.Members[0].ResourceID, r.now()); ok && (engine != model.EngineMySQL || permit.Stage != model.RecoveryFencing || permit.PrimaryID != "") {
+				t.Fatal("pre-selection writer authorization")
+			}
+			task = advanceDisasterFixture(t, r, task)
+			permit, expiry, ok := r.RecoveryAuthorization(task.ClusterID, task.PrimaryID, r.now())
+			if !ok || permit.ResourceID != task.ResourceID || permit.LeaseID != task.LeaseID || !expiry.After(r.now()) {
+				t.Fatal("selected recovery primary not authorized")
+			}
+			if _, _, ok = r.RecoveryAuthorization(task.ClusterID, task.Members[1].ResourceID, r.now()); ok {
+				t.Fatal("replica received a primary permit")
+			}
+			if _, _, ok = r.RecoveryAuthorization(task.ClusterID, task.PrimaryID, expiry); ok {
+				t.Fatal("expired operation lease authorized a primary")
+			}
+			r.mu.Lock()
+			r.snapshot.InventoryGenerations[task.ClusterID]++
+			r.mu.Unlock()
+			if _, _, ok = r.RecoveryAuthorization(task.ClusterID, task.PrimaryID, r.now()); ok {
+				t.Fatal("changed inventory still authorized")
+			}
+			r.mu.Lock()
+			r.snapshot.InventoryGenerations[task.ClusterID]--
+			r.mu.Unlock()
+			if _, err := r.AdvanceRecovery(context.Background(), task, model.RecoveryEvent{Stage: model.RecoveryBlocked, Message: "blocked fixture"}); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, ok = r.RecoveryAuthorization(task.ClusterID, task.PrimaryID, r.now().Add(time.Second)); ok {
+				t.Fatal("blocked task still authorized")
+			}
+		})
+	}
+}

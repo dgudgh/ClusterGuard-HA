@@ -60,6 +60,37 @@ func progressRecordFixture() model.OperationRecord {
 	}
 }
 
+func TestDurableTerminalStatusContract(t *testing.T) {
+	for _, test := range []struct {
+		status   model.OperationStatus
+		terminal bool
+	}{
+		{model.OperationPlanned, false},
+		{model.OperationRunning, false},
+		{model.OperationBlocked, true},
+		{model.OperationSucceeded, true},
+		{model.OperationFailed, true},
+		{model.OperationIndeterminate, true},
+		{model.OperationUnsupported, true},
+		{"", false},
+		{"future-status", false},
+	} {
+		t.Run(string(test.status), func(t *testing.T) {
+			if got := durableTerminalStatus(test.status); got != test.terminal {
+				t.Fatalf("terminal(%q)=%t want %t", test.status, got, test.terminal)
+			}
+			if test.terminal {
+				operations := &progressOperationStore{record: progressRecordFixture()}
+				operations.record.Status = test.status
+				progress := repositoryProgress{operations: operations, operationID: operations.record.ResourceID, now: time.Now}
+				if err := progress.CompleteStep(context.Background(), "verify", "late completion"); err == nil || operations.transitions != 0 {
+					t.Fatalf("terminal progress accepted: status=%q transitions=%d err=%v", test.status, operations.transitions, err)
+				}
+			}
+		})
+	}
+}
+
 func commitProgressTransition(store *progressOperationStore, revision uint64, transition model.OperationTransition) {
 	store.record.MetadataRevision = revision + 1
 	store.record.Operation.MetadataRevision = revision + 1

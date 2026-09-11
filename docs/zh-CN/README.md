@@ -58,6 +58,8 @@
 
 ## 验收证据
 
+开发与维护先看 [源码、文件与测试导览](source-layout-and-testing.md) 和 [旧版对比及清理记录](dead-code-cleanup-2026-09-11.md)。测试归并不删除原有回归；本地、浏览器夹具和真实现场结果分别记录。
+
 - [MySQL 旧主恢复专项验收](mysql-former-primary-recovery-qualification-2026-08-09.md)
 - [生产故障与并发测试报告](production-chaos-test-report-2026-08-09.md)
 - [计划关机和自动恢复报告](power-lifecycle-test-report.md)

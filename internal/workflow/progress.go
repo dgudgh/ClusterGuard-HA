@@ -77,7 +77,7 @@ func (progress repositoryProgress) CompleteStep(ctx context.Context, step string
 		if completed {
 			return nil
 		}
-		if terminalProgressStatus(record.Status) {
+		if durableTerminalStatus(record.Status) {
 			if lastErr != nil {
 				return progress.commitFailure(step, "terminal_after_retry", lastErr)
 			}
@@ -106,7 +106,7 @@ func (progress repositoryProgress) CompleteStep(ctx context.Context, step string
 			if _, completed = completedStepAttempt(current.Attempts, step); completed {
 				return nil
 			}
-			if terminalProgressStatus(current.Status) {
+			if durableTerminalStatus(current.Status) {
 				return progress.commitFailure(step, "terminal_after_commit_error", fmt.Errorf("%w: current_status=%s current_stage=%s current_revision=%d", lastErr, current.Status, current.Stage, current.MetadataRevision))
 			}
 		}
@@ -144,13 +144,4 @@ func completedStepAttempt(attempts []model.StepAttempt, step string) (uint64, bo
 		}
 	}
 	return maximum, false
-}
-
-func terminalProgressStatus(status model.OperationStatus) bool {
-	switch status {
-	case model.OperationBlocked, model.OperationSucceeded, model.OperationFailed, model.OperationIndeterminate, model.OperationUnsupported:
-		return true
-	default:
-		return false
-	}
 }

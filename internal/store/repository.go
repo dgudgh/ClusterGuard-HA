@@ -329,15 +329,6 @@ func preservePreviousSnapshot(path string) error {
 	return nil
 }
 
-func terminalReportStatus(status model.OperationStatus) bool {
-	switch status {
-	case model.OperationBlocked, model.OperationSucceeded, model.OperationFailed, model.OperationIndeterminate, model.OperationUnsupported:
-		return true
-	default:
-		return false
-	}
-}
-
 func cloneInstance(instance model.DatabaseInstance) model.DatabaseInstance {
 	copy := instance
 	copy.EngineIdentity = instance.EngineIdentity.Clone()
@@ -2401,7 +2392,7 @@ func (repository *Repository) RecordAudit(event model.AuditEvent) error {
 }
 
 func (repository *Repository) RecordReport(report model.Report) error {
-	if !terminalReportStatus(report.Status) {
+	if !terminalOperationStatus(report.Status) {
 		return validationError("report status must be terminal")
 	}
 	if err := validateReportText(report); err != nil {
