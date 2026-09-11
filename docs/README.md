@@ -22,6 +22,8 @@ npm run build:html
 
 ## Product Documentation / 产品文档
 
+Latest installer prerelease / 最新安装介质预发布：[2.2-101 发布说明（中文）](zh-CN/release-2.2.101.md) · [GitHub v2.2.101](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.101)。One kit contains MySQL and PostgreSQL media; final site acceptance is pending. 同一安装包包含 MySQL/PG 介质，最终版现场验收仍未完成。Updater follow-up / 升级器后续状态见 [私有执行区安全记录](zh-CN/updater-private-workspace-2026-09-11.md)。这些链接指向当前 Markdown；已发布包内文档仍保留构建时快照。
+
 | Topic / 主题 | English | 简体中文 |
 | --- | --- | --- |
 | Documentation index / 文档索引 | [English](en-US/README.md) | [中文](zh-CN/README.md) |

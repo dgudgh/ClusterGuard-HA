@@ -9,18 +9,25 @@
 
 ## 当前版本
 
+### 最新安装介质预发布
+
+[2.2-101 发布说明](release-2.2.101.md) 与 [GitHub v2.2.101](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.101)：一份 MySQL 8.0.44 / PostgreSQL 16.4 安装介质及单独 ClusterGuard RPM，固定构建提交 `78dbdbf`。安装包已核验并上传；生产 `.cgupgrade` 和最终版现场安装、升级、回退验收尚未完成。包内 `release_channel=stable` 不改变其 GitHub 预发布状态。
+
+升级器修复与剩余门槛见 [私有执行区安全记录](updater-private-workspace-2026-09-11.md)。下载摘要及最新文档补正以 2.2-101 发布说明为准。
+
+### 历史正式版本入口
+
 | 版本 | 状态 | 数据库支持边界 |
 | --- | --- | --- |
 | `2.1-45` | 正式封板 | MySQL 高可用控制平台 |
 | `2.2-39` | 正式发布 | PostgreSQL 16.4、Docker Swarm，并保留 2.1 MySQL 能力 |
 | 后续版本 | 规划 | Oracle Data Guard Broker、SQL Server Always On 独立验收 |
 
-当前正式版本下载：
+以下为本手册原有的 2.2-39 正式版下载入口，保留用于历史追溯；不代表 2.2-101 已正式验收：
 
 <https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.39>
 
-不要使用本地目录中编号高于 `2.1-45` 的历史候选包替代正式 Release。正式交付物
-必须来自 GitHub Release，并通过随包 SHA256 校验。
+候选包和预发布不能仅凭较高版本号替代正式 Release。交付物必须核对 GitHub Release 的发布状态及随包 SHA256。
 
 ## 推荐阅读顺序
 

@@ -1,5 +1,9 @@
 # 升级器私有执行区安全修复
 
+## 当前状态
+
+截至 2026-09-11，代码修复已纳入 `f76b2f4`；包含该修复的 2.2-101 安装包从干净提交 `78dbdbffc9645dd22c9867888cd11b4f2dc2bd89` 构建并发布至 GitHub。下载、摘要和验证边界统一见 [2.2-101 发布说明](release-2.2.101.md)。代码与安装包校验已完成；生产签名升级包及最终版现场升级验收仍未完成。
+
 ## 修改前证据
 
 - 实际工作树：`.worktrees/platform-auth-session`，分支 `codex/2.2-postgresql`，HEAD `19d02bcf076b6e294af0e1f30e2c34f0727e6ae4`。保留已有未提交修改，不提交无关图片删除。
@@ -25,7 +29,9 @@
 - [完成] root 入口校验：升级包必须是 root 拥有的普通文件、不可由组/其他用户写入、不可硬链接；输入目录及运行目录的所有祖先必须是 root 拥有且不可写；引导阶段只接受 root 创建的 0700 `/tmp/clusterguard-upgrade.*` 快照目录。
 - [完成] 正常/攻击路径与关联回归：`go test ./...`、`go test -race ./internal/platformupdate ./cmd/clusterguard-update-helper`、`go vet ./...`、shell 语法检查、`git diff --check` 均通过；脚本重点集成回归通过。
 - [完成] 152–154 Linux 原生 workspace 权限检查：可信 root 目录和文件检查、快照均通过；组/其他可写目录、目录符号链接、文件符号链接均被拒绝。测试未修改数据库服务或数据目录。
-- [未采集] Helper Unix socket 的 root/服务 UID 隔离测试：152–154 当前没有 `clusterguard` 服务账号、Helper systemd unit 或安装后的目标路径，无法构造真实生产 socket；不把这三台主机的 workspace 检查扩大解释为完整安装验收。
-- [待完成] 由当前安全修复提交构建 MySQL/PostgreSQL 完整介质、安装包与签名升级包，并在构建后重新做内外清单校验；未完成前不称为已发布。
+- [未采集] 最终版安装后的 Helper Unix socket root/服务 UID 隔离测试。9 月 11 日检查记录称账号/unit/目标路径不可用，与 [9 月 10 日测试记录](helper-linux-field-test-2026-09-10.md) 的已安装状态不一致；本次文档更新未重查主机，现场状态需重新确认，不能将历史 socket 通过或本次 workspace 通过写成最终版安装验收。
+- [完成] 构建并校验 2.2-101：一份同时包含 MySQL 8.0.44 与 PostgreSQL 16.4 的安装介质及单独 RPM，`verification.json` 为 `passed`；最终源码分支和 GitHub 预发布已上传，六个附件齐全。
+- [未完成] 生产签名 `.cgupgrade`：尚未确认匹配现场信任公钥的生产签名私钥，没有发布该产物。
+- [未采集] 最终版真实安装、上传验签、滚动升级、回退、Leader 接管和业务集群灾难恢复；发布报告保留 `deployed=false`、`field_acceptance=false`。
 
 本记录先于本轮业务代码编辑建立；上面的现场限制仍然有效。测试通过表示代码和隔离 fixture 达到对应断言，不等于 152–154 已完成 ClusterGuard 安装、升级、回退或灾难恢复验收。
