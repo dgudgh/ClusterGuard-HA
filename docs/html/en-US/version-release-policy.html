@@ -143,6 +143,12 @@ git diff --check
 <li>The patch contains target and rollback RPMs, and passes signature, compatibility, rolling-order, resume, and automatic-rollback tests.</li>
 </ol>
 <p>If any gate fails, only an internal candidate package can be generated, and formal tags or GitHub Releases cannot be created.</p>
+<p><code>release_channel</code> in <code>RELEASE-INFO</code> is decided automatically by the build script
+(<code>scripts/build-clusterguard-offline-kit.sh</code>) from whether the <strong>source tree is clean</strong>: clean
+writes <code>stable</code>, otherwise <code>candidate</code>. It does <strong>not</strong> mean the gates above have passed. A
+<code>release_channel=stable</code> archive can therefore still be an internal candidate package; formal
+release eligibility depends only on whether every gate in this section passes, and
+<code>release_channel</code> never substitutes for site acceptance.</p>
 <h2 id="7-release-steps">7. Release Steps<a class="heading-anchor" href="#7-release-steps" aria-label="Link to 7. Release Steps">#</a></h2>
 <p>Formal release is executed in the following order:</p>
 <ol>

@@ -22,8 +22,8 @@ RuntimeTarget and WorkloadBinding are mandatory. ClusterGuard never infers a run
 
 - Each database instance has its own one-replica StatefulSet at ordinal zero and its own PVC.
 - WorkloadBinding records StatefulSet, Pod name, immutable Pod UID, Node name, and PVC UID.
-- The writer Service is selectorless, and its EndpointSlice is labeled as managed by `clusterguard.io/ha`.
-- Each StatefulSet enables the start guard and records `clusterguard.io/mysql-role=primary|replica`.
+- The writer Service is selectorless, and its EndpointSlice is labeled as managed by `clusterguard.io/ha`, carries the `kubernetes.io/service-name=<writer Service>` label, and uses `addressType: IPv4`; the control plane rejects any other slice.
+- Each StatefulSet enables the start guard through the `clusterguard.io/fence-guard=enabled` annotation (initially with `clusterguard.io/fenced=false`) and records `clusterguard.io/mysql-role=primary|replica`. A Pod without the `fence-guard` annotation is refused at start.
 - Inside the database namespace, the Controller receives only `get` for Service/Pod/PVC, `get/update` for EndpointSlice, `get/patch` for StatefulSet, and `get/update` for the scale subresource. Its only cluster-scoped permission is `get Node`.
 - The Kubernetes API uses HTTPS with CA validation and a rotating token file or client certificate.
 - Database Pods disable automatic ServiceAccount token mounting. A short-lived token is projected only into the start-guard init container and is not visible to the MySQL container.
@@ -64,6 +64,17 @@ Enable the provider in every controller:
   "enabled": true,
   "request_timeout_seconds": 10,
   "fence_timeout_seconds": 60
+}
+```
+
+Also enable the MySQL operation and replication credentials, otherwise a switchover cannot run:
+the platform advertises MySQL mutations only when those credentials resolve.
+
+```json
+"mysql": {
+  "enabled": true,
+  "operation": { "username": "cg_operator", "password_env": "CG_MYSQL_OPERATION_PASSWORD" },
+  "replication": { "username": "cg_replication", "password_env": "CG_MYSQL_REPLICATION_PASSWORD" }
 }
 ```
 

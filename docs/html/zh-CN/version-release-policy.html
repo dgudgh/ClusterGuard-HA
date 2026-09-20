@@ -148,6 +148,10 @@ git diff --check
 <li>升级包同时包含目标与回退 RPM，签名、兼容合同、滚动顺序、断点续跑和自动回退测试通过。</li>
 </ol>
 <p>任一门禁失败时只能生成内部候选包，不能创建正式标签或 GitHub Release。</p>
+<p><code>RELEASE-INFO</code> 中的 <code>release_channel</code> 由构建脚本（<code>scripts/build-clusterguard-offline-kit.sh</code>）
+按<strong>源码树是否干净</strong>自动判定：干净写 <code>stable</code>，否则写 <code>candidate</code>。它<strong>不代表</strong>本节门禁已通过，
+因此 <code>release_channel=stable</code> 的介质仍可能只是内部候选包——正式发布资格只以本节门禁是否全部通过为准，
+<code>release_channel</code> 不能替代现场验收。</p>
 <h2 id="7-发布步骤">7. 发布步骤<a class="heading-anchor" href="#7-发布步骤" aria-label="Link to 7. 发布步骤">#</a></h2>
 <p>正式发布按以下顺序执行：</p>
 <ol>

@@ -32,7 +32,7 @@ Initial password: admin123
 
 Password must be changed on first login; before changing the password, all cluster, topology, audit read, and change operations except authentication interfaces are rejected. The default password is only stored as an Argon2id hash and is not written into configuration, environment files, audit, or reports. Operations initiated within the platform use authenticated sessions, CSRF, and role authorization; users do not need to manually input control tokens or one-time approval tokens. External APIs use Bearer control tokens; high-risk service calls still require a one-time Approval bound to the operation.
 
-Modifying the administrator password is prohibited when the backend JSON or password hash is forgotten. Follow the local one-time recovery process:
+Do not edit the backend JSON or the password hash when the administrator password is forgotten. Follow the local one-time recovery process:
 
 ```bash
 sudo -u clusterguard /usr/local/bin/clusterguard admin prepare-recovery
@@ -277,9 +277,11 @@ consume short-term one-time approvals by the backend, and the approval key is no
 Automated commands also go through the unified Power API; actual execution must explicitly provide a one-time approval token:
 
 ```bash
-cgctl cluster shutdown --cluster <CLUSTER_DISPLAY_NAME> --mode service|poweroff \
+cgctl --server https://127.0.0.1:3000 --ca-file /etc/clusterguard/tls/ca.crt \
+  cluster shutdown --cluster <CLUSTER_DISPLAY_NAME> --mode service|poweroff \
   --approval-token <ONE_TIME_TOKEN>
-cgctl cluster shutdown --cluster <CLUSTER_DISPLAY_NAME> --mode service --dry-run
+cgctl --server https://127.0.0.1:3000 --ca-file /etc/clusterguard/tls/ca.crt \
+  cluster shutdown --cluster <CLUSTER_DISPLAY_NAME> --mode service --dry-run
 ```
 
 `--dry-run` only performs pre-checks, then automatically cancels the temporary lifecycle, without changing the database or host status.
@@ -327,7 +329,8 @@ curl -sk -X POST -H "Authorization: Bearer ${CG_CONTROL_TOKEN}" \
 ### 11.5 View Recovery Status
 
 ```bash
-cgctl cluster restore-status [--cluster <CLUSTER_UUID>]
+cgctl --server https://127.0.0.1:3000 --ca-file /etc/clusterguard/tls/ca.crt \
+  cluster restore-status [--cluster <CLUSTER_UUID>]
 ```
 
 Output whether the snapshot exists, cluster information, `recovered_at`, recovery freeze status (`frozen`/`active`), each instance's role/health/replication delay/maintenance mark, and recovery advice based on status. If `--cluster` is not specified, the local snapshot's cluster UUID is used by default.

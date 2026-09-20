@@ -112,7 +112,7 @@ sha256sum -c clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz.sha256
 </blockquote>
 <p>当前的 MySQL 适配器提供：</p>
 <ul>
-<li>面向 MySQL 5.7、8.0、8.4 和 9.7 的清单内发现；</li>
+<li>面向 MySQL 5.7、8.0、8.4 和 9.x 的清单内发现（9.x 方言分支只有针对 9.7.0 的单元测试，尚无 9.x 现场验收记录）；</li>
 <li>全局唯一不可变节点名称、平台 UUID 和原生 MySQL
 <code>server_uuid</code> 身份；</li>
 <li>持久化的拓扑、健康、复制链接、探测证据和指标；</li>
@@ -128,7 +128,7 @@ sha256sum -c clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz.sha256
 <li>失败时阻断的存活/就绪检查、Raft 角色和多数派诊断、有界历史、分页操作日志和限速事件提醒；</li>
 <li>带基于角色访问、强制引导密码更改、CSRF 保护和 <code>cgctl</code> 服务 CLI 的认证中文控制台；</li>
 <li>持久操作 UUID、幂等键、阶段进度、审计和报告；</li>
-<li>用于手动高风险数据库操作的计划绑定、五分钟、单次使用审批授权；</li>
+<li>用于手动高风险数据库操作的计划绑定、单次使用审批授权（默认五分钟、上限十五分钟）；</li>
 <li>在独立适配器和写入端点契约下验证的 MySQL 5.7/8.x/9.x 变更语法。</li>
 </ul>
 <h2 id="2-2-发布范围">2.2 发布范围<a class="heading-anchor" href="#2-2-发布范围" aria-label="Link to 2.2 发布范围">#</a></h2>

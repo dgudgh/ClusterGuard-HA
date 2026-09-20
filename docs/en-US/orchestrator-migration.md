@@ -154,7 +154,7 @@ In the console, open **Cluster Management -> Add Cluster**:
 Equivalent API example:
 
 ```bash
-curl -sS -X POST http://127.0.0.1:8088/api/v1/clusters \
+curl -sS -X POST https://<controller>:3000/api/v1/clusters \
   -H 'content-type: application/json' \
   -H "Authorization: Bearer ${CG_CONTROL_TOKEN}" \
   -d '{
@@ -172,7 +172,7 @@ Refresh discovery with an empty object only:
 
 ```bash
 curl -sS -X POST \
-  http://127.0.0.1:8088/api/v1/clusters/<CLUSTER_UUID>/discover \
+  https://<controller>:3000/api/v1/clusters/<CLUSTER_UUID>/discover \
   -H 'content-type: application/json' \
   -H "Authorization: Bearer ${CG_CONTROL_TOKEN}" \
   -d '{}'

@@ -43,11 +43,24 @@ ClusterGuard retains the latest **3 update versions** by default. The setting is
 
 ```json
 {
-  "retained_versions": 3
+  "trust_key": "/etc/clusterguard/trust/patch-signing-public.pem",
+  "deployment_state": "/etc/clusterguard/deployment-state.json",
+  "ssh_user": "root",
+  "ssh_key": "/etc/clusterguard/ssh/controller_ed25519",
+  "known_hosts": "/etc/clusterguard/ssh/controller_known_hosts",
+  "ssh_port": 22,
+  "api_port": 3000,
+  "retained_versions": 3,
+  "controllers": [],
+  "data_nodes": []
 }
 ```
 
-After a complete update or automatic rollback releases the maintenance gate, the privileged update path removes older artifacts on every node. Controller uploads, status, and events live under `/var/lib/clusterguard/updates/<patch_id>/`; rollback RPMs and configuration backups live under `/var/lib/clusterguard/update-history/<patch_id>/` on each node. Generating a read-only plan does not trigger cleanup and therefore does not mutate nodes.
+Change only the `retained_versions` key and **do not replace the whole file**: `trust_key`,
+`deployment_state`, `ssh_key`, and `known_hosts` are written by the installer, and the update
+job reads them with `jq -er`, so a missing key makes the update refuse to run.
+
+After a complete update or automatic rollback releases the maintenance gate, the privileged update path removes older artifacts on every node. Controller uploads, status, and events live under `/var/lib/clusterguard/updates/<patch_id>/`; rollback RPMs and configuration backups live under `/var/lib/clusterguard-update-private/history/<patch_id>/` on each node. Generating a read-only plan does not trigger cleanup and therefore does not mutate nodes.
 
 The three-version limit applies only to update packages, rollback RPMs, configuration backups, and their update-status events. It does not limit HA operation or audit logs. Those logs are outside package pruning; the console shows all clusters by default and provides a separate cluster filter.
 
@@ -59,7 +72,7 @@ Every release RPM embeds an immutable runtime contract containing product, versi
 
 ```bash
 clusterguard --version-json
-cgctl version --json
+cgctl --json version
 curl --cacert /etc/clusterguard/tls/ca.crt \
   https://127.0.0.1:3000/api/v1/platform/version
 ```
@@ -163,8 +176,8 @@ clusterguard-upgrade \
   --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --state ./clusterguard-deployment-state.json \
-  --ssh-key /root/.ssh/clusterguard_update \
-  --known-hosts /etc/clusterguard/ssh_known_hosts \
+  --ssh-key /etc/clusterguard/ssh/controller_ed25519 \
+  --known-hosts /etc/clusterguard/ssh/controller_known_hosts \
   --plan
 ```
 
@@ -177,8 +190,8 @@ clusterguard-upgrade \
   --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --state ./clusterguard-deployment-state.json \
-  --ssh-key /root/.ssh/clusterguard_update \
-  --known-hosts /etc/clusterguard/ssh_known_hosts \
+  --ssh-key /etc/clusterguard/ssh/controller_ed25519 \
+  --known-hosts /etc/clusterguard/ssh/controller_known_hosts \
   --execute
 ```
 
@@ -197,8 +210,8 @@ Node readiness is more than an RPM version check. A controller must rejoin and o
 ### Verify
 
 ```bash
-cgctl version --json
-cgctl status --json
+cgctl --json version
+cgctl --json status
 systemctl --no-pager --full status clusterguard-ha
 test ! -e /etc/clusterguard/update-maintenance.json
 ```
@@ -223,8 +236,8 @@ clusterguard-upgrade \
   --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --state ./clusterguard-deployment-state.json \
-  --ssh-key /root/.ssh/clusterguard_update \
-  --known-hosts /etc/clusterguard/ssh_known_hosts \
+  --ssh-key /etc/clusterguard/ssh/controller_ed25519 \
+  --known-hosts /etc/clusterguard/ssh/controller_known_hosts \
   --resume --execute
 ```
 
@@ -237,8 +250,8 @@ clusterguard-upgrade \
   --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --state ./clusterguard-deployment-state.json \
-  --ssh-key /root/.ssh/clusterguard_update \
-  --known-hosts /etc/clusterguard/ssh_known_hosts \
+  --ssh-key /etc/clusterguard/ssh/controller_ed25519 \
+  --known-hosts /etc/clusterguard/ssh/controller_known_hosts \
   --rollback --execute
 ```
 
@@ -248,7 +261,7 @@ Versions predating the managed update protocol do not expose `--version-json` or
 
 ```bash
 clusterguard --version-json
-cgctl status --json | jq '{maintenance:.result.update_maintenance_active, controllers:.result.controller_members, data_nodes:.result.data_node_members}'
+cgctl --json status | jq '{maintenance:.result.update_maintenance_active, controllers:.result.controller_members, data_nodes:.result.data_node_members}'
 ```
 
 Managed patching starts only after every node has the same `state_format` and `update_protocol`. The updater fails closed when it encounters an older binary; it never silently drops version verification.

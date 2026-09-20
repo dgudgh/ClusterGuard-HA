@@ -168,7 +168,7 @@ GRANT REPLICATION SLAVE ON *.* TO &#39;cg_replication&#39;@&#39;192.0.2.%&#39;;
 <li>核对发现到的 <code>server_uuid</code>、角色、复制源、版本和延迟。</li>
 </ol>
 <p>等效 API 示例：</p>
-<pre><code class="language-bash">curl -sS -X POST http://127.0.0.1:8088/api/v1/clusters \
+<pre><code class="language-bash">curl -sS -X POST https://&lt;controller&gt;:3000/api/v1/clusters \
   -H &#39;content-type: application/json&#39; \
   -H &quot;Authorization: Bearer ${CG_CONTROL_TOKEN}&quot; \
   -d &#39;{
@@ -183,7 +183,7 @@ GRANT REPLICATION SLAVE ON *.* TO &#39;cg_replication&#39;@&#39;192.0.2.%&#39;;
 </code></pre>
 <p>刷新发现时只发送空对象：</p>
 <pre><code class="language-bash">curl -sS -X POST \
-  http://127.0.0.1:8088/api/v1/clusters/&lt;CLUSTER_UUID&gt;/discover \
+  https://&lt;controller&gt;:3000/api/v1/clusters/&lt;CLUSTER_UUID&gt;/discover \
   -H &#39;content-type: application/json&#39; \
   -H &quot;Authorization: Bearer ${CG_CONTROL_TOKEN}&quot; \
   -d &#39;{}&#39;

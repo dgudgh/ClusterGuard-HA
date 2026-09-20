@@ -120,6 +120,13 @@ And verify:
 
 If any gate fails, only an internal candidate package can be generated, and formal tags or GitHub Releases cannot be created.
 
+`release_channel` in `RELEASE-INFO` is decided automatically by the build script
+(`scripts/build-clusterguard-offline-kit.sh`) from whether the **source tree is clean**: clean
+writes `stable`, otherwise `candidate`. It does **not** mean the gates above have passed. A
+`release_channel=stable` archive can therefore still be an internal candidate package; formal
+release eligibility depends only on whether every gate in this section passes, and
+`release_channel` never substitutes for site acceptance.
+
 ## 7. Release Steps
 
 Formal release is executed in the following order:

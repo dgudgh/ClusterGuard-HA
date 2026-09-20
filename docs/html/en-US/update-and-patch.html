@@ -66,10 +66,31 @@
   --execute
 </code></pre>
 <p>The installer configures <code>/etc/clusterguard/update.json</code>, the trusted public key, and <code>clusterguard-update-helper.service</code> on every controller. Without a trusted key, the console reports Version Update as unavailable and never falls back to unsigned installation.</p>
+<h3 id="update-package-retention">Update Package Retention<a class="heading-anchor" href="#update-package-retention" aria-label="Link to Update Package Retention">#</a></h3>
+<p>ClusterGuard retains the latest <strong>3 update versions</strong> by default. The setting is stored in <code>/etc/clusterguard/update.json</code> on every controller:</p>
+<pre><code class="language-json">{
+  &quot;trust_key&quot;: &quot;/etc/clusterguard/trust/patch-signing-public.pem&quot;,
+  &quot;deployment_state&quot;: &quot;/etc/clusterguard/deployment-state.json&quot;,
+  &quot;ssh_user&quot;: &quot;root&quot;,
+  &quot;ssh_key&quot;: &quot;/etc/clusterguard/ssh/controller_ed25519&quot;,
+  &quot;known_hosts&quot;: &quot;/etc/clusterguard/ssh/controller_known_hosts&quot;,
+  &quot;ssh_port&quot;: 22,
+  &quot;api_port&quot;: 3000,
+  &quot;retained_versions&quot;: 3,
+  &quot;controllers&quot;: [],
+  &quot;data_nodes&quot;: []
+}
+</code></pre>
+<p>Change only the <code>retained_versions</code> key and <strong>do not replace the whole file</strong>: <code>trust_key</code>,
+<code>deployment_state</code>, <code>ssh_key</code>, and <code>known_hosts</code> are written by the installer, and the update
+job reads them with <code>jq -er</code>, so a missing key makes the update refuse to run.</p>
+<p>After a complete update or automatic rollback releases the maintenance gate, the privileged update path removes older artifacts on every node. Controller uploads, status, and events live under <code>/var/lib/clusterguard/updates/&lt;patch_id&gt;/</code>; rollback RPMs and configuration backups live under <code>/var/lib/clusterguard-update-private/history/&lt;patch_id&gt;/</code> on each node. Generating a read-only plan does not trigger cleanup and therefore does not mutate nodes.</p>
+<p>The three-version limit applies only to update packages, rollback RPMs, configuration backups, and their update-status events. It does not limit HA operation or audit logs. Those logs are outside package pruning; the console shows all clusters by default and provides a separate cluster filter.</p>
+<p>The package used by the current run is always protected. Queued or running packages, packages with an active maintenance gate, and packages marked as requiring verification neither consume the three ordinary retention slots nor get deleted automatically. A site can therefore temporarily contain more than three versions while an incident is unresolved. The next successful update or complete rollback applies retention again after the safety state is closed. <code>retained_versions</code> must be a positive integer.</p>
 <h2 id="1-update-architecture">1. Update Architecture<a class="heading-anchor" href="#1-update-architecture" aria-label="Link to 1. Update Architecture">#</a></h2>
 <p>Every release RPM embeds an immutable runtime contract containing product, version, release, Git commit, build time, platform, RPM architecture, metadata <code>state_format</code>, and <code>update_protocol</code>.</p>
 <pre><code class="language-bash">clusterguard --version-json
-cgctl version --json
+cgctl --json version
 curl --cacert /etc/clusterguard/tls/ca.crt \
   https://127.0.0.1:3000/api/v1/platform/version
 </code></pre>
@@ -132,8 +153,11 @@ curl --cacert /etc/clusterguard/tls/ca.crt \
   --from-rpm dist/clusterguard-ha-2.2-28.x86_64.rpm \
   --to-rpm dist/clusterguard-ha-2.2-29.x86_64.rpm \
   --signing-key /secure/offline/clusterguard-patch-signing.key \
+  --expected-public-key site-trust/patch-signing-public.pem \
   --output dist/clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade
 </code></pre>
+<p>Before release, read the public key actually referenced by <code>update.json</code> on every site controller. The three site fingerprints, the public fingerprint derived from the offline private key, and the key used to verify the package must match exactly. A public key from an older release directory must never be treated as the site trust anchor merely because its file name looks correct. After the package is built, log in to the current Leader and perform one real console upload. Stop after the console records that the package was uploaded and its signature was verified. The package is not deliverable until this upload succeeds.</p>
+<p>See <a href="update-signature-incident-2026-08-31.md">Update Package Signature Verification Incident (2026-08-31)</a> for the <code>2.2-59</code> to <code>2.2-60</code> failure, process cause, and mandatory release gates.</p>
 <p>Ship the update package, its SHA-256 file, release notes, and a signing-key fingerprint through an independent channel. Never overwrite an existing update artifact.</p>
 <h2 id="4-site-preparation">4. Site Preparation<a class="heading-anchor" href="#4-site-preparation" aria-label="Link to 4. Site Preparation">#</a></h2>
 <ol>
@@ -169,8 +193,8 @@ install -m 0640 -o root -g clusterguard clusterguard-patch-signing-public.pem \
   --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --state ./clusterguard-deployment-state.json \
-  --ssh-key /root/.ssh/clusterguard_update \
-  --known-hosts /etc/clusterguard/ssh_known_hosts \
+  --ssh-key /etc/clusterguard/ssh/controller_ed25519 \
+  --known-hosts /etc/clusterguard/ssh/controller_known_hosts \
   --plan
 </code></pre>
 <p>The fixed order is controller followers, data-only Agent nodes, then the current Leader. Every node must run either the declared source or target and pass the embedded binary contract check. The updater reads each data node&#39;s immutable UUID, compares controller UUIDs with live Raft voters, and compares data-node UUIDs with the live active inventory. Divergent controller views, duplicate UUIDs, role mismatches, or stale membership are rejected before maintenance locks are created, preventing missed nodes, cross-cluster targeting, and partial gating.</p>
@@ -179,8 +203,8 @@ install -m 0640 -o root -g clusterguard clusterguard-patch-signing-public.pem \
   --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --state ./clusterguard-deployment-state.json \
-  --ssh-key /root/.ssh/clusterguard_update \
-  --known-hosts /etc/clusterguard/ssh_known_hosts \
+  --ssh-key /etc/clusterguard/ssh/controller_ed25519 \
+  --known-hosts /etc/clusterguard/ssh/controller_known_hosts \
   --execute
 </code></pre>
 <p>Before every node, the updater rechecks quorum, Leader identity, readiness, active operations, and lifecycle tasks. Before writing any maintenance marker, a console update distributes the complete signed package and metadata to all controllers and re-verifies SHA-256 remotely. Copy interruption, insufficient disk space, permission failure, or digest mismatch therefore cannot enter maintenance or install an RPM. If the Raft Leader changes during the update, the new Leader can resume or roll back from the same protected local artifact.</p>
@@ -194,8 +218,8 @@ install -m 0640 -o root -g clusterguard clusterguard-patch-signing-public.pem \
 </ul>
 <p>Node readiness is more than an RPM version check. A controller must rejoin and observe a stable Leader. A data node must restore both <code>clusterguard-agent.service</code> and <code>clusterguard-agent-reconcile.timer</code>. A mixed node must satisfy both sets of checks; failure stops forward progress and enters rollback.</p>
 <h3 id="verify">Verify<a class="heading-anchor" href="#verify" aria-label="Link to Verify">#</a></h3>
-<pre><code class="language-bash">cgctl version --json
-cgctl status --json
+<pre><code class="language-bash">cgctl --json version
+cgctl --json status
 systemctl --no-pager --full status clusterguard-ha
 test ! -e /etc/clusterguard/update-maintenance.json
 </code></pre>
@@ -211,8 +235,8 @@ clusterguard-update-PATCH-ID.events.jsonl
   --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --state ./clusterguard-deployment-state.json \
-  --ssh-key /root/.ssh/clusterguard_update \
-  --known-hosts /etc/clusterguard/ssh_known_hosts \
+  --ssh-key /etc/clusterguard/ssh/controller_ed25519 \
+  --known-hosts /etc/clusterguard/ssh/controller_known_hosts \
   --resume --execute
 </code></pre>
 <p><code>--resume</code> accepts only the same <code>patch_id</code> stored in the lock. A console update has already copied the package to every controller before creating that lock, so a new Leader resumes from its local artifact after leadership changes; a package or metadata digest mismatch is still rejected. Do not manually remove maintenance markers or locks. On normal completion, the updater preflights every controller marker before releasing any of them. If a release fails partway through, it writes the same lock back to every controller and remains fail-closed until connectivity is repaired and the run is resumed.</p>
@@ -221,14 +245,14 @@ clusterguard-update-PATCH-ID.events.jsonl
   --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --state ./clusterguard-deployment-state.json \
-  --ssh-key /root/.ssh/clusterguard_update \
-  --known-hosts /etc/clusterguard/ssh_known_hosts \
+  --ssh-key /etc/clusterguard/ssh/controller_ed25519 \
+  --known-hosts /etc/clusterguard/ssh/controller_known_hosts \
   --rollback --execute
 </code></pre>
 <h2 id="7-first-adoption">7. First Adoption<a class="heading-anchor" href="#7-first-adoption" aria-label="Link to 7. First Adoption">#</a></h2>
 <p>Versions predating the managed update protocol do not expose <code>--version-json</code> or the unified maintenance gate and cannot consume <code>.cgupgrade</code> directly. Use the bridge maintenance procedure from that release, disable automatic mutation ingress, install the bridge RPM one controller at a time, and verify on every node:</p>
 <pre><code class="language-bash">clusterguard --version-json
-cgctl status --json | jq &#39;{maintenance:.result.update_maintenance_active, controllers:.result.controller_members, data_nodes:.result.data_node_members}&#39;
+cgctl --json status | jq &#39;{maintenance:.result.update_maintenance_active, controllers:.result.controller_members, data_nodes:.result.data_node_members}&#39;
 </code></pre>
 <p>Managed patching starts only after every node has the same <code>state_format</code> and <code>update_protocol</code>. The updater fails closed when it encounters an older binary; it never silently drops version verification.</p>
 <h2 id="8-production-admission-checklist">8. Production Admission Checklist<a class="heading-anchor" href="#8-production-admission-checklist" aria-label="Link to 8. Production Admission Checklist">#</a></h2>
@@ -252,7 +276,7 @@ cgctl status --json | jq &#39;{maintenance:.result.update_maintenance_active, co
         </article>
         <aside class="page-toc" aria-label="On this page">
           <strong>On this page</strong>
-          <a class="toc-level-2" href="#console-based-update">Console-Based Update</a><a class="toc-level-2" href="#1-update-architecture">1. Update Architecture</a><a class="toc-level-2" href="#2-supported-boundaries">2. Supported Boundaries</a><a class="toc-level-2" href="#3-build-a-signed-update-package">3. Build a Signed Update Package</a><a class="toc-level-2" href="#4-site-preparation">4. Site Preparation</a><a class="toc-level-2" href="#5-four-step-update">5. Four-Step Update</a><a class="toc-level-3" href="#inspect">Inspect</a><a class="toc-level-3" href="#plan">Plan</a><a class="toc-level-3" href="#execute">Execute</a><a class="toc-level-3" href="#verify">Verify</a><a class="toc-level-2" href="#6-resume-and-rollback">6. Resume and Rollback</a><a class="toc-level-2" href="#7-first-adoption">7. First Adoption</a><a class="toc-level-2" href="#8-production-admission-checklist">8. Production Admission Checklist</a>
+          <a class="toc-level-2" href="#console-based-update">Console-Based Update</a><a class="toc-level-3" href="#update-package-retention">Update Package Retention</a><a class="toc-level-2" href="#1-update-architecture">1. Update Architecture</a><a class="toc-level-2" href="#2-supported-boundaries">2. Supported Boundaries</a><a class="toc-level-2" href="#3-build-a-signed-update-package">3. Build a Signed Update Package</a><a class="toc-level-2" href="#4-site-preparation">4. Site Preparation</a><a class="toc-level-2" href="#5-four-step-update">5. Four-Step Update</a><a class="toc-level-3" href="#inspect">Inspect</a><a class="toc-level-3" href="#plan">Plan</a><a class="toc-level-3" href="#execute">Execute</a><a class="toc-level-3" href="#verify">Verify</a><a class="toc-level-2" href="#6-resume-and-rollback">6. Resume and Rollback</a><a class="toc-level-2" href="#7-first-adoption">7. First Adoption</a><a class="toc-level-2" href="#8-production-admission-checklist">8. Production Admission Checklist</a>
         </aside>
       </main>
     </div>

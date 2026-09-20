@@ -156,7 +156,7 @@ MySQL 5.7 的执行账号需要受限来源的 `SUPER`。完整版本差异和 T
 等效 API 示例：
 
 ```bash
-curl -sS -X POST http://127.0.0.1:8088/api/v1/clusters \
+curl -sS -X POST https://<controller>:3000/api/v1/clusters \
   -H 'content-type: application/json' \
   -H "Authorization: Bearer ${CG_CONTROL_TOKEN}" \
   -d '{
@@ -174,7 +174,7 @@ curl -sS -X POST http://127.0.0.1:8088/api/v1/clusters \
 
 ```bash
 curl -sS -X POST \
-  http://127.0.0.1:8088/api/v1/clusters/<CLUSTER_UUID>/discover \
+  https://<controller>:3000/api/v1/clusters/<CLUSTER_UUID>/discover \
   -H 'content-type: application/json' \
   -H "Authorization: Bearer ${CG_CONTROL_TOKEN}" \
   -d '{}'

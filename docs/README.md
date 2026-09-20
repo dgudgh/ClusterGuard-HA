@@ -22,7 +22,7 @@ npm run build:html
 
 ## Product Documentation / 产品文档
 
-Latest installer prerelease / 最新安装介质预发布：[2.2-101 发布说明（中文）](zh-CN/release-2.2.101.md) · [GitHub v2.2.101](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.101)。One kit contains MySQL and PostgreSQL media; final site acceptance is pending. 同一安装包包含 MySQL/PG 介质，最终版现场验收仍未完成。Updater follow-up / 升级器后续状态见 [私有执行区安全记录](zh-CN/updater-private-workspace-2026-09-11.md)。这些链接指向当前 Markdown；已发布包内文档仍保留构建时快照。
+Latest installer prerelease / 最新安装介质预发布：[2.2-101 发布说明（中文）](zh-CN/release-2.2.101.md) · [GitHub v2.2.101](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.101)。One kit contains MySQL and PostgreSQL media; final site acceptance is pending. 同一安装包包含 MySQL/PG 介质，最终版现场验收仍未完成。Updater follow-up / 升级器后续状态见 [私有执行区安全记录](zh-CN/updater-private-workspace-2026-09-11.md)。这些链接指向当前 Markdown；已发布包内文档仍保留构建时快照。2.2.48 及之后的发布说明（`zh-CN/release-2.2.69.md` 至 `zh-CN/release-2.2.101.md`）只维护简体中文版，英文侧发布说明止于 `en-US/release-2.2.47.md`；下表只列中英成对的文档，因此发布说明一栏停在 2.2.47。完整中文发布说明清单见 [中文文档索引](zh-CN/README.md)。
 
 | Topic / 主题 | English | 简体中文 |
 | --- | --- | --- |
@@ -48,6 +48,9 @@ Latest installer prerelease / 最新安装介质预发布：[2.2-101 发布说�
 | MySQL proven methods / MySQL 已验证方法 | [English](proven-mysql-ha-methods.md) | [中文](zh-CN/proven-mysql-ha-methods.md) |
 | MySQL feature acceptance / MySQL 功能验收 | [English](mysql-feature-parity-acceptance.md) | [中文](zh-CN/mysql-feature-parity-acceptance.md) |
 | Version and release policy / 版本发布规范 | [English](en-US/version-release-policy.md) | [中文](zh-CN/version-release-policy.md) |
+| Kubernetes MySQL / Kubernetes MySQL 接管 | [English](en-US/kubernetes-mysql.md) | [中文](zh-CN/kubernetes-mysql.md) |
+| Docker Swarm MySQL / Docker Swarm MySQL 接管 | [English](en-US/docker-swarm-mysql.md) | [中文](zh-CN/docker-swarm-mysql.md) |
+| Control-plane and API reference / 控制面与 API 参考 | [English](operations.md) | [中文](zh-CN/operations.md) |
 
 ## Qualification Evidence / 验收证据
 

@@ -10,7 +10,7 @@
 
 主机、Docker Swarm 和 Kubernetes 是数据库集群的运行时属性，不是拆分控制面的依据。一个站点只部署一套奇数节点 ClusterGuard Raft 控制面，所有数据库集群共用同一组 HTTPS API/控制台端口，默认是 `3000`。控制台按集群资源展示独立条目，例如 `pg16-ha` 与 `swarm-mysql-8.0`，运维人员在顶部集群选择器中切换。
 
-同一宿主机上的 `clusterguard-agent` 也只运行一份。`/etc/clusterguard/agent.json` 的 `clusters` 数组可以同时包含宿主机 PostgreSQL、宿主机 MySQL 和 Docker MySQL 策略；每条策略用不同的 `cluster_id`、`instance_id` 和 `runtime_kind` 区分。数据库端口可以相同，不能据此推断运行时或集群身份。
+同一宿主机上的 `clusterguard-agent` 也只运行一份。`/etc/clusterguard/agent.json` 的 `clusters` 数组可以同时包含宿主机 PostgreSQL、宿主机 MySQL、Docker MySQL 和 Docker PostgreSQL 策略；每条策略用不同的 `cluster_id`、`instance_id` 和 `runtime_kind` 区分。数据库端口可以相同，不能据此推断运行时或集群身份。
 
 `3100` 等第二控制端口只允许用于有明确销毁计划的隔离破坏性实验。验收结束后必须把已验证集群登记到统一控制面、迁移 Agent 策略和所有权租约，并停用临时 Raft、Agent timer 与监听端口。生产交付不得长期运行两套控制面管理同一站点。
 
@@ -84,17 +84,17 @@ ClusterGuard 所说的“主机层”包括物理机和虚拟机。两者都由�
 5. 每个控制节点运行 `mysql/install-mysql-client.sh MYSQL_TAR`，安装独立客户端。控制面不得借用本机数据库容器中的 `mysql`，否则本机容器停止时会同时失去探测和恢复能力。
 6. 在 Manager 创建 `cg_mysql_root_password` 和 `cg_mysql_operator_cnf` 两个 Swarm secret。
 7. 导出集群 UUID 和三个临时实例 UUID，执行 `docker stack deploy -c mysql-stack.yml cgmysql`。
-8. 先在 01 执行 `bootstrap-replication.sh 01`，再分别在 02、03 执行 `bootstrap-replication.sh 02|03`，建立账号、GTID 复制和验收数据。该脚本只操作所在宿主机的本地任务，不会把远程容器误当成本地容器。
+8. 先在 01 执行 `bootstrap-replication.sh 01`，再分别在 02、03 执行 `bootstrap-replication.sh 02|03`，建立账号、GTID 复制和验收数据。该脚本只操作所在宿主机的本地任务，不会把远程容器误当成本地容器。执行前必须在对应宿主机导出 `CG_MYSQL_ROOT_PASSWORD`、`CG_MYSQL_DISCOVERY_PASSWORD`、`CG_MYSQL_OPERATION_PASSWORD`、`CG_MYSQL_REPLICATION_PASSWORD` 四个变量（任一缺失即直接退出，复制口令不得超过 32 字符）；`CG_MYSQL_SOURCE_HOST` 默认 `192.168.102.152`，不在该网段时必须显式覆盖。
 9. 在站点现有的统一 ClusterGuard 控制面登记一个新的 Docker MySQL 集群、三个宿主机 endpoint 并执行发现；不要新建第二套 API/Raft 端口。
 10. 使用发现后的真实实例 UUID 重新部署 Service 标签，把 Docker 策略合并进三台现有 `/etc/clusterguard/agent.json` 的 `clusters` 数组。
-11. 创建 RuntimeTarget、WorkloadBinding 和 HAEndpoint，运行预检查后启用自动故障切换。
+11. 创建 RuntimeTarget、WorkloadBinding 和 HAEndpoint，运行预检查后启用自动故障切换。MySQL 自动故障切换还要求可用的隔离证据，否则控制面会拒绝启动：设置 `"fencing": { "agent_quorum_enabled": true, "agent_quorum_grace_seconds": 15 }`（取值 15–60 秒），或配置外部 fencer，或启用 `kubernetes`。
 
 ## 9. 验收计划
 
 | 场景 | 预期结果 |
 | --- | --- |
 | 计划切换 01→02→03→01 | 主库、复制源和 VIP 同步收敛，业务地址不变 |
-| 停止主库容器 | 旧主持久隔离，候选提升，VIP 在 30 秒内迁移 |
+| 停止主库容器 | 旧主持久隔离，候选提升，VIP 迁移（实验室实测约 30 秒，非产品承诺时限） |
 | 重启旧主 Service | 容器先以只读状态启动，再自动挂回复制 |
 | Docker daemon 停止 | 不伪造容器状态；未满足隔离证据时阻断切换 |
 | 两个容器标签指向同一实例 | Agent 报身份冲突并阻断变更 |

@@ -49,13 +49,29 @@ Deployment Method: One operations machine installs multiple control nodes and da
 <p>Do not mix this manual with old versions of Orchestrator, single-machine RPM manual configurations.</p>
 <p><code>clusterguard-configure</code> is the node-level configuration program called by the installer on remote nodes. During the initial deployment, it should not be manually invoked by the operations personnel one by one; it is only used when the platform node lifecycle, controlled recovery process, or engineering support explicitly requires it.</p>
 <h2 id="1-deliverables-and-installation-methods">1. Deliverables and Installation Methods<a class="heading-anchor" href="#1-deliverables-and-installation-methods" aria-label="Link to 1. Deliverables and Installation Methods">#</a></h2>
-<p>The official delivery directory includes:</p>
-<pre><code class="language-text">clusterguard-ha-2.1-45-offline-linux-x86_64/
+<p>The official delivery directory is the build output directory <code>release/&lt;bundle-version&gt;/</code>
+(for example <code>release/2.1-48/</code>):</p>
+<pre><code class="language-text">release/2.1-48/
+  RELEASE-INFO
   clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz
   clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz.sha256
   clusterguard-ha-2.1-45.x86_64.rpm
   clusterguard-ha-2.1-45.x86_64.rpm.sha256
-  docs/ClusterGuard-HA-离线安装与部署手册.md
+  SHA256SUMS
+  docs/                                   # bundled Chinese manuals
+</code></pre>
+<p>Unpacking the <code>*.tar.gz</code> yields the <strong>media directory</strong>, which shares the archive name but has
+different contents: the RPM and node runtime appear again under <code>packages/</code>.</p>
+<pre><code class="language-text">clusterguard-ha-2.1-45-offline-linux-x86_64/
+  install_clusterguard.sh                 # production installation entry point
+  packages/                               # ClusterGuard RPM and node runtime tar.gz
+  packages/database/                      # MySQL / PostgreSQL media and README.txt
+  dependencies/                           # offline RPM repository (with repodata/)
+  docs/                                   # bundled manuals
+  tools/                                  # jq, clock mesh, PostgreSQL source build tools
+  examples/                               # fencing and docker-swarm examples
+  RELEASE-INFO
+  SHA256SUMS
 </code></pre>
 <p>Production deployment should use the complete offline package, not manually install RPM individually:</p>
 <pre><code class="language-bash">sha256sum -c clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz.sha256
@@ -261,7 +277,7 @@ targets_file=/etc/clusterguard/fencing/vmware-targets.tsv
 <p>If the MySQL binary depends on libraries not provided by the target operating system, the same distribution, main version, architecture, and signed RPMs must be placed in <code>dependencies/</code>. You can use the offline package&#39;s tools on a connected same version mirror machine to collect:</p>
 <pre><code class="language-bash">tools/收集RHEL离线依赖.sh --help
 </code></pre>
-<p>Do not use <code>--nogpgcheck</code> or disable dependency checks. The <code>--dependencies</code> here is only used for the basic runtime dependencies of ClusterGuard and MySQL, not for the PostgreSQL source code compilation toolchain.</p>
+<p>Do not use <code>--nogpgcheck</code> against a networked repository or against RPMs that have not been verified individually. You may disable <code>gpgcheck</code> for a repository that points at the <strong>local media directory</strong> only after verifying every RPM in <code>dependencies/</code> with <code>rpm --checksig</code> and checking <code>SHA256SUMS</code> — which is exactly what the product&#39;s own installer and PostgreSQL source build do (verify first, then disable verification inside the isolated build root). The <code>--dependencies</code> directory is only used for the basic runtime dependencies of ClusterGuard and MySQL, not for the PostgreSQL source code compilation toolchain, and it must contain at least the <code>libaio</code>, <code>ncurses-compat-libs</code>, and <code>numactl-libs</code> RPMs; the actual closure size depends on how it was collected — consult <code>PACKAGE-MANIFEST.txt</code> / <code>COLLECTION-INFO</code> inside the media.</p>
 <h3 id="official-postgresql-source-code-installation">Official PostgreSQL Source Code Installation<a class="heading-anchor" href="#official-postgresql-source-code-installation" aria-label="Link to Official PostgreSQL Source Code Installation">#</a></h3>
 <p>PostgreSQL can directly use the official release source code package, and does not require users to pre-make binary packages. For example:</p>
 <pre><code class="language-text">/opt/postgresql-16.4.tar.bz2

@@ -6,6 +6,14 @@
 
 版本边界：`v2.1.45` 是已封板的 MySQL 发布版本。PostgreSQL 操作属于 2.2 系列。Oracle 和 SQL Server 流程在它们各自的生产认证完成之前仍分别受限制。
 
+> **文档定位：** 本文是控制面与 API 参考。全文示例使用**源码配置的默认值**（`http://127.0.0.1:8088`，明文回环）。
+> 生产安装器 `scripts/install_clusterguard.sh` 生成的部署监听 `https://<host>:3000` 并强制 TLS
+> （证书 `/etc/clusterguard/tls/server.crt`，CA `/etc/clusterguard/tls/ca.crt`，API 端口默认 3000）。
+> 因此在现场请把示例中的地址换成 `https://<host>:3000`，curl 命令补 `--cacert /etc/clusterguard/tls/ca.crt`，
+> 并把每条 `cgctl <子命令>` 改写成
+> `cgctl --server https://<host>:3000 --ca-file /etc/clusterguard/tls/ca.crt <子命令>`
+> （全局 flag 必须写在子命令之前）。日常值守流程以[运维操作手册](operations-manual.md)为准。
+
 ## 1. 配置控制平面
 
 使用 `configs/clusterguard.example.json` 作为配置形状。加载器拒绝未知的键和多个 JSON 值。
@@ -359,7 +367,7 @@ clusterguard_control_plane_lifecycle_tasks
 身份。ClusterGuard HA 运行时不需要外部导出器、
 监控代理或指标数据库。
 
-控制台操作日志最初加载 50 个事件，并在操作员选择 **加载更多** 时每次请求添加 50 个事件。对于一个自动恢复事件的重复阻塞重试，会显示为一个事件并带有尝试次数；
+控制台操作日志最初加载 20 个事件，并在操作员选择 **加载更多** 时每次请求添加 20 个事件。对于一个自动恢复事件的重复阻塞重试，会显示为一个事件并带有尝试次数；
 持久操作记录保持独立且可审计。手动操作和不同事件从不合并。默认情况下，原始请求和响应数据被折叠，事件在最新尝试时打开。持久快照保留最新的 128 个计划操作、512 个终端操作、
 1,024 个审计事件、512 个报告和 2,048 个安全事件。当策略要求更长的审计保留期时，在这些限制之前导出记录。
 
@@ -632,23 +640,23 @@ MySQL多源复制在此阶段被检测但未建模。如果`SHOW REPLICA STATUS`
 
 用于维护窗口、机架移动和MySQL主/副本集群的完全断电。平台在关闭前应用保护，系统启动后systemd单元会自动恢复集群，无需操作员干预。
 
-### 11.1 关闭模式
+### 12.1 关闭模式
 
 | 模式 | 行为 | 使用场景 |
 |------|----------|----------|
 | `service` | 仅停止MySQL（先停止副本，最后停止主节点）；主机保持运行 | 软件升级、配置更改、短维护窗口 |
 | `poweroff` | 并行关闭每个节点 | 机架电源维护、迁移 |
 
-### 11.2 启动关闭
+### 12.2 启动关闭
 
 在Web控制台中使用 **拓扑 -> 电源生命周期 -> 一键关闭**。默认`service`模式停止数据库但保持主机运行。登录的平台管理员在服务器内部收到一个短暂的、单次使用的审批；没有审批密钥暴露给浏览器。
 
 CLI自动化使用相同的API工作流，并需要显式发出的一次性审批令牌：
 
 ```bash
-cgctl cluster shutdown --cluster <display name> --mode service|poweroff \
-  --approval-token <single-use-token>
-cgctl cluster shutdown --cluster <display name> --mode service --dry-run
+cgctl cluster shutdown --cluster <集群显示名> --mode service|poweroff \
+  --approval-token <一次性令牌>
+cgctl cluster shutdown --cluster <集群显示名> --mode service --dry-run
 ```
 
 `--dry-run`执行预检查并立即取消临时生命周期；它不会更改数据库或主机状态。没有直接的shell绕过。
@@ -661,7 +669,7 @@ cgctl cluster shutdown --cluster <display name> --mode service --dry-run
 4. 在每个节点上运行`SET PERSIST_ONLY read_only=ON; SET PERSIST_ONLY super_read_only=ON` —— 没有运行时影响，但跨重启持久化，因此恢复后的集群不能接受散写。
 5. 按模式停止：`service`先停止副本再停止主节点；`poweroff`并行关闭所有节点。
 
-### 11.3 重启后的自动恢复
+### 12.3 重启后的自动恢复
 
 两个单元都默认启用。它们在启动时扫描每个集群的快照目录，当目录为空时为无操作：
 
@@ -670,7 +678,7 @@ cgctl cluster shutdown --cluster <display name> --mode service --dry-run
 
 `poweroff`不能自行重新启动物理断电的服务器。自动开机需要VMware自动启动/API、IPMI/iDRAC/iLO、Wake-on-LAN或AC恢复固件。一旦操作系统启动，ClusterGuard恢复是自动的。
 
-### 11.4 超时和失败回退（关闭）
+### 12.4 超时和失败回退（关闭）
 
 - 如果最终化超时且主节点仍不健康，保护 **不会** 被释放：脚本记录CRITICAL，干净退出并等待操作员。
 - 确认问题已解决后，手动释放保护：
@@ -683,7 +691,7 @@ curl -sk -X POST -H "Authorization: Bearer ${CG_CONTROL_TOKEN}" \
 
 - 删除快照会使两个单元变为无操作；对已最终化的快照（`recovered_at`存在）重新运行恢复/最终化也是幂等的无操作。
 
-### 11.5 检查恢复状态
+### 12.5 检查恢复状态
 
 ```bash
 cgctl cluster restore-status [--cluster <cluster-uuid>]
@@ -695,7 +703,7 @@ cgctl cluster restore-status [--cluster <cluster-uuid>]
 
 PostgreSQL是ClusterGuard原生的HA实现。它提供安全身份发现、主/备拓扑、健康、原生指标、时间线感知候选评估、受控切换、受保护故障转移、旧主节点回滚/重新加入、允许列表修复、Linux VIP耦合以及`pg_basebackup`节点同步。
 
-可选的自动故障转移在PostgreSQL专用恢复控制器中运行。它需要六次连续的主节点故障观测（默认节奏下30秒），当前拓扑快照，一个已知零重放延迟的一级备用节点，RaftLeader和多数权威，受限Agent或外部隔离器证明旧主节点无法写入，以及通过验证、审计和报告的完整通用工作流。控制器从不将网络不可达作为隔离证据，也从不重试不确定的提升后结果。
+可选的自动故障转移在PostgreSQL专用恢复控制器中运行。它需要三次连续的主节点故障观测、时间跨度不少于 3 秒，当前拓扑快照，一个已知零重放延迟的一级备用节点，RaftLeader和多数权威，受限Agent或外部隔离器证明旧主节点无法写入，以及通过验证、审计和报告的完整通用工作流。控制器从不将网络不可达作为隔离证据，也从不重试不确定的提升后结果。
 
 执行从不单独根据引擎名称推断。ClusterGuard仅在存在专用操作和复制凭证、受限签名Agent策略、可执行端点提供者、当前拓扑证据和所需控制器多数时才宣传每个变更操作能力。故障转移还需要稳定的故障证据和外部隔离成功，当前主节点无法证明隔离时。
 

@@ -28,8 +28,8 @@ The authoritative, current deployment guide is
   validation;
 - subsequent node lifecycle and recovery boundaries.
 
-See the sealed [2.1-45 release notes](zh-CN/release-2.1.45.md) and the
-[version/release policy](zh-CN/version-release-policy.md) before building or
+See the sealed [2.1-45 release notes](en-US/release-2.1.45.md) and the
+[version/release policy](en-US/version-release-policy.md) before building or
 publishing a new package.
 
 Use `install_clusterguard.sh --plan` before every production deployment. It

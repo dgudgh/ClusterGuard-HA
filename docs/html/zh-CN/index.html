@@ -40,6 +40,10 @@
         <article class="document-content"><h1 id="clusterguard-ha-中文文档">ClusterGuard HA 中文文档<a class="heading-anchor" href="#clusterguard-ha-中文文档" aria-label="Link to ClusterGuard HA 中文文档">#</a></h1>
 <p>离线 HTML 文档中心入口为 <a href="../index.html"><code>../html/index.html</code></a>，包含本手册、迁移流程、验收证据、本地搜索和打印页面，不依赖外部网络。</p>
 <h2 id="当前版本">当前版本<a class="heading-anchor" href="#当前版本" aria-label="Link to 当前版本">#</a></h2>
+<h3 id="最新安装介质预发布">最新安装介质预发布<a class="heading-anchor" href="#最新安装介质预发布" aria-label="Link to 最新安装介质预发布">#</a></h3>
+<p><a href="release-2.2.101.md">2.2-101 发布说明</a> 与 <a href="https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.101">GitHub v2.2.101</a>：一份 MySQL 8.0.44 / PostgreSQL 16.4 安装介质及单独 ClusterGuard RPM，固定构建提交 <code>78dbdbf</code>。安装包已核验并上传；生产 <code>.cgupgrade</code> 和最终版现场安装、升级、回退验收尚未完成。包内 <code>release_channel=stable</code> 不改变其 GitHub 预发布状态。</p>
+<p>升级器修复与剩余门槛见 <a href="updater-private-workspace-2026-09-11.md">私有执行区安全记录</a>。下载摘要及最新文档补正以 2.2-101 发布说明为准。</p>
+<h3 id="历史正式版本入口">历史正式版本入口<a class="heading-anchor" href="#历史正式版本入口" aria-label="Link to 历史正式版本入口">#</a></h3>
 <table>
 <thead>
 <tr>
@@ -64,11 +68,14 @@
 <td>Oracle Data Guard Broker、SQL Server Always On 独立验收</td>
 </tr>
 </tbody></table>
-<p>当前正式版本下载：</p>
+<p>以下为本手册原有的 2.2-39 正式版下载入口，保留用于历史追溯；不代表 2.2-101 已正式验收：</p>
 <p><a href="https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.39">https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.39</a></p>
-<p>不要使用本地目录中编号高于 <code>2.1-45</code> 的历史候选包替代正式 Release。正式交付物
-必须来自 GitHub Release，并通过随包 SHA256 校验。</p>
+<p>候选包和预发布不能仅凭较高版本号替代正式 Release。交付物必须核对 GitHub Release 的发布状态及随包 SHA256。</p>
 <h2 id="推荐阅读顺序">推荐阅读顺序<a class="heading-anchor" href="#推荐阅读顺序" aria-label="Link to 推荐阅读顺序">#</a></h2>
+<p>最新安装介质先看 <a href="release-2.2.101.md">2.2-101 发布说明</a>。2.2.48 及以后的中文发布说明
+（<code>release-2.2.69.md</code> 至 <code>release-2.2.101.md</code>）按版本号倒序存放在本目录，<strong>没有英文对应版本</strong>，
+英文侧发布说明只维护到 <code>release-2.2.47.md</code>。</p>
+<p>下面按正式基线 <code>2.2-39</code> 的顺序编排：</p>
 <ol>
 <li><a href="release-2.2.47.html">2.2.47 发布说明</a>
 确认正式包、摘要、支持范围和生产准入边界。</li>
@@ -96,6 +103,7 @@
    构建新版本、维护标签和发布 PostgreSQL 2.2 时使用。</li>
 </ol>
 <h2 id="验收证据">验收证据<a class="heading-anchor" href="#验收证据" aria-label="Link to 验收证据">#</a></h2>
+<p>开发与维护先看 <a href="source-layout-and-testing.md">源码、文件与测试导览</a> 和 <a href="dead-code-cleanup-2026-09-11.md">旧版对比及清理记录</a>。测试归并不删除原有回归；本地、浏览器夹具和真实现场结果分别记录。</p>
 <ul>
 <li><a href="mysql-former-primary-recovery.html">MySQL 旧主恢复专项验收</a></li>
 <li><a href="production-chaos-test.html">生产故障与并发测试报告</a></li>
@@ -159,7 +167,7 @@ selectorless Service/EndpointSlice、独立单副本 StatefulSet、持久角色�
         </article>
         <aside class="page-toc" aria-label="本页目录">
           <strong>本页目录</strong>
-          <a class="toc-level-2" href="#当前版本">当前版本</a><a class="toc-level-2" href="#推荐阅读顺序">推荐阅读顺序</a><a class="toc-level-2" href="#验收证据">验收证据</a><a class="toc-level-2" href="#postgresql-2-2">PostgreSQL 2.2</a><a class="toc-level-2" href="#docker-swarm-mysql">Docker Swarm MySQL</a><a class="toc-level-2" href="#kubernetes-mysql">Kubernetes MySQL</a><a class="toc-level-2" href="#公众号系列">公众号系列</a><a class="toc-level-2" href="#文档效力">文档效力</a><a class="toc-level-2" href="#问题反馈所需信息">问题反馈所需信息</a>
+          <a class="toc-level-2" href="#当前版本">当前版本</a><a class="toc-level-3" href="#最新安装介质预发布">最新安装介质预发布</a><a class="toc-level-3" href="#历史正式版本入口">历史正式版本入口</a><a class="toc-level-2" href="#推荐阅读顺序">推荐阅读顺序</a><a class="toc-level-2" href="#验收证据">验收证据</a><a class="toc-level-2" href="#postgresql-2-2">PostgreSQL 2.2</a><a class="toc-level-2" href="#docker-swarm-mysql">Docker Swarm MySQL</a><a class="toc-level-2" href="#kubernetes-mysql">Kubernetes MySQL</a><a class="toc-level-2" href="#公众号系列">公众号系列</a><a class="toc-level-2" href="#文档效力">文档效力</a><a class="toc-level-2" href="#问题反馈所需信息">问题反馈所需信息</a>
         </aside>
       </main>
     </div>

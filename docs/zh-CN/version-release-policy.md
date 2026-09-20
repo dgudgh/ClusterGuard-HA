@@ -126,6 +126,11 @@ git diff --check
 
 任一门禁失败时只能生成内部候选包，不能创建正式标签或 GitHub Release。
 
+`RELEASE-INFO` 中的 `release_channel` 由构建脚本（`scripts/build-clusterguard-offline-kit.sh`）
+按**源码树是否干净**自动判定：干净写 `stable`，否则写 `candidate`。它**不代表**本节门禁已通过，
+因此 `release_channel=stable` 的介质仍可能只是内部候选包——正式发布资格只以本节门禁是否全部通过为准，
+`release_channel` 不能替代现场验收。
+
 ## 7. 发布步骤
 
 正式发布按以下顺序执行：

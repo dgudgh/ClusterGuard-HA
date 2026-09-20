@@ -23,8 +23,8 @@ RuntimeTarget 和 WorkloadBinding 是强制边界标记。平台不会根据端�
 1. 每个数据库实例使用独立的单副本 StatefulSet，ordinal 必须为 0。禁止用一个三副本 StatefulSet 表示一主两从，因为缩容旧主会同时影响其他实例。
 2. 每个实例必须有独立 PVC，数据库 `server_uuid` 不因 Pod 重建改变。
 3. WorkloadBinding 必须登记 StatefulSet、Pod 名、不可变 Pod UID、Node 名和 PVC UID。
-4. writer Service 必须没有 selector；EndpointSlice 必须标记 `endpointslice.kubernetes.io/managed-by=clusterguard.io/ha`。
-5. StatefulSet 必须启用启动守卫，并登记 `clusterguard.io/mysql-role=primary|replica`。
+4. writer Service 必须没有 selector；EndpointSlice 必须标记 `endpointslice.kubernetes.io/managed-by=clusterguard.io/ha`，并带有 `kubernetes.io/service-name=<writer Service 名>` 标签且 `addressType: IPv4`，否则控制面会拒绝该切片。
+5. StatefulSet 必须启用启动守卫（注解 `clusterguard.io/fence-guard=enabled`，初始 `clusterguard.io/fenced=false`），并登记 `clusterguard.io/mysql-role=primary|replica`。缺少 `fence-guard` 注解的 Pod 会被拒绝启动。
 6. Controller 在数据库命名空间内只取得 `get` Service/Pod/PVC、`get/update` EndpointSlice、`get/patch` StatefulSet 和 `get/update` scale 子资源权限；集群级权限只有 `get Node`。
 7. Kubernetes API 必须使用 HTTPS、CA 校验和短期 ServiceAccount token 或客户端证书。token 文件每次请求都会重新读取，支持轮换。
 8. 数据库 Pod 禁止自动挂载 ServiceAccount token；短期 token 只投影给启动守卫 init container，MySQL 主容器不可见。
@@ -79,6 +79,16 @@ deploy/kubernetes/mysql/bootstrap-writer-endpoint.sh \
   "enabled": true,
   "request_timeout_seconds": 10,
   "fence_timeout_seconds": 60
+}
+```
+
+还需同时启用 MySQL 的操作与复制凭据，否则切换无法执行——平台只有在这些凭据解析成功时才对外宣告 MySQL 变更能力：
+
+```json
+"mysql": {
+  "enabled": true,
+  "operation": { "username": "cg_operator", "password_env": "CG_MYSQL_OPERATION_PASSWORD" },
+  "replication": { "username": "cg_replication", "password_env": "CG_MYSQL_REPLICATION_PASSWORD" }
 }
 ```
 

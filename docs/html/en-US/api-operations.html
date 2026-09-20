@@ -41,6 +41,18 @@
 <p>Version boundary: <code>v2.1.45</code> is the sealed MySQL release. PostgreSQL operations
 belong to the 2.2 line. Oracle and SQL Server procedures remain separately
 gated until their own production qualification is complete.</p>
+<blockquote>
+<p><strong>Scope:</strong> this document is the control-plane and API reference. Every example uses the
+<strong>source-configuration defaults</strong> (<code>http://127.0.0.1:8088</code>, plaintext loopback), while a
+production installation created by <code>scripts/install_clusterguard.sh</code> listens on
+<code>https://&lt;host&gt;:3000</code> with TLS enforced (certificate <code>/etc/clusterguard/tls/server.crt</code>,
+CA <code>/etc/clusterguard/tls/ca.crt</code>, API port defaulting to 3000). On a real deployment,
+replace the address with <code>https://&lt;host&gt;:3000</code>, add <code>--cacert /etc/clusterguard/tls/ca.crt</code>
+to curl commands, and rewrite each <code>cgctl &lt;subcommand&gt;</code> as
+<code>cgctl --server https://&lt;host&gt;:3000 --ca-file /etc/clusterguard/tls/ca.crt &lt;subcommand&gt;</code>
+(global flags must precede the subcommand). For day-to-day work follow the
+<a href="operations-manual.html">Operations Manual</a>.</p>
+</blockquote>
 <h2 id="1-configure-the-control-plane">1. Configure the Control Plane<a class="heading-anchor" href="#1-configure-the-control-plane" aria-label="Link to 1. Configure the Control Plane">#</a></h2>
 <p>Use <code>configs/clusterguard.example.json</code> as the configuration shape. The loader
 rejects unknown keys and multiple JSON values.</p>
@@ -576,7 +588,7 @@ scraped controller and carry no mutable hostname label; assign the controller
 identity in the Prometheus scrape target configuration. No external exporter,
 monitoring agent, or metrics database is required by the ClusterGuard HA
 runtime.</p>
-<p>The console operation log loads 50 events initially and adds 50 events per
+<p>The console operation log loads 20 events initially and adds 20 events per
 request when the operator selects <strong>Load more</strong>. Repeated blocked retries for
 one automatic-recovery incident appear as one incident with an attempt count;
 the durable operation records remain separate and auditable. Manual operations
@@ -895,7 +907,7 @@ promotion eligibility.</p>
 primary/replica cluster. The platform applies protection before shutdown and
 systemd units restore the cluster automatically after boot, without operator
 intervention.</p>
-<h3 id="11-1-shutdown-modes">11.1 Shutdown modes<a class="heading-anchor" href="#11-1-shutdown-modes" aria-label="Link to 11.1 Shutdown modes">#</a></h3>
+<h3 id="12-1-shutdown-modes">12.1 Shutdown modes<a class="heading-anchor" href="#12-1-shutdown-modes" aria-label="Link to 12.1 Shutdown modes">#</a></h3>
 <table>
 <thead>
 <tr>
@@ -915,7 +927,7 @@ intervention.</p>
 <td>Rack power maintenance, relocation</td>
 </tr>
 </tbody></table>
-<h3 id="11-2-initiating-shutdown">11.2 Initiating shutdown<a class="heading-anchor" href="#11-2-initiating-shutdown" aria-label="Link to 11.2 Initiating shutdown">#</a></h3>
+<h3 id="12-2-initiating-shutdown">12.2 Initiating shutdown<a class="heading-anchor" href="#12-2-initiating-shutdown" aria-label="Link to 12.2 Initiating shutdown">#</a></h3>
 <p>Use <strong>Topology -&gt; Power lifecycle -&gt; One-click shutdown</strong> in the Web console.
 The default <code>service</code> mode stops the database but leaves the hosts running. A
 logged-in platform administrator receives a short-lived, single-use approval
@@ -943,7 +955,7 @@ restored cluster cannot accept stray writes.</li>
 <li>Stop per mode: <code>service</code> stops replicas then the primary; <code>poweroff</code>
 powers off all nodes in parallel.</li>
 </ol>
-<h3 id="11-3-automatic-restore-after-reboot">11.3 Automatic restore after reboot<a class="heading-anchor" href="#11-3-automatic-restore-after-reboot" aria-label="Link to 11.3 Automatic restore after reboot">#</a></h3>
+<h3 id="12-3-automatic-restore-after-reboot">12.3 Automatic restore after reboot<a class="heading-anchor" href="#12-3-automatic-restore-after-reboot" aria-label="Link to 12.3 Automatic restore after reboot">#</a></h3>
 <p>Both units ship enabled. They scan the per-cluster snapshot directory at boot
 and are no-ops when it is empty:</p>
 <ul>
@@ -962,7 +974,7 @@ to that cluster&#39;s snapshot.</li>
 <p><code>poweroff</code> cannot turn a physically powered-off server back on by itself.
 Automatic power-on requires VMware autostart/API, IPMI/iDRAC/iLO, Wake-on-LAN,
 or firmware restore-on-AC. Once the OS boots, ClusterGuard recovery is automatic.</p>
-<h3 id="11-4-timeout-and-failure-fallback-fail-closed">11.4 Timeout and failure fallback (fail-closed)<a class="heading-anchor" href="#11-4-timeout-and-failure-fallback-fail-closed" aria-label="Link to 11.4 Timeout and failure fallback (fail-closed)">#</a></h3>
+<h3 id="12-4-timeout-and-failure-fallback-fail-closed">12.4 Timeout and failure fallback (fail-closed)<a class="heading-anchor" href="#12-4-timeout-and-failure-fallback-fail-closed" aria-label="Link to 12.4 Timeout and failure fallback (fail-closed)">#</a></h3>
 <ul>
 <li>If finalize times out with the primary still unhealthy, protection is
 <strong>not</strong> released: the script logs CRITICAL, exits cleanly, and waits for an
@@ -978,7 +990,7 @@ operator.</li>
 against an already-finalized snapshot (<code>recovered_at</code> present) is also an
 idempotent no-op.</li>
 </ul>
-<h3 id="11-5-inspecting-restore-state">11.5 Inspecting restore state<a class="heading-anchor" href="#11-5-inspecting-restore-state" aria-label="Link to 11.5 Inspecting restore state">#</a></h3>
+<h3 id="12-5-inspecting-restore-state">12.5 Inspecting restore state<a class="heading-anchor" href="#12-5-inspecting-restore-state" aria-label="Link to 12.5 Inspecting restore state">#</a></h3>
 <pre><code class="language-bash">cgctl cluster restore-status [--cluster &lt;cluster-uuid&gt;]
 </code></pre>
 <p>Prints snapshot presence, cluster identity, <code>recovered_at</code>, recovery-freeze
@@ -1123,7 +1135,7 @@ modeling, WSFC quorum evidence, and site-specific fencing for forced failover.</
         </article>
         <aside class="page-toc" aria-label="On this page">
           <strong>On this page</strong>
-          <a class="toc-level-2" href="#1-configure-the-control-plane">1. Configure the Control Plane</a><a class="toc-level-3" href="#platform-login">Platform Login</a><a class="toc-level-2" href="#2-inspect-engines-and-capabilities">2. Inspect Engines and Capabilities</a><a class="toc-level-2" href="#3-register-authoritative-inventory">3. Register Authoritative Inventory</a><a class="toc-level-2" href="#4-refresh-mysql-topology">4. Refresh MySQL Topology</a><a class="toc-level-2" href="#5-check-control-plane-health-and-readiness">5. Check Control-Plane Health and Readiness</a><a class="toc-level-2" href="#6-read-topology-health-candidates-and-metrics">6. Read Topology, Health, Candidates, and Metrics</a><a class="toc-level-2" href="#7-use-cgctl">7. Use cgctl</a><a class="toc-level-2" href="#8-prepare-a-guarded-mysql-switchover">8. Prepare A Guarded MySQL Switchover</a><a class="toc-level-3" href="#browser-console">Browser Console</a><a class="toc-level-3" href="#external-service-api">External Service API</a><a class="toc-level-2" href="#9-reconcile-mutable-metadata">9. Reconcile Mutable Metadata</a><a class="toc-level-2" href="#10-built-in-node-installation-and-synchronization">10. Built-in Node Installation and Synchronization</a><a class="toc-level-2" href="#11-automatic-failover-and-safety-boundary">11. Automatic Failover and Safety Boundary</a><a class="toc-level-3" href="#external-fencing-contract">External fencing contract</a><a class="toc-level-2" href="#12-planned-shutdown-and-automatic-recovery">12. Planned Shutdown and Automatic Recovery</a><a class="toc-level-3" href="#11-1-shutdown-modes">11.1 Shutdown modes</a><a class="toc-level-3" href="#11-2-initiating-shutdown">11.2 Initiating shutdown</a><a class="toc-level-3" href="#11-3-automatic-restore-after-reboot">11.3 Automatic restore after reboot</a><a class="toc-level-3" href="#11-4-timeout-and-failure-fallback-fail-closed">11.4 Timeout and failure fallback (fail-closed)</a><a class="toc-level-3" href="#11-5-inspecting-restore-state">11.5 Inspecting restore state</a><a class="toc-level-2" href="#13-postgresql-ha">13. PostgreSQL HA</a><a class="toc-level-2" href="#14-adapter-roadmap">14. Adapter Roadmap</a><a class="toc-level-3" href="#mysql">MySQL</a><a class="toc-level-3" href="#postgresql">PostgreSQL</a><a class="toc-level-3" href="#oracle">Oracle</a><a class="toc-level-3" href="#sql-server">SQL Server</a>
+          <a class="toc-level-2" href="#1-configure-the-control-plane">1. Configure the Control Plane</a><a class="toc-level-3" href="#platform-login">Platform Login</a><a class="toc-level-2" href="#2-inspect-engines-and-capabilities">2. Inspect Engines and Capabilities</a><a class="toc-level-2" href="#3-register-authoritative-inventory">3. Register Authoritative Inventory</a><a class="toc-level-2" href="#4-refresh-mysql-topology">4. Refresh MySQL Topology</a><a class="toc-level-2" href="#5-check-control-plane-health-and-readiness">5. Check Control-Plane Health and Readiness</a><a class="toc-level-2" href="#6-read-topology-health-candidates-and-metrics">6. Read Topology, Health, Candidates, and Metrics</a><a class="toc-level-2" href="#7-use-cgctl">7. Use cgctl</a><a class="toc-level-2" href="#8-prepare-a-guarded-mysql-switchover">8. Prepare A Guarded MySQL Switchover</a><a class="toc-level-3" href="#browser-console">Browser Console</a><a class="toc-level-3" href="#external-service-api">External Service API</a><a class="toc-level-2" href="#9-reconcile-mutable-metadata">9. Reconcile Mutable Metadata</a><a class="toc-level-2" href="#10-built-in-node-installation-and-synchronization">10. Built-in Node Installation and Synchronization</a><a class="toc-level-2" href="#11-automatic-failover-and-safety-boundary">11. Automatic Failover and Safety Boundary</a><a class="toc-level-3" href="#external-fencing-contract">External fencing contract</a><a class="toc-level-2" href="#12-planned-shutdown-and-automatic-recovery">12. Planned Shutdown and Automatic Recovery</a><a class="toc-level-3" href="#12-1-shutdown-modes">12.1 Shutdown modes</a><a class="toc-level-3" href="#12-2-initiating-shutdown">12.2 Initiating shutdown</a><a class="toc-level-3" href="#12-3-automatic-restore-after-reboot">12.3 Automatic restore after reboot</a><a class="toc-level-3" href="#12-4-timeout-and-failure-fallback-fail-closed">12.4 Timeout and failure fallback (fail-closed)</a><a class="toc-level-3" href="#12-5-inspecting-restore-state">12.5 Inspecting restore state</a><a class="toc-level-2" href="#13-postgresql-ha">13. PostgreSQL HA</a><a class="toc-level-2" href="#14-adapter-roadmap">14. Adapter Roadmap</a><a class="toc-level-3" href="#mysql">MySQL</a><a class="toc-level-3" href="#postgresql">PostgreSQL</a><a class="toc-level-3" href="#oracle">Oracle</a><a class="toc-level-3" href="#sql-server">SQL Server</a>
         </aside>
       </main>
     </div>

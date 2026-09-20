@@ -40,6 +40,22 @@
         <article class="document-content"><h1 id="clusterguard-ha-english-documentation">ClusterGuard HA English Documentation<a class="heading-anchor" href="#clusterguard-ha-english-documentation" aria-label="Link to ClusterGuard HA English Documentation">#</a></h1>
 <p>The offline HTML documentation center starts at <a href="../index.html"><code>../html/index.html</code></a>. It includes this manual, the migration runbook, qualification evidence, local search, and print-friendly pages without an external network dependency.</p>
 <h2 id="current-version">Current Version<a class="heading-anchor" href="#current-version" aria-label="Link to Current Version">#</a></h2>
+<h3 id="latest-installer-prerelease">Latest Installer Prerelease<a class="heading-anchor" href="#latest-installer-prerelease" aria-label="Link to Latest Installer Prerelease">#</a></h3>
+<p>The newest installer kit is <strong>2.2-101</strong>, whose release notes are maintained in Simplified
+Chinese only: <a href="../zh-CN/release-2.2.101.md">2.2-101 release notes</a> ·
+<a href="https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.101">GitHub v2.2.101</a>.
+It is one kit containing MySQL 8.0.44 / PostgreSQL 16.4 media plus a standalone
+ClusterGuard RPM, built from commit <code>78dbdbf</code>. The archive was verified and uploaded;
+production <code>.cgupgrade</code> and final site installation, upgrade, and rollback acceptance
+remain outstanding. <code>release_channel=stable</code> inside the package does not change its
+GitHub prerelease status.</p>
+<p>English release notes are maintained through
+<a href="release-2.2.47.html">2.2.47</a>; the records from 2.2.48 onward (<code>docs/zh-CN/release-2.2.69.md</code>
+through <code>release-2.2.101.md</code>) exist only in Simplified Chinese. Machine-verified
+checksums and the latest documentation corrections are governed by the 2.2-101 release
+notes. Updater fixes and remaining gates are recorded in the
+<a href="../zh-CN/updater-private-workspace-2026-09-11.md">private execution workspace record</a>.</p>
+<h3 id="historical-formal-releases">Historical Formal Releases<a class="heading-anchor" href="#historical-formal-releases" aria-label="Link to Historical Formal Releases">#</a></h3>
 <table>
 <thead>
 <tr>
@@ -68,6 +84,9 @@
 <p><a href="https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.39">https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.39</a></p>
 <p>Do not use historical candidate packages with numbers higher than <code>2.1-45</code> in the local directory to replace the official release. The official deliverables must come from GitHub Release and be verified with the included SHA256 checksum.</p>
 <h2 id="recommended-reading-order">Recommended Reading Order<a class="heading-anchor" href="#recommended-reading-order" aria-label="Link to Recommended Reading Order">#</a></h2>
+<p>For the newest installer kit, start with the
+<a href="../zh-CN/release-2.2.101.md">2.2-101 release notes</a> (Simplified Chinese only).</p>
+<p>The order below follows the formal <code>2.2-39</code> baseline:</p>
 <ol>
 <li><a href="release-2.2.47.html">2.2.47 Release Notes</a>
 Confirm the official package, summary, support scope, and production admission boundary.</li>
@@ -147,7 +166,7 @@ uniqueness, and former-primary <code>pg_rewind</code>, is recorded in the
         </article>
         <aside class="page-toc" aria-label="On this page">
           <strong>On this page</strong>
-          <a class="toc-level-2" href="#current-version">Current Version</a><a class="toc-level-2" href="#recommended-reading-order">Recommended Reading Order</a><a class="toc-level-2" href="#acceptance-evidence">Acceptance Evidence</a><a class="toc-level-2" href="#postgresql-2-2">PostgreSQL 2.2</a><a class="toc-level-2" href="#docker-swarm-mysql">Docker Swarm MySQL</a><a class="toc-level-2" href="#kubernetes-mysql">Kubernetes MySQL</a><a class="toc-level-2" href="#document-validity">Document Validity</a><a class="toc-level-2" href="#information-required-for-issue-feedback">Information Required for Issue Feedback</a>
+          <a class="toc-level-2" href="#current-version">Current Version</a><a class="toc-level-3" href="#latest-installer-prerelease">Latest Installer Prerelease</a><a class="toc-level-3" href="#historical-formal-releases">Historical Formal Releases</a><a class="toc-level-2" href="#recommended-reading-order">Recommended Reading Order</a><a class="toc-level-2" href="#acceptance-evidence">Acceptance Evidence</a><a class="toc-level-2" href="#postgresql-2-2">PostgreSQL 2.2</a><a class="toc-level-2" href="#docker-swarm-mysql">Docker Swarm MySQL</a><a class="toc-level-2" href="#kubernetes-mysql">Kubernetes MySQL</a><a class="toc-level-2" href="#document-validity">Document Validity</a><a class="toc-level-2" href="#information-required-for-issue-feedback">Information Required for Issue Feedback</a>
         </aside>
       </main>
     </div>

@@ -21,15 +21,34 @@ Do not mix this manual with old versions of Orchestrator, single-machine RPM man
 
 ## 1. Deliverables and Installation Methods
 
-The official delivery directory includes:
+The official delivery directory is the build output directory `release/<bundle-version>/`
+(for example `release/2.1-48/`):
 
 ```text
-clusterguard-ha-2.1-45-offline-linux-x86_64/
+release/2.1-48/
+  RELEASE-INFO
   clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz
   clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz.sha256
   clusterguard-ha-2.1-45.x86_64.rpm
   clusterguard-ha-2.1-45.x86_64.rpm.sha256
-  docs/ClusterGuard-HA-离线安装与部署手册.md
+  SHA256SUMS
+  docs/                                   # bundled Chinese manuals
+```
+
+Unpacking the `*.tar.gz` yields the **media directory**, which shares the archive name but has
+different contents: the RPM and node runtime appear again under `packages/`.
+
+```text
+clusterguard-ha-2.1-45-offline-linux-x86_64/
+  install_clusterguard.sh                 # production installation entry point
+  packages/                               # ClusterGuard RPM and node runtime tar.gz
+  packages/database/                      # MySQL / PostgreSQL media and README.txt
+  dependencies/                           # offline RPM repository (with repodata/)
+  docs/                                   # bundled manuals
+  tools/                                  # jq, clock mesh, PostgreSQL source build tools
+  examples/                               # fencing and docker-swarm examples
+  RELEASE-INFO
+  SHA256SUMS
 ```
 
 Production deployment should use the complete offline package, not manually install RPM individually:
@@ -208,7 +227,7 @@ If the MySQL binary depends on libraries not provided by the target operating sy
 tools/收集RHEL离线依赖.sh --help
 ```
 
-Do not use `--nogpgcheck` or disable dependency checks. The `--dependencies` here is only used for the basic runtime dependencies of ClusterGuard and MySQL, not for the PostgreSQL source code compilation toolchain.
+Do not use `--nogpgcheck` against a networked repository or against RPMs that have not been verified individually. You may disable `gpgcheck` for a repository that points at the **local media directory** only after verifying every RPM in `dependencies/` with `rpm --checksig` and checking `SHA256SUMS` — which is exactly what the product's own installer and PostgreSQL source build do (verify first, then disable verification inside the isolated build root). The `--dependencies` directory is only used for the basic runtime dependencies of ClusterGuard and MySQL, not for the PostgreSQL source code compilation toolchain, and it must contain at least the `libaio`, `ncurses-compat-libs`, and `numactl-libs` RPMs; the actual closure size depends on how it was collected — consult `PACKAGE-MANIFEST.txt` / `COLLECTION-INFO` inside the media.
 
 ### Official PostgreSQL Source Code Installation
 

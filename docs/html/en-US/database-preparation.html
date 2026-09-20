@@ -107,6 +107,14 @@ ORDER BY user, host;
 </code></pre>
 <h3 id="2-3-minimal-permission-accounts">2.3 Minimal Permission Accounts<a class="heading-anchor" href="#2-3-minimal-permission-accounts" aria-label="Link to 2.3 Minimal Permission Accounts">#</a></h3>
 <p>The following example restricts the control node network segment to <code>192.168.102.%</code>. In production environments, it should be further tightened to specific control node addresses and use random long passwords.</p>
+<blockquote>
+<p><strong>Applies to preparing accounts by hand on an existing MySQL instance.</strong> Instances created by the
+ClusterGuard installer do not use this least-privilege set: <code>scripts/clusterguard-mysql-install.sh</code>
+grants the operation account <code>GRANT ALL PRIVILEGES ON *.* ... WITH GRANT OPTION</code>, adds <code>SELECT</code>
+to the discovery account and <code>REPLICATION CLIENT</code> to the replication account, and always creates
+the accounts with the host name <code>&#39;%&#39;</code>. Before assessing a production instance against least
+privilege, confirm first how its accounts were created.</p>
+</blockquote>
 <p>MySQL 8.0/8.4:</p>
 <pre><code class="language-sql">CREATE USER &#39;cg_discovery&#39;@&#39;192.168.102.%&#39;
   IDENTIFIED BY &#39;&lt;DISCOVERY_PASSWORD&gt;&#39;;
@@ -181,6 +189,13 @@ SELECT pg_reload_conf();
 </code></pre>
 <p>Replicas also need to be maintained by a controlled process for <code>clusterguard.primary_node_id</code> and <code>primary_conninfo</code>.</p>
 <h3 id="3-2-minimal-permission-accounts">3.2 Minimal Permission Accounts<a class="heading-anchor" href="#3-2-minimal-permission-accounts" aria-label="Link to 3.2 Minimal Permission Accounts">#</a></h3>
+<blockquote>
+<p><strong>Applies to onboarding an existing instance.</strong> PostgreSQL instances created by the ClusterGuard
+offline installer are currently onboarded with the <code>postgres</code> account (both <code>discovery</code> and
+<code>operation</code>), and the installer generates <code>pg_hba.conf</code> entries from the allowed CIDR rather than
+the <code>hostssl</code> per-role rules below. Configure an existing instance as described here when you
+need least-privilege access.</p>
+</blockquote>
 <pre><code class="language-sql">CREATE ROLE cg_monitor LOGIN PASSWORD &#39;&lt;DISCOVERY_PASSWORD&gt;&#39;;
 GRANT pg_monitor TO cg_monitor;
 
@@ -188,6 +203,7 @@ CREATE ROLE cg_operator LOGIN PASSWORD &#39;&lt;OPERATION_PASSWORD&gt;&#39;;
 GRANT pg_monitor, pg_signal_backend TO cg_operator;
 GRANT ALTER SYSTEM ON PARAMETER default_transaction_read_only TO cg_operator;
 GRANT EXECUTE ON FUNCTION pg_reload_conf() TO cg_operator;
+GRANT EXECUTE ON FUNCTION pg_wal_replay_resume() TO cg_operator;
 
 CREATE ROLE clusterguard_repl
   WITH LOGIN REPLICATION PASSWORD &#39;&lt;REPLICATION_PASSWORD&gt;&#39;;

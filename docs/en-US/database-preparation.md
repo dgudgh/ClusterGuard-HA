@@ -97,6 +97,13 @@ ORDER BY user, host;
 
 The following example restricts the control node network segment to `192.168.102.%`. In production environments, it should be further tightened to specific control node addresses and use random long passwords.
 
+> **Applies to preparing accounts by hand on an existing MySQL instance.** Instances created by the
+> ClusterGuard installer do not use this least-privilege set: `scripts/clusterguard-mysql-install.sh`
+> grants the operation account `GRANT ALL PRIVILEGES ON *.* ... WITH GRANT OPTION`, adds `SELECT`
+> to the discovery account and `REPLICATION CLIENT` to the replication account, and always creates
+> the accounts with the host name `'%'`. Before assessing a production instance against least
+> privilege, confirm first how its accounts were created.
+
 MySQL 8.0/8.4:
 
 ```sql
@@ -198,6 +205,12 @@ SELECT pg_reload_conf();
 Replicas also need to be maintained by a controlled process for `clusterguard.primary_node_id` and `primary_conninfo`.
 
 ### 3.2 Minimal Permission Accounts
+> **Applies to onboarding an existing instance.** PostgreSQL instances created by the ClusterGuard
+> offline installer are currently onboarded with the `postgres` account (both `discovery` and
+> `operation`), and the installer generates `pg_hba.conf` entries from the allowed CIDR rather than
+> the `hostssl` per-role rules below. Configure an existing instance as described here when you
+> need least-privilege access.
+
 
 ```sql
 CREATE ROLE cg_monitor LOGIN PASSWORD '<DISCOVERY_PASSWORD>';
@@ -207,6 +220,7 @@ CREATE ROLE cg_operator LOGIN PASSWORD '<OPERATION_PASSWORD>';
 GRANT pg_monitor, pg_signal_backend TO cg_operator;
 GRANT ALTER SYSTEM ON PARAMETER default_transaction_read_only TO cg_operator;
 GRANT EXECUTE ON FUNCTION pg_reload_conf() TO cg_operator;
+GRANT EXECUTE ON FUNCTION pg_wal_replay_resume() TO cg_operator;
 
 CREATE ROLE clusterguard_repl
   WITH LOGIN REPLICATION PASSWORD '<REPLICATION_PASSWORD>';

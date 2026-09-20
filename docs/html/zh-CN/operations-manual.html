@@ -292,9 +292,11 @@ assets/pki/raft-issuer.key      0640 root:clusterguard
 <code>service</code>，只停止数据库服务，服务器保持开机。已登录的平台管理员由后端签发并
 消费短时一次性审批，浏览器中不暴露审批密钥。</p>
 <p>自动化命令同样走统一 Power API；真实执行必须显式提供一次性审批令牌：</p>
-<pre><code class="language-bash">cgctl cluster shutdown --cluster &lt;集群显示名&gt; --mode service|poweroff \
+<pre><code class="language-bash">cgctl --server https://127.0.0.1:3000 --ca-file /etc/clusterguard/tls/ca.crt \
+  cluster shutdown --cluster &lt;集群显示名&gt; --mode service|poweroff \
   --approval-token &lt;一次性令牌&gt;
-cgctl cluster shutdown --cluster &lt;集群显示名&gt; --mode service --dry-run
+cgctl --server https://127.0.0.1:3000 --ca-file /etc/clusterguard/tls/ca.crt \
+  cluster shutdown --cluster &lt;集群显示名&gt; --mode service --dry-run
 </code></pre>
 <p><code>--dry-run</code> 仅执行预检查，随后自动取消临时生命周期，不改数据库或主机状态。
 不存在绕过 Safety Guard、锁、审批、审计和 Agent 白名单的直连脚本入口。</p>
@@ -335,7 +337,8 @@ VMware 自动启动/API、IPMI/iDRAC/iLO、Wake-on-LAN 或 BIOS 来电自启；�
 <li>删除快照后两个恢复单元自动变为 no-op；对已 finalize 的快照重复执行 restore/finalize 也是幂等 no-op。</li>
 </ul>
 <h3 id="11-5-查看恢复状态">11.5 查看恢复状态<a class="heading-anchor" href="#11-5-查看恢复状态" aria-label="Link to 11.5 查看恢复状态">#</a></h3>
-<pre><code class="language-bash">cgctl cluster restore-status [--cluster &lt;CLUSTER_UUID&gt;]
+<pre><code class="language-bash">cgctl --server https://127.0.0.1:3000 --ca-file /etc/clusterguard/tls/ca.crt \
+  cluster restore-status [--cluster &lt;CLUSTER_UUID&gt;]
 </code></pre>
 <p>输出快照是否存在、集群信息、<code>recovered_at</code>、恢复冻结状态（<code>frozen</code>/<code>active</code>）、每个实例的角色/健康/复制延迟/维护标记，以及按状态给出的恢复建议（advice）。未指定 <code>--cluster</code> 时默认使用本机快照中的集群 UUID。</p>
 <h2 id="12-备份与恢复">12. 备份与恢复<a class="heading-anchor" href="#12-备份与恢复" aria-label="Link to 12. 备份与恢复">#</a></h2>

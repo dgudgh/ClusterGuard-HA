@@ -77,8 +77,8 @@
 <li>每个数据库实例使用独立的单副本 StatefulSet，ordinal 必须为 0。禁止用一个三副本 StatefulSet 表示一主两从，因为缩容旧主会同时影响其他实例。</li>
 <li>每个实例必须有独立 PVC，数据库 <code>server_uuid</code> 不因 Pod 重建改变。</li>
 <li>WorkloadBinding 必须登记 StatefulSet、Pod 名、不可变 Pod UID、Node 名和 PVC UID。</li>
-<li>writer Service 必须没有 selector；EndpointSlice 必须标记 <code>endpointslice.kubernetes.io/managed-by=clusterguard.io/ha</code>。</li>
-<li>StatefulSet 必须启用启动守卫，并登记 <code>clusterguard.io/mysql-role=primary|replica</code>。</li>
+<li>writer Service 必须没有 selector；EndpointSlice 必须标记 <code>endpointslice.kubernetes.io/managed-by=clusterguard.io/ha</code>，并带有 <code>kubernetes.io/service-name=&lt;writer Service 名&gt;</code> 标签且 <code>addressType: IPv4</code>，否则控制面会拒绝该切片。</li>
+<li>StatefulSet 必须启用启动守卫（注解 <code>clusterguard.io/fence-guard=enabled</code>，初始 <code>clusterguard.io/fenced=false</code>），并登记 <code>clusterguard.io/mysql-role=primary|replica</code>。缺少 <code>fence-guard</code> 注解的 Pod 会被拒绝启动。</li>
 <li>Controller 在数据库命名空间内只取得 <code>get</code> Service/Pod/PVC、<code>get/update</code> EndpointSlice、<code>get/patch</code> StatefulSet 和 <code>get/update</code> scale 子资源权限；集群级权限只有 <code>get Node</code>。</li>
 <li>Kubernetes API 必须使用 HTTPS、CA 校验和短期 ServiceAccount token 或客户端证书。token 文件每次请求都会重新读取，支持轮换。</li>
 <li>数据库 Pod 禁止自动挂载 ServiceAccount token；短期 token 只投影给启动守卫 init container，MySQL 主容器不可见。</li>
@@ -116,6 +116,13 @@ kubectl apply -f deploy/kubernetes/mysql/writer-service.yaml
   &quot;enabled&quot;: true,
   &quot;request_timeout_seconds&quot;: 10,
   &quot;fence_timeout_seconds&quot;: 60
+}
+</code></pre>
+<p>还需同时启用 MySQL 的操作与复制凭据，否则切换无法执行——平台只有在这些凭据解析成功时才对外宣告 MySQL 变更能力：</p>
+<pre><code class="language-json">&quot;mysql&quot;: {
+  &quot;enabled&quot;: true,
+  &quot;operation&quot;: { &quot;username&quot;: &quot;cg_operator&quot;, &quot;password_env&quot;: &quot;CG_MYSQL_OPERATION_PASSWORD&quot; },
+  &quot;replication&quot;: { &quot;username&quot;: &quot;cg_replication&quot;, &quot;password_env&quot;: &quot;CG_MYSQL_REPLICATION_PASSWORD&quot; }
 }
 </code></pre>
 <p>在每个控制节点准备权限为 <code>0600</code> 的凭据描述文件、CA 和 token。<code>credential_ref</code> 只保存凭据描述文件的绝对路径，不把 token 写入 ClusterGuard 元数据。</p>

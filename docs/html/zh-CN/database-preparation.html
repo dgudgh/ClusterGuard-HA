@@ -108,6 +108,12 @@ ORDER BY user, host;
 </code></pre>
 <h3 id="2-3-最小权限账号">2.3 最小权限账号<a class="heading-anchor" href="#2-3-最小权限账号" aria-label="Link to 2.3 最小权限账号">#</a></h3>
 <p>以下示例把控制节点网段限制为 <code>192.168.102.%</code>。生产环境应进一步收紧到具体控制节点地址，并使用随机长密码。</p>
+<blockquote>
+<p><strong>适用范围：</strong> 本节是<strong>手工为已有 MySQL 实例</strong>准备账号的配方。由 ClusterGuard 安装器新建的托管实例
+并不使用这套最小权限：<code>scripts/clusterguard-mysql-install.sh</code> 给执行账号的是
+<code>GRANT ALL PRIVILEGES ON *.* ... WITH GRANT OPTION</code>，发现账号额外有 <code>SELECT</code>，复制账号额外有
+<code>REPLICATION CLIENT</code>，且账号主机名一律是 <code>&#39;%&#39;</code>。按最小权限评估生产实例前请先确认账号是怎么来的。</p>
+</blockquote>
 <p>MySQL 8.0/8.4：</p>
 <pre><code class="language-sql">CREATE USER &#39;cg_discovery&#39;@&#39;192.168.102.%&#39;
   IDENTIFIED BY &#39;&lt;DISCOVERY_PASSWORD&gt;&#39;;
@@ -182,6 +188,11 @@ SELECT pg_reload_conf();
 </code></pre>
 <p>副本还需要由受控流程维护 <code>clusterguard.primary_node_id</code> 和 <code>primary_conninfo</code>。</p>
 <h3 id="3-2-最小权限账号">3.2 最小权限账号<a class="heading-anchor" href="#3-2-最小权限账号" aria-label="Link to 3.2 最小权限账号">#</a></h3>
+<blockquote>
+<p><strong>适用于接入已有实例。</strong> 由 ClusterGuard 离线安装器新建的 PostgreSQL 实例当前以 <code>postgres</code>
+账号接入（<code>discovery</code> 与 <code>operation</code> 均为 <code>postgres</code>），<code>pg_hba.conf</code> 条目由安装器按允许网段生成，
+不是下面的 <code>hostssl</code> + 按角色规则。需要最小权限接入时，请对已有实例按本节配置。</p>
+</blockquote>
 <pre><code class="language-sql">CREATE ROLE cg_monitor LOGIN PASSWORD &#39;&lt;DISCOVERY_PASSWORD&gt;&#39;;
 GRANT pg_monitor TO cg_monitor;
 
@@ -189,6 +200,7 @@ CREATE ROLE cg_operator LOGIN PASSWORD &#39;&lt;OPERATION_PASSWORD&gt;&#39;;
 GRANT pg_monitor, pg_signal_backend TO cg_operator;
 GRANT ALTER SYSTEM ON PARAMETER default_transaction_read_only TO cg_operator;
 GRANT EXECUTE ON FUNCTION pg_reload_conf() TO cg_operator;
+GRANT EXECUTE ON FUNCTION pg_wal_replay_resume() TO cg_operator;
 
 CREATE ROLE clusterguard_repl
   WITH LOGIN REPLICATION PASSWORD &#39;&lt;REPLICATION_PASSWORD&gt;&#39;;
@@ -238,6 +250,10 @@ GRANT SYSDG TO CLUSTERGUARD_DG;
 <pre><code class="language-bash">sqlplus &#39;CLUSTERGUARD_DG/&lt;STRONG_PASSWORD&gt;@MESDB as sysdg&#39;
 sqlplus &#39;CLUSTERGUARD_DG/&lt;STRONG_PASSWORD&gt;@MESDB_B as sysdg&#39;
 </code></pre>
+<blockquote>
+<p>以上 <code>as sysdg</code> 子句仅用于<strong>人工验证</strong>。产品本身的连接串是 <code>user/password@connect</code>，不会追加角色子句；
+因此该账号必须在密码文件中直接具备 <code>SYSDG</code> 权限，而不是依赖连接时提权。</p>
+</blockquote>
 <p>Agent 模式在数据库节点以 <code>oracle</code> 操作系统账号运行 <code>dgmgrl</code>。数据库节点的受保护环境文件设置：</p>
 <pre><code class="language-bash">CG_ORACLE_BROKER_PASSWORD=&#39;&lt;STRONG_PASSWORD&gt;&#39;
 </code></pre>

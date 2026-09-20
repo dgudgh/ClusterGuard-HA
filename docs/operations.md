@@ -9,6 +9,17 @@ Version boundary: `v2.1.45` is the sealed MySQL release. PostgreSQL operations
 belong to the 2.2 line. Oracle and SQL Server procedures remain separately
 gated until their own production qualification is complete.
 
+> **Scope:** this document is the control-plane and API reference. Every example uses the
+> **source-configuration defaults** (`http://127.0.0.1:8088`, plaintext loopback), while a
+> production installation created by `scripts/install_clusterguard.sh` listens on
+> `https://<host>:3000` with TLS enforced (certificate `/etc/clusterguard/tls/server.crt`,
+> CA `/etc/clusterguard/tls/ca.crt`, API port defaulting to 3000). On a real deployment,
+> replace the address with `https://<host>:3000`, add `--cacert /etc/clusterguard/tls/ca.crt`
+> to curl commands, and rewrite each `cgctl <subcommand>` as
+> `cgctl --server https://<host>:3000 --ca-file /etc/clusterguard/tls/ca.crt <subcommand>`
+> (global flags must precede the subcommand). For day-to-day work follow the
+> [Operations Manual](en-US/operations-manual.md).
+
 ## 1. Configure the Control Plane
 
 Use `configs/clusterguard.example.json` as the configuration shape. The loader
@@ -487,7 +498,7 @@ identity in the Prometheus scrape target configuration. No external exporter,
 monitoring agent, or metrics database is required by the ClusterGuard HA
 runtime.
 
-The console operation log loads 50 events initially and adds 50 events per
+The console operation log loads 20 events initially and adds 20 events per
 request when the operator selects **Load more**. Repeated blocked retries for
 one automatic-recovery incident appear as one incident with an attempt count;
 the durable operation records remain separate and auditable. Manual operations
@@ -876,14 +887,14 @@ primary/replica cluster. The platform applies protection before shutdown and
 systemd units restore the cluster automatically after boot, without operator
 intervention.
 
-### 11.1 Shutdown modes
+### 12.1 Shutdown modes
 
 | Mode | Behavior | Use case |
 |------|----------|----------|
 | `service` | Stops MySQL only (replicas first, primary last); hosts stay up | Software upgrade, config change, short maintenance window |
 | `poweroff` | Power-off every node in parallel | Rack power maintenance, relocation |
 
-### 11.2 Initiating shutdown
+### 12.2 Initiating shutdown
 
 Use **Topology -> Power lifecycle -> One-click shutdown** in the Web console.
 The default `service` mode stops the database but leaves the hosts running. A
@@ -917,7 +928,7 @@ The full flow (any failure interrupts and keeps protection, see 11.4):
 5. Stop per mode: `service` stops replicas then the primary; `poweroff`
    powers off all nodes in parallel.
 
-### 11.3 Automatic restore after reboot
+### 12.3 Automatic restore after reboot
 
 Both units ship enabled. They scan the per-cluster snapshot directory at boot
 and are no-ops when it is empty:
@@ -938,7 +949,7 @@ and are no-ops when it is empty:
 Automatic power-on requires VMware autostart/API, IPMI/iDRAC/iLO, Wake-on-LAN,
 or firmware restore-on-AC. Once the OS boots, ClusterGuard recovery is automatic.
 
-### 11.4 Timeout and failure fallback (fail-closed)
+### 12.4 Timeout and failure fallback (fail-closed)
 
 - If finalize times out with the primary still unhealthy, protection is
   **not** released: the script logs CRITICAL, exits cleanly, and waits for an
@@ -955,7 +966,7 @@ curl -sk -X POST -H "Authorization: Bearer ${CG_CONTROL_TOKEN}" \
   against an already-finalized snapshot (`recovered_at` present) is also an
   idempotent no-op.
 
-### 11.5 Inspecting restore state
+### 12.5 Inspecting restore state
 
 ```bash
 cgctl cluster restore-status [--cluster <cluster-uuid>]

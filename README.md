@@ -79,7 +79,8 @@ d4a46bdfa4c95bb641a7d19f063d2f43219177658b01b914a31a1cd5d06ec590  clusterguard-h
 
 The current MySQL adapter provides:
 
-- inventory-scoped discovery for MySQL 5.7, 8.0, 8.4, and 9.7;
+- inventory-scoped discovery for MySQL 5.7, 8.0, 8.4, and 9.x (the 9.x dialect
+  path is unit-tested against 9.7.0 only; no 9.x site qualification is recorded);
 - globally unique immutable node names, platform UUIDs, and native MySQL
   `server_uuid` identity;
 - persisted topology, health, replication links, probe evidence, and metrics;
@@ -98,8 +99,8 @@ The current MySQL adapter provides:
 - an authenticated Chinese console with role-based access, mandatory bootstrap
   password change, CSRF protection, and the `cgctl` service CLI;
 - durable operation UUIDs, idempotency keys, stage progress, audit, and reports;
-- plan-bound, five-minute, single-use approval grants for manual high-risk
-  database operations;
+- plan-bound, single-use approval grants for manual high-risk database
+  operations (five-minute default lifetime, capped at fifteen minutes);
 - tested MySQL 5.7/8.x/9.x mutation dialects behind an independent adapter and
   writer-endpoint contract.
 

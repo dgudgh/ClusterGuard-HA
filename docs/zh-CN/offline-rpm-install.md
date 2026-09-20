@@ -22,15 +22,33 @@
 
 ## 1. 交付物与安装方式
 
-正式交付目录包含：
+正式交付目录是构建产物目录 `release/<bundle-version>/`（例如 `release/2.1-48/`）：
 
 ```text
-clusterguard-ha-2.1-45-offline-linux-x86_64/
+release/2.1-48/
+  RELEASE-INFO
   clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz
   clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz.sha256
   clusterguard-ha-2.1-45.x86_64.rpm
   clusterguard-ha-2.1-45.x86_64.rpm.sha256
-  docs/ClusterGuard-HA-离线安装与部署手册.md
+  SHA256SUMS
+  docs/                                   # 随包中文手册
+```
+
+解包 `*.tar.gz` 得到的是**介质目录**，它与上面的交付目录同名但内容不同：RPM 与节点运行时
+会重新出现在 `packages/` 下。
+
+```text
+clusterguard-ha-2.1-45-offline-linux-x86_64/
+  install_clusterguard.sh                 # 生产安装入口
+  packages/                               # ClusterGuard RPM 与节点运行时 tar.gz
+  packages/database/                      # MySQL / PostgreSQL 介质与 README.txt
+  dependencies/                           # 离线 RPM 仓库（含 repodata/）
+  docs/                                   # 随包手册
+  tools/                                  # jq、时钟网格、PostgreSQL 源码编译等工具
+  examples/                               # fencing 与 docker-swarm 示例
+  RELEASE-INFO
+  SHA256SUMS
 ```
 
 生产部署应使用完整离线包，不是单独手工安装 RPM：
@@ -209,7 +227,7 @@ MySQL 默认监听数据库端口的所有 IPv4 地址，ClusterGuard 管理账�
 tools/收集RHEL离线依赖.sh --help
 ```
 
-不要使用 `--nogpgcheck` 或关闭依赖检查。这里的 `--dependencies` 只用于 ClusterGuard 和 MySQL 的基础运行依赖，不承载 PostgreSQL 源码编译工具链。
+不要对联网仓库或未经逐包验签的 RPM 使用 `--nogpgcheck`。只有在已经对 `dependencies/` 逐个执行 `rpm --checksig` 并核对 `SHA256SUMS` 之后，才允许对**指向本地介质目录**的仓库关闭 `gpgcheck`——产品自身的安装器与 PostgreSQL 源码编译器正是这样做的（先逐包验签，再在隔离构建根内关闭校验）。这里的 `--dependencies` 只用于 ClusterGuard 和 MySQL 的基础运行依赖，不承载 PostgreSQL 源码编译工具链，且至少必须包含 `libaio`、`ncurses-compat-libs`、`numactl-libs` 三个 RPM；实际闭包大小取决于收集方式，以介质内 `PACKAGE-MANIFEST.txt` / `COLLECTION-INFO` 为准。
 
 ### PostgreSQL 官方源码安装
 

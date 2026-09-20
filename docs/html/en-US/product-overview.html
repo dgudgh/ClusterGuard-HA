@@ -114,7 +114,8 @@ and is documented separately in
 </blockquote>
 <p>The current MySQL adapter provides:</p>
 <ul>
-<li>inventory-scoped discovery for MySQL 5.7, 8.0, 8.4, and 9.7;</li>
+<li>inventory-scoped discovery for MySQL 5.7, 8.0, 8.4, and 9.x (the 9.x dialect
+path is unit-tested against 9.7.0 only; no 9.x site qualification is recorded);</li>
 <li>globally unique immutable node names, platform UUIDs, and native MySQL
 <code>server_uuid</code> identity;</li>
 <li>persisted topology, health, replication links, probe evidence, and metrics;</li>
@@ -133,8 +134,8 @@ bounded history, paginated operation logs, and rate-limited incident reminders;<
 <li>an authenticated Chinese console with role-based access, mandatory bootstrap
 password change, CSRF protection, and the <code>cgctl</code> service CLI;</li>
 <li>durable operation UUIDs, idempotency keys, stage progress, audit, and reports;</li>
-<li>plan-bound, five-minute, single-use approval grants for manual high-risk
-database operations;</li>
+<li>plan-bound, single-use approval grants for manual high-risk database
+operations (five-minute default lifetime, capped at fifteen minutes);</li>
 <li>tested MySQL 5.7/8.x/9.x mutation dialects behind an independent adapter and
 writer-endpoint contract.</li>
 </ul>

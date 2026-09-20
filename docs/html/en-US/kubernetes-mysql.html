@@ -76,8 +76,8 @@
 <ul>
 <li>Each database instance has its own one-replica StatefulSet at ordinal zero and its own PVC.</li>
 <li>WorkloadBinding records StatefulSet, Pod name, immutable Pod UID, Node name, and PVC UID.</li>
-<li>The writer Service is selectorless, and its EndpointSlice is labeled as managed by <code>clusterguard.io/ha</code>.</li>
-<li>Each StatefulSet enables the start guard and records <code>clusterguard.io/mysql-role=primary|replica</code>.</li>
+<li>The writer Service is selectorless, and its EndpointSlice is labeled as managed by <code>clusterguard.io/ha</code>, carries the <code>kubernetes.io/service-name=&lt;writer Service&gt;</code> label, and uses <code>addressType: IPv4</code>; the control plane rejects any other slice.</li>
+<li>Each StatefulSet enables the start guard through the <code>clusterguard.io/fence-guard=enabled</code> annotation (initially with <code>clusterguard.io/fenced=false</code>) and records <code>clusterguard.io/mysql-role=primary|replica</code>. A Pod without the <code>fence-guard</code> annotation is refused at start.</li>
 <li>Inside the database namespace, the Controller receives only <code>get</code> for Service/Pod/PVC, <code>get/update</code> for EndpointSlice, <code>get/patch</code> for StatefulSet, and <code>get/update</code> for the scale subresource. Its only cluster-scoped permission is <code>get Node</code>.</li>
 <li>The Kubernetes API uses HTTPS with CA validation and a rotating token file or client certificate.</li>
 <li>Database Pods disable automatic ServiceAccount token mounting. A short-lived token is projected only into the start-guard init container and is not visible to the MySQL container.</li>
@@ -105,6 +105,14 @@ docker build -f deploy/kubernetes/fence-guard/Dockerfile \
   &quot;enabled&quot;: true,
   &quot;request_timeout_seconds&quot;: 10,
   &quot;fence_timeout_seconds&quot;: 60
+}
+</code></pre>
+<p>Also enable the MySQL operation and replication credentials, otherwise a switchover cannot run:
+the platform advertises MySQL mutations only when those credentials resolve.</p>
+<pre><code class="language-json">&quot;mysql&quot;: {
+  &quot;enabled&quot;: true,
+  &quot;operation&quot;: { &quot;username&quot;: &quot;cg_operator&quot;, &quot;password_env&quot;: &quot;CG_MYSQL_OPERATION_PASSWORD&quot; },
+  &quot;replication&quot;: { &quot;username&quot;: &quot;cg_replication&quot;, &quot;password_env&quot;: &quot;CG_MYSQL_REPLICATION_PASSWORD&quot; }
 }
 </code></pre>
 <p>Register one Kubernetes RuntimeTarget whose <code>endpoint</code> is the API HTTPS origin and whose <code>credential_ref</code> is an absolute local JSON profile containing <code>ca_file</code> and <code>bearer_token_file</code>. Register one Kubernetes WorkloadBinding per database instance, including live Pod UID and Node name. Finally register a <code>service</code> HAEndpoint with provider <code>kubernetes_service</code>, provider reference <code>namespace/service/endpoint-slice</code>, the Service DNS hostname, database port, and current primary owner ID.</p>

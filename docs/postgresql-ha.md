@@ -370,8 +370,8 @@ layout:
    stale probe evidence, and a foreign system identifier.
 3. Planned switchover rotates through every node while preserving one writer
    and one VIP owner.
-4. Old-primary recovery succeeds with rewind and blocks to rebuild when rewind
-   prerequisites are absent.
+4. Old-primary recovery succeeds with `pg_rewind` when its prerequisites are met; when they
+   are absent the platform blocks an unsafe rewind and recommends a rebuild.
 5. `pg_basebackup` rebuild leaves no target-only data and rejoins streaming.
 6. Controller minority cannot execute a mutation.
 7. A primary network partition remains blocked until the external fencer proves

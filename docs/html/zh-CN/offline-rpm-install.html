@@ -49,13 +49,28 @@
 <p>不要把本手册与旧版 Orchestrator、单机 RPM 手工配置文档混用。</p>
 <p><code>clusterguard-configure</code> 是安装器在远端调用的节点级配置程序。初次部署不应由运维人员逐台手工调用它；只有平台节点生命周期、受控恢复流程或工程支持明确要求时才使用该程序。</p>
 <h2 id="1-交付物与安装方式">1. 交付物与安装方式<a class="heading-anchor" href="#1-交付物与安装方式" aria-label="Link to 1. 交付物与安装方式">#</a></h2>
-<p>正式交付目录包含：</p>
-<pre><code class="language-text">clusterguard-ha-2.1-45-offline-linux-x86_64/
+<p>正式交付目录是构建产物目录 <code>release/&lt;bundle-version&gt;/</code>（例如 <code>release/2.1-48/</code>）：</p>
+<pre><code class="language-text">release/2.1-48/
+  RELEASE-INFO
   clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz
   clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz.sha256
   clusterguard-ha-2.1-45.x86_64.rpm
   clusterguard-ha-2.1-45.x86_64.rpm.sha256
-  docs/ClusterGuard-HA-离线安装与部署手册.md
+  SHA256SUMS
+  docs/                                   # 随包中文手册
+</code></pre>
+<p>解包 <code>*.tar.gz</code> 得到的是<strong>介质目录</strong>，它与上面的交付目录同名但内容不同：RPM 与节点运行时
+会重新出现在 <code>packages/</code> 下。</p>
+<pre><code class="language-text">clusterguard-ha-2.1-45-offline-linux-x86_64/
+  install_clusterguard.sh                 # 生产安装入口
+  packages/                               # ClusterGuard RPM 与节点运行时 tar.gz
+  packages/database/                      # MySQL / PostgreSQL 介质与 README.txt
+  dependencies/                           # 离线 RPM 仓库（含 repodata/）
+  docs/                                   # 随包手册
+  tools/                                  # jq、时钟网格、PostgreSQL 源码编译等工具
+  examples/                               # fencing 与 docker-swarm 示例
+  RELEASE-INFO
+  SHA256SUMS
 </code></pre>
 <p>生产部署应使用完整离线包，不是单独手工安装 RPM：</p>
 <pre><code class="language-bash">sha256sum -c clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz.sha256
@@ -238,7 +253,7 @@ targets_file=/etc/clusterguard/fencing/vmware-targets.tsv
 <p>如果 MySQL 二进制依赖目标操作系统没有提供的库，必须把同发行版、同主版本、同架构、已签名的 RPM 放进 <code>dependencies/</code>。可在联网的同版本镜像机上使用离线包内工具收集：</p>
 <pre><code class="language-bash">tools/收集RHEL离线依赖.sh --help
 </code></pre>
-<p>不要使用 <code>--nogpgcheck</code> 或关闭依赖检查。这里的 <code>--dependencies</code> 只用于 ClusterGuard 和 MySQL 的基础运行依赖，不承载 PostgreSQL 源码编译工具链。</p>
+<p>不要对联网仓库或未经逐包验签的 RPM 使用 <code>--nogpgcheck</code>。只有在已经对 <code>dependencies/</code> 逐个执行 <code>rpm --checksig</code> 并核对 <code>SHA256SUMS</code> 之后，才允许对<strong>指向本地介质目录</strong>的仓库关闭 <code>gpgcheck</code>——产品自身的安装器与 PostgreSQL 源码编译器正是这样做的（先逐包验签，再在隔离构建根内关闭校验）。这里的 <code>--dependencies</code> 只用于 ClusterGuard 和 MySQL 的基础运行依赖，不承载 PostgreSQL 源码编译工具链，且至少必须包含 <code>libaio</code>、<code>ncurses-compat-libs</code>、<code>numactl-libs</code> 三个 RPM；实际闭包大小取决于收集方式，以介质内 <code>PACKAGE-MANIFEST.txt</code> / <code>COLLECTION-INFO</code> 为准。</p>
 <h3 id="postgresql-官方源码安装">PostgreSQL 官方源码安装<a class="heading-anchor" href="#postgresql-官方源码安装" aria-label="Link to PostgreSQL 官方源码安装">#</a></h3>
 <p>PostgreSQL 可以直接使用官方 release 源码包，不要求用户预先制作二进制包。例如：</p>
 <pre><code class="language-text">/opt/postgresql-16.4.tar.bz2

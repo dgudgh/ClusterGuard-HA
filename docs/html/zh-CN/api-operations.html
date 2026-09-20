@@ -39,6 +39,15 @@
       <main class="document-layout" id="document-content">
         <article class="document-content"><h1 id="clusterguard-ha-操作">ClusterGuard HA 操作<a class="heading-anchor" href="#clusterguard-ha-操作" aria-label="Link to ClusterGuard HA 操作">#</a></h1>
 <p>版本边界：<code>v2.1.45</code> 是已封板的 MySQL 发布版本。PostgreSQL 操作属于 2.2 系列。Oracle 和 SQL Server 流程在它们各自的生产认证完成之前仍分别受限制。</p>
+<blockquote>
+<p><strong>文档定位：</strong> 本文是控制面与 API 参考。全文示例使用<strong>源码配置的默认值</strong>（<code>http://127.0.0.1:8088</code>，明文回环）。
+生产安装器 <code>scripts/install_clusterguard.sh</code> 生成的部署监听 <code>https://&lt;host&gt;:3000</code> 并强制 TLS
+（证书 <code>/etc/clusterguard/tls/server.crt</code>，CA <code>/etc/clusterguard/tls/ca.crt</code>，API 端口默认 3000）。
+因此在现场请把示例中的地址换成 <code>https://&lt;host&gt;:3000</code>，curl 命令补 <code>--cacert /etc/clusterguard/tls/ca.crt</code>，
+并把每条 <code>cgctl &lt;子命令&gt;</code> 改写成
+<code>cgctl --server https://&lt;host&gt;:3000 --ca-file /etc/clusterguard/tls/ca.crt &lt;子命令&gt;</code>
+（全局 flag 必须写在子命令之前）。日常值守流程以<a href="operations-manual.html">运维操作手册</a>为准。</p>
+</blockquote>
 <h2 id="1-配置控制平面">1. 配置控制平面<a class="heading-anchor" href="#1-配置控制平面" aria-label="Link to 1. 配置控制平面">#</a></h2>
 <p>使用 <code>configs/clusterguard.example.json</code> 作为配置形状。加载器拒绝未知的键和多个 JSON 值。</p>
 <p>实现的键：</p>
@@ -450,7 +459,7 @@ clusterguard_control_plane_lifecycle_tasks
 被抓取的控制器，并且不携带可变的主机名标签；在 Prometheus 抓取目标配置中分配控制器
 身份。ClusterGuard HA 运行时不需要外部导出器、
 监控代理或指标数据库。</p>
-<p>控制台操作日志最初加载 50 个事件，并在操作员选择 <strong>加载更多</strong> 时每次请求添加 50 个事件。对于一个自动恢复事件的重复阻塞重试，会显示为一个事件并带有尝试次数；
+<p>控制台操作日志最初加载 20 个事件，并在操作员选择 <strong>加载更多</strong> 时每次请求添加 20 个事件。对于一个自动恢复事件的重复阻塞重试，会显示为一个事件并带有尝试次数；
 持久操作记录保持独立且可审计。手动操作和不同事件从不合并。默认情况下，原始请求和响应数据被折叠，事件在最新尝试时打开。持久快照保留最新的 128 个计划操作、512 个终端操作、
 1,024 个审计事件、512 个报告和 2,048 个安全事件。当策略要求更长的审计保留期时，在这些限制之前导出记录。</p>
 <p>对于一个不可变的外部归档，在达到限制之前，使用经过身份验证的控制会话或服务持有者以 NDJSON 格式获取当前审计窗口：</p>
@@ -653,7 +662,7 @@ assets/pki/raft-issuer.key      0640 root:clusterguard
 <p>MySQL多源复制在此阶段被检测但未建模。如果<code>SHOW REPLICA STATUS</code>或其遗留等价物返回多于一个通道，发现将关闭并不发布部分健康、拓扑或提升资格。</p>
 <h2 id="12-计划关闭和自动恢复">12. 计划关闭和自动恢复<a class="heading-anchor" href="#12-计划关闭和自动恢复" aria-label="Link to 12. 计划关闭和自动恢复">#</a></h2>
 <p>用于维护窗口、机架移动和MySQL主/副本集群的完全断电。平台在关闭前应用保护，系统启动后systemd单元会自动恢复集群，无需操作员干预。</p>
-<h3 id="11-1-关闭模式">11.1 关闭模式<a class="heading-anchor" href="#11-1-关闭模式" aria-label="Link to 11.1 关闭模式">#</a></h3>
+<h3 id="12-1-关闭模式">12.1 关闭模式<a class="heading-anchor" href="#12-1-关闭模式" aria-label="Link to 12.1 关闭模式">#</a></h3>
 <table>
 <thead>
 <tr>
@@ -673,12 +682,12 @@ assets/pki/raft-issuer.key      0640 root:clusterguard
 <td>机架电源维护、迁移</td>
 </tr>
 </tbody></table>
-<h3 id="11-2-启动关闭">11.2 启动关闭<a class="heading-anchor" href="#11-2-启动关闭" aria-label="Link to 11.2 启动关闭">#</a></h3>
+<h3 id="12-2-启动关闭">12.2 启动关闭<a class="heading-anchor" href="#12-2-启动关闭" aria-label="Link to 12.2 启动关闭">#</a></h3>
 <p>在Web控制台中使用 <strong>拓扑 -&gt; 电源生命周期 -&gt; 一键关闭</strong>。默认<code>service</code>模式停止数据库但保持主机运行。登录的平台管理员在服务器内部收到一个短暂的、单次使用的审批；没有审批密钥暴露给浏览器。</p>
 <p>CLI自动化使用相同的API工作流，并需要显式发出的一次性审批令牌：</p>
-<pre><code class="language-bash">cgctl cluster shutdown --cluster &lt;display name&gt; --mode service|poweroff \
-  --approval-token &lt;single-use-token&gt;
-cgctl cluster shutdown --cluster &lt;display name&gt; --mode service --dry-run
+<pre><code class="language-bash">cgctl cluster shutdown --cluster &lt;集群显示名&gt; --mode service|poweroff \
+  --approval-token &lt;一次性令牌&gt;
+cgctl cluster shutdown --cluster &lt;集群显示名&gt; --mode service --dry-run
 </code></pre>
 <p><code>--dry-run</code>执行预检查并立即取消临时生命周期；它不会更改数据库或主机状态。没有直接的shell绕过。</p>
 <p>完整流程（任何失败都会中断并保持保护，参见11.4）：</p>
@@ -689,14 +698,14 @@ cgctl cluster shutdown --cluster &lt;display name&gt; --mode service --dry-run
 <li>在每个节点上运行<code>SET PERSIST_ONLY read_only=ON; SET PERSIST_ONLY super_read_only=ON</code> —— 没有运行时影响，但跨重启持久化，因此恢复后的集群不能接受散写。</li>
 <li>按模式停止：<code>service</code>先停止副本再停止主节点；<code>poweroff</code>并行关闭所有节点。</li>
 </ol>
-<h3 id="11-3-重启后的自动恢复">11.3 重启后的自动恢复<a class="heading-anchor" href="#11-3-重启后的自动恢复" aria-label="Link to 11.3 重启后的自动恢复">#</a></h3>
+<h3 id="12-3-重启后的自动恢复">12.3 重启后的自动恢复<a class="heading-anchor" href="#12-3-重启后的自动恢复" aria-label="Link to 12.3 重启后的自动恢复">#</a></h3>
 <p>两个单元都默认启用。它们在启动时扫描每个集群的快照目录，当目录为空时为无操作：</p>
 <ul>
 <li><code>clusterguard-cluster-restore.service</code> —— 首先确认实时控制平面仍记录活跃的计划恢复状态，启动本地数据库服务，并等待就绪。对于MySQL，只有不可变ID指定的主节点会清除持久化和运行时只读标志。然后它报告启动/恢复并触发发现。在普通重启时，陈旧的快照在任何角色变更之前被拒绝。</li>
 <li><code>clusterguard-cluster-finalize.service</code> —— 等待控制平面健康（<code>/healthz</code>，最多60秒），然后轮询拓扑直到主实例报告健康（每5秒，最多600秒）；成功后解除自动恢复冻结，清除集群维护保护，并将<code>recovered_at</code>写入该集群的快照。</li>
 </ul>
 <p><code>poweroff</code>不能自行重新启动物理断电的服务器。自动开机需要VMware自动启动/API、IPMI/iDRAC/iLO、Wake-on-LAN或AC恢复固件。一旦操作系统启动，ClusterGuard恢复是自动的。</p>
-<h3 id="11-4-超时和失败回退-关闭">11.4 超时和失败回退（关闭）<a class="heading-anchor" href="#11-4-超时和失败回退-关闭" aria-label="Link to 11.4 超时和失败回退（关闭）">#</a></h3>
+<h3 id="12-4-超时和失败回退-关闭">12.4 超时和失败回退（关闭）<a class="heading-anchor" href="#12-4-超时和失败回退-关闭" aria-label="Link to 12.4 超时和失败回退（关闭）">#</a></h3>
 <ul>
 <li>如果最终化超时且主节点仍不健康，保护 <strong>不会</strong> 被释放：脚本记录CRITICAL，干净退出并等待操作员。</li>
 <li>确认问题已解决后，手动释放保护：</li>
@@ -708,13 +717,13 @@ cgctl cluster shutdown --cluster &lt;display name&gt; --mode service --dry-run
 <ul>
 <li>删除快照会使两个单元变为无操作；对已最终化的快照（<code>recovered_at</code>存在）重新运行恢复/最终化也是幂等的无操作。</li>
 </ul>
-<h3 id="11-5-检查恢复状态">11.5 检查恢复状态<a class="heading-anchor" href="#11-5-检查恢复状态" aria-label="Link to 11.5 检查恢复状态">#</a></h3>
+<h3 id="12-5-检查恢复状态">12.5 检查恢复状态<a class="heading-anchor" href="#12-5-检查恢复状态" aria-label="Link to 12.5 检查恢复状态">#</a></h3>
 <pre><code class="language-bash">cgctl cluster restore-status [--cluster &lt;cluster-uuid&gt;]
 </code></pre>
 <p>打印快照存在情况、集群身份、<code>recovered_at</code>、恢复冻结状态（<code>frozen</code>/<code>active</code>）以及每个实例的角色/健康/复制延迟/维护状态，以及模式特定的建议。没有<code>--cluster</code>时，使用本地快照的集群UUID。</p>
 <h2 id="13-postgresql-ha">13. PostgreSQL HA<a class="heading-anchor" href="#13-postgresql-ha" aria-label="Link to 13. PostgreSQL HA">#</a></h2>
 <p>PostgreSQL是ClusterGuard原生的HA实现。它提供安全身份发现、主/备拓扑、健康、原生指标、时间线感知候选评估、受控切换、受保护故障转移、旧主节点回滚/重新加入、允许列表修复、Linux VIP耦合以及<code>pg_basebackup</code>节点同步。</p>
-<p>可选的自动故障转移在PostgreSQL专用恢复控制器中运行。它需要六次连续的主节点故障观测（默认节奏下30秒），当前拓扑快照，一个已知零重放延迟的一级备用节点，RaftLeader和多数权威，受限Agent或外部隔离器证明旧主节点无法写入，以及通过验证、审计和报告的完整通用工作流。控制器从不将网络不可达作为隔离证据，也从不重试不确定的提升后结果。</p>
+<p>可选的自动故障转移在PostgreSQL专用恢复控制器中运行。它需要三次连续的主节点故障观测、时间跨度不少于 3 秒，当前拓扑快照，一个已知零重放延迟的一级备用节点，RaftLeader和多数权威，受限Agent或外部隔离器证明旧主节点无法写入，以及通过验证、审计和报告的完整通用工作流。控制器从不将网络不可达作为隔离证据，也从不重试不确定的提升后结果。</p>
 <p>执行从不单独根据引擎名称推断。ClusterGuard仅在存在专用操作和复制凭证、受限签名Agent策略、可执行端点提供者、当前拓扑证据和所需控制器多数时才宣传每个变更操作能力。故障转移还需要稳定的故障证据和外部隔离成功，当前主节点无法证明隔离时。</p>
 <p>使用<a href="postgresql-ha.html">PostgreSQL HA 操作</a>获取完整的身份 SQL、最小权限账户模型、<code>pg_hba.conf</code> 要求、控制器和 Agent 配置、节点生命周期设置、操作流程、指标和破坏性验收清单。未知延迟和可选指标保持未知；平台不会将缺失证据转换为虚构的零值，也不会报告模拟成功。</p>
 <h2 id="14-适配器路线图">14. 适配器路线图<a class="heading-anchor" href="#14-适配器路线图" aria-label="Link to 14. 适配器路线图">#</a></h2>
@@ -760,7 +769,7 @@ cgctl cluster shutdown --cluster &lt;display name&gt; --mode service --dry-run
         </article>
         <aside class="page-toc" aria-label="本页目录">
           <strong>本页目录</strong>
-          <a class="toc-level-2" href="#1-配置控制平面">1. 配置控制平面</a><a class="toc-level-3" href="#平台登录">平台登录</a><a class="toc-level-2" href="#2-检查引擎和功能">2. 检查引擎和功能</a><a class="toc-level-2" href="#3-注册权威清单">3. 注册权威清单</a><a class="toc-level-2" href="#4-刷新-mysql-拓扑">4. 刷新 MySQL 拓扑</a><a class="toc-level-2" href="#5-检查控制平面健康和就绪状态">5. 检查控制平面健康和就绪状态</a><a class="toc-level-2" href="#6-读取拓扑-健康状况-候选者和指标">6. 读取拓扑、健康状况、候选者和指标</a><a class="toc-level-2" href="#7-使用-cgctl">7. 使用 cgctl</a><a class="toc-level-2" href="#8-准备一个受保护的-mysql-切换">8. 准备一个受保护的 MySQL 切换</a><a class="toc-level-3" href="#浏览器控制台">浏览器控制台</a><a class="toc-level-3" href="#外部服务-api">外部服务 API</a><a class="toc-level-2" href="#9-重新协调可变元数据">9. 重新协调可变元数据</a><a class="toc-level-2" href="#10-内置节点安装和同步">10. 内置节点安装和同步</a><a class="toc-level-2" href="#11-自动故障转移和安全边界">11. 自动故障转移和安全边界</a><a class="toc-level-3" href="#外部隔离合同">外部隔离合同</a><a class="toc-level-2" href="#12-计划关闭和自动恢复">12. 计划关闭和自动恢复</a><a class="toc-level-3" href="#11-1-关闭模式">11.1 关闭模式</a><a class="toc-level-3" href="#11-2-启动关闭">11.2 启动关闭</a><a class="toc-level-3" href="#11-3-重启后的自动恢复">11.3 重启后的自动恢复</a><a class="toc-level-3" href="#11-4-超时和失败回退-关闭">11.4 超时和失败回退（关闭）</a><a class="toc-level-3" href="#11-5-检查恢复状态">11.5 检查恢复状态</a><a class="toc-level-2" href="#13-postgresql-ha">13. PostgreSQL HA</a><a class="toc-level-2" href="#14-适配器路线图">14. 适配器路线图</a><a class="toc-level-3" href="#mysql">MySQL</a><a class="toc-level-3" href="#postgresql">PostgreSQL</a><a class="toc-level-3" href="#oracle">Oracle</a><a class="toc-level-3" href="#sql-server">SQL Server</a>
+          <a class="toc-level-2" href="#1-配置控制平面">1. 配置控制平面</a><a class="toc-level-3" href="#平台登录">平台登录</a><a class="toc-level-2" href="#2-检查引擎和功能">2. 检查引擎和功能</a><a class="toc-level-2" href="#3-注册权威清单">3. 注册权威清单</a><a class="toc-level-2" href="#4-刷新-mysql-拓扑">4. 刷新 MySQL 拓扑</a><a class="toc-level-2" href="#5-检查控制平面健康和就绪状态">5. 检查控制平面健康和就绪状态</a><a class="toc-level-2" href="#6-读取拓扑-健康状况-候选者和指标">6. 读取拓扑、健康状况、候选者和指标</a><a class="toc-level-2" href="#7-使用-cgctl">7. 使用 cgctl</a><a class="toc-level-2" href="#8-准备一个受保护的-mysql-切换">8. 准备一个受保护的 MySQL 切换</a><a class="toc-level-3" href="#浏览器控制台">浏览器控制台</a><a class="toc-level-3" href="#外部服务-api">外部服务 API</a><a class="toc-level-2" href="#9-重新协调可变元数据">9. 重新协调可变元数据</a><a class="toc-level-2" href="#10-内置节点安装和同步">10. 内置节点安装和同步</a><a class="toc-level-2" href="#11-自动故障转移和安全边界">11. 自动故障转移和安全边界</a><a class="toc-level-3" href="#外部隔离合同">外部隔离合同</a><a class="toc-level-2" href="#12-计划关闭和自动恢复">12. 计划关闭和自动恢复</a><a class="toc-level-3" href="#12-1-关闭模式">12.1 关闭模式</a><a class="toc-level-3" href="#12-2-启动关闭">12.2 启动关闭</a><a class="toc-level-3" href="#12-3-重启后的自动恢复">12.3 重启后的自动恢复</a><a class="toc-level-3" href="#12-4-超时和失败回退-关闭">12.4 超时和失败回退（关闭）</a><a class="toc-level-3" href="#12-5-检查恢复状态">12.5 检查恢复状态</a><a class="toc-level-2" href="#13-postgresql-ha">13. PostgreSQL HA</a><a class="toc-level-2" href="#14-适配器路线图">14. 适配器路线图</a><a class="toc-level-3" href="#mysql">MySQL</a><a class="toc-level-3" href="#postgresql">PostgreSQL</a><a class="toc-level-3" href="#oracle">Oracle</a><a class="toc-level-3" href="#sql-server">SQL Server</a>
         </aside>
       </main>
     </div>

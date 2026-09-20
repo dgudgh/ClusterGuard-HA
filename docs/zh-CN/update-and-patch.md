@@ -43,11 +43,23 @@
 
 ```json
 {
-  "retained_versions": 3
+  "trust_key": "/etc/clusterguard/trust/patch-signing-public.pem",
+  "deployment_state": "/etc/clusterguard/deployment-state.json",
+  "ssh_user": "root",
+  "ssh_key": "/etc/clusterguard/ssh/controller_ed25519",
+  "known_hosts": "/etc/clusterguard/ssh/controller_known_hosts",
+  "ssh_port": 22,
+  "api_port": 3000,
+  "retained_versions": 3,
+  "controllers": [],
+  "data_nodes": []
 }
 ```
 
-完整升级或自动回退结束并释放维护门禁后，特权升级链路会在所有节点清理旧目录。控制节点的上传包、状态和事件位于 `/var/lib/clusterguard/updates/<patch_id>/`，各节点用于受控回退的 RPM 和配置备份位于 `/var/lib/clusterguard/update-history/<patch_id>/`。只生成计划不会触发清理，保证只读计划不修改节点。
+只调整 `retained_versions` 一个键，**不要整体覆盖该文件**：`trust_key`、`deployment_state`、
+`ssh_key`、`known_hosts` 由安装器写入，升级作业用 `jq -er` 强制读取，任一缺失都会直接拒绝执行升级。
+
+完整升级或自动回退结束并释放维护门禁后，特权升级链路会在所有节点清理旧目录。控制节点的上传包、状态和事件位于 `/var/lib/clusterguard/updates/<patch_id>/`，各节点用于受控回退的 RPM 和配置备份位于 `/var/lib/clusterguard-update-private/history/<patch_id>/`。只生成计划不会触发清理，保证只读计划不修改节点。
 
 这里的“3 个版本”只指升级安装包、回退 RPM、配置备份和对应的升级状态事件，不是操作日志条数。高可用切换与审计日志不参与升级包清理，也不会因为 `retained_versions` 被截断；控制台操作日志默认查看全部集群，并可单独按集群筛选。
 
@@ -66,7 +78,7 @@
 
 ```bash
 clusterguard --version-json
-cgctl version --json
+cgctl --json version
 curl --cacert /etc/clusterguard/tls/ca.crt \
   https://127.0.0.1:3000/api/v1/platform/version
 ```
@@ -170,8 +182,8 @@ clusterguard-upgrade \
   --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --state ./clusterguard-deployment-state.json \
-  --ssh-key /root/.ssh/clusterguard_update \
-  --known-hosts /etc/clusterguard/ssh_known_hosts \
+  --ssh-key /etc/clusterguard/ssh/controller_ed25519 \
+  --known-hosts /etc/clusterguard/ssh/controller_known_hosts \
   --plan
 ```
 
@@ -184,8 +196,8 @@ clusterguard-upgrade \
   --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --state ./clusterguard-deployment-state.json \
-  --ssh-key /root/.ssh/clusterguard_update \
-  --known-hosts /etc/clusterguard/ssh_known_hosts \
+  --ssh-key /etc/clusterguard/ssh/controller_ed25519 \
+  --known-hosts /etc/clusterguard/ssh/controller_known_hosts \
   --execute
 ```
 
@@ -206,8 +218,8 @@ clusterguard-upgrade \
 完成后检查：
 
 ```bash
-cgctl version --json
-cgctl status --json
+cgctl --json version
+cgctl --json status
 systemctl --no-pager --full status clusterguard-ha
 test ! -e /etc/clusterguard/update-maintenance.json
 ```
@@ -232,8 +244,8 @@ clusterguard-upgrade \
   --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --state ./clusterguard-deployment-state.json \
-  --ssh-key /root/.ssh/clusterguard_update \
-  --known-hosts /etc/clusterguard/ssh_known_hosts \
+  --ssh-key /etc/clusterguard/ssh/controller_ed25519 \
+  --known-hosts /etc/clusterguard/ssh/controller_known_hosts \
   --resume --execute
 ```
 
@@ -246,8 +258,8 @@ clusterguard-upgrade \
   --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --state ./clusterguard-deployment-state.json \
-  --ssh-key /root/.ssh/clusterguard_update \
-  --known-hosts /etc/clusterguard/ssh_known_hosts \
+  --ssh-key /etc/clusterguard/ssh/controller_ed25519 \
+  --known-hosts /etc/clusterguard/ssh/controller_known_hosts \
   --rollback --execute
 ```
 
@@ -257,7 +269,7 @@ clusterguard-upgrade \
 
 ```bash
 clusterguard --version-json
-cgctl status --json | jq '{maintenance:.result.update_maintenance_active, controllers:.result.controller_members, data_nodes:.result.data_node_members}'
+cgctl --json status | jq '{maintenance:.result.update_maintenance_active, controllers:.result.controller_members, data_nodes:.result.data_node_members}'
 ```
 
 全部节点进入同一 `state_format` 和 `update_protocol` 后，后续版本才能使用本文的签名滚动升级包。升级器遇到旧二进制时会明确拒绝，不会降级为无版本校验安装。

@@ -99,6 +99,11 @@ ORDER BY user, host;
 
 以下示例把控制节点网段限制为 `192.168.102.%`。生产环境应进一步收紧到具体控制节点地址，并使用随机长密码。
 
+> **适用范围：** 本节是**手工为已有 MySQL 实例**准备账号的配方。由 ClusterGuard 安装器新建的托管实例
+> 并不使用这套最小权限：`scripts/clusterguard-mysql-install.sh` 给执行账号的是
+> `GRANT ALL PRIVILEGES ON *.* ... WITH GRANT OPTION`，发现账号额外有 `SELECT`，复制账号额外有
+> `REPLICATION CLIENT`，且账号主机名一律是 `'%'`。按最小权限评估生产实例前请先确认账号是怎么来的。
+
 MySQL 8.0/8.4：
 
 ```sql
@@ -200,6 +205,10 @@ SELECT pg_reload_conf();
 副本还需要由受控流程维护 `clusterguard.primary_node_id` 和 `primary_conninfo`。
 
 ### 3.2 最小权限账号
+> **适用于接入已有实例。** 由 ClusterGuard 离线安装器新建的 PostgreSQL 实例当前以 `postgres`
+> 账号接入（`discovery` 与 `operation` 均为 `postgres`），`pg_hba.conf` 条目由安装器按允许网段生成，
+> 不是下面的 `hostssl` + 按角色规则。需要最小权限接入时，请对已有实例按本节配置。
+
 
 ```sql
 CREATE ROLE cg_monitor LOGIN PASSWORD '<DISCOVERY_PASSWORD>';
@@ -209,6 +218,7 @@ CREATE ROLE cg_operator LOGIN PASSWORD '<OPERATION_PASSWORD>';
 GRANT pg_monitor, pg_signal_backend TO cg_operator;
 GRANT ALTER SYSTEM ON PARAMETER default_transaction_read_only TO cg_operator;
 GRANT EXECUTE ON FUNCTION pg_reload_conf() TO cg_operator;
+GRANT EXECUTE ON FUNCTION pg_wal_replay_resume() TO cg_operator;
 
 CREATE ROLE clusterguard_repl
   WITH LOGIN REPLICATION PASSWORD '<REPLICATION_PASSWORD>';
@@ -280,6 +290,9 @@ GRANT SYSDG TO CLUSTERGUARD_DG;
 sqlplus 'CLUSTERGUARD_DG/<STRONG_PASSWORD>@MESDB as sysdg'
 sqlplus 'CLUSTERGUARD_DG/<STRONG_PASSWORD>@MESDB_B as sysdg'
 ```
+
+> 以上 `as sysdg` 子句仅用于**人工验证**。产品本身的连接串是 `user/password@connect`，不会追加角色子句；
+> 因此该账号必须在密码文件中直接具备 `SYSDG` 权限，而不是依赖连接时提权。
 
 Agent 模式在数据库节点以 `oracle` 操作系统账号运行 `dgmgrl`。数据库节点的受保护环境文件设置：
 

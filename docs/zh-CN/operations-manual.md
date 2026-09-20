@@ -285,9 +285,11 @@ Prometheus 可以读取平台暴露的监控接口，不要求额外部署数据
 自动化命令同样走统一 Power API；真实执行必须显式提供一次性审批令牌：
 
 ```bash
-cgctl cluster shutdown --cluster <集群显示名> --mode service|poweroff \
+cgctl --server https://127.0.0.1:3000 --ca-file /etc/clusterguard/tls/ca.crt \
+  cluster shutdown --cluster <集群显示名> --mode service|poweroff \
   --approval-token <一次性令牌>
-cgctl cluster shutdown --cluster <集群显示名> --mode service --dry-run
+cgctl --server https://127.0.0.1:3000 --ca-file /etc/clusterguard/tls/ca.crt \
+  cluster shutdown --cluster <集群显示名> --mode service --dry-run
 ```
 
 `--dry-run` 仅执行预检查，随后自动取消临时生命周期，不改数据库或主机状态。
@@ -335,7 +337,8 @@ curl -sk -X POST -H "Authorization: Bearer ${CG_CONTROL_TOKEN}" \
 ### 11.5 查看恢复状态
 
 ```bash
-cgctl cluster restore-status [--cluster <CLUSTER_UUID>]
+cgctl --server https://127.0.0.1:3000 --ca-file /etc/clusterguard/tls/ca.crt \
+  cluster restore-status [--cluster <CLUSTER_UUID>]
 ```
 
 输出快照是否存在、集群信息、`recovered_at`、恢复冻结状态（`frozen`/`active`）、每个实例的角色/健康/复制延迟/维护标记，以及按状态给出的恢复建议（advice）。未指定 `--cluster` 时默认使用本机快照中的集群 UUID。

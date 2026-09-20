@@ -66,6 +66,26 @@
   --execute
 </code></pre>
 <p>安装器会在所有控制节点配置 <code>/etc/clusterguard/update.json</code>、发布公钥和 <code>clusterguard-update-helper.service</code>。未配置可信公钥时，控制台会明确显示版本更新不可用，不会降级为未验签安装。</p>
+<h3 id="升级包保留策略">升级包保留策略<a class="heading-anchor" href="#升级包保留策略" aria-label="Link to 升级包保留策略">#</a></h3>
+<p>升级材料默认保留最近 <strong>3 个版本</strong>。配置项位于每个控制节点的 <code>/etc/clusterguard/update.json</code>：</p>
+<pre><code class="language-json">{
+  &quot;trust_key&quot;: &quot;/etc/clusterguard/trust/patch-signing-public.pem&quot;,
+  &quot;deployment_state&quot;: &quot;/etc/clusterguard/deployment-state.json&quot;,
+  &quot;ssh_user&quot;: &quot;root&quot;,
+  &quot;ssh_key&quot;: &quot;/etc/clusterguard/ssh/controller_ed25519&quot;,
+  &quot;known_hosts&quot;: &quot;/etc/clusterguard/ssh/controller_known_hosts&quot;,
+  &quot;ssh_port&quot;: 22,
+  &quot;api_port&quot;: 3000,
+  &quot;retained_versions&quot;: 3,
+  &quot;controllers&quot;: [],
+  &quot;data_nodes&quot;: []
+}
+</code></pre>
+<p>只调整 <code>retained_versions</code> 一个键，<strong>不要整体覆盖该文件</strong>：<code>trust_key</code>、<code>deployment_state</code>、
+<code>ssh_key</code>、<code>known_hosts</code> 由安装器写入，升级作业用 <code>jq -er</code> 强制读取，任一缺失都会直接拒绝执行升级。</p>
+<p>完整升级或自动回退结束并释放维护门禁后，特权升级链路会在所有节点清理旧目录。控制节点的上传包、状态和事件位于 <code>/var/lib/clusterguard/updates/&lt;patch_id&gt;/</code>，各节点用于受控回退的 RPM 和配置备份位于 <code>/var/lib/clusterguard-update-private/history/&lt;patch_id&gt;/</code>。只生成计划不会触发清理，保证只读计划不修改节点。</p>
+<p>这里的“3 个版本”只指升级安装包、回退 RPM、配置备份和对应的升级状态事件，不是操作日志条数。高可用切换与审计日志不参与升级包清理，也不会因为 <code>retained_versions</code> 被截断；控制台操作日志默认查看全部集群，并可单独按集群筛选。</p>
+<p>当前执行包始终受保护。处于排队或运行状态、仍有维护门禁，或标记为“操作结果需要验证”的包不会计入 3 个普通保留名额，也不会被自动删除。因此事故未闭环时磁盘上可能暂时多于 3 个版本，安全状态处理完成后，下一次成功升级或完整回退会再次执行清理。修改 <code>retained_versions</code> 时必须使用大于 0 的整数。</p>
 <h2 id="1-升级架构">1. 升级架构<a class="heading-anchor" href="#1-升级架构" aria-label="Link to 1. 升级架构">#</a></h2>
 <p>每个正式 RPM 都内嵌以下不可变运行合同：</p>
 <ul>
@@ -76,7 +96,7 @@
 </ul>
 <p>可通过以下命令读取：</p>
 <pre><code class="language-bash">clusterguard --version-json
-cgctl version --json
+cgctl --json version
 curl --cacert /etc/clusterguard/tls/ca.crt \
   https://127.0.0.1:3000/api/v1/platform/version
 </code></pre>
@@ -139,8 +159,11 @@ curl --cacert /etc/clusterguard/tls/ca.crt \
   --from-rpm dist/clusterguard-ha-2.2-28.x86_64.rpm \
   --to-rpm dist/clusterguard-ha-2.2-29.x86_64.rpm \
   --signing-key /secure/offline/clusterguard-patch-signing.key \
+  --expected-public-key site-trust/patch-signing-public.pem \
   --output dist/clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade
 </code></pre>
+<p>发布前必须从现场所有控制节点读取 <code>update.json</code> 指向的实际受信公钥，并确认三节点公钥指纹、离线私钥导出的公钥指纹和升级包验签公钥指纹完全一致。不得因为历史发布目录中的公钥文件名看起来正确，就把它当作现场信任链。构建完成后还必须登录当前 Leader 的控制台真实上传一次，只生成“已上传并通过签名校验”的记录，不执行升级。现场上传没有成功前，不得把升级包标记为可交付。</p>
+<p><code>2.2-59</code> 到 <code>2.2-60</code> 的现场验签失败、流程根因和强制发布门禁见 <a href="update-signature-incident-2026-08-31.md">升级包验签失败复盘（2026-08-31）</a>。</p>
 <p>发布物必须同时交付升级包、升级包 SHA-256、发布说明和独立渠道提供的签名公钥指纹。不得覆盖同名升级包。</p>
 <h2 id="4-现场准备">4. 现场准备<a class="heading-anchor" href="#4-现场准备" aria-label="Link to 4. 现场准备">#</a></h2>
 <ol>
@@ -176,8 +199,8 @@ install -m 0640 -o root -g clusterguard clusterguard-patch-signing-public.pem \
   --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --state ./clusterguard-deployment-state.json \
-  --ssh-key /root/.ssh/clusterguard_update \
-  --known-hosts /etc/clusterguard/ssh_known_hosts \
+  --ssh-key /etc/clusterguard/ssh/controller_ed25519 \
+  --known-hosts /etc/clusterguard/ssh/controller_known_hosts \
   --plan
 </code></pre>
 <p>计划固定为：控制节点 Follower、仅数据 Agent 节点、最后处理当前 Leader。所有节点必须处于升级包清单允许的源版本或目标版本，并通过二进制版本合同校验。升级器会读取每台数据节点的固定 UUID，并把控制节点 UUID 与实时 Raft voter、数据节点 UUID 与实时活动数据节点清单分别逐项比对。任一控制节点观测不同、重复 UUID、节点角色不符或清单过期，都会在建立维护锁之前阻断，避免漏升级、串节点和部分门禁。</p>
@@ -186,8 +209,8 @@ install -m 0640 -o root -g clusterguard clusterguard-patch-signing-public.pem \
   --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --state ./clusterguard-deployment-state.json \
-  --ssh-key /root/.ssh/clusterguard_update \
-  --known-hosts /etc/clusterguard/ssh_known_hosts \
+  --ssh-key /etc/clusterguard/ssh/controller_ed25519 \
+  --known-hosts /etc/clusterguard/ssh/controller_known_hosts \
   --execute
 </code></pre>
 <p>执行器在每台节点前重新检查多数派、Leader、就绪状态、活动操作和节点任务。升级开始后，会在所有控制节点写入 <code>/etc/clusterguard/update-maintenance.json</code>：</p>
@@ -202,8 +225,8 @@ install -m 0640 -o root -g clusterguard clusterguard-patch-signing-public.pem \
 <p>节点升级完成不只检查 RPM 版本。控制节点必须重新加入并看到稳定 Leader；数据节点必须同时恢复 <code>clusterguard-agent.service</code> 和 <code>clusterguard-agent-reconcile.timer</code>。控制与数据同机的混合节点必须同时满足两组条件，任何一组失败都会停止后续滚动并进入回退。</p>
 <h3 id="验证结果">验证结果<a class="heading-anchor" href="#验证结果" aria-label="Link to 验证结果">#</a></h3>
 <p>完成后检查：</p>
-<pre><code class="language-bash">cgctl version --json
-cgctl status --json
+<pre><code class="language-bash">cgctl --json version
+cgctl --json status
 systemctl --no-pager --full status clusterguard-ha
 test ! -e /etc/clusterguard/update-maintenance.json
 </code></pre>
@@ -219,8 +242,8 @@ clusterguard-update-补丁ID.events.jsonl
   --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --state ./clusterguard-deployment-state.json \
-  --ssh-key /root/.ssh/clusterguard_update \
-  --known-hosts /etc/clusterguard/ssh_known_hosts \
+  --ssh-key /etc/clusterguard/ssh/controller_ed25519 \
+  --known-hosts /etc/clusterguard/ssh/controller_known_hosts \
   --resume --execute
 </code></pre>
 <p><code>--resume</code> 只接受锁中相同的 <code>patch_id</code>。图形化升级在建立锁前已经把同一升级包复制到全部控制节点，因此 Leader 变化后可由新 Leader 使用本机副本续跑；包摘要或元数据不一致时仍会拒绝执行。不要手工删除维护标记或锁；这样会绕过版本和多数派复核。正常结束时，升级器会先确认所有控制节点上的锁和维护标记都属于当前升级包，再开始释放；若释放过程中任何节点失败，升级器会把相同锁补偿写回全部控制节点并保持 fail-closed，待连通性恢复后再续跑。</p>
@@ -229,14 +252,14 @@ clusterguard-update-补丁ID.events.jsonl
   --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --state ./clusterguard-deployment-state.json \
-  --ssh-key /root/.ssh/clusterguard_update \
-  --known-hosts /etc/clusterguard/ssh_known_hosts \
+  --ssh-key /etc/clusterguard/ssh/controller_ed25519 \
+  --known-hosts /etc/clusterguard/ssh/controller_known_hosts \
   --rollback --execute
 </code></pre>
 <h2 id="7-首次纳入受控升级">7. 首次纳入受控升级<a class="heading-anchor" href="#7-首次纳入受控升级" aria-label="Link to 7. 首次纳入受控升级">#</a></h2>
 <p>早于受控升级协议的历史版本没有 <code>--version-json</code> 和统一维护门禁，不能直接执行 <code>.cgupgrade</code>。首次升级必须使用对应版本发布说明中的桥接维护流程，停止自动变更入口后逐节点安装桥接 RPM，并验证所有节点均满足：</p>
 <pre><code class="language-bash">clusterguard --version-json
-cgctl status --json | jq &#39;{maintenance:.result.update_maintenance_active, controllers:.result.controller_members, data_nodes:.result.data_node_members}&#39;
+cgctl --json status | jq &#39;{maintenance:.result.update_maintenance_active, controllers:.result.controller_members, data_nodes:.result.data_node_members}&#39;
 </code></pre>
 <p>全部节点进入同一 <code>state_format</code> 和 <code>update_protocol</code> 后，后续版本才能使用本文的签名滚动升级包。升级器遇到旧二进制时会明确拒绝，不会降级为无版本校验安装。</p>
 <h2 id="8-生产准入清单">8. 生产准入清单<a class="heading-anchor" href="#8-生产准入清单" aria-label="Link to 8. 生产准入清单">#</a></h2>
@@ -260,7 +283,7 @@ cgctl status --json | jq &#39;{maintenance:.result.update_maintenance_active, co
         </article>
         <aside class="page-toc" aria-label="本页目录">
           <strong>本页目录</strong>
-          <a class="toc-level-2" href="#控制台图形化升级">控制台图形化升级</a><a class="toc-level-2" href="#1-升级架构">1. 升级架构</a><a class="toc-level-2" href="#2-支持边界">2. 支持边界</a><a class="toc-level-2" href="#3-发布侧构建签名升级包">3. 发布侧构建签名升级包</a><a class="toc-level-2" href="#4-现场准备">4. 现场准备</a><a class="toc-level-2" href="#5-四步升级">5. 四步升级</a><a class="toc-level-3" href="#验证升级包">验证升级包</a><a class="toc-level-3" href="#生成现场计划">生成现场计划</a><a class="toc-level-3" href="#执行滚动升级">执行滚动升级</a><a class="toc-level-3" href="#验证结果">验证结果</a><a class="toc-level-2" href="#6-中断续跑与自动回退">6. 中断续跑与自动回退</a><a class="toc-level-2" href="#7-首次纳入受控升级">7. 首次纳入受控升级</a><a class="toc-level-2" href="#8-生产准入清单">8. 生产准入清单</a>
+          <a class="toc-level-2" href="#控制台图形化升级">控制台图形化升级</a><a class="toc-level-3" href="#升级包保留策略">升级包保留策略</a><a class="toc-level-2" href="#1-升级架构">1. 升级架构</a><a class="toc-level-2" href="#2-支持边界">2. 支持边界</a><a class="toc-level-2" href="#3-发布侧构建签名升级包">3. 发布侧构建签名升级包</a><a class="toc-level-2" href="#4-现场准备">4. 现场准备</a><a class="toc-level-2" href="#5-四步升级">5. 四步升级</a><a class="toc-level-3" href="#验证升级包">验证升级包</a><a class="toc-level-3" href="#生成现场计划">生成现场计划</a><a class="toc-level-3" href="#执行滚动升级">执行滚动升级</a><a class="toc-level-3" href="#验证结果">验证结果</a><a class="toc-level-2" href="#6-中断续跑与自动回退">6. 中断续跑与自动回退</a><a class="toc-level-2" href="#7-首次纳入受控升级">7. 首次纳入受控升级</a><a class="toc-level-2" href="#8-生产准入清单">8. 生产准入清单</a>
         </aside>
       </main>
     </div>

@@ -53,7 +53,7 @@
 Initial password: admin123
 </code></pre>
 <p>Password must be changed on first login; before changing the password, all cluster, topology, audit read, and change operations except authentication interfaces are rejected. The default password is only stored as an Argon2id hash and is not written into configuration, environment files, audit, or reports. Operations initiated within the platform use authenticated sessions, CSRF, and role authorization; users do not need to manually input control tokens or one-time approval tokens. External APIs use Bearer control tokens; high-risk service calls still require a one-time Approval bound to the operation.</p>
-<p>Modifying the administrator password is prohibited when the backend JSON or password hash is forgotten. Follow the local one-time recovery process:</p>
+<p>Do not edit the backend JSON or the password hash when the administrator password is forgotten. Follow the local one-time recovery process:</p>
 <pre><code class="language-bash">sudo -u clusterguard /usr/local/bin/clusterguard admin prepare-recovery
 </code></pre>
 <p>Place the generated recovery artifact with <code>0600</code> permissions on all control nodes, perform a rolling restart, and immediately change the password after logging in with a one-time temporary password.</p>
@@ -285,9 +285,11 @@ assets/pki/raft-issuer.key      0640 root:clusterguard
 <code>service</code>, only stopping the database service, keeping the server on. Logged-in platform administrators are issued and
 consume short-term one-time approvals by the backend, and the approval key is not exposed in the browser.</p>
 <p>Automated commands also go through the unified Power API; actual execution must explicitly provide a one-time approval token:</p>
-<pre><code class="language-bash">cgctl cluster shutdown --cluster &lt;CLUSTER_DISPLAY_NAME&gt; --mode service|poweroff \
+<pre><code class="language-bash">cgctl --server https://127.0.0.1:3000 --ca-file /etc/clusterguard/tls/ca.crt \
+  cluster shutdown --cluster &lt;CLUSTER_DISPLAY_NAME&gt; --mode service|poweroff \
   --approval-token &lt;ONE_TIME_TOKEN&gt;
-cgctl cluster shutdown --cluster &lt;CLUSTER_DISPLAY_NAME&gt; --mode service --dry-run
+cgctl --server https://127.0.0.1:3000 --ca-file /etc/clusterguard/tls/ca.crt \
+  cluster shutdown --cluster &lt;CLUSTER_DISPLAY_NAME&gt; --mode service --dry-run
 </code></pre>
 <p><code>--dry-run</code> only performs pre-checks, then automatically cancels the temporary lifecycle, without changing the database or host status.
 There is no direct script entry that bypasses Safety Guard, locks, approvals, audit, and Agent whitelist.</p>
@@ -328,7 +330,8 @@ started, ClusterGuard will automatically complete database, topology, replicatio
 <li>After deleting the snapshot, the two recovery units automatically become no-ops; repeating restore/finalize on an already finalized snapshot is also an idempotent no-op.</li>
 </ul>
 <h3 id="11-5-view-recovery-status">11.5 View Recovery Status<a class="heading-anchor" href="#11-5-view-recovery-status" aria-label="Link to 11.5 View Recovery Status">#</a></h3>
-<pre><code class="language-bash">cgctl cluster restore-status [--cluster &lt;CLUSTER_UUID&gt;]
+<pre><code class="language-bash">cgctl --server https://127.0.0.1:3000 --ca-file /etc/clusterguard/tls/ca.crt \
+  cluster restore-status [--cluster &lt;CLUSTER_UUID&gt;]
 </code></pre>
 <p>Output whether the snapshot exists, cluster information, <code>recovered_at</code>, recovery freeze status (<code>frozen</code>/<code>active</code>), each instance&#39;s role/health/replication delay/maintenance mark, and recovery advice based on status. If <code>--cluster</code> is not specified, the local snapshot&#39;s cluster UUID is used by default.</p>
 <h2 id="12-backup-and-recovery">12. Backup and Recovery<a class="heading-anchor" href="#12-backup-and-recovery" aria-label="Link to 12. Backup and Recovery">#</a></h2>

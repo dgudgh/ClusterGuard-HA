@@ -8,6 +8,26 @@ The offline HTML documentation center starts at [`../html/index.html`](../html/i
 
 ## Current Version
 
+### Latest Installer Prerelease
+
+The newest installer kit is **2.2-101**, whose release notes are maintained in Simplified
+Chinese only: [2.2-101 release notes](../zh-CN/release-2.2.101.md) ·
+[GitHub v2.2.101](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.101).
+It is one kit containing MySQL 8.0.44 / PostgreSQL 16.4 media plus a standalone
+ClusterGuard RPM, built from commit `78dbdbf`. The archive was verified and uploaded;
+production `.cgupgrade` and final site installation, upgrade, and rollback acceptance
+remain outstanding. `release_channel=stable` inside the package does not change its
+GitHub prerelease status.
+
+English release notes are maintained through
+[2.2.47](release-2.2.47.md); the records from 2.2.48 onward (`docs/zh-CN/release-2.2.69.md`
+through `release-2.2.101.md`) exist only in Simplified Chinese. Machine-verified
+checksums and the latest documentation corrections are governed by the 2.2-101 release
+notes. Updater fixes and remaining gates are recorded in the
+[private execution workspace record](../zh-CN/updater-private-workspace-2026-09-11.md).
+
+### Historical Formal Releases
+
 | Version | Status | Database Support Boundary |
 | --- | --- | --- |
 | `2.1-45` | Officially Released | MySQL High Availability Control Platform |
@@ -21,6 +41,11 @@ Current Formal Release:
 Do not use historical candidate packages with numbers higher than `2.1-45` in the local directory to replace the official release. The official deliverables must come from GitHub Release and be verified with the included SHA256 checksum.
 
 ## Recommended Reading Order
+
+For the newest installer kit, start with the
+[2.2-101 release notes](../zh-CN/release-2.2.101.md) (Simplified Chinese only).
+
+The order below follows the formal `2.2-39` baseline:
 
 1. [2.2.47 Release Notes](release-2.2.47.md)
    Confirm the official package, summary, support scope, and production admission boundary.
