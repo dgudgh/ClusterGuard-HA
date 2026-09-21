@@ -22,7 +22,7 @@ npm run build:html
 
 ## Product Documentation / 产品文档
 
-Latest installer prerelease / 最新安装介质预发布：[2.2-101 发布说明（中文）](zh-CN/release-2.2.101.md) · [GitHub v2.2.101](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.101)。One kit contains MySQL and PostgreSQL media; final site acceptance is pending. 同一安装包包含 MySQL/PG 介质，最终版现场验收仍未完成。Updater follow-up / 升级器后续状态见 [私有执行区安全记录](zh-CN/updater-private-workspace-2026-09-11.md)。这些链接指向当前 Markdown；已发布包内文档仍保留构建时快照。英文侧发布说明止于 `en-US/release-2.2.47.md`；此后的发布说明只维护简体中文版，现存 `zh-CN/release-2.2.69.md` 至 `zh-CN/release-2.2.101.md`。下表只列中英成对的文档，因此发布说明一栏停在 2.2.47。完整中文发布说明清单见 [中文文档索引](zh-CN/README.md)。
+Latest installer / 最新安装介质：[2.2-102 发布说明（中文）](zh-CN/release-2.2.102.md)。One kit contains MySQL and PostgreSQL media; it is built and verified locally but not uploaded and not accepted on site. 同一安装包包含 MySQL/PG 介质，已在本地构建并核验，尚未上传 GitHub、尚未现场验收。Previous / 上一版：[2.2-101 发布说明（中文）](zh-CN/release-2.2.101.md) · [GitHub v2.2.101](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.101)。Updater follow-up / 升级器后续状态见 [私有执行区安全记录](zh-CN/updater-private-workspace-2026-09-11.md)。这些链接指向当前 Markdown；已发布包内文档仍保留构建时快照。英文侧发布说明止于 `en-US/release-2.2.47.md`；此后的发布说明只维护简体中文版，现存 2.2.69–2.2.73、2.2.86、2.2.88–2.2.102（其间号段未生成发布说明，不是断链）。下表只列中英成对的文档，因此发布说明一栏停在 2.2.47。完整中文发布说明清单见 [中文文档索引](zh-CN/README.md)。
 
 | Topic / 主题 | English | 简体中文 |
 | --- | --- | --- |
