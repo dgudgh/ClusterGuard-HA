@@ -51,7 +51,7 @@ rename or duplicate the cluster.
 ## Failure Observation Window
 
 Automatic recovery uses a stable incident rather than a single failed probe.
-The default evidence window is at least three seconds, represented by three
+The default evidence window is at least three seconds, represented by four
 current observations. A successful or indeterminate recovery for the same source
 primary and incident cannot be submitted again. Failed pre-commit attempts can
 retry only after the configured backoff.
