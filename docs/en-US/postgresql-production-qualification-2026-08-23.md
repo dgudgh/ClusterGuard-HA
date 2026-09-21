@@ -46,7 +46,7 @@ point-in-time recovery remain separate production requirements.
 | Planned switchover | Passed | Initial switch completed in about 8 seconds; five further rotations across all three nodes completed in about 10 seconds each. |
 | Concurrent switch requests | Passed | One request completed and the competing request was blocked after lock/topology revalidation; only one role transition occurred. |
 | Primary VM hard power-off | Passed | Writer interruption was 15.1 seconds; hypervisor marker to first successful write was about 24.97 seconds. No duplicate primary or VIP owner appeared. |
-| Primary network partition | Passed | With PostgreSQL `connect_timeout=2`, writer interruption was 17.973 seconds and partition marker to first successful write was 17.942 seconds. |
+| Primary network partition | Passed | With PostgreSQL `connect_timeout=2`, writer interruption was 17.942 seconds and partition marker to first successful write was 17.973 seconds (the two values were previously swapped in this row, which implied recovery finishing before the interruption). |
 | Unbounded client connection attempt | Observed constraint | One connection without a bounded connect timeout waited about 31.97 seconds although the control-plane operation completed earlier. |
 | Controller quorum loss | Passed fail-closed | Mutation authority disappeared; the isolated primary Agent stopped PostgreSQL and removed the VIP. Recovery resumed only after quorum returned. |
 | Raft Leader restart | Passed | A new Leader was elected while the database primary, VIP ownership, and row count remained stable. |

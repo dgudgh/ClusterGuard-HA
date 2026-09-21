@@ -8,23 +8,29 @@ The offline HTML documentation center starts at [`../html/index.html`](../html/i
 
 ## Current Version
 
-### Latest Installer Prerelease
+### Latest Installer
 
-The newest installer kit is **2.2-101**, whose release notes are maintained in Simplified
-Chinese only: [2.2-101 release notes](../zh-CN/release-2.2.101.md) ·
-[GitHub v2.2.101](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.101).
+The newest installer kit is **2.2-102**, whose release notes are maintained in Simplified
+Chinese only: [2.2-102 release notes](../zh-CN/release-2.2.102.md).
 It is one kit containing MySQL 8.0.44 / PostgreSQL 16.4 media plus a standalone
-ClusterGuard RPM, built from commit `78dbdbf`. The archive was verified and uploaded;
-production `.cgupgrade` and final site installation, upgrade, and rollback acceptance
-remain outstanding. `release_channel=stable` inside the package does not change its
-GitHub prerelease status.
+ClusterGuard RPM, built from code baseline `7b36461` (the media `RELEASE-INFO` records
+`2b9a449`, the commit that added this release note and the index entries without changing
+any code, so the two are code-equivalent). The archive was built and verified locally but
+was neither uploaded to GitHub nor accepted on site; production `.cgupgrade` and final
+site installation, upgrade, and rollback acceptance remain outstanding.
+`release_channel=stable` inside the package does not change that.
+
+The previous kit,
+[2.2-101 release notes](../zh-CN/release-2.2.101.md) ·
+[GitHub v2.2.101](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.101), was
+verified and uploaded as a GitHub prerelease from commit `78dbdbf`.
 
 English release notes are maintained through
 [2.2.47](release-2.2.47.md); every later release note exists only in Simplified Chinese,
-and the ones present today run from `docs/zh-CN/release-2.2.69.md` through
-`release-2.2.101.md`. Machine-verified
-checksums and the latest documentation corrections are governed by the 2.2-101 release
-notes. Updater fixes and remaining gates are recorded in the
+and the ones present today are 2.2.69-2.2.73, 2.2.86 and 2.2.88-2.2.102. The gaps in
+between never had a release note generated, so they are not broken links.
+Machine-verified checksums and the latest documentation corrections are governed by the
+2.2-102 release notes. Updater fixes and remaining gates are recorded in the
 [private execution workspace record](../zh-CN/updater-private-workspace-2026-09-11.md).
 
 ### Historical Formal Releases
@@ -44,7 +50,7 @@ Do not use historical candidate packages with numbers higher than `2.1-45` in th
 ## Recommended Reading Order
 
 For the newest installer kit, start with the
-[2.2-101 release notes](../zh-CN/release-2.2.101.md) (Simplified Chinese only).
+[2.2-102 release notes](../zh-CN/release-2.2.102.md) (Simplified Chinese only).
 
 The order below follows the formal `2.2-39` baseline:
 
@@ -72,6 +78,17 @@ The order below follows the formal `2.2-39` baseline:
    Verify signed update packages, review the plan, roll nodes, resume interrupted work, and perform controlled rollback.
 16. [Version and Release Policy](version-release-policy.md)
    Use when building new versions, maintaining tags, and releasing PostgreSQL 2.2.
+17. [Architecture](../architecture.md)
+   Review the control plane, metadata storage, consensus, node agent and workflow stages before changing deployment topology.
+18. [PostgreSQL HA](../postgresql-ha.md)
+   Understand native PostgreSQL identity, streaming replication, controlled switchover, automatic takeover and former-primary rewind.
+19. [Control-Plane and API Reference](../operations.md)
+   Look up API paths, roles, approval grants, console behaviour and operational limits.
+20. [Proven MySQL HA Methods](../proven-mysql-ha-methods.md)
+   See which MySQL HA mechanisms have been validated for this product, and under what evidence window.
+21. [MySQL Feature Parity Acceptance](../mysql-feature-parity-acceptance.md)
+22. [MySQL Production Qualification](../mysql-production-qualification-2026-07-28.md)
+   Confirm the measured client interruption and the conditions that must be met before production admission.
 
 ## Acceptance Evidence
 
@@ -79,6 +96,8 @@ The order below follows the formal `2.2-39` baseline:
 - [Production Chaos and Concurrency Test Report](production-chaos-test-report-2026-08-09.md)
 - [Planned Shutdown and Automatic Recovery Report](power-lifecycle-test-report.md)
 - [PostgreSQL 16.4 Production Qualification](postgresql-production-qualification-2026-08-23.md)
+- [MySQL Feature Parity Acceptance](../mysql-feature-parity-acceptance.md)
+- [MySQL Production Qualification](../mysql-production-qualification-2026-07-28.md)
 - [Docker Swarm MySQL Lab Qualification](docker-swarm-mysql-validation-plan.md)
 - [Kubernetes MySQL Guide](kubernetes-mysql.md)
 
@@ -115,6 +134,12 @@ The following documents are the production delivery entry points:
 - `docs/en-US/operations-manual.md`
 - `docs/en-US/update-and-patch.md`
 - `docs/en-US/version-release-policy.md`
+- `docs/architecture.md`
+- `docs/operations.md`
+- `docs/postgresql-ha.md`
+- `docs/proven-mysql-ha-methods.md`
+- `docs/mysql-feature-parity-acceptance.md`
+- `docs/mysql-production-qualification-2026-07-28.md`
 
 `docs/superpowers/` preserves historical design and implementation plans and is only used for traceability, not as the current installation or production operation manual. When documents are inconsistent with the official release, the corresponding `RELEASE-INFO`, summary file, and release notes of that version shall prevail.
 

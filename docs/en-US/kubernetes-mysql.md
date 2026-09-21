@@ -20,7 +20,10 @@ RuntimeTarget and WorkloadBinding are mandatory. ClusterGuard never infers a run
 
 ## Mandatory safety contract
 
-- Each database instance has its own one-replica StatefulSet at ordinal zero and its own PVC.
+- Each database instance has its own one-replica StatefulSet at ordinal zero, plus its own PVC, so the
+  database `server_uuid` does not change when the Pod is recreated.
+- Never represent one primary and two replicas with a single three-replica StatefulSet: scaling down the
+  old primary would disturb the other instances at the same time.
 - WorkloadBinding records StatefulSet, Pod name, immutable Pod UID, Node name, and PVC UID.
 - The writer Service is selectorless, and its EndpointSlice is labeled as managed by `clusterguard.io/ha`, carries the `kubernetes.io/service-name=<writer Service>` label, and uses `addressType: IPv4`; the control plane rejects any other slice.
 - Each StatefulSet enables the start guard through the `clusterguard.io/fence-guard=enabled` annotation (initially with `clusterguard.io/fenced=false`) and records `clusterguard.io/mysql-role=primary|replica`. A Pod without the `fence-guard` annotation is refused at start.
@@ -78,11 +81,76 @@ the platform advertises MySQL mutations only when those credentials resolve.
 }
 ```
 
-Register one Kubernetes RuntimeTarget whose `endpoint` is the API HTTPS origin and whose `credential_ref` is an absolute local JSON profile containing `ca_file` and `bearer_token_file`. Register one Kubernetes WorkloadBinding per database instance, including live Pod UID and Node name. Finally register a `service` HAEndpoint with provider `kubernetes_service`, provider reference `namespace/service/endpoint-slice`, the Service DNS hostname, database port, and current primary owner ID.
+On every controller node, prepare the credential profile, the CA and the token with mode `0600`.
+`credential_ref` stores only the absolute path of the credential profile; the token is never written
+into ClusterGuard metadata.
 
-Use per-Pod headless Service DNS names for the three database discovery endpoints. Never register all database instances through the writer Service.
+```json
+{
+  "ca_file": "/etc/clusterguard/kubernetes/ca.crt",
+  "bearer_token_file": "/etc/clusterguard/kubernetes/token",
+  "server_name": "kubernetes.default.svc"
+}
+```
+
+All three Raft controllers must reach the same Kubernetes API and must each hold an equivalent local
+credential profile.
+
+### Resource registration
+
+Create the Kubernetes RuntimeTarget through the authenticated control API:
+
+```json
+{
+  "display_name": "production-k8s",
+  "kind": "kubernetes",
+  "endpoint": "https://kubernetes.example.internal:6443",
+  "credential_ref": "/etc/clusterguard/kubernetes/credentials.json",
+  "active": true
+}
+```
+
+Create one WorkloadBinding per database instance:
+
+```json
+{
+  "instance_id": "INSTANCE_UUID",
+  "runtime_target_id": "RUNTIME_UUID",
+  "runtime_kind": "kubernetes",
+  "active": true,
+  "kubernetes": {
+    "cluster_name": "production",
+    "namespace": "database",
+    "stateful_set": "mysql-a",
+    "ordinal": 0,
+    "pod_name": "mysql-a-0",
+    "pod_uid": "LIVE_POD_UID",
+    "node_name": "worker-a",
+    "pvc_uid": "MYSQL_DATA_PVC_UID"
+  }
+}
+```
+
+Use per-Pod headless Service DNS names for the three database discovery endpoints. Never register all
+database instances through the writer Service. Finally create the HAEndpoint:
+
+```json
+{
+  "kind": "service",
+  "provider": "kubernetes_service",
+  "provider_ref": "database/mysql-writer/mysql-writer-clusterguard",
+  "hostname": "mysql-writer.database.svc",
+  "port": 3306,
+  "owner_id": "CURRENT_PRIMARY_INSTANCE_UUID",
+  "active": true
+}
+```
 
 ## Acceptance boundary
+
+Before going live, at minimum verify planned switchover cycles, primary Pod deletion, a temporarily
+unreachable kube-apiserver, EndpointSlice conflicts, an old-primary Node turning NotReady, Pod UID
+changes, a StatefulSet accidentally scaled to two replicas, Raft minority, and a failing guard-image pull.
 
 Code tests cover API TLS, token rotation, selector rejection, immutable Pod identity, single-backend transfer, durable role annotations, persistent fencing, scale-down, and NotReady-node rejection. A real Kubernetes end-to-end qualification has not yet been run, so these tests are not production acceptance evidence.
 

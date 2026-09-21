@@ -106,7 +106,7 @@ operation lock and stale topology evidence blocks execution.</li>
 <tr>
 <td>Primary network partition</td>
 <td>Passed</td>
-<td>With PostgreSQL <code>connect_timeout=2</code>, writer interruption was 17.973 seconds and partition marker to first successful write was 17.942 seconds.</td>
+<td>With PostgreSQL <code>connect_timeout=2</code>, writer interruption was 17.942 seconds and partition marker to first successful write was 17.973 seconds (the two values were previously swapped in this row, which implied recovery finishing before the interruption).</td>
 </tr>
 <tr>
 <td>Unbounded client connection attempt</td>

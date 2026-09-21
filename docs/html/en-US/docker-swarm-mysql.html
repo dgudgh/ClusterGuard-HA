@@ -113,23 +113,116 @@
 </tbody></table>
 <p>Container mode does not place the VIP inside a container. Applications still connect to <code>VIP:database-port</code>; the VIP moves between hosts while Swarm manages desired container state. The ClusterGuard control plane remains an independent host service, so stopping a database container must not also remove management access.</p>
 <h2 id="identity-and-placement">Identity and placement<a class="heading-anchor" href="#identity-and-placement" aria-label="Link to Identity and placement">#</a></h2>
+<p>The platform stores three identity layers:</p>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>Stable identity</th>
+<th>Mutable attributes</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Database instance</td>
+<td><code>resource_id</code> plus MySQL <code>server_uuid</code></td>
+<td>hostname, IP, port, role</td>
+</tr>
+<tr>
+<td>Runtime target</td>
+<td><code>RuntimeTarget.resource_id</code></td>
+<td>Docker endpoint, labels, credential reference</td>
+</tr>
+<tr>
+<td>Workload</td>
+<td><code>WorkloadBinding.resource_id</code></td>
+<td>container ID, task ID, observation time</td>
+</tr>
+</tbody></table>
 <p><code>DatabaseInstance.resource_id</code> and MySQL <code>server_uuid</code> remain stable when a container is replaced. <code>RuntimeTarget</code> describes the Docker control boundary. <code>WorkloadBinding</code> binds an instance to one host and allowlisted Swarm Service while recording replaceable task and container observations.</p>
 <p>Only one active binding is accepted for an instance. A container ID is never accepted from a mutation request.</p>
+<h2 id="high-availability-boundary">High-availability boundary<a class="heading-anchor" href="#high-availability-boundary" aria-label="Link to High-availability boundary">#</a></h2>
+<ol>
+<li>Swarm owns container process restart and placement on the pinned node.</li>
+<li>Native MySQL GTID replication owns data synchronisation.</li>
+<li>ClusterGuard owns candidate evaluation, the transition workflow, old-primary fencing, the VIP, audit, and verification.</li>
+<li>The Raft majority decides who may execute a transition and issue VIP ownership leases.</li>
+<li>The host Agent manages the pinned Service through the local Docker socket. A container ID or an arbitrary command passed in through the API is never accepted.</li>
+</ol>
+<p>The database Service publishes 3306 with <code>mode: host</code>. The VIP is always bound to the network interface of
+the host that currently runs the primary, so the client address does not change across a transition.</p>
 <h2 id="fencing-contract">Fencing contract<a class="heading-anchor" href="#fencing-contract" aria-label="Link to Fencing contract">#</a></h2>
-<p>The host Agent atomically writes <code>/etc/clusterguard/docker/mysql-fence.cnf</code> before changing the live server. The whole <code>/etc/clusterguard/docker</code> directory is mounted read-only at <code>/etc/mysql/conf.d</code>, so an atomic role-file replacement is visible through the directory mount instead of being hidden behind a file bind mount pinned to an old inode. The Agent then records the durable local role, applies MySQL <code>SET PERSIST_ONLY</code>, changes the live read-only flags, and releases the VIP. A Swarm-recreated former primary therefore starts read-only.</p>
-<p>An unavailable Docker daemon, ambiguous container labels, an identity mismatch, or an unreachable role on a running task blocks failover.</p>
+<p>The host Agent atomically writes <code>/etc/clusterguard/docker/mysql-fence.cnf</code> before changing the live server. The whole <code>/etc/clusterguard/docker</code> directory is mounted read-only at <code>/etc/mysql/conf.d</code>, so an atomic role-file replacement is visible through the directory mount instead of being hidden behind a file bind mount pinned to an old inode. Old-primary fencing runs in this order:</p>
+<ol>
+<li>Atomically write the fence file with <code>read_only=ON</code> and <code>super_read_only=ON</code>.</li>
+<li>Write the Agent&#39;s durable local role record and apply MySQL <code>SET PERSIST_ONLY</code>.</li>
+<li>Set the global read-only state of the running process and release the VIP.</li>
+</ol>
+<p>Even if Swarm recreates the container after fencing, the new task reads the host fence file first and starts
+read-only. An unavailable Docker daemon, ambiguous container labels, an identity mismatch, or an unreachable
+role on a running task all fail the failover closed.</p>
 <h2 id="operational-constraints">Operational constraints<a class="heading-anchor" href="#operational-constraints" aria-label="Link to Operational constraints">#</a></h2>
 <ul>
 <li>Use at least three odd-numbered Swarm Managers. Swarm quorum and ClusterGuard Raft quorum are separate safety domains.</li>
-<li>Pin one MySQL Service to each labeled node and publish 3306 in host mode.</li>
+<li>Pin each database Service to a node carrying the <code>clusterguard.mysql.slot</code> label, and publish 3306 with <code>mode: host</code>.</li>
 <li>Store data on a durable bind mount or qualified block storage, never in the container writable layer.</li>
-<li>Run the restricted Agent on the host. Do not expose the Docker socket to the database container.</li>
-<li>Planned database stop changes Swarm desired replicas to zero. <code>docker stop</code> is not an accepted lifecycle operation.</li>
+<li>Run the restricted Agent on the host and do not expose the Docker socket to the database container; only root or a restricted sudo account may access that socket.</li>
+<li>Planned database stop changes Swarm desired replicas to zero with <code>docker service scale SERVICE=0</code>. <code>docker stop</code> is not an accepted lifecycle operation.</li>
 <li>The VIP is attached to the current writer host, not to a container overlay interface.</li>
+<li>A database failure is not a host failure. A failed 3306 probe can trigger database recovery, while a whole-host power loss follows the separate power workflow.</li>
 </ul>
 <h2 id="deployment-and-validation">Deployment and validation<a class="heading-anchor" href="#deployment-and-validation" aria-label="Link to Deployment and validation">#</a></h2>
-<p>Deployment assets are under <code>deploy/docker-swarm/</code>. Install Docker from the pinned static archive, create a three-manager Swarm, prepare each host, and install an independent native client on every controller with <code>mysql/install-mysql-client.sh MYSQL_TAR</code>. The control plane must not borrow the client from its local database container because losing that task would also remove discovery and recovery access. Load the MySQL image, create the external secrets, and deploy <code>mysql-stack.yml</code>. Run <code>bootstrap-replication.sh 01</code> on host 01 first, followed by <code>bootstrap-replication.sh 02</code> and <code>03</code> on the corresponding hosts. Each invocation deliberately controls only the local Swarm task. Export <code>CG_MYSQL_ROOT_PASSWORD</code>, <code>CG_MYSQL_DISCOVERY_PASSWORD</code>, <code>CG_MYSQL_OPERATION_PASSWORD</code>, and <code>CG_MYSQL_REPLICATION_PASSWORD</code> on the host first (the script exits immediately when any is missing, and the replication password must be at most 32 characters); <code>CG_MYSQL_SOURCE_HOST</code> defaults to <code>192.168.102.152</code>, so override it outside that subnet. Register a new Docker MySQL cluster in the site&#39;s existing control plane, discover the instances, merge each Docker policy into the existing host Agent configuration, and then register RuntimeTarget and WorkloadBinding records. Do not create a second API or Raft port. MySQL automatic failover additionally requires working isolation evidence or the control plane refuses to start it: set <code>&quot;fencing&quot;: { &quot;agent_quorum_enabled&quot;: true, &quot;agent_quorum_grace_seconds&quot;: 15 }</code> (valid range 15-60 seconds), or configure an external fencer, or enable <code>kubernetes</code>.</p>
-<p>Qualification covers round-robin switchovers, primary task loss, Docker daemon loss, former-primary restart, duplicate container identity, Raft quorum loss, Swarm manager quorum loss, VIP uniqueness, replication convergence, and audit/report completeness. VIP migration after primary task loss was observed at roughly 30 seconds in the lab; that is a measured value, not a product commitment.</p>
+<p>Deployment assets are under <code>deploy/docker-swarm/</code>.</p>
+<ol>
+<li>Copy the official Docker x86_64 static archive and the MySQL 8.0.44 image tarball into the offline environment.</li>
+<li>Run <code>install-docker-static.sh</code> on all three hosts.</li>
+<li>Initialise Swarm on 01 and join 02 and 03 as Managers.</li>
+<li>Run <code>mysql/prepare-host.sh SLOT NODE_IP</code> on every host.</li>
+<li>Run <code>mysql/install-mysql-client.sh MYSQL_TAR</code> on every controller node to install an independent client. The control plane must not borrow <code>mysql</code> from its local database container, because losing that task would also remove discovery and recovery access.</li>
+<li>Create the two Swarm secrets <code>cg_mysql_root_password</code> and <code>cg_mysql_operator_cnf</code> on a Manager.</li>
+<li>Export the cluster UUID and the three provisional instance UUIDs, then run <code>docker stack deploy -c mysql-stack.yml cgmysql</code>.</li>
+<li>Run <code>bootstrap-replication.sh 01</code> on host 01 first, then <code>bootstrap-replication.sh 02</code> and <code>03</code> on the corresponding hosts, to create accounts, GTID replication and acceptance data. Each invocation deliberately controls only the local Swarm task and never mistakes a remote container for a local one. Export <code>CG_MYSQL_ROOT_PASSWORD</code>, <code>CG_MYSQL_DISCOVERY_PASSWORD</code>, <code>CG_MYSQL_OPERATION_PASSWORD</code>, and <code>CG_MYSQL_REPLICATION_PASSWORD</code> on the matching host first (the script exits immediately when any is missing, and the replication password must be at most 32 characters); <code>CG_MYSQL_SOURCE_HOST</code> defaults to <code>192.168.102.152</code>, so override it outside that subnet.</li>
+<li>Register a new Docker MySQL cluster plus the three host endpoints in the site&#39;s existing unified ClusterGuard control plane and run discovery. Do not create a second API or Raft port.</li>
+<li>Redeploy the Service with the real instance UUIDs discovered above, and merge the Docker policy into the <code>clusters</code> array of the three existing <code>/etc/clusterguard/agent.json</code> files.</li>
+<li>Create RuntimeTarget, WorkloadBinding and HAEndpoint, run prechecks, then enable automatic failover. MySQL automatic failover additionally requires working isolation evidence or the control plane refuses to start it: set <code>&quot;fencing&quot;: { &quot;agent_quorum_enabled&quot;: true, &quot;agent_quorum_grace_seconds&quot;: 15 }</code> (valid range 15-60 seconds), or configure an external fencer, or enable <code>kubernetes</code>.</li>
+</ol>
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>Expected result</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Planned switchover 01-&gt;02-&gt;03-&gt;01</td>
+<td>Primary, replication source and VIP converge together; the client address does not change</td>
+</tr>
+<tr>
+<td>Primary container stopped</td>
+<td>The old primary is durably fenced, the candidate is promoted and the VIP moves (measured end to end in the lab at about 21 seconds, of which workflow execution and verification took about 12.2 seconds; the 30-second figure is a target, not a product commitment)</td>
+</tr>
+<tr>
+<td>Former-primary Service restarted</td>
+<td>The container starts read-only and then rejoins replication automatically</td>
+</tr>
+<tr>
+<td>Docker daemon stopped</td>
+<td>Container state is never faked; the transition is blocked while isolation evidence is missing</td>
+</tr>
+<tr>
+<td>Two container labels point at the same instance</td>
+<td>The Agent reports an identity conflict and blocks the mutation</td>
+</tr>
+<tr>
+<td>ClusterGuard Raft majority lost</td>
+<td>Primary transition and VIP acquisition are refused</td>
+</tr>
+<tr>
+<td>Swarm Manager majority lost</td>
+<td>Service scaling is refused; the running databases and the VIP are not disturbed</td>
+</tr>
+</tbody></table>
+<p>Qualification additionally covers duplicate-VIP detection, replication convergence after each transition, and
+audit/report completeness.</p>
 <p>The executable lab plan and evidence checklist for <code>192.168.102.152-154</code> are in
 <a href="docker-swarm-mysql-validation.html"><code>docker-swarm-mysql-validation-plan.md</code></a>.</p>
 <h2 id="separate-kubernetes-mode">Separate Kubernetes mode<a class="heading-anchor" href="#separate-kubernetes-mode" aria-label="Link to Separate Kubernetes mode">#</a></h2>
@@ -142,7 +235,7 @@
         </article>
         <aside class="page-toc" aria-label="On this page">
           <strong>On this page</strong>
-          <a class="toc-level-2" href="#scope">Scope</a><a class="toc-level-2" href="#unified-control-plane-and-cluster-selection">Unified control plane and cluster selection</a><a class="toc-level-2" href="#host-and-container-boundaries">Host and container boundaries</a><a class="toc-level-2" href="#identity-and-placement">Identity and placement</a><a class="toc-level-2" href="#fencing-contract">Fencing contract</a><a class="toc-level-2" href="#operational-constraints">Operational constraints</a><a class="toc-level-2" href="#deployment-and-validation">Deployment and validation</a><a class="toc-level-2" href="#separate-kubernetes-mode">Separate Kubernetes mode</a>
+          <a class="toc-level-2" href="#scope">Scope</a><a class="toc-level-2" href="#unified-control-plane-and-cluster-selection">Unified control plane and cluster selection</a><a class="toc-level-2" href="#host-and-container-boundaries">Host and container boundaries</a><a class="toc-level-2" href="#identity-and-placement">Identity and placement</a><a class="toc-level-2" href="#high-availability-boundary">High-availability boundary</a><a class="toc-level-2" href="#fencing-contract">Fencing contract</a><a class="toc-level-2" href="#operational-constraints">Operational constraints</a><a class="toc-level-2" href="#deployment-and-validation">Deployment and validation</a><a class="toc-level-2" href="#separate-kubernetes-mode">Separate Kubernetes mode</a>
         </aside>
       </main>
     </div>

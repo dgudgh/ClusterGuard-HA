@@ -11,7 +11,7 @@
 
 ### 最新安装介质
 
-[2.2-102 发布说明](release-2.2.102.md)：一份 MySQL 8.0.44 / PostgreSQL 16.4 完整离线安装介质及单独 ClusterGuard RPM，固定构建提交 `7b36461`。本地已按发版门禁构建并核验；生产 `.cgupgrade` 和最终版现场安装、升级、回退验收尚未完成。本版未上传 GitHub，也未被现场验收，不能仅凭较高版本号当作已发布版本。
+[2.2-102 发布说明](release-2.2.102.md)：一份 MySQL 8.0.44 / PostgreSQL 16.4 完整离线安装介质及单独 ClusterGuard RPM，代码基线为 `7b36461`（介质内 `RELEASE-INFO` 记录的是打包时的 HEAD `2b9a449`；该提交只新增本发布说明与索引、不含代码改动，两者代码等价）。本地已按发版门禁构建并核验；生产 `.cgupgrade` 和最终版现场安装、升级、回退验收尚未完成。本版未上传 GitHub，也未被现场验收，不能仅凭较高版本号当作已发布版本。
 
 [2.2-101 发布说明](release-2.2.101.md) 与 [GitHub v2.2.101](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.101)：上一份安装介质，固定构建提交 `78dbdbf`，已核验并上传为 GitHub 预发布。包内 `release_channel=stable` 不改变其预发布状态。
 

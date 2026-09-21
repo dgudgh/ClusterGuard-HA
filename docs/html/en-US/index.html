@@ -40,21 +40,26 @@
         <article class="document-content"><h1 id="clusterguard-ha-english-documentation">ClusterGuard HA English Documentation<a class="heading-anchor" href="#clusterguard-ha-english-documentation" aria-label="Link to ClusterGuard HA English Documentation">#</a></h1>
 <p>The offline HTML documentation center starts at <a href="../index.html"><code>../html/index.html</code></a>. It includes this manual, the migration runbook, qualification evidence, local search, and print-friendly pages without an external network dependency.</p>
 <h2 id="current-version">Current Version<a class="heading-anchor" href="#current-version" aria-label="Link to Current Version">#</a></h2>
-<h3 id="latest-installer-prerelease">Latest Installer Prerelease<a class="heading-anchor" href="#latest-installer-prerelease" aria-label="Link to Latest Installer Prerelease">#</a></h3>
-<p>The newest installer kit is <strong>2.2-101</strong>, whose release notes are maintained in Simplified
-Chinese only: <a href="../zh-CN/release-2.2.101.html">2.2-101 release notes</a> ·
-<a href="https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.101">GitHub v2.2.101</a>.
+<h3 id="latest-installer">Latest Installer<a class="heading-anchor" href="#latest-installer" aria-label="Link to Latest Installer">#</a></h3>
+<p>The newest installer kit is <strong>2.2-102</strong>, whose release notes are maintained in Simplified
+Chinese only: <a href="../zh-CN/release-2.2.102.html">2.2-102 release notes</a>.
 It is one kit containing MySQL 8.0.44 / PostgreSQL 16.4 media plus a standalone
-ClusterGuard RPM, built from commit <code>78dbdbf</code>. The archive was verified and uploaded;
-production <code>.cgupgrade</code> and final site installation, upgrade, and rollback acceptance
-remain outstanding. <code>release_channel=stable</code> inside the package does not change its
-GitHub prerelease status.</p>
+ClusterGuard RPM, built from code baseline <code>7b36461</code> (the media <code>RELEASE-INFO</code> records
+<code>2b9a449</code>, the commit that added this release note and the index entries without changing
+any code, so the two are code-equivalent). The archive was built and verified locally but
+was neither uploaded to GitHub nor accepted on site; production <code>.cgupgrade</code> and final
+site installation, upgrade, and rollback acceptance remain outstanding.
+<code>release_channel=stable</code> inside the package does not change that.</p>
+<p>The previous kit,
+<a href="../zh-CN/release-2.2.101.html">2.2-101 release notes</a> ·
+<a href="https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.101">GitHub v2.2.101</a>, was
+verified and uploaded as a GitHub prerelease from commit <code>78dbdbf</code>.</p>
 <p>English release notes are maintained through
 <a href="release-2.2.47.html">2.2.47</a>; every later release note exists only in Simplified Chinese,
-and the ones present today run from <code>docs/zh-CN/release-2.2.69.md</code> through
-<code>release-2.2.101.md</code>. Machine-verified
-checksums and the latest documentation corrections are governed by the 2.2-101 release
-notes. Updater fixes and remaining gates are recorded in the
+and the ones present today are 2.2.69-2.2.73, 2.2.86 and 2.2.88-2.2.102. The gaps in
+between never had a release note generated, so they are not broken links.
+Machine-verified checksums and the latest documentation corrections are governed by the
+2.2-102 release notes. Updater fixes and remaining gates are recorded in the
 <a href="../../zh-CN/updater-private-workspace-2026-09-11.md">private execution workspace record</a>.</p>
 <h3 id="historical-formal-releases">Historical Formal Releases<a class="heading-anchor" href="#historical-formal-releases" aria-label="Link to Historical Formal Releases">#</a></h3>
 <table>
@@ -86,7 +91,7 @@ notes. Updater fixes and remaining gates are recorded in the
 <p>Do not use historical candidate packages with numbers higher than <code>2.1-45</code> in the local directory to replace the official release. The official deliverables must come from GitHub Release and be verified with the included SHA256 checksum.</p>
 <h2 id="recommended-reading-order">Recommended Reading Order<a class="heading-anchor" href="#recommended-reading-order" aria-label="Link to Recommended Reading Order">#</a></h2>
 <p>For the newest installer kit, start with the
-<a href="../zh-CN/release-2.2.101.html">2.2-101 release notes</a> (Simplified Chinese only).</p>
+<a href="../zh-CN/release-2.2.102.html">2.2-102 release notes</a> (Simplified Chinese only).</p>
 <p>The order below follows the formal <code>2.2-39</code> baseline:</p>
 <ol>
 <li><a href="release-2.2.47.html">2.2.47 Release Notes</a>
@@ -113,6 +118,17 @@ Confirm the official package, summary, support scope, and production admission b
    Verify signed update packages, review the plan, roll nodes, resume interrupted work, and perform controlled rollback.</li>
 <li><a href="version-release-policy.html">Version and Release Policy</a>
    Use when building new versions, maintaining tags, and releasing PostgreSQL 2.2.</li>
+<li><a href="architecture.html">Architecture</a>
+   Review the control plane, metadata storage, consensus, node agent and workflow stages before changing deployment topology.</li>
+<li><a href="postgresql-ha.html">PostgreSQL HA</a>
+   Understand native PostgreSQL identity, streaming replication, controlled switchover, automatic takeover and former-primary rewind.</li>
+<li><a href="api-operations.html">Control-Plane and API Reference</a>
+   Look up API paths, roles, approval grants, console behaviour and operational limits.</li>
+<li><a href="proven-mysql-ha-methods.html">Proven MySQL HA Methods</a>
+   See which MySQL HA mechanisms have been validated for this product, and under what evidence window.</li>
+<li><a href="mysql-feature-parity-acceptance.html">MySQL Feature Parity Acceptance</a></li>
+<li><a href="mysql-production-qualification.html">MySQL Production Qualification</a>
+   Confirm the measured client interruption and the conditions that must be met before production admission.</li>
 </ol>
 <h2 id="acceptance-evidence">Acceptance Evidence<a class="heading-anchor" href="#acceptance-evidence" aria-label="Link to Acceptance Evidence">#</a></h2>
 <ul>
@@ -120,6 +136,8 @@ Confirm the official package, summary, support scope, and production admission b
 <li><a href="production-chaos-test.html">Production Chaos and Concurrency Test Report</a></li>
 <li><a href="power-lifecycle-test.html">Planned Shutdown and Automatic Recovery Report</a></li>
 <li><a href="postgresql-production-qualification.html">PostgreSQL 16.4 Production Qualification</a></li>
+<li><a href="mysql-feature-parity-acceptance.html">MySQL Feature Parity Acceptance</a></li>
+<li><a href="mysql-production-qualification.html">MySQL Production Qualification</a></li>
 <li><a href="docker-swarm-mysql-validation.html">Docker Swarm MySQL Lab Qualification</a></li>
 <li><a href="kubernetes-mysql.html">Kubernetes MySQL Guide</a></li>
 </ul>
@@ -146,6 +164,12 @@ uniqueness, and former-primary <code>pg_rewind</code>, is recorded in the
 <li><code>docs/en-US/operations-manual.md</code></li>
 <li><code>docs/en-US/update-and-patch.md</code></li>
 <li><code>docs/en-US/version-release-policy.md</code></li>
+<li><code>docs/architecture.md</code></li>
+<li><code>docs/operations.md</code></li>
+<li><code>docs/postgresql-ha.md</code></li>
+<li><code>docs/proven-mysql-ha-methods.md</code></li>
+<li><code>docs/mysql-feature-parity-acceptance.md</code></li>
+<li><code>docs/mysql-production-qualification-2026-07-28.md</code></li>
 </ul>
 <p><code>docs/superpowers/</code> preserves historical design and implementation plans and is only used for traceability, not as the current installation or production operation manual. When documents are inconsistent with the official release, the corresponding <code>RELEASE-INFO</code>, summary file, and release notes of that version shall prevail.</p>
 <h2 id="information-required-for-issue-feedback">Information Required for Issue Feedback<a class="heading-anchor" href="#information-required-for-issue-feedback" aria-label="Link to Information Required for Issue Feedback">#</a></h2>
@@ -167,7 +191,7 @@ uniqueness, and former-primary <code>pg_rewind</code>, is recorded in the
         </article>
         <aside class="page-toc" aria-label="On this page">
           <strong>On this page</strong>
-          <a class="toc-level-2" href="#current-version">Current Version</a><a class="toc-level-3" href="#latest-installer-prerelease">Latest Installer Prerelease</a><a class="toc-level-3" href="#historical-formal-releases">Historical Formal Releases</a><a class="toc-level-2" href="#recommended-reading-order">Recommended Reading Order</a><a class="toc-level-2" href="#acceptance-evidence">Acceptance Evidence</a><a class="toc-level-2" href="#postgresql-2-2">PostgreSQL 2.2</a><a class="toc-level-2" href="#docker-swarm-mysql">Docker Swarm MySQL</a><a class="toc-level-2" href="#kubernetes-mysql">Kubernetes MySQL</a><a class="toc-level-2" href="#document-validity">Document Validity</a><a class="toc-level-2" href="#information-required-for-issue-feedback">Information Required for Issue Feedback</a>
+          <a class="toc-level-2" href="#current-version">Current Version</a><a class="toc-level-3" href="#latest-installer">Latest Installer</a><a class="toc-level-3" href="#historical-formal-releases">Historical Formal Releases</a><a class="toc-level-2" href="#recommended-reading-order">Recommended Reading Order</a><a class="toc-level-2" href="#acceptance-evidence">Acceptance Evidence</a><a class="toc-level-2" href="#postgresql-2-2">PostgreSQL 2.2</a><a class="toc-level-2" href="#docker-swarm-mysql">Docker Swarm MySQL</a><a class="toc-level-2" href="#kubernetes-mysql">Kubernetes MySQL</a><a class="toc-level-2" href="#document-validity">Document Validity</a><a class="toc-level-2" href="#information-required-for-issue-feedback">Information Required for Issue Feedback</a>
         </aside>
       </main>
     </div>

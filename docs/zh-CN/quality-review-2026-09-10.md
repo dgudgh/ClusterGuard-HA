@@ -31,7 +31,7 @@ Oracle/SQL Server 原生灾难恢复、PXC、密钥轮换不在本轮范围；�
 
 ## 三、修改前旧版对比与问题卡
 
-基线旧提交 `bc0546a`（2.2-99 前的正式标签基线）。旧文件：`git show bc0546a:internal/api/console.html`（4637 行）。
+基线旧提交 `bc0546a`（2.2-68，2.2-99 之前的正式标签基线）。旧文件：`git show bc0546a:internal/api/console.html`（4637 行）。
 
 ### QR-01 登录/引导阶段：数据加载失败被当作会话失效（旧有缺陷）
 

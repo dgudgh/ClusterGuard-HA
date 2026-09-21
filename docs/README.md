@@ -39,6 +39,7 @@ Latest installer / 最新安装介质：[2.2-102 发布说明（中文）](zh-CN
 | 2.2.40 release notes / 2.2.40 发布说明 | [English](en-US/release-2.2.40.md) | [中文](zh-CN/release-2.2.40.md) |
 | 2.2.39 release notes / 2.2.39 发布说明 | [English](en-US/release-2.2.39.md) | [中文](zh-CN/release-2.2.39.md) |
 | 2.1.45 release notes / 2.1.45 发布说明 | [English](en-US/release-2.1.45.md) | [中文](zh-CN/release-2.1.45.md) |
+| Offline installation entry / 离线安装入口 | [English](offline-install.md) | [中文](zh-CN/offline-install.md) |
 | Offline RPM installation / 离线 RPM 安装 | [English](en-US/offline-rpm-install.md) | [中文](zh-CN/offline-rpm-install.md) |
 | Database preparation / 数据库接入 | [English](en-US/database-preparation.md) | [中文](zh-CN/database-preparation.md) |
 | Migration from Orchestrator / 从 Orchestrator 迁移 | [English](en-US/orchestrator-migration.md) | [中文](zh-CN/orchestrator-migration.md) |
@@ -70,9 +71,9 @@ Qualification reports record a specific laboratory build and date. They do not r
 
 Source and test organization / 源码与测试维护入口：[文件与测试导览](zh-CN/source-layout-and-testing.md) · [旧版对比与清理记录](zh-CN/dead-code-cleanup-2026-09-11.md)。These development records distinguish local checks, browser fixtures, historical tools, and field validation; they are not a production acceptance claim.
 
-`docs/superpowers/` contains design specifications and implementation plans for traceability. Each English record has a Simplified Chinese counterpart under `docs/superpowers/zh-CN/`. These records are historical engineering evidence, not current production runbooks.
+`docs/superpowers/` contains design specifications and implementation plans for traceability. Each English record has a Simplified Chinese counterpart under `docs/superpowers/zh-CN/`, except the index `docs/superpowers/README.md` itself, which exists in English only. These records are historical engineering evidence, not current production runbooks.
 
-`docs/superpowers/` 保存设计规格和实施计划，用于工程追溯。每份英文记录在 `docs/superpowers/zh-CN/` 下都有中文对应版本。这些文件属于历史工程证据，不是当前生产操作手册。
+`docs/superpowers/` 保存设计规格和实施计划，用于工程追溯。除索引 `docs/superpowers/README.md` 本身（仅英文）外，每份英文记录在 `docs/superpowers/zh-CN/` 下都有中文对应版本。这些文件属于历史工程证据，不是当前生产操作手册。
 
 ## Documentation Rules / 文档规则
 

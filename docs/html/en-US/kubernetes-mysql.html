@@ -74,7 +74,10 @@
 <p>RuntimeTarget and WorkloadBinding are mandatory. ClusterGuard never infers a runtime from a port, hostname, or container name.</p>
 <h2 id="mandatory-safety-contract">Mandatory safety contract<a class="heading-anchor" href="#mandatory-safety-contract" aria-label="Link to Mandatory safety contract">#</a></h2>
 <ul>
-<li>Each database instance has its own one-replica StatefulSet at ordinal zero and its own PVC.</li>
+<li>Each database instance has its own one-replica StatefulSet at ordinal zero, plus its own PVC, so the
+database <code>server_uuid</code> does not change when the Pod is recreated.</li>
+<li>Never represent one primary and two replicas with a single three-replica StatefulSet: scaling down the
+old primary would disturb the other instances at the same time.</li>
 <li>WorkloadBinding records StatefulSet, Pod name, immutable Pod UID, Node name, and PVC UID.</li>
 <li>The writer Service is selectorless, and its EndpointSlice is labeled as managed by <code>clusterguard.io/ha</code>, carries the <code>kubernetes.io/service-name=&lt;writer Service&gt;</code> label, and uses <code>addressType: IPv4</code>; the control plane rejects any other slice.</li>
 <li>Each StatefulSet enables the start guard through the <code>clusterguard.io/fence-guard=enabled</code> annotation (initially with <code>clusterguard.io/fenced=false</code>) and records <code>clusterguard.io/mysql-role=primary|replica</code>. A Pod without the <code>fence-guard</code> annotation is refused at start.</li>
@@ -115,9 +118,61 @@ the platform advertises MySQL mutations only when those credentials resolve.</p>
   &quot;replication&quot;: { &quot;username&quot;: &quot;cg_replication&quot;, &quot;password_env&quot;: &quot;CG_MYSQL_REPLICATION_PASSWORD&quot; }
 }
 </code></pre>
-<p>Register one Kubernetes RuntimeTarget whose <code>endpoint</code> is the API HTTPS origin and whose <code>credential_ref</code> is an absolute local JSON profile containing <code>ca_file</code> and <code>bearer_token_file</code>. Register one Kubernetes WorkloadBinding per database instance, including live Pod UID and Node name. Finally register a <code>service</code> HAEndpoint with provider <code>kubernetes_service</code>, provider reference <code>namespace/service/endpoint-slice</code>, the Service DNS hostname, database port, and current primary owner ID.</p>
-<p>Use per-Pod headless Service DNS names for the three database discovery endpoints. Never register all database instances through the writer Service.</p>
+<p>On every controller node, prepare the credential profile, the CA and the token with mode <code>0600</code>.
+<code>credential_ref</code> stores only the absolute path of the credential profile; the token is never written
+into ClusterGuard metadata.</p>
+<pre><code class="language-json">{
+  &quot;ca_file&quot;: &quot;/etc/clusterguard/kubernetes/ca.crt&quot;,
+  &quot;bearer_token_file&quot;: &quot;/etc/clusterguard/kubernetes/token&quot;,
+  &quot;server_name&quot;: &quot;kubernetes.default.svc&quot;
+}
+</code></pre>
+<p>All three Raft controllers must reach the same Kubernetes API and must each hold an equivalent local
+credential profile.</p>
+<h3 id="resource-registration">Resource registration<a class="heading-anchor" href="#resource-registration" aria-label="Link to Resource registration">#</a></h3>
+<p>Create the Kubernetes RuntimeTarget through the authenticated control API:</p>
+<pre><code class="language-json">{
+  &quot;display_name&quot;: &quot;production-k8s&quot;,
+  &quot;kind&quot;: &quot;kubernetes&quot;,
+  &quot;endpoint&quot;: &quot;https://kubernetes.example.internal:6443&quot;,
+  &quot;credential_ref&quot;: &quot;/etc/clusterguard/kubernetes/credentials.json&quot;,
+  &quot;active&quot;: true
+}
+</code></pre>
+<p>Create one WorkloadBinding per database instance:</p>
+<pre><code class="language-json">{
+  &quot;instance_id&quot;: &quot;INSTANCE_UUID&quot;,
+  &quot;runtime_target_id&quot;: &quot;RUNTIME_UUID&quot;,
+  &quot;runtime_kind&quot;: &quot;kubernetes&quot;,
+  &quot;active&quot;: true,
+  &quot;kubernetes&quot;: {
+    &quot;cluster_name&quot;: &quot;production&quot;,
+    &quot;namespace&quot;: &quot;database&quot;,
+    &quot;stateful_set&quot;: &quot;mysql-a&quot;,
+    &quot;ordinal&quot;: 0,
+    &quot;pod_name&quot;: &quot;mysql-a-0&quot;,
+    &quot;pod_uid&quot;: &quot;LIVE_POD_UID&quot;,
+    &quot;node_name&quot;: &quot;worker-a&quot;,
+    &quot;pvc_uid&quot;: &quot;MYSQL_DATA_PVC_UID&quot;
+  }
+}
+</code></pre>
+<p>Use per-Pod headless Service DNS names for the three database discovery endpoints. Never register all
+database instances through the writer Service. Finally create the HAEndpoint:</p>
+<pre><code class="language-json">{
+  &quot;kind&quot;: &quot;service&quot;,
+  &quot;provider&quot;: &quot;kubernetes_service&quot;,
+  &quot;provider_ref&quot;: &quot;database/mysql-writer/mysql-writer-clusterguard&quot;,
+  &quot;hostname&quot;: &quot;mysql-writer.database.svc&quot;,
+  &quot;port&quot;: 3306,
+  &quot;owner_id&quot;: &quot;CURRENT_PRIMARY_INSTANCE_UUID&quot;,
+  &quot;active&quot;: true
+}
+</code></pre>
 <h2 id="acceptance-boundary">Acceptance boundary<a class="heading-anchor" href="#acceptance-boundary" aria-label="Link to Acceptance boundary">#</a></h2>
+<p>Before going live, at minimum verify planned switchover cycles, primary Pod deletion, a temporarily
+unreachable kube-apiserver, EndpointSlice conflicts, an old-primary Node turning NotReady, Pod UID
+changes, a StatefulSet accidentally scaled to two replicas, Raft minority, and a failing guard-image pull.</p>
 <p>Code tests cover API TLS, token rotation, selector rejection, immutable Pod identity, single-backend transfer, durable role annotations, persistent fencing, scale-down, and NotReady-node rejection. A real Kubernetes end-to-end qualification has not yet been run, so these tests are not production acceptance evidence.</p>
 <p>After failover, the old StatefulSet remains fenced at zero replicas. A controlled maintenance workflow must verify the durable <code>replica</code> role, clear the fence, scale it to one, and then run GTID former-primary recovery. The graphical maintenance action is still pending; do not bypass data validation and restart it writable.</p>
 
@@ -128,7 +183,7 @@ the platform advertises MySQL mutations only when those credentials resolve.</p>
         </article>
         <aside class="page-toc" aria-label="On this page">
           <strong>On this page</strong>
-          <a class="toc-level-2" href="#delivered-scope">Delivered scope</a><a class="toc-level-2" href="#runtime-boundaries">Runtime boundaries</a><a class="toc-level-2" href="#mandatory-safety-contract">Mandatory safety contract</a><a class="toc-level-2" href="#transition-protocol">Transition protocol</a><a class="toc-level-2" href="#deployment">Deployment</a><a class="toc-level-2" href="#acceptance-boundary">Acceptance boundary</a>
+          <a class="toc-level-2" href="#delivered-scope">Delivered scope</a><a class="toc-level-2" href="#runtime-boundaries">Runtime boundaries</a><a class="toc-level-2" href="#mandatory-safety-contract">Mandatory safety contract</a><a class="toc-level-2" href="#transition-protocol">Transition protocol</a><a class="toc-level-2" href="#deployment">Deployment</a><a class="toc-level-3" href="#resource-registration">Resource registration</a><a class="toc-level-2" href="#acceptance-boundary">Acceptance boundary</a>
         </aside>
       </main>
     </div>
