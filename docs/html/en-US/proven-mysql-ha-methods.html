@@ -159,9 +159,10 @@ information, and settings. Every visible execution action either calls a real
 ClusterGuard API or is disabled with the backend capability reason. Raw
 operation evidence is collapsed by default but remains available for audit.</p>
 <h2 id="validated-delivery">Validated Delivery<a class="heading-anchor" href="#validated-delivery" aria-label="Link to Validated Delivery">#</a></h2>
-<p>The RC58 bundle contains the controller, CLI, restricted agent, lifecycle
-executor, systemd units, timers, log rotation, configuration templates, and
-installer. It was deployed to three controllers and three colocated data nodes.
+<p>The <code>rc61</code> bundle (<code>clusterguard-ha-mysql-parity-rc61-linux-amd64.tar.gz</code>, the
+artifact recorded in the acceptance matrix) contains the controller, CLI,
+restricted agent, lifecycle executor, systemd units, timers, log rotation,
+configuration templates, and installer. It was deployed to three controllers and three colocated data nodes.
 The acceptance matrix verified six clusters, 50 repeated real switchovers,
 quorum-loss self-isolation, primary network failure, former-primary return,
 repeated restart, full-host reboot, divergent rebuild, and endpoint metadata

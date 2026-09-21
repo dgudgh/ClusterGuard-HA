@@ -157,7 +157,7 @@ curl --cacert /etc/clusterguard/tls/ca.crt \
   --output dist/clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade
 </code></pre>
 <p>Before release, read the public key actually referenced by <code>update.json</code> on every site controller. The three site fingerprints, the public fingerprint derived from the offline private key, and the key used to verify the package must match exactly. A public key from an older release directory must never be treated as the site trust anchor merely because its file name looks correct. After the package is built, log in to the current Leader and perform one real console upload. Stop after the console records that the package was uploaded and its signature was verified. The package is not deliverable until this upload succeeds.</p>
-<p>See <a href="update-signature-incident-2026-08-31.md">Update Package Signature Verification Incident (2026-08-31)</a> for the <code>2.2-59</code> to <code>2.2-60</code> failure, process cause, and mandatory release gates.</p>
+<p>See <a href="../../en-US/update-signature-incident-2026-08-31.md">Update Package Signature Verification Incident (2026-08-31)</a> for the <code>2.2-59</code> to <code>2.2-60</code> failure, process cause, and mandatory release gates.</p>
 <p>Ship the update package, its SHA-256 file, release notes, and a signing-key fingerprint through an independent channel. Never overwrite an existing update artifact.</p>
 <h2 id="4-site-preparation">4. Site Preparation<a class="heading-anchor" href="#4-site-preparation" aria-label="Link to 4. Site Preparation">#</a></h2>
 <ol>

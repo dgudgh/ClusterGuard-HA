@@ -153,9 +153,10 @@ operation evidence is collapsed by default but remains available for audit.
 
 ## Validated Delivery
 
-The RC58 bundle contains the controller, CLI, restricted agent, lifecycle
-executor, systemd units, timers, log rotation, configuration templates, and
-installer. It was deployed to three controllers and three colocated data nodes.
+The `rc61` bundle (`clusterguard-ha-mysql-parity-rc61-linux-amd64.tar.gz`, the
+artifact recorded in the acceptance matrix) contains the controller, CLI,
+restricted agent, lifecycle executor, systemd units, timers, log rotation,
+configuration templates, and installer. It was deployed to three controllers and three colocated data nodes.
 The acceptance matrix verified six clusters, 50 repeated real switchovers,
 quorum-loss self-isolation, primary network failure, former-primary return,
 repeated restart, full-host reboot, divergent rebuild, and endpoint metadata

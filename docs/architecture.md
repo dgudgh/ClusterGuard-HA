@@ -32,10 +32,12 @@ runner and safety dependency is configured.
 ## Software Update Plane
 
 ClusterGuard HA separates control-plane software updates from database
-mutation. Every binary exposes its version, release, build commit,
-`state_format`, and `update_protocol`. Every `.cgpatch` carries the target RPM,
-rollback RPM, compatibility manifest, SHA-256 checksums, and an offline release
-signature. The site updater manages only ClusterGuard controllers and Agents;
+mutation. The control-plane binaries expose their version, release, build
+commit, `state_format`, and `update_protocol`; `cgctl` reports the same fields by
+querying the control plane. Every `.cgupgrade` carries the target RPM, rollback
+RPM, compatibility manifest, SHA-256 checksums, and an offline release
+signature; the legacy `.cgpatch` suffix is accepted for compatibility. The site
+updater manages only ClusterGuard controllers and Agents;
 it does not invoke database clients or alter database software, data
 directories, replication, or VIP configuration.
 
@@ -178,8 +180,9 @@ Server adapter provides Always On discovery, topology, health,
 synchronized-secondary candidate assessment, planned failover precheck, plan,
 execute, verify, and send/redo queue metrics when sqlcmd is configured; forced
 failover remains blocked without an explicit data-loss approval policy. Oracle
-metrics and Oracle/SQL Server node sync continue to return `unsupported` until
-their engine-specific implementations are added.
+metrics require DGMGRL or SQLPlus on the controller and otherwise return
+`unsupported`; Oracle and SQL Server node sync remain `unsupported` until their
+engine-specific implementations are added.
 
 Adapter topology links use engine-native source and target identities. The
 resource registry resolves those identities to immutable platform UUIDs before
@@ -351,8 +354,8 @@ endpoint provider. The source is fenced before promotion, every reachable
 follower is reparented, and success requires independent proof of one writable
 instance and one target VIP owner.
 
-Automatic failover uses three failed-primary observations spanning at least
-three seconds to record a stable incident. Only
+Automatic failover uses four consecutive failed-primary observations spanning at
+least three seconds to record a stable incident. Only
 the majority Leader may submit the durable operation. The same incident cannot
 be repeated after success or an indeterminate outcome. Operation locks are
 Raft-replicated and renewed, Safety Guard rechecks majority, and endpoint

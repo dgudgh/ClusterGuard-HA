@@ -18,6 +18,9 @@ clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz
   docs/ClusterGuard-HA-离线安装与部署手册.md
 ```
 
+The listing above uses the sealed `2.1-45` MySQL-only kit. Every PostgreSQL step on
+this page requires a `2.2` or later kit; do not run them with a `2.1-45` kit.
+
 The authoritative, current deployment guide is
 [`docs/en-US/offline-rpm-install.md`](en-US/offline-rpm-install.md). It covers:
 
@@ -38,7 +41,8 @@ VIP-backed MySQL HA defaults to database-level automatic failover using stable
 MySQL failure evidence, a Raft-majority transition lease, and the local Agent's
 fail-closed VIP/read-only reconciliation. `--fencer` is an optional second layer
 for sites with BMC, PDU, cloud, or hypervisor isolation. Use
-`--manual-failover-only` only when automatic recovery is intentionally disabled.
+`--manual-failover-only` only when automatic recovery is intentionally disabled; it
+cannot be combined with `--fencer` or `--fencer-assets`.
 
 Do not use legacy per-node configuration examples as a replacement for the
 multi-node installer. The per-node `clusterguard-install.sh` helper is used by

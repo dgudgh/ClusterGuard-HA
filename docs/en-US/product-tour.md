@@ -35,7 +35,7 @@ The topology answers four operational questions:
 
 ## Node Lifecycle
 
-The Nodes page separates inventory from lifecycle tasks. Add, replace, and rebuild parameters are collected in a modal and then submitted as an auditable task, keeping long installation forms out of the main workspace.
+The Nodes page separates inventory from lifecycle tasks. Add and rebuild (repair) parameters are collected in a modal and then submitted as an auditable task, keeping long installation forms out of the main workspace.
 
 ![ClusterGuard HA node lifecycle](../assets/screenshots/node-lifecycle.png)
 
@@ -49,7 +49,7 @@ Lifecycle tasks cover:
 
 ## Operation Log
 
-The Operation Log separates concise events from raw evidence. The default view shows time, cluster, source primary, target node, operation type, and final status. Operators can expand an entry to inspect raw output, operation UUID, workflow stages, checks, and report links.
+The Operation Log separates concise events from raw evidence. The default view shows time, cluster, source primary, target node, operation type, and final status. Operators can expand an entry to read the complete raw record, which carries the operation UUID, workflow stages, checks, and report links alongside the raw output.
 
 ![ClusterGuard HA operation log](../assets/screenshots/operation-log.png)
 

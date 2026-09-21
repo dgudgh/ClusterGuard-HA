@@ -142,7 +142,7 @@ CREATE ROLE clusterguard_repl WITH REPLICATION LOGIN PASSWORD '<random-replicati
 
 ### 自动故障转移合同
 
-只有生产现场使用的 PostgreSQL 包、服务单元、网络、存储和隔离方式通过下述破坏性验收矩阵后，才能设置 `automatic_failover_enabled`。默认节奏下，控制器需要连续 3 次主库失败观测且时间跨度不少于 3 秒，才会评估接管。这里的 3 秒是故障证据窗口，不是端到端 RTO 承诺。Agent 另有 15 秒授权失效隔离宽限，用来防止失联旧主继续持有写角色或 VIP。
+只有生产现场使用的 PostgreSQL 包、服务单元、网络、存储和隔离方式通过下述破坏性验收矩阵后，才能设置 `automatic_failover_enabled`。默认节奏下，控制器需要连续 4 次主库失败观测且时间跨度不少于 3 秒，才会评估接管。这里的 3 秒是故障证据窗口，不是端到端 RTO 承诺。Agent 另有 15 秒授权失效隔离宽限，用来防止失联旧主继续持有写角色或 VIP。
 
 PostgreSQL 16.4 实验室验收中，客户端使用 `connect_timeout=2` 时，写入口中断实测为 17.973 秒。未设置有界连接超时时，曾有一次连接调用阻塞约 32 秒，尽管控制面操作更早完成。因此生产连接串必须设置有界连接超时和重试策略，并从应用写入口测量 RTO，不能只看审计时间。
 

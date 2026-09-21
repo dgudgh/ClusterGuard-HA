@@ -20,8 +20,9 @@ remain outstanding. `release_channel=stable` inside the package does not change 
 GitHub prerelease status.
 
 English release notes are maintained through
-[2.2.47](release-2.2.47.md); the records from 2.2.48 onward (`docs/zh-CN/release-2.2.69.md`
-through `release-2.2.101.md`) exist only in Simplified Chinese. Machine-verified
+[2.2.47](release-2.2.47.md); every later release note exists only in Simplified Chinese,
+and the ones present today run from `docs/zh-CN/release-2.2.69.md` through
+`release-2.2.101.md`. Machine-verified
 checksums and the latest documentation corrections are governed by the 2.2-101 release
 notes. Updater fixes and remaining gates are recorded in the
 [private execution workspace record](../zh-CN/updater-private-workspace-2026-09-11.md).

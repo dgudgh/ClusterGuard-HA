@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="2.2.100 发布说明 - ClusterGuard HA operational documentation">
+  <title>2.2.100 发布说明 | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">跳到正文</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>搜索文档</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="输入标题关键词">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>开始使用</h2><a href="index.html" data-doc-title="clusterguard ha 中文文档">ClusterGuard HA 中文文档</a><a href="product-overview.html" data-doc-title="产品概览">产品概览</a><a href="product-tour.html" data-doc-title="控制台产品导览">控制台产品导览</a><a href="architecture.html" data-doc-title="系统架构">系统架构</a><a href="release-2.2.101.html" data-doc-title="2.2.101 发布说明">2.2.101 发布说明</a><a href="release-2.2.100.html" data-doc-title="2.2.100 发布说明" aria-current="page" class="active">2.2.100 发布说明</a><a href="release-2.2.99.html" data-doc-title="2.2.99 发布说明">2.2.99 发布说明</a><a href="release-2.2.98.html" data-doc-title="2.2.98 发布说明">2.2.98 发布说明</a><a href="release-2.2.97.html" data-doc-title="2.2.97 发布说明">2.2.97 发布说明</a><a href="release-2.2.96.html" data-doc-title="2.2.96 发布说明">2.2.96 发布说明</a><a href="release-2.2.95.html" data-doc-title="2.2.95 发布说明">2.2.95 发布说明</a><a href="release-2.2.94.html" data-doc-title="2.2.94 发布说明">2.2.94 发布说明</a><a href="release-2.2.93.html" data-doc-title="2.2.93 发布说明">2.2.93 发布说明</a><a href="release-2.2.92.html" data-doc-title="2.2.92 发布说明">2.2.92 发布说明</a><a href="release-2.2.91.html" data-doc-title="2.2.91 发布说明">2.2.91 发布说明</a><a href="release-2.2.90.html" data-doc-title="2.2.90 发布说明">2.2.90 发布说明</a><a href="release-2.2.89.html" data-doc-title="2.2.89 发布说明">2.2.89 发布说明</a><a href="release-2.2.88.html" data-doc-title="2.2.88 发布说明">2.2.88 发布说明</a><a href="release-2.2.86.html" data-doc-title="2.2.86 发布说明">2.2.86 发布说明</a><a href="release-2.2.73.html" data-doc-title="2.2.73 发布说明">2.2.73 发布说明</a><a href="release-2.2.72.html" data-doc-title="2.2.72 发布说明">2.2.72 发布说明</a><a href="release-2.2.71.html" data-doc-title="2.2.71 发布说明">2.2.71 发布说明</a><a href="release-2.2.70.html" data-doc-title="2.2.70 发布说明">2.2.70 发布说明</a><a href="release-2.2.69.html" data-doc-title="2.2.69 发布说明">2.2.69 发布说明</a><a href="release-2.2.47.html" data-doc-title="2.2.47 发布说明">2.2.47 发布说明</a><a href="release-2.2.46.html" data-doc-title="2.2.46 发布说明">2.2.46 发布说明</a><a href="release-2.2.45.html" data-doc-title="2.2.45 发布说明">2.2.45 发布说明</a><a href="release-2.2.44.html" data-doc-title="2.2.44 发布说明">2.2.44 发布说明</a><a href="release-2.2.43.html" data-doc-title="2.2.43 发布说明">2.2.43 发布说明</a><a href="release-2.2.42.html" data-doc-title="2.2.42 发布说明">2.2.42 发布说明</a><a href="release-2.2.41.html" data-doc-title="2.2.41 发布说明">2.2.41 发布说明</a><a href="release-2.2.40.html" data-doc-title="2.2.40 发布说明">2.2.40 发布说明</a><a href="release-2.2.39.html" data-doc-title="2.2.39 发布说明">2.2.39 发布说明</a><a href="release-2.1.45.html" data-doc-title="2.1.45 发布说明">2.1.45 发布说明</a></section><section><h2>部署与迁移</h2><a href="offline-rpm-install.html" data-doc-title="离线 rpm 安装">离线 RPM 安装</a><a href="database-preparation.html" data-doc-title="数据库接入">数据库接入</a><a href="orchestrator-migration.html" data-doc-title="从 orchestrator 迁移">从 Orchestrator 迁移</a></section><section><h2>日常运维</h2><a href="operations-manual.html" data-doc-title="运维操作手册">运维操作手册</a><a href="api-operations.html" data-doc-title="api 运维参考">API 运维参考</a><a href="postgresql-ha.html" data-doc-title="postgresql 高可用">PostgreSQL 高可用</a><a href="docker-swarm-mysql.html" data-doc-title="docker swarm mysql">Docker Swarm MySQL</a><a href="kubernetes-mysql.html" data-doc-title="kubernetes mysql">Kubernetes MySQL</a><a href="update-and-patch.html" data-doc-title="版本升级与回退">版本升级与回退</a><a href="version-release-policy.html" data-doc-title="版本与发版规范">版本与发版规范</a></section><section><h2>验收证据</h2><a href="proven-mysql-ha-methods.html" data-doc-title="mysql 已验证方法">MySQL 已验证方法</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql 功能验收">MySQL 功能验收</a><a href="mysql-former-primary-recovery.html" data-doc-title="旧主恢复专项验收">旧主恢复专项验收</a><a href="mysql-production-qualification.html" data-doc-title="mysql 生产验收">MySQL 生产验收</a><a href="postgresql-production-qualification.html" data-doc-title="postgresql 16.4 生产验收">PostgreSQL 16.4 生产验收</a><a href="docker-swarm-mysql-validation.html" data-doc-title="docker swarm mysql 实机验证">Docker Swarm MySQL 实机验证</a><a href="production-chaos-test.html" data-doc-title="生产故障测试报告">生产故障测试报告</a><a href="power-lifecycle-test.html" data-doc-title="计划关机测试报告">计划关机测试报告</a><a href="release-recovery-acceptance-checklist.html" data-doc-title="恢复与升级发布验收清单">恢复与升级发布验收清单</a></section></nav>
+      <div class="sidebar-meta">
+        <span>离线文档构建</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">打开目录</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>2.2.100 发布说明</strong></div>
+        <div class="header-actions">
+          <a href="../en-US/index.html" lang="en-US">English</a>
+          <button id="print-button" type="button">打印</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha-2-2-100-修复补丁">ClusterGuard HA 2.2-100 修复补丁<a class="heading-anchor" href="#clusterguard-ha-2-2-100-修复补丁" aria-label="Link to ClusterGuard HA 2.2-100 修复补丁">#</a></h1>
+<p>适用现场：2.2-98，Linux x86_64。保留原白蓝界面，不包含新视觉设计。</p>
+<h2 id="修复内容">修复内容<a class="heading-anchor" href="#修复内容" aria-label="Link to 修复内容">#</a></h2>
+<ul>
+<li>PostgreSQL受控灾难恢复遗漏旧default_transaction_read_only配置，导致主库提升后
+仍只读、最终拓扑0links并阻断Recovery Commit。仅在WAL证据、授权、HBA guard
+验证后处理旧配置；不放宽健康、身份、多数派、writer lease或VIP保护。</li>
+<li>PG无主库时不再误入MySQL重启bootstrap，准确提示需要受控恢复。</li>
+<li>纳入本次端到端审计已测试的节点危险操作锁、确认失效/重复提交保护、首屏加载隔离、
+Oracle/SQL Server页面能力与指标真实性修复；不宣称后两者支持未实现的灾难恢复。</li>
+</ul>
+<h2 id="手动更新">手动更新<a class="heading-anchor" href="#手动更新" aria-label="Link to 手动更新">#</a></h2>
+<p>在设置的版本更新弹窗选择clusterguard-ha-2.2-98_to_2.2-100.x86_64.cgupgrade，
+等待验签与计划就绪后按受控流程升级。需要维护窗口，自动切换在升级期间暂停。
+包内有98回退RPM；此包不是二进制差分，含100目标RPM和98回退RPM。
+它不是新装用全量离线安装包，不能用于99或其他来源版本。</p>
+<h2 id="验收结果与限制">验收结果与限制<a class="heading-anchor" href="#验收结果与限制" aria-label="Link to 验收结果与限制">#</a></h2>
+<ul>
+<li>现场PG已恢复为154主、152/153从；原生复制、槽、身份、VIP和Recovery Commit通过。</li>
+<li>MySQL保持153主，容器、GTID与VIP未改变。两个引擎分别50轮自然发现全部healthy、2links。</li>
+<li>全仓2104项通过，另补跑1项Node路径跳过的测试通过；关键恢复模块race536项通过，vet通过。</li>
+<li>新增真实PG旧只读fence复现，修改前失败，修改后真实启动/复制与业务隔离测试通过。</li>
+<li>本地签名/篡改拒绝/包载荷/内嵌HTML校验通过；152使用现场公钥只读inspect通过。</li>
+<li><strong>未安装100，未执行现场上传和滚动升级。</strong> 这些不等同已通过验收。</li>
+<li>PXC专用恢复、Oracle/SQL Server真实灾难恢复及历史泄露凭据轮换仍不在已完成范围内。</li>
+</ul>
+<p>完整证据和服务器备份位置见<a href="../../zh-CN/field-repair-2026-09-10.md">field-repair-2026-09-10.md</a>。</p>
+<p>补丁SHA-256：ea95e445a0c24dc769413b72275d71d7bbe995a9a9392d5ad67a8d337b14ee36。</p>
+
+          <footer class="document-footer">
+            <span>源文件: <code>docs/zh-CN/release-2.2.100.md</code></span>
+            <a href="../index.html">文档语言入口</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="本页目录">
+          <strong>本页目录</strong>
+          <a class="toc-level-2" href="#修复内容">修复内容</a><a class="toc-level-2" href="#手动更新">手动更新</a><a class="toc-level-2" href="#验收结果与限制">验收结果与限制</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

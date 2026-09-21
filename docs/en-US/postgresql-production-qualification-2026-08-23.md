@@ -60,7 +60,7 @@ The candidate configuration uses:
 ```text
 discovery interval                 1 second
 per-endpoint discovery timeout    1 second
-stable failure evidence           3 observations spanning at least 3 seconds
+stable failure evidence           4 observations spanning at least 3 seconds
 Agent authorization-expiry fence  15 seconds
 blocked-attempt retry backoff      30 seconds
 PostgreSQL wal_receiver_timeout    5 seconds

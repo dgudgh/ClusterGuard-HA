@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="2.2.93 发布说明 - ClusterGuard HA operational documentation">
+  <title>2.2.93 发布说明 | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">跳到正文</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>搜索文档</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="输入标题关键词">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>开始使用</h2><a href="index.html" data-doc-title="clusterguard ha 中文文档">ClusterGuard HA 中文文档</a><a href="product-overview.html" data-doc-title="产品概览">产品概览</a><a href="product-tour.html" data-doc-title="控制台产品导览">控制台产品导览</a><a href="architecture.html" data-doc-title="系统架构">系统架构</a><a href="release-2.2.101.html" data-doc-title="2.2.101 发布说明">2.2.101 发布说明</a><a href="release-2.2.100.html" data-doc-title="2.2.100 发布说明">2.2.100 发布说明</a><a href="release-2.2.99.html" data-doc-title="2.2.99 发布说明">2.2.99 发布说明</a><a href="release-2.2.98.html" data-doc-title="2.2.98 发布说明">2.2.98 发布说明</a><a href="release-2.2.97.html" data-doc-title="2.2.97 发布说明">2.2.97 发布说明</a><a href="release-2.2.96.html" data-doc-title="2.2.96 发布说明">2.2.96 发布说明</a><a href="release-2.2.95.html" data-doc-title="2.2.95 发布说明">2.2.95 发布说明</a><a href="release-2.2.94.html" data-doc-title="2.2.94 发布说明">2.2.94 发布说明</a><a href="release-2.2.93.html" data-doc-title="2.2.93 发布说明" aria-current="page" class="active">2.2.93 发布说明</a><a href="release-2.2.92.html" data-doc-title="2.2.92 发布说明">2.2.92 发布说明</a><a href="release-2.2.91.html" data-doc-title="2.2.91 发布说明">2.2.91 发布说明</a><a href="release-2.2.90.html" data-doc-title="2.2.90 发布说明">2.2.90 发布说明</a><a href="release-2.2.89.html" data-doc-title="2.2.89 发布说明">2.2.89 发布说明</a><a href="release-2.2.88.html" data-doc-title="2.2.88 发布说明">2.2.88 发布说明</a><a href="release-2.2.86.html" data-doc-title="2.2.86 发布说明">2.2.86 发布说明</a><a href="release-2.2.73.html" data-doc-title="2.2.73 发布说明">2.2.73 发布说明</a><a href="release-2.2.72.html" data-doc-title="2.2.72 发布说明">2.2.72 发布说明</a><a href="release-2.2.71.html" data-doc-title="2.2.71 发布说明">2.2.71 发布说明</a><a href="release-2.2.70.html" data-doc-title="2.2.70 发布说明">2.2.70 发布说明</a><a href="release-2.2.69.html" data-doc-title="2.2.69 发布说明">2.2.69 发布说明</a><a href="release-2.2.47.html" data-doc-title="2.2.47 发布说明">2.2.47 发布说明</a><a href="release-2.2.46.html" data-doc-title="2.2.46 发布说明">2.2.46 发布说明</a><a href="release-2.2.45.html" data-doc-title="2.2.45 发布说明">2.2.45 发布说明</a><a href="release-2.2.44.html" data-doc-title="2.2.44 发布说明">2.2.44 发布说明</a><a href="release-2.2.43.html" data-doc-title="2.2.43 发布说明">2.2.43 发布说明</a><a href="release-2.2.42.html" data-doc-title="2.2.42 发布说明">2.2.42 发布说明</a><a href="release-2.2.41.html" data-doc-title="2.2.41 发布说明">2.2.41 发布说明</a><a href="release-2.2.40.html" data-doc-title="2.2.40 发布说明">2.2.40 发布说明</a><a href="release-2.2.39.html" data-doc-title="2.2.39 发布说明">2.2.39 发布说明</a><a href="release-2.1.45.html" data-doc-title="2.1.45 发布说明">2.1.45 发布说明</a></section><section><h2>部署与迁移</h2><a href="offline-rpm-install.html" data-doc-title="离线 rpm 安装">离线 RPM 安装</a><a href="database-preparation.html" data-doc-title="数据库接入">数据库接入</a><a href="orchestrator-migration.html" data-doc-title="从 orchestrator 迁移">从 Orchestrator 迁移</a></section><section><h2>日常运维</h2><a href="operations-manual.html" data-doc-title="运维操作手册">运维操作手册</a><a href="api-operations.html" data-doc-title="api 运维参考">API 运维参考</a><a href="postgresql-ha.html" data-doc-title="postgresql 高可用">PostgreSQL 高可用</a><a href="docker-swarm-mysql.html" data-doc-title="docker swarm mysql">Docker Swarm MySQL</a><a href="kubernetes-mysql.html" data-doc-title="kubernetes mysql">Kubernetes MySQL</a><a href="update-and-patch.html" data-doc-title="版本升级与回退">版本升级与回退</a><a href="version-release-policy.html" data-doc-title="版本与发版规范">版本与发版规范</a></section><section><h2>验收证据</h2><a href="proven-mysql-ha-methods.html" data-doc-title="mysql 已验证方法">MySQL 已验证方法</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql 功能验收">MySQL 功能验收</a><a href="mysql-former-primary-recovery.html" data-doc-title="旧主恢复专项验收">旧主恢复专项验收</a><a href="mysql-production-qualification.html" data-doc-title="mysql 生产验收">MySQL 生产验收</a><a href="postgresql-production-qualification.html" data-doc-title="postgresql 16.4 生产验收">PostgreSQL 16.4 生产验收</a><a href="docker-swarm-mysql-validation.html" data-doc-title="docker swarm mysql 实机验证">Docker Swarm MySQL 实机验证</a><a href="production-chaos-test.html" data-doc-title="生产故障测试报告">生产故障测试报告</a><a href="power-lifecycle-test.html" data-doc-title="计划关机测试报告">计划关机测试报告</a><a href="release-recovery-acceptance-checklist.html" data-doc-title="恢复与升级发布验收清单">恢复与升级发布验收清单</a></section></nav>
+      <div class="sidebar-meta">
+        <span>离线文档构建</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">打开目录</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>2.2.93 发布说明</strong></div>
+        <div class="header-actions">
+          <a href="../en-US/index.html" lang="en-US">English</a>
+          <button id="print-button" type="button">打印</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha-2-2-93-升级确认反馈修复">ClusterGuard HA 2.2-93：升级确认反馈修复<a class="heading-anchor" href="#clusterguard-ha-2-2-93-升级确认反馈修复" aria-label="Link to ClusterGuard HA 2.2-93：升级确认反馈修复">#</a></h1>
+<p>日期：2026-09-08。保持经典界面，未引入新的页面设计。</p>
+<h2 id="已确认的原因">已确认的原因<a class="heading-anchor" href="#已确认的原因" aria-label="Link to 已确认的原因">#</a></h2>
+<p>在本地 Chrome 加载实际发布控制台代码，按选择文件、上传校验、生成计划、输入补丁 ID、确认升级的用户路径复现。API 和文件内容是隔离测试替身，不连接现场数据库，不代表现场验签或滚动升级验收。</p>
+<ol>
+<li><code>startSoftwareUpdate</code> 只更新通用升级区域，没有刷新确认框的按钮和文案。请求处理中内部变量已挡住重入，但按钮仍可点击，视觉上没有响应。</li>
+<li>原代码丢弃 POST 返回的任务，继续等待升级列表、版本、控制面三个接口全部返回，才关闭确认框。其中任何一个慢请求都会拖住已经受理的动作，而且原链路没有请求超时。</li>
+<li>提交错误写入已关闭的上传框及底层提示，最上面的确认框看不到错误。</li>
+<li>计划生成只等待 20 轮、每轮间隔 500ms，超出后要求再次点击。其轮询还重复等待上述三个接口。</li>
+<li>确认输入与提交目标读取当前列表第一项，而非打开确认框时的固定补丁，存在后台列表更新导致确认失配的风险。</li>
+</ol>
+<p>这些是代码和本地浏览器已经验证的缺陷。未对现场当次请求抓包，不将具体现场时延归因于某个数据库或网络节点。</p>
+<h2 id="修复边界">修复边界<a class="heading-anchor" href="#修复边界" aria-label="Link to 修复边界">#</a></h2>
+<ul>
+<li>确认后立即显示正在提交，并锁定确认、输入和关闭控件；执行、续跑、回退共用相同保护。</li>
+<li>使用 POST 返回且已验证身份的任务立即打开进度框；版本、控制面状态独立读取，不阻塞任务受理反馈。</li>
+<li>确认框内显示拒绝原因。POST 超时、网络断开、409、5xx 或无法确认的响应进入结果待确认状态；后续核对按钮只 GET 任务，不自动重发 POST。关闭重开也不会丢掉本页面的待确认状态。</li>
+<li>固定本次确认的补丁 ID；提交前启动的旧快照不能覆盖刚受理或直接读取的新任务。</li>
+<li>计划通过单包状态接口等待，超过旧约 10 秒窗口也会在就绪后自动打开二次确认。计划等待可以关闭；关闭不取消后台只读计划，也不自动升级。最多等待 5 分钟后明确报告计划未就绪。</li>
+<li>保留手动输入补丁 ID、后台成功计划校验、权限、签名、Raft 多数派和维护门禁。没有放宽任何安全判定。</li>
+<li>只修正确认弹窗的窄屏按钮布局和长补丁 ID 换行，其余经典 HTML/CSS 保持不变。</li>
+</ul>
+<h2 id="测试证据">测试证据<a class="heading-anchor" href="#测试证据" aria-label="Link to 测试证据">#</a></h2>
+<ul>
+<li>改动前 4 个用户路径场景共 14 项断言，其中 6 项失败；保存在 <code>before/result.json</code>。</li>
+<li>修复后 12 个场景、45 项断言通过，包括慢提交、慢辅助接口、拒绝提示、长时间计划、503、断网、30 秒超时、补丁变化、旧快照、取消等待、续跑和回退。</li>
+<li>原有浏览器回归通过：12 次集群切换、24 个响应式页面视图、可切换标签、默认折叠日志、固定进度头和独立日志滚动。</li>
+<li>API 和升级管理器测试、race 检查及 Go 静态检查通过。全量 Go 测试首次因测试命令漏了 <code>/sbin</code>、找不到 <code>sha256sum</code> 而失败；纠正 PATH 后全量重跑通过，脚本测试耗时 238.563 秒。</li>
+<li>两个包分别校验原始 91/92 回退 RPM、同一 93 目标 RPM、引导器、清单签名及全部 SHA-256；篡改清单被拒绝；实际升级脚本的只读 <code>--inspect</code> 通过。</li>
+<li>RPM 内嵌控制台与测试文件完全一致。与 92 比较，66 个非变更载荷文件保持一致；变动为 5 个带版本信息的二进制和 BUILD-INFO。</li>
+</ul>
+<h2 id="手动升级">手动升级<a class="heading-anchor" href="#手动升级" aria-label="Link to 手动升级">#</a></h2>
+<p>目标版本为 <code>2.2-93</code>，架构为 <code>x86_64</code>。按当前实际运行版本二选一，不要连续上传两个包：</p>
+<table>
+<thead>
+<tr>
+<th>当前版本</th>
+<th>上传包</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>2.2-91</td>
+<td>clusterguard-ha-2.2-91_to_2.2-93.x86_64.cgupgrade</td>
+</tr>
+<tr>
+<td>2.2-92</td>
+<td>clusterguard-ha-2.2-92_to_2.2-93.x86_64.cgupgrade</td>
+</tr>
+</tbody></table>
+<p>91 到 93 的包同时包含 92 的轻量操作上下文读取修复，不需要先安装 92。其他来源版本不在这两个包的支持范围内。</p>
+<p>仍从设置、版本更新、升级入口上传，保持现场安全检查。93 的确认交互是在升级完成并重新加载页面后生效；安装 93 这一轮仍由当前旧版页面发起，不能保证旧页面立即获得新交互，不要反复点击确认。</p>
+<p>未自动安装、未 SSH、未替换现场公钥、未执行数据库恢复。未做现场真实文件上传验签及三节点滚动升级，本地结果不能代替现场验收。已有 92 发布包不覆盖。</p>
+
+          <footer class="document-footer">
+            <span>源文件: <code>docs/zh-CN/release-2.2.93.md</code></span>
+            <a href="../index.html">文档语言入口</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="本页目录">
+          <strong>本页目录</strong>
+          <a class="toc-level-2" href="#已确认的原因">已确认的原因</a><a class="toc-level-2" href="#修复边界">修复边界</a><a class="toc-level-2" href="#测试证据">测试证据</a><a class="toc-level-2" href="#手动升级">手动升级</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

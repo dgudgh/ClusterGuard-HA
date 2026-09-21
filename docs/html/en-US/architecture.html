@@ -61,10 +61,12 @@ expansion remains roadmap work. Mutation stays unavailable unless every native
 runner and safety dependency is configured.</p>
 <h2 id="software-update-plane">Software Update Plane<a class="heading-anchor" href="#software-update-plane" aria-label="Link to Software Update Plane">#</a></h2>
 <p>ClusterGuard HA separates control-plane software updates from database
-mutation. Every binary exposes its version, release, build commit,
-<code>state_format</code>, and <code>update_protocol</code>. Every <code>.cgpatch</code> carries the target RPM,
-rollback RPM, compatibility manifest, SHA-256 checksums, and an offline release
-signature. The site updater manages only ClusterGuard controllers and Agents;
+mutation. The control-plane binaries expose their version, release, build
+commit, <code>state_format</code>, and <code>update_protocol</code>; <code>cgctl</code> reports the same fields by
+querying the control plane. Every <code>.cgupgrade</code> carries the target RPM, rollback
+RPM, compatibility manifest, SHA-256 checksums, and an offline release
+signature; the legacy <code>.cgpatch</code> suffix is accepted for compatibility. The site
+updater manages only ClusterGuard controllers and Agents;
 it does not invoke database clients or alter database software, data
 directories, replication, or VIP configuration.</p>
 <p>The update state machine is fixed:</p>
@@ -261,8 +263,9 @@ Server adapter provides Always On discovery, topology, health,
 synchronized-secondary candidate assessment, planned failover precheck, plan,
 execute, verify, and send/redo queue metrics when sqlcmd is configured; forced
 failover remains blocked without an explicit data-loss approval policy. Oracle
-metrics and Oracle/SQL Server node sync continue to return <code>unsupported</code> until
-their engine-specific implementations are added.</p>
+metrics require DGMGRL or SQLPlus on the controller and otherwise return
+<code>unsupported</code>; Oracle and SQL Server node sync remain <code>unsupported</code> until their
+engine-specific implementations are added.</p>
 <p>Adapter topology links use engine-native source and target identities. The
 resource registry resolves those identities to immutable platform UUIDs before
 publishing <code>ReplicationLink</code> resources. This keeps mutable host coordinates
@@ -406,8 +409,8 @@ running replication threads, compatible release families, and an executable
 endpoint provider. The source is fenced before promotion, every reachable
 follower is reparented, and success requires independent proof of one writable
 instance and one target VIP owner.</p>
-<p>Automatic failover uses three failed-primary observations spanning at least
-three seconds to record a stable incident. Only
+<p>Automatic failover uses four consecutive failed-primary observations spanning at
+least three seconds to record a stable incident. Only
 the majority Leader may submit the durable operation. The same incident cannot
 be repeated after success or an indeterminate outcome. Operation locks are
 Raft-replicated and renewed, Safety Guard rechecks majority, and endpoint

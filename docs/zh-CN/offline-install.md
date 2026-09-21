@@ -17,6 +17,9 @@ clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz
   docs/ClusterGuard-HA-离线安装与部署手册.md
 ```
 
+上面列出的是已封板的 `2.1-45` MySQL 专用套件。本页所有 PostgreSQL 步骤都需要
+`2.2` 或更高版本的套件，不要用 `2.1-45` 套件执行。
+
 权威的当前部署指南是
 [`docs/zh-CN/offline-rpm-install.md`](./offline-rpm-install.md)。它涵盖以下内容：
 
@@ -33,7 +36,7 @@ clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz
 在每次生产部署之前使用 `install_clusterguard.sh --plan`。除非明确提供 `--execute`，
 否则它不会更改远程主机。基于 VIP 的 MySQL HA 默认使用稳定 MySQL 故障证据、Raft 多数过渡租约和本地 Agent 的
 失败时阻断 VIP/只读协调，实现数据库级别的自动故障转移。`--fencer` 是一个可选的第二层，适用于具有 BMC、PDU、云或虚拟化隔离的站点。仅在有意禁用自动恢复时使用
-`--manual-failover-only`。
+`--manual-failover-only`；它不能与 `--fencer` 或 `--fencer-assets` 同时配置。
 
 不要使用旧的每节点配置示例来替代多节点安装程序。每节点的 `clusterguard-install.sh` 辅助工具在控制平面存在后由平台生命周期工作流使用；它不是初始的生产引导过程。
 

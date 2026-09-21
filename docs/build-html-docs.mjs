@@ -17,36 +17,71 @@ const projectRoot = path.resolve(docsDirectory, "..");
 const outputRoot = path.join(docsDirectory, "html");
 const sourceAssets = path.join(docsDirectory, "html-src");
 
+// Release notes are discovered from the filesystem instead of being listed by
+// hand. A hand-maintained list silently falls behind the files it describes:
+// before this change the build only named releases up to 2.2.47, so the 21
+// later Chinese notes that already existed were unreachable from the offline
+// documentation centre even though their markdown was present.
+const versionedReleasePattern = /^release-(\d+(?:\.\d+)*)\.md$/;
+
+function releaseTitle(locale, version) {
+  return locale === "zh-CN" ? `${version} 发布说明` : `Release ${version}`;
+}
+
+function compareReleaseVersionsDescending(left, right) {
+  const leftParts = left.split(".").map(Number);
+  const rightParts = right.split(".").map(Number);
+  for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index += 1) {
+    const difference = (rightParts[index] || 0) - (leftParts[index] || 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
+function discoverReleases(locale) {
+  return fs
+    .readdirSync(path.join(docsDirectory, locale))
+    .map((name) => (versionedReleasePattern.exec(name) || [])[1])
+    .filter(Boolean)
+    .sort(compareReleaseVersionsDescending)
+    .map((version) =>
+      entry(locale, `release-${version}`, releaseTitle(locale, version), `docs/${locale}/release-${version}.md`)
+    );
+}
+
+const releases = {
+  "en-US": discoverReleases("en-US"),
+  "zh-CN": discoverReleases("zh-CN")
+};
+
+const releaseSlugs = {
+  "en-US": releases["en-US"].map((item) => item.slug),
+  "zh-CN": releases["zh-CN"].map((item) => item.slug)
+};
+
 const groups = {
   "en-US": [
-    ["Start Here", ["index", "product-overview", "product-tour", "architecture", "release-2.2.47", "release-2.2.46", "release-2.2.45", "release-2.2.44", "release-2.2.43", "release-2.2.42", "release-2.2.41", "release-2.2.40", "release-2.2.39", "release-2.1.45"]],
+    ["Start Here", ["index", "product-overview", "product-tour", "architecture", ...releaseSlugs["en-US"]]],
     ["Deploy and Migrate", ["offline-rpm-install", "database-preparation", "orchestrator-migration"]],
     ["Operate", ["operations-manual", "api-operations", "postgresql-ha", "docker-swarm-mysql", "kubernetes-mysql", "update-and-patch", "version-release-policy"]],
     ["Qualification", ["proven-mysql-ha-methods", "mysql-feature-parity-acceptance", "mysql-former-primary-recovery", "mysql-production-qualification", "postgresql-production-qualification", "docker-swarm-mysql-validation", "production-chaos-test", "power-lifecycle-test"]]
   ],
   "zh-CN": [
-    ["开始使用", ["index", "product-overview", "product-tour", "architecture", "release-2.2.47", "release-2.2.46", "release-2.2.45", "release-2.2.44", "release-2.2.43", "release-2.2.42", "release-2.2.41", "release-2.2.40", "release-2.2.39", "release-2.1.45"]],
+    ["开始使用", ["index", "product-overview", "product-tour", "architecture", ...releaseSlugs["zh-CN"]]],
     ["部署与迁移", ["offline-rpm-install", "database-preparation", "orchestrator-migration"]],
     ["日常运维", ["operations-manual", "api-operations", "postgresql-ha", "docker-swarm-mysql", "kubernetes-mysql", "update-and-patch", "version-release-policy"]],
-    ["验收证据", ["proven-mysql-ha-methods", "mysql-feature-parity-acceptance", "mysql-former-primary-recovery", "mysql-production-qualification", "postgresql-production-qualification", "docker-swarm-mysql-validation", "production-chaos-test", "power-lifecycle-test"]]
+    ["验收证据", ["proven-mysql-ha-methods", "mysql-feature-parity-acceptance", "mysql-former-primary-recovery", "mysql-production-qualification", "postgresql-production-qualification", "docker-swarm-mysql-validation", "production-chaos-test", "power-lifecycle-test", "release-recovery-acceptance-checklist"]]
   ]
 };
 
 const entries = [
+  ...releases["en-US"],
+  ...releases["zh-CN"],
+
   entry("en-US", "index", "ClusterGuard HA Documentation", "docs/en-US/README.md"),
   entry("en-US", "product-overview", "Product Overview", "README.md"),
   entry("en-US", "product-tour", "Console Product Tour", "docs/en-US/product-tour.md"),
   entry("en-US", "architecture", "Architecture", "docs/architecture.md"),
-  entry("en-US", "release-2.2.47", "Release 2.2.47", "docs/en-US/release-2.2.47.md"),
-  entry("en-US", "release-2.2.46", "Release 2.2.46", "docs/en-US/release-2.2.46.md"),
-  entry("en-US", "release-2.2.45", "Release 2.2.45", "docs/en-US/release-2.2.45.md"),
-  entry("en-US", "release-2.2.44", "Release 2.2.44", "docs/en-US/release-2.2.44.md"),
-  entry("en-US", "release-2.2.43", "Release 2.2.43", "docs/en-US/release-2.2.43.md"),
-  entry("en-US", "release-2.2.42", "Release 2.2.42", "docs/en-US/release-2.2.42.md"),
-  entry("en-US", "release-2.2.41", "Release 2.2.41", "docs/en-US/release-2.2.41.md"),
-  entry("en-US", "release-2.2.40", "Release 2.2.40", "docs/en-US/release-2.2.40.md"),
-  entry("en-US", "release-2.2.39", "Release 2.2.39", "docs/en-US/release-2.2.39.md"),
-  entry("en-US", "release-2.1.45", "Release 2.1.45", "docs/en-US/release-2.1.45.md"),
   entry("en-US", "offline-rpm-install", "Offline RPM Installation", "docs/en-US/offline-rpm-install.md"),
   entry("en-US", "database-preparation", "Database Preparation", "docs/en-US/database-preparation.md"),
   entry("en-US", "orchestrator-migration", "Migration from Orchestrator", "docs/en-US/orchestrator-migration.md"),
@@ -70,16 +105,6 @@ const entries = [
   entry("zh-CN", "product-overview", "产品概览", "README.zh-CN.md"),
   entry("zh-CN", "product-tour", "控制台产品导览", "docs/zh-CN/product-tour.md"),
   entry("zh-CN", "architecture", "系统架构", "docs/zh-CN/architecture.md"),
-  entry("zh-CN", "release-2.2.47", "2.2.47 发布说明", "docs/zh-CN/release-2.2.47.md"),
-  entry("zh-CN", "release-2.2.46", "2.2.46 发布说明", "docs/zh-CN/release-2.2.46.md"),
-  entry("zh-CN", "release-2.2.45", "2.2.45 发布说明", "docs/zh-CN/release-2.2.45.md"),
-  entry("zh-CN", "release-2.2.44", "2.2.44 发布说明", "docs/zh-CN/release-2.2.44.md"),
-  entry("zh-CN", "release-2.2.43", "2.2.43 发布说明", "docs/zh-CN/release-2.2.43.md"),
-  entry("zh-CN", "release-2.2.42", "2.2.42 发布说明", "docs/zh-CN/release-2.2.42.md"),
-  entry("zh-CN", "release-2.2.41", "2.2.41 发布说明", "docs/zh-CN/release-2.2.41.md"),
-  entry("zh-CN", "release-2.2.40", "2.2.40 发布说明", "docs/zh-CN/release-2.2.40.md"),
-  entry("zh-CN", "release-2.2.39", "2.2.39 发布说明", "docs/zh-CN/release-2.2.39.md"),
-  entry("zh-CN", "release-2.1.45", "2.1.45 发布说明", "docs/zh-CN/release-2.1.45.md"),
   entry("zh-CN", "offline-rpm-install", "离线 RPM 安装", "docs/zh-CN/offline-rpm-install.md"),
   entry("zh-CN", "database-preparation", "数据库接入", "docs/zh-CN/database-preparation.md"),
   entry("zh-CN", "orchestrator-migration", "从 Orchestrator 迁移", "docs/zh-CN/orchestrator-migration.md"),
@@ -97,7 +122,8 @@ const entries = [
   entry("zh-CN", "postgresql-production-qualification", "PostgreSQL 16.4 生产验收", "docs/zh-CN/postgresql-production-qualification-2026-08-23.md"),
   entry("zh-CN", "docker-swarm-mysql-validation", "Docker Swarm MySQL 实机验证", "docs/zh-CN/docker-swarm-mysql-validation-plan.md"),
   entry("zh-CN", "production-chaos-test", "生产故障测试报告", "docs/zh-CN/production-chaos-test-report-2026-08-09.md"),
-  entry("zh-CN", "power-lifecycle-test", "计划关机测试报告", "docs/zh-CN/power-lifecycle-test-report.md")
+  entry("zh-CN", "power-lifecycle-test", "计划关机测试报告", "docs/zh-CN/power-lifecycle-test-report.md"),
+  entry("zh-CN", "release-recovery-acceptance-checklist", "恢复与升级发布验收清单", "docs/zh-CN/release-recovery-acceptance-checklist.md")
 ];
 
 function entry(locale, slug, title, source) {
@@ -111,6 +137,12 @@ for (const item of entries) {
 
 const entryBySource = new Map(entries.map((item) => [item.sourcePath, item]));
 const entryByLocaleAndSlug = new Map(entries.map((item) => [`${item.locale}:${item.slug}`, item]));
+
+// Documents that are referenced from a rendered page but are not part of the
+// curated set, and referenced targets that no longer exist. Both are reported at
+// the end of the build so a curation gap stays visible instead of silent.
+const uncuratedReferences = new Set();
+const missingReferences = new Set();
 
 fs.rmSync(outputRoot, { recursive: true, force: true });
 fs.mkdirSync(path.join(outputRoot, "assets", "screenshots"), { recursive: true });
@@ -142,6 +174,17 @@ for (const item of entries) {
 fs.writeFileSync(path.join(outputRoot, "index.html"), landingPage());
 console.log(`Generated ${entries.length + 1} HTML pages in ${path.relative(projectRoot, outputRoot)}`);
 
+if (uncuratedReferences.size > 0) {
+  console.log(
+    `${uncuratedReferences.size} referenced document(s) are outside the curated set and are linked as source files:`
+  );
+  for (const item of [...uncuratedReferences].sort()) console.log(`  - ${item}`);
+}
+if (missingReferences.size > 0) {
+  console.log(`${missingReferences.size} referenced target(s) are missing from the tree:`);
+  for (const item of [...missingReferences].sort()) console.log(`  - ${item}`);
+}
+
 function stripSourceLanguageSwitch(markdown) {
   return markdown.replace(/<!-- LANGUAGE-SWITCH -->[\s\S]*?<!-- \/LANGUAGE-SWITCH -->\s*/g, "");
 }
@@ -166,6 +209,16 @@ function rewriteReference(reference, current, isImage) {
   }
   if (absolute === path.join(outputRoot, "index.html")) {
     return relativeURL(path.dirname(current.outputPath), path.join(outputRoot, "index.html"));
+  }
+
+  // Not in the curated set, but still a real file in the shipped tree (the
+  // markdown sources ship alongside docs/html). Recompute the path from the
+  // generated page to that file so the offline HTML never carries a dangling
+  // link, and record the gap for the build summary.
+  if (absolute.startsWith(projectRoot + path.sep)) {
+    const relativeTarget = path.relative(projectRoot, absolute).split(path.sep).join("/");
+    (fs.existsSync(absolute) ? uncuratedReferences : missingReferences).add(relativeTarget);
+    return relativeURL(path.dirname(current.outputPath), absolute) + (fragment ? `#${fragment}` : "");
   }
   return reference;
 }
@@ -296,6 +349,14 @@ function tableOfContents(headings) {
   ).join("");
 }
 
+// Newest release note per locale, derived from the discovered files rather than
+// hard-coded, so the landing page cannot advertise a stale version.
+function releaseLink(locale) {
+  const newest = releases[locale][0];
+  if (!newest) return "";
+  return `<a href="${locale}/${newest.slug}.html">${escapeHTML(newest.title)}</a>`;
+}
+
 function landingPage() {
   return `<!doctype html>
 <html lang="zh-CN">
@@ -319,6 +380,7 @@ function landingPage() {
       <h2>Production boundary / 生产边界</h2>
       <p>MySQL 2.1 is sealed at 2.1.45. PostgreSQL delivery begins in 2.2. Oracle Data Guard Broker and SQL Server Always On require independent release qualification.</p>
       <p>MySQL 2.1 已在 2.1.45 封板。PostgreSQL 从 2.2 开始交付。Oracle Data Guard Broker 和 SQL Server Always On 必须单独发版验收。</p>
+      <p>Latest release notes / 最新发布说明：${releaseLink("zh-CN")}（简体中文）· ${releaseLink("en-US")}（English）</p>
     </section>
   </main>
 </body>

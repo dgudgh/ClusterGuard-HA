@@ -22,10 +22,10 @@ Do not mix this manual with old versions of Orchestrator, single-machine RPM man
 ## 1. Deliverables and Installation Methods
 
 The official delivery directory is the build output directory `release/<bundle-version>/`
-(for example `release/2.1-48/`):
+(the listing below uses the 2.1-45 media version):
 
 ```text
-release/2.1-48/
+release/2.1-45/
   RELEASE-INFO
   clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz
   clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz.sha256
@@ -139,7 +139,7 @@ hostnamectl --static
 
 The VIP must be an address not used by other devices in the current Layer 2 network. Do not manually configure the VIP on any network interface in advance; after installation, ClusterGuard Agent will bind it uniquely based on the primary database role, Raft majority, and lease.
 
-The default MySQL HA deployment with VIP enables automatic database-level failover, not relying on VMware virtual machine names or VMX paths. The control plane probes the MySQL port and SQL health every second; after three current failed-primary observations span at least three seconds, the Raft Leader may evaluate a candidate-primary transition. The old-primary Agent retains only a short majority authorization. When that authorization expires it revokes the VIP, records a persistent isolation intent, and keeps MySQL read-only. The control plane preserves a separate 15-second authorization-expiry fence and rechecks Raft majority, failure evidence, and the exact transition lease before allowing promotion. A blocked attempt uses a separate 30-second retry backoff.
+The default MySQL HA deployment with VIP enables automatic database-level failover, not relying on VMware virtual machine names or VMX paths. The control plane probes the MySQL port and SQL health every second; after four current failed-primary observations span at least three seconds, the Raft Leader may evaluate a candidate-primary transition. The old-primary Agent retains only a short majority authorization. When that authorization expires it revokes the VIP, records a persistent isolation intent, and keeps MySQL read-only. The control plane preserves a separate 15-second authorization-expiry fence and rechecks Raft majority, failure evidence, and the exact transition lease before allowing promotion. A blocked attempt uses a separate 30-second retry backoff.
 
 These intervals serve different purposes and do not add up to a guaranteed application RTO. Production clients must use bounded connection timeouts and retries, and the site acceptance test must measure from the writer endpoint.
 

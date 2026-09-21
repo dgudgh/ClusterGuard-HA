@@ -765,7 +765,7 @@ therefore document the timeout/fallback policy and validate it with client-side
 transaction IDs during destructive failover tests.
 
 The recovery controller executes only on the majority Leader. Discovery records
-one incident after three current failed-primary samples span at least three seconds. The
+one incident after four current failed-primary samples span at least three seconds. The
 controller chooses only the rank-one eligible candidate and submits a normal
 durable `failover` operation through a private internal authorization path.
 Public JSON cannot select this mode. The incident ID is audited at `APPROVE`;
@@ -986,7 +986,7 @@ former-primary rewind/rejoin, allowlisted repair, Linux VIP coupling, and
 `pg_basebackup` node synchronization.
 
 Optional automatic failover runs in a PostgreSQL-only recovery controller. It
-requires three consecutive primary-failure observations spanning at least
+requires four consecutive primary-failure observations spanning at least
 three seconds at the default cadence, a current topology snapshot, a rank-one standby with known
 zero replay lag, Raft leader and majority authority, restricted-Agent or
 external-fencer proof that the old primary cannot write, and the complete

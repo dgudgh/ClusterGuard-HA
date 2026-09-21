@@ -22,10 +22,10 @@
 
 ## 1. 交付物与安装方式
 
-正式交付目录是构建产物目录 `release/<bundle-version>/`（例如 `release/2.1-48/`）：
+正式交付目录是构建产物目录 `release/<bundle-version>/`（下例使用 2.1-45 介质版本）：
 
 ```text
-release/2.1-48/
+release/2.1-45/
   RELEASE-INFO
   clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz
   clusterguard-ha-2.1-45-offline-linux-x86_64.tar.gz.sha256
@@ -139,7 +139,7 @@ hostnamectl --static
 
 VIP 必须是当前二层网络中未被其他设备使用的地址。不要预先手动将 VIP 配置到任一网卡；安装后由 ClusterGuard Agent 依据主库角色、Raft 多数和租约负责唯一绑定。
 
-带 VIP 的 MySQL HA 部署默认启用数据库层自动故障切换，不依赖 VMware 虚拟机名称或 VMX 路径。控制面每秒探测 MySQL 端口和 SQL 健康；连续 3 次得到当前主库失败观测且时间跨度不少于 3 秒后，Raft Leader 才会评估候选主库过渡。旧主 Agent 只保留短期多数派授权；授权失效后会撤销 VIP、记录持久隔离意图并将 MySQL 保持为只读。控制面另行保留 15 秒授权失效隔离宽限，并在提升前再次确认 Raft 多数派、故障证据和精确过渡租约。被阻断的尝试使用独立的 30 秒重试退避。
+带 VIP 的 MySQL HA 部署默认启用数据库层自动故障切换，不依赖 VMware 虚拟机名称或 VMX 路径。控制面每秒探测 MySQL 端口和 SQL 健康；连续 4 次得到当前主库失败观测且时间跨度不少于 3 秒后，Raft Leader 才会评估候选主库过渡。旧主 Agent 只保留短期多数派授权；授权失效后会撤销 VIP、记录持久隔离意图并将 MySQL 保持为只读。控制面另行保留 15 秒授权失效隔离宽限，并在提升前再次确认 Raft 多数派、故障证据和精确过渡租约。被阻断的尝试使用独立的 30 秒重试退避。
 
 这些时间控制承担不同职责，不能相加后当作应用 RTO 承诺。生产客户端必须设置有界连接超时和重试，并在现场从写入口测量实际 RTO。
 

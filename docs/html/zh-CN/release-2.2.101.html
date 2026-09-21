@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="2.2.101 发布说明 - ClusterGuard HA operational documentation">
+  <title>2.2.101 发布说明 | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">跳到正文</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>搜索文档</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="输入标题关键词">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>开始使用</h2><a href="index.html" data-doc-title="clusterguard ha 中文文档">ClusterGuard HA 中文文档</a><a href="product-overview.html" data-doc-title="产品概览">产品概览</a><a href="product-tour.html" data-doc-title="控制台产品导览">控制台产品导览</a><a href="architecture.html" data-doc-title="系统架构">系统架构</a><a href="release-2.2.101.html" data-doc-title="2.2.101 发布说明" aria-current="page" class="active">2.2.101 发布说明</a><a href="release-2.2.100.html" data-doc-title="2.2.100 发布说明">2.2.100 发布说明</a><a href="release-2.2.99.html" data-doc-title="2.2.99 发布说明">2.2.99 发布说明</a><a href="release-2.2.98.html" data-doc-title="2.2.98 发布说明">2.2.98 发布说明</a><a href="release-2.2.97.html" data-doc-title="2.2.97 发布说明">2.2.97 发布说明</a><a href="release-2.2.96.html" data-doc-title="2.2.96 发布说明">2.2.96 发布说明</a><a href="release-2.2.95.html" data-doc-title="2.2.95 发布说明">2.2.95 发布说明</a><a href="release-2.2.94.html" data-doc-title="2.2.94 发布说明">2.2.94 发布说明</a><a href="release-2.2.93.html" data-doc-title="2.2.93 发布说明">2.2.93 发布说明</a><a href="release-2.2.92.html" data-doc-title="2.2.92 发布说明">2.2.92 发布说明</a><a href="release-2.2.91.html" data-doc-title="2.2.91 发布说明">2.2.91 发布说明</a><a href="release-2.2.90.html" data-doc-title="2.2.90 发布说明">2.2.90 发布说明</a><a href="release-2.2.89.html" data-doc-title="2.2.89 发布说明">2.2.89 发布说明</a><a href="release-2.2.88.html" data-doc-title="2.2.88 发布说明">2.2.88 发布说明</a><a href="release-2.2.86.html" data-doc-title="2.2.86 发布说明">2.2.86 发布说明</a><a href="release-2.2.73.html" data-doc-title="2.2.73 发布说明">2.2.73 发布说明</a><a href="release-2.2.72.html" data-doc-title="2.2.72 发布说明">2.2.72 发布说明</a><a href="release-2.2.71.html" data-doc-title="2.2.71 发布说明">2.2.71 发布说明</a><a href="release-2.2.70.html" data-doc-title="2.2.70 发布说明">2.2.70 发布说明</a><a href="release-2.2.69.html" data-doc-title="2.2.69 发布说明">2.2.69 发布说明</a><a href="release-2.2.47.html" data-doc-title="2.2.47 发布说明">2.2.47 发布说明</a><a href="release-2.2.46.html" data-doc-title="2.2.46 发布说明">2.2.46 发布说明</a><a href="release-2.2.45.html" data-doc-title="2.2.45 发布说明">2.2.45 发布说明</a><a href="release-2.2.44.html" data-doc-title="2.2.44 发布说明">2.2.44 发布说明</a><a href="release-2.2.43.html" data-doc-title="2.2.43 发布说明">2.2.43 发布说明</a><a href="release-2.2.42.html" data-doc-title="2.2.42 发布说明">2.2.42 发布说明</a><a href="release-2.2.41.html" data-doc-title="2.2.41 发布说明">2.2.41 发布说明</a><a href="release-2.2.40.html" data-doc-title="2.2.40 发布说明">2.2.40 发布说明</a><a href="release-2.2.39.html" data-doc-title="2.2.39 发布说明">2.2.39 发布说明</a><a href="release-2.1.45.html" data-doc-title="2.1.45 发布说明">2.1.45 发布说明</a></section><section><h2>部署与迁移</h2><a href="offline-rpm-install.html" data-doc-title="离线 rpm 安装">离线 RPM 安装</a><a href="database-preparation.html" data-doc-title="数据库接入">数据库接入</a><a href="orchestrator-migration.html" data-doc-title="从 orchestrator 迁移">从 Orchestrator 迁移</a></section><section><h2>日常运维</h2><a href="operations-manual.html" data-doc-title="运维操作手册">运维操作手册</a><a href="api-operations.html" data-doc-title="api 运维参考">API 运维参考</a><a href="postgresql-ha.html" data-doc-title="postgresql 高可用">PostgreSQL 高可用</a><a href="docker-swarm-mysql.html" data-doc-title="docker swarm mysql">Docker Swarm MySQL</a><a href="kubernetes-mysql.html" data-doc-title="kubernetes mysql">Kubernetes MySQL</a><a href="update-and-patch.html" data-doc-title="版本升级与回退">版本升级与回退</a><a href="version-release-policy.html" data-doc-title="版本与发版规范">版本与发版规范</a></section><section><h2>验收证据</h2><a href="proven-mysql-ha-methods.html" data-doc-title="mysql 已验证方法">MySQL 已验证方法</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql 功能验收">MySQL 功能验收</a><a href="mysql-former-primary-recovery.html" data-doc-title="旧主恢复专项验收">旧主恢复专项验收</a><a href="mysql-production-qualification.html" data-doc-title="mysql 生产验收">MySQL 生产验收</a><a href="postgresql-production-qualification.html" data-doc-title="postgresql 16.4 生产验收">PostgreSQL 16.4 生产验收</a><a href="docker-swarm-mysql-validation.html" data-doc-title="docker swarm mysql 实机验证">Docker Swarm MySQL 实机验证</a><a href="production-chaos-test.html" data-doc-title="生产故障测试报告">生产故障测试报告</a><a href="power-lifecycle-test.html" data-doc-title="计划关机测试报告">计划关机测试报告</a><a href="release-recovery-acceptance-checklist.html" data-doc-title="恢复与升级发布验收清单">恢复与升级发布验收清单</a></section></nav>
+      <div class="sidebar-meta">
+        <span>离线文档构建</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">打开目录</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>2.2.101 发布说明</strong></div>
+        <div class="header-actions">
+          <a href="../en-US/index.html" lang="en-US">English</a>
+          <button id="print-button" type="button">打印</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha-2-2-101-完整安装介质">ClusterGuard HA 2.2-101 完整安装介质<a class="heading-anchor" href="#clusterguard-ha-2-2-101-完整安装介质" aria-label="Link to ClusterGuard HA 2.2-101 完整安装介质">#</a></h1>
+<h2 id="最终发布状态">最终发布状态<a class="heading-anchor" href="#最终发布状态" aria-label="Link to 最终发布状态">#</a></h2>
+<p>截至 2026-09-11，源码已推送至 <code>codex/2.2-postgresql</code>，安装产物已发布到 <a href="https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.101">GitHub v2.2.101 预发布</a>。交付物为<strong>一份同时包含 MySQL 与 PostgreSQL 介质的安装包，以及单独的 ClusterGuard RPM</strong>。</p>
+<ul>
+<li>固定构建提交和 tag 指向：<code>78dbdbffc9645dd22c9867888cd11b4f2dc2bd89</code>。</li>
+<li>构建时间：<code>2026-09-11T03:30:00Z</code>，即北京时间 11:30；干净源码，<code>source_tree_dirty=false</code>、<code>source_untracked_count=0</code>。</li>
+<li>GitHub 状态：<code>isDraft=false</code>、<code>isPrerelease=true</code>。包内 <code>release_channel=stable</code> 是构建器根据干净工作树生成的标记，<strong>不代表现场验收或正式生产准入</strong>；本轮没有实现新的显式渠道参数。</li>
+<li>生产签名升级包 <code>.cgupgrade</code>：未生成、未发布。本次安装介质不能上传到控制台升级弹窗。</li>
+</ul>
+<p>本页是发布后的文档补正。已发布包内的说明仍是构建时快照，其中旧提交/旧摘要以本页及 Release 的 <code>RELEASE-INFO</code>、<code>.sha256</code>、<code>verification.json</code> 为准。文档提交可以晚于构建提交；仅补正文档不重建同版本二进制、不移动 <code>v2.2.101</code>，避免再次改变已发布摘要。</p>
+<h2 id="下载与摘要">下载与摘要<a class="heading-anchor" href="#下载与摘要" aria-label="Link to 下载与摘要">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>附件</th>
+<th align="right">大小（字节）</th>
+<th>SHA256</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><a href="https://github.com/dgudgh/ClusterGuard-HA/releases/download/v2.2.101/clusterguard-ha-2.2-101-offline-linux-x86_64.tar.gz">MySQL + PostgreSQL 安装包</a></td>
+<td align="right">316905938</td>
+<td><code>c4c0d6659a7b4d1ff39ada3c38542eddbe2d1d91cede5a6a1a97d4954404a5f5</code></td>
+</tr>
+<tr>
+<td><a href="https://github.com/dgudgh/ClusterGuard-HA/releases/download/v2.2.101/clusterguard-ha-2.2-101.x86_64.rpm">ClusterGuard RPM</a></td>
+<td align="right">18430614</td>
+<td><code>3dfa81bf09895b1be0e27c2e44a8d33b9ac51d9526b02ea5f1acc4b56770238c</code></td>
+</tr>
+</tbody></table>
+<p>Release 共六个附件：上述两个二进制、各自的 <code>.sha256</code>、<a href="https://github.com/dgudgh/ClusterGuard-HA/releases/download/v2.2.101/RELEASE-INFO">RELEASE-INFO</a> 和 <a href="https://github.com/dgudgh/ClusterGuard-HA/releases/download/v2.2.101/verification.json">verification.json</a>。本地重新计算的两个 SHA256 均与 GitHub 资产 API 的 <code>digest</code> 一致；小附件已下载逐字比对。没有把“大附件大小一致”写成重新下载完整二进制后的验收。</p>
+<p>在下载目录校验：</p>
+<pre><code class="language-bash">sha256sum -c clusterguard-ha-2.2-101-offline-linux-x86_64.tar.gz.sha256
+sha256sum -c clusterguard-ha-2.2-101.x86_64.rpm.sha256
+</code></pre>
+<h2 id="介质范围">介质范围<a class="heading-anchor" href="#介质范围" aria-label="Link to 介质范围">#</a></h2>
+<ul>
+<li>MySQL：8.0.44 官方 Linux glibc2.17 x86_64 minimal 通用二进制，minimal 不包含调试符号，保留数据库运行程序；ClusterGuard 程序、安装脚本及 Rocky Linux 8 x86_64 运行依赖一并打包。</li>
+<li>PostgreSQL：16.4 官方源码，加 Rocky Linux 8.10 x86_64 编译依赖 RPM 和仓库元数据，安装器支持在首个数据节点编译一次并分发。不是 PostgreSQL 的预编译二进制包；本次未执行目标主机安装和编译验收。</li>
+<li>包内 <code>dependencies/COLLECTION-INFO</code> 标记 <code>postgresql_source_build=true</code>，安装器会识别并复用该目录；也可显式指定 <code>--postgresql-dependencies /path/to/extracted-kit/dependencies</code>。<code>RELEASE-INFO</code> 中的 <code>postgresql_build_dependencies=separate-online-first</code> 是构建器的通用固定标记，不能据此判断本包缺少编译依赖。</li>
+<li>安装器按 <code>--engine mysql</code> 或 <code>--engine postgresql</code> 选择介质。默认生成计划，显式 <code>--execute</code> 才执行；完整参数见 <a href="offline-rpm-install.html">离线安装与部署手册</a>。安装包用于新部署，不能覆盖已有数据库目录、部署状态或 Raft 数据。单独 RPM 仅包含 ClusterGuard 程序，不包含 MySQL/PG 数据库介质。</li>
+<li>数据库版本保持已有测试基线；“最新”指 ClusterGuard 最新源码，不宣称 MySQL 8.0.44 / PostgreSQL 16.4 是上游最新版本。</li>
+</ul>
+<h2 id="修复与验证">修复与验证<a class="heading-anchor" href="#修复与验证" aria-label="Link to 修复与验证">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>项目</th>
+<th>已有结果与边界</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>升级器安全修复</td>
+<td><code>f76b2f4</code> 纳入 root 私有执行区、输入快照、降权结果发布和可信恢复记录；详见 <a href="../../zh-CN/updater-private-workspace-2026-09-11.md">安全修复记录</a></td>
+</tr>
+<tr>
+<td>包校验器</td>
+<td><code>e26f3af</code> 去除 release=99、数据库数量=0 和固定测试公钥硬编码；显式校验版本、包数量、摘要、RPM、HTML、配置和脚本；存在 Go VCS 元数据时才校验该字段，缺失时不宣称二进制提供了 VCS 证明</td>
+</tr>
+<tr>
+<td>源码回归</td>
+<td>发布前 <code>go test ./...</code>、Helper 两包 race、<code>go vet ./...</code>、shell 语法和差异检查通过；此处引用发布轮次结果，本次文档更新未重跑业务测试</td>
+</tr>
+<tr>
+<td>最终包核验</td>
+<td><code>verification.json</code> 为 <code>passed</code>，构建提交 <code>78dbdbf</code>，内外摘要、版本、架构、嵌入 HTML、MySQL/PG 文件、JSON 和高置信凭据扫描通过；安装器仅运行 <code>--help</code></td>
+</tr>
+<tr>
+<td>9 月 10 日隔离测试</td>
+<td><a href="../../zh-CN/helper-linux-field-test-2026-09-10.md">三节点测试记录</a> 记载当时 Helper UID/socket 与隔离 MySQL/PG 恢复结果；属于此前源码和夹具，不能替代最终 101 安装验收</td>
+</tr>
+<tr>
+<td>9 月 11 日 workspace 检查</td>
+<td>152–154 原生检查通过：可信目录/文件与快照可用，组或其他用户可写目录、目录和文件符号链接被拒绝</td>
+</tr>
+<tr>
+<td>最终版现场安装与升级</td>
+<td><code>deployed=false</code>、<code>field_acceptance=false</code>；未执行 101 安装、真实上传验签、滚动升级、回退、Leader 接管或业务集群灾难恢复</td>
+</tr>
+</tbody></table>
+<h2 id="未完成项">未完成项<a class="heading-anchor" href="#未完成项" aria-label="Link to 未完成项">#</a></h2>
+<ol>
+<li>最终版安装后的 Helper socket/服务 UID、滚动升级和回退现场验收尚未采集。9 月 11 日检查记录称服务账号/unit/目标路径不可用，与 9 月 10 日已有安装的记录不一致；本次文档核对未重新 SSH，不能据此断言三台当前均未安装，需在后续现场验收重新确认。</li>
+<li>未确认与现场信任公钥匹配的生产补丁签名私钥，故未发布生产 <code>.cgupgrade</code>。校验器允许安装包不带补丁信任公钥；本包 <code>trust/</code> 没有该公钥，未把测试密钥作为生产信任配置。</li>
+<li>目标操作系统上的依赖签名信任、最终安装/PG 编译、现场 Raft Recovery Commit 和 VIP/lease 恢复仍需验收。历史 replication secret 轮换、PXC/Oracle/SQL Server 原生恢复不因安装包发布而完成。</li>
+</ol>
+<h2 id="基线与本次补正">基线与本次补正<a class="heading-anchor" href="#基线与本次补正" aria-label="Link to 基线与本次补正">#</a></h2>
+<ul>
+<li>原修复基线：<code>bc0546a</code>（2.2-68）与 <code>c8795a3</code>（2.2-99），99 包 <code>database_package_count=0</code>；本包为 2。</li>
+<li>文档补正前对比：<code>git show 298dce2:docs/zh-CN/release-2.2.101.md</code> 与 <code>78dbdbf</code> 中的记录，发现提交/摘要停留在中间构建，且混用“两套介质”和统一包、计划中的渠道参数与已实现行为。</li>
+<li>补正证据：最终包 <code>RELEASE-INFO</code>、<code>verification.json</code>、归档清单及 <code>dependencies/COLLECTION-INFO</code>，本地重新计算的 SHA256，GitHub Release 资产 <code>digest/state/size</code> 和远端 tag。</li>
+<li>本次只修改发布说明、安全状态交叉引用和 Markdown 索引；原始历史测试结果保留，不倒填现场验收，不修改业务代码或已发布产物。</li>
+</ul>
+<h2 id="官方来源">官方来源<a class="heading-anchor" href="#官方来源" aria-label="Link to 官方来源">#</a></h2>
+<ul>
+<li><a href="https://dev.mysql.com/doc/refman/8.0/en/binary-installation.html">MySQL 官方通用二进制安装说明</a></li>
+<li><a href="https://cdn.mysql.com/archives/mysql-8.0/mysql-8.0.44-linux-glibc2.17-x86_64-minimal.tar.xz">MySQL 8.0.44 归档介质</a></li>
+<li><a href="https://ftp.postgresql.org/pub/source/v16.4/">PostgreSQL 16.4 官方源码与摘要</a></li>
+</ul>
+
+          <footer class="document-footer">
+            <span>源文件: <code>docs/zh-CN/release-2.2.101.md</code></span>
+            <a href="../index.html">文档语言入口</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="本页目录">
+          <strong>本页目录</strong>
+          <a class="toc-level-2" href="#最终发布状态">最终发布状态</a><a class="toc-level-2" href="#下载与摘要">下载与摘要</a><a class="toc-level-2" href="#介质范围">介质范围</a><a class="toc-level-2" href="#修复与验证">修复与验证</a><a class="toc-level-2" href="#未完成项">未完成项</a><a class="toc-level-2" href="#基线与本次补正">基线与本次补正</a><a class="toc-level-2" href="#官方来源">官方来源</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

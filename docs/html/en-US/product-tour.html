@@ -61,7 +61,7 @@
 <li>Which nodes are unreachable, degraded, or require attention?</li>
 </ol>
 <h2 id="node-lifecycle">Node Lifecycle<a class="heading-anchor" href="#node-lifecycle" aria-label="Link to Node Lifecycle">#</a></h2>
-<p>The Nodes page separates inventory from lifecycle tasks. Add, replace, and rebuild parameters are collected in a modal and then submitted as an auditable task, keeping long installation forms out of the main workspace.</p>
+<p>The Nodes page separates inventory from lifecycle tasks. Add and rebuild (repair) parameters are collected in a modal and then submitted as an auditable task, keeping long installation forms out of the main workspace.</p>
 <p><img src="../assets/screenshots/node-lifecycle.png" alt="ClusterGuard HA node lifecycle"></p>
 <p>Lifecycle tasks cover:</p>
 <ul>
@@ -72,7 +72,7 @@
 <li>odd controller-count enforcement and Raft membership checks.</li>
 </ul>
 <h2 id="operation-log">Operation Log<a class="heading-anchor" href="#operation-log" aria-label="Link to Operation Log">#</a></h2>
-<p>The Operation Log separates concise events from raw evidence. The default view shows time, cluster, source primary, target node, operation type, and final status. Operators can expand an entry to inspect raw output, operation UUID, workflow stages, checks, and report links.</p>
+<p>The Operation Log separates concise events from raw evidence. The default view shows time, cluster, source primary, target node, operation type, and final status. Operators can expand an entry to read the complete raw record, which carries the operation UUID, workflow stages, checks, and report links alongside the raw output.</p>
 <p><img src="../assets/screenshots/operation-log.png" alt="ClusterGuard HA operation log"></p>
 <p>A successful event requires both execution and post-operation verification. If a database role changed but verification did not complete, the result must remain review-required or failed rather than being inferred from the command exit code alone.</p>
 <h2 id="screenshot-maintenance-policy">Screenshot Maintenance Policy<a class="heading-anchor" href="#screenshot-maintenance-policy" aria-label="Link to Screenshot Maintenance Policy">#</a></h2>

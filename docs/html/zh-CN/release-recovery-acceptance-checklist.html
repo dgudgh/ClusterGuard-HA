@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="恢复与升级发布验收清单 - ClusterGuard HA operational documentation">
+  <title>恢复与升级发布验收清单 | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">跳到正文</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>搜索文档</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="输入标题关键词">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>开始使用</h2><a href="index.html" data-doc-title="clusterguard ha 中文文档">ClusterGuard HA 中文文档</a><a href="product-overview.html" data-doc-title="产品概览">产品概览</a><a href="product-tour.html" data-doc-title="控制台产品导览">控制台产品导览</a><a href="architecture.html" data-doc-title="系统架构">系统架构</a><a href="release-2.2.101.html" data-doc-title="2.2.101 发布说明">2.2.101 发布说明</a><a href="release-2.2.100.html" data-doc-title="2.2.100 发布说明">2.2.100 发布说明</a><a href="release-2.2.99.html" data-doc-title="2.2.99 发布说明">2.2.99 发布说明</a><a href="release-2.2.98.html" data-doc-title="2.2.98 发布说明">2.2.98 发布说明</a><a href="release-2.2.97.html" data-doc-title="2.2.97 发布说明">2.2.97 发布说明</a><a href="release-2.2.96.html" data-doc-title="2.2.96 发布说明">2.2.96 发布说明</a><a href="release-2.2.95.html" data-doc-title="2.2.95 发布说明">2.2.95 发布说明</a><a href="release-2.2.94.html" data-doc-title="2.2.94 发布说明">2.2.94 发布说明</a><a href="release-2.2.93.html" data-doc-title="2.2.93 发布说明">2.2.93 发布说明</a><a href="release-2.2.92.html" data-doc-title="2.2.92 发布说明">2.2.92 发布说明</a><a href="release-2.2.91.html" data-doc-title="2.2.91 发布说明">2.2.91 发布说明</a><a href="release-2.2.90.html" data-doc-title="2.2.90 发布说明">2.2.90 发布说明</a><a href="release-2.2.89.html" data-doc-title="2.2.89 发布说明">2.2.89 发布说明</a><a href="release-2.2.88.html" data-doc-title="2.2.88 发布说明">2.2.88 发布说明</a><a href="release-2.2.86.html" data-doc-title="2.2.86 发布说明">2.2.86 发布说明</a><a href="release-2.2.73.html" data-doc-title="2.2.73 发布说明">2.2.73 发布说明</a><a href="release-2.2.72.html" data-doc-title="2.2.72 发布说明">2.2.72 发布说明</a><a href="release-2.2.71.html" data-doc-title="2.2.71 发布说明">2.2.71 发布说明</a><a href="release-2.2.70.html" data-doc-title="2.2.70 发布说明">2.2.70 发布说明</a><a href="release-2.2.69.html" data-doc-title="2.2.69 发布说明">2.2.69 发布说明</a><a href="release-2.2.47.html" data-doc-title="2.2.47 发布说明">2.2.47 发布说明</a><a href="release-2.2.46.html" data-doc-title="2.2.46 发布说明">2.2.46 发布说明</a><a href="release-2.2.45.html" data-doc-title="2.2.45 发布说明">2.2.45 发布说明</a><a href="release-2.2.44.html" data-doc-title="2.2.44 发布说明">2.2.44 发布说明</a><a href="release-2.2.43.html" data-doc-title="2.2.43 发布说明">2.2.43 发布说明</a><a href="release-2.2.42.html" data-doc-title="2.2.42 发布说明">2.2.42 发布说明</a><a href="release-2.2.41.html" data-doc-title="2.2.41 发布说明">2.2.41 发布说明</a><a href="release-2.2.40.html" data-doc-title="2.2.40 发布说明">2.2.40 发布说明</a><a href="release-2.2.39.html" data-doc-title="2.2.39 发布说明">2.2.39 发布说明</a><a href="release-2.1.45.html" data-doc-title="2.1.45 发布说明">2.1.45 发布说明</a></section><section><h2>部署与迁移</h2><a href="offline-rpm-install.html" data-doc-title="离线 rpm 安装">离线 RPM 安装</a><a href="database-preparation.html" data-doc-title="数据库接入">数据库接入</a><a href="orchestrator-migration.html" data-doc-title="从 orchestrator 迁移">从 Orchestrator 迁移</a></section><section><h2>日常运维</h2><a href="operations-manual.html" data-doc-title="运维操作手册">运维操作手册</a><a href="api-operations.html" data-doc-title="api 运维参考">API 运维参考</a><a href="postgresql-ha.html" data-doc-title="postgresql 高可用">PostgreSQL 高可用</a><a href="docker-swarm-mysql.html" data-doc-title="docker swarm mysql">Docker Swarm MySQL</a><a href="kubernetes-mysql.html" data-doc-title="kubernetes mysql">Kubernetes MySQL</a><a href="update-and-patch.html" data-doc-title="版本升级与回退">版本升级与回退</a><a href="version-release-policy.html" data-doc-title="版本与发版规范">版本与发版规范</a></section><section><h2>验收证据</h2><a href="proven-mysql-ha-methods.html" data-doc-title="mysql 已验证方法">MySQL 已验证方法</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql 功能验收">MySQL 功能验收</a><a href="mysql-former-primary-recovery.html" data-doc-title="旧主恢复专项验收">旧主恢复专项验收</a><a href="mysql-production-qualification.html" data-doc-title="mysql 生产验收">MySQL 生产验收</a><a href="postgresql-production-qualification.html" data-doc-title="postgresql 16.4 生产验收">PostgreSQL 16.4 生产验收</a><a href="docker-swarm-mysql-validation.html" data-doc-title="docker swarm mysql 实机验证">Docker Swarm MySQL 实机验证</a><a href="production-chaos-test.html" data-doc-title="生产故障测试报告">生产故障测试报告</a><a href="power-lifecycle-test.html" data-doc-title="计划关机测试报告">计划关机测试报告</a><a href="release-recovery-acceptance-checklist.html" data-doc-title="恢复与升级发布验收清单" aria-current="page" class="active">恢复与升级发布验收清单</a></section></nav>
+      <div class="sidebar-meta">
+        <span>离线文档构建</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">打开目录</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>恢复与升级发布验收清单</strong></div>
+        <div class="header-actions">
+          <a href="../en-US/index.html" lang="en-US">English</a>
+          <button id="print-button" type="button">打印</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="恢复与升级发布验收清单">恢复与升级发布验收清单<a class="heading-anchor" href="#恢复与升级发布验收清单" aria-label="Link to 恢复与升级发布验收清单">#</a></h1>
+<h2 id="完成判定">完成判定<a class="heading-anchor" href="#完成判定" aria-label="Link to 完成判定">#</a></h2>
+<p>编译、单元测试、直接安装 RPM、控制节点版本一致、页面显示成功，均不能单独作为现场验收完成的证据。没有执行的测试必须标为未执行。失败候选包不得覆盖原版本重打，必须明确撤回并使用新的补丁 ID。</p>
+<h2 id="修改前强制对比">修改前强制对比<a class="heading-anchor" href="#修改前强制对比" aria-label="Link to 修改前强制对比">#</a></h2>
+<p>先遵守项目根目录 <a href="../../../AGENTS.md">AGENTS.md</a>。<strong>第一次修改业务代码前必须完成旧版对照并留下任务 Markdown；不能先改完再把对比补写成已事前完成。</strong></p>
+<ul>
+<li><input disabled="" type="checkbox"> 确认用户认可的旧版本、回归提交、当前工作树和当前发布包，不把当前 HEAD 当成全部版本。</li>
+<li><input disabled="" type="checkbox"> 读取旧代码完整调用链，对比默认值、顶部选择联动、API 参数、异步状态与日志范围。</li>
+<li><input disabled="" type="checkbox"> 记录应保留的旧行为、当前回归证据、拟改范围及验证方法；缺少可信基线先调查，不凭猜测修改。</li>
+<li><input disabled="" type="checkbox"> 同一用户路径在修改前复现、修改后回归；不只检查截图、编译或当前实现的字符串。</li>
+</ul>
+<p>已发生的联动回归和补查证据见 <a href="../../zh-CN/log-cluster-scope-regression.md">日志集群联动回归记录</a>。</p>
+<h2 id="每次发布">每次发布<a class="heading-anchor" href="#每次发布" aria-label="Link to 每次发布">#</a></h2>
+<ul>
+<li><input disabled="" type="checkbox"> 核对真实源码目录、未提交改动、三台安装版本、当前数据库主从和维护状态。</li>
+<li><input disabled="" type="checkbox"> 修改前旧代码对比记录齐全；顶部集群切换、日志范围、分页和迟到响应均按旧正确行为回归。</li>
+<li><input disabled="" type="checkbox"> 完成全仓测试、关联竞态测试、vet 和差异检查。真实数据库测试必须显式提供运行环境；跳过不能记作通过。</li>
+<li><input disabled="" type="checkbox"> 用现场信任公钥约束签名构建，保留完整来源 RPM、目标 RPM、签名升级包、SHA-256 和时间。</li>
+<li><input disabled="" type="checkbox"> Chrome 点击升级：初始无旧包信息；文件选择器选择包；上传校验；弹窗显示校验完成；按钮由禁用变为可用；二次确认后执行。</li>
+<li><input disabled="" type="checkbox"> 等待完整节点事件、最终状态和维护释放。不能把 3/3 控制程序版本一致当成数据库连续可用。</li>
+<li><input disabled="" type="checkbox"> 两种数据库运行时，通过实际 VIP 连续执行只读 SQL，验证连接成功、原生主库身份和可写角色。升级前后对比容器 ID、启动时间、主从、links、VIP 唯一归属。</li>
+<li><input disabled="" type="checkbox"> 最终版本分别完成至少 50 个不同后台 discovery observation：healthy、一主两从、两条安全 links、lag=0。读取旧 observation 50 次不算 50 个周期。</li>
+<li><input disabled="" type="checkbox"> 使用原生 SQL 核对业务测试标记、节点 UUID、MySQL GTID 与 IO/SQL、PG receiver/application_name/物理槽。</li>
+<li><input disabled="" type="checkbox"> 核对 Recovery Commit 与当前启停状态；历史 unplanned 保留，但不能把已恢复的当前状态显示为异常。</li>
+<li><input disabled="" type="checkbox"> 上传前后比较既有审计文件 SHA-256。默认三个版本仅适用于安装材料，不能截断升级或操作日志；运行中和待复核任务的回退材料额外保护。</li>
+<li><input disabled="" type="checkbox"> 实测桌面与窄屏标签切换、弹窗滚动、日志展开收起；操作标签在一行等宽，说明另行显示。</li>
+<li><input disabled="" type="checkbox"> 发布说明区分代码、隔离原生测试、现场测试、升级包和未覆盖场景。</li>
+</ul>
+<h2 id="恢复场景必须分开测">恢复场景必须分开测<a class="heading-anchor" href="#恢复场景必须分开测" aria-label="Link to 恢复场景必须分开测">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>必须证明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>三节点全部停止</td>
+<td>程序自行建立隔离证据、选出唯一安全主库、恢复从库、核对停机前测试数据</td>
+</tr>
+<tr>
+<td>部分节点仍运行</td>
+<td>程序完整隔离运行中的节点，SSH 超时不能把停库命令当成 5 秒查询；不能提前手动停掉节点来绕开此项</td>
+</tr>
+<tr>
+<td>PG 分支冲突</td>
+<td>system identifier、timeline 祖先、fork LSN、WAL 字节与独立 COMMIT/PREPARE；缺 WAL 或独立提交必须阻断</td>
+</tr>
+<tr>
+<td>MySQL 分支冲突</td>
+<td>GTID 集合包含、relay 排空、持久只读、native ID；独立事务、未决 XA、重启可写覆盖必须阻断</td>
+</tr>
+<tr>
+<td>升级期间续租</td>
+<td>已验签的 Agent 请求继续校验 Leader/quorum 和当前 lease；普通业务变更仍由维护门禁阻断</td>
+</tr>
+<tr>
+<td>PG 主库与控制器同机</td>
+<td>恢复 HBA 放行已配置的本机控制器精确 IP；保护仍生效时真实管理连接成功、非管理连接拒绝，不能只测试其他两台 peer</td>
+</tr>
+<tr>
+<td>PG 旧失败任务续跑</td>
+<td>字节与摘要匹配的旧保护文件才能迁移；保留原 HBA 和任务身份，篡改保护文件必须阻断</td>
+</tr>
+<tr>
+<td>失败及接管</td>
+<td>失败保持保护；重新预检重新取证；过期租约、签名错误、无多数派不能继续放行</td>
+</tr>
+</tbody></table>
+<p>禁止为了通过验收删除 fencing、放宽健康判断、延长短期签名许可、跳过事务分支检查，或手工设置健康状态。</p>
+<h2 id="工具与证据">工具与证据<a class="heading-anchor" href="#工具与证据" aria-label="Link to 工具与证据">#</a></h2>
+<ul>
+<li>浏览器交互回归：<code>tools/console-recovery-acceptance.cjs</code>。</li>
+<li>现场恢复准备、原生验证和 50 周期：<code>tools/diagnostics/recovery-field-acceptance.py</code>，仅用于明确授权的三台实验节点。</li>
+<li>运行中升级连续性：<code>tools/diagnostics/release-continuity-field-check.py</code>，baseline/monitor/verify，输出不含凭据。</li>
+<li>安装材料与审计保留：<code>tools/diagnostics/release-retention-field-check.py</code>。</li>
+<li>PG 复制凭据旋转及验证：<code>tools/diagnostics/pg-replication-secret-rotation.py</code>。私有回执不能打印或放进支持包。</li>
+<li>PG 同机控制器隔离验收：<code>tools/diagnostics/pg-colocated-guard-field-check.py</code>，只读且限时，不修改 HBA 或开放业务入口。</li>
+</ul>
+<p>Docker Swarm 入口脚本是已发布 Config 时，仅替换宿主机 RPM 不会更新容器入口。必须单独记录原 Config、审核内容与新引用，并用容器重启验证旧 Bootstrap Env 不再覆盖运行态。</p>
+<p>PXC/Galera 的 seqno/bootstrap 规则不能套用于普通 MySQL GTID 或 PostgreSQL WAL。未运行的引擎与部署形态不得列为已验收。</p>
+
+          <footer class="document-footer">
+            <span>源文件: <code>docs/zh-CN/release-recovery-acceptance-checklist.md</code></span>
+            <a href="../index.html">文档语言入口</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="本页目录">
+          <strong>本页目录</strong>
+          <a class="toc-level-2" href="#完成判定">完成判定</a><a class="toc-level-2" href="#修改前强制对比">修改前强制对比</a><a class="toc-level-2" href="#每次发布">每次发布</a><a class="toc-level-2" href="#恢复场景必须分开测">恢复场景必须分开测</a><a class="toc-level-2" href="#工具与证据">工具与证据</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

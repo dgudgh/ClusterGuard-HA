@@ -186,7 +186,7 @@ control plane, and the restricted Agent. Invalid combinations fail at startup.
 Set `automatic_failover_enabled` only after the destructive qualification
 matrix below passes for the exact PostgreSQL packages, service units, network,
 storage, and fencing provider used in production. At the default cadence the
-controller requires three current failed-primary observations spanning at
+controller requires four current failed-primary observations spanning at
 least three seconds before it evaluates a takeover. This is an evidence window,
 not an end-to-end RTO promise. A separate 15-second Agent authorization-expiry
 fence protects against a disconnected old primary retaining writer or VIP

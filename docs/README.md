@@ -6,9 +6,9 @@ ClusterGuard HA 产品文档同时维护英文和简体中文版本。安装、�
 
 ## Offline HTML / 离线 HTML
 
-Open [`html/index.html`](html/index.html) directly in a browser. The generated documentation center contains 65 HTML pages across both languages, local search, print styles, responsive navigation, and bundled screenshots; it does not require a web server or external CDN.
+Open [`html/index.html`](html/index.html) directly in a browser. The documentation center covers both languages with local search, print styles, responsive navigation, and bundled screenshots; it does not require a web server or external CDN. Its page list is generated from the markdown sources, so every release note under `docs/zh-CN/` and `docs/en-US/` is reachable, including the Chinese-only notes after 2.2.47.
 
-直接使用浏览器打开 [`html/index.html`](html/index.html)。当前跟踪的文档中心包含 65 个 HTML 页面（含中英文与语言入口）、本地搜索、打印样式、响应式目录和随包截图，不依赖 Web 服务或外部 CDN。
+直接使用浏览器打开 [`html/index.html`](html/index.html)。文档中心含中英文、本地搜索、打印样式、响应式目录和随包截图，不依赖 Web 服务或外部 CDN；页面清单由 markdown 源生成，因此两侧目录下的每份发布说明都可直达，包括 2.2.47 之后仅中文的版本。
 
 Rebuild after changing Markdown:
 
@@ -22,7 +22,7 @@ npm run build:html
 
 ## Product Documentation / 产品文档
 
-Latest installer prerelease / 最新安装介质预发布：[2.2-101 发布说明（中文）](zh-CN/release-2.2.101.md) · [GitHub v2.2.101](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.101)。One kit contains MySQL and PostgreSQL media; final site acceptance is pending. 同一安装包包含 MySQL/PG 介质，最终版现场验收仍未完成。Updater follow-up / 升级器后续状态见 [私有执行区安全记录](zh-CN/updater-private-workspace-2026-09-11.md)。这些链接指向当前 Markdown；已发布包内文档仍保留构建时快照。2.2.48 及之后的发布说明（`zh-CN/release-2.2.69.md` 至 `zh-CN/release-2.2.101.md`）只维护简体中文版，英文侧发布说明止于 `en-US/release-2.2.47.md`；下表只列中英成对的文档，因此发布说明一栏停在 2.2.47。完整中文发布说明清单见 [中文文档索引](zh-CN/README.md)。
+Latest installer prerelease / 最新安装介质预发布：[2.2-101 发布说明（中文）](zh-CN/release-2.2.101.md) · [GitHub v2.2.101](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.101)。One kit contains MySQL and PostgreSQL media; final site acceptance is pending. 同一安装包包含 MySQL/PG 介质，最终版现场验收仍未完成。Updater follow-up / 升级器后续状态见 [私有执行区安全记录](zh-CN/updater-private-workspace-2026-09-11.md)。这些链接指向当前 Markdown；已发布包内文档仍保留构建时快照。英文侧发布说明止于 `en-US/release-2.2.47.md`；此后的发布说明只维护简体中文版，现存 `zh-CN/release-2.2.69.md` 至 `zh-CN/release-2.2.101.md`。下表只列中英成对的文档，因此发布说明一栏停在 2.2.47。完整中文发布说明清单见 [中文文档索引](zh-CN/README.md)。
 
 | Topic / 主题 | English | 简体中文 |
 | --- | --- | --- |
