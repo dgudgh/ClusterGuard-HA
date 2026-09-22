@@ -134,6 +134,7 @@ The following documents are the production delivery entry points:
 - `docs/en-US/operations-manual.md`
 - `docs/en-US/update-and-patch.md`
 - `docs/en-US/version-release-policy.md`
+- `docs/en-US/licensing.md`
 - `docs/architecture.md`
 - `docs/operations.md`
 - `docs/postgresql-ha.md`
@@ -150,6 +151,13 @@ the public channel**. Run `node tools/verify-public-release-assets.cjs` before a
 after uploading and require `status=passed`; an update package on a public channel
 is treated as unauthorized distribution. See
 [Version and Release Policy §3.1](version-release-policy.md).
+
+**Licensing is a hard rule.** The delivery line uses `AGPL-3.0-only`; the authoritative text is
+`LICENSE` at the repository root. The `license` field in `packaging/rpm/nfpm.yaml`, the file
+`/usr/share/doc/clusterguard-ha/LICENSE` inside the RPM and the READMEs must all agree with it.
+Run `node tools/verify-license-consistency.cjs` after any dependency or packaging change. The
+source-publishing obligations per usage scenario are in
+[Licensing and Compliance](licensing.md).
 
 `docs/superpowers/` preserves historical design and implementation plans and is only used for traceability, not as the current installation or production operation manual. When documents are inconsistent with the official release, the corresponding `RELEASE-INFO`, summary file, and release notes of that version shall prevail.
 

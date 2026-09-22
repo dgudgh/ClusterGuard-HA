@@ -263,6 +263,30 @@ points:
 - [English version update guide](docs/en-US/update-and-patch.md) / [中文版本升级与回退手册](docs/zh-CN/update-and-patch.md)
 - [English release policy](docs/en-US/version-release-policy.md) / [中文版本规范](docs/zh-CN/version-release-policy.md)
 
+## License
+
+ClusterGuard HA is licensed under the **GNU Affero General Public License, version 3 only**
+(`AGPL-3.0-only`). The full text is [LICENSE](LICENSE).
+
+In short: you may use, modify and sell it, but if you make a modified version available to
+others — **including as a network service only** — you must publish the Corresponding Source
+under the same license. Running it unmodified for your own operations creates no publication
+duty. Contracted customers receive the software under these same terms; the channel rule that
+keeps update packages off the public channel is a delivery policy, not a license restriction.
+
+Third-party components and their licenses — the MPL-2.0 modules linked into the binaries and
+the packages bundled in the offline kit — are listed in
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). The obligations are spelled out scenario by
+scenario in [Licensing and Compliance](docs/en-US/licensing.md) /
+[许可与合规](docs/zh-CN/licensing.md).
+
+Verify that `LICENSE`, `go.mod`, the RPM metadata and the packaging scripts stay in agreement
+after any dependency or packaging change:
+
+```bash
+node tools/verify-license-consistency.cjs
+```
+
 ## Register and Refresh a MySQL Cluster
 
 Registration creates the authoritative endpoint inventory. Hostname, IP, and

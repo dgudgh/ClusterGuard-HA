@@ -197,6 +197,25 @@ go run ./cmd/clusterguard --config configs/clusterguard.example.json
 - [English update guide](docs/en-US/update-and-patch.md) / [中文版本升级与回退手册](docs/zh-CN/update-and-patch.md)
 - [English release policy](docs/en-US/version-release-policy.md) / [中文版本规范](docs/zh-CN/version-release-policy.md)
 
+## 许可
+
+ClusterGuard HA 采用 **GNU Affero 通用公共许可证第 3 版（仅此版本，`AGPL-3.0-only`）** 授权，
+全文见 [LICENSE](LICENSE)。
+
+一句话：你可以自由使用、修改、收费分发；但一旦你把修改后的版本对外提供——**包括只作为网络
+服务提供**——就必须按同一许可开放对应源码。原封不动地自用不产生对外开源义务。签约客户同样
+按此条款取得软件；"升级包不进公开渠道"是交付策略，不是许可限制。
+
+链接进二进制的 MPL-2.0 模块、以及离线介质中捆绑的第三方安装包，其许可与来源逐项列在
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。各类场景下的具体义务见
+[许可与合规](docs/zh-CN/licensing.md) / [Licensing and Compliance](docs/en-US/licensing.md)。
+
+任何依赖或打包改动后，校验 `LICENSE`、`go.mod`、RPM 元数据与打包脚本仍然一致：
+
+```bash
+node tools/verify-license-consistency.cjs
+```
+
 ## 注册和刷新 MySQL 集群
 
 注册会建立权威端点清单。主机名、IP 和

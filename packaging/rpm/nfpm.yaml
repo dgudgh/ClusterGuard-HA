@@ -11,7 +11,7 @@ description: |
   的发现、诊断、受控切换、验证、审计及报告能力。
 vendor: ClusterGuard HA
 homepage: https://github.com/dgudgh/ClusterGuard-HA
-license: Proprietary
+license: AGPL-3.0-only
 
 depends:
   - bash
@@ -252,6 +252,21 @@ contents:
 
   - src: ${CG_RPM_STAGE}/docs/README.md
     dst: /usr/share/doc/clusterguard-ha/README.md
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${CG_RPM_STAGE}/docs/LICENSE
+    dst: /usr/share/doc/clusterguard-ha/LICENSE
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${CG_RPM_STAGE}/docs/THIRD-PARTY-NOTICES.md
+    dst: /usr/share/doc/clusterguard-ha/THIRD-PARTY-NOTICES.md
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${CG_RPM_STAGE}/docs/MPL-2.0.txt
+    dst: /usr/share/doc/clusterguard-ha/MPL-2.0.txt
     expand: true
     file_info:
       mode: 0644

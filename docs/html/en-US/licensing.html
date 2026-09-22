@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="Licensing and Compliance - ClusterGuard HA operational documentation">
+  <title>Licensing and Compliance | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">Skip to content</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>Search documentation</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="Filter by title">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.2.47.html" data-doc-title="release 2.2.47">Release 2.2.47</a><a href="release-2.2.46.html" data-doc-title="release 2.2.46">Release 2.2.46</a><a href="release-2.2.45.html" data-doc-title="release 2.2.45">Release 2.2.45</a><a href="release-2.2.44.html" data-doc-title="release 2.2.44">Release 2.2.44</a><a href="release-2.2.43.html" data-doc-title="release 2.2.43">Release 2.2.43</a><a href="release-2.2.42.html" data-doc-title="release 2.2.42">Release 2.2.42</a><a href="release-2.2.41.html" data-doc-title="release 2.2.41">Release 2.2.41</a><a href="release-2.2.40.html" data-doc-title="release 2.2.40">Release 2.2.40</a><a href="release-2.2.39.html" data-doc-title="release 2.2.39">Release 2.2.39</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="docker-swarm-mysql.html" data-doc-title="docker swarm mysql">Docker Swarm MySQL</a><a href="kubernetes-mysql.html" data-doc-title="kubernetes mysql">Kubernetes MySQL</a><a href="update-and-patch.html" data-doc-title="version update and rollback">Version Update and Rollback</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="postgresql-production-qualification.html" data-doc-title="postgresql 16.4 production qualification">PostgreSQL 16.4 Production Qualification</a><a href="docker-swarm-mysql-validation.html" data-doc-title="docker swarm mysql lab qualification">Docker Swarm MySQL Lab Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section><section><h2>License</h2><a href="licensing.html" data-doc-title="licensing and compliance" aria-current="page" class="active">Licensing and Compliance</a></section></nav>
+      <div class="sidebar-meta">
+        <span>Offline documentation build</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">Open navigation</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>Licensing and Compliance</strong></div>
+        <div class="header-actions">
+          <a href="../zh-CN/licensing.html" lang="zh-CN">简体中文</a>
+          <button id="print-button" type="button">Print</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="licensing-and-compliance">Licensing and Compliance<a class="heading-anchor" href="#licensing-and-compliance" aria-label="Link to Licensing and Compliance">#</a></h1>
+<blockquote>
+<p>This chapter states which license applies to ClusterGuard HA, what obligations using it
+creates, and what enterprise customers need to know. It restates the license terms
+themselves and <strong>is not legal advice</strong>; consult your own counsel on how they apply to you.</p>
+</blockquote>
+<h2 id="in-one-sentence">In one sentence<a class="heading-anchor" href="#in-one-sentence" aria-label="Link to In one sentence">#</a></h2>
+<p><strong>ClusterGuard HA is licensed under <code>AGPL-3.0-only</code>. You may use, modify and sell it freely —
+but once you make a modified version available to others, including as a network service
+only, you must publish the Corresponding Source under the same license.</strong></p>
+<h2 id="1-what-license-applies">1. What license applies<a class="heading-anchor" href="#1-what-license-applies" aria-label="Link to 1. What license applies">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>SPDX identifier</td>
+<td><code>AGPL-3.0-only</code></td>
+</tr>
+<tr>
+<td>Full name</td>
+<td>GNU Affero General Public License, version 3</td>
+</tr>
+<tr>
+<td>License text</td>
+<td>repository root <a href="../../../LICENSE"><code>LICENSE</code></a> (verbatim official text)</td>
+</tr>
+<tr>
+<td>Copyright</td>
+<td>Copyright (C) 2026 dgudgh</td>
+</tr>
+<tr>
+<td>Third-party components</td>
+<td><a href="../../../THIRD-PARTY-NOTICES.md"><code>THIRD-PARTY-NOTICES.md</code></a></td>
+</tr>
+</tbody></table>
+<p>Choosing <strong>only</strong> rather than <code>or-later</code> is deliberate: it pins the license to v3 so a future
+FSF release does not apply automatically.</p>
+<p>The <code>license</code> field in <code>packaging/rpm/nfpm.yaml</code>, the file
+<code>/usr/share/doc/clusterguard-ha/LICENSE</code> inside the RPM, the READMEs and this page all state
+the same thing.</p>
+<h2 id="2-obligations-at-a-glance">2. Obligations at a glance<a class="heading-anchor" href="#2-obligations-at-a-glance" aria-label="Link to 2. Obligations at a glance">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>What you do</th>
+<th>Must you publish source?</th>
+<th>Basis</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Run it internally, unmodified, without giving copies to outsiders</td>
+<td>No</td>
+<td>no distribution occurred, and §13 is not triggered</td>
+</tr>
+<tr>
+<td>Modify it for internal use only, not exposed as a service</td>
+<td>No (the modifications are still bound by <code>AGPL-3.0-only</code>)</td>
+<td>no distribution occurred</td>
+</tr>
+<tr>
+<td><strong>Modify it and let people reach it over a network (web, API)</strong></td>
+<td><strong>Yes — offer those users the Corresponding Source</strong></td>
+<td>§13</td>
+</tr>
+<tr>
+<td>Give a binary or source copy to a third party (customer, partner, mirror, embedded in your product)</td>
+<td><strong>Yes</strong> — include <code>LICENSE</code>, mark your changes, provide Corresponding Source</td>
+<td>§4–§6</td>
+</tr>
+<tr>
+<td>Ship it inside a product you sell</td>
+<td><strong>Yes</strong>, and the parts you make available must still satisfy this license</td>
+<td>§5, §13</td>
+</tr>
+<tr>
+<td>Charge money</td>
+<td>Unrestricted — charging is fully permitted</td>
+<td>§1, §4</td>
+</tr>
+</tbody></table>
+<p>Two things must be stated plainly:</p>
+<ul>
+<li><strong>&quot;Corresponding Source&quot; means the complete source of your version</strong>, including your
+modifications — not just the upstream original.</li>
+<li>§13 triggers on <strong>modification plus network interaction</strong>. If you run the official RPM
+unmodified, §13 adds nothing; but the moment distribution occurs, the §4–§6 obligations
+take effect immediately.</li>
+</ul>
+<h2 id="3-three-typical-scenarios">3. Three typical scenarios<a class="heading-anchor" href="#3-three-typical-scenarios" aria-label="Link to 3. Three typical scenarios">#</a></h2>
+<h3 id="3-1-internal-deployment-unmodified">3.1 Internal deployment, unmodified<a class="heading-anchor" href="#3-1-internal-deployment-unmodified" aria-label="Link to 3.1 Internal deployment, unmodified">#</a></h3>
+<p>You take the offline kit, install it in your own datacenter and operate your own databases.
+<strong>No obligation to publish anything.</strong></p>
+<h3 id="3-2-modified-then-exposed-as-a-network-service">3.2 Modified, then exposed as a network service<a class="heading-anchor" href="#3-2-modified-then-exposed-as-a-network-service" aria-label="Link to 3.2 Modified, then exposed as a network service">#</a></h3>
+<p>You adapt the console and open it to another department, a subsidiary, or external customers
+through a browser or API. <strong>Those users must be able to obtain the complete source of your
+adapted version</strong> — typically a prominent &quot;Source&quot; entry in the console pointing at a place
+where it can be fetched. This is the increment AGPL adds over GPL, and the reason this
+project chose AGPL.</p>
+<h3 id="3-3-redistribution">3.3 Redistribution<a class="heading-anchor" href="#3-3-redistribution" aria-label="Link to 3.3 Redistribution">#</a></h3>
+<p>Handing the RPM or offline kit to a third party, or selling it as part of your product.
+You <strong>must</strong>:</p>
+<ol>
+<li>ship the complete <code>LICENSE</code>;</li>
+<li>mark clearly which changes you made, and when;</li>
+<li>provide a way to obtain the Corresponding Source;</li>
+<li>add no terms that conflict with this license.</li>
+</ol>
+<h2 id="4-charging-is-unaffected">4. Charging is unaffected<a class="heading-anchor" href="#4-charging-is-unaffected" aria-label="Link to 4. Charging is unaffected">#</a></h2>
+<p><code>AGPL-3.0-only</code> <strong>does not forbid commercial use and does not forbid charging</strong>. You may sell
+at any price, offer paid support, or offer paid hosting. What it restricts is taking the code
+and denying others the code — not earning revenue.</p>
+<h2 id="5-what-enterprise-customers-must-know">5. What enterprise customers must know<a class="heading-anchor" href="#5-what-enterprise-customers-must-know" aria-label="Link to 5. What enterprise customers must know">#</a></h2>
+<p>This needs to be said outright, because it directly shapes the delivery policy:</p>
+<blockquote>
+<p><strong>Under <code>AGPL-3.0-only</code>, whoever receives the software has the legal right to redistribute
+it. Copyright cannot stop them.</strong></p>
+</blockquote>
+<p>The rule in <code>docs/zh-CN/version-release-policy.md</code> §3.1 — that update packages go only to
+contracted enterprise customers, stay local and are never uploaded to a public channel — is
+therefore a <strong>delivery and support policy, not a license restriction</strong>. Contracted customers
+are still bound by this license; the maintainer&#39;s commercial value comes from version
+delivery, production qualification, support response and accountability, not from copyright
+containment.</p>
+<p>If your business model requires customers to be <em>forbidden</em> from redistributing — i.e.
+traditional closed-source licensing — <code>AGPL-3.0-only</code> cannot deliver that. You would need a
+proprietary license or dual licensing, see §8. <strong>The current state is <code>AGPL-3.0-only</code>, with no
+room for ambiguity on this point.</strong></p>
+<h2 id="6-third-party-components">6. Third-party components<a class="heading-anchor" href="#6-third-party-components" aria-label="Link to 6. Third-party components">#</a></h2>
+<p>The binaries link 15 Go modules (4 under MPL-2.0, 11 under MIT / BSD-3-Clause), and the
+offline kit bundles 271 Rocky Linux 8 dependency RPMs and may embed official MySQL /
+PostgreSQL packages. Those licenses are <strong>independent</strong> and are not altered by this project
+using AGPL. The per-component list, copyright holders and how to obtain sources are in
+<a href="../../../THIRD-PARTY-NOTICES.md"><code>THIRD-PARTY-NOTICES.md</code></a>:</p>
+<ul>
+<li>A copy of MPL-2.0 ships at <a href="../../licenses/MPL-2.0.txt"><code>docs/licenses/MPL-2.0.txt</code></a> and is
+installed by the RPM to <code>/usr/share/doc/clusterguard-ha/MPL-2.0.txt</code>.</li>
+<li>ClusterGuard HA drives each database by <strong>executing that vendor&#39;s own command-line client</strong>,
+and links against no vendor client library, so the vendors&#39; licenses do not constrain this
+project&#39;s own code.</li>
+<li>Redistributing the bundled MySQL Community packages carries GPL-2.0 obligations, and those
+belong to whoever performs that distribution.</li>
+</ul>
+<h2 id="7-how-to-obtain-the-source">7. How to obtain the source<a class="heading-anchor" href="#7-how-to-obtain-the-source" aria-label="Link to 7. How to obtain the source">#</a></h2>
+<pre><code class="language-bash">git clone https://github.com/dgudgh/ClusterGuard-HA.git
+git checkout &lt;version from BUILD-INFO&gt;     # e.g. v2.2.103
+</code></pre>
+<p><code>BUILD-INFO</code> and <code>build-info.json</code>, shipped with every kit, record the version, commit and
+build time, which ties a binary back to an exact commit. That is the operable form of
+&quot;Corresponding Source&quot; under §13.</p>
+<h2 id="8-maintainer-operations-relicensing-and-dual-licensing">8. Maintainer operations: relicensing and dual licensing<a class="heading-anchor" href="#8-maintainer-operations-relicensing-and-dual-licensing" aria-label="Link to 8. Maintainer operations: relicensing and dual licensing">#</a></h2>
+<p>All 200 commits in this repository come from a single author with no co-signers, so <strong>there
+are no third-party contributors whose consent would be required</strong>. The maintainer can
+therefore:</p>
+<ul>
+<li><strong>relicense</strong>: replace <code>AGPL-3.0-only</code> with another license (Apache-2.0, proprietary, …) by
+swapping <code>LICENSE</code> and updating every location below;</li>
+<li><strong>dual license</strong>: issue a commercial license to enterprise customers who do not accept the
+AGPL obligations, while continuing to publish the community edition under AGPL.</li>
+</ul>
+<p>Any license change must update all of the following <strong>in the same change</strong>, or the repository
+contradicts itself:</p>
+<table>
+<thead>
+<tr>
+<th>Location</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>LICENSE</code></td>
+<td>authoritative text</td>
+</tr>
+<tr>
+<td><code>license</code> in <code>packaging/rpm/nfpm.yaml</code></td>
+<td>RPM metadata (SPDX identifier)</td>
+</tr>
+<tr>
+<td><code>contents</code> in <code>packaging/rpm/nfpm.yaml</code></td>
+<td>ensures <code>LICENSE</code> lands in the RPM</td>
+</tr>
+<tr>
+<td><code>scripts/build-clusterguard-rpm.sh</code></td>
+<td>copies <code>LICENSE</code> into the packaging stage</td>
+</tr>
+<tr>
+<td><code>scripts/build-clusterguard-offline-kit.sh</code></td>
+<td>puts <code>LICENSE</code> into the offline kit</td>
+</tr>
+<tr>
+<td><code>README.md</code> / <code>README.zh-CN.md</code></td>
+<td>public front page</td>
+</tr>
+<tr>
+<td><code>docs/zh-CN/licensing.md</code> / <code>docs/en-US/licensing.md</code></td>
+<td>this page, both languages</td>
+</tr>
+<tr>
+<td><code>THIRD-PARTY-NOTICES.md</code></td>
+<td>third-party list and compatibility conclusions</td>
+</tr>
+<tr>
+<td><code>AGENTS.md</code></td>
+<td>binding rule for subsequent agents</td>
+</tr>
+</tbody></table>
+<p>Then run:</p>
+<pre><code class="language-bash">node tools/verify-license-consistency.cjs
+</code></pre>
+<h2 id="9-no-warranty-and-irrevocability">9. No warranty, and irrevocability<a class="heading-anchor" href="#9-no-warranty-and-irrevocability" aria-label="Link to 9. No warranty, and irrevocability">#</a></h2>
+<p>The software is provided &quot;as is&quot;, without warranty of any kind. A license is irrevocable:
+once someone has obtained your version under <code>AGPL-3.0-only</code>, you <strong>cannot</strong> withdraw that
+grant retroactively. Deciding the license <strong>before</strong> publishing therefore matters more than
+changing it afterwards.</p>
+<h2 id="related-documents">Related documents<a class="heading-anchor" href="#related-documents" aria-label="Link to Related documents">#</a></h2>
+<ul>
+<li><a href="../../../THIRD-PARTY-NOTICES.md">Third-Party Notices</a></li>
+<li><a href="version-release-policy.html">Version and Release Policy</a></li>
+<li><a href="update-and-patch.html">Update and Patch Manual</a></li>
+</ul>
+
+          <footer class="document-footer">
+            <span>Source: <code>docs/en-US/licensing.md</code></span>
+            <a href="../index.html">Documentation language home</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="On this page">
+          <strong>On this page</strong>
+          <a class="toc-level-2" href="#in-one-sentence">In one sentence</a><a class="toc-level-2" href="#1-what-license-applies">1. What license applies</a><a class="toc-level-2" href="#2-obligations-at-a-glance">2. Obligations at a glance</a><a class="toc-level-2" href="#3-three-typical-scenarios">3. Three typical scenarios</a><a class="toc-level-3" href="#3-1-internal-deployment-unmodified">3.1 Internal deployment, unmodified</a><a class="toc-level-3" href="#3-2-modified-then-exposed-as-a-network-service">3.2 Modified, then exposed as a network service</a><a class="toc-level-3" href="#3-3-redistribution">3.3 Redistribution</a><a class="toc-level-2" href="#4-charging-is-unaffected">4. Charging is unaffected</a><a class="toc-level-2" href="#5-what-enterprise-customers-must-know">5. What enterprise customers must know</a><a class="toc-level-2" href="#6-third-party-components">6. Third-party components</a><a class="toc-level-2" href="#7-how-to-obtain-the-source">7. How to obtain the source</a><a class="toc-level-2" href="#8-maintainer-operations-relicensing-and-dual-licensing">8. Maintainer operations: relicensing and dual licensing</a><a class="toc-level-2" href="#9-no-warranty-and-irrevocability">9. No warranty, and irrevocability</a><a class="toc-level-2" href="#related-documents">Related documents</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

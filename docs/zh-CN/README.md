@@ -120,12 +120,19 @@ selectorless Service/EndpointSlice、独立单副本 StatefulSet、持久角色�
 - `docs/zh-CN/operations-manual.md`
 - `docs/zh-CN/update-and-patch.md`
 - `docs/zh-CN/version-release-policy.md`
+- `docs/zh-CN/licensing.md`
 
 **发布渠道是硬性规则**：GitHub Release 只承载完整离线安装介质；签名 `.cgupgrade`
 升级包（含旧 `.cgpatch`）只对签约企业客户交付、只留本地，**不得上传任何公开渠道**。
 反过来，**不带完整离线介质的 Release 也不得留在公开渠道**。上传前后各跑一次
 `node tools/verify-public-release-assets.cjs`，报 `status=passed` 方可上传；公开渠道出现
 升级包即视为越权分发。详见[版本与发版规范 §3.1](version-release-policy.md)。
+
+**许可是硬性条款**：交付线采用 `AGPL-3.0-only`，权威全文是仓库根目录 `LICENSE`。
+`packaging/rpm/nfpm.yaml` 的 `license` 字段、RPM 内的
+`/usr/share/doc/clusterguard-ha/LICENSE` 与各 README 必须与之一致；改动依赖或打包后
+跑一次 `node tools/verify-license-consistency.cjs`。各类使用场景下的开源义务见
+[许可与合规](licensing.md)。
 
 `docs/superpowers/` 保存历史设计和实施计划，只用于追溯，不是当前安装或生产操作
 手册。文档与正式 Release 不一致时，以对应 Release 内的 `RELEASE-INFO`、摘要文件

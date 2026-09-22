@@ -4,6 +4,14 @@ ClusterGuard HA product documentation is maintained in English and Simplified Ch
 
 ClusterGuard HA 产品文档同时维护英文和简体中文版本。安装、变更和排障时请选择对应语言，并以同版本文档为准。
 
+## License / 许可
+
+ClusterGuard HA is licensed under the **GNU Affero General Public License, version 3 only** (`AGPL-3.0-only`); the authoritative text is [`../LICENSE`](../LICENSE). You may use, modify and sell it, but a modified version made available to others — including as a network service only — must have its Corresponding Source published under the same license. Third-party components are listed in [`../THIRD-PARTY-NOTICES.md`](../THIRD-PARTY-NOTICES.md). Run `node tools/verify-license-consistency.cjs` after any dependency or packaging change.
+
+ClusterGuard HA 采用 **GNU Affero 通用公共许可证第 3 版（仅此版本，`AGPL-3.0-only`）** 授权，权威全文见 [`../LICENSE`](../LICENSE)。你可以自由使用、修改、收费分发；但修改后的版本一旦对外提供——包括只作为网络服务提供——就必须按同一许可开放对应源码。第三方组件见 [`../THIRD-PARTY-NOTICES.md`](../THIRD-PARTY-NOTICES.md)。依赖或打包改动后请运行 `node tools/verify-license-consistency.cjs`。
+
+详细义务见 [许可与合规](zh-CN/licensing.md) / [Licensing and Compliance](en-US/licensing.md)。
+
 ## Offline HTML / 离线 HTML
 
 Open [`html/index.html`](html/index.html) directly in a browser. The documentation center covers both languages with local search, print styles, responsive navigation, and bundled screenshots; it does not require a web server or external CDN. Its page list is generated from the markdown sources, so every release note under `docs/zh-CN/` and `docs/en-US/` is reachable, including the Chinese-only notes after 2.2.47.
@@ -49,6 +57,7 @@ Latest installer / 最新安装介质：[2.2-103 发布说明（中文）](zh-CN
 | MySQL proven methods / MySQL 已验证方法 | [English](proven-mysql-ha-methods.md) | [中文](zh-CN/proven-mysql-ha-methods.md) |
 | MySQL feature acceptance / MySQL 功能验收 | [English](mysql-feature-parity-acceptance.md) | [中文](zh-CN/mysql-feature-parity-acceptance.md) |
 | Version and release policy / 版本发布规范 | [English](en-US/version-release-policy.md) | [中文](zh-CN/version-release-policy.md) |
+| Licensing and compliance / 许可与合规 | [English](en-US/licensing.md) | [中文](zh-CN/licensing.md) |
 | Kubernetes MySQL / Kubernetes MySQL 接管 | [English](en-US/kubernetes-mysql.md) | [中文](zh-CN/kubernetes-mysql.md) |
 | Docker Swarm MySQL / Docker Swarm MySQL 接管 | [English](en-US/docker-swarm-mysql.md) | [中文](zh-CN/docker-swarm-mysql.md) |
 | Control-plane and API reference / 控制面与 API 参考 | [English](operations.md) | [中文](zh-CN/operations.md) |

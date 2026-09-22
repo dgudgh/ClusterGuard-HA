@@ -64,13 +64,15 @@ const groups = {
     ["Start Here", ["index", "product-overview", "product-tour", "architecture", ...releaseSlugs["en-US"]]],
     ["Deploy and Migrate", ["offline-rpm-install", "database-preparation", "orchestrator-migration"]],
     ["Operate", ["operations-manual", "api-operations", "postgresql-ha", "docker-swarm-mysql", "kubernetes-mysql", "update-and-patch", "version-release-policy"]],
-    ["Qualification", ["proven-mysql-ha-methods", "mysql-feature-parity-acceptance", "mysql-former-primary-recovery", "mysql-production-qualification", "postgresql-production-qualification", "docker-swarm-mysql-validation", "production-chaos-test", "power-lifecycle-test"]]
+    ["Qualification", ["proven-mysql-ha-methods", "mysql-feature-parity-acceptance", "mysql-former-primary-recovery", "mysql-production-qualification", "postgresql-production-qualification", "docker-swarm-mysql-validation", "production-chaos-test", "power-lifecycle-test"]],
+    ["License", ["licensing"]]
   ],
   "zh-CN": [
     ["开始使用", ["index", "product-overview", "product-tour", "architecture", ...releaseSlugs["zh-CN"]]],
     ["部署与迁移", ["offline-rpm-install", "database-preparation", "orchestrator-migration"]],
     ["日常运维", ["operations-manual", "api-operations", "postgresql-ha", "docker-swarm-mysql", "kubernetes-mysql", "update-and-patch", "version-release-policy"]],
-    ["验收证据", ["proven-mysql-ha-methods", "mysql-feature-parity-acceptance", "mysql-former-primary-recovery", "mysql-production-qualification", "postgresql-production-qualification", "docker-swarm-mysql-validation", "production-chaos-test", "power-lifecycle-test", "release-recovery-acceptance-checklist"]]
+    ["验收证据", ["proven-mysql-ha-methods", "mysql-feature-parity-acceptance", "mysql-former-primary-recovery", "mysql-production-qualification", "postgresql-production-qualification", "docker-swarm-mysql-validation", "production-chaos-test", "power-lifecycle-test", "release-recovery-acceptance-checklist"]],
+    ["许可", ["licensing"]]
   ]
 };
 
@@ -92,6 +94,7 @@ const entries = [
   entry("en-US", "kubernetes-mysql", "Kubernetes MySQL", "docs/en-US/kubernetes-mysql.md"),
   entry("en-US", "update-and-patch", "Version Update and Rollback", "docs/en-US/update-and-patch.md"),
   entry("en-US", "version-release-policy", "Version and Release Policy", "docs/en-US/version-release-policy.md"),
+  entry("en-US", "licensing", "Licensing and Compliance", "docs/en-US/licensing.md"),
   entry("en-US", "proven-mysql-ha-methods", "Proven MySQL HA Methods", "docs/proven-mysql-ha-methods.md"),
   entry("en-US", "mysql-feature-parity-acceptance", "MySQL Feature Acceptance", "docs/mysql-feature-parity-acceptance.md"),
   entry("en-US", "mysql-former-primary-recovery", "Former-Primary Recovery Qualification", "docs/en-US/mysql-former-primary-recovery-qualification-2026-08-09.md"),
@@ -115,6 +118,7 @@ const entries = [
   entry("zh-CN", "kubernetes-mysql", "Kubernetes MySQL", "docs/zh-CN/kubernetes-mysql.md"),
   entry("zh-CN", "update-and-patch", "版本升级与回退", "docs/zh-CN/update-and-patch.md"),
   entry("zh-CN", "version-release-policy", "版本与发版规范", "docs/zh-CN/version-release-policy.md"),
+  entry("zh-CN", "licensing", "许可与合规", "docs/zh-CN/licensing.md"),
   entry("zh-CN", "proven-mysql-ha-methods", "MySQL 已验证方法", "docs/zh-CN/proven-mysql-ha-methods.md"),
   entry("zh-CN", "mysql-feature-parity-acceptance", "MySQL 功能验收", "docs/zh-CN/mysql-feature-parity-acceptance.md"),
   entry("zh-CN", "mysql-former-primary-recovery", "旧主恢复专项验收", "docs/zh-CN/mysql-former-primary-recovery-qualification-2026-08-09.md"),

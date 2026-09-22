@@ -40,6 +40,32 @@
 - 规则全文、删除义务与历史先例（`v2.2.68` 越权附件）见
   [版本与发版规范 §3.1](docs/zh-CN/version-release-policy.md)。
 
+## 许可硬规则（2026-09-22 起，永久生效，不可协商）
+
+**本项目采用 `AGPL-3.0-only`。** 权威全文是仓库根目录的 `LICENSE`（官方原文，**不得改动**，
+sha256 `8486a10c4393cee1c25392769ddd3b2d6c242d6ec7928e1414efff7dfb2f07ef`）。
+
+用户 2026-09-22 明确要求"用我的代码就必须也开源"。这是**刻意的永久决定**：
+
+- **不得**替换 `LICENSE`、**不得**把任何位置的许可声明改成别的协议（尤其**不得**再出现
+  `Proprietary`），除非用户在当次对话中明确要求换协议，且换协议必须按
+  [许可与合规](docs/zh-CN/licensing.md) §8 的表格**一次改全所有落点**。
+- **不得**在未同步 `THIRD-PARTY-NOTICES.md` 的情况下新增任何第三方依赖。每个新依赖都要按
+  现有格式补一行：模块、版本、SPDX 标识、版权人、upstream 地址。**许可是实读模块自带
+  `LICENSE` 得出的，不得凭记忆或猜。**
+- **依赖许可兼容性**：现有 4 个依赖是 MPL-2.0（`hashicorp/raft`、`raft-boltdb/v2`、
+  `golang-lru`、`go-immutable-radix`）。因此 **`GPL-2.0-only` 永远不可选**——MPL-2.0 不允许与
+  GPL-2.0-only 组合。引入新依赖前先判断其与 AGPL-3.0 的兼容性，不兼容就不引入。
+- **交付物必须带许可**：RPM 必须把 `LICENSE`、`THIRD-PARTY-NOTICES.md`、`MPL-2.0.txt` 装到
+  `/usr/share/doc/clusterguard-ha/`；离线介质必须把 `LICENSE` 放在介质根目录。
+  `packaging/rpm/nfpm.yaml` 的 `license` 字段、`contents` 段与两个构建脚本不得被拆散。
+- **不得**把本仓库的源码或二进制以附加限制条款的方式对外提供（AGPL 第 7 条禁止附加限制）。
+  签NDA、卖升级包都属于正常商业行为，许可本身不禁止；但**不得**向客户声称"你不得再分发"。
+- **门禁**：任何依赖、打包或文档改动后跑一次 `node tools/verify-license-consistency.cjs`，
+  必须 `status=passed`。
+- 面向客户的各种场景义务表见 [许可与合规](docs/zh-CN/licensing.md)；
+  第三方逐项清单见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
+
 ## 不得擅自改变的行为
 
 - 顶部所选集群是当前工作上下文。日志默认跟随它；用户明确选择全部集群才跨集群显示。切换顶部集群必须清理旧行、旧游标和旧请求，重新查询所选集群。
@@ -76,6 +102,7 @@
 - [ ] 不覆盖已交付版本；新修复用新的版本和补丁 ID。
 - [ ] 交付记录可追溯：`node tools/verify-release-records.cjs` 报 `status=passed`，即 `release/` 下每个 `RELEASE-INFO` 的 `commit=` 都能被标签或远端引用到达（`local-only` 表示只被本地分支指着，必须推送到远端）。发布说明的提交必须回到主仓库分支，不得只留在 `.build/` 的一次性构建克隆里。
 - [ ] 公开渠道只放完整安装介质，且每个 Release 都带完整介质：`node tools/verify-public-release-assets.cjs` 报 `status=passed`，即所有 GitHub Release（含草稿）附件中没有任何签名 `.cgupgrade`、旧 `.cgpatch` 或 `<来源>_to_<目标>` 形态的升级包，且没有任何已发布 Release 缺少完整离线介质。**升级包只对签约企业客户交付、只留本地，不得上传 GitHub 或任何公开渠道**（见 [发版规范 §3.1](docs/zh-CN/version-release-policy.md)）。删除越权附件时必须连同其 `.sha256` 一起删；删除整个 Release 时保留 Git 标签。
+- [ ] 许可声明一致：`node tools/verify-license-consistency.cjs` 报 `status=passed`，即根 `LICENSE` 是未改动的 AGPL-3.0 官方原文、`packaging/rpm/nfpm.yaml` 的 `license` 为 `AGPL-3.0-only`、RPM 内容清单与两个构建脚本都会装入 `LICENSE`（连同 `THIRD-PARTY-NOTICES.md`、`MPL-2.0.txt`）、且中英 README 与许可页陈述一致。新增依赖必须已写入 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
 
 任何未完成项必须报告，不得为了交付把它改成通过。发布细则见 [恢复与升级发布验收清单](docs/zh-CN/release-recovery-acceptance-checklist.md)。
 
