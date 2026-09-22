@@ -45,9 +45,48 @@
 已发出去的包内文档不能是两套，所以带修正重新出包。</p>
 <p>本版<strong>含一处新装行为变更</strong>（首次管理员口令），不只是文档更新。装维流程需要相应调整，
 详见下文「本版的安全行为变更」。</p>
+<blockquote>
+<p><strong>版本谱系</strong>：<code>2.2-103</code> 有两个本地构建。<strong>首版</strong>（<code>2026-09-22T03:25:36Z</code>，基线
+<code>55de30f</code>）构建于许可落地之前，包内既无许可文本、RPM 头也写着 <code>Proprietary</code>。
+<strong>本目录交付的是重建的第二版</strong>（基线 <code>68c3448</code>），唯一目的是把 <code>AGPL-3.0-only</code>
+的声明补进产物本身。首版从未发布、从未交付，其产物改名保留在 <code>.build/</code> 下备查。</p>
+</blockquote>
+<h2 id="本次重建-第二版-改了什么">本次重建（第二版）改了什么<a class="heading-anchor" href="#本次重建-第二版-改了什么" aria-label="Link to 本次重建（第二版）改了什么">#</a></h2>
+<p>2.2-103 首版构建时，仓库还没有任何许可声明：根目录没有 <code>LICENSE</code>，
+<code>packaging/rpm/nfpm.yaml</code> 写着 <code>license: Proprietary</code>。许可随后落地为
+<code>AGPL-3.0-only</code>（提交 <code>68c3448</code>），但<strong>已产出的介质不会因此改变</strong>——RPM 头的
+<code>License</code> 字段是打包那一刻写死的，介质内的文件是构建时复制的。因此带许可重新构建：</p>
+<table>
+<thead>
+<tr>
+<th>项</th>
+<th>首版</th>
+<th>本版（重建）</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>RPM 头 <code>License</code></td>
+<td><code>Proprietary</code></td>
+<td><code>AGPL-3.0-only</code></td>
+</tr>
+<tr>
+<td>RPM 内 <code>/usr/share/doc/clusterguard-ha/</code></td>
+<td>无许可文件</td>
+<td><code>LICENSE</code>、<code>THIRD-PARTY-NOTICES.md</code>、<code>MPL-2.0.txt</code></td>
+</tr>
+<tr>
+<td>介质根目录</td>
+<td>无许可文件</td>
+<td><code>LICENSE</code>、<code>THIRD-PARTY-NOTICES.md</code>、<code>MPL-2.0.txt</code></td>
+</tr>
+</tbody></table>
+<p><strong>为什么必须重出而不是只改声明</strong>：<code>AGPL-3.0</code> §4 要求分发目标代码时随附本许可的副本；
+按首版现状发给客户属于不合规分发。除许可外，代码、包内文档、依赖闭包与数据库包与首版
+一致——本版<strong>不含</strong>任何功能或行为变更，因此<strong>装维流程与首版完全相同</strong>。</p>
 <h2 id="相对-2-2-102-的变更">相对 2.2-102 的变更<a class="heading-anchor" href="#相对-2-2-102-的变更" aria-label="Link to 相对 2.2-102 的变更">#</a></h2>
 <p>2.2-102 的代码基线是 <code>7b36461</code>（包内 <code>RELEASE-INFO</code> 记录打包时 HEAD <code>2b9a449</code>，该提交
-只新增发布说明与索引、不含代码改动，两者代码等价）。本版基线为 <code>eb741ee</code>。</p>
+只新增发布说明与索引、不含代码改动，两者代码等价）。2.2-103 <strong>首版</strong>基线为 <code>eb741ee</code>；
+<strong>本重建版</strong>基线为 <code>68c3448</code>，相对首版只多出许可落地相关改动（见上一节）。</p>
 <table>
 <thead>
 <tr>
@@ -227,7 +266,8 @@ bash install_clusterguard.sh --help
 <code>EngineIdentity</code> 未统一归一化、endpoint 字段双写、<code>ReplicaLink</code> 延迟语义、
 labels/所有权维度缺失）未在本版修复。</li>
 <li>PXC 专用恢复、Oracle/SQL Server 原生灾难恢复和历史泄露凭据轮换仍不在已完成范围内。</li>
-<li>本版未上传 GitHub。</li>
+<li>本版<strong>介质</strong>未上传 GitHub。仓库自身的 <code>LICENSE</code>（<code>AGPL-3.0-only</code>，提交 <code>68c3448</code>）
+已随文档分支发布，公开仓库页已识别该许可；但这不等于介质已发布。</li>
 </ol>
 <p>真实构建回归、摘要、包内容与安装器 <code>--help</code> 检查结果记录在同目录构建报告和交付目录的
 <code>verification.json</code>；这些检查不等同现场验收。</p>
@@ -239,7 +279,7 @@ labels/所有权维度缺失）未在本版修复。</li>
         </article>
         <aside class="page-toc" aria-label="本页目录">
           <strong>本页目录</strong>
-          <a class="toc-level-2" href="#相对-2-2-102-的变更">相对 2.2-102 的变更</a><a class="toc-level-3" href="#本版修正的-且存在于-2-2-102-包内文档中的错误">本版修正的、且存在于 2.2-102 包内文档中的错误</a><a class="toc-level-2" href="#本版的安全行为变更-装维需注意">本版的安全行为变更（装维需注意）</a><a class="toc-level-2" href="#介质范围">介质范围</a><a class="toc-level-2" href="#使用入口">使用入口</a><a class="toc-level-2" href="#与-2-2-102-的兼容性">与 2.2-102 的兼容性</a><a class="toc-level-2" href="#验证边界">验证边界</a>
+          <a class="toc-level-2" href="#本次重建-第二版-改了什么">本次重建（第二版）改了什么</a><a class="toc-level-2" href="#相对-2-2-102-的变更">相对 2.2-102 的变更</a><a class="toc-level-3" href="#本版修正的-且存在于-2-2-102-包内文档中的错误">本版修正的、且存在于 2.2-102 包内文档中的错误</a><a class="toc-level-2" href="#本版的安全行为变更-装维需注意">本版的安全行为变更（装维需注意）</a><a class="toc-level-2" href="#介质范围">介质范围</a><a class="toc-level-2" href="#使用入口">使用入口</a><a class="toc-level-2" href="#与-2-2-102-的兼容性">与 2.2-102 的兼容性</a><a class="toc-level-2" href="#验证边界">验证边界</a>
         </aside>
       </main>
     </div>
