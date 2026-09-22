@@ -10,7 +10,7 @@
 // 2026-09-22 and this check keeps it from coming back.
 //
 // Usage:
-//   node tools/verify-public-release-assets.cjs [--repo <owner/name>]
+//   node tools/verify-public-release-assets.cjs [--repo <owner/name>] [--include-drafts]
 //
 // Rules applied to every asset name:
 //   cgupgrade-suffix  `.cgupgrade` / `.cgupgrade.sha256`
@@ -19,10 +19,15 @@
 //                     by rolling-update packages, which catches an upgrade
 //                     artifact that was renamed to hide its suffix
 //
-// Anything matching a rule is a failure. A release carrying no complete offline
-// kit is reported as a notice instead: legacy releases predate the rule, and the
-// public channel is not required to carry an installer for every historical
-// version.
+// Anything matching a rule is a failure.
+//
+// A release-level rule also applies: a published release must carry a complete
+// offline kit (`*-offline-linux-*.tar.gz`). The public channel carries complete
+// installation media only, so a release that offers no installer has no business
+// being published. Release v2.2.68 was exactly this - an RPM with no kit - and
+// was deleted on 2026-09-22. Drafts are exempt by default, because a draft is the
+// staging area while the kit is still being uploaded; pass --include-drafts to
+// apply the rule to drafts too.
 //
 // Exit code is non-zero when any rule matches. This script talks to GitHub and
 // needs an authenticated `gh`.
@@ -35,6 +40,7 @@ const flag = (name) => {
 };
 
 const repo = flag('--repo') || 'dgudgh/ClusterGuard-HA';
+const includeDrafts = process.argv.includes('--include-drafts');
 
 const RULES = [
   { name: 'cgupgrade-suffix', test: (n) => /\.cgupgrade(\.sha256)?$/i.test(n) },
@@ -71,11 +77,12 @@ try {
 }
 
 const failures = [];
-const notices = [];
+const missingOfflineKit = [];
 let assetsChecked = 0;
 
 for (const release of releases) {
   const tag = release.tag_name;
+  const draft = Boolean(release.draft);
   const assets = Array.isArray(release.assets) ? release.assets : [];
   assetsChecked += assets.length;
 
@@ -93,40 +100,50 @@ for (const release of releases) {
   }
 
   const names = assets.map((asset) => asset.name);
-  if (!names.some((name) => OFFLINE_KIT.test(name))) {
-    notices.push({
+  if (!names.some((name) => OFFLINE_KIT.test(name)) && (!draft || includeDrafts)) {
+    missingOfflineKit.push({
       tag,
-      draft: Boolean(release.draft),
+      draft,
       prerelease: Boolean(release.prerelease),
       assets: names,
-      note: 'no complete offline kit on this release',
+      matched_rules: ['missing-offline-kit'],
     });
   }
 }
 
+const failing = failures.length + missingOfflineKit.length;
+
 const report = {
-  status: failures.length === 0 ? 'passed' : 'failed',
+  status: failing === 0 ? 'passed' : 'failed',
   repo,
   releases_checked: releases.length,
+  drafts_included: includeDrafts,
   assets_checked: assetsChecked,
   failures,
-  notices,
+  missing_offline_kit: missingOfflineKit,
 };
 
 console.log(JSON.stringify(report, null, 2));
 
-if (failures.length > 0) {
+if (failing > 0) {
   console.error('');
-  console.error(`public channel carries ${failures.length} enterprise-only artifact(s):`);
-  for (const failure of failures) {
-    console.error(`  ${failure.tag}  ${failure.asset}  (${failure.matched_rules.join(', ')})`);
+  if (failures.length > 0) {
+    console.error(`public channel carries ${failures.length} enterprise-only artifact(s):`);
+    for (const failure of failures) {
+      console.error(`  ${failure.tag}  ${failure.asset}  (${failure.matched_rules.join(', ')})`);
+    }
+    console.error('remove them: gh release delete-asset <tag> <asset> --repo ' + repo);
   }
-  console.error('remove them: gh release delete-asset <tag> <asset> --repo ' + repo);
+  if (missingOfflineKit.length > 0) {
+    console.error(`public channel carries ${missingOfflineKit.length} release(s) without a complete offline kit:`);
+    for (const entry of missingOfflineKit) {
+      console.error(`  ${entry.tag}  (assets: ${entry.assets.join(', ') || 'none'})`);
+    }
+    console.error('a published release must carry complete installation media; remove the release:');
+    console.error('  gh release delete <tag> --repo ' + repo + ' --yes   # keep the tag for provenance, or add --cleanup-tag');
+  }
   process.exit(1);
 }
 
 console.log('');
-console.log(`public channel is clean: ${releases.length} release(s), ${assetsChecked} asset(s), 0 enterprise-only artifact(s)`);
-for (const notice of notices) {
-  console.log(`notice: ${notice.tag} carries no complete offline kit (assets: ${notice.assets.join(', ') || 'none'})`);
-}
+console.log(`public channel is clean: ${releases.length} release(s), ${assetsChecked} asset(s), 0 enterprise-only artifact(s), every release carries a complete offline kit`);

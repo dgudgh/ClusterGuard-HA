@@ -174,10 +174,11 @@ uniqueness, and former-primary <code>pg_rewind</code>, is recorded in the
 <p><strong>The publication channel split is a hard rule.</strong> GitHub Releases carry complete
 offline installation media only; signed <code>.cgupgrade</code> update packages (including
 legacy <code>.cgpatch</code>) are delivered to contracted enterprise customers and kept
-locally only — they <strong>must not</strong> be uploaded to any public channel. Run
-<code>node tools/verify-public-release-assets.cjs</code> before and after uploading and
-require <code>status=passed</code>; an update package on a public channel is treated as
-unauthorized distribution. See
+locally only — they <strong>must not</strong> be uploaded to any public channel. The converse
+holds as well: a release that carries no complete offline media <strong>must not stay on
+the public channel</strong>. Run <code>node tools/verify-public-release-assets.cjs</code> before and
+after uploading and require <code>status=passed</code>; an update package on a public channel
+is treated as unauthorized distribution. See
 <a href="version-release-policy.html">Version and Release Policy §3.1</a>.</p>
 <p><code>docs/superpowers/</code> preserves historical design and implementation plans and is only used for traceability, not as the current installation or production operation manual. When documents are inconsistent with the official release, the corresponding <code>RELEASE-INFO</code>, summary file, and release notes of that version shall prevail.</p>
 <h2 id="information-required-for-issue-feedback">Information Required for Issue Feedback<a class="heading-anchor" href="#information-required-for-issue-feedback" aria-label="Link to Information Required for Issue Feedback">#</a></h2>

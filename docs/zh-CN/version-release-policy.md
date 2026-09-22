@@ -80,17 +80,26 @@ v2.2.2
 | 签名 `.cgupgrade` 升级包（含旧 `.cgpatch`）及其 `.sha256` | **仅对签约企业客户交付，绝不上传 GitHub 或任何公开渠道** |
 
 公开渠道只有完整安装介质。升级包是企业交付物，**出现在公开渠道即视为越权分发**，
-必须立即删除并按发布事故处理。
+必须立即删除并按发布事故处理。反过来同样成立：**公开渠道上的每个 Release 都必须带完整
+离线介质**，只有 RPM 或只有说明的 Release 没有存在意义，必须删除。
 
 - 升级包仍受本节不可覆盖规则约束，只是不出现在公开渠道。
 - 构建脚本与本地 `release/` 目录照常保留升级包，**不得**把它们加进 GitHub Release 附件。
 - 删除越权附件时**必须同步删除其 `.sha256`**，否则会留下指向不存在文件的摘要。
-- 检查命令：`node tools/verify-public-release-assets.cjs`。它按 `.cgupgrade` / `.cgpatch`
-  后缀与 `<来源>_to_<目标>` 命名规则检查全部 Release（含草稿），命中即退出码 1。
-  上传前后各跑一次。
-- 历史先例：`v2.2.68` 曾发布 `clusterguard-ha-2.2-66_to_2.2-68.x86_64.cgupgrade`
+- 删除整个 Release 时**保留 Git 标签**：标签是源码出处，不是分发产物；且仍被远端分支可达，
+  交付记录门禁不受影响。只有确认无人引用该标签时才用 `--cleanup-tag`。
+- 检查命令：`node tools/verify-public-release-assets.cjs`。它执行两条规则，命中任一即退出码 1：
+  ① 按 `.cgupgrade` / `.cgpatch` 后缀与 `<来源>_to_<目标>` 命名规则检查全部 Release（含草稿）的附件；
+  ② 未带完整离线介质的**已发布** Release 视为违规（草稿默认豁免，它是上传中的暂存区；
+  加 `--include-drafts` 可一并检查）。上传前后各跑一次。
+- 历史先例一：`v2.2.68` 曾发布 `clusterguard-ha-2.2-66_to_2.2-68.x86_64.cgupgrade`
   （36,005,513 字节），已于 2026-09-22 删除；本地副本 `release/2.2-68-user-e2e/`
   摘要 `402256420e44473a3c37206ab2d3b53535cda00fd717c33bc78e1dd024772565` 一致，未丢失。
+- 历史先例二：同一 `v2.2.68` Release 只有 `clusterguard-ha-2.2-68.x86_64.rpm` 及其 `.sha256`，
+  没有完整离线介质，已于 2026-09-22 **整个删除**（保留标签，指向 `bc0546a`）。删除前已下载核对：
+  远端副本与本地 `release/2.2-68-user-e2e/` 摘要同为
+  `9c20ca1823706c0bdeccca239c563658645cfefdd748b9e5fb2f27544a5c8a58`，未丢失。
+  删除后 GitHub 的 Latest 标记回到 `v2.2.39`（它带完整介质）。
 
 ## 4. 分支规则
 
@@ -165,7 +174,8 @@ git diff --check
 6. 推送提交和标签。
 7. 创建 GitHub Release 并上传只读附件——**只上传完整安装介质、各自的 `.sha256`、`RELEASE-INFO`
    和 `verification.json`**；签名 `.cgupgrade` 与旧 `.cgpatch` 升级包**不得上传**（见 §3.1）。
-   上传前先跑 `node tools/verify-public-release-assets.cjs`。
+   上传前后都跑 `node tools/verify-public-release-assets.cjs`：它既检查越权升级包，也检查是否
+   存在**不带完整离线介质**的已发布 Release。缺介质的 Release 不得留在公开渠道。
 8. 从 GitHub 重新下载附件，再执行一次摘要和安装冒烟验证。
 
 发布完成后，只允许通过新版本修复问题。

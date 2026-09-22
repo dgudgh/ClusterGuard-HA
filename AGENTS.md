@@ -28,9 +28,14 @@
   它们是签约企业客户的交付物，只保留在本地 `release/` 目录，按签约交付流程单独提供。
 - **公开渠道出现升级包即视为越权分发**：立即删除，**同步删除其 `.sha256`**，
   并按发布事故在当日记录中留痕。客户索要升级包时走签约交付，不得给 Release 链接。
+- **反向同样成立**：公开渠道上的每个 Release 都必须带完整离线介质。只有 RPM 或只有说明的
+  Release 必须整个删除（`v2.2.68` 就是这种，2026-09-22 已删）。删 Release 时**保留 Git 标签**
+  ——标签是源码出处、仍被远端分支可达，不影响交付记录门禁；确认无人引用才用 `--cleanup-tag`。
 - **门禁**：上传前后各跑一次 `node tools/verify-public-release-assets.cjs`，
-  报 `status=passed` 才允许上传。该脚本检查全部 Release（含草稿），
-  按 `.cgupgrade` / `.cgpatch` 后缀与 `<来源>_to_<目标>` 命名判定，命中即退出码 1。
+  报 `status=passed` 才允许上传。它执行两条规则，命中任一即退出码 1：
+  ① 全部 Release（含草稿）的附件里没有签名 `.cgupgrade`、旧 `.cgpatch` 或
+  `<来源>_to_<目标>` 命名的升级包；② 没有**已发布**的 Release 缺少完整离线介质
+  （草稿默认豁免，它是上传中的暂存区；加 `--include-drafts` 一并检查）。
 - 构建流程照旧产出升级包，**只是不得进入任何公开渠道**；本地 `release/` 清单可保留升级包条目。
 - 规则全文、删除义务与历史先例（`v2.2.68` 越权附件）见
   [版本与发版规范 §3.1](docs/zh-CN/version-release-policy.md)。
@@ -70,7 +75,7 @@
 - [ ] 已说明现场版本是否核实、哪些场景未测试、是否部署；用户手动升级的请求不得擅自改成直接安装 RPM。
 - [ ] 不覆盖已交付版本；新修复用新的版本和补丁 ID。
 - [ ] 交付记录可追溯：`node tools/verify-release-records.cjs` 报 `status=passed`，即 `release/` 下每个 `RELEASE-INFO` 的 `commit=` 都能被标签或远端引用到达（`local-only` 表示只被本地分支指着，必须推送到远端）。发布说明的提交必须回到主仓库分支，不得只留在 `.build/` 的一次性构建克隆里。
-- [ ] 公开渠道只放完整安装介质：`node tools/verify-public-release-assets.cjs` 报 `status=passed`，即所有 GitHub Release（含草稿）附件中没有任何签名 `.cgupgrade`、旧 `.cgpatch` 或 `<来源>_to_<目标>` 形态的升级包。**升级包只对签约企业客户交付、只留本地，不得上传 GitHub 或任何公开渠道**（见 [发版规范 §3.1](docs/zh-CN/version-release-policy.md)）。删除越权附件时必须连同其 `.sha256` 一起删。
+- [ ] 公开渠道只放完整安装介质，且每个 Release 都带完整介质：`node tools/verify-public-release-assets.cjs` 报 `status=passed`，即所有 GitHub Release（含草稿）附件中没有任何签名 `.cgupgrade`、旧 `.cgpatch` 或 `<来源>_to_<目标>` 形态的升级包，且没有任何已发布 Release 缺少完整离线介质。**升级包只对签约企业客户交付、只留本地，不得上传 GitHub 或任何公开渠道**（见 [发版规范 §3.1](docs/zh-CN/version-release-policy.md)）。删除越权附件时必须连同其 `.sha256` 一起删；删除整个 Release 时保留 Git 标签。
 
 任何未完成项必须报告，不得为了交付把它改成通过。发布细则见 [恢复与升级发布验收清单](docs/zh-CN/release-recovery-acceptance-checklist.md)。
 

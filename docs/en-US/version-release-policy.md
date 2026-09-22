@@ -78,7 +78,9 @@ Delivery artifacts are split into two tiers, and they go to **different channels
 
 The public channel carries complete installation media only. An update package is an enterprise
 artifact, and **its presence on a public channel is unauthorized distribution**: it must be
-removed immediately and treated as a release incident.
+removed immediately and treated as a release incident. The converse holds too: **every release on
+the public channel must carry complete offline media**. A release offering only the RPM, or only
+release notes, serves no purpose and must be deleted.
 
 - Update packages remain subject to the immutable rules above; they are simply absent from the
   public channel.
@@ -86,13 +88,25 @@ removed immediately and treated as a release incident.
   be added to GitHub Release attachments.
 - When removing an unauthorized attachment, **remove its `.sha256` in the same step**, otherwise
   the release keeps a digest pointing at a file that no longer exists.
-- Check command: `node tools/verify-public-release-assets.cjs`. It applies the `.cgupgrade` /
-  `.cgpatch` suffix rules and the `<from>_to_<to>` naming rule to every release, drafts included,
-  and exits non-zero on a match. Run it before and after uploading.
-- Precedent: `v2.2.68` once published `clusterguard-ha-2.2-66_to_2.2-68.x86_64.cgupgrade`
+- When removing a whole release, **keep the Git tag**: the tag is source provenance, not a
+  distribution artifact, and it stays reachable from the remote branch, so the delivery-record gate
+  is unaffected. Use `--cleanup-tag` only once nothing references the tag.
+- Check command: `node tools/verify-public-release-assets.cjs`. It applies two rules and exits
+  non-zero when either matches: (1) the `.cgupgrade` / `.cgpatch` suffix rules and the
+  `<from>_to_<to>` naming rule across every release, drafts included; (2) a **published** release
+  that carries no complete offline media is a violation. Drafts are exempt by default because a
+  draft is the staging area while the kit is still uploading; pass `--include-drafts` to cover them
+  as well. Run it before and after uploading.
+- Precedent one: `v2.2.68` once published `clusterguard-ha-2.2-66_to_2.2-68.x86_64.cgupgrade`
   (36,005,513 bytes). It was removed on 2026-09-22; the local copy under
   `release/2.2-68-user-e2e/` matches digest
   `402256420e44473a3c37206ab2d3b53535cda00fd717c33bc78e1dd024772565`, so nothing was lost.
+- Precedent two: the same `v2.2.68` release carried only `clusterguard-ha-2.2-68.x86_64.rpm` and its
+  `.sha256`, with no complete offline media, so it was **deleted in full** on 2026-09-22 (the tag
+  was kept and points at `bc0546a`). Before deleting, the asset was downloaded and compared: the
+  remote copy and the local `release/2.2-68-user-e2e/` copy share digest
+  `9c20ca1823706c0bdeccca239c563658645cfefdd748b9e5fb2f27544a5c8a58`, so nothing was lost. After
+  the deletion GitHub's Latest marker moved back to `v2.2.39`, which does carry complete media.
 
 ## 4. Branch Rules
 
@@ -164,7 +178,7 @@ Formal release is executed in the following order:
 4. Verify the summary, signature, package content, and installation process.
 5. Create an annotated tag, for example, `v2.2.1`.
 6. Push the commit and tag.
-7. Create a GitHub Release and upload read-only attachments — **the complete installation media, their `.sha256` files, `RELEASE-INFO` and `verification.json` only**. Signed `.cgupgrade` and legacy `.cgpatch` update packages **must not be uploaded** (see §3.1). Run `node tools/verify-public-release-assets.cjs` before uploading.
+7. Create a GitHub Release and upload read-only attachments — **the complete installation media, their `.sha256` files, `RELEASE-INFO` and `verification.json` only**. Signed `.cgupgrade` and legacy `.cgpatch` update packages **must not be uploaded** (see §3.1). Run `node tools/verify-public-release-assets.cjs` before and after uploading: it checks for unauthorized update packages and for any **published release without complete offline media**. A release missing its media must not stay on the public channel.
 8. Redownload the attachments from GitHub and perform a summary and installation smoke test again.
 
 After the release is completed, only new versions are allowed to fix issues.

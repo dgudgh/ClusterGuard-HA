@@ -148,9 +148,9 @@ selectorless Service/EndpointSlice、独立单副本 StatefulSet、持久角色�
 </ul>
 <p><strong>发布渠道是硬性规则</strong>：GitHub Release 只承载完整离线安装介质；签名 <code>.cgupgrade</code>
 升级包（含旧 <code>.cgpatch</code>）只对签约企业客户交付、只留本地，<strong>不得上传任何公开渠道</strong>。
-上传前后各跑一次 <code>node tools/verify-public-release-assets.cjs</code>，报 <code>status=passed</code>
-方可上传；公开渠道出现升级包即视为越权分发。详见
-<a href="version-release-policy.html">版本与发版规范 §3.1</a>。</p>
+反过来，<strong>不带完整离线介质的 Release 也不得留在公开渠道</strong>。上传前后各跑一次
+<code>node tools/verify-public-release-assets.cjs</code>，报 <code>status=passed</code> 方可上传；公开渠道出现
+升级包即视为越权分发。详见<a href="version-release-policy.html">版本与发版规范 §3.1</a>。</p>
 <p><code>docs/superpowers/</code> 保存历史设计和实施计划，只用于追溯，不是当前安装或生产操作
 手册。文档与正式 Release 不一致时，以对应 Release 内的 <code>RELEASE-INFO</code>、摘要文件
 和该版本发布说明为准。</p>
