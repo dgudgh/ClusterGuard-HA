@@ -2741,13 +2741,21 @@ func TestHAMatrixSupportsAuthenticatedPlatformSessionExecution(t *testing.T) {
 }
 
 func TestAuthenticationDeliveryDocumentationCoversBootstrapAndRecovery(t *testing.T) {
+	// The literal bootstrap password used to be the proxy for "the delivery
+	// documentation explains how to obtain the first administrator credential".
+	// The runtime no longer falls back to that literal: unless the deployment
+	// sets bootstrap_admin_password_env, the Leader generates the password into a
+	// root-only file. The contract therefore moves with the behaviour and now
+	// requires the documentation to name the mechanism. What this test protects
+	// is unchanged: an operator must be able to bootstrap and recover the
+	// administrator account from the shipped documentation alone.
 	for _, path := range []string{"../README.md", "../docs/operations.md", "../docs/architecture.md", "../docs/mysql-feature-parity-acceptance.md"} {
 		contents, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
 		}
 		text := string(contents)
-		for _, expected := range []string{"admin", "admin123", "MustChangePassword", "eight-hour", "logout", "first password change"} {
+		for _, expected := range []string{"admin", "bootstrap_admin_password_env", "bootstrap-admin-password", "MustChangePassword", "eight-hour", "logout", "first password change"} {
 			if !strings.Contains(text, expected) {
 				t.Fatalf("%s missing authentication documentation %q", path, expected)
 			}
