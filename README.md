@@ -36,6 +36,12 @@ Release policy and support boundary:
   Docker Swarm adoption, and the Kubernetes writer-endpoint foundation.
 - Any shipped feature or behavior change increments the package release; an
   existing RPM, offline archive, tag, or GitHub Release is never overwritten.
+- **GitHub Releases carry complete offline installation media only.** Signed
+  `.cgupgrade` update packages (including legacy `.cgpatch`) are delivered to
+  contracted enterprise customers only and are **never** uploaded to GitHub or
+  any other public channel; a public copy is treated as unauthorized
+  distribution and is removed on sight. See
+  [release policy §3.1](docs/en-US/version-release-policy.md).
 - Oracle and SQL Server code may exist behind capability gates, but it is not a
   production claim for the sealed 2.1 line.
 

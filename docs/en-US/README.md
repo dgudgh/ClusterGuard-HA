@@ -141,6 +141,15 @@ The following documents are the production delivery entry points:
 - `docs/mysql-feature-parity-acceptance.md`
 - `docs/mysql-production-qualification-2026-07-28.md`
 
+**The publication channel split is a hard rule.** GitHub Releases carry complete
+offline installation media only; signed `.cgupgrade` update packages (including
+legacy `.cgpatch`) are delivered to contracted enterprise customers and kept
+locally only — they **must not** be uploaded to any public channel. Run
+`node tools/verify-public-release-assets.cjs` before and after uploading and
+require `status=passed`; an update package on a public channel is treated as
+unauthorized distribution. See
+[Version and Release Policy §3.1](version-release-policy.md).
+
 `docs/superpowers/` preserves historical design and implementation plans and is only used for traceability, not as the current installation or production operation manual. When documents are inconsistent with the official release, the corresponding `RELEASE-INFO`, summary file, and release notes of that version shall prevail.
 
 ## Information Required for Issue Feedback

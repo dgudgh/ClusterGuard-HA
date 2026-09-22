@@ -34,6 +34,10 @@ ClusterGuard HA 是一个独立、洁净室的高可用控制平面。
   Docker Swarm 接管和 Kubernetes 写入口基础能力。
 - 任何已发布的功能或行为更改都会增加包的发布版本；一个
   已发布的 RPM、离线包、标签或 GitHub Release 都不会被覆盖。
+- **GitHub Release 只承载完整离线安装介质。** 签名 `.cgupgrade` 升级包（含旧
+  `.cgpatch`）只对签约企业客户交付，**绝不**上传 GitHub 或任何其他公开渠道；
+  公开渠道出现副本即视为越权分发，一经发现立即删除。见
+  [发版规范 §3.1](docs/zh-CN/version-release-policy.md)。
 - Oracle 和 SQL Server 代码可能存在于能力门后，但不是
   已封板 2.1 系列的生产支持声明。
 
