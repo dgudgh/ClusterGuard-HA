@@ -43,6 +43,9 @@
 <p><strong>制品说明：</strong> <code>.cgupgrade</code> 是完整的签名滚动升级包，并非二进制差分小补丁。它同时携带目标 RPM 和当前版本 RPM，以便失败时自动回退。<code>*-offline-linux-*.tar.gz</code> 是新装或重装介质，不能直接上传到滚动升级页面。旧版本发布的 <code>.cgpatch</code> 继续兼容。</p>
 </blockquote>
 <blockquote>
+<p><strong>获取渠道：</strong> 完整安装介质通过 <a href="https://github.com/dgudgh/ClusterGuard-HA/releases">GitHub Release</a> 公开发布；<strong>签名升级包不通过公开渠道发布</strong>，由厂商对签约企业客户单独提供。不要在公开渠道寻找 <code>.cgupgrade</code>。</p>
+</blockquote>
+<blockquote>
 <p><strong>版本基线：</strong> <code>2.2.39</code> 是首个正式受控升级基线。标准 <code>2.2-38</code> 没有受控升级框架，实验室 <code>2.2-38.field3</code> 的 RPM 记录与二进制合同也不一致，两者都不能直接上传通用升级包进入 <code>2.2.39</code>。先按本手册的历史版本桥接流程逐节点迁移到正式 <code>2.2.39</code>；从后续正式版本开始使用以 <code>2.2.39</code> 为来源版本的 <code>.cgupgrade</code>。</p>
 </blockquote>
 <blockquote>

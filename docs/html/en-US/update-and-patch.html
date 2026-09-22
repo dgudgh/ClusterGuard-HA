@@ -43,6 +43,9 @@
 <p><strong>Artifact naming:</strong> <code>.cgupgrade</code> is a complete signed rolling-update package, not a small binary delta. It contains both the target RPM and the current-version RPM for automatic rollback. <code>*-offline-linux-*.tar.gz</code> is intended for installation or reinstallation and cannot be uploaded directly to the rolling-update page. Legacy <code>.cgpatch</code> packages remain supported.</p>
 </blockquote>
 <blockquote>
+<p><strong>Where to obtain them:</strong> complete installation media are published publicly through <a href="https://github.com/dgudgh/ClusterGuard-HA/releases">GitHub Releases</a>. <strong>Signed update packages are not published on public channels</strong>; the vendor supplies them to contracted enterprise customers directly. Do not look for a <code>.cgupgrade</code> on a public channel.</p>
+</blockquote>
+<blockquote>
 <p><strong>Version baseline:</strong> <code>2.2.39</code> is the first formal managed-update baseline. Standard <code>2.2-38</code> does not include the managed-update framework, and the laboratory <code>2.2-38.field3</code> RPM record does not match its binary contract. Neither can enter <code>2.2.39</code> by uploading a generic update package. Migrate each node to the formal <code>2.2.39</code> RPM with the historical-version bridge procedure first; later formal versions can use a <code>.cgupgrade</code> whose source version is <code>2.2.39</code>.</p>
 </blockquote>
 <blockquote>

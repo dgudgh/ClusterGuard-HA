@@ -101,6 +101,42 @@ v2.2.2
 <li>Manually replacing scripts in the offline package without updating the summary;</li>
 <li>Building a formal release from an uncommitted working tree and making the Release point to another commit.</li>
 </ul>
+<h3 id="3-1-publication-channel-split-from-2026-09-22">3.1 Publication Channel Split (from 2026-09-22)<a class="heading-anchor" href="#3-1-publication-channel-split-from-2026-09-22" aria-label="Link to 3.1 Publication Channel Split (from 2026-09-22)">#</a></h3>
+<p>Delivery artifacts are split into two tiers, and they go to <strong>different channels</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Artifact</th>
+<th>Channel</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Complete offline installation media <code>clusterguard-ha-&lt;version&gt;-offline-linux-x86_64.tar.gz</code>, the ClusterGuard RPM, their <code>.sha256</code> files, <code>RELEASE-INFO</code>, <code>verification.json</code></td>
+<td>GitHub Release (public channel)</td>
+</tr>
+<tr>
+<td>Signed <code>.cgupgrade</code> update packages (including legacy <code>.cgpatch</code>) and their <code>.sha256</code> files</td>
+<td><strong>Contracted enterprise customers only; never uploaded to GitHub or any public channel</strong></td>
+</tr>
+</tbody></table>
+<p>The public channel carries complete installation media only. An update package is an enterprise
+artifact, and <strong>its presence on a public channel is unauthorized distribution</strong>: it must be
+removed immediately and treated as a release incident.</p>
+<ul>
+<li>Update packages remain subject to the immutable rules above; they are simply absent from the
+public channel.</li>
+<li>The build script and the local <code>release/</code> directory still hold update packages. They <strong>must not</strong>
+be added to GitHub Release attachments.</li>
+<li>When removing an unauthorized attachment, <strong>remove its <code>.sha256</code> in the same step</strong>, otherwise
+the release keeps a digest pointing at a file that no longer exists.</li>
+<li>Check command: <code>node tools/verify-public-release-assets.cjs</code>. It applies the <code>.cgupgrade</code> /
+<code>.cgpatch</code> suffix rules and the <code>&lt;from&gt;_to_&lt;to&gt;</code> naming rule to every release, drafts included,
+and exits non-zero on a match. Run it before and after uploading.</li>
+<li>Precedent: <code>v2.2.68</code> once published <code>clusterguard-ha-2.2-66_to_2.2-68.x86_64.cgupgrade</code>
+(36,005,513 bytes). It was removed on 2026-09-22; the local copy under
+<code>release/2.2-68-user-e2e/</code> matches digest
+<code>402256420e44473a3c37206ab2d3b53535cda00fd717c33bc78e1dd024772565</code>, so nothing was lost.</li>
+</ul>
 <h2 id="4-branch-rules">4. Branch Rules<a class="heading-anchor" href="#4-branch-rules" aria-label="Link to 4. Branch Rules">#</a></h2>
 <ul>
 <li><code>main</code> stores formally reviewed, traceable code.</li>
@@ -154,11 +190,11 @@ release eligibility depends only on whether every gate in this section passes, a
 <ol>
 <li>Gather and submit all changes for this version.</li>
 <li>Execute full testing and on-site acceptance.</li>
-<li>Build RPM, main offline package, signed update package, and necessary independent dependency packages from a clean commit.</li>
+<li>Build RPM, main offline package, signed update package, and necessary independent dependency packages from a clean commit (the update package stays local; see §3.1).</li>
 <li>Verify the summary, signature, package content, and installation process.</li>
 <li>Create an annotated tag, for example, <code>v2.2.1</code>.</li>
 <li>Push the commit and tag.</li>
-<li>Create a GitHub Release and upload read-only attachments.</li>
+<li>Create a GitHub Release and upload read-only attachments — <strong>the complete installation media, their <code>.sha256</code> files, <code>RELEASE-INFO</code> and <code>verification.json</code> only</strong>. Signed <code>.cgupgrade</code> and legacy <code>.cgpatch</code> update packages <strong>must not be uploaded</strong> (see §3.1). Run <code>node tools/verify-public-release-assets.cjs</code> before uploading.</li>
 <li>Redownload the attachments from GitHub and perform a summary and installation smoke test again.</li>
 </ol>
 <p>After the release is completed, only new versions are allowed to fix issues.</p>
@@ -173,7 +209,7 @@ RPM, offline kit, or a customer server.</p>
         </article>
         <aside class="page-toc" aria-label="On this page">
           <strong>On this page</strong>
-          <a class="toc-level-2" href="#1-version-format">1. Version Format</a><a class="toc-level-2" href="#2-current-version-lines">2. Current Version Lines</a><a class="toc-level-2" href="#3-immutable-release-rules">3. Immutable Release Rules</a><a class="toc-level-2" href="#4-branch-rules">4. Branch Rules</a><a class="toc-level-2" href="#5-postgresql-2-2-delivery-rules">5. PostgreSQL 2.2 Delivery Rules</a><a class="toc-level-2" href="#6-formal-release-gate">6. Formal Release Gate</a><a class="toc-level-2" href="#7-release-steps">7. Release Steps</a>
+          <a class="toc-level-2" href="#1-version-format">1. Version Format</a><a class="toc-level-2" href="#2-current-version-lines">2. Current Version Lines</a><a class="toc-level-2" href="#3-immutable-release-rules">3. Immutable Release Rules</a><a class="toc-level-3" href="#3-1-publication-channel-split-from-2026-09-22">3.1 Publication Channel Split (from 2026-09-22)</a><a class="toc-level-2" href="#4-branch-rules">4. Branch Rules</a><a class="toc-level-2" href="#5-postgresql-2-2-delivery-rules">5. PostgreSQL 2.2 Delivery Rules</a><a class="toc-level-2" href="#6-formal-release-gate">6. Formal Release Gate</a><a class="toc-level-2" href="#7-release-steps">7. Release Steps</a>
         </aside>
       </main>
     </div>

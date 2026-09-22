@@ -49,6 +49,7 @@
 - [ ] 已说明现场版本是否核实、哪些场景未测试、是否部署；用户手动升级的请求不得擅自改成直接安装 RPM。
 - [ ] 不覆盖已交付版本；新修复用新的版本和补丁 ID。
 - [ ] 交付记录可追溯：`node tools/verify-release-records.cjs` 报 `status=passed`，即 `release/` 下每个 `RELEASE-INFO` 的 `commit=` 都能被标签或远端引用到达（`local-only` 表示只被本地分支指着，必须推送到远端）。发布说明的提交必须回到主仓库分支，不得只留在 `.build/` 的一次性构建克隆里。
+- [ ] 公开渠道只放完整安装介质：`node tools/verify-public-release-assets.cjs` 报 `status=passed`，即所有 GitHub Release（含草稿）附件中没有任何签名 `.cgupgrade`、旧 `.cgpatch` 或 `<来源>_to_<目标>` 形态的升级包。**升级包只对签约企业客户交付、只留本地，不得上传 GitHub 或任何公开渠道**（见 [发版规范 §3.1](docs/zh-CN/version-release-policy.md)）。删除越权附件时必须连同其 `.sha256` 一起删。
 
 任何未完成项必须报告，不得为了交付把它改成通过。发布细则见 [恢复与升级发布验收清单](docs/zh-CN/release-recovery-acceptance-checklist.md)。
 

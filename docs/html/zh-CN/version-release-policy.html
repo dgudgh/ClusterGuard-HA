@@ -103,6 +103,37 @@ v2.2.2
 <li>手工替换离线包中的脚本而不更新摘要；</li>
 <li>把未提交工作树构建成正式发布并让 Release 指向另一个提交。</li>
 </ul>
+<h3 id="3-1-发布渠道分层-2026-09-22-起">3.1 发布渠道分层（2026-09-22 起）<a class="heading-anchor" href="#3-1-发布渠道分层-2026-09-22-起" aria-label="Link to 3.1 发布渠道分层（2026-09-22 起）">#</a></h3>
+<p>交付产物分两层，<strong>上传渠道不同</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>产物</th>
+<th>渠道</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>完整离线安装介质 <code>clusterguard-ha-&lt;版本&gt;-offline-linux-x86_64.tar.gz</code>、ClusterGuard RPM、各自 <code>.sha256</code>、<code>RELEASE-INFO</code>、<code>verification.json</code></td>
+<td>GitHub Release（公开渠道）</td>
+</tr>
+<tr>
+<td>签名 <code>.cgupgrade</code> 升级包（含旧 <code>.cgpatch</code>）及其 <code>.sha256</code></td>
+<td><strong>仅对签约企业客户交付，绝不上传 GitHub 或任何公开渠道</strong></td>
+</tr>
+</tbody></table>
+<p>公开渠道只有完整安装介质。升级包是企业交付物，<strong>出现在公开渠道即视为越权分发</strong>，
+必须立即删除并按发布事故处理。</p>
+<ul>
+<li>升级包仍受本节不可覆盖规则约束，只是不出现在公开渠道。</li>
+<li>构建脚本与本地 <code>release/</code> 目录照常保留升级包，<strong>不得</strong>把它们加进 GitHub Release 附件。</li>
+<li>删除越权附件时<strong>必须同步删除其 <code>.sha256</code></strong>，否则会留下指向不存在文件的摘要。</li>
+<li>检查命令：<code>node tools/verify-public-release-assets.cjs</code>。它按 <code>.cgupgrade</code> / <code>.cgpatch</code>
+后缀与 <code>&lt;来源&gt;_to_&lt;目标&gt;</code> 命名规则检查全部 Release（含草稿），命中即退出码 1。
+上传前后各跑一次。</li>
+<li>历史先例：<code>v2.2.68</code> 曾发布 <code>clusterguard-ha-2.2-66_to_2.2-68.x86_64.cgupgrade</code>
+（36,005,513 字节），已于 2026-09-22 删除；本地副本 <code>release/2.2-68-user-e2e/</code>
+摘要 <code>402256420e44473a3c37206ab2d3b53535cda00fd717c33bc78e1dd024772565</code> 一致，未丢失。</li>
+</ul>
 <h2 id="4-分支规则">4. 分支规则<a class="heading-anchor" href="#4-分支规则" aria-label="Link to 4. 分支规则">#</a></h2>
 <ul>
 <li><code>main</code> 保存已审查、可追溯的正式代码。</li>
@@ -157,11 +188,13 @@ git diff --check
 <ol>
 <li>整理并提交本版本全部变更。</li>
 <li>执行全量测试和现场验收。</li>
-<li>从干净提交构建 RPM、主离线包、签名升级包和必要的独立依赖包。</li>
+<li>从干净提交构建 RPM、主离线包、签名升级包和必要的独立依赖包（升级包只留本地，见 §3.1）。</li>
 <li>验证摘要、签名、包内容和安装流程。</li>
 <li>创建注释标签，例如 <code>v2.2.1</code>。</li>
 <li>推送提交和标签。</li>
-<li>创建 GitHub Release 并上传只读附件。</li>
+<li>创建 GitHub Release 并上传只读附件——<strong>只上传完整安装介质、各自的 <code>.sha256</code>、<code>RELEASE-INFO</code>
+和 <code>verification.json</code></strong>；签名 <code>.cgupgrade</code> 与旧 <code>.cgpatch</code> 升级包<strong>不得上传</strong>（见 §3.1）。
+上传前先跑 <code>node tools/verify-public-release-assets.cjs</code>。</li>
 <li>从 GitHub 重新下载附件，再执行一次摘要和安装冒烟验证。</li>
 </ol>
 <p>发布完成后，只允许通过新版本修复问题。</p>
@@ -174,7 +207,7 @@ git diff --check
         </article>
         <aside class="page-toc" aria-label="本页目录">
           <strong>本页目录</strong>
-          <a class="toc-level-2" href="#1-版本格式">1. 版本格式</a><a class="toc-level-2" href="#2-当前版本线">2. 当前版本线</a><a class="toc-level-2" href="#3-不可变发布规则">3. 不可变发布规则</a><a class="toc-level-2" href="#4-分支规则">4. 分支规则</a><a class="toc-level-2" href="#5-postgresql-2-2-交付规则">5. PostgreSQL 2.2 交付规则</a><a class="toc-level-2" href="#6-正式发版门禁">6. 正式发版门禁</a><a class="toc-level-2" href="#7-发布步骤">7. 发布步骤</a>
+          <a class="toc-level-2" href="#1-版本格式">1. 版本格式</a><a class="toc-level-2" href="#2-当前版本线">2. 当前版本线</a><a class="toc-level-2" href="#3-不可变发布规则">3. 不可变发布规则</a><a class="toc-level-3" href="#3-1-发布渠道分层-2026-09-22-起">3.1 发布渠道分层（2026-09-22 起）</a><a class="toc-level-2" href="#4-分支规则">4. 分支规则</a><a class="toc-level-2" href="#5-postgresql-2-2-交付规则">5. PostgreSQL 2.2 交付规则</a><a class="toc-level-2" href="#6-正式发版门禁">6. 正式发版门禁</a><a class="toc-level-2" href="#7-发布步骤">7. 发布步骤</a>
         </aside>
       </main>
     </div>

@@ -67,6 +67,33 @@ The following practices are prohibited:
 - Manually replacing scripts in the offline package without updating the summary;
 - Building a formal release from an uncommitted working tree and making the Release point to another commit.
 
+### 3.1 Publication Channel Split (from 2026-09-22)
+
+Delivery artifacts are split into two tiers, and they go to **different channels**:
+
+| Artifact | Channel |
+| --- | --- |
+| Complete offline installation media `clusterguard-ha-<version>-offline-linux-x86_64.tar.gz`, the ClusterGuard RPM, their `.sha256` files, `RELEASE-INFO`, `verification.json` | GitHub Release (public channel) |
+| Signed `.cgupgrade` update packages (including legacy `.cgpatch`) and their `.sha256` files | **Contracted enterprise customers only; never uploaded to GitHub or any public channel** |
+
+The public channel carries complete installation media only. An update package is an enterprise
+artifact, and **its presence on a public channel is unauthorized distribution**: it must be
+removed immediately and treated as a release incident.
+
+- Update packages remain subject to the immutable rules above; they are simply absent from the
+  public channel.
+- The build script and the local `release/` directory still hold update packages. They **must not**
+  be added to GitHub Release attachments.
+- When removing an unauthorized attachment, **remove its `.sha256` in the same step**, otherwise
+  the release keeps a digest pointing at a file that no longer exists.
+- Check command: `node tools/verify-public-release-assets.cjs`. It applies the `.cgupgrade` /
+  `.cgpatch` suffix rules and the `<from>_to_<to>` naming rule to every release, drafts included,
+  and exits non-zero on a match. Run it before and after uploading.
+- Precedent: `v2.2.68` once published `clusterguard-ha-2.2-66_to_2.2-68.x86_64.cgupgrade`
+  (36,005,513 bytes). It was removed on 2026-09-22; the local copy under
+  `release/2.2-68-user-e2e/` matches digest
+  `402256420e44473a3c37206ab2d3b53535cda00fd717c33bc78e1dd024772565`, so nothing was lost.
+
 ## 4. Branch Rules
 
 - `main` stores formally reviewed, traceable code.
@@ -133,11 +160,11 @@ Formal release is executed in the following order:
 
 1. Gather and submit all changes for this version.
 2. Execute full testing and on-site acceptance.
-3. Build RPM, main offline package, signed update package, and necessary independent dependency packages from a clean commit.
+3. Build RPM, main offline package, signed update package, and necessary independent dependency packages from a clean commit (the update package stays local; see §3.1).
 4. Verify the summary, signature, package content, and installation process.
 5. Create an annotated tag, for example, `v2.2.1`.
 6. Push the commit and tag.
-7. Create a GitHub Release and upload read-only attachments.
+7. Create a GitHub Release and upload read-only attachments — **the complete installation media, their `.sha256` files, `RELEASE-INFO` and `verification.json` only**. Signed `.cgupgrade` and legacy `.cgpatch` update packages **must not be uploaded** (see §3.1). Run `node tools/verify-public-release-assets.cjs` before uploading.
 8. Redownload the attachments from GitHub and perform a summary and installation smoke test again.
 
 After the release is completed, only new versions are allowed to fix issues.
