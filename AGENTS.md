@@ -48,6 +48,7 @@
 - [ ] 来源 RPM、目标 RPM、签名、现场信任公钥、回退载荷、SHA-256 和只读 inspect 校验一致。
 - [ ] 已说明现场版本是否核实、哪些场景未测试、是否部署；用户手动升级的请求不得擅自改成直接安装 RPM。
 - [ ] 不覆盖已交付版本；新修复用新的版本和补丁 ID。
+- [ ] 交付记录可追溯：`node tools/verify-release-records.cjs` 报 `status=passed`，即 `release/` 下每个 `RELEASE-INFO` 的 `commit=` 都能被标签或远端引用到达（`local-only` 表示只被本地分支指着，必须推送到远端）。发布说明的提交必须回到主仓库分支，不得只留在 `.build/` 的一次性构建克隆里。
 
 任何未完成项必须报告，不得为了交付把它改成通过。发布细则见 [恢复与升级发布验收清单](docs/zh-CN/release-recovery-acceptance-checklist.md)。
 

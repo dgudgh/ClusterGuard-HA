@@ -161,7 +161,7 @@ PostgreSQL 存储原生连接、事务、死锁、临时字节、块读取、块
 
 ## 平台认证
 
-一个新的元数据存储使用首次登录密码 `admin123`、角色 `admin` 和 `MustChangePassword=true` 引导 `admin`。在重启或 Leader 更改期间，现有用户永远不会被覆盖。在任何平台数据可读之前，必须进行首次密码更改。密码使用 Argon2id，会话仅在与其它控制元数据相同的复制快照中存储 SHA-256 令牌和 CSRF 哈希。
+一个新的元数据存储以角色 `admin` 和 `MustChangePassword=true` 引导 `admin`；首次登录口令在部署设置了 `bootstrap_admin_password_env` 时取自该变量，否则由 Leader 生成并写入与元数据同目录的 root 专属文件 `bootstrap-admin-password`（权限 0600）。在重启或 Leader 更改期间，现有用户永远不会被覆盖。在任何平台数据可读之前，必须进行首次密码更改。密码使用 Argon2id，会话仅在与其它控制元数据相同的复制快照中存储 SHA-256 令牌和 CSRF 哈希。
 
 浏览器接收一个不透明的 HttpOnly SameSite 会话 Cookie 和一个独立的 CSRF Cookie。变更请求必须在 `X-CSRF-Token` 中提交对应 Cookie 值。会话绝对有效期为八小时；修改密码或注销会立即撤销会话。`admin` 拥有完整访问权限，`operator` 可以执行受控数据库操作，`viewer` 仅可读取。
 

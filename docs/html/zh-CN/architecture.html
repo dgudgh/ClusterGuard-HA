@@ -229,7 +229,7 @@
 <p>Prometheus 端点使用稳定的 <code>cluster_id</code> 和 <code>instance_id</code> 标签，可以直接抓取。ClusterGuard HA 没有第三方监控运行时依赖。</p>
 <p>PostgreSQL 存储原生连接、事务、死锁、临时字节、块读取、块命中、数据库大小、复制客户端、缓存命中和可选最长事务样本，以及拓扑派生的复制延迟。Prometheus 系列使用 <code>clusterguard_postgresql_*</code> 命名空间，Zabbix 键使用 <code>clusterguard.postgresql.*</code>。未知延迟或可选事务年龄被省略而不是报告为零，PostgreSQL 数据永远不会标记为 MySQL。</p>
 <h2 id="平台认证">平台认证<a class="heading-anchor" href="#平台认证" aria-label="Link to 平台认证">#</a></h2>
-<p>一个新的元数据存储使用首次登录密码 <code>admin123</code>、角色 <code>admin</code> 和 <code>MustChangePassword=true</code> 引导 <code>admin</code>。在重启或 Leader 更改期间，现有用户永远不会被覆盖。在任何平台数据可读之前，必须进行首次密码更改。密码使用 Argon2id，会话仅在与其它控制元数据相同的复制快照中存储 SHA-256 令牌和 CSRF 哈希。</p>
+<p>一个新的元数据存储以角色 <code>admin</code> 和 <code>MustChangePassword=true</code> 引导 <code>admin</code>；首次登录口令在部署设置了 <code>bootstrap_admin_password_env</code> 时取自该变量，否则由 Leader 生成并写入与元数据同目录的 root 专属文件 <code>bootstrap-admin-password</code>（权限 0600）。在重启或 Leader 更改期间，现有用户永远不会被覆盖。在任何平台数据可读之前，必须进行首次密码更改。密码使用 Argon2id，会话仅在与其它控制元数据相同的复制快照中存储 SHA-256 令牌和 CSRF 哈希。</p>
 <p>浏览器接收一个不透明的 HttpOnly SameSite 会话 Cookie 和一个独立的 CSRF Cookie。变更请求必须在 <code>X-CSRF-Token</code> 中提交对应 Cookie 值。会话绝对有效期为八小时；修改密码或注销会立即撤销会话。<code>admin</code> 拥有完整访问权限，<code>operator</code> 可以执行受控数据库操作，<code>viewer</code> 仅可读取。</p>
 <p>浏览器从不接收审批密钥。对于登录操作，API 使用认证的参与者创建持久计划，内部发出一次性授权，并直接传递给未更改的审批消耗阶段。服务客户端保持独立：控制 Bearer 认证客户端，显式的一次性授权授权确切的数据库计划。</p>
 <p>没有在线忘记密码绕过。恢复需要停止控制平面变更操作并恢复受保护的元数据，其管理员凭证已知；<code>PlatformUser</code> 记录的实时删除或直接哈希编辑超出安全模型。</p>

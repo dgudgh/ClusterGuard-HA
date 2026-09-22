@@ -132,6 +132,13 @@ sessions while retaining hash-only, one-time operation grants:
 
 - a new metadata store bootstraps `admin` with the documented `admin123`
   first-login password and `MustChangePassword=true`;
+
+> **Superseded 2026-09-22:** the bullets below record what the 2026-07-16
+> update delivered, when the first-login password was the fixed `admin123`.
+> The platform now takes that password from `bootstrap_admin_password_env`
+> when the deployment sets it, and otherwise generates it into a root-only
+> `bootstrap-admin-password` file beside the metadata file. The rest of this
+> acceptance record is unchanged.
 - the first password change is mandatory before any database or administrative
   mutation is accepted;
 - passwords use Argon2id, browser sessions have an eight-hour absolute

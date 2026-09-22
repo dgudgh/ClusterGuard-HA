@@ -437,7 +437,7 @@ install -d -m 0700 /secure/clusterguard/mysql-ha-3306
 https://192.168.102.152:3000/
 ```
 
-初始账号为 `admin`，首次密码为 `admin123`。首次登录后必须立即修改密码；改密前控制台和 API 仅允许认证与改密，不能查看或操作集群数据。
+初始账号为 `admin`。首次密码在部署设置了 `bootstrap_admin_password_env` 时取自该变量，否则由控制面生成到 `/var/lib/clusterguard/bootstrap-admin-password`（权限 0600，与 `metadata.json` 同目录），在它出现的控制节点上读取。无论哪种来源，首次登录后都必须立即修改密码；改密前控制台和 API 仅允许认证与改密，不能查看或操作集群数据。
 
 ### 6.3 MySQL 8.4 部署
 
@@ -598,7 +598,7 @@ systemctl status clusterguard-ha.service --no-pager
 journalctl -u clusterguard-ha.service -n 200 --no-pager
 ```
 
-新建集群的初始账号为 `admin`，初始密码为 `admin123`；首次登录后必须立即更改密码。若已改过密码，应使用新密码，服务重启不会恢复默认密码。
+新建集群的初始账号为 `admin`，初始口令来源见 6.2 节；首次登录后必须立即更改密码。若已改过密码，应使用新密码，服务重启不会恢复初始口令，且平台会删除该引导口令文件。
 
 ### 12.6 VIP 未绑定或出现多个 Owner
 

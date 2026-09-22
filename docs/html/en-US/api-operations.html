@@ -261,10 +261,16 @@ command-line arguments, API payloads, or persisted metadata.</p>
 <h3 id="platform-login">Platform Login<a class="heading-anchor" href="#platform-login" aria-label="Link to Platform Login">#</a></h3>
 <p>On an empty metadata store, the Leader creates one bootstrap administrator:</p>
 <pre><code class="language-text">username: admin
-temporary password: admin123
+temporary password: see bootstrap-admin-password below
 role: admin
 MustChangePassword: true
 </code></pre>
+<p>Unless the deployment sets <code>bootstrap_admin_password_env</code>, the Leader generates
+that password and writes it to <code>/var/lib/clusterguard/bootstrap-admin-password</code>
+(mode 0600, beside <code>metadata.json</code>); read it on the control node where it
+appears. A deployment that sets the environment variable uses that value and no
+file is created. Either way the platform removes the artifact after the first
+password change.</p>
 <p>The first login succeeds only far enough to change the password. Every other
 platform API returns <code>password_change_required</code> until that first password change
 completes. The password is stored as an Argon2id hash in the replicated

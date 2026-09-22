@@ -122,7 +122,7 @@ path is unit-tested against 9.7.0 only; no 9.x site qualification is recorded);<
 <li>promotion-candidate assessment with GTID and replication safety checks;</li>
 <li>guarded three-node planned switchover with primary and VIP ownership coupled;</li>
 <li>former-primary rejoin and allowlisted replication repair;</li>
-<li>three observations across a three-second stable-failure window and optional automatic failover;</li>
+<li>four observations across a three-second stable-failure window and optional automatic failover;</li>
 <li>Raft-backed operation locks, endpoint leases, local self-isolation, and
 reboot-time VIP convergence through the restricted node agent;</li>
 <li>add/rebuild lifecycle tasks with fixed node-slot reuse, staged install,
@@ -173,7 +173,7 @@ the cluster has a complete HA endpoint inventory, an odd Raft controller set,
 current leader-backed majority authority, purpose-specific MySQL credentials,
 agent signing material, an operation lock, and approval. Missing or unknown
 evidence blocks the operation; it never produces a simulated success.</p>
-<p>Automatic failover is separately opt-in. It requires three current failure
+<p>Automatic failover is separately opt-in. It requires four current failure
 observations spanning at least three seconds, the rank-one eligible candidate, current
 controller quorum, old-primary isolation, and an exclusive VIP lease. MySQL can
 use short-lived Raft-majority Agent authorization: stale authorization expires,
@@ -189,12 +189,15 @@ as writer or VIP owner. PostgreSQL 16.4 laboratory qualification measured
 timeout; every production site must repeat that test with its own network,
 storage, database package, client timeout, and fencing policy.</p>
 <p>The browser console authenticates against platform users stored in the
-replicated metadata snapshot. A fresh installation creates <code>admin</code> with the
-documented first-login password <code>admin123</code> and <code>MustChangePassword=true</code>. The
-first password change is mandatory: until it succeeds, all cluster and metadata
-API reads and every mutation are blocked. The default is stored only as an
-Argon2id hash; it is never written to configuration, environment files, audit
-events, or reports. Sessions have an eight-hour absolute lifetime, use HttpOnly
+replicated metadata snapshot. A fresh installation creates <code>admin</code> with
+<code>MustChangePassword=true</code>. Unless the deployment sets
+<code>bootstrap_admin_password_env</code>, the Leader generates the first-login password
+and writes it to a root-only <code>bootstrap-admin-password</code> file (mode 0600) beside
+the metadata file; read it on the control node where it appears. The platform
+removes that file once the first password change succeeds. The first password
+change is mandatory: until it succeeds, all cluster and metadata API reads and
+every mutation are blocked. The password is stored only as an Argon2id hash; it
+is never written to configuration, environment files, audit events, or reports. Sessions have an eight-hour absolute lifetime, use HttpOnly
 SameSite cookies plus CSRF validation, and are revoked by password change or
 logout.</p>
 <p>For an authenticated administrator or operator, the server builds the exact
@@ -231,7 +234,9 @@ go run ./cmd/clusterguard --config configs/clusterguard.example.json
 <p>When started directly from the source configuration, the console and API are
 served from <code>http://127.0.0.1:8088/</code> by default. The supported RPM/offline
 deployment serves HTTPS on port <code>3000</code>. On a new metadata store, sign in as
-<code>admin</code> with <code>admin123</code>. The console immediately requires a new password and
+<code>admin</code> with the generated password from the root-only <code>bootstrap-admin-password</code>
+file (or with the password configured through <code>bootstrap_admin_password_env</code>).
+The console immediately requires a new password and
 does not load cluster data until that first password change succeeds.</p>
 <p>Service managers should use <code>/healthz</code> for liveness and <code>/readyz</code> for
 fail-closed control-plane readiness. Authenticated operators can use

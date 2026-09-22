@@ -425,7 +425,7 @@ export CG_SSH_PASSWORD
 <p>After installation is complete, the console address is:</p>
 <pre><code class="language-text">https://192.168.102.152:3000/
 </code></pre>
-<p>The initial account is <code>admin</code>, and the initial password is <code>admin123</code>. You must immediately change the password after the first login; before changing the password, the console and API only allow authentication and password change, and cannot view or operate cluster data.</p>
+<p>The initial account is <code>admin</code>. The initial password is the value of <code>bootstrap_admin_password_env</code> when the deployment sets it, and is otherwise generated into <code>/var/lib/clusterguard/bootstrap-admin-password</code> (mode 0600, beside <code>metadata.json</code>); read it on the control node where it appears. Either way you must immediately change the password after the first login; before changing the password, the console and API only allow authentication and password change, and cannot view or operate cluster data.</p>
 <h3 id="6-3-mysql-8-4-deployment">6.3 MySQL 8.4 Deployment<a class="heading-anchor" href="#6-3-mysql-8-4-deployment" aria-label="Link to 6.3 MySQL 8.4 Deployment">#</a></h3>
 <p>Replace the two items in the above command with actual values. If <code>/opt</code> has multiple MySQL 8.4 packages, explicitly add <code>-r /opt/EXACT_FILENAME</code>:</p>
 <pre><code class="language-text">--database-version 8.4.10
@@ -530,7 +530,7 @@ readlink /tmp/mysql.sock
 <pre><code class="language-bash">systemctl status clusterguard-ha.service --no-pager
 journalctl -u clusterguard-ha.service -n 200 --no-pager
 </code></pre>
-<p>A new cluster starts with account <code>admin</code> and password <code>admin123</code>. The password must be changed immediately after the first login. After it has been changed, use the new password; restarting the service does not restore the default password.</p>
+<p>A new cluster starts with account <code>admin</code> and the initial password described in section 6.2. The password must be changed immediately after the first login. After it has been changed, use the new password; restarting the service does not restore the initial password, and the platform removes the bootstrap file.</p>
 <h3 id="12-6-vip-not-bound-or-multiple-owners">12.6 VIP Not Bound or Multiple Owners<a class="heading-anchor" href="#12-6-vip-not-bound-or-multiple-owners" aria-label="Link to 12.6 VIP Not Bound or Multiple Owners">#</a></h3>
 <p>First, stop any external VIP management tools, then check the control node majority, current primary database role, Agent service, network card name, and CIDR. VIP is only allowed to be managed by ClusterGuard Agent; high-risk operations must be rejected when there is no quorum.</p>
 <h2 id="13-uninstallation-and-rollback">13. Uninstallation and Rollback<a class="heading-anchor" href="#13-uninstallation-and-rollback" aria-label="Link to 13. Uninstallation and Rollback">#</a></h2>

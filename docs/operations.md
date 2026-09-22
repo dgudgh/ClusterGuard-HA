@@ -104,10 +104,17 @@ On an empty metadata store, the Leader creates one bootstrap administrator:
 
 ```text
 username: admin
-temporary password: admin123
+temporary password: see bootstrap-admin-password below
 role: admin
 MustChangePassword: true
 ```
+
+Unless the deployment sets `bootstrap_admin_password_env`, the Leader generates
+that password and writes it to `/var/lib/clusterguard/bootstrap-admin-password`
+(mode 0600, beside `metadata.json`); read it on the control node where it
+appears. A deployment that sets the environment variable uses that value and no
+file is created. Either way the platform removes the artifact after the first
+password change.
 
 The first login succeeds only far enough to change the password. Every other
 platform API returns `password_change_required` until that first password change

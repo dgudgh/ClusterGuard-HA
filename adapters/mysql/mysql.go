@@ -81,14 +81,20 @@ func (adapterInstance *Adapter) Capabilities(ctx context.Context) adapter.Capabi
 		executionReason = "guarded switchover, former-primary rejoin, and replication repair are implemented"
 	}
 	return adapter.Capabilities{Engine: model.EngineMySQL, Features: map[adapter.Capability]adapter.CapabilityState{
-		adapter.CapabilityDiscover:          {Available: true, Reason: "read-only discovery is implemented"},
-		adapter.CapabilityTopology:          {Available: true, Reason: "read-only native replication topology is implemented"},
-		adapter.CapabilityHealth:            {Available: true, Reason: "read-only health is implemented"},
-		adapter.CapabilityPrecheck:          {Available: true, Reason: "guarded planned-switchover precheck is implemented"},
-		adapter.CapabilityPlan:              {Available: true, Reason: "guarded planned-switchover planning is implemented"},
-		adapter.CapabilityExecute:           {Available: executionAvailable, Mutating: true, Reason: executionReason},
-		adapter.CapabilityVerify:            {Available: executionAvailable, Reason: executionReason},
-		adapter.CapabilityNodeSync:          {Available: false, Mutating: true, Reason: "node synchronization is not implemented"},
+		adapter.CapabilityDiscover: {Available: true, Reason: "read-only discovery is implemented"},
+		adapter.CapabilityTopology: {Available: true, Reason: "read-only native replication topology is implemented"},
+		adapter.CapabilityHealth:   {Available: true, Reason: "read-only health is implemented"},
+		adapter.CapabilityPrecheck: {Available: true, Reason: "guarded planned-switchover precheck is implemented"},
+		adapter.CapabilityPlan:     {Available: true, Reason: "guarded planned-switchover planning is implemented"},
+		adapter.CapabilityExecute:  {Available: executionAvailable, Mutating: true, Reason: executionReason},
+		adapter.CapabilityVerify:   {Available: executionAvailable, Reason: executionReason},
+		// This adapter deliberately does not implement the node-sync interface: the
+		// methods below return ErrUnsupported and MySQL node synchronization is
+		// executed by the platform task engine instead. The reason states that
+		// distinction because the console renders this map as an operator-facing
+		// capability list, where "not implemented" used to read as "MySQL cannot
+		// rebuild a node at all".
+		adapter.CapabilityNodeSync:          {Available: false, Mutating: true, Reason: "the adapter node-sync interface is not implemented; MySQL node lifecycle is executed by the platform task engine"},
 		adapter.CapabilityMetadataReconcile: {Available: true, Reason: "metadata reconciliation is implemented by the platform repository"},
 		adapter.CapabilityMetrics:           {Available: true, Reason: "read-only performance metrics are implemented"},
 		adapter.CapabilityCandidates:        {Available: true, Reason: "read-only promotion candidate evaluation is implemented"},

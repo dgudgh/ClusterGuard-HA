@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -293,6 +294,7 @@ func runAuthenticationBootstrap(
 	repository *store.Repository,
 	service *platformauth.Service,
 	authority coordination.MutationAuthority,
+	bootstrapPasswordFile string,
 	bootstrapPassword func() (string, error),
 	onError func(error),
 ) {
@@ -306,7 +308,7 @@ func runAuthenticationBootstrap(
 			// committing the user. Once the first password change completes, every
 			// controller removes any such root-only stale artifact on its next pass.
 			if !administrator.MustChangePassword {
-				_ = platformauth.RemoveBootstrapPassword(platformauth.DefaultBootstrapPasswordFile)
+				_ = platformauth.RemoveBootstrapPassword(bootstrapPasswordFile)
 			}
 			return
 		}
@@ -340,7 +342,21 @@ func bootstrapAdministratorPassword(configuration config.File) (string, error) {
 	if password := strings.TrimSpace(configuration.BootstrapAdminPassword); password != "" {
 		return password, nil
 	}
-	return platformauth.DefaultBootstrapPassword, nil
+	return platformauth.ReadOrCreateBootstrapPassword(bootstrapPasswordPath(configuration), nil)
+}
+
+// bootstrapPasswordPath returns the root-only file that holds the generated
+// initial administrator credential. It sits beside the metadata it protects so
+// that each installation keeps its own credential instead of sharing one
+// published default. An explicitly configured password takes precedence and
+// needs no artifact; when no metadata path is configured the platform default
+// location is used.
+func bootstrapPasswordPath(configuration config.File) string {
+	metadataPath := strings.TrimSpace(configuration.MetadataPath)
+	if metadataPath == "" {
+		return platformauth.DefaultBootstrapPasswordFile
+	}
+	return filepath.Join(filepath.Dir(metadataPath), filepath.Base(platformauth.DefaultBootstrapPasswordFile))
 }
 
 func authenticationRecoveryApplied(repository *store.Repository, recoveryID model.ResourceID) bool {
@@ -650,7 +666,7 @@ func New(configuration config.File) (*Runtime, error) {
 		}
 	} else {
 		result.startLoop(func(ctx context.Context) {
-			runAuthenticationBootstrap(ctx, repository, result.authentication, result.consensus, func() (string, error) {
+			runAuthenticationBootstrap(ctx, repository, result.authentication, result.consensus, bootstrapPasswordPath(configuration), func() (string, error) {
 				return bootstrapAdministratorPassword(configuration)
 			}, func(err error) {
 				log.Printf("administrator bootstrap failed: %v", err)

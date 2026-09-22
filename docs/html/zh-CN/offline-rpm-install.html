@@ -402,7 +402,7 @@ export CG_SSH_PASSWORD
 <p>安装完成后，控制台地址为：</p>
 <pre><code class="language-text">https://192.168.102.152:3000/
 </code></pre>
-<p>初始账号为 <code>admin</code>，首次密码为 <code>admin123</code>。首次登录后必须立即修改密码；改密前控制台和 API 仅允许认证与改密，不能查看或操作集群数据。</p>
+<p>初始账号为 <code>admin</code>。首次密码在部署设置了 <code>bootstrap_admin_password_env</code> 时取自该变量，否则由控制面生成到 <code>/var/lib/clusterguard/bootstrap-admin-password</code>（权限 0600，与 <code>metadata.json</code> 同目录），在它出现的控制节点上读取。无论哪种来源，首次登录后都必须立即修改密码；改密前控制台和 API 仅允许认证与改密，不能查看或操作集群数据。</p>
 <h3 id="6-3-mysql-8-4-部署">6.3 MySQL 8.4 部署<a class="heading-anchor" href="#6-3-mysql-8-4-部署" aria-label="Link to 6.3 MySQL 8.4 部署">#</a></h3>
 <p>将以上命令的两项替换为实际值即可。若 <code>/opt</code> 同时有多个 MySQL 8.4 包，可显式增加 <code>-r /opt/EXACT_FILENAME</code>：</p>
 <pre><code class="language-text">--database-version 8.4.10
@@ -507,7 +507,7 @@ readlink /tmp/mysql.sock
 <pre><code class="language-bash">systemctl status clusterguard-ha.service --no-pager
 journalctl -u clusterguard-ha.service -n 200 --no-pager
 </code></pre>
-<p>新建集群的初始账号为 <code>admin</code>，初始密码为 <code>admin123</code>；首次登录后必须立即更改密码。若已改过密码，应使用新密码，服务重启不会恢复默认密码。</p>
+<p>新建集群的初始账号为 <code>admin</code>，初始口令来源见 6.2 节；首次登录后必须立即更改密码。若已改过密码，应使用新密码，服务重启不会恢复初始口令，且平台会删除该引导口令文件。</p>
 <h3 id="12-6-vip-未绑定或出现多个-owner">12.6 VIP 未绑定或出现多个 Owner<a class="heading-anchor" href="#12-6-vip-未绑定或出现多个-owner" aria-label="Link to 12.6 VIP 未绑定或出现多个 Owner">#</a></h3>
 <p>先停止任何外部 VIP 管理工具，再检查控制节点多数、当前主库角色、Agent 服务、网卡名和 CIDR。VIP 只允许 ClusterGuard Agent 管理；没有 quorum 时高风险操作必须被拒绝。</p>
 <h2 id="13-卸载与回滚">13. 卸载与回滚<a class="heading-anchor" href="#13-卸载与回滚" aria-label="Link to 13. 卸载与回滚">#</a></h2>

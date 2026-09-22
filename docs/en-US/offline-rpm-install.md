@@ -436,7 +436,7 @@ After installation is complete, the console address is:
 https://192.168.102.152:3000/
 ```
 
-The initial account is `admin`, and the initial password is `admin123`. You must immediately change the password after the first login; before changing the password, the console and API only allow authentication and password change, and cannot view or operate cluster data.
+The initial account is `admin`. The initial password is the value of `bootstrap_admin_password_env` when the deployment sets it, and is otherwise generated into `/var/lib/clusterguard/bootstrap-admin-password` (mode 0600, beside `metadata.json`); read it on the control node where it appears. Either way you must immediately change the password after the first login; before changing the password, the console and API only allow authentication and password change, and cannot view or operate cluster data.
 
 ### 6.3 MySQL 8.4 Deployment
 
@@ -597,7 +597,7 @@ systemctl status clusterguard-ha.service --no-pager
 journalctl -u clusterguard-ha.service -n 200 --no-pager
 ```
 
-A new cluster starts with account `admin` and password `admin123`. The password must be changed immediately after the first login. After it has been changed, use the new password; restarting the service does not restore the default password.
+A new cluster starts with account `admin` and the initial password described in section 6.2. The password must be changed immediately after the first login. After it has been changed, use the new password; restarting the service does not restore the initial password, and the platform removes the bootstrap file.
 
 ### 12.6 VIP Not Bound or Multiple Owners
 

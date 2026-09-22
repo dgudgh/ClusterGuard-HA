@@ -27,8 +27,13 @@ Temporary account for new metadata storage:
 
 ```text
 Username: admin
-Initial password: admin123
+Initial password: from bootstrap-admin-password (mode 0600)
 ```
+
+The Leader generates that password into `/var/lib/clusterguard/bootstrap-admin-password`
+beside the metadata file unless the deployment sets `bootstrap_admin_password_env`,
+in which case that value is the initial password and no file is created. Read the
+file on the control node where it appears.
 
 Password must be changed on first login; before changing the password, all cluster, topology, audit read, and change operations except authentication interfaces are rejected. The default password is only stored as an Argon2id hash and is not written into configuration, environment files, audit, or reports. Operations initiated within the platform use authenticated sessions, CSRF, and role authorization; users do not need to manually input control tokens or one-time approval tokens. External APIs use Bearer control tokens; high-risk service calls still require a one-time Approval bound to the operation.
 

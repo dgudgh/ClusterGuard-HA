@@ -40,13 +40,56 @@ func (roundTrip runtimeRoundTripperFunc) RoundTrip(request *http.Request) (*http
 	return roundTrip(request)
 }
 
-func TestBootstrapAdministratorPasswordUsesDocumentedDefaultWithoutArtifact(t *testing.T) {
-	password, err := bootstrapAdministratorPassword(config.File{})
+func TestBootstrapAdministratorPasswordGeneratesRootOnlyArtifact(t *testing.T) {
+	configuration := config.File{MetadataPath: filepath.Join(t.TempDir(), "metadata.json")}
+	password, err := bootstrapAdministratorPassword(configuration)
 	if err != nil {
-		t.Fatalf("resolve default bootstrap password: %v", err)
+		t.Fatalf("resolve generated bootstrap password: %v", err)
 	}
-	if password != platformauth.DefaultBootstrapPassword {
-		t.Fatalf("default bootstrap password=%q want %q", password, platformauth.DefaultBootstrapPassword)
+	if password == platformauth.DefaultBootstrapPassword {
+		t.Fatalf("a fresh installation must not share the documented default administrator password")
+	}
+	if err := platformauth.ValidateNewPassword(password); err != nil {
+		t.Fatalf("generated bootstrap password fails the password policy: %v", err)
+	}
+	artifactPath := bootstrapPasswordPath(configuration)
+	info, err := os.Stat(artifactPath)
+	if err != nil {
+		t.Fatalf("stat bootstrap password artifact: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("bootstrap password artifact mode=%v want 0600", info.Mode().Perm())
+	}
+	contents, err := os.ReadFile(artifactPath)
+	if err != nil {
+		t.Fatalf("read bootstrap password artifact: %v", err)
+	}
+	if strings.TrimSpace(string(contents)) != password {
+		t.Fatalf("bootstrap password artifact does not hold the generated password")
+	}
+	reused, err := bootstrapAdministratorPassword(configuration)
+	if err != nil {
+		t.Fatalf("re-resolve bootstrap password: %v", err)
+	}
+	if reused != password {
+		t.Fatalf("an existing bootstrap password artifact must be reused")
+	}
+}
+
+func TestBootstrapAdministratorPasswordPrefersConfiguredValue(t *testing.T) {
+	configuration := config.File{
+		MetadataPath:           filepath.Join(t.TempDir(), "metadata.json"),
+		BootstrapAdminPassword: runtimeBootstrapPassword,
+	}
+	password, err := bootstrapAdministratorPassword(configuration)
+	if err != nil {
+		t.Fatalf("resolve configured bootstrap password: %v", err)
+	}
+	if password != runtimeBootstrapPassword {
+		t.Fatalf("configured bootstrap password=%q want %q", password, runtimeBootstrapPassword)
+	}
+	if _, err := os.Stat(bootstrapPasswordPath(configuration)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("an explicitly configured password must not create an artifact: %v", err)
 	}
 }
 
@@ -71,7 +114,7 @@ func TestAuthenticationBootstrapReportsLeaderCommitFailures(t *testing.T) {
 	reported := make(chan error, 1)
 	done := make(chan struct{})
 	go func() {
-		runAuthenticationBootstrap(ctx, repository, service, nil, func() (string, error) {
+		runAuthenticationBootstrap(ctx, repository, service, nil, "", func() (string, error) {
 			return runtimeBootstrapPassword, nil
 		}, func(err error) {
 			select {

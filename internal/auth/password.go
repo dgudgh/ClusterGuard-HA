@@ -15,9 +15,12 @@ import (
 
 const (
 	DefaultAdminUsername = "admin"
-	// DefaultBootstrapPassword is intentionally short-lived: a newly created
-	// administrator is forced to replace it before any platform data can be read
-	// or changed. It is never persisted as plaintext.
+	// DefaultBootstrapPassword is the documented first-login password. A
+	// deployment that configures bootstrap_admin_password_env explicitly still
+	// gets it; a deployment that does not now receives a generated credential in
+	// a root-only file beside the metadata instead. It is never persisted as
+	// plaintext, and the first login must replace it before any platform data can
+	// be read or changed.
 	DefaultBootstrapPassword = "admin123"
 
 	maximumPasswordLength = 1024

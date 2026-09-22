@@ -249,10 +249,14 @@ go run ./cmd/clusterguard --config configs/clusterguard.example.json
 <h3 id="平台登录">平台登录<a class="heading-anchor" href="#平台登录" aria-label="Link to 平台登录">#</a></h3>
 <p>在空的元数据存储中，Leader 创建一个引导管理员：</p>
 <pre><code class="language-text">username: admin
-temporary password: admin123
+temporary password: 见下方 bootstrap-admin-password
 role: admin
 MustChangePassword: true
 </code></pre>
+<p>若部署未设置 <code>bootstrap_admin_password_env</code>，该口令由 Leader 生成并写入
+<code>/var/lib/clusterguard/bootstrap-admin-password</code>（权限 0600，与 <code>metadata.json</code> 同目录），
+在它出现的控制节点上读取。设置了该环境变量的部署使用变量值，不生成文件。两种情况下
+平台都会在首次改密成功后删除该文件。</p>
 <p>首次登录只能进行到更改密码的步骤。在首次密码更改完成之前，所有其他平台 API 都返回 <code>password_change_required</code>。密码以 Argon2id 哈希形式存储在复制的元数据快照中；明文永远不会写入配置、环境文件、审计事件或报告中。</p>
 <p>浏览器会话具有八小时的绝对生命周期。会话密钥保存在 HttpOnly SameSite Cookie 中，变更操作请求需要匹配的 <code>clusterguard_csrf</code> Cookie 和 <code>X-CSRF-Token</code> 头部，密码更改或注销会撤销会话。角色如下：</p>
 <table>

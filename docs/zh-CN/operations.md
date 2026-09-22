@@ -91,10 +91,15 @@ go run ./cmd/clusterguard --config configs/clusterguard.example.json
 
 ```text
 username: admin
-temporary password: admin123
+temporary password: 见下方 bootstrap-admin-password
 role: admin
 MustChangePassword: true
 ```
+
+若部署未设置 `bootstrap_admin_password_env`，该口令由 Leader 生成并写入
+`/var/lib/clusterguard/bootstrap-admin-password`（权限 0600，与 `metadata.json` 同目录），
+在它出现的控制节点上读取。设置了该环境变量的部署使用变量值，不生成文件。两种情况下
+平台都会在首次改密成功后删除该文件。
 
 首次登录只能进行到更改密码的步骤。在首次密码更改完成之前，所有其他平台 API 都返回 `password_change_required`。密码以 Argon2id 哈希形式存储在复制的元数据快照中；明文永远不会写入配置、环境文件、审计事件或报告中。
 

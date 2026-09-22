@@ -29,8 +29,12 @@ https://<任一控制节点>:3000/
 
 ```text
 用户名：admin
-首次密码：admin123
+首次密码：取自 bootstrap-admin-password（权限 0600）
 ```
+
+若部署未设置 `bootstrap_admin_password_env`，该口令由 Leader 生成，写入与元数据同目录的
+`/var/lib/clusterguard/bootstrap-admin-password`；设置了该变量的部署则使用变量值，不生成文件。
+在口令文件出现的控制节点上读取它。
 
 首次登录必须修改密码；改密前，除认证接口外的集群、拓扑、审计读取和所有变更都会被拒绝。默认密码只以 Argon2id 哈希保存，不会写入配置、环境文件、审计或报告。平台内发起的操作使用已认证会话、CSRF 和角色授权，用户不需要手工输入控制令牌或一次性审批令牌。外部 API 使用 Bearer control token；高风险服务调用仍需要与操作绑定的一次性 Approval。
 

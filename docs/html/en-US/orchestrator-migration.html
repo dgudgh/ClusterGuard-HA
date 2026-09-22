@@ -276,7 +276,7 @@ systemctl disable &lt;OLD_VIP_TIMER_OR_SERVICE&gt;
 <li>three or more odd-numbered controllers form a stable Raft majority;</li>
 <li>Agent runs on every data node and enforces local read-only isolation after authority expires;</li>
 <li>current primary, candidate, and VIP owner are correct;</li>
-<li>the default three-observation, three-second stable-failure evidence window and the separate 15-second Agent isolation fence have been tested on site;</li>
+<li>the default four-observation, three-second stable-failure evidence window and the separate 15-second Agent isolation fence have been tested on site;</li>
 <li>application writer-endpoint RTO has been measured with bounded client connection timeouts and retries;</li>
 <li>network partitions, Agent loss, and controller quorum loss fail closed;</li>
 <li>a recovered old primary can only enter the former-primary recovery workflow;</li>
