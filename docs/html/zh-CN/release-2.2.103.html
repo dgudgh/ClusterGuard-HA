@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="2.2.103 发布说明 - ClusterGuard HA operational documentation">
+  <title>2.2.103 发布说明 | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">跳到正文</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>搜索文档</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="输入标题关键词">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>开始使用</h2><a href="index.html" data-doc-title="clusterguard ha 中文文档">ClusterGuard HA 中文文档</a><a href="product-overview.html" data-doc-title="产品概览">产品概览</a><a href="product-tour.html" data-doc-title="控制台产品导览">控制台产品导览</a><a href="architecture.html" data-doc-title="系统架构">系统架构</a><a href="release-2.2.103.html" data-doc-title="2.2.103 发布说明" aria-current="page" class="active">2.2.103 发布说明</a><a href="release-2.2.102.html" data-doc-title="2.2.102 发布说明">2.2.102 发布说明</a><a href="release-2.2.101.html" data-doc-title="2.2.101 发布说明">2.2.101 发布说明</a><a href="release-2.2.100.html" data-doc-title="2.2.100 发布说明">2.2.100 发布说明</a><a href="release-2.2.99.html" data-doc-title="2.2.99 发布说明">2.2.99 发布说明</a><a href="release-2.2.98.html" data-doc-title="2.2.98 发布说明">2.2.98 发布说明</a><a href="release-2.2.97.html" data-doc-title="2.2.97 发布说明">2.2.97 发布说明</a><a href="release-2.2.96.html" data-doc-title="2.2.96 发布说明">2.2.96 发布说明</a><a href="release-2.2.95.html" data-doc-title="2.2.95 发布说明">2.2.95 发布说明</a><a href="release-2.2.94.html" data-doc-title="2.2.94 发布说明">2.2.94 发布说明</a><a href="release-2.2.93.html" data-doc-title="2.2.93 发布说明">2.2.93 发布说明</a><a href="release-2.2.92.html" data-doc-title="2.2.92 发布说明">2.2.92 发布说明</a><a href="release-2.2.91.html" data-doc-title="2.2.91 发布说明">2.2.91 发布说明</a><a href="release-2.2.90.html" data-doc-title="2.2.90 发布说明">2.2.90 发布说明</a><a href="release-2.2.89.html" data-doc-title="2.2.89 发布说明">2.2.89 发布说明</a><a href="release-2.2.88.html" data-doc-title="2.2.88 发布说明">2.2.88 发布说明</a><a href="release-2.2.86.html" data-doc-title="2.2.86 发布说明">2.2.86 发布说明</a><a href="release-2.2.73.html" data-doc-title="2.2.73 发布说明">2.2.73 发布说明</a><a href="release-2.2.72.html" data-doc-title="2.2.72 发布说明">2.2.72 发布说明</a><a href="release-2.2.71.html" data-doc-title="2.2.71 发布说明">2.2.71 发布说明</a><a href="release-2.2.70.html" data-doc-title="2.2.70 发布说明">2.2.70 发布说明</a><a href="release-2.2.69.html" data-doc-title="2.2.69 发布说明">2.2.69 发布说明</a><a href="release-2.2.47.html" data-doc-title="2.2.47 发布说明">2.2.47 发布说明</a><a href="release-2.2.46.html" data-doc-title="2.2.46 发布说明">2.2.46 发布说明</a><a href="release-2.2.45.html" data-doc-title="2.2.45 发布说明">2.2.45 发布说明</a><a href="release-2.2.44.html" data-doc-title="2.2.44 发布说明">2.2.44 发布说明</a><a href="release-2.2.43.html" data-doc-title="2.2.43 发布说明">2.2.43 发布说明</a><a href="release-2.2.42.html" data-doc-title="2.2.42 发布说明">2.2.42 发布说明</a><a href="release-2.2.41.html" data-doc-title="2.2.41 发布说明">2.2.41 发布说明</a><a href="release-2.2.40.html" data-doc-title="2.2.40 发布说明">2.2.40 发布说明</a><a href="release-2.2.39.html" data-doc-title="2.2.39 发布说明">2.2.39 发布说明</a><a href="release-2.1.45.html" data-doc-title="2.1.45 发布说明">2.1.45 发布说明</a></section><section><h2>部署与迁移</h2><a href="offline-rpm-install.html" data-doc-title="离线 rpm 安装">离线 RPM 安装</a><a href="database-preparation.html" data-doc-title="数据库接入">数据库接入</a><a href="orchestrator-migration.html" data-doc-title="从 orchestrator 迁移">从 Orchestrator 迁移</a></section><section><h2>日常运维</h2><a href="operations-manual.html" data-doc-title="运维操作手册">运维操作手册</a><a href="api-operations.html" data-doc-title="api 运维参考">API 运维参考</a><a href="postgresql-ha.html" data-doc-title="postgresql 高可用">PostgreSQL 高可用</a><a href="docker-swarm-mysql.html" data-doc-title="docker swarm mysql">Docker Swarm MySQL</a><a href="kubernetes-mysql.html" data-doc-title="kubernetes mysql">Kubernetes MySQL</a><a href="update-and-patch.html" data-doc-title="版本升级与回退">版本升级与回退</a><a href="version-release-policy.html" data-doc-title="版本与发版规范">版本与发版规范</a></section><section><h2>验收证据</h2><a href="proven-mysql-ha-methods.html" data-doc-title="mysql 已验证方法">MySQL 已验证方法</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql 功能验收">MySQL 功能验收</a><a href="mysql-former-primary-recovery.html" data-doc-title="旧主恢复专项验收">旧主恢复专项验收</a><a href="mysql-production-qualification.html" data-doc-title="mysql 生产验收">MySQL 生产验收</a><a href="postgresql-production-qualification.html" data-doc-title="postgresql 16.4 生产验收">PostgreSQL 16.4 生产验收</a><a href="docker-swarm-mysql-validation.html" data-doc-title="docker swarm mysql 实机验证">Docker Swarm MySQL 实机验证</a><a href="production-chaos-test.html" data-doc-title="生产故障测试报告">生产故障测试报告</a><a href="power-lifecycle-test.html" data-doc-title="计划关机测试报告">计划关机测试报告</a><a href="release-recovery-acceptance-checklist.html" data-doc-title="恢复与升级发布验收清单">恢复与升级发布验收清单</a></section></nav>
+      <div class="sidebar-meta">
+        <span>离线文档构建</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">打开目录</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>2.2.103 发布说明</strong></div>
+        <div class="header-actions">
+          <a href="../en-US/index.html" lang="en-US">English</a>
+          <button id="print-button" type="button">打印</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha-2-2-103-完整安装介质">ClusterGuard HA 2.2-103 完整安装介质<a class="heading-anchor" href="#clusterguard-ha-2-2-103-完整安装介质" aria-label="Link to ClusterGuard HA 2.2-103 完整安装介质">#</a></h1>
+<p>本版是<strong>新装用全量离线安装介质</strong>，不是控制台可上传的 <code>.cgupgrade</code> 升级补丁。</p>
+<p>2.2-103 取代 2.2-102 候选包。取代的原因不是新增功能，而是<strong>2.2-102 的包内文档快照
+取早于本轮全部修正</strong>：那份介质里的《离线安装与部署手册》《版本升级与回退手册》
+《运维操作手册》和《Docker-Swarm-MySQL》仍带着后经查实的错误。已修好的源码文档与
+已发出去的包内文档不能是两套，所以带修正重新出包。</p>
+<p>本版<strong>含一处新装行为变更</strong>（首次管理员口令），不只是文档更新。装维流程需要相应调整，
+详见下文「本版的安全行为变更」。</p>
+<h2 id="相对-2-2-102-的变更">相对 2.2-102 的变更<a class="heading-anchor" href="#相对-2-2-102-的变更" aria-label="Link to 相对 2.2-102 的变更">#</a></h2>
+<p>2.2-102 的代码基线是 <code>7b36461</code>（包内 <code>RELEASE-INFO</code> 记录打包时 HEAD <code>2b9a449</code>，该提交
+只新增发布说明与索引、不含代码改动，两者代码等价）。本版基线为 <code>eb741ee</code>。</p>
+<table>
+<thead>
+<tr>
+<th>提交</th>
+<th>类型</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>eb741ee</code></td>
+<td>测试</td>
+<td>文档契约测试 <code>TestAuthenticationDeliveryDocumentationCoversBootstrapAndRecovery</code> 的断言，由字面量 <code>admin123</code> 改为引导机制 <code>bootstrap_admin_password_env</code> / <code>bootstrap-admin-password</code>。该测试原先钉住的正是本版改掉的旧行为；测试意图（装维仅凭随包文档即可引导并恢复管理员账号）不变，且仍是真实内容检查——四个文件任一丢掉机制说明即失败。</td>
+</tr>
+<tr>
+<td><code>772fbfb</code></td>
+<td><strong>安全修复</strong></td>
+<td>新装首次管理员口令不再回退到公开字面量 <code>admin123</code>。未设置 <code>bootstrap_admin_password_env</code> 的部署，改由控制面自身的生成器生成随机口令，写入 <code>metadata.json</code> 同目录的 root-only 0600 文件 <code>bootstrap-admin-password</code>。</td>
+</tr>
+<tr>
+<td><code>772fbfb</code></td>
+<td>修正</td>
+<td>派生路径与清理路径统一由 <code>metadata_path</code> 推出，创建与清理由此不可能再指向不同文件；此前清理的是一个运行时从未创建的固定路径。</td>
+</tr>
+<tr>
+<td><code>772fbfb</code></td>
+<td>修正</td>
+<td>MySQL 适配器 <code>CapabilityNodeSync</code> 的 <code>reason</code> 由「node synchronization is not implemented」改为说明「适配器 node-sync 接口未实现，MySQL 节点生命周期由平台任务引擎执行」。控制台把该映射当作能力清单渲染，旧措辞会被读成「MySQL 根本不能重建节点」。能力开关本身正确，未改动。</td>
+</tr>
+<tr>
+<td><code>772fbfb</code></td>
+<td>工具</td>
+<td>新增 <code>tools/verify-release-records.cjs</code>：逐条校验 <code>release/*/RELEASE-INFO</code> 的提交是否在本仓库、是否被标签或远端引用到达、该提交内是否含本版发布说明。</td>
+</tr>
+<tr>
+<td><code>772fbfb</code></td>
+<td>流程</td>
+<td><code>AGENTS.md</code> 打包前阻断清单新增「交付记录可追溯」一项。</td>
+</tr>
+<tr>
+<td><code>772fbfb</code></td>
+<td>文档</td>
+<td>证据窗口「三次观测」的<strong>第二轮</strong>遗漏点：两个根 README 与英文迁移手册仍有旧值，本版修正。</td>
+</tr>
+<tr>
+<td><code>ef4d72b</code></td>
+<td>文档</td>
+<td>第三轮（72 文件）：按各文档自身证据表改正数值类缺陷；补齐英文侧对齐（<code>kubernetes-mysql</code> 89→157 行、<code>docker-swarm-mysql</code> 67→116 行）。</td>
+</tr>
+<tr>
+<td><code>cb10460</code></td>
+<td>文档</td>
+<td>第二轮（87 文件）：改正安全证据窗口参数；文档中心改为从文件系统发现发布说明，65→86 页；非策展文档链接解析为真实源文件，不再产出悬空 <code>.md</code>。</td>
+</tr>
+<tr>
+<td><code>9c314ca</code></td>
+<td>文档</td>
+<td>残留的英文 <code>three observations</code>。</td>
+</tr>
+<tr>
+<td><code>3a39c4d</code></td>
+<td>文档</td>
+<td>第一轮（51 文件）：2.2 生产文档集与实现对齐，含多处「照做会失败」的命令、路径与参数错误。</td>
+</tr>
+<tr>
+<td><code>562c537</code></td>
+<td>记录</td>
+<td>把 2.2-102 的交付记录并回文档分支（该提交此前只活在一次性的构建克隆里）。</td>
+</tr>
+</tbody></table>
+<p>另恢复 <code>docs/assets/wechat-covers/</code> 下 11 张封面图 —— 它们在本轮工作之前就已从工作区
+缺失，一直是 Markdown 链接门禁里那 11 个断链的来源。</p>
+<h3 id="本版修正的-且存在于-2-2-102-包内文档中的错误">本版修正的、且存在于 2.2-102 包内文档中的错误<a class="heading-anchor" href="#本版修正的-且存在于-2-2-102-包内文档中的错误" aria-label="Link to 本版修正的、且存在于 2.2-102 包内文档中的错误">#</a></h3>
+<table>
+<thead>
+<tr>
+<th>项</th>
+<th>2.2-102 包内文档（错）</th>
+<th>2.2-103（正）</th>
+<th>依据</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>自动故障切换证据窗口</td>
+<td>《离线安装与部署手册》「连续 <strong>3</strong> 次得到当前主库失败观测」</td>
+<td>「连续 <strong>4</strong> 次……时间跨度不少于 3 秒」</td>
+<td><code>internal/runtime/runtime.go</code> 的四次观测注释、<code>runtime_test.go</code> 的「少于四次必须拒绝」用例、<code>coordination/failure_window.go</code> 首个观测只作种子不计入 checks</td>
+</tr>
+<tr>
+<td>版本查询命令</td>
+<td>《版本升级与回退手册》<code>cgctl version --json</code></td>
+<td><code>cgctl --json version</code></td>
+<td><code>cgctl</code> 的全局标志必须在子命令之前</td>
+</tr>
+<tr>
+<td>VIP 迁移计时</td>
+<td>《Docker-Swarm-MySQL》「VIP 在 30 秒内迁移」</td>
+<td>「实验室实测端到端约 21 秒、其中工作流执行及验证约 12.2 秒；30 秒是目标值，非产品承诺时限」</td>
+<td>该文档自身引用的 2026-09-11 实验室记录</td>
+</tr>
+<tr>
+<td>首次管理员口令</td>
+<td>《运维操作手册》「首次密码：admin123」；《离线安装与部署手册》两处</td>
+<td>部署设置 <code>bootstrap_admin_password_env</code> 时取该变量，否则读取控制节点上 root-only 0600 的 <code>bootstrap-admin-password</code></td>
+<td><code>internal/auth/recovery.go</code>、<code>internal/runtime/runtime.go</code></td>
+</tr>
+</tbody></table>
+<p>《Docker-Swarm-MySQL》与两处《生产验收报告》里其余的「30 秒」是被阻断操作的重试退避
+语义，经核对正确，未改动。</p>
+<h2 id="本版的安全行为变更-装维需注意">本版的安全行为变更（装维需注意）<a class="heading-anchor" href="#本版的安全行为变更-装维需注意" aria-label="Link to 本版的安全行为变更（装维需注意）">#</a></h2>
+<p>未设置 <code>bootstrap_admin_password_env</code> 的<strong>全新安装</strong>，首次管理员口令来源变了：</p>
+<ul>
+<li>2.2-102 及以前：固定为文档中的 <code>admin123</code>，首次登录后强制改密。</li>
+<li>2.2-103 起：控制面生成随机口令，写入 <code>metadata.json</code> 同目录的 <code>bootstrap-admin-password</code>
+（权限 0600，仅 root 可读）。首次登录后仍强制改密。</li>
+</ul>
+<p>不变量：</p>
+<ul>
+<li><strong>显式配置优先。</strong> 部署设置了 <code>bootstrap_admin_password_env</code> 时仍使用该值
+（例如 <code>admin123</code>），不生成任何文件，已有站点不会被锁在外面。</li>
+<li>口令从不以明文落库；元数据快照里是 Argon2id 哈希。</li>
+<li>改密前控制台与 API 只允许认证与改密，不能查看或操作集群数据。</li>
+<li>首个完成改密的控制器会清除该 root-only 文件。</li>
+</ul>
+<p>已在真实控制器上验证（非仅单测）：全新单机实例生成 <code>bootstrap-admin-password</code>（0600）、
+日志中无口令；用生成口令登录返回 200 且 <code>must_change_password=true</code>，用 <code>admin123</code>
+登录返回 401；元数据含 Argon2id 哈希且不含两个口令的任何明文。另起一个经
+<code>bootstrap_admin_password_env</code> 配置的实例，可用自己的口令登录且<strong>不创建</strong>任何口令文件。</p>
+<h2 id="介质范围">介质范围<a class="heading-anchor" href="#介质范围" aria-label="Link to 介质范围">#</a></h2>
+<ul>
+<li>MySQL：8.0.44 官方 Linux glibc2.17 x86_64 minimal 通用二进制（minimal 不含调试符号，
+保留数据库运行程序）。</li>
+<li>PostgreSQL：16.4 官方源码，并附 Rocky Linux 8.10 x86_64 编译依赖 RPM 和仓库元数据；
+安装器支持在首个数据节点编译一次并分发，不是 PostgreSQL 预编译二进制包。</li>
+<li>ClusterGuard Linux x86_64 RPM、tar 运行程序、多节点 <code>install_clusterguard.sh</code>、
+MySQL/PostgreSQL 安装接入脚本、示例配置和中文手册。</li>
+<li>静态 Linux <code>jq</code> 与内外两层 SHA256 校验清单。<strong>不包含签名私钥、现场凭据或生产补丁
+签名公钥。</strong></li>
+</ul>
+<p>新装数据库也可通过 <code>-r</code> 指定已批准的 MySQL 二进制包或 PostgreSQL 二进制/官方源码包；
+PostgreSQL 另需 <code>--database-version</code>。安装器默认只生成计划，显式 <code>--execute</code> 才修改主机。
+完整参数见<a href="offline-rpm-install.html">离线安装与部署手册</a>。</p>
+<h2 id="使用入口">使用入口<a class="heading-anchor" href="#使用入口" aria-label="Link to 使用入口">#</a></h2>
+<pre><code class="language-bash">sha256sum -c clusterguard-ha-2.2-103-offline-linux-x86_64.tar.gz.sha256
+tar -xzf clusterguard-ha-2.2-103-offline-linux-x86_64.tar.gz
+cd clusterguard-ha-2.2-103-offline-linux-x86_64
+sha256sum -c SHA256SUMS
+bash install_clusterguard.sh --help
+</code></pre>
+<p>首次登录前先取得初始口令：设置了 <code>bootstrap_admin_password_env</code> 就用该值；未设置则到
+控制节点读取 <code>/var/lib/clusterguard/bootstrap-admin-password</code>（0600，需 root）。</p>
+<p>已有集群不要用新装命令覆盖部署状态、Raft 数据、数据库目录或身份文件。本压缩包不能
+上传到升级弹窗；需要现场升级请使用对应来源版本的签名 <code>.cgupgrade</code> 补丁。</p>
+<h2 id="与-2-2-102-的兼容性">与 2.2-102 的兼容性<a class="heading-anchor" href="#与-2-2-102-的兼容性" aria-label="Link to 与 2.2-102 的兼容性">#</a></h2>
+<ul>
+<li>2.2-102 不是二进制差分，也不替代升级补丁。102 → 103 没有发布签名 <code>.cgupgrade</code>，
+本介质只用于新装。</li>
+<li>元数据快照、操作记录与 HTTP 响应结构与 102 一致，102 写入的数据可继续被 103 读取，
+不需要迁移。</li>
+<li>端口、目录、systemd 单元、控制台默认端口和安装参数与 102 一致。</li>
+<li>唯一影响装维流程的差异是上面那节首次口令来源。<strong>已在跑的集群升级到 103 后不会
+被改口令</strong>，只有全新安装受影响。</li>
+</ul>
+<h2 id="验证边界">验证边界<a class="heading-anchor" href="#验证边界" aria-label="Link to 验证边界">#</a></h2>
+<p>包内 <code>RELEASE-INFO</code> 记录版本、构建提交、干净工作树状态和数据库包数量；RPM 内
+<code>BUILD-INFO</code> 记录同一版本与提交。构建前执行 <code>go test ./...</code>、<code>go vet ./...</code>、脚本语法
+检查和差异检查；包内两个控制程序必须嵌入与测试一致的 HTML。</p>
+<p>以下事项<strong>在本版中未完成，不因本包生成而视为已通过</strong>：</p>
+<ol>
+<li>未在目标 Linux 主机执行 103 的安装、PG 源码编译或滚动升级。</li>
+<li>未执行真实 MySQL/PostgreSQL 灾难恢复、VIP 接管、Raft Recovery Commit 或旧主回挂
+的现场验收。</li>
+<li><strong>新引导口令流程的多控制器现场验收未做。</strong> 新装现场操作手册已从「用 <code>admin123</code>
+登录」改为「读取控制节点上的 root-only 文件」，装维流程必须重跑一遍才能算通过。</li>
+<li>未确认与现场信任公钥匹配的生产补丁签名私钥，故未生成生产 <code>.cgupgrade</code>。</li>
+<li>目标操作系统上的依赖 RPM 签名信任仍需在目标机验证。</li>
+<li>域模型评估记录中的其余缺陷（例如 <code>ResourceID</code> 生成失败直接 panic、
+<code>EngineIdentity</code> 未统一归一化、endpoint 字段双写、<code>ReplicaLink</code> 延迟语义、
+labels/所有权维度缺失）未在本版修复。</li>
+<li>PXC 专用恢复、Oracle/SQL Server 原生灾难恢复和历史泄露凭据轮换仍不在已完成范围内。</li>
+<li>本版未上传 GitHub。</li>
+</ol>
+<p>真实构建回归、摘要、包内容与安装器 <code>--help</code> 检查结果记录在同目录构建报告和交付目录的
+<code>verification.json</code>；这些检查不等同现场验收。</p>
+
+          <footer class="document-footer">
+            <span>源文件: <code>docs/zh-CN/release-2.2.103.md</code></span>
+            <a href="../index.html">文档语言入口</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="本页目录">
+          <strong>本页目录</strong>
+          <a class="toc-level-2" href="#相对-2-2-102-的变更">相对 2.2-102 的变更</a><a class="toc-level-3" href="#本版修正的-且存在于-2-2-102-包内文档中的错误">本版修正的、且存在于 2.2-102 包内文档中的错误</a><a class="toc-level-2" href="#本版的安全行为变更-装维需注意">本版的安全行为变更（装维需注意）</a><a class="toc-level-2" href="#介质范围">介质范围</a><a class="toc-level-2" href="#使用入口">使用入口</a><a class="toc-level-2" href="#与-2-2-102-的兼容性">与 2.2-102 的兼容性</a><a class="toc-level-2" href="#验证边界">验证边界</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

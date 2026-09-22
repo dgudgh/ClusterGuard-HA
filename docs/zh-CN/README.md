@@ -11,9 +11,11 @@
 
 ### 最新安装介质
 
-[2.2-102 发布说明](release-2.2.102.md)：一份 MySQL 8.0.44 / PostgreSQL 16.4 完整离线安装介质及单独 ClusterGuard RPM，代码基线为 `7b36461`（介质内 `RELEASE-INFO` 记录的是打包时的 HEAD `2b9a449`；该提交只新增本发布说明与索引、不含代码改动，两者代码等价）。本地已按发版门禁构建并核验；生产 `.cgupgrade` 和最终版现场安装、升级、回退验收尚未完成。本版未上传 GitHub，也未被现场验收，不能仅凭较高版本号当作已发布版本。
+[2.2-103 发布说明](release-2.2.103.md)：一份 MySQL 8.0.44 / PostgreSQL 16.4 完整离线安装介质及单独 ClusterGuard RPM，代码基线为 `eb741ee`。相对 2.2-102 含**一处新装行为变更**：未设置 `bootstrap_admin_password_env` 的全新安装，首次管理员口令改为控制面生成的随机口令，写入 `metadata.json` 同目录的 root-only 0600 文件，不再固定为 `admin123`；装维流程需相应调整。本地已按发版门禁构建并核验；生产 `.cgupgrade` 和最终版现场安装、升级、回退验收尚未完成。本版未上传 GitHub，也未被现场验收，不能仅凭较高版本号当作已发布版本。
 
-[2.2-101 发布说明](release-2.2.101.md) 与 [GitHub v2.2.101](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.101)：上一份安装介质，固定构建提交 `78dbdbf`，已核验并上传为 GitHub 预发布。包内 `release_channel=stable` 不改变其预发布状态。
+[2.2-102 发布说明](release-2.2.102.md)：上一份安装介质，**已由 2.2-103 取代**——它的包内文档取的是修正前快照，仍含本版改正的证据窗口次数、`cgctl` 全局标志顺序和首次口令说明。代码基线为 `7b36461`（介质内 `RELEASE-INFO` 记录的是打包时的 HEAD `2b9a449`；该提交只新增本发布说明与索引、不含代码改动，两者代码等价）。
+
+[2.2-101 发布说明](release-2.2.101.md) 与 [GitHub v2.2.101](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.101)：再上一份安装介质，固定构建提交 `78dbdbf`，已核验并上传为 GitHub 预发布。包内 `release_channel=stable` 不改变其预发布状态。
 
 升级器修复与剩余门槛见 [私有执行区安全记录](updater-private-workspace-2026-09-11.md)。下载摘要及最新文档补正以对应版本的发布说明为准。
 
@@ -33,9 +35,9 @@
 
 ## 推荐阅读顺序
 
-最新安装介质先看 [2.2-101 发布说明](release-2.2.101.md)。英文侧发布说明只维护到
+最新安装介质先看 [2.2-103 发布说明](release-2.2.103.md)。英文侧发布说明只维护到
 `release-2.2.47.md`；此后的发布说明**没有英文对应版本**，只维护简体中文，现存
-`release-2.2.69.md` 至 `release-2.2.101.md`，按版本号倒序存放在本目录。
+`release-2.2.69.md` 至 `release-2.2.103.md`，按版本号倒序存放在本目录。
 
 下面按正式基线 `2.2-39` 的顺序编排：
 
