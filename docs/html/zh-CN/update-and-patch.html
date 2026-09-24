@@ -170,22 +170,37 @@ curl --cacert /etc/clusterguard/tls/ca.crt \
 <p>发布物必须同时交付升级包、升级包 SHA-256、发布说明和独立渠道提供的签名公钥指纹。不得覆盖同名升级包。</p>
 <h2 id="4-现场准备">4. 现场准备<a class="heading-anchor" href="#4-现场准备" aria-label="Link to 4. 现场准备">#</a></h2>
 <ol>
-<li><p>将发布公钥预置到受保护目录：</p>
+<li><p>将发布公钥预置到受保护目录，并在<strong>每台控制节点</strong>启用受限特权 Helper：</p>
 <pre><code class="language-bash">install -d -m 0750 -o root -g clusterguard /etc/clusterguard/trust
 install -m 0640 -o root -g clusterguard clusterguard-patch-signing-public.pem \
   /etc/clusterguard/trust/patch-signing-public.pem
+install -d -m 0750 -o clusterguard -g clusterguard /var/lib/clusterguard/updates
+install -d -m 0700 -o root -g root /var/lib/clusterguard-update-private
+systemctl enable --now clusterguard-update-helper.service
+systemctl is-active --quiet clusterguard-update-helper.service
+test -S /run/clusterguard/update-helper.sock
 </code></pre>
+<p>公钥与 Helper <strong>缺任一</strong>，控制台 <code>设置 → 版本更新</code> 都会显示“不可用”并禁用升级入口；判定顺序是
+可信公钥 → 验签校验器 → Helper 健康检查。安装器未传 <code>--patch-trust-key</code> 时不会执行这两步，
+RPM 的 <code>%post</code> 也不启用 Helper。<code>update.json</code> 只影响滚动升级能否执行，不影响“是否可用”的判定。</p>
 </li>
-<li><p>准备安装器生成的 <code>clusterguard-deployment-state.json</code>。节点发生扩容、退役或替换后，应使用当前清单，或在升级命令中显式传入完整的 <code>--controllers</code> 和 <code>--data-nodes</code>；显式参数优先于旧状态文件。</p>
-</li>
-<li><p>确认全部控制节点在线、Raft 为奇数且至少三个、只有一个 Leader。</p>
-</li>
-<li><p>确认没有正在执行或结果不确定的数据库操作，也没有节点增删、重建或同步任务。</p>
-</li>
-<li><p>备份 <code>/etc/clusterguard/</code>、<code>/var/lib/clusterguard/</code> 和现场部署状态文件。</p>
-</li>
-<li><p>确认 SSH 主机密钥可信；生产环境优先使用专用 SSH 私钥。</p>
-</li>
+</ol>
+<p>1a. <code>update.json</code> 中的 <code>ssh_key</code> 必须指向 <strong>root 属主 0600</strong> 的私钥副本。升级任务会用
+   <code>workspace check-file</code> 校验全部特权输入（要求 root 属主），而运行时的
+   <code>/etc/clusterguard/ssh/controller_ed25519</code> 属主是 <code>clusterguard</code>，直接引用会在执行阶段被拒；
+   OpenSSH 客户端也会拒绝组/其他用户可读的私钥。安装器（带 <code>--patch-trust-key</code> 重跑时）会自动
+   生成 <code>/etc/clusterguard/updates/controller_ed25519</code>（root:root 0600）并在 <code>update.json</code> 中引用；
+   手工准备时需自行创建：</p>
+<pre><code class="language-bash">install -d -m 0750 -o root -g root /etc/clusterguard/updates
+install -m 0600 -o root -g root /etc/clusterguard/ssh/controller_ed25519 \
+  /etc/clusterguard/updates/controller_ed25519
+</code></pre>
+<ol start="2">
+<li>准备安装器生成的 <code>clusterguard-deployment-state.json</code>。节点发生扩容、退役或替换后，应使用当前清单，或在升级命令中显式传入完整的 <code>--controllers</code> 和 <code>--data-nodes</code>；显式参数优先于旧状态文件。</li>
+<li>确认全部控制节点在线、Raft 为奇数且至少三个、只有一个 Leader。</li>
+<li>确认没有正在执行或结果不确定的数据库操作，也没有节点增删、重建或同步任务。</li>
+<li>备份 <code>/etc/clusterguard/</code>、<code>/var/lib/clusterguard/</code> 和现场部署状态文件。</li>
+<li>确认 SSH 主机密钥可信；生产环境优先使用专用 SSH 私钥。</li>
 </ol>
 <h2 id="5-四步升级">5. 四步升级<a class="heading-anchor" href="#5-四步升级" aria-label="Link to 5. 四步升级">#</a></h2>
 <h3 id="验证升级包">验证升级包<a class="heading-anchor" href="#验证升级包" aria-label="Link to 验证升级包">#</a></h3>

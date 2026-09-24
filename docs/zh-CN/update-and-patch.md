@@ -146,12 +146,34 @@ scripts/build-clusterguard-patch.sh \
 
 ## 4. 现场准备
 
-1. 将发布公钥预置到受保护目录：
+1. 将发布公钥预置到受保护目录，并在**每台控制节点**启用受限特权 Helper：
 
    ```bash
    install -d -m 0750 -o root -g clusterguard /etc/clusterguard/trust
    install -m 0640 -o root -g clusterguard clusterguard-patch-signing-public.pem \
      /etc/clusterguard/trust/patch-signing-public.pem
+   install -d -m 0750 -o clusterguard -g clusterguard /var/lib/clusterguard/updates
+   install -d -m 0700 -o root -g root /var/lib/clusterguard-update-private
+   systemctl enable --now clusterguard-update-helper.service
+   systemctl is-active --quiet clusterguard-update-helper.service
+   test -S /run/clusterguard/update-helper.sock
+   ```
+
+   公钥与 Helper **缺任一**，控制台 `设置 → 版本更新` 都会显示“不可用”并禁用升级入口；判定顺序是
+   可信公钥 → 验签校验器 → Helper 健康检查。安装器未传 `--patch-trust-key` 时不会执行这两步，
+   RPM 的 `%post` 也不启用 Helper。`update.json` 只影响滚动升级能否执行，不影响“是否可用”的判定。
+
+1a. `update.json` 中的 `ssh_key` 必须指向 **root 属主 0600** 的私钥副本。升级任务会用
+   `workspace check-file` 校验全部特权输入（要求 root 属主），而运行时的
+   `/etc/clusterguard/ssh/controller_ed25519` 属主是 `clusterguard`，直接引用会在执行阶段被拒；
+   OpenSSH 客户端也会拒绝组/其他用户可读的私钥。安装器（带 `--patch-trust-key` 重跑时）会自动
+   生成 `/etc/clusterguard/updates/controller_ed25519`（root:root 0600）并在 `update.json` 中引用；
+   手工准备时需自行创建：
+
+   ```bash
+   install -d -m 0750 -o root -g root /etc/clusterguard/updates
+   install -m 0600 -o root -g root /etc/clusterguard/ssh/controller_ed25519 \
+     /etc/clusterguard/updates/controller_ed25519
    ```
 
 2. 准备安装器生成的 `clusterguard-deployment-state.json`。节点发生扩容、退役或替换后，应使用当前清单，或在升级命令中显式传入完整的 `--controllers` 和 `--data-nodes`；显式参数优先于旧状态文件。

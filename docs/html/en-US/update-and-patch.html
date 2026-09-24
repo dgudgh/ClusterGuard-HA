@@ -164,22 +164,40 @@ curl --cacert /etc/clusterguard/tls/ca.crt \
 <p>Ship the update package, its SHA-256 file, release notes, and a signing-key fingerprint through an independent channel. Never overwrite an existing update artifact.</p>
 <h2 id="4-site-preparation">4. Site Preparation<a class="heading-anchor" href="#4-site-preparation" aria-label="Link to 4. Site Preparation">#</a></h2>
 <ol>
-<li><p>Install the trusted public key:</p>
+<li><p>Install the trusted public key and enable the restricted privileged Helper on <strong>every controller</strong>:</p>
 <pre><code class="language-bash">install -d -m 0750 -o root -g clusterguard /etc/clusterguard/trust
 install -m 0640 -o root -g clusterguard clusterguard-patch-signing-public.pem \
   /etc/clusterguard/trust/patch-signing-public.pem
+install -d -m 0750 -o clusterguard -g clusterguard /var/lib/clusterguard/updates
+install -d -m 0700 -o root -g root /var/lib/clusterguard-update-private
+systemctl enable --now clusterguard-update-helper.service
+systemctl is-active --quiet clusterguard-update-helper.service
+test -S /run/clusterguard/update-helper.sock
 </code></pre>
+<p>Without <strong>either</strong> the public key or the Helper, the console reports <strong>Settings → Version Update</strong> as
+unavailable and disables the upgrade entry point; the verdict checks the trusted key, then the
+signature inspector, then Helper health. The installer performs neither step unless
+<code>--patch-trust-key</code> is supplied, and the RPM <code>%post</code> never enables the Helper. <code>update.json</code> only
+gates rolling-upgrade execution, not the availability verdict.</p>
 </li>
-<li><p>Keep the generated <code>clusterguard-deployment-state.json</code>. After expansion, retirement, or replacement, use the current inventory or pass complete <code>--controllers</code> and <code>--data-nodes</code> lists explicitly. Explicit lists take precedence over a stale state file.</p>
-</li>
-<li><p>Verify all controllers are online, the Raft voter set is odd and at least three, and exactly one Leader exists.</p>
-</li>
-<li><p>Verify there are no running or indeterminate database operations and no node add, rebuild, or synchronization tasks.</p>
-</li>
-<li><p>Back up <code>/etc/clusterguard/</code>, <code>/var/lib/clusterguard/</code>, and the deployment state.</p>
-</li>
-<li><p>Use reviewed SSH host keys and preferably a dedicated SSH key.</p>
-</li>
+</ol>
+<p>1a. <code>ssh_key</code> in <code>update.json</code> must reference a <strong>root-owned 0600</strong> copy of the private key. The update
+   job validates every privileged input with <code>workspace check-file</code> (root ownership required), while the
+   runtime <code>/etc/clusterguard/ssh/controller_ed25519</code> is owned by the <code>clusterguard</code> user — referencing it
+   directly fails at execution time, and the OpenSSH client itself refuses group/world-readable identity
+   files. When the installer is re-run with <code>--patch-trust-key</code> it creates
+   <code>/etc/clusterguard/updates/controller_ed25519</code> (root:root 0600) automatically and references it in
+   <code>update.json</code>; prepare it manually otherwise:</p>
+<pre><code class="language-bash">install -d -m 0750 -o root -g root /etc/clusterguard/updates
+install -m 0600 -o root -g root /etc/clusterguard/ssh/controller_ed25519 \
+  /etc/clusterguard/updates/controller_ed25519
+</code></pre>
+<ol start="2">
+<li>Keep the generated <code>clusterguard-deployment-state.json</code>. After expansion, retirement, or replacement, use the current inventory or pass complete <code>--controllers</code> and <code>--data-nodes</code> lists explicitly. Explicit lists take precedence over a stale state file.</li>
+<li>Verify all controllers are online, the Raft voter set is odd and at least three, and exactly one Leader exists.</li>
+<li>Verify there are no running or indeterminate database operations and no node add, rebuild, or synchronization tasks.</li>
+<li>Back up <code>/etc/clusterguard/</code>, <code>/var/lib/clusterguard/</code>, and the deployment state.</li>
+<li>Use reviewed SSH host keys and preferably a dedicated SSH key.</li>
 </ol>
 <h2 id="5-four-step-update">5. Four-Step Update<a class="heading-anchor" href="#5-four-step-update" aria-label="Link to 5. Four-Step Update">#</a></h2>
 <h3 id="inspect">Inspect<a class="heading-anchor" href="#inspect" aria-label="Link to Inspect">#</a></h3>
