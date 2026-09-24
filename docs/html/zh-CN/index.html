@@ -41,7 +41,8 @@
 <p>离线 HTML 文档中心入口为 <a href="../index.html"><code>../html/index.html</code></a>，包含本手册、迁移流程、验收证据、本地搜索和打印页面，不依赖外部网络。</p>
 <h2 id="当前版本">当前版本<a class="heading-anchor" href="#当前版本" aria-label="Link to 当前版本">#</a></h2>
 <h3 id="最新安装介质">最新安装介质<a class="heading-anchor" href="#最新安装介质" aria-label="Link to 最新安装介质">#</a></h3>
-<p><a href="release-2.2.103.html">2.2-103 发布说明</a>：一份 MySQL 8.0.44 / PostgreSQL 16.4 完整离线安装介质及单独 ClusterGuard RPM，代码基线为 <code>68c3448</code>（<strong>重建第二版</strong>；首版基线 <code>eb741ee</code>）。本版为把 <code>AGPL-3.0-only</code> 许可文本装进产物而重出——首版构建于许可落地之前，包内无任何许可文件，RPM 头也写着 <code>Proprietary</code>，从未发布、从未交付。相对 2.2-102 含<strong>一处新装行为变更</strong>：未设置 <code>bootstrap_admin_password_env</code> 的全新安装，首次管理员口令改为控制面生成的随机口令，写入 <code>metadata.json</code> 同目录的 root-only 0600 文件，不再固定为 <code>admin123</code>；装维流程需相应调整。本地已按发版门禁构建并核验；生产 <code>.cgupgrade</code> 和最终版现场安装、升级、回退验收尚未完成。本版<strong>介质</strong>未上传 GitHub（仓库的 <code>AGPL-3.0-only</code> 许可已随文档分支发布），也未被现场验收，不能仅凭较高版本号当作已发布版本。</p>
+<p><a href="release-2.2.104.html">2.2-104 发布说明</a>：最新安装介质，代码基线 <code>259b796</code>。相对 2.2-103 新增<strong>运行参数只读视图</strong>（控制台「设置 → 运行参数」展示配置文件的实际生效值、来源与「需重启」标记，凭据只显示环境变量名）与<strong>引擎级集群策略</strong>（自动切换观测次数、证据窗口、切换操作预算、维护抑制写入 Raft 复制存储，控制台可改、可审计、运行时每轮读取即刻生效）。策略变更与审计事件共用同一次 Raft 提交；策略读取失败或输入越界时设置页禁止写入。介质同时内嵌 MySQL 8.0.44 与 PostgreSQL 16.4 原厂介质。本地已按发版门禁构建并核验；<strong>介质未上传 GitHub、未被现场验收</strong>；因缺少与现场信任公钥匹配的生产补丁签名私钥，未生成 <code>.cgupgrade</code>。</p>
+<p><a href="release-2.2.103.html">2.2-103 发布说明</a>：上一份安装介质，<strong>已由 2.2-104 取代</strong>；一份 MySQL 8.0.44 / PostgreSQL 16.4 完整离线安装介质及单独 ClusterGuard RPM，代码基线为 <code>68c3448</code>（<strong>重建第二版</strong>；首版基线 <code>eb741ee</code>）。本版为把 <code>AGPL-3.0-only</code> 许可文本装进产物而重出——首版构建于许可落地之前，包内无任何许可文件，RPM 头也写着 <code>Proprietary</code>，从未发布、从未交付。相对 2.2-102 含<strong>一处新装行为变更</strong>：未设置 <code>bootstrap_admin_password_env</code> 的全新安装，首次管理员口令改为控制面生成的随机口令，写入 <code>metadata.json</code> 同目录的 root-only 0600 文件，不再固定为 <code>admin123</code>；装维流程需相应调整。本地已按发版门禁构建并核验；生产 <code>.cgupgrade</code> 和最终版现场安装、升级、回退验收尚未完成。本版<strong>介质</strong>未上传 GitHub（仓库的 <code>AGPL-3.0-only</code> 许可已随文档分支发布），也未被现场验收，不能仅凭较高版本号当作已发布版本。</p>
 <p><a href="release-2.2.102.html">2.2-102 发布说明</a>：上一份安装介质，<strong>已由 2.2-103 取代</strong>——它的包内文档取的是修正前快照，仍含本版改正的证据窗口次数、<code>cgctl</code> 全局标志顺序和首次口令说明。代码基线为 <code>7b36461</code>（介质内 <code>RELEASE-INFO</code> 记录的是打包时的 HEAD <code>2b9a449</code>；该提交只新增本发布说明与索引、不含代码改动，两者代码等价）。</p>
 <p><a href="release-2.2.101.html">2.2-101 发布说明</a> 与 <a href="https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.101">GitHub v2.2.101</a>：再上一份安装介质，固定构建提交 <code>78dbdbf</code>，已核验并上传为 GitHub 预发布。包内 <code>release_channel=stable</code> 不改变其预发布状态。</p>
 <p>升级器修复与剩余门槛见 <a href="../../zh-CN/updater-private-workspace-2026-09-11.md">私有执行区安全记录</a>。下载摘要及最新文档补正以对应版本的发布说明为准。</p>
@@ -74,9 +75,9 @@
 <p><a href="https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.39">https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.39</a></p>
 <p>候选包和预发布不能仅凭较高版本号替代正式 Release。交付物必须核对 GitHub Release 的发布状态及随包 SHA256。</p>
 <h2 id="推荐阅读顺序">推荐阅读顺序<a class="heading-anchor" href="#推荐阅读顺序" aria-label="Link to 推荐阅读顺序">#</a></h2>
-<p>最新安装介质先看 <a href="release-2.2.103.html">2.2-103 发布说明</a>。英文侧发布说明只维护到
+<p>最新安装介质先看 <a href="release-2.2.104.html">2.2-104 发布说明</a>。英文侧发布说明只维护到
 <code>release-2.2.47.md</code>；此后的发布说明<strong>没有英文对应版本</strong>，只维护简体中文，现存
-<code>release-2.2.69.md</code> 至 <code>release-2.2.103.md</code>，按版本号倒序存放在本目录。</p>
+<code>release-2.2.69.md</code> 至 <code>release-2.2.104.md</code>，按版本号倒序存放在本目录。</p>
 <p>下面按正式基线 <code>2.2-39</code> 的顺序编排：</p>
 <ol>
 <li><a href="release-2.2.47.html">2.2.47 发布说明</a>
