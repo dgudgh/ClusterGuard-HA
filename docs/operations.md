@@ -1043,7 +1043,18 @@ every managed instance. The Agent records the isolation intent before it tries
 the live SQL mutation, so a stopped old primary can be fenced and verified
 without making network unreachability a fencing signal. A recovered instance
 therefore starts read-only and becomes writable only through a leader-backed
-ClusterGuard role transition.
+ClusterGuard role transition. That restart fence is permanent: the Agent never
+clears it when it activates a writer, and the reconcile loop must not require it
+to disappear — only the recorded isolation intent and runtime writability
+converge.
+
+The reconcile unit inspects `<datadir>/mysqld-auto.cnf` to prove that durable
+fence. That file is owned by the database service account, so
+`clusterguard-agent-reconcile.service` must keep `CAP_DAC_OVERRIDE` and
+`CAP_DAC_READ_SEARCH` in both `CapabilityBoundingSet` and
+`AmbientCapabilities`. Without them root cannot read the file, the fail-closed
+loop treats the missing evidence as an isolation trigger, and the authorized
+writer releases the VIP and fences itself read-only on every cycle.
 
 Production deployments must configure and exercise a site-specific out-of-band
 provider through the fencing contract above, and qualify a physical-copy method
