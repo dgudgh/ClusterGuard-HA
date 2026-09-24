@@ -1553,6 +1553,64 @@ func TestConsoleProvidesAdminOnlySignedSoftwareUpdateWorkflow(t *testing.T) {
 	}
 }
 
+func TestSoftwareUpdatePanelExplainsUnavailableUpgradeService(t *testing.T) {
+	page := string(consoleHTML)
+	panelStart := strings.Index(page, `id="software-update-panel"`)
+	if panelStart < 0 {
+		t.Fatal("software update panel is missing")
+	}
+	dialogOffset := strings.Index(page[panelStart:], `<dialog id="software-update-dialog"`)
+	if dialogOffset < 0 {
+		t.Fatal("software update dialog is missing")
+	}
+	panel := page[panelStart : panelStart+dialogOffset]
+	if !strings.Contains(panel, `id="software-update-panel-reason" hidden`) {
+		t.Fatal("the version update panel must carry the unavailability reason inline")
+	}
+	if strings.Contains(panel, `id="software-update-package-file"`) {
+		t.Fatal("the reason must not live behind upload controls that are disabled while the service is unavailable")
+	}
+	for _, contract := range []string{
+		`const softwareUpdateUnavailableReason = snapshot =>`,
+		`const softwareUpdateUnavailableCopy = snapshot =>`,
+		`const unavailableCopy = softwareUpdateUnavailableCopy(snapshot);`,
+		`ready.title = snapshot.available ? '' : unavailableCopy;`,
+		`const panelReason = byId('software-update-panel-reason');`,
+		`panelReason.hidden = snapshot.available;`,
+		`panelReason.textContent = unavailableCopy;`,
+		`校验服务不可用：${softwareUpdateUnavailableReason(snapshot)}`,
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing unavailable upgrade reason contract %q", contract)
+		}
+	}
+}
+
+func TestClusterLoadBannerReportsPerSectionEvidenceReason(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		`const evidenceReasonText = reason => ({`,
+		`'cluster has no persisted topology observation': '尚未持久化拓扑观测',`,
+		`'candidate evaluation requires persisted probe evidence': '缺少当轮探测证据',`,
+		`'candidate evaluation requires exactly one current primary': '当前主节点不唯一，需恰好 1 个',`,
+		`reason:evidenceReasonText(error.message)`,
+		`const evidenceUnavailableText = loaded => (loaded.unavailableSections || []).map((section, index) => {`,
+		"return reason ? `${section}（${reason}）` : section;",
+		`unavailableReasons:unavailableEvidence.map(section => section.reason || '')`,
+		"部分数据不可用：${evidenceUnavailableText(loaded)}；操作已锁定，可重试读取。",
+		"部分数据不可用：${evidenceUnavailableText(loaded)}。",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing evidence reason contract %q", contract)
+		}
+	}
+	// Naming the section without the control-plane reason is exactly the defect this guards: the
+	// affected panels lock themselves, so the banner is the only place the operator can read why.
+	if strings.Contains(page, "loaded.unavailableSections.join('、')") {
+		t.Fatal("the cluster load banner must carry the per-section evidence reason")
+	}
+}
+
 func TestSoftwareUpdateDialogPresentsWarningUploadMetadataAndActionInOrder(t *testing.T) {
 	page := string(consoleHTML)
 	start := strings.Index(page, `<dialog id="software-update-dialog"`)
