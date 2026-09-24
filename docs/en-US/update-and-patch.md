@@ -140,12 +140,37 @@ Ship the update package, its SHA-256 file, release notes, and a signing-key fing
 
 ## 4. Site Preparation
 
-1. Install the trusted public key:
+1. Install the trusted public key and enable the restricted privileged Helper on **every controller**:
 
    ```bash
    install -d -m 0750 -o root -g clusterguard /etc/clusterguard/trust
    install -m 0640 -o root -g clusterguard clusterguard-patch-signing-public.pem \
      /etc/clusterguard/trust/patch-signing-public.pem
+   install -d -m 0750 -o clusterguard -g clusterguard /var/lib/clusterguard/updates
+   install -d -m 0700 -o root -g root /var/lib/clusterguard-update-private
+   systemctl enable --now clusterguard-update-helper.service
+   systemctl is-active --quiet clusterguard-update-helper.service
+   test -S /run/clusterguard/update-helper.sock
+   ```
+
+   Without **either** the public key or the Helper, the console reports **Settings → Version Update** as
+   unavailable and disables the upgrade entry point; the verdict checks the trusted key, then the
+   signature inspector, then Helper health. The installer performs neither step unless
+   `--patch-trust-key` is supplied, and the RPM `%post` never enables the Helper. `update.json` only
+   gates rolling-upgrade execution, not the availability verdict.
+
+1a. `ssh_key` in `update.json` must reference a **root-owned 0600** copy of the private key. The update
+   job validates every privileged input with `workspace check-file` (root ownership required), while the
+   runtime `/etc/clusterguard/ssh/controller_ed25519` is owned by the `clusterguard` user — referencing it
+   directly fails at execution time, and the OpenSSH client itself refuses group/world-readable identity
+   files. When the installer is re-run with `--patch-trust-key` it creates
+   `/etc/clusterguard/updates/controller_ed25519` (root:root 0600) automatically and references it in
+   `update.json`; prepare it manually otherwise:
+
+   ```bash
+   install -d -m 0750 -o root -g root /etc/clusterguard/updates
+   install -m 0600 -o root -g root /etc/clusterguard/ssh/controller_ed25519 \
+     /etc/clusterguard/updates/controller_ed25519
    ```
 
 2. Keep the generated `clusterguard-deployment-state.json`. After expansion, retirement, or replacement, use the current inventory or pass complete `--controllers` and `--data-nodes` lists explicitly. Explicit lists take precedence over a stale state file.

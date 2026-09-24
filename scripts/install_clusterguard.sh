@@ -2114,7 +2114,7 @@ configure_platform_updates() {
     --argjson api_port "${api_port}" \
     --argjson retained_versions 3 \
     --arg ssh_user "${ssh_user}" \
-    '{trust_key:"/etc/clusterguard/trust/patch-signing-public.pem",deployment_state:"/etc/clusterguard/deployment-state.json",ssh_user:$ssh_user,ssh_key:"/etc/clusterguard/ssh/controller_ed25519",known_hosts:"/etc/clusterguard/ssh/controller_known_hosts",ssh_port:$ssh_port,api_port:$api_port,retained_versions:$retained_versions,controllers:$controllers,data_nodes:$data_nodes}' \
+    '{trust_key:"/etc/clusterguard/trust/patch-signing-public.pem",deployment_state:"/etc/clusterguard/deployment-state.json",ssh_user:$ssh_user,ssh_key:"/etc/clusterguard/updates/controller_ed25519",known_hosts:"/etc/clusterguard/ssh/controller_known_hosts",ssh_port:$ssh_port,api_port:$api_port,retained_versions:$retained_versions,controllers:$controllers,data_nodes:$data_nodes}' \
     >"${update_config}"
   chmod 0600 "${update_config}"
   for host in "${controller_nodes[@]}"; do
@@ -2127,6 +2127,12 @@ set -euo pipefail
 install -d -m 0750 -o root -g clusterguard /etc/clusterguard/trust
 install -d -m 0750 -o clusterguard -g clusterguard /var/lib/clusterguard/updates
 install -d -m 0700 -o root -g root /var/lib/clusterguard-update-private
+install -d -m 0750 -o root -g root /etc/clusterguard/updates
+# The rolling upgrade job validates privileged inputs with `workspace check-file`,
+# which requires root ownership. /etc/clusterguard/ssh/controller_ed25519 is owned by
+# the clusterguard user (agent runtime), so give the updater its own root-owned copy.
+# OpenSSH additionally refuses group/world-readable identity files, hence 0600 root:root.
+install -m 0600 -o root -g root /etc/clusterguard/ssh/controller_ed25519 /etc/clusterguard/updates/controller_ed25519
 install -m 0640 -o root -g clusterguard '${remote_stage}/patch-signing-public.pem' /etc/clusterguard/trust/patch-signing-public.pem
 install -m 0600 -o root -g root '${remote_stage}/deployment-state.json' /etc/clusterguard/deployment-state.json
 install -m 0600 -o root -g root '${remote_stage}/update.json' /etc/clusterguard/update.json
