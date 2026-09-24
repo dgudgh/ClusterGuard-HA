@@ -720,7 +720,9 @@ PostgreSQL是ClusterGuard原生的HA实现。它提供安全身份发现、主/�
 
 独立的MySQL路径现在包括发现、候选评估、计划切换、受保护故障转移、旧主节点重新加入、允许列表修复、Linux VIP所有权、自我隔离、分阶段节点生命周期、交付打包和破坏性三节点接受。实验室接受包括六个集群、重复的真实切换、多数丢失、主网络分区、旧主节点重新加入、完整主机重启、发散节点重建和可变主机名/IP/端口协调。参见`docs/mysql-feature-parity-acceptance.md`获取证据和包哈希。
 
-用于自动故障转移的每个MySQL Agent策略必须声明`mysql_service`、`mysql_server_binary`和`mysql_server_defaults_file`。ClusterGuard在接受带内隔离之前检查本地systemd单元和有效的`mysqld --verbose --help`输出。`read_only=ON`和`super_read_only=ON`必须在每个管理实例上作为默认重启生效。Agent在尝试实时SQL变更操作之前记录隔离意图，因此停止的旧主节点可以被隔离和验证，而无需将网络不可达作为隔离信号。因此，恢复的实例以只读方式启动，仅通过由Leader支持的ClusterGuard角色转换才能变为可写。
+用于自动故障转移的每个MySQL Agent策略必须声明`mysql_service`、`mysql_server_binary`和`mysql_server_defaults_file`。ClusterGuard在接受带内隔离之前检查本地systemd单元和有效的`mysqld --verbose --help`输出。`read_only=ON`和`super_read_only=ON`必须在每个管理实例上作为默认重启生效。Agent在尝试实时SQL变更操作之前记录隔离意图，因此停止的旧主节点可以被隔离和验证，而无需将网络不可达作为隔离信号。因此，恢复的实例以只读方式启动，仅通过由Leader支持的ClusterGuard角色转换才能变为可写。该重启栅栏是永久性的：Agent激活写入者时不会清除它，协调循环也不得要求它消失——需要收敛的只有已记录的隔离意图与运行时可写性。
+
+协调单元会检查`<datadir>/mysqld-auto.cnf`来证明这个持久栅栏。该文件属主是数据库服务账户，因此`clusterguard-agent-reconcile.service`必须在`CapabilityBoundingSet`和`AmbientCapabilities`中同时保留`CAP_DAC_OVERRIDE`与`CAP_DAC_READ_SEARCH`。缺少它们时root无法读取该文件，失败即关闭的循环会把缺失证据当作隔离触发条件，被授权的写入者就会在每个周期释放VIP并把自身设为只读。
 
 生产部署必须通过上述隔离合同配置和演练特定站点的带外提供者，并验证物理复制方法，如Clone或XtraBackup。捆绑的逻辑转储重建是破坏性回退：在导入供体数据之前，它会删除目标上的所有非系统模式，因此目标数据无法在重置GTID历史后存活。
 

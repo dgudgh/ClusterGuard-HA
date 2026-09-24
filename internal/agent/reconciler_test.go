@@ -307,6 +307,68 @@ func TestReconcilerCommitsWritableRestartStateOnlyAfterStableKeepDecision(t *tes
 	}
 }
 
+// durableFencedRoleStub mirrors the real MySQL role controller: committing the
+// writable role clears the recorded isolation intent and the runtime read-only
+// flags, but the durable restart fence (read_only=ON in the server defaults
+// file plus SET PERSIST_ONLY) is never removed.
+type durableFencedRoleStub struct {
+	*reconcileRoleStub
+	status MySQLIsolationStatus
+}
+
+func (roles *durableFencedRoleStub) PersistReadOnly(ctx context.Context, policy ClusterPolicy, readOnly bool) error {
+	if err := roles.reconcileRoleStub.PersistReadOnly(ctx, policy, readOnly); err != nil {
+		return err
+	}
+	roles.status.DatabaseReachable = true
+	roles.status.ServiceRunning = true
+	roles.status.ReadOnly = readOnly
+	roles.status.SuperReadOnly = readOnly
+	roles.status.PersistedReadOnly = readOnly
+	roles.status.RestartReadOnly = true
+	return nil
+}
+
+func (roles *durableFencedRoleStub) IsolationStatus(context.Context, ClusterPolicy) (MySQLIsolationStatus, error) {
+	return roles.status, nil
+}
+
+// TestReconcilerKeepVIPConvergesWhileRestartFenceStaysReadOnly locks the site
+// invariant that broke a live three-node cluster: every managed instance must
+// restart read-only, so RestartReadOnly is permanently true. Requiring it to
+// clear made keep_vip self-isolate on every cycle, which flapped the writer and
+// the VIP between two states about every ten seconds.
+func TestReconcilerKeepVIPConvergesWhileRestartFenceStaysReadOnly(t *testing.T) {
+	policy := reconcilePolicy()
+	vip := &reconcileVIPStub{owns: true}
+	base := &reconcileRoleStub{readOnly: true, superReadOnly: true}
+	roles := &durableFencedRoleStub{
+		reconcileRoleStub: base,
+		status: MySQLIsolationStatus{
+			DatabaseReachable: true, ServiceRunning: true,
+			RestartReadOnly: true, PersistedReadOnly: true,
+			ReadOnly: true, SuperReadOnly: true,
+		},
+	}
+	decision := reconcileDecisionStub{response: ReconcileResponse{
+		ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileKeepVIP, LeaseID: model.NewResourceID(),
+	}}
+
+	results, err := NewReconciler(vip, roles, decision).ReconcileAll(context.Background(), map[model.ResourceID]ClusterPolicy{policy.ClusterID: policy})
+	if err != nil || len(results) != 1 || results[0].Action != ReconcileKeepVIP {
+		t.Fatalf("fenced keep results=%+v err=%v", results, err)
+	}
+	if len(base.persisted) != 1 || base.persisted[0] {
+		t.Fatalf("keep_vip did not commit the writable role exactly once: %+v", base.persisted)
+	}
+	if vip.releases != 0 || !vip.owns {
+		t.Fatalf("keep_vip released the VIP while the restart fence stayed read-only: %+v", vip)
+	}
+	if !roles.status.RestartReadOnly {
+		t.Fatal("durable restart fence was cleared instead of preserved")
+	}
+}
+
 func TestReconcilerSelfIsolatesWhenWritableRestartStateCannotBeCommitted(t *testing.T) {
 	policy := reconcilePolicy()
 	vip := &reconcileVIPStub{owns: true}

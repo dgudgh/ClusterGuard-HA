@@ -225,10 +225,20 @@ func (reconciler *Reconciler) reconcileRecovery(ctx context.Context, policy Clus
 	return ReconcileResult{ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: decision.Action, Message: "Recovery Commit and majority lease activated the verified MySQL writer"}, nil
 }
 
-// convergeWritableRestartState commits a promoted MySQL primary's durable role
+// convergeWritableRestartState commits a promoted MySQL primary's writable role
 // only after the controller has finalized a stable ownership lease. Transition
 // targets intentionally remain restart-fenced until this point. A failure to
 // prove the durable state is handled by the caller through self-isolation.
+//
+// The durable restart fence is a permanent site invariant: every managed
+// instance must restart read-only (read_only=ON and super_read_only=ON in the
+// server defaults file, re-asserted with SET PERSIST_ONLY on every role
+// mutation). Requiring that fence to disappear here was unsatisfiable, so a
+// healthy primary self-isolated on every keep_vip cycle and the controller
+// answered with bootstrap_primary on the next one: the writer endpoint flapped
+// between read-only and writable about every ten seconds. What must converge is
+// the Agent's recorded isolation intent plus runtime writability; the restart
+// fence itself stays in place.
 func (reconciler *Reconciler) convergeWritableRestartState(ctx context.Context, policy ClusterPolicy) error {
 	durable, supported := reconciler.roles.(DurableRoleController)
 	if !supported {
@@ -238,7 +248,7 @@ func (reconciler *Reconciler) convergeWritableRestartState(ctx context.Context, 
 	if err != nil {
 		return fmt.Errorf("inspect writable MySQL restart state: %w", err)
 	}
-	if !status.RestartReadOnly && !status.PersistedReadOnly {
+	if writableRestartStateConverged(status) {
 		return nil
 	}
 	if err := reconciler.roles.PersistReadOnly(ctx, policy, false); err != nil {
@@ -248,10 +258,18 @@ func (reconciler *Reconciler) convergeWritableRestartState(ctx context.Context, 
 	if err != nil {
 		return fmt.Errorf("verify writable MySQL restart state: %w", err)
 	}
-	if status.RestartReadOnly || status.PersistedReadOnly || !status.DatabaseReachable || status.ReadOnly || status.SuperReadOnly {
+	if !writableRestartStateConverged(status) {
 		return fmt.Errorf("writable MySQL restart state did not converge")
 	}
 	return nil
+}
+
+// writableRestartStateConverged reports whether the local instance already
+// proves the writable owner role: the Agent holds no isolation intent and the
+// running database accepts writes. RestartReadOnly is deliberately not part of
+// the condition.
+func writableRestartStateConverged(status MySQLIsolationStatus) bool {
+	return !status.PersistedReadOnly && status.DatabaseReachable && !status.ReadOnly && !status.SuperReadOnly
 }
 
 func (reconciler *Reconciler) reconcilePostgreSQL(ctx context.Context, policy ClusterPolicy, action ReconcileAction) (ReconcileResult, error) {
