@@ -1371,6 +1371,7 @@
                 <div class="software-version-cell"><span id="software-update-target-label">待升级目标版本</span><strong id="software-update-latest-target">尚无待升级包</strong></div>
                 <div class="software-version-cell"><span>历史记录</span><strong id="software-update-history-summary">0 次</strong></div>
               </div>
+              <p class="settings-note" id="software-update-panel-reason" hidden>尚未读取升级服务状态。</p>
               <div class="software-update-runtime" id="software-update-runtime" hidden>
                 <div class="software-update-job"><div class="identity-cell"><span>状态</span><strong id="software-update-job-status">尚未计划</strong></div><div class="identity-cell"><span>模式</span><strong id="software-update-job-mode">-</strong></div><div class="identity-cell"><span>当前节点</span><strong id="software-update-job-node">-</strong></div><div class="identity-cell"><span>说明</span><strong id="software-update-job-message">等待生成只读计划。</strong></div></div>
                 <div class="software-update-progress" id="software-update-inline-progress">
@@ -2106,17 +2107,31 @@
       }
     };
 
+    // A section without usable evidence used to be reported by name only, so the operator saw
+    // "部分数据不可用：候选评估" with every affected panel locked and no way to learn why. Carry the
+    // control-plane reason next to the section name and render both.
+    const evidenceReasonText = reason => ({
+      'cluster has no persisted topology observation': '尚未持久化拓扑观测',
+      'candidate evaluation requires persisted probe evidence': '缺少当轮探测证据',
+      'candidate evaluation requires exactly one current primary': '当前主节点不唯一，需恰好 1 个',
+    }[reason] || reason);
+
     const evidenceResult = async (path, fallback, section, signal) => {
       try {
         const value = await readClusterResult(path, signal);
-        return { value:value == null ? fallback : value, unavailable:value == null ? section : '' };
+        return { value:value == null ? fallback : value, unavailable:value == null ? section : '', reason:value == null ? '接口未返回数据' : '' };
       }
       catch (error) {
-        if (error instanceof APIError && error.status === 409 && noEvidenceMessages.has(error.message)) return { value: fallback, unavailable: section };
-        if (section !== '拓扑' && error instanceof APIError && (error.status === 0 || error.status === 404 || error.status >= 500)) return { value:fallback, unavailable:section };
+        if (error instanceof APIError && error.status === 409 && noEvidenceMessages.has(error.message)) return { value: fallback, unavailable: section, reason:evidenceReasonText(error.message) };
+        if (section !== '拓扑' && error instanceof APIError && (error.status === 0 || error.status === 404 || error.status >= 500)) return { value:fallback, unavailable:section, reason:`${error.status ? `HTTP ${error.status} ` : ''}${error.message}` };
         throw error;
       }
     };
+
+    const evidenceUnavailableText = loaded => (loaded.unavailableSections || []).map((section, index) => {
+      const reason = (loaded.unavailableReasons || [])[index];
+      return reason ? `${section}（${reason}）` : section;
+    }).join('、');
 
     const text = (tag, className, value) => {
       const element = document.createElement(tag);
@@ -3492,6 +3507,13 @@
       renderSoftwareUpdateProgress();
     };
 
+    // Single source of truth for "why is version update unavailable". The reason must be readable
+    // even while every upgrade control stays disabled, so it is rendered on the panel itself.
+    const softwareUpdateUnavailableReason = snapshot =>
+      snapshot.reason || '未配置升级包信任或升级 Helper';
+    const softwareUpdateUnavailableCopy = snapshot =>
+      `升级服务不可用：${softwareUpdateUnavailableReason(snapshot)}`;
+
     const renderSoftwareUpdates = () => {
       renderPlatformVersion();
       renderSoftwareUpdateDialogAlert();
@@ -3501,12 +3523,17 @@
         return;
       }
       const snapshot = state.softwareUpdates || { available:false, packages:[] };
+      const unavailableCopy = softwareUpdateUnavailableCopy(snapshot);
       const ready = byId('software-update-readiness');
       ready.textContent = snapshot.available ? '可用' : '不可用';
       ready.className = `badge ${snapshot.available ? 'success' : 'danger'}`;
+      ready.title = snapshot.available ? '' : unavailableCopy;
+      const panelReason = byId('software-update-panel-reason');
+      panelReason.hidden = snapshot.available;
+      panelReason.textContent = unavailableCopy;
       byId('software-update-reason').textContent = snapshot.available
         ? '升级包验签服务和受限升级 Helper 已就绪。支持 .cgupgrade，兼容旧 .cgpatch。'
-        : `升级服务不可用：${snapshot.reason || '未配置升级包信任或升级 Helper'}`;
+        : unavailableCopy;
       const latest = latestSoftwareUpdate();
       const pending = pendingSoftwareUpdate();
       const fileInput = byId('software-update-package-file');
@@ -3516,7 +3543,7 @@
       if (!selectedFile && pending && !['validating', 'failed'].includes(validationState)) validationState = 'verified';
       if (!selectedFile && !pending && !['validating', 'verified', 'failed'].includes(validationState)) validationState = 'idle';
       const validationCopy = {
-        idle: ['等待上传校验', snapshot.available ? '选择签名升级包并上传校验后，才能执行滚动升级。' : `校验服务不可用：${snapshot.reason || '未配置升级包信任或升级 Helper'}`, 'i'],
+        idle: ['等待上传校验', snapshot.available ? '选择签名升级包并上传校验后，才能执行滚动升级。' : `校验服务不可用：${softwareUpdateUnavailableReason(snapshot)}`, 'i'],
         selected: ['等待上传校验', `已选择 ${selectedFile ? selectedFile.name : '升级包'}，请点击“上传并校验”。`, '1'],
         validating: ['正在校验', '正在核对升级包签名、版本、架构、引导器和兼容性合同。', '…'],
         verified: ['校验完成', pending && pending.package ? `升级包 ${pending.package.patch_id || pending.package.file_name || ''} 已通过签名与兼容性校验。` : '升级包已通过签名与兼容性校验。', '✓'],
@@ -4986,7 +5013,7 @@
               if (generation !== state.requestGeneration) return;
               if (!clusterDetail || !clusterDetail.cluster || clusterDetail.cluster.resource_id !== clusterId) throw new APIError('集群详情与所选集群不一致，请重试。');
               const topology = topologySection.value;
-              if (!topology) { loaded = { clusterDetail, topology:null, health:null, candidates:[], metrics:{ instances:[] }, unavailableSections:['拓扑', '健康状态', '候选评估', '性能指标'] }; break; }
+              if (!topology) { loaded = { clusterDetail, topology:null, health:null, candidates:[], metrics:{ instances:[] }, unavailableSections:['拓扑', '健康状态', '候选评估', '性能指标'], unavailableReasons:[topologySection.reason || '', '', '', ''] }; break; }
               // Draw the received topology while all action evidence remains locked.
               commitIfCurrent(generation, () => {
                 state.clusterDetail = clusterDetail; state.topology = topology;
@@ -5004,7 +5031,10 @@
                   return { value:null, unavailable:`操作上下文（${error.message}）` };
                 })
               ]);
-              loaded = { clusterDetail, topology, health:healthSection.value, candidates:candidateSection.value, metrics:metricsSection.value, operationContext:operationSection.value, unavailableSections:[healthSection.unavailable, candidateSection.unavailable, metricsSection.unavailable, operationSection.unavailable].filter(Boolean) };
+              const unavailableEvidence = [healthSection, candidateSection, metricsSection, operationSection].filter(section => section.unavailable);
+              loaded = { clusterDetail, topology, health:healthSection.value, candidates:candidateSection.value, metrics:metricsSection.value, operationContext:operationSection.value,
+                unavailableSections:unavailableEvidence.map(section => section.unavailable),
+                unavailableReasons:unavailableEvidence.map(section => section.reason || '') };
               break;
             } catch (error) {
               if (generation !== state.requestGeneration) return;
@@ -5024,10 +5054,10 @@
           const clusterIndex = state.clusters.findIndex(cluster => cluster.resource_id === clusterId);
           if (clusterIndex >= 0 && loaded.clusterDetail.cluster) state.clusters[clusterIndex] = loaded.clusterDetail.cluster;
           renderTopology(); renderOperationContext(); renderMetrics(); renderOverview();
-          renderClusterLoadStatus(state.clusterDataReady ? 'ready' : 'partial', !topologyConverged ? '拓扑视图仍在同步，操作已锁定，请刷新复核。' : `部分数据不可用：${loaded.unavailableSections.join('、')}；操作已锁定，可重试读取。`);
+          renderClusterLoadStatus(state.clusterDataReady ? 'ready' : 'partial', !topologyConverged ? '拓扑视图仍在同步，操作已锁定，请刷新复核。' : `部分数据不可用：${evidenceUnavailableText(loaded)}；操作已锁定，可重试读取。`);
           loadPowerStatus(clusterId).catch(error => commitIfCurrent(generation, () => setLiveStatus(`启停状态读取失败：${error.message}`, true)));
           if (!topologyConverged) setLiveStatus('操作已验证，但当前控制节点的拓扑视图仍在同步，请刷新复核。', true);
-          else setLiveStatus(loaded.unavailableSections.length ? `部分数据不可用：${loaded.unavailableSections.join('、')}。` : '集群状态已更新。');
+          else setLiveStatus(loaded.unavailableSections.length ? `部分数据不可用：${evidenceUnavailableText(loaded)}。` : '集群状态已更新。');
         });
       } catch (error) {
         commitIfCurrent(generation, () => {
