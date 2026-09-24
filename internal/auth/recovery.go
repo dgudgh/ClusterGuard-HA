@@ -25,8 +25,87 @@ const (
 	adminRecoveryMaximumAge      = 24 * time.Hour
 	adminRecoveryFutureSkew      = 5 * time.Minute
 	adminRecoveryMaxBytes        = 64 << 10
+	bootstrapPasswordMinBytes    = 12
+	bootstrapPasswordMaxBytes    = 4096
 	temporaryPasswordBytes       = 24
 )
+
+// requirePrivateParentDirectory guards the directory that holds a root-only
+// credential. The file itself can only be trusted when nobody but its owner can
+// put something in the directory in its place: any other writable directory
+// lets a second account swap or redirect the artifact, which nothing checked on
+// the file afterwards can undo. A world-writable directory that also carries the
+// sticky bit (a shared temporary directory such as /tmp at mode 1777) still
+// stops one account from replacing another's entries, so it is allowed.
+//
+// The owner is deliberately not compared with the current uid: that needs
+// platform-specific stat structures and this package has to stay portable.
+func requirePrivateParentDirectory(path string) error {
+	directory := filepath.Dir(path)
+	info, err := os.Lstat(directory)
+	if err != nil {
+		return fmt.Errorf("inspect credential directory: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("credential directory %s must not be a symbolic link", directory)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("credential parent %s is not a directory", directory)
+	}
+	permission := info.Mode().Perm()
+	if permission&0o020 != 0 {
+		return fmt.Errorf("credential directory %s must not be group-writable (mode %04o)", directory, permission)
+	}
+	if permission&0o002 != 0 && info.Mode()&os.ModeSticky == 0 {
+		return fmt.Errorf("credential directory %s must not be world-writable (mode %04o)", directory, permission)
+	}
+	return nil
+}
+
+// readPrivateCredential reads a root-only credential without ever following a
+// symbolic link. The parent directory is vetted first, the path is inspected
+// with Lstat so a link is rejected up front, and the descriptor is then
+// re-checked with fstat: if anything replaced the path between those two steps
+// the identity no longer matches and the opened file is refused. Reading through
+// the descriptor also removes the window in which a swapped file would be read.
+func readPrivateCredential(kind, path string, minimumSize, maximumSize int64) ([]byte, error) {
+	if err := requirePrivateParentDirectory(path); err != nil {
+		return nil, err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("%s must be a private regular file with mode 0600", kind)
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || info.Size() < minimumSize || info.Size() > maximumSize {
+		return nil, fmt.Errorf("%s must be a private regular file with mode 0600", kind)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", kind, err)
+	}
+	defer func() { _ = file.Close() }()
+	opened, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", kind, err)
+	}
+	if !os.SameFile(info, opened) {
+		return nil, fmt.Errorf("%s was replaced while it was being opened", kind)
+	}
+	if !opened.Mode().IsRegular() || opened.Mode().Perm() != 0o600 {
+		return nil, fmt.Errorf("%s must be a private regular file with mode 0600", kind)
+	}
+	contents, err := io.ReadAll(io.LimitReader(file, maximumSize+1))
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", kind, err)
+	}
+	if int64(len(contents)) > maximumSize {
+		return nil, fmt.Errorf("%s must be a private regular file with mode 0600", kind)
+	}
+	return contents, nil
+}
 
 // ReadOrCreateBootstrapPassword creates the initial administrator credential in
 // a root-only file. It deliberately stores the plaintext only until the first
@@ -40,16 +119,11 @@ func ReadOrCreateBootstrapPassword(path string, random io.Reader) (string, error
 		return "", fmt.Errorf("create bootstrap administrator password directory: %w", err)
 	}
 	read := func() (string, error) {
-		info, err := os.Stat(path)
+		contents, err := readPrivateCredential(
+			"bootstrap administrator password file", path, bootstrapPasswordMinBytes, bootstrapPasswordMaxBytes,
+		)
 		if err != nil {
 			return "", err
-		}
-		if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || info.Size() < 12 || info.Size() > 4096 {
-			return "", fmt.Errorf("bootstrap administrator password file must be a private regular file with mode 0600")
-		}
-		contents, err := os.ReadFile(path)
-		if err != nil {
-			return "", fmt.Errorf("read bootstrap administrator password: %w", err)
 		}
 		password := strings.TrimSpace(string(contents))
 		if err := ValidateNewPassword(password); err != nil {
@@ -204,16 +278,9 @@ func WriteAdminRecoveryArtifact(path string, artifact AdminRecoveryArtifact) err
 }
 
 func ReadAdminRecoveryArtifact(path string, now time.Time) (AdminRecoveryArtifact, error) {
-	info, err := os.Stat(path)
+	contents, err := readPrivateCredential("administrator recovery artifact", path, 1, adminRecoveryMaxBytes)
 	if err != nil {
 		return AdminRecoveryArtifact{}, err
-	}
-	if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || info.Size() <= 0 || info.Size() > adminRecoveryMaxBytes {
-		return AdminRecoveryArtifact{}, fmt.Errorf("administrator recovery artifact must be a private regular file with mode 0600")
-	}
-	contents, err := os.ReadFile(path)
-	if err != nil {
-		return AdminRecoveryArtifact{}, fmt.Errorf("read administrator recovery artifact: %w", err)
 	}
 	decoder := json.NewDecoder(bytes.NewReader(contents))
 	decoder.DisallowUnknownFields()

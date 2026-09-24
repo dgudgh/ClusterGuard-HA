@@ -7,6 +7,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -40,7 +42,7 @@ func (stub *authMutationRPCStub) Forward(writer http.ResponseWriter, request *ht
 	return nil
 }
 
-func newAuthenticationTestServer(t *testing.T) (*Server, *store.Repository, *platformauth.Service) {
+func newAuthenticationTestServer(t *testing.T, options ...ServerOption) (*Server, *store.Repository, *platformauth.Service) {
 	t.Helper()
 	repository := store.NewMemory()
 	hasher := platformauth.Argon2Hasher{
@@ -64,7 +66,7 @@ func newAuthenticationTestServer(t *testing.T) (*Server, *store.Repository, *pla
 	)
 	server := NewServer(
 		registry, repository, workflowService, &fakeRefresher{},
-		WithControlToken(testControlToken), WithAuthentication(service),
+		append([]ServerOption{WithControlToken(testControlToken), WithAuthentication(service)}, options...)...,
 	)
 	return server, repository, service
 }
@@ -296,6 +298,52 @@ func TestPlatformPasswordChangeRevokesSessionAndAllowsRelogin(t *testing.T) {
 	response = client.request(t, http.MethodDelete, "/api/v1/clusters/"+string(cluster.ResourceID), map[string]string{"confirm_display_name": cluster.DisplayName}, true)
 	if response.Code != http.StatusOK || len(repository.Clusters()) != 0 {
 		t.Fatalf("authenticated admin retirement status=%d body=%s clusters=%+v", response.Code, response.Body.String(), repository.Clusters())
+	}
+}
+
+func TestServerResolvesBootstrapPasswordFile(t *testing.T) {
+	defaulted := NewServer(adapter.NewRegistry(), store.NewMemory(), nil, nil)
+	if defaulted.bootstrapPasswordFile != platformauth.DefaultBootstrapPasswordFile {
+		t.Fatalf("bootstrap password file=%q want the platform default %q", defaulted.bootstrapPasswordFile, platformauth.DefaultBootstrapPasswordFile)
+	}
+	custom := filepath.Join(t.TempDir(), "bootstrap-admin-password")
+	configured := NewServer(adapter.NewRegistry(), store.NewMemory(), nil, nil, WithBootstrapPasswordFile(custom))
+	if configured.bootstrapPasswordFile != custom {
+		t.Fatalf("bootstrap password file=%q want %q", configured.bootstrapPasswordFile, custom)
+	}
+	trimmed := NewServer(adapter.NewRegistry(), store.NewMemory(), nil, nil, WithBootstrapPasswordFile("  "+custom+"  "))
+	if trimmed.bootstrapPasswordFile != custom {
+		t.Fatalf("bootstrap password file=%q want the trimmed %q", trimmed.bootstrapPasswordFile, custom)
+	}
+	blanked := NewServer(adapter.NewRegistry(), store.NewMemory(), nil, nil, WithBootstrapPasswordFile("   "))
+	if blanked.bootstrapPasswordFile != platformauth.DefaultBootstrapPasswordFile {
+		t.Fatalf("a blank override must keep the default, got %q", blanked.bootstrapPasswordFile)
+	}
+}
+
+// A custom MetadataPath relocates the generated administrator credential to sit
+// beside the metadata. The password-change handler has to remove *that* artifact
+// and not the published default, otherwise the plaintext credential survives the
+// first password change for as long as the controller keeps running.
+func TestPasswordChangeRemovesBootstrapArtifactAtConfiguredPath(t *testing.T) {
+	artifactPath := filepath.Join(t.TempDir(), filepath.Base(platformauth.DefaultBootstrapPasswordFile))
+	if err := os.WriteFile(artifactPath, []byte(apiBootstrapPassword+"\n"), 0o600); err != nil {
+		t.Fatalf("seed bootstrap artifact: %v", err)
+	}
+	server, _, _ := newAuthenticationTestServer(t, WithBootstrapPasswordFile(artifactPath))
+	client := &authTestClient{handler: server.Handler()}
+	if response := client.login(t, "admin", apiBootstrapPassword); response.Code != http.StatusOK {
+		t.Fatalf("login status=%d body=%s", response.Code, response.Body.String())
+	}
+	response := client.request(t, http.MethodPost, "/api/v1/auth/password", map[string]string{
+		"current_password": apiBootstrapPassword,
+		"new_password":     "A-new-secure-password-456",
+	}, true)
+	if response.Code != http.StatusOK {
+		t.Fatalf("password change status=%d body=%s", response.Code, response.Body.String())
+	}
+	if _, err := os.Stat(artifactPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("bootstrap artifact survived the password change: %v", err)
 	}
 }
 

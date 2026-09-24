@@ -422,6 +422,27 @@
     .settings-panel { overflow:hidden; box-shadow:none; }
     .settings-panel .panel-header { min-height:64px; padding:0 20px; }
     .settings-panel .panel-header p { margin:3px 0 0; color:var(--muted); font-size:12px; }
+    .configuration-sections { display:grid; gap:18px; }
+    .configuration-sections h4 { margin:0 0 6px; color:var(--ink); font-size:12px; }
+    .configuration-section-note { margin:0 0 8px; color:var(--muted); font-size:11px; }
+    .configuration-table { width:100%; min-width:720px; border-collapse:collapse; }
+    .configuration-table th, .configuration-table td { padding:8px 10px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; font-size:11px; }
+    .configuration-table th { color:var(--muted); font-size:10px; font-weight:550; }
+    .configuration-table tr:last-child td { border-bottom:0; }
+    .configuration-value { overflow-wrap:anywhere; }
+    .configuration-tag { display:inline-flex; align-items:center; min-height:20px; padding:0 6px; border:1px solid var(--line-strong); border-radius:5px; color:var(--muted); font-size:10px; white-space:nowrap; }
+    .configuration-tag.file { border-color:var(--accent); color:var(--accent-strong); }
+    .configuration-tag.attention { border-color:#d8b46a; color:#8a5a00; }
+    .configuration-warnings { margin:0 0 14px; padding:10px 12px; border:1px solid #e0b48a; border-radius:7px; background:#fff5e9; color:#8a5a00; font-size:11px; }
+    .configuration-file-meta { display:flex; flex-wrap:wrap; gap:4px 16px; margin:0 0 14px; color:var(--muted); font-size:11px; }
+    .configuration-policy { margin-top:18px; padding-top:16px; border-top:1px solid var(--line); }
+    .configuration-policy-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px 14px; margin:10px 0 12px; }
+    .configuration-policy-grid label { display:flex; flex-direction:column; gap:4px; color:var(--muted); font-size:11px; }
+    .configuration-policy-grid select, .configuration-policy-grid input[type="number"] { min-height:32px; padding:0 8px; border:1px solid var(--line-strong); border-radius:6px; background:var(--surface); color:var(--ink); font-size:12px; }
+    .configuration-policy-check { flex-direction:row !important; align-items:center; gap:6px !important; grid-column:1 / -1; }
+    .configuration-policy-check input[type="checkbox"] { width:16px; height:16px; min-height:16px; flex:0 0 16px; margin:0; padding:0; accent-color:var(--accent); }
+    .configuration-policy-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; }
+    .configuration-policy-status { color:var(--muted); font-size:11px; }
     .settings-kicker { display:block; margin-bottom:4px; color:var(--accent); font-size:10px; font-weight:800; text-transform:uppercase; }
     .control-plane-strip { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); }
     .control-plane-group { min-width:0; padding:16px 18px; border-right:1px solid var(--line); }
@@ -1343,6 +1364,7 @@
               <h2 class="visually-hidden" id="settings-title">控制台设置</h2>
               <div class="topology-section-tabs settings-section-tabs" role="tablist" aria-label="设置功能区">
                 <button id="settings-status-tab" type="button" role="tab" aria-controls="settings-status-panel" aria-selected="true" data-settings-section="status">控制台状态</button>
+                <button id="settings-configuration-tab" type="button" role="tab" aria-controls="settings-configuration-panel" aria-selected="false" data-settings-section="configuration" tabindex="-1">运行参数</button>
                 <button id="software-update-tab" type="button" role="tab" aria-controls="software-update-panel" aria-selected="false" data-settings-section="updates" tabindex="-1">版本更新</button>
                 <button id="settings-account-tab" type="button" role="tab" aria-controls="settings-account-panel" aria-selected="false" data-settings-section="account" tabindex="-1">账户与偏好</button>
               </div>
@@ -1360,6 +1382,32 @@
               <div class="control-plane-group"><span>活动操作</span><strong id="control-plane-operations">-</strong><div class="control-plane-secondary"><span>节点任务</span><b id="control-plane-tasks">-</b></div></div>
             </div>
             <p class="settings-note control-plane-reason" id="control-plane-reason">尚未取得控制面状态。</p>
+          </div>
+
+          <div class="panel settings-panel settings-section-panel" id="settings-configuration-panel" role="tabpanel" aria-labelledby="settings-configuration-tab" hidden>
+            <div class="panel-header"><div><h3 class="panel-title">运行参数</h3><p>本节点实际生效的配置、每个值的来源，以及改动是否需要重启</p></div><div class="settings-inline-actions"><span class="badge" id="configuration-source-summary">读取中</span><button id="reload-configuration" type="button">重新读取文件</button></div></div>
+            <div class="panel-body">
+              <p class="settings-note" id="configuration-reload-note">正在读取本节点配置……</p>
+              <div class="configuration-file-meta" id="configuration-file-meta"></div>
+              <div class="configuration-warnings" id="configuration-warnings" hidden></div>
+              <div class="configuration-sections" id="configuration-sections"><p class="settings-note">尚未取得运行参数。</p></div>
+              <div class="configuration-policy" id="configuration-policy" hidden>
+                <h4>引擎级全局策略（复制存储 · 改完即生效）</h4>
+                <p class="configuration-section-note">作用于此控制面管理的所有同引擎集群，不随顶部所选集群改变。策略写入 Raft 复制存储，改动记审计，下一轮生效；留空字段沿用节点配置。</p>
+                <div class="configuration-policy-grid">
+                  <label>引擎<select id="cluster-policy-engine"><option value="mysql">mysql</option><option value="postgresql">postgresql</option></select></label>
+                  <label>故障证据观测次数<input id="cluster-policy-observations" type="number" min="2" max="100" inputmode="numeric" placeholder="留空＝沿用配置"></label>
+                  <label>证据窗口（秒）<input id="cluster-policy-window" type="number" min="1" max="3600" inputmode="numeric" placeholder="留空＝沿用配置"></label>
+                  <label>切换操作预算（秒）<input id="cluster-policy-budget" type="number" min="30" max="3600" inputmode="numeric" placeholder="留空＝沿用配置"></label>
+                  <label class="configuration-policy-check"><input id="cluster-policy-suppressed" type="checkbox">维护抑制：暂停所有该引擎集群的自动切换</label>
+                </div>
+                <div class="configuration-policy-actions">
+                  <button id="save-cluster-policy" class="primary-button" type="button">保存策略</button>
+                  <button id="clear-cluster-policy" type="button">清除全部覆盖</button>
+                  <span class="configuration-policy-status" id="cluster-policy-status"></span>
+                </div>
+              </div>
+            </div>
           </div>
 
           <div class="panel settings-panel settings-section-panel software-update-panel" id="software-update-panel" role="tabpanel" aria-labelledby="software-update-tab" hidden>
@@ -1750,7 +1798,8 @@
     const operationLogPageSize = 20;
     const state = {
       language: 'zh-CN', clusters: [], clusterDirectory: new Map(), fleetTopology: new Map(), capabilities: [], nodes: [], allOperations: [], lifecycleTasks: [], lifecycleCapability: { available:false, reason:'未配置' },
-      controlPlane: null, platformVersion: null, powerStatus: null, powerRunning: false,
+      controlPlane: null, configuration: null, configurationLoading: false, configurationError: '',
+      clusterPolicy: null, clusterPolicySaving: false, platformVersion: null, powerStatus: null, powerRunning: false,
       disaster: null, disasterEpoch:0, disasterTimer:null,
       softwareUpdates: { available:false, reason:'尚未检查升级服务', warning:'系统升级期间无法进行自动切换，请注意关注。', packages:[] },
       softwareUpdateRunning: false, softwareUpdateAction: '', softwareUpdatePollingTimer: null,
@@ -1902,6 +1951,237 @@
       renderSoftwareUpdateGlobalWarning();
     };
 
+    // The configuration panel answers a question the console used to leave
+    // implicit: which values a node is really running with, where each came
+    // from, and whether an edit can reach the running process. Every string is
+    // placed with textContent so a configuration value can never inject markup.
+    // A "policy" value lives in Raft-replicated metadata: cluster-wide,
+    // changeable here, audited, and applied on the next round.
+    const configurationSourceLabel = source =>
+      (source === 'file' ? '配置文件' : source === 'policy' ? '集群策略' : '平台默认');
+
+    const configurationTimeText = value => {
+      if (!value) return '-';
+      const parsed = new Date(value);
+      return Number.isNaN(parsed.getTime()) ? '-' : parsed.toLocaleString('zh-CN');
+    };
+
+    const configurationValueRow = value => {
+      const row = document.createElement('tr');
+      const key = document.createElement('td');
+      key.textContent = value.key;
+      const effective = document.createElement('td');
+      effective.className = 'configuration-value';
+      effective.textContent = value.value;
+      const source = document.createElement('td');
+      const sourceTag = document.createElement('span');
+      sourceTag.className = `configuration-tag ${value.source === 'file' ? 'file' : ''}`;
+      sourceTag.textContent = configurationSourceLabel(value.source);
+      source.append(sourceTag);
+      const restart = document.createElement('td');
+      const restartTag = document.createElement('span');
+      restartTag.className = `configuration-tag ${value.restart_required ? 'attention' : ''}`;
+      restartTag.textContent = value.restart_required ? '需重启' : '可热改';
+      restart.append(restartTag);
+      const note = document.createElement('td');
+      note.className = 'configuration-value';
+      const noteParts = [];
+      if (value.credential_ref) noteParts.push('凭据引用');
+      if (value.note) noteParts.push(value.note);
+      note.textContent = noteParts.length ? noteParts.join(' · ') : '-';
+      row.append(key, effective, source, restart, note);
+      return row;
+    };
+
+    const configurationSectionNode = section => {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'configuration-section';
+      const heading = document.createElement('h4');
+      heading.textContent = section.label;
+      wrapper.append(heading);
+      if (section.note) {
+        const note = document.createElement('p');
+        note.className = 'configuration-section-note';
+        note.textContent = section.note;
+        wrapper.append(note);
+      }
+      const table = document.createElement('table');
+      table.className = 'configuration-table';
+      const head = document.createElement('thead');
+      const headRow = document.createElement('tr');
+      ['参数', '生效值', '来源', '生效方式', '说明'].forEach(label => {
+        const cell = document.createElement('th');
+        cell.textContent = label;
+        headRow.append(cell);
+      });
+      head.append(headRow);
+      table.append(head);
+      const body = document.createElement('tbody');
+      (section.values || []).forEach(value => body.append(configurationValueRow(value)));
+      table.append(body);
+      wrapper.append(table);
+      return wrapper;
+    };
+
+    const renderConfiguration = () => {
+      const container = byId('configuration-sections');
+      const view = state.configuration;
+      const reload = byId('reload-configuration');
+      if (reload) reload.disabled = state.configurationLoading;
+      container.textContent = '';
+      if (state.configurationError) {
+        const failure = document.createElement('p');
+        failure.className = 'settings-note';
+        failure.textContent = `运行参数暂时不可用：${state.configurationError}`;
+        container.append(failure);
+      }
+      const summary = byId('configuration-source-summary');
+      const meta = byId('configuration-file-meta');
+      if (!view) {
+        summary.textContent = state.configurationLoading ? '读取中' : '不可用';
+        summary.className = `badge ${state.configurationLoading ? '' : 'danger'}`;
+        meta.textContent = '';
+        byId('configuration-reload-note').textContent = '正在读取本节点配置……';
+        byId('configuration-warnings').hidden = true;
+        return;
+      }
+      summary.textContent = view.file_present ? '配置文件已读取' : '配置文件不存在';
+      summary.className = `badge ${view.file_present ? 'success' : 'danger'}`;
+      byId('configuration-reload-note').textContent = view.reload_supported ? '本节点支持重新加载配置。' : view.reload_note;
+      meta.textContent = '';
+      [`配置文件：${view.path}`, `进程启动：${configurationTimeText(view.process_started_at)}`, `文件修改：${configurationTimeText(view.file_modified_at)}`].forEach(text => {
+        const item = document.createElement('span');
+        item.textContent = text;
+        meta.append(item);
+      });
+      const warnings = byId('configuration-warnings');
+      const messages = view.warnings || [];
+      warnings.hidden = messages.length === 0;
+      warnings.textContent = messages.join(' / ');
+      (view.sections || []).forEach(section => container.append(configurationSectionNode(section)));
+    };
+
+    const loadConfiguration = async () => {
+      state.configurationLoading = true;
+      state.configurationError = '';
+      renderConfiguration();
+      try {
+        state.configuration = await fetchResult('/api/v1/control-plane/configuration');
+      } catch (error) {
+        if (error && error.staleSession) return;
+        state.configurationError = (error && error.message) ? error.message : '未知错误';
+      } finally {
+        state.configurationLoading = false;
+        renderConfiguration();
+      }
+    };
+
+    // Re-reading the file is a display action only: the runtime reads its
+    // configuration at start-up, so the button refreshes what the operator sees
+    // and never claims to have changed the running process.
+    byId('reload-configuration').addEventListener('click', () => { void loadConfiguration(); });
+
+    // The cluster policy is the opposite: it is replicated metadata, so a save
+    // here really does change what every controller does on its next round.
+    const clusterPolicyEngines = ['mysql', 'postgresql'];
+
+    const clusterPolicyCurrent = () => (state.clusterPolicy && state.clusterPolicy.policy && state.clusterPolicy.policy.engines) || {};
+
+    const clusterPolicyNumber = id => {
+      const raw = String(byId(id).value || '').trim();
+      if (raw === '') return 0;
+      return Number(raw);
+    };
+
+    const renderClusterPolicy = (resetFields = false) => {
+      const editor = byId('configuration-policy');
+      if (editor) editor.hidden = !state.configuration;
+      const save = byId('save-cluster-policy');
+      const clear = byId('clear-cluster-policy');
+      if (save) save.disabled = state.clusterPolicySaving || !state.clusterPolicy;
+      if (clear) clear.disabled = state.clusterPolicySaving || !state.clusterPolicy;
+      if (!resetFields || !state.clusterPolicy) return;
+      const settings = clusterPolicyCurrent()[byId('cluster-policy-engine').value] || {};
+      byId('cluster-policy-observations').value = settings.automatic_failover_minimum_observations || '';
+      byId('cluster-policy-window').value = settings.automatic_failover_failure_window_seconds || '';
+      byId('cluster-policy-budget').value = settings.automatic_failover_operation_timeout_seconds || '';
+      byId('cluster-policy-suppressed').checked = !!settings.automatic_failover_suppressed;
+    };
+
+    // Saving merges into the existing policy so editing one engine never wipes
+    // the other, and an engine with no overrides is dropped entirely - which is
+    // what makes "clear this engine" the same operation as "leave it empty".
+    const clusterPolicyPayload = engine => {
+      const engines = {};
+      const existing = clusterPolicyCurrent();
+      for (const key of Object.keys(existing)) {
+        if (clusterPolicyEngines.includes(key)) engines[key] = { ...existing[key] };
+      }
+      const settings = {};
+      const observations = clusterPolicyNumber('cluster-policy-observations');
+      const windowSeconds = clusterPolicyNumber('cluster-policy-window');
+      const budgetSeconds = clusterPolicyNumber('cluster-policy-budget');
+      if (observations > 0) settings.automatic_failover_minimum_observations = observations;
+      if (windowSeconds > 0) settings.automatic_failover_failure_window_seconds = windowSeconds;
+      if (budgetSeconds > 0) settings.automatic_failover_operation_timeout_seconds = budgetSeconds;
+      if (byId('cluster-policy-suppressed').checked) settings.automatic_failover_suppressed = true;
+      engines[engine] = settings;
+      for (const key of Object.keys(engines)) {
+        if (Object.keys(engines[key]).length === 0) delete engines[key];
+      }
+      return { engines };
+    };
+
+    const fetchClusterPolicy = async () => {
+      state.clusterPolicy = null;
+      renderClusterPolicy();
+      try {
+        state.clusterPolicy = await fetchResult('/api/v1/cluster-policy');
+        if (byId('cluster-policy-status')) byId('cluster-policy-status').textContent = '已读取当前策略。';
+      } catch (error) {
+        if (error && error.staleSession) return;
+        if (byId('cluster-policy-status')) byId('cluster-policy-status').textContent = `策略读取失败：${(error && error.message) ? error.message : '未知错误'}`;
+      }
+      renderClusterPolicy(true);
+    };
+
+    const submitClusterPolicy = async payload => {
+      if (state.clusterPolicySaving || !state.clusterPolicy) return;
+      const status = byId('cluster-policy-status');
+      state.clusterPolicySaving = true;
+      if (status) status.textContent = '正在保存……';
+      renderClusterPolicy();
+      try {
+        await fetchResult('/api/v1/cluster-policy', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+        });
+        if (status) status.textContent = '已保存，运行时下一轮生效。';
+        await loadConfiguration();
+        await fetchClusterPolicy();
+      } catch (error) {
+        if (error && error.staleSession) return;
+        if (status) status.textContent = `保存失败：${(error && error.message) ? error.message : '未知错误'}`;
+      } finally {
+        state.clusterPolicySaving = false;
+        renderClusterPolicy();
+      }
+    };
+
+    byId('cluster-policy-engine').addEventListener('change', () => renderClusterPolicy(true));
+    byId('save-cluster-policy').addEventListener('click', () => {
+      if (!state.clusterPolicy || state.clusterPolicySaving) return;
+      for (const id of ['cluster-policy-observations', 'cluster-policy-window', 'cluster-policy-budget']) {
+        const input = byId(id);
+        if (input.value.trim() && !input.checkValidity()) {
+          byId('cluster-policy-status').textContent = '请检查数值范围，必须填写整数。';
+          input.focus();
+          return;
+        }
+      }
+      void submitClusterPolicy(clusterPolicyPayload(byId('cluster-policy-engine').value));
+    });
+    byId('clear-cluster-policy').addEventListener('click', () => { void submitClusterPolicy({ engines: {} }); });
+
     // Clear both cached evidence and rendered rows before another session can see the shell.
     const clearSessionData = () => {
       state.fleetReadEpoch++; state.nodeReadEpoch++; state.softwareUpdateReadEpoch++;
@@ -1916,6 +2196,10 @@
       state.nodesLoaded = false; state.nodesLoadError = '';
       state.lifecycleCapability = { available:false, reason:'尚未读取节点能力' };
       state.controlPlane = null; state.platformVersion = null;
+      state.configuration = null; state.configurationError = ''; state.configurationLoading = false;
+      state.clusterPolicy = null; state.clusterPolicySaving = false;
+      byId('cluster-policy-status').textContent = '';
+      renderClusterPolicy();
       state.operationContext = null; state.fleetOperationContext = null; state.fleetContextError = '';
       state.selectedClusterId = ''; state.selectedCandidateId = ''; state.selectedRejoinId = '';
       state.clusterLoading = false; state.clusterLoadError = ''; state.clusterDataReady = false;
@@ -5589,8 +5873,8 @@
       if (focus) byId(`operations-${selected}-tab`).focus();
     };
 
-    const settingsSectionOrder = ['status', 'updates', 'account'];
-    const settingsSectionPanels = { status:'settings-status-panel', updates:'software-update-panel', account:'settings-account-panel' };
+    const settingsSectionOrder = ['status', 'configuration', 'updates', 'account'];
+    const settingsSectionPanels = { status:'settings-status-panel', configuration:'settings-configuration-panel', updates:'software-update-panel', account:'settings-account-panel' };
     const setSettingsSection = (section, focus = false) => {
       let selected = settingsSectionOrder.includes(section) ? section : 'status';
       if (selected === 'updates' && !canAdministerPlatform()) selected = 'status';
@@ -5604,10 +5888,12 @@
       });
       const summaries = {
         status:'Leader、Raft 多数派与运行任务',
+        configuration:'本节点生效参数、取值来源与是否需要重启',
         updates:'当前版本、升级包校验、滚动升级与历史记录',
         account:'登录账户、安全操作与本地显示偏好'
       };
       byId('settings-section-summary').textContent = summaries[selected];
+      if (selected === 'configuration') { void loadConfiguration(); void fetchClusterPolicy(); }
       if (focus) byId(selected === 'updates' ? 'software-update-tab' : `settings-${selected}-tab`).focus();
     };
 

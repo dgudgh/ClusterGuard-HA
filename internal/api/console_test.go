@@ -84,7 +84,7 @@ func TestSettingsShowsAuthenticatedControlPlaneDiagnostics(t *testing.T) {
 	}
 }
 
-func TestSettingsUsesThreeSwitchableAdministrativeSections(t *testing.T) {
+func TestSettingsUsesSwitchableAdministrativeSections(t *testing.T) {
 	page := string(consoleHTML)
 	view := consoleView(t, "settings")
 	for _, contract := range []string{
@@ -128,6 +128,82 @@ func TestSettingsUsesThreeSwitchableAdministrativeSections(t *testing.T) {
 	for _, forbidden := range []string{`class="settings-workspace"`, `class="settings-column settings-column-summary"`, `class="settings-column settings-column-tools"`} {
 		if strings.Contains(view, forbidden) {
 			t.Fatalf("settings must not retain the stacked all-functions layout %q", forbidden)
+		}
+	}
+}
+
+// The configuration panel renders values that come from a file an operator can
+// edit, so the page has to treat them as text. The contract below pins both the
+// read-only framing (no reload claim) and the text-only rendering.
+func TestSettingsExposesReadOnlyEffectiveConfigurationSection(t *testing.T) {
+	page := string(consoleHTML)
+	view := consoleView(t, "settings")
+	for _, contract := range []string{
+		`id="settings-configuration-tab" type="button" role="tab" aria-controls="settings-configuration-panel" aria-selected="false"`,
+		`id="settings-configuration-panel" role="tabpanel" aria-labelledby="settings-configuration-tab" hidden`,
+		`id="configuration-source-summary"`, `id="reload-configuration" type="button">重新读取文件</button>`,
+		`id="configuration-reload-note"`, `id="configuration-file-meta"`,
+		`id="configuration-warnings" hidden`, `id="configuration-sections"`,
+	} {
+		if !strings.Contains(view, contract) {
+			t.Fatalf("settings missing effective-configuration contract %q", contract)
+		}
+	}
+	for _, contract := range []string{
+		"const settingsSectionOrder = ['status', 'configuration', 'updates', 'account']",
+		"configuration:'settings-configuration-panel'",
+		"if (selected === 'configuration') { void loadConfiguration(); void fetchClusterPolicy(); }",
+		"const loadConfiguration = async () =>",
+		"fetchResult('/api/v1/control-plane/configuration')",
+		"const renderConfiguration = () =>",
+		"effective.textContent = value.value;",
+		"restartTag.textContent = value.restart_required ? '需重启' : '可热改';",
+		"byId('configuration-reload-note').textContent = view.reload_supported ? '本节点支持重新加载配置。' : view.reload_note;",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing configuration rendering contract %q", contract)
+		}
+	}
+	for _, forbidden := range []string{"effective.innerHTML", "note.innerHTML", "container.innerHTML = view"} {
+		if strings.Contains(page, forbidden) {
+			t.Fatalf("configuration values must be placed as text, not markup: %q", forbidden)
+		}
+	}
+}
+
+// The policy editor is the writable half of the same panel. Its bounds must
+// match the ones the store enforces, otherwise the console offers values the
+// server will reject.
+func TestSettingsEditsClusterPolicyThroughTheReplicatedPolicyEndpoint(t *testing.T) {
+	page := string(consoleHTML)
+	view := consoleView(t, "settings")
+	for _, contract := range []string{
+		`id="configuration-policy" hidden`,
+		`id="cluster-policy-engine"`,
+		`id="cluster-policy-observations" type="number" min="2" max="100"`,
+		`id="cluster-policy-window" type="number" min="1" max="3600"`,
+		`id="cluster-policy-budget" type="number" min="30" max="3600"`,
+		`id="cluster-policy-suppressed" type="checkbox"`,
+		`id="save-cluster-policy" class="primary-button" type="button">保存策略</button>`,
+		`id="clear-cluster-policy" type="button">清除全部覆盖</button>`,
+		`作用于此控制面管理的所有同引擎集群，不随顶部所选集群改变`,
+	} {
+		if !strings.Contains(view, contract) {
+			t.Fatalf("settings missing cluster policy editor contract %q", contract)
+		}
+	}
+	for _, contract := range []string{
+		"fetchResult('/api/v1/cluster-policy'",
+		"method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)",
+		"const clusterPolicyPayload = engine =>",
+		"const clusterPolicyEngines = ['mysql', 'postgresql']",
+		"await loadConfiguration();",
+		"if (save) save.disabled = state.clusterPolicySaving || !state.clusterPolicy;",
+		"if (clear) clear.disabled = state.clusterPolicySaving || !state.clusterPolicy;",
+		"input.value.trim() && !input.checkValidity()",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console missing cluster policy write contract %q", contract)
 		}
 	}
 }

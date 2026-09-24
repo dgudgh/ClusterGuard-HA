@@ -120,6 +120,9 @@ CREATE ROLE clusterguard_repl WITH REPLICATION LOGIN PASSWORD '<random-replicati
   "automatic_failover_enabled": false,
   "automatic_failover_interval_seconds": 1,
   "automatic_failover_retry_seconds": 30,
+  "automatic_failover_minimum_observations": 4,
+  "automatic_failover_failure_window_seconds": 3,
+  "automatic_failover_operation_timeout_seconds": 300,
   "discovery": {
     "username": "cg_monitor",
     "database": "postgres",
@@ -143,6 +146,16 @@ CREATE ROLE clusterguard_repl WITH REPLICATION LOGIN PASSWORD '<random-replicati
 ### 自动故障转移合同
 
 只有生产现场使用的 PostgreSQL 包、服务单元、网络、存储和隔离方式通过下述破坏性验收矩阵后，才能设置 `automatic_failover_enabled`。默认节奏下，控制器需要连续 4 次主库失败观测且时间跨度不少于 3 秒，才会评估接管。这里的 3 秒是故障证据窗口，不是端到端 RTO 承诺。Agent 另有 15 秒授权失效隔离宽限，用来防止失联旧主继续持有写角色或 VIP。
+
+证据窗口与单次操作预算可按引擎调整，默认值与上文的 4 次 / 3 秒一致：
+
+| 配置键 | 默认值 | 范围 | 作用 |
+| --- | --- | --- | --- |
+| `automatic_failover_minimum_observations` | `4` | `2` - `100` | 评估晋升前所需的连续失败观测次数。 |
+| `automatic_failover_failure_window_seconds` | `3` | `1` - `3600` | 这些观测必须覆盖的最小时间跨度。 |
+| `automatic_failover_operation_timeout_seconds` | `300` | `30` - `3600` | 单次自动故障切换操作的预算。 |
+
+这三个键在 `mysql` 与 `postgresql` 两段中各自独立，两个库可以采用不同策略。放宽容据窗口会推迟晋升，收紧则可能在单次探测丢失时就晋升。操作预算必须长于验证阶段（MySQL 和 PostgreSQL 为 30 秒，Oracle 为 4 分钟）。短于发现节奏的证据窗口永远填不满，例如发现间隔为 15 秒时，3 秒窗口无法累积到所需的观测次数。
 
 PostgreSQL 16.4 实验室验收中，客户端使用 `connect_timeout=2` 时，写入口中断实测为 17.973 秒。未设置有界连接超时时，曾有一次连接调用阻塞约 32 秒，尽管控制面操作更早完成。因此生产连接串必须设置有界连接超时和重试策略，并从应用写入口测量 RTO，不能只看审计时间。
 

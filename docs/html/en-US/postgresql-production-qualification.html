@@ -149,6 +149,43 @@ failure evidence; it does not bypass old-primary isolation. The 15-second
 Agent window is a split-brain safety control. The 30-second value applies only
 after a blocked or failed attempt and is not added to every successful
 failover.</p>
+<p>The evidence window and the per-operation budget are configurable per engine,
+so the values above are defaults rather than fixed constants:</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Default</th>
+<th>Range</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>automatic_failover_minimum_observations</code></td>
+<td><code>4</code></td>
+<td><code>2</code> - <code>100</code></td>
+<td>Consecutive failure observations required before promotion is evaluated.</td>
+</tr>
+<tr>
+<td><code>automatic_failover_failure_window_seconds</code></td>
+<td><code>3</code></td>
+<td><code>1</code> - <code>3600</code></td>
+<td>Minimum span those observations must cover.</td>
+</tr>
+<tr>
+<td><code>automatic_failover_operation_timeout_seconds</code></td>
+<td><code>300</code></td>
+<td><code>30</code> - <code>3600</code></td>
+<td>Budget for one automatic failover operation.</td>
+</tr>
+</tbody></table>
+<p>Widening the evidence window delays promotion; narrowing it risks promoting on
+a single lost probe. The operation budget must stay longer than the
+verification stage (30 seconds for MySQL and PostgreSQL, 4 minutes for
+Oracle), otherwise a promotion is cancelled while it is still being verified.
+An evidence window shorter than the discovery cadence can never be filled: with
+a 15-second discovery interval, a three-second window never accumulates the
+observations it requires.</p>
 <p>Application RTO depends on client behavior. The accepted baseline uses a
 connection timeout no greater than two seconds plus retry and reconnect logic.
 Measure RTO from the failed writer request to the first committed request on

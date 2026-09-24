@@ -191,9 +191,9 @@ targets_file=/etc/clusterguard/fencing/vmware-targets.tsv
 
 ## 4. 准备数据库介质与离线依赖
 
-正式离线包可以在构建时通过可重复的 `--database-package` 直接嵌入审批的数据库介质。安装器在未传 `-r` 时，会自动从离线包的 `packages/database/` 和统一目录 `/opt` 查找匹配的 tar 包。也可以通过 `--database-package-dir /secure/database-media` 指定企业统一介质目录。
+正式离线包可以在构建时通过可重复的 `--database-package` 直接嵌入审批的数据库介质。安装器在未传 `-r` 时，优先从当前离线包的 `packages/database/` 查找匹配的 tar 包；只有该目录没有匹配介质时，才到 `/opt` 查找。也可以通过 `--database-package-dir /secure/database-media` 仅扫描指定的企业统一介质目录。
 
-安装器要求介质是可读取的 `tar`、`tar.gz`、`tgz`、`tar.xz`、`tar.bz2` 或 `tbz2`，并且压缩包只有一个安全的顶层目录。它使用 `--engine` 与 `--database-version` 匹配文件名；例如 MySQL 8.0.44 将匹配文件名中同时包含 `mysql` 或 `upsql` 和 `8.0.44` 的包。找到多个候选时会拒绝执行，要求使用 `-r` 明确指定，绝不会随意选择一个版本。
+安装器要求介质是可读取的 `tar`、`tar.gz`、`tgz`、`tar.xz`、`tar.bz2` 或 `tbz2`，并且压缩包只有一个安全的顶层目录。它使用 `--engine` 与 `--database-version` 匹配文件名；例如 MySQL 8.0.44 将匹配文件名中同时包含 `mysql` 或 `upsql` 和 `8.0.44` 的包。同一有效目录内找到多个候选时会拒绝执行，要求使用 `-r` 明确指定，绝不会随意选择一个版本。已发布的旧安装器若同时在套件和 `/opt` 找到候选，也需要显式指定 `-r`。
 
 MySQL 8.0 示例：
 
@@ -437,7 +437,7 @@ install -d -m 0700 /secure/clusterguard/mysql-ha-3306
 https://192.168.102.152:3000/
 ```
 
-初始账号为 `admin`。首次密码在部署设置了 `bootstrap_admin_password_env` 时取自该变量，否则由控制面生成到 `/var/lib/clusterguard/bootstrap-admin-password`（权限 0600，与 `metadata.json` 同目录），在它出现的控制节点上读取。无论哪种来源，首次登录后都必须立即修改密码；改密前控制台和 API 仅允许认证与改密，不能查看或操作集群数据。
+初始账号为 `admin`。新安装的首次密码由控制面生成到 `/var/lib/clusterguard/bootstrap-admin-password`（权限 0600，与 `metadata.json` 同目录）。交互式安装完成后，安装器从当前 Raft Leader 安全读取并直接显示；非交互标准输出不显示明文，需在生成口令的控制节点上以 root 读取该文件。交互终端显示的口令可能被终端录屏或会话记录保存，应保护安装会话并在首次登录后立即改密。若文件不存在，可能是管理员已经存在或已改密，不得使用旧版固定口令，也不得删除集群状态重新初始化；应使用管理员恢复流程。改密前控制台和 API 仅允许认证与改密，不能查看或操作集群数据。
 
 ### 6.3 MySQL 8.4 部署
 

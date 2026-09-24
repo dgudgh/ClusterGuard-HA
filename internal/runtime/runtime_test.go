@@ -201,6 +201,169 @@ func TestRuntimeMarksAuthenticationCookiesSecureWhenTLSIsConfigured(t *testing.T
 	}
 }
 
+const runtimeRotatedPassword = "Runtime-rotated-password-123"
+
+type bootstrapAuthorityStub struct{ err error }
+
+func (stub bootstrapAuthorityStub) RequireMutationAuthority(context.Context) error { return stub.err }
+
+func newBootstrapAuthorityTestService(repository *store.Repository) *platformauth.Service {
+	hasher := platformauth.Argon2Hasher{
+		Params: platformauth.Argon2Params{
+			Memory: 64, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
+		},
+		Random: bytes.NewReader(bytes.Repeat([]byte{0x5c}, 4096)),
+	}
+	return platformauth.New(
+		repository, hasher, bytes.NewReader(bytes.Repeat([]byte{0x6d}, 8192)),
+		func() time.Time { return time.Date(2026, time.July, 16, 14, 0, 0, 0, time.UTC) },
+		8*time.Hour,
+	)
+}
+
+// The generated credential lives beside the configured metadata, so both a
+// standalone controller and a consensus leader have to remove the artifact they
+// were told about - not the published default - once the password is rotated.
+func TestAuthenticationBootstrapRemovesCredentialAfterPasswordChange(t *testing.T) {
+	scenarios := []struct {
+		name      string
+		authority coordination.MutationAuthority
+	}{
+		{name: "standalone", authority: nil},
+		{name: "consensus-leader", authority: bootstrapAuthorityStub{}},
+	}
+	for _, scenario := range scenarios {
+		t.Run(scenario.name, func(t *testing.T) {
+			artifactPath := filepath.Join(t.TempDir(), filepath.Base(platformauth.DefaultBootstrapPasswordFile))
+			if err := os.WriteFile(artifactPath, []byte(runtimeBootstrapPassword+"\n"), 0o600); err != nil {
+				t.Fatalf("seed bootstrap credential: %v", err)
+			}
+			repository := store.NewMemory()
+			service := newBootstrapAuthorityTestService(repository)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			resolution := func() (string, error) { return runtimeBootstrapPassword, nil }
+
+			runAuthenticationBootstrap(ctx, repository, service, scenario.authority, artifactPath, resolution, nil)
+			administrator, found := repository.PlatformUserByUsername(platformauth.DefaultAdminUsername)
+			if !found {
+				t.Fatal("bootstrap administrator was not created")
+			}
+			if !administrator.MustChangePassword {
+				t.Fatal("a freshly bootstrapped administrator must change its password before it can act")
+			}
+
+			// A reconciling controller must keep the credential in place until the
+			// password has actually been rotated, otherwise the operator is locked out.
+			runAuthenticationBootstrap(ctx, repository, service, scenario.authority, artifactPath,
+				func() (string, error) { return "", errors.New("the existing credential must be reused") }, nil)
+			if _, err := os.Stat(artifactPath); err != nil {
+				t.Fatalf("credential was removed before the password change: %v", err)
+			}
+
+			session, err := service.Login(ctx, platformauth.DefaultAdminUsername, runtimeBootstrapPassword)
+			if err != nil {
+				t.Fatalf("login as bootstrap administrator: %v", err)
+			}
+			if _, err := service.ChangePassword(ctx, session.SessionToken, runtimeBootstrapPassword, runtimeRotatedPassword); err != nil {
+				t.Fatalf("rotate bootstrap password: %v", err)
+			}
+			runAuthenticationBootstrap(ctx, repository, service, scenario.authority, artifactPath,
+				func() (string, error) { return "", errors.New("the administrator already exists") }, nil)
+			if _, err := os.Stat(artifactPath); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("bootstrap credential survived the password change: %v", err)
+			}
+		})
+	}
+}
+
+func TestAuthenticationBootstrapWaitsForMutationAuthority(t *testing.T) {
+	artifactPath := filepath.Join(t.TempDir(), filepath.Base(platformauth.DefaultBootstrapPasswordFile))
+	if err := os.WriteFile(artifactPath, []byte(runtimeBootstrapPassword+"\n"), 0o600); err != nil {
+		t.Fatalf("seed bootstrap credential: %v", err)
+	}
+	repository := store.NewMemory()
+	service := newBootstrapAuthorityTestService(repository)
+	authority := bootstrapAuthorityStub{err: errors.New("another controller holds mutation authority")}
+	ctx, cancel := context.WithTimeout(context.Background(), 700*time.Millisecond)
+	defer cancel()
+
+	runAuthenticationBootstrap(ctx, repository, service, authority, artifactPath, func() (string, error) {
+		return "", errors.New("a controller without mutation authority must not bootstrap")
+	}, nil)
+
+	if _, found := repository.PlatformUserByUsername(platformauth.DefaultAdminUsername); found {
+		t.Fatal("a follower created the bootstrap administrator")
+	}
+	if _, err := os.Stat(artifactPath); err != nil {
+		t.Fatalf("follower touched the bootstrap credential: %v", err)
+	}
+}
+
+// End-to-end guard for a custom MetadataPath: the runtime generated credential
+// sits beside the metadata, and the HTTP password-change route must remove that
+// file even though the default location was never used.
+func TestRuntimeRemovesGeneratedBootstrapCredentialAfterPasswordChange(t *testing.T) {
+	metadataPath := filepath.Join(t.TempDir(), "state", "metadata.json")
+	runtimeInstance, err := New(config.File{MetadataPath: metadataPath})
+	if err != nil {
+		t.Fatalf("start runtime: %v", err)
+	}
+	defer runtimeInstance.Close()
+
+	artifactPath := bootstrapPasswordPath(config.File{MetadataPath: metadataPath})
+	if filepath.Dir(artifactPath) != filepath.Dir(metadataPath) {
+		t.Fatalf("bootstrap artifact=%s does not sit beside the metadata %s", artifactPath, metadataPath)
+	}
+	if artifactPath == platformauth.DefaultBootstrapPasswordFile {
+		t.Fatal("a custom metadata path must relocate the bootstrap credential")
+	}
+	contents, err := os.ReadFile(artifactPath)
+	if err != nil {
+		t.Fatalf("read generated bootstrap credential: %v", err)
+	}
+	password := strings.TrimSpace(string(contents))
+	if password == "" {
+		t.Fatal("generated bootstrap credential is empty")
+	}
+
+	handler := runtimeInstance.Handler()
+	loginRequest := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login",
+		strings.NewReader(`{"username":"admin","password":"`+password+`"}`))
+	loginRequest.Header.Set("Content-Type", "application/json")
+	loginResponse := httptest.NewRecorder()
+	handler.ServeHTTP(loginResponse, loginRequest)
+	if loginResponse.Code != http.StatusOK {
+		t.Fatalf("login status=%d body=%s", loginResponse.Code, loginResponse.Body.String())
+	}
+	cookies := loginResponse.Result().Cookies()
+	csrfToken := ""
+	for _, cookie := range cookies {
+		if cookie.Name == "clusterguard_csrf" {
+			csrfToken = cookie.Value
+		}
+	}
+	if csrfToken == "" {
+		t.Fatalf("login response carries no CSRF cookie: %+v", cookies)
+	}
+
+	changeRequest := httptest.NewRequest(http.MethodPost, "/api/v1/auth/password",
+		strings.NewReader(`{"current_password":"`+password+`","new_password":"`+runtimeRotatedPassword+`"}`))
+	changeRequest.Header.Set("Content-Type", "application/json")
+	for _, cookie := range cookies {
+		changeRequest.AddCookie(cookie)
+	}
+	changeRequest.Header.Set("X-CSRF-Token", csrfToken)
+	changeResponse := httptest.NewRecorder()
+	handler.ServeHTTP(changeResponse, changeRequest)
+	if changeResponse.Code != http.StatusOK {
+		t.Fatalf("password change status=%d body=%s", changeResponse.Code, changeResponse.Body.String())
+	}
+	if _, err := os.Stat(artifactPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("generated bootstrap credential survived the password change: %v", err)
+	}
+}
+
 func TestMutationRPCClientTrustsConfiguredControlPlaneCA(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.WriteHeader(http.StatusNoContent)
@@ -841,6 +1004,134 @@ func TestMySQLFailoverRuntimeSharesThreeSecondFailureEvidence(t *testing.T) {
 		}
 	}
 	t.Fatalf("runtime failover safety omitted stable-primary-failure check: %+v", checks)
+}
+
+// staticEngineResolver maps cluster identifiers to engines without needing a
+// populated repository.
+type staticEngineResolver map[model.ResourceID]model.Engine
+
+func (resolver staticEngineResolver) Cluster(id model.ResourceID) (model.DatabaseCluster, bool) {
+	engine, found := resolver[id]
+	if !found {
+		return model.DatabaseCluster{}, false
+	}
+	return model.DatabaseCluster{ResourceMeta: model.ResourceMeta{ResourceID: id}, Engine: engine}, true
+}
+
+// TestConfiguredFailureEvidenceHonoursPerEngineWindows drives one shared
+// observation stream and checks that each engine answers with its own window.
+// Both engines are configured away from the defaults on purpose: if an engine
+// silently fell back to the shared default window, the expected answers below
+// would flip and the test would fail.
+func TestConfiguredFailureEvidenceHonoursPerEngineWindows(t *testing.T) {
+	mysqlCluster, postgresqlCluster := model.NewResourceID(), model.NewResourceID()
+	configuration := config.File{
+		MySQL: config.MySQL{
+			Enabled: true, AutomaticFailoverEnabled: true,
+			DiscoveryIntervalSeconds: 1, DiscoveryTimeoutSeconds: 1,
+			// Four observations, but they must span ten seconds.
+			AutomaticFailoverMinimumObservations: 4, AutomaticFailoverFailureWindowSeconds: 10,
+		},
+		PostgreSQL: config.PostgreSQL{
+			Enabled: true, AutomaticFailoverEnabled: true,
+			DiscoveryIntervalSeconds: 1, DiscoveryTimeoutSeconds: 1,
+			// Six observations, spanning only three seconds.
+			AutomaticFailoverMinimumObservations: 6, AutomaticFailoverFailureWindowSeconds: 3,
+		},
+	}
+	evidence := newConfiguredFailureEvidence(configuration, staticEngineResolver{
+		mysqlCluster: model.EngineMySQL, postgresqlCluster: model.EnginePostgreSQL,
+	}, nil)
+	start := time.Date(2026, time.July, 13, 20, 0, 0, 0, time.UTC)
+	record := func(upTo int, offset time.Duration) {
+		for index := 0; index <= upTo; index++ {
+			observedAt := start.Add(time.Duration(index) * offset)
+			evidence.Record(mysqlCluster, true, observedAt)
+			evidence.Record(postgresqlCluster, true, observedAt)
+		}
+	}
+	// Phase one: four observations spanning three seconds. MySQL still owes ten
+	// seconds of evidence; PostgreSQL still owes two more observations.
+	record(3, time.Second)
+	if evidence.Stable(mysqlCluster, start.Add(3*time.Second)) {
+		t.Fatal("MySQL stabilized after three seconds despite a configured ten-second window")
+	}
+	if evidence.Stable(postgresqlCluster, start.Add(3*time.Second)) {
+		t.Fatal("PostgreSQL stabilized after four observations despite requiring six")
+	}
+	// Phase two: six observations spanning five seconds. PostgreSQL is satisfied
+	// on both counts; MySQL is still three seconds short of its own window.
+	record(5, time.Second)
+	if evidence.Stable(mysqlCluster, start.Add(5*time.Second)) {
+		t.Fatal("MySQL stabilized after five seconds despite a configured ten-second window")
+	}
+	if !evidence.Stable(postgresqlCluster, start.Add(5*time.Second)) {
+		t.Fatal("PostgreSQL never stabilized once its six observations and three seconds elapsed")
+	}
+	if _, ok := evidence.Incident(postgresqlCluster, start.Add(5*time.Second)); !ok {
+		t.Fatal("PostgreSQL produced no incident despite a stable series")
+	}
+	// Phase three: extend the series to ten seconds. Only now may MySQL promote,
+	// and the five-second observation gap stays inside MySQL's stale-evidence
+	// bound so the series continues instead of restarting.
+	evidence.Record(mysqlCluster, true, start.Add(10*time.Second))
+	if !evidence.Stable(mysqlCluster, start.Add(10*time.Second)) {
+		t.Fatal("MySQL never stabilized once its four observations and ten seconds elapsed")
+	}
+	if _, ok := evidence.Incident(mysqlCluster, start.Add(10*time.Second)); !ok {
+		t.Fatal("MySQL produced no incident despite a stable series")
+	}
+}
+
+func TestConfiguredFailureEvidenceWidensWindowPerConfiguration(t *testing.T) {
+	mysqlCluster := model.NewResourceID()
+	// Ten observations across thirty seconds: far stricter than the default.
+	configuration := config.File{
+		MySQL: config.MySQL{
+			Enabled: true, AutomaticFailoverEnabled: true,
+			DiscoveryIntervalSeconds: 1, DiscoveryTimeoutSeconds: 1,
+			AutomaticFailoverMinimumObservations: 10, AutomaticFailoverFailureWindowSeconds: 30,
+		},
+	}
+	evidence := newConfiguredFailureEvidence(configuration, staticEngineResolver{mysqlCluster: model.EngineMySQL}, nil)
+	start := time.Date(2026, time.July, 13, 20, 0, 0, 0, time.UTC)
+	// Four observations stay inside the stale-evidence gap, so they accumulate
+	// into one series rather than restarting it.
+	for index := 0; index < 4; index++ {
+		evidence.Record(mysqlCluster, true, start.Add(time.Duration(index)*4*time.Second))
+	}
+	if evidence.Stable(mysqlCluster, start.Add(12*time.Second)) {
+		t.Fatal("a widened window still stabilized on the default four observations")
+	}
+	for index := 4; index < 10; index++ {
+		evidence.Record(mysqlCluster, true, start.Add(time.Duration(index)*4*time.Second))
+	}
+	now := start.Add(36 * time.Second)
+	if !evidence.Stable(mysqlCluster, now) {
+		t.Fatal("a widened window never stabilized once its own ten observations and thirty seconds elapsed")
+	}
+}
+
+func TestConfiguredFailureEvidenceFallsBackForUnownedEngines(t *testing.T) {
+	oracleCluster := model.NewResourceID()
+	configuration := config.File{}
+	evidence := newConfiguredFailureEvidence(configuration, staticEngineResolver{oracleCluster: model.EngineOracle}, nil)
+	start := time.Date(2026, time.July, 13, 20, 0, 0, 0, time.UTC)
+	for index := 0; index < 4; index++ {
+		evidence.Record(oracleCluster, true, start.Add(time.Duration(index)*time.Second))
+	}
+	if !evidence.Stable(oracleCluster, start.Add(3*time.Second)) {
+		t.Fatal("an engine without its own window stopped recording evidence instead of falling back")
+	}
+}
+
+func TestAutomaticFailoverOperationTimeoutFallsBackToDefault(t *testing.T) {
+	if got, want := automaticFailoverOperationTimeout(0), 5*time.Minute; got != want {
+		t.Fatalf("operation timeout=%s, want %s", got, want)
+	}
+	if got, want := automaticFailoverOperationTimeout(90), 90*time.Second; got != want {
+		t.Fatalf("operation timeout=%s, want %s", got, want)
+	}
 }
 
 func TestMySQLFailoverRuntimeRejectsAgentQuorumWithoutAgentChannel(t *testing.T) {

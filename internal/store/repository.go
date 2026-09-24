@@ -132,6 +132,12 @@ type snapshot struct {
 	Audits                []model.AuditEvent                                       `json:"audits"`
 	Reports               []model.Report                                           `json:"reports"`
 	SecurityEvents        []model.SecurityEvent                                    `json:"security_events"`
+	// ClusterPolicy is appended last on purpose: while no policy is set the
+	// field is omitted, so a controller running this build produces byte
+	// identical state - and therefore the same digest - as one running the
+	// previous build. Rolling upgrades stay digest-compatible until an operator
+	// actually sets a policy.
+	ClusterPolicy *ClusterPolicy `json:"cluster_policy,omitempty"`
 }
 
 type Repository struct {
@@ -177,6 +183,7 @@ func emptySnapshot() snapshot {
 		Audits:                []model.AuditEvent{},
 		Reports:               []model.Report{},
 		SecurityEvents:        []model.SecurityEvent{},
+		ClusterPolicy:         nil,
 	}
 }
 

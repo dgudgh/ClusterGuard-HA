@@ -191,7 +191,7 @@ func (server *Server) authRoute(writer http.ResponseWriter, request *http.Reques
 			return
 		}
 		server.recordSecurityEvent(state.principal, changed.Username, "password_changed", "success", "platform password changed")
-		if err := platformauth.RemoveBootstrapPassword(platformauth.DefaultBootstrapPasswordFile); err != nil {
+		if err := platformauth.RemoveBootstrapPassword(server.bootstrapPasswordFile); err != nil {
 			server.recordSecurityEvent(state.principal, changed.Username, "bootstrap_password_cleanup", "failure", "remove bootstrap credential artifact failed")
 		}
 		clearAuthenticationCookies(writer, server.requestIsSecure(request))

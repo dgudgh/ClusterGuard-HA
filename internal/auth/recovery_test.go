@@ -152,3 +152,78 @@ func TestBootstrapPasswordArtifactRejectsUnsafePermissions(t *testing.T) {
 		t.Fatal("world-readable bootstrap password was accepted")
 	}
 }
+
+func TestBootstrapPasswordArtifactRejectsSymbolicLink(t *testing.T) {
+	directory := t.TempDir()
+	target := filepath.Join(directory, "somewhere-else-secret")
+	if err := os.WriteFile(target, []byte(testBootstrapPassword+"\n"), 0o600); err != nil {
+		t.Fatalf("write link target: %v", err)
+	}
+	link := filepath.Join(t.TempDir(), "bootstrap-password")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symbolic links are unavailable here: %v", err)
+	}
+	if _, err := ReadOrCreateBootstrapPassword(link, nil); err == nil {
+		t.Fatal("a bootstrap password file that is a symbolic link was read through")
+	}
+	if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("the symbolic link was replaced instead of being refused: %v", err)
+	}
+}
+
+func TestAdminRecoveryArtifactRejectsSymbolicLink(t *testing.T) {
+	now := time.Date(2026, time.July, 17, 2, 30, 0, 0, time.UTC)
+	artifact, err := NewAdminRecoveryArtifact("Recovery-temporary-password-123", testArgon2Hasher(), func() time.Time { return now })
+	if err != nil {
+		t.Fatalf("new recovery artifact: %v", err)
+	}
+	directory := t.TempDir()
+	target := filepath.Join(directory, "somewhere-else-recovery.json")
+	if err := WriteAdminRecoveryArtifact(target, artifact); err != nil {
+		t.Fatalf("write link target: %v", err)
+	}
+	// The target has to be a readable artifact, otherwise the test would pass on
+	// decoding errors instead of proving the link was refused.
+	if _, err := ReadAdminRecoveryArtifact(target, now.Add(time.Minute)); err != nil {
+		t.Fatalf("recovery artifact fixture is unreadable: %v", err)
+	}
+	link := filepath.Join(t.TempDir(), "admin-recovery.json")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symbolic links are unavailable here: %v", err)
+	}
+	if _, err := ReadAdminRecoveryArtifact(link, now.Add(time.Minute)); err == nil {
+		t.Fatal("an administrator recovery artifact that is a symbolic link was read through")
+	}
+}
+
+// A credential is only as trustworthy as the directory that holds it. Once
+// another account can write into that directory it can plant a symbolic link or
+// swap the file outright, which no amount of checking on the file itself undoes.
+func TestPrivateCredentialRejectsWritableParentDirectory(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root bypasses directory permission checks")
+	}
+	for _, permission := range []os.FileMode{0o777, 0o775} {
+		directory := filepath.Join(t.TempDir(), "shared")
+		if err := os.Mkdir(directory, 0o700); err != nil {
+			t.Fatalf("create credential directory: %v", err)
+		}
+		if err := os.Chmod(directory, permission); err != nil {
+			t.Fatalf("loosen credential directory permissions: %v", err)
+		}
+		passwordPath := filepath.Join(directory, "bootstrap-password")
+		if err := os.WriteFile(passwordPath, []byte(testBootstrapPassword+"\n"), 0o600); err != nil {
+			t.Fatalf("write bootstrap artifact: %v", err)
+		}
+		if _, err := ReadOrCreateBootstrapPassword(passwordPath, nil); err == nil {
+			t.Fatalf("bootstrap credential in a %04o directory was accepted", permission)
+		}
+		recoveryPath := filepath.Join(directory, "admin-recovery.json")
+		if err := os.WriteFile(recoveryPath, []byte("{\"version\":1}\n"), 0o600); err != nil {
+			t.Fatalf("write recovery artifact: %v", err)
+		}
+		if _, err := ReadAdminRecoveryArtifact(recoveryPath, time.Now()); err == nil {
+			t.Fatalf("recovery artifact in a %04o directory was accepted", permission)
+		}
+	}
+}

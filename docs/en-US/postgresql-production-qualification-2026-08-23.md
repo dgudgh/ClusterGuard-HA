@@ -73,6 +73,23 @@ Agent window is a split-brain safety control. The 30-second value applies only
 after a blocked or failed attempt and is not added to every successful
 failover.
 
+The evidence window and the per-operation budget are configurable per engine,
+so the values above are defaults rather than fixed constants:
+
+| Key | Default | Range | Effect |
+| --- | --- | --- | --- |
+| `automatic_failover_minimum_observations` | `4` | `2` - `100` | Consecutive failure observations required before promotion is evaluated. |
+| `automatic_failover_failure_window_seconds` | `3` | `1` - `3600` | Minimum span those observations must cover. |
+| `automatic_failover_operation_timeout_seconds` | `300` | `30` - `3600` | Budget for one automatic failover operation. |
+
+Widening the evidence window delays promotion; narrowing it risks promoting on
+a single lost probe. The operation budget must stay longer than the
+verification stage (30 seconds for MySQL and PostgreSQL, 4 minutes for
+Oracle), otherwise a promotion is cancelled while it is still being verified.
+An evidence window shorter than the discovery cadence can never be filled: with
+a 15-second discovery interval, a three-second window never accumulates the
+observations it requires.
+
 Application RTO depends on client behavior. The accepted baseline uses a
 connection timeout no greater than two seconds plus retry and reconnect logic.
 Measure RTO from the failed writer request to the first committed request on

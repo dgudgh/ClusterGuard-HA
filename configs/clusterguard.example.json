@@ -33,6 +33,9 @@
     "automatic_failover_enabled": false,
     "automatic_failover_interval_seconds": 1,
     "automatic_failover_retry_seconds": 30,
+    "automatic_failover_minimum_observations": 4,
+    "automatic_failover_failure_window_seconds": 3,
+    "automatic_failover_operation_timeout_seconds": 300,
     "discovery": {
       "username": "cg_discovery",
       "password_env": "CG_MYSQL_DISCOVERY_PASSWORD"
@@ -53,6 +56,9 @@
     "automatic_failover_enabled": false,
     "automatic_failover_interval_seconds": 1,
     "automatic_failover_retry_seconds": 30,
+    "automatic_failover_minimum_observations": 4,
+    "automatic_failover_failure_window_seconds": 3,
+    "automatic_failover_operation_timeout_seconds": 300,
     "discovery": {
       "username": "cg_monitor",
       "database": "postgres",

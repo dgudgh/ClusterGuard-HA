@@ -32,10 +32,13 @@
   Release 必须整个删除（`v2.2.68` 就是这种，2026-09-22 已删）。删 Release 时**保留 Git 标签**
   ——标签是源码出处、仍被远端分支可达，不影响交付记录门禁；确认无人引用才用 `--cleanup-tag`。
 - **门禁**：上传前后各跑一次 `node tools/verify-public-release-assets.cjs`，
-  报 `status=passed` 才允许上传。它执行两条规则，命中任一即退出码 1：
+  报 `status=passed` 才允许上传。它执行三组规则，命中任一即退出码 1：
   ① 全部 Release（含草稿）的附件里没有签名 `.cgupgrade`、旧 `.cgpatch` 或
   `<来源>_to_<目标>` 命名的升级包；② 没有**已发布**的 Release 缺少完整离线介质
-  （草稿默认豁免，它是上传中的暂存区；加 `--include-drafts` 一并检查）。
+  （草稿默认豁免，它是上传中的暂存区；加 `--include-drafts` 一并检查）；
+  ③ 介质本身必须可用：有同名 `.sha256` 伴侣、体积不小于 10 MiB、上传状态为 `uploaded`
+  —— 只按文件名匹配挡不住空包、截断上传或缺摘要文件的发布。缺少 `RELEASE-INFO` /
+  `verification.json` 记为 warning（早期版本本就没有），加 `--strict` 才升级为失败。
 - 构建流程照旧产出升级包，**只是不得进入任何公开渠道**；本地 `release/` 清单可保留升级包条目。
 - 规则全文、删除义务与历史先例（`v2.2.68` 越权附件）见
   [版本与发版规范 §3.1](docs/zh-CN/version-release-policy.md)。

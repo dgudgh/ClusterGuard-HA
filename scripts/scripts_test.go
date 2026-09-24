@@ -521,6 +521,15 @@ func TestUpgradeScriptRollsFollowersDataOnlyThenLeader(t *testing.T) {
 	if _, err := exec.LookPath("jq"); err != nil {
 		t.Skip("jq is required")
 	}
+	// The script polls the control plane before and after every mutation and
+	// backs off with real sleeps. Those sleeps decide nothing here: the fake
+	// peers flip their state synchronously, so a retry succeeding only ever
+	// depends on how long it slept, not on any change it waited for. Zeroing the
+	// delay keeps this scenario-heavy test in seconds instead of minutes. Any
+	// scenario that genuinely needs wall-clock waiting must assert on its own
+	// outcome, not on elapsed time.
+	t.Setenv("CG_UPDATE_CLUSTER_IDLE_DELAY_SECONDS", "0")
+	t.Setenv("CG_UPDATE_NODE_READY_DELAY_SECONDS", "0")
 	privateKey, publicKey := generatePatchSigningKey(t)
 	root := t.TempDir()
 	fromRPM := filepath.Join(root, "clusterguard-ha-2.2-28.x86_64.rpm")
@@ -2031,6 +2040,141 @@ func TestMultiNodeInstallerAutoSelectsOnlyOneDatabasePackageFromUnifiedDirectory
 	}
 }
 
+func TestMultiNodeInstallerPrefersBundledDatabaseMediaBeforeOpt(t *testing.T) {
+	for _, tc := range []struct {
+		engine  string
+		version string
+	}{
+		{engine: "mysql", version: "8.0.44"},
+		{engine: "postgresql", version: "16.4"},
+	} {
+		t.Run(tc.engine, func(t *testing.T) {
+			root := t.TempDir()
+			kit := filepath.Join(root, "kit")
+			bundledDir := filepath.Join(kit, "packages", "database")
+			fallbackDir := filepath.Join(root, "opt")
+			explicitDir := filepath.Join(root, "approved")
+			for _, dir := range []string{bundledDir, fallbackDir, explicitDir} {
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			name := tc.engine + "-" + tc.version + ".tar.xz"
+			bundled := filepath.Join(bundledDir, name)
+			fallback := filepath.Join(fallbackDir, name)
+			explicit := filepath.Join(explicitDir, name)
+			for _, path := range []string{bundled, fallback, explicit} {
+				writeFile(t, path, "fixture", 0o644)
+			}
+			run := func(dir, packagePath string) (string, error) {
+				command := exec.Command("bash", "-c", `
+set -euo pipefail
+export CG_INSTALLER_LIBRARY_ONLY=true
+source ./install_clusterguard.sh
+script_dir="$CG_TEST_KIT"
+database_engine="$CG_TEST_ENGINE"
+database_version="$CG_TEST_VERSION"
+database_package_dir="$CG_TEST_EXPLICIT_DIR"
+database_package="$CG_TEST_PACKAGE"
+find() {
+  if [[ "$1" == /opt ]]; then
+    shift
+    command find "$CG_TEST_OPT" "$@"
+  else
+    command find "$@"
+  fi
+}
+resolve_database_package
+printf 'SELECTED=%s\n' "$database_package"
+`)
+				command.Env = append(os.Environ(),
+					"CG_DATABASE_PACKAGE_DIR=", "CG_TEST_KIT="+kit,
+					"CG_TEST_OPT="+fallbackDir, "CG_TEST_ENGINE="+tc.engine,
+					"CG_TEST_VERSION="+tc.version, "CG_TEST_EXPLICIT_DIR="+dir,
+					"CG_TEST_PACKAGE="+packagePath)
+				output, err := command.CombinedOutput()
+				return string(output), err
+			}
+
+			output, err := run("", "")
+			if err != nil || !strings.Contains(output, "SELECTED="+bundled) {
+				t.Fatalf("bundled media should win over /opt: err=%v\n%s", err, output)
+			}
+			output, err = run(explicitDir, "")
+			if err != nil || !strings.Contains(output, "SELECTED="+explicit) {
+				t.Fatalf("explicit directory should win: err=%v\n%s", err, output)
+			}
+			output, err = run("", explicit)
+			if err != nil || !strings.Contains(output, "SELECTED="+explicit) {
+				t.Fatalf("explicit package should win: err=%v\n%s", err, output)
+			}
+
+			second := filepath.Join(bundledDir, tc.engine+"-"+tc.version+"-second.tar.xz")
+			writeFile(t, second, "second fixture", 0o644)
+			output, err = run("", "")
+			if err == nil || !strings.Contains(output, "发现多个匹配的数据库介质") || strings.Contains(output, fallback) {
+				t.Fatalf("ambiguous bundled media must fail without scanning /opt: err=%v\n%s", err, output)
+			}
+			if err := os.Remove(second); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(bundled); err != nil {
+				t.Fatal(err)
+			}
+			output, err = run("", "")
+			if err != nil || !strings.Contains(output, "SELECTED="+fallback) {
+				t.Fatalf("/opt fallback should be used when kit has no match: err=%v\n%s", err, output)
+			}
+		})
+	}
+}
+
+func TestMultiNodeInstallerPlanPrefersBundledMySQLMedia(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq is required")
+	}
+	root := t.TempDir()
+	kit := filepath.Join(root, "kit")
+	bundledDir := filepath.Join(kit, "packages", "database")
+	fallbackDir := filepath.Join(root, "opt")
+	for _, dir := range []string{bundledDir, fallbackDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFile(t, filepath.Join(kit, "packages", "clusterguard-ha-2.2-103.x86_64.rpm"), "rpm fixture", 0o644)
+	bundled := filepath.Join(bundledDir, "mysql-8.0.44-linux-glibc2.17-x86_64-minimal.tar.gz")
+	if err := os.Rename(fakeDatabaseArchive(t, "mysql", ""), bundled); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(fallbackDir, "mysql-8.0.44-linux-glibc2.17-x86_64.tar.xz"), "fallback fixture", 0o644)
+	command := exec.Command("bash", "-c", `
+set -euo pipefail
+export CG_INSTALLER_LIBRARY_ONLY=true
+source ./install_clusterguard.sh
+script_dir="$CG_TEST_KIT"
+find() {
+  if [[ "$1" == /opt ]]; then
+    shift
+    command find "$CG_TEST_OPT" "$@"
+  else
+    command find "$@"
+  fi
+}
+main -l 192.168.102.152,192.168.102.153,192.168.102.154 \
+  -n 192.168.102.152,192.168.102.153,192.168.102.154 \
+  -u root -ld /var/lib/clusterguard -nd /data \
+  --engine mysql --database-version 8.0.44 --database-port 3306 \
+  --cluster-name mysql-ha-3306 --vip 192.168.102.155 \
+  --interface ens160 --prefix 24 --plan
+`)
+	command.Env = append(os.Environ(), "CG_DATABASE_PACKAGE_DIR=", "CG_TEST_KIT="+kit, "CG_TEST_OPT="+fallbackDir)
+	output, err := command.CombinedOutput()
+	if err != nil || !strings.Contains(string(output), "数据库介质     : "+bundled) || !strings.Contains(string(output), "只读计划完成") {
+		t.Fatalf("bundled media plan failed: err=%v\n%s", err, output)
+	}
+}
+
 func TestMultiNodeInstallerAutoSelectsOnlyOneBundledApplicationRPM(t *testing.T) {
 	root := t.TempDir()
 	packages := filepath.Join(root, "packages")
@@ -2065,6 +2209,51 @@ resolve_application_rpm
 	output, err = command.CombinedOutput()
 	if err == nil || !strings.Contains(string(output), "发现多个 ClusterGuard RPM") {
 		t.Fatalf("ambiguous RPM selection was not blocked: err=%v output=%s", err, output)
+	}
+}
+
+func TestMultiNodeInstallerBootstrapPasswordUsesCurrentLeaderAndDoesNotLeakToPipes(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq is required")
+	}
+	root := t.TempDir()
+	secrets := filepath.Join(root, "deployment-secrets.env")
+	writeFile(t, secrets, "CG_CONTROL_TOKEN=test-control-token\n", 0o600)
+	command := exec.Command("bash", "-c", `
+set -euo pipefail
+export CG_INSTALLER_LIBRARY_ONLY=true
+source ./install_clusterguard.sh
+controller_nodes=(192.0.2.1 192.0.2.2)
+controller_data_root=/var/lib/clusterguard
+secrets_file="$CG_TEST_SECRETS"
+jq_binary=jq
+curl() {
+  if [[ "$*" == *192.0.2.2* ]]; then
+    printf '%s\n' '{"status":"ok","result":{"role":"leader","ready":true,"quorum_confirmed":true,"mutation_authority":true}}'
+  else
+    printf '%s\n' '{"status":"ok","result":{"role":"follower","ready":true,"quorum_confirmed":true,"mutation_authority":false}}'
+  fi
+}
+remote_exec() {
+  [[ "$1" == 192.0.2.2 && "$2" == *"stat -c '%u:%a'"* && "$2" == *"id -u clusterguard"* && "$2" == *"cat -- '/var/lib/clusterguard/bootstrap-admin-password'"* ]] || return 1
+  printf '%s\n' "$CG_TEST_PASSWORD"
+}
+result="$(bootstrap_password_from_leader)"
+[[ "$result" == "$CG_TEST_PASSWORD" ]]
+remote_exec() { printf '%s\n' admin123; }
+if bootstrap_password_from_leader >/dev/null; then exit 1; fi
+bootstrap_password_from_leader() { printf '%s' "$CG_TEST_PASSWORD"; }
+print_install_completion
+`)
+	command.Env = append(os.Environ(), "CG_TEST_SECRETS="+secrets, "CG_TEST_PASSWORD=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("bootstrap password delivery test failed: %v\n%s", err, output)
+	}
+	text := string(output)
+	if !strings.Contains(text, "安装完成") || !strings.Contains(text, "未在非交互输出中显示") ||
+		strings.Contains(text, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef") || strings.Contains(text, "首次密码：admin123") {
+		t.Fatalf("installer completion leaked or misstated bootstrap credential: %s", text)
 	}
 }
 

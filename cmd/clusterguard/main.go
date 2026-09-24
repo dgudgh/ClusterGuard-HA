@@ -23,7 +23,7 @@ import (
 	"clusterguard.io/ha/internal/runtime"
 )
 
-const defaultConfigPath = "/etc/clusterguard/clusterguard.json"
+const defaultConfigPath = config.DefaultPath
 
 const gracefulShutdownTimeout = 30 * time.Second
 
@@ -148,7 +148,7 @@ func main() {
 		fmt.Printf("ClusterGuard HA configuration is valid: %s\n", options.configPath)
 		return
 	}
-	server, err := runtime.New(configuration)
+	server, err := runtime.New(configuration, runtime.WithConfigurationPath(options.configPath))
 	if err != nil {
 		log.Fatalf("startup error: %v", err)
 	}

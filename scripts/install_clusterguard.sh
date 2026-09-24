@@ -106,7 +106,7 @@ ClusterGuard HA 多节点离线安装器
       --postgresql-source-package FILE
                                 -r 的 PostgreSQL 源码包专用别名
       --database-package-dir DIR
-                                数据库统一介质目录；默认依次检查 packages/database/ 和 /opt
+                                仅扫描指定目录；默认优先使用 packages/database/，无匹配时检查 /opt
   -u, --ssh-user USER          SSH 用户，默认 root
   -P, --ssh-password PASS      SSH 密码；也可使用 CG_SSH_PASSWORD 或在真实安装开始时隐藏输入一次
   -p, --ssh-passwords LIST     节点 SSH 密码，逗号分隔，按去重后的 -l/-n 节点顺序对应
@@ -486,6 +486,9 @@ resolve_database_package() {
       candidates[${candidate_count}]="${candidate}"
       candidate_count=$((candidate_count + 1))
     done < <(find "${directory}" -maxdepth 1 -type f \( -name '*.tar' -o -name '*.tar.gz' -o -name '*.tgz' -o -name '*.tar.xz' -o -name '*.tar.bz2' -o -name '*.tbz2' \) -print | sort)
+    if [[ -z "${database_package_dir}" && "${directory}" == "${script_dir}/packages/database" ]] && ((candidate_count > 0)); then
+      break
+    fi
   done
   for ((candidate_index=0; candidate_index<candidate_count; candidate_index++)); do
     candidate="${candidates[${candidate_index}]}"
@@ -736,6 +739,7 @@ print_plan() {
     printf '  数据库介质类型 : 原厂二进制\n'
   fi
   printf '  控制面数据目录 : %s\n' "${controller_data_root}"
+  printf '  首次管理员口令 : 随机生成；交互安装完成时显示，非交互时读取 %s/bootstrap-admin-password\n' "${controller_data_root}"
   if [[ "${database_engine}" != "none" ]]; then
     printf '  数据库数据目录 : %s/%s/%s\n' "${database_data_root}" "${database_engine}" "${database_port}"
   fi
@@ -2346,6 +2350,39 @@ verify_installation() {
   log "安装验证通过"
 }
 
+bootstrap_password_from_leader() {
+  local host response password token path="${controller_data_root}/bootstrap-admin-password"
+  local quoted_path
+  [[ "${path}" =~ ^/[A-Za-z0-9._/-]+$ ]] || return 1
+  quoted_path="'${path}'"
+  token="$(read_env_value CG_CONTROL_TOKEN "${secrets_file}")"
+  for host in "${controller_nodes[@]}"; do
+    response="$(curl --silent --show-error --fail --cacert "${work_dir}/pki-source/api-ca.crt" \
+      --connect-timeout 5 --max-time 10 -H "Authorization: Bearer ${token}" \
+      "https://${host}:${api_port}/api/v1/control-plane/status" 2>/dev/null)" || continue
+    "${jq_binary}" -e '.status == "ok" and .result.role == "leader" and
+      .result.ready == true and .result.quorum_confirmed == true and
+      .result.mutation_authority == true' <<<"${response}" >/dev/null 2>&1 || continue
+    password="$(remote_exec "${host}" "test -f ${quoted_path} && test ! -L ${quoted_path} && test \"\$(stat -c '%u:%a' ${quoted_path})\" = \"\$(id -u clusterguard):600\" && cat -- ${quoted_path}" 2>/dev/null)" || return 1
+    [[ "${password}" =~ ^[A-Za-z0-9_-]{32}$ ]] || return 1
+    printf '%s' "${password}"
+    return 0
+  done
+  return 1
+}
+
+print_install_completion() {
+  local password="" credential_file="${controller_data_root}/bootstrap-admin-password"
+  printf '\n安装完成。\n控制台：https://%s:%s/\n初始账户：admin\n' "${controller_nodes[0]}" "${api_port}"
+  if [[ -t 1 ]] && password="$(bootstrap_password_from_leader)"; then
+    printf '首次密码：%s\n' "${password}"
+  else
+    printf '首次密码：未在非交互输出中显示或无法从当前 Leader 安全读取；请在生成口令的控制节点上以 root 查看 %s。若文件不存在，请使用管理员恢复流程，切勿使用旧版固定口令。\n' "${credential_file}"
+  fi
+  unset password
+  printf '首次登录后必须立即重设；改密前禁止查看或操作平台数据。\n部署状态：%s\n站点秘密：%s\n\n' "${state_file}" "${secrets_file}"
+}
+
 confirm_execute() {
   [[ "${assume_yes}" == "true" ]] && return
   [[ -t 0 ]] || die "非交互执行必须追加 -y/--yes"
@@ -2403,7 +2440,7 @@ main() {
   wait_control_plane
   if [[ "${database_engine}" != "none" ]]; then api_request POST "/api/v1/clusters/$(state_cluster_id)/discover" '{}' >/dev/null; fi
   verify_installation
-  printf '\n安装完成。\n控制台：https://%s:%s/\n初始账户：admin\n首次密码：admin123（首次登录后必须立即重设；改密前禁止查看或操作平台数据）\n部署状态：%s\n站点秘密：%s\n\n' "${controller_nodes[0]}" "${api_port}" "${state_file}" "${secrets_file}"
+  print_install_completion
 }
 
 if [[ "${CG_INSTALLER_LIBRARY_ONLY:-false}" != "true" ]]; then

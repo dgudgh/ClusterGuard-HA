@@ -88,10 +88,14 @@ v2.2.2
 - 删除越权附件时**必须同步删除其 `.sha256`**，否则会留下指向不存在文件的摘要。
 - 删除整个 Release 时**保留 Git 标签**：标签是源码出处，不是分发产物；且仍被远端分支可达，
   交付记录门禁不受影响。只有确认无人引用该标签时才用 `--cleanup-tag`。
-- 检查命令：`node tools/verify-public-release-assets.cjs`。它执行两条规则，命中任一即退出码 1：
+- 检查命令：`node tools/verify-public-release-assets.cjs`。它执行三组规则，命中任一即退出码 1：
   ① 按 `.cgupgrade` / `.cgpatch` 后缀与 `<来源>_to_<目标>` 命名规则检查全部 Release（含草稿）的附件；
   ② 未带完整离线介质的**已发布** Release 视为违规（草稿默认豁免，它是上传中的暂存区；
-  加 `--include-drafts` 可一并检查）。上传前后各跑一次。
+  加 `--include-drafts` 可一并检查）；
+  ③ 介质本身必须可用：有同名 `.sha256` 伴侣、体积不小于 10 MiB、上传状态为 `uploaded`。
+  只按文件名匹配挡不住空包、截断上传或缺摘要文件的发布，所以这三项单独成规。
+  缺少 `RELEASE-INFO` / `verification.json` 记为 warning（早期版本本就没有），加 `--strict`
+  才升级为失败。上传前后各跑一次；要核对字节本身再加 `--verify-download`（会下载介质）。
 - 历史先例一：`v2.2.68` 曾发布 `clusterguard-ha-2.2-66_to_2.2-68.x86_64.cgupgrade`
   （36,005,513 字节），已于 2026-09-22 删除；本地副本 `release/2.2-68-user-e2e/`
   摘要 `402256420e44473a3c37206ab2d3b53535cda00fd717c33bc78e1dd024772565` 一致，未丢失。

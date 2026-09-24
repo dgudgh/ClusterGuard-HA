@@ -191,9 +191,9 @@ The installer will install the isolator to `/usr/local/libexec/clusterguard-fenc
 
 ## 4. Prepare Database Media and Offline Dependencies
 
-The official offline package can embed approved database media directly through repeatable `--database-package` during construction. When the installer does not receive `-r`, it will automatically search for matching tar packages from `packages/database/` and unified directory `/opt` in the offline package. It is also possible to specify the enterprise unified media directory through `--database-package-dir /secure/database-media`.
+The official offline package can embed approved database media directly through repeatable `--database-package` during construction. Without `-r`, the installer first searches the current offline kit's `packages/database/`; it searches `/opt` only when the kit has no matching package. Use `--database-package-dir /secure/database-media` to search only the specified enterprise media directory.
 
-The installer requires the media to be readable `tar`, `tar.gz`, `tgz`, `tar.xz`, `tar.bz2`, or `tbz2`, and the compressed package must have only one secure top-level directory. It uses `--engine` and `--database-version` to match filenames; for example, MySQL 8.0.44 will match packages with filenames that simultaneously include `mysql` or `upsql` and `8.0.44`. If multiple candidates are found, it will refuse to execute and require the use of `-r` to explicitly specify, and will never randomly choose a version.
+The installer requires the media to be readable `tar`, `tar.gz`, `tgz`, `tar.xz`, `tar.bz2`, or `tbz2`, and the compressed package must have only one secure top-level directory. It uses `--engine` and `--database-version` to match filenames; for example, MySQL 8.0.44 will match packages with filenames that simultaneously include `mysql` or `upsql` and `8.0.44`. Multiple candidates in the selected directory still require an explicit `-r`. Older published installers also require `-r` when both the kit and `/opt` contain a match.
 
 MySQL 8.0 example:
 
@@ -436,7 +436,7 @@ After installation is complete, the console address is:
 https://192.168.102.152:3000/
 ```
 
-The initial account is `admin`. The initial password is the value of `bootstrap_admin_password_env` when the deployment sets it, and is otherwise generated into `/var/lib/clusterguard/bootstrap-admin-password` (mode 0600, beside `metadata.json`); read it on the control node where it appears. Either way you must immediately change the password after the first login; before changing the password, the console and API only allow authentication and password change, and cannot view or operate cluster data.
+The initial account is `admin`. For a new installation, the control plane generates the initial password in `/var/lib/clusterguard/bootstrap-admin-password` (mode 0600, beside `metadata.json`). After an interactive installation, the installer reads it securely from the current Raft Leader and displays it in the terminal. Non-interactive standard output does not contain the plaintext; read the file as root on the control node where it was generated. Terminal recording may capture the displayed password, so protect the installation session and change the password immediately after the first login. If the file is absent, the administrator may already exist or may have changed the password. Do not use the former fixed default or delete cluster state to reinitialize it; use the administrator recovery procedure. Until the first password change, the console and API only allow authentication and password change.
 
 ### 6.3 MySQL 8.4 Deployment
 

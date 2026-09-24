@@ -29,11 +29,16 @@ const maximumJSONBodyBytes = 1 << 20
 const requestIDHeader = "X-Request-ID"
 
 type Server struct {
-	registry              *adapter.Registry
-	store                 *store.Repository
-	workflow              *workflow.Service
-	approvals             *approval.Service
-	authentication        *platformauth.Service
+	registry       *adapter.Registry
+	store          *store.Repository
+	workflow       *workflow.Service
+	approvals      *approval.Service
+	authentication *platformauth.Service
+	// bootstrapPasswordFile is the artifact that holds the generated initial
+	// administrator credential. It sits beside the configured metadata, so a
+	// custom MetadataPath must reach the password-change handler too - otherwise
+	// the plaintext survives the first password change.
+	bootstrapPasswordFile string
 	refresher             Refresher
 	controlToken          string
 	monitorToken          string
@@ -46,6 +51,7 @@ type Server struct {
 	mutationRPC           MutationRPC
 	secureCookies         bool
 	controlPlane          ControlPlaneStatusProvider
+	configuration         ConfigurationProvider
 	maintenance           MutationMaintenance
 	softwareUpdates       SoftwareUpdateManager
 	disasterRecovery      DisasterRecoveryManager
@@ -90,6 +96,18 @@ func WithAuthentication(service *platformauth.Service) ServerOption {
 	return func(server *Server) { server.authentication = service }
 }
 
+// WithBootstrapPasswordFile overrides the location of the generated initial
+// administrator credential. Runtime passes the resolved path (which honours a
+// custom MetadataPath); anything left unset keeps the platform default so
+// existing callers behave as before.
+func WithBootstrapPasswordFile(path string) ServerOption {
+	return func(server *Server) {
+		if trimmed := strings.TrimSpace(path); trimmed != "" {
+			server.bootstrapPasswordFile = trimmed
+		}
+	}
+}
+
 func WithMonitoringToken(token string) ServerOption {
 	return func(server *Server) { server.monitorToken = strings.TrimSpace(token) }
 }
@@ -126,6 +144,13 @@ func WithControlPlaneStatus(provider ControlPlaneStatusProvider) ServerOption {
 	return func(server *Server) { server.controlPlane = provider }
 }
 
+// WithConfiguration exposes the read-only effective configuration of this node.
+// It is display-only: the runtime keeps reading its configuration once at
+// start-up, and the view says so.
+func WithConfiguration(provider ConfigurationProvider) ServerOption {
+	return func(server *Server) { server.configuration = provider }
+}
+
 func WithMutationMaintenance(gate MutationMaintenance) ServerOption {
 	return func(server *Server) { server.maintenance = gate }
 }
@@ -135,7 +160,11 @@ func WithSoftwareUpdates(manager SoftwareUpdateManager) ServerOption {
 }
 
 func NewServer(registry *adapter.Registry, repository *store.Repository, service *workflow.Service, refresher Refresher, options ...ServerOption) *Server {
-	server := &Server{registry: registry, store: repository, workflow: service, refresher: refresher, startedAt: time.Now().UTC()}
+	server := &Server{
+		registry: registry, store: repository, workflow: service, refresher: refresher,
+		bootstrapPasswordFile: platformauth.DefaultBootstrapPasswordFile,
+		startedAt:             time.Now().UTC(),
+	}
 	for _, option := range options {
 		if option != nil {
 			option(server)
@@ -315,6 +344,10 @@ func (server *Server) route(writer http.ResponseWriter, request *http.Request) {
 		server.capabilities(writer)
 	case request.Method == http.MethodGet && path == "/api/v1/control-plane/status":
 		server.controlPlaneStatusRoute(writer, request)
+	case request.Method == http.MethodGet && path == "/api/v1/control-plane/configuration":
+		server.configurationRoute(writer, request)
+	case (request.Method == http.MethodGet || request.Method == http.MethodPut) && path == "/api/v1/cluster-policy":
+		server.clusterPolicyRoute(writer, request)
 	case request.Method == http.MethodGet && path == "/api/v1/platform/version":
 		server.platformVersionRoute(writer)
 	case path == "/api/v1/platform/updates" || strings.HasPrefix(path, "/api/v1/platform/updates/"):

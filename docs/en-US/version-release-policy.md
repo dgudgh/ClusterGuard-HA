@@ -91,12 +91,17 @@ release notes, serves no purpose and must be deleted.
 - When removing a whole release, **keep the Git tag**: the tag is source provenance, not a
   distribution artifact, and it stays reachable from the remote branch, so the delivery-record gate
   is unaffected. Use `--cleanup-tag` only once nothing references the tag.
-- Check command: `node tools/verify-public-release-assets.cjs`. It applies two rules and exits
-  non-zero when either matches: (1) the `.cgupgrade` / `.cgpatch` suffix rules and the
+- Check command: `node tools/verify-public-release-assets.cjs`. It applies three rule groups and
+  exits non-zero when any matches: (1) the `.cgupgrade` / `.cgpatch` suffix rules and the
   `<from>_to_<to>` naming rule across every release, drafts included; (2) a **published** release
   that carries no complete offline media is a violation. Drafts are exempt by default because a
   draft is the staging area while the kit is still uploading; pass `--include-drafts` to cover them
-  as well. Run it before and after uploading.
+  as well; (3) the media itself must be usable: a `<name>.sha256` companion, at least 10 MiB, and
+  an `uploaded` state. Matching the file name alone cannot catch an empty tar, a truncated upload,
+  or a kit published without its digest, so those are checked separately. Missing `RELEASE-INFO` /
+  `verification.json` is reported as a warning (earlier releases never carried them) and only
+  becomes a failure with `--strict`. Run it before and after uploading; add `--verify-download` to
+  check the bytes themselves against the published digest.
 - Precedent one: `v2.2.68` once published `clusterguard-ha-2.2-66_to_2.2-68.x86_64.cgupgrade`
   (36,005,513 bytes). It was removed on 2026-09-22; the local copy under
   `release/2.2-68-user-e2e/` matches digest

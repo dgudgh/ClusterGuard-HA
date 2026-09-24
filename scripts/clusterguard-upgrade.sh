@@ -102,6 +102,7 @@ cluster_idle_attempts="${CG_UPDATE_CLUSTER_IDLE_ATTEMPTS:-30}"
 cluster_idle_delay_seconds="${CG_UPDATE_CLUSTER_IDLE_DELAY_SECONDS:-2}"
 cluster_idle_timeout_seconds="${CG_UPDATE_CLUSTER_IDLE_TIMEOUT_SECONDS:-60}"
 node_ready_timeout_seconds="${CG_UPDATE_NODE_READY_TIMEOUT_SECONDS:-90}"
+node_ready_delay_seconds="${CG_UPDATE_NODE_READY_DELAY_SECONDS:-2}"
 stale_operation_threshold_seconds=1800
 execution_id=""
 previous_execution_id=""
@@ -112,6 +113,11 @@ mutation_guard=""
 [[ "${cluster_idle_delay_seconds}" =~ ^[0-9]+$ ]] || { printf 'CG_UPDATE_CLUSTER_IDLE_DELAY_SECONDS 必须为非负整数\n' >&2; exit 1; }
 [[ "${cluster_idle_timeout_seconds}" =~ ^[1-9][0-9]*$ ]] || { printf 'CG_UPDATE_CLUSTER_IDLE_TIMEOUT_SECONDS 必须为正整数\n' >&2; exit 1; }
 [[ "${node_ready_timeout_seconds}" =~ ^[1-9][0-9]*$ ]] || { printf 'CG_UPDATE_NODE_READY_TIMEOUT_SECONDS 必须为正整数\n' >&2; exit 1; }
+# 0 is allowed: scenarios whose peers change state synchronously have nothing to
+# wait for, and every retry then costs one probe instead of one sleep. The 60
+# attempt ceiling still bounds the loop, so a node that never becomes ready fails
+# at exactly the same point, only sooner.
+[[ "${node_ready_delay_seconds}" =~ ^[0-9]+$ ]] || { printf 'CG_UPDATE_NODE_READY_DELAY_SECONDS 必须为非负整数\n' >&2; exit 1; }
 [[ "${bootstrap_depth}" == 0 || "${bootstrap_depth}" == 1 ]] || { printf 'CG_UPDATE_BOOTSTRAP_DEPTH 必须为 0 或 1\n' >&2; exit 1; }
 
 timestamp() { date '+%Y-%m-%d %H:%M:%S'; }
@@ -1547,7 +1553,7 @@ wait_node_ready() {
 		fi
 		now_epoch="$(date +%s)"
 		((attempt < 60 && now_epoch < deadline_epoch)) || break
-		sleep_seconds=2
+		sleep_seconds="${node_ready_delay_seconds}"
 		if ((sleep_seconds > deadline_epoch - now_epoch)); then sleep_seconds=$((deadline_epoch - now_epoch)); fi
 		((sleep_seconds > 0)) && sleep "${sleep_seconds}"
 	done

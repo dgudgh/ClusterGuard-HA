@@ -57,6 +57,104 @@ func TestLoadReadsConfigurationAndEnvironmentSecret(t *testing.T) {
 	}
 }
 
+// writeTimingConfig writes a minimal enabled-MySQL configuration whose
+// automatic failover timing block is supplied by the caller.
+func writeTimingConfig(t *testing.T, mysqlTiming string) string {
+	t.Helper()
+	directory := t.TempDir()
+	path := filepath.Join(directory, "control.json")
+	contents := `{
+  "http_address": "127.0.0.1:9090",
+  "metadata_path": "` + filepath.Join(directory, "metadata.json") + `",
+  "mysql": {
+    "enabled": true,
+    "discovery": {"username": "discover", "password_env": "CG_TEST_MYSQL_DISCOVERY"},
+    "operation": {"username": "operator", "password_env": "CG_TEST_MYSQL_OPERATION"},
+    "replication": {"username": "replicator", "password_env": "CG_TEST_MYSQL_REPLICATION"}` + mysqlTiming + `
+  }
+}`
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CG_TEST_MYSQL_DISCOVERY", "discovery-secret")
+	t.Setenv("CG_TEST_MYSQL_OPERATION", "operation-secret")
+	t.Setenv("CG_TEST_MYSQL_REPLICATION", "replication-secret")
+	return path
+}
+
+func TestLoadAppliesAutomaticFailoverTimingDefaults(t *testing.T) {
+	loaded, err := Load(writeTimingConfig(t, ""))
+	if err != nil {
+		t.Fatalf("load configuration: %v", err)
+	}
+	if loaded.MySQL.AutomaticFailoverMinimumObservations != DefaultAutomaticFailoverMinimumObservations {
+		t.Fatalf("minimum observations=%d, want %d", loaded.MySQL.AutomaticFailoverMinimumObservations, DefaultAutomaticFailoverMinimumObservations)
+	}
+	if loaded.MySQL.AutomaticFailoverFailureWindowSeconds != DefaultAutomaticFailoverFailureWindowSeconds {
+		t.Fatalf("failure window=%ds, want %ds", loaded.MySQL.AutomaticFailoverFailureWindowSeconds, DefaultAutomaticFailoverFailureWindowSeconds)
+	}
+	if loaded.MySQL.AutomaticFailoverOperationTimeoutSeconds != DefaultAutomaticFailoverOperationTimeoutSeconds {
+		t.Fatalf("operation timeout=%ds, want %ds", loaded.MySQL.AutomaticFailoverOperationTimeoutSeconds, DefaultAutomaticFailoverOperationTimeoutSeconds)
+	}
+}
+
+func TestLoadHonoursConfiguredAutomaticFailoverTiming(t *testing.T) {
+	timing := `,
+    "automatic_failover_minimum_observations": 6,
+    "automatic_failover_failure_window_seconds": 30,
+    "automatic_failover_operation_timeout_seconds": 600`
+	loaded, err := Load(writeTimingConfig(t, timing))
+	if err != nil {
+		t.Fatalf("load configuration: %v", err)
+	}
+	if loaded.MySQL.AutomaticFailoverMinimumObservations != 6 {
+		t.Fatalf("minimum observations=%d, want 6", loaded.MySQL.AutomaticFailoverMinimumObservations)
+	}
+	if loaded.MySQL.AutomaticFailoverFailureWindowSeconds != 30 {
+		t.Fatalf("failure window=%ds, want 30s", loaded.MySQL.AutomaticFailoverFailureWindowSeconds)
+	}
+	if loaded.MySQL.AutomaticFailoverOperationTimeoutSeconds != 600 {
+		t.Fatalf("operation timeout=%ds, want 600s", loaded.MySQL.AutomaticFailoverOperationTimeoutSeconds)
+	}
+}
+
+func TestLoadRejectsOutOfRangeAutomaticFailoverTiming(t *testing.T) {
+	cases := []struct {
+		name    string
+		timing  string
+		wantErr string
+	}{
+		{
+			name:    "single observation cannot reject a missed probe",
+			timing:  `, "automatic_failover_minimum_observations": 1`,
+			wantErr: "automatic_failover_minimum_observations",
+		},
+		{
+			// A value of zero is indistinguishable from an absent key under
+			// omitempty, so it means "use the default" rather than "no window".
+			name:    "window longer than an hour",
+			timing:  `, "automatic_failover_failure_window_seconds": 99999`,
+			wantErr: "automatic_failover_failure_window_seconds",
+		},
+		{
+			name:    "operation budget shorter than a promotion",
+			timing:  `, "automatic_failover_operation_timeout_seconds": 5`,
+			wantErr: "automatic_failover_operation_timeout_seconds",
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			_, err := Load(writeTimingConfig(t, testCase.timing))
+			if err == nil {
+				t.Fatalf("out-of-range timing was accepted: %s", testCase.timing)
+			}
+			if !strings.Contains(err.Error(), testCase.wantErr) {
+				t.Fatalf("error=%v, want it to name %s", err, testCase.wantErr)
+			}
+		})
+	}
+}
+
 func TestLoadResolvesPurposeSpecificMySQLCredentials(t *testing.T) {
 	directory := t.TempDir()
 	path := filepath.Join(directory, "control.json")

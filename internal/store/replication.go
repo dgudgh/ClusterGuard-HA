@@ -306,6 +306,16 @@ func normalizeSnapshot(value snapshot) (snapshot, error) {
 			return snapshot{}, fmt.Errorf("report status is not terminal")
 		}
 	}
+	// A policy that arrived from a peer must satisfy the same bounds as one
+	// accepted from the console, otherwise a leader could replicate tuning this
+	// node would refuse locally.
+	if normalized.ClusterPolicy != nil {
+		policy := cloneClusterPolicy(*normalized.ClusterPolicy)
+		if err := validateClusterPolicy(policy); err != nil {
+			return snapshot{}, err
+		}
+		normalized.ClusterPolicy = &policy
+	}
 	return normalized, nil
 }
 

@@ -146,6 +146,68 @@ func recoveryFixture(now time.Time) (model.DatabaseCluster, model.TopologySnapsh
 	return cluster, snapshot, targetID
 }
 
+// deadlineRecoveryExecutor captures the deadline the controller hands to a
+// failover operation, which is the only place the operation budget is observable.
+type deadlineRecoveryExecutor struct {
+	mu          sync.Mutex
+	deadline    time.Time
+	hasDeadline bool
+}
+
+func (executor *deadlineRecoveryExecutor) ExecuteAutomatic(ctx context.Context, _ adapter.OperationRequest, _ string) (model.Execution, error) {
+	executor.mu.Lock()
+	defer executor.mu.Unlock()
+	executor.deadline, executor.hasDeadline = ctx.Deadline()
+	return model.Execution{Status: model.OperationSucceeded}, nil
+}
+
+func TestControllerBoundsAutomaticFailoverWithConfiguredOperationTimeout(t *testing.T) {
+	now := time.Date(2026, time.July, 13, 22, 30, 30, 0, time.UTC)
+	cluster, snapshot, targetID := recoveryFixture(now)
+	incident := now.Add(-30 * time.Second)
+	executor := &deadlineRecoveryExecutor{}
+	controller := NewController(
+		recoveryStateStub{clusters: []model.DatabaseCluster{cluster}, snapshots: map[model.ResourceID]model.TopologySnapshot{cluster.ResourceID: snapshot}},
+		recoveryFailureEvidenceStub{incidents: map[model.ResourceID]time.Time{cluster.ResourceID: incident}},
+		recoverySelectorStub{targets: map[model.ResourceID]model.ResourceID{cluster.ResourceID: targetID}},
+		executor, recoveryAuthorityStub{}, 30*time.Second, func() time.Time { return now },
+		WithOperationTimeout(90*time.Second),
+	)
+	if err := controller.RunOnce(context.Background()); err != nil {
+		t.Fatalf("run automatic failover: %v", err)
+	}
+	if !executor.hasDeadline {
+		t.Fatal("automatic failover ran without an operation deadline")
+	}
+	// context.WithTimeout measures from the real clock, so compare against real
+	// remaining time rather than the injected fake clock.
+	if remaining := time.Until(executor.deadline); remaining <= 89*time.Second || remaining > 90*time.Second {
+		t.Fatalf("operation deadline remaining=%s, want about 90s", remaining)
+	}
+}
+
+func TestControllerDefaultsOperationTimeoutToFiveMinutes(t *testing.T) {
+	now := time.Date(2026, time.July, 13, 22, 30, 30, 0, time.UTC)
+	cluster, snapshot, targetID := recoveryFixture(now)
+	incident := now.Add(-30 * time.Second)
+	executor := &deadlineRecoveryExecutor{}
+	controller := NewController(
+		recoveryStateStub{clusters: []model.DatabaseCluster{cluster}, snapshots: map[model.ResourceID]model.TopologySnapshot{cluster.ResourceID: snapshot}},
+		recoveryFailureEvidenceStub{incidents: map[model.ResourceID]time.Time{cluster.ResourceID: incident}},
+		recoverySelectorStub{targets: map[model.ResourceID]model.ResourceID{cluster.ResourceID: targetID}},
+		executor, recoveryAuthorityStub{}, 30*time.Second, func() time.Time { return now },
+	)
+	if err := controller.RunOnce(context.Background()); err != nil {
+		t.Fatalf("run automatic failover: %v", err)
+	}
+	if !executor.hasDeadline {
+		t.Fatal("automatic failover ran without an operation deadline")
+	}
+	if remaining := time.Until(executor.deadline); remaining <= 4*time.Minute || remaining > 5*time.Minute {
+		t.Fatalf("operation deadline remaining=%s, want about 5m", remaining)
+	}
+}
+
 func TestControllerExecutesOneAuditedFailoverForStableIncident(t *testing.T) {
 	now := time.Date(2026, time.July, 13, 22, 30, 30, 0, time.UTC)
 	cluster, snapshot, targetID := recoveryFixture(now)

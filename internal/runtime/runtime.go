@@ -417,7 +417,7 @@ func runAuthenticationRecovery(
 
 type mysqlFailoverRuntime struct {
 	failureObserver discovery.PrimaryFailureObserver
-	failureEvidence *coordination.FailureWindow
+	failureEvidence *engineFailureEvidence
 	safety          mysql.FailoverSafetyProvider
 }
 
@@ -495,6 +495,260 @@ func automaticFailoverMaximumObservationGap(configuration config.File) time.Dura
 	return maximumGap
 }
 
+// automaticFailoverEvidenceProfile carries the tunable failure-evidence window
+// for one engine. Observations count the whole series including the seeding
+// observation, while checks counts only the follow-ups the window must retain,
+// because the first observation opens the series and is never counted as a
+// check (see coordination.FailureWindow.Record).
+type automaticFailoverEvidenceProfile struct {
+	observations int
+	checks       int
+	duration     time.Duration
+	maximumGap   time.Duration
+}
+
+// automaticFailoverObservations falls back to the documented default when the
+// configuration was assembled in-process without passing through config.Load.
+func automaticFailoverObservations(value int) int {
+	if value <= 0 {
+		return config.DefaultAutomaticFailoverMinimumObservations
+	}
+	return value
+}
+
+func automaticFailoverWindowSeconds(value int) int {
+	if value <= 0 {
+		return config.DefaultAutomaticFailoverFailureWindowSeconds
+	}
+	return value
+}
+
+// automaticFailoverEvidenceProfileFor builds one engine's evidence window. The
+// stale-evidence gap keeps its original derivation: it starts from the window
+// itself and only widens when the configured discovery cadence is slower, so a
+// normal scheduler interval is never mistaken for a recovered primary.
+func automaticFailoverEvidenceProfileFor(enabled bool, intervalSeconds, timeoutSeconds, minimumObservations, failureWindowSeconds int) automaticFailoverEvidenceProfile {
+	observations := automaticFailoverObservations(minimumObservations)
+	checks := observations - 1
+	if checks < 1 {
+		checks = 1
+	}
+	duration := time.Duration(automaticFailoverWindowSeconds(failureWindowSeconds)) * time.Second
+	maximumGap := 2 * duration / time.Duration(checks)
+	if enabled && intervalSeconds > 0 {
+		cadence := time.Duration(intervalSeconds) * time.Second
+		if timeout := time.Duration(timeoutSeconds) * time.Second; timeout > cadence {
+			cadence = timeout
+		}
+		if candidate := 2 * cadence; candidate > maximumGap {
+			maximumGap = candidate
+		}
+	}
+	return automaticFailoverEvidenceProfile{observations: observations, checks: checks, duration: duration, maximumGap: maximumGap}
+}
+
+// automaticFailoverOperationTimeout bounds one automatic failover operation.
+// It falls back to the documented default when the configuration was assembled
+// in-process without passing through config.Load.
+func automaticFailoverOperationTimeout(seconds int) time.Duration {
+	if seconds <= 0 {
+		return time.Duration(config.DefaultAutomaticFailoverOperationTimeoutSeconds) * time.Second
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func automaticFailoverMySQLProfile(configuration config.File) automaticFailoverEvidenceProfile {
+	return automaticFailoverEvidenceProfileFor(
+		configuration.MySQL.AutomaticFailoverEnabled,
+		configuration.MySQL.DiscoveryIntervalSeconds, configuration.MySQL.DiscoveryTimeoutSeconds,
+		configuration.MySQL.AutomaticFailoverMinimumObservations, configuration.MySQL.AutomaticFailoverFailureWindowSeconds,
+	)
+}
+
+// automaticFailoverProfileWithPolicy applies the replicated cluster policy on
+// top of what this node was started with. A zero policy field means "no
+// override", so a cluster adopts one parameter at a time and clearing the
+// policy restores the configured behaviour exactly.
+func automaticFailoverProfileWithPolicy(configuration config.File, engine model.Engine, settings store.ClusterEnginePolicy) automaticFailoverEvidenceProfile {
+	if engine != model.EnginePostgreSQL {
+		return automaticFailoverEvidenceProfileFor(
+			configuration.MySQL.AutomaticFailoverEnabled,
+			configuration.MySQL.DiscoveryIntervalSeconds, configuration.MySQL.DiscoveryTimeoutSeconds,
+			firstPositive(settings.AutomaticFailoverMinimumObservations, configuration.MySQL.AutomaticFailoverMinimumObservations),
+			firstPositive(settings.AutomaticFailoverFailureWindowSeconds, configuration.MySQL.AutomaticFailoverFailureWindowSeconds),
+		)
+	}
+	return automaticFailoverEvidenceProfileFor(
+		configuration.PostgreSQL.AutomaticFailoverEnabled,
+		configuration.PostgreSQL.DiscoveryIntervalSeconds, configuration.PostgreSQL.DiscoveryTimeoutSeconds,
+		firstPositive(settings.AutomaticFailoverMinimumObservations, configuration.PostgreSQL.AutomaticFailoverMinimumObservations),
+		firstPositive(settings.AutomaticFailoverFailureWindowSeconds, configuration.PostgreSQL.AutomaticFailoverFailureWindowSeconds),
+	)
+}
+
+func firstPositive(override, configured int) int {
+	if override > 0 {
+		return override
+	}
+	return configured
+}
+
+// clusterPolicyProvider reads the replicated policy straight from the store on
+// every call. Nothing is cached: a follower that has just applied the commit
+// must start honouring it immediately.
+func clusterPolicyProvider(repository *store.Repository) func(model.Engine) store.ClusterEnginePolicy {
+	if repository == nil {
+		return nil
+	}
+	return func(engine model.Engine) store.ClusterEnginePolicy {
+		return repository.ClusterEnginePolicy(engine)
+	}
+}
+
+func automaticFailoverPolicyOperationTimeout(configuration config.File, engine model.Engine, settings store.ClusterEnginePolicy) time.Duration {
+	override := settings.AutomaticFailoverOperationTimeoutSeconds
+	if override <= 0 {
+		if engine == model.EnginePostgreSQL {
+			override = configuration.PostgreSQL.AutomaticFailoverOperationTimeoutSeconds
+		} else {
+			override = configuration.MySQL.AutomaticFailoverOperationTimeoutSeconds
+		}
+	}
+	return automaticFailoverOperationTimeout(override)
+}
+
+func automaticFailoverPostgreSQLProfile(configuration config.File) automaticFailoverEvidenceProfile {
+	return automaticFailoverEvidenceProfileFor(
+		configuration.PostgreSQL.AutomaticFailoverEnabled,
+		configuration.PostgreSQL.DiscoveryIntervalSeconds, configuration.PostgreSQL.DiscoveryTimeoutSeconds,
+		configuration.PostgreSQL.AutomaticFailoverMinimumObservations, configuration.PostgreSQL.AutomaticFailoverFailureWindowSeconds,
+	)
+}
+
+// engineFailureEvidence routes discovery observations and stability queries to
+// the failure window configured for the engine that owns a cluster. Discovery
+// publishes a single observation stream, so every window receives the record
+// and only the owning engine's window answers a stability query; a cluster
+// identifier belongs to exactly one engine, so foreign records are inert.
+type engineFailureEvidence struct {
+	mu       sync.Mutex
+	windows  map[model.Engine]*coordination.FailureWindow
+	fallback *coordination.FailureWindow
+	engineOf func(model.ResourceID) (model.Engine, bool)
+	// profiles records the bounds each window was built with, and profileFor
+	// re-reads the replicated cluster policy. When the two disagree the window
+	// is rebuilt, which is what makes a policy change take effect without a
+	// restart. Rebuilding drops evidence accumulated under the previous bounds:
+	//
+	// that is deliberate. Keeping a series that was collected under, say, ten
+	// observations and replaying it against a window that now requires two
+	// would authorize a failover the new policy would never have allowed.
+	profiles   map[model.Engine]automaticFailoverEvidenceProfile
+	profileFor func(model.Engine) automaticFailoverEvidenceProfile
+}
+
+// refreshLocked rebuilds any window whose policy bounds have changed. Callers
+// must hold evidence.mu.
+func (evidence *engineFailureEvidence) refreshLocked() {
+	if evidence == nil || evidence.profileFor == nil {
+		return
+	}
+	for engine := range evidence.windows {
+		profile := evidence.profileFor(engine)
+		if existing, found := evidence.profiles[engine]; found && existing == profile {
+			continue
+		}
+		evidence.windows[engine] = coordination.NewFailureWindow(profile.checks, profile.duration,
+			coordination.WithMaximumObservationGap(profile.maximumGap))
+		evidence.profiles[engine] = profile
+	}
+}
+
+func newEngineFailureEvidence(fallback *coordination.FailureWindow, engineOf func(model.ResourceID) (model.Engine, bool)) *engineFailureEvidence {
+	return &engineFailureEvidence{
+		windows:  make(map[model.Engine]*coordination.FailureWindow),
+		profiles: make(map[model.Engine]automaticFailoverEvidenceProfile),
+		fallback: fallback, engineOf: engineOf,
+	}
+}
+
+// withPolicyProvider makes each engine's window follow the replicated cluster
+// policy. The provider is consulted before every use, so a console change takes
+// effect on the next discovery round instead of at the next restart.
+func (evidence *engineFailureEvidence) withPolicyProvider(configuration config.File, policy func(model.Engine) store.ClusterEnginePolicy) *engineFailureEvidence {
+	if evidence == nil || policy == nil {
+		return evidence
+	}
+	evidence.profileFor = func(engine model.Engine) automaticFailoverEvidenceProfile {
+		return automaticFailoverProfileWithPolicy(configuration, engine, policy(engine))
+	}
+	return evidence
+}
+
+func (evidence *engineFailureEvidence) windowFor(clusterID model.ResourceID) *coordination.FailureWindow {
+	if evidence == nil {
+		return nil
+	}
+	evidence.mu.Lock()
+	defer evidence.mu.Unlock()
+	evidence.refreshLocked()
+	if evidence.engineOf != nil {
+		if engine, ok := evidence.engineOf(clusterID); ok {
+			if window, found := evidence.windows[engine]; found && window != nil {
+				return window
+			}
+		}
+	}
+	return evidence.fallback
+}
+
+func (evidence *engineFailureEvidence) Record(clusterID model.ResourceID, failed bool, observedAt time.Time) {
+	if evidence == nil {
+		return
+	}
+	evidence.mu.Lock()
+	evidence.refreshLocked()
+	windows := make([]*coordination.FailureWindow, 0, len(evidence.windows))
+	for _, window := range evidence.windows {
+		windows = append(windows, window)
+	}
+	fallback := evidence.fallback
+	evidence.mu.Unlock()
+	for _, window := range windows {
+		if window != nil {
+			window.Record(clusterID, failed, observedAt)
+		}
+	}
+	if fallback != nil {
+		fallback.Record(clusterID, failed, observedAt)
+	}
+}
+
+func (evidence *engineFailureEvidence) Stable(clusterID model.ResourceID, now time.Time) bool {
+	window := evidence.windowFor(clusterID)
+	return window != nil && window.Stable(clusterID, now)
+}
+
+func (evidence *engineFailureEvidence) Incident(clusterID model.ResourceID, now time.Time) (time.Time, bool) {
+	window := evidence.windowFor(clusterID)
+	if window == nil {
+		return time.Time{}, false
+	}
+	return window.Incident(clusterID, now)
+}
+
+// StableIncident satisfies the optional evidence interface the guarded failover
+// safety provider type-asserts, so a promotion still has to prove it was
+// authorized by a stable incident under the owning engine's window.
+func (evidence *engineFailureEvidence) StableIncident(clusterID model.ResourceID, startedAt time.Time) bool {
+	window := evidence.windowFor(clusterID)
+	return window != nil && window.StableIncident(clusterID, startedAt)
+}
+
+// newMySQLFailoverRuntime builds the failover components with the documented
+// default evidence window. It exists for callers that have no configuration to
+// honour; the runtime itself uses newConfiguredFailoverRuntime so each engine
+// can carry its own window.
 func newMySQLFailoverRuntime(
 	authority coordination.MutationAuthority,
 	inventory coordination.FailoverInventory,
@@ -507,6 +761,64 @@ func newMySQLFailoverRuntime(
 	authorizations *coordination.AgentAuthorizationTracker,
 	externalFencers ...coordination.ExternalFencer,
 ) mysqlFailoverRuntime {
+	failureOptions := make([]coordination.FailureWindowOption, 0, 1)
+	if failureMaximumObservationGap > 0 {
+		failureOptions = append(failureOptions, coordination.WithMaximumObservationGap(failureMaximumObservationGap))
+	}
+	failures := coordination.NewFailureWindow(automaticFailoverFailureChecks, automaticFailoverFailureDuration, failureOptions...)
+	return newConfiguredFailoverRuntime(authority, inventory, leases, transport, secret, now,
+		agentQuorumGrace, newEngineFailureEvidence(failures, nil), authorizations, externalFencers...)
+}
+
+// clusterEngineResolver reports which engine owns a cluster. Only the engine
+// that owns a cluster may answer stability questions about it.
+type clusterEngineResolver interface {
+	Cluster(model.ResourceID) (model.DatabaseCluster, bool)
+}
+
+// newConfiguredFailureEvidence builds one failure window per engine that has
+// automatic failover enabled, plus a fallback window that preserves the
+// historical shared behaviour for every other engine. Engines without their own
+// window fall back rather than being denied, so a misconfigured engine never
+// silently stops recording evidence.
+func newConfiguredFailureEvidence(configuration config.File, inventory clusterEngineResolver, policy func(model.Engine) store.ClusterEnginePolicy) *engineFailureEvidence {
+	fallback := coordination.NewFailureWindow(automaticFailoverFailureChecks, automaticFailoverFailureDuration,
+		coordination.WithMaximumObservationGap(automaticFailoverMaximumObservationGap(configuration)))
+	engineOf := func(clusterID model.ResourceID) (model.Engine, bool) {
+		if inventory == nil {
+			return model.Engine(""), false
+		}
+		cluster, ok := inventory.Cluster(clusterID)
+		return cluster.Engine, ok
+	}
+	evidence := newEngineFailureEvidence(fallback, engineOf)
+	if configuration.MySQL.AutomaticFailoverEnabled {
+		profile := automaticFailoverMySQLProfile(configuration)
+		evidence.windows[model.EngineMySQL] = coordination.NewFailureWindow(profile.checks, profile.duration,
+			coordination.WithMaximumObservationGap(profile.maximumGap))
+		evidence.profiles[model.EngineMySQL] = profile
+	}
+	if configuration.PostgreSQL.AutomaticFailoverEnabled {
+		profile := automaticFailoverPostgreSQLProfile(configuration)
+		evidence.windows[model.EnginePostgreSQL] = coordination.NewFailureWindow(profile.checks, profile.duration,
+			coordination.WithMaximumObservationGap(profile.maximumGap))
+		evidence.profiles[model.EnginePostgreSQL] = profile
+	}
+	return evidence.withPolicyProvider(configuration, policy)
+}
+
+func newConfiguredFailoverRuntime(
+	authority coordination.MutationAuthority,
+	inventory coordination.FailoverInventory,
+	leases writerendpoint.LeaseStore,
+	transport writerendpoint.AgentTransport,
+	secret string,
+	now func() time.Time,
+	agentQuorumGrace time.Duration,
+	evidence *engineFailureEvidence,
+	authorizations *coordination.AgentAuthorizationTracker,
+	externalFencers ...coordination.ExternalFencer,
+) mysqlFailoverRuntime {
 	components := mysqlFailoverRuntime{safety: mysql.UnsupportedFailoverSafetyProvider{}}
 	var externalFencer coordination.ExternalFencer
 	if len(externalFencers) > 0 {
@@ -515,16 +827,11 @@ func newMySQLFailoverRuntime(
 	if authority == nil || inventory == nil || leases == nil || ((transport == nil || secret == "") && externalFencer == nil) {
 		return components
 	}
-	// Four consecutive observations (the initial failure plus three follow-ups)
-	// across three seconds reject a single missed probe while leaving the full
-	// 15-second Agent authorization expiry window and promotion inside a 30s RTO.
-	failureOptions := make([]coordination.FailureWindowOption, 0, 1)
-	if failureMaximumObservationGap > 0 {
-		failureOptions = append(failureOptions, coordination.WithMaximumObservationGap(failureMaximumObservationGap))
+	if evidence == nil {
+		return components
 	}
-	failures := coordination.NewFailureWindow(automaticFailoverFailureChecks, automaticFailoverFailureDuration, failureOptions...)
-	components.failureObserver = failures
-	components.failureEvidence = failures
+	components.failureObserver = evidence
+	components.failureEvidence = evidence
 	options := make([]coordination.GuardedFailoverOption, 0, 2)
 	if agentQuorumGrace > 0 {
 		options = append(options, coordination.WithAgentQuorumFencing(agentQuorumGrace))
@@ -535,7 +842,7 @@ func newMySQLFailoverRuntime(
 	if externalFencer != nil {
 		options = append(options, coordination.WithExternalFencer(externalFencer))
 	}
-	components.safety = coordination.NewGuardedFailoverSafety(failures, authority, inventory, leases, transport, secret, now, options...)
+	components.safety = coordination.NewGuardedFailoverSafety(evidence, authority, inventory, leases, transport, secret, now, options...)
 	return components
 }
 
@@ -627,7 +934,34 @@ func (runtime *Runtime) Close() error {
 	return runtime.consensus.Close()
 }
 
-func New(configuration config.File) (*Runtime, error) {
+// options carries start-up facts the runtime cannot derive from the decoded
+// configuration alone.
+type options struct {
+	configurationPath string
+}
+
+// Option adjusts runtime start-up without changing the configuration contract.
+type Option func(*options)
+
+// WithConfigurationPath records where the running process was told to read its
+// configuration. The runtime never re-reads that file for behaviour - the caller
+// loads it once - but the console has to name the file and say which keys are
+// present in it, so the path has to travel with the runtime.
+func WithConfigurationPath(path string) Option {
+	return func(target *options) { target.configurationPath = strings.TrimSpace(path) }
+}
+
+func New(configuration config.File, settings ...Option) (*Runtime, error) {
+	applied := options{}
+	for _, setting := range settings {
+		if setting != nil {
+			setting(&applied)
+		}
+	}
+	configurationPath := applied.configurationPath
+	if configurationPath == "" {
+		configurationPath = config.DefaultPath
+	}
 	startedAt := time.Now().UTC()
 	repository, err := store.Open(configuration.MetadataPath)
 	if err != nil {
@@ -766,10 +1100,14 @@ func New(configuration config.File) (*Runtime, error) {
 	if configuration.Fencing.AgentQuorumEnabled {
 		agentQuorumGrace = time.Duration(configuration.Fencing.AgentQuorumGraceSeconds) * time.Second
 	}
-	failoverRuntime := newMySQLFailoverRuntime(
+	failoverRuntime := newConfiguredFailoverRuntime(
 		failoverAuthority, repository, failoverLeases, agentTransport, configuration.Agent.SharedSecret, nil,
 		agentQuorumGrace,
-		automaticFailoverMaximumObservationGap(configuration), agentAuthorizations, externalFencer,
+		// The replicated policy is the hot half of failover tuning: it is read
+		// again on every round, so a console change takes effect without a
+		// restart, while the configuration file still supplies every value the
+		// policy does not override.
+		newConfiguredFailureEvidence(configuration, repository, clusterPolicyProvider(repository)), agentAuthorizations, externalFencer,
 	)
 	mysqlAdapter := mysql.NewWithSafetyProviders(
 		mysql.CLIQueryRunner{},
@@ -830,6 +1168,9 @@ func New(configuration config.File) (*Runtime, error) {
 		api.WithAuthentication(result.authentication),
 		api.WithSecureCookies(strings.TrimSpace(configuration.TLSCertFile) != ""),
 		api.WithControlPlaneStatus(newControlPlaneStatusProvider(repository, result.consensus, startedAt)),
+		api.WithConfiguration(newConfigurationViewProvider(configuration, configurationPath, startedAt, func() store.ClusterPolicy {
+			return repository.ClusterPolicy()
+		})),
 		api.WithMutationMaintenance(updateMaintenance),
 		api.WithSoftwareUpdates(softwareUpdates),
 	}
@@ -900,6 +1241,11 @@ func New(configuration config.File) (*Runtime, error) {
 			return secrets, nil
 		})))
 	}
+	// The bootstrap artifact lives beside the configured metadata, so the API
+	// layer must learn the resolved path instead of assuming the published
+	// default. Without this a custom MetadataPath leaves the plaintext
+	// credential in place after the first password change.
+	options = append(options, api.WithBootstrapPasswordFile(bootstrapPasswordPath(configuration)))
 	result.server = api.NewServer(registry, repository, service, refresher, options...)
 	var discoveryAuthority discovery.ScheduledMutationAuthority
 	if result.consensus != nil {
@@ -925,6 +1271,11 @@ func New(configuration config.File) (*Runtime, error) {
 			result.consensus,
 			time.Duration(configuration.MySQL.AutomaticFailoverRetrySeconds)*time.Second, nil,
 			recovery.WithInterval(time.Duration(configuration.MySQL.AutomaticFailoverIntervalSeconds)*time.Second),
+			recovery.WithOperationTimeout(automaticFailoverOperationTimeout(configuration.MySQL.AutomaticFailoverOperationTimeoutSeconds)),
+			recovery.WithOperationTimeoutProvider(func() time.Duration {
+				return automaticFailoverPolicyOperationTimeout(configuration, model.EngineMySQL, repository.ClusterEnginePolicy(model.EngineMySQL))
+			}),
+			recovery.WithSuppression(func() bool { return repository.AutomaticFailoverSuppressed(model.EngineMySQL) }),
 		)
 		result.startAutomaticRecovery(controller)
 	}
@@ -939,6 +1290,11 @@ func New(configuration config.File) (*Runtime, error) {
 			time.Duration(configuration.PostgreSQL.AutomaticFailoverRetrySeconds)*time.Second, nil,
 			recovery.WithEngine(model.EnginePostgreSQL),
 			recovery.WithInterval(time.Duration(configuration.PostgreSQL.AutomaticFailoverIntervalSeconds)*time.Second),
+			recovery.WithOperationTimeout(automaticFailoverOperationTimeout(configuration.PostgreSQL.AutomaticFailoverOperationTimeoutSeconds)),
+			recovery.WithOperationTimeoutProvider(func() time.Duration {
+				return automaticFailoverPolicyOperationTimeout(configuration, model.EnginePostgreSQL, repository.ClusterEnginePolicy(model.EnginePostgreSQL))
+			}),
+			recovery.WithSuppression(func() bool { return repository.AutomaticFailoverSuppressed(model.EnginePostgreSQL) }),
 		)
 		result.startAutomaticRecovery(controller)
 	}

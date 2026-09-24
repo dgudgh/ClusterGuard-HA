@@ -134,12 +134,17 @@ the release keeps a digest pointing at a file that no longer exists.</li>
 <li>When removing a whole release, <strong>keep the Git tag</strong>: the tag is source provenance, not a
 distribution artifact, and it stays reachable from the remote branch, so the delivery-record gate
 is unaffected. Use <code>--cleanup-tag</code> only once nothing references the tag.</li>
-<li>Check command: <code>node tools/verify-public-release-assets.cjs</code>. It applies two rules and exits
-non-zero when either matches: (1) the <code>.cgupgrade</code> / <code>.cgpatch</code> suffix rules and the
+<li>Check command: <code>node tools/verify-public-release-assets.cjs</code>. It applies three rule groups and
+exits non-zero when any matches: (1) the <code>.cgupgrade</code> / <code>.cgpatch</code> suffix rules and the
 <code>&lt;from&gt;_to_&lt;to&gt;</code> naming rule across every release, drafts included; (2) a <strong>published</strong> release
 that carries no complete offline media is a violation. Drafts are exempt by default because a
 draft is the staging area while the kit is still uploading; pass <code>--include-drafts</code> to cover them
-as well. Run it before and after uploading.</li>
+as well; (3) the media itself must be usable: a <code>&lt;name&gt;.sha256</code> companion, at least 10 MiB, and
+an <code>uploaded</code> state. Matching the file name alone cannot catch an empty tar, a truncated upload,
+or a kit published without its digest, so those are checked separately. Missing <code>RELEASE-INFO</code> /
+<code>verification.json</code> is reported as a warning (earlier releases never carried them) and only
+becomes a failure with <code>--strict</code>. Run it before and after uploading; add <code>--verify-download</code> to
+check the bytes themselves against the published digest.</li>
 <li>Precedent one: <code>v2.2.68</code> once published <code>clusterguard-ha-2.2-66_to_2.2-68.x86_64.cgupgrade</code>
 (36,005,513 bytes). It was removed on 2026-09-22; the local copy under
 <code>release/2.2-68-user-e2e/</code> matches digest

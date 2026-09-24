@@ -14,6 +14,12 @@ import (
 	"clusterguard.io/ha/pkg/model"
 )
 
+// DefaultPath is the configuration file the packaged service reads when the
+// command line does not override it. It is exported so the console can report
+// which file the running process was started from instead of repeating the
+// literal in several packages.
+const DefaultPath = "/etc/clusterguard/clusterguard.json"
+
 type Credential struct {
 	Username    string `json:"username"`
 	Database    string `json:"database,omitempty"`
@@ -22,28 +28,34 @@ type Credential struct {
 }
 
 type MySQL struct {
-	Enabled                          bool       `json:"enabled"`
-	SemiSyncRequired                 bool       `json:"semi_sync_required,omitempty"`
-	DiscoveryIntervalSeconds         int        `json:"discovery_interval_seconds,omitempty"`
-	DiscoveryTimeoutSeconds          int        `json:"discovery_timeout_seconds,omitempty"`
-	AutomaticFailoverEnabled         bool       `json:"automatic_failover_enabled,omitempty"`
-	AutomaticFailoverIntervalSeconds int        `json:"automatic_failover_interval_seconds,omitempty"`
-	AutomaticFailoverRetrySeconds    int        `json:"automatic_failover_retry_seconds,omitempty"`
-	Discovery                        Credential `json:"discovery"`
-	Operation                        Credential `json:"operation"`
-	Replication                      Credential `json:"replication"`
+	Enabled                                  bool       `json:"enabled"`
+	SemiSyncRequired                         bool       `json:"semi_sync_required,omitempty"`
+	DiscoveryIntervalSeconds                 int        `json:"discovery_interval_seconds,omitempty"`
+	DiscoveryTimeoutSeconds                  int        `json:"discovery_timeout_seconds,omitempty"`
+	AutomaticFailoverEnabled                 bool       `json:"automatic_failover_enabled,omitempty"`
+	AutomaticFailoverIntervalSeconds         int        `json:"automatic_failover_interval_seconds,omitempty"`
+	AutomaticFailoverRetrySeconds            int        `json:"automatic_failover_retry_seconds,omitempty"`
+	AutomaticFailoverMinimumObservations     int        `json:"automatic_failover_minimum_observations,omitempty"`
+	AutomaticFailoverFailureWindowSeconds    int        `json:"automatic_failover_failure_window_seconds,omitempty"`
+	AutomaticFailoverOperationTimeoutSeconds int        `json:"automatic_failover_operation_timeout_seconds,omitempty"`
+	Discovery                                Credential `json:"discovery"`
+	Operation                                Credential `json:"operation"`
+	Replication                              Credential `json:"replication"`
 }
 
 type PostgreSQL struct {
-	Enabled                          bool       `json:"enabled"`
-	DiscoveryIntervalSeconds         int        `json:"discovery_interval_seconds,omitempty"`
-	DiscoveryTimeoutSeconds          int        `json:"discovery_timeout_seconds,omitempty"`
-	AutomaticFailoverEnabled         bool       `json:"automatic_failover_enabled,omitempty"`
-	AutomaticFailoverIntervalSeconds int        `json:"automatic_failover_interval_seconds,omitempty"`
-	AutomaticFailoverRetrySeconds    int        `json:"automatic_failover_retry_seconds,omitempty"`
-	Discovery                        Credential `json:"discovery"`
-	Operation                        Credential `json:"operation,omitempty"`
-	Replication                      Credential `json:"replication,omitempty"`
+	Enabled                                  bool       `json:"enabled"`
+	DiscoveryIntervalSeconds                 int        `json:"discovery_interval_seconds,omitempty"`
+	DiscoveryTimeoutSeconds                  int        `json:"discovery_timeout_seconds,omitempty"`
+	AutomaticFailoverEnabled                 bool       `json:"automatic_failover_enabled,omitempty"`
+	AutomaticFailoverIntervalSeconds         int        `json:"automatic_failover_interval_seconds,omitempty"`
+	AutomaticFailoverRetrySeconds            int        `json:"automatic_failover_retry_seconds,omitempty"`
+	AutomaticFailoverMinimumObservations     int        `json:"automatic_failover_minimum_observations,omitempty"`
+	AutomaticFailoverFailureWindowSeconds    int        `json:"automatic_failover_failure_window_seconds,omitempty"`
+	AutomaticFailoverOperationTimeoutSeconds int        `json:"automatic_failover_operation_timeout_seconds,omitempty"`
+	Discovery                                Credential `json:"discovery"`
+	Operation                                Credential `json:"operation,omitempty"`
+	Replication                              Credential `json:"replication,omitempty"`
 }
 
 type Oracle struct {
@@ -269,6 +281,11 @@ func Load(path string) (File, error) {
 		if configuration.MySQL.AutomaticFailoverRetrySeconds <= 0 {
 			configuration.MySQL.AutomaticFailoverRetrySeconds = 30
 		}
+		if err := normalizeAutomaticFailoverTiming(&configuration.MySQL.AutomaticFailoverMinimumObservations,
+			&configuration.MySQL.AutomaticFailoverFailureWindowSeconds,
+			&configuration.MySQL.AutomaticFailoverOperationTimeoutSeconds, "MySQL"); err != nil {
+			return File{}, err
+		}
 		for name, credential := range map[string]*Credential{
 			"discovery":   &configuration.MySQL.Discovery,
 			"operation":   &configuration.MySQL.Operation,
@@ -291,6 +308,11 @@ func Load(path string) (File, error) {
 		}
 		if configuration.PostgreSQL.AutomaticFailoverRetrySeconds <= 0 {
 			configuration.PostgreSQL.AutomaticFailoverRetrySeconds = 30
+		}
+		if err := normalizeAutomaticFailoverTiming(&configuration.PostgreSQL.AutomaticFailoverMinimumObservations,
+			&configuration.PostgreSQL.AutomaticFailoverFailureWindowSeconds,
+			&configuration.PostgreSQL.AutomaticFailoverOperationTimeoutSeconds, "PostgreSQL"); err != nil {
+			return File{}, err
 		}
 		if err := resolveCredential("PostgreSQL", "discovery", &configuration.PostgreSQL.Discovery); err != nil {
 			return File{}, err
@@ -466,6 +488,66 @@ func Load(path string) (File, error) {
 		return File{}, fmt.Errorf("PostgreSQL automatic failover requires agent quorum fencing or an external fencer")
 	}
 	return configuration, nil
+}
+
+// Automatic failover timing bounds. The defaults reproduce the previously
+// hard-coded evidence window (four consecutive observations spanning three
+// seconds) and the previously hard-coded five minute operation budget, so an
+// existing configuration keeps its behaviour when the keys are absent.
+const (
+	DefaultAutomaticFailoverMinimumObservations     = 4
+	DefaultAutomaticFailoverFailureWindowSeconds    = 3
+	DefaultAutomaticFailoverOperationTimeoutSeconds = 300
+
+	MinimumAutomaticFailoverObservations   = 2
+	MaximumAutomaticFailoverObservations   = 100
+	MinimumAutomaticFailoverWindowSeconds  = 1
+	MaximumAutomaticFailoverWindowSeconds  = 3600
+	MinimumAutomaticFailoverTimeoutSeconds = 30
+	MaximumAutomaticFailoverTimeoutSeconds = 3600
+)
+
+// normalizeAutomaticFailoverTiming fills defaults and rejects out-of-range
+// automatic failover timing for one engine. Observations count the whole series
+// including the seeding observation, so the lower bound is two: a seed plus at
+// least one follow-up. Without the follow-up the window could never reject a
+// single missed probe, which is the entire purpose of the evidence window.
+func normalizeAutomaticFailoverTiming(minimumObservations *int, failureWindowSeconds *int, operationTimeoutSeconds *int, engine string) error {
+	if *minimumObservations <= 0 {
+		*minimumObservations = DefaultAutomaticFailoverMinimumObservations
+	}
+	if *failureWindowSeconds <= 0 {
+		*failureWindowSeconds = DefaultAutomaticFailoverFailureWindowSeconds
+	}
+	if *operationTimeoutSeconds <= 0 {
+		*operationTimeoutSeconds = DefaultAutomaticFailoverOperationTimeoutSeconds
+	}
+	return ValidateAutomaticFailoverTiming(*minimumObservations, *failureWindowSeconds, *operationTimeoutSeconds, engine)
+}
+
+// ValidateAutomaticFailoverTiming rejects out-of-range automatic failover
+// timing without filling defaults. A caller that treats zero as "not set" -
+// the replicated cluster policy overrides a node configuration file key by key,
+// so every field is independent - validates only what was supplied. The bounds
+// themselves stay here so the file loader and the replicated policy cannot
+// drift apart.
+func ValidateAutomaticFailoverTiming(minimumObservations, failureWindowSeconds, operationTimeoutSeconds int, engine string) error {
+	if minimumObservations > 0 &&
+		(minimumObservations < MinimumAutomaticFailoverObservations || minimumObservations > MaximumAutomaticFailoverObservations) {
+		return fmt.Errorf("%s automatic_failover_minimum_observations must be between %d and %d",
+			engine, MinimumAutomaticFailoverObservations, MaximumAutomaticFailoverObservations)
+	}
+	if failureWindowSeconds > 0 &&
+		(failureWindowSeconds < MinimumAutomaticFailoverWindowSeconds || failureWindowSeconds > MaximumAutomaticFailoverWindowSeconds) {
+		return fmt.Errorf("%s automatic_failover_failure_window_seconds must be between %d and %d",
+			engine, MinimumAutomaticFailoverWindowSeconds, MaximumAutomaticFailoverWindowSeconds)
+	}
+	if operationTimeoutSeconds > 0 &&
+		(operationTimeoutSeconds < MinimumAutomaticFailoverTimeoutSeconds || operationTimeoutSeconds > MaximumAutomaticFailoverTimeoutSeconds) {
+		return fmt.Errorf("%s automatic_failover_operation_timeout_seconds must be between %d and %d",
+			engine, MinimumAutomaticFailoverTimeoutSeconds, MaximumAutomaticFailoverTimeoutSeconds)
+	}
+	return nil
 }
 
 func validateConsensusPeerAPIs(configuration File) (bool, error) {

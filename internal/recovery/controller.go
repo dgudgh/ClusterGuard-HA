@@ -19,6 +19,9 @@ const (
 	AutomaticRecoveryActor    = "clusterguard-automatic-recovery"
 	maximumParallelRecoveries = 4
 	maximumTopologyAge        = 15 * time.Second
+	// defaultAutomaticFailoverOperationTimeout reproduces the budget that was
+	// hard-coded at the call sites before the timeout became configurable.
+	defaultAutomaticFailoverOperationTimeout = 5 * time.Minute
 )
 
 type MutationAuthority interface {
@@ -45,20 +48,29 @@ type OperationExecutor interface {
 }
 
 type Controller struct {
-	state         StateReader
-	failures      FailureEvidence
-	selector      CandidateSelector
-	executor      OperationExecutor
-	authority     MutationAuthority
-	engine        model.Engine
-	retryDelay    time.Duration
-	interval      time.Duration
-	now           func() time.Time
-	onError       func(error)
-	errorReminder *observability.ErrorReminder
-	recoveryGate  chan struct{}
-	inFlightMu    sync.Mutex
-	inFlight      map[model.ResourceID]struct{}
+	state            StateReader
+	failures         FailureEvidence
+	selector         CandidateSelector
+	executor         OperationExecutor
+	authority        MutationAuthority
+	engine           model.Engine
+	retryDelay       time.Duration
+	interval         time.Duration
+	operationTimeout time.Duration
+	// operationTimeoutProvider is consulted every round so a change to the
+	// replicated cluster policy takes effect on the next cycle instead of at
+	// the next restart. operationTimeout stays as the start-up value and as the
+	// fallback when no policy is configured.
+	operationTimeoutProvider func() time.Duration
+	// suppressed pauses automatic failover for planned maintenance. Evidence is
+	// still recorded, so lifting the pause cannot resurrect a stale series.
+	suppressed func() bool
+	now        func() time.Time
+	onError          func(error)
+	errorReminder    *observability.ErrorReminder
+	recoveryGate     chan struct{}
+	inFlightMu       sync.Mutex
+	inFlight         map[model.ResourceID]struct{}
 }
 
 type Option func(*Controller)
@@ -74,6 +86,38 @@ func WithInterval(interval time.Duration) Option {
 func WithEngine(engine model.Engine) Option {
 	return func(controller *Controller) {
 		controller.engine = engine
+	}
+}
+
+// WithOperationTimeout bounds how long a single automatic failover operation
+// may run. The default preserves the historical five minute budget.
+func WithOperationTimeout(timeout time.Duration) Option {
+	return func(controller *Controller) {
+		if timeout > 0 {
+			controller.operationTimeout = timeout
+		}
+	}
+}
+
+// WithOperationTimeoutProvider makes the operation budget read from the
+// replicated cluster policy on every round. The provider returns zero when no
+// override is set, which keeps the start-up budget in force.
+func WithOperationTimeoutProvider(provider func() time.Duration) Option {
+	return func(controller *Controller) {
+		if provider != nil {
+			controller.operationTimeoutProvider = provider
+		}
+	}
+}
+
+// WithSuppression pauses automatic failover while the provider reports true.
+// The controller keeps recording evidence, so a maintenance window cannot be
+// used to hide an incident that was already accumulating.
+func WithSuppression(suppressed func() bool) Option {
+	return func(controller *Controller) {
+		if suppressed != nil {
+			controller.suppressed = suppressed
+		}
 	}
 }
 
@@ -94,7 +138,8 @@ func NewController(state StateReader, failures FailureEvidence, selector Candida
 	}
 	controller := &Controller{
 		state: state, failures: failures, selector: selector, executor: executor, authority: authority,
-		engine: model.EngineMySQL, retryDelay: retryDelay, interval: 5 * time.Second, now: now,
+		engine: model.EngineMySQL, retryDelay: retryDelay, interval: 5 * time.Second,
+		operationTimeout: defaultAutomaticFailoverOperationTimeout, now: now,
 		onError:       func(err error) { log.Printf("automatic recovery cycle failed: %v", err) },
 		errorReminder: observability.NewErrorReminder(5*time.Minute, now),
 		recoveryGate:  make(chan struct{}, maximumParallelRecoveries),
@@ -106,6 +151,24 @@ func NewController(state StateReader, failures FailureEvidence, selector Candida
 		}
 	}
 	return controller
+}
+
+// automaticOperationTimeout never returns a zero budget. A zero would make
+// context.WithTimeout expire the operation immediately, so a Controller built
+// without NewController still gets the documented default.
+func (controller *Controller) automaticOperationTimeout() time.Duration {
+	if controller == nil {
+		return defaultAutomaticFailoverOperationTimeout
+	}
+	if controller.operationTimeoutProvider != nil {
+		if timeout := controller.operationTimeoutProvider(); timeout > 0 {
+			return timeout
+		}
+	}
+	if controller.operationTimeout <= 0 {
+		return defaultAutomaticFailoverOperationTimeout
+	}
+	return controller.operationTimeout
 }
 
 func (controller *Controller) reportError(err error) {
@@ -154,6 +217,9 @@ func (controller *Controller) configured() bool {
 func (controller *Controller) RunOnce(ctx context.Context) error {
 	if !controller.configured() {
 		return fmt.Errorf("automatic %s recovery controller is not configured", controller.engine)
+	}
+	if controller.suppressed != nil && controller.suppressed() {
+		return nil
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -234,7 +300,7 @@ func (controller *Controller) recoverCluster(ctx context.Context, cluster model.
 			TargetID: previous.TargetID, IdempotencyKey: previous.IdempotencyKey,
 			Parameters: map[string]string{"trigger": "resume_promoted_unverified"},
 		}
-		operationContext, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		operationContext, cancel := context.WithTimeout(ctx, controller.automaticOperationTimeout())
 		defer cancel()
 		if _, err := controller.executor.ExecuteAutomatic(operationContext, request, incidentID); err != nil {
 			return fmt.Errorf("resume automatic failover for %s: %w", cluster.ResourceID, err)
@@ -271,7 +337,7 @@ func (controller *Controller) recoverCluster(ctx context.Context, cluster model.
 		IdempotencyKey: prefix + strconv.Itoa(attempt),
 		Parameters:     map[string]string{"trigger": "stable_primary_failure"},
 	}
-	operationContext, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	operationContext, cancel := context.WithTimeout(ctx, controller.automaticOperationTimeout())
 	defer cancel()
 	incidentID := strings.TrimSuffix(prefix, ":")
 	_, err = controller.executor.ExecuteAutomatic(operationContext, request, incidentID)
