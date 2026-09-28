@@ -459,6 +459,34 @@ func TestPatchInspectorRejectsTamperedBootstrapUpgrader(t *testing.T) {
 	}
 }
 
+func TestPatchInspectorDivertsHotfixPackagesToTheCLI(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq is required")
+	}
+	_, publicKey := generatePatchSigningKey(t)
+	root := t.TempDir()
+	payload := filepath.Join(root, "payload", "clusterguard-hotfix")
+	if err := os.MkdirAll(payload, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(payload, "apply.sh"), "#!/bin/sh\nexit 0\n", 0o755)
+	hotfixPath := filepath.Join(root, "clusterguard-ha-hotfix-HF-TEST.cgpatch")
+	if output, err := exec.Command("tar", "-C", filepath.Join(root, "payload"), "-czf", hotfixPath, "clusterguard-hotfix").CombinedOutput(); err != nil {
+		t.Fatalf("repack hotfix: %v\n%s", err, output)
+	}
+	output, err := exec.Command("bash", "clusterguard-upgrade.sh", "--patch", hotfixPath, "--trust-key", publicKey, "--inspect").CombinedOutput()
+	if err == nil {
+		t.Fatalf("hotfix package must not be accepted by the rolling upgrade channel: %s", output)
+	}
+	text := string(output)
+	if !strings.Contains(text, "热修补丁包") || !strings.Contains(text, "clusterguard-hotfix/apply.sh") {
+		t.Fatalf("rejection must name the hotfix and point at the CLI apply path, got: %s", text)
+	}
+	if strings.Contains(text, "范围外路径") {
+		t.Fatalf("hotfix packages must not fall through to the opaque whitelist rejection: %s", text)
+	}
+}
+
 func TestUpgradeScriptNeverInvokesDatabaseClients(t *testing.T) {
 	contents, err := os.ReadFile("clusterguard-upgrade.sh")
 	if err != nil {

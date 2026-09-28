@@ -1593,8 +1593,16 @@ func TestConsoleProvidesAdminOnlySignedSoftwareUpdateWorkflow(t *testing.T) {
 			t.Fatalf("console missing signed software update contract %q", contract)
 		}
 	}
-	if !strings.Contains(settings, "版本更新") || !strings.Contains(page, "支持 .cgupgrade，兼容旧 .cgpatch") {
+	if !strings.Contains(settings, "版本更新") || !strings.Contains(page, "支持 .cgupgrade 与旧滚动 .cgpatch；热修包请走命令行") {
 		t.Fatal("software update entry must be presented in settings and upload guidance must be presented in the dialog")
+	}
+	for _, contract := range []string{
+		`fileName.endsWith('.cgpatch') && fileName.includes('hotfix')`,
+		"请在控制节点命令行用 tar -xzf 解包后运行 clusterguard-hotfix/apply.sh",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console must divert hotfix .cgpatch uploads to the CLI apply path, missing %q", contract)
+		}
 	}
 	if strings.Contains(settings, `id="software-update-package-file"`) {
 		t.Fatal("software update upload controls must not remain inline in the settings panel")

@@ -98,6 +98,7 @@ curl --cacert /etc/clusterguard/tls/ca.crt \
   https://127.0.0.1:3000/api/v1/platform/version
 </code></pre>
 <p>A <code>.cgupgrade</code> contains the target RPM, rollback RPM, embedded bootstrap updater, compatibility manifest, SHA-256 checksums, and release signature. Sites retain only the release public key. The private signing key must remain offline and must never be shipped to customer systems. The legacy <code>.cgpatch</code> suffix is accepted only for compatibility.</p>
+<p><strong>Do not confuse this with hotfix patches</strong> (see the hotfix patch catalogue): they reuse the <code>.cgpatch</code> suffix but their top-level directory is <code>clusterguard-hotfix/</code> and they carry rebuilt binaries plus an <code>apply.sh</code> — they are <strong>not</strong> a rolling-upgrade artifact. The console rejects them at both file selection and package inspection with guidance to the correct path: extract with <code>tar -xzf</code> on a controller and run <code>clusterguard-hotfix/apply.sh</code>. Never upload a hotfix patch to the Version Update dialog.</p>
 <pre><code class="language-text">clusterguard-patch/
 ├── PATCH-MANIFEST.json
 ├── PATCH-MANIFEST.sig

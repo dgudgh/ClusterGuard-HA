@@ -81,6 +81,8 @@ curl --cacert /etc/clusterguard/tls/ca.crt \
 
 A `.cgupgrade` contains the target RPM, rollback RPM, embedded bootstrap updater, compatibility manifest, SHA-256 checksums, and release signature. Sites retain only the release public key. The private signing key must remain offline and must never be shipped to customer systems. The legacy `.cgpatch` suffix is accepted only for compatibility.
 
+**Do not confuse this with hotfix patches** (see the hotfix patch catalogue): they reuse the `.cgpatch` suffix but their top-level directory is `clusterguard-hotfix/` and they carry rebuilt binaries plus an `apply.sh` — they are **not** a rolling-upgrade artifact. The console rejects them at both file selection and package inspection with guidance to the correct path: extract with `tar -xzf` on a controller and run `clusterguard-hotfix/apply.sh`. Never upload a hotfix patch to the Version Update dialog.
+
 ```text
 clusterguard-patch/
 ├── PATCH-MANIFEST.json

@@ -247,6 +247,13 @@ safe_extract_patch() {
   listing="$(tar -tzf "${patch_file}")" || die "升级包归档无法读取"
   [[ -n "${listing}" ]] || die "升级包归档为空"
   while IFS= read -r entry; do
+    # Hotfix patches reuse the legacy .cgpatch suffix but are a completely
+    # different artifact: they must be applied with their own apply.sh on the
+    # controller command line, never through this rolling-upgrade channel.
+    # Name the trap instead of hiding it behind a bare whitelist rejection.
+    if [[ "${entry}" == clusterguard-hotfix || "${entry}" == clusterguard-hotfix/* ]]; then
+      die "该包是热修补丁包（clusterguard-hotfix/），不经过控制台滚动升级通道；请在控制节点命令行用 tar -xzf 解包后运行 clusterguard-hotfix/apply.sh 安装（详见热修补丁台账）"
+    fi
     [[ "${entry}" == clusterguard-patch || "${entry}" == clusterguard-patch/* ]] || die "升级包包含范围外路径：${entry}"
     [[ "${entry}" != /* && "${entry}" != *"../"* && "${entry}" != *"/.." && "${entry}" != *"//"* ]] ||
       die "升级包包含不安全路径：${entry}"

@@ -104,6 +104,7 @@ curl --cacert /etc/clusterguard/tls/ca.crt \
   https://127.0.0.1:3000/api/v1/platform/version
 </code></pre>
 <p>签名升级包使用 <code>.cgupgrade</code> 后缀，包含目标 RPM、回退 RPM、包内引导升级器、兼容性清单、SHA-256 摘要和发布签名。现场只保存发布公钥，发布私钥必须离线保管，不得放入安装包或客户服务器。旧 <code>.cgpatch</code> 后缀只作为兼容入口保留。</p>
+<p><strong>注意区分</strong>：热修补丁包（见《热修补丁台账》）也使用 <code>.cgpatch</code> 后缀，但顶层目录是 <code>clusterguard-hotfix/</code>、携带的是重建的二进制与 <code>apply.sh</code>，<strong>不属于滚动升级通道</strong>。控制台在上传和校验两个入口都会拒收并提示正确路径：在控制节点命令行 <code>tar -xzf</code> 解包后运行 <code>clusterguard-hotfix/apply.sh</code> 安装。不要把热修补丁包上传到版本更新对话框。</p>
 <pre><code class="language-text">clusterguard-patch/
 ├── PATCH-MANIFEST.json
 ├── PATCH-MANIFEST.sig
