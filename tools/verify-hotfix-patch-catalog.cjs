@@ -15,8 +15,9 @@
  * A patch is one per site visit, not one per commit. Two fixes that both rebuild
  * /usr/local/bin/clusterguard must not ship as two patches: applying the older
  * one last silently undoes the newer fix. The gate therefore also checks that
- * the payload of a patch really covers every fix it declares, and that the
- * artifact directory is a single, unambiguous application entry point.
+ * the payload of a patch really covers every fix it declares, and that each
+ * release line's artifact directory is a single, unambiguous application entry
+ * point for that baseline.
  *
  * The gate ties four things together so none of them can drift alone:
  *
@@ -50,7 +51,11 @@ const arg = (flag, fallback) => {
 const repo = path.resolve(arg('--repo', path.resolve(__dirname, '..')));
 const artifactRoot = path.resolve(arg('--artifact-root', repo));
 const publicKey = arg('--public-key', process.env.CG_HOTFIX_TRUSTED_PUBLIC_KEY || '');
-const artifactDir = 'release/2.2-103-hotfixes';
+// One release line per patch: a 2.2-103 site and a 2.2-104 site must never be
+// pointed at the same directory, or an operator could apply a patch built for
+// the wrong baseline (that silently downgrades binaries). Each spec therefore
+// owns its own delivery directory, derived from the version it was built for.
+const artifactDirFor = (body) => `release/${body.rpm_version}-${body.rpm_release}-hotfixes`;
 
 const failures = [];
 const check = (name, ok, detail) => {
@@ -143,7 +148,6 @@ check('every declaration carries the id, severity, commits and bilingual text', 
 check('every declaration points at real fix commits whose baseline is an ancestor', badCommits.length === 0, badCommits.join(', '));
 
 // --- Gate 2: every declaration has a signed artifact -----------------------
-const artifactDirectory = path.join(artifactRoot, artifactDir);
 const archiveName = (body) =>
   `clusterguard-ha-hotfix-${body.id}-${body.rpm_version}-${body.rpm_release}.x86_64.cgpatch`;
 
@@ -169,7 +173,7 @@ const resolved = [];
 
 for (const spec of specs) {
   const body = spec.body;
-  const archive = path.join(artifactDirectory, archiveName(body));
+  const archive = path.join(artifactRoot, artifactDirFor(body), archiveName(body));
   if (!fs.existsSync(archive)) {
     missingArtifacts.push(`${body.id} -> ${archiveName(body)}`);
     continue;
@@ -291,11 +295,38 @@ for (const item of resolved) {
 }
 check('the build tree carries no production change beyond the declared fixes', contaminated.length === 0, contaminated.join('; '));
 
-const archiveCount = fs.existsSync(artifactDirectory)
-  ? fs.readdirSync(artifactDirectory).filter((name) => name.endsWith('.cgpatch')).length
-  : 0;
-check('the artifact directory is one unambiguous application entry point per declaration',
-  archiveCount === specs.length, `${archiveCount} .cgpatch file(s) for ${specs.length} declaration(s)`);
+const declaredDirs = new Map();
+for (const spec of specs) {
+  const dir = artifactDirFor(spec.body);
+  declaredDirs.set(dir, (declaredDirs.get(dir) || 0) + 1);
+}
+const badDirCounts = [];
+for (const [dir, declaredCount] of declaredDirs) {
+  const directory = path.join(artifactRoot, dir);
+  const count = fs.existsSync(directory)
+    ? fs.readdirSync(directory).filter((name) => name.endsWith('.cgpatch')).length
+    : 0;
+  if (count !== declaredCount) badDirCounts.push(`${dir}: ${count} .cgpatch for ${declaredCount} declaration(s)`);
+}
+check('every release line holds one unambiguous application entry point per declaration',
+  badDirCounts.length === 0, badDirCounts.join('; '));
+
+// A .cgpatch sitting in a release line that no declaration claims is a trap:
+// the renderer would still list it, and an operator could apply a patch the
+// gate never validated. Scan every release/*-hotfixes directory for strays.
+const strayArchives = [];
+const releaseRoot = path.join(artifactRoot, 'release');
+if (fs.existsSync(releaseRoot)) {
+  for (const entry of fs.readdirSync(releaseRoot)) {
+    const candidate = path.join(releaseRoot, entry);
+    if (!fs.statSync(candidate).isDirectory() || !entry.endsWith('-hotfixes')) continue;
+    if (declaredDirs.has(`release/${entry}`)) continue;
+    for (const name of fs.readdirSync(candidate)) {
+      if (name.endsWith('.cgpatch')) strayArchives.push(`release/${entry}/${name}`);
+    }
+  }
+}
+check('no stray .cgpatch hides in an undeclared release line', strayArchives.length === 0, strayArchives.join(', '));
 
 // --- Gate 3: the bilingual catalogue is rendered and truthful --------------
 const catalogueEnglish = path.join(repo, 'docs/hotfix-patches.md');

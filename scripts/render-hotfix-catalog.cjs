@@ -16,7 +16,7 @@ function parseArgs(argv) {
   const options = {
     repository: defaultRepository,
     artifactRoot: process.env.CG_HOTFIX_ARTIFACT_ROOT || defaultRepository,
-    artifactDir: "release/2.2-103-hotfixes",
+    artifactDir: null,
     outEn: path.join(defaultRepository, "docs/hotfix-patches.md"),
     outZh: path.join(defaultRepository, "docs/zh-CN/hotfix-patches.md")
   };
@@ -57,18 +57,33 @@ function readManifest(archive) {
 }
 
 function collect(options) {
-  const directory = path.join(options.artifactRoot, options.artifactDir);
-  if (!fs.existsSync(directory)) {
-    throw new Error(`hotfix artifact directory not found: ${directory}`);
+  const releaseRoot = path.join(options.artifactRoot, "release");
+  if (!fs.existsSync(releaseRoot)) {
+    throw new Error(`release root not found: ${releaseRoot}`);
   }
-  const archives = fs
-    .readdirSync(directory)
-    .filter((name) => name.endsWith(".cgpatch"))
-    .sort();
-  if (archives.length === 0) {
-    throw new Error(`no hotfix patches found in ${directory}`);
+  // One release line per baseline: release/<version>-hotfixes holds exactly the
+  // patches built for that released version. --artifact-dir narrows the scan to
+  // a single line for ad-hoc renders; by default every line is collected.
+  const directories = options.artifactDir
+    ? [options.artifactDir]
+    : fs.readdirSync(releaseRoot)
+      .filter((name) => name.endsWith("-hotfixes"))
+      .filter((name) => fs.statSync(path.join(releaseRoot, name)).isDirectory())
+      .map((name) => `release/${name}`)
+      .sort();
+  const manifests = [];
+  for (const dir of directories) {
+    const directory = path.join(options.artifactRoot, dir);
+    for (const name of fs.readdirSync(directory).filter((n) => n.endsWith(".cgpatch")).sort()) {
+      const manifest = readManifest(path.join(directory, name));
+      manifest.dirName = dir;
+      manifests.push(manifest);
+    }
   }
-  return archives.map((name) => readManifest(path.join(directory, name)));
+  if (manifests.length === 0) {
+    throw new Error(`no hotfix patches found under ${releaseRoot}`);
+  }
+  return manifests;
 }
 
 function restartUnits(manifest) {
@@ -79,7 +94,7 @@ function restartUnits(manifest) {
   return units;
 }
 
-function renderEnglish(manifests, artifactDir) {
+function renderEnglish(manifests) {
   const lines = [];
   lines.push("# Hotfix patch catalogue");
   lines.push("");
@@ -97,19 +112,21 @@ function renderEnglish(manifests, artifactDir) {
   lines.push("");
   lines.push("One patch per site visit, not one per commit: two patches that both replace");
   lines.push("`/usr/local/bin/clusterguard` are order sensitive — applying the older one last");
-  lines.push("silently undoes the newer fix. **Apply the newest patch only.**");
+  lines.push("silently undoes the newer fix. **Apply the newest patch for your baseline only, and");
+  lines.push("never mix patches built for different baseline versions** — a patch from another");
+  lines.push("baseline silently downgrades binaries back to its own release line.");
   lines.push("");
   lines.push("| Hotfix | Severity | Fix commits | Build tree | Artifact |");
   lines.push("| --- | --- | --- | --- | --- |");
   for (const manifest of manifests) {
     const commits = manifest.fix_commits.map((commit) => `\`${commit.slice(0, 7)}\``).join(", ");
-    lines.push(`| ${manifest.hotfix_id} | ${manifest.severity} | ${commits} | \`${manifest.build_commit.slice(0, 7)}\` | \`${manifest.archive}\` |`);
+    lines.push(`| ${manifest.hotfix_id} | ${manifest.severity} | ${commits} | \`${manifest.build_commit.slice(0, 7)}\` | \`${manifest.dirName}/${manifest.archive}\` |`);
   }
   lines.push("");
   lines.push("## Applying a patch");
   lines.push("");
   lines.push("```bash");
-  lines.push(`tar -xzf ${artifactDir}/<artifact>.cgpatch`);
+  lines.push("tar -xzf release/<baseline-version>-hotfixes/<artifact>.cgpatch");
   lines.push("cd clusterguard-hotfix");
   lines.push("bash apply.sh            # backs up, verifies SHA-256, installs, daemon-reload");
   lines.push("systemctl restart <unit> # apply.sh prints the units it needs; it never restarts by itself");
@@ -123,7 +140,7 @@ function renderEnglish(manifests, artifactDir) {
     lines.push(`- Fix commits: ${manifest.fix_commits.map((commit) => `\`${commit.slice(0, 7)}\``).join(", ")}`);
     lines.push(`- Build tree: \`${manifest.build_commit}\` (baseline \`${manifest.base_commit}\` plus the fixes above and nothing else)`);
     lines.push(`- Applies to: ${manifest.source.version}-${manifest.source.release} → ${manifest.target.version}-${manifest.target.release} (${manifest.target.rpm_architecture})`);
-    lines.push(`- Artifact: \`${artifactDir}/${manifest.archive}\``);
+    lines.push(`- Artifact: \`${manifest.dirName}/${manifest.archive}\``);
     lines.push(`- SHA-256: \`${manifest.archiveSha256}\``);
     lines.push(`- Source diff: \`${manifest.source_patch}\``);
     lines.push("- Payload:");
@@ -168,7 +185,7 @@ function renderEnglish(manifests, artifactDir) {
   return lines.join("\n") + "\n";
 }
 
-function renderChinese(manifests, artifactDir) {
+function renderChinese(manifests) {
   const lines = [];
   lines.push("# 热修补丁台账");
   lines.push("");
@@ -182,19 +199,20 @@ function renderChinese(manifests, artifactDir) {
   lines.push("现场只能等下一个完整版本才能拿到修复。");
   lines.push("");
   lines.push("补丁按“一次现场处理”打包，不按提交拆分：两个都替换 `/usr/local/bin/clusterguard` 的");
-  lines.push("补丁如果叠加，结果取决于安装顺序——后装旧的会把新修复盖掉。**只装最新的那一个包。**");
+  lines.push("补丁如果叠加，结果取决于安装顺序——后装旧的会把新修复盖掉。**只装你所在基线版本的最新一个包，");
+  lines.push("不要混装不同基线版本的包**——装错基线的包会把二进制悄悄降级回它自己的发布线。");
   lines.push("");
   lines.push("| 补丁编号 | 严重级别 | 覆盖修复提交 | 构建树 | 产物 |");
   lines.push("| --- | --- | --- | --- | --- |");
   for (const manifest of manifests) {
     const commits = manifest.fix_commits.map((commit) => `\`${commit.slice(0, 7)}\``).join("、");
-    lines.push(`| ${manifest.hotfix_id} | ${manifest.severity} | ${commits} | \`${manifest.build_commit.slice(0, 7)}\` | \`${manifest.archive}\` |`);
+    lines.push(`| ${manifest.hotfix_id} | ${manifest.severity} | ${commits} | \`${manifest.build_commit.slice(0, 7)}\` | \`${manifest.dirName}/${manifest.archive}\` |`);
   }
   lines.push("");
   lines.push("## 应用补丁");
   lines.push("");
   lines.push("```bash");
-  lines.push(`tar -xzf ${artifactDir}/<产物文件名>.cgpatch`);
+  lines.push("tar -xzf release/<基线版本>-hotfixes/<产物文件名>.cgpatch");
   lines.push("cd clusterguard-hotfix");
   lines.push("bash apply.sh            # 备份、校验 SHA-256、安装、daemon-reload");
   lines.push("systemctl restart <单元> # apply.sh 只打印需要重启的单元，不自动重启");
@@ -208,7 +226,7 @@ function renderChinese(manifests, artifactDir) {
     lines.push(`- 覆盖修复提交：${manifest.fix_commits.map((commit) => `\`${commit.slice(0, 7)}\``).join("、")}`);
     lines.push(`- 构建树：\`${manifest.build_commit}\`（基线 \`${manifest.base_commit}\` + 上述修复，不含其它提交）`);
     lines.push(`- 适用版本：${manifest.source.version}-${manifest.source.release} → ${manifest.target.version}-${manifest.target.release}（${manifest.target.rpm_architecture}）`);
-    lines.push(`- 产物：\`${artifactDir}/${manifest.archive}\``);
+    lines.push(`- 产物：\`${manifest.dirName}/${manifest.archive}\``);
     lines.push(`- SHA-256：\`${manifest.archiveSha256}\``);
     lines.push(`- 源码差异：\`${manifest.source_patch}\``);
     lines.push("- 交付内容：");
@@ -258,8 +276,8 @@ const main = () => {
   const manifests = collect(options).sort((left, right) => right.hotfix_id.localeCompare(left.hotfix_id));
   fs.mkdirSync(path.dirname(options.outEn), { recursive: true });
   fs.mkdirSync(path.dirname(options.outZh), { recursive: true });
-  fs.writeFileSync(options.outEn, renderEnglish(manifests, options.artifactDir));
-  fs.writeFileSync(options.outZh, renderChinese(manifests, options.artifactDir));
+  fs.writeFileSync(options.outEn, renderEnglish(manifests));
+  fs.writeFileSync(options.outZh, renderChinese(manifests));
   console.log(`rendered ${manifests.length} hotfix patches`);
   console.log(`en=${options.outEn}`);
   console.log(`zh=${options.outZh}`);
