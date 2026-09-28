@@ -4516,19 +4516,27 @@ func TestSoftwareUpdateHelperSystemdUnitAllowsControlledPrivilegedUpdate(t *test
 	for _, required := range []string{
 		"User=root",
 		"Group=clusterguard",
-		"RuntimeDirectory=clusterguard",
-		"RuntimeDirectoryMode=0750",
 		"ProtectSystem=false",
 		"/usr/local/libexec/clusterguard-update-helper",
 		"/usr/local/libexec/clusterguard-update-job.sh",
+		// The shared runtime directory must be created idempotently, not
+		// declared: a RuntimeDirectory= entry makes systemd own
+		// /run/clusterguard, which races with the helper's own chown on the
+		// first start (status=233) and deletes the directory on stop while the
+		// control plane is still using it.
+		"ExecStartPre=/usr/bin/install -d -m 0750 -o root -g clusterguard /run/clusterguard",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("software update helper unit is missing %q", required)
 		}
 	}
+	// The comment above explains why the directive was removed; the assertion
+	// names the directive itself so it cannot be tripped by that comment.
 	for _, forbidden := range []string{
 		"ProtectSystem=strict",
 		"CapabilityBoundingSet=",
+		"RuntimeDirectory=clusterguard",
+		"RuntimeDirectoryMode=",
 	} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("software update helper unit contains incompatible restriction %q", forbidden)
