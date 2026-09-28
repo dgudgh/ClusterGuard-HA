@@ -63,14 +63,14 @@ const groups = {
   "en-US": [
     ["Start Here", ["index", "product-overview", "product-tour", "architecture", ...releaseSlugs["en-US"]]],
     ["Deploy and Migrate", ["offline-rpm-install", "database-preparation", "orchestrator-migration"]],
-    ["Operate", ["operations-manual", "api-operations", "postgresql-ha", "docker-swarm-mysql", "kubernetes-mysql", "update-and-patch", "version-release-policy"]],
+    ["Operate", ["operations-manual", "api-operations", "postgresql-ha", "docker-swarm-mysql", "kubernetes-mysql", "update-and-patch", "hotfix-patches", "version-release-policy"]],
     ["Qualification", ["proven-mysql-ha-methods", "mysql-feature-parity-acceptance", "mysql-former-primary-recovery", "mysql-production-qualification", "postgresql-production-qualification", "docker-swarm-mysql-validation", "production-chaos-test", "power-lifecycle-test"]],
     ["License", ["licensing"]]
   ],
   "zh-CN": [
     ["开始使用", ["index", "product-overview", "product-tour", "architecture", ...releaseSlugs["zh-CN"]]],
     ["部署与迁移", ["offline-rpm-install", "database-preparation", "orchestrator-migration"]],
-    ["日常运维", ["operations-manual", "api-operations", "postgresql-ha", "docker-swarm-mysql", "kubernetes-mysql", "update-and-patch", "version-release-policy"]],
+    ["日常运维", ["operations-manual", "api-operations", "postgresql-ha", "docker-swarm-mysql", "kubernetes-mysql", "update-and-patch", "hotfix-patches", "version-release-policy"]],
     ["验收证据", ["proven-mysql-ha-methods", "mysql-feature-parity-acceptance", "mysql-former-primary-recovery", "mysql-production-qualification", "postgresql-production-qualification", "docker-swarm-mysql-validation", "production-chaos-test", "power-lifecycle-test", "release-recovery-acceptance-checklist"]],
     ["许可", ["licensing"]]
   ]
@@ -93,6 +93,7 @@ const entries = [
   entry("en-US", "docker-swarm-mysql", "Docker Swarm MySQL", "docs/en-US/docker-swarm-mysql.md"),
   entry("en-US", "kubernetes-mysql", "Kubernetes MySQL", "docs/en-US/kubernetes-mysql.md"),
   entry("en-US", "update-and-patch", "Version Update and Rollback", "docs/en-US/update-and-patch.md"),
+  entry("en-US", "hotfix-patches", "Hotfix Patch Catalogue", "docs/hotfix-patches.md"),
   entry("en-US", "version-release-policy", "Version and Release Policy", "docs/en-US/version-release-policy.md"),
   entry("en-US", "licensing", "Licensing and Compliance", "docs/en-US/licensing.md"),
   entry("en-US", "proven-mysql-ha-methods", "Proven MySQL HA Methods", "docs/proven-mysql-ha-methods.md"),
@@ -117,6 +118,7 @@ const entries = [
   entry("zh-CN", "docker-swarm-mysql", "Docker Swarm MySQL", "docs/zh-CN/docker-swarm-mysql.md"),
   entry("zh-CN", "kubernetes-mysql", "Kubernetes MySQL", "docs/zh-CN/kubernetes-mysql.md"),
   entry("zh-CN", "update-and-patch", "版本升级与回退", "docs/zh-CN/update-and-patch.md"),
+  entry("zh-CN", "hotfix-patches", "热修补丁台账", "docs/zh-CN/hotfix-patches.md"),
   entry("zh-CN", "version-release-policy", "版本与发版规范", "docs/zh-CN/version-release-policy.md"),
   entry("zh-CN", "licensing", "许可与合规", "docs/zh-CN/licensing.md"),
   entry("zh-CN", "proven-mysql-ha-methods", "MySQL 已验证方法", "docs/zh-CN/proven-mysql-ha-methods.md"),

@@ -1,0 +1,188 @@
+# 热修补丁台账
+
+> 本文件由 `scripts/render-hotfix-catalog.cjs` 依据磁盘上真实存在的签名补丁包生成，
+> 请勿手工编辑：重新构建补丁包后重新生成本文件。
+> `tools/verify-hotfix-patch-catalog.cjs` 会在“修复提交没有补丁包”或“本文件与产物不一致”时失败。
+
+`.cgupgrade` 携带完整 RPM，只能由滚动升级执行器应用；热修补丁包只携带一次 bug 修复
+真正改动的东西：重新构建的二进制、被修改的 systemd 单元、作为证据的源码差异，以及一对
+apply/rollback 脚本。针对已发布版本的每一个 bug 修复都必须留下一个补丁包，否则现场只能
+等下一个完整版本才能拿到修复。
+
+| 补丁编号 | 严重级别 | 修复提交 | 产物 |
+| --- | --- | --- | --- |
+| HF-2026-0928-04 | P1 | `5ae2039` | `clusterguard-ha-hotfix-HF-2026-0928-04-2.2-103.x86_64.cgpatch` |
+| HF-2026-0928-03 | P0 | `dd82ca5` | `clusterguard-ha-hotfix-HF-2026-0928-03-2.2-103.x86_64.cgpatch` |
+| HF-2026-0928-02 | P0 | `d5f9491` | `clusterguard-ha-hotfix-HF-2026-0928-02-2.2-103.x86_64.cgpatch` |
+| HF-2026-0928-01 | P1 | `ed9faca` | `clusterguard-ha-hotfix-HF-2026-0928-01-2.2-103.x86_64.cgpatch` |
+
+## 应用补丁
+
+```bash
+tar -xzf release/2.2-103-hotfixes/<产物文件名>.cgpatch
+cd clusterguard-hotfix
+bash apply.sh            # 备份、校验 SHA-256、安装、daemon-reload
+systemctl restart <单元> # apply.sh 只打印需要重启的单元，不自动重启
+bash rollback.sh         # 按最新备份清单回滚
+```
+
+## HF-2026-0928-04 — 整机关机提交后控制台卡在无法交互的对话框上
+
+- 严重级别：P1
+- 修复提交：`5ae2039`（基线 `467e533`）
+- 适用版本：2.2-103 → 2.2-103+hf-2026-0928-04（x86_64）
+- 产物：`release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-04-2.2-103.x86_64.cgpatch`
+- SHA-256：`ae4ab5f0538d8c78a9aea20e399c1b7fee8c7d8fb1b316e81f8c081bbfc247cb`
+- 源码差异：`src/HF-2026-0928-04-5ae2039.patch`
+- 交付内容：
+  - `payload/bin/clusterguard` → `/usr/local/bin/clusterguard`（0755）
+- 需要重启：`clusterguard-ha.service`
+
+### 现象
+
+提交整机关机后主机断电、控制面随之消失，页面永久停在关机确认对话框上，只能手动关闭标签页；提交后响应丢失时还会误报为错误。
+
+### 根因
+
+poweroff 分支提交成功后只改了结果横幅，既不关闭对话框也不做收尾；主机断电后页面失去所有交互入口，而“已提交却丢了响应”本就是预期结果。
+
+### 修复
+
+新增 settlePoweroffConsole()：等 2.5s 后带 3s 超时探测 /power/status，不可达则显示离线层并 window.close()，仍可达则只关对话框并起 5s 看门狗；service 模式永不关页面。
+
+### 何时需要应用
+
+- 提交整机关机后控制台卡死、需要手动关闭标签页
+- 关机提交后偶发“无法连接控制 API”被当作失败
+
+### 验证
+
+- `/usr/local/bin/clusterguard --version`
+- `systemctl is-active clusterguard-ha`
+- `curl -sk --max-time 5 https://127.0.0.1:3000/api/v1/clusters | head -c 200`
+
+### 回滚
+
+执行 rollback.sh 恢复旧控制面二进制后 systemctl restart clusterguard-ha；页面将恢复为提交后停留在对话框的旧行为。
+
+## HF-2026-0928-03 — MySQL 写入者协调抖动：授权主库每 5 秒自隔离一次
+
+- 严重级别：P0
+- 修复提交：`dd82ca5`（基线 `467e533`）
+- 适用版本：2.2-103 → 2.2-103+hf-2026-0928-03（x86_64）
+- 产物：`release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-03-2.2-103.x86_64.cgpatch`
+- SHA-256：`c4ebf0ad6f384cd71c28c460ffb47dd8931e6dc6dc021ee3a0f49e76fba4ce8e`
+- 源码差异：`src/HF-2026-0928-03-dd82ca5.patch`
+- 交付内容：
+  - `payload/bin/clusterguard-agent` → `/usr/local/bin/clusterguard-agent`（0755）
+  - `payload/systemd/clusterguard-agent-reconcile.service` → `/usr/lib/systemd/system/clusterguard-agent-reconcile.service`（0644）
+- 需要重启：`clusterguard-agent-reconcile.service`
+
+### 现象
+
+集群长期 degraded、两条复制链路 unhealthy、候选评估 409、计划关机必被阻断。实测自安装起 9492 次自隔离，read_only 与 VIP 每约 10 秒同步翻转一次。
+
+### 根因
+
+① agent-reconcile 单元的 CapabilityBoundingSet 缺 CAP_DAC_OVERRIDE/CAP_DAC_READ_SEARCH，root 也读不了 <datadir>/mysqld-auto.cnf（mysql:mysql 0640），IsolationStatus 报错即触发失败关闭；② convergeWritableRestartState 要求 RestartReadOnly 变为 false，但“重启后只读”是永久站点不变量，条件永不满足。
+
+### 修复
+
+收敛判定改为只看“隔离意图已清除 + 运行时可写”（writableRestartStateConverged），不再要求重启栅栏消失；单元补 CAP_DAC_OVERRIDE 与 CAP_DAC_READ_SEARCH（bounding 与 ambient 都补）。
+
+### 何时需要应用
+
+- 集群长期 degraded 且复制链路 unhealthy，但复制本身正常
+- journalctl -u clusterguard-agent-reconcile.service 反复出现 self-isolated 或 permission denied
+
+### 验证
+
+- `/usr/local/bin/clusterguard-agent --version`
+- `systemctl show clusterguard-agent-reconcile.service -p CapabilityBoundingSet`
+- `journalctl -u clusterguard-agent-reconcile.service --since '-10min' | grep -c self-isolated`
+- `jq -c '.topology_snapshots[] | {observed_at, health: .health.state}' /var/lib/clusterguard/metadata.json`
+
+### 回滚
+
+执行 rollback.sh 恢复旧二进制与旧单元后 systemctl daemon-reload；注意回滚会重新引入抖动，仅在确认新二进制有回归时使用。
+
+## HF-2026-0928-02 — 升级执行链两个前置缺陷：SSH 私钥属主与 Helper 共用运行时目录
+
+- 严重级别：P0
+- 修复提交：`d5f9491`（基线 `467e533`）
+- 适用版本：2.2-103 → 2.2-103+hf-2026-0928-02（x86_64）
+- 产物：`release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-2.2-103.x86_64.cgpatch`
+- SHA-256：`b775702291798ffa18f7911bae70c34394d1c9dae2228cbf07a6fecee4e56132`
+- 源码差异：`src/HF-2026-0928-02-d5f9491.patch`
+- 交付内容：
+  - `payload/systemd/clusterguard-update-helper.service` → `/usr/lib/systemd/system/clusterguard-update-helper.service`（0644）
+  - `payload/installer/install_clusterguard.sh` → `仅安装器，现场无对应路径`（0755）
+- 需要重启：`clusterguard-update-helper.service`
+
+### 现象
+
+版本更新始终 available=false，安装/上传升级包的三个控件全灰；即便手工补齐 update.json，升级执行器仍以“私钥权限过宽”拒绝；Helper 首启报 status=233，且停机时把 /run/clusterguard 整个删掉。
+
+### 根因
+
+① update.json 的 ssh_key 指向 clusterguard 属主的私钥，而 workspace check-file 要求 root 属主且非组/其他可写；② Helper 单元用 RuntimeDirectory=clusterguard 声明了一个共用目录，启动 chown/chmod 存在竞态，停止时 systemd 会删除该目录。
+
+### 修复
+
+安装器额外生成 root:root 0600 的私钥副本 /etc/clusterguard/updates/controller_ed25519 并写入 update.json；Helper 单元去掉 RuntimeDirectory，改为 ExecStartPre=/usr/bin/install -d -m 0750 -o root -g clusterguard /run/clusterguard（幂等且不再“拥有”该目录）。
+
+### 何时需要应用
+
+- 控制台版本更新长期 available=false
+- clusterguard-update-helper 首启失败或停机后 /run/clusterguard 丢失
+
+### 验证
+
+- `systemctl cat clusterguard-update-helper.service | grep -c RuntimeDirectory`
+- `systemctl is-active clusterguard-update-helper`
+- `stat -c '%U:%G %a' /etc/clusterguard/updates/controller_ed25519`
+- `curl -sk https://127.0.0.1:3000/api/v1/platform/updates | head -c 400`
+
+### 回滚
+
+执行 rollback.sh 恢复旧单元后 systemctl daemon-reload；注意旧单元重新拥有 /run/clusterguard，停机时会再次删除该目录。
+
+## HF-2026-0928-01 — 控制台不解释“不可用”的原因
+
+- 严重级别：P1
+- 修复提交：`ed9faca`（基线 `467e533`）
+- 适用版本：2.2-103 → 2.2-103+hf-2026-0928-01（x86_64）
+- 产物：`release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-01-2.2-103.x86_64.cgpatch`
+- SHA-256：`b860c87db4d9d0bac129b2bf41d3dad3ed6f966cdac99c0e3ede5cf4105647af`
+- 源码差异：`src/HF-2026-0928-01-ed9faca.patch`
+- 交付内容：
+  - `payload/bin/clusterguard` → `/usr/local/bin/clusterguard`（0755）
+- 需要重启：`clusterguard-ha.service`
+
+### 现象
+
+版本更新面板只显示红徽标“不可用”，不写原因；集群加载横幅只报栏目名（“部分数据不可用：候选评估；操作已锁定”），运维无法判断下一步做什么。
+
+### 根因
+
+前端丢弃了后端给出的原因：`evidenceResult` 只保留布尔状态，409 响应体里的具体原因没有回填到面板与横幅，运维只能看到状态标签。
+
+### 修复
+
+面板内联渲染 `#software-update-panel-reason` 并在徽标上加 tooltip；`evidenceResult` 携带 `reason`，`evidenceReasonText()` 把 409 消息映射为中文，`evidenceUnavailableText()` 按栏目回填原因。
+
+### 何时需要应用
+
+- 控制台版本更新面板显示“不可用”但无原因
+- 集群加载横幅只报栏目名、不报原因
+
+### 验证
+
+- `/usr/local/bin/clusterguard --version`
+- `systemctl is-active clusterguard-ha`
+- `curl -sk https://127.0.0.1:3000/api/v1/platform/updates | head -c 400`
+
+### 回滚
+
+执行 rollback.sh 后 systemctl daemon-reload 并 systemctl restart clusterguard-ha；控制台将恢复为只显示状态标签的旧行为。
+

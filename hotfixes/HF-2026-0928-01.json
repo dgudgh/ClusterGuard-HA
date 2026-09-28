@@ -1,0 +1,34 @@
+{
+  "id": "HF-2026-0928-01",
+  "severity": "P1",
+  "base_commit": "467e533",
+  "fix_commit": "ed9faca",
+  "rpm_version": "2.2",
+  "rpm_release": "103",
+  "title": {
+    "zh": "控制台不解释“不可用”的原因",
+    "en": "The console stopped explaining why a capability is unavailable"
+  },
+  "symptom": {
+    "zh": "版本更新面板只显示红徽标“不可用”，不写原因；集群加载横幅只报栏目名（“部分数据不可用：候选评估；操作已锁定”），运维无法判断下一步做什么。",
+    "en": "The software update panel showed only a red \"unavailable\" badge with no reason, and the cluster load banner named the failing section without saying why, so operators could not tell what to do next."
+  },
+  "root_cause": {
+    "zh": "前端丢弃了后端给出的原因：`evidenceResult` 只保留布尔状态，409 响应体里的具体原因没有回填到面板与横幅，运维只能看到状态标签。",
+    "en": "The front end discarded the reason the API already returned: the evidence result kept only a boolean state and never fed the 409 body back into the panel or the banner, so only a status label survived."
+  },
+  "fix": {
+    "zh": "面板内联渲染 `#software-update-panel-reason` 并在徽标上加 tooltip；`evidenceResult` 携带 `reason`，`evidenceReasonText()` 把 409 消息映射为中文，`evidenceUnavailableText()` 按栏目回填原因。",
+    "en": "The panel now renders an inline reason and puts it on the badge tooltip; the evidence result carries `reason`, `evidenceReasonText()` maps the 409 message to readable text, and `evidenceUnavailableText()` reports it per section."
+  },
+  "applies_to": [
+    "控制台版本更新面板显示“不可用”但无原因",
+    "集群加载横幅只报栏目名、不报原因"
+  ],
+  "verification": [
+    "/usr/local/bin/clusterguard --version",
+    "systemctl is-active clusterguard-ha",
+    "curl -sk https://127.0.0.1:3000/api/v1/platform/updates | head -c 400"
+  ],
+  "rollback": "执行 rollback.sh 后 systemctl daemon-reload 并 systemctl restart clusterguard-ha；控制台将恢复为只显示状态标签的旧行为。"
+}
