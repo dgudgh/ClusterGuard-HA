@@ -178,22 +178,24 @@ has_path() { printf '%s\n' "${changed}" | grep -qE "$1"; }
 
 binaries=""
 systemd_units=""
-libexec_scripts=""
+runtime_scripts=""
 installer_only="false"
 if has_path '^(internal/agent|cmd/clusterguard-agent)/'; then binaries="${binaries} clusterguard-agent"; fi
 if has_path '^(internal/api|cmd/clusterguard)/'; then binaries="${binaries} clusterguard"; fi
 if has_path '^packaging/systemd/.*\.service$'; then
   systemd_units="$(printf '%s\n' "${changed}" | grep -E '^packaging/systemd/.*\.service$' | sed 's#^packaging/systemd/##' | sort -u)"
 fi
-# Runtime helper scripts live in /usr/local/libexec on the site. They are read
-# when the component that calls them runs (boot recovery, engine install), so a
-# fix carried here needs no service restart — but it must still travel in the
-# payload, otherwise a site patch would silently drop it.
+# Runtime helper scripts are read the next time the component that calls them
+# runs (boot recovery, engine install, console package inspection), so a fix
+# carried here needs no service restart — but it must still travel in the
+# payload, otherwise a site patch would silently drop it. Their *site* path is
+# never derived from the source name: packaging/rpm/nfpm.yaml is the only truth,
+# resolved through scripts/hotfix-payload-map.cjs.
 if has_path '^scripts/clusterguard-[a-z0-9-]+\.sh$'; then
-  libexec_scripts="$(printf '%s\n' "${changed}" | grep -E '^scripts/clusterguard-[a-z0-9-]+\.sh$' | sed 's#^scripts/##' | sort -u)"
+  runtime_scripts="$(printf '%s\n' "${changed}" | grep -E '^scripts/clusterguard-[a-z0-9-]+\.sh$' | sed 's#^scripts/##' | sort -u)"
 fi
 if has_path '^scripts/install_clusterguard\.sh$'; then installer_only="true"; fi
-[[ -n "${binaries}" || -n "${systemd_units}" || -n "${libexec_scripts}" || "${installer_only}" == "true" ]] ||
+[[ -n "${binaries}" || -n "${systemd_units}" || -n "${runtime_scripts}" || "${installer_only}" == "true" ]] ||
   die "该修复没有可交付产物（既不涉及二进制，也不涉及单元、运行时脚本或安装器）"
 
 stage="$(mktemp -d /tmp/clusterguard-hotfix.XXXXXX)"
@@ -208,7 +210,7 @@ trap cleanup EXIT
 git -C "${repository}" worktree add --detach "${source_tree}" "${build_commit}" >/dev/null 2>&1 ||
   die "无法为构建提交创建临时工作树：${build_commit}"
 root="${stage}/clusterguard-hotfix"
-mkdir -p "${root}/payload/bin" "${root}/payload/systemd" "${root}/payload/libexec" "${root}/payload/installer" "${root}/src"
+mkdir -p "${root}/payload/bin" "${root}/payload/systemd" "${root}/payload/scripts" "${root}/payload/installer" "${root}/src"
 
 build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 version_ldflags="-s -w -X clusterguard.io/ha/internal/buildinfo.Version=${rpm_version} -X clusterguard.io/ha/internal/buildinfo.Release=${rpm_release} -X clusterguard.io/ha/internal/buildinfo.Commit=${short_fix} -X clusterguard.io/ha/internal/buildinfo.BuiltAt=${build_time}"
@@ -219,8 +221,8 @@ done
 for unit in ${systemd_units}; do
   install -m 0644 "${source_tree}/packaging/systemd/${unit}" "${root}/payload/systemd/${unit}"
 done
-for script in ${libexec_scripts}; do
-  install -m 0755 "${source_tree}/scripts/${script}" "${root}/payload/libexec/${script}"
+for script in ${runtime_scripts}; do
+  install -m 0755 "${source_tree}/scripts/${script}" "${root}/payload/scripts/${script}"
 done
 if [[ "${installer_only}" == "true" ]]; then
   install -m 0755 "${source_tree}/scripts/install_clusterguard.sh" "${root}/payload/installer/install_clusterguard.sh"
@@ -229,52 +231,37 @@ git -C "${repository}" diff "${base_commit}..${build_commit}" -- . ':(exclude)do
   >"${root}/src/${hotfix_id}-${short_fix}.patch"
 find "${root}/payload" -type d -empty -delete
 
+# --- Payload destinations ----------------------------------------------------
+# Every payload file's site path, mode and ownership comes from the RPM
+# packaging manifest of the build tree. Guessing them is how a console fix once
+# shipped to /usr/local/libexec/clusterguard-upgrade.sh while the product runs
+# /usr/local/sbin/clusterguard-upgrade: the patch installed cleanly, the operator
+# verified the wrong file, and nothing changed. An undeclared source is a build
+# failure now, not a silent miss.
+payload_map="${stage}/payload-map.json"
+"${node_bin}" "${repository}/scripts/hotfix-payload-map.cjs" \
+  --nfpm "${source_tree}/packaging/rpm/nfpm.yaml" \
+  --binaries "${binaries}" \
+  --units "${systemd_units}" \
+  --scripts "${runtime_scripts}" \
+  --out "${payload_map}" || die "无法从 packaging/rpm/nfpm.yaml 解析补丁落点（未声明的运行时脚本必须先加入打包清单）"
+
 # --- Manifest ----------------------------------------------------------------
 payload_files="${stage}/payload-files.json"
 "${node_bin}" -e '
   const fs = require("fs");
   const path = require("path");
   const crypto = require("crypto");
-  const [root, binariesRaw, unitsRaw, libexecRaw, installerOnly, out] = process.argv.slice(1);
+  const [root, payloadMapPath, installerOnly, out] = process.argv.slice(1);
   const digest = file => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
-  const files = [];
-  for (const name of binariesRaw.split(/\s+/).filter(Boolean)) {
-    files.push({
-      artifact: `payload/bin/${name}`,
-      install_path: `/usr/local/bin/${name}`,
-      mode: "0755",
-      kind: "binary",
-      restart_unit: name === "clusterguard" ? "clusterguard-ha.service" : null,
-      note: name === "clusterguard"
-        ? "Control plane binary. internal/api/console.html and every other embedded asset is compiled in, so the service must be restarted before the fix is live."
-        : "Node agent binary. The reconcile timer runs it as a oneshot unit, so the next five second tick already uses the new build."
-    });
-  }
-  for (const name of unitsRaw.split(/\s+/).filter(Boolean)) {
-    files.push({
-      artifact: `payload/systemd/${name}`,
-      install_path: `/usr/lib/systemd/system/${name}`,
-      mode: "0644",
-      kind: "systemd_unit",
-      restart_unit: name,
-      note: "Unit file. systemctl daemon-reload is mandatory before the change takes effect."
-    });
-  }
-  for (const name of libexecRaw.split(/\s+/).filter(Boolean)) {
-    files.push({
-      artifact: `payload/libexec/${name}`,
-      install_path: `/usr/local/libexec/${name}`,
-      mode: "0755",
-      kind: "runtime_script",
-      restart_unit: null,
-      note: "Runtime helper script. It is read the next time the component that calls it runs, so no service restart is needed for the fix to take effect."
-    });
-  }
+  const files = JSON.parse(fs.readFileSync(payloadMapPath, "utf8")).entries;
   if (installerOnly === "true") {
     files.push({
       artifact: "payload/installer/install_clusterguard.sh",
       install_path: null,
       mode: "0755",
+      owner: "root",
+      group: "root",
       kind: "installer",
       restart_unit: null,
       note: "Installer-only fix. It changes fresh installs; an installed site is corrected by the operator steps in README.md."
@@ -285,7 +272,7 @@ payload_files="${stage}/payload-files.json"
     entry.size = fs.statSync(path.join(root, entry.artifact)).size;
   }
   fs.writeFileSync(out, JSON.stringify(files, null, 2) + "\n");
-' "${root}" "${binaries}" "${systemd_units}" "${libexec_scripts}" "${installer_only}" "${payload_files}"
+' "${root}" "${payload_map}" "${installer_only}" "${payload_files}"
 
 manifest_js="${stage}/manifest.cjs"
 cat >"${manifest_js}" <<'MANIFEST_JS'
@@ -398,7 +385,7 @@ apply.push('mkdir -p "${backup_dir}"');
 apply.push(': >"${backup_list}"');
 apply.push("");
 apply.push("install_payload() {");
-apply.push('  local artifact="$1" destination="$2" mode="$3"');
+apply.push('  local artifact="$1" destination="$2" mode="$3" ownership="$4"');
 apply.push('  if [[ -f "${destination}" ]]; then');
 apply.push('    cp -p "${destination}" "${destination}.bak-${stamp}"');
 apply.push('    printf "%s\\t%s\\n" "${destination}" "${destination}.bak-${stamp}" >>"${backup_list}"');
@@ -406,8 +393,8 @@ apply.push("  else");
 apply.push('    printf "%s\\t%s\\n" "${destination}" "" >>"${backup_list}"');
 apply.push("  fi");
 apply.push('  install -d -m 0755 "$(dirname "${destination}")"');
-apply.push('  install -m "${mode}" -o root -g root "${here}/${artifact}" "${destination}"');
-apply.push('  printf "  已安装 %s -> %s\\n" "${artifact}" "${destination}"');
+apply.push('  install -m "${mode}" -o "${ownership%%:*}" -g "${ownership##*:}" "${here}/${artifact}" "${destination}"');
+apply.push('  printf "  已安装 %s -> %s (%s %s)\\n" "${artifact}" "${destination}" "${mode}" "${ownership}"');
 apply.push("}");
 apply.push("");
 apply.push(say("== 2/4 安装补丁文件 =="));
@@ -416,7 +403,8 @@ for (const entry of manifest.files) {
     apply.push(say(`  跳过 ${entry.artifact}（installer-only，现场无对应路径）`));
     continue;
   }
-  apply.push(`install_payload ${quote(entry.artifact)} ${quote(entry.install_path)} '${entry.mode}'`);
+  const ownership = `${entry.owner || "root"}:${entry.group || "root"}`;
+  apply.push(`install_payload ${quote(entry.artifact)} ${quote(entry.install_path)} '${entry.mode}' '${ownership}'`);
 }
 apply.push("");
 apply.push(say("== 3/4 重载 systemd =="));

@@ -487,6 +487,127 @@ func TestPatchInspectorDivertsHotfixPackagesToTheCLI(t *testing.T) {
 	}
 }
 
+// requireNode returns a usable node interpreter or skips the test, mirroring the
+// jq/openssl convention used elsewhere in this package.
+func requireNode(t *testing.T) string {
+	t.Helper()
+	if configured := os.Getenv("CG_NODE_BIN"); configured != "" {
+		if _, err := os.Stat(configured); err == nil {
+			return configured
+		}
+	}
+	if found, err := exec.LookPath("node"); err == nil {
+		return found
+	}
+	for _, candidate := range []string{"/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"} {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	t.Skip("node is required")
+	return ""
+}
+
+// The site path of a payload file is decided by packaging/rpm/nfpm.yaml, never
+// by its source name. On 2026-09-28 a hotfix shipped the console fix to
+// /usr/local/libexec/clusterguard-upgrade.sh while the product executes
+// /usr/local/sbin/clusterguard-upgrade, so the fix applied cleanly and changed
+// nothing. These two tests pin the mapping and the builder that must use it.
+func TestHotfixPayloadMapResolvesSitePathsFromThePackagingManifest(t *testing.T) {
+	node := requireNode(t)
+	out := filepath.Join(t.TempDir(), "payload-map.json")
+	command := exec.Command(node, "hotfix-payload-map.cjs",
+		"--nfpm", filepath.Join("..", "packaging", "rpm", "nfpm.yaml"),
+		"--binaries", "clusterguard clusterguard-agent",
+		"--units", "clusterguard-update-helper.service",
+		"--scripts", "clusterguard-upgrade.sh clusterguard-agent-stdio.sh clusterguard-cluster-finalize.sh",
+		"--out", out)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("map payload: %v\n%s", err, output)
+	}
+	body, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mapped struct {
+		Entries []struct {
+			Artifact    string `json:"artifact"`
+			InstallPath string `json:"install_path"`
+			Mode        string `json:"mode"`
+			Owner       string `json:"owner"`
+			Group       string `json:"group"`
+			Kind        string `json:"kind"`
+		} `json:"entries"`
+		Missing []string `json:"missing"`
+	}
+	if err := json.Unmarshal(body, &mapped); err != nil {
+		t.Fatal(err)
+	}
+	if len(mapped.Missing) != 0 {
+		t.Fatalf("declared components were reported as unmapped: %v", mapped.Missing)
+	}
+	type expectation struct {
+		installPath string
+		mode        string
+		owner       string
+		group       string
+	}
+	expected := map[string]expectation{
+		"payload/scripts/clusterguard-upgrade.sh":            {"/usr/local/sbin/clusterguard-upgrade", "0750", "root", "clusterguard"},
+		"payload/scripts/clusterguard-agent-stdio.sh":        {"/usr/local/libexec/clusterguard-agent-stdio", "0750", "root", "root"},
+		"payload/scripts/clusterguard-cluster-finalize.sh":   {"/usr/local/libexec/clusterguard-cluster-finalize.sh", "0755", "root", "root"},
+		"payload/bin/clusterguard":                           {"/usr/local/bin/clusterguard", "0755", "root", "root"},
+		"payload/bin/clusterguard-agent":                     {"/usr/local/bin/clusterguard-agent", "0755", "root", "root"},
+		"payload/systemd/clusterguard-update-helper.service": {"/usr/lib/systemd/system/clusterguard-update-helper.service", "0644", "root", "root"},
+	}
+	seen := map[string]bool{}
+	for _, entry := range mapped.Entries {
+		want, ok := expected[entry.Artifact]
+		if !ok {
+			t.Fatalf("unexpected payload entry %q", entry.Artifact)
+		}
+		seen[entry.Artifact] = true
+		if entry.InstallPath != want.installPath || entry.Mode != want.mode ||
+			entry.Owner != want.owner || entry.Group != want.group {
+			t.Fatalf("%s mapped to %s mode=%s owner=%s:%s, want %s mode=%s owner=%s:%s",
+				entry.Artifact, entry.InstallPath, entry.Mode, entry.Owner, entry.Group,
+				want.installPath, want.mode, want.owner, want.group)
+		}
+	}
+	for artifact := range expected {
+		if !seen[artifact] {
+			t.Fatalf("payload entry %q is missing from the mapping", artifact)
+		}
+	}
+
+	undeclared := exec.Command(node, "hotfix-payload-map.cjs",
+		"--nfpm", filepath.Join("..", "packaging", "rpm", "nfpm.yaml"),
+		"--scripts", "clusterguard-not-packaged-anywhere.sh")
+	output, err := undeclared.CombinedOutput()
+	if err == nil {
+		t.Fatalf("a runtime script the packaging manifest does not declare must fail the mapping: %s", output)
+	}
+	if !strings.Contains(string(output), "clusterguard-not-packaged-anywhere.sh") {
+		t.Fatalf("the failure must name the undeclared script, got: %s", output)
+	}
+}
+
+func TestHotfixBuilderTakesPayloadPathsFromThePackagingManifest(t *testing.T) {
+	contents, err := os.ReadFile("build-hotfix-patch.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	if !strings.Contains(text, "hotfix-payload-map.cjs") || !strings.Contains(text, "packaging/rpm/nfpm.yaml") {
+		t.Fatal("the hotfix builder must resolve payload destinations through the packaging manifest")
+	}
+	for _, guess := range []string{"install_path: `/usr/local/libexec/${name}`", "install_path: `/usr/local/bin/${name}`"} {
+		if strings.Contains(text, guess) {
+			t.Fatalf("the hotfix builder still guesses %s instead of reading packaging/rpm/nfpm.yaml", guess)
+		}
+	}
+}
+
 func TestUpgradeScriptNeverInvokesDatabaseClients(t *testing.T) {
 	contents, err := os.ReadFile("clusterguard-upgrade.sh")
 	if err != nil {

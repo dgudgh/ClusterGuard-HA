@@ -248,32 +248,93 @@ if (publicKey) {
 // --- Gate 2b: the payload really covers every declared fix ------------------
 // A patch that declares a fix but does not ship the artifact that fix needs is
 // worse than no patch: the site believes it is fixed. Derive the requirement
-// from each fix commit on its own, exactly like the builder does.
-const payloadRequirements = (commit) => {
+// from each fix commit on its own, exactly like the builder does, and express it
+// as the *site path* the fix has to reach rather than as an artifact name —
+// packaging/rpm/nfpm.yaml is what decides where a file lives.
+const mapping = require(path.join(__dirname, '..', 'scripts', 'hotfix-payload-map.cjs'));
+const nfpmText = fs.readFileSync(path.join(__dirname, '..', 'packaging', 'rpm', 'nfpm.yaml'), 'utf8');
+const nfpmDestinations = mapping.parseNfpmDestinations(nfpmText);
+
+const requiredDestinations = (commit) => {
   const changed = git('diff', '--name-only', `${commit}^..${commit}`).split('\n').filter(Boolean);
-  const needed = [];
-  if (changed.some((file) => /^(internal\/agent|cmd\/clusterguard-agent)\//.test(file))) needed.push('payload/bin/clusterguard-agent');
-  if (changed.some((file) => /^(internal\/api|cmd\/clusterguard)\//.test(file))) needed.push('payload/bin/clusterguard');
-  for (const file of changed.filter((file) => /^packaging\/systemd\/.*\.service$/.test(file))) {
-    needed.push(`payload/systemd/${file.replace(/^packaging\/systemd\//, '')}`);
+  const binaries = [];
+  const units = [];
+  const scripts = [];
+  if (changed.some((file) => /^(internal\/agent|cmd\/clusterguard-agent)\//.test(file))) binaries.push('clusterguard-agent');
+  if (changed.some((file) => /^(internal\/api|cmd\/clusterguard)\//.test(file))) binaries.push('clusterguard');
+  for (const file of changed.filter((entry) => /^packaging\/systemd\/.*\.service$/.test(entry))) {
+    units.push(file.replace(/^packaging\/systemd\//, ''));
   }
-  for (const file of changed.filter((file) => /^scripts\/clusterguard-[a-z0-9-]+\.sh$/.test(file))) {
-    needed.push(`payload/libexec/${file.replace(/^scripts\//, '')}`);
+  for (const file of changed.filter((entry) => /^scripts\/clusterguard-[a-z0-9-]+\.sh$/.test(entry))) {
+    scripts.push(file.replace(/^scripts\//, ''));
   }
-  if (changed.includes('scripts/install_clusterguard.sh')) needed.push('payload/installer/install_clusterguard.sh');
-  return needed;
+  const resolved = mapping.resolvePayloadItems({ binaries, units, scripts }, nfpmText);
+  return {
+    paths: resolved.entries.map((entry) => entry.install_path),
+    unmapped: resolved.missing.concat(resolved.problems),
+    installerOnly: changed.includes('scripts/install_clusterguard.sh'),
+  };
 };
 
 const underdelivered = [];
+const unmappedRequirements = [];
 for (const item of resolved) {
-  const shipped = new Set(item.manifest.files.map((file) => file.artifact));
+  const shipped = new Set(item.manifest.files.map((file) => file.install_path).filter(Boolean));
+  const kinds = new Set(item.manifest.files.map((file) => file.kind));
   for (const commit of item.manifest.fix_commits || []) {
-    for (const artifact of payloadRequirements(commit)) {
-      if (!shipped.has(artifact)) underdelivered.push(`${item.body.id}:${commit.slice(0, 7)} 需要 ${artifact}`);
+    const { paths, unmapped, installerOnly } = requiredDestinations(commit);
+    for (const problem of unmapped) unmappedRequirements.push(`${item.body.id}:${commit.slice(0, 7)} ${problem}`);
+    for (const destination of paths) {
+      if (!shipped.has(destination)) underdelivered.push(`${item.body.id}:${commit.slice(0, 7)} 需要 ${destination}`);
+    }
+    if (installerOnly && !kinds.has('installer')) {
+      underdelivered.push(`${item.body.id}:${commit.slice(0, 7)} 需要 installer payload`);
     }
   }
 }
 check('every declared fix is really present in the payload', underdelivered.length === 0, underdelivered.join('; '));
+check('every runtime script a fix touches is declared by the packaging manifest',
+  unmappedRequirements.length === 0, unmappedRequirements.join('; '));
+
+// --- Gate 2c: payload files must install where the product looks for them ----
+// The site path, mode and ownership of every shipped file are decided by the RPM
+// packaging. Deriving them from the source name shipped the 2026-09-28 console
+// fix to /usr/local/libexec/clusterguard-upgrade.sh while the product executes
+// /usr/local/sbin/clusterguard-upgrade: the patch applied cleanly, the operator
+// verified the wrong file, and the behaviour never changed.
+const destinationDrift = [];
+const sourceKeyFor = (entry) => {
+  const base = path.basename(entry.artifact);
+  if (entry.kind === 'binary') return `bin/${base}`;
+  if (entry.kind === 'systemd_unit') return `packaging/${base}`;
+  if (entry.kind === 'runtime_script') return `scripts/${base}`;
+  return null; // installer-only payload has no site path by design
+};
+for (const item of resolved) {
+  for (const entry of item.manifest.files) {
+    const key = sourceKeyFor(entry);
+    if (!key) continue;
+    const declared = nfpmDestinations.get(key);
+    if (!declared || !declared.dst) {
+      destinationDrift.push(`${item.body.id}:${key} 未在打包清单声明`);
+      continue;
+    }
+    if (entry.install_path !== declared.dst) {
+      destinationDrift.push(`${item.body.id}:${key} 落点 ${entry.install_path} ≠ 打包清单 ${declared.dst}`);
+    }
+    const declaredMode = mapping.normalizeMode(declared.mode);
+    if (declaredMode && entry.mode !== declaredMode) {
+      destinationDrift.push(`${item.body.id}:${key} 模式 ${entry.mode} ≠ 打包清单 ${declaredMode}`);
+    }
+    const owner = entry.owner || 'root';
+    const group = entry.group || 'root';
+    if (owner !== (declared.owner || 'root') || group !== (declared.group || 'root')) {
+      destinationDrift.push(`${item.body.id}:${key} 属主 ${owner}:${group} ≠ 打包清单 ${declared.owner || 'root'}:${declared.group || 'root'}`);
+    }
+  }
+}
+check('every payload file installs where the packaging manifest says it lives',
+  destinationDrift.length === 0, destinationDrift.join('; '));
 
 // A patch may be built from a ported tree, but that tree must still be "the
 // release baseline plus the declared fixes". Fixes made on a development line
