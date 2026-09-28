@@ -501,6 +501,12 @@ User=mysql
 Group=mysql
 RuntimeDirectory=clusterguard/mysql/${port}
 RuntimeDirectoryMode=0750
+# /run/clusterguard is shared with the update helper and any other managed engine.
+# Keep that shared parent traversable for the unprivileged mysql user: it is not a
+# member of the clusterguard group, and /run is a tmpfs, so whichever unit creates
+# the parent first decides whether mysqld can reach its own socket. Without this
+# the daemon dies on every boot with "Could not create unix socket lock file".
+ExecStartPre=+/usr/bin/install -d -m 0755 /run/clusterguard
 ExecStart=${mysqld} --defaults-file=${config_file}
 Restart=on-failure
 RestartSec=5

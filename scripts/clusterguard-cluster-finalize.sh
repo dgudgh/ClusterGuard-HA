@@ -342,4 +342,9 @@ echo "  - or, only after explicit operator review, unfreeze manually:" >&2
 echo "    curl -sk -X POST -H \"Authorization: Bearer \${CG_CONTROL_TOKEN}\" -H 'Content-Type: application/json'" >&2
 echo "      -d '{\"freeze\":false}' ${cg_api_url}/api/v1/clusters/${cluster_id}/recovery-freeze" >&2
 echo "clusterguard-cluster-finalize.sh: protection intentionally left active" >&2
-exit 0
+# Exit NON-ZERO so the unit's Restart=on-failure keeps retrying. Protection must
+# stay active while the cluster is unrecovered (fail-closed), but reporting
+# success here is wrong: a 0 exit makes systemd treat this oneshot as finished,
+# so once the operator fixes the primary the freeze would never be released
+# automatically — contradicting the recovery guidance printed just above.
+exit 1
