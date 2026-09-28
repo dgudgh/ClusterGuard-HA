@@ -961,6 +961,13 @@ restored cluster cannot accept stray writes.</li>
 <li>Stop per mode: <code>service</code> stops replicas then the primary; <code>poweroff</code>
 powers off all nodes in parallel.</li>
 </ol>
+<p>The console settles itself once a host power-off is submitted: it closes the
+shutdown dialog, states that the control plane stops with the host, and closes
+its own page. Browsers only let a script close a tab it opened itself, so the
+offline screen also carries an explicit &quot;Close this page&quot; action, and the page
+keeps probing the control plane first — a control plane deployed on another host
+stays reachable and keeps its console. A <code>service</code> shutdown never closes the
+console.</p>
 <h3 id="12-3-automatic-restore-after-reboot">12.3 Automatic restore after reboot<a class="heading-anchor" href="#12-3-automatic-restore-after-reboot" aria-label="Link to 12.3 Automatic restore after reboot">#</a></h3>
 <p>Both units ship enabled. They scan the per-cluster snapshot directory at boot
 and are no-ops when it is empty:</p>

@@ -935,6 +935,14 @@ The full flow (any failure interrupts and keeps protection, see 11.4):
 5. Stop per mode: `service` stops replicas then the primary; `poweroff`
    powers off all nodes in parallel.
 
+The console settles itself once a host power-off is submitted: it closes the
+shutdown dialog, states that the control plane stops with the host, and closes
+its own page. Browsers only let a script close a tab it opened itself, so the
+offline screen also carries an explicit "Close this page" action, and the page
+keeps probing the control plane first — a control plane deployed on another host
+stays reachable and keeps its console. A `service` shutdown never closes the
+console.
+
 ### 12.3 Automatic restore after reboot
 
 Both units ship enabled. They scan the per-cluster snapshot directory at boot
