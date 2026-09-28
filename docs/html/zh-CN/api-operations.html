@@ -702,6 +702,7 @@ cgctl cluster shutdown --cluster &lt;集群显示名&gt; --mode service --dry-ru
 <li>在每个节点上运行<code>SET PERSIST_ONLY read_only=ON; SET PERSIST_ONLY super_read_only=ON</code> —— 没有运行时影响，但跨重启持久化，因此恢复后的集群不能接受散写。</li>
 <li>按模式停止：<code>service</code>先停止副本再停止主节点；<code>poweroff</code>并行关闭所有节点。</li>
 </ol>
+<p>整机关机提交后，控制台页面会自动收尾：关闭关机对话框、说明控制面随主机停止服务，并关闭页面本身。浏览器只允许脚本关闭由脚本打开的标签页，因此离线提示页同时提供显式的「关闭本页面」按钮；页面会先探测控制面——若控制面部署在另一台主机上、仍然可达，则保持控制台打开。<code>service</code> 模式收尾不会关闭控制台。</p>
 <h3 id="12-3-重启后的自动恢复">12.3 重启后的自动恢复<a class="heading-anchor" href="#12-3-重启后的自动恢复" aria-label="Link to 12.3 重启后的自动恢复">#</a></h3>
 <p>两个单元都默认启用。它们在启动时扫描每个集群的快照目录，当目录为空时为无操作：</p>
 <ul>

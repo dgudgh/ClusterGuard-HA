@@ -1422,6 +1422,60 @@ func TestConsoleShowsPowerLifecyclePanel(t *testing.T) {
 	}
 }
 
+// A host power-off takes the control plane down with the host, so the console
+// must not leave the operator in front of a shutdown dialog whose API can never
+// answer again. Once the shutdown is submitted the page settles: it closes the
+// dialog, explains the disconnect, tries to close itself, and keeps watching in
+// case the host drops the control plane a little later. Stopping the database
+// service alone must never do this - that console stays usable.
+func TestConsoleClosesThePageAfterAHostPoweroff(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		`id="power-offline-screen"`,
+		`id="power-offline-detail"`,
+		`id="power-offline-summary"`,
+		`id="power-offline-close"`,
+		`id="power-offline-stay"`,
+		`id="power-offline-hint"`,
+		"主机正在关机",
+		"controlAPIConnectionLost",
+		"poweroffControlPlaneLost",
+		"watchForPoweroffControlPlaneLoss",
+		"settlePoweroffConsole",
+		"enterPoweroffOfflineState",
+		"dismissPowerOfflineScreen",
+		"关闭本页面",
+		"留在此页查看",
+		"浏览器不允许脚本关闭手工打开的标签页",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("console power-off teardown missing %q", contract)
+		}
+	}
+	// Scoping: the console only tears itself down for the host power-off
+	// lifecycle, and only once.
+	if count := strings.Count(page, "settlePoweroffConsole(cluster.resource_id"); count != 1 {
+		t.Fatalf("host power-off teardown must run exactly once, found %d call sites", count)
+	}
+	if !strings.Contains(page, "if (mode === 'poweroff') {") {
+		t.Fatalf("host power-off teardown must be gated on the poweroff lifecycle")
+	}
+	if !strings.Contains(page, "mode === 'poweroff' && executedClusters.length && controlAPIConnectionLost(error)") {
+		t.Fatalf("a shutdown response lost to the dropping host must settle the page instead of reporting an error")
+	}
+	if !strings.Contains(page, "setLiveStatus('数据库集群已安全停机。');") {
+		t.Fatalf("stopping only the database service must keep the existing console behaviour")
+	}
+	// The probe reads the real power status endpoint before deciding, so a
+	// control plane deployed off the powered-off host keeps its console.
+	if count := strings.Count(page, "power/status`"); count < 2 {
+		t.Fatalf("the teardown probe must read the real power status endpoint, found %d references", count)
+	}
+	if count := strings.Count(page, "window.close()"); count != 1 {
+		t.Fatalf("the console closes itself from exactly one place, found %d", count)
+	}
+}
+
 func TestConsoleProvidesAdminOnlySignedSoftwareUpdateWorkflow(t *testing.T) {
 	page := string(consoleHTML)
 	settings := consoleView(t, "settings")

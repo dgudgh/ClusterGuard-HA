@@ -692,6 +692,14 @@
     .power-acknowledgement input { width:17px; min-height:17px; flex:0 0 auto; margin:2px 0 0; accent-color:var(--accent); }
     .power-action { border-color:#d9a4a4; color:#9d3030; }
     .power-action:hover:not(:disabled) { border-color:var(--danger); background:var(--danger-soft); color:#8f3131; }
+    .power-offline-screen { position:fixed; inset:0; z-index:60; display:grid; place-items:center; padding:24px; background:rgba(11,32,26,.62); }
+    .power-offline-screen[hidden] { display:none; }
+    .power-offline-card { width:min(540px,100%); display:grid; gap:14px; padding:26px 28px; border:1px solid var(--line); border-radius:12px; background:#fff; box-shadow:var(--shadow); text-align:center; }
+    .power-offline-icon { display:grid; place-items:center; width:46px; height:46px; margin:0 auto; border-radius:50%; background:var(--danger-soft); color:#9d3030; font-size:22px; line-height:1; }
+    .power-offline-card h2 { margin:0; font-size:19px; }
+    .power-offline-card p { margin:0; color:var(--muted); font-size:12px; line-height:1.6; }
+    .power-offline-card .result-banner { margin:0; text-align:left; }
+    .power-offline-actions { display:flex; flex-wrap:wrap; justify-content:center; gap:10px; }
     .live-status { position:fixed; right:22px; bottom:18px; z-index:40; max-width:min(460px,calc(100vw - 44px)); padding:11px 14px; border:1px solid var(--line-strong); border-left:3px solid var(--accent); border-radius:7px; background:#fff; box-shadow:var(--shadow); color:var(--muted); }
     .live-status[hidden] { display:none; }
     .live-status.error { border-left-color:var(--danger); color:#903434; }
@@ -1519,6 +1527,20 @@
     </div>
   </dialog>
 
+  <div class="power-offline-screen" id="power-offline-screen" role="alertdialog" aria-modal="true" aria-labelledby="power-offline-title" aria-describedby="power-offline-detail" hidden>
+    <div class="power-offline-card">
+      <div class="power-offline-icon" aria-hidden="true">⏻</div>
+      <h2 id="power-offline-title">主机正在关机</h2>
+      <p id="power-offline-detail">整机关机命令已提交，控制面随主机断电停止服务，本页面与控制 API 的连接已经断开。</p>
+      <div class="result-banner success" id="power-offline-summary">已提交。</div>
+      <div class="power-offline-actions">
+        <button id="power-offline-close" class="primary-button" type="button">关闭本页面</button>
+        <button id="power-offline-stay" type="button">留在此页查看</button>
+      </div>
+      <p id="power-offline-hint">若本页没有自动关闭，可直接关闭该标签页。带外开机后 ClusterGuard 会逐套自动恢复并验证数据库，恢复期间不要手工解除保护。</p>
+    </div>
+  </div>
+
   <dialog id="node-lifecycle-modal" class="node-lifecycle-dialog" role="dialog" aria-modal="true" aria-labelledby="node-lifecycle-title">
     <div class="dialog-head">
       <div class="dialog-title"><h2 id="node-lifecycle-title">添加或修复节点</h2><p>安装、数据同步、复制接入和元数据更新由同一条受控流程完成。</p></div>
@@ -1752,6 +1774,7 @@
     const state = {
       language: 'zh-CN', clusters: [], clusterDirectory: new Map(), fleetTopology: new Map(), capabilities: [], nodes: [], allOperations: [], lifecycleTasks: [], lifecycleCapability: { available:false, reason:'未配置' },
       controlPlane: null, platformVersion: null, powerStatus: null, powerRunning: false,
+      poweroffSubmitted: false, poweroffWatchdog: null,
       disaster: null, disasterEpoch:0, disasterTimer:null,
       softwareUpdates: { available:false, reason:'尚未检查升级服务', warning:'系统升级期间无法进行自动切换，请注意关注。', packages:[] },
       softwareUpdateRunning: false, softwareUpdateAction: '', softwareUpdatePollingTimer: null,
@@ -4797,6 +4820,101 @@
         : '我确认停止该集群的全部数据库服务，主机重启后自动恢复。';
     };
 
+    // A host power-off only takes the console page down when the control plane
+    // runs on the same host. Everything below treats the lost connection as the
+    // expected end of a poweroff lifecycle instead of an error the operator has
+    // to dismiss by hand while looking at a dialog that can never answer again.
+    const controlAPIConnectionLost = error => !!error && error.name === 'APIError'
+      && error.status === 0 && String(error.message).includes('无法连接控制 API');
+
+    const showPowerOfflineScreen = (summary, detail) => {
+      if (summary) byId('power-offline-summary').textContent = summary;
+      if (detail) byId('power-offline-detail').textContent = detail;
+      byId('power-offline-hint').textContent = '若本页没有自动关闭，可直接关闭该标签页。带外开机后 ClusterGuard 会逐套自动恢复并验证数据库，恢复期间不要手工解除保护。';
+      const dialog = byId('power-shutdown-dialog');
+      if (dialog.open) dialog.close();
+      byId('power-offline-screen').hidden = false;
+    };
+
+    const dismissPowerOfflineScreen = () => {
+      if (state.poweroffWatchdog) { window.clearInterval(state.poweroffWatchdog); state.poweroffWatchdog = null; }
+      byId('power-offline-screen').hidden = true;
+    };
+
+    // Browsers only let a script close a window it opened itself, so this is a
+    // best effort: when the tab was opened by hand the call is ignored and the
+    // offline screen stays up with an explicit instruction instead.
+    const closeConsolePage = () => {
+      window.close();
+      window.setTimeout(() => {
+        if (!window.closed) byId('power-offline-hint').textContent = '浏览器不允许脚本关闭手工打开的标签页，请手动关闭本页。带外开机后 ClusterGuard 会逐套自动恢复并验证数据库。';
+      }, 400);
+    };
+
+    const enterPoweroffOfflineState = (summary, detail) => {
+      state.poweroffSubmitted = true;
+      showPowerOfflineScreen(summary, detail);
+      closeConsolePage();
+    };
+
+    const poweroffControlPlaneLost = async clusterId => {
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => controller.abort(), 3000);
+      try {
+        await fetchResult(`/api/v1/clusters/${clusterId}/power/status`, { cache:'no-store', signal:controller.signal });
+        return false;
+      } catch (error) {
+        return controlAPIConnectionLost(error);
+      } finally {
+        window.clearTimeout(timer);
+      }
+    };
+
+    // Keep watching after the lifecycle was submitted: when the console page is
+    // still on screen at the moment the host drops the control plane, close it
+    // out then instead of waiting for a manual refresh to fail.
+    const watchForPoweroffControlPlaneLoss = clusterId => {
+      if (state.poweroffWatchdog) window.clearInterval(state.poweroffWatchdog);
+      let attempts = 0;
+      state.poweroffWatchdog = window.setInterval(async () => {
+        attempts += 1;
+        if (attempts > 60) { window.clearInterval(state.poweroffWatchdog); state.poweroffWatchdog = null; return; }
+        if (!byId('power-offline-screen').hidden) return;
+        if (await poweroffControlPlaneLost(clusterId)) {
+          window.clearInterval(state.poweroffWatchdog);
+          state.poweroffWatchdog = null;
+          enterPoweroffOfflineState('整机关机命令已提交。', '控制面已停止服务，本页面与控制 API 的连接已经断开。');
+        }
+      }, 5000);
+    };
+
+    // The shutdown response is the last thing the control plane can send before
+    // the host goes down, so settle the page instead of leaving the dialog open
+    // on a connection that is already gone.
+    const settlePoweroffConsole = async (clusterId, summary) => {
+      state.poweroffSubmitted = true;
+      const result = byId('power-shutdown-result');
+      try {
+        result.className = 'result-banner success';
+        result.textContent = `${summary} 正在确认控制面连接。`;
+        await new Promise(resolve => window.setTimeout(resolve, 2500));
+        if (await poweroffControlPlaneLost(clusterId)) {
+          showPowerOfflineScreen(summary, '整机关机命令已提交并确认，目标主机正在断电，控制面随主机停止服务，本页面与控制 API 的连接已经断开。');
+          closeConsolePage();
+          return;
+        }
+        // The control plane is still reachable, so it does not run on the
+        // powered-off host: keep the console and only close the dialog.
+        result.textContent = `${summary} 控制面仍可访问，本页面保持打开。`;
+        window.setTimeout(() => {
+          if (!state.powerRunning && byId('power-shutdown-dialog').open) byId('power-shutdown-dialog').close();
+        }, 1200);
+        watchForPoweroffControlPlaneLoss(clusterId);
+      } catch (_) {
+        // Settling is cosmetic; it must never turn into a shutdown error.
+      }
+    };
+
     const openPowerShutdownDialog = () => {
       const cluster = state.clusterDetail && state.clusterDetail.cluster;
       if (!cluster || !state.topology) { setLiveStatus('请先选择集群并完成拓扑检查。', true); return; }
@@ -4892,12 +5010,19 @@
         await plan(cluster.resource_id, mode);
         result.textContent = '计划已锁定，正在执行集群关机。';
         await execute(cluster.resource_id, cluster.display_name);
-        result.textContent = mode === 'poweroff'
-          ? '所有同宿主集群已记录并安全停库，整机关机命令已提交。带外开机后将逐套自动恢复和验证。'
-          : '数据库服务已安全停止。主机重启后 ClusterGuard 将自动恢复并验证数据库。';
         result.className = 'result-banner success';
-        setLiveStatus(mode === 'poweroff' ? '整机关机命令已提交。' : '数据库集群已安全停机。');
-        if (mode !== 'poweroff') await loadPowerStatus(cluster.resource_id);
+        if (mode === 'poweroff') {
+          result.textContent = '所有同宿主集群已记录并安全停库，整机关机命令已提交。带外开机后将逐套自动恢复和验证。';
+          setLiveStatus('整机关机命令已提交。');
+          const summary = executedClusters.length
+            ? `已提交的关机流程：${executedClusters.join('、')}。`
+            : '整机关机命令已提交。';
+          await settlePoweroffConsole(cluster.resource_id, summary);
+          return;
+        }
+        result.textContent = '数据库服务已安全停止。主机重启后 ClusterGuard 将自动恢复并验证数据库。';
+        setLiveStatus('数据库集群已安全停机。');
+        await loadPowerStatus(cluster.resource_id);
       } catch (error) {
         // Plans that were never submitted can be cancelled. Submitted
         // lifecycles stay fail-closed because a lost response may still mean
@@ -4906,6 +5031,18 @@
         const partial = executedClusters.length
           ? ` 已提交：${executedClusters.join('、')}；请通过带外开机触发自动恢复，禁止手工解除保护。`
           : '';
+        // A host power-off kills the control plane before its response can be
+        // read. Once a shutdown lifecycle was submitted, the lost connection is
+        // the expected outcome, not an error the operator must dismiss.
+        if (mode === 'poweroff' && executedClusters.length && controlAPIConnectionLost(error)) {
+          result.className = 'result-banner success';
+          result.textContent = `已提交的关机流程：${executedClusters.join('、')}。控制面已失去连接，可能正在随主机关机。`;
+          setLiveStatus('整机关机命令已提交，控制面连接已断开。');
+          enterPoweroffOfflineState(
+            `已提交的关机流程：${executedClusters.join('、')}。`,
+            '控制面在关机流程执行中断开连接，未收到最终确认。若主机正在断电，这是预期现象；若主机仍在线，请重新连接控制台确认电源状态与恢复进度。');
+          return;
+        }
         result.textContent = `${error.message}${partial}`;
         result.className = 'result-banner error';
         setLiveStatus(`${error.message}${partial}`, true);
@@ -5686,6 +5823,8 @@
     byId('power-confirm-impact').addEventListener('change', renderPowerShutdownConfirmation);
     document.querySelectorAll('input[name="power-mode"]').forEach(input => input.addEventListener('change', renderPowerShutdownConfirmation));
     byId('confirm-power-shutdown').addEventListener('click', executePowerShutdown);
+    byId('power-offline-close').addEventListener('click', closeConsolePage);
+    byId('power-offline-stay').addEventListener('click', dismissPowerOfflineScreen);
     byId('retire-cluster-confirmation').addEventListener('input', renderClusterRetirementContext);
     byId('cluster-select').addEventListener('change', loadSelectedCluster);
     byId('retry-cluster-load').addEventListener('click', () => loadSelectedCluster({ preserveOperationResult:true }));
