@@ -251,6 +251,10 @@ Group=postgres
 SupplementaryGroups=clusterguard
 RuntimeDirectory=clusterguard/postgresql/${port}
 RuntimeDirectoryMode=0750
+# Same shared-parent rule as the managed MySQL unit: keep /run/clusterguard
+# traversable so the unprivileged postgres user can reach its own runtime
+# directory after a reboot, when the update helper may have created it first.
+ExecStartPre=+/usr/bin/install -d -m 0755 /run/clusterguard
 ExecStart=${software_root}/bin/postgres -D ${data_directory}
 ExecReload=${software_root}/bin/pg_ctl -D ${data_directory} reload
 KillSignal=SIGINT

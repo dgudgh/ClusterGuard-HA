@@ -4706,7 +4706,7 @@ func TestSoftwareUpdateHelperSystemdUnitAllowsControlledPrivilegedUpdate(t *test
 		"User=root",
 		"Group=clusterguard",
 		"ProtectSystem=false",
-		"/usr/bin/install -d -m 0750 -o root -g clusterguard /run/clusterguard",
+		"/usr/bin/install -d -m 0755 -o root -g clusterguard /run/clusterguard",
 		"/usr/local/libexec/clusterguard-update-helper",
 		"/usr/local/libexec/clusterguard-update-job.sh",
 	} {
@@ -4714,20 +4714,71 @@ func TestSoftwareUpdateHelperSystemdUnitAllowsControlledPrivilegedUpdate(t *test
 			t.Fatalf("software update helper unit is missing %q", required)
 		}
 	}
-	// The helper shares /run/clusterguard with the control plane. Declaring it
-	// as RuntimeDirectory makes systemd own the directory: start-up chown/chmod
-	// races the service (site 192.168.102.152-154 failed the first start with
-	// status=233) and stopping the helper deletes a directory the control plane
-	// still uses. The unit must create it idempotently instead of owning it.
+	// The helper shares /run/clusterguard with the control plane and with every
+	// managed engine. Declaring it as RuntimeDirectory makes systemd own the
+	// directory: start-up chown/chmod races the service (site 192.168.102.152-154
+	// failed the first start with status=233) and stopping the helper deletes a
+	// directory the control plane still uses. The unit must create it idempotently
+	// instead of owning it.
+	//
+	// The shared parent must also stay traversable for the unprivileged engine
+	// accounts. The managed MySQL unit nests clusterguard/mysql/3306 below it and
+	// runs as the mysql user, which is not a member of the clusterguard group (the
+	// PostgreSQL unit works around the same problem with SupplementaryGroups). A
+	// 0750 mode here makes mysqld abort at every boot with "Could not create unix
+	// socket lock file", because /run is a tmpfs and this unit normally wins the
+	// race to create the parent — turning any host reboot into a full cluster
+	// outage. Do not reintroduce 0750.
 	for _, forbidden := range []string{
 		"ProtectSystem=strict",
 		"CapabilityBoundingSet=",
 		"RuntimeDirectory=clusterguard",
 		"RuntimeDirectoryMode=",
+		"-m 0750 -o root -g clusterguard /run/clusterguard",
 	} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("software update helper unit contains incompatible restriction %q", forbidden)
 		}
+	}
+}
+
+func TestManagedEngineUnitsKeepSharedRuntimeDirectoryTraversable(t *testing.T) {
+	for _, name := range []string{"clusterguard-mysql-install.sh", "clusterguard-postgresql-install.sh"} {
+		contents, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(contents)
+		// Each engine runs unprivileged and nests its own RuntimeDirectory below
+		// /run/clusterguard. It must repair the shared parent before starting, so
+		// that a reboot in which another unit creates the parent as 0750 cannot
+		// keep the engine from reaching its own socket.
+		if !strings.Contains(text, "ExecStartPre=+/usr/bin/install -d -m 0755 /run/clusterguard") {
+			t.Fatalf("%s must repair the shared /run/clusterguard mode before starting the engine", name)
+		}
+		if !strings.Contains(text, "RuntimeDirectory=clusterguard/") {
+			t.Fatalf("%s must keep the engine runtime directory under the shared parent", name)
+		}
+	}
+}
+
+func TestClusterFinalizeKeepsRetryingAfterAFailClosedTimeout(t *testing.T) {
+	contents, err := os.ReadFile("clusterguard-cluster-finalize.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	critical := strings.Index(text, "automatic recovery remains FROZEN and maintenance remains ACTIVE")
+	if critical < 0 {
+		t.Fatal("cluster finalize must report the fail-closed state when the primary does not recover in time")
+	}
+	// Fail-closed must not masquerade as success. The unit is a oneshot service
+	// with Restart=on-failure: exiting 0 there retires it permanently, so after
+	// the operator fixes the primary the recovery freeze would never be released
+	// automatically and every instance would stay in maintenance until someone
+	// cleared it by hand.
+	if !strings.Contains(text[critical:], "exit 1") {
+		t.Fatal("cluster finalize must exit non-zero after a fail-closed timeout so systemd keeps retrying")
 	}
 }
 

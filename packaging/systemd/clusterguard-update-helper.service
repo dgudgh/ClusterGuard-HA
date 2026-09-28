@@ -14,8 +14,15 @@ RestartSec=3s
 # via RuntimeDirectory= : systemd would chown/chmod it on every start (a first-start
 # race with an existing directory surfaces as exit status 233/RUNTIME_DIRECTORY) and
 # would REMOVE it when this unit stops, dropping sockets other components rely on.
-# Create it idempotently instead; existing owners/modes are already correct.
-ExecStartPre=/usr/bin/install -d -m 0750 -o root -g clusterguard /run/clusterguard
+# Create it idempotently instead, and keep it WORLD-TRAVERSABLE (0755).
+# The managed MySQL/PostgreSQL units nest their RuntimeDirectory below this path
+# (clusterguard/mysql/3306, clusterguard/postgresql/5432) and run as the
+# unprivileged mysql/postgres users, which are NOT members of the clusterguard
+# group. With 0750 here those daemons cannot traverse the shared parent, so they
+# abort with "Could not create unix socket lock file" on every single start.
+# /run is a tmpfs, so this unit usually wins the boot race to create the parent:
+# a 0750 mode makes every host reboot a guaranteed cluster outage.
+ExecStartPre=/usr/bin/install -d -m 0755 -o root -g clusterguard /run/clusterguard
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
