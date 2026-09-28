@@ -1,0 +1,214 @@
+{
+  "id": "HF-2026-0928-05",
+  "severity": "P0",
+  "base_commit": "e01f5ce376f94e2595590358c72dd2585e7c09b4",
+  "build_commit": "18d738e25a7bd71bb47fcb920ce45dc42411489b",
+  "fix_commits": [
+    "ed9faca",
+    "d5f9491",
+    "dd82ca5",
+    "5ae2039",
+    "28e3b47",
+    "9303e9d",
+    "18d738e"
+  ],
+  "rpm_version": "2.2",
+  "rpm_release": "104",
+  "supersedes": [
+    "HF-2026-0928-03",
+    "HF-2026-0928-04"
+  ],
+  "title": {
+    "zh": "2.2-104 现场修复合集（累积）：整机重启后集群不可用、写入者抖动、升级链前置、控制台原因与关机收尾、热修包误传控制台",
+    "en": "2.2-104 site fix bundle (cumulative): cluster stranded after a host reboot, writer reconcile flap, update prerequisites, console reasons, power-off teardown, and the hotfix-via-console trap"
+  },
+  "summary": {
+    "zh": "在 HF-2026-0928-04（用户已应用后仍看到旧报错）的基础上修掉一个投递缺陷（18d738e）：HF-04 把带修复的 upgrade 脚本装到了 /usr/local/libexec/clusterguard-upgrade.sh，而控制台上传校验执行的是打包清单声明的 /usr/local/sbin/clusterguard-upgrade（0750 root:clusterguard）——包装得干干净净、每台都报「已安装」，运维验的是错的文件，控制台照旧报「范围外路径」。热修补丁的落点、模式、属主现在一律由 packaging/rpm/nfpm.yaml 决定（单一真源），未在打包清单声明的运行时脚本直接构建失败。只装这一个包（它完整包含并取代 HF-2026-0928-03/04），不要与其它基线混装。",
+    "en": "Builds on HF-2026-0928-04 (which the site applied while still seeing the old rejection) with one delivery defect fixed (18d738e): HF-04 installed the fixed upgrade script at /usr/local/libexec/clusterguard-upgrade.sh, but the console upload inspection executes the path the packaging manifest declares, /usr/local/sbin/clusterguard-upgrade (0750 root:clusterguard). Every file reported installed, the operator verified the wrong one, and the console kept reporting an out-of-scope path. Payload destinations, modes and ownership now come from packaging/rpm/nfpm.yaml alone, and a runtime script the manifest does not declare fails the build. Apply this patch alone — it contains and supersedes HF-2026-0928-03 and HF-2026-0928-04 — and never mix baselines."
+  },
+  "fixes": [
+    {
+      "commit": "18d738e",
+      "severity": "P1",
+      "title": {
+        "zh": "热修补丁的落点由来源名猜出，修复被装到产品不读的路径",
+        "en": "Payload destinations were guessed from the source name, so the fix landed where the product never looks"
+      },
+      "symptom": {
+        "zh": "HF-04 应用后三台脚本、单元、二进制全部显示「已安装」，但控制台上传热修包仍报「升级包包含范围外路径：clusterguard-hotfix/」：带修复的脚本被装到 /usr/local/libexec/clusterguard-upgrade.sh（产品从不执行该路径），真正被调用的 /usr/local/sbin/clusterguard-upgrade 还是 9 月 24 日 RPM 装的旧版本。",
+        "en": "After HF-04 every script, unit and binary reported installed, yet the console still rejected hotfix uploads with an out-of-scope path error: the fixed script had been written to /usr/local/libexec/clusterguard-upgrade.sh, a path the product never executes, while the file actually invoked, /usr/local/sbin/clusterguard-upgrade, was still the RPM build from 24 September."
+      },
+      "root_cause": {
+        "zh": "构建脚本按「scripts/clusterguard-*.sh → /usr/local/libexec/<同名>」猜落点，而打包清单里至少三个脚本不是这样：clusterguard-upgrade.sh 与 clusterguard-configure.sh 落在 /usr/local/sbin（前者 0750 root:clusterguard），clusterguard-agent-stdio.sh 还要去掉 .sh 后缀。门禁当时只校验 payload 里「有没有」对应文件，从不校验它「落到哪」。",
+        "en": "The builder guessed \"scripts/clusterguard-*.sh -> /usr/local/libexec/<same name>\", but the packaging manifest disagrees for at least three scripts: clusterguard-upgrade.sh and clusterguard-configure.sh live in /usr/local/sbin (the former as 0750 root:clusterguard) and clusterguard-agent-stdio.sh drops the .sh suffix. The gate only checked that a payload file existed, never where it would be installed."
+      },
+      "fix": {
+        "zh": "落点、模式、属主统一由 scripts/hotfix-payload-map.cjs 读 packaging/rpm/nfpm.yaml 解析（构建、门禁、测试共用同一真源）；payload 目录改为 payload/scripts，apply.sh 按声明的属主属组安装；未在打包清单声明的运行时脚本直接构建失败；门禁新增「每个修复必须抵达其现场路径」与「每个 payload 文件必须落在打包清单声明的路径」两条检查——后者在 HF-04 产物上实测报红，精确指出路径/模式/属主三项偏差。",
+        "en": "A single source of truth, scripts/hotfix-payload-map.cjs, resolves destination, mode and ownership from packaging/rpm/nfpm.yaml and is shared by the builder, the gate and the tests; payload files live under payload/scripts and apply.sh installs with the declared owner and group; a runtime script the manifest does not declare fails the build; and the gate gained \"every fix must reach its site path\" plus \"every payload file installs where the manifest says\" — the latter turned red on the HF-04 artifact and named the path, mode and ownership drift."
+      },
+      "applies_to": [
+        "热修补丁应用后每台都报「已安装」，但现场行为没有任何变化",
+        "控制台上传热修包仍然报「范围外路径：clusterguard-hotfix/」",
+        "需要判断某个脚本到底哪一份副本在生效"
+      ]
+    },
+    {
+      "commit": "9303e9d",
+      "severity": "P1",
+      "title": {
+        "zh": "热修补丁包误传控制台时只报「范围外路径」，不说是通道走错了",
+        "en": "A hotfix patch uploaded to the console was rejected with an opaque path error instead of naming the wrong channel"
+      },
+      "symptom": {
+        "zh": "运维把 clusterguard-ha-hotfix-*.cgpatch 传到版本更新对话框（文件选择器按 .cgpatch 后缀放行、实验室链验签也能通过），最后只得到「升级失败：升级包包含范围外路径：clusterguard-hotfix/」——没有任何文字说明热修包根本不该走这个通道，运维会反复重试。",
+        "en": "An operator uploading clusterguard-ha-hotfix-*.cgpatch to the Version Update dialog (the file picker accepts the .cgpatch suffix and the lab-chain signature verifies) only got \"out-of-scope path: clusterguard-hotfix/\" — nothing said the hotfix belongs to a different channel, so the operator retried."
+      },
+      "root_cause": {
+        "zh": "热修补丁包沿用了旧滚动升级包的 .cgpatch 后缀，两种不同用途的制品撞名；滚动执行器的白名单只判路径合法性，不识别制品类型；控制台对话框还写着「兼容旧 .cgpatch」，进一步诱导上传。",
+        "en": "Hotfix patches inherited the .cgpatch suffix from legacy rolling packages, so two different artifacts collided on one name; the rolling executor's whitelist judged paths, not artifact types; and the dialog advertised \"legacy .cgpatch compatibility\", inviting the upload."
+      },
+      "fix": {
+        "zh": "clusterguard-upgrade.sh 在解包检查时识别 clusterguard-hotfix/ 顶层，直接报出正确入口（tar 解包后运行 clusterguard-hotfix/apply.sh）；控制台在文件选择时拦截文件名含 hotfix 的 .cgpatch 并给出同样指引，选择器与就绪文案改为「滚动包专属，热修包走命令行」；update-and-patch 双语文档明确两种 .cgpatch 是两条通道。新增防回归：TestPatchInspectorDivertsHotfixPackagesToTheCLI 真打包真跑 --inspect，控制台契约测试断言拦截逻辑存在，均经变异验证。",
+        "en": "clusterguard-upgrade.sh recognises the clusterguard-hotfix/ top level during inspection and rejects it with the actual remediation (extract and run clusterguard-hotfix/apply.sh); the console intercepts hotfix-named .cgpatch files at selection time with the same guidance, and the picker/readiness copy now says the channel is rolling-packages-only; the update-and-patch documentation in both languages states the two .cgpatch artifacts are different channels. Regressions: TestPatchInspectorDivertsHotfixPackagesToTheCLI builds a real archive and runs --inspect, and the console contract test asserts the interception exists — both mutation-verified."
+      },
+      "applies_to": [
+        "把热修补丁包上传到版本更新对话框，报「升级包包含范围外路径：clusterguard-hotfix/」",
+        "运维不确定 .cgpatch 热修包应该走哪条安装通道"
+      ]
+    },
+    {
+      "commit": "28e3b47",
+      "severity": "P0",
+      "title": {
+        "zh": "整机重启后整个集群起不来：共享运行时目录权限与恢复冻结永不释放",
+        "en": "A host reboot stranded the whole cluster: shared runtime directory mode and a recovery freeze that never lifted"
+      },
+      "symptom": {
+        "zh": "三台整机关机再开机后，控制台报「部分数据不可用：候选评估」「尚未发现主库」，三个实例全部显示「数据库未启动或不可达」，再次整机关机与故障切换都被阻断。clusterguard-mysql-3306.service 与 clusterguard-cluster-restore.service 双双进入崩溃重启循环，重启计数分别达到 2063/2069/2072 与 1034~1036。",
+        "en": "After a planned whole-host shutdown the console reported \"some data unavailable: candidate evaluation\", no primary at all, and every instance as \"database not started or unreachable\"; both another power-off and failover were blocked. clusterguard-mysql-3306.service and clusterguard-cluster-restore.service sat in restart loops at counts 2063/2069/2072 and 1034-1036."
+      },
+      "root_cause": {
+        "zh": "① update-helper 单元用 ExecStartPre 把共享目录 /run/clusterguard 建成 0750，而托管 MySQL 单元的 RuntimeDirectory=clusterguard/mysql/3306 嵌套在它下面、以非特权 mysql 用户运行（不属于 clusterguard 组）；/run 是 tmpfs，开机时 update-helper 先创建父目录，mysqld 连这层目录都穿不过去，建 socket 锁文件失败即 Aborting——InnoDB 其实已初始化成功，数据无损。安装当天能用只是因为碰巧 mysqld 先启动，开机顺序一反过来就是必现故障。② cluster-finalize 在 600 秒内等不到主库时以 exit 0 结束，而它是 oneshot + Restart=on-failure，退出码 0 等于宣告完成，恢复冻结此后只能人工解除——脚本自己打印的「修好后会自动恢复」并不成立。",
+        "en": "The update helper created the shared /run/clusterguard as 0750 via ExecStartPre, while the managed MySQL unit nests RuntimeDirectory=clusterguard/mysql/3306 beneath it and runs as the unprivileged mysql user, which is not a member of the clusterguard group. /run is a tmpfs, so on boot the helper creates the parent first and mysqld cannot traverse it: socket lock creation fails and the server aborts, even though InnoDB had already initialised cleanly and no data was at risk. It worked on install day only because mysqld happened to start first; reversing the boot order makes the outage certain. Separately, cluster-finalize exited 0 when the primary had not recovered within 600 seconds, and the unit is a oneshot with Restart=on-failure, so a zero exit retired it permanently and the recovery freeze could then only be lifted by hand — its own printed reassurance that recovery would resume automatically was false."
+      },
+      "fix": {
+        "zh": "共享父目录改为 0755（保持可穿越），并让托管 MySQL/PostgreSQL 单元在自己的 ExecStartPre 里幂等修正该父目录，于是无论谁先创建父目录、无论开机顺序如何，引擎都能到达自己的 socket；cluster-finalize 的 fail-closed 超时路径改为 exit 1，让 systemd 每 30 秒重试，直到主库恢复并走完 power/complete 自动解冻。门禁同时修掉了把 0750 当成期望值的断言，并新增两条防回归检查（共享目录权限、finalize 退出码）。",
+        "en": "The shared parent is now 0755 (traversable), and the managed MySQL/PostgreSQL units repair that parent idempotently in their own ExecStartPre, so the engine reaches its own socket no matter who created the parent or in which order the units start. The fail-closed timeout path of cluster-finalize now exits non-zero so systemd retries every 30 seconds until the primary is back and power/complete releases the freeze automatically. The gates also stopped pinning 0750 as expected behaviour and gained two regressions covering the shared parent mode and the finalize exit status."
+      },
+      "applies_to": [
+        "整机关机后重新开机，控制台报「数据库未启动或不可达」且没有主库",
+        "clusterguard-mysql-3306.service 反复重启，error.log 报 Could not create unix socket lock file",
+        "计划关机或故障切换被阻断，power 生命周期停在 recovering 且 recovery_freeze 为 true"
+      ]
+    },
+    {
+      "commit": "dd82ca5",
+      "severity": "P0",
+      "title": {
+        "zh": "MySQL 写入者协调抖动：授权主库每 5 秒自隔离一次",
+        "en": "MySQL writer reconcile flap: the authorized primary fenced itself every five seconds"
+      },
+      "symptom": {
+        "zh": "集群长期 degraded、两条复制链路 unhealthy、候选评估 409、计划关机必被阻断。实测自安装起 9492 次自隔离，read_only 与 VIP 每约 10 秒同步翻转一次。",
+        "en": "The cluster never left degraded, both replication links never left unhealthy, candidate evaluation answered 409 and every planned shutdown was blocked. Measurement showed 9,492 self-isolations since install, with read_only and the VIP flipping together roughly every ten seconds."
+      },
+      "root_cause": {
+        "zh": "① agent-reconcile 单元的 CapabilityBoundingSet 缺 CAP_DAC_OVERRIDE/CAP_DAC_READ_SEARCH，root 也读不了 <datadir>/mysqld-auto.cnf（mysql:mysql 0640），IsolationStatus 报错即触发失败关闭；② convergeWritableRestartState 要求 RestartReadOnly 变为 false，但“重启后只读”是永久站点不变量，条件永不满足。",
+        "en": "The reconcile unit bounded capabilities without CAP_DAC_OVERRIDE/CAP_DAC_READ_SEARCH, so root could not read <datadir>/mysqld-auto.cnf (mysql:mysql 0640) and the fail-closed loop self-isolated; and convergeWritableRestartState demanded RestartReadOnly to clear even though restarting read-only is a permanent site invariant the role controller re-asserts on every mutation."
+      },
+      "fix": {
+        "zh": "收敛判定改为只看“隔离意图已清除 + 运行时可写”（writableRestartStateConverged），不再要求重启栅栏消失；单元补 CAP_DAC_OVERRIDE 与 CAP_DAC_READ_SEARCH（bounding 与 ambient 都补）。",
+        "en": "Convergence now requires only that the recorded isolation intent is clear and the runtime is writable; the restart fence is left alone. The unit keeps CAP_DAC_OVERRIDE and CAP_DAC_READ_SEARCH in both the bounding and ambient sets."
+      },
+      "applies_to": [
+        "集群长期 degraded 且复制链路 unhealthy，但复制本身正常",
+        "journalctl -u clusterguard-agent-reconcile.service 反复出现 self-isolated 或 permission denied"
+      ]
+    },
+    {
+      "commit": "d5f9491",
+      "severity": "P0",
+      "title": {
+        "zh": "升级执行链两个前置缺陷：SSH 私钥属主与 Helper 共用运行时目录",
+        "en": "Two update prerequisites: SSH key ownership and a shared runtime directory the helper owned"
+      },
+      "symptom": {
+        "zh": "版本更新始终 available=false，安装/上传升级包的三个控件全灰；即便手工补齐 update.json，升级执行器仍以“私钥权限过宽”拒绝；Helper 首启报 status=233，且停机时把 /run/clusterguard 整个删掉。",
+        "en": "Software updates stayed available=false and the three upload controls stayed disabled; even with a hand-written update.json the executor rejected the SSH key as too permissive, and the helper failed its first start with status=233 while deleting the shared /run/clusterguard on stop."
+      },
+      "root_cause": {
+        "zh": "① update.json 的 ssh_key 指向 clusterguard 属主的私钥，而 workspace check-file 要求 root 属主且非组/其他可写；② Helper 单元用 RuntimeDirectory=clusterguard 声明了一个共用目录，启动 chown/chmod 存在竞态，停止时 systemd 会删除该目录。",
+        "en": "The generated update.json pointed ssh_key at a clusterguard-owned private key while the workspace file check requires root ownership with no group or other write bit; and the helper unit declared RuntimeDirectory=clusterguard, which races with start-up chown/chmod and is deleted by systemd on stop."
+      },
+      "fix": {
+        "zh": "安装器额外生成 root:root 0600 的私钥副本 /etc/clusterguard/updates/controller_ed25519 并写入 update.json；Helper 单元去掉 RuntimeDirectory，改为 ExecStartPre 幂等创建共享目录（不再“拥有”该目录，停机不删）。该目录的模式在 28e3b47 中进一步定为 0755。",
+        "en": "The installer now also installs a root:root 0600 key copy at /etc/clusterguard/updates/controller_ed25519 and points update.json at it; the helper unit drops RuntimeDirectory for an idempotent ExecStartPre that creates the shared directory without owning it (so stopping it never deletes the directory). Its mode was later fixed to 0755 by 28e3b47."
+      },
+      "applies_to": [
+        "控制台版本更新长期 available=false",
+        "clusterguard-update-helper 首启失败或停机后 /run/clusterguard 丢失"
+      ]
+    },
+    {
+      "commit": "ed9faca",
+      "severity": "P1",
+      "title": {
+        "zh": "控制台不解释“不可用”的原因",
+        "en": "The console stopped explaining why a capability is unavailable"
+      },
+      "symptom": {
+        "zh": "版本更新面板只显示红徽标“不可用”，不写原因；集群加载横幅只报栏目名（“部分数据不可用：候选评估；操作已锁定”），运维无法判断下一步做什么。",
+        "en": "The software update panel showed only a red \"unavailable\" badge with no reason, and the cluster load banner named the failing section without saying why, so operators could not tell what to do next."
+      },
+      "root_cause": {
+        "zh": "前端丢弃了后端给出的原因：`evidenceResult` 只保留布尔状态，409 响应体里的具体原因没有回填到面板与横幅，运维只能看到状态标签。",
+        "en": "The front end discarded the reason the API already returned: the evidence result kept only a boolean state and never fed the 409 body back into the panel or the banner, so only a status label survived."
+      },
+      "fix": {
+        "zh": "面板内联渲染 `#software-update-panel-reason` 并在徽标上加 tooltip；`evidenceResult` 携带 `reason`，`evidenceReasonText()` 把 409 消息映射为中文，`evidenceUnavailableText()` 按栏目回填原因。",
+        "en": "The panel now renders an inline reason and puts it on the badge tooltip; the evidence result carries `reason`, `evidenceReasonText()` maps the 409 message to readable text, and `evidenceUnavailableText()` reports it per section."
+      },
+      "applies_to": [
+        "控制台版本更新面板显示“不可用”但无原因",
+        "集群加载横幅只报栏目名、不报原因"
+      ]
+    },
+    {
+      "commit": "5ae2039",
+      "severity": "P1",
+      "title": {
+        "zh": "整机关机提交后控制台卡在无法交互的对话框上",
+        "en": "The console froze on a dead dialog after a host power-off was submitted"
+      },
+      "symptom": {
+        "zh": "提交整机关机后主机断电、控制面随之消失，页面永久停在关机确认对话框上，只能手动关闭标签页；提交后响应丢失时还会误报为错误。",
+        "en": "After a host power-off was submitted the control plane went away with the host, leaving the page parked on the confirmation dialog forever, and a lost response after submission was reported as an error."
+      },
+      "root_cause": {
+        "zh": "poweroff 分支提交成功后只改了结果横幅，既不关闭对话框也不做收尾；主机断电后页面失去所有交互入口，而“已提交却丢了响应”本就是预期结果。",
+        "en": "The poweroff branch only updated the result banner after a successful submission; it never closed the dialog or settled the page, and a lost response after submission is an expected outcome rather than an error."
+      },
+      "fix": {
+        "zh": "新增 settlePoweroffConsole()：等 2.5s 后带 3s 超时探测 /power/status，不可达则显示离线层并 window.close()，仍可达则只关对话框并起 5s 看门狗；service 模式永不关页面。",
+        "en": "settlePoweroffConsole() waits 2.5s then probes /power/status with a 3s timeout: unreachable shows the offline screen and closes the tab, reachable only closes the dialog and starts a 5s watchdog. Service mode never closes the page."
+      },
+      "applies_to": [
+        "提交整机关机后控制台卡死、需要手动关闭标签页",
+        "关机提交后偶发“无法连接控制 API”被当作失败"
+      ]
+    }
+  ],
+  "verification": [
+    "ls -ld /run/clusterguard   # 必须是 drwxr-xr-x（0755），可被非特权引擎账户穿越",
+    "ls -l /usr/local/sbin/clusterguard-upgrade   # 必须是 0750 root:clusterguard，mtime 为本次应用时间",
+    "grep -c '热修补丁包' /usr/local/sbin/clusterguard-upgrade   # 必须为 1（控制台上传校验执行的就是这个文件）",
+    "ls -l /usr/local/libexec/clusterguard-upgrade.sh   # 不应存在（HF-04 误装的位置，已改名为 .unused-*）",
+    "systemctl cat clusterguard-update-helper.service | grep -c 'RuntimeDirectory=clusterguard'   # 必须为 0",
+    "systemctl is-active clusterguard-mysql-3306 clusterguard-ha clusterguard-agent clusterguard-update-helper",
+    "tail -20 /var/log/clusterguard/mysql/3306/error.log   # 不应再出现 Could not create unix socket lock file",
+    "jq -c '.clusters[] | {recovery_freeze}' /var/lib/clusterguard/metadata.json   # 恢复完成后应为 false",
+    "/usr/local/sbin/clusterguard-upgrade --patch /root/clusterguard-ha-hotfix-HF-2026-0928-05-2.2-104.x86_64.cgpatch --trust-key /etc/clusterguard/trust/patch-signing-public.pem --inspect   # 必须报「热修补丁包…apply.sh」而非「范围外路径」",
+    "curl -sk https://192.168.102.155:3000/ | grep -c 'clusterguard-hotfix/apply.sh'   # 控制台页面必须已包含热修包拦截指引（浏览器需刷新）"
+  ],
+  "rollback": "执行 rollback.sh 恢复旧二进制、旧单元与旧运行时脚本，然后 systemctl daemon-reload 并 systemctl restart clusterguard-ha。注意：回滚会把 /run/clusterguard 重新交回 0750 的创建方，下一次整机重启会再次让集群起不来；仅在确认新版本有回归时使用，并在回滚后临时手工执行 chmod 0755 /run/clusterguard。"
+}
