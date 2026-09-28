@@ -61,11 +61,11 @@
 </tr>
 </thead>
 <tbody><tr>
-<td>HF-2026-0928-03</td>
+<td>HF-2026-0928-04</td>
 <td>P0</td>
-<td><code>ed9faca</code>、<code>d5f9491</code>、<code>dd82ca5</code>、<code>5ae2039</code>、<code>28e3b47</code></td>
-<td><code>0c1a6fe</code></td>
-<td><code>release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-03-2.2-104.x86_64.cgpatch</code></td>
+<td><code>ed9faca</code>、<code>d5f9491</code>、<code>dd82ca5</code>、<code>5ae2039</code>、<code>28e3b47</code>、<code>9303e9d</code></td>
+<td><code>9303e9d</code></td>
+<td><code>release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-04-2.2-104.x86_64.cgpatch</code></td>
 </tr>
 <tr>
 <td>HF-2026-0928-02</td>
@@ -82,15 +82,15 @@ bash apply.sh            # 备份、校验 SHA-256、安装、daemon-reload
 systemctl restart &lt;单元&gt; # apply.sh 只打印需要重启的单元，不自动重启
 bash rollback.sh         # 按最新备份清单回滚
 </code></pre>
-<h2 id="hf-2026-0928-03-2-2-104-现场修复合集-累积-整机重启后集群不可用-写入者抖动-升级链前置-控制台原因与关机收尾">HF-2026-0928-03 — 2.2-104 现场修复合集（累积）：整机重启后集群不可用、写入者抖动、升级链前置、控制台原因与关机收尾<a class="heading-anchor" href="#hf-2026-0928-03-2-2-104-现场修复合集-累积-整机重启后集群不可用-写入者抖动-升级链前置-控制台原因与关机收尾" aria-label="Link to HF-2026-0928-03 — 2.2-104 现场修复合集（累积）：整机重启后集群不可用、写入者抖动、升级链前置、控制台原因与关机收尾">#</a></h2>
+<h2 id="hf-2026-0928-04-2-2-104-现场修复合集-累积-整机重启后集群不可用-写入者抖动-升级链前置-控制台原因与关机收尾-热修包误">HF-2026-0928-04 — 2.2-104 现场修复合集（累积）：整机重启后集群不可用、写入者抖动、升级链前置、控制台原因与关机收尾、热修包误传控制台<a class="heading-anchor" href="#hf-2026-0928-04-2-2-104-现场修复合集-累积-整机重启后集群不可用-写入者抖动-升级链前置-控制台原因与关机收尾-热修包误" aria-label="Link to HF-2026-0928-04 — 2.2-104 现场修复合集（累积）：整机重启后集群不可用、写入者抖动、升级链前置、控制台原因与关机收尾、热修包误传控制台">#</a></h2>
 <ul>
 <li>严重级别：P0</li>
-<li>覆盖修复提交：<code>ed9faca</code>、<code>d5f9491</code>、<code>dd82ca5</code>、<code>5ae2039</code>、<code>28e3b47</code></li>
-<li>构建树：<code>0c1a6fe47ef83f4dfb26ae0239fefddf029d9cc8</code>（基线 <code>e01f5ce376f94e2595590358c72dd2585e7c09b4</code> + 上述修复，不含其它提交）</li>
-<li>适用版本：2.2-104 → 2.2-104+hf-2026-0928-03（x86_64）</li>
-<li>产物：<code>release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-03-2.2-104.x86_64.cgpatch</code></li>
-<li>SHA-256：<code>875c620fc649561fc7ed679e498452031e5d46f183d2a8f8e2c7fd1100af9e88</code></li>
-<li>源码差异：<code>src/HF-2026-0928-03-0c1a6fe.patch</code></li>
+<li>覆盖修复提交：<code>ed9faca</code>、<code>d5f9491</code>、<code>dd82ca5</code>、<code>5ae2039</code>、<code>28e3b47</code>、<code>9303e9d</code></li>
+<li>构建树：<code>9303e9d594195134b029a18bcaf9088aa5270e6d</code>（基线 <code>e01f5ce376f94e2595590358c72dd2585e7c09b4</code> + 上述修复，不含其它提交）</li>
+<li>适用版本：2.2-104 → 2.2-104+hf-2026-0928-04（x86_64）</li>
+<li>产物：<code>release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-04-2.2-104.x86_64.cgpatch</code></li>
+<li>SHA-256：<code>bfbf905896317a1712f5313ebd2b2e32c2993f08375118191905bb3c7f3d614e</code></li>
+<li>源码差异：<code>src/HF-2026-0928-04-9303e9d.patch</code></li>
 <li>交付内容：<ul>
 <li><code>payload/bin/clusterguard-agent</code> → <code>/usr/local/bin/clusterguard-agent</code>（0755）</li>
 <li><code>payload/bin/clusterguard</code> → <code>/usr/local/bin/clusterguard</code>（0755）</li>
@@ -99,14 +99,30 @@ bash rollback.sh         # 按最新备份清单回滚
 <li><code>payload/libexec/clusterguard-cluster-finalize.sh</code> → <code>/usr/local/libexec/clusterguard-cluster-finalize.sh</code>（0755）</li>
 <li><code>payload/libexec/clusterguard-mysql-install.sh</code> → <code>/usr/local/libexec/clusterguard-mysql-install.sh</code>（0755）</li>
 <li><code>payload/libexec/clusterguard-postgresql-install.sh</code> → <code>/usr/local/libexec/clusterguard-postgresql-install.sh</code>（0755）</li>
+<li><code>payload/libexec/clusterguard-upgrade.sh</code> → <code>/usr/local/libexec/clusterguard-upgrade.sh</code>（0755）</li>
 <li><code>payload/installer/install_clusterguard.sh</code> → <code>仅安装器，现场无对应路径</code>（0755）</li>
 </ul>
 </li>
 <li>需要重启：<code>clusterguard-ha.service</code>、<code>clusterguard-agent-reconcile.service</code>、<code>clusterguard-update-helper.service</code></li>
 </ul>
 <h3 id="本包概要">本包概要<a class="heading-anchor" href="#本包概要" aria-label="Link to 本包概要">#</a></h3>
-<p>现场 192.168.102.152-154 已于 2026-09-24 滚动升级到 2.2-104（e01f5ce），但这五个修复是在那次发布之后提交的，2.2-104 介质不含它们。此前现场以手工方式临时缓解（替换 agent 二进制、给受影响单元落 drop-in）；本包把这些修复固化为签名产物：替换后的 canonical 单元与运行时脚本让 drop-in 不再是唯一的防线。只装这一个包，不要与其它基线（如 2.2-103 的 HF-2026-0928-02）混装：多个修复都替换 /usr/local/bin/clusterguard，装错基线会把二进制悄悄降级回它自己的发布线。注意：热修包不能从控制台上传——滚动升级执行器的路径白名单只认 .cgupgrade（顶层 clusterguard-patch/），.cgpatch（顶层 clusterguard-hotfix/）会被「升级包包含范围外路径」拒绝，这是预期行为；正确入口是命令行 tar 解包后 bash apply.sh。构建树 0c1a6fe = 2.2-104 基线 + 五个修复 + 热修流水线提交（流水线提交不触生产路径，已由门禁校验）。</p>
-<h3 id="hf-2026-0928-03-1-整机重启后整个集群起不来-共享运行时目录权限与恢复冻结永不释放-28e3b47-p0">HF-2026-0928-03.1 整机重启后整个集群起不来：共享运行时目录权限与恢复冻结永不释放（<code>28e3b47</code>，P0）<a class="heading-anchor" href="#hf-2026-0928-03-1-整机重启后整个集群起不来-共享运行时目录权限与恢复冻结永不释放-28e3b47-p0" aria-label="Link to HF-2026-0928-03.1 整机重启后整个集群起不来：共享运行时目录权限与恢复冻结永不释放（28e3b47，P0）">#</a></h3>
+<p>在 HF-2026-0928-03 的基础上追加 9303e9d：热修补丁包与旧滚动升级包共用 .cgpatch 后缀，控制台文件选择器按后缀放行、验签也能通过，直到滚动执行器的路径白名单才以「升级包包含范围外路径：clusterguard-hotfix/」拒绝——报错从不告诉运维这个包属于另一条通道。本包让升级检查器在验签阶段就识别 clusterguard-hotfix/ 顶层并给出可操作指引（tar 解包 + apply.sh），控制台在文件选择时即拦截文件名含 hotfix 的 .cgpatch，对话框文案与 update-and-patch 双语文档同步澄清。只装这一个包（它完整包含并取代 HF-2026-0928-03），不要与其它基线（如 2.2-103 的 HF-2026-0928-02）混装。构建树 9303e9d = 2.2-104 基线 + 六个修复 + 不触生产路径的流水线提交（门禁已校验）。</p>
+<h3 id="hf-2026-0928-04-1-热修补丁包误传控制台时只报-范围外路径-不说是通道走错了-9303e9d-p1">HF-2026-0928-04.1 热修补丁包误传控制台时只报「范围外路径」，不说是通道走错了（<code>9303e9d</code>，P1）<a class="heading-anchor" href="#hf-2026-0928-04-1-热修补丁包误传控制台时只报-范围外路径-不说是通道走错了-9303e9d-p1" aria-label="Link to HF-2026-0928-04.1 热修补丁包误传控制台时只报「范围外路径」，不说是通道走错了（9303e9d，P1）">#</a></h3>
+<ul>
+<li><p>现象：运维把 clusterguard-ha-hotfix-*.cgpatch 传到版本更新对话框（文件选择器按 .cgpatch 后缀放行、实验室链验签也能通过），最后只得到「升级失败：升级包包含范围外路径：clusterguard-hotfix/」——没有任何文字说明热修包根本不该走这个通道，运维会反复重试。</p>
+</li>
+<li><p>根因：热修补丁包沿用了旧滚动升级包的 .cgpatch 后缀，两种不同用途的制品撞名；滚动执行器的白名单只判路径合法性，不识别制品类型；控制台对话框还写着「兼容旧 .cgpatch」，进一步诱导上传。</p>
+</li>
+<li><p>修复：clusterguard-upgrade.sh 在解包检查时识别 clusterguard-hotfix/ 顶层，直接报出正确入口（tar 解包后运行 clusterguard-hotfix/apply.sh）；控制台在文件选择时拦截文件名含 hotfix 的 .cgpatch 并给出同样指引，选择器与就绪文案改为「滚动包专属，热修包走命令行」；update-and-patch 双语文档明确两种 .cgpatch 是两条通道。新增防回归：TestPatchInspectorDivertsHotfixPackagesToTheCLI 真打包真跑 --inspect，控制台契约测试断言拦截逻辑存在，均经变异验证。</p>
+</li>
+<li><p>何时需要应用：</p>
+<ul>
+<li>把热修补丁包上传到版本更新对话框，报「升级包包含范围外路径：clusterguard-hotfix/」</li>
+<li>运维不确定 .cgpatch 热修包应该走哪条安装通道</li>
+</ul>
+</li>
+</ul>
+<h3 id="hf-2026-0928-04-2-整机重启后整个集群起不来-共享运行时目录权限与恢复冻结永不释放-28e3b47-p0">HF-2026-0928-04.2 整机重启后整个集群起不来：共享运行时目录权限与恢复冻结永不释放（<code>28e3b47</code>，P0）<a class="heading-anchor" href="#hf-2026-0928-04-2-整机重启后整个集群起不来-共享运行时目录权限与恢复冻结永不释放-28e3b47-p0" aria-label="Link to HF-2026-0928-04.2 整机重启后整个集群起不来：共享运行时目录权限与恢复冻结永不释放（28e3b47，P0）">#</a></h3>
 <ul>
 <li><p>现象：三台整机关机再开机后，控制台报「部分数据不可用：候选评估」「尚未发现主库」，三个实例全部显示「数据库未启动或不可达」，再次整机关机与故障切换都被阻断。clusterguard-mysql-3306.service 与 clusterguard-cluster-restore.service 双双进入崩溃重启循环，重启计数分别达到 2063/2069/2072 与 1034~1036。</p>
 </li>
@@ -122,7 +138,7 @@ bash rollback.sh         # 按最新备份清单回滚
 </ul>
 </li>
 </ul>
-<h3 id="hf-2026-0928-03-2-mysql-写入者协调抖动-授权主库每-5-秒自隔离一次-dd82ca5-p0">HF-2026-0928-03.2 MySQL 写入者协调抖动：授权主库每 5 秒自隔离一次（<code>dd82ca5</code>，P0）<a class="heading-anchor" href="#hf-2026-0928-03-2-mysql-写入者协调抖动-授权主库每-5-秒自隔离一次-dd82ca5-p0" aria-label="Link to HF-2026-0928-03.2 MySQL 写入者协调抖动：授权主库每 5 秒自隔离一次（dd82ca5，P0）">#</a></h3>
+<h3 id="hf-2026-0928-04-3-mysql-写入者协调抖动-授权主库每-5-秒自隔离一次-dd82ca5-p0">HF-2026-0928-04.3 MySQL 写入者协调抖动：授权主库每 5 秒自隔离一次（<code>dd82ca5</code>，P0）<a class="heading-anchor" href="#hf-2026-0928-04-3-mysql-写入者协调抖动-授权主库每-5-秒自隔离一次-dd82ca5-p0" aria-label="Link to HF-2026-0928-04.3 MySQL 写入者协调抖动：授权主库每 5 秒自隔离一次（dd82ca5，P0）">#</a></h3>
 <ul>
 <li><p>现象：集群长期 degraded、两条复制链路 unhealthy、候选评估 409、计划关机必被阻断。实测自安装起 9492 次自隔离，read_only 与 VIP 每约 10 秒同步翻转一次。</p>
 </li>
@@ -137,7 +153,7 @@ bash rollback.sh         # 按最新备份清单回滚
 </ul>
 </li>
 </ul>
-<h3 id="hf-2026-0928-03-3-升级执行链两个前置缺陷-ssh-私钥属主与-helper-共用运行时目录-d5f9491-p0">HF-2026-0928-03.3 升级执行链两个前置缺陷：SSH 私钥属主与 Helper 共用运行时目录（<code>d5f9491</code>，P0）<a class="heading-anchor" href="#hf-2026-0928-03-3-升级执行链两个前置缺陷-ssh-私钥属主与-helper-共用运行时目录-d5f9491-p0" aria-label="Link to HF-2026-0928-03.3 升级执行链两个前置缺陷：SSH 私钥属主与 Helper 共用运行时目录（d5f9491，P0）">#</a></h3>
+<h3 id="hf-2026-0928-04-4-升级执行链两个前置缺陷-ssh-私钥属主与-helper-共用运行时目录-d5f9491-p0">HF-2026-0928-04.4 升级执行链两个前置缺陷：SSH 私钥属主与 Helper 共用运行时目录（<code>d5f9491</code>，P0）<a class="heading-anchor" href="#hf-2026-0928-04-4-升级执行链两个前置缺陷-ssh-私钥属主与-helper-共用运行时目录-d5f9491-p0" aria-label="Link to HF-2026-0928-04.4 升级执行链两个前置缺陷：SSH 私钥属主与 Helper 共用运行时目录（d5f9491，P0）">#</a></h3>
 <ul>
 <li><p>现象：版本更新始终 available=false，安装/上传升级包的三个控件全灰；即便手工补齐 update.json，升级执行器仍以“私钥权限过宽”拒绝；Helper 首启报 status=233，且停机时把 /run/clusterguard 整个删掉。</p>
 </li>
@@ -152,7 +168,7 @@ bash rollback.sh         # 按最新备份清单回滚
 </ul>
 </li>
 </ul>
-<h3 id="hf-2026-0928-03-4-控制台不解释-不可用-的原因-ed9faca-p1">HF-2026-0928-03.4 控制台不解释“不可用”的原因（<code>ed9faca</code>，P1）<a class="heading-anchor" href="#hf-2026-0928-03-4-控制台不解释-不可用-的原因-ed9faca-p1" aria-label="Link to HF-2026-0928-03.4 控制台不解释“不可用”的原因（ed9faca，P1）">#</a></h3>
+<h3 id="hf-2026-0928-04-5-控制台不解释-不可用-的原因-ed9faca-p1">HF-2026-0928-04.5 控制台不解释“不可用”的原因（<code>ed9faca</code>，P1）<a class="heading-anchor" href="#hf-2026-0928-04-5-控制台不解释-不可用-的原因-ed9faca-p1" aria-label="Link to HF-2026-0928-04.5 控制台不解释“不可用”的原因（ed9faca，P1）">#</a></h3>
 <ul>
 <li><p>现象：版本更新面板只显示红徽标“不可用”，不写原因；集群加载横幅只报栏目名（“部分数据不可用：候选评估；操作已锁定”），运维无法判断下一步做什么。</p>
 </li>
@@ -167,7 +183,7 @@ bash rollback.sh         # 按最新备份清单回滚
 </ul>
 </li>
 </ul>
-<h3 id="hf-2026-0928-03-5-整机关机提交后控制台卡在无法交互的对话框上-5ae2039-p1">HF-2026-0928-03.5 整机关机提交后控制台卡在无法交互的对话框上（<code>5ae2039</code>，P1）<a class="heading-anchor" href="#hf-2026-0928-03-5-整机关机提交后控制台卡在无法交互的对话框上-5ae2039-p1" aria-label="Link to HF-2026-0928-03.5 整机关机提交后控制台卡在无法交互的对话框上（5ae2039，P1）">#</a></h3>
+<h3 id="hf-2026-0928-04-6-整机关机提交后控制台卡在无法交互的对话框上-5ae2039-p1">HF-2026-0928-04.6 整机关机提交后控制台卡在无法交互的对话框上（<code>5ae2039</code>，P1）<a class="heading-anchor" href="#hf-2026-0928-04-6-整机关机提交后控制台卡在无法交互的对话框上-5ae2039-p1" aria-label="Link to HF-2026-0928-04.6 整机关机提交后控制台卡在无法交互的对话框上（5ae2039，P1）">#</a></h3>
 <ul>
 <li><p>现象：提交整机关机后主机断电、控制面随之消失，页面永久停在关机确认对话框上，只能手动关闭标签页；提交后响应丢失时还会误报为错误。</p>
 </li>
@@ -193,6 +209,8 @@ bash rollback.sh         # 按最新备份清单回滚
 <li><code>systemctl show clusterguard-agent-reconcile.service -p CapabilityBoundingSet</code></li>
 <li><code>journalctl -u clusterguard-cluster-finalize --since &#39;-10min&#39; | tail   # 主库未恢复时必须非零退出并重试，不得打印 Succeeded</code></li>
 <li><code>jq -c &#39;.clusters[] | {recovery_freeze}&#39; /var/lib/clusterguard/metadata.json   # 恢复完成后应为 false</code></li>
+<li><code>把任意 clusterguard-ha-hotfix-*.cgpatch 上传到版本更新对话框   # 必须在文件选择或校验阶段即被拒，并报出「热修补丁包……apply.sh」的明确指引，不得再出现「范围外路径」</code></li>
+<li><code>curl -sk https://&lt;VIP&gt;:3000/ | grep -c &#39;clusterguard-hotfix/apply.sh&#39;   # 控制台页面必须已包含热修包拦截指引</code></li>
 </ul>
 <h3 id="回滚">回滚<a class="heading-anchor" href="#回滚" aria-label="Link to 回滚">#</a></h3>
 <p>执行 rollback.sh 恢复旧二进制、旧单元与旧运行时脚本，然后 systemctl daemon-reload 并 systemctl restart clusterguard-ha。注意：回滚会把 /run/clusterguard 重新交回 0750 的创建方，下一次整机重启会再次让集群起不来；仅在确认新版本有回归时使用，并在回滚后临时手工执行 chmod 0755 /run/clusterguard。</p>
@@ -319,7 +337,7 @@ bash rollback.sh         # 按最新备份清单回滚
         </article>
         <aside class="page-toc" aria-label="本页目录">
           <strong>本页目录</strong>
-          <a class="toc-level-2" href="#应用补丁">应用补丁</a><a class="toc-level-2" href="#hf-2026-0928-03-2-2-104-现场修复合集-累积-整机重启后集群不可用-写入者抖动-升级链前置-控制台原因与关机收尾">HF-2026-0928-03 — 2.2-104 现场修复合集（累积）：整机重启后集群不可用、写入者抖动、升级链前置、控制台原因与关机收尾</a><a class="toc-level-3" href="#本包概要">本包概要</a><a class="toc-level-3" href="#hf-2026-0928-03-1-整机重启后整个集群起不来-共享运行时目录权限与恢复冻结永不释放-28e3b47-p0">HF-2026-0928-03.1 整机重启后整个集群起不来：共享运行时目录权限与恢复冻结永不释放（28e3b47，P0）</a><a class="toc-level-3" href="#hf-2026-0928-03-2-mysql-写入者协调抖动-授权主库每-5-秒自隔离一次-dd82ca5-p0">HF-2026-0928-03.2 MySQL 写入者协调抖动：授权主库每 5 秒自隔离一次（dd82ca5，P0）</a><a class="toc-level-3" href="#hf-2026-0928-03-3-升级执行链两个前置缺陷-ssh-私钥属主与-helper-共用运行时目录-d5f9491-p0">HF-2026-0928-03.3 升级执行链两个前置缺陷：SSH 私钥属主与 Helper 共用运行时目录（d5f9491，P0）</a><a class="toc-level-3" href="#hf-2026-0928-03-4-控制台不解释-不可用-的原因-ed9faca-p1">HF-2026-0928-03.4 控制台不解释“不可用”的原因（ed9faca，P1）</a><a class="toc-level-3" href="#hf-2026-0928-03-5-整机关机提交后控制台卡在无法交互的对话框上-5ae2039-p1">HF-2026-0928-03.5 整机关机提交后控制台卡在无法交互的对话框上（5ae2039，P1）</a><a class="toc-level-3" href="#验证">验证</a><a class="toc-level-3" href="#回滚">回滚</a><a class="toc-level-2" href="#hf-2026-0928-02-2-2-103-现场修复合集-累积-整机重启后集群不可用-写入者抖动-升级链前置-控制台原因与关机收尾">HF-2026-0928-02 — 2.2-103 现场修复合集（累积）：整机重启后集群不可用、写入者抖动、升级链前置、控制台原因与关机收尾</a><a class="toc-level-3" href="#本包概要-2">本包概要</a><a class="toc-level-3" href="#hf-2026-0928-02-1-整机重启后整个集群起不来-共享运行时目录权限与恢复冻结永不释放-28e3b47-p0">HF-2026-0928-02.1 整机重启后整个集群起不来：共享运行时目录权限与恢复冻结永不释放（28e3b47，P0）</a><a class="toc-level-3" href="#hf-2026-0928-02-2-mysql-写入者协调抖动-授权主库每-5-秒自隔离一次-dd82ca5-p0">HF-2026-0928-02.2 MySQL 写入者协调抖动：授权主库每 5 秒自隔离一次（dd82ca5，P0）</a><a class="toc-level-3" href="#hf-2026-0928-02-3-升级执行链两个前置缺陷-ssh-私钥属主与-helper-共用运行时目录-d5f9491-p0">HF-2026-0928-02.3 升级执行链两个前置缺陷：SSH 私钥属主与 Helper 共用运行时目录（d5f9491，P0）</a><a class="toc-level-3" href="#hf-2026-0928-02-4-控制台不解释-不可用-的原因-ed9faca-p1">HF-2026-0928-02.4 控制台不解释“不可用”的原因（ed9faca，P1）</a><a class="toc-level-3" href="#hf-2026-0928-02-5-整机关机提交后控制台卡在无法交互的对话框上-5ae2039-p1">HF-2026-0928-02.5 整机关机提交后控制台卡在无法交互的对话框上（5ae2039，P1）</a><a class="toc-level-3" href="#验证-2">验证</a><a class="toc-level-3" href="#回滚-2">回滚</a>
+          <a class="toc-level-2" href="#应用补丁">应用补丁</a><a class="toc-level-2" href="#hf-2026-0928-04-2-2-104-现场修复合集-累积-整机重启后集群不可用-写入者抖动-升级链前置-控制台原因与关机收尾-热修包误">HF-2026-0928-04 — 2.2-104 现场修复合集（累积）：整机重启后集群不可用、写入者抖动、升级链前置、控制台原因与关机收尾、热修包误传控制台</a><a class="toc-level-3" href="#本包概要">本包概要</a><a class="toc-level-3" href="#hf-2026-0928-04-1-热修补丁包误传控制台时只报-范围外路径-不说是通道走错了-9303e9d-p1">HF-2026-0928-04.1 热修补丁包误传控制台时只报「范围外路径」，不说是通道走错了（9303e9d，P1）</a><a class="toc-level-3" href="#hf-2026-0928-04-2-整机重启后整个集群起不来-共享运行时目录权限与恢复冻结永不释放-28e3b47-p0">HF-2026-0928-04.2 整机重启后整个集群起不来：共享运行时目录权限与恢复冻结永不释放（28e3b47，P0）</a><a class="toc-level-3" href="#hf-2026-0928-04-3-mysql-写入者协调抖动-授权主库每-5-秒自隔离一次-dd82ca5-p0">HF-2026-0928-04.3 MySQL 写入者协调抖动：授权主库每 5 秒自隔离一次（dd82ca5，P0）</a><a class="toc-level-3" href="#hf-2026-0928-04-4-升级执行链两个前置缺陷-ssh-私钥属主与-helper-共用运行时目录-d5f9491-p0">HF-2026-0928-04.4 升级执行链两个前置缺陷：SSH 私钥属主与 Helper 共用运行时目录（d5f9491，P0）</a><a class="toc-level-3" href="#hf-2026-0928-04-5-控制台不解释-不可用-的原因-ed9faca-p1">HF-2026-0928-04.5 控制台不解释“不可用”的原因（ed9faca，P1）</a><a class="toc-level-3" href="#hf-2026-0928-04-6-整机关机提交后控制台卡在无法交互的对话框上-5ae2039-p1">HF-2026-0928-04.6 整机关机提交后控制台卡在无法交互的对话框上（5ae2039，P1）</a><a class="toc-level-3" href="#验证">验证</a><a class="toc-level-3" href="#回滚">回滚</a><a class="toc-level-2" href="#hf-2026-0928-02-2-2-103-现场修复合集-累积-整机重启后集群不可用-写入者抖动-升级链前置-控制台原因与关机收尾">HF-2026-0928-02 — 2.2-103 现场修复合集（累积）：整机重启后集群不可用、写入者抖动、升级链前置、控制台原因与关机收尾</a><a class="toc-level-3" href="#本包概要-2">本包概要</a><a class="toc-level-3" href="#hf-2026-0928-02-1-整机重启后整个集群起不来-共享运行时目录权限与恢复冻结永不释放-28e3b47-p0">HF-2026-0928-02.1 整机重启后整个集群起不来：共享运行时目录权限与恢复冻结永不释放（28e3b47，P0）</a><a class="toc-level-3" href="#hf-2026-0928-02-2-mysql-写入者协调抖动-授权主库每-5-秒自隔离一次-dd82ca5-p0">HF-2026-0928-02.2 MySQL 写入者协调抖动：授权主库每 5 秒自隔离一次（dd82ca5，P0）</a><a class="toc-level-3" href="#hf-2026-0928-02-3-升级执行链两个前置缺陷-ssh-私钥属主与-helper-共用运行时目录-d5f9491-p0">HF-2026-0928-02.3 升级执行链两个前置缺陷：SSH 私钥属主与 Helper 共用运行时目录（d5f9491，P0）</a><a class="toc-level-3" href="#hf-2026-0928-02-4-控制台不解释-不可用-的原因-ed9faca-p1">HF-2026-0928-02.4 控制台不解释“不可用”的原因（ed9faca，P1）</a><a class="toc-level-3" href="#hf-2026-0928-02-5-整机关机提交后控制台卡在无法交互的对话框上-5ae2039-p1">HF-2026-0928-02.5 整机关机提交后控制台卡在无法交互的对话框上（5ae2039，P1）</a><a class="toc-level-3" href="#验证-2">验证</a><a class="toc-level-3" href="#回滚-2">回滚</a>
         </aside>
       </main>
     </div>
