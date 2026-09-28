@@ -1,34 +1,125 @@
 {
   "id": "HF-2026-0928-01",
-  "severity": "P1",
+  "severity": "P0",
   "base_commit": "467e533",
-  "fix_commit": "ed9faca",
+  "build_commit": "d296f5f1abf1bb754d1287a34473a1c13ee8505f",
+  "fix_commits": ["ed9faca", "d5f9491", "dd82ca5", "5ae2039"],
   "rpm_version": "2.2",
   "rpm_release": "103",
   "title": {
-    "zh": "控制台不解释“不可用”的原因",
-    "en": "The console stopped explaining why a capability is unavailable"
+    "zh": "2.2-103 现场修复合集：写入者抖动、升级链前置、控制台原因与关机收尾",
+    "en": "2.2-103 site fix bundle: writer reconcile flap, update prerequisites, console reasons and power-off teardown"
   },
-  "symptom": {
-    "zh": "版本更新面板只显示红徽标“不可用”，不写原因；集群加载横幅只报栏目名（“部分数据不可用：候选评估；操作已锁定”），运维无法判断下一步做什么。",
-    "en": "The software update panel showed only a red \"unavailable\" badge with no reason, and the cluster load banner named the failing section without saying why, so operators could not tell what to do next."
+  "summary": {
+    "zh": "一个包覆盖 2.2-103 基线上缺失的四个修复。只装这一个包即可，不要与其它补丁混用：两个修复都替换 /usr/local/bin/clusterguard，多包叠加会因顺序不同而互相覆盖。构建树是 2.2-103 基线加上四个修复（移植分支 hotfix/2.2-103-fixes，d296f5f），不含开发线上未发布的功能提交。",
+    "en": "One patch covering the four fixes missing from the 2.2-103 baseline. Apply this patch alone: two of the fixes replace /usr/local/bin/clusterguard, so stacking patches makes the result depend on the order they were applied. The build tree is the 2.2-103 baseline plus the four fixes (ported branch hotfix/2.2-103-fixes, d296f5f) and carries no unreleased feature commit from the development line."
   },
-  "root_cause": {
-    "zh": "前端丢弃了后端给出的原因：`evidenceResult` 只保留布尔状态，409 响应体里的具体原因没有回填到面板与横幅，运维只能看到状态标签。",
-    "en": "The front end discarded the reason the API already returned: the evidence result kept only a boolean state and never fed the 409 body back into the panel or the banner, so only a status label survived."
-  },
-  "fix": {
-    "zh": "面板内联渲染 `#software-update-panel-reason` 并在徽标上加 tooltip；`evidenceResult` 携带 `reason`，`evidenceReasonText()` 把 409 消息映射为中文，`evidenceUnavailableText()` 按栏目回填原因。",
-    "en": "The panel now renders an inline reason and puts it on the badge tooltip; the evidence result carries `reason`, `evidenceReasonText()` maps the 409 message to readable text, and `evidenceUnavailableText()` reports it per section."
-  },
-  "applies_to": [
-    "控制台版本更新面板显示“不可用”但无原因",
-    "集群加载横幅只报栏目名、不报原因"
+  "fixes": [
+    {
+      "commit": "dd82ca5",
+      "severity": "P0",
+      "title": {
+        "zh": "MySQL 写入者协调抖动：授权主库每 5 秒自隔离一次",
+        "en": "MySQL writer reconcile flap: the authorized primary fenced itself every five seconds"
+      },
+      "symptom": {
+        "zh": "集群长期 degraded、两条复制链路 unhealthy、候选评估 409、计划关机必被阻断。实测自安装起 9492 次自隔离，read_only 与 VIP 每约 10 秒同步翻转一次。",
+        "en": "The cluster never left degraded, both replication links never left unhealthy, candidate evaluation answered 409 and every planned shutdown was blocked. Measurement showed 9,492 self-isolations since install, with read_only and the VIP flipping together roughly every ten seconds."
+      },
+      "root_cause": {
+        "zh": "① agent-reconcile 单元的 CapabilityBoundingSet 缺 CAP_DAC_OVERRIDE/CAP_DAC_READ_SEARCH，root 也读不了 <datadir>/mysqld-auto.cnf（mysql:mysql 0640），IsolationStatus 报错即触发失败关闭；② convergeWritableRestartState 要求 RestartReadOnly 变为 false，但“重启后只读”是永久站点不变量，条件永不满足。",
+        "en": "The reconcile unit bounded capabilities without CAP_DAC_OVERRIDE/CAP_DAC_READ_SEARCH, so root could not read <datadir>/mysqld-auto.cnf (mysql:mysql 0640) and the fail-closed loop self-isolated; and convergeWritableRestartState demanded RestartReadOnly to clear even though restarting read-only is a permanent site invariant the role controller re-asserts on every mutation."
+      },
+      "fix": {
+        "zh": "收敛判定改为只看“隔离意图已清除 + 运行时可写”（writableRestartStateConverged），不再要求重启栅栏消失；单元补 CAP_DAC_OVERRIDE 与 CAP_DAC_READ_SEARCH（bounding 与 ambient 都补）。",
+        "en": "Convergence now requires only that the recorded isolation intent is clear and the runtime is writable; the restart fence is left alone. The unit keeps CAP_DAC_OVERRIDE and CAP_DAC_READ_SEARCH in both the bounding and ambient sets."
+      },
+      "applies_to": [
+        "集群长期 degraded 且复制链路 unhealthy，但复制本身正常",
+        "journalctl -u clusterguard-agent-reconcile.service 反复出现 self-isolated 或 permission denied"
+      ]
+    },
+    {
+      "commit": "d5f9491",
+      "severity": "P0",
+      "title": {
+        "zh": "升级执行链两个前置缺陷：SSH 私钥属主与 Helper 共用运行时目录",
+        "en": "Two update prerequisites: SSH key ownership and a shared runtime directory the helper owned"
+      },
+      "symptom": {
+        "zh": "版本更新始终 available=false，安装/上传升级包的三个控件全灰；即便手工补齐 update.json，升级执行器仍以“私钥权限过宽”拒绝；Helper 首启报 status=233，且停机时把 /run/clusterguard 整个删掉。",
+        "en": "Software updates stayed available=false and the three upload controls stayed disabled; even with a hand-written update.json the executor rejected the SSH key as too permissive, and the helper failed its first start with status=233 while deleting the shared /run/clusterguard on stop."
+      },
+      "root_cause": {
+        "zh": "① update.json 的 ssh_key 指向 clusterguard 属主的私钥，而 workspace check-file 要求 root 属主且非组/其他可写；② Helper 单元用 RuntimeDirectory=clusterguard 声明了一个共用目录，启动 chown/chmod 存在竞态，停止时 systemd 会删除该目录。",
+        "en": "The generated update.json pointed ssh_key at a clusterguard-owned private key while the workspace file check requires root ownership with no group or other write bit; and the helper unit declared RuntimeDirectory=clusterguard, which races with start-up chown/chmod and is deleted by systemd on stop."
+      },
+      "fix": {
+        "zh": "安装器额外生成 root:root 0600 的私钥副本 /etc/clusterguard/updates/controller_ed25519 并写入 update.json；Helper 单元去掉 RuntimeDirectory，改为 ExecStartPre=/usr/bin/install -d -m 0750 -o root -g clusterguard /run/clusterguard（幂等且不再“拥有”该目录）。",
+        "en": "The installer now also installs a root:root 0600 key copy at /etc/clusterguard/updates/controller_ed25519 and points update.json at it; the helper unit drops RuntimeDirectory for an idempotent ExecStartPre that creates /run/clusterguard without owning it."
+      },
+      "applies_to": [
+        "控制台版本更新长期 available=false",
+        "clusterguard-update-helper 首启失败或停机后 /run/clusterguard 丢失"
+      ]
+    },
+    {
+      "commit": "ed9faca",
+      "severity": "P1",
+      "title": {
+        "zh": "控制台不解释“不可用”的原因",
+        "en": "The console stopped explaining why a capability is unavailable"
+      },
+      "symptom": {
+        "zh": "版本更新面板只显示红徽标“不可用”，不写原因；集群加载横幅只报栏目名（“部分数据不可用：候选评估；操作已锁定”），运维无法判断下一步做什么。",
+        "en": "The software update panel showed only a red \"unavailable\" badge with no reason, and the cluster load banner named the failing section without saying why, so operators could not tell what to do next."
+      },
+      "root_cause": {
+        "zh": "前端丢弃了后端给出的原因：`evidenceResult` 只保留布尔状态，409 响应体里的具体原因没有回填到面板与横幅，运维只能看到状态标签。",
+        "en": "The front end discarded the reason the API already returned: the evidence result kept only a boolean state and never fed the 409 body back into the panel or the banner, so only a status label survived."
+      },
+      "fix": {
+        "zh": "面板内联渲染 `#software-update-panel-reason` 并在徽标上加 tooltip；`evidenceResult` 携带 `reason`，`evidenceReasonText()` 把 409 消息映射为中文，`evidenceUnavailableText()` 按栏目回填原因。",
+        "en": "The panel now renders an inline reason and puts it on the badge tooltip; the evidence result carries `reason`, `evidenceReasonText()` maps the 409 message to readable text, and `evidenceUnavailableText()` reports it per section."
+      },
+      "applies_to": [
+        "控制台版本更新面板显示“不可用”但无原因",
+        "集群加载横幅只报栏目名、不报原因"
+      ]
+    },
+    {
+      "commit": "5ae2039",
+      "severity": "P1",
+      "title": {
+        "zh": "整机关机提交后控制台卡在无法交互的对话框上",
+        "en": "The console froze on a dead dialog after a host power-off was submitted"
+      },
+      "symptom": {
+        "zh": "提交整机关机后主机断电、控制面随之消失，页面永久停在关机确认对话框上，只能手动关闭标签页；提交后响应丢失时还会误报为错误。",
+        "en": "After a host power-off was submitted the control plane went away with the host, leaving the page parked on the confirmation dialog forever, and a lost response after submission was reported as an error."
+      },
+      "root_cause": {
+        "zh": "poweroff 分支提交成功后只改了结果横幅，既不关闭对话框也不做收尾；主机断电后页面失去所有交互入口，而“已提交却丢了响应”本就是预期结果。",
+        "en": "The poweroff branch only updated the result banner after a successful submission; it never closed the dialog or settled the page, and a lost response after submission is an expected outcome rather than an error."
+      },
+      "fix": {
+        "zh": "新增 settlePoweroffConsole()：等 2.5s 后带 3s 超时探测 /power/status，不可达则显示离线层并 window.close()，仍可达则只关对话框并起 5s 看门狗；service 模式永不关页面。",
+        "en": "settlePoweroffConsole() waits 2.5s then probes /power/status with a 3s timeout: unreachable shows the offline screen and closes the tab, reachable only closes the dialog and starts a 5s watchdog. Service mode never closes the page."
+      },
+      "applies_to": [
+        "提交整机关机后控制台卡死、需要手动关闭标签页",
+        "关机提交后偶发“无法连接控制 API”被当作失败"
+      ]
+    }
   ],
   "verification": [
     "/usr/local/bin/clusterguard --version",
+    "/usr/local/bin/clusterguard-agent --version",
     "systemctl is-active clusterguard-ha",
-    "curl -sk https://127.0.0.1:3000/api/v1/platform/updates | head -c 400"
+    "systemctl show clusterguard-agent-reconcile.service -p CapabilityBoundingSet",
+    "systemctl cat clusterguard-update-helper.service | grep -c RuntimeDirectory",
+    "journalctl -u clusterguard-agent-reconcile.service --since '-10min' | grep -c self-isolated",
+    "jq -c '.topology_snapshots[] | {observed_at, health: .health.state}' /var/lib/clusterguard/metadata.json"
   ],
-  "rollback": "执行 rollback.sh 后 systemctl daemon-reload 并 systemctl restart clusterguard-ha；控制台将恢复为只显示状态标签的旧行为。"
+  "rollback": "执行 rollback.sh 恢复旧二进制与旧单元后 systemctl daemon-reload 并 systemctl restart clusterguard-ha。注意：回滚会重新引入写入者抖动与升级链阻塞，仅在确认新二进制有回归时使用。"
 }

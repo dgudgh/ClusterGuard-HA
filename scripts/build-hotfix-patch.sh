@@ -2,14 +2,20 @@
 set -euo pipefail
 export COPYFILE_DISABLE=1
 
-# Builds a signed hotfix patch for one bug fix commit.
+# Builds one signed hotfix patch for every bug fix a site still needs.
 #
 # A .cgupgrade carries whole RPMs and can only be applied by the rolling
-# upgrade executor. A hotfix patch carries exactly what one bug fix changed:
-# the rebuilt binaries that embed the change, the systemd units it touched, the
-# source diff as evidence, and an idempotent apply/rollback pair. Every bug fix
-# must leave a patch behind, otherwise a running site can only pick the fix up
-# by waiting for the next full release.
+# upgrade executor. A hotfix patch carries exactly what the declared bug fixes
+# changed: the rebuilt binaries that embed them, the systemd units they touched,
+# the source diff as evidence, and an idempotent apply/rollback pair. Every bug
+# fix must be covered by a patch, otherwise a running site can only pick the fix
+# up by waiting for the next full release.
+#
+# One patch per site visit, not one patch per commit: a site applies "what this
+# machine needs", and two patches that both replace /usr/local/bin/clusterguard
+# are order sensitive — applying the older one last silently undoes the newer
+# fix. A patch therefore declares the fix commits it covers and rebuilds a
+# single tree that carries all of them.
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repository="$(cd "${script_dir}/.." && pwd)"
@@ -73,9 +79,22 @@ spec_get() {
   ' "${spec}" "$1" || die "热修描述缺少字段：$1"
 }
 
+spec_get_optional() {
+  "${node_bin}" -e '
+    const fs = require("fs");
+    const spec = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    let value = spec;
+    for (const key of process.argv[2].split(".")) {
+      if (value === null || typeof value !== "object" || !(key in value)) process.exit(1);
+      value = value[key];
+    }
+    if (value === undefined || value === null) process.exit(1);
+    process.stdout.write(typeof value === "string" ? value : JSON.stringify(value));
+  ' "${spec}" "$1" 2>/dev/null || true
+}
+
 hotfix_id="$(spec_get id)"
 base_commit="$(spec_get base_commit)"
-fix_commit="$(spec_get fix_commit)"
 rpm_version="$(spec_get rpm_version)"
 rpm_release="$(spec_get rpm_release)"
 severity="$(spec_get severity)"
@@ -83,12 +102,40 @@ severity="$(spec_get severity)"
 [[ "${rpm_version}" =~ ^[0-9][0-9A-Za-z._+~-]*$ ]] || die "rpm version 格式无效"
 [[ "${rpm_release}" =~ ^[0-9][0-9A-Za-z._+~-]*$ ]] || die "rpm release 格式无效"
 
+# A patch covers a window of fixes. The build tree is the release baseline plus
+# every declared fix and nothing else, so a fix made on a development branch can
+# be shipped without dragging unreleased feature commits along with it.
+fix_commits=()
+while IFS= read -r line; do
+  [[ -n "${line}" ]] && fix_commits+=("${line}")
+done < <("${node_bin}" -e '
+  const fs = require("fs");
+  const spec = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+  const raw = spec.fix_commits;
+  if (!Array.isArray(raw) || raw.length === 0) process.exit(1);
+  for (const item of raw) if (typeof item !== "string" || !item.length) process.exit(1);
+  for (const item of raw) console.log(item);
+' "${spec}" || die "热修描述缺少非空的 fix_commits 数组")
+
 git -C "${repository}" cat-file -e "${base_commit}^{commit}" 2>/dev/null || die "基线提交不存在：${base_commit}"
-git -C "${repository}" cat-file -e "${fix_commit}^{commit}" 2>/dev/null || die "修复提交不存在：${fix_commit}"
-fix_commit="$(git -C "${repository}" rev-parse "${fix_commit}^{commit}")"
-short_fix="$(git -C "${repository}" rev-parse --short=7 "${fix_commit}")"
-git -C "${repository}" merge-base --is-ancestor "${base_commit}" "${fix_commit}" ||
-  die "基线提交 ${base_commit} 不是修复提交 ${fix_commit} 的祖先"
+resolved_fix_commits=()
+for commit in "${fix_commits[@]}"; do
+  git -C "${repository}" cat-file -e "${commit}^{commit}" 2>/dev/null || die "修复提交不存在：${commit}"
+  full="$(git -C "${repository}" rev-parse "${commit}^{commit}")"
+  git -C "${repository}" merge-base --is-ancestor "${base_commit}" "${full}" ||
+    die "基线提交 ${base_commit} 不是修复提交 ${commit} 的祖先"
+  resolved_fix_commits+=("${full}")
+done
+
+build_commit="$(spec_get_optional build_commit)"
+if [[ -z "${build_commit}" ]]; then
+  build_commit="${resolved_fix_commits[$((${#resolved_fix_commits[@]} - 1))]}"
+fi
+git -C "${repository}" cat-file -e "${build_commit}^{commit}" 2>/dev/null || die "构建提交不存在：${build_commit}"
+build_commit="$(git -C "${repository}" rev-parse "${build_commit}^{commit}")"
+short_fix="$(git -C "${repository}" rev-parse --short=7 "${build_commit}")"
+git -C "${repository}" merge-base --is-ancestor "${base_commit}" "${build_commit}" ||
+  die "基线提交 ${base_commit} 不是构建提交 ${build_commit} 的祖先"
 
 case "${goarch}" in
   amd64) rpm_arch="x86_64" ;;
@@ -113,14 +160,19 @@ sha256_file() {
   fi
 }
 
-# --- Decide what this fix actually ships -------------------------------------
-# Only production paths decide the payload, and only the fix commit itself
-# decides it: the range from the release baseline to the fix would also carry
-# every unrelated commit in between. Tests and documentation are carried as
-# source evidence but never rebuilt into an artifact.
-diff_range="${fix_commit}^..${fix_commit}"
-changed="$(git -C "${repository}" diff --name-only "${diff_range}")"
-[[ -n "${changed}" ]] || die "修复提交没有改动：${fix_commit}"
+# --- Decide what this patch actually ships -----------------------------------
+# Only production paths decide the payload, and only the declared fix commits
+# decide it: the range from the release baseline to the build commit would also
+# carry every unrelated commit in between, including unreleased features that
+# share a file with a fix. Tests and documentation are carried as source
+# evidence but never rebuilt into an artifact.
+changed=""
+for commit in "${resolved_fix_commits[@]}"; do
+  part="$(git -C "${repository}" diff --name-only "${commit}^..${commit}")"
+  changed="$(printf '%s\n%s\n' "${changed}" "${part}")"
+done
+changed="$(printf '%s\n' "${changed}" | sed '/^$/d' | sort -u)"
+[[ -n "${changed}" ]] || die "声明的修复提交没有任何改动"
 
 has_path() { printf '%s\n' "${changed}" | grep -qE "$1"; }
 
@@ -137,23 +189,32 @@ if has_path '^scripts/install_clusterguard\.sh$'; then installer_only="true"; fi
   die "该修复没有可交付产物（既不涉及二进制也不涉及单元或安装器）"
 
 stage="$(mktemp -d /tmp/clusterguard-hotfix.XXXXXX)"
-trap 'rm -rf "${stage}"' EXIT
+source_tree="${stage}/source"
+cleanup() {
+  if [[ -d "${source_tree}" ]]; then
+    git -C "${repository}" worktree remove --force "${source_tree}" >/dev/null 2>&1 || true
+  fi
+  rm -rf "${stage}"
+}
+trap cleanup EXIT
+git -C "${repository}" worktree add --detach "${source_tree}" "${build_commit}" >/dev/null 2>&1 ||
+  die "无法为构建提交创建临时工作树：${build_commit}"
 root="${stage}/clusterguard-hotfix"
 mkdir -p "${root}/payload/bin" "${root}/payload/systemd" "${root}/payload/installer" "${root}/src"
 
 build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 version_ldflags="-s -w -X clusterguard.io/ha/internal/buildinfo.Version=${rpm_version} -X clusterguard.io/ha/internal/buildinfo.Release=${rpm_release} -X clusterguard.io/ha/internal/buildinfo.Commit=${short_fix} -X clusterguard.io/ha/internal/buildinfo.BuiltAt=${build_time}"
 for binary in ${binaries}; do
-  CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" go -C "${repository}" build -trimpath -ldflags "${version_ldflags}" \
+  CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" go -C "${source_tree}" build -trimpath -ldflags "${version_ldflags}" \
     -o "${root}/payload/bin/${binary}" "./cmd/${binary}"
 done
 for unit in ${systemd_units}; do
-  install -m 0644 "${repository}/packaging/systemd/${unit}" "${root}/payload/systemd/${unit}"
+  install -m 0644 "${source_tree}/packaging/systemd/${unit}" "${root}/payload/systemd/${unit}"
 done
 if [[ "${installer_only}" == "true" ]]; then
-  install -m 0755 "${repository}/scripts/install_clusterguard.sh" "${root}/payload/installer/install_clusterguard.sh"
+  install -m 0755 "${source_tree}/scripts/install_clusterguard.sh" "${root}/payload/installer/install_clusterguard.sh"
 fi
-git -C "${repository}" diff "${diff_range}" -- . ':(exclude)docs/html' \
+git -C "${repository}" diff "${base_commit}..${build_commit}" -- . ':(exclude)docs/html' \
   >"${root}/src/${hotfix_id}-${short_fix}.patch"
 find "${root}/payload" -type d -empty -delete
 
@@ -209,18 +270,19 @@ manifest_js="${stage}/manifest.cjs"
 cat >"${manifest_js}" <<'MANIFEST_JS'
 const fs = require("fs");
 const crypto = require("crypto");
-const [specPath, payloadFilesPath, sourcePatchName, buildTime, rpmArch, goos, goarch, out] = process.argv.slice(2);
+const [specPath, payloadFilesPath, sourcePatchName, buildTime, rpmArch, goos, goarch, fixCommitsRaw, buildCommit, out] = process.argv.slice(2);
 const spec = JSON.parse(fs.readFileSync(specPath, "utf8"));
 const files = JSON.parse(fs.readFileSync(payloadFilesPath, "utf8"));
 const digest = file => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 const manifest = {
-  schema_version: 1,
+  schema_version: 2,
   kind: "hotfix",
   product: "ClusterGuard HA",
   hotfix_id: spec.id,
   severity: spec.severity,
   base_commit: spec.base_commit,
-  fix_commit: spec.fix_commit,
+  build_commit: buildCommit,
+  fix_commits: fixCommitsRaw.split(",").filter(Boolean),
   source: { version: spec.rpm_version, release: spec.rpm_release },
   target: {
     version: spec.rpm_version,
@@ -231,10 +293,8 @@ const manifest = {
   },
   compatibility: { state_format: 1, update_protocol: 1 },
   title: spec.title,
-  symptom: spec.symptom,
-  root_cause: spec.root_cause,
-  fix: spec.fix,
-  applies_to: spec.applies_to || [],
+  summary: spec.summary || null,
+  fixes: spec.fixes || [],
   verification: spec.verification || [],
   rollback: spec.rollback || "Run rollback.sh, then systemctl daemon-reload and restart the services listed in the manifest.",
   files,
@@ -246,6 +306,7 @@ process.stdout.write(digest(out) + "\n");
 MANIFEST_JS
 manifest_sha="$("${node_bin}" "${manifest_js}" "${spec}" "${payload_files}" \
   "${hotfix_id}-${short_fix}.patch" "${build_time}" "${rpm_arch}" "${goos}" "${goarch}" \
+  "$(IFS=,; printf '%s' "${resolved_fix_commits[*]}")" "${build_commit}" \
   "${root}/HOTFIX-MANIFEST.json")"
 
 openssl dgst -sha256 -sign "${signing_key}" -out "${root}/HOTFIX-MANIFEST.sig" "${root}/HOTFIX-MANIFEST.json"
@@ -286,7 +347,7 @@ apply.push("");
 apply.push("# Applies one ClusterGuard HA hotfix patch. Generated by build-hotfix-patch.sh;");
 apply.push("# do not edit by hand. Every replaced file is backed up first so rollback.sh can");
 apply.push("# put the site back exactly as it was.");
-apply.push(`# hotfix=${manifest.hotfix_id} fix_commit=${manifest.fix_commit} source=${manifest.source.version}-${manifest.source.release}`);
+apply.push(`# hotfix=${manifest.hotfix_id} build_commit=${manifest.build_commit.slice(0, 7)} fix_commits=${manifest.fix_commits.map((commit) => commit.slice(0, 7)).join(",")} source=${manifest.source.version}-${manifest.source.release}`);
 apply.push("");
 apply.push(`if [[ "$(id -u)" -ne 0 ]]; then printf "${esc("必须以 root 运行 apply.sh。")}\\n" >&2; exit 1; fi`);
 apply.push("");
@@ -415,12 +476,27 @@ bash -n "${root}/rollback.sh" || die "生成的 rollback.sh 语法不合法"
   lines.push(`# ${manifest.hotfix_id} — ${manifest.title.zh} / ${manifest.title.en}`);
   lines.push("");
   lines.push(`- 严重级别：${manifest.severity}`);
-  lines.push(`- 修复提交：\`${manifest.fix_commit}\`（基线 \`${manifest.base_commit}\`）`);
+  lines.push(`- 覆盖修复提交：${manifest.fix_commits.map((commit) => `\`${commit.slice(0, 7)}\``).join("、")}`);
+  lines.push(`- 构建树：\`${manifest.build_commit}\`（基线 \`${manifest.base_commit}\`，只含基线 + 上述修复）`);
   lines.push(`- 适用版本：${manifest.source.version}-${manifest.source.release} → ${manifest.target.version}-${manifest.target.release} (${manifest.target.rpm_architecture})`);
   lines.push("");
-  lines.push(section({ zh: "现象", en: "Symptom" }, manifest.symptom));
-  lines.push(section({ zh: "根因", en: "Root cause" }, manifest.root_cause));
-  lines.push(section({ zh: "修复", en: "Fix" }, manifest.fix));
+  if (manifest.summary) {
+    lines.push(section({ zh: "本包概要", en: "What this patch does" }, manifest.summary));
+  }
+  for (const [index, item] of (manifest.fixes || []).entries()) {
+    const commit = (item.commit || "").slice(0, 7);
+    lines.push(`## ${index + 1}. ${item.title.zh} / ${item.title.en}（\`${commit}\`, ${item.severity}）`);
+    lines.push("");
+    lines.push(section({ zh: "现象", en: "Symptom" }, item.symptom));
+    lines.push(section({ zh: "根因", en: "Root cause" }, item.root_cause));
+    lines.push(section({ zh: "修复", en: "Fix" }, item.fix));
+    if ((item.applies_to || []).length > 0) {
+      lines.push("### 何时需要应用 / When to apply");
+      lines.push("");
+      for (const entry of item.applies_to) lines.push(`- ${entry}`);
+      lines.push("");
+    }
+  }
   lines.push("## 产物 / Artifacts");
   lines.push("");
   for (const entry of manifest.files) {
@@ -470,7 +546,8 @@ printf '%s  %s\n' "${archive_sha}" "${archive_name}" >"${output}.sha256"
 
 printf 'hotfix_patch=%s\n' "${output}"
 printf 'hotfix_id=%s\n' "${hotfix_id}"
-printf 'fix_commit=%s\n' "${fix_commit}"
+printf 'fix_commits=%s\n' "$(IFS=,; printf '%s' "${resolved_fix_commits[*]}")"
+printf 'build_commit=%s\n' "${build_commit}"
 printf 'source=%s-%s\n' "${rpm_version}" "${rpm_release}"
 printf 'architecture=%s\n' "${rpm_arch}"
 printf 'components=%s %s\n' "${binaries}" "${systemd_units}"

@@ -2,7 +2,7 @@
 /**
  * verify-hotfix-patch-catalog.cjs
  *
- * Regression gate for "every bug fix leaves a patch behind".
+ * Regression gate for "every bug fix is covered by a patch".
  *
  * Before this gate existed a fix could be committed, tested and documented while
  * the only way for a running site to receive it was to wait for the next full
@@ -12,15 +12,22 @@
  * fenced the authorized primary every five seconds, the two update-chain
  * prerequisites, and the console teardown after a host power-off.
  *
+ * A patch is one per site visit, not one per commit. Two fixes that both rebuild
+ * /usr/local/bin/clusterguard must not ship as two patches: applying the older
+ * one last silently undoes the newer fix. The gate therefore also checks that
+ * the payload of a patch really covers every fix it declares, and that the
+ * artifact directory is a single, unambiguous application entry point.
+ *
  * The gate ties four things together so none of them can drift alone:
  *
- *   - hotfixes/*.json declares one fix commit and its bilingual description;
+ *   - hotfixes/*.json declares the fix commits a patch covers, the tree it was
+ *     built from, and the bilingual description of every fix;
  *   - scripts/build-hotfix-patch.sh turns that declaration into a signed
  *     .cgpatch carrying rebuilt binaries, touched systemd units, the source
  *     diff, and an apply/rollback pair;
  *   - scripts/render-hotfix-catalog.cjs renders docs/hotfix-patches.md and
  *     docs/zh-CN/hotfix-patches.md from the artifacts that really exist;
- *   - every fix commit between the release baseline and HEAD must be declared,
+ *   - every fix commit between the release baseline and HEAD must be covered,
  *     so committing a fix without building its patch fails the gate.
  *
  * Run: node tools/verify-hotfix-patch-catalog.cjs [--repo <path>]
@@ -66,32 +73,74 @@ const specs = fs.existsSync(specDirectory)
 
 check('hotfix declarations exist', specs.length > 0, 'hotfixes/*.json is empty');
 
-// --- Gate 1: every declaration is complete and points at a real commit -----
-const requiredBlocks = ['title', 'symptom', 'root_cause', 'fix'];
+// --- Gate 1: every declaration is complete and points at real commits ------
 const incomplete = [];
 const badCommits = [];
+const resolveCommit = (reference) => {
+  const resolved = git('rev-parse', `${reference}^{commit}`);
+  return resolved;
+};
 for (const spec of specs) {
   const body = spec.body;
-  for (const key of ['id', 'severity', 'base_commit', 'fix_commit', 'rpm_version', 'rpm_release']) {
+  for (const key of ['id', 'severity', 'base_commit', 'rpm_version', 'rpm_release']) {
     if (typeof body[key] !== 'string' || body[key].length === 0) incomplete.push(`${spec.name}:${key}`);
   }
-  for (const block of requiredBlocks) {
+  for (const block of ['title']) {
     for (const locale of ['zh', 'en']) {
       if (!body[block] || typeof body[block][locale] !== 'string' || body[block][locale].length === 0) {
         incomplete.push(`${spec.name}:${block}.${locale}`);
       }
     }
   }
+  if (!Array.isArray(body.fix_commits) || body.fix_commits.length === 0) {
+    incomplete.push(`${spec.name}:fix_commits`);
+  }
+  if (!Array.isArray(body.fixes) || body.fixes.length === 0) {
+    incomplete.push(`${spec.name}:fixes`);
+  }
+  for (const [index, item] of (body.fixes || []).entries()) {
+    for (const block of ['title', 'symptom', 'root_cause', 'fix']) {
+      for (const locale of ['zh', 'en']) {
+        if (!item[block] || typeof item[block][locale] !== 'string' || item[block][locale].length === 0) {
+          incomplete.push(`${spec.name}:fixes[${index}].${block}.${locale}`);
+        }
+      }
+    }
+    if (typeof item.commit !== 'string' || item.commit.length === 0) incomplete.push(`${spec.name}:fixes[${index}].commit`);
+    if (typeof item.severity !== 'string' || item.severity.length === 0) incomplete.push(`${spec.name}:fixes[${index}].severity`);
+  }
   if (!/^HF-\d{4}-\d{4}-\d{2}$/.test(body.id || '')) incomplete.push(`${spec.name}:id-format`);
+  const declaredCommits = new Set((body.fix_commits || []).map((commit) => {
+    try {
+      return resolveCommit(commit);
+    } catch (error) {
+      return null;
+    }
+  }));
+  for (const item of body.fixes || []) {
+    let resolved = null;
+    try {
+      resolved = resolveCommit(item.commit);
+    } catch (error) {
+      resolved = null;
+    }
+    if (resolved && !declaredCommits.has(resolved)) incomplete.push(`${spec.name}:fixes[].commit 未出现在 fix_commits 中 (${item.commit})`);
+  }
   try {
-    const resolved = git('rev-parse', `${body.fix_commit}^{commit}`);
-    git('merge-base', '--is-ancestor', body.base_commit, resolved);
+    for (const commit of body.fix_commits || []) {
+      const resolved = resolveCommit(commit);
+      git('merge-base', '--is-ancestor', body.base_commit, resolved);
+    }
+    if (body.build_commit) {
+      const resolved = resolveCommit(body.build_commit);
+      git('merge-base', '--is-ancestor', body.base_commit, resolved);
+    }
   } catch (error) {
-    badCommits.push(`${spec.name}:${body.fix_commit}`);
+    badCommits.push(`${spec.name}:${body.base_commit}`);
   }
 }
 check('every declaration carries the id, severity, commits and bilingual text', incomplete.length === 0, incomplete.join(', '));
-check('every declaration points at a real fix commit whose baseline is an ancestor', badCommits.length === 0, badCommits.join(', '));
+check('every declaration points at real fix commits whose baseline is an ancestor', badCommits.length === 0, badCommits.join(', '));
 
 // --- Gate 2: every declaration has a signed artifact -----------------------
 const artifactDirectory = path.join(artifactRoot, artifactDir);
@@ -132,7 +181,14 @@ for (const spec of specs) {
   }
   const root = unpack(archive);
   const manifest = JSON.parse(fs.readFileSync(path.join(root, 'HOTFIX-MANIFEST.json'), 'utf8'));
-  if (manifest.hotfix_id !== body.id || !manifest.fix_commit.startsWith(body.fix_commit.slice(0, 7)) ||
+  const declaredCommits = (body.fix_commits || []).map((commit) => git('rev-parse', `${commit}^{commit}`)).sort();
+  const manifestCommits = [...(manifest.fix_commits || [])].sort();
+  const declaredBuild = body.build_commit
+    ? git('rev-parse', `${body.build_commit}^{commit}`)
+    : declaredCommits[declaredCommits.length - 1];
+  if (manifest.hotfix_id !== body.id ||
+      declaredCommits.join(',') !== manifestCommits.join(',') ||
+      manifest.build_commit !== declaredBuild ||
       manifest.source.version !== body.rpm_version || manifest.source.release !== body.rpm_release ||
       manifest.kind !== 'hotfix') {
     mismatched.push(`${body.id}: manifest disagrees with hotfixes/${spec.name}`);
@@ -185,6 +241,59 @@ if (publicKey) {
   console.log('skip signature verification — pass --public-key or set CG_HOTFIX_TRUSTED_PUBLIC_KEY');
 }
 
+// --- Gate 2b: the payload really covers every declared fix ------------------
+// A patch that declares a fix but does not ship the artifact that fix needs is
+// worse than no patch: the site believes it is fixed. Derive the requirement
+// from each fix commit on its own, exactly like the builder does.
+const payloadRequirements = (commit) => {
+  const changed = git('diff', '--name-only', `${commit}^..${commit}`).split('\n').filter(Boolean);
+  const needed = [];
+  if (changed.some((file) => /^(internal\/agent|cmd\/clusterguard-agent)\//.test(file))) needed.push('payload/bin/clusterguard-agent');
+  if (changed.some((file) => /^(internal\/api|cmd\/clusterguard)\//.test(file))) needed.push('payload/bin/clusterguard');
+  for (const file of changed.filter((file) => /^packaging\/systemd\/.*\.service$/.test(file))) {
+    needed.push(`payload/systemd/${file.replace(/^packaging\/systemd\//, '')}`);
+  }
+  if (changed.includes('scripts/install_clusterguard.sh')) needed.push('payload/installer/install_clusterguard.sh');
+  return needed;
+};
+
+const underdelivered = [];
+for (const item of resolved) {
+  const shipped = new Set(item.manifest.files.map((file) => file.artifact));
+  for (const commit of item.manifest.fix_commits || []) {
+    for (const artifact of payloadRequirements(commit)) {
+      if (!shipped.has(artifact)) underdelivered.push(`${item.body.id}:${commit.slice(0, 7)} 需要 ${artifact}`);
+    }
+  }
+}
+check('every declared fix is really present in the payload', underdelivered.length === 0, underdelivered.join('; '));
+
+// A patch may be built from a ported tree, but that tree must still be "the
+// release baseline plus the declared fixes". Fixes made on a development line
+// often share a file with an unreleased feature, and shipping that feature
+// inside a hotfix is how a site gets an unvalidated change.
+const payloadPathPattern = /^(internal\/agent|cmd\/clusterguard-agent|internal\/api|cmd\/clusterguard)\/|^packaging\/systemd\/.*\.service$|^scripts\/install_clusterguard\.sh$/;
+const productionFiles = (range) => git('diff', '--name-only', range).split('\n').filter(Boolean)
+  .filter((file) => payloadPathPattern.test(file));
+
+const contaminated = [];
+for (const item of resolved) {
+  const declared = new Set();
+  for (const commit of item.manifest.fix_commits || []) {
+    for (const file of productionFiles(`${commit}^..${commit}`)) declared.add(file);
+  }
+  const extra = productionFiles(`${item.manifest.base_commit}..${item.manifest.build_commit}`)
+    .filter((file) => !declared.has(file));
+  if (extra.length) contaminated.push(`${item.body.id}: ${extra.join(', ')}`);
+}
+check('the build tree carries no production change beyond the declared fixes', contaminated.length === 0, contaminated.join('; '));
+
+const archiveCount = fs.existsSync(artifactDirectory)
+  ? fs.readdirSync(artifactDirectory).filter((name) => name.endsWith('.cgpatch')).length
+  : 0;
+check('the artifact directory is one unambiguous application entry point per declaration',
+  archiveCount === specs.length, `${archiveCount} .cgpatch file(s) for ${specs.length} declaration(s)`);
+
 // --- Gate 3: the bilingual catalogue is rendered and truthful --------------
 const catalogueEnglish = path.join(repo, 'docs/hotfix-patches.md');
 const catalogueChinese = path.join(repo, 'docs/zh-CN/hotfix-patches.md');
@@ -196,21 +305,29 @@ if (fs.existsSync(catalogueEnglish) && fs.existsSync(catalogueChinese)) {
   const chinese = fs.readFileSync(catalogueChinese, 'utf8');
   const absentIds = [];
   const staleSha = [];
+  const absentCommits = [];
   for (const item of resolved) {
     for (const [label, text] of [['en', english], ['zh', chinese]]) {
       if (!text.includes(item.body.id)) absentIds.push(`${label}:${item.body.id}`);
       if (!text.includes(item.sha)) staleSha.push(`${label}:${item.body.id}`);
+      for (const commit of item.manifest.fix_commits || []) {
+        if (!text.includes(commit.slice(0, 7))) absentCommits.push(`${label}:${commit.slice(0, 7)}`);
+      }
     }
   }
   check('both catalogues list every hotfix id', absentIds.length === 0, absentIds.join(', '));
   check('both catalogues quote the sha256 of the artifact that is on disk', staleSha.length === 0, staleSha.join(', '));
+  check('both catalogues list every fix commit the patch covers', absentCommits.length === 0, absentCommits.join(', '));
   check('the catalogue is generated, not hand-written',
     /Generated by `scripts\/render-hotfix-catalog\.cjs`/.test(english) &&
     /由 `scripts\/render-hotfix-catalog\.cjs`/.test(chinese));
 }
 
 // --- Gate 4: no fix commit can escape without a patch ----------------------
-const declared = new Set(specs.map((spec) => git('rev-parse', `${spec.body.fix_commit}^{commit}`)));
+const declared = new Set();
+for (const spec of specs) {
+  for (const commit of spec.body.fix_commits || []) declared.add(git('rev-parse', `${commit}^{commit}`));
+}
 const baselines = [...new Set(specs.map((spec) => spec.body.base_commit))];
 const undeclaredFixes = [];
 for (const baseline of baselines) {
@@ -218,10 +335,17 @@ for (const baseline of baselines) {
   for (const line of commits) {
     const [hash, subject] = line.split('\t');
     if (!/^fix(\([^)]+\))?:/.test(subject)) continue;
+    // Only a fix that touches a production path needs a site patch. A fix to
+    // this gate, the builder, the renderer or the documentation ships with the
+    // source tree; demanding a patch for it would make the gate unsatisfiable
+    // (the builder dies when a fix has no deliverable artifact).
+    const touchesPayload = git('diff', '--name-only', `${hash}^..${hash}`).split('\n').filter(Boolean)
+      .some((file) => payloadPathPattern.test(file));
+    if (!touchesPayload) continue;
     if (!declared.has(hash)) undeclaredFixes.push(`${hash.slice(0, 7)} ${subject}`);
   }
 }
-check('every bug fix commit since the release baseline has a patch', undeclaredFixes.length === 0, undeclaredFixes.join('; '));
+check('every bug fix commit since the release baseline is covered by a patch', undeclaredFixes.length === 0, undeclaredFixes.join('; '));
 
 // --- Gate 5: the builder and renderer are wired into the repository --------
 const builder = path.join(repo, 'scripts/build-hotfix-patch.sh');
