@@ -64,11 +64,11 @@ silently undoes the newer fix. <strong>Apply the newest patch only.</strong></p>
 </tr>
 </thead>
 <tbody><tr>
-<td>HF-2026-0928-01</td>
+<td>HF-2026-0928-02</td>
 <td>P0</td>
-<td><code>ed9faca</code>, <code>d5f9491</code>, <code>dd82ca5</code>, <code>5ae2039</code></td>
-<td><code>d296f5f</code></td>
-<td><code>clusterguard-ha-hotfix-HF-2026-0928-01-2.2-103.x86_64.cgpatch</code></td>
+<td><code>ed9faca</code>, <code>d5f9491</code>, <code>dd82ca5</code>, <code>5ae2039</code>, <code>28e3b47</code></td>
+<td><code>f90f995</code></td>
+<td><code>clusterguard-ha-hotfix-HF-2026-0928-02-2.2-103.x86_64.cgpatch</code></td>
 </tr>
 </tbody></table>
 <h2 id="applying-a-patch">Applying a patch<a class="heading-anchor" href="#applying-a-patch" aria-label="Link to Applying a patch">#</a></h2>
@@ -78,28 +78,47 @@ bash apply.sh            # backs up, verifies SHA-256, installs, daemon-reload
 systemctl restart &lt;unit&gt; # apply.sh prints the units it needs; it never restarts by itself
 bash rollback.sh         # restores from the newest backup manifest
 </code></pre>
-<h2 id="hf-2026-0928-01-2-2-103-site-fix-bundle-writer-reconcile-flap-update-pre">HF-2026-0928-01 — 2.2-103 site fix bundle: writer reconcile flap, update prerequisites, console reasons and power-off teardown<a class="heading-anchor" href="#hf-2026-0928-01-2-2-103-site-fix-bundle-writer-reconcile-flap-update-pre" aria-label="Link to HF-2026-0928-01 — 2.2-103 site fix bundle: writer reconcile flap, update prerequisites, console reasons and power-off teardown">#</a></h2>
+<h2 id="hf-2026-0928-02-2-2-103-site-fix-bundle-cumulative-cluster-stranded-afte">HF-2026-0928-02 — 2.2-103 site fix bundle (cumulative): cluster stranded after a host reboot, writer reconcile flap, update prerequisites, console reasons and power-off teardown<a class="heading-anchor" href="#hf-2026-0928-02-2-2-103-site-fix-bundle-cumulative-cluster-stranded-afte" aria-label="Link to HF-2026-0928-02 — 2.2-103 site fix bundle (cumulative): cluster stranded after a host reboot, writer reconcile flap, update prerequisites, console reasons and power-off teardown">#</a></h2>
 <ul>
 <li>Severity: P0</li>
-<li>Fix commits: <code>ed9faca</code>, <code>d5f9491</code>, <code>dd82ca5</code>, <code>5ae2039</code></li>
-<li>Build tree: <code>d296f5f1abf1bb754d1287a34473a1c13ee8505f</code> (baseline <code>467e533</code> plus the fixes above and nothing else)</li>
-<li>Applies to: 2.2-103 → 2.2-103+hf-2026-0928-01 (x86_64)</li>
-<li>Artifact: <code>release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-01-2.2-103.x86_64.cgpatch</code></li>
-<li>SHA-256: <code>12557ee6affc13127070ce200a67af83052415bde8e3365642030de82202f95c</code></li>
-<li>Source diff: <code>src/HF-2026-0928-01-d296f5f.patch</code></li>
+<li>Fix commits: <code>ed9faca</code>, <code>d5f9491</code>, <code>dd82ca5</code>, <code>5ae2039</code>, <code>28e3b47</code></li>
+<li>Build tree: <code>f90f995fb92c23d66723a5331742a551be7a93b6</code> (baseline <code>467e533</code> plus the fixes above and nothing else)</li>
+<li>Applies to: 2.2-103 → 2.2-103+hf-2026-0928-02 (x86_64)</li>
+<li>Artifact: <code>release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-2.2-103.x86_64.cgpatch</code></li>
+<li>SHA-256: <code>d0ae656aca4f576632deddc7880eda4b445ac81c6e9ef53a406036d26671277f</code></li>
+<li>Source diff: <code>src/HF-2026-0928-02-f90f995.patch</code></li>
 <li>Payload:<ul>
 <li><code>payload/bin/clusterguard-agent</code> → <code>/usr/local/bin/clusterguard-agent</code> (0755)</li>
 <li><code>payload/bin/clusterguard</code> → <code>/usr/local/bin/clusterguard</code> (0755)</li>
 <li><code>payload/systemd/clusterguard-agent-reconcile.service</code> → <code>/usr/lib/systemd/system/clusterguard-agent-reconcile.service</code> (0644)</li>
 <li><code>payload/systemd/clusterguard-update-helper.service</code> → <code>/usr/lib/systemd/system/clusterguard-update-helper.service</code> (0644)</li>
+<li><code>payload/libexec/clusterguard-cluster-finalize.sh</code> → <code>/usr/local/libexec/clusterguard-cluster-finalize.sh</code> (0755)</li>
+<li><code>payload/libexec/clusterguard-mysql-install.sh</code> → <code>/usr/local/libexec/clusterguard-mysql-install.sh</code> (0755)</li>
+<li><code>payload/libexec/clusterguard-postgresql-install.sh</code> → <code>/usr/local/libexec/clusterguard-postgresql-install.sh</code> (0755)</li>
 <li><code>payload/installer/install_clusterguard.sh</code> → <code>installer-only, no site path</code> (0755)</li>
 </ul>
 </li>
 <li>Restart required: <code>clusterguard-ha.service</code>, <code>clusterguard-agent-reconcile.service</code>, <code>clusterguard-update-helper.service</code></li>
 </ul>
 <h3 id="what-this-patch-does">What this patch does<a class="heading-anchor" href="#what-this-patch-does" aria-label="Link to What this patch does">#</a></h3>
-<p>One patch covering the four fixes missing from the 2.2-103 baseline. Apply this patch alone: two of the fixes replace /usr/local/bin/clusterguard, so stacking patches makes the result depend on the order they were applied. The build tree is the 2.2-103 baseline plus the four fixes (ported branch hotfix/2.2-103-fixes, d296f5f) and carries no unreleased feature commit from the development line.</p>
-<h3 id="hf-2026-0928-01-1-mysql-writer-reconcile-flap-the-authorized-primary-fen">HF-2026-0928-01.1 MySQL writer reconcile flap: the authorized primary fenced itself every five seconds (<code>dd82ca5</code>, P0)<a class="heading-anchor" href="#hf-2026-0928-01-1-mysql-writer-reconcile-flap-the-authorized-primary-fen" aria-label="Link to HF-2026-0928-01.1 MySQL writer reconcile flap: the authorized primary fenced itself every five seconds (dd82ca5, P0)">#</a></h3>
+<p>Cumulative bundle covering the five fixes missing from the 2.2-103 baseline; it supersedes HF-2026-0928-01. Apply this patch alone: several fixes replace /usr/local/bin/clusterguard, so stacking patches makes the outcome depend on the order they were applied. The build tree is the 2.2-103 baseline plus these five fixes (ported branch hotfix/2.2-103-fixes, f90f995) and carries no unreleased feature commit. New payload kind: runtime scripts ship under payload/libexec/ (site path /usr/local/libexec/) and take effect the next time their caller runs, so they need no service restart.</p>
+<h3 id="hf-2026-0928-02-1-a-host-reboot-stranded-the-whole-cluster-shared-runtim">HF-2026-0928-02.1 A host reboot stranded the whole cluster: shared runtime directory mode and a recovery freeze that never lifted (<code>28e3b47</code>, P0)<a class="heading-anchor" href="#hf-2026-0928-02-1-a-host-reboot-stranded-the-whole-cluster-shared-runtim" aria-label="Link to HF-2026-0928-02.1 A host reboot stranded the whole cluster: shared runtime directory mode and a recovery freeze that never lifted (28e3b47, P0)">#</a></h3>
+<ul>
+<li><p>Symptom: After a planned whole-host shutdown the console reported &quot;some data unavailable: candidate evaluation&quot;, no primary at all, and every instance as &quot;database not started or unreachable&quot;; both another power-off and failover were blocked. clusterguard-mysql-3306.service and clusterguard-cluster-restore.service sat in restart loops at counts 2063/2069/2072 and 1034-1036.</p>
+</li>
+<li><p>Root cause: The update helper created the shared /run/clusterguard as 0750 via ExecStartPre, while the managed MySQL unit nests RuntimeDirectory=clusterguard/mysql/3306 beneath it and runs as the unprivileged mysql user, which is not a member of the clusterguard group. /run is a tmpfs, so on boot the helper creates the parent first and mysqld cannot traverse it: socket lock creation fails and the server aborts, even though InnoDB had already initialised cleanly and no data was at risk. It worked on install day only because mysqld happened to start first; reversing the boot order makes the outage certain. Separately, cluster-finalize exited 0 when the primary had not recovered within 600 seconds, and the unit is a oneshot with Restart=on-failure, so a zero exit retired it permanently and the recovery freeze could then only be lifted by hand — its own printed reassurance that recovery would resume automatically was false.</p>
+</li>
+<li><p>Fix: The shared parent is now 0755 (traversable), and the managed MySQL/PostgreSQL units repair that parent idempotently in their own ExecStartPre, so the engine reaches its own socket no matter who created the parent or in which order the units start. The fail-closed timeout path of cluster-finalize now exits non-zero so systemd retries every 30 seconds until the primary is back and power/complete releases the freeze automatically. The gates also stopped pinning 0750 as expected behaviour and gained two regressions covering the shared parent mode and the finalize exit status.</p>
+</li>
+<li><p>When to apply:</p>
+<ul>
+<li>整机关机后重新开机，控制台报「数据库未启动或不可达」且没有主库</li>
+<li>clusterguard-mysql-3306.service 反复重启，error.log 报 Could not create unix socket lock file</li>
+<li>计划关机或故障切换被阻断，power 生命周期停在 recovering 且 recovery_freeze 为 true</li>
+</ul>
+</li>
+</ul>
+<h3 id="hf-2026-0928-02-2-mysql-writer-reconcile-flap-the-authorized-primary-fen">HF-2026-0928-02.2 MySQL writer reconcile flap: the authorized primary fenced itself every five seconds (<code>dd82ca5</code>, P0)<a class="heading-anchor" href="#hf-2026-0928-02-2-mysql-writer-reconcile-flap-the-authorized-primary-fen" aria-label="Link to HF-2026-0928-02.2 MySQL writer reconcile flap: the authorized primary fenced itself every five seconds (dd82ca5, P0)">#</a></h3>
 <ul>
 <li><p>Symptom: The cluster never left degraded, both replication links never left unhealthy, candidate evaluation answered 409 and every planned shutdown was blocked. Measurement showed 9,492 self-isolations since install, with read_only and the VIP flipping together roughly every ten seconds.</p>
 </li>
@@ -114,13 +133,13 @@ bash rollback.sh         # restores from the newest backup manifest
 </ul>
 </li>
 </ul>
-<h3 id="hf-2026-0928-01-2-two-update-prerequisites-ssh-key-ownership-and-a-share">HF-2026-0928-01.2 Two update prerequisites: SSH key ownership and a shared runtime directory the helper owned (<code>d5f9491</code>, P0)<a class="heading-anchor" href="#hf-2026-0928-01-2-two-update-prerequisites-ssh-key-ownership-and-a-share" aria-label="Link to HF-2026-0928-01.2 Two update prerequisites: SSH key ownership and a shared runtime directory the helper owned (d5f9491, P0)">#</a></h3>
+<h3 id="hf-2026-0928-02-3-two-update-prerequisites-ssh-key-ownership-and-a-share">HF-2026-0928-02.3 Two update prerequisites: SSH key ownership and a shared runtime directory the helper owned (<code>d5f9491</code>, P0)<a class="heading-anchor" href="#hf-2026-0928-02-3-two-update-prerequisites-ssh-key-ownership-and-a-share" aria-label="Link to HF-2026-0928-02.3 Two update prerequisites: SSH key ownership and a shared runtime directory the helper owned (d5f9491, P0)">#</a></h3>
 <ul>
 <li><p>Symptom: Software updates stayed available=false and the three upload controls stayed disabled; even with a hand-written update.json the executor rejected the SSH key as too permissive, and the helper failed its first start with status=233 while deleting the shared /run/clusterguard on stop.</p>
 </li>
 <li><p>Root cause: The generated update.json pointed ssh_key at a clusterguard-owned private key while the workspace file check requires root ownership with no group or other write bit; and the helper unit declared RuntimeDirectory=clusterguard, which races with start-up chown/chmod and is deleted by systemd on stop.</p>
 </li>
-<li><p>Fix: The installer now also installs a root:root 0600 key copy at /etc/clusterguard/updates/controller_ed25519 and points update.json at it; the helper unit drops RuntimeDirectory for an idempotent ExecStartPre that creates /run/clusterguard without owning it.</p>
+<li><p>Fix: The installer now also installs a root:root 0600 key copy at /etc/clusterguard/updates/controller_ed25519 and points update.json at it; the helper unit drops RuntimeDirectory for an idempotent ExecStartPre that creates the shared directory without owning it (so stopping it never deletes the directory). Its mode was later fixed to 0755 by 28e3b47.</p>
 </li>
 <li><p>When to apply:</p>
 <ul>
@@ -129,7 +148,7 @@ bash rollback.sh         # restores from the newest backup manifest
 </ul>
 </li>
 </ul>
-<h3 id="hf-2026-0928-01-3-the-console-stopped-explaining-why-a-capability-is-una">HF-2026-0928-01.3 The console stopped explaining why a capability is unavailable (<code>ed9faca</code>, P1)<a class="heading-anchor" href="#hf-2026-0928-01-3-the-console-stopped-explaining-why-a-capability-is-una" aria-label="Link to HF-2026-0928-01.3 The console stopped explaining why a capability is unavailable (ed9faca, P1)">#</a></h3>
+<h3 id="hf-2026-0928-02-4-the-console-stopped-explaining-why-a-capability-is-una">HF-2026-0928-02.4 The console stopped explaining why a capability is unavailable (<code>ed9faca</code>, P1)<a class="heading-anchor" href="#hf-2026-0928-02-4-the-console-stopped-explaining-why-a-capability-is-una" aria-label="Link to HF-2026-0928-02.4 The console stopped explaining why a capability is unavailable (ed9faca, P1)">#</a></h3>
 <ul>
 <li><p>Symptom: The software update panel showed only a red &quot;unavailable&quot; badge with no reason, and the cluster load banner named the failing section without saying why, so operators could not tell what to do next.</p>
 </li>
@@ -144,7 +163,7 @@ bash rollback.sh         # restores from the newest backup manifest
 </ul>
 </li>
 </ul>
-<h3 id="hf-2026-0928-01-4-the-console-froze-on-a-dead-dialog-after-a-host-power-">HF-2026-0928-01.4 The console froze on a dead dialog after a host power-off was submitted (<code>5ae2039</code>, P1)<a class="heading-anchor" href="#hf-2026-0928-01-4-the-console-froze-on-a-dead-dialog-after-a-host-power-" aria-label="Link to HF-2026-0928-01.4 The console froze on a dead dialog after a host power-off was submitted (5ae2039, P1)">#</a></h3>
+<h3 id="hf-2026-0928-02-5-the-console-froze-on-a-dead-dialog-after-a-host-power-">HF-2026-0928-02.5 The console froze on a dead dialog after a host power-off was submitted (<code>5ae2039</code>, P1)<a class="heading-anchor" href="#hf-2026-0928-02-5-the-console-froze-on-a-dead-dialog-after-a-host-power-" aria-label="Link to HF-2026-0928-02.5 The console froze on a dead dialog after a host power-off was submitted (5ae2039, P1)">#</a></h3>
 <ul>
 <li><p>Symptom: After a host power-off was submitted the control plane went away with the host, leaving the page parked on the confirmation dialog forever, and a lost response after submission was reported as an error.</p>
 </li>
@@ -161,16 +180,19 @@ bash rollback.sh         # restores from the newest backup manifest
 </ul>
 <h3 id="verification">Verification<a class="heading-anchor" href="#verification" aria-label="Link to Verification">#</a></h3>
 <ul>
+<li><code>ls -ld /run/clusterguard   # 必须是 drwxr-xr-x（0755），可被非特权引擎账户穿越</code></li>
+<li><code>systemctl cat clusterguard-update-helper.service | grep -c &#39;RuntimeDirectory=clusterguard&#39;   # 必须为 0</code></li>
+<li><code>systemctl show clusterguard-mysql-3306 -p NRestarts   # 应用后应停止增长</code></li>
+<li><code>systemctl is-active clusterguard-mysql-3306 clusterguard-ha clusterguard-agent</code></li>
+<li><code>tail -20 /var/log/clusterguard/mysql/3306/error.log   # 不应再出现 Could not create unix socket lock file</code></li>
 <li><code>/usr/local/bin/clusterguard --version</code></li>
 <li><code>/usr/local/bin/clusterguard-agent --version</code></li>
-<li><code>systemctl is-active clusterguard-ha</code></li>
 <li><code>systemctl show clusterguard-agent-reconcile.service -p CapabilityBoundingSet</code></li>
-<li><code>systemctl cat clusterguard-update-helper.service | grep -c RuntimeDirectory</code></li>
-<li><code>journalctl -u clusterguard-agent-reconcile.service --since &#39;-10min&#39; | grep -c self-isolated</code></li>
-<li><code>jq -c &#39;.topology_snapshots[] | {observed_at, health: .health.state}&#39; /var/lib/clusterguard/metadata.json</code></li>
+<li><code>journalctl -u clusterguard-cluster-finalize --since &#39;-10min&#39; | tail   # 主库未恢复时必须非零退出并重试，不得打印 Succeeded</code></li>
+<li><code>jq -c &#39;.clusters[] | {recovery_freeze}&#39; /var/lib/clusterguard/metadata.json   # 恢复完成后应为 false</code></li>
 </ul>
 <h3 id="rollback">Rollback<a class="heading-anchor" href="#rollback" aria-label="Link to Rollback">#</a></h3>
-<p>执行 rollback.sh 恢复旧二进制与旧单元后 systemctl daemon-reload 并 systemctl restart clusterguard-ha。注意：回滚会重新引入写入者抖动与升级链阻塞，仅在确认新二进制有回归时使用。</p>
+<p>执行 rollback.sh 恢复旧二进制、旧单元与旧运行时脚本，然后 systemctl daemon-reload 并 systemctl restart clusterguard-ha。注意：回滚会把 /run/clusterguard 重新交回 0750 的创建方，下一次整机重启会再次让集群起不来；仅在确认新版本有回归时使用，并在回滚后临时手工执行 chmod 0755 /run/clusterguard。</p>
 
           <footer class="document-footer">
             <span>Source: <code>docs/hotfix-patches.md</code></span>
@@ -179,7 +201,7 @@ bash rollback.sh         # restores from the newest backup manifest
         </article>
         <aside class="page-toc" aria-label="On this page">
           <strong>On this page</strong>
-          <a class="toc-level-2" href="#applying-a-patch">Applying a patch</a><a class="toc-level-2" href="#hf-2026-0928-01-2-2-103-site-fix-bundle-writer-reconcile-flap-update-pre">HF-2026-0928-01 — 2.2-103 site fix bundle: writer reconcile flap, update prerequisites, console reasons and power-off teardown</a><a class="toc-level-3" href="#what-this-patch-does">What this patch does</a><a class="toc-level-3" href="#hf-2026-0928-01-1-mysql-writer-reconcile-flap-the-authorized-primary-fen">HF-2026-0928-01.1 MySQL writer reconcile flap: the authorized primary fenced itself every five seconds (dd82ca5, P0)</a><a class="toc-level-3" href="#hf-2026-0928-01-2-two-update-prerequisites-ssh-key-ownership-and-a-share">HF-2026-0928-01.2 Two update prerequisites: SSH key ownership and a shared runtime directory the helper owned (d5f9491, P0)</a><a class="toc-level-3" href="#hf-2026-0928-01-3-the-console-stopped-explaining-why-a-capability-is-una">HF-2026-0928-01.3 The console stopped explaining why a capability is unavailable (ed9faca, P1)</a><a class="toc-level-3" href="#hf-2026-0928-01-4-the-console-froze-on-a-dead-dialog-after-a-host-power-">HF-2026-0928-01.4 The console froze on a dead dialog after a host power-off was submitted (5ae2039, P1)</a><a class="toc-level-3" href="#verification">Verification</a><a class="toc-level-3" href="#rollback">Rollback</a>
+          <a class="toc-level-2" href="#applying-a-patch">Applying a patch</a><a class="toc-level-2" href="#hf-2026-0928-02-2-2-103-site-fix-bundle-cumulative-cluster-stranded-afte">HF-2026-0928-02 — 2.2-103 site fix bundle (cumulative): cluster stranded after a host reboot, writer reconcile flap, update prerequisites, console reasons and power-off teardown</a><a class="toc-level-3" href="#what-this-patch-does">What this patch does</a><a class="toc-level-3" href="#hf-2026-0928-02-1-a-host-reboot-stranded-the-whole-cluster-shared-runtim">HF-2026-0928-02.1 A host reboot stranded the whole cluster: shared runtime directory mode and a recovery freeze that never lifted (28e3b47, P0)</a><a class="toc-level-3" href="#hf-2026-0928-02-2-mysql-writer-reconcile-flap-the-authorized-primary-fen">HF-2026-0928-02.2 MySQL writer reconcile flap: the authorized primary fenced itself every five seconds (dd82ca5, P0)</a><a class="toc-level-3" href="#hf-2026-0928-02-3-two-update-prerequisites-ssh-key-ownership-and-a-share">HF-2026-0928-02.3 Two update prerequisites: SSH key ownership and a shared runtime directory the helper owned (d5f9491, P0)</a><a class="toc-level-3" href="#hf-2026-0928-02-4-the-console-stopped-explaining-why-a-capability-is-una">HF-2026-0928-02.4 The console stopped explaining why a capability is unavailable (ed9faca, P1)</a><a class="toc-level-3" href="#hf-2026-0928-02-5-the-console-froze-on-a-dead-dialog-after-a-host-power-">HF-2026-0928-02.5 The console froze on a dead dialog after a host power-off was submitted (5ae2039, P1)</a><a class="toc-level-3" href="#verification">Verification</a><a class="toc-level-3" href="#rollback">Rollback</a>
         </aside>
       </main>
     </div>

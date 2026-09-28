@@ -18,7 +18,7 @@ silently undoes the newer fix. **Apply the newest patch only.**
 
 | Hotfix | Severity | Fix commits | Build tree | Artifact |
 | --- | --- | --- | --- | --- |
-| HF-2026-0928-01 | P0 | `ed9faca`, `d5f9491`, `dd82ca5`, `5ae2039` | `d296f5f` | `clusterguard-ha-hotfix-HF-2026-0928-01-2.2-103.x86_64.cgpatch` |
+| HF-2026-0928-02 | P0 | `ed9faca`, `d5f9491`, `dd82ca5`, `5ae2039`, `28e3b47` | `f90f995` | `clusterguard-ha-hotfix-HF-2026-0928-02-2.2-103.x86_64.cgpatch` |
 
 ## Applying a patch
 
@@ -30,28 +30,44 @@ systemctl restart <unit> # apply.sh prints the units it needs; it never restarts
 bash rollback.sh         # restores from the newest backup manifest
 ```
 
-## HF-2026-0928-01 — 2.2-103 site fix bundle: writer reconcile flap, update prerequisites, console reasons and power-off teardown
+## HF-2026-0928-02 — 2.2-103 site fix bundle (cumulative): cluster stranded after a host reboot, writer reconcile flap, update prerequisites, console reasons and power-off teardown
 
 - Severity: P0
-- Fix commits: `ed9faca`, `d5f9491`, `dd82ca5`, `5ae2039`
-- Build tree: `d296f5f1abf1bb754d1287a34473a1c13ee8505f` (baseline `467e533` plus the fixes above and nothing else)
-- Applies to: 2.2-103 → 2.2-103+hf-2026-0928-01 (x86_64)
-- Artifact: `release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-01-2.2-103.x86_64.cgpatch`
-- SHA-256: `12557ee6affc13127070ce200a67af83052415bde8e3365642030de82202f95c`
-- Source diff: `src/HF-2026-0928-01-d296f5f.patch`
+- Fix commits: `ed9faca`, `d5f9491`, `dd82ca5`, `5ae2039`, `28e3b47`
+- Build tree: `f90f995fb92c23d66723a5331742a551be7a93b6` (baseline `467e533` plus the fixes above and nothing else)
+- Applies to: 2.2-103 → 2.2-103+hf-2026-0928-02 (x86_64)
+- Artifact: `release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-2.2-103.x86_64.cgpatch`
+- SHA-256: `d0ae656aca4f576632deddc7880eda4b445ac81c6e9ef53a406036d26671277f`
+- Source diff: `src/HF-2026-0928-02-f90f995.patch`
 - Payload:
   - `payload/bin/clusterguard-agent` → `/usr/local/bin/clusterguard-agent` (0755)
   - `payload/bin/clusterguard` → `/usr/local/bin/clusterguard` (0755)
   - `payload/systemd/clusterguard-agent-reconcile.service` → `/usr/lib/systemd/system/clusterguard-agent-reconcile.service` (0644)
   - `payload/systemd/clusterguard-update-helper.service` → `/usr/lib/systemd/system/clusterguard-update-helper.service` (0644)
+  - `payload/libexec/clusterguard-cluster-finalize.sh` → `/usr/local/libexec/clusterguard-cluster-finalize.sh` (0755)
+  - `payload/libexec/clusterguard-mysql-install.sh` → `/usr/local/libexec/clusterguard-mysql-install.sh` (0755)
+  - `payload/libexec/clusterguard-postgresql-install.sh` → `/usr/local/libexec/clusterguard-postgresql-install.sh` (0755)
   - `payload/installer/install_clusterguard.sh` → `installer-only, no site path` (0755)
 - Restart required: `clusterguard-ha.service`, `clusterguard-agent-reconcile.service`, `clusterguard-update-helper.service`
 
 ### What this patch does
 
-One patch covering the four fixes missing from the 2.2-103 baseline. Apply this patch alone: two of the fixes replace /usr/local/bin/clusterguard, so stacking patches makes the result depend on the order they were applied. The build tree is the 2.2-103 baseline plus the four fixes (ported branch hotfix/2.2-103-fixes, d296f5f) and carries no unreleased feature commit from the development line.
+Cumulative bundle covering the five fixes missing from the 2.2-103 baseline; it supersedes HF-2026-0928-01. Apply this patch alone: several fixes replace /usr/local/bin/clusterguard, so stacking patches makes the outcome depend on the order they were applied. The build tree is the 2.2-103 baseline plus these five fixes (ported branch hotfix/2.2-103-fixes, f90f995) and carries no unreleased feature commit. New payload kind: runtime scripts ship under payload/libexec/ (site path /usr/local/libexec/) and take effect the next time their caller runs, so they need no service restart.
 
-### HF-2026-0928-01.1 MySQL writer reconcile flap: the authorized primary fenced itself every five seconds (`dd82ca5`, P0)
+### HF-2026-0928-02.1 A host reboot stranded the whole cluster: shared runtime directory mode and a recovery freeze that never lifted (`28e3b47`, P0)
+
+- Symptom: After a planned whole-host shutdown the console reported "some data unavailable: candidate evaluation", no primary at all, and every instance as "database not started or unreachable"; both another power-off and failover were blocked. clusterguard-mysql-3306.service and clusterguard-cluster-restore.service sat in restart loops at counts 2063/2069/2072 and 1034-1036.
+
+- Root cause: The update helper created the shared /run/clusterguard as 0750 via ExecStartPre, while the managed MySQL unit nests RuntimeDirectory=clusterguard/mysql/3306 beneath it and runs as the unprivileged mysql user, which is not a member of the clusterguard group. /run is a tmpfs, so on boot the helper creates the parent first and mysqld cannot traverse it: socket lock creation fails and the server aborts, even though InnoDB had already initialised cleanly and no data was at risk. It worked on install day only because mysqld happened to start first; reversing the boot order makes the outage certain. Separately, cluster-finalize exited 0 when the primary had not recovered within 600 seconds, and the unit is a oneshot with Restart=on-failure, so a zero exit retired it permanently and the recovery freeze could then only be lifted by hand — its own printed reassurance that recovery would resume automatically was false.
+
+- Fix: The shared parent is now 0755 (traversable), and the managed MySQL/PostgreSQL units repair that parent idempotently in their own ExecStartPre, so the engine reaches its own socket no matter who created the parent or in which order the units start. The fail-closed timeout path of cluster-finalize now exits non-zero so systemd retries every 30 seconds until the primary is back and power/complete releases the freeze automatically. The gates also stopped pinning 0750 as expected behaviour and gained two regressions covering the shared parent mode and the finalize exit status.
+
+- When to apply:
+  - 整机关机后重新开机，控制台报「数据库未启动或不可达」且没有主库
+  - clusterguard-mysql-3306.service 反复重启，error.log 报 Could not create unix socket lock file
+  - 计划关机或故障切换被阻断，power 生命周期停在 recovering 且 recovery_freeze 为 true
+
+### HF-2026-0928-02.2 MySQL writer reconcile flap: the authorized primary fenced itself every five seconds (`dd82ca5`, P0)
 
 - Symptom: The cluster never left degraded, both replication links never left unhealthy, candidate evaluation answered 409 and every planned shutdown was blocked. Measurement showed 9,492 self-isolations since install, with read_only and the VIP flipping together roughly every ten seconds.
 
@@ -63,19 +79,19 @@ One patch covering the four fixes missing from the 2.2-103 baseline. Apply this 
   - 集群长期 degraded 且复制链路 unhealthy，但复制本身正常
   - journalctl -u clusterguard-agent-reconcile.service 反复出现 self-isolated 或 permission denied
 
-### HF-2026-0928-01.2 Two update prerequisites: SSH key ownership and a shared runtime directory the helper owned (`d5f9491`, P0)
+### HF-2026-0928-02.3 Two update prerequisites: SSH key ownership and a shared runtime directory the helper owned (`d5f9491`, P0)
 
 - Symptom: Software updates stayed available=false and the three upload controls stayed disabled; even with a hand-written update.json the executor rejected the SSH key as too permissive, and the helper failed its first start with status=233 while deleting the shared /run/clusterguard on stop.
 
 - Root cause: The generated update.json pointed ssh_key at a clusterguard-owned private key while the workspace file check requires root ownership with no group or other write bit; and the helper unit declared RuntimeDirectory=clusterguard, which races with start-up chown/chmod and is deleted by systemd on stop.
 
-- Fix: The installer now also installs a root:root 0600 key copy at /etc/clusterguard/updates/controller_ed25519 and points update.json at it; the helper unit drops RuntimeDirectory for an idempotent ExecStartPre that creates /run/clusterguard without owning it.
+- Fix: The installer now also installs a root:root 0600 key copy at /etc/clusterguard/updates/controller_ed25519 and points update.json at it; the helper unit drops RuntimeDirectory for an idempotent ExecStartPre that creates the shared directory without owning it (so stopping it never deletes the directory). Its mode was later fixed to 0755 by 28e3b47.
 
 - When to apply:
   - 控制台版本更新长期 available=false
   - clusterguard-update-helper 首启失败或停机后 /run/clusterguard 丢失
 
-### HF-2026-0928-01.3 The console stopped explaining why a capability is unavailable (`ed9faca`, P1)
+### HF-2026-0928-02.4 The console stopped explaining why a capability is unavailable (`ed9faca`, P1)
 
 - Symptom: The software update panel showed only a red "unavailable" badge with no reason, and the cluster load banner named the failing section without saying why, so operators could not tell what to do next.
 
@@ -87,7 +103,7 @@ One patch covering the four fixes missing from the 2.2-103 baseline. Apply this 
   - 控制台版本更新面板显示“不可用”但无原因
   - 集群加载横幅只报栏目名、不报原因
 
-### HF-2026-0928-01.4 The console froze on a dead dialog after a host power-off was submitted (`5ae2039`, P1)
+### HF-2026-0928-02.5 The console froze on a dead dialog after a host power-off was submitted (`5ae2039`, P1)
 
 - Symptom: After a host power-off was submitted the control plane went away with the host, leaving the page parked on the confirmation dialog forever, and a lost response after submission was reported as an error.
 
@@ -101,15 +117,18 @@ One patch covering the four fixes missing from the 2.2-103 baseline. Apply this 
 
 ### Verification
 
+- `ls -ld /run/clusterguard   # 必须是 drwxr-xr-x（0755），可被非特权引擎账户穿越`
+- `systemctl cat clusterguard-update-helper.service | grep -c 'RuntimeDirectory=clusterguard'   # 必须为 0`
+- `systemctl show clusterguard-mysql-3306 -p NRestarts   # 应用后应停止增长`
+- `systemctl is-active clusterguard-mysql-3306 clusterguard-ha clusterguard-agent`
+- `tail -20 /var/log/clusterguard/mysql/3306/error.log   # 不应再出现 Could not create unix socket lock file`
 - `/usr/local/bin/clusterguard --version`
 - `/usr/local/bin/clusterguard-agent --version`
-- `systemctl is-active clusterguard-ha`
 - `systemctl show clusterguard-agent-reconcile.service -p CapabilityBoundingSet`
-- `systemctl cat clusterguard-update-helper.service | grep -c RuntimeDirectory`
-- `journalctl -u clusterguard-agent-reconcile.service --since '-10min' | grep -c self-isolated`
-- `jq -c '.topology_snapshots[] | {observed_at, health: .health.state}' /var/lib/clusterguard/metadata.json`
+- `journalctl -u clusterguard-cluster-finalize --since '-10min' | tail   # 主库未恢复时必须非零退出并重试，不得打印 Succeeded`
+- `jq -c '.clusters[] | {recovery_freeze}' /var/lib/clusterguard/metadata.json   # 恢复完成后应为 false`
 
 ### Rollback
 
-执行 rollback.sh 恢复旧二进制与旧单元后 systemctl daemon-reload 并 systemctl restart clusterguard-ha。注意：回滚会重新引入写入者抖动与升级链阻塞，仅在确认新二进制有回归时使用。
+执行 rollback.sh 恢复旧二进制、旧单元与旧运行时脚本，然后 systemctl daemon-reload 并 systemctl restart clusterguard-ha。注意：回滚会把 /run/clusterguard 重新交回 0750 的创建方，下一次整机重启会再次让集群起不来；仅在确认新版本有回归时使用，并在回滚后临时手工执行 chmod 0755 /run/clusterguard。
 

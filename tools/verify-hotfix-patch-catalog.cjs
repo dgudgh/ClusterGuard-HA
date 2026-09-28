@@ -253,6 +253,9 @@ const payloadRequirements = (commit) => {
   for (const file of changed.filter((file) => /^packaging\/systemd\/.*\.service$/.test(file))) {
     needed.push(`payload/systemd/${file.replace(/^packaging\/systemd\//, '')}`);
   }
+  for (const file of changed.filter((file) => /^scripts\/clusterguard-[a-z0-9-]+\.sh$/.test(file))) {
+    needed.push(`payload/libexec/${file.replace(/^scripts\//, '')}`);
+  }
   if (changed.includes('scripts/install_clusterguard.sh')) needed.push('payload/installer/install_clusterguard.sh');
   return needed;
 };
@@ -272,7 +275,7 @@ check('every declared fix is really present in the payload', underdelivered.leng
 // release baseline plus the declared fixes". Fixes made on a development line
 // often share a file with an unreleased feature, and shipping that feature
 // inside a hotfix is how a site gets an unvalidated change.
-const payloadPathPattern = /^(internal\/agent|cmd\/clusterguard-agent|internal\/api|cmd\/clusterguard)\/|^packaging\/systemd\/.*\.service$|^scripts\/install_clusterguard\.sh$/;
+const payloadPathPattern = /^(internal\/agent|cmd\/clusterguard-agent|internal\/api|cmd\/clusterguard)\/|^packaging\/systemd\/.*\.service$|^scripts\/install_clusterguard\.sh$|^scripts\/clusterguard-[a-z0-9-]+\.sh$/;
 const productionFiles = (range) => git('diff', '--name-only', range).split('\n').filter(Boolean)
   .filter((file) => payloadPathPattern.test(file));
 
