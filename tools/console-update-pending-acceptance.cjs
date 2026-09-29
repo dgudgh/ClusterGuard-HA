@@ -1,14 +1,23 @@
 // Acceptance: after 「上传并校验」 the 滚动升级 button must act on the package the
-// operator just uploaded, even when a record written while a node clock ran ahead
-// still sorts above it.
+// operator just uploaded, and must never aim at a record this cluster cannot run.
 //
-// The site hit both halves of this on 2026-09-29 13:16. Manager.Snapshot orders
-// packages by the stored uploaded_at descending, and HF-2026-0928-06 carries a
-// timestamp written while the node clock ran ~5h39m ahead, so it stayed at
-// packages[0] after cgupgrade-2.2-104-to-2.2-105-x86_64 was uploaded. The console
-// resolved its subject from packages[0] alone, found a finished job there, and left
-// the button disabled with a green 「校验完成」 above it: the operator had verified a
-// package the page would not let them run, and nothing on screen said why.
+// The site hit both halves of this on 2026-09-29. Manager.Snapshot orders packages
+// by the stored uploaded_at descending, and HF-2026-0928-06 carries a timestamp
+// written while the node clock ran ~5h39m ahead, so it stayed at packages[0] after
+// cgupgrade-2.2-104-to-2.2-105-x86_64 was uploaded. The console resolved its subject
+// from packages[0] alone, found a finished job there, and left the button disabled
+// with a green 「校验完成」 above it: the operator had verified a package the page
+// would not let them run, and nothing on screen said why.
+//
+// The 14:02 incident that same day is the second half. A hotfix built for 2.2-105 was
+// uploaded to a cluster still running 2.2-104; the upload verified, took the only
+// action slot, and its plan failed. Because a failed job stays actionable so a
+// transient failure can be retried, and because the dialog has no package picker, the
+// button could only ever aim at the one package this cluster can never apply - while
+// cgupgrade-2.2-104-to-2.2-105-x86_64, the package that should have run, was listed
+// underneath it and unreachable. The server now marks such a record incompatible and
+// the console must both keep it out of the candidates and say which release line it
+// belongs to.
 //
 // None of that is visible to a string contract. The disabled attribute, the copy
 // that explains it, which package the identity grid describes, and which id the
@@ -70,6 +79,50 @@ const plannedJob = () => ({
   patch_id: PACKAGE_ID, mode: 'plan', status: 'planned', message: '只读升级计划已生成',
   started_at: PACKAGE_STAMP, updated_at: PACKAGE_STAMP, maintenance_active: false,
   automatic_failover_available: true, progress: { phase:'preparing', total:3, current:0, percent:0 },
+});
+
+const FOREIGN_ID = 'HF-2026-0929-04';
+const FOREIGN_TARGET = '2.2-105+hf-2026-0929-04';
+
+// Copied verbatim out of the retired record on the site (and from the archive this
+// repository built at the time), so the fixture reproduces the 14:02 sequence rather
+// than an invented one.
+const FOREIGN_STAMP = '2026-09-29T06:02:27.864633761Z';
+const FOREIGN_FAILED_AT = '2026-09-29T06:02:32Z';
+
+// The server's own refusal, word for word as platformupdate.packageBaselineFault
+// renders it for a 2.2-105 hotfix on a 2.2-104 cluster. The console must show this
+// rather than re-deriving an answer of its own.
+const FOREIGN_REASON = '热修补丁属于 2.2-105 发布线，本集群运行 2.2-104；请先完成到 2.2-105 的滚动升级再上传。';
+
+// The 14:02 incident: a hotfix built for the release line this cluster is not on,
+// uploaded successfully because a valid signature was all the channel asked for.
+// Its plan then failed - and, before this fix, the failure never released the
+// console's only action slot, so the package that should have run stayed
+// unreachable behind it.
+const foreignRecord = () => ({
+  package: {
+    patch_id: FOREIGN_ID, file_name: `clusterguard-ha-hotfix-${FOREIGN_ID}-2.2-105.x86_64.cgpatch`,
+    kind: 'hotfix', source_version: '2.2-105', target_version: FOREIGN_TARGET, size_bytes: 8639457,
+    signature_verified: true, rolling: true, rollback_available: true, database_mutation: false,
+    uploaded_at: FOREIGN_STAMP,
+  },
+  // What Manager.Snapshot computes on the node: the server decides this once and
+  // sends it with the row, so the console never has to re-derive it.
+  incompatible: true,
+  incompatible_reason: FOREIGN_REASON,
+  job: {
+    patch_id: FOREIGN_ID, mode: 'plan', status: 'failed',
+    // Exactly what the job wrapper wrote on the site: a fixed sentence naming the
+    // maintenance gate, which the fourth fix in this release line replaces with the
+    // updater's own reason. This value is kept as it stands because it is what the
+    // record actually contains, and it is not what the assertions below care about -
+    // they care that the console stops aiming at this package at all.
+    message: '升级任务失败或被阻断；请查看输出和事件记录，确认维护门禁状态后再续跑或回退',
+    started_at: FOREIGN_STAMP, updated_at: FOREIGN_FAILED_AT, finished_at: FOREIGN_FAILED_AT,
+    maintenance_active: false, automatic_failover_available: true,
+    progress: { phase:'failed', total:3, current:0, percent:0 },
+  },
 });
 
 // One console per run. `mock.snapshot` is re-read on every request and `afterUpload`
@@ -261,6 +314,7 @@ const FILE_NAME = `${PACKAGE_ID}.cgupgrade`;
 
 const scenarios = [
   {
+    kind: 'fresh-upload',
     name: 'a fresh upload below a future-stamped finished record',
     // Before the upload only the finished record exists; the upload is what adds the
     // package - exactly the 13:16 sequence.
@@ -272,6 +326,7 @@ const scenarios = [
     makeAfterUpload: () => consoleUnderTest({ initial: [finishedRecord(), packageRecord()] }),
   },
   {
+    kind: 'no-actionable',
     name: 'an upload the list has no actionable record for',
     // The server answers the upload with the record it already holds - what a second
     // upload of a finished package looks like from the console's side - and the list
@@ -279,11 +334,28 @@ const scenarios = [
     make: () => consoleUnderTest({ initial: [finishedRecord()], upload: finishedRecord() }),
   },
   {
+    kind: 'ordinary',
     name: 'the ordinary upload with no stale record in the way',
     make: () => consoleUnderTest({
       initial: [],
       afterUpload: mock => { mock.snapshot = [packageRecord()]; },
     }),
+  },
+  {
+    kind: 'foreign-above',
+    name: 'a foreign-baseline package sorting above the upgrade that should run',
+    // The 14:02 list exactly: the 2.2-105 hotfix was uploaded at 06:02Z, the rolling
+    // package at 05:16Z, so the record the console can never run sorts first. Before
+    // this fix that was the only target the dialog had.
+    make: () => consoleUnderTest({ initial: [foreignRecord(), packageRecord()] }),
+    makeAfterUpload: () => consoleUnderTest({ initial: [foreignRecord(), packageRecord()] }),
+  },
+  {
+    kind: 'foreign-only',
+    name: 'nothing but a foreign-baseline package in the list',
+    // No actionable record at all, and the one on top belongs to another release
+    // line. The panel must say so instead of calling it a finished record.
+    make: () => consoleUnderTest({ initial: [foreignRecord()] }),
   },
 ];
 
@@ -317,7 +389,12 @@ const main = async () => {
       mock.actions.every(action => action === 'plan'), mock.actions.join(', ') || '(no actions)');
     record(`${scenario.name}: the driver completed`, !page.error, page.error || '');
 
-    if (scenario.name.startsWith('a fresh upload')) {
+    // A record the cluster can never run must not be the row the operator is sent to.
+    // Both lines have to appear in the marker: naming the package's line without the
+    // running one leaves the operator without the step that comes first.
+    const namesBothLines = value => (value || '').includes('2.2-105') && (value || '').includes('2.2-104');
+
+    if (scenario.kind === 'fresh-upload') {
       record(`${scenario.name}: 滚动升级 is enabled with the finished record on top`,
         page.button && page.button.disabled === false, `disabled=${page.button && page.button.disabled}`);
       record(`${scenario.name}: the row above the fresh upload is flagged as future-stamped`,
@@ -333,7 +410,7 @@ const main = async () => {
       record(`${scenario.name}: the summary calls the uploaded package the pending target`,
         page.target && page.target.label === '待升级目标版本' && page.target.value === '2.2-105 · 已上传',
         `${(page.target || {}).label} :: ${(page.target || {}).value}`);
-    } else if (scenario.name.startsWith('an upload the list')) {
+    } else if (scenario.kind === 'no-actionable') {
       record(`${scenario.name}: the panel says the upload verified but nothing can run`,
         page.validation && page.validation.state === 'verified-blocked'
           && page.validation.title === '校验完成，但当前没有可执行的升级包',
@@ -346,6 +423,40 @@ const main = async () => {
         page.button && page.button.disabled === true, `disabled=${page.button && page.button.disabled}`);
       record(`${scenario.name}: the summary calls the finished record the last completed version`,
         page.target && page.target.label === '最近完成版本' && page.target.value === '2.2-104 · 升级成功',
+        `${(page.target || {}).label} :: ${(page.target || {}).value}`);
+    } else if (scenario.kind === 'foreign-above') {
+      record(`${scenario.name}: the inapplicable record is listed first`,
+        page.history && page.history[0] && page.history[0].patchID === FOREIGN_ID,
+        `${(page.history || [])[0] && page.history[0].patchID} :: ${(page.history || [])[0] && page.history[0].message}`);
+      record(`${scenario.name}: its row says which release line it belongs to and which one this is`,
+        namesBothLines((page.history || [])[0] && page.history[0].message),
+        (page.history || [])[0] && page.history[0].message);
+      record(`${scenario.name}: the package that can actually run carries no such marker`,
+        page.history && page.history[1] && !namesBothLines(page.history[1].message),
+        `${(page.history || [])[1] && page.history[1].patchID} :: ${(page.history || [])[1] && page.history[1].message}`);
+      record(`${scenario.name}: 滚动升级 is enabled despite the foreign record on top`,
+        page.button && page.button.disabled === false, `disabled=${page.button && page.button.disabled}`);
+      record(`${scenario.name}: the identity grid describes the package that can run, not the one on top`,
+        page.identity && page.identity.patchID === PACKAGE_ID && page.identity.targetVersion === '2.2-105',
+        `${(page.identity || {}).patchID} -> ${(page.identity || {}).targetVersion}`);
+      record(`${scenario.name}: the summary calls the package that can run the pending target`,
+        page.target && page.target.label === '待升级目标版本' && page.target.value === '2.2-105 · 已上传',
+        `${(page.target || {}).label} :: ${(page.target || {}).value}`);
+    } else if (scenario.kind === 'foreign-only') {
+      record(`${scenario.name}: the panel says the upload verified but nothing can run`,
+        page.validation && page.validation.state === 'verified-blocked'
+          && page.validation.title === '校验完成，但当前没有可执行的升级包',
+        `${(page.validation || {}).state} :: ${(page.validation || {}).title}`);
+      record(`${scenario.name}: the panel blames the release line, not a record that finished`,
+        ((page.validation || {}).detail || '').includes(FOREIGN_ID)
+          && namesBothLines((page.validation || {}).detail)
+          && !((page.validation || {}).detail || '').includes('已经执行完成'),
+        (page.validation || {}).detail);
+      record(`${scenario.name}: 滚动升级 stays disabled rather than aiming at an inapplicable package`,
+        page.button && page.button.disabled === true, `disabled=${page.button && page.button.disabled}`);
+      record(`${scenario.name}: the summary does not promise this is the pending target`,
+        page.target && page.target.label === '最近处理版本'
+          && (page.target.value || '').startsWith(FOREIGN_TARGET),
         `${(page.target || {}).label} :: ${(page.target || {}).value}`);
     } else {
       record(`${scenario.name}: the panel reports a plain verified upload`,
