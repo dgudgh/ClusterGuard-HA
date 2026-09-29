@@ -1087,6 +1087,32 @@ verify_cluster_idle() {
 	leader_host="${observed_leader}"
 }
 
+# Who holds the Raft leadership right now?
+#
+# verify_cluster_idle() already derives that as a side effect, but it also
+# enforces a dozen unrelated cluster invariants and dies on any of them, so it
+# cannot be asked this one narrow question mid-flight.
+#
+# A hotfix restarts the node it just patched, and ordered_nodes deliberately puts
+# the leader last: once that final node is done the cached leader_host names the
+# node that just went down, and leadership may have moved to another controller.
+# Re-resolving here is what keeps the gate release in finish_update_maintenance
+# aimed at a reachable leader instead of the one that just rebooted.
+resolve_leader_host() {
+	local host status role
+	for host in "${controllers[@]}"; do
+		status="$(control_status "${host}" 2>/dev/null)" || continue
+		role="$(jq -r '.result.role // empty' <<<"${status}" 2>/dev/null || true)"
+		[[ "${role}" == "leader" ]] || continue
+		if [[ "${host}" != "${leader_host}" ]]; then
+			log "Raft Leader 已变更：${leader_host:-none} -> ${host}（热修重启节点后由选举产生）"
+		fi
+		leader_host="${host}"
+		return 0
+	done
+	return 1
+}
+
 wait_cluster_idle() {
 	local expected_leader="${1:-}" expected_maintenance="${2:-false}" expected_activity="${3:-idle}" attempt output=""
 	local started_epoch deadline_epoch now_epoch sleep_seconds elapsed_seconds
@@ -1904,6 +1930,15 @@ run_hotfix_update() {
   configure_known_hosts
   load_runtime_data_members
   log_all_node_service_facts
+  # A failed hotfix keeps its maintenance gate on purpose — that is what stops an
+  # unreviewed cluster from drifting — and the gate can only be taken over by
+  # re-running the very same patch. The rolling flow detects its own leftover
+  # locks on the way down, but a hotfix returns before that code is ever reached,
+  # so current_patch_maintenance_active would stay false forever and the re-run
+  # would be refused by the "no maintenance may be active" check below. That left
+  # a failed hotfix with no supported way to resume or roll back. Detecting here
+  # makes the same adoption path the rolling flow already uses reachable.
+  detect_current_update_lock
 
   # The installed RPM release never changes during a hotfix, so it doubles as
   # the baseline the patch was built for. Refusing a mismatch here is what keeps
@@ -1926,7 +1961,14 @@ run_hotfix_update() {
     verify_cluster_idle "" any any
   else
     update_mode="execute"
-    verify_cluster_idle "" false any
+    if ${current_patch_maintenance_active}; then
+      # Our own gate survived a failed run; accept it here and let
+      # acquire_update_locks adopt the existing locks rather than refusing the
+      # one operation that can still clear them.
+      verify_cluster_idle "" true any
+    else
+      verify_cluster_idle "" false any
+    fi
   fi
   ordered_nodes=()
   for host in "${controllers[@]}"; do [[ "${host}" == "${leader_host}" ]] || ordered_nodes[${#ordered_nodes[@]}]="${host}"; done
@@ -1999,7 +2041,17 @@ run_hotfix_update() {
     updated_nodes[${#updated_nodes[@]}]="${host}"
     if ! apply_hotfix_on_node "${host}" "${remote_dir}" "${restart_units}"; then hotfix_failed=true; failure_node="${host}"; break; fi
     if ! assert_hotfix_digests "${host}"; then hotfix_failed=true; failure_node="${host}"; break; fi
-    if ! wait_cluster_idle "${leader_host}" true idle; then hotfix_failed=true; failure_node="${host}"; break; fi
+    # The node just patched may have been the leader, and patching it restarts its
+    # control plane. Demanding the pre-apply leader here therefore failed the whole
+    # run exactly when the last (leader) node had in fact applied cleanly, and the
+    # automatic rollback that followed could not restore a running binary either.
+    # Wait for the maintenance state and an idle cluster instead, then re-resolve
+    # the leader so the gate release below reaches whoever holds it now.
+    if ! wait_cluster_idle "" true idle; then hotfix_failed=true; failure_node="${host}"; break; fi
+    if ! resolve_leader_host; then
+      log "错误：${host} 应用后无法重新解析 Raft Leader" >&2
+      hotfix_failed=true; failure_node="${host}"; break
+    fi
     write_journal verified "${host}" "file digests, service state and readiness verified" updating "${node_index}" "${total_nodes}"
   done
 
