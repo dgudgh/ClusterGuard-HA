@@ -180,10 +180,19 @@ binaries=""
 systemd_units=""
 runtime_scripts=""
 installer_only="false"
-if has_path '^(internal/agent|cmd/clusterguard-agent)/'; then binaries="${binaries} clusterguard-agent"; fi
-if has_path '^(internal/api|cmd/clusterguard)/'; then binaries="${binaries} clusterguard"; fi
-if has_path '^packaging/systemd/.*\.service$'; then
-  systemd_units="$(printf '%s\n' "${changed}" | grep -E '^packaging/systemd/.*\.service$' | sed 's#^packaging/systemd/##' | sort -u)"
+# Which binary embeds a change is a fact about the import graph, not about the
+# path it sits on. Two hard-coded prefixes used to answer it —
+# internal/agent|cmd/clusterguard-agent and internal/api|cmd/clusterguard — and a
+# shared package belongs to neither: the 2026-09-29 fix in internal/coordination
+# (a VIP ownership lease that stayed valid for hours after the clock moved
+# backwards, disabling automatic failover for the whole window) matched both of
+# them zero times, so this patch would have shipped the runtime script and no
+# binary at all while its manifest called the fix delivered.
+binaries="$("${node_bin}" "${repository}/scripts/hotfix-component-map.cjs" \
+  --tree "${source_tree}" --mode binaries <<<"${changed}")" ||
+  die "无法从导入图推导修复涉及的二进制（scripts/hotfix-component-map.cjs --tree ${source_tree}）"
+if has_path '^packaging/systemd/.*\.(service|timer)$'; then
+  systemd_units="$(printf '%s\n' "${changed}" | grep -E '^packaging/systemd/.*\.(service|timer)$' | sed 's#^packaging/systemd/##' | sort -u)"
 fi
 # Runtime helper scripts are read the next time the component that calls them
 # runs (boot recovery, engine install, console package inspection), so a fix

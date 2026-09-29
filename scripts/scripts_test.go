@@ -882,6 +882,119 @@ func TestHotfixBuilderTakesPayloadPathsFromThePackagingManifest(t *testing.T) {
 	}
 }
 
+// Which binary carries a change is a fact about the import graph, not about the
+// path the changed file sits on. On 2026-09-29 a P0 fix in internal/coordination —
+// a VIP ownership lease that stayed valid for hours after the clock moved
+// backwards, so automatic failover was silently disabled for the whole window —
+// matched neither of the two prefixes the builder and the catalogue gate used:
+// the requirement came out empty, and the patch would have shipped the runtime
+// script with no binary at all while its manifest called the fix delivered.
+func TestHotfixComponentsComeFromTheImportGraph(t *testing.T) {
+	node := requireNode(t)
+	binaries := func(files ...string) string {
+		t.Helper()
+		command := exec.Command(node, "hotfix-component-map.cjs", "--tree", "..", "--mode", "binaries")
+		command.Stdin = strings.NewReader(strings.Join(files, "\n") + "\n")
+		output, err := command.CombinedOutput()
+		if err != nil {
+			t.Fatalf("resolve the components of %v: %v\n%s", files, err, output)
+		}
+		return strings.TrimSpace(string(output))
+	}
+	for _, expectation := range []struct {
+		file string
+		want string
+	}{
+		// The two shapes the prefix table happened to get right, kept so a
+		// rewrite cannot quietly change them.
+		{"internal/api/console.html", "clusterguard"},
+		{"internal/agent/reconciler.go", "clusterguard clusterguard-agent"},
+		// The shape it could not see at all.
+		{"internal/coordination/lease.go", "clusterguard"},
+		{"internal/runtime/runtime.go", "clusterguard"},
+		// A package the helper links on its own: the fix must reach that binary
+		// too, or the control plane and the helper disagree about the payload.
+		{"internal/platformupdate/inspector.go", "clusterguard clusterguard-update-helper"},
+		// Tooling and documentation reach no binary, so no patch is owed for them.
+		{"tools/verify-hotfix-patch-catalog.cjs", ""},
+		{"scripts/hotfix-component-map.cjs", ""},
+		{"docs/operations.md", ""},
+	} {
+		if got := binaries(expectation.file); got != expectation.want {
+			t.Fatalf("%s must reach %q, got %q", expectation.file, expectation.want, got)
+		}
+	}
+}
+
+// The candidate set is read from the package manifest, so a binary added to the
+// RPM is covered without anyone remembering a list here.
+func TestHotfixCandidateBinariesComeFromThePackagingManifest(t *testing.T) {
+	node := requireNode(t)
+	output, err := exec.Command(node, "-e",
+		`const fs=require("fs");const m=require("./hotfix-component-map.cjs");`+
+			`process.stdout.write(m.shippedBinaries(fs.readFileSync("../packaging/rpm/nfpm.yaml","utf8"),"..").join(" "))`).CombinedOutput()
+	if err != nil {
+		t.Fatalf("read the shipped binaries: %v\n%s", err, output)
+	}
+	for _, name := range []string{"clusterguard", "clusterguard-agent", "clusterguard-update-helper", "cgctl"} {
+		if !strings.Contains(string(output), name) {
+			t.Fatalf("the package installs %s, so it must be a candidate component: %s", name, output)
+		}
+	}
+	// jq has no cmd/ directory: a bin entry that is not a Go program cannot be
+	// rebuilt by a patch, so it must not appear as a candidate.
+	if strings.Contains(string(output), "jq") {
+		t.Fatalf("jq is not built from this tree and cannot be a payload component: %s", output)
+	}
+}
+
+// An empty answer is indistinguishable from "nothing here carries the fix", and
+// that is exactly how the shared-package fix went missing. Refuse instead.
+func TestHotfixComponentMapFailsLoudlyInsteadOfGuessing(t *testing.T) {
+	node := requireNode(t)
+	command := exec.Command(node, "hotfix-component-map.cjs", "--tree", t.TempDir(), "--mode", "binaries")
+	command.Stdin = strings.NewReader("internal/coordination/lease.go\n")
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatalf("a tree whose import graph cannot be read must fail rather than print an empty component list: %s", output)
+	}
+	if strings.TrimSpace(string(output)) == "" {
+		t.Fatal("the failure must say why the import graph could not be read")
+	}
+}
+
+func TestHotfixBuilderAndGateDeriveComponentsFromTheImportGraph(t *testing.T) {
+	builder, err := os.ReadFile("build-hotfix-patch.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(builder)
+	if !strings.Contains(text, "hotfix-component-map.cjs") {
+		t.Fatal("the hotfix builder must derive the binaries a fix reaches from the import graph")
+	}
+	for _, prefix := range []string{
+		"^(internal/agent|cmd/clusterguard-agent)/",
+		"^(internal/api|cmd/clusterguard)/",
+	} {
+		if strings.Contains(text, prefix) {
+			t.Fatalf("the builder still decides which binary a fix reaches by path prefix %s", prefix)
+		}
+	}
+	gate, err := os.ReadFile(filepath.Join("..", "tools", "verify-hotfix-patch-catalog.cjs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gateText := string(gate)
+	if !strings.Contains(gateText, "hotfix-component-map.cjs") {
+		t.Fatal("the catalogue gate must decide which components a fix requires the same way the builder does")
+	}
+	for _, pattern := range []string{`internal\/agent|cmd\/clusterguard-agent`, `internal\/api|cmd\/clusterguard`, "payloadPathPattern"} {
+		if strings.Contains(gateText, pattern) {
+			t.Fatalf("the catalogue gate still decides production paths by %s", pattern)
+		}
+	}
+}
+
 func TestUpgradeScriptNeverInvokesDatabaseClients(t *testing.T) {
 	contents, err := os.ReadFile("clusterguard-upgrade.sh")
 	if err != nil {
@@ -4043,6 +4156,7 @@ func TestInstallerMeasuresNodesAgainstItsOwnClock(t *testing.T) {
 	for _, expected := range []string{
 		"reference_epoch=\"$(date -u +%s)\"",
 		"drift=$(( epoch - reference_epoch ))",
+		"if (( drift > 30 )); then",
 		"与本机（${reference_stamp}）相差 ${drift} 秒",
 		"clusterguard-clock-mesh.sh --server --accept-current-time --subnet",
 		"--timezone) need_value \"$@\"; cluster_timezone=\"$2\"",

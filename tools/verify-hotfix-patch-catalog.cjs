@@ -269,17 +269,23 @@ if (publicKey) {
 // as the *site path* the fix has to reach rather than as an artifact name —
 // packaging/rpm/nfpm.yaml is what decides where a file lives.
 const mapping = require(path.join(__dirname, '..', 'scripts', 'hotfix-payload-map.cjs'));
+// Which artifact carries a change is a fact about the import graph, so the same
+// module the builder uses answers it here too. Hard-coded path prefixes used to
+// answer it, and a fix in a shared package — internal/coordination, where a VIP
+// ownership lease survived a backwards clock step and disabled automatic
+// failover — matched neither prefix: the requirement came out empty, the patch
+// shipped no binary, and this gate reported the fix as delivered.
+const components = require(path.join(__dirname, '..', 'scripts', 'hotfix-component-map.cjs'));
 const nfpmText = fs.readFileSync(path.join(__dirname, '..', 'packaging', 'rpm', 'nfpm.yaml'), 'utf8');
 const nfpmDestinations = mapping.parseNfpmDestinations(nfpmText);
+const componentResolver = components.resolver(repo, { nfpmText });
 
 const requiredDestinations = (commit) => {
   const changed = git('diff', '--name-only', `${commit}^..${commit}`).split('\n').filter(Boolean);
-  const binaries = [];
+  const binaries = componentResolver.binariesForFiles(changed);
   const units = [];
   const scripts = [];
-  if (changed.some((file) => /^(internal\/agent|cmd\/clusterguard-agent)\//.test(file))) binaries.push('clusterguard-agent');
-  if (changed.some((file) => /^(internal\/api|cmd\/clusterguard)\//.test(file))) binaries.push('clusterguard');
-  for (const file of changed.filter((entry) => /^packaging\/systemd\/.*\.service$/.test(entry))) {
+  for (const file of changed.filter((entry) => /^packaging\/systemd\/.*\.(service|timer)$/.test(entry))) {
     units.push(file.replace(/^packaging\/systemd\//, ''));
   }
   for (const file of changed.filter((entry) => /^scripts\/clusterguard-[a-z0-9-]+\.sh$/.test(entry))) {
@@ -357,9 +363,12 @@ check('every payload file installs where the packaging manifest says it lives',
 // release baseline plus the declared fixes". Fixes made on a development line
 // often share a file with an unreleased feature, and shipping that feature
 // inside a hotfix is how a site gets an unvalidated change.
-const payloadPathPattern = /^(internal\/agent|cmd\/clusterguard-agent|internal\/api|cmd\/clusterguard)\/|^packaging\/systemd\/.*\.service$|^scripts\/install_clusterguard\.sh$|^scripts\/clusterguard-[a-z0-9-]+\.sh$/;
+//
+// "Production" is decided by the import graph, not by a prefix list, so a change
+// in a shared package cannot slip past this check by not looking like one of the
+// two binaries.
 const productionFiles = (range) => git('diff', '--name-only', range).split('\n').filter(Boolean)
-  .filter((file) => payloadPathPattern.test(file));
+  .filter((file) => componentResolver.isProductionPath(file));
 
 const contaminated = [];
 for (const item of resolved) {
@@ -490,8 +499,7 @@ for (const baseline of baselines) {
     // this gate, the builder, the renderer or the documentation ships with the
     // source tree; demanding a patch for it would make the gate unsatisfiable
     // (the builder dies when a fix has no deliverable artifact).
-    const touchesPayload = git('diff', '--name-only', `${hash}^..${hash}`).split('\n').filter(Boolean)
-      .some((file) => payloadPathPattern.test(file));
+    const touchesPayload = productionFiles(`${hash}^..${hash}`).length > 0;
     if (!touchesPayload) continue;
     if (!declared.has(hash)) undeclaredFixes.push(`${hash.slice(0, 7)} ${subject}`);
   }

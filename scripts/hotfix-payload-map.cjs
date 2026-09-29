@@ -28,6 +28,16 @@ const DEFAULT_MODE = { binary: "0755", systemd_unit: "0644", runtime_script: "07
 
 const ARTIFACT_DIRECTORY = { binary: "bin", systemd_unit: "systemd", runtime_script: "scripts" };
 
+// Which unit has to restart before a swapped binary is the one actually running.
+// A binary absent from this table has no service of its own: clusterguard-agent
+// is a oneshot the reconcile timer invokes every five seconds, cgctl is a CLI,
+// and the fence guard runs from a container image. Replacing the file is enough
+// for those, and saying otherwise would have the operator restart nothing useful.
+const BINARY_RESTART_UNITS = {
+  clusterguard: "clusterguard-ha.service",
+  "clusterguard-update-helper": "clusterguard-update-helper.service",
+};
+
 function parseNfpmDestinations(text) {
   const destinations = new Map();
   let current = null;
@@ -90,7 +100,7 @@ function resolvePayloadItems(items, nfpmText) {
       owner: declared.owner || "root",
       group: declared.group || "root",
       kind,
-      restart_unit: kind === "binary" && name === "clusterguard" ? "clusterguard-ha.service"
+      restart_unit: kind === "binary" ? BINARY_RESTART_UNITS[name] || null
         : kind === "systemd_unit" ? name : null,
     });
   };
@@ -117,13 +127,18 @@ if (require.main === module) {
     fs.readFileSync(nfpmPath, "utf8"),
   );
   for (const entry of result.entries) {
-    entry.note = entry.kind === "binary" && entry.install_path.endsWith("/clusterguard")
+    const base = entry.artifact.split("/").pop();
+    entry.note = entry.kind === "binary" && base === "clusterguard"
       ? "Control plane binary. internal/api/console.html and every other embedded asset is compiled in, so the service must be restarted before the fix is live."
-      : entry.kind === "binary"
+      : entry.kind === "binary" && base === "clusterguard-agent"
         ? "Node agent binary. The reconcile timer runs it as a oneshot unit, so the next five second tick already uses the new build."
-        : entry.kind === "systemd_unit"
-          ? "Unit file. systemctl daemon-reload is mandatory before the change takes effect."
-          : "Runtime helper script. It is read the next time the component that calls it runs, so no service restart is needed for the fix to take effect.";
+        : entry.kind === "binary" && entry.restart_unit
+          ? `Shipped binary. ${entry.restart_unit} runs it, so that unit must be restarted before the new build is the one running.`
+          : entry.kind === "binary"
+            ? "Shipped binary with no service of its own. It is started on demand — a CLI invocation or a container image — so the new build is used the next time it starts."
+            : entry.kind === "systemd_unit"
+              ? "Unit file. systemctl daemon-reload is mandatory before the change takes effect."
+              : "Runtime helper script. It is read the next time the component that calls it runs, so no service restart is needed for the fix to take effect.";
   }
   if (out) fs.writeFileSync(out, JSON.stringify(result, null, 2) + "\n");
   else process.stdout.write(JSON.stringify(result, null, 2) + "\n");
@@ -135,4 +150,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { parseNfpmDestinations, resolvePayloadItems, normalizeMode, ALLOWED_INSTALL_PREFIXES };
+module.exports = { parseNfpmDestinations, resolvePayloadItems, normalizeMode, ALLOWED_INSTALL_PREFIXES, BINARY_RESTART_UNITS };
