@@ -530,6 +530,13 @@ openssl dgst -sha256 -sign "${signing_key}" -out "${root}/HOTFIX-MANIFEST.sig" "
   const fs = require("fs");
   const [manifestPath, out] = process.argv.slice(1);
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  // The command-line path has no daemon to consult the manifest, so a replaced
+  // binary whose unit is never restarted keeps the old process running: the patch
+  // applies cleanly and nothing changes. apply.sh already prints this set; README
+  // is what the operator reads first, so it is generated from the same source
+  // rather than naming one hard-coded unit (which left the helper and the agent
+  // reconcile unit on their old binaries).
+  const restartUnits = [...new Set(manifest.files.map((entry) => entry.restart_unit).filter(Boolean))].sort();
   const section = (label, block) => {
     if (!block) return "";
     return Object.entries(block).map(([locale, text]) => {
@@ -575,8 +582,10 @@ openssl dgst -sha256 -sign "${signing_key}" -out "${root}/HOTFIX-MANIFEST.sig" "
   lines.push("tar -xzf <this-archive>.cgpatch");
   lines.push("cd clusterguard-hotfix");
   lines.push("bash apply.sh");
-  lines.push("# 控制面二进制被替换时必须重启，否则进程仍跑旧代码");
-  lines.push("systemctl restart clusterguard-ha");
+  if (restartUnits.length > 0) {
+    lines.push("# 被替换的二进制与单元必须重启，否则进程仍跑旧代码");
+    for (const unit of restartUnits) lines.push(`systemctl restart ${unit}`);
+  }
   lines.push("```");
   lines.push("");
   lines.push("## 回滚 / Rollback");
@@ -584,7 +593,7 @@ openssl dgst -sha256 -sign "${signing_key}" -out "${root}/HOTFIX-MANIFEST.sig" "
   lines.push("```bash");
   lines.push("bash rollback.sh");
   lines.push("systemctl daemon-reload");
-  lines.push("systemctl restart clusterguard-ha");
+  for (const unit of restartUnits) lines.push(`systemctl restart ${unit}`);
   lines.push("```");
   lines.push("");
   lines.push("## 验证 / Verification");

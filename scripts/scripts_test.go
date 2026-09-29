@@ -1003,6 +1003,33 @@ func TestHotfixBuilderAndGateDeriveComponentsFromTheImportGraph(t *testing.T) {
 	}
 }
 
+func TestHotfixDocumentationRestartsEveryUnitThePayloadReplaces(t *testing.T) {
+	// README.md is the first thing an operator reads, and it used to print a single
+	// hard-coded unit while the payload replaced three. Following it left the update
+	// helper and the agent reconcile unit on their old binaries, so the patch applied
+	// cleanly and the two fixes it carried stayed dormant. apply.sh is already
+	// generated from the manifest's restart_unit set; README has to come from the
+	// same source, and the gate has to check both or the blind spot just moves.
+	builder, err := os.ReadFile("build-hotfix-patch.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(builder)
+	if strings.Contains(text, `lines.push("systemctl restart clusterguard-ha")`) {
+		t.Fatal("the README template still names one hard-coded restart unit instead of the manifest's set")
+	}
+	if !strings.Contains(text, "manifest.files.map((entry) => entry.restart_unit)") {
+		t.Fatal("the README must list the restart units the signed manifest declares")
+	}
+	gate, err := os.ReadFile(filepath.Join("..", "tools", "verify-hotfix-patch-catalog.cjs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(gate), "undocumentedRestarts") {
+		t.Fatal("the catalogue gate must check README as well as apply.sh, or a hard-coded unit stays green")
+	}
+}
+
 func TestUpgradeScriptNeverInvokesDatabaseClients(t *testing.T) {
 	contents, err := os.ReadFile("clusterguard-upgrade.sh")
 	if err != nil {

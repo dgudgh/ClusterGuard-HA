@@ -39,7 +39,7 @@ bash rollback.sh         # 按最新备份清单回滚
 - 构建树：`fd59a3b28457e1ac021e47c062e13b1c65f22351`（基线 `e01f5ce376f94e2595590358c72dd2585e7c09b4` + 上述修复，不含其它提交）
 - 适用版本：2.2-104 → 2.2-104+hf-2026-0929-01（x86_64）
 - 产物：`release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-01-2.2-104.x86_64.cgpatch`
-- SHA-256：`3198ca71e50bebc68a8982d6a99b5bec9f063140cc497383eaf4d707121713e7`
+- SHA-256：`9b46dfd18cd86203d93deea2599cdc7b0ae958de733779b80b3727ded09f7ec5`
 - 源码差异：`src/HF-2026-0929-01-fd59a3b.patch`
 - 交付内容：
   - `payload/bin/clusterguard` → `/usr/local/bin/clusterguard`（0755）
@@ -231,11 +231,11 @@ bash rollback.sh         # 按最新备份清单回滚
 - 构建树：`f90f995fb92c23d66723a5331742a551be7a93b6`（基线 `467e533` + 上述修复，不含其它提交）
 - 适用版本：2.2-103 → 2.2-103+hf-2026-0928-02（x86_64）
 - 产物：`release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-2.2-103.x86_64.cgpatch`
-- SHA-256：`8b82eaa59acb2555af39430cbcaccc0b2283584ea76d61aa20baabc10aa43dc2`
+- SHA-256：`71083a217f5e0c317c752ce084ed43ea353fc877f5ff1a5737e9444c07eea55b`
 - 源码差异：`src/HF-2026-0928-02-f90f995.patch`
 - 交付内容：
-  - `payload/bin/clusterguard-agent` → `/usr/local/bin/clusterguard-agent`（0755）
   - `payload/bin/clusterguard` → `/usr/local/bin/clusterguard`（0755）
+  - `payload/bin/clusterguard-agent` → `/usr/local/bin/clusterguard-agent`（0755）
   - `payload/systemd/clusterguard-agent-reconcile.service` → `/usr/lib/systemd/system/clusterguard-agent-reconcile.service`（0644）
   - `payload/systemd/clusterguard-update-helper.service` → `/usr/lib/systemd/system/clusterguard-update-helper.service`（0644）
   - `payload/scripts/clusterguard-cluster-finalize.sh` → `/usr/local/libexec/clusterguard-cluster-finalize.sh`（0755）

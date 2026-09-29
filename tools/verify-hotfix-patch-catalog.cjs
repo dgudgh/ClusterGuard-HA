@@ -167,6 +167,7 @@ const mismatched = [];
 const incompleteArchives = [];
 const checksumMismatch = [];
 const badScripts = [];
+const undocumentedRestarts = [];
 const unboundTooling = [];
 const unsignedOrInvalid = [];
 const sidecarMismatch = [];
@@ -229,6 +230,33 @@ for (const spec of specs) {
   for (const unit of new Set(manifest.files.map((file) => file.restart_unit).filter(Boolean))) {
     if (!apply.includes(unit)) badScripts.push(`${body.id}:apply.sh 未提示重启 ${unit}`);
   }
+  // README.md is the other half of that same instruction, and the one an operator
+  // actually reads before running apply.sh. It used to print a single hard-coded
+  // unit while the payload replaced three: following it left
+  // clusterguard-update-helper and clusterguard-agent-reconcile running their old
+  // binaries, which is the same "applies cleanly, changes nothing" shape the
+  // apply.sh fix removed. Checking only apply.sh would leave the blind spot open.
+  //
+  // The check is per section, not on the whole file: the Apply and the Rollback
+  // blocks each have to name every unit, because an operator following one of them
+  // never reads the other. A whole-file check passes as soon as the string appears
+  // anywhere, so deleting the line from Apply while Rollback keeps it stayed green.
+  const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
+  const sections = {};
+  for (const part of readme.split(/^## /m)) {
+    const newline = part.indexOf('\n');
+    if (newline === -1) continue;
+    sections[part.slice(0, newline).trim()] = part.slice(newline + 1);
+  }
+  const applySection = sections['应用 / Apply'] || '';
+  const rollbackSection = sections['回滚 / Rollback'] || '';
+  if (!applySection || !rollbackSection) {
+    undocumentedRestarts.push(`${body.id}:README 缺少「应用 / Apply」或「回滚 / Rollback」节`);
+  }
+  for (const unit of new Set(manifest.files.map((file) => file.restart_unit).filter(Boolean))) {
+    if (!applySection.includes(`systemctl restart ${unit}`)) undocumentedRestarts.push(`${body.id}:README 应用节未提示重启 ${unit}`);
+    if (!rollbackSection.includes(`systemctl restart ${unit}`)) undocumentedRestarts.push(`${body.id}:README 回滚节未提示重启 ${unit}`);
+  }
   // apply.sh and rollback.sh run as root on every node and decide what is written
   // where, so the signed manifest has to anchor them. Before 2026-09-29 they were
   // generated after the manifest was signed and covered by nothing: a swapped
@@ -262,6 +290,7 @@ check('every artifact manifest agrees with its declaration', mismatched.length =
 check('every artifact carries manifest, signature, checksums, scripts, README and source diff', incompleteArchives.length === 0, incompleteArchives.join('; '));
 check('every artifact checksum file matches its payload', checksumMismatch.length === 0, checksumMismatch.join(', '));
 check('apply.sh and rollback.sh are valid, verify checksums, install every path and never restart by themselves', badScripts.length === 0, badScripts.join('; '));
+check('README names every unit the payload replaces in both its Apply and its Rollback block', undocumentedRestarts.length === 0, undocumentedRestarts.join('; '));
 check('the signed manifest anchors apply.sh and rollback.sh and SHA256SUMS covers them', unboundTooling.length === 0, unboundTooling.join('; '));
 if (publicKey) {
   check('every artifact signature verifies against the trusted public key', unsignedOrInvalid.length === 0, unsignedOrInvalid.join(', '));
