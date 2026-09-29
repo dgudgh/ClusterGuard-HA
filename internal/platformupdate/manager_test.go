@@ -477,3 +477,120 @@ func writeJobForTest(t *testing.T, root string, job Job) {
 		t.Fatal(err)
 	}
 }
+
+// uploaded_at is written from the node clock, so a record created while that clock ran ahead
+// carries a timestamp no later clock agrees with. The 2026-09-29 site incident is exactly this:
+// the RTC was read as UTC and then localised a second time, HF-2026-0928-06 was recorded at
+// 2026-09-29T11:01:17Z while the real time was about 05:22Z, and its package.json mtime landed
+// at 19:02 +0800 - six hours in the future. Such a record is reported, not silently reordered:
+// uploaded_at is both the ordering key and the time the console shows, so an operator choosing
+// an upgrade package has to be told the time on that row is untrustworthy.
+func TestSnapshotReportsRecordsWrittenByAFutureClock(t *testing.T) {
+	now := time.Date(2026, 9, 29, 5, 24, 0, 0, time.UTC)
+	for _, testCase := range []struct {
+		name   string
+		offset time.Duration
+		want   bool
+	}{
+		{name: "a record written on an agreeing clock is trusted", offset: 0},
+		{name: "a record inside the tolerance is trusted", offset: clockSkewTolerance},
+		{name: "a record past the tolerance is reported", offset: clockSkewTolerance + time.Second, want: true},
+		{name: "a record from the past is trusted", offset: -7 * time.Minute},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			root := t.TempDir()
+			trust := filepath.Join(root, "public.pem")
+			if err := os.WriteFile(trust, []byte("public"), 0o640); err != nil {
+				t.Fatal(err)
+			}
+			patchID := "cgupgrade-2.2-104-to-2.2-105-x86_64"
+			writer := NewManager(Config{RootDirectory: root, TrustKeyPath: trust},
+				WithInspector(inspectorStub{result: Package{
+					PatchID: patchID, SourceVersion: "2.2-104", TargetVersion: "2.2-105",
+					Architecture: "x86_64", SignatureVerified: true, RollbackAvailable: true, Rolling: true,
+					BootstrapAvailable: true, BootstrapProtocol: 1,
+				}}),
+				WithHelper(&helperStub{}),
+				WithClock(func() time.Time { return now.Add(testCase.offset) }))
+			if _, err := writer.Upload(context.Background(), "release.cgupgrade", strings.NewReader("signed package")); err != nil {
+				t.Fatal(err)
+			}
+
+			// The clock is corrected afterwards, which is what the site did on 2026-09-29.
+			reader := NewManager(Config{RootDirectory: root, TrustKeyPath: trust},
+				WithInspector(inspectorStub{result: Package{PatchID: patchID, BootstrapAvailable: true, BootstrapProtocol: 1}}),
+				WithHelper(&helperStub{}),
+				WithClock(func() time.Time { return now }))
+			snapshot := reader.Snapshot(context.Background())
+			if len(snapshot.Packages) != 1 {
+				t.Fatalf("unexpected snapshot: %+v", snapshot)
+			}
+			if snapshot.Packages[0].ClockSkew != testCase.want {
+				t.Fatalf("offset %s reported clock_skew=%v, want %v",
+					testCase.offset, snapshot.Packages[0].ClockSkew, testCase.want)
+			}
+		})
+	}
+}
+
+// A future-stamped finished record keeps its position at the head of the list, because the
+// ordering key is the very timestamp that is wrong. The site shape is reproduced here: the
+// hotfix record sorts above the upgrade package that was really uploaded later, and its job has
+// already succeeded. Reading packages[0] therefore selects a package that cannot run, which is
+// why the console resolves the newest actionable record instead; this test pins the server side
+// of that contract so the console assertion cannot quietly become vacuous.
+func TestSnapshotOrdersAFutureStampedRecordAboveALaterUpload(t *testing.T) {
+	futureStamped := time.Date(2026, 9, 29, 11, 1, 17, 712051173, time.UTC)
+	realUpload := time.Date(2026, 9, 29, 5, 16, 35, 838450034, time.UTC)
+	now := time.Date(2026, 9, 29, 5, 22, 0, 0, time.UTC)
+	root := t.TempDir()
+	trust := filepath.Join(root, "public.pem")
+	if err := os.WriteFile(trust, []byte("public"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, seeded := range []struct {
+		patchID    string
+		target     string
+		uploadedAt time.Time
+		jobStatus  Status
+	}{
+		{patchID: "HF-2026-0928-06", target: "2.2-104+hf-2026-0928-06", uploadedAt: futureStamped, jobStatus: StatusSucceeded},
+		{patchID: "cgupgrade-2.2-104-to-2.2-105-x86_64", target: "2.2-105", uploadedAt: realUpload},
+	} {
+		manager := NewManager(Config{RootDirectory: root, TrustKeyPath: trust},
+			WithInspector(inspectorStub{result: Package{
+				PatchID: seeded.patchID, SourceVersion: "2.2-104", TargetVersion: seeded.target,
+				Architecture: "x86_64", SignatureVerified: true, RollbackAvailable: true, Rolling: true,
+				BootstrapAvailable: true, BootstrapProtocol: 1,
+			}}),
+			WithHelper(&helperStub{}),
+			WithClock(func() time.Time { return seeded.uploadedAt }))
+		if _, err := manager.Upload(context.Background(), seeded.patchID+".cgupgrade", strings.NewReader("signed package")); err != nil {
+			t.Fatal(err)
+		}
+		if seeded.jobStatus != "" {
+			writeJobForTest(t, root, Job{
+				PatchID: seeded.patchID, Mode: ModeExecute, Status: seeded.jobStatus,
+				UpdatedAt: seeded.uploadedAt, FinishedAt: seeded.uploadedAt,
+			})
+		}
+	}
+
+	reader := NewManager(Config{RootDirectory: root, TrustKeyPath: trust}, WithHelper(&helperStub{}),
+		WithClock(func() time.Time { return now }))
+	snapshot := reader.Snapshot(context.Background())
+	if len(snapshot.Packages) != 2 {
+		t.Fatalf("unexpected snapshot: %+v", snapshot)
+	}
+	head := snapshot.Packages[0]
+	if head.Package.PatchID != "HF-2026-0928-06" || !head.ClockSkew {
+		t.Fatalf("a future-stamped record must stay at the head and be flagged: %+v", head)
+	}
+	if head.Job == nil || head.Job.Status != StatusSucceeded {
+		t.Fatalf("the head record must carry its finished job: %+v", head.Job)
+	}
+	if snapshot.Packages[1].Package.PatchID != "cgupgrade-2.2-104-to-2.2-105-x86_64" || snapshot.Packages[1].ClockSkew {
+		t.Fatalf("the freshly uploaded package must be second and untouched: %+v", snapshot.Packages[1])
+	}
+}

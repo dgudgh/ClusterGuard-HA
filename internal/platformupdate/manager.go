@@ -28,6 +28,14 @@ const (
 	PreferredPackageExtension = ".cgupgrade"
 	LegacyPackageExtension    = ".cgpatch"
 
+	// A stored uploaded_at further ahead of this node's clock than this cannot have been
+	// written by a clock that agreed with it - the node was running ahead when the record
+	// was created. The record is reported rather than quietly reordered: uploaded_at is
+	// both the ordering key and the time the console shows, so an operator who is about to
+	// pick an upgrade package has to know the time on that row is not trustworthy before
+	// trusting the row order it produced.
+	clockSkewTolerance = 5 * time.Minute
+
 	// Package kinds as reported by the signed package inspector. A hotfix reuses
 	// the legacy .cgpatch suffix but is applied by its own manifest-driven
 	// installer instead of an RPM transaction.
@@ -152,6 +160,10 @@ type Job struct {
 type PackageStatus struct {
 	Package Package `json:"package"`
 	Job     *Job    `json:"job,omitempty"`
+	// ClockSkew marks a record whose uploaded_at lies in the future, i.e. the node clock
+	// was running ahead when the record was written. It travels with the row so the
+	// console can say the time - and therefore the position - is not trustworthy.
+	ClockSkew bool `json:"clock_skew,omitempty"`
 }
 
 type Snapshot struct {
@@ -252,6 +264,9 @@ func (manager *Manager) Snapshot(ctx context.Context) Snapshot {
 			candidate = reconciled
 		}
 		status := PackageStatus{Package: candidate}
+		if skew := candidate.UploadedAt.Sub(manager.now()); skew > clockSkewTolerance {
+			status.ClockSkew = true
+		}
 		if job, jobFound := manager.Job(candidate.PatchID); jobFound {
 			status.Job = &job
 		}
