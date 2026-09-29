@@ -1132,7 +1132,11 @@ func New(configuration config.File, settings ...Option) (*Runtime, error) {
 	}
 	locks := newRuntimeLocks(repository, failoverAuthority)
 	updateMaintenance := maintenance.NewGate(maintenance.DefaultMarkerPath, repository)
-	softwareUpdates := platformupdate.NewManager(platformupdate.Config{})
+	// The release line is read from this binary's own build metadata: it is what
+	// the updater's baseline guard compares an installed RPM release against, and
+	// stamping it here means every construction path gets it without the control
+	// plane having to shell out to the package database.
+	softwareUpdates := platformupdate.NewManager(platformupdate.Config{CurrentRelease: platformupdate.CurrentRelease()})
 	operationCredentials := func(_ context.Context, cluster model.DatabaseCluster) (adapter.OperationCredentials, error) {
 		return databaseOperationCredentials(configuration, cluster)
 	}

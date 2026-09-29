@@ -594,3 +594,187 @@ func TestSnapshotOrdersAFutureStampedRecordAboveALaterUpload(t *testing.T) {
 		t.Fatalf("the freshly uploaded package must be second and untouched: %+v", snapshot.Packages[1])
 	}
 }
+
+// The baseline rule itself was the one part of the 2026-09-29 field incident that
+// already worked: the updater refused a 2.2-105 hotfix on a 2.2-104 cluster and
+// said exactly why. What failed was that nothing upstream knew the rule, so the
+// refused package still occupied the console's only action slot. This pins the
+// shared predicate to the updater's own two cases (scripts/clusterguard-upgrade.sh,
+// run_hotfix_update and run_rolling_update) using the values the site really held.
+func TestPackageBaselineFaultMirrorsTheUpdaterGuard(t *testing.T) {
+	for _, testCase := range []struct {
+		name      string
+		kind      string
+		source    string
+		target    string
+		current   string
+		wantFault bool
+	}{
+		{
+			name: "the field incident: a 2.2-105 hotfix on a 2.2-104 cluster is refused",
+			kind: PackageKindHotfix, source: "2.2-105", target: "2.2-105+hf-2026-0929-04", current: "2.2-104",
+			wantFault: true,
+		},
+		{
+			name: "the same hotfix is accepted once the cluster reaches 2.2-105",
+			kind: PackageKindHotfix, source: "2.2-105", target: "2.2-105+hf-2026-0929-04", current: "2.2-105",
+		},
+		{
+			name: "the hotfix the site did apply matched the line it was installed on",
+			kind: PackageKindHotfix, source: "2.2-104", target: "2.2-104+hf-2026-0928-06", current: "2.2-104",
+		},
+		{
+			name: "a rolling upgrade is accepted on the line it upgrades from",
+			kind: PackageKindUpgrade, source: "2.2-104", target: "2.2-105", current: "2.2-104",
+		},
+		{
+			name: "a rolling upgrade stays acceptable once a node reached the target",
+			kind: PackageKindUpgrade, source: "2.2-104", target: "2.2-105", current: "2.2-105",
+		},
+		{
+			name: "a rolling upgrade two lines behind is refused",
+			kind: PackageKindUpgrade, source: "2.2-103", target: "2.2-104", current: "2.2-105",
+			wantFault: true,
+		},
+		{
+			name: "a hotfix from the line below is refused as well",
+			kind: PackageKindHotfix, source: "2.2-104", target: "2.2-104+hf", current: "2.2-105",
+			wantFault: true,
+		},
+		{
+			name: "an unknown running release abstains rather than blocking legitimate uploads",
+			kind: PackageKindHotfix, source: "2.2-105", target: "2.2-105+hf", current: "",
+		},
+		{
+			name: "a package that reports no baseline abstains",
+			kind: PackageKindHotfix, source: "", target: "2.2-105+hf", current: "2.2-104",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			fault := packageBaselineFault(testCase.kind, testCase.source, testCase.target, testCase.current)
+			if (fault != "") != testCase.wantFault {
+				t.Fatalf("fault=%q wantFault=%v", fault, testCase.wantFault)
+			}
+			if !testCase.wantFault {
+				return
+			}
+			// An operator cannot act on "incompatible": the refusal has to name the
+			// line the package belongs to and the line the cluster is actually on,
+			// otherwise it repeats the fault the message text was meant to fix.
+			if !strings.Contains(fault, testCase.source) {
+				t.Fatalf("refusal must name the package line: %q", fault)
+			}
+			if testCase.current != "" && !strings.Contains(fault, testCase.current) {
+				t.Fatalf("refusal must name the running line: %q", fault)
+			}
+		})
+	}
+}
+
+// Refusing at the door only helps if it leaves nothing behind. A stored record
+// owns the console's single action slot, is ordered by upload time and is treated
+// as retryable after a failure, so a refused package that still got stored would
+// reproduce the very deadlock this guard exists to prevent.
+func TestUploadRefusesAPackageFromAnotherReleaseLine(t *testing.T) {
+	root := t.TempDir()
+	trust := filepath.Join(root, "public.pem")
+	if err := os.WriteFile(trust, []byte("public"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	patchID := "HF-2026-0929-04"
+	manager := NewManager(Config{RootDirectory: root, TrustKeyPath: trust, CurrentRelease: "2.2-104"},
+		WithInspector(inspectorStub{result: Package{
+			PatchID: patchID, Kind: PackageKindHotfix, SourceVersion: "2.2-105",
+			TargetVersion: "2.2-105+hf-2026-0929-04", Architecture: "x86_64",
+			SignatureVerified: true, RollbackAvailable: true, Rolling: true,
+		}}),
+		WithHelper(&helperStub{}))
+	_, err := manager.Upload(context.Background(), patchID+".cgpatch", strings.NewReader("signed package"))
+	if !errors.Is(err, ErrPackageBaselineMismatch) {
+		t.Fatalf("a package from another release line must be refused, got %v", err)
+	}
+	for _, want := range []string{"2.2-105", "2.2-104"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("the refusal must name %q so the operator learns which upgrade comes first: %v", want, err)
+		}
+	}
+	if _, statErr := os.Stat(filepath.Join(root, patchID)); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("a refused package must leave no record behind: %v", statErr)
+	}
+	if snapshot := manager.Snapshot(context.Background()); len(snapshot.Packages) != 0 {
+		t.Fatalf("a refused package must not appear in the snapshot: %+v", snapshot.Packages)
+	}
+}
+
+// Records that already carry a foreign baseline - uploaded before this guard, or
+// accepted while the cluster sat on another line - must be annotated rather than
+// hidden: the operator has to see why the package is listed but will not run.
+func TestSnapshotMarksAPackageFromAnotherReleaseLine(t *testing.T) {
+	now := time.Date(2026, 9, 29, 6, 2, 27, 0, time.UTC)
+	root := t.TempDir()
+	trust := filepath.Join(root, "public.pem")
+	if err := os.WriteFile(trust, []byte("public"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	foreign := "HF-2026-0929-04"
+	legitimate := "cgupgrade-2.2-104-to-2.2-105-x86_64"
+	for _, seeded := range []struct {
+		patchID    string
+		kind       string
+		source     string
+		target     string
+		uploadedAt time.Time
+	}{
+		{foreign, PackageKindHotfix, "2.2-105", "2.2-105+hf-2026-0929-04", now},
+		{legitimate, PackageKindUpgrade, "2.2-104", "2.2-105", now.Add(-46 * time.Minute)},
+	} {
+		patchID, kind, source, target := seeded.patchID, seeded.kind, seeded.source, seeded.target
+		uploadedAt := seeded.uploadedAt
+		writer := NewManager(Config{RootDirectory: root, TrustKeyPath: trust},
+			WithInspector(inspectorStub{result: Package{
+				PatchID: patchID, Kind: kind, SourceVersion: source, TargetVersion: target,
+				Architecture: "x86_64", SignatureVerified: true, RollbackAvailable: true, Rolling: true,
+				BootstrapAvailable: true, BootstrapProtocol: 1,
+			}}),
+			WithHelper(&helperStub{}),
+			WithClock(func() time.Time { return uploadedAt }))
+		if _, err := writer.Upload(context.Background(), patchID+".cgpatch", strings.NewReader("signed package")); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	reader := NewManager(Config{RootDirectory: root, TrustKeyPath: trust, CurrentRelease: "2.2-104"},
+		WithHelper(&helperStub{}), WithClock(func() time.Time { return now }))
+	snapshot := reader.Snapshot(context.Background())
+	if len(snapshot.Packages) != 2 {
+		t.Fatalf("the foreign record must stay visible, not be hidden: %+v", snapshot.Packages)
+	}
+	head := snapshot.Packages[0]
+	if head.Package.PatchID != foreign {
+		t.Fatalf("the newest upload still sorts first: %+v", head.Package)
+	}
+	if !head.Incompatible {
+		t.Fatalf("the foreign record must be marked incompatible: %+v", head)
+	}
+	for _, want := range []string{"2.2-105", "2.2-104"} {
+		if !strings.Contains(head.IncompatibleReason, want) {
+			t.Fatalf("the reason must name %q: %q", want, head.IncompatibleReason)
+		}
+	}
+	if snapshot.Packages[1].Incompatible || snapshot.Packages[1].IncompatibleReason != "" {
+		t.Fatalf("a rolling package that matches this line must not be marked: %+v", snapshot.Packages[1])
+	}
+}
+
+// A guard only tests exercise reads as present while doing nothing in production.
+// The control plane has exactly one construction site and it must stamp the
+// release this binary was built for; without it the guard silently abstains.
+func TestProductionWiresTheRunningReleaseIntoTheSoftwareUpdateManager(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("..", "runtime", "runtime.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(source), "platformupdate.Config{CurrentRelease: platformupdate.CurrentRelease()}") {
+		t.Fatal("internal/runtime must construct the software update manager with the release this binary runs, or the upload baseline guard silently abstains in production")
+	}
+}

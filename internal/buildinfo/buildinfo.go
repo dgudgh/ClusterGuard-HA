@@ -7,6 +7,11 @@ const (
 	StateFormat        = 1
 	UpdateProtocol     = 1
 	UpdateGateProtocol = 1
+
+	// DevRelease is the release a binary reports when the release builder did not
+	// link one in. It names no real release line, so anything that has to compare
+	// release lines must treat it as "unknown" rather than as a match candidate.
+	DevRelease = "0"
 )
 
 // These values are replaced by the release builder through Go linker flags.

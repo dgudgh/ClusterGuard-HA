@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"clusterguard.io/ha/internal/buildinfo"
 )
 
 const (
@@ -63,7 +65,13 @@ var (
 	ErrConfirmationRequired = errors.New("typed update package confirmation is required")
 	ErrJobActive            = errors.New("another software update job is already active")
 	ErrBootstrapRequired    = errors.New("signed .cgupgrade package does not contain a verified bootstrap upgrader")
-	patchIDPattern          = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+	// ErrPackageBaselineMismatch reports a package that is cryptographically
+	// sound but belongs to a release line this cluster is not running. The
+	// console used to accept such a package and only discover it was unusable
+	// when its plan ran the updater's own baseline guard - by which point the
+	// record already owned the single action slot and could never release it.
+	ErrPackageBaselineMismatch = errors.New("软件更新包与当前集群基线不一致")
+	patchIDPattern             = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 )
 
 const AutomaticFailoverWarning = "系统升级期间无法进行自动切换，请注意关注。"
@@ -71,6 +79,39 @@ const AutomaticFailoverWarning = "系统升级期间无法进行自动切换，�
 func SupportedPackageFileName(fileName string) bool {
 	name := strings.ToLower(strings.TrimSpace(filepath.Base(fileName)))
 	return strings.HasSuffix(name, PreferredPackageExtension) || strings.HasSuffix(name, LegacyPackageExtension)
+}
+
+// packageBaselineFault reports why a signed package cannot ever be applied to a
+// cluster running current, or "" when it can. This is deliberately the single
+// implementation of the rule: the upload path rejects on it and the snapshot
+// annotates on it, so the two can never drift apart.
+//
+// The rule is not invented here - it mirrors the baseline guard in the updater
+// (scripts/clusterguard-upgrade.sh, run_hotfix_update and run_rolling_update),
+// which is the only other place that decides it:
+//
+//   - A hotfix replaces files inside one installed release, so the updater
+//     requires the installed release to equal the patch baseline exactly, and
+//     it never changes the RPM release, so the baseline stays valid afterwards.
+//   - A rolling package is applied node by node and is resumable, so the updater
+//     accepts a node that already reached the target as well as one still on the
+//     source. Both ends are therefore legitimate baselines.
+//
+// An unknown running release (a build with no release metadata linked in, or an
+// unreadable one) abstains rather than blocking legitimate uploads.
+func packageBaselineFault(kind string, sourceVersion string, targetVersion string, current string) string {
+	current = strings.TrimSpace(current)
+	sourceVersion = strings.TrimSpace(sourceVersion)
+	if current == "" || sourceVersion == "" || sourceVersion == current {
+		return ""
+	}
+	if kind == PackageKindHotfix {
+		return fmt.Sprintf("热修补丁属于 %s 发布线，本集群运行 %s；请先完成到 %s 的滚动升级再上传。", sourceVersion, current, sourceVersion)
+	}
+	if strings.TrimSpace(targetVersion) == current {
+		return ""
+	}
+	return fmt.Sprintf("滚动升级包适用于 %s 到 %s，本集群运行 %s；请确认集群版本或改用匹配的升级包。", sourceVersion, targetVersion, current)
 }
 
 type Mode string
@@ -95,8 +136,8 @@ const (
 )
 
 type Package struct {
-	ArtifactsPruned    bool      `json:"artifacts_pruned,omitempty"`
-	PatchID            string    `json:"patch_id"`
+	ArtifactsPruned bool   `json:"artifacts_pruned,omitempty"`
+	PatchID         string `json:"patch_id"`
 	// Kind distinguishes a rolling RPM upgrade from a hotfix patch. The console
 	// accepts both and applies them through the same helper, but the two are not
 	// interchangeable: a hotfix deliberately leaves the installed RPM release
@@ -164,6 +205,14 @@ type PackageStatus struct {
 	// was running ahead when the record was written. It travels with the row so the
 	// console can say the time - and therefore the position - is not trustworthy.
 	ClockSkew bool `json:"clock_skew,omitempty"`
+	// Incompatible marks a record whose source_version does not describe this
+	// cluster's release line, i.e. a package that can never be applied here
+	// regardless of how often it is retried. It travels with the row for the same
+	// reason ClockSkew does: the console has to know before it picks a target, and
+	// it must not re-derive the answer from a second copy of the rule living in
+	// JavaScript. IncompatibleReason carries the operator-facing explanation.
+	Incompatible       bool   `json:"incompatible,omitempty"`
+	IncompatibleReason string `json:"incompatible_reason,omitempty"`
 }
 
 type Snapshot struct {
@@ -180,6 +229,30 @@ type Config struct {
 	UpgradeBinaryPath  string
 	HelperSocketPath   string
 	MaximumUploadBytes int64
+	// CurrentRelease is the release line this control plane is running, written
+	// in the same "<version>-<release>" form a signed package reports as its
+	// source_version and the updater compares against the installed RPM release
+	// (scripts/clusterguard-upgrade.sh, run_hotfix_update). It comes from the
+	// binary's own build metadata rather than an rpm query so the control plane
+	// needs no package database access; the hotfix builder stamps the plain
+	// release, so the value survives a hotfix exactly like the RPM release does.
+	// Empty disables the baseline guard, which is what a development build that
+	// was never linked with release metadata should do.
+	CurrentRelease string
+}
+
+// CurrentRelease reports the release line the running control plane belongs to,
+// in the form signed packages and the updater both use (for example "2.2-105").
+//
+// A binary that was never linked with release metadata reports the development
+// sentinel (see internal/buildinfo), which names no release line, so this returns
+// the empty string and the baseline guard abstains. Guessing a line here would
+// turn a development build into a cluster that refuses every package.
+func CurrentRelease() string {
+	if buildinfo.Release == buildinfo.DevRelease {
+		return ""
+	}
+	return buildinfo.Version + "-" + buildinfo.Release
 }
 
 type Inspector interface {
@@ -267,6 +340,14 @@ func (manager *Manager) Snapshot(ctx context.Context) Snapshot {
 		if skew := candidate.UploadedAt.Sub(manager.now()); skew > clockSkewTolerance {
 			status.ClockSkew = true
 		}
+		// A record can only carry a foreign baseline if it predates the upload
+		// guard or was accepted while the cluster sat on another release line.
+		// It is annotated rather than hidden: the operator still has to see why
+		// the package is on the list but is not the one the console will run.
+		if fault := packageBaselineFault(candidate.Kind, candidate.SourceVersion, candidate.TargetVersion, manager.config.CurrentRelease); fault != "" {
+			status.Incompatible = true
+			status.IncompatibleReason = fault
+		}
 		if job, jobFound := manager.Job(candidate.PatchID); jobFound {
 			status.Job = &job
 		}
@@ -320,6 +401,14 @@ func (manager *Manager) Upload(ctx context.Context, fileName string, source io.R
 	if strings.HasSuffix(strings.ToLower(filepath.Base(fileName)), PreferredPackageExtension) &&
 		(!inspected.BootstrapAvailable || inspected.BootstrapProtocol != 1) {
 		return Package{}, ErrBootstrapRequired
+	}
+	// A signature proves where a package came from, not that this cluster can
+	// run it. Rejecting here is the only place that can still say no cheaply:
+	// once the record exists the console has a single action slot, orders it by
+	// upload time, and treats a failed job as retryable - so a package built for
+	// a release line this cluster is not on would hold that slot forever.
+	if fault := packageBaselineFault(inspected.Kind, inspected.SourceVersion, inspected.TargetVersion, manager.config.CurrentRelease); fault != "" {
+		return Package{}, fmt.Errorf("%w：%s", ErrPackageBaselineMismatch, fault)
 	}
 	destinationDirectory := filepath.Join(manager.config.RootDirectory, inspected.PatchID)
 	if info, statErr := os.Lstat(destinationDirectory); statErr == nil && !info.IsDir() {
