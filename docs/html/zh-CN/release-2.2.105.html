@@ -84,9 +84,14 @@ VIP 归属租约不再续期，数据节点按设计摘掉 VIP 并把实例设�
 <p>交付工具链本身（一次现场处理出一个累积补丁包、双语热修台账、相应防漏门禁）也在本版范围内，
 但它不改变产品运行时行为，只影响我们如何把修复送到现场。</p>
 </blockquote>
-<h2 id="介质构建之后发现的缺陷-上传完-滚动升级-按钮不亮">介质构建之后发现的缺陷：上传完「滚动升级」按钮不亮<a class="heading-anchor" href="#介质构建之后发现的缺陷-上传完-滚动升级-按钮不亮" aria-label="Link to 介质构建之后发现的缺陷：上传完「滚动升级」按钮不亮">#</a></h2>
-<p>本版介质打包提交是 <code>bf2feeb</code>，打包完成于 2026-09-29T04:48:28Z。<strong>介质构建之后</strong>现场在
-同日的控制台实操中发现一个缺陷，因此<strong>本介质里仍然带着它</strong>，修复不在介质内。</p>
+<h2 id="介质构建之后发现的缺陷-升级弹窗里点不动的两个动作">介质构建之后发现的缺陷：升级弹窗里点不动的两个动作<a class="heading-anchor" href="#介质构建之后发现的缺陷-升级弹窗里点不动的两个动作" aria-label="Link to 介质构建之后发现的缺陷：升级弹窗里点不动的两个动作">#</a></h2>
+<p>本版介质打包提交是 <code>bf2feeb</code>，打包完成于 2026-09-29T04:48:28Z。<strong>介质构建之后</strong>，现场在同一天
+（2026-09-29）的两轮控制台实操里暴露出五个缺陷，因此<strong>本介质里仍然带着它们</strong>，修复不在介质内。</p>
+<p>这五个缺陷是同一句话的两次现身：控制台判断「这个包能不能装在本集群上」时只读了时间轴——记录新不新、
+作业失败过没有——没有读另一个维度：<strong>包与集群的关系</strong>，也就是包的 <code>source_version</code> 与集群正在跑的
+发布线是否一致。这一维上算错的代价很实在：唯一能执行的那个包被一个永远装不上的包挡住，而页面上
+没有一句话说明原因。</p>
+<h3 id="第一次-13-16-首行是一条时间戳落在未来的终态记录">第一次（13:16）：首行是一条时间戳落在未来的终态记录<a class="heading-anchor" href="#第一次-13-16-首行是一条时间戳落在未来的终态记录" aria-label="Link to 第一次（13:16）：首行是一条时间戳落在未来的终态记录">#</a></h3>
 <ul>
 <li>现象：上传 <code>.cgupgrade</code> 后校验通过、历史记录出现「已上传」，但「滚动升级」按钮始终灰着点
 不动；同一个对话框上方却是绿色的「校验完成」，页面不解释原因。</li>
@@ -99,9 +104,33 @@ VIP 归属租约不再续期，数据节点按设计摘掉 VIP 并把实例设�
 计划与确认框都从同一主体推导，并在无包可执行时改说「校验完成，但当前没有可执行的升级包」
 且点名占住列表的那条记录；服务端在 <code>PackageStatus</code> 上增加 <code>clock_skew</code>（容忍 5 分钟），
 让历史行自己标注「记录时间戳晚于当前时间，排序与时间不可信」。</li>
+</ul>
+<h3 id="第二次-14-02-一个属于别的发布线的包占住了唯一可执行槽">第二次（14:02）：一个属于别的发布线的包占住了唯一可执行槽<a class="heading-anchor" href="#第二次-14-02-一个属于别的发布线的包占住了唯一可执行槽" aria-label="Link to 第二次（14:02）：一个属于别的发布线的包占住了唯一可执行槽">#</a></h3>
+<ul>
+<li>现象：为了给 2.2-105 备好修复，现场把一个<strong>属于 2.2-105 发布线</strong>的热修补丁
+（<code>HF-2026-0929-04</code>，<code>source_version = 2.2-105</code>）上传到<strong>仍停在 2.2-104</strong> 的集群。上传顺利、
+记录随即出现并占住控制台<strong>唯一的可执行槽</strong>；点「计划」后升级器按设计拒绝，但真正该执行的
+<code>cgupgrade-2.2-104-to-2.2-105-x86_64</code> 排在被它压住的位置，从界面上无法选中。于是集群的升级
+通道被一个本机永远装不上的包堵死，且当时没有任何退场手段：该版本没有删除或停用记录的接口，
+而重传同一份内容会返回既有记录并保留原始 <code>UploadedAt</code>。</li>
+<li>根因：三个各自都正确的设计叠在同一处。① 上传口只回答「这个包是不是我们的」（验签），不回答
+「这台机器能不能装它」；② 列表按 <code>uploaded_at</code> 倒序、列表项只认第一条、且对话框里没有包选择器；
+③ <code>failed</code> 是<strong>可重试</strong>状态，所以失败记录不退位。唯一正确的拒绝来自升级器自己的基线校验，
+而它排在最后，结论也不回流到任何一条已经做出的判定里。</li>
+<li>修复（三个提交）：① 上传口改用<strong>升级器自己的口径</strong>拒绝跨基线包
+（<code>ErrPackageBaselineMismatch</code> → HTTP 409），且拒绝发生在建立目标目录<strong>之前</strong>，被拒的包连记录
+都不留下；<code>Snapshot</code> 同时给已有记录打上 <code>incompatible</code> / <code>incompatible_reason</code>，把同一句判定
+带给前台。② 控制台把 <code>incompatible</code> 记录排除出可执行候选，历史行标注它属于哪条发布线、
+本集群是哪条；一条可执行记录都没有时改说「当前没有可执行的升级包」并点名那条跨基线记录，
+而不再说「已经执行完成，不能重复发起」。③ 失败作业从升级器写进 <code>output.log</code> 的
+「升级失败：…」里提取真实原因交给操作员，不再指向这条路径上根本不存在的「维护门禁」。</li>
+</ul>
+<h3 id="交付形式与顺序约束">交付形式与顺序约束<a class="heading-anchor" href="#交付形式与顺序约束" aria-label="Link to 交付形式与顺序约束">#</a></h3>
+<ul>
 <li>交付形式：签名热修包
 <code>release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-04-2.2-105.x86_64.cgpatch</code>
-（双语台账见 <code>docs/hotfix-patches.md</code> / <code>docs/zh-CN/hotfix-patches.md</code>）。</li>
+——<strong>一个包</strong>同时覆盖上面五个缺陷（双语台账见 <code>docs/hotfix-patches.md</code> /
+<code>docs/zh-CN/hotfix-patches.md</code>）。</li>
 </ul>
 <blockquote>
 <p><strong>应用顺序是硬约束：必须先滚动升级到 2.2-105，再装这个热修包。</strong> <code>.cgupgrade</code> 会整体替换
@@ -116,6 +145,12 @@ VIP 归属租约不再续期，数据节点按设计摘掉 VIP 并把实例设�
 <li><code>go test ./... -count=1</code>（含 <code>scripts</code> 包的交付链路测试）</li>
 <li>全部 shell 脚本 <code>bash -n</code> 语法检查</li>
 <li>观测水位容忍、时钟网格、热修台账等门禁脚本</li>
+<li><code>scripts</code> 包的 <code>TestBuildersStampExactlyTheBuildinfoSymbolsTheyDeclare</code>：两个构建器的每一个
+<code>-X</code> 都必须指向 <code>internal/buildinfo</code> 真的声明的变量。链接器对指错符号的 <code>-X</code> 是<strong>静默忽略</strong>的
+——包照样构建、照样交付，而 <code>--version-json</code> 会答 <code>development-0</code>；这条路径上没有任何别的东西
+会看它一眼</li>
+<li>热修包的载荷来源可复核：用构建器同一套 <code>-ldflags</code>（<code>BuiltAt</code> 取包内清单的 <code>built_at</code>）对
+<code>build_commit</code> 重建，两个载荷二进制与包内文件<strong>逐字节相同</strong></li>
 <li><code>verify-license-consistency.cjs</code> 许可一致性——<strong>本版改动了 <code>packaging/rpm/nfpm.yaml</code></strong>
 （新增一个随包交付的脚本），许可文件与 RPM 元数据需保持一致</li>
 <li>离线介质的独立只读校验（<code>verify-offline-kit.cjs</code>），以及包内许可文件与仓库原文的逐字节比对</li>
@@ -156,8 +191,10 @@ VIP 自动接管<strong>均未执行</strong>。控制台一侧的验收是分�
 <ul>
 <li><strong>已做</strong>：multipart 上传到「滚动升级」可用性这条判定链<strong>已有真实浏览器验收</strong>——
 <code>tools/console-update-pending-acceptance.cjs</code> 驱动仓库内真实的 <code>console.html</code>，覆盖「未来时间
-戳记录占住首行」「列表里没有可执行包」「常规上传」三个场景共 25 项断言，不依赖 playwright；
-四处变异（主体退回首行、身份栏退回首行、<code>clock_skew</code> 读深一层、去掉 blocked 分支）全部被抓到。</li>
+戳记录占住首行」「列表里没有可执行包」「常规上传」「跨基线记录压在可执行包之上」「列表里只有
+一条跨基线记录」五个场景共 49 项断言，不依赖 playwright；七处变异（主体退回首行、身份栏退回
+首行、<code>clock_skew</code> 读深一层、去掉 blocked 分支、可执行判定不再排除 <code>incompatible</code>、历史行不再
+标注 <code>incompatible</code>、blocked 文案退回「已经执行完成」）全部被抓到，且每次都核对文件逐字节复原。</li>
 <li><strong>未做</strong>：上述验收跑在仓库自带的 API 夹具上，<strong>不是</strong>对已部署控制面的实测。因此<strong>仍未验收</strong>
 的是：对现场控制面的 HTTP 层登录与 multipart 真实上传、上传之后真正执行一次滚动升级与回退，
 以及本记录上方那个热修包的现场应用。</li>
@@ -171,7 +208,7 @@ VIP 自动接管<strong>均未执行</strong>。控制台一侧的验收是分�
         </article>
         <aside class="page-toc" aria-label="本页目录">
           <strong>本页目录</strong>
-          <a class="toc-level-2" href="#本次变更">本次变更</a><a class="toc-level-3" href="#1-集群时钟-本版主要变更">1. 集群时钟（本版主要变更）</a><a class="toc-level-3" href="#2-写入者协调与整机重启可恢复性">2. 写入者协调与整机重启可恢复性</a><a class="toc-level-3" href="#3-控制台">3. 控制台</a><a class="toc-level-3" href="#4-在线升级与热修补丁通道">4. 在线升级与热修补丁通道</a><a class="toc-level-2" href="#介质构建之后发现的缺陷-上传完-滚动升级-按钮不亮">介质构建之后发现的缺陷：上传完「滚动升级」按钮不亮</a><a class="toc-level-2" href="#验证范围">验证范围</a><a class="toc-level-2" href="#介质范围">介质范围</a><a class="toc-level-2" href="#使用入口">使用入口</a><a class="toc-level-2" href="#现场验收状态">现场验收状态</a>
+          <a class="toc-level-2" href="#本次变更">本次变更</a><a class="toc-level-3" href="#1-集群时钟-本版主要变更">1. 集群时钟（本版主要变更）</a><a class="toc-level-3" href="#2-写入者协调与整机重启可恢复性">2. 写入者协调与整机重启可恢复性</a><a class="toc-level-3" href="#3-控制台">3. 控制台</a><a class="toc-level-3" href="#4-在线升级与热修补丁通道">4. 在线升级与热修补丁通道</a><a class="toc-level-2" href="#介质构建之后发现的缺陷-升级弹窗里点不动的两个动作">介质构建之后发现的缺陷：升级弹窗里点不动的两个动作</a><a class="toc-level-3" href="#第一次-13-16-首行是一条时间戳落在未来的终态记录">第一次（13:16）：首行是一条时间戳落在未来的终态记录</a><a class="toc-level-3" href="#第二次-14-02-一个属于别的发布线的包占住了唯一可执行槽">第二次（14:02）：一个属于别的发布线的包占住了唯一可执行槽</a><a class="toc-level-3" href="#交付形式与顺序约束">交付形式与顺序约束</a><a class="toc-level-2" href="#验证范围">验证范围</a><a class="toc-level-2" href="#介质范围">介质范围</a><a class="toc-level-2" href="#使用入口">使用入口</a><a class="toc-level-2" href="#现场验收状态">现场验收状态</a>
         </aside>
       </main>
     </div>
