@@ -20,7 +20,7 @@ baseline silently downgrades binaries back to its own release line.
 
 | Hotfix | Severity | Fix commits | Build tree | Artifact |
 | --- | --- | --- | --- | --- |
-| HF-2026-0929-01 | P0 | `ed9faca`, `d5f9491`, `dd82ca5`, `5ae2039`, `28e3b47`, `9303e9d`, `18d738e`, `81fe3c8`, `ac6f3f7`, `abf5782`, `fce48b7` | `fd59a3b` | `release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-01-2.2-104.x86_64.cgpatch` |
+| HF-2026-0929-02 | P0 | `7a1ba82`, `ed9faca`, `d5f9491`, `dd82ca5`, `5ae2039`, `28e3b47`, `9303e9d`, `18d738e`, `81fe3c8`, `ac6f3f7`, `abf5782`, `fce48b7` | `7a1ba82` | `release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-02-2.2-104.x86_64.cgpatch` |
 | HF-2026-0928-02 | P0 | `914c6c5`, `3c88289`, `4015f97`, `0e8ab48`, `f90f995` | `f90f995` | `release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-2.2-103.x86_64.cgpatch` |
 
 ## Applying a patch
@@ -37,15 +37,15 @@ systemctl restart <unit> # apply.sh prints the units it needs; it never restarts
 bash rollback.sh         # restores from the newest backup manifest
 ```
 
-## HF-2026-0929-01 — 2.2-104 site fix bundle (cumulative): adds the three fixes for the uniform clock offset on top of HF-2026-0928-06 — lease re-anchoring after a backwards step, a deliberate clock authority with a pinned display timezone, and hotfix components derived from the import graph
+## HF-2026-0929-02 — 2.2-104 site fix bundle (cumulative): adds the fix for a topology watermark that rejected every refresh after the clock moved backwards — the watermark falls back onto the current clock, leases renew again, and VIP and instance authorisation resume
 
 - Severity: P0
-- Fix commits: `ed9faca`, `d5f9491`, `dd82ca5`, `5ae2039`, `28e3b47`, `9303e9d`, `18d738e`, `81fe3c8`, `ac6f3f7`, `abf5782`, `fce48b7`
-- Build tree: `fd59a3b28457e1ac021e47c062e13b1c65f22351` (baseline `e01f5ce376f94e2595590358c72dd2585e7c09b4` plus the fixes above and nothing else)
-- Applies to: 2.2-104 → 2.2-104+hf-2026-0929-01 (x86_64)
-- Artifact: `release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-01-2.2-104.x86_64.cgpatch`
-- SHA-256: `9b46dfd18cd86203d93deea2599cdc7b0ae958de733779b80b3727ded09f7ec5`
-- Source diff: `src/HF-2026-0929-01-fd59a3b.patch`
+- Fix commits: `7a1ba82`, `ed9faca`, `d5f9491`, `dd82ca5`, `5ae2039`, `28e3b47`, `9303e9d`, `18d738e`, `81fe3c8`, `ac6f3f7`, `abf5782`, `fce48b7`
+- Build tree: `7a1ba820995d7fb26f89b36d3e1e62b62ccd278e` (baseline `e01f5ce376f94e2595590358c72dd2585e7c09b4` plus the fixes above and nothing else)
+- Applies to: 2.2-104 → 2.2-104+hf-2026-0929-02 (x86_64)
+- Artifact: `release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-02-2.2-104.x86_64.cgpatch`
+- SHA-256: `42d18932b23d1929bfd260cd7300a707fc947d2ff7a9d186a93fed927cc1402a`
+- Source diff: `src/HF-2026-0929-02-7a1ba82.patch`
 - Payload:
   - `payload/bin/clusterguard` → `/usr/local/bin/clusterguard` (0755)
   - `payload/bin/clusterguard-agent` → `/usr/local/bin/clusterguard-agent` (0755)
@@ -62,9 +62,25 @@ bash rollback.sh         # restores from the newest backup manifest
 
 ### What this patch does
 
-This patch contains and supersedes HF-2026-0928-06, plus three fixes, all flowing from one event: the uniform clock offset found on site on 2026-09-29, where all three nodes' UTC ran eight hours fast. (1) Lease re-anchoring after a backwards step (ac6f3f7, P0): stepping the clock back strands the VIP ownership lease's expiry eight hours out, so it never expires when its holder stops renewing it and automatic takeover is silently off — this has to be fixed before the clock is corrected. (2) A deliberate clock authority and a pinned display timezone (abf5782, P1): --server no longer swallows the node's own time unchecked, and the timezone lands on both roles and can now reach a site through the RPM. (3) Hotfix components derived from the import graph (fce48b7, P1): without it this patch would have carried the runtime script and no binary, and the lease fix would never have arrived. The payload therefore carries one binary more than the previous patch, /usr/local/libexec/clusterguard-update-helper — HF-2026-0928-06 omitted it, so the helper half of the console hotfix channel never actually landed. Apply this patch alone and never mix baselines. Correct the clock afterwards, then confirm on the spot that the lease's expires_at has been re-anchored to roughly the current UTC plus 60 seconds.
+This patch contains and supersedes HF-2026-0929-01, plus one P0 fix (7a1ba82) measured on 2026-09-29 after stepping all three nodes from a clock running eight hours fast back to the real time. A watermark is only as trustworthy as the clock that wrote it: correcting the clock is itself what puts every later observation behind the watermark, so strict monotonicity rejects refreshes forever, observed_at never leaves the wrong clock, the ownership keeper reads the topology as coming from the future and skips the renewal, and the agents release the VIP and lock every instance read-only - fixing the clock is what takes the cluster down, with no way out from the host. The gap itself is now the evidence: a backwards step wider than five minutes cannot be an ordering violation, so it is admitted and the watermark lands on the new observation, while behaviour inside the tolerance is unchanged. The payload is the same as HF-2026-0929-01 (the control plane, agent and update-helper binaries plus the clock mesh script and the environment/unit lists), but all three binaries are rebuilt from the new build tree. Apply this patch alone and never mix baselines. Restart clusterguard-ha on all three nodes afterwards and confirm on the spot that stale topology observation no longer appears, that metadata.json keeps advancing, and that the lease expires_at has re-anchored to roughly the current UTC plus 60 seconds.
 
-### HF-2026-0929-01.1 A hotfix uploaded to the console was only told to use the command line, a channel the product never provided (`81fe3c8`, P1)
+### HF-2026-0929-02.1 After the clock moved backwards the topology watermark rejected every refresh forever, so the lease stopped renewing, the VIP was released and every instance was locked read-only (`7a1ba82`, P0)
+
+- Symptom: After stepping all three nodes from a clock running eight hours fast back to the real time and restarting the control plane, the cluster never came back, and nothing available on the host could bring it back. The control plane logged a failure every second - `scheduled topology discovery failed: apply discovery refresh batch: ... stale topology observation: observed at 2026-09-29T03:44:12.100668659Z is not after 2026-09-29T11:27:36.730892013Z` - while /var/lib/clusterguard/metadata.json and raft.db stopped advancing within a minute of start-up and clusterguard_state_revision froze. On the lease side the keeper reported `VIP ownership reconciliation failed: cluster ... topology is stale or unavailable` every five minutes and the VIP ownership lease sat with an expires_at roughly eight hours in the future. The data node agents then released the VIP and forced every instance read-only, by design. The striking part is the direction of causation: correcting the clock is what took the cluster down, so a maintenance action meant to make the system more correct cost the whole cluster.
+
+- Root cause: A topology observation has to move the watermark forward; that monotonicity check is what stops a late refresh from replacing fresher evidence with staler evidence. An isolated deployment has no external time reference, though, so the watermark is only as good as the clock that wrote it - and once an operator corrects a clock that was wrong, *every* later observation lands behind the watermark, so strict monotonicity rejects refreshes forever. What is being rejected is not a stale observation; it is a clock that no longer exists. The consequences close a loop: topology never refreshes, so topology_snapshots[].observed_at stays pinned at the wrong clock's 11:27:36; the ownership keeper's freshness test (`snapshot.ObservedAt.After(now.Add(interval))`, i.e. "the topology is from the future") then calls it stale and skips the renewal entirely; the lease is never renewed; and the agents release the VIP and lock every instance read-only by design. One root cause, two faces: on the write side "the watermark rejected the observation", on the authorisation side "the topology is from the future".
+
+- Fix: The gap itself is now the evidence. A probe, retry or scheduling delay can reorder observations by seconds, never by hours, so a gap wider than any plausible one cannot be an ordering violation - it is a clock that no longer exists. Such an observation is let through and the watermark lands on it, which re-arms strict ordering from that moment on; and once the write side admits the observation, observed_at lands on the current clock too, so the authorisation side's freshness test passes and renewals resume. Inside the tolerance (observationWatermarkRewindTolerance = 5 * time.Minute) nothing changes, so the protection the watermark exists for is untouched. Both directions are asserted: a one-minute step backwards is still rejected with ErrStaleObservation, an eight-hour one is absorbed; and the watermark, the published observation and the reopened persistent file must all agree, with new observations advancing normally afterwards. tools/verify-observation-watermark-tolerance.cjs pins the shape of the tolerance - positive, bounded, strictly smaller than the step it absorbs - and asserts the rewind test still asserts the ordering violation, so the gate cannot pass by deleting the protection it guards.
+
+- When to apply:
+  - 修正过集群时间之后（或任何场合回拨过系统时钟之后）集群停在 degraded、控制台迟迟不刷新
+  - 控制面日志每秒刷一条 stale topology observation: observed at … is not after …
+  - /var/lib/clusterguard/metadata.json 与 raft.db 的 mtime 不再前进，clusterguard_state_revision 卡死
+  - 控制面日志每 5 分钟报 VIP ownership reconciliation failed: … topology is stale or unavailable
+  - VIP 归属租约的 expires_at 停在约 8 小时之后
+  - 数据节点 agent 摘掉 VIP 并把 MySQL 实例设成只读
+
+### HF-2026-0929-02.2 A hotfix uploaded to the console was only told to use the command line, a channel the product never provided (`81fe3c8`, P1)
 
 - Symptom: Following the previous fix's own guidance, the operator uploaded clusterguard-ha-hotfix-*.cgpatch to the Version Update dialog and got "this package is a hotfix (clusterguard-hotfix/), it does not go through the console rolling channel; extract it on the control node with tar -xzf and run clusterguard-hotfix/apply.sh". The guidance was accurate, but the console neither accepted the package nor offered plan/execute/rollback, so every hotfix meant hand-extracted SSH work on every node, with no record of the signature check, the execution, or any ability to roll back.
 
@@ -78,7 +94,7 @@ This patch contains and supersedes HF-2026-0928-06, plus three fixes, all flowin
   - 需要让热修包的验签、计划、执行与回滚都在控制台留有记录
   - 担心热修补丁包里的 apply.sh / rollback.sh 没有被签名锚定
 
-### HF-2026-0929-01.2 Payload destinations were guessed from the source name, so the fix landed where the product never looks (`18d738e`, P1)
+### HF-2026-0929-02.3 Payload destinations were guessed from the source name, so the fix landed where the product never looks (`18d738e`, P1)
 
 - Symptom: After HF-04 every script, unit and binary reported installed, yet the console still rejected hotfix uploads with an out-of-scope path error: the fixed script had been written to /usr/local/libexec/clusterguard-upgrade.sh, a path the product never executes, while the file actually invoked, /usr/local/sbin/clusterguard-upgrade, was still the RPM build from 24 September.
 
@@ -91,7 +107,7 @@ This patch contains and supersedes HF-2026-0928-06, plus three fixes, all flowin
   - 控制台上传热修包仍然报「范围外路径：clusterguard-hotfix/」
   - 需要判断某个脚本到底哪一份副本在生效
 
-### HF-2026-0929-01.3 A hotfix patch uploaded to the console was rejected with an opaque path error instead of naming the wrong channel (`9303e9d`, P1)
+### HF-2026-0929-02.4 A hotfix patch uploaded to the console was rejected with an opaque path error instead of naming the wrong channel (`9303e9d`, P1)
 
 - Symptom: An operator uploading clusterguard-ha-hotfix-*.cgpatch to the Version Update dialog (the file picker accepts the .cgpatch suffix and the lab-chain signature verifies) only got "out-of-scope path: clusterguard-hotfix/" — nothing said the hotfix belongs to a different channel, so the operator retried.
 
@@ -103,7 +119,7 @@ This patch contains and supersedes HF-2026-0928-06, plus three fixes, all flowin
   - 把热修补丁包上传到版本更新对话框，报「升级包包含范围外路径：clusterguard-hotfix/」
   - 运维不确定 .cgpatch 热修包应该走哪条安装通道
 
-### HF-2026-0929-01.4 A host reboot stranded the whole cluster: shared runtime directory mode and a recovery freeze that never lifted (`28e3b47`, P0)
+### HF-2026-0929-02.5 A host reboot stranded the whole cluster: shared runtime directory mode and a recovery freeze that never lifted (`28e3b47`, P0)
 
 - Symptom: After a planned whole-host shutdown the console reported "some data unavailable: candidate evaluation", no primary at all, and every instance as "database not started or unreachable"; both another power-off and failover were blocked. clusterguard-mysql-3306.service and clusterguard-cluster-restore.service sat in restart loops at counts 2063/2069/2072 and 1034-1036.
 
@@ -116,7 +132,7 @@ This patch contains and supersedes HF-2026-0928-06, plus three fixes, all flowin
   - clusterguard-mysql-3306.service 反复重启，error.log 报 Could not create unix socket lock file
   - 计划关机或故障切换被阻断，power 生命周期停在 recovering 且 recovery_freeze 为 true
 
-### HF-2026-0929-01.5 MySQL writer reconcile flap: the authorized primary fenced itself every five seconds (`dd82ca5`, P0)
+### HF-2026-0929-02.6 MySQL writer reconcile flap: the authorized primary fenced itself every five seconds (`dd82ca5`, P0)
 
 - Symptom: The cluster never left degraded, both replication links never left unhealthy, candidate evaluation answered 409 and every planned shutdown was blocked. Measurement showed 9,492 self-isolations since install, with read_only and the VIP flipping together roughly every ten seconds.
 
@@ -128,7 +144,7 @@ This patch contains and supersedes HF-2026-0928-06, plus three fixes, all flowin
   - 集群长期 degraded 且复制链路 unhealthy，但复制本身正常
   - journalctl -u clusterguard-agent-reconcile.service 反复出现 self-isolated 或 permission denied
 
-### HF-2026-0929-01.6 Two update prerequisites: SSH key ownership and a shared runtime directory the helper owned (`d5f9491`, P0)
+### HF-2026-0929-02.7 Two update prerequisites: SSH key ownership and a shared runtime directory the helper owned (`d5f9491`, P0)
 
 - Symptom: Software updates stayed available=false and the three upload controls stayed disabled; even with a hand-written update.json the executor rejected the SSH key as too permissive, and the helper failed its first start with status=233 while deleting the shared /run/clusterguard on stop.
 
@@ -140,7 +156,7 @@ This patch contains and supersedes HF-2026-0928-06, plus three fixes, all flowin
   - 控制台版本更新长期 available=false
   - clusterguard-update-helper 首启失败或停机后 /run/clusterguard 丢失
 
-### HF-2026-0929-01.7 The console stopped explaining why a capability is unavailable (`ed9faca`, P1)
+### HF-2026-0929-02.8 The console stopped explaining why a capability is unavailable (`ed9faca`, P1)
 
 - Symptom: The software update panel showed only a red "unavailable" badge with no reason, and the cluster load banner named the failing section without saying why, so operators could not tell what to do next.
 
@@ -152,7 +168,7 @@ This patch contains and supersedes HF-2026-0928-06, plus three fixes, all flowin
   - 控制台版本更新面板显示“不可用”但无原因
   - 集群加载横幅只报栏目名、不报原因
 
-### HF-2026-0929-01.8 The console froze on a dead dialog after a host power-off was submitted (`5ae2039`, P1)
+### HF-2026-0929-02.9 The console froze on a dead dialog after a host power-off was submitted (`5ae2039`, P1)
 
 - Symptom: After a host power-off was submitted the control plane went away with the host, leaving the page parked on the confirmation dialog forever, and a lost response after submission was reported as an error.
 
@@ -164,7 +180,7 @@ This patch contains and supersedes HF-2026-0928-06, plus three fixes, all flowin
   - 提交整机关机后控制台卡死、需要手动关闭标签页
   - 关机提交后偶发“无法连接控制 API”被当作失败
 
-### HF-2026-0929-01.9 After the clock moved backwards the VIP ownership lease stopped expiring, silently disabling automatic failover (`ac6f3f7`, P0)
+### HF-2026-0929-02.10 After the clock moved backwards the VIP ownership lease stopped expiring, silently disabling automatic failover (`ac6f3f7`, P0)
 
 - Symptom: The cluster clock ran eight hours fast. Once the time is corrected — or after any backwards step of the system clock — the VIP ownership lease in coordination_leases sits with an expires_at roughly eight hours in the future. The lease still authorises its holder, but it no longer expires when that holder stops renewing it: ownership_keeper calls AcquireStableBatch every five seconds and skipped any lease with more than half its TTL left, so automatic takeover was disabled for the whole window. The node holding the VIP could die and the VIP would not move. Staggered steps are worse: whichever node stepped first read the lease as expired and could take it, producing two VIP owners.
 
@@ -177,7 +193,7 @@ This patch contains and supersedes HF-2026-0928-06, plus three fixes, all flowin
   - 担心自动故障接管被静默关闭、VIP 不会随主库切换
   - 三台节点时间不一致时出现过 VIP 抢注或双 Owner
 
-### HF-2026-0929-01.10 The clock mesh tool froze an unchecked local time as the cluster authority, and pinned no display timezone (`abf5782`, P1)
+### HF-2026-0929-02.11 The clock mesh tool froze an unchecked local time as the cluster authority, and pinned no display timezone (`abf5782`, P1)
 
 - Symptom: At install time all three nodes' UTC ran eight hours fast (the RTCs held local time while the kernel read them as UTC). The clock check only asked whether the nodes agreed with each other — 2 seconds of spread, a pass — and then clusterguard-clock-mesh.sh --server promoted that node's time to the cluster authority, where hwclock --systohc --utc and rtcsync made it survive every reboot. The site's own certificate is the evidence: the CA's notBefore is Sep 23 14:05:49 2026 GMT, a full eight hours later than the real instant. Meanwhile 152/153 displayed America/New_York and 154 Asia/Shanghai, so one cluster showed two wall clocks for the same record.
 
@@ -190,7 +206,7 @@ This patch contains and supersedes HF-2026-0928-06, plus three fixes, all flowin
   - 集群里同一条记录显示两个钟点（节点显示时区不统一）
   - 需要重跑时钟网配置，用 --timezone 把全集群显示时区固定下来
 
-### HF-2026-0929-01.11 The hotfix channel guessed which binary a change belongs to from a path prefix, silently dropping fixes in shared packages (`fce48b7`, P1)
+### HF-2026-0929-02.12 The hotfix channel guessed which binary a change belongs to from a path prefix, silently dropping fixes in shared packages (`fce48b7`, P1)
 
 - Symptom: The lease fix this patch carries lives in internal/coordination, while the builder and the catalogue gate both derived components from two hard-coded prefixes (internal/agent|cmd/clusterguard-agent and internal/api|cmd/clusterguard). Neither matched — the measured hit count was zero for both — so the payload would have contained the runtime script and no binary: the site would have applied it successfully, the signed manifest would have listed the fix as delivered, and the control plane would still have carried the defect. Because the gate and the builder shared the same table, nothing would have objected. That table also missed internal/platformupdate, which the control plane and clusterguard-update-helper both link; HF-2026-0928-06 shipped only the control plane, so the helper half of the console hotfix channel never reached a site.
 
@@ -224,10 +240,15 @@ This patch contains and supersedes HF-2026-0928-06, plus three fixes, all flowin
 - `/usr/local/sbin/clusterguard-clock-mesh.sh --server --dry-run   # 必须拒绝并打印 --set-utc 与 --accept-current-time 两条出路，且不改动任何配置`
 - `date -u +%Y-%m-%dT%H:%M:%SZ; timedatectl show -p Timezone --value; hwclock --show   # 拨钟之后：三台 UTC 与真实时间一致、Timezone 三台一致、hwclock 与 date -u 一致`
 - `jq -r '.coordination_leases | to_entries[] | [.key, .value.lease.ha_endpoint_id, .value.lease.expires_at, .value.updated_at, .value.lease.active] | @tsv' /var/lib/clusterguard/metadata.json   # 关键验收：拨回 8 小时并重启控制面之后，expires_at 必须是当前 UTC + 约 60 秒，而不是当前 UTC + 8 小时`
+- `journalctl -u clusterguard-ha --since "-3min" --no-pager | grep -c "stale topology observation"   # 必须为 0（修复前是每秒一条）`
+- `jq -r ".observation_watermarks | to_entries[] | [.key, .value] | @tsv" /var/lib/clusterguard/metadata.json   # 水位必须已落到当前时钟，不再是 2026-09-29T11:27:36.730892013Z`
+- `jq -r ".topology_snapshots | to_entries[] | [.key, .value.observed_at] | @tsv" /var/lib/clusterguard/metadata.json   # observed_at 必须是当前 UTC——不再「来自未来」，否则 ownership_keeper 会判 stale 并跳过续约`
+- `stat -c "%y %s" /var/lib/clusterguard/metadata.json; sleep 30; stat -c "%y %s" /var/lib/clusterguard/metadata.json   # 在 Raft leader 上，mtime 与 clusterguard_state_revision 必须前进`
+- `journalctl -u clusterguard-ha --since "-6min" --no-pager | grep -c "topology is stale or unavailable"   # 必须为 0（修复前每 5 分钟一条）`
 
 ### Rollback
 
-执行 rollback.sh 恢复旧二进制、旧单元与旧运行时脚本，然后 systemctl daemon-reload 并重启 clusterguard-ha 与 clusterguard-update-helper。注意两点：① 回滚会把 clusterguard-clock-mesh.sh 恢复成“无校验即成为权威”的旧版本，并撤掉租约重锚——若此后再次回拨系统时钟，VIP 归属租约将再次长期不过期、自动接管再次被静默关闭；② /usr/local/libexec/clusterguard-update-helper 会回到 HF-2026-0928-06 之前的状态（该二进制此前从未被热修更新过）。本包对 /run/clusterguard、clusterguard-update-helper.service 与其它单元的回滚沿用 HF-2026-0928-05 / HF-2026-0928-06 的说明。
+执行 rollback.sh 恢复旧二进制、旧单元与旧运行时脚本，然后 systemctl daemon-reload 并重启 clusterguard-ha 与 clusterguard-update-helper。注意两点：① 回滚会把 clusterguard-clock-mesh.sh 恢复成“无校验即成为权威”的旧版本，并撤掉租约重锚——若此后再次回拨系统时钟，VIP 归属租约将再次长期不过期、自动接管再次被静默关闭；② /usr/local/libexec/clusterguard-update-helper 会回到 HF-2026-0928-06 之前的状态（该二进制此前从未被热修更新过）。本包对 /run/clusterguard、clusterguard-update-helper.service 与其它单元的回滚沿用 HF-2026-0928-05 / HF-2026-0928-06 的说明。 ③ 本包另加的水位容忍也会一并回滚：此后若再次回拨系统时钟，拓扑刷新将再次被永久拒绝——拓扑不再更新、租约停止续约、agent 摘掉 VIP 并把实例锁成只读，而现场无法自解。若确需回滚本包又曾回拨过时钟，回滚后必须同时把 observation_watermarks 与 topology_snapshots 手工对齐到当前时钟，否则集群会停在本次同样的停机态。
 
 ## HF-2026-0928-02 — 2.2-103 site fix bundle (cumulative): cluster stranded after a host reboot, writer reconcile flap, update prerequisites, console reasons and power-off teardown
 
