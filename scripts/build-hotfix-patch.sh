@@ -342,11 +342,20 @@ openssl dgst -sha256 -sign "${signing_key}" -out "${root}/HOTFIX-MANIFEST.sig" "
 } >"${root}/SHA256SUMS"
 
 # --- apply.sh / rollback.sh --------------------------------------------------
-restart_units=""
-for unit in ${systemd_units}; do restart_units="${restart_units} ${unit}"; done
-if [[ " ${binaries} " == *" clusterguard "* ]]; then
-  restart_units="${restart_units} clusterguard-ha.service"
-fi
+# The restart hints are the command-line path's only instruction: there is no
+# daemon on that path to read the manifest, and a binary that is replaced but
+# never restarted leaves the old process running — a fix that applies cleanly and
+# changes nothing. So they are the manifest's own restart_unit set, taken from the
+# payload map, rather than a list reassembled here: an earlier version added only
+# the control-plane unit and would have missed a binary whose unit carries the fix.
+restart_units="$("${node_bin}" -e '
+  const fs = require("fs");
+  const units = new Set();
+  for (const entry of JSON.parse(fs.readFileSync(process.argv[1], "utf8")).entries) {
+    if (entry.restart_unit) units.add(entry.restart_unit);
+  }
+  process.stdout.write([...units].join(" "));
+' "${payload_map}")"
 
 render_js="${stage}/render-scripts.cjs"
 cat >"${render_js}" <<'RENDER_JS'

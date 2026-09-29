@@ -222,6 +222,13 @@ for (const spec of specs) {
       badScripts.push(`${body.id}:apply.sh 未安装 ${entry.install_path}`);
     }
   }
+  // On the command-line path there is no daemon to consult the manifest, so the
+  // units that have to restart can only reach the operator through the script's
+  // own output. A replaced binary whose unit is never restarted leaves the old
+  // process running: the patch applies cleanly and nothing changes.
+  for (const unit of new Set(manifest.files.map((file) => file.restart_unit).filter(Boolean))) {
+    if (!apply.includes(unit)) badScripts.push(`${body.id}:apply.sh 未提示重启 ${unit}`);
+  }
   // apply.sh and rollback.sh run as root on every node and decide what is written
   // where, so the signed manifest has to anchor them. Before 2026-09-29 they were
   // generated after the manifest was signed and covered by nothing: a swapped
