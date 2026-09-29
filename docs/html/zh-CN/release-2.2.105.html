@@ -84,6 +84,80 @@ VIP 归属租约不再续期，数据节点按设计摘掉 VIP 并把实例设�
 <p>交付工具链本身（一次现场处理出一个累积补丁包、双语热修台账、相应防漏门禁）也在本版范围内，
 但它不改变产品运行时行为，只影响我们如何把修复送到现场。</p>
 </blockquote>
+<blockquote>
+<p><strong>交付物不可变（2026-09-29 起为硬规则）</strong>：已签名、已登记的 <code>.cgpatch</code> <strong>永不原地重建</strong>。同一个
+文件名 + 同一个版本号 + 不同的字节，会让现场与仓库各说一套——现场报「我装的是 2.2-105」，仓库也
+有「2.2-105」，而两边摘要不同，事后无法证明节点实际运行过什么。任何修订都必须产生<strong>新身份</strong>：
+文件名带 <code>-r1</code>，manifest 带 <code>revision</code> 与 <code>supersedes_artifact{file,sha256,reason}</code>。构建脚本现在
+<strong>拒绝</strong>覆盖任何已存在的产物；台账 <code>hotfixes/hotfix-publications.json</code> 是身份的唯一真源，门禁逐条
+核对已登记摘要是否与磁盘逐字节一致、修订是否指回被替代的身份、同一交付线是否只有一个 <code>current</code>
+入口、以及有没有哪条声明指向了已被取代的修订。已经是证据的旧身份不回炉：它的字节不按
+今天的规则升级，而是把仍带的缺陷逐条写进台账（<code>status: frozen</code> + <code>known_defects</code>），门禁对这份声明
+做<strong>双向</strong>校验——既不许少声明，也不许声明一个已经不存在了的缺陷。</p>
+<p>台账放在<strong>源码树</strong>（<code>hotfixes/</code>）而不是介质树：<code>release/</code> 从未被 git 跟踪，一份只存在于某台机器上
+的来源记录不算记录。条目按「相对介质根的路径」索引，于是台账随分支传播、产物留在原地。</p>
+<p><strong>分工：签名清单只写&quot;为什么替换&quot;，实测数据写台账。</strong> 清单里的 <code>supersedes_artifact.reason</code> 一旦
+签名就不可改写，所以不放任何会随时间漂移的事实、路径或量化断言——否则一个笔误就要再出一个几乎
+相同的交付物来纠正。这一条是踩出来的，见下节。</p>
+</blockquote>
+<h2 id="一次自己犯下的发布事故-与它逼出来的四条规则">一次自己犯下的发布事故，与它逼出来的四条规则<a class="heading-anchor" href="#一次自己犯下的发布事故-与它逼出来的四条规则" aria-label="Link to 一次自己犯下的发布事故，与它逼出来的四条规则">#</a></h2>
+<p><code>release/2.2-103-hotfixes/</code> 下的 <code>HF-2026-0928-02</code> 从 r0 一路走到 r4，五个身份全部保留在台账里。
+过程本身是本版最有价值的产物——它把&quot;不可变&quot;从一句口号变成了可执行的判据：</p>
+<table>
+<thead>
+<tr>
+<th>身份</th>
+<th>摘要前缀</th>
+<th>状态</th>
+<th>发生了什么</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>r0</td>
+<td><code>71083a21…</code></td>
+<td>superseded</td>
+<td>17:47 被一次<strong>同名原地重建</strong>覆盖，三个现场节点都没有 2.2-103 线的包，无法取回。字节已丢失，摘要保留为唯一记录</td>
+</tr>
+<tr>
+<td>r1</td>
+<td><code>62bc8c7c…</code></td>
+<td>superseded</td>
+<td>以新身份重建以恢复该线可交付性。缺陷：签名清单把台账位置写成 <code>release/hotfix-publications.json</code>，而台账随后迁入源码树，指针失效</td>
+</tr>
+<tr>
+<td>r2</td>
+<td><code>4cf15ee1…</code></td>
+<td>superseded</td>
+<td>为纠正 r1 的指针而构建，却在理由里写下未经实测的断言「载荷与 r1 逐字节相同」——不成立</td>
+</tr>
+<tr>
+<td>r3</td>
+<td><code>13731cae…</code></td>
+<td>superseded</td>
+<td>纠正 r2，但把差异字节数写死成「每个二进制 63 字节」。实测三个身份两两之间：<code>clusterguard</code> 63/61/63 字节、<code>clusterguard-agent</code> 40/40/40 字节</td>
+</tr>
+<tr>
+<td>r4</td>
+<td><code>b11c939f…</code></td>
+<td><strong>current</strong></td>
+<td>该线当前入口。理由里不再有任何量化断言</td>
+</tr>
+</tbody></table>
+<p>四条规则：</p>
+<ol>
+<li><strong>已签名即不可变。</strong> r1 到 r4 的每一次纠正都是新身份，没有一次回去改写旧字节。构建脚本在写出
+产物前检查路径是否已存在，存在就<strong>拒绝</strong>并把操作者引向新身份。</li>
+<li><strong>签名清单里不放会漂移的断言。</strong> r2、r3 的两次返工都源于此——不是算错，而是把不可修订的位置
+用来承载可修订的内容。清单只保留&quot;为什么替换前一个身份&quot;。</li>
+<li><strong>产物二进制不可复现，所以台账摘要不可替代。</strong> 同一 <code>build_commit</code> 两次构建得到<strong>大小相同、
+代码相同</strong>的二进制，但每个二进制有几十字节不同，那差异全部落在 Go 的 build ID 上（由构建路径
+派生）。因此&quot;重新构建一次对拍&quot;<strong>不能</strong>用来判断一份产物是否被换过——唯一可信的比对基准是本台账
+登记的摘要。这是一条已知限制，不是本次文案修订的产物。</li>
+<li><strong>门禁要理解 <code>frozen</code> 与 <code>superseded</code> 的区别。</strong> 修订保留在介质目录里是<strong>正常且必要</strong>的——那些
+字节是&quot;现场到底运行过什么&quot;的证据。所以&quot;这个目录里只有一个 <code>.cgpatch</code>&quot;不再是正确的不变量；
+正确的不变量是&quot;这个目录里最多只有一个 <code>current</code>&quot;以及&quot;没有哪条声明指向已被取代的修订&quot;。按文件
+数做判据会在第一个修订出现时变红，而真正的歧义（两个 <code>current</code>）反而漏过去。</li>
+</ol>
 <h2 id="介质构建之后发现的缺陷-升级弹窗里点不动的两个动作">介质构建之后发现的缺陷：升级弹窗里点不动的两个动作<a class="heading-anchor" href="#介质构建之后发现的缺陷-升级弹窗里点不动的两个动作" aria-label="Link to 介质构建之后发现的缺陷：升级弹窗里点不动的两个动作">#</a></h2>
 <p>本版介质打包提交是 <code>bf2feeb</code>，打包完成于 2026-09-29T04:48:28Z。<strong>介质构建之后</strong>，现场在同一天
 （2026-09-29）的两轮控制台实操里暴露出五个缺陷，因此<strong>本介质里仍然带着它们</strong>，修复不在介质内。</p>
@@ -179,6 +253,33 @@ VIP 归属租约不再续期，数据节点按设计摘掉 VIP 并把实例设�
 <code>--version-json</code> 报 <code>2.2/105/d2e5d85</code>），所以现在只需要上传本包。反过来，本包也不能脱开 HF-04
 单独使用。</p>
 </blockquote>
+<h3 id="现场验收口径-本包起生效">现场验收口径（本包起生效）<a class="heading-anchor" href="#现场验收口径-本包起生效" aria-label="Link to 现场验收口径（本包起生效）">#</a></h3>
+<ul>
+<li><strong>验收对象是 <code>/usr/local/sbin/clusterguard-upgrade</code>，不是 <code>/usr/local/bin/clusterguard</code></strong>——本包根本
+不改后者。三台 <code>sha256sum /usr/local/sbin/clusterguard-upgrade</code> 必须一致，<code>stat</code> 的属主/权限必须
+与清单一致（<code>0750 root:clusterguard</code>）。</li>
+<li><strong>不要再把「<code>.153</code> 必须仍是 Leader」写成验收条件。</strong> 热修本身会重启节点，重启必然可能触发重新选举，
+Leader 漂移是<strong>预期行为</strong>而不是故障。正确的判据是集群层面的不变式：
+<code>unique_leader = true</code>、<code>quorum = true</code>、<code>voters = 3</code>、<code>all_nodes_ready = true</code>、两条复制链路 healthy，
+以及 <code>update_maintenance_active = false</code>、<code>active_operations = 0</code>。谁当 Leader 只要求「存在且唯一」。</li>
+<li>上传前本地核算 <code>sha256sum</code>，必须等于包侧车里的 <code>259c23646eaac488da5bad24d7c8ed98dac95046c40b22d379dd85ba03d03bb6</code>。</li>
+<li><strong>不要在现网为了测试而制造失败热修。</strong> 回退路径（<code>mktemp</code> → <code>mv -f</code> → 重启 → 版本回落 → 节点重新加入
+→ 门禁自动释放或进入可续跑状态）应在测试环境验证；下一次带二进制的热修才是本包真正的动态验收。</li>
+</ul>
+<h3 id="作业记录的处置-追加-不改写">作业记录的处置：追加，不改写<a class="heading-anchor" href="#作业记录的处置-追加-不改写" aria-label="Link to 作业记录的处置：追加，不改写">#</a></h3>
+<p><code>HF-2026-0929-04</code> 的记录仍是 <code>failed</code> / <code>finished_at=null</code> / <code>progress 0/3</code>，而它的载荷其实已经生效。
+<strong>不要改名让它消失，也不要修改原始事实</strong>——原始字段是「现场发生过什么」的证据。正确做法是追加处置结果，
+保留原记录：</p>
+<pre><code class="language-json">&quot;execution_status&quot;: &quot;failed&quot;,
+&quot;payload_state&quot;: &quot;applied&quot;,
+&quot;recovery_status&quot;: &quot;manually_recovered&quot;,
+&quot;superseded_by&quot;: &quot;HF-2026-0929-05&quot;,
+&quot;maintenance_closed_at&quot;: &quot;2026-09-29T16:42:00+08:00&quot;,
+&quot;closure_reason&quot;: &quot;rollback path defect&quot;
+</code></pre>
+<p>这样后续做事故链分析时才能看到完整的一条：
+<code>HF-04 apply succeeded → post-apply verification failed → rollback attempted → rollback ETXTBSY → maintenance remained → manual recovery → HF-05 permanently fixed the upgrade channel</code>。
+（本轮<strong>不执行</strong>这步：现场只做 HF-05 上传，记录处置另行安排。）</p>
 <h2 id="验证范围">验证范围<a class="heading-anchor" href="#验证范围" aria-label="Link to 验证范围">#</a></h2>
 <ul>
 <li><code>go build ./...</code></li>
@@ -251,7 +352,7 @@ VIP 自动接管<strong>均未执行</strong>。控制台一侧的验收是分�
         </article>
         <aside class="page-toc" aria-label="本页目录">
           <strong>本页目录</strong>
-          <a class="toc-level-2" href="#本次变更">本次变更</a><a class="toc-level-3" href="#1-集群时钟-本版主要变更">1. 集群时钟（本版主要变更）</a><a class="toc-level-3" href="#2-写入者协调与整机重启可恢复性">2. 写入者协调与整机重启可恢复性</a><a class="toc-level-3" href="#3-控制台">3. 控制台</a><a class="toc-level-3" href="#4-在线升级与热修补丁通道">4. 在线升级与热修补丁通道</a><a class="toc-level-2" href="#介质构建之后发现的缺陷-升级弹窗里点不动的两个动作">介质构建之后发现的缺陷：升级弹窗里点不动的两个动作</a><a class="toc-level-3" href="#第一次-13-16-首行是一条时间戳落在未来的终态记录">第一次（13:16）：首行是一条时间戳落在未来的终态记录</a><a class="toc-level-3" href="#第二次-14-02-一个属于别的发布线的包占住了唯一可执行槽">第二次（14:02）：一个属于别的发布线的包占住了唯一可执行槽</a><a class="toc-level-3" href="#交付形式与顺序约束">交付形式与顺序约束</a><a class="toc-level-2" href="#热修通道自身的失败路径-一次失败之后再无自动出路-16-22">热修通道自身的失败路径：一次失败之后再无自动出路（16:22）</a><a class="toc-level-3" href="#交付形式与顺序约束-hf-2026-0929-05">交付形式与顺序约束（HF-2026-0929-05）</a><a class="toc-level-2" href="#验证范围">验证范围</a><a class="toc-level-2" href="#介质范围">介质范围</a><a class="toc-level-2" href="#使用入口">使用入口</a><a class="toc-level-2" href="#现场验收状态">现场验收状态</a>
+          <a class="toc-level-2" href="#本次变更">本次变更</a><a class="toc-level-3" href="#1-集群时钟-本版主要变更">1. 集群时钟（本版主要变更）</a><a class="toc-level-3" href="#2-写入者协调与整机重启可恢复性">2. 写入者协调与整机重启可恢复性</a><a class="toc-level-3" href="#3-控制台">3. 控制台</a><a class="toc-level-3" href="#4-在线升级与热修补丁通道">4. 在线升级与热修补丁通道</a><a class="toc-level-2" href="#一次自己犯下的发布事故-与它逼出来的四条规则">一次自己犯下的发布事故，与它逼出来的四条规则</a><a class="toc-level-2" href="#介质构建之后发现的缺陷-升级弹窗里点不动的两个动作">介质构建之后发现的缺陷：升级弹窗里点不动的两个动作</a><a class="toc-level-3" href="#第一次-13-16-首行是一条时间戳落在未来的终态记录">第一次（13:16）：首行是一条时间戳落在未来的终态记录</a><a class="toc-level-3" href="#第二次-14-02-一个属于别的发布线的包占住了唯一可执行槽">第二次（14:02）：一个属于别的发布线的包占住了唯一可执行槽</a><a class="toc-level-3" href="#交付形式与顺序约束">交付形式与顺序约束</a><a class="toc-level-2" href="#热修通道自身的失败路径-一次失败之后再无自动出路-16-22">热修通道自身的失败路径：一次失败之后再无自动出路（16:22）</a><a class="toc-level-3" href="#交付形式与顺序约束-hf-2026-0929-05">交付形式与顺序约束（HF-2026-0929-05）</a><a class="toc-level-3" href="#现场验收口径-本包起生效">现场验收口径（本包起生效）</a><a class="toc-level-3" href="#作业记录的处置-追加-不改写">作业记录的处置：追加，不改写</a><a class="toc-level-2" href="#验证范围">验证范围</a><a class="toc-level-2" href="#介质范围">介质范围</a><a class="toc-level-2" href="#使用入口">使用入口</a><a class="toc-level-2" href="#现场验收状态">现场验收状态</a>
         </aside>
       </main>
     </div>
