@@ -61,6 +61,13 @@
 </tr>
 </thead>
 <tbody><tr>
+<td>HF-2026-0929-05</td>
+<td>P0</td>
+<td><code>7252ecf</code>、<code>c05f8b2</code></td>
+<td><code>c05f8b2</code></td>
+<td><code>release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-05-2.2-105.x86_64.cgpatch</code></td>
+</tr>
+<tr>
 <td>HF-2026-0929-04</td>
 <td>P1</td>
 <td><code>39ef673</code>、<code>4d80125</code>、<code>3a61103</code>、<code>d0f63e6</code>、<code>d2e5d85</code></td>
@@ -91,6 +98,105 @@ bash apply.sh            # 备份、校验 SHA-256、安装、daemon-reload
 systemctl restart &lt;单元&gt; # apply.sh 只打印需要重启的单元，不自动重启
 bash rollback.sh         # 按最新备份清单回滚
 </code></pre>
+<h2 id="hf-2026-0929-05-2-2-105-交付线-热修补丁自己的失败路径把现场锁死-逐节点应用后仍把-leader-钉在应用前-回退用-c">HF-2026-0929-05 — 2.2-105 交付线：热修补丁自己的失败路径把现场锁死——逐节点应用后仍把 Leader 钉在应用前、回退用 cp 就地覆盖运行中的二进制（ETXTBSY）、失败之后既不能续跑也不能回退<a class="heading-anchor" href="#hf-2026-0929-05-2-2-105-交付线-热修补丁自己的失败路径把现场锁死-逐节点应用后仍把-leader-钉在应用前-回退用-c" aria-label="Link to HF-2026-0929-05 — 2.2-105 交付线：热修补丁自己的失败路径把现场锁死——逐节点应用后仍把 Leader 钉在应用前、回退用 cp 就地覆盖运行中的二进制（ETXTBSY）、失败之后既不能续跑也不能回退">#</a></h2>
+<ul>
+<li>严重级别：P0</li>
+<li>覆盖修复提交：<code>7252ecf</code>、<code>c05f8b2</code></li>
+<li>构建树：<code>c05f8b248bb5689f46ebebc77e900852c71085a9</code>（基线 <code>d2e5d850e20d432b92e0c04f963a8381b0044606</code> + 上述修复，不含其它提交）</li>
+<li>适用版本：2.2-105 → 2.2-105+hf-2026-0929-05（x86_64）</li>
+<li>产物：<code>release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-05-2.2-105.x86_64.cgpatch</code></li>
+<li>SHA-256：<code>259c23646eaac488da5bad24d7c8ed98dac95046c40b22d379dd85ba03d03bb6</code></li>
+<li>源码差异：<code>src/HF-2026-0929-05-c05f8b2.patch</code></li>
+<li>交付内容：<ul>
+<li><code>payload/scripts/clusterguard-upgrade.sh</code> → <code>/usr/local/sbin/clusterguard-upgrade</code>（0750）</li>
+</ul>
+</li>
+<li>需要重启：无</li>
+</ul>
+<h3 id="本包概要">本包概要<a class="heading-anchor" href="#本包概要" aria-label="Link to 本包概要">#</a></h3>
+<p>本包只替换一个运行时脚本：<code>scripts/clusterguard-upgrade.sh</code> → <code>/usr/local/sbin/clusterguard-upgrade</code>（0750 root:clusterguard）。<strong>它不含任何二进制，因此清单里没有任何 <code>restart_unit</code>，应用过程不会重启任何服务</strong>——这不是省事，而是本包必须成立的前提：本包修的正是「热修重启节点会把流程自己打翻」，而本次执行的仍然是现场已装的那份旧脚本，所以只有让本次应用根本不重启，它才能在踩到那个缺陷之前先把修复装上去。安装完成后，下一次热修（以及未来任何会重启节点的包）才真正受这条修复保护。本包依附 HF-2026-0929-04 的构建树（<code>base_commit = d2e5d85</code>）——现场已经应用过 HF-04 并正在运行它的载荷，本包是它的增量，不取代它，也不重复交付它的二进制。本包覆盖 2026-09-29 16:22 现场的第三次事故：在滚动升级到 2.2-105 成功、HF-04 也已应用之后，操作手又执行了一次同一个热修包，这一次它失败了，并且<strong>自己把自己锁死</strong>。三条缺陷是一条链：① 热修按 <code>ordered_nodes</code> 逐台应用，而 Leader 被刻意排在最后；每台应用完都要等控制面恢复一致，而这个等待把「应用前那台 Leader」当成必须不变的期望——最后那台恰恰就是 Leader，重启它必然触发重新选举，于是 60 秒等待必然超时（现场 <code>leader_changed</code>），作业被判失败。② 判失败后走自动回退，而生成的 <code>rollback.sh</code> 用 <code>cp</code> 就地覆盖目标文件；被替换的文件里包含正在运行的二进制，就地写入必然 <code>ETXTBSY</code>（现场三台全部回退失败）。③ 回退失败的设计后果是保留维护门禁，而门禁只能由「重跑同一个补丁」接管——可热修路径在 <code>detect_current_update_lock</code> 之前就 <code>exit</code> 了，<code>current_patch_maintenance_active</code> 永远是 false，重跑又被「必须没有维护态」这条准入检查拒绝。三条合起来，现场没有任何一条自动路径可走，只能改文件系统解封（08:24:47 记录 <code>automatic rollback incomplete; maintenance gate retained</code>，实际处置是 16:42 备份 <code>updates/</code> 记录、在 Leader 上调 <code>gate/release</code>、三台改名移走锁与 <code>/etc/clusterguard/update-maintenance.json</code>）。顺带修掉第四条同源缺陷：<code>rollback.sh</code> 此前取「最新的」<code>backup-*.txt</code>，而不是本补丁自己的清单——<code>restore_backup()</code> 把「清单里没有这条记录」解释成「补丁前不存在」并直接删除目标文件，所以一旦取错清单，它会删除在役的系统文件。现在备份清单名带上补丁编号，回滚只认本补丁的清单。</p>
+<h3 id="hf-2026-0929-05-1-热修逐节点应用后仍要求-leader-是应用前那一台-被重启的节点恰好就是-leader-时-60-秒等待必">HF-2026-0929-05.1 热修逐节点应用后仍要求 Leader 是应用前那一台——被重启的节点恰好就是 Leader 时，60 秒等待必然超时并触发回退（<code>7252ecf</code>，P0）<a class="heading-anchor" href="#hf-2026-0929-05-1-热修逐节点应用后仍要求-leader-是应用前那一台-被重启的节点恰好就是-leader-时-60-秒等待必" aria-label="Link to HF-2026-0929-05.1 热修逐节点应用后仍要求 Leader 是应用前那一台——被重启的节点恰好就是 Leader 时，60 秒等待必然超时并触发回退（7252ecf，P0）">#</a></h3>
+<ul>
+<li><p>现象：2026-09-29 16:22 现场执行 HF-2026-0929-04，逐台应用看似正常，随后在 <code>.154</code> 上报 <code>hotfix failed; automatic rollback started</code>，<code>status.json</code> 最终停在 <code>failed</code> / <code>phase: rollback</code> / <code>current: 0</code>。日志里的判据是 <code>leader_changed</code>：控制面在应用期间发生过一次 Leader 变更，而流程要求它不能变。三台 <code>clusterguard-ha</code> 都在 16:23 前后重启过一次——那是本次应用本身做的。</p>
+</li>
+<li><p>根因：<code>run_hotfix_update</code> 按 <code>ordered_nodes</code> 逐台应用，Leader 被刻意排在最后（<code>for host in controllers; do [[ host == leader_host ]] || ordered_nodes+=…; done; ordered_nodes+=leader_host</code>）。每台应用完都执行 <code>if ! wait_cluster_idle &quot;${leader_host}&quot; true idle</code>——把「应用开始前解析出来的那台 Leader」当作<strong>必须保持不变</strong>的期望传进去。<code>verify_cluster_idle</code> 在 <code>expected_leader</code> 非空时会比对 <code>observed_leader</code>，不等就判 <code>leader_changed</code>。热修是要重启被处理节点的（<code>apply_hotfix_on_node</code> → <code>restart_hotfix_units</code>），而最后一台就是 Leader：重启它必然触发重新选举，<code>observed_leader</code> 由此变成别的节点，于是这个等待在<strong>先成功后失败</strong>的路径上必然超时（现场 60 秒）。同一个 <code>leader_host</code> 还被 <code>acquire_replicated_update_gate</code>（<code>:802</code>）与 <code>release_replicated_update_gate</code>（<code>:809</code>）用来找 Leader 下发门禁，所以缓存在应用前的值还会让门禁释放打向一台已经不是 Leader 的节点——这是同一条缺陷的第二处隐患。</p>
+</li>
+<li><p>修复：新增 <code>resolve_leader_host()</code>：只问「现在谁持有领导权」这一个窄问题——遍历控制节点取各自的 status，第一个报 <code>role == leader</code> 的即为答案并写入 <code>leader_host</code>，与缓存值不同时打印一行变更日志；它不做 <code>verify_cluster_idle</code> 那一整套成员/活动校验，因此不会因为无关不变式而 <code>die</code>（<code>verify_cluster_idle</code> 顺带推导同一件事，但它是被用于等待的，不能在流程中途被这样询问）。逐节点等待改为 <code>wait_cluster_idle &quot;&quot; true idle</code>——只要求维护态成立且集群空闲，不再对 Leader 身份提要求；随后立即 <code>resolve_leader_host</code>，让 <code>finish_update_maintenance</code> 里的门禁释放指向<strong>当前</strong>的 Leader。准入阶段那次 <code>wait_cluster_idle &quot;${leader_host}&quot; true idle</code>（<code>acquire_update_locks</code> 之后、任何节点被改动之前）保持不变：那时还没有重启，要求 Leader 稳定是合理的。断言：<code>TestHotfixFlowTreatsLeaderMovementAsExpectedAfterRestart</code> 同时钉住 <code>resolve_leader_host</code> 的存在与实现（必须问逐个控制节点、必须把应答者写回 <code>leader_host</code>）、<code>run_hotfix_update</code> 必须含 <code>wait_cluster_idle &quot;&quot; true idle</code>、必须含 <code>resolve_leader_host</code>，且<strong>不得</strong>再出现 <code>if ! wait_cluster_idle &quot;${leader_host}&quot; true idle</code>。变异验证：把该处换回 <code>&quot;${leader_host}&quot;</code> 时断言变红。</p>
+</li>
+<li><p>何时需要应用：</p>
+<ul>
+<li>热修执行到最后一个节点之后失败，日志里出现 leader_changed 或「控制面升级门禁未通过」，而每个节点其实都已经应用成功</li>
+<li>热修应用期间控制面发生重启，随后等待超时</li>
+<li>升级列表里最后一个节点恰好是 Leader 的热修包</li>
+</ul>
+</li>
+</ul>
+<h3 id="hf-2026-0929-05-2-失败的热修无法接管自己残留的维护门禁-检测代码在热修路径上永远到不了-于是续跑被自己的门禁拒绝-回退又被-e">HF-2026-0929-05.2 失败的热修无法接管自己残留的维护门禁——检测代码在热修路径上永远到不了，于是续跑被自己的门禁拒绝、回退又被 ETXTBSY 挡住，现场没有任何自动出路（<code>7252ecf</code>，P0）<a class="heading-anchor" href="#hf-2026-0929-05-2-失败的热修无法接管自己残留的维护门禁-检测代码在热修路径上永远到不了-于是续跑被自己的门禁拒绝-回退又被-e" aria-label="Link to HF-2026-0929-05.2 失败的热修无法接管自己残留的维护门禁——检测代码在热修路径上永远到不了，于是续跑被自己的门禁拒绝、回退又被 ETXTBSY 挡住，现场没有任何自动出路（7252ecf，P0）">#</a></h3>
+<ul>
+<li><p>现象：上一条的失败把维护门禁留在了三台控制节点上。此后现场做任何一件事都撞墙：重跑同一个补丁被「必须没有维护态」拒绝；受控回退在同一份门禁下也走不通；控制台横幅显示「升级维护未闭环 · 维护门禁仍生效 / 自动故障切换已暂停」，而对话框给出的建议是「确认维护门禁状态后再续跑或回退」——两条路都指向一个走不通的动作。最终只能人工作业：备份 <code>updates/</code> 下的记录、在 Leader 上调 <code>gate/release</code>、三台改名移走 <code>.cluster-update.lock</code> 与 <code>/etc/clusterguard/update-maintenance.json</code>。</p>
+</li>
+<li><p>根因：门禁的接管路径本来就有，只是热修走不到。<code>detect_current_update_lock()</code> 会遍历控制节点、在<strong>全部</strong>节点都带本补丁的维护锁时把 <code>current_patch_maintenance_active</code> 置为 true；<code>acquire_update_locks</code> 见到它为真就调 <code>adopt_current_update_locks</code> 接管已有锁；<code>build_order</code>（滚动升级路径）也据此放宽维护态期望。但主流程里 <code>detect_current_update_lock</code> 的调用在 <code>:2086</code>，而热修分支在 <code>:2037</code> 就 <code>run_hotfix_update; exit 0</code> 了——<strong>热修路径从未调用它</strong>，<code>current_patch_maintenance_active</code> 恒为 false，接管分支永远不可达。与此同时 <code>run_hotfix_update</code> 的准入检查是无条件的 <code>verify_cluster_idle &quot;&quot; false any</code>：要求维护态为 false。两者合起来正好把唯一的补救动作挡在门外——门禁只能靠重跑接管，而重跑要求门禁不存在。</p>
+</li>
+<li><p>修复：在热修流程里、<code>load_nodes</code> 之后（任何准入检查之前）调用 <code>detect_current_update_lock</code>，让同一条接管路径对热修也可达；准入检查据此分支：<code>current_patch_maintenance_active</code> 为真时用 <code>verify_cluster_idle &quot;&quot; true any</code> 接受本补丁自己的门禁（随后由 <code>acquire_update_locks</code> → <code>adopt_current_update_locks</code> 接管），否则维持原来的 <code>verify_cluster_idle &quot;&quot; false any</code>。回退分支（<code>rollback_requested</code>）不变。断言：<code>TestHotfixFlowCanAdoptItsOwnMaintenanceGate</code> 要求 <code>run_hotfix_update</code> 里出现 <code>detect_current_update_lock</code> 的<strong>调用语句本身</strong>（<code>\n  detect_current_update_lock</code>，而不是函数名出现在别处或注释里——这一点是被变异验证逼出来的：早期版本只断言名字包含，结果把调用换成注释仍然通过）、要求以 <code>${current_patch_maintenance_active}</code> 分支、要求出现 <code>verify_cluster_idle &quot;&quot; true any</code>，并反向钉住 <code>acquire_update_locks</code> 仍然含 <code>adopt_current_update_locks</code>，防止两半漂移。变异验证：删掉该调用时断言变红。</p>
+</li>
+<li><p>何时需要应用：</p>
+<ul>
+<li>热修失败后控制台一直显示「升级维护未闭环 / 维护门禁仍生效」，自动故障切换被暂停</li>
+<li>重跑同一个热修包被拒绝，提示要求先确认维护门禁状态</li>
+<li>受控回退也走不通，只能上文件系统改锁文件</li>
+</ul>
+</li>
+</ul>
+<h3 id="hf-2026-0929-05-3-生成的-rollback-sh-用-cp-就地覆盖运行中的二进制-etxtbsy-回退在任何节点都不可能成功">HF-2026-0929-05.3 生成的 rollback.sh 用 cp 就地覆盖运行中的二进制——ETXTBSY，回退在任何节点都不可能成功，门禁因此必然被保留（<code>c05f8b2</code>，P0）<a class="heading-anchor" href="#hf-2026-0929-05-3-生成的-rollback-sh-用-cp-就地覆盖运行中的二进制-etxtbsy-回退在任何节点都不可能成功" aria-label="Link to HF-2026-0929-05.3 生成的 rollback.sh 用 cp 就地覆盖运行中的二进制——ETXTBSY，回退在任何节点都不可能成功，门禁因此必然被保留（c05f8b2，P0）">#</a></h3>
+<ul>
+<li><p>现象：上一条的自动回退在三台节点上全部失败：<code>.154</code> 08:24:36、<code>.153</code> 08:24:39、<code>.152</code> 08:24:42，每条都是「restoring the files this hotfix replaced」之后没有下文，08:24:45 汇总为 <code>rollback_failed</code> / <code>automatic rollback incomplete; maintenance gate retained</code>。「应用成功、回退失败」这个组合本身就是线索：只有回退这一侧失败，说明差异不在文件内容，而在<strong>写文件的方式</strong>。</p>
+</li>
+<li><p>根因：生成器给 <code>rollback.sh</code> 的 <code>restore_backup()</code> 写的是 <code>cp -p &quot;${backup}&quot; &quot;${destination}&quot;</code>，也就是<strong>就地覆盖</strong>目标文件。而 <code>apply.sh</code> 那一侧用的是 <code>install -m &lt;mode&gt; -o &lt;owner&gt; -g &lt;group&gt; &quot;${here}/${artifact}&quot; &quot;${destination}&quot;</code>——GNU <code>install</code> 会先 unlink 目标再创建，所以应用从不 ETXTBSY，回退却<strong>每次都会</strong>：热修替换的文件里就包含正在运行的 <code>/usr/local/bin/clusterguard</code> 与 <code>/usr/local/libexec/clusterguard-update-helper</code>，对一个正在被执行的文件做截断写入会得到 ETXTBSY。结果是「安装能成功、回退永远不能成功」，而回退失败的设计后果是保留维护门禁——也就是说，这条缺陷把任何一次热修失败都变成需要人工解封的现场。</p>
+</li>
+<li><p>修复：生成的 <code>restore_backup()</code> 改为换 inode：<code>restore_tmp=&quot;$(mktemp &quot;${destination}.restore.XXXXXX&quot;)&quot;</code> → <code>cp -p &quot;${backup}&quot; &quot;${restore_tmp}&quot;</code> → <code>mv -f &quot;${restore_tmp}&quot; &quot;${destination}&quot;</code>。临时文件与目标同目录（因此同文件系统，<code>mv</code> 是原子的改名），运行中的进程继续持有旧 inode，不受影响；<code>cp -p</code> 仍保留备份文件的 mode 与时间戳。断言分两层：源级 <code>TestGeneratedRollbackReplacesFilesBySwappingTheInode</code> 钉住生成器里必须同时出现 mktemp、写入临时文件、<code>mv -f</code> 三步，并<strong>禁止</strong>出现 <code>cp -p &quot;${backup}&quot; &quot;${destination}&quot;</code>；产物级门禁在真实 <code>.cgpatch</code> 解出的 <code>rollback.sh</code> 上复查同样两条（必须含 <code>mv -f &quot;${restore_tmp}&quot;</code>、不得含就地覆盖）。变异验证：把 <code>mv -f</code> 换回 <code>cp -p</code> 时源级断言变红，门禁对历史产物也当场变红（这条门禁一加上就抓出了 HF-2026-0928-02 / -03 / -04 三个旧包的回滚同样是坏的）。</p>
+</li>
+<li><p>何时需要应用：</p>
+<ul>
+<li>热修失败后自动回退也没有成功，日志停在「restoring the files this hotfix replaced」</li>
+<li>回退报 ETXTBSY 或文本文件忙</li>
+<li>任何「应用成功、回退失败」的组合，都先怀疑回退是就地覆盖而不是换 inode</li>
+</ul>
+</li>
+</ul>
+<h3 id="hf-2026-0929-05-4-生成的-rollback-sh-接受-最新的-备份清单-可能恢复别的补丁的文件-甚至把清单里没提到的在役文件">HF-2026-0929-05.4 生成的 rollback.sh 接受「最新的」备份清单——可能恢复别的补丁的文件，甚至把清单里没提到的在役文件直接删掉（<code>c05f8b2</code>，P1）<a class="heading-anchor" href="#hf-2026-0929-05-4-生成的-rollback-sh-接受-最新的-备份清单-可能恢复别的补丁的文件-甚至把清单里没提到的在役文件" aria-label="Link to HF-2026-0929-05.4 生成的 rollback.sh 接受「最新的」备份清单——可能恢复别的补丁的文件，甚至把清单里没提到的在役文件直接删掉（c05f8b2，P1）">#</a></h3>
+<ul>
+<li><p>现象：回退脚本自己选清单：<code>backup_list=&quot;$(ls -1 &quot;${backup_dir}&quot;/backup-*.txt | tail -1)&quot;</code>。<code>/var/lib/clusterguard/hotfix/</code> 是<strong>所有</strong>热修共用的备份目录（现场在 11:49 那次处理后就留下了整套 11:49 的备份清单），因此回退哪一次补丁、恢复哪些文件，取决于「谁的文件名排序最后」，而不是本补丁声明了什么。上一条的 ETXTBSY 恰好掩盖了这条：<code>set -euo pipefail</code> 让脚本在第一个文件就退出，后面的文件根本没被处理；一旦上一条修好、回退真的跑得完，这条就会开始生效。</p>
+</li>
+<li><p>根因：<code>apply.sh</code> 写的清单名是 <code>backup-${stamp}.txt</code>，只带时间戳、不带补丁编号；<code>rollback.sh</code> 于是只能用「取最新」来猜。而 <code>restore_backup()</code> 对「清单里找不到这个目标路径」的处理是 <code>rm -f &quot;${destination}&quot;</code>，理由是在别的补丁的清单里查不到，并不等于「本补丁之前它不存在」——这正是「补丁前不存在」这一合法状态的判断依据被张冠李戴。取错清单的后果因此有两个方向：恢复成别的补丁备份的旧文件（静默降级，无任何报错），或者把一个本补丁根本没碰过的在役文件删掉。</p>
+</li>
+<li><p>修复：把清单名绑定到补丁编号：<code>apply.sh</code> 写 <code>backup-${hotfix_id}-${stamp}.txt</code>，<code>rollback.sh</code> 只匹配 <code>backup-&lt;本补丁 id&gt;-*.txt</code>，取不到就按既有的「没有找到备份清单，无法回滚」退出，而不是退回任意清单。断言：源级 <code>TestGeneratedBackupManifestIsBoundToItsOwnHotfix</code> 两处分开钉（生成器里 apply 的清单名必须带 <code>backup-${manifest.hotfix_id}-${stamp}</code>、rollback 的匹配必须带 <code>/backup-${manifest.hotfix_id}-*.txt</code>），并禁止出现裸 <code>backup-*.txt</code>——分开钉是被变异逼出来的：只断言「出现 hotfix id 片段」时，改掉其中一处仍然通过。产物级门禁在真实 <code>apply.sh</code> 与 <code>rollback.sh</code> 上复查同样两条。</p>
+</li>
+<li><p>何时需要应用：</p>
+<ul>
+<li>同一台机器上先后做过多次热修，现在要回退其中一次</li>
+<li>回退之后发现某个文件变成了更早的版本，而本次补丁并没有替换它</li>
+<li>回退脚本删掉了一个本补丁从未涉及的文件</li>
+</ul>
+</li>
+</ul>
+<h3 id="验证">验证<a class="heading-anchor" href="#验证" aria-label="Link to 验证">#</a></h3>
+<ul>
+<li><code>sha256sum /usr/local/sbin/clusterguard-upgrade   # 必须等于包内 HOTFIX-MANIFEST.json 中 payload/scripts/clusterguard-upgrade.sh 的 sha256</code></li>
+<li><code>ls -l /usr/local/sbin/clusterguard-upgrade   # 必须仍为 0750 root:clusterguard</code></li>
+<li><code>jq -r &#39;.files[].restart_unit // &quot;(none)&quot;&#39; /root/&lt;解包目录&gt;/clusterguard-hotfix/HOTFIX-MANIFEST.json   # 必须全部为 (none)：本包不含二进制，应用不重启任何服务</code></li>
+<li><code>systemctl is-active clusterguard-ha   # 应用全程必须始终 active：本包不重启控制面，不应出现重启窗口</code></li>
+<li><code>grep -c &#39;resolve_leader_host&#39; /usr/local/sbin/clusterguard-upgrade   # 必须 ≥2（定义 + 热修循环里的调用）：逐节点应用后重新解析 Raft Leader</code></li>
+<li><code>grep -c &#39;wait_cluster_idle &quot;&quot; true idle&#39; /usr/local/sbin/clusterguard-upgrade   # 必须 ≥1：逐节点等待不得再钉死应用前的 Leader</code></li>
+<li><code>bash -c &#39;! grep -q &quot;if ! wait_cluster_idle \&quot;\${leader_host}\&quot; true idle&quot; /usr/local/sbin/clusterguard-upgrade&#39;   # 必须成功：被取代的旧形状不得残留</code></li>
+<li><code>bash -c &#39;! grep -q &quot;^  detect_current_update_lock$&quot; /usr/local/sbin/clusterguard-upgrade || echo present&#39;   # 热修路径必须已能检测本补丁残留的维护门禁</code></li>
+<li><code>bash /root/&lt;解包目录&gt;/clusterguard-hotfix/rollback.sh   # 生成的 rollback.sh 必须用 mktemp + mv -f 换 inode 恢复，且只认 backup-HF-2026-0929-05-*.txt</code></li>
+<li><code>/usr/local/sbin/clusterguard-upgrade --patch &lt;本包&gt; --trust-key /etc/clusterguard/trust/patch-signing-public.pem --inspect   # signature=verified、kind=hotfix、database_mutation=false、rollback=available</code></li>
+<li><code>curl -sk -H &#39;Authorization: Bearer &lt;token&gt;&#39; https://192.168.102.155:3000/api/v1/control-plane/status | jq -c &#39;{maintenance:.result.update_maintenance_active,active_ops:.result.active_operations}&#39;   # 应用后必须 maintenance:false、active_ops:0</code></li>
+<li><code>ls /etc/clusterguard/update-maintenance.json   # 应用成功后必须不存在：门禁已释放，控制台横幅不得再出现</code></li>
+<li><code>下一步验收（本包的目的）：再执行任意一个含二进制的热修包，逐节点应用后不得再出现 leader_changed，且失败时自动回退必须成功、门禁必须被正常释放</code></li>
+</ul>
+<h3 id="回滚">回滚<a class="heading-anchor" href="#回滚" aria-label="Link to 回滚">#</a></h3>
+<p>执行 rollback.sh 恢复旧的 /usr/local/sbin/clusterguard-upgrade，然后 systemctl daemon-reload。本包不含任何二进制、不含 systemd 单元、不含安装器，所以回滚不需要重启任何服务，也不会影响正在运行的控制面与 Helper。回滚后会被带回的行为共四处：热修逐节点应用后重新钉死应用前那台 Leader，于是当被重启的最后一个节点就是 Leader 时，等待会再次超时并触发自动回退；热修路径重新无法接管自己残留的门禁，失败后既不能续跑也不能回退，只能像 2026-09-29 16:42 那样上文件系统解封；此后新生成的 rollback.sh 重新用 cp 就地覆盖运行中的二进制（ETXTBSY），回退在任何节点都不会成功；并且重新接受「最新的」备份清单，可能恢复别的补丁的文件或删除在役文件。注意本包不取代 HF-2026-0929-04：HF-04 的载荷（控制面、Helper、update-job 脚本）已经应用在现场并在运行，回滚本包不会也不能把它们带回旧版本——本包只改那份决定「热修怎么执行」的运行时脚本。</p>
 <h2 id="hf-2026-0929-04-2-2-105-交付线-控制台无法判断-这个包能不能装在本集群上-跨基线的升级包占住唯一可执行槽-终态记录锚死按">HF-2026-0929-04 — 2.2-105 交付线：控制台无法判断「这个包能不能装在本集群上」——跨基线的升级包占住唯一可执行槽、终态记录锚死按钮、失败原因指向根本不存在的维护门禁<a class="heading-anchor" href="#hf-2026-0929-04-2-2-105-交付线-控制台无法判断-这个包能不能装在本集群上-跨基线的升级包占住唯一可执行槽-终态记录锚死按" aria-label="Link to HF-2026-0929-04 — 2.2-105 交付线：控制台无法判断「这个包能不能装在本集群上」——跨基线的升级包占住唯一可执行槽、终态记录锚死按钮、失败原因指向根本不存在的维护门禁">#</a></h2>
 <ul>
 <li>严重级别：P1</li>
@@ -98,7 +204,7 @@ bash rollback.sh         # 按最新备份清单回滚
 <li>构建树：<code>d2e5d850e20d432b92e0c04f963a8381b0044606</code>（基线 <code>bf2feeb070948599d054e66670ada3f29ff8ee25</code> + 上述修复，不含其它提交）</li>
 <li>适用版本：2.2-105 → 2.2-105+hf-2026-0929-04（x86_64）</li>
 <li>产物：<code>release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-04-2.2-105.x86_64.cgpatch</code></li>
-<li>SHA-256：<code>78a0b623977a060d157c35a267c67af26cd96c514526d1d2b1f3b4e86999d126</code></li>
+<li>SHA-256：<code>f768e4b7bc71a486f20d15fddffa9c2defe04b2fadc6e15c60ac0947e1a2ffc4</code></li>
 <li>源码差异：<code>src/HF-2026-0929-04-d2e5d85.patch</code></li>
 <li>交付内容：<ul>
 <li><code>payload/bin/clusterguard</code> → <code>/usr/local/bin/clusterguard</code>（0755）</li>
@@ -108,7 +214,7 @@ bash rollback.sh         # 按最新备份清单回滚
 </li>
 <li>需要重启：<code>clusterguard-ha.service</code>、<code>clusterguard-update-helper.service</code></li>
 </ul>
-<h3 id="本包概要">本包概要<a class="heading-anchor" href="#本包概要" aria-label="Link to 本包概要">#</a></h3>
+<h3 id="本包概要-2">本包概要<a class="heading-anchor" href="#本包概要-2" aria-label="Link to 本包概要">#</a></h3>
 <p>本包替换两个二进制——<code>/usr/local/bin/clusterguard</code>（控制面，<code>internal/api/console.html</code> 由 <code>go:embed</code> 嵌进它）与 <code>/usr/local/libexec/clusterguard-update-helper</code>（受限升级 Helper）——外加一个运行时脚本 <code>/usr/local/libexec/clusterguard-update-job.sh</code>。两个二进制都必须重建，是因为它们都链接 <code>internal/platformupdate</code>（用 <code>go list -deps ./cmd/clusterguard-update-helper</code> 可复核），而本包有修复落在那两个包里；Helper 自身行为不变，变的只是它内嵌的那份包代码。运行时脚本由 Helper 在每次起作业时读取，所以它不需要单独重启。本包不改 RPM 版本、不动任何 systemd 单元、不动 agent，也不出现安装器。<strong>这是 2.2-105 交付线的包</strong>：2.2-105 的 <code>.cgupgrade</code> 会整包替换这两个二进制，所以必须在滚动升级到 2.2-105 之后应用；先装本包再升级，本包会被升级包覆盖（含这个运行时脚本）。同理，2.2-104 线的 HF-2026-0929-03 不要用在 2.2-105 站点上，反之亦然。本包覆盖 2026-09-29 同一天在同一现场暴露的五个缺陷，它们共同的主线是一句话：<strong>控制台无法判断「这个包能不能装在本集群上」</strong>。它只按一个维度评估记录——时间轴上的作业状态（新不新、失败过没有），而这两个事故的失败都出在另一个维度：包与集群的关系（<code>source_version</code> 与集群当前版本是否一致）。前两个缺陷是第一次事故（13:16 上传一个已经修好的 2.2-105 包，按钮却点不动）：<code>Manager.Snapshot</code> 按 <code>uploaded_at</code> 倒序返回，而控制台把「待升级目标版本」「身份栅格」「按钮是否可用」三件事都锚在列表首行；首行是一条 <code>uploaded_at</code> 写在节点时钟快约 5 小时 39 分时的记录（<code>HF-2026-0928-06</code>，<code>2026-09-29T11:01:17.712051173Z</code>），它挂着 <code>succeeded</code> 的 job，于是「待升级包」判定为无、按钮被 <code>!pending</code> 永久关掉，而校验面板仍按上传结果显示绿色的「校验完成」——上下两半在同一屏里互相矛盾，操作员拿到一个验签通过却点不动的包，页面上没有一句话说明原因。后三个缺陷是当天 14:02 的第二次事故，也是更根本的那一个：为了给 2.2-105 备好修复，现场把属于 2.2-105 线的热修补丁 <code>HF-2026-0929-04</code> 上传到了<strong>仍停在 2.2-104</strong> 的集群。上传顺利（签名通过就收下），它随即占住控制台唯一的可执行槽；点「计划」后升级器按设计拒绝，但这次拒绝不改变任何一条已经做出的判定，于是失败记录<strong>不退位</strong>，而真正该执行的 <code>cgupgrade-2.2-104-to-2.2-105-x86_64</code> 排在被它压住的位置、从界面上无法选中。三条修复分别对应：上传口按升级器自己的口径拒绝跨基线包（被拒的包不留任何记录）、快照给已有记录打 <code>incompatible</code> 并让前台把它排除出可执行候选、失败作业把升级器写在输出里的真实原因带给操作员而不是继续指向一个不存在的「维护门禁」。</p>
 <h3 id="hf-2026-0929-04-1-控制台把-待升级目标-与-滚动升级-锚在升级记录首行-首行是已完成记录时按钮永久灰死且页面不说原因-39ef">HF-2026-0929-04.1 控制台把「待升级目标」与「滚动升级」锚在升级记录首行，首行是已完成记录时按钮永久灰死且页面不说原因（<code>39ef673</code>，P1）<a class="heading-anchor" href="#hf-2026-0929-04-1-控制台把-待升级目标-与-滚动升级-锚在升级记录首行-首行是已完成记录时按钮永久灰死且页面不说原因-39ef" aria-label="Link to HF-2026-0929-04.1 控制台把「待升级目标」与「滚动升级」锚在升级记录首行，首行是已完成记录时按钮永久灰死且页面不说原因（39ef673，P1）">#</a></h3>
 <ul>
@@ -193,7 +299,7 @@ bash rollback.sh         # 按最新备份清单回滚
 </ul>
 </li>
 </ul>
-<h3 id="验证">验证<a class="heading-anchor" href="#验证" aria-label="Link to 验证">#</a></h3>
+<h3 id="验证-2">验证<a class="heading-anchor" href="#验证-2" aria-label="Link to 验证">#</a></h3>
 <ul>
 <li><code>/usr/local/bin/clusterguard --version-json | jq -r .commit   # 必须等于本次构建树（build_commit）的短哈希，release 仍为 105</code></li>
 <li><code>rpm -q clusterguard-ha   # 必须仍为 2.2-105：热修补丁不改 RPM 版本，靠 commit 区分是否已应用</code></li>
@@ -213,7 +319,7 @@ bash rollback.sh         # 按最新备份清单回滚
 <li><code>浏览器强制刷新 https://192.168.102.155:3000/ → 设置 → 版本更新 → 升级：上传一个属于别的发布线的包必须当场被拒并给出点名两条发布线的文案，且历史记录里**不新增**该记录</code></li>
 <li><code>同上对话框：若列表里已有跨基线记录，该行必须带「与当前集群基线不一致」标记，「滚动升级」按钮不得以它为默认目标；此时若没有别的可执行记录，面板必须说「当前没有可执行的升级包」并点名那条跨基线记录属于别的发布线</code></li>
 </ul>
-<h3 id="回滚">回滚<a class="heading-anchor" href="#回滚" aria-label="Link to 回滚">#</a></h3>
+<h3 id="回滚-2">回滚<a class="heading-anchor" href="#回滚-2" aria-label="Link to 回滚">#</a></h3>
 <p>执行 rollback.sh 恢复旧的控制面二进制、旧 Helper 二进制与旧运行时脚本，然后 systemctl daemon-reload 并 systemctl restart clusterguard-ha clusterguard-update-helper；本包不涉及 systemd 单元、不涉及安装器，回滚不需要额外手工对齐。回滚后会被带回的行为共五处：控制台重新按升级记录首行决定「待升级目标版本」与「滚动升级」按钮，因此当列表里存在时间戳落在未来的记录时，按钮会再次被那条已完成记录关掉且页面不再解释原因；服务端不再下发 clock_skew，历史行不再有「排序与时间不可信」标注；上传通道重新只验签名，属于别的发布线的包会被再次收下；快照不再标记 incompatible，跨基线记录会重新被当作可重试候选并占住唯一动作槽；失败的升级作业重新只报固定文案，把操作员指向一个不存在的「维护门禁」。2026-09-29 现场已把三台节点的未来时间戳修正回真实时间，且已把误上传的 HF-2026-0929-04 记录改名隔离，所以正常状态下回滚不会立刻复现；但只要之后再次出现时钟跑快的节点，或再次为尚未安装的目标线提前上传补丁，回滚就等于把这两个缺陷一并带回来。</p>
 <h2 id="hf-2026-0929-03-2-2-104-现场修复合集-累积-在-hf-2026-0929-02-之上合并设置页页签-账户与偏好-并入-状">HF-2026-0929-03 — 2.2-104 现场修复合集（累积）：在 HF-2026-0929-02 之上合并设置页页签——「账户与偏好」并入「状态设置」，页签回到三个<a class="heading-anchor" href="#hf-2026-0929-03-2-2-104-现场修复合集-累积-在-hf-2026-0929-02-之上合并设置页页签-账户与偏好-并入-状" aria-label="Link to HF-2026-0929-03 — 2.2-104 现场修复合集（累积）：在 HF-2026-0929-02 之上合并设置页页签——「账户与偏好」并入「状态设置」，页签回到三个">#</a></h2>
 <ul>
@@ -222,7 +328,7 @@ bash rollback.sh         # 按最新备份清单回滚
 <li>构建树：<code>de142494dd73b6d7890df713897e551caa9da2a1</code>（基线 <code>e01f5ce376f94e2595590358c72dd2585e7c09b4</code> + 上述修复，不含其它提交）</li>
 <li>适用版本：2.2-104 → 2.2-104+hf-2026-0929-03（x86_64）</li>
 <li>产物：<code>release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-03-2.2-104.x86_64.cgpatch</code></li>
-<li>SHA-256：<code>21bdc542d9c24c1d6345788797ba12bfd804c54f2fa33af4ae5022cc75aad7a3</code></li>
+<li>SHA-256：<code>c8bc761c03397d879b0d81d666e7181a0fe626b111090bee6e5bd140ccf95765</code></li>
 <li>源码差异：<code>src/HF-2026-0929-03-de14249.patch</code></li>
 <li>交付内容：<ul>
 <li><code>payload/bin/clusterguard</code> → <code>/usr/local/bin/clusterguard</code>（0755）</li>
@@ -240,7 +346,7 @@ bash rollback.sh         # 按最新备份清单回滚
 </li>
 <li>需要重启：<code>clusterguard-ha.service</code>、<code>clusterguard-update-helper.service</code>、<code>clusterguard-agent-reconcile.service</code></li>
 </ul>
-<h3 id="本包概要-2">本包概要<a class="heading-anchor" href="#本包概要-2" aria-label="Link to 本包概要">#</a></h3>
+<h3 id="本包概要-3">本包概要<a class="heading-anchor" href="#本包概要-3" aria-label="Link to 本包概要">#</a></h3>
 <p>本包完整包含并取代 HF-2026-0929-02（也就是说完整包含 HF-2026-0929-01），另加一项设置页合并（de14249）。交付内容与上一包相同——控制面、agent、update-helper 三个二进制，加上时钟网脚本、单元与环境清单——但三个二进制都按新构建树 de14249 重新编译，因此不要与其它包混装，只装这一个。新增的 de14249 只动 internal/api/console.html：原来「控制台状态 / 运行参数 / 版本更新 / 账户与偏好」四个页签在常规宽度下第四个换行、单独占满一行（现场截图即是），而账户与显示偏好描述的对象本来就是控制台自身，于是把「账户与偏好」并进「状态设置」成为状态面板内部的一块，页签收敛为三个。<strong>console.html 是 go:embed 进控制面二进制的</strong>，所以这项改动只有在装了本包并重启 clusterguard-ha 之后才会在页面上出现，浏览器还需要强制刷新。装完当场核对：控制台设置页只有三个页签、选中「状态设置」能看到「账户与安全」与「显示偏好」、切到「运行参数」时它们离屏、切回后重现、「修改密码」仍能打开对话框。</p>
 <h3 id="hf-2026-0929-03-1-设置页第四个页签单独换行占满一行-账户与偏好被拆成与-控制台状态-无关的一页-de14249-p3">HF-2026-0929-03.1 设置页第四个页签单独换行占满一行，账户与偏好被拆成与「控制台状态」无关的一页（<code>de14249</code>，P3）<a class="heading-anchor" href="#hf-2026-0929-03-1-设置页第四个页签单独换行占满一行-账户与偏好被拆成与-控制台状态-无关的一页-de14249-p3" aria-label="Link to HF-2026-0929-03.1 设置页第四个页签单独换行占满一行，账户与偏好被拆成与「控制台状态」无关的一页（de14249，P3）">#</a></h3>
 <ul>
@@ -448,7 +554,7 @@ bash rollback.sh         # 按最新备份清单回滚
 </ul>
 </li>
 </ul>
-<h3 id="验证-2">验证<a class="heading-anchor" href="#验证-2" aria-label="Link to 验证">#</a></h3>
+<h3 id="验证-3">验证<a class="heading-anchor" href="#验证-3" aria-label="Link to 验证">#</a></h3>
 <ul>
 <li><code>ls -ld /run/clusterguard   # 必须是 drwxr-xr-x（0755），可被非特权引擎账户穿越</code></li>
 <li><code>ls -l /usr/local/sbin/clusterguard-upgrade   # 必须是 0750 root:clusterguard，mtime 为本次应用时间</code></li>
@@ -482,7 +588,7 @@ bash rollback.sh         # 按最新备份清单回滚
 <li><code>浏览器强制刷新 https://192.168.102.155:3000/ 后打开设置页：页签必须是三个（状态设置 / 运行参数 / 版本更新），选中「状态设置」时能看到「账户与安全」与「显示偏好」，切到「运行参数」后二者离屏，切回后重现，「修改密码」仍能打开对话框，「界面语言」与「自动刷新」仍可操作</code></li>
 <li><code>node tools/console-settings-merge-acceptance.cjs   # 仓库内复核本次合并的真浏览器验收（需本机有 Chrome；只读，不连现场）</code></li>
 </ul>
-<h3 id="回滚-2">回滚<a class="heading-anchor" href="#回滚-2" aria-label="Link to 回滚">#</a></h3>
+<h3 id="回滚-3">回滚<a class="heading-anchor" href="#回滚-3" aria-label="Link to 回滚">#</a></h3>
 <p>执行 rollback.sh 恢复旧二进制、旧单元与旧运行时脚本，然后 systemctl daemon-reload 并重启 clusterguard-ha 与 clusterguard-update-helper。注意两点：① 回滚会把 clusterguard-clock-mesh.sh 恢复成“无校验即成为权威”的旧版本，并撤掉租约重锚——若此后再次回拨系统时钟，VIP 归属租约将再次长期不过期、自动接管再次被静默关闭；② /usr/local/libexec/clusterguard-update-helper 会回到 HF-2026-0928-06 之前的状态（该二进制此前从未被热修更新过）。本包对 /run/clusterguard、clusterguard-update-helper.service 与其它单元的回滚沿用 HF-2026-0928-05 / HF-2026-0928-06 的说明。 ③ 本包另加的水位容忍也会一并回滚：此后若再次回拨系统时钟，拓扑刷新将再次被永久拒绝——拓扑不再更新、租约停止续约、agent 摘掉 VIP 并把实例锁成只读，而现场无法自解。若确需回滚本包又曾回拨过时钟，回滚后必须同时把 observation_watermarks 与 topology_snapshots 手工对齐到当前时钟，否则集群会停在本次同样的停机态。 ④ 本包另加的设置页合并也会一并回滚：控制台回到四个页签、「账户与偏好」重新作为独立一页出现。这个改动只影响页面结构，没有数据或授权影响，回滚不需要额外的手工对齐。</p>
 <h2 id="hf-2026-0928-02-2-2-103-现场修复合集-累积-整机重启后集群不可用-写入者抖动-升级链前置-控制台原因与关机收尾">HF-2026-0928-02 — 2.2-103 现场修复合集（累积）：整机重启后集群不可用、写入者抖动、升级链前置、控制台原因与关机收尾<a class="heading-anchor" href="#hf-2026-0928-02-2-2-103-现场修复合集-累积-整机重启后集群不可用-写入者抖动-升级链前置-控制台原因与关机收尾" aria-label="Link to HF-2026-0928-02 — 2.2-103 现场修复合集（累积）：整机重启后集群不可用、写入者抖动、升级链前置、控制台原因与关机收尾">#</a></h2>
 <ul>
@@ -491,7 +597,7 @@ bash rollback.sh         # 按最新备份清单回滚
 <li>构建树：<code>f90f995fb92c23d66723a5331742a551be7a93b6</code>（基线 <code>467e533</code> + 上述修复，不含其它提交）</li>
 <li>适用版本：2.2-103 → 2.2-103+hf-2026-0928-02（x86_64）</li>
 <li>产物：<code>release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-2.2-103.x86_64.cgpatch</code></li>
-<li>SHA-256：<code>71083a217f5e0c317c752ce084ed43ea353fc877f5ff1a5737e9444c07eea55b</code></li>
+<li>SHA-256：<code>f5919ad90b960913b2b39b57245172b670c4b328cad5e0f3d6854225f0cadecf</code></li>
 <li>源码差异：<code>src/HF-2026-0928-02-f90f995.patch</code></li>
 <li>交付内容：<ul>
 <li><code>payload/bin/clusterguard</code> → <code>/usr/local/bin/clusterguard</code>（0755）</li>
@@ -506,7 +612,7 @@ bash rollback.sh         # 按最新备份清单回滚
 </li>
 <li>需要重启：<code>clusterguard-ha.service</code>、<code>clusterguard-agent-reconcile.service</code>、<code>clusterguard-update-helper.service</code></li>
 </ul>
-<h3 id="本包概要-3">本包概要<a class="heading-anchor" href="#本包概要-3" aria-label="Link to 本包概要">#</a></h3>
+<h3 id="本包概要-4">本包概要<a class="heading-anchor" href="#本包概要-4" aria-label="Link to 本包概要">#</a></h3>
 <p>本包累积覆盖 2.2-103 基线缺失的五个修复，替代 HF-2026-0928-01。只装这一个包，不要与旧包混用：多个修复都替换 /usr/local/bin/clusterguard，叠加时结果取决于安装顺序。构建树是 2.2-103 基线加上这五个修复（移植分支 hotfix/2.2-103-fixes，f90f995），不含开发线上未发布的功能提交。新增交付类型：运行时脚本进 payload/libexec/（现场 /usr/local/libexec/），这类脚本在下次被调用时生效，不需要重启服务。</p>
 <h3 id="hf-2026-0928-02-1-整机重启后整个集群起不来-共享运行时目录权限与恢复冻结永不释放-f90f995-p0">HF-2026-0928-02.1 整机重启后整个集群起不来：共享运行时目录权限与恢复冻结永不释放（<code>f90f995</code>，P0）<a class="heading-anchor" href="#hf-2026-0928-02-1-整机重启后整个集群起不来-共享运行时目录权限与恢复冻结永不释放-f90f995-p0" aria-label="Link to HF-2026-0928-02.1 整机重启后整个集群起不来：共享运行时目录权限与恢复冻结永不释放（f90f995，P0）">#</a></h3>
 <ul>
@@ -584,7 +690,7 @@ bash rollback.sh         # 按最新备份清单回滚
 </ul>
 </li>
 </ul>
-<h3 id="验证-3">验证<a class="heading-anchor" href="#验证-3" aria-label="Link to 验证">#</a></h3>
+<h3 id="验证-4">验证<a class="heading-anchor" href="#验证-4" aria-label="Link to 验证">#</a></h3>
 <ul>
 <li><code>ls -ld /run/clusterguard   # 必须是 drwxr-xr-x（0755），可被非特权引擎账户穿越</code></li>
 <li><code>systemctl cat clusterguard-update-helper.service | grep -c &#39;RuntimeDirectory=clusterguard&#39;   # 必须为 0</code></li>
@@ -597,7 +703,7 @@ bash rollback.sh         # 按最新备份清单回滚
 <li><code>journalctl -u clusterguard-cluster-finalize --since &#39;-10min&#39; | tail   # 主库未恢复时必须非零退出并重试，不得打印 Succeeded</code></li>
 <li><code>jq -c &#39;.clusters[] | {recovery_freeze}&#39; /var/lib/clusterguard/metadata.json   # 恢复完成后应为 false</code></li>
 </ul>
-<h3 id="回滚-3">回滚<a class="heading-anchor" href="#回滚-3" aria-label="Link to 回滚">#</a></h3>
+<h3 id="回滚-4">回滚<a class="heading-anchor" href="#回滚-4" aria-label="Link to 回滚">#</a></h3>
 <p>执行 rollback.sh 恢复旧二进制、旧单元与旧运行时脚本，然后 systemctl daemon-reload 并 systemctl restart clusterguard-ha。注意：回滚会把 /run/clusterguard 重新交回 0750 的创建方，下一次整机重启会再次让集群起不来；仅在确认新版本有回归时使用，并在回滚后临时手工执行 chmod 0755 /run/clusterguard。</p>
 
           <footer class="document-footer">
@@ -607,7 +713,7 @@ bash rollback.sh         # 按最新备份清单回滚
         </article>
         <aside class="page-toc" aria-label="本页目录">
           <strong>本页目录</strong>
-          <a class="toc-level-2" href="#应用补丁">应用补丁</a><a class="toc-level-2" href="#hf-2026-0929-04-2-2-105-交付线-控制台无法判断-这个包能不能装在本集群上-跨基线的升级包占住唯一可执行槽-终态记录锚死按">HF-2026-0929-04 — 2.2-105 交付线：控制台无法判断「这个包能不能装在本集群上」——跨基线的升级包占住唯一可执行槽、终态记录锚死按钮、失败原因指向根本不存在的维护门禁</a><a class="toc-level-3" href="#本包概要">本包概要</a><a class="toc-level-3" href="#hf-2026-0929-04-1-控制台把-待升级目标-与-滚动升级-锚在升级记录首行-首行是已完成记录时按钮永久灰死且页面不说原因-39ef">HF-2026-0929-04.1 控制台把「待升级目标」与「滚动升级」锚在升级记录首行，首行是已完成记录时按钮永久灰死且页面不说原因（39ef673，P1）</a><a class="toc-level-3" href="#hf-2026-0929-04-2-服务端不区分写在未来的记录-把不可信的排序当权威下发-控制台无从判断-4d80125-p2">HF-2026-0929-04.2 服务端不区分写在未来的记录，把不可信的排序当权威下发，控制台无从判断（4d80125，P2）</a><a class="toc-level-3" href="#hf-2026-0929-04-3-上传口只验-这个包是不是我们的-不验-这个包能不能装在这台机器上-跨基线的升级包被收下-并占住控制台唯一的可">HF-2026-0929-04.3 上传口只验「这个包是不是我们的」，不验「这个包能不能装在这台机器上」——跨基线的升级包被收下，并占住控制台唯一的可执行槽（3a61103，P1）</a><a class="toc-level-3" href="#hf-2026-0929-04-4-控制台把-跨基线包-当成一次普通失败来重试-它永远占着唯一的动作槽-按钮只能打在一个本机装不上的包上-d0f">HF-2026-0929-04.4 控制台把「跨基线包」当成一次普通失败来重试——它永远占着唯一的动作槽，按钮只能打在一个本机装不上的包上（d0f63e6，P1）</a><a class="toc-level-3" href="#hf-2026-0929-04-5-失败的升级作业把原因说成-确认维护门禁状态-而这条路径上根本没有门禁-d2e5d85-p2">HF-2026-0929-04.5 失败的升级作业把原因说成「确认维护门禁状态」，而这条路径上根本没有门禁（d2e5d85，P2）</a><a class="toc-level-3" href="#验证">验证</a><a class="toc-level-3" href="#回滚">回滚</a><a class="toc-level-2" href="#hf-2026-0929-03-2-2-104-现场修复合集-累积-在-hf-2026-0929-02-之上合并设置页页签-账户与偏好-并入-状">HF-2026-0929-03 — 2.2-104 现场修复合集（累积）：在 HF-2026-0929-02 之上合并设置页页签——「账户与偏好」并入「状态设置」，页签回到三个</a><a class="toc-level-3" href="#本包概要-2">本包概要</a><a class="toc-level-3" href="#hf-2026-0929-03-1-设置页第四个页签单独换行占满一行-账户与偏好被拆成与-控制台状态-无关的一页-de14249-p3">HF-2026-0929-03.1 设置页第四个页签单独换行占满一行，账户与偏好被拆成与「控制台状态」无关的一页（de14249，P3）</a><a class="toc-level-3" href="#hf-2026-0929-03-2-时钟拨回之后拓扑观测水位永久拒绝刷新-租约停止续约-vip-被动释放并把实例全部锁成只读-7a1ba82-p">HF-2026-0929-03.2 时钟拨回之后拓扑观测水位永久拒绝刷新，租约停止续约、VIP 被动释放并把实例全部锁成只读（7a1ba82，P0）</a><a class="toc-level-3" href="#hf-2026-0929-03-3-热修包上传到控制台只得到-请走命令行-而产品从未提供那条通道-81fe3c8-p1">HF-2026-0929-03.3 热修包上传到控制台只得到「请走命令行」，而产品从未提供那条通道（81fe3c8，P1）</a><a class="toc-level-3" href="#hf-2026-0929-03-4-热修补丁的落点由来源名猜出-修复被装到产品不读的路径-18d738e-p1">HF-2026-0929-03.4 热修补丁的落点由来源名猜出，修复被装到产品不读的路径（18d738e，P1）</a><a class="toc-level-3" href="#hf-2026-0929-03-5-热修补丁包误传控制台时只报-范围外路径-不说是通道走错了-9303e9d-p1">HF-2026-0929-03.5 热修补丁包误传控制台时只报「范围外路径」，不说是通道走错了（9303e9d，P1）</a><a class="toc-level-3" href="#hf-2026-0929-03-6-整机重启后整个集群起不来-共享运行时目录权限与恢复冻结永不释放-28e3b47-p0">HF-2026-0929-03.6 整机重启后整个集群起不来：共享运行时目录权限与恢复冻结永不释放（28e3b47，P0）</a><a class="toc-level-3" href="#hf-2026-0929-03-7-mysql-写入者协调抖动-授权主库每-5-秒自隔离一次-dd82ca5-p0">HF-2026-0929-03.7 MySQL 写入者协调抖动：授权主库每 5 秒自隔离一次（dd82ca5，P0）</a><a class="toc-level-3" href="#hf-2026-0929-03-8-升级执行链两个前置缺陷-ssh-私钥属主与-helper-共用运行时目录-d5f9491-p0">HF-2026-0929-03.8 升级执行链两个前置缺陷：SSH 私钥属主与 Helper 共用运行时目录（d5f9491，P0）</a><a class="toc-level-3" href="#hf-2026-0929-03-9-控制台不解释-不可用-的原因-ed9faca-p1">HF-2026-0929-03.9 控制台不解释“不可用”的原因（ed9faca，P1）</a><a class="toc-level-3" href="#hf-2026-0929-03-10-整机关机提交后控制台卡在无法交互的对话框上-5ae2039-p1">HF-2026-0929-03.10 整机关机提交后控制台卡在无法交互的对话框上（5ae2039，P1）</a><a class="toc-level-3" href="#hf-2026-0929-03-11-时钟回拨后-vip-归属租约不再过期-自动故障接管被静默关闭-ac6f3f7-p0">HF-2026-0929-03.11 时钟回拨后 VIP 归属租约不再过期，自动故障接管被静默关闭（ac6f3f7，P0）</a><a class="toc-level-3" href="#hf-2026-0929-03-12-时钟网脚本把本机时间无校验地冻结成全集群权威-且从不固定显示时区-abf5782-p1">HF-2026-0929-03.12 时钟网脚本把本机时间无校验地冻结成全集群权威，且从不固定显示时区（abf5782，P1）</a><a class="toc-level-3" href="#hf-2026-0929-03-13-热修通道按路径前缀猜-改动落在哪个二进制-共享包里的修复被静默丢弃-fce48b7-p1">HF-2026-0929-03.13 热修通道按路径前缀猜“改动落在哪个二进制”，共享包里的修复被静默丢弃（fce48b7，P1）</a><a class="toc-level-3" href="#验证-2">验证</a><a class="toc-level-3" href="#回滚-2">回滚</a><a class="toc-level-2" href="#hf-2026-0928-02-2-2-103-现场修复合集-累积-整机重启后集群不可用-写入者抖动-升级链前置-控制台原因与关机收尾">HF-2026-0928-02 — 2.2-103 现场修复合集（累积）：整机重启后集群不可用、写入者抖动、升级链前置、控制台原因与关机收尾</a><a class="toc-level-3" href="#本包概要-3">本包概要</a><a class="toc-level-3" href="#hf-2026-0928-02-1-整机重启后整个集群起不来-共享运行时目录权限与恢复冻结永不释放-f90f995-p0">HF-2026-0928-02.1 整机重启后整个集群起不来：共享运行时目录权限与恢复冻结永不释放（f90f995，P0）</a><a class="toc-level-3" href="#hf-2026-0928-02-2-mysql-写入者协调抖动-授权主库每-5-秒自隔离一次-4015f97-p0">HF-2026-0928-02.2 MySQL 写入者协调抖动：授权主库每 5 秒自隔离一次（4015f97，P0）</a><a class="toc-level-3" href="#hf-2026-0928-02-3-升级执行链两个前置缺陷-ssh-私钥属主与-helper-共用运行时目录-3c88289-p0">HF-2026-0928-02.3 升级执行链两个前置缺陷：SSH 私钥属主与 Helper 共用运行时目录（3c88289，P0）</a><a class="toc-level-3" href="#hf-2026-0928-02-4-控制台不解释-不可用-的原因-914c6c5-p1">HF-2026-0928-02.4 控制台不解释“不可用”的原因（914c6c5，P1）</a><a class="toc-level-3" href="#hf-2026-0928-02-5-整机关机提交后控制台卡在无法交互的对话框上-0e8ab48-p1">HF-2026-0928-02.5 整机关机提交后控制台卡在无法交互的对话框上（0e8ab48，P1）</a><a class="toc-level-3" href="#验证-3">验证</a><a class="toc-level-3" href="#回滚-3">回滚</a>
+          <a class="toc-level-2" href="#应用补丁">应用补丁</a><a class="toc-level-2" href="#hf-2026-0929-05-2-2-105-交付线-热修补丁自己的失败路径把现场锁死-逐节点应用后仍把-leader-钉在应用前-回退用-c">HF-2026-0929-05 — 2.2-105 交付线：热修补丁自己的失败路径把现场锁死——逐节点应用后仍把 Leader 钉在应用前、回退用 cp 就地覆盖运行中的二进制（ETXTBSY）、失败之后既不能续跑也不能回退</a><a class="toc-level-3" href="#本包概要">本包概要</a><a class="toc-level-3" href="#hf-2026-0929-05-1-热修逐节点应用后仍要求-leader-是应用前那一台-被重启的节点恰好就是-leader-时-60-秒等待必">HF-2026-0929-05.1 热修逐节点应用后仍要求 Leader 是应用前那一台——被重启的节点恰好就是 Leader 时，60 秒等待必然超时并触发回退（7252ecf，P0）</a><a class="toc-level-3" href="#hf-2026-0929-05-2-失败的热修无法接管自己残留的维护门禁-检测代码在热修路径上永远到不了-于是续跑被自己的门禁拒绝-回退又被-e">HF-2026-0929-05.2 失败的热修无法接管自己残留的维护门禁——检测代码在热修路径上永远到不了，于是续跑被自己的门禁拒绝、回退又被 ETXTBSY 挡住，现场没有任何自动出路（7252ecf，P0）</a><a class="toc-level-3" href="#hf-2026-0929-05-3-生成的-rollback-sh-用-cp-就地覆盖运行中的二进制-etxtbsy-回退在任何节点都不可能成功">HF-2026-0929-05.3 生成的 rollback.sh 用 cp 就地覆盖运行中的二进制——ETXTBSY，回退在任何节点都不可能成功，门禁因此必然被保留（c05f8b2，P0）</a><a class="toc-level-3" href="#hf-2026-0929-05-4-生成的-rollback-sh-接受-最新的-备份清单-可能恢复别的补丁的文件-甚至把清单里没提到的在役文件">HF-2026-0929-05.4 生成的 rollback.sh 接受「最新的」备份清单——可能恢复别的补丁的文件，甚至把清单里没提到的在役文件直接删掉（c05f8b2，P1）</a><a class="toc-level-3" href="#验证">验证</a><a class="toc-level-3" href="#回滚">回滚</a><a class="toc-level-2" href="#hf-2026-0929-04-2-2-105-交付线-控制台无法判断-这个包能不能装在本集群上-跨基线的升级包占住唯一可执行槽-终态记录锚死按">HF-2026-0929-04 — 2.2-105 交付线：控制台无法判断「这个包能不能装在本集群上」——跨基线的升级包占住唯一可执行槽、终态记录锚死按钮、失败原因指向根本不存在的维护门禁</a><a class="toc-level-3" href="#本包概要-2">本包概要</a><a class="toc-level-3" href="#hf-2026-0929-04-1-控制台把-待升级目标-与-滚动升级-锚在升级记录首行-首行是已完成记录时按钮永久灰死且页面不说原因-39ef">HF-2026-0929-04.1 控制台把「待升级目标」与「滚动升级」锚在升级记录首行，首行是已完成记录时按钮永久灰死且页面不说原因（39ef673，P1）</a><a class="toc-level-3" href="#hf-2026-0929-04-2-服务端不区分写在未来的记录-把不可信的排序当权威下发-控制台无从判断-4d80125-p2">HF-2026-0929-04.2 服务端不区分写在未来的记录，把不可信的排序当权威下发，控制台无从判断（4d80125，P2）</a><a class="toc-level-3" href="#hf-2026-0929-04-3-上传口只验-这个包是不是我们的-不验-这个包能不能装在这台机器上-跨基线的升级包被收下-并占住控制台唯一的可">HF-2026-0929-04.3 上传口只验「这个包是不是我们的」，不验「这个包能不能装在这台机器上」——跨基线的升级包被收下，并占住控制台唯一的可执行槽（3a61103，P1）</a><a class="toc-level-3" href="#hf-2026-0929-04-4-控制台把-跨基线包-当成一次普通失败来重试-它永远占着唯一的动作槽-按钮只能打在一个本机装不上的包上-d0f">HF-2026-0929-04.4 控制台把「跨基线包」当成一次普通失败来重试——它永远占着唯一的动作槽，按钮只能打在一个本机装不上的包上（d0f63e6，P1）</a><a class="toc-level-3" href="#hf-2026-0929-04-5-失败的升级作业把原因说成-确认维护门禁状态-而这条路径上根本没有门禁-d2e5d85-p2">HF-2026-0929-04.5 失败的升级作业把原因说成「确认维护门禁状态」，而这条路径上根本没有门禁（d2e5d85，P2）</a><a class="toc-level-3" href="#验证-2">验证</a><a class="toc-level-3" href="#回滚-2">回滚</a><a class="toc-level-2" href="#hf-2026-0929-03-2-2-104-现场修复合集-累积-在-hf-2026-0929-02-之上合并设置页页签-账户与偏好-并入-状">HF-2026-0929-03 — 2.2-104 现场修复合集（累积）：在 HF-2026-0929-02 之上合并设置页页签——「账户与偏好」并入「状态设置」，页签回到三个</a><a class="toc-level-3" href="#本包概要-3">本包概要</a><a class="toc-level-3" href="#hf-2026-0929-03-1-设置页第四个页签单独换行占满一行-账户与偏好被拆成与-控制台状态-无关的一页-de14249-p3">HF-2026-0929-03.1 设置页第四个页签单独换行占满一行，账户与偏好被拆成与「控制台状态」无关的一页（de14249，P3）</a><a class="toc-level-3" href="#hf-2026-0929-03-2-时钟拨回之后拓扑观测水位永久拒绝刷新-租约停止续约-vip-被动释放并把实例全部锁成只读-7a1ba82-p">HF-2026-0929-03.2 时钟拨回之后拓扑观测水位永久拒绝刷新，租约停止续约、VIP 被动释放并把实例全部锁成只读（7a1ba82，P0）</a><a class="toc-level-3" href="#hf-2026-0929-03-3-热修包上传到控制台只得到-请走命令行-而产品从未提供那条通道-81fe3c8-p1">HF-2026-0929-03.3 热修包上传到控制台只得到「请走命令行」，而产品从未提供那条通道（81fe3c8，P1）</a><a class="toc-level-3" href="#hf-2026-0929-03-4-热修补丁的落点由来源名猜出-修复被装到产品不读的路径-18d738e-p1">HF-2026-0929-03.4 热修补丁的落点由来源名猜出，修复被装到产品不读的路径（18d738e，P1）</a><a class="toc-level-3" href="#hf-2026-0929-03-5-热修补丁包误传控制台时只报-范围外路径-不说是通道走错了-9303e9d-p1">HF-2026-0929-03.5 热修补丁包误传控制台时只报「范围外路径」，不说是通道走错了（9303e9d，P1）</a><a class="toc-level-3" href="#hf-2026-0929-03-6-整机重启后整个集群起不来-共享运行时目录权限与恢复冻结永不释放-28e3b47-p0">HF-2026-0929-03.6 整机重启后整个集群起不来：共享运行时目录权限与恢复冻结永不释放（28e3b47，P0）</a><a class="toc-level-3" href="#hf-2026-0929-03-7-mysql-写入者协调抖动-授权主库每-5-秒自隔离一次-dd82ca5-p0">HF-2026-0929-03.7 MySQL 写入者协调抖动：授权主库每 5 秒自隔离一次（dd82ca5，P0）</a><a class="toc-level-3" href="#hf-2026-0929-03-8-升级执行链两个前置缺陷-ssh-私钥属主与-helper-共用运行时目录-d5f9491-p0">HF-2026-0929-03.8 升级执行链两个前置缺陷：SSH 私钥属主与 Helper 共用运行时目录（d5f9491，P0）</a><a class="toc-level-3" href="#hf-2026-0929-03-9-控制台不解释-不可用-的原因-ed9faca-p1">HF-2026-0929-03.9 控制台不解释“不可用”的原因（ed9faca，P1）</a><a class="toc-level-3" href="#hf-2026-0929-03-10-整机关机提交后控制台卡在无法交互的对话框上-5ae2039-p1">HF-2026-0929-03.10 整机关机提交后控制台卡在无法交互的对话框上（5ae2039，P1）</a><a class="toc-level-3" href="#hf-2026-0929-03-11-时钟回拨后-vip-归属租约不再过期-自动故障接管被静默关闭-ac6f3f7-p0">HF-2026-0929-03.11 时钟回拨后 VIP 归属租约不再过期，自动故障接管被静默关闭（ac6f3f7，P0）</a><a class="toc-level-3" href="#hf-2026-0929-03-12-时钟网脚本把本机时间无校验地冻结成全集群权威-且从不固定显示时区-abf5782-p1">HF-2026-0929-03.12 时钟网脚本把本机时间无校验地冻结成全集群权威，且从不固定显示时区（abf5782，P1）</a><a class="toc-level-3" href="#hf-2026-0929-03-13-热修通道按路径前缀猜-改动落在哪个二进制-共享包里的修复被静默丢弃-fce48b7-p1">HF-2026-0929-03.13 热修通道按路径前缀猜“改动落在哪个二进制”，共享包里的修复被静默丢弃（fce48b7，P1）</a><a class="toc-level-3" href="#验证-3">验证</a><a class="toc-level-3" href="#回滚-3">回滚</a><a class="toc-level-2" href="#hf-2026-0928-02-2-2-103-现场修复合集-累积-整机重启后集群不可用-写入者抖动-升级链前置-控制台原因与关机收尾">HF-2026-0928-02 — 2.2-103 现场修复合集（累积）：整机重启后集群不可用、写入者抖动、升级链前置、控制台原因与关机收尾</a><a class="toc-level-3" href="#本包概要-4">本包概要</a><a class="toc-level-3" href="#hf-2026-0928-02-1-整机重启后整个集群起不来-共享运行时目录权限与恢复冻结永不释放-f90f995-p0">HF-2026-0928-02.1 整机重启后整个集群起不来：共享运行时目录权限与恢复冻结永不释放（f90f995，P0）</a><a class="toc-level-3" href="#hf-2026-0928-02-2-mysql-写入者协调抖动-授权主库每-5-秒自隔离一次-4015f97-p0">HF-2026-0928-02.2 MySQL 写入者协调抖动：授权主库每 5 秒自隔离一次（4015f97，P0）</a><a class="toc-level-3" href="#hf-2026-0928-02-3-升级执行链两个前置缺陷-ssh-私钥属主与-helper-共用运行时目录-3c88289-p0">HF-2026-0928-02.3 升级执行链两个前置缺陷：SSH 私钥属主与 Helper 共用运行时目录（3c88289，P0）</a><a class="toc-level-3" href="#hf-2026-0928-02-4-控制台不解释-不可用-的原因-914c6c5-p1">HF-2026-0928-02.4 控制台不解释“不可用”的原因（914c6c5，P1）</a><a class="toc-level-3" href="#hf-2026-0928-02-5-整机关机提交后控制台卡在无法交互的对话框上-0e8ab48-p1">HF-2026-0928-02.5 整机关机提交后控制台卡在无法交互的对话框上（0e8ab48，P1）</a><a class="toc-level-3" href="#验证-4">验证</a><a class="toc-level-3" href="#回滚-4">回滚</a>
         </aside>
       </main>
     </div>

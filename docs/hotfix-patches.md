@@ -20,6 +20,7 @@ baseline silently downgrades binaries back to its own release line.
 
 | Hotfix | Severity | Fix commits | Build tree | Artifact |
 | --- | --- | --- | --- | --- |
+| HF-2026-0929-05 | P0 | `7252ecf`, `c05f8b2` | `c05f8b2` | `release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-05-2.2-105.x86_64.cgpatch` |
 | HF-2026-0929-04 | P1 | `39ef673`, `4d80125`, `3a61103`, `d0f63e6`, `d2e5d85` | `d2e5d85` | `release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-04-2.2-105.x86_64.cgpatch` |
 | HF-2026-0929-03 | P0 | `de14249`, `7a1ba82`, `ed9faca`, `d5f9491`, `dd82ca5`, `5ae2039`, `28e3b47`, `9303e9d`, `18d738e`, `81fe3c8`, `ac6f3f7`, `abf5782`, `fce48b7` | `de14249` | `release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-03-2.2-104.x86_64.cgpatch` |
 | HF-2026-0928-02 | P0 | `914c6c5`, `3c88289`, `4015f97`, `0e8ab48`, `f90f995` | `f90f995` | `release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-2.2-103.x86_64.cgpatch` |
@@ -38,6 +39,95 @@ systemctl restart <unit> # apply.sh prints the units it needs; it never restarts
 bash rollback.sh         # restores from the newest backup manifest
 ```
 
+## HF-2026-0929-05 — 2.2-105 release line: the hotfix flow locked its own site down - it still pinned the leader captured before the restarts, rolled back by writing over running binaries (ETXTBSY), and left a failed run with no way forward
+
+- Severity: P0
+- Fix commits: `7252ecf`, `c05f8b2`
+- Build tree: `c05f8b248bb5689f46ebebc77e900852c71085a9` (baseline `d2e5d850e20d432b92e0c04f963a8381b0044606` plus the fixes above and nothing else)
+- Applies to: 2.2-105 → 2.2-105+hf-2026-0929-05 (x86_64)
+- Artifact: `release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-05-2.2-105.x86_64.cgpatch`
+- SHA-256: `259c23646eaac488da5bad24d7c8ed98dac95046c40b22d379dd85ba03d03bb6`
+- Source diff: `src/HF-2026-0929-05-c05f8b2.patch`
+- Payload:
+  - `payload/scripts/clusterguard-upgrade.sh` → `/usr/local/sbin/clusterguard-upgrade` (0750)
+- Restart required: none
+
+### What this patch does
+
+This package replaces exactly one runtime script: scripts/clusterguard-upgrade.sh, landing at /usr/local/sbin/clusterguard-upgrade (0750 root:clusterguard). It carries no binary, so the manifest declares no restart_unit at all and applying it restarts nothing. That is not a convenience but the precondition for this package to work at all: what it fixes is precisely the way a hotfix knocks over its own flow when it restarts a node, and the run that installs it is still the old script already on the site - so only by not restarting anything can this run put the fix in place before it reaches the defect. Once installed, the next hotfix (and any future package that does restart a node) is covered. The package attaches to the HF-2026-0929-04 build tree (base_commit = d2e5d85): the site has already applied HF-04 and is running its payload, so this is an increment on top of it, not a replacement, and it does not re-deliver HF-04's binaries. It covers the third incident at the site on 2026-09-29 at 16:22: after the rolling upgrade to 2.2-105 had succeeded and HF-04 had been applied, the operator ran the same hotfix package again. This time it failed, and it locked itself down. The three defects form one chain. First, a hotfix applies node by node following ordered_nodes, with the leader deliberately last, and the wait after each node demanded that the controller which held the leadership before the first restart still hold it - but the last node is exactly that leader, restarting it forces a re-election, so the 60 second wait was guaranteed to time out (leader_changed on the site) and the job was declared failed. Second, failure enters the automatic rollback, and the generated rollback.sh copied each backup over its target; the files a hotfix replaces include running binaries, and writing those in place is ETXTBSY - rollback failed on all three nodes. Third, a failed rollback keeps the maintenance gate on purpose, and that gate can only be taken over by re-running the same patch - yet the hotfix flow returns before detect_current_update_lock is ever reached, so current_patch_maintenance_active stayed false and the re-run was refused by the 'no maintenance may be active' admission check. With all three together there was no automatic path left, and the site could only be unblocked on the filesystem (08:24:47 recorded automatic rollback incomplete; maintenance gate retained; the actual handling was to back up the updates/ records at 16:42, call gate/release on the leader, and rename the locks and /etc/clusterguard/update-maintenance.json aside on all three nodes). A fourth defect of the same origin is fixed along with them: rollback.sh used to pick whichever backup-*.txt was newest rather than this patch's own manifest, and restore_backup() reads 'no entry in the manifest' as 'did not exist before the patch' and deletes the destination - so a wrong manifest deletes live system files.
+
+### HF-2026-0929-05.1 The hotfix still required the leader captured before the restarts, so when the restarted node was that leader the 60 second wait was guaranteed to time out (`7252ecf`, P0)
+
+- Symptom: On 2026-09-29 at 16:22 the site ran HF-2026-0929-04. Applying node by node looked fine, then it reported hotfix failed; automatic rollback started on .154 and status.json ended at failed / phase: rollback / current: 0. The verdict in the log was leader_changed: the leadership had moved during the run, and the flow required it not to. All three clusterguard-ha processes restarted around 16:23 - because this very application restarted them.
+
+- Root cause: run_hotfix_update applies node by node following ordered_nodes, with the leader deliberately last (for host in controllers; do [[ host == leader_host ]] || ordered_nodes+=...; done; ordered_nodes+=leader_host). After every node it ran if ! wait_cluster_idle "${leader_host}" true idle, passing the leader resolved before the run began as an expectation that must not change. verify_cluster_idle compares observed_leader against a non-empty expected_leader and reports leader_changed on any difference. A hotfix restarts the node it patches (apply_hotfix_on_node calls restart_hotfix_units), and the last node is that leader: restarting it forces a re-election, observed_leader becomes another controller, and the wait therefore times out on the exact path that had just succeeded (60 seconds on the site). The same cached leader_host also feeds acquire_replicated_update_gate (:802) and release_replicated_update_gate (:809) to target the gate at the leader, so a value captured before the restarts also aims the gate release at a node that is no longer the leader - the same defect's second hazard.
+
+- Fix: A new resolve_leader_host() asks the one narrow question - who holds the leadership right now - by walking the controllers and taking the first that reports role == leader, publishing it into leader_host and logging a line when it differs from the cached value. It deliberately does not run verify_cluster_idle's full membership and activity validation, so no unrelated invariant can die mid-flow (verify_cluster_idle derives the same fact as a side effect, but it is built for waiting and cannot be asked this question in flight). The per-node wait becomes wait_cluster_idle "" true idle - the maintenance state must hold and the cluster must be idle, with no claim about who leads - and resolve_leader_host runs immediately after, so the gate release inside finish_update_maintenance targets the leader as it is now. The admission wait that runs before any node is touched (after acquire_update_locks) keeps its "${leader_host}": nothing has restarted yet, and demanding a stable leader there is correct. Assertions: TestHotfixFlowTreatsLeaderMovementAsExpectedAfterRestart pins the existence and the implementation of resolve_leader_host (it must ask each controller, and it must publish the answering controller into leader_host), requires wait_cluster_idle "" true idle and resolve_leader_host in run_hotfix_update, and forbids if ! wait_cluster_idle "${leader_host}" true idle from coming back. Mutation: restoring "${leader_host}" there turns the assertion red.
+
+- When to apply:
+  - 热修执行到最后一个节点之后失败，日志里出现 leader_changed 或「控制面升级门禁未通过」，而每个节点其实都已经应用成功
+  - 热修应用期间控制面发生重启，随后等待超时
+  - 升级列表里最后一个节点恰好是 Leader 的热修包
+
+### HF-2026-0929-05.2 A failed hotfix could not take over its own maintenance gate: the detection code is unreachable from the hotfix path, so the re-run was refused by that same gate and rollback was blocked by ETXTBSY - no automatic way out (`7252ecf`, P0)
+
+- Symptom: The failure above left the maintenance gate in place on all three controllers, after which every move hit a wall: re-running the same patch was refused by the 'no maintenance may be active' rule, and the controlled rollback could not get through behind that same gate either. The console banner read 升级维护未闭环 · 维护门禁仍生效 / 自动故障切换已暂停 while the dialog advised checking the maintenance gate before resuming or rolling back - both routes pointing at an action that could not complete. The site was only unblocked by hand: backing up the records under updates/, calling gate/release on the leader, and renaming .cluster-update.lock and /etc/clusterguard/update-maintenance.json aside on all three nodes.
+
+- Root cause: The adoption path existed; the hotfix simply could not reach it. detect_current_update_lock() walks the controllers and sets current_patch_maintenance_active when every one of them carries this patch's maintenance lock; acquire_update_locks calls adopt_current_update_locks when it sees that flag, and build_order on the rolling path relaxes the maintenance expectation on it too. But in the main flow detect_current_update_lock is called at :2086, while the hotfix branch does run_hotfix_update; exit 0 back at :2037 - the hotfix path never calls it, so current_patch_maintenance_active is always false and the adoption branch is unreachable. Meanwhile the admission check in run_hotfix_update was an unconditional verify_cluster_idle "" false any, demanding no maintenance state. Together they shut the only remedy out: the gate can only be taken over by re-running, and the re-run demanded that the gate not exist.
+
+- Fix: run_hotfix_update now calls detect_current_update_lock after load_nodes and before any admission check, making the same adoption path reachable from a hotfix, and the admission check branches on it: when current_patch_maintenance_active is true it uses verify_cluster_idle "" true any to accept this patch's own gate (acquire_update_locks then adopts it via adopt_current_update_locks), and otherwise keeps the original verify_cluster_idle "" false any. The rollback branch is untouched. Assertions: TestHotfixFlowCanAdoptItsOwnMaintenanceGate requires the call statement itself inside run_hotfix_update (\n  detect_current_update_lock, not the name appearing somewhere else or in a comment - a requirement the mutation run forced: an earlier version only asserted that the name was present, and replacing the call with a comment still passed), requires the branch on ${current_patch_maintenance_active}, requires verify_cluster_idle "" true any, and pins acquire_update_locks as still containing adopt_current_update_locks so the two halves cannot drift. Mutation: removing the call turns the assertion red.
+
+- When to apply:
+  - 热修失败后控制台一直显示「升级维护未闭环 / 维护门禁仍生效」，自动故障切换被暂停
+  - 重跑同一个热修包被拒绝，提示要求先确认维护门禁状态
+  - 受控回退也走不通，只能上文件系统改锁文件
+
+### HF-2026-0929-05.3 The generated rollback.sh copied over running binaries, so ETXTBSY made rollback impossible on every node and the maintenance gate was certain to stay up (`c05f8b2`, P0)
+
+- Symptom: The automatic rollback failed on all three nodes: .154 at 08:24:36, .153 at 08:24:39, .152 at 08:24:42, each stalling right after 'restoring the files this hotfix replaced', summarised at 08:24:45 as rollback_failed / automatic rollback incomplete; maintenance gate retained. The combination itself is the clue: only the rollback side failed, so the difference is not the file contents but how they are written.
+
+- Root cause: The generator wrote cp -p "${backup}" "${destination}" into rollback.sh's restore_backup(), that is, it overwrote the destination in place. apply.sh on the other side uses install -m <mode> -o <owner> -g <group> "${here}/${artifact}" "${destination}", and GNU install unlinks the target before creating it, so applying never hit ETXTBSY while rollback always did: the files a hotfix replaces include the running /usr/local/bin/clusterguard and /usr/local/libexec/clusterguard-update-helper, and truncating a file that is being executed returns ETXTBSY. The result was 'install succeeds, rollback can never succeed', and a failed rollback keeps the maintenance gate by design - so this one defect turned every failed hotfix into a site that needs manual unblocking.
+
+- Fix: The generated restore_backup() now swaps the inode: restore_tmp="$(mktemp "${destination}.restore.XXXXXX")" then cp -p "${backup}" "${restore_tmp}" then mv -f "${restore_tmp}" "${destination}". The temp file sits in the destination's own directory, hence the same filesystem, so mv is an atomic rename; a running process keeps the old inode and is unaffected, and cp -p still carries the backup's mode and timestamps. Assertions at two layers: the source-level TestGeneratedRollbackReplacesFilesBySwappingTheInode pins that the generator emits mktemp, the write to the temp file and mv -f, and forbids cp -p "${backup}" "${destination}" from appearing; the artifact gate re-checks the same two facts on the rollback.sh unpacked from every real .cgpatch (it must contain mv -f "${restore_tmp}" and must not overwrite in place). Mutation: reverting mv -f to cp -p turns the source assertion red, and the gate goes red on historical artifacts too - adding it immediately caught that the rollback of HF-2026-0928-02, -03 and -04 was broken in exactly the same way.
+
+- When to apply:
+  - 热修失败后自动回退也没有成功，日志停在「restoring the files this hotfix replaced」
+  - 回退报 ETXTBSY 或文本文件忙
+  - 任何「应用成功、回退失败」的组合，都先怀疑回退是就地覆盖而不是换 inode
+
+### HF-2026-0929-05.4 The generated rollback.sh accepted whichever backup manifest was newest, so it could restore another patch's files - or delete a live file its manifest happened not to mention (`c05f8b2`, P1)
+
+- Symptom: The rollback script picked its own manifest: backup_list="$(ls -1 "${backup_dir}"/backup-*.txt | tail -1)". /var/lib/clusterguard/hotfix/ is shared by every hotfix (the site still had a full set of manifests from the 11:49 handling), so which patch a rollback restores, and which files it touches, depended on whichever filename sorted last rather than on what this patch declared. The ETXTBSY above masked it: set -euo pipefail made the script exit on the first file, so the rest were never processed; as soon as the previous defect was fixed and the rollback could run to completion, this one would start to bite.
+
+- Root cause: apply.sh named its manifest backup-${stamp}.txt, carrying only a timestamp and no patch id, so rollback.sh could do nothing but guess 'the newest'. And restore_backup() handles 'this destination is not in the manifest' with rm -f "${destination}" - but not being listed in some other patch's manifest is not the same as 'it did not exist before this patch', which is the legitimate state that branch exists for. A wrong manifest therefore cuts both ways: restoring an older file that another patch had backed up (a silent downgrade with no error at all), or deleting a live file this patch never touched.
+
+- Fix: The manifest name is bound to the patch id: apply.sh writes backup-${hotfix_id}-${stamp}.txt and rollback.sh matches only backup-<this patch id>-*.txt, exiting with the existing 'no backup manifest found, cannot roll back' message rather than falling back to an arbitrary manifest. Assertions: the source-level TestGeneratedBackupManifestIsBoundToItsOwnHotfix pins the two halves separately (the generator's apply manifest name must carry backup-${manifest.hotfix_id}-${stamp}, its rollback match must carry /backup-${manifest.hotfix_id}-*.txt) and forbids a bare backup-*.txt - pinning them separately was forced by the mutation run, since a check that only looked for the id fragment stayed green while one of the two scripts still ignored it. The artifact gate re-checks both facts on the real apply.sh and rollback.sh.
+
+- When to apply:
+  - 同一台机器上先后做过多次热修，现在要回退其中一次
+  - 回退之后发现某个文件变成了更早的版本，而本次补丁并没有替换它
+  - 回退脚本删掉了一个本补丁从未涉及的文件
+
+### Verification
+
+- `sha256sum /usr/local/sbin/clusterguard-upgrade   # 必须等于包内 HOTFIX-MANIFEST.json 中 payload/scripts/clusterguard-upgrade.sh 的 sha256`
+- `ls -l /usr/local/sbin/clusterguard-upgrade   # 必须仍为 0750 root:clusterguard`
+- `jq -r '.files[].restart_unit // "(none)"' /root/<解包目录>/clusterguard-hotfix/HOTFIX-MANIFEST.json   # 必须全部为 (none)：本包不含二进制，应用不重启任何服务`
+- `systemctl is-active clusterguard-ha   # 应用全程必须始终 active：本包不重启控制面，不应出现重启窗口`
+- `grep -c 'resolve_leader_host' /usr/local/sbin/clusterguard-upgrade   # 必须 ≥2（定义 + 热修循环里的调用）：逐节点应用后重新解析 Raft Leader`
+- `grep -c 'wait_cluster_idle "" true idle' /usr/local/sbin/clusterguard-upgrade   # 必须 ≥1：逐节点等待不得再钉死应用前的 Leader`
+- `bash -c '! grep -q "if ! wait_cluster_idle \"\${leader_host}\" true idle" /usr/local/sbin/clusterguard-upgrade'   # 必须成功：被取代的旧形状不得残留`
+- `bash -c '! grep -q "^  detect_current_update_lock$" /usr/local/sbin/clusterguard-upgrade || echo present'   # 热修路径必须已能检测本补丁残留的维护门禁`
+- `bash /root/<解包目录>/clusterguard-hotfix/rollback.sh   # 生成的 rollback.sh 必须用 mktemp + mv -f 换 inode 恢复，且只认 backup-HF-2026-0929-05-*.txt`
+- `/usr/local/sbin/clusterguard-upgrade --patch <本包> --trust-key /etc/clusterguard/trust/patch-signing-public.pem --inspect   # signature=verified、kind=hotfix、database_mutation=false、rollback=available`
+- `curl -sk -H 'Authorization: Bearer <token>' https://192.168.102.155:3000/api/v1/control-plane/status | jq -c '{maintenance:.result.update_maintenance_active,active_ops:.result.active_operations}'   # 应用后必须 maintenance:false、active_ops:0`
+- `ls /etc/clusterguard/update-maintenance.json   # 应用成功后必须不存在：门禁已释放，控制台横幅不得再出现`
+- `下一步验收（本包的目的）：再执行任意一个含二进制的热修包，逐节点应用后不得再出现 leader_changed，且失败时自动回退必须成功、门禁必须被正常释放`
+
+### Rollback
+
+执行 rollback.sh 恢复旧的 /usr/local/sbin/clusterguard-upgrade，然后 systemctl daemon-reload。本包不含任何二进制、不含 systemd 单元、不含安装器，所以回滚不需要重启任何服务，也不会影响正在运行的控制面与 Helper。回滚后会被带回的行为共四处：热修逐节点应用后重新钉死应用前那台 Leader，于是当被重启的最后一个节点就是 Leader 时，等待会再次超时并触发自动回退；热修路径重新无法接管自己残留的门禁，失败后既不能续跑也不能回退，只能像 2026-09-29 16:42 那样上文件系统解封；此后新生成的 rollback.sh 重新用 cp 就地覆盖运行中的二进制（ETXTBSY），回退在任何节点都不会成功；并且重新接受「最新的」备份清单，可能恢复别的补丁的文件或删除在役文件。注意本包不取代 HF-2026-0929-04：HF-04 的载荷（控制面、Helper、update-job 脚本）已经应用在现场并在运行，回滚本包不会也不能把它们带回旧版本——本包只改那份决定「热修怎么执行」的运行时脚本。
+
 ## HF-2026-0929-04 — 2.2-105 release line: the console could not tell whether a package can be applied to this cluster at all - a foreign-baseline package owned the only action slot, a finished record pinned the button, and the failure reason blamed a maintenance gate that was never set
 
 - Severity: P1
@@ -45,7 +135,7 @@ bash rollback.sh         # restores from the newest backup manifest
 - Build tree: `d2e5d850e20d432b92e0c04f963a8381b0044606` (baseline `bf2feeb070948599d054e66670ada3f29ff8ee25` plus the fixes above and nothing else)
 - Applies to: 2.2-105 → 2.2-105+hf-2026-0929-04 (x86_64)
 - Artifact: `release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-04-2.2-105.x86_64.cgpatch`
-- SHA-256: `78a0b623977a060d157c35a267c67af26cd96c514526d1d2b1f3b4e86999d126`
+- SHA-256: `f768e4b7bc71a486f20d15fddffa9c2defe04b2fadc6e15c60ac0947e1a2ffc4`
 - Source diff: `src/HF-2026-0929-04-d2e5d85.patch`
 - Payload:
   - `payload/bin/clusterguard` → `/usr/local/bin/clusterguard` (0755)
@@ -156,7 +246,7 @@ This package replaces two binaries - /usr/local/bin/clusterguard (the control pl
 - Build tree: `de142494dd73b6d7890df713897e551caa9da2a1` (baseline `e01f5ce376f94e2595590358c72dd2585e7c09b4` plus the fixes above and nothing else)
 - Applies to: 2.2-104 → 2.2-104+hf-2026-0929-03 (x86_64)
 - Artifact: `release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-03-2.2-104.x86_64.cgpatch`
-- SHA-256: `21bdc542d9c24c1d6345788797ba12bfd804c54f2fa33af4ae5022cc75aad7a3`
+- SHA-256: `c8bc761c03397d879b0d81d666e7181a0fe626b111090bee6e5bd140ccf95765`
 - Source diff: `src/HF-2026-0929-03-de14249.patch`
 - Payload:
   - `payload/bin/clusterguard` → `/usr/local/bin/clusterguard` (0755)
@@ -388,7 +478,7 @@ This patch contains and supersedes HF-2026-0929-02 (and therefore contains HF-20
 - Build tree: `f90f995fb92c23d66723a5331742a551be7a93b6` (baseline `467e533` plus the fixes above and nothing else)
 - Applies to: 2.2-103 → 2.2-103+hf-2026-0928-02 (x86_64)
 - Artifact: `release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-2.2-103.x86_64.cgpatch`
-- SHA-256: `71083a217f5e0c317c752ce084ed43ea353fc877f5ff1a5737e9444c07eea55b`
+- SHA-256: `f5919ad90b960913b2b39b57245172b670c4b328cad5e0f3d6854225f0cadecf`
 - Source diff: `src/HF-2026-0928-02-f90f995.patch`
 - Payload:
   - `payload/bin/clusterguard` → `/usr/local/bin/clusterguard` (0755)

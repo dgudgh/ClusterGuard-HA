@@ -1,0 +1,138 @@
+{
+  "id": "HF-2026-0929-05",
+  "severity": "P0",
+  "base_commit": "d2e5d850e20d432b92e0c04f963a8381b0044606",
+  "build_commit": "c05f8b248bb5689f46ebebc77e900852c71085a9",
+  "fix_commits": [
+    "7252ecf092e6cea6697b94981a4232b686852d1c",
+    "c05f8b248bb5689f46ebebc77e900852c71085a9"
+  ],
+  "rpm_version": "2.2",
+  "rpm_release": "105",
+  "title": {
+    "zh": "2.2-105 交付线：热修补丁自己的失败路径把现场锁死——逐节点应用后仍把 Leader 钉在应用前、回退用 cp 就地覆盖运行中的二进制（ETXTBSY）、失败之后既不能续跑也不能回退",
+    "en": "2.2-105 release line: the hotfix flow locked its own site down - it still pinned the leader captured before the restarts, rolled back by writing over running binaries (ETXTBSY), and left a failed run with no way forward"
+  },
+  "summary": {
+    "zh": "本包只替换一个运行时脚本：`scripts/clusterguard-upgrade.sh` → `/usr/local/sbin/clusterguard-upgrade`（0750 root:clusterguard）。**它不含任何二进制，因此清单里没有任何 `restart_unit`，应用过程不会重启任何服务**——这不是省事，而是本包必须成立的前提：本包修的正是「热修重启节点会把流程自己打翻」，而本次执行的仍然是现场已装的那份旧脚本，所以只有让本次应用根本不重启，它才能在踩到那个缺陷之前先把修复装上去。安装完成后，下一次热修（以及未来任何会重启节点的包）才真正受这条修复保护。本包依附 HF-2026-0929-04 的构建树（`base_commit = d2e5d85`）——现场已经应用过 HF-04 并正在运行它的载荷，本包是它的增量，不取代它，也不重复交付它的二进制。本包覆盖 2026-09-29 16:22 现场的第三次事故：在滚动升级到 2.2-105 成功、HF-04 也已应用之后，操作手又执行了一次同一个热修包，这一次它失败了，并且**自己把自己锁死**。三条缺陷是一条链：① 热修按 `ordered_nodes` 逐台应用，而 Leader 被刻意排在最后；每台应用完都要等控制面恢复一致，而这个等待把「应用前那台 Leader」当成必须不变的期望——最后那台恰恰就是 Leader，重启它必然触发重新选举，于是 60 秒等待必然超时（现场 `leader_changed`），作业被判失败。② 判失败后走自动回退，而生成的 `rollback.sh` 用 `cp` 就地覆盖目标文件；被替换的文件里包含正在运行的二进制，就地写入必然 `ETXTBSY`（现场三台全部回退失败）。③ 回退失败的设计后果是保留维护门禁，而门禁只能由「重跑同一个补丁」接管——可热修路径在 `detect_current_update_lock` 之前就 `exit` 了，`current_patch_maintenance_active` 永远是 false，重跑又被「必须没有维护态」这条准入检查拒绝。三条合起来，现场没有任何一条自动路径可走，只能改文件系统解封（08:24:47 记录 `automatic rollback incomplete; maintenance gate retained`，实际处置是 16:42 备份 `updates/` 记录、在 Leader 上调 `gate/release`、三台改名移走锁与 `/etc/clusterguard/update-maintenance.json`）。顺带修掉第四条同源缺陷：`rollback.sh` 此前取「最新的」`backup-*.txt`，而不是本补丁自己的清单——`restore_backup()` 把「清单里没有这条记录」解释成「补丁前不存在」并直接删除目标文件，所以一旦取错清单，它会删除在役的系统文件。现在备份清单名带上补丁编号，回滚只认本补丁的清单。",
+    "en": "This package replaces exactly one runtime script: scripts/clusterguard-upgrade.sh, landing at /usr/local/sbin/clusterguard-upgrade (0750 root:clusterguard). It carries no binary, so the manifest declares no restart_unit at all and applying it restarts nothing. That is not a convenience but the precondition for this package to work at all: what it fixes is precisely the way a hotfix knocks over its own flow when it restarts a node, and the run that installs it is still the old script already on the site - so only by not restarting anything can this run put the fix in place before it reaches the defect. Once installed, the next hotfix (and any future package that does restart a node) is covered. The package attaches to the HF-2026-0929-04 build tree (base_commit = d2e5d85): the site has already applied HF-04 and is running its payload, so this is an increment on top of it, not a replacement, and it does not re-deliver HF-04's binaries. It covers the third incident at the site on 2026-09-29 at 16:22: after the rolling upgrade to 2.2-105 had succeeded and HF-04 had been applied, the operator ran the same hotfix package again. This time it failed, and it locked itself down. The three defects form one chain. First, a hotfix applies node by node following ordered_nodes, with the leader deliberately last, and the wait after each node demanded that the controller which held the leadership before the first restart still hold it - but the last node is exactly that leader, restarting it forces a re-election, so the 60 second wait was guaranteed to time out (leader_changed on the site) and the job was declared failed. Second, failure enters the automatic rollback, and the generated rollback.sh copied each backup over its target; the files a hotfix replaces include running binaries, and writing those in place is ETXTBSY - rollback failed on all three nodes. Third, a failed rollback keeps the maintenance gate on purpose, and that gate can only be taken over by re-running the same patch - yet the hotfix flow returns before detect_current_update_lock is ever reached, so current_patch_maintenance_active stayed false and the re-run was refused by the 'no maintenance may be active' admission check. With all three together there was no automatic path left, and the site could only be unblocked on the filesystem (08:24:47 recorded automatic rollback incomplete; maintenance gate retained; the actual handling was to back up the updates/ records at 16:42, call gate/release on the leader, and rename the locks and /etc/clusterguard/update-maintenance.json aside on all three nodes). A fourth defect of the same origin is fixed along with them: rollback.sh used to pick whichever backup-*.txt was newest rather than this patch's own manifest, and restore_backup() reads 'no entry in the manifest' as 'did not exist before the patch' and deletes the destination - so a wrong manifest deletes live system files."
+  },
+  "fixes": [
+    {
+      "commit": "7252ecf092e6cea6697b94981a4232b686852d1c",
+      "severity": "P0",
+      "title": {
+        "zh": "热修逐节点应用后仍要求 Leader 是应用前那一台——被重启的节点恰好就是 Leader 时，60 秒等待必然超时并触发回退",
+        "en": "The hotfix still required the leader captured before the restarts, so when the restarted node was that leader the 60 second wait was guaranteed to time out"
+      },
+      "symptom": {
+        "zh": "2026-09-29 16:22 现场执行 HF-2026-0929-04，逐台应用看似正常，随后在 `.154` 上报 `hotfix failed; automatic rollback started`，`status.json` 最终停在 `failed` / `phase: rollback` / `current: 0`。日志里的判据是 `leader_changed`：控制面在应用期间发生过一次 Leader 变更，而流程要求它不能变。三台 `clusterguard-ha` 都在 16:23 前后重启过一次——那是本次应用本身做的。",
+        "en": "On 2026-09-29 at 16:22 the site ran HF-2026-0929-04. Applying node by node looked fine, then it reported hotfix failed; automatic rollback started on .154 and status.json ended at failed / phase: rollback / current: 0. The verdict in the log was leader_changed: the leadership had moved during the run, and the flow required it not to. All three clusterguard-ha processes restarted around 16:23 - because this very application restarted them."
+      },
+      "root_cause": {
+        "zh": "`run_hotfix_update` 按 `ordered_nodes` 逐台应用，Leader 被刻意排在最后（`for host in controllers; do [[ host == leader_host ]] || ordered_nodes+=…; done; ordered_nodes+=leader_host`）。每台应用完都执行 `if ! wait_cluster_idle \"${leader_host}\" true idle`——把「应用开始前解析出来的那台 Leader」当作**必须保持不变**的期望传进去。`verify_cluster_idle` 在 `expected_leader` 非空时会比对 `observed_leader`，不等就判 `leader_changed`。热修是要重启被处理节点的（`apply_hotfix_on_node` → `restart_hotfix_units`），而最后一台就是 Leader：重启它必然触发重新选举，`observed_leader` 由此变成别的节点，于是这个等待在**先成功后失败**的路径上必然超时（现场 60 秒）。同一个 `leader_host` 还被 `acquire_replicated_update_gate`（`:802`）与 `release_replicated_update_gate`（`:809`）用来找 Leader 下发门禁，所以缓存在应用前的值还会让门禁释放打向一台已经不是 Leader 的节点——这是同一条缺陷的第二处隐患。",
+        "en": "run_hotfix_update applies node by node following ordered_nodes, with the leader deliberately last (for host in controllers; do [[ host == leader_host ]] || ordered_nodes+=...; done; ordered_nodes+=leader_host). After every node it ran if ! wait_cluster_idle \"${leader_host}\" true idle, passing the leader resolved before the run began as an expectation that must not change. verify_cluster_idle compares observed_leader against a non-empty expected_leader and reports leader_changed on any difference. A hotfix restarts the node it patches (apply_hotfix_on_node calls restart_hotfix_units), and the last node is that leader: restarting it forces a re-election, observed_leader becomes another controller, and the wait therefore times out on the exact path that had just succeeded (60 seconds on the site). The same cached leader_host also feeds acquire_replicated_update_gate (:802) and release_replicated_update_gate (:809) to target the gate at the leader, so a value captured before the restarts also aims the gate release at a node that is no longer the leader - the same defect's second hazard."
+      },
+      "fix": {
+        "zh": "新增 `resolve_leader_host()`：只问「现在谁持有领导权」这一个窄问题——遍历控制节点取各自的 status，第一个报 `role == leader` 的即为答案并写入 `leader_host`，与缓存值不同时打印一行变更日志；它不做 `verify_cluster_idle` 那一整套成员/活动校验，因此不会因为无关不变式而 `die`（`verify_cluster_idle` 顺带推导同一件事，但它是被用于等待的，不能在流程中途被这样询问）。逐节点等待改为 `wait_cluster_idle \"\" true idle`——只要求维护态成立且集群空闲，不再对 Leader 身份提要求；随后立即 `resolve_leader_host`，让 `finish_update_maintenance` 里的门禁释放指向**当前**的 Leader。准入阶段那次 `wait_cluster_idle \"${leader_host}\" true idle`（`acquire_update_locks` 之后、任何节点被改动之前）保持不变：那时还没有重启，要求 Leader 稳定是合理的。断言：`TestHotfixFlowTreatsLeaderMovementAsExpectedAfterRestart` 同时钉住 `resolve_leader_host` 的存在与实现（必须问逐个控制节点、必须把应答者写回 `leader_host`）、`run_hotfix_update` 必须含 `wait_cluster_idle \"\" true idle`、必须含 `resolve_leader_host`，且**不得**再出现 `if ! wait_cluster_idle \"${leader_host}\" true idle`。变异验证：把该处换回 `\"${leader_host}\"` 时断言变红。",
+        "en": "A new resolve_leader_host() asks the one narrow question - who holds the leadership right now - by walking the controllers and taking the first that reports role == leader, publishing it into leader_host and logging a line when it differs from the cached value. It deliberately does not run verify_cluster_idle's full membership and activity validation, so no unrelated invariant can die mid-flow (verify_cluster_idle derives the same fact as a side effect, but it is built for waiting and cannot be asked this question in flight). The per-node wait becomes wait_cluster_idle \"\" true idle - the maintenance state must hold and the cluster must be idle, with no claim about who leads - and resolve_leader_host runs immediately after, so the gate release inside finish_update_maintenance targets the leader as it is now. The admission wait that runs before any node is touched (after acquire_update_locks) keeps its \"${leader_host}\": nothing has restarted yet, and demanding a stable leader there is correct. Assertions: TestHotfixFlowTreatsLeaderMovementAsExpectedAfterRestart pins the existence and the implementation of resolve_leader_host (it must ask each controller, and it must publish the answering controller into leader_host), requires wait_cluster_idle \"\" true idle and resolve_leader_host in run_hotfix_update, and forbids if ! wait_cluster_idle \"${leader_host}\" true idle from coming back. Mutation: restoring \"${leader_host}\" there turns the assertion red."
+      },
+      "applies_to": [
+        "热修执行到最后一个节点之后失败，日志里出现 leader_changed 或「控制面升级门禁未通过」，而每个节点其实都已经应用成功",
+        "热修应用期间控制面发生重启，随后等待超时",
+        "升级列表里最后一个节点恰好是 Leader 的热修包"
+      ]
+    },
+    {
+      "commit": "7252ecf092e6cea6697b94981a4232b686852d1c",
+      "severity": "P0",
+      "title": {
+        "zh": "失败的热修无法接管自己残留的维护门禁——检测代码在热修路径上永远到不了，于是续跑被自己的门禁拒绝、回退又被 ETXTBSY 挡住，现场没有任何自动出路",
+        "en": "A failed hotfix could not take over its own maintenance gate: the detection code is unreachable from the hotfix path, so the re-run was refused by that same gate and rollback was blocked by ETXTBSY - no automatic way out"
+      },
+      "symptom": {
+        "zh": "上一条的失败把维护门禁留在了三台控制节点上。此后现场做任何一件事都撞墙：重跑同一个补丁被「必须没有维护态」拒绝；受控回退在同一份门禁下也走不通；控制台横幅显示「升级维护未闭环 · 维护门禁仍生效 / 自动故障切换已暂停」，而对话框给出的建议是「确认维护门禁状态后再续跑或回退」——两条路都指向一个走不通的动作。最终只能人工作业：备份 `updates/` 下的记录、在 Leader 上调 `gate/release`、三台改名移走 `.cluster-update.lock` 与 `/etc/clusterguard/update-maintenance.json`。",
+        "en": "The failure above left the maintenance gate in place on all three controllers, after which every move hit a wall: re-running the same patch was refused by the 'no maintenance may be active' rule, and the controlled rollback could not get through behind that same gate either. The console banner read 升级维护未闭环 · 维护门禁仍生效 / 自动故障切换已暂停 while the dialog advised checking the maintenance gate before resuming or rolling back - both routes pointing at an action that could not complete. The site was only unblocked by hand: backing up the records under updates/, calling gate/release on the leader, and renaming .cluster-update.lock and /etc/clusterguard/update-maintenance.json aside on all three nodes."
+      },
+      "root_cause": {
+        "zh": "门禁的接管路径本来就有，只是热修走不到。`detect_current_update_lock()` 会遍历控制节点、在**全部**节点都带本补丁的维护锁时把 `current_patch_maintenance_active` 置为 true；`acquire_update_locks` 见到它为真就调 `adopt_current_update_locks` 接管已有锁；`build_order`（滚动升级路径）也据此放宽维护态期望。但主流程里 `detect_current_update_lock` 的调用在 `:2086`，而热修分支在 `:2037` 就 `run_hotfix_update; exit 0` 了——**热修路径从未调用它**，`current_patch_maintenance_active` 恒为 false，接管分支永远不可达。与此同时 `run_hotfix_update` 的准入检查是无条件的 `verify_cluster_idle \"\" false any`：要求维护态为 false。两者合起来正好把唯一的补救动作挡在门外——门禁只能靠重跑接管，而重跑要求门禁不存在。",
+        "en": "The adoption path existed; the hotfix simply could not reach it. detect_current_update_lock() walks the controllers and sets current_patch_maintenance_active when every one of them carries this patch's maintenance lock; acquire_update_locks calls adopt_current_update_locks when it sees that flag, and build_order on the rolling path relaxes the maintenance expectation on it too. But in the main flow detect_current_update_lock is called at :2086, while the hotfix branch does run_hotfix_update; exit 0 back at :2037 - the hotfix path never calls it, so current_patch_maintenance_active is always false and the adoption branch is unreachable. Meanwhile the admission check in run_hotfix_update was an unconditional verify_cluster_idle \"\" false any, demanding no maintenance state. Together they shut the only remedy out: the gate can only be taken over by re-running, and the re-run demanded that the gate not exist."
+      },
+      "fix": {
+        "zh": "在热修流程里、`load_nodes` 之后（任何准入检查之前）调用 `detect_current_update_lock`，让同一条接管路径对热修也可达；准入检查据此分支：`current_patch_maintenance_active` 为真时用 `verify_cluster_idle \"\" true any` 接受本补丁自己的门禁（随后由 `acquire_update_locks` → `adopt_current_update_locks` 接管），否则维持原来的 `verify_cluster_idle \"\" false any`。回退分支（`rollback_requested`）不变。断言：`TestHotfixFlowCanAdoptItsOwnMaintenanceGate` 要求 `run_hotfix_update` 里出现 `detect_current_update_lock` 的**调用语句本身**（`\\n  detect_current_update_lock`，而不是函数名出现在别处或注释里——这一点是被变异验证逼出来的：早期版本只断言名字包含，结果把调用换成注释仍然通过）、要求以 `${current_patch_maintenance_active}` 分支、要求出现 `verify_cluster_idle \"\" true any`，并反向钉住 `acquire_update_locks` 仍然含 `adopt_current_update_locks`，防止两半漂移。变异验证：删掉该调用时断言变红。",
+        "en": "run_hotfix_update now calls detect_current_update_lock after load_nodes and before any admission check, making the same adoption path reachable from a hotfix, and the admission check branches on it: when current_patch_maintenance_active is true it uses verify_cluster_idle \"\" true any to accept this patch's own gate (acquire_update_locks then adopts it via adopt_current_update_locks), and otherwise keeps the original verify_cluster_idle \"\" false any. The rollback branch is untouched. Assertions: TestHotfixFlowCanAdoptItsOwnMaintenanceGate requires the call statement itself inside run_hotfix_update (\\n  detect_current_update_lock, not the name appearing somewhere else or in a comment - a requirement the mutation run forced: an earlier version only asserted that the name was present, and replacing the call with a comment still passed), requires the branch on ${current_patch_maintenance_active}, requires verify_cluster_idle \"\" true any, and pins acquire_update_locks as still containing adopt_current_update_locks so the two halves cannot drift. Mutation: removing the call turns the assertion red."
+      },
+      "applies_to": [
+        "热修失败后控制台一直显示「升级维护未闭环 / 维护门禁仍生效」，自动故障切换被暂停",
+        "重跑同一个热修包被拒绝，提示要求先确认维护门禁状态",
+        "受控回退也走不通，只能上文件系统改锁文件"
+      ]
+    },
+    {
+      "commit": "c05f8b248bb5689f46ebebc77e900852c71085a9",
+      "severity": "P0",
+      "title": {
+        "zh": "生成的 rollback.sh 用 cp 就地覆盖运行中的二进制——ETXTBSY，回退在任何节点都不可能成功，门禁因此必然被保留",
+        "en": "The generated rollback.sh copied over running binaries, so ETXTBSY made rollback impossible on every node and the maintenance gate was certain to stay up"
+      },
+      "symptom": {
+        "zh": "上一条的自动回退在三台节点上全部失败：`.154` 08:24:36、`.153` 08:24:39、`.152` 08:24:42，每条都是「restoring the files this hotfix replaced」之后没有下文，08:24:45 汇总为 `rollback_failed` / `automatic rollback incomplete; maintenance gate retained`。「应用成功、回退失败」这个组合本身就是线索：只有回退这一侧失败，说明差异不在文件内容，而在**写文件的方式**。",
+        "en": "The automatic rollback failed on all three nodes: .154 at 08:24:36, .153 at 08:24:39, .152 at 08:24:42, each stalling right after 'restoring the files this hotfix replaced', summarised at 08:24:45 as rollback_failed / automatic rollback incomplete; maintenance gate retained. The combination itself is the clue: only the rollback side failed, so the difference is not the file contents but how they are written."
+      },
+      "root_cause": {
+        "zh": "生成器给 `rollback.sh` 的 `restore_backup()` 写的是 `cp -p \"${backup}\" \"${destination}\"`，也就是**就地覆盖**目标文件。而 `apply.sh` 那一侧用的是 `install -m <mode> -o <owner> -g <group> \"${here}/${artifact}\" \"${destination}\"`——GNU `install` 会先 unlink 目标再创建，所以应用从不 ETXTBSY，回退却**每次都会**：热修替换的文件里就包含正在运行的 `/usr/local/bin/clusterguard` 与 `/usr/local/libexec/clusterguard-update-helper`，对一个正在被执行的文件做截断写入会得到 ETXTBSY。结果是「安装能成功、回退永远不能成功」，而回退失败的设计后果是保留维护门禁——也就是说，这条缺陷把任何一次热修失败都变成需要人工解封的现场。",
+        "en": "The generator wrote cp -p \"${backup}\" \"${destination}\" into rollback.sh's restore_backup(), that is, it overwrote the destination in place. apply.sh on the other side uses install -m <mode> -o <owner> -g <group> \"${here}/${artifact}\" \"${destination}\", and GNU install unlinks the target before creating it, so applying never hit ETXTBSY while rollback always did: the files a hotfix replaces include the running /usr/local/bin/clusterguard and /usr/local/libexec/clusterguard-update-helper, and truncating a file that is being executed returns ETXTBSY. The result was 'install succeeds, rollback can never succeed', and a failed rollback keeps the maintenance gate by design - so this one defect turned every failed hotfix into a site that needs manual unblocking."
+      },
+      "fix": {
+        "zh": "生成的 `restore_backup()` 改为换 inode：`restore_tmp=\"$(mktemp \"${destination}.restore.XXXXXX\")\"` → `cp -p \"${backup}\" \"${restore_tmp}\"` → `mv -f \"${restore_tmp}\" \"${destination}\"`。临时文件与目标同目录（因此同文件系统，`mv` 是原子的改名），运行中的进程继续持有旧 inode，不受影响；`cp -p` 仍保留备份文件的 mode 与时间戳。断言分两层：源级 `TestGeneratedRollbackReplacesFilesBySwappingTheInode` 钉住生成器里必须同时出现 mktemp、写入临时文件、`mv -f` 三步，并**禁止**出现 `cp -p \"${backup}\" \"${destination}\"`；产物级门禁在真实 `.cgpatch` 解出的 `rollback.sh` 上复查同样两条（必须含 `mv -f \"${restore_tmp}\"`、不得含就地覆盖）。变异验证：把 `mv -f` 换回 `cp -p` 时源级断言变红，门禁对历史产物也当场变红（这条门禁一加上就抓出了 HF-2026-0928-02 / -03 / -04 三个旧包的回滚同样是坏的）。",
+        "en": "The generated restore_backup() now swaps the inode: restore_tmp=\"$(mktemp \"${destination}.restore.XXXXXX\")\" then cp -p \"${backup}\" \"${restore_tmp}\" then mv -f \"${restore_tmp}\" \"${destination}\". The temp file sits in the destination's own directory, hence the same filesystem, so mv is an atomic rename; a running process keeps the old inode and is unaffected, and cp -p still carries the backup's mode and timestamps. Assertions at two layers: the source-level TestGeneratedRollbackReplacesFilesBySwappingTheInode pins that the generator emits mktemp, the write to the temp file and mv -f, and forbids cp -p \"${backup}\" \"${destination}\" from appearing; the artifact gate re-checks the same two facts on the rollback.sh unpacked from every real .cgpatch (it must contain mv -f \"${restore_tmp}\" and must not overwrite in place). Mutation: reverting mv -f to cp -p turns the source assertion red, and the gate goes red on historical artifacts too - adding it immediately caught that the rollback of HF-2026-0928-02, -03 and -04 was broken in exactly the same way."
+      },
+      "applies_to": [
+        "热修失败后自动回退也没有成功，日志停在「restoring the files this hotfix replaced」",
+        "回退报 ETXTBSY 或文本文件忙",
+        "任何「应用成功、回退失败」的组合，都先怀疑回退是就地覆盖而不是换 inode"
+      ]
+    },
+    {
+      "commit": "c05f8b248bb5689f46ebebc77e900852c71085a9",
+      "severity": "P1",
+      "title": {
+        "zh": "生成的 rollback.sh 接受「最新的」备份清单——可能恢复别的补丁的文件，甚至把清单里没提到的在役文件直接删掉",
+        "en": "The generated rollback.sh accepted whichever backup manifest was newest, so it could restore another patch's files - or delete a live file its manifest happened not to mention"
+      },
+      "symptom": {
+        "zh": "回退脚本自己选清单：`backup_list=\"$(ls -1 \"${backup_dir}\"/backup-*.txt | tail -1)\"`。`/var/lib/clusterguard/hotfix/` 是**所有**热修共用的备份目录（现场在 11:49 那次处理后就留下了整套 11:49 的备份清单），因此回退哪一次补丁、恢复哪些文件，取决于「谁的文件名排序最后」，而不是本补丁声明了什么。上一条的 ETXTBSY 恰好掩盖了这条：`set -euo pipefail` 让脚本在第一个文件就退出，后面的文件根本没被处理；一旦上一条修好、回退真的跑得完，这条就会开始生效。",
+        "en": "The rollback script picked its own manifest: backup_list=\"$(ls -1 \"${backup_dir}\"/backup-*.txt | tail -1)\". /var/lib/clusterguard/hotfix/ is shared by every hotfix (the site still had a full set of manifests from the 11:49 handling), so which patch a rollback restores, and which files it touches, depended on whichever filename sorted last rather than on what this patch declared. The ETXTBSY above masked it: set -euo pipefail made the script exit on the first file, so the rest were never processed; as soon as the previous defect was fixed and the rollback could run to completion, this one would start to bite."
+      },
+      "root_cause": {
+        "zh": "`apply.sh` 写的清单名是 `backup-${stamp}.txt`，只带时间戳、不带补丁编号；`rollback.sh` 于是只能用「取最新」来猜。而 `restore_backup()` 对「清单里找不到这个目标路径」的处理是 `rm -f \"${destination}\"`，理由是在别的补丁的清单里查不到，并不等于「本补丁之前它不存在」——这正是「补丁前不存在」这一合法状态的判断依据被张冠李戴。取错清单的后果因此有两个方向：恢复成别的补丁备份的旧文件（静默降级，无任何报错），或者把一个本补丁根本没碰过的在役文件删掉。",
+        "en": "apply.sh named its manifest backup-${stamp}.txt, carrying only a timestamp and no patch id, so rollback.sh could do nothing but guess 'the newest'. And restore_backup() handles 'this destination is not in the manifest' with rm -f \"${destination}\" - but not being listed in some other patch's manifest is not the same as 'it did not exist before this patch', which is the legitimate state that branch exists for. A wrong manifest therefore cuts both ways: restoring an older file that another patch had backed up (a silent downgrade with no error at all), or deleting a live file this patch never touched."
+      },
+      "fix": {
+        "zh": "把清单名绑定到补丁编号：`apply.sh` 写 `backup-${hotfix_id}-${stamp}.txt`，`rollback.sh` 只匹配 `backup-<本补丁 id>-*.txt`，取不到就按既有的「没有找到备份清单，无法回滚」退出，而不是退回任意清单。断言：源级 `TestGeneratedBackupManifestIsBoundToItsOwnHotfix` 两处分开钉（生成器里 apply 的清单名必须带 `backup-${manifest.hotfix_id}-${stamp}`、rollback 的匹配必须带 `/backup-${manifest.hotfix_id}-*.txt`），并禁止出现裸 `backup-*.txt`——分开钉是被变异逼出来的：只断言「出现 hotfix id 片段」时，改掉其中一处仍然通过。产物级门禁在真实 `apply.sh` 与 `rollback.sh` 上复查同样两条。",
+        "en": "The manifest name is bound to the patch id: apply.sh writes backup-${hotfix_id}-${stamp}.txt and rollback.sh matches only backup-<this patch id>-*.txt, exiting with the existing 'no backup manifest found, cannot roll back' message rather than falling back to an arbitrary manifest. Assertions: the source-level TestGeneratedBackupManifestIsBoundToItsOwnHotfix pins the two halves separately (the generator's apply manifest name must carry backup-${manifest.hotfix_id}-${stamp}, its rollback match must carry /backup-${manifest.hotfix_id}-*.txt) and forbids a bare backup-*.txt - pinning them separately was forced by the mutation run, since a check that only looked for the id fragment stayed green while one of the two scripts still ignored it. The artifact gate re-checks both facts on the real apply.sh and rollback.sh."
+      },
+      "applies_to": [
+        "同一台机器上先后做过多次热修，现在要回退其中一次",
+        "回退之后发现某个文件变成了更早的版本，而本次补丁并没有替换它",
+        "回退脚本删掉了一个本补丁从未涉及的文件"
+      ]
+    }
+  ],
+  "verification": [
+    "sha256sum /usr/local/sbin/clusterguard-upgrade   # 必须等于包内 HOTFIX-MANIFEST.json 中 payload/scripts/clusterguard-upgrade.sh 的 sha256",
+    "ls -l /usr/local/sbin/clusterguard-upgrade   # 必须仍为 0750 root:clusterguard",
+    "jq -r '.files[].restart_unit // \"(none)\"' /root/<解包目录>/clusterguard-hotfix/HOTFIX-MANIFEST.json   # 必须全部为 (none)：本包不含二进制，应用不重启任何服务",
+    "systemctl is-active clusterguard-ha   # 应用全程必须始终 active：本包不重启控制面，不应出现重启窗口",
+    "grep -c 'resolve_leader_host' /usr/local/sbin/clusterguard-upgrade   # 必须 ≥2（定义 + 热修循环里的调用）：逐节点应用后重新解析 Raft Leader",
+    "grep -c 'wait_cluster_idle \"\" true idle' /usr/local/sbin/clusterguard-upgrade   # 必须 ≥1：逐节点等待不得再钉死应用前的 Leader",
+    "bash -c '! grep -q \"if ! wait_cluster_idle \\\"\\${leader_host}\\\" true idle\" /usr/local/sbin/clusterguard-upgrade'   # 必须成功：被取代的旧形状不得残留",
+    "bash -c '! grep -q \"^  detect_current_update_lock$\" /usr/local/sbin/clusterguard-upgrade || echo present'   # 热修路径必须已能检测本补丁残留的维护门禁",
+    "bash /root/<解包目录>/clusterguard-hotfix/rollback.sh   # 生成的 rollback.sh 必须用 mktemp + mv -f 换 inode 恢复，且只认 backup-HF-2026-0929-05-*.txt",
+    "/usr/local/sbin/clusterguard-upgrade --patch <本包> --trust-key /etc/clusterguard/trust/patch-signing-public.pem --inspect   # signature=verified、kind=hotfix、database_mutation=false、rollback=available",
+    "curl -sk -H 'Authorization: Bearer <token>' https://192.168.102.155:3000/api/v1/control-plane/status | jq -c '{maintenance:.result.update_maintenance_active,active_ops:.result.active_operations}'   # 应用后必须 maintenance:false、active_ops:0",
+    "ls /etc/clusterguard/update-maintenance.json   # 应用成功后必须不存在：门禁已释放，控制台横幅不得再出现",
+    "下一步验收（本包的目的）：再执行任意一个含二进制的热修包，逐节点应用后不得再出现 leader_changed，且失败时自动回退必须成功、门禁必须被正常释放"
+  ],
+  "rollback": "执行 rollback.sh 恢复旧的 /usr/local/sbin/clusterguard-upgrade，然后 systemctl daemon-reload。本包不含任何二进制、不含 systemd 单元、不含安装器，所以回滚不需要重启任何服务，也不会影响正在运行的控制面与 Helper。回滚后会被带回的行为共四处：热修逐节点应用后重新钉死应用前那台 Leader，于是当被重启的最后一个节点就是 Leader 时，等待会再次超时并触发自动回退；热修路径重新无法接管自己残留的门禁，失败后既不能续跑也不能回退，只能像 2026-09-29 16:42 那样上文件系统解封；此后新生成的 rollback.sh 重新用 cp 就地覆盖运行中的二进制（ETXTBSY），回退在任何节点都不会成功；并且重新接受「最新的」备份清单，可能恢复别的补丁的文件或删除在役文件。注意本包不取代 HF-2026-0929-04：HF-04 的载荷（控制面、Helper、update-job 脚本）已经应用在现场并在运行，回滚本包不会也不能把它们带回旧版本——本包只改那份决定「热修怎么执行」的运行时脚本。"
+}

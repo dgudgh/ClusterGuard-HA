@@ -138,6 +138,47 @@ VIP 归属租约不再续期，数据节点按设计摘掉 VIP 并把实例设�
 <code>apply.sh</code> 与 <code>--inspect</code> 都不校验已安装的 RPM release，这个顺序靠人守。
 同理，2.2-104 线上那份补丁包（HF-2026-0929-03）不要用在 2.2-105 现场，反向也一样。</p>
 </blockquote>
+<h2 id="热修通道自身的失败路径-一次失败之后再无自动出路-16-22">热修通道自身的失败路径：一次失败之后再无自动出路（16:22）<a class="heading-anchor" href="#热修通道自身的失败路径-一次失败之后再无自动出路-16-22" aria-label="Link to 热修通道自身的失败路径：一次失败之后再无自动出路（16:22）">#</a></h2>
+<p>上面五个缺陷修完并打成 <code>HF-2026-0929-04</code> 之后，现场当天又做了第二轮实操：<strong>滚动升级到 2.2-105
+成功</strong>（16:03 记录 <code>succeeded</code>，维护门禁随之释放），随后操作手<strong>再次上传并执行同一个热修包</strong>。
+这一次它失败了，而且在失败之后<strong>把自己锁死</strong>——现场没有任何一条自动路径可以走。</p>
+<ul>
+<li>现象：逐台应用看起来正常，随后在 <code>.154</code> 上报 <code>hotfix failed; automatic rollback started</code>，
+<code>status.json</code> 停在 <code>failed</code> / <code>phase: rollback</code> / <code>current: 0</code>；日志里的判据是 <code>leader_changed</code>
+（60 秒等待超时），而三台 <code>clusterguard-ha</code> 都在 16:23 前后重启过一次——那正是本次应用自己做的。
+此后控制台横幅显示「升级维护未闭环 · 维护门禁仍生效 / 自动故障切换已暂停」，而对话框给出的两条
+建议（续跑 / 回退）撞在同一个走不通的动作上。</li>
+<li>根因（三条串成一条链）：① 热修按 <code>ordered_nodes</code> 逐台应用、Leader 刻意排最后，而每台应用完都执行
+<code>wait_cluster_idle &quot;${leader_host}&quot; true idle</code>——把<strong>应用开始前</strong>解析出来的那台 Leader 当成必须不变
+的期望；被重启的最后一台恰恰就是它，重新选举使 <code>observed_leader</code> 改变，于是这个等待在<strong>刚刚成功</strong>
+的路径上必然超时。② 判失败后走自动回退，而生成的 <code>rollback.sh</code> 用 <code>cp</code> <strong>就地覆盖</strong>目标文件；被
+替换的文件里包含正在运行的 <code>/usr/local/bin/clusterguard</code> 与 <code>clusterguard-update-helper</code>，就地写入
+必然 <code>ETXTBSY</code>（应用这一侧从不失败，是因为 <code>apply.sh</code> 用的 GNU <code>install</code> 会先 unlink 再创建），
+于是三台回退全部失败。③ 回退失败的设计后果是保留维护门禁，而门禁只能靠「重跑同一个补丁」接管——
+可热修分支在调用 <code>detect_current_update_lock</code> 之前就 <code>exit</code> 了，接管分支永远不可达，重跑又被
+「必须没有维护态」这条准入检查拒绝。三条合起来：<strong>继续走不通，退回去也走不通</strong>。</li>
+<li>处置：只能人工解封——备份 <code>updates/</code> 下的作业记录、在 Leader（<code>.153</code>）上调 <code>gate/release</code>、三台
+改名移走 <code>.cluster-update.lock</code> 与 <code>/etc/clusterguard/update-maintenance.json</code>。</li>
+<li>附带修掉的第四条缺陷（同源）：<code>rollback.sh</code> 取「最新的」<code>backup-*.txt</code> 而不是本补丁自己的清单，而
+<code>restore_backup()</code> 把「清单里没有这条记录」解释成「补丁前不存在」并直接 <code>rm -f</code> 目标——取错清单会
+<strong>删掉在役的系统文件</strong>。现在备份清单名带上补丁编号，回退只认本补丁的清单。</li>
+</ul>
+<h3 id="交付形式与顺序约束-hf-2026-0929-05">交付形式与顺序约束（HF-2026-0929-05）<a class="heading-anchor" href="#交付形式与顺序约束-hf-2026-0929-05" aria-label="Link to 交付形式与顺序约束（HF-2026-0929-05）">#</a></h3>
+<ul>
+<li>交付形式：签名热修包
+<code>release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-05-2.2-105.x86_64.cgpatch</code>
+（96,054 字节，sha256 <code>259c2364…</code>）——<strong>一个包</strong>覆盖上述四个缺陷。</li>
+</ul>
+<blockquote>
+<p><strong>本包不含任何二进制，因此应用过程不重启任何服务。</strong> 这不是省事，而是它成立的前提：本包修的正是
+「热修重启节点会把流程自己打翻」，而执行安装的仍然是现场那份旧脚本，只有让本次应用根本不重启，
+修复才能在被那个缺陷踩到之前先装上去。安装之后，<strong>下一次</strong>热修（以及任何会重启节点的包）才真正
+受这条修复保护。</p>
+<p><strong>它是 <code>HF-2026-0929-04</code> 的增量，不取代它</strong>：<code>base_commit</code> 就是 HF-04 的构建树（<code>d2e5d85</code>），
+现场三台已经跑着 HF-04 的载荷（<code>/usr/local/bin/clusterguard</code> 三台同为 <code>26cf134f…</code>、
+<code>--version-json</code> 报 <code>2.2/105/d2e5d85</code>），所以现在只需要上传本包。反过来，本包也不能脱开 HF-04
+单独使用。</p>
+</blockquote>
 <h2 id="验证范围">验证范围<a class="heading-anchor" href="#验证范围" aria-label="Link to 验证范围">#</a></h2>
 <ul>
 <li><code>go build ./...</code></li>
@@ -197,7 +238,9 @@ VIP 自动接管<strong>均未执行</strong>。控制台一侧的验收是分�
 标注 <code>incompatible</code>、blocked 文案退回「已经执行完成」）全部被抓到，且每次都核对文件逐字节复原。</li>
 <li><strong>未做</strong>：上述验收跑在仓库自带的 API 夹具上，<strong>不是</strong>对已部署控制面的实测。因此<strong>仍未验收</strong>
 的是：对现场控制面的 HTTP 层登录与 multipart 真实上传、上传之后真正执行一次滚动升级与回退，
-以及本记录上方那个热修包的现场应用。</li>
+以及热修包本身的现场应用。热修包一侧的现状要分开说：<code>HF-2026-0929-04</code> 的载荷<strong>已经</strong>在三台
+生效（只是作业记录停在 <code>failed</code>，见上一节），而 <code>HF-2026-0929-05</code> <strong>尚未上传</strong>——它要修的是
+「热修怎么执行」，需要下一次带二进制的热修才能真正验收。</li>
 </ul>
 <p>本包不替代现场验签与滚动升级验收，不能仅凭较高版本号当作已发布版本。</p>
 
@@ -208,7 +251,7 @@ VIP 自动接管<strong>均未执行</strong>。控制台一侧的验收是分�
         </article>
         <aside class="page-toc" aria-label="本页目录">
           <strong>本页目录</strong>
-          <a class="toc-level-2" href="#本次变更">本次变更</a><a class="toc-level-3" href="#1-集群时钟-本版主要变更">1. 集群时钟（本版主要变更）</a><a class="toc-level-3" href="#2-写入者协调与整机重启可恢复性">2. 写入者协调与整机重启可恢复性</a><a class="toc-level-3" href="#3-控制台">3. 控制台</a><a class="toc-level-3" href="#4-在线升级与热修补丁通道">4. 在线升级与热修补丁通道</a><a class="toc-level-2" href="#介质构建之后发现的缺陷-升级弹窗里点不动的两个动作">介质构建之后发现的缺陷：升级弹窗里点不动的两个动作</a><a class="toc-level-3" href="#第一次-13-16-首行是一条时间戳落在未来的终态记录">第一次（13:16）：首行是一条时间戳落在未来的终态记录</a><a class="toc-level-3" href="#第二次-14-02-一个属于别的发布线的包占住了唯一可执行槽">第二次（14:02）：一个属于别的发布线的包占住了唯一可执行槽</a><a class="toc-level-3" href="#交付形式与顺序约束">交付形式与顺序约束</a><a class="toc-level-2" href="#验证范围">验证范围</a><a class="toc-level-2" href="#介质范围">介质范围</a><a class="toc-level-2" href="#使用入口">使用入口</a><a class="toc-level-2" href="#现场验收状态">现场验收状态</a>
+          <a class="toc-level-2" href="#本次变更">本次变更</a><a class="toc-level-3" href="#1-集群时钟-本版主要变更">1. 集群时钟（本版主要变更）</a><a class="toc-level-3" href="#2-写入者协调与整机重启可恢复性">2. 写入者协调与整机重启可恢复性</a><a class="toc-level-3" href="#3-控制台">3. 控制台</a><a class="toc-level-3" href="#4-在线升级与热修补丁通道">4. 在线升级与热修补丁通道</a><a class="toc-level-2" href="#介质构建之后发现的缺陷-升级弹窗里点不动的两个动作">介质构建之后发现的缺陷：升级弹窗里点不动的两个动作</a><a class="toc-level-3" href="#第一次-13-16-首行是一条时间戳落在未来的终态记录">第一次（13:16）：首行是一条时间戳落在未来的终态记录</a><a class="toc-level-3" href="#第二次-14-02-一个属于别的发布线的包占住了唯一可执行槽">第二次（14:02）：一个属于别的发布线的包占住了唯一可执行槽</a><a class="toc-level-3" href="#交付形式与顺序约束">交付形式与顺序约束</a><a class="toc-level-2" href="#热修通道自身的失败路径-一次失败之后再无自动出路-16-22">热修通道自身的失败路径：一次失败之后再无自动出路（16:22）</a><a class="toc-level-3" href="#交付形式与顺序约束-hf-2026-0929-05">交付形式与顺序约束（HF-2026-0929-05）</a><a class="toc-level-2" href="#验证范围">验证范围</a><a class="toc-level-2" href="#介质范围">介质范围</a><a class="toc-level-2" href="#使用入口">使用入口</a><a class="toc-level-2" href="#现场验收状态">现场验收状态</a>
         </aside>
       </main>
     </div>

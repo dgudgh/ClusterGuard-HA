@@ -15,6 +15,7 @@
 
 | 补丁编号 | 严重级别 | 覆盖修复提交 | 构建树 | 产物 |
 | --- | --- | --- | --- | --- |
+| HF-2026-0929-05 | P0 | `7252ecf`、`c05f8b2` | `c05f8b2` | `release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-05-2.2-105.x86_64.cgpatch` |
 | HF-2026-0929-04 | P1 | `39ef673`、`4d80125`、`3a61103`、`d0f63e6`、`d2e5d85` | `d2e5d85` | `release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-04-2.2-105.x86_64.cgpatch` |
 | HF-2026-0929-03 | P0 | `de14249`、`7a1ba82`、`ed9faca`、`d5f9491`、`dd82ca5`、`5ae2039`、`28e3b47`、`9303e9d`、`18d738e`、`81fe3c8`、`ac6f3f7`、`abf5782`、`fce48b7` | `de14249` | `release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-03-2.2-104.x86_64.cgpatch` |
 | HF-2026-0928-02 | P0 | `914c6c5`、`3c88289`、`4015f97`、`0e8ab48`、`f90f995` | `f90f995` | `release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-2.2-103.x86_64.cgpatch` |
@@ -33,6 +34,95 @@ systemctl restart <单元> # apply.sh 只打印需要重启的单元，不自动
 bash rollback.sh         # 按最新备份清单回滚
 ```
 
+## HF-2026-0929-05 — 2.2-105 交付线：热修补丁自己的失败路径把现场锁死——逐节点应用后仍把 Leader 钉在应用前、回退用 cp 就地覆盖运行中的二进制（ETXTBSY）、失败之后既不能续跑也不能回退
+
+- 严重级别：P0
+- 覆盖修复提交：`7252ecf`、`c05f8b2`
+- 构建树：`c05f8b248bb5689f46ebebc77e900852c71085a9`（基线 `d2e5d850e20d432b92e0c04f963a8381b0044606` + 上述修复，不含其它提交）
+- 适用版本：2.2-105 → 2.2-105+hf-2026-0929-05（x86_64）
+- 产物：`release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-05-2.2-105.x86_64.cgpatch`
+- SHA-256：`259c23646eaac488da5bad24d7c8ed98dac95046c40b22d379dd85ba03d03bb6`
+- 源码差异：`src/HF-2026-0929-05-c05f8b2.patch`
+- 交付内容：
+  - `payload/scripts/clusterguard-upgrade.sh` → `/usr/local/sbin/clusterguard-upgrade`（0750）
+- 需要重启：无
+
+### 本包概要
+
+本包只替换一个运行时脚本：`scripts/clusterguard-upgrade.sh` → `/usr/local/sbin/clusterguard-upgrade`（0750 root:clusterguard）。**它不含任何二进制，因此清单里没有任何 `restart_unit`，应用过程不会重启任何服务**——这不是省事，而是本包必须成立的前提：本包修的正是「热修重启节点会把流程自己打翻」，而本次执行的仍然是现场已装的那份旧脚本，所以只有让本次应用根本不重启，它才能在踩到那个缺陷之前先把修复装上去。安装完成后，下一次热修（以及未来任何会重启节点的包）才真正受这条修复保护。本包依附 HF-2026-0929-04 的构建树（`base_commit = d2e5d85`）——现场已经应用过 HF-04 并正在运行它的载荷，本包是它的增量，不取代它，也不重复交付它的二进制。本包覆盖 2026-09-29 16:22 现场的第三次事故：在滚动升级到 2.2-105 成功、HF-04 也已应用之后，操作手又执行了一次同一个热修包，这一次它失败了，并且**自己把自己锁死**。三条缺陷是一条链：① 热修按 `ordered_nodes` 逐台应用，而 Leader 被刻意排在最后；每台应用完都要等控制面恢复一致，而这个等待把「应用前那台 Leader」当成必须不变的期望——最后那台恰恰就是 Leader，重启它必然触发重新选举，于是 60 秒等待必然超时（现场 `leader_changed`），作业被判失败。② 判失败后走自动回退，而生成的 `rollback.sh` 用 `cp` 就地覆盖目标文件；被替换的文件里包含正在运行的二进制，就地写入必然 `ETXTBSY`（现场三台全部回退失败）。③ 回退失败的设计后果是保留维护门禁，而门禁只能由「重跑同一个补丁」接管——可热修路径在 `detect_current_update_lock` 之前就 `exit` 了，`current_patch_maintenance_active` 永远是 false，重跑又被「必须没有维护态」这条准入检查拒绝。三条合起来，现场没有任何一条自动路径可走，只能改文件系统解封（08:24:47 记录 `automatic rollback incomplete; maintenance gate retained`，实际处置是 16:42 备份 `updates/` 记录、在 Leader 上调 `gate/release`、三台改名移走锁与 `/etc/clusterguard/update-maintenance.json`）。顺带修掉第四条同源缺陷：`rollback.sh` 此前取「最新的」`backup-*.txt`，而不是本补丁自己的清单——`restore_backup()` 把「清单里没有这条记录」解释成「补丁前不存在」并直接删除目标文件，所以一旦取错清单，它会删除在役的系统文件。现在备份清单名带上补丁编号，回滚只认本补丁的清单。
+
+### HF-2026-0929-05.1 热修逐节点应用后仍要求 Leader 是应用前那一台——被重启的节点恰好就是 Leader 时，60 秒等待必然超时并触发回退（`7252ecf`，P0）
+
+- 现象：2026-09-29 16:22 现场执行 HF-2026-0929-04，逐台应用看似正常，随后在 `.154` 上报 `hotfix failed; automatic rollback started`，`status.json` 最终停在 `failed` / `phase: rollback` / `current: 0`。日志里的判据是 `leader_changed`：控制面在应用期间发生过一次 Leader 变更，而流程要求它不能变。三台 `clusterguard-ha` 都在 16:23 前后重启过一次——那是本次应用本身做的。
+
+- 根因：`run_hotfix_update` 按 `ordered_nodes` 逐台应用，Leader 被刻意排在最后（`for host in controllers; do [[ host == leader_host ]] || ordered_nodes+=…; done; ordered_nodes+=leader_host`）。每台应用完都执行 `if ! wait_cluster_idle "${leader_host}" true idle`——把「应用开始前解析出来的那台 Leader」当作**必须保持不变**的期望传进去。`verify_cluster_idle` 在 `expected_leader` 非空时会比对 `observed_leader`，不等就判 `leader_changed`。热修是要重启被处理节点的（`apply_hotfix_on_node` → `restart_hotfix_units`），而最后一台就是 Leader：重启它必然触发重新选举，`observed_leader` 由此变成别的节点，于是这个等待在**先成功后失败**的路径上必然超时（现场 60 秒）。同一个 `leader_host` 还被 `acquire_replicated_update_gate`（`:802`）与 `release_replicated_update_gate`（`:809`）用来找 Leader 下发门禁，所以缓存在应用前的值还会让门禁释放打向一台已经不是 Leader 的节点——这是同一条缺陷的第二处隐患。
+
+- 修复：新增 `resolve_leader_host()`：只问「现在谁持有领导权」这一个窄问题——遍历控制节点取各自的 status，第一个报 `role == leader` 的即为答案并写入 `leader_host`，与缓存值不同时打印一行变更日志；它不做 `verify_cluster_idle` 那一整套成员/活动校验，因此不会因为无关不变式而 `die`（`verify_cluster_idle` 顺带推导同一件事，但它是被用于等待的，不能在流程中途被这样询问）。逐节点等待改为 `wait_cluster_idle "" true idle`——只要求维护态成立且集群空闲，不再对 Leader 身份提要求；随后立即 `resolve_leader_host`，让 `finish_update_maintenance` 里的门禁释放指向**当前**的 Leader。准入阶段那次 `wait_cluster_idle "${leader_host}" true idle`（`acquire_update_locks` 之后、任何节点被改动之前）保持不变：那时还没有重启，要求 Leader 稳定是合理的。断言：`TestHotfixFlowTreatsLeaderMovementAsExpectedAfterRestart` 同时钉住 `resolve_leader_host` 的存在与实现（必须问逐个控制节点、必须把应答者写回 `leader_host`）、`run_hotfix_update` 必须含 `wait_cluster_idle "" true idle`、必须含 `resolve_leader_host`，且**不得**再出现 `if ! wait_cluster_idle "${leader_host}" true idle`。变异验证：把该处换回 `"${leader_host}"` 时断言变红。
+
+- 何时需要应用：
+  - 热修执行到最后一个节点之后失败，日志里出现 leader_changed 或「控制面升级门禁未通过」，而每个节点其实都已经应用成功
+  - 热修应用期间控制面发生重启，随后等待超时
+  - 升级列表里最后一个节点恰好是 Leader 的热修包
+
+### HF-2026-0929-05.2 失败的热修无法接管自己残留的维护门禁——检测代码在热修路径上永远到不了，于是续跑被自己的门禁拒绝、回退又被 ETXTBSY 挡住，现场没有任何自动出路（`7252ecf`，P0）
+
+- 现象：上一条的失败把维护门禁留在了三台控制节点上。此后现场做任何一件事都撞墙：重跑同一个补丁被「必须没有维护态」拒绝；受控回退在同一份门禁下也走不通；控制台横幅显示「升级维护未闭环 · 维护门禁仍生效 / 自动故障切换已暂停」，而对话框给出的建议是「确认维护门禁状态后再续跑或回退」——两条路都指向一个走不通的动作。最终只能人工作业：备份 `updates/` 下的记录、在 Leader 上调 `gate/release`、三台改名移走 `.cluster-update.lock` 与 `/etc/clusterguard/update-maintenance.json`。
+
+- 根因：门禁的接管路径本来就有，只是热修走不到。`detect_current_update_lock()` 会遍历控制节点、在**全部**节点都带本补丁的维护锁时把 `current_patch_maintenance_active` 置为 true；`acquire_update_locks` 见到它为真就调 `adopt_current_update_locks` 接管已有锁；`build_order`（滚动升级路径）也据此放宽维护态期望。但主流程里 `detect_current_update_lock` 的调用在 `:2086`，而热修分支在 `:2037` 就 `run_hotfix_update; exit 0` 了——**热修路径从未调用它**，`current_patch_maintenance_active` 恒为 false，接管分支永远不可达。与此同时 `run_hotfix_update` 的准入检查是无条件的 `verify_cluster_idle "" false any`：要求维护态为 false。两者合起来正好把唯一的补救动作挡在门外——门禁只能靠重跑接管，而重跑要求门禁不存在。
+
+- 修复：在热修流程里、`load_nodes` 之后（任何准入检查之前）调用 `detect_current_update_lock`，让同一条接管路径对热修也可达；准入检查据此分支：`current_patch_maintenance_active` 为真时用 `verify_cluster_idle "" true any` 接受本补丁自己的门禁（随后由 `acquire_update_locks` → `adopt_current_update_locks` 接管），否则维持原来的 `verify_cluster_idle "" false any`。回退分支（`rollback_requested`）不变。断言：`TestHotfixFlowCanAdoptItsOwnMaintenanceGate` 要求 `run_hotfix_update` 里出现 `detect_current_update_lock` 的**调用语句本身**（`\n  detect_current_update_lock`，而不是函数名出现在别处或注释里——这一点是被变异验证逼出来的：早期版本只断言名字包含，结果把调用换成注释仍然通过）、要求以 `${current_patch_maintenance_active}` 分支、要求出现 `verify_cluster_idle "" true any`，并反向钉住 `acquire_update_locks` 仍然含 `adopt_current_update_locks`，防止两半漂移。变异验证：删掉该调用时断言变红。
+
+- 何时需要应用：
+  - 热修失败后控制台一直显示「升级维护未闭环 / 维护门禁仍生效」，自动故障切换被暂停
+  - 重跑同一个热修包被拒绝，提示要求先确认维护门禁状态
+  - 受控回退也走不通，只能上文件系统改锁文件
+
+### HF-2026-0929-05.3 生成的 rollback.sh 用 cp 就地覆盖运行中的二进制——ETXTBSY，回退在任何节点都不可能成功，门禁因此必然被保留（`c05f8b2`，P0）
+
+- 现象：上一条的自动回退在三台节点上全部失败：`.154` 08:24:36、`.153` 08:24:39、`.152` 08:24:42，每条都是「restoring the files this hotfix replaced」之后没有下文，08:24:45 汇总为 `rollback_failed` / `automatic rollback incomplete; maintenance gate retained`。「应用成功、回退失败」这个组合本身就是线索：只有回退这一侧失败，说明差异不在文件内容，而在**写文件的方式**。
+
+- 根因：生成器给 `rollback.sh` 的 `restore_backup()` 写的是 `cp -p "${backup}" "${destination}"`，也就是**就地覆盖**目标文件。而 `apply.sh` 那一侧用的是 `install -m <mode> -o <owner> -g <group> "${here}/${artifact}" "${destination}"`——GNU `install` 会先 unlink 目标再创建，所以应用从不 ETXTBSY，回退却**每次都会**：热修替换的文件里就包含正在运行的 `/usr/local/bin/clusterguard` 与 `/usr/local/libexec/clusterguard-update-helper`，对一个正在被执行的文件做截断写入会得到 ETXTBSY。结果是「安装能成功、回退永远不能成功」，而回退失败的设计后果是保留维护门禁——也就是说，这条缺陷把任何一次热修失败都变成需要人工解封的现场。
+
+- 修复：生成的 `restore_backup()` 改为换 inode：`restore_tmp="$(mktemp "${destination}.restore.XXXXXX")"` → `cp -p "${backup}" "${restore_tmp}"` → `mv -f "${restore_tmp}" "${destination}"`。临时文件与目标同目录（因此同文件系统，`mv` 是原子的改名），运行中的进程继续持有旧 inode，不受影响；`cp -p` 仍保留备份文件的 mode 与时间戳。断言分两层：源级 `TestGeneratedRollbackReplacesFilesBySwappingTheInode` 钉住生成器里必须同时出现 mktemp、写入临时文件、`mv -f` 三步，并**禁止**出现 `cp -p "${backup}" "${destination}"`；产物级门禁在真实 `.cgpatch` 解出的 `rollback.sh` 上复查同样两条（必须含 `mv -f "${restore_tmp}"`、不得含就地覆盖）。变异验证：把 `mv -f` 换回 `cp -p` 时源级断言变红，门禁对历史产物也当场变红（这条门禁一加上就抓出了 HF-2026-0928-02 / -03 / -04 三个旧包的回滚同样是坏的）。
+
+- 何时需要应用：
+  - 热修失败后自动回退也没有成功，日志停在「restoring the files this hotfix replaced」
+  - 回退报 ETXTBSY 或文本文件忙
+  - 任何「应用成功、回退失败」的组合，都先怀疑回退是就地覆盖而不是换 inode
+
+### HF-2026-0929-05.4 生成的 rollback.sh 接受「最新的」备份清单——可能恢复别的补丁的文件，甚至把清单里没提到的在役文件直接删掉（`c05f8b2`，P1）
+
+- 现象：回退脚本自己选清单：`backup_list="$(ls -1 "${backup_dir}"/backup-*.txt | tail -1)"`。`/var/lib/clusterguard/hotfix/` 是**所有**热修共用的备份目录（现场在 11:49 那次处理后就留下了整套 11:49 的备份清单），因此回退哪一次补丁、恢复哪些文件，取决于「谁的文件名排序最后」，而不是本补丁声明了什么。上一条的 ETXTBSY 恰好掩盖了这条：`set -euo pipefail` 让脚本在第一个文件就退出，后面的文件根本没被处理；一旦上一条修好、回退真的跑得完，这条就会开始生效。
+
+- 根因：`apply.sh` 写的清单名是 `backup-${stamp}.txt`，只带时间戳、不带补丁编号；`rollback.sh` 于是只能用「取最新」来猜。而 `restore_backup()` 对「清单里找不到这个目标路径」的处理是 `rm -f "${destination}"`，理由是在别的补丁的清单里查不到，并不等于「本补丁之前它不存在」——这正是「补丁前不存在」这一合法状态的判断依据被张冠李戴。取错清单的后果因此有两个方向：恢复成别的补丁备份的旧文件（静默降级，无任何报错），或者把一个本补丁根本没碰过的在役文件删掉。
+
+- 修复：把清单名绑定到补丁编号：`apply.sh` 写 `backup-${hotfix_id}-${stamp}.txt`，`rollback.sh` 只匹配 `backup-<本补丁 id>-*.txt`，取不到就按既有的「没有找到备份清单，无法回滚」退出，而不是退回任意清单。断言：源级 `TestGeneratedBackupManifestIsBoundToItsOwnHotfix` 两处分开钉（生成器里 apply 的清单名必须带 `backup-${manifest.hotfix_id}-${stamp}`、rollback 的匹配必须带 `/backup-${manifest.hotfix_id}-*.txt`），并禁止出现裸 `backup-*.txt`——分开钉是被变异逼出来的：只断言「出现 hotfix id 片段」时，改掉其中一处仍然通过。产物级门禁在真实 `apply.sh` 与 `rollback.sh` 上复查同样两条。
+
+- 何时需要应用：
+  - 同一台机器上先后做过多次热修，现在要回退其中一次
+  - 回退之后发现某个文件变成了更早的版本，而本次补丁并没有替换它
+  - 回退脚本删掉了一个本补丁从未涉及的文件
+
+### 验证
+
+- `sha256sum /usr/local/sbin/clusterguard-upgrade   # 必须等于包内 HOTFIX-MANIFEST.json 中 payload/scripts/clusterguard-upgrade.sh 的 sha256`
+- `ls -l /usr/local/sbin/clusterguard-upgrade   # 必须仍为 0750 root:clusterguard`
+- `jq -r '.files[].restart_unit // "(none)"' /root/<解包目录>/clusterguard-hotfix/HOTFIX-MANIFEST.json   # 必须全部为 (none)：本包不含二进制，应用不重启任何服务`
+- `systemctl is-active clusterguard-ha   # 应用全程必须始终 active：本包不重启控制面，不应出现重启窗口`
+- `grep -c 'resolve_leader_host' /usr/local/sbin/clusterguard-upgrade   # 必须 ≥2（定义 + 热修循环里的调用）：逐节点应用后重新解析 Raft Leader`
+- `grep -c 'wait_cluster_idle "" true idle' /usr/local/sbin/clusterguard-upgrade   # 必须 ≥1：逐节点等待不得再钉死应用前的 Leader`
+- `bash -c '! grep -q "if ! wait_cluster_idle \"\${leader_host}\" true idle" /usr/local/sbin/clusterguard-upgrade'   # 必须成功：被取代的旧形状不得残留`
+- `bash -c '! grep -q "^  detect_current_update_lock$" /usr/local/sbin/clusterguard-upgrade || echo present'   # 热修路径必须已能检测本补丁残留的维护门禁`
+- `bash /root/<解包目录>/clusterguard-hotfix/rollback.sh   # 生成的 rollback.sh 必须用 mktemp + mv -f 换 inode 恢复，且只认 backup-HF-2026-0929-05-*.txt`
+- `/usr/local/sbin/clusterguard-upgrade --patch <本包> --trust-key /etc/clusterguard/trust/patch-signing-public.pem --inspect   # signature=verified、kind=hotfix、database_mutation=false、rollback=available`
+- `curl -sk -H 'Authorization: Bearer <token>' https://192.168.102.155:3000/api/v1/control-plane/status | jq -c '{maintenance:.result.update_maintenance_active,active_ops:.result.active_operations}'   # 应用后必须 maintenance:false、active_ops:0`
+- `ls /etc/clusterguard/update-maintenance.json   # 应用成功后必须不存在：门禁已释放，控制台横幅不得再出现`
+- `下一步验收（本包的目的）：再执行任意一个含二进制的热修包，逐节点应用后不得再出现 leader_changed，且失败时自动回退必须成功、门禁必须被正常释放`
+
+### 回滚
+
+执行 rollback.sh 恢复旧的 /usr/local/sbin/clusterguard-upgrade，然后 systemctl daemon-reload。本包不含任何二进制、不含 systemd 单元、不含安装器，所以回滚不需要重启任何服务，也不会影响正在运行的控制面与 Helper。回滚后会被带回的行为共四处：热修逐节点应用后重新钉死应用前那台 Leader，于是当被重启的最后一个节点就是 Leader 时，等待会再次超时并触发自动回退；热修路径重新无法接管自己残留的门禁，失败后既不能续跑也不能回退，只能像 2026-09-29 16:42 那样上文件系统解封；此后新生成的 rollback.sh 重新用 cp 就地覆盖运行中的二进制（ETXTBSY），回退在任何节点都不会成功；并且重新接受「最新的」备份清单，可能恢复别的补丁的文件或删除在役文件。注意本包不取代 HF-2026-0929-04：HF-04 的载荷（控制面、Helper、update-job 脚本）已经应用在现场并在运行，回滚本包不会也不能把它们带回旧版本——本包只改那份决定「热修怎么执行」的运行时脚本。
+
 ## HF-2026-0929-04 — 2.2-105 交付线：控制台无法判断「这个包能不能装在本集群上」——跨基线的升级包占住唯一可执行槽、终态记录锚死按钮、失败原因指向根本不存在的维护门禁
 
 - 严重级别：P1
@@ -40,7 +130,7 @@ bash rollback.sh         # 按最新备份清单回滚
 - 构建树：`d2e5d850e20d432b92e0c04f963a8381b0044606`（基线 `bf2feeb070948599d054e66670ada3f29ff8ee25` + 上述修复，不含其它提交）
 - 适用版本：2.2-105 → 2.2-105+hf-2026-0929-04（x86_64）
 - 产物：`release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-04-2.2-105.x86_64.cgpatch`
-- SHA-256：`78a0b623977a060d157c35a267c67af26cd96c514526d1d2b1f3b4e86999d126`
+- SHA-256：`f768e4b7bc71a486f20d15fddffa9c2defe04b2fadc6e15c60ac0947e1a2ffc4`
 - 源码差异：`src/HF-2026-0929-04-d2e5d85.patch`
 - 交付内容：
   - `payload/bin/clusterguard` → `/usr/local/bin/clusterguard`（0755）
@@ -151,7 +241,7 @@ bash rollback.sh         # 按最新备份清单回滚
 - 构建树：`de142494dd73b6d7890df713897e551caa9da2a1`（基线 `e01f5ce376f94e2595590358c72dd2585e7c09b4` + 上述修复，不含其它提交）
 - 适用版本：2.2-104 → 2.2-104+hf-2026-0929-03（x86_64）
 - 产物：`release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-03-2.2-104.x86_64.cgpatch`
-- SHA-256：`21bdc542d9c24c1d6345788797ba12bfd804c54f2fa33af4ae5022cc75aad7a3`
+- SHA-256：`c8bc761c03397d879b0d81d666e7181a0fe626b111090bee6e5bd140ccf95765`
 - 源码差异：`src/HF-2026-0929-03-de14249.patch`
 - 交付内容：
   - `payload/bin/clusterguard` → `/usr/local/bin/clusterguard`（0755）
@@ -383,7 +473,7 @@ bash rollback.sh         # 按最新备份清单回滚
 - 构建树：`f90f995fb92c23d66723a5331742a551be7a93b6`（基线 `467e533` + 上述修复，不含其它提交）
 - 适用版本：2.2-103 → 2.2-103+hf-2026-0928-02（x86_64）
 - 产物：`release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-2.2-103.x86_64.cgpatch`
-- SHA-256：`71083a217f5e0c317c752ce084ed43ea353fc877f5ff1a5737e9444c07eea55b`
+- SHA-256：`f5919ad90b960913b2b39b57245172b670c4b328cad5e0f3d6854225f0cadecf`
 - 源码差异：`src/HF-2026-0928-02-f90f995.patch`
 - 交付内容：
   - `payload/bin/clusterguard` → `/usr/local/bin/clusterguard`（0755）
