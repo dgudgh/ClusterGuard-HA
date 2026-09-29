@@ -147,6 +147,37 @@ for (const spec of specs) {
 check('every declaration carries the id, severity, commits and bilingual text', incomplete.length === 0, incomplete.join(', '));
 check('every declaration points at real fix commits whose baseline is an ancestor', badCommits.length === 0, badCommits.join(', '));
 
+// The reverse of the check above. fix_commits is what the signed manifest
+// promises the site, fixes[] is the only place an operator can read what each
+// of those commits actually changed; the two were only ever compared in one
+// direction, so a commit could sit in fix_commits with no entry at all. The
+// commit table is rendered from fix_commits, so its short sha would still show
+// up in both catalogues and every other check would stay green while the patch
+// shipped a change nobody had described.
+const undocumentedFixes = [];
+for (const spec of specs) {
+  const described = new Set((spec.body.fixes || []).map((item) => {
+    try {
+      return resolveCommit(item.commit);
+    } catch (error) {
+      return null;
+    }
+  }));
+  for (const commit of spec.body.fix_commits || []) {
+    let resolved = null;
+    try {
+      resolved = resolveCommit(commit);
+    } catch (error) {
+      continue;
+    }
+    if (!described.has(resolved)) {
+      undocumentedFixes.push(`${spec.body.id}:${commit.slice(0, 7)} 在 fix_commits 中但没有对应的 fixes[] 条目`);
+    }
+  }
+}
+check('every declared fix commit is described by a bilingual fix entry',
+  undocumentedFixes.length === 0, undocumentedFixes.join('; '));
+
 // --- Gate 2: every declaration has a signed artifact -----------------------
 const archiveName = (body) =>
   `clusterguard-ha-hotfix-${body.id}-${body.rpm_version}-${body.rpm_release}.x86_64.cgpatch`;

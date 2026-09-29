@@ -15,7 +15,7 @@
 
 | 补丁编号 | 严重级别 | 覆盖修复提交 | 构建树 | 产物 |
 | --- | --- | --- | --- | --- |
-| HF-2026-0929-02 | P0 | `7a1ba82`、`ed9faca`、`d5f9491`、`dd82ca5`、`5ae2039`、`28e3b47`、`9303e9d`、`18d738e`、`81fe3c8`、`ac6f3f7`、`abf5782`、`fce48b7` | `7a1ba82` | `release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-02-2.2-104.x86_64.cgpatch` |
+| HF-2026-0929-03 | P0 | `de14249`、`7a1ba82`、`ed9faca`、`d5f9491`、`dd82ca5`、`5ae2039`、`28e3b47`、`9303e9d`、`18d738e`、`81fe3c8`、`ac6f3f7`、`abf5782`、`fce48b7` | `de14249` | `release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-03-2.2-104.x86_64.cgpatch` |
 | HF-2026-0928-02 | P0 | `914c6c5`、`3c88289`、`4015f97`、`0e8ab48`、`f90f995` | `f90f995` | `release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-2.2-103.x86_64.cgpatch` |
 
 ## 应用补丁
@@ -32,15 +32,15 @@ systemctl restart <单元> # apply.sh 只打印需要重启的单元，不自动
 bash rollback.sh         # 按最新备份清单回滚
 ```
 
-## HF-2026-0929-02 — 2.2-104 现场修复合集（累积）：在 HF-2026-0929-01 之上加入「时钟拨回后拓扑水位永久拒绝刷新」的修复——水位落回当前时钟，租约恢复续约，VIP 与实例恢复授权
+## HF-2026-0929-03 — 2.2-104 现场修复合集（累积）：在 HF-2026-0929-02 之上合并设置页页签——「账户与偏好」并入「状态设置」，页签回到三个
 
 - 严重级别：P0
-- 覆盖修复提交：`7a1ba82`、`ed9faca`、`d5f9491`、`dd82ca5`、`5ae2039`、`28e3b47`、`9303e9d`、`18d738e`、`81fe3c8`、`ac6f3f7`、`abf5782`、`fce48b7`
-- 构建树：`7a1ba820995d7fb26f89b36d3e1e62b62ccd278e`（基线 `e01f5ce376f94e2595590358c72dd2585e7c09b4` + 上述修复，不含其它提交）
-- 适用版本：2.2-104 → 2.2-104+hf-2026-0929-02（x86_64）
-- 产物：`release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-02-2.2-104.x86_64.cgpatch`
-- SHA-256：`42d18932b23d1929bfd260cd7300a707fc947d2ff7a9d186a93fed927cc1402a`
-- 源码差异：`src/HF-2026-0929-02-7a1ba82.patch`
+- 覆盖修复提交：`de14249`、`7a1ba82`、`ed9faca`、`d5f9491`、`dd82ca5`、`5ae2039`、`28e3b47`、`9303e9d`、`18d738e`、`81fe3c8`、`ac6f3f7`、`abf5782`、`fce48b7`
+- 构建树：`de142494dd73b6d7890df713897e551caa9da2a1`（基线 `e01f5ce376f94e2595590358c72dd2585e7c09b4` + 上述修复，不含其它提交）
+- 适用版本：2.2-104 → 2.2-104+hf-2026-0929-03（x86_64）
+- 产物：`release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-03-2.2-104.x86_64.cgpatch`
+- SHA-256：`21bdc542d9c24c1d6345788797ba12bfd804c54f2fa33af4ae5022cc75aad7a3`
+- 源码差异：`src/HF-2026-0929-03-de14249.patch`
 - 交付内容：
   - `payload/bin/clusterguard` → `/usr/local/bin/clusterguard`（0755）
   - `payload/bin/clusterguard-agent` → `/usr/local/bin/clusterguard-agent`（0755）
@@ -57,9 +57,22 @@ bash rollback.sh         # 按最新备份清单回滚
 
 ### 本包概要
 
-本包完整包含并取代 HF-2026-0929-01，另加一项 P0 修复（7a1ba82），来自 2026-09-29 把三台快 8 小时的时间拨回真实时刻之后的实测。水位写在错钟上就不再可信：修正时钟这个动作本身让之后每一次观测都落在水位之后，严格单调性于是永久拒绝刷新，拓扑永不更新、observed_at 永远停在那口错钟，ownership_keeper 把拓扑判成「来自未来」而跳过续约，agent 按设计摘掉 VIP 并把实例锁成只读——修时钟反而把集群推进停机态，且现场无法自解。修法是用差距本身作判据：超过 5 分钟的回拨不可能是顺序违规，放行并把水位落到新观测上，窗口之内行为完全不变。交付内容与 HF-2026-0929-01 相同（控制面、agent、update-helper 三个二进制，加上时钟网脚本与环境/单元清单），但三个二进制都按新构建树重新编译。只装这一个包，不要与其它基线混装。装完重启三台 clusterguard-ha，当场核对：日志不再出现 stale topology observation、metadata.json 的 mtime 继续前进、租约 expires_at 重锚为当前 UTC 加约 60 秒。
+本包完整包含并取代 HF-2026-0929-02（也就是说完整包含 HF-2026-0929-01），另加一项设置页合并（de14249）。交付内容与上一包相同——控制面、agent、update-helper 三个二进制，加上时钟网脚本、单元与环境清单——但三个二进制都按新构建树 de14249 重新编译，因此不要与其它包混装，只装这一个。新增的 de14249 只动 internal/api/console.html：原来「控制台状态 / 运行参数 / 版本更新 / 账户与偏好」四个页签在常规宽度下第四个换行、单独占满一行（现场截图即是），而账户与显示偏好描述的对象本来就是控制台自身，于是把「账户与偏好」并进「状态设置」成为状态面板内部的一块，页签收敛为三个。**console.html 是 go:embed 进控制面二进制的**，所以这项改动只有在装了本包并重启 clusterguard-ha 之后才会在页面上出现，浏览器还需要强制刷新。装完当场核对：控制台设置页只有三个页签、选中「状态设置」能看到「账户与安全」与「显示偏好」、切到「运行参数」时它们离屏、切回后重现、「修改密码」仍能打开对话框。
 
-### HF-2026-0929-02.1 时钟拨回之后拓扑观测水位永久拒绝刷新，租约停止续约、VIP 被动释放并把实例全部锁成只读（`7a1ba82`，P0）
+### HF-2026-0929-03.1 设置页第四个页签单独换行占满一行，账户与偏好被拆成与「控制台状态」无关的一页（`de14249`，P3）
+
+- 现象：控制台设置页的页签是「控制台状态 / 运行参数 / 版本更新 / 账户与偏好」四个。常规窗口宽度下第四个放不进第一行，于是换行落到第二行、单独占满一整行 —— 现场截图就是这个样子。比排版更别扭的是分组本身：账户与安全、界面语言、自动刷新描述的对象都是控制台自己，和「控制台状态」是同一类东西，却被拆成平级的一页，「设置」看上去像两组互不相干的设置；要改界面语言，操作员得先切到「账户与偏好」、改完再切回来。而且这是「再加一个入口就坏」的结构：页签行放三个刚好一行，第五个入口同样会换行，谁都不知道下一次该往哪儿加。
+
+- 根因：页签是按「数据从哪个接口来」切的，不是按「操作员想改什么」切的：控制面状态来自 /api/v1/control-plane/*，账户与偏好来自账户接口，于是后者被实现成一个平级的第四个页签，而没有人体量过 tablist 的宽度。三个入口时一行刚好放得下，第四个一加就换行 —— 这是结构问题，不是一次性的排版失误。分组同样缺少语义依据：账户与显示偏好描述的对象就是控制台自身，正是状态那一页已经描述的对象，两者的区别只是数据来源不同，而数据来源是实现的细节，不是操作员的心理模型。
+
+- 修复：把两个页签合成一个「状态设置」：账户与安全、显示偏好作为**状态面板内部**的一块（搬迁，不是复制），因此切到「运行参数」时它会随面板一起离屏，页签轮转收敛为三个；页签说明改为「Leader、Raft 多数派、运行任务与账户偏好」。这不是纯字符串改动，所以合并从两个方向钉死：契约测试正向断言新页签名；位置断言账户块必须出现在状态面板开始之后、下一个面板之前（只断言字符串存在的话，块浮在面板外也能通过）；反向断言不允许再出现 settings-account-tab / settings-account-panel / data-settings-section="account"，且页签顺序长度必须为 3。新增真浏览器验收 tools/console-settings-merge-acceptance.cjs（沿用仓库既有的自研 CDP 驱动与 console-ui-fixture，无 playwright 依赖），在真实页面上断言账户块有布局盒、切「运行参数」后离屏、切回「状态设置」后回来、「修改密码」仍能打开对话框、界面语言与自动刷新仍渲染、方向键只在三个页签间轮转 —— 账户功能是被搬家，不是被删掉。tools/console-design-acceptance.cjs 里对被删页签的两处引用改指 settings-status-tab。变异验证：契约 5/5、浏览器 3/3 全部被抓（含「把第 4 个页签加回来」「把账户块搬出面板」「删掉账户块」），还原后文件逐字节一致。
+
+- 何时需要应用：
+  - 设置页第四个页签单独换行占满一行，「账户与偏好」看起来和「控制台状态」无关
+  - 要改界面语言 / 自动刷新却找不到入口，或需要确认合并之后账户功能（当前用户、修改密码、退出）是否还在
+  - 打算再往设置页加一个入口，需要先确认页签行现在有几个、还能不能再放
+
+### HF-2026-0929-03.2 时钟拨回之后拓扑观测水位永久拒绝刷新，租约停止续约、VIP 被动释放并把实例全部锁成只读（`7a1ba82`，P0）
 
 - 现象：把三台快 8 小时的时间拨回真实时刻并重启控制面之后，集群再也没能恢复，而且没有任何现场手段能把它拉回来。控制面日志每秒刷一条 `scheduled topology discovery failed: apply discovery refresh batch: … stale topology observation: observed at 2026-09-29T03:44:12.100668659Z is not after 2026-09-29T11:27:36.730892013Z`；`/var/lib/clusterguard/metadata.json` 与 `raft.db` 的 mtime 停在控制面启动后一分钟内不再前进，`clusterguard_state_revision` 卡死；租约侧每 5 分钟报一次 `VIP ownership reconciliation failed: cluster … topology is stale or unavailable`，VIP 归属租约的 expires_at 停在“约 8 小时之后”。数据节点 agent 随后按设计摘掉 VIP 并把每台实例置为只读。真正刺眼的是因果方向：**修时钟这个动作本身把集群推进了停机态** —— 一个为了让系统回到正确状态而做的运维动作，代价是整个集群停机。
 
@@ -75,7 +88,7 @@ bash rollback.sh         # 按最新备份清单回滚
   - VIP 归属租约的 expires_at 停在约 8 小时之后
   - 数据节点 agent 摘掉 VIP 并把 MySQL 实例设成只读
 
-### HF-2026-0929-02.2 热修包上传到控制台只得到「请走命令行」，而产品从未提供那条通道（`81fe3c8`，P1）
+### HF-2026-0929-03.3 热修包上传到控制台只得到「请走命令行」，而产品从未提供那条通道（`81fe3c8`，P1）
 
 - 现象：运维按上一版给出的指引，把 clusterguard-ha-hotfix-*.cgpatch 传到「版本更新」对话框，得到「该包是热修补丁包（clusterguard-hotfix/），不经过控制台滚动升级通道；请在控制节点命令行用 tar -xzf 解包后运行 clusterguard-hotfix/apply.sh 安装」。指引本身没错，但控制台既不接受这个包，也不提供 plan/execute/rollback：现场每一次装热修都要手工 SSH 解包、逐台重启，验签结果、执行过程与回滚能力都不留痕。
 
@@ -89,7 +102,7 @@ bash rollback.sh         # 按最新备份清单回滚
   - 需要让热修包的验签、计划、执行与回滚都在控制台留有记录
   - 担心热修补丁包里的 apply.sh / rollback.sh 没有被签名锚定
 
-### HF-2026-0929-02.3 热修补丁的落点由来源名猜出，修复被装到产品不读的路径（`18d738e`，P1）
+### HF-2026-0929-03.4 热修补丁的落点由来源名猜出，修复被装到产品不读的路径（`18d738e`，P1）
 
 - 现象：HF-04 应用后三台脚本、单元、二进制全部显示「已安装」，但控制台上传热修包仍报「升级包包含范围外路径：clusterguard-hotfix/」：带修复的脚本被装到 /usr/local/libexec/clusterguard-upgrade.sh（产品从不执行该路径），真正被调用的 /usr/local/sbin/clusterguard-upgrade 还是 9 月 24 日 RPM 装的旧版本。
 
@@ -102,7 +115,7 @@ bash rollback.sh         # 按最新备份清单回滚
   - 控制台上传热修包仍然报「范围外路径：clusterguard-hotfix/」
   - 需要判断某个脚本到底哪一份副本在生效
 
-### HF-2026-0929-02.4 热修补丁包误传控制台时只报「范围外路径」，不说是通道走错了（`9303e9d`，P1）
+### HF-2026-0929-03.5 热修补丁包误传控制台时只报「范围外路径」，不说是通道走错了（`9303e9d`，P1）
 
 - 现象：运维把 clusterguard-ha-hotfix-*.cgpatch 传到版本更新对话框（文件选择器按 .cgpatch 后缀放行、实验室链验签也能通过），最后只得到「升级失败：升级包包含范围外路径：clusterguard-hotfix/」——没有任何文字说明热修包根本不该走这个通道，运维会反复重试。
 
@@ -114,7 +127,7 @@ bash rollback.sh         # 按最新备份清单回滚
   - 把热修补丁包上传到版本更新对话框，报「升级包包含范围外路径：clusterguard-hotfix/」
   - 运维不确定 .cgpatch 热修包应该走哪条安装通道
 
-### HF-2026-0929-02.5 整机重启后整个集群起不来：共享运行时目录权限与恢复冻结永不释放（`28e3b47`，P0）
+### HF-2026-0929-03.6 整机重启后整个集群起不来：共享运行时目录权限与恢复冻结永不释放（`28e3b47`，P0）
 
 - 现象：三台整机关机再开机后，控制台报「部分数据不可用：候选评估」「尚未发现主库」，三个实例全部显示「数据库未启动或不可达」，再次整机关机与故障切换都被阻断。clusterguard-mysql-3306.service 与 clusterguard-cluster-restore.service 双双进入崩溃重启循环，重启计数分别达到 2063/2069/2072 与 1034~1036。
 
@@ -127,7 +140,7 @@ bash rollback.sh         # 按最新备份清单回滚
   - clusterguard-mysql-3306.service 反复重启，error.log 报 Could not create unix socket lock file
   - 计划关机或故障切换被阻断，power 生命周期停在 recovering 且 recovery_freeze 为 true
 
-### HF-2026-0929-02.6 MySQL 写入者协调抖动：授权主库每 5 秒自隔离一次（`dd82ca5`，P0）
+### HF-2026-0929-03.7 MySQL 写入者协调抖动：授权主库每 5 秒自隔离一次（`dd82ca5`，P0）
 
 - 现象：集群长期 degraded、两条复制链路 unhealthy、候选评估 409、计划关机必被阻断。实测自安装起 9492 次自隔离，read_only 与 VIP 每约 10 秒同步翻转一次。
 
@@ -139,7 +152,7 @@ bash rollback.sh         # 按最新备份清单回滚
   - 集群长期 degraded 且复制链路 unhealthy，但复制本身正常
   - journalctl -u clusterguard-agent-reconcile.service 反复出现 self-isolated 或 permission denied
 
-### HF-2026-0929-02.7 升级执行链两个前置缺陷：SSH 私钥属主与 Helper 共用运行时目录（`d5f9491`，P0）
+### HF-2026-0929-03.8 升级执行链两个前置缺陷：SSH 私钥属主与 Helper 共用运行时目录（`d5f9491`，P0）
 
 - 现象：版本更新始终 available=false，安装/上传升级包的三个控件全灰；即便手工补齐 update.json，升级执行器仍以“私钥权限过宽”拒绝；Helper 首启报 status=233，且停机时把 /run/clusterguard 整个删掉。
 
@@ -151,7 +164,7 @@ bash rollback.sh         # 按最新备份清单回滚
   - 控制台版本更新长期 available=false
   - clusterguard-update-helper 首启失败或停机后 /run/clusterguard 丢失
 
-### HF-2026-0929-02.8 控制台不解释“不可用”的原因（`ed9faca`，P1）
+### HF-2026-0929-03.9 控制台不解释“不可用”的原因（`ed9faca`，P1）
 
 - 现象：版本更新面板只显示红徽标“不可用”，不写原因；集群加载横幅只报栏目名（“部分数据不可用：候选评估；操作已锁定”），运维无法判断下一步做什么。
 
@@ -163,7 +176,7 @@ bash rollback.sh         # 按最新备份清单回滚
   - 控制台版本更新面板显示“不可用”但无原因
   - 集群加载横幅只报栏目名、不报原因
 
-### HF-2026-0929-02.9 整机关机提交后控制台卡在无法交互的对话框上（`5ae2039`，P1）
+### HF-2026-0929-03.10 整机关机提交后控制台卡在无法交互的对话框上（`5ae2039`，P1）
 
 - 现象：提交整机关机后主机断电、控制面随之消失，页面永久停在关机确认对话框上，只能手动关闭标签页；提交后响应丢失时还会误报为错误。
 
@@ -175,7 +188,7 @@ bash rollback.sh         # 按最新备份清单回滚
   - 提交整机关机后控制台卡死、需要手动关闭标签页
   - 关机提交后偶发“无法连接控制 API”被当作失败
 
-### HF-2026-0929-02.10 时钟回拨后 VIP 归属租约不再过期，自动故障接管被静默关闭（`ac6f3f7`，P0）
+### HF-2026-0929-03.11 时钟回拨后 VIP 归属租约不再过期，自动故障接管被静默关闭（`ac6f3f7`，P0）
 
 - 现象：集群时间整体快 8 小时。修好时间之后——或任何一次向回拨动系统时钟之后——coordination_leases 里 VIP 归属租约的 expires_at 会停在“约 8 小时后到期”。租约仍然授权当前持有者，但**持有者停止续约它也不会过期**：ownership_keeper 每 5 秒调用一次 AcquireStableBatch，判据是“距到期还剩超过半个 TTL 就跳过”，于是整个 8 小时窗口内自动接管失效——持有 VIP 的节点宕机，VIP 不会自动转移。三台若不同步回拨，先拨回的那台会把租约判为已过期并抢注，出现两个 VIP Owner。
 
@@ -188,7 +201,7 @@ bash rollback.sh         # 按最新备份清单回滚
   - 担心自动故障接管被静默关闭、VIP 不会随主库切换
   - 三台节点时间不一致时出现过 VIP 抢注或双 Owner
 
-### HF-2026-0929-02.11 时钟网脚本把本机时间无校验地冻结成全集群权威，且从不固定显示时区（`abf5782`，P1）
+### HF-2026-0929-03.12 时钟网脚本把本机时间无校验地冻结成全集群权威，且从不固定显示时区（`abf5782`，P1）
 
 - 现象：装机时三台的 UTC 一致地快 8 小时（RTC 里存本地时间、内核按 UTC 读取）。当时的时钟检查只问“节点之间是否互相一致”——最大偏差 2 秒，通过——随后 clusterguard-clock-mesh.sh --server 把这台的时间升格为全集群权威，再由 hwclock --systohc --utc 与 rtcsync 固化进 RTC，偏差因此挺过每一次重启。现场证书就是证据：CA 的 notBefore 为 Sep 23 14:05:49 2026 GMT，比真实时刻晚整整 8 小时。同时 152/153 显示 America/New_York、154 显示 Asia/Shanghai，集群里同一条记录有两个钟点。
 
@@ -201,7 +214,7 @@ bash rollback.sh         # 按最新备份清单回滚
   - 集群里同一条记录显示两个钟点（节点显示时区不统一）
   - 需要重跑时钟网配置，用 --timezone 把全集群显示时区固定下来
 
-### HF-2026-0929-02.12 热修通道按路径前缀猜“改动落在哪个二进制”，共享包里的修复被静默丢弃（`fce48b7`，P1）
+### HF-2026-0929-03.13 热修通道按路径前缀猜“改动落在哪个二进制”，共享包里的修复被静默丢弃（`fce48b7`，P1）
 
 - 现象：本包要携带的租约修复位于 internal/coordination，而构建脚本与台账门禁都用两条硬编码前缀推导组件（internal/agent|cmd/clusterguard-agent 与 internal/api|cmd/clusterguard）。该目录两条都不匹配（实测命中数均为 0），于是构件里只会有运行时脚本、没有二进制：现场会“应用成功”，签名清单会写“修复已交付”，而控制面仍然带着缺陷，且因为门禁与构建脚本共用同一张表，没有任何一方会反对。同一张表还漏了 internal/platformupdate——它被控制面与 clusterguard-update-helper 同时链接，而 HF-2026-0928-06 只交付了控制面，控制台热修通道的 helper 侧那一半从未到达现场。
 
@@ -240,10 +253,16 @@ bash rollback.sh         # 按最新备份清单回滚
 - `jq -r ".topology_snapshots | to_entries[] | [.key, .value.observed_at] | @tsv" /var/lib/clusterguard/metadata.json   # observed_at 必须是当前 UTC——不再「来自未来」，否则 ownership_keeper 会判 stale 并跳过续约`
 - `stat -c "%y %s" /var/lib/clusterguard/metadata.json; sleep 30; stat -c "%y %s" /var/lib/clusterguard/metadata.json   # 在 Raft leader 上，mtime 与 clusterguard_state_revision 必须前进`
 - `journalctl -u clusterguard-ha --since "-6min" --no-pager | grep -c "topology is stale or unavailable"   # 必须为 0（修复前每 5 分钟一条）`
+- `curl -sk https://192.168.102.155:3000/ | grep -c '状态设置'   # 必须 ≥1（控制面二进制里的页面已含合并后的页签名）`
+- `curl -sk https://192.168.102.155:3000/ | grep -c 'data-settings-section="account"'   # 必须为 0（旧的第四个页签不得复活）`
+- `curl -sk https://192.168.102.155:3000/ | grep -c 'settings-account-block'   # 必须 ≥1（账户块已搬进状态面板内部）`
+- `curl -sk https://192.168.102.155:3000/ | grep -c 'id="settings-account-panel"'   # 必须为 0（不再有独立的账户面板）`
+- `浏览器强制刷新 https://192.168.102.155:3000/ 后打开设置页：页签必须是三个（状态设置 / 运行参数 / 版本更新），选中「状态设置」时能看到「账户与安全」与「显示偏好」，切到「运行参数」后二者离屏，切回后重现，「修改密码」仍能打开对话框，「界面语言」与「自动刷新」仍可操作`
+- `node tools/console-settings-merge-acceptance.cjs   # 仓库内复核本次合并的真浏览器验收（需本机有 Chrome；只读，不连现场）`
 
 ### 回滚
 
-执行 rollback.sh 恢复旧二进制、旧单元与旧运行时脚本，然后 systemctl daemon-reload 并重启 clusterguard-ha 与 clusterguard-update-helper。注意两点：① 回滚会把 clusterguard-clock-mesh.sh 恢复成“无校验即成为权威”的旧版本，并撤掉租约重锚——若此后再次回拨系统时钟，VIP 归属租约将再次长期不过期、自动接管再次被静默关闭；② /usr/local/libexec/clusterguard-update-helper 会回到 HF-2026-0928-06 之前的状态（该二进制此前从未被热修更新过）。本包对 /run/clusterguard、clusterguard-update-helper.service 与其它单元的回滚沿用 HF-2026-0928-05 / HF-2026-0928-06 的说明。 ③ 本包另加的水位容忍也会一并回滚：此后若再次回拨系统时钟，拓扑刷新将再次被永久拒绝——拓扑不再更新、租约停止续约、agent 摘掉 VIP 并把实例锁成只读，而现场无法自解。若确需回滚本包又曾回拨过时钟，回滚后必须同时把 observation_watermarks 与 topology_snapshots 手工对齐到当前时钟，否则集群会停在本次同样的停机态。
+执行 rollback.sh 恢复旧二进制、旧单元与旧运行时脚本，然后 systemctl daemon-reload 并重启 clusterguard-ha 与 clusterguard-update-helper。注意两点：① 回滚会把 clusterguard-clock-mesh.sh 恢复成“无校验即成为权威”的旧版本，并撤掉租约重锚——若此后再次回拨系统时钟，VIP 归属租约将再次长期不过期、自动接管再次被静默关闭；② /usr/local/libexec/clusterguard-update-helper 会回到 HF-2026-0928-06 之前的状态（该二进制此前从未被热修更新过）。本包对 /run/clusterguard、clusterguard-update-helper.service 与其它单元的回滚沿用 HF-2026-0928-05 / HF-2026-0928-06 的说明。 ③ 本包另加的水位容忍也会一并回滚：此后若再次回拨系统时钟，拓扑刷新将再次被永久拒绝——拓扑不再更新、租约停止续约、agent 摘掉 VIP 并把实例锁成只读，而现场无法自解。若确需回滚本包又曾回拨过时钟，回滚后必须同时把 observation_watermarks 与 topology_snapshots 手工对齐到当前时钟，否则集群会停在本次同样的停机态。 ④ 本包另加的设置页合并也会一并回滚：控制台回到四个页签、「账户与偏好」重新作为独立一页出现。这个改动只影响页面结构，没有数据或授权影响，回滚不需要额外的手工对齐。
 
 ## HF-2026-0928-02 — 2.2-103 现场修复合集（累积）：整机重启后集群不可用、写入者抖动、升级链前置、控制台原因与关机收尾
 
