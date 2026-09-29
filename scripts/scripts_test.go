@@ -760,7 +760,6 @@ func TestHotfixFlowPinsItsSafetyDecisions(t *testing.T) {
 	}
 }
 
-
 // requireNode returns a usable node interpreter or skips the test, mirroring the
 // jq/openssl convention used elsewhere in this package.
 func requireNode(t *testing.T) string {
@@ -5673,4 +5672,83 @@ func TestChineseDeliveryManualsCoverInstallDatabasePreparationAndOperations(t *t
 			}
 		}
 	}
+}
+
+// The job wrapper used to throw the updater's own explanation away and report a fixed
+// sentence naming the maintenance gate. On 2026-09-29 no gate was set at all
+// (maintenance_active=false, no marker on any node), so the operator's only clue pointed
+// at a check that could not have failed while the real reason - a 2.2-105 hotfix uploaded
+// to a 2.2-104 cluster - sat in output.log.
+//
+// This runs the wrapper's own function against such a log instead of matching its source
+// text, so a broken extraction fails here and not only a deleted line.
+func TestUpdateFailureMessageQuotesTheUpdaterReason(t *testing.T) {
+	script, err := os.ReadFile("clusterguard-update-job.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, found := extractShellFunction(string(script), "update_failure_message")
+	if !found {
+		t.Fatal("clusterguard-update-job.sh must define update_failure_message")
+	}
+	for _, testCase := range []struct {
+		name   string
+		log    string
+		absent bool
+		want   string
+	}{
+		{
+			name: "the field incident reports the baseline mismatch instead of a maintenance gate",
+			log: "[2026-09-29T06:02:28Z] 正在生成只读滚动升级计划\n" +
+				"[2026-09-29T06:02:32Z] 升级失败：192.168.102.152 当前版本 2.2-104 与热修补丁基线 2.2-105 不一致；拒绝应用（装错基线会把控制面二进制降级）\n",
+			want: "升级任务失败或被阻断：192.168.102.152 当前版本 2.2-104 与热修补丁基线 2.2-105 不一致；拒绝应用（装错基线会把控制面二进制降级）",
+		},
+		{
+			name: "the last refusal wins over an earlier one",
+			log:  "升级失败：first\n升级失败：second\n",
+			want: "升级任务失败或被阻断：second",
+		},
+		{
+			name: "a log without a refusal keeps the generic sentence",
+			log:  "正在生成只读滚动升级计划\n",
+			want: "升级任务失败或被阻断；请查看输出和事件记录，确认维护门禁状态后再续跑或回退",
+		},
+		{
+			name:   "a failure before the updater writes any output keeps the generic sentence",
+			absent: true,
+			want:   "升级任务失败或被阻断；请查看输出和事件记录，确认维护门禁状态后再续跑或回退",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			jobDir := t.TempDir()
+			if !testCase.absent {
+				if err := os.WriteFile(filepath.Join(jobDir, "output.log"), []byte(testCase.log), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			command := exec.Command("bash", "-c", "set -euo pipefail\njob_dir=$1\n"+body+"\nupdate_failure_message\n", "bash", jobDir)
+			output, err := command.CombinedOutput()
+			if err != nil {
+				t.Fatalf("running the wrapper's own function failed: %v\n%s", err, output)
+			}
+			if got := string(output); got != testCase.want {
+				t.Fatalf("message=%q want %q", got, testCase.want)
+			}
+		})
+	}
+}
+
+// extractShellFunction returns a top-level shell function from its declaration through the
+// first line that closes the body at column zero.
+func extractShellFunction(script string, name string) (string, bool) {
+	start := strings.Index(script, "\n"+name+"() {\n")
+	if start < 0 {
+		return "", false
+	}
+	body := script[start+1:]
+	end := strings.Index(body, "\n}\n")
+	if end < 0 {
+		return body, true
+	}
+	return body[:end+3], true
 }

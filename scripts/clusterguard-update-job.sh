@@ -101,6 +101,32 @@ write_status() {
 cleanup() { [[ -z "${tool_dir}" || ! -d "${tool_dir}" ]] || rm -rf "${tool_dir}"; }
 trap cleanup EXIT
 
+# update_failure_message quotes the reason the updater gave for refusing, which it
+# writes on the last 升级失败 line of its own output to stderr
+# (scripts/clusterguard-upgrade.sh, die). The helper redirects that to
+# ${job_dir}/output.log and it is complete here, because the updater has exited.
+#
+# Quoting it is the point. The fallback sentence names the maintenance gate as the
+# likely cause, but this path fails with no gate set at all: on 2026-09-29 the job
+# reported maintenance_active=false with no marker on any node, so the only clue
+# the operator had pointed at a check that could not have failed, while the real
+# reason - a 2.2-105 hotfix uploaded to a 2.2-104 cluster - sat in the log.
+update_failure_message() {
+  local line failure_reason=""
+  if [[ -f "${job_dir}/output.log" ]]; then
+    while IFS= read -r line; do
+      case "${line}" in
+        *"升级失败："*) failure_reason="${line##*升级失败：}" ;;
+      esac
+    done < <(tail -n 60 "${job_dir}/output.log" 2>/dev/null || true)
+  fi
+  if [[ -n "${failure_reason}" ]]; then
+    printf '升级任务失败或被阻断：%s' "${failure_reason}"
+  else
+    printf '升级任务失败或被阻断；请查看输出和事件记录，确认维护门禁状态后再续跑或回退'
+  fi
+}
+
 schedule_helper_refresh() {
   [[ "${mode}" != plan ]] || return 0
   local systemd_run systemctl_binary unit
@@ -181,7 +207,7 @@ else
       [[ "${last_event_status}" == failed || "${last_event_status}" == rollback_failed || "${last_event_status}" == rollback_lock_release_failed ]]; then
     maintenance_after_failure=true
   fi
-  write_status failed "升级任务失败或被阻断；请查看输出和事件记录，确认维护门禁状态后再续跑或回退" "${maintenance_after_failure}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  write_status failed "$(update_failure_message)" "${maintenance_after_failure}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   schedule_helper_refresh || true
   exit "${exit_code}"
 fi
