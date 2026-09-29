@@ -34,6 +34,18 @@
  * Run: node tools/verify-hotfix-patch-catalog.cjs [--repo <path>]
  *                                                [--artifact-root <path>]
  *                                                [--public-key <file>]
+ *
+ * --repo is the tree that carries the declarations, the ledger and the rendered
+ * catalogues; --artifact-root is the tree that carries release/. They are usually
+ * the same, and they are separate for one real case: release/ is not committed, so
+ * a linked worktree has the ledger but none of the artifacts it describes. Running
+ * from a worktree without --artifact-root reports every single ledger entry as
+ * "已登记的产物不在磁盘上" - a wall of failures that says nothing about the
+ * artifacts and hides the checks that would otherwise have run.
+ *
+ * Pass --public-key (or set CG_HOTFIX_TRUSTED_PUBLIC_KEY) to also verify the
+ * signature on every artifact. Without it that one check is skipped, and the
+ * verdict says so instead of claiming a pass.
  */
 'use strict';
 
@@ -58,6 +70,7 @@ const publicKey = arg('--public-key', process.env.CG_HOTFIX_TRUSTED_PUBLIC_KEY |
 const artifactDirFor = (body) => `release/${body.rpm_version}-${body.rpm_release}-hotfixes`;
 
 const failures = [];
+const skips = [];
 const check = (name, ok, detail) => {
   if (ok) {
     console.log(`ok   ${name}`);
@@ -65,6 +78,19 @@ const check = (name, ok, detail) => {
     failures.push(name);
     console.error(`FAIL ${name}${detail ? ` — ${detail}` : ''}`);
   }
+};
+// A check that could not run is not a check that passed. Signature verification is
+// the only one in this gate that needs something the repository does not carry: a
+// trusted public key. Leaving the key optional is deliberate, so that a
+// contributor without signing material can still gate the ledger, the coverage
+// and the payload contents. But that convenience used to be indistinguishable
+// from success - a keyless run printed 41 ok lines and exited 0 while proving
+// nothing about whether these artifacts are the ones this project signed, and the
+// only trace was one line in the middle of a long report. A skip is part of the
+// verdict now, not a detail next to it.
+const skip = (name, why) => {
+  skips.push({ name, why });
+  console.log(`skip ${name} — ${why}`);
 };
 
 const sha256File = (file) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
@@ -507,7 +533,8 @@ check('the signed manifest anchors apply.sh and rollback.sh and SHA256SUMS cover
 if (publicKey) {
   check('every artifact signature verifies against the trusted public key', unsignedOrInvalid.length === 0, unsignedOrInvalid.join(', '));
 } else {
-  console.log('skip signature verification — pass --public-key or set CG_HOTFIX_TRUSTED_PUBLIC_KEY');
+  skip('every artifact signature verifies against the trusted public key',
+    'no trusted public key given: pass --public-key or set CG_HOTFIX_TRUSTED_PUBLIC_KEY');
 }
 
 // --- Gate 2b: the payload really covers every declared fix ------------------
@@ -914,4 +941,12 @@ if (failures.length) {
   console.error(`\n${failures.length} check(s) failed.`);
   process.exit(1);
 }
-console.log('\nall hotfix patch catalogue checks passed.');
+if (skips.length) {
+  console.log(`\nno check failed, but ${skips.length} did not run:`);
+  for (const item of skips) {
+    console.log(`  - ${item.name} — ${item.why}`);
+  }
+  console.log('that is not a pass: nothing here proves these are the artifacts this project signed.');
+} else {
+  console.log('\nall hotfix patch catalogue checks passed.');
+}

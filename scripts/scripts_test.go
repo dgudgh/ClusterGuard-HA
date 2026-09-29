@@ -1155,6 +1155,40 @@ func TestHotfixDocumentationRestartsEveryUnitThePayloadReplaces(t *testing.T) {
 	}
 }
 
+func TestCatalogueGateDoesNotClaimAPassWhenASignatureCheckCannotRun(t *testing.T) {
+	// Signature verification is the one check in the catalogue gate that cannot
+	// always run: it needs a trusted public key, and the repository deliberately
+	// does not carry one, so a contributor without signing material can still gate
+	// the ledger, the fix coverage and the payload contents. The first version
+	// printed a single skip line in the middle of forty-one "ok" lines and then
+	// finished with "all hotfix patch catalogue checks passed." - so a keyless run
+	// was indistinguishable from a verified one. That is the same failure this
+	// project keeps finding elsewhere: a check that silently does nothing reads
+	// exactly like a check that passed. A skip has to reach the verdict, and the
+	// verdict has to say what was not proven.
+	gate, err := os.ReadFile(filepath.Join("..", "tools", "verify-hotfix-patch-catalog.cjs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(gate)
+	if !strings.Contains(text, "const skips = []") || !strings.Contains(text, "skips.push({ name, why })") {
+		t.Fatal("the catalogue gate must record every check it skips, so the verdict can report them")
+	}
+	skipBranch := strings.Index(text, "if (skips.length)")
+	passLine := strings.Index(text, "all hotfix patch catalogue checks passed.")
+	if skipBranch == -1 || passLine == -1 || skipBranch > passLine {
+		t.Fatal("the catalogue gate must let a skipped check change the verdict instead of only logging it")
+	}
+	if strings.Contains(text, "skip signature verification") {
+		t.Fatal("the catalogue gate still prints a skip line that no verdict refers to")
+	}
+	// The skip is not a free pass either: an artifact whose signature was never
+	// checked must not be described as verified.
+	if !strings.Contains(text, "did not run") {
+		t.Fatal("the catalogue gate must name the checks that did not run in its verdict")
+	}
+}
+
 func TestUpgradeScriptNeverInvokesDatabaseClients(t *testing.T) {
 	contents, err := os.ReadFile("clusterguard-upgrade.sh")
 	if err != nil {
