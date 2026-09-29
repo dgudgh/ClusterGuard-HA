@@ -1,6 +1,17 @@
 {
   "schema_version": 1,
-  "note": "已签名交付物的身份台账，只追加不修改。同一个文件名、同一个版本号、不同的字节＝事故：现场会说自己装的是 2.2-105，仓库也有 2.2-105，而两边摘要不同，事后无法证明节点实际运行过什么。因此任何修订都必须产生新身份（文件名带 -r1、-r2 …，manifest 带 revision 与 supersedes_artifact）。status=current 的产物才是该交付线当前可上传的入口；status=frozen 的身份只作为「现场到底运行过什么」的证据保留，它的字节永远不按今天的规则升级，且必须逐条声明它仍带的缺陷（known_defects 与门禁实测必须**双向**一致）。bytes_retained=false 表示该身份的字节已不存在，摘要仍保留为唯一记录。分工：签名清单里的 supersedes_artifact.reason 只写「为什么替换前一个身份」——它一旦签名就不可改写，所以不放任何会随时间漂移的事实、路径或量化断言；测量数据、时间线、当时的判断全部写在本台账与文档里，那是可修订的记录。",
+  "note": "已签名交付物的身份台账，只追加不修改。同一个文件名、同一个版本号、不同的字节＝事故：现场会说自己装的是 2.2-105，仓库也有 2.2-105，而两边摘要不同，事后无法证明节点实际运行过什么。因此任何修订都必须产生新身份（文件名带 -r1、-r2 …，manifest 带 revision 与 supersedes_artifact）。status=current 的产物才是该交付线当前可上传的入口；status=frozen 的身份只作为「现场到底运行过什么」的证据保留，它的字节永远不按今天的规则升级，且必须逐条声明它仍带的缺陷（known_defects 与门禁实测必须**双向**一致）。bytes_retained=false 表示该身份的字节已不存在，摘要仍保留为唯一记录。分工是硬规则、由门禁强制：签名清单里的 supersedes_artifact.reason 一旦签名就不可改写，所以它只回答「为什么替换前一个身份」——不许出现路径（会迁移）、不许出现数字（会测错）；测量数据、取证命令、时间线与当时的判断全部写在本台账与文档里，那是可修订的记录。这条规则是当天三份签名产物作废之后才立起来的：见 HF-2026-0928-02 的 r1 至 r5。",
+  "reproducible_builds": {
+    "question": "同一 build_commit 两次构建为什么字节不同？判断一份产物有没有被换过，能不能靠重构建对拍？",
+    "finding": "差异来自构建器每次注入的构建时刻（scripts/build-hotfix-patch.sh 里 build_time=\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"，经 -X clusterguard.io/ha/internal/buildinfo.BuiltAt 注入）。固定该值后同一提交可以逐字节复现，所以「重构建对拍」是可行的核对手段——前提是先把 BuiltAt 固定成清单里的 built_at。",
+    "evidence": [
+      "git -C <仓库> worktree add --detach /tmp/tree-check-r4 f90f995fb92c23d66723a5331742a551be7a93b6",
+      "CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C /tmp/tree-check-r4 build -trimpath -ldflags \"-s -w -X clusterguard.io/ha/internal/buildinfo.Version=2.2 -X clusterguard.io/ha/internal/buildinfo.Release=103 -X clusterguard.io/ha/internal/buildinfo.Commit=f90f995 -X clusterguard.io/ha/internal/buildinfo.BuiltAt=2026-09-29T10:28:27Z\" -o /tmp/clusterguard-repro ./cmd/clusterguard",
+      "shasum -a 256 /tmp/clusterguard-repro = b2b7f7c76939fade86b3fb2aa0a665ad533b9ed3ba6e38b1497828d77d249c1f，与 HF-2026-0928-02 r4 清单里 payload/bin/clusterguard 登记的摘要逐字节一致（构建器已用 -trimpath，构建路径不进入结果）。"
+    ],
+    "caveat": "构建器本身不固定 BuiltAt，这是对的（它应当记录构建时刻），代价是直接重跑构建必然得到不同字节。那 40 至 63 字节的差异不是产物被换过的证据：clusterguard 内嵌 built_at 字符串，clusterguard-agent 不引用 buildinfo 所以字符串层无差异，但两者的 Go build ID 都因链接器参数变化而改变。",
+    "invalidation": "HF-2026-0928-02 r4 的签名清单里写的是「不可逐字节复现、原因在构建路径」，与上述实测相反；该修订因此被 r5 取代，本节即纠正内容。"
+  },
   "publications": [
     {
       "file": "release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-2.2-103.x86_64.cgpatch",
@@ -42,7 +53,7 @@
       "superseded_by": "release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-r3-2.2-103.x86_64.cgpatch",
       "bytes_retained": true,
       "known_defects": [],
-      "note": "为纠正 r1 的失效台账指针而构建，但它的理由里写了一句未经实测的断言「载荷与 r1 逐字节相同」——不成立。实测（逐字节比对解包后的 payload/bin）：clusterguard 差 63 字节、clusterguard-agent 差 40 字节，大小与其余内容完全相同，差异全部落在 Go 的 build ID 上。该断言随产物签名，无法回改，只能由 r3 纠正。"
+      "note": "为纠正 r1 的失效台账指针而构建，但它的理由里写了一句未经实测的断言「载荷与 r1 逐字节相同」——不成立。实测（逐字节比对解包后的 payload/bin）：clusterguard 差 63 字节、clusterguard-agent 差 40 字节，大小相同。差异的真实来源是构建器注入的 built_at：r1=2026-09-29T10:10:35Z、r2=2026-09-29T10:26:16Z。clusterguard 内嵌了这个字符串（它引用 buildinfo），clusterguard-agent 没有（`-X` 对不引用 buildinfo 的二进制静默失效），后者的差异只剩 Go build ID——而 build ID 因为链接器参数变了（built_at 是参数之一）也跟着变。该断言随产物签名，无法回改，只能由 r3 纠正。"
     },
     {
       "file": "release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-r3-2.2-103.x86_64.cgpatch",
@@ -56,7 +67,7 @@
       "superseded_by": "release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-r4-2.2-103.x86_64.cgpatch",
       "bytes_retained": true,
       "known_defects": [],
-      "note": "纠正 r2 的错误断言，但又把差异字节数写死成「每个二进制 63 字节」。实测（同一比对方法）三个身份两两之间：clusterguard 为 63/61/63 字节，clusterguard-agent 为 40/40/40 字节——数字只对其中一个二进制成立。根因是签名清单里放了会漂移的量化断言；r4 起改为「清单只写为什么替换，实测数据写台账」。"
+      "note": "纠正 r2 的错误断言，但又把差异字节数写死成「每个二进制 63 字节」。实测（同一比对方法）四个身份两两之间：clusterguard 为 63/61/63/59/61/63 字节，clusterguard-agent 为 40/40/40/40/40/40 字节——数字只对其中一个二进制成立。根因不是这一次算错，而是签名清单里放了会漂移的量化断言；r4 起改为「清单只写为什么替换，实测数据写台账」。"
     },
     {
       "file": "release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-r4-2.2-103.x86_64.cgpatch",
@@ -65,15 +76,26 @@
       "revision": 4,
       "sha256": "b11c939fcaa581d7b8e6f2c65613f57ca3dc5e72990f4a3fbbf50e4bc60deb50",
       "size": 8977452,
-      "status": "current",
+      "status": "superseded",
       "supersedes_sha256": "13731cae03f04d605cc5d8f339947bd13f882a8149a14b402c719bffebebf764",
+      "superseded_by": "release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-r5-2.2-103.x86_64.cgpatch",
+      "bytes_retained": true,
+      "known_defects": [],
+      "note": "把量化断言从签名清单里移走，但顺手写下两条新的错误结论：「本仓库的补丁二进制不可逐字节复现」以及「原因在构建路径」。两条都实测推翻——见本台账的 reproducible_builds 一节。这一轮证明了真正的问题不是哪一次算错，而是这个字段根本不该承载需要实测支撑的技术结论：签名之后只能靠再出一份交付物来纠正。r5 起该字段由门禁限制为「路径与数字都不许出现」。"
+    },
+    {
+      "file": "release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-r5-2.2-103.x86_64.cgpatch",
+      "hotfix_id": "HF-2026-0928-02",
+      "release_line": "2.2-103",
+      "revision": 5,
+      "sha256": "347699772b068b4b65251fc63f6116e7ca747bb5b64517988494e5e96ce2963e",
+      "size": 8977135,
+      "status": "current",
+      "supersedes_sha256": "b11c939fcaa581d7b8e6f2c65613f57ca3dc5e72990f4a3fbbf50e4bc60deb50",
       "superseded_by": null,
       "bytes_retained": true,
       "known_defects": [],
-      "note": "本条为该线当前可上传入口。签名清单的身份理由不再包含任何量化断言，只保留「为什么替换前一个身份」这一不会随时间变化的事实；实测数据全部留在本台账。构建输入自 r1 起未变（同一 base_commit、build_commit、fix_commits 与组件集合）。r0 至 r4 均未交付任何现场。",
-      "known_limitations": [
-        "本仓库的补丁二进制不可逐字节复现（Go build ID 由构建路径派生），因此「同一 commit 重新构建得到相同字节」不成立：判断一份产物是否被换过只能靠本台账登记的摘要，不能靠重构建对拍。"
-      ]
+      "note": "本条为该线当前可上传入口。签名清单的身份理由自本条起受门禁约束：不许出现路径、不许出现数字，只回答「为什么替换前一个身份」。构建输入自 r1 起未变（同一 base_commit、build_commit、fix_commits 与组件集合）。r0 至 r5 均未交付任何现场。"
     },
     {
       "file": "release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-03-2.2-104.x86_64.cgpatch",

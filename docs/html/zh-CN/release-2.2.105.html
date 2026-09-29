@@ -98,10 +98,11 @@ VIP 归属租约不再续期，数据节点按设计摘掉 VIP 并把实例设�
 的来源记录不算记录。条目按「相对介质根的路径」索引，于是台账随分支传播、产物留在原地。</p>
 <p><strong>分工：签名清单只写&quot;为什么替换&quot;，实测数据写台账。</strong> 清单里的 <code>supersedes_artifact.reason</code> 一旦
 签名就不可改写，所以不放任何会随时间漂移的事实、路径或量化断言——否则一个笔误就要再出一个几乎
-相同的交付物来纠正。这一条是踩出来的，见下节。</p>
+相同的交付物来纠正。这条不只写在文档里：门禁会拒绝理由字段里出现路径或数字，也拒绝空理由。
+它是踩出来的，见下节。</p>
 </blockquote>
 <h2 id="一次自己犯下的发布事故-与它逼出来的四条规则">一次自己犯下的发布事故，与它逼出来的四条规则<a class="heading-anchor" href="#一次自己犯下的发布事故-与它逼出来的四条规则" aria-label="Link to 一次自己犯下的发布事故，与它逼出来的四条规则">#</a></h2>
-<p><code>release/2.2-103-hotfixes/</code> 下的 <code>HF-2026-0928-02</code> 从 r0 一路走到 r4，五个身份全部保留在台账里。
+<p><code>release/2.2-103-hotfixes/</code> 下的 <code>HF-2026-0928-02</code> 从 r0 一路走到 r5，六个身份全部保留在台账里。
 过程本身是本版最有价值的产物——它把&quot;不可变&quot;从一句口号变成了可执行的判据：</p>
 <table>
 <thead>
@@ -128,36 +129,55 @@ VIP 归属租约不再续期，数据节点按设计摘掉 VIP 并把实例设�
 <td>r2</td>
 <td><code>4cf15ee1…</code></td>
 <td>superseded</td>
-<td>为纠正 r1 的指针而构建，却在理由里写下未经实测的断言「载荷与 r1 逐字节相同」——不成立</td>
+<td>为纠正 r1 的指针而构建，却在理由里写下<strong>未经实测</strong>的断言「载荷与 r1 逐字节相同」——不成立</td>
 </tr>
 <tr>
 <td>r3</td>
 <td><code>13731cae…</code></td>
 <td>superseded</td>
-<td>纠正 r2，但把差异字节数写死成「每个二进制 63 字节」。实测三个身份两两之间：<code>clusterguard</code> 63/61/63 字节、<code>clusterguard-agent</code> 40/40/40 字节</td>
+<td>纠正 r2，但把差异字节数写死成「每个二进制 63 字节」。实测只有其中一个二进制是这个数</td>
 </tr>
 <tr>
 <td>r4</td>
 <td><code>b11c939f…</code></td>
+<td>superseded</td>
+<td>把量化断言移出清单，却顺手写下两条<strong>实测推翻</strong>的新结论：二进制不可复现、原因在构建路径</td>
+</tr>
+<tr>
+<td>r5</td>
+<td><code>34769977…</code></td>
 <td><strong>current</strong></td>
-<td>该线当前入口。理由里不再有任何量化断言</td>
+<td>该线当前入口。理由字段只回答「为什么替换前一个身份」，并由门禁强制：不许路径、不许数字</td>
 </tr>
 </tbody></table>
 <p>四条规则：</p>
 <ol>
-<li><strong>已签名即不可变。</strong> r1 到 r4 的每一次纠正都是新身份，没有一次回去改写旧字节。构建脚本在写出
+<li><strong>已签名即不可变。</strong> r1 到 r5 的每一次纠正都是新身份，没有一次回去改写旧字节。构建脚本在写出
 产物前检查路径是否已存在，存在就<strong>拒绝</strong>并把操作者引向新身份。</li>
-<li><strong>签名清单里不放会漂移的断言。</strong> r2、r3 的两次返工都源于此——不是算错，而是把不可修订的位置
-用来承载可修订的内容。清单只保留&quot;为什么替换前一个身份&quot;。</li>
-<li><strong>产物二进制不可复现，所以台账摘要不可替代。</strong> 同一 <code>build_commit</code> 两次构建得到<strong>大小相同、
-代码相同</strong>的二进制，但每个二进制有几十字节不同，那差异全部落在 Go 的 build ID 上（由构建路径
-派生）。因此&quot;重新构建一次对拍&quot;<strong>不能</strong>用来判断一份产物是否被换过——唯一可信的比对基准是本台账
-登记的摘要。这是一条已知限制，不是本次文案修订的产物。</li>
+<li><strong>签名清单里不放会漂移的断言。</strong> r2、r3、r4 三次返工全部源于此——不是算错，而是把一个<strong>不可
+改写</strong>的位置用来承载需要实测支撑、会随时间变化的内容。所以 r5 起门禁直接禁止理由字段出现
+路径（会迁移：台账当天就搬过一次）与数字（会测错：同一句话只对两个二进制里的一个成立）。
+清单只保留&quot;为什么替换前一个身份&quot;，取证命令与实测数据留在台账里——那是可修订的记录。</li>
+<li><strong>判断一份产物有没有被换过，只有台账摘要说了算。</strong> 这里踩的是另一个坑：r4 断言&quot;二进制不可
+逐字节复现&quot;。实测相反——差异来自构建器每次注入的构建时刻
+（<code>build-hotfix-patch.sh</code> 的 <code>build_time=&quot;$(date -u …)&quot;</code> → <code>-X …BuiltAt</code>），把该值固定成清单里的
+<code>built_at</code>，同一提交可以<strong>逐字节复现</strong>（2026-09-29 实测：<code>clusterguard</code> 重建摘要与 r4 清单登记的
+<code>payload/bin/clusterguard</code> 完全一致，构建器的 <code>-trimpath</code> 已经把构建路径摘干净）。教训不是
+&quot;对拍没用&quot;，而是<strong>结论必须先实测再写</strong>：直接重跑构建必然得到不同的字节，那 40～63 字节的差异
+不是产物被动过的证据。判断&quot;有没有被换过&quot;的权威始终是本台账登记的摘要。</li>
 <li><strong>门禁要理解 <code>frozen</code> 与 <code>superseded</code> 的区别。</strong> 修订保留在介质目录里是<strong>正常且必要</strong>的——那些
 字节是&quot;现场到底运行过什么&quot;的证据。所以&quot;这个目录里只有一个 <code>.cgpatch</code>&quot;不再是正确的不变量；
 正确的不变量是&quot;这个目录里最多只有一个 <code>current</code>&quot;以及&quot;没有哪条声明指向已被取代的修订&quot;。按文件
-数做判据会在第一个修订出现时变红，而真正的歧义（两个 <code>current</code>）反而漏过去。</li>
+数做判据会在第一个修订出现时变红，而真正的歧义（两个 <code>current</code>）反而漏过去。台账因此也不只是
+存档：渲染器要靠它决定&quot;该上传哪一份&quot;，门禁要靠它决定&quot;哪一份是当前的&quot;，两者同源。</li>
 </ol>
+<blockquote>
+<p>这场事故的方法学教训，比上面四条更通用：<strong>第一次变异验证脚本本身是坏的，它把&quot;变异根本没落地&quot;
+判成了&quot;门禁成功拦住&quot;</strong>。原因是 <code>while read</code> 的输入没有结尾换行，循环体一次都没执行，判定变量
+停在初值上——14 个用例全部免费通过。现在脚本必须自证三件事：判定器能报出&quot;没咬到&quot;（自测用例）、
+每次变异都真的改到了文件（witness 逐字节比对）、收尾逐字节还原。<strong>变异验证没有自证能力时，
+它给出的&quot;全绿&quot;与没跑过没有区别。</strong></p>
+</blockquote>
 <h2 id="介质构建之后发现的缺陷-升级弹窗里点不动的两个动作">介质构建之后发现的缺陷：升级弹窗里点不动的两个动作<a class="heading-anchor" href="#介质构建之后发现的缺陷-升级弹窗里点不动的两个动作" aria-label="Link to 介质构建之后发现的缺陷：升级弹窗里点不动的两个动作">#</a></h2>
 <p>本版介质打包提交是 <code>bf2feeb</code>，打包完成于 2026-09-29T04:48:28Z。<strong>介质构建之后</strong>，现场在同一天
 （2026-09-29）的两轮控制台实操里暴露出五个缺陷，因此<strong>本介质里仍然带着它们</strong>，修复不在介质内。</p>

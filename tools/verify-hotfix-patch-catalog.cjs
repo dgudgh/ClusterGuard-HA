@@ -180,6 +180,34 @@ for (const spec of specs) {
 check('every declaration carries the id, severity, commits and bilingual text', incomplete.length === 0, incomplete.join(', '));
 check('every declaration points at real fix commits whose baseline is an ancestor', badCommits.length === 0, badCommits.join(', '));
 
+// A signed manifest is append-only: a wrong claim written into it can only be
+// corrected by shipping another artifact, which is how one sentence turned into
+// three extra revisions of a patch nobody had deployed. The `reason` field is
+// therefore held to the single thing that cannot drift - why this identity
+// replaces the previous one - and this check makes that structural rather than
+// aspirational: no paths (they move; the ledger's own location changed the same
+// day the field was first used) and no numbers (they get measured wrong; a byte
+// count that held for one of the two binaries did not hold for the other).
+const driftyReasons = [];
+for (const spec of specs) {
+  if ((spec.body.revision || 0) === 0) continue;
+  const identity = spec.body.supersedes_artifact;
+  if (!identity || typeof identity.reason !== 'string' || identity.reason.trim().length === 0) {
+    driftyReasons.push(`${spec.name}: 修订理由为空`);
+    continue;
+  }
+  for (const [label, pattern] of [['路径', /[/\\]/], ['量化事实', /\d/]]) {
+    if (pattern.test(identity.reason)) driftyReasons.push(`${spec.name}: 修订理由包含会漂移的${label}`);
+  }
+  for (const key of ['file', 'sha256']) {
+    if (typeof identity[key] !== 'string' || identity[key].length === 0) {
+      driftyReasons.push(`${spec.name}: supersedes_artifact.${key} 缺失`);
+    }
+  }
+}
+check('a revision reason only says why the identity was replaced: no path, no number',
+  driftyReasons.length === 0, driftyReasons.join('; '));
+
 // The reverse of the check above. fix_commits is what the signed manifest
 // promises the site, fixes[] is the only place an operator can read what each
 // of those commits actually changed; the two were only ever compared in one
@@ -869,8 +897,17 @@ if (fs.existsSync(builder)) {
     /产物已存在，拒绝原地覆盖/.test(source) && /revision/.test(source) && /supersedes_artifact/.test(source));
 }
 if (fs.existsSync(renderer)) {
+  const rendererSource = fs.readFileSync(renderer, 'utf8');
   check('the renderer reads manifests from the artifacts instead of trusting a list',
-    /tar/.test(fs.readFileSync(renderer, 'utf8')) && /HOTFIX-MANIFEST\.json/.test(fs.readFileSync(renderer, 'utf8')));
+    /tar/.test(rendererSource) && /HOTFIX-MANIFEST\.json/.test(rendererSource));
+  // A delivery directory holds several identities of the same patch, so "the
+  // newest file" is a guess and every filename is not an answer. The catalogue
+  // tells an operator which one to upload, and that answer has to come from the
+  // ledger - the same source the gate itself trusts. Otherwise the document and
+  // the gate could disagree about which artifact is current, and only the gate
+  // would be right.
+  check('the renderer takes the current identity from the ledger, not from the newest filename',
+    /hotfix-publications\.json/.test(rendererSource) && /status === "current"/.test(rendererSource));
 }
 
 if (failures.length) {

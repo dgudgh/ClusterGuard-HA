@@ -95,7 +95,7 @@ below names the one to apply for each patch</strong>; the other identities are h
 <td>P0</td>
 <td><code>914c6c5</code>, <code>3c88289</code>, <code>4015f97</code>, <code>0e8ab48</code>, <code>f90f995</code></td>
 <td><code>f90f995</code></td>
-<td><code>release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-r4-2.2-103.x86_64.cgpatch</code></td>
+<td><code>release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-r5-2.2-103.x86_64.cgpatch</code></td>
 </tr>
 </tbody></table>
 <h2 id="applying-a-patch">Applying a patch<a class="heading-anchor" href="#applying-a-patch" aria-label="Link to Applying a patch">#</a></h2>
@@ -629,9 +629,9 @@ rebuilt to today&#39;s rules — that would destroy the record.</p>
 <li>Fix commits: <code>914c6c5</code>, <code>3c88289</code>, <code>4015f97</code>, <code>0e8ab48</code>, <code>f90f995</code></li>
 <li>Build tree: <code>f90f995fb92c23d66723a5331742a551be7a93b6</code> (baseline <code>467e533</code> plus the fixes above and nothing else)</li>
 <li>Applies to: 2.2-103 → 2.2-103+hf-2026-0928-02 (x86_64)</li>
-<li>Artifact: <code>release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-r4-2.2-103.x86_64.cgpatch</code></li>
-<li>SHA-256: <code>b11c939fcaa581d7b8e6f2c65613f57ca3dc5e72990f4a3fbbf50e4bc60deb50</code></li>
-<li>Artifact identity: revision 4, supersedes <code>13731cae03f04d605cc5d8f339947bd13f882a8149a14b402c719bffebebf764</code> (<code>release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-r3-2.2-103.x86_64.cgpatch</code>) — 第 3 修订（r3）的理由里写死了一个二进制的差异字节数，那个数字只对其中一个二进制成立，而且差异长度本身随构建路径变化。根因不是这一次算错，而是签名清单里放进了会随时间漂移的量化断言——清单一旦签名就不可改写，任何笔误都只能靠再出一个修订来纠正，代价是又多一份几乎相同的交付物。第 4 修订把这类细节从签名清单里移出去：清单只保留「为什么替换前一个身份」这一不会随时间变化的事实，实测数据放在发布台账（hotfixes/hotfix-publications.json）里，那是可修订的记录。前三个修订的链条与原始动机见台账。r0 至 r3 均未交付任何现场，其摘要与字节按不可变规则保留，标记为 superseded。已知限制：本仓库的补丁二进制不可逐字节复现，判断一份产物是否被换过只能靠台账登记的摘要。</li>
+<li>Artifact: <code>release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-r5-2.2-103.x86_64.cgpatch</code></li>
+<li>SHA-256: <code>347699772b068b4b65251fc63f6116e7ca747bb5b64517988494e5e96ce2963e</code></li>
+<li>Artifact identity: revision 5, supersedes <code>b11c939fcaa581d7b8e6f2c65613f57ca3dc5e72990f4a3fbbf50e4bc60deb50</code> (<code>release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-r4-2.2-103.x86_64.cgpatch</code>) — 前一个修订的理由断言本仓库的补丁二进制不可逐字节复现，并把原因归于构建路径。两条都不对：字节差异来自构建器每次注入的构建时刻，把该值固定后同一提交可以逐字节复现，实测记录在发布台账里。已签名的产物不得原地改写，所以由本修订纠正；并且从本修订起，签名清单里的理由只回答「为什么替换前一个身份」——不写路径（会迁移），也不写量化事实（会测错），这两类错误今天各作废过一份签名产物。前几修订的完整链条、取证命令与实测数据都在发布台账里。</li>
 <li>Source diff: <code>src/HF-2026-0928-02-f90f995.patch</code></li>
 <li>Payload:<ul>
 <li><code>payload/bin/clusterguard</code> → <code>/usr/local/bin/clusterguard</code> (0755)</li>
@@ -740,11 +740,15 @@ rebuilt to today&#39;s rules — that would destroy the record.</p>
 <h3 id="rollback-4">Rollback<a class="heading-anchor" href="#rollback-4" aria-label="Link to Rollback">#</a></h3>
 <p>执行 rollback.sh 恢复旧二进制、旧单元与旧运行时脚本，然后 systemctl daemon-reload 并 systemctl restart clusterguard-ha。注意：回滚会把 /run/clusterguard 重新交回 0750 的创建方，下一次整机重启会再次让集群起不来；仅在确认新版本有回归时使用，并在回滚后临时手工执行 chmod 0755 /run/clusterguard。</p>
 <h3 id="identity-history-of-this-patch">Identity history of this patch<a class="heading-anchor" href="#identity-history-of-this-patch" aria-label="Link to Identity history of this patch">#</a></h3>
-<p>The section above describes <code>clusterguard-ha-hotfix-HF-2026-0928-02-r4-2.2-103.x86_64.cgpatch</code>. The identities below stay in the delivery
+<p>The section above describes <code>clusterguard-ha-hotfix-HF-2026-0928-02-r5-2.2-103.x86_64.cgpatch</code>. The identities below stay in the delivery
 directory under the immutability rule — <strong>they are not installation entry points</strong>, only the
 evidence of what a site ran or of what an earlier build of this patch contained. The full
 timeline is in <code>hotfixes/hotfix-publications.json</code>.</p>
 <ul>
+<li><strong>revision 4</strong> <code>b11c939fcaa581d7b8e6f2c65613f57ca3dc5e72990f4a3fbbf50e4bc60deb50</code> (8,977,452 bytes, superseded)<ul>
+<li>Why it was replaced — quoted verbatim from its signed manifest (Chinese; the manifest field is a single string): 第 3 修订（r3）的理由里写死了一个二进制的差异字节数，那个数字只对其中一个二进制成立，而且差异长度本身随构建路径变化。根因不是这一次算错，而是签名清单里放进了会随时间漂移的量化断言——清单一旦签名就不可改写，任何笔误都只能靠再出一个修订来纠正，代价是又多一份几乎相同的交付物。第 4 修订把这类细节从签名清单里移出去：清单只保留「为什么替换前一个身份」这一不会随时间变化的事实，实测数据放在发布台账（hotfixes/hotfix-publications.json）里，那是可修订的记录。前三个修订的链条与原始动机见台账。r0 至 r3 均未交付任何现场，其摘要与字节按不可变规则保留，标记为 superseded。已知限制：本仓库的补丁二进制不可逐字节复现，判断一份产物是否被换过只能靠台账登记的摘要。</li>
+</ul>
+</li>
 <li><strong>revision 3</strong> <code>13731cae03f04d605cc5d8f339947bd13f882a8149a14b402c719bffebebf764</code> (8,977,602 bytes, superseded)<ul>
 <li>Why it was replaced — quoted verbatim from its signed manifest (Chinese; the manifest field is a single string): 起点是第 1 修订（r1）：它的签名清单把发布台账的位置写成 release/hotfix-publications.json，而台账随后迁入源码树（hotfixes/hotfix-publications.json，跟随分支传播），该指针因此指向一个不存在的文件。第 2 修订（r2）本意是纠正这句话，但它在理由里写下了「载荷与 r1 逐字节相同」——这句话不成立：两次构建的二进制大小与代码相同，但每个二进制有 63 字节不同，那是 Go 的 build ID（构建路径派生）。r2 已经签名，按不可变规则不得原地改写，于是由第 3 修订把话改对。自 r1 起构建输入未变：同一 base_commit、build_commit、fix_commits 与组件集合，本修订只动清单里的身份字段与这段散文。已知限制（独立于本次文案修订）：本仓库的补丁二进制<strong>不可逐字节复现</strong>，「同一 commit 重新构建得到相同字节」目前不成立，因此判断一份产物是否被换过只能靠台账登记的摘要，不能靠重构建对拍。r0 的字节已不可恢复；r0、r1、r2 均未交付任何现场，其摘要与字节按不可变规则保留，标记为 superseded。</li>
 </ul>
