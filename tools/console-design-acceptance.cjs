@@ -11,7 +11,7 @@ const views = ['overview', 'topology', 'operations', 'nodes', 'metrics', 'operat
 const tabs = {
   topology:['topology-map-tab', 'topology-power-tab', 'topology-identity-tab'],
   operations:['operations-switchover-tab', 'operations-recovery-tab', 'operations-disaster-tab'],
-  settings:['settings-status-tab', 'software-update-tab', 'settings-account-tab']
+  settings:['settings-status-tab', 'software-update-tab']
 };
 
 (async () => {
@@ -53,7 +53,7 @@ const tabs = {
         ['topology', 'topology-map-tab', 'open-metadata-modal', 'metadata-modal', 'cancel-metadata'],
         ['topology', 'topology-power-tab', 'open-power-shutdown', 'power-shutdown-dialog', 'cancel-power-shutdown'],
         ['nodes', null, 'open-node-lifecycle-modal', 'node-lifecycle-modal', 'cancel-node-lifecycle'],
-        ['settings', 'settings-account-tab', 'settings-change-password', 'password-modal', 'cancel-password-change'],
+        ['settings', 'settings-status-tab', 'settings-change-password', 'password-modal', 'cancel-password-change'],
         ['settings', 'software-update-tab', 'open-software-update-dialog', 'software-update-dialog', 'cancel-software-update-dialog'],
         ['operations', 'operations-disaster-tab', 'open-disaster-recovery', 'disaster-dialog', 'cancel-disaster']
       ];

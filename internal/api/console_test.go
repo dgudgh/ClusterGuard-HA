@@ -89,12 +89,11 @@ func TestSettingsUsesSwitchableAdministrativeSections(t *testing.T) {
 	view := consoleView(t, "settings")
 	for _, contract := range []string{
 		`class="view settings-view"`, `class="topology-section-tabs settings-section-tabs" role="tablist"`,
-		`id="settings-status-tab" type="button" role="tab" aria-controls="settings-status-panel" aria-selected="true"`,
+		`id="settings-status-tab" type="button" role="tab" aria-controls="settings-status-panel" aria-selected="true" data-settings-section="status">状态设置</button>`,
 		`id="software-update-tab" type="button" role="tab" aria-controls="software-update-panel" aria-selected="false"`,
-		`id="settings-account-tab" type="button" role="tab" aria-controls="settings-account-panel" aria-selected="false"`,
 		`id="settings-status-panel" role="tabpanel" aria-labelledby="settings-status-tab"`,
 		`id="software-update-panel" role="tabpanel" aria-labelledby="software-update-tab" hidden`,
-		`id="settings-account-panel" role="tabpanel" aria-labelledby="settings-account-tab" hidden`,
+		`class="settings-account-block"`,
 		`class="settings-preference-sheet"`,
 		`class="settings-preference-row" role="group" aria-labelledby="settings-account-title"`,
 		`class="settings-preference-row" role="group" aria-labelledby="settings-display-title"`,
@@ -107,6 +106,18 @@ func TestSettingsUsesSwitchableAdministrativeSections(t *testing.T) {
 			t.Fatalf("settings missing switchable administrative section contract %q", contract)
 		}
 	}
+	// Account and display preferences used to be a section of their own. They
+	// now live inside the status panel, so the page has to keep them there: the
+	// block must appear after the status panel opens and before the next panel
+	// does. Pulling them back out into a fourth tab would otherwise still
+	// satisfy every contract above.
+	statusPanel := strings.Index(view, `id="settings-status-panel"`)
+	accountBlock := strings.Index(view, `class="settings-account-block"`)
+	configurationPanel := strings.Index(view, `id="settings-configuration-panel"`)
+	if statusPanel < 0 || accountBlock < 0 || configurationPanel < 0 ||
+		statusPanel > accountBlock || accountBlock > configurationPanel {
+		t.Fatalf("account preferences must stay inside the status panel, ahead of the configuration panel (status=%d account=%d configuration=%d)", statusPanel, accountBlock, configurationPanel)
+	}
 	for _, contract := range []string{
 		`id="software-update-dialog" class="software-update-dialog"`,
 		`class="software-update-file-picker"`, `id="software-update-file-name"`,
@@ -114,6 +125,7 @@ func TestSettingsUsesSwitchableAdministrativeSections(t *testing.T) {
 		`id="software-update-package-file" type="file" accept=".cgupgrade,.cgpatch,application/octet-stream"`,
 		"--accent:#0071e3", "--canvas:#f5f5f7", "renderSelectedSoftwareUpdateFile",
 		"const setSettingsSection = (section, focus = false) =>", "settingsSection: 'status'",
+		"const settingsSectionOrder = ['status', 'configuration', 'updates']",
 		"const softwareUpdates = await softwareUpdateRequest('/api/v1/platform/updates')",
 		"void softwareUpdateRequest('/api/v1/platform/version').then(version =>",
 		"state.platformVersion = version", "const previousSoftwareUpdates = state.softwareUpdates",
@@ -125,9 +137,12 @@ func TestSettingsUsesSwitchableAdministrativeSections(t *testing.T) {
 			t.Fatalf("console missing settings design contract %q", contract)
 		}
 	}
-	for _, forbidden := range []string{`class="settings-workspace"`, `class="settings-column settings-column-summary"`, `class="settings-column settings-column-tools"`} {
+	for _, forbidden := range []string{
+		`class="settings-workspace"`, `class="settings-column settings-column-summary"`, `class="settings-column settings-column-tools"`,
+		`data-settings-section="account"`, `id="settings-account-panel"`, `id="settings-account-tab"`,
+	} {
 		if strings.Contains(view, forbidden) {
-			t.Fatalf("settings must not retain the stacked all-functions layout %q", forbidden)
+			t.Fatalf("settings must not retain the stacked all-functions layout, nor a separate account section %q", forbidden)
 		}
 	}
 }
@@ -150,7 +165,7 @@ func TestSettingsExposesReadOnlyEffectiveConfigurationSection(t *testing.T) {
 		}
 	}
 	for _, contract := range []string{
-		"const settingsSectionOrder = ['status', 'configuration', 'updates', 'account']",
+		"const settingsSectionPanels = { status:'settings-status-panel', configuration:'settings-configuration-panel', updates:'software-update-panel' }",
 		"configuration:'settings-configuration-panel'",
 		"if (selected === 'configuration') { void loadConfiguration(); void fetchClusterPolicy(); }",
 		"const loadConfiguration = async () =>",
