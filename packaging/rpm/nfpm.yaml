@@ -69,6 +69,14 @@ contents:
     expand: true
     file_info:
       mode: 0755
+  # Shipped, not installer-only: the installer copies this tool onto every node
+  # and operators re-run it, so a site must be able to receive a corrected copy
+  # through the normal package path rather than keeping whatever was first copied.
+  - src: ${CG_RPM_STAGE}/scripts/clusterguard-clock-mesh.sh
+    dst: /usr/local/sbin/clusterguard-clock-mesh.sh
+    expand: true
+    file_info:
+      mode: 0755
   - src: ${CG_RPM_STAGE}/scripts/clusterguard-upgrade.sh
     dst: /usr/local/sbin/clusterguard-upgrade
     expand: true

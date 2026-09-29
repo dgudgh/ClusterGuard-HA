@@ -121,6 +121,7 @@ helpers=(
   clusterguard-cluster-restore.sh
   clusterguard-cluster-finalize.sh
   clusterguard-upgrade.sh
+  clusterguard-clock-mesh.sh
   clusterguard-update-job.sh
   clusterguard-update-prune.sh
 )

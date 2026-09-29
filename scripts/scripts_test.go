@@ -3928,6 +3928,11 @@ func TestClockMeshUsesOnlyFixedInternalSource(t *testing.T) {
 		"chronyc makestep",
 		"timedatectl set-local-rtc 0",
 		"hwclock --systohc --utc",
+		// The display timezone is applied, not merely reported, and it is applied
+		// on both roles so the cluster cannot render one instant two ways.
+		"timedatectl set-timezone \"$timezone\"",
+		"--accept-current-time",
+		"--set-utc",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("clock mesh is missing %q", expected)
@@ -3935,6 +3940,128 @@ func TestClockMeshUsesOnlyFixedInternalSource(t *testing.T) {
 	}
 	if strings.Contains(text, "pool ") {
 		t.Fatal("clock mesh must not depend on an external NTP pool")
+	}
+}
+
+// The mesh tool is the only thing that decides what time an isolated cluster
+// believes. On the lab site the first control node's clock was adopted wholesale
+// and then written to the RTC, so a guest whose RTC held local time while the
+// kernel read it as UTC stayed eight hours ahead of everything it had to talk to.
+// Becoming that authority must therefore be a deliberate act.
+func TestClockMeshRefusesToServeAnUnverifiedClock(t *testing.T) {
+	command := exec.Command("bash", "clusterguard-clock-mesh.sh", "--server")
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatalf("clock mesh became the authority without the clock being supplied or vouched for: %s", output)
+	}
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 2 {
+		t.Fatalf("clock mesh refusal exit=%v output=%s", err, output)
+	}
+	// The refusal has to say what the operator is being asked to vouch for.
+	for _, expected := range []string{"--set-utc", "--accept-current-time", "hwclock --systohc", "date -u"} {
+		if !strings.Contains(string(output), expected) {
+			t.Fatalf("the refusal must explain %q, got: %s", expected, output)
+		}
+	}
+}
+
+func TestClockMeshAcceptsAnExplicitInstantAndAcknowledgedClock(t *testing.T) {
+	for _, arguments := range [][]string{
+		{"--server", "--set-utc", "2026-09-29T02:20:00Z", "--dry-run"},
+		{"--server", "--accept-current-time", "--dry-run"},
+	} {
+		output, err := exec.Command("bash", append([]string{"clusterguard-clock-mesh.sh"}, arguments...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("clock mesh rejected %v: %v %s", arguments, err, output)
+		}
+		if !strings.Contains(string(output), "dry-run: nothing was changed") {
+			t.Fatalf("dry run for %v did not stop before mutating: %s", arguments, output)
+		}
+	}
+}
+
+// A pinned display timezone is what stops one cluster from rendering the same
+// instant as two different wall clocks, which is exactly what the site did.
+func TestClockMeshPinsTheDisplayTimezoneOnBothRoles(t *testing.T) {
+	for _, arguments := range [][]string{
+		{"--server", "--accept-current-time", "--timezone", "Asia/Shanghai", "--dry-run"},
+		{"--client", "--server-address", "192.168.102.152", "--timezone", "Asia/Shanghai", "--dry-run"},
+	} {
+		output, err := exec.Command("bash", append([]string{"clusterguard-clock-mesh.sh"}, arguments...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("clock mesh rejected %v: %v %s", arguments, err, output)
+		}
+		text := string(output)
+		if !strings.Contains(text, "would set display timezone to Asia/Shanghai") {
+			t.Fatalf("clock mesh did not pin the timezone for %v: %s", arguments, text)
+		}
+	}
+	// Omitting it must be visible rather than silent, or a split stays unnoticed.
+	output, err := exec.Command("bash", "clusterguard-clock-mesh.sh", "--server", "--accept-current-time", "--dry-run").CombinedOutput()
+	if err != nil {
+		t.Fatalf("clock mesh without --timezone: %v %s", err, output)
+	}
+	if !strings.Contains(string(output), "is NOT managed here") {
+		t.Fatalf("an unmanaged timezone must be reported: %s", output)
+	}
+}
+
+func TestClockMeshRejectsBadInput(t *testing.T) {
+	for _, testCase := range []struct {
+		name      string
+		arguments []string
+		expected  string
+	}{
+		{"unparseable instant", []string{"--server", "--set-utc", "tomorrow", "--dry-run"}, "Invalid --set-utc"},
+		{"unknown zone", []string{"--server", "--accept-current-time", "--timezone", "Not/AZone", "--dry-run"}, "Unknown timezone"},
+		{"client without server", []string{"--client", "--dry-run"}, "--client requires --server-address"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			output, err := exec.Command("bash", append([]string{"clusterguard-clock-mesh.sh"}, testCase.arguments...)...).CombinedOutput()
+			if err == nil {
+				t.Fatalf("expected %v to be rejected, got: %s", testCase.arguments, output)
+			}
+			if !strings.Contains(string(output), testCase.expected) {
+				t.Fatalf("missing %q in: %s", testCase.expected, output)
+			}
+		})
+	}
+}
+
+// Two halves of one defect. The installer used to measure only whether the nodes
+// agreed with each other, which a uniformly wrong rack passes with a spread of two
+// seconds, and then hand the permanent clock authority to that unverified clock.
+// The acknowledgement it now passes is the one it has just earned by measuring
+// every node against its own time.
+func TestInstallerMeasuresNodesAgainstItsOwnClock(t *testing.T) {
+	contents, err := os.ReadFile("install_clusterguard.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	for _, expected := range []string{
+		"reference_epoch=\"$(date -u +%s)\"",
+		"drift=$(( epoch - reference_epoch ))",
+		"与本机（${reference_stamp}）相差 ${drift} 秒",
+		"clusterguard-clock-mesh.sh --server --accept-current-time --subnet",
+		"--timezone) need_value \"$@\"; cluster_timezone=\"$2\"",
+		"cluster_timezone_zone()",
+		"if zone=\"$(cluster_timezone_zone)\"; then",
+		"zone_arg=\"--timezone '${zone}'\"",
+		// Both invocations must actually carry the zone: pinning the assignment
+		// alone would let it be dropped from the command that matters.
+		"clusterguard-clock-mesh.sh --server --accept-current-time --subnet '${source_subnet}' ${zone_arg}",
+		"clusterguard-clock-mesh.sh --client --server-address '${source_host}' ${zone_arg}",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("installer clock handling is missing %q", expected)
+		}
+	}
+	// Claiming that the clocks agree with each other is not a claim that they are
+	// right, and the old wording read as the latter.
+	if strings.Contains(text, "节点时钟一致性已确认，最大偏差 ${skew} 秒") {
+		t.Fatal("the installer must not report mutual agreement as if the clock had been verified")
 	}
 }
 

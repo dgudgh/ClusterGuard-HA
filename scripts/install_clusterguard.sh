@@ -32,6 +32,10 @@ cluster_name=""
 vip=""
 vip_interface="ens160"
 vip_prefix=24
+# Display timezone applied to every node so one cluster cannot show two different
+# wall clocks for the same instant. Empty means "inherit this host's zone"; the
+# zone is pinned explicitly rather than left to each node's OS installer default.
+cluster_timezone=""
 database_port=""
 api_port=3000
 raft_port=10009
@@ -160,6 +164,8 @@ ClusterGuard HA 多节点离线安装器
       --fencer-assets DIR      外部隔离程序的站点配置目录；文件安装到 /etc/clusterguard/fencing/
       --manual-failover-only   显式关闭自动故障切换，仅保留人工受控切换
       --patch-trust-key FILE   补丁签名公钥；配置后可在控制台上传并受控滚动升级
+      --timezone ZONE          应用到所有节点的显示时区，默认沿用本机时区；
+                               不显式固定会让同一集群对同一时刻显示两个钟点
       --plan                   仅显示计划（默认）
       --execute                校验后真实安装
   -y, --yes                    非交互确认
@@ -201,6 +207,7 @@ parse_args() {
       --vip) need_value "$@"; vip="$2"; shift 2 ;;
       --interface) need_value "$@"; vip_interface="$2"; shift 2 ;;
       --prefix) need_value "$@"; vip_prefix="$2"; shift 2 ;;
+      --timezone) need_value "$@"; cluster_timezone="$2"; shift 2 ;;
       --mysql-root-password) need_value "$@"; mysql_root_password="$2"; shift 2 ;;
       --mysql-root-remote-host) need_value "$@"; mysql_root_remote_host="$2"; shift 2 ;;
       --postgresql-password) need_value "$@"; postgresql_admin_password="$2"; shift 2 ;;
@@ -1323,15 +1330,41 @@ printf 'CG_PREFLIGHT|%s|%s|%s|%s|%s\\n' \"\${arch}\" \"\${ntp}\" \"\${os_id}\" \
   done
 }
 
+# Formats a remote epoch for a diagnostic message. The installer host may be
+# either GNU or BSD, so both spellings are attempted before falling back to the
+# raw value.
+utc_stamp_of() {
+  local epoch="$1"
+  date -u -d "@${epoch}" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null ||
+    date -u -r "${epoch}" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null ||
+    printf 'epoch %s' "${epoch}"
+}
+
 # Agent requests are short-lived and signed. A material clock skew would make a
 # healthy peer reject the leader's request as expired, which must never surface
 # as a misleading topology or VIP fault after installation has begun.
+#
+# The spread between the nodes is only half of the question, and on its own it is
+# the half this deployment cannot fail usefully. Nothing downstream notices that
+# every node agrees on the wrong instant: guests whose RTCs held local time while
+# the kernel read them as UTC are uniformly wrong by the zone offset and still
+# show a spread of a couple of seconds. The installer host is the only reference
+# available here, so each node is measured against it too, and a node that is
+# materially off in absolute terms is reported with both readings.
 verify_cluster_clock_skew() {
   local host output epoch minimum_epoch=0 maximum_epoch=0 skew=0
+  local reference_epoch reference_stamp drift=0
+  reference_epoch="$(date -u +%s)"
+  reference_stamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   for host in "${all_nodes[@]}"; do
     output="$(remote_exec "${host}" "date -u +%s")"
     epoch="${output%%$'\n'*}"
     [[ "${epoch}" =~ ^[0-9]{10,}$ ]] || die "${host} 未返回可验证的 UTC 时间戳"
+    drift=$(( epoch - reference_epoch ))
+    if (( drift < 0 )); then drift=$(( -drift )); fi
+    if (( drift > 30 )); then
+      die "${host} 的 UTC 为 $(utc_stamp_of "${epoch}")，与本机（${reference_stamp}）相差 ${drift} 秒，超过 30 秒安全上限。节点之间可能彼此一致却整体偏离真实时间——虚拟化环境里 RTC 中存的是本地时间、内核却按 UTC 读取，正是这种形状。请先在 ${host} 上校正时间（date -u 核对，必要时 timedatectl set-timezone 与 hwclock --systohc --utc）后重试"
+    fi
     if (( minimum_epoch == 0 || epoch < minimum_epoch )); then minimum_epoch="${epoch}"; fi
     if (( epoch > maximum_epoch )); then maximum_epoch="${epoch}"; fi
   done
@@ -1339,7 +1372,7 @@ verify_cluster_clock_skew() {
   if (( skew > 30 )); then
     die "节点系统时钟偏差为 ${skew} 秒，超过 30 秒安全上限；请先校正 RTC 或时间后重试，安装器随后会配置固定内部时钟源"
   fi
-  log "节点时钟一致性已确认，最大偏差 ${skew} 秒"
+  log "节点时钟一致性已确认：节点之间最大偏差 ${skew} 秒，且各节点与本机 UTC 相差均不超过 30 秒"
 }
 
 clock_mesh_tool() {
@@ -1350,22 +1383,51 @@ clock_mesh_tool() {
   die "缺少固定内部时钟源工具 clusterguard-clock-mesh.sh"
 }
 
+# The zone the whole cluster will display. An explicit --timezone wins; otherwise
+# the installer host's own zone is used so the cluster reads like the operator's
+# clock. It is never left to each node's own OS default, which is how one cluster
+# ends up rendering the same instant as two different wall clocks.
+cluster_timezone_zone() {
+  local zone=""
+  if [[ -n "${cluster_timezone}" ]]; then
+    zone="${cluster_timezone}"
+  else
+    zone="$(timedatectl show -p Timezone --value 2>/dev/null || true)"
+    if [[ -z "${zone}" ]]; then
+      zone="$(readlink -f /etc/localtime 2>/dev/null | sed 's#.*/zoneinfo/##' || true)"
+    fi
+  fi
+  [[ -n "${zone}" && -f "/usr/share/zoneinfo/${zone}" ]] || return 1
+  printf '%s\n' "${zone}"
+}
+
 configure_fixed_cluster_clock_source() {
-  local source_host="${controller_nodes[0]}" source_subnet tool host
+  local source_host="${controller_nodes[0]}" source_subnet tool host zone_arg="" zone=""
   valid_ipv4 "${source_host}" || die "固定内部时钟源必须使用 IPv4 控制节点，当前为：${source_host}"
   source_subnet="${source_host%.*}.0/24"
   tool="$(clock_mesh_tool)"
+  if zone="$(cluster_timezone_zone)"; then
+    zone_arg="--timezone '${zone}'"
+  else
+    warn "无法确定要固定到全部节点的时区；请显式传入 --timezone，否则各节点会各自显示本地时区"
+  fi
 
   log "配置固定内部时钟源：${source_host}（不跟随 VIP 或数据库主库切换）"
+  if [[ -n "${zone_arg}" ]]; then log "集群显示时区统一为 ${zone}"; fi
   for host in "${all_nodes[@]}"; do
     remote_exec_checked "${host}" "创建时钟工具目录" "install -d -m 0755 /usr/local/sbin"
     remote_copy "${tool}" "${host}" "/usr/local/sbin/clusterguard-clock-mesh.sh"
     remote_exec_checked "${host}" "安装固定内部时钟源工具" "chmod 0755 /usr/local/sbin/clusterguard-clock-mesh.sh"
   done
-  remote_exec_checked "${source_host}" "启用固定内部时钟源" "/usr/local/sbin/clusterguard-clock-mesh.sh --server --subnet '${source_subnet}'"
+  # --accept-current-time carries the acknowledgement that verify_cluster_clock_skew
+  # has just earned. The mesh tool refuses to hand a permanent, cluster-wide clock
+  # authority to a node whose time nobody checked, because that is how an
+  # uncorrected RTC offset becomes the cluster's truth and, through hwclock,
+  # survives every reboot.
+  remote_exec_checked "${source_host}" "启用固定内部时钟源" "/usr/local/sbin/clusterguard-clock-mesh.sh --server --accept-current-time --subnet '${source_subnet}' ${zone_arg}"
   for host in "${all_nodes[@]}"; do
     [[ "${host}" == "${source_host}" ]] && continue
-    remote_exec_checked "${host}" "同步固定内部时钟源" "/usr/local/sbin/clusterguard-clock-mesh.sh --client --server-address '${source_host}'"
+    remote_exec_checked "${host}" "同步固定内部时钟源" "/usr/local/sbin/clusterguard-clock-mesh.sh --client --server-address '${source_host}' ${zone_arg}"
   done
 }
 
