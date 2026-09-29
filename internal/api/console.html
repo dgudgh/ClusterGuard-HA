@@ -3536,6 +3536,11 @@
     // the package the operator just uploaded. Reading only packages[0] then pinned the button
     // to that finished record and disabled 滚动升级 with no way forward.
     const softwareUpdateActionable = item => {
+      // A package built for another release line can never be applied here, so no
+      // job state and no amount of retrying makes it a candidate. The verdict is
+      // computed once by the server (platformupdate.packageBaselineFault) and
+      // travels with the row; re-deriving it here is how the two answers drift.
+      if (item && item.incompatible) return false;
       const job = item && item.job || null;
       return !job || job.verification_required || !['succeeded', 'rolled_back'].includes(job.status);
     };
@@ -3611,14 +3616,21 @@
         // clock_skew sits on the record wrapper, not on the package it describes - reading
         // it off `record` here silently rendered nothing at all.
         const rowMessage = (job && job.message) || '升级包已上传并通过签名校验';
+        // Both markers explain why this row is not the one the console will act
+        // on, and both sit on the record wrapper rather than on the package it
+        // describes - reading either one off `record` renders nothing at all.
         const skewed = !!(item && item.clock_skew);
+        const incompatible = !!(item && item.incompatible);
+        const rowNote = incompatible
+          ? ` · ${item.incompatible_reason || '与当前集群基线不一致，本集群装不上'}`
+          : skewed ? ' · 记录时间戳晚于当前时间，排序与时间不可信' : '';
         row.append(
           statusCell,
           text('td', 'mono', record.patch_id || '-'),
           text('td', '', `${record.source_version || '不限'} → ${record.target_version || '-'}`),
           text('td', '', softwareUpdateModeText(job && job.mode)),
           text('td', '', softwareUpdateDateText(occurredAt)),
-          text('td', 'history-message', skewed ? `${rowMessage} · 记录时间戳晚于当前时间，排序与时间不可信` : rowMessage)
+          text('td', 'history-message', `${rowMessage}${rowNote}`)
         );
         body.append(row);
       });
@@ -3872,14 +3884,21 @@
       const newestRecordID = newestRecord && newestRecord.package
         ? (newestRecord.package.patch_id || newestRecord.package.file_name || '')
         : '';
+      // "Nothing to run" has more than one cause, and telling the operator the
+      // newest record "already finished" when it in fact belongs to another
+      // release line is exactly the kind of wrong-cause message that sent the
+      // 2026-09-29 incident looking for a maintenance gate that was never set.
+      const newestIncompatible = !!(newestRecord && newestRecord.incompatible);
       const validationCopy = {
         idle: ['等待上传校验', snapshot.available ? '选择签名升级包并上传校验后，才能执行滚动升级。' : `校验服务不可用：${softwareUpdateUnavailableReason(snapshot)}`, 'i'],
         selected: ['等待上传校验', `已选择 ${selectedFile ? selectedFile.name : '升级包'}，请点击“上传并校验”。`, '1'],
         validating: ['正在校验', '正在核对升级包签名、版本、架构、引导器和兼容性合同。', '…'],
         verified: ['校验完成', pending && pending.package ? `升级包 ${pending.package.patch_id || pending.package.file_name || ''} 已通过签名与兼容性校验。` : '升级包已通过签名与兼容性校验。', '✓'],
-        'verified-blocked': ['校验完成，但当前没有可执行的升级包', newestRecordID
-          ? `升级包已通过签名与兼容性校验，但列表里排在最新的记录是 ${newestRecordID}，它已经执行完成，不能重复发起。请核对升级记录的时间戳是否可靠，或重新上传要执行的升级包。`
-          : '升级包已通过签名与兼容性校验，但升级记录里没有可执行的升级包。请重新上传要执行的升级包。', '!'],
+        'verified-blocked': ['校验完成，但当前没有可执行的升级包', newestIncompatible
+          ? `升级包已通过签名与兼容性校验，但列表里排在最新的记录是 ${newestRecordID}，${newestRecord.incompatible_reason || '它不属于本集群的发布线，本集群装不上。'}`
+          : newestRecordID
+            ? `升级包已通过签名与兼容性校验，但列表里排在最新的记录是 ${newestRecordID}，它已经执行完成，不能重复发起。请核对升级记录的时间戳是否可靠，或重新上传要执行的升级包。`
+            : '升级包已通过签名与兼容性校验，但升级记录里没有可执行的升级包。请重新上传要执行的升级包。', '!'],
         failed: ['校验失败', state.softwareUpdateValidationMessage || '升级包未通过校验，请检查错误后重新上传。', '!'],
       }[validationState] || ['等待上传校验', '选择签名升级包并上传校验后，才能执行滚动升级。', 'i'];
       const validation = byId('software-update-validation');

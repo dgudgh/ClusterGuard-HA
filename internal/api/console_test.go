@@ -1844,7 +1844,19 @@ func TestSoftwareUpdateRollingActionTargetsTheNewestActionablePackage(t *testing
 		// inside rendered the marker on no row at all - a browser run, not this contract,
 		// is what caught that, so the shape is pinned here and the wrong read is rejected below.
 		"const skewed = !!(item && item.clock_skew);",
-		"skewed ? `${rowMessage} · 记录时间戳晚于当前时间，排序与时间不可信` : rowMessage",
+		"skewed ? ' · 记录时间戳晚于当前时间，排序与时间不可信' : ''",
+		// A package from another release line is annotated, not hidden, and the row says
+		// why so the operator stops waiting for a rollout that can never start.
+		"const incompatible = !!(item && item.incompatible);",
+		"? ` · ${item.incompatible_reason || '与当前集群基线不一致，本集群装不上'}`",
+		"text('td', 'history-message', `${rowMessage}${rowNote}`)",
+		// A record from another release line can never be the one the console acts on.
+		"if (item && item.incompatible) return false;",
+		// "Nothing to run" has two causes now, and the panel has to name the right one:
+		// telling the operator the newest record "已经执行完成" when it actually belongs to
+		// another release line repeats the wrong-cause message that started this incident.
+		"const newestIncompatible = !!(newestRecord && newestRecord.incompatible);",
+		"${newestRecord.incompatible_reason || '它不属于本集群的发布线，本集群装不上。'}",
 	} {
 		if !strings.Contains(page, contract) {
 			t.Fatalf("the rolling upgrade must act on the newest actionable package: missing %q", contract)
@@ -1862,15 +1874,32 @@ func TestSoftwareUpdateRollingActionTargetsTheNewestActionablePackage(t *testing
 			t.Fatalf("the rolling upgrade must not resolve its subject from packages[0]: %q is back", legacy)
 		}
 	}
-	// Manager.Snapshot sets ClockSkew on the PackageStatus wrapper, so the marker has to
-	// be read from the wrapper. `record` is the nested package here, and reading the flag
-	// off it compiles, renders nothing, and looks correct in a diff.
+	// Manager.Snapshot sets ClockSkew and Incompatible on the PackageStatus wrapper, so both
+	// markers have to be read from the wrapper. `record` is the nested package here, and
+	// reading either flag off it compiles, renders nothing, and looks correct in a diff.
 	for _, wrongLevel := range []string{
 		"record.clock_skew ?",
 		"record.clock_skew &&",
+		"record.incompatible ?",
+		"record.incompatible &&",
 	} {
 		if strings.Contains(page, wrongLevel) {
-			t.Fatalf("clock_skew is a field of the record wrapper, not of the package: %q reads it one level too deep", wrongLevel)
+			t.Fatalf("clock_skew and incompatible are fields of the record wrapper, not of the package: %q reads it one level too deep", wrongLevel)
+		}
+	}
+	// The baseline verdict belongs to the server: platformupdate.packageBaselineFault is the
+	// single implementation, and the updater's own guard is the third reader of the same rule.
+	// Re-deriving it in the console lets the two answers drift - which is how the console came
+	// to offer a package the updater had already refused. Comparing against
+	// snapshot.current_version is the tempting shape for that mistake, and doubly wrong: the
+	// real API never returns that field, so the comparison would be against undefined and
+	// silently always false.
+	for _, derived := range []string{
+		"snapshot.current_version",
+		"softwareUpdates.current_version",
+	} {
+		if strings.Contains(page, derived) {
+			t.Fatalf("the console must read the server's baseline verdict instead of re-deriving it: %q", derived)
 		}
 	}
 }
