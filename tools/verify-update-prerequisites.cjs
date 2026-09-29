@@ -20,6 +20,14 @@
  *     directory idempotently via ExecStartPre and must NOT claim
  *     RuntimeDirectory.
  *
+ *  3. P0 reboot outage (2026-09-28) — the same ExecStartPre created that shared
+ *     /run/clusterguard as 0750, and the managed MySQL/PostgreSQL units nest
+ *     their RuntimeDirectory below it as unprivileged users outside the
+ *     clusterguard group. /run is a tmpfs, so the helper won the boot race and
+ *     every reboot stranded the cluster. The unit must create it 0755, and this
+ *     gate must not accept 0750 as an alternative — its earlier revision did,
+ *     which is exactly how the defect survived a full gate suite.
+ *
  * Run: node tools/verify-update-prerequisites.cjs [--repo <path>]
  */
 'use strict';
@@ -79,8 +87,20 @@ check(
   'RuntimeDirectory on a shared dir re-chowns it per start (233 race) and deletes it on stop',
 );
 check(
-  'helper unit: idempotent ExecStartPre creates /run/clusterguard',
-  /ExecStartPre=.*install -d -m 0750 -o root -g clusterguard \/run\/clusterguard/.test(helperUnit),
+  'helper unit: idempotent ExecStartPre creates a world-traversable /run/clusterguard',
+  /ExecStartPre=.*install -d -m 0755 -o root -g clusterguard \/run\/clusterguard/.test(helperUnit),
+  'the managed engine units nest their own RuntimeDirectory below this path and run as mysql/postgres, which are not members of the clusterguard group',
+);
+// On 2026-09-28 this very check pinned 0750 and kept passing while the site sat
+// in a reboot-length outage: /run is a tmpfs, the helper wins the boot race, and
+// mysqld then cannot traverse its own parent and aborts with "Could not create
+// unix socket lock file" (restart counters reached 2063/2069/2072). A gate that
+// accepts the defect's mode is not a gate, so its absence is pinned separately
+// rather than left implied by the 0755 pattern above.
+check(
+  'helper unit: does NOT create /run/clusterguard 0750',
+  !/ExecStartPre=.*install -d -m 0750\b[^\n]*\/run\/clusterguard/.test(helperUnit),
+  '0750 on the shared parent blocks the unprivileged engine users from reaching their own sockets',
 );
 check(
   'helper unit: socket path unchanged (/run/clusterguard/update-helper.sock)',

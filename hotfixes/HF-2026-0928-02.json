@@ -3,7 +3,13 @@
   "severity": "P0",
   "base_commit": "467e533",
   "build_commit": "f90f995fb92c23d66723a5331742a551be7a93b6",
-  "fix_commits": ["ed9faca", "d5f9491", "dd82ca5", "5ae2039", "28e3b47"],
+  "fix_commits": [
+    "914c6c56e95714fd375426b8afbadb0ae49abc7b",
+    "3c882892380f289bb5eaf61578bff645b1700525",
+    "4015f9791c7266e94305f89408dc0201157098c9",
+    "0e8ab48a15625faf73ab63cb281f7c7ecfc7a51a",
+    "f90f995fb92c23d66723a5331742a551be7a93b6"
+  ],
   "rpm_version": "2.2",
   "rpm_release": "103",
   "title": {
@@ -16,7 +22,7 @@
   },
   "fixes": [
     {
-      "commit": "28e3b47",
+      "commit": "f90f995fb92c23d66723a5331742a551be7a93b6",
       "severity": "P0",
       "title": {
         "zh": "整机重启后整个集群起不来：共享运行时目录权限与恢复冻结永不释放",
@@ -41,7 +47,7 @@
       ]
     },
     {
-      "commit": "dd82ca5",
+      "commit": "4015f9791c7266e94305f89408dc0201157098c9",
       "severity": "P0",
       "title": {
         "zh": "MySQL 写入者协调抖动：授权主库每 5 秒自隔离一次",
@@ -65,7 +71,7 @@
       ]
     },
     {
-      "commit": "d5f9491",
+      "commit": "3c882892380f289bb5eaf61578bff645b1700525",
       "severity": "P0",
       "title": {
         "zh": "升级执行链两个前置缺陷：SSH 私钥属主与 Helper 共用运行时目录",
@@ -89,7 +95,7 @@
       ]
     },
     {
-      "commit": "ed9faca",
+      "commit": "914c6c56e95714fd375426b8afbadb0ae49abc7b",
       "severity": "P1",
       "title": {
         "zh": "控制台不解释“不可用”的原因",
@@ -113,7 +119,7 @@
       ]
     },
     {
-      "commit": "5ae2039",
+      "commit": "0e8ab48a15625faf73ab63cb281f7c7ecfc7a51a",
       "severity": "P1",
       "title": {
         "zh": "整机关机提交后控制台卡在无法交互的对话框上",

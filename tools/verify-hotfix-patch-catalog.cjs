@@ -373,6 +373,45 @@ for (const item of resolved) {
 }
 check('the build tree carries no production change beyond the declared fixes', contaminated.length === 0, contaminated.join('; '));
 
+// A declared fix commit must actually be in the tree the patch was built from.
+// The 2.2-103 line is a ported branch, so its five fixes exist there as
+// cherry-picks with different hashes; declaring the originals made the signed
+// manifest and the published catalogue name commits the archive does not
+// contain at all. Ancestry is the only thing that tells the two apart, so both
+// directions are checked: nothing declared that is absent from the tree, and
+// nothing in the tree left undeclared.
+const foreignFixes = [];
+for (const item of resolved) {
+  for (const commit of item.manifest.fix_commits || []) {
+    try {
+      git('merge-base', '--is-ancestor', commit, item.manifest.build_commit);
+    } catch (error) {
+      foreignFixes.push(`${item.body.id}:${commit.slice(0, 7)} 不在构建树 ${item.manifest.build_commit.slice(0, 7)} 中`);
+    }
+  }
+}
+check('every declared fix commit is an ancestor of the build tree', foreignFixes.length === 0, foreignFixes.join('; '));
+
+// The file-level scan above cannot see an undeclared commit that edits a file
+// another declared fix already touched — exactly the case for console.html,
+// which three of these fixes share. Compare commits, not files: any commit in
+// the build range that reaches a production path must be declared, otherwise
+// the tree embeds a change the manifest denies shipping.
+const unauthorisedFixes = [];
+for (const item of resolved) {
+  const declaredCommits = new Set(item.manifest.fix_commits || []);
+  const ranged = git('log', '--format=%H', `${item.manifest.base_commit}..${item.manifest.build_commit}`)
+    .split('\n').filter(Boolean);
+  for (const commit of ranged) {
+    if (declaredCommits.has(commit)) continue;
+    if (productionFiles(`${commit}^..${commit}`).length > 0) {
+      unauthorisedFixes.push(`${item.body.id}:${commit.slice(0, 7)} 改动了生产路径但未被声明`);
+    }
+  }
+}
+check('every production change in the build tree is an accounted-for declared fix',
+  unauthorisedFixes.length === 0, unauthorisedFixes.join('; '));
+
 const declaredDirs = new Map();
 for (const spec of specs) {
   const dir = artifactDirFor(spec.body);

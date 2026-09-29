@@ -20,10 +20,14 @@ baseline silently downgrades binaries back to its own release line.
 
 | Hotfix | Severity | Fix commits | Build tree | Artifact |
 | --- | --- | --- | --- | --- |
-| HF-2026-0928-05 | P0 | `ed9faca`, `d5f9491`, `dd82ca5`, `5ae2039`, `28e3b47`, `9303e9d`, `18d738e` | `18d738e` | `release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-05-2.2-104.x86_64.cgpatch` |
-| HF-2026-0928-02 | P0 | `ed9faca`, `d5f9491`, `dd82ca5`, `5ae2039`, `28e3b47` | `f90f995` | `release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-2.2-103.x86_64.cgpatch` |
+| HF-2026-0928-06 | P0 | `ed9faca`, `d5f9491`, `dd82ca5`, `5ae2039`, `28e3b47`, `9303e9d`, `18d738e`, `81fe3c8` | `81fe3c8` | `release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-06-2.2-104.x86_64.cgpatch` |
+| HF-2026-0928-02 | P0 | `914c6c5`, `3c88289`, `4015f97`, `0e8ab48`, `f90f995` | `f90f995` | `release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-2.2-103.x86_64.cgpatch` |
 
 ## Applying a patch
+
+**Preferred: the console, under Version Update -> Upload package.** After the upload the constrained helper applies the patch node by node: a hotfix leaves the installed RPM release alone, replaces only the files its signed manifest names, verifies every destination digest and restarts the units that manifest declares; any failure rolls back with the package's own `rollback.sh` and keeps the maintenance gate held. The console's package detail states whether the archive is a hotfix or a rolling upgrade.
+
+**Alternative: the controller command line.** Same signature and SHA-256 protection, but it does **not** restart services by itself, so restart them as it prints or the processes keep running the old code:
 
 ```bash
 tar -xzf release/<baseline-version>-hotfixes/<artifact>.cgpatch
@@ -33,15 +37,15 @@ systemctl restart <unit> # apply.sh prints the units it needs; it never restarts
 bash rollback.sh         # restores from the newest backup manifest
 ```
 
-## HF-2026-0928-05 — 2.2-104 site fix bundle (cumulative): cluster stranded after a host reboot, writer reconcile flap, update prerequisites, console reasons, power-off teardown, and the hotfix-via-console trap
+## HF-2026-0928-06 — 2.2-104 site fix bundle (cumulative): cluster stranded after a host reboot, writer reconcile flap, update prerequisites, console reasons, power-off teardown, and the console hotfix channel
 
 - Severity: P0
-- Fix commits: `ed9faca`, `d5f9491`, `dd82ca5`, `5ae2039`, `28e3b47`, `9303e9d`, `18d738e`
-- Build tree: `18d738e25a7bd71bb47fcb920ce45dc42411489b` (baseline `e01f5ce376f94e2595590358c72dd2585e7c09b4` plus the fixes above and nothing else)
-- Applies to: 2.2-104 → 2.2-104+hf-2026-0928-05 (x86_64)
-- Artifact: `release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-05-2.2-104.x86_64.cgpatch`
-- SHA-256: `58cdc380163f07d5193d4af8b6fbc1d5b3965c7d6abf8c07270d05d9a667d9f0`
-- Source diff: `src/HF-2026-0928-05-18d738e.patch`
+- Fix commits: `ed9faca`, `d5f9491`, `dd82ca5`, `5ae2039`, `28e3b47`, `9303e9d`, `18d738e`, `81fe3c8`
+- Build tree: `81fe3c88a4768e35d7c6e2c366b2e107eff7f33b` (baseline `e01f5ce376f94e2595590358c72dd2585e7c09b4` plus the fixes above and nothing else)
+- Applies to: 2.2-104 → 2.2-104+hf-2026-0928-06 (x86_64)
+- Artifact: `release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-06-2.2-104.x86_64.cgpatch`
+- SHA-256: `1e1aab698318ae292e69d1ea08acefed760b46903f695a1065cf5c6a6ad31210`
+- Source diff: `src/HF-2026-0928-06-81fe3c8.patch`
 - Payload:
   - `payload/bin/clusterguard-agent` → `/usr/local/bin/clusterguard-agent` (0755)
   - `payload/bin/clusterguard` → `/usr/local/bin/clusterguard` (0755)
@@ -56,9 +60,23 @@ bash rollback.sh         # restores from the newest backup manifest
 
 ### What this patch does
 
-Builds on HF-2026-0928-04 (which the site applied while still seeing the old rejection) with one delivery defect fixed (18d738e): HF-04 installed the fixed upgrade script at /usr/local/libexec/clusterguard-upgrade.sh, but the console upload inspection executes the path the packaging manifest declares, /usr/local/sbin/clusterguard-upgrade (0750 root:clusterguard). Every file reported installed, the operator verified the wrong one, and the console kept reporting an out-of-scope path. Payload destinations, modes and ownership now come from packaging/rpm/nfpm.yaml alone, and a runtime script the manifest does not declare fails the build. Apply this patch alone — it contains and supersedes HF-2026-0928-03 and HF-2026-0928-04 — and never mix baselines.
+Adds one console-channel fix (81fe3c8) on top of HF-2026-0928-05: a hotfix no longer has to go through the command line — the console's Version Update verifies the same trust anchor, drives the same helper through --plan/--execute/--rollback, tells a hotfix from a rolling upgrade by its top-level directory, and labels the package kind in its detail panel. The same commit closes a signing blind spot: apply.sh and rollback.sh run as root and decide what is written where, yet were generated after the manifest was signed and covered by no digest at all — a swapped apply.sh satisfied every payload digest while installing something else. The builder now writes both digests into the signed manifest and into SHA256SUMS, and the verifier requires schema_version 3. Apply this patch alone (it contains and supersedes HF-2026-0928-05) and never mix baselines.
 
-### HF-2026-0928-05.1 Payload destinations were guessed from the source name, so the fix landed where the product never looks (`18d738e`, P1)
+### HF-2026-0928-06.1 A hotfix uploaded to the console was only told to use the command line, a channel the product never provided (`81fe3c8`, P1)
+
+- Symptom: Following the previous fix's own guidance, the operator uploaded clusterguard-ha-hotfix-*.cgpatch to the Version Update dialog and got "this package is a hotfix (clusterguard-hotfix/), it does not go through the console rolling channel; extract it on the control node with tar -xzf and run clusterguard-hotfix/apply.sh". The guidance was accurate, but the console neither accepted the package nor offered plan/execute/rollback, so every hotfix meant hand-extracted SSH work on every node, with no record of the signature check, the execution, or any ability to roll back.
+
+- Root cause: The console's install path was already generic: it only turns "run the package you verified and stored" into a mode + patch_id request to the update helper, which invokes clusterguard-upgrade --plan/--execute/--rollback; the privilege boundary never depended on artifact type. What kept hotfixes out was two separate "one more guard" decisions: the executor hard-coded the clusterguard-patch/ top level and called anything else an out-of-scope path, and the console intercepted any file whose name contained hotfix at selection time. Together they meant a hotfix could never enter the console, even though --inspect and the helper were already able to carry it. A second, independent defect surfaced while fixing this: apply.sh and rollback.sh were generated after the manifest had been signed, so swapping apply.sh satisfied every payload digest while installing something else entirely.
+
+- Fix: The archive's top level now decides the artifact kind (clusterguard-patch/ rolling, clusterguard-hotfix/ hotfix, mixing both is rejected) and --inspect reports a kind= line, defaulting an older script's silence to "upgrade" so a stale controller keeps working. verify_hotfix and run_hotfix_update apply the same trust anchor and require schema_version 3, kind=hotfix and apply.sh/rollback.sh digests that match the signed manifest; every file digest is compared against the manifest and SHA256SUMS; install paths are restricted to /usr/local/{bin,sbin,libexec}, /usr/lib/systemd/system and /etc/clusterguard; and node idempotency is decided per file rather than per RPM release, because the RPM judge is useless here — source and target release are identical, so the rolling loop would call every node "already current" and report success. --resume is refused with the reason that applying the patch is already idempotent. The control plane's Package gains a Kind field, the console's detail panel shows the package kind, the picker accepts both suffixes, and the block-anything-named-hotfix logic is gone. Finally the builder re-emits the manifest after generating apply.sh/rollback.sh, binds their digests into the signature, and republishes SHA256SUMS.
+
+- When to apply:
+  - 需要在控制台的「版本更新」里直接安装热修补丁包，而不是手工 SSH 解包
+  - 上传 .cgpatch 后报「该包是热修补丁包…请在控制节点命令行…」
+  - 需要让热修包的验签、计划、执行与回滚都在控制台留有记录
+  - 担心热修补丁包里的 apply.sh / rollback.sh 没有被签名锚定
+
+### HF-2026-0928-06.2 Payload destinations were guessed from the source name, so the fix landed where the product never looks (`18d738e`, P1)
 
 - Symptom: After HF-04 every script, unit and binary reported installed, yet the console still rejected hotfix uploads with an out-of-scope path error: the fixed script had been written to /usr/local/libexec/clusterguard-upgrade.sh, a path the product never executes, while the file actually invoked, /usr/local/sbin/clusterguard-upgrade, was still the RPM build from 24 September.
 
@@ -71,7 +89,7 @@ Builds on HF-2026-0928-04 (which the site applied while still seeing the old rej
   - 控制台上传热修包仍然报「范围外路径：clusterguard-hotfix/」
   - 需要判断某个脚本到底哪一份副本在生效
 
-### HF-2026-0928-05.2 A hotfix patch uploaded to the console was rejected with an opaque path error instead of naming the wrong channel (`9303e9d`, P1)
+### HF-2026-0928-06.3 A hotfix patch uploaded to the console was rejected with an opaque path error instead of naming the wrong channel (`9303e9d`, P1)
 
 - Symptom: An operator uploading clusterguard-ha-hotfix-*.cgpatch to the Version Update dialog (the file picker accepts the .cgpatch suffix and the lab-chain signature verifies) only got "out-of-scope path: clusterguard-hotfix/" — nothing said the hotfix belongs to a different channel, so the operator retried.
 
@@ -83,7 +101,7 @@ Builds on HF-2026-0928-04 (which the site applied while still seeing the old rej
   - 把热修补丁包上传到版本更新对话框，报「升级包包含范围外路径：clusterguard-hotfix/」
   - 运维不确定 .cgpatch 热修包应该走哪条安装通道
 
-### HF-2026-0928-05.3 A host reboot stranded the whole cluster: shared runtime directory mode and a recovery freeze that never lifted (`28e3b47`, P0)
+### HF-2026-0928-06.4 A host reboot stranded the whole cluster: shared runtime directory mode and a recovery freeze that never lifted (`28e3b47`, P0)
 
 - Symptom: After a planned whole-host shutdown the console reported "some data unavailable: candidate evaluation", no primary at all, and every instance as "database not started or unreachable"; both another power-off and failover were blocked. clusterguard-mysql-3306.service and clusterguard-cluster-restore.service sat in restart loops at counts 2063/2069/2072 and 1034-1036.
 
@@ -96,7 +114,7 @@ Builds on HF-2026-0928-04 (which the site applied while still seeing the old rej
   - clusterguard-mysql-3306.service 反复重启，error.log 报 Could not create unix socket lock file
   - 计划关机或故障切换被阻断，power 生命周期停在 recovering 且 recovery_freeze 为 true
 
-### HF-2026-0928-05.4 MySQL writer reconcile flap: the authorized primary fenced itself every five seconds (`dd82ca5`, P0)
+### HF-2026-0928-06.5 MySQL writer reconcile flap: the authorized primary fenced itself every five seconds (`dd82ca5`, P0)
 
 - Symptom: The cluster never left degraded, both replication links never left unhealthy, candidate evaluation answered 409 and every planned shutdown was blocked. Measurement showed 9,492 self-isolations since install, with read_only and the VIP flipping together roughly every ten seconds.
 
@@ -108,7 +126,7 @@ Builds on HF-2026-0928-04 (which the site applied while still seeing the old rej
   - 集群长期 degraded 且复制链路 unhealthy，但复制本身正常
   - journalctl -u clusterguard-agent-reconcile.service 反复出现 self-isolated 或 permission denied
 
-### HF-2026-0928-05.5 Two update prerequisites: SSH key ownership and a shared runtime directory the helper owned (`d5f9491`, P0)
+### HF-2026-0928-06.6 Two update prerequisites: SSH key ownership and a shared runtime directory the helper owned (`d5f9491`, P0)
 
 - Symptom: Software updates stayed available=false and the three upload controls stayed disabled; even with a hand-written update.json the executor rejected the SSH key as too permissive, and the helper failed its first start with status=233 while deleting the shared /run/clusterguard on stop.
 
@@ -120,7 +138,7 @@ Builds on HF-2026-0928-04 (which the site applied while still seeing the old rej
   - 控制台版本更新长期 available=false
   - clusterguard-update-helper 首启失败或停机后 /run/clusterguard 丢失
 
-### HF-2026-0928-05.6 The console stopped explaining why a capability is unavailable (`ed9faca`, P1)
+### HF-2026-0928-06.7 The console stopped explaining why a capability is unavailable (`ed9faca`, P1)
 
 - Symptom: The software update panel showed only a red "unavailable" badge with no reason, and the cluster load banner named the failing section without saying why, so operators could not tell what to do next.
 
@@ -132,7 +150,7 @@ Builds on HF-2026-0928-04 (which the site applied while still seeing the old rej
   - 控制台版本更新面板显示“不可用”但无原因
   - 集群加载横幅只报栏目名、不报原因
 
-### HF-2026-0928-05.7 The console froze on a dead dialog after a host power-off was submitted (`5ae2039`, P1)
+### HF-2026-0928-06.8 The console froze on a dead dialog after a host power-off was submitted (`5ae2039`, P1)
 
 - Symptom: After a host power-off was submitted the control plane went away with the host, leaving the page parked on the confirmation dialog forever, and a lost response after submission was reported as an error.
 
@@ -156,28 +174,31 @@ Builds on HF-2026-0928-04 (which the site applied while still seeing the old rej
 - `jq -c '.clusters[] | {recovery_freeze}' /var/lib/clusterguard/metadata.json   # 恢复完成后应为 false`
 - `/usr/local/sbin/clusterguard-upgrade --patch /root/clusterguard-ha-hotfix-HF-2026-0928-05-2.2-104.x86_64.cgpatch --trust-key /etc/clusterguard/trust/patch-signing-public.pem --inspect   # 必须报「热修补丁包…apply.sh」而非「范围外路径」`
 - `curl -sk https://192.168.102.155:3000/ | grep -c 'clusterguard-hotfix/apply.sh'   # 控制台页面必须已包含热修包拦截指引（浏览器需刷新）`
+- `/usr/local/sbin/clusterguard-upgrade --patch /root/clusterguard-ha-hotfix-HF-2026-0928-06-2.2-104.x86_64.cgpatch --trust-key /etc/clusterguard/trust/patch-signing-public.pem --inspect   # 必须输出 kind=hotfix，而不是拒绝该包`
+- `curl -sk https://192.168.102.155:3000/ | grep -c '包类型'   # 控制台页面必须已包含包类型字段（浏览器需刷新）`
+- `curl -sk https://192.168.102.155:3000/ | grep -c '支持 .cgupgrade 滚动升级包与 .cgpatch 热修补丁包'   # 控制台上传指引必须已同时点名两种包`
 
 ### Rollback
 
-执行 rollback.sh 恢复旧二进制、旧单元与旧运行时脚本，然后 systemctl daemon-reload 并 systemctl restart clusterguard-ha。注意：回滚会把 /run/clusterguard 重新交回 0750 的创建方，下一次整机重启会再次让集群起不来；仅在确认新版本有回归时使用，并在回滚后临时手工执行 chmod 0755 /run/clusterguard。
+执行 rollback.sh 恢复旧二进制、旧单元与旧运行时脚本，然后 systemctl daemon-reload 并 systemctl restart clusterguard-ha。注意：回滚会把 /run/clusterguard 重新交回 0750 的创建方，下一次整机重启会再次让集群起不来；仅在确认新版本有回归时使用，并在回滚后临时手工执行 chmod 0755 /run/clusterguard。 本包对 /run/clusterguard 与 clusterguard-update-helper.service 的回滚沿用 HF-2026-0928-05 的说明。
 
 ## HF-2026-0928-02 — 2.2-103 site fix bundle (cumulative): cluster stranded after a host reboot, writer reconcile flap, update prerequisites, console reasons and power-off teardown
 
 - Severity: P0
-- Fix commits: `ed9faca`, `d5f9491`, `dd82ca5`, `5ae2039`, `28e3b47`
+- Fix commits: `914c6c5`, `3c88289`, `4015f97`, `0e8ab48`, `f90f995`
 - Build tree: `f90f995fb92c23d66723a5331742a551be7a93b6` (baseline `467e533` plus the fixes above and nothing else)
 - Applies to: 2.2-103 → 2.2-103+hf-2026-0928-02 (x86_64)
 - Artifact: `release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-2.2-103.x86_64.cgpatch`
-- SHA-256: `d0ae656aca4f576632deddc7880eda4b445ac81c6e9ef53a406036d26671277f`
+- SHA-256: `8b82eaa59acb2555af39430cbcaccc0b2283584ea76d61aa20baabc10aa43dc2`
 - Source diff: `src/HF-2026-0928-02-f90f995.patch`
 - Payload:
   - `payload/bin/clusterguard-agent` → `/usr/local/bin/clusterguard-agent` (0755)
   - `payload/bin/clusterguard` → `/usr/local/bin/clusterguard` (0755)
   - `payload/systemd/clusterguard-agent-reconcile.service` → `/usr/lib/systemd/system/clusterguard-agent-reconcile.service` (0644)
   - `payload/systemd/clusterguard-update-helper.service` → `/usr/lib/systemd/system/clusterguard-update-helper.service` (0644)
-  - `payload/libexec/clusterguard-cluster-finalize.sh` → `/usr/local/libexec/clusterguard-cluster-finalize.sh` (0755)
-  - `payload/libexec/clusterguard-mysql-install.sh` → `/usr/local/libexec/clusterguard-mysql-install.sh` (0755)
-  - `payload/libexec/clusterguard-postgresql-install.sh` → `/usr/local/libexec/clusterguard-postgresql-install.sh` (0755)
+  - `payload/scripts/clusterguard-cluster-finalize.sh` → `/usr/local/libexec/clusterguard-cluster-finalize.sh` (0755)
+  - `payload/scripts/clusterguard-mysql-install.sh` → `/usr/local/libexec/clusterguard-mysql-install.sh` (0755)
+  - `payload/scripts/clusterguard-postgresql-install.sh` → `/usr/local/libexec/clusterguard-postgresql-install.sh` (0755)
   - `payload/installer/install_clusterguard.sh` → `installer-only, no site path` (0755)
 - Restart required: `clusterguard-ha.service`, `clusterguard-agent-reconcile.service`, `clusterguard-update-helper.service`
 
@@ -185,7 +206,7 @@ Builds on HF-2026-0928-04 (which the site applied while still seeing the old rej
 
 Cumulative bundle covering the five fixes missing from the 2.2-103 baseline; it supersedes HF-2026-0928-01. Apply this patch alone: several fixes replace /usr/local/bin/clusterguard, so stacking patches makes the outcome depend on the order they were applied. The build tree is the 2.2-103 baseline plus these five fixes (ported branch hotfix/2.2-103-fixes, f90f995) and carries no unreleased feature commit. New payload kind: runtime scripts ship under payload/libexec/ (site path /usr/local/libexec/) and take effect the next time their caller runs, so they need no service restart.
 
-### HF-2026-0928-02.1 A host reboot stranded the whole cluster: shared runtime directory mode and a recovery freeze that never lifted (`28e3b47`, P0)
+### HF-2026-0928-02.1 A host reboot stranded the whole cluster: shared runtime directory mode and a recovery freeze that never lifted (`f90f995`, P0)
 
 - Symptom: After a planned whole-host shutdown the console reported "some data unavailable: candidate evaluation", no primary at all, and every instance as "database not started or unreachable"; both another power-off and failover were blocked. clusterguard-mysql-3306.service and clusterguard-cluster-restore.service sat in restart loops at counts 2063/2069/2072 and 1034-1036.
 
@@ -198,7 +219,7 @@ Cumulative bundle covering the five fixes missing from the 2.2-103 baseline; it 
   - clusterguard-mysql-3306.service 反复重启，error.log 报 Could not create unix socket lock file
   - 计划关机或故障切换被阻断，power 生命周期停在 recovering 且 recovery_freeze 为 true
 
-### HF-2026-0928-02.2 MySQL writer reconcile flap: the authorized primary fenced itself every five seconds (`dd82ca5`, P0)
+### HF-2026-0928-02.2 MySQL writer reconcile flap: the authorized primary fenced itself every five seconds (`4015f97`, P0)
 
 - Symptom: The cluster never left degraded, both replication links never left unhealthy, candidate evaluation answered 409 and every planned shutdown was blocked. Measurement showed 9,492 self-isolations since install, with read_only and the VIP flipping together roughly every ten seconds.
 
@@ -210,7 +231,7 @@ Cumulative bundle covering the five fixes missing from the 2.2-103 baseline; it 
   - 集群长期 degraded 且复制链路 unhealthy，但复制本身正常
   - journalctl -u clusterguard-agent-reconcile.service 反复出现 self-isolated 或 permission denied
 
-### HF-2026-0928-02.3 Two update prerequisites: SSH key ownership and a shared runtime directory the helper owned (`d5f9491`, P0)
+### HF-2026-0928-02.3 Two update prerequisites: SSH key ownership and a shared runtime directory the helper owned (`3c88289`, P0)
 
 - Symptom: Software updates stayed available=false and the three upload controls stayed disabled; even with a hand-written update.json the executor rejected the SSH key as too permissive, and the helper failed its first start with status=233 while deleting the shared /run/clusterguard on stop.
 
@@ -222,7 +243,7 @@ Cumulative bundle covering the five fixes missing from the 2.2-103 baseline; it 
   - 控制台版本更新长期 available=false
   - clusterguard-update-helper 首启失败或停机后 /run/clusterguard 丢失
 
-### HF-2026-0928-02.4 The console stopped explaining why a capability is unavailable (`ed9faca`, P1)
+### HF-2026-0928-02.4 The console stopped explaining why a capability is unavailable (`914c6c5`, P1)
 
 - Symptom: The software update panel showed only a red "unavailable" badge with no reason, and the cluster load banner named the failing section without saying why, so operators could not tell what to do next.
 
@@ -234,7 +255,7 @@ Cumulative bundle covering the five fixes missing from the 2.2-103 baseline; it 
   - 控制台版本更新面板显示“不可用”但无原因
   - 集群加载横幅只报栏目名、不报原因
 
-### HF-2026-0928-02.5 The console froze on a dead dialog after a host power-off was submitted (`5ae2039`, P1)
+### HF-2026-0928-02.5 The console froze on a dead dialog after a host power-off was submitted (`0e8ab48`, P1)
 
 - Symptom: After a host power-off was submitted the control plane went away with the host, leaving the page parked on the confirmation dialog forever, and a lost response after submission was reported as an error.
 

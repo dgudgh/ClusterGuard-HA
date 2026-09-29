@@ -641,6 +641,126 @@ func TestHotfixToolingDigestsAreBoundOnBothSides(t *testing.T) {
 	}
 }
 
+// shellFunctionBody returns the body of a `name() {` definition, up to the
+// first closing brace in column one. The upgrade script keeps that convention
+// throughout, so the pins below need no real shell parser.
+func shellFunctionBody(t *testing.T, source, name string) string {
+	t.Helper()
+	start := strings.Index(source, name+"() {")
+	if start < 0 {
+		t.Fatalf("shell script does not define %s", name)
+	}
+	body := source[start:]
+	end := strings.Index(body, "\n}\n")
+	if end < 0 {
+		t.Fatalf("cannot find the end of %s", name)
+	}
+	return body[:end]
+}
+
+// Applying a hotfix is idempotent, so re-running the same patch is the
+// supported retry and --resume has nothing to resume. Letting it through would
+// drop the run into the rolling path, whose bookkeeping keys on an RPM release
+// a hotfix deliberately never changes — the state machine would look for a
+// maintenance record that no hotfix run can produce.
+func TestHotfixFlowRefusesResume(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq is required")
+	}
+	archive, publicKey := signedHotfixPackage(t, hotfixFixtureOptions{})
+	output, err := exec.Command("bash", "clusterguard-upgrade.sh",
+		"--patch", archive, "--trust-key", publicKey,
+		"--resume", "--execute", "--yes").CombinedOutput()
+	if err == nil {
+		t.Fatalf("a hotfix must refuse --resume even when fully authorised: %s", output)
+	}
+	if !strings.Contains(string(output), "热修补丁不支持 --resume") {
+		t.Fatalf("the refusal must say why, got: %s", output)
+	}
+}
+
+// The three decisions that make the console-driven hotfix path safe cannot be
+// reached without a live cluster, so they are pinned at the source level. Each
+// one exists because its absence produced a real defect:
+//
+//   - the baseline guard, because the RPM release is identical on both sides of
+//     a hotfix, so nothing else stops a 2.2-103 patch from downgrading 2.2-104;
+//   - the per-file digest judge, because the rolling loop's
+//     `installed == desired_version` skip would mark every node "already
+//     upgraded" and report success without writing a byte;
+//   - the Leader exemption in restart_hotfix_units, because this job runs
+//     inside the Leader's own update helper and restarting it mid-job kills the
+//     process that is executing the patch.
+func TestHotfixFlowPinsItsSafetyDecisions(t *testing.T) {
+	contents, err := os.ReadFile("clusterguard-upgrade.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(contents)
+
+	flow := shellFunctionBody(t, source, "run_hotfix_update")
+	for _, fragment := range []string{
+		"热修补丁不支持 --resume",
+		`[[ "${installed}" == "${source_version}" ]]`,
+		"装错基线会把控制面二进制降级",
+		"write_hotfix_state_probe",
+		"assert_hotfix_digests",
+		`rollback_hotfix_nodes "${restart_units}"`,
+	} {
+		if !strings.Contains(flow, fragment) {
+			t.Fatalf("run_hotfix_update must keep %s", fragment)
+		}
+	}
+	// The rolling skip must not leak into the hotfix flow: with an unchanged
+	// RPM release it is exactly the judge that silently does nothing.
+	if strings.Contains(flow, "desired_version") {
+		t.Fatal("the hotfix flow must not reuse the RPM-release skip; it compares file digests instead")
+	}
+
+	probe := shellFunctionBody(t, source, "write_hotfix_state_probe")
+	for _, fragment := range []string{
+		`sha256sum "${install_path}"`,
+		`select((.install_path // "") != "")`,
+		// The probe's stdout is parsed line by line by hotfix_field, so the two
+		// halves of that contract are pinned against each other below.
+		"printf 'matched=%s total=%s mismatched=%s",
+		"total=$((total + 1))",
+	} {
+		if !strings.Contains(probe, fragment) {
+			t.Fatalf("the node probe must compare each declared file digest, missing %s", fragment)
+		}
+	}
+
+	// The probe writes `key=value` and hotfix_field reads it back with a sed
+	// substitution. A probe that starts printing JSON, or a parser that stops
+	// accepting the key it is given, silently reports 0/0 — which reads as "no
+	// files needed" rather than as a failure. Both halves of that contract are
+	// pinned: the parser must key off the name it was asked for and accept only
+	// digits, and the flow must ask for the two keys the probe prints.
+	parser := shellFunctionBody(t, source, "hotfix_field")
+	for _, fragment := range []string{"s/.*$2=", "[0-9][0-9]*", "head -n 1"} {
+		if !strings.Contains(parser, fragment) {
+			t.Fatalf("hotfix_field must parse the probe's key=value contract, missing %s", fragment)
+		}
+	}
+	for _, key := range []string{"matched", "total"} {
+		if !strings.Contains(flow, `hotfix_field "${state}" `+key) {
+			t.Fatalf("the flow must read %s back from the probe output", key)
+		}
+	}
+
+	verifier := shellFunctionBody(t, source, "assert_hotfix_digests")
+	if !strings.Contains(verifier, `"${matched}" == "${total}"`) {
+		t.Fatal("the final proof must require every declared file to match, not merely that the patch ran")
+	}
+
+	restarter := shellFunctionBody(t, source, "restart_hotfix_units")
+	if !strings.Contains(restarter, `[[ "${unit}" != "clusterguard-update-helper.service" ]] || continue`) {
+		t.Fatal("the Leader must not restart the update helper that is running this job")
+	}
+}
+
+
 // requireNode returns a usable node interpreter or skips the test, mirroring the
 // jq/openssl convention used elsewhere in this package.
 func requireNode(t *testing.T) string {
