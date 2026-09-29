@@ -25,6 +25,46 @@ func TestCommandInspectorParsesVerifiedBootstrapContract(t *testing.T) {
 	}
 }
 
+func TestCommandInspectorParsesHotfixKind(t *testing.T) {
+	root := t.TempDir()
+	binary := filepath.Join(root, "upgrader")
+	contents := "#!/usr/bin/env bash\n" +
+		"printf '%s\\n' 'signature=verified' 'kind=hotfix' 'patch_id=HF-2026-0928-05' 'source=2.2-104' 'target=2.2-104+hf-2026-0928-05' 'architecture=x86_64' 'rollback=available' 'rolling=true' 'database_mutation=false' 'bootstrap=unavailable' 'bootstrap_protocol=0'\n"
+	if err := os.WriteFile(binary, []byte(contents), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	result, err := (CommandInspector{UpgradeBinaryPath: binary}).Inspect(context.Background(), "hotfix.cgpatch", "public.pem")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Kind != PackageKindHotfix {
+		t.Fatalf("hotfix kind was not parsed: %+v", result)
+	}
+	if result.TargetVersion != "2.2-104+hf-2026-0928-05" || !result.Rolling || !result.RollbackAvailable {
+		t.Fatalf("hotfix contract was not parsed: %+v", result)
+	}
+}
+
+// A controller that has not yet received the fix still runs an upgrader that
+// never prints a kind. Those releases only ever produced rolling packages, so an
+// absent value must not make an otherwise valid package look unknown.
+func TestCommandInspectorTreatsAnAbsentKindAsARollingUpgrade(t *testing.T) {
+	root := t.TempDir()
+	binary := filepath.Join(root, "upgrader")
+	contents := "#!/usr/bin/env bash\n" +
+		"printf '%s\\n' 'signature=verified' 'patch_id=cg-2.2-103-to-2.2-104' 'source=2.2-103' 'target=2.2-104' 'architecture=x86_64' 'rollback=available' 'rolling=true' 'database_mutation=false'\n"
+	if err := os.WriteFile(binary, []byte(contents), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	result, err := (CommandInspector{UpgradeBinaryPath: binary}).Inspect(context.Background(), "release.cgupgrade", "public.pem")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Kind != PackageKindUpgrade {
+		t.Fatalf("an inspection without a kind must read as a rolling upgrade: %+v", result)
+	}
+}
+
 func TestCommandInspectorReportsExecutionFailureWithoutCommandOutput(t *testing.T) {
 	binary := filepath.Join(t.TempDir(), "missing-upgrader")
 	_, err := (CommandInspector{UpgradeBinaryPath: binary}).Inspect(

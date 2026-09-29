@@ -47,7 +47,13 @@ declare -a node_passwords=()
 
 work_dir=""
 patch_root=""
+# "upgrade" for a rolling .cgupgrade-style RPM patch, "hotfix" for a .cgpatch
+# hotfix tree with its own apply.sh. Decided by safe_extract_patch from the
+# archive's top level; a package may only carry one of the two.
+package_kind=""
 patch_id=""
+hotfix_package_sha=""
+restart_units=""
 source_version=""
 target_version=""
 source_rpm=""
@@ -137,8 +143,14 @@ ClusterGuard HA 客户现场签名升级包与滚动升级器
     --state clusterguard-deployment-state.json -u root -P 'SSH密码' \
     --accept-host-keys --execute
 
+热修补丁（顶层为 clusterguard-hotfix/ 的 .cgpatch）：
+  clusterguard-upgrade --package HOTFIX.cgpatch --trust-key PUBLIC.pem \
+    --state clusterguard-deployment-state.json -u root -P 'SSH密码' \
+    --accept-host-keys --execute
+
 选项：
-  --package FILE                签名 .cgupgrade 升级包
+  --package FILE                签名升级包：.cgupgrade 滚动包，或顶层为
+                                clusterguard-hotfix/ 的 .cgpatch 热修包
   --patch FILE                  兼容旧命令的别名
   --trust-key FILE              预先交付并可信保存的升级包签名公钥
   --inspect                     只验证签名、摘要和兼容合同
@@ -168,6 +180,11 @@ ClusterGuard HA 客户现场签名升级包与滚动升级器
 升级固定顺序为 followers -> data-only -> leader。每一步都重新验证多数派、
 就绪状态、活动操作和节点任务；任何失败都会停止并用内置旧 RPM 自动回退。
 升级器不安装、停止、启动或修改任何数据库软件与数据目录。
+
+热修包不改变 RPM 版本，只替换签名清单声明的那些文件：逐个节点校验包内摘要、
+解包到 root 私有目录、运行包内 apply.sh、按清单重启受影响单元，最后再逐文件
+比对落地摘要。源版本与热修基线不一致时直接拒绝，避免把二进制降级。失败时用
+包内 rollback.sh 自动回退。热修不支持 --resume（应用本身幂等，重跑即可）。
 EOF
 }
 
@@ -236,7 +253,7 @@ sha256_file() {
 }
 
 safe_extract_patch() {
-  local entry listing
+  local entry listing layout="" entry_layout
   work_dir="$(mktemp -d /tmp/clusterguard-upgrade.XXXXXX)"
   chmod 0700 "${work_dir}"
   # Copy before listing, verification or extraction. -R -P preserves special
@@ -247,22 +264,38 @@ safe_extract_patch() {
   listing="$(tar -tzf "${patch_file}")" || die "升级包归档无法读取"
   [[ -n "${listing}" ]] || die "升级包归档为空"
   while IFS= read -r entry; do
-    # Hotfix patches reuse the legacy .cgpatch suffix but are a completely
-    # different artifact: they must be applied with their own apply.sh on the
-    # controller command line, never through this rolling-upgrade channel.
-    # Name the trap instead of hiding it behind a bare whitelist rejection.
-    if [[ "${entry}" == clusterguard-hotfix || "${entry}" == clusterguard-hotfix/* ]]; then
-      die "该包是热修补丁包（clusterguard-hotfix/），不经过控制台滚动升级通道；请在控制节点命令行用 tar -xzf 解包后运行 clusterguard-hotfix/apply.sh 安装（详见热修补丁台账）"
-    fi
-    [[ "${entry}" == clusterguard-patch || "${entry}" == clusterguard-patch/* ]] || die "升级包包含范围外路径：${entry}"
     [[ "${entry}" != /* && "${entry}" != *"../"* && "${entry}" != *"/.." && "${entry}" != *"//"* ]] ||
       die "升级包包含不安全路径：${entry}"
+    case "${entry}" in
+      clusterguard-patch|clusterguard-patch/*) entry_layout="upgrade" ;;
+      clusterguard-hotfix|clusterguard-hotfix/*) entry_layout="hotfix" ;;
+      *) die "升级包包含范围外路径：${entry}" ;;
+    esac
+    # A package carries exactly one layout. A rolling payload and a hotfix tree
+    # in the same archive would leave apply.sh and this script disagreeing about
+    # what the artefact is, so refuse instead of guessing.
+    if [[ -z "${layout}" ]]; then
+      layout="${entry_layout}"
+    elif [[ "${layout}" != "${entry_layout}" ]]; then
+      die "升级包同时包含滚动升级与热修两种布局：${entry}"
+    fi
   done <<<"${listing}"
+  [[ -n "${layout}" ]] || die "升级包不包含可识别的顶层目录"
   if tar -tvzf "${patch_file}" | awk 'substr($1,1,1) != "-" && substr($1,1,1) != "d" {found=1} END {exit found ? 0 : 1}'; then
     die "升级包禁止包含链接或特殊文件"
   fi
   tar -xzf "${patch_file}" -C "${work_dir}"
-  patch_root="${work_dir}/clusterguard-patch"
+  # Hotfix patches reuse the legacy .cgpatch suffix but carry their own
+  # apply.sh/rollback.sh instead of an RPM pair. They are a first-class package
+  # kind here, not a trap: --inspect reports them and run_hotfix_update applies
+  # them inside the same maintenance window as a rolling upgrade.
+  if [[ "${layout}" == "hotfix" ]]; then
+    package_kind="hotfix"
+    patch_root="${work_dir}/clusterguard-hotfix"
+  else
+    package_kind="upgrade"
+    patch_root="${work_dir}/clusterguard-patch"
+  fi
 }
 
 verify_patch() {
@@ -340,6 +373,80 @@ verify_patch() {
   fi
 }
 
+# A hotfix is verified against the same trust anchor as a rolling upgrade, but
+# the contract it must satisfy is different: there is no RPM pair and no
+# bootstrap. What has to hold is that the signed manifest, the apply/rollback
+# pair and every payload file agree with SHA256SUMS, and that no file claims a
+# destination outside the prefixes the packaging manifest may install into.
+# That destination check is the runtime half of the build-time rule that payload
+# paths come from packaging/rpm/nfpm.yaml instead of being guessed.
+verify_hotfix() {
+  local manifest signature checksums manifest_sha actual artifact install_path expected required
+  manifest="${patch_root}/HOTFIX-MANIFEST.json"
+  signature="${patch_root}/HOTFIX-MANIFEST.sig"
+  checksums="${patch_root}/SHA256SUMS"
+  [[ -f "${manifest}" && ! -L "${manifest}" && -f "${signature}" && ! -L "${signature}" && -f "${checksums}" && ! -L "${checksums}" ]] ||
+    die "热修补丁缺少签名清单"
+  openssl dgst -sha256 -verify "${trust_key}" -signature "${signature}" "${manifest}" >/dev/null 2>&1 ||
+    die "hotfix signature verification failed"
+  jq -e '
+    .schema_version == 3 and .kind == "hotfix" and .product == "ClusterGuard HA" and
+    (.hotfix_id | type == "string" and length > 0) and
+    (.source.version | type == "string" and length > 0) and
+    (.source.release | type == "string" and length > 0) and
+    (.target.version | type == "string" and length > 0) and
+    (.target.release | type == "string" and length > 0) and
+    (.files | type == "array" and length > 0) and
+    ([.files[] | select((.install_path // "") != "")] | length > 0) and
+    (.tooling.apply.path == "apply.sh") and
+    (.tooling.apply.sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+    (.tooling.rollback.path == "rollback.sh") and
+    (.tooling.rollback.sha256 | type == "string" and test("^[0-9a-f]{64}$"))
+  ' "${manifest}" >/dev/null ||
+    die "热修补丁清单无效（需要 schema_version 3，且清单内必须携带 apply.sh/rollback.sh 的签名摘要）"
+
+  patch_id="$(jq -r '.hotfix_id' "${manifest}")"
+  source_version="$(jq -r '.source.version + "-" + .source.release' "${manifest}")"
+  target_version="$(jq -r '.target.version + "-" + .target.release' "${manifest}")"
+  rpm_architecture="$(jq -r '.target.rpm_architecture // "x86_64"' "${manifest}")"
+  [[ "${patch_id}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die "patch id 格式无效"
+  [[ -z "${expected_patch_id}" || "${expected_patch_id}" == "${patch_id}" ]] || die "签名热修补丁 ID 与请求不匹配"
+
+  manifest_sha="$(sha256_file "${manifest}")"
+  grep -Fqx "${manifest_sha}  HOTFIX-MANIFEST.json" "${checksums}" || die "hotfix manifest checksum mismatch"
+  # apply.sh and rollback.sh run as root on every node and decide what is
+  # written where, so they must be anchored by the signature rather than merely
+  # travelling alongside it. Without this, a swapped apply.sh would satisfy every
+  # payload digest while installing something else entirely.
+  for required in apply.sh rollback.sh; do
+    [[ -f "${patch_root}/${required}" && ! -L "${patch_root}/${required}" ]] || die "热修补丁缺少 ${required}"
+    actual="$(sha256_file "${patch_root}/${required}")"
+    declared="$(jq -r ".tooling.${required%.sh}.sha256" "${manifest}")"
+    [[ "${actual}" == "${declared}" ]] ||
+      die "${required} digest does not match the signed manifest（脚本与签名清单不一致，拒绝应用）"
+    grep -Fqx "${actual}  ${required}" "${checksums}" || die "${required} checksum mismatch"
+  done
+
+  # Separator is "|" rather than a tab on purpose: tab is IFS *whitespace*, so
+  # `read -r a b c` would collapse the empty install_path of an installer-only
+  # entry and shift the digest into the wrong variable.
+  while IFS='|' read -r artifact install_path expected; do
+    [[ -n "${artifact}" ]] || continue
+    [[ "${artifact}" =~ ^payload/[A-Za-z0-9._/-]+$ ]] || die "热修补丁 payload 路径无效：${artifact}"
+    [[ -f "${patch_root}/${artifact}" && ! -L "${patch_root}/${artifact}" ]] || die "热修补丁缺少文件：${artifact}"
+    actual="$(sha256_file "${patch_root}/${artifact}")"
+    [[ "${actual}" == "${expected}" ]] || die "热修补丁文件摘要与清单不一致：${artifact}"
+    grep -Fqx "${actual}  ${artifact}" "${checksums}" || die "热修补丁校验清单与文件不一致：${artifact}"
+    # The signed manifest is the only authority for a destination. An empty one
+    # marks an installer-only artefact that has no path on an installed site.
+    if [[ -z "${install_path}" ]]; then continue; fi
+    case "${install_path}" in
+      /usr/local/bin/*|/usr/local/sbin/*|/usr/local/libexec/*|/usr/lib/systemd/system/*|/etc/clusterguard/*) ;;
+      *) die "热修补丁落点超出允许范围：${install_path}" ;;
+    esac
+  done < <(jq -r '.files[] | [(.artifact),(.install_path // ""),(.sha256 // "")] | join("|")' "${manifest}")
+}
+
 trusted_directory() {
   local requested="$1" create="${2:-false}" current="" part owner permissions
   local -a parts
@@ -402,10 +509,15 @@ trap cleanup EXIT
 
 validate_root_input_patch
 safe_extract_patch
-verify_patch
+if [[ "${package_kind}" == "hotfix" ]]; then
+  verify_hotfix
+else
+  verify_patch
+fi
 
 if ${inspect_only}; then
   printf 'signature=verified\n'
+  printf 'kind=%s\n' "${package_kind}"
   printf 'patch_id=%s\n' "${patch_id}"
   printf 'source=%s\n' "${source_version}"
   printf 'target=%s\n' "${target_version}"
@@ -1640,6 +1752,292 @@ rollback_updated_nodes() {
   done
   ((failures == 0))
 }
+
+# --- Hotfix application ------------------------------------------------------
+# A hotfix is not a version change: the installed RPM release stays where it is
+# and only the files named by the signed manifest are replaced. That is exactly
+# why this cannot reuse the rolling loop below, whose idempotency test is
+# `installed == desired_version` — with an unchanged RPM release every node
+# would look like it had already reached the target and be skipped, and the
+# "upgrade" would report success without touching a single file. The per-node
+# test here is instead the digest of each declared file at its declared install
+# path, which is also what proves the fix reached the disk rather than merely
+# being "installed".
+
+write_hotfix_state_probe() {
+  cat >"${work_dir}/hotfix-state-probe.sh" <<'PROBE'
+#!/usr/bin/env bash
+set -euo pipefail
+# Reports how many files declared by a hotfix manifest already match on this
+# node. Runs as root on the node; the manifest it reads is the signed one
+# carried inside the package, so the comparison cannot be steered by a caller.
+package_dir="$1"
+manifest="${package_dir}/clusterguard-hotfix/HOTFIX-MANIFEST.json"
+jq_bin=/usr/local/libexec/jq-linux-amd64
+[[ -x "${jq_bin}" ]] || jq_bin="$(command -v jq || true)"
+[[ -n "${jq_bin}" && -x "${jq_bin}" ]] || { printf '节点缺少 jq\n' >&2; exit 1; }
+[[ -f "${manifest}" && ! -L "${manifest}" ]] || { printf '节点缺少热修清单\n' >&2; exit 1; }
+matched=0
+total=0
+mismatched=""
+while IFS='|' read -r artifact install_path expected; do
+  [[ -n "${artifact}" ]] || continue
+  [[ -n "${expected}" ]] || continue
+  total=$((total + 1))
+  if [[ -f "${install_path}" ]] && [[ "$(sha256sum "${install_path}" | awk '{print $1}')" == "${expected}" ]]; then
+    matched=$((matched + 1))
+  else
+    mismatched="${mismatched}${install_path} "
+  fi
+done < <("${jq_bin}" -r '.files[] | select((.install_path // "") != "") | [.artifact, .install_path, (.sha256 // "")] | join("|")' "${manifest}")
+printf 'matched=%s total=%s mismatched=%s\n' "${matched}" "${total}" "${mismatched}"
+PROBE
+  chmod 0700 "${work_dir}/hotfix-state-probe.sh"
+}
+
+hotfix_field() {
+  sed -n "s/.*$2=\\([0-9][0-9]*\\).*/\\1/p" <<<"$1" | head -n 1
+}
+
+# Copies the verified package to one node, proves the transfer byte for byte,
+# and unpacks it into a root-owned staging directory.
+stage_hotfix_on_node() {
+  local host="$1" remote_dir="$2"
+  remote_run "${host}" "install -d -m 0700 '${remote_dir}'" || return 1
+  remote_copy "${host}" "${patch_file}" "${remote_dir}/package.cgpatch.tmp" || return 1
+  remote_copy "${host}" "${work_dir}/hotfix-state-probe.sh" "${remote_dir}/hotfix-state-probe.sh.tmp" || return 1
+  remote_run "${host}" "set -eu
+chmod 0600 '${remote_dir}/package.cgpatch.tmp'
+test \"\$(sha256sum '${remote_dir}/package.cgpatch.tmp' | awk '{print \$1}')\" = '${hotfix_package_sha}'
+mv -f '${remote_dir}/package.cgpatch.tmp' '${remote_dir}/package.cgpatch'
+chmod 0700 '${remote_dir}/hotfix-state-probe.sh.tmp'
+mv -f '${remote_dir}/hotfix-state-probe.sh.tmp' '${remote_dir}/hotfix-state-probe.sh'
+rm -rf '${remote_dir}/clusterguard-hotfix'
+tar -xzf '${remote_dir}/package.cgpatch' -C '${remote_dir}'
+test -f '${remote_dir}/clusterguard-hotfix/HOTFIX-MANIFEST.json'"
+}
+
+hotfix_state_on() {
+  local host="$1" remote_dir="$2"
+  remote_run "${host}" "bash '${remote_dir}/hotfix-state-probe.sh' '${remote_dir}'"
+}
+
+# daemon-reload is mandatory and the declared units must actually be restarted:
+# a replaced binary that no process re-executes leaves the site running the old
+# code while every digest on disk says the fix is present.
+restart_hotfix_units() {
+  local host="$1" units="$2" node_units="${2}" filtered="" unit
+  if [[ "${host}" == "${leader_host}" ]]; then
+    # This job runs inside the Leader's update helper; the job runner refreshes
+    # that unit itself once the terminal status is durable.
+    for unit in ${units}; do
+      [[ "${unit}" != "clusterguard-update-helper.service" ]] || continue
+      filtered="${filtered} ${unit}"
+    done
+    node_units="${filtered}"
+  fi
+  [[ -n "${node_units// /}" ]] || return 0
+  remote_run "${host}" "set -eu
+systemctl daemon-reload
+for unit in ${node_units}; do systemctl restart \"\${unit}\"; done
+for unit in ${node_units}; do systemctl is-active --quiet \"\${unit}\"; done"
+}
+
+apply_hotfix_on_node() {
+  local host="$1" remote_dir="$2" units="$3"
+  assert_update_lock_ownership || { log "升级执行所有权已改变，停止节点变更 host=${host}"; return 1; }
+  remote_run "${host}" "set -eu; ${mutation_guard}
+cd '${remote_dir}/clusterguard-hotfix'
+bash apply.sh" || return 1
+  restart_hotfix_units "${host}" "${units}" || return 1
+  wait_node_ready "${host}" "$(remote_package_version "${host}")" || return 1
+}
+
+restore_hotfix_on_node() {
+  local host="$1" remote_dir="$2" units="$3"
+  remote_run "${host}" "set -eu; ${mutation_guard}
+cd '${remote_dir}/clusterguard-hotfix'
+bash rollback.sh" || return 1
+  restart_hotfix_units "${host}" "${units}" || return 1
+}
+
+rollback_hotfix_nodes() {
+  local units="$1" index host remote_dir failures=0 current=0 total="${#updated_nodes[@]}"
+  ((${#updated_nodes[@]} > 0)) || return 0
+  log "开始自动回退已应用热修补丁的节点"
+  for ((index=${#updated_nodes[@]}-1; index>=0; index--)); do
+    host="${updated_nodes[${index}]}"
+    remote_dir="${remote_stage}/${patch_id}"
+    log "回退 ${host}"
+    write_journal rolling_back "${host}" "restoring the files this hotfix replaced" rollback "${current}" "${total}"
+    if ! restore_hotfix_on_node "${host}" "${remote_dir}" "${units}"; then
+      log "警告：${host} 自动回退失败，需要人工处置"
+      failures=$((failures + 1))
+      continue
+    fi
+    current=$((current + 1))
+    write_journal rollback_verified "${host}" "previous file contents restored and services restarted" rollback "${current}" "${total}"
+  done
+  ((failures == 0))
+}
+
+assert_hotfix_digests() {
+  local host state matched total
+  for host in "$@"; do
+    state="$(hotfix_state_on "${host}" "${remote_stage}/${patch_id}")" || return 1
+    matched="$(hotfix_field "${state}" matched)"
+    total="$(hotfix_field "${state}" total)"
+    [[ -n "${matched}" && -n "${total}" && "${matched}" == "${total}" ]] || {
+      log "错误：${host} 仅 ${matched:-0}/${total:-0} 个文件与签名清单一致" >&2
+      return 1
+    }
+  done
+}
+
+run_hotfix_update() {
+  local host installed state matched total units unit remote_dir confirmation
+  local hotfix_failed=false failure_node="" node_index=0
+  ${resume_requested} && die "热修补丁不支持 --resume：应用本身是幂等的，直接重新执行同一个补丁即可"
+
+  load_nodes
+  configure_passwords
+  configure_known_hosts
+  load_runtime_data_members
+  log_all_node_service_facts
+
+  # The installed RPM release never changes during a hotfix, so it doubles as
+  # the baseline the patch was built for. Refusing a mismatch here is what keeps
+  # a 2.2-103 patch from silently downgrading a 2.2-104 site.
+  for host in "${all_nodes[@]}"; do
+    installed="$(remote_package_version "${host}")" || die "无法读取 ${host} 的已安装版本"
+    [[ "${installed}" == "${source_version}" ]] ||
+      die "${host} 当前版本 ${installed} 与热修补丁基线 ${source_version} 不一致；拒绝应用（装错基线会把控制面二进制降级）"
+  done
+
+  write_hotfix_state_probe
+  hotfix_package_sha="$(sha256_file "${patch_file}")"
+  restart_units="$(jq -r '[.files[] | .restart_unit // empty] | unique | join(" ")' "${patch_root}/HOTFIX-MANIFEST.json")"
+  for unit in ${restart_units}; do
+    [[ "${unit}" =~ ^[A-Za-z0-9@._-]+\.(service|timer|socket)$ ]] || die "热修清单包含无效单元名：${unit}"
+  done
+
+  if ${rollback_requested}; then
+    update_mode="rollback"
+    verify_cluster_idle "" any any
+  else
+    update_mode="execute"
+    verify_cluster_idle "" false any
+  fi
+  ordered_nodes=()
+  for host in "${controllers[@]}"; do [[ "${host}" == "${leader_host}" ]] || ordered_nodes[${#ordered_nodes[@]}]="${host}"; done
+  for host in "${data_nodes[@]}"; do is_controller "${host}" || ordered_nodes[${#ordered_nodes[@]}]="${host}"; done
+  ordered_nodes[${#ordered_nodes[@]}]="${leader_host}"
+
+  if ${rollback_requested}; then
+    printf '\nClusterGuard HA 热修补丁受控回退计划\n'
+  else
+    printf '\nClusterGuard HA 热修补丁应用计划\n'
+  fi
+  printf '  补丁编号   : %s\n' "${patch_id}"
+  printf '  基线版本   : %s\n' "${source_version}"
+  printf '  站点版本   : %s\n' "${target_version}"
+  printf '  固定顺序   : followers -> data-only -> leader\n'
+  printf '  Leader     : %s（最后处理）\n' "${leader_host}"
+  printf '  数据库变更 : false\n'
+  printf '  重启单元   : %s\n' "${restart_units}"
+  for host in "${ordered_nodes[@]}"; do printf '  - %s\n' "${host}"; done
+
+  if ! ${execute}; then
+    log "计划完成，未修改任何节点；确认后追加 --execute"
+    return 0
+  fi
+  if ! ${assume_yes}; then
+    printf '输入热修补丁编号 %s 确认：' "${patch_id}"
+    read -r confirmation
+    [[ "${confirmation}" == "${patch_id}" ]] || die "确认内容不匹配"
+  fi
+
+  journal_file="${PWD}/clusterguard-update-${patch_id}.json"
+  journal_events_file="${PWD}/clusterguard-update-${patch_id}.events.jsonl"
+  total_nodes="${#ordered_nodes[@]}"
+  publish_update_artifacts
+  acquire_update_locks
+  journal_started=true
+  write_journal running "" "hotfix maintenance gates are being acquired" locking 0 "${total_nodes}"
+  wait_cluster_idle "${leader_host}" true idle || die "维护门禁建立后控制面未在时限内恢复一致"
+  if all_controllers_support_replicated_gate; then
+    acquire_replicated_update_gate || die "无法建立 Raft 维护门禁；未修改任何文件"
+  fi
+
+  if ${rollback_requested}; then
+    updated_nodes=("${ordered_nodes[@]}")
+    if rollback_hotfix_nodes "${restart_units}"; then
+      write_journal rolled_back "" "controlled rollback completed and maintenance released" rolled_back "${#updated_nodes[@]}" "${#updated_nodes[@]}"
+      log "热修补丁受控回退完成：${patch_id}"
+      return 0
+    fi
+    write_journal rollback_failed "" "controlled rollback incomplete; maintenance gate retained" rollback 0 "${#updated_nodes[@]}"
+    die "受控回退不完整；维护门禁已保留，请人工处置"
+  fi
+
+  write_journal running "" "hotfix application started" preparing 0 "${total_nodes}"
+  for host in "${ordered_nodes[@]}"; do
+    node_index=$((node_index + 1))
+    remote_dir="${remote_stage}/${patch_id}"
+    write_journal running "${host}" "staging the signed hotfix package" staging "$((node_index - 1))" "${total_nodes}"
+    if ! stage_hotfix_on_node "${host}" "${remote_dir}"; then hotfix_failed=true; failure_node="${host}"; break; fi
+    if ! state="$(hotfix_state_on "${host}" "${remote_dir}")"; then hotfix_failed=true; failure_node="${host}"; break; fi
+    matched="$(hotfix_field "${state}" matched)"
+    total="$(hotfix_field "${state}" total)"
+    if [[ -n "${matched}" && -n "${total}" && "${matched}" == "${total}" ]]; then
+      log "跳过已达到目标内容的节点：${host}"
+      write_journal verified "${host}" "every declared file digest already matches" updating "${node_index}" "${total_nodes}"
+      continue
+    fi
+    log "应用热修补丁：${host}（${matched:-0}/${total:-0} 个文件已匹配）"
+    write_journal updating "${host}" "applying hotfix payload" updating "$((node_index - 1))" "${total_nodes}"
+    updated_nodes[${#updated_nodes[@]}]="${host}"
+    if ! apply_hotfix_on_node "${host}" "${remote_dir}" "${restart_units}"; then hotfix_failed=true; failure_node="${host}"; break; fi
+    if ! assert_hotfix_digests "${host}"; then hotfix_failed=true; failure_node="${host}"; break; fi
+    if ! wait_cluster_idle "${leader_host}" true idle; then hotfix_failed=true; failure_node="${host}"; break; fi
+    write_journal verified "${host}" "file digests, service state and readiness verified" updating "${node_index}" "${total_nodes}"
+  done
+
+  if ${hotfix_failed}; then
+    rollback_in_progress=true
+    write_journal rolling_back "${failure_node}" "hotfix failed; automatic rollback started" rollback "${#updated_nodes[@]}" "${#updated_nodes[@]}"
+    if ! rollback_hotfix_nodes "${restart_units}"; then
+      write_journal rollback_failed "${failure_node}" "automatic rollback incomplete; maintenance gate retained" rollback 0 "${#updated_nodes[@]}"
+      die "节点 ${failure_node} 应用失败且自动回退不完整；维护门禁已保留，请人工处置"
+    fi
+    verify_cluster_idle "" true idle
+    if ! finish_update_maintenance "idle"; then
+      write_journal rollback_lock_release_failed "${failure_node}" "rollback succeeded but maintenance release failed" rollback "${#updated_nodes[@]}" "${#updated_nodes[@]}"
+      die "自动回退完成，但部分维护锁释放失败；变更仍被安全阻断，请修复连通性后人工处置"
+    fi
+    retain_update_locks=false
+    write_journal rolled_back "${failure_node}" "automatic rollback completed and maintenance released" rolled_back "${#updated_nodes[@]}" "${#updated_nodes[@]}"
+    die "节点 ${failure_node} 应用失败，已完成自动回退"
+  fi
+
+  # Final proof: on every node, every declared file must match the signed digest
+  # at the declared install path. This is the check that separates "the patch
+  # applied cleanly" from "the site actually runs the fixed build".
+  assert_hotfix_digests "${all_nodes[@]}" || die "最终逐文件校验失败；请检查节点上的热修落地状态"
+  write_journal finalizing "" "verifying all node digests and maintenance release" finalizing "${total_nodes}" "${total_nodes}"
+  verify_cluster_idle "" true idle
+  finish_update_maintenance "idle" || die "无法验证并释放集群维护门禁；维护状态保留，请检查执行日志后续跑"
+  wait_cluster_idle "" false idle || die "维护门禁释放后控制面未在时限内恢复一致或仍有活动任务"
+  write_journal succeeded "" "all node digests and maintenance release verified" completed "${total_nodes}" "${total_nodes}"
+  log "热修补丁完成：${patch_id}（站点版本 ${target_version}）已在全部节点逐文件校验通过"
+}
+
+# A hotfix runs its own flow: the rolling loop below keys on the RPM release,
+# which a hotfix deliberately does not change.
+if [[ "${package_kind}" == "hotfix" ]]; then
+  run_hotfix_update
+  exit 0
+fi
 
 load_nodes
 configure_passwords

@@ -1593,16 +1593,23 @@ func TestConsoleProvidesAdminOnlySignedSoftwareUpdateWorkflow(t *testing.T) {
 			t.Fatalf("console missing signed software update contract %q", contract)
 		}
 	}
-	if !strings.Contains(settings, "版本更新") || !strings.Contains(page, "支持 .cgupgrade 与旧滚动 .cgpatch；热修包请走命令行") {
-		t.Fatal("software update entry must be presented in settings and upload guidance must be presented in the dialog")
+	if !strings.Contains(settings, "版本更新") || !strings.Contains(page, "支持 .cgupgrade 滚动升级包与 .cgpatch 热修补丁包") {
+		t.Fatal("software update entry must be presented in settings and upload guidance must name both package kinds")
 	}
+	// Both kinds travel through this channel. A hotfix used to be diverted to the
+	// CLI after the file had already been picked and uploaded, which surfaced as a
+	// bare "out-of-scope path" rejection; the console must not reintroduce that.
 	for _, contract := range []string{
-		`fileName.endsWith('.cgpatch') && fileName.includes('hotfix')`,
-		"请在控制节点命令行用 tar -xzf 解包后运行 clusterguard-hotfix/apply.sh",
+		`fileName.endsWith('.cgupgrade') || fileName.endsWith('.cgpatch')`,
+		`record.kind === 'hotfix'`,
+		`id="software-update-package-kind"`,
 	} {
 		if !strings.Contains(page, contract) {
-			t.Fatalf("console must divert hotfix .cgpatch uploads to the CLI apply path, missing %q", contract)
+			t.Fatalf("console must accept and label both package kinds, missing %q", contract)
 		}
+	}
+	if strings.Contains(page, "请在控制节点命令行用 tar -xzf 解包后运行 clusterguard-hotfix/apply.sh") {
+		t.Fatal("the console must no longer turn a hotfix away after the upload has already started")
 	}
 	if strings.Contains(settings, `id="software-update-package-file"`) {
 		t.Fatal("software update upload controls must not remain inline in the settings panel")

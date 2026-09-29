@@ -125,6 +125,10 @@ function renderEnglish(manifests) {
   lines.push("");
   lines.push("## Applying a patch");
   lines.push("");
+  lines.push("**Preferred: the console, under Version Update -> Upload package.** After the upload the constrained helper applies the patch node by node: a hotfix leaves the installed RPM release alone, replaces only the files its signed manifest names, verifies every destination digest and restarts the units that manifest declares; any failure rolls back with the package's own `rollback.sh` and keeps the maintenance gate held. The console's package detail states whether the archive is a hotfix or a rolling upgrade.");
+  lines.push("");
+  lines.push("**Alternative: the controller command line.** Same signature and SHA-256 protection, but it does **not** restart services by itself, so restart them as it prints or the processes keep running the old code:");
+  lines.push("");
   lines.push("```bash");
   lines.push("tar -xzf release/<baseline-version>-hotfixes/<artifact>.cgpatch");
   lines.push("cd clusterguard-hotfix");
@@ -210,6 +214,10 @@ function renderChinese(manifests) {
   }
   lines.push("");
   lines.push("## 应用补丁");
+  lines.push("");
+  lines.push("**首选：控制台「版本更新 → 上传升级包」**。上传签名包后由受限 Helper 逐节点应用：热修补丁不改动 RPM 版本，只替换签名清单声明的文件、逐节点核对落地摘要，并按清单重启受影响单元；任一步失败都会用包内 `rollback.sh` 自动回退并保留维护门禁。控制台的包详情会标明该包是「热修补丁」还是「滚动升级」。");
+  lines.push("");
+  lines.push("**备选：控制节点命令行**。同样受验签与 SHA-256 保护，但**不会自动重启服务**，需按输出自行重启，否则进程仍运行旧代码：");
   lines.push("");
   lines.push("```bash");
   lines.push("tar -xzf release/<基线版本>-hotfixes/<产物文件名>.cgpatch");

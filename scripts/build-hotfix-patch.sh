@@ -469,6 +469,41 @@ chmod 0755 "${root}/apply.sh" "${root}/rollback.sh"
 bash -n "${root}/apply.sh" || die "生成的 apply.sh 语法不合法"
 bash -n "${root}/rollback.sh" || die "生成的 rollback.sh 语法不合法"
 
+# --- Bind the generated tooling into the signed manifest ---------------------
+# apply.sh and rollback.sh run as root on every node and decide what is written
+# where, yet they are generated *after* the manifest and were therefore never
+# anchored by the signature: a swapped apply.sh would have satisfied every
+# payload digest while installing something else. Re-emit the manifest once the
+# scripts exist, carry their digests inside it, and only then sign and publish
+# SHA256SUMS. There is no circularity — the generator reads the manifest's file
+# list, never its tooling digests.
+apply_sha="$(sha256_file "${root}/apply.sh")"
+rollback_sha="$(sha256_file "${root}/rollback.sh")"
+"${node_bin}" -e '
+  const fs = require("fs");
+  const [manifestPath, applySha, rollbackSha] = process.argv.slice(1);
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  manifest.schema_version = 3;
+  manifest.tooling = {
+    apply: { path: "apply.sh", sha256: applySha },
+    rollback: { path: "rollback.sh", sha256: rollbackSha }
+  };
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
+' "${root}/HOTFIX-MANIFEST.json" "${apply_sha}" "${rollback_sha}"
+manifest_sha="$(sha256_file "${root}/HOTFIX-MANIFEST.json")"
+openssl dgst -sha256 -sign "${signing_key}" -out "${root}/HOTFIX-MANIFEST.sig" "${root}/HOTFIX-MANIFEST.json"
+{
+  printf '%s  %s\n' "${manifest_sha}" "HOTFIX-MANIFEST.json"
+  printf '%s  %s\n' "${apply_sha}" "apply.sh"
+  printf '%s  %s\n' "${rollback_sha}" "rollback.sh"
+  "${node_bin}" -e '
+    const fs = require("fs");
+    for (const entry of JSON.parse(fs.readFileSync(process.argv[1], "utf8"))) {
+      console.log(`${entry.sha256}  ${entry.artifact}`);
+    }
+  ' "${payload_files}"
+} >"${root}/SHA256SUMS"
+
 # --- README ------------------------------------------------------------------
 "${node_bin}" -e '
   const fs = require("fs");

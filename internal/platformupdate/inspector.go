@@ -37,8 +37,16 @@ func (inspector CommandInspector) Inspect(ctx context.Context, patchPath, trustK
 		}
 	}
 	bootstrapProtocol, _ := strconv.Atoi(values["bootstrap_protocol"])
+	// An inspection performed by a pre-2.2-104-hotfix upgrade script does not
+	// report a kind; those releases only ever produced rolling packages, so
+	// treating an absent value as "upgrade" keeps an older controller working.
+	kind := values["kind"]
+	if kind == "" {
+		kind = PackageKindUpgrade
+	}
 	return Package{
-		PatchID: values["patch_id"], SourceVersion: values["source"], TargetVersion: values["target"],
+		PatchID: values["patch_id"], Kind: kind,
+		SourceVersion: values["source"], TargetVersion: values["target"],
 		Architecture: values["architecture"], SignatureVerified: values["signature"] == "verified",
 		RollbackAvailable: values["rollback"] == "available", Rolling: values["rolling"] == "true",
 		DatabaseMutation:   values["database_mutation"] != "false",

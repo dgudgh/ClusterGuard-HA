@@ -167,6 +167,7 @@ const mismatched = [];
 const incompleteArchives = [];
 const checksumMismatch = [];
 const badScripts = [];
+const unboundTooling = [];
 const unsignedOrInvalid = [];
 const sidecarMismatch = [];
 const resolved = [];
@@ -221,6 +222,21 @@ for (const spec of specs) {
       badScripts.push(`${body.id}:apply.sh 未安装 ${entry.install_path}`);
     }
   }
+  // apply.sh and rollback.sh run as root on every node and decide what is written
+  // where, so the signed manifest has to anchor them. Before 2026-09-29 they were
+  // generated after the manifest was signed and covered by nothing: a swapped
+  // apply.sh satisfied every payload digest while installing something else.
+  if (manifest.schema_version !== 3) unboundTooling.push(`${body.id}:schema_version 必须为 3`);
+  for (const [name, declared] of [
+    ['apply.sh', manifest.tooling && manifest.tooling.apply && manifest.tooling.apply.sha256],
+    ['rollback.sh', manifest.tooling && manifest.tooling.rollback && manifest.tooling.rollback.sha256],
+  ]) {
+    const actual = sha256File(path.join(root, name));
+    if (declared !== actual) unboundTooling.push(`${body.id}:${name} 的摘要未写入签名清单`);
+    if (!sums.some(([expected, artifact]) => artifact === name && expected === actual)) {
+      unboundTooling.push(`${body.id}:SHA256SUMS 未覆盖 ${name}`);
+    }
+  }
   if (publicKey) {
     try {
       execFileSync('openssl', ['dgst', '-sha256', '-verify', publicKey,
@@ -239,6 +255,7 @@ check('every artifact manifest agrees with its declaration', mismatched.length =
 check('every artifact carries manifest, signature, checksums, scripts, README and source diff', incompleteArchives.length === 0, incompleteArchives.join('; '));
 check('every artifact checksum file matches its payload', checksumMismatch.length === 0, checksumMismatch.join(', '));
 check('apply.sh and rollback.sh are valid, verify checksums, install every path and never restart by themselves', badScripts.length === 0, badScripts.join('; '));
+check('the signed manifest anchors apply.sh and rollback.sh and SHA256SUMS covers them', unboundTooling.length === 0, unboundTooling.join('; '));
 if (publicKey) {
   check('every artifact signature verifies against the trusted public key', unsignedOrInvalid.length === 0, unsignedOrInvalid.join(', '));
 } else {

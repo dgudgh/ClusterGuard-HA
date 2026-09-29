@@ -1691,7 +1691,7 @@
       <div class="software-update-entry">
         <div class="software-update-upload">
           <input class="software-update-file-input" id="software-update-package-file" type="file" accept=".cgupgrade,.cgpatch,application/octet-stream">
-          <label class="software-update-file-picker" for="software-update-package-file"><span class="software-update-file-icon" aria-hidden="true">↑</span><span class="software-update-file-copy"><strong>选择 ClusterGuard 签名升级包</strong><span id="software-update-file-name">支持 .cgupgrade 与旧滚动 .cgpatch；热修包请走命令行</span></span></label>
+          <label class="software-update-file-picker" for="software-update-package-file"><span class="software-update-file-icon" aria-hidden="true">↑</span><span class="software-update-file-copy"><strong>选择 ClusterGuard 签名升级包</strong><span id="software-update-file-name">支持 .cgupgrade 滚动升级包与 .cgpatch 热修补丁包</span></span></label>
           <button id="upload-software-update" class="primary-button" type="button">上传并校验</button>
         </div>
         <div class="software-update-channel"><span>升级通道</span><strong>签名升级包 + 受限 Helper</strong><p class="settings-note" id="software-update-reason">正在检查升级包签名信任和本机升级服务。新装离线包不能直接用于滚动升级。</p></div>
@@ -1699,7 +1699,7 @@
       <div class="software-update-package" id="software-update-package" hidden>
         <div class="software-update-metadata">
           <div class="identity-cell"><span>升级包 ID</span><strong class="mono" id="software-update-patch-id">-</strong></div><div class="identity-cell"><span>来源版本</span><strong id="software-update-source-version">-</strong></div><div class="identity-cell"><span>目标版本</span><strong id="software-update-target-version">-</strong></div><div class="identity-cell"><span>包大小</span><strong id="software-update-size">-</strong></div>
-          <div class="identity-cell"><span>签名校验</span><strong id="software-update-signature">-</strong></div><div class="identity-cell"><span>滚动升级</span><strong id="software-update-rolling">-</strong></div><div class="identity-cell"><span>可回退</span><strong id="software-update-rollback">-</strong></div><div class="identity-cell"><span>上传时间</span><strong id="software-update-uploaded-at">-</strong></div>
+          <div class="identity-cell"><span>包类型</span><strong id="software-update-package-kind">-</strong></div><div class="identity-cell"><span>签名校验</span><strong id="software-update-signature">-</strong></div><div class="identity-cell"><span>滚动升级</span><strong id="software-update-rolling">-</strong></div><div class="identity-cell"><span>可回退</span><strong id="software-update-rollback">-</strong></div><div class="identity-cell"><span>上传时间</span><strong id="software-update-uploaded-at">-</strong></div>
         </div>
       </div>
       <div class="software-update-validation" id="software-update-validation" data-state="idle" role="status" aria-live="polite">
@@ -2256,7 +2256,7 @@
       byId('software-update-package').hidden = true; byId('software-update-runtime').hidden = true;
       byId('software-update-events').replaceChildren(); byId('software-update-output').textContent = '';
       ['software-update-patch-id', 'software-update-source-version', 'software-update-target-version', 'software-update-size',
-        'software-update-signature', 'software-update-rolling', 'software-update-rollback', 'software-update-uploaded-at',
+        'software-update-package-kind', 'software-update-signature', 'software-update-rolling', 'software-update-rollback', 'software-update-uploaded-at',
         'software-update-job-status', 'software-update-job-mode', 'software-update-job-node', 'software-update-job-message',
         'node-lifecycle-cluster', 'operation-review-id', 'operation-review-kind', 'disaster-cluster-name', 'disaster-primary']
         .forEach(id => { byId(id).textContent = '-'; });
@@ -3616,7 +3616,7 @@
       const file = input.files && input.files[0];
       byId('software-update-file-name').textContent = file
         ? `${file.name} · ${formatBytes(file.size)}`
-        : '支持 .cgupgrade 与旧滚动 .cgpatch；热修包请走命令行';
+        : '支持 .cgupgrade 滚动升级包与 .cgpatch 热修补丁包';
     };
 
     const renderSoftwareUpdateDialogAlert = () => {
@@ -3839,7 +3839,7 @@
       panelReason.hidden = snapshot.available;
       panelReason.textContent = unavailableCopy;
       byId('software-update-reason').textContent = snapshot.available
-        ? '升级包验签服务和受限升级 Helper 已就绪。支持 .cgupgrade 与旧滚动 .cgpatch；热修补丁包不经过本通道，请在命令行用 apply.sh 安装。'
+        ? '升级包验签服务和受限升级 Helper 已就绪。支持 .cgupgrade 滚动升级包与 .cgpatch 热修补丁包，两者都由本通道安装。'
         : unavailableCopy;
       const latest = latestSoftwareUpdate();
       const pending = pendingSoftwareUpdate();
@@ -3883,6 +3883,9 @@
       const record = latest.package || {};
       const job = latest.job || null;
       byId('software-update-patch-id').textContent = record.patch_id || '-';
+      byId('software-update-package-kind').textContent = record.kind === 'hotfix'
+        ? '热修补丁（只替换清单声明的文件，不改 RPM 版本）'
+        : '滚动升级（整包 RPM 替换）';
       byId('software-update-source-version').textContent = record.source_version || '不限';
       byId('software-update-target-version').textContent = record.target_version || '-';
       byId('software-update-size').textContent = formatBytes(Number(record.size_bytes));
@@ -3987,18 +3990,10 @@
       const input = byId('software-update-package-file');
       const file = input.files && input.files[0];
       const fileName = file && file.name.toLowerCase();
-      if (fileName && fileName.endsWith('.cgpatch') && fileName.includes('hotfix')) {
-        const message = '这是热修补丁包（hotfix），不能通过控制台滚动升级安装；请在控制节点命令行用 tar -xzf 解包后运行 clusterguard-hotfix/apply.sh（详见热修补丁台账）。';
-        state.softwareUpdateValidationState = 'failed';
-        state.softwareUpdateValidationMessage = message;
-        setSoftwareUpdateDialogAlert(message);
-        renderSoftwareUpdates();
-        return;
-      }
       if (!file || !(fileName.endsWith('.cgupgrade') || fileName.endsWith('.cgpatch'))) {
         const message = fileName && (fileName.endsWith('.tar.gz') || fileName.endsWith('.tgz'))
           ? '这是用于新装或重装的完整离线安装包，不能直接用于滚动升级。请选择同一 Release 提供的 .cgupgrade 签名升级包。'
-          : '请选择 .cgupgrade 签名升级包；旧版本的 .cgpatch 仍可兼容。';
+          : '请选择 .cgupgrade 签名升级包，或 .cgpatch 热修补丁包。';
         state.softwareUpdateValidationState = 'failed';
         state.softwareUpdateValidationMessage = message;
         setSoftwareUpdateDialogAlert(message);

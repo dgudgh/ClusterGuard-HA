@@ -459,31 +459,185 @@ func TestPatchInspectorRejectsTamperedBootstrapUpgrader(t *testing.T) {
 	}
 }
 
-func TestPatchInspectorDivertsHotfixPackagesToTheCLI(t *testing.T) {
+// sha256OfFile mirrors the shell helper the upgrade script uses to anchor every
+// artefact, so the fixtures below compute digests exactly the way the shipped
+// verifier does.
+func sha256OfFile(t *testing.T, path string) string {
+	t.Helper()
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(contents))
+}
+
+type hotfixFixtureOptions struct {
+	// omitTooling drops the signed apply.sh/rollback.sh digests, reproducing a
+	// schema-2 package. apply.sh runs as root and decides what is written where,
+	// so a manifest that does not anchor it must be refused rather than trusted.
+	omitTooling bool
+	// replaceApplyAfterSigning swaps apply.sh after the manifest was signed,
+	// reproducing a tampered archive whose payload digests are all still intact.
+	replaceApplyAfterSigning bool
+}
+
+// signedHotfixPackage assembles a minimal but fully formed hotfix archive: the
+// real top-level layout, a schema-3 manifest, SHA256SUMS and a detached
+// signature, so the inspector tests exercise the production verification path
+// instead of a stub.
+func signedHotfixPackage(t *testing.T, options hotfixFixtureOptions) (string, string) {
+	t.Helper()
+	privateKey, publicKey := generatePatchSigningKey(t)
+	root := t.TempDir()
+	patchRoot := filepath.Join(root, "clusterguard-hotfix")
+	applyPath := filepath.Join(patchRoot, "apply.sh")
+	payloadPath := filepath.Join(patchRoot, "payload", "bin", "clusterguard")
+	writeFile(t, applyPath, "#!/bin/sh\nexit 0\n", 0o755)
+	writeFile(t, filepath.Join(patchRoot, "rollback.sh"), "#!/bin/sh\nexit 0\n", 0o755)
+	writeFile(t, payloadPath, "control-plane\n", 0o755)
+	applySHA := sha256OfFile(t, applyPath)
+	rollbackSHA := sha256OfFile(t, filepath.Join(patchRoot, "rollback.sh"))
+	payloadSHA := sha256OfFile(t, payloadPath)
+
+	manifest := map[string]any{
+		"schema_version": 3,
+		"kind":           "hotfix",
+		"product":        "ClusterGuard HA",
+		"hotfix_id":      "HF-TEST",
+		"source":         map[string]any{"version": "2.2", "release": "104"},
+		"target": map[string]any{
+			"version": "2.2", "release": "104+hf-test", "rpm_architecture": "x86_64",
+		},
+		"files": []any{map[string]any{
+			"artifact":     "payload/bin/clusterguard",
+			"install_path": "/usr/local/bin/clusterguard",
+			"mode":         "0755",
+			"sha256":       payloadSHA,
+			"restart_unit": "clusterguard-ha.service",
+		}},
+	}
+	if !options.omitTooling {
+		manifest["tooling"] = map[string]any{
+			"apply":    map[string]any{"path": "apply.sh", "sha256": applySHA},
+			"rollback": map[string]any{"path": "rollback.sh", "sha256": rollbackSHA},
+		}
+	}
+	encoded, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestPath := filepath.Join(patchRoot, "HOTFIX-MANIFEST.json")
+	writeFile(t, manifestPath, string(encoded)+"\n", 0o644)
+	// The manifest digest has to be taken from the exact bytes on disk: SHA256SUMS
+	// is what ties the signed manifest to every other file in the archive.
+	sums := fmt.Sprintf("%s  HOTFIX-MANIFEST.json\n%s  apply.sh\n%s  rollback.sh\n%s  payload/bin/clusterguard\n",
+		sha256OfFile(t, manifestPath), applySHA, rollbackSHA, payloadSHA)
+	writeFile(t, filepath.Join(patchRoot, "SHA256SUMS"), sums, 0o644)
+	if output, err := exec.Command("openssl", "dgst", "-sha256", "-sign", privateKey,
+		"-out", filepath.Join(patchRoot, "HOTFIX-MANIFEST.sig"), manifestPath).CombinedOutput(); err != nil {
+		t.Fatalf("sign hotfix manifest: %v\n%s", err, output)
+	}
+	if options.replaceApplyAfterSigning {
+		writeFile(t, applyPath, "#!/bin/sh\nexit 0\n# swapped after signing\n", 0o755)
+	}
+	archive := filepath.Join(root, "clusterguard-ha-hotfix-HF-TEST.cgpatch")
+	if output, err := exec.Command("tar", "-C", root, "-czf", archive, "clusterguard-hotfix").CombinedOutput(); err != nil {
+		t.Fatalf("pack hotfix: %v\n%s", err, output)
+	}
+	return archive, publicKey
+}
+
+// A hotfix is a first-class package kind: the console stores it, --inspect
+// reports it, and run_hotfix_update applies it. Before 2026-09-29 this channel
+// rejected the archive outright, which is what pushed operators into the
+// file picker and produced the misleading "out-of-scope path" error.
+func TestPatchInspectorAcceptsASignedHotfixPackage(t *testing.T) {
 	if _, err := exec.LookPath("jq"); err != nil {
 		t.Skip("jq is required")
 	}
-	_, publicKey := generatePatchSigningKey(t)
-	root := t.TempDir()
-	payload := filepath.Join(root, "payload", "clusterguard-hotfix")
-	if err := os.MkdirAll(payload, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeFile(t, filepath.Join(payload, "apply.sh"), "#!/bin/sh\nexit 0\n", 0o755)
-	hotfixPath := filepath.Join(root, "clusterguard-ha-hotfix-HF-TEST.cgpatch")
-	if output, err := exec.Command("tar", "-C", filepath.Join(root, "payload"), "-czf", hotfixPath, "clusterguard-hotfix").CombinedOutput(); err != nil {
-		t.Fatalf("repack hotfix: %v\n%s", err, output)
-	}
-	output, err := exec.Command("bash", "clusterguard-upgrade.sh", "--patch", hotfixPath, "--trust-key", publicKey, "--inspect").CombinedOutput()
-	if err == nil {
-		t.Fatalf("hotfix package must not be accepted by the rolling upgrade channel: %s", output)
+	archive, publicKey := signedHotfixPackage(t, hotfixFixtureOptions{})
+	output, err := exec.Command("bash", "clusterguard-upgrade.sh", "--patch", archive, "--trust-key", publicKey, "--inspect").CombinedOutput()
+	if err != nil {
+		t.Fatalf("signed hotfix must be accepted: %v\n%s", err, output)
 	}
 	text := string(output)
-	if !strings.Contains(text, "热修补丁包") || !strings.Contains(text, "clusterguard-hotfix/apply.sh") {
-		t.Fatalf("rejection must name the hotfix and point at the CLI apply path, got: %s", text)
+	for _, expected := range []string{
+		"signature=verified", "kind=hotfix", "patch_id=HF-TEST",
+		"source=2.2-104", "target=2.2-104+hf-test",
+		"rollback=available", "rolling=true", "database_mutation=false",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("inspection must report %q, got: %s", expected, text)
+		}
 	}
 	if strings.Contains(text, "范围外路径") {
 		t.Fatalf("hotfix packages must not fall through to the opaque whitelist rejection: %s", text)
+	}
+}
+
+// apply.sh runs as root on every node and chooses what is written where. If it
+// is not anchored by the signature, swapping it leaves every payload digest
+// intact while the patch installs something else entirely.
+func TestPatchInspectorRejectsAHotfixWhoseApplyScriptChanged(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq is required")
+	}
+	archive, publicKey := signedHotfixPackage(t, hotfixFixtureOptions{replaceApplyAfterSigning: true})
+	output, err := exec.Command("bash", "clusterguard-upgrade.sh", "--patch", archive, "--trust-key", publicKey, "--inspect").CombinedOutput()
+	if err == nil {
+		t.Fatalf("a hotfix whose apply.sh changed after signing must be refused: %s", output)
+	}
+	if !strings.Contains(string(output), "apply.sh") {
+		t.Fatalf("rejection must name the script whose digest disagrees: %s", output)
+	}
+}
+
+func TestPatchInspectorRequiresToolingDigestsInsideTheSignedHotfixManifest(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq is required")
+	}
+	archive, publicKey := signedHotfixPackage(t, hotfixFixtureOptions{omitTooling: true})
+	output, err := exec.Command("bash", "clusterguard-upgrade.sh", "--patch", archive, "--trust-key", publicKey, "--inspect").CombinedOutput()
+	if err == nil {
+		t.Fatalf("a schema-2 hotfix manifest must not be trusted: %s", output)
+	}
+	if !strings.Contains(string(output), "schema_version 3") {
+		t.Fatalf("rejection must state the contract it needs: %s", output)
+	}
+}
+
+// The digest binding has two halves: the builder has to emit the apply/rollback
+// digests into the manifest, and the verifier has to demand them. Pinning both
+// here stops one side being relaxed while the other still claims the guarantee.
+// The end-to-end proof is the real patch build, which the release gate re-runs.
+func TestHotfixToolingDigestsAreBoundOnBothSides(t *testing.T) {
+	builder, err := os.ReadFile("build-hotfix-patch.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fragment := range []string{
+		"manifest.schema_version = 3",
+		"manifest.tooling = {",
+		`{ path: "apply.sh", sha256: applySha }`,
+		`{ path: "rollback.sh", sha256: rollbackSha }`,
+	} {
+		if !strings.Contains(string(builder), fragment) {
+			t.Fatalf("builder must bind the generated scripts into the signed manifest, missing: %s", fragment)
+		}
+	}
+	verifier, err := os.ReadFile("clusterguard-upgrade.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fragment := range []string{
+		`.schema_version == 3`,
+		`.tooling.apply.sha256`,
+		`.tooling.rollback.sha256`,
+		"digest does not match the signed manifest",
+	} {
+		if !strings.Contains(string(verifier), fragment) {
+			t.Fatalf("verifier must require the tooling digests, missing: %s", fragment)
+		}
 	}
 }
 

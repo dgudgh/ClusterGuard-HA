@@ -28,6 +28,12 @@ const (
 	PreferredPackageExtension = ".cgupgrade"
 	LegacyPackageExtension    = ".cgpatch"
 
+	// Package kinds as reported by the signed package inspector. A hotfix reuses
+	// the legacy .cgpatch suffix but is applied by its own manifest-driven
+	// installer instead of an RPM transaction.
+	PackageKindUpgrade = "upgrade"
+	PackageKindHotfix  = "hotfix"
+
 	patchFileName    = "package.cgpatch"
 	packageFileName  = "package.json"
 	jobFileName      = "status.json"
@@ -83,6 +89,11 @@ const (
 type Package struct {
 	ArtifactsPruned    bool      `json:"artifacts_pruned,omitempty"`
 	PatchID            string    `json:"patch_id"`
+	// Kind distinguishes a rolling RPM upgrade from a hotfix patch. The console
+	// accepts both and applies them through the same helper, but the two are not
+	// interchangeable: a hotfix deliberately leaves the installed RPM release
+	// alone and only replaces the files its signed manifest names.
+	Kind               string    `json:"kind,omitempty"`
 	FileName           string    `json:"file_name"`
 	SizeBytes          int64     `json:"size_bytes"`
 	SHA256             string    `json:"sha256"`

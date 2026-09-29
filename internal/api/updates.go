@@ -164,7 +164,7 @@ func (server *Server) uploadSoftwareUpdate(writer http.ResponseWriter, request *
 	}
 	files := request.MultipartForm.File["package"]
 	if len(files) != 1 {
-		writeError(writer, http.StatusBadRequest, "exactly one signed .cgupgrade package is required (.cgpatch is accepted for compatibility)")
+		writeError(writer, http.StatusBadRequest, "exactly one signed package is required (.cgupgrade for a rolling upgrade, .cgpatch for a hotfix patch)")
 		return
 	}
 	file, err := openMultipartFile(files[0])
