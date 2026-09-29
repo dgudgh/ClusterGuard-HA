@@ -760,6 +760,132 @@ func TestHotfixFlowPinsItsSafetyDecisions(t *testing.T) {
 	}
 }
 
+// A hotfix restarts the node it just patched, and ordered_nodes deliberately puts
+// the leader last. Pinning the wait that follows every node to the leader captured
+// before the first restart therefore fails the run exactly when the last node had
+// applied cleanly — and because the automatic rollback could not restore a running
+// binary either, the maintenance gate stayed up with no supported way out.
+// HF-2026-0929-04 failed this way on 192.168.102.154.
+func TestHotfixFlowTreatsLeaderMovementAsExpectedAfterRestart(t *testing.T) {
+	contents, err := os.ReadFile("clusterguard-upgrade.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(contents)
+
+	resolver := shellFunctionBody(t, source, "resolve_leader_host")
+	if resolver == "" {
+		t.Fatal("resolve_leader_host must exist: a hotfix restarts the node it patched, so the leader must be re-resolved instead of cached")
+	}
+	if !strings.Contains(resolver, `control_status "${host}"`) {
+		t.Fatal("resolve_leader_host must ask each controller which one holds the leadership")
+	}
+	if !strings.Contains(resolver, `leader_host="${host}"`) {
+		t.Fatal("resolve_leader_host must publish the controller that answered as leader")
+	}
+
+	flow := shellFunctionBody(t, source, "run_hotfix_update")
+	if !strings.Contains(flow, `wait_cluster_idle "" true idle`) {
+		t.Fatal("the wait after each node must not pin the leader captured before that node was restarted")
+	}
+	// The admission wait that runs before any node is touched may pin the leader;
+	// the per-node wait may not.
+	if strings.Contains(flow, `if ! wait_cluster_idle "${leader_host}" true idle`) {
+		t.Fatal("pinning the pre-apply leader in the per-node wait fails the run whenever the patched node was the leader")
+	}
+	if !strings.Contains(flow, "resolve_leader_host") {
+		t.Fatal("the flow must re-resolve the leader after a restart, or the gate release targets the node that just went down")
+	}
+}
+
+// A failed hotfix keeps its maintenance gate on purpose, and that gate can only be
+// taken over by re-running the very same patch. The rolling flow detects its own
+// leftover locks on the way down, but a hotfix returns before that code is reached,
+// so current_patch_maintenance_active stayed false forever and the re-run was
+// refused by the "no maintenance may be active" admission check. That left a failed
+// hotfix with no supported way to resume or roll back — the operator had to clear
+// Raft state by hand.
+func TestHotfixFlowCanAdoptItsOwnMaintenanceGate(t *testing.T) {
+	contents, err := os.ReadFile("clusterguard-upgrade.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(contents)
+
+	flow := shellFunctionBody(t, source, "run_hotfix_update")
+	// Pin the call statement itself, not a mention of the name: a comment that
+	// merely carries the identifier would satisfy a plain Contains while the flow
+	// detects nothing at all.
+	if !strings.Contains(flow, "\n  detect_current_update_lock") {
+		t.Fatal("the hotfix flow must call detect_current_update_lock; without it current_patch_maintenance_active is never true")
+	}
+	if !strings.Contains(flow, "${current_patch_maintenance_active}") {
+		t.Fatal("the execute admission check must branch on a leftover gate belonging to this same patch")
+	}
+	if !strings.Contains(flow, `verify_cluster_idle "" true any`) {
+		t.Fatal("a re-run behind this patch's own gate must be admitted, so acquire_update_locks can adopt it")
+	}
+
+	// The adoption itself lives in acquire_update_locks; pinning it here keeps the
+	// two halves of the contract from drifting apart.
+	acquire := shellFunctionBody(t, source, "acquire_update_locks")
+	if !strings.Contains(acquire, "adopt_current_update_locks") {
+		t.Fatal("acquire_update_locks must still take over an existing gate of the same patch")
+	}
+}
+
+// rollback.sh must swap the inode instead of overwriting the file in place. The
+// files a hotfix replaces include running binaries, and writing into a live
+// executable fails with ETXTBSY — exactly how the automatic rollback of
+// HF-2026-0929-04 failed on all three nodes and left the gate stuck.
+func TestGeneratedRollbackReplacesFilesBySwappingTheInode(t *testing.T) {
+	contents, err := os.ReadFile("build-hotfix-patch.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	builder := string(contents)
+
+	for _, fragment := range []string{
+		`rollback.push('    restore_tmp="$(mktemp "${destination}.restore.XXXXXX")"');`,
+		`rollback.push('    cp -p "${backup}" "${restore_tmp}"');`,
+		`rollback.push('    mv -f "${restore_tmp}" "${destination}"');`,
+	} {
+		if !strings.Contains(builder, fragment) {
+			t.Fatalf("the generated rollback must stage a sibling temp file and rename it over the target, missing %s", fragment)
+		}
+	}
+	if strings.Contains(builder, `rollback.push('    cp -p "${backup}" "${destination}"');`) {
+		t.Fatal("the generated rollback must not copy onto a running binary: that is ETXTBSY")
+	}
+}
+
+// rollback.sh may only use this patch's own backup manifest. Taking whatever
+// backup-*.txt happens to be newest restores an unrelated set of files, and for a
+// destination that older manifest does not mention, restore_backup() deletes the
+// file — "absent before the patch" is a legitimate state, so a mismatched manifest
+// silently removes live system files.
+func TestGeneratedBackupManifestIsBoundToItsOwnHotfix(t *testing.T) {
+	contents, err := os.ReadFile("build-hotfix-patch.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	builder := string(contents)
+
+	// Both halves are pinned separately: a check that only looked for the id
+	// fragment would stay green while one of the two scripts still ignored it.
+	for _, fragment := range []string{
+		`backup_list="\${backup_dir}/backup-${manifest.hotfix_id}-\${stamp}.txt"`,
+		`/backup-${manifest.hotfix_id}-*.txt`,
+	} {
+		if !strings.Contains(builder, fragment) {
+			t.Fatalf("the backup manifest must be bound to this patch's hotfix id, missing %s", fragment)
+		}
+	}
+	if strings.Contains(builder, `ls -1 "${backup_dir}"/backup-*.txt`) {
+		t.Fatal("rollback.sh must not accept an arbitrary backup manifest, only this patch's own")
+	}
+}
+
 // requireNode returns a usable node interpreter or skips the test, mirroring the
 // jq/openssl convention used elsewhere in this package.
 func requireNode(t *testing.T) string {
