@@ -179,8 +179,11 @@ check('every declared fix commit is described by a bilingual fix entry',
   undocumentedFixes.length === 0, undocumentedFixes.join('; '));
 
 // --- Gate 2: every declaration has a signed artifact -----------------------
+// A revision is a *different* artifact, never a rewrite of the published one, so
+// it carries the revision in its filename as well as in its manifest.
 const archiveName = (body) =>
-  `clusterguard-ha-hotfix-${body.id}-${body.rpm_version}-${body.rpm_release}.x86_64.cgpatch`;
+  `clusterguard-ha-hotfix-${body.id}${body.revision ? `-r${body.revision}` : ''}`
+  + `-${body.rpm_version}-${body.rpm_release}.x86_64.cgpatch`;
 
 const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-hotfix-gate-'));
 const cleanup = () => fs.rmSync(stage, { recursive: true, force: true });
@@ -197,7 +200,36 @@ const missingArtifacts = [];
 const mismatched = [];
 const incompleteArchives = [];
 const checksumMismatch = [];
-const badScripts = [];
+// Problems are attributed to the artifact they were found in, not collected
+// globally: a published artifact can never be repaired in place, so a defect
+// found in one that has already been handed over is frozen - declared in the
+// publication ledger and allowed to stay - while the artifact a release line
+// currently offers has to be clean.
+const problemsByArtifact = new Map();
+const note = (artifact, message) => {
+  if (!problemsByArtifact.has(artifact)) problemsByArtifact.set(artifact, []);
+  problemsByArtifact.get(artifact).push(message);
+};
+const cleanArtifacts = [];
+
+// --- Publication ledger ------------------------------------------------------
+// A signed .cgpatch is the only record of what a site ran. Rebuilding one in
+// place - same filename, same version, different bytes - destroys exactly that
+// record: the site reports "2.2-105", the repository also has a "2.2-105", and
+// the digests differ, so neither side can say what the nodes are running. So
+// publishing appends an identity here and nothing already published is ever
+// rewritten; a correction is a *new* artifact (`-r1`, `-r2`, ...) that names the
+// identity it supersedes. `status: "frozen"` marks an identity that is kept only
+// as evidence - its bytes are never upgraded to today's rules - and it has to
+// declare the defects it still carries, so the reason it is not uploadable is
+// written down rather than merely implied.
+const ledgerPath = path.join(artifactRoot, 'release/hotfix-publications.json');
+const ledger = fs.existsSync(ledgerPath)
+  ? JSON.parse(fs.readFileSync(ledgerPath, 'utf8'))
+  : null;
+const publications = new Map();
+for (const entry of (ledger && ledger.publications) || []) publications.set(entry.file, entry);
+const relativeToRoot = (file) => path.relative(artifactRoot, file).split(path.sep).join('/');
 const undocumentedRestarts = [];
 const unboundTooling = [];
 const unsignedOrInvalid = [];
@@ -216,7 +248,17 @@ for (const spec of specs) {
   if (!fs.existsSync(sidecar) || !fs.readFileSync(sidecar, 'utf8').includes(actualSha)) {
     sidecarMismatch.push(body.id);
   }
-  const root = unpack(archive);
+  // A corrupt artifact used to blow up here as an unhandled exception, which
+  // reads as a broken gate rather than as a broken package - and a stack trace
+  // is exactly the kind of output that gets skimmed past. Report it as what it
+  // is and keep going, so one bad file does not hide the rest.
+  let root;
+  try {
+    root = unpack(archive);
+  } catch (error) {
+    incompleteArchives.push(`${body.id}: 产物无法解包（${String(error.message).split('\n')[0]}）`);
+    continue;
+  }
   const manifest = JSON.parse(fs.readFileSync(path.join(root, 'HOTFIX-MANIFEST.json'), 'utf8'));
   const declaredCommits = (body.fix_commits || []).map((commit) => git('rev-parse', `${commit}^{commit}`)).sort();
   const manifestCommits = [...(manifest.fix_commits || [])].sort();
@@ -227,7 +269,9 @@ for (const spec of specs) {
       declaredCommits.join(',') !== manifestCommits.join(',') ||
       manifest.build_commit !== declaredBuild ||
       manifest.source.version !== body.rpm_version || manifest.source.release !== body.rpm_release ||
-      manifest.kind !== 'hotfix') {
+      manifest.kind !== 'hotfix' ||
+      (manifest.revision || 0) !== (body.revision || 0) ||
+      JSON.stringify(manifest.supersedes_artifact || null) !== JSON.stringify(body.supersedes_artifact || null)) {
     mismatched.push(`${body.id}: manifest disagrees with hotfixes/${spec.name}`);
   }
   const requiredFiles = ['HOTFIX-MANIFEST.json', 'HOTFIX-MANIFEST.sig', 'SHA256SUMS', 'apply.sh', 'rollback.sh', 'README.md', manifest.source_patch];
@@ -243,7 +287,7 @@ for (const spec of specs) {
     try {
       execFileSync('bash', ['-n', path.join(root, script)]);
     } catch (error) {
-      badScripts.push(`${body.id}:${script}`);
+      note(archive, `${body.id}:${script}`);
     }
   }
   // Only executable lines count. These generated scripts document the rules they
@@ -254,11 +298,11 @@ for (const spec of specs) {
   const code = (script) => script.split('\n').filter((line) => !/^\s*#/.test(line)).join('\n');
   const apply = fs.readFileSync(path.join(root, 'apply.sh'), 'utf8');
   const applyCode = code(apply);
-  if (!/sha256sum -c SHA256SUMS/.test(applyCode)) badScripts.push(`${body.id}:apply.sh 未校验 SHA256SUMS`);
-  if (/^\s*systemctl restart /m.test(applyCode)) badScripts.push(`${body.id}:apply.sh 自动重启服务`);
+  if (!/sha256sum -c SHA256SUMS/.test(applyCode)) note(archive, `${body.id}:apply.sh 未校验 SHA256SUMS`);
+  if (/^\s*systemctl restart /m.test(applyCode)) note(archive, `${body.id}:apply.sh 自动重启服务`);
   for (const entry of manifest.files) {
     if (entry.install_path && !applyCode.includes(entry.install_path)) {
-      badScripts.push(`${body.id}:apply.sh 未安装 ${entry.install_path}`);
+      note(archive, `${body.id}:apply.sh 未安装 ${entry.install_path}`);
     }
   }
   // The files a hotfix replaces include running binaries, so restoring one by
@@ -270,10 +314,10 @@ for (const spec of specs) {
   const rollbackScript = fs.readFileSync(path.join(root, 'rollback.sh'), 'utf8');
   const rollbackCode = code(rollbackScript);
   if (!/mv -f "\$\{restore_tmp\}"/.test(rollbackCode)) {
-    badScripts.push(`${body.id}:rollback.sh 未用改名换 inode 恢复文件（就地写运行中的二进制会 ETXTBSY）`);
+    note(archive, `${body.id}:rollback.sh 未用改名换 inode 恢复文件（就地写运行中的二进制会 ETXTBSY）`);
   }
   if (/cp -p "\$\{backup\}" "\$\{destination\}"/.test(rollbackCode)) {
-    badScripts.push(`${body.id}:rollback.sh 直接覆盖目标文件（运行中的二进制会 ETXTBSY）`);
+    note(archive, `${body.id}:rollback.sh 直接覆盖目标文件（运行中的二进制会 ETXTBSY）`);
   }
   // rollback.sh may only use this patch's own backup manifest. Taking whichever
   // backup-*.txt happens to be newest restores an unrelated set of files, and
@@ -281,20 +325,20 @@ for (const spec of specs) {
   // patch" - so for a destination the wrong manifest fails to mention, it deletes
   // the live file instead of restoring it.
   if (!applyCode.includes(`/backup-${manifest.hotfix_id}-`)) {
-    badScripts.push(`${body.id}:apply.sh 未把备份清单绑定到本补丁的 hotfix id`);
+    note(archive, `${body.id}:apply.sh 未把备份清单绑定到本补丁的 hotfix id`);
   }
   if (!rollbackCode.includes(`/backup-${manifest.hotfix_id}-`)) {
-    badScripts.push(`${body.id}:rollback.sh 未把备份清单绑定到本补丁的 hotfix id`);
+    note(archive, `${body.id}:rollback.sh 未把备份清单绑定到本补丁的 hotfix id`);
   }
   if (/backup-\*\.txt/.test(rollbackCode)) {
-    badScripts.push(`${body.id}:rollback.sh 接受任意备份清单，可能恢复别的补丁的文件或误删文件`);
+    note(archive, `${body.id}:rollback.sh 接受任意备份清单，可能恢复别的补丁的文件或误删文件`);
   }
   // On the command-line path there is no daemon to consult the manifest, so the
   // units that have to restart can only reach the operator through the script's
   // own output. A replaced binary whose unit is never restarted leaves the old
   // process running: the patch applies cleanly and nothing changes.
   for (const unit of new Set(manifest.files.map((file) => file.restart_unit).filter(Boolean))) {
-    if (!applyCode.includes(unit)) badScripts.push(`${body.id}:apply.sh 未提示重启 ${unit}`);
+    if (!applyCode.includes(unit)) note(archive, `${body.id}:apply.sh 未提示重启 ${unit}`);
   }
   // README.md is the other half of that same instruction, and the one an operator
   // actually reads before running apply.sh. It used to print a single hard-coded
@@ -347,7 +391,7 @@ for (const spec of specs) {
       unsignedOrInvalid.push(body.id);
     }
   }
-  resolved.push({ body, archive, sha: actualSha, manifest });
+  resolved.push({ body, archive, sha: actualSha, manifest, publication: publications.get(relativeToRoot(archive)) });
 }
 
 check('every declaration has its .cgpatch artifact', missingArtifacts.length === 0, missingArtifacts.join(', '));
@@ -355,7 +399,35 @@ check('every artifact has a matching .sha256 sidecar', sidecarMismatch.length ==
 check('every artifact manifest agrees with its declaration', mismatched.length === 0, mismatched.join('; '));
 check('every artifact carries manifest, signature, checksums, scripts, README and source diff', incompleteArchives.length === 0, incompleteArchives.join('; '));
 check('every artifact checksum file matches its payload', checksumMismatch.length === 0, checksumMismatch.join(', '));
-check('apply.sh and rollback.sh are valid, verify checksums, install every path and never restart by themselves', badScripts.length === 0, badScripts.join('; '));
+// A frozen identity is kept as evidence of what a site ran, so its bytes stay as
+// they are even when today's rules would have generated them differently. That
+// exemption is not a free pass: every problem found in a frozen artifact has to
+// be declared, and every declared defect has to still be found. The two
+// directions matter equally - an undeclared defect hides a known-bad package,
+// and a stale declaration would let a defect be repaired silently under cover of
+// a note that says it is still there.
+const liveProblems = [];
+const undeclaredDefects = [];
+const staleDefects = [];
+for (const item of resolved) {
+  const found = problemsByArtifact.get(item.archive) || [];
+  const declared = (item.publication && item.publication.known_defects) || [];
+  if (item.publication && item.publication.status === 'frozen') {
+    for (const problem of found) {
+      if (!declared.includes(problem)) undeclaredDefects.push(`${item.body.id}: 冻结产物有未声明的缺陷 — ${problem}`);
+    }
+    for (const defect of declared) {
+      if (!found.includes(defect)) staleDefects.push(`${item.body.id}: 已声明的缺陷不再存在 — ${defect}`);
+    }
+  } else {
+    liveProblems.push(...found);
+  }
+}
+check('apply.sh and rollback.sh are valid, verify checksums, install every path and never restart by themselves',
+  liveProblems.length === 0, liveProblems.join('; '));
+check('a frozen publication declares exactly the defects it still carries',
+  undeclaredDefects.length === 0 && staleDefects.length === 0,
+  [...undeclaredDefects, ...staleDefects].join('; '));
 check('README names every unit the payload replaces in both its Apply and its Rollback block', undocumentedRestarts.length === 0, undocumentedRestarts.join('; '));
 check('the signed manifest anchors apply.sh and rollback.sh and SHA256SUMS covers them', unboundTooling.length === 0, unboundTooling.join('; '));
 if (publicKey) {
@@ -556,6 +628,99 @@ if (fs.existsSync(releaseRoot)) {
 }
 check('no stray .cgpatch hides in an undeclared release line', strayArchives.length === 0, strayArchives.join(', '));
 
+// --- Publication identity is append-only ------------------------------------
+const deliveryArchives = [];
+for (const dir of declaredDirs.keys()) {
+  const directory = path.join(artifactRoot, dir);
+  if (!fs.existsSync(directory)) continue;
+  for (const name of fs.readdirSync(directory)) {
+    if (name.endsWith('.cgpatch')) deliveryArchives.push(`${dir}/${name}`);
+  }
+}
+const unregistered = deliveryArchives.filter((file) => !publications.has(file));
+check('every artifact a release line offers is registered in the publication ledger',
+  unregistered.length === 0, unregistered.join(', '));
+
+const rewritten = [];
+const misplaced = [];
+for (const [file, entry] of publications) {
+  const absolute = path.join(artifactRoot, file);
+  const present = fs.existsSync(absolute);
+  if (entry.bytes_retained === false) {
+    // The digest is still the record of what a site ran, so the entry stays even
+    // when the bytes are gone; what must not happen is a *different* file being
+    // passed off as it.
+    if (present) misplaced.push(`${file}: 登记为字节未保留，但文件仍在磁盘上`);
+    continue;
+  }
+  if (!present) {
+    misplaced.push(`${file}: 已登记的产物不在磁盘上`);
+    continue;
+  }
+  const actual = sha256File(absolute);
+  if (actual !== entry.sha256 || fs.statSync(absolute).size !== entry.size) {
+    rewritten.push(`${file}: 磁盘 ${actual.slice(0, 12)}…/${fs.statSync(absolute).size} ≠ 已发布 ${entry.sha256.slice(0, 12)}…/${entry.size}`);
+  }
+}
+check('no published artifact is rewritten in place, and none that lost its bytes is still present',
+  rewritten.length === 0 && misplaced.length === 0, [...rewritten, ...misplaced].join('; '));
+
+const brokenChain = [];
+for (const [file, entry] of publications) {
+  const revision = entry.revision || 0;
+  if (revision === 0) {
+    if (entry.supersedes_sha256) brokenChain.push(`${file}: 首次发布不应声明替代对象`);
+    continue;
+  }
+  if (!file.includes(`-r${revision}-`)) {
+    brokenChain.push(`${file}: 修订身份必须写进文件名（-r${revision}）`);
+  }
+  if (!entry.supersedes_sha256) {
+    brokenChain.push(`${file}: 修订必须声明它替代的身份`);
+    continue;
+  }
+  const previous = [...publications.entries()].find(([, other]) => other.sha256 === entry.supersedes_sha256);
+  if (!previous) {
+    brokenChain.push(`${file}: 替代的摘要 ${String(entry.supersedes_sha256).slice(0, 12)}… 不在台账里`);
+    continue;
+  }
+  if ((previous[1].revision || 0) !== revision - 1) {
+    brokenChain.push(`${file}: 只能替代上一修订 r${revision - 1}`);
+  }
+  if (previous[1].superseded_by !== file) {
+    brokenChain.push(`${file}: 被替代的 ${previous[0]} 没有回指本身份`);
+  }
+}
+check('a revision names the identity it supersedes, and that identity points back',
+  brokenChain.length === 0, brokenChain.join('; '));
+
+const notCurrent = [];
+const currentPerLine = new Map();
+for (const item of resolved) {
+  const entry = item.publication;
+  if (!entry) {
+    notCurrent.push(`${item.body.id}: 产物的身份未登记`);
+    continue;
+  }
+  if (!['current', 'frozen', 'superseded'].includes(entry.status)) {
+    notCurrent.push(`${item.body.id}: 未知的产物状态 ${entry.status}`);
+    continue;
+  }
+  // A frozen identity is a historical record, not an upload candidate - it only
+  // has to be honest about what it still carries, which the check above enforces.
+  // What must not happen is one release line offering two different "current"
+  // artifacts: that makes the operator's choice depend on a directory listing.
+  if (entry.status !== 'current') continue;
+  const line = artifactDirFor(item.body);
+  if (currentPerLine.has(line) && currentPerLine.get(line) !== entry.file) {
+    notCurrent.push(`${line}: 同一交付线上出现两个 current 产物`);
+  } else {
+    currentPerLine.set(line, entry.file);
+  }
+}
+check('every declaration resolves to a registered identity, with one current artifact per release line',
+  notCurrent.length === 0, notCurrent.join('; '));
+
 // --- Gate 3: the bilingual catalogue is rendered and truthful --------------
 const catalogueEnglish = path.join(repo, 'docs/hotfix-patches.md');
 const catalogueChinese = path.join(repo, 'docs/zh-CN/hotfix-patches.md');
@@ -618,6 +783,11 @@ if (fs.existsSync(builder)) {
     /补丁签名私钥与预期受信公钥不匹配/.test(source));
   check('the builder validates the generated scripts before packaging',
     /bash -n "\$\{root\}\/apply\.sh"/.test(source) && /bash -n "\$\{root\}\/rollback\.sh"/.test(source));
+  // The ledger check above can only see a rewrite after it happened. This one is
+  // the prevention: the builder must stop before touching a path that already
+  // holds an artifact, and send the operator to a new identity instead.
+  check('the builder refuses to rebuild a published artifact in place',
+    /产物已存在，拒绝原地覆盖/.test(source) && /revision/.test(source) && /supersedes_artifact/.test(source));
 }
 if (fs.existsSync(renderer)) {
   check('the renderer reads manifests from the artifacts instead of trusting a list',

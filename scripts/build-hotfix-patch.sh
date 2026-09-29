@@ -137,6 +137,31 @@ short_fix="$(git -C "${repository}" rev-parse --short=7 "${build_commit}")"
 git -C "${repository}" merge-base --is-ancestor "${base_commit}" "${build_commit}" ||
   die "基线提交 ${base_commit} 不是构建提交 ${build_commit} 的祖先"
 
+# A published artifact can never be rebuilt in place: the digest is the only
+# record of what a site actually ran, and a second artifact that carries the same
+# filename and the same version but different bytes destroys that record on both
+# sides at once. A correction is a new identity instead - pass revision 1, 2, ...
+# in the spec together with the identity it supersedes.
+hotfix_revision="$("${node_bin}" -e '
+  const fs = require("fs");
+  const spec = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+  const value = spec.revision === undefined ? 0 : spec.revision;
+  if (!Number.isInteger(value) || value < 0) process.exit(1);
+  // Not `supersedes`: that name already means "which hotfix package this one
+  // replaces" in these specs. This one names an artifact identity.
+  const replaced = spec.supersedes_artifact === undefined ? null : spec.supersedes_artifact;
+  if (value > 0) {
+    if (!replaced || typeof replaced.file !== "string" || !replaced.file.length ||
+        typeof replaced.sha256 !== "string" || !replaced.sha256.length ||
+        typeof replaced.reason !== "string" || !replaced.reason.length) process.exit(2);
+  } else if (replaced) {
+    process.exit(3);
+  }
+  console.log(value);
+' "${spec}")" || die "revision/supersedes_artifact 不合法：revision>0 必须给出 supersedes_artifact{file,sha256,reason}，revision=0 不得给出 supersedes_artifact"
+revision_suffix=""
+[[ "${hotfix_revision}" -gt 0 ]] && revision_suffix="-r${hotfix_revision}"
+
 case "${goarch}" in
   amd64) rpm_arch="x86_64" ;;
   arm64) rpm_arch="aarch64" ;;
@@ -302,6 +327,10 @@ const manifest = {
   severity: spec.severity,
   base_commit: spec.base_commit,
   build_commit: buildCommit,
+  // A revision is a separate artifact, never a rewrite of a published one, so
+  // the identity it replaces travels with it into the signed manifest.
+  revision: spec.revision || 0,
+  supersedes_artifact: spec.supersedes_artifact || null,
   fix_commits: fixCommitsRaw.split(",").filter(Boolean),
   source: { version: spec.rpm_version, release: spec.rpm_release },
   target: {
@@ -624,8 +653,15 @@ openssl dgst -sha256 -sign "${signing_key}" -out "${root}/HOTFIX-MANIFEST.sig" "
 # --- Package -----------------------------------------------------------------
 mkdir -p "${output_dir}"
 output_dir="$(cd "${output_dir}" && pwd)"
-archive_name="clusterguard-ha-hotfix-${hotfix_id}-${rpm_version}-${rpm_release}.${rpm_arch}.cgpatch"
+archive_name="clusterguard-ha-hotfix-${hotfix_id}${revision_suffix}-${rpm_version}-${rpm_release}.${rpm_arch}.cgpatch"
 output="${output_dir}/${archive_name}"
+if [[ -e "${output}" ]]; then
+  die "产物已存在，拒绝原地覆盖：${output}
+已签名的交付物一旦生成即不可变——同一个文件名、同一个版本号、不同的字节，会让现场与仓库
+各说一套，事后无法证明节点实际运行过什么。请二选一：
+  ① 在 spec 里加 revision（例如 1）+ supersedes_artifact{file,sha256,reason}，产生新身份与新文件名；
+  ② 若该文件从未交付、从未上传现场，先把它改名移走并写明原因，再重新构建。"
+fi
 temporary_output="${output}.tmp.$$"
 rm -f "${temporary_output}"
 tar --no-xattrs -C "${stage}" -czf "${temporary_output}" clusterguard-hotfix

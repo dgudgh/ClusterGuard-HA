@@ -146,6 +146,9 @@ function renderEnglish(manifests) {
     lines.push(`- Applies to: ${manifest.source.version}-${manifest.source.release} → ${manifest.target.version}-${manifest.target.release} (${manifest.target.rpm_architecture})`);
     lines.push(`- Artifact: \`${manifest.dirName}/${manifest.archive}\``);
     lines.push(`- SHA-256: \`${manifest.archiveSha256}\``);
+    if (manifest.revision > 0 && manifest.supersedes_artifact) {
+      lines.push(`- Artifact identity: revision ${manifest.revision}, supersedes \`${manifest.supersedes_artifact.sha256}\` (\`${manifest.supersedes_artifact.file}\`) — ${manifest.supersedes_artifact.reason}`);
+    }
     lines.push(`- Source diff: \`${manifest.source_patch}\``);
     lines.push("- Payload:");
     for (const entry of manifest.files) {
@@ -236,6 +239,9 @@ function renderChinese(manifests) {
     lines.push(`- 适用版本：${manifest.source.version}-${manifest.source.release} → ${manifest.target.version}-${manifest.target.release}（${manifest.target.rpm_architecture}）`);
     lines.push(`- 产物：\`${manifest.dirName}/${manifest.archive}\``);
     lines.push(`- SHA-256：\`${manifest.archiveSha256}\``);
+    if (manifest.revision > 0 && manifest.supersedes_artifact) {
+      lines.push(`- 产物身份：第 ${manifest.revision} 修订，替代 \`${manifest.supersedes_artifact.sha256}\`（\`${manifest.supersedes_artifact.file}\`）——${manifest.supersedes_artifact.reason}`);
+    }
     lines.push(`- 源码差异：\`${manifest.source_patch}\``);
     lines.push("- 交付内容：");
     for (const entry of manifest.files) {
