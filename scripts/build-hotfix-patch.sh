@@ -180,17 +180,6 @@ binaries=""
 systemd_units=""
 runtime_scripts=""
 installer_only="false"
-# Which binary embeds a change is a fact about the import graph, not about the
-# path it sits on. Two hard-coded prefixes used to answer it —
-# internal/agent|cmd/clusterguard-agent and internal/api|cmd/clusterguard — and a
-# shared package belongs to neither: the 2026-09-29 fix in internal/coordination
-# (a VIP ownership lease that stayed valid for hours after the clock moved
-# backwards, disabling automatic failover for the whole window) matched both of
-# them zero times, so this patch would have shipped the runtime script and no
-# binary at all while its manifest called the fix delivered.
-binaries="$("${node_bin}" "${repository}/scripts/hotfix-component-map.cjs" \
-  --tree "${source_tree}" --mode binaries <<<"${changed}")" ||
-  die "无法从导入图推导修复涉及的二进制（scripts/hotfix-component-map.cjs --tree ${source_tree}）"
 if has_path '^packaging/systemd/.*\.(service|timer)$'; then
   systemd_units="$(printf '%s\n' "${changed}" | grep -E '^packaging/systemd/.*\.(service|timer)$' | sed 's#^packaging/systemd/##' | sort -u)"
 fi
@@ -204,8 +193,6 @@ if has_path '^scripts/clusterguard-[a-z0-9-]+\.sh$'; then
   runtime_scripts="$(printf '%s\n' "${changed}" | grep -E '^scripts/clusterguard-[a-z0-9-]+\.sh$' | sed 's#^scripts/##' | sort -u)"
 fi
 if has_path '^scripts/install_clusterguard\.sh$'; then installer_only="true"; fi
-[[ -n "${binaries}" || -n "${systemd_units}" || -n "${runtime_scripts}" || "${installer_only}" == "true" ]] ||
-  die "该修复没有可交付产物（既不涉及二进制，也不涉及单元、运行时脚本或安装器）"
 
 stage="$(mktemp -d /tmp/clusterguard-hotfix.XXXXXX)"
 source_tree="${stage}/source"
@@ -220,6 +207,22 @@ git -C "${repository}" worktree add --detach "${source_tree}" "${build_commit}" 
   die "无法为构建提交创建临时工作树：${build_commit}"
 root="${stage}/clusterguard-hotfix"
 mkdir -p "${root}/payload/bin" "${root}/payload/systemd" "${root}/payload/scripts" "${root}/payload/installer" "${root}/src"
+
+# Which binary embeds a change is a fact about the import graph, not about the
+# path it sits on. Two hard-coded prefixes used to answer it —
+# internal/agent|cmd/clusterguard-agent and internal/api|cmd/clusterguard — and a
+# shared package belongs to neither: the 2026-09-29 fix in internal/coordination
+# (a VIP ownership lease that stayed valid for hours after the clock moved
+# backwards, disabling automatic failover for the whole window) matched both of
+# them zero times, so this patch would have shipped the runtime script and no
+# binary at all while its manifest called the fix delivered. The graph has to be
+# read from the build tree, which is why this cannot happen before the worktree
+# exists.
+binaries="$("${node_bin}" "${repository}/scripts/hotfix-component-map.cjs" \
+  --tree "${source_tree}" --mode binaries <<<"${changed}")" ||
+  die "无法从导入图推导修复涉及的二进制（scripts/hotfix-component-map.cjs --tree ${source_tree}）"
+[[ -n "${binaries}" || -n "${systemd_units}" || -n "${runtime_scripts}" || "${installer_only}" == "true" ]] ||
+  die "该修复没有可交付产物（既不涉及二进制，也不涉及单元、运行时脚本或安装器）"
 
 build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 version_ldflags="-s -w -X clusterguard.io/ha/internal/buildinfo.Version=${rpm_version} -X clusterguard.io/ha/internal/buildinfo.Release=${rpm_release} -X clusterguard.io/ha/internal/buildinfo.Commit=${short_fix} -X clusterguard.io/ha/internal/buildinfo.BuiltAt=${build_time}"

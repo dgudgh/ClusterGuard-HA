@@ -980,6 +980,14 @@ func TestHotfixBuilderAndGateDeriveComponentsFromTheImportGraph(t *testing.T) {
 			t.Fatalf("the builder still decides which binary a fix reaches by path prefix %s", prefix)
 		}
 	}
+	// The import graph has to come from the tree the patch is built from, so the
+	// derivation must sit after the worktree is created. Reading it earlier made
+	// the builder die on an unbound source_tree before it built anything.
+	worktree := strings.Index(text, "source_tree=\"${stage}/source\"")
+	derivation := strings.Index(text, "--tree \"${source_tree}\" --mode binaries")
+	if worktree == -1 || derivation == -1 || derivation < worktree {
+		t.Fatalf("the builder must read the import graph from the build tree (worktree at %d, derivation at %d)", worktree, derivation)
+	}
 	gate, err := os.ReadFile(filepath.Join("..", "tools", "verify-hotfix-patch-catalog.cjs"))
 	if err != nil {
 		t.Fatal(err)
