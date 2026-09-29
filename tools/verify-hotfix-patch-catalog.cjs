@@ -246,20 +246,55 @@ for (const spec of specs) {
       badScripts.push(`${body.id}:${script}`);
     }
   }
+  // Only executable lines count. These generated scripts document the rules they
+  // follow, and the comment explaining why rollback.sh may only use this patch's
+  // own manifest necessarily names the backup-*.txt glob it forbids. Testing the
+  // whole file lets prose satisfy a requirement or trip a prohibition: the first
+  // version of the glob ban fired on its own explanation in all four packages.
+  const code = (script) => script.split('\n').filter((line) => !/^\s*#/.test(line)).join('\n');
   const apply = fs.readFileSync(path.join(root, 'apply.sh'), 'utf8');
-  if (!/sha256sum -c SHA256SUMS/.test(apply)) badScripts.push(`${body.id}:apply.sh 未校验 SHA256SUMS`);
-  if (/^\s*systemctl restart /m.test(apply)) badScripts.push(`${body.id}:apply.sh 自动重启服务`);
+  const applyCode = code(apply);
+  if (!/sha256sum -c SHA256SUMS/.test(applyCode)) badScripts.push(`${body.id}:apply.sh 未校验 SHA256SUMS`);
+  if (/^\s*systemctl restart /m.test(applyCode)) badScripts.push(`${body.id}:apply.sh 自动重启服务`);
   for (const entry of manifest.files) {
-    if (entry.install_path && !apply.includes(entry.install_path)) {
+    if (entry.install_path && !applyCode.includes(entry.install_path)) {
       badScripts.push(`${body.id}:apply.sh 未安装 ${entry.install_path}`);
     }
+  }
+  // The files a hotfix replaces include running binaries, so restoring one by
+  // writing over the destination in place fails with ETXTBSY on every node. That
+  // is how the automatic rollback of HF-2026-0929-04 failed on all three of them
+  // and left the maintenance gate stuck. The restored file has to be staged
+  // beside its destination and renamed over it, which swaps the inode and leaves
+  // any running process untouched.
+  const rollbackScript = fs.readFileSync(path.join(root, 'rollback.sh'), 'utf8');
+  const rollbackCode = code(rollbackScript);
+  if (!/mv -f "\$\{restore_tmp\}"/.test(rollbackCode)) {
+    badScripts.push(`${body.id}:rollback.sh 未用改名换 inode 恢复文件（就地写运行中的二进制会 ETXTBSY）`);
+  }
+  if (/cp -p "\$\{backup\}" "\$\{destination\}"/.test(rollbackCode)) {
+    badScripts.push(`${body.id}:rollback.sh 直接覆盖目标文件（运行中的二进制会 ETXTBSY）`);
+  }
+  // rollback.sh may only use this patch's own backup manifest. Taking whichever
+  // backup-*.txt happens to be newest restores an unrelated set of files, and
+  // restore_backup() reads "not in the manifest" as "did not exist before the
+  // patch" - so for a destination the wrong manifest fails to mention, it deletes
+  // the live file instead of restoring it.
+  if (!applyCode.includes(`/backup-${manifest.hotfix_id}-`)) {
+    badScripts.push(`${body.id}:apply.sh 未把备份清单绑定到本补丁的 hotfix id`);
+  }
+  if (!rollbackCode.includes(`/backup-${manifest.hotfix_id}-`)) {
+    badScripts.push(`${body.id}:rollback.sh 未把备份清单绑定到本补丁的 hotfix id`);
+  }
+  if (/backup-\*\.txt/.test(rollbackCode)) {
+    badScripts.push(`${body.id}:rollback.sh 接受任意备份清单，可能恢复别的补丁的文件或误删文件`);
   }
   // On the command-line path there is no daemon to consult the manifest, so the
   // units that have to restart can only reach the operator through the script's
   // own output. A replaced binary whose unit is never restarted leaves the old
   // process running: the patch applies cleanly and nothing changes.
   for (const unit of new Set(manifest.files.map((file) => file.restart_unit).filter(Boolean))) {
-    if (!apply.includes(unit)) badScripts.push(`${body.id}:apply.sh 未提示重启 ${unit}`);
+    if (!applyCode.includes(unit)) badScripts.push(`${body.id}:apply.sh 未提示重启 ${unit}`);
   }
   // README.md is the other half of that same instruction, and the one an operator
   // actually reads before running apply.sh. It used to print a single hard-coded
