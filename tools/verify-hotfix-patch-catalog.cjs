@@ -70,13 +70,44 @@ const check = (name, ok, detail) => {
 const sha256File = (file) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
 
+// `hotfixes/` holds two kinds of document: one declaration per patch, and the
+// publication ledger next to them. Both are JSON in the same directory, so the
+// loader has to tell them apart explicitly. Reading the ledger as a declaration
+// is not a near miss that the field checks would catch - the ledger has no
+// base_commit, so the completeness check reports it and the gate then dies on
+// `git log undefined..HEAD` with a stack trace, burying the verdict under it.
+// A declaration is recognised by its id; every other JSON in this directory is
+// named as unrecognised rather than silently skipped, so a mistyped filename
+// cannot quietly drop a patch out of the gate's view. A file that does not even
+// parse is reported the same way - these files are hand-edited, and a stray
+// comma must read as "HF-2026-0929-05.json is broken", not as a stack trace
+// from JSON.parse that looks like the gate itself fell over.
 const specDirectory = path.join(repo, 'hotfixes');
-const specs = fs.existsSync(specDirectory)
-  ? fs.readdirSync(specDirectory).filter((name) => name.endsWith('.json')).sort()
-    .map((name) => ({ name, path: path.join(specDirectory, name), body: JSON.parse(fs.readFileSync(path.join(specDirectory, name), 'utf8')) }))
-  : [];
+const companionDocuments = new Set(['hotfix-publications.json']);
+const documents = [];
+const unparsableDocuments = [];
+if (fs.existsSync(specDirectory)) {
+  for (const name of fs.readdirSync(specDirectory).filter((entry) => entry.endsWith('.json')).sort()) {
+    const file = path.join(specDirectory, name);
+    try {
+      documents.push({ name, path: file, body: JSON.parse(fs.readFileSync(file, 'utf8')) });
+    } catch (error) {
+      unparsableDocuments.push(`${name}: ${String(error.message).split('\n')[0]}`);
+    }
+  }
+}
+const specs = documents.filter((document) => !companionDocuments.has(document.name));
+const unrecognised = specs
+  .filter((document) => !/^HF-\d{4}-\d{4}-\d{2}$/.test(document.body.id || ''))
+  .map((document) => document.name);
+for (let index = specs.length - 1; index >= 0; index -= 1) {
+  if (unrecognised.includes(specs[index].name)) specs.splice(index, 1);
+}
 
+check('every JSON document in hotfixes/ parses', unparsableDocuments.length === 0, unparsableDocuments.join('; '));
 check('hotfix declarations exist', specs.length > 0, 'hotfixes/*.json is empty');
+check('every JSON in hotfixes/ is a patch declaration or the publication ledger', unrecognised.length === 0,
+  `${unrecognised.join(', ')} 既没有 HF-YYYY-MMDD-NN 形式的 id，也不是已知的伴随文件`);
 
 // --- Gate 1: every declaration is complete and points at real commits ------
 const incomplete = [];
@@ -114,7 +145,9 @@ for (const spec of specs) {
     if (typeof item.commit !== 'string' || item.commit.length === 0) incomplete.push(`${spec.name}:fixes[${index}].commit`);
     if (typeof item.severity !== 'string' || item.severity.length === 0) incomplete.push(`${spec.name}:fixes[${index}].severity`);
   }
-  if (!/^HF-\d{4}-\d{4}-\d{2}$/.test(body.id || '')) incomplete.push(`${spec.name}:id-format`);
+  // The id format is what told the loader above that this file is a declaration
+  // at all, so it cannot still be wrong here; asserting it twice would leave a
+  // sentence no mutation can ever turn red.
   const declaredCommits = new Set((body.fix_commits || []).map((commit) => {
     try {
       return resolveCommit(commit);
@@ -223,10 +256,23 @@ const cleanArtifacts = [];
 // as evidence - its bytes are never upgraded to today's rules - and it has to
 // declare the defects it still carries, so the reason it is not uploadable is
 // written down rather than merely implied.
-const ledgerPath = path.join(artifactRoot, 'release/hotfix-publications.json');
-const ledger = fs.existsSync(ledgerPath)
-  ? JSON.parse(fs.readFileSync(ledgerPath, 'utf8'))
-  : null;
+// The ledger lives in the source tree, next to the declarations it complements,
+// not in the media tree: `release/` has never been tracked by git, and a
+// provenance record that exists on one machine only is not a record. Entries are
+// keyed by the artifact's path relative to the artifact root, so the file
+// travels with the branch while the artifacts stay where they are built.
+const ledgerPath = path.join(repo, 'hotfixes/hotfix-publications.json');
+let ledger = null;
+let ledgerError = null;
+if (fs.existsSync(ledgerPath)) {
+  try {
+    ledger = JSON.parse(fs.readFileSync(ledgerPath, 'utf8'));
+  } catch (error) {
+    // The ledger is hand-edited too; a syntax error in it must be reported as a
+    // ledger problem, not thrown as a stack trace that hides every other check.
+    ledgerError = String(error.message).split('\n')[0];
+  }
+}
 const publications = new Map();
 for (const entry of (ledger && ledger.publications) || []) publications.set(entry.file, entry);
 const relativeToRoot = (file) => path.relative(artifactRoot, file).split(path.sep).join('/');
@@ -600,15 +646,26 @@ for (const spec of specs) {
   const dir = artifactDirFor(spec.body);
   declaredDirs.set(dir, (declaredDirs.get(dir) || 0) + 1);
 }
+// A delivery directory is what an operator is pointed at, so it must offer one
+// unambiguous thing to apply. Several .cgpatch files sitting in it is normal and
+// intended: a superseded identity keeps its bytes, because those bytes are the
+// evidence of what some site once ran, and deleting them to tidy a directory
+// would destroy exactly the record this ledger exists to keep. What would be
+// ambiguous is two *current* identities in the same directory - the operator's
+// choice would then depend on a directory listing rather than on the ledger. So
+// the count that matters comes from the ledger, not from the filesystem.
 const badDirCounts = [];
-for (const [dir, declaredCount] of declaredDirs) {
-  const directory = path.join(artifactRoot, dir);
-  const count = fs.existsSync(directory)
-    ? fs.readdirSync(directory).filter((name) => name.endsWith('.cgpatch')).length
-    : 0;
-  if (count !== declaredCount) badDirCounts.push(`${dir}: ${count} .cgpatch for ${declaredCount} declaration(s)`);
+const currentByLine = new Map();
+for (const [dir] of declaredDirs) {
+  const offered = [...publications.entries()]
+    .filter(([file, entry]) => entry.status === 'current' && path.posix.dirname(file) === dir)
+    .map(([file]) => file);
+  currentByLine.set(dir, offered);
+  if (offered.length > 1) {
+    badDirCounts.push(`${dir}: ${offered.length} 个 current 产物（${offered.join(', ')}）`);
+  }
 }
-check('every release line holds one unambiguous application entry point per declaration',
+check('every release line offers at most one current artifact in its delivery directory',
   badDirCounts.length === 0, badDirCounts.join('; '));
 
 // A .cgpatch sitting in a release line that no declaration claims is a trap:
@@ -638,6 +695,7 @@ for (const dir of declaredDirs.keys()) {
   }
 }
 const unregistered = deliveryArchives.filter((file) => !publications.has(file));
+check('the publication ledger parses', ledgerError === null, `${ledgerPath} — ${ledgerError || ''}`);
 check('every artifact a release line offers is registered in the publication ledger',
   unregistered.length === 0, unregistered.join(', '));
 
@@ -695,7 +753,6 @@ check('a revision names the identity it supersedes, and that identity points bac
   brokenChain.length === 0, brokenChain.join('; '));
 
 const notCurrent = [];
-const currentPerLine = new Map();
 for (const item of resolved) {
   const entry = item.publication;
   if (!entry) {
@@ -706,19 +763,23 @@ for (const item of resolved) {
     notCurrent.push(`${item.body.id}: 未知的产物状态 ${entry.status}`);
     continue;
   }
-  // A frozen identity is a historical record, not an upload candidate - it only
-  // has to be honest about what it still carries, which the check above enforces.
-  // What must not happen is one release line offering two different "current"
-  // artifacts: that makes the operator's choice depend on a directory listing.
-  if (entry.status !== 'current') continue;
-  const line = artifactDirFor(item.body);
-  if (currentPerLine.has(line) && currentPerLine.get(line) !== entry.file) {
-    notCurrent.push(`${line}: 同一交付线上出现两个 current 产物`);
-  } else {
-    currentPerLine.set(line, entry.file);
+  // The three statuses mean different things to an operator reading the catalogue
+  // and the difference decides what this check may demand:
+  //   current    - this is the artifact the line offers; correct target.
+  //   frozen     - a retired line whose bytes are kept as evidence (HF-2026-0929-03
+  //                and -04 were applied at a site and are not rebuildable). A
+  //                declaration pointing at one is a historical record, not a
+  //                pointer an operator should follow blindly, so it is legitimate
+  //                even when a newer patch exists on the same line.
+  //   superseded - a newer revision of *this same patch* exists. A declaration
+  //                pointing here would send the operator to a retired revision,
+  //                which is the one combination that is never correct.
+  if (entry.status === 'superseded') {
+    const offered = currentByLine.get(artifactDirFor(item.body)) || [];
+    notCurrent.push(`${item.body.id}: 声明指向已被取代的产物 ${entry.file}（本线当前入口：${offered.join(', ') || '无'}）`);
   }
 }
-check('every declaration resolves to a registered identity, with one current artifact per release line',
+check('no declaration points at a superseded artifact: the catalogue must name the newest revision',
   notCurrent.length === 0, notCurrent.join('; '));
 
 // --- Gate 3: the bilingual catalogue is rendered and truthful --------------
@@ -751,14 +812,32 @@ if (fs.existsSync(catalogueEnglish) && fs.existsSync(catalogueChinese)) {
 }
 
 // --- Gate 4: no fix commit can escape without a patch ----------------------
+// Every lookup here is best-effort. A declaration whose baseline or fix commit
+// does not resolve is already reported by name in the two checks above; letting
+// `git log <bad ref>..HEAD` throw instead would replace that verdict with a
+// stack trace, and the coverage question this section asks would go unanswered.
 const declared = new Set();
 for (const spec of specs) {
-  for (const commit of spec.body.fix_commits || []) declared.add(git('rev-parse', `${commit}^{commit}`));
+  for (const commit of spec.body.fix_commits || []) {
+    try {
+      declared.add(git('rev-parse', `${commit}^{commit}`));
+    } catch (error) {
+      // Unresolvable fix commit; the declaration checks already failed for it.
+    }
+  }
 }
-const baselines = [...new Set(specs.map((spec) => spec.body.base_commit))];
+const baselines = [...new Set(specs
+  .map((spec) => spec.body.base_commit)
+  .filter((baseline) => typeof baseline === 'string' && baseline.length > 0))];
 const undeclaredFixes = [];
 for (const baseline of baselines) {
-  const commits = git('log', '--format=%H%x09%s', `${baseline}..HEAD`).split('\n').filter(Boolean);
+  let commits;
+  try {
+    commits = git('log', '--format=%H%x09%s', `${baseline}..HEAD`).split('\n').filter(Boolean);
+  } catch (error) {
+    // Unresolvable baseline; the declaration checks already failed for it.
+    continue;
+  }
   for (const line of commits) {
     const [hash, subject] = line.split('\t');
     if (!/^fix(\([^)]+\))?:/.test(subject)) continue;

@@ -18,12 +18,17 @@ silently undoes the newer fix. **Apply the newest patch for your baseline only, 
 never mix patches built for different baseline versions** — a patch from another
 baseline silently downgrades binaries back to its own release line.
 
-| Hotfix | Severity | Fix commits | Build tree | Artifact |
+A signed patch is never rebuilt in place: a correction produces a *new* identity
+(`-r1`, `-r2`, ...) and the earlier bytes stay in the directory as the only record of
+what a site ran. So a directory can hold several files for one patch. **The table
+below names the one to apply for each patch**; the other identities are history.
+
+| Hotfix | Severity | Fix commits | Build tree | Artifact to apply |
 | --- | --- | --- | --- | --- |
 | HF-2026-0929-05 | P0 | `7252ecf`, `c05f8b2` | `c05f8b2` | `release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-05-2.2-105.x86_64.cgpatch` |
 | HF-2026-0929-04 | P1 | `39ef673`, `4d80125`, `3a61103`, `d0f63e6`, `d2e5d85` | `d2e5d85` | `release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-04-2.2-105.x86_64.cgpatch` |
 | HF-2026-0929-03 | P0 | `de14249`, `7a1ba82`, `ed9faca`, `d5f9491`, `dd82ca5`, `5ae2039`, `28e3b47`, `9303e9d`, `18d738e`, `81fe3c8`, `ac6f3f7`, `abf5782`, `fce48b7` | `de14249` | `release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-03-2.2-104.x86_64.cgpatch` |
-| HF-2026-0928-02 | P0 | `914c6c5`, `3c88289`, `4015f97`, `0e8ab48`, `f90f995` | `f90f995` | `release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-2.2-103.x86_64.cgpatch` |
+| HF-2026-0928-02 | P0 | `914c6c5`, `3c88289`, `4015f97`, `0e8ab48`, `f90f995` | `f90f995` | `release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-r4-2.2-103.x86_64.cgpatch` |
 
 ## Applying a patch
 
@@ -135,13 +140,23 @@ This package replaces exactly one runtime script: scripts/clusterguard-upgrade.s
 - Build tree: `d2e5d850e20d432b92e0c04f963a8381b0044606` (baseline `bf2feeb070948599d054e66670ada3f29ff8ee25` plus the fixes above and nothing else)
 - Applies to: 2.2-105 → 2.2-105+hf-2026-0929-04 (x86_64)
 - Artifact: `release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-04-2.2-105.x86_64.cgpatch`
-- SHA-256: `f768e4b7bc71a486f20d15fddffa9c2defe04b2fadc6e15c60ac0947e1a2ffc4`
+- SHA-256: `78a0b623977a060d157c35a267c67af26cd96c514526d1d2b1f3b4e86999d126`
 - Source diff: `src/HF-2026-0929-04-d2e5d85.patch`
 - Payload:
   - `payload/bin/clusterguard` → `/usr/local/bin/clusterguard` (0755)
   - `payload/bin/clusterguard-update-helper` → `/usr/local/libexec/clusterguard-update-helper` (0755)
   - `payload/scripts/clusterguard-update-job.sh` → `/usr/local/libexec/clusterguard-update-job.sh` (0750)
 - Restart required: `clusterguard-ha.service`, `clusterguard-update-helper.service`
+
+> **This identity is frozen.** It is the artifact a site actually ran, kept as evidence; it is not
+> the upload entry point for its line. It still carries the defects listed below, and it is never
+> rebuilt to today's rules — that would destroy the record.
+
+- Known defect: HF-2026-0929-04:rollback.sh 未用改名换 inode 恢复文件（就地写运行中的二进制会 ETXTBSY）
+- Known defect: HF-2026-0929-04:rollback.sh 直接覆盖目标文件（运行中的二进制会 ETXTBSY）
+- Known defect: HF-2026-0929-04:apply.sh 未把备份清单绑定到本补丁的 hotfix id
+- Known defect: HF-2026-0929-04:rollback.sh 未把备份清单绑定到本补丁的 hotfix id
+- Known defect: HF-2026-0929-04:rollback.sh 接受任意备份清单，可能恢复别的补丁的文件或误删文件
 
 ### What this patch does
 
@@ -246,7 +261,7 @@ This package replaces two binaries - /usr/local/bin/clusterguard (the control pl
 - Build tree: `de142494dd73b6d7890df713897e551caa9da2a1` (baseline `e01f5ce376f94e2595590358c72dd2585e7c09b4` plus the fixes above and nothing else)
 - Applies to: 2.2-104 → 2.2-104+hf-2026-0929-03 (x86_64)
 - Artifact: `release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-03-2.2-104.x86_64.cgpatch`
-- SHA-256: `c8bc761c03397d879b0d81d666e7181a0fe626b111090bee6e5bd140ccf95765`
+- SHA-256: `21bdc542d9c24c1d6345788797ba12bfd804c54f2fa33af4ae5022cc75aad7a3`
 - Source diff: `src/HF-2026-0929-03-de14249.patch`
 - Payload:
   - `payload/bin/clusterguard` → `/usr/local/bin/clusterguard` (0755)
@@ -261,6 +276,16 @@ This package replaces two binaries - /usr/local/bin/clusterguard (the control pl
   - `payload/scripts/clusterguard-upgrade.sh` → `/usr/local/sbin/clusterguard-upgrade` (0750)
   - `payload/installer/install_clusterguard.sh` → `installer-only, no site path` (0755)
 - Restart required: `clusterguard-ha.service`, `clusterguard-update-helper.service`, `clusterguard-agent-reconcile.service`
+
+> **This identity is frozen.** It is the artifact a site actually ran, kept as evidence; it is not
+> the upload entry point for its line. It still carries the defects listed below, and it is never
+> rebuilt to today's rules — that would destroy the record.
+
+- Known defect: HF-2026-0929-03:rollback.sh 未用改名换 inode 恢复文件（就地写运行中的二进制会 ETXTBSY）
+- Known defect: HF-2026-0929-03:rollback.sh 直接覆盖目标文件（运行中的二进制会 ETXTBSY）
+- Known defect: HF-2026-0929-03:apply.sh 未把备份清单绑定到本补丁的 hotfix id
+- Known defect: HF-2026-0929-03:rollback.sh 未把备份清单绑定到本补丁的 hotfix id
+- Known defect: HF-2026-0929-03:rollback.sh 接受任意备份清单，可能恢复别的补丁的文件或误删文件
 
 ### What this patch does
 
@@ -477,8 +502,9 @@ This patch contains and supersedes HF-2026-0929-02 (and therefore contains HF-20
 - Fix commits: `914c6c5`, `3c88289`, `4015f97`, `0e8ab48`, `f90f995`
 - Build tree: `f90f995fb92c23d66723a5331742a551be7a93b6` (baseline `467e533` plus the fixes above and nothing else)
 - Applies to: 2.2-103 → 2.2-103+hf-2026-0928-02 (x86_64)
-- Artifact: `release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-2.2-103.x86_64.cgpatch`
-- SHA-256: `f5919ad90b960913b2b39b57245172b670c4b328cad5e0f3d6854225f0cadecf`
+- Artifact: `release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-r4-2.2-103.x86_64.cgpatch`
+- SHA-256: `b11c939fcaa581d7b8e6f2c65613f57ca3dc5e72990f4a3fbbf50e4bc60deb50`
+- Artifact identity: revision 4, supersedes `13731cae03f04d605cc5d8f339947bd13f882a8149a14b402c719bffebebf764` (`release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-r3-2.2-103.x86_64.cgpatch`) — 第 3 修订（r3）的理由里写死了一个二进制的差异字节数，那个数字只对其中一个二进制成立，而且差异长度本身随构建路径变化。根因不是这一次算错，而是签名清单里放进了会随时间漂移的量化断言——清单一旦签名就不可改写，任何笔误都只能靠再出一个修订来纠正，代价是又多一份几乎相同的交付物。第 4 修订把这类细节从签名清单里移出去：清单只保留「为什么替换前一个身份」这一不会随时间变化的事实，实测数据放在发布台账（hotfixes/hotfix-publications.json）里，那是可修订的记录。前三个修订的链条与原始动机见台账。r0 至 r3 均未交付任何现场，其摘要与字节按不可变规则保留，标记为 superseded。已知限制：本仓库的补丁二进制不可逐字节复现，判断一份产物是否被换过只能靠台账登记的摘要。
 - Source diff: `src/HF-2026-0928-02-f90f995.patch`
 - Payload:
   - `payload/bin/clusterguard` → `/usr/local/bin/clusterguard` (0755)
@@ -572,4 +598,18 @@ Cumulative bundle covering the five fixes missing from the 2.2-103 baseline; it 
 ### Rollback
 
 执行 rollback.sh 恢复旧二进制、旧单元与旧运行时脚本，然后 systemctl daemon-reload 并 systemctl restart clusterguard-ha。注意：回滚会把 /run/clusterguard 重新交回 0750 的创建方，下一次整机重启会再次让集群起不来；仅在确认新版本有回归时使用，并在回滚后临时手工执行 chmod 0755 /run/clusterguard。
+
+### Identity history of this patch
+
+The section above describes `clusterguard-ha-hotfix-HF-2026-0928-02-r4-2.2-103.x86_64.cgpatch`. The identities below stay in the delivery
+directory under the immutability rule — **they are not installation entry points**, only the
+evidence of what a site ran or of what an earlier build of this patch contained. The full
+timeline is in `hotfixes/hotfix-publications.json`.
+
+- **revision 3** `13731cae03f04d605cc5d8f339947bd13f882a8149a14b402c719bffebebf764` (8,977,602 bytes, superseded)
+  - Why it was replaced — quoted verbatim from its signed manifest (Chinese; the manifest field is a single string): 起点是第 1 修订（r1）：它的签名清单把发布台账的位置写成 release/hotfix-publications.json，而台账随后迁入源码树（hotfixes/hotfix-publications.json，跟随分支传播），该指针因此指向一个不存在的文件。第 2 修订（r2）本意是纠正这句话，但它在理由里写下了「载荷与 r1 逐字节相同」——这句话不成立：两次构建的二进制大小与代码相同，但每个二进制有 63 字节不同，那是 Go 的 build ID（构建路径派生）。r2 已经签名，按不可变规则不得原地改写，于是由第 3 修订把话改对。自 r1 起构建输入未变：同一 base_commit、build_commit、fix_commits 与组件集合，本修订只动清单里的身份字段与这段散文。已知限制（独立于本次文案修订）：本仓库的补丁二进制**不可逐字节复现**，「同一 commit 重新构建得到相同字节」目前不成立，因此判断一份产物是否被换过只能靠台账登记的摘要，不能靠重构建对拍。r0 的字节已不可恢复；r0、r1、r2 均未交付任何现场，其摘要与字节按不可变规则保留，标记为 superseded。
+- **revision 2** `4cf15ee118ed73bd28b854d4b331e4f083617b7bd527b52351f9ca26c9a4416d` (8,977,146 bytes, superseded)
+  - Why it was replaced — quoted verbatim from its signed manifest (Chinese; the manifest field is a single string): 第 1 修订（r1）的签名清单把发布台账的位置写成 release/hotfix-publications.json。台账随后迁入源码树（hotfixes/hotfix-publications.json，可随分支传播），r1 清单里的这个指针因此指向一个不存在的文件。已签名的产物不得原地改写——同一个文件名配上不同的字节，会让「现场运行过什么」失去唯一的凭证——所以这段文案由第 2 修订来纠正，而不是回去改 r1。本修订只动清单里的身份字段与散文：载荷（二进制、单元、运行时脚本、源码 diff）与 r1 逐字节相同。r1 已登记但从未交付任何现场，故标记为 superseded，其摘要与字节按不可变规则原样保留。
+- **revision 1** `62bc8c7cffaced9c5fda113961bc4d50b9e5e55656945aa977fd615fdb388dea` (8,976,887 bytes, superseded)
+  - Why it was replaced — quoted verbatim from its signed manifest (Chinese; the manifest field is a single string): 原身份（r0）的字节在 2026-09-29 17:47 被一次「同名原地重建」覆盖，且三个现场节点都没有留存 2.2-103 线的补丁包，无法像 HF-2026-0929-03 / -04 那样从现场取回，因此 r0 已不可恢复。本修订用修正后的生成器重新构建（生成的 rollback.sh 改为 mktemp + mv -f 换 inode，且只认本补丁自己的备份清单），并以新文件名与新摘要发布；r0 的摘要保留在 release/hotfix-publications.json 作为它曾经存在过的唯一记录。
 

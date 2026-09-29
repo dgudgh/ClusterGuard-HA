@@ -56,6 +56,22 @@ function readManifest(archive) {
   return manifest;
 }
 
+// The ledger, not the directory listing, decides which artifact in a directory is
+// the one to apply. Several revisions of the same patch legitimately live side by
+// side - the superseded ones keep their bytes because those bytes are the evidence
+// of what a site once ran - so "newest file wins" would be a guess and "list them
+// all as separate patches" tells an operator nothing about which to upload.
+function loadLedger(options) {
+  const ledgerPath = path.join(options.repository, "hotfixes/hotfix-publications.json");
+  if (!fs.existsSync(ledgerPath)) {
+    throw new Error(`publication ledger not found: ${ledgerPath}`);
+  }
+  const ledger = JSON.parse(fs.readFileSync(ledgerPath, "utf8"));
+  const byFile = new Map();
+  for (const entry of ledger.publications || []) byFile.set(entry.file, entry);
+  return byFile;
+}
+
 function collect(options) {
   const releaseRoot = path.join(options.artifactRoot, "release");
   if (!fs.existsSync(releaseRoot)) {
@@ -71,12 +87,14 @@ function collect(options) {
       .filter((name) => fs.statSync(path.join(releaseRoot, name)).isDirectory())
       .map((name) => `release/${name}`)
       .sort();
+  const ledger = loadLedger(options);
   const manifests = [];
   for (const dir of directories) {
     const directory = path.join(options.artifactRoot, dir);
     for (const name of fs.readdirSync(directory).filter((n) => n.endsWith(".cgpatch")).sort()) {
       const manifest = readManifest(path.join(directory, name));
       manifest.dirName = dir;
+      manifest.publication = ledger.get(`${dir}/${name}`) || null;
       manifests.push(manifest);
     }
   }
@@ -84,6 +102,31 @@ function collect(options) {
     throw new Error(`no hotfix patches found under ${releaseRoot}`);
   }
   return manifests;
+}
+
+// One section per patch, not one per file. The body describes the identity the
+// ledger marks as the line's current entry point; every other revision of that
+// same patch is listed underneath as identity history. A line with no current
+// identity (every patch on it is frozen - the site already ran it and it cannot
+// be rebuilt) falls back to its newest identity, and the section says so.
+function group(manifests) {
+  const byHotfix = new Map();
+  for (const manifest of manifests) {
+    if (!byHotfix.has(manifest.hotfix_id)) byHotfix.set(manifest.hotfix_id, []);
+    byHotfix.get(manifest.hotfix_id).push(manifest);
+  }
+  const groups = [];
+  for (const [hotfixId, entries] of byHotfix) {
+    entries.sort((left, right) => (left.revision || 0) - (right.revision || 0));
+    const current = entries.find((entry) => entry.publication && entry.publication.status === "current");
+    const primary = current || entries[entries.length - 1];
+    groups.push({
+      hotfixId,
+      primary,
+      superseded: entries.filter((entry) => entry !== primary)
+    });
+  }
+  return groups.sort((left, right) => right.hotfixId.localeCompare(left.hotfixId));
 }
 
 function restartUnits(manifest) {
@@ -94,7 +137,16 @@ function restartUnits(manifest) {
   return units;
 }
 
-function renderEnglish(manifests) {
+function statusLabel(status, language) {
+  const labels = {
+    current: { en: "current", zh: "当前" },
+    frozen: { en: "frozen evidence", zh: "已冻结的证据" },
+    superseded: { en: "superseded", zh: "已被取代" }
+  };
+  return (labels[status] || { en: status, zh: status })[language];
+}
+
+function renderEnglish(groups) {
   const lines = [];
   lines.push("# Hotfix patch catalogue");
   lines.push("");
@@ -116,11 +168,16 @@ function renderEnglish(manifests) {
   lines.push("never mix patches built for different baseline versions** — a patch from another");
   lines.push("baseline silently downgrades binaries back to its own release line.");
   lines.push("");
-  lines.push("| Hotfix | Severity | Fix commits | Build tree | Artifact |");
+  lines.push("A signed patch is never rebuilt in place: a correction produces a *new* identity");
+  lines.push("(`-r1`, `-r2`, ...) and the earlier bytes stay in the directory as the only record of");
+  lines.push("what a site ran. So a directory can hold several files for one patch. **The table");
+  lines.push("below names the one to apply for each patch**; the other identities are history.");
+  lines.push("");
+  lines.push("| Hotfix | Severity | Fix commits | Build tree | Artifact to apply |");
   lines.push("| --- | --- | --- | --- | --- |");
-  for (const manifest of manifests) {
-    const commits = manifest.fix_commits.map((commit) => `\`${commit.slice(0, 7)}\``).join(", ");
-    lines.push(`| ${manifest.hotfix_id} | ${manifest.severity} | ${commits} | \`${manifest.build_commit.slice(0, 7)}\` | \`${manifest.dirName}/${manifest.archive}\` |`);
+  for (const { primary } of groups) {
+    const commits = primary.fix_commits.map((commit) => `\`${commit.slice(0, 7)}\``).join(", ");
+    lines.push(`| ${primary.hotfix_id} | ${primary.severity} | ${commits} | \`${primary.build_commit.slice(0, 7)}\` | \`${primary.dirName}/${primary.archive}\` |`);
   }
   lines.push("");
   lines.push("## Applying a patch");
@@ -137,36 +194,44 @@ function renderEnglish(manifests) {
   lines.push("bash rollback.sh         # restores from the newest backup manifest");
   lines.push("```");
   lines.push("");
-  for (const manifest of manifests) {
-    lines.push(`## ${manifest.hotfix_id} — ${manifest.title.en}`);
+  for (const { primary, superseded } of groups) {
+    lines.push(`## ${primary.hotfix_id} — ${primary.title.en}`);
     lines.push("");
-    lines.push(`- Severity: ${manifest.severity}`);
-    lines.push(`- Fix commits: ${manifest.fix_commits.map((commit) => `\`${commit.slice(0, 7)}\``).join(", ")}`);
-    lines.push(`- Build tree: \`${manifest.build_commit}\` (baseline \`${manifest.base_commit}\` plus the fixes above and nothing else)`);
-    lines.push(`- Applies to: ${manifest.source.version}-${manifest.source.release} → ${manifest.target.version}-${manifest.target.release} (${manifest.target.rpm_architecture})`);
-    lines.push(`- Artifact: \`${manifest.dirName}/${manifest.archive}\``);
-    lines.push(`- SHA-256: \`${manifest.archiveSha256}\``);
-    if (manifest.revision > 0 && manifest.supersedes_artifact) {
-      lines.push(`- Artifact identity: revision ${manifest.revision}, supersedes \`${manifest.supersedes_artifact.sha256}\` (\`${manifest.supersedes_artifact.file}\`) — ${manifest.supersedes_artifact.reason}`);
+    lines.push(`- Severity: ${primary.severity}`);
+    lines.push(`- Fix commits: ${primary.fix_commits.map((commit) => `\`${commit.slice(0, 7)}\``).join(", ")}`);
+    lines.push(`- Build tree: \`${primary.build_commit}\` (baseline \`${primary.base_commit}\` plus the fixes above and nothing else)`);
+    lines.push(`- Applies to: ${primary.source.version}-${primary.source.release} → ${primary.target.version}-${primary.target.release} (${primary.target.rpm_architecture})`);
+    lines.push(`- Artifact: \`${primary.dirName}/${primary.archive}\``);
+    lines.push(`- SHA-256: \`${primary.archiveSha256}\``);
+    if (primary.revision > 0 && primary.supersedes_artifact) {
+      lines.push(`- Artifact identity: revision ${primary.revision}, supersedes \`${primary.supersedes_artifact.sha256}\` (\`${primary.supersedes_artifact.file}\`) — ${primary.supersedes_artifact.reason}`);
     }
-    lines.push(`- Source diff: \`${manifest.source_patch}\``);
+    lines.push(`- Source diff: \`${primary.source_patch}\``);
     lines.push("- Payload:");
-    for (const entry of manifest.files) {
+    for (const entry of primary.files) {
       const target = entry.install_path || "installer-only, no site path";
       lines.push(`  - \`${entry.artifact}\` → \`${target}\` (${entry.mode})`);
     }
-    const units = restartUnits(manifest);
+    const units = restartUnits(primary);
     lines.push(`- Restart required: ${units.length ? units.map((unit) => `\`${unit}\``).join(", ") : "none"}`);
     lines.push("");
-    if (manifest.summary) {
+    if (primary.publication && primary.publication.status === "frozen") {
+      lines.push("> **This identity is frozen.** It is the artifact a site actually ran, kept as evidence; it is not");
+      lines.push("> the upload entry point for its line. It still carries the defects listed below, and it is never");
+      lines.push("> rebuilt to today's rules — that would destroy the record.");
+      lines.push("");
+      for (const defect of primary.publication.known_defects || []) lines.push(`- Known defect: ${defect}`);
+      if ((primary.publication.known_defects || []).length > 0) lines.push("");
+    }
+    if (primary.summary) {
       lines.push("### What this patch does");
       lines.push("");
-      lines.push(manifest.summary.en);
+      lines.push(primary.summary.en);
       lines.push("");
     }
-    for (const [index, item] of (manifest.fixes || []).entries()) {
+    for (const [index, item] of (primary.fixes || []).entries()) {
       const commit = (item.commit || "").slice(0, 7);
-      lines.push(`### ${manifest.hotfix_id}.${index + 1} ${item.title.en} (\`${commit}\`, ${item.severity})`);
+      lines.push(`### ${primary.hotfix_id}.${index + 1} ${item.title.en} (\`${commit}\`, ${item.severity})`);
       lines.push("");
       lines.push(`- Symptom: ${item.symptom.en}`);
       lines.push("");
@@ -182,17 +247,36 @@ function renderEnglish(manifests) {
     }
     lines.push("### Verification");
     lines.push("");
-    for (const step of manifest.verification || []) lines.push(`- \`${step}\``);
+    for (const step of primary.verification || []) lines.push(`- \`${step}\``);
     lines.push("");
     lines.push("### Rollback");
     lines.push("");
-    lines.push(typeof manifest.rollback === "string" ? manifest.rollback : manifest.rollback.en);
+    lines.push(typeof primary.rollback === "string" ? primary.rollback : primary.rollback.en);
     lines.push("");
+    if (superseded.length > 0) {
+      lines.push("### Identity history of this patch");
+      lines.push("");
+      lines.push(`The section above describes \`${primary.archive}\`. The identities below stay in the delivery`);
+      lines.push("directory under the immutability rule — **they are not installation entry points**, only the");
+      lines.push("evidence of what a site ran or of what an earlier build of this patch contained. The full");
+      lines.push("timeline is in `hotfixes/hotfix-publications.json`.");
+      lines.push("");
+      for (const entry of [...superseded].reverse()) {
+        const status = entry.publication ? statusLabel(entry.publication.status, "en") : "unregistered";
+        const size = entry.publication ? `${entry.publication.size.toLocaleString("en-US")} bytes` : "size not recorded";
+        const revision = entry.revision > 0 ? `revision ${entry.revision}` : "first publication";
+        lines.push(`- **${revision}** \`${entry.archiveSha256}\` (${size}, ${status})`);
+        if (entry.supersedes_artifact) {
+          lines.push(`  - Why it was replaced — quoted verbatim from its signed manifest (Chinese; the manifest field is a single string): ${entry.supersedes_artifact.reason}`);
+        }
+      }
+      lines.push("");
+    }
   }
   return lines.join("\n") + "\n";
 }
 
-function renderChinese(manifests) {
+function renderChinese(groups) {
   const lines = [];
   lines.push("# 热修补丁台账");
   lines.push("");
@@ -209,11 +293,15 @@ function renderChinese(manifests) {
   lines.push("补丁如果叠加，结果取决于安装顺序——后装旧的会把新修复盖掉。**只装你所在基线版本的最新一个包，");
   lines.push("不要混装不同基线版本的包**——装错基线的包会把二进制悄悄降级回它自己的发布线。");
   lines.push("");
-  lines.push("| 补丁编号 | 严重级别 | 覆盖修复提交 | 构建树 | 产物 |");
+  lines.push("已签名的补丁**永不原地重建**：任何修订都会产生**新身份**（`-r1`、`-r2` …），旧身份的字节");
+  lines.push("留在目录里，作为“现场到底运行过什么”的唯一记录。所以一个目录里可能同时存在同一个补丁的");
+  lines.push("多份文件。**下表列出的才是每个补丁应当安装的那一份**，其余身份只是历史。");
+  lines.push("");
+  lines.push("| 补丁编号 | 严重级别 | 覆盖修复提交 | 构建树 | 应当安装的产物 |");
   lines.push("| --- | --- | --- | --- | --- |");
-  for (const manifest of manifests) {
-    const commits = manifest.fix_commits.map((commit) => `\`${commit.slice(0, 7)}\``).join("、");
-    lines.push(`| ${manifest.hotfix_id} | ${manifest.severity} | ${commits} | \`${manifest.build_commit.slice(0, 7)}\` | \`${manifest.dirName}/${manifest.archive}\` |`);
+  for (const { primary } of groups) {
+    const commits = primary.fix_commits.map((commit) => `\`${commit.slice(0, 7)}\``).join("、");
+    lines.push(`| ${primary.hotfix_id} | ${primary.severity} | ${commits} | \`${primary.build_commit.slice(0, 7)}\` | \`${primary.dirName}/${primary.archive}\` |`);
   }
   lines.push("");
   lines.push("## 应用补丁");
@@ -230,36 +318,43 @@ function renderChinese(manifests) {
   lines.push("bash rollback.sh         # 按最新备份清单回滚");
   lines.push("```");
   lines.push("");
-  for (const manifest of manifests) {
-    lines.push(`## ${manifest.hotfix_id} — ${manifest.title.zh}`);
+  for (const { primary, superseded } of groups) {
+    lines.push(`## ${primary.hotfix_id} — ${primary.title.zh}`);
     lines.push("");
-    lines.push(`- 严重级别：${manifest.severity}`);
-    lines.push(`- 覆盖修复提交：${manifest.fix_commits.map((commit) => `\`${commit.slice(0, 7)}\``).join("、")}`);
-    lines.push(`- 构建树：\`${manifest.build_commit}\`（基线 \`${manifest.base_commit}\` + 上述修复，不含其它提交）`);
-    lines.push(`- 适用版本：${manifest.source.version}-${manifest.source.release} → ${manifest.target.version}-${manifest.target.release}（${manifest.target.rpm_architecture}）`);
-    lines.push(`- 产物：\`${manifest.dirName}/${manifest.archive}\``);
-    lines.push(`- SHA-256：\`${manifest.archiveSha256}\``);
-    if (manifest.revision > 0 && manifest.supersedes_artifact) {
-      lines.push(`- 产物身份：第 ${manifest.revision} 修订，替代 \`${manifest.supersedes_artifact.sha256}\`（\`${manifest.supersedes_artifact.file}\`）——${manifest.supersedes_artifact.reason}`);
+    lines.push(`- 严重级别：${primary.severity}`);
+    lines.push(`- 覆盖修复提交：${primary.fix_commits.map((commit) => `\`${commit.slice(0, 7)}\``).join("、")}`);
+    lines.push(`- 构建树：\`${primary.build_commit}\`（基线 \`${primary.base_commit}\` + 上述修复，不含其它提交）`);
+    lines.push(`- 适用版本：${primary.source.version}-${primary.source.release} → ${primary.target.version}-${primary.target.release}（${primary.target.rpm_architecture}）`);
+    lines.push(`- 产物：\`${primary.dirName}/${primary.archive}\``);
+    lines.push(`- SHA-256：\`${primary.archiveSha256}\``);
+    if (primary.revision > 0 && primary.supersedes_artifact) {
+      lines.push(`- 产物身份：第 ${primary.revision} 修订，替代 \`${primary.supersedes_artifact.sha256}\`（\`${primary.supersedes_artifact.file}\`）——${primary.supersedes_artifact.reason}`);
     }
-    lines.push(`- 源码差异：\`${manifest.source_patch}\``);
+    lines.push(`- 源码差异：\`${primary.source_patch}\``);
     lines.push("- 交付内容：");
-    for (const entry of manifest.files) {
+    for (const entry of primary.files) {
       const target = entry.install_path || "仅安装器，现场无对应路径";
       lines.push(`  - \`${entry.artifact}\` → \`${target}\`（${entry.mode}）`);
     }
-    const units = restartUnits(manifest);
+    const units = restartUnits(primary);
     lines.push(`- 需要重启：${units.length ? units.map((unit) => `\`${unit}\``).join("、") : "无"}`);
     lines.push("");
-    if (manifest.summary) {
+    if (primary.publication && primary.publication.status === "frozen") {
+      lines.push("> **本身份已冻结。** 它是现场实际执行过的那一份，作为证据保留，**不是该交付线的上传入口**。");
+      lines.push("> 它仍带着下列缺陷，且不会按今天的规则回炉重造——那会毁掉这份证据。");
+      lines.push("");
+      for (const defect of primary.publication.known_defects || []) lines.push(`- 已知缺陷：${defect}`);
+      if ((primary.publication.known_defects || []).length > 0) lines.push("");
+    }
+    if (primary.summary) {
       lines.push("### 本包概要");
       lines.push("");
-      lines.push(manifest.summary.zh);
+      lines.push(primary.summary.zh);
       lines.push("");
     }
-    for (const [index, item] of (manifest.fixes || []).entries()) {
+    for (const [index, item] of (primary.fixes || []).entries()) {
       const commit = (item.commit || "").slice(0, 7);
-      lines.push(`### ${manifest.hotfix_id}.${index + 1} ${item.title.zh}（\`${commit}\`，${item.severity}）`);
+      lines.push(`### ${primary.hotfix_id}.${index + 1} ${item.title.zh}（\`${commit}\`，${item.severity}）`);
       lines.push("");
       lines.push(`- 现象：${item.symptom.zh}`);
       lines.push("");
@@ -275,24 +370,43 @@ function renderChinese(manifests) {
     }
     lines.push("### 验证");
     lines.push("");
-    for (const step of manifest.verification || []) lines.push(`- \`${step}\``);
+    for (const step of primary.verification || []) lines.push(`- \`${step}\``);
     lines.push("");
     lines.push("### 回滚");
     lines.push("");
-    lines.push(typeof manifest.rollback === "string" ? manifest.rollback : manifest.rollback.zh);
+    lines.push(typeof primary.rollback === "string" ? primary.rollback : primary.rollback.zh);
     lines.push("");
+    if (superseded.length > 0) {
+      lines.push("### 该补丁的身份历史");
+      lines.push("");
+      lines.push(`上面一节描述的是 \`${primary.archive}\`。下列身份按不可变规则留在交付目录里，`);
+      lines.push("**不是安装入口**，只作为「现场到底运行过什么」或「本补丁早先构建成了什么」的证据。");
+      lines.push("完整时间线见 `hotfixes/hotfix-publications.json`。");
+      lines.push("");
+      for (const entry of [...superseded].reverse()) {
+        const status = entry.publication ? statusLabel(entry.publication.status, "zh") : "未登记";
+        const size = entry.publication ? `${entry.publication.size.toLocaleString("en-US")} 字节` : "大小未登记";
+        const revision = entry.revision > 0 ? `第 ${entry.revision} 修订` : "首次发布";
+        lines.push(`- **${revision}** \`${entry.archiveSha256}\`（${size}，${status}）`);
+        if (entry.supersedes_artifact) {
+          lines.push(`  - 被替换的原因（原样引自它自己的签名清单）：${entry.supersedes_artifact.reason}`);
+        }
+      }
+      lines.push("");
+    }
   }
   return lines.join("\n") + "\n";
 }
 
 const main = () => {
   const options = parseArgs(process.argv.slice(2));
-  const manifests = collect(options).sort((left, right) => right.hotfix_id.localeCompare(left.hotfix_id));
+  const groups = group(collect(options));
   fs.mkdirSync(path.dirname(options.outEn), { recursive: true });
   fs.mkdirSync(path.dirname(options.outZh), { recursive: true });
-  fs.writeFileSync(options.outEn, renderEnglish(manifests));
-  fs.writeFileSync(options.outZh, renderChinese(manifests));
-  console.log(`rendered ${manifests.length} hotfix patches`);
+  fs.writeFileSync(options.outEn, renderEnglish(groups));
+  fs.writeFileSync(options.outZh, renderChinese(groups));
+  const identities = groups.reduce((total, item) => total + 1 + item.superseded.length, 0);
+  console.log(`rendered ${groups.length} hotfix patches (${identities} published identities)`);
   console.log(`en=${options.outEn}`);
   console.log(`zh=${options.outZh}`);
 };

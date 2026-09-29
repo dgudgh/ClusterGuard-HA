@@ -1,0 +1,141 @@
+{
+  "schema_version": 1,
+  "note": "已签名交付物的身份台账，只追加不修改。同一个文件名、同一个版本号、不同的字节＝事故：现场会说自己装的是 2.2-105，仓库也有 2.2-105，而两边摘要不同，事后无法证明节点实际运行过什么。因此任何修订都必须产生新身份（文件名带 -r1、-r2 …，manifest 带 revision 与 supersedes_artifact）。status=current 的产物才是该交付线当前可上传的入口；status=frozen 的身份只作为「现场到底运行过什么」的证据保留，它的字节永远不按今天的规则升级，且必须逐条声明它仍带的缺陷（known_defects 与门禁实测必须**双向**一致）。bytes_retained=false 表示该身份的字节已不存在，摘要仍保留为唯一记录。分工：签名清单里的 supersedes_artifact.reason 只写「为什么替换前一个身份」——它一旦签名就不可改写，所以不放任何会随时间漂移的事实、路径或量化断言；测量数据、时间线、当时的判断全部写在本台账与文档里，那是可修订的记录。",
+  "publications": [
+    {
+      "file": "release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-2.2-103.x86_64.cgpatch",
+      "hotfix_id": "HF-2026-0928-02",
+      "release_line": "2.2-103",
+      "revision": 0,
+      "sha256": "71083a217f5e0c317c752ce084ed43ea353fc877f5ff1a5737e9444c07eea55b",
+      "size": 8975400,
+      "status": "superseded",
+      "supersedes_sha256": null,
+      "superseded_by": "release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-r1-2.2-103.x86_64.cgpatch",
+      "bytes_retained": false,
+      "known_defects": [],
+      "note": "字节已丢失。2026-09-29 17:47 用修好的生成器重建时，构建脚本当时既不归档、也不拒绝同名文件，直接原地覆盖了这份已发布产物；152/153/154 三台现场都没有留存任何 2.2-103 线的补丁包，因此无法像 HF-2026-0929-03/-04 那样取回。此摘要取自最后一份已提交的台账 docs/zh-CN/hotfix-patches.md，是该身份存在过的唯一记录。"
+    },
+    {
+      "file": "release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-r1-2.2-103.x86_64.cgpatch",
+      "hotfix_id": "HF-2026-0928-02",
+      "release_line": "2.2-103",
+      "revision": 1,
+      "sha256": "62bc8c7cffaced9c5fda113961bc4d50b9e5e55656945aa977fd615fdb388dea",
+      "size": 8976887,
+      "status": "superseded",
+      "supersedes_sha256": "71083a217f5e0c317c752ce084ed43ea353fc877f5ff1a5737e9444c07eea55b",
+      "superseded_by": "release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-r2-2.2-103.x86_64.cgpatch",
+      "bytes_retained": true,
+      "known_defects": [],
+      "note": "r0 不可恢复后以新身份重新构建（生成的 rollback.sh 改为 mktemp + mv -f 换 inode，且只认本补丁自己的备份清单）。留下一个缺陷：它的签名清单把发布台账的位置写成 release/hotfix-publications.json，而台账随后迁入源码树（hotfixes/hotfix-publications.json）。指针失效，但指向的是台账而不是载荷，因此只是文档缺陷；按不可变规则不回炉，由 r2 起逐个修订纠正。线上已不在 2.2-103，此身份留档。"
+    },
+    {
+      "file": "release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-r2-2.2-103.x86_64.cgpatch",
+      "hotfix_id": "HF-2026-0928-02",
+      "release_line": "2.2-103",
+      "revision": 2,
+      "sha256": "4cf15ee118ed73bd28b854d4b331e4f083617b7bd527b52351f9ca26c9a4416d",
+      "size": 8977146,
+      "status": "superseded",
+      "supersedes_sha256": "62bc8c7cffaced9c5fda113961bc4d50b9e5e55656945aa977fd615fdb388dea",
+      "superseded_by": "release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-r3-2.2-103.x86_64.cgpatch",
+      "bytes_retained": true,
+      "known_defects": [],
+      "note": "为纠正 r1 的失效台账指针而构建，但它的理由里写了一句未经实测的断言「载荷与 r1 逐字节相同」——不成立。实测（逐字节比对解包后的 payload/bin）：clusterguard 差 63 字节、clusterguard-agent 差 40 字节，大小与其余内容完全相同，差异全部落在 Go 的 build ID 上。该断言随产物签名，无法回改，只能由 r3 纠正。"
+    },
+    {
+      "file": "release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-r3-2.2-103.x86_64.cgpatch",
+      "hotfix_id": "HF-2026-0928-02",
+      "release_line": "2.2-103",
+      "revision": 3,
+      "sha256": "13731cae03f04d605cc5d8f339947bd13f882a8149a14b402c719bffebebf764",
+      "size": 8977602,
+      "status": "superseded",
+      "supersedes_sha256": "4cf15ee118ed73bd28b854d4b331e4f083617b7bd527b52351f9ca26c9a4416d",
+      "superseded_by": "release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-r4-2.2-103.x86_64.cgpatch",
+      "bytes_retained": true,
+      "known_defects": [],
+      "note": "纠正 r2 的错误断言，但又把差异字节数写死成「每个二进制 63 字节」。实测（同一比对方法）三个身份两两之间：clusterguard 为 63/61/63 字节，clusterguard-agent 为 40/40/40 字节——数字只对其中一个二进制成立。根因是签名清单里放了会漂移的量化断言；r4 起改为「清单只写为什么替换，实测数据写台账」。"
+    },
+    {
+      "file": "release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-r4-2.2-103.x86_64.cgpatch",
+      "hotfix_id": "HF-2026-0928-02",
+      "release_line": "2.2-103",
+      "revision": 4,
+      "sha256": "b11c939fcaa581d7b8e6f2c65613f57ca3dc5e72990f4a3fbbf50e4bc60deb50",
+      "size": 8977452,
+      "status": "current",
+      "supersedes_sha256": "13731cae03f04d605cc5d8f339947bd13f882a8149a14b402c719bffebebf764",
+      "superseded_by": null,
+      "bytes_retained": true,
+      "known_defects": [],
+      "note": "本条为该线当前可上传入口。签名清单的身份理由不再包含任何量化断言，只保留「为什么替换前一个身份」这一不会随时间变化的事实；实测数据全部留在本台账。构建输入自 r1 起未变（同一 base_commit、build_commit、fix_commits 与组件集合）。r0 至 r4 均未交付任何现场。",
+      "known_limitations": [
+        "本仓库的补丁二进制不可逐字节复现（Go build ID 由构建路径派生），因此「同一 commit 重新构建得到相同字节」不成立：判断一份产物是否被换过只能靠本台账登记的摘要，不能靠重构建对拍。"
+      ]
+    },
+    {
+      "file": "release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-03-2.2-104.x86_64.cgpatch",
+      "hotfix_id": "HF-2026-0929-03",
+      "release_line": "2.2-104",
+      "revision": 0,
+      "sha256": "21bdc542d9c24c1d6345788797ba12bfd804c54f2fa33af4ae5022cc75aad7a3",
+      "size": 11963399,
+      "status": "frozen",
+      "supersedes_sha256": null,
+      "superseded_by": null,
+      "bytes_retained": true,
+      "known_defects": [
+        "HF-2026-0929-03:rollback.sh 未用改名换 inode 恢复文件（就地写运行中的二进制会 ETXTBSY）",
+        "HF-2026-0929-03:rollback.sh 直接覆盖目标文件（运行中的二进制会 ETXTBSY）",
+        "HF-2026-0929-03:apply.sh 未把备份清单绑定到本补丁的 hotfix id",
+        "HF-2026-0929-03:rollback.sh 未把备份清单绑定到本补丁的 hotfix id",
+        "HF-2026-0929-03:rollback.sh 接受任意备份清单，可能恢复别的补丁的文件或误删文件"
+      ],
+      "note": "2026-09-29 17:47 被同名覆盖后，同一天从现场 /root/clusterguard-ha-hotfix-HF-2026-0929-03-2.2-104.x86_64.cgpatch（三台一致）取回原始字节，逐字节校验后归位。它由未修正的生成器构建，生成的 apply.sh/rollback.sh 仍带上述缺陷；按不可变原则不回炉，缺陷逐条声明在 known_defects。该线已退役，不再交付。"
+    },
+    {
+      "file": "release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-04-2.2-105.x86_64.cgpatch",
+      "hotfix_id": "HF-2026-0929-04",
+      "release_line": "2.2-105",
+      "revision": 0,
+      "sha256": "78a0b623977a060d157c35a267c67af26cd96c514526d1d2b1f3b4e86999d126",
+      "size": 8692199,
+      "status": "frozen",
+      "supersedes_sha256": null,
+      "superseded_by": null,
+      "bytes_retained": true,
+      "known_defects": [
+        "HF-2026-0929-04:rollback.sh 未用改名换 inode 恢复文件（就地写运行中的二进制会 ETXTBSY）",
+        "HF-2026-0929-04:rollback.sh 直接覆盖目标文件（运行中的二进制会 ETXTBSY）",
+        "HF-2026-0929-04:apply.sh 未把备份清单绑定到本补丁的 hotfix id",
+        "HF-2026-0929-04:rollback.sh 未把备份清单绑定到本补丁的 hotfix id",
+        "HF-2026-0929-04:rollback.sh 接受任意备份清单，可能恢复别的补丁的文件或误删文件"
+      ],
+      "note": "现场 16:22 实际执行过的就是这一份：三台 /var/lib/clusterguard/updates/HF-2026-0929-04/package.cgpatch 摘要与 78a0b623 一致。2026-09-29 17:47 被同名覆盖后从现场取回原始字节归位。其载荷已生效，作业记录停在 failed；后续修复由 HF-2026-0929-05 承担，本身份不回炉。"
+    },
+    {
+      "file": "release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-05-2.2-105.x86_64.cgpatch",
+      "hotfix_id": "HF-2026-0929-05",
+      "release_line": "2.2-105",
+      "revision": 0,
+      "sha256": "259c23646eaac488da5bad24d7c8ed98dac95046c40b22d379dd85ba03d03bb6",
+      "size": 96054,
+      "status": "current",
+      "supersedes_sha256": null,
+      "superseded_by": null,
+      "bytes_retained": true,
+      "known_defects": [],
+      "unpublished_rewrites": [
+        {
+          "sha256": "c1ef2c155fec316fb0fe4168cbc4577f5ed2a64b03a4f545a0edfd9d6ac5e9ed",
+          "size": 94817,
+          "at": "2026-09-29T17:46+08:00",
+          "note": "同一文件名下的第一次构建（build_commit 仍写作 7252ecf、未含生成器修复 c05f8b2 的那一版）。当天即重建。它从未交付、从未上传现场，因此不构成已发布身份，也不占用 revision 号；记在这里以免日后对不上。"
+        }
+      ],
+      "note": "首次发布即本条。只替换 /usr/local/sbin/clusterguard-upgrade，零 restart_unit，应用不重启任何服务。"
+    }
+  ]
+}

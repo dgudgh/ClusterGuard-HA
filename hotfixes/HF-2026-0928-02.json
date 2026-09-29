@@ -1,11 +1,11 @@
 {
   "id": "HF-2026-0928-02",
   "severity": "P0",
-  "revision": 1,
+  "revision": 4,
   "supersedes_artifact": {
-    "file": "release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-2.2-103.x86_64.cgpatch",
-    "sha256": "71083a217f5e0c317c752ce084ed43ea353fc877f5ff1a5737e9444c07eea55b",
-    "reason": "原身份（r0）的字节在 2026-09-29 17:47 被一次「同名原地重建」覆盖，且三个现场节点都没有留存 2.2-103 线的补丁包，无法像 HF-2026-0929-03 / -04 那样从现场取回，因此 r0 已不可恢复。本修订用修正后的生成器重新构建（生成的 rollback.sh 改为 mktemp + mv -f 换 inode，且只认本补丁自己的备份清单），并以新文件名与新摘要发布；r0 的摘要保留在 release/hotfix-publications.json 作为它曾经存在过的唯一记录。"
+    "file": "release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-r3-2.2-103.x86_64.cgpatch",
+    "sha256": "13731cae03f04d605cc5d8f339947bd13f882a8149a14b402c719bffebebf764",
+    "reason": "第 3 修订（r3）的理由里写死了一个二进制的差异字节数，那个数字只对其中一个二进制成立，而且差异长度本身随构建路径变化。根因不是这一次算错，而是签名清单里放进了会随时间漂移的量化断言——清单一旦签名就不可改写，任何笔误都只能靠再出一个修订来纠正，代价是又多一份几乎相同的交付物。第 4 修订把这类细节从签名清单里移出去：清单只保留「为什么替换前一个身份」这一不会随时间变化的事实，实测数据放在发布台账（hotfixes/hotfix-publications.json）里，那是可修订的记录。前三个修订的链条与原始动机见台账。r0 至 r3 均未交付任何现场，其摘要与字节按不可变规则保留，标记为 superseded。已知限制：本仓库的补丁二进制不可逐字节复现，判断一份产物是否被换过只能靠台账登记的摘要。"
   },
   "base_commit": "467e533",
   "build_commit": "f90f995fb92c23d66723a5331742a551be7a93b6",
