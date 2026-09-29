@@ -499,6 +499,9 @@
     .software-update-validation[data-state="verified"] { border-color:rgba(39,139,87,.34); background:#f4faf7; }
     .software-update-validation[data-state="verified"] .software-update-validation-marker { border-color:#278b57; background:#278b57; color:#fff; }
     .software-update-validation[data-state="verified"] .software-update-validation-copy strong { color:#1f7449; }
+    .software-update-validation[data-state="verified-blocked"] { border-color:#ead6ac; background:var(--warning-soft); }
+    .software-update-validation[data-state="verified-blocked"] .software-update-validation-marker { border-color:#b7791f; background:#b7791f; color:#fff; }
+    .software-update-validation[data-state="verified-blocked"] .software-update-validation-copy strong { color:#65470e; }
     .software-update-validation[data-state="failed"] { border-color:rgba(184,59,59,.32); background:var(--danger-soft); }
     .software-update-validation[data-state="failed"] .software-update-validation-marker { border-color:var(--danger); background:var(--danger); color:#fff; }
     .software-update-validation[data-state="failed"] .software-update-validation-copy strong { color:#903434; }
@@ -3526,12 +3529,18 @@
       byId('software-update-running-architecture').textContent = version.rpm_architecture || version.architecture || '-';
     };
     const latestSoftwareUpdate = () => (state.softwareUpdates && state.softwareUpdates.packages && state.softwareUpdates.packages[0]) || null;
-    const pendingSoftwareUpdate = () => {
-      const latest = latestSoftwareUpdate();
-      if (!latest) return null;
-      const job = latest.job || null;
-      return !job || job.verification_required || !['succeeded', 'rolled_back'].includes(job.status) ? latest : null;
+    // "Still actionable" means the record has no job yet, or one that has not ended in a
+    // verified terminal state. The button must act on the newest actionable package, not on
+    // packages[0]: the list is ordered by the stored uploaded_at, so a single record written
+    // while the node clock ran ahead sorts above everything uploaded afterwards - including
+    // the package the operator just uploaded. Reading only packages[0] then pinned the button
+    // to that finished record and disabled 滚动升级 with no way forward.
+    const softwareUpdateActionable = item => {
+      const job = item && item.job || null;
+      return !job || job.verification_required || !['succeeded', 'rolled_back'].includes(job.status);
     };
+    const pendingSoftwareUpdate = () => ((state.softwareUpdates && state.softwareUpdates.packages) || [])
+      .filter(softwareUpdateActionable)[0] || null;
     const softwareUpdateJobTime = item => {
       const job = item.job || {};
       const times = [job.updated_at, job.started_at].map(value => Date.parse(value)).filter(value => Number.isFinite(value) && value > 0);
@@ -3597,13 +3606,19 @@
         const row = document.createElement('tr');
         const statusCell = document.createElement('td');
         statusCell.append(text('span', `badge ${softwareUpdateBadgeClass(status)}`, softwareUpdateStatusText(status)));
+        // A record stamped ahead of this node's clock explains why a fresh upload can sit
+        // below it in the list, so say it on the row rather than only in the log.
+        // clock_skew sits on the record wrapper, not on the package it describes - reading
+        // it off `record` here silently rendered nothing at all.
+        const rowMessage = (job && job.message) || '升级包已上传并通过签名校验';
+        const skewed = !!(item && item.clock_skew);
         row.append(
           statusCell,
           text('td', 'mono', record.patch_id || '-'),
           text('td', '', `${record.source_version || '不限'} → ${record.target_version || '-'}`),
           text('td', '', softwareUpdateModeText(job && job.mode)),
           text('td', '', softwareUpdateDateText(occurredAt)),
-          text('td', 'history-message', (job && job.message) || '升级包已上传并通过签名校验')
+          text('td', 'history-message', skewed ? `${rowMessage} · 记录时间戳晚于当前时间，排序与时间不可信` : rowMessage)
         );
         body.append(row);
       });
@@ -3640,17 +3655,20 @@
       if (message && !(dialog && dialog.open)) setLiveStatus(message, level !== 'info');
     };
 
-    const renderSoftwareUpdateTargetSummary = (latest, pending) => {
+    // Describes one record, and it must be the same record the buttons act on: labelling the
+    // newest row "待升级目标版本" while the button would roll out a different package is the
+    // same defect one layer up. The caller passes `pending || latest`.
+    const renderSoftwareUpdateTargetSummary = subject => {
       const label = byId('software-update-target-label');
       const value = byId('software-update-latest-target');
-      if (!latest || !latest.package) {
+      if (!subject || !subject.package) {
         label.textContent = '待升级目标版本';
         value.textContent = '尚无待升级包';
         return;
       }
-      const status = latest.job && latest.job.status || 'uploaded';
-      label.textContent = pending ? '待升级目标版本' : status === 'succeeded' ? '最近完成版本' : '最近处理版本';
-      value.textContent = `${latest.package.target_version || '-'} · ${softwareUpdateStatusText(status)}`;
+      const status = subject.job && subject.job.status || 'uploaded';
+      label.textContent = softwareUpdateActionable(subject) ? '待升级目标版本' : status === 'succeeded' ? '最近完成版本' : '最近处理版本';
+      value.textContent = `${subject.package.target_version || '-'} · ${softwareUpdateStatusText(status)}`;
     };
 
     const selectSoftwareUpdateFile = () => {
@@ -3845,12 +3863,23 @@
       let validationState = state.softwareUpdateValidationState;
       if (selectedFile && !['validating', 'failed'].includes(validationState)) validationState = 'selected';
       if (!selectedFile && pending && !['validating', 'failed'].includes(validationState)) validationState = 'verified';
-      if (!selectedFile && !pending && !['validating', 'verified', 'failed'].includes(validationState)) validationState = 'idle';
+      // The upload verified but nothing in the list can be rolled out: a green "校验完成"
+      // sitting above a permanently disabled button told the operator nothing. Name the
+      // record that is occupying the list instead of leaving them to guess.
+      if (!selectedFile && !pending && validationState === 'verified') validationState = 'verified-blocked';
+      if (!selectedFile && !pending && !['validating', 'verified', 'verified-blocked', 'failed'].includes(validationState)) validationState = 'idle';
+      const newestRecord = latestSoftwareUpdate();
+      const newestRecordID = newestRecord && newestRecord.package
+        ? (newestRecord.package.patch_id || newestRecord.package.file_name || '')
+        : '';
       const validationCopy = {
         idle: ['等待上传校验', snapshot.available ? '选择签名升级包并上传校验后，才能执行滚动升级。' : `校验服务不可用：${softwareUpdateUnavailableReason(snapshot)}`, 'i'],
         selected: ['等待上传校验', `已选择 ${selectedFile ? selectedFile.name : '升级包'}，请点击“上传并校验”。`, '1'],
         validating: ['正在校验', '正在核对升级包签名、版本、架构、引导器和兼容性合同。', '…'],
         verified: ['校验完成', pending && pending.package ? `升级包 ${pending.package.patch_id || pending.package.file_name || ''} 已通过签名与兼容性校验。` : '升级包已通过签名与兼容性校验。', '✓'],
+        'verified-blocked': ['校验完成，但当前没有可执行的升级包', newestRecordID
+          ? `升级包已通过签名与兼容性校验，但列表里排在最新的记录是 ${newestRecordID}，它已经执行完成，不能重复发起。请核对升级记录的时间戳是否可靠，或重新上传要执行的升级包。`
+          : '升级包已通过签名与兼容性校验，但升级记录里没有可执行的升级包。请重新上传要执行的升级包。', '!'],
         failed: ['校验失败', state.softwareUpdateValidationMessage || '升级包未通过校验，请检查错误后重新上传。', '!'],
       }[validationState] || ['等待上传校验', '选择签名升级包并上传校验后，才能执行滚动升级。', 'i'];
       const validation = byId('software-update-validation');
@@ -3860,7 +3889,7 @@
       byId('software-update-validation-title').textContent = validationCopy[0];
       byId('software-update-validation-detail').textContent = validationCopy[1];
       renderSoftwareUpdateHistory(snapshot);
-      renderSoftwareUpdateTargetSummary(latest, pending);
+      renderSoftwareUpdateTargetSummary(pending || latest);
       const packagePanel = byId('software-update-package');
       packagePanel.hidden = !(pending && !selectedFile && validationState === 'verified');
       const latestJobItem = latestSoftwareUpdateJob(true);
@@ -3869,16 +3898,22 @@
       fileInput.disabled = state.softwareUpdateRunning || anyActive || !snapshot.available;
       byId('upload-software-update').disabled = state.softwareUpdateRunning || anyActive || !snapshot.available;
       byId('upload-software-update').textContent = validationState === 'validating' ? '正在校验' : '上传并校验';
-      byId('software-update-runtime').hidden = !(latest && latest.job);
-      if (!latest) {
+      // The identity grid, the job status, the action gates and the confirmation id must all
+      // describe the package the buttons act on. That is `pending` - the newest record that
+      // is still actionable. `latest` is only the newest row overall and may already be a
+      // finished record, so deriving the gates from it let a completed package decide
+      // whether a freshly uploaded one could be rolled out.
+      const subject = pending || latest;
+      byId('software-update-runtime').hidden = !(subject && subject.job);
+      if (!latest || !subject) {
         byId('execute-software-update').disabled = true;
         byId('resume-software-update').hidden = true;
         byId('rollback-software-update').hidden = true;
         renderSoftwareUpdateGlobalWarning();
         return;
       }
-      const record = latest.package || {};
-      const job = latest.job || null;
+      const record = subject.package || {};
+      const job = subject.job || null;
       byId('software-update-patch-id').textContent = record.patch_id || '-';
       byId('software-update-package-kind').textContent = record.kind === 'hotfix'
         ? '热修补丁（只替换清单声明的文件，不改 RPM 版本）'
@@ -4127,10 +4162,12 @@
     };
 
     const prepareSoftwareUpdateExecution = async () => {
-      const latest = latestSoftwareUpdate();
-      const patchID = latest && latest.package && latest.package.patch_id;
-      const status = latest && latest.job && latest.job.status || 'uploaded';
-      if (!latest || !patchID || state.softwareUpdateRunning || state.softwareUpdateSubmission) return;
+      // Must be the same subject the button was gated on: taking packages[0] here would plan
+      // (and then execute) the wrong record whenever an older finished one sorts above it.
+      const target = pendingSoftwareUpdate();
+      const patchID = target && target.package && target.package.patch_id;
+      const status = target && target.job && target.job.status || 'uploaded';
+      if (!target || !patchID || state.softwareUpdateRunning || state.softwareUpdateSubmission) return;
       setSoftwareUpdateDialogAlert();
       if (status !== 'planned') {
         setSoftwareUpdateDialogAlert(`正在为升级包 ${patchID} 生成只读升级计划，请稍候。`, 'info');

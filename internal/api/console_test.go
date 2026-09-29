@@ -1763,9 +1763,11 @@ func TestSoftwareUpdateSummaryDistinguishesPendingAndCompletedTargets(t *testing
 	for _, contract := range []string{
 		`id="software-update-target-label">待升级目标版本`,
 		`id="software-update-latest-target">尚无待升级包`,
-		"const renderSoftwareUpdateTargetSummary = (latest, pending) =>",
-		"label.textContent = pending ? '待升级目标版本' : status === 'succeeded' ? '最近完成版本' : '最近处理版本'",
-		"value.textContent = `${latest.package.target_version || '-'} · ${softwareUpdateStatusText(status)}`",
+		"const renderSoftwareUpdateTargetSummary = subject =>",
+		"label.textContent = softwareUpdateActionable(subject) ? '待升级目标版本' : status === 'succeeded' ? '最近完成版本' : '最近处理版本'",
+		"value.textContent = `${subject.package.target_version || '-'} · ${softwareUpdateStatusText(status)}`",
+		// The summary must describe the record the buttons act on, not merely the newest row.
+		"renderSoftwareUpdateTargetSummary(pending || latest)",
 	} {
 		if !strings.Contains(page, contract) {
 			t.Fatalf("software update summary must explain target-version state: missing %q", contract)
@@ -1773,6 +1775,9 @@ func TestSoftwareUpdateSummaryDistinguishesPendingAndCompletedTargets(t *testing
 	}
 	if strings.Contains(page, `<span>最近目标版本</span>`) {
 		t.Fatal("ambiguous recent target version label must not return")
+	}
+	if strings.Contains(page, "renderSoftwareUpdateTargetSummary(latest, pending)") {
+		t.Fatal("the target summary must not describe a different record than the rolling action targets")
 	}
 }
 
@@ -1798,8 +1803,10 @@ func TestSoftwareUpdateErrorsStayAtTopOfOpenDialog(t *testing.T) {
 func TestSoftwareUpdateDialogDoesNotPresentCompletedHistoryAsPendingPackage(t *testing.T) {
 	page := string(consoleHTML)
 	for _, contract := range []string{
-		"const pendingSoftwareUpdate = () => {",
-		"!['succeeded', 'rolled_back'].includes(job.status) ? latest : null",
+		"const softwareUpdateActionable = item => {",
+		"return !job || job.verification_required || !['succeeded', 'rolled_back'].includes(job.status);",
+		"const pendingSoftwareUpdate = () => ((state.softwareUpdates && state.softwareUpdates.packages) || [])",
+		".filter(softwareUpdateActionable)[0] || null;",
 		"const pending = pendingSoftwareUpdate()",
 		"packagePanel.hidden = !(pending && !selectedFile && validationState === 'verified')",
 	} {
@@ -1809,6 +1816,62 @@ func TestSoftwareUpdateDialogDoesNotPresentCompletedHistoryAsPendingPackage(t *t
 	}
 	if strings.Contains(page, "packagePanel.hidden = !latest") {
 		t.Fatal("completed latest history must not automatically populate the software update dialog")
+	}
+	// Reading only packages[0] is the exact defect that blocked the 2.2-104 -> 2.2-105 rollout on
+	// the site: the list is ordered by uploaded_at, so one record written while the node clock ran
+	// ahead sits above the package uploaded afterwards and its finished job disabled the button.
+	// Pending must be found by scanning the list, never by taking its head.
+	if strings.Contains(page, "!['succeeded', 'rolled_back'].includes(job.status) ? latest : null") {
+		t.Fatal("pending must not be resolved from packages[0] alone; scan for the newest actionable record")
+	}
+}
+
+func TestSoftwareUpdateRollingActionTargetsTheNewestActionablePackage(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		"const subject = pending || latest;",
+		"const record = subject.package || {};",
+		"const job = subject.job || null;",
+		"byId('execute-software-update').disabled = !snapshot.available || busy || !pending || !!selectedFile || validationState !== 'verified' || !record.rolling",
+		"const target = pendingSoftwareUpdate();",
+		"const patchID = target && target.package && target.package.patch_id;",
+		// The uploaded-and-verified panel must not keep a green "校验完成" above a dead button.
+		"if (!selectedFile && !pending && validationState === 'verified') validationState = 'verified-blocked';",
+		"'verified-blocked': ['校验完成，但当前没有可执行的升级包'",
+		".software-update-validation[data-state=\"verified-blocked\"] {",
+		// The row whose timestamp cannot be trusted has to say so where the operator sees it.
+		// clock_skew belongs to the record wrapper, and reading it off the package nested
+		// inside rendered the marker on no row at all - a browser run, not this contract,
+		// is what caught that, so the shape is pinned here and the wrong read is rejected below.
+		"const skewed = !!(item && item.clock_skew);",
+		"skewed ? `${rowMessage} · 记录时间戳晚于当前时间，排序与时间不可信` : rowMessage",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("the rolling upgrade must act on the newest actionable package: missing %q", contract)
+		}
+	}
+	// Planning and executing must never derive their subject from the newest row outright - that
+	// read is what pinned the button to an already-finished record and left the operator with no
+	// way forward. Match the shape rather than one variable name: pinning "const patchID = latest
+	// && ..." passed while an identical read under another local name went unnoticed.
+	for _, legacy := range []string{
+		"latest && latest.package && latest.package.patch_id",
+		"latest && latest.job && latest.job.status",
+	} {
+		if strings.Contains(page, legacy) {
+			t.Fatalf("the rolling upgrade must not resolve its subject from packages[0]: %q is back", legacy)
+		}
+	}
+	// Manager.Snapshot sets ClockSkew on the PackageStatus wrapper, so the marker has to
+	// be read from the wrapper. `record` is the nested package here, and reading the flag
+	// off it compiles, renders nothing, and looks correct in a diff.
+	for _, wrongLevel := range []string{
+		"record.clock_skew ?",
+		"record.clock_skew &&",
+	} {
+		if strings.Contains(page, wrongLevel) {
+			t.Fatalf("clock_skew is a field of the record wrapper, not of the package: %q reads it one level too deep", wrongLevel)
+		}
 	}
 }
 
