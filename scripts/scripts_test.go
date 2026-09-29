@@ -5752,3 +5752,118 @@ func extractShellFunction(script string, name string) (string, bool) {
 	}
 	return body[:end+3], true
 }
+
+// Version stamping is a silent failure class on both sides of the link. The
+// linker ignores a -X flag whose symbol path it cannot resolve and reports
+// nothing, and the binary then serves the development defaults. The software
+// update baseline guard reads the release out of that stamp, so a renamed
+// variable, a renamed package, or a changed module path used to disable the
+// guard in production while every test in this repository still passed - the Go
+// tests inject Config.CurrentRelease directly and never look at a stamp.
+//
+// This cross-checks the builders against the declarations rather than pinning
+// either one's text, so it fails whichever side someone edits alone.
+func TestBuildersStampExactlyTheBuildinfoSymbolsTheyDeclare(t *testing.T) {
+	moduleFile, err := os.ReadFile(filepath.Join("..", "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	module := ""
+	for _, line := range strings.Split(string(moduleFile), "\n") {
+		if rest, found := strings.CutPrefix(strings.TrimSpace(line), "module "); found {
+			module = strings.TrimSpace(rest)
+			break
+		}
+	}
+	if module == "" {
+		t.Fatal("go.mod declares no module path, so the -X targets below cannot be checked")
+	}
+	expectedPackage := module + "/internal/buildinfo"
+
+	source, err := os.ReadFile(filepath.Join("..", "internal", "buildinfo", "buildinfo.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	declared := map[string]bool{}
+	block := string(source)
+	if start := strings.Index(block, "\nvar (\n"); start >= 0 {
+		block = block[start+len("\nvar (\n"):]
+		if end := strings.Index(block, "\n)\n"); end >= 0 {
+			block = block[:end]
+		}
+		for _, line := range strings.Split(block, "\n") {
+			// gofmt aligns the equals signs, so `Commit  = "unknown"` carries more
+			// than one space and cutting on a single-spaced separator would keep a
+			// trailing space in the name - which is how this test first reported
+			// Commit as undeclared.
+			name, value, found := strings.Cut(strings.TrimSpace(line), "=")
+			name, value = strings.TrimSpace(name), strings.TrimSpace(value)
+			if !found || name == "" || strings.ContainsAny(name, " \t") || !strings.HasPrefix(value, `"`) {
+				continue
+			}
+			declared[name] = true
+		}
+	}
+	for _, name := range []string{"Version", "Release"} {
+		if !declared[name] {
+			t.Fatalf("internal/buildinfo must declare %s, or the release the guard compares is never stamped", name)
+		}
+	}
+
+	for _, builder := range []string{"build-hotfix-patch.sh", "build-clusterguard-rpm.sh"} {
+		script, err := os.ReadFile(builder)
+		if err != nil {
+			t.Fatal(err)
+		}
+		flags, found := extractShellAssignment(string(script), "version_ldflags")
+		if !found {
+			t.Fatalf("%s must define version_ldflags: without it the binaries it ships report the development release", builder)
+		}
+		symbols := map[string]string{}
+		for _, assignment := range strings.Split(strings.TrimPrefix(flags, "-s -w"), " -X ") {
+			assignment = strings.TrimSpace(assignment)
+			if assignment == "" {
+				continue
+			}
+			symbol, _, ok := strings.Cut(assignment, "=")
+			if !ok {
+				t.Fatalf("%s: %q is not a -X symbol=value assignment", builder, assignment)
+			}
+			dot := strings.LastIndex(symbol, ".")
+			if dot < 0 {
+				t.Fatalf("%s: %q names no package variable", builder, symbol)
+			}
+			packagePath, variable := symbol[:dot], symbol[dot+1:]
+			if packagePath != expectedPackage {
+				t.Errorf("%s: -X targets %q, but the declarations live in %q; the linker would ignore this silently", builder, packagePath, expectedPackage)
+				continue
+			}
+			if !declared[variable] {
+				t.Errorf("%s: -X targets %s.%s, which internal/buildinfo does not declare; the linker would ignore this silently", builder, expectedPackage, variable)
+				continue
+			}
+			symbols[variable] = assignment
+		}
+		for _, name := range []string{"Version", "Release"} {
+			if _, ok := symbols[name]; !ok {
+				t.Fatalf("%s does not stamp %s: the package it ships would run with the development release, and platformupdate.CurrentRelease would abstain", builder, name)
+			}
+		}
+	}
+}
+
+// extractShellAssignment returns the value of a top-level `name="..."` assignment,
+// which is how both builders carry their linker flags.
+func extractShellAssignment(script string, name string) (string, bool) {
+	const opening = "=\""
+	at := strings.Index(script, "\n"+name+opening)
+	if at < 0 {
+		return "", false
+	}
+	rest := script[at+len("\n"+name+opening):]
+	end := strings.Index(rest, "\"\n")
+	if end < 0 {
+		return "", false
+	}
+	return rest[:end], true
+}
