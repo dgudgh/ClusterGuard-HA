@@ -20,7 +20,7 @@ baseline silently downgrades binaries back to its own release line.
 
 | Hotfix | Severity | Fix commits | Build tree | Artifact |
 | --- | --- | --- | --- | --- |
-| HF-2026-0928-06 | P0 | `ed9faca`, `d5f9491`, `dd82ca5`, `5ae2039`, `28e3b47`, `9303e9d`, `18d738e`, `81fe3c8` | `81fe3c8` | `release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-06-2.2-104.x86_64.cgpatch` |
+| HF-2026-0929-01 | P0 | `ed9faca`, `d5f9491`, `dd82ca5`, `5ae2039`, `28e3b47`, `9303e9d`, `18d738e`, `81fe3c8`, `ac6f3f7`, `abf5782`, `fce48b7` | `fd59a3b` | `release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-01-2.2-104.x86_64.cgpatch` |
 | HF-2026-0928-02 | P0 | `914c6c5`, `3c88289`, `4015f97`, `0e8ab48`, `f90f995` | `f90f995` | `release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-2.2-103.x86_64.cgpatch` |
 
 ## Applying a patch
@@ -37,32 +37,34 @@ systemctl restart <unit> # apply.sh prints the units it needs; it never restarts
 bash rollback.sh         # restores from the newest backup manifest
 ```
 
-## HF-2026-0928-06 — 2.2-104 site fix bundle (cumulative): cluster stranded after a host reboot, writer reconcile flap, update prerequisites, console reasons, power-off teardown, and the console hotfix channel
+## HF-2026-0929-01 — 2.2-104 site fix bundle (cumulative): adds the three fixes for the uniform clock offset on top of HF-2026-0928-06 — lease re-anchoring after a backwards step, a deliberate clock authority with a pinned display timezone, and hotfix components derived from the import graph
 
 - Severity: P0
-- Fix commits: `ed9faca`, `d5f9491`, `dd82ca5`, `5ae2039`, `28e3b47`, `9303e9d`, `18d738e`, `81fe3c8`
-- Build tree: `81fe3c88a4768e35d7c6e2c366b2e107eff7f33b` (baseline `e01f5ce376f94e2595590358c72dd2585e7c09b4` plus the fixes above and nothing else)
-- Applies to: 2.2-104 → 2.2-104+hf-2026-0928-06 (x86_64)
-- Artifact: `release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-06-2.2-104.x86_64.cgpatch`
-- SHA-256: `1e1aab698318ae292e69d1ea08acefed760b46903f695a1065cf5c6a6ad31210`
-- Source diff: `src/HF-2026-0928-06-81fe3c8.patch`
+- Fix commits: `ed9faca`, `d5f9491`, `dd82ca5`, `5ae2039`, `28e3b47`, `9303e9d`, `18d738e`, `81fe3c8`, `ac6f3f7`, `abf5782`, `fce48b7`
+- Build tree: `fd59a3b28457e1ac021e47c062e13b1c65f22351` (baseline `e01f5ce376f94e2595590358c72dd2585e7c09b4` plus the fixes above and nothing else)
+- Applies to: 2.2-104 → 2.2-104+hf-2026-0929-01 (x86_64)
+- Artifact: `release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-01-2.2-104.x86_64.cgpatch`
+- SHA-256: `3198ca71e50bebc68a8982d6a99b5bec9f063140cc497383eaf4d707121713e7`
+- Source diff: `src/HF-2026-0929-01-fd59a3b.patch`
 - Payload:
-  - `payload/bin/clusterguard-agent` → `/usr/local/bin/clusterguard-agent` (0755)
   - `payload/bin/clusterguard` → `/usr/local/bin/clusterguard` (0755)
+  - `payload/bin/clusterguard-agent` → `/usr/local/bin/clusterguard-agent` (0755)
+  - `payload/bin/clusterguard-update-helper` → `/usr/local/libexec/clusterguard-update-helper` (0755)
   - `payload/systemd/clusterguard-agent-reconcile.service` → `/usr/lib/systemd/system/clusterguard-agent-reconcile.service` (0644)
   - `payload/systemd/clusterguard-update-helper.service` → `/usr/lib/systemd/system/clusterguard-update-helper.service` (0644)
+  - `payload/scripts/clusterguard-clock-mesh.sh` → `/usr/local/sbin/clusterguard-clock-mesh.sh` (0755)
   - `payload/scripts/clusterguard-cluster-finalize.sh` → `/usr/local/libexec/clusterguard-cluster-finalize.sh` (0755)
   - `payload/scripts/clusterguard-mysql-install.sh` → `/usr/local/libexec/clusterguard-mysql-install.sh` (0755)
   - `payload/scripts/clusterguard-postgresql-install.sh` → `/usr/local/libexec/clusterguard-postgresql-install.sh` (0755)
   - `payload/scripts/clusterguard-upgrade.sh` → `/usr/local/sbin/clusterguard-upgrade` (0750)
   - `payload/installer/install_clusterguard.sh` → `installer-only, no site path` (0755)
-- Restart required: `clusterguard-ha.service`, `clusterguard-agent-reconcile.service`, `clusterguard-update-helper.service`
+- Restart required: `clusterguard-ha.service`, `clusterguard-update-helper.service`, `clusterguard-agent-reconcile.service`
 
 ### What this patch does
 
-Adds one console-channel fix (81fe3c8) on top of HF-2026-0928-05: a hotfix no longer has to go through the command line — the console's Version Update verifies the same trust anchor, drives the same helper through --plan/--execute/--rollback, tells a hotfix from a rolling upgrade by its top-level directory, and labels the package kind in its detail panel. The same commit closes a signing blind spot: apply.sh and rollback.sh run as root and decide what is written where, yet were generated after the manifest was signed and covered by no digest at all — a swapped apply.sh satisfied every payload digest while installing something else. The builder now writes both digests into the signed manifest and into SHA256SUMS, and the verifier requires schema_version 3. Apply this patch alone (it contains and supersedes HF-2026-0928-05) and never mix baselines.
+This patch contains and supersedes HF-2026-0928-06, plus three fixes, all flowing from one event: the uniform clock offset found on site on 2026-09-29, where all three nodes' UTC ran eight hours fast. (1) Lease re-anchoring after a backwards step (ac6f3f7, P0): stepping the clock back strands the VIP ownership lease's expiry eight hours out, so it never expires when its holder stops renewing it and automatic takeover is silently off — this has to be fixed before the clock is corrected. (2) A deliberate clock authority and a pinned display timezone (abf5782, P1): --server no longer swallows the node's own time unchecked, and the timezone lands on both roles and can now reach a site through the RPM. (3) Hotfix components derived from the import graph (fce48b7, P1): without it this patch would have carried the runtime script and no binary, and the lease fix would never have arrived. The payload therefore carries one binary more than the previous patch, /usr/local/libexec/clusterguard-update-helper — HF-2026-0928-06 omitted it, so the helper half of the console hotfix channel never actually landed. Apply this patch alone and never mix baselines. Correct the clock afterwards, then confirm on the spot that the lease's expires_at has been re-anchored to roughly the current UTC plus 60 seconds.
 
-### HF-2026-0928-06.1 A hotfix uploaded to the console was only told to use the command line, a channel the product never provided (`81fe3c8`, P1)
+### HF-2026-0929-01.1 A hotfix uploaded to the console was only told to use the command line, a channel the product never provided (`81fe3c8`, P1)
 
 - Symptom: Following the previous fix's own guidance, the operator uploaded clusterguard-ha-hotfix-*.cgpatch to the Version Update dialog and got "this package is a hotfix (clusterguard-hotfix/), it does not go through the console rolling channel; extract it on the control node with tar -xzf and run clusterguard-hotfix/apply.sh". The guidance was accurate, but the console neither accepted the package nor offered plan/execute/rollback, so every hotfix meant hand-extracted SSH work on every node, with no record of the signature check, the execution, or any ability to roll back.
 
@@ -76,7 +78,7 @@ Adds one console-channel fix (81fe3c8) on top of HF-2026-0928-05: a hotfix no lo
   - 需要让热修包的验签、计划、执行与回滚都在控制台留有记录
   - 担心热修补丁包里的 apply.sh / rollback.sh 没有被签名锚定
 
-### HF-2026-0928-06.2 Payload destinations were guessed from the source name, so the fix landed where the product never looks (`18d738e`, P1)
+### HF-2026-0929-01.2 Payload destinations were guessed from the source name, so the fix landed where the product never looks (`18d738e`, P1)
 
 - Symptom: After HF-04 every script, unit and binary reported installed, yet the console still rejected hotfix uploads with an out-of-scope path error: the fixed script had been written to /usr/local/libexec/clusterguard-upgrade.sh, a path the product never executes, while the file actually invoked, /usr/local/sbin/clusterguard-upgrade, was still the RPM build from 24 September.
 
@@ -89,7 +91,7 @@ Adds one console-channel fix (81fe3c8) on top of HF-2026-0928-05: a hotfix no lo
   - 控制台上传热修包仍然报「范围外路径：clusterguard-hotfix/」
   - 需要判断某个脚本到底哪一份副本在生效
 
-### HF-2026-0928-06.3 A hotfix patch uploaded to the console was rejected with an opaque path error instead of naming the wrong channel (`9303e9d`, P1)
+### HF-2026-0929-01.3 A hotfix patch uploaded to the console was rejected with an opaque path error instead of naming the wrong channel (`9303e9d`, P1)
 
 - Symptom: An operator uploading clusterguard-ha-hotfix-*.cgpatch to the Version Update dialog (the file picker accepts the .cgpatch suffix and the lab-chain signature verifies) only got "out-of-scope path: clusterguard-hotfix/" — nothing said the hotfix belongs to a different channel, so the operator retried.
 
@@ -101,7 +103,7 @@ Adds one console-channel fix (81fe3c8) on top of HF-2026-0928-05: a hotfix no lo
   - 把热修补丁包上传到版本更新对话框，报「升级包包含范围外路径：clusterguard-hotfix/」
   - 运维不确定 .cgpatch 热修包应该走哪条安装通道
 
-### HF-2026-0928-06.4 A host reboot stranded the whole cluster: shared runtime directory mode and a recovery freeze that never lifted (`28e3b47`, P0)
+### HF-2026-0929-01.4 A host reboot stranded the whole cluster: shared runtime directory mode and a recovery freeze that never lifted (`28e3b47`, P0)
 
 - Symptom: After a planned whole-host shutdown the console reported "some data unavailable: candidate evaluation", no primary at all, and every instance as "database not started or unreachable"; both another power-off and failover were blocked. clusterguard-mysql-3306.service and clusterguard-cluster-restore.service sat in restart loops at counts 2063/2069/2072 and 1034-1036.
 
@@ -114,7 +116,7 @@ Adds one console-channel fix (81fe3c8) on top of HF-2026-0928-05: a hotfix no lo
   - clusterguard-mysql-3306.service 反复重启，error.log 报 Could not create unix socket lock file
   - 计划关机或故障切换被阻断，power 生命周期停在 recovering 且 recovery_freeze 为 true
 
-### HF-2026-0928-06.5 MySQL writer reconcile flap: the authorized primary fenced itself every five seconds (`dd82ca5`, P0)
+### HF-2026-0929-01.5 MySQL writer reconcile flap: the authorized primary fenced itself every five seconds (`dd82ca5`, P0)
 
 - Symptom: The cluster never left degraded, both replication links never left unhealthy, candidate evaluation answered 409 and every planned shutdown was blocked. Measurement showed 9,492 self-isolations since install, with read_only and the VIP flipping together roughly every ten seconds.
 
@@ -126,7 +128,7 @@ Adds one console-channel fix (81fe3c8) on top of HF-2026-0928-05: a hotfix no lo
   - 集群长期 degraded 且复制链路 unhealthy，但复制本身正常
   - journalctl -u clusterguard-agent-reconcile.service 反复出现 self-isolated 或 permission denied
 
-### HF-2026-0928-06.6 Two update prerequisites: SSH key ownership and a shared runtime directory the helper owned (`d5f9491`, P0)
+### HF-2026-0929-01.6 Two update prerequisites: SSH key ownership and a shared runtime directory the helper owned (`d5f9491`, P0)
 
 - Symptom: Software updates stayed available=false and the three upload controls stayed disabled; even with a hand-written update.json the executor rejected the SSH key as too permissive, and the helper failed its first start with status=233 while deleting the shared /run/clusterguard on stop.
 
@@ -138,7 +140,7 @@ Adds one console-channel fix (81fe3c8) on top of HF-2026-0928-05: a hotfix no lo
   - 控制台版本更新长期 available=false
   - clusterguard-update-helper 首启失败或停机后 /run/clusterguard 丢失
 
-### HF-2026-0928-06.7 The console stopped explaining why a capability is unavailable (`ed9faca`, P1)
+### HF-2026-0929-01.7 The console stopped explaining why a capability is unavailable (`ed9faca`, P1)
 
 - Symptom: The software update panel showed only a red "unavailable" badge with no reason, and the cluster load banner named the failing section without saying why, so operators could not tell what to do next.
 
@@ -150,7 +152,7 @@ Adds one console-channel fix (81fe3c8) on top of HF-2026-0928-05: a hotfix no lo
   - 控制台版本更新面板显示“不可用”但无原因
   - 集群加载横幅只报栏目名、不报原因
 
-### HF-2026-0928-06.8 The console froze on a dead dialog after a host power-off was submitted (`5ae2039`, P1)
+### HF-2026-0929-01.8 The console froze on a dead dialog after a host power-off was submitted (`5ae2039`, P1)
 
 - Symptom: After a host power-off was submitted the control plane went away with the host, leaving the page parked on the confirmation dialog forever, and a lost response after submission was reported as an error.
 
@@ -161,6 +163,44 @@ Adds one console-channel fix (81fe3c8) on top of HF-2026-0928-05: a hotfix no lo
 - When to apply:
   - 提交整机关机后控制台卡死、需要手动关闭标签页
   - 关机提交后偶发“无法连接控制 API”被当作失败
+
+### HF-2026-0929-01.9 After the clock moved backwards the VIP ownership lease stopped expiring, silently disabling automatic failover (`ac6f3f7`, P0)
+
+- Symptom: The cluster clock ran eight hours fast. Once the time is corrected — or after any backwards step of the system clock — the VIP ownership lease in coordination_leases sits with an expires_at roughly eight hours in the future. The lease still authorises its holder, but it no longer expires when that holder stops renewing it: ownership_keeper calls AcquireStableBatch every five seconds and skipped any lease with more than half its TTL left, so automatic takeover was disabled for the whole window. The node holding the VIP could die and the VIP would not move. Staggered steps are worse: whichever node stepped first read the lease as expired and could take it, producing two VIP owners.
+
+- Root cause: The renewal test only asked how much TTL was left, and after a backwards step the stored expiry is stranded arbitrarily far into the future, so "more than half a TTL left" reads as "nothing to do" for exactly as long as the step was. The quantity that can reveal a step is the distance between the stored expiry and the current clock: a renewal always rewrites the expiry to its own clock plus one TTL, so anything beyond one full grant cannot be the product of elapsed time. (The first attempt measured the expiry against the record's own updated_at instead, but a renewal rewrites both, so their difference is always the granted TTL and carries no clock information at all.)
+
+- Fix: Both Acquire and AcquireStableBatch now treat an expiry further from the current clock than maxLeaseTTL — the grant ceiling, and therefore the furthest a stored expiry can legitimately sit — as a stale anchor and re-anchor it to now + TTL; the existing invariant that a renewal never shortens an existing expiry is unchanged. Three tests drive real time: re-anchor on the stable path, re-anchor on the transfer path, and the boundary case — exactly one full TTL must stay untouched, otherwise the detector would rewrite every long-lived lease on every tick.
+
+- When to apply:
+  - 修好集群时间之后，或任何场合回拨过系统时钟之后
+  - 担心自动故障接管被静默关闭、VIP 不会随主库切换
+  - 三台节点时间不一致时出现过 VIP 抢注或双 Owner
+
+### HF-2026-0929-01.10 The clock mesh tool froze an unchecked local time as the cluster authority, and pinned no display timezone (`abf5782`, P1)
+
+- Symptom: At install time all three nodes' UTC ran eight hours fast (the RTCs held local time while the kernel read them as UTC). The clock check only asked whether the nodes agreed with each other — 2 seconds of spread, a pass — and then clusterguard-clock-mesh.sh --server promoted that node's time to the cluster authority, where hwclock --systohc --utc and rtcsync made it survive every reboot. The site's own certificate is the evidence: the CA's notBefore is Sep 23 14:05:49 2026 GMT, a full eight hours later than the real instant. Meanwhile 152/153 displayed America/New_York and 154 Asia/Shanghai, so one cluster showed two wall clocks for the same record.
+
+- Root cause: Two places had been completed into gaps by one more convenience. --server took the node's own current time as the authority with nothing upstream to correct it and no confirmation step, and writing an unverified time into the RTC is exactly what turns a one-off install mistake into a permanent offset. The display timezone was then left entirely to each node's OS default, while the console renders the configuration update time in the answering node's local zone (internal/runtime/configuration_view.go), so the inconsistency is visible in the product itself.
+
+- Fix: --server now requires either --set-utc <RFC3339> (adopt this instant) or --accept-current-time (explicitly vouch for this node's clock), and refuses with both routes printed before it rewrites any configuration or touches the RTC. --set-utc stops chrony first, steps the clock, and reports the drift. A new --timezone lands timedatectl set-timezone before either role branch, and with no zone given the tool says plainly that this node's zone is not managed here; --dry-run prints the same decisions. The installer only passes --accept-current-time after measuring every node against its own UTC within 30 seconds, and passes the single --timezone to the authority and to every client; the success line no longer calls mutual agreement verification. The script is now declared in the RPM manifest at /usr/local/sbin/clusterguard-clock-mesh.sh, so an installed site can receive a corrected copy through the package path — it previously travelled only with the installer, which is why no site could ever get the fix.
+
+- When to apply:
+  - 节点之间时钟一致、但整体偏离真实时间（一个时区偏移的形状）
+  - 集群里同一条记录显示两个钟点（节点显示时区不统一）
+  - 需要重跑时钟网配置，用 --timezone 把全集群显示时区固定下来
+
+### HF-2026-0929-01.11 The hotfix channel guessed which binary a change belongs to from a path prefix, silently dropping fixes in shared packages (`fce48b7`, P1)
+
+- Symptom: The lease fix this patch carries lives in internal/coordination, while the builder and the catalogue gate both derived components from two hard-coded prefixes (internal/agent|cmd/clusterguard-agent and internal/api|cmd/clusterguard). Neither matched — the measured hit count was zero for both — so the payload would have contained the runtime script and no binary: the site would have applied it successfully, the signed manifest would have listed the fix as delivered, and the control plane would still have carried the defect. Because the gate and the builder shared the same table, nothing would have objected. That table also missed internal/platformupdate, which the control plane and clusterguard-update-helper both link; HF-2026-0928-06 shipped only the control plane, so the helper half of the console hotfix channel never reached a site.
+
+- Root cause: Which binary links a package is a fact about the import graph, not about what the path looks like. A shared package belongs to no prefix, and that table decided two things at once: what the payload contains, and which fixes need a patch at all. A fix in a shared package was therefore invisible in both directions.
+
+- Fix: A new scripts/hotfix-component-map.cjs is the single source of truth: candidate binaries come from packaging/rpm/nfpm.yaml's bin/* entries (so they cover clusterguard, clusterguard-agent, clusterguard-update-helper, cgctl and clusterguard-k8s-fence-guard rather than a hard-coded pair) and ownership comes from the real import graph via go list -deps. An unreadable graph is a hard failure instead of an empty answer, because an empty answer is indistinguishable from "nothing carries this fix" and that is exactly how the fix went missing. The builder and the catalogue gate share the module, the production-path test is the same graph, and four tests pin it: shared packages, embedded assets, the helper, and files that reach no binary at all — plus two that stop either prefix table from coming back.
+
+- When to apply:
+  - 怀疑某个热修包“应用成功”但现场行为没有任何变化
+  - 需要核对补丁里究竟该包含哪些二进制
 
 ### Verification
 
@@ -177,10 +217,17 @@ Adds one console-channel fix (81fe3c8) on top of HF-2026-0928-05: a hotfix no lo
 - `/usr/local/sbin/clusterguard-upgrade --patch /root/clusterguard-ha-hotfix-HF-2026-0928-06-2.2-104.x86_64.cgpatch --trust-key /etc/clusterguard/trust/patch-signing-public.pem --inspect   # 必须输出 kind=hotfix，而不是拒绝该包`
 - `curl -sk https://192.168.102.155:3000/ | grep -c '包类型'   # 控制台页面必须已包含包类型字段（浏览器需刷新）`
 - `curl -sk https://192.168.102.155:3000/ | grep -c '支持 .cgupgrade 滚动升级包与 .cgpatch 热修补丁包'   # 控制台上传指引必须已同时点名两种包`
+- `sha256sum /usr/local/bin/clusterguard /usr/local/bin/clusterguard-agent /usr/local/libexec/clusterguard-update-helper   # 三条必须与本台账「交付内容」中 payload/bin/* 的 sha256 逐条一致`
+- `ls -l /usr/local/sbin/clusterguard-clock-mesh.sh   # mtime 必须是本次应用时间，即现场已拿到修正版脚本`
+- `grep -c 'Refusing to become the clock authority' /usr/local/sbin/clusterguard-clock-mesh.sh   # 必须为 1`
+- `grep -c 'timedatectl set-timezone' /usr/local/sbin/clusterguard-clock-mesh.sh   # 必须为 1`
+- `/usr/local/sbin/clusterguard-clock-mesh.sh --server --dry-run   # 必须拒绝并打印 --set-utc 与 --accept-current-time 两条出路，且不改动任何配置`
+- `date -u +%Y-%m-%dT%H:%M:%SZ; timedatectl show -p Timezone --value; hwclock --show   # 拨钟之后：三台 UTC 与真实时间一致、Timezone 三台一致、hwclock 与 date -u 一致`
+- `jq -r '.coordination_leases | to_entries[] | [.key, .value.lease.ha_endpoint_id, .value.lease.expires_at, .value.updated_at, .value.lease.active] | @tsv' /var/lib/clusterguard/metadata.json   # 关键验收：拨回 8 小时并重启控制面之后，expires_at 必须是当前 UTC + 约 60 秒，而不是当前 UTC + 8 小时`
 
 ### Rollback
 
-执行 rollback.sh 恢复旧二进制、旧单元与旧运行时脚本，然后 systemctl daemon-reload 并 systemctl restart clusterguard-ha。注意：回滚会把 /run/clusterguard 重新交回 0750 的创建方，下一次整机重启会再次让集群起不来；仅在确认新版本有回归时使用，并在回滚后临时手工执行 chmod 0755 /run/clusterguard。 本包对 /run/clusterguard 与 clusterguard-update-helper.service 的回滚沿用 HF-2026-0928-05 的说明。
+执行 rollback.sh 恢复旧二进制、旧单元与旧运行时脚本，然后 systemctl daemon-reload 并重启 clusterguard-ha 与 clusterguard-update-helper。注意两点：① 回滚会把 clusterguard-clock-mesh.sh 恢复成“无校验即成为权威”的旧版本，并撤掉租约重锚——若此后再次回拨系统时钟，VIP 归属租约将再次长期不过期、自动接管再次被静默关闭；② /usr/local/libexec/clusterguard-update-helper 会回到 HF-2026-0928-06 之前的状态（该二进制此前从未被热修更新过）。本包对 /run/clusterguard、clusterguard-update-helper.service 与其它单元的回滚沿用 HF-2026-0928-05 / HF-2026-0928-06 的说明。
 
 ## HF-2026-0928-02 — 2.2-103 site fix bundle (cumulative): cluster stranded after a host reboot, writer reconcile flap, update prerequisites, console reasons and power-off teardown
 

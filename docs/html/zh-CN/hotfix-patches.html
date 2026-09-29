@@ -61,11 +61,11 @@
 </tr>
 </thead>
 <tbody><tr>
-<td>HF-2026-0928-06</td>
+<td>HF-2026-0929-01</td>
 <td>P0</td>
-<td><code>ed9faca</code>、<code>d5f9491</code>、<code>dd82ca5</code>、<code>5ae2039</code>、<code>28e3b47</code>、<code>9303e9d</code>、<code>18d738e</code>、<code>81fe3c8</code></td>
-<td><code>81fe3c8</code></td>
-<td><code>release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-06-2.2-104.x86_64.cgpatch</code></td>
+<td><code>ed9faca</code>、<code>d5f9491</code>、<code>dd82ca5</code>、<code>5ae2039</code>、<code>28e3b47</code>、<code>9303e9d</code>、<code>18d738e</code>、<code>81fe3c8</code>、<code>ac6f3f7</code>、<code>abf5782</code>、<code>fce48b7</code></td>
+<td><code>fd59a3b</code></td>
+<td><code>release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-01-2.2-104.x86_64.cgpatch</code></td>
 </tr>
 <tr>
 <td>HF-2026-0928-02</td>
@@ -84,20 +84,22 @@ bash apply.sh            # 备份、校验 SHA-256、安装、daemon-reload
 systemctl restart &lt;单元&gt; # apply.sh 只打印需要重启的单元，不自动重启
 bash rollback.sh         # 按最新备份清单回滚
 </code></pre>
-<h2 id="hf-2026-0928-06-2-2-104-现场修复合集-累积-整机重启后集群不可用-写入者抖动-升级链前置-控制台原因与关机收尾-控制台热">HF-2026-0928-06 — 2.2-104 现场修复合集（累积）：整机重启后集群不可用、写入者抖动、升级链前置、控制台原因与关机收尾、控制台热修通道<a class="heading-anchor" href="#hf-2026-0928-06-2-2-104-现场修复合集-累积-整机重启后集群不可用-写入者抖动-升级链前置-控制台原因与关机收尾-控制台热" aria-label="Link to HF-2026-0928-06 — 2.2-104 现场修复合集（累积）：整机重启后集群不可用、写入者抖动、升级链前置、控制台原因与关机收尾、控制台热修通道">#</a></h2>
+<h2 id="hf-2026-0929-01-2-2-104-现场修复合集-累积-在-hf-2026-0928-06-之上加入时钟整体偏移的三项修复-租约回拨">HF-2026-0929-01 — 2.2-104 现场修复合集（累积）：在 HF-2026-0928-06 之上加入时钟整体偏移的三项修复——租约回拨后重锚、时钟网脚本的权威确认与显示时区、热修组件推导改为按导入图<a class="heading-anchor" href="#hf-2026-0929-01-2-2-104-现场修复合集-累积-在-hf-2026-0928-06-之上加入时钟整体偏移的三项修复-租约回拨" aria-label="Link to HF-2026-0929-01 — 2.2-104 现场修复合集（累积）：在 HF-2026-0928-06 之上加入时钟整体偏移的三项修复——租约回拨后重锚、时钟网脚本的权威确认与显示时区、热修组件推导改为按导入图">#</a></h2>
 <ul>
 <li>严重级别：P0</li>
-<li>覆盖修复提交：<code>ed9faca</code>、<code>d5f9491</code>、<code>dd82ca5</code>、<code>5ae2039</code>、<code>28e3b47</code>、<code>9303e9d</code>、<code>18d738e</code>、<code>81fe3c8</code></li>
-<li>构建树：<code>81fe3c88a4768e35d7c6e2c366b2e107eff7f33b</code>（基线 <code>e01f5ce376f94e2595590358c72dd2585e7c09b4</code> + 上述修复，不含其它提交）</li>
-<li>适用版本：2.2-104 → 2.2-104+hf-2026-0928-06（x86_64）</li>
-<li>产物：<code>release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-06-2.2-104.x86_64.cgpatch</code></li>
-<li>SHA-256：<code>1e1aab698318ae292e69d1ea08acefed760b46903f695a1065cf5c6a6ad31210</code></li>
-<li>源码差异：<code>src/HF-2026-0928-06-81fe3c8.patch</code></li>
+<li>覆盖修复提交：<code>ed9faca</code>、<code>d5f9491</code>、<code>dd82ca5</code>、<code>5ae2039</code>、<code>28e3b47</code>、<code>9303e9d</code>、<code>18d738e</code>、<code>81fe3c8</code>、<code>ac6f3f7</code>、<code>abf5782</code>、<code>fce48b7</code></li>
+<li>构建树：<code>fd59a3b28457e1ac021e47c062e13b1c65f22351</code>（基线 <code>e01f5ce376f94e2595590358c72dd2585e7c09b4</code> + 上述修复，不含其它提交）</li>
+<li>适用版本：2.2-104 → 2.2-104+hf-2026-0929-01（x86_64）</li>
+<li>产物：<code>release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-01-2.2-104.x86_64.cgpatch</code></li>
+<li>SHA-256：<code>3198ca71e50bebc68a8982d6a99b5bec9f063140cc497383eaf4d707121713e7</code></li>
+<li>源码差异：<code>src/HF-2026-0929-01-fd59a3b.patch</code></li>
 <li>交付内容：<ul>
-<li><code>payload/bin/clusterguard-agent</code> → <code>/usr/local/bin/clusterguard-agent</code>（0755）</li>
 <li><code>payload/bin/clusterguard</code> → <code>/usr/local/bin/clusterguard</code>（0755）</li>
+<li><code>payload/bin/clusterguard-agent</code> → <code>/usr/local/bin/clusterguard-agent</code>（0755）</li>
+<li><code>payload/bin/clusterguard-update-helper</code> → <code>/usr/local/libexec/clusterguard-update-helper</code>（0755）</li>
 <li><code>payload/systemd/clusterguard-agent-reconcile.service</code> → <code>/usr/lib/systemd/system/clusterguard-agent-reconcile.service</code>（0644）</li>
 <li><code>payload/systemd/clusterguard-update-helper.service</code> → <code>/usr/lib/systemd/system/clusterguard-update-helper.service</code>（0644）</li>
+<li><code>payload/scripts/clusterguard-clock-mesh.sh</code> → <code>/usr/local/sbin/clusterguard-clock-mesh.sh</code>（0755）</li>
 <li><code>payload/scripts/clusterguard-cluster-finalize.sh</code> → <code>/usr/local/libexec/clusterguard-cluster-finalize.sh</code>（0755）</li>
 <li><code>payload/scripts/clusterguard-mysql-install.sh</code> → <code>/usr/local/libexec/clusterguard-mysql-install.sh</code>（0755）</li>
 <li><code>payload/scripts/clusterguard-postgresql-install.sh</code> → <code>/usr/local/libexec/clusterguard-postgresql-install.sh</code>（0755）</li>
@@ -105,11 +107,11 @@ bash rollback.sh         # 按最新备份清单回滚
 <li><code>payload/installer/install_clusterguard.sh</code> → <code>仅安装器，现场无对应路径</code>（0755）</li>
 </ul>
 </li>
-<li>需要重启：<code>clusterguard-ha.service</code>、<code>clusterguard-agent-reconcile.service</code>、<code>clusterguard-update-helper.service</code></li>
+<li>需要重启：<code>clusterguard-ha.service</code>、<code>clusterguard-update-helper.service</code>、<code>clusterguard-agent-reconcile.service</code></li>
 </ul>
 <h3 id="本包概要">本包概要<a class="heading-anchor" href="#本包概要" aria-label="Link to 本包概要">#</a></h3>
-<p>在 HF-2026-0928-05 的基础上新增一条控制台通道修复（81fe3c8）：热修包不再只能走命令行——控制台的「版本更新」现在按同一个信任锚验签、通过同一个 helper 驱动 --plan/--execute/--rollback，热修与滚动升级按顶层目录区分，详情面板会标明包类型。同一次提交还关掉一个签名盲区：apply.sh / rollback.sh 以 root 运行、决定装什么装到哪儿，此前却是在清单签名之后才生成、不被任何摘要覆盖（换掉 apply.sh 可以满足全部 payload 摘要去装别的东西）——构建脚本现在把两个脚本的摘要写进签名清单并纳入 SHA256SUMS，校验侧要求 schema_version 3。只装这一个包（它完整包含并取代 HF-2026-0928-05），不要与其它基线混装。</p>
-<h3 id="hf-2026-0928-06-1-热修包上传到控制台只得到-请走命令行-而产品从未提供那条通道-81fe3c8-p1">HF-2026-0928-06.1 热修包上传到控制台只得到「请走命令行」，而产品从未提供那条通道（<code>81fe3c8</code>，P1）<a class="heading-anchor" href="#hf-2026-0928-06-1-热修包上传到控制台只得到-请走命令行-而产品从未提供那条通道-81fe3c8-p1" aria-label="Link to HF-2026-0928-06.1 热修包上传到控制台只得到「请走命令行」，而产品从未提供那条通道（81fe3c8，P1）">#</a></h3>
+<p>本包完整包含并取代 HF-2026-0928-06，另加三项修复，全部来自 2026-09-29 现场时钟整体偏移（三台 UTC 一致地快 8 小时）这一件事。① 租约回拨后重锚（ac6f3f7，P0）：拨回时间会让 VIP 归属租约的到期时间被甩到 8 小时之后，持有者停止续约也不会过期，自动接管被静默关闭——必须先修它再拨钟。② 时钟网脚本的权威确认与显示时区（abf5782，P1）：--server 不再无校验吞下本机时间，时区在两侧角色统一落地且进得了 RPM。③ 热修组件推导改为按导入图（fce48b7，P1）：否则本包只会带上运行时脚本，而租约修复到不了现场。交付内容因此比上一个包多一个二进制 /usr/local/libexec/clusterguard-update-helper ——HF-2026-0928-06 漏了它，控制台热修通道的 helper 侧那一半其实从未落地。只装这一个包，不要与其它基线混装。装完再拨钟，拨完当场核对租约的 expires_at 已重锚为当前 UTC + 约 60 秒。</p>
+<h3 id="hf-2026-0929-01-1-热修包上传到控制台只得到-请走命令行-而产品从未提供那条通道-81fe3c8-p1">HF-2026-0929-01.1 热修包上传到控制台只得到「请走命令行」，而产品从未提供那条通道（<code>81fe3c8</code>，P1）<a class="heading-anchor" href="#hf-2026-0929-01-1-热修包上传到控制台只得到-请走命令行-而产品从未提供那条通道-81fe3c8-p1" aria-label="Link to HF-2026-0929-01.1 热修包上传到控制台只得到「请走命令行」，而产品从未提供那条通道（81fe3c8，P1）">#</a></h3>
 <ul>
 <li><p>现象：运维按上一版给出的指引，把 clusterguard-ha-hotfix-*.cgpatch 传到「版本更新」对话框，得到「该包是热修补丁包（clusterguard-hotfix/），不经过控制台滚动升级通道；请在控制节点命令行用 tar -xzf 解包后运行 clusterguard-hotfix/apply.sh 安装」。指引本身没错，但控制台既不接受这个包，也不提供 plan/execute/rollback：现场每一次装热修都要手工 SSH 解包、逐台重启，验签结果、执行过程与回滚能力都不留痕。</p>
 </li>
@@ -126,7 +128,7 @@ bash rollback.sh         # 按最新备份清单回滚
 </ul>
 </li>
 </ul>
-<h3 id="hf-2026-0928-06-2-热修补丁的落点由来源名猜出-修复被装到产品不读的路径-18d738e-p1">HF-2026-0928-06.2 热修补丁的落点由来源名猜出，修复被装到产品不读的路径（<code>18d738e</code>，P1）<a class="heading-anchor" href="#hf-2026-0928-06-2-热修补丁的落点由来源名猜出-修复被装到产品不读的路径-18d738e-p1" aria-label="Link to HF-2026-0928-06.2 热修补丁的落点由来源名猜出，修复被装到产品不读的路径（18d738e，P1）">#</a></h3>
+<h3 id="hf-2026-0929-01-2-热修补丁的落点由来源名猜出-修复被装到产品不读的路径-18d738e-p1">HF-2026-0929-01.2 热修补丁的落点由来源名猜出，修复被装到产品不读的路径（<code>18d738e</code>，P1）<a class="heading-anchor" href="#hf-2026-0929-01-2-热修补丁的落点由来源名猜出-修复被装到产品不读的路径-18d738e-p1" aria-label="Link to HF-2026-0929-01.2 热修补丁的落点由来源名猜出，修复被装到产品不读的路径（18d738e，P1）">#</a></h3>
 <ul>
 <li><p>现象：HF-04 应用后三台脚本、单元、二进制全部显示「已安装」，但控制台上传热修包仍报「升级包包含范围外路径：clusterguard-hotfix/」：带修复的脚本被装到 /usr/local/libexec/clusterguard-upgrade.sh（产品从不执行该路径），真正被调用的 /usr/local/sbin/clusterguard-upgrade 还是 9 月 24 日 RPM 装的旧版本。</p>
 </li>
@@ -142,7 +144,7 @@ bash rollback.sh         # 按最新备份清单回滚
 </ul>
 </li>
 </ul>
-<h3 id="hf-2026-0928-06-3-热修补丁包误传控制台时只报-范围外路径-不说是通道走错了-9303e9d-p1">HF-2026-0928-06.3 热修补丁包误传控制台时只报「范围外路径」，不说是通道走错了（<code>9303e9d</code>，P1）<a class="heading-anchor" href="#hf-2026-0928-06-3-热修补丁包误传控制台时只报-范围外路径-不说是通道走错了-9303e9d-p1" aria-label="Link to HF-2026-0928-06.3 热修补丁包误传控制台时只报「范围外路径」，不说是通道走错了（9303e9d，P1）">#</a></h3>
+<h3 id="hf-2026-0929-01-3-热修补丁包误传控制台时只报-范围外路径-不说是通道走错了-9303e9d-p1">HF-2026-0929-01.3 热修补丁包误传控制台时只报「范围外路径」，不说是通道走错了（<code>9303e9d</code>，P1）<a class="heading-anchor" href="#hf-2026-0929-01-3-热修补丁包误传控制台时只报-范围外路径-不说是通道走错了-9303e9d-p1" aria-label="Link to HF-2026-0929-01.3 热修补丁包误传控制台时只报「范围外路径」，不说是通道走错了（9303e9d，P1）">#</a></h3>
 <ul>
 <li><p>现象：运维把 clusterguard-ha-hotfix-*.cgpatch 传到版本更新对话框（文件选择器按 .cgpatch 后缀放行、实验室链验签也能通过），最后只得到「升级失败：升级包包含范围外路径：clusterguard-hotfix/」——没有任何文字说明热修包根本不该走这个通道，运维会反复重试。</p>
 </li>
@@ -157,7 +159,7 @@ bash rollback.sh         # 按最新备份清单回滚
 </ul>
 </li>
 </ul>
-<h3 id="hf-2026-0928-06-4-整机重启后整个集群起不来-共享运行时目录权限与恢复冻结永不释放-28e3b47-p0">HF-2026-0928-06.4 整机重启后整个集群起不来：共享运行时目录权限与恢复冻结永不释放（<code>28e3b47</code>，P0）<a class="heading-anchor" href="#hf-2026-0928-06-4-整机重启后整个集群起不来-共享运行时目录权限与恢复冻结永不释放-28e3b47-p0" aria-label="Link to HF-2026-0928-06.4 整机重启后整个集群起不来：共享运行时目录权限与恢复冻结永不释放（28e3b47，P0）">#</a></h3>
+<h3 id="hf-2026-0929-01-4-整机重启后整个集群起不来-共享运行时目录权限与恢复冻结永不释放-28e3b47-p0">HF-2026-0929-01.4 整机重启后整个集群起不来：共享运行时目录权限与恢复冻结永不释放（<code>28e3b47</code>，P0）<a class="heading-anchor" href="#hf-2026-0929-01-4-整机重启后整个集群起不来-共享运行时目录权限与恢复冻结永不释放-28e3b47-p0" aria-label="Link to HF-2026-0929-01.4 整机重启后整个集群起不来：共享运行时目录权限与恢复冻结永不释放（28e3b47，P0）">#</a></h3>
 <ul>
 <li><p>现象：三台整机关机再开机后，控制台报「部分数据不可用：候选评估」「尚未发现主库」，三个实例全部显示「数据库未启动或不可达」，再次整机关机与故障切换都被阻断。clusterguard-mysql-3306.service 与 clusterguard-cluster-restore.service 双双进入崩溃重启循环，重启计数分别达到 2063/2069/2072 与 1034~1036。</p>
 </li>
@@ -173,7 +175,7 @@ bash rollback.sh         # 按最新备份清单回滚
 </ul>
 </li>
 </ul>
-<h3 id="hf-2026-0928-06-5-mysql-写入者协调抖动-授权主库每-5-秒自隔离一次-dd82ca5-p0">HF-2026-0928-06.5 MySQL 写入者协调抖动：授权主库每 5 秒自隔离一次（<code>dd82ca5</code>，P0）<a class="heading-anchor" href="#hf-2026-0928-06-5-mysql-写入者协调抖动-授权主库每-5-秒自隔离一次-dd82ca5-p0" aria-label="Link to HF-2026-0928-06.5 MySQL 写入者协调抖动：授权主库每 5 秒自隔离一次（dd82ca5，P0）">#</a></h3>
+<h3 id="hf-2026-0929-01-5-mysql-写入者协调抖动-授权主库每-5-秒自隔离一次-dd82ca5-p0">HF-2026-0929-01.5 MySQL 写入者协调抖动：授权主库每 5 秒自隔离一次（<code>dd82ca5</code>，P0）<a class="heading-anchor" href="#hf-2026-0929-01-5-mysql-写入者协调抖动-授权主库每-5-秒自隔离一次-dd82ca5-p0" aria-label="Link to HF-2026-0929-01.5 MySQL 写入者协调抖动：授权主库每 5 秒自隔离一次（dd82ca5，P0）">#</a></h3>
 <ul>
 <li><p>现象：集群长期 degraded、两条复制链路 unhealthy、候选评估 409、计划关机必被阻断。实测自安装起 9492 次自隔离，read_only 与 VIP 每约 10 秒同步翻转一次。</p>
 </li>
@@ -188,7 +190,7 @@ bash rollback.sh         # 按最新备份清单回滚
 </ul>
 </li>
 </ul>
-<h3 id="hf-2026-0928-06-6-升级执行链两个前置缺陷-ssh-私钥属主与-helper-共用运行时目录-d5f9491-p0">HF-2026-0928-06.6 升级执行链两个前置缺陷：SSH 私钥属主与 Helper 共用运行时目录（<code>d5f9491</code>，P0）<a class="heading-anchor" href="#hf-2026-0928-06-6-升级执行链两个前置缺陷-ssh-私钥属主与-helper-共用运行时目录-d5f9491-p0" aria-label="Link to HF-2026-0928-06.6 升级执行链两个前置缺陷：SSH 私钥属主与 Helper 共用运行时目录（d5f9491，P0）">#</a></h3>
+<h3 id="hf-2026-0929-01-6-升级执行链两个前置缺陷-ssh-私钥属主与-helper-共用运行时目录-d5f9491-p0">HF-2026-0929-01.6 升级执行链两个前置缺陷：SSH 私钥属主与 Helper 共用运行时目录（<code>d5f9491</code>，P0）<a class="heading-anchor" href="#hf-2026-0929-01-6-升级执行链两个前置缺陷-ssh-私钥属主与-helper-共用运行时目录-d5f9491-p0" aria-label="Link to HF-2026-0929-01.6 升级执行链两个前置缺陷：SSH 私钥属主与 Helper 共用运行时目录（d5f9491，P0）">#</a></h3>
 <ul>
 <li><p>现象：版本更新始终 available=false，安装/上传升级包的三个控件全灰；即便手工补齐 update.json，升级执行器仍以“私钥权限过宽”拒绝；Helper 首启报 status=233，且停机时把 /run/clusterguard 整个删掉。</p>
 </li>
@@ -203,7 +205,7 @@ bash rollback.sh         # 按最新备份清单回滚
 </ul>
 </li>
 </ul>
-<h3 id="hf-2026-0928-06-7-控制台不解释-不可用-的原因-ed9faca-p1">HF-2026-0928-06.7 控制台不解释“不可用”的原因（<code>ed9faca</code>，P1）<a class="heading-anchor" href="#hf-2026-0928-06-7-控制台不解释-不可用-的原因-ed9faca-p1" aria-label="Link to HF-2026-0928-06.7 控制台不解释“不可用”的原因（ed9faca，P1）">#</a></h3>
+<h3 id="hf-2026-0929-01-7-控制台不解释-不可用-的原因-ed9faca-p1">HF-2026-0929-01.7 控制台不解释“不可用”的原因（<code>ed9faca</code>，P1）<a class="heading-anchor" href="#hf-2026-0929-01-7-控制台不解释-不可用-的原因-ed9faca-p1" aria-label="Link to HF-2026-0929-01.7 控制台不解释“不可用”的原因（ed9faca，P1）">#</a></h3>
 <ul>
 <li><p>现象：版本更新面板只显示红徽标“不可用”，不写原因；集群加载横幅只报栏目名（“部分数据不可用：候选评估；操作已锁定”），运维无法判断下一步做什么。</p>
 </li>
@@ -218,7 +220,7 @@ bash rollback.sh         # 按最新备份清单回滚
 </ul>
 </li>
 </ul>
-<h3 id="hf-2026-0928-06-8-整机关机提交后控制台卡在无法交互的对话框上-5ae2039-p1">HF-2026-0928-06.8 整机关机提交后控制台卡在无法交互的对话框上（<code>5ae2039</code>，P1）<a class="heading-anchor" href="#hf-2026-0928-06-8-整机关机提交后控制台卡在无法交互的对话框上-5ae2039-p1" aria-label="Link to HF-2026-0928-06.8 整机关机提交后控制台卡在无法交互的对话框上（5ae2039，P1）">#</a></h3>
+<h3 id="hf-2026-0929-01-8-整机关机提交后控制台卡在无法交互的对话框上-5ae2039-p1">HF-2026-0929-01.8 整机关机提交后控制台卡在无法交互的对话框上（<code>5ae2039</code>，P1）<a class="heading-anchor" href="#hf-2026-0929-01-8-整机关机提交后控制台卡在无法交互的对话框上-5ae2039-p1" aria-label="Link to HF-2026-0929-01.8 整机关机提交后控制台卡在无法交互的对话框上（5ae2039，P1）">#</a></h3>
 <ul>
 <li><p>现象：提交整机关机后主机断电、控制面随之消失，页面永久停在关机确认对话框上，只能手动关闭标签页；提交后响应丢失时还会误报为错误。</p>
 </li>
@@ -230,6 +232,53 @@ bash rollback.sh         # 按最新备份清单回滚
 <ul>
 <li>提交整机关机后控制台卡死、需要手动关闭标签页</li>
 <li>关机提交后偶发“无法连接控制 API”被当作失败</li>
+</ul>
+</li>
+</ul>
+<h3 id="hf-2026-0929-01-9-时钟回拨后-vip-归属租约不再过期-自动故障接管被静默关闭-ac6f3f7-p0">HF-2026-0929-01.9 时钟回拨后 VIP 归属租约不再过期，自动故障接管被静默关闭（<code>ac6f3f7</code>，P0）<a class="heading-anchor" href="#hf-2026-0929-01-9-时钟回拨后-vip-归属租约不再过期-自动故障接管被静默关闭-ac6f3f7-p0" aria-label="Link to HF-2026-0929-01.9 时钟回拨后 VIP 归属租约不再过期，自动故障接管被静默关闭（ac6f3f7，P0）">#</a></h3>
+<ul>
+<li><p>现象：集群时间整体快 8 小时。修好时间之后——或任何一次向回拨动系统时钟之后——coordination_leases 里 VIP 归属租约的 expires_at 会停在“约 8 小时后到期”。租约仍然授权当前持有者，但<strong>持有者停止续约它也不会过期</strong>：ownership_keeper 每 5 秒调用一次 AcquireStableBatch，判据是“距到期还剩超过半个 TTL 就跳过”，于是整个 8 小时窗口内自动接管失效——持有 VIP 的节点宕机，VIP 不会自动转移。三台若不同步回拨，先拨回的那台会把租约判为已过期并抢注，出现两个 VIP Owner。</p>
+</li>
+<li><p>根因：续约判据只问“还剩多少 TTL”，而时钟回拨之后存储的到期时间被甩到任意远的未来，“还剩超过半个 TTL”于是被读成“无需处理”，持续时长恰好等于回拨的幅度。能暴露回拨的量是到期时间距当前时钟的距离：一次续约总是把到期时间写成“自己的时钟 + 一个 TTL”，所以任何超过一个完整 TTL 的剩余有效期都不可能是时间流逝的产物。（第一次修复改用了“到期时间 - 记录自身的 updated_at”，但续约会同时重写这两个字段，二者之差恒等于授予的 TTL，不携带任何时钟信息。）</p>
+</li>
+<li><p>修复：Acquire 与 AcquireStableBatch 都以 maxLeaseTTL（既是授予上限，也是“存储到期时间距当前时钟”的合法最大值）为准，超过即重锚为 now + TTL；“续约永不缩短既有到期时间”这条既有不变量保持不变。新增三条真跑时间的测试：稳定路径重锚、转移路径重锚，以及边界用例——恰好一个完整 TTL 必须保持不动，否则检测器会在每个 tick 重写所有长期租约。</p>
+</li>
+<li><p>何时需要应用：</p>
+<ul>
+<li>修好集群时间之后，或任何场合回拨过系统时钟之后</li>
+<li>担心自动故障接管被静默关闭、VIP 不会随主库切换</li>
+<li>三台节点时间不一致时出现过 VIP 抢注或双 Owner</li>
+</ul>
+</li>
+</ul>
+<h3 id="hf-2026-0929-01-10-时钟网脚本把本机时间无校验地冻结成全集群权威-且从不固定显示时区-abf5782-p1">HF-2026-0929-01.10 时钟网脚本把本机时间无校验地冻结成全集群权威，且从不固定显示时区（<code>abf5782</code>，P1）<a class="heading-anchor" href="#hf-2026-0929-01-10-时钟网脚本把本机时间无校验地冻结成全集群权威-且从不固定显示时区-abf5782-p1" aria-label="Link to HF-2026-0929-01.10 时钟网脚本把本机时间无校验地冻结成全集群权威，且从不固定显示时区（abf5782，P1）">#</a></h3>
+<ul>
+<li><p>现象：装机时三台的 UTC 一致地快 8 小时（RTC 里存本地时间、内核按 UTC 读取）。当时的时钟检查只问“节点之间是否互相一致”——最大偏差 2 秒，通过——随后 clusterguard-clock-mesh.sh --server 把这台的时间升格为全集群权威，再由 hwclock --systohc --utc 与 rtcsync 固化进 RTC，偏差因此挺过每一次重启。现场证书就是证据：CA 的 notBefore 为 Sep 23 14:05:49 2026 GMT，比真实时刻晚整整 8 小时。同时 152/153 显示 America/New_York、154 显示 Asia/Shanghai，集群里同一条记录有两个钟点。</p>
+</li>
+<li><p>根因：两处都被“多一层方便”补成了缺口。① --server 直接把自己当前的时间当作权威，没有任何上游能纠正它，也没有任何确认步骤，而把未校验的时间写进 RTC 正是让一次安装失误变成永久偏差的动作。② 显示时区完全交给各节点 OS 默认，而控制台渲染“配置更新时间”用的是应答节点的本地时区（internal/runtime/configuration_view.go），时区不统一会被产品直接呈现出来。</p>
+</li>
+<li><p>修复：① --server 现在必须给出 --set-utc <RFC3339>（采用指定时刻）或 --accept-current-time（明确为该节点时间背书）；两者都没有时，在改写任何配置或触碰 RTC 之前直接拒绝，并打印两条出路。--set-utc 会先停 chronyd 再拨钟并报告偏差。② 新增 --timezone，在两种角色分支之前统一落地 timedatectl set-timezone；未指定时明确打印“本节点时区不受本工具管理”，--dry-run 同样打印全部决策。③ 安装器改为逐节点与本机 UTC 比对（±30 秒）通过后，才向权威传 --accept-current-time，并把同一个 --timezone 传给权威与全部客户端；成功文案不再把“互相一致”说成已校验。④ 脚本加入 RPM 打包清单（/usr/local/sbin/clusterguard-clock-mesh.sh），现场才能通过正式包路径收到修正版——此前它只随安装器拷贝，已装机的站点永远拿不到修正。</p>
+</li>
+<li><p>何时需要应用：</p>
+<ul>
+<li>节点之间时钟一致、但整体偏离真实时间（一个时区偏移的形状）</li>
+<li>集群里同一条记录显示两个钟点（节点显示时区不统一）</li>
+<li>需要重跑时钟网配置，用 --timezone 把全集群显示时区固定下来</li>
+</ul>
+</li>
+</ul>
+<h3 id="hf-2026-0929-01-11-热修通道按路径前缀猜-改动落在哪个二进制-共享包里的修复被静默丢弃-fce48b7-p1">HF-2026-0929-01.11 热修通道按路径前缀猜“改动落在哪个二进制”，共享包里的修复被静默丢弃（<code>fce48b7</code>，P1）<a class="heading-anchor" href="#hf-2026-0929-01-11-热修通道按路径前缀猜-改动落在哪个二进制-共享包里的修复被静默丢弃-fce48b7-p1" aria-label="Link to HF-2026-0929-01.11 热修通道按路径前缀猜“改动落在哪个二进制”，共享包里的修复被静默丢弃（fce48b7，P1）">#</a></h3>
+<ul>
+<li><p>现象：本包要携带的租约修复位于 internal/coordination，而构建脚本与台账门禁都用两条硬编码前缀推导组件（internal/agent|cmd/clusterguard-agent 与 internal/api|cmd/clusterguard）。该目录两条都不匹配（实测命中数均为 0），于是构件里只会有运行时脚本、没有二进制：现场会“应用成功”，签名清单会写“修复已交付”，而控制面仍然带着缺陷，且因为门禁与构建脚本共用同一张表，没有任何一方会反对。同一张表还漏了 internal/platformupdate——它被控制面与 clusterguard-update-helper 同时链接，而 HF-2026-0928-06 只交付了控制面，控制台热修通道的 helper 侧那一半从未到达现场。</p>
+</li>
+<li><p>根因：“某个包被哪个二进制链接”是导入图的事实，与路径长什么样无关。共享包不属于任何一条前缀，而这张前缀表同时决定了两件事：构件里放什么，以及哪些修复必须有补丁——共享包里的修复因此在两个方向上都不可见。</p>
+</li>
+<li><p>修复：新增 scripts/hotfix-component-map.cjs 作为唯一真源：候选二进制从 packaging/rpm/nfpm.yaml 的 bin/* 读取（因此涵盖 clusterguard、clusterguard-agent、clusterguard-update-helper、cgctl、clusterguard-k8s-fence-guard，而不是写死的两个），归属由 go list -deps 的真实导入图决定；导入图读不出来时硬失败，而不是返回空集合——空集合与“没有任何东西承载这条修复”无法区分，这正是修复丢失的形态。构建脚本与台账门禁共用该模块，生产路径判据也一并换成依赖图；新增 4 条测试（共享包、内嵌资源、helper、以及不承载任何二进制的文件），并钉死两条前缀表不得复活。</p>
+</li>
+<li><p>何时需要应用：</p>
+<ul>
+<li>怀疑某个热修包“应用成功”但现场行为没有任何变化</li>
+<li>需要核对补丁里究竟该包含哪些二进制</li>
 </ul>
 </li>
 </ul>
@@ -248,9 +297,16 @@ bash rollback.sh         # 按最新备份清单回滚
 <li><code>/usr/local/sbin/clusterguard-upgrade --patch /root/clusterguard-ha-hotfix-HF-2026-0928-06-2.2-104.x86_64.cgpatch --trust-key /etc/clusterguard/trust/patch-signing-public.pem --inspect   # 必须输出 kind=hotfix，而不是拒绝该包</code></li>
 <li><code>curl -sk https://192.168.102.155:3000/ | grep -c &#39;包类型&#39;   # 控制台页面必须已包含包类型字段（浏览器需刷新）</code></li>
 <li><code>curl -sk https://192.168.102.155:3000/ | grep -c &#39;支持 .cgupgrade 滚动升级包与 .cgpatch 热修补丁包&#39;   # 控制台上传指引必须已同时点名两种包</code></li>
+<li><code>sha256sum /usr/local/bin/clusterguard /usr/local/bin/clusterguard-agent /usr/local/libexec/clusterguard-update-helper   # 三条必须与本台账「交付内容」中 payload/bin/* 的 sha256 逐条一致</code></li>
+<li><code>ls -l /usr/local/sbin/clusterguard-clock-mesh.sh   # mtime 必须是本次应用时间，即现场已拿到修正版脚本</code></li>
+<li><code>grep -c &#39;Refusing to become the clock authority&#39; /usr/local/sbin/clusterguard-clock-mesh.sh   # 必须为 1</code></li>
+<li><code>grep -c &#39;timedatectl set-timezone&#39; /usr/local/sbin/clusterguard-clock-mesh.sh   # 必须为 1</code></li>
+<li><code>/usr/local/sbin/clusterguard-clock-mesh.sh --server --dry-run   # 必须拒绝并打印 --set-utc 与 --accept-current-time 两条出路，且不改动任何配置</code></li>
+<li><code>date -u +%Y-%m-%dT%H:%M:%SZ; timedatectl show -p Timezone --value; hwclock --show   # 拨钟之后：三台 UTC 与真实时间一致、Timezone 三台一致、hwclock 与 date -u 一致</code></li>
+<li><code>jq -r &#39;.coordination_leases | to_entries[] | [.key, .value.lease.ha_endpoint_id, .value.lease.expires_at, .value.updated_at, .value.lease.active] | @tsv&#39; /var/lib/clusterguard/metadata.json   # 关键验收：拨回 8 小时并重启控制面之后，expires_at 必须是当前 UTC + 约 60 秒，而不是当前 UTC + 8 小时</code></li>
 </ul>
 <h3 id="回滚">回滚<a class="heading-anchor" href="#回滚" aria-label="Link to 回滚">#</a></h3>
-<p>执行 rollback.sh 恢复旧二进制、旧单元与旧运行时脚本，然后 systemctl daemon-reload 并 systemctl restart clusterguard-ha。注意：回滚会把 /run/clusterguard 重新交回 0750 的创建方，下一次整机重启会再次让集群起不来；仅在确认新版本有回归时使用，并在回滚后临时手工执行 chmod 0755 /run/clusterguard。 本包对 /run/clusterguard 与 clusterguard-update-helper.service 的回滚沿用 HF-2026-0928-05 的说明。</p>
+<p>执行 rollback.sh 恢复旧二进制、旧单元与旧运行时脚本，然后 systemctl daemon-reload 并重启 clusterguard-ha 与 clusterguard-update-helper。注意两点：① 回滚会把 clusterguard-clock-mesh.sh 恢复成“无校验即成为权威”的旧版本，并撤掉租约重锚——若此后再次回拨系统时钟，VIP 归属租约将再次长期不过期、自动接管再次被静默关闭；② /usr/local/libexec/clusterguard-update-helper 会回到 HF-2026-0928-06 之前的状态（该二进制此前从未被热修更新过）。本包对 /run/clusterguard、clusterguard-update-helper.service 与其它单元的回滚沿用 HF-2026-0928-05 / HF-2026-0928-06 的说明。</p>
 <h2 id="hf-2026-0928-02-2-2-103-现场修复合集-累积-整机重启后集群不可用-写入者抖动-升级链前置-控制台原因与关机收尾">HF-2026-0928-02 — 2.2-103 现场修复合集（累积）：整机重启后集群不可用、写入者抖动、升级链前置、控制台原因与关机收尾<a class="heading-anchor" href="#hf-2026-0928-02-2-2-103-现场修复合集-累积-整机重启后集群不可用-写入者抖动-升级链前置-控制台原因与关机收尾" aria-label="Link to HF-2026-0928-02 — 2.2-103 现场修复合集（累积）：整机重启后集群不可用、写入者抖动、升级链前置、控制台原因与关机收尾">#</a></h2>
 <ul>
 <li>严重级别：P0</li>
@@ -374,7 +430,7 @@ bash rollback.sh         # 按最新备份清单回滚
         </article>
         <aside class="page-toc" aria-label="本页目录">
           <strong>本页目录</strong>
-          <a class="toc-level-2" href="#应用补丁">应用补丁</a><a class="toc-level-2" href="#hf-2026-0928-06-2-2-104-现场修复合集-累积-整机重启后集群不可用-写入者抖动-升级链前置-控制台原因与关机收尾-控制台热">HF-2026-0928-06 — 2.2-104 现场修复合集（累积）：整机重启后集群不可用、写入者抖动、升级链前置、控制台原因与关机收尾、控制台热修通道</a><a class="toc-level-3" href="#本包概要">本包概要</a><a class="toc-level-3" href="#hf-2026-0928-06-1-热修包上传到控制台只得到-请走命令行-而产品从未提供那条通道-81fe3c8-p1">HF-2026-0928-06.1 热修包上传到控制台只得到「请走命令行」，而产品从未提供那条通道（81fe3c8，P1）</a><a class="toc-level-3" href="#hf-2026-0928-06-2-热修补丁的落点由来源名猜出-修复被装到产品不读的路径-18d738e-p1">HF-2026-0928-06.2 热修补丁的落点由来源名猜出，修复被装到产品不读的路径（18d738e，P1）</a><a class="toc-level-3" href="#hf-2026-0928-06-3-热修补丁包误传控制台时只报-范围外路径-不说是通道走错了-9303e9d-p1">HF-2026-0928-06.3 热修补丁包误传控制台时只报「范围外路径」，不说是通道走错了（9303e9d，P1）</a><a class="toc-level-3" href="#hf-2026-0928-06-4-整机重启后整个集群起不来-共享运行时目录权限与恢复冻结永不释放-28e3b47-p0">HF-2026-0928-06.4 整机重启后整个集群起不来：共享运行时目录权限与恢复冻结永不释放（28e3b47，P0）</a><a class="toc-level-3" href="#hf-2026-0928-06-5-mysql-写入者协调抖动-授权主库每-5-秒自隔离一次-dd82ca5-p0">HF-2026-0928-06.5 MySQL 写入者协调抖动：授权主库每 5 秒自隔离一次（dd82ca5，P0）</a><a class="toc-level-3" href="#hf-2026-0928-06-6-升级执行链两个前置缺陷-ssh-私钥属主与-helper-共用运行时目录-d5f9491-p0">HF-2026-0928-06.6 升级执行链两个前置缺陷：SSH 私钥属主与 Helper 共用运行时目录（d5f9491，P0）</a><a class="toc-level-3" href="#hf-2026-0928-06-7-控制台不解释-不可用-的原因-ed9faca-p1">HF-2026-0928-06.7 控制台不解释“不可用”的原因（ed9faca，P1）</a><a class="toc-level-3" href="#hf-2026-0928-06-8-整机关机提交后控制台卡在无法交互的对话框上-5ae2039-p1">HF-2026-0928-06.8 整机关机提交后控制台卡在无法交互的对话框上（5ae2039，P1）</a><a class="toc-level-3" href="#验证">验证</a><a class="toc-level-3" href="#回滚">回滚</a><a class="toc-level-2" href="#hf-2026-0928-02-2-2-103-现场修复合集-累积-整机重启后集群不可用-写入者抖动-升级链前置-控制台原因与关机收尾">HF-2026-0928-02 — 2.2-103 现场修复合集（累积）：整机重启后集群不可用、写入者抖动、升级链前置、控制台原因与关机收尾</a><a class="toc-level-3" href="#本包概要-2">本包概要</a><a class="toc-level-3" href="#hf-2026-0928-02-1-整机重启后整个集群起不来-共享运行时目录权限与恢复冻结永不释放-f90f995-p0">HF-2026-0928-02.1 整机重启后整个集群起不来：共享运行时目录权限与恢复冻结永不释放（f90f995，P0）</a><a class="toc-level-3" href="#hf-2026-0928-02-2-mysql-写入者协调抖动-授权主库每-5-秒自隔离一次-4015f97-p0">HF-2026-0928-02.2 MySQL 写入者协调抖动：授权主库每 5 秒自隔离一次（4015f97，P0）</a><a class="toc-level-3" href="#hf-2026-0928-02-3-升级执行链两个前置缺陷-ssh-私钥属主与-helper-共用运行时目录-3c88289-p0">HF-2026-0928-02.3 升级执行链两个前置缺陷：SSH 私钥属主与 Helper 共用运行时目录（3c88289，P0）</a><a class="toc-level-3" href="#hf-2026-0928-02-4-控制台不解释-不可用-的原因-914c6c5-p1">HF-2026-0928-02.4 控制台不解释“不可用”的原因（914c6c5，P1）</a><a class="toc-level-3" href="#hf-2026-0928-02-5-整机关机提交后控制台卡在无法交互的对话框上-0e8ab48-p1">HF-2026-0928-02.5 整机关机提交后控制台卡在无法交互的对话框上（0e8ab48，P1）</a><a class="toc-level-3" href="#验证-2">验证</a><a class="toc-level-3" href="#回滚-2">回滚</a>
+          <a class="toc-level-2" href="#应用补丁">应用补丁</a><a class="toc-level-2" href="#hf-2026-0929-01-2-2-104-现场修复合集-累积-在-hf-2026-0928-06-之上加入时钟整体偏移的三项修复-租约回拨">HF-2026-0929-01 — 2.2-104 现场修复合集（累积）：在 HF-2026-0928-06 之上加入时钟整体偏移的三项修复——租约回拨后重锚、时钟网脚本的权威确认与显示时区、热修组件推导改为按导入图</a><a class="toc-level-3" href="#本包概要">本包概要</a><a class="toc-level-3" href="#hf-2026-0929-01-1-热修包上传到控制台只得到-请走命令行-而产品从未提供那条通道-81fe3c8-p1">HF-2026-0929-01.1 热修包上传到控制台只得到「请走命令行」，而产品从未提供那条通道（81fe3c8，P1）</a><a class="toc-level-3" href="#hf-2026-0929-01-2-热修补丁的落点由来源名猜出-修复被装到产品不读的路径-18d738e-p1">HF-2026-0929-01.2 热修补丁的落点由来源名猜出，修复被装到产品不读的路径（18d738e，P1）</a><a class="toc-level-3" href="#hf-2026-0929-01-3-热修补丁包误传控制台时只报-范围外路径-不说是通道走错了-9303e9d-p1">HF-2026-0929-01.3 热修补丁包误传控制台时只报「范围外路径」，不说是通道走错了（9303e9d，P1）</a><a class="toc-level-3" href="#hf-2026-0929-01-4-整机重启后整个集群起不来-共享运行时目录权限与恢复冻结永不释放-28e3b47-p0">HF-2026-0929-01.4 整机重启后整个集群起不来：共享运行时目录权限与恢复冻结永不释放（28e3b47，P0）</a><a class="toc-level-3" href="#hf-2026-0929-01-5-mysql-写入者协调抖动-授权主库每-5-秒自隔离一次-dd82ca5-p0">HF-2026-0929-01.5 MySQL 写入者协调抖动：授权主库每 5 秒自隔离一次（dd82ca5，P0）</a><a class="toc-level-3" href="#hf-2026-0929-01-6-升级执行链两个前置缺陷-ssh-私钥属主与-helper-共用运行时目录-d5f9491-p0">HF-2026-0929-01.6 升级执行链两个前置缺陷：SSH 私钥属主与 Helper 共用运行时目录（d5f9491，P0）</a><a class="toc-level-3" href="#hf-2026-0929-01-7-控制台不解释-不可用-的原因-ed9faca-p1">HF-2026-0929-01.7 控制台不解释“不可用”的原因（ed9faca，P1）</a><a class="toc-level-3" href="#hf-2026-0929-01-8-整机关机提交后控制台卡在无法交互的对话框上-5ae2039-p1">HF-2026-0929-01.8 整机关机提交后控制台卡在无法交互的对话框上（5ae2039，P1）</a><a class="toc-level-3" href="#hf-2026-0929-01-9-时钟回拨后-vip-归属租约不再过期-自动故障接管被静默关闭-ac6f3f7-p0">HF-2026-0929-01.9 时钟回拨后 VIP 归属租约不再过期，自动故障接管被静默关闭（ac6f3f7，P0）</a><a class="toc-level-3" href="#hf-2026-0929-01-10-时钟网脚本把本机时间无校验地冻结成全集群权威-且从不固定显示时区-abf5782-p1">HF-2026-0929-01.10 时钟网脚本把本机时间无校验地冻结成全集群权威，且从不固定显示时区（abf5782，P1）</a><a class="toc-level-3" href="#hf-2026-0929-01-11-热修通道按路径前缀猜-改动落在哪个二进制-共享包里的修复被静默丢弃-fce48b7-p1">HF-2026-0929-01.11 热修通道按路径前缀猜“改动落在哪个二进制”，共享包里的修复被静默丢弃（fce48b7，P1）</a><a class="toc-level-3" href="#验证">验证</a><a class="toc-level-3" href="#回滚">回滚</a><a class="toc-level-2" href="#hf-2026-0928-02-2-2-103-现场修复合集-累积-整机重启后集群不可用-写入者抖动-升级链前置-控制台原因与关机收尾">HF-2026-0928-02 — 2.2-103 现场修复合集（累积）：整机重启后集群不可用、写入者抖动、升级链前置、控制台原因与关机收尾</a><a class="toc-level-3" href="#本包概要-2">本包概要</a><a class="toc-level-3" href="#hf-2026-0928-02-1-整机重启后整个集群起不来-共享运行时目录权限与恢复冻结永不释放-f90f995-p0">HF-2026-0928-02.1 整机重启后整个集群起不来：共享运行时目录权限与恢复冻结永不释放（f90f995，P0）</a><a class="toc-level-3" href="#hf-2026-0928-02-2-mysql-写入者协调抖动-授权主库每-5-秒自隔离一次-4015f97-p0">HF-2026-0928-02.2 MySQL 写入者协调抖动：授权主库每 5 秒自隔离一次（4015f97，P0）</a><a class="toc-level-3" href="#hf-2026-0928-02-3-升级执行链两个前置缺陷-ssh-私钥属主与-helper-共用运行时目录-3c88289-p0">HF-2026-0928-02.3 升级执行链两个前置缺陷：SSH 私钥属主与 Helper 共用运行时目录（3c88289，P0）</a><a class="toc-level-3" href="#hf-2026-0928-02-4-控制台不解释-不可用-的原因-914c6c5-p1">HF-2026-0928-02.4 控制台不解释“不可用”的原因（914c6c5，P1）</a><a class="toc-level-3" href="#hf-2026-0928-02-5-整机关机提交后控制台卡在无法交互的对话框上-0e8ab48-p1">HF-2026-0928-02.5 整机关机提交后控制台卡在无法交互的对话框上（0e8ab48，P1）</a><a class="toc-level-3" href="#验证-2">验证</a><a class="toc-level-3" href="#回滚-2">回滚</a>
         </aside>
       </main>
     </div>

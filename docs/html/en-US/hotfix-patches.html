@@ -66,11 +66,11 @@ baseline silently downgrades binaries back to its own release line.</p>
 </tr>
 </thead>
 <tbody><tr>
-<td>HF-2026-0928-06</td>
+<td>HF-2026-0929-01</td>
 <td>P0</td>
-<td><code>ed9faca</code>, <code>d5f9491</code>, <code>dd82ca5</code>, <code>5ae2039</code>, <code>28e3b47</code>, <code>9303e9d</code>, <code>18d738e</code>, <code>81fe3c8</code></td>
-<td><code>81fe3c8</code></td>
-<td><code>release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-06-2.2-104.x86_64.cgpatch</code></td>
+<td><code>ed9faca</code>, <code>d5f9491</code>, <code>dd82ca5</code>, <code>5ae2039</code>, <code>28e3b47</code>, <code>9303e9d</code>, <code>18d738e</code>, <code>81fe3c8</code>, <code>ac6f3f7</code>, <code>abf5782</code>, <code>fce48b7</code></td>
+<td><code>fd59a3b</code></td>
+<td><code>release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-01-2.2-104.x86_64.cgpatch</code></td>
 </tr>
 <tr>
 <td>HF-2026-0928-02</td>
@@ -89,20 +89,22 @@ bash apply.sh            # backs up, verifies SHA-256, installs, daemon-reload
 systemctl restart &lt;unit&gt; # apply.sh prints the units it needs; it never restarts by itself
 bash rollback.sh         # restores from the newest backup manifest
 </code></pre>
-<h2 id="hf-2026-0928-06-2-2-104-site-fix-bundle-cumulative-cluster-stranded-afte">HF-2026-0928-06 — 2.2-104 site fix bundle (cumulative): cluster stranded after a host reboot, writer reconcile flap, update prerequisites, console reasons, power-off teardown, and the console hotfix channel<a class="heading-anchor" href="#hf-2026-0928-06-2-2-104-site-fix-bundle-cumulative-cluster-stranded-afte" aria-label="Link to HF-2026-0928-06 — 2.2-104 site fix bundle (cumulative): cluster stranded after a host reboot, writer reconcile flap, update prerequisites, console reasons, power-off teardown, and the console hotfix channel">#</a></h2>
+<h2 id="hf-2026-0929-01-2-2-104-site-fix-bundle-cumulative-adds-the-three-fixes-">HF-2026-0929-01 — 2.2-104 site fix bundle (cumulative): adds the three fixes for the uniform clock offset on top of HF-2026-0928-06 — lease re-anchoring after a backwards step, a deliberate clock authority with a pinned display timezone, and hotfix components derived from the import graph<a class="heading-anchor" href="#hf-2026-0929-01-2-2-104-site-fix-bundle-cumulative-adds-the-three-fixes-" aria-label="Link to HF-2026-0929-01 — 2.2-104 site fix bundle (cumulative): adds the three fixes for the uniform clock offset on top of HF-2026-0928-06 — lease re-anchoring after a backwards step, a deliberate clock authority with a pinned display timezone, and hotfix components derived from the import graph">#</a></h2>
 <ul>
 <li>Severity: P0</li>
-<li>Fix commits: <code>ed9faca</code>, <code>d5f9491</code>, <code>dd82ca5</code>, <code>5ae2039</code>, <code>28e3b47</code>, <code>9303e9d</code>, <code>18d738e</code>, <code>81fe3c8</code></li>
-<li>Build tree: <code>81fe3c88a4768e35d7c6e2c366b2e107eff7f33b</code> (baseline <code>e01f5ce376f94e2595590358c72dd2585e7c09b4</code> plus the fixes above and nothing else)</li>
-<li>Applies to: 2.2-104 → 2.2-104+hf-2026-0928-06 (x86_64)</li>
-<li>Artifact: <code>release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-06-2.2-104.x86_64.cgpatch</code></li>
-<li>SHA-256: <code>1e1aab698318ae292e69d1ea08acefed760b46903f695a1065cf5c6a6ad31210</code></li>
-<li>Source diff: <code>src/HF-2026-0928-06-81fe3c8.patch</code></li>
+<li>Fix commits: <code>ed9faca</code>, <code>d5f9491</code>, <code>dd82ca5</code>, <code>5ae2039</code>, <code>28e3b47</code>, <code>9303e9d</code>, <code>18d738e</code>, <code>81fe3c8</code>, <code>ac6f3f7</code>, <code>abf5782</code>, <code>fce48b7</code></li>
+<li>Build tree: <code>fd59a3b28457e1ac021e47c062e13b1c65f22351</code> (baseline <code>e01f5ce376f94e2595590358c72dd2585e7c09b4</code> plus the fixes above and nothing else)</li>
+<li>Applies to: 2.2-104 → 2.2-104+hf-2026-0929-01 (x86_64)</li>
+<li>Artifact: <code>release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-01-2.2-104.x86_64.cgpatch</code></li>
+<li>SHA-256: <code>3198ca71e50bebc68a8982d6a99b5bec9f063140cc497383eaf4d707121713e7</code></li>
+<li>Source diff: <code>src/HF-2026-0929-01-fd59a3b.patch</code></li>
 <li>Payload:<ul>
-<li><code>payload/bin/clusterguard-agent</code> → <code>/usr/local/bin/clusterguard-agent</code> (0755)</li>
 <li><code>payload/bin/clusterguard</code> → <code>/usr/local/bin/clusterguard</code> (0755)</li>
+<li><code>payload/bin/clusterguard-agent</code> → <code>/usr/local/bin/clusterguard-agent</code> (0755)</li>
+<li><code>payload/bin/clusterguard-update-helper</code> → <code>/usr/local/libexec/clusterguard-update-helper</code> (0755)</li>
 <li><code>payload/systemd/clusterguard-agent-reconcile.service</code> → <code>/usr/lib/systemd/system/clusterguard-agent-reconcile.service</code> (0644)</li>
 <li><code>payload/systemd/clusterguard-update-helper.service</code> → <code>/usr/lib/systemd/system/clusterguard-update-helper.service</code> (0644)</li>
+<li><code>payload/scripts/clusterguard-clock-mesh.sh</code> → <code>/usr/local/sbin/clusterguard-clock-mesh.sh</code> (0755)</li>
 <li><code>payload/scripts/clusterguard-cluster-finalize.sh</code> → <code>/usr/local/libexec/clusterguard-cluster-finalize.sh</code> (0755)</li>
 <li><code>payload/scripts/clusterguard-mysql-install.sh</code> → <code>/usr/local/libexec/clusterguard-mysql-install.sh</code> (0755)</li>
 <li><code>payload/scripts/clusterguard-postgresql-install.sh</code> → <code>/usr/local/libexec/clusterguard-postgresql-install.sh</code> (0755)</li>
@@ -110,11 +112,11 @@ bash rollback.sh         # restores from the newest backup manifest
 <li><code>payload/installer/install_clusterguard.sh</code> → <code>installer-only, no site path</code> (0755)</li>
 </ul>
 </li>
-<li>Restart required: <code>clusterguard-ha.service</code>, <code>clusterguard-agent-reconcile.service</code>, <code>clusterguard-update-helper.service</code></li>
+<li>Restart required: <code>clusterguard-ha.service</code>, <code>clusterguard-update-helper.service</code>, <code>clusterguard-agent-reconcile.service</code></li>
 </ul>
 <h3 id="what-this-patch-does">What this patch does<a class="heading-anchor" href="#what-this-patch-does" aria-label="Link to What this patch does">#</a></h3>
-<p>Adds one console-channel fix (81fe3c8) on top of HF-2026-0928-05: a hotfix no longer has to go through the command line — the console&#39;s Version Update verifies the same trust anchor, drives the same helper through --plan/--execute/--rollback, tells a hotfix from a rolling upgrade by its top-level directory, and labels the package kind in its detail panel. The same commit closes a signing blind spot: apply.sh and rollback.sh run as root and decide what is written where, yet were generated after the manifest was signed and covered by no digest at all — a swapped apply.sh satisfied every payload digest while installing something else. The builder now writes both digests into the signed manifest and into SHA256SUMS, and the verifier requires schema_version 3. Apply this patch alone (it contains and supersedes HF-2026-0928-05) and never mix baselines.</p>
-<h3 id="hf-2026-0928-06-1-a-hotfix-uploaded-to-the-console-was-only-told-to-use-">HF-2026-0928-06.1 A hotfix uploaded to the console was only told to use the command line, a channel the product never provided (<code>81fe3c8</code>, P1)<a class="heading-anchor" href="#hf-2026-0928-06-1-a-hotfix-uploaded-to-the-console-was-only-told-to-use-" aria-label="Link to HF-2026-0928-06.1 A hotfix uploaded to the console was only told to use the command line, a channel the product never provided (81fe3c8, P1)">#</a></h3>
+<p>This patch contains and supersedes HF-2026-0928-06, plus three fixes, all flowing from one event: the uniform clock offset found on site on 2026-09-29, where all three nodes&#39; UTC ran eight hours fast. (1) Lease re-anchoring after a backwards step (ac6f3f7, P0): stepping the clock back strands the VIP ownership lease&#39;s expiry eight hours out, so it never expires when its holder stops renewing it and automatic takeover is silently off — this has to be fixed before the clock is corrected. (2) A deliberate clock authority and a pinned display timezone (abf5782, P1): --server no longer swallows the node&#39;s own time unchecked, and the timezone lands on both roles and can now reach a site through the RPM. (3) Hotfix components derived from the import graph (fce48b7, P1): without it this patch would have carried the runtime script and no binary, and the lease fix would never have arrived. The payload therefore carries one binary more than the previous patch, /usr/local/libexec/clusterguard-update-helper — HF-2026-0928-06 omitted it, so the helper half of the console hotfix channel never actually landed. Apply this patch alone and never mix baselines. Correct the clock afterwards, then confirm on the spot that the lease&#39;s expires_at has been re-anchored to roughly the current UTC plus 60 seconds.</p>
+<h3 id="hf-2026-0929-01-1-a-hotfix-uploaded-to-the-console-was-only-told-to-use-">HF-2026-0929-01.1 A hotfix uploaded to the console was only told to use the command line, a channel the product never provided (<code>81fe3c8</code>, P1)<a class="heading-anchor" href="#hf-2026-0929-01-1-a-hotfix-uploaded-to-the-console-was-only-told-to-use-" aria-label="Link to HF-2026-0929-01.1 A hotfix uploaded to the console was only told to use the command line, a channel the product never provided (81fe3c8, P1)">#</a></h3>
 <ul>
 <li><p>Symptom: Following the previous fix&#39;s own guidance, the operator uploaded clusterguard-ha-hotfix-*.cgpatch to the Version Update dialog and got &quot;this package is a hotfix (clusterguard-hotfix/), it does not go through the console rolling channel; extract it on the control node with tar -xzf and run clusterguard-hotfix/apply.sh&quot;. The guidance was accurate, but the console neither accepted the package nor offered plan/execute/rollback, so every hotfix meant hand-extracted SSH work on every node, with no record of the signature check, the execution, or any ability to roll back.</p>
 </li>
@@ -131,7 +133,7 @@ bash rollback.sh         # restores from the newest backup manifest
 </ul>
 </li>
 </ul>
-<h3 id="hf-2026-0928-06-2-payload-destinations-were-guessed-from-the-source-name">HF-2026-0928-06.2 Payload destinations were guessed from the source name, so the fix landed where the product never looks (<code>18d738e</code>, P1)<a class="heading-anchor" href="#hf-2026-0928-06-2-payload-destinations-were-guessed-from-the-source-name" aria-label="Link to HF-2026-0928-06.2 Payload destinations were guessed from the source name, so the fix landed where the product never looks (18d738e, P1)">#</a></h3>
+<h3 id="hf-2026-0929-01-2-payload-destinations-were-guessed-from-the-source-name">HF-2026-0929-01.2 Payload destinations were guessed from the source name, so the fix landed where the product never looks (<code>18d738e</code>, P1)<a class="heading-anchor" href="#hf-2026-0929-01-2-payload-destinations-were-guessed-from-the-source-name" aria-label="Link to HF-2026-0929-01.2 Payload destinations were guessed from the source name, so the fix landed where the product never looks (18d738e, P1)">#</a></h3>
 <ul>
 <li><p>Symptom: After HF-04 every script, unit and binary reported installed, yet the console still rejected hotfix uploads with an out-of-scope path error: the fixed script had been written to /usr/local/libexec/clusterguard-upgrade.sh, a path the product never executes, while the file actually invoked, /usr/local/sbin/clusterguard-upgrade, was still the RPM build from 24 September.</p>
 </li>
@@ -147,7 +149,7 @@ bash rollback.sh         # restores from the newest backup manifest
 </ul>
 </li>
 </ul>
-<h3 id="hf-2026-0928-06-3-a-hotfix-patch-uploaded-to-the-console-was-rejected-wi">HF-2026-0928-06.3 A hotfix patch uploaded to the console was rejected with an opaque path error instead of naming the wrong channel (<code>9303e9d</code>, P1)<a class="heading-anchor" href="#hf-2026-0928-06-3-a-hotfix-patch-uploaded-to-the-console-was-rejected-wi" aria-label="Link to HF-2026-0928-06.3 A hotfix patch uploaded to the console was rejected with an opaque path error instead of naming the wrong channel (9303e9d, P1)">#</a></h3>
+<h3 id="hf-2026-0929-01-3-a-hotfix-patch-uploaded-to-the-console-was-rejected-wi">HF-2026-0929-01.3 A hotfix patch uploaded to the console was rejected with an opaque path error instead of naming the wrong channel (<code>9303e9d</code>, P1)<a class="heading-anchor" href="#hf-2026-0929-01-3-a-hotfix-patch-uploaded-to-the-console-was-rejected-wi" aria-label="Link to HF-2026-0929-01.3 A hotfix patch uploaded to the console was rejected with an opaque path error instead of naming the wrong channel (9303e9d, P1)">#</a></h3>
 <ul>
 <li><p>Symptom: An operator uploading clusterguard-ha-hotfix-*.cgpatch to the Version Update dialog (the file picker accepts the .cgpatch suffix and the lab-chain signature verifies) only got &quot;out-of-scope path: clusterguard-hotfix/&quot; — nothing said the hotfix belongs to a different channel, so the operator retried.</p>
 </li>
@@ -162,7 +164,7 @@ bash rollback.sh         # restores from the newest backup manifest
 </ul>
 </li>
 </ul>
-<h3 id="hf-2026-0928-06-4-a-host-reboot-stranded-the-whole-cluster-shared-runtim">HF-2026-0928-06.4 A host reboot stranded the whole cluster: shared runtime directory mode and a recovery freeze that never lifted (<code>28e3b47</code>, P0)<a class="heading-anchor" href="#hf-2026-0928-06-4-a-host-reboot-stranded-the-whole-cluster-shared-runtim" aria-label="Link to HF-2026-0928-06.4 A host reboot stranded the whole cluster: shared runtime directory mode and a recovery freeze that never lifted (28e3b47, P0)">#</a></h3>
+<h3 id="hf-2026-0929-01-4-a-host-reboot-stranded-the-whole-cluster-shared-runtim">HF-2026-0929-01.4 A host reboot stranded the whole cluster: shared runtime directory mode and a recovery freeze that never lifted (<code>28e3b47</code>, P0)<a class="heading-anchor" href="#hf-2026-0929-01-4-a-host-reboot-stranded-the-whole-cluster-shared-runtim" aria-label="Link to HF-2026-0929-01.4 A host reboot stranded the whole cluster: shared runtime directory mode and a recovery freeze that never lifted (28e3b47, P0)">#</a></h3>
 <ul>
 <li><p>Symptom: After a planned whole-host shutdown the console reported &quot;some data unavailable: candidate evaluation&quot;, no primary at all, and every instance as &quot;database not started or unreachable&quot;; both another power-off and failover were blocked. clusterguard-mysql-3306.service and clusterguard-cluster-restore.service sat in restart loops at counts 2063/2069/2072 and 1034-1036.</p>
 </li>
@@ -178,7 +180,7 @@ bash rollback.sh         # restores from the newest backup manifest
 </ul>
 </li>
 </ul>
-<h3 id="hf-2026-0928-06-5-mysql-writer-reconcile-flap-the-authorized-primary-fen">HF-2026-0928-06.5 MySQL writer reconcile flap: the authorized primary fenced itself every five seconds (<code>dd82ca5</code>, P0)<a class="heading-anchor" href="#hf-2026-0928-06-5-mysql-writer-reconcile-flap-the-authorized-primary-fen" aria-label="Link to HF-2026-0928-06.5 MySQL writer reconcile flap: the authorized primary fenced itself every five seconds (dd82ca5, P0)">#</a></h3>
+<h3 id="hf-2026-0929-01-5-mysql-writer-reconcile-flap-the-authorized-primary-fen">HF-2026-0929-01.5 MySQL writer reconcile flap: the authorized primary fenced itself every five seconds (<code>dd82ca5</code>, P0)<a class="heading-anchor" href="#hf-2026-0929-01-5-mysql-writer-reconcile-flap-the-authorized-primary-fen" aria-label="Link to HF-2026-0929-01.5 MySQL writer reconcile flap: the authorized primary fenced itself every five seconds (dd82ca5, P0)">#</a></h3>
 <ul>
 <li><p>Symptom: The cluster never left degraded, both replication links never left unhealthy, candidate evaluation answered 409 and every planned shutdown was blocked. Measurement showed 9,492 self-isolations since install, with read_only and the VIP flipping together roughly every ten seconds.</p>
 </li>
@@ -193,7 +195,7 @@ bash rollback.sh         # restores from the newest backup manifest
 </ul>
 </li>
 </ul>
-<h3 id="hf-2026-0928-06-6-two-update-prerequisites-ssh-key-ownership-and-a-share">HF-2026-0928-06.6 Two update prerequisites: SSH key ownership and a shared runtime directory the helper owned (<code>d5f9491</code>, P0)<a class="heading-anchor" href="#hf-2026-0928-06-6-two-update-prerequisites-ssh-key-ownership-and-a-share" aria-label="Link to HF-2026-0928-06.6 Two update prerequisites: SSH key ownership and a shared runtime directory the helper owned (d5f9491, P0)">#</a></h3>
+<h3 id="hf-2026-0929-01-6-two-update-prerequisites-ssh-key-ownership-and-a-share">HF-2026-0929-01.6 Two update prerequisites: SSH key ownership and a shared runtime directory the helper owned (<code>d5f9491</code>, P0)<a class="heading-anchor" href="#hf-2026-0929-01-6-two-update-prerequisites-ssh-key-ownership-and-a-share" aria-label="Link to HF-2026-0929-01.6 Two update prerequisites: SSH key ownership and a shared runtime directory the helper owned (d5f9491, P0)">#</a></h3>
 <ul>
 <li><p>Symptom: Software updates stayed available=false and the three upload controls stayed disabled; even with a hand-written update.json the executor rejected the SSH key as too permissive, and the helper failed its first start with status=233 while deleting the shared /run/clusterguard on stop.</p>
 </li>
@@ -208,7 +210,7 @@ bash rollback.sh         # restores from the newest backup manifest
 </ul>
 </li>
 </ul>
-<h3 id="hf-2026-0928-06-7-the-console-stopped-explaining-why-a-capability-is-una">HF-2026-0928-06.7 The console stopped explaining why a capability is unavailable (<code>ed9faca</code>, P1)<a class="heading-anchor" href="#hf-2026-0928-06-7-the-console-stopped-explaining-why-a-capability-is-una" aria-label="Link to HF-2026-0928-06.7 The console stopped explaining why a capability is unavailable (ed9faca, P1)">#</a></h3>
+<h3 id="hf-2026-0929-01-7-the-console-stopped-explaining-why-a-capability-is-una">HF-2026-0929-01.7 The console stopped explaining why a capability is unavailable (<code>ed9faca</code>, P1)<a class="heading-anchor" href="#hf-2026-0929-01-7-the-console-stopped-explaining-why-a-capability-is-una" aria-label="Link to HF-2026-0929-01.7 The console stopped explaining why a capability is unavailable (ed9faca, P1)">#</a></h3>
 <ul>
 <li><p>Symptom: The software update panel showed only a red &quot;unavailable&quot; badge with no reason, and the cluster load banner named the failing section without saying why, so operators could not tell what to do next.</p>
 </li>
@@ -223,7 +225,7 @@ bash rollback.sh         # restores from the newest backup manifest
 </ul>
 </li>
 </ul>
-<h3 id="hf-2026-0928-06-8-the-console-froze-on-a-dead-dialog-after-a-host-power-">HF-2026-0928-06.8 The console froze on a dead dialog after a host power-off was submitted (<code>5ae2039</code>, P1)<a class="heading-anchor" href="#hf-2026-0928-06-8-the-console-froze-on-a-dead-dialog-after-a-host-power-" aria-label="Link to HF-2026-0928-06.8 The console froze on a dead dialog after a host power-off was submitted (5ae2039, P1)">#</a></h3>
+<h3 id="hf-2026-0929-01-8-the-console-froze-on-a-dead-dialog-after-a-host-power-">HF-2026-0929-01.8 The console froze on a dead dialog after a host power-off was submitted (<code>5ae2039</code>, P1)<a class="heading-anchor" href="#hf-2026-0929-01-8-the-console-froze-on-a-dead-dialog-after-a-host-power-" aria-label="Link to HF-2026-0929-01.8 The console froze on a dead dialog after a host power-off was submitted (5ae2039, P1)">#</a></h3>
 <ul>
 <li><p>Symptom: After a host power-off was submitted the control plane went away with the host, leaving the page parked on the confirmation dialog forever, and a lost response after submission was reported as an error.</p>
 </li>
@@ -235,6 +237,53 @@ bash rollback.sh         # restores from the newest backup manifest
 <ul>
 <li>提交整机关机后控制台卡死、需要手动关闭标签页</li>
 <li>关机提交后偶发“无法连接控制 API”被当作失败</li>
+</ul>
+</li>
+</ul>
+<h3 id="hf-2026-0929-01-9-after-the-clock-moved-backwards-the-vip-ownership-leas">HF-2026-0929-01.9 After the clock moved backwards the VIP ownership lease stopped expiring, silently disabling automatic failover (<code>ac6f3f7</code>, P0)<a class="heading-anchor" href="#hf-2026-0929-01-9-after-the-clock-moved-backwards-the-vip-ownership-leas" aria-label="Link to HF-2026-0929-01.9 After the clock moved backwards the VIP ownership lease stopped expiring, silently disabling automatic failover (ac6f3f7, P0)">#</a></h3>
+<ul>
+<li><p>Symptom: The cluster clock ran eight hours fast. Once the time is corrected — or after any backwards step of the system clock — the VIP ownership lease in coordination_leases sits with an expires_at roughly eight hours in the future. The lease still authorises its holder, but it no longer expires when that holder stops renewing it: ownership_keeper calls AcquireStableBatch every five seconds and skipped any lease with more than half its TTL left, so automatic takeover was disabled for the whole window. The node holding the VIP could die and the VIP would not move. Staggered steps are worse: whichever node stepped first read the lease as expired and could take it, producing two VIP owners.</p>
+</li>
+<li><p>Root cause: The renewal test only asked how much TTL was left, and after a backwards step the stored expiry is stranded arbitrarily far into the future, so &quot;more than half a TTL left&quot; reads as &quot;nothing to do&quot; for exactly as long as the step was. The quantity that can reveal a step is the distance between the stored expiry and the current clock: a renewal always rewrites the expiry to its own clock plus one TTL, so anything beyond one full grant cannot be the product of elapsed time. (The first attempt measured the expiry against the record&#39;s own updated_at instead, but a renewal rewrites both, so their difference is always the granted TTL and carries no clock information at all.)</p>
+</li>
+<li><p>Fix: Both Acquire and AcquireStableBatch now treat an expiry further from the current clock than maxLeaseTTL — the grant ceiling, and therefore the furthest a stored expiry can legitimately sit — as a stale anchor and re-anchor it to now + TTL; the existing invariant that a renewal never shortens an existing expiry is unchanged. Three tests drive real time: re-anchor on the stable path, re-anchor on the transfer path, and the boundary case — exactly one full TTL must stay untouched, otherwise the detector would rewrite every long-lived lease on every tick.</p>
+</li>
+<li><p>When to apply:</p>
+<ul>
+<li>修好集群时间之后，或任何场合回拨过系统时钟之后</li>
+<li>担心自动故障接管被静默关闭、VIP 不会随主库切换</li>
+<li>三台节点时间不一致时出现过 VIP 抢注或双 Owner</li>
+</ul>
+</li>
+</ul>
+<h3 id="hf-2026-0929-01-10-the-clock-mesh-tool-froze-an-unchecked-local-time-as-">HF-2026-0929-01.10 The clock mesh tool froze an unchecked local time as the cluster authority, and pinned no display timezone (<code>abf5782</code>, P1)<a class="heading-anchor" href="#hf-2026-0929-01-10-the-clock-mesh-tool-froze-an-unchecked-local-time-as-" aria-label="Link to HF-2026-0929-01.10 The clock mesh tool froze an unchecked local time as the cluster authority, and pinned no display timezone (abf5782, P1)">#</a></h3>
+<ul>
+<li><p>Symptom: At install time all three nodes&#39; UTC ran eight hours fast (the RTCs held local time while the kernel read them as UTC). The clock check only asked whether the nodes agreed with each other — 2 seconds of spread, a pass — and then clusterguard-clock-mesh.sh --server promoted that node&#39;s time to the cluster authority, where hwclock --systohc --utc and rtcsync made it survive every reboot. The site&#39;s own certificate is the evidence: the CA&#39;s notBefore is Sep 23 14:05:49 2026 GMT, a full eight hours later than the real instant. Meanwhile 152/153 displayed America/New_York and 154 Asia/Shanghai, so one cluster showed two wall clocks for the same record.</p>
+</li>
+<li><p>Root cause: Two places had been completed into gaps by one more convenience. --server took the node&#39;s own current time as the authority with nothing upstream to correct it and no confirmation step, and writing an unverified time into the RTC is exactly what turns a one-off install mistake into a permanent offset. The display timezone was then left entirely to each node&#39;s OS default, while the console renders the configuration update time in the answering node&#39;s local zone (internal/runtime/configuration_view.go), so the inconsistency is visible in the product itself.</p>
+</li>
+<li><p>Fix: --server now requires either --set-utc <RFC3339> (adopt this instant) or --accept-current-time (explicitly vouch for this node&#39;s clock), and refuses with both routes printed before it rewrites any configuration or touches the RTC. --set-utc stops chrony first, steps the clock, and reports the drift. A new --timezone lands timedatectl set-timezone before either role branch, and with no zone given the tool says plainly that this node&#39;s zone is not managed here; --dry-run prints the same decisions. The installer only passes --accept-current-time after measuring every node against its own UTC within 30 seconds, and passes the single --timezone to the authority and to every client; the success line no longer calls mutual agreement verification. The script is now declared in the RPM manifest at /usr/local/sbin/clusterguard-clock-mesh.sh, so an installed site can receive a corrected copy through the package path — it previously travelled only with the installer, which is why no site could ever get the fix.</p>
+</li>
+<li><p>When to apply:</p>
+<ul>
+<li>节点之间时钟一致、但整体偏离真实时间（一个时区偏移的形状）</li>
+<li>集群里同一条记录显示两个钟点（节点显示时区不统一）</li>
+<li>需要重跑时钟网配置，用 --timezone 把全集群显示时区固定下来</li>
+</ul>
+</li>
+</ul>
+<h3 id="hf-2026-0929-01-11-the-hotfix-channel-guessed-which-binary-a-change-belo">HF-2026-0929-01.11 The hotfix channel guessed which binary a change belongs to from a path prefix, silently dropping fixes in shared packages (<code>fce48b7</code>, P1)<a class="heading-anchor" href="#hf-2026-0929-01-11-the-hotfix-channel-guessed-which-binary-a-change-belo" aria-label="Link to HF-2026-0929-01.11 The hotfix channel guessed which binary a change belongs to from a path prefix, silently dropping fixes in shared packages (fce48b7, P1)">#</a></h3>
+<ul>
+<li><p>Symptom: The lease fix this patch carries lives in internal/coordination, while the builder and the catalogue gate both derived components from two hard-coded prefixes (internal/agent|cmd/clusterguard-agent and internal/api|cmd/clusterguard). Neither matched — the measured hit count was zero for both — so the payload would have contained the runtime script and no binary: the site would have applied it successfully, the signed manifest would have listed the fix as delivered, and the control plane would still have carried the defect. Because the gate and the builder shared the same table, nothing would have objected. That table also missed internal/platformupdate, which the control plane and clusterguard-update-helper both link; HF-2026-0928-06 shipped only the control plane, so the helper half of the console hotfix channel never reached a site.</p>
+</li>
+<li><p>Root cause: Which binary links a package is a fact about the import graph, not about what the path looks like. A shared package belongs to no prefix, and that table decided two things at once: what the payload contains, and which fixes need a patch at all. A fix in a shared package was therefore invisible in both directions.</p>
+</li>
+<li><p>Fix: A new scripts/hotfix-component-map.cjs is the single source of truth: candidate binaries come from packaging/rpm/nfpm.yaml&#39;s bin/* entries (so they cover clusterguard, clusterguard-agent, clusterguard-update-helper, cgctl and clusterguard-k8s-fence-guard rather than a hard-coded pair) and ownership comes from the real import graph via go list -deps. An unreadable graph is a hard failure instead of an empty answer, because an empty answer is indistinguishable from &quot;nothing carries this fix&quot; and that is exactly how the fix went missing. The builder and the catalogue gate share the module, the production-path test is the same graph, and four tests pin it: shared packages, embedded assets, the helper, and files that reach no binary at all — plus two that stop either prefix table from coming back.</p>
+</li>
+<li><p>When to apply:</p>
+<ul>
+<li>怀疑某个热修包“应用成功”但现场行为没有任何变化</li>
+<li>需要核对补丁里究竟该包含哪些二进制</li>
 </ul>
 </li>
 </ul>
@@ -253,9 +302,16 @@ bash rollback.sh         # restores from the newest backup manifest
 <li><code>/usr/local/sbin/clusterguard-upgrade --patch /root/clusterguard-ha-hotfix-HF-2026-0928-06-2.2-104.x86_64.cgpatch --trust-key /etc/clusterguard/trust/patch-signing-public.pem --inspect   # 必须输出 kind=hotfix，而不是拒绝该包</code></li>
 <li><code>curl -sk https://192.168.102.155:3000/ | grep -c &#39;包类型&#39;   # 控制台页面必须已包含包类型字段（浏览器需刷新）</code></li>
 <li><code>curl -sk https://192.168.102.155:3000/ | grep -c &#39;支持 .cgupgrade 滚动升级包与 .cgpatch 热修补丁包&#39;   # 控制台上传指引必须已同时点名两种包</code></li>
+<li><code>sha256sum /usr/local/bin/clusterguard /usr/local/bin/clusterguard-agent /usr/local/libexec/clusterguard-update-helper   # 三条必须与本台账「交付内容」中 payload/bin/* 的 sha256 逐条一致</code></li>
+<li><code>ls -l /usr/local/sbin/clusterguard-clock-mesh.sh   # mtime 必须是本次应用时间，即现场已拿到修正版脚本</code></li>
+<li><code>grep -c &#39;Refusing to become the clock authority&#39; /usr/local/sbin/clusterguard-clock-mesh.sh   # 必须为 1</code></li>
+<li><code>grep -c &#39;timedatectl set-timezone&#39; /usr/local/sbin/clusterguard-clock-mesh.sh   # 必须为 1</code></li>
+<li><code>/usr/local/sbin/clusterguard-clock-mesh.sh --server --dry-run   # 必须拒绝并打印 --set-utc 与 --accept-current-time 两条出路，且不改动任何配置</code></li>
+<li><code>date -u +%Y-%m-%dT%H:%M:%SZ; timedatectl show -p Timezone --value; hwclock --show   # 拨钟之后：三台 UTC 与真实时间一致、Timezone 三台一致、hwclock 与 date -u 一致</code></li>
+<li><code>jq -r &#39;.coordination_leases | to_entries[] | [.key, .value.lease.ha_endpoint_id, .value.lease.expires_at, .value.updated_at, .value.lease.active] | @tsv&#39; /var/lib/clusterguard/metadata.json   # 关键验收：拨回 8 小时并重启控制面之后，expires_at 必须是当前 UTC + 约 60 秒，而不是当前 UTC + 8 小时</code></li>
 </ul>
 <h3 id="rollback">Rollback<a class="heading-anchor" href="#rollback" aria-label="Link to Rollback">#</a></h3>
-<p>执行 rollback.sh 恢复旧二进制、旧单元与旧运行时脚本，然后 systemctl daemon-reload 并 systemctl restart clusterguard-ha。注意：回滚会把 /run/clusterguard 重新交回 0750 的创建方，下一次整机重启会再次让集群起不来；仅在确认新版本有回归时使用，并在回滚后临时手工执行 chmod 0755 /run/clusterguard。 本包对 /run/clusterguard 与 clusterguard-update-helper.service 的回滚沿用 HF-2026-0928-05 的说明。</p>
+<p>执行 rollback.sh 恢复旧二进制、旧单元与旧运行时脚本，然后 systemctl daemon-reload 并重启 clusterguard-ha 与 clusterguard-update-helper。注意两点：① 回滚会把 clusterguard-clock-mesh.sh 恢复成“无校验即成为权威”的旧版本，并撤掉租约重锚——若此后再次回拨系统时钟，VIP 归属租约将再次长期不过期、自动接管再次被静默关闭；② /usr/local/libexec/clusterguard-update-helper 会回到 HF-2026-0928-06 之前的状态（该二进制此前从未被热修更新过）。本包对 /run/clusterguard、clusterguard-update-helper.service 与其它单元的回滚沿用 HF-2026-0928-05 / HF-2026-0928-06 的说明。</p>
 <h2 id="hf-2026-0928-02-2-2-103-site-fix-bundle-cumulative-cluster-stranded-afte">HF-2026-0928-02 — 2.2-103 site fix bundle (cumulative): cluster stranded after a host reboot, writer reconcile flap, update prerequisites, console reasons and power-off teardown<a class="heading-anchor" href="#hf-2026-0928-02-2-2-103-site-fix-bundle-cumulative-cluster-stranded-afte" aria-label="Link to HF-2026-0928-02 — 2.2-103 site fix bundle (cumulative): cluster stranded after a host reboot, writer reconcile flap, update prerequisites, console reasons and power-off teardown">#</a></h2>
 <ul>
 <li>Severity: P0</li>
@@ -379,7 +435,7 @@ bash rollback.sh         # restores from the newest backup manifest
         </article>
         <aside class="page-toc" aria-label="On this page">
           <strong>On this page</strong>
-          <a class="toc-level-2" href="#applying-a-patch">Applying a patch</a><a class="toc-level-2" href="#hf-2026-0928-06-2-2-104-site-fix-bundle-cumulative-cluster-stranded-afte">HF-2026-0928-06 — 2.2-104 site fix bundle (cumulative): cluster stranded after a host reboot, writer reconcile flap, update prerequisites, console reasons, power-off teardown, and the console hotfix channel</a><a class="toc-level-3" href="#what-this-patch-does">What this patch does</a><a class="toc-level-3" href="#hf-2026-0928-06-1-a-hotfix-uploaded-to-the-console-was-only-told-to-use-">HF-2026-0928-06.1 A hotfix uploaded to the console was only told to use the command line, a channel the product never provided (81fe3c8, P1)</a><a class="toc-level-3" href="#hf-2026-0928-06-2-payload-destinations-were-guessed-from-the-source-name">HF-2026-0928-06.2 Payload destinations were guessed from the source name, so the fix landed where the product never looks (18d738e, P1)</a><a class="toc-level-3" href="#hf-2026-0928-06-3-a-hotfix-patch-uploaded-to-the-console-was-rejected-wi">HF-2026-0928-06.3 A hotfix patch uploaded to the console was rejected with an opaque path error instead of naming the wrong channel (9303e9d, P1)</a><a class="toc-level-3" href="#hf-2026-0928-06-4-a-host-reboot-stranded-the-whole-cluster-shared-runtim">HF-2026-0928-06.4 A host reboot stranded the whole cluster: shared runtime directory mode and a recovery freeze that never lifted (28e3b47, P0)</a><a class="toc-level-3" href="#hf-2026-0928-06-5-mysql-writer-reconcile-flap-the-authorized-primary-fen">HF-2026-0928-06.5 MySQL writer reconcile flap: the authorized primary fenced itself every five seconds (dd82ca5, P0)</a><a class="toc-level-3" href="#hf-2026-0928-06-6-two-update-prerequisites-ssh-key-ownership-and-a-share">HF-2026-0928-06.6 Two update prerequisites: SSH key ownership and a shared runtime directory the helper owned (d5f9491, P0)</a><a class="toc-level-3" href="#hf-2026-0928-06-7-the-console-stopped-explaining-why-a-capability-is-una">HF-2026-0928-06.7 The console stopped explaining why a capability is unavailable (ed9faca, P1)</a><a class="toc-level-3" href="#hf-2026-0928-06-8-the-console-froze-on-a-dead-dialog-after-a-host-power-">HF-2026-0928-06.8 The console froze on a dead dialog after a host power-off was submitted (5ae2039, P1)</a><a class="toc-level-3" href="#verification">Verification</a><a class="toc-level-3" href="#rollback">Rollback</a><a class="toc-level-2" href="#hf-2026-0928-02-2-2-103-site-fix-bundle-cumulative-cluster-stranded-afte">HF-2026-0928-02 — 2.2-103 site fix bundle (cumulative): cluster stranded after a host reboot, writer reconcile flap, update prerequisites, console reasons and power-off teardown</a><a class="toc-level-3" href="#what-this-patch-does-2">What this patch does</a><a class="toc-level-3" href="#hf-2026-0928-02-1-a-host-reboot-stranded-the-whole-cluster-shared-runtim">HF-2026-0928-02.1 A host reboot stranded the whole cluster: shared runtime directory mode and a recovery freeze that never lifted (f90f995, P0)</a><a class="toc-level-3" href="#hf-2026-0928-02-2-mysql-writer-reconcile-flap-the-authorized-primary-fen">HF-2026-0928-02.2 MySQL writer reconcile flap: the authorized primary fenced itself every five seconds (4015f97, P0)</a><a class="toc-level-3" href="#hf-2026-0928-02-3-two-update-prerequisites-ssh-key-ownership-and-a-share">HF-2026-0928-02.3 Two update prerequisites: SSH key ownership and a shared runtime directory the helper owned (3c88289, P0)</a><a class="toc-level-3" href="#hf-2026-0928-02-4-the-console-stopped-explaining-why-a-capability-is-una">HF-2026-0928-02.4 The console stopped explaining why a capability is unavailable (914c6c5, P1)</a><a class="toc-level-3" href="#hf-2026-0928-02-5-the-console-froze-on-a-dead-dialog-after-a-host-power-">HF-2026-0928-02.5 The console froze on a dead dialog after a host power-off was submitted (0e8ab48, P1)</a><a class="toc-level-3" href="#verification-2">Verification</a><a class="toc-level-3" href="#rollback-2">Rollback</a>
+          <a class="toc-level-2" href="#applying-a-patch">Applying a patch</a><a class="toc-level-2" href="#hf-2026-0929-01-2-2-104-site-fix-bundle-cumulative-adds-the-three-fixes-">HF-2026-0929-01 — 2.2-104 site fix bundle (cumulative): adds the three fixes for the uniform clock offset on top of HF-2026-0928-06 — lease re-anchoring after a backwards step, a deliberate clock authority with a pinned display timezone, and hotfix components derived from the import graph</a><a class="toc-level-3" href="#what-this-patch-does">What this patch does</a><a class="toc-level-3" href="#hf-2026-0929-01-1-a-hotfix-uploaded-to-the-console-was-only-told-to-use-">HF-2026-0929-01.1 A hotfix uploaded to the console was only told to use the command line, a channel the product never provided (81fe3c8, P1)</a><a class="toc-level-3" href="#hf-2026-0929-01-2-payload-destinations-were-guessed-from-the-source-name">HF-2026-0929-01.2 Payload destinations were guessed from the source name, so the fix landed where the product never looks (18d738e, P1)</a><a class="toc-level-3" href="#hf-2026-0929-01-3-a-hotfix-patch-uploaded-to-the-console-was-rejected-wi">HF-2026-0929-01.3 A hotfix patch uploaded to the console was rejected with an opaque path error instead of naming the wrong channel (9303e9d, P1)</a><a class="toc-level-3" href="#hf-2026-0929-01-4-a-host-reboot-stranded-the-whole-cluster-shared-runtim">HF-2026-0929-01.4 A host reboot stranded the whole cluster: shared runtime directory mode and a recovery freeze that never lifted (28e3b47, P0)</a><a class="toc-level-3" href="#hf-2026-0929-01-5-mysql-writer-reconcile-flap-the-authorized-primary-fen">HF-2026-0929-01.5 MySQL writer reconcile flap: the authorized primary fenced itself every five seconds (dd82ca5, P0)</a><a class="toc-level-3" href="#hf-2026-0929-01-6-two-update-prerequisites-ssh-key-ownership-and-a-share">HF-2026-0929-01.6 Two update prerequisites: SSH key ownership and a shared runtime directory the helper owned (d5f9491, P0)</a><a class="toc-level-3" href="#hf-2026-0929-01-7-the-console-stopped-explaining-why-a-capability-is-una">HF-2026-0929-01.7 The console stopped explaining why a capability is unavailable (ed9faca, P1)</a><a class="toc-level-3" href="#hf-2026-0929-01-8-the-console-froze-on-a-dead-dialog-after-a-host-power-">HF-2026-0929-01.8 The console froze on a dead dialog after a host power-off was submitted (5ae2039, P1)</a><a class="toc-level-3" href="#hf-2026-0929-01-9-after-the-clock-moved-backwards-the-vip-ownership-leas">HF-2026-0929-01.9 After the clock moved backwards the VIP ownership lease stopped expiring, silently disabling automatic failover (ac6f3f7, P0)</a><a class="toc-level-3" href="#hf-2026-0929-01-10-the-clock-mesh-tool-froze-an-unchecked-local-time-as-">HF-2026-0929-01.10 The clock mesh tool froze an unchecked local time as the cluster authority, and pinned no display timezone (abf5782, P1)</a><a class="toc-level-3" href="#hf-2026-0929-01-11-the-hotfix-channel-guessed-which-binary-a-change-belo">HF-2026-0929-01.11 The hotfix channel guessed which binary a change belongs to from a path prefix, silently dropping fixes in shared packages (fce48b7, P1)</a><a class="toc-level-3" href="#verification">Verification</a><a class="toc-level-3" href="#rollback">Rollback</a><a class="toc-level-2" href="#hf-2026-0928-02-2-2-103-site-fix-bundle-cumulative-cluster-stranded-afte">HF-2026-0928-02 — 2.2-103 site fix bundle (cumulative): cluster stranded after a host reboot, writer reconcile flap, update prerequisites, console reasons and power-off teardown</a><a class="toc-level-3" href="#what-this-patch-does-2">What this patch does</a><a class="toc-level-3" href="#hf-2026-0928-02-1-a-host-reboot-stranded-the-whole-cluster-shared-runtim">HF-2026-0928-02.1 A host reboot stranded the whole cluster: shared runtime directory mode and a recovery freeze that never lifted (f90f995, P0)</a><a class="toc-level-3" href="#hf-2026-0928-02-2-mysql-writer-reconcile-flap-the-authorized-primary-fen">HF-2026-0928-02.2 MySQL writer reconcile flap: the authorized primary fenced itself every five seconds (4015f97, P0)</a><a class="toc-level-3" href="#hf-2026-0928-02-3-two-update-prerequisites-ssh-key-ownership-and-a-share">HF-2026-0928-02.3 Two update prerequisites: SSH key ownership and a shared runtime directory the helper owned (3c88289, P0)</a><a class="toc-level-3" href="#hf-2026-0928-02-4-the-console-stopped-explaining-why-a-capability-is-una">HF-2026-0928-02.4 The console stopped explaining why a capability is unavailable (914c6c5, P1)</a><a class="toc-level-3" href="#hf-2026-0928-02-5-the-console-froze-on-a-dead-dialog-after-a-host-power-">HF-2026-0928-02.5 The console froze on a dead dialog after a host power-off was submitted (0e8ab48, P1)</a><a class="toc-level-3" href="#verification-2">Verification</a><a class="toc-level-3" href="#rollback-2">Rollback</a>
         </aside>
       </main>
     </div>
