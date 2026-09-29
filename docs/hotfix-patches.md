@@ -20,6 +20,7 @@ baseline silently downgrades binaries back to its own release line.
 
 | Hotfix | Severity | Fix commits | Build tree | Artifact |
 | --- | --- | --- | --- | --- |
+| HF-2026-0929-04 | P1 | `39ef673`, `4d80125` | `4d80125` | `release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-04-2.2-105.x86_64.cgpatch` |
 | HF-2026-0929-03 | P0 | `de14249`, `7a1ba82`, `ed9faca`, `d5f9491`, `dd82ca5`, `5ae2039`, `28e3b47`, `9303e9d`, `18d738e`, `81fe3c8`, `ac6f3f7`, `abf5782`, `fce48b7` | `de14249` | `release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-03-2.2-104.x86_64.cgpatch` |
 | HF-2026-0928-02 | P0 | `914c6c5`, `3c88289`, `4015f97`, `0e8ab48`, `f90f995` | `f90f995` | `release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-2.2-103.x86_64.cgpatch` |
 
@@ -36,6 +37,68 @@ bash apply.sh            # backs up, verifies SHA-256, installs, daemon-reload
 systemctl restart <unit> # apply.sh prints the units it needs; it never restarts by itself
 bash rollback.sh         # restores from the newest backup manifest
 ```
+
+## HF-2026-0929-04 — 2.2-105 release line: after 上传并校验 the rolling upgrade stayed unclickable - the button was anchored on a finished record at the head of the upgrade history instead of the package just uploaded
+
+- Severity: P1
+- Fix commits: `39ef673`, `4d80125`
+- Build tree: `4d80125ed1d1f5483daabc4eea3b08775a97fce2` (baseline `bf2feeb070948599d054e66670ada3f29ff8ee25` plus the fixes above and nothing else)
+- Applies to: 2.2-105 → 2.2-105+hf-2026-0929-04 (x86_64)
+- Artifact: `release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-04-2.2-105.x86_64.cgpatch`
+- SHA-256: `271495230cdcd571b5253cf4542a140ad956d5e8eaedab0f36635c35b9ee4cc9`
+- Source diff: `src/HF-2026-0929-04-4d80125.patch`
+- Payload:
+  - `payload/bin/clusterguard` → `/usr/local/bin/clusterguard` (0755)
+  - `payload/bin/clusterguard-update-helper` → `/usr/local/libexec/clusterguard-update-helper` (0755)
+- Restart required: `clusterguard-ha.service`, `clusterguard-update-helper.service`
+
+### What this patch does
+
+This package replaces two binaries: /usr/local/bin/clusterguard (the control plane, which go:embed's internal/api/console.html) and /usr/local/libexec/clusterguard-update-helper (the restricted upgrade helper). Both have to be rebuilt because both link internal/platformupdate - `go list -deps ./cmd/clusterguard-update-helper` shows it - and the second fix in this package lands in that package; the helper's own behaviour is unchanged, only the copy of that package embedded in it is. It moves no RPM release, touches no systemd unit, leaves the agent alone, and carries no installer or runtime script. It belongs to the 2.2-105 release line: the 2.2-105 .cgupgrade replaces both binaries wholesale, so this patch must be applied after the rolling upgrade to 2.2-105 - applying it first means the upgrade overwrites it. For the same reason the 2.2-104 package (HF-2026-0929-03) must not be used on a 2.2-105 site, or the reverse. The defect: the console anchored both the pending-target summary and the 滚动升级 button on the first entry of the upgrade history, which Manager.Snapshot returns ordered by uploaded_at descending. On 2026-09-29 at 13:16 the site uploaded cgupgrade-2.2-104-to-2.2-105-x86_64, and the head of the list was still a record whose uploaded_at had been written while the node clock ran about five hours and thirty-nine minutes ahead (HF-2026-0928-06, 2026-09-29T11:01:17.712051173Z). That record carries a succeeded job, so the pending package resolved to nothing, the button was disabled by !pending, and the validation panel kept showing a green 校验完成 because the upload itself had passed. The operator was left with a verified package they could not run and nothing on the page explaining why. This package resolves the subject by scanning for the newest still-actionable record, derives the identity grid, the action gates, the read-only plan and the confirmation dialog from that same record, replaces the misleading panel copy with 校验完成，但当前没有可执行的升级包 naming the record occupying the list when nothing can be run, and has the server publish clock_skew so the history row can say 记录时间戳晚于当前时间，排序与时间不可信 - because uploaded_at is both the ordering key and the displayed value, and a clock that ran ahead corrupts both at once, invisibly.
+
+### HF-2026-0929-04.1 The console anchored the pending target and the rolling upgrade on the head of the upgrade history, so a finished record there left the button permanently dead with no explanation (`39ef673`, P1)
+
+- Symptom: On 2026-09-29 at 13:16 the site uploaded cgupgrade-2.2-104-to-2.2-105-x86_64 in the 设置 → 版本更新 → 升级 dialog. The upload succeeded and the history gained a row reading 已上传, but the button below stayed grey and unclickable while the panel showed a green 校验完成 / 升级包已通过签名与兼容性校验。 The site screenshot is exactly that: green tick above, dead button below. Nothing on the page said why, so the operator could only re-upload, switch browsers, and start doubting the package.
+
+- Root cause: Manager.Snapshot returns packages ordered by uploaded_at descending, and the console used latestSoftwareUpdate() - that is, packages[0] - to decide three things at once: the pending target version, the identity grid (patch id, versions, whether it can roll, job status), and whether the button is live. HF-2026-0928-06 had been stamped while the node clock ran about five hours and thirty-nine minutes ahead (2026-09-29T11:01:17.712051173Z), so it sorted above the 2.2-105 package uploaded at 13:16. Its job was succeeded, so pendingSoftwareUpdate() returned null, the gate's !pending disabled the button, and the subject degraded to that finished hotfix (rolling:false, status:succeeded) - the identity grid and the gates were describing a record that must never be executed. The validation panel never consulted pending, only the upload result, so it kept saying 校验完成: the two halves of the same screen contradicted each other.
+
+- Fix: The subject is now found by scanning for the newest still-actionable record: softwareUpdateActionable accepts a record with no job, a job still awaiting verification, or a status that is not one of the terminal succeeded/rolled_back; pendingSoftwareUpdate uses it to scan the whole list instead of taking the head. The identity grid, the job panel, the three button gates, prepareSoftwareUpdateExecution and openSoftwareUpdateConfirmation all derive from a single subject, pending || latest, so the package id the confirmation dialog asks the operator to type is the package just uploaded. A new verified-blocked state covers the case where the upload verified but nothing in the list can run: the panel says 校验完成，但当前没有可执行的升级包 and names the newest record occupying the list, explaining that it has already finished and cannot be started again, while the summary switches to 最近完成版本 / 最近处理版本 rather than calling a finished record the pending target. A history row whose record carries clock_skew appends 记录时间戳晚于当前时间，排序与时间不可信。 Two layers of assertions pin this. The Go contract tests assert the new implementation and reject the old shapes (no subject from packages[0], no clock_skew read one level too deep - it lives on the record wrapper, not on the package nested inside it). The new browser acceptance tools/console-update-pending-acceptance.cjs reuses the repository's own DevTools-protocol runner tools/console-cdp-harness.cjs with no playwright dependency and, across three scenarios and 25 checks, drives the console's own change listener, multipart upload, refresh and read-only plan request on the real page: the upload must light the button with a future-stamped record on top, the confirmation must name the uploaded package, the blocked copy must appear and name the record when nothing can run, the ordinary path must be unaffected, and no Runtime.exceptionThrown may fire. Four mutations (subject back to packages[0], identity grid back to the head, clock_skew read one level deeper, blocked derivation removed) were all caught, and console.html is byte-identical by SHA-256 after restore.
+
+- When to apply:
+  - 上传并校验成功后「滚动升级」按钮灰着、点不动，历史记录里却明明有「已上传」的包
+  - 升级记录里最新一条是「升级成功 / 已回退」之类的终态记录，而刚上传的包排在它下面
+  - 想确认「待升级目标版本」显示的是不是真的会被执行的那个包
+  - 升级记录的时间戳看起来不对（比当前时间晚），需要判断排序还可不可信
+
+### HF-2026-0929-04.2 The server did not distinguish records stamped in the future and published an untrustworthy ordering as authoritative (`4d80125`, P2)
+
+- Symptom: GET /api/v1/platform/updates returned only the record's own timestamp. When a control node's clock had run ahead, records written during that window stayed pinned to the top of the list forever: on the site HF-2026-0928-06 read as if it were recent when its timestamp actually lay five hours and thirty-nine minutes in the future, and the console could only take it as the newest.
+
+- Root cause: PackageStatus carried the record and nothing about whether its uploaded_at was in the future relative to this node's clock. uploaded_at is both the ordering key and the value shown to the operator, so a clock that disagreed with this node corrupted the order and the display together, and at the API layer the corruption was invisible - the console had no basis on which to distrust the head of the list.
+
+- Fix: PackageStatus gains clock_skew (json:"clock_skew,omitempty"), set whenever uploaded_at lies more than clockSkewTolerance = 5m ahead of this node's clock, so a record born of a clock that disagrees with this node travels with that fact and the console can mark the row. Assertions: a table-driven manager_test covers the boundary (offsets of 0, exactly five minutes, five minutes plus a second which must be flagged, and minus seven minutes which must not), and the real site values reproduce a future-stamped record sorting above a later upload - the head must be the flagged finished record, the second entry must be the fresh package and unflagged.
+
+- When to apply:
+  - 升级记录里的时间看起来比当前时间晚，怀疑某个节点的时钟曾经跑快
+  - 要判断控制台给出的「最新」记录到底可不可信
+  - 排查为什么某条老记录一直排在列表最上面
+
+### Verification
+
+- `/usr/local/bin/clusterguard --version-json | jq -r .commit   # 必须等于本次构建树（build_commit）的短哈希，release 仍为 105`
+- `rpm -q clusterguard-ha   # 必须仍为 2.2-105：热修补丁不改 RPM 版本，靠 commit 区分是否已应用`
+- `sha256sum /usr/local/bin/clusterguard   # 必须等于包内 HOTFIX-MANIFEST.json 中 payload/bin/clusterguard 的 sha256`
+- `sha256sum /usr/local/libexec/clusterguard-update-helper   # 必须等于清单中 payload/bin/clusterguard-update-helper 的 sha256`
+- `systemctl restart clusterguard-ha clusterguard-update-helper   # apply.sh 绝不自动重启；不重启则两个进程仍是旧代码，页面不会变`
+- `curl -sk https://192.168.102.155:3000/ | grep -c '记录时间戳晚于当前时间'   # 必须 ≥1（控制面二进制内的页面已含排序可信度提示，浏览器需强制刷新）`
+- `curl -sk https://192.168.102.155:3000/ | grep -c '校验完成，但当前没有可执行的升级包'   # 必须 ≥1（校验面板已含 blocked 文案）`
+- `浏览器强制刷新 https://192.168.102.155:3000/ → 设置 → 版本更新 → 升级：若历史记录首行是已完成记录而刚上传的包排在下面，「滚动升级」必须仍可点；点开后确认框里要手输的包 ID 必须是刚上传的那个`
+- `同上对话框：若上传已验签但列表里没有可执行记录，面板必须显示「校验完成，但当前没有可执行的升级包」并点名占住列表的记录，而不是显示绿色的「校验完成」配一个灰按钮`
+- `curl -sk -H 'Authorization: Bearer <token>' https://192.168.102.155:3000/api/v1/platform/updates | jq -c '.result.packages[] | {id:.package.patch_id, clock_skew}'   # 时间戳落在未来的记录必须带 clock_skew:true（字段缺省即未标记）`
+
+### Rollback
+
+执行 rollback.sh 恢复旧的控制面二进制与旧 Helper 二进制，然后 systemctl daemon-reload 并 systemctl restart clusterguard-ha clusterguard-update-helper；本包不涉及 systemd 单元、不涉及安装器或运行时脚本，回滚不需要额外手工对齐。回滚后的行为差异只有一处：控制台重新按升级记录首行决定「待升级目标版本」与「滚动升级」按钮，因此当列表里存在时间戳落在未来的记录时，按钮会再次被那条已完成记录关掉且页面不再解释原因；服务端也不再下发 clock_skew，历史行不再有「排序与时间不可信」标注。2026-09-29 现场已把三台节点的未来时间戳修正回真实时间，正常状态下列表首行不再是未来记录，回滚不会立刻复现问题；但若之后再次出现时钟跑快的节点，回滚等于把该缺陷一并带回来。
 
 ## HF-2026-0929-03 — 2.2-104 site fix bundle (cumulative): merges the settings tabs on top of HF-2026-0929-02 - accounts and preferences fold into 状态设置 and the tab row is back to three
 

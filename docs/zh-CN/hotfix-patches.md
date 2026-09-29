@@ -15,6 +15,7 @@
 
 | 补丁编号 | 严重级别 | 覆盖修复提交 | 构建树 | 产物 |
 | --- | --- | --- | --- | --- |
+| HF-2026-0929-04 | P1 | `39ef673`、`4d80125` | `4d80125` | `release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-04-2.2-105.x86_64.cgpatch` |
 | HF-2026-0929-03 | P0 | `de14249`、`7a1ba82`、`ed9faca`、`d5f9491`、`dd82ca5`、`5ae2039`、`28e3b47`、`9303e9d`、`18d738e`、`81fe3c8`、`ac6f3f7`、`abf5782`、`fce48b7` | `de14249` | `release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-03-2.2-104.x86_64.cgpatch` |
 | HF-2026-0928-02 | P0 | `914c6c5`、`3c88289`、`4015f97`、`0e8ab48`、`f90f995` | `f90f995` | `release/2.2-103-hotfixes/clusterguard-ha-hotfix-HF-2026-0928-02-2.2-103.x86_64.cgpatch` |
 
@@ -31,6 +32,68 @@ bash apply.sh            # 备份、校验 SHA-256、安装、daemon-reload
 systemctl restart <单元> # apply.sh 只打印需要重启的单元，不自动重启
 bash rollback.sh         # 按最新备份清单回滚
 ```
+
+## HF-2026-0929-04 — 2.2-105 交付线：控制台「上传并校验」完成后滚动升级仍不可点——按钮锚在升级记录首行的已完成记录上，而不是刚上传的那个包
+
+- 严重级别：P1
+- 覆盖修复提交：`39ef673`、`4d80125`
+- 构建树：`4d80125ed1d1f5483daabc4eea3b08775a97fce2`（基线 `bf2feeb070948599d054e66670ada3f29ff8ee25` + 上述修复，不含其它提交）
+- 适用版本：2.2-105 → 2.2-105+hf-2026-0929-04（x86_64）
+- 产物：`release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-04-2.2-105.x86_64.cgpatch`
+- SHA-256：`271495230cdcd571b5253cf4542a140ad956d5e8eaedab0f36635c35b9ee4cc9`
+- 源码差异：`src/HF-2026-0929-04-4d80125.patch`
+- 交付内容：
+  - `payload/bin/clusterguard` → `/usr/local/bin/clusterguard`（0755）
+  - `payload/bin/clusterguard-update-helper` → `/usr/local/libexec/clusterguard-update-helper`（0755）
+- 需要重启：`clusterguard-ha.service`、`clusterguard-update-helper.service`
+
+### 本包概要
+
+本包替换两个二进制：`/usr/local/bin/clusterguard`（控制面，`internal/api/console.html` 由 `go:embed` 嵌进它）与 `/usr/local/libexec/clusterguard-update-helper`（受限升级 Helper）。两个都必须重建，是因为它们都链接 `internal/platformupdate`（用 `go list -deps ./cmd/clusterguard-update-helper` 可复核），而本包的第二项修复正落在那个包里；Helper 自身行为不变，变的只是它内嵌的那份包代码。本包不改 RPM 版本、不动任何 systemd 单元、不动 agent，也不出现安装器或运行时脚本。**这是 2.2-105 交付线的包**：2.2-105 的 `.cgupgrade` 会整包替换这两个二进制，所以必须在滚动升级到 2.2-105 之后应用；先装本包再升级，本包会被升级包覆盖。同理，2.2-104 线的 HF-2026-0929-03 不要用在 2.2-105 站点上，反之亦然。缺陷本身：控制台此前把「待升级目标版本」与「滚动升级」按钮都锚在升级记录的第一条上，而记录列表由 `Manager.Snapshot` 按 `uploaded_at` 倒序返回。2026-09-29 13:16 现场上传 `cgupgrade-2.2-104-to-2.2-105-x86_64` 之后，列表首行仍是一条 `uploaded_at` 写在节点时钟快约 5 小时 39 分时的记录（`HF-2026-0928-06`，`2026-09-29T11:01:17.712051173Z`），它挂着 `succeeded` 的 job，于是「待升级包」判定为无、按钮被 `!pending` 永久关掉，而校验面板仍按上传结果显示绿色的「校验完成」。操作员拿到的是一个验签通过却点不动的包，页面上没有任何一句话说明原因。本包把判定改为「扫列表找最新一条仍可执行的记录」，并让身份栅格、门禁、只读计划与确认框统一以该记录为 subject；上传已验签但列表里没有可执行记录时，面板改为明确说「校验完成，但当前没有可执行的升级包」并点名占住列表的记录；服务端同时下发 `clock_skew`，让历史行能标注「记录时间戳晚于当前时间，排序与时间不可信」——因为 `uploaded_at` 既是排序键又是展示值，一旦它来自跑快的时钟，排序与展示会同时失真且失真不可见。
+
+### HF-2026-0929-04.1 控制台把「待升级目标」与「滚动升级」锚在升级记录首行，首行是已完成记录时按钮永久灰死且页面不说原因（`39ef673`，P1）
+
+- 现象：2026-09-29 13:16，现场在「设置 → 版本更新 → 升级」对话框里上传 `cgupgrade-2.2-104-to-2.2-105-x86_64`，上传成功、历史记录里出现「已上传」一行，但下方按钮始终是灰的、点不动；面板上是绿色的「✓ 校验完成 / 升级包已通过签名与兼容性校验。」。截图即为现场所见：绿勾在上、灰按钮在下。页面上没有任何文字说明为什么不能点，操作员只能重传、换浏览器、怀疑包本身有问题。
+
+- 根因：`Manager.Snapshot` 按 `uploaded_at` 倒序返回 packages，控制台此前用 `latestSoftwareUpdate()`（就是 `packages[0]`）同时决定三件事：待升级目标版本、身份栅格（包 ID / 版本 / 是否可滚动 / job 状态），以及按钮是否可用。现场 `HF-2026-0928-06` 的 `uploaded_at` 是节点时钟快约 5 小时 39 分时写下的（`2026-09-29T11:01:17.712051173Z`），所以它排在 13:16 刚上传的 2.2-105 包之上；它的 job 是 `succeeded`，于是 `pendingSoftwareUpdate()` 返回 null，按钮被门禁里的 `!pending` 关掉，`subject` 退化成那条已完成的热修补丁（`rolling:false`、`status:succeeded`），身份栅格与门禁因此都在描述一个根本不该被执行的记录。而校验面板不看 `pending`，只看上传结果，所以继续显示「校验完成」——上下两半在同一屏里互相矛盾。
+
+- 修复：判定改为「扫列表找最新一条仍可执行的记录」：新增 `softwareUpdateActionable`（无 job、或 job 仍待核验、或状态不是终态 `succeeded`/`rolled_back`），`pendingSoftwareUpdate()` 用它扫全列表而不是取首行；身份栅格、job 面板、三个按钮的门禁、`prepareSoftwareUpdateExecution` 与 `openSoftwareUpdateConfirmation` 统一以 `pending || latest` 为唯一的 subject，确认框里要手输的包 ID 也随之指向刚上传的那个包。新增 `verified-blocked` 状态：上传已验签但列表里没有可执行记录时，面板明确写「校验完成，但当前没有可执行的升级包」并点名排在最新、占住列表的那条记录，说明它已执行完成、不能重复发起；摘要行相应改为「最近完成版本 / 最近处理版本」，不再把已完成的记录叫作「待升级目标版本」。历史行在记录 `clock_skew` 为真时追加「· 记录时间戳晚于当前时间，排序与时间不可信」。断言分两层：Go 契约测试断言新实现并反向拒绝旧形状（不允许再从 `packages[0]` 取 subject、不允许把 `clock_skew` 读深一层——`clock_skew` 在记录包装层，不在它内嵌的 `package` 上）；新增真浏览器验收 `tools/console-update-pending-acceptance.cjs`（复用仓库自研的 DevTools-protocol 运行器 `tools/console-cdp-harness.cjs`，无 playwright 依赖，三场景 25 项），在真实页面上走控制台自己的 change 监听器、multipart 上传、刷新与只读计划请求，断言未来时间戳下的上传必须点亮按钮、确认框必须写刚上传的包 ID、无可执行记录时必须显示 blocked 文案并点名、正常上传路径不受影响、且全程没有 Runtime.exceptionThrown。变异验证 4 项（subject 退回 `packages[0]`、身份栅格退回首行、`clock_skew` 读深一层、去掉 blocked 推导）全部被判红，还原后 `console.html` 与 SHA-256 逐字节一致。
+
+- 何时需要应用：
+  - 上传并校验成功后「滚动升级」按钮灰着、点不动，历史记录里却明明有「已上传」的包
+  - 升级记录里最新一条是「升级成功 / 已回退」之类的终态记录，而刚上传的包排在它下面
+  - 想确认「待升级目标版本」显示的是不是真的会被执行的那个包
+  - 升级记录的时间戳看起来不对（比当前时间晚），需要判断排序还可不可信
+
+### HF-2026-0929-04.2 服务端不区分写在未来的记录，把不可信的排序当权威下发，控制台无从判断（`4d80125`，P2）
+
+- 现象：`GET /api/v1/platform/updates` 只回记录本身的时间。当某台控制节点的时钟曾经快过，那段时间写下的记录会被永久钉在列表顶部：现场表现为 `HF-2026-0928-06` 的时间看起来像刚刚、实际是 5 小时 39 分之后的未来时间，而控制台只能照单全收，把它当成「最新」。
+
+- 根因：`PackageStatus` 只承载记录本身，缺少「这条记录的 `uploaded_at` 相对本节点时钟处于未来」这一事实。而 `uploaded_at` 同时是排序键和展示值：一旦它来自一个与本节点不一致的时钟，排序和展示就同时失真，且这个失真在接口层完全不可见——控制台没有依据去怀疑首行。
+
+- 修复：在 `PackageStatus` 上新增 `clock_skew`（`json:"clock_skew,omitempty"`），凡是 `uploaded_at` 超出本节点时钟 `clockSkewTolerance = 5m` 的记录即置位，把「这条记录诞生于一个与本节点不一致的时钟」随行下发；控制台据此在历史行上标注。断言：`manager_test.go` 用表驱动覆盖边界（偏移 0、恰好等于 5 分钟、5 分钟 + 1 秒必须置位、-7 分钟不置位），并用现场真实数值复现「未来时间戳的记录排在后来上传的包之上」——首行必须是被标记的那条已完成记录，第二行必须是新上传的包且不被标记。
+
+- 何时需要应用：
+  - 升级记录里的时间看起来比当前时间晚，怀疑某个节点的时钟曾经跑快
+  - 要判断控制台给出的「最新」记录到底可不可信
+  - 排查为什么某条老记录一直排在列表最上面
+
+### 验证
+
+- `/usr/local/bin/clusterguard --version-json | jq -r .commit   # 必须等于本次构建树（build_commit）的短哈希，release 仍为 105`
+- `rpm -q clusterguard-ha   # 必须仍为 2.2-105：热修补丁不改 RPM 版本，靠 commit 区分是否已应用`
+- `sha256sum /usr/local/bin/clusterguard   # 必须等于包内 HOTFIX-MANIFEST.json 中 payload/bin/clusterguard 的 sha256`
+- `sha256sum /usr/local/libexec/clusterguard-update-helper   # 必须等于清单中 payload/bin/clusterguard-update-helper 的 sha256`
+- `systemctl restart clusterguard-ha clusterguard-update-helper   # apply.sh 绝不自动重启；不重启则两个进程仍是旧代码，页面不会变`
+- `curl -sk https://192.168.102.155:3000/ | grep -c '记录时间戳晚于当前时间'   # 必须 ≥1（控制面二进制内的页面已含排序可信度提示，浏览器需强制刷新）`
+- `curl -sk https://192.168.102.155:3000/ | grep -c '校验完成，但当前没有可执行的升级包'   # 必须 ≥1（校验面板已含 blocked 文案）`
+- `浏览器强制刷新 https://192.168.102.155:3000/ → 设置 → 版本更新 → 升级：若历史记录首行是已完成记录而刚上传的包排在下面，「滚动升级」必须仍可点；点开后确认框里要手输的包 ID 必须是刚上传的那个`
+- `同上对话框：若上传已验签但列表里没有可执行记录，面板必须显示「校验完成，但当前没有可执行的升级包」并点名占住列表的记录，而不是显示绿色的「校验完成」配一个灰按钮`
+- `curl -sk -H 'Authorization: Bearer <token>' https://192.168.102.155:3000/api/v1/platform/updates | jq -c '.result.packages[] | {id:.package.patch_id, clock_skew}'   # 时间戳落在未来的记录必须带 clock_skew:true（字段缺省即未标记）`
+
+### 回滚
+
+执行 rollback.sh 恢复旧的控制面二进制与旧 Helper 二进制，然后 systemctl daemon-reload 并 systemctl restart clusterguard-ha clusterguard-update-helper；本包不涉及 systemd 单元、不涉及安装器或运行时脚本，回滚不需要额外手工对齐。回滚后的行为差异只有一处：控制台重新按升级记录首行决定「待升级目标版本」与「滚动升级」按钮，因此当列表里存在时间戳落在未来的记录时，按钮会再次被那条已完成记录关掉且页面不再解释原因；服务端也不再下发 clock_skew，历史行不再有「排序与时间不可信」标注。2026-09-29 现场已把三台节点的未来时间戳修正回真实时间，正常状态下列表首行不再是未来记录，回滚不会立刻复现问题；但若之后再次出现时钟跑快的节点，回滚等于把该缺陷一并带回来。
 
 ## HF-2026-0929-03 — 2.2-104 现场修复合集（累积）：在 HF-2026-0929-02 之上合并设置页页签——「账户与偏好」并入「状态设置」，页签回到三个
 
