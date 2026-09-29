@@ -114,7 +114,7 @@ The operations machine needs to save deployment status, site secrets, and certif
 - Use the same Linux distribution main version and x86_64 architecture.
 - Each node uses a unique and stable hostname.
 - Control nodes must reserve at least 2 GiB of available space; the database data directory must reserve at least 10 GiB, and production environments should increase based on capacity planning.
-- Clock synchronization is required between all nodes. The installer will check the NTP status; in production environments, unsynchronized states must be fixed first.
+- Clock synchronization is required between all nodes, and each node's UTC must stay within 30 seconds of the operations machine. Nodes agreeing with each other does not make the time correct: a virtualised guest whose RTC holds local time while the kernel reads it as UTC is uniformly ahead by one zone offset. The installer checks the NTP status, measures every node against its own clock, and then pins one display timezone across the whole cluster. See 12.7.
 - Root should be able to log in via SSH, or a dedicated operations account with sudo privileges should be provided.
 - Network and security policies must allow the following connections.
 
@@ -602,6 +602,14 @@ A new cluster starts with account `admin` and the initial password described in 
 ### 12.6 VIP Not Bound or Multiple Owners
 
 First, stop any external VIP management tools, then check the control node majority, current primary database role, Agent service, network card name, and CIDR. VIP is only allowed to be managed by ClusterGuard Agent; high-risk operations must be rejected when there is no quorum.
+
+### 12.7 Node clocks are uniformly offset, or the cluster displays a wall clock one zone away from reality
+
+Nodes agreeing with each other is not the same as the time being correct. When a virtualised guest's RTC holds local time while the kernel reads it as UTC, all three nodes are uniformly ahead by one zone offset and the spread between them stays a couple of seconds — only a comparison against the operations machine can see it. The installer now measures every node against its own UTC and stops above 30 seconds; verify with `date -u` on the reported node, correct the zone with `timedatectl set-timezone` if needed, write it back with `hwclock --systohc --utc`, then retry.
+
+The display timezone is pinned across every node from the installer's `--timezone`, falling back to the operations machine's zone. Every timestamp the cluster stores is UTC; the one exception is the console, which renders the configuration update time in the answering node's local zone, so a cluster with mixed zones shows two wall clocks for the same record.
+
+`clusterguard-clock-mesh.sh --server` only promotes itself to the cluster's clock authority when given `--set-utc` or `--accept-current-time`: it imposes the node's own time on every other node and makes it permanent with `hwclock --systohc`. Persisting an unverified clock is how a one-off install mistake becomes a permanent offset.
 
 ## 13. Uninstallation and Rollback
 
