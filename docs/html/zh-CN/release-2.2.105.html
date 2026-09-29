@@ -84,6 +84,31 @@ VIP 归属租约不再续期，数据节点按设计摘掉 VIP 并把实例设�
 <p>交付工具链本身（一次现场处理出一个累积补丁包、双语热修台账、相应防漏门禁）也在本版范围内，
 但它不改变产品运行时行为，只影响我们如何把修复送到现场。</p>
 </blockquote>
+<h2 id="介质构建之后发现的缺陷-上传完-滚动升级-按钮不亮">介质构建之后发现的缺陷：上传完「滚动升级」按钮不亮<a class="heading-anchor" href="#介质构建之后发现的缺陷-上传完-滚动升级-按钮不亮" aria-label="Link to 介质构建之后发现的缺陷：上传完「滚动升级」按钮不亮">#</a></h2>
+<p>本版介质打包提交是 <code>bf2feeb</code>，打包完成于 2026-09-29T04:48:28Z。<strong>介质构建之后</strong>现场在
+同日的控制台实操中发现一个缺陷，因此<strong>本介质里仍然带着它</strong>，修复不在介质内。</p>
+<ul>
+<li>现象：上传 <code>.cgupgrade</code> 后校验通过、历史记录出现「已上传」，但「滚动升级」按钮始终灰着点
+不动；同一个对话框上方却是绿色的「校验完成」，页面不解释原因。</li>
+<li>根因：控制台把「待升级目标」与「滚动升级」按钮都锚在升级记录的第一条上，而排序键
+<code>uploaded_at</code> 同时就是要显示给操作员的那一行。一旦首行是一条<strong>时间戳落在未来</strong>的记录
+（某台控制节点走时偏快时写入的），它就永远排在最新上传的包之上；该记录带终态任务，于是
+「待升级目标」解算为空、按钮被禁用，而校验面板只看上传结果，仍在报「校验完成」——同一界面
+的两半互相矛盾。</li>
+<li>修复（两个提交）：控制台改为按「最新仍可执行的记录」定位主体，身份栏、三个按钮闸门、只读
+计划与确认框都从同一主体推导，并在无包可执行时改说「校验完成，但当前没有可执行的升级包」
+且点名占住列表的那条记录；服务端在 <code>PackageStatus</code> 上增加 <code>clock_skew</code>（容忍 5 分钟），
+让历史行自己标注「记录时间戳晚于当前时间，排序与时间不可信」。</li>
+<li>交付形式：签名热修包
+<code>release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-04-2.2-105.x86_64.cgpatch</code>
+（双语台账见 <code>docs/hotfix-patches.md</code> / <code>docs/zh-CN/hotfix-patches.md</code>）。</li>
+</ul>
+<blockquote>
+<p><strong>应用顺序是硬约束：必须先滚动升级到 2.2-105，再装这个热修包。</strong> <code>.cgupgrade</code> 会整体替换
+<code>clusterguard</code> 与 <code>clusterguard-update-helper</code> 两个二进制，先装热修会被升级覆盖掉。
+<code>apply.sh</code> 与 <code>--inspect</code> 都不校验已安装的 RPM release，这个顺序靠人守。
+同理，2.2-104 线上那份补丁包（HF-2026-0929-03）不要用在 2.2-105 现场，反向也一样。</p>
+</blockquote>
 <h2 id="验证范围">验证范围<a class="heading-anchor" href="#验证范围" aria-label="Link to 验证范围">#</a></h2>
 <ul>
 <li><code>go build ./...</code></li>
@@ -127,8 +152,17 @@ bash install_clusterguard.sh --help
 <code>clusterguard-ha-2.2-104_to_2.2-105.x86_64.cgupgrade</code>）。</p>
 <h2 id="现场验收状态">现场验收状态<a class="heading-anchor" href="#现场验收状态" aria-label="Link to 现场验收状态">#</a></h2>
 <p>本版介质已在本地按发版门禁构建并核验，<strong>未上传 GitHub</strong>。三节点滚动升级、真实故障切换与
-VIP 自动接管<strong>均未执行</strong>；控制台的 HTTP 层登录与 multipart 上传路径也<strong>未做真实浏览器验收</strong>。
-本包不替代现场验签与滚动升级验收，不能仅凭较高版本号当作已发布版本。</p>
+VIP 自动接管<strong>均未执行</strong>。控制台一侧的验收是分层的，必须分开说清楚：</p>
+<ul>
+<li><strong>已做</strong>：multipart 上传到「滚动升级」可用性这条判定链<strong>已有真实浏览器验收</strong>——
+<code>tools/console-update-pending-acceptance.cjs</code> 驱动仓库内真实的 <code>console.html</code>，覆盖「未来时间
+戳记录占住首行」「列表里没有可执行包」「常规上传」三个场景共 25 项断言，不依赖 playwright；
+四处变异（主体退回首行、身份栏退回首行、<code>clock_skew</code> 读深一层、去掉 blocked 分支）全部被抓到。</li>
+<li><strong>未做</strong>：上述验收跑在仓库自带的 API 夹具上，<strong>不是</strong>对已部署控制面的实测。因此<strong>仍未验收</strong>
+的是：对现场控制面的 HTTP 层登录与 multipart 真实上传、上传之后真正执行一次滚动升级与回退，
+以及本记录上方那个热修包的现场应用。</li>
+</ul>
+<p>本包不替代现场验签与滚动升级验收，不能仅凭较高版本号当作已发布版本。</p>
 
           <footer class="document-footer">
             <span>源文件: <code>docs/zh-CN/release-2.2.105.md</code></span>
@@ -137,7 +171,7 @@ VIP 自动接管<strong>均未执行</strong>；控制台的 HTTP 层登录与 m
         </article>
         <aside class="page-toc" aria-label="本页目录">
           <strong>本页目录</strong>
-          <a class="toc-level-2" href="#本次变更">本次变更</a><a class="toc-level-3" href="#1-集群时钟-本版主要变更">1. 集群时钟（本版主要变更）</a><a class="toc-level-3" href="#2-写入者协调与整机重启可恢复性">2. 写入者协调与整机重启可恢复性</a><a class="toc-level-3" href="#3-控制台">3. 控制台</a><a class="toc-level-3" href="#4-在线升级与热修补丁通道">4. 在线升级与热修补丁通道</a><a class="toc-level-2" href="#验证范围">验证范围</a><a class="toc-level-2" href="#介质范围">介质范围</a><a class="toc-level-2" href="#使用入口">使用入口</a><a class="toc-level-2" href="#现场验收状态">现场验收状态</a>
+          <a class="toc-level-2" href="#本次变更">本次变更</a><a class="toc-level-3" href="#1-集群时钟-本版主要变更">1. 集群时钟（本版主要变更）</a><a class="toc-level-3" href="#2-写入者协调与整机重启可恢复性">2. 写入者协调与整机重启可恢复性</a><a class="toc-level-3" href="#3-控制台">3. 控制台</a><a class="toc-level-3" href="#4-在线升级与热修补丁通道">4. 在线升级与热修补丁通道</a><a class="toc-level-2" href="#介质构建之后发现的缺陷-上传完-滚动升级-按钮不亮">介质构建之后发现的缺陷：上传完「滚动升级」按钮不亮</a><a class="toc-level-2" href="#验证范围">验证范围</a><a class="toc-level-2" href="#介质范围">介质范围</a><a class="toc-level-2" href="#使用入口">使用入口</a><a class="toc-level-2" href="#现场验收状态">现场验收状态</a>
         </aside>
       </main>
     </div>
