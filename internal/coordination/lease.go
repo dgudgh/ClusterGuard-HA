@@ -12,6 +12,13 @@ import (
 	"clusterguard.io/ha/pkg/model"
 )
 
+// maxLeaseTTL is the longest lifetime any coordination lease can be granted, and
+// therefore the furthest ahead of the present clock a stored expiry can
+// legitimately sit. Anything beyond it cannot be the product of elapsed time: a
+// renewal always rewrites the expiry to its own clock plus one TTL, so only a
+// backwards clock step can strand an expiry further out than this.
+const maxLeaseTTL = time.Minute
+
 type MutationAuthority interface {
 	RequireMutationAuthority(context.Context) error
 }
@@ -60,7 +67,7 @@ func (store *LeaseStore) Acquire(ctx context.Context, request endpoint.LeaseRequ
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	now := store.now().UTC()
-	if request.TTL <= 0 || request.TTL > time.Minute {
+	if request.TTL <= 0 || request.TTL > maxLeaseTTL {
 		request.TTL = 30 * time.Second
 	}
 	for _, record := range store.records.CoordinationLeases() {
@@ -73,7 +80,12 @@ func (store *LeaseStore) Acquire(ctx context.Context, request endpoint.LeaseRequ
 			continue
 		}
 		if lease.OperationID == request.OperationID && lease.OwnerID == request.OwnerID && lease.PreviousOwnerID == request.PreviousOwnerID {
-			if requestedExpiry := now.Add(request.TTL); requestedExpiry.After(lease.ExpiresAt) {
+			requestedExpiry := now.Add(request.TTL)
+			// Extend a lease that is running out, and re-anchor one whose stored
+			// expiry sits further from the current clock than any grant can reach.
+			// Only a backwards clock step can produce that, and honouring it would
+			// keep the lease looking held long after its owner stopped renewing it.
+			if requestedExpiry.After(lease.ExpiresAt) || lease.ExpiresAt.Sub(now) > maxLeaseTTL {
 				lease.ExpiresAt = requestedExpiry
 			}
 			record.Lease = lease
@@ -164,7 +176,7 @@ func (store *LeaseStore) AcquireStableBatch(ctx context.Context, requests []endp
 			continue
 		}
 		ttl := request.TTL
-		if ttl <= 0 || ttl > time.Minute {
+		if ttl <= 0 || ttl > maxLeaseTTL {
 			ttl = 30 * time.Second
 		}
 		if resourceID, found := activeByScope[scope]; found {
@@ -176,7 +188,19 @@ func (store *LeaseStore) AcquireStableBatch(ctx context.Context, requests []endp
 			// The ownership keeper runs more frequently than the lease TTL so it
 			// can react quickly to a changed owner. Do not replicate an otherwise
 			// identical lease until half of its TTL has elapsed.
-			if record.Lease.ExpiresAt.Sub(now) > ttl/2 {
+			//
+			// That headroom test must not be the only exit, though. After the
+			// system clock moves backwards the stored expiry is stranded
+			// arbitrarily far into the future, and "more than half a TTL left"
+			// then reads as "nothing to do" for exactly as long as the step was.
+			// A one-minute VIP ownership lease has been observed pinned roughly
+			// eight hours ahead: the lease still authorised its owner, but it no
+			// longer expired when that owner stopped renewing it, so automatic
+			// failover was silently disabled for the whole window. A stored expiry
+			// further from the current clock than one full grant cannot be the
+			// product of elapsed time, so re-anchor it.
+			staleAnchor := record.Lease.ExpiresAt.Sub(now) > maxLeaseTTL
+			if !staleAnchor && record.Lease.ExpiresAt.Sub(now) > ttl/2 {
 				continue
 			}
 			record.Lease.ExpiresAt = now.Add(ttl)

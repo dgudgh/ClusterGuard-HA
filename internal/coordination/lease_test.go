@@ -376,3 +376,112 @@ func TestQuorumLeaseRollsTransitionBackInOneDurableUpdate(t *testing.T) {
 		t.Fatalf("stable=%+v record=%+v records=%+v", stable, record, records.records)
 	}
 }
+
+// An operator correcting a system clock that had drifted hours ahead leaves every
+// lease written before the correction anchored to the old clock: its stored expiry
+// now sits hours past the moment it was written. The half-TTL headroom rule reads
+// that as "renewal not due yet" and would leave a one-minute VIP ownership lease
+// authorising its owner for the full step duration — the lease keeps its owner
+// while no longer expiring when that owner stops renewing, which silently disables
+// automatic failover until the stranded expiry finally passes.
+func TestQuorumStableLeaseReanchorsAfterTheClockMovesBackwards(t *testing.T) {
+	realNow := time.Date(2026, time.September, 29, 2, 20, 0, 0, time.UTC)
+	skewedNow := realNow.Add(8 * time.Hour)
+	now := skewedNow
+	records := &leaseRecordStore{records: map[model.ResourceID]LeaseRecord{}}
+	store := NewLeaseStore(records, authoritativeMembership(t), func() time.Time { return now })
+	endpointID := model.NewResourceID()
+	request := endpoint.LeaseRequest{
+		ClusterID: model.NewResourceID(), HAEndpointID: endpointID, OperationID: endpointID,
+		OwnerID: model.NewResourceID(), TTL: time.Minute,
+	}
+	if err := store.AcquireStableBatch(context.Background(), []endpoint.LeaseRequest{request}); err != nil {
+		t.Fatalf("seed stable lease under the skewed clock: %v", err)
+	}
+	var seeded LeaseRecord
+	for _, record := range records.records {
+		seeded = record
+	}
+	if !seeded.Lease.ExpiresAt.Equal(skewedNow.Add(time.Minute)) {
+		t.Fatalf("seeded lease expiry=%s", seeded.Lease.ExpiresAt)
+	}
+
+	now = realNow
+	records.replaceCalls = 0
+	if err := store.AcquireStableBatch(context.Background(), []endpoint.LeaseRequest{request}); err != nil {
+		t.Fatalf("renew after the clock correction: %v", err)
+	}
+	if records.replaceCalls != 1 {
+		t.Fatalf("a lease anchored to the pre-correction clock was not re-anchored: durable mutations=%d", records.replaceCalls)
+	}
+	renewed := records.records[seeded.Lease.ResourceID]
+	if !renewed.Lease.ExpiresAt.Equal(realNow.Add(time.Minute)) || !renewed.UpdatedAt.Equal(realNow) {
+		t.Fatalf("lease kept its stale anchor: %+v", renewed)
+	}
+	if err := store.Validate(context.Background(), renewed.Lease); err != nil {
+		t.Fatalf("validate the re-anchored lease: %v", err)
+	}
+}
+
+// The transition path used by failover takes the same backwards clock step.
+func TestQuorumSingleLeaseReanchorsAfterTheClockMovesBackwards(t *testing.T) {
+	realNow := time.Date(2026, time.September, 29, 2, 20, 0, 0, time.UTC)
+	skewedNow := realNow.Add(8 * time.Hour)
+	now := skewedNow
+	records := &leaseRecordStore{records: map[model.ResourceID]LeaseRecord{}}
+	store := NewLeaseStore(records, authoritativeMembership(t), func() time.Time { return now })
+	request := endpoint.LeaseRequest{
+		ClusterID: model.NewResourceID(), HAEndpointID: model.NewResourceID(),
+		OperationID: model.NewResourceID(), OwnerID: model.NewResourceID(), TTL: time.Minute,
+	}
+	first, err := store.Acquire(context.Background(), request)
+	if err != nil {
+		t.Fatalf("seed lease under the skewed clock: %v", err)
+	}
+	if !first.ExpiresAt.Equal(skewedNow.Add(time.Minute)) {
+		t.Fatalf("seeded lease expiry=%s", first.ExpiresAt)
+	}
+
+	now = realNow
+	renewed, err := store.Acquire(context.Background(), request)
+	if err != nil {
+		t.Fatalf("renew after the clock correction: %v", err)
+	}
+	if !renewed.ExpiresAt.Equal(realNow.Add(time.Minute)) || !records.records[first.ResourceID].UpdatedAt.Equal(realNow) {
+		t.Fatalf("lease kept its stale anchor: renewed=%+v record=%+v", renewed, records.records[first.ResourceID])
+	}
+}
+
+// The re-anchor trigger must sit exactly at one full TTL. A lease holding the
+// longest grantable lifetime is ordinary and must keep the headroom rule, or the
+// detector would re-replicate every long-lived lease on every tick.
+func TestQuorumLeaseReanchorBoundaryIsOneFullTTL(t *testing.T) {
+	startedAt := time.Date(2026, time.September, 29, 2, 20, 0, 0, time.UTC)
+	now := startedAt
+	records := &leaseRecordStore{records: map[model.ResourceID]LeaseRecord{}}
+	store := NewLeaseStore(records, authoritativeMembership(t), func() time.Time { return now })
+	endpointID := model.NewResourceID()
+	request := endpoint.LeaseRequest{
+		ClusterID: model.NewResourceID(), HAEndpointID: endpointID, OperationID: endpointID,
+		OwnerID: model.NewResourceID(), TTL: time.Minute,
+	}
+	if err := store.AcquireStableBatch(context.Background(), []endpoint.LeaseRequest{request}); err != nil {
+		t.Fatal(err)
+	}
+	// A full-minute lease read one instant later still sits exactly one TTL ahead
+	// of the clock — the furthest a legitimate grant reaches. It must be left
+	// alone: widening the trigger by a single comparison would re-anchor every
+	// stable lease on every tick.
+	records.replaceCalls = 0
+	if err := store.AcquireStableBatch(context.Background(), []endpoint.LeaseRequest{request}); err != nil {
+		t.Fatal(err)
+	}
+	if records.replaceCalls != 0 {
+		t.Fatalf("a full-TTL lease was mistaken for a stale anchor: durable mutations=%d", records.replaceCalls)
+	}
+	for _, record := range records.records {
+		if !record.Lease.ExpiresAt.Equal(startedAt.Add(time.Minute)) || !record.UpdatedAt.Equal(startedAt) {
+			t.Fatalf("a lease at the headroom boundary was rewritten: %+v", record)
+		}
+	}
+}
