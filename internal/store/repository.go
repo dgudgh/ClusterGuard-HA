@@ -28,6 +28,21 @@ var (
 	ErrPostCommitDurability = errors.New("metadata snapshot committed with durability warning")
 )
 
+// An observation normally has to move the watermark forward, so an out-of-order
+// refresh cannot replace fresher evidence with staler evidence. An isolated
+// deployment has no external time reference, though, which makes the watermark
+// only as good as the clock that wrote it: the moment an operator corrects a
+// clock that was wrong, every later observation lands *behind* the watermark the
+// wrong clock already recorded, and strict monotonicity then rejects refreshes
+// forever. That is not a stale observation, it is a clock that no longer exists.
+// Topology never becomes fresh again, the ownership keeper stops renewing
+// leases, and the data node agents release the VIP and force every instance
+// read-only, so the entire cluster stays down until someone intervenes on the
+// host. A gap wider than any plausible probe, retry or scheduling delay cannot
+// be an ordering violation, so beyond this tolerance the watermark is reset
+// instead of being treated as one.
+const observationWatermarkRewindTolerance = 5 * time.Minute
+
 func validationError(format string, arguments ...interface{}) error {
 	return fmt.Errorf("%w: %s", ErrValidation, fmt.Sprintf(format, arguments...))
 }
@@ -1820,7 +1835,8 @@ func (repository *Repository) ApplyDiscoveryRefresh(refresh DiscoveryRefresh) (m
 	if observedAt.IsZero() {
 		observedAt = repository.now().UTC()
 	}
-	if watermark, found := repository.snapshot.ObservationWatermarks[refresh.ClusterID]; found && !observedAt.After(watermark) {
+	if watermark, found := repository.snapshot.ObservationWatermarks[refresh.ClusterID]; found && !observedAt.After(watermark) &&
+		watermark.Sub(observedAt) <= observationWatermarkRewindTolerance {
 		return model.TopologySnapshot{}, fmt.Errorf("%w: observed at %s is not after %s", ErrStaleObservation, observedAt.Format(time.RFC3339Nano), watermark.Format(time.RFC3339Nano))
 	}
 	currentGeneration := repository.snapshot.InventoryGenerations[refresh.ClusterID]

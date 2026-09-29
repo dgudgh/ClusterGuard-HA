@@ -2021,6 +2021,72 @@ func TestApplyDiscoveryRefreshRejectsEqualAndOlderObservationsAtomically(t *test
 	}
 }
 
+// An isolated deployment has no external time reference, so the watermark is
+// only as trustworthy as the clock that wrote it. Correcting a clock that was
+// wrong moves every later observation behind the watermark the wrong clock
+// already recorded; refusing those refreshes forever is what left the cluster
+// down on site after the timezone was fixed, because topology never became
+// fresh again and the agents stayed in their read-only safety state.
+func TestApplyDiscoveryRefreshResetsTheWatermarkWhenTheClockMovedBackwards(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metadata.json")
+	repository, err := Open(path)
+	if err != nil {
+		t.Fatalf("open repository: %v", err)
+	}
+	cluster, endpoints, err := repository.CreateClusterWithEndpoints(model.DatabaseCluster{
+		Engine: model.EngineMySQL, DisplayName: "clock-rewind",
+	}, []model.Endpoint{{Kind: model.EndpointDatabase, Hostname: "mysql-a", Port: 3306, Active: true}})
+	if err != nil {
+		t.Fatalf("create inventory: %v", err)
+	}
+	primary := mysqlInstance(cluster.ResourceID, "mysql-a", "", 3306)
+	primary.Role = model.RolePrimary
+	refresh := func(observedAt time.Time) (model.TopologySnapshot, error) {
+		return repository.ApplyDiscoveryRefresh(DiscoveryRefresh{
+			ClusterID:           cluster.ResourceID,
+			InventoryGeneration: currentInventoryGeneration(t, repository, cluster.ResourceID),
+			Observations:        []DiscoveryObservation{{EndpointID: endpoints[0].ResourceID, Instance: primary}},
+			Probes:              []model.ProbeStatus{{EndpointID: endpoints[0].ResourceID, Health: model.Health{State: model.HealthHealthy}}},
+			ObservedAt:          observedAt,
+		})
+	}
+	// The clock that was wrong: the node believed it was eight hours ahead.
+	wrongClock := time.Date(2026, time.September, 29, 11, 27, 36, 0, time.UTC)
+	if _, err := refresh(wrongClock); err != nil {
+		t.Fatalf("publish observation from the wrong clock: %v", err)
+	}
+	// Inside the tolerance an earlier observation is still an ordering
+	// violation, so the protection the watermark exists for stays intact.
+	if _, err := refresh(wrongClock.Add(-time.Minute)); !errors.Is(err, ErrStaleObservation) {
+		t.Fatalf("observation one minute behind the watermark error = %v", err)
+	}
+	// The corrected clock sits eight hours behind the watermark. That is a clock
+	// that no longer exists rather than a staler observation.
+	corrected := wrongClock.Add(-8 * time.Hour)
+	snapshot, err := refresh(corrected)
+	if err != nil {
+		t.Fatalf("observation from the corrected clock: %v", err)
+	}
+	if !snapshot.ObservedAt.Equal(corrected) {
+		t.Fatalf("corrected observation was not published: %+v", snapshot)
+	}
+	watermark, found := repository.ObservationWatermark(cluster.ResourceID)
+	if !found || !watermark.Equal(corrected) {
+		t.Fatalf("watermark was not reset onto the corrected clock: %s found=%t", watermark, found)
+	}
+	// Once reset, ordering on the corrected clock is enforced again.
+	if _, err := refresh(corrected.Add(time.Second)); err != nil {
+		t.Fatalf("observation after the reset: %v", err)
+	}
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen repository: %v", err)
+	}
+	if persisted, found := reopened.ObservationWatermark(cluster.ResourceID); !found || !persisted.Equal(corrected.Add(time.Second)) {
+		t.Fatalf("reset watermark did not survive reopen: %s found=%t", persisted, found)
+	}
+}
+
 func TestDiscoveryWatermarkAndInventoryGenerationSurviveInvalidationAndRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "metadata.json")
 	repository, err := Open(path)
