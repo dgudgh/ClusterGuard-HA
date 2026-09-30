@@ -146,6 +146,27 @@ scripts/build-clusterguard-patch.sh \
 
 发布物必须同时交付升级包、升级包 SHA-256、发布说明和独立渠道提供的签名公钥指纹。不得覆盖同名升级包。
 
+### 热修补丁规格
+
+热修补丁（`.cgpatch`）由 `scripts/build-hotfix-patch.sh` 按 `hotfixes/HF-*.json` 构建，产物与逐项双语台账见[热修补丁台账](hotfix-patches.md)。规格里的三个提交字段含义不同，不要混用：
+
+| 字段 | 含义 |
+| --- | --- |
+| `base_commit` | **目标现场已经拥有的代码树**——不是“上一个正式版本” |
+| `fix_commits[]` | 本包引入的生产修复，与台账条目一一对应 |
+| `build_commit` | 承载本包全部生产改动的树，必须是每个 `fix_commits` 的后代 |
+
+`base_commit` 不是随手填的标记，它是门禁的判据：`base_commit..build_commit` 之间**每一个触及生产路径的提交都必须列在 `fix_commits` 里**（`tools/verify-hotfix-patch-catalog.cjs`）。基线取宽了，就会把**别的包**的修复算成自己的——包声称自己交付了一个它并不引入的修复，而台账上那条修复属于另一个包。
+
+正确的取法是**继承上一个已交付包的 `build_commit`**：现场装的是哪棵树，就以那棵树为基线。
+
+| 包 | 基线取法 |
+| --- | --- |
+| `HF-2026-0929-05` | 取 HF-04 的 `build_commit`——现场装的就是 HF-04 那棵树 |
+| `HF-2026-0930-01` | 取 HF-05 的 `build_commit`——现场装的就是 HF-05 那棵树 |
+
+反例即 `HF-2026-0930-01`：它的规格从相邻规格抄了 HF-04 的树 `d2e5d850`，于是 `base_commit..build_commit` 里多出 HF-05 自己的生产修复 `7252ecf`，门禁判红“改动了生产路径但未被声明”。修法是**收窄基线**，而不是把一个本包并不引入的修复写进 `fix_commits` 去迎合门禁。改基线前可用同一套判据预演，避免被门禁反复驳回；`scripts/hotfix-component-map.cjs` 是“哪些文件属于生产路径”的唯一真源。
+
 ## 4. 现场准备
 
 1. 将发布公钥预置到受保护目录，并在**每台控制节点**启用受限特权 Helper：

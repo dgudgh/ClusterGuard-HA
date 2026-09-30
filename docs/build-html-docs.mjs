@@ -63,14 +63,14 @@ const groups = {
   "en-US": [
     ["Start Here", ["index", "product-overview", "product-tour", "architecture", ...releaseSlugs["en-US"]]],
     ["Deploy and Migrate", ["offline-rpm-install", "database-preparation", "orchestrator-migration"]],
-    ["Operate", ["operations-manual", "api-operations", "postgresql-ha", "docker-swarm-mysql", "kubernetes-mysql", "update-and-patch", "hotfix-patches", "version-release-policy"]],
+    ["Operate", ["operations-manual", "api-operations", "postgresql-ha", "docker-swarm-mysql", "kubernetes-mysql", "update-and-patch", "hotfix-patches", "upgrade-validation-chain", "version-release-policy", "update-operation-identity-incident-2026-09-30"]],
     ["Qualification", ["proven-mysql-ha-methods", "mysql-feature-parity-acceptance", "mysql-former-primary-recovery", "mysql-production-qualification", "postgresql-production-qualification", "docker-swarm-mysql-validation", "production-chaos-test", "power-lifecycle-test"]],
     ["License", ["licensing"]]
   ],
   "zh-CN": [
     ["开始使用", ["index", "product-overview", "product-tour", "architecture", ...releaseSlugs["zh-CN"]]],
     ["部署与迁移", ["offline-rpm-install", "database-preparation", "orchestrator-migration"]],
-    ["日常运维", ["operations-manual", "api-operations", "postgresql-ha", "docker-swarm-mysql", "kubernetes-mysql", "update-and-patch", "hotfix-patches", "version-release-policy"]],
+    ["日常运维", ["operations-manual", "api-operations", "postgresql-ha", "docker-swarm-mysql", "kubernetes-mysql", "update-and-patch", "hotfix-patches", "upgrade-validation-chain", "version-release-policy", "update-operation-identity-incident-2026-09-30"]],
     ["验收证据", ["proven-mysql-ha-methods", "mysql-feature-parity-acceptance", "mysql-former-primary-recovery", "mysql-production-qualification", "postgresql-production-qualification", "docker-swarm-mysql-validation", "production-chaos-test", "power-lifecycle-test", "release-recovery-acceptance-checklist"]],
     ["许可", ["licensing"]]
   ]
@@ -94,6 +94,7 @@ const entries = [
   entry("en-US", "kubernetes-mysql", "Kubernetes MySQL", "docs/en-US/kubernetes-mysql.md"),
   entry("en-US", "update-and-patch", "Version Update and Rollback", "docs/en-US/update-and-patch.md"),
   entry("en-US", "hotfix-patches", "Hotfix Patch Catalogue", "docs/hotfix-patches.md"),
+  entry("en-US", "upgrade-validation-chain", "Upgrade and Hotfix Validation Chain", "docs/upgrade-validation-chain.md"),
   entry("en-US", "version-release-policy", "Version and Release Policy", "docs/en-US/version-release-policy.md"),
   entry("en-US", "licensing", "Licensing and Compliance", "docs/en-US/licensing.md"),
   entry("en-US", "proven-mysql-ha-methods", "Proven MySQL HA Methods", "docs/proven-mysql-ha-methods.md"),
@@ -104,6 +105,7 @@ const entries = [
   entry("en-US", "docker-swarm-mysql-validation", "Docker Swarm MySQL Lab Qualification", "docs/en-US/docker-swarm-mysql-validation-plan.md"),
   entry("en-US", "production-chaos-test", "Production Chaos Test Report", "docs/en-US/production-chaos-test-report-2026-08-09.md"),
   entry("en-US", "power-lifecycle-test", "Power Lifecycle Test Report", "docs/en-US/power-lifecycle-test-report.md"),
+  entry("en-US", "update-operation-identity-incident-2026-09-30", "Update Action Identity and Hotfix Recovery Incident (2026-09-30)", "docs/en-US/update-operation-identity-incident-2026-09-30.md"),
 
   entry("zh-CN", "index", "ClusterGuard HA 中文文档", "docs/zh-CN/README.md"),
   entry("zh-CN", "product-overview", "产品概览", "README.zh-CN.md"),
@@ -119,6 +121,7 @@ const entries = [
   entry("zh-CN", "kubernetes-mysql", "Kubernetes MySQL", "docs/zh-CN/kubernetes-mysql.md"),
   entry("zh-CN", "update-and-patch", "版本升级与回退", "docs/zh-CN/update-and-patch.md"),
   entry("zh-CN", "hotfix-patches", "热修补丁台账", "docs/zh-CN/hotfix-patches.md"),
+  entry("zh-CN", "upgrade-validation-chain", "升级与热修统一校验链", "docs/zh-CN/upgrade-validation-chain.md"),
   entry("zh-CN", "version-release-policy", "版本与发版规范", "docs/zh-CN/version-release-policy.md"),
   entry("zh-CN", "licensing", "许可与合规", "docs/zh-CN/licensing.md"),
   entry("zh-CN", "proven-mysql-ha-methods", "MySQL 已验证方法", "docs/zh-CN/proven-mysql-ha-methods.md"),
@@ -129,6 +132,7 @@ const entries = [
   entry("zh-CN", "docker-swarm-mysql-validation", "Docker Swarm MySQL 实机验证", "docs/zh-CN/docker-swarm-mysql-validation-plan.md"),
   entry("zh-CN", "production-chaos-test", "生产故障测试报告", "docs/zh-CN/production-chaos-test-report-2026-08-09.md"),
   entry("zh-CN", "power-lifecycle-test", "计划关机测试报告", "docs/zh-CN/power-lifecycle-test-report.md"),
+  entry("zh-CN", "update-operation-identity-incident-2026-09-30", "升级动作对象错配与热修恢复语义复盘（2026-09-30）", "docs/zh-CN/update-operation-identity-incident-2026-09-30.md"),
   entry("zh-CN", "release-recovery-acceptance-checklist", "恢复与升级发布验收清单", "docs/zh-CN/release-recovery-acceptance-checklist.md")
 ];
 

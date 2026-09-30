@@ -1,0 +1,891 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="Upgrade and Hotfix Validation Chain - ClusterGuard HA operational documentation">
+  <title>Upgrade and Hotfix Validation Chain | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">Skip to content</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>Search documentation</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="Filter by title">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-2.2.47.html" data-doc-title="release 2.2.47">Release 2.2.47</a><a href="release-2.2.46.html" data-doc-title="release 2.2.46">Release 2.2.46</a><a href="release-2.2.45.html" data-doc-title="release 2.2.45">Release 2.2.45</a><a href="release-2.2.44.html" data-doc-title="release 2.2.44">Release 2.2.44</a><a href="release-2.2.43.html" data-doc-title="release 2.2.43">Release 2.2.43</a><a href="release-2.2.42.html" data-doc-title="release 2.2.42">Release 2.2.42</a><a href="release-2.2.41.html" data-doc-title="release 2.2.41">Release 2.2.41</a><a href="release-2.2.40.html" data-doc-title="release 2.2.40">Release 2.2.40</a><a href="release-2.2.39.html" data-doc-title="release 2.2.39">Release 2.2.39</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="docker-swarm-mysql.html" data-doc-title="docker swarm mysql">Docker Swarm MySQL</a><a href="kubernetes-mysql.html" data-doc-title="kubernetes mysql">Kubernetes MySQL</a><a href="update-and-patch.html" data-doc-title="version update and rollback">Version Update and Rollback</a><a href="hotfix-patches.html" data-doc-title="hotfix patch catalogue">Hotfix Patch Catalogue</a><a href="upgrade-validation-chain.html" data-doc-title="upgrade and hotfix validation chain" aria-current="page" class="active">Upgrade and Hotfix Validation Chain</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a><a href="update-operation-identity-incident-2026-09-30.html" data-doc-title="update action identity and hotfix recovery incident (2026-09-30)">Update Action Identity and Hotfix Recovery Incident (2026-09-30)</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="postgresql-production-qualification.html" data-doc-title="postgresql 16.4 production qualification">PostgreSQL 16.4 Production Qualification</a><a href="docker-swarm-mysql-validation.html" data-doc-title="docker swarm mysql lab qualification">Docker Swarm MySQL Lab Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section><section><h2>License</h2><a href="licensing.html" data-doc-title="licensing and compliance">Licensing and Compliance</a></section></nav>
+      <div class="sidebar-meta">
+        <span>Offline documentation build</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">Open navigation</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>Upgrade and Hotfix Validation Chain</strong></div>
+        <div class="header-actions">
+          <a href="../zh-CN/upgrade-validation-chain.html" lang="zh-CN">简体中文</a>
+          <button id="print-button" type="button">Print</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="upgrade-and-hotfix-validation-chain">Upgrade and Hotfix Validation Chain<a class="heading-anchor" href="#upgrade-and-hotfix-validation-chain" aria-label="Link to Upgrade and Hotfix Validation Chain">#</a></h1>
+<blockquote>
+<p><strong>Level: P0 — mandatory, must not be skipped.</strong></p>
+<p>This is not an explanatory document. It is the single mandatory validation contract for
+ClusterGuard upgrades, hotfixes, rollback, resume, re-execution, building, signing,
+releasing and field acceptance.</p>
+<p><strong>Every program, script, AI agent, CI job, release tool, console, API, runner, helper and
+hotfix builder must read and obey this document before performing any upgrade or hotfix
+action.</strong></p>
+<p>If code behaviour conflicts with this document, <strong>the P0 rules here win and the program
+must fail closed. &quot;Carry on as best it can&quot; is not an option.</strong></p>
+</blockquote>
+<p>This repository holds the contract at the path section 20 mandates,
+<code>docs/upgrade-validation-chain.md</code>, with the Chinese copy at
+<code>docs/zh-CN/upgrade-validation-chain.md</code>. Programs parse the machine-readable block in
+section 21 out of this file; they do not re-derive the rules from anywhere else. The
+repository-specific mapping from rule to enforcement point, and the obligations that are not
+yet met, are in sections 22 and 23 — they are part of the contract, not commentary.</p>
+<hr>
+<h2 id="0-absolute-rules-a-program-must-not-ignore-these">0. Absolute rules (a program must not ignore these)<a class="heading-anchor" href="#0-absolute-rules-a-program-must-not-ignore-these" aria-label="Link to 0. Absolute rules (a program must not ignore these)">#</a></h2>
+<h3 id="0-1-must-be-obeyed">0.1 Must be obeyed<a class="heading-anchor" href="#0-1-must-be-obeyed" aria-label="Link to 0.1 Must be obeyed">#</a></h3>
+<p>These are hard gates that cannot be bypassed:</p>
+<ol>
+<li><strong>Every upgrade or hotfix action must first resolve the target package identity.</strong></li>
+<li><strong>The object shown in the UI, the object named in the confirmation, the object posted to,
+and the object the back end executes must be the same package.</strong></li>
+<li><strong>A hotfix does not support <code>--resume</code>.</strong></li>
+<li><strong>After a hotfix fails or is interrupted, the only recovery is to re-execute the same
+package; <code>--resume</code> must not be called.</strong></li>
+<li><strong>Only a rolling upgrade that failed or was interrupted may be continued with <code>--resume</code>.</strong></li>
+<li><strong>Only the same <code>patch_id</code>/<code>package_id</code> may adopt the maintenance lock it left behind.</strong></li>
+<li><strong>Different packages must never adopt, overwrite or clear each other&#39;s maintenance lock.</strong></li>
+<li><strong>A <code>.cgpatch</code> that has been signed, released, or given a SHA-256 must never be rebuilt in
+place.</strong></li>
+<li><strong>Same file name + same version + different bytes / different SHA-256 = release incident.</strong></li>
+<li><strong>A historical success must never be overwritten by a later failed action.</strong></li>
+<li><strong>Package deployment state and operation execution history must be separated.</strong></li>
+<li><strong>A change of leader is not in itself a failure.</strong></li>
+<li><strong>Acceptance checks a unique leader, quorum, voters, readiness and rejoin — not that one
+fixed IP stayed leader.</strong></li>
+<li><strong>Rollback must not overwrite a running binary with <code>cp</code>. It must use a temporary file and
+an atomic <code>mv</code> on the same filesystem, or stop the service first and then replace the
+file.</strong></li>
+<li><strong>A built artifact must pass source-level tests, artifact-level checks, mutation
+verification and signature verification.</strong></li>
+<li><strong>When a gate finds an inconsistency it must block the release. It must not be downgraded
+to a warning.</strong></li>
+<li><strong>A program must not substitute an implicit default such as <code>packages[0]</code> or <code>latest</code> for
+the subject the operator actually selected.</strong></li>
+<li><strong>Any fallback that would change the package identity must fail outright.</strong></li>
+<li><strong>Every re-execute / resume / rollback action must re-verify the package kind and target
+identity on the back end. The front end must not be trusted.</strong></li>
+<li><strong>These rules must not be skipped by a later program on the grounds of &quot;compatibility with
+the old logic&quot;, a &quot;temporary bypass&quot;, or &quot;the site needs it now&quot;.</strong></li>
+</ol>
+<hr>
+<h2 id="1-the-unified-object-model">1. The unified object model<a class="heading-anchor" href="#1-the-unified-object-model" aria-label="Link to 1. The unified object model">#</a></h2>
+<p>An upgrade system must distinguish at least these three objects:</p>
+<pre><code class="language-text">Package
+  ├─ package_id / patch_id
+  ├─ kind: hotfix | rolling_upgrade
+  ├─ build_commit
+  ├─ base_commit
+  ├─ fix_commits[]
+  ├─ sha256
+  ├─ signature
+  └─ payload
+
+Deployment State
+  ├─ not_installed
+  ├─ applying
+  ├─ installed
+  ├─ rollbacking
+  ├─ rolled_back
+  └─ recovery_required
+
+Operation History
+  ├─ operation_id
+  ├─ package_id
+  ├─ mode: plan | execute | retry | resume | rollback
+  ├─ started_at
+  ├─ finished_at
+  ├─ status
+  ├─ message
+  └─ events[]
+</code></pre>
+<h2 id="1-1-overwriting-state-is-forbidden">1.1 Overwriting state is forbidden<a class="heading-anchor" href="#1-1-overwriting-state-is-forbidden" aria-label="Link to 1.1 Overwriting state is forbidden">#</a></h2>
+<p>Forbidden:</p>
+<pre><code class="language-text">HF-05 09:30 execute succeeded
+13:30 resume rejected
+=&gt; HF-05 status overwritten to failed
+</code></pre>
+<p>Required:</p>
+<pre><code class="language-text">Package: HF-05
+Deployment State: installed
+
+Operation #1
+  mode=execute
+  status=succeeded
+
+Operation #2
+  mode=resume
+  status=rejected
+</code></pre>
+<p><strong>A later operation must not overwrite a completed historical state.</strong></p>
+<hr>
+<h2 id="2-package-identity-rules">2. Package identity rules<a class="heading-anchor" href="#2-package-identity-rules" aria-label="Link to 2. Package identity rules">#</a></h2>
+<h2 id="2-1-what-defines-an-identity">2.1 What defines an identity<a class="heading-anchor" href="#2-1-what-defines-an-identity" aria-label="Link to 2.1 What defines an identity">#</a></h2>
+<p>An identity is defined by all of:</p>
+<pre><code class="language-text">package_id / patch_id
+version
+revision
+sha256
+signature
+build_commit
+base_commit
+</code></pre>
+<p>A change to any one of them is a new release identity.</p>
+<h2 id="2-2-a-released-package-is-immutable">2.2 A released package is immutable<a class="heading-anchor" href="#2-2-a-released-package-is-immutable" aria-label="Link to 2.2 A released package is immutable">#</a></h2>
+<p>As soon as any of these holds:</p>
+<pre><code class="language-text">signed
+present in release/
+present in the ledger
+has a sha256 sidecar
+handed to a site
+installed at a site
+</code></pre>
+<p>the bytes of that package are permanently immutable.</p>
+<p>Forbidden:</p>
+<pre><code class="language-text">clusterguard-2.2-105.x86_64.cgpatch
+old sha256 = AAA
+
+rebuilt and still called:
+clusterguard-2.2-105.x86_64.cgpatch
+new sha256 = BBB
+</code></pre>
+<p>A new identity must be produced, for example:</p>
+<pre><code class="language-text">2.2-105-r1
+2.2-105+repack1
+HF-2026-0930-01-r1
+</code></pre>
+<p>and recorded:</p>
+<pre><code class="language-text">supersedes
+replacement_reason
+original_sha256
+replacement_sha256
+</code></pre>
+<hr>
+<h2 id="3-splitting-hotfixes-from-rolling-upgrades">3. Splitting hotfixes from rolling upgrades<a class="heading-anchor" href="#3-splitting-hotfixes-from-rolling-upgrades" aria-label="Link to 3. Splitting hotfixes from rolling upgrades">#</a></h2>
+<h2 id="3-1-rolling-upgrade">3.1 Rolling upgrade<a class="heading-anchor" href="#3-1-rolling-upgrade" aria-label="Link to 3.1 Rolling upgrade">#</a></h2>
+<p>Permitted state machine:</p>
+<pre><code class="language-text">plan
+  ↓
+execute
+  ↓
+failed/interrupted
+  ↓
+resume
+  ↓
+--resume
+</code></pre>
+<h2 id="3-2-hotfix">3.2 Hotfix<a class="heading-anchor" href="#3-2-hotfix" aria-label="Link to 3.2 Hotfix">#</a></h2>
+<p>Permitted state machine:</p>
+<pre><code class="language-text">plan
+  ↓
+execute
+  ↓
+failed/interrupted
+  ↓
+retry same package
+  ↓
+execute same package again
+</code></pre>
+<p><strong>Forbidden:</strong></p>
+<pre><code class="language-text">hotfix + --resume
+</code></pre>
+<p>When the back end is given:</p>
+<pre><code class="language-text">kind=hotfix
+mode=resume
+</code></pre>
+<p>it must:</p>
+<pre><code class="language-text">REJECT
+error_code = HOTFIX_RESUME_NOT_SUPPORTED
+</code></pre>
+<p>It must not quietly turn that into an execute unless a future revision of this protocol says
+so explicitly.</p>
+<p>A hotfix &quot;retry&quot; is an execute of the same package; the API has no separate retry mode, and a
+hotfix re-run is recorded as an execute. Adding a mode the runner does not have would put a
+second vocabulary for the same action into the logs and the audit trail, which section 6.1
+puts a stop to.</p>
+<hr>
+<h2 id="4-same-package-re-entry-and-the-maintenance-lock">4. Same-package re-entry and the maintenance lock<a class="heading-anchor" href="#4-same-package-re-entry-and-the-maintenance-lock" aria-label="Link to 4. Same-package re-entry and the maintenance lock">#</a></h2>
+<h2 id="4-1-when-adoption-is-allowed">4.1 When adoption is allowed<a class="heading-anchor" href="#4-1-when-adoption-is-allowed" aria-label="Link to 4.1 When adoption is allowed">#</a></h2>
+<p>Only when:</p>
+<pre><code class="language-text">existing_lock.patch_id == current_package.patch_id
+</code></pre>
+<p>is this permitted:</p>
+<pre><code class="language-text">adopt_current_update_locks()
+</code></pre>
+<h2 id="4-2-a-foreign-lock">4.2 A foreign lock<a class="heading-anchor" href="#4-2-a-foreign-lock" aria-label="Link to 4.2 A foreign lock">#</a></h2>
+<p>If:</p>
+<pre><code class="language-text">existing_lock.patch_id != current_package.patch_id
+</code></pre>
+<p>then it must:</p>
+<pre><code class="language-text">BLOCK
+FOREIGN_UPDATE_LOCK
+</code></pre>
+<p>Forbidden:</p>
+<pre><code class="language-text">clearing someone else&#39;s lock
+overwriting someone else&#39;s lock
+reusing someone else&#39;s operation
+treating every hotfix as re-enterable
+</code></pre>
+<h2 id="4-3-the-principle">4.3 The principle<a class="heading-anchor" href="#4-3-the-principle" aria-label="Link to 4.3 The principle">#</a></h2>
+<pre><code class="language-text">same package → re-entry allowed
+different package → blocked
+</code></pre>
+<hr>
+<h2 id="5-console-object-consistency">5. Console object consistency<a class="heading-anchor" href="#5-console-object-consistency" aria-label="Link to 5. Console object consistency">#</a></h2>
+<h2 id="5-1-a-single-subject">5.1 A single subject<a class="heading-anchor" href="#5-1-a-single-subject" aria-label="Link to 5.1 A single subject">#</a></h2>
+<p>There must be exactly one source:</p>
+<pre><code class="language-text">softwareUpdateSubject()
+</code></pre>
+<p>Every one of these must reference that same object:</p>
+<pre><code class="language-text">button visibility
+button enabled/disabled
+the confirmation
+patch_id
+the POST URL
+rollback target
+resume target
+retry target
+history row action
+</code></pre>
+<h2 id="5-2-packages-0-is-forbidden">5.2 <code>packages[0]</code> is forbidden<a class="heading-anchor" href="#5-2-packages-0-is-forbidden" aria-label="Link to 5.2 packages[0] is forbidden">#</a></h2>
+<p>Forbidden:</p>
+<pre><code class="language-js">patchID = latestSoftwareUpdate()?.package?.patch_id
+</code></pre>
+<p>as a substitute for the object the button belongs to.</p>
+<p>In particular this is forbidden:</p>
+<pre><code class="language-text">button visibility derived from = HF-04
+POST target = packages[0] = HF-05
+</code></pre>
+<h2 id="5-3-rollback-is-held-to-a-stricter-rule">5.3 Rollback is held to a stricter rule<a class="heading-anchor" href="#5-3-rollback-is-held-to-a-stricter-rule" aria-label="Link to 5.3 Rollback is held to a stricter rule">#</a></h2>
+<p>A rollback must carry explicitly:</p>
+<pre><code class="language-text">selected_subject.package_id
+</code></pre>
+<p>and the back end must re-verify:</p>
+<pre><code class="language-text">request patch_id
+==
+resolved package_id
+</code></pre>
+<p>A mismatch is rejected.</p>
+<hr>
+<h2 id="6-the-back-end-as-the-last-line-of-defence">6. The back end as the last line of defence<a class="heading-anchor" href="#6-the-back-end-as-the-last-line-of-defence" aria-label="Link to 6. The back end as the last line of defence">#</a></h2>
+<p>Whether or not the UI has already checked, the back end must re-check:</p>
+<pre><code class="language-text">package exists
+package identity matches
+kind matches operation mode
+maintenance lock ownership matches
+operation transition legal
+signature valid
+package not superseded/invalid
+</code></pre>
+<h2 id="6-1-legal-mode-matrix">6.1 Legal mode matrix<a class="heading-anchor" href="#6-1-legal-mode-matrix" aria-label="Link to 6.1 Legal mode matrix">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>kind</th>
+<th align="right">plan</th>
+<th align="right">execute</th>
+<th align="right">retry</th>
+<th align="right">resume</th>
+<th align="right">rollback</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>rolling_upgrade</td>
+<td align="right">✅</td>
+<td align="right">✅</td>
+<td align="right">❌ / per protocol</td>
+<td align="right">✅</td>
+<td align="right">✅</td>
+</tr>
+<tr>
+<td>hotfix</td>
+<td align="right">✅</td>
+<td align="right">✅</td>
+<td align="right">✅</td>
+<td align="right">❌</td>
+<td align="right">✅</td>
+</tr>
+</tbody></table>
+<p>For any illegal combination:</p>
+<pre><code class="language-text">HTTP/API reject
+do not start the helper
+do not start the runner
+do not write a maintenance lock
+do not overwrite a historical operation
+</code></pre>
+<hr>
+<h2 id="7-leader-and-quorum-rules">7. Leader and quorum rules<a class="heading-anchor" href="#7-leader-and-quorum-rules" aria-label="Link to 7. Leader and quorum rules">#</a></h2>
+<h2 id="7-1-a-fixed-leader-is-forbidden">7.1 A fixed leader is forbidden<a class="heading-anchor" href="#7-1-a-fixed-leader-is-forbidden" aria-label="Link to 7.1 A fixed leader is forbidden">#</a></h2>
+<p>Forbidden:</p>
+<pre><code class="language-text">leader before the run = .153
+leader after the run must still be .153
+</code></pre>
+<p>Correct:</p>
+<pre><code class="language-text">unique_leader = true
+quorum = true
+voters = expected
+all_nodes_ready = true
+target_node_rejoined = true
+</code></pre>
+<p>A leader moving from:</p>
+<pre><code class="language-text">.153 → .154
+</code></pre>
+<p>is not in itself a failure.</p>
+<h2 id="7-2-leader-discovery">7.2 Leader discovery<a class="heading-anchor" href="#7-2-leader-discovery" aria-label="Link to 7.2 Leader discovery">#</a></h2>
+<p>While a node&#39;s local control plane is restarting:</p>
+<pre><code class="language-text">leader_known=false
+</code></pre>
+<p>the program must not fall back to:</p>
+<pre><code class="language-text">self
+</code></pre>
+<p>and then mis-report:</p>
+<pre><code class="language-text">leader_changed
+</code></pre>
+<p>It should prefer:</p>
+<pre><code class="language-text">leader_api_address
+peer/voter rediscovery
+cluster status
+</code></pre>
+<p>and distinguish:</p>
+<pre><code class="language-text">unknown != changed
+</code></pre>
+<hr>
+<h2 id="8-rollback-rules">8. Rollback rules<a class="heading-anchor" href="#8-rollback-rules" aria-label="Link to 8. Rollback rules">#</a></h2>
+<h2 id="8-1-the-etxtbsy-prone-form-is-forbidden">8.1 The ETXTBSY-prone form is forbidden<a class="heading-anchor" href="#8-1-the-etxtbsy-prone-form-is-forbidden" aria-label="Link to 8.1 The ETXTBSY-prone form is forbidden">#</a></h2>
+<p>Forbidden:</p>
+<pre><code class="language-bash">cp backup_binary /usr/local/bin/clusterguard
+</code></pre>
+<p>overwriting a binary that is running.</p>
+<h2 id="8-2-the-correct-form">8.2 The correct form<a class="heading-anchor" href="#8-2-the-correct-form" aria-label="Link to 8.2 The correct form">#</a></h2>
+<p>On the same filesystem:</p>
+<pre><code class="language-bash">install -m 0755 backup/clusterguard \
+  /usr/local/bin/.clusterguard.rollback.$$
+
+sync
+
+mv -f \
+  /usr/local/bin/.clusterguard.rollback.$$ \
+  /usr/local/bin/clusterguard
+</code></pre>
+<p>or:</p>
+<pre><code class="language-text">stop service
+replace file
+start service
+</code></pre>
+<h2 id="8-3-when-a-rollback-is-complete">8.3 When a rollback is complete<a class="heading-anchor" href="#8-3-when-a-rollback-is-complete" aria-label="Link to 8.3 When a rollback is complete">#</a></h2>
+<p>Replacing the file successfully is not a successful rollback.</p>
+<p>All of these must be verified:</p>
+<pre><code class="language-text">binary sha256
+version
+service active
+ready=true
+node rejoin
+cluster quorum
+unique leader
+maintenance state
+</code></pre>
+<hr>
+<h2 id="9-backup-manifest-isolation">9. Backup manifest isolation<a class="heading-anchor" href="#9-backup-manifest-isolation" aria-label="Link to 9. Backup manifest isolation">#</a></h2>
+<p>Forbidden:</p>
+<pre><code class="language-text">backup-*.txt
+</code></pre>
+<p>as the recovery logic for &quot;take the newest backup&quot;.</p>
+<p>It must be bound to:</p>
+<pre><code class="language-text">backup-&lt;hotfix_id&gt;-&lt;stamp&gt;.txt
+</code></pre>
+<p>and recovery must verify:</p>
+<pre><code class="language-text">manifest.hotfix_id == current_hotfix_id
+</code></pre>
+<p>Restoring another patch&#39;s backup is forbidden.</p>
+<hr>
+<h2 id="10-build-commit-base-commit-fix-commits">10. build_commit / base_commit / fix_commits<a class="heading-anchor" href="#10-build-commit-base-commit-fix-commits" aria-label="Link to 10. build_commit / base_commit / fix_commits">#</a></h2>
+<h2 id="10-1-what-base-commit-is">10.1 What <code>base_commit</code> is<a class="heading-anchor" href="#10-1-what-base-commit-is" aria-label="Link to 10.1 What base_commit is">#</a></h2>
+<p><code>base_commit</code> must be:</p>
+<blockquote>
+<p><strong>the build tree the target site already has</strong></p>
+</blockquote>
+<p>and not mechanically:</p>
+<pre><code class="language-text">the previous formal major version
+some older hotfix
+the base in the template
+</code></pre>
+<h2 id="10-2-the-gate">10.2 The gate<a class="heading-anchor" href="#10-2-the-gate" aria-label="Link to 10.2 The gate">#</a></h2>
+<p>For:</p>
+<pre><code class="language-text">base_commit..build_commit
+</code></pre>
+<p>every commit is scanned.</p>
+<p>If a commit:</p>
+<pre><code class="language-text">touches a production path
+AND
+is not in fix_commits
+</code></pre>
+<p>then:</p>
+<pre><code class="language-text">FAIL
+</code></pre>
+<p>Declaring someone else&#39;s historical fix as this package&#39;s own <code>fix_commit</code> in order to get
+past the gate is forbidden. The correct move is to narrow <code>base_commit</code>.</p>
+<hr>
+<h2 id="11-the-pre-build-chain">11. The pre-build chain<a class="heading-anchor" href="#11-the-pre-build-chain" aria-label="Link to 11. The pre-build chain">#</a></h2>
+<p>All of this must pass before building:</p>
+<pre><code class="language-text">[1] source tree clean/known
+[2] base_commit valid
+[3] build_commit contains all declared fixes
+[4] production changes fully accounted
+[5] package identity unique
+[6] previous released bytes immutable
+[7] payload mapping correct
+[8] ownership/mode correct
+[9] restart units explicit
+[10] rollback generation valid
+</code></pre>
+<p>If any fails:</p>
+<pre><code class="language-text">DO NOT BUILD
+</code></pre>
+<hr>
+<h2 id="12-the-post-build-chain">12. The post-build chain<a class="heading-anchor" href="#12-the-post-build-chain" aria-label="Link to 12. The post-build chain">#</a></h2>
+<p>Must be checked:</p>
+<pre><code class="language-text">signature=verified
+kind correct
+schema_version correct
+base_commit correct
+build_commit correct
+fix_commits correct
+payload list exact
+target path exact
+file owner exact
+file mode exact
+restart_unit exact
+database_mutation expected
+rollback available
+sha256 sidecar matches
+</code></pre>
+<p>and:</p>
+<pre><code class="language-text">the runtime scripts inside the package
+==
+the corresponding files in the source tree
+</code></pre>
+<p>must be byte-identical.</p>
+<hr>
+<h2 id="13-tests-and-the-mutation-gate">13. Tests and the mutation gate<a class="heading-anchor" href="#13-tests-and-the-mutation-gate" aria-label="Link to 13. Tests and the mutation gate">#</a></h2>
+<p>Passing ordinary tests is not enough.</p>
+<p>All of these must exist:</p>
+<pre><code class="language-text">source tests
+package tests
+API tests
+console tests
+runner tests
+mutation tests
+</code></pre>
+<p>A mutation test must prove:</p>
+<pre><code class="language-text">a real error → is caught
+sensitive text in a comment only → is not falsely caught
+moving a correct statement into a comment → fails
+wrong package id → fails
+hotfix resume → fails
+foreign lock adoption → fails
+packages[0] fallback → fails
+</code></pre>
+<p>and there must be at least one:</p>
+<pre><code class="language-text">no-bite control
+</code></pre>
+<p>proving the tests are not &quot;fail no matter what is changed&quot;.</p>
+<hr>
+<h2 id="14-checks-before-a-field-run">14. Checks before a field run<a class="heading-anchor" href="#14-checks-before-a-field-run" aria-label="Link to 14. Checks before a field run">#</a></h2>
+<p>Before uploading at the site:</p>
+<pre><code class="language-text">sha256sum package
+</code></pre>
+<p>must match the release ledger exactly.</p>
+<p>Check:</p>
+<pre><code class="language-text">cluster ready
+unique leader
+voters expected
+active_operations=0
+update_maintenance_active=false
+</code></pre>
+<p>If a maintenance window is already open:</p>
+<pre><code class="language-text">establish the lock owner first
+do not upload a new package straight away
+</code></pre>
+<hr>
+<h2 id="15-checks-during-a-field-run">15. Checks during a field run<a class="heading-anchor" href="#15-checks-during-a-field-run" aria-label="Link to 15. Checks during a field run">#</a></h2>
+<p>After each node completes, check:</p>
+<pre><code class="language-text">file digest
+service state
+ready state
+node membership
+leader discovery
+cluster quorum
+</code></pre>
+<p>Do not check only &quot;the command exited 0&quot;.</p>
+<hr>
+<h2 id="16-checks-after-a-field-run">16. Checks after a field run<a class="heading-anchor" href="#16-checks-after-a-field-run" aria-label="Link to 16. Checks after a field run">#</a></h2>
+<p>The order must be:</p>
+<pre><code class="language-text">1. the same sha256 for the target files on all three nodes
+2. service active
+3. helper active (where involved)
+4. ready=true
+5. voters=3
+6. unique leader=1
+7. peer links healthy
+8. update_maintenance_active=false
+9. active_operations=0
+10. package deployment state correct
+11. operation history append-only
+12. what the UI shows matches the real state
+</code></pre>
+<hr>
+<h2 id="17-required-console-regression">17. Required console regression<a class="heading-anchor" href="#17-required-console-regression" aria-label="Link to 17. Required console regression">#</a></h2>
+<p>After every change to upgrade/hotfix behaviour in the console, at least these must be
+verified:</p>
+<h3 id="case-a">Case A<a class="heading-anchor" href="#case-a" aria-label="Link to Case A">#</a></h3>
+<pre><code class="language-text">successful hotfix
+→ 续跑 is not shown
+</code></pre>
+<h3 id="case-b">Case B<a class="heading-anchor" href="#case-b" aria-label="Link to Case B">#</a></h3>
+<pre><code class="language-text">failed hotfix
+→ 重新执行 is shown
+→ 续跑 is not shown
+</code></pre>
+<h3 id="case-c">Case C<a class="heading-anchor" href="#case-c" aria-label="Link to Case C">#</a></h3>
+<pre><code class="language-text">failed rolling upgrade
+→ 续跑 is shown
+</code></pre>
+<h3 id="case-d">Case D<a class="heading-anchor" href="#case-d" aria-label="Link to Case D">#</a></h3>
+<pre><code class="language-text">HF-04 = pending/failed
+HF-05 = latest/succeeded
+
+click HF-04&#39;s action
+→ the posted patch_id must be HF-04
+</code></pre>
+<h3 id="case-e">Case E<a class="heading-anchor" href="#case-e" aria-label="Link to Case E">#</a></h3>
+<pre><code class="language-text">click HF-04&#39;s rollback
+→ the rollback target must be HF-04
+→ falling back to HF-05 / packages[0] is forbidden
+</code></pre>
+<p>Cases A–E are executable in this repository:</p>
+<pre><code class="language-text">node tools/console-update-hotfix-recovery-acceptance.cjs
+</code></pre>
+<p>It drives the real console page over the DevTools protocol against a local fixture built from
+the records the site actually held, and reads the id the page posted off the fixture&#39;s request
+log. Without a browser it reports NOT RUN rather than passing.</p>
+<hr>
+<h2 id="18-the-hf-05-2026-09-30-regression-baseline">18. The HF-05 / 2026-09-30 regression baseline<a class="heading-anchor" href="#18-the-hf-05-2026-09-30-regression-baseline" aria-label="Link to 18. The HF-05 / 2026-09-30 regression baseline">#</a></h2>
+<p>These facts must be kept permanently as a regression sample:</p>
+<pre><code class="language-text">HF-05 had actually succeeded
+↓
+resume was clicked by mistake
+↓
+the hotfix runner refused --resume immediately
+↓
+the real cluster was not damaged
+↓
+but the historical success was overwritten with failed
+</code></pre>
+<p>This proves three things must be defended against forever:</p>
+<pre><code class="language-text">1. the UI subject and the POST target disagreeing
+2. an illegal hotfix resume routing
+3. an operation overwriting the package deployment state
+</code></pre>
+<hr>
+<h2 id="19-release-discipline">19. Release discipline<a class="heading-anchor" href="#19-release-discipline" aria-label="Link to 19. Release discipline">#</a></h2>
+<p>Forbidden:</p>
+<pre><code class="language-text">describing a package as a formal remote release when it has not been pushed or tagged
+</code></pre>
+<p>These stages must be distinguished:</p>
+<pre><code class="language-text">built
+signed
+validated
+released locally
+pushed
+tagged
+uploaded to field
+installed
+verified in field
+</code></pre>
+<p>Every report must state the true stage.</p>
+<hr>
+<h2 id="20-the-program-read-requirement">20. The program read requirement<a class="heading-anchor" href="#20-the-program-read-requirement" aria-label="Link to 20. The program read requirement">#</a></h2>
+<p>Every future automation must confirm this document exists before performing upgrade-related
+work:</p>
+<pre><code class="language-text">MANDATORY_DOC = docs/upgrade-validation-chain.md
+</code></pre>
+<p>If it does not exist:</p>
+<pre><code class="language-text">FAIL CLOSED
+</code></pre>
+<p>If the <code>VALIDATION_CONTRACT_VERSION</code> in this document is higher than the version a program
+supports:</p>
+<pre><code class="language-text">FAIL CLOSED
+</code></pre>
+<p>Silently ignoring an unknown rule is forbidden.</p>
+<hr>
+<h2 id="21-machine-readable-contract">21. Machine-readable contract<a class="heading-anchor" href="#21-machine-readable-contract" aria-label="Link to 21. Machine-readable contract">#</a></h2>
+<pre><code class="language-yaml">VALIDATION_CONTRACT_VERSION: 1
+
+mandatory: true
+fail_closed: true
+
+package:
+  immutable_after_release: true
+  identity_must_be_explicit: true
+  forbid_same_identity_different_sha256: true
+
+hotfix:
+  resume_supported: false
+  retry_same_package_supported: true
+  same_package_lock_adoption_only: true
+
+rolling_upgrade:
+  resume_supported: true
+
+console:
+  subject_must_equal_action_target: true
+  forbid_packages_0_fallback: true
+
+backend:
+  revalidate_package_kind: true
+  revalidate_package_identity: true
+  revalidate_lock_owner: true
+
+history:
+  package_state_separate_from_operation_history: true
+  append_only_operations: true
+  forbid_success_overwrite: true
+
+leader:
+  fixed_leader_required: false
+  unique_leader_required: true
+  quorum_required: true
+
+rollback:
+  direct_cp_over_running_binary_forbidden: true
+  atomic_replace_required: true
+  verify_after_restore: true
+
+release:
+  signed_artifact_immutable: true
+  sha256_required: true
+  mutation_gate_required: true
+
+field:
+  verify_cluster_health_before: true
+  verify_cluster_health_after: true
+</code></pre>
+<hr>
+<h2 id="22-where-each-rule-is-enforced-in-this-repository">22. Where each rule is enforced in this repository<a class="heading-anchor" href="#22-where-each-rule-is-enforced-in-this-repository" aria-label="Link to 22. Where each rule is enforced in this repository">#</a></h2>
+<p>The table is part of the contract: a rule with no enforcement point and no open obligation is
+an unenforced rule. <code>tools/verify-upgrade-validation-chain.cjs</code> reads this table&#39;s rules as
+code and re-checks the enforcement points every run.</p>
+<table>
+<thead>
+<tr>
+<th>Rule</th>
+<th>Enforced at</th>
+<th>State</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>0.1.1 identity explicit</td>
+<td><code>scripts/clusterguard-upgrade.sh</code> reads the patch id out of the signed manifest and validates it; the API path is <code>/api/v1/platform/updates/{patchID}/{mode}</code></td>
+<td>enforced</td>
+</tr>
+<tr>
+<td>0.1.2 subject == action target</td>
+<td><code>softwareUpdateSubject()</code> in <code>internal/api/console.html</code>; verified in a real browser by Cases A–E</td>
+<td>enforced</td>
+</tr>
+<tr>
+<td>0.1.3 hotfix has no resume (routing)</td>
+<td><code>update_mode_arguments()</code> in <code>scripts/clusterguard-update-job.sh</code>; pinned by <code>TestUpdateJobRoutesResumeByPackageKind</code></td>
+<td>enforced</td>
+</tr>
+<tr>
+<td>0.1.3 hotfix has no resume (back end)</td>
+<td><code>ErrResumeUnsupported</code> in <code>internal/platformupdate/manager.go</code>, mapped to HTTP 409, returned before any file is written</td>
+<td>enforced</td>
+</tr>
+<tr>
+<td>0.1.4 hotfix retry re-runs the same package</td>
+<td>the job wrapper emits <code>--execute --yes</code>; the console posts <code>/execute</code> for the same patch id</td>
+<td>enforced</td>
+</tr>
+<tr>
+<td>0.1.5 rolling upgrade may resume</td>
+<td>the job wrapper emits <code>--resume --execute --yes</code> for a non-hotfix</td>
+<td>enforced</td>
+</tr>
+<tr>
+<td>0.1.6 same-package lock adoption</td>
+<td><code>current_update_lock_on_host()</code> requires the lock&#39;s own patch id (<code>grep -Fqx &#39;${patch_id}&#39;</code>)</td>
+<td>enforced</td>
+</tr>
+<tr>
+<td>0.1.7 foreign lock blocked</td>
+<td><code>foreign_update_lock_on_host()</code> / <code>detect_foreign_update_lock()</code>; a foreign holder is refused by name</td>
+<td>enforced</td>
+</tr>
+<tr>
+<td>0.1.8 published bytes immutable</td>
+<td><code>scripts/build-hotfix-patch.sh</code> refuses to overwrite an artifact; a never-delivered build is renamed aside with a stated reason</td>
+<td>enforced</td>
+</tr>
+<tr>
+<td>0.1.9 same name, different bytes</td>
+<td><code>hotfixes/hotfix-publications.json</code> revision chain, re-checked by <code>tools/verify-hotfix-patch-catalog.cjs</code></td>
+<td>enforced</td>
+</tr>
+<tr>
+<td>0.1.10 no success overwrite</td>
+<td>—</td>
+<td><strong>open — see §23</strong></td>
+</tr>
+<tr>
+<td>0.1.11 state and history separated</td>
+<td>—</td>
+<td><strong>open — see §23</strong></td>
+</tr>
+<tr>
+<td>0.1.12 a leader change is not a failure</td>
+<td><code>resolve_leader_host()</code> re-resolves after the patched node restarts instead of pinning the pre-run leader</td>
+<td>enforced</td>
+</tr>
+<tr>
+<td>0.1.13 unique leader, quorum, voters</td>
+<td><code>verify_cluster_idle()</code></td>
+<td>enforced</td>
+</tr>
+<tr>
+<td>0.1.14 rollback never <code>cp</code>s</td>
+<td>the generated <code>rollback.sh</code> uses <code>mktemp</code> plus <code>mv -f</code></td>
+<td>enforced</td>
+</tr>
+<tr>
+<td>0.1.15 source + artifact + mutation + signature</td>
+<td><code>scripts/build-hotfix-patch.sh</code> and <code>tools/verify-hotfix-patch-catalog.cjs</code> (42 checks, no skips)</td>
+<td>enforced</td>
+</tr>
+<tr>
+<td>0.1.16 a gate blocks the release</td>
+<td>the gates exit non-zero; the catalogue gate reports <code>did not run</code> rather than passing when a check is skipped</td>
+<td>enforced</td>
+</tr>
+<tr>
+<td>0.1.17 no implicit <code>packages[0]</code> / <code>latest</code></td>
+<td><code>softwareUpdateSubject()</code>, <code>pendingSoftwareUpdate()</code> and <code>prepareSoftwareUpdateExecution()</code> in the console</td>
+<td>enforced</td>
+</tr>
+<tr>
+<td>0.1.18 an identity-changing fallback fails</td>
+<td><code>startSoftwareUpdate()</code> returns false for an id that is not a record in the list; the back end rejects an unknown id</td>
+<td>enforced</td>
+</tr>
+<tr>
+<td>0.1.19 the back end re-validates kind and identity</td>
+<td><code>internal/platformupdate/manager.go</code>, and the job wrapper reading the signed <code>package.json</code> kind</td>
+<td>enforced</td>
+</tr>
+<tr>
+<td>0.1.20 no rule may be skipped</td>
+<td><code>tools/verify-upgrade-validation-chain.cjs</code> fails closed when this document is missing, unparsable or newer than it supports</td>
+<td>enforced</td>
+</tr>
+<tr>
+<td>5.3 rollback carries its subject</td>
+<td>the rollback URL carries the patch id and the confirmation asks the operator to type that same id</td>
+<td>enforced</td>
+</tr>
+<tr>
+<td>7.2 unknown is not changed</td>
+<td><code>verify_cluster_idle()</code> reports an unobserved leader as <code>leader_unknown</code>, and only an actually different leader as <code>leader_changed</code></td>
+<td>enforced</td>
+</tr>
+<tr>
+<td>9 a backup is bound to its hotfix</td>
+<td>the builder names the list <code>backup-&lt;hotfix_id&gt;-&lt;stamp&gt;.txt</code> and the generated <code>rollback.sh</code> only ever globs its own id</td>
+<td>enforced</td>
+</tr>
+<tr>
+<td>10 <code>base_commit</code> is the site&#39;s tree</td>
+<td><code>tools/verify-hotfix-patch-catalog.cjs</code> scans <code>base_commit..build_commit</code> per commit; <code>docs/update-and-patch.md</code> states the rule</td>
+<td>enforced</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="23-open-obligations">23. Open obligations<a class="heading-anchor" href="#23-open-obligations" aria-label="Link to 23. Open obligations">#</a></h2>
+<p>These rules are in force and are <strong>not yet implemented</strong>. They are listed here, and printed on
+every gate run, so that no reader can mistake the contract for fully satisfied. Each one names
+the card that closes it.</p>
+<pre><code class="language-text">history.package_state_separate_from_operation_history
+  card: UPDATE-OPERATION-HISTORY-P0
+  today: one status.json per package holds the newest attempt, so a later attempt
+  replaces an earlier result. Evidence: after the 2026-09-30 13:30 refused resume, the
+  leader&#39;s status.json said resume/failed for a package whose own event log is a complete
+  success, while the other two nodes still said execute/succeeded.
+
+history.append_only_operations
+  card: UPDATE-OPERATION-HISTORY-P0
+  today: operations are not recorded as a list; only events.jsonl is append-only.
+
+history.forbid_success_overwrite
+  card: UPDATE-OPERATION-HISTORY-P0
+  today: the general rule is not enforced. The specific route that caused the incident is
+  closed - the back end now refuses a hotfix resume before a job exists, so the refused
+  attempt writes nothing - but a later legitimate attempt can still replace a success.
+</code></pre>
+<p><code>tools/verify-upgrade-validation-chain.cjs</code> reports these as <code>OPEN</code> on every run. Run it with
+<code>--strict</code> to make them fail the run, which is what a release gate should use until the card
+lands; the default is to report them without failing, so that a change unrelated to the
+history model is not blocked by work the contract&#39;s own section 23 records as outstanding.</p>
+<hr>
+<h2 id="24-final-principle">24. Final principle<a class="heading-anchor" href="#24-final-principle" aria-label="Link to 24. Final principle">#</a></h2>
+<p>The goal of the upgrade system is not:</p>
+<blockquote>
+<p>&quot;the script eventually returned 0&quot;.</p>
+</blockquote>
+<p>It is:</p>
+<blockquote>
+<p><strong>every change has an explicit identity, an explicit target, an explicit state machine, an
+explicit lock owner, an explicit rollback boundary and an explicit chain of evidence — and
+no program can operate the wrong package through a default value, a historical overwrite, a
+wrong recovery mode or a silent fallback.</strong></p>
+</blockquote>
+<hr>
+<p><strong>END OF MANDATORY VALIDATION CONTRACT</strong></p>
+
+          <footer class="document-footer">
+            <span>Source: <code>docs/upgrade-validation-chain.md</code></span>
+            <a href="../index.html">Documentation language home</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="On this page">
+          <strong>On this page</strong>
+          <a class="toc-level-2" href="#0-absolute-rules-a-program-must-not-ignore-these">0. Absolute rules (a program must not ignore these)</a><a class="toc-level-3" href="#0-1-must-be-obeyed">0.1 Must be obeyed</a><a class="toc-level-2" href="#1-the-unified-object-model">1. The unified object model</a><a class="toc-level-2" href="#1-1-overwriting-state-is-forbidden">1.1 Overwriting state is forbidden</a><a class="toc-level-2" href="#2-package-identity-rules">2. Package identity rules</a><a class="toc-level-2" href="#2-1-what-defines-an-identity">2.1 What defines an identity</a><a class="toc-level-2" href="#2-2-a-released-package-is-immutable">2.2 A released package is immutable</a><a class="toc-level-2" href="#3-splitting-hotfixes-from-rolling-upgrades">3. Splitting hotfixes from rolling upgrades</a><a class="toc-level-2" href="#3-1-rolling-upgrade">3.1 Rolling upgrade</a><a class="toc-level-2" href="#3-2-hotfix">3.2 Hotfix</a><a class="toc-level-2" href="#4-same-package-re-entry-and-the-maintenance-lock">4. Same-package re-entry and the maintenance lock</a><a class="toc-level-2" href="#4-1-when-adoption-is-allowed">4.1 When adoption is allowed</a><a class="toc-level-2" href="#4-2-a-foreign-lock">4.2 A foreign lock</a><a class="toc-level-2" href="#4-3-the-principle">4.3 The principle</a><a class="toc-level-2" href="#5-console-object-consistency">5. Console object consistency</a><a class="toc-level-2" href="#5-1-a-single-subject">5.1 A single subject</a><a class="toc-level-2" href="#5-2-packages-0-is-forbidden">5.2 packages[0] is forbidden</a><a class="toc-level-2" href="#5-3-rollback-is-held-to-a-stricter-rule">5.3 Rollback is held to a stricter rule</a><a class="toc-level-2" href="#6-the-back-end-as-the-last-line-of-defence">6. The back end as the last line of defence</a><a class="toc-level-2" href="#6-1-legal-mode-matrix">6.1 Legal mode matrix</a><a class="toc-level-2" href="#7-leader-and-quorum-rules">7. Leader and quorum rules</a><a class="toc-level-2" href="#7-1-a-fixed-leader-is-forbidden">7.1 A fixed leader is forbidden</a><a class="toc-level-2" href="#7-2-leader-discovery">7.2 Leader discovery</a><a class="toc-level-2" href="#8-rollback-rules">8. Rollback rules</a><a class="toc-level-2" href="#8-1-the-etxtbsy-prone-form-is-forbidden">8.1 The ETXTBSY-prone form is forbidden</a><a class="toc-level-2" href="#8-2-the-correct-form">8.2 The correct form</a><a class="toc-level-2" href="#8-3-when-a-rollback-is-complete">8.3 When a rollback is complete</a><a class="toc-level-2" href="#9-backup-manifest-isolation">9. Backup manifest isolation</a><a class="toc-level-2" href="#10-build-commit-base-commit-fix-commits">10. build_commit / base_commit / fix_commits</a><a class="toc-level-2" href="#10-1-what-base-commit-is">10.1 What base_commit is</a><a class="toc-level-2" href="#10-2-the-gate">10.2 The gate</a><a class="toc-level-2" href="#11-the-pre-build-chain">11. The pre-build chain</a><a class="toc-level-2" href="#12-the-post-build-chain">12. The post-build chain</a><a class="toc-level-2" href="#13-tests-and-the-mutation-gate">13. Tests and the mutation gate</a><a class="toc-level-2" href="#14-checks-before-a-field-run">14. Checks before a field run</a><a class="toc-level-2" href="#15-checks-during-a-field-run">15. Checks during a field run</a><a class="toc-level-2" href="#16-checks-after-a-field-run">16. Checks after a field run</a><a class="toc-level-2" href="#17-required-console-regression">17. Required console regression</a><a class="toc-level-3" href="#case-a">Case A</a><a class="toc-level-3" href="#case-b">Case B</a><a class="toc-level-3" href="#case-c">Case C</a><a class="toc-level-3" href="#case-d">Case D</a><a class="toc-level-3" href="#case-e">Case E</a><a class="toc-level-2" href="#18-the-hf-05-2026-09-30-regression-baseline">18. The HF-05 / 2026-09-30 regression baseline</a><a class="toc-level-2" href="#19-release-discipline">19. Release discipline</a><a class="toc-level-2" href="#20-the-program-read-requirement">20. The program read requirement</a><a class="toc-level-2" href="#21-machine-readable-contract">21. Machine-readable contract</a><a class="toc-level-2" href="#22-where-each-rule-is-enforced-in-this-repository">22. Where each rule is enforced in this repository</a><a class="toc-level-2" href="#23-open-obligations">23. Open obligations</a><a class="toc-level-2" href="#24-final-principle">24. Final principle</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

@@ -140,6 +140,27 @@ See [Update Package Signature Verification Incident (2026-08-31)](update-signatu
 
 Ship the update package, its SHA-256 file, release notes, and a signing-key fingerprint through an independent channel. Never overwrite an existing update artifact.
 
+### Hotfix Patch Specs
+
+A hotfix patch (`.cgpatch`) is built by `scripts/build-hotfix-patch.sh` from `hotfixes/HF-*.json`. Its artifacts and per-fix bilingual catalogue are in the [Hotfix Patch Catalogue](../hotfix-patches.md). Three commit fields in the spec mean different things and are not interchangeable:
+
+| Field | Meaning |
+| --- | --- |
+| `base_commit` | **The code tree the target site already has** - not "the previous official release" |
+| `fix_commits[]` | The production fixes this package introduces, one per catalogue entry |
+| `build_commit` | The tree carrying all of this package's production changes; must be a descendant of every `fix_commits` entry |
+
+`base_commit` is not a label to fill in casually; it is what the gate judges: every commit between `base_commit` and `build_commit` that **touches a production path must be listed in `fix_commits`** (`tools/verify-hotfix-patch-catalog.cjs`). Take the baseline too wide and the package claims another package's fix as its own - it asserts it delivers a fix it does not introduce, while the catalogue attributes that fix to a different package.
+
+The correct baseline is **the `build_commit` of the previously delivered package**: whatever tree the site is running is the tree you build from.
+
+| Package | Baseline |
+| --- | --- |
+| `HF-2026-0929-05` | HF-04's `build_commit` - the tree the site ran at the time |
+| `HF-2026-0930-01` | HF-05's `build_commit` - the tree the site runs now |
+
+The counter-example is `HF-2026-0930-01` itself: its spec copied HF-04's tree `d2e5d850` from a neighbouring spec, which pulled HF-05's own production fix `7252ecf` into `base_commit..build_commit`, and the gate failed that one commit as a production change that was never declared. The fix is to **narrow the baseline**, not to write a fix this package does not introduce into `fix_commits` to satisfy the gate. Rehearse the same criterion before changing a baseline instead of arguing with the gate repeatedly; `scripts/hotfix-component-map.cjs` is the single source of truth for which files are production paths.
+
 ## 4. Site Preparation
 
 1. Install the trusted public key and enable the restricted privileged Helper on **every controller**:
