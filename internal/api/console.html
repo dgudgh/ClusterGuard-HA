@@ -3514,7 +3514,9 @@
       uploaded:'已上传', queued:'排队中', running:'升级中', planned:'计划已通过',
       succeeded:'升级成功', failed:'升级失败', rolled_back:'已回退', interrupted:'状态待确认'
     })[value] || value || '尚未计划';
-    const softwareUpdateModeText = value => ({ plan:'只读计划', execute:'滚动升级', resume:'续跑升级', rollback:'受控回退' })[value] || value || '-';
+    const softwareUpdateModeText = (value, kind) => (kind === 'hotfix'
+      ? ({ plan:'只读热修计划', execute:'热修应用', resume:'续跑热修', rollback:'热修回退' })[value]
+      : ({ plan:'只读计划', execute:'滚动升级', resume:'续跑升级', rollback:'受控回退' })[value]) || value || '-';
     const softwareUpdateBadgeClass = value => ({ succeeded:'success', planned:'success', rolled_back:'warning', failed:'danger', interrupted:'warning', running:'warning', queued:'warning' })[value] || '';
     const platformVersionText = () => {
       const version = state.platformVersion || {};
@@ -3628,7 +3630,7 @@
           statusCell,
           text('td', 'mono', record.patch_id || '-'),
           text('td', '', `${record.source_version || '不限'} → ${record.target_version || '-'}`),
-          text('td', '', softwareUpdateModeText(job && job.mode)),
+          text('td', '', softwareUpdateModeText(job && job.mode, record.kind)),
           text('td', '', softwareUpdateDateText(occurredAt)),
           text('td', 'history-message', `${rowMessage}${rowNote}`)
         );
@@ -3948,7 +3950,7 @@
       byId('software-update-uploaded-at').textContent = record.uploaded_at ? new Date(record.uploaded_at).toLocaleString(state.language) : '-';
       const status = job && job.status;
       byId('software-update-job-status').textContent = softwareUpdateStatusText(status || 'uploaded');
-      byId('software-update-job-mode').textContent = softwareUpdateModeText(job && job.mode);
+      byId('software-update-job-mode').textContent = softwareUpdateModeText(job && job.mode, record.kind);
       byId('software-update-job-node').textContent = (job && job.node) || '-';
       byId('software-update-job-message').textContent = (job && job.message) || '等待生成只读计划。';
       const busy = state.softwareUpdateRunning || ['queued', 'running'].includes(status);
