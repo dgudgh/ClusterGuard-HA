@@ -165,6 +165,38 @@ for privileged_input in "${trust_key}" "${state_file}" "${ssh_key}" "${known_hos
   [[ -z "${privileged_input}" ]] || "${workspace_helper}" workspace check-file "${privileged_input}"
 done
 
+# The action the operator picked is not always the action the updater must run,
+# and this is the last place that can tell the difference. Resuming is defined by
+# the rolling flow's persisted journal; a hotfix deliberately has no such journal
+# - applying one is idempotent, so the supported way forward is to run the same
+# patch again - and the updater refuses --resume for a hotfix on the first line of
+# run_hotfix_update. Mapping resume to --resume unconditionally therefore turned
+# "retry the patch that is already on disk" into a guaranteed failure: on
+# 2026-09-30 the console offered 续跑 for a hotfix, this ran the updater with
+# --resume, the updater refused, and the refusal was written over a record whose
+# payload had been applied and verified on all three nodes.
+#
+# It is a function so the routing is one decision that can be executed on its own:
+# the wrapper around it needs root, runuser and flock, so nothing else in this
+# file can be run in place. Its answer goes to stdout, one flag per line; the
+# announcement of a substitution goes to stderr, where it reaches output.log
+# without becoming an argument.
+update_mode_arguments() {
+  local requested_mode="$1" requested_kind="$2" requested_patch="$3"
+  case "${requested_mode}" in
+    plan) printf '%s\n' --plan ;;
+    execute) printf '%s\n' --execute --yes ;;
+    resume)
+      if [[ "${requested_kind}" == hotfix ]]; then
+        printf '热修补丁 %s 不支持续跑：应用本身是幂等的，改为重新执行同一个补丁。\n' "${requested_patch}" >&2
+        printf '%s\n' --execute --yes
+      else
+        printf '%s\n' --resume --execute --yes
+      fi ;;
+    rollback) printf '%s\n' --rollback --execute --yes ;;
+  esac
+}
+
 arguments=(--patch "${patch}" --expected-patch-id "${patch_id}" --private-root "${private_root}" --managed-job-dir "${public_dir}" --trust-key "${trust_key}" --state "${state_file}" --update-root "${root}" --retain-versions "${retained_versions}" -u "${ssh_user}" --ssh-port "${ssh_port}" --api-port "${api_port}")
 [[ -z "${controllers}" ]] || arguments+=(--controllers "${controllers}")
 [[ -z "${data_nodes}" ]] || arguments+=(--data-nodes "${data_nodes}")
@@ -172,22 +204,32 @@ arguments=(--patch "${patch}" --expected-patch-id "${patch_id}" --private-root "
 [[ -z "${known_hosts}" ]] || arguments+=(--known-hosts "${known_hosts}")
 [[ -z "${ssh_credentials}" ]] || arguments+=(--ssh-credentials-file "${ssh_credentials}")
 
-case "${mode}" in
-  plan) arguments+=(--plan) ;;
-  execute) arguments+=(--execute --yes) ;;
-  resume) arguments+=(--resume --execute --yes) ;;
-  rollback) arguments+=(--rollback --execute --yes) ;;
-esac
+# The package kind is not a guess: the snapshot above puts package.json - the
+# signed metadata, carrying kind - in ${job_dir}, so the side that decides what to
+# execute reads the same fact the console displays on that row. An older control
+# plane, or a direct API call, can still ask for a resume of a hotfix, so the
+# routing has to live here too and not only in the caller.
+#
+# Read into the array rather than piped, so the loop runs in this shell; a pipe
+# would put the appends in a subshell and silently drop every flag.
+package_kind="$("${jq_binary}" -r '.kind // "upgrade"' "${job_dir}/package.json")"
+while IFS= read -r mode_flag; do arguments+=("${mode_flag}"); done < <(update_mode_arguments "${mode}" "${package_kind}" "${patch_id}")
 
 maintenance=false
 [[ "${mode}" == plan ]] || maintenance=true
-write_status running "$([[ "${mode}" == plan ]] && printf '正在生成只读滚动升级计划' || printf '正在执行滚动升级；自动故障切换已暂停')" "${maintenance}"
+# The record has to name what was actually run. A hotfix is not a rolling
+# upgrade: it replaces the files its signed manifest names and deliberately
+# leaves the RPM release alone, so an operator reading 滚动升级完成 on a hotfix row
+# is being told about an action that never happened.
+kind_label="滚动升级"
+[[ "${package_kind}" != hotfix ]] || kind_label="热修补丁"
+write_status running "$([[ "${mode}" == plan ]] && printf '正在生成只读%s计划' "${kind_label}" || printf '正在执行%s；自动故障切换已暂停' "${kind_label}")" "${maintenance}"
 if (cd "${job_dir}" && "${upgrader}" "${arguments[@]}"); then
   finished="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   case "${mode}" in
     plan) write_status planned "升级计划已生成，尚未修改任何节点" false "${finished}" ;;
     rollback) write_status rolled_back "受控回退完成，维护门禁已释放" false "${finished}" ;;
-    *) write_status succeeded "滚动升级完成，全部节点与控制面已验证，维护门禁已释放" false "${finished}" ;;
+    *) write_status succeeded "${kind_label}完成，全部节点与控制面已验证，维护门禁已释放" false "${finished}" ;;
   esac
   schedule_helper_refresh || true
 else

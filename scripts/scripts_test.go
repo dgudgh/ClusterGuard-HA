@@ -834,6 +834,176 @@ func TestHotfixFlowCanAdoptItsOwnMaintenanceGate(t *testing.T) {
 	}
 }
 
+// Which flags a mode must produce is not decided by the mode alone. Resuming is
+// defined by the rolling flow's persisted journal; a hotfix deliberately has no
+// such journal, and the updater refuses --resume for one on the first line of
+// run_hotfix_update. scripts/clusterguard-update-job.sh used to map resume to
+// --resume for every package, so "retry the patch already on disk" became a
+// guaranteed failure: on 2026-09-30 the console offered 续跑 for
+// HF-2026-0929-05, the wrapper ran the updater with --resume, the updater
+// refused, and the refusal was written over a record whose payload had been
+// applied and verified on all three nodes.
+//
+// The decision is executed rather than matched as text, because text matching is
+// what let it stay wrong for so long: the wrapper asserted nothing about which
+// package it was running, so every contract test around it stayed green while the
+// resume arm was wrong. Cases 1 and 2 of the four are this test; cases 3 and 4 -
+// a maintenance gate is reusable by the patch that left it and refused for any
+// other - need a live cluster and are pinned structurally below.
+func TestUpdateJobRoutesResumeByPackageKind(t *testing.T) {
+	script, err := os.ReadFile("clusterguard-update-job.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(script)
+	// The kind has to come from the signed metadata the wrapper already
+	// snapshots. Reading it from a filename, a mode or a default would let the
+	// routing disagree with the kind the console displayed on that same row.
+	if !strings.Contains(text, `package_kind="$("${jq_binary}" -r '.kind // "upgrade"' "${job_dir}/package.json")"`) {
+		t.Fatal("the package kind must be read from the signed metadata snapshot, defaulting to a rolling upgrade when absent")
+	}
+	// Consumed, and consumed in this shell: a pipe would put the appends in a
+	// subshell and drop every flag, leaving the updater with its defaults.
+	if !strings.Contains(text, `while IFS= read -r mode_flag; do arguments+=("${mode_flag}"); done < <(update_mode_arguments "${mode}" "${package_kind}" "${patch_id}")`) {
+		t.Fatal("the mode flags must be read into the argument array from update_mode_arguments, in this shell")
+	}
+	body, found := extractShellFunction(text, "update_mode_arguments")
+	if !found {
+		t.Fatal("clusterguard-update-job.sh must define update_mode_arguments so the routing can be executed on its own")
+	}
+	flagsFor := func(mode, kind string) (string, string) {
+		command := exec.Command("bash", "-c",
+			"set -euo pipefail\n"+body+"\nupdate_mode_arguments \"$1\" \"$2\" HF-2026-0930-01\n", "bash", mode, kind)
+		var stderr strings.Builder
+		command.Stderr = &stderr
+		output, err := command.Output()
+		if err != nil {
+			t.Fatalf("update_mode_arguments %q/%q failed: %v (%s)", mode, kind, err, stderr.String())
+		}
+		return string(output), stderr.String()
+	}
+
+	for _, testCase := range []struct {
+		name, mode, kind, want string
+	}{
+		{"case 1: a failed rolling upgrade is resumed from its journal", "resume", "upgrade", "--resume\n--execute\n--yes\n"},
+		{"a package from before kind existed is a rolling upgrade", "resume", "", "--resume\n--execute\n--yes\n"},
+		{"case 2: a failed hotfix is re-executed, never resumed", "resume", "hotfix", "--execute\n--yes\n"},
+		{"a hotfix execute is unaffected by the routing", "execute", "hotfix", "--execute\n--yes\n"},
+		{"a hotfix plan stays read-only", "plan", "hotfix", "--plan\n"},
+		{"a hotfix rollback is unaffected by the routing", "rollback", "hotfix", "--rollback\n--execute\n--yes\n"},
+		{"a rolling execute is unaffected by the routing", "execute", "upgrade", "--execute\n--yes\n"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			flags, _ := flagsFor(testCase.mode, testCase.kind)
+			if flags != testCase.want {
+				t.Fatalf("%s/%q produced %q, want %q", testCase.mode, testCase.kind, flags, testCase.want)
+			}
+			if testCase.kind == "hotfix" && strings.Contains(flags, "--resume") {
+				t.Fatal("a hotfix was given --resume: the updater refuses it, and the refusal is recorded as the patch's own outcome")
+			}
+		})
+	}
+
+	// The substitution has to be visible. Silently turning a resume into an
+	// execute would leave the operator reading a request they never made, with
+	// nothing in output.log explaining the difference.
+	if _, stderr := flagsFor("resume", "hotfix"); !strings.Contains(stderr, "不支持续跑") {
+		t.Fatal("replacing a hotfix resume with a re-execution must be announced, where it reaches output.log")
+	}
+	if _, stderr := flagsFor("resume", "upgrade"); stderr != "" {
+		t.Fatalf("resuming a rolling upgrade is not a substitution and must stay silent, got %q", stderr)
+	}
+}
+
+// A failed hotfix keeps its maintenance gate on purpose, and that gate can only
+// be taken over by the very same patch. The rule has two halves and they are only
+// safe together: crediting a lock to whoever holds it would let any hotfix take
+// over any other hotfix's gate - and this is the upgrade gate, so it would be
+// pierced - while refusing every gate leaves a failed hotfix with no way forward,
+// which is exactly where the site was stuck on 2026-09-29.
+//
+// These two are pinned at the source level rather than executed, for the reason
+// the three safety decisions above are: reaching them needs three controllers
+// with locks on their real filesystems. What is pinned is that the two predicates
+// partition "a lock exists on this host" into mine and not-mine, which is the
+// property that makes the pair safe.
+func TestMaintenanceGateIsAdoptedByTheSamePatchAndRefusedForAForeignOne(t *testing.T) {
+	contents, err := os.ReadFile("clusterguard-upgrade.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(contents)
+
+	// Case 3, the half that lets a failed hotfix be retried at all: exact patch
+	// identity, never "some lock exists".
+	mine := shellFunctionBody(t, source, "current_update_lock_on_host")
+	if !strings.Contains(mine, `grep -Fqx '${patch_id}'`) {
+		t.Fatal("our own gate must be recognised by exact patch identity, never by the mere presence of a lock")
+	}
+
+	// Case 4, the half that stops the gate from being pierced: the holder must be
+	// a *different* patch, and the marker itself must name that holder rather
+	// than the lock directory alone.
+	foreign := shellFunctionBody(t, source, "foreign_update_lock_on_host")
+	if !strings.Contains(foreign, `test \"\${held}\" != '${patch_id}'`) {
+		t.Fatal("the foreign check must require the holder to be a different patch")
+	}
+	if !strings.Contains(foreign, `--arg held \"\${held}\" '.patch_id == \$held'`) {
+		t.Fatal("the foreign check must require the maintenance marker itself to name that holder")
+	}
+
+	flow := shellFunctionBody(t, source, "run_hotfix_update")
+	// Only consulted when the gate is not ours. Asking unconditionally would
+	// refuse the re-run with the very check that exists to let it through.
+	if !strings.Contains(flow, "if ! ${current_patch_maintenance_active}; then") {
+		t.Fatal("the foreign check must be conditional on this patch not already owning the gate")
+	}
+}
+
+// "The cluster failed the gate check" is not something an operator can act on.
+// When another patch holds the maintenance gate, the one fact that decides what
+// to do next is *which* patch holds it: re-running that one is allowed, running
+// this one is not, and no amount of retrying changes that. The refusal must name
+// it, and it must come before anything on the site is read or changed.
+func TestHotfixFlowNamesTheForeignHolderOfItsMaintenanceGate(t *testing.T) {
+	contents, err := os.ReadFile("clusterguard-upgrade.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(contents)
+
+	flow := shellFunctionBody(t, source, "run_hotfix_update")
+	// Pin the call statement itself, not a mention of the name: a comment
+	// carrying the identifier would satisfy a plain Contains while the flow
+	// detects nothing at all. That trap was already sprung once on this file.
+	if !strings.Contains(flow, "\n    detect_foreign_update_lock") {
+		t.Fatal("run_hotfix_update must consult detect_foreign_update_lock")
+	}
+	// A named refusal is only useful if it is stated before any mutation. The
+	// only mutation authority the flow takes is acquire_update_locks.
+	call := strings.Index(flow, "detect_foreign_update_lock")
+	locks := strings.Index(flow, "acquire_update_locks")
+	if call < 0 || locks < 0 || call > locks {
+		t.Fatal("a foreign gate must be refused before the flow acquires any lock")
+	}
+
+	detector := shellFunctionBody(t, source, "detect_foreign_update_lock")
+	for _, required := range []string{
+		"die ",
+		"维护门禁当前由 ${previous} 持有",
+		"${patch_id}",
+		// A partially held gate is an inconsistency to report, not a lock to
+		// reason about, so every controller has to agree - as detect_current_
+		// update_lock requires for our own gate.
+		`((found == ${#controllers[@]}))`,
+	} {
+		if !strings.Contains(detector, required) {
+			t.Fatalf("the refusal must name both patches and require a consistent holder, missing %q", required)
+		}
+	}
+}
+
 // rollback.sh must swap the inode instead of overwriting the file in place. The
 // files a hotfix replaces include running binaries, and writing into a live
 // executable fails with ETXTBSY — exactly how the automatic rollback of

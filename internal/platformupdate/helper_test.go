@@ -192,6 +192,56 @@ func TestCommandLauncherPublishesGroupReadableOutput(t *testing.T) {
 	}
 }
 
+// The runner is told what to do by argv, so the string that reaches it is the
+// whole contract between the control plane and the updater: resume picks up the
+// rolling journal, execute starts over, and a hotfix is refused a resume
+// outright. Pinning argv here keeps "the console asked for a resume" and "the
+// updater was told to resume" from drifting apart without anyone noticing.
+func TestCommandLauncherPassesTheModeItWasAskedFor(t *testing.T) {
+	root := helperTestRoot(t)
+	capture := filepath.Join(root, "argv.txt")
+	runner := filepath.Join(root, "runner.sh")
+	if err := os.WriteFile(runner, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \""+capture+"\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const patchID = "HF-2026-0930-01"
+	for _, testCase := range []struct {
+		mode Mode
+		want string
+	}{
+		{ModePlan, "--mode\nplan\n--patch-id\n" + patchID + "\n"},
+		{ModeExecute, "--mode\nexecute\n--patch-id\n" + patchID + "\n"},
+		{ModeResume, "--mode\nresume\n--patch-id\n" + patchID + "\n"},
+		{ModeRollback, "--mode\nrollback\n--patch-id\n" + patchID + "\n"},
+	} {
+		t.Run(string(testCase.mode), func(t *testing.T) {
+			if err := os.Remove(capture); err != nil && !errors.Is(err, os.ErrNotExist) {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			output := filepath.Join(root, "output-"+string(testCase.mode)+".log")
+			if err := (CommandLauncher{RunnerPath: runner}).Start(testCase.mode, patchID, output, func(err error) { done <- err }); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("runner did not finish")
+			}
+			contents, err := os.ReadFile(capture)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := string(contents); got != testCase.want {
+				t.Fatalf("argv=%q, want %q", got, testCase.want)
+			}
+		})
+	}
+}
+
 func TestUnixHelperClientSurfacesHelperErrors(t *testing.T) {
 	client := NewUnixHelperClient(filepath.Join(t.TempDir(), "missing.sock"))
 	if err := client.Ready(context.Background()); err == nil {

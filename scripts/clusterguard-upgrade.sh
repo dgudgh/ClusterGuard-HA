@@ -1241,6 +1241,60 @@ case \"\${owner}\" in *[!A-Za-z0-9._-]*) exit 2 ;; esac
 printf '%s\\n' \"\${owner}\""
 }
 
+# Which *other* patch is holding the maintenance gate on this host, if any?
+#
+# current_update_lock_on_host() answers one question only: "is the lock on this
+# host mine". A lock belonging to a different patch therefore looks exactly like
+# no lock at all there, and the flow falls through to the generic admission
+# check, which reports the maintenance state as one item in a list of a dozen
+# unrelated violations. The operator is told the cluster "did not pass the gate
+# check" without ever learning the one fact that decides what to do next: another
+# patch holds the gate, only that patch can take it over, and re-running this one
+# will keep failing until it is dealt with.
+#
+# This is deliberately not a second admission rule. It produces the same refusal
+# the generic check already produces, said out loud — so it is consulted only to
+# explain a refusal, never to grant one, and it cannot loosen the gate.
+foreign_update_lock_on_host() {
+  local host="$1"
+  remote_run "${host}" "set -eu
+lock='${remote_stage}/.cluster-update.lock'
+marker='${maintenance_marker}'
+jq_bin=/usr/local/libexec/jq-linux-amd64
+test -d \"\${lock}\" && test -f \"\${lock}/patch-id\" && test -f \"\${marker}\" && test -x \"\${jq_bin}\"
+held=\$(cat \"\${lock}/patch-id\")
+case \"\${held}\" in [A-Za-z0-9]*) ;; *) exit 2 ;; esac
+case \"\${held}\" in *[!A-Za-z0-9._-]*) exit 2 ;; esac
+test \"\${held}\" != '${patch_id}'
+\"\${jq_bin}\" -e --arg held \"\${held}\" '.patch_id == \$held' \"\${marker}\" >/dev/null
+printf '%s\\n' \"\${held}\""
+}
+
+# Same package re-enters; a different package is refused by name.
+#
+# detect_current_update_lock() credits only a lock whose patch-id equals this
+# patch, so "the gate belongs to somebody else" and "there is no gate" are
+# indistinguishable to it — and the caller then cannot tell an operator which of
+# the two it is looking at. Requiring the holder to be the same on every
+# controller mirrors that function: a partially held gate is an inconsistency to
+# report, not a lock to reason about.
+detect_foreign_update_lock() {
+  local host holder previous="" found=0
+  for host in "${controllers[@]}"; do
+    holder="$(foreign_update_lock_on_host "${host}" 2>/dev/null || true)"
+    [[ -n "${holder}" ]] || continue
+    if [[ -n "${previous}" && "${holder}" != "${previous}" ]]; then
+      log "检测到不一致的维护门禁持有者；不会接管"
+      return 0
+    fi
+    previous="${holder}"
+    found=$((found + 1))
+  done
+  if ((found == ${#controllers[@]})) && [[ -n "${previous}" ]]; then
+    die "维护门禁当前由 ${previous} 持有，与本次补丁 ${patch_id} 不同；热修补丁只能接管自己留下的门禁（同一个补丁重跑可以，换一个补丁不行）。请先处置 ${previous}，或直接用 ${previous} 重跑。"
+  fi
+}
+
 detect_current_update_lock() {
   local host found=0
   for host in "${controllers[@]}"; do
@@ -1939,6 +1993,14 @@ run_hotfix_update() {
   # a failed hotfix with no supported way to resume or roll back. Detecting here
   # makes the same adoption path the rolling flow already uses reachable.
   detect_current_update_lock
+  # A gate that is not ours ends the run here, by name, before anything else is
+  # read or changed. The generic admission check below would refuse it anyway,
+  # but it reports the maintenance state as one violation among a dozen and never
+  # says which patch is holding the gate — and that is the single fact that
+  # decides whether re-running this package can work at all.
+  if ! ${current_patch_maintenance_active}; then
+    detect_foreign_update_lock
+  fi
 
   # The installed RPM release never changes during a hotfix, so it doubles as
   # the baseline the patch was built for. Refusing a mismatch here is what keeps
