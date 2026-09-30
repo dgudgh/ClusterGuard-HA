@@ -144,7 +144,7 @@
       "revision": 0,
       "sha256": "259c23646eaac488da5bad24d7c8ed98dac95046c40b22d379dd85ba03d03bb6",
       "size": 96054,
-      "status": "current",
+      "status": "frozen",
       "supersedes_sha256": null,
       "superseded_by": null,
       "bytes_retained": true,
@@ -157,7 +157,43 @@
           "note": "同一文件名下的第一次构建（build_commit 仍写作 7252ecf、未含生成器修复 c05f8b2 的那一版）。当天即重建。它从未交付、从未上传现场，因此不构成已发布身份，也不占用 revision 号；记在这里以免日后对不上。"
         }
       ],
-      "note": "首次发布即本条。只替换 /usr/local/sbin/clusterguard-upgrade，零 restart_unit，应用不重启任何服务。"
+      "note": "现场已交付并已应用：2026-09-30 09:30:15 至 09:30:41 三台依次替换 /usr/local/sbin/clusterguard-upgrade，作业记录为 execute succeeded（all node digests and maintenance release verified），三台摘要一致。它因此从 current 转为 frozen：字节留作「现场运行过什么」的证据，不再回炉。它只替换升级器那一个脚本，与本目录 2.2-105 的另一份 current 产物（HF-2026-0930-01）在文件上没有交集，两者是先后关系而不是互相取代——装过本包再装 HF-2026-0930-01，或者只装后者，都不会把对方的改动带走。"
+    },
+    {
+      "file": "release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0930-01-2.2-105.x86_64.cgpatch",
+      "hotfix_id": "HF-2026-0930-01",
+      "release_line": "2.2-105",
+      "revision": 0,
+      "sha256": "baf16ebca3f7ea5f4003c1669887ffa66d1626e589990c4a6d8e5798168892c3",
+      "size": 8735057,
+      "status": "superseded",
+      "supersedes_sha256": null,
+      "superseded_by": "release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0930-01-r1-2.2-105.x86_64.cgpatch",
+      "bytes_retained": true,
+      "known_defects": [],
+      "note": "首次发布即本条，同一天即被 r1 取代，两轮都没有交付任何现场，现场也没有它的作业记录。它带两处缺陷。其一，它只堵住了控制台把动作打到错的升级记录上，没有改上层调度器的续跑语义——现场对一个失败的热修作业点「续跑」时，调度器仍然统一下发 --resume，而热修的续跑入口是永远失败的，因为热修要的是「重新执行同一个补丁」而不是从断点续跑；取代它的 r1 把这条路由补在执行入口里。其二，它的清单把起点记成了 d2e5d85（比它更早那个包的构建树），而它声明的修复只有 9fdb0e7，于是 7252ecf——HF-2026-0929-05 自己的生产修复——落进了它声称的范围；这一条正是门禁「every production change in the build tree is an accounted-for declared fix」要防的事，r1 把基线收窄到 c05f8b2 之后才过。"
+    },
+    {
+      "file": "release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0930-01-r1-2.2-105.x86_64.cgpatch",
+      "hotfix_id": "HF-2026-0930-01",
+      "release_line": "2.2-105",
+      "revision": 1,
+      "sha256": "9a5af9bda61e81f87af686fd551ee9b90d04808d1f160df259cc84f4253b8fcd",
+      "size": 8758333,
+      "status": "current",
+      "supersedes_sha256": "baf16ebca3f7ea5f4003c1669887ffa66d1626e589990c4a6d8e5798168892c3",
+      "superseded_by": null,
+      "bytes_retained": true,
+      "known_defects": [],
+      "unpublished_rewrites": [
+        {
+          "sha256": "ae0d94d523fbc1bd154eddc433070feb1e3725191e0ce671f6b06c1aea9e8cc2",
+          "size": 8795850,
+          "at": "2026-09-30T13:54+08:00",
+          "note": "本修订的第一次构建。它的签名清单把 base_commit 记成了 d2e5d85（更早那个包的构建树），而 fix_commits 只有 9fdb0e7 与 8be2e3d，于是清单声称的范围里落进了 7252ecf——HF-2026-0929-05 自己的生产修复。门禁「every production change in the build tree is an accounted-for declared fix」判红；这就是该门禁要防的事：清单不得把别的包的修复算成自己的。改为把基线收窄到 c05f8b2（上一个已交付补丁的构建树，也就是现场已应用的那棵树）后重建。该字节从未上传任何现场、从未签入，按 build-hotfix-patch.sh 自己给出的出路改名移走到 release/2.2-105-hotfixes/unpublished-20260930-135909/（含 REASON.md），因此不构成已发布身份，也不占用 revision 号。"
+        }
+      ],
+      "note": "本条为该线当前可上传入口。载荷四个文件：两个二进制（clusterguard、clusterguard-update-helper）加两个运行时脚本（/usr/local/libexec/clusterguard-update-job.sh、/usr/local/sbin/clusterguard-upgrade），重启 clusterguard-ha.service 与 clusterguard-update-helper.service，因此应用期间控制台页面会短暂不可用。它记录的是 2026-09-30 13:30 那次事故的修复：控制台把动作打到错的升级记录上、给热修提供了永远失败的续跑入口、把已生效的补丁显示成失败，外加执行入口按包种类分派下发参数，以及热修只能接管自己留下的维护门禁（同一个补丁重跑可以，换一个补丁不行）。顺便纠正一条此前写在文档里的判断：热修写进 /etc/clusterguard/update-maintenance.json 的 mode 也是 rolling_update，与滚动升级无异，所以该文件里的 mode 从来不是热修与滚动的判据，真正的判据只有 patch_id。"
     }
   ]
 }

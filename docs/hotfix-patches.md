@@ -25,6 +25,7 @@ below names the one to apply for each patch**; the other identities are history.
 
 | Hotfix | Severity | Fix commits | Build tree | Artifact to apply |
 | --- | --- | --- | --- | --- |
+| HF-2026-0930-01 | P0 | `9fdb0e7`, `8be2e3d` | `8be2e3d` | `release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0930-01-r1-2.2-105.x86_64.cgpatch` |
 | HF-2026-0929-05 | P0 | `7252ecf`, `c05f8b2` | `c05f8b2` | `release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-05-2.2-105.x86_64.cgpatch` |
 | HF-2026-0929-04 | P1 | `39ef673`, `4d80125`, `3a61103`, `d0f63e6`, `d2e5d85` | `d2e5d85` | `release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-04-2.2-105.x86_64.cgpatch` |
 | HF-2026-0929-03 | P0 | `de14249`, `7a1ba82`, `ed9faca`, `d5f9491`, `dd82ca5`, `5ae2039`, `28e3b47`, `9303e9d`, `18d738e`, `81fe3c8`, `ac6f3f7`, `abf5782`, `fce48b7` | `de14249` | `release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-03-2.2-104.x86_64.cgpatch` |
@@ -44,6 +45,127 @@ systemctl restart <unit> # apply.sh prints the units it needs; it never restarts
 bash rollback.sh         # restores from the newest backup manifest
 ```
 
+## HF-2026-0930-01 — The console acted on the wrong update record and offered a hotfix a resume that can only fail, while the execution entry passed every hotfix retry down as a resume and never named the holder when another package owned the maintenance gate - the site's 13:30 resume of HF-2026-0929-05 failed on 2026-09-30, while that patch had passed per-file verification on all three nodes at 09:30
+
+- Severity: P0
+- Fix commits: `9fdb0e7`, `8be2e3d`
+- Build tree: `8be2e3de1cb0f994b4b0e8990db8b9828293b394` (baseline `c05f8b248bb5689f46ebebc77e900852c71085a9` plus the fixes above and nothing else)
+- Applies to: 2.2-105 → 2.2-105+hf-2026-0930-01 (x86_64)
+- Artifact: `release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0930-01-r1-2.2-105.x86_64.cgpatch`
+- SHA-256: `9a5af9bda61e81f87af686fd551ee9b90d04808d1f160df259cc84f4253b8fcd`
+- Artifact identity: revision 1, supersedes `baf16ebca3f7ea5f4003c1669887ffa66d1626e589990c4a6d8e5798168892c3` (`release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0930-01-2.2-105.x86_64.cgpatch`) — 首次构建只含控制台与执行入口的拒止，同一现场处理还必须让热修重试真正重执行同一个补丁；而且它的清单把起点记在一个更早的包上，于是另一份补丁的生产修复被算进了本包的范围。在执行入口补齐这条路由之前，该身份的字节从未交付任何现场，因此不修正旧字节，而以新身份重建并取代它。
+- Source diff: `src/HF-2026-0930-01-8be2e3d.patch`
+- Payload:
+  - `payload/bin/clusterguard` → `/usr/local/bin/clusterguard` (0755)
+  - `payload/bin/clusterguard-update-helper` → `/usr/local/libexec/clusterguard-update-helper` (0755)
+  - `payload/scripts/clusterguard-update-job.sh` → `/usr/local/libexec/clusterguard-update-job.sh` (0750)
+  - `payload/scripts/clusterguard-upgrade.sh` → `/usr/local/sbin/clusterguard-upgrade` (0750)
+- Restart required: `clusterguard-ha.service`, `clusterguard-update-helper.service`
+
+### What this patch does
+
+This package replaces two binaries: cmd/clusterguard -> /usr/local/bin/clusterguard (the control plane; internal/api/console.html and internal/api/updates.go compile into it) and cmd/clusterguard-update-helper -> /usr/local/bin/clusterguard-update-helper (internal/platformupdate/manager.go is imported by both). No database mutation. Restart units: clusterguard-ha.service and clusterguard-update-helper.service, so the console page is briefly unavailable while this package is applied - that is its only observable effect. What it fixes: the console's three action buttons (rolling upgrade / resume / controlled rollback) now act on the same record that enabled them; previously their state came from `pending` while the submission fell back to `packages[0]`, which in practice overwrote the succeeded record of HF-2026-0929-05 with failed. The manager now rejects a resume of a hotfix before writing any state. The upgrade-history badge now answers whether the patch took effect, and states both facts when the newest attempt was a no-op refusal. This revision (revision 1) adds the fourth and fifth fixes in the execution entry, and therefore two payload files: scripts/clusterguard-update-job.sh into /usr/local/libexec/clusterguard-update-job.sh (0755 root:root; the Helper executes it for every job, so it is the single place that decides what the updater is actually told, and it has no restart_unit) and scripts/clusterguard-upgrade.sh into /usr/local/sbin/clusterguard-upgrade (0750 root:clusterguard; apart from the named gate verdict added here it matches the copy HF-2026-0929-05 already applied at the site). Fourth: the execution entry chose the updater's flags from the mode alone, without looking at the package kind, so retrying a hotfix was translated into --resume - and a hotfix has no journal to resume from, so the updater refuses --resume on the first line of run_hotfix_update. It now reads kind from the signed metadata it has already snapshotted: a hotfix resume is rewritten into a re-execution of the same patch and announced in output.log, while a rolling upgrade still passes --resume. Fifth: ownership of the maintenance gate is decided by name - the same patch may take over the gate it left behind, and a different patch holding it is refused by name instead of reporting that the cluster did not pass the gate check.
+
+### HF-2026-0930-01.1 Action buttons acted on the newest record rather than on the record that enabled them - clicking resume for a failed hotfix fired the request at a different, already-succeeded patch, and the same defect in the rollback button would have reverted a package the operator never selected (`9fdb0e7`, P0)
+
+- Symptom: At 2026-09-30 13:30:30 the HF-2026-0929-05 row in 历史升级记录 turned into 升级失败 / 续跑升级, and the result column read "热修补丁不支持 --resume". At that same moment all three nodes reported the same /usr/local/sbin/clusterguard-upgrade digest, update_maintenance_active was false and active_operations was 0: the console was calling an applied patch failed. The button that could be clicked belonged to the failed record HF-2026-0929-04; the action it submitted landed on HF-2026-0929-05.
+
+- Root cause: The defaults of openSoftwareUpdateConfirmation(mode, patchID = latestSoftwareUpdate()?.package?.patch_id) and startSoftwareUpdate(..., patchID = latestSoftwareUpdate()?.package?.patch_id) resolved to packages[0], and the resume-software-update / rollback-software-update listeners pass no patch id at all. Visibility and enabled state, however, came from `subject = pending || latest` (then the failed HF-2026-0929-04). The comment directly above already required that the identity grid, the job status, the action gates and the confirmation id all describe the package the buttons act on; the first three were moved to `subject` and the confirmation id was missed.
+
+- Fix: A single resolver, softwareUpdateSubject() = pendingSoftwareUpdate() || latestSoftwareUpdate(), now feeds the identity grid, the job status, all three action gates, the target summary and the default patch id of both submission functions. The tests also pin the old shapes so they cannot come back: latestSoftwareUpdate()?.package?.patch_id and latest && latest.package && latest.package.patch_id.
+
+- When to apply:
+  - 对任一失败记录点「续跑升级」或「受控回退」，而列表里存在比自己更新的记录
+  - 同一条记录已经是 succeeded、而被其它记录占用操作位时的任何动作
+  - 现场 2026-09-30 13:30 的「续跑 HF-2026-0929-05 失败」
+
+### HF-2026-0930-01.2 The manager accepted a hotfix resume and handed it to the helper, so an attempt that could only ever be refused was recorded as the patch's own outcome, overwriting a success that was really in place (`9fdb0e7`, P0)
+
+- Symptom: The job record of HF-2026-0929-05 changed from mode=execute / status=succeeded / finished_at=01:30:59Z (its last event being "execute succeeded - all node digests and maintenance release verified") to mode=resume / status=failed / started_at=finished_at=05:30:30Z, with the refused attempt contributing no events at all. The console then said 升级失败 for as long as the record stood, while all three nodes ran identical payloads.
+
+- Root cause: clusterguard-upgrade.sh dies with "热修补丁不支持 --resume" on the first statement of run_hotfix_update (a hotfix is idempotent, re-running is the supported path), but platformupdate.Manager.Start had no precondition on ModeResume: it wrote the job file and started the helper, and the helper's existing launch-failure path rewrites job.PatchID/Mode/Status to failed. The refusal was correct; what was wrong is that it became the patch's recorded outcome.
+
+- Fix: Manager.Start now rejects mode == ModeResume && softwarePackage.Kind == PackageKindHotfix before the job file is written, returning the new ErrResumeUnsupported, which the API maps to 409. Resuming a rolling upgrade is untouched - it remains the only way forward when a node-by-node upgrade fails part-way - and a test pins each direction.
+
+- When to apply:
+  - 对任意热修补丁（.cgpatch）发起续跑
+  - 控制台在失败的热修记录上显示「续跑升级」按钮
+  - 任何希望从控制台验证「这个补丁到底装上没有」的操作者
+
+### HF-2026-0930-01.3 The upgrade-history badge answered "did the newest attempt succeed" but was displayed as "did this patch take effect", and the console offered no retry at all for a hotfix that genuinely needed one (`9fdb0e7`, P1)
+
+- Symptom: HF-2026-0929-05 showed 升级失败 (danger badge) in 历史升级记录 and the result column carried only the resume refusal. After a failure the same hotfix had neither a working resume (always refused) nor a retry entry point, only 受控回退 - which happened to be the most dangerous action available at that moment.
+
+- Root cause: renderSoftwareUpdateHistory and the detail panel both read softwareUpdateStatusText(job.status) directly, and job.status describes only the newest attempt; a refused no-op attempt produces no events and changes no payload, yet rewrote that field. At the same time the execute gate was hard-coded to ['uploaded','planned'].includes(status), which a failed hotfix can never satisfy, so the site lost its only automatic way forward - even though detect_current_update_lock exists in run_hotfix_update precisely to make re-running the same patch work.
+
+- Fix: New helpers softwareUpdateCompletedAttempt(job) (the last terminal event in job.events: succeeded / failed / rolled_back / rollback_failed) and softwareUpdateOutcome(job): when the newest attempt is failed and the last completed work is succeeded, the badge reads 已生效 · 本次尝试失败 and the result column is prefixed with the verification time. The console no longer offers resume for a hotfix and instead offers 重新执行 for one that genuinely did not take effect (decided from the outcome, not the raw status), running the same plan-then-execute the first application used. Action gates keep reading the raw status throughout: a refused attempt must not look clean because an older run of the same patch succeeded.
+
+- When to apply:
+  - 升级记录里任何「最近一次尝试失败、但更早完成的一次成功」的补丁
+  - 失败的热修补丁需要重跑同一个补丁时
+  - 需要从控制台判断「现场到底在跑哪一版」的任何复核
+
+### HF-2026-0930-01.4 The execution entry chose the updater's flags from the mode alone, so retrying a hotfix was translated into --resume - which the updater refuses on its first line, turning the retry into a guaranteed failure recorded as that patch's own outcome (`8be2e3d`, P0)
+
+- Symptom: On 2026-09-30 at 13:30 the site clicked 续跑升级 on HF-2026-0929-05 and the console reported, in red, 升级任务失败或被阻断：热修补丁不支持 --resume：应用本身是幂等的，直接重新执行同一个补丁即可, with the history row reading 升级失败 · HF-2026-0929-05 · 续跑升级 · 13:30:30 · 192.168.102.153. That patch's payload had passed per-file verification on all three controllers at 09:30:15 to 09:30:41 the same morning (the 01:30:59Z event is succeeded with message all node digests and maintenance release verified), and the 13:30:29Z record - mode=resume, status=failed, started_at equal to finished_at - produced no events at all: it never touched a node.
+
+- Root cause: When scripts/clusterguard-update-job.sh built its arguments it had a single case "${mode}": the resume) arm appended --resume --execute --yes unconditionally. What that script answers is what the updater should be told, and the mode alone does not decide it: --resume means continuing from the journal a rolling upgrade persists, a hotfix deliberately has no such journal, and the first line of run_hotfix_update is die "热修补丁不支持 --resume". The evidence was already in hand - the script snapshots the signed metadata package.json, which carries kind, into ${job_dir} - but nothing ever read it. Removing the resume button from the console left this gap open: from outside the control plane (an older control plane, a direct POST to /api/v1/platform/updates/<id>/resume, or a hand invocation of /usr/local/libexec/clusterguard-update-job.sh) --mode resume could still reach the updater, and the result was a refusal written into the record that reads like the patch's own failure.
+
+- Fix: package_kind comes from the signed metadata the script has already snapshotted (jq -r '.kind // "upgrade"' "${job_dir}/package.json"; a package without kind is treated as a rolling upgrade, matching the Go side), and the routing is lifted into a pure function, update_mode_arguments: resume plus hotfix emits --execute --yes and prints one line to stderr (热修补丁 … 不支持续跑：应用本身是幂等的，改为重新执行同一个补丁) so it reaches output.log and stays at the site; resume plus anything else still emits --resume --execute --yes; plan, execute and rollback are unchanged. It is a function so the decision can be executed on its own - the script needs root, runuser and flock, so nothing else in it can be run in place. Acceptance cases 1 and 2 execute it directly: resume/upgrade must produce --resume, resume/hotfix must not. Mutation (/tmp/mutate-hotfix-retry-routing.py, with an S0 did-not-bite control and byte-for-byte restoration): reverting the arm to an unconditional --resume, hard-coding the kind to upgrade, swapping the two arms, dropping the announcement, and turning the consumption into a pipe (which puts the appends in a subshell and loses every flag) - all five turn the assertions red. The write_status wording also follows the kind, so a hotfix record no longer calls itself a completed rolling upgrade.
+
+- When to apply:
+  - 控制台对失败的热修提供「续跑」入口，或从控制面之外（旧控制面、直接 POST resume、手工调用执行入口）对热修请求续跑
+  - 任何「热修重试必然失败，失败原因只出现在日志里，而记录只显示失败」的现场
+  - 升级历史里出现 mode=resume 而包的种类是 hotfix 的记录
+  - 一条升级记录自称「滚动升级完成」而它其实是一个热修补丁
+
+### HF-2026-0930-01.5 Who owns the maintenance gate is invisible on the hotfix path: when another package holds it the only verdict is that the cluster did not pass the gate check, so the operator cannot tell which patch to re-run (`8be2e3d`, P1)
+
+- Symptom: A failed hotfix keeps its maintenance gate on purpose, and that gate can only be taken over by the same patch. What the site can see, though, is a generic admission failure: verify_cluster_idle "" false any ends with 控制面升级门禁未通过；以上诊断逐项列出实际违反条件, in which the maintenance state is one line among many. When the gate belongs to a different patch the operator is handed that generic refusal, and the one fact that would let them move forward - the gate belongs to X, only re-running X can take it over, re-running this package never will - never appears at all.
+
+- Root cause: current_update_lock_on_host() answers exactly one question - is the lock on this host mine (grep -Fqx '${patch_id}') - so a lock belonging to somebody else looks identical to no lock at all, and the hotfix path falls straight through to the generic admission check, which knows nothing about who owns the gate. The failed_update_lock_on_host() and detect_recoverable_failed_update() beside it cover taking over a failed rolling upgrade, and both require the marker's .mode to be rolling_update, which has nothing to do with a hotfix. That points at an easy misreading worth recording: a hotfix also writes mode rolling_update into /etc/clusterguard/update-maintenance.json, because acquire_update_locks does not branch on the package kind - so the marker's mode was never the discriminator between a hotfix and a rolling upgrade; patch_id was.
+
+- Fix: Two functions are added. foreign_update_lock_on_host() requires the lock's patch-id to differ from this patch and the marker at /etc/clusterguard/update-maintenance.json to name that same holder; detect_foreign_update_lock() requires every controller to agree on one holder and then dies naming both (维护门禁当前由 ${previous} 持有，与本次补丁 ${patch_id} 不同). It is consulted only when current_patch_maintenance_active is false, so it cannot refuse the re-run behind this patch's own gate, and the refusal it produces is the same refusal the generic check already produced - only said properly - so it cannot loosen the gate. The rolling path deliberately does not get it: that path has two legitimate takeovers (recoverable_previous_patch_id and its own lock), and deciding by identity would kill taking over a failed rolling upgrade. Acceptance cases 3 and 4 need locks on three controllers' own filesystems and cannot run offline, so they are pinned at the source level as this file's other such decisions are: the two predicates must be anchored on grep -Fqx '${patch_id}' and on != '${patch_id}' respectively, which is what makes them partition a lock into mine and not-mine, and the hotfix flow must call the check before acquire_update_locks. Mutation: dropping the !=, dropping the marker's self-reported holder, making the check unconditional, removing the call from the hotfix path, and downgrading die to log - all five turn the assertions red.
+
+- When to apply:
+  - 一个热修失败后，现场想用另一个热修补丁往前走：应当被指名拒绝，而不是只报「门禁未通过」
+  - 想确认「同一个补丁重跑允许、换一个补丁不行」这条规则是否真的成立
+  - 排查「控制面升级门禁未通过」时，需要先知道门禁到底归谁
+
+### Verification
+
+- `sha256sum /usr/local/bin/clusterguard   # 三台必须一致，且等于包内 HOTFIX-MANIFEST.json 中 payload/bin/clusterguard 的 sha256`
+- `sha256sum /usr/local/bin/clusterguard-update-helper   # 三台必须一致，且等于清单中 payload/bin/clusterguard-update-helper 的 sha256`
+- `systemctl is-active clusterguard-ha clusterguard-update-helper   # 应用完成后两者都必须 active`
+- `curl -sk -H 'Authorization: Bearer <token>' https://127.0.0.1:3000/api/v1/control-plane/status | jq -c '{maintenance:.result.update_maintenance_active,active_ops:.result.active_operations,ready:.result.ready}'   # 必须 maintenance:false、active_ops:0、ready:true`
+- `ls /etc/clusterguard/update-maintenance.json   # 成功后必须不存在`
+- `curl -sk -X POST -H 'Authorization: Bearer <token>' -H 'X-CSRF-Token: <csrf>' -H 'Content-Type: application/json' -d '{"confirmation":"HF-2026-0929-05"}' https://127.0.0.1:3000/api/v1/platform/updates/HF-2026-0929-05/resume   # 必须返回 409 且错误文本为「热修补丁不支持续跑…」；返回后该补丁的作业记录必须原样不变（这是本包最关键的一条：拒绝不得再改写记录）`
+- `curl -sk -H 'Authorization: Bearer <token>' https://127.0.0.1:3000/api/v1/platform/updates | jq -r '.result.packages[] | "\(.package.patch_id) \(.job.mode) \(.job.status)"'   # HF-2026-0929-05 一行必须仍为 execute succeeded（应用本包之后新发起的续跑不得再改写它）`
+- `浏览器：设置 → 版本更新 → 历史升级记录   # HF-2026-0929-05 一行必须显示「已生效 · 本次尝试失败」，结果栏以「补丁已生效：最近一次完成的执行于 … 逐文件校验通过」开头`
+- `浏览器：同上   # 选中失败的热修补丁时不得出现「续跑升级」按钮；确实未生效的热修必须出现「重新执行」，且确认对话框中要求输入包 ID、文案为「确认重新执行」`
+- `浏览器：同上   # 若把操作位切到另一条记录，按钮文案与随后的确认对话框必须描述同一条记录（这是本次事故的直接回归项）`
+- `grep -n 'update_mode_arguments' /usr/local/libexec/clusterguard-update-job.sh   # 必须出现：执行入口按包种类分派下发参数`
+- `grep -c '不支持续跑' /usr/local/libexec/clusterguard-update-job.sh   # 必须 ≥1：热修续跑被改写为重新执行，并说明改写`
+- `jq -r '.kind' /var/lib/clusterguard/updates/HF-2026-0930-01/package.json   # 必须为 hotfix：执行入口读的就是这份签名元数据`
+- `jq -r '.base_commit,.build_commit,(.fix_commits|join(" "))' /var/lib/clusterguard/updates/HF-2026-0930-01/package.json   # 清单声称的范围内，除本包 fix_commits 之外不得有触及生产路径的提交；本包首次构建与 revision 0 都把基线记成了更早那个包的构建树，于是 HF-2026-0929-05 的生产修复被算进本包的范围，门禁当场判红。基线已收窄到 c05f8b2（上一个已交付补丁的构建树），范围内除 9fdb0e7 与 8be2e3d 外只剩测试、门禁与文档提交`
+- `grep -c 'detect_foreign_update_lock' /usr/local/sbin/clusterguard-upgrade   # 必须 ≥3（定义 + 门禁判据里的调用 + 热修路径上的调用）`
+- `实测（正向）：对一个已生效的热修点「重新执行」→ 必须走 plan → execute，输出里出现「跳过已达到目标内容的节点」，并且**不得**出现「热修补丁 … 不支持续跑」`
+- `实测（异包）：在三台控制节点各留一把属于另一个补丁的 /var/lib/clusterguard-update-private/history/.cluster-update.lock 与对应的 /etc/clusterguard/update-maintenance.json，再执行本包 → 必须被指名拒绝（维护门禁当前由 <另一个补丁> 持有），且不得修改任何文件`
+- `本次是「含二进制的热修包」，因此同时执行 HF-2026-0929-05 验收清单里那条下一步验收：逐节点应用后不得再出现 leader_changed，失败时自动回退必须成功、门禁必须被正常释放`
+
+### Rollback
+
+执行 rollback.sh 恢复旧的 /usr/local/bin/clusterguard 与 /usr/local/bin/clusterguard-update-helper，然后 systemctl daemon-reload 并按清单重启 clusterguard-ha.service 与 clusterguard-update-helper.service。回滚会把本次修掉的三处行为带回来：(1) 动作按钮重新作用于 packages[0] 而不是启用它的那条记录，于是对失败记录点「续跑」会再次打到最新那个补丁上，「受控回退」会回退操作者没有选中的包——后者会真的把一份已生效的载荷改回旧版本；(2) manager 重新接受热修续跑，于是那次必然被拒绝的尝试会再次把该补丁自己的成功记录覆盖成 failed；(3) 升级记录徽标重新只反映最近一次尝试，已生效的补丁会被显示成「升级失败」，同时失败的热修重新失去「重新执行」入口。注意本包不取代 HF-2026-0929-05：那份热修只替换 /usr/local/sbin/clusterguard-upgrade，与本包的两个载荷没有交集，回滚本包不会也不能把它带走。 本修订新增两个载荷文件，回滚同样会恢复它们：`/usr/local/libexec/clusterguard-update-job.sh` 与 `/usr/local/sbin/clusterguard-upgrade`（后者除本次新增的具名门禁判定外与 HF-2026-0929-05 的载荷一致）。回滚会把本次修掉的第四处与第五处行为带回来：(4) 执行入口重新只看 mode，于是任何对热修的续跑请求——旧控制面、直接 POST resume、手工调用执行入口——都会再次被下发成 `--resume`，在升级器第一行被拒绝，再把拒绝写成这个补丁自己的结果；`update_mode_arguments` 消失；热修的记录重新自称「滚动升级完成」。(5) 异包持有维护门禁时重新只报通用的「控制面升级门禁未通过」，不再指名持有者。注意回滚**不会**把 HF-2026-0929-05 的载荷带回旧版本，也不会撤销控制台的记录修复：本包与它改的是不同的文件。
+
+### Identity history of this patch
+
+The section above describes `clusterguard-ha-hotfix-HF-2026-0930-01-r1-2.2-105.x86_64.cgpatch`. The identities below stay in the delivery
+directory under the immutability rule — **they are not installation entry points**, only the
+evidence of what a site ran or of what an earlier build of this patch contained. The full
+timeline is in `hotfixes/hotfix-publications.json`.
+
+- **first publication** `baf16ebca3f7ea5f4003c1669887ffa66d1626e589990c4a6d8e5798168892c3` (8,735,057 bytes, superseded)
+
 ## HF-2026-0929-05 — 2.2-105 release line: the hotfix flow locked its own site down - it still pinned the leader captured before the restarts, rolled back by writing over running binaries (ETXTBSY), and left a failed run with no way forward
 
 - Severity: P0
@@ -56,6 +178,10 @@ bash rollback.sh         # restores from the newest backup manifest
 - Payload:
   - `payload/scripts/clusterguard-upgrade.sh` → `/usr/local/sbin/clusterguard-upgrade` (0750)
 - Restart required: none
+
+> **This identity is frozen.** It is the artifact a site actually ran, kept as evidence; it is not
+> the upload entry point for its line. It still carries the defects listed below, and it is never
+> rebuilt to today's rules — that would destroy the record.
 
 ### What this patch does
 

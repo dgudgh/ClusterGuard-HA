@@ -19,6 +19,7 @@
 
 | 补丁编号 | 严重级别 | 覆盖修复提交 | 构建树 | 应当安装的产物 |
 | --- | --- | --- | --- | --- |
+| HF-2026-0930-01 | P0 | `9fdb0e7`、`8be2e3d` | `8be2e3d` | `release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0930-01-r1-2.2-105.x86_64.cgpatch` |
 | HF-2026-0929-05 | P0 | `7252ecf`、`c05f8b2` | `c05f8b2` | `release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-05-2.2-105.x86_64.cgpatch` |
 | HF-2026-0929-04 | P1 | `39ef673`、`4d80125`、`3a61103`、`d0f63e6`、`d2e5d85` | `d2e5d85` | `release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-04-2.2-105.x86_64.cgpatch` |
 | HF-2026-0929-03 | P0 | `de14249`、`7a1ba82`、`ed9faca`、`d5f9491`、`dd82ca5`、`5ae2039`、`28e3b47`、`9303e9d`、`18d738e`、`81fe3c8`、`ac6f3f7`、`abf5782`、`fce48b7` | `de14249` | `release/2.2-104-hotfixes/clusterguard-ha-hotfix-HF-2026-0929-03-2.2-104.x86_64.cgpatch` |
@@ -38,6 +39,126 @@ systemctl restart <单元> # apply.sh 只打印需要重启的单元，不自动
 bash rollback.sh         # 按最新备份清单回滚
 ```
 
+## HF-2026-0930-01 — 控制台把操作打到了错的升级记录上、给热修提供了一个永远失败的续跑入口，而执行入口又把「热修重试」统一当成「续跑」下发；异包持有维护门禁时也不指名持有者——2026-09-30 13:30 现场「续跑 HF-2026-0929-05 失败」，而那份热修当天 09:30 已经在三台逐文件校验通过
+
+- 严重级别：P0
+- 覆盖修复提交：`9fdb0e7`、`8be2e3d`
+- 构建树：`8be2e3de1cb0f994b4b0e8990db8b9828293b394`（基线 `c05f8b248bb5689f46ebebc77e900852c71085a9` + 上述修复，不含其它提交）
+- 适用版本：2.2-105 → 2.2-105+hf-2026-0930-01（x86_64）
+- 产物：`release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0930-01-r1-2.2-105.x86_64.cgpatch`
+- SHA-256：`9a5af9bda61e81f87af686fd551ee9b90d04808d1f160df259cc84f4253b8fcd`
+- 产物身份：第 1 修订，替代 `baf16ebca3f7ea5f4003c1669887ffa66d1626e589990c4a6d8e5798168892c3`（`release/2.2-105-hotfixes/clusterguard-ha-hotfix-HF-2026-0930-01-2.2-105.x86_64.cgpatch`）——首次构建只含控制台与执行入口的拒止，同一现场处理还必须让热修重试真正重执行同一个补丁；而且它的清单把起点记在一个更早的包上，于是另一份补丁的生产修复被算进了本包的范围。在执行入口补齐这条路由之前，该身份的字节从未交付任何现场，因此不修正旧字节，而以新身份重建并取代它。
+- 源码差异：`src/HF-2026-0930-01-8be2e3d.patch`
+- 交付内容：
+  - `payload/bin/clusterguard` → `/usr/local/bin/clusterguard`（0755）
+  - `payload/bin/clusterguard-update-helper` → `/usr/local/libexec/clusterguard-update-helper`（0755）
+  - `payload/scripts/clusterguard-update-job.sh` → `/usr/local/libexec/clusterguard-update-job.sh`（0750）
+  - `payload/scripts/clusterguard-upgrade.sh` → `/usr/local/sbin/clusterguard-upgrade`（0750）
+- 需要重启：`clusterguard-ha.service`、`clusterguard-update-helper.service`
+
+### 本包概要
+
+本包替换两个二进制：`cmd/clusterguard` → `/usr/local/bin/clusterguard`（控制面，`internal/api/console.html` 与 `internal/api/updates.go` 都编译进它）和 `cmd/clusterguard-update-helper` → `/usr/local/bin/clusterguard-update-helper`（`internal/platformupdate/manager.go` 被两者共同引用）。数据库变更：无。重启单元：`clusterguard-ha.service` 与 `clusterguard-update-helper.service`——因此应用本包期间控制台页面会短暂不可用，这是本包唯一的可感知影响。修复内容：控制台的「滚动升级 / 续跑升级 / 受控回退」三个按钮改为作用于**启用它们的同一条记录**（此前按钮状态取自 `pending` 而提交却回退到 `packages[0]`，实测把 HF-2026-0929-05 的 succeeded 记录覆盖成 failed）；manager 对热修的续跑请求在写任何状态之前直接拒绝；升级记录的状态徽标改为回答「这个补丁到底生效了没有」，并在最近一次尝试是空拒绝时同时说明两件事。 本条修订（revision 1）在执行入口补齐第四与第五处修复，并因此新增两个载荷文件：`scripts/clusterguard-update-job.sh` → `/usr/local/libexec/clusterguard-update-job.sh`（0755 root:root，Helper 每次作业都直接执行它，所以它是「这次到底给升级器下发什么参数」的唯一决定点，没有 restart_unit）与 `scripts/clusterguard-upgrade.sh` → `/usr/local/sbin/clusterguard-upgrade`（0750 root:clusterguard，除本次新增的具名门禁判定外，与 HF-2026-0929-05 已应用在现场的那份一致）。第四处修复：执行入口决定下发什么参数时只看 mode、不看包的种类，于是「重试一个热修」被翻译成 `--resume`——而热修没有可续跑的 journal，升级器在 `run_hotfix_update` 第一行就拒绝 `--resume`。它现在从自己已经快照好的签名元数据里读 `kind`：热修的 resume 被改写为重新执行同一个补丁并在 output.log 里说明，滚动升级仍然 `--resume`。第五处修复：维护门禁的归属做成具名判定——同一个补丁可以接管自己留下的门禁，另一个补丁持有门禁时被指名拒绝，而不是只报一句「控制面升级门禁未通过」。
+
+### HF-2026-0930-01.1 动作按钮作用于「最新的记录」而不是「启用它的那条记录」——对失败的热修点「续跑」，请求却打到了另一个已经成功的补丁上；「受控回退」同理，会把操作者根本没选中的那个包回退掉（`9fdb0e7`，P0）
+
+- 现象：2026-09-30 13:30:30，控制台「历史升级记录」里 HF-2026-0929-05 一行变成「升级失败 / 续跑升级」，结果栏写「升级任务失败或被阻断：热修补丁不支持 --resume：应用本身是…」。而同一时刻三台 `/usr/local/sbin/clusterguard-upgrade` 摘要一致、`update_maintenance_active=false`、`active_operations=0`：控制台在说一个已经生效的补丁失败了。此前可点的按钮来自失败记录 HF-2026-0929-04（它的状态是 failed），提交出去的动作却落在 HF-2026-0929-05 上。
+
+- 根因：`openSoftwareUpdateConfirmation(mode, patchID = latestSoftwareUpdate()?.package?.patch_id)` 与 `startSoftwareUpdate(..., patchID = latestSoftwareUpdate()?.package?.patch_id)` 的默认值取的是 `packages[0]`，而 `resume-software-update` / `rollback-software-update` 两个监听器调用时**不传** patchID。按钮的显隐与禁用状态却由 `subject = pending || latest`（当时 = 失败的 HF-2026-0929-04）决定。同一段代码上方的注释已经写明「the identity grid, the job status, the action gates and the confirmation id must all describe the package the buttons act on」——前三项改成了 `subject`，确认 ID 这一项漏了。
+
+- 修复：新增唯一解析器 `softwareUpdateSubject() = pendingSoftwareUpdate() || latestSoftwareUpdate()`，身份网格、任务状态、三个动作门禁、目标摘要与两个提交函数的默认 patchID 全部改用它。测试同时钉住旧形状不得回归（`latestSoftwareUpdate()?.package?.patch_id`、`latest && latest.package && latest.package.patch_id`）。
+
+- 何时需要应用：
+  - 对任一失败记录点「续跑升级」或「受控回退」，而列表里存在比自己更新的记录
+  - 同一条记录已经是 succeeded、而被其它记录占用操作位时的任何动作
+  - 现场 2026-09-30 13:30 的「续跑 HF-2026-0929-05 失败」
+
+### HF-2026-0930-01.2 热修的续跑请求被 manager 接受并交给 Helper，于是「必然被拒绝」的尝试被记成了这个补丁自己的结果，把已生效的成功记录覆盖掉（`9fdb0e7`，P0）
+
+- 现象：HF-2026-0929-05 的作业记录从 `mode=execute / status=succeeded / finished_at=01:30:59Z`（事件结尾为 `execute succeeded · all node digests and maintenance release verified`）变成 `mode=resume / status=failed / started_at=finished_at=05:30:30Z`，失败的尝试没有产生任何事件。结果是控制台上的「升级失败」与磁盘上三台一致的载荷长期互相矛盾。
+
+- 根因：`clusterguard-upgrade.sh` 在 `run_hotfix_update()` 的**第一条语句**就 `die "热修补丁不支持 --resume"`（理由是热修幂等、重跑即可），但 `platformupdate.Manager.Start` 对 `ModeResume` 没有任何前置条件，于是它先写 `job` 文件、再启动 Helper；Helper 记录启动失败时按 `helper.go` 的既有逻辑把 `job.PatchID/Mode/Status` 改成 `failed`。拒绝本身是对的，错的是它被写成了补丁的结果。
+
+- 修复：在 `Manager.Start` 里、写 job 文件**之前**拒绝 `mode == ModeResume && softwarePackage.Kind == PackageKindHotfix`，返回新错误 `ErrResumeUnsupported`，由 API 层映射为 409。滚动升级的续跑路径不受影响（逐节点升级半途失败时它仍是唯一出路），两个方向各有一个用例钉住。
+
+- 何时需要应用：
+  - 对任意热修补丁（.cgpatch）发起续跑
+  - 控制台在失败的热修记录上显示「续跑升级」按钮
+  - 任何希望从控制台验证「这个补丁到底装上没有」的操作者
+
+### HF-2026-0930-01.3 升级记录的状态徽标回答的是「最近一次尝试成功了吗」，却被当成「这个补丁生效了吗」显示，并且对热修不提供本来就该提供的重跑路径（`9fdb0e7`，P1）
+
+- 现象：HF-2026-0929-05 在「历史升级记录」中的状态是「升级失败」（danger 徽标），结果栏只写那句续跑拒绝；同一份热补丁在 failed 之后既不能续跑（必然被拒）也没有「重新执行」入口，只有「受控回退」，而回退恰好是当时最危险的动作。
+
+- 根因：`renderSoftwareUpdateHistory` 与详情面板都直接 `softwareUpdateStatusText(job.status)`，而 `job.status` 只描述最近一次尝试；被拒绝的空尝试既不产生事件也不改载荷，却改写了这个字段。同时 `execute-software-update` 的可用条件写死 `['uploaded','planned'].includes(status)`，失败的热修落不进这个集合，于是现场唯一的自动出路消失了——尽管 `run_hotfix_update` 里的 `detect_current_update_lock` 正是为了让「重跑同一个补丁」可行而加的。
+
+- 修复：新增 `softwareUpdateCompletedAttempt(job)`（从 `job.events` 取最近一条终态：succeeded / failed / rolled_back / rollback_failed）与 `softwareUpdateOutcome(job)`：当最近尝试为 failed 而最近完成的是 succeeded 时，徽标显示「已生效 · 本次尝试失败」，结果栏前置「补丁已生效：最近一次完成的执行于 <时间> 逐文件校验通过」。控制台不再对热修显示续跑，改为对「确实没生效」的热修（判据取自 outcome 而非原始 status）显示「重新执行」，走与首次应用相同的 plan→execute。**动作门禁仍一律读原始 status**：被拒绝的尝试不能因为更早的一次成功就显得干净。
+
+- 何时需要应用：
+  - 升级记录里任何「最近一次尝试失败、但更早完成的一次成功」的补丁
+  - 失败的热修补丁需要重跑同一个补丁时
+  - 需要从控制台判断「现场到底在跑哪一版」的任何复核
+
+### HF-2026-0930-01.4 执行入口按 mode 决定下发参数、不看包的种类——「重试一个热修」被翻译成 `--resume`，而升级器第一行就拒绝它，于是重试必然失败，并把拒绝写成这个补丁自己的结果（`8be2e3d`，P0）
+
+- 现象：2026-09-30 13:30 现场对 HF-2026-0929-05 点「续跑升级」，控制台红字「升级任务失败或被阻断：热修补丁不支持 --resume：应用本身是幂等的，直接重新执行同一个补丁即可」，历史行记为「升级失败 · HF-2026-0929-05 · 续跑升级 · 13:30:30 · 192.168.102.153」。而这份补丁的载荷当天 09:30:15→09:30:41 已在三台控制节点逐文件校验通过（01:30:59Z 事件 `succeeded`，`message: all node digests and maintenance release verified`）；13:30:29Z 那条新记录 `mode=resume / status=failed / started_at=finished_at=05:30:30Z` 没有产生任何事件——它根本没有碰到任何一个节点。
+
+- 根因：`scripts/clusterguard-update-job.sh` 决定 `arguments` 时只有一个 `case "${mode}"`：`resume)` 无条件追加 `--resume --execute --yes`。这个脚本要回答的是「给升级器下发什么参数」，而参数并不只由 mode 决定：`--resume` 的含义是从滚动升级持久化的 journal 断点续跑，热修刻意没有这种 journal，`run_hotfix_update` 的第一行就是 `die "热修补丁不支持 --resume"`。判断依据其实**就在手上**——脚本早已把签名元数据 `package.json`（含 `kind`）快照到 `${job_dir}`——但从来没有人读它。控制台那一侧把「续跑按钮」收掉之后这条缺口仍然存在：控制面之外（旧控制面、直接 POST `/api/v1/platform/updates/<id>/resume`、手工调用 `/usr/local/libexec/clusterguard-update-job.sh`）仍然可以把 `--mode resume` 交到升级器面前，而结果是一条被写进记录、看起来像补丁自己失败的拒绝。
+
+- 修复：`package_kind` 取自本脚本已经快照的签名元数据（`jq -r '.kind // "upgrade"' "${job_dir}/package.json"`；没有 `kind` 的老包按滚动升级处理，与 Go 侧一致），路由抽成 `update_mode_arguments` 这个纯函数：`resume` + `hotfix` 输出 `--execute --yes`，并在 stderr 打印一行「热修补丁 … 不支持续跑：应用本身是幂等的，改为重新执行同一个补丁」让它随 output.log 留在现场；`resume` + 其他仍然输出 `--resume --execute --yes`；`plan`/`execute`/`rollback` 不变。抽成函数是为了让这个决定**可以被单独执行**——该脚本需要 root、runuser 与 flock，其余部分都无法就地运行。验收用例 1 与用例 2 直接执行它：`resume/upgrade` 必须产出 `--resume`，`resume/hotfix` 必须不产出。变异验证（`/tmp/mutate-hotfix-retry-routing.py`，含 S0「没咬到」控制与逐字节还原）：把该臂改回无条件的 `--resume`、把 kind 硬编码为 upgrade、把两臂互换、去掉那行告知、把消费改成管道（appends 落进子 shell、标志全丢）——五个变异全部让断言变红。另外 `write_status` 的措辞也按 kind 取值，热修的记录不再自称「滚动升级完成」。
+
+- 何时需要应用：
+  - 控制台对失败的热修提供「续跑」入口，或从控制面之外（旧控制面、直接 POST resume、手工调用执行入口）对热修请求续跑
+  - 任何「热修重试必然失败，失败原因只出现在日志里，而记录只显示失败」的现场
+  - 升级历史里出现 mode=resume 而包的种类是 hotfix 的记录
+  - 一条升级记录自称「滚动升级完成」而它其实是一个热修补丁
+
+### HF-2026-0930-01.5 「维护门禁归谁」在热修路径上不可见——异包持有门禁时只报「控制面升级门禁未通过」，操作手无从知道该用哪个补丁重跑（`8be2e3d`，P1）
+
+- 现象：热修失败会刻意保留维护门禁，而门禁只能由同一个补丁接管。可现场能看到的是通用准入失败：`verify_cluster_idle "" false any` 以「控制面升级门禁未通过；以上诊断逐项列出实际违反条件」结束，维护态只是那串违反项里的一行。当门禁属于**另一个**补丁时，操作手拿到的是这条通用拒绝，而唯一能让他往前走的事实——「门禁属于 X，只有重跑 X 才行，重跑本包永远不行」——从未出现。
+
+- 根因：`current_update_lock_on_host()` 只回答一个问题：「这台机器上的锁是不是我的」（`grep -Fqx '${patch_id}'`），所以「锁属于别人」与「没有锁」在它眼里完全一样；热修路径于是直接落到通用准入检查，而那个检查并不知道门禁的归属。同文件里的 `failed_update_lock_on_host()` 与 `detect_recoverable_failed_update()` 覆盖的是「接管一次失败的滚动升级」，两者都要求 marker 的 `.mode == "rolling_update"`，与热修无关——顺带说明一个容易看错的点：热修写进 `/etc/clusterguard/update-maintenance.json` 的 `mode` 也是 `rolling_update`（`acquire_update_locks` 不分包种类），所以 marker 的 `mode` 从来不是区分热修与滚动升级的判据，真正的判据只有 `patch_id`。
+
+- 修复：新增 `foreign_update_lock_on_host()` 与 `detect_foreign_update_lock()`：前者要求锁里的 `patch-id` **不等于**本次补丁、且 `/etc/clusterguard/update-maintenance.json` 自报同一持有者；后者要求全部控制节点一致报同一个持有者，然后 `die` 出双方编号（`维护门禁当前由 ${previous} 持有，与本次补丁 ${patch_id} 不同；热修补丁只能接管自己留下的门禁……`）。它只在 `current_patch_maintenance_active` 为假时才被询问，因此不会把自己残留的门禁也拒掉；它产生的拒绝与通用检查本来就产生的拒绝是同一个（都是拒绝），只是把话说清楚，所以它不会放松门禁。滚动升级路径**刻意不加**这条：那条路径有两个合法接管场景（`recoverable_previous_patch_id` 与自己的锁），按编号一刀切会把「接管一次失败的滚动升级」误杀。验收用例 3 与用例 4 需要在三台控制节点各自的文件系统上留锁，无法离线执行，因此按本文件既有做法在源码层钉住：两把判据必须分别以 `grep -Fqx '${patch_id}'` 与 `!= '${patch_id}'` 锚定，从而构成「我的 / 不是我的」的划分；并钉住热修路径确实调用了它、且在 `acquire_update_locks` 之前。变异验证：去掉 `!=`、去掉 marker 自报持有者、把检查改成无条件、删掉热修路径上的调用、把 `die` 降成 `log`——五个变异全部让断言变红。
+
+- 何时需要应用：
+  - 一个热修失败后，现场想用另一个热修补丁往前走：应当被指名拒绝，而不是只报「门禁未通过」
+  - 想确认「同一个补丁重跑允许、换一个补丁不行」这条规则是否真的成立
+  - 排查「控制面升级门禁未通过」时，需要先知道门禁到底归谁
+
+### 验证
+
+- `sha256sum /usr/local/bin/clusterguard   # 三台必须一致，且等于包内 HOTFIX-MANIFEST.json 中 payload/bin/clusterguard 的 sha256`
+- `sha256sum /usr/local/bin/clusterguard-update-helper   # 三台必须一致，且等于清单中 payload/bin/clusterguard-update-helper 的 sha256`
+- `systemctl is-active clusterguard-ha clusterguard-update-helper   # 应用完成后两者都必须 active`
+- `curl -sk -H 'Authorization: Bearer <token>' https://127.0.0.1:3000/api/v1/control-plane/status | jq -c '{maintenance:.result.update_maintenance_active,active_ops:.result.active_operations,ready:.result.ready}'   # 必须 maintenance:false、active_ops:0、ready:true`
+- `ls /etc/clusterguard/update-maintenance.json   # 成功后必须不存在`
+- `curl -sk -X POST -H 'Authorization: Bearer <token>' -H 'X-CSRF-Token: <csrf>' -H 'Content-Type: application/json' -d '{"confirmation":"HF-2026-0929-05"}' https://127.0.0.1:3000/api/v1/platform/updates/HF-2026-0929-05/resume   # 必须返回 409 且错误文本为「热修补丁不支持续跑…」；返回后该补丁的作业记录必须原样不变（这是本包最关键的一条：拒绝不得再改写记录）`
+- `curl -sk -H 'Authorization: Bearer <token>' https://127.0.0.1:3000/api/v1/platform/updates | jq -r '.result.packages[] | "\(.package.patch_id) \(.job.mode) \(.job.status)"'   # HF-2026-0929-05 一行必须仍为 execute succeeded（应用本包之后新发起的续跑不得再改写它）`
+- `浏览器：设置 → 版本更新 → 历史升级记录   # HF-2026-0929-05 一行必须显示「已生效 · 本次尝试失败」，结果栏以「补丁已生效：最近一次完成的执行于 … 逐文件校验通过」开头`
+- `浏览器：同上   # 选中失败的热修补丁时不得出现「续跑升级」按钮；确实未生效的热修必须出现「重新执行」，且确认对话框中要求输入包 ID、文案为「确认重新执行」`
+- `浏览器：同上   # 若把操作位切到另一条记录，按钮文案与随后的确认对话框必须描述同一条记录（这是本次事故的直接回归项）`
+- `grep -n 'update_mode_arguments' /usr/local/libexec/clusterguard-update-job.sh   # 必须出现：执行入口按包种类分派下发参数`
+- `grep -c '不支持续跑' /usr/local/libexec/clusterguard-update-job.sh   # 必须 ≥1：热修续跑被改写为重新执行，并说明改写`
+- `jq -r '.kind' /var/lib/clusterguard/updates/HF-2026-0930-01/package.json   # 必须为 hotfix：执行入口读的就是这份签名元数据`
+- `jq -r '.base_commit,.build_commit,(.fix_commits|join(" "))' /var/lib/clusterguard/updates/HF-2026-0930-01/package.json   # 清单声称的范围内，除本包 fix_commits 之外不得有触及生产路径的提交；本包首次构建与 revision 0 都把基线记成了更早那个包的构建树，于是 HF-2026-0929-05 的生产修复被算进本包的范围，门禁当场判红。基线已收窄到 c05f8b2（上一个已交付补丁的构建树），范围内除 9fdb0e7 与 8be2e3d 外只剩测试、门禁与文档提交`
+- `grep -c 'detect_foreign_update_lock' /usr/local/sbin/clusterguard-upgrade   # 必须 ≥3（定义 + 门禁判据里的调用 + 热修路径上的调用）`
+- `实测（正向）：对一个已生效的热修点「重新执行」→ 必须走 plan → execute，输出里出现「跳过已达到目标内容的节点」，并且**不得**出现「热修补丁 … 不支持续跑」`
+- `实测（异包）：在三台控制节点各留一把属于另一个补丁的 /var/lib/clusterguard-update-private/history/.cluster-update.lock 与对应的 /etc/clusterguard/update-maintenance.json，再执行本包 → 必须被指名拒绝（维护门禁当前由 <另一个补丁> 持有），且不得修改任何文件`
+- `本次是「含二进制的热修包」，因此同时执行 HF-2026-0929-05 验收清单里那条下一步验收：逐节点应用后不得再出现 leader_changed，失败时自动回退必须成功、门禁必须被正常释放`
+
+### 回滚
+
+执行 rollback.sh 恢复旧的 /usr/local/bin/clusterguard 与 /usr/local/bin/clusterguard-update-helper，然后 systemctl daemon-reload 并按清单重启 clusterguard-ha.service 与 clusterguard-update-helper.service。回滚会把本次修掉的三处行为带回来：(1) 动作按钮重新作用于 packages[0] 而不是启用它的那条记录，于是对失败记录点「续跑」会再次打到最新那个补丁上，「受控回退」会回退操作者没有选中的包——后者会真的把一份已生效的载荷改回旧版本；(2) manager 重新接受热修续跑，于是那次必然被拒绝的尝试会再次把该补丁自己的成功记录覆盖成 failed；(3) 升级记录徽标重新只反映最近一次尝试，已生效的补丁会被显示成「升级失败」，同时失败的热修重新失去「重新执行」入口。注意本包不取代 HF-2026-0929-05：那份热修只替换 /usr/local/sbin/clusterguard-upgrade，与本包的两个载荷没有交集，回滚本包不会也不能把它带走。 本修订新增两个载荷文件，回滚同样会恢复它们：`/usr/local/libexec/clusterguard-update-job.sh` 与 `/usr/local/sbin/clusterguard-upgrade`（后者除本次新增的具名门禁判定外与 HF-2026-0929-05 的载荷一致）。回滚会把本次修掉的第四处与第五处行为带回来：(4) 执行入口重新只看 mode，于是任何对热修的续跑请求——旧控制面、直接 POST resume、手工调用执行入口——都会再次被下发成 `--resume`，在升级器第一行被拒绝，再把拒绝写成这个补丁自己的结果；`update_mode_arguments` 消失；热修的记录重新自称「滚动升级完成」。(5) 异包持有维护门禁时重新只报通用的「控制面升级门禁未通过」，不再指名持有者。注意回滚**不会**把 HF-2026-0929-05 的载荷带回旧版本，也不会撤销控制台的记录修复：本包与它改的是不同的文件。
+
+### 该补丁的身份历史
+
+上面一节描述的是 `clusterguard-ha-hotfix-HF-2026-0930-01-r1-2.2-105.x86_64.cgpatch`。下列身份按不可变规则留在交付目录里，
+**不是安装入口**，只作为「现场到底运行过什么」或「本补丁早先构建成了什么」的证据。
+完整时间线见 `hotfixes/hotfix-publications.json`。
+
+- **首次发布** `baf16ebca3f7ea5f4003c1669887ffa66d1626e589990c4a6d8e5798168892c3`（8,735,057 字节，已被取代）
+
 ## HF-2026-0929-05 — 2.2-105 交付线：热修补丁自己的失败路径把现场锁死——逐节点应用后仍把 Leader 钉在应用前、回退用 cp 就地覆盖运行中的二进制（ETXTBSY）、失败之后既不能续跑也不能回退
 
 - 严重级别：P0
@@ -50,6 +171,9 @@ bash rollback.sh         # 按最新备份清单回滚
 - 交付内容：
   - `payload/scripts/clusterguard-upgrade.sh` → `/usr/local/sbin/clusterguard-upgrade`（0750）
 - 需要重启：无
+
+> **本身份已冻结。** 它是现场实际执行过的那一份，作为证据保留，**不是该交付线的上传入口**。
+> 它仍带着下列缺陷，且不会按今天的规则回炉重造——那会毁掉这份证据。
 
 ### 本包概要
 
