@@ -1829,6 +1829,7 @@
       softwareUpdateRunning: false, softwareUpdateAction: '', softwareUpdatePollingTimer: null,
       softwareUpdateReadEpoch: 0, softwareUpdatePlanWait: null, softwareUpdateSubmission: null,
       softwareUpdateConfirmationPatchID: '', softwareUpdateConfirmationMessage: '',
+      softwareUpdateConfirmationFor: '', softwareUpdateConfirmationRetry: false,
       softwareUpdateValidationState: 'idle', softwareUpdateValidationMessage: '',
       softwareUpdateDialogAlert: '', softwareUpdateDialogAlertLevel: 'error',
       softwareUpdateProgressDismissed: '', softwareUpdateProgressWasActive: false,
@@ -4276,7 +4277,7 @@
       }
       setSoftwareUpdateDialogAlert();
       closeSoftwareUpdateDialog();
-      openSoftwareUpdateConfirmation('execute', patchID);
+      openSoftwareUpdateConfirmation('execute', patchID, softwareUpdateIsRetry(target));
     };
 
     const renderSoftwareUpdateConfirmation = () => {
@@ -4298,7 +4299,7 @@
       byId('cancel-software-update-confirmation').disabled = busy;
     };
 
-    const openSoftwareUpdateConfirmation = (mode, patchID = softwareUpdateSubject()?.package?.patch_id) => {
+    const openSoftwareUpdateConfirmation = (mode, patchID = softwareUpdateSubject()?.package?.patch_id, retry = null) => {
       if (!patchID || state.softwareUpdateRunning) return;
       closeSoftwareUpdateDialog();
       state.softwareUpdateAction = mode;
@@ -4307,9 +4308,20 @@
       // The confirmation has to describe the action the operator is actually taking.
       // Re-running a failed hotfix is not a rolling upgrade, and calling it one hid
       // the fact that the same patch is applied again rather than something new.
-      const retry = softwareUpdateIsRetry(softwareUpdateSubject());
+      //
+      // The verdict is the one taken when the action was chosen, not one re-derived here.
+      // Generating the plan for this very action replaces the record's job, so re-deriving
+      // it would read the plan the console just wrote and describe a hotfix re-run as a
+      // rolling upgrade - the screen naming a different action from the one being taken,
+      // which is the shape of the 2026-09-30 incident. It is remembered per package so a
+      // confirmation reopened to reconcile an uncertain submission still names that action.
+      if (retry !== null || state.softwareUpdateConfirmationFor !== patchID) {
+        state.softwareUpdateConfirmationRetry = retry === null ? softwareUpdateIsRetry(softwareUpdateSubject()) : retry;
+        state.softwareUpdateConfirmationFor = patchID;
+      }
+      const isRetry = mode === 'execute' && !!state.softwareUpdateConfirmationRetry;
       const labels = {
-        execute: retry
+        execute: isRetry
           ? ['确认重新执行', '将重新执行同一个热修补丁：应用本身是幂等的，不会产生新的版本。', '确认重新执行']
           : ['确认滚动升级', '将按跟随节点、数据节点、Leader 的顺序执行升级。', '确认执行升级'],
         resume:['确认续跑升级', '将从持久化升级日志中断点续跑。', '确认续跑'],

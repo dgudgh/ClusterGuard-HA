@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="升级动作对象错配与热修恢复语义复盘（2026-09-30） - ClusterGuard HA operational documentation">
+  <title>升级动作对象错配与热修恢复语义复盘（2026-09-30） | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">跳到正文</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>搜索文档</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="输入标题关键词">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>开始使用</h2><a href="index.html" data-doc-title="clusterguard ha 中文文档">ClusterGuard HA 中文文档</a><a href="product-overview.html" data-doc-title="产品概览">产品概览</a><a href="product-tour.html" data-doc-title="控制台产品导览">控制台产品导览</a><a href="architecture.html" data-doc-title="系统架构">系统架构</a><a href="release-2.2.105.html" data-doc-title="2.2.105 发布说明">2.2.105 发布说明</a><a href="release-2.2.104.html" data-doc-title="2.2.104 发布说明">2.2.104 发布说明</a><a href="release-2.2.103.html" data-doc-title="2.2.103 发布说明">2.2.103 发布说明</a><a href="release-2.2.102.html" data-doc-title="2.2.102 发布说明">2.2.102 发布说明</a><a href="release-2.2.101.html" data-doc-title="2.2.101 发布说明">2.2.101 发布说明</a><a href="release-2.2.100.html" data-doc-title="2.2.100 发布说明">2.2.100 发布说明</a><a href="release-2.2.99.html" data-doc-title="2.2.99 发布说明">2.2.99 发布说明</a><a href="release-2.2.98.html" data-doc-title="2.2.98 发布说明">2.2.98 发布说明</a><a href="release-2.2.97.html" data-doc-title="2.2.97 发布说明">2.2.97 发布说明</a><a href="release-2.2.96.html" data-doc-title="2.2.96 发布说明">2.2.96 发布说明</a><a href="release-2.2.95.html" data-doc-title="2.2.95 发布说明">2.2.95 发布说明</a><a href="release-2.2.94.html" data-doc-title="2.2.94 发布说明">2.2.94 发布说明</a><a href="release-2.2.93.html" data-doc-title="2.2.93 发布说明">2.2.93 发布说明</a><a href="release-2.2.92.html" data-doc-title="2.2.92 发布说明">2.2.92 发布说明</a><a href="release-2.2.91.html" data-doc-title="2.2.91 发布说明">2.2.91 发布说明</a><a href="release-2.2.90.html" data-doc-title="2.2.90 发布说明">2.2.90 发布说明</a><a href="release-2.2.89.html" data-doc-title="2.2.89 发布说明">2.2.89 发布说明</a><a href="release-2.2.88.html" data-doc-title="2.2.88 发布说明">2.2.88 发布说明</a><a href="release-2.2.86.html" data-doc-title="2.2.86 发布说明">2.2.86 发布说明</a><a href="release-2.2.73.html" data-doc-title="2.2.73 发布说明">2.2.73 发布说明</a><a href="release-2.2.72.html" data-doc-title="2.2.72 发布说明">2.2.72 发布说明</a><a href="release-2.2.71.html" data-doc-title="2.2.71 发布说明">2.2.71 发布说明</a><a href="release-2.2.70.html" data-doc-title="2.2.70 发布说明">2.2.70 发布说明</a><a href="release-2.2.69.html" data-doc-title="2.2.69 发布说明">2.2.69 发布说明</a><a href="release-2.2.47.html" data-doc-title="2.2.47 发布说明">2.2.47 发布说明</a><a href="release-2.2.46.html" data-doc-title="2.2.46 发布说明">2.2.46 发布说明</a><a href="release-2.2.45.html" data-doc-title="2.2.45 发布说明">2.2.45 发布说明</a><a href="release-2.2.44.html" data-doc-title="2.2.44 发布说明">2.2.44 发布说明</a><a href="release-2.2.43.html" data-doc-title="2.2.43 发布说明">2.2.43 发布说明</a><a href="release-2.2.42.html" data-doc-title="2.2.42 发布说明">2.2.42 发布说明</a><a href="release-2.2.41.html" data-doc-title="2.2.41 发布说明">2.2.41 发布说明</a><a href="release-2.2.40.html" data-doc-title="2.2.40 发布说明">2.2.40 发布说明</a><a href="release-2.2.39.html" data-doc-title="2.2.39 发布说明">2.2.39 发布说明</a><a href="release-2.1.45.html" data-doc-title="2.1.45 发布说明">2.1.45 发布说明</a></section><section><h2>部署与迁移</h2><a href="offline-rpm-install.html" data-doc-title="离线 rpm 安装">离线 RPM 安装</a><a href="database-preparation.html" data-doc-title="数据库接入">数据库接入</a><a href="orchestrator-migration.html" data-doc-title="从 orchestrator 迁移">从 Orchestrator 迁移</a></section><section><h2>日常运维</h2><a href="operations-manual.html" data-doc-title="运维操作手册">运维操作手册</a><a href="api-operations.html" data-doc-title="api 运维参考">API 运维参考</a><a href="postgresql-ha.html" data-doc-title="postgresql 高可用">PostgreSQL 高可用</a><a href="docker-swarm-mysql.html" data-doc-title="docker swarm mysql">Docker Swarm MySQL</a><a href="kubernetes-mysql.html" data-doc-title="kubernetes mysql">Kubernetes MySQL</a><a href="update-and-patch.html" data-doc-title="版本升级与回退">版本升级与回退</a><a href="hotfix-patches.html" data-doc-title="热修补丁台账">热修补丁台账</a><a href="upgrade-validation-chain.html" data-doc-title="升级与热修统一校验链">升级与热修统一校验链</a><a href="version-release-policy.html" data-doc-title="版本与发版规范">版本与发版规范</a><a href="update-operation-identity-incident-2026-09-30.html" data-doc-title="升级动作对象错配与热修恢复语义复盘（2026-09-30）" aria-current="page" class="active">升级动作对象错配与热修恢复语义复盘（2026-09-30）</a></section><section><h2>验收证据</h2><a href="proven-mysql-ha-methods.html" data-doc-title="mysql 已验证方法">MySQL 已验证方法</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql 功能验收">MySQL 功能验收</a><a href="mysql-former-primary-recovery.html" data-doc-title="旧主恢复专项验收">旧主恢复专项验收</a><a href="mysql-production-qualification.html" data-doc-title="mysql 生产验收">MySQL 生产验收</a><a href="postgresql-production-qualification.html" data-doc-title="postgresql 16.4 生产验收">PostgreSQL 16.4 生产验收</a><a href="docker-swarm-mysql-validation.html" data-doc-title="docker swarm mysql 实机验证">Docker Swarm MySQL 实机验证</a><a href="production-chaos-test.html" data-doc-title="生产故障测试报告">生产故障测试报告</a><a href="power-lifecycle-test.html" data-doc-title="计划关机测试报告">计划关机测试报告</a><a href="release-recovery-acceptance-checklist.html" data-doc-title="恢复与升级发布验收清单">恢复与升级发布验收清单</a></section><section><h2>许可</h2><a href="licensing.html" data-doc-title="许可与合规">许可与合规</a></section></nav>
+      <div class="sidebar-meta">
+        <span>离线文档构建</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">打开目录</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>升级动作对象错配与热修恢复语义复盘（2026-09-30）</strong></div>
+        <div class="header-actions">
+          <a href="../en-US/update-operation-identity-incident-2026-09-30.html" lang="en-US">English</a>
+          <button id="print-button" type="button">打印</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="升级动作对象错配与热修恢复语义缺失复盘-2026-09-30">升级动作对象错配与热修恢复语义缺失复盘（2026-09-30）<a class="heading-anchor" href="#升级动作对象错配与热修恢复语义缺失复盘-2026-09-30" aria-label="Link to 升级动作对象错配与热修恢复语义缺失复盘（2026-09-30）">#</a></h1>
+<h2 id="摘要">摘要<a class="heading-anchor" href="#摘要" aria-label="Link to 摘要">#</a></h2>
+<p>现场在 2026-09-30 13:30（北京）对一个<strong>已经安装成功</strong>的热修补丁发起“续跑升级”，结果是：三台控制节点里<strong>只有作业实际执行的那一台</strong>（Leader <code>.153</code>）的安装记录被改写成失败，另外两台仍记录成功。控制台读的是 Leader 那台，于是界面上长期显示“升级失败”，而磁盘上三台运行的载荷完全一致。</p>
+<p>这不是“热修幂等重试实现失败”。它是三件事叠在一起：</p>
+<ol>
+<li><strong>控制台把动作提交到了错的升级记录上</strong>——按钮开关依据的记录与真正 POST 的 <code>patch_id</code> 不是同一个对象；</li>
+<li><strong>恢复语义没有按包种类分流</strong>——“普通升级失败 → 续跑”被无差别套用到热修补丁上，而热修补丁没有可续跑的断点，它的正确恢复动作是<strong>重新执行同一个补丁</strong>；</li>
+<li><strong>服务端没有最后一道兜底</strong>——即使前端修好，<code>kind=hotfix + mode=resume</code> 也必须在写任何文件之前被拒绝，否则一次“必然被拒绝”的动作会被记成这个补丁自己的结果。</li>
+</ol>
+<p>三层都在 <code>HF-2026-0930-01</code> 里修复。其中第 3 层是这次复盘最关键的结论：<strong>拒绝本身必须不写记录</strong>。一个只造成拒绝的尝试若覆盖了真正完成安装的那次执行，操作者就再也无法从控制台回答“这个补丁到底装上没有”。</p>
+<h2 id="现场证据">现场证据<a class="heading-anchor" href="#现场证据" aria-label="Link to 现场证据">#</a></h2>
+<h3 id="三节点的安装记录不一致">三节点的安装记录不一致<a class="heading-anchor" href="#三节点的安装记录不一致" aria-label="Link to 三节点的安装记录不一致">#</a></h3>
+<p><code>/var/lib/clusterguard/updates/HF-2026-0929-05/status.json</code>：</p>
+<table>
+<thead>
+<tr>
+<th>节点</th>
+<th><code>mode</code> / <code>status</code></th>
+<th>时间</th>
+<th>文件 mtime</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>.152</code></td>
+<td><code>execute</code> / <code>succeeded</code></td>
+<td><code>01:30:59Z</code> 结束</td>
+<td>09-30 09:30:59</td>
+</tr>
+<tr>
+<td><code>.153</code>（Leader）</td>
+<td><strong><code>resume</code> / <code>failed</code></strong></td>
+<td><code>05:30:29Z</code> → <code>05:30:30Z</code></td>
+<td>09-30 <strong>13:30:30</strong></td>
+</tr>
+<tr>
+<td><code>.154</code></td>
+<td><code>execute</code> / <code>succeeded</code></td>
+<td><code>01:30:59Z</code> 结束</td>
+<td>09-30 09:31:01</td>
+</tr>
+</tbody></table>
+<p><code>.153</code> 的记录内容为 <code>升级任务失败或被阻断：热修补丁不支持 --resume：应用本身是幂等的，直接重新执行同一个补丁即可</code>。</p>
+<h3 id="事件日志三台完全一致">事件日志三台完全一致<a class="heading-anchor" href="#事件日志三台完全一致" aria-label="Link to 事件日志三台完全一致">#</a></h3>
+<p>三台的 <code>events.jsonl</code> 都是 13 行、mtime 都停在 09-30 09:31、最后一条都是 <code>succeeded</code>（<code>all node digests and maintenance release verified</code>）。<strong>被拒绝的那次尝试没有产生任何事件</strong>。</p>
+<h3 id="由此得到的两个结论">由此得到的两个结论<a class="heading-anchor" href="#由此得到的两个结论" aria-label="Link to 由此得到的两个结论">#</a></h3>
+<ul>
+<li>记录覆盖<strong>不是集群范围的</strong>：升级包存储与作业目录是各控制节点本地的，<code>POST</code> 不经 Leader 转发，作业在操作者所连的那台机器上执行，所以只有 Leader 那台的记录被改写。<strong>控制台显示的状态等于 Leader 那台的状态，不等于集群状态</strong>——排查“这个补丁装上没有”必须三台分别读盘，不能只信控制台。</li>
+<li>同一条记录上“事件链成功”与“状态失败”可以长期共存，因为二者来源不同：状态由作业封装器写入并可被后续操作覆盖，事件只由真正执行的那次尝试追加。</li>
+</ul>
+<h2 id="三层根因与修复">三层根因与修复<a class="heading-anchor" href="#三层根因与修复" aria-label="Link to 三层根因与修复">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>层</th>
+<th>缺陷</th>
+<th>修复</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>一、控制台对象绑定</td>
+<td>按钮的启用状态取自“最新的可操作记录”，而 <code>patch_id</code> 取自“列表里最新的一行”，二者不是同一个对象。于是画面显示“正在续跑 HF-04”，实际 POST 的是 HF-05 的 <code>/resume</code>。回退按钮有同样缺陷，且更危险：它可能回退一个操作者从未选中的包</td>
+<td>引入单一 <code>softwareUpdateSubject</code>，渲染主体、动作主体、确认主体与 POST 的 <code>patch_id</code> 全部取自它；<code>packages[0]</code> 不再作为动作对象（<code>9fdb0e7</code>）</td>
+</tr>
+<tr>
+<td>二、恢复语义路由</td>
+<td><code>scripts/clusterguard-update-job.sh</code> 是真正的上层操作编排器：它把 <code>mode</code> 翻译成升级器参数，但<strong>不看包种类</strong>，于是热修也被统一下发 <code>--resume</code>，而这个入口对热修<strong>永远失败</strong></td>
+<td>按已快照的签名元数据 <code>package.json</code> 的 <code>kind</code> 分流：<code>resume + upgrade → --resume</code>；<code>resume + hotfix → 重新执行同一个补丁</code>，并在输出里说明这次演替（<code>8be2e3d</code>）</td>
+</tr>
+<tr>
+<td>三、服务端兜底</td>
+<td><code>platformupdate.Manager.Start</code> 对 <code>ModeResume</code> 没有前置条件：它先写作业文件再启动 Helper，Helper 把启动失败改写成 <code>failed</code>，于是拒绝成了这个补丁的记录</td>
+<td>在<strong>写任何文件之前</strong>拒绝 <code>mode == ModeResume &amp;&amp; kind == hotfix</code>，返回 <code>ErrResumeUnsupported</code>，API 映射为 409；记录原样保留（<code>9fdb0e7</code>）</td>
+</tr>
+</tbody></table>
+<p>第 3 层采用“直接拒绝”而不是“服务端把续跑规范化成重试”：<code>resume ≠ retry</code>，API 层不偷偷改变用户动作的语义。控制台对失败的热修显示「重新执行」而不是「续跑升级」，日志、审计、API 与操作者的理解因此一致。</p>
+<h3 id="门禁归属-同包可重入-异包必拒绝">门禁归属：同包可重入，异包必拒绝<a class="heading-anchor" href="#门禁归属-同包可重入-异包必拒绝" aria-label="Link to 门禁归属：同包可重入，异包必拒绝">#</a></h3>
+<p>热修补丁失败后可以重新执行同一个补丁，但<strong>不能接管别的补丁留下的维护门禁</strong>：<code>HF-04</code> 留下的锁，<code>HF-05</code> 不得因为“都是热修”就抢过来。判据只有 <code>patch_id</code>，不是 <code>mode</code>——热修写进 <code>/etc/clusterguard/update-maintenance.json</code> 的 <code>mode</code> 同样也是 <code>rolling_update</code>，所以 <strong>marker 的 <code>mode</code> 从来不是热修/滚动的判据</strong>。脚本层原有的两条接管路径本来就按包身份严格划分（自己的锁比对自己、失败的滚动升级锁要求 <code>≠</code> 自己），本次新增的只是在热修流程里<strong>把持有者名字说出来</strong>，不放松任何准入。</p>
+<h2 id="hf-2026-0930-01-r1-交付物"><code>HF-2026-0930-01</code> r1 交付物<a class="heading-anchor" href="#hf-2026-0930-01-r1-交付物" aria-label="Link to HF-2026-0930-01 r1 交付物">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>项</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>产物</td>
+<td><code>clusterguard-ha-hotfix-HF-2026-0930-01-r1-2.2-105.x86_64.cgpatch</code></td>
+</tr>
+<tr>
+<td>SHA-256</td>
+<td><code>9a5af9bda61e81f87af686fd551ee9b90d04808d1f160df259cc84f4253b8fcd</code></td>
+</tr>
+<tr>
+<td>大小</td>
+<td>8,758,333</td>
+</tr>
+<tr>
+<td><code>--inspect</code></td>
+<td><code>signature=verified</code> / <code>kind=hotfix</code> / <code>rollback=available</code> / <code>database_mutation=false</code></td>
+</tr>
+<tr>
+<td>载荷</td>
+<td>2 个二进制 + 2 个运行时脚本（<code>clusterguard-update-job.sh</code>、<code>clusterguard-upgrade</code>），与源码树逐字节一致</td>
+</tr>
+<tr>
+<td>重启单元</td>
+<td><code>clusterguard-ha.service</code>、<code>clusterguard-update-helper.service</code></td>
+</tr>
+</tbody></table>
+<p>这个包<strong>会重启控制面</strong>，所以应用期间控制台页面短时不可用是<strong>预期行为</strong>，不是升级失败。它取代 <code>revision 0</code>（<code>baf16ebc</code>）：r0 只堵住了控制台把动作打到错的记录上，没有改上层编排器的续跑语义；两次构建都没有交付任何现场，取代理由与该字段的取值规范见<a href="hotfix-patches.html">热修补丁台账</a>。</p>
+<h2 id="现场上线与验收">现场上线与验收<a class="heading-anchor" href="#现场上线与验收" aria-label="Link to 现场上线与验收">#</a></h2>
+<h3 id="上线步骤">上线步骤<a class="heading-anchor" href="#上线步骤" aria-label="Link to 上线步骤">#</a></h3>
+<p>上传 <code>HF-2026-0930-01</code> r1 → 正常执行 → 等待两个服务重启 → 重新登录或刷新控制台 → 按下面的顺序只读验证。</p>
+<p><strong>上线之前，不要对任何失败的热修补丁点「续跑」</strong>：现场仍运行旧控制台与旧编排器，动作会落到列表里最新的那条记录上。</p>
+<h3 id="只读验证-先看真实状态-不先看历史记录的颜色">只读验证（先看真实状态，不先看历史记录的颜色）<a class="heading-anchor" href="#只读验证-先看真实状态-不先看历史记录的颜色" aria-label="Link to 只读验证（先看真实状态，不先看历史记录的颜色）">#</a></h3>
+<pre><code class="language-bash">set -a; . /etc/clusterguard/agent.env; set +a
+# 1. 三个控制节点的进程与服务
+systemctl is-active clusterguard-ha.service clusterguard-update-helper.service
+# 2. 控制面状态：就绪、投票者、唯一 Leader、维护门禁与活动操作
+curl -sk -H &quot;Authorization: Bearer $CG_CONTROL_TOKEN&quot; https://127.0.0.1:3000/api/v1/control-plane/status
+# 3. 两个运行时脚本在三台的摘要必须一致
+sha256sum /usr/local/libexec/clusterguard-update-job.sh /usr/local/sbin/clusterguard-upgrade
+</code></pre>
+<p>逐项期望：三台 <code>clusterguard-ha.service</code>、<code>clusterguard-update-helper.service</code> 均为 <code>active</code>；<code>ready=true</code>；<code>voters=3</code>；<code>unique leader=1</code>；<code>update_maintenance_active=false</code>；<code>active_operations=0</code>；两个脚本在三台的摘要两两相同；本包的安装记录为 <code>succeeded</code>。</p>
+<h3 id="控制台回归-上线后第一件事-不是再升一次级">控制台回归（上线后第一件事，不是再升一次级）<a class="heading-anchor" href="#控制台回归-上线后第一件事-不是再升一次级" aria-label="Link to 控制台回归（上线后第一件事，不是再升一次级）">#</a></h3>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>场景</th>
+<th>期望</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>A</td>
+<td>已成功的热修补丁</td>
+<td><strong>不出现</strong>「续跑」，也不出现「重新执行」</td>
+</tr>
+<tr>
+<td>B</td>
+<td>失败的热修补丁</td>
+<td>显示「重新执行」，<strong>不显示</strong>「续跑」</td>
+</tr>
+<tr>
+<td>C</td>
+<td>失败的滚动升级</td>
+<td>显示「续跑」</td>
+</tr>
+<tr>
+<td>D</td>
+<td><code>HF-04</code> 为 failed、<code>HF-05</code> 为最新且 succeeded 时点击旧记录的动作</td>
+<td>POST 的必须是该记录自己的 <code>patch_id</code>，不是列表最新那条</td>
+</tr>
+<tr>
+<td>E</td>
+<td><code>HF-04</code> 的受控回退</td>
+<td>必须操作 <code>HF-04</code>，<strong>不得</strong>回退到列表里最新的一行</td>
+</tr>
+</tbody></table>
+<p>D 与 E 是这次事故的核心回归项。服务端侧可独立复核：动作被拒时对应补丁目录下 <code>status.json</code> 的 mtime 与内容必须<strong>完全不变</strong>（这正是第 3 层的验收点，可在任意失败热修上直接验证）：</p>
+<pre><code class="language-bash">curl -sk -X POST -H &quot;Authorization: Bearer $CG_CONTROL_TOKEN&quot; -H &quot;X-CSRF-Token: $CSRF&quot; \
+  -H &#39;Content-Type: application/json&#39; -d &#39;{&quot;confirmation&quot;:&quot;&lt;patch-id&gt;&quot;}&#39; \
+  https://127.0.0.1:3000/api/v1/platform/updates/&lt;patch-id&gt;/resume   # 期望 409
+stat -c &#39;%y&#39; /var/lib/clusterguard/updates/&lt;patch-id&gt;/status.json    # 期望与调用前相同
+</code></pre>
+<h2 id="未闭环">未闭环<a class="heading-anchor" href="#未闭环" aria-label="Link to 未闭环">#</a></h2>
+<ol>
+<li><strong><code>UPDATE-OPERATION-HISTORY-P0</code>：把“包安装状态”与“操作执行历史”分离。</strong> 现在的升级记录是<strong>可覆盖状态模型</strong>：一个 <code>package</code> 只有一个作业槽，后来的操作覆盖先前结果。所以 <code>HF-05</code> 会呈现成“事件链完整成功 / 状态失败 / 结果栏只有续跑拒绝”，而正确的呈现应当是“包已安装”＋“最近一次操作：续跑被拒”。要求：包部署结果一旦完成就不可被后续操作改写，每次操作<strong>追加</strong>一条操作记录，而不是覆盖包的安装状态。这是从根上消除“成功包被一次错误操作改成失败包”的办法，也是本次三层修复的收尾（三层阻止了伤害发生，这一项消除伤害的<strong>可记录空间</strong>）。</li>
+<li><strong><code>kind</code> 不可判定时的恢复语义仍是猜的。</strong> <code>platformupdate.Manager.Start</code> 的拒绝判据是 <code>Kind == PackageKindHotfix</code>，而 <code>Manager.Package()</code> 直接反序列化磁盘 <code>package.json</code>，<strong>读侧没有兜底</strong>；<code>--inspect</code> 侧的兜底是“没有 <code>kind</code> 就当滚动升级”。因此一个 <code>package.json</code> 缺 <code>kind</code> 的热修补丁，其续跑会被放过并进入编排器（<code>inspector.go</code> 的兜底只作用于 Inspect 返回路径，救不了这里）。当前现场不可达：三个热修补丁 <code>HF-2026-0928-06</code>/<code>HF-2026-0929-04</code>/<code>HF-2026-0929-05</code> 的 <code>package.json</code> 都带 <code>kind=hotfix</code>，唯一缺 <code>kind</code> 的是 2.2-103 期上传的滚动包 <code>cgupgrade-2.2-103-to-2.2-104-x86_64</code>（它确实该被当作滚动包）。要让它成为结构上的保证而不是当前的巧合，需要在<strong>上传侧</strong>拒绝 <code>kind</code> 无法判定的包（两种恢复语义相反，无法判定就不能安全恢复），此后读侧的判定才是墙。</li>
+</ol>
+
+          <footer class="document-footer">
+            <span>源文件: <code>docs/zh-CN/update-operation-identity-incident-2026-09-30.md</code></span>
+            <a href="../index.html">文档语言入口</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="本页目录">
+          <strong>本页目录</strong>
+          <a class="toc-level-2" href="#摘要">摘要</a><a class="toc-level-2" href="#现场证据">现场证据</a><a class="toc-level-3" href="#三节点的安装记录不一致">三节点的安装记录不一致</a><a class="toc-level-3" href="#事件日志三台完全一致">事件日志三台完全一致</a><a class="toc-level-3" href="#由此得到的两个结论">由此得到的两个结论</a><a class="toc-level-2" href="#三层根因与修复">三层根因与修复</a><a class="toc-level-3" href="#门禁归属-同包可重入-异包必拒绝">门禁归属：同包可重入，异包必拒绝</a><a class="toc-level-2" href="#hf-2026-0930-01-r1-交付物">HF-2026-0930-01 r1 交付物</a><a class="toc-level-2" href="#现场上线与验收">现场上线与验收</a><a class="toc-level-3" href="#上线步骤">上线步骤</a><a class="toc-level-3" href="#只读验证-先看真实状态-不先看历史记录的颜色">只读验证（先看真实状态，不先看历史记录的颜色）</a><a class="toc-level-3" href="#控制台回归-上线后第一件事-不是再升一次级">控制台回归（上线后第一件事，不是再升一次级）</a><a class="toc-level-2" href="#未闭环">未闭环</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

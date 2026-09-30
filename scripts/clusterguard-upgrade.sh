@@ -1079,8 +1079,15 @@ verify_cluster_idle() {
 		log "控制面集群诊断 leaders=${leaders} violations=leader_count_not_one"
 		failed=true
 	fi
-	if [[ -n "${expected_leader}" && "${observed_leader}" != "${expected_leader}" ]]; then
-		log "控制面集群诊断 expected_leader=${expected_leader} observed_leader=${observed_leader:-none} violations=leader_changed"
+	if [[ -n "${expected_leader}" && -z "${observed_leader}" ]]; then
+		# No controller reported being the leader. That is an observation we do not have, not
+		# an observation that contradicts the expectation, and calling it leader_changed sent
+		# one investigation looking for a leadership move that never happened. The run still
+		# fails - we cannot verify a unique leader - but it fails under a verdict that is true.
+		log "控制面集群诊断 expected_leader=${expected_leader} observed_leader=none violations=leader_unknown"
+		failed=true
+	elif [[ -n "${expected_leader}" && "${observed_leader}" != "${expected_leader}" ]]; then
+		log "控制面集群诊断 expected_leader=${expected_leader} observed_leader=${observed_leader} violations=leader_changed"
 		failed=true
 	fi
 	${failed} && die "控制面升级门禁未通过；以上诊断逐项列出实际违反条件"
