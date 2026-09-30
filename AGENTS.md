@@ -94,6 +94,7 @@ sha256 `8486a10c4393cee1c25392769ddd3b2d6c242d6ec7928e1414efff7dfb2f07ef`）。
 - 保留已有日志及原始证据，旧运行中/待复核记录仍参与安全判断。
 - 桌面与窄屏布局；控件不能重叠，标题与计数必须对应实际查询范围。
 - 区分本地源码测试、隔离浏览器测试、真实现场验收。未做现场上传、验签和滚动升级，不得写成现场已验收。
+- 升级与热修的动作对象必须用真实点击覆盖：成功的热修不提供「续跑」；失败的热修提供「重新执行」而非「续跑」；被拒绝的续跑在成功事件链上留下的失败状态按「本次尝试失败」解释；失败的滚动升级保留「续跑」；以及列表里「更新的成功记录在上、失败记录在下」时，执行与回退都只作用于失败的那一条，且请求里的 `patch_id` 与确认框要求输入的 id 一致。回归入口 `tools/console-update-hotfix-recovery-acceptance.cjs`，逐场景如实报告是否执行、是否通过。
 
 ## 打包前阻断清单
 
@@ -105,6 +106,7 @@ sha256 `8486a10c4393cee1c25392769ddd3b2d6c242d6ec7928e1414efff7dfb2f07ef`）。
 - [ ] 不覆盖已交付版本；新修复用新的版本和补丁 ID。
 - [ ] 交付记录可追溯：`node tools/verify-release-records.cjs` 报 `status=passed`，即 `release/` 下每个 `RELEASE-INFO` 的 `commit=` 都能被标签或远端引用到达（`local-only` 表示只被本地分支指着，必须推送到远端）。发布说明的提交必须回到主仓库分支，不得只留在 `.build/` 的一次性构建克隆里。
 - [ ] 公开渠道只放完整安装介质，且每个 Release 都带完整介质：`node tools/verify-public-release-assets.cjs` 报 `status=passed`，即所有 GitHub Release（含草稿）附件中没有任何签名 `.cgupgrade`、旧 `.cgpatch` 或 `<来源>_to_<目标>` 形态的升级包，且没有任何已发布 Release 缺少完整离线介质。**升级包只对签约企业客户交付、只留本地，不得上传 GitHub 或任何公开渠道**（见 [发版规范 §3.1](docs/zh-CN/version-release-policy.md)）。删除越权附件时必须连同其 `.sha256` 一起删；删除整个 Release 时保留 Git 标签。
+- [ ] 升级与热修的规则都有落点：`node tools/verify-upgrade-validation-chain.cjs` 报 0 failed，且 [升级与热修统一校验链](docs/zh-CN/upgrade-validation-chain.md) §23 的未决义务**如实报为 `OPEN`**（未实现的不得算作通过；加 `--strict` 时它们必须让门禁失败）。该契约是本仓库的强制执行文档：执行任何升级/热修动作前先读它。
 - [ ] 许可声明一致：`node tools/verify-license-consistency.cjs` 报 `status=passed`，即根 `LICENSE` 是未改动的 AGPL-3.0 官方原文、`packaging/rpm/nfpm.yaml` 的 `license` 为 `AGPL-3.0-only`、RPM 内容清单与两个构建脚本都会装入 `LICENSE`（连同 `THIRD-PARTY-NOTICES.md`、`MPL-2.0.txt`）、且中英 README 与许可页陈述一致。新增依赖必须已写入 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
 
 任何未完成项必须报告，不得为了交付把它改成通过。发布细则见 [恢复与升级发布验收清单](docs/zh-CN/release-recovery-acceptance-checklist.md)。
