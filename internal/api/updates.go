@@ -245,7 +245,7 @@ func (server *Server) writeSoftwareUpdateError(writer http.ResponseWriter, err e
 		writeError(writer, http.StatusNotFound, err.Error())
 	case errors.Is(err, platformupdate.ErrInvalidPatch), errors.Is(err, platformupdate.ErrBootstrapRequired), errors.Is(err, platformupdate.ErrConfirmationRequired):
 		writeError(writer, http.StatusBadRequest, err.Error())
-	case errors.Is(err, platformupdate.ErrPlanRequired), errors.Is(err, platformupdate.ErrJobActive), errors.Is(err, platformupdate.ErrPackageConflict), errors.Is(err, platformupdate.ErrPackagePruned), errors.Is(err, platformupdate.ErrPackageBaselineMismatch):
+	case errors.Is(err, platformupdate.ErrPlanRequired), errors.Is(err, platformupdate.ErrJobActive), errors.Is(err, platformupdate.ErrPackageConflict), errors.Is(err, platformupdate.ErrPackagePruned), errors.Is(err, platformupdate.ErrPackageBaselineMismatch), errors.Is(err, platformupdate.ErrResumeUnsupported):
 		writeError(writer, http.StatusConflict, err.Error())
 	default:
 		writeError(writer, http.StatusServiceUnavailable, err.Error())

@@ -71,7 +71,18 @@ var (
 	// when its plan ran the updater's own baseline guard - by which point the
 	// record already owned the single action slot and could never release it.
 	ErrPackageBaselineMismatch = errors.New("软件更新包与当前集群基线不一致")
-	patchIDPattern             = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+	// ErrResumeUnsupported reports a resume of a hotfix patch. The updater refuses
+	// it on the first line of run_hotfix_update - applying a hotfix is idempotent,
+	// so the supported way forward is to re-run the same patch, not to resume it -
+	// and there is no state where resume could ever work for a hotfix. Accepting
+	// the request anyway did real damage: the helper recorded the refusal as the
+	// patch's job, so a resume that never touched a node wrote `failed` over a
+	// record whose payload was applied and verified on every node. From then on the
+	// console reported a running patch as a failed one, and "which files is this
+	// site actually running" could no longer be answered from the console at all.
+	// Refusing here, before the job file is written, keeps the previous outcome.
+	ErrResumeUnsupported = errors.New("热修补丁不支持续跑：应用本身是幂等的，重新执行同一个补丁即可")
+	patchIDPattern       = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 )
 
 const AutomaticFailoverWarning = "系统升级期间无法进行自动切换，请注意关注。"
@@ -472,6 +483,12 @@ func (manager *Manager) Start(ctx context.Context, mode Mode, patchID, confirmat
 	current, found := manager.Job(patchID)
 	if found && (current.Status == StatusQueued || current.Status == StatusRunning) {
 		return Job{}, ErrJobActive
+	}
+	// Decided before anything is written: a refused request must not become the
+	// patch's recorded outcome, or a no-op attempt erases the evidence of the run
+	// that actually applied the patch.
+	if mode == ModeResume && softwarePackage.Kind == PackageKindHotfix {
+		return Job{}, ErrResumeUnsupported
 	}
 	if mode == ModeExecute && (!found || current.Status != StatusPlanned) {
 		return Job{}, ErrPlanRequired

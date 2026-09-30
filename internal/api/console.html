@@ -3512,10 +3512,33 @@
 
     const softwareUpdateStatusText = value => ({
       uploaded:'已上传', queued:'排队中', running:'升级中', planned:'计划已通过',
-      succeeded:'升级成功', failed:'升级失败', rolled_back:'已回退', interrupted:'状态待确认'
+      succeeded:'升级成功', failed:'升级失败', rolled_back:'已回退', interrupted:'状态待确认',
+      applied_attempt_failed:'已生效 · 本次尝试失败'
     })[value] || value || '尚未计划';
     const softwareUpdateModeText = value => ({ plan:'只读计划', execute:'滚动升级', resume:'续跑升级', rollback:'受控回退' })[value] || value || '-';
-    const softwareUpdateBadgeClass = value => ({ succeeded:'success', planned:'success', rolled_back:'warning', failed:'danger', interrupted:'warning', running:'warning', queued:'warning' })[value] || '';
+    const softwareUpdateBadgeClass = value => ({ succeeded:'success', planned:'success', rolled_back:'warning', failed:'danger', interrupted:'warning', running:'warning', queued:'warning', applied_attempt_failed:'warning' })[value] || '';
+    // job.status describes the newest attempt; job.events holds what actually ran. An
+    // attempt that is refused before it touches a node - a resume of a hotfix is rejected
+    // on the updater's first line - is still what job.status ends up saying, so reading
+    // job.status alone reported a patch as failed while its payload was applied and
+    // verified on every node. That is how "which files is this site actually running"
+    // becomes unanswerable from the console. The badge therefore reports the last attempt
+    // that completed work, and says both when the newest attempt did nothing.
+    //
+    // Display only. Every action gate keeps using the raw status: a refused attempt must
+    // never look like a clean one just because an older run of the same patch succeeded.
+    const softwareUpdateCompletedAttempt = job => ((job && job.events) || [])
+      .filter(event => ['succeeded', 'failed', 'rolled_back', 'rollback_failed'].includes(event.status))
+      .slice(-1)[0] || null;
+    const softwareUpdateOutcome = job => {
+      const status = (job && job.status) || 'uploaded';
+      if (status !== 'failed') return status;
+      const completed = softwareUpdateCompletedAttempt(job);
+      return completed && completed.status === 'succeeded' ? 'applied_attempt_failed' : status;
+    };
+    const softwareUpdateOutcomeNote = job => softwareUpdateOutcome(job) !== 'applied_attempt_failed'
+      ? ''
+      : `补丁已生效：最近一次完成的执行于 ${softwareUpdateDateText(softwareUpdateCompletedAttempt(job).updated_at)} 逐文件校验通过。`;
     const platformVersionText = () => {
       const version = state.platformVersion || {};
       if (!version.version) return '版本未知';
@@ -3546,6 +3569,30 @@
     };
     const pendingSoftwareUpdate = () => ((state.softwareUpdates && state.softwareUpdates.packages) || [])
       .filter(softwareUpdateActionable)[0] || null;
+    // The one record the whole panel is about: the identity grid, the job status, the
+    // action gates AND the confirmation the operator types all have to name it. Every
+    // action button used to derive its enabled state from this record but submit
+    // `latestSoftwareUpdate()` - packages[0], the newest row overall - so clicking
+    // 续跑 on a failed record sent the request for whatever was uploaded most
+    // recently instead. On 2026-09-30 that submitted a resume for a hotfix whose
+    // payload had already been applied and verified on all three nodes: the updater
+    // refused it, and the refusal was written over the record's own success. The
+    // rollback button had the same defect and a worse one - it would have reverted a
+    // package the operator never selected. One resolver, used by both.
+    const softwareUpdateSubject = () => pendingSoftwareUpdate() || latestSoftwareUpdate();
+    // A hotfix cannot be resumed - the updater refuses it on its first line and tells the
+    // operator to re-run the same patch instead, because applying one is idempotent - so
+    // the only thing a 续跑 button can do for a hotfix is fail, and that failure used to be
+    // recorded as the patch's own outcome. A hotfix that genuinely did not take effect is
+    // retried through the same plan-then-execute flow a fresh patch uses. A rolling upgrade
+    // is not idempotent in that way, so a failed one is continued with resume.
+    //
+    // The decision reads the outcome, not the raw status: a hotfix whose newest attempt was
+    // refused and whose payload is therefore already applied must not be offered a retry.
+    const softwareUpdateIsHotfix = item => !!(item && item.package && item.package.kind === 'hotfix');
+    const softwareUpdateIsRetry = item => softwareUpdateIsHotfix(item)
+      && !!(item && item.job)
+      && softwareUpdateOutcome(item.job) === 'failed';
     const softwareUpdateJobTime = item => {
       const job = item.job || {};
       const times = [job.updated_at, job.started_at].map(value => Date.parse(value)).filter(value => Number.isFinite(value) && value > 0);
@@ -3606,7 +3653,10 @@
       packages.forEach(item => {
         const record = item.package || {};
         const job = item.job || null;
-        const status = (job && job.status) || 'uploaded';
+        // The badge answers "did this patch take effect", which is not the same question
+        // as "did the newest attempt succeed". A record whose newest attempt was refused
+        // and whose payload is applied on every node must not read as a plain failure.
+        const status = softwareUpdateOutcome(job);
         const occurredAt = (job && (job.finished_at || job.updated_at || job.started_at)) || record.uploaded_at;
         const row = document.createElement('tr');
         const statusCell = document.createElement('td');
@@ -3615,7 +3665,9 @@
         // below it in the list, so say it on the row rather than only in the log.
         // clock_skew sits on the record wrapper, not on the package it describes - reading
         // it off `record` here silently rendered nothing at all.
-        const rowMessage = (job && job.message) || '升级包已上传并通过签名校验';
+        const attemptMessage = (job && job.message) || '升级包已上传并通过签名校验';
+        const outcomeNote = softwareUpdateOutcomeNote(job);
+        const rowMessage = outcomeNote ? `${outcomeNote}本次${softwareUpdateModeText(job && job.mode)}未生效：${attemptMessage}` : attemptMessage;
         // Both markers explain why this row is not the one the console will act
         // on, and both sit on the record wrapper rather than on the package it
         // describes - reading either one off `record` renders nothing at all.
@@ -3680,7 +3732,7 @@
       }
       const status = subject.job && subject.job.status || 'uploaded';
       label.textContent = softwareUpdateActionable(subject) ? '待升级目标版本' : status === 'succeeded' ? '最近完成版本' : '最近处理版本';
-      value.textContent = `${subject.package.target_version || '-'} · ${softwareUpdateStatusText(status)}`;
+      value.textContent = `${subject.package.target_version || '-'} · ${softwareUpdateStatusText(softwareUpdateOutcome(subject.job))}`;
     };
 
     const selectSoftwareUpdateFile = () => {
@@ -3908,7 +3960,7 @@
       byId('software-update-validation-title').textContent = validationCopy[0];
       byId('software-update-validation-detail').textContent = validationCopy[1];
       renderSoftwareUpdateHistory(snapshot);
-      renderSoftwareUpdateTargetSummary(pending || latest);
+      renderSoftwareUpdateTargetSummary(softwareUpdateSubject());
       const packagePanel = byId('software-update-package');
       packagePanel.hidden = !(pending && !selectedFile && validationState === 'verified');
       const latestJobItem = latestSoftwareUpdateJob(true);
@@ -3922,10 +3974,11 @@
       // is still actionable. `latest` is only the newest row overall and may already be a
       // finished record, so deriving the gates from it let a completed package decide
       // whether a freshly uploaded one could be rolled out.
-      const subject = pending || latest;
+      const subject = softwareUpdateSubject();
       byId('software-update-runtime').hidden = !(subject && subject.job);
       if (!latest || !subject) {
         byId('execute-software-update').disabled = true;
+        byId('execute-software-update').textContent = '滚动升级';
         byId('resume-software-update').hidden = true;
         byId('rollback-software-update').hidden = true;
         renderSoftwareUpdateGlobalWarning();
@@ -3947,14 +4000,22 @@
       byId('software-update-rollback').textContent = record.rollback_available ? '可回退' : '不可回退';
       byId('software-update-uploaded-at').textContent = record.uploaded_at ? new Date(record.uploaded_at).toLocaleString(state.language) : '-';
       const status = job && job.status;
-      byId('software-update-job-status').textContent = softwareUpdateStatusText(status || 'uploaded');
+      // Same rule as the history row: the badge reports whether the patch took effect,
+      // and the message states both facts when the newest attempt was a no-op refusal.
+      byId('software-update-job-status').textContent = softwareUpdateStatusText(softwareUpdateOutcome(job));
       byId('software-update-job-mode').textContent = softwareUpdateModeText(job && job.mode);
       byId('software-update-job-node').textContent = (job && job.node) || '-';
-      byId('software-update-job-message').textContent = (job && job.message) || '等待生成只读计划。';
+      const jobMessage = (job && job.message) || '等待生成只读计划。';
+      const jobOutcomeNote = softwareUpdateOutcomeNote(job);
+      byId('software-update-job-message').textContent = jobOutcomeNote ? `${jobOutcomeNote}本次${softwareUpdateModeText(job && job.mode)}未生效：${jobMessage}` : jobMessage;
       const busy = state.softwareUpdateRunning || ['queued', 'running'].includes(status);
-      byId('execute-software-update').disabled = !snapshot.available || busy || !pending || !!selectedFile || validationState !== 'verified' || !record.rolling || !['uploaded', 'planned'].includes(status || 'uploaded');
-      byId('resume-software-update').hidden = !(pending && status === 'failed');
-      byId('resume-software-update').disabled = !snapshot.available || busy || status !== 'failed';
+      // Action gates read the raw status and the subject record, never the display outcome:
+      // what the operator is told and what they are allowed to do must not drift apart.
+      const retry = softwareUpdateIsRetry(subject);
+      byId('execute-software-update').textContent = retry ? '重新执行' : '滚动升级';
+      byId('execute-software-update').disabled = !snapshot.available || busy || !pending || !!selectedFile || validationState !== 'verified' || !record.rolling || !(retry || ['uploaded', 'planned'].includes(status || 'uploaded'));
+      byId('resume-software-update').hidden = !(pending && status === 'failed' && !softwareUpdateIsHotfix(subject));
+      byId('resume-software-update').disabled = !snapshot.available || busy || status !== 'failed' || softwareUpdateIsHotfix(subject);
       byId('rollback-software-update').hidden = !(pending && record.rollback_available && ['failed', 'succeeded'].includes(status));
       byId('rollback-software-update').disabled = !snapshot.available || busy || !record.rollback_available || !['failed', 'succeeded'].includes(status);
       const events = (job && job.events) || [];
@@ -4095,7 +4156,7 @@
         item.package.patch_id === patchID ? { ...item, job } : item);
     };
 
-    const startSoftwareUpdate = async (mode, confirmation = '', patchID = latestSoftwareUpdate()?.package?.patch_id) => {
+    const startSoftwareUpdate = async (mode, confirmation = '', patchID = softwareUpdateSubject()?.package?.patch_id) => {
       if (!patchID || state.softwareUpdateRunning || !canAdministerPlatform()) return false;
       if (state.softwareUpdateSubmission) return false;
       let accepted = false;
@@ -4237,16 +4298,22 @@
       byId('cancel-software-update-confirmation').disabled = busy;
     };
 
-    const openSoftwareUpdateConfirmation = (mode, patchID = latestSoftwareUpdate()?.package?.patch_id) => {
+    const openSoftwareUpdateConfirmation = (mode, patchID = softwareUpdateSubject()?.package?.patch_id) => {
       if (!patchID || state.softwareUpdateRunning) return;
       closeSoftwareUpdateDialog();
       state.softwareUpdateAction = mode;
       state.softwareUpdateConfirmationPatchID = patchID;
       if (!state.softwareUpdateSubmission) state.softwareUpdateConfirmationMessage = '';
+      // The confirmation has to describe the action the operator is actually taking.
+      // Re-running a failed hotfix is not a rolling upgrade, and calling it one hid
+      // the fact that the same patch is applied again rather than something new.
+      const retry = softwareUpdateIsRetry(softwareUpdateSubject());
       const labels = {
-        execute:['确认滚动升级', '将按跟随节点、数据节点、Leader 的顺序执行升级。', '确认执行升级'],
+        execute: retry
+          ? ['确认重新执行', '将重新执行同一个热修补丁：应用本身是幂等的，不会产生新的版本。', '确认重新执行']
+          : ['确认滚动升级', '将按跟随节点、数据节点、Leader 的顺序执行升级。', '确认执行升级'],
         resume:['确认续跑升级', '将从持久化升级日志中断点续跑。', '确认续跑'],
-        rollback:['确认受控回退', '将根据已签名升级包内的回退工件执行受控回退。', '确认回退']
+        rollback:['确认受控回退', '将根据已签名升级包内的回退工件执行受控回退。', '确认回退'],
       };
       const copy = labels[mode] || labels.execute;
       byId('software-update-confirmation-title').textContent = copy[0];

@@ -1765,12 +1765,22 @@ func TestSoftwareUpdateSummaryDistinguishesPendingAndCompletedTargets(t *testing
 		`id="software-update-latest-target">尚无待升级包`,
 		"const renderSoftwareUpdateTargetSummary = subject =>",
 		"label.textContent = softwareUpdateActionable(subject) ? '待升级目标版本' : status === 'succeeded' ? '最近完成版本' : '最近处理版本'",
-		"value.textContent = `${subject.package.target_version || '-'} · ${softwareUpdateStatusText(status)}`",
+		// The summary reports whether the patch took effect, using the same read as the
+		// history row, so the two never tell the operator different stories about one record.
+		"value.textContent = `${subject.package.target_version || '-'} · ${softwareUpdateStatusText(softwareUpdateOutcome(subject.job))}`",
 		// The summary must describe the record the buttons act on, not merely the newest row.
-		"renderSoftwareUpdateTargetSummary(pending || latest)",
+		"renderSoftwareUpdateTargetSummary(softwareUpdateSubject())",
 	} {
 		if !strings.Contains(page, contract) {
 			t.Fatalf("software update summary must explain target-version state: missing %q", contract)
+		}
+	}
+	for _, legacy := range []string{
+		"value.textContent = `${subject.package.target_version || '-'} · ${softwareUpdateStatusText(status)}`",
+		"renderSoftwareUpdateTargetSummary(pending || latest)",
+	} {
+		if strings.Contains(page, legacy) {
+			t.Fatalf("the target summary must resolve its own subject: %q is back", legacy)
 		}
 	}
 	if strings.Contains(page, `<span>最近目标版本</span>`) {
@@ -1829,7 +1839,13 @@ func TestSoftwareUpdateDialogDoesNotPresentCompletedHistoryAsPendingPackage(t *t
 func TestSoftwareUpdateRollingActionTargetsTheNewestActionablePackage(t *testing.T) {
 	page := string(consoleHTML)
 	for _, contract := range []string{
-		"const subject = pending || latest;",
+		// One resolver, used by the identity grid, the job status, the action gates and the
+		// confirmation the operator types. Deriving the gates from `pending` while the buttons
+		// submitted `latestSoftwareUpdate()` - packages[0], the newest row overall - shipped a
+		// panel that showed 续跑 for one record and fired it at another.
+		"const softwareUpdateSubject = () => pendingSoftwareUpdate() || latestSoftwareUpdate();",
+		"const subject = softwareUpdateSubject();",
+		"patchID = softwareUpdateSubject()?.package?.patch_id",
 		"const record = subject.package || {};",
 		"const job = subject.job || null;",
 		"byId('execute-software-update').disabled = !snapshot.available || busy || !pending || !!selectedFile || validationState !== 'verified' || !record.rolling",
@@ -1900,6 +1916,94 @@ func TestSoftwareUpdateRollingActionTargetsTheNewestActionablePackage(t *testing
 	} {
 		if strings.Contains(page, derived) {
 			t.Fatalf("the console must read the server's baseline verdict instead of re-deriving it: %q", derived)
+		}
+	}
+}
+
+// The history badge answers "did this patch take effect", which is not the same question as
+// "did the newest attempt succeed". The two came apart in public on 2026-09-30: a resume that
+// the updater refused before it touched a node was written as the patch's outcome, and the
+// console then reported an applied, verified hotfix as a failed one. The event list still held
+// the run that did the work, so the record has to be read from it.
+func TestSoftwareUpdateHistoryReportsWhetherThePatchTookEffect(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		"const softwareUpdateCompletedAttempt = job => ((job && job.events) || [])",
+		".filter(event => ['succeeded', 'failed', 'rolled_back', 'rollback_failed'].includes(event.status))",
+		"const softwareUpdateOutcome = job => {",
+		"return completed && completed.status === 'succeeded' ? 'applied_attempt_failed' : status;",
+		"applied_attempt_failed:'已生效 · 本次尝试失败'",
+		"applied_attempt_failed:'warning'",
+		"const status = softwareUpdateOutcome(job);",
+		"byId('software-update-job-status').textContent = softwareUpdateStatusText(softwareUpdateOutcome(job));",
+		"const softwareUpdateOutcomeNote = job => softwareUpdateOutcome(job) !== 'applied_attempt_failed'",
+		"补丁已生效：最近一次完成的执行于 ${softwareUpdateDateText(softwareUpdateCompletedAttempt(job).updated_at)} 逐文件校验通过。",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("the history must report whether the patch took effect: missing %q", contract)
+		}
+	}
+	// Displaying the older outcome must not soften the gates: what the operator is allowed to
+	// do still follows the raw status of the newest attempt. Deriving a gate from the outcome
+	// would let a patch whose newest attempt was refused look like a clean success, and hand
+	// the operator an action the updater will reject again.
+	for _, gate := range []string{
+		"byId('resume-software-update').hidden = !(pending && status === 'failed'",
+		"byId('resume-software-update').disabled = !snapshot.available || busy || status !== 'failed'",
+		"byId('rollback-software-update').hidden = !(pending && record.rollback_available && ['failed', 'succeeded'].includes(status));",
+		"const busy = state.softwareUpdateRunning || ['queued', 'running'].includes(status);",
+	} {
+		if !strings.Contains(page, gate) {
+			t.Fatalf("action gates must keep reading the raw attempt status: missing %q", gate)
+		}
+	}
+	for _, softened := range []string{
+		"['queued', 'running'].includes(softwareUpdateOutcome(",
+		"'succeeded'].includes(softwareUpdateOutcome(",
+		"['failed', 'succeeded'].includes(softwareUpdateOutcome(",
+	} {
+		if strings.Contains(page, softened) {
+			t.Fatalf("an action gate must never be derived from the display outcome: %q", softened)
+		}
+	}
+}
+
+// A resume of a hotfix cannot succeed: the updater refuses it on the first line of
+// run_hotfix_update, because applying a hotfix is idempotent and the supported way forward is
+// to re-run the same patch. Offering the button anyway gave the operator an action whose only
+// possible outcome was a refusal - and, before the manager learned to refuse it first, that
+// refusal was recorded as the patch's own outcome. What the console offers for a failed hotfix
+// is therefore a retry, which is exactly what the updater's own message tells the operator to
+// do, and what detect_current_update_lock was added to make possible.
+func TestConsoleNeverOffersResumeForAHotfix(t *testing.T) {
+	page := string(consoleHTML)
+	for _, contract := range []string{
+		"const softwareUpdateIsHotfix = item => !!(item && item.package && item.package.kind === 'hotfix');",
+		"byId('resume-software-update').hidden = !(pending && status === 'failed' && !softwareUpdateIsHotfix(subject));",
+		"byId('resume-software-update').disabled = !snapshot.available || busy || status !== 'failed' || softwareUpdateIsHotfix(subject);",
+		"const softwareUpdateIsRetry = item => softwareUpdateIsHotfix(item)",
+		"&& softwareUpdateOutcome(item.job) === 'failed';",
+		"byId('execute-software-update').textContent = retry ? '重新执行' : '滚动升级';",
+		"|| !(retry || ['uploaded', 'planned'].includes(status || 'uploaded'));",
+		"确认重新执行", // the typed confirmation has to name the action the button does
+		"将重新执行同一个热修补丁：应用本身是幂等的，不会产生新的版本。",
+	} {
+		if !strings.Contains(page, contract) {
+			t.Fatalf("a hotfix must not be offered a resume: missing %q", contract)
+		}
+	}
+	// The retry follows whether the patch took effect, so a hotfix whose newest attempt was
+	// refused and whose payload is already in place is not offered a pointless second run.
+	// Reading the raw attempt status there would put 重新执行 on an applied patch.
+	if strings.Contains(page, "&& item.job.status === 'failed';") {
+		t.Fatal("the retry must follow whether the patch took effect, not the raw attempt status")
+	}
+	for _, legacy := range []string{
+		"byId('resume-software-update').hidden = !(pending && status === 'failed');",
+		"byId('resume-software-update').disabled = !snapshot.available || busy || status !== 'failed';",
+	} {
+		if strings.Contains(page, legacy) {
+			t.Fatalf("the resume gate must account for the package kind: %q is back", legacy)
 		}
 	}
 }

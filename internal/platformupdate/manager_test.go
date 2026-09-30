@@ -478,6 +478,81 @@ func writeJobForTest(t *testing.T, root string, job Job) {
 	}
 }
 
+func preparedHotfixManager(t *testing.T) (*Manager, *helperStub, string) {
+	t.Helper()
+	root := t.TempDir()
+	trust := filepath.Join(root, "public.pem")
+	if err := os.WriteFile(trust, []byte("public"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	helper := &helperStub{}
+	patchID := "HF-2026-0929-05"
+	manager := NewManager(Config{RootDirectory: root, TrustKeyPath: trust},
+		WithInspector(inspectorStub{result: Package{
+			PatchID: patchID, Kind: PackageKindHotfix, SourceVersion: "2.2-105", TargetVersion: "2.2-105+hf-2026-0929-05",
+			SignatureVerified: true, RollbackAvailable: true, Rolling: true,
+		}}),
+		WithHelper(helper))
+	if _, err := manager.Upload(context.Background(), "hotfix.cgpatch", strings.NewReader("patch")); err != nil {
+		t.Fatal(err)
+	}
+	return manager, helper, patchID
+}
+
+// The updater refuses --resume for a hotfix on the first line of run_hotfix_update, because
+// applying one is idempotent and the supported way forward is to re-run the same patch. The
+// manager used to accept the request anyway, hand it to the helper and let the refusal be
+// recorded as the patch's job. On 2026-09-30 that is exactly what happened on a live site:
+// HF-2026-0929-05 had been applied and verified on all three nodes, a resume was submitted
+// for it, and the refusal wrote `failed` over the record - after which the console reported
+// an applied, verified patch as a failed one, and the only place left that knew the payload
+// was in place was the event list nobody reads on the summary table.
+//
+// Two things have to hold, and the second is the one that matters: the request is refused,
+// and the existing record survives it. A refusal that still rewrites the outcome has the
+// same cost as the failure it prevented.
+func TestManagerRefusesToResumeAHotfixAndKeepsItsRecord(t *testing.T) {
+	manager, helper, patchID := preparedHotfixManager(t)
+	applied := time.Date(2026, 9, 30, 1, 30, 59, 0, time.UTC)
+	writeJobForTest(t, manager.config.RootDirectory, Job{
+		PatchID: patchID, Mode: ModeExecute, Status: StatusSucceeded,
+		StartedAt: applied.Add(-time.Minute), UpdatedAt: applied, FinishedAt: applied,
+	})
+
+	if _, err := manager.Start(context.Background(), ModeResume, patchID, patchID); !errors.Is(err, ErrResumeUnsupported) {
+		t.Fatalf("resuming a hotfix must be refused with ErrResumeUnsupported, got %v", err)
+	}
+	if len(helper.started) != 0 {
+		t.Fatalf("a refused resume must never reach the helper, started=%v", helper.started)
+	}
+	job, found := manager.Job(patchID)
+	if !found {
+		t.Fatal("the applied hotfix lost its record")
+	}
+	if job.Status != StatusSucceeded || job.Mode != ModeExecute || !job.FinishedAt.Equal(applied) {
+		t.Fatalf("a refused resume overwrote the record of the run that applied the patch: %+v", job)
+	}
+}
+
+// The refusal is specific to hotfixes. A rolling upgrade is applied node by node and a
+// failure part-way leaves nodes on two different versions, so resume is the only supported
+// way forward and must keep working - including the fact that it still reaches the helper.
+func TestManagerStillResumesARollingUpgrade(t *testing.T) {
+	manager, helper, patchID := preparedManager(t)
+	writeJobForTest(t, manager.config.RootDirectory, Job{
+		PatchID: patchID, Mode: ModeExecute, Status: StatusFailed,
+		StartedAt: time.Date(2026, 9, 29, 8, 22, 35, 0, time.UTC),
+	})
+
+	job, err := manager.Start(context.Background(), ModeResume, patchID, patchID)
+	if err != nil {
+		t.Fatalf("a rolling upgrade must still be resumable: %v", err)
+	}
+	if job.Status != StatusQueued || len(helper.started) != 1 || helper.started[0] != ModeResume {
+		t.Fatalf("unexpected job/helper state: %+v %+v", job, helper.started)
+	}
+}
+
 // uploaded_at is written from the node clock, so a record created while that clock ran ahead
 // carries a timestamp no later clock agrees with. The 2026-09-29 site incident is exactly this:
 // the RTC was read as UTC and then localised a second time, HF-2026-0928-06 was recorded at
