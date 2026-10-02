@@ -79,11 +79,11 @@ prepare_mysql() {
   if [[ -z "${candidate}" && -x "${link_root}/mysql/bin/mysql" ]]; then
     candidate="${link_root}/mysql/bin/mysql"
   fi
-  if [[ -z "${candidate}" ]]; then
-    candidate="$(command -v mysql || true)"
-  fi
   if [[ -z "${candidate}" && -d "${managed_root}/mysql" ]]; then
     candidate="$(find "${managed_root}/mysql" -type f -path '*/software/bin/mysql' -perm -u+x -print | LC_ALL=C sort | tail -n 1)"
+  fi
+  if [[ -z "${candidate}" ]]; then
+    candidate="$(command -v mysql || true)"
   fi
   if [[ -n "${candidate}" && -x "${candidate}" ]]; then
     if [[ "${candidate}" == */software/bin/mysql ]]; then

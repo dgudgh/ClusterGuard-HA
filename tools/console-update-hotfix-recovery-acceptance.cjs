@@ -131,7 +131,7 @@ const plannedJob = patchID => ({
 // `mock.actions` keeps the id each write was aimed at, which is the whole point: the
 // assertions below are about the patch_id the page posted, not about which button the
 // operator thought they pressed.
-const consoleUnderTest = initial => {
+const consoleUnderTest = (initial, { maintenanceActive = false } = {}) => {
   const fixture = createConsoleFixture();
   const mock = { actions: [], snapshot: initial.map(item => structuredClone(item)), report: null };
   const findRecord = patchID => mock.snapshot.find(item => item.package.patch_id === patchID);
@@ -150,6 +150,13 @@ const consoleUnderTest = initial => {
     }
     if (url.pathname === '/api/v1/platform/version') {
       return { result: { version: '2.2', release: '105', rpm_architecture: 'x86_64', architecture: 'x86_64' } };
+    }
+    if (url.pathname === '/api/v1/control-plane/status') {
+      return { result: {
+        mode: 'raft', role: 'leader', ready: true, quorum_confirmed: true,
+        voter_count: 3, local_controller_id: 'node-1', leader_id: 'node-1',
+        update_maintenance_active: maintenanceActive, uptime_seconds: 72600,
+      } };
     }
     if (url.pathname === '/api/v1/platform/updates' && req.method === 'GET') {
       return { result: {
@@ -418,10 +425,18 @@ const scenarios = [
     expectAction: 'execute',
   },
   {
-    // D: the 13:30 list. The successful record sorts first, the failed, still-actionable
-    // one below it. The action belongs to the record the panel describes.
-    name: 'acting below a newer successful record',
+    // Once the gate is explicitly down and the later hotfix succeeded, the failed
+    // earlier attempt remains visible in history but is no longer the action subject.
+    name: 'older failed hotfix after recovery',
     make: () => consoleUnderTest([hotfixDone(), hotfixFailed()]),
+    driver: GATES_DRIVER,
+  },
+  {
+    // D: the 13:30 list. The successful record sorts first, the failed, still-actionable
+    // one below it. The active gate keeps that failed record actionable, so the action
+    // belongs to the record the panel describes.
+    name: 'acting below a newer successful record',
+    make: () => consoleUnderTest([hotfixDone(), hotfixFailed()], { maintenanceActive: true }),
     driver: SUBMIT_DRIVER('execute-software-update'),
     awaitAction: true,
     expectAction: 'execute',
@@ -430,7 +445,7 @@ const scenarios = [
     // E: the rollback half of the same list. A rollback aimed at packages[0] would
     // revert a package nobody selected.
     name: 'rolling back below a newer successful record',
-    make: () => consoleUnderTest([hotfixDone(), hotfixFailed()]),
+    make: () => consoleUnderTest([hotfixDone(), hotfixFailed()], { maintenanceActive: true }),
     driver: SUBMIT_DRIVER('rollback-software-update'),
     awaitAction: true,
     expectAction: 'rollback',
@@ -540,6 +555,22 @@ const main = async () => {
         `hidden=${page.rollback && page.rollback.hidden}`);
     }
 
+    if (scenario.name === 'older failed hotfix after recovery') {
+      record(`${scenario.name}: the failed attempt remains in history`,
+        page.history && page.history.some(row => row.patchID === HOTFIX_FAILED),
+        (page.history || []).map(row => row.patchID).join(', '));
+      record(`${scenario.name}: both hotfix history rows name the hotfix action`,
+        page.history && [HOTFIX_DONE, HOTFIX_FAILED].every(patchID =>
+          page.history.some(row => row.patchID === patchID && row.mode === '热修应用')),
+        (page.history || []).map(row => `${row.patchID}:${row.mode}`).join(', '));
+      record(`${scenario.name}: the successful patch owns the summary`,
+        page.identity === HOTFIX_DONE && page.subject === HOTFIX_DONE,
+        `${page.identity} / ${page.subject}`);
+      record(`${scenario.name}: the retired failure cannot be re-executed`,
+        page.execute && page.execute.disabled === true && page.resume && page.resume.hidden === true,
+        JSON.stringify({ execute:page.execute, resume:page.resume }));
+    }
+
     if (scenario.name === 'a hotfix whose resume was refused') {
       // The refused attempt did not apply anything, but its record is what the leader
       // shows, so the panel has to explain it as a failed run of this patch rather than
@@ -554,6 +585,9 @@ const main = async () => {
     }
 
     if (scenario.name === 'a rolling upgrade that failed') {
+      record(`${scenario.name}: history keeps the rolling action name`,
+        page.history && page.history.some(row => row.patchID === ROLLING && row.mode === '滚动升级'),
+        (page.history || []).map(row => `${row.patchID}:${row.mode}`).join(', '));
       record(`${scenario.name}: 续跑 is offered`, page.resume && page.resume.hidden === false,
         `hidden=${page.resume && page.resume.hidden}`);
       record(`${scenario.name}: 续跑 can be pressed`,
