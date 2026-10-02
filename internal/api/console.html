@@ -3516,7 +3516,9 @@
       succeeded:'升级成功', failed:'升级失败', rolled_back:'已回退', interrupted:'状态待确认',
       applied_attempt_failed:'已生效 · 本次尝试失败'
     })[value] || value || '尚未计划';
-    const softwareUpdateModeText = value => ({ plan:'只读计划', execute:'滚动升级', resume:'续跑升级', rollback:'受控回退' })[value] || value || '-';
+    const softwareUpdateModeText = (value, kind) => (kind === 'hotfix'
+      ? ({ plan:'只读热修计划', execute:'热修应用', resume:'续跑热修', rollback:'热修回退' })[value]
+      : ({ plan:'只读计划', execute:'滚动升级', resume:'续跑升级', rollback:'受控回退' })[value]) || value || '-';
     const softwareUpdateBadgeClass = value => ({ succeeded:'success', planned:'success', rolled_back:'warning', failed:'danger', interrupted:'warning', running:'warning', queued:'warning', applied_attempt_failed:'warning' })[value] || '';
     // job.status describes the newest attempt; job.events holds what actually ran. An
     // attempt that is refused before it touches a node - a resume of a hotfix is rejected
@@ -3553,6 +3555,19 @@
       byId('software-update-running-architecture').textContent = version.rpm_architecture || version.architecture || '-';
     };
     const latestSoftwareUpdate = () => (state.softwareUpdates && state.softwareUpdates.packages && state.softwareUpdates.packages[0]) || null;
+    const failedUpdateHasLaterSuccess = item => {
+      const record = item && item.package || {};
+      const startedAt = Date.parse(item && item.job && item.job.started_at || record.uploaded_at);
+      if (!Number.isFinite(startedAt)) return false;
+      return ((state.softwareUpdates && state.softwareUpdates.packages) || []).some(candidate => {
+        const otherRecord = candidate && candidate.package || {};
+        const otherJob = candidate && candidate.job;
+        const otherStartedAt = Date.parse(otherJob && otherJob.started_at || otherRecord.uploaded_at);
+        return candidate !== item && otherJob && otherJob.mode !== 'plan' && otherJob.status === 'succeeded'
+          && otherRecord.kind === record.kind && otherRecord.source_version === record.source_version
+          && Number.isFinite(otherStartedAt) && otherStartedAt > startedAt;
+      });
+    };
     // "Still actionable" means the record has no job yet, or one that has not ended in a
     // verified terminal state. The button must act on the newest actionable package, not on
     // packages[0]: the list is ordered by the stored uploaded_at, so a single record written
@@ -3566,6 +3581,10 @@
       // travels with the row; re-deriving it here is how the two answers drift.
       if (item && item.incompatible) return false;
       const job = item && item.job || null;
+      // Keep the failed job in history, but do not make it the action target after
+      // a later patch on the same release line succeeded and the live gate closed.
+      if (job && job.status === 'failed' && state.controlPlane?.update_maintenance_active === false
+          && failedUpdateHasLaterSuccess(item)) return false;
       return !job || job.verification_required || !['succeeded', 'rolled_back'].includes(job.status);
     };
     const pendingSoftwareUpdate = () => ((state.softwareUpdates && state.softwareUpdates.packages) || [])
@@ -3668,7 +3687,7 @@
         // it off `record` here silently rendered nothing at all.
         const attemptMessage = (job && job.message) || '升级包已上传并通过签名校验';
         const outcomeNote = softwareUpdateOutcomeNote(job);
-        const rowMessage = outcomeNote ? `${outcomeNote}本次${softwareUpdateModeText(job && job.mode)}未生效：${attemptMessage}` : attemptMessage;
+        const rowMessage = outcomeNote ? `${outcomeNote}本次${softwareUpdateModeText(job && job.mode, record.kind)}未生效：${attemptMessage}` : attemptMessage;
         // Both markers explain why this row is not the one the console will act
         // on, and both sit on the record wrapper rather than on the package it
         // describes - reading either one off `record` renders nothing at all.
@@ -3681,7 +3700,7 @@
           statusCell,
           text('td', 'mono', record.patch_id || '-'),
           text('td', '', `${record.source_version || '不限'} → ${record.target_version || '-'}`),
-          text('td', '', softwareUpdateModeText(job && job.mode)),
+          text('td', '', softwareUpdateModeText(job && job.mode, record.kind)),
           text('td', '', softwareUpdateDateText(occurredAt)),
           text('td', 'history-message', `${rowMessage}${rowNote}`)
         );
@@ -4004,11 +4023,11 @@
       // Same rule as the history row: the badge reports whether the patch took effect,
       // and the message states both facts when the newest attempt was a no-op refusal.
       byId('software-update-job-status').textContent = softwareUpdateStatusText(softwareUpdateOutcome(job));
-      byId('software-update-job-mode').textContent = softwareUpdateModeText(job && job.mode);
+      byId('software-update-job-mode').textContent = softwareUpdateModeText(job && job.mode, record.kind);
       byId('software-update-job-node').textContent = (job && job.node) || '-';
       const jobMessage = (job && job.message) || '等待生成只读计划。';
       const jobOutcomeNote = softwareUpdateOutcomeNote(job);
-      byId('software-update-job-message').textContent = jobOutcomeNote ? `${jobOutcomeNote}本次${softwareUpdateModeText(job && job.mode)}未生效：${jobMessage}` : jobMessage;
+      byId('software-update-job-message').textContent = jobOutcomeNote ? `${jobOutcomeNote}本次${softwareUpdateModeText(job && job.mode, record.kind)}未生效：${jobMessage}` : jobMessage;
       const busy = state.softwareUpdateRunning || ['queued', 'running'].includes(status);
       // Action gates read the raw status and the subject record, never the display outcome:
       // what the operator is told and what they are allowed to do must not drift apart.
@@ -4174,7 +4193,7 @@
         rememberSoftwareUpdateJob(patchID, job);
         accepted = true;
         state.softwareUpdateSubmission = null;
-        const message = mode === 'plan' ? `升级包 ${patchID} 正在生成升级计划。` : `升级包 ${patchID} 已进入${softwareUpdateModeText(mode)}队列。`;
+        const message = mode === 'plan' ? `升级包 ${patchID} 正在生成升级计划。` : `升级包 ${patchID} 已进入${softwareUpdateModeText(mode, item.package.kind)}队列。`;
         if (mode === 'plan') setSoftwareUpdateDialogAlert(message, 'info');
         else setLiveStatus(message);
       } catch (error) {
@@ -4184,9 +4203,9 @@
             state.softwareUpdateConfirmationMessage = `提交结果待确认：${error.message}。请核对任务状态；不会重复提交升级。`;
           } else {
             state.softwareUpdateSubmission = null;
-            state.softwareUpdateConfirmationMessage = `${softwareUpdateModeText(mode)}失败：${error.message}`;
+            state.softwareUpdateConfirmationMessage = `${softwareUpdateModeText(mode, item.package.kind)}失败：${error.message}`;
           }
-        } else setSoftwareUpdateDialogAlert(`${softwareUpdateModeText(mode)}失败：${error.message}`);
+        } else setSoftwareUpdateDialogAlert(`${softwareUpdateModeText(mode, item.package.kind)}失败：${error.message}`);
       } finally {
         state.softwareUpdateRunning = false;
         renderSoftwareUpdates();
