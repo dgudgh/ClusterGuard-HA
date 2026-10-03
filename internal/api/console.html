@@ -3517,7 +3517,7 @@
       applied_attempt_failed:'已生效 · 本次尝试失败'
     })[value] || value || '尚未计划';
     const softwareUpdateModeText = (value, kind) => (kind === 'hotfix'
-      ? ({ plan:'只读热修计划', execute:'热修应用', resume:'续跑热修', rollback:'热修回退' })[value]
+      ? ({ plan:'只读热修计划', execute:'热修应用', retry:'重新执行热修', resume:'续跑热修', rollback:'热修回退' })[value]
       : ({ plan:'只读计划', execute:'滚动升级', resume:'续跑升级', rollback:'受控回退' })[value]) || value || '-';
     const softwareUpdateBadgeClass = value => ({ succeeded:'success', planned:'success', rolled_back:'warning', failed:'danger', interrupted:'warning', running:'warning', queued:'warning', applied_attempt_failed:'warning' })[value] || '';
     // job.status describes the newest attempt; job.events holds what actually ran. An
@@ -3535,13 +3535,16 @@
       .slice(-1)[0] || null;
     const softwareUpdateOutcome = job => {
       const status = (job && job.status) || 'uploaded';
+      if (job?.deployment_state === 'installed' && status === 'failed') return 'applied_attempt_failed';
+      if (job?.deployment_state) return status;
       if (status !== 'failed') return status;
       const completed = softwareUpdateCompletedAttempt(job);
       return completed && completed.status === 'succeeded' ? 'applied_attempt_failed' : status;
     };
     const softwareUpdateOutcomeNote = job => softwareUpdateOutcome(job) !== 'applied_attempt_failed'
       ? ''
-      : `补丁已生效：最近一次完成的执行于 ${softwareUpdateDateText(softwareUpdateCompletedAttempt(job).updated_at)} 逐文件校验通过。`;
+      : job?.deployment_state === 'installed' ? '后端独立部署记录确认补丁已生效；本次尝试失败保留为独立操作。'
+      : `补丁已生效：最近一次完成的执行于 ${softwareUpdateDateText(softwareUpdateCompletedAttempt(job)?.updated_at)} 逐文件校验通过。`;
     const platformVersionText = () => {
       const version = state.platformVersion || {};
       if (!version.version) return '版本未知';
@@ -3555,19 +3558,6 @@
       byId('software-update-running-architecture').textContent = version.rpm_architecture || version.architecture || '-';
     };
     const latestSoftwareUpdate = () => (state.softwareUpdates && state.softwareUpdates.packages && state.softwareUpdates.packages[0]) || null;
-    const failedUpdateHasLaterSuccess = item => {
-      const record = item && item.package || {};
-      const startedAt = Date.parse(item && item.job && item.job.started_at || record.uploaded_at);
-      if (!Number.isFinite(startedAt)) return false;
-      return ((state.softwareUpdates && state.softwareUpdates.packages) || []).some(candidate => {
-        const otherRecord = candidate && candidate.package || {};
-        const otherJob = candidate && candidate.job;
-        const otherStartedAt = Date.parse(otherJob && otherJob.started_at || otherRecord.uploaded_at);
-        return candidate !== item && otherJob && otherJob.mode !== 'plan' && otherJob.status === 'succeeded'
-          && otherRecord.kind === record.kind && otherRecord.source_version === record.source_version
-          && Number.isFinite(otherStartedAt) && otherStartedAt > startedAt;
-      });
-    };
     // "Still actionable" means the record has no job yet, or one that has not ended in a
     // verified terminal state. The button must act on the newest actionable package, not on
     // packages[0]: the list is ordered by the stored uploaded_at, so a single record written
@@ -3581,10 +3571,7 @@
       // travels with the row; re-deriving it here is how the two answers drift.
       if (item && item.incompatible) return false;
       const job = item && item.job || null;
-      // Keep the failed job in history, but do not make it the action target after
-      // a later patch on the same release line succeeded and the live gate closed.
-      if (job && job.status === 'failed' && state.controlPlane?.update_maintenance_active === false
-          && failedUpdateHasLaterSuccess(item)) return false;
+      if (job?.deployment_state === 'installed' && !['queued','running'].includes(job.status)) return false;
       return !job || job.verification_required || !['succeeded', 'rolled_back'].includes(job.status);
     };
     const pendingSoftwareUpdate = () => ((state.softwareUpdates && state.softwareUpdates.packages) || [])
@@ -4166,7 +4153,7 @@
     };
 
     const rememberSoftwareUpdateJob = (patchID, job) => {
-      if (!job || job.patch_id !== patchID || !['plan', 'execute', 'resume', 'rollback'].includes(job.mode) ||
+      if (!job || job.patch_id !== patchID || !['plan', 'execute', 'retry', 'resume', 'rollback'].includes(job.mode) ||
           !['queued', 'running', 'planned', 'succeeded', 'failed', 'rolled_back'].includes(job.status) || job.verification_required) {
         throw new APIError('升级任务状态尚未得到确认');
       }
@@ -4182,14 +4169,16 @@
       let accepted = false;
       const item = (state.softwareUpdates.packages || []).find(candidate => candidate.package.patch_id === patchID);
       if (!item) return false;
-      const submission = mode === 'plan' ? null : { patchID, mode, previousJob:item.job, phase:'submitting' };
+      const operationID = `operation-${Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('')}`;
+      const submission = mode === 'plan' ? null : { patchID, mode, operationID, previousJob:item.job, phase:'submitting' };
       state.softwareUpdateSubmission = submission;
       state.softwareUpdateConfirmationMessage = '';
       state.softwareUpdateRunning = true;
       renderSoftwareUpdates();
       try {
-        const job = await softwareUpdateRequest(`/api/v1/platform/updates/${encodeURIComponent(patchID)}/${mode}`, mutationOptions({ confirmation }));
+        const job = await softwareUpdateRequest(`/api/v1/platform/updates/${encodeURIComponent(patchID)}/${mode}`, mutationOptions({ confirmation, operation_id:operationID }));
         if (job?.mode !== mode) throw new APIError('返回的升级任务与确认动作不一致');
+        if (job?.operation_id && job.operation_id !== operationID) throw new APIError('返回的升级任务与本次操作 ID 不一致');
         rememberSoftwareUpdateJob(patchID, job);
         accepted = true;
         state.softwareUpdateSubmission = null;
@@ -4267,9 +4256,10 @@
       const target = pendingSoftwareUpdate();
       const patchID = target && target.package && target.package.patch_id;
       const status = target && target.job && target.job.status || 'uploaded';
+      const retry = softwareUpdateIsRetry(target);
       if (!target || !patchID || state.softwareUpdateRunning || state.softwareUpdateSubmission) return;
       setSoftwareUpdateDialogAlert();
-      if (status !== 'planned') {
+      if (status !== 'planned' && !retry) {
         setSoftwareUpdateDialogAlert(`正在为升级包 ${patchID} 生成只读升级计划，请稍候。`, 'info');
         const planned = await startSoftwareUpdate('plan', '', patchID);
         if (!planned) return;
@@ -4296,7 +4286,7 @@
       }
       setSoftwareUpdateDialogAlert();
       closeSoftwareUpdateDialog();
-      openSoftwareUpdateConfirmation('execute', patchID, softwareUpdateIsRetry(target));
+      openSoftwareUpdateConfirmation(retry ? 'retry' : 'execute', patchID, retry);
     };
 
     const renderSoftwareUpdateConfirmation = () => {
@@ -4311,7 +4301,7 @@
       const button = byId('confirm-software-update-action');
       button.disabled = !matches || busy;
       button.textContent = busy ? (uncertain ? '核对中…' : '正在提交…') : uncertain ? '核对任务状态'
-        : ({ execute:'确认执行升级', resume:'确认续跑', rollback:'确认回退' }[state.softwareUpdateAction] || '确认执行');
+        : ({ execute:'确认执行升级', retry:'确认重新执行', resume:'确认续跑', rollback:'确认回退' }[state.softwareUpdateAction] || '确认执行');
       button.setAttribute('aria-busy', String(busy));
       byId('software-update-confirmation-input').disabled = busy;
       byId('close-software-update-confirmation').disabled = busy;
@@ -4338,11 +4328,12 @@
         state.softwareUpdateConfirmationRetry = retry === null ? softwareUpdateIsRetry(softwareUpdateSubject()) : retry;
         state.softwareUpdateConfirmationFor = patchID;
       }
-      const isRetry = mode === 'execute' && !!state.softwareUpdateConfirmationRetry;
+      const isRetry = mode === 'retry' && !!state.softwareUpdateConfirmationRetry;
       const labels = {
-        execute: isRetry
+        execute: ['确认滚动升级', '将按跟随节点、数据节点、Leader 的顺序执行升级。', '确认执行升级'],
+        retry: isRetry
           ? ['确认重新执行', '将重新执行同一个热修补丁：应用本身是幂等的，不会产生新的版本。', '确认重新执行']
-          : ['确认滚动升级', '将按跟随节点、数据节点、Leader 的顺序执行升级。', '确认执行升级'],
+          : ['确认重新执行', '将重新执行同一个热修补丁。', '确认重新执行'],
         resume:['确认续跑升级', '将从持久化升级日志中断点续跑。', '确认续跑'],
         rollback:['确认受控回退', '将根据已签名升级包内的回退工件执行受控回退。', '确认回退'],
       };
@@ -4375,7 +4366,8 @@
         const job = item?.job;
         const previous = submission.previousJob;
         if (item?.package?.patch_id !== submission.patchID || !job || job.verification_required || job.mode !== submission.mode ||
-            !job.started_at || (previous?.mode === job.mode && previous?.started_at === job.started_at)) {
+            (job.operation_id ? job.operation_id !== submission.operationID :
+              (!job.started_at || (previous?.mode === job.mode && previous?.started_at === job.started_at)))) {
           throw new APIError('尚未查到本次动作的新任务，请继续核对或检查 Leader 的升级记录');
         }
         rememberSoftwareUpdateJob(submission.patchID, job);
@@ -4396,7 +4388,7 @@
       const patchID = state.softwareUpdateConfirmationPatchID;
       if (!patchID || state.softwareUpdateRunning || !canAdministerPlatform() || byId('software-update-confirmation-input').value !== patchID) return;
       const mode = state.softwareUpdateAction;
-      if (!['execute', 'resume', 'rollback'].includes(mode)) return;
+      if (!['execute', 'retry', 'resume', 'rollback'].includes(mode)) return;
       const accepted = state.softwareUpdateSubmission ? await reconcileSoftwareUpdateSubmission() : await startSoftwareUpdate(mode, patchID, patchID);
       if (accepted && !state.softwareUpdateRunning && canAdministerPlatform()) {
         if (byId('software-update-confirmation-dialog').open) closeSoftwareUpdateConfirmation();

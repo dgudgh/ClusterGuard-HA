@@ -56,6 +56,12 @@ while (($#)); do
   esac
 done
 
+# Read the supported mandatory contract before constructing or signing bytes.
+"${CG_NODE_BIN:-node}" "${script_dir}/../tools/verify-upgrade-validation-chain.cjs" --repo "${script_dir}/.." --contract-only || {
+  printf 'CG_CONTRACT_UNAVAILABLE: mandatory upgrade contract failed\n' >&2
+  exit 1
+}
+
 command -v git >/dev/null 2>&1 || die "需要 git"
 command -v openssl >/dev/null 2>&1 || die "需要 openssl"
 command -v tar >/dev/null 2>&1 || die "需要 tar"
@@ -318,6 +324,8 @@ const crypto = require("crypto");
 const [specPath, payloadFilesPath, sourcePatchName, buildTime, rpmArch, goos, goarch, fixCommitsRaw, buildCommit, out] = process.argv.slice(2);
 const spec = JSON.parse(fs.readFileSync(specPath, "utf8"));
 const files = JSON.parse(fs.readFileSync(payloadFilesPath, "utf8"));
+const supersedes = spec.supersedes || [];
+if (!Array.isArray(supersedes) || new Set(supersedes).size !== supersedes.length || supersedes.some(id => typeof id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id) || id === spec.id)) throw new Error("invalid supersedes identity");
 const digest = file => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 const manifest = {
   schema_version: 2,
@@ -331,6 +339,7 @@ const manifest = {
   // the identity it replaces travels with it into the signed manifest.
   revision: spec.revision || 0,
   supersedes_artifact: spec.supersedes_artifact || null,
+  supersedes: spec.supersedes || [],
   fix_commits: fixCommitsRaw.split(",").filter(Boolean),
   source: { version: spec.rpm_version, release: spec.rpm_release },
   target: {

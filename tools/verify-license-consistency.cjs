@@ -195,6 +195,9 @@ const walk = (directory, out = []) => {
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
     if (entry.isDirectory()) {
       if (SKIP_DIRS.has(entry.name)) continue;
+      // Chat history quotes old and third-party license declarations. It is
+      // local agent memory, not source or a delivered product declaration.
+      if (path.relative(repo, path.join(directory, entry.name)) === path.join('.workbuddy', 'memory')) continue;
       // docs/html is generated from the markdown already scanned above.
       if (entry.name === 'html' && path.basename(directory) === 'docs') continue;
       walk(path.join(directory, entry.name), out);

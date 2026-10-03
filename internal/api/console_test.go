@@ -1937,7 +1937,7 @@ func TestSoftwareUpdateHistoryReportsWhetherThePatchTookEffect(t *testing.T) {
 		"const status = softwareUpdateOutcome(job);",
 		"byId('software-update-job-status').textContent = softwareUpdateStatusText(softwareUpdateOutcome(job));",
 		"const softwareUpdateOutcomeNote = job => softwareUpdateOutcome(job) !== 'applied_attempt_failed'",
-		"补丁已生效：最近一次完成的执行于 ${softwareUpdateDateText(softwareUpdateCompletedAttempt(job).updated_at)} 逐文件校验通过。",
+		"补丁已生效：最近一次完成的执行于 ${softwareUpdateDateText(softwareUpdateCompletedAttempt(job)?.updated_at)} 逐文件校验通过。",
 	} {
 		if !strings.Contains(page, contract) {
 			t.Fatalf("the history must report whether the patch took effect: missing %q", contract)

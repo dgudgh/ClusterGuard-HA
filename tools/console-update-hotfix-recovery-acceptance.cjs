@@ -386,6 +386,16 @@ const SUBMIT_DRIVER = buttonID => `(async () => {${PAGE_HELPERS}
 
 const scenarios = [
   {
+    name: 'installed hotfix survives a later failed plan',
+    make: () => {
+      const item = hotfixDone();
+      item.job = {...item.job, mode:'plan', status:'failed', deployment_state:'installed', message:'helper unavailable'};
+      return consoleUnderTest([item]);
+    },
+    driver:GATES_DRIVER,
+  },
+
+  {
     // A: a hotfix that succeeded. There is nothing to continue and nothing to re-run.
     name: 'a hotfix that succeeded',
     make: () => consoleUnderTest([hotfixDone()]),
@@ -422,12 +432,12 @@ const scenarios = [
     make: () => consoleUnderTest([hotfixFailed()]),
     driver: SUBMIT_DRIVER('execute-software-update'),
     awaitAction: true,
-    expectAction: 'execute',
+    expectAction: 'retry',
   },
   {
-    // Once the gate is explicitly down and the later hotfix succeeded, the failed
-    // earlier attempt remains visible in history but is no longer the action subject.
-    name: 'older failed hotfix after recovery',
+    // A later success does not prove it superseded this failed package. Without an
+    // explicit relationship, the older failed row remains the subject.
+    name: 'unrelated newer success does not retire failed hotfix',
     make: () => consoleUnderTest([hotfixDone(), hotfixFailed()]),
     driver: GATES_DRIVER,
   },
@@ -439,7 +449,7 @@ const scenarios = [
     make: () => consoleUnderTest([hotfixDone(), hotfixFailed()], { maintenanceActive: true }),
     driver: SUBMIT_DRIVER('execute-software-update'),
     awaitAction: true,
-    expectAction: 'execute',
+    expectAction: 'retry',
   },
   {
     // E: the rollback half of the same list. A rollback aimed at packages[0] would
@@ -529,6 +539,12 @@ const main = async () => {
         actionIDs(mock).join(', ') || '(no write actions)');
     }
 
+
+    if (scenario.name === 'installed hotfix survives a later failed plan') {
+      record(`${scenario.name}: no retry of an installed deployment`,page.execute?.disabled === true,JSON.stringify(page.execute));
+      record(`${scenario.name}: no resume of an installed hotfix`,page.resume?.hidden === true,JSON.stringify(page.resume));
+      record(`${scenario.name}: identity remains explicit`,page.identity === HOTFIX_DONE,page.identity);
+    }
     if (scenario.name === 'a hotfix that succeeded') {
       record(`${scenario.name}: 续跑 is not offered`, page.resume && page.resume.hidden === true,
         `hidden=${page.resume && page.resume.hidden}`);
@@ -555,7 +571,7 @@ const main = async () => {
         `hidden=${page.rollback && page.rollback.hidden}`);
     }
 
-    if (scenario.name === 'older failed hotfix after recovery') {
+    if (scenario.name === 'unrelated newer success does not retire failed hotfix') {
       record(`${scenario.name}: the failed attempt remains in history`,
         page.history && page.history.some(row => row.patchID === HOTFIX_FAILED),
         (page.history || []).map(row => row.patchID).join(', '));
@@ -563,11 +579,11 @@ const main = async () => {
         page.history && [HOTFIX_DONE, HOTFIX_FAILED].every(patchID =>
           page.history.some(row => row.patchID === patchID && row.mode === '热修应用')),
         (page.history || []).map(row => `${row.patchID}:${row.mode}`).join(', '));
-      record(`${scenario.name}: the successful patch owns the summary`,
-        page.identity === HOTFIX_DONE && page.subject === HOTFIX_DONE,
+      record(`${scenario.name}: the failed patch remains the subject`,
+        page.identity === HOTFIX_FAILED && page.subject === HOTFIX_FAILED,
         `${page.identity} / ${page.subject}`);
-      record(`${scenario.name}: the retired failure cannot be re-executed`,
-        page.execute && page.execute.disabled === true && page.resume && page.resume.hidden === true,
+      record(`${scenario.name}: the failed patch may be retried only by explicit action`,
+        page.execute && page.execute.text === '重新执行' && page.resume && page.resume.hidden === true,
         JSON.stringify({ execute:page.execute, resume:page.resume }));
     }
 

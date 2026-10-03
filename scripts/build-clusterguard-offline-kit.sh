@@ -57,6 +57,12 @@ while (($#)); do
   esac
 done
 
+# Read the supported mandatory contract before constructing or signing bytes.
+"${CG_NODE_BIN:-node}" "${script_dir}/../tools/verify-upgrade-validation-chain.cjs" --repo "${script_dir}/.." --contract-only || {
+  printf 'CG_CONTRACT_UNAVAILABLE: mandatory upgrade contract failed\n' >&2
+  exit 1
+}
+
 [[ -x "${nfpm_binary}" ]] || { echo "必须提供可信 nFPM" >&2; exit 3; }
 [[ -x "${jq_binary}" ]] || { echo "必须提供静态 Linux jq" >&2; exit 3; }
 

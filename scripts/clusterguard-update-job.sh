@@ -10,17 +10,22 @@ workspace_helper="${CG_UPDATE_WORKSPACE_HELPER:-/usr/local/libexec/clusterguard-
 private_root="${CG_UPDATE_PRIVATE_ROOT:-/var/lib/clusterguard-update-private}"
 mode=""
 patch_id=""
+operation_id=""
 
 die() { printf '更新任务失败：%s\n' "$*" >&2; exit 1; }
 while (($#)); do
   case "$1" in
     --mode) [[ $# -ge 2 ]] || die "--mode 缺少值"; mode="$2"; shift 2 ;;
     --patch-id) [[ $# -ge 2 ]] || die "--patch-id 缺少值"; patch_id="$2"; shift 2 ;;
+    --operation-id) [[ $# -ge 2 ]] || die "--operation-id 缺少值"; operation_id="$2"; shift 2 ;;
     *) die "未知参数：$1" ;;
   esac
 done
-[[ "${mode}" == plan || "${mode}" == execute || "${mode}" == resume || "${mode}" == rollback ]] || die "任务模式无效"
+[[ "${mode}" == plan || "${mode}" == execute || "${mode}" == retry || "${mode}" == resume || "${mode}" == rollback ]] || die "任务模式无效"
 [[ "${patch_id}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die "升级包 ID 无效"
+[[ -z "${operation_id}" || "${operation_id}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die "操作 ID 无效"
+[[ -n "${operation_id}" ]] || operation_id="operation-$(date -u +%Y%m%dT%H%M%SZ)-$$-${RANDOM}"
+"${workspace_helper}" contract >/dev/null || die "CG_CONTRACT_UNAVAILABLE: 无法加载升级热修契约"
 [[ -f "${config}" && ! -L "${config}" ]] || die "升级配置不存在：${config}"
 [[ -x "${upgrader}" && ! -L "${upgrader}" ]] || die "升级器不存在：${upgrader}"
 "${workspace_helper}" workspace check-file "${config}"
@@ -44,6 +49,54 @@ job_dir="${private_root}/jobs/${patch_id}"
 "${workspace_helper}" workspace create-directory "${job_dir}"
 patch="${job_dir}/package.cgpatch"
 status_file="${job_dir}/status.json"
+# Root-owned replicated history is recovery authority after a leader change.
+# Public uploads/status are deliberately excluded from this import.
+import_private_history() {
+  local history_name history_file replicated_status local_owner replicated_owner local_status replicated_terminal replicated_operations operation_line
+  for history_name in operations.jsonl deployment.json status.json; do
+    history_file="${private_root}/history/${patch_id}/${history_name}"
+    if [[ ! -e "${job_dir}/${history_name}" && -e "${history_file}" ]]; then
+      "${workspace_helper}" workspace check-file "${history_file}"
+      "${workspace_helper}" workspace snapshot "${history_file}" "${job_dir}/${history_name}"
+    fi
+  done
+  replicated_status="${private_root}/history/${patch_id}/status.json"
+  if [[ -f "${replicated_status}" && -f "${status_file}" ]]; then
+    "${workspace_helper}" workspace check-file "${replicated_status}"
+    local_owner="$("${jq_binary}" -r '.operation_id // .execution_id // "legacy"' "${status_file}")"
+    replicated_owner="$("${jq_binary}" -r '.operation_id // .execution_id // "legacy"' "${replicated_status}")"
+    [[ "${local_owner}" == "${replicated_owner}" ]] || die "CG_HISTORY_OVERWRITE_FORBIDDEN: 私有与复制操作身份不一致，必须先核对历史"
+    local_status="$("${jq_binary}" -r '.status' "${status_file}")"
+    replicated_terminal="$("${jq_binary}" -r '.status | IN("succeeded","failed","rolled_back","planned")' "${replicated_status}")"
+    case "${local_status}" in
+      succeeded|failed|rolled_back|planned)
+        if [[ "${replicated_terminal}" == true ]]; then
+          [[ "${local_status}" == "$("${jq_binary}" -r '.status' "${replicated_status}")" ]] || die "CG_HISTORY_OVERWRITE_FORBIDDEN: 同一操作终态不一致"
+        fi ;;
+      *)
+        if [[ "${replicated_terminal}" == true ]]; then
+          "${workspace_helper}" workspace snapshot "${replicated_status}" "${status_file}"
+          [[ ! -f "${private_root}/history/${patch_id}/deployment.json" ]] || "${workspace_helper}" workspace snapshot "${private_root}/history/${patch_id}/deployment.json" "${job_dir}/deployment.json"
+        fi ;;
+    esac
+  fi
+  replicated_operations="${private_root}/history/${patch_id}/operations.jsonl"
+  if [[ -f "${replicated_operations}" ]]; then
+    "${workspace_helper}" workspace check-file "${replicated_operations}"
+    "${jq_binary}" -se --arg patch "${patch_id}" 'all(.[]; (.patch_id==$patch) and (.operation_id | type=="string" and length>0))' "${replicated_operations}" >/dev/null || die "CG_HISTORY_OVERWRITE_FORBIDDEN: 复制操作记录无效"
+    while IFS= read -r operation_line; do
+      if ! grep -Fqx -- "${operation_line}" "${job_dir}/operations.jsonl"; then
+        printf '%s\n' "${operation_line}" >>"${job_dir}/operations.jsonl"
+      fi
+    done <"${replicated_operations}"
+  fi
+  if [[ -f "${status_file}" ]]; then
+    "${jq_binary}" -c --arg patch "${patch_id}" '
+      if .patch_id != $patch then error("CG_PACKAGE_IDENTITY_MISMATCH") else
+        .operation_id=(.operation_id // .execution_id // ("legacy-"+$patch)) end' "${status_file}" >>"${job_dir}/operations.jsonl"
+  fi
+}
+import_private_history
 # Never import public status/events as recovery authority. Existing private
 # records survive plan/resume and can only have been written by root.
 "${workspace_helper}" workspace snapshot "${public_dir}/package.cgpatch" "${patch}"
@@ -71,6 +124,8 @@ publish_public_file() {
 publish_public_artifacts() {
   local artifact
   publish_public_file "${status_file}" status.json || return 1
+  publish_public_file "${job_dir}/deployment.json" deployment.json || return 1
+  publish_public_file "${job_dir}/operations.jsonl" operations.jsonl || return 1
   publish_public_file "${job_dir}/output.log" output.log || return 1
   shopt -s nullglob
   for artifact in "${job_dir}"/clusterguard-update-*.json "${job_dir}"/clusterguard-update-*.events.jsonl; do
@@ -84,17 +139,32 @@ write_status() {
   local status="$1" message="$2" maintenance="$3" finished="${4:-}"
   local temporary="${status_file}.tmp"
   "${jq_binary}" -n \
-    --arg patch_id "${patch_id}" --arg mode "${mode}" --arg status "${status}" \
+    --arg operation_id "${operation_id}" --arg patch_id "${patch_id}" --arg mode "${mode}" --arg status "${status}" \
     --arg message "${message}" --arg warning "系统升级期间无法进行自动切换，请注意关注。" \
     --arg started_at "${started_at}" --arg updated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --arg finished_at "${finished}" --argjson maintenance_active "${maintenance}" \
-    '{patch_id:$patch_id,mode:$mode,status:$status,message:$message,
+    '{operation_id:$operation_id,patch_id:$patch_id,mode:$mode,status:$status,message:$message,
       warning:(if $mode == "plan" then "" else $warning end),
       maintenance_active:$maintenance_active,
       automatic_failover_available:($maintenance_active | not),
       started_at:$started_at,updated_at:$updated_at,
       finished_at:(if $finished_at == "" then null else $finished_at end)}' >"${temporary}"
-  mv -f "${temporary}" "${status_file}"
+  "${jq_binary}" -c . "${temporary}" >>"${job_dir}/operations.jsonl"
+  chmod 0640 "${job_dir}/operations.jsonl"
+  if [[ ! -f "${job_dir}/deployment.json" ]]; then
+    if [[ -f "${status_file}" ]]; then
+      "${jq_binary}" --arg package_id "${patch_id}" '{package_id:$package_id,state:(if .status=="succeeded" then "installed" elif .status=="rolled_back" then "rolled_back" else "not_installed" end),last_verified_state:(if .status=="succeeded" then "installed" elif .status=="rolled_back" then "rolled_back" else null end),last_verified_operation_id:(.operation_id // .execution_id // null)}' "${status_file}" >"${job_dir}/deployment.json"
+    else printf '{"package_id":"%s","state":"not_installed"}\n' "${patch_id}" >"${job_dir}/deployment.json"; fi
+  fi
+  "${jq_binary}" --arg mode "${mode}" --arg status "${status}" --arg operation "${operation_id}" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson maintenance "${maintenance}" '
+    if $mode=="plan" then .
+    elif $status=="succeeded" or $status=="rolled_back" then
+      .state=(if $status=="succeeded" then "installed" else "rolled_back" end) | .last_verified_state=.state | .last_verified_operation_id=$operation | .operation_id=$operation | .updated_at=$at
+    elif $maintenance then .state=(if $status=="failed" then "recovery_required" elif $mode=="rollback" then "rollbacking" else "applying" end) | .operation_id=$operation | .updated_at=$at
+    else . end' "${job_dir}/deployment.json" >"${job_dir}/deployment.json.tmp"
+  mv -f "${job_dir}/deployment.json.tmp" "${job_dir}/deployment.json"
+  "${jq_binary}" --arg state "$("${jq_binary}" -r .state "${job_dir}/deployment.json")" '.deployment_state=$state' "${temporary}" >"${temporary}.state"
+  mv -f "${temporary}.state" "${status_file}"
   publish_public_artifacts || printf '警告：私有状态已持久化，但控制台状态发布失败\n' >&2
 }
 
@@ -165,34 +235,20 @@ for privileged_input in "${trust_key}" "${state_file}" "${ssh_key}" "${known_hos
   [[ -z "${privileged_input}" ]] || "${workspace_helper}" workspace check-file "${privileged_input}"
 done
 
-# The action the operator picked is not always the action the updater must run,
-# and this is the last place that can tell the difference. Resuming is defined by
-# the rolling flow's persisted journal; a hotfix deliberately has no such journal
-# - applying one is idempotent, so the supported way forward is to run the same
-# patch again - and the updater refuses --resume for a hotfix on the first line of
-# run_hotfix_update. Mapping resume to --resume unconditionally therefore turned
-# "retry the patch that is already on disk" into a guaranteed failure: on
-# 2026-09-30 the console offered 续跑 for a hotfix, this ran the updater with
-# --resume, the updater refused, and the refusal was written over a record whose
-# payload had been applied and verified on all three nodes.
-#
-# It is a function so the routing is one decision that can be executed on its own:
-# the wrapper around it needs root, runuser and flock, so nothing else in this
-# file can be run in place. Its answer goes to stdout, one flag per line; the
-# announcement of a substitution goes to stderr, where it reaches output.log
-# without becoming an argument.
+# Keep retry and resume distinct all the way to the privileged boundary. A
+# hotfix retry applies the exact same signed package again; a resume request is
+# refused before a status record or maintenance lock can be changed.
 update_mode_arguments() {
   local requested_mode="$1" requested_kind="$2" requested_patch="$3"
   case "${requested_mode}" in
     plan) printf '%s\n' --plan ;;
     execute) printf '%s\n' --execute --yes ;;
+    retry)
+      [[ "${requested_kind}" == hotfix ]] || { printf 'CG_HOTFIX_RESUME_FORBIDDEN: retry 仅用于热修补丁\n' >&2; return 1; }
+      printf '%s\n' --retry --execute --yes ;;
     resume)
-      if [[ "${requested_kind}" == hotfix ]]; then
-        printf '热修补丁 %s 不支持续跑：应用本身是幂等的，改为重新执行同一个补丁。\n' "${requested_patch}" >&2
-        printf '%s\n' --execute --yes
-      else
-        printf '%s\n' --resume --execute --yes
-      fi ;;
+      [[ "${requested_kind}" != hotfix ]] || { printf 'CG_HOTFIX_RESUME_FORBIDDEN: 热修补丁 %s 不支持续跑，请重新执行同一个补丁。\n' "${requested_patch}" >&2; return 1; }
+      printf '%s\n' --resume --execute --yes ;;
     rollback) printf '%s\n' --rollback --execute --yes ;;
   esac
 }
@@ -203,6 +259,7 @@ arguments=(--patch "${patch}" --expected-patch-id "${patch_id}" --private-root "
 [[ -z "${ssh_key}" ]] || arguments+=(--ssh-key "${ssh_key}")
 [[ -z "${known_hosts}" ]] || arguments+=(--known-hosts "${known_hosts}")
 [[ -z "${ssh_credentials}" ]] || arguments+=(--ssh-credentials-file "${ssh_credentials}")
+arguments+=(--operation-id "${operation_id}")
 
 # The package kind is not a guess: the snapshot above puts package.json - the
 # signed metadata, carrying kind - in ${job_dir}, so the side that decides what to
@@ -213,7 +270,8 @@ arguments=(--patch "${patch}" --expected-patch-id "${patch_id}" --private-root "
 # Read into the array rather than piped, so the loop runs in this shell; a pipe
 # would put the appends in a subshell and silently drop every flag.
 package_kind="$("${jq_binary}" -r '.kind // "upgrade"' "${job_dir}/package.json")"
-while IFS= read -r mode_flag; do arguments+=("${mode_flag}"); done < <(update_mode_arguments "${mode}" "${package_kind}" "${patch_id}")
+mode_flags="$(update_mode_arguments "${mode}" "${package_kind}" "${patch_id}")" || die "模式与升级包类型不匹配"
+while IFS= read -r mode_flag; do arguments+=("${mode_flag}"); done <<<"${mode_flags}"
 
 maintenance=false
 [[ "${mode}" == plan ]] || maintenance=true

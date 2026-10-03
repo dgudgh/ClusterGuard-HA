@@ -27,6 +27,7 @@ type SoftwareUpdateManager interface {
 
 type softwareUpdateActionPayload struct {
 	Confirmation string `json:"confirmation,omitempty"`
+	OperationID  string `json:"operation_id,omitempty"`
 }
 
 type softwareUpdateGatePayload struct {
@@ -56,7 +57,7 @@ func softwareUpdateMaintenanceRoute(method, path string) bool {
 		return false
 	}
 	switch platformupdate.Mode(parts[1]) {
-	case platformupdate.ModePlan, platformupdate.ModeExecute, platformupdate.ModeResume, platformupdate.ModeRollback:
+	case platformupdate.ModePlan, platformupdate.ModeExecute, platformupdate.ModeRetry, platformupdate.ModeResume, platformupdate.ModeRollback:
 		return true
 	default:
 		return false
@@ -89,12 +90,12 @@ func (server *Server) softwareUpdateRoute(writer http.ResponseWriter, request *h
 		return
 	}
 	if len(parts) == 1 && request.Method == http.MethodGet {
-		server.softwareUpdateStatus(writer, parts[0])
+		server.softwareUpdateStatus(writer, request, parts[0])
 		return
 	}
 	if len(parts) == 2 && request.Method == http.MethodPost {
 		mode := platformupdate.Mode(parts[1])
-		if mode == platformupdate.ModePlan || mode == platformupdate.ModeExecute ||
+		if mode == platformupdate.ModePlan || mode == platformupdate.ModeExecute || mode == platformupdate.ModeRetry ||
 			mode == platformupdate.ModeResume || mode == platformupdate.ModeRollback {
 			server.startSoftwareUpdate(writer, request, parts[0], mode)
 			return
@@ -197,7 +198,7 @@ func openMultipartFile(header *multipart.FileHeader) (multipart.File, error) {
 	return header.Open()
 }
 
-func (server *Server) softwareUpdateStatus(writer http.ResponseWriter, patchID string) {
+func (server *Server) softwareUpdateStatus(writer http.ResponseWriter, request *http.Request, patchID string) {
 	packageRecord, found := server.softwareUpdates.Package(patchID)
 	if !found {
 		writeError(writer, http.StatusNotFound, platformupdate.ErrPackageNotFound.Error())
@@ -206,6 +207,15 @@ func (server *Server) softwareUpdateStatus(writer http.ResponseWriter, patchID s
 	result := platformupdate.PackageStatus{Package: packageRecord}
 	if job, jobFound := server.softwareUpdates.Job(patchID); jobFound {
 		result.Job = &job
+	}
+	if history, ok := server.softwareUpdates.(interface {
+		Deployment(string) (*platformupdate.Deployment, bool)
+		Operations(string) []platformupdate.Job
+	}); ok {
+		result.Deployment, _ = history.Deployment(patchID)
+		if request.URL.Query().Get("history") == "1" {
+			result.Operations = history.Operations(patchID)
+		}
 	}
 	writeJSON(writer, http.StatusOK, map[string]interface{}{"status": "ok", "result": result, "warning": platformupdate.AutomaticFailoverWarning})
 }
@@ -218,6 +228,12 @@ func (server *Server) startSoftwareUpdate(writer http.ResponseWriter, request *h
 	}
 	actor := softwareUpdateActor(request)
 	stage := model.StagePlan
+	if server.store != nil {
+		if gate, active := server.store.SoftwareUpdateGate(); active && gate.PatchID != patchID {
+			writeError(writer, http.StatusConflict, "CG_FOREIGN_UPDATE_LOCK: maintenance belongs to "+gate.PatchID)
+			return
+		}
+	}
 	if mode != platformupdate.ModePlan {
 		stage = model.StageExecute
 	}
@@ -225,7 +241,15 @@ func (server *Server) startSoftwareUpdate(writer http.ResponseWriter, request *h
 		writeError(writer, http.StatusServiceUnavailable, "software update audit is unavailable")
 		return
 	}
-	job, err := server.softwareUpdates.Start(request.Context(), mode, patchID, payload.Confirmation)
+	var job platformupdate.Job
+	var err error
+	if manager, ok := server.softwareUpdates.(interface {
+		StartWithOperationID(context.Context, platformupdate.Mode, string, string, string) (platformupdate.Job, error)
+	}); ok {
+		job, err = manager.StartWithOperationID(request.Context(), mode, patchID, payload.Confirmation, payload.OperationID)
+	} else {
+		job, err = server.softwareUpdates.Start(request.Context(), mode, patchID, payload.Confirmation)
+	}
 	if err != nil {
 		server.writeSoftwareUpdateError(writer, err)
 		return

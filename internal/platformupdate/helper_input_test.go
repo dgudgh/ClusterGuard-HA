@@ -10,7 +10,7 @@ import (
 )
 
 func TestHelperRequiresOneCompleteBoundedRequest(t *testing.T) {
-	for _, mode := range []Mode{ModePlan, ModeExecute, ModeResume, ModeRollback} {
+	for _, mode := range []Mode{ModePlan, ModeExecute, ModeRetry, ModeResume, ModeRollback} {
 		for _, suffix := range []struct {
 			name  string
 			body  string

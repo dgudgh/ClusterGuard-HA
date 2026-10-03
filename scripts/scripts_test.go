@@ -472,6 +472,10 @@ func sha256OfFile(t *testing.T, path string) string {
 }
 
 type hotfixFixtureOptions struct {
+	hotfixID   string
+	supersedes []string
+	privateKey string
+	publicKey  string
 	// omitTooling drops the signed apply.sh/rollback.sh digests, reproducing a
 	// schema-2 package. apply.sh runs as root and decides what is written where,
 	// so a manifest that does not anchor it must be refused rather than trusted.
@@ -487,7 +491,10 @@ type hotfixFixtureOptions struct {
 // instead of a stub.
 func signedHotfixPackage(t *testing.T, options hotfixFixtureOptions) (string, string) {
 	t.Helper()
-	privateKey, publicKey := generatePatchSigningKey(t)
+	privateKey, publicKey := options.privateKey, options.publicKey
+	if privateKey == "" {
+		privateKey, publicKey = generatePatchSigningKey(t)
+	}
 	root := t.TempDir()
 	patchRoot := filepath.Join(root, "clusterguard-hotfix")
 	applyPath := filepath.Join(patchRoot, "apply.sh")
@@ -515,6 +522,12 @@ func signedHotfixPackage(t *testing.T, options hotfixFixtureOptions) (string, st
 			"sha256":       payloadSHA,
 			"restart_unit": "clusterguard-ha.service",
 		}},
+	}
+	if options.hotfixID != "" {
+		manifest["hotfix_id"] = options.hotfixID
+	}
+	if options.supersedes != nil {
+		manifest["supersedes"] = options.supersedes
 	}
 	if !options.omitTooling {
 		manifest["tooling"] = map[string]any{
@@ -864,23 +877,21 @@ func TestUpdateJobRoutesResumeByPackageKind(t *testing.T) {
 	}
 	// Consumed, and consumed in this shell: a pipe would put the appends in a
 	// subshell and drop every flag, leaving the updater with its defaults.
-	if !strings.Contains(text, `while IFS= read -r mode_flag; do arguments+=("${mode_flag}"); done < <(update_mode_arguments "${mode}" "${package_kind}" "${patch_id}")`) {
-		t.Fatal("the mode flags must be read into the argument array from update_mode_arguments, in this shell")
+	if !strings.Contains(text, `mode_flags="$(update_mode_arguments "${mode}" "${package_kind}" "${patch_id}")" || die`) ||
+		!strings.Contains(text, `while IFS= read -r mode_flag; do arguments+=("${mode_flag}"); done <<<"${mode_flags}"`) {
+		t.Fatal("routing failure must stop the job before status is written and flags must be read in this shell")
 	}
 	body, found := extractShellFunction(text, "update_mode_arguments")
 	if !found {
 		t.Fatal("clusterguard-update-job.sh must define update_mode_arguments so the routing can be executed on its own")
 	}
-	flagsFor := func(mode, kind string) (string, string) {
+	flagsFor := func(mode, kind string) (string, string, error) {
 		command := exec.Command("bash", "-c",
 			"set -euo pipefail\n"+body+"\nupdate_mode_arguments \"$1\" \"$2\" HF-2026-0930-01\n", "bash", mode, kind)
 		var stderr strings.Builder
 		command.Stderr = &stderr
 		output, err := command.Output()
-		if err != nil {
-			t.Fatalf("update_mode_arguments %q/%q failed: %v (%s)", mode, kind, err, stderr.String())
-		}
-		return string(output), stderr.String()
+		return string(output), stderr.String(), err
 	}
 
 	for _, testCase := range []struct {
@@ -888,14 +899,17 @@ func TestUpdateJobRoutesResumeByPackageKind(t *testing.T) {
 	}{
 		{"case 1: a failed rolling upgrade is resumed from its journal", "resume", "upgrade", "--resume\n--execute\n--yes\n"},
 		{"a package from before kind existed is a rolling upgrade", "resume", "", "--resume\n--execute\n--yes\n"},
-		{"case 2: a failed hotfix is re-executed, never resumed", "resume", "hotfix", "--execute\n--yes\n"},
+		{"case 2: a failed hotfix is retried with its own mode", "retry", "hotfix", "--retry\n--execute\n--yes\n"},
 		{"a hotfix execute is unaffected by the routing", "execute", "hotfix", "--execute\n--yes\n"},
 		{"a hotfix plan stays read-only", "plan", "hotfix", "--plan\n"},
 		{"a hotfix rollback is unaffected by the routing", "rollback", "hotfix", "--rollback\n--execute\n--yes\n"},
 		{"a rolling execute is unaffected by the routing", "execute", "upgrade", "--execute\n--yes\n"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			flags, _ := flagsFor(testCase.mode, testCase.kind)
+			flags, _, err := flagsFor(testCase.mode, testCase.kind)
+			if err != nil {
+				t.Fatalf("routing %s/%s failed: %v", testCase.mode, testCase.kind, err)
+			}
 			if flags != testCase.want {
 				t.Fatalf("%s/%q produced %q, want %q", testCase.mode, testCase.kind, flags, testCase.want)
 			}
@@ -905,13 +919,13 @@ func TestUpdateJobRoutesResumeByPackageKind(t *testing.T) {
 		})
 	}
 
-	// The substitution has to be visible. Silently turning a resume into an
-	// execute would leave the operator reading a request they never made, with
-	// nothing in output.log explaining the difference.
-	if _, stderr := flagsFor("resume", "hotfix"); !strings.Contains(stderr, "不支持续跑") {
-		t.Fatal("replacing a hotfix resume with a re-execution must be announced, where it reaches output.log")
+	if flags, stderr, err := flagsFor("resume", "hotfix"); err == nil || flags != "" || !strings.Contains(stderr, "CG_HOTFIX_RESUME_FORBIDDEN") {
+		t.Fatal("hotfix resume must fail closed without producing execution flags")
 	}
-	if _, stderr := flagsFor("resume", "upgrade"); stderr != "" {
+	if flags, _, err := flagsFor("retry", "upgrade"); err == nil || flags != "" {
+		t.Fatal("rolling upgrade retry must fail closed")
+	}
+	if _, stderr, _ := flagsFor("resume", "upgrade"); stderr != "" {
 		t.Fatalf("resuming a rolling upgrade is not a substitution and must stay silent, got %q", stderr)
 	}
 }
@@ -1401,7 +1415,7 @@ func TestUpgradeScriptEnforcesMaintenanceAndVersionContracts(t *testing.T) {
 		"stale_automatic",
 		"clusterguard-agent-reconcile.timer",
 		"systemctl enable --now 'clusterguard-agent-reconcile.timer'",
-		"检测到可安全接管的失败升级维护锁",
+		"CG_FOREIGN_UPDATE_LOCK",
 		"补偿回锁",
 		`[[ -z "${controllers_raw}" ]] || csv_to_array "${controllers_raw}" controllers`,
 		`[[ -z "${data_nodes_raw}" ]] || csv_to_array "${data_nodes_raw}" data`,
@@ -1569,6 +1583,9 @@ elif [[ "$command" == *"cgctl"*" status"* ]]; then
     if ((status_calls > ${FAKE_STATUS_FAIL_AFTER_CALLS:-999999})); then ready=false; fi
   fi
   printf '{"status":"ok","result":{"ready":%s,"leader_known":true,"quorum_confirmed":%s,"voter_count":%s,"active_operations":%s,"indeterminate_operations":%s,"active_lifecycle_tasks":%s,"update_maintenance_active":%s,"role":"%s","local_controller_id":"%s","controller_members":%s,"data_node_members":%s}}\n' "$ready" "$quorum" "$voter_count" "$active_operations" "$indeterminate_operations" "$active_lifecycle_tasks" "$maintenance" "$role" "$node_id" "$members" "$data_members"
+elif [[ "$command" == *"held="* && "$command" == *".cluster-update.lock"* ]]; then
+  [[ -n "${FAKE_FAILED_UPDATE_LOCK:-}" && -f "$state/$host.maintenance" ]] || exit 56
+  printf '%s\n' "${FAKE_FAILED_UPDATE_LOCK}"
 elif [[ "$command" == *".cluster-update.lock"* && "$command" == *"status.json"* && "$command" == *"maintenance_active"* && "$command" != *"patch-id.tmp"* ]]; then
   [[ -n "${FAKE_FAILED_UPDATE_LOCK:-}" ]] || exit 56
   printf '%s\n' "${FAKE_FAILED_UPDATE_LOCK}"
@@ -1998,59 +2015,26 @@ esac
 		writeFile(t, filepath.Join(state, host+".maintenance"), "failed update maintenance\n", 0o600)
 	}
 	previousPatchID := "cgupgrade-2.2-27-to-2.2-28-x86_64"
-	command = exec.Command("bash", upgradeScript,
-		"--patch", patchPath, "--trust-key", publicKey,
-		"--controllers", "c1,c2,c3", "--data-nodes", "c1,c2,c3,d1",
-		"--known-hosts", knownHosts, "-u", "root", "--plan")
-	command.Dir = root
-	command.Env = append(os.Environ(), "PATH="+fakeBin+":"+os.Getenv("PATH"), "FAKE_REMOTE_STATE="+state,
-		"FAKE_FAILED_UPDATE_LOCK="+previousPatchID, "FAKE_OPERATION_MODE=stale-auto",
-		"CG_UPDATE_CLUSTER_IDLE_ATTEMPTS=1", "CG_UPDATE_CLUSTER_IDLE_DELAY_SECONDS=0")
-	output, err = command.CombinedOutput()
-	if err != nil || !strings.Contains(string(output), "维护恢复   : 接管已失败升级 "+previousPatchID+" 的现有门禁") ||
-		!strings.Contains(string(output), "计划完成，未修改任何节点") {
-		t.Fatalf("failed-update maintenance takeover plan was not read-only and actionable: err=%v\n%s", err, output)
-	}
-	if _, statErr := os.Stat(filepath.Join(state, "install-order")); !os.IsNotExist(statErr) {
-		t.Fatalf("failed-update takeover plan installed an RPM: %v", statErr)
-	}
-
-	command = exec.Command("bash", upgradeScript,
-		"--patch", patchPath, "--trust-key", publicKey,
-		"--controllers", "c1,c2,c3", "--data-nodes", "c1,c2,c3,d1",
-		"--known-hosts", knownHosts, "-u", "root", "--execute", "--yes")
-	command.Dir = root
-	command.Env = append(os.Environ(), "PATH="+fakeBin+":"+os.Getenv("PATH"), "FAKE_REMOTE_STATE="+state,
-		"FAKE_FAILED_UPDATE_LOCK="+previousPatchID, "FAKE_OPERATION_MODE=stale-auto", "FAKE_TIMER_REQUIRES_ENABLE=true")
-	output, err = command.CombinedOutput()
-	if err != nil || !strings.Contains(string(output), "已接管失败升级维护锁 previous_patch_id="+previousPatchID) {
-		t.Fatalf("failed-update maintenance takeover execution failed: err=%v\n%s", err, output)
-	}
-	for _, host := range []string{"c1", "c2", "c3", "d1"} {
-		version, readErr := os.ReadFile(filepath.Join(state, host+".version"))
-		if readErr != nil || strings.TrimSpace(string(version)) != "2.2-29" {
-			t.Fatalf("%s takeover final version=%q err=%v", host, version, readErr)
+	for _, mode := range [][]string{{"--plan"}, {"--execute", "--yes"}} {
+		command = exec.Command("bash", append([]string{upgradeScript,
+			"--patch", patchPath, "--trust-key", publicKey,
+			"--controllers", "c1,c2,c3", "--data-nodes", "c1,c2,c3,d1",
+			"--known-hosts", knownHosts, "-u", "root"}, mode...)...)
+		command.Dir = root
+		command.Env = append(os.Environ(), "PATH="+fakeBin+":"+os.Getenv("PATH"), "FAKE_REMOTE_STATE="+state,
+			"FAKE_FAILED_UPDATE_LOCK="+previousPatchID, "FAKE_OPERATION_MODE=stale-auto")
+		output, err = command.CombinedOutput()
+		if err == nil || !strings.Contains(string(output), "CG_FOREIGN_UPDATE_LOCK") || !strings.Contains(string(output), previousPatchID) {
+			t.Fatalf("foreign-package maintenance lock was not refused for %v: err=%v\n%s", mode, err, output)
 		}
-		if _, statErr := os.Stat(filepath.Join(state, host+".maintenance")); !os.IsNotExist(statErr) {
-			t.Fatalf("%s takeover maintenance marker was not released: %v", host, statErr)
+		for _, host := range []string{"c1", "c2", "c3"} {
+			if _, statErr := os.Stat(filepath.Join(state, host+".maintenance")); statErr != nil {
+				t.Fatalf("foreign lock on %s was changed: %v", host, statErr)
+			}
 		}
-	}
-
-	resetFakeCluster(t)
-	for _, host := range []string{"c1", "c2", "c3"} {
-		writeFile(t, filepath.Join(state, host+".maintenance"), "failed update maintenance\n", 0o600)
-	}
-	writeFile(t, filepath.Join(state, "c1.version"), "2.2-29\n", 0o600)
-	command = exec.Command("bash", upgradeScript,
-		"--patch", patchPath, "--trust-key", publicKey,
-		"--controllers", "c1,c2,c3", "--data-nodes", "c1,c2,c3,d1",
-		"--known-hosts", knownHosts, "-u", "root", "--plan")
-	command.Dir = root
-	command.Env = append(os.Environ(), "PATH="+fakeBin+":"+os.Getenv("PATH"), "FAKE_REMOTE_STATE="+state,
-		"FAKE_FAILED_UPDATE_LOCK="+previousPatchID, "FAKE_OPERATION_MODE=stale-auto")
-	output, err = command.CombinedOutput()
-	if err == nil || !strings.Contains(string(output), "所有节点均已回到源版本 2.2-28") {
-		t.Fatalf("mixed-version failed-update maintenance was incorrectly adopted: err=%v\n%s", err, output)
+		if _, statErr := os.Stat(filepath.Join(state, "install-order")); !os.IsNotExist(statErr) {
+			t.Fatalf("foreign lock admission mutated an RPM: %v", statErr)
+		}
 	}
 
 	resetFakeCluster(t)

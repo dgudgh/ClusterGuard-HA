@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"clusterguard.io/ha/internal/buildinfo"
+	"clusterguard.io/ha/internal/updatecontract"
+	"clusterguard.io/ha/pkg/model"
 )
 
 const (
@@ -130,6 +132,7 @@ type Mode string
 const (
 	ModePlan     Mode = "plan"
 	ModeExecute  Mode = "execute"
+	ModeRetry    Mode = "retry"
 	ModeResume   Mode = "resume"
 	ModeRollback Mode = "rollback"
 )
@@ -154,6 +157,7 @@ type Package struct {
 	// interchangeable: a hotfix deliberately leaves the installed RPM release
 	// alone and only replaces the files its signed manifest names.
 	Kind               string    `json:"kind,omitempty"`
+	Supersedes         []string  `json:"supersedes,omitempty"`
 	FileName           string    `json:"file_name"`
 	SizeBytes          int64     `json:"size_bytes"`
 	SHA256             string    `json:"sha256"`
@@ -170,17 +174,19 @@ type Package struct {
 }
 
 type Event struct {
-	PatchID   string    `json:"patch_id,omitempty"`
-	Mode      Mode      `json:"mode,omitempty"`
-	Status    string    `json:"status"`
-	Node      string    `json:"node,omitempty"`
-	Message   string    `json:"message,omitempty"`
-	Phase     string    `json:"phase,omitempty"`
-	Current   int       `json:"current,omitempty"`
-	Total     int       `json:"total,omitempty"`
-	Source    string    `json:"source,omitempty"`
-	Target    string    `json:"target,omitempty"`
-	UpdatedAt time.Time `json:"updated_at,omitempty"`
+	OperationID string    `json:"operation_id,omitempty"`
+	ExecutionID string    `json:"execution_id,omitempty"`
+	PatchID     string    `json:"patch_id,omitempty"`
+	Mode        Mode      `json:"mode,omitempty"`
+	Status      string    `json:"status"`
+	Node        string    `json:"node,omitempty"`
+	Message     string    `json:"message,omitempty"`
+	Phase       string    `json:"phase,omitempty"`
+	Current     int       `json:"current,omitempty"`
+	Total       int       `json:"total,omitempty"`
+	Source      string    `json:"source,omitempty"`
+	Target      string    `json:"target,omitempty"`
+	UpdatedAt   time.Time `json:"updated_at,omitempty"`
 }
 
 type Progress struct {
@@ -192,6 +198,8 @@ type Progress struct {
 }
 
 type Job struct {
+	OperationID                string    `json:"operation_id,omitempty"`
+	DeploymentState            string    `json:"deployment_state,omitempty"`
 	PatchID                    string    `json:"patch_id"`
 	Mode                       Mode      `json:"mode"`
 	Status                     Status    `json:"status"`
@@ -210,8 +218,10 @@ type Job struct {
 }
 
 type PackageStatus struct {
-	Package Package `json:"package"`
-	Job     *Job    `json:"job,omitempty"`
+	Package    Package     `json:"package"`
+	Job        *Job        `json:"job,omitempty"`
+	Deployment *Deployment `json:"deployment,omitempty"`
+	Operations []Job       `json:"operations,omitempty"`
 	// ClockSkew marks a record whose uploaded_at lies in the future, i.e. the node clock
 	// was running ahead when the record was written. It travels with the row so the
 	// console can say the time - and therefore the position - is not trustworthy.
@@ -282,6 +292,7 @@ type Manager struct {
 	now                func() time.Time
 	verifiedBootstraps map[string]struct{}
 	mu                 sync.Mutex
+	historyValidation  historyValidationCache
 }
 
 type Option func(*Manager)
@@ -362,6 +373,7 @@ func (manager *Manager) Snapshot(ctx context.Context) Snapshot {
 		if job, jobFound := manager.Job(candidate.PatchID); jobFound {
 			status.Job = &job
 		}
+		status.Deployment, _ = manager.Deployment(candidate.PatchID)
 		result.Packages = append(result.Packages, status)
 	}
 	sort.Slice(result.Packages, func(left, right int) bool {
@@ -461,6 +473,10 @@ func (manager *Manager) Upload(ctx context.Context, fileName string, source io.R
 }
 
 func (manager *Manager) Start(ctx context.Context, mode Mode, patchID, confirmation string) (Job, error) {
+	return manager.StartWithOperationID(ctx, mode, patchID, confirmation, "")
+}
+
+func (manager *Manager) StartWithOperationID(ctx context.Context, mode Mode, patchID, confirmation, operationID string) (Job, error) {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
 	if err := manager.readiness(ctx); err != nil {
@@ -468,6 +484,29 @@ func (manager *Manager) Start(ctx context.Context, mode Mode, patchID, confirmat
 	}
 	if !validPatchID(patchID) {
 		return Job{}, ErrPackageNotFound
+	}
+	if operationID != "" && !validPatchID(operationID) {
+		return Job{}, ErrInvalidPatch
+	}
+	if operationID != "" {
+		if mode != ModePlan && strings.TrimSpace(confirmation) != patchID {
+			return Job{}, ErrConfirmationRequired
+		}
+		if err := manager.validateHistoryFresh(patchID); err != nil {
+			return Job{}, err
+		}
+		for _, previous := range manager.Operations(patchID) {
+			if previous.OperationID != operationID {
+				continue
+			}
+			if previous.Mode != mode || previous.PatchID != patchID {
+				return Job{}, ErrPackageConflict
+			}
+			if current, found := manager.Job(patchID); found && current.OperationID == operationID {
+				return current, nil
+			}
+			return previous, nil
+		}
 	}
 	softwarePackage, found := manager.Package(patchID)
 	if !found {
@@ -480,7 +519,30 @@ func (manager *Manager) Start(ctx context.Context, mode Mode, patchID, confirmat
 	if err != nil {
 		return Job{}, err
 	}
+	{
+		verified, err := manager.inspector.Inspect(ctx, filepath.Join(manager.config.RootDirectory, patchID, patchFileName), manager.config.TrustKeyPath)
+		if err != nil {
+			return Job{}, err
+		}
+		if !verified.SignatureVerified || verified.PatchID != patchID || verified.Kind != softwarePackage.Kind || verified.SourceVersion != softwarePackage.SourceVersion || verified.TargetVersion != softwarePackage.TargetVersion {
+			return Job{}, fmt.Errorf("%w: CG_PACKAGE_IDENTITY_MISMATCH", ErrInvalidPatch)
+		}
+		if fault := packageBaselineFault(verified.Kind, verified.SourceVersion, verified.TargetVersion, manager.config.CurrentRelease); fault != "" {
+			return Job{}, fmt.Errorf("%w: %s", ErrPackageBaselineMismatch, fault)
+		}
+	}
+	if err := manager.verifyStoredDigest(softwarePackage); err != nil {
+		return Job{}, err
+	}
 	current, found := manager.Job(patchID)
+	if err := manager.validateHistoryFresh(patchID); err != nil {
+		return Job{}, err
+	}
+	if mode != ModePlan {
+		if err := manager.checkSuperseded(ctx, patchID); err != nil {
+			return Job{}, err
+		}
+	}
 	if found && (current.Status == StatusQueued || current.Status == StatusRunning) {
 		return Job{}, ErrJobActive
 	}
@@ -490,6 +552,24 @@ func (manager *Manager) Start(ctx context.Context, mode Mode, patchID, confirmat
 	if mode == ModeResume && softwarePackage.Kind == PackageKindHotfix {
 		return Job{}, ErrResumeUnsupported
 	}
+	if mode == ModeRetry && softwarePackage.Kind != PackageKindHotfix {
+		return Job{}, ErrInvalidPatch
+	}
+	if mode == ModeRetry && (!found || current.Status != StatusFailed) {
+		return Job{}, ErrPlanRequired
+	}
+	if mode == ModeRetry && current.DeploymentState == "installed" {
+		return Job{}, ErrPlanRequired
+	}
+	if mode == ModeResume && (!found || current.Status != StatusFailed) {
+		return Job{}, ErrPlanRequired
+	}
+	if mode == ModeRollback && (!found || !softwarePackage.RollbackAvailable || (current.Status != StatusFailed && current.Status != StatusSucceeded)) {
+		return Job{}, ErrPlanRequired
+	}
+	if mode == ModeExecute && current.DeploymentState == "installed" {
+		return Job{}, ErrPlanRequired
+	}
 	if mode == ModeExecute && (!found || current.Status != StatusPlanned) {
 		return Job{}, ErrPlanRequired
 	}
@@ -497,13 +577,16 @@ func (manager *Manager) Start(ctx context.Context, mode Mode, patchID, confirmat
 		return Job{}, ErrConfirmationRequired
 	}
 	switch mode {
-	case ModePlan, ModeExecute, ModeResume, ModeRollback:
+	case ModePlan, ModeExecute, ModeRetry, ModeResume, ModeRollback:
 	default:
 		return Job{}, ErrInvalidPatch
 	}
 	now := manager.now().UTC()
+	if operationID == "" {
+		operationID = string(model.NewResourceID())
+	}
 	job := Job{
-		PatchID: patchID, Mode: mode, Status: StatusQueued, StartedAt: now, UpdatedAt: now,
+		OperationID: operationID, PatchID: patchID, Mode: mode, Status: StatusQueued, StartedAt: now, UpdatedAt: now,
 		AutomaticFailoverAvailable: mode == ModePlan,
 	}
 	if mode != ModePlan {
@@ -516,14 +599,31 @@ func (manager *Manager) Start(ctx context.Context, mode Mode, patchID, confirmat
 	if err := ensureDirectoryMode(filepath.Dir(jobPath), updateJobDirMode); err != nil {
 		return Job{}, fmt.Errorf("prepare software update job directory: %w", err)
 	}
+	if found {
+		if err := manager.preservePreviousOperation(current); err != nil {
+			return Job{}, err
+		}
+	}
+	if err := appendOperation(filepath.Dir(jobPath), "requests.jsonl", job); err != nil {
+		return Job{}, err
+	}
 	if err := writeJSONAtomic(jobPath, job); err != nil {
 		return Job{}, err
 	}
-	if err := manager.helper.Start(ctx, mode, patchID); err != nil {
+	var startErr error
+	if helper, ok := manager.helper.(interface {
+		StartOperation(context.Context, Mode, string, string) error
+	}); ok {
+		startErr = helper.StartOperation(ctx, mode, patchID, job.OperationID)
+	} else {
+		startErr = manager.helper.Start(ctx, mode, patchID)
+	}
+	if err := startErr; err != nil {
 		job.Status = StatusFailed
 		job.Message = err.Error()
 		job.FinishedAt = manager.now().UTC()
 		job.UpdatedAt = job.FinishedAt
+		_ = appendOperation(filepath.Dir(jobPath), "requests.jsonl", job)
 		if !jobFileHasTerminalStatus(jobPath) {
 			_ = writeJSONAtomic(jobPath, job)
 		}
@@ -622,6 +722,13 @@ func (manager *Manager) Job(patchID string) (Job, bool) {
 		eventsPath = filepath.Join(directory, "clusterguard-update-"+patchID+".events.jsonl")
 	}
 	result.Events = readEvents(eventsPath, maximumTailLines)
+	if err := manager.validateHistory(patchID); err != nil {
+		result.VerificationRequired = true
+		result.Message = err.Error()
+	}
+	if deployment, ok := manager.Deployment(patchID); ok {
+		result.DeploymentState = deployment.State
+	}
 	deriveJobProgress(&result)
 	return result, true
 }
@@ -637,6 +744,13 @@ func deriveJobProgress(job *Job) {
 		seen[node] = struct{}{}
 	}
 	for _, event := range job.Events {
+		owner := event.OperationID
+		if owner == "" {
+			owner = event.ExecutionID
+		}
+		if job.OperationID != "" && owner != job.OperationID {
+			continue
+		}
 		if strings.TrimSpace(event.Node) != "" {
 			job.Node = event.Node
 		}
@@ -658,6 +772,13 @@ func deriveJobProgress(job *Job) {
 	}
 	if len(job.Events) > 0 {
 		latest := job.Events[len(job.Events)-1]
+		owner := latest.OperationID
+		if owner == "" {
+			owner = latest.ExecutionID
+		}
+		if job.OperationID != "" && owner != job.OperationID {
+			latest = Event{}
+		}
 		if !latest.UpdatedAt.IsZero() && (job.UpdatedAt.IsZero() || latest.UpdatedAt.After(job.UpdatedAt)) {
 			job.UpdatedAt = latest.UpdatedAt
 			if latest.Mode != "" {
@@ -750,6 +871,9 @@ func progressPercent(status Status, progress Progress) int {
 }
 
 func (manager *Manager) readiness(ctx context.Context) error {
+	if err := updatecontract.Validate(); err != nil {
+		return err
+	}
 	info, err := os.Stat(manager.config.TrustKeyPath)
 	if err != nil || !info.Mode().IsRegular() {
 		return fmt.Errorf("可信补丁签名公钥未配置：%s", manager.config.TrustKeyPath)

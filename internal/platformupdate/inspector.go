@@ -2,6 +2,7 @@ package platformupdate
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -44,8 +45,21 @@ func (inspector CommandInspector) Inspect(ctx context.Context, patchPath, trustK
 	if kind == "" {
 		kind = PackageKindUpgrade
 	}
+	var supersedes []string
+	if raw := values["supersedes"]; raw != "" {
+		if err := json.Unmarshal([]byte(raw), &supersedes); err != nil {
+			return Package{}, ErrInvalidPatch
+		}
+		seen := map[string]bool{}
+		for _, id := range supersedes {
+			if !validPatchID(id) || id == values["patch_id"] || seen[id] {
+				return Package{}, ErrInvalidPatch
+			}
+			seen[id] = true
+		}
+	}
 	return Package{
-		PatchID: values["patch_id"], Kind: kind,
+		PatchID: values["patch_id"], Kind: kind, Supersedes: supersedes,
 		SourceVersion: values["source"], TargetVersion: values["target"],
 		Architecture: values["architecture"], SignatureVerified: values["signature"] == "verified",
 		RollbackAvailable: values["rollback"] == "available", Rolling: values["rolling"] == "true",

@@ -38,6 +38,12 @@ while (($#)); do
   esac
 done
 
+# Read the supported mandatory contract before constructing or signing bytes.
+"${CG_NODE_BIN:-node}" "${script_dir}/../tools/verify-upgrade-validation-chain.cjs" --repo "${script_dir}/.." --contract-only || {
+  printf 'CG_CONTRACT_UNAVAILABLE: mandatory upgrade contract failed\n' >&2
+  exit 1
+}
+
 [[ "${version}" =~ ^[0-9][0-9A-Za-z._+~]*$ ]] || { echo "invalid RPM version" >&2; exit 2; }
 [[ "${release}" =~ ^[0-9][0-9A-Za-z._+~]*$ ]] || { echo "invalid RPM release" >&2; exit 2; }
 case "${goarch}" in

@@ -73,6 +73,7 @@ const openSession = url => new Promise((resolve, reject) => {
     const handler = pending.get(message.id);
     if (!handler) return;
     pending.delete(message.id);
+    clearTimeout(handler.timer);
     if (message.error) handler.reject(new Error(message.error.message));
     else handler.resolve(message.result);
   });
@@ -80,13 +81,18 @@ const openSession = url => new Promise((resolve, reject) => {
   socket.addEventListener('error', () => { clearTimeout(timer); reject(new Error('devtools websocket failed')); }, { once:true });
   const send = (method, params = {}, timeoutMs = 10000) => new Promise((res, rej) => {
     sequence += 1;
-    pending.set(sequence, { resolve:res, reject:rej });
+    const id = sequence;
+    const timer = setTimeout(() => { if (pending.delete(id)) rej(new Error(`${method} timed out after ${timeoutMs}ms`)); }, timeoutMs);
+    pending.set(id, { resolve:res, reject:rej, timer });
     if (process.env.CG_CDP_TRACE) console.log(`cdp << ${JSON.stringify({ id: sequence, method })}`);
     socket.send(JSON.stringify({ id:sequence, method, params }));
-    setTimeout(() => { if (pending.delete(sequence)) rej(new Error(`${method} timed out after ${timeoutMs}ms`)); }, timeoutMs);
   });
   send.on = listener => { listeners.add(listener); return () => listeners.delete(listener); };
-  send.close = () => { try { socket.close(); } catch (_) {} };
+  send.close = () => {
+    for (const handler of pending.values()) { clearTimeout(handler.timer); handler.reject(new Error('devtools session closed')); }
+    pending.clear();
+    try { socket.close(); } catch (_) {}
+  };
   socket.addEventListener('open', () => { clearTimeout(timer); resolve(send); }, { once:true });
 });
 

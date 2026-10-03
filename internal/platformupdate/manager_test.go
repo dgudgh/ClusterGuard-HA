@@ -534,6 +534,30 @@ func TestManagerRefusesToResumeAHotfixAndKeepsItsRecord(t *testing.T) {
 	}
 }
 
+func TestManagerRetriesOnlyFailedHotfixWithItsOwnMode(t *testing.T) {
+	manager, helper, patchID := preparedHotfixManager(t)
+	writeJobForTest(t, manager.config.RootDirectory, Job{
+		PatchID: patchID, Mode: ModeExecute, Status: StatusFailed,
+		StartedAt: time.Date(2026, 9, 29, 8, 22, 35, 0, time.UTC),
+	})
+	if _, err := manager.Start(context.Background(), ModeRetry, patchID, "wrong"); !errors.Is(err, ErrConfirmationRequired) {
+		t.Fatalf("retry must require the same package ID confirmation: %v", err)
+	}
+	job, err := manager.Start(context.Background(), ModeRetry, patchID, patchID)
+	if err != nil || job.Mode != ModeRetry || job.Status != StatusQueued || len(helper.started) != 1 || helper.started[0] != ModeRetry {
+		t.Fatalf("retry must reach helper as retry of the same package: job=%+v helper=%+v err=%v", job, helper.started, err)
+	}
+	writeJobForTest(t, manager.config.RootDirectory, Job{PatchID: patchID, Mode: ModeRetry, Status: StatusSucceeded})
+	if _, err := manager.Start(context.Background(), ModeRetry, patchID, patchID); !errors.Is(err, ErrPlanRequired) {
+		t.Fatalf("an installed hotfix must not be retried: %v", err)
+	}
+	rolling, _, rollingID := preparedManager(t)
+	writeJobForTest(t, rolling.config.RootDirectory, Job{PatchID: rollingID, Mode: ModeExecute, Status: StatusFailed})
+	if _, err := rolling.Start(context.Background(), ModeRetry, rollingID, rollingID); !errors.Is(err, ErrInvalidPatch) {
+		t.Fatalf("rolling upgrade retry must be rejected: %v", err)
+	}
+}
+
 // The refusal is specific to hotfixes. A rolling upgrade is applied node by node and a
 // failure part-way leaves nodes on two different versions, so resume is the only supported
 // way forward and must keep working - including the fact that it still reaches the helper.

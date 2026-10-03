@@ -74,11 +74,17 @@ func (repository *Repository) ClaimSoftwareUpdateGate(patchID, executionID, prev
 		(!validSoftwareUpdateIdentifier(previousPatchID) || !validSoftwareUpdateIdentifier(previousExecutionID)) {
 		return SoftwareUpdateGate{}, validationError("previous software update gate identity is invalid")
 	}
+	if previousPatchID != "" && previousPatchID != patchID {
+		return SoftwareUpdateGate{}, conflictError("CG_FOREIGN_UPDATE_LOCK: maintenance ownership cannot transfer between packages")
+	}
 	repository.mutationMu.Lock()
 	defer repository.mutationMu.Unlock()
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 	if existing := repository.snapshot.SoftwareUpdateGate; existing != nil {
+		if existing.PatchID != patchID {
+			return SoftwareUpdateGate{}, conflictError("CG_FOREIGN_UPDATE_LOCK: maintenance gate belongs to another package")
+		}
 		if existing.PatchID == patchID && existing.ExecutionID == executionID {
 			return *existing, nil
 		}

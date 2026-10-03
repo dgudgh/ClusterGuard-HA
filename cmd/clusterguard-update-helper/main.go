@@ -16,9 +16,17 @@ import (
 	"time"
 
 	"clusterguard.io/ha/internal/platformupdate"
+	"clusterguard.io/ha/internal/updatecontract"
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "contract" {
+		if err := updatecontract.Validate(); err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println(`{"id":"CG-UPGRADE-CONTRACT","contract_version":2,"contract_loaded":true}`)
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "workspace" {
 		if err := platformupdate.RunWorkspaceCommand(os.Args[2:]); err != nil {
 			log.Fatal(err)

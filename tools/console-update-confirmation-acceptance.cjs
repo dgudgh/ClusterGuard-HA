@@ -147,6 +147,25 @@ const deferred = () => {
         await page.locator('#software-update-progress-dialog').waitFor({ state:'visible' });
         check(mock.posts.filter(post => post.mode === 'execute').length === 1, 'durable reconciliation never resubmits mutation');
       });
+
+      await scenario('uncertain-hotfix-retry-operation-identity', async ({page,mock,item,check,confirm}) => {
+        item.package.kind='hotfix';
+        item.job={patch_id:item.package.patch_id,operation_id:'previous-operation',mode:'retry',status:'failed',started_at:'2026-09-08T00:01:00Z',updated_at:'2026-09-08T00:01:00Z'};
+        await page.evaluate(() => loadSoftwareUpdates());
+        await confirm(); mock.error=503;
+        await page.locator('#confirm-software-update-action').click();
+        await page.waitForFunction(() => document.querySelector('#confirm-software-update-action').textContent === '核对任务状态');
+        const request=mock.posts.find(post => post.mode==='retry');
+        check(!!request?.payload?.operation_id,'retry has an explicit operation identity');
+        item.job={...item.job,status:'running',operation_id:'different-operation'};
+        await page.locator('#confirm-software-update-action').click();
+        await page.waitForFunction(() => document.querySelector('#software-update-confirmation-state').textContent.includes('尚未查到本次动作'));
+        check(await page.locator('#software-update-confirmation-dialog').isVisible(),'a different operation cannot reconcile the retry');
+        item.job.operation_id=request.payload.operation_id;
+        await page.locator('#confirm-software-update-action').click();
+        await page.locator('#software-update-progress-dialog').waitFor({state:'visible'});
+        check(mock.posts.filter(post => post.mode==='retry').length===1,'same-second retry reconciles without another mutation');
+      });
       await scenario('network-disconnect', async ({ page, mock, check, confirm }) => {
         await confirm();
         await page.route('**/api/v1/platform/updates/*/execute', route => route.abort('connectionreset'));

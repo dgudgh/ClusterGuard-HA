@@ -2,6 +2,7 @@ package platformupdate
 
 import (
 	"bytes"
+	"clusterguard.io/ha/internal/updatecontract"
 	"context"
 	"encoding/json"
 	"errors"
@@ -47,7 +48,11 @@ func (client *UnixHelperClient) Ready(ctx context.Context) error {
 }
 
 func (client *UnixHelperClient) Start(ctx context.Context, mode Mode, patchID string) error {
-	contents, _ := json.Marshal(helperRequest{Mode: mode, PatchID: patchID})
+	return client.StartOperation(ctx, mode, patchID, "")
+}
+
+func (client *UnixHelperClient) StartOperation(ctx context.Context, mode Mode, patchID, operationID string) error {
+	contents, _ := json.Marshal(helperRequest{Mode: mode, PatchID: patchID, OperationID: operationID})
 	request, _ := http.NewRequestWithContext(ctx, http.MethodPost, "http://unix/v1/jobs", bytes.NewReader(contents))
 	request.Header.Set("Content-Type", "application/json")
 	response, err := client.client.Do(request)
@@ -69,8 +74,9 @@ func (client *UnixHelperClient) Start(ctx context.Context, mode Mode, patchID st
 }
 
 type helperRequest struct {
-	Mode    Mode   `json:"mode"`
-	PatchID string `json:"patch_id"`
+	Mode        Mode   `json:"mode"`
+	PatchID     string `json:"patch_id"`
+	OperationID string `json:"operation_id,omitempty"`
 }
 
 type JobLauncher interface {
@@ -82,6 +88,10 @@ type CommandLauncher struct {
 }
 
 func (launcher CommandLauncher) Start(mode Mode, patchID, outputPath string, done func(error)) error {
+	return launcher.StartOperation(mode, patchID, outputPath, "", done)
+}
+
+func (launcher CommandLauncher) StartOperation(mode Mode, patchID, outputPath, operationID string, done func(error)) error {
 	directory, err := openHelperDirectory(filepath.Dir(outputPath))
 	if err != nil {
 		return err
@@ -98,6 +108,9 @@ func (launcher CommandLauncher) Start(mode Mode, patchID, outputPath string, don
 		return err
 	}
 	command := exec.Command(launcher.RunnerPath, "--mode", string(mode), "--patch-id", patchID)
+	if operationID != "" {
+		command.Args = append(command.Args, "--operation-id", operationID)
+	}
 	command.Stdout = output
 	command.Stderr = output
 	if err := command.Start(); err != nil {
@@ -133,6 +146,10 @@ func NewHelperHandlerWithPrivateRoot(root, privateRoot string, launcher JobLaunc
 
 func (handler *HelperHandler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if err := updatecontract.Validate(); err != nil {
+		helperError(writer, http.StatusServiceUnavailable, err.Error())
+		return
+	}
 	if request.Method == http.MethodGet && request.URL.Path == "/healthz" {
 		writer.WriteHeader(http.StatusOK)
 		_, _ = writer.Write([]byte(`{"status":"ok"}`))
@@ -145,7 +162,7 @@ func (handler *HelperHandler) ServeHTTP(writer http.ResponseWriter, request *htt
 	decoder := json.NewDecoder(http.MaxBytesReader(writer, request.Body, 4096))
 	decoder.DisallowUnknownFields()
 	payload := helperRequest{}
-	if err := decoder.Decode(&payload); err != nil || !validPatchID(payload.PatchID) || !allowedMode(payload.Mode) {
+	if err := decoder.Decode(&payload); err != nil || !validPatchID(payload.PatchID) || !allowedMode(payload.Mode) || (payload.OperationID != "" && !validPatchID(payload.OperationID)) {
 		helperError(writer, http.StatusBadRequest, "invalid software update request")
 		return
 	}
@@ -213,14 +230,22 @@ func (handler *HelperHandler) ServeHTTP(writer http.ResponseWriter, request *htt
 				defer privateDirectory.Close()
 			}
 			if err != nil {
-				handler.recordLaunchFailure(privateDirectory, payload.PatchID, payload.Mode, err)
+				handler.recordLaunchFailure(privateDirectory, payload.PatchID, payload.Mode, err, payload.OperationID)
 			}
 			handler.mu.Lock()
 			handler.active = false
 			handler.mu.Unlock()
 		})
 	}
-	if err := handler.launcher.Start(payload.Mode, payload.PatchID, filepath.Join(privatePath, outputFileName), done); err != nil {
+	var launchErr error
+	if launcher, ok := handler.launcher.(interface {
+		StartOperation(Mode, string, string, string, func(error)) error
+	}); ok {
+		launchErr = launcher.StartOperation(payload.Mode, payload.PatchID, filepath.Join(privatePath, outputFileName), payload.OperationID, done)
+	} else {
+		launchErr = handler.launcher.Start(payload.Mode, payload.PatchID, filepath.Join(privatePath, outputFileName), done)
+	}
+	if err := launchErr; err != nil {
 		done(err)
 		helperError(writer, http.StatusInternalServerError, "unable to start privileged software update job")
 		return
@@ -229,7 +254,11 @@ func (handler *HelperHandler) ServeHTTP(writer http.ResponseWriter, request *htt
 	_, _ = writer.Write([]byte(`{"status":"accepted"}`))
 }
 
-func (handler *HelperHandler) recordLaunchFailure(directory *os.File, patchID string, mode Mode, cause error) {
+func (handler *HelperHandler) recordLaunchFailure(directory *os.File, patchID string, mode Mode, cause error, operationIDs ...string) {
+	operationID := ""
+	if len(operationIDs) != 0 {
+		operationID = operationIDs[0]
+	}
 	job := Job{}
 	file, err := openHelperFile(directory, jobFileName, os.O_RDONLY, 0)
 	if err == nil {
@@ -249,13 +278,28 @@ func (handler *HelperHandler) recordLaunchFailure(directory *os.File, patchID st
 	// so the helper must not replace that evidence with a generic launch error.
 	switch job.Status {
 	case StatusPlanned, StatusSucceeded, StatusFailed, StatusRolledBack:
-		return
+		if operationID == "" || job.OperationID == operationID {
+			return
+		}
+	}
+	if operationID != "" && job.OperationID != operationID && job.PatchID != "" {
+		manager := &Manager{config: Config{RootDirectory: filepath.Dir(directory.Name())}}
+		if err := manager.preservePreviousOperation(job); err != nil {
+			return
+		}
+		job = Job{OperationID: operationID, StartedAt: time.Now().UTC()}
 	}
 	now := time.Now().UTC()
 	job.PatchID, job.Mode, job.Status = patchID, mode, StatusFailed
 	job.Message = "特权更新任务启动或执行失败：" + cause.Error()
 	job.Warning = AutomaticFailoverWarning
 	job.UpdatedAt, job.FinishedAt = now, now
+	if operationID != "" {
+		job.OperationID = operationID
+	}
+	if job.OperationID != "" {
+		_ = appendOperation(directory.Name(), "operations.jsonl", job)
+	}
 	_ = writeHelperJob(directory, job)
 }
 
@@ -265,7 +309,7 @@ func helperError(writer http.ResponseWriter, status int, message string) {
 }
 
 func allowedMode(mode Mode) bool {
-	return mode == ModePlan || mode == ModeExecute || mode == ModeResume || mode == ModeRollback
+	return mode == ModePlan || mode == ModeExecute || mode == ModeRetry || mode == ModeResume || mode == ModeRollback
 }
 
 func strictChild(root, child string) bool {

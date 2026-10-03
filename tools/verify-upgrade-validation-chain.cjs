@@ -1,42 +1,27 @@
 #!/usr/bin/env node
-// The gate for the upgrade validation chain.
-//
-// docs/upgrade-validation-chain.md is the mandatory contract for upgrades, hotfixes,
-// rollback, building, signing and field acceptance, and its section 22 maps every rule to the
-// place it is enforced. A mapping is a claim, and a claim nobody re-checks decays: this walks
-// the same list and re-checks each enforcement point against the tree, so a rule that stops
-// being true stops the release instead of quietly describing something that no longer holds.
-//
-// It also reports the obligations the contract itself records as outstanding (section 23).
-// They are printed on every run, with the card that closes each one, and --strict turns them
-// into failures - which is what a release gate should use until those cards land.
-//
-//   node tools/verify-upgrade-validation-chain.cjs [--repo <dir>] [--strict] [--self-test]
-//
-// Section 20 is why this exits non-zero rather than warning when the document is missing,
-// unparsable, or newer than this program understands: FAIL CLOSED is the whole point of
-// reading it first.
-//
-// --self-test proves the checks can fail. It copies the files the rules read into a temporary
-// directory, mutates one thing at a time, and asserts that the rule meant to catch it does -
-// plus a no-bite control that a comment-only edit is not reported as a violation. A gate that
-// cannot fail is worse than no gate, because it reads as a pass.
+// Checks the supported v2 section 21 contract, executable routing and rollback
+// generation, console subject identity, immutable delivery ledger and lock rules.
+// This is a local source gate, not proof of artifact or production acceptance.
+// Remaining ART/FIELD evidence is tracked in
+// docs/zh-CN/upgrade-validation-chain-implementation-status.md and is OPEN;
+// --strict refuses release until that evidence exists.
+// --contract-only checks loading/schema compatibility before builders write bytes.
+// --self-test runs mutations in an isolated copy and includes no-bite controls.
 
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const vm = require('node:vm');
 
-const SUPPORTED_CONTRACT_VERSION = 1;
+const SUPPORTED_CONTRACT_VERSION = 2;
 const CONTRACT_DOC = 'docs/upgrade-validation-chain.md';
 const CONTRACT_DOC_ZH = 'docs/zh-CN/upgrade-validation-chain.md';
 
 // Every rule below is a claim section 22 makes. The identifiers are the rule numbers of the
 // contract so a failure points at the clause to re-read, not merely at a file.
 const OPEN_OBLIGATIONS = [
-  { rule: '0.1.10', key: 'history.forbid_success_overwrite', card: 'UPDATE-OPERATION-HISTORY-P0' },
-  { rule: '0.1.11', key: 'history.package_state_separate_from_operation_history', card: 'UPDATE-OPERATION-HISTORY-P0' },
-  { rule: '0.1.11', key: 'history.append_only_operations', card: 'UPDATE-OPERATION-HISTORY-P0' },
+  { rule: '11 / 15', key: 'artifact_and_field_acceptance', status:'full ART/FIELD evidence is not completed', card: 'UPDATE-V2-FIELD-ACCEPTANCE' },
 ];
 
 const repoRoot = (() => {
@@ -45,6 +30,7 @@ const repoRoot = (() => {
 })();
 const strict = process.argv.includes('--strict');
 const selfTest = process.argv.includes('--self-test');
+const contractOnly = process.argv.includes('--contract-only');
 
 // The tree the checks read. The self-test points this at the mutated copy; a mutation is only
 // meaningful if the checks are reading the tree the mutation was written to.
@@ -60,28 +46,31 @@ const read = rel => {
 // rather than a YAML dependency: the block is the contract's own interface, and a gate that
 // needs a package installed to read the rules is a gate that will not be run.
 const parseContract = source => {
-  const match = source.match(/```yaml\n([\s\S]*?)```/);
-  if (!match) return null;
-  const flat = new Map();
-  let section = '';
-  for (const raw of match[1].split('\n')) {
-    if (!raw.trim() || raw.trim().startsWith('#')) continue;
-    const indented = /^\s+\S/.test(raw);
-    const separator = raw.indexOf(':');
-    if (separator < 0) return null;
-    const key = raw.slice(0, separator).trim();
-    const value = raw.slice(separator + 1).trim();
-    if (indented) {
-      if (!section) return null;
-      flat.set(`${section}.${key}`, value);
-    } else if (value === '') {
-      section = key;
+  if (typeof source !== 'string') return null;
+  const marker = '# 21. Machine-Readable Contract';
+  if (source.split(marker).length !== 2) return null;
+  const section = source.split(marker)[1].split('\n# 22.')[0];
+  const blocks = [...section.matchAll(/```yaml\n([\s\S]*?)```/g)];
+  if (blocks.length !== 1) return null;
+  const schema = JSON.parse(read('internal/updatecontract/schema.json') || 'null');
+  if (!schema) return null;
+  const values = new Map(), groups = new Set();
+  let group = '';
+  for (const line of blocks[0][1].split('\n')) {
+    if (!line.trim()) continue;
+    const match = line.match(/^( *)([a-z_][a-z_0-9]*): *(.*)$/);
+    if (!match) return null;
+    const [, indent, key, value] = match;
+    if (!indent) {
+      if (value || groups.has(key) || !Object.keys(schema).some(field => field.startsWith(key+'.'))) return null;
+      groups.add(key); group = key;
     } else {
-      section = '';
-      flat.set(key, value);
+      const field = group+'.'+key;
+      if (indent !== '  ' || !group || values.has(field) || schema[field] !== value) return null;
+      values.set(field,value);
     }
   }
-  return flat;
+  return values.size === Object.keys(schema).length ? values : null;
 };
 
 // The job wrapper's routing is a pure function for exactly this reason: it can be executed.
@@ -108,7 +97,35 @@ const runRouting = (mode, kind) => {
   } catch (_) { return null; }
 };
 
+const generatedRollback = () => {
+  const builder = read('scripts/build-hotfix-patch.sh');
+  const renderer = builder?.split("cat >\"${render_js}\" <<'RENDER_JS'\n")[1]?.split('\nRENDER_JS')[0];
+  if (!renderer) return null;
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(),'cg-rollback-gate-'));
+  try {
+    fs.writeFileSync(path.join(directory,'render.cjs'),renderer);
+    fs.writeFileSync(path.join(directory,'manifest.json'),JSON.stringify({hotfix_id:'HF-GATE',build_commit:'1234567890abcdef',fix_commits:[],source:{version:'2.2',release:'105'},files:[{artifact:'payload/example',install_path:'/tmp/example',mode:'0755',owner:'root',group:'root'}],verification:[]}));
+    execFileSync(process.execPath,[path.join(directory,'render.cjs'),path.join(directory,'manifest.json'),'',path.join(directory,'apply.sh'),path.join(directory,'rollback.sh')],{timeout:20000});
+    return fs.readFileSync(path.join(directory,'rollback.sh'),'utf8');
+  } finally { fs.rmSync(directory,{recursive:true,force:true}); }
+};
+
 const CHECKS = [
+  {
+    rule:'INV-004',
+    title:'deployment result survives a later failed operation',
+    run:() => {
+      const source = read('internal/api/console.html');
+      const start=source.indexOf('const softwareUpdateCompletedAttempt =');
+      const end=source.indexOf('const softwareUpdateOutcomeNote =',start);
+      if (start < 0 || end < 0) return 'missing outcome evaluator';
+      const fn = vm.runInNewContext(source.slice(start,end)+'; softwareUpdateOutcome',{},{timeout:1000});
+      if (fn({deployment_state:'installed',status:'failed'}) !== 'applied_attempt_failed') return 'failed attempt overwrites installed result';
+      if (fn({deployment_state:'rolled_back',status:'failed',events:[{status:'succeeded'}]}) !== 'failed') return 'stale event overrides authoritative rollback';
+      return true;
+    },
+  },
+
   {
     rule: '20',
     title: 'the mandatory document is present and parses',
@@ -117,13 +134,13 @@ const CHECKS = [
       if (!source) return `missing ${CONTRACT_DOC}`;
       const contract = parseContract(source);
       if (!contract) return `${CONTRACT_DOC} has no parsable machine-readable block`;
-      const version = Number(contract.get('VALIDATION_CONTRACT_VERSION'));
+      const version = Number(contract.get('contract.version'));
       if (!Number.isInteger(version)) return 'VALIDATION_CONTRACT_VERSION is not an integer';
       if (version > SUPPORTED_CONTRACT_VERSION) {
         return `the contract is version ${version} and this program supports ${SUPPORTED_CONTRACT_VERSION}: FAIL CLOSED`;
       }
-      if (contract.get('mandatory') !== 'true') return 'mandatory is not true';
-      if (contract.get('fail_closed') !== 'true') return 'fail_closed is not true';
+      if (contract.get('contract.mandatory') !== 'true') return 'mandatory is not true';
+      if (contract.get('contract.fail_closed') !== 'true') return 'fail_closed is not true';
       return true;
     },
   },
@@ -146,29 +163,24 @@ const CHECKS = [
     },
   },
   {
-    rule: '23',
-    title: 'every outstanding obligation is recorded, carded and still declared',
+    rule: '21',
+    title: 'runtime consumers load the same supported contract',
     run: () => {
-      const source = read(CONTRACT_DOC);
-      const contract = parseContract(source) || new Map();
-      for (const obligation of OPEN_OBLIGATIONS) {
-        if (contract.get(obligation.key) !== 'true') return `${obligation.key} is not declared true in the contract`;
-        const at = source.indexOf(obligation.key);
-        if (at < 0) return `${obligation.key} is not listed among the open obligations`;
-        const after = source.slice(at, at + 600);
-        if (!after.includes(`card: ${obligation.card}`)) return `${obligation.key} names no card (expected ${obligation.card})`;
+      if (read('internal/updatecontract/contract.md') !== read(CONTRACT_DOC)) return 'embedded contract differs';
+      for (const file of ['internal/platformupdate/manager.go','internal/platformupdate/helper.go']) {
+        if (!read(file)?.includes('updatecontract.Validate()')) return file+' does not load the contract';
       }
       return true;
     },
   },
   {
-    rule: '0.1.3',
-    title: "a hotfix resume is routed to a re-execution, and only a rolling upgrade resumes",
+    rule: '3 / 4',
+    title: "a hotfix resume is rejected, retry is explicit, and only a rolling upgrade resumes",
     run: () => {
       const hotfix = runRouting('resume', 'hotfix');
-      if (!hotfix) return 'update_mode_arguments could not be executed';
-      if (hotfix.includes('--resume')) return `resume+hotfix still emits --resume: ${hotfix.join(' ')}`;
-      if (!hotfix.includes('--execute')) return `resume+hotfix does not re-execute: ${hotfix.join(' ')}`;
+      if (hotfix !== null) return 'resume+hotfix was not rejected';
+      const retry = runRouting('retry', 'hotfix');
+      if (!retry?.includes('--retry') || !retry.includes('--execute') || retry.includes('--resume')) return 'retry+hotfix lost explicit retry identity';
       const upgrade = runRouting('resume', 'upgrade');
       if (!upgrade) return 'update_mode_arguments could not be executed for an upgrade';
       if (!upgrade.includes('--resume')) return `resume+upgrade lost --resume: ${upgrade.join(' ')}`;
@@ -178,7 +190,7 @@ const CHECKS = [
     },
   },
   {
-    rule: '0.1.3',
+    rule: '3 / 4',
     title: 'the back end refuses a hotfix resume before anything is written',
     run: () => {
       const manager = read('internal/platformupdate/manager.go');
@@ -200,7 +212,7 @@ const CHECKS = [
     },
   },
   {
-    rule: '0.1.6',
+    rule: 'INV-005',
     title: 'the maintenance lock is adopted only by the patch that left it',
     run: () => {
       const source = read('scripts/clusterguard-upgrade.sh');
@@ -210,14 +222,14 @@ const CHECKS = [
     },
   },
   {
-    rule: '0.1.7',
+    rule: 'INV-005',
     title: 'a foreign maintenance lock is refused by name',
     run: () => {
       const source = read('scripts/clusterguard-upgrade.sh');
       if (!source) return 'missing scripts/clusterguard-upgrade.sh';
       const fn = shellFunction(source, 'detect_foreign_update_lock');
       if (!fn) return 'detect_foreign_update_lock is gone';
-      if (!fn.includes('die ')) return 'detect_foreign_update_lock no longer refuses the run';
+      if (!fn.includes('die "CG_FOREIGN_UPDATE_LOCK: 维护门禁当前由 ${previous} 持有')) return 'detect_foreign_update_lock no longer refuses the foreign holder';
       if (!/found\s*==\s*\$\{#controllers\[@\]\}/.test(fn)) return 'the foreign check no longer requires every controller to agree';
       const helper = shellFunction(source, 'foreign_update_lock_on_host');
       if (!helper) return 'foreign_update_lock_on_host is gone';
@@ -232,7 +244,7 @@ const CHECKS = [
     },
   },
   {
-    rule: '0.1.2 / 5.1 / 5.2',
+    rule: '4 / 5',
     title: 'the console resolves one subject and describes the action it takes',
     run: () => {
       const page = read('internal/api/console.html');
@@ -241,7 +253,7 @@ const CHECKS = [
         ['single subject resolver', 'const softwareUpdateSubject = () => pendingSoftwareUpdate() || latestSoftwareUpdate();'],
         ['confirmation defaulting to the subject', 'patchID = softwareUpdateSubject()?.package?.patch_id'],
         ['rollback and resume using the subject', 'byId(\'resume-software-update\').addEventListener(\'click\', () => openSoftwareUpdateConfirmation(\'resume\'))'],
-        ['the retry verdict travelling into the confirmation', "openSoftwareUpdateConfirmation('execute', patchID, softwareUpdateIsRetry(target))"],
+        ['the retry verdict travelling into the confirmation', "openSoftwareUpdateConfirmation(retry ? 'retry' : 'execute', patchID, retry)"],
         ['the plan step acting on the actionable record', 'const target = pendingSoftwareUpdate();'],
       ];
       for (const [label, needle] of required) {
@@ -254,7 +266,7 @@ const CHECKS = [
     },
   },
   {
-    rule: '0.1.17 / 0.1.18',
+    rule: 'INV-001 / INV-002',
     title: 'no action falls back to an implicit record, and an unknown id fails',
     run: () => {
       const page = read('internal/api/console.html');
@@ -273,11 +285,12 @@ const CHECKS = [
     },
   },
   {
-    rule: '8.1 / 8.2',
+    rule: 'RB-002',
     title: 'the generated rollback never copies over a running binary',
     run: () => {
-      const builder = read('scripts/build-hotfix-patch.sh');
-      if (!builder) return 'missing scripts/build-hotfix-patch.sh';
+      const generated = generatedRollback();
+      if (!generated) return 'rollback generator unavailable';
+      const builder = generated.split('\n').filter(line => !line.trimStart().startsWith('#')).join('\n');
       if (!builder.includes('restore_tmp="$(mktemp')) return 'the generated rollback no longer stages into a temporary file';
       if (!builder.includes('mv -f "${restore_tmp}" "${destination}"')) return 'the generated rollback no longer replaces the file atomically';
       // The failure mode is a copy whose target is the live file. A copy whose *source* is the
@@ -290,7 +303,7 @@ const CHECKS = [
     },
   },
   {
-    rule: '9',
+    rule: 'RB-001',
     title: 'a backup list is bound to the hotfix that wrote it',
     run: () => {
       const builder = read('scripts/build-hotfix-patch.sh');
@@ -308,7 +321,7 @@ const CHECKS = [
     },
   },
   {
-    rule: '0.1.8 / 0.1.9 / 2.2',
+    rule: 'INV-003 / 2',
     title: 'the ledger keeps every published identity and its revision chain intact',
     run: () => {
       const ledger = read('hotfixes/hotfix-publications.json');
@@ -343,7 +356,7 @@ const CHECKS = [
     },
   },
   {
-    rule: '10.2',
+    rule: 'BC-002',
     title: 'the catalogue gate scans the build range per commit for unaccounted production changes',
     run: () => {
       const gate = read('tools/verify-hotfix-patch-catalog.cjs');
@@ -358,7 +371,7 @@ const CHECKS = [
     },
   },
   {
-    rule: '7.1 / 7.2',
+    rule: '7',
     title: 'a leader change is not a failure, and an unknown leader is not a change',
     run: () => {
       const source = read('scripts/clusterguard-upgrade.sh');
@@ -377,7 +390,7 @@ const CHECKS = [
     },
   },
   {
-    rule: '0.1.15 / 13',
+    rule: '12 / 16 / 17',
     title: 'the artifact chain and the console regression exist',
     run: () => {
       for (const file of ['scripts/build-hotfix-patch.sh', 'tools/verify-hotfix-patch-catalog.cjs', 'tools/verify-upgrade-validation-chain.cjs']) {
@@ -398,15 +411,15 @@ const CHECKS = [
     },
   },
   {
-    rule: '19',
+    rule: '18',
     title: 'the release stage vocabulary is stated, so a stage cannot be overstated',
     run: () => {
       const source = read(CONTRACT_DOC);
-      const stages = ['built', 'signed', 'validated', 'released locally', 'pushed', 'tagged', 'uploaded to field', 'installed', 'verified in field'];
+      const stages = ['built', 'signed', 'validated', 'released_local', 'pushed', 'tagged', 'uploaded_field', 'installed_field', 'verified_field'];
       for (const stage of stages) {
         if (!source.includes(stage)) return `the contract no longer lists the release stage "${stage}"`;
       }
-      if (!/Every report must state the true stage/.test(source)) return 'the release discipline clause lost its requirement to state the true stage';
+      if (!source.includes('禁止把：')) return 'missing release stage discipline';
       return true;
     },
   },
@@ -414,7 +427,7 @@ const CHECKS = [
 
 const runChecks = () => {
   const failures = [];
-  for (const check of CHECKS) {
+  for (const check of (contractOnly ? CHECKS.filter(check => ['20','21'].includes(check.rule)) : CHECKS)) {
     let outcome;
     try { outcome = check.run(); } catch (error) { outcome = `threw: ${error.message}`; }
     if (outcome === true) {
@@ -429,9 +442,9 @@ const runChecks = () => {
 
 const reportOpen = () => {
   const source = read(CONTRACT_DOC) || '';
-  const open = OPEN_OBLIGATIONS.filter(obligation => source.includes(obligation.key));
+  const open = contractOnly ? [] : OPEN_OBLIGATIONS;
   for (const obligation of open) {
-    console.log(`OPEN  §${obligation.rule} ${obligation.key} — not implemented, card ${obligation.card}`);
+    console.log(`OPEN  §${obligation.rule} ${obligation.key} — ${obligation.status || "not implemented"}, card ${obligation.card}`);
   }
   return open;
 };
@@ -439,7 +452,7 @@ const reportOpen = () => {
 // The files the rules read. The self-test copies exactly these, so a mutation cannot be
 // caught by reading something the gate does not actually consult.
 const READ_FILES = [
-  CONTRACT_DOC, CONTRACT_DOC_ZH,
+  CONTRACT_DOC, CONTRACT_DOC_ZH, 'internal/updatecontract/contract.md', 'internal/updatecontract/schema.json', 'internal/platformupdate/helper.go',
   'scripts/clusterguard-update-job.sh', 'scripts/clusterguard-upgrade.sh', 'scripts/build-hotfix-patch.sh',
   'internal/platformupdate/manager.go', 'internal/api/updates.go', 'internal/api/console.html',
   'hotfixes/hotfix-publications.json', 'tools/verify-hotfix-patch-catalog.cjs',
@@ -448,30 +461,52 @@ const READ_FILES = [
 
 const MUTATIONS = [
   {
+    name:'a failed attempt overwrites installed deployment',file:'internal/api/console.html',
+    find:"job?.deployment_state === 'installed' && status === 'failed'",
+    replace:"false && status === 'failed'",
+    rule:'deployment result survives a later failed operation',
+  },
+
+  {
+    name:'atomic restore moved into a comment',
+    file:'scripts/build-hotfix-patch.sh',
+    find:"rollback.push('    mv -f \"${restore_tmp}\" \"${destination}\"');",
+    replace:"//rollback.push('    mv -f \"${restore_tmp}\" \"${destination}\"');",
+    rule:'the generated rollback never copies over a running binary',
+  },
+
+  ...[
+    ['unknown field', '  version: 2', '  version: 2\n  unknown: true'],
+    ['duplicate field', '  version: 2', '  version: 2\n  version: 2'],
+    ['unsupported version', '  version: 2', '  version: 3'],
+    ['invalid nesting', '  version: 2', '    version: 2'],
+  ].map(([name,find,replace]) => ({name,file:CONTRACT_DOC,find,replace,rule:'the mandatory document is present and parses'})),
+
+  {
     name: 'resume+hotfix goes back to --resume',
     file: 'scripts/clusterguard-update-job.sh',
-    find: 'if [[ "${requested_kind}" == hotfix ]]; then',
-    replace: 'if false; then',
-    rule: 'a hotfix resume is routed to a re-execution',
+    find: '[[ "${requested_kind}" != hotfix ]] ||',
+    replace: 'true ||',
+    rule: 'a hotfix resume is rejected',
   },
   {
     name: 'the resume arm is reached for every kind',
     file: 'scripts/clusterguard-update-job.sh',
-    find: 'if [[ "${requested_kind}" == hotfix ]]; then',
-    replace: 'if [[ "${requested_kind}" != hotfix ]]; then',
-    rule: 'a hotfix resume is routed to a re-execution',
+    find: '[[ "${requested_kind}" != hotfix ]] ||',
+    replace: '[[ "${requested_kind}" == hotfix ]] ||',
+    rule: 'a hotfix resume is rejected',
   },
   {
     name: 'the foreign lock check stops refusing',
     file: 'scripts/clusterguard-upgrade.sh',
-    find: '    die "维护门禁当前由 ${previous} 持有',
-    replace: '    log "维护门禁当前由 ${previous} 持有',
+    find: '    die "CG_FOREIGN_UPDATE_LOCK: 维护门禁当前由 ${previous} 持有',
+    replace: '    log "CG_FOREIGN_UPDATE_LOCK: 维护门禁当前由 ${previous} 持有',
     rule: 'a foreign maintenance lock is refused by name',
   },
   {
     name: 'the confirmation re-derives the verdict instead of reusing it',
     file: 'internal/api/console.html',
-    find: "openSoftwareUpdateConfirmation('execute', patchID, softwareUpdateIsRetry(target))",
+    find: "openSoftwareUpdateConfirmation(retry ? 'retry' : 'execute', patchID, retry)",
     replace: "openSoftwareUpdateConfirmation('execute', patchID)",
     rule: 'the console resolves one subject and describes the action it takes',
   },
@@ -591,7 +626,7 @@ if (selfTest) {
     console.log(`${open.length} obligation(s) are open and are not counted as passing checks.`);
     if (strict) {
       console.log('--strict is in effect, so they fail this run.');
-      failures.push(...open.map(obligation => `${obligation.key} is not implemented`));
+      failures.push(...open.map(obligation => `${obligation.key}: ${obligation.status || "not implemented"}`));
     }
   }
   if (failures.length) {
@@ -600,6 +635,6 @@ if (selfTest) {
     console.log('  That is a pass for the rules whose enforcement point still holds, and a failure for the rest.');
     process.exitCode = 1;
   } else {
-    console.log(`${CHECKS.length} checks passed, ${open.length} obligation(s) open, 0 failed.`);
+    console.log(`${contractOnly ? 3 : CHECKS.length} checks passed, ${open.length} obligation(s) open, 0 failed.`);
   }
 }

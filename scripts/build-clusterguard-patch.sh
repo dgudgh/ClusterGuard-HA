@@ -50,6 +50,12 @@ while (($#)); do
   esac
 done
 
+# Read the supported mandatory contract before constructing or signing bytes.
+"${CG_NODE_BIN:-node}" "${script_dir}/../tools/verify-upgrade-validation-chain.cjs" --repo "${script_dir}/.." --contract-only || {
+  printf 'CG_CONTRACT_UNAVAILABLE: mandatory upgrade contract failed\n' >&2
+  exit 1
+}
+
 command -v jq >/dev/null 2>&1 || die "需要 jq"
 command -v openssl >/dev/null 2>&1 || die "需要 openssl"
 command -v tar >/dev/null 2>&1 || die "需要 tar"

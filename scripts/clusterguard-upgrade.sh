@@ -24,9 +24,11 @@ rollback_requested=false
 rollback_in_progress=false
 assume_yes=false
 resume_requested=false
+retry_requested=false
 private_root="/var/lib/clusterguard-update-private"
 remote_stage=""
 expected_patch_id=""
+operation_id=""
 managed_job_dir=""
 workspace_protocol=2
 control_status_path="/api/v1/control-plane/status"
@@ -94,11 +96,9 @@ update_pruner="/usr/local/libexec/clusterguard-update-prune.sh"
 retained_versions="${CG_UPDATE_RETAINED_VERSIONS:-3}"
 update_mode="execute"
 progress_replication_enabled=false
-recoverable_previous_patch_id=""
 current_patch_maintenance_active=false
 current_patch_maintenance_inconsistent=false
 replicated_update_gate_active=false
-all_nodes_at_source=true
 bootstrap_available=false
 bootstrap_entrypoint=""
 bootstrap_sha=""
@@ -210,11 +210,13 @@ while (($#)); do
     --remote-stage) need_value "$@"; remote_stage="$2"; shift 2 ;;
     --private-root) need_value "$@"; private_root="$2"; shift 2 ;;
     --expected-patch-id) need_value "$@"; expected_patch_id="$2"; shift 2 ;;
+    --operation-id) need_value "$@"; operation_id="$2"; shift 2 ;;
     --managed-job-dir) need_value "$@"; managed_job_dir="$2"; shift 2 ;;
     --plan) execute=false; shift ;;
     --execute) execute=true; shift ;;
     --rollback) rollback_requested=true; shift ;;
     --resume) resume_requested=true; shift ;;
+    --retry) retry_requested=true; shift ;;
     -y|--yes) assume_yes=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "未知参数：$1" ;;
@@ -223,11 +225,19 @@ done
 [[ -n "${remote_stage}" ]] || remote_stage="${private_root}/history"
 [[ "${private_root}" =~ ^/[A-Za-z0-9._/-]+$ && "${private_root}" != *"//"* && "${private_root}" != *"/../"* && "${private_root}" != */.. ]] || die "私有执行目录无效"
 [[ -z "${expected_patch_id}" || "${expected_patch_id}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die "请求升级包 ID 无效"
+[[ -z "${operation_id}" || "${operation_id}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die "操作 ID 无效"
 [[ -z "${managed_job_dir}" || ( "${managed_job_dir}" =~ ^/[A-Za-z0-9._/-]+$ && "${managed_job_dir}" != *"//"* && "${managed_job_dir}" != *"/../"* && "${managed_job_dir}" != */.. ) ]] || die "展示目录无效"
 
 if ${rollback_requested} && ${resume_requested}; then
   die "--rollback 与 --resume 不能同时使用"
 fi
+if ${retry_requested} && { ${resume_requested} || ${rollback_requested}; }; then
+  die "retry 与 resume/rollback 不能同时使用"
+fi
+
+contract_helper="${CG_UPDATE_CONTRACT_HELPER:-/usr/local/libexec/clusterguard-update-helper}"
+[[ -x "${contract_helper}" && ! -L "${contract_helper}" ]] || die "CG_CONTRACT_UNAVAILABLE: 升级契约加载器不可用"
+"${contract_helper}" contract >/dev/null || die "CG_CONTRACT_UNAVAILABLE: 不支持当前升级契约"
 
 command -v jq >/dev/null 2>&1 || die "需要 jq"
 command -v openssl >/dev/null 2>&1 || die "需要 openssl"
@@ -404,6 +414,11 @@ verify_hotfix() {
     (.tooling.rollback.sha256 | type == "string" and test("^[0-9a-f]{64}$"))
   ' "${manifest}" >/dev/null ||
     die "热修补丁清单无效（需要 schema_version 3，且清单内必须携带 apply.sh/rollback.sh 的签名摘要）"
+  jq -e '. as $manifest | (.supersedes // []) as $ids |
+    ($ids | type == "array") and
+    ($ids | length == (unique | length)) and
+    all($ids[]; type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")) and
+    all($ids[]; . != $manifest.hotfix_id)' "${manifest}" >/dev/null || die "签名 supersedes 声明无效"
 
   patch_id="$(jq -r '.hotfix_id' "${manifest}")"
   source_version="$(jq -r '.source.version + "-" + .source.release' "${manifest}")"
@@ -514,6 +529,9 @@ if [[ "${package_kind}" == "hotfix" ]]; then
 else
   verify_patch
 fi
+if ${retry_requested} && [[ "${package_kind}" != hotfix ]]; then
+  die "retry 仅用于同一个热修补丁，滚动升级请使用 resume"
+fi
 
 if ${inspect_only}; then
   printf 'signature=verified\n'
@@ -525,6 +543,9 @@ if ${inspect_only}; then
   printf 'rollback=available\n'
   printf 'rolling=true\n'
   printf 'database_mutation=false\n'
+  if [[ "${package_kind}" == hotfix ]]; then
+    printf 'supersedes=%s\n' "$(jq -c '.supersedes // []' "${patch_root}/HOTFIX-MANIFEST.json")"
+  fi
   if ${bootstrap_available}; then
     printf 'bootstrap=available\n'
     printf 'bootstrap_protocol=%s\n' "${bootstrap_protocol}"
@@ -572,12 +593,16 @@ publish_local_update_file() {
 }
 
 execution_id="update-$(date -u +%Y%m%dT%H%M%SZ)-$$-$(openssl rand -hex 8)"
+[[ -z "${operation_id}" ]] || execution_id="${operation_id}"
+operation_id="${execution_id}"
 mutation_guard="trusted_directory '${remote_stage}' true; exec 8>'${remote_stage}/.node-update.lock'; flock -x -w 30 8;"
 
 if ${rollback_requested}; then
   update_mode="rollback"
 elif ${resume_requested}; then
   update_mode="resume"
+elif ${retry_requested}; then
+  update_mode="retry"
 fi
 
 append_unique() {
@@ -1217,24 +1242,6 @@ log_all_node_service_facts() {
   for host in "${all_nodes[@]}"; do log_node_service_facts "${host}"; done
 }
 
-failed_update_lock_on_host() {
-  local host="$1"
-  remote_run "${host}" "set -eu
-lock='${remote_stage}/.cluster-update.lock'
-marker='${maintenance_marker}'
-jq_bin=/usr/local/libexec/jq-linux-amd64
-test -d \"\${lock}\" && test -f \"\${lock}/patch-id\" && test -f \"\${marker}\" && test -x \"\${jq_bin}\"
-old=\$(cat \"\${lock}/patch-id\")
-case \"\${old}\" in [A-Za-z0-9]*) ;; *) exit 2 ;; esac
-case \"\${old}\" in *[!A-Za-z0-9._-]*) exit 2 ;; esac
-test \"\${old}\" != '${patch_id}'
-\"\${jq_bin}\" -e --arg patch \"\${old}\" '.patch_id == \$patch and .mode == \"rolling_update\"' \"\${marker}\" >/dev/null
-status='${private_root}/history/'\"\${old}\"'/status.json'
-test -f \"\${status}\"
-\"\${jq_bin}\" -e --arg patch \"\${old}\" '.patch_id == \$patch and .status == \"failed\" and .maintenance_active == true' \"\${status}\" >/dev/null
-printf '%s\\n' \"\${old}\""
-}
-
 current_update_lock_on_host() {
   local host="$1"
   remote_run "${host}" "set -eu
@@ -1291,14 +1298,15 @@ detect_foreign_update_lock() {
     holder="$(foreign_update_lock_on_host "${host}" 2>/dev/null || true)"
     [[ -n "${holder}" ]] || continue
     if [[ -n "${previous}" && "${holder}" != "${previous}" ]]; then
-      log "检测到不一致的维护门禁持有者；不会接管"
-      return 0
+      die "CG_FOREIGN_UPDATE_LOCK: 控制节点维护门禁持有者不一致；不会接管"
     fi
     previous="${holder}"
     found=$((found + 1))
   done
   if ((found == ${#controllers[@]})) && [[ -n "${previous}" ]]; then
-    die "维护门禁当前由 ${previous} 持有，与本次补丁 ${patch_id} 不同；热修补丁只能接管自己留下的门禁（同一个补丁重跑可以，换一个补丁不行）。请先处置 ${previous}，或直接用 ${previous} 重跑。"
+    die "CG_FOREIGN_UPDATE_LOCK: 维护门禁当前由 ${previous} 持有，与本次补丁 ${patch_id} 不同；只能重新执行或续跑 ${previous}。"
+  elif ((found > 0)); then
+    die "CG_FOREIGN_UPDATE_LOCK: ${found}/${#controllers[@]} 个控制节点持有外包门禁；锁归属不一致，不会接管"
   fi
 }
 
@@ -1318,39 +1326,6 @@ detect_current_update_lock() {
   fi
 }
 
-detect_recoverable_failed_update() {
-  local host candidate previous="" found=0 owner previous_owner=""
-  for host in "${controllers[@]}"; do
-    candidate="$(failed_update_lock_on_host "${host}" 2>/dev/null || true)"
-    if [[ -z "${candidate}" ]]; then
-      continue
-    fi
-    [[ "${candidate}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || return 0
-    if [[ -n "${previous}" && "${candidate}" != "${previous}" ]]; then
-      log "检测到不一致的历史升级维护锁；不会自动接管"
-      return 0
-    fi
-    previous="${candidate}"
-    found=$((found + 1))
-  done
-  if ((found == ${#controllers[@]})) && [[ -n "${previous}" ]]; then
-    for host in "${controllers[@]}"; do
-      owner="$(remote_run "${host}" "if test -f '${remote_stage}/.cluster-update.lock/execution-id'; then cat '${remote_stage}/.cluster-update.lock/execution-id'; else printf 'legacy\\n'; fi")" || return 0
-      [[ "${owner}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || return 0
-      [[ -z "${previous_owner}" || "${previous_owner}" == "${owner}" ]] || return 0
-      previous_owner="${owner}"
-    done
-    recoverable_previous_patch_id="${previous}"
-    if [[ "${previous_owner}" != legacy ]]; then
-      previous_gate_patch_id="${previous}"
-      previous_execution_id="${previous_owner}"
-    fi
-    log "检测到可安全接管的失败升级维护锁 previous_patch_id=${recoverable_previous_patch_id}"
-  elif ((found > 0)); then
-    log "历史升级维护锁仅在 ${found}/${#controllers[@]} 个控制节点满足接管条件；不会自动接管"
-  fi
-}
-
 build_order() {
   local host
   if ${resume_requested}; then
@@ -1360,8 +1335,6 @@ build_order() {
 		# maintenance is allowed to drain after every controller is gated.
 		if ${rollback_requested} && ${current_patch_maintenance_active}; then
 			verify_cluster_idle "" true any
-		elif [[ -n "${recoverable_previous_patch_id}" ]]; then
-			verify_cluster_idle "" true any
 		else
 			verify_cluster_idle "" false any
 		fi
@@ -1370,83 +1343,15 @@ build_order() {
     # same strictly classified stale pre-mutation automatic record that the
     # signed bootstrap can carry through maintenance; otherwise the old record
     # creates a plan-before-upgrade circular dependency.
-    if [[ -n "${recoverable_previous_patch_id}" ]]; then
-      wait_cluster_idle "" true stale_automatic || die "生成恢复升级计划前控制面未在时限内恢复一致"
-    else
-      wait_cluster_idle "" false stale_automatic || die "生成升级计划前控制面未在时限内恢复空闲"
-    fi
+    wait_cluster_idle "" false stale_automatic || die "生成升级计划前控制面未在时限内恢复空闲"
     # wait_cluster_idle isolates a failed probe so `die` cannot terminate the
     # caller. Refresh the stable topology in this shell to retain leader_host;
     # a newly admitted operation does not invalidate the read-only node order.
-    if [[ -n "${recoverable_previous_patch_id}" ]]; then
-      verify_cluster_idle "" true any
-    else
-      verify_cluster_idle "" false any
-    fi
+    verify_cluster_idle "" false any
   fi
   for host in "${controllers[@]}"; do [[ "${host}" == "${leader_host}" ]] || ordered_nodes[${#ordered_nodes[@]}]="${host}"; done
   for host in "${data_nodes[@]}"; do is_controller "${host}" || ordered_nodes[${#ordered_nodes[@]}]="${host}"; done
   ordered_nodes[${#ordered_nodes[@]}]="${leader_host}"
-}
-
-transfer_failed_update_locks() {
-  local host restore_host command restore_command previous_marker previous_owner_command transfer_failed=false compensation_failed=false
-  local -a transfer_order=("${leader_host}") transferred=()
-  for host in "${controllers[@]}"; do
-    [[ "${host}" == "${leader_host}" ]] || transfer_order[${#transfer_order[@]}]="${host}"
-  done
-  previous_marker="{\"schema_version\":1,\"patch_id\":\"${recoverable_previous_patch_id}\",\"mode\":\"rolling_update\"}"
-  previous_owner_command="rm -f \"\${lock}/execution-id\""
-  if [[ -n "${previous_execution_id}" ]]; then
-    previous_marker="{\"schema_version\":2,\"patch_id\":\"${recoverable_previous_patch_id}\",\"execution_id\":\"${previous_execution_id}\",\"mode\":\"rolling_update\"}"
-    previous_owner_command="printf '%s\\n' '${previous_execution_id}' >\"\${lock}/execution-id\""
-  fi
-  command="set -eu
-${mutation_guard}
-lock='${remote_stage}/.cluster-update.lock'
-marker='${maintenance_marker}'
-jq_bin=/usr/local/libexec/jq-linux-amd64
-test \"\$(cat \"\${lock}/patch-id\")\" = '${recoverable_previous_patch_id}'
-\"\${jq_bin}\" -e --arg patch '${recoverable_previous_patch_id}' '.patch_id == \$patch and .mode == \"rolling_update\"' \"\${marker}\" >/dev/null
-\"\${jq_bin}\" -e --arg patch '${recoverable_previous_patch_id}' '.patch_id == \$patch and .status == \"failed\" and .maintenance_active == true' '${private_root}/history/${recoverable_previous_patch_id}/status.json' >/dev/null
-printf '%s\\n' '${patch_id}' >\"\${lock}/patch-id.tmp\"
-mv -f \"\${lock}/patch-id.tmp\" \"\${lock}/patch-id\"
-printf '%s\\n' '${execution_id}' >\"\${lock}/execution-id.tmp\"
-mv -f \"\${lock}/execution-id.tmp\" \"\${lock}/execution-id\"
-umask 077
-printf '%s\\n' '{\"schema_version\":2,\"patch_id\":\"${patch_id}\",\"execution_id\":\"${execution_id}\",\"mode\":\"rolling_update\",\"supersedes\":\"${recoverable_previous_patch_id}\"}' >\"\${marker}.tmp\"
-mv -f \"\${marker}.tmp\" \"\${marker}\""
-  restore_command="set -eu
-${mutation_guard}
-lock='${remote_stage}/.cluster-update.lock'
-marker='${maintenance_marker}'
-test \"\$(cat \"\${lock}/patch-id\")\" = '${patch_id}'
-test \"\$(cat \"\${lock}/execution-id\")\" = '${execution_id}'
-printf '%s\\n' '${recoverable_previous_patch_id}' >\"\${lock}/patch-id.tmp\"
-mv -f \"\${lock}/patch-id.tmp\" \"\${lock}/patch-id\"
-${previous_owner_command}
-umask 077
-printf '%s\\n' '${previous_marker}' >\"\${marker}.tmp\"
-mv -f \"\${marker}.tmp\" \"\${marker}\""
-  for host in "${transfer_order[@]}"; do
-    if ! remote_run "${host}" "${command}"; then
-      transfer_failed=true
-      break
-    fi
-    transferred[${#transferred[@]}]="${host}"
-  done
-  if ${transfer_failed}; then
-    for restore_host in "${transferred[@]}"; do
-      remote_run "${restore_host}" "${restore_command}" >/dev/null 2>&1 || compensation_failed=true
-    done
-    ${compensation_failed} && log "警告：失败升级维护锁接管补偿不完整；所有维护门禁保持关闭"
-    die "无法原子接管失败升级 ${recoverable_previous_patch_id} 的维护锁；未修改任何 RPM"
-  fi
-  locked_nodes=("${transfer_order[@]}")
-  adopted_update_locks=true
-  retain_update_locks=true
-  update_locks_acquired=true
-  log "已接管失败升级维护锁 previous_patch_id=${recoverable_previous_patch_id} current_patch_id=${patch_id}"
 }
 
 adopt_current_update_locks() {
@@ -1529,10 +1434,6 @@ acquire_update_locks() {
 	local host command
 	local -a lock_order=("${leader_host}")
   upgrade_lock_name="${remote_stage}/.cluster-update.lock"
-  if [[ -n "${recoverable_previous_patch_id}" ]]; then
-    transfer_failed_update_locks
-    return
-  fi
   if ${current_patch_maintenance_active}; then
     adopt_current_update_locks
     return
@@ -1650,12 +1551,15 @@ publish_update_artifacts() {
 }
 
 publish_update_progress() {
-  local host status_source="${PWD}/status.json"
+  local host artifact status_source="${PWD}/status.json"
   [[ -f "${status_source}" && -f "${journal_events_file}" ]] || return 0
   publish_local_update_file "${status_source}" status.json ||
     log "警告：本机控制台状态投影失败，私有升级记录仍已保留"
   publish_local_update_file "${journal_events_file}" events.jsonl ||
     log "警告：本机控制台事件投影失败，私有升级记录仍已保留"
+  for artifact in operations.jsonl deployment.json; do
+    [[ ! -f "${PWD}/${artifact}" ]] || publish_local_update_file "${PWD}/${artifact}" "${artifact}" || log "警告：${artifact} 本机投影失败"
+  done
 
   remote_publish_private_file() {
     local target_host="$1" source="$2" destination="$3"
@@ -1667,6 +1571,9 @@ publish_update_progress() {
   }
 
   for host in "${controllers[@]}"; do
+    for artifact in operations.jsonl deployment.json; do
+      [[ ! -f "${PWD}/${artifact}" ]] || remote_publish_private_file "${host}" "${PWD}/${artifact}" "${artifact}" || log "警告：${host} 的 ${artifact} 同步失败"
+    done
     if ! remote_publish_private_file "${host}" "${status_source}" status.json; then
       log "警告：控制节点 ${host} 的升级状态同步失败"
       continue
@@ -1689,7 +1596,7 @@ write_journal() {
   jq -cn --arg execution_id "${execution_id}" --arg patch_id "${patch_id}" --arg mode "${update_mode}" --arg status "${status}" --arg node "${node}" --arg message "${message}" \
     --arg phase "${phase}" --argjson current "${current}" --argjson total "${total}" \
     --arg source "${source_version}" --arg target "${target_version}" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    '{execution_id:$execution_id,patch_id:$patch_id,mode:$mode,status:$status,node:$node,message:$message,phase:$phase,current:$current,total:$total,source:$source,target:$target,updated_at:$at}' >"${event_tmp}"
+    '{operation_id:$execution_id,execution_id:$execution_id,patch_id:$patch_id,mode:$mode,status:$status,node:$node,message:$message,phase:$phase,current:$current,total:$total,source:$source,target:$target,updated_at:$at}' >"${event_tmp}"
   chmod 0640 "${event_tmp}"
   cat "${event_tmp}" >>"${journal_events_file}"
   chmod 0640 "${journal_events_file}"
@@ -1714,13 +1621,29 @@ write_journal() {
     --arg node "${node}" --arg message "${message}" --arg phase "${phase}" \
     --arg started_at "${started_at}" --arg updated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg finished_at "${finished_at}" \
     --argjson maintenance_active "${maintenance}" --argjson current "${current}" --argjson total "${total}" --argjson percent "${percent}" \
-    '{execution_id:$execution_id,patch_id:$patch_id,mode:$mode,status:$status,node:$node,message:$message,
+    '{operation_id:$execution_id,execution_id:$execution_id,patch_id:$patch_id,mode:$mode,status:$status,node:$node,message:$message,
       maintenance_active:$maintenance_active,automatic_failover_available:($maintenance_active | not),
       started_at:$started_at,updated_at:$updated_at,finished_at:(if $finished_at == "" then null else $finished_at end),
       progress:{phase:$phase,current:$current,total:$total,percent:$percent}}' >"${PWD}/status.json.tmp"
   chown root:clusterguard "${PWD}/status.json.tmp" 2>/dev/null || true
   chmod 0640 "${PWD}/status.json.tmp"
   mv -f "${PWD}/status.json.tmp" "${PWD}/status.json"
+  jq -c . "${PWD}/status.json" >>"${PWD}/operations.jsonl"
+  chmod 0640 "${PWD}/operations.jsonl"
+  if [[ "${status}" == succeeded || "${status}" == rolled_back ]]; then
+    jq -n --arg package "${patch_id}" --arg operation "${operation_id}" --arg state "$([[ "${status}" == succeeded ]] && printf installed || printf rolled_back)" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{package_id:$package,state:$state,operation_id:$operation,last_verified_state:$state,last_verified_operation_id:$operation,updated_at:$at}' >"${PWD}/deployment.json.tmp"
+    chmod 0640 "${PWD}/deployment.json.tmp"
+    mv -f "${PWD}/deployment.json.tmp" "${PWD}/deployment.json"
+  elif [[ "${update_mode}" != plan ]]; then
+    [[ -f "${PWD}/deployment.json" ]] || printf '{"package_id":"%s","state":"not_installed"}\n' "${patch_id}" >"${PWD}/deployment.json"
+    jq --arg package "${patch_id}" --arg operation "${operation_id}" --arg mode "${update_mode}" --arg status "${job_status}" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
+      if .package_id != $package then error("CG_PACKAGE_IDENTITY_MISMATCH") else
+        .operation_id=$operation | .updated_at=$at |
+        .state=(if $status=="failed" then "recovery_required" elif $mode=="rollback" then "rollbacking" else "applying" end)
+      end' "${PWD}/deployment.json" >"${PWD}/deployment.json.tmp"
+    chmod 0640 "${PWD}/deployment.json.tmp"
+    mv -f "${PWD}/deployment.json.tmp" "${PWD}/deployment.json"
+  fi
   publish_update_progress
 }
 
@@ -1841,6 +1764,25 @@ rollback_updated_nodes() {
 }
 
 # --- Hotfix application ------------------------------------------------------
+assert_not_superseded() {
+  local record successor archive inspected declarations
+  shopt -s nullglob
+  for record in "${private_root}"/jobs/*/deployment.json "${private_root}"/history/*/deployment.json; do
+    [[ ! -L "${record}" ]] || die "CG_PACKAGE_IDENTITY_MISMATCH: 部署记录不是普通文件"
+    successor="$(jq -er 'select(.state=="installed") | .package_id' "${record}")" || continue
+    [[ "${successor}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die "CG_PACKAGE_IDENTITY_MISMATCH: 部署记录身份无效"
+    [[ "${successor}" != "${patch_id}" ]] || continue
+    archive="${private_root}/jobs/${successor}/package.cgpatch"
+    [[ -f "${archive}" ]] || archive="${private_root}/inbox/${successor}/package.cgpatch"
+    inspected="$(bash "${BASH_SOURCE[0]}" --patch "${archive}" --trust-key "${trust_key}" --expected-patch-id "${successor}" --inspect)" || die "CG_PACKAGE_IDENTITY_MISMATCH: 无法重新验签已安装补丁 ${successor}"
+    declarations="$(printf '%s\n' "${inspected}" | sed -n 's/^supersedes=//p')"
+    [[ -n "${declarations}" ]] || declarations='[]'
+    if jq -e --arg id "${patch_id}" 'index($id) != null' <<<"${declarations}" >/dev/null; then
+      die "CG_PACKAGE_IDENTITY_MISMATCH: ${patch_id} 已被签名且已安装的 ${successor} 替代"
+    fi
+  done
+  shopt -u nullglob
+}
 # A hotfix is not a version change: the installed RPM release stays where it is
 # and only the files named by the signed manifest are replaced. That is exactly
 # why this cannot reuse the rolling loop below, whose idempotency test is
@@ -2031,7 +1973,7 @@ run_hotfix_update() {
     update_mode="rollback"
     verify_cluster_idle "" any any
   else
-    update_mode="execute"
+    ${retry_requested} && update_mode="retry" || update_mode="execute"
     if ${current_patch_maintenance_active}; then
       # Our own gate survived a failed run; accept it here and let
       # acquire_update_locks adopt the existing locks rather than refusing the
@@ -2171,6 +2113,7 @@ run_hotfix_update() {
 # A hotfix runs its own flow: the rolling loop below keys on the RPM release,
 # which a hotfix deliberately does not change.
 if [[ "${package_kind}" == "hotfix" ]]; then
+  assert_not_superseded
   run_hotfix_update
   exit 0
 fi
@@ -2209,7 +2152,6 @@ for host in "${all_nodes[@]}"; do
         die "${host} 的源版本合同校验失败"
       ;;
     "${target_version}")
-      all_nodes_at_source=false
       verify_node_contract "${host}" "${target_product_version}" "${target_release}" "${target_state_format}" "${target_update_protocol}" ||
         die "${host} 的目标版本合同校验失败"
       ;;
@@ -2220,13 +2162,10 @@ for host in "${all_nodes[@]}"; do
 done
 
 detect_current_update_lock
-detect_recoverable_failed_update
+detect_foreign_update_lock
 ${current_patch_maintenance_inconsistent} && die "当前升级包维护锁不完整；为避免误清门禁，未执行任何变更"
 if ${resume_requested} && ! ${current_patch_maintenance_active}; then
   die "续跑只允许复用全部控制节点上的同一升级包完整维护锁；未执行任何变更"
-fi
-if [[ -n "${recoverable_previous_patch_id}" ]] && ! ${all_nodes_at_source}; then
-  die "失败升级维护锁只能在所有节点均已回到源版本 ${source_version} 后接管"
 fi
 
 build_order
@@ -2237,9 +2176,7 @@ printf '  目标合同   : %s\n' "${desired_version}"
 printf '  固定顺序   : followers -> data-only -> leader\n'
 printf '  Leader     : %s（最后处理）\n' "${leader_host}"
 printf '  数据库变更 : false\n'
-if [[ -n "${recoverable_previous_patch_id}" ]]; then
-  printf '  维护恢复   : 接管已失败升级 %s 的现有门禁\n' "${recoverable_previous_patch_id}"
-elif ${current_patch_maintenance_active}; then
+if ${current_patch_maintenance_active}; then
   printf '  维护恢复   : 复用当前升级包的现有门禁\n'
 fi
 for host in "${ordered_nodes[@]}"; do printf '  - %s\n' "${host}"; done
@@ -2264,7 +2201,7 @@ journal_started=true
 write_journal running "" "rolling update started" preparing 0 "${total_nodes}"
 write_journal running "" "maintenance gates are being acquired" locking 0 "${total_nodes}"
 maintenance_activity_mode="idle"
-if ! ${rollback_requested} || ${current_patch_maintenance_active} || [[ -n "${recoverable_previous_patch_id}" ]]; then
+if ! ${rollback_requested} || ${current_patch_maintenance_active}; then
   maintenance_activity_mode="stale_automatic"
 fi
 wait_cluster_idle "${leader_host}" true "${maintenance_activity_mode}" || die "维护门禁建立后控制面未在时限内恢复一致"

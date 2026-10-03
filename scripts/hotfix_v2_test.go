@@ -17,7 +17,7 @@ func TestHotfixRollbackAndRetryCompleteTheirRuntimeChecks(t *testing.T) {
 	probe := `set -eo pipefail
 source_version=2.2-105; target_version=2.2-105+hf-test; patch_id=HF-TEST
 patch_file=/tmp/unused; patch_root=/tmp; work_dir=/tmp; remote_stage=/tmp/stage
-execute=true; assume_yes=true; resume_requested=false; rollback_requested="$1"; release_ok="$2"; ready_ok="$3"
+execute=true; assume_yes=true; resume_requested=false; retry_requested=true; rollback_requested="$1"; release_ok="$2"; ready_ok="$3"
 current_patch_maintenance_active=false; retain_update_locks=false; update_locks_acquired=false; replicated_gate_active=false
 release_calls=0; restart_calls=0; ready_calls=0; journal_statuses=''
 controllers=(node1 node2 node3); data_nodes=(); all_nodes=(node1 node2 node3); leader_host=node3

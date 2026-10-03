@@ -211,6 +211,7 @@ func TestCommandLauncherPassesTheModeItWasAskedFor(t *testing.T) {
 	}{
 		{ModePlan, "--mode\nplan\n--patch-id\n" + patchID + "\n"},
 		{ModeExecute, "--mode\nexecute\n--patch-id\n" + patchID + "\n"},
+		{ModeRetry, "--mode\nretry\n--patch-id\n" + patchID + "\n"},
 		{ModeResume, "--mode\nresume\n--patch-id\n" + patchID + "\n"},
 		{ModeRollback, "--mode\nrollback\n--patch-id\n" + patchID + "\n"},
 	} {

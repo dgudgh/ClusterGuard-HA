@@ -25,7 +25,10 @@ func TestSoftwareUpdateGatePersistsAndTransfersWithoutUnfencing(t *testing.T) {
 	if _, err := reopened.ClaimSoftwareUpdateGate("patch-2", "execution-2", "patch-1", "wrong-owner"); !errors.Is(err, ErrConflict) {
 		t.Fatalf("stale takeover accepted: %v", err)
 	}
-	if _, err := reopened.ClaimSoftwareUpdateGate("patch-2", "execution-2", "patch-1", "execution-1"); err != nil {
+	if _, err := reopened.ClaimSoftwareUpdateGate("patch-2", "execution-2", "patch-1", "execution-1"); !errors.Is(err, ErrConflict) {
+		t.Fatalf("foreign package takeover accepted: %v", err)
+	}
+	if _, err := reopened.ClaimSoftwareUpdateGate("patch-1", "execution-2", "patch-1", "execution-1"); err != nil {
 		t.Fatal(err)
 	}
 	if !reopened.SoftwareUpdateMaintenanceActive() {
@@ -34,7 +37,7 @@ func TestSoftwareUpdateGatePersistsAndTransfersWithoutUnfencing(t *testing.T) {
 	if err := reopened.ReleaseSoftwareUpdateGate("patch-1", "execution-1"); !errors.Is(err, ErrConflict) {
 		t.Fatalf("old executor released new gate: %v", err)
 	}
-	if err := reopened.ReleaseSoftwareUpdateGate("patch-2", "execution-2"); err != nil {
+	if err := reopened.ReleaseSoftwareUpdateGate("patch-1", "execution-2"); err != nil {
 		t.Fatal(err)
 	}
 	final, err := Open(path)
