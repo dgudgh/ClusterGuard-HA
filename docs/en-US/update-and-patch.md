@@ -16,15 +16,32 @@ This guide defines how a customer site updates the ClusterGuard HA control plane
 >
 > Once the maintenance marker is established, planned switchovers, failovers, automatic failover, and node mutations are blocked by Safety Guard. Read-only topology, health, metrics, and operation logs remain available. Automatic failover resumes only after every node passes update verification and the maintenance marker is released. An interrupted or failed update keeps the marker in place and remains fail-closed until the same update package is resumed or rolled back.
 
+## Current v2 Action and State Rules (2026-10-03)
+
+Current source baseline: `7b643f4` (2026-10-03), on the sole mainline `codex/2.2-postgresql`. Updates and hotfixes enforce the v2 contract: failed hotfixes use `retry`; interrupted rolling updates use `resume`. New-artifact and site ART/FIELD acceptance remains **OPEN**. No new package or production deployment was performed.
+
+| Package and state | Recovery action | Rejected behavior |
+| --- | --- | --- |
+| Failed hotfix without a verified installed deployment | Confirm the original `patch_id`, then invoke `retry` directly | Do not replace failure identity with a new plan or convert resume to execute |
+| Verified installed hotfix | Read the result; request controlled rollback when supported | No resume or repeat installation of the same package |
+| Failed or interrupted rolling update | Same-package `resume` or controlled rollback | No takeover of another package's locks |
+| 5xx, disconnect, or timeout with uncertain acceptance | Read durable results for the same `operation_id` | No automatic resubmission or timestamp-based correlation |
+
+Action requests identify both `patch_id` and `operation_id`. Reusing an operation ID requires the same package and mode. `deployment.json` holds independent deployment state; `requests.jsonl` and `operations.jsonl` retain append-only history. A failed plan does not erase a successful deployment. Default status responses omit full history; request it explicitly through `GET /api/v1/platform/updates/<patch_id>?history=1`.
+
+Before inspect or execution, Runner requires an executable, non-symlink `clusterguard-update-helper` with a `contract` subcommand. The default is `/usr/local/libexec/clusterguard-update-helper`; controlled environments may set `CG_UPDATE_CONTRACT_HELPER`. An older Helper without this command refuses the run. Deploy matching Manager, Helper, and Runner through a new controlled delivery and validate the site; replacing only the upgrade script does not establish v2 deployment.
+
+Only signed `supersedes` declarations and verified installation establish replacement. A newer success on the same version does not automatically retire an older failure. Foreign locks, corrupt history, different replicated operation identities, and conflicting terminal results block execution while preserving evidence. See [implementation status](upgrade-validation-chain-implementation-status.md) and the [mandatory contract](../upgrade-validation-chain.md).
+
 ## Console-Based Update
 
 An administrator can complete the workflow under **Settings → Version Update** without assembling shell commands:
 
-1. Upload an officially released, signed `.cgupgrade`. The server validates format, SHA-256, release signature, architecture, source and target versions, and state protocol before accepting it.
+1. Upload a formally delivered, signed `.cgupgrade` rolling-update package or `.cgpatch` hotfix. The server validates format, SHA-256, release signature, architecture, source and target versions, and state protocol before accepting it.
 2. Select **Generate Update Plan** and review the update package ID, source, target, rolling order, rollback availability, and node inventory.
 3. Select **Execute Rolling Update**. The confirmation dialog repeats the automatic-failover warning and requires the complete update package ID. The runner first distributes the same signed package and metadata to every controller, verifies SHA-256 remotely, and publishes each copy atomically before creating maintenance gates.
 4. A persistent banner remains visible for the entire maintenance transaction while node events, status, and raw output update in place.
-5. After success, confirm the banner is gone and recheck topology, VIP, and replication. On failure, use **Resume Update** or **Controlled Rollback**; never delete maintenance markers manually.
+5. After success, confirm the banner is gone and recheck topology, VIP, and replication. On rolling-update failure, use **Resume Update** or **Controlled Rollback**; for a failed hotfix, use **Retry** or controlled rollback according to the table above; never delete maintenance markers manually.
 
 Upload and orchestration endpoints require an authenticated administrator and enforce CSRF, Raft Leader forwarding, signature trust, a constrained root helper, and audit recording. An update package ID cannot be overwritten with different content.
 
@@ -113,7 +130,7 @@ The initial installer registers immutable controller, data, and mixed-node ident
 
 | Change | Method |
 | --- | --- |
-| Version update such as `2.2-28` to `2.2-29` | Signed `.cgupgrade` rolling update |
+| Version update such as `2.2-104` to `2.2-105` | Signed `.cgupgrade` rolling update |
 | Feature-line update with unchanged state contract | Signed update package after compatibility qualification |
 | Incompatible `state_format` or `update_protocol` | Rejected; use a dedicated migration release |
 | Database engine upgrade | Separate database upgrade workflow |
@@ -123,15 +140,15 @@ Update protocol v1 does not perform destructive metadata downgrade. A future sta
 
 ## 3. Build a Signed Update Package
 
-Build old and new RPMs from clean, qualified commits, then sign the update package with the offline release key:
+Use the delivered source RPM with its original bytes and digest; never rebuild an existing release identity in place. Build the target RPM from a clean, qualified new-version commit, then sign with the offline release key. The 2.2-104 → 2.2-105 filenames below are examples, not evidence of v2 site acceptance; use the delivery manifest and compatibility results for the actual path:
 
 ```bash
 scripts/build-clusterguard-patch.sh \
-  --from-rpm dist/clusterguard-ha-2.2-28.x86_64.rpm \
-  --to-rpm dist/clusterguard-ha-2.2-29.x86_64.rpm \
+  --from-rpm dist/clusterguard-ha-2.2-104.x86_64.rpm \
+  --to-rpm dist/clusterguard-ha-2.2-105.x86_64.rpm \
   --signing-key /secure/offline/clusterguard-patch-signing.key \
   --expected-public-key site-trust/patch-signing-public.pem \
-  --output dist/clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade
+  --output dist/clusterguard-ha-2.2-104_to_2.2-105.x86_64.cgupgrade
 ```
 
 Before release, read the public key actually referenced by `update.json` on every site controller. The three site fingerprints, the public fingerprint derived from the offline private key, and the key used to verify the package must match exactly. A public key from an older release directory must never be treated as the site trust anchor merely because its file name looks correct. After the package is built, log in to the current Leader and perform one real console upload. Stop after the console records that the package was uploaded and its signature was verified. The package is not deliverable until this upload succeeds.
@@ -210,7 +227,7 @@ This step does not contact remote nodes:
 
 ```bash
 clusterguard-upgrade \
-  --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
+  --package clusterguard-ha-2.2-104_to_2.2-105.x86_64.cgupgrade \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --inspect
 ```
@@ -223,7 +240,7 @@ During plan or execution, the source updater logs that the signed bootstrap was 
 
 ```bash
 clusterguard-upgrade \
-  --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
+  --package clusterguard-ha-2.2-104_to_2.2-105.x86_64.cgupgrade \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --state ./clusterguard-deployment-state.json \
   --ssh-key /etc/clusterguard/ssh/controller_ed25519 \
@@ -237,7 +254,7 @@ The fixed order is controller followers, data-only Agent nodes, then the current
 
 ```bash
 clusterguard-upgrade \
-  --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
+  --package clusterguard-ha-2.2-104_to_2.2-105.x86_64.cgupgrade \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --state ./clusterguard-deployment-state.json \
   --ssh-key /etc/clusterguard/ssh/controller_ed25519 \
@@ -283,7 +300,7 @@ If the updater host loses power or the process is killed, the maintenance marker
 
 ```bash
 clusterguard-upgrade \
-  --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
+  --package clusterguard-ha-2.2-104_to_2.2-105.x86_64.cgupgrade \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --state ./clusterguard-deployment-state.json \
   --ssh-key /etc/clusterguard/ssh/controller_ed25519 \
@@ -297,7 +314,7 @@ To deliberately return to the old RPM:
 
 ```bash
 clusterguard-upgrade \
-  --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
+  --package clusterguard-ha-2.2-104_to_2.2-105.x86_64.cgupgrade \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --state ./clusterguard-deployment-state.json \
   --ssh-key /etc/clusterguard/ssh/controller_ed25519 \

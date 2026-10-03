@@ -1,5 +1,15 @@
 # ClusterGuard HA Documentation / 文档中心
 
+## 当前源码 / Current Source
+
+当前源码基线为 `7b643f4`（2026-10-03），唯一主线为 `codex/2.2-postgresql`。升级与热修统一执行 v2 契约；热修失败使用独立 `retry`，滚动升级失败使用 `resume`。新包与现场 ART/FIELD 验收仍为 **OPEN**，本轮没有新包或生产部署。
+
+Current source baseline: `7b643f4` (2026-10-03), on the sole mainline `codex/2.2-postgresql`. Updates and hotfixes enforce the v2 contract: failed hotfixes use `retry`; interrupted rolling updates use `resume`. New-artifact and site ART/FIELD acceptance remains **OPEN**. No new package or production deployment was performed.
+
+[中文实现状态](zh-CN/upgrade-validation-chain-implementation-status.md) · [English implementation status](en-US/upgrade-validation-chain-implementation-status.md)
+
+热修台账保留旧签名包的实际行为，不表示旧包包含 v2 修复。 / Hotfix catalogues describe existing signed artifacts; they do not imply that those artifacts contain the v2 source fixes.
+
 ClusterGuard HA product documentation is maintained in English and Simplified Chinese. Choose one language and keep the paired page open during installation or operations.
 
 ClusterGuard HA 产品文档同时维护英文和简体中文版本。安装、变更和排障时请选择对应语言，并以同版本文档为准。

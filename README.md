@@ -1,5 +1,9 @@
 # ClusterGuard HA
 
+## Current Source and Delivery Status
+
+Current source baseline: `7b643f4` (2026-10-03), on the sole mainline `codex/2.2-postgresql`. Updates and hotfixes enforce the v2 contract: failed hotfixes use `retry`; interrupted rolling updates use `resume`. New-artifact and site ART/FIELD acceptance remains **OPEN**. No new package or production deployment was performed. See [implementation and acceptance status](docs/en-US/upgrade-validation-chain-implementation-status.md).
+
 <!-- LANGUAGE-SWITCH -->
 > **Language:** English | [简体中文](README.zh-CN.md)
 <!-- /LANGUAGE-SWITCH -->

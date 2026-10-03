@@ -1,6 +1,23 @@
 # 源码、文件与测试导览
 
-维护日期：2026-09-11。面向当前开发分支，不代表已发布安装包已包含后续清理。先读 [AGENTS.md](../../AGENTS.md)，修改前必须完成旧版对照并保留记录。
+## 当前主线与 v2 验证
+
+当前源码基线为 `7b643f4`（2026-10-03），唯一主线为 `codex/2.2-postgresql`。升级与热修统一执行 v2 契约；热修失败使用独立 `retry`，滚动升级失败使用 `resume`。新包与现场 ART/FIELD 验收仍为 **OPEN**，本轮没有新包或生产部署。
+
+契约实现在 `internal/updatecontract`；升级状态与幂等实现在 `internal/platformupdate`；脚本入口是 `scripts/clusterguard-update-job.sh` 和 `scripts/clusterguard-upgrade.sh`。最新实际执行的 Go、race、浏览器与门禁结果见[修复记录](upgrade-hotfix-v2-repair-2026-10-03.md)。
+
+```bash
+node tools/verify-upgrade-validation-chain.cjs
+node tools/verify-upgrade-validation-chain.cjs --self-test
+node tools/verify-upgrade-validation-chain.cjs --strict
+node tools/verify-license-consistency.cjs
+CONSOLE_TEST_OUTPUT=.build/validation/hotfix-recovery node tools/console-update-hotfix-recovery-acceptance.cjs
+CONSOLE_TEST_OUTPUT=.build/validation/update-confirmation node tools/console-update-confirmation-acceptance.cjs
+```
+
+`--strict` 当前因完整新包与现场验收 OPEN 而失败，这是发布阻断。四个构建入口另执行 `--contract-only`；Go 构建脚本测试可设置 `CG_NODE_BIN`。隔离浏览器通过不等于数据库现场通过。
+
+维护日期：2026-10-03。面向当前开发分支，不代表已发布安装包已包含后续清理。先读 [AGENTS.md](../../AGENTS.md)，修改前必须完成旧版对照并保留记录。
 
 ## 从哪里开始读
 
@@ -113,7 +130,7 @@ CONSOLE_TEST_OUTPUT=.build/validation/engine-pages node tools/console-engine-pag
 
 ## 打包与文档
 
-安装材料从 `scripts/build-clusterguard-bundle.sh`、`build-clusterguard-rpm.sh`、`build-clusterguard-offline-kit.sh` 生成；签名补丁使用 `build-clusterguard-patch.sh`。版本与产物检查分别见 [bundle-version-acceptance.cjs](../../tools/bundle-version-acceptance.cjs) 和 [verify-offline-kit.cjs](../../tools/verify-offline-kit.cjs)。必须先核对各脚本参数、来源介质、可信公钥及发布清单，不将语法检查等同验包成功。
+安装材料从 `scripts/build-clusterguard-bundle.sh`、`build-clusterguard-rpm.sh`、`build-clusterguard-offline-kit.sh` 生成；签名滚动升级包使用 `build-clusterguard-patch.sh`，热修包使用 `build-hotfix-patch.sh`。版本与产物检查分别见 [bundle-version-acceptance.cjs](../../tools/bundle-version-acceptance.cjs) 和 [verify-offline-kit.cjs](../../tools/verify-offline-kit.cjs)。必须先核对各脚本参数、来源介质、可信公钥及发布清单，不将语法检查等同验包成功。
 
 Markdown 是可维护来源，HTML 文档使用 [build-html-docs.mjs](../build-html-docs.mjs) 生成；仅维护当前源文档不会改变已发布包内的文档快照。没有实际重新构建和核验，不得标注为新安装包。
 

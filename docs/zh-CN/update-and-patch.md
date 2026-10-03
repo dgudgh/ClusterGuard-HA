@@ -16,15 +16,32 @@
 >
 > 请在维护窗口执行升级，并安排人员持续观察数据库主从、VIP、业务连接、Raft 多数派和控制节点状态。维护标记建立后，计划切换、故障切换、自动故障切换和节点变更都会被 Safety Guard 阻断；只读拓扑、健康、指标和操作日志仍可使用。只有全部节点升级并验证通过、维护标记成功释放后，自动切换才会恢复。升级失败或中断时标记会保留，平台保持 fail-closed，必须续跑或受控回退。
 
+## v2 当前动作与状态规则（2026-10-03）
+
+当前源码基线为 `7b643f4`（2026-10-03），唯一主线为 `codex/2.2-postgresql`。升级与热修统一执行 v2 契约；热修失败使用独立 `retry`，滚动升级失败使用 `resume`。新包与现场 ART/FIELD 验收仍为 **OPEN**，本轮没有新包或生产部署。
+
+| 包及状态 | 允许的恢复动作 | 禁止的行为 |
+| --- | --- | --- |
+| 热修失败，尚未确证已安装 | 确认原 `patch_id` 后直接 `retry`（重新执行） | 不先生成新计划覆盖失败身份；不将 resume 转成 execute |
+| 热修已确证安装成功 | 查看结果；按签名回退能力申请受控回退 | 不提供续跑或重新安装同包 |
+| 滚动升级失败或中断 | 同包 `resume` 或受控回退 | 不接管另一包的锁 |
+| 5xx、断连或超时，受理结果不确定 | 查询持久化的同一 `operation_id` | 不自动重复提交或用时间戳猜测结果 |
+
+API 动作请求使用明确 `patch_id` 与 `operation_id`；同一操作 ID 只能绑定同包同模式。`deployment.json` 保存独立部署状态，`requests.jsonl` 和 `operations.jsonl` 保留追加历史；计划失败不抹除已成功部署。默认状态响应不返回全量历史，需要时使用 `GET /api/v1/platform/updates/<patch_id>?history=1`。
+
+Runner 在 inspect 或执行前要求非符号链接的可执行 `clusterguard-update-helper` 支持 `contract` 子命令，默认路径 `/usr/local/libexec/clusterguard-update-helper`，受控环境可通过 `CG_UPDATE_CONTRACT_HELPER` 指定。旧 Helper 缺少该命令时会拒绝运行；不能假定只换升级脚本就完成 v2 部署。必须按新的受控交付流程安装匹配的 Manager、Helper 与 Runner，再验收现场。
+
+替代关系只认签名清单的 `supersedes` 和确证安装状态；同版本或较新成功记录不自动替代旧失败。外包锁、损坏历史、不同操作的复制历史及冲突终态均阻断执行并保留证据。详情见[实现与验收状态](upgrade-validation-chain-implementation-status.md)和[强制契约](upgrade-validation-chain.md)。
+
 ## 控制台图形化升级
 
 管理员可在 **设置 → 版本更新** 完成全流程，无需在页面外拼接命令：
 
-1. 上传正式发布的已签名 `.cgupgrade` 文件。后端先校验升级包格式、SHA-256、发布签名、架构、源版本、目标版本和状态协议，未通过验签的文件不会进入执行区。
+1. 上传正式交付的已签名 `.cgupgrade` 滚动升级包或 `.cgpatch` 热修包。后端先校验升级包格式、SHA-256、发布签名、架构、源版本、目标版本和状态协议，未通过验签的文件不会进入执行区。
 2. 点击 **生成升级计划**，核对升级包 ID、源版本、目标版本、滚动顺序、回退能力和节点清单。
 3. 点击 **执行滚动升级**。确认框会再次显示停用自动切换的警告，并要求输入完整升级包 ID，避免误触和错包执行。执行器先把同一份签名升级包和元数据分发到全部控制节点，逐台复核 SHA-256 并原子发布，全部成功后才建立维护门禁。
 4. 升级期间控制台顶部持续显示“系统升级期间无法进行自动切换，请注意关注。”，页面实时展示节点事件、状态和原始输出。
-5. 成功后确认维护提示消失并复核拓扑、VIP 和复制；失败时使用 **续跑升级** 或 **受控回退**，不要手工删除维护标记。
+5. 成功后确认维护提示消失并复核拓扑、VIP 和复制；滚动升级失败时使用 **续跑升级** 或 **受控回退**；热修失败按上表使用 **重新执行** 或受控回退，不要手工删除维护标记。
 
 上传和编排 API 只接受已登录管理员，并通过 CSRF、Raft Leader 转发、签名信任、受限 root Helper 和审计链路。升级包保存在受保护的数据目录，同一升级包 ID 不允许被不同内容覆盖。
 
@@ -119,7 +136,7 @@ clusterguard-patch/
 
 | 变更类型 | 处理方式 |
 | --- | --- |
-| 同一版本线修复，例如 `2.2-28` 到 `2.2-29` | 使用签名 `.cgupgrade` 滚动升级 |
+| 同一版本线修复，例如 `2.2-104` 到 `2.2-105` | 使用签名 `.cgupgrade` 滚动升级 |
 | 功能版本升级且状态合同不变 | 完成兼容验收后可使用签名升级包 |
 | `state_format` 或 `update_protocol` 不兼容 | 当前升级协议拒绝执行，必须使用专用迁移版本 |
 | MySQL/PostgreSQL 等数据库升级 | 使用独立数据库升级流程，不得混入控制面升级包 |
@@ -129,15 +146,15 @@ clusterguard-patch/
 
 ## 3. 发布侧构建签名升级包
 
-从干净、已测试的提交分别构建旧版和新版 RPM，再使用离线发布私钥签名：
+来源 RPM 使用已交付的原始字节与摘要，不能原地重建旧版本。目标 RPM 从干净、已测试的新版本提交构建，再使用离线发布私钥签名。下面的 2.2-104 → 2.2-105 仅为文件命名示例，不证明该路径已满足 v2 现场验收；实际使用须以交付清单和兼容性结果为准：
 
 ```bash
 scripts/build-clusterguard-patch.sh \
-  --from-rpm dist/clusterguard-ha-2.2-28.x86_64.rpm \
-  --to-rpm dist/clusterguard-ha-2.2-29.x86_64.rpm \
+  --from-rpm dist/clusterguard-ha-2.2-104.x86_64.rpm \
+  --to-rpm dist/clusterguard-ha-2.2-105.x86_64.rpm \
   --signing-key /secure/offline/clusterguard-patch-signing.key \
   --expected-public-key site-trust/patch-signing-public.pem \
-  --output dist/clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade
+  --output dist/clusterguard-ha-2.2-104_to_2.2-105.x86_64.cgupgrade
 ```
 
 发布前必须从现场所有控制节点读取 `update.json` 指向的实际受信公钥，并确认三节点公钥指纹、离线私钥导出的公钥指纹和升级包验签公钥指纹完全一致。不得因为历史发布目录中的公钥文件名看起来正确，就把它当作现场信任链。构建完成后还必须登录当前 Leader 的控制台真实上传一次，只生成“已上传并通过签名校验”的记录，不执行升级。现场上传没有成功前，不得把升级包标记为可交付。
@@ -213,7 +230,7 @@ scripts/build-clusterguard-patch.sh \
 
 ```bash
 clusterguard-upgrade \
-  --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
+  --package clusterguard-ha-2.2-104_to_2.2-105.x86_64.cgupgrade \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --inspect
 ```
@@ -226,7 +243,7 @@ clusterguard-upgrade \
 
 ```bash
 clusterguard-upgrade \
-  --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
+  --package clusterguard-ha-2.2-104_to_2.2-105.x86_64.cgupgrade \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --state ./clusterguard-deployment-state.json \
   --ssh-key /etc/clusterguard/ssh/controller_ed25519 \
@@ -240,7 +257,7 @@ clusterguard-upgrade \
 
 ```bash
 clusterguard-upgrade \
-  --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
+  --package clusterguard-ha-2.2-104_to_2.2-105.x86_64.cgupgrade \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --state ./clusterguard-deployment-state.json \
   --ssh-key /etc/clusterguard/ssh/controller_ed25519 \
@@ -288,7 +305,7 @@ clusterguard-update-补丁ID.events.jsonl
 
 ```bash
 clusterguard-upgrade \
-  --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
+  --package clusterguard-ha-2.2-104_to_2.2-105.x86_64.cgupgrade \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --state ./clusterguard-deployment-state.json \
   --ssh-key /etc/clusterguard/ssh/controller_ed25519 \
@@ -302,7 +319,7 @@ clusterguard-upgrade \
 
 ```bash
 clusterguard-upgrade \
-  --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
+  --package clusterguard-ha-2.2-104_to_2.2-105.x86_64.cgupgrade \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --state ./clusterguard-deployment-state.json \
   --ssh-key /etc/clusterguard/ssh/controller_ed25519 \

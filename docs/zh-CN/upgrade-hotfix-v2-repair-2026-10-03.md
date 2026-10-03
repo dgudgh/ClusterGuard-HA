@@ -64,3 +64,7 @@
 本地和远端主线均只有 `codex/2.2-postgresql`，工作树只有本仓库一个；本轮没有创建功能分支。源修改全部提交该主线，不把已经测试的功能留下在其他分支。
 
 完整新包 ART 与现场 FIELD 验收仍为 **OPEN**，见 `upgrade-validation-chain-implementation-status.md`。未构建/覆盖已交付包，未打标签，未安装新代码到生产，不宣称所有未知 bug 已消除。现有无关未跟踪文件未纳入提交。
+
+### 源码提交确认
+
+实现已提交并推送：`7b643f42ed11901c5d73f7703f3e3f176d053bb4`，唯一主线 `codex/2.2-postgresql`。本文前半部分的“当前”指修改前基线，不能作为修复后状态。后续文档同步见[同步记录](documentation-sync-2026-10-03.md)。

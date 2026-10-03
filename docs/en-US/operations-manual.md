@@ -1,5 +1,7 @@
 # ClusterGuard HA Operations Manual
 
+> For current update/hotfix action rules, see the [update guide](update-and-patch.md). Current source baseline: `7b643f4` (2026-10-03), on the sole mainline `codex/2.2-postgresql`. Updates and hotfixes enforce the v2 contract: failed hotfixes use `retry`; interrupted rolling updates use `resume`. New-artifact and site ART/FIELD acceptance remains **OPEN**. No new package or production deployment was performed.
+
 <!-- LANGUAGE-SWITCH -->
 > **Language:** English | [简体中文](../zh-CN/operations-manual.md)
 <!-- /LANGUAGE-SWITCH -->
@@ -436,7 +438,7 @@ ClusterGuard mutation ingress is held by the shared maintenance gate.
 
 ```bash
 sudo clusterguard-upgrade \
-  --package ./clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
+  --package ./clusterguard-ha-2.2-104_to_2.2-105.x86_64.cgupgrade \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --state ./clusterguard-deployment-state.json \
   --ssh-key /root/.ssh/clusterguard_update \
@@ -444,7 +446,7 @@ sudo clusterguard-upgrade \
   --execute
 ```
 
-After host loss or network interruption, rerun the same patch with `--resume`.
+After host loss or network interruption during a rolling update, rerun the same package with `--resume`. Hotfixes reject `--resume`; failed hotfix retries use the original package with `--retry --execute --yes`, through console confirmation and the constrained Helper.
 Maintenance is released only after a complete update or complete rollback is
 verified. See the [Version Update and Rollback Guide](update-and-patch.md) for preparation,
 inspection, planning, rollback, and production admission requirements.

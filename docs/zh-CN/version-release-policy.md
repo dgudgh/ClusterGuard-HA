@@ -1,5 +1,11 @@
 # ClusterGuard HA 版本与发版规范
 
+## v2 发布前置检查
+
+当前源码基线为 `7b643f4`（2026-10-03），唯一主线为 `codex/2.2-postgresql`。升级与热修统一执行 v2 契约；热修失败使用独立 `retry`，滚动升级失败使用 `resume`。新包与现场 ART/FIELD 验收仍为 **OPEN**，本轮没有新包或生产部署。
+
+四个构建入口在产出/签名前执行 `verify-upgrade-validation-chain.cjs --contract-only`，需要 Node（可设置 `CG_NODE_BIN`）。这仅检查契约加载与模式一致性，不代表完整 PRE/ART/FIELD 验收。发布前必须执行完整门禁及 `--strict`；OPEN 必须阻断正式发布。见[实现状态](upgrade-validation-chain-implementation-status.md)。热修检查同包 retry、拒绝 resume、签名 supersedes 和独立历史；滚动升级检查 resume。已交付身份不得原地重建。
+
 <!-- LANGUAGE-SWITCH -->
 > **语言：** [English](../en-US/version-release-policy.md) | 简体中文
 <!-- /LANGUAGE-SWITCH -->

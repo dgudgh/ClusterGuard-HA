@@ -1,5 +1,7 @@
 # HF-04 历史记录动作名称修复前对照（2026-09-30）
 
+> **后续状态（2026-10-03）：** 本文保留当时的基线、方案与验收事实。当前主线 `7b643f4` 已实现 v2，热修 resume 直接拒绝，失败热修走 retry；不同包的成功不再按版本/时间推断替代关系。独立部署与操作历史保护既有成功。仅保留 `codex/2.2-postgresql` 一条本地/远端主线；文内旧分支与旧门禁数字属于历史。当前证据与 OPEN 见[实现状态](upgrade-validation-chain-implementation-status.md)，生产是否已包含该源码仍未重新验收。
+
 - 源码：`codex/hotfix-history-kind`，基线 `d6f8ff2`；修改前工作树干净。目标现场为 2.2-105 的 `HF-2026-0929-04` 历史作业，当前现场状态未重新读取。
 - 旧行为：`81fe3c8^` 的 `internal/api/console.html` 只处理滚动升级；`softwareUpdateModeText('execute')` 显示“滚动升级”，当时与包类型一致。`81fe3c8` 加入 `.cgpatch` 热修通道和包类型展示，但 `renderSoftwareUpdateHistory` 仍只传 `job.mode`，因此热修的 `execute` 行也写成“滚动升级”。`5fb048f` 改进热修控制台后，这一历史表调用仍未改变。
 - 实际调用链：服务端 `internal/platformupdate/manager.go` 将签名包的 `kind=hotfix` 写入持久化 package 记录，列表 API 把 package 与 job 合并；页面加载 `/api/v1/platform/updates` 后 `renderSoftwareUpdates` 调用 `renderSoftwareUpdateHistory`。历史行已有 `record.kind`，但动作列只用 `job.mode`。HF-04 失败记录的 `mode=execute` 被展示成“滚动升级”。刷新或重登仍会从同一记录复现。

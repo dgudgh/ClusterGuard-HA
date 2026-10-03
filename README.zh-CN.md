@@ -1,5 +1,9 @@
 # ClusterGuard HA
 
+## 当前源码与交付状态
+
+当前源码基线为 `7b643f4`（2026-10-03），唯一主线为 `codex/2.2-postgresql`。升级与热修统一执行 v2 契约；热修失败使用独立 `retry`，滚动升级失败使用 `resume`。新包与现场 ART/FIELD 验收仍为 **OPEN**，本轮没有新包或生产部署。 见[实现与验收状态](docs/zh-CN/upgrade-validation-chain-implementation-status.md)。
+
 <!-- LANGUAGE-SWITCH -->
 > **语言：** [English](README.md) | 简体中文
 <!-- /LANGUAGE-SWITCH -->

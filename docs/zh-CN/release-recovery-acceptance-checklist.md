@@ -1,5 +1,15 @@
 # 恢复与升级发布验收清单
 
+## v2 强制升级与热修门槛
+
+当前源码基线为 `7b643f4`（2026-10-03），唯一主线为 `codex/2.2-postgresql`。升级与热修统一执行 v2 契约；热修失败使用独立 `retry`，滚动升级失败使用 `resume`。新包与现场 ART/FIELD 验收仍为 **OPEN**，本轮没有新包或生产部署。
+
+- [ ] 先读[强制契约 v2](upgrade-validation-chain.md)及[实现状态](upgrade-validation-chain-implementation-status.md)；完整门禁和 `--strict` 均满足发布条件。当前 17 PASS / 1 OPEN / 0 failed，strict 因 ART/FIELD 未完成而退出 1，不得报为发布通过。
+- [ ] 新包取得 ART-001..013，现场取得 FIELD-001..012；逐项保留真实证据，不用源码断言代替。
+- [ ] 核对 Manager、Helper、Runner 的 v2 契约能力；旧 Helper 的 `contract` 不可用必须先解决交付兼容性。
+- [ ] 真实点击覆盖热修 retry/拒绝 resume、滚动 resume、明确 patch_id、operation_id 对账、未知结果只查询及同秒不同操作；覆盖不同操作私有历史冲突和外包门禁拒绝。
+- [ ] 部署状态、操作尝试和历史分别核对；成功后计划失败不得改写已安装结果。supersedes 必须来自已验签清单与确证安装状态。
+
 ## 完成判定
 
 编译、单元测试、直接安装 RPM、控制节点版本一致、页面显示成功，均不能单独作为现场验收完成的证据。没有执行的测试必须标为未执行。失败候选包不得覆盖原版本重打，必须明确撤回并使用新的补丁 ID。

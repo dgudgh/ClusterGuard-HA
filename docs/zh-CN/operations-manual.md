@@ -1,5 +1,7 @@
 # ClusterGuard HA 运维操作手册
 
+> 当前升级/热修动作规则见[版本升级与回退手册](update-and-patch.md)。当前源码基线为 `7b643f4`（2026-10-03），唯一主线为 `codex/2.2-postgresql`。升级与热修统一执行 v2 契约；热修失败使用独立 `retry`，滚动升级失败使用 `resume`。新包与现场 ART/FIELD 验收仍为 **OPEN**，本轮没有新包或生产部署。
+
 <!-- LANGUAGE-SWITCH -->
 > **语言：** [English](../en-US/operations-manual.md) | 简体中文
 <!-- /LANGUAGE-SWITCH -->
@@ -439,7 +441,7 @@ cgctl --server https://127.0.0.1:3000 --ca-file /etc/clusterguard/tls/ca.crt \
 
 ```bash
 sudo clusterguard-upgrade \
-  --package ./clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
+  --package ./clusterguard-ha-2.2-104_to_2.2-105.x86_64.cgupgrade \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --state ./clusterguard-deployment-state.json \
   --ssh-key /root/.ssh/clusterguard_update \
@@ -447,4 +449,4 @@ sudo clusterguard-upgrade \
   --execute
 ```
 
-断电或网络中断后使用同一个升级包追加 `--resume`。只有完整升级或完整回退验证成功才释放维护门禁。详细准备、检查、计划、回退和生产准入要求见[版本升级与回退手册](update-and-patch.md)。
+滚动升级断电或网络中断后使用同一个升级包追加 `--resume`；热修不支持 `--resume`，失败重试使用原包 `--retry --execute --yes`，并通过控制台确认与受限 Helper 执行。只有完整升级或完整回退验证成功才释放维护门禁。详细准备、检查、计划、回退和生产准入要求见[版本升级与回退手册](update-and-patch.md)。

@@ -1,5 +1,9 @@
 # ClusterGuard HA English Documentation
 
+## Current Source and Delivery Status
+
+Current source baseline: `7b643f4` (2026-10-03), on the sole mainline `codex/2.2-postgresql`. Updates and hotfixes enforce the v2 contract: failed hotfixes use `retry`; interrupted rolling updates use `resume`. New-artifact and site ART/FIELD acceptance remains **OPEN**. No new package or production deployment was performed. See [implementation and acceptance status](upgrade-validation-chain-implementation-status.md).
+
 The offline HTML documentation center starts at [`../html/index.html`](../html/index.html). It includes this manual, the migration runbook, qualification evidence, local search, and print-friendly pages without an external network dependency.
 
 <!-- LANGUAGE-SWITCH -->

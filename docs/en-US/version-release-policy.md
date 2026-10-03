@@ -1,5 +1,11 @@
 # ClusterGuard HA Version and Release Policy
 
+## v2 Release Preconditions
+
+Current source baseline: `7b643f4` (2026-10-03), on the sole mainline `codex/2.2-postgresql`. Updates and hotfixes enforce the v2 contract: failed hotfixes use `retry`; interrupted rolling updates use `resume`. New-artifact and site ART/FIELD acceptance remains **OPEN**. No new package or production deployment was performed.
+
+The four build entry points run `verify-upgrade-validation-chain.cjs --contract-only` before producing/signing artifacts and require Node (`CG_NODE_BIN` may override its path). This checks contract loading and schema consistency only, not complete PRE/ART/FIELD acceptance. Run the complete gate and `--strict` before release; OPEN blocks formal release. See [implementation status](upgrade-validation-chain-implementation-status.md). Hotfix acceptance covers same-package retry, rejected resume, signed supersedes, and independent history; rolling acceptance covers resume. Never rebuild a delivered identity in place.
+
 <!-- LANGUAGE-SWITCH -->
 > **Language:** English | [简体中文](../zh-CN/version-release-policy.md)
 <!-- /LANGUAGE-SWITCH -->

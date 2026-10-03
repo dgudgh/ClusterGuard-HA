@@ -1,5 +1,7 @@
 # Update Action Identity Mismatch and Missing Hotfix Recovery Semantics (2026-09-30)
 
+> **Subsequent source status (2026-10-03):** This retrospective preserves the incident and delivered-package facts. Source `7b643f4` rejects hotfix resume, routes failed hotfixes through retry, and separates deployment state from operation history. Newer successes establish replacement only through signed supersedes and verified deployment. See [current implementation status](upgrade-validation-chain-implementation-status.md); production deployment of this source has not been validated.
+
 ## Summary
 
 At 13:30 on 2026-09-30 (UTC+8) the site asked to *resume* a hotfix that had **already been installed successfully**. The result: of the three controllers, **only the one that actually ran the job** (Leader `.153`) had its installation record rewritten as a failure; the other two still recorded success. The console reads the Leader's copy, so the UI showed 升级失败 for as long as that record stood, while all three nodes ran byte-identical payloads.
