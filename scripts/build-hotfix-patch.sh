@@ -428,13 +428,14 @@ apply.push('    printf "  %s OK\\n" "${artifact}"');
 apply.push('  done < <(awk "{print \\$1, \\$2}" "${here}/SHA256SUMS")');
 apply.push("fi");
 apply.push("");
-apply.push('stamp="$(date +%Y%m%d-%H%M%S)"');
+apply.push('stamp="$(date +%Y%m%d-%H%M%S-%N)"');
 apply.push('backup_dir="/var/lib/clusterguard/hotfix"');
 apply.push(`# The manifest name carries the hotfix id so rollback.sh can prove it is
 # restoring this patch's backups and not whichever set happens to be newest.
 backup_list="\${backup_dir}/backup-${manifest.hotfix_id}-\${stamp}.txt"`);
 apply.push('mkdir -p "${backup_dir}"');
-apply.push(': >"${backup_list}"');
+apply.push('( set -C; : >"${backup_list}" ) || { printf "备份清单已存在，拒绝覆盖：%s\\n" "${backup_list}" >&2; exit 1; }');
+apply.push(`printf '%s\\n' '# package_id=${manifest.hotfix_id}' >>"\${backup_list}"`);
 apply.push("");
 apply.push("install_payload() {");
 apply.push('  local artifact="$1" destination="$2" mode="$3" ownership="$4"');
@@ -486,18 +487,25 @@ rollback.push("");
 rollback.push(`if [[ "$(id -u)" -ne 0 ]]; then printf "${esc("必须以 root 运行 rollback.sh。")}\\n" >&2; exit 1; fi`);
 rollback.push("");
 rollback.push('backup_dir="/var/lib/clusterguard/hotfix"');
-rollback.push(`# Only this patch's own manifest is accepted. Picking "the newest backup-*.txt"
-# would restore whatever unrelated set of files was written last, and for a
-# destination that an older manifest does not mention at all, restore_backup()
-# below deletes the file - "absent before the patch" is a legitimate state, so a
-# mismatched manifest silently removes live system files.
-backup_list="$(ls -1 "\${backup_dir}"/backup-${manifest.hotfix_id}-*.txt 2>/dev/null | tail -1)"`);
-rollback.push(`[[ -n "\${backup_list}" ]] || { printf "${esc("没有找到备份清单，无法回滚。")}\\n" >&2; exit 1; }`);
-rollback.push(`printf "${esc("使用备份清单：%s")}\\n" "\${backup_list}"`);
+rollback.push(`# Use only this package's backups, oldest first. A retry may have
+# backed up files that were already patched, so its newest manifest is not the
+# original state. The first entry for each destination is the state to restore.
+backup_lists=( "\${backup_dir}"/backup-${manifest.hotfix_id}-*.txt )`);
+rollback.push('[[ -f "${backup_lists[0]}" ]] || { printf "没有找到本补丁的备份清单，无法回滚。\\n" >&2; exit 1; }');
+rollback.push(`for backup_list in "\${backup_lists[@]}"; do
+  [[ "$(head -n 1 "\${backup_list}")" == '# package_id=${manifest.hotfix_id}' ]] || {
+    printf "备份清单身份不匹配：%s\\n" "\${backup_list}" >&2; exit 1;
+  }
+done`);
 rollback.push("");
 rollback.push("restore_backup() {");
-rollback.push('  local destination="$1" backup restore_tmp');
-rollback.push('  backup="$(awk -F"\\t" -v target="${destination}" \'$1 == target { print $2; exit }\' "${backup_list}")"');
+rollback.push('  local destination="$1" backup restore_tmp backup_list entry=""');
+rollback.push('  for backup_list in "${backup_lists[@]}"; do');
+rollback.push('    entry="$(awk -F"\\t" -v target="${destination}" \'$1 == target && NF >= 2 { printf "found\\t%s", $2; exit }\' "${backup_list}")"');
+rollback.push('    [[ -z "${entry}" ]] || break');
+rollback.push('  done');
+rollback.push('  [[ -n "${entry}" ]] || { printf "  备份清单缺少目标：%s\\n" "${destination}" >&2; return 1; }');
+rollback.push('  backup="${entry#*$\'\\t\'}"');
 rollback.push('  if [[ -z "${backup}" ]]; then');
 rollback.push('    rm -f "${destination}"');
 rollback.push('    printf "  已移除 %s（补丁前不存在）\\n" "${destination}"');
@@ -513,9 +521,11 @@ rollback.push('    # the target, the same way apply.sh publishes its own writes.
 rollback.push('    restore_tmp="$(mktemp "${destination}.restore.XXXXXX")"');
 rollback.push('    cp -p "${backup}" "${restore_tmp}"');
 rollback.push('    mv -f "${restore_tmp}" "${destination}"');
+rollback.push('    cmp -s "${backup}" "${destination}" || { printf "  恢复后文件校验失败：%s\\n" "${destination}" >&2; return 1; }');
 rollback.push('    printf "  已回滚 %s <- %s\\n" "${destination}" "${backup}"');
 rollback.push("  else");
-rollback.push('    printf "  备份缺失，跳过 %s（%s）\\n" "${destination}" "${backup}" >&2');
+rollback.push('    printf "  备份缺失，拒绝回退 %s（%s）\\n" "${destination}" "${backup}" >&2');
+rollback.push('    return 1');
 rollback.push("  fi");
 rollback.push("}");
 rollback.push("");

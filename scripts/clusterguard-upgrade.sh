@@ -1941,11 +1941,13 @@ bash apply.sh" || return 1
 }
 
 restore_hotfix_on_node() {
-  local host="$1" remote_dir="$2" units="$3"
+  local host="$1" remote_dir="$2" units="$3" installed
   remote_run "${host}" "set -eu; ${mutation_guard}
 cd '${remote_dir}/clusterguard-hotfix'
 bash rollback.sh" || return 1
   restart_hotfix_units "${host}" "${units}" || return 1
+  installed="$(remote_package_version "${host}")" || return 1
+  wait_node_ready "${host}" "${installed}" || return 1
 }
 
 rollback_hotfix_nodes() {
@@ -2083,6 +2085,11 @@ run_hotfix_update() {
   if ${rollback_requested}; then
     updated_nodes=("${ordered_nodes[@]}")
     if rollback_hotfix_nodes "${restart_units}"; then
+      if ! finish_update_maintenance "idle"; then
+        write_journal rollback_lock_release_failed "" "controlled rollback restored files but maintenance release failed" rollback "${#updated_nodes[@]}" "${#updated_nodes[@]}"
+        die "受控回退已恢复文件，但维护门禁释放失败；变更仍被安全阻断，请人工处置"
+      fi
+      wait_cluster_idle "" false idle || die "维护门禁释放后控制面未恢复一致"
       write_journal rolled_back "" "controlled rollback completed and maintenance released" rolled_back "${#updated_nodes[@]}" "${#updated_nodes[@]}"
       log "热修补丁受控回退完成：${patch_id}"
       return 0
@@ -2102,6 +2109,14 @@ run_hotfix_update() {
     total="$(hotfix_field "${state}" total)"
     if [[ -n "${matched}" && -n "${total}" && "${matched}" == "${total}" ]]; then
       log "跳过已达到目标内容的节点：${host}"
+      # Matching files do not prove the running process loaded them. A previous
+      # attempt may have stopped after installation but before the restart.
+      if ! assert_update_lock_ownership || ! restart_hotfix_units "${host}" "${restart_units}" ||
+         ! wait_node_ready "${host}" "${installed}" || ! wait_cluster_idle "" true idle ||
+         ! resolve_leader_host; then
+        write_journal failed "${host}" "files matched but service restart or readiness could not be verified; maintenance retained" failed "$((node_index - 1))" "${total_nodes}"
+        die "${host} 文件已匹配，但服务重启或就绪核验失败；维护门禁保留"
+      fi
       write_journal verified "${host}" "every declared file digest already matches" updating "${node_index}" "${total_nodes}"
       continue
     fi
