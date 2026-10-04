@@ -1,5 +1,7 @@
 # ClusterGuard HA Version and Release Policy
 
+> Gate workflow update (2026-10-04): use `--stage source --strict` for source development. Artifact and field acceptance require `--stage artifact` or `--stage field`, `--strict`, and `--acceptance-report FILE` with actual evidence. The default remains field; real ART/FIELD evidence is still unavailable. See the [workflow](../zh-CN/validation-gate-workflow.md).
+
 ## v2 Release Preconditions
 
 Current source baseline: `7b643f4` (2026-10-03), on the sole mainline `codex/2.2-postgresql`. Updates and hotfixes enforce the v2 contract: failed hotfixes use `retry`; interrupted rolling updates use `resume`. New-artifact and site ART/FIELD acceptance remains **OPEN**. No new package or production deployment was performed.

@@ -1,5 +1,7 @@
 # ClusterGuard HA Documentation / 文档中心
 
+门禁开发与验收已按阶段推进，详见[执行和更新流程](zh-CN/validation-gate-workflow.md)；默认最终验收仍需要真实 ART/FIELD 证据。 / Gate execution now separates source, artifact, and field stages; final acceptance still requires actual evidence.
+
 ## 当前源码 / Current Source
 
 当前源码基线为 `7b643f4`（2026-10-03），唯一主线为 `codex/2.2-postgresql`。升级与热修统一执行 v2 契约；热修失败使用独立 `retry`，滚动升级失败使用 `resume`。新包与现场 ART/FIELD 验收仍为 **OPEN**，本轮没有新包或生产部署。

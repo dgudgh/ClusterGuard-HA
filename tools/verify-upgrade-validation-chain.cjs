@@ -4,7 +4,9 @@
 // This is a local source gate, not proof of artifact or production acceptance.
 // Remaining ART/FIELD evidence is tracked in
 // docs/zh-CN/upgrade-validation-chain-implementation-status.md and is OPEN;
-// --strict refuses release until that evidence exists.
+// --strict refuses the selected stage until its evidence exists (default: field).
+// --stage source permits source development without asserting ART/FIELD completion.
+// --acceptance-report FILE supplies version-bound artifact/site evidence inventories.
 // --contract-only checks loading/schema compatibility before builders write bytes.
 // --self-test runs mutations in an isolated copy and includes no-bite controls.
 
@@ -13,6 +15,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const vm = require('node:vm');
+const evidence = require('./upgrade-acceptance-evidence.cjs');
 
 const SUPPORTED_CONTRACT_VERSION = 2;
 const CONTRACT_DOC = 'docs/upgrade-validation-chain.md';
@@ -20,9 +23,7 @@ const CONTRACT_DOC_ZH = 'docs/zh-CN/upgrade-validation-chain.md';
 
 // Every rule below is a claim section 22 makes. The identifiers are the rule numbers of the
 // contract so a failure points at the clause to re-read, not merely at a file.
-const OPEN_OBLIGATIONS = [
-  { rule: '11 / 15', key: 'artifact_and_field_acceptance', status:'full ART/FIELD evidence is not completed', card: 'UPDATE-V2-FIELD-ACCEPTANCE' },
-];
+
 
 const repoRoot = (() => {
   const index = process.argv.indexOf('--repo');
@@ -31,6 +32,22 @@ const repoRoot = (() => {
 const strict = process.argv.includes('--strict');
 const selfTest = process.argv.includes('--self-test');
 const contractOnly = process.argv.includes('--contract-only');
+const argument = name => {
+  const index=process.argv.indexOf(name);
+  if(index<0) return null;
+  if(!process.argv[index+1] || process.argv[index+1].startsWith('--')) throw Error(`${name} requires a value`);
+  return process.argv[index+1];
+};
+let stage, reportFile;
+try {
+  stage=argument('--stage') || 'field';
+  reportFile=argument('--acceptance-report');
+  if(!['source','artifact','field'].includes(stage)) throw Error('unknown stage: '+stage);
+  if(contractOnly && (reportFile || process.argv.includes('--stage'))) throw Error('--contract-only cannot assert an acceptance stage');
+  if(selfTest && (reportFile || process.argv.includes('--stage'))) throw Error('--self-test cannot assert an acceptance stage');
+  if(stage==='source' && reportFile) throw Error('source stage does not consume artifact/field evidence');
+} catch(error) { console.error(error.message); process.exit(1); }
+
 
 // The tree the checks read. The self-test points this at the mutated copy; a mutation is only
 // meaningful if the checks are reading the tree the mutation was written to.
@@ -440,12 +457,27 @@ const runChecks = () => {
   return failures;
 };
 
-const reportOpen = () => {
-  const source = read(CONTRACT_DOC) || '';
-  const open = contractOnly ? [] : OPEN_OBLIGATIONS;
-  for (const obligation of open) {
-    console.log(`OPEN  §${obligation.rule} ${obligation.key} — ${obligation.status || "not implemented"}, card ${obligation.card}`);
+const reportOpen = failures => {
+  if (contractOnly) return [];
+  console.log(`Stage: ${stage} (source checks are always required)`);
+  if(stage==='source') {
+    console.log('DEFERRED ART/FIELD: outside source-stage completion; release and site acceptance are not asserted.');
+    return [];
   }
+  const key=stage==='artifact'?'artifact_acceptance':'artifact_and_field_acceptance';
+  if(reportFile) {
+    try {
+      const report=evidence.validateReport(checkRoot,path.resolve(reportFile),stage);
+      console.log(`EVIDENCE ${stage} inventory verified for ${report.package_id}; recorded by ${report.recorded_by}`);
+      if(stage==='artifact') console.log('DEFERRED FIELD: artifact-stage completion does not assert site acceptance.');
+      return [];
+    } catch(error) {
+      failures.push('invalid acceptance report: '+error.message);
+      console.log('FAIL acceptance evidence: '+error.message);
+    }
+  }
+  const open=[{rule:'11 / 15',key,status:`${stage==='artifact'?'ART':'ART/FIELD'} evidence is not completed`,card:'UPDATE-V2-FIELD-ACCEPTANCE'}];
+  for(const obligation of open) console.log(`OPEN  §${obligation.rule} ${obligation.key} — ${obligation.status}, card ${obligation.card}`);
   return open;
 };
 
@@ -606,7 +638,15 @@ const runSelfTest = () => {
   return problems;
 };
 
-if (selfTest) {
+if (process.argv.includes('--print-evidence-binding')) {
+  if (strict || selfTest || contractOnly || reportFile || process.argv.includes('--stage')) {
+    console.error('--print-evidence-binding only prints identity; it cannot run an acceptance stage');
+    process.exitCode=1;
+  } else {
+    try { console.log(JSON.stringify({schema_version:1,source_sha256:evidence.sourceDigest(repoRoot),contract_sha256:evidence.digest(fs.readFileSync(path.join(repoRoot,CONTRACT_DOC)))},null,2)); }
+    catch(error) { console.error(error.message);process.exitCode=1; }
+  }
+} else if (selfTest) {
   console.log(`self-testing ${path.join(__dirname, path.basename(__filename))} against a copy of ${repoRoot}\n`);
   const problems = runSelfTest();
   console.log('');
@@ -620,7 +660,7 @@ if (selfTest) {
 } else {
   console.log(`Upgrade validation chain — contract ${read(CONTRACT_DOC) ? '' : '(missing) '}at ${CONTRACT_DOC}\n`);
   const failures = runChecks();
-  const open = reportOpen();
+  const open = reportOpen(failures);
   console.log('');
   if (open.length) {
     console.log(`${open.length} obligation(s) are open and are not counted as passing checks.`);
@@ -632,7 +672,7 @@ if (selfTest) {
   if (failures.length) {
     console.log(`${CHECKS.length} checks, ${failures.length} failed:`);
     for (const failure of failures) console.log(`  - ${failure}`);
-    console.log('  That is a pass for the rules whose enforcement point still holds, and a failure for the rest.');
+    console.log('  This stage did not pass.');
     process.exitCode = 1;
   } else {
     console.log(`${contractOnly ? 3 : CHECKS.length} checks passed, ${open.length} obligation(s) open, 0 failed.`);

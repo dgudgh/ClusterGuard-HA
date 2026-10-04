@@ -1,5 +1,7 @@
 # 恢复与升级发布验收清单
 
+> 门禁执行更新（2026-10-04）：开发使用 `--stage source --strict`；新包与现场使用 `--stage artifact/field --strict --acceptance-report FILE`，需真实证据。默认仍为 field，当前 ART/FIELD 未完成；详情见[分阶段门禁与更新流程](validation-gate-workflow.md)。
+
 ## v2 强制升级与热修门槛
 
 当前源码基线为 `7b643f4`（2026-10-03），唯一主线为 `codex/2.2-postgresql`。升级与热修统一执行 v2 契约；热修失败使用独立 `retry`，滚动升级失败使用 `resume`。新包与现场 ART/FIELD 验收仍为 **OPEN**，本轮没有新包或生产部署。

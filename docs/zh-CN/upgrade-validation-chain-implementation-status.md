@@ -1,5 +1,7 @@
 # 升级热修统一校验链 v2：实现与验收状态
 
+> 门禁执行更新（2026-10-04）：开发使用 `--stage source --strict`；新包与现场使用 `--stage artifact/field --strict --acceptance-report FILE`，需真实证据。默认仍为 field，当前 ART/FIELD 未完成；详情见[分阶段门禁与更新流程](validation-gate-workflow.md)。
+
 更新：2026-10-03。强制契约为 `docs/upgrade-validation-chain.md`，与下载目录 v2 原文逐字一致。此文件记录实现状态，不修改契约规则。
 
 ## 已实现并在本地验证
