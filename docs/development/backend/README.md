@@ -1,5 +1,7 @@
 # 后端功能入口
 
+**修改前必读：[门禁执行与更新流程](../../zh-CN/validation-gate-workflow.md)。** 涉及升级、热修、回退、操作管理、维护锁或其他契约范围时，先完整读[强制契约 v2](../../zh-CN/upgrade-validation-chain.md)；完成必读后再选功能。
+
 API 路由在 `internal/api/server.go`。下表按业务职责分组；“设置”是设置页调用的接口集合，不是独立的后端服务包。
 
 | 问题范围 | 功能文档 |

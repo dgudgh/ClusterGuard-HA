@@ -2,7 +2,7 @@
 
 [后端](../README.md) → [设置接口](README.md) → [升级与热修](updates.md) → 门禁
 
-必须先读[强制契约](../../../zh-CN/upgrade-validation-chain.md)。本页说明实现落点；具体命令和报告格式在[分阶段门禁流程](../../../zh-CN/validation-gate-workflow.md)，需要执行对应阶段时再读。
+修改前必须先读[门禁执行与更新流程](../../../zh-CN/validation-gate-workflow.md)和完整[强制契约](../../../zh-CN/upgrade-validation-chain.md)，记录加载与适用阶段。本页说明实现落点，不替代这两份必读文档。
 
 ## 先判断是哪类问题
 

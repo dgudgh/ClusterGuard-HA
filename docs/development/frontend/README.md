@@ -1,5 +1,7 @@
 # 前端页面入口
 
+**修改前必读：[门禁执行与更新流程](../../zh-CN/validation-gate-workflow.md)。** 涉及控制台更新流程、操作管理或其他契约范围时，先完整读[强制契约 v2](../../zh-CN/upgrade-validation-chain.md)；完成必读后再选页面。
+
 页面实现集中在 `internal/api/console.html`。先读[前端通用交互规则](../rules/frontend-common.md)，再按问题选择页面；此处的目录是阅读导航，不代表源码组件划分。
 
 | 页面或问题 | 功能文档 |

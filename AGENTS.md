@@ -2,6 +2,12 @@
 
 适用全仓。只保留一条主线 `codex/2.2-postgresql`；保留他人未提交改动。文档按前端、后端和交付模块渐进展开，不要求一次读完全部资料。
 
+## P0：修改前必读门禁（先于模块导航）
+
+1. **开始任何修改前，必须先读[门禁执行与更新流程](docs/zh-CN/validation-gate-workflow.md)**，确定适用门禁阶段及验证计划，然后再进入功能文档。
+2. **涉及升级、热修、重试、续跑、回退、控制台更新流程、操作管理、维护锁、构建、签名或发布时，修改/执行前必须完整读取[升级与热修强制契约 v2](docs/zh-CN/upgrade-validation-chain.md)**。任务记录写明 `CG-UPGRADE-CONTRACT`、`contract_version=2`、`contract_loaded=true`。
+3. 任务 Markdown 必须记录已读门禁文档、适用阶段和验证计划；未读适用门禁不得开始对应修改或动作，未完成门禁不得宣称对应阶段通过。强制契约是规范，执行流程是指南；功能文档不得降低门禁要求。
+
 ## 所有修改必须遵守
 
 - 修改业务代码前先确认实际源码、分支、HEAD、工作树与目标运行版本；用 git log/show/diff 对比可信旧行为，并事先写下任务 Markdown。未完成旧版对比不得修改业务代码。
@@ -18,10 +24,10 @@
 | 前端 | [前端入口](docs/development/frontend/README.md) | 当前页面 → 功能 → 规则/测试 |
 | 后端 | [后端入口](docs/development/backend/README.md) | 接口模块 → 功能 → 服务/存储 |
 | 高风险操作 | [操作授权规则](docs/development/rules/operation-safety.md) | 对应操作/恢复/节点功能 |
-| 升级、热修及其构建/校验 | [后端设置：升级](docs/development/backend/settings/updates.md) | 对应子功能；执行前必须读[强制契约](docs/zh-CN/upgrade-validation-chain.md) |
+| 升级、热修及其构建/校验 | [强制契约](docs/zh-CN/upgrade-validation-chain.md) | [后端设置：升级](docs/development/backend/settings/updates.md) → 对应子功能 |
 | 打包、签名、公开发布、现场交付 | [交付入口](docs/development/delivery/README.md) | 适用渠道规则与完整发布清单 |
 | 依赖或许可变更 | [许可与依赖规则](docs/development/rules/licensing.md) | 第三方清单与合规说明 |
 
-不要递归读取所有链接。父索引只给职责与下一步；具体功能页说明范围、调用链、失败和验证。页中“必须读”按写明的触发条件执行，“仅当”链接留到对应问题出现时再读。旧 AGENTS 正文去向见[适用规则索引](docs/development/rules/README.md)。
+先完成以上门禁必读，再按需阅读模块，不递归读取所有链接。父索引只给职责与下一步；具体功能页说明范围、调用链、失败和验证。页中“必须读”按写明的触发条件执行，“仅当”链接留到对应问题出现时再读。旧 AGENTS 正文去向见[适用规则索引](docs/development/rules/README.md)。
 
 [开发总入口](docs/development/README.md) · [文档中心](docs/README.md)
