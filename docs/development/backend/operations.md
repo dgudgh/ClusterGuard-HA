@@ -2,15 +2,14 @@
 
 [返回模块](README.md)
 
-## 什么时候读
 
-仅当任务涉及本功能的实现、故障或回归时读取；相关功能通过末尾链接继续进入。
+修改操作入口、预检、授权或执行链前，必须读[高风险操作授权规则](../rules/operation-safety.md)。
 
-## 路径
+## 调用链与边界
 
 precheck → plan → approval → execute → workflow → adapter → verify → 持久化结果；每个执行边界重新验证授权及安全事实。
 
-## 源码与验证入口
+## 定位实现与回归
 
 | 职责 | 入口 |
 | --- | --- |
@@ -19,5 +18,4 @@ precheck → plan → approval → execute → workflow → adapter → verify �
 
 ## 需要时再读
 
-- [operation-safety](../rules/operation-safety.md)
-- [operations](../frontend/operations.md)
+- [操作与恢复交互](../frontend/operations.md)

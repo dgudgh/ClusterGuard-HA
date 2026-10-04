@@ -1,12 +1,16 @@
-# 后端：设置
+# 后端设置接口
 
-设置接口负责控制面状态、配置投影、集群策略、认证和版本更新。配置读取与策略写入不同；显示偏好保存在浏览器，无独立后端接口。此页只列路径，规则和验收放到对应功能页。
+这里汇总设置页及关于页所用接口，职责分散在 API、认证、运行时和升级服务中。先确定是读取状态、读取配置、写策略还是执行升级。
 
-| 当前任务 | 下一份文档 |
+| 职责与粗略路径 | 功能文档 |
 | --- | --- |
-| 设置：控制面状态接口 | [status](status.md) |
-| 设置：认证与账户接口 | [account](account.md) |
-| 设置：运行参数接口 | [configuration](configuration.md) |
-| 设置：引擎级集群策略 | [cluster-policy](cluster-policy.md) |
-| 设置与关于：版本接口 | [version](version.md) |
-| 设置：升级与热修编排 | [updates](updates.md) |
+| 状态 GET → 状态 provider → 当前控制面事实 | [控制面状态](status.md) |
+| auth 路由 → 会话、CSRF、账户服务 | [认证与账户](account.md) |
+| configuration GET → 当前节点配置投影 | [运行参数](configuration.md) |
+| cluster-policy GET/PUT → 引擎级覆盖 → Raft | [全局引擎策略](cluster-policy.md) |
+| version GET → buildinfo → 版本投影 | [版本信息](version.md) |
+| updates 路由 → 升级服务 → 受限执行器 | [升级与热修](updates.md) |
+
+浏览器语言和刷新频率由[前端显示偏好](../../frontend/settings/preferences.md)说明，没有对应写配置 API。
+
+[返回后端功能入口](../README.md)

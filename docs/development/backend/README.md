@@ -1,13 +1,16 @@
-# 后端模块入口
+# 后端功能入口
 
-请求路由入口为 [server.go](../../../internal/api/server.go)，按功能进入具体服务。跨前后端问题再读取对应前端页；普通模块修改无需预读发布验收全文。
+API 路由在 `internal/api/server.go`。下表按业务职责分组；“设置”是设置页调用的接口集合，不是独立的后端服务包。
 
-| 当前任务 | 下一份文档 |
+| 问题范围 | 功能文档 |
 | --- | --- |
-| 设置 | [README](settings/README.md) |
-| 集群注册、发现与拓扑 | [clusters](clusters.md) |
-| 切换、授权与执行编排 | [operations](operations.md) |
-| 灾难恢复与旧主恢复 | [recovery](recovery.md) |
-| 节点同步、生命周期与受限执行 | [nodes](nodes.md) |
-| 健康、指标与报告 | [observability](observability.md) |
-| 日志、分页、存储与 Raft | [audit](audit.md) |
+| 控制面状态、配置、认证、策略、软件升级 | [设置接口](settings/README.md) |
+| 集群登记、发现、数据库身份和拓扑 | [集群与发现](clusters.md) |
+| 切换、审批、执行和核验 | [操作编排](operations.md) |
+| 灾难恢复、旧主恢复和原生隔离证据 | [恢复流程](recovery.md) |
+| 节点同步、添加修复、启停和 Agent 执行 | [节点生命周期](nodes.md) |
+| 健康、指标和报告 | [观测与报告](observability.md) |
+| 日志查询、游标、审计展示 | [日志与审计](audit.md) |
+| Raft、CAS、快照与底层保留规则 | [持久化基础设施](persistence.md) |
+
+先定位到业务功能；仅当问题涉及提交、复制或存储时，再进入持久化基础设施。

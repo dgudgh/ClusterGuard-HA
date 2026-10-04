@@ -1,22 +1,13 @@
-# 设置与关于：版本接口
+# 平台版本信息
 
-[返回模块](README.md)
+[后端功能](../README.md) → [设置接口](README.md) → 版本
 
-## 什么时候读
+`GET /api/v1/platform/version` → `platformVersionRoute` → `buildinfo.Current("clusterguard")` → no-store JSON。
 
-仅当任务涉及本功能的实现、故障或回归时读取；相关功能通过末尾链接继续进入。
+这是当前程序构建信息投影，不探测所有控制器 RPM，不验签，也不证明签名热修包已经应用。页面版本、源码 HEAD、已交付构建提交和现场包身份须分别核对。
 
-## 路径
+## 定位与验证
 
-GET /api/v1/platform/version → platformVersionRoute → buildinfo；仅提供版本展示。正式交付身份还须核对 RELEASE-INFO、签名与摘要。
+修改响应看[control_plane.go](../../../../internal/api/control_plane.go)，修改构建字段看[buildinfo](../../../../internal/buildinfo)；接口契约由[control_plane_test.go](../../../../internal/api/control_plane_test.go)的版本测试覆盖。
 
-## 源码与验证入口
-
-| 职责 | 入口 |
-| --- | --- |
-| 实现 | [control_plane.go](../../../../internal/api/control_plane.go)、[buildinfo](../../../../internal/buildinfo)、[server.go](../../../../internal/api/server.go) |
-| 回归 | [control_plane_test.go](../../../../internal/api/control_plane_test.go) |
-
-## 需要时再读
-
-- [about](../../frontend/about.md)
+响应正确但关于页显示不对时读[关于页面](../../frontend/about.md)；修改来源/目标兼容性时读[升级动作保护](update-actions.md)；准备交付身份才读[版本发布规范](../../../zh-CN/version-release-policy.md)。

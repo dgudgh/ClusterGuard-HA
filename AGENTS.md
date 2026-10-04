@@ -22,6 +22,6 @@
 | 打包、签名、公开发布、现场交付 | [交付入口](docs/development/delivery/README.md) | 适用渠道规则与完整发布清单 |
 | 依赖或许可变更 | [许可与依赖规则](docs/development/rules/licensing.md) | 第三方清单与合规说明 |
 
-不要递归读取所有链接。模块索引只给职责和粗略路径；涉及的单功能文档及其适用硬规则必须读取。跨模块问题才沿调用链读取关联模块。
+不要递归读取所有链接。父索引只给职责与下一步；具体功能页说明范围、调用链、失败和验证。页中“必须读”按写明的触发条件执行，“仅当”链接留到对应问题出现时再读。旧 AGENTS 正文去向见[适用规则索引](docs/development/rules/README.md)。
 
 [开发总入口](docs/development/README.md) · [文档中心](docs/README.md)

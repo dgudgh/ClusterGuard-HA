@@ -1,24 +1,13 @@
-# 设置：升级与热修编排
+# 后端升级与热修
 
-[返回模块](README.md)
+本功能的粗略链路是 `updates API → Manager → Helper → job wrapper → Runner → 签名载荷`。先选问题，具体代码和测试在子功能页。
 
-## 什么时候读
-
-仅当任务涉及本功能的实现、故障或回归时读取；相关功能通过末尾链接继续进入。
-
-## 路径
-
-/api/v1/platform/updates → Manager → 受限 Helper → job wrapper → Runner → 签名载荷。只选择下面与当前问题对应的子功能。
-
-## 源码与验证入口
-
-| 职责 | 入口 |
+| 当前问题 | 进入的子功能 |
 | --- | --- |
-| 实现 | [updates.go](../../../../internal/api/updates.go)、[platformupdate](../../../../internal/platformupdate)、[updatecontract](../../../../internal/updatecontract)、[clusterguard-update-job.sh](../../../../scripts/clusterguard-update-job.sh)、[clusterguard-upgrade.sh](../../../../scripts/clusterguard-upgrade.sh)、[software_update.go](../../../../internal/store/software_update.go) |
-| 回归 | [updates_test.go](../../../../internal/api/updates_test.go)、[manager_test.go](../../../../internal/platformupdate/manager_test.go)、[history_test.go](../../../../internal/platformupdate/history_test.go)、[software_update_test.go](../../../../internal/store/software_update_test.go) |
+| execute/retry/resume/rollback、验签、基线、外包锁 | [动作与执行保护](update-actions.md) |
+| 成功被失败覆盖、重复提交、操作 ID、Leader 历史冲突 | [部署状态与操作历史](update-history.md) |
+| 契约加载、门禁阶段、构建前检查、验收证据更新 | [契约与验收门禁](update-validation.md) |
 
-## 需要时再读
+先选择子功能定位问题。开始修改或执行升级链路前，必须完整读取[强制契约](../../../zh-CN/upgrade-validation-chain.md)，并按 §20 记录契约加载；子功能页不能替代契约。具体现场命令只在执行升级时读[现场手册](../../../zh-CN/update-and-patch.md)；构建/签名/发布再进入[交付流程](../../delivery/README.md)。
 
-- [update-actions](update-actions.md)
-- [update-history](update-history.md)
-- [update-validation](update-validation.md)
+[返回设置接口](README.md)

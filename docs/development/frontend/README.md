@@ -1,15 +1,15 @@
-# 前端模块入口
+# 前端页面入口
 
-所有页面目前共用 [console.html](../../../internal/api/console.html)，这里按功能导航，不代表源码已拆组件。改页面先读 [前端通用规则](../rules/frontend-common.md)，再选当前页。
+页面实现集中在 `internal/api/console.html`。先读[前端通用交互规则](../rules/frontend-common.md)，再按问题选择页面；此处的目录是阅读导航，不代表源码组件划分。
 
-| 当前任务 | 下一份文档 |
+| 页面或问题 | 功能文档 |
 | --- | --- |
-| 设置 | [README](settings/README.md) |
-| 集群上下文与导航 | [context](context.md) |
-| 总览与拓扑 | [overview](overview.md) |
-| 操作与恢复交互 | [operations](operations.md) |
-| 节点与生命周期弹窗 | [nodes](nodes.md) |
-| 指标与引擎能力 | [metrics](metrics.md) |
-| 操作日志与分页 | [logs](logs.md) |
-| 关于与版本展示 | [about](about.md) |
-| 全页面与引擎能力边界 | [engines](engines.md) |
+| 设置：状态、账户、偏好、参数、策略、版本更新 | [设置功能](settings/README.md) |
+| 顶部集群切换、刷新、请求晚到 | [集群上下文](context.md) |
+| 总览和拓扑展示 | [总览与拓扑](overview.md) |
+| 切换与恢复的按钮、确认、进度 | [操作与恢复交互](operations.md) |
+| 节点添加、修复、生命周期弹窗 | [节点交互](nodes.md) |
+| 指标名称、数值和引擎支持 | [指标展示](metrics.md) |
+| 日志范围、筛选、分页、原始详情 | [操作日志](logs.md) |
+| 版本与关于信息 | [关于页面](about.md) |
+| 共同壳层、跨引擎能力或全页面验收 | [跨页面与引擎检查](engines.md) |

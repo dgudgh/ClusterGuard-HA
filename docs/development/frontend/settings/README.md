@@ -1,12 +1,14 @@
-# 前端：设置
+# 前端设置功能
 
-设置包含状态设置、运行参数、版本更新三个功能区。状态设置含账户与偏好；运行参数含只读配置与可修改的集群策略。只进入当前需要改动的具体功能。
+设置有三个实际面板。先按面板定位，再进入单项功能；显示偏好不写后端，策略也不跟随顶部选中集群。
 
-| 当前任务 | 下一份文档 |
-| --- | --- |
-| 设置：状态展示 | [status](status.md) |
-| 设置：账户与会话 | [account](account.md) |
-| 设置：显示偏好 | [preferences](preferences.md) |
-| 设置：运行参数只读视图 | [configuration](configuration.md) |
-| 设置：集群策略编辑 | [cluster-policy](cluster-policy.md) |
-| 设置：升级与热修交互 | [updates](updates.md) |
+| 面板 | 具体问题 | 下一步 |
+| --- | --- | --- |
+| 状态设置 | Leader、quorum、任务状态展示 | [控制面状态](status.md) |
+| 状态设置 | 修改密码、退出、登录失效 | [账户与会话](account.md) |
+| 状态设置 | 语言、自动刷新频率 | [显示偏好](preferences.md) |
+| 运行参数 | 配置值、来源、重启提示 | [配置只读视图](configuration.md) |
+| 运行参数 | 修改或清除引擎级全局覆盖 | [引擎策略编辑](cluster-policy.md) |
+| 版本更新 | 上传、确认、retry/resume、历史展示 | [升级与热修交互](updates.md) |
+
+[返回前端页面入口](../README.md)
