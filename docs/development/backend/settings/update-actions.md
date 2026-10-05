@@ -2,7 +2,7 @@
 
 [后端](../README.md) → [设置接口](README.md) → [升级与热修](updates.md) → 动作
 
-修改/执行本功能前必须读[强制契约](../../../zh-CN/upgrade-validation-chain.md)；涉及确认与授权时还须读[操作安全规则](../../rules/operation-safety.md)。
+修改/执行本功能前必须读[强制契约](../../../zh-CN/upgrade-validation-chain.md)。修改任何非 plan 的变更入口、执行链、重试、续跑、回退、确认或授权撤回前，还必须读[操作安全规则](../../rules/operation-safety.md)；不能因改动位于 Manager、Helper 或 Runner 而跳过。
 
 ## 请求链路
 

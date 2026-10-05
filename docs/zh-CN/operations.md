@@ -1,5 +1,7 @@
 # ClusterGuard HA 操作
 
+> **阅读用途：控制面/API 参考。** 先从[运维操作手册](operations-manual.md)选择任务，再查本页接口和配置契约。源码修改前先读[根规则](../../AGENTS.md)与[适用规则](../development/rules/README.md)；真实恢复或升级动作前完成对应验收预检，API 示例不替代授权或安全检查。
+
 <!-- LANGUAGE-SWITCH -->
 > **语言：** [English](../operations.md) | 简体中文
 <!-- /LANGUAGE-SWITCH -->

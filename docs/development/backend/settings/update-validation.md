@@ -26,6 +26,6 @@
 - 证据完整性、过期与 CLI 阶段：[证据测试](../../../../tools/upgrade-acceptance-evidence.test.cjs)。
 - 源码断言失效：校验脚本 `--self-test`，要求变异被捕获且无关修改对照通过。
 - 构建前加载：[热修构建器](../../../../scripts/build-hotfix-patch.sh)、[滚动升级包构建器](../../../../scripts/build-clusterguard-patch.sh)及 RPM/离线构建入口。
-- 实际 ART/FIELD 完成情况：[实现与验收状态](../../../zh-CN/upgrade-validation-chain-implementation-status.md)。未执行项不能因选择 source 阶段而关闭。
+- [实现与验收状态](../../../zh-CN/upgrade-validation-chain-implementation-status.md)是其标注日期与源码基线下的历史快照，不代表当前 HEAD 或现场状态。当前 ART/FIELD 判定必须使用当前证据绑定、相应 strict 阶段和本次实际验收报告；未执行项不能因选择 source 阶段或引用旧快照而关闭。
 
 仅在产出、签名或发布新制品时再进入[交付流程](../../delivery/README.md)。

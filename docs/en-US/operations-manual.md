@@ -1,6 +1,8 @@
 # ClusterGuard HA Operations Manual
 
-> For current update/hotfix action rules, see the [update guide](update-and-patch.md). Current source baseline: `7b643f4` (2026-10-03), on the sole mainline `codex/2.2-postgresql`. Updates and hotfixes enforce the v2 contract: failed hotfixes use `retry`; interrupted rolling updates use `resume`. New-artifact and site ART/FIELD acceptance remains **OPEN**. No new package or production deployment was performed.
+> **Reading order:** use the relevant section for routine read-only observation. Before changing operation management or business code, read the [root rules](../../AGENTS.md) and [applicable rules](../development/rules/README.md). Before actual recovery, read the relevant [acceptance scenarios](../zh-CN/release-recovery-acceptance-checklist.md). Before an update, hotfix, or rollback, read the complete [contract](../upgrade-validation-chain.md) and [gate workflow](../zh-CN/validation-gate-workflow.md), then follow the procedure. Historical reports do not replace evidence for this site operation.
+
+> For update/hotfix action rules, see the [update guide](update-and-patch.md). The implementation record dated 2026-10-03 used baseline `7b643f4` on `codex/2.2-postgresql`; that repair produced no new package or deployment and recorded ART/FIELD as **OPEN**. This is not the status of this site operation. Under v2, failed hotfixes use `retry` and interrupted rolling updates use `resume`; recheck the current checkout, package, and site evidence before acting.
 
 <!-- LANGUAGE-SWITCH -->
 > **Language:** English | [简体中文](../zh-CN/operations-manual.md)

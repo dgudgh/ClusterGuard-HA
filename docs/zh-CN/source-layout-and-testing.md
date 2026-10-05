@@ -1,12 +1,14 @@
 # 源码、文件与测试导览
 
+> **阅读用途：源码定位与测试入口参考。** 修改前先完成[根规则](../../AGENTS.md)、[门禁流程](validation-gate-workflow.md)及[适用规则](../development/rules/README.md)的必读，再用本页查具体目录。下方有日期的验证结果属于历史快照，当前执行阶段以门禁流程为准。
+
 > 门禁执行更新（2026-10-04）：开发使用 `--stage source --strict`；新包与现场使用 `--stage artifact/field --strict --acceptance-report FILE`，需真实证据。默认仍为 field，当前 ART/FIELD 未完成；详情见[分阶段门禁与更新流程](validation-gate-workflow.md)。
 
-## 当前主线与 v2 验证
+## 2026-10-03 实现与验证快照
 
-当前源码基线为 `7b643f4`（2026-10-03），唯一主线为 `codex/2.2-postgresql`。升级与热修统一执行 v2 契约；热修失败使用独立 `retry`，滚动升级失败使用 `resume`。新包与现场 ART/FIELD 验收仍为 **OPEN**，本轮没有新包或生产部署。
+该次源码修复基线为 `7b643f4`（2026-10-03），主线为 `codex/2.2-postgresql`；该次修复执行 v2 契约，热修失败使用独立 `retry`，滚动升级失败使用 `resume`，未产出新包或部署，ART/FIELD 记录为 **OPEN**。当前任务须重新核对 checkout 与对应阶段的真实证据。
 
-契约实现在 `internal/updatecontract`；升级状态与幂等实现在 `internal/platformupdate`；脚本入口是 `scripts/clusterguard-update-job.sh` 和 `scripts/clusterguard-upgrade.sh`。最新实际执行的 Go、race、浏览器与门禁结果见[修复记录](upgrade-hotfix-v2-repair-2026-10-03.md)。
+契约实现在 `internal/updatecontract`；升级状态与幂等实现在 `internal/platformupdate`；脚本入口是 `scripts/clusterguard-update-job.sh` 和 `scripts/clusterguard-upgrade.sh`。该次实际执行的 Go、race、浏览器与门禁结果见[修复记录](upgrade-hotfix-v2-repair-2026-10-03.md)。下列无阶段命令保留用于追溯当时验证，当前任务按顶部门禁流程选择 source/artifact/field。
 
 ```bash
 node tools/verify-upgrade-validation-chain.cjs
@@ -17,9 +19,9 @@ CONSOLE_TEST_OUTPUT=.build/validation/hotfix-recovery node tools/console-update-
 CONSOLE_TEST_OUTPUT=.build/validation/update-confirmation node tools/console-update-confirmation-acceptance.cjs
 ```
 
-`--strict` 当前因完整新包与现场验收 OPEN 而失败，这是发布阻断。四个构建入口另执行 `--contract-only`；Go 构建脚本测试可设置 `CG_NODE_BIN`。隔离浏览器通过不等于数据库现场通过。
+该次无阶段 `--strict` 因完整新包与现场验收 OPEN 而失败；当前任务按适用阶段和本次证据重新执行，不能复用旧结果。四个构建入口另执行 `--contract-only`；Go 构建脚本测试可设置 `CG_NODE_BIN`。隔离浏览器通过不等于数据库现场通过。
 
-维护日期：2026-10-03。面向当前开发分支，不代表已发布安装包已包含后续清理。先读 [AGENTS.md](../../AGENTS.md)，修改前必须完成旧版对照并保留记录。
+导览维护记录：2026-10-03；上述验证快照面向当时修复基线，不代表已发布安装包已包含后续清理。先读 [AGENTS.md](../../AGENTS.md)，修改前必须完成旧版对照并保留记录。
 
 ## 从哪里开始读
 

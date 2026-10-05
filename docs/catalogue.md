@@ -1,14 +1,25 @@
-# ClusterGuard HA Documentation / 文档中心
+# ClusterGuard HA Full Catalogue and Historical Links / 完整资料与历史链接目录
 
-> 完整资料目录，保留截至 2026-10-04 拆分前的手册/历史索引。按需查找资料；开发从[分模块入口](development/README.md)开始，不一次性读取此目录的全部内容。
+> 完整资料与历史链接目录，保留拆分前的手册、发布和验收索引。这里用于查找资料，不是每次修改的阅读顺序。 / Full catalogue of manuals and historical release and acceptance links; this is a lookup index, not a reading order for each change.
+
+**修改前先读[根规则](../AGENTS.md)、[门禁执行流程](zh-CN/validation-gate-workflow.md)和[阅读顺序与适用规则](development/rules/README.md)，再进入[开发模块](development/README.md)。** 涉及升级契约范围的修改或动作前，完整读取[强制契约 v2](zh-CN/upgrade-validation-chain.md)。 / Before changes, read the repository rules, gate workflow, and applicable rules, then select a development module; read the complete mandatory contract before changes or actions within its scope.
+
+## Document Roles / 资料作用
+
+| Role / 作用 | Entry / 入口 |
+| --- | --- |
+| Current mandatory rules / 现行强制规范 | [Reading order / 阅读顺序](development/rules/README.md)、[Contract / 强制契约](upgrade-validation-chain.md)、[Release policy / 发版规范](zh-CN/version-release-policy.md)、[Licensing / 许可](zh-CN/licensing.md) |
+| Operations instructions / 操作说明 | [Task entry / 场景入口](README.md) → [中文手册](zh-CN/README.md) / [English manuals](en-US/README.md)，满足适用规则后使用对应版本手册 / use the matching version after applicable rules |
+| Design and reference / 设计参考 | [Architecture / 架构](architecture.md)、[Product tour / 产品导览](en-US/product-tour.md)；说明设计或接口，不能替代强制规范 / explanations do not replace mandatory rules |
+| Historical releases and acceptance / 历史发布与验收 | 下方版本、带日期报告及工程记录用于追溯对应制品和验证范围，不能证明本次现场通过 / records below describe their artifacts and validation scope, not present site acceptance |
 
 门禁开发与验收已按阶段推进，详见[执行和更新流程](zh-CN/validation-gate-workflow.md)；默认最终验收仍需要真实 ART/FIELD 证据。 / Gate execution now separates source, artifact, and field stages; final acceptance still requires actual evidence.
 
-## 当前源码 / Current Source
+## 源码修复与验收记录 / Recorded Source Repair and Acceptance
 
-当前源码基线为 `7b643f4`（2026-10-03），唯一主线为 `codex/2.2-postgresql`。升级与热修统一执行 v2 契约；热修失败使用独立 `retry`，滚动升级失败使用 `resume`。新包与现场 ART/FIELD 验收仍为 **OPEN**，本轮没有新包或生产部署。
+记录中的源码修复基线为 `7b643f4`（2026-10-03），唯一主线为 `codex/2.2-postgresql`。该次修复的升级与热修执行 v2 契约：热修失败使用独立 `retry`，滚动升级失败使用 `resume`。该次修复的新包与现场 ART/FIELD 验收记录仍为 **OPEN**，未产生新包或生产部署；不替代本次源码、制品和现场核验。
 
-Current source baseline: `7b643f4` (2026-10-03), on the sole mainline `codex/2.2-postgresql`. Updates and hotfixes enforce the v2 contract: failed hotfixes use `retry`; interrupted rolling updates use `resume`. New-artifact and site ART/FIELD acceptance remains **OPEN**. No new package or production deployment was performed.
+Recorded source repair baseline: `7b643f4` (2026-10-03), on the sole mainline `codex/2.2-postgresql`. That repair enforces the v2 contract: failed hotfixes use `retry`; interrupted rolling updates use `resume`. Its new-artifact and site ART/FIELD acceptance record remains **OPEN**; that repair produced no new package or production deployment. This does not replace verification of the current checkout, package, or site.
 
 [中文实现状态](zh-CN/upgrade-validation-chain-implementation-status.md) · [English implementation status](en-US/upgrade-validation-chain-implementation-status.md)
 
@@ -42,41 +53,42 @@ npm install
 npm run build:html
 ```
 
-## Product Documentation / 产品文档
+## Manuals, Rules and Historical Release Links / 手册、规范与历史发布链接
 
-Latest installer / 最新安装介质：[2.2-105 发布说明（中文）](zh-CN/release-2.2.105.md)。Baseline `b383092`. It freezes the defects that 2.2-104 exposed in the field into a release medium. Correcting a cluster clock no longer takes the cluster down: a rewind used to leave the topology observation watermark in the future, every later refresh was then rejected as out of order, the VIP ownership lease stopped being renewed, and the data nodes released the VIP and set every instance read-only — fixing the clock was itself what stopped the cluster. The MySQL writer that isolated itself roughly every ten seconds is aligned again, 账户与偏好 folds into 状态设置, the console names why a section is unavailable, and a signed hotfix patch can be installed from the console. These 27 commits had only ever reached a site as signed `.cgpatch` bundles; this is the first medium that carries them. 基线 `b383092`：把 2.2-104 之后在现场暴露并修复的一批缺陷固化进正式介质。**修正集群时钟不再让集群进入停机态**（拨钟后拓扑观测水位留在未来 → 每次刷新按顺序违规被拒 → VIP 归属租约停止续期 → 数据节点摘 VIP 并把实例设为只读），**停止 MySQL 写入者每约 10 秒自我隔离的抖动**，「账户与偏好」并入「状态设置」，控制台直接显示“不可用”的原因，可从控制台安装签名热修补丁。这 27 个提交此前只以签名 `.cgpatch` 热修包的形式在现场存在，本版是它们第一次随正式版本交付。Built and verified locally, not uploaded to GitHub and not accepted on site; the three-node rolling upgrade, real failover and VIP takeover have not been run. 已在本地构建核验，未上传 GitHub、未现场验收；三节点滚动升级、真实故障切换与 VIP 自动接管均未执行。Previous / 上一版：[2.2-104 发布说明（中文）](zh-CN/release-2.2.104.md)（已由 2.2-105 取代；代码基线 `259b796`，介质内 `RELEASE-INFO` 记录的是打包提交 `e01f5ce`，该提交只补完发布说明与索引、不含代码改动，两者代码等价；本版另配了签名 `.cgupgrade`（`2.2-103 → 2.2-104`，实验室链，现场信任该链），本地保存、未上传 GitHub）。Earlier / 再上一版：[2.2-103 发布说明（中文）](zh-CN/release-2.2.103.md)。One kit contains MySQL and PostgreSQL media; this is the **second build** of 2.2-103, reissued so that the artifacts themselves carry the `AGPL-3.0-only` license (the first build predates the license and contained no license file). It is built and verified locally but not uploaded and not accepted on site. 同一安装包包含 MySQL/PG 介质；这是 2.2-103 的**第二次构建**，为把 `AGPL-3.0-only` 许可装进产物而重出（首版构建于许可落地之前，包内无许可文件）。已在本地构建并核验，尚未上传 GitHub、尚未现场验收。This version also changes the fresh-install administrator credential: without `bootstrap_admin_password_env` the controller now generates a random password into a root-only 0600 file instead of falling back to `admin123`. 本版另含一处新装行为变更：未设置 `bootstrap_admin_password_env` 时，首次管理员口令改由控制面随机生成并写入 root-only 0600 文件，不再回退到 `admin123`。Previous / 上一版：[2.2-102 发布说明（中文）](zh-CN/release-2.2.102.md)（已由 2.2-103 取代，其包内文档为修正前快照） · [2.2-101 发布说明（中文）](zh-CN/release-2.2.101.md) · [GitHub v2.2.101](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.101)。Updater follow-up / 升级器后续状态见 [私有执行区安全记录](zh-CN/updater-private-workspace-2026-09-11.md)。这些链接指向当前 Markdown；2.2-103 之后的包内文档仍会保留构建时快照。英文侧发布说明止于 `en-US/release-2.2.47.md`；此后的发布说明只维护简体中文版，现存 2.2.69–2.2.73、2.2.86、2.2.88–2.2.105（其间号段未生成发布说明，不是断链）。下表只列中英成对的文档，因此发布说明一栏停在 2.2.47。完整中文发布说明清单见 [中文文档索引](zh-CN/README.md)。
+Recorded installer / 已记录的 2.2-105 安装介质：[2.2-105 发布说明（中文）](zh-CN/release-2.2.105.md)。Baseline `b383092`. It freezes the defects that 2.2-104 exposed in the field into a release medium. Correcting a cluster clock no longer takes the cluster down: a rewind used to leave the topology observation watermark in the future, every later refresh was then rejected as out of order, the VIP ownership lease stopped being renewed, and the data nodes released the VIP and set every instance read-only — fixing the clock was itself what stopped the cluster. The MySQL writer that isolated itself roughly every ten seconds is aligned again, 账户与偏好 folds into 状态设置, the console names why a section is unavailable, and a signed hotfix patch can be installed from the console. These 27 commits had only ever reached a site as signed `.cgpatch` bundles; this is the first medium that carries them. 基线 `b383092`：把 2.2-104 之后在现场暴露并修复的一批缺陷固化进正式介质。**修正集群时钟不再让集群进入停机态**（拨钟后拓扑观测水位留在未来 → 每次刷新按顺序违规被拒 → VIP 归属租约停止续期 → 数据节点摘 VIP 并把实例设为只读），**停止 MySQL 写入者每约 10 秒自我隔离的抖动**，「账户与偏好」并入「状态设置」，控制台直接显示“不可用”的原因，可从控制台安装签名热修补丁。这 27 个提交此前只以签名 `.cgpatch` 热修包的形式在现场存在，本版是它们第一次随正式版本交付。Built and verified locally, not uploaded to GitHub and not accepted on site; the three-node rolling upgrade, real failover and VIP takeover have not been run. 已在本地构建核验，未上传 GitHub、未现场验收；三节点滚动升级、真实故障切换与 VIP 自动接管均未执行。Previous / 上一版：[2.2-104 发布说明（中文）](zh-CN/release-2.2.104.md)（已由 2.2-105 取代；代码基线 `259b796`，介质内 `RELEASE-INFO` 记录的是打包提交 `e01f5ce`，该提交只补完发布说明与索引、不含代码改动，两者代码等价；本版另配了签名 `.cgupgrade`（`2.2-103 → 2.2-104`，实验室链，现场信任该链），本地保存、未上传 GitHub）。Earlier / 再上一版：[2.2-103 发布说明（中文）](zh-CN/release-2.2.103.md)。One kit contains MySQL and PostgreSQL media; this is the **second build** of 2.2-103, reissued so that the artifacts themselves carry the `AGPL-3.0-only` license (the first build predates the license and contained no license file). It is built and verified locally but not uploaded and not accepted on site. 同一安装包包含 MySQL/PG 介质；这是 2.2-103 的**第二次构建**，为把 `AGPL-3.0-only` 许可装进产物而重出（首版构建于许可落地之前，包内无许可文件）。已在本地构建并核验，尚未上传 GitHub、尚未现场验收。This version also changes the fresh-install administrator credential: without `bootstrap_admin_password_env` the controller now generates a random password into a root-only 0600 file instead of falling back to `admin123`. 本版另含一处新装行为变更：未设置 `bootstrap_admin_password_env` 时，首次管理员口令改由控制面随机生成并写入 root-only 0600 文件，不再回退到 `admin123`。Previous / 上一版：[2.2-102 发布说明（中文）](zh-CN/release-2.2.102.md)（已由 2.2-103 取代，其包内文档为修正前快照） · [2.2-101 发布说明（中文）](zh-CN/release-2.2.101.md) · [GitHub v2.2.101](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.101)。Updater follow-up / 升级器后续状态见 [私有执行区安全记录](zh-CN/updater-private-workspace-2026-09-11.md)。这些链接指向当前 Markdown；2.2-103 之后的包内文档仍会保留构建时快照。英文侧发布说明止于 `en-US/release-2.2.47.md`；此后的发布说明只维护简体中文版，现存 2.2.69–2.2.73、2.2.86、2.2.88–2.2.105（其间号段未生成发布说明，不是断链）。下表只列中英成对的文档，因此发布说明一栏停在 2.2.47。中文场景入口见 [中文文档索引](zh-CN/README.md)，发布记录列表见 [中文完整资料目录](zh-CN/catalogue.md)。
 
-| Topic / 主题 | English | 简体中文 |
-| --- | --- | --- |
-| Documentation index / 文档索引 | [English](en-US/README.md) | [中文](zh-CN/README.md) |
-| Product tour / 产品导览 | [English](en-US/product-tour.md) | [中文](zh-CN/product-tour.md) |
-| Architecture / 架构 | [English](architecture.md) | [中文](zh-CN/architecture.md) |
-| 2.2.47 release notes / 2.2.47 发布说明 | [English](en-US/release-2.2.47.md) | [中文](zh-CN/release-2.2.47.md) |
-| 2.2.46 release notes / 2.2.46 发布说明 | [English](en-US/release-2.2.46.md) | [中文](zh-CN/release-2.2.46.md) |
-| 2.2.45 release notes / 2.2.45 发布说明 | [English](en-US/release-2.2.45.md) | [中文](zh-CN/release-2.2.45.md) |
-| 2.2.44 release notes / 2.2.44 发布说明 | [English](en-US/release-2.2.44.md) | [中文](zh-CN/release-2.2.44.md) |
-| 2.2.43 release notes / 2.2.43 发布说明 | [English](en-US/release-2.2.43.md) | [中文](zh-CN/release-2.2.43.md) |
-| 2.2.42 release notes / 2.2.42 发布说明 | [English](en-US/release-2.2.42.md) | [中文](zh-CN/release-2.2.42.md) |
-| 2.2.41 release notes / 2.2.41 发布说明 | [English](en-US/release-2.2.41.md) | [中文](zh-CN/release-2.2.41.md) |
-| 2.2.40 release notes / 2.2.40 发布说明 | [English](en-US/release-2.2.40.md) | [中文](zh-CN/release-2.2.40.md) |
-| 2.2.39 release notes / 2.2.39 发布说明 | [English](en-US/release-2.2.39.md) | [中文](zh-CN/release-2.2.39.md) |
-| 2.1.45 release notes / 2.1.45 发布说明 | [English](en-US/release-2.1.45.md) | [中文](zh-CN/release-2.1.45.md) |
-| Offline installation entry / 离线安装入口 | [English](offline-install.md) | [中文](zh-CN/offline-install.md) |
-| Offline RPM installation / 离线 RPM 安装 | [English](en-US/offline-rpm-install.md) | [中文](zh-CN/offline-rpm-install.md) |
-| Database preparation / 数据库接入 | [English](en-US/database-preparation.md) | [中文](zh-CN/database-preparation.md) |
-| Migration from Orchestrator / 从 Orchestrator 迁移 | [English](en-US/orchestrator-migration.md) | [中文](zh-CN/orchestrator-migration.md) |
-| Operations manual / 运维手册 | [English](en-US/operations-manual.md) | [中文](zh-CN/operations-manual.md) |
-| PostgreSQL HA / PostgreSQL 高可用 | [English](postgresql-ha.md) | [中文](zh-CN/postgresql-ha.md) |
-| Version update and rollback / 版本升级与回退手册 | [English](en-US/update-and-patch.md) | [中文](zh-CN/update-and-patch.md) |
-| MySQL proven methods / MySQL 已验证方法 | [English](proven-mysql-ha-methods.md) | [中文](zh-CN/proven-mysql-ha-methods.md) |
-| MySQL feature acceptance / MySQL 功能验收 | [English](mysql-feature-parity-acceptance.md) | [中文](zh-CN/mysql-feature-parity-acceptance.md) |
-| Version and release policy / 版本发布规范 | [English](en-US/version-release-policy.md) | [中文](zh-CN/version-release-policy.md) |
-| Licensing and compliance / 许可与合规 | [English](en-US/licensing.md) | [中文](zh-CN/licensing.md) |
-| Kubernetes MySQL / Kubernetes MySQL 接管 | [English](en-US/kubernetes-mysql.md) | [中文](zh-CN/kubernetes-mysql.md) |
-| Docker Swarm MySQL / Docker Swarm MySQL 接管 | [English](en-US/docker-swarm-mysql.md) | [中文](zh-CN/docker-swarm-mysql.md) |
-| Control-plane and API reference / 控制面与 API 参考 | [English](operations.md) | [中文](zh-CN/operations.md) |
+| Role / 作用 | Topic / 主题 | English | 简体中文 |
+| --- | --- | --- | --- |
+| Task entry / 场景入口 | Documentation index / 文档索引 | [English](en-US/README.md) | [中文](zh-CN/README.md) |
+| Design or reference / 设计参考 | Product tour / 产品导览 | [English](en-US/product-tour.md) | [中文](zh-CN/product-tour.md) |
+| Design or reference / 设计参考 | Architecture / 架构 | [English](architecture.md) | [中文](zh-CN/architecture.md) |
+| Historical release / 历史发布 | 2.2.47 release notes / 2.2.47 发布说明 | [English](en-US/release-2.2.47.md) | [中文](zh-CN/release-2.2.47.md) |
+| Historical release / 历史发布 | 2.2.46 release notes / 2.2.46 发布说明 | [English](en-US/release-2.2.46.md) | [中文](zh-CN/release-2.2.46.md) |
+| Historical release / 历史发布 | 2.2.45 release notes / 2.2.45 发布说明 | [English](en-US/release-2.2.45.md) | [中文](zh-CN/release-2.2.45.md) |
+| Historical release / 历史发布 | 2.2.44 release notes / 2.2.44 发布说明 | [English](en-US/release-2.2.44.md) | [中文](zh-CN/release-2.2.44.md) |
+| Historical release / 历史发布 | 2.2.43 release notes / 2.2.43 发布说明 | [English](en-US/release-2.2.43.md) | [中文](zh-CN/release-2.2.43.md) |
+| Historical release / 历史发布 | 2.2.42 release notes / 2.2.42 发布说明 | [English](en-US/release-2.2.42.md) | [中文](zh-CN/release-2.2.42.md) |
+| Historical release / 历史发布 | 2.2.41 release notes / 2.2.41 发布说明 | [English](en-US/release-2.2.41.md) | [中文](zh-CN/release-2.2.41.md) |
+| Historical release / 历史发布 | 2.2.40 release notes / 2.2.40 发布说明 | [English](en-US/release-2.2.40.md) | [中文](zh-CN/release-2.2.40.md) |
+| Historical release / 历史发布 | 2.2.39 release notes / 2.2.39 发布说明 | [English](en-US/release-2.2.39.md) | [中文](zh-CN/release-2.2.39.md) |
+| Historical release / 历史发布 | 2.1.45 release notes / 2.1.45 发布说明 | [English](en-US/release-2.1.45.md) | [中文](zh-CN/release-2.1.45.md) |
+| Operations instructions / 操作说明 | Offline installation entry / 离线安装入口 | [English](offline-install.md) | [中文](zh-CN/offline-install.md) |
+| Operations instructions / 操作说明 | Offline RPM installation / 离线 RPM 安装 | [English](en-US/offline-rpm-install.md) | [中文](zh-CN/offline-rpm-install.md) |
+| Operations instructions / 操作说明 | Database preparation / 数据库接入 | [English](en-US/database-preparation.md) | [中文](zh-CN/database-preparation.md) |
+| Operations instructions / 操作说明 | Migration from Orchestrator / 从 Orchestrator 迁移 | [English](en-US/orchestrator-migration.md) | [中文](zh-CN/orchestrator-migration.md) |
+| Operations instructions / 操作说明 | Operations manual / 运维手册 | [English](en-US/operations-manual.md) | [中文](zh-CN/operations-manual.md) |
+| Operations instructions / 操作说明 | PostgreSQL HA / PostgreSQL 高可用 | [English](postgresql-ha.md) | [中文](zh-CN/postgresql-ha.md) |
+| Operations instructions / 操作说明 | Version update and rollback / 版本升级与回退手册 | [English](en-US/update-and-patch.md) | [中文](zh-CN/update-and-patch.md) |
+| Design or reference / 设计参考 | MySQL proven methods / MySQL 已验证方法 | [English](proven-mysql-ha-methods.md) | [中文](zh-CN/proven-mysql-ha-methods.md) |
+| Acceptance reference / 验收记录 | MySQL feature acceptance / MySQL 功能验收 | [English](mysql-feature-parity-acceptance.md) | [中文](zh-CN/mysql-feature-parity-acceptance.md) |
+| Mandatory rules / 强制规范 | Version and release policy / 版本发布规范 | [English](en-US/version-release-policy.md) | [中文](zh-CN/version-release-policy.md) |
+| Mandatory rules / 强制规范 | Licensing and compliance / 许可与合规 | [English](en-US/licensing.md) | [中文](zh-CN/licensing.md) |
+| Operations instructions / 操作说明 | Kubernetes MySQL / Kubernetes MySQL 接管 | [English](en-US/kubernetes-mysql.md) | [中文](zh-CN/kubernetes-mysql.md) |
+| Operations instructions / 操作说明 | Docker Swarm MySQL / Docker Swarm MySQL 接管 | [English](en-US/docker-swarm-mysql.md) | [中文](zh-CN/docker-swarm-mysql.md) |
+| Design or reference / 设计参考 | Control-plane and API reference / 控制面与 API 参考 | [English](operations.md) | [中文](zh-CN/operations.md) |
 
-## Qualification Evidence / 验收证据
+
+## Historical Qualification Evidence / 历史验收证据
 
 | Evidence / 证据 | English | 简体中文 |
 | --- | --- | --- |
@@ -92,11 +104,11 @@ Qualification reports record a specific laboratory build and date. They do not r
 
 ## Internal Engineering Records / 内部工程记录
 
-Source and test organization / 源码与测试维护入口：[文件与测试导览](zh-CN/source-layout-and-testing.md) · [旧版对比与清理记录](zh-CN/dead-code-cleanup-2026-09-11.md)。These development records distinguish local checks, browser fixtures, historical tools, and field validation; they are not a production acceptance claim.
+Source and test reference / 源码与测试追溯资料：[文件与测试导览](zh-CN/source-layout-and-testing.md) · [旧版对比与清理记录](zh-CN/dead-code-cleanup-2026-09-11.md)。These development records distinguish local checks, browser fixtures, historical tools, and field validation; they are not a production acceptance claim.
 
-`docs/superpowers/` contains design specifications and implementation plans for traceability. Each English record has a Simplified Chinese counterpart under `docs/superpowers/zh-CN/`, except the index `docs/superpowers/README.md` itself, which exists in English only. These records are historical engineering evidence, not current production runbooks.
+`docs/superpowers/` contains design specifications and implementation plans for traceability. Each English record has a Simplified Chinese counterpart under `docs/superpowers/zh-CN/`, except the bilingual index `docs/superpowers/README.md` itself. These records are historical engineering evidence. Current changes and actions follow the repository rules and applicable mandatory contracts. A release’s RELEASE-INFO, checksums and release notes establish its delivered identity and historical behavior; they cannot override current mandatory rules.
 
-`docs/superpowers/` 保存设计规格和实施计划，用于工程追溯。除索引 `docs/superpowers/README.md` 本身（仅英文）外，每份英文记录在 `docs/superpowers/zh-CN/` 下都有中文对应版本。这些文件属于历史工程证据，不是当前生产操作手册。
+`docs/superpowers/` 保存设计规格和实施计划，用于工程追溯。除中英合并的索引 `docs/superpowers/README.md` 本身外，每份英文记录在 `docs/superpowers/zh-CN/` 下都有中文对应版本。这些文件属于历史工程证据。当前修改和动作遵守根规则及适用强制契约；对应 Release 的 RELEASE-INFO、摘要和发布说明用于确认已交付身份与历史行为，不能覆盖当前强制规则。
 
 ## Documentation Rules / 文档规则
 

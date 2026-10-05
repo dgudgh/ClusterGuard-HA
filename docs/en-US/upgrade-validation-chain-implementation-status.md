@@ -1,5 +1,7 @@
 # Upgrade and Hotfix v2: Implementation and Acceptance Status
 
+> **Document role: historical implementation and acceptance snapshot.** Results below apply to their recorded date and repair baseline `7b643f4`; they are not current site status or the gate definition. Use the [gate workflow](../zh-CN/validation-gate-workflow.md), current bindings, the applicable strict stage, and actual acceptance reports for this run. Historical results do not close unexecuted checks.
+
 > Gate workflow update (2026-10-04): use `--stage source --strict` for source development. Artifact and field acceptance require `--stage artifact` or `--stage field`, `--strict`, and `--acceptance-report FILE` with actual evidence. The default remains field; real ART/FIELD evidence is still unavailable. See the [workflow](../zh-CN/validation-gate-workflow.md).
 
 Updated 2026-10-03. Implementation commit: `7b643f42ed11901c5d73f7703f3e3f176d053bb4`, pushed to the sole local and remote mainline `codex/2.2-postgresql`. The mandatory [v2 contract](../upgrade-validation-chain.md), its Chinese copy, and the embedded copy remain identical to the supplied original. This status page does not change the contract.

@@ -1,12 +1,14 @@
 # 恢复与升级发布验收清单
 
+> **适用时机：** 准备构建/发布包含恢复或升级改动的版本、真实恢复操作或现场验收前必读。先完成根规则与适用契约，再按本次动作和版本核对清单；历史结果不代替本次证据。
+
 > 门禁执行更新（2026-10-04）：开发使用 `--stage source --strict`；新包与现场使用 `--stage artifact/field --strict --acceptance-report FILE`，需真实证据。默认仍为 field，当前 ART/FIELD 未完成；详情见[分阶段门禁与更新流程](validation-gate-workflow.md)。
 
 ## v2 强制升级与热修门槛
 
-当前源码基线为 `7b643f4`（2026-10-03），唯一主线为 `codex/2.2-postgresql`。升级与热修统一执行 v2 契约；热修失败使用独立 `retry`，滚动升级失败使用 `resume`。新包与现场 ART/FIELD 验收仍为 **OPEN**，本轮没有新包或生产部署。
+升级与热修统一执行 v2 契约；热修失败使用独立 `retry`，滚动升级失败使用 `resume`。2026-10-03 的修复记录基线为 `7b643f4`，该次修复没有新包或部署、ART/FIELD 为 **OPEN**；这是历史记录，不代表本次源码或现场验收结果。本次按下面清单核对实际版本、绑定与证据。
 
-- [ ] 先读[强制契约 v2](upgrade-validation-chain.md)及[实现状态](upgrade-validation-chain-implementation-status.md)；完整门禁和 `--strict` 均满足发布条件。当前 17 PASS / 1 OPEN / 0 failed，strict 因 ART/FIELD 未完成而退出 1，不得报为发布通过。
+- [ ] 先读[强制契约 v2](upgrade-validation-chain.md)和[门禁执行流程](validation-gate-workflow.md)，按本次工作执行 source、artifact 或 field 严格阶段；新包必须有 ART，现场必须有 ART/FIELD 真实证据。历史[实现快照](upgrade-validation-chain-implementation-status.md)不代表本次验收结果，只有“0 failed”也不构成通过。
 - [ ] 新包取得 ART-001..013，现场取得 FIELD-001..012；逐项保留真实证据，不用源码断言代替。
 - [ ] 核对 Manager、Helper、Runner 的 v2 契约能力；旧 Helper 的 `contract` 不可用必须先解决交付兼容性。
 - [ ] 真实点击覆盖热修 retry/拒绝 resume、滚动 resume、明确 patch_id、operation_id 对账、未知结果只查询及同秒不同操作；覆盖不同操作私有历史冲突和外包门禁拒绝。

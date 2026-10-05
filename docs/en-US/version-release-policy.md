@@ -1,12 +1,14 @@
 # ClusterGuard HA Version and Release Policy
 
+> **Document role: mandatory policy for the applicable task.** Read before building, signing, releasing, or handling delivery artifacts, together with the [contract](../upgrade-validation-chain.md), [gate workflow](../zh-CN/validation-gate-workflow.md), [build checklist](../development/rules/release-checklist.md), and applicable licensing/channel rules. Dated implementation results provide context; acceptance for this run needs its own bindings and actual evidence.
+
 > Gate workflow update (2026-10-04): use `--stage source --strict` for source development. Artifact and field acceptance require `--stage artifact` or `--stage field`, `--strict`, and `--acceptance-report FILE` with actual evidence. The default remains field; real ART/FIELD evidence is still unavailable. See the [workflow](../zh-CN/validation-gate-workflow.md).
 
 ## v2 Release Preconditions
 
-Current source baseline: `7b643f4` (2026-10-03), on the sole mainline `codex/2.2-postgresql`. Updates and hotfixes enforce the v2 contract: failed hotfixes use `retry`; interrupted rolling updates use `resume`. New-artifact and site ART/FIELD acceptance remains **OPEN**. No new package or production deployment was performed.
+Updates and hotfixes enforce the v2 contract: failed hotfixes use `retry`; interrupted rolling updates use `resume`. The repair recorded on 2026-10-03 used baseline `7b643f4` on `codex/2.2-postgresql`; it produced no new package or deployment and recorded ART/FIELD as **OPEN**. That historical record does not replace this delivery's source, package identity, or applicable strict acceptance.
 
-The four build entry points run `verify-upgrade-validation-chain.cjs --contract-only` before producing/signing artifacts and require Node (`CG_NODE_BIN` may override its path). This checks contract loading and schema consistency only, not complete PRE/ART/FIELD acceptance. Run the complete gate and `--strict` before release; OPEN blocks formal release. See [implementation status](upgrade-validation-chain-implementation-status.md). Hotfix acceptance covers same-package retry, rejected resume, signed supersedes, and independent history; rolling acceptance covers resume. Never rebuild a delivered identity in place.
+The four build entry points run `verify-upgrade-validation-chain.cjs --contract-only` before producing/signing artifacts and require Node (`CG_NODE_BIN` may override its path). This checks contract loading and schema consistency only, not complete PRE/ART/FIELD acceptance. Run the complete gate and `--strict` before release; OPEN blocks formal release. Past results are in the [historical implementation and acceptance snapshot](upgrade-validation-chain-implementation-status.md), which is not an acceptance input for this run. Hotfix acceptance covers same-package retry, rejected resume, signed supersedes, and independent history; rolling acceptance covers resume. Never rebuild a delivered identity in place.
 
 <!-- LANGUAGE-SWITCH -->
 > **Language:** English | [简体中文](../zh-CN/version-release-policy.md)

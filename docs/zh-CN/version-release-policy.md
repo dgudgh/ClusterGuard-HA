@@ -1,12 +1,14 @@
 # ClusterGuard HA 版本与发版规范
 
+> **文档性质：适用任务的强制规范。** 开始构建、签名、发布或处理交付物前读取本页，并先完成[强制契约](upgrade-validation-chain.md)、[门禁流程](validation-gate-workflow.md)、[打包清单](../development/rules/release-checklist.md)和适用许可/渠道规则的必读。日期化的旧实现结果只是背景；本次验收须使用本次绑定与真实证据。
+
 > 门禁执行更新（2026-10-04）：开发使用 `--stage source --strict`；新包与现场使用 `--stage artifact/field --strict --acceptance-report FILE`，需真实证据。默认仍为 field，当前 ART/FIELD 未完成；详情见[分阶段门禁与更新流程](validation-gate-workflow.md)。
 
 ## v2 发布前置检查
 
-当前源码基线为 `7b643f4`（2026-10-03），唯一主线为 `codex/2.2-postgresql`。升级与热修统一执行 v2 契约；热修失败使用独立 `retry`，滚动升级失败使用 `resume`。新包与现场 ART/FIELD 验收仍为 **OPEN**，本轮没有新包或生产部署。
+升级与热修统一执行 v2 契约；热修失败使用独立 `retry`，滚动升级失败使用 `resume`。2026-10-03 的修复记录基线为 `7b643f4`，主线为 `codex/2.2-postgresql`；该次修复没有新包或部署、ART/FIELD 为 **OPEN**。该历史记录不代替本次交付源码、包身份和相应严格验收。
 
-四个构建入口在产出/签名前执行 `verify-upgrade-validation-chain.cjs --contract-only`，需要 Node（可设置 `CG_NODE_BIN`）。这仅检查契约加载与模式一致性，不代表完整 PRE/ART/FIELD 验收。发布前必须执行完整门禁及 `--strict`；OPEN 必须阻断正式发布。见[实现状态](upgrade-validation-chain-implementation-status.md)。热修检查同包 retry、拒绝 resume、签名 supersedes 和独立历史；滚动升级检查 resume。已交付身份不得原地重建。
+四个构建入口在产出/签名前执行 `verify-upgrade-validation-chain.cjs --contract-only`，需要 Node（可设置 `CG_NODE_BIN`）。这仅检查契约加载与模式一致性，不代表完整 PRE/ART/FIELD 验收。发布前必须执行完整门禁及 `--strict`；OPEN 必须阻断正式发布。旧结果见[历史实现与验收快照](upgrade-validation-chain-implementation-status.md)，不作为本次验收输入。热修检查同包 retry、拒绝 resume、签名 supersedes 和独立历史；滚动升级检查 resume。已交付身份不得原地重建。
 
 <!-- LANGUAGE-SWITCH -->
 > **语言：** [English](../en-US/version-release-policy.md) | 简体中文

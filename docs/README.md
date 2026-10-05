@@ -4,7 +4,7 @@
 
 **任何修改前先读[门禁执行与更新流程](zh-CN/validation-gate-workflow.md)**；涉及升级、热修、回退、操作管理、维护锁、构建、签名或发布时，修改/执行前完整读[强制契约 v2](zh-CN/upgrade-validation-chain.md)。门禁必读先于下方模块导航。
 
-开发入口：[分模块导航](development/README.md)。旧手册、验收报告和发布记录保留在完整资料目录，不是开始每次开发的必读清单。
+门禁之后按[阅读优先级与适用规则](development/rules/README.md)选择前置规范，再进入[开发模块](development/README.md)。操作手册用于对应实际动作；设计、旧验收报告和发布记录按场景/版本追溯，不代表当前验收状态。
 
 | 当前任务 | 下一份文档 |
 | --- | --- |

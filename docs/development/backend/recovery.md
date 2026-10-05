@@ -16,9 +16,9 @@
 | 实现 | [disaster_recovery.go](../../../internal/api/disaster_recovery.go)、[disaster](../../../internal/disaster)、[recovery](../../../internal/recovery)、[postgresql](../../../adapters/postgresql)、[mysql](../../../adapters/mysql) |
 | 回归 | [disaster_recovery_test.go](../../../internal/api/disaster_recovery_test.go)、[disaster](../../../internal/disaster) |
 
-## 需要时再读
+## 现场或发布前必读
 
-- [恢复与升级发布验收清单](../../zh-CN/release-recovery-acceptance-checklist.md)
+准备真实恢复操作、制定恢复现场验收或交付包含恢复改动的版本前，必须读[恢复与升级发布验收清单](../../zh-CN/release-recovery-acceptance-checklist.md)的对应场景。源码调查不要求执行现场操作；未执行不能报为通过。
 
 ## 必须保持与回归
 

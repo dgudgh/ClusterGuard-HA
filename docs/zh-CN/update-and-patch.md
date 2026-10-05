@@ -1,5 +1,7 @@
 # ClusterGuard HA 版本升级与回退手册
 
+> **操作前必读：** 完整读取[强制契约 v2](upgrade-validation-chain.md)和[门禁执行流程](validation-gate-workflow.md)，按[恢复与升级验收清单](release-recovery-acceptance-checklist.md)完成本次动作适用的预检与验证计划，再执行本手册。旧发布说明或历史验收快照不能代替本次包身份与现场证据。
+
 <!-- LANGUAGE-SWITCH -->
 > **语言：** [English](../en-US/update-and-patch.md) | 简体中文
 <!-- /LANGUAGE-SWITCH -->
@@ -16,9 +18,9 @@
 >
 > 请在维护窗口执行升级，并安排人员持续观察数据库主从、VIP、业务连接、Raft 多数派和控制节点状态。维护标记建立后，计划切换、故障切换、自动故障切换和节点变更都会被 Safety Guard 阻断；只读拓扑、健康、指标和操作日志仍可使用。只有全部节点升级并验证通过、维护标记成功释放后，自动切换才会恢复。升级失败或中断时标记会保留，平台保持 fail-closed，必须续跑或受控回退。
 
-## v2 当前动作与状态规则（2026-10-03）
+## v2 动作规则与实现记录（2026-10-03）
 
-当前源码基线为 `7b643f4`（2026-10-03），唯一主线为 `codex/2.2-postgresql`。升级与热修统一执行 v2 契约；热修失败使用独立 `retry`，滚动升级失败使用 `resume`。新包与现场 ART/FIELD 验收仍为 **OPEN**，本轮没有新包或生产部署。
+v2 规则以强制契约为准。2026-10-03 的源码修复记录基线为 `7b643f4`，主线为 `codex/2.2-postgresql`；该次修复未产出新包或部署，ART/FIELD 记录为 **OPEN**。该记录不代表本次 checkout、交付包或现场状态，操作前须重新核对。热修失败使用独立 `retry`，滚动升级失败使用 `resume`。
 
 | 包及状态 | 允许的恢复动作 | 禁止的行为 |
 | --- | --- | --- |
@@ -31,7 +33,7 @@ API 动作请求使用明确 `patch_id` 与 `operation_id`；同一操作 ID 只
 
 Runner 在 inspect 或执行前要求非符号链接的可执行 `clusterguard-update-helper` 支持 `contract` 子命令，默认路径 `/usr/local/libexec/clusterguard-update-helper`，受控环境可通过 `CG_UPDATE_CONTRACT_HELPER` 指定。旧 Helper 缺少该命令时会拒绝运行；不能假定只换升级脚本就完成 v2 部署。必须按新的受控交付流程安装匹配的 Manager、Helper 与 Runner，再验收现场。
 
-替代关系只认签名清单的 `supersedes` 和确证安装状态；同版本或较新成功记录不自动替代旧失败。外包锁、损坏历史、不同操作的复制历史及冲突终态均阻断执行并保留证据。详情见[实现与验收状态](upgrade-validation-chain-implementation-status.md)和[强制契约](upgrade-validation-chain.md)。
+替代关系只认签名清单的 `supersedes` 和确证安装状态；同版本或较新成功记录不自动替代旧失败。外包锁、损坏历史、不同操作的复制历史及冲突终态均阻断执行并保留证据。规范见[强制契约](upgrade-validation-chain.md)；当时实现证据见[历史实现与验收快照](upgrade-validation-chain-implementation-status.md)，不替代本次验收。
 
 ## 控制台图形化升级
 

@@ -1,8 +1,12 @@
 # ClusterGuard HA
 
-## 当前源码与交付状态
+## 开发与文档修改前必读
 
-当前源码基线为 `7b643f4`（2026-10-03），唯一主线为 `codex/2.2-postgresql`。升级与热修统一执行 v2 契约；热修失败使用独立 `retry`，滚动升级失败使用 `resume`。新包与现场 ART/FIELD 验收仍为 **OPEN**，本轮没有新包或生产部署。 见[实现与验收状态](docs/zh-CN/upgrade-validation-chain-implementation-status.md)。
+修改前先读[根规则](AGENTS.md)、[门禁执行与更新流程](docs/zh-CN/validation-gate-workflow.md)和[阅读顺序与适用规则](docs/development/rules/README.md)，再选[开发模块](docs/development/README.md)。涉及升级契约范围的修改或动作前，完整读取[强制契约 v2](docs/zh-CN/upgrade-validation-chain.md)。安装与运维先满足适用规则，再使用对应版本的场景手册。
+
+## v2 源码修复与验收记录
+
+记录中的源码修复基线为 `7b643f4`（2026-10-03），唯一主线为 `codex/2.2-postgresql`。该次修复的升级与热修执行 v2 契约：热修失败使用独立 `retry`，滚动升级失败使用 `resume`。该次修复的新包与现场 ART/FIELD 验收记录仍为 **OPEN**，未产生新包或生产部署。见[实现与验收记录](docs/zh-CN/upgrade-validation-chain-implementation-status.md)；该记录不替代本次源码、制品和现场核验。
 
 <!-- LANGUAGE-SWITCH -->
 > **语言：** [English](README.md) | 简体中文
@@ -27,7 +31,7 @@ ClusterGuard HA 是一个独立、洁净室的高可用控制平面。
 拓扑和审计证据组织在同一套运维流程中。拓扑、节点生命周期和操作日志等
 页面见中英文[产品导览](docs/zh-CN/product-tour.md)。
 
-## 当前发布版本
+## 已记录的正式发布版本
 
 发布策略和支持边界：
 
@@ -51,7 +55,7 @@ ClusterGuard HA 是一个独立、洁净室的高可用控制平面。
 | `2.2.39` | 正式发布 | PostgreSQL 16.4、Docker Swarm，以及保留的 MySQL HA 能力 |
 | 后续系列 | 路线图 | Oracle Data Guard Broker 和 SQL Server Always On 在单独认证后 |
 
-从 [ClusterGuard HA 2.2.39](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.39) 下载当前正式版本：
+从 [ClusterGuard HA 2.2.39](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.39) 下载已记录的正式 `2.2.39` 版本：
 
 ```bash
 curl -fLO https://github.com/dgudgh/ClusterGuard-HA/releases/download/v2.2.39/clusterguard-ha-2.2-39-offline-linux-x86_64.tar.gz
@@ -192,8 +196,10 @@ go run ./cmd/clusterguard --config configs/clusterguard.example.json
 ## 文档
 
 [中英文文档中心](docs/README.md)列出了每份英文文档及其简体中文对应版本。
-推荐入口：
+先读适用规则，再读场景手册；发布与验收记录用于追溯：
 
+- [阅读顺序与适用规则](docs/development/rules/README.md) / [开发模块](docs/development/README.md)
+- [升级与热修强制契约](docs/zh-CN/upgrade-validation-chain.md) / [门禁执行流程](docs/zh-CN/validation-gate-workflow.md)
 - [English documentation](docs/en-US/README.md) / [中文文档](docs/zh-CN/README.md)
 - [English product tour](docs/en-US/product-tour.md) / [中文产品导览](docs/zh-CN/product-tour.md)
 - [English offline installation](docs/en-US/offline-rpm-install.md) / [中文离线安装](docs/zh-CN/offline-rpm-install.md)

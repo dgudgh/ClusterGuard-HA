@@ -1,8 +1,12 @@
 # ClusterGuard HA
 
-## Current Source and Delivery Status
+## Before Development or Document Changes
 
-Current source baseline: `7b643f4` (2026-10-03), on the sole mainline `codex/2.2-postgresql`. Updates and hotfixes enforce the v2 contract: failed hotfixes use `retry`; interrupted rolling updates use `resume`. New-artifact and site ART/FIELD acceptance remains **OPEN**. No new package or production deployment was performed. See [implementation and acceptance status](docs/en-US/upgrade-validation-chain-implementation-status.md).
+Read the [repository rules](AGENTS.md), [gate workflow](docs/zh-CN/validation-gate-workflow.md), and [reading order and applicable rules](docs/development/rules/README.md) before making changes; then select the relevant [development module](docs/development/README.md). Before modifying or executing work within the upgrade contract's scope, read the complete [mandatory v2 contract](docs/upgrade-validation-chain.md). Installation and operations follow the matching version's task guide after its applicable rules.
+
+## Recorded v2 Source Repair and Acceptance Status
+
+The recorded source repair baseline is `7b643f4` (2026-10-03), on the sole mainline `codex/2.2-postgresql`. That repair enforces the v2 contract for updates and hotfixes: failed hotfixes use `retry`; interrupted rolling updates use `resume`. Its new-artifact and site ART/FIELD acceptance record remains **OPEN**; that repair produced no new package or production deployment. See the [implementation and acceptance record](docs/en-US/upgrade-validation-chain-implementation-status.md). This record does not replace verification of the current checkout, package, or site.
 
 <!-- LANGUAGE-SWITCH -->
 > **Language:** English | [简体中文](README.zh-CN.md)
@@ -29,7 +33,7 @@ controlled execution, recovery, topology, and audit evidence in one operator
 workflow. See the bilingual [product tour](docs/en-US/product-tour.md) for the
 topology, node lifecycle, and operation-log views.
 
-## Current Release
+## Recorded Formal Releases
 
 Release policy and support boundary:
 
@@ -55,7 +59,7 @@ Release policy and support boundary:
 | `2.2.39` | Formal release | PostgreSQL 16.4, Docker Swarm, and retained MySQL HA capabilities |
 | Later lines | Roadmap | Oracle Data Guard Broker and SQL Server Always On after separate qualification |
 
-Download the current formal release from
+Download the recorded formal `2.2.39` release from
 [ClusterGuard HA 2.2.39](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.39):
 
 ```bash
@@ -257,9 +261,11 @@ reconciliation policy as one audited workflow.
 ## Documentation
 
 The [bilingual documentation center](docs/README.md) maps every maintained
-English document to its Simplified Chinese counterpart. Recommended entry
-points:
+English document to its Simplified Chinese counterpart. Read applicable rules
+before the task guide; use release and acceptance records for traceability:
 
+- [Reading order and applicable rules](docs/development/rules/README.md) / [Development modules](docs/development/README.md)
+- [Mandatory upgrade contract](docs/upgrade-validation-chain.md) / [Gate workflow](docs/zh-CN/validation-gate-workflow.md)
 - [English documentation](docs/en-US/README.md) / [中文文档](docs/zh-CN/README.md)
 - [English product tour](docs/en-US/product-tour.md) / [中文产品导览](docs/zh-CN/product-tour.md)
 - [English offline installation](docs/en-US/offline-rpm-install.md) / [中文离线安装](docs/zh-CN/offline-rpm-install.md)

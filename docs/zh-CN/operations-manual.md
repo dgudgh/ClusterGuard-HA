@@ -1,6 +1,8 @@
 # ClusterGuard HA 运维操作手册
 
-> 当前升级/热修动作规则见[版本升级与回退手册](update-and-patch.md)。当前源码基线为 `7b643f4`（2026-10-03），唯一主线为 `codex/2.2-postgresql`。升级与热修统一执行 v2 契约；热修失败使用独立 `retry`，滚动升级失败使用 `resume`。新包与现场 ART/FIELD 验收仍为 **OPEN**，本轮没有新包或生产部署。
+> **阅读顺序：** 日常只读观测进入对应章节；操作管理或业务代码修改先读[根规则](../../AGENTS.md)与[适用规则](../development/rules/README.md)。真实恢复前先读[恢复验收清单](release-recovery-acceptance-checklist.md)的对应场景；升级、热修或回退前先读[完整强制契约](upgrade-validation-chain.md)与[门禁流程](validation-gate-workflow.md)，再进入操作步骤。旧报告不能代替本次现场证据。
+
+> 升级/热修动作规则见[版本升级与回退手册](update-and-patch.md)。2026-10-03 的实现记录基线为 `7b643f4`，主线为 `codex/2.2-postgresql`；该次修复没有新包或部署，ART/FIELD 记录为 **OPEN**，不代表本次现场状态。v2 热修失败使用独立 `retry`，滚动升级失败使用 `resume`；操作前按适用规则重新核对本次源码、包与现场证据。
 
 <!-- LANGUAGE-SWITCH -->
 > **语言：** [English](../en-US/operations-manual.md) | 简体中文

@@ -6,7 +6,7 @@
 
 | 动作 | 本步骤必须读 |
 | --- | --- |
-| 构建新身份的 RPM、介质或签名包 | [版本与制品规范](../../zh-CN/version-release-policy.md)、[打包阻断清单](../rules/release-checklist.md) |
+| 构建新身份的 RPM、介质或签名包 | [版本与制品规范](../../zh-CN/version-release-policy.md)、[打包阻断清单](../rules/release-checklist.md)、[许可与依赖规则](../rules/licensing.md)、[公开渠道规则](../rules/public-release.md) |
 | 维护许可声明、引入依赖、封装文档许可 | [许可与依赖规则](../rules/licensing.md) |
 | 上传/删除 GitHub Release 或其附件 | [公开渠道规则](../rules/public-release.md) |
 | 推进源码、新包与现场的门禁证据 | [分阶段门禁流程](../../zh-CN/validation-gate-workflow.md) |

@@ -1,5 +1,7 @@
 # ClusterGuard HA Operations
 
+> **Reference scope:** use this page for the exact API/configuration contract after choosing the task in the [operations manual](en-US/operations-manual.md). Before changing source, read the [root rules](../AGENTS.md) and [applicable rules](development/rules/README.md). Before executing recovery or update actions, complete the applicable acceptance preflight; API examples do not bypass authorization or safety checks.
+
 <!-- LANGUAGE-SWITCH -->
 > **Language:** English | [简体中文](zh-CN/operations.md)
 <!-- /LANGUAGE-SWITCH -->

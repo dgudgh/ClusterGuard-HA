@@ -1,5 +1,7 @@
 # ClusterGuard HA Version Update and Rollback Guide
 
+> **Required before acting:** read the complete [v2 contract](../upgrade-validation-chain.md) and [gate workflow](../zh-CN/validation-gate-workflow.md). Complete the applicable preflight and validation plan from the [recovery and update acceptance checklist](../zh-CN/release-recovery-acceptance-checklist.md) before following this guide. Old release notes or acceptance snapshots do not establish this package's identity or site evidence.
+
 <!-- LANGUAGE-SWITCH -->
 > **Language:** English | [简体中文](../zh-CN/update-and-patch.md)
 <!-- /LANGUAGE-SWITCH -->
@@ -16,9 +18,9 @@ This guide defines how a customer site updates the ClusterGuard HA control plane
 >
 > Once the maintenance marker is established, planned switchovers, failovers, automatic failover, and node mutations are blocked by Safety Guard. Read-only topology, health, metrics, and operation logs remain available. Automatic failover resumes only after every node passes update verification and the maintenance marker is released. An interrupted or failed update keeps the marker in place and remains fail-closed until the same update package is resumed or rolled back.
 
-## Current v2 Action and State Rules (2026-10-03)
+## v2 Action Rules and Implementation Record (2026-10-03)
 
-Current source baseline: `7b643f4` (2026-10-03), on the sole mainline `codex/2.2-postgresql`. Updates and hotfixes enforce the v2 contract: failed hotfixes use `retry`; interrupted rolling updates use `resume`. New-artifact and site ART/FIELD acceptance remains **OPEN**. No new package or production deployment was performed.
+The mandatory contract defines the v2 rules. The source repair recorded on 2026-10-03 used baseline `7b643f4` on `codex/2.2-postgresql`; that repair produced no new package or deployment, and its ART/FIELD record was **OPEN**. It does not establish this checkout's, package's, or site's status; recheck before acting. Failed hotfixes use `retry`; interrupted rolling updates use `resume`.
 
 | Package and state | Recovery action | Rejected behavior |
 | --- | --- | --- |
@@ -31,7 +33,7 @@ Action requests identify both `patch_id` and `operation_id`. Reusing an operatio
 
 Before inspect or execution, Runner requires an executable, non-symlink `clusterguard-update-helper` with a `contract` subcommand. The default is `/usr/local/libexec/clusterguard-update-helper`; controlled environments may set `CG_UPDATE_CONTRACT_HELPER`. An older Helper without this command refuses the run. Deploy matching Manager, Helper, and Runner through a new controlled delivery and validate the site; replacing only the upgrade script does not establish v2 deployment.
 
-Only signed `supersedes` declarations and verified installation establish replacement. A newer success on the same version does not automatically retire an older failure. Foreign locks, corrupt history, different replicated operation identities, and conflicting terminal results block execution while preserving evidence. See [implementation status](upgrade-validation-chain-implementation-status.md) and the [mandatory contract](../upgrade-validation-chain.md).
+Only signed `supersedes` declarations and verified installation establish replacement. A newer success on the same version does not automatically retire an older failure. Foreign locks, corrupt history, different replicated operation identities, and conflicting terminal results block execution while preserving evidence. Rules come from the [mandatory contract](../upgrade-validation-chain.md); the [historical implementation and acceptance snapshot](upgrade-validation-chain-implementation-status.md) records past evidence, not acceptance of this run.
 
 ## Console-Based Update
 

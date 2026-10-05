@@ -35,4 +35,4 @@ API `GET /api/v1/platform/updates/{patch_id}` 返回包、当前 job、独立 de
 
 持久化/兼容迁移看[history.go](../../../../internal/platformupdate/history.go)和[history_test.go](../../../../internal/platformupdate/history_test.go)；幂等受理与重启看[manager.go](../../../../internal/platformupdate/manager.go)和[manager_test.go](../../../../internal/platformupdate/manager_test.go)；跨 Leader 私有历史看[job wrapper](../../../../scripts/clusterguard-update-job.sh)。
 
-现场是否已有这些行为，以[实际验收状态](../../../zh-CN/upgrade-validation-chain-implementation-status.md)为准；源码测试不代替现场历史一致性验收。
+[实现与验收状态](../../../zh-CN/upgrade-validation-chain-implementation-status.md)只记录其标注日期与源码基线下的历史快照，不能作为当前 HEAD 或当前现场的权威状态。当前判定必须重新输出当前证据绑定，执行[门禁流程](../../../zh-CN/validation-gate-workflow.md)规定的相应 strict 阶段，并核对本次制品或现场的实际验收报告；源码测试不代替现场历史一致性验收。

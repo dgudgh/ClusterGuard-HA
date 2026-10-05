@@ -2,8 +2,7 @@
 
 [返回模块](README.md)
 
-
-修改操作入口、预检、授权或执行链前，必须读[高风险操作授权规则](../rules/operation-safety.md)。
+修改本页所述操作管理、操作入口、预检、授权或执行链前，必须完整读[升级与热修强制契约 v2](../../zh-CN/upgrade-validation-chain.md)和[高风险操作授权规则](../rules/operation-safety.md)。本页不能缩小根规则中“操作管理”的契约触发范围。
 
 ## 调用链与边界
 
