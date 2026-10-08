@@ -1873,7 +1873,7 @@ func TestSoftwareUpdateRollingActionTargetsTheNewestActionablePackage(t *testing
 		"? ` · ${item.incompatible_reason || '与当前集群基线不一致，本集群装不上'}`",
 		"text('td', 'history-message', `${rowMessage}${rowNote}`)",
 		// A record from another release line can never be the one the console acts on.
-		"if (item && item.incompatible) return false;",
+		"if (item && (item.incompatible || item.superseded_by)) return false;",
 		// "Nothing to run" has two causes now, and the panel has to name the right one:
 		// telling the operator the newest record "已经执行完成" when it actually belongs to
 		// another release line repeats the wrong-cause message that started this incident.

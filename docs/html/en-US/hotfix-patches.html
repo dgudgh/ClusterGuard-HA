@@ -111,7 +111,7 @@ below names the one to apply for each patch</strong>; the other identities are h
 <h2 id="applying-a-patch">Applying a patch<a class="heading-anchor" href="#applying-a-patch" aria-label="Link to Applying a patch">#</a></h2>
 <p><strong>Preferred: the console, under Version Update -&gt; Upload package.</strong> After the upload the constrained helper applies the patch node by node: a hotfix leaves the installed RPM release alone, replaces only the files its signed manifest names, verifies every destination digest and restarts the units that manifest declares; any failure rolls back with the package&#39;s own <code>rollback.sh</code> and keeps the maintenance gate held. The console&#39;s package detail states whether the archive is a hotfix or a rolling upgrade.</p>
 <p><strong>Alternative: the controller command line.</strong> Same signature and SHA-256 protection, but it does <strong>not</strong> restart services by itself, so restart them as it prints or the processes keep running the old code:</p>
-<pre><code class="language-bash">tar -xzf release/&lt;baseline-version&gt;-hotfixes/&lt;artifact&gt;.cgpatch
+<pre><code class="language-bash">tar -xzf &lt;ledger-artifact-path&gt;.cgpatch
 cd clusterguard-hotfix
 bash apply.sh            # backs up, verifies SHA-256, installs, daemon-reload
 systemctl restart &lt;unit&gt; # apply.sh prints the units it needs; it never restarts by itself

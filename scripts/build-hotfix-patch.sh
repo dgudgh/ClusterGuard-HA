@@ -112,7 +112,11 @@ patch_version_declared="$("${node_bin}" -e '
   else process.stdout.write("present");
 ' "${spec}")" || die "patch_version 必须是非空字符串；历史规格可以省略该字段"
 severity="$(spec_get severity)"
-[[ "${hotfix_id}" =~ ^HF-[0-9]{4}-[0-9]{4}-[0-9]{2}$ ]] || die "热修编号格式必须为 HF-YYYY-MMDD-NN：${hotfix_id}"
+if [[ "${patch_version_declared}" == "present" ]]; then
+  [[ "${hotfix_id}" == "${patch_version}" ]] || die "新产品包 ID 必须等于 patch_version：${hotfix_id} != ${patch_version}"
+else
+  [[ "${hotfix_id}" =~ ^HF-[0-9]{4}-[0-9]{4}-[0-9]{2}$ ]] || die "历史热修编号格式必须为 HF-YYYY-MMDD-NN：${hotfix_id}"
+fi
 [[ "${rpm_version}" =~ ^[0-9][0-9A-Za-z._+~-]*$ ]] || die "rpm version 格式无效"
 [[ "${rpm_release}" =~ ^[0-9][0-9A-Za-z._+~-]*$ ]] || die "rpm release 格式无效"
 if [[ "${patch_version_declared}" == "present" ]]; then

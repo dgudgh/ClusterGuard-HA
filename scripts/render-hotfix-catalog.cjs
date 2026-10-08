@@ -77,13 +77,12 @@ function collect(options) {
   if (!fs.existsSync(releaseRoot)) {
     throw new Error(`release root not found: ${releaseRoot}`);
   }
-  // One release line per baseline: release/<version>-hotfixes holds exactly the
-  // patches built for that released version. --artifact-dir narrows the scan to
-  // a single line for ad-hoc renders; by default every line is collected.
+  // Product-version directories and frozen RPM-baseline directories coexist.
+  // The signed source and ledger establish admission and current identity.
   const directories = options.artifactDir
     ? [options.artifactDir]
     : fs.readdirSync(releaseRoot)
-      .filter((name) => name.endsWith("-hotfixes"))
+      .filter((name) => name.endsWith("-hotfixes") || /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/.test(name))
       .filter((name) => fs.statSync(path.join(releaseRoot, name)).isDirectory())
       .map((name) => `release/${name}`)
       .sort();
@@ -190,7 +189,7 @@ function renderEnglish(groups) {
   lines.push("**Alternative: the controller command line.** Same signature and SHA-256 protection, but it does **not** restart services by itself, so restart them as it prints or the processes keep running the old code:");
   lines.push("");
   lines.push("```bash");
-  lines.push("tar -xzf release/<baseline-version>-hotfixes/<artifact>.cgpatch");
+  lines.push("tar -xzf <ledger-artifact-path>.cgpatch");
   lines.push("cd clusterguard-hotfix");
   lines.push("bash apply.sh            # backs up, verifies SHA-256, installs, daemon-reload");
   lines.push("systemctl restart <unit> # apply.sh prints the units it needs; it never restarts by itself");
@@ -316,7 +315,7 @@ function renderChinese(groups) {
   lines.push("**备选：控制节点命令行**。同样受验签与 SHA-256 保护，但**不会自动重启服务**，需按输出自行重启，否则进程仍运行旧代码：");
   lines.push("");
   lines.push("```bash");
-  lines.push("tar -xzf release/<基线版本>-hotfixes/<产物文件名>.cgpatch");
+  lines.push("tar -xzf <台账中的制品路径>.cgpatch");
   lines.push("cd clusterguard-hotfix");
   lines.push("bash apply.sh            # 备份、校验 SHA-256、安装、daemon-reload");
   lines.push("systemctl restart <单元> # apply.sh 只打印需要重启的单元，不自动重启");

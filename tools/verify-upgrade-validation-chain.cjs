@@ -181,6 +181,22 @@ const writeOperationTree = (root, name, status, events) => {
 
 const CHECKS = [
   {
+    rule:'INV-001 / INV-009',title:'version identity and signed supersession reach the current subject',
+    run:()=>{
+      const source=read('internal/api/console.html');
+      const body=source.match(/const softwareUpdateActionable = item => \{([\s\S]*?)\n    \};/);
+      if(!body) return 'actionable resolver missing';
+      const actionable=vm.runInNewContext(`item=>{${body[1]}}`,{softwareUpdatePayloadApplied:()=>false});
+      if(actionable({superseded_by:'3.1.1.4',job:{status:'failed'}})!==false || actionable({job:{status:'failed'}})!==true) return 'signed retirement lost or unrelated history hidden';
+      const manager=read('internal/platformupdate/manager.go');
+      if(!manager.includes('successor.Package.Supersedes') || !manager.includes('!manager.successorInstalled(successor.Package.PatchID)') || !manager.includes('!successor.Package.SignatureVerified')) return 'retirement no longer requires signed installed successor';
+      const builder=read('scripts/build-hotfix-patch.sh');
+      if(!builder.includes('[[ "${hotfix_id}" == "${patch_version}" ]]')) return 'new product ID does not equal signed version';
+      return true;
+    },
+  },
+
+  {
     rule:'11', title:'runtime and history use their own verified product versions',
     run: () => {
       const page=read('internal/api/console.html');
@@ -716,6 +732,8 @@ const READ_FILES = [
 ];
 
 const MUTATIONS = [
+  {name:'retired historical failure occupies current summary again',file:'internal/api/console.html',find:'item.incompatible || item.superseded_by',replace:'item.incompatible || false',rule:'version identity and signed supersession reach the current subject'},
+
   { name:'filename migration leaves runtime behind', file:'scripts/build-hotfix-patch.sh', find:'internal/buildinfo.ProductVersion=${patch_version}', replace:'internal/buildinfo.Release=${patch_version}', rule:'runtime and history use their own verified product versions' },
   { name:'UI ignores sealed runtime version', file:'internal/api/console.html', find:'if (version.product_version) return version.product_version;', replace:'if (false) return version.product_version;', rule:'runtime and history use their own verified product versions' },
 

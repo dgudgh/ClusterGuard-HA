@@ -442,6 +442,21 @@ const SUBMIT_DRIVER = buttonID => `(async () => {${PAGE_HELPERS}
 })()`;
 
 const scenarios = [
+  ...[1440,390].map(width=>({
+    name:`signed successor removes historical failure from summary at ${width}px`,
+    width, summaryCheck:true,
+    make:()=>{
+      const old=hotfixFailed(); old.superseded_by='3.1.1.4';
+      const installed=hotfixFresh(); installed.package.patch_id='3.1.1.4'; installed.package.patch_version='3.1.1.4'; installed.job.patch_id='3.1.1.4';
+      return consoleUnderTest([installed,old],{productVersion:'3.1.1.4'});
+    },driver:GATES_DRIVER,
+  })),
+  {
+    name:'new version identity is the typed confirmation and outbound request',
+    make:()=>{const item=hotfixFailed();item.package.patch_id='3.1.1.4';item.package.patch_version='3.1.1.4';item.job.patch_id='3.1.1.4';return consoleUnderTest([item]);},
+    driver:SUBMIT_DRIVER('execute-software-update'),awaitAction:true,expectAction:'retry',identityCheck:true,
+  },
+
   ...[1440, 390].map(width => ({
     name: `sealed runtime and signed history at ${width}px`,
     make: () => {
@@ -623,7 +638,12 @@ const main = async () => {
     }
 
 
-    if (scenario.versionCheck) {
+    if (scenario.summaryCheck) {
+      record(`${scenario.name}: installed identity owns the summary`,page.identity==='3.1.1.4',page.identity);
+      record(`${scenario.name}: current and completed target agree`,page.runningVersion==='3.1.1.4' && page.summaryVersion.includes('3.1.1.4') && page.jobStatus==='升级成功',JSON.stringify(page));
+      record(`${scenario.name}: historical failure remains visible`,page.history.some(row=>row.patchID===HOTFIX_FAILED && row.message.includes('已被 3.1.1.4 替代')),JSON.stringify(page.history));
+      record(`${scenario.name}: no retry of retired predecessor`,page.execute.disabled===true,JSON.stringify(page.execute));
+    } else if (scenario.versionCheck) {
       record(`${scenario.name}: current version comes from the running binary`, page.runningVersion === '3.1.1.1', page.runningVersion);
       record(`${scenario.name}: pending target does not impersonate the runtime`, page.targetVersion === '3.1.1.3', page.targetVersion);
       record(`${scenario.name}: own signed version appears in installed history`, page.history.some(row => row.patchID === HOTFIX_FRESH && row.version === '2.2-105 → 3.1.1.1'), JSON.stringify(page.history));
@@ -631,6 +651,7 @@ const main = async () => {
     } else {
       record(`${scenario.name}: legacy runtime retains its RPM display`, page.runningVersion === '2.2-105', page.runningVersion);
     }
+    if(scenario.identityCheck) record(`${scenario.name}: literal product ID is confirmed and submitted`,page.phrase==='3.1.1.4' && actionIDs(mock)[0]==='3.1.1.4',JSON.stringify(mock.actions));
     if (scenario.name === 'installed hotfix survives a later failed plan') {
       record(`${scenario.name}: no retry of an installed deployment`,page.execute?.disabled === true,JSON.stringify(page.execute));
       record(`${scenario.name}: no resume of an installed hotfix`,page.resume?.hidden === true,JSON.stringify(page.resume));

@@ -43,8 +43,9 @@ func (manager *Manager) reconcileHotfixVersion(ctx context.Context, softwarePack
 	if err != nil || hex.EncodeToString(hash.Sum(nil)) != softwarePackage.SHA256 {
 		return softwarePackage, ErrInvalidPatch
 	}
-	if version, ok := manager.verifiedPatchVersions[key]; ok {
-		softwarePackage.PatchVersion = version
+	if verified, ok := manager.verifiedPatchVersions[key]; ok {
+		softwarePackage.PatchVersion = verified.PatchVersion
+		softwarePackage.Supersedes = append([]string(nil), verified.Supersedes...)
 		return softwarePackage, nil
 	}
 	inspected, err := manager.inspector.Inspect(ctx, archive, manager.config.TrustKeyPath)
@@ -55,6 +56,7 @@ func (manager *Manager) reconcileHotfixVersion(ctx context.Context, softwarePack
 		return softwarePackage, ErrInvalidPatch
 	}
 	softwarePackage.PatchVersion = inspected.PatchVersion
-	manager.verifiedPatchVersions[key] = inspected.PatchVersion
+	softwarePackage.Supersedes = append([]string(nil), inspected.Supersedes...)
+	manager.verifiedPatchVersions[key] = inspected
 	return softwarePackage, nil
 }

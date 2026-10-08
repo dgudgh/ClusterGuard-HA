@@ -33,7 +33,7 @@
 **备选：控制节点命令行**。同样受验签与 SHA-256 保护，但**不会自动重启服务**，需按输出自行重启，否则进程仍运行旧代码：
 
 ```bash
-tar -xzf release/<基线版本>-hotfixes/<产物文件名>.cgpatch
+tar -xzf <台账中的制品路径>.cgpatch
 cd clusterguard-hotfix
 bash apply.sh            # 备份、校验 SHA-256、安装、daemon-reload
 systemctl restart <单元> # apply.sh 只打印需要重启的单元，不自动重启

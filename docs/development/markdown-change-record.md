@@ -26,23 +26,24 @@ recorded-through: 73ff4a3
 | 2026-10-08 | `AGENTS.md` | M | 在「所有修改必须遵守」里新增一条：任何 Markdown 的新增/删除/修改都必须在 `docs/development/markdown-change-record.md` 登记并过 `verify-markdown-change-record.cjs`，改了 md 必须重建 `docs/html`，未登记不得提交。 |
 | 2026-10-08 | `docs/README.md` | M | 文档中心导航表新增一行「改文档 → Markdown 变更记录」，让台账在入口页可发现。 |
 | 2026-10-08 | `docs/development/README.md` | M | 开发入口在「先确定问题发生在哪一层」之后补一句：改动任何 Markdown 都要登记台账并跑对应门禁。 |
-| 2026-10-08 | `docs/development/delivery/README.md` | M | 热修命名条从「四段版本 `MAJOR.CAPABILITY.INTERNAL.BUGFIX`」改为「新封板版本线从 `3.1.1.1` 开始、四段为 `MAJOR.MINOR.PATCH.BUGFIX`」，并写明旧 2.x/HF 文件名全部冻结为历史。 |
+| 2026-10-08 | `docs/development/delivery/README.md` | M | 热修命名条从「四段版本 `MAJOR.CAPABILITY.INTERNAL.BUGFIX`」改为「新封板版本线从 `3.1.1.1` 开始、四段为 `MAJOR.MINOR.PATCH.BUGFIX`」，并写明旧 2.x/HF 文件名全部冻结为历史。 当前交付按产品版本目录与版本ID定位，不用旧RPM目录作当前入口。 |
 | 2026-10-08 | `docs/development/markdown-change-record.md` | A | 本页：建立 md 变更台账，规定增删改都要登记，并由 `tools/verify-markdown-change-record.cjs` 做结构与覆盖校验。 |
 | 2026-10-08 | `docs/development/rules/change-policy.md` | M | 新增「文档变更必须登记」一节：登记范围、`A`/`M`/`D` 判据、门禁的三种判红情形、`git add` 后门禁才可见、通过后重建生成页。 |
 | 2026-10-08 | `docs/development/rules/licensing.md` | M | 许可声明扫描排除整个根 .workbuddy 本机资料；明确业务/文档及嵌套同名目录仍须扫描并拒绝错误声明。 |
-| 2026-10-08 | `docs/en-US/hotfix-package-naming.md` | A | 新增英文版包命名规则页；本轮重建为与中文逐节对齐的 7 节结构，补回初版漏掉的「禁止的名字」一节与 `.cgupgrade` 跨语法禁令；迁移示例改为新运行时 ID HF-2026-1008-02，并说明同旧 ID 不同摘要会导致上传冲突。 补充运行产品版本、RPM兼容基线和历史签名字段来源。 |
+| 2026-10-08 | `docs/en-US/hotfix-package-naming.md` | A | 新增英文版包命名规则页；本轮重建为与中文逐节对齐的 7 节结构，补回初版漏掉的「禁止的名字」一节与 `.cgupgrade` 跨语法禁令；迁移示例改为新运行时 ID HF-2026-1008-02，并说明同旧 ID 不同摘要会导致上传冲突。 补充运行产品版本、RPM兼容基线和历史签名字段来源；目录按四段版本，不以RPM来源命名。 同步版本ID、产品目录、验签替代与旧HF兼容规则。 |
 | 2026-10-08 | `docs/en-US/update-and-patch.md` | M | 制品说明与热修规格节改用 `clusterguard-3.1.1.1.x86_64.cgpatch` 示例，并点明新封板版本线起点 `3.1.1.1`；与中文版同口径。 |
 | 2026-10-08 | `docs/en-US/upgrade-validation-chain-implementation-status.md` | M | 2026-10-08 增补：登记「载荷已落地是单一判据」「回退只命名最新已应用记录」「supersede 守卫必须有非 deployment 的输入源」三处落点，并记下 2 项未决义务。 |
 | 2026-10-08 | `docs/en-US/version-release-policy.md` | M | 交付身份条改为新封板版本线起点 `3.1.1.1` + `MAJOR.MINOR.PATCH.BUGFIX`，并写明历史 2.x/HF 规格名称冻结。 |
-| 2026-10-08 | `docs/hotfix-patches.md` | M | 导言改用新命名与封板起点；换行按 `scripts/render-hotfix-catalog.cjs` 的实际输出对齐，避免下次渲染产生无意义重排。 |
-| 2026-10-08 | `docs/zh-CN/hotfix-package-naming.md` | A | 新增中文版包命名规则页（本次随命名线迁移首次入库）：7 节结构，规定四段版本 `MAJOR.MINOR.PATCH.BUGFIX` 从 `3.1.1.1` 起、`HF-...` 只留在签名清单、修订递增 Bug 修订段并记 `supersedes_artifact`。本轮把「本次规格示例」改为「新规格示例」，并修正禁止示例的注释措辞；迁移示例改为 HF-2026-1008-02，要求首次迁移分配新 ID、签名 supersedes 关联旧包，避免上传身份冲突。 产品版本绑定运行二进制与API；历史目标读取自身签名版本；旧已交付包冻结并用3.1.1.3修正。 |
-| 2026-10-08 | `docs/zh-CN/hotfix-patches.md` | M | 同英文台账：导言改用新命名与封板起点。 |
+| 2026-10-08 | `docs/hotfix-patches.md` | M | 导言改用新命名与封板起点；换行按 `scripts/render-hotfix-catalog.cjs` 的实际输出对齐，避免下次渲染产生无意义重排。 渲染器使用实际台账制品路径的解包示例，兼容产品版本目录。 |
+| 2026-10-08 | `docs/zh-CN/hotfix-package-naming.md` | A | 新增中文版包命名规则页（本次随命名线迁移首次入库）：7 节结构，规定四段版本 `MAJOR.MINOR.PATCH.BUGFIX` 从 `3.1.1.1` 起、`HF-...` 只留在签名清单、修订递增 Bug 修订段并记 `supersedes_artifact`。本轮把「本次规格示例」改为「新规格示例」，并修正禁止示例的注释措辞；迁移示例改为 HF-2026-1008-02，要求首次迁移分配新 ID、签名 supersedes 关联旧包，避免上传身份冲突。 产品版本绑定运行二进制与API；历史目标读取自身签名版本；旧已交付包冻结并用3.1.1.3修正；当前制品目录改为release/<四段版本>，旧目录仅留历史，台账迁移不改签名字节。 新产品ID等于patch_version；目录按四段版本；旧HF身份保留历史，签名后继替代投影不改旧失败。 |
+| 2026-10-08 | `docs/zh-CN/hotfix-patches.md` | M | 同英文台账：导言改用新命名与封板起点。 渲染器使用实际台账制品路径的解包示例，兼容产品版本目录。 |
 | 2026-10-08 | `docs/zh-CN/update-and-patch.md` | M | 制品说明与热修规格节改用 `clusterguard-3.1.1.1.x86_64.cgpatch` 示例并点明封板起点；与英文版同口径。 |
 | 2026-10-08 | `docs/zh-CN/upgrade-validation-chain-implementation-status.md` | M | 同英文状态页：登记三处落点与 2 项未决义务。 |
 | 2026-10-08 | `docs/zh-CN/version-release-policy.md` | M | 交付身份条改为新封板版本线起点 `3.1.1.1` + `MAJOR.MINOR.PATCH.BUGFIX`。 |
 | 2026-10-08 | `docs/zh-CN/validation-gate-workflow.md` | M | 去掉已过期的固定17项计数，以本次源码门禁输出为准；新增功能仍须补充实际回归。 |
 | 2026-10-08 | `docs/development/backend/settings/version.md` | M | 说明product_version运行来源和旧历史验签补读，RPM兼容字段不变。 |
-| 2026-10-08 | `docs/development/frontend/settings/updates.md` | M | 明确当前/目标/历史版本的来源，补充桌面及窄屏行为回归。 |
+| 2026-10-08 | `docs/development/frontend/settings/updates.md` | M | 明确当前/目标/历史版本的来源，补充桌面及窄屏行为回归。 新增superseded_by与版本ID统一；摘要排除验签后继已替代的旧失败，历史不改写。 |
+| 2026-10-08 | `docs/development/backend/settings/update-history.md` | M | 记录Snapshot验签后继及部署判据、旧失败与活动任务保留。 |
 
 ## 批次说明
 
@@ -61,3 +62,5 @@ recorded-through: 73ff4a3
 8. **迁移身份验证（2026-10-08）。** 对真实上传路径验证后，纠正中英命名示例为新的 `HF-2026-1008-02`；首次迁移分配新内部包 ID，保留版本文件名 `clusterguard-3.1.1.1.x86_64.cgpatch`。同 ID 不同摘要的中间包归档，签名字节不改写。私有制品验收和交付说明留在 `release/`。命名页当前不在 HTML 生成器页清单中，仍执行完整重建检查。
 
 9. **本机参考与门禁修复（2026-10-08）。** 本机记忆逐章节原文拆分到忽略的 `.workbuddy/reference/` 并保留完整快照和摘要对拍；入库规则说明根本机目录的扫描边界。许可 CLI 回归覆盖本机归档不误报、真实源码/文档/嵌套同名目录错误声明仍拒绝。热修修订链支持版本文件名，继续验证递增修订及双向替代。流程不再固定旧检查数量；执行完整 HTML 重建。私有新补丁用于交付尚未入包的主线修复，制品及现场验收分开记录。
+
+本次目录规则调整：当前3.1.1.3入口按产品版本定位，renderer同步新旧目录识别与台账解包路径示例；HTML重建。

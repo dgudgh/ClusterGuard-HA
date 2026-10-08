@@ -219,10 +219,11 @@ type Job struct {
 }
 
 type PackageStatus struct {
-	Package    Package     `json:"package"`
-	Job        *Job        `json:"job,omitempty"`
-	Deployment *Deployment `json:"deployment,omitempty"`
-	Operations []Job       `json:"operations,omitempty"`
+	SupersededBy string      `json:"superseded_by,omitempty"`
+	Package      Package     `json:"package"`
+	Job          *Job        `json:"job,omitempty"`
+	Deployment   *Deployment `json:"deployment,omitempty"`
+	Operations   []Job       `json:"operations,omitempty"`
 	// ClockSkew marks a record whose uploaded_at lies in the future, i.e. the node clock
 	// was running ahead when the record was written. It travels with the row so the
 	// console can say the time - and therefore the position - is not trustworthy.
@@ -292,7 +293,7 @@ type Manager struct {
 	helper                Helper
 	now                   func() time.Time
 	verifiedBootstraps    map[string]struct{}
-	verifiedPatchVersions map[string]string
+	verifiedPatchVersions map[string]Package
 	mu                    sync.Mutex
 	historyValidation     historyValidationCache
 }
@@ -321,7 +322,7 @@ func NewManager(config Config, options ...Option) *Manager {
 	if config.MaximumUploadBytes <= 0 {
 		config.MaximumUploadBytes = DefaultMaximumUpload
 	}
-	manager := &Manager{config: config, now: time.Now, verifiedBootstraps: make(map[string]struct{}), verifiedPatchVersions: make(map[string]string)}
+	manager := &Manager{config: config, now: time.Now, verifiedBootstraps: make(map[string]struct{}), verifiedPatchVersions: make(map[string]Package)}
 	manager.inspector = CommandInspector{UpgradeBinaryPath: config.UpgradeBinaryPath}
 	manager.helper = NewUnixHelperClient(config.HelperSocketPath)
 	for _, option := range options {
@@ -358,6 +359,7 @@ func (manager *Manager) Snapshot(ctx context.Context) Snapshot {
 			continue
 		}
 		if candidate.Kind == PackageKindHotfix {
+			candidate.Supersedes = nil
 			if !candidate.ArtifactsPruned {
 				candidate.PatchVersion = ""
 			}
@@ -384,6 +386,24 @@ func (manager *Manager) Snapshot(ctx context.Context) Snapshot {
 		}
 		status.Deployment, _ = manager.Deployment(candidate.PatchID)
 		result.Packages = append(result.Packages, status)
+	}
+	// Only an installed, compatible successor's verified declaration retires a
+	// failed predecessor. Operation history remains unchanged.
+	for _, successor := range result.Packages {
+		if successor.Package.Kind != PackageKindHotfix || successor.Incompatible ||
+			!successor.Package.SignatureVerified || !manager.successorInstalled(successor.Package.PatchID) {
+			continue
+		}
+		for _, predecessor := range successor.Package.Supersedes {
+			for i := range result.Packages {
+				status := &result.Packages[i]
+				if status.Package.PatchID != predecessor || (status.Job != nil &&
+					(status.Job.Status == StatusQueued || status.Job.Status == StatusRunning)) {
+					continue
+				}
+				status.SupersededBy = successor.Package.PatchID
+			}
+		}
 	}
 	sort.Slice(result.Packages, func(left, right int) bool {
 		return result.Packages[left].Package.UploadedAt.After(result.Packages[right].Package.UploadedAt)

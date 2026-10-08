@@ -41,7 +41,7 @@ below names the one to apply for each patch**; the other identities are history.
 **Alternative: the controller command line.** Same signature and SHA-256 protection, but it does **not** restart services by itself, so restart them as it prints or the processes keep running the old code:
 
 ```bash
-tar -xzf release/<baseline-version>-hotfixes/<artifact>.cgpatch
+tar -xzf <ledger-artifact-path>.cgpatch
 cd clusterguard-hotfix
 bash apply.sh            # backs up, verifies SHA-256, installs, daemon-reload
 systemctl restart <unit> # apply.sh prints the units it needs; it never restarts by itself

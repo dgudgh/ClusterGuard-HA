@@ -3614,7 +3614,7 @@
       // job state and no amount of retrying makes it a candidate. The verdict is
       // computed once by the server (platformupdate.packageBaselineFault) and
       // travels with the row; re-deriving it here is how the two answers drift.
-      if (item && item.incompatible) return false;
+      if (item && (item.incompatible || item.superseded_by)) return false;
       const job = item && item.job || null;
       if (job?.deployment_state === 'installed' && !['queued','running'].includes(job.status)) return false;
       if (!job || job.verification_required) return true;
@@ -3747,7 +3747,7 @@
         // describes - reading either one off `record` renders nothing at all.
         const skewed = !!(item && item.clock_skew);
         const incompatible = !!(item && item.incompatible);
-        const rowNote = incompatible
+        const rowNote = item.superseded_by ? ` · 已被 ${item.superseded_by} 替代，保留历史记录` : incompatible
           ? ` · ${item.incompatible_reason || '与当前集群基线不一致，本集群装不上'}`
           : skewed ? ' · 记录时间戳晚于当前时间，排序与时间不可信' : '';
         row.append(

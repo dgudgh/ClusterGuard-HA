@@ -63,11 +63,17 @@ const arg = (flag, fallback) => {
 const repo = path.resolve(arg('--repo', path.resolve(__dirname, '..')));
 const artifactRoot = path.resolve(arg('--artifact-root', repo));
 const publicKey = arg('--public-key', process.env.CG_HOTFIX_TRUSTED_PUBLIC_KEY || '');
-// One release line per patch: a 2.2-103 site and a 2.2-104 site must never be
-// pointed at the same directory, or an operator could apply a patch built for
-// the wrong baseline (that silently downgrades binaries). Each spec therefore
-// owns its own delivery directory, derived from the version it was built for.
-const artifactDirFor = (body) => `release/${body.rpm_version}-${body.rpm_release}-hotfixes`;
+// New delivery directories follow the product identity. Frozen historical
+// declarations retain their ledger location; RPM admission remains independent.
+const artifactDirFor = (body) => {
+  if (body.patch_version) {
+    const historical = [...publications.values()].find(entry => entry.hotfix_id === body.id &&
+      entry.patch_version === body.patch_version && ['frozen', 'superseded'].includes(entry.status));
+    return historical ? path.posix.dirname(historical.file) : `release/${body.patch_version}`;
+  }
+  return `release/${body.rpm_version}-${body.rpm_release}-hotfixes`;
+};
+const isHotfixDeliveryDirectory = name => name.endsWith('-hotfixes') || /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/.test(name);
 
 const failures = [];
 const skips = [];
@@ -124,7 +130,8 @@ if (fs.existsSync(specDirectory)) {
 }
 const specs = documents.filter((document) => !companionDocuments.has(document.name));
 const unrecognised = specs
-  .filter((document) => !/^HF-\d{4}-\d{4}-\d{2}$/.test(document.body.id || ''))
+  .filter((document) => !/^HF-\d{4}-\d{4}-\d{2}$/.test(document.body.id || '') &&
+    !(typeof document.body.id === 'string' && /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/.test(document.body.id) && document.body.id === document.body.patch_version))
   .map((document) => document.name);
 for (let index = specs.length - 1; index >= 0; index -= 1) {
   if (unrecognised.includes(specs[index].name)) specs.splice(index, 1);
@@ -133,7 +140,7 @@ for (let index = specs.length - 1; index >= 0; index -= 1) {
 check('every JSON document in hotfixes/ parses', unparsableDocuments.length === 0, unparsableDocuments.join('; '));
 check('hotfix declarations exist', specs.length > 0, 'hotfixes/*.json is empty');
 check('every JSON in hotfixes/ is a patch declaration or the publication ledger', unrecognised.length === 0,
-  `${unrecognised.join(', ')} 既没有 HF-YYYY-MMDD-NN 形式的 id，也不是已知的伴随文件`);
+  `${unrecognised.join(', ')} 既没有 HF-YYYY-MMDD-NN 形式的历史id或与patch_version相同的四段产品id，也不是已知的伴随文件`);
 
 // --- Gate 1: every declaration is complete and points at real commits ------
 const incomplete = [];
@@ -739,13 +746,13 @@ for (const spec of specs) {
 // the count that matters comes from the ledger, not from the filesystem.
 const badDirCounts = [];
 const currentByLine = new Map();
-for (const [dir] of declaredDirs) {
+for (const line of new Set([...publications.values()].map(entry => entry.release_line))) {
   const offered = [...publications.entries()]
-    .filter(([file, entry]) => entry.status === 'current' && path.posix.dirname(file) === dir)
+    .filter(([, entry]) => entry.status === 'current' && entry.release_line === line)
     .map(([file]) => file);
-  currentByLine.set(dir, offered);
+  currentByLine.set(line, offered);
   if (offered.length > 1) {
-    badDirCounts.push(`${dir}: ${offered.length} 个 current 产物（${offered.join(', ')}）`);
+    badDirCounts.push(`${line}: ${offered.length} 个 current 产物（${offered.join(', ')}）`);
   }
 }
 check('every release line offers at most one current artifact in its delivery directory',
@@ -753,13 +760,13 @@ check('every release line offers at most one current artifact in its delivery di
 
 // A .cgpatch sitting in a release line that no declaration claims is a trap:
 // the renderer would still list it, and an operator could apply a patch the
-// gate never validated. Scan every release/*-hotfixes directory for strays.
+// gate never validated. Scan legacy and product-version directories for strays.
 const strayArchives = [];
 const releaseRoot = path.join(artifactRoot, 'release');
 if (fs.existsSync(releaseRoot)) {
   for (const entry of fs.readdirSync(releaseRoot)) {
     const candidate = path.join(releaseRoot, entry);
-    if (!fs.statSync(candidate).isDirectory() || !entry.endsWith('-hotfixes')) continue;
+    if (!fs.statSync(candidate).isDirectory() || !isHotfixDeliveryDirectory(entry)) continue;
     if (declaredDirs.has(`release/${entry}`)) continue;
     for (const name of fs.readdirSync(candidate)) {
       if (name.endsWith('.cgpatch')) strayArchives.push(`release/${entry}/${name}`);
@@ -874,7 +881,7 @@ for (const item of resolved) {
   //                pointing here would send the operator to a retired revision,
   //                which is the one combination that is never correct.
   if (entry.status === 'superseded') {
-    const offered = currentByLine.get(artifactDirFor(item.body)) || [];
+    const offered = currentByLine.get(`${item.body.rpm_version}-${item.body.rpm_release}`) || [];
     notCurrent.push(`${item.body.id}: 声明指向已被取代的产物 ${entry.file}（本线当前入口：${offered.join(', ') || '无'}）`);
   }
 }
