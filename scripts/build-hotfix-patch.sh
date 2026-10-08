@@ -103,10 +103,31 @@ hotfix_id="$(spec_get id)"
 base_commit="$(spec_get base_commit)"
 rpm_version="$(spec_get rpm_version)"
 rpm_release="$(spec_get rpm_release)"
+patch_version="$(spec_get_optional patch_version)"
+patch_version_declared="$("${node_bin}" -e '
+  const fs = require("fs");
+  const spec = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+  if (!Object.prototype.hasOwnProperty.call(spec, "patch_version")) process.stdout.write("absent");
+  else if (typeof spec.patch_version !== "string" || spec.patch_version.length === 0) process.exit(1);
+  else process.stdout.write("present");
+' "${spec}")" || die "patch_version 必须是非空字符串；历史规格可以省略该字段"
 severity="$(spec_get severity)"
 [[ "${hotfix_id}" =~ ^HF-[0-9]{4}-[0-9]{4}-[0-9]{2}$ ]] || die "热修编号格式必须为 HF-YYYY-MMDD-NN：${hotfix_id}"
 [[ "${rpm_version}" =~ ^[0-9][0-9A-Za-z._+~-]*$ ]] || die "rpm version 格式无效"
 [[ "${rpm_release}" =~ ^[0-9][0-9A-Za-z._+~-]*$ ]] || die "rpm release 格式无效"
+if [[ "${patch_version_declared}" == "present" ]]; then
+  [[ "${patch_version}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] ||
+    die "patch_version 格式必须为 MAJOR.CAPABILITY.INTERNAL.BUGFIX：${patch_version}"
+  patch_major="${BASH_REMATCH[1]}"
+  patch_capability="${BASH_REMATCH[2]}"
+  patch_internal="${BASH_REMATCH[3]}"
+  patch_bugfix="${BASH_REMATCH[4]}"
+  [[ "${rpm_version}" == "${patch_major}.${patch_capability}" ]] ||
+    die "patch_version 的前两段必须与 rpm_version 一致：${patch_version} != ${rpm_version}"
+  [[ "${rpm_release}" == "${patch_internal}" ]] ||
+    die "patch_version 的内部功能段必须与 rpm_release 一致：${patch_version} != ${rpm_release}"
+  (( 10#${patch_bugfix} >= 1 )) || die "patch_version 的 Bug 修订段必须从 1 开始：${patch_version}"
+fi
 
 # A patch covers a window of fixes. The build tree is the release baseline plus
 # every declared fix and nothing else, so a fix made on a development branch can
@@ -149,8 +170,9 @@ git -C "${repository}" merge-base --is-ancestor "${base_commit}" "${build_commit
 # A published artifact can never be rebuilt in place: the digest is the only
 # record of what a site actually ran, and a second artifact that carries the same
 # filename and the same version but different bytes destroys that record on both
-# sides at once. A correction is a new identity instead - pass revision 1, 2, ...
-# in the spec together with the identity it supersedes.
+# sides at once. A correction is a new identity instead: versioned declarations
+# advance patch_version's Bug-fix segment, while historical declarations use
+# revision 1, 2, ... in the spec together with the identity they supersede.
 hotfix_revision="$("${node_bin}" -e '
   const fs = require("fs");
   const spec = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
@@ -335,6 +357,7 @@ const manifest = {
   kind: "hotfix",
   product: "ClusterGuard HA",
   hotfix_id: spec.id,
+  patch_version: spec.patch_version || null,
   severity: spec.severity,
   base_commit: spec.base_commit,
   build_commit: buildCommit,
@@ -639,6 +662,7 @@ openssl dgst -sha256 -sign "${signing_key}" -out "${root}/HOTFIX-MANIFEST.sig" "
   lines.push(`# ${manifest.hotfix_id} — ${manifest.title.zh} / ${manifest.title.en}`);
   lines.push("");
   lines.push(`- 严重级别：${manifest.severity}`);
+  if (manifest.patch_version) lines.push(`- 补丁版本：${manifest.patch_version}`);
   lines.push(`- 覆盖修复提交：${manifest.fix_commits.map((commit) => `\`${commit.slice(0, 7)}\``).join("、")}`);
   lines.push(`- 构建树：\`${manifest.build_commit}\`（基线 \`${manifest.base_commit}\`，只含基线 + 上述修复）`);
   lines.push(`- 适用版本：${manifest.source.version}-${manifest.source.release} → ${manifest.target.version}-${manifest.target.release} (${manifest.target.rpm_architecture})`);
@@ -696,14 +720,21 @@ openssl dgst -sha256 -sign "${signing_key}" -out "${root}/HOTFIX-MANIFEST.sig" "
 # --- Package -----------------------------------------------------------------
 mkdir -p "${output_dir}"
 output_dir="$(cd "${output_dir}" && pwd)"
-archive_name="clusterguard-ha-hotfix-${hotfix_id}${revision_suffix}-${rpm_version}-${rpm_release}.${rpm_arch}.cgpatch"
+if [[ "${patch_version_declared}" == "present" ]]; then
+  archive_name="clusterguard-${patch_version}.${rpm_arch}.cgpatch"
+else
+  # Historical declarations retain their immutable HF-based names. New
+  # declarations must set patch_version and use the public version grammar.
+  archive_name="clusterguard-ha-hotfix-${hotfix_id}${revision_suffix}-${rpm_version}-${rpm_release}.${rpm_arch}.cgpatch"
+fi
 output="${output_dir}/${archive_name}"
 if [[ -e "${output}" ]]; then
   die "产物已存在，拒绝原地覆盖：${output}
 已签名的交付物一旦生成即不可变——同一个文件名、同一个版本号、不同的字节，会让现场与仓库
 各说一套，事后无法证明节点实际运行过什么。请二选一：
-  ① 在 spec 里加 revision（例如 1）+ supersedes_artifact{file,sha256,reason}，产生新身份与新文件名；
-  ② 若该文件从未交付、从未上传现场，先把它改名移走并写明原因，再重新构建。"
+ ① 新格式在 spec 中递增 patch_version 的 Bug 修订段（例如 2.2.105.2），并记录 revision + supersedes_artifact{file,sha256,reason}；
+ ② 历史格式在 spec 里加 revision（例如 1）+ supersedes_artifact{file,sha256,reason}，产生新身份与新文件名；
+ ③ 若该文件从未交付、从未上传现场，先把它改名移走并写明原因，再重新构建。"
 fi
 temporary_output="${output}.tmp.$$"
 rm -f "${temporary_output}"
@@ -715,6 +746,7 @@ printf '%s  %s\n' "${archive_sha}" "${archive_name}" >"${output}.sha256"
 
 printf 'hotfix_patch=%s\n' "${output}"
 printf 'hotfix_id=%s\n' "${hotfix_id}"
+printf 'patch_version=%s\n' "${patch_version:-legacy}"
 printf 'fix_commits=%s\n' "$(IFS=,; printf '%s' "${resolved_fix_commits[*]}")"
 printf 'build_commit=%s\n' "${build_commit}"
 printf 'source=%s-%s\n' "${rpm_version}" "${rpm_release}"

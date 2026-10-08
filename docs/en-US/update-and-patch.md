@@ -8,7 +8,7 @@
 
 This guide defines how a customer site updates the ClusterGuard HA control plane. Control-plane software updates are strictly separate from database upgrades. The updater does not invoke MySQL, PostgreSQL, Oracle, or SQL Server clients and does not stop databases or modify database software, data directories, replication, or VIP configuration.
 
-> **Artifact naming:** `.cgupgrade` is a complete signed rolling-update package, not a small binary delta. It contains both the target RPM and the current-version RPM for automatic rollback. `*-offline-linux-*.tar.gz` is intended for installation or reinstallation and cannot be uploaded directly to the rolling-update page. Legacy `.cgpatch` packages remain supported. See the [hotfix package naming and delivery directory rules](hotfix-package-naming.md) for the exact `.cgpatch` filename grammar, revision rules, and baseline selection.
+> **Artifact naming:** `.cgupgrade` is a complete signed rolling-update package, not a small binary delta. It contains both the target RPM and the current-version RPM for automatic rollback. `*-offline-linux-*.tar.gz` is intended for installation or reinstallation and cannot be uploaded directly to the rolling-update page. Legacy `.cgpatch` packages remain supported. New hotfix specifications use `patch_version` and the [hotfix version and filename rules](hotfix-package-naming.md); historical specifications retain their immutable HF-based names.
 
 > **Where to obtain them:** complete installation media are published publicly through [GitHub Releases](https://github.com/dgudgh/ClusterGuard-HA/releases). **Signed update packages are not published on public channels**; the vendor supplies them to contracted enterprise customers directly. Do not look for a `.cgupgrade` on a public channel.
 
@@ -161,7 +161,7 @@ Ship the update package, its SHA-256 file, release notes, and a signing-key fing
 
 ### Hotfix Patch Specs
 
-A hotfix patch (`.cgpatch`) is built by `scripts/build-hotfix-patch.sh` from `hotfixes/HF-*.json`. Its artifacts and per-fix bilingual catalogue are in the [Hotfix Patch Catalogue](../hotfix-patches.md). Three commit fields in the spec mean different things and are not interchangeable:
+A hotfix patch (`.cgpatch`) is built by `scripts/build-hotfix-patch.sh` from `hotfixes/HF-*.json`. New specifications set `patch_version` and produce names such as `clusterguard-2.2.105.1.x86_64.cgpatch`; specifications without it retain their historical HF-based names. Its artifacts and per-fix bilingual catalogue are in the [Hotfix Patch Catalogue](../hotfix-patches.md). Three commit fields in the spec mean different things and are not interchangeable:
 
 | Field | Meaning |
 | --- | --- |

@@ -12,6 +12,6 @@
 | 推进源码、新包与现场的门禁证据 | [分阶段门禁流程](../../zh-CN/validation-gate-workflow.md) |
 | 现场上传、升级、重试、回退 | [现场升级手册](../../zh-CN/update-and-patch.md)、[强制契约](../../zh-CN/upgrade-validation-chain.md) |
 
-热修 `.cgpatch` 的文件名和目录按[热修补丁包命名与交付目录规则](../../zh-CN/hotfix-package-naming.md)执行；该页明确源基线、`HF-YYYY-MMDD-NN` 编号、`-rREV` 修订和同包重试的边界。
+热修 `.cgpatch` 的文件名和目录按[热修补丁包版本与文件名规则](../../zh-CN/hotfix-package-naming.md)执行；新规格使用四段版本 `MAJOR.CAPABILITY.INTERNAL.BUGFIX`，`HF-YYYY-MMDD-NN` 只保留在签名清单中作为操作身份。
 
 做完整发布时执行打包清单中的全部适用门槛；只修改业务功能时返回对应前端/后端模块。

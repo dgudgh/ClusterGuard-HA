@@ -18,9 +18,12 @@ silently undoes the newer fix. **Apply the newest patch for your baseline only, 
 never mix patches built for different baseline versions** — a patch from another
 baseline silently downgrades binaries back to its own release line.
 
-A signed patch is never rebuilt in place: a correction produces a *new* identity
-(`-r1`, `-r2`, ...) and the earlier bytes stay in the directory as the only record of
-what a site ran. So a directory can hold several files for one patch. **The table
+New hotfix specifications use `patch_version` and the versioned filename
+`clusterguard-MAJOR.CAPABILITY.INTERNAL.BUGFIX.<arch>.cgpatch`; the signed
+manifest still carries the `HF-...` operation identity. Historical specifications
+retain their immutable HF-based names. A signed patch is never rebuilt in place:
+a correction gets a new Bug-fix version and the earlier bytes stay in the directory
+as the only record of what a site ran. **The table
 below names the one to apply for each patch**; the other identities are history.
 
 | Hotfix | Severity | Fix commits | Build tree | Artifact to apply |
@@ -740,4 +743,3 @@ timeline is in `hotfixes/hotfix-publications.json`.
   - Why it was replaced — quoted verbatim from its signed manifest (Chinese; the manifest field is a single string): 第 1 修订（r1）的签名清单把发布台账的位置写成 release/hotfix-publications.json。台账随后迁入源码树（hotfixes/hotfix-publications.json，可随分支传播），r1 清单里的这个指针因此指向一个不存在的文件。已签名的产物不得原地改写——同一个文件名配上不同的字节，会让「现场运行过什么」失去唯一的凭证——所以这段文案由第 2 修订来纠正，而不是回去改 r1。本修订只动清单里的身份字段与散文：载荷（二进制、单元、运行时脚本、源码 diff）与 r1 逐字节相同。r1 已登记但从未交付任何现场，故标记为 superseded，其摘要与字节按不可变规则原样保留。
 - **revision 1** `62bc8c7cffaced9c5fda113961bc4d50b9e5e55656945aa977fd615fdb388dea` (8,976,887 bytes, superseded)
   - Why it was replaced — quoted verbatim from its signed manifest (Chinese; the manifest field is a single string): 原身份（r0）的字节在 2026-09-29 17:47 被一次「同名原地重建」覆盖，且三个现场节点都没有留存 2.2-103 线的补丁包，无法像 HF-2026-0929-03 / -04 那样从现场取回，因此 r0 已不可恢复。本修订用修正后的生成器重新构建（生成的 rollback.sh 改为 mktemp + mv -f 换 inode，且只认本补丁自己的备份清单），并以新文件名与新摘要发布；r0 的摘要保留在 release/hotfix-publications.json 作为它曾经存在过的唯一记录。
-

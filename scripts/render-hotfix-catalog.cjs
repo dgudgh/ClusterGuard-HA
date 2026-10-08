@@ -168,9 +168,12 @@ function renderEnglish(groups) {
   lines.push("never mix patches built for different baseline versions** — a patch from another");
   lines.push("baseline silently downgrades binaries back to its own release line.");
   lines.push("");
-  lines.push("A signed patch is never rebuilt in place: a correction produces a *new* identity");
-  lines.push("(`-r1`, `-r2`, ...) and the earlier bytes stay in the directory as the only record of");
-  lines.push("what a site ran. So a directory can hold several files for one patch. **The table");
+  lines.push("New hotfix specifications use `patch_version` and the versioned filename");
+  lines.push("`clusterguard-MAJOR.CAPABILITY.INTERNAL.BUGFIX.<arch>.cgpatch`; the signed");
+  lines.push("manifest still carries the `HF-...` operation identity. Historical specifications");
+  lines.push("retain their immutable HF-based names. A signed patch is never rebuilt in place:");
+  lines.push("a correction gets a new Bug-fix version and the earlier bytes stay in the directory");
+  lines.push("as the only record of what a site ran. **The table");
   lines.push("below names the one to apply for each patch**; the other identities are history.");
   lines.push("");
   lines.push("| Hotfix | Severity | Fix commits | Build tree | Artifact to apply |");
@@ -201,6 +204,7 @@ function renderEnglish(groups) {
     lines.push(`- Fix commits: ${primary.fix_commits.map((commit) => `\`${commit.slice(0, 7)}\``).join(", ")}`);
     lines.push(`- Build tree: \`${primary.build_commit}\` (baseline \`${primary.base_commit}\` plus the fixes above and nothing else)`);
     lines.push(`- Applies to: ${primary.source.version}-${primary.source.release} → ${primary.target.version}-${primary.target.release} (${primary.target.rpm_architecture})`);
+    if (primary.patch_version) lines.push(`- Patch version: \`${primary.patch_version}\``);
     lines.push(`- Artifact: \`${primary.dirName}/${primary.archive}\``);
     lines.push(`- SHA-256: \`${primary.archiveSha256}\``);
     if (primary.revision > 0 && primary.supersedes_artifact) {
@@ -293,8 +297,9 @@ function renderChinese(groups) {
   lines.push("补丁如果叠加，结果取决于安装顺序——后装旧的会把新修复盖掉。**只装你所在基线版本的最新一个包，");
   lines.push("不要混装不同基线版本的包**——装错基线的包会把二进制悄悄降级回它自己的发布线。");
   lines.push("");
-  lines.push("已签名的补丁**永不原地重建**：任何修订都会产生**新身份**（`-r1`、`-r2` …），旧身份的字节");
-  lines.push("留在目录里，作为“现场到底运行过什么”的唯一记录。所以一个目录里可能同时存在同一个补丁的");
+  lines.push("新规格使用 `patch_version` 和 `clusterguard-MAJOR.CAPABILITY.INTERNAL.BUGFIX.<架构>.cgpatch`；");
+  lines.push("签名清单仍保留 `HF-...` 作为操作身份。历史规格继续保留原来的 HF 文件名。已签名的补丁**永不原地重建**：");
+  lines.push("修订使用新的 Bug 修订版本，旧身份的字节留在目录里，作为“现场到底运行过什么”的唯一记录。");
   lines.push("多份文件。**下表列出的才是每个补丁应当安装的那一份**，其余身份只是历史。");
   lines.push("");
   lines.push("| 补丁编号 | 严重级别 | 覆盖修复提交 | 构建树 | 应当安装的产物 |");
@@ -325,6 +330,7 @@ function renderChinese(groups) {
     lines.push(`- 覆盖修复提交：${primary.fix_commits.map((commit) => `\`${commit.slice(0, 7)}\``).join("、")}`);
     lines.push(`- 构建树：\`${primary.build_commit}\`（基线 \`${primary.base_commit}\` + 上述修复，不含其它提交）`);
     lines.push(`- 适用版本：${primary.source.version}-${primary.source.release} → ${primary.target.version}-${primary.target.release}（${primary.target.rpm_architecture}）`);
+    if (primary.patch_version) lines.push(`- 补丁版本：\`${primary.patch_version}\``);
     lines.push(`- 产物：\`${primary.dirName}/${primary.archive}\``);
     lines.push(`- SHA-256：\`${primary.archiveSha256}\``);
     if (primary.revision > 0 && primary.supersedes_artifact) {

@@ -1,48 +1,72 @@
-# Hotfix Package Naming and Delivery Directory
+# Hotfix Version and Filename Rules
 
-> This page defines the filename, directory, and identification rules for signed `.cgpatch` hotfixes. Read the [gate workflow](../zh-CN/validation-gate-workflow.md) first; for build, signing, upload, retry, or rollback, also read the complete [v2 contract](../zh-CN/upgrade-validation-chain.md). This page does not replace signature, SHA-256, PRE/ART/FIELD, or site acceptance gates.
+> This page defines the version fields, filename, and delivery directory for new signed `.cgpatch` packages. Read the [gate workflow](../zh-CN/validation-gate-workflow.md) first; for build, signing, upload, retry, or rollback, also read the complete [v2 contract](../zh-CN/upgrade-validation-chain.md). This page does not replace signature, SHA-256, PRE/ART/FIELD, or site acceptance gates.
 
 ## Canonical filename
 
-The `scripts/build-hotfix-patch.sh` builder emits this fixed form:
+New hotfix specifications must set `patch_version`. The builder emits:
 
 ```text
-clusterguard-ha-hotfix-HF-YYYY-MMDD-NN[-rREV]-<source-version>-<source-release>.<arch>.cgpatch
+clusterguard-MAJOR.CAPABILITY.INTERNAL.BUGFIX.<arch>.cgpatch
 ```
 
-| Segment | Meaning | Example |
+Example specification and output:
+
+```json
+{
+  "id": "HF-2026-1008-01",
+  "patch_version": "2.2.105.1",
+  "rpm_version": "2.2",
+  "rpm_release": "105"
+}
+```
+
+```text
+clusterguard-2.2.105.1.x86_64.cgpatch
+```
+
+`patch_version` is also signed into `HOTFIX-MANIFEST.json`. The filename and manifest must describe the same artifact.
+
+## Four version segments
+
+| Segment | Example | Meaning | Constraint |
+| --- | --- | --- | --- |
+| `MAJOR` | `2` | Production-stable major line | Production stable version |
+| `CAPABILITY` | `2.2` | Capability line: MySQL expanded to PostgreSQL, Oracle, and SQL Server | Must match `rpm_version` `2.2` |
+| `INTERNAL` | `105` | Internal feature release on that capability line | Must match `rpm_release` `105` |
+| `BUGFIX` | `1` | Bug-fix sequence for `2.2.105` | Starts at `1`, never `0` |
+
+Thus `2.2.105.1` is the hotfix version, while the installed RPM baseline remains `2.2-105`. The target, affected files, restart units, and operation identity still come from the signed manifest.
+
+## Hotfix ID versus filename version
+
+`HF-YYYY-MMDD-NN` remains the manifest `hotfix_id` used by the console, audit, retry, and maintenance-gate ownership. The new filename deliberately omits it:
+
+| Location | Example | Purpose |
 | --- | --- | --- |
-| `clusterguard-ha` | Fixed product name | `clusterguard-ha` |
-| `hotfix` | Fixed artifact kind; the archive root is `clusterguard-hotfix/` | `hotfix` |
-| `HF-YYYY-MMDD-NN` | Immutable hotfix ID: year, month/day, and two-digit daily sequence | `HF-2026-1008-01` |
-| `-rREV` | Artifact revision, only for a correction; `r0` is omitted | `-r1` |
-| `<source-version>-<source-release>` | Installed RPM baseline, never the target | `2.2-105` |
-| `<arch>` | RPM architecture | `x86_64`, `aarch64` |
-| `.cgpatch` | Fixed hotfix suffix | `.cgpatch` |
+| Outer filename | `clusterguard-2.2.105.1.x86_64.cgpatch` | Human-readable product and Bug-fix version |
+| Signed manifest | `hotfix_id=HF-2026-1008-01` | Runtime operation and audit identity |
+| Signed manifest | `patch_version=2.2.105.1` | Binds the filename version to the signature |
 
-The current package is therefore:
+The confirmation dialog still asks for `HF-2026-1008-01`; verify the filename, manifest, and sidecar digest together.
+
+## Retry, correction, and immutability
+
+- A failed, not-yet-confirmed application retries the exact same file, ID, and `patch_version`. Retry does not create a new file.
+- A signed file is never rebuilt or overwritten in place.
+- The new filename does not append `-r1`. If signed bytes need correction, use the next Bug-fix version, such as `2.2.105.2`, and record `revision` plus `supersedes_artifact{file,sha256,reason}` in the new signed manifest.
+- Keep the old file and digest as evidence; `.2` is a new traceable Bug-fix identity.
+
+Historical specifications without `patch_version` retain their immutable `clusterguard-ha-hotfix-HF-...` names. They are frozen history, not candidates for cosmetic renaming. New specifications use this versioned form.
+
+## Baseline, directory, and rolling-package boundary
+
+For `clusterguard-2.2.105.1.x86_64.cgpatch`, verify `source.version=2.2`, `source.release=105`, and `patch_version=2.2.105.1` in the signed manifest. Store it under `release/2.2-105-hotfixes/` beside its same-basename `.sha256` and delivery note. Signed packages, hashes, and the private ledger stay in the local or contracted delivery directory.
+
+`.cgupgrade` keeps its own rolling grammar:
 
 ```text
-clusterguard-ha-hotfix-HF-2026-1008-01-2.2-105.x86_64.cgpatch
+clusterguard-ha-<source-version>-<source-release>-to-<target-version>-<target-release>-<arch>.cgupgrade
 ```
 
-It is hotfix `HF-2026-1008-01` for source baseline `2.2-105` on `x86_64`. The target comes from the signed manifest (`2.2-105+hf-2026-1008-01`); it is not encoded as the filename baseline and does not change the RPM release.
-
-## Revision and retry rules
-
-- Revision `0` is omitted from the filename. A correction uses `-r1`, `-r2`, and so on, while retaining the old file.
-- A revised artifact must record the replaced filename, its SHA-256, and the reason in `supersedes_artifact` and must pass the applicable gates again.
-- The practical artifact identity is `(hotfix_id, revision, SHA-256)`. A matching `hotfix_id` never authorizes overwriting bytes.
-- A failed, not-yet-confirmed application retries the exact same file, ID, and revision. Retry does not create a new filename.
-
-## Baseline, directory, and selection
-
-The source baseline in the filename must match `source.version` and `source.release` in `HOTFIX-MANIFEST.json` and the running site. The manifest target may be `2.2-105+hf-2026-1008-01`; that target is not substituted into the filename.
-
-Store the artifact under `release/<source-version>-<source-release>-hotfixes/`, for example `release/2.2-105-hotfixes/`, beside its same-basename `.sha256` file and delivery note. Signed packages, hashes, and the private ledger stay in the local or contracted delivery directory and are not published to GitHub.
-
-Select the package from the private ledger's current artifact entry. Do not select by filesystem time, directory order, or a label such as `latest`. Verify the filename, manifest, sidecar digest, and status together.
-
-## Boundary with `.cgupgrade`
-
-`.cgupgrade` has its own builder and grammar: `clusterguard-ha-<source-version>-<source-release>-to-<target-version>-<target-release>-<arch>.cgupgrade`. Do not reuse the hotfix ID grammar for a rolling package, or put the `+hf-...` target into a hotfix filename.
+Do not mix the two grammars or select a package by filesystem time or a label such as `latest`.

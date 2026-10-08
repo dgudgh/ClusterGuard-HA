@@ -202,6 +202,22 @@ for (const spec of specs) {
   } catch (error) {
     badCommits.push(`${spec.name}:${body.base_commit}`);
   }
+  if (body.patch_version !== undefined) {
+    const match = typeof body.patch_version === 'string'
+      ? body.patch_version.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/)
+      : null;
+    if (!match) {
+      incomplete.push(`${spec.name}:patch_version 格式必须为 MAJOR.CAPABILITY.INTERNAL.BUGFIX`);
+    } else {
+      if (`${match[1]}.${match[2]}` !== body.rpm_version) {
+        incomplete.push(`${spec.name}:patch_version 前两段必须等于 rpm_version`);
+      }
+      if (match[3] !== body.rpm_release) {
+        incomplete.push(`${spec.name}:patch_version 内部功能段必须等于 rpm_release`);
+      }
+      if (Number(match[4]) < 1) incomplete.push(`${spec.name}:patch_version BUGFIX 必须从 1 开始`);
+    }
+  }
 }
 check('every declaration carries the id, severity, commits and bilingual text', incomplete.length === 0, incomplete.join(', '));
 check('every declaration points at real fix commits whose baseline is an ancestor', badCommits.length === 0, badCommits.join(', '));
@@ -266,11 +282,14 @@ check('every declared fix commit is described by a bilingual fix entry',
   undocumentedFixes.length === 0, undocumentedFixes.join('; '));
 
 // --- Gate 2: every declaration has a signed artifact -----------------------
-// A revision is a *different* artifact, never a rewrite of the published one, so
-// it carries the revision in its filename as well as in its manifest.
+// A revision is a *different* artifact, never a rewrite of the published one.
+// Legacy declarations carry revision in the filename; versioned declarations
+// carry the new Bug-fix segment in the filename and keep revision in the manifest.
 const archiveName = (body) =>
-  `clusterguard-ha-hotfix-${body.id}${body.revision ? `-r${body.revision}` : ''}`
-  + `-${body.rpm_version}-${body.rpm_release}.x86_64.cgpatch`;
+  body.patch_version
+    ? `clusterguard-${body.patch_version}.x86_64.cgpatch`
+    : `clusterguard-ha-hotfix-${body.id}${body.revision ? `-r${body.revision}` : ''}`
+      + `-${body.rpm_version}-${body.rpm_release}.x86_64.cgpatch`;
 
 const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-hotfix-gate-'));
 const cleanup = () => fs.rmSync(stage, { recursive: true, force: true });
@@ -305,8 +324,9 @@ const cleanArtifacts = [];
 // record: the site reports "2.2-105", the repository also has a "2.2-105", and
 // the digests differ, so neither side can say what the nodes are running. So
 // publishing appends an identity here and nothing already published is ever
-// rewritten; a correction is a *new* artifact (`-r1`, `-r2`, ...) that names the
-// identity it supersedes. `status: "frozen"` marks an identity that is kept only
+// rewritten; a correction is a *new* artifact. Historical declarations use
+// `-r1`, `-r2`, ...; versioned declarations advance the Bug-fix segment and keep
+// the revision chain in the manifest. `status: "frozen"` marks an identity that is kept only
 // as evidence - its bytes are never upgraded to today's rules - and it has to
 // declare the defects it still carries, so the reason it is not uploadable is
 // written down rather than merely implied.
@@ -370,6 +390,7 @@ for (const spec of specs) {
       manifest.build_commit !== declaredBuild ||
       manifest.source.version !== body.rpm_version || manifest.source.release !== body.rpm_release ||
       manifest.kind !== 'hotfix' ||
+      (manifest.patch_version || null) !== (body.patch_version || null) ||
       (manifest.revision || 0) !== (body.revision || 0) ||
       JSON.stringify(manifest.supersedes_artifact || null) !== JSON.stringify(body.supersedes_artifact || null)) {
     mismatched.push(`${body.id}: manifest disagrees with hotfixes/${spec.name}`);
@@ -930,6 +951,9 @@ if (fs.existsSync(builder)) {
     /补丁签名私钥与预期受信公钥不匹配/.test(source));
   check('the builder validates the generated scripts before packaging',
     /bash -n "\$\{root\}\/apply\.sh"/.test(source) && /bash -n "\$\{root\}\/rollback\.sh"/.test(source));
+  check('the builder binds a new patch_version to the versioned archive name and manifest',
+    /archive_name="clusterguard-\$\{patch_version\}\.\$\{rpm_arch\}\.cgpatch"/.test(source) &&
+    /patch_version: spec\.patch_version \|\| null/.test(source));
   // The ledger check above can only see a rewrite after it happened. This one is
   // the prevention: the builder must stop before touching a path that already
   // holds an artifact, and send the operator to a new identity instead.

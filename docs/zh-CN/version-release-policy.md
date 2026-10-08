@@ -69,7 +69,7 @@ v2.2.2
 - SHA256 文件；
 - Release Notes。
 
-热修 `.cgpatch` 的文件名不是临时标签：按[热修补丁包命名与交付目录规则](hotfix-package-naming.md)区分热修编号、制品修订、源基线和架构。相同 `hotfix_id` 的更正必须用 `-rREV` 产生新制品并记录被替代文件及摘要；已签名文件不得原地重建。同包失败重试继续使用原文件，不通过递增编号掩盖未确认的现场结果。
+热修 `.cgpatch` 的文件名是交付身份的一部分：新规格按[热修补丁包版本与文件名规则](hotfix-package-naming.md)使用 `clusterguard-MAJOR.CAPABILITY.INTERNAL.BUGFIX.<架构>.cgpatch`，并把同一 `patch_version` 写入签名清单。`HF-...` 仍是控制台和审计用的 `hotfix_id`；历史规格的旧文件名保持冻结。已签名文件不得原地重建，同包失败重试继续使用原文件。
 
 同名文件内容发生任何变化都视为新版本。即使只修改安装脚本或包内操作手册，
 也必须增加发行序号，因为交付包已经发生变化。
