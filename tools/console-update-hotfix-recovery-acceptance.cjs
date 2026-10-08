@@ -46,12 +46,16 @@ const { runConsoleDriver } = require('./console-cdp-harness.cjs');
 // ordering that made the operator's click land somewhere else.
 const HOTFIX_DONE = 'HF-2026-0929-05';
 const HOTFIX_FAILED = 'HF-2026-0929-04';
+const HOTFIX_FRESH = 'HF-2026-1008-01';
 const ROLLING = 'cgupgrade-2.2-104-to-2.2-105-x86_64';
 
 const HOTFIX_DONE_STAMP = '2026-09-30T01:29:19.47289955Z';
 const HOTFIX_DONE_FINISHED = '2026-09-30T01:30:59Z';
 const HOTFIX_FAILED_STAMP = '2026-09-29T08:22:08.240764113Z';
 const HOTFIX_FAILED_STARTED = '2026-09-29T08:22:35Z';
+const HOTFIX_FRESH_STAMP = '2026-10-08T08:56:51.262278862Z';
+const HOTFIX_FRESH_STARTED = '2026-10-08T08:57:07Z';
+const HOTFIX_FRESH_FINISHED = '2026-10-08T08:58:30Z';
 const ROLLING_STAMP = '2026-09-29T05:16:35.838450034Z';
 const ROLLING_FAILED_AT = '2026-09-29T05:20:11Z';
 
@@ -73,8 +77,24 @@ const hotfixDone = () => ({
     started_at: HOTFIX_DONE_STAMP, updated_at: HOTFIX_DONE_FINISHED, finished_at: HOTFIX_DONE_FINISHED,
     maintenance_active: false, automatic_failover_available: true,
     progress: { phase: 'completed', total: 3, current: 3, percent: 100 },
+    events: appliedEvents(HOTFIX_DONE, HOTFIX_DONE_STAMP, HOTFIX_DONE_FINISHED),
   },
 });
+
+// The event chain a run that applied and verified a patch leaves behind: a progress
+// event per node and one terminal success. It is what tells the console the files are
+// on disk, so a fixture without it describes a record no runner writes - and the
+// console half of this incident is precisely about a record whose status and whose
+// event chain disagree.
+const appliedEvents = (patchID, startedAt, finishedAt) => [
+  { patch_id: patchID, mode: 'execute', status: 'running', node: '192.168.102.152', updated_at: startedAt },
+  { patch_id: patchID, mode: 'execute', status: 'verified', node: '192.168.102.152', updated_at: startedAt },
+  { patch_id: patchID, mode: 'execute', status: 'running', node: '192.168.102.154', updated_at: startedAt },
+  { patch_id: patchID, mode: 'execute', status: 'verified', node: '192.168.102.154', updated_at: startedAt },
+  { patch_id: patchID, mode: 'execute', status: 'running', node: '192.168.102.153', updated_at: finishedAt },
+  { patch_id: patchID, mode: 'execute', status: 'verified', node: '192.168.102.153', updated_at: finishedAt },
+  { patch_id: patchID, mode: 'execute', status: 'succeeded', node: '192.168.102.153', updated_at: finishedAt },
+];
 
 const hotfixFailed = () => ({
   package: {
@@ -93,7 +113,9 @@ const hotfixFailed = () => ({
 });
 
 // A record left behind by the refused resume: its event chain is a complete success
-// while its status says failed. The console must not read that as the patch's verdict.
+// while its status says failed. The console must not read that as the patch's verdict —
+// and, because the chain says the payload is on disk, must also not offer to run it
+// again. This is the record the live leader still holds for HF-2026-0929-05.
 const hotfixRefused = () => {
   const record = hotfixDone();
   record.job = {
@@ -101,9 +123,32 @@ const hotfixRefused = () => {
     message: RESUME_REFUSAL, started_at: '2026-09-30T05:30:29Z', updated_at: '2026-09-30T05:30:30Z',
     finished_at: '2026-09-30T05:30:30Z', maintenance_active: false, automatic_failover_available: true,
     progress: { phase: 'failed', total: 3, current: 0, percent: 0 },
+    // The refused attempt wrote no event of its own: the chain still ends in the run
+    // that applied and verified the patch. That is the whole reason status alone lies.
+    events: appliedEvents(HOTFIX_DONE, HOTFIX_DONE_STAMP, HOTFIX_DONE_FINISHED),
   };
   return record;
 };
+
+// The successor the site applied afterwards - HF-2026-1008-01's shape, which replaced
+// the same single script HF-2026-0929-05 had replaced. It is the newest record whose
+// payload is on disk, so it is the only record a rollback may revert.
+const hotfixFresh = () => ({
+  package: {
+    patch_id: HOTFIX_FRESH, file_name: `clusterguard-ha-hotfix-${HOTFIX_FRESH}-2.2-105.x86_64.cgpatch`,
+    kind: 'hotfix', source_version: '2.2-105', target_version: `2.2-105+hf-2026-1008-01`,
+    size_bytes: 9028276, signature_verified: true, rolling: true, rollback_available: true,
+    database_mutation: false, uploaded_at: HOTFIX_FRESH_STAMP,
+  },
+  job: {
+    patch_id: HOTFIX_FRESH, mode: 'execute', status: 'succeeded', node: '192.168.102.153',
+    message: '滚动升级完成，全部节点与控制面已验证，维护门禁已释放',
+    started_at: HOTFIX_FRESH_STARTED, updated_at: HOTFIX_FRESH_FINISHED, finished_at: HOTFIX_FRESH_FINISHED,
+    maintenance_active: false, automatic_failover_available: true,
+    progress: { phase: 'completed', total: 3, current: 3, percent: 100 },
+    events: appliedEvents(HOTFIX_FRESH, HOTFIX_FRESH_STARTED, HOTFIX_FRESH_FINISHED),
+  },
+});
 
 const rollingFailed = () => ({
   package: {
@@ -278,6 +323,9 @@ const PAGE_HELPERS = `
     resume: { hidden: byId('resume-software-update').hidden, disabled: byId('resume-software-update').disabled },
     rollback: { hidden: byId('rollback-software-update').hidden, disabled: byId('rollback-software-update').disabled },
     identity: text('software-update-patch-id'),
+    jobStatus: text('software-update-job-status'),
+    jobMessage: text('software-update-job-message'),
+    targetLabel: text('software-update-target-label'),
     history: [...document.querySelectorAll('#software-update-history tr')].map(row => ({
       patchID: (row.children[1] || {}).textContent ? row.children[1].textContent.trim() : '',
       mode: (row.children[3] || {}).textContent ? row.children[3].textContent.trim() : '',
@@ -417,17 +465,18 @@ const scenarios = [
   },
   {
     // B': the record the leader still holds for HF-2026-0929-05: the event chain is a
-    // complete success, and the status is a refusal that was written over it. It reads as
-    // failed, so it stays actionable - and a hotfix is recovered by re-running it. What
-    // must never come back is 续跑, which is the only thing this over written record
-    // could otherwise invite.
+    // complete success, and the status is a refusal that was written over it. Re-running a
+    // patch that is already on disk is a no-op, and 续跑 is refused on the updater's first
+    // line, so the honest offer here is none - the panel has to say the payload is in place
+    // instead of quoting the refusal's "直接重新执行同一个补丁即可" as if it were an action.
     name: 'a hotfix whose resume was refused',
     make: () => consoleUnderTest([hotfixRefused()]),
     driver: GATES_DRIVER,
   },
   {
-    // B+: the same failed hotfix, with the operator actually re-running it. The id the
-    // page posts has to be the id it showed.
+    // B+: a hotfix that failed without ever applying anything. The recovery the updater
+    // supports is re-running the same patch, so that is what the console must offer - and
+    // the id the page posts has to be the id it showed.
     name: 're-running a failed hotfix',
     make: () => consoleUnderTest([hotfixFailed()]),
     driver: SUBMIT_DRIVER('execute-software-update'),
@@ -435,16 +484,9 @@ const scenarios = [
     expectAction: 'retry',
   },
   {
-    // A later success does not prove it superseded this failed package. Without an
-    // explicit relationship, the older failed row remains the subject.
-    name: 'unrelated newer success does not retire failed hotfix',
-    make: () => consoleUnderTest([hotfixDone(), hotfixFailed()]),
-    driver: GATES_DRIVER,
-  },
-  {
-    // D: the 13:30 list. The successful record sorts first, the failed, still-actionable
-    // one below it. The active gate keeps that failed record actionable, so the action
-    // belongs to the record the panel describes.
+    // D: the 13:30 list. The applied record sorts first, the failed one - which never
+    // applied anything and is therefore still the operator's to retry - below it. The
+    // action belongs to the record the panel describes, not to packages[0].
     name: 'acting below a newer successful record',
     make: () => consoleUnderTest([hotfixDone(), hotfixFailed()], { maintenanceActive: true }),
     driver: SUBMIT_DRIVER('execute-software-update'),
@@ -452,10 +494,30 @@ const scenarios = [
     expectAction: 'retry',
   },
   {
-    // E: the rollback half of the same list. A rollback aimed at packages[0] would
-    // revert a package nobody selected.
-    name: 'rolling back below a newer successful record',
+    // E, reversed on purpose. The same list, but the rollback button is aimed at
+    // HF-2026-0929-04 while HF-2026-0929-05's payload is what is on disk. A rollback
+    // restores the files that patch carried; HF-2026-0929-05 replaced one of them, so this
+    // would leave the site running a mix of two patches and report a clean rollback. The
+    // button is therefore not offered at all rather than offered at the wrong record - and
+    // the live site proved why: HF-2026-1008-01 had replaced the same file, and the guard
+    // that was supposed to refuse it read a record the old runner never wrote.
+    name: 'rolling back a record whose files have been replaced',
     make: () => consoleUnderTest([hotfixDone(), hotfixFailed()], { maintenanceActive: true }),
+    driver: GATES_DRIVER,
+  },
+  {
+    // F: the list the 17:07 screenshot showed, with the newest applied record added. The
+    // refused-resume record is applied, so it is neither actionable nor the record a
+    // rollback may aim at, and the panel settles on the patch the site is actually running.
+    name: 'an applied record is not retired by a timestamp, it is retired by its payload',
+    make: () => consoleUnderTest([hotfixFresh(), hotfixRefused()]),
+    driver: GATES_DRIVER,
+  },
+  {
+    // G: and the rollback that is still legitimate - the newest applied record's own. The
+    // confirmation has to name it, and the request has to carry that same id.
+    name: 'rolling back the newest applied record names it',
+    make: () => consoleUnderTest([hotfixFresh(), hotfixRefused()]),
     driver: SUBMIT_DRIVER('rollback-software-update'),
     awaitAction: true,
     expectAction: 'rollback',
@@ -549,10 +611,17 @@ const main = async () => {
       record(`${scenario.name}: 续跑 is not offered`, page.resume && page.resume.hidden === true,
         `hidden=${page.resume && page.resume.hidden}`);
       record(`${scenario.name}: the execute button is not a re-run either`,
-        page.execute && page.execute.text === '滚动升级' && page.execute.disabled === true,
+        page.execute && page.execute.text === '应用热修补丁' && page.execute.disabled === true,
         `${page.execute && page.execute.text} disabled=${page.execute && page.execute.disabled}`);
       record(`${scenario.name}: the panel describes the succeeded hotfix`,
         page.identity === HOTFIX_DONE, page.identity);
+      // The patch this site is running is the one record a rollback may revert, and its
+      // own package carries the backup. Offering it here is the point: HF-2026-1008-01
+      // replaced the same single file HF-2026-0929-05 had replaced, so rolling back the
+      // older one is the operation that must not be offered.
+      record(`${scenario.name}: its own rollback is offered`,
+        page.rollback && page.rollback.hidden === false,
+        `hidden=${page.rollback && page.rollback.hidden}`);
     }
 
     if (scenario.name === 'a hotfix that failed') {
@@ -566,36 +635,30 @@ const main = async () => {
         `disabled=${page.execute && page.execute.disabled}`);
       record(`${scenario.name}: the panel describes the failed hotfix`,
         page.identity === HOTFIX_FAILED, page.identity);
-      record(`${scenario.name}: rollback is offered as the alternative`,
-        page.rollback && page.rollback.hidden === false,
+      // Nothing is on disk for this record, so there is no backup to restore from and no
+      // rollback to offer: a patch whose payload never landed has nothing to revert.
+      record(`${scenario.name}: no rollback of a payload that never landed`,
+        page.rollback && page.rollback.hidden === true,
         `hidden=${page.rollback && page.rollback.hidden}`);
     }
 
-    if (scenario.name === 'unrelated newer success does not retire failed hotfix') {
-      record(`${scenario.name}: the failed attempt remains in history`,
-        page.history && page.history.some(row => row.patchID === HOTFIX_FAILED),
-        (page.history || []).map(row => row.patchID).join(', '));
-      record(`${scenario.name}: both hotfix history rows name the hotfix action`,
-        page.history && [HOTFIX_DONE, HOTFIX_FAILED].every(patchID =>
-          page.history.some(row => row.patchID === patchID && row.mode === '热修应用')),
-        (page.history || []).map(row => `${row.patchID}:${row.mode}`).join(', '));
-      record(`${scenario.name}: the failed patch remains the subject`,
-        page.identity === HOTFIX_FAILED && page.subject === HOTFIX_FAILED,
-        `${page.identity} / ${page.subject}`);
-      record(`${scenario.name}: the failed patch may be retried only by explicit action`,
-        page.execute && page.execute.text === '重新执行' && page.resume && page.resume.hidden === true,
-        JSON.stringify({ execute:page.execute, resume:page.resume }));
-    }
-
     if (scenario.name === 'a hotfix whose resume was refused') {
-      // The refused attempt did not apply anything, but its record is what the leader
-      // shows, so the panel has to explain it as a failed run of this patch rather than
-      // as a patch that can be continued.
+      // The refused attempt wrote no event of its own, so the chain still ends in the run
+      // that applied and verified the payload. The console reads that chain, not the raw
+      // status, and therefore has nothing to offer: re-running an applied hotfix is a
+      // no-op and 续跑 is refused on the updater's first line. The panel's job here is to
+      // say the patch is in place, which is what the live screenshot got wrong.
       record(`${scenario.name}: 续跑 is not offered`, page.resume && page.resume.hidden === true,
         `hidden=${page.resume && page.resume.hidden}`);
-      record(`${scenario.name}: the recovery offered instead is 重新执行`,
-        page.execute && page.execute.text === '重新执行' && page.execute.disabled === false,
+      record(`${scenario.name}: no re-run of a payload that is already applied`,
+        page.execute && page.execute.text === '应用热修补丁' && page.execute.disabled === true,
         `${page.execute && page.execute.text} disabled=${page.execute && page.execute.disabled}`);
+      record(`${scenario.name}: the panel reports the payload as applied`,
+        page.jobStatus === '已生效 · 本次尝试失败', page.jobStatus);
+      record(`${scenario.name}: and explains that the newest attempt did not take effect`,
+        typeof page.jobMessage === 'string' && page.jobMessage.includes('补丁已生效')
+          && page.jobMessage.includes('未生效'),
+        page.jobMessage);
       record(`${scenario.name}: the panel still describes that patch`,
         page.identity === HOTFIX_DONE, page.identity);
     }
@@ -636,15 +699,43 @@ const main = async () => {
         !actionIDs(mock).includes(HOTFIX_DONE), JSON.stringify(actionIDs(mock)));
     }
 
-    if (scenario.name === 'rolling back below a newer successful record') {
-      record(`${scenario.name}: the panel describes the failed record, not the newest row`,
-        page.identity === HOTFIX_FAILED, page.identity);
-      record(`${scenario.name}: the confirmation asks for the failed record's id`,
-        page.phrase === HOTFIX_FAILED, page.phrase);
-      record(`${scenario.name}: the rollback was aimed at that record and nothing else`,
-        actionIDs(mock).length === 1 && actionIDs(mock)[0] === HOTFIX_FAILED,
-        JSON.stringify(actionIDs(mock)));
-      record(`${scenario.name}: the newer successful record was never reverted`,
+    if (scenario.name === 'rolling back a record whose files have been replaced') {
+      record(`${scenario.name}: the panel describes the record the operator is looking at`,
+        page.identity === HOTFIX_FAILED && page.subject === HOTFIX_FAILED,
+        `${page.identity} / ${page.subject}`);
+      record(`${scenario.name}: no rollback of a record a newer patch has already replaced`,
+        page.rollback && page.rollback.hidden === true,
+        `hidden=${page.rollback && page.rollback.hidden}`);
+      record(`${scenario.name}: nothing reached the executor`,
+        mock.actions.every(entry => entry.action === 'plan'),
+        actionIDs(mock).join(', ') || '(no write actions)');
+    }
+
+    if (scenario.name === 'an applied record is not retired by a timestamp, it is retired by its payload') {
+      record(`${scenario.name}: the panel settles on the record whose payload is on disk`,
+        page.identity === HOTFIX_FRESH && page.subject === HOTFIX_FRESH,
+        `${page.identity} / ${page.subject}`);
+      record(`${scenario.name}: it is labelled as running, not as a target to upgrade to`,
+        page.targetLabel === '最近完成版本', page.targetLabel);
+      record(`${scenario.name}: the refused-resume record is not offered a re-run through the subject`,
+        page.execute && page.execute.disabled === true,
+        `${page.execute && page.execute.text} disabled=${page.execute && page.execute.disabled}`);
+      record(`${scenario.name}: 续跑 is not offered for either record`,
+        page.resume && page.resume.hidden === true, `hidden=${page.resume && page.resume.hidden}`);
+      record(`${scenario.name}: the rollback on offer belongs to that record`,
+        page.rollback && page.rollback.hidden === false,
+        `hidden=${page.rollback && page.rollback.hidden}`);
+    }
+
+    if (scenario.name === 'rolling back the newest applied record names it') {
+      record(`${scenario.name}: the confirmation names the newest applied record`,
+        page.opened === true && page.phrase === HOTFIX_FRESH, `${page.phrase} opened=${page.opened}`);
+      record(`${scenario.name}: it is described as a controlled rollback`,
+        page.title === '确认受控回退', page.title);
+      record(`${scenario.name}: the page posted the patch it described`,
+        actionIDs(mock).length === 1 && actionIDs(mock)[0] === HOTFIX_FRESH,
+        JSON.stringify(mock.actions));
+      record(`${scenario.name}: the superseded record was never reverted`,
         !actionIDs(mock).includes(HOTFIX_DONE), JSON.stringify(actionIDs(mock)));
     }
   }

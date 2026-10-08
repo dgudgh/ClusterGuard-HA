@@ -1764,23 +1764,69 @@ rollback_updated_nodes() {
 }
 
 # --- Hotfix application ------------------------------------------------------
+# A payload is "installed" if the deployment record says so, or if the operation
+# record itself does. The runner writes `succeeded` only after every declared file
+# matched its signed digest on every node, so that record is evidence, not a hint.
+# A refused attempt is not the opposite of one either: on 2026-09-30 a resume was
+# refused on this script's first line and written over status.json while the event
+# chain still ended in a verified success.
+payload_applied() {
+  local status_file="$1" directory events status
+  status="$(jq -r '.status // ""' "${status_file}")"
+  if [[ "${status}" == "succeeded" ]]; then
+    return 0
+  fi
+  [[ "${status}" == "failed" ]] || return 1
+  directory="${status_file%/*}"
+  events="${directory}/events.jsonl"
+  [[ -f "${events}" ]] || events="${directory}/clusterguard-update-$(basename -- "${directory}").events.jsonl"
+  [[ -f "${events}" ]] || return 1
+  jq -es 'map(select(.status | IN("succeeded","failed","rolled_back","rollback_failed"))) | last | (.status // "") == "succeeded"' "${events}" >/dev/null
+}
+
+# The second source is not a convenience. HF-2026-1008-01 was applied at 16:57 on
+# 2026-10-08 by an update runner that predated deployment.json, so no node holds a
+# deployment record for it. A guard reading only deployment records does not fail
+# closed there - it never runs - and the first request it fails to stop is a
+# rollback of HF-2026-0929-05, which HF-2026-1008-01 declares as superseded: the
+# script is reverted to its pre-HF-05 bytes while the other four files keep the
+# newer ones, and the rollback reports success.
 assert_not_superseded() {
-  local record successor archive inspected declarations
+  local record status_file successor directory archive inspected declarations operation candidates
+  candidates=""
   shopt -s nullglob
-  for record in "${private_root}"/jobs/*/deployment.json "${private_root}"/history/*/deployment.json; do
+  for record in "${private_root}"/jobs/*/deployment.json "${private_root}"/history/*/deployment.json "${update_root}"/*/deployment.json; do
     [[ ! -L "${record}" ]] || die "CG_PACKAGE_IDENTITY_MISMATCH: 部署记录不是普通文件"
     successor="$(jq -er 'select(.state=="installed") | .package_id' "${record}")" || continue
     [[ "${successor}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die "CG_PACKAGE_IDENTITY_MISMATCH: 部署记录身份无效"
-    [[ "${successor}" != "${patch_id}" ]] || continue
+    candidates+="${successor}"$'\n'
+  done
+  # Only a hotfix manifest can name what it supersedes, so only a hotfix record is
+  # read this way: otherwise every action would re-inspect the site's whole RPM
+  # history, including release lines this script no longer accepts.
+  for status_file in "${private_root}"/jobs/*/status.json "${private_root}"/history/*/status.json "${update_root}"/*/status.json; do
+    [[ ! -L "${status_file}" ]] || die "CG_PACKAGE_IDENTITY_MISMATCH: 操作记录不是普通文件"
+    directory="${status_file%/*}"
+    successor="$(basename -- "${directory}")"
+    [[ "${successor}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || die "CG_PACKAGE_IDENTITY_MISMATCH: 操作记录身份无效"
+    [[ -f "${directory}/package.json" ]] || continue
+    operation="$(jq -r '.kind // ""' "${directory}/package.json")" || die "CG_PACKAGE_IDENTITY_MISMATCH: 无法读取升级包记录 ${successor}"
+    [[ "${operation}" == "hotfix" ]] || continue
+    payload_applied "${status_file}" || continue
+    candidates+="${successor}"$'\n'
+  done
+  while IFS= read -r successor; do
+    [[ -n "${successor}" && "${successor}" != "${patch_id}" ]] || continue
     archive="${private_root}/jobs/${successor}/package.cgpatch"
     [[ -f "${archive}" ]] || archive="${private_root}/inbox/${successor}/package.cgpatch"
+    [[ -f "${archive}" ]] || archive="${update_root}/${successor}/package.cgpatch"
     inspected="$(bash "${BASH_SOURCE[0]}" --patch "${archive}" --trust-key "${trust_key}" --expected-patch-id "${successor}" --inspect)" || die "CG_PACKAGE_IDENTITY_MISMATCH: 无法重新验签已安装补丁 ${successor}"
     declarations="$(printf '%s\n' "${inspected}" | sed -n 's/^supersedes=//p')"
     [[ -n "${declarations}" ]] || declarations='[]'
     if jq -e --arg id "${patch_id}" 'index($id) != null' <<<"${declarations}" >/dev/null; then
       die "CG_PACKAGE_IDENTITY_MISMATCH: ${patch_id} 已被签名且已安装的 ${successor} 替代"
     fi
-  done
+  done < <(printf '%s' "${candidates}" | sort -u)
   shopt -u nullglob
 }
 # A hotfix is not a version change: the installed RPM release stays where it is

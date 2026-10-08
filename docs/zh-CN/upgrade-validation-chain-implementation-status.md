@@ -41,3 +41,19 @@
 2026-10-03 实现回归：源码门禁 17 PASS / 1 OPEN / 0 failed；strict 因 OPEN 退出 1；14 个变异被捕获；许可 68 PASS。详细执行记录见[修复记录](upgrade-hotfix-v2-repair-2026-10-03.md)。本次文档同步的再次执行结果见[同步记录](documentation-sync-2026-10-03.md)。
 
 [热修台账](hotfix-patches.md)由已签名的既有制品生成，HF-2026-0930-01 等旧包的 resume 转 execute、plan→execute 描述是历史包行为，不能当作当前 v2 的恢复流程；没有为本轮源码修复重建这些包。运行环境须同时具备支持 `contract` 的 Helper 和匹配的 Manager/Runner。
+
+## 2026-10-08 增补：载荷已落地是单一判据
+
+> 本节记录 2026-10-08 的源码修复与落点，**不修改契约规则**。下列判定都是既有条款的执行，不是新条款：§6「创建 job 前 `validate not superseded`」、§INV-009「服务端重校验 `superseded status`」、§21 `history.deployment_success_overwrite_forbidden` 与 `console.subject_equals_action_target`、§8 回退契约与 §16 UI-005。
+
+| 范围 | 落点 | 证据 |
+| --- | --- | --- |
+| §6 / INV-009 supersede 守卫必须有 deployment 之外的输入源 | `scripts/clusterguard-upgrade.sh`（`payload_applied`、`assert_not_superseded`）、`internal/platformupdate/supersedes.go`（`successorInstalled`）、`internal/platformupdate/history.go`（`payloadInstalled`） | 三台现场的真实归档、`package.json`、`status.json`、`events.jsonl` 搭出守卫输入后跑真实脚本：改动前的守卫**静默通过**（该根下 `deployment.json` 数量为 0，守卫不是失败而是从不运行），改动后具名拒绝 `HF-2026-0929-05` 与 `HF-2026-0929-04`；反向对照（无后继的 `HF-2026-1008-01` 自身）走到后续检查、未被误拦。Go 单测 `TestAppliedSuccessorBlocksPredecessorWithoutAnyDeploymentRecord`、`TestRejectedAttemptOverVerifiedSuccessCountsAsApplied`、`TestSucceededRollingPackageIsNotABlockingSuccessor` 与脚本级 `TestRunnerBlocksSupersededPredecessorWithoutAnyDeploymentRecord`（真实签名包跑真实脚本） |
+| INV-004 / §21 载荷在盘上由**两个来源之一**判定 | `internal/api/console.html`（`softwareUpdatePayloadApplied`）、`scripts/clusterguard-upgrade.sh`（`payload_applied`） | `deployment.json == installed`，或该包自己的 operation 记录证明载荷已落地（`status == succeeded`，或 `status == failed` 而最后一条已完成事件是 `succeeded`）。被随后被拒的 `resume` 覆盖的 `status=failed` 记录据此仍判为已生效；真实部署记录（如 `rolled_back`）优先于事件链 |
+| §5 / UI-005 回退只能命名最新已应用记录 | `internal/api/console.html`（`softwareUpdateRollbackTarget`） | 真浏览器 8 场景 / 80 断言全通过；已被新补丁替换的记录不提供回退按钮，若点击则具名拒绝并说明「回退只替换它自己携带的文件」。**面板不用时间戳推断取代关系**——取代由服务端按签名声明裁决，面板只在载荷已在盘上时不提供动作 |
+| §12 门禁 | `tools/verify-upgrade-validation-chain.cjs` | 21 项检查通过；`--self-test` 21 个变异全部被捕获，no-bite 与 comment-only 两个控制行为正确 |
+
+### 2026-10-08 新增未决
+
+- `history.supersede_declaration_not_persisted_in_package_json`：现场在役包由早于该字段的构建器产出，`package.json` 里没有 `supersedes`，取而代之的是**重新 `--inspect` 归档**读取签名声明。于是「谁被谁替代」不落在包内的持久记录里，只落在签名清单与重新验签的结果里。
+- 上述判定目前是既有条款的执行，**未**升契约版本。若要把它们写成规范条款，须按 §23 走一次完整的版本递增：升 `contract.version`、更新第 21 节机器可读块与 `internal/updatecontract/schema.json`、嵌入副本、`SupportedVersion`、消费方声明与回归测试。本节据此只记录落点与证据，不代替该决定。

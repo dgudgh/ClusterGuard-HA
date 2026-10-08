@@ -127,6 +127,58 @@ const generatedRollback = () => {
   } finally { fs.rmSync(directory,{recursive:true,force:true}); }
 };
 
+// The console's whole update decision - "is this payload on the disk", "is this record still
+// actionable", "which record may a rollback name" - is a pure block of functions, so it is
+// executed here against the shapes the site actually serves. Reading the source would pass
+// for a block whose branches were swapped; the 2026-10-08 record is a shape no invented
+// fixture would have produced, so it is one of the cases below.
+const softwareUpdateDecision = (packages = []) => {
+  const source = read('internal/api/console.html');
+  if (!source) return null;
+  const start = source.indexOf('const softwareUpdateCompletedAttempt =');
+  const end = source.indexOf('const softwareUpdateIsHotfix =', start);
+  if (start < 0 || end < 0) return null;
+  const harness = 'const state={softwareUpdates:{packages:' + JSON.stringify(packages) + '}};'
+    + 'const softwareUpdateDateText=()=>\'\';\n'
+    + source.slice(start, end)
+    + '\n;({payloadApplied:softwareUpdatePayloadApplied,actionable:softwareUpdateActionable,'
+    + 'rollbackTarget:softwareUpdateRollbackTarget,outcome:softwareUpdateOutcome})';
+  try { return vm.runInNewContext(harness, {}, { timeout: 1000 }); } catch (_) { return null; }
+};
+
+// A verified run of an older attempt, overwritten by an attempt that was refused before it
+// reached a node: status says failed, the last completed event says the files landed.
+const OVERWRITTEN_VERIFIED_RUN = { status:'failed', events:[{status:'running'},{status:'succeeded',updated_at:'2026-10-08T16:58:30Z'}] };
+const GENUINE_FAILURE_RUN = { status:'failed', events:[{status:'running'},{status:'failed',updated_at:'2026-10-08T16:58:30Z'}] };
+
+// The guard's second source is a shell function, so it is run rather than matched: the
+// difference between a guard that reads operation records and one that only reads deployment
+// records is invisible in a diff but decides whether the guard executes at all.
+const payloadAppliedVerdict = statusFile => {
+  const source = read('scripts/clusterguard-upgrade.sh');
+  if (!source) return null;
+  const fn = shellFunction(source, 'payload_applied');
+  if (!fn) return null;
+  const script = fn + '\npayload_applied ' + JSON.stringify(statusFile) + '\n';
+  try {
+    execFileSync('/bin/bash', ['-c', 'command -v jq >/dev/null'], { timeout: 20000 });
+  } catch (_) { return null; }
+  try {
+    execFileSync('/bin/bash', ['-c', script], { encoding: 'utf8', timeout: 20000 });
+    return 0;
+  } catch (error) { return typeof error.status === 'number' ? error.status : -1; }
+};
+
+const writeOperationTree = (root, name, status, events) => {
+  const directory = path.join(root, name);
+  fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(path.join(directory, 'status.json'), JSON.stringify({ status }));
+  if (events) {
+    fs.writeFileSync(path.join(directory, 'events.jsonl'), events.map(event => JSON.stringify(event)).join('\n') + '\n');
+  }
+  return path.join(directory, 'status.json');
+};
+
 const CHECKS = [
   {
     rule:'INV-004',
@@ -415,12 +467,17 @@ const CHECKS = [
       }
       const acceptance = read('tools/console-update-hotfix-recovery-acceptance.cjs');
       if (!acceptance) return 'missing the console regression that section 17 requires';
+      // §16's five mandatory cases, plus the two shapes the site produced: the operation that
+      // overwrote an applied package's record (REG-003) and the rollback that would have mixed
+      // two patches. A scenario renamed here is a scenario that stopped being run.
       for (const scenario of [
         'a hotfix that succeeded',
         'a hotfix that failed',
         'a rolling upgrade that failed',
+        'a hotfix whose resume was refused',
         'acting below a newer successful record',
-        'rolling back below a newer successful record',
+        'an applied record is not retired by a timestamp, it is retired by its payload',
+        'rolling back a record whose files have been replaced',
       ]) {
         if (!acceptance.includes(`name: '${scenario}'`)) return `the console regression no longer covers: ${scenario}`;
       }
@@ -437,6 +494,151 @@ const CHECKS = [
         if (!source.includes(stage)) return `the contract no longer lists the release stage "${stage}"`;
       }
       if (!source.includes('禁止把：')) return 'missing release stage discipline';
+      return true;
+    },
+  },
+  {
+    rule: '6 / INV-009',
+    title: 'the supersede guard reads a source that exists on the field',
+    run: () => {
+      const source = read('scripts/clusterguard-upgrade.sh');
+      if (!source) return 'missing scripts/clusterguard-upgrade.sh';
+      const guard = shellFunction(source, 'assert_not_superseded');
+      if (!guard) return 'assert_not_superseded is gone';
+      // The refusal is only worth reading if the guard reaches it on a tree that has no
+      // deployment record, which is every tree an update runner predating deployment.json
+      // leaves behind.
+      if (!/for status_file in [^;]*status\.json[^;]*;/.test(guard)) {
+        return 'the guard no longer enumerates operation records, so on a field tree it does not run at all';
+      }
+      if (!guard.includes('payload_applied "${status_file}" || continue')) {
+        return 'operation records are enumerated but never judged, so an applied predecessor cannot be a successor';
+      }
+      if (!guard.includes('[[ "${operation}" == "hotfix" ]] || continue')) {
+        return 'the operation record is no longer restricted to hotfixes, so a rolling package could block every action';
+      }
+      if (!guard.includes('die "CG_PACKAGE_IDENTITY_MISMATCH: ${patch_id} 已被签名且已安装的 ${successor} 替代"')) {
+        return 'the guard no longer refuses a superseded predecessor by name';
+      }
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-payload-applied-'));
+      try {
+        const verified = writeOperationTree(root, 'verified', 'failed', OVERWRITTEN_VERIFIED_RUN.events);
+        const refused = writeOperationTree(root, 'refused', 'failed', GENUINE_FAILURE_RUN.events);
+        const applied = writeOperationTree(root, 'applied', 'succeeded', null);
+        const silent = writeOperationTree(root, 'silent', 'failed', null);
+        const asked = [
+          ['a verified run whose record was overwritten', verified, 0],
+          ['a run that genuinely failed', refused, 1],
+          ['a run the runner recorded as succeeded', applied, 0],
+          ['a record with no event chain at all', silent, 1],
+        ];
+        for (const [label, statusFile, expected] of asked) {
+          const verdict = payloadAppliedVerdict(statusFile);
+          if (verdict === null) return 'payload_applied could not be executed (jq or the function is missing)';
+          if (verdict !== expected) return `${label} was judged ${verdict}, expected ${expected}`;
+        }
+        return true;
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
+  {
+    rule: 'INV-004 / 21',
+    title: 'a verified run still counts as applied after a refused attempt overwrote its record',
+    run: () => {
+      const decision = softwareUpdateDecision();
+      if (!decision) return 'the console decision block could not be executed';
+      const cases = [
+        ['the 2026-10-08 record: failed status, verified event chain, no deployment record',
+          { package:{patch_id:'HF-OLD',kind:'hotfix'}, job: OVERWRITTEN_VERIFIED_RUN }, true],
+        ['a run the runner recorded as succeeded',
+          { package:{patch_id:'HF-OK',kind:'hotfix'}, job:{status:'succeeded'} }, true],
+        ['a run that genuinely failed',
+          { package:{patch_id:'HF-BAD',kind:'hotfix'}, job: GENUINE_FAILURE_RUN }, false],
+        ['a rolled-back deployment record outranking a stale success event',
+          { package:{patch_id:'HF-RB',kind:'hotfix'}, job:{status:'failed',deployment_state:'rolled_back',events:[{status:'succeeded'}]} }, false],
+        ['a record with no operation at all',
+          { package:{patch_id:'HF-NEW',kind:'hotfix'}, job:null }, false],
+      ];
+      for (const [label, item, expected] of cases) {
+        if (decision.payloadApplied(item) !== expected) {
+          return `${label} was judged payloadApplied=${decision.payloadApplied(item)}, expected ${expected}`;
+        }
+      }
+      return true;
+    },
+  },
+  {
+    rule: '5 / UI-005',
+    title: 'rollback names only the record whose payload is on the disk',
+    run: () => {
+      const decision = softwareUpdateDecision();
+      if (!decision) return 'the console decision block could not be executed';
+      // A record whose payload is on the disk has nothing left to run. Leaving it actionable
+      // is what pinned the panel to a replaced patch on 2026-10-08: it read failed, so it
+      // stayed actionable for ever, owned the subject, and was the only record a rollback
+      // could aim at - while the newer patch that replaced it was already on every node.
+      const refused = { package:{patch_id:'HF-OLD',kind:'hotfix',rollback_available:true}, job: OVERWRITTEN_VERIFIED_RUN };
+      const stillFailing = { package:{patch_id:'HF-BAD',kind:'hotfix',rollback_available:true}, job: GENUINE_FAILURE_RUN };
+      if (decision.actionable(refused)) return 'a record whose payload is already applied is still actionable';
+      if (!decision.actionable(stillFailing)) return 'a record that genuinely failed is no longer actionable';
+      // "Newest row" and "newest applied record" are the same thing only by accident. The
+      // button has to name the second, or it reverts a patch the operator never selected.
+      const appliedNewer = { package:{patch_id:'HF-NEW',kind:'hotfix',rollback_available:true}, job:{status:'succeeded',finished_at:'2026-10-08T16:58:30Z'} };
+      const failedOlder = { package:{patch_id:'HF-BAD2',kind:'hotfix',rollback_available:true}, job:{status:'failed',finished_at:'2026-09-30T05:30:30Z',events:[{status:'failed'}]} };
+      const targeted = softwareUpdateDecision([failedOlder, appliedNewer]);
+      if (!targeted) return 'the console decision block could not be executed with a package list';
+      const target = targeted.rollbackTarget();
+      if (!target) return 'no rollback target was resolved for a site with one applied patch';
+      if (target.package.patch_id !== 'HF-NEW') {
+        return `a rollback named ${target.package.patch_id}; it may only name the newest record whose payload is on the disk`;
+      }
+      // The button is bound to that target and refused when the panel describes another
+      // record. The browser regression, not this gate, proves the refusal reaches the DOM.
+      const page = read('internal/api/console.html');
+      for (const [label, needle] of [
+        ['the button follows the rollback target, not the subject', 'const rollbackApplies = !!rollbackTarget && rollbackTarget === subject;'],
+        ['the button is hidden for every other record', "byId('rollback-software-update').hidden = !rollbackApplies;"],
+        ['clicking it refuses a record whose files were replaced', 'if (!target || target !== softwareUpdateSubject()) {'],
+      ]) {
+        if (!page.includes(needle)) return `${label}: ${needle} is gone`;
+      }
+      const acceptance = read('tools/console-update-hotfix-recovery-acceptance.cjs');
+      if (!acceptance) return 'missing the console regression that section 17 requires';
+      for (const scenario of [
+        'rolling back a record whose files have been replaced',
+        'an applied record is not retired by a timestamp, it is retired by its payload',
+        'rolling back the newest applied record names it',
+      ]) {
+        if (!acceptance.includes(`name: '${scenario}'`)) return `the console regression no longer covers: ${scenario}`;
+      }
+      return true;
+    },
+  },
+  {
+    rule: 'INV-009 / 6',
+    title: 'the back end establishes supersession from the operation record too',
+    run: () => {
+      const source = read('internal/platformupdate/supersedes.go');
+      if (!source) return 'missing internal/platformupdate/supersedes.go';
+      const start = source.indexOf('func (manager *Manager) successorInstalled(');
+      if (start < 0) return 'successorInstalled is gone';
+      const body = source.slice(start, source.indexOf('\n}\n', start));
+      if (!body.includes('manager.Deployment(patchID)')) return 'the deployment record is no longer consulted';
+      if (!body.includes('payloadInstalled(job)')) {
+        return 'the operation record is no longer consulted, so a patch applied without a deployment record is not a successor';
+      }
+      if (!body.includes('PackageKindHotfix')) return 'the second source is no longer restricted to hotfixes';
+      // A binding without a test is a claim. These two names are the runs that establish the
+      // verdict on the field shape: no deployment record at all, and a success overwritten
+      // by an attempt the updater refused on its first line.
+      const tests = read('internal/platformupdate/supersedes_test.go');
+      if (!tests) return 'missing internal/platformupdate/supersedes_test.go';
+      for (const name of [
+        'TestAppliedSuccessorBlocksPredecessorWithoutAnyDeploymentRecord',
+        'TestRejectedAttemptOverVerifiedSuccessCountsAsApplied',
+      ]) {
+        if (!tests.includes(`func ${name}(`)) return `the run that proves the second source is gone: ${name}`;
+      }
       return true;
     },
   },
@@ -485,6 +687,7 @@ const reportOpen = failures => {
 // caught by reading something the gate does not actually consult.
 const READ_FILES = [
   CONTRACT_DOC, CONTRACT_DOC_ZH, 'internal/updatecontract/contract.md', 'internal/updatecontract/schema.json', 'internal/platformupdate/helper.go',
+  'internal/platformupdate/supersedes.go', 'internal/platformupdate/supersedes_test.go',
   'scripts/clusterguard-update-job.sh', 'scripts/clusterguard-upgrade.sh', 'scripts/build-hotfix-patch.sh',
   'internal/platformupdate/manager.go', 'internal/api/updates.go', 'internal/api/console.html',
   'hotfixes/hotfix-publications.json', 'tools/verify-hotfix-patch-catalog.cjs',
@@ -567,11 +770,62 @@ const MUTATIONS = [
     rule: 'a leader change is not a failure, and an unknown leader is not a change',
   },
   {
-    name: 'a published identity loses its revision marker',
+    name: 'the ledger revises an identity in place instead of superseding it',
     file: 'hotfixes/hotfix-publications.json',
     find: 'clusterguard-ha-hotfix-HF-2026-0930-01-r1-2.2-105.x86_64.cgpatch',
     replace: 'clusterguard-ha-hotfix-HF-2026-0930-01-2.2-105.x86_64.cgpatch',
     rule: 'the ledger keeps every published identity',
+  },
+  {
+    // The defect this check exists for: with only the deployment record as a source, the
+    // guard does not fail closed on a field tree - it never runs.
+    name: 'the supersede guard goes back to reading only deployment records',
+    file: 'scripts/clusterguard-upgrade.sh',
+    find: '  for status_file in "${private_root}"/jobs/*/status.json "${private_root}"/history/*/status.json "${update_root}"/*/status.json; do',
+    replace: '  for status_file in "${private_root}"/jobs/*/absent.json "${private_root}"/history/*/absent.json "${update_root}"/*/absent.json; do',
+    rule: 'the supersede guard reads a source that exists on the field',
+  },
+  {
+    name: 'a rolling package is admitted as a blocking successor',
+    file: 'scripts/clusterguard-upgrade.sh',
+    find: '    [[ "${operation}" == "hotfix" ]] || continue',
+    replace: '    [[ "${operation}" == "hotfix" ]] || true',
+    rule: 'the supersede guard reads a source that exists on the field',
+  },
+  {
+    name: 'a refused attempt stops counting as a verified run',
+    file: 'scripts/clusterguard-upgrade.sh',
+    find: '  [[ "${status}" == "failed" ]] || return 1',
+    replace: '  return 1',
+    rule: 'the supersede guard reads a source that exists on the field',
+  },
+  {
+    name: 'an overwritten verified run stops counting as applied',
+    file: 'internal/api/console.html',
+    find: "      return ['succeeded', 'applied_attempt_failed'].includes(softwareUpdateOutcome(job));",
+    replace: "      return softwareUpdateOutcome(job) === 'succeeded';",
+    rule: 'a verified run still counts as applied after a refused attempt overwrote its record',
+  },
+  {
+    name: 'an applied record stays actionable again',
+    file: 'internal/api/console.html',
+    find: '      if (softwareUpdatePayloadApplied(item)) return false;',
+    replace: '      if (false) return false;',
+    rule: 'rollback names only the record whose payload is on the disk',
+  },
+  {
+    name: 'a rollback goes back to naming the newest row rather than the newest applied one',
+    file: 'internal/api/console.html',
+    find: '      .filter(softwareUpdatePayloadApplied)\n',
+    replace: '      .filter(() => false)\n',
+    rule: 'rollback names only the record whose payload is on the disk',
+  },
+  {
+    name: 'the back end goes back to the deployment record alone',
+    file: 'internal/platformupdate/supersedes.go',
+    find: '	return found && payloadInstalled(job)',
+    replace: '	return false',
+    rule: 'the back end establishes supersession from the operation record too',
   },
 ];
 

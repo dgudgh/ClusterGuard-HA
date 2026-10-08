@@ -3514,12 +3514,16 @@
     const softwareUpdateStatusText = value => ({
       uploaded:'已上传', queued:'排队中', running:'升级中', planned:'计划已通过',
       succeeded:'升级成功', failed:'升级失败', rolled_back:'已回退', interrupted:'状态待确认',
-      applied_attempt_failed:'已生效 · 本次尝试失败'
+      applied_attempt_failed:'已生效 · 本次尝试失败',
+      // The deployment record's own states reach this map whenever the server has one, and
+      // an unmapped value is printed as-is: a raw English token in a Chinese panel.
+      installed:'已生效', not_installed:'未生效', applying:'正在应用', rollbacking:'正在回退',
+      recovery_required:'需要人工恢复',
     })[value] || value || '尚未计划';
     const softwareUpdateModeText = (value, kind) => (kind === 'hotfix'
       ? ({ plan:'只读热修计划', execute:'热修应用', retry:'重新执行热修', resume:'续跑热修', rollback:'热修回退' })[value]
       : ({ plan:'只读计划', execute:'滚动升级', resume:'续跑升级', rollback:'受控回退' })[value]) || value || '-';
-    const softwareUpdateBadgeClass = value => ({ succeeded:'success', planned:'success', rolled_back:'warning', failed:'danger', interrupted:'warning', running:'warning', queued:'warning', applied_attempt_failed:'warning' })[value] || '';
+    const softwareUpdateBadgeClass = value => ({ succeeded:'success', planned:'success', installed:'success', rolled_back:'warning', failed:'danger', interrupted:'warning', running:'warning', queued:'warning', applying:'warning', rollbacking:'warning', recovery_required:'danger', applied_attempt_failed:'warning' })[value] || '';
     // job.status describes the newest attempt; job.events holds what actually ran. An
     // attempt that is refused before it touches a node - a resume of a hotfix is rejected
     // on the updater's first line - is still what job.status ends up saying, so reading
@@ -3528,8 +3532,11 @@
     // becomes unanswerable from the console. The badge therefore reports the last attempt
     // that completed work, and says both when the newest attempt did nothing.
     //
-    // Display only. Every action gate keeps using the raw status: a refused attempt must
-    // never look like a clean one just because an older run of the same patch succeeded.
+    // Display only. The action gates read the raw status of the newest attempt for anything
+    // about the attempt itself - whether a resume is possible, whether an action is in
+    // flight - so a refused attempt never looks like a clean one. The one thing they read
+    // from here is whether the payload is on disk (softwareUpdatePayloadApplied), which is a
+    // statement about files, not about the attempt looking successful.
     const softwareUpdateCompletedAttempt = job => ((job && job.events) || [])
       .filter(event => ['succeeded', 'failed', 'rolled_back', 'rollback_failed'].includes(event.status))
       .slice(-1)[0] || null;
@@ -3558,6 +3565,42 @@
       byId('software-update-running-architecture').textContent = version.rpm_architecture || version.architecture || '-';
     };
     const latestSoftwareUpdate = () => (state.softwareUpdates && state.softwareUpdates.packages && state.softwareUpdates.packages[0]) || null;
+    // Whether the files this record carries are the ones the site is running. The
+    // outcome is what decides it, not the raw status: on 2026-10-08 the record for an
+    // applied and verified patch read `failed`, because a resume the updater refuses on
+    // its first line had been written over the run that applied it.
+    const softwareUpdatePayloadApplied = item => {
+      const job = item && item.job || null;
+      if (!job) return false;
+      // The deployment record is the direct answer when the server has one. It is not the
+      // only one: HF-2026-1008-01 was applied on 2026-10-08 by an update runner that
+      // predated that record, so no node has one for it, and the operation that the runner
+      // only writes as succeeded after every declared file matched its signed digest is
+      // what is left. Both mean the same thing - the files are on disk.
+      if (job.deployment_state) return job.deployment_state === 'installed';
+      return ['succeeded', 'applied_attempt_failed'].includes(softwareUpdateOutcome(job));
+    };
+    // When a payload landed. A hotfix's baseline is the tree the site already has, so
+    // applying B after A means B carries A: "newer applied" is the same relation as
+    // "supersedes" for every record a site can roll back. The console cannot read the
+    // signed declaration - the API does not expose it - so it uses the order.
+    const softwareUpdateAppliedAt = item => {
+      const job = item && item.job;
+      if (!job) return 0;
+      const completed = softwareUpdateCompletedAttempt(job);
+      const stamp = job.finished_at || job.updated_at || (completed && completed.updated_at);
+      const value = Date.parse(stamp || '');
+      // A zero time marshals as year 1, which parses to a negative number and would sort
+      // below nothing at all.
+      return Number.isFinite(value) && value > 0 ? value : 0;
+    };
+    // The newest record whose payload is on disk, and therefore the only one a rollback
+    // can revert. Reverting an older patch replaces the files that patch happened to
+    // carry and leaves every other file as the newer patch left it: the site would run
+    // a mix of two patches while the console reported a clean controlled rollback.
+    const newestAppliedSoftwareUpdate = () => ((state.softwareUpdates && state.softwareUpdates.packages) || [])
+      .filter(softwareUpdatePayloadApplied)
+      .slice().sort((left, right) => softwareUpdateAppliedAt(right) - softwareUpdateAppliedAt(left))[0] || null;
     // "Still actionable" means the record has no job yet, or one that has not ended in a
     // verified terminal state. The button must act on the newest actionable package, not on
     // packages[0]: the list is ordered by the stored uploaded_at, so a single record written
@@ -3572,7 +3615,23 @@
       if (item && item.incompatible) return false;
       const job = item && item.job || null;
       if (job?.deployment_state === 'installed' && !['queued','running'].includes(job.status)) return false;
-      return !job || job.verification_required || !['succeeded', 'rolled_back'].includes(job.status);
+      if (!job || job.verification_required) return true;
+      if (['succeeded', 'rolled_back'].includes(job.status)) return false;
+      // A record whose payload is on disk has nothing left to run: re-running a hotfix is
+      // a no-op, and a resume of one is refused on the updater's first line. Leaving it
+      // here is what pinned the whole panel to HF-2026-0929-05 on 2026-10-08 - the record
+      // said failed, so it stayed actionable for ever, owned the subject, and was the only
+      // record a rollback could aim at, while the newer patch that replaced it was already
+      // on every node.
+      //
+      // Nothing else retires a record. An older row is not retired because a newer one
+      // exists: supersession is decided by the signed declaration in the package manifest,
+      // the server enforces it (manager.checkSuperseded, on the same two sources as above),
+      // and the panel shows its refusal. Inferring it here from timestamps would be a
+      // second, softer opinion - and an actionable row that the server would refuse is a
+      // better failure than a silent one.
+      if (softwareUpdatePayloadApplied(item)) return false;
+      return true;
     };
     const pendingSoftwareUpdate = () => ((state.softwareUpdates && state.softwareUpdates.packages) || [])
       .filter(softwareUpdateActionable)[0] || null;
@@ -3587,6 +3646,12 @@
     // rollback button had the same defect and a worse one - it would have reverted a
     // package the operator never selected. One resolver, used by both.
     const softwareUpdateSubject = () => pendingSoftwareUpdate() || latestSoftwareUpdate();
+    // The one record a rollback may act on. The button used to follow whatever record the
+    // panel described, which is only the same thing by accident.
+    const softwareUpdateRollbackTarget = () => {
+      const newest = newestAppliedSoftwareUpdate();
+      return newest && newest.package && newest.package.rollback_available ? newest : null;
+    };
     // A hotfix cannot be resumed - the updater refuses it on its first line and tells the
     // operator to re-run the same patch instead, because applying one is idempotent - so
     // the only thing a 续跑 button can do for a hotfix is fail, and that failure used to be
@@ -4019,12 +4084,23 @@
       // Action gates read the raw status and the subject record, never the display outcome:
       // what the operator is told and what they are allowed to do must not drift apart.
       const retry = softwareUpdateIsRetry(subject);
-      byId('execute-software-update').textContent = retry ? '重新执行' : '滚动升级';
+      // The button says what it does. A hotfix is not rolled out, it is applied: it leaves
+      // the RPM release alone and replaces only the files its signed manifest names, and
+      // calling that a rolling upgrade was the label on the record that started all of this.
+      byId('execute-software-update').textContent = retry ? '重新执行'
+        : softwareUpdateIsHotfix(subject) ? '应用热修补丁' : '滚动升级';
       byId('execute-software-update').disabled = !snapshot.available || busy || !pending || !!selectedFile || validationState !== 'verified' || !record.rolling || !(retry || ['uploaded', 'planned'].includes(status || 'uploaded'));
       byId('resume-software-update').hidden = !(pending && status === 'failed' && !softwareUpdateIsHotfix(subject));
       byId('resume-software-update').disabled = !snapshot.available || busy || status !== 'failed' || softwareUpdateIsHotfix(subject);
-      byId('rollback-software-update').hidden = !(pending && record.rollback_available && ['failed', 'succeeded'].includes(status));
-      byId('rollback-software-update').disabled = !snapshot.available || busy || !record.rollback_available || !['failed', 'succeeded'].includes(status);
+      // Rollback is offered for the record whose files are the ones on disk, and for no
+      // other. On 2026-10-08 this was the only enabled action on the panel and it aimed at
+      // HF-2026-0929-05, whose payload is a single file that HF-2026-1008-01 had already
+      // replaced: the rollback would have restored the pre-HF-05 script, left the other four
+      // files new, released the maintenance gate and reported success.
+      const rollbackTarget = softwareUpdateRollbackTarget();
+      const rollbackApplies = !!rollbackTarget && rollbackTarget === subject;
+      byId('rollback-software-update').hidden = !rollbackApplies;
+      byId('rollback-software-update').disabled = !snapshot.available || busy || !rollbackApplies;
       const events = (job && job.events) || [];
       byId('software-update-event-count').textContent = `${events.length} 条`;
       const eventList = byId('software-update-events');
@@ -6384,7 +6460,18 @@
     byId('upload-software-update').addEventListener('click', uploadSoftwareUpdate);
     byId('execute-software-update').addEventListener('click', prepareSoftwareUpdateExecution);
     byId('resume-software-update').addEventListener('click', () => openSoftwareUpdateConfirmation('resume'));
-    byId('rollback-software-update').addEventListener('click', () => openSoftwareUpdateConfirmation('rollback'));
+    byId('rollback-software-update').addEventListener('click', () => {
+      // The gate hides the button when it does not apply; this is the race where the read
+      // that produced the panel is older than the click. Refusing here is the difference
+      // between a mixed deployment and an operator who is told why.
+      const target = softwareUpdateRollbackTarget();
+      if (!target || target !== softwareUpdateSubject()) {
+        setSoftwareUpdateDialogAlert('无法回退：该记录已被更新的已安装补丁取代。回退只替换它自己携带的文件，其余文件仍是新补丁写入的版本，会得到两个补丁混合的状态。');
+        renderSoftwareUpdates();
+        return;
+      }
+      openSoftwareUpdateConfirmation('rollback', target.package.patch_id);
+    });
     byId('software-update-confirmation-input').addEventListener('input', renderSoftwareUpdateConfirmation);
     byId('close-software-update-confirmation').addEventListener('click', closeSoftwareUpdateConfirmation);
     byId('cancel-software-update-confirmation').addEventListener('click', closeSoftwareUpdateConfirmation);

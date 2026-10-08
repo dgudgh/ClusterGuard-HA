@@ -52,6 +52,38 @@ func appendOperation(directory, name string, job Job) error {
 	return file.Sync()
 }
 
+// lastCompletedEvent returns the newest event that ended an attempt: the runner
+// writes several progress events per node before it writes the terminal one.
+func lastCompletedEvent(job Job) *Event {
+	for index := len(job.Events) - 1; index >= 0; index-- {
+		event := job.Events[index]
+		if event.Status != "succeeded" && event.Status != "failed" && event.Status != "rolled_back" && event.Status != "rollback_failed" {
+			continue
+		}
+		return &job.Events[index]
+	}
+	return nil
+}
+
+// payloadInstalled reports whether an operation left the package's payload on
+// disk, reading the operation record alone. A success is the direct answer. A
+// failure is not necessarily the opposite of one: an attempt refused before it
+// touched a node - the updater rejects a hotfix resume on its first line - is
+// written over the same status.json as the run that actually applied and
+// verified the patch, and that rejected attempt is what a site is left holding
+// (2026-09-30, HF-2026-0929-05). The last completed attempt is the evidence
+// there, exactly as it is when the deployment record is written.
+func payloadInstalled(job Job) bool {
+	if job.Status == StatusSucceeded {
+		return true
+	}
+	if job.Status != StatusFailed || job.MaintenanceActive {
+		return false
+	}
+	event := lastCompletedEvent(job)
+	return event != nil && event.Status == "succeeded"
+}
+
 func (manager *Manager) preservePreviousOperation(job Job) error {
 	directory := filepath.Join(manager.config.RootDirectory, job.PatchID)
 	if job.OperationID == "" {
@@ -89,29 +121,22 @@ func (manager *Manager) preservePreviousOperation(job Job) error {
 	// Migrate the original incident: a rejected legacy attempt overwrote
 	// status.json while the runner's last completed event still proved success.
 	if job.Status == StatusFailed && !job.MaintenanceActive {
-		for index := len(job.Events) - 1; index >= 0; index-- {
-			event := job.Events[index]
-			if event.Status != "succeeded" && event.Status != "failed" && event.Status != "rolled_back" && event.Status != "rollback_failed" {
-				continue
+		if event := lastCompletedEvent(job); event != nil && event.Status == "succeeded" {
+			verified := job
+			verified.Status, verified.Mode, verified.UpdatedAt = StatusSucceeded, ModeExecute, event.UpdatedAt
+			verified.OperationID = event.OperationID
+			if verified.OperationID == "" {
+				verified.OperationID = event.ExecutionID
 			}
-			if event.Status == "succeeded" {
-				verified := job
-				verified.Status, verified.Mode, verified.UpdatedAt = StatusSucceeded, ModeExecute, event.UpdatedAt
-				verified.OperationID = event.OperationID
-				if verified.OperationID == "" {
-					verified.OperationID = event.ExecutionID
-				}
-				if verified.OperationID == "" {
-					contents, _ := json.Marshal(event)
-					digest := sha256.Sum256(contents)
-					verified.OperationID = "legacy-success-" + hex.EncodeToString(digest[:16])
-				}
-				if err := appendOperation(directory, "requests.jsonl", verified); err != nil {
-					return err
-				}
-				state, deployment.State, job.OperationID = "installed", "installed", verified.OperationID
+			if verified.OperationID == "" {
+				contents, _ := json.Marshal(event)
+				digest := sha256.Sum256(contents)
+				verified.OperationID = "legacy-success-" + hex.EncodeToString(digest[:16])
 			}
-			break
+			if err := appendOperation(directory, "requests.jsonl", verified); err != nil {
+				return err
+			}
+			state, deployment.State, job.OperationID = "installed", "installed", verified.OperationID
 		}
 	}
 	if state == "installed" || state == "rolled_back" {

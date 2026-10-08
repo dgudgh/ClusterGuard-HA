@@ -1814,7 +1814,13 @@ func TestSoftwareUpdateDialogDoesNotPresentCompletedHistoryAsPendingPackage(t *t
 	page := string(consoleHTML)
 	for _, contract := range []string{
 		"const softwareUpdateActionable = item => {",
-		"return !job || job.verification_required || !['succeeded', 'rolled_back'].includes(job.status);",
+		"if (!job || job.verification_required) return true;",
+		"if (['succeeded', 'rolled_back'].includes(job.status)) return false;",
+		// A record whose payload is on the disk has nothing left to run. On 2026-10-08 this
+		// was what pinned the whole panel to HF-2026-0929-05: its record read failed, so it
+		// stayed actionable for ever and owned the subject, while the patch that had replaced
+		// it was already applied on every node.
+		"if (softwareUpdatePayloadApplied(item)) return false;",
 		"const pendingSoftwareUpdate = () => ((state.softwareUpdates && state.softwareUpdates.packages) || [])",
 		".filter(softwareUpdateActionable)[0] || null;",
 		"const pending = pendingSoftwareUpdate()",
@@ -1946,11 +1952,16 @@ func TestSoftwareUpdateHistoryReportsWhetherThePatchTookEffect(t *testing.T) {
 	// Displaying the older outcome must not soften the gates: what the operator is allowed to
 	// do still follows the raw status of the newest attempt. Deriving a gate from the outcome
 	// would let a patch whose newest attempt was refused look like a clean success, and hand
-	// the operator an action the updater will reject again.
+	// the operator an action the updater will reject again. The rollback gate is the one that
+	// does not name the attempt at all - it names the record whose files are the ones on disk,
+	// which is a question about the deployment, not about which attempt looked clean.
 	for _, gate := range []string{
 		"byId('resume-software-update').hidden = !(pending && status === 'failed'",
 		"byId('resume-software-update').disabled = !snapshot.available || busy || status !== 'failed'",
-		"byId('rollback-software-update').hidden = !(pending && record.rollback_available && ['failed', 'succeeded'].includes(status));",
+		"const rollbackTarget = softwareUpdateRollbackTarget();",
+		"const rollbackApplies = !!rollbackTarget && rollbackTarget === subject;",
+		"byId('rollback-software-update').hidden = !rollbackApplies;",
+		"byId('rollback-software-update').disabled = !snapshot.available || busy || !rollbackApplies;",
 		"const busy = state.softwareUpdateRunning || ['queued', 'running'].includes(status);",
 	} {
 		if !strings.Contains(page, gate) {
@@ -1983,7 +1994,10 @@ func TestConsoleNeverOffersResumeForAHotfix(t *testing.T) {
 		"byId('resume-software-update').disabled = !snapshot.available || busy || status !== 'failed' || softwareUpdateIsHotfix(subject);",
 		"const softwareUpdateIsRetry = item => softwareUpdateIsHotfix(item)",
 		"&& softwareUpdateOutcome(item.job) === 'failed';",
-		"byId('execute-software-update').textContent = retry ? '重新执行' : '滚动升级';",
+		"byId('execute-software-update').textContent = retry ? '重新执行'",
+		// A hotfix is not rolled out, it is applied, and the label has to say so: calling it a
+		// rolling upgrade is the label on the record that started this whole repair.
+		": softwareUpdateIsHotfix(subject) ? '应用热修补丁' : '滚动升级';",
 		"|| !(retry || ['uploaded', 'planned'].includes(status || 'uploaded'));",
 		"确认重新执行", // the typed confirmation has to name the action the button does
 		"将重新执行同一个热修补丁：应用本身是幂等的，不会产生新的版本。",
