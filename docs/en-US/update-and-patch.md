@@ -8,7 +8,7 @@
 
 This guide defines how a customer site updates the ClusterGuard HA control plane. Control-plane software updates are strictly separate from database upgrades. The updater does not invoke MySQL, PostgreSQL, Oracle, or SQL Server clients and does not stop databases or modify database software, data directories, replication, or VIP configuration.
 
-> **Artifact naming:** `.cgupgrade` is a complete signed rolling-update package, not a small binary delta. It contains both the target RPM and the current-version RPM for automatic rollback. `*-offline-linux-*.tar.gz` is intended for installation or reinstallation and cannot be uploaded directly to the rolling-update page. Legacy `.cgpatch` packages remain supported.
+> **Artifact naming:** `.cgupgrade` is a complete signed rolling-update package, not a small binary delta. It contains both the target RPM and the current-version RPM for automatic rollback. `*-offline-linux-*.tar.gz` is intended for installation or reinstallation and cannot be uploaded directly to the rolling-update page. Legacy `.cgpatch` packages remain supported. See the [hotfix package naming and delivery directory rules](hotfix-package-naming.md) for the exact `.cgpatch` filename grammar, revision rules, and baseline selection.
 
 > **Where to obtain them:** complete installation media are published publicly through [GitHub Releases](https://github.com/dgudgh/ClusterGuard-HA/releases). **Signed update packages are not published on public channels**; the vendor supplies them to contracted enterprise customers directly. Do not look for a `.cgupgrade` on a public channel.
 

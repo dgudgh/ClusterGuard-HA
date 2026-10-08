@@ -8,7 +8,7 @@
 
 本文说明客户现场如何升级 ClusterGuard HA 控制平面。控制软件升级与数据库升级严格分离：升级器不会调用 MySQL、PostgreSQL、Oracle 或 SQL Server 客户端，不会停止数据库，也不会修改数据库软件、数据目录、复制关系或 VIP 配置。
 
-> **制品说明：** `.cgupgrade` 是完整的签名滚动升级包，并非二进制差分小补丁。它同时携带目标 RPM 和当前版本 RPM，以便失败时自动回退。`*-offline-linux-*.tar.gz` 是新装或重装介质，不能直接上传到滚动升级页面。旧版本发布的 `.cgpatch` 继续兼容。
+> **制品说明：** `.cgupgrade` 是完整的签名滚动升级包，并非二进制差分小补丁。它同时携带目标 RPM 和当前版本 RPM，以便失败时自动回退。`*-offline-linux-*.tar.gz` 是新装或重装介质，不能直接上传到滚动升级页面。旧版本发布的 `.cgpatch` 继续兼容。热修包的文件名、修订和目录规则见[热修补丁包命名与交付目录规则](hotfix-package-naming.md)。
 
 > **获取渠道：** 完整安装介质通过 [GitHub Release](https://github.com/dgudgh/ClusterGuard-HA/releases) 公开发布；**签名升级包不通过公开渠道发布**，由厂商对签约企业客户单独提供。不要在公开渠道寻找 `.cgupgrade`。
 
@@ -167,7 +167,7 @@ scripts/build-clusterguard-patch.sh \
 
 ### 热修补丁规格
 
-热修补丁（`.cgpatch`）由 `scripts/build-hotfix-patch.sh` 按 `hotfixes/HF-*.json` 构建，产物与逐项双语台账见[热修补丁台账](hotfix-patches.md)。规格里的三个提交字段含义不同，不要混用：
+热修补丁（`.cgpatch`）由 `scripts/build-hotfix-patch.sh` 按 `hotfixes/HF-*.json` 构建，文件名必须遵守[热修补丁包命名与交付目录规则](hotfix-package-naming.md)，产物与逐项双语台账见[热修补丁台账](hotfix-patches.md)。规格里的三个提交字段含义不同，不要混用：
 
 | 字段 | 含义 |
 | --- | --- |
