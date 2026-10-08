@@ -195,9 +195,11 @@ const walk = (directory, out = []) => {
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
     if (entry.isDirectory()) {
       if (SKIP_DIRS.has(entry.name)) continue;
-      // Chat history quotes old and third-party license declarations. It is
-      // local agent memory, not source or a delivered product declaration.
-      if (path.relative(repo, path.join(directory, entry.name)) === path.join('.workbuddy', 'memory')) continue;
+      // The root agent directory contains local memory, references and archived
+      // logs quoting old/third-party declarations. It is ignored, not delivered.
+      // Match its root-relative path so production directories with the same
+      // basename still receive the normal declaration checks.
+      if (path.relative(repo, path.join(directory, entry.name)) === '.workbuddy') continue;
       // docs/html is generated from the markdown already scanned above.
       if (entry.name === 'html' && path.basename(directory) === 'docs') continue;
       walk(path.join(directory, entry.name), out);

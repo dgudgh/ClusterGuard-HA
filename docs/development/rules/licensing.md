@@ -23,5 +23,7 @@ sha256 `8486a10c4393cee1c25392769ddd3b2d6c242d6ec7928e1414efff7dfb2f07ef`）。
   签NDA、卖升级包都属于正常商业行为，许可本身不禁止；但**不得**向客户声称"你不得再分发"。
 - **门禁**：任何依赖、打包或文档改动后跑一次 `node tools/verify-license-consistency.cjs`，
   必须 `status=passed`。
+  根目录 `.workbuddy/` 是不入库的本机记忆、参考和归档资料，全部排除产品许可声明扫描；
+  该例外只适用于这个根目录。业务源码、文档和其中同名的嵌套目录仍须扫描，错误声明必须拒绝。
 - 面向客户的各种场景义务表见 [许可与合规](../../zh-CN/licensing.md)；
   第三方逐项清单见 [THIRD-PARTY-NOTICES.md](../../../THIRD-PARTY-NOTICES.md)。

@@ -813,7 +813,13 @@ for (const [file, entry] of publications) {
     if (entry.supersedes_sha256) brokenChain.push(`${file}: 首次发布不应声明替代对象`);
     continue;
   }
-  if (!file.includes(`-r${revision}-`)) {
+  if (entry.patch_version) {
+    if (!/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/.test(entry.patch_version) ||
+        Number(entry.patch_version.split('.')[3]) < 1 ||
+        !new RegExp(`^clusterguard-${entry.patch_version.replaceAll('.', '\\.')}\\.[a-z0-9_]+\\.cgpatch$`).test(path.basename(file))) {
+      brokenChain.push(`${file}: 修订文件名必须绑定台账的四段 patch_version`);
+    }
+  } else if (!file.includes(`-r${revision}-`)) {
     brokenChain.push(`${file}: 修订身份必须写进文件名（-r${revision}）`);
   }
   if (!entry.supersedes_sha256) {
@@ -827,6 +833,16 @@ for (const [file, entry] of publications) {
   }
   if ((previous[1].revision || 0) !== revision - 1) {
     brokenChain.push(`${file}: 只能替代上一修订 r${revision - 1}`);
+  }
+  if (entry.patch_version && previous[1].patch_version) {
+    const nextVersion = entry.patch_version.split('.');
+    const previousVersion = previous[1].patch_version.split('.');
+    if (!/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/.test(entry.patch_version) ||
+        !/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/.test(previous[1].patch_version) ||
+        nextVersion.slice(0, 3).join('.') !== previousVersion.slice(0, 3).join('.') ||
+        BigInt(nextVersion[3]) !== BigInt(previousVersion[3]) + 1n) {
+      brokenChain.push(`${file}: 修订必须递增同一封板版本的 Bug 修订段`);
+    }
   }
   if (previous[1].superseded_by !== file) {
     brokenChain.push(`${file}: 被替代的 ${previous[0]} 没有回指本身份`);

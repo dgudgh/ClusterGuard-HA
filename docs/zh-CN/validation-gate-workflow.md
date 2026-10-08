@@ -18,7 +18,7 @@
 
 | 阶段 | 命令 | 通过表示什么 |
 | --- | --- | --- |
-| 源码 | `node tools/verify-upgrade-validation-chain.cjs --stage source --strict` | 现有 17 项源码规则成立；不声明新包或现场通过 |
+| 源码 | `node tools/verify-upgrade-validation-chain.cjs --stage source --strict` | 当前源码规则集合成立，数量以本次输出为准；不声明新包或现场通过 |
 | 新包 | `node tools/verify-upgrade-validation-chain.cjs --stage artifact --strict --acceptance-report /private/acceptance.json` | 源码规则及 ART-001..013 证据清单均满足；不声明现场通过 |
 | 最终验收 | `node tools/verify-upgrade-validation-chain.cjs --stage field --strict --acceptance-report /private/acceptance.json` | 源码规则与 ART-001..013、FIELD-001..012 的验收记录及证据引用均满足 |
 | 契约预检查 | `node tools/verify-upgrade-validation-chain.cjs --contract-only` | 仅契约加载与兼容性，不能代替上述阶段 |
@@ -30,7 +30,7 @@
 先按本次目标推进：纯源码修复完成源码回归、source 严格门禁及源码归档；新包交付再进入构建和 ART，现场升级/验收再进入 FIELD。各阶段的完成声明仍以本次实际证据为准。
 
 1. 按 AGENTS 留下旧代码对照；实现功能并完成相应真实回归。
-2. 更新该功能的门禁断言和失败变异用例，执行源码阶段及 `--self-test`。这 17 项是已有源码检查，不是全部功能测试；新增功能还须增加相应测试。
+2. 更新该功能的门禁断言和失败变异用例，执行源码阶段及 `--self-test`。已有源码检查的数量以本次运行输出为准；它们不是全部功能测试，新增功能还须增加相应测试。
 3. 提交源码时，将本次源码和新文件归入唯一主线；涉及交付身份时，再核对版本、来源与目标及不可变身份。
 4. 需要新包交付时，从这份源码构建新的包，不重建已交付身份；执行 ART 项并保存实际验签、载荷、权限、脚本一致性等原始输出。
 5. 需要现场升级/验收时，在有现场授权后执行 FIELD 项，记录实际集群、控制节点和结果。没有执行的项不能填 passed。
