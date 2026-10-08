@@ -169,9 +169,9 @@ function renderEnglish(groups) {
   lines.push("baseline silently downgrades binaries back to its own release line.");
   lines.push("");
   lines.push("New hotfix specifications use `patch_version` and the versioned filename");
-  lines.push("`clusterguard-MAJOR.CAPABILITY.INTERNAL.BUGFIX.<arch>.cgpatch`; the signed");
-  lines.push("manifest still carries the `HF-...` operation identity. Historical specifications");
-  lines.push("retain their immutable HF-based names. A signed patch is never rebuilt in place:");
+  lines.push("`clusterguard-MAJOR.MINOR.PATCH.BUGFIX.<arch>.cgpatch`; the new sealed release line starts at");
+  lines.push("`3.1.1.1`. The signed manifest still carries the `HF-...` operation identity. Historical");
+  lines.push("2.x and HF-named specifications retain their immutable legacy names. A signed patch is never rebuilt in place:");
   lines.push("a correction gets a new Bug-fix version and the earlier bytes stay in the directory");
   lines.push("as the only record of what a site ran. **The table");
   lines.push("below names the one to apply for each patch**; the other identities are history.");
@@ -297,8 +297,8 @@ function renderChinese(groups) {
   lines.push("补丁如果叠加，结果取决于安装顺序——后装旧的会把新修复盖掉。**只装你所在基线版本的最新一个包，");
   lines.push("不要混装不同基线版本的包**——装错基线的包会把二进制悄悄降级回它自己的发布线。");
   lines.push("");
-  lines.push("新规格使用 `patch_version` 和 `clusterguard-MAJOR.CAPABILITY.INTERNAL.BUGFIX.<架构>.cgpatch`；");
-  lines.push("签名清单仍保留 `HF-...` 作为操作身份。历史规格继续保留原来的 HF 文件名。已签名的补丁**永不原地重建**：");
+  lines.push("新规格使用 `patch_version` 和 `clusterguard-MAJOR.MINOR.PATCH.BUGFIX.<架构>.cgpatch`；");
+  lines.push("新的封板版本线从 `3.1.1.1` 开始。签名清单仍保留 `HF-...` 作为操作身份；历史 2.x 和 HF 文件名继续冻结。已签名的补丁**永不原地重建**：");
   lines.push("修订使用新的 Bug 修订版本，旧身份的字节留在目录里，作为“现场到底运行过什么”的唯一记录。");
   lines.push("多份文件。**下表列出的才是每个补丁应当安装的那一份**，其余身份只是历史。");
   lines.push("");

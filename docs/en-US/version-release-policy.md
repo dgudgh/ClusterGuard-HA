@@ -67,7 +67,7 @@ After a formal release is completed, the following objects must not be overwritt
 - SHA256 files;
 - Release Notes.
 
-Hotfix `.cgpatch` filenames are part of the delivery identity. New specifications use `patch_version` and the [hotfix version and filename rules](hotfix-package-naming.md): `clusterguard-MAJOR.CAPABILITY.INTERNAL.BUGFIX.<arch>.cgpatch`, with the same version signed into the manifest. `HF-...` remains the console and audit `hotfix_id`; historical specifications retain their frozen HF-based names. Signed files are never rebuilt in place, and a failed same-package retry keeps the original file.
+Hotfix `.cgpatch` filenames are part of the delivery identity. The new sealed release line starts at `3.1.1.1`; new specifications use `patch_version` and the [hotfix version and filename rules](hotfix-package-naming.md): `clusterguard-MAJOR.MINOR.PATCH.BUGFIX.<arch>.cgpatch`, with the same version signed into the manifest. `HF-...` remains the console and audit `hotfix_id`; historical 2.x/HF specifications retain their frozen names. Signed files are never rebuilt in place, and a failed same-package retry keeps the original file.
 
 Any changes to the content of files with the same name are considered a new version. Even if only the installation script or operation manual inside the package is modified, the release number must be increased because the delivery package has changed.
 

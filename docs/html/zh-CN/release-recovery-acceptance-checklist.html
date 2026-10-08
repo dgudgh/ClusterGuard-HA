@@ -38,6 +38,21 @@
       </header>
       <main class="document-layout" id="document-content">
         <article class="document-content"><h1 id="恢复与升级发布验收清单">恢复与升级发布验收清单<a class="heading-anchor" href="#恢复与升级发布验收清单" aria-label="Link to 恢复与升级发布验收清单">#</a></h1>
+<blockquote>
+<p><strong>适用时机：</strong> 准备构建/发布包含恢复或升级改动的版本、真实恢复操作或现场验收前必读。先完成根规则与适用契约，再按本次动作和版本核对清单；历史结果不代替本次证据。</p>
+</blockquote>
+<blockquote>
+<p>门禁执行更新（2026-10-04）：开发使用 <code>--stage source --strict</code>；新包与现场使用 <code>--stage artifact/field --strict --acceptance-report FILE</code>，需真实证据。默认仍为 field，当前 ART/FIELD 未完成；详情见<a href="../../zh-CN/validation-gate-workflow.md">分阶段门禁与更新流程</a>。</p>
+</blockquote>
+<h2 id="v2-强制升级与热修门槛">v2 强制升级与热修门槛<a class="heading-anchor" href="#v2-强制升级与热修门槛" aria-label="Link to v2 强制升级与热修门槛">#</a></h2>
+<p>升级与热修统一执行 v2 契约；热修失败使用独立 <code>retry</code>，滚动升级失败使用 <code>resume</code>。2026-10-03 的修复记录基线为 <code>7b643f4</code>，该次修复没有新包或部署、ART/FIELD 为 <strong>OPEN</strong>；这是历史记录，不代表本次源码或现场验收结果。本次按下面清单核对实际版本、绑定与证据。</p>
+<ul>
+<li><input disabled="" type="checkbox"> 先读<a href="upgrade-validation-chain.html">强制契约 v2</a>和<a href="../../zh-CN/validation-gate-workflow.md">门禁执行流程</a>，按本次工作执行 source、artifact 或 field 严格阶段；新包必须有 ART，现场必须有 ART/FIELD 真实证据。历史<a href="../../zh-CN/upgrade-validation-chain-implementation-status.md">实现快照</a>不代表本次验收结果，只有“0 failed”也不构成通过。</li>
+<li><input disabled="" type="checkbox"> 新包取得 ART-001..013，现场取得 FIELD-001..012；逐项保留真实证据，不用源码断言代替。</li>
+<li><input disabled="" type="checkbox"> 核对 Manager、Helper、Runner 的 v2 契约能力；旧 Helper 的 <code>contract</code> 不可用必须先解决交付兼容性。</li>
+<li><input disabled="" type="checkbox"> 真实点击覆盖热修 retry/拒绝 resume、滚动 resume、明确 patch_id、operation_id 对账、未知结果只查询及同秒不同操作；覆盖不同操作私有历史冲突和外包门禁拒绝。</li>
+<li><input disabled="" type="checkbox"> 部署状态、操作尝试和历史分别核对；成功后计划失败不得改写已安装结果。supersedes 必须来自已验签清单与确证安装状态。</li>
+</ul>
 <h2 id="完成判定">完成判定<a class="heading-anchor" href="#完成判定" aria-label="Link to 完成判定">#</a></h2>
 <p>编译、单元测试、直接安装 RPM、控制节点版本一致、页面显示成功，均不能单独作为现场验收完成的证据。没有执行的测试必须标为未执行。失败候选包不得覆盖原版本重打，必须明确撤回并使用新的补丁 ID。</p>
 <h2 id="修改前强制对比">修改前强制对比<a class="heading-anchor" href="#修改前强制对比" aria-label="Link to 修改前强制对比">#</a></h2>
@@ -127,7 +142,7 @@
         </article>
         <aside class="page-toc" aria-label="本页目录">
           <strong>本页目录</strong>
-          <a class="toc-level-2" href="#完成判定">完成判定</a><a class="toc-level-2" href="#修改前强制对比">修改前强制对比</a><a class="toc-level-2" href="#每次发布">每次发布</a><a class="toc-level-2" href="#恢复场景必须分开测">恢复场景必须分开测</a><a class="toc-level-2" href="#工具与证据">工具与证据</a>
+          <a class="toc-level-2" href="#v2-强制升级与热修门槛">v2 强制升级与热修门槛</a><a class="toc-level-2" href="#完成判定">完成判定</a><a class="toc-level-2" href="#修改前强制对比">修改前强制对比</a><a class="toc-level-2" href="#每次发布">每次发布</a><a class="toc-level-2" href="#恢复场景必须分开测">恢复场景必须分开测</a><a class="toc-level-2" href="#工具与证据">工具与证据</a>
         </aside>
       </main>
     </div>

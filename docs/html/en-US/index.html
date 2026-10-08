@@ -37,168 +37,46 @@
         </div>
       </header>
       <main class="document-layout" id="document-content">
-        <article class="document-content"><h1 id="clusterguard-ha-english-documentation">ClusterGuard HA English Documentation<a class="heading-anchor" href="#clusterguard-ha-english-documentation" aria-label="Link to ClusterGuard HA English Documentation">#</a></h1>
-<p>The offline HTML documentation center starts at <a href="../index.html"><code>../html/index.html</code></a>. It includes this manual, the migration runbook, qualification evidence, local search, and print-friendly pages without an external network dependency.</p>
-<h2 id="current-version">Current Version<a class="heading-anchor" href="#current-version" aria-label="Link to Current Version">#</a></h2>
-<h3 id="latest-installer">Latest Installer<a class="heading-anchor" href="#latest-installer" aria-label="Link to Latest Installer">#</a></h3>
-<p>The newest installer kit is <strong>2.2-102</strong>, whose release notes are maintained in Simplified
-Chinese only: <a href="../zh-CN/release-2.2.102.html">2.2-102 release notes</a>.
-It is one kit containing MySQL 8.0.44 / PostgreSQL 16.4 media plus a standalone
-ClusterGuard RPM, built from code baseline <code>7b36461</code> (the media <code>RELEASE-INFO</code> records
-<code>2b9a449</code>, the commit that added this release note and the index entries without changing
-any code, so the two are code-equivalent). The archive was built and verified locally but
-was neither uploaded to GitHub nor accepted on site; production <code>.cgupgrade</code> and final
-site installation, upgrade, and rollback acceptance remain outstanding.
-<code>release_channel=stable</code> inside the package does not change that.</p>
-<p>The previous kit,
-<a href="../zh-CN/release-2.2.101.html">2.2-101 release notes</a> ·
-<a href="https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.101">GitHub v2.2.101</a>, was
-verified and uploaded as a GitHub prerelease from commit <code>78dbdbf</code>.</p>
-<p>English release notes are maintained through
-<a href="release-2.2.47.html">2.2.47</a>; every later release note exists only in Simplified Chinese,
-and the ones present today are 2.2.69-2.2.73, 2.2.86 and 2.2.88-2.2.102. The gaps in
-between never had a release note generated, so they are not broken links.
-Machine-verified checksums and the latest documentation corrections are governed by the
-2.2-102 release notes. Updater fixes and remaining gates are recorded in the
-<a href="../../zh-CN/updater-private-workspace-2026-09-11.md">private execution workspace record</a>.</p>
-<h3 id="historical-formal-releases">Historical Formal Releases<a class="heading-anchor" href="#historical-formal-releases" aria-label="Link to Historical Formal Releases">#</a></h3>
+        <article class="document-content"><h1 id="english-manual-entry">English Manual Entry<a class="heading-anchor" href="#english-manual-entry" aria-label="Link to English Manual Entry">#</a></h1>
+<p><strong>Before development or document changes, read the <a href="../../../AGENTS.md">repository rules</a>, <a href="../../zh-CN/validation-gate-workflow.md">gate workflow</a>, and <a href="../../development/rules/README.md">reading order and applicable rules</a>.</strong> Before modifying or executing work within the upgrade contract&#39;s scope, read the complete <a href="upgrade-validation-chain.html">mandatory v2 contract</a>; then select the task guide after the applicable prerequisites.</p>
+<p>Choose one task below. The full catalogue preserves historical releases and acceptance records; it is not required reading for every change.</p>
 <table>
 <thead>
 <tr>
-<th>Version</th>
-<th>Status</th>
-<th>Database Support Boundary</th>
+<th>当前任务</th>
+<th>下一份文档</th>
 </tr>
 </thead>
 <tbody><tr>
-<td><code>2.1-45</code></td>
-<td>Officially Released</td>
-<td>MySQL High Availability Control Platform</td>
+<td>安装 / Installation</td>
+<td><a href="offline-rpm-install.html">ClusterGuard HA Offline Installation and Deployment Manual</a></td>
 </tr>
 <tr>
-<td><code>2.2-39</code></td>
-<td>Formal Release</td>
-<td>PostgreSQL 16.4, Docker Swarm, and retained MySQL 2.1 capability</td>
+<td>数据库接入 / Database preparation</td>
+<td><a href="database-preparation.html">ClusterGuard HA Database Integration Manual</a></td>
 </tr>
 <tr>
-<td>Subsequent Versions</td>
-<td>Planning</td>
-<td>Oracle Data Guard Broker, SQL Server Always On independent acceptance</td>
+<td>运维 / Operations</td>
+<td><a href="operations-manual.html">ClusterGuard HA Operations Manual</a></td>
+</tr>
+<tr>
+<td>升级与回退 / Update and rollback</td>
+<td><a href="upgrade-validation-chain.html">Mandatory v2 contract</a> → <a href="update-and-patch.html">Update and rollback guide for the matching version</a></td>
+</tr>
+<tr>
+<td>开发模块 / Development modules</td>
+<td><a href="../../development/README.md">开发模块导航</a></td>
+</tr>
+<tr>
+<td>升级实现与验收记录 / Recorded update acceptance</td>
+<td><a href="../../en-US/upgrade-validation-chain-implementation-status.md">Upgrade and Hotfix v2: Implementation and Acceptance Status</a>, limited to that repair and its recorded validation</td>
+</tr>
+<tr>
+<td>完整历史资料 / Full catalogue</td>
+<td><a href="../../en-US/catalogue.md">ClusterGuard HA English Documentation</a></td>
 </tr>
 </tbody></table>
-<p>Current Formal Release:</p>
-<p><a href="https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.39">https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.39</a></p>
-<p>Do not use historical candidate packages with numbers higher than <code>2.1-45</code> in the local directory to replace the official release. The official deliverables must come from GitHub Release and be verified with the included SHA256 checksum.</p>
-<h2 id="recommended-reading-order">Recommended Reading Order<a class="heading-anchor" href="#recommended-reading-order" aria-label="Link to Recommended Reading Order">#</a></h2>
-<p>For the newest installer kit, start with the
-<a href="../zh-CN/release-2.2.102.html">2.2-102 release notes</a> (Simplified Chinese only).</p>
-<p>The order below follows the formal <code>2.2-39</code> baseline:</p>
-<ol>
-<li><a href="release-2.2.47.html">2.2.47 Release Notes</a>
-Confirm the official package, summary, support scope, and production admission boundary.</li>
-<li><a href="release-2.2.46.html">2.2.46 Release Notes</a></li>
-<li><a href="release-2.2.45.html">2.2.45 Release Notes</a></li>
-<li><a href="release-2.2.44.html">2.2.44 Release Notes</a></li>
-<li><a href="release-2.2.43.html">2.2.43 Release Notes</a></li>
-<li><a href="release-2.2.42.html">2.2.42 Release Notes</a></li>
-<li><a href="release-2.2.41.html">2.2.41 Release Notes</a></li>
-<li><a href="release-2.2.40.html">2.2.40 Release Notes</a></li>
-<li><a href="release-2.2.39.html">2.2.39 Release Notes</a></li>
-<li><a href="product-tour.html">Product Tour</a>
-   Understand the topology, operations, node lifecycle, and operation logs through actual control console screenshots.</li>
-<li><a href="offline-rpm-install.html">Offline Installation and Deployment Manual</a>
-   Complete the deployment of control nodes, data nodes, databases, Agent, Raft, VIP, and certificates.</li>
-<li><a href="database-preparation.html">Database Preparation Manual</a>
-   Prepare native database identity, minimal permissions, replication, and health check conditions.</li>
-<li><a href="orchestrator-migration.html">Migration from Orchestrator</a>
-   Onboard existing MySQL clusters without reinstalling data and transfer exclusive recovery and VIP authority safely.</li>
-<li><a href="operations-manual.html">Operations Manual</a>
-   Execute failover, old primary recovery, node expansion, planned shutdown, audit, and emergency handling.</li>
-<li><a href="update-and-patch.html">Version Update and Rollback Guide</a>
-   Verify signed update packages, review the plan, roll nodes, resume interrupted work, and perform controlled rollback.</li>
-<li><a href="version-release-policy.html">Version and Release Policy</a>
-   Use when building new versions, maintaining tags, and releasing PostgreSQL 2.2.</li>
-<li><a href="architecture.html">Architecture</a>
-   Review the control plane, metadata storage, consensus, node agent and workflow stages before changing deployment topology.</li>
-<li><a href="postgresql-ha.html">PostgreSQL HA</a>
-   Understand native PostgreSQL identity, streaming replication, controlled switchover, automatic takeover and former-primary rewind.</li>
-<li><a href="api-operations.html">Control-Plane and API Reference</a>
-   Look up API paths, roles, approval grants, console behaviour and operational limits.</li>
-<li><a href="proven-mysql-ha-methods.html">Proven MySQL HA Methods</a>
-   See which MySQL HA mechanisms have been validated for this product, and under what evidence window.</li>
-<li><a href="mysql-feature-parity-acceptance.html">MySQL Feature Parity Acceptance</a></li>
-<li><a href="mysql-production-qualification.html">MySQL Production Qualification</a>
-   Confirm the measured client interruption and the conditions that must be met before production admission.</li>
-</ol>
-<h2 id="acceptance-evidence">Acceptance Evidence<a class="heading-anchor" href="#acceptance-evidence" aria-label="Link to Acceptance Evidence">#</a></h2>
-<ul>
-<li><a href="mysql-former-primary-recovery.html">MySQL Former-Primary Recovery Qualification</a></li>
-<li><a href="production-chaos-test.html">Production Chaos and Concurrency Test Report</a></li>
-<li><a href="power-lifecycle-test.html">Planned Shutdown and Automatic Recovery Report</a></li>
-<li><a href="postgresql-production-qualification.html">PostgreSQL 16.4 Production Qualification</a></li>
-<li><a href="mysql-feature-parity-acceptance.html">MySQL Feature Parity Acceptance</a></li>
-<li><a href="mysql-production-qualification.html">MySQL Production Qualification</a></li>
-<li><a href="docker-swarm-mysql-validation.html">Docker Swarm MySQL Lab Qualification</a></li>
-<li><a href="kubernetes-mysql.html">Kubernetes MySQL Guide</a></li>
-</ul>
-<p>These reports record results under specific laboratories, database packages, and dates. After changing the database minor version, Linux distribution, storage, network, VIP NIC, or isolation method, on-site acceptance must be re-executed.</p>
-<h2 id="postgresql-2-2">PostgreSQL 2.2<a class="heading-anchor" href="#postgresql-2-2" aria-label="Link to PostgreSQL 2.2">#</a></h2>
-<p>Starting from version 2.2, PostgreSQL will not be rolled back to <code>v2.1.45</code>. The 2.2 main offline package remains streamlined: when explicitly specifying <code>--engine postgresql</code>, it defaults to resolving source code compilation dependencies online within the isolated build root. When on-site internet access is unavailable, upload a separate PostgreSQL dependency package and use <code>--postgresql-dependencies</code>.</p>
-<p>Database permissions, native identity, streaming replication, and recovery requirements for PostgreSQL are detailed in the <a href="database-preparation.html">Database Preparation Manual</a>; complete installation parameters are detailed in the <a href="offline-rpm-install.html">Offline Installation and Deployment Manual</a>.</p>
-<p>The three-node PostgreSQL 16.4 matrix, including planned rotations, hard
-power-off, network partition, quorum loss, concurrent operations, writer-VIP
-uniqueness, and former-primary <code>pg_rewind</code>, is recorded in the
-<a href="postgresql-production-qualification.html">PostgreSQL Production Qualification Report</a>.</p>
-<h2 id="docker-swarm-mysql">Docker Swarm MySQL<a class="heading-anchor" href="#docker-swarm-mysql" aria-label="Link to Docker Swarm MySQL">#</a></h2>
-<p>The first Docker Swarm phase uses host Agents, fixed Service slots, MySQL GTID replication, and a host VIP. See the
-<a href="docker-swarm-mysql.html">Docker Swarm MySQL Guide</a> for architecture, deployment order, and safety constraints. The
-<a href="docker-swarm-mysql-validation.html">Docker Swarm MySQL Lab Qualification</a> records three-node planned switchovers, automatic failover, former-writer rejoin, manager interruption, Raft quorum loss, and duplicate-VIP results from <code>192.168.102.152-154</code>.</p>
-<h2 id="kubernetes-mysql">Kubernetes MySQL<a class="heading-anchor" href="#kubernetes-mysql" aria-label="Link to Kubernetes MySQL">#</a></h2>
-<p>Kubernetes mode does not move a host VIP or change CoreDNS. ClusterGuard uses a Raft-authorized selectorless Service/EndpointSlice, dedicated one-replica StatefulSets, durable role annotations, and a fail-closed start guard. See the <a href="kubernetes-mysql.html">Kubernetes MySQL Guide</a> for RBAC, registration, deployment constraints, and the current acceptance boundary. This feature currently has code-level automated tests but no real Kubernetes production qualification report.</p>
-<h2 id="document-validity">Document Validity<a class="heading-anchor" href="#document-validity" aria-label="Link to Document Validity">#</a></h2>
-<p>The following documents are the production delivery entry points:</p>
-<ul>
-<li><code>docs/en-US/release-*.md</code></li>
-<li><code>docs/en-US/offline-rpm-install.md</code></li>
-<li><code>docs/en-US/database-preparation.md</code></li>
-<li><code>docs/en-US/operations-manual.md</code></li>
-<li><code>docs/en-US/update-and-patch.md</code></li>
-<li><code>docs/en-US/version-release-policy.md</code></li>
-<li><code>docs/en-US/licensing.md</code></li>
-<li><code>docs/architecture.md</code></li>
-<li><code>docs/operations.md</code></li>
-<li><code>docs/postgresql-ha.md</code></li>
-<li><code>docs/proven-mysql-ha-methods.md</code></li>
-<li><code>docs/mysql-feature-parity-acceptance.md</code></li>
-<li><code>docs/mysql-production-qualification-2026-07-28.md</code></li>
-</ul>
-<p><strong>The publication channel split is a hard rule.</strong> GitHub Releases carry complete
-offline installation media only; signed <code>.cgupgrade</code> update packages (including
-legacy <code>.cgpatch</code>) are delivered to contracted enterprise customers and kept
-locally only — they <strong>must not</strong> be uploaded to any public channel. The converse
-holds as well: a release that carries no complete offline media <strong>must not stay on
-the public channel</strong>. Run <code>node tools/verify-public-release-assets.cjs</code> before and
-after uploading and require <code>status=passed</code>; an update package on a public channel
-is treated as unauthorized distribution. See
-<a href="version-release-policy.html">Version and Release Policy §3.1</a>.</p>
-<p><strong>Licensing is a hard rule.</strong> The delivery line uses <code>AGPL-3.0-only</code>; the authoritative text is
-<code>LICENSE</code> at the repository root. The <code>license</code> field in <code>packaging/rpm/nfpm.yaml</code>, the file
-<code>/usr/share/doc/clusterguard-ha/LICENSE</code> inside the RPM and the READMEs must all agree with it.
-Run <code>node tools/verify-license-consistency.cjs</code> after any dependency or packaging change. The
-source-publishing obligations per usage scenario are in
-<a href="licensing.html">Licensing and Compliance</a>.</p>
-<p><code>docs/superpowers/</code> preserves historical design and implementation plans and is only used for traceability, not as the current installation or production operation manual. When documents are inconsistent with the official release, the corresponding <code>RELEASE-INFO</code>, summary file, and release notes of that version shall prevail.</p>
-<h2 id="information-required-for-issue-feedback">Information Required for Issue Feedback<a class="heading-anchor" href="#information-required-for-issue-feedback" aria-label="Link to Information Required for Issue Feedback">#</a></h2>
-<p>When submitting an issue, provide at least the following:</p>
-<ul>
-<li>Complete ClusterGuard version and Git commit;</li>
-<li>Database engine, complete version, port, and cluster UUID;</li>
-<li>Control node Leader, Raft members, and quorum status;</li>
-<li>Operation UUID, request ID, occurrence time, and operation type;</li>
-<li>De-identified operation report, audit records, and Agent/systemd logs;</li>
-<li>Primary, replication source, and VIP Owner before and after the issue occurred.</li>
-</ul>
-<p>Do not submit database passwords, control tokens, approval tokens, private keys, or complete <code>deployment-secrets.env</code> in tickets, screenshots, or chat records.</p>
+<p>许可 / License：<strong>AGPL-3.0-only</strong>；详细义务见<a href="licensing.html">许可与合规 / Compliance</a>。</p>
 
           <footer class="document-footer">
             <span>Source: <code>docs/en-US/README.md</code></span>
@@ -207,7 +85,7 @@ source-publishing obligations per usage scenario are in
         </article>
         <aside class="page-toc" aria-label="On this page">
           <strong>On this page</strong>
-          <a class="toc-level-2" href="#current-version">Current Version</a><a class="toc-level-3" href="#latest-installer">Latest Installer</a><a class="toc-level-3" href="#historical-formal-releases">Historical Formal Releases</a><a class="toc-level-2" href="#recommended-reading-order">Recommended Reading Order</a><a class="toc-level-2" href="#acceptance-evidence">Acceptance Evidence</a><a class="toc-level-2" href="#postgresql-2-2">PostgreSQL 2.2</a><a class="toc-level-2" href="#docker-swarm-mysql">Docker Swarm MySQL</a><a class="toc-level-2" href="#kubernetes-mysql">Kubernetes MySQL</a><a class="toc-level-2" href="#document-validity">Document Validity</a><a class="toc-level-2" href="#information-required-for-issue-feedback">Information Required for Issue Feedback</a>
+          
         </aside>
       </main>
     </div>

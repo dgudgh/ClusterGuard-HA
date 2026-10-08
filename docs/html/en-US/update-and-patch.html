@@ -38,9 +38,12 @@
       </header>
       <main class="document-layout" id="document-content">
         <article class="document-content"><h1 id="clusterguard-ha-version-update-and-rollback-guide">ClusterGuard HA Version Update and Rollback Guide<a class="heading-anchor" href="#clusterguard-ha-version-update-and-rollback-guide" aria-label="Link to ClusterGuard HA Version Update and Rollback Guide">#</a></h1>
+<blockquote>
+<p><strong>Required before acting:</strong> read the complete <a href="upgrade-validation-chain.html">v2 contract</a> and <a href="../../zh-CN/validation-gate-workflow.md">gate workflow</a>. Complete the applicable preflight and validation plan from the <a href="../zh-CN/release-recovery-acceptance-checklist.html">recovery and update acceptance checklist</a> before following this guide. Old release notes or acceptance snapshots do not establish this package&#39;s identity or site evidence.</p>
+</blockquote>
 <p>This guide defines how a customer site updates the ClusterGuard HA control plane. Control-plane software updates are strictly separate from database upgrades. The updater does not invoke MySQL, PostgreSQL, Oracle, or SQL Server clients and does not stop databases or modify database software, data directories, replication, or VIP configuration.</p>
 <blockquote>
-<p><strong>Artifact naming:</strong> <code>.cgupgrade</code> is a complete signed rolling-update package, not a small binary delta. It contains both the target RPM and the current-version RPM for automatic rollback. <code>*-offline-linux-*.tar.gz</code> is intended for installation or reinstallation and cannot be uploaded directly to the rolling-update page. Legacy <code>.cgpatch</code> packages remain supported.</p>
+<p><strong>Artifact naming:</strong> <code>.cgupgrade</code> is a complete signed rolling-update package, not a small binary delta. It contains both the target RPM and the current-version RPM for automatic rollback. <code>*-offline-linux-*.tar.gz</code> is intended for installation or reinstallation and cannot be uploaded directly to the rolling-update page. Legacy <code>.cgpatch</code> packages remain supported. New hotfix specifications must set <code>patch_version</code>, and the new sealed release line starts at <code>3.1.1.1</code>; version, filename, and directory rules are in the <a href="../../en-US/hotfix-package-naming.md">hotfix version and filename rules</a>. Historical specifications retain their immutable HF-based names.</p>
 </blockquote>
 <blockquote>
 <p><strong>Where to obtain them:</strong> complete installation media are published publicly through <a href="https://github.com/dgudgh/ClusterGuard-HA/releases">GitHub Releases</a>. <strong>Signed update packages are not published on public channels</strong>; the vendor supplies them to contracted enterprise customers directly. Do not look for a <code>.cgupgrade</code> on a public channel.</p>
@@ -52,14 +55,48 @@
 <p><strong>Important: automatic failover is unavailable while a system update is in progress. Monitor the platform and database service throughout the maintenance window.</strong></p>
 <p>Once the maintenance marker is established, planned switchovers, failovers, automatic failover, and node mutations are blocked by Safety Guard. Read-only topology, health, metrics, and operation logs remain available. Automatic failover resumes only after every node passes update verification and the maintenance marker is released. An interrupted or failed update keeps the marker in place and remains fail-closed until the same update package is resumed or rolled back.</p>
 </blockquote>
+<h2 id="v2-action-rules-and-implementation-record-2026-10-03">v2 Action Rules and Implementation Record (2026-10-03)<a class="heading-anchor" href="#v2-action-rules-and-implementation-record-2026-10-03" aria-label="Link to v2 Action Rules and Implementation Record (2026-10-03)">#</a></h2>
+<p>The mandatory contract defines the v2 rules. The source repair recorded on 2026-10-03 used baseline <code>7b643f4</code> on <code>codex/2.2-postgresql</code>; that repair produced no new package or deployment, and its ART/FIELD record was <strong>OPEN</strong>. It does not establish this checkout&#39;s, package&#39;s, or site&#39;s status; recheck before acting. Failed hotfixes use <code>retry</code>; interrupted rolling updates use <code>resume</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Package and state</th>
+<th>Recovery action</th>
+<th>Rejected behavior</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Failed hotfix without a verified installed deployment</td>
+<td>Confirm the original <code>patch_id</code>, then invoke <code>retry</code> directly</td>
+<td>Do not replace failure identity with a new plan or convert resume to execute</td>
+</tr>
+<tr>
+<td>Verified installed hotfix</td>
+<td>Read the result; request controlled rollback when supported</td>
+<td>No resume or repeat installation of the same package</td>
+</tr>
+<tr>
+<td>Failed or interrupted rolling update</td>
+<td>Same-package <code>resume</code> or controlled rollback</td>
+<td>No takeover of another package&#39;s locks</td>
+</tr>
+<tr>
+<td>5xx, disconnect, or timeout with uncertain acceptance</td>
+<td>Read durable results for the same <code>operation_id</code></td>
+<td>No automatic resubmission or timestamp-based correlation</td>
+</tr>
+</tbody></table>
+<p>Action requests identify both <code>patch_id</code> and <code>operation_id</code>. Reusing an operation ID requires the same package and mode. <code>deployment.json</code> holds independent deployment state; <code>requests.jsonl</code> and <code>operations.jsonl</code> retain append-only history. A failed plan does not erase a successful deployment. Default status responses omit full history; request it explicitly through <code>GET /api/v1/platform/updates/&lt;patch_id&gt;?history=1</code>.</p>
+<p>Before inspect or execution, Runner requires an executable, non-symlink <code>clusterguard-update-helper</code> with a <code>contract</code> subcommand. The default is <code>/usr/local/libexec/clusterguard-update-helper</code>; controlled environments may set <code>CG_UPDATE_CONTRACT_HELPER</code>. An older Helper without this command refuses the run. Deploy matching Manager, Helper, and Runner through a new controlled delivery and validate the site; replacing only the upgrade script does not establish v2 deployment.</p>
+<p>Only signed <code>supersedes</code> declarations and verified installation establish replacement. A newer success on the same version does not automatically retire an older failure. Foreign locks, corrupt history, different replicated operation identities, and conflicting terminal results block execution while preserving evidence. Rules come from the <a href="upgrade-validation-chain.html">mandatory contract</a>; the <a href="../../en-US/upgrade-validation-chain-implementation-status.md">historical implementation and acceptance snapshot</a> records past evidence, not acceptance of this run.</p>
 <h2 id="console-based-update">Console-Based Update<a class="heading-anchor" href="#console-based-update" aria-label="Link to Console-Based Update">#</a></h2>
 <p>An administrator can complete the workflow under <strong>Settings → Version Update</strong> without assembling shell commands:</p>
 <ol>
-<li>Upload an officially released, signed <code>.cgupgrade</code>. The server validates format, SHA-256, release signature, architecture, source and target versions, and state protocol before accepting it.</li>
+<li>Upload a formally delivered, signed <code>.cgupgrade</code> rolling-update package or <code>.cgpatch</code> hotfix. The server validates format, SHA-256, release signature, architecture, source and target versions, and state protocol before accepting it.</li>
 <li>Select <strong>Generate Update Plan</strong> and review the update package ID, source, target, rolling order, rollback availability, and node inventory.</li>
 <li>Select <strong>Execute Rolling Update</strong>. The confirmation dialog repeats the automatic-failover warning and requires the complete update package ID. The runner first distributes the same signed package and metadata to every controller, verifies SHA-256 remotely, and publishes each copy atomically before creating maintenance gates.</li>
 <li>A persistent banner remains visible for the entire maintenance transaction while node events, status, and raw output update in place.</li>
-<li>After success, confirm the banner is gone and recheck topology, VIP, and replication. On failure, use <strong>Resume Update</strong> or <strong>Controlled Rollback</strong>; never delete maintenance markers manually.</li>
+<li>After success, confirm the banner is gone and recheck topology, VIP, and replication. On rolling-update failure, use <strong>Resume Update</strong> or <strong>Controlled Rollback</strong>; for a failed hotfix, use <strong>Retry</strong> or controlled rollback according to the table above; never delete maintenance markers manually.</li>
 </ol>
 <p>Upload and orchestration endpoints require an authenticated administrator and enforce CSRF, Raft Leader forwarding, signature trust, a constrained root helper, and audit recording. An update package ID cannot be overwritten with different content.</p>
 <p>Provide the release public key during initial installation. A formal offline kit may carry the public key; the private key must never be shipped to customer systems:</p>
@@ -130,7 +167,7 @@ curl --cacert /etc/clusterguard/tls/ca.crt \
 </tr>
 </thead>
 <tbody><tr>
-<td>Version update such as <code>2.2-28</code> to <code>2.2-29</code></td>
+<td>Version update such as <code>2.2-104</code> to <code>2.2-105</code></td>
 <td>Signed <code>.cgupgrade</code> rolling update</td>
 </tr>
 <tr>
@@ -152,19 +189,19 @@ curl --cacert /etc/clusterguard/tls/ca.crt \
 </tbody></table>
 <p>Update protocol v1 does not perform destructive metadata downgrade. A future state-format change must use an expand/read, switch/write, and contract/cleanup migration sequence rather than a regular update package.</p>
 <h2 id="3-build-a-signed-update-package">3. Build a Signed Update Package<a class="heading-anchor" href="#3-build-a-signed-update-package" aria-label="Link to 3. Build a Signed Update Package">#</a></h2>
-<p>Build old and new RPMs from clean, qualified commits, then sign the update package with the offline release key:</p>
+<p>Use the delivered source RPM with its original bytes and digest; never rebuild an existing release identity in place. Build the target RPM from a clean, qualified new-version commit, then sign with the offline release key. The 2.2-104 → 2.2-105 filenames below are examples, not evidence of v2 site acceptance; use the delivery manifest and compatibility results for the actual path:</p>
 <pre><code class="language-bash">scripts/build-clusterguard-patch.sh \
-  --from-rpm dist/clusterguard-ha-2.2-28.x86_64.rpm \
-  --to-rpm dist/clusterguard-ha-2.2-29.x86_64.rpm \
+  --from-rpm dist/clusterguard-ha-2.2-104.x86_64.rpm \
+  --to-rpm dist/clusterguard-ha-2.2-105.x86_64.rpm \
   --signing-key /secure/offline/clusterguard-patch-signing.key \
   --expected-public-key site-trust/patch-signing-public.pem \
-  --output dist/clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade
+  --output dist/clusterguard-ha-2.2-104_to_2.2-105.x86_64.cgupgrade
 </code></pre>
 <p>Before release, read the public key actually referenced by <code>update.json</code> on every site controller. The three site fingerprints, the public fingerprint derived from the offline private key, and the key used to verify the package must match exactly. A public key from an older release directory must never be treated as the site trust anchor merely because its file name looks correct. After the package is built, log in to the current Leader and perform one real console upload. Stop after the console records that the package was uploaded and its signature was verified. The package is not deliverable until this upload succeeds.</p>
 <p>See <a href="../../en-US/update-signature-incident-2026-08-31.md">Update Package Signature Verification Incident (2026-08-31)</a> for the <code>2.2-59</code> to <code>2.2-60</code> failure, process cause, and mandatory release gates.</p>
 <p>Ship the update package, its SHA-256 file, release notes, and a signing-key fingerprint through an independent channel. Never overwrite an existing update artifact.</p>
 <h3 id="hotfix-patch-specs">Hotfix Patch Specs<a class="heading-anchor" href="#hotfix-patch-specs" aria-label="Link to Hotfix Patch Specs">#</a></h3>
-<p>A hotfix patch (<code>.cgpatch</code>) is built by <code>scripts/build-hotfix-patch.sh</code> from <code>hotfixes/HF-*.json</code>. Its artifacts and per-fix bilingual catalogue are in the <a href="hotfix-patches.html">Hotfix Patch Catalogue</a>. Three commit fields in the spec mean different things and are not interchangeable:</p>
+<p>A hotfix patch (<code>.cgpatch</code>) is built by <code>scripts/build-hotfix-patch.sh</code> from <code>hotfixes/HF-*.json</code>. New specifications set <code>patch_version</code> and produce names such as <code>clusterguard-3.1.1.1.x86_64.cgpatch</code>; the new sealed release line starts at <code>3.1.1.1</code>, while specifications without it retain their historical HF-based names. Its artifacts and per-fix bilingual catalogue are in the <a href="hotfix-patches.html">Hotfix Patch Catalogue</a>. Three commit fields in the spec mean different things and are not interchangeable:</p>
 <table>
 <thead>
 <tr>
@@ -245,7 +282,7 @@ install -m 0600 -o root -g root /etc/clusterguard/ssh/controller_ed25519 \
 <h3 id="inspect">Inspect<a class="heading-anchor" href="#inspect" aria-label="Link to Inspect">#</a></h3>
 <p>This step does not contact remote nodes:</p>
 <pre><code class="language-bash">clusterguard-upgrade \
-  --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
+  --package clusterguard-ha-2.2-104_to_2.2-105.x86_64.cgupgrade \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --inspect
 </code></pre>
@@ -253,7 +290,7 @@ install -m 0600 -o root -g root /etc/clusterguard/ssh/controller_ed25519 \
 <p>During plan or execution, the source updater logs that the signed bootstrap was verified and execution is being handed to the package updater. Do not proceed with a production change if this handoff record is absent.</p>
 <h3 id="plan">Plan<a class="heading-anchor" href="#plan" aria-label="Link to Plan">#</a></h3>
 <pre><code class="language-bash">clusterguard-upgrade \
-  --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
+  --package clusterguard-ha-2.2-104_to_2.2-105.x86_64.cgupgrade \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --state ./clusterguard-deployment-state.json \
   --ssh-key /etc/clusterguard/ssh/controller_ed25519 \
@@ -263,7 +300,7 @@ install -m 0600 -o root -g root /etc/clusterguard/ssh/controller_ed25519 \
 <p>The fixed order is controller followers, data-only Agent nodes, then the current Leader. Every node must run either the declared source or target and pass the embedded binary contract check. The updater reads each data node&#39;s immutable UUID, compares controller UUIDs with live Raft voters, and compares data-node UUIDs with the live active inventory. Divergent controller views, duplicate UUIDs, role mismatches, or stale membership are rejected before maintenance locks are created, preventing missed nodes, cross-cluster targeting, and partial gating.</p>
 <h3 id="execute">Execute<a class="heading-anchor" href="#execute" aria-label="Link to Execute">#</a></h3>
 <pre><code class="language-bash">clusterguard-upgrade \
-  --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
+  --package clusterguard-ha-2.2-104_to_2.2-105.x86_64.cgupgrade \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --state ./clusterguard-deployment-state.json \
   --ssh-key /etc/clusterguard/ssh/controller_ed25519 \
@@ -295,7 +332,7 @@ clusterguard-update-PATCH-ID.events.jsonl
 <p>An ordinary error, termination signal, or node failure stops forward progress and rolls nodes updated by this run back in reverse order with the embedded old RPM. The failed node is included in the rollback set.</p>
 <p>If the updater host loses power or the process is killed, the maintenance marker intentionally remains and keeps the platform fail-closed. Resume with the same signed update package:</p>
 <pre><code class="language-bash">clusterguard-upgrade \
-  --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
+  --package clusterguard-ha-2.2-104_to_2.2-105.x86_64.cgupgrade \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --state ./clusterguard-deployment-state.json \
   --ssh-key /etc/clusterguard/ssh/controller_ed25519 \
@@ -305,7 +342,7 @@ clusterguard-update-PATCH-ID.events.jsonl
 <p><code>--resume</code> accepts only the same <code>patch_id</code> stored in the lock. A console update has already copied the package to every controller before creating that lock, so a new Leader resumes from its local artifact after leadership changes; a package or metadata digest mismatch is still rejected. Do not manually remove maintenance markers or locks. On normal completion, the updater preflights every controller marker before releasing any of them. If a release fails partway through, it writes the same lock back to every controller and remains fail-closed until connectivity is repaired and the run is resumed.</p>
 <p>To deliberately return to the old RPM:</p>
 <pre><code class="language-bash">clusterguard-upgrade \
-  --package clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
+  --package clusterguard-ha-2.2-104_to_2.2-105.x86_64.cgupgrade \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --state ./clusterguard-deployment-state.json \
   --ssh-key /etc/clusterguard/ssh/controller_ed25519 \
@@ -339,7 +376,7 @@ cgctl --json status | jq &#39;{maintenance:.result.update_maintenance_active, co
         </article>
         <aside class="page-toc" aria-label="On this page">
           <strong>On this page</strong>
-          <a class="toc-level-2" href="#console-based-update">Console-Based Update</a><a class="toc-level-3" href="#update-package-retention">Update Package Retention</a><a class="toc-level-2" href="#1-update-architecture">1. Update Architecture</a><a class="toc-level-2" href="#2-supported-boundaries">2. Supported Boundaries</a><a class="toc-level-2" href="#3-build-a-signed-update-package">3. Build a Signed Update Package</a><a class="toc-level-3" href="#hotfix-patch-specs">Hotfix Patch Specs</a><a class="toc-level-2" href="#4-site-preparation">4. Site Preparation</a><a class="toc-level-2" href="#5-four-step-update">5. Four-Step Update</a><a class="toc-level-3" href="#inspect">Inspect</a><a class="toc-level-3" href="#plan">Plan</a><a class="toc-level-3" href="#execute">Execute</a><a class="toc-level-3" href="#verify">Verify</a><a class="toc-level-2" href="#6-resume-and-rollback">6. Resume and Rollback</a><a class="toc-level-2" href="#7-first-adoption">7. First Adoption</a><a class="toc-level-2" href="#8-production-admission-checklist">8. Production Admission Checklist</a>
+          <a class="toc-level-2" href="#v2-action-rules-and-implementation-record-2026-10-03">v2 Action Rules and Implementation Record (2026-10-03)</a><a class="toc-level-2" href="#console-based-update">Console-Based Update</a><a class="toc-level-3" href="#update-package-retention">Update Package Retention</a><a class="toc-level-2" href="#1-update-architecture">1. Update Architecture</a><a class="toc-level-2" href="#2-supported-boundaries">2. Supported Boundaries</a><a class="toc-level-2" href="#3-build-a-signed-update-package">3. Build a Signed Update Package</a><a class="toc-level-3" href="#hotfix-patch-specs">Hotfix Patch Specs</a><a class="toc-level-2" href="#4-site-preparation">4. Site Preparation</a><a class="toc-level-2" href="#5-four-step-update">5. Four-Step Update</a><a class="toc-level-3" href="#inspect">Inspect</a><a class="toc-level-3" href="#plan">Plan</a><a class="toc-level-3" href="#execute">Execute</a><a class="toc-level-3" href="#verify">Verify</a><a class="toc-level-2" href="#6-resume-and-rollback">6. Resume and Rollback</a><a class="toc-level-2" href="#7-first-adoption">7. First Adoption</a><a class="toc-level-2" href="#8-production-admission-checklist">8. Production Admission Checklist</a>
         </aside>
       </main>
     </div>

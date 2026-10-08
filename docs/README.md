@@ -11,6 +11,7 @@
 | 开发：前端 / Frontend | [前端页面](development/frontend/README.md) |
 | 开发：后端 / Backend | [后端功能](development/backend/README.md) |
 | 打包与交付 / Delivery | [交付流程](development/delivery/README.md) |
+| 改文档 / Document changes | [Markdown 变更记录](development/markdown-change-record.md) |
 | 中文用户手册 | [中文场景手册](zh-CN/README.md) |
 | English manuals | [English task guides](en-US/README.md) |
 | 完整资料与历史发布 / Full catalogue | [完整历史资料目录](catalogue.md) |

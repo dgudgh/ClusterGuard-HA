@@ -8,7 +8,7 @@
 
 先按[阅读优先级与适用规则](rules/README.md)确定当前任务的前置规则；历史设计和验收结果只用于对应版本追溯。
 
-先确定问题发生在哪一层，只进入对应入口。业务代码修改前遵守[修改与证据规则](rules/change-policy.md)。
+先确定问题发生在哪一层，只进入对应入口。业务代码修改前遵守[修改与证据规则](rules/change-policy.md)；改动任何 Markdown 都要登记到 [Markdown 变更记录](markdown-change-record.md) 并跑 `node tools/verify-markdown-change-record.cjs`。
 
 | 你要改什么 | 进入哪里 |
 | --- | --- |

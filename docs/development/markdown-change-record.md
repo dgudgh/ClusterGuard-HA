@@ -1,0 +1,55 @@
+# Markdown 变更记录
+
+> **规则：本仓任何 Markdown 的新增、删除、修改，都必须在下方登记表留下一条记录，写清文件路径、变更类型（`A` 新增 / `M` 修改 / `D` 删除）和改了什么。** 重命名按「删旧 + 增新」两条记录，不引入 `R`。
+> **门禁：** `node tools/verify-markdown-change-record.cjs`（结构 + 覆盖）；`--self-test` 做变异验证。
+> **范围：** 只登记 `.md`，并且只登记**入库**的 `.md`。`release/`、`.build/`、`.worktrees/` 不入 git，其中的 md 不在门禁范围。其他 Markdown（`docs/html/`）由 `docs/build-html-docs.mjs` 从这些 md 生成，改了 md 必须重建，但生成页不逐页登记，只写进下方批次说明。
+
+本页登记覆盖的起点提交（门禁按它计算「基线 → 当前工作树」的 md 净变更）：
+
+```text
+recorded-through: 73ff4a3
+```
+
+门禁的判定规则：从上述基线到当前工作树、每个发生增删改的 `.md` 都必须在下表出现且类型一致；基线以来没有变化的 md 不得出现在表里。**尚未 `git add` 的文件不在门禁范围内**，门禁每次运行都会把它们列出来提醒。
+
+## 怎么记
+
+1. 改完 md 先 `git add`，再跑 `node tools/verify-markdown-change-record.cjs`；门禁会直接列出「变了但没登记」和「登记了但没变」的文件。
+2. 一个文件在基线上不存在 → `A`；存在且内容变了 → `M`；被删掉 → `D`。同一个文件在基线以来既新增又修改，只记一条 `A`。
+3. 说明写清楚**改了什么**，不写「优化文档」「同步更新」这类空话；至少写清被改动的规则、数字或示例。
+4. 台账变长、需要重置基线时，把 `recorded-through` 换成新的提交号，并在批次说明里写明「此前批次已归档到本页历史」，不要悄悄改基线。
+
+## 登记表
+
+| 日期 | 文件 | 变更 | 说明 |
+| --- | --- | --- | --- |
+| 2026-10-08 | `AGENTS.md` | M | 在「所有修改必须遵守」里新增一条：任何 Markdown 的新增/删除/修改都必须在 `docs/development/markdown-change-record.md` 登记并过 `verify-markdown-change-record.cjs`，改了 md 必须重建 `docs/html`，未登记不得提交。 |
+| 2026-10-08 | `docs/README.md` | M | 文档中心导航表新增一行「改文档 → Markdown 变更记录」，让台账在入口页可发现。 |
+| 2026-10-08 | `docs/development/README.md` | M | 开发入口在「先确定问题发生在哪一层」之后补一句：改动任何 Markdown 都要登记台账并跑对应门禁。 |
+| 2026-10-08 | `docs/development/delivery/README.md` | M | 热修命名条从「四段版本 `MAJOR.CAPABILITY.INTERNAL.BUGFIX`」改为「新封板版本线从 `3.1.1.1` 开始、四段为 `MAJOR.MINOR.PATCH.BUGFIX`」，并写明旧 2.x/HF 文件名全部冻结为历史。 |
+| 2026-10-08 | `docs/development/markdown-change-record.md` | A | 本页：建立 md 变更台账，规定增删改都要登记，并由 `tools/verify-markdown-change-record.cjs` 做结构与覆盖校验。 |
+| 2026-10-08 | `docs/development/rules/change-policy.md` | M | 新增「文档变更必须登记」一节：登记范围、`A`/`M`/`D` 判据、门禁的三种判红情形、`git add` 后门禁才可见、通过后重建生成页。 |
+| 2026-10-08 | `docs/en-US/hotfix-package-naming.md` | A | 新增英文版包命名规则页；本轮重建为与中文逐节对齐的 7 节结构，补回初版漏掉的「禁止的名字」一节与 `.cgupgrade` 跨语法禁令。 |
+| 2026-10-08 | `docs/en-US/update-and-patch.md` | M | 制品说明与热修规格节改用 `clusterguard-3.1.1.1.x86_64.cgpatch` 示例，并点明新封板版本线起点 `3.1.1.1`；与中文版同口径。 |
+| 2026-10-08 | `docs/en-US/upgrade-validation-chain-implementation-status.md` | M | 2026-10-08 增补：登记「载荷已落地是单一判据」「回退只命名最新已应用记录」「supersede 守卫必须有非 deployment 的输入源」三处落点，并记下 2 项未决义务。 |
+| 2026-10-08 | `docs/en-US/version-release-policy.md` | M | 交付身份条改为新封板版本线起点 `3.1.1.1` + `MAJOR.MINOR.PATCH.BUGFIX`，并写明历史 2.x/HF 规格名称冻结。 |
+| 2026-10-08 | `docs/hotfix-patches.md` | M | 导言改用新命名与封板起点；换行按 `scripts/render-hotfix-catalog.cjs` 的实际输出对齐，避免下次渲染产生无意义重排。 |
+| 2026-10-08 | `docs/zh-CN/hotfix-package-naming.md` | A | 新增中文版包命名规则页（本次随命名线迁移首次入库）：7 节结构，规定四段版本 `MAJOR.MINOR.PATCH.BUGFIX` 从 `3.1.1.1` 起、`HF-...` 只留在签名清单、修订递增 Bug 修订段并记 `supersedes_artifact`。本轮把「本次规格示例」改为「新规格示例」，并修正禁止示例的注释措辞。 |
+| 2026-10-08 | `docs/zh-CN/hotfix-patches.md` | M | 同英文台账：导言改用新命名与封板起点。 |
+| 2026-10-08 | `docs/zh-CN/update-and-patch.md` | M | 制品说明与热修规格节改用 `clusterguard-3.1.1.1.x86_64.cgpatch` 示例并点明封板起点；与英文版同口径。 |
+| 2026-10-08 | `docs/zh-CN/upgrade-validation-chain-implementation-status.md` | M | 同英文状态页：登记三处落点与 2 项未决义务。 |
+| 2026-10-08 | `docs/zh-CN/version-release-policy.md` | M | 交付身份条改为新封板版本线起点 `3.1.1.1` + `MAJOR.MINOR.PATCH.BUGFIX`。 |
+
+## 批次说明
+
+### 2026-10-08 · 热修版本身份线迁移与统一校验链收口（基线 `73ff4a3`）
+
+两条线合并成一批登记，因为它们落在同一组文件上，只按路径记一次净变更：
+
+1. **热修版本身份线迁移。** `8474f4e` 首次定义热修包命名，用四段 `MAJOR.CAPABILITY.INTERNAL.BUGFIX`（示例 `2.2.105.1`）并把前两段约束到 `rpm_version`、第三段约束到 `rpm_release`；`4bd5eb1` 把整套口径改成新的封板版本线 `MAJOR.MINOR.PATCH.BUGFIX`（起点 `3.1.1.1`），四段就此成为**交付版本身份**、不再要求与源 RPM 的 `rpm_version`、`rpm_release` 逐段相等，构建器与台账门禁里那条逐段一致性强校验同时被移除。受影响的 9 份 md 见上表。
+2. **统一校验链收口。** `4d93052` 修掉三处现场缺陷（supersede 守卫只读 `deployment.json` 因而从不运行、载荷判据只认原始 `status`、控制台操作位钉在已生效且已被取代的记录上），改动落在两份实现状态页的 2026-10-08 增补里。
+3. **本轮文档整理（2026-10-08）。** 把 `hotfix-package-naming.md` 中英两版拉成逐节对齐的 7 节结构（行号与节号完全一致，各 116 行），补回英文版缺失的「禁止的名字」一节与 `.cgupgrade` 跨语法禁令；把 `update-and-patch.md` 中英两版的制品说明统一到「必须填 `patch_version`、封板版本线从 `3.1.1.1` 开始」；把 `docs/hotfix-patches.md` 的换行对齐到渲染器的实际输出。
+4. **生成页重建。** `docs/html/` 是入库产物，`docs/build-html-docs.mjs` 重新生成 98 页，其中 19 页内容变化：6 页来自本批命名文案（`hotfix-patches` / `update-and-patch` / `version-release-policy` 的中英版），其余来自更早的 md 改动此前一直没重建（`index`、`api-operations`、`operations-manual`、`product-overview`、`upgrade-validation-chain`、`update-operation-identity-incident-2026-09-30`、`release-recovery-acceptance-checklist`）。生成产物不逐页登记。
+5. **规则落点。** 「改 md 必须登记」写进四处：`AGENTS.md`（全仓强制条款）、`docs/development/rules/change-policy.md`（新增「文档变更必须登记」一节，含判红情形与门禁可见性）、`docs/development/README.md` 与 `docs/README.md`（入口可发现）。这些文件本身也在上表登记。
+6. **命名规则已被真实实例化。** 同一批改动还产出了第一份按新规则命名的真实规格与产物（在本地 `release/2.2-105-hotfixes/`，该目录不入 git）：规格里 `patch_version` 为 `3.1.1.1`、`rpm_version` 为 `2.2`、`rpm_release` 为 `105`，与两份 `hotfix-package-naming.md`（`docs/zh-CN/` 与 `docs/en-US/`）的示例逐字段一致；原来按旧 `MAJOR.CAPABILITY.INTERNAL.BUGFIX` 命名的产物被改名移入 `obsolete-20261008-3.1-renaming/` 并留下 `REASON.md`。本轮没有改动这些私有文件，也没有把它们写进本页。
+7. **未纳入本页的既知未跟踪 md。** `docs/install-zh.md`（引用了已不存在的 `codex/phase1-control-kernel`、`codex/platform-auth-session` 分支的旧草稿）与 `.workbuddy/memory/*.md`（本机工作记忆）都未加入索引，不由本页登记，门禁只把它们列出来提醒。

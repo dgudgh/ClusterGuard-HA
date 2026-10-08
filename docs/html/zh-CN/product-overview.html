@@ -38,6 +38,10 @@
       </header>
       <main class="document-layout" id="document-content">
         <article class="document-content"><h1 id="clusterguard-ha">ClusterGuard HA<a class="heading-anchor" href="#clusterguard-ha" aria-label="Link to ClusterGuard HA">#</a></h1>
+<h2 id="开发与文档修改前必读">开发与文档修改前必读<a class="heading-anchor" href="#开发与文档修改前必读" aria-label="Link to 开发与文档修改前必读">#</a></h2>
+<p>修改前先读<a href="../../../AGENTS.md">根规则</a>、<a href="../../zh-CN/validation-gate-workflow.md">门禁执行与更新流程</a>和<a href="../../development/rules/README.md">阅读顺序与适用规则</a>，再选<a href="../../development/README.md">开发模块</a>。涉及升级契约范围的修改或动作前，完整读取<a href="upgrade-validation-chain.html">强制契约 v2</a>。安装与运维先满足适用规则，再使用对应版本的场景手册。</p>
+<h2 id="v2-源码修复与验收记录">v2 源码修复与验收记录<a class="heading-anchor" href="#v2-源码修复与验收记录" aria-label="Link to v2 源码修复与验收记录">#</a></h2>
+<p>记录中的源码修复基线为 <code>7b643f4</code>（2026-10-03），唯一主线为 <code>codex/2.2-postgresql</code>。该次修复的升级与热修执行 v2 契约：热修失败使用独立 <code>retry</code>，滚动升级失败使用 <code>resume</code>。该次修复的新包与现场 ART/FIELD 验收记录仍为 <strong>OPEN</strong>，未产生新包或生产部署。见<a href="../../zh-CN/upgrade-validation-chain-implementation-status.md">实现与验收记录</a>；该记录不替代本次源码、制品和现场核验。</p>
 <p>ClusterGuard HA 需要 Go 1.22 或更新版本。</p>
 <p><strong>ClusterGuard HA 多数据库企业级高可用控制平台</strong></p>
 <p><strong>ClusterGuard HA — Multi-Database High Availability Control Plane</strong></p>
@@ -50,7 +54,7 @@
 <p>控制台将集群上下文、主库与候选节点、VIP 状态、受控执行、旧主恢复、
 拓扑和审计证据组织在同一套运维流程中。拓扑、节点生命周期和操作日志等
 页面见中英文<a href="product-tour.html">产品导览</a>。</p>
-<h2 id="当前发布版本">当前发布版本<a class="heading-anchor" href="#当前发布版本" aria-label="Link to 当前发布版本">#</a></h2>
+<h2 id="已记录的正式发布版本">已记录的正式发布版本<a class="heading-anchor" href="#已记录的正式发布版本" aria-label="Link to 已记录的正式发布版本">#</a></h2>
 <p>发布策略和支持边界：</p>
 <ul>
 <li><code>v2.1.45</code> 是 2.1 系列的不可变最终发布版本。</li>
@@ -91,7 +95,7 @@ Docker Swarm 接管和 Kubernetes 写入口基础能力。</li>
 <td>Oracle Data Guard Broker 和 SQL Server Always On 在单独认证后</td>
 </tr>
 </tbody></table>
-<p>从 <a href="https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.39">ClusterGuard HA 2.2.39</a> 下载当前正式版本：</p>
+<p>从 <a href="https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.39">ClusterGuard HA 2.2.39</a> 下载已记录的正式 <code>2.2.39</code> 版本：</p>
 <pre><code class="language-bash">curl -fLO https://github.com/dgudgh/ClusterGuard-HA/releases/download/v2.2.39/clusterguard-ha-2.2-39-offline-linux-x86_64.tar.gz
 curl -fLO https://github.com/dgudgh/ClusterGuard-HA/releases/download/v2.2.39/clusterguard-ha-2.2-39-offline-linux-x86_64.tar.gz.sha256
 sha256sum -c clusterguard-ha-2.2-39-offline-linux-x86_64.tar.gz.sha256
@@ -200,8 +204,10 @@ go run ./cmd/clusterguard --config configs/clusterguard.example.json
 数据库拓扑、Agent 配置和 VIP 收敛策略。</p>
 <h2 id="文档">文档<a class="heading-anchor" href="#文档" aria-label="Link to 文档">#</a></h2>
 <p><a href="../index.html">中英文文档中心</a>列出了每份英文文档及其简体中文对应版本。
-推荐入口：</p>
+先读适用规则，再读场景手册；发布与验收记录用于追溯：</p>
 <ul>
+<li><a href="../../development/rules/README.md">阅读顺序与适用规则</a> / <a href="../../development/README.md">开发模块</a></li>
+<li><a href="upgrade-validation-chain.html">升级与热修强制契约</a> / <a href="../../zh-CN/validation-gate-workflow.md">门禁执行流程</a></li>
 <li><a href="../en-US/index.html">English documentation</a> / <a href="index.html">中文文档</a></li>
 <li><a href="../en-US/product-tour.html">English product tour</a> / <a href="product-tour.html">中文产品导览</a></li>
 <li><a href="../en-US/offline-rpm-install.html">English offline installation</a> / <a href="offline-rpm-install.html">中文离线安装</a></li>
@@ -314,7 +320,7 @@ go run ./cmd/cgctl --server http://127.0.0.1:8088 clusters
         </article>
         <aside class="page-toc" aria-label="本页目录">
           <strong>本页目录</strong>
-          <a class="toc-level-2" href="#控制台预览">控制台预览</a><a class="toc-level-2" href="#当前发布版本">当前发布版本</a><a class="toc-level-2" href="#2-2-发布范围">2.2 发布范围</a><a class="toc-level-2" href="#安全边界">安全边界</a><a class="toc-level-2" href="#启动">启动</a><a class="toc-level-2" href="#文档">文档</a><a class="toc-level-2" href="#许可">许可</a><a class="toc-level-2" href="#注册和刷新-mysql-集群">注册和刷新 MySQL 集群</a><a class="toc-level-2" href="#注册和刷新-postgresql-集群">注册和刷新 PostgreSQL 集群</a><a class="toc-level-2" href="#cli">CLI</a>
+          <a class="toc-level-2" href="#开发与文档修改前必读">开发与文档修改前必读</a><a class="toc-level-2" href="#v2-源码修复与验收记录">v2 源码修复与验收记录</a><a class="toc-level-2" href="#控制台预览">控制台预览</a><a class="toc-level-2" href="#已记录的正式发布版本">已记录的正式发布版本</a><a class="toc-level-2" href="#2-2-发布范围">2.2 发布范围</a><a class="toc-level-2" href="#安全边界">安全边界</a><a class="toc-level-2" href="#启动">启动</a><a class="toc-level-2" href="#文档">文档</a><a class="toc-level-2" href="#许可">许可</a><a class="toc-level-2" href="#注册和刷新-mysql-集群">注册和刷新 MySQL 集群</a><a class="toc-level-2" href="#注册和刷新-postgresql-集群">注册和刷新 PostgreSQL 集群</a><a class="toc-level-2" href="#cli">CLI</a>
         </aside>
       </main>
     </div>

@@ -207,14 +207,8 @@ for (const spec of specs) {
       ? body.patch_version.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/)
       : null;
     if (!match) {
-      incomplete.push(`${spec.name}:patch_version 格式必须为 MAJOR.CAPABILITY.INTERNAL.BUGFIX`);
+      incomplete.push(`${spec.name}:patch_version 格式必须为 MAJOR.MINOR.PATCH.BUGFIX`);
     } else {
-      if (`${match[1]}.${match[2]}` !== body.rpm_version) {
-        incomplete.push(`${spec.name}:patch_version 前两段必须等于 rpm_version`);
-      }
-      if (match[3] !== body.rpm_release) {
-        incomplete.push(`${spec.name}:patch_version 内部功能段必须等于 rpm_release`);
-      }
       if (Number(match[4]) < 1) incomplete.push(`${spec.name}:patch_version BUGFIX 必须从 1 开始`);
     }
   }

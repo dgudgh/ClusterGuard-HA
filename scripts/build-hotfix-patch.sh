@@ -117,15 +117,8 @@ severity="$(spec_get severity)"
 [[ "${rpm_release}" =~ ^[0-9][0-9A-Za-z._+~-]*$ ]] || die "rpm release 格式无效"
 if [[ "${patch_version_declared}" == "present" ]]; then
   [[ "${patch_version}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] ||
-    die "patch_version 格式必须为 MAJOR.CAPABILITY.INTERNAL.BUGFIX：${patch_version}"
-  patch_major="${BASH_REMATCH[1]}"
-  patch_capability="${BASH_REMATCH[2]}"
-  patch_internal="${BASH_REMATCH[3]}"
+    die "patch_version 格式必须为 MAJOR.MINOR.PATCH.BUGFIX：${patch_version}"
   patch_bugfix="${BASH_REMATCH[4]}"
-  [[ "${rpm_version}" == "${patch_major}.${patch_capability}" ]] ||
-    die "patch_version 的前两段必须与 rpm_version 一致：${patch_version} != ${rpm_version}"
-  [[ "${rpm_release}" == "${patch_internal}" ]] ||
-    die "patch_version 的内部功能段必须与 rpm_release 一致：${patch_version} != ${rpm_release}"
   (( 10#${patch_bugfix} >= 1 )) || die "patch_version 的 Bug 修订段必须从 1 开始：${patch_version}"
 fi
 
@@ -732,7 +725,7 @@ if [[ -e "${output}" ]]; then
   die "产物已存在，拒绝原地覆盖：${output}
 已签名的交付物一旦生成即不可变——同一个文件名、同一个版本号、不同的字节，会让现场与仓库
 各说一套，事后无法证明节点实际运行过什么。请二选一：
- ① 新格式在 spec 中递增 patch_version 的 Bug 修订段（例如 2.2.105.2），并记录 revision + supersedes_artifact{file,sha256,reason}；
+ ① 新格式在 spec 中递增 patch_version 的 Bug 修订段（例如 3.1.1.2），并记录 revision + supersedes_artifact{file,sha256,reason}；
  ② 历史格式在 spec 里加 revision（例如 1）+ supersedes_artifact{file,sha256,reason}，产生新身份与新文件名；
  ③ 若该文件从未交付、从未上传现场，先把它改名移走并写明原因，再重新构建。"
 fi

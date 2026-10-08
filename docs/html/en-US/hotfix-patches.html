@@ -55,9 +55,12 @@ next release.</p>
 silently undoes the newer fix. <strong>Apply the newest patch for your baseline only, and
 never mix patches built for different baseline versions</strong> — a patch from another
 baseline silently downgrades binaries back to its own release line.</p>
-<p>A signed patch is never rebuilt in place: a correction produces a <em>new</em> identity
-(<code>-r1</code>, <code>-r2</code>, ...) and the earlier bytes stay in the directory as the only record of
-what a site ran. So a directory can hold several files for one patch. <strong>The table
+<p>New hotfix specifications use <code>patch_version</code> and the versioned filename
+<code>clusterguard-MAJOR.MINOR.PATCH.BUGFIX.&lt;arch&gt;.cgpatch</code>; the new sealed release line starts at
+<code>3.1.1.1</code>. The signed manifest still carries the <code>HF-...</code> operation identity. Historical
+2.x and HF-named specifications retain their immutable legacy names. A signed patch is never rebuilt in place:
+a correction gets a new Bug-fix version and the earlier bytes stay in the directory
+as the only record of what a site ran. <strong>The table
 below names the one to apply for each patch</strong>; the other identities are history.</p>
 <table>
 <thead>

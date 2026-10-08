@@ -50,8 +50,9 @@
 <p>补丁按“一次现场处理”打包，不按提交拆分：两个都替换 <code>/usr/local/bin/clusterguard</code> 的
 补丁如果叠加，结果取决于安装顺序——后装旧的会把新修复盖掉。<strong>只装你所在基线版本的最新一个包，
 不要混装不同基线版本的包</strong>——装错基线的包会把二进制悄悄降级回它自己的发布线。</p>
-<p>已签名的补丁<strong>永不原地重建</strong>：任何修订都会产生<strong>新身份</strong>（<code>-r1</code>、<code>-r2</code> …），旧身份的字节
-留在目录里，作为“现场到底运行过什么”的唯一记录。所以一个目录里可能同时存在同一个补丁的
+<p>新规格使用 <code>patch_version</code> 和 <code>clusterguard-MAJOR.MINOR.PATCH.BUGFIX.&lt;架构&gt;.cgpatch</code>；
+新的封板版本线从 <code>3.1.1.1</code> 开始。签名清单仍保留 <code>HF-...</code> 作为操作身份；历史 2.x 和 HF 文件名继续冻结。已签名的补丁<strong>永不原地重建</strong>：
+修订使用新的 Bug 修订版本，旧身份的字节留在目录里，作为“现场到底运行过什么”的唯一记录。
 多份文件。<strong>下表列出的才是每个补丁应当安装的那一份</strong>，其余身份只是历史。</p>
 <table>
 <thead>

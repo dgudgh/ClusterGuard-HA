@@ -37,255 +37,270 @@
         </div>
       </header>
       <main class="document-layout" id="document-content">
-        <article class="document-content"><h1 id="升级与热修统一校验链">升级与热修统一校验链<a class="heading-anchor" href="#升级与热修统一校验链" aria-label="Link to 升级与热修统一校验链">#</a></h1>
+        <article class="document-content"><h1 id="clusterguard-upgrade-hotfix-validation-contract">ClusterGuard Upgrade / Hotfix Validation Contract<a class="heading-anchor" href="#clusterguard-upgrade-hotfix-validation-contract" aria-label="Link to ClusterGuard Upgrade / Hotfix Validation Contract">#</a></h1>
 <blockquote>
-<p><strong>级别：P0 —— 强制执行，不得跳过。</strong></p>
-<p>本文不是说明性文档，而是 ClusterGuard 升级、热修、回退、续跑、重新执行、构建、签名、发布、现场验收的<strong>统一强制校验契约</strong>。</p>
-<p><strong>任何程序、脚本、AI Agent、CI、发布工具、控制台、API、Runner、Helper、Hotfix Builder 在执行升级/热修相关动作前，必须先读取并遵守本文。</strong></p>
-<p>若代码行为与本文冲突：<strong>以本文的 P0 规则为准，程序必须失败关闭（fail closed），禁止「尽量继续」。</strong></p>
+<p><strong>Contract ID:</strong> <code>CG-UPGRADE-CONTRACT</code></p>
+<p><strong>Contract Version:</strong> <code>2</code></p>
+<p><strong>Severity:</strong> <code>P0</code></p>
+<p><strong>Mode:</strong> <code>MANDATORY / FAIL-CLOSED</code></p>
+<p><strong>Scope:</strong> Upgrade / Hotfix / Retry / Resume / Rollback / Build / Sign / Release / Field Validation</p>
+<p>本文是 <strong>ClusterGuard 升级与热修链路的规范性契约（Normative Contract）</strong>，不是说明性文档。</p>
+<p>所有相关程序、脚本、控制台、API、Runner、Helper、Builder、CI、AI Agent 在执行相关动作前，必须加载并遵守本契约。</p>
+<p><strong>MUST / MUST NOT = 强制。任何违反必须阻断。</strong></p>
+<p><strong>SHOULD / SHOULD NOT = 建议。若偏离必须记录理由。</strong></p>
+<p><strong>MAY = 可选。</strong></p>
 </blockquote>
-<p>本仓库把契约放在第 20 节指定的路径 <code>docs/upgrade-validation-chain.md</code>，中文副本在
-<code>docs/zh-CN/upgrade-validation-chain.md</code>。程序从本文件里解析第 21 节的机器可读块，不从
-任何其他位置重新推导规则。本仓库「规则 → 落点」的映射，以及尚未履行的义务，在第 22 与
-第 23 节——它们是契约的一部分，不是注释。</p>
 <hr>
-<h2 id="0-绝对规则-程序不得忽略">0. 绝对规则（程序不得忽略）<a class="heading-anchor" href="#0-绝对规则-程序不得忽略" aria-label="Link to 0. 绝对规则（程序不得忽略）">#</a></h2>
-<h3 id="0-1-必须遵守">0.1 必须遵守<a class="heading-anchor" href="#0-1-必须遵守" aria-label="Link to 0.1 必须遵守">#</a></h3>
-<p>以下规则属于<strong>不可绕过的硬门禁</strong>：</p>
-<ol>
-<li><strong>任何升级/热修动作必须先确定目标 package identity。</strong></li>
-<li><strong>UI 展示对象、确认对象、POST 对象、后端执行对象必须是同一个 package。</strong></li>
-<li><strong>Hotfix 不支持 <code>--resume</code>。</strong></li>
-<li><strong>Hotfix 失败/中断后只能「重新执行同一个 package」，不能调用 <code>--resume</code>。</strong></li>
-<li><strong>Rolling Upgrade 失败/中断后才允许走 <code>--resume</code>。</strong></li>
-<li><strong>只有同一个 <code>patch_id</code>/<code>package_id</code> 才允许接管自己遗留的 maintenance lock。</strong></li>
-<li><strong>不同 package 之间禁止接管、覆盖、清理对方的 maintenance lock。</strong></li>
-<li><strong>已签名、已发布、已有 SHA256 的 <code>.cgpatch</code> 永远不可原地重建。</strong></li>
-<li><strong>同文件名 + 同版本 + 不同字节/不同 SHA256 = 发布事故。</strong></li>
-<li><strong>历史成功结果不得被后续失败动作覆盖。</strong></li>
-<li><strong>Package deployment state 与 Operation execution history 必须分离。</strong></li>
-<li><strong>Leader 发生变化本身不是失败。</strong></li>
-<li><strong>升级验收应检查唯一 Leader、Quorum、Voters、Ready、Rejoin，而不是固定某个 IP 必须一直是 Leader。</strong></li>
-<li><strong>Rollback 禁止用 <code>cp</code> 覆盖正在运行的二进制。必须使用临时文件 + 同文件系统原子 <code>mv</code>，或先停服务再替换。</strong></li>
-<li><strong>构建产物必须经过源级测试 + 产物级检查 + 变异验证 + 签名验证。</strong></li>
-<li><strong>门禁发现不一致时必须阻断发布，不得降级为 warning。</strong></li>
-<li><strong>程序不得根据 <code>packages[0]</code>、<code>latest</code> 等隐式默认值替代用户实际选中的 subject。</strong></li>
-<li><strong>任何 fallback 如果会改变 package identity，必须直接失败。</strong></li>
-<li><strong>所有「重新执行/续跑/回退」动作都必须在后端重新验证 package kind 与 target identity，不能只信任前端。</strong></li>
-<li><strong>本文规则不得被后续程序以「兼容旧逻辑」「临时绕过」「现场紧急」为理由跳过。</strong></li>
-</ol>
-<hr>
-<h2 id="1-统一对象模型">1. 统一对象模型<a class="heading-anchor" href="#1-统一对象模型" aria-label="Link to 1. 统一对象模型">#</a></h2>
-<p>升级系统必须至少区分以下三个对象：</p>
-<pre><code class="language-text">Package
-  ├─ package_id / patch_id
-  ├─ kind: hotfix | rolling_upgrade
-  ├─ build_commit
-  ├─ base_commit
-  ├─ fix_commits[]
-  ├─ sha256
-  ├─ signature
-  └─ payload
-
-Deployment State
-  ├─ not_installed
-  ├─ applying
-  ├─ installed
-  ├─ rollbacking
-  ├─ rolled_back
-  └─ recovery_required
-
-Operation History
-  ├─ operation_id
-  ├─ package_id
-  ├─ mode: plan | execute | retry | resume | rollback
-  ├─ started_at
-  ├─ finished_at
-  ├─ status
-  ├─ message
-  └─ events[]
+<h1 id="0-contract-bootstrap">0. Contract Bootstrap<a class="heading-anchor" href="#0-contract-bootstrap" aria-label="Link to 0. Contract Bootstrap">#</a></h1>
+<p>任何升级相关入口执行前，必须完成：</p>
+<pre><code class="language-text">contract_id = CG-UPGRADE-CONTRACT
+contract_version = 2
+contract_loaded = true
+contract_supported = true
 </code></pre>
-<h2 id="1-1-禁止状态覆盖">1.1 禁止状态覆盖<a class="heading-anchor" href="#1-1-禁止状态覆盖" aria-label="Link to 1.1 禁止状态覆盖">#</a></h2>
-<p>禁止：</p>
-<pre><code class="language-text">HF-05 09:30 execute succeeded
-13:30 resume rejected
-=&gt; HF-05 status 被覆盖成 failed
+<p>若出现以下任一情况：</p>
+<pre><code class="language-text">contract missing
+contract unreadable
+contract version &gt; program supported version
+machine-readable section parse failed
 </code></pre>
 <p>必须：</p>
-<pre><code class="language-text">Package: HF-05
-Deployment State: installed
-
-Operation #1
-  mode=execute
-  status=succeeded
-
-Operation #2
-  mode=resume
-  status=rejected
+<pre><code class="language-text">FAIL CLOSED
+error_code = CG_CONTRACT_UNAVAILABLE
 </code></pre>
-<p><strong>后续操作不得覆盖历史完成状态。</strong></p>
-<hr>
-<h2 id="2-package-identity-强制规则">2. Package Identity 强制规则<a class="heading-anchor" href="#2-package-identity-强制规则" aria-label="Link to 2. Package Identity 强制规则">#</a></h2>
-<h2 id="2-1-package-identity">2.1 Package identity<a class="heading-anchor" href="#2-1-package-identity" aria-label="Link to 2.1 Package identity">#</a></h2>
-<p>至少由以下字段共同定义：</p>
-<pre><code class="language-text">package_id / patch_id
-version
-revision
-sha256
-signature
-build_commit
-base_commit
-</code></pre>
-<p>任何一个发生变化，都视为新的发布身份。</p>
-<h2 id="2-2-已发布包不可变">2.2 已发布包不可变<a class="heading-anchor" href="#2-2-已发布包不可变" aria-label="Link to 2.2 已发布包不可变">#</a></h2>
-<p>一旦满足任一条件：</p>
-<pre><code class="language-text">已签名
-已进入 release/
-已进入台账
-已生成 sha256 侧车
-已交付现场
-已被现场安装
-</code></pre>
-<p>则该 package 字节永久不可变。</p>
 <p>禁止：</p>
-<pre><code class="language-text">clusterguard-2.2-105.x86_64.cgpatch
-旧 sha256 = AAA
-
-重新构建后仍叫：
-clusterguard-2.2-105.x86_64.cgpatch
-新 sha256 = BBB
+<pre><code class="language-text">继续执行
+降级为 warning
+使用旧默认规则
+静默忽略未知字段
 </code></pre>
-<p>必须产生新 identity，例如：</p>
-<pre><code class="language-text">2.2-105-r1
-2.2-105+repack1
-HF-2026-0930-01-r1
+<hr>
+<h1 id="1-core-invariants">1. Core Invariants<a class="heading-anchor" href="#1-core-invariants" aria-label="Link to 1. Core Invariants">#</a></h1>
+<p>以下 Invariant 是整个系统的最高优先级规则。</p>
+<p>后续章节只能细化，不得修改其语义。</p>
+<hr>
+<h2 id="inv-001-exact-package-identity">INV-001 — Exact Package Identity<a class="heading-anchor" href="#inv-001-exact-package-identity" aria-label="Link to INV-001 — Exact Package Identity">#</a></h2>
+<p><strong>MUST</strong></p>
+<p>每次操作必须显式绑定唯一 <code>package_id / patch_id</code>。</p>
+<p>UI、确认框、API、Helper、Runner、Lock、Operation History 必须指向同一个 package。</p>
+<h3 id="pass">PASS<a class="heading-anchor" href="#pass" aria-label="Link to PASS">#</a></h3>
+<pre><code class="language-text">render.package_id
+==
+confirm.package_id
+==
+request.package_id
+==
+resolved.package_id
+==
+runner.package_id
 </code></pre>
-<p>并记录：</p>
+<h3 id="fail">FAIL<a class="heading-anchor" href="#fail" aria-label="Link to FAIL">#</a></h3>
+<p>任意不一致。</p>
+<h3 id="error">Error<a class="heading-anchor" href="#error" aria-label="Link to Error">#</a></h3>
+<pre><code class="language-text">CG_PACKAGE_IDENTITY_MISMATCH
+</code></pre>
+<hr>
+<h2 id="inv-002-no-implicit-package-fallback">INV-002 — No Implicit Package Fallback<a class="heading-anchor" href="#inv-002-no-implicit-package-fallback" aria-label="Link to INV-002 — No Implicit Package Fallback">#</a></h2>
+<p><strong>MUST NOT</strong></p>
+<p>不得使用以下隐式值替代用户/状态机已经选定的对象：</p>
+<pre><code class="language-text">packages[0]
+latest
+first available
+newest record
+last successful package
+</code></pre>
+<p>除非该动作本身的协议明确就是“选择最新包”，且不存在已有 subject。</p>
+<h3 id="error-2">Error<a class="heading-anchor" href="#error-2" aria-label="Link to Error">#</a></h3>
+<pre><code class="language-text">CG_IMPLICIT_PACKAGE_FALLBACK
+</code></pre>
+<hr>
+<h2 id="inv-003-released-artifact-is-immutable">INV-003 — Released Artifact Is Immutable<a class="heading-anchor" href="#inv-003-released-artifact-is-immutable" aria-label="Link to INV-003 — Released Artifact Is Immutable">#</a></h2>
+<p>满足任一条件后，package 字节永久不可修改：</p>
+<pre><code class="language-text">signed
+sha256 sidecar generated
+entered release ledger
+delivered
+uploaded
+installed
+</code></pre>
+<p>同 identity 不得出现不同 SHA256。</p>
+<h3 id="error-3">Error<a class="heading-anchor" href="#error-3" aria-label="Link to Error">#</a></h3>
+<pre><code class="language-text">CG_RELEASED_ARTIFACT_MUTATED
+</code></pre>
+<p>任何修改必须产生新 identity：</p>
+<pre><code class="language-text">revision++
+or
+new package_id
+</code></pre>
+<p>并声明：</p>
 <pre><code class="language-text">supersedes
 replacement_reason
 original_sha256
 replacement_sha256
 </code></pre>
 <hr>
-<h2 id="3-hotfix-与-rolling-upgrade-分流">3. Hotfix 与 Rolling Upgrade 分流<a class="heading-anchor" href="#3-hotfix-与-rolling-upgrade-分流" aria-label="Link to 3. Hotfix 与 Rolling Upgrade 分流">#</a></h2>
-<h2 id="3-1-rolling-upgrade">3.1 Rolling Upgrade<a class="heading-anchor" href="#3-1-rolling-upgrade" aria-label="Link to 3.1 Rolling Upgrade">#</a></h2>
-<p>允许状态机：</p>
-<pre><code class="language-text">plan
-  ↓
-execute
-  ↓
-failed/interrupted
-  ↓
-resume
-  ↓
---resume
-</code></pre>
-<h2 id="3-2-hotfix">3.2 Hotfix<a class="heading-anchor" href="#3-2-hotfix" aria-label="Link to 3.2 Hotfix">#</a></h2>
-<p>允许状态机：</p>
-<pre><code class="language-text">plan
-  ↓
-execute
-  ↓
-failed/interrupted
-  ↓
-retry same package
-  ↓
-execute same package again
-</code></pre>
-<p><strong>禁止：</strong></p>
-<pre><code class="language-text">hotfix + --resume
-</code></pre>
-<p>后端遇到：</p>
+<h2 id="inv-004-hotfix-never-uses-resume">INV-004 — Hotfix Never Uses Resume<a class="heading-anchor" href="#inv-004-hotfix-never-uses-resume" aria-label="Link to INV-004 — Hotfix Never Uses Resume">#</a></h2>
+<p>对于：</p>
 <pre><code class="language-text">kind=hotfix
-mode=resume
 </code></pre>
 <p>必须：</p>
-<pre><code class="language-text">REJECT
-error_code = HOTFIX_RESUME_NOT_SUPPORTED
+<pre><code class="language-text">resume_supported=false
 </code></pre>
-<p>不得偷偷转换成 execute，除非未来协议明确修改。</p>
-<p>Hotfix 的「重新执行」就是对同一个 package 执行 execute；API 没有单独的 retry 模式，热修重跑
-记录为 execute。给 runner 里并不存在的模式另造一个名字，会让同一个动作在日志与审计里出现
-两套词汇，这正是第 6.1 节要阻止的。</p>
+<p>失败/中断后的合法动作是：</p>
+<pre><code class="language-text">retry same package
+</code></pre>
+<p>而不是：</p>
+<pre><code class="language-text">--resume
+</code></pre>
+<h3 id="error-4">Error<a class="heading-anchor" href="#error-4" aria-label="Link to Error">#</a></h3>
+<pre><code class="language-text">CG_HOTFIX_RESUME_FORBIDDEN
+</code></pre>
 <hr>
-<h2 id="4-同包重入与-maintenance-lock">4. 同包重入与 Maintenance Lock<a class="heading-anchor" href="#4-同包重入与-maintenance-lock" aria-label="Link to 4. 同包重入与 Maintenance Lock">#</a></h2>
-<h2 id="4-1-接管条件">4.1 接管条件<a class="heading-anchor" href="#4-1-接管条件" aria-label="Link to 4.1 接管条件">#</a></h2>
+<h2 id="inv-005-lock-ownership-is-package-scoped">INV-005 — Lock Ownership Is Package-Scoped<a class="heading-anchor" href="#inv-005-lock-ownership-is-package-scoped" aria-label="Link to INV-005 — Lock Ownership Is Package-Scoped">#</a></h2>
 <p>只有：</p>
-<pre><code class="language-text">existing_lock.patch_id == current_package.patch_id
+<pre><code class="language-text">existing_lock.package_id == current.package_id
 </code></pre>
-<p>才允许：</p>
-<pre><code class="language-text">adopt_current_update_locks()
+<p>才允许接管已有 lock。</p>
+<h3 id="same-package">Same Package<a class="heading-anchor" href="#same-package" aria-label="Link to Same Package">#</a></h3>
+<pre><code class="language-text">ALLOW adopt/re-entry
 </code></pre>
-<h2 id="4-2-外包锁">4.2 外包锁<a class="heading-anchor" href="#4-2-外包锁" aria-label="Link to 4.2 外包锁">#</a></h2>
-<p>如果：</p>
-<pre><code class="language-text">existing_lock.patch_id != current_package.patch_id
+<h3 id="foreign-package">Foreign Package<a class="heading-anchor" href="#foreign-package" aria-label="Link to Foreign Package">#</a></h3>
+<pre><code class="language-text">BLOCK
+error_code = CG_FOREIGN_UPDATE_LOCK
+</code></pre>
+<p>禁止清理、覆盖、复用其他 package 的 lock。</p>
+<hr>
+<h2 id="inv-006-package-state-operation-state">INV-006 — Package State != Operation State<a class="heading-anchor" href="#inv-006-package-state-operation-state" aria-label="Link to INV-006 — Package State != Operation State">#</a></h2>
+<p>Package 的部署状态与每一次操作记录必须分离。</p>
+<p>禁止后一次操作覆盖前一次成功部署结果。</p>
+<h3 id="正确">正确<a class="heading-anchor" href="#正确" aria-label="Link to 正确">#</a></h3>
+<pre><code class="language-text">Package HF-05
+deployment_state=installed
+
+Operation #1
+mode=execute
+status=succeeded
+
+Operation #2
+mode=resume
+status=rejected
+</code></pre>
+<h3 id="禁止">禁止<a class="heading-anchor" href="#禁止" aria-label="Link to 禁止">#</a></h3>
+<pre><code class="language-text">Operation #2 failed
+=&gt; overwrite Package HF-05 as failed
+</code></pre>
+<h3 id="error-5">Error<a class="heading-anchor" href="#error-5" aria-label="Link to Error">#</a></h3>
+<pre><code class="language-text">CG_HISTORY_OVERWRITE_FORBIDDEN
+</code></pre>
+<hr>
+<h2 id="inv-007-leader-identity-is-not-stable-state">INV-007 — Leader Identity Is Not Stable State<a class="heading-anchor" href="#inv-007-leader-identity-is-not-stable-state" aria-label="Link to INV-007 — Leader Identity Is Not Stable State">#</a></h2>
+<p>Leader IP/节点发生变化本身不是升级失败。</p>
+<p>必须验证：</p>
+<pre><code class="language-text">unique_leader=true
+quorum=true
+voters=expected
+nodes_ready=true
+target_node_rejoined=true
+</code></pre>
+<p>禁止：</p>
+<pre><code class="language-text">leader_before == leader_after
+</code></pre>
+<p>作为成功条件。</p>
+<h3 id="error-6">Error<a class="heading-anchor" href="#error-6" aria-label="Link to Error">#</a></h3>
+<pre><code class="language-text">CG_INVALID_FIXED_LEADER_ASSUMPTION
+</code></pre>
+<hr>
+<h2 id="inv-008-rollback-must-be-atomic-or-offline">INV-008 — Rollback Must Be Atomic or Offline<a class="heading-anchor" href="#inv-008-rollback-must-be-atomic-or-offline" aria-label="Link to INV-008 — Rollback Must Be Atomic or Offline">#</a></h2>
+<p>运行中的二进制禁止：</p>
+<pre><code class="language-bash">cp backup target
 </code></pre>
 <p>必须：</p>
-<pre><code class="language-text">BLOCK
-FOREIGN_UPDATE_LOCK
+<pre><code class="language-text">atomic replace on same filesystem
 </code></pre>
-<p>禁止：</p>
-<pre><code class="language-text">清掉别人的锁
-覆盖别人的锁
-复用别人的 operation
-把 any hotfix 都认为可重入
+<p>或：</p>
+<pre><code class="language-text">stop service → replace → start service
 </code></pre>
-<h2 id="4-3-核心原则">4.3 核心原则<a class="heading-anchor" href="#4-3-核心原则" aria-label="Link to 4.3 核心原则">#</a></h2>
-<pre><code class="language-text">same package → re-entry allowed
-different package → blocked
+<p>推荐：</p>
+<pre><code class="language-bash">install -m 0755 backup &quot;$target.tmp&quot;
+sync
+mv -f &quot;$target.tmp&quot; &quot;$target&quot;
+</code></pre>
+<h3 id="error-7">Error<a class="heading-anchor" href="#error-7" aria-label="Link to Error">#</a></h3>
+<pre><code class="language-text">CG_NONATOMIC_RUNNING_BINARY_RESTORE
 </code></pre>
 <hr>
-<h2 id="5-ui-console-对象一致性">5. UI / Console 对象一致性<a class="heading-anchor" href="#5-ui-console-对象一致性" aria-label="Link to 5. UI / Console 对象一致性">#</a></h2>
-<h2 id="5-1-单一-subject">5.1 单一 Subject<a class="heading-anchor" href="#5-1-单一-subject" aria-label="Link to 5.1 单一 Subject">#</a></h2>
-<p>必须存在唯一来源：</p>
-<pre><code class="language-text">softwareUpdateSubject()
-</code></pre>
-<p>以下动作必须引用同一对象：</p>
-<pre><code class="language-text">按钮显示条件
-按钮 enabled/disabled
-确认框
-patch_id
-POST URL
-rollback target
-resume target
-retry target
-history row action
-</code></pre>
-<h2 id="5-2-禁止默认-packages-0">5.2 禁止默认 packages[0]<a class="heading-anchor" href="#5-2-禁止默认-packages-0" aria-label="Link to 5.2 禁止默认 packages[0]">#</a></h2>
-<p>禁止：</p>
-<pre><code class="language-js">patchID = latestSoftwareUpdate()?.package?.patch_id
-</code></pre>
-<p>用于代替当前按钮对应对象。</p>
-<p>特别禁止：</p>
-<pre><code class="language-text">按钮显示依据 = HF-04
-POST target = packages[0] = HF-05
-</code></pre>
-<h2 id="5-3-回退比续跑更严格">5.3 回退比续跑更严格<a class="heading-anchor" href="#5-3-回退比续跑更严格" aria-label="Link to 5.3 回退比续跑更严格">#</a></h2>
-<p>Rollback 必须显式携带：</p>
-<pre><code class="language-text">selected_subject.package_id
-</code></pre>
-<p>后端再次验证：</p>
-<pre><code class="language-text">request patch_id
-==
-resolved package_id
-</code></pre>
-<p>不一致则拒绝。</p>
-<hr>
-<h2 id="6-后端最终防线">6. 后端最终防线<a class="heading-anchor" href="#6-后端最终防线" aria-label="Link to 6. 后端最终防线">#</a></h2>
-<p>无论 UI 是否已经校验，后端都必须重新检查：</p>
+<h2 id="inv-009-backend-revalidates-everything">INV-009 — Backend Revalidates Everything<a class="heading-anchor" href="#inv-009-backend-revalidates-everything" aria-label="Link to INV-009 — Backend Revalidates Everything">#</a></h2>
+<p>前端校验永远不是最终安全边界。</p>
+<p>服务端执行前必须重新验证：</p>
 <pre><code class="language-text">package exists
-package identity matches
-kind matches operation mode
-maintenance lock ownership matches
-operation transition legal
-signature valid
-package not superseded/invalid
+package identity
+package kind
+requested mode
+lock ownership
+transition legality
+signature
+superseded status
 </code></pre>
-<h2 id="6-1-mode-合法矩阵">6.1 mode 合法矩阵<a class="heading-anchor" href="#6-1-mode-合法矩阵" aria-label="Link to 6.1 mode 合法矩阵">#</a></h2>
+<p>不得信任客户端传入的 mode/package identity。</p>
+<hr>
+<h2 id="inv-010-validation-failure-stops-release">INV-010 — Validation Failure Stops Release<a class="heading-anchor" href="#inv-010-validation-failure-stops-release" aria-label="Link to INV-010 — Validation Failure Stops Release">#</a></h2>
+<p>任何 P0 gate 失败：</p>
+<pre><code class="language-text">FAIL
+</code></pre>
+<p>不得：</p>
+<pre><code class="language-text">WARN AND CONTINUE
+skip
+manual override
+temporary bypass
+</code></pre>
+<p>除非产生<strong>新的正式 Contract Version</strong>明确修改规则。</p>
+<hr>
+<h1 id="2-canonical-state-model">2. Canonical State Model<a class="heading-anchor" href="#2-canonical-state-model" aria-label="Link to 2. Canonical State Model">#</a></h1>
+<hr>
+<h2 id="2-1-package">2.1 Package<a class="heading-anchor" href="#2-1-package" aria-label="Link to 2.1 Package">#</a></h2>
+<pre><code class="language-yaml">Package:
+  package_id: string
+  kind: hotfix | rolling_upgrade
+  version: string
+  revision: integer
+  base_commit: git_sha
+  build_commit: git_sha
+  fix_commits: [git_sha]
+  sha256: hex
+  signature: verified | invalid | unknown
+  supersedes: package_id | null
+</code></pre>
+<hr>
+<h2 id="2-2-deployment-state">2.2 Deployment State<a class="heading-anchor" href="#2-2-deployment-state" aria-label="Link to 2.2 Deployment State">#</a></h2>
+<p>仅描述“这个 package 在现场是否已经生效”。</p>
+<pre><code class="language-text">not_installed
+applying
+installed
+rollbacking
+rolled_back
+recovery_required
+</code></pre>
+<hr>
+<h2 id="2-3-operation">2.3 Operation<a class="heading-anchor" href="#2-3-operation" aria-label="Link to 2.3 Operation">#</a></h2>
+<p>每次动作创建独立 operation。</p>
+<pre><code class="language-yaml">Operation:
+  operation_id: string
+  package_id: string
+  mode: plan | execute | retry | resume | rollback
+  status: queued | running | succeeded | failed | rejected | interrupted
+  started_at: timestamp
+  finished_at: timestamp | null
+  error_code: string | null
+  message: string
+  events: []
+</code></pre>
+<p>Operation 必须 append-only。</p>
+<hr>
+<h1 id="3-legal-transition-matrix">3. Legal Transition Matrix<a class="heading-anchor" href="#3-legal-transition-matrix" aria-label="Link to 3. Legal Transition Matrix">#</a></h1>
 <table>
 <thead>
 <tr>
-<th>kind</th>
+<th>Package Kind</th>
 <th align="right">plan</th>
 <th align="right">execute</th>
 <th align="right">retry</th>
@@ -294,15 +309,15 @@ package not superseded/invalid
 </tr>
 </thead>
 <tbody><tr>
-<td>rolling_upgrade</td>
+<td><code>rolling_upgrade</code></td>
 <td align="right">✅</td>
 <td align="right">✅</td>
-<td align="right">❌/按协议</td>
+<td align="right">❌*</td>
 <td align="right">✅</td>
 <td align="right">✅</td>
 </tr>
 <tr>
-<td>hotfix</td>
+<td><code>hotfix</code></td>
 <td align="right">✅</td>
 <td align="right">✅</td>
 <td align="right">✅</td>
@@ -310,324 +325,580 @@ package not superseded/invalid
 <td align="right">✅</td>
 </tr>
 </tbody></table>
-<p>任何不合法组合：</p>
-<pre><code class="language-text">HTTP/API reject
-不启动 helper
-不启动 runner
-不写 maintenance lock
-不覆盖历史 operation
+<p><code>rolling_upgrade retry</code> 若未来需要支持，必须通过新 Contract Version 明确定义。</p>
+<p>非法组合必须：</p>
+<pre><code class="language-text">reject before helper/runner starts
+do not acquire lock
+do not modify deployment state
+append rejected operation if audit requires
 </code></pre>
 <hr>
-<h2 id="7-leader-quorum-校验规则">7. Leader / Quorum 校验规则<a class="heading-anchor" href="#7-leader-quorum-校验规则" aria-label="Link to 7. Leader / Quorum 校验规则">#</a></h2>
-<h2 id="7-1-禁止固定-leader">7.1 禁止固定 Leader<a class="heading-anchor" href="#7-1-禁止固定-leader" aria-label="Link to 7.1 禁止固定 Leader">#</a></h2>
+<h1 id="4-hotfix-retry-contract">4. Hotfix Retry Contract<a class="heading-anchor" href="#4-hotfix-retry-contract" aria-label="Link to 4. Hotfix Retry Contract">#</a></h1>
+<p>Hotfix 的恢复流程固定为：</p>
+<pre><code class="language-text">failed/interrupted
+        ↓
+retry
+        ↓
+same package_id
+        ↓
+check lock owner
+        ↓
+same package lock → adopt
+no lock            → acquire
+foreign lock       → reject
+        ↓
+execute idempotent apply
+        ↓
+verify
+        ↓
+release maintenance
+</code></pre>
 <p>禁止：</p>
-<pre><code class="language-text">应用前 leader=.153
-应用后 leader 必须仍然=.153
+<pre><code class="language-text">retry Hotfix A
+→ secretly execute Hotfix B
 </code></pre>
-<p>正确：</p>
-<pre><code class="language-text">unique_leader = true
-quorum = true
-voters = expected
-all_nodes_ready = true
-target_node_rejoined = true
+<p>禁止：</p>
+<pre><code class="language-text">resume Hotfix A
+→ auto-convert to execute without explicit protocol
 </code></pre>
-<p>Leader 从：</p>
-<pre><code class="language-text">.153 → .154
+<p>当前规则：<strong>resume 请求直接拒绝。</strong></p>
+<hr>
+<h1 id="5-console-subject-contract">5. Console Subject Contract<a class="heading-anchor" href="#5-console-subject-contract" aria-label="Link to 5. Console Subject Contract">#</a></h1>
+<p>必须有单一对象：</p>
+<pre><code class="language-text">softwareUpdateSubject
 </code></pre>
-<p>本身不构成失败。</p>
-<h2 id="7-2-leader-discovery">7.2 leader discovery<a class="heading-anchor" href="#7-2-leader-discovery" aria-label="Link to 7.2 leader discovery">#</a></h2>
-<p>节点本地控制面重启期间：</p>
+<p>它同时决定：</p>
+<pre><code class="language-text">display
+button visibility
+button enabled
+confirmation
+request URL
+request package_id
+rollback package_id
+retry package_id
+resume package_id
+</code></pre>
+<p>以下结构禁止存在：</p>
+<pre><code class="language-text">display subject = pending || latest
+action package_id = packages[0]
+</code></pre>
+<h3 id="required-assertion">Required Assertion<a class="heading-anchor" href="#required-assertion" aria-label="Link to Required Assertion">#</a></h3>
+<pre><code class="language-text">subject.package_id == outbound_request.package_id
+</code></pre>
+<hr>
+<h1 id="6-backend-operation-guard">6. Backend Operation Guard<a class="heading-anchor" href="#6-backend-operation-guard" aria-label="Link to 6. Backend Operation Guard">#</a></h1>
+<p>后端必须在创建 job 前执行：</p>
+<pre><code class="language-text">resolve package
+validate signature
+validate kind
+validate requested mode
+validate lock owner
+validate legal transition
+validate not superseded
+</code></pre>
+<p>示意：</p>
+<pre><code class="language-text">if kind == hotfix &amp;&amp; mode == resume:
+    reject(CG_HOTFIX_RESUME_FORBIDDEN)
+
+if lock.exists &amp;&amp; lock.package_id != package.package_id:
+    reject(CG_FOREIGN_UPDATE_LOCK)
+</code></pre>
+<hr>
+<h1 id="7-leader-cluster-validation">7. Leader / Cluster Validation<a class="heading-anchor" href="#7-leader-cluster-validation" aria-label="Link to 7. Leader / Cluster Validation">#</a></h1>
+<hr>
+<h2 id="7-1-required-health">7.1 Required Health<a class="heading-anchor" href="#7-1-required-health" aria-label="Link to 7.1 Required Health">#</a></h2>
+<p>每次节点操作后至少确认：</p>
+<pre><code class="language-text">unique_leader=true
+quorum=true
+voters=expected
+target_node_rejoined=true
+cluster_ready=true
+</code></pre>
+<hr>
+<h2 id="7-2-leader-discovery">7.2 Leader Discovery<a class="heading-anchor" href="#7-2-leader-discovery" aria-label="Link to 7.2 Leader Discovery">#</a></h2>
+<p>本机控制面暂时不可用：</p>
 <pre><code class="language-text">leader_known=false
 </code></pre>
-<p>不得直接 fallback 到：</p>
-<pre><code class="language-text">self
+<p>不得解释成：</p>
+<pre><code class="language-text">leader=self
 </code></pre>
-<p>并误判：</p>
-<pre><code class="language-text">leader_changed
+<p>也不得解释成：</p>
+<pre><code class="language-text">leader_changed=true
 </code></pre>
-<p>应优先：</p>
-<pre><code class="language-text">leader_api_address
-peer/voter rediscovery
-cluster status
-</code></pre>
-<p>并区分：</p>
+<p>必须：</p>
 <pre><code class="language-text">unknown != changed
 </code></pre>
+<p>允许使用：</p>
+<pre><code class="language-text">known leader_api_address
+peer/voter rediscovery
+authoritative cluster status
+</code></pre>
 <hr>
-<h2 id="8-rollback-强制规则">8. Rollback 强制规则<a class="heading-anchor" href="#8-rollback-强制规则" aria-label="Link to 8. Rollback 强制规则">#</a></h2>
-<h2 id="8-1-禁止-etxtbsy-风险写法">8.1 禁止 ETXTBSY 风险写法<a class="heading-anchor" href="#8-1-禁止-etxtbsy-风险写法" aria-label="Link to 8.1 禁止 ETXTBSY 风险写法">#</a></h2>
-<p>禁止：</p>
-<pre><code class="language-bash">cp backup_binary /usr/local/bin/clusterguard
+<h1 id="8-rollback-contract">8. Rollback Contract<a class="heading-anchor" href="#8-rollback-contract" aria-label="Link to 8. Rollback Contract">#</a></h1>
+<hr>
+<h2 id="rb-001-backup-identity">RB-001 — Backup Identity<a class="heading-anchor" href="#rb-001-backup-identity" aria-label="Link to RB-001 — Backup Identity">#</a></h2>
+<p>禁止使用：</p>
+<pre><code class="language-text">latest backup-*.txt
 </code></pre>
-<p>直接覆盖运行中二进制。</p>
-<h2 id="8-2-正确写法">8.2 正确写法<a class="heading-anchor" href="#8-2-正确写法" aria-label="Link to 8.2 正确写法">#</a></h2>
-<p>同一文件系统：</p>
-<pre><code class="language-bash">install -m 0755 backup/clusterguard \
-  /usr/local/bin/.clusterguard.rollback.$$
-
-sync
-
-mv -f \
-  /usr/local/bin/.clusterguard.rollback.$$ \
-  /usr/local/bin/clusterguard
+<p>必须：</p>
+<pre><code class="language-text">backup-&lt;package_id&gt;-&lt;stamp&gt;.txt
 </code></pre>
-<p>或：</p>
-<pre><code class="language-text">stop service
-replace file
-start service
+<p>恢复时验证：</p>
+<pre><code class="language-text">manifest.package_id == operation.package_id
 </code></pre>
-<h2 id="8-3-rollback-完成条件">8.3 Rollback 完成条件<a class="heading-anchor" href="#8-3-rollback-完成条件" aria-label="Link to 8.3 Rollback 完成条件">#</a></h2>
-<p>文件替换成功 ≠ rollback 成功。</p>
-<p>必须同时验证：</p>
-<pre><code class="language-text">binary sha256
-version
+<p>不一致：</p>
+<pre><code class="language-text">CG_BACKUP_IDENTITY_MISMATCH
+</code></pre>
+<hr>
+<h2 id="rb-002-restore-method">RB-002 — Restore Method<a class="heading-anchor" href="#rb-002-restore-method" aria-label="Link to RB-002 — Restore Method">#</a></h2>
+<p>运行文件必须：</p>
+<pre><code class="language-text">temp file
+→ fsync/sync as required
+→ atomic mv
+</code></pre>
+<p>或停服务替换。</p>
+<hr>
+<h2 id="rb-003-rollback-completion">RB-003 — Rollback Completion<a class="heading-anchor" href="#rb-003-rollback-completion" aria-label="Link to RB-003 — Rollback Completion">#</a></h2>
+<p>rollback 成功必须同时满足：</p>
+<pre><code class="language-text">target sha256 restored
+version restored
 service active
 ready=true
-node rejoin
-cluster quorum
-unique leader
-maintenance state
+node rejoined
+quorum=true
+unique_leader=true
+maintenance state correct
 </code></pre>
+<p>“文件复制成功”不等于 rollback 成功。</p>
 <hr>
-<h2 id="9-backup-manifest-隔离">9. Backup Manifest 隔离<a class="heading-anchor" href="#9-backup-manifest-隔离" aria-label="Link to 9. Backup Manifest 隔离">#</a></h2>
-<p>禁止：</p>
-<pre><code class="language-text">backup-*.txt
-</code></pre>
-<p>作为「取最新备份」的恢复逻辑。</p>
-<p>必须绑定：</p>
-<pre><code class="language-text">backup-&lt;hotfix_id&gt;-&lt;stamp&gt;.txt
-</code></pre>
-<p>恢复时必须验证：</p>
-<pre><code class="language-text">manifest.hotfix_id == current_hotfix_id
-</code></pre>
-<p>禁止恢复其他补丁的备份。</p>
+<h1 id="9-build-commit-accounting">9. Build Commit Accounting<a class="heading-anchor" href="#9-build-commit-accounting" aria-label="Link to 9. Build Commit Accounting">#</a></h1>
 <hr>
-<h2 id="10-build-commit-base-commit-fix-commits">10. build_commit / base_commit / fix_commits<a class="heading-anchor" href="#10-build-commit-base-commit-fix-commits" aria-label="Link to 10. build_commit / base_commit / fix_commits">#</a></h2>
-<h2 id="10-1-base-commit-定义">10.1 base_commit 定义<a class="heading-anchor" href="#10-1-base-commit-定义" aria-label="Link to 10.1 base_commit 定义">#</a></h2>
-<p><code>base_commit</code> 必须是：</p>
+<h2 id="bc-001-base-commit">BC-001 — base_commit<a class="heading-anchor" href="#bc-001-base-commit" aria-label="Link to BC-001 — base_commit">#</a></h2>
+<p><code>base_commit</code> 定义为：</p>
 <blockquote>
-<p><strong>目标现场当前已经拥有的构建树</strong></p>
+<p>目标现场当前已经拥有的代码树。</p>
 </blockquote>
-<p>而不是机械地取：</p>
-<pre><code class="language-text">上一个正式大版本
-某个旧 hotfix
-模板里的 base
-</code></pre>
-<h2 id="10-2-gate">10.2 Gate<a class="heading-anchor" href="#10-2-gate" aria-label="Link to 10.2 Gate">#</a></h2>
+<p>不得机械复制旧 spec。</p>
+<hr>
+<h2 id="bc-002-production-diff-accounting">BC-002 — Production Diff Accounting<a class="heading-anchor" href="#bc-002-production-diff-accounting" aria-label="Link to BC-002 — Production Diff Accounting">#</a></h2>
 <p>对：</p>
 <pre><code class="language-text">base_commit..build_commit
 </code></pre>
-<p>逐提交扫描。</p>
-<p>如果某提交：</p>
-<pre><code class="language-text">touches production path
-AND
-not in fix_commits
+<p>逐提交分析。</p>
+<p>每个触及 production path 的 commit：</p>
+<pre><code class="language-text">MUST be declared in fix_commits
 </code></pre>
-<p>则：</p>
-<pre><code class="language-text">FAIL
+<p>否则：</p>
+<pre><code class="language-text">CG_UNDECLARED_PRODUCTION_CHANGE
 </code></pre>
-<p>禁止通过「把别人历史修复也声明成自己的 fix_commit」来绕过。应优先收窄正确 base。</p>
+<p>禁止为了过 gate 把历史上已存在的修复伪装成本包 fix。</p>
+<p>正确方式通常是修正 <code>base_commit</code>。</p>
 <hr>
-<h2 id="11-产物构建前校验链">11. 产物构建前校验链<a class="heading-anchor" href="#11-产物构建前校验链" aria-label="Link to 11. 产物构建前校验链">#</a></h2>
+<h1 id="10-build-preflight-gate">10. Build Preflight Gate<a class="heading-anchor" href="#10-build-preflight-gate" aria-label="Link to 10. Build Preflight Gate">#</a></h1>
 <p>构建前必须全部通过：</p>
-<pre><code class="language-text">[1] source tree clean/known
-[2] base_commit valid
-[3] build_commit contains all declared fixes
-[4] production changes fully accounted
-[5] package identity unique
-[6] previous released bytes immutable
-[7] payload mapping correct
-[8] ownership/mode correct
-[9] restart units explicit
-[10] rollback generation valid
-</code></pre>
-<p>任一失败：</p>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Check</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>PRE-001</td>
+<td>Contract loaded</td>
+</tr>
+<tr>
+<td>PRE-002</td>
+<td>Source tree known</td>
+</tr>
+<tr>
+<td>PRE-003</td>
+<td><code>base_commit</code> valid</td>
+</tr>
+<tr>
+<td>PRE-004</td>
+<td><code>build_commit</code> valid</td>
+</tr>
+<tr>
+<td>PRE-005</td>
+<td>Production diffs accounted</td>
+</tr>
+<tr>
+<td>PRE-006</td>
+<td>Package identity unique</td>
+</tr>
+<tr>
+<td>PRE-007</td>
+<td>Released artifact not overwritten</td>
+</tr>
+<tr>
+<td>PRE-008</td>
+<td>Payload mapping exact</td>
+</tr>
+<tr>
+<td>PRE-009</td>
+<td>Owner/mode declared</td>
+</tr>
+<tr>
+<td>PRE-010</td>
+<td>Restart units explicit</td>
+</tr>
+<tr>
+<td>PRE-011</td>
+<td>Rollback generator valid</td>
+</tr>
+</tbody></table>
+<p>任意 FAIL：</p>
 <pre><code class="language-text">DO NOT BUILD
 </code></pre>
 <hr>
-<h2 id="12-产物构建后校验链">12. 产物构建后校验链<a class="heading-anchor" href="#12-产物构建后校验链" aria-label="Link to 12. 产物构建后校验链">#</a></h2>
-<p>必须检查：</p>
-<pre><code class="language-text">signature=verified
-kind correct
-schema_version correct
-base_commit correct
-build_commit correct
-fix_commits correct
-payload list exact
-target path exact
-file owner exact
-file mode exact
-restart_unit exact
-database_mutation expected
-rollback available
-sha256 sidecar matches
+<h1 id="11-artifact-gate">11. Artifact Gate<a class="heading-anchor" href="#11-artifact-gate" aria-label="Link to 11. Artifact Gate">#</a></h1>
+<p>构建后必须验证：</p>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Check</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>ART-001</td>
+<td>signature verified</td>
+</tr>
+<tr>
+<td>ART-002</td>
+<td>sha256 sidecar matches</td>
+</tr>
+<tr>
+<td>ART-003</td>
+<td>kind correct</td>
+</tr>
+<tr>
+<td>ART-004</td>
+<td>schema version correct</td>
+</tr>
+<tr>
+<td>ART-005</td>
+<td>base/build/fix commits correct</td>
+</tr>
+<tr>
+<td>ART-006</td>
+<td>payload exact</td>
+</tr>
+<tr>
+<td>ART-007</td>
+<td>destination exact</td>
+</tr>
+<tr>
+<td>ART-008</td>
+<td>owner exact</td>
+</tr>
+<tr>
+<td>ART-009</td>
+<td>mode exact</td>
+</tr>
+<tr>
+<td>ART-010</td>
+<td>restart units exact</td>
+</tr>
+<tr>
+<td>ART-011</td>
+<td>rollback available/expected</td>
+</tr>
+<tr>
+<td>ART-012</td>
+<td>database mutation declared</td>
+</tr>
+<tr>
+<td>ART-013</td>
+<td>runtime scripts byte-identical to source</td>
+</tr>
+</tbody></table>
+<p>任何 FAIL：</p>
+<pre><code class="language-text">DO NOT RELEASE
 </code></pre>
-<p>并验证：</p>
-<pre><code class="language-text">包内 runtime_script
-==
-源码树对应文件
-</code></pre>
-<p>必须逐字节一致。</p>
 <hr>
-<h2 id="13-测试-mutation-gate">13. 测试 + Mutation Gate<a class="heading-anchor" href="#13-测试-mutation-gate" aria-label="Link to 13. 测试 + Mutation Gate">#</a></h2>
-<p>普通测试通过仍不够。</p>
-<p>必须同时有：</p>
-<pre><code class="language-text">source tests
-package tests
-API tests
-console tests
-runner tests
-mutation tests
+<h1 id="12-test-gate">12. Test Gate<a class="heading-anchor" href="#12-test-gate" aria-label="Link to 12. Test Gate">#</a></h1>
+<p>必须同时覆盖：</p>
+<pre><code class="language-text">unit
+integration
+console
+API
+runner
+builder
+artifact
+mutation
 </code></pre>
-<p>Mutation Test 必须证明：</p>
-<pre><code class="language-text">真正错误 → 会被抓
-仅注释包含敏感文本 → 不应误抓
-把正确语句移到注释 → 必须失败
-错误 package id → 必须失败
-hotfix resume → 必须失败
-foreign lock adoption → 必须失败
-packages[0] fallback → 必须失败
-</code></pre>
-<p>并有至少一个：</p>
-<pre><code class="language-text">no-bite control
-</code></pre>
-<p>证明测试不是「无论改什么都失败」。</p>
 <hr>
-<h2 id="14-现场执行前校验">14. 现场执行前校验<a class="heading-anchor" href="#14-现场执行前校验" aria-label="Link to 14. 现场执行前校验">#</a></h2>
-<p>现场上传前：</p>
-<pre><code class="language-text">sha256sum package
+<h2 id="12-1-required-mutations">12.1 Required Mutations<a class="heading-anchor" href="#12-1-required-mutations" aria-label="Link to 12.1 Required Mutations">#</a></h2>
+<p>至少证明：</p>
+<table>
+<thead>
+<tr>
+<th>Mutation</th>
+<th>Expected</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>code 使用裸 <code>backup-*.txt</code></td>
+<td>FAIL</td>
+</tr>
+<tr>
+<td>注释出现 <code>backup-*.txt</code></td>
+<td>PASS</td>
+</tr>
+<tr>
+<td>把真实 <code>mv -f</code> 移入注释</td>
+<td>FAIL</td>
+</tr>
+<tr>
+<td>UI subject 与 POST target 不一致</td>
+<td>FAIL</td>
+</tr>
+<tr>
+<td>使用 <code>packages[0]</code> fallback</td>
+<td>FAIL</td>
+</tr>
+<tr>
+<td>hotfix + resume</td>
+<td>FAIL</td>
+</tr>
+<tr>
+<td>foreign package adopts lock</td>
+<td>FAIL</td>
+</tr>
+<tr>
+<td>same identity different sha256</td>
+<td>FAIL</td>
+</tr>
+<tr>
+<td>overwrite succeeded package state</td>
+<td>FAIL</td>
+</tr>
+</tbody></table>
+<p>必须有 no-bite control：</p>
+<pre><code class="language-text">合法无关修改 → PASS
 </code></pre>
-<p>必须与 release ledger 完全一致。</p>
-<p>检查：</p>
-<pre><code class="language-text">cluster ready
-unique leader
-voters expected
+<hr>
+<h1 id="13-field-preflight">13. Field Preflight<a class="heading-anchor" href="#13-field-preflight" aria-label="Link to 13. Field Preflight">#</a></h1>
+<p>上传现场前：</p>
+<pre><code class="language-text">verify package sha256
+verify signature
+verify release ledger identity
+</code></pre>
+<p>集群必须：</p>
+<pre><code class="language-text">ready=true
+unique_leader=true
+voters=expected
 active_operations=0
 update_maintenance_active=false
 </code></pre>
-<p>若现场已有 maintenance：</p>
-<pre><code class="language-text">必须先确认 lock owner
-禁止直接上传新包
+<p>若 maintenance 已存在：</p>
+<pre><code class="language-text">identify owner first
 </code></pre>
+<p>禁止直接上传新包。</p>
 <hr>
-<h2 id="15-现场执行中校验">15. 现场执行中校验<a class="heading-anchor" href="#15-现场执行中校验" aria-label="Link to 15. 现场执行中校验">#</a></h2>
-<p>每个节点执行完成后检查：</p>
-<pre><code class="language-text">file digest
+<h1 id="14-field-execution-checks">14. Field Execution Checks<a class="heading-anchor" href="#14-field-execution-checks" aria-label="Link to 14. Field Execution Checks">#</a></h1>
+<p>每个节点完成后检查：</p>
+<pre><code class="language-text">payload digest
 service state
-ready state
-node membership
-leader discovery
-cluster quorum
+ready
+membership
+leader visibility
+quorum
 </code></pre>
-<p>不要只检查「命令退出码」。</p>
+<p>禁止只依赖 exit code。</p>
 <hr>
-<h2 id="16-现场执行后校验">16. 现场执行后校验<a class="heading-anchor" href="#16-现场执行后校验" aria-label="Link to 16. 现场执行后校验">#</a></h2>
-<p>顺序必须是：</p>
-<pre><code class="language-text">1. 三节点目标文件 sha256 一致
-2. 服务 active
-3. helper active（如涉及）
-4. ready=true
-5. voters=3
-6. unique leader=1
-7. peer links healthy
-8. update_maintenance_active=false
-9. active_operations=0
-10. package deployment state correct
-11. operation history append-only
-12. UI 展示与真实状态一致
+<h1 id="15-field-final-acceptance">15. Field Final Acceptance<a class="heading-anchor" href="#15-field-final-acceptance" aria-label="Link to 15. Field Final Acceptance">#</a></h1>
+<p>按顺序执行：</p>
+<pre><code class="language-text">FIELD-001 target files sha256 consistent
+FIELD-002 services active
+FIELD-003 helper active when applicable
+FIELD-004 all nodes ready
+FIELD-005 voters expected
+FIELD-006 exactly one leader
+FIELD-007 peer links healthy
+FIELD-008 update_maintenance_active=false
+FIELD-009 active_operations=0
+FIELD-010 deployment state correct
+FIELD-011 operation history append-only
+FIELD-012 UI state matches authoritative backend state
 </code></pre>
 <hr>
-<h2 id="17-console-回归必测">17. Console 回归必测<a class="heading-anchor" href="#17-console-回归必测" aria-label="Link to 17. Console 回归必测">#</a></h2>
-<p>每次升级/热修相关 Console 修改后，至少验证：</p>
-<h3 id="case-a">Case A<a class="heading-anchor" href="#case-a" aria-label="Link to Case A">#</a></h3>
-<pre><code class="language-text">successful hotfix
-→ 不显示「续跑」
+<h1 id="16-mandatory-console-regression">16. Mandatory Console Regression<a class="heading-anchor" href="#16-mandatory-console-regression" aria-label="Link to 16. Mandatory Console Regression">#</a></h1>
+<hr>
+<h2 id="ui-001-successful-hotfix">UI-001 Successful Hotfix<a class="heading-anchor" href="#ui-001-successful-hotfix" aria-label="Link to UI-001 Successful Hotfix">#</a></h2>
+<pre><code class="language-text">installed hotfix
+→ no Resume
 </code></pre>
-<h3 id="case-b">Case B<a class="heading-anchor" href="#case-b" aria-label="Link to Case B">#</a></h3>
-<pre><code class="language-text">failed hotfix
-→ 显示「重新执行」
-→ 不显示「续跑」
+<hr>
+<h2 id="ui-002-failed-hotfix">UI-002 Failed Hotfix<a class="heading-anchor" href="#ui-002-failed-hotfix" aria-label="Link to UI-002 Failed Hotfix">#</a></h2>
+<pre><code class="language-text">failed/interrupted hotfix
+→ Retry
+→ no Resume
 </code></pre>
-<h3 id="case-c">Case C<a class="heading-anchor" href="#case-c" aria-label="Link to Case C">#</a></h3>
-<pre><code class="language-text">failed rolling upgrade
-→ 显示「续跑」
+<hr>
+<h2 id="ui-003-failed-rolling-upgrade">UI-003 Failed Rolling Upgrade<a class="heading-anchor" href="#ui-003-failed-rolling-upgrade" aria-label="Link to UI-003 Failed Rolling Upgrade">#</a></h2>
+<pre><code class="language-text">failed/interrupted rolling upgrade
+→ Resume
 </code></pre>
-<h3 id="case-d">Case D<a class="heading-anchor" href="#case-d" aria-label="Link to Case D">#</a></h3>
-<pre><code class="language-text">HF-04 = pending/failed
-HF-05 = latest/succeeded
+<hr>
+<h2 id="ui-004-cross-record-targeting">UI-004 Cross-Record Targeting<a class="heading-anchor" href="#ui-004-cross-record-targeting" aria-label="Link to UI-004 Cross-Record Targeting">#</a></h2>
+<pre><code class="language-text">HF-04 pending/failed
+HF-05 latest/succeeded
 
-点击 HF-04 动作
-→ POST patch_id 必须是 HF-04
-</code></pre>
-<h3 id="case-e">Case E<a class="heading-anchor" href="#case-e" aria-label="Link to Case E">#</a></h3>
-<pre><code class="language-text">点击 HF-04 rollback
-→ rollback target 必须是 HF-04
-→ 禁止 fallback 到 HF-05 / packages[0]
-</code></pre>
-<p>Case A–E 在本仓库是可执行的：</p>
-<pre><code class="language-text">node tools/console-update-hotfix-recovery-acceptance.cjs
-</code></pre>
-<p>它通过 DevTools 协议驱动真实控制台页面，站点数据来自现场实际持有的那几条记录，并从
-fixture 的请求日志里读取页面真正 POST 出去的 patch_id。没有浏览器时它报告 NOT RUN，
-而不是通过。</p>
-<hr>
-<h2 id="18-hf-05-2026-09-30-事故回归基线">18. HF-05 / 2026-09-30 事故回归基线<a class="heading-anchor" href="#18-hf-05-2026-09-30-事故回归基线" aria-label="Link to 18. HF-05 / 2026-09-30 事故回归基线">#</a></h2>
-<p>必须永久保留以下事实作为回归样本：</p>
-<pre><code class="language-text">HF-05 实际已经 succeeded
-↓
-错误点击 resume
-↓
-hotfix runner 立即拒绝 --resume
-↓
-真实集群未受损
-↓
-但历史成功记录被覆盖成 failed
-</code></pre>
-<p>这证明三件事必须永久防回归：</p>
-<pre><code class="language-text">1. UI subject 与 POST target 不一致
-2. hotfix resume routing 不合法
-3. operation 覆盖 package deployment state
+click HF-04 action
+→ outbound package_id == HF-04
 </code></pre>
 <hr>
-<h2 id="19-发布纪律">19. 发布纪律<a class="heading-anchor" href="#19-发布纪律" aria-label="Link to 19. 发布纪律">#</a></h2>
-<p>禁止：</p>
-<pre><code class="language-text">未 push/未 tag 却把包描述为正式远端发布
+<h2 id="ui-005-rollback-targeting">UI-005 Rollback Targeting<a class="heading-anchor" href="#ui-005-rollback-targeting" aria-label="Link to UI-005 Rollback Targeting">#</a></h2>
+<pre><code class="language-text">click HF-04 rollback
+→ target HF-04
+→ MUST NOT target packages[0]
 </code></pre>
-<p>必须区分：</p>
+<hr>
+<h1 id="17-permanent-regression-scenario">17. Permanent Regression Scenario<a class="heading-anchor" href="#17-permanent-regression-scenario" aria-label="Link to 17. Permanent Regression Scenario">#</a></h1>
+<p>以下事故必须永久保留为测试 fixture：</p>
+<pre><code class="language-text">HF-05 execute succeeded
+↓
+a later Resume request targeted HF-05
+↓
+hotfix rejected --resume
+↓
+cluster remained healthy
+↓
+operation failure overwrote displayed package status
+</code></pre>
+<p>必须永久防止：</p>
+<pre><code class="language-text">REG-001 wrong UI subject/action target
+REG-002 hotfix resume routing
+REG-003 operation overwrites package deployment result
+</code></pre>
+<hr>
+<h1 id="18-release-lifecycle">18. Release Lifecycle<a class="heading-anchor" href="#18-release-lifecycle" aria-label="Link to 18. Release Lifecycle">#</a></h1>
+<p>必须显式区分：</p>
 <pre><code class="language-text">built
 signed
 validated
-released locally
+released_local
 pushed
 tagged
-uploaded to field
-installed
-verified in field
+uploaded_field
+installed_field
+verified_field
 </code></pre>
-<p>任何报告都必须写真实阶段。</p>
+<p>禁止把：</p>
+<pre><code class="language-text">built/signed locally
+</code></pre>
+<p>描述为：</p>
+<pre><code class="language-text">released/pushed/installed
+</code></pre>
 <hr>
-<h2 id="20-程序读取要求">20. 程序读取要求<a class="heading-anchor" href="#20-程序读取要求" aria-label="Link to 20. 程序读取要求">#</a></h2>
-<p>所有未来自动化程序必须在执行升级相关任务前检查本文存在：</p>
-<pre><code class="language-text">MANDATORY_DOC = docs/upgrade-validation-chain.md
-</code></pre>
-<p>如果不存在：</p>
-<pre><code class="language-text">FAIL CLOSED
-</code></pre>
-<p>如果本文中的 <code>VALIDATION_CONTRACT_VERSION</code> 高于程序支持版本：</p>
-<pre><code class="language-text">FAIL CLOSED
-</code></pre>
-<p>禁止静默忽略未知规则。</p>
+<h1 id="19-error-code-registry">19. Error Code Registry<a class="heading-anchor" href="#19-error-code-registry" aria-label="Link to 19. Error Code Registry">#</a></h1>
+<table>
+<thead>
+<tr>
+<th>Error Code</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>CG_CONTRACT_UNAVAILABLE</code></td>
+<td>Contract missing/unreadable/unsupported</td>
+</tr>
+<tr>
+<td><code>CG_PACKAGE_IDENTITY_MISMATCH</code></td>
+<td>Operation targets inconsistent package</td>
+</tr>
+<tr>
+<td><code>CG_IMPLICIT_PACKAGE_FALLBACK</code></td>
+<td>Implicit latest/packages[0] fallback</td>
+</tr>
+<tr>
+<td><code>CG_RELEASED_ARTIFACT_MUTATED</code></td>
+<td>Released bytes changed</td>
+</tr>
+<tr>
+<td><code>CG_HOTFIX_RESUME_FORBIDDEN</code></td>
+<td>Resume requested for hotfix</td>
+</tr>
+<tr>
+<td><code>CG_FOREIGN_UPDATE_LOCK</code></td>
+<td>Package attempted to adopt foreign lock</td>
+</tr>
+<tr>
+<td><code>CG_HISTORY_OVERWRITE_FORBIDDEN</code></td>
+<td>Later operation overwrote prior deployment result</td>
+</tr>
+<tr>
+<td><code>CG_INVALID_FIXED_LEADER_ASSUMPTION</code></td>
+<td>Fixed leader identity used as success requirement</td>
+</tr>
+<tr>
+<td><code>CG_NONATOMIC_RUNNING_BINARY_RESTORE</code></td>
+<td>Unsafe rollback overwrite</td>
+</tr>
+<tr>
+<td><code>CG_BACKUP_IDENTITY_MISMATCH</code></td>
+<td>Backup belongs to another package</td>
+</tr>
+<tr>
+<td><code>CG_UNDECLARED_PRODUCTION_CHANGE</code></td>
+<td>Build range contains undeclared production commit</td>
+</tr>
+</tbody></table>
+<p>新增错误码必须更新本表。</p>
 <hr>
-<h2 id="21-machine-readable-contract">21. Machine-Readable Contract<a class="heading-anchor" href="#21-machine-readable-contract" aria-label="Link to 21. Machine-Readable Contract">#</a></h2>
-<pre><code class="language-yaml">VALIDATION_CONTRACT_VERSION: 1
+<h1 id="20-ai-agent-rules">20. AI / Agent Rules<a class="heading-anchor" href="#20-ai-agent-rules" aria-label="Link to 20. AI / Agent Rules">#</a></h1>
+<p>任何 Codex / Claude / Trae / AI Agent 在修改以下范围前：</p>
+<pre><code class="language-text">upgrade
+hotfix
+rollback
+release
+package builder
+console update flow
+operation manager
+maintenance lock
+</code></pre>
+<p>必须先读取本文，并在工作记录中输出：</p>
+<pre><code class="language-text">CG-UPGRADE-CONTRACT
+contract_version=2
+contract_loaded=true
+</code></pre>
+<p>AI MUST NOT：</p>
+<pre><code class="language-text">weaken MUST to SHOULD
+convert FAIL to WARN
+skip mutation gate
+skip artifact gate
+overwrite released package
+delete historical failure evidence
+change package identity without revision
+invent a fallback target
+assume latest == selected
+assume leader must remain unchanged
+</code></pre>
+<p>如果无法证明符合某条 P0：</p>
+<pre><code class="language-text">STOP
+mark unresolved
+do not claim completion
+</code></pre>
+<hr>
+<h1 id="21-machine-readable-contract">21. Machine-Readable Contract<a class="heading-anchor" href="#21-machine-readable-contract" aria-label="Link to 21. Machine-Readable Contract">#</a></h1>
+<blockquote>
+<p>程序应优先解析本节。字段未知时必须 fail closed。</p>
+</blockquote>
+<pre><code class="language-yaml">contract:
+  id: CG-UPGRADE-CONTRACT
+  version: 2
+  mandatory: true
+  fail_closed: true
 
-mandatory: true
-fail_closed: true
-
-package:
-  immutable_after_release: true
-  identity_must_be_explicit: true
-  forbid_same_identity_different_sha256: true
+invariants:
+  explicit_package_identity: true
+  implicit_package_fallback_forbidden: true
+  released_artifact_immutable: true
+  package_state_separate_from_operations: true
+  backend_revalidation_required: true
 
 hotfix:
   resume_supported: false
@@ -638,211 +909,78 @@ rolling_upgrade:
   resume_supported: true
 
 console:
-  subject_must_equal_action_target: true
-  forbid_packages_0_fallback: true
-
-backend:
-  revalidate_package_kind: true
-  revalidate_package_identity: true
-  revalidate_lock_owner: true
-
-history:
-  package_state_separate_from_operation_history: true
-  append_only_operations: true
-  forbid_success_overwrite: true
+  subject_equals_action_target: true
+  packages_0_fallback_forbidden: true
 
 leader:
-  fixed_leader_required: false
+  fixed_identity_required: false
   unique_leader_required: true
   quorum_required: true
+  unknown_is_not_changed: true
 
 rollback:
   direct_cp_over_running_binary_forbidden: true
   atomic_replace_required: true
-  verify_after_restore: true
+  backup_identity_bound_to_package: true
+  post_restore_verification_required: true
+
+build:
+  production_diff_accounting_required: true
+  base_commit_is_field_baseline: true
 
 release:
   signed_artifact_immutable: true
   sha256_required: true
   mutation_gate_required: true
 
+history:
+  operation_append_only: true
+  deployment_success_overwrite_forbidden: true
+
 field:
-  verify_cluster_health_before: true
-  verify_cluster_health_after: true
+  health_check_before: true
+  health_check_after: true
 </code></pre>
 <hr>
-<h2 id="22-本仓库各规则的落点">22. 本仓库各规则的落点<a class="heading-anchor" href="#22-本仓库各规则的落点" aria-label="Link to 22. 本仓库各规则的落点">#</a></h2>
-<p>这张表是契约的一部分：一条没有落点、也没有未决义务的规则，就是一条没有被执行的规则。
-<code>tools/verify-upgrade-validation-chain.cjs</code> 把表里的规则当作代码逐条重查落点。</p>
-<table>
-<thead>
-<tr>
-<th>规则</th>
-<th>落点</th>
-<th>状态</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>0.1.1 identity 显式</td>
-<td><code>scripts/clusterguard-upgrade.sh</code> 从签名清单读出 patch id 并校验格式；API 路径为 <code>/api/v1/platform/updates/{patchID}/{mode}</code></td>
-<td>已执行</td>
-</tr>
-<tr>
-<td>0.1.2 subject == 动作对象</td>
-<td><code>internal/api/console.html</code> 的 <code>softwareUpdateSubject()</code>；由 Case A–E 在真浏览器里验收</td>
-<td>已执行</td>
-</tr>
-<tr>
-<td>0.1.3 hotfix 无 resume（路由）</td>
-<td><code>scripts/clusterguard-update-job.sh</code> 的 <code>update_mode_arguments()</code>；由 <code>TestUpdateJobRoutesResumeByPackageKind</code> 钉住</td>
-<td>已执行</td>
-</tr>
-<tr>
-<td>0.1.3 hotfix 无 resume（后端）</td>
-<td><code>internal/platformupdate/manager.go</code> 的 <code>ErrResumeUnsupported</code>，映射为 HTTP 409，且在任何文件被写之前返回</td>
-<td>已执行</td>
-</tr>
-<tr>
-<td>0.1.4 热修重试 = 重跑同一个包</td>
-<td>job wrapper 下发 <code>--execute --yes</code>；控制台对同一个 patch id POST <code>/execute</code></td>
-<td>已执行</td>
-</tr>
-<tr>
-<td>0.1.5 滚动升级可续跑</td>
-<td>job wrapper 对非热修下发 <code>--resume --execute --yes</code></td>
-<td>已执行</td>
-</tr>
-<tr>
-<td>0.1.6 同包接管门禁</td>
-<td><code>current_update_lock_on_host()</code> 要求锁的 patch id 与自己相同（<code>grep -Fqx &#39;${patch_id}&#39;</code>）</td>
-<td>已执行</td>
-</tr>
-<tr>
-<td>0.1.7 异包拒绝</td>
-<td><code>foreign_update_lock_on_host()</code> / <code>detect_foreign_update_lock()</code>；异包持有者会被点名拒绝</td>
-<td>已执行</td>
-</tr>
-<tr>
-<td>0.1.8 已发布字节不可变</td>
-<td><code>scripts/build-hotfix-patch.sh</code> 拒绝原地覆盖；未交付的那次构建改名留档并写明原因</td>
-<td>已执行</td>
-</tr>
-<tr>
-<td>0.1.9 同名不同字节</td>
-<td><code>hotfixes/hotfix-publications.json</code> 的 revision 链，由 <code>tools/verify-hotfix-patch-catalog.cjs</code> 复核</td>
-<td>已执行</td>
-</tr>
-<tr>
-<td>0.1.10 历史成功不被覆盖</td>
-<td>—</td>
-<td><strong>未执行 —— 见第 23 节</strong></td>
-</tr>
-<tr>
-<td>0.1.11 状态与历史分离</td>
-<td>—</td>
-<td><strong>未执行 —— 见第 23 节</strong></td>
-</tr>
-<tr>
-<td>0.1.12 Leader 变更不是失败</td>
-<td><code>resolve_leader_host()</code> 在被补丁重启的节点回来后重新解析 Leader，而不是钉死运行前那台</td>
-<td>已执行</td>
-</tr>
-<tr>
-<td>0.1.13 唯一 Leader / Quorum / Voters</td>
-<td><code>verify_cluster_idle()</code></td>
-<td>已执行</td>
-</tr>
-<tr>
-<td>0.1.14 回退不用 <code>cp</code></td>
-<td>生成的 <code>rollback.sh</code> 使用 <code>mktemp</code> + <code>mv -f</code></td>
-<td>已执行</td>
-</tr>
-<tr>
-<td>0.1.15 源码 + 产物 + 变异 + 签名</td>
-<td><code>scripts/build-hotfix-patch.sh</code> 与 <code>tools/verify-hotfix-patch-catalog.cjs</code>（42 项、无跳过）</td>
-<td>已执行</td>
-</tr>
-<tr>
-<td>0.1.16 门禁阻断发布</td>
-<td>门禁非零退出；台账门禁在跳过检查时报 <code>did not run</code>，而不是通过</td>
-<td>已执行</td>
-</tr>
-<tr>
-<td>0.1.17 无隐式 <code>packages[0]</code> / <code>latest</code></td>
-<td>控制台的 <code>softwareUpdateSubject()</code>、<code>pendingSoftwareUpdate()</code> 与 <code>prepareSoftwareUpdateExecution()</code></td>
-<td>已执行</td>
-</tr>
-<tr>
-<td>0.1.18 改变 identity 的 fallback 直接失败</td>
-<td><code>startSoftwareUpdate()</code> 对不在列表中的 id 直接返回 false；后端拒绝未知 id</td>
-<td>已执行</td>
-</tr>
-<tr>
-<td>0.1.19 后端重验 kind 与 identity</td>
-<td><code>internal/platformupdate/manager.go</code>，以及 job wrapper 读取签名的 <code>package.json</code> kind</td>
-<td>已执行</td>
-</tr>
-<tr>
-<td>0.1.20 不得跳过本文</td>
-<td><code>tools/verify-upgrade-validation-chain.cjs</code> 在本文缺失、不可解析或版本高于其支持版本时失败关闭</td>
-<td>已执行</td>
-</tr>
-<tr>
-<td>5.3 回退携带自己的 subject</td>
-<td>回退 URL 携带 patch id，确认框要求的正是同一个 id</td>
-<td>已执行</td>
-</tr>
-<tr>
-<td>7.2 unknown 不等于 changed</td>
-<td><code>verify_cluster_idle()</code> 把观测不到 Leader 报成 <code>leader_unknown</code>，只有确实不同的 Leader 才是 <code>leader_changed</code></td>
-<td>已执行</td>
-</tr>
-<tr>
-<td>9 备份清单绑定自己的热修</td>
-<td>构建器把清单命名为 <code>backup-&lt;hotfix_id&gt;-&lt;stamp&gt;.txt</code>，生成的 <code>rollback.sh</code> 只 glob 自己的 id</td>
-<td>已执行</td>
-</tr>
-<tr>
-<td>10 <code>base_commit</code> 是现场已有的树</td>
-<td><code>tools/verify-hotfix-patch-catalog.cjs</code> 逐提交扫描 <code>base_commit..build_commit</code>；<code>docs/update-and-patch.md</code> 写明该规则</td>
-<td>已执行</td>
-</tr>
-</tbody></table>
-<hr>
-<h2 id="23-未决义务">23. 未决义务<a class="heading-anchor" href="#23-未决义务" aria-label="Link to 23. 未决义务">#</a></h2>
-<p>以下规则已经生效，<strong>但尚未实现</strong>。它们被列在这里，并在每次门禁运行时打印出来，以免任何
-读者把契约误当成已被完全满足。每条都点名了收口它的卡片。</p>
-<pre><code class="language-text">history.package_state_separate_from_operation_history
-  card: UPDATE-OPERATION-HISTORY-P0
-  现状：每个包一个 status.json 只保存最新一次尝试，因此后来的尝试会替换先前的结果。
-  证据：2026-09-30 13:30 那次被拒绝的 resume 之后，Leader 的 status.json 对一个人
-  事件日志完整成功的包写着 resume/failed，而另外两台仍写着 execute/succeeded。
-
-history.append_only_operations
-  card: UPDATE-OPERATION-HISTORY-P0
-  现状：操作没有按列表记录；只有 events.jsonl 是追加式的。
-
-history.forbid_success_overwrite
-  card: UPDATE-OPERATION-HISTORY-P0
-  现状：通用规则未执行。造成事故的那条具体路径已封死——后端现在在作业产生之前就拒绝热修
-  续跑，被拒绝的尝试什么都不写——但后来一次合法尝试仍可能替换掉先前的成功。
+<h1 id="22-completion-definition">22. Completion Definition<a class="heading-anchor" href="#22-completion-definition" aria-label="Link to 22. Completion Definition">#</a></h1>
+<p>任何程序、AI、工程师不得仅以以下条件宣布完成：</p>
+<pre><code class="language-text">command exit 0
+tests green
+package built
 </code></pre>
-<p><code>tools/verify-upgrade-validation-chain.cjs</code> 每次运行都会把它们报成 <code>OPEN</code>。加 <code>--strict</code>
-可让它们使整次运行失败，发布门禁在卡片落地之前应当使用它；默认只报不拦，这样与历史模型
-无关的改动不会被契约自己第 23 节记为未完成的工作卡住。</p>
+<p>完成必须意味着：</p>
+<pre><code class="language-text">identity correct
+state transition legal
+lock ownership correct
+artifact immutable
+rollback bounded
+tests meaningful
+mutation tests bite
+field state healthy
+history auditable
+UI and backend agree
+</code></pre>
 <hr>
-<h2 id="24-最终原则">24. 最终原则<a class="heading-anchor" href="#24-最终原则" aria-label="Link to 24. 最终原则">#</a></h2>
-<p>升级系统的目标不是：</p>
-<blockquote>
-<p>「脚本最后返回 0」。</p>
-</blockquote>
-<p>而是：</p>
-<blockquote>
-<p><strong>每一次变更都拥有明确身份、明确目标、明确状态机、明确锁归属、明确回滚边界、明确证据
-链，并且任何程序都无法通过默认值、历史覆盖、错误恢复模式或静默 fallback 操作错误的包。</strong></p>
-</blockquote>
+<h1 id="23-change-control">23. Change Control<a class="heading-anchor" href="#23-change-control" aria-label="Link to 23. Change Control">#</a></h1>
+<p>修改本契约必须：</p>
+<pre><code class="language-text">1. increment contract version
+2. record reason
+3. update machine-readable block
+4. update error codes if needed
+5. update regression tests
+6. update every parser/consumer that declares supported version
+</code></pre>
+<p>禁止原地修改规则而不升版本。</p>
 <hr>
-<p><strong>END OF MANDATORY VALIDATION CONTRACT</strong></p>
+<h1 id="24-final-rule">24. Final Rule<a class="heading-anchor" href="#24-final-rule" aria-label="Link to 24. Final Rule">#</a></h1>
+<blockquote>
+<p><strong>升级系统的正确性，不由“脚本有没有跑完”定义，而由：明确对象、合法状态迁移、锁归属、不可变发布物、可验证回滚、集群健康、完整审计链共同定义。</strong></p>
+</blockquote>
+<p>任何程序无法证明上述条件时：</p>
+<pre><code class="language-text">FAIL CLOSED
+</code></pre>
+<hr>
+<p><strong>END OF CG-UPGRADE-CONTRACT v2</strong></p>
 
           <footer class="document-footer">
             <span>源文件: <code>docs/zh-CN/upgrade-validation-chain.md</code></span>
@@ -851,7 +989,7 @@ history.forbid_success_overwrite
         </article>
         <aside class="page-toc" aria-label="本页目录">
           <strong>本页目录</strong>
-          <a class="toc-level-2" href="#0-绝对规则-程序不得忽略">0. 绝对规则（程序不得忽略）</a><a class="toc-level-3" href="#0-1-必须遵守">0.1 必须遵守</a><a class="toc-level-2" href="#1-统一对象模型">1. 统一对象模型</a><a class="toc-level-2" href="#1-1-禁止状态覆盖">1.1 禁止状态覆盖</a><a class="toc-level-2" href="#2-package-identity-强制规则">2. Package Identity 强制规则</a><a class="toc-level-2" href="#2-1-package-identity">2.1 Package identity</a><a class="toc-level-2" href="#2-2-已发布包不可变">2.2 已发布包不可变</a><a class="toc-level-2" href="#3-hotfix-与-rolling-upgrade-分流">3. Hotfix 与 Rolling Upgrade 分流</a><a class="toc-level-2" href="#3-1-rolling-upgrade">3.1 Rolling Upgrade</a><a class="toc-level-2" href="#3-2-hotfix">3.2 Hotfix</a><a class="toc-level-2" href="#4-同包重入与-maintenance-lock">4. 同包重入与 Maintenance Lock</a><a class="toc-level-2" href="#4-1-接管条件">4.1 接管条件</a><a class="toc-level-2" href="#4-2-外包锁">4.2 外包锁</a><a class="toc-level-2" href="#4-3-核心原则">4.3 核心原则</a><a class="toc-level-2" href="#5-ui-console-对象一致性">5. UI / Console 对象一致性</a><a class="toc-level-2" href="#5-1-单一-subject">5.1 单一 Subject</a><a class="toc-level-2" href="#5-2-禁止默认-packages-0">5.2 禁止默认 packages[0]</a><a class="toc-level-2" href="#5-3-回退比续跑更严格">5.3 回退比续跑更严格</a><a class="toc-level-2" href="#6-后端最终防线">6. 后端最终防线</a><a class="toc-level-2" href="#6-1-mode-合法矩阵">6.1 mode 合法矩阵</a><a class="toc-level-2" href="#7-leader-quorum-校验规则">7. Leader / Quorum 校验规则</a><a class="toc-level-2" href="#7-1-禁止固定-leader">7.1 禁止固定 Leader</a><a class="toc-level-2" href="#7-2-leader-discovery">7.2 leader discovery</a><a class="toc-level-2" href="#8-rollback-强制规则">8. Rollback 强制规则</a><a class="toc-level-2" href="#8-1-禁止-etxtbsy-风险写法">8.1 禁止 ETXTBSY 风险写法</a><a class="toc-level-2" href="#8-2-正确写法">8.2 正确写法</a><a class="toc-level-2" href="#8-3-rollback-完成条件">8.3 Rollback 完成条件</a><a class="toc-level-2" href="#9-backup-manifest-隔离">9. Backup Manifest 隔离</a><a class="toc-level-2" href="#10-build-commit-base-commit-fix-commits">10. build_commit / base_commit / fix_commits</a><a class="toc-level-2" href="#10-1-base-commit-定义">10.1 base_commit 定义</a><a class="toc-level-2" href="#10-2-gate">10.2 Gate</a><a class="toc-level-2" href="#11-产物构建前校验链">11. 产物构建前校验链</a><a class="toc-level-2" href="#12-产物构建后校验链">12. 产物构建后校验链</a><a class="toc-level-2" href="#13-测试-mutation-gate">13. 测试 + Mutation Gate</a><a class="toc-level-2" href="#14-现场执行前校验">14. 现场执行前校验</a><a class="toc-level-2" href="#15-现场执行中校验">15. 现场执行中校验</a><a class="toc-level-2" href="#16-现场执行后校验">16. 现场执行后校验</a><a class="toc-level-2" href="#17-console-回归必测">17. Console 回归必测</a><a class="toc-level-3" href="#case-a">Case A</a><a class="toc-level-3" href="#case-b">Case B</a><a class="toc-level-3" href="#case-c">Case C</a><a class="toc-level-3" href="#case-d">Case D</a><a class="toc-level-3" href="#case-e">Case E</a><a class="toc-level-2" href="#18-hf-05-2026-09-30-事故回归基线">18. HF-05 / 2026-09-30 事故回归基线</a><a class="toc-level-2" href="#19-发布纪律">19. 发布纪律</a><a class="toc-level-2" href="#20-程序读取要求">20. 程序读取要求</a><a class="toc-level-2" href="#21-machine-readable-contract">21. Machine-Readable Contract</a><a class="toc-level-2" href="#22-本仓库各规则的落点">22. 本仓库各规则的落点</a><a class="toc-level-2" href="#23-未决义务">23. 未决义务</a><a class="toc-level-2" href="#24-最终原则">24. 最终原则</a>
+          <a class="toc-level-2" href="#inv-001-exact-package-identity">INV-001 — Exact Package Identity</a><a class="toc-level-3" href="#pass">PASS</a><a class="toc-level-3" href="#fail">FAIL</a><a class="toc-level-3" href="#error">Error</a><a class="toc-level-2" href="#inv-002-no-implicit-package-fallback">INV-002 — No Implicit Package Fallback</a><a class="toc-level-3" href="#error-2">Error</a><a class="toc-level-2" href="#inv-003-released-artifact-is-immutable">INV-003 — Released Artifact Is Immutable</a><a class="toc-level-3" href="#error-3">Error</a><a class="toc-level-2" href="#inv-004-hotfix-never-uses-resume">INV-004 — Hotfix Never Uses Resume</a><a class="toc-level-3" href="#error-4">Error</a><a class="toc-level-2" href="#inv-005-lock-ownership-is-package-scoped">INV-005 — Lock Ownership Is Package-Scoped</a><a class="toc-level-3" href="#same-package">Same Package</a><a class="toc-level-3" href="#foreign-package">Foreign Package</a><a class="toc-level-2" href="#inv-006-package-state-operation-state">INV-006 — Package State != Operation State</a><a class="toc-level-3" href="#正确">正确</a><a class="toc-level-3" href="#禁止">禁止</a><a class="toc-level-3" href="#error-5">Error</a><a class="toc-level-2" href="#inv-007-leader-identity-is-not-stable-state">INV-007 — Leader Identity Is Not Stable State</a><a class="toc-level-3" href="#error-6">Error</a><a class="toc-level-2" href="#inv-008-rollback-must-be-atomic-or-offline">INV-008 — Rollback Must Be Atomic or Offline</a><a class="toc-level-3" href="#error-7">Error</a><a class="toc-level-2" href="#inv-009-backend-revalidates-everything">INV-009 — Backend Revalidates Everything</a><a class="toc-level-2" href="#inv-010-validation-failure-stops-release">INV-010 — Validation Failure Stops Release</a><a class="toc-level-2" href="#2-1-package">2.1 Package</a><a class="toc-level-2" href="#2-2-deployment-state">2.2 Deployment State</a><a class="toc-level-2" href="#2-3-operation">2.3 Operation</a><a class="toc-level-3" href="#required-assertion">Required Assertion</a><a class="toc-level-2" href="#7-1-required-health">7.1 Required Health</a><a class="toc-level-2" href="#7-2-leader-discovery">7.2 Leader Discovery</a><a class="toc-level-2" href="#rb-001-backup-identity">RB-001 — Backup Identity</a><a class="toc-level-2" href="#rb-002-restore-method">RB-002 — Restore Method</a><a class="toc-level-2" href="#rb-003-rollback-completion">RB-003 — Rollback Completion</a><a class="toc-level-2" href="#bc-001-base-commit">BC-001 — base_commit</a><a class="toc-level-2" href="#bc-002-production-diff-accounting">BC-002 — Production Diff Accounting</a><a class="toc-level-2" href="#12-1-required-mutations">12.1 Required Mutations</a><a class="toc-level-2" href="#ui-001-successful-hotfix">UI-001 Successful Hotfix</a><a class="toc-level-2" href="#ui-002-failed-hotfix">UI-002 Failed Hotfix</a><a class="toc-level-2" href="#ui-003-failed-rolling-upgrade">UI-003 Failed Rolling Upgrade</a><a class="toc-level-2" href="#ui-004-cross-record-targeting">UI-004 Cross-Record Targeting</a><a class="toc-level-2" href="#ui-005-rollback-targeting">UI-005 Rollback Targeting</a>
         </aside>
       </main>
     </div>

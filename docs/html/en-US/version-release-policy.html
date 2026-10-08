@@ -38,6 +38,15 @@
       </header>
       <main class="document-layout" id="document-content">
         <article class="document-content"><h1 id="clusterguard-ha-version-and-release-policy">ClusterGuard HA Version and Release Policy<a class="heading-anchor" href="#clusterguard-ha-version-and-release-policy" aria-label="Link to ClusterGuard HA Version and Release Policy">#</a></h1>
+<blockquote>
+<p><strong>Document role: mandatory policy for the applicable task.</strong> Read before building, signing, releasing, or handling delivery artifacts, together with the <a href="upgrade-validation-chain.html">contract</a>, <a href="../../zh-CN/validation-gate-workflow.md">gate workflow</a>, <a href="../../development/rules/release-checklist.md">build checklist</a>, and applicable licensing/channel rules. Dated implementation results provide context; acceptance for this run needs its own bindings and actual evidence.</p>
+</blockquote>
+<blockquote>
+<p>Gate workflow update (2026-10-04): use <code>--stage source --strict</code> for source development. Artifact and field acceptance require <code>--stage artifact</code> or <code>--stage field</code>, <code>--strict</code>, and <code>--acceptance-report FILE</code> with actual evidence. The default remains field; real ART/FIELD evidence is still unavailable. See the <a href="../../zh-CN/validation-gate-workflow.md">workflow</a>.</p>
+</blockquote>
+<h2 id="v2-release-preconditions">v2 Release Preconditions<a class="heading-anchor" href="#v2-release-preconditions" aria-label="Link to v2 Release Preconditions">#</a></h2>
+<p>Updates and hotfixes enforce the v2 contract: failed hotfixes use <code>retry</code>; interrupted rolling updates use <code>resume</code>. The repair recorded on 2026-10-03 used baseline <code>7b643f4</code> on <code>codex/2.2-postgresql</code>; it produced no new package or deployment and recorded ART/FIELD as <strong>OPEN</strong>. That historical record does not replace this delivery&#39;s source, package identity, or applicable strict acceptance.</p>
+<p>The four build entry points run <code>verify-upgrade-validation-chain.cjs --contract-only</code> before producing/signing artifacts and require Node (<code>CG_NODE_BIN</code> may override its path). This checks contract loading and schema consistency only, not complete PRE/ART/FIELD acceptance. Run the complete gate and <code>--strict</code> before release; OPEN blocks formal release. Past results are in the <a href="../../en-US/upgrade-validation-chain-implementation-status.md">historical implementation and acceptance snapshot</a>, which is not an acceptance input for this run. Hotfix acceptance covers same-package retry, rejected resume, signed supersedes, and independent history; rolling acceptance covers resume. Never rebuild a delivered identity in place.</p>
 <h2 id="1-version-format">1. Version Format<a class="heading-anchor" href="#1-version-format" aria-label="Link to 1. Version Format">#</a></h2>
 <p>ClusterGuard HA packages use the following format:</p>
 <pre><code class="language-text">MAJOR.FEATURE-RELEASE
@@ -92,6 +101,7 @@ v2.2.2
 <li>SHA256 files;</li>
 <li>Release Notes.</li>
 </ul>
+<p>Hotfix <code>.cgpatch</code> filenames are part of the delivery identity. The new sealed release line starts at <code>3.1.1.1</code>; new specifications use <code>patch_version</code> and the <a href="../../en-US/hotfix-package-naming.md">hotfix version and filename rules</a>: <code>clusterguard-MAJOR.MINOR.PATCH.BUGFIX.&lt;arch&gt;.cgpatch</code>, with the same version signed into the manifest. <code>HF-...</code> remains the console and audit <code>hotfix_id</code>; historical 2.x/HF specifications retain their frozen names. Signed files are never rebuilt in place, and a failed same-package retry keeps the original file.</p>
 <p>Any changes to the content of files with the same name are considered a new version. Even if only the installation script or operation manual inside the package is modified, the release number must be increased because the delivery package has changed.</p>
 <p>The following practices are prohibited:</p>
 <ul>
@@ -228,7 +238,7 @@ RPM, offline kit, or a customer server.</p>
         </article>
         <aside class="page-toc" aria-label="On this page">
           <strong>On this page</strong>
-          <a class="toc-level-2" href="#1-version-format">1. Version Format</a><a class="toc-level-2" href="#2-current-version-lines">2. Current Version Lines</a><a class="toc-level-2" href="#3-immutable-release-rules">3. Immutable Release Rules</a><a class="toc-level-3" href="#3-1-publication-channel-split-from-2026-09-22">3.1 Publication Channel Split (from 2026-09-22)</a><a class="toc-level-2" href="#4-branch-rules">4. Branch Rules</a><a class="toc-level-2" href="#5-postgresql-2-2-delivery-rules">5. PostgreSQL 2.2 Delivery Rules</a><a class="toc-level-2" href="#6-formal-release-gate">6. Formal Release Gate</a><a class="toc-level-2" href="#7-release-steps">7. Release Steps</a>
+          <a class="toc-level-2" href="#v2-release-preconditions">v2 Release Preconditions</a><a class="toc-level-2" href="#1-version-format">1. Version Format</a><a class="toc-level-2" href="#2-current-version-lines">2. Current Version Lines</a><a class="toc-level-2" href="#3-immutable-release-rules">3. Immutable Release Rules</a><a class="toc-level-3" href="#3-1-publication-channel-split-from-2026-09-22">3.1 Publication Channel Split (from 2026-09-22)</a><a class="toc-level-2" href="#4-branch-rules">4. Branch Rules</a><a class="toc-level-2" href="#5-postgresql-2-2-delivery-rules">5. PostgreSQL 2.2 Delivery Rules</a><a class="toc-level-2" href="#6-formal-release-gate">6. Formal Release Gate</a><a class="toc-level-2" href="#7-release-steps">7. Release Steps</a>
         </aside>
       </main>
     </div>

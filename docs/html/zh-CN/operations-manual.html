@@ -38,6 +38,12 @@
       </header>
       <main class="document-layout" id="document-content">
         <article class="document-content"><h1 id="clusterguard-ha-运维操作手册">ClusterGuard HA 运维操作手册<a class="heading-anchor" href="#clusterguard-ha-运维操作手册" aria-label="Link to ClusterGuard HA 运维操作手册">#</a></h1>
+<blockquote>
+<p><strong>阅读顺序：</strong> 日常只读观测进入对应章节；操作管理或业务代码修改先读<a href="../../../AGENTS.md">根规则</a>与<a href="../../development/rules/README.md">适用规则</a>。真实恢复前先读<a href="release-recovery-acceptance-checklist.html">恢复验收清单</a>的对应场景；升级、热修或回退前先读<a href="upgrade-validation-chain.html">完整强制契约</a>与<a href="../../zh-CN/validation-gate-workflow.md">门禁流程</a>，再进入操作步骤。旧报告不能代替本次现场证据。</p>
+</blockquote>
+<blockquote>
+<p>升级/热修动作规则见<a href="update-and-patch.html">版本升级与回退手册</a>。2026-10-03 的实现记录基线为 <code>7b643f4</code>，主线为 <code>codex/2.2-postgresql</code>；该次修复没有新包或部署，ART/FIELD 记录为 <strong>OPEN</strong>，不代表本次现场状态。v2 热修失败使用独立 <code>retry</code>，滚动升级失败使用 <code>resume</code>；操作前按适用规则重新核对本次源码、包与现场证据。</p>
+</blockquote>
 <p>本文用于日常值守、变更、故障处理和审计。所有高可用操作都必须经过平台统一工作流：</p>
 <pre><code class="language-text">DISCOVER -&gt; PRECHECK -&gt; PLAN -&gt; SAFETY_GUARD -&gt; LOCK
 -&gt; APPROVE -&gt; EXECUTE -&gt; VERIFY -&gt; AUDIT -&gt; REPORT
@@ -429,14 +435,14 @@ VMware 自动启动/API、IPMI/iDRAC/iLO、Wake-on-LAN 或 BIOS 来电自启；�
 <h2 id="15-软件升级与补丁">15. 软件升级与补丁<a class="heading-anchor" href="#15-软件升级与补丁" aria-label="Link to 15. 软件升级与补丁">#</a></h2>
 <p>现场不得使用 <code>rpm -Uvh</code> 同时覆盖全部控制节点。正式版本更新使用签名 <code>.cgupgrade</code> 升级包，按 follower、纯数据节点、Leader 的顺序滚动处理，并在每一步重新验证版本合同、Raft 多数派、活动任务和维护状态。升级期间数据库继续运行，ClusterGuard 的所有变更入口进入统一维护门禁。</p>
 <pre><code class="language-bash">sudo clusterguard-upgrade \
-  --package ./clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
+  --package ./clusterguard-ha-2.2-104_to_2.2-105.x86_64.cgupgrade \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --state ./clusterguard-deployment-state.json \
   --ssh-key /root/.ssh/clusterguard_update \
   --known-hosts /etc/clusterguard/ssh_known_hosts \
   --execute
 </code></pre>
-<p>断电或网络中断后使用同一个升级包追加 <code>--resume</code>。只有完整升级或完整回退验证成功才释放维护门禁。详细准备、检查、计划、回退和生产准入要求见<a href="update-and-patch.html">版本升级与回退手册</a>。</p>
+<p>滚动升级断电或网络中断后使用同一个升级包追加 <code>--resume</code>；热修不支持 <code>--resume</code>，失败重试使用原包 <code>--retry --execute --yes</code>，并通过控制台确认与受限 Helper 执行。只有完整升级或完整回退验证成功才释放维护门禁。详细准备、检查、计划、回退和生产准入要求见<a href="update-and-patch.html">版本升级与回退手册</a>。</p>
 
           <footer class="document-footer">
             <span>源文件: <code>docs/zh-CN/operations-manual.md</code></span>

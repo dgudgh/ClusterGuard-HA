@@ -19,9 +19,9 @@ never mix patches built for different baseline versions** — a patch from anoth
 baseline silently downgrades binaries back to its own release line.
 
 New hotfix specifications use `patch_version` and the versioned filename
-`clusterguard-MAJOR.CAPABILITY.INTERNAL.BUGFIX.<arch>.cgpatch`; the signed
-manifest still carries the `HF-...` operation identity. Historical specifications
-retain their immutable HF-based names. A signed patch is never rebuilt in place:
+`clusterguard-MAJOR.MINOR.PATCH.BUGFIX.<arch>.cgpatch`; the new sealed release line starts at
+`3.1.1.1`. The signed manifest still carries the `HF-...` operation identity. Historical
+2.x and HF-named specifications retain their immutable legacy names. A signed patch is never rebuilt in place:
 a correction gets a new Bug-fix version and the earlier bytes stay in the directory
 as the only record of what a site ran. **The table
 below names the one to apply for each patch**; the other identities are history.

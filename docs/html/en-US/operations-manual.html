@@ -38,6 +38,12 @@
       </header>
       <main class="document-layout" id="document-content">
         <article class="document-content"><h1 id="clusterguard-ha-operations-manual">ClusterGuard HA Operations Manual<a class="heading-anchor" href="#clusterguard-ha-operations-manual" aria-label="Link to ClusterGuard HA Operations Manual">#</a></h1>
+<blockquote>
+<p><strong>Reading order:</strong> use the relevant section for routine read-only observation. Before changing operation management or business code, read the <a href="../../../AGENTS.md">root rules</a> and <a href="../../development/rules/README.md">applicable rules</a>. Before actual recovery, read the relevant <a href="../zh-CN/release-recovery-acceptance-checklist.html">acceptance scenarios</a>. Before an update, hotfix, or rollback, read the complete <a href="upgrade-validation-chain.html">contract</a> and <a href="../../zh-CN/validation-gate-workflow.md">gate workflow</a>, then follow the procedure. Historical reports do not replace evidence for this site operation.</p>
+</blockquote>
+<blockquote>
+<p>For update/hotfix action rules, see the <a href="update-and-patch.html">update guide</a>. The implementation record dated 2026-10-03 used baseline <code>7b643f4</code> on <code>codex/2.2-postgresql</code>; that repair produced no new package or deployment and recorded ART/FIELD as <strong>OPEN</strong>. This is not the status of this site operation. Under v2, failed hotfixes use <code>retry</code> and interrupted rolling updates use <code>resume</code>; recheck the current checkout, package, and site evidence before acting.</p>
+</blockquote>
 <p>This document is used for daily duty, changes, fault handling, and auditing. All high-availability operations must go through the platform&#39;s unified workflow:</p>
 <pre><code class="language-text">DISCOVER -&gt; PRECHECK -&gt; PLAN -&gt; SAFETY_GUARD -&gt; LOCK
 -&gt; APPROVE -&gt; EXECUTE -&gt; VERIFY -&gt; AUDIT -&gt; REPORT
@@ -427,14 +433,14 @@ order, and rechecks the version contract, Raft quorum, active work, and
 maintenance state at every step. Databases continue running while all
 ClusterGuard mutation ingress is held by the shared maintenance gate.</p>
 <pre><code class="language-bash">sudo clusterguard-upgrade \
-  --package ./clusterguard-ha-2.2-28_to_2.2-29.x86_64.cgupgrade \
+  --package ./clusterguard-ha-2.2-104_to_2.2-105.x86_64.cgupgrade \
   --trust-key /etc/clusterguard/trust/patch-signing-public.pem \
   --state ./clusterguard-deployment-state.json \
   --ssh-key /root/.ssh/clusterguard_update \
   --known-hosts /etc/clusterguard/ssh_known_hosts \
   --execute
 </code></pre>
-<p>After host loss or network interruption, rerun the same patch with <code>--resume</code>.
+<p>After host loss or network interruption during a rolling update, rerun the same package with <code>--resume</code>. Hotfixes reject <code>--resume</code>; failed hotfix retries use the original package with <code>--retry --execute --yes</code>, through console confirmation and the constrained Helper.
 Maintenance is released only after a complete update or complete rollback is
 verified. See the <a href="update-and-patch.html">Version Update and Rollback Guide</a> for preparation,
 inspection, planning, rollback, and production admission requirements.</p>

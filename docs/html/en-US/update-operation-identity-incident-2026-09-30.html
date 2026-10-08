@@ -38,6 +38,9 @@
       </header>
       <main class="document-layout" id="document-content">
         <article class="document-content"><h1 id="update-action-identity-mismatch-and-missing-hotfix-recovery-semantics-20">Update Action Identity Mismatch and Missing Hotfix Recovery Semantics (2026-09-30)<a class="heading-anchor" href="#update-action-identity-mismatch-and-missing-hotfix-recovery-semantics-20" aria-label="Link to Update Action Identity Mismatch and Missing Hotfix Recovery Semantics (2026-09-30)">#</a></h1>
+<blockquote>
+<p><strong>Subsequent source status (2026-10-03):</strong> This retrospective preserves the incident and delivered-package facts. Source <code>7b643f4</code> rejects hotfix resume, routes failed hotfixes through retry, and separates deployment state from operation history. Newer successes establish replacement only through signed supersedes and verified deployment. See <a href="../../en-US/upgrade-validation-chain-implementation-status.md">current implementation status</a>; production deployment of this source has not been validated.</p>
+</blockquote>
 <h2 id="summary">Summary<a class="heading-anchor" href="#summary" aria-label="Link to Summary">#</a></h2>
 <p>At 13:30 on 2026-09-30 (UTC+8) the site asked to <em>resume</em> a hotfix that had <strong>already been installed successfully</strong>. The result: of the three controllers, <strong>only the one that actually ran the job</strong> (Leader <code>.153</code>) had its installation record rewritten as a failure; the other two still recorded success. The console reads the Leader&#39;s copy, so the UI showed 升级失败 for as long as that record stood, while all three nodes ran byte-identical payloads.</p>
 <p>This is not &quot;the hotfix idempotent retry was implemented wrong&quot;. Three defects stacked:</p>

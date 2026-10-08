@@ -14,6 +14,7 @@
 - 没有完成对应行为回归，不得宣称修复完成；本地源码、隔离浏览器、真实数据库、现场升级分别记录，未执行不得记为通过。
 - 不得绕过授权、签名、隔离/fencing、writer lease、维护门禁或多数派检查。保留旧日志与原始证据；局部修复，不附带无关业务变化。
 - 许可固定为 AGPL-3.0-only；根 LICENSE 不得修改。任何依赖、打包或文档修改后执行 `node tools/verify-license-consistency.cjs`，必须 passed。
+- **任何 Markdown 的新增、删除、修改都必须在 [Markdown 变更记录](docs/development/markdown-change-record.md) 登记**：按文件写清变更类型（`A` 新增 / `M` 修改 / `D` 删除）和改了什么，重命名按「删旧 + 增新」两条记，然后用 `node tools/verify-markdown-change-record.cjs` 校验，必须 passed。改了 md 必须重建入库的生成页（`cd docs && node build-html-docs.mjs`）。没有被登记、或门禁报「变了但没登记」的 md 不得提交。
 - GitHub 只放完整离线安装介质；签名 `.cgupgrade` / `.cgpatch` 及摘要仅本地和签约交付，不得公开。已交付身份不得覆盖重建。
 
 ## 按任务选择路径
