@@ -1767,7 +1767,7 @@ func TestSoftwareUpdateSummaryDistinguishesPendingAndCompletedTargets(t *testing
 		"label.textContent = softwareUpdateActionable(subject) ? '待升级目标版本' : status === 'succeeded' ? '最近完成版本' : '最近处理版本'",
 		// The summary reports whether the patch took effect, using the same read as the
 		// history row, so the two never tell the operator different stories about one record.
-		"value.textContent = `${subject.package.target_version || '-'} · ${softwareUpdateStatusText(softwareUpdateOutcome(subject.job))}`",
+		"value.textContent = `${softwareUpdateTargetVersion(subject.package)} · ${softwareUpdateStatusText(softwareUpdateOutcome(subject.job))}`",
 		// The summary must describe the record the buttons act on, not merely the newest row.
 		"renderSoftwareUpdateTargetSummary(softwareUpdateSubject())",
 	} {

@@ -79,3 +79,25 @@ func TestCommandInspectorReportsExecutionFailureWithoutCommandOutput(t *testing.
 		t.Fatalf("execution failure lost its diagnostic detail: %q", message)
 	}
 }
+
+func TestCommandInspectorReadsOnlyValidFourPartHotfixVersion(t *testing.T) {
+	for _, value := range []string{"3.1.1.1", "", "3.1.1.0", "3.1.1", "3.1.1.1-extra"} {
+		t.Run(value, func(t *testing.T) {
+			binary := filepath.Join(t.TempDir(), "upgrader")
+			contents := "#!/usr/bin/env bash\nprintf '%s\\n' 'signature=verified' 'kind=hotfix' 'patch_id=HF-version-test' 'source=2.2-105' 'target=2.2-105+hf' 'patch_version=" + value + "'\n"
+			if err := os.WriteFile(binary, []byte(contents), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			result, err := (CommandInspector{UpgradeBinaryPath: binary}).Inspect(context.Background(), "hotfix.cgpatch", "public.pem")
+			if value != "" && value != "3.1.1.1" {
+				if err == nil {
+					t.Fatalf("invalid version accepted: %+v", result)
+				}
+				return
+			}
+			if err != nil || result.PatchVersion != value || result.SourceVersion != "2.2-105" {
+				t.Fatalf("result=%+v err=%v", result, err)
+			}
+		})
+	}
+}

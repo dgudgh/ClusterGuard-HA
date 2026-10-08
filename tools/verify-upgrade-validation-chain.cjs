@@ -181,6 +181,26 @@ const writeOperationTree = (root, name, status, events) => {
 
 const CHECKS = [
   {
+    rule:'11', title:'runtime and history use their own verified product versions',
+    run: () => {
+      const page=read('internal/api/console.html');
+      const display=page?.match(/const platformVersionText = \(\) => \{([\s\S]*?)\n    \};/);
+      const target=page?.match(/const softwareUpdateTargetVersion = record => ([^;]+);/);
+      if(!display || !target) return 'version display functions missing';
+      for(const [product,want] of [['3.1.1.1','3.1.1.1'],['','2.2-105']]) {
+        const ctx={state:{platformVersion:{product_version:product,version:'2.2',release:'105'}}};
+        if(vm.runInNewContext(`(()=>{${display[1]}})()`,ctx)!==want) return 'runtime version did not come from its own build';
+      }
+      const version=vm.runInNewContext(`record => ${target[1]}`);
+      if(version({patch_version:'3.1.1.3',target_version:'2.2-105+hf'})!=='3.1.1.3' || version({target_version:'2.2-105+hf'})!=='2.2-105+hf') return 'signed target or legacy fallback lost';
+      if(!read('scripts/build-hotfix-patch.sh')?.includes('internal/buildinfo.ProductVersion=${patch_version}')) return 'build does not bind product version';
+      if(!read('internal/platformupdate/inspector.go')?.includes('patchVersion := values["patch_version"]')) return 'signed inspect version is discarded';
+      if(!read('internal/platformupdate/version.go')?.includes('hex.EncodeToString(hash.Sum(nil)) != softwarePackage.SHA256') || !read('internal/platformupdate/version.go')?.includes('!inspected.SignatureVerified')) return 'legacy history enrichment is not verified';
+      return true;
+    },
+  },
+
+  {
     rule:'INV-004',
     title:'deployment result survives a later failed operation',
     run:() => {
@@ -686,6 +706,7 @@ const reportOpen = failures => {
 // The files the rules read. The self-test copies exactly these, so a mutation cannot be
 // caught by reading something the gate does not actually consult.
 const READ_FILES = [
+  'internal/platformupdate/version.go', 'internal/platformupdate/inspector.go',
   CONTRACT_DOC, CONTRACT_DOC_ZH, 'internal/updatecontract/contract.md', 'internal/updatecontract/schema.json', 'internal/platformupdate/helper.go',
   'internal/platformupdate/supersedes.go', 'internal/platformupdate/supersedes_test.go',
   'scripts/clusterguard-update-job.sh', 'scripts/clusterguard-upgrade.sh', 'scripts/build-hotfix-patch.sh',
@@ -695,6 +716,9 @@ const READ_FILES = [
 ];
 
 const MUTATIONS = [
+  { name:'filename migration leaves runtime behind', file:'scripts/build-hotfix-patch.sh', find:'internal/buildinfo.ProductVersion=${patch_version}', replace:'internal/buildinfo.Release=${patch_version}', rule:'runtime and history use their own verified product versions' },
+  { name:'UI ignores sealed runtime version', file:'internal/api/console.html', find:'if (version.product_version) return version.product_version;', replace:'if (false) return version.product_version;', rule:'runtime and history use their own verified product versions' },
+
   {
     name:'a failed attempt overwrites installed deployment',file:'internal/api/console.html',
     find:"job?.deployment_state === 'installed' && status === 'failed'",

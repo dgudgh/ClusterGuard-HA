@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+
+	"clusterguard.io/ha/internal/buildinfo"
 )
 
 type CommandInspector struct {
@@ -45,6 +47,10 @@ func (inspector CommandInspector) Inspect(ctx context.Context, patchPath, trustK
 	if kind == "" {
 		kind = PackageKindUpgrade
 	}
+	patchVersion := values["patch_version"]
+	if patchVersion != "" && (kind != PackageKindHotfix || !buildinfo.ValidProductVersion(patchVersion)) {
+		return Package{}, ErrInvalidPatch
+	}
 	var supersedes []string
 	if raw := values["supersedes"]; raw != "" {
 		if err := json.Unmarshal([]byte(raw), &supersedes); err != nil {
@@ -59,7 +65,7 @@ func (inspector CommandInspector) Inspect(ctx context.Context, patchPath, trustK
 		}
 	}
 	return Package{
-		PatchID: values["patch_id"], Kind: kind, Supersedes: supersedes,
+		PatchID: values["patch_id"], Kind: kind, Supersedes: supersedes, PatchVersion: patchVersion,
 		SourceVersion: values["source"], TargetVersion: values["target"],
 		Architecture: values["architecture"], SignatureVerified: values["signature"] == "verified",
 		RollbackAvailable: values["rollback"] == "available", Rolling: values["rolling"] == "true",

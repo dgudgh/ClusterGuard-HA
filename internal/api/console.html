@@ -3554,9 +3554,11 @@
       : `补丁已生效：最近一次完成的执行于 ${softwareUpdateDateText(softwareUpdateCompletedAttempt(job)?.updated_at)} 逐文件校验通过。`;
     const platformVersionText = () => {
       const version = state.platformVersion || {};
+      if (version.product_version) return version.product_version;
       if (!version.version) return '版本未知';
       return version.release && version.release !== '0' ? `${version.version}-${version.release}` : version.version;
     };
+    const softwareUpdateTargetVersion = record => record.patch_version || record.target_version || '-';
     const renderPlatformVersion = () => {
       const label = platformVersionText();
       const version = state.platformVersion || {};
@@ -3751,7 +3753,7 @@
         row.append(
           statusCell,
           text('td', 'mono', record.patch_id || '-'),
-          text('td', '', `${record.source_version || '不限'} → ${record.target_version || '-'}`),
+          text('td', '', `${record.source_version || '不限'} → ${softwareUpdateTargetVersion(record)}`),
           text('td', '', softwareUpdateModeText(job && job.mode, record.kind)),
           text('td', '', softwareUpdateDateText(occurredAt)),
           text('td', 'history-message', `${rowMessage}${rowNote}`)
@@ -3804,7 +3806,7 @@
       }
       const status = subject.job && subject.job.status || 'uploaded';
       label.textContent = softwareUpdateActionable(subject) ? '待升级目标版本' : status === 'succeeded' ? '最近完成版本' : '最近处理版本';
-      value.textContent = `${subject.package.target_version || '-'} · ${softwareUpdateStatusText(softwareUpdateOutcome(subject.job))}`;
+      value.textContent = `${softwareUpdateTargetVersion(subject.package)} · ${softwareUpdateStatusText(softwareUpdateOutcome(subject.job))}`;
     };
 
     const selectSoftwareUpdateFile = () => {
@@ -3852,7 +3854,7 @@
         : verificationRequired ? '任务状态文件不可读取或解析；控制面维护状态与节点版本需要独立核验。'
           : terminal ? '任务已结束，最终状态和节点事件将保留在升级历史中。' : '当前没有正在执行的升级任务。';
       byId('software-update-progress-patch-id').textContent = record.patch_id || '控制面维护任务';
-      byId('software-update-progress-version').textContent = `${record.source_version || '-'} → ${record.target_version || '-'}`;
+      byId('software-update-progress-version').textContent = `${record.source_version || '-'} → ${softwareUpdateTargetVersion(record)}`;
       const statusElement = byId('software-update-progress-status');
       statusElement.textContent = softwareUpdateStatusText(status);
       statusElement.className = `badge ${softwareUpdateBadgeClass(status)}`;
@@ -4063,7 +4065,7 @@
         ? '热修补丁（只替换清单声明的文件，不改 RPM 版本）'
         : '滚动升级（整包 RPM 替换）';
       byId('software-update-source-version').textContent = record.source_version || '不限';
-      byId('software-update-target-version').textContent = record.target_version || '-';
+      byId('software-update-target-version').textContent = softwareUpdateTargetVersion(record);
       byId('software-update-size').textContent = formatBytes(Number(record.size_bytes));
       byId('software-update-signature').textContent = record.signature_verified
         ? record.bootstrap_available ? `已通过 · 引导器 v${record.bootstrap_protocol || 1}` : '已通过 · 历史兼容包'

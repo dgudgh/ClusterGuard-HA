@@ -176,7 +176,7 @@ const plannedJob = patchID => ({
 // `mock.actions` keeps the id each write was aimed at, which is the whole point: the
 // assertions below are about the patch_id the page posted, not about which button the
 // operator thought they pressed.
-const consoleUnderTest = (initial, { maintenanceActive = false } = {}) => {
+const consoleUnderTest = (initial, { maintenanceActive = false, productVersion = "" } = {}) => {
   const fixture = createConsoleFixture();
   const mock = { actions: [], snapshot: initial.map(item => structuredClone(item)), report: null };
   const findRecord = patchID => mock.snapshot.find(item => item.package.patch_id === patchID);
@@ -194,7 +194,7 @@ const consoleUnderTest = (initial, { maintenanceActive = false } = {}) => {
       return { result: true };
     }
     if (url.pathname === '/api/v1/platform/version') {
-      return { result: { version: '2.2', release: '105', rpm_architecture: 'x86_64', architecture: 'x86_64' } };
+      return { result: { product_version: productVersion, version: '2.2', release: '105', rpm_architecture: 'x86_64', architecture: 'x86_64' } };
     }
     if (url.pathname === '/api/v1/control-plane/status') {
       return { result: {
@@ -326,7 +326,12 @@ const PAGE_HELPERS = `
     jobStatus: text('software-update-job-status'),
     jobMessage: text('software-update-job-message'),
     targetLabel: text('software-update-target-label'),
+    runningVersion: text('software-update-running-version'),
+    targetVersion: text('software-update-target-version'),
+    summaryVersion: text('software-update-latest-target'),
+    viewport: window.innerWidth,
     history: [...document.querySelectorAll('#software-update-history tr')].map(row => ({
+      version: (row.children[2] || {}).textContent?.trim() || '',
       patchID: (row.children[1] || {}).textContent ? row.children[1].textContent.trim() : '',
       mode: (row.children[3] || {}).textContent ? row.children[3].textContent.trim() : '',
       message: (row.children[5] || {}).textContent ? row.children[5].textContent.trim() : '',
@@ -371,6 +376,10 @@ const GATES_DRIVER = `(async () => {${PAGE_HELPERS}
     read.state = {
       validation: byId('software-update-validation').dataset.state,
       targetLabel: text('software-update-target-label'),
+    runningVersion: text('software-update-running-version'),
+    targetVersion: text('software-update-target-version'),
+    summaryVersion: text('software-update-latest-target'),
+    viewport: window.innerWidth,
       targetValue: text('software-update-latest-target'),
     };
     return read;
@@ -433,6 +442,18 @@ const SUBMIT_DRIVER = buttonID => `(async () => {${PAGE_HELPERS}
 })()`;
 
 const scenarios = [
+  ...[1440, 390].map(width => ({
+    name: `sealed runtime and signed history at ${width}px`,
+    make: () => {
+      const installed = hotfixFresh();
+      installed.package.patch_version = '3.1.1.1';
+      const pending = hotfixFailed();
+      pending.package.patch_version = '3.1.1.3';
+      return consoleUnderTest([pending, installed], { productVersion: '3.1.1.1' });
+    },
+    driver: GATES_DRIVER, width,
+    versionCheck: true,
+  })),
   {
     name: 'installed hotfix survives a later failed plan',
     make: () => {
@@ -553,7 +574,7 @@ const main = async () => {
     let protocolNote = '';
     try {
       run = await runConsoleDriver({
-        fixture, driver: scenario.driver,
+        fixture, driver: scenario.driver, viewport: scenario.width ? {width: scenario.width, height:900} : undefined,
         hash: '#settings', profilePrefix: 'cg-update-recovery-', timeoutMs: HARNESS_BUDGET_MS,
       });
     } catch (error) {
@@ -602,6 +623,14 @@ const main = async () => {
     }
 
 
+    if (scenario.versionCheck) {
+      record(`${scenario.name}: current version comes from the running binary`, page.runningVersion === '3.1.1.1', page.runningVersion);
+      record(`${scenario.name}: pending target does not impersonate the runtime`, page.targetVersion === '3.1.1.3', page.targetVersion);
+      record(`${scenario.name}: own signed version appears in installed history`, page.history.some(row => row.patchID === HOTFIX_FRESH && row.version === '2.2-105 → 3.1.1.1'), JSON.stringify(page.history));
+      record(`${scenario.name}: actual viewport`, page.viewport === scenario.width, String(page.viewport));
+    } else {
+      record(`${scenario.name}: legacy runtime retains its RPM display`, page.runningVersion === '2.2-105', page.runningVersion);
+    }
     if (scenario.name === 'installed hotfix survives a later failed plan') {
       record(`${scenario.name}: no retry of an installed deployment`,page.execute?.disabled === true,JSON.stringify(page.execute));
       record(`${scenario.name}: no resume of an installed hotfix`,page.resume?.hidden === true,JSON.stringify(page.resume));

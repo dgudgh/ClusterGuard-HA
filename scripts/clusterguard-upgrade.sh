@@ -402,6 +402,8 @@ verify_hotfix() {
   jq -e '
     .schema_version == 3 and .kind == "hotfix" and .product == "ClusterGuard HA" and
     (.hotfix_id | type == "string" and length > 0) and
+    ((has("patch_version") | not) or
+      (.patch_version | type == "string" and test("^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+$") and (split(".")[-1] | test("[1-9]")))) and
     (.source.version | type == "string" and length > 0) and
     (.source.release | type == "string" and length > 0) and
     (.target.version | type == "string" and length > 0) and
@@ -544,6 +546,7 @@ if ${inspect_only}; then
   printf 'rolling=true\n'
   printf 'database_mutation=false\n'
   if [[ "${package_kind}" == hotfix ]]; then
+    printf 'patch_version=%s\n' "$(jq -r '.patch_version // empty' "${patch_root}/HOTFIX-MANIFEST.json")"
     printf 'supersedes=%s\n' "$(jq -c '.supersedes // []' "${patch_root}/HOTFIX-MANIFEST.json")"
   fi
   if ${bootstrap_available}; then

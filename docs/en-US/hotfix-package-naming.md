@@ -27,7 +27,7 @@ The builder emits:
 clusterguard-3.1.1.1.x86_64.cgpatch
 ```
 
-`patch_version` is signed into `HOTFIX-MANIFEST.json`. The filename and manifest must describe the same version; changing only the filename is not a valid correction.
+`patch_version` is signed into `HOTFIX-MANIFEST.json`. The filename, signed manifest and running binary must describe the same product version; changing only the filename is not a valid correction.
 
 ## 2. What the four segments mean
 
@@ -38,7 +38,7 @@ clusterguard-3.1.1.1.x86_64.cgpatch
 | `PATCH` | `1` | Current sealed feature release |
 | `BUGFIX` | `1` | First bug revision of that release |
 
-These four segments are the **delivery version identity**. They do not have to equal the source RPM's `rpm_version` and `rpm_release`. A package is still built for the installed baseline — for example `2.2-105` — so the signed manifest keeps `source.version=2.2` and `source.release=105`; those describe the baseline the package can be applied to, while `patch_version=3.1.1.1` identifies the new sealed identity.
+These four segments are the **runtime and delivery version identity**. They do not have to equal the source RPM's `rpm_version` and `rpm_release`. A package is still built for the installed baseline — for example `2.2-105` — so the signed manifest keeps `source.version=2.2` and `source.release=105`; those describe the baseline the package can be applied to, while `patch_version=3.1.1.1` identifies the new sealed identity.
 
 The bug-fix segment starts at `1`. If signed bytes need correction, use a new identity such as `3.1.1.2` and record `revision` plus `supersedes_artifact{file,sha256,reason}` in the signed manifest. Never overwrite `3.1.1.1`.
 
@@ -116,3 +116,9 @@ hotfix.cgpatch
 ```
 
 If the filename and the manifest disagree, one version has more than one digest, the supersede relationship is missing, or the current ledger entry cannot be confirmed, stop the upload and keep the original files and logs. Renaming is never a way forward.
+
+## Runtime and history version projection
+
+New builds bind `patch_version` to the filename, signed manifest and `buildinfo.ProductVersion`. `clusterguard version` and the platform API `product_version` expose the running four-part product identity. The API `version/release` remain the RPM compatibility baseline used by admission checks. A pending upload never determines the running version.
+
+Already delivered 3.1.1.1 and 3.1.1.2 artifacts omitted the runtime binding. Keep their original bytes; deliver this correction under a new 3.1.1.3 identity. History and target labels use each package's own verified `patch_version`. Missing historical metadata is enriched only from the original signed archive after hash and identity checks, without rewriting operation history. Legacy packages without that field retain their original target.

@@ -143,7 +143,7 @@ const launch = async (browser, port, extraArgs, attempts, profilePrefix) => {
 
 // Resolves to null when the machine has no browser, so a caller can report SKIP
 // instead of failing a machine that cannot run this kind of check.
-const runConsoleDriver = async ({ fixture, driver, hash = '', profilePrefix = 'cg-console-', timeoutMs = DEFAULT_BUDGET_MS }) => {
+const runConsoleDriver = async ({ fixture, driver, hash = '', profilePrefix = 'cg-console-', timeoutMs = DEFAULT_BUDGET_MS, viewport }) => {
   const browser = CHROME_CANDIDATES.find(candidate => fs.existsSync(candidate));
   if (!browser) {
     console.log('SKIP: no Chrome/Chromium binary found; set CHROME_BIN to run this acceptance.');
@@ -186,6 +186,7 @@ const runConsoleDriver = async ({ fixture, driver, hash = '', profilePrefix = 'c
     const target = await getJSON(`http://127.0.0.1:${debugPort}/json/new?${encodeURIComponent(started.origin + hash)}`, { method:'PUT' });
     send = await openSession(target.webSocketDebuggerUrl);
     await send('Runtime.enable');
+    if (viewport) await send('Emulation.setDeviceMetricsOverride', { ...viewport, deviceScaleFactor:1, mobile:false });
     const pageErrors = [];
     send.on(message => {
       if (message.method === 'Runtime.exceptionThrown') {

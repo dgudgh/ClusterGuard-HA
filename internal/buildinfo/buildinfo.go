@@ -1,6 +1,10 @@
 package buildinfo
 
-import "runtime"
+import (
+	"regexp"
+	"runtime"
+	"strings"
+)
 
 const (
 	Product            = "ClusterGuard HA"
@@ -22,6 +26,9 @@ var (
 	Release = "0"
 	Commit  = "unknown"
 	BuiltAt = "unknown"
+	// ProductVersion is the sealed four-part runtime identity. Version/Release
+	// remain the RPM compatibility baseline consumed by existing upgrade tools.
+	ProductVersion = ""
 )
 
 type Info struct {
@@ -29,6 +36,7 @@ type Info struct {
 	Binary             string `json:"binary"`
 	Version            string `json:"version"`
 	Release            string `json:"release"`
+	ProductVersion     string `json:"product_version,omitempty"`
 	Commit             string `json:"commit"`
 	BuiltAt            string `json:"built_at"`
 	OS                 string `json:"os"`
@@ -40,11 +48,16 @@ type Info struct {
 }
 
 func Current(binary string) Info {
+	productVersion := ProductVersion
+	if !ValidProductVersion(productVersion) {
+		productVersion = ""
+	}
 	return Info{
 		Product:            Product,
 		Binary:             binary,
 		Version:            Version,
 		Release:            Release,
+		ProductVersion:     productVersion,
 		Commit:             Commit,
 		BuiltAt:            BuiltAt,
 		OS:                 runtime.GOOS,
@@ -54,6 +67,26 @@ func Current(binary string) Info {
 		UpdateProtocol:     UpdateProtocol,
 		UpdateGateProtocol: UpdateGateProtocol,
 	}
+}
+
+var productVersionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$`)
+
+func ValidProductVersion(value string) bool {
+	if !productVersionPattern.MatchString(value) {
+		return false
+	}
+	parts := strings.Split(value, ".")
+	return strings.TrimLeft(parts[3], "0") != ""
+}
+
+func (info Info) DisplayVersion() string {
+	if ValidProductVersion(info.ProductVersion) {
+		return info.ProductVersion
+	}
+	if info.Release == "" || info.Release == DevRelease {
+		return info.Version
+	}
+	return info.Version + "-" + info.Release
 }
 
 func RPMArchitecture(architecture string) string {

@@ -157,6 +157,7 @@ type Package struct {
 	// interchangeable: a hotfix deliberately leaves the installed RPM release
 	// alone and only replaces the files its signed manifest names.
 	Kind               string    `json:"kind,omitempty"`
+	PatchVersion       string    `json:"patch_version,omitempty"`
 	Supersedes         []string  `json:"supersedes,omitempty"`
 	FileName           string    `json:"file_name"`
 	SizeBytes          int64     `json:"size_bytes"`
@@ -286,13 +287,14 @@ type Helper interface {
 }
 
 type Manager struct {
-	config             Config
-	inspector          Inspector
-	helper             Helper
-	now                func() time.Time
-	verifiedBootstraps map[string]struct{}
-	mu                 sync.Mutex
-	historyValidation  historyValidationCache
+	config                Config
+	inspector             Inspector
+	helper                Helper
+	now                   func() time.Time
+	verifiedBootstraps    map[string]struct{}
+	verifiedPatchVersions map[string]string
+	mu                    sync.Mutex
+	historyValidation     historyValidationCache
 }
 
 type Option func(*Manager)
@@ -319,7 +321,7 @@ func NewManager(config Config, options ...Option) *Manager {
 	if config.MaximumUploadBytes <= 0 {
 		config.MaximumUploadBytes = DefaultMaximumUpload
 	}
-	manager := &Manager{config: config, now: time.Now, verifiedBootstraps: make(map[string]struct{})}
+	manager := &Manager{config: config, now: time.Now, verifiedBootstraps: make(map[string]struct{}), verifiedPatchVersions: make(map[string]string)}
 	manager.inspector = CommandInspector{UpgradeBinaryPath: config.UpgradeBinaryPath}
 	manager.helper = NewUnixHelperClient(config.HelperSocketPath)
 	for _, option := range options {
@@ -355,7 +357,14 @@ func (manager *Manager) Snapshot(ctx context.Context) Snapshot {
 		if !found {
 			continue
 		}
-		if reconciled, reconcileErr := manager.reconcileStoredBootstrap(ctx, candidate); reconcileErr == nil {
+		if candidate.Kind == PackageKindHotfix {
+			if !candidate.ArtifactsPruned {
+				candidate.PatchVersion = ""
+			}
+			if reconciled, reconcileErr := manager.reconcileHotfixVersion(ctx, candidate); reconcileErr == nil {
+				candidate = reconciled
+			}
+		} else if reconciled, reconcileErr := manager.reconcileStoredBootstrap(ctx, candidate); reconcileErr == nil {
 			candidate = reconciled
 		}
 		status := PackageStatus{Package: candidate}

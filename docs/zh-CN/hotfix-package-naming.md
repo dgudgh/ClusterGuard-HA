@@ -27,7 +27,9 @@ clusterguard-MAJOR.MINOR.PATCH.BUGFIX.<架构>.cgpatch
 clusterguard-3.1.1.1.x86_64.cgpatch
 ```
 
-`patch_version` 会同时写入签名的 `HOTFIX-MANIFEST.json`。文件名和清单必须表达同一个版本；只改文件名、不改签名清单不构成有效修复。
+`patch_version` 同时绑定文件名、签名 `HOTFIX-MANIFEST.json` 和实际运行二进制的 `buildinfo.ProductVersion`。平台 API 通过 `product_version` 返回当前程序的四段版本，控制台优先显示它；不能只改文件名或清单。
+
+旧的3.1.1.1、3.1.1.2制品未绑定运行产品版本，原始字节保持冻结；需通过新修订3.1.1.3补齐链路，不能原地重建旧包。
 
 ## 2. 四段版本的含义
 
@@ -38,7 +40,7 @@ clusterguard-3.1.1.1.x86_64.cgpatch
 | `PATCH` | `1` | 当前封板功能发布 |
 | `BUGFIX` | `1` | 该封板发布的第一个 Bug 修订 |
 
-这些四段是**交付版本身份**，不要求与热修来源 RPM 的 `rpm_version`、`rpm_release` 逐段相等。包仍然按已安装的基线构建，例如 `2.2-105`，于是签名清单保留 `source.version=2.2`、`source.release=105`；它们描述可应用基线，`patch_version=3.1.1.1` 描述新的封板身份。
+这些四段是**产品运行与交付版本身份**，不要求与热修来源 RPM 的 `rpm_version`、`rpm_release` 逐段相等。包仍然按已安装的基线构建，例如 `2.2-105`，于是签名清单保留 `source.version=2.2`、`source.release=105`；它们描述可应用基线，`patch_version=3.1.1.1` 描述新的封板身份。
 
 Bug 修订段必须从 `1` 开始。已签名字节需要修正时使用新的版本身份，例如 `3.1.1.2`，并在签名清单记录 `revision` 与 `supersedes_artifact{file,sha256,reason}`；不能覆盖 `3.1.1.1`。
 
@@ -78,7 +80,10 @@ Bug 修订段必须从 `1` 开始。已签名字节需要修正时使用新的�
 2. `patch_version` 是四段数字且 Bug 修订段大于 `0`；
 3. 文件名架构等于清单 `target.rpm_architecture`；
 4. `hotfix_id`、`patch_version`、`revision`、`source`、`target` 和受影响文件来自同一签名清单；
-5. `.sha256` 与文件实际字节一致，私有台账把该身份标为当前入口。
+5. `.sha256` 与文件实际字节一致，私有台账把该身份标为当前入口；
+6. 实际构建的 `clusterguard version`、`--version-json` 中的 `product_version` 与签名版本一致；更新后核对每个节点的运行版本和 API。API 的 `version/release` 仍为 RPM 兼容基线，不能拿四段版本替换升级来源校验。
+
+历史/待升级目标显示该包自身经验签得到的 `patch_version`。旧历史缺字段时，仅从同一包摘要与身份核对后的签名原件补读；没有该字段的旧包保留原目标，不猜文件名、不以任意上传包冒充当前运行版本。
 
 不要按目录时间、文件排序或 `latest` 标签选包。文件名正确不等于签名、兼容性或现场验收已经通过。
 

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"clusterguard.io/ha/internal/buildinfo"
 	"clusterguard.io/ha/internal/store"
 	"clusterguard.io/ha/pkg/adapter"
 	"clusterguard.io/ha/pkg/model"
@@ -106,6 +107,11 @@ func TestAuthenticatedControlPlaneStatusReturnsOperationalEvidence(t *testing.T)
 }
 
 func TestAuthenticatedPlatformVersionExposesPatchCompatibility(t *testing.T) {
+	oldVersion, oldRelease, oldProduct := buildinfo.Version, buildinfo.Release, buildinfo.ProductVersion
+	defer func() {
+		buildinfo.Version, buildinfo.Release, buildinfo.ProductVersion = oldVersion, oldRelease, oldProduct
+	}()
+	buildinfo.Version, buildinfo.Release, buildinfo.ProductVersion = "2.2", "105", "3.1.1.1"
 	server := NewServer(adapter.NewRegistry(), store.NewMemory(), nil, nil, WithControlToken(testControlToken))
 	response := callJSON(t, server.Handler(), http.MethodGet, "/api/v1/platform/version", nil)
 	if response.Code != http.StatusOK {
@@ -118,6 +124,7 @@ func TestAuthenticatedPlatformVersionExposesPatchCompatibility(t *testing.T) {
 			Binary         string `json:"binary"`
 			Version        string `json:"version"`
 			Release        string `json:"release"`
+			ProductVersion string `json:"product_version"`
 			StateFormat    int    `json:"state_format"`
 			UpdateProtocol int    `json:"update_protocol"`
 		} `json:"result"`
@@ -126,7 +133,7 @@ func TestAuthenticatedPlatformVersionExposesPatchCompatibility(t *testing.T) {
 		t.Fatalf("decode platform version: %v", err)
 	}
 	if envelope.Status != "ok" || envelope.Result.Product != "ClusterGuard HA" || envelope.Result.Binary != "clusterguard" ||
-		envelope.Result.Version == "" || envelope.Result.Release == "" || envelope.Result.StateFormat < 1 || envelope.Result.UpdateProtocol < 1 {
+		envelope.Result.Version != "2.2" || envelope.Result.Release != "105" || envelope.Result.ProductVersion != "3.1.1.1" || envelope.Result.StateFormat < 1 || envelope.Result.UpdateProtocol < 1 {
 		t.Fatalf("platform version=%+v", envelope)
 	}
 }

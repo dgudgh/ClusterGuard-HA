@@ -275,6 +275,9 @@ binaries="$("${node_bin}" "${repository}/scripts/hotfix-component-map.cjs" \
 
 build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 version_ldflags="-s -w -X clusterguard.io/ha/internal/buildinfo.Version=${rpm_version} -X clusterguard.io/ha/internal/buildinfo.Release=${rpm_release} -X clusterguard.io/ha/internal/buildinfo.Commit=${short_fix} -X clusterguard.io/ha/internal/buildinfo.BuiltAt=${build_time}"
+if [[ "${patch_version_declared}" == "present" ]]; then
+  version_ldflags+=" -X clusterguard.io/ha/internal/buildinfo.ProductVersion=${patch_version}"
+fi
 for binary in ${binaries}; do
   CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" go -C "${source_tree}" build -trimpath -ldflags "${version_ldflags}" \
     -o "${root}/payload/bin/${binary}" "./cmd/${binary}"

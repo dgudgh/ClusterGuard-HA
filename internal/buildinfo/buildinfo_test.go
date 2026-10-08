@@ -29,3 +29,22 @@ func TestRPMArchitectureUsesPackageNaming(t *testing.T) {
 		}
 	}
 }
+
+func TestProductVersionDoesNotChangeCompatibilityBaseline(t *testing.T) {
+	oldVersion, oldRelease, oldProduct := Version, Release, ProductVersion
+	defer func() { Version, Release, ProductVersion = oldVersion, oldRelease, oldProduct }()
+	Version, Release = "2.2", "105"
+	for _, value := range []string{"3.1.1.1", "", "3.1.1", "3.1.1.0", "3.1.1.000", "3.1.1.1\ninjected"} {
+		ProductVersion = value
+		info := Current("clusterguard")
+		want := "2.2-105"
+		if value == "3.1.1.1" {
+			want = value
+		} else if info.ProductVersion != "" {
+			t.Fatalf("invalid version exposed: %+v", info)
+		}
+		if info.DisplayVersion() != want || info.Version != "2.2" || info.Release != "105" {
+			t.Fatalf("version %q: %+v display=%s", value, info, info.DisplayVersion())
+		}
+	}
+}
