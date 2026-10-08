@@ -48,7 +48,7 @@
 2026-09-08 通过已连接的 GitHub 接口读取私有仓库 `dgudgh/ClusterGuard-HA`，没有推送、创建发布或修改分支：
 
 - [14defea: add guarded operations console](https://github.com/dgudgh/ClusterGuard-HA/commit/14defea07f158e5e0ff4a3ae73edcf783870d026) 的 diff 明确把 `GET /operations?cluster_id=...` 加入健康、候选和指标的 `Promise.all`，并把全量日志加入启动等待。该提交前的相应刷新代码没有操作历史请求。
-- [v2.2.68](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.68) 对应 `bc0546a3e91ac86c61017d6d57c7ceeedd3d114f`。核对时这是远端最新发布，也是 `codex/2.2-postgresql` 分支 HEAD。本地后续改动尚未进入该远端分支，不能把 GitHub 最新发布当作现场 2.2-91 源码。
+- [v2.2.68](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v2.2.68) 对应 `bc0546a3e91ac86c61017d6d57c7ceeedd3d114f`。核对时这是远端最新发布，也是 `codex/2.2-postgresql` 分支 HEAD。本地后续改动尚未进入该远端分支，不能把 GitHub 最新发布当作现场 2.2-91 源码。该 Release 后续按公开渠道规则删除并保留 Git 标签；2026-10-05 核验时，此 URL 显示标签追溯页，Release API 返回 404，不作为当前介质下载入口。
 - 当前 2.2-91 将全量记录改成全量摘要、先绘制拓扑，但仍等待摘要才结束刷新。没有旧版同期同数据的现场样本，不能仅凭提交历史断言用户每一个旧版本的实际耗时。
 
 本次局部修复：
