@@ -5,6 +5,13 @@
 const {execFileSync} = require('node:child_process');
 const components = require('../scripts/hotfix-component-map.cjs');
 
+// patch-id deliberately ignores whitespace. That alone cannot prove runtime
+// equivalence: whitespace inside a string literal can change behavior. Keep
+// exact added/removed bytes and paths as well, while ignoring context offsets.
+function changeBytes(diff) {
+  return diff.split('\n').filter(line=>line.startsWith('diff --git ') || line.startsWith('+') || line.startsWith('-')).join('\n');
+}
+
 function account(root, base, build, fixes, history = []) {
   const git = (...args) => execFileSync('git', ['-C', root, ...args], {encoding:'utf8'}).trim();
   const full = ref => git('rev-parse', `${ref}^{commit}`);
@@ -17,7 +24,8 @@ function account(root, base, build, fixes, history = []) {
     const paths=runtimeFiles(commit);
     if(!paths.length) throw Error('baseline history has no runtime change');
     const diff=git('diff','--no-ext-diff','--no-renames','--unified=0',`${commit}^`,commit,'--',...paths);
-    return execFileSync('git',['patch-id','--stable'],{cwd:root,input:diff,encoding:'utf8'}).trim().split(/\s+/)[0];
+    const id=execFileSync('git',['patch-id','--stable'],{cwd:root,input:diff,encoding:'utf8'}).trim().split(/\s+/)[0];
+    return JSON.stringify([id,changeBytes(diff)]);
   };
   if(!Array.isArray(history)) throw Error('baseline_history must be an array');
   const retained=new Set();
@@ -34,7 +42,7 @@ function account(root, base, build, fixes, history = []) {
     .filter(commit=>!declared.has(commit)&&!retained.has(commit)&&files(commit).length);
   return {undeclared,baseline_history:history};
 }
-module.exports={account};
+module.exports={account,changeBytes};
 if(require.main===module) {
   const fs=require('node:fs');
   const spec=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
