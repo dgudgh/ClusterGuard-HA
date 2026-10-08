@@ -143,6 +143,9 @@ short_fix="$(git -C "${repository}" rev-parse --short=7 "${build_commit}")"
 git -C "${repository}" merge-base --is-ancestor "${base_commit}" "${build_commit}" ||
   die "基线提交 ${base_commit} 不是构建提交 ${build_commit} 的祖先"
 
+"${node_bin}" "${repository}/tools/hotfix-build-accounting.cjs" "${spec}" "${repository}" "${build_commit}" ||
+  die "CG_UNDECLARED_PRODUCTION_CHANGE: 构建前生产提交核算失败"
+
 # A published artifact can never be rebuilt in place: the digest is the only
 # record of what a site actually ran, and a second artifact that carries the same
 # filename and the same version but different bytes destroys that record on both
@@ -340,6 +343,7 @@ const manifest = {
   revision: spec.revision || 0,
   supersedes_artifact: spec.supersedes_artifact || null,
   supersedes: spec.supersedes || [],
+  baseline_history: spec.baseline_history || [],
   fix_commits: fixCommitsRaw.split(",").filter(Boolean),
   source: { version: spec.rpm_version, release: spec.rpm_release },
   target: {
@@ -350,6 +354,7 @@ const manifest = {
     architecture: goarch
   },
   compatibility: { state_format: 1, update_protocol: 1 },
+  database_mutation: false,
   title: spec.title,
   summary: spec.summary || null,
   fixes: spec.fixes || [],
@@ -407,6 +412,28 @@ const quote = value => `'${String(value).replace(/'/g, "'\\''")}'`;
 const esc = text => text.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
 const say = line => `printf "${esc(line)}\\n"`;
 
+// This is also used during a legacy-to-v2 update: the installed Helper may not
+// understand "contract" yet. Only after verifying the installed trust key's
+// signature and every signed digest may we run this package's new Helper.
+const verification = [
+  'here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
+  'sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk \'{print $1}\'; else shasum -a 256 "$1" | awk \'{print $1}\'; fi; }',
+  'trust_key="${CG_HOTFIX_TRUST_KEY:-/etc/clusterguard/trust/patch-signing-public.pem}"',
+  '[[ -f "${trust_key}" && ! -L "${trust_key}" ]] || { printf "可信签名公钥不可用\\n" >&2; exit 1; }',
+  'openssl dgst -sha256 -verify "${trust_key}" -signature "${here}/HOTFIX-MANIFEST.sig" "${here}/HOTFIX-MANIFEST.json" >/dev/null 2>&1 || { printf "热修签名校验失败\\n" >&2; exit 1; }',
+  'for tool in apply rollback; do',
+  '  expected="$(jq -er --arg tool "${tool}" \'.tooling[$tool].sha256\' "${here}/HOTFIX-MANIFEST.json")"',
+  '  [[ -f "${here}/${tool}.sh" && ! -L "${here}/${tool}.sh" && "$(sha "${here}/${tool}.sh")" == "${expected}" ]] || { printf "热修工具摘要不匹配\\n" >&2; exit 1; }',
+  'done',
+  'while IFS="|" read -r artifact expected; do',
+  '  [[ "${artifact}" == payload/* && "${artifact}" != *".."* && -f "${here}/${artifact}" && ! -L "${here}/${artifact}" && "$(sha "${here}/${artifact}")" == "${expected}" ]] || { printf "热修载荷摘要不匹配：%s\\n" "${artifact}" >&2; exit 1; }',
+  'done < <(jq -er \'.files[] | [.artifact, .sha256] | join("|")\' "${here}/HOTFIX-MANIFEST.json")',
+  'contract_helper=/usr/local/libexec/clusterguard-update-helper',
+  'if jq -e \'.files[] | select(.artifact == "payload/bin/clusterguard-update-helper")\' "${here}/HOTFIX-MANIFEST.json" >/dev/null; then contract_helper="${here}/payload/bin/clusterguard-update-helper"; fi',
+  '[[ -x "${contract_helper}" && ! -L "${contract_helper}" ]] && "${contract_helper}" contract >/dev/null || { printf "CG_CONTRACT_UNAVAILABLE: 热修契约加载失败\\n" >&2; exit 1; }',
+  ''
+];
+
 const apply = [];
 apply.push("#!/usr/bin/env bash");
 apply.push("set -euo pipefail");
@@ -418,8 +445,7 @@ apply.push(`# hotfix=${manifest.hotfix_id} build_commit=${manifest.build_commit.
 apply.push("");
 apply.push(`if [[ "$(id -u)" -ne 0 ]]; then printf "${esc("必须以 root 运行 apply.sh。")}\\n" >&2; exit 1; fi`);
 apply.push("");
-apply.push('here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"');
-apply.push("");
+apply.push(...verification);
 apply.push("sha() {");
 apply.push('  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk "{print \\$1}"; else shasum -a 256 "$1" | awk "{print \\$1}"; fi');
 apply.push("}");
@@ -495,6 +521,7 @@ rollback.push(`# hotfix=${manifest.hotfix_id}`);
 rollback.push("");
 rollback.push(`if [[ "$(id -u)" -ne 0 ]]; then printf "${esc("必须以 root 运行 rollback.sh。")}\\n" >&2; exit 1; fi`);
 rollback.push("");
+rollback.push(...verification);
 rollback.push('backup_dir="/var/lib/clusterguard/hotfix"');
 rollback.push(`# Use only this package's backups, oldest first. A retry may have
 # backed up files that were already patched, so its newest manifest is not the
@@ -643,21 +670,18 @@ openssl dgst -sha256 -sign "${signing_key}" -out "${root}/HOTFIX-MANIFEST.sig" "
   lines.push("## 应用 / Apply");
   lines.push("");
   lines.push("```bash");
-  lines.push("tar -xzf <this-archive>.cgpatch");
-  lines.push("cd clusterguard-hotfix");
-  lines.push("bash apply.sh");
-  if (restartUnits.length > 0) {
-    lines.push("# 被替换的二进制与单元必须重启，否则进程仍跑旧代码");
-    for (const unit of restartUnits) lines.push(`systemctl restart ${unit}`);
-  }
+  lines.push("# 在当前 Leader 控制台上传本 .cgpatch，校验、查看计划并二次确认执行。");
+  lines.push("# Runner 建立维护门禁，逐节点应用、重启清单单元、验证摘要和就绪后释放门禁。");
+  lines.push("# apply.sh / rollback.sh 是 Runner 的节点工具，不能替代集群更新入口。");
+  for (const unit of restartUnits) lines.push(`# Runner 按清单执行：systemctl restart ${unit}`);
   lines.push("```");
   lines.push("");
   lines.push("## 回滚 / Rollback");
   lines.push("");
   lines.push("```bash");
-  lines.push("bash rollback.sh");
-  lines.push("systemctl daemon-reload");
-  for (const unit of restartUnits) lines.push(`systemctl restart ${unit}`);
+  lines.push("# 在当前 Leader 控制台对本包使用受控回退，并完成二次确认。");
+  lines.push("# 回退只读取本包自己的备份；缺少备份或恢复不完整时保留维护门禁。");
+  for (const unit of restartUnits) lines.push(`# Runner 按清单执行：systemctl restart ${unit}`);
   lines.push("```");
   lines.push("");
   lines.push("## 验证 / Verification");

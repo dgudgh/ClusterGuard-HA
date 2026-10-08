@@ -683,6 +683,19 @@ check('every declared fix commit is an ancestor of the build tree', foreignFixes
 // the tree embeds a change the manifest denies shipping.
 const unauthorisedFixes = [];
 for (const item of resolved) {
+  // A private delivery can carry an explicit proof of retained, already-fielded
+  // port history. This does not exempt any new runtime change or change the base.
+  if (item.manifest.baseline_history?.length) {
+    try {
+      if (JSON.stringify(item.manifest.baseline_history) !== JSON.stringify(item.body.baseline_history)) throw Error('signed baseline history differs from spec');
+      const result = require('./hotfix-build-accounting.cjs').account(repo, item.manifest.base_commit,
+        item.manifest.build_commit, item.manifest.fix_commits, item.manifest.baseline_history);
+      for (const commit of result.undeclared) unauthorisedFixes.push(`${item.body.id}:${commit.slice(0,7)} 改动了生产路径但未被声明`);
+    } catch (error) {
+      unauthorisedFixes.push(`${item.body.id}:${error.message}`);
+    }
+    continue;
+  }
   const declaredCommits = new Set(item.manifest.fix_commits || []);
   const ranged = git('log', '--format=%H', `${item.manifest.base_commit}..${item.manifest.build_commit}`)
     .split('\n').filter(Boolean);

@@ -26,6 +26,8 @@
 - 证据完整性、过期与 CLI 阶段：[证据测试](../../../../tools/upgrade-acceptance-evidence.test.cjs)。
 - 源码断言失效：校验脚本 `--self-test`，要求变异被捕获且无关修改对照通过。
 - 构建前加载：[热修构建器](../../../../scripts/build-hotfix-patch.sh)、[滚动升级包构建器](../../../../scripts/build-clusterguard-patch.sh)及 RPM/离线构建入口。
+- 热修生产提交核算：[核算器](../../../../tools/hotfix-build-accounting.cjs)及[回归](../../../../tools/hotfix-build-accounting.test.cjs)。恢复旧移植血缘时，用 `baseline_history` 显式证明对应原提交已在现场基线中、运行路径补丁一致；不能把既有修复伪装成新增修复，未声明的新生产变更仍阻断。
+- 热修节点工具：生成的 apply/rollback 在写文件前验证受信签名、清单内工具/载荷摘要并加载契约。有已验证的新 Helper 载荷时用它加载 v2，解决安装 Helper 尚旧的引导阶段；没有时要求安装 Helper 支持契约。完整集群动作仍由控制台/Runner 建立门禁、逐节点重启并验证，节点工具不替代集群入口。回归见[构建引导测试](../../../../scripts/hotfix_bootstrap_test.go)。
 - [实现与验收状态](../../../zh-CN/upgrade-validation-chain-implementation-status.md)是其标注日期与源码基线下的历史快照，不代表当前 HEAD 或现场状态。当前 ART/FIELD 判定必须使用当前证据绑定、相应 strict 阶段和本次实际验收报告；未执行项不能因选择 source 阶段或引用旧快照而关闭。
 
 仅在产出、签名或发布新制品时再进入[交付流程](../../delivery/README.md)。
