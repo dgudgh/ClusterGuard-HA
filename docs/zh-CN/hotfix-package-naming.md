@@ -14,7 +14,7 @@ clusterguard-MAJOR.MINOR.PATCH.BUGFIX.<架构>.cgpatch
 
 ```json
 {
-  "id": "HF-2026-1008-01",
+  "id": "HF-2026-1008-02",
   "patch_version": "3.1.1.1",
   "rpm_version": "2.2",
   "rpm_release": "105"
@@ -49,10 +49,12 @@ Bug 修订段必须从 `1` 开始。已签名字节需要修正时使用新的�
 | 位置 | 示例 | 用途 |
 | --- | --- | --- |
 | 外层文件名 | `clusterguard-3.1.1.1.x86_64.cgpatch` | 交付版本身份 |
-| `HOTFIX-MANIFEST.json` | `hotfix_id=HF-2026-1008-01` | 运行时操作、审计和同包 retry |
+| `HOTFIX-MANIFEST.json` | `hotfix_id=HF-2026-1008-02` | 运行时操作、审计和同包 retry |
 | `HOTFIX-MANIFEST.json` | `patch_version=3.1.1.1` | 绑定文件名与签名 |
 
-确认框要求输入的包 ID 仍是 `HF-2026-1008-01`。上传前必须核对文件名、签名清单和 `.sha256` 是同一份制品。
+确认框要求输入的包 ID 仍是 `HF-2026-1008-02`。上传前必须核对文件名、签名清单和 `.sha256` 是同一份制品。
+
+首次从旧命名迁移到新封板身份时，必须分配新的 `hotfix_id`。例如旧包 `HF-2026-1008-01` 迁移为 `HF-2026-1008-02`，清单通过 `supersedes` 记录关联。控制台按 `hotfix_id` 和摘要识别包；只换版本名仍沿用旧 ID、但摘要不同，会触发包冲突，不能作为交付入口。
 
 ## 4. 重试、修订与不可变性
 
@@ -67,7 +69,7 @@ Bug 修订段必须从 `1` 开始。已签名字节需要修正时使用新的�
 文件名：  clusterguard-3.1.1.1.x86_64.cgpatch
 清单源：  source.version=2.2, source.release=105
 清单版本：patch_version=3.1.1.1
-清单目标：target.version=2.2, target.release=105+hf-2026-1008-01
+清单目标：target.version=2.2, target.release=105+hf-2026-1008-02
 ```
 
 按以下顺序检查：
@@ -106,7 +108,7 @@ clusterguard-ha-<源版本>-<源发行号>-to-<目标版本>-<目标发行号>-<
 新规格不能使用以下名字：
 
 ```text
-clusterguard-ha-hotfix-HF-2026-1008-01-2.2-105.x86_64.cgpatch  # 新规格仍按旧 HF 写法命名
+clusterguard-ha-hotfix-HF-2026-1008-02-2.2-105.x86_64.cgpatch  # 新规格仍按旧 HF 写法命名
 clusterguard-3.1.1.x86_64.cgpatch                              # 只写了三段
 clusterguard-3.1.1.0.x86_64.cgpatch                            # Bug 修订段从 0 开始
 latest.cgpatch

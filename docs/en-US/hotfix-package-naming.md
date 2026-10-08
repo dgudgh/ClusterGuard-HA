@@ -14,7 +14,7 @@ Example of a new specification:
 
 ```json
 {
-  "id": "HF-2026-1008-01",
+  "id": "HF-2026-1008-02",
   "patch_version": "3.1.1.1",
   "rpm_version": "2.2",
   "rpm_release": "105"
@@ -49,10 +49,12 @@ The bug-fix segment starts at `1`. If signed bytes need correction, use a new id
 | Location | Example | Purpose |
 | --- | --- | --- |
 | Outer filename | `clusterguard-3.1.1.1.x86_64.cgpatch` | Delivery version identity |
-| `HOTFIX-MANIFEST.json` | `hotfix_id=HF-2026-1008-01` | Runtime operation, audit, and same-package retry |
+| `HOTFIX-MANIFEST.json` | `hotfix_id=HF-2026-1008-02` | Runtime operation, audit, and same-package retry |
 | `HOTFIX-MANIFEST.json` | `patch_version=3.1.1.1` | Binds the filename to the signature |
 
-The confirmation dialog still asks for the package id `HF-2026-1008-01`. Before upload, verify that the filename, the signed manifest, and the `.sha256` sidecar describe one artifact.
+The confirmation dialog still asks for the package id `HF-2026-1008-02`. Before upload, verify that the filename, the signed manifest, and the `.sha256` sidecar describe one artifact.
+
+The first migration from a legacy name to the sealed release line must allocate a new `hotfix_id`: for example, migrate `HF-2026-1008-01` to `HF-2026-1008-02` and record the relationship in signed `supersedes`. The console identifies packages by `hotfix_id` and digest. Reusing the old ID with different bytes triggers a package conflict even when the versioned filename is correct.
 
 ## 4. Retry, correction, and immutability
 
@@ -67,7 +69,7 @@ The confirmation dialog still asks for the package id `HF-2026-1008-01`. Before 
 Filename:         clusterguard-3.1.1.1.x86_64.cgpatch
 Manifest source:  source.version=2.2, source.release=105
 Manifest version: patch_version=3.1.1.1
-Manifest target:  target.version=2.2, target.release=105+hf-2026-1008-01
+Manifest target:  target.version=2.2, target.release=105+hf-2026-1008-02
 ```
 
 Check in this order:
@@ -106,7 +108,7 @@ Do not apply the `.cgupgrade` source-to-target grammar to a hotfix package, and 
 A new specification must not use these names:
 
 ```text
-clusterguard-ha-hotfix-HF-2026-1008-01-2.2-105.x86_64.cgpatch  # a new spec still using the old HF grammar
+clusterguard-ha-hotfix-HF-2026-1008-02-2.2-105.x86_64.cgpatch  # a new spec still using the old HF grammar
 clusterguard-3.1.1.x86_64.cgpatch                              # only three segments
 clusterguard-3.1.1.0.x86_64.cgpatch                            # bug-fix segment starts at 0
 latest.cgpatch
