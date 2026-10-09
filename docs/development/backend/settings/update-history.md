@@ -40,3 +40,9 @@ API `GET /api/v1/platform/updates/{patch_id}` 返回包、当前 job、独立 de
 ## 版本身份与旧记录替代
 
 Snapshot从原包SHA与验签结果补读supersedes，仅已安装且兼容的签名后继输出superseded_by；旧失败status与原记录不改，活动任务不隐藏。
+
+## 传输与节点更新进度
+
+`Manager.Job` → `deriveJobProgress` → `progressPercent`将同一operation_id的status/events投影为页面进度。Runner在每个热修节点前发出`staging`，current是已完成节点数；它与`updating`共用节点步骤的百分比计算，避免传输下一节点时走未知阶段的0%分支。只修改读取投影，原始状态和事件保持不变，完成仍须以终态及健康核验为准。
+
+[三节点持久化回归](../../../../internal/platformupdate/progress_staging_test.go)实际读取每一步status/events，覆盖准备、三次传输、节点更新、集群验证、最终成功；可将实际投影供[浏览器回归](../../../../tools/console-update-staging-progress-acceptance.cjs)使用。跨操作隔离仍由operation_id约束。

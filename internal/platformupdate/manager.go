@@ -878,7 +878,7 @@ func progressPercent(status Status, progress Progress) int {
 		return 3
 	case "preparing", "locking":
 		return 8
-	case "updating":
+	case "staging", "updating":
 		if progress.Total > 0 {
 			return 15 + (progress.Current * 70 / progress.Total)
 		}

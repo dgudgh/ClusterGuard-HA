@@ -3706,7 +3706,7 @@
     };
     const softwareUpdatePhaseText = phase => ({
       queued:'任务已进入队列', preparing:'正在核对升级合同与节点状态', locking:'正在建立集群维护门禁',
-      updating:'正在滚动更新控制节点', verifying:'正在验证控制面与节点合同', finalizing:'正在完成集群验证并释放维护门禁',
+      staging:'正在向控制节点传输已签名补丁', updating:'正在滚动更新控制节点', verifying:'正在验证控制面与节点合同', finalizing:'正在完成集群验证并释放维护门禁',
       rollback:'正在受控回退已更新节点', completed:'全部节点升级完成', rolled_back:'已回退并释放维护门禁',
       failed:'升级被阻断，需要人工处理'
     })[phase] || '正在等待升级器上报节点进度';
@@ -3882,7 +3882,7 @@
 
       const stageIndex = ['completed', 'rolled_back'].includes(phase) ? 3
         : ['verifying', 'finalizing'].includes(phase) ? 2
-          : ['updating', 'rollback'].includes(phase) ? 1 : 0;
+          : ['staging', 'updating', 'rollback'].includes(phase) ? 1 : 0;
       document.querySelectorAll('[data-update-progress-stage]').forEach((stage, index) => {
         const done = ['succeeded', 'rolled_back'].includes(status) || index < stageIndex;
         const currentStage = !['succeeded', 'rolled_back'].includes(status) && index === stageIndex;

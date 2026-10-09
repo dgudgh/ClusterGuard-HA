@@ -181,6 +181,22 @@ const writeOperationTree = (root, name, status, events) => {
 
 const CHECKS = [
   {
+    rule: '22 / FIELD-012',
+    title: 'hotfix staging retains node progress and its console stage',
+    run: () => {
+      const manager = read('internal/platformupdate/manager.go') || '';
+      const start = manager.indexOf('func progressPercent(');
+      const body = manager.slice(start, manager.indexOf('\n}\n', start));
+      if (!body.includes('case "staging", "updating":')) return 'staging no longer shares the node-step progress calculation';
+      const page = read('internal/api/console.html') || '';
+      if (!page.includes("['staging', 'updating', 'rollback'].includes(phase) ? 1 : 0")) return 'staging jumps back to preparation in the console';
+      if (!page.includes("staging:'正在向控制节点传输已签名补丁'")) return 'staging lost its operator label';
+      if (!(read('internal/platformupdate/progress_staging_test.go') || '').includes('func TestHotfixStagingProgressAcrossThreeNodes(')) return 'missing persisted three-node progress regression';
+      if (!(read('tools/console-update-staging-progress-acceptance.cjs') || '').includes('new operation resets rather than inherits 100%')) return 'missing actual-browser progress/reset regression';
+      return true;
+    },
+  },
+  {
     rule:'INV-001 / INV-009',title:'version identity and signed supersession reach the current subject',
     run:()=>{
       const source=read('internal/api/console.html');
@@ -722,6 +738,7 @@ const reportOpen = failures => {
 // The files the rules read. The self-test copies exactly these, so a mutation cannot be
 // caught by reading something the gate does not actually consult.
 const READ_FILES = [
+  'internal/platformupdate/progress_staging_test.go', 'tools/console-update-staging-progress-acceptance.cjs',
   'internal/platformupdate/version.go', 'internal/platformupdate/inspector.go',
   CONTRACT_DOC, CONTRACT_DOC_ZH, 'internal/updatecontract/contract.md', 'internal/updatecontract/schema.json', 'internal/platformupdate/helper.go',
   'internal/platformupdate/supersedes.go', 'internal/platformupdate/supersedes_test.go',
@@ -732,6 +749,8 @@ const READ_FILES = [
 ];
 
 const MUTATIONS = [
+  {name:'hotfix staging becomes zero again',file:'internal/platformupdate/manager.go',find:'case "staging", "updating":',replace:'case "updating":',rule:'hotfix staging retains node progress and its console stage'},
+  {name:'hotfix staging jumps back to console preparation',file:'internal/api/console.html',find:"['staging', 'updating', 'rollback'].includes(phase) ? 1 : 0",replace:"['updating', 'rollback'].includes(phase) ? 1 : 0",rule:'hotfix staging retains node progress and its console stage'},
   {name:'retired historical failure occupies current summary again',file:'internal/api/console.html',find:'item.incompatible || item.superseded_by',replace:'item.incompatible || false',rule:'version identity and signed supersession reach the current subject'},
 
   { name:'filename migration leaves runtime behind', file:'scripts/build-hotfix-patch.sh', find:'internal/buildinfo.ProductVersion=${patch_version}', replace:'internal/buildinfo.Release=${patch_version}', rule:'runtime and history use their own verified product versions' },
