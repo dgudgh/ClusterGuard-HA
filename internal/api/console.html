@@ -425,15 +425,23 @@
     .configuration-distribution-mark { display:grid; place-items:center; flex:0 0 20px; width:20px; height:20px; border:1.5px solid var(--ink); border-radius:5px; }
     .configuration-distribution-mark::before { content:""; width:9px; height:6px; border-left:2px solid var(--ink); border-right:2px solid var(--ink); }
     #configuration-targets { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(280px,100%),1fr)); gap:10px; margin-top:12px; }
-    .configuration-target { display:grid; grid-template-columns:17px minmax(0,1fr); align-items:start; gap:10px; padding:12px 14px; border:1px solid var(--line); border-radius:8px; background:#fff; cursor:pointer; }
+    .configuration-target { display:grid; grid-template-columns:minmax(0,1fr) 18px; align-items:center; gap:12px; padding:13px 14px; border:1px solid var(--line); border-radius:8px; background:#fff; cursor:pointer; }
     .configuration-target:hover { border-color:var(--line-strong); }
     .configuration-target:focus-within { border-color:var(--accent); }
-    .configuration-target input[type="checkbox"] { width:16px; min-width:16px; height:16px; min-height:16px; flex:0 0 16px; margin:2px 0 0; padding:0; accent-color:var(--accent); }
+    .configuration-target input[type="checkbox"] { width:18px; min-width:18px; height:18px; min-height:18px; flex:0 0 18px; margin:0; padding:0; accent-color:var(--accent); cursor:pointer; }
+    .configuration-target input[type="checkbox"]:disabled { cursor:default; }
     .configuration-target-body { min-width:0; }
-    .configuration-target-name { display:block; color:var(--ink); font-size:12px; font-weight:680; overflow-wrap:anywhere; }
-    .configuration-target-chip { display:inline-block; margin-left:6px; padding:1px 6px; border:1px solid var(--line-strong); border-radius:999px; color:var(--muted); font-size:10px; font-weight:600; vertical-align:middle; }
-    .configuration-target-id { display:block; margin-top:3px; color:var(--muted); font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:11px; overflow-wrap:anywhere; }
-    .configuration-target-address { display:block; margin-top:6px; color:var(--muted); font-size:11px; overflow-wrap:anywhere; }
+    .configuration-target-name { display:flex; align-items:center; gap:6px; flex-wrap:wrap; color:var(--ink); font-size:12px; font-weight:680; overflow-wrap:anywhere; }
+    .configuration-target-chip { display:inline-block; padding:1px 7px; border:1px solid transparent; border-radius:999px; font-size:10px; font-weight:600; line-height:1.5; }
+    .configuration-target-chip-local { background:var(--blue-soft); border-color:var(--blue-line); color:var(--accent-strong); }
+    .configuration-target-chip-leader { background:var(--warning-soft); border-color:rgba(163,84,0,.25); color:var(--warning); }
+    .configuration-target-chip-voter { background:rgba(36,138,61,.08); border-color:rgba(36,138,61,.22); color:var(--success); }
+    .configuration-target-id { display:block; margin-top:4px; color:var(--muted); font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:11px; overflow-wrap:anywhere; }
+    .configuration-target-address { display:flex; align-items:center; gap:5px; margin-top:7px; color:var(--muted); font-size:11px; }
+    .configuration-target-address svg { width:11px; height:11px; flex:0 0 11px; }
+    .configuration-target-endpoint { overflow-wrap:anywhere; }
+    a.configuration-target-endpoint { color:var(--accent); text-decoration:none; }
+    a.configuration-target-endpoint:hover { text-decoration:underline; }
     .configuration-button-icon { width:14px; height:14px; flex:0 0 14px; }
  #configuration-confirm {box-sizing:border-box;max-width:min(680px,calc(100vw - 32px));max-height:85vh;overflow:auto;border:1px solid var(--line);border-radius:12px;padding:24px;}
  .configuration-sections { display:grid; gap:10px; min-width:0; }
@@ -1898,7 +1906,7 @@
  "解锁参数下发":"Unlock configuration changes", "重新锁定参数下发":"Lock configuration changes",
  "检查并下发":"Review and apply", "清除草稿":"Clear draft", "确认参数下发":"Confirm configuration changes",
  "集群级参数必须选择全部投票节点。":"Cluster-wide parameters require all voting controllers.",
- "本机":"This host", "未登记节点":"Node not registered", "无可用地址":"No address available",
+ "本机":"This host", "投票节点":"Voting node", "未登记节点":"Node not registered", "无可用地址":"No address available",
  "逐节点超时":"Per-controller timeout",
  "秒":"seconds",
  "各节点将依次重启，核验实际生效值后才完成。":"Controllers restart one at a time. Completion requires verifying the values used by the new processes.",
@@ -3204,12 +3212,29 @@
       const input=document.createElement('input');input.type='checkbox';input.dataset.configurationNode=member.resource_id;input.checked=state.configurationTargets===null||state.configurationTargets.includes(member.resource_id);input.disabled=!configurationEditAllowed();
       input.addEventListener('change',()=>{state.configurationTargets=[...targets.querySelectorAll('input:checked')].map(i=>i.dataset.configurationNode);state.configurationDraftEpoch++;state.configurationIntent=null;byId('configuration-confirm').close();});
       const body=document.createElement('div');body.className='configuration-target-body';
-      const name=document.createElement('span');name.className='configuration-target-name';name.textContent=node?node.node_name:ui('未登记节点');
-      const chips=[];if(member.resource_id===localControllerID)chips.push(ui('本机'));if(member.resource_id===state.controlPlane?.leader_id)chips.push('Leader');
-      if(chips.length){const chip=document.createElement('span');chip.className='configuration-target-chip';chip.textContent=chips.join(' · ');name.append(chip);}
+      const name=document.createElement('span');name.className='configuration-target-name';
+      const nameText=document.createElement('span');nameText.textContent=node?node.node_name:ui('未登记节点');name.append(nameText);
+      // Exactly one role chip per card, and every chip is a fact the control plane can
+      // back: being listed as a distribution member makes the card a voter, while the
+      // local and Leader markers come from their own fields - never from a reachability
+      // guess, which the control plane does not probe per voter.
+      const chip=document.createElement('span');chip.className='configuration-target-chip';
+      if(member.resource_id===localControllerID){chip.classList.add('configuration-target-chip-local');chip.textContent=ui('本机');}
+      else if(member.resource_id===state.controlPlane?.leader_id){chip.classList.add('configuration-target-chip-leader');chip.textContent='Leader';}
+      else{chip.classList.add('configuration-target-chip-voter');chip.textContent=ui('投票节点');}
+      name.append(chip);
       const id=document.createElement('span');id.className='configuration-target-id';id.textContent=member.resource_id;
-      const address=document.createElement('span');address.className='configuration-target-address';address.textContent=member.api_address||member.address||node?.ip_address||node?.hostname||ui('无可用地址');
-      body.append(name,id,address);card.append(input,body);targets.append(card);
+      const address=document.createElement('span');address.className='configuration-target-address';
+      const linkIcon=document.createElementNS('http://www.w3.org/2000/svg','svg');
+      linkIcon.setAttribute('viewBox','0 0 16 16');linkIcon.setAttribute('fill','none');linkIcon.setAttribute('stroke','currentColor');linkIcon.setAttribute('stroke-width','1.6');linkIcon.setAttribute('stroke-linecap','round');linkIcon.setAttribute('stroke-linejoin','round');linkIcon.setAttribute('aria-hidden','true');
+      for(const d of ['M6.8 9.2l2.4-2.4','M7.6 4.9l1.3-1.3a2.6 2.6 0 0 1 3.7 3.7l-1.3 1.3','M8.4 11.1l-1.3 1.3a2.6 2.6 0 0 1-3.7-3.7l1.3-1.3']){const segment=document.createElementNS('http://www.w3.org/2000/svg','path');segment.setAttribute('d',d);linkIcon.append(segment);}
+      address.append(linkIcon);
+      const endpoint=member.api_address||member.address||node?.ip_address||node?.hostname||'';
+      // The endpoint the Leader records already carries its scheme (runtime joins
+      // apiScheme://host:port), so it can be opened directly; anything else stays text.
+      if(/^https?:\/\//.test(endpoint)){const link=document.createElement('a');link.className='configuration-target-endpoint';link.href=endpoint;link.target='_blank';link.rel='noreferrer';link.textContent=endpoint;address.append(link);}
+      else{const text=document.createElement('span');text.className='configuration-target-endpoint';text.textContent=endpoint||ui('无可用地址');address.append(text);}
+      body.append(name,id,address);card.append(body,input);targets.append(card);
      }
      if(state.configurationDistributionError)configurationMessage(ui('下发状态读取失败；不能确认任务结果。'));
      const tasks=byId('configuration-tasks');tasks.replaceChildren();

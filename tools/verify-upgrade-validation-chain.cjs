@@ -344,11 +344,11 @@ const CHECKS = [
     run:()=>{
       const source=read('internal/api/console.html')||'';
       if(!source.includes('#configuration-targets { display:grid;')) return 'the controller targets are no longer laid out as a grid of cards';
-      if(!/\.configuration-target input\[type="checkbox"\] \{[^}]*min-height:16px/.test(source)) return 'the controller checkbox is not pinned to 16px, so the shared input width/min-height stretches it again';
+      if(!/\.configuration-target input\[type="checkbox"\] \{[^}]*min-height:18px/.test(source)) return 'the controller checkbox is not pinned to 18px, so the shared input width/min-height stretches it again';
       const start=source.indexOf("const targets=byId('configuration-targets');");
-      const endMarker='body.append(name,id,address);card.append(input,body);targets.append(card);';
+      const endMarker='body.append(name,id,address);card.append(body,input);targets.append(card);';
       const end=source.indexOf(endMarker,start);
-      if(start<0||end<0) return 'the controller targets are no longer rendered as one card per voter';
+      if(start<0||end<0) return 'the controller targets are no longer rendered as one card per voter with the checkbox trailing the facts';
       const closing=source.indexOf('\n     }',end+endMarker.length);
       if(closing<0) return 'the controller card loop is no longer a closed block';
       const loop=source.slice(start,closing+'\n     }'.length);
@@ -357,44 +357,57 @@ const CHECKS = [
       // from the shipped branch rather than from a copy of the rule kept in this gate.
       const render=vm.runInNewContext(`(state) => {
         const make = tag => {
-          const element = { tagName:String(tag).toUpperCase(), className:'', dataset:{}, children:[], textContent:'', checked:false, disabled:false,
+          const element = { tagName:String(tag).toUpperCase(), className:'', dataset:{}, children:[], textContent:'', checked:false, disabled:false, href:'',
+            classList:{_items:new Set(), add(...names){ for(const n of names) element.classList._items.add(n); }, contains(n){ return element.classList._items.has(n); }},
+            setAttribute(name,value){ element[name]=value; },
             append(...items){ element.children.push(...items); },
             replaceChildren(){ element.children.length = 0; },
             addEventListener(){}, querySelectorAll(){ return []; }, close(){} };
           return element;
         };
         const container = make('div');
-        const document = { createElement: tag => make(tag) };
+        const document = { createElement: tag => make(tag), createElementNS: (ns,tag) => make(tag) };
         const byId = id => id === 'configuration-targets' ? container : make('div');
         const ui = template => template;
         const configurationEditAllowed = () => true;
         ${loop}
         return container.children;
       }`, {});
-      const members=[{resource_id:'aaaaaaaa-0000-4000-8000-000000000001'},{resource_id:'bbbbbbbb-0000-4000-8000-000000000002',api_address:'10.0.0.2:8443'}];
+      const members=[{resource_id:'aaaaaaaa-0000-4000-8000-000000000001'},{resource_id:'bbbbbbbb-0000-4000-8000-000000000002',api_address:'https://10.0.0.2:3000'},{resource_id:'cccccccc-0000-4000-8000-000000000003'}];
       const cards=render({
         configurationDistribution:{local:{node_id:members[0].resource_id},members},
-        nodes:[{resource_id:members[0].resource_id,node_name:'cg-prod-01',ip_address:'192.0.2.1'}],
-        configurationTargets:null,controlPlane:{leader_id:members[0].resource_id},
+        nodes:[{resource_id:members[0].resource_id,node_name:'cg-prod-01',ip_address:'192.0.2.1'},{resource_id:members[2].resource_id,node_name:'cg-prod-03',ip_address:'192.0.2.3'}],
+        configurationTargets:null,controlPlane:{leader_id:members[1].resource_id},
       });
-      if(cards.length!==2) return `the distribution rendered ${cards.length} cards for two voters`;
+      if(cards.length!==3) return `the distribution rendered ${cards.length} cards for three voters`;
       if(cards[0].tagName!=='LABEL') return 'a controller card is no longer a label, so clicking anywhere on it stops toggling its checkbox';
-      const input=cards[0].children[0];
-      if(input.tagName!=='INPUT'||input.type!=='checkbox'||input.dataset.configurationNode!==members[0].resource_id) return 'a controller card no longer binds its own checkbox to the voter it names';
-      const first=cards[0].children[1].children;
-      if(first[0].textContent!=='cg-prod-01') return `a registered voter is presented as ${first[0].textContent} instead of its inventory node name`;
-      if(first[0].children.length!==1||first[0].children[0].textContent!=='本机 · Leader') return 'the card no longer marks the controller serving the page and the current Leader';
+      const input=cards[0].children[1];
+      if(input.tagName!=='INPUT'||input.type!=='checkbox'||input.dataset.configurationNode!==members[0].resource_id) return 'a controller card no longer binds a trailing checkbox to the voter it names';
+      const first=cards[0].children[0].children;
+      if(first[0].children[0].textContent!=='cg-prod-01') return `a registered voter is presented as ${first[0].children[0].textContent} instead of its inventory node name`;
+      const firstChip=first[0].children[1];
+      if(!firstChip||firstChip.textContent!=='本机'||!firstChip.classList.contains('configuration-target-chip-local')) return 'the controller serving the page lost its local chip';
       if(first[1].textContent!==members[0].resource_id) return 'the card no longer states the immutable voter id';
-      if(first[2].textContent!=='192.0.2.1') return 'the card no longer falls back to the inventory address when the voter carries no trusted API endpoint';
-      const second=cards[1].children[1].children;
-      if(second[0].textContent!=='未登记节点') return `a voter missing from the inventory is presented as ${second[0].textContent} instead of the registration fallback`;
+      if(first[2].children[0].tagName!=='SVG') return 'the address row lost its link icon';
+      const firstEndpoint=first[2].children[1];
+      if(!firstEndpoint||firstEndpoint.tagName==='A'||firstEndpoint.textContent!=='192.0.2.1') return 'a bare inventory address must stay plain text instead of becoming a link';
+      const second=cards[1].children[0].children;
+      if(second[0].children[0].textContent!=='未登记节点') return `a voter missing from the inventory is presented as ${second[0].children[0].textContent} instead of the registration fallback`;
+      const secondChip=second[0].children[1];
+      if(!secondChip||secondChip.textContent!=='Leader'||!secondChip.classList.contains('configuration-target-chip-leader')) return 'the current Leader lost its Leader chip';
       if(second[1].textContent!==members[1].resource_id) return 'an unregistered voter lost its immutable id';
-      if(second[2].textContent!=='10.0.0.2:8443') return 'the card no longer prefers the trusted API endpoint the Leader recorded for that voter';
-      if(!source.includes('"未登记节点":"Node not registered"')||!source.includes('"本机":"This host"')||!source.includes('"无可用地址":"No address available"')) return 'the card wording has no English catalogue entry';
+      const secondEndpoint=second[2].children[1];
+      if(!secondEndpoint||secondEndpoint.tagName!=='A'||secondEndpoint.href!=='https://10.0.0.2:3000') return 'the trusted https endpoint the Leader recorded is no longer offered as a link';
+      const third=cards[2].children[0].children;
+      const thirdChip=third[0].children[1];
+      if(!thirdChip||thirdChip.textContent!=='投票节点'||!thirdChip.classList.contains('configuration-target-chip-voter')) return 'a plain voting member lost its voter chip';
+      if(!source.includes('"未登记节点":"Node not registered"')||!source.includes('"本机":"This host"')||!source.includes('"无可用地址":"No address available"')||!source.includes('"投票节点":"Voting node"')) return 'the card wording has no English catalogue entry';
       const acceptance=read('tools/console-configuration-distribution-acceptance.cjs')||'';
       if(!acceptance.includes('every controller card names the node, its id and its trusted address')) return 'missing real-browser regression for the card facts';
+      if(!acceptance.includes('each controller card carries exactly one role chip')) return 'missing real-browser regression for the single role chip';
+      if(!acceptance.includes('a trusted https endpoint renders as a link')) return 'missing real-browser regression for the endpoint link';
       if(!acceptance.includes('a controller card claims no liveness the API cannot back')) return 'missing real-browser regression for the liveness wording';
-      if(!acceptance.includes('the controller checkbox stays a 16px control instead of a stretched input')) return 'missing real-browser regression for the checkbox size';
+      if(!acceptance.includes('the controller checkbox stays an 18px control instead of a stretched input')) return 'missing real-browser regression for the checkbox size';
       return true;
     },
   },
@@ -939,9 +952,12 @@ const MUTATIONS = [
 
   { name:'controller cards go back to a bare list', file:'internal/api/console.html', find:'#configuration-targets { display:grid;', replace:'#configuration-targets { display:flex;', rule:'a controller distribution card states the node facts and no unsupportable liveness' },
   { name:'a controller card stops being a label', file:'internal/api/console.html', find:"const card=document.createElement('label');card.className='configuration-target';", replace:"const card=document.createElement('div');card.className='configuration-target';", rule:'a controller distribution card states the node facts and no unsupportable liveness' },
-  { name:'a controller card shows the raw id instead of the node name', file:'internal/api/console.html', find:"name.textContent=node?node.node_name:ui('未登记节点');", replace:"name.textContent=node?member.resource_id:ui('未登记节点');", rule:'a controller distribution card states the node facts and no unsupportable liveness' },
-  { name:'a controller card ignores the trusted API endpoint the Leader recorded', file:'internal/api/console.html', find:"address.textContent=member.api_address||member.address||node?.ip_address||node?.hostname||ui('无可用地址');", replace:"address.textContent=node?.ip_address||node?.hostname||ui('无可用地址');", rule:'a controller distribution card states the node facts and no unsupportable liveness' },
-  { name:'the controller checkbox stretches again', file:'internal/api/console.html', find:'.configuration-target input[type="checkbox"] { width:16px; min-width:16px; height:16px; min-height:16px;', replace:'.configuration-target input[type="checkbox"] { width:16px; min-width:16px; height:16px; min-height:34px;', rule:'a controller distribution card states the node facts and no unsupportable liveness' },
+  { name:'a controller card shows the raw id instead of the node name', file:'internal/api/console.html', find:"nameText.textContent=node?node.node_name:ui('未登记节点');", replace:"nameText.textContent=node?member.resource_id:ui('未登记节点');", rule:'a controller distribution card states the node facts and no unsupportable liveness' },
+  { name:'a controller card ignores the trusted API endpoint the Leader recorded', file:'internal/api/console.html', find:"const endpoint=member.api_address||member.address||node?.ip_address||node?.hostname||'';", replace:"const endpoint=node?.ip_address||node?.hostname||'';", rule:'a controller distribution card states the node facts and no unsupportable liveness' },
+  { name:'the controller checkbox stretches again', file:'internal/api/console.html', find:'.configuration-target input[type="checkbox"] { width:18px; min-width:18px; height:18px; min-height:18px;', replace:'.configuration-target input[type="checkbox"] { width:18px; min-width:18px; height:18px; min-height:34px;', rule:'a controller distribution card states the node facts and no unsupportable liveness' },
+  { name:'the controller checkbox jumps back ahead of the facts', file:'internal/api/console.html', find:'card.append(body,input);targets.append(card);', replace:'card.append(input,body);targets.append(card);', rule:'a controller distribution card states the node facts and no unsupportable liveness' },
+  { name:'a plain voting member loses its voter chip', file:'internal/api/console.html', find:"else{chip.classList.add('configuration-target-chip-voter');chip.textContent=ui('投票节点');}", replace:"else{chip.textContent='';}", rule:'a controller distribution card states the node facts and no unsupportable liveness' },
+  { name:'a trusted https endpoint stops being a link', file:'internal/api/console.html', find:'if(/^https?:\\/\\//.test(endpoint)){', replace:'if(false){', rule:'a controller distribution card states the node facts and no unsupportable liveness' },
 
   {
     name:'a failed attempt overwrites installed deployment',file:'internal/api/console.html',
