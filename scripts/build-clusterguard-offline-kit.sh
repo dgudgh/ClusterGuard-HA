@@ -11,6 +11,8 @@ bundle_version=""
 goarch="amd64"
 nfpm_binary="${CG_NFPM_BINARY:-$(command -v nfpm 2>/dev/null || true)}"
 jq_binary="${CG_JQ_BINARY:-}"
+product_version=""
+requested_channel=""
 dependency_dir=""
 patch_trust_key=""
 database_packages=()
@@ -24,6 +26,8 @@ usage() {
   --output DIR          输出目录；默认写入主项目 release/VERSION-RELEASE
   --version VERSION     RPM 版本，例如 2.2
   --release RELEASE     RPM release，例如 1
+  --release-channel VER candidate 或 stable；不代表现场验收
+  --product-version VER 四段运行产品版本，与四段介质版本一致
   --bundle-version VER  介质显示版本，默认使用 VERSION-RELEASE
   --goarch ARCH         amd64 或 arm64
   --nfpm-binary FILE    可信 nFPM 可执行文件
@@ -40,7 +44,9 @@ while (($#)); do
   case "$1" in
     --output) output="${2:-}"; shift 2 ;;
     --version) version="${2:-}"; shift 2 ;;
+    --product-version) product_version="${2:-}"; shift 2 ;;
     --release) release="${2:-}"; shift 2 ;;
+    --release-channel) requested_channel="${2:-}"; shift 2 ;;
     --bundle-version) bundle_version="${2:-}"; shift 2 ;;
     --goarch) goarch="${2:-}"; shift 2 ;;
     --nfpm-binary) nfpm_binary="${2:-}"; shift 2 ;;
@@ -63,6 +69,13 @@ done
   exit 1
 }
 
+[[ -z "${requested_channel}" || "${requested_channel}" == candidate || "${requested_channel}" == stable ]] || { echo "invalid release channel" >&2; exit 2; }
+# Four-part product identity is independent of the RPM compatibility baseline.
+if [[ -n "${product_version}" ]]; then
+  [[ "${product_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]*[1-9][0-9]*$ ]] || {
+    echo "invalid --product-version; expected MAJOR.MINOR.PATCH.BUGFIX with BUGFIX > 0" >&2; exit 2;
+  }
+fi
 [[ -x "${nfpm_binary}" ]] || { echo "必须提供可信 nFPM" >&2; exit 3; }
 [[ -x "${jq_binary}" ]] || { echo "必须提供静态 Linux jq" >&2; exit 3; }
 
@@ -201,6 +214,10 @@ if [[ -z "${bundle_version}" ]]; then
 fi
 [[ "${bundle_version}" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "介质版本格式无效" >&2; exit 2; }
 
+if [[ "${bundle_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  [[ -n "${product_version}" ]] || product_version="${bundle_version}"
+  [[ "${product_version}" == "${bundle_version}" && "${product_version}" =~ \.[0-9]*[1-9][0-9]*$ ]] || { echo "bundle/product version mismatch or invalid BUGFIX" >&2; exit 2; }
+fi
 if [[ -z "${output}" ]]; then
   # A build may run from a linked worktree. Formal deliverables belong to the
   # visible primary repository, never under .worktrees or a temporary dist.
@@ -214,6 +231,9 @@ if [[ -z "${output}" ]]; then
   output="${release_repository}/release/${bundle_version}"
 fi
 
+for existing in "${output}/clusterguard-ha-${bundle_version}-offline-linux-${media_arch}.tar.gz" "${output}/clusterguard-ha-${version}-${release}.${media_arch}.rpm" "${output}/RELEASE-INFO"; do
+  [[ ! -e "${existing}" && ! -e "${existing}.sha256" ]] || { echo "refusing to overwrite existing deliverable: ${existing}" >&2; exit 3; }
+done
 stage="$(mktemp -d /tmp/clusterguard-offline-kit.XXXXXX)"
 trap 'rm -rf "${stage}"' EXIT
 artifacts="${stage}/artifacts"
@@ -233,6 +253,7 @@ mkdir -p \
 
 "${script_dir}/build-clusterguard-bundle.sh" \
   --output "${artifacts}" \
+  --product-version "${product_version}" \
   --version "${bundle_version}" \
   --rpm-version "${version}" \
   --rpm-release "${release}" \
@@ -242,6 +263,7 @@ mkdir -p \
 
 "${script_dir}/build-clusterguard-rpm.sh" \
   --output "${artifacts}" \
+  --product-version "${product_version}" \
   --version "${version}" \
   --release "${release}" \
   --goarch "${goarch}" \
@@ -266,6 +288,12 @@ install -m 0644 "${repository}/docs/zh-CN/update-and-patch.md" "${kit}/docs/版�
 install -m 0644 "${repository}/docs/zh-CN/docker-swarm-mysql.md" "${kit}/docs/Docker-Swarm-MySQL.md"
 install -m 0644 "${repository}/docs/zh-CN/postgresql-ha.md" "${kit}/docs/PostgreSQL-高可用手册.md"
 install -m 0644 "${repository}/docs/zh-CN/postgresql-production-qualification-2026-08-23.md" "${kit}/docs/PostgreSQL-生产验收报告.md"
+release_notes="${repository}/docs/zh-CN/release-${product_version}.md"
+if [[ -n "${product_version}" && -f "${release_notes}" ]]; then
+  install -m 0644 "${release_notes}" "${kit}/docs/ClusterGuard-HA-${product_version}-发布说明.md"
+  english_notes="${repository}/docs/en-US/release-${product_version}.md"
+  [[ ! -f "${english_notes}" ]] || install -m 0644 "${english_notes}" "${kit}/docs/ClusterGuard-HA-${product_version}-release-notes.md"
+fi
 release_notes="${repository}/docs/zh-CN/release-${version}.${release}.md"
 if [[ -f "${release_notes}" ]]; then
   install -m 0644 "${release_notes}" "${kit}/docs/ClusterGuard-HA-${version}.${release}-发布说明.md"
@@ -371,11 +399,13 @@ if [[ "${source_tree_dirty}" == "false" ]]; then
 else
   release_channel="candidate"
 fi
+[[ -z "${requested_channel}" ]] || release_channel="${requested_channel}"
 cat >"${kit}/RELEASE-INFO" <<EOF
 product=ClusterGuard HA
 version=${version}
 release=${release}
 bundle_version=${bundle_version}
+product_version=${product_version}
 release_channel=${release_channel}
 architecture=${media_arch}
 commit=${commit}

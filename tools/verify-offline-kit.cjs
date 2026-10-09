@@ -6,14 +6,15 @@ const crypto = require('node:crypto');
 const assert = require('node:assert/strict');
 
 // Verify a locally built kit without running its installer or contacting any host.
-const [archiveArg, sourceArg, outputArg, expectedVersion, expectedRelease, expectedDatabaseCount] = process.argv.slice(2);
+const [archiveArg, sourceArg, outputArg, expectedVersion, expectedRelease, expectedDatabaseCount, expectedProductVersion] = process.argv.slice(2);
 assert.ok(
   archiveArg && sourceArg && outputArg && expectedVersion && expectedRelease && expectedDatabaseCount,
-  'usage: node tools/verify-offline-kit.cjs ARCHIVE CLEAN_SOURCE REPORT VERSION RELEASE DATABASE_PACKAGE_COUNT',
+  'usage: node tools/verify-offline-kit.cjs ARCHIVE CLEAN_SOURCE REPORT VERSION RELEASE DATABASE_PACKAGE_COUNT [PRODUCT_VERSION]',
 );
 assert.match(expectedVersion, /^[0-9][0-9A-Za-z._+~-]*$/);
 assert.match(expectedRelease, /^[0-9][0-9A-Za-z._+~-]*$/);
 assert.match(expectedDatabaseCount, /^[0-9]+$/);
+if (expectedProductVersion) assert.match(expectedProductVersion, /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]*[1-9][0-9]*$/);
 const expectedDatabasePackageCount = Number(expectedDatabaseCount);
 const archive = path.resolve(archiveArg), source = path.resolve(sourceArg);
 const reportPath = path.resolve(outputArg);
@@ -58,6 +59,11 @@ assert.equal(roots.length,1);
 const kit = path.join(scratch,'kit',roots[0]);
 const metadata = info(path.join(kit,'RELEASE-INFO'));
 check('release identity and clean source', () => {
+  assert.match(metadata.bundle_version, /^[A-Za-z0-9._-]+$/);
+  if (expectedProductVersion) {
+    assert.equal(metadata.product_version,expectedProductVersion);
+    assert.equal(metadata.bundle_version,expectedProductVersion);
+  }
   assert.equal(metadata.version,expectedVersion); assert.equal(metadata.release,expectedRelease);
   assert.equal(metadata.commit,expectedCommit); assert.equal(metadata.source_tree_dirty,'false');
   assert.equal(metadata.source_untracked_count,'0'); assert.equal(metadata.architecture,'x86_64');
@@ -85,16 +91,17 @@ check('database package contents', () => {
     assert.ok(databasePackages.some(name => /postgresql/i.test(name)), 'PostgreSQL package is missing');
   }
 });
-const runtimeArchiveName = `clusterguard-ha-${expectedVersion}-${expectedRelease}-linux-amd64.tar.gz`;
+const runtimeArchiveName = `clusterguard-ha-${metadata.bundle_version}-linux-amd64.tar.gz`;
 const runtimeArchive = path.join(kit,`packages/${runtimeArchiveName}`);
 extract(runtimeArchive,path.join(scratch,'runtime'));
-const runtime = path.join(scratch,`runtime/clusterguard-ha-${expectedVersion}-${expectedRelease}-linux-amd64`);
+const runtime = path.join(scratch,`runtime/clusterguard-ha-${metadata.bundle_version}-linux-amd64`);
 check('runtime checksum manifest', () => verifySums(path.join(runtime,'SHA256SUMS')));
 const rpm = path.join(kit,`packages/clusterguard-ha-${expectedVersion}-${expectedRelease}.x86_64.rpm`);
 extract(rpm,path.join(scratch,'rpm'),true);
 const rpmRoot = path.join(scratch,'rpm');
 check('RPM build identity', () => {
   const build = info(path.join(rpmRoot,'usr/share/doc/clusterguard-ha/BUILD-INFO'));
+  if (expectedProductVersion) assert.equal(build.product_version,expectedProductVersion);
   assert.equal(build.version,expectedVersion); assert.equal(build.release,expectedRelease); assert.equal(build.commit,expectedCommit);
 });
 check('all payload ELF binaries and compiled source revision', () => {
@@ -104,6 +111,7 @@ check('all payload ELF binaries and compiled source revision', () => {
       assert.match(run('file',['-b',file]),/x86-64|x86_64/);
       if (path.basename(file).startsWith('clusterguard') || path.basename(file) === 'cgctl') {
         const settings = run('go',['version','-m',file]);
+        if (expectedProductVersion) assert.ok(fs.readFileSync(file).includes(Buffer.from(expectedProductVersion)), `compiled product identity missing: ${file}`);
         assert.ok(settings.includes('GOOS=linux') && settings.includes('GOARCH=amd64'));
         // Cross-compiled binaries may not carry Go VCS metadata. When it is
         // present, it must still prove the exact clean source revision.
@@ -141,4 +149,5 @@ const report = {status:'passed', archive:path.basename(archive), sha256:sha(arch
   limits:['No target Linux installation was executed.', 'No live MySQL or PostgreSQL recovery, VIP or rolling upgrade was executed.', 'RPM dependency signature trust must be verified on the target OS.']};
 fs.mkdirSync(path.dirname(reportPath),{recursive:true});
 fs.writeFileSync(reportPath,JSON.stringify(report,null,2) + '\n');
+fs.rmSync(scratch,{recursive:true,force:true});
 console.log(JSON.stringify(report));

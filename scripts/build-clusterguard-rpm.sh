@@ -10,6 +10,7 @@ release="1"
 goarch="${CG_RPM_GOARCH:-amd64}"
 nfpm_binary="${CG_NFPM_BINARY:-$(command -v nfpm 2>/dev/null || true)}"
 jq_binary="${CG_JQ_BINARY:-}"
+product_version=""
 
 usage() {
   cat <<'EOF'
@@ -18,6 +19,7 @@ usage: build-clusterguard-rpm.sh [options]
 Options:
   --output DIR          RPM output directory
   --version VERSION     RPM version, for example 2.2
+  --product-version VER Four-part runtime product identity
   --release RELEASE     RPM release, for example 1
   --goarch ARCH         amd64 or arm64
   --nfpm-binary FILE    trusted nFPM executable
@@ -29,6 +31,7 @@ while (($#)); do
   case "$1" in
     --output) output="${2:-}"; shift 2 ;;
     --version) version="${2:-}"; shift 2 ;;
+    --product-version) product_version="${2:-}"; shift 2 ;;
     --release) release="${2:-}"; shift 2 ;;
     --goarch) goarch="${2:-}"; shift 2 ;;
     --nfpm-binary) nfpm_binary="${2:-}"; shift 2 ;;
@@ -44,6 +47,12 @@ done
   exit 1
 }
 
+# Four-part product identity is independent of the RPM compatibility baseline.
+if [[ -n "${product_version}" ]]; then
+  [[ "${product_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]*[1-9][0-9]*$ ]] || {
+    echo "invalid --product-version; expected MAJOR.MINOR.PATCH.BUGFIX with BUGFIX > 0" >&2; exit 2;
+  }
+fi
 [[ "${version}" =~ ^[0-9][0-9A-Za-z._+~]*$ ]] || { echo "invalid RPM version" >&2; exit 2; }
 [[ "${release}" =~ ^[0-9][0-9A-Za-z._+~]*$ ]] || { echo "invalid RPM release" >&2; exit 2; }
 case "${goarch}" in
@@ -69,6 +78,8 @@ case "${goarch}" in
     ;;
 esac
 
+package="${output}/clusterguard-ha-${version}-${release}.${rpm_arch}.rpm"
+[[ ! -e "${package}" && ! -e "${package}.sha256" ]] || { echo "refusing to overwrite existing RPM: ${package}" >&2; exit 3; }
 stage="$(mktemp -d /tmp/clusterguard-rpm.XXXXXX)"
 trap 'rm -rf "${stage}"' EXIT
 root="${stage}/root"
@@ -89,6 +100,10 @@ if [[ "${commit}" != "unknown" && -n "$(git -C "${repository}" status --porcelai
 fi
 build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 version_ldflags="-s -w -X clusterguard.io/ha/internal/buildinfo.Version=${version} -X clusterguard.io/ha/internal/buildinfo.Release=${release} -X clusterguard.io/ha/internal/buildinfo.Commit=${commit} -X clusterguard.io/ha/internal/buildinfo.BuiltAt=${build_time}"
+
+if [[ -n "${product_version}" ]]; then
+  version_ldflags="${version_ldflags} -X clusterguard.io/ha/internal/buildinfo.ProductVersion=${product_version}"
+fi
 
 build_targets=(
   "clusterguard:./cmd/clusterguard"
@@ -154,6 +169,9 @@ install -m 0644 "${repository}/docs/zh-CN/update-and-patch.md" "${root}/docs/"
 install -m 0644 "${repository}/docs/zh-CN/update-signature-incident-2026-08-31.md" "${root}/docs/"
 install -m 0644 "${repository}/docs/zh-CN/update-maintenance-gate-incident-2026-09-07.md" "${root}/docs/"
 install -m 0644 "${repository}/docs/zh-CN/release-2.2.72.md" "${root}/docs/"
+if [[ -n "${product_version}" && -f "${repository}/docs/zh-CN/release-${product_version}.md" ]]; then
+  install -m 0644 "${repository}/docs/zh-CN/release-${product_version}.md" "${root}/docs/"
+fi
 install -m 0644 "${repository}/docs/zh-CN/docker-swarm-mysql.md" "${root}/docs/"
 install -m 0644 "${repository}/docs/zh-CN/kubernetes-mysql.md" "${root}/docs/"
 install -m 0644 "${repository}/docs/zh-CN/postgresql-ha.md" "${root}/docs/"
@@ -179,6 +197,7 @@ cat >"${root}/BUILD-INFO" <<EOF
 product=ClusterGuard HA
 version=${version}
 release=${release}
+product_version=${product_version}
 architecture=${rpm_arch}
 commit=${commit}
 built_at=${build_time}

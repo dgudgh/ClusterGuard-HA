@@ -11,17 +11,19 @@ rpm_release=""
 goos="${CG_BUNDLE_GOOS:-linux}"
 goarch="${CG_BUNDLE_GOARCH:-amd64}"
 jq_binary="${CG_JQ_BINARY:-}"
+product_version=""
 
 while (($#)); do
   case "$1" in
     --output) output="${2:-}"; shift 2 ;;
     --version) version="${2:-}"; shift 2 ;;
+    --product-version) product_version="${2:-}"; shift 2 ;;
     --rpm-version) rpm_version="${2:-}"; shift 2 ;;
     --rpm-release) rpm_release="${2:-}"; shift 2 ;;
     --goos) goos="${2:-}"; shift 2 ;;
     --goarch) goarch="${2:-}"; shift 2 ;;
     --jq-binary) jq_binary="${2:-}"; shift 2 ;;
-    -h|--help) echo "usage: $0 [--output DIR] [--version BUNDLE_VERSION] [--rpm-version VERSION --rpm-release RELEASE] [--goos OS] [--goarch ARCH] [--jq-binary FILE]"; exit 0 ;;
+    -h|--help) echo "usage: $0 [--output DIR] [--version BUNDLE_VERSION] [--product-version PRODUCT_VERSION] [--rpm-version VERSION --rpm-release RELEASE] [--goos OS] [--goarch ARCH] [--jq-binary FILE]"; exit 0 ;;
     *) echo "unknown bundle argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -38,6 +40,19 @@ else
   rpm_version="${version}"
   rpm_release=0
 fi
+# Four-part product identity is independent of the RPM compatibility baseline.
+if [[ -n "${product_version}" ]]; then
+  [[ "${product_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]*[1-9][0-9]*$ ]] || {
+    echo "invalid --product-version; expected MAJOR.MINOR.PATCH.BUGFIX with BUGFIX > 0" >&2; exit 2;
+  }
+fi
+if [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  [[ -n "${product_version}" ]] || product_version="${version}"
+  [[ "${product_version}" == "${version}" && "${product_version}" =~ \.[0-9]*[1-9][0-9]*$ ]] || { echo "bundle/product version mismatch or invalid BUGFIX" >&2; exit 2; }
+fi
+"${CG_NODE_BIN:-node}" "${script_dir}/../tools/verify-upgrade-validation-chain.cjs" --repo "${script_dir}/.." --contract-only
+archive="${output}/clusterguard-ha-${version}-${goos}-${goarch}.tar.gz"
+[[ ! -e "${archive}" ]] || { echo "refusing to overwrite existing bundle: ${archive}" >&2; exit 3; }
 commit="$(git -C "${repository}" rev-parse HEAD 2>/dev/null || printf unknown)"
 if [[ "${commit}" != "unknown" && -n "$(git -C "${repository}" status --porcelain --untracked-files=normal)" ]]; then
   commit="${commit}-dirty"
@@ -48,6 +63,10 @@ stage="$(mktemp -d /tmp/clusterguard-bundle.XXXXXX)"
 trap 'rm -rf "${stage}"' EXIT
 root="${stage}/clusterguard-ha-${version}-${goos}-${goarch}"
 mkdir -p "${root}/bin" "${root}/scripts" "${root}/configs" "${root}/docs/zh-CN" "${root}/packaging/systemd" "${root}/packaging/logrotate"
+
+if [[ -n "${product_version}" ]]; then
+  version_ldflags="${version_ldflags} -X clusterguard.io/ha/internal/buildinfo.ProductVersion=${product_version}"
+fi
 
 build_targets=(
   "clusterguard:./cmd/clusterguard"
@@ -65,6 +84,9 @@ done
 cp "${repository}"/configs/*.json "${root}/configs/"
 cp "${repository}"/packaging/systemd/* "${root}/packaging/systemd/"
 cp "${repository}"/packaging/logrotate/* "${root}/packaging/logrotate/"
+cp "${repository}/LICENSE" "${root}/LICENSE"
+cp "${repository}/THIRD-PARTY-NOTICES.md" "${root}/THIRD-PARTY-NOTICES.md"
+cp "${repository}/docs/licenses/MPL-2.0.txt" "${root}/MPL-2.0.txt"
 cp "${repository}/README.md" "${root}/README.md"
 cp "${repository}/docs/offline-install.md" "${root}/OFFLINE-INSTALL.md"
 cp "${repository}"/docs/zh-CN/*.md "${root}/docs/zh-CN/"

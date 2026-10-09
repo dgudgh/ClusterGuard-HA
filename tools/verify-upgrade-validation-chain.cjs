@@ -181,6 +181,24 @@ const writeOperationTree = (root, name, status, events) => {
 
 const CHECKS = [
   {
+    rule:'3 / ART-005', title:'full installation builders bind product identity independently of RPM',
+    run:()=>{
+      for(const name of ['rpm','bundle']) {
+        const file=read(`scripts/build-clusterguard-${name}.sh`)||'';
+        if(!file.includes('buildinfo.ProductVersion=${product_version}'))return `${name} omits the compiled product identity`;
+        if(!file.includes('refusing to overwrite existing'))return `${name} can overwrite an existing artifact`;
+      }
+      const kit=read('scripts/build-clusterguard-offline-kit.sh')||'';
+      if((kit.match(/--product-version "\$\{product_version\}"/g)||[]).length!==2)return 'offline kit fails to forward product identity to both builders';
+      if(!kit.includes('product_version=${product_version}'))return 'kit provenance omits product identity';
+      const verify=read('tools/verify-offline-kit.cjs')||'';
+      if(!verify.includes('assert.equal(metadata.product_version,expectedProductVersion)')||!verify.includes('assert.equal(build.product_version,expectedProductVersion)'))return 'kit verifier fails to bind product identity';
+      if(!(read('tools/bundle-version-acceptance.cjs')||'').includes("info.product_version === item.product"))return 'actual native binary regression missing';
+      return true;
+    },
+  },
+
+  {
     rule:'22 / FIELD-012', title:'console language preference covers settings and keeps raw values intact',
     run:()=>{
       const page=read('internal/api/console.html')||'';
@@ -981,6 +999,7 @@ const reportOpen = failures => {
 // The files the rules read. The self-test copies exactly these, so a mutation cannot be
 // caught by reading something the gate does not actually consult.
 const READ_FILES = [
+  'scripts/build-clusterguard-rpm.sh','scripts/build-clusterguard-bundle.sh','scripts/build-clusterguard-offline-kit.sh','tools/verify-offline-kit.cjs','tools/bundle-version-acceptance.cjs',
   'internal/platformupdate/history.go',
   'scripts/operation_version_test.go', 'internal/platformupdate/operation_version_test.go', 'tools/console-update-version-transition-acceptance.cjs',
   'tools/console-language-acceptance.cjs',
@@ -996,6 +1015,11 @@ const READ_FILES = [
 ];
 
 const MUTATIONS = [
+  {name:'full RPM loses product version injection',file:'scripts/build-clusterguard-rpm.sh',find:'buildinfo.ProductVersion=${product_version}',replace:'buildinfo.Version=${product_version}',rule:'full installation builders bind product identity independently of RPM'},
+  {name:'runtime bundle loses product version injection',file:'scripts/build-clusterguard-bundle.sh',find:'buildinfo.ProductVersion=${product_version}',replace:'buildinfo.Version=${product_version}',rule:'full installation builders bind product identity independently of RPM'},
+  {name:'offline kit loses product version propagation',file:'scripts/build-clusterguard-offline-kit.sh',find:'--product-version "${product_version}"',replace:'--version "${product_version}"',rule:'full installation builders bind product identity independently of RPM'},
+  {name:'RPM product version proof is ignored',file:'tools/verify-offline-kit.cjs',find:'assert.equal(build.product_version,expectedProductVersion)',replace:'assert.ok(build.product_version)',rule:'full installation builders bind product identity independently of RPM'},
+
   {name:'read-only nonrestart parameter gets an editor',file:'internal/api/console.html',find:"return configurationField(value, section) ? 'editable' : 'readonly';",replace:"return !value.restart_required ? 'editable' : 'readonly';",rule:'configuration editors follow capabilities and appear after effective values'},
   {name:'unread capabilities are assumed editable',file:'internal/api/console.html',find:"return 'pending';",replace:"return 'editable';",rule:'configuration editors follow capabilities and appear after effective values'},
   {name:'input returns underneath effective value',file:'internal/api/console.html',find:'edit.append(input);',replace:'effective.append(input);',rule:'configuration editors follow capabilities and appear after effective values'},

@@ -12,7 +12,8 @@ const targetOS = run('go', ['env', 'GOOS']).trim();
 const targetArch = run('go', ['env', 'GOARCH']).trim();
 const tests = baseline ? [{ label:'2.2-99', args:[] }] : [
   { label:'2.2-99', args:[] },
-  { label:'release-candidate', args:['--rpm-version','2.2','--rpm-release','99'] }
+  { label:'release-candidate', args:['--rpm-version','2.2','--rpm-release','99'] },
+  { label:'3.1.2.8', product:'3.1.2.8', release:'106', args:['--rpm-version','2.2','--rpm-release','106'] }
 ];
 const results = [];
 for (const item of tests) {
@@ -37,15 +38,31 @@ for (const item of tests) {
     const info = binary === 'clusterguard' ? JSON.parse(run(executable,['--version-json'])) : null;
     const invocation = invocations.find(args => args.includes('build') && args.includes(`./cmd/${binary}`));
     const flags = invocation?.[invocation.indexOf('-ldflags') + 1] || '';
-    const passed = flags.includes('buildinfo.Version=2.2') && flags.includes('buildinfo.Release=99')
+    const passed = flags.includes('buildinfo.Version=2.2') && flags.includes('buildinfo.Release=' + (item.release || '99'))
+      && (!item.product || flags.includes('buildinfo.ProductVersion=' + item.product))
       && settings.includes(`path\tclusterguard.io/ha/cmd/${binary}`)
       && settings.includes(`GOOS=${targetOS}`) && settings.includes(`GOARCH=${targetArch}`)
-      && (!info || (info.version === '2.2' && info.release === '99' && info.commit !== 'unknown' && info.built_at !== 'unknown'));
+      && (!info || (info.version === '2.2' && info.release === (item.release || '99') && (!item.product || info.product_version === item.product) && info.commit !== 'unknown' && info.built_at !== 'unknown'));
     results.push({ label:item.label, binary, info, compiler_flags:flags, passed });
   }
 }
+const refusals = [];
+if (!baseline) {
+  for (const extra of [ ['--product-version','3.1.2'], ['--product-version','3.1.2.0'], ['--product-version','3.1.2.9'], ['--version','3.1.2.0'] ]) {
+    const result = cp.spawnSync('bash',['scripts/build-clusterguard-bundle.sh','--version','3.1.2.8','--rpm-version','2.2','--rpm-release','106',...extra],{encoding:'utf8'});
+    assert.equal(result.status,2, 'invalid/mismatched product identity must be refused before build');
+    refusals.push({args:extra,status:result.status});
+  }
+  const stage = fs.mkdtempSync(path.join(os.tmpdir(),'cg-bundle-existing-'));
+  const artifact = path.join(stage,`clusterguard-ha-3.1.2.8-${targetOS}-${targetArch}.tar.gz`);
+  fs.writeFileSync(artifact,'immutable original');
+  const result = cp.spawnSync('bash',['scripts/build-clusterguard-bundle.sh','--version','3.1.2.8','--goos',targetOS,'--goarch',targetArch,'--output',stage],{encoding:'utf8'});
+  assert.equal(result.status,3); assert.equal(fs.readFileSync(artifact,'utf8'),'immutable original');
+  refusals.push({name:'existing artifact retained',status:result.status});
+  fs.rmSync(stage,{recursive:true,force:true});
+}
 const failures = results.filter(item => !item.passed).length;
-const report = { status:baseline ? 'baseline-recorded' : failures ? 'failed' : 'passed', scope:'native local binaries; no install or network operations', results, failures };
+const report = { status:baseline ? 'baseline-recorded' : failures ? 'failed' : 'passed', scope:'native local binaries; no install or network operations', refusals, results, failures };
 fs.writeFileSync(path.join(output,'result.json'), JSON.stringify(report,null,2) + '\n');
 console.log(JSON.stringify(report));
 if (baseline) assert.equal(report.failures,3);
