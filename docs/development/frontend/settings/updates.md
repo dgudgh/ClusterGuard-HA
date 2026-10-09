@@ -31,7 +31,7 @@
 
 ## 版本显示来源
 
-当前运行版本取平台版本 API 的 `product_version`，没有该字段时显示 RPM `version-release`；上传更高版本不改变这个值。目标、确认框和历史行取各包已验证的 `patch_version`，旧包回退到 `target_version`。历史保留来源 RPM 基线，便于核对兼容性。真实桌面及390像素浏览器回归覆盖当前3.1.1.1与待升级3.1.1.3同时存在，防止上传记录冒充运行版本。
+当前运行版本取平台版本 API 的 `product_version`，没有该字段时显示 RPM `version-release`；上传更高版本不改变这个值。目标、确认框和历史行取各包已验证的 `patch_version`，旧包回退到 `target_version`。历史与进度的版本变化用当前操作的 `job.from_version → job.to_version`（正常应用目标缺字段时仍可读取同包签名目标）。Runner在维护锁建立后、载荷替换前读取各节点二进制版本；`from_node_versions`保留逐节点观测，只有全部一致才填from_version。混合节点明确显示“节点版本不一致”；旧记录或节点不可读取显示“执行前版本未记录”。不从上一条成功记录、上传顺序、当前运行版本或签名source推测历史起点；回退目标未记录时明确显示未知。RPM基线单独列出，用于兼容性核对，不放在实际版本变化箭头左侧。真实桌面及390像素浏览器回归覆盖当前3.1.1.1与待升级3.1.1.3同时存在，防止上传记录冒充运行版本。
 
 ## 版本身份与旧记录替代
 
@@ -50,3 +50,5 @@
 未知诊断显示当前语言的核对提示，并提供可展开的“原始信息”，按字面文本呈现，不执行其中的HTML；原始Job/events与输出日志不改。原始输出区域继续保留原文，供排查使用。
 
 [消息映射回归](../../../../tools/console-update-message-language.test.cjs)检查Runner全部固定事件消息；[真实浏览器回归](../../../../tools/console-update-message-language-acceptance.cjs)覆盖桌面/窄屏、新旧成功记录、失败/门禁保留、传输、未知诊断和语言往返切换。完整页面语言绑定见[显示偏好](preferences.md)。
+
+[操作版本浏览器回归](../../../../tools/console-update-version-transition-acceptance.cjs)覆盖桌面/窄屏、实际7到8、旧记录、混合节点、观测缺失、回退、双语及原始API字段不改。

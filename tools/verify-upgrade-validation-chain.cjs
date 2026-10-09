@@ -216,6 +216,23 @@ const CHECKS = [
     },
   },
   {
+    rule: 'INV-005 / 22 / FIELD-012',
+    title: 'operation product transition is separate from RPM baseline',
+    run: () => {
+      const runner=read('scripts/clusterguard-upgrade.sh')||'';
+      const wrapper=read('scripts/clusterguard-update-job.sh')||'';
+      const page=read('internal/api/console.html')||'';
+      if(!runner.includes('capture_operation_versions() {') || runner.split('acquire_update_locks\n').filter(part=>part.startsWith('  capture_operation_versions')||part.startsWith('capture_operation_versions')).length!==2) return 'both executors must observe versions after locks and before payload changes';
+      if(!runner.includes('from_node_versions:$from_nodes') || !runner.includes('to_version:$to_version'))return 'runner lost operation observations';
+      if(!wrapper.includes('if .operation_id==$operation then {from_version,from_node_versions,to_version} else {} end'))return 'wrapper can inherit another operation version';
+      if(!page.includes('softwareUpdateVersionCell(record, job)')||!page.includes("textContent = softwareUpdateVersionChange(record, job)"))return 'history/progress use RPM baseline as execution source';
+      if(!page.includes("ui('执行前版本未记录')")||!page.includes("ui('RPM基线：{0}'"))return 'unknown source or independent baseline is hidden';
+      for(const file of ['scripts/operation_version_test.go','internal/platformupdate/operation_version_test.go','tools/console-update-version-transition-acceptance.cjs'])if(!read(file))return 'missing operation version regression '+file;
+      return true;
+    },
+  },
+
+  {
     rule: '22 / FIELD-012',
     title: 'hotfix staging retains node progress and its console stage',
     run: () => {
@@ -773,6 +790,8 @@ const reportOpen = failures => {
 // The files the rules read. The self-test copies exactly these, so a mutation cannot be
 // caught by reading something the gate does not actually consult.
 const READ_FILES = [
+  'internal/platformupdate/history.go',
+  'scripts/operation_version_test.go', 'internal/platformupdate/operation_version_test.go', 'tools/console-update-version-transition-acceptance.cjs',
   'tools/console-language-acceptance.cjs',
   'tools/console-update-message-language-acceptance.cjs',
   'internal/platformupdate/progress_staging_test.go', 'tools/console-update-staging-progress-acceptance.cjs',
@@ -791,6 +810,8 @@ const MUTATIONS = [
 
   {name:'history prints raw English again',file:'internal/api/console.html',find:'renderSoftwareUpdateMessage(messageCell, job && job.message',replace:'renderSoftwareUpdateMessage(messageCell, null',rule:'update history and events localize messages without rewriting evidence'},
   {name:'verified hotfix result loses Chinese translation',file:'internal/api/console.html',find:"'all node digests and maintenance release verified':'热修补丁完成，全部节点与控制面已验证，维护门禁已释放'",replace:"'all node digests and maintenance release verified':'all node digests and maintenance release verified'",rule:'update history and events localize messages without rewriting evidence'},
+  {name:'version history reuses RPM baseline',file:'internal/api/console.html',find:'softwareUpdateVersionCell(record, job),',replace:"text('td', '', record.source_version),",rule:'operation product transition is separate from RPM baseline'},
+  {name:'wrapper inherits unrelated product source',file:'scripts/clusterguard-update-job.sh',find:'if .operation_id==$operation then {from_version,from_node_versions,to_version} else {} end',replace:'{from_version,from_node_versions,to_version}',rule:'operation product transition is separate from RPM baseline'},
   {name:'hotfix staging becomes zero again',file:'internal/platformupdate/manager.go',find:'case "staging", "updating":',replace:'case "updating":',rule:'hotfix staging retains node progress and its console stage'},
   {name:'hotfix staging jumps back to console preparation',file:'internal/api/console.html',find:"['staging', 'updating', 'rollback'].includes(phase) ? 1 : 0",replace:"['updating', 'rollback'].includes(phase) ? 1 : 0",rule:'hotfix staging retains node progress and its console stage'},
   {name:'retired historical failure occupies current summary again',file:'internal/api/console.html',find:'item.incompatible || item.superseded_by',replace:'item.incompatible || false',rule:'version identity and signed supersession reach the current subject'},

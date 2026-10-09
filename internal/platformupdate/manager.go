@@ -198,24 +198,33 @@ type Progress struct {
 	CompletedNodes []string `json:"completed_nodes,omitempty"`
 }
 
+type NodeVersion struct {
+	Node    string `json:"node"`
+	Version string `json:"version"`
+}
+
+// These are operation observations, independent of the signed RPM baseline.
 type Job struct {
-	OperationID                string    `json:"operation_id,omitempty"`
-	DeploymentState            string    `json:"deployment_state,omitempty"`
-	PatchID                    string    `json:"patch_id"`
-	Mode                       Mode      `json:"mode"`
-	Status                     Status    `json:"status"`
-	Node                       string    `json:"node,omitempty"`
-	Message                    string    `json:"message,omitempty"`
-	Warning                    string    `json:"warning,omitempty"`
-	MaintenanceActive          bool      `json:"maintenance_active"`
-	AutomaticFailoverAvailable bool      `json:"automatic_failover_available"`
-	VerificationRequired       bool      `json:"verification_required,omitempty"`
-	StartedAt                  time.Time `json:"started_at,omitempty"`
-	UpdatedAt                  time.Time `json:"updated_at,omitempty"`
-	FinishedAt                 time.Time `json:"finished_at,omitempty"`
-	Events                     []Event   `json:"events,omitempty"`
-	OutputTail                 []string  `json:"output_tail,omitempty"`
-	Progress                   Progress  `json:"progress"`
+	FromVersion                string        `json:"from_version,omitempty"`
+	FromNodeVersions           []NodeVersion `json:"from_node_versions,omitempty"`
+	ToVersion                  string        `json:"to_version,omitempty"`
+	OperationID                string        `json:"operation_id,omitempty"`
+	DeploymentState            string        `json:"deployment_state,omitempty"`
+	PatchID                    string        `json:"patch_id"`
+	Mode                       Mode          `json:"mode"`
+	Status                     Status        `json:"status"`
+	Node                       string        `json:"node,omitempty"`
+	Message                    string        `json:"message,omitempty"`
+	Warning                    string        `json:"warning,omitempty"`
+	MaintenanceActive          bool          `json:"maintenance_active"`
+	AutomaticFailoverAvailable bool          `json:"automatic_failover_available"`
+	VerificationRequired       bool          `json:"verification_required,omitempty"`
+	StartedAt                  time.Time     `json:"started_at,omitempty"`
+	UpdatedAt                  time.Time     `json:"updated_at,omitempty"`
+	FinishedAt                 time.Time     `json:"finished_at,omitempty"`
+	Events                     []Event       `json:"events,omitempty"`
+	OutputTail                 []string      `json:"output_tail,omitempty"`
+	Progress                   Progress      `json:"progress"`
 }
 
 type PackageStatus struct {
@@ -754,6 +763,14 @@ func (manager *Manager) Job(patchID string) (Job, bool) {
 	if err := manager.validateHistory(patchID); err != nil {
 		result.VerificationRequired = true
 		result.Message = err.Error()
+	}
+	if !result.VerificationRequired && result.OperationID != "" && len(result.FromNodeVersions) == 0 && result.FromVersion == "" && result.ToVersion == "" {
+		for _, operation := range manager.Operations(patchID) {
+			if operation.OperationID == result.OperationID {
+				preserveOperationVersions(operation, &result)
+				break
+			}
+		}
 	}
 	if deployment, ok := manager.Deployment(patchID); ok {
 		result.DeploymentState = deployment.State

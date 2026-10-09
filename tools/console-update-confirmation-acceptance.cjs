@@ -221,7 +221,8 @@ const deferred = () => {
       });
       for (const mode of ['resume', 'rollback']) {
         await scenario(`${mode}-confirmation`, async ({ page, mock, item, check, gate }) => {
-          item.job = { patch_id:item.package.patch_id, mode:'execute', status:'failed', started_at:'2026-09-08T00:00:00Z', updated_at:'2026-09-08T00:00:00Z' };
+          // Rollback requires the newest verified installed subject; resume requires failure.
+          item.job = { patch_id:item.package.patch_id, mode:'execute', status:mode === 'rollback' ? 'succeeded' : 'failed', started_at:'2026-09-08T00:00:00Z', updated_at:'2026-09-08T00:00:00Z' };
           await page.evaluate(() => loadSoftwareUpdates());
           await page.locator(`#${mode}-software-update`).click();
           await page.locator('#software-update-confirmation-input').fill('wrong-package');

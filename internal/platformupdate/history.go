@@ -184,6 +184,9 @@ func (manager *Manager) Operations(patchID string) []Job {
 			if previous, ok := byID[job.OperationID]; ok && terminalOperation(previous.Status) && !terminalOperation(job.Status) {
 				continue
 			}
+			if previous, ok := byID[job.OperationID]; ok {
+				preserveOperationVersions(previous, &job)
+			}
 			byID[job.OperationID] = job
 		}
 		file.Close()
@@ -325,4 +328,16 @@ func (manager *Manager) verifyStoredDigest(record Package) error {
 		return fmt.Errorf("%w: CG_RELEASED_ARTIFACT_MUTATED", ErrPackageConflict)
 	}
 	return nil
+}
+
+// Old wrappers drop unknown fields when publishing their terminal snapshot.
+// Preserve the Runner's observations for that same operation, never a neighbour.
+func preserveOperationVersions(previous Job, job *Job) {
+	if previous.OperationID == "" || previous.OperationID != job.OperationID || previous.PatchID != job.PatchID || previous.Mode != job.Mode {
+		return
+	}
+	if len(job.FromNodeVersions) != 0 || job.FromVersion != "" || job.ToVersion != "" {
+		return
+	}
+	job.FromVersion, job.FromNodeVersions, job.ToVersion = previous.FromVersion, previous.FromNodeVersions, previous.ToVersion
 }

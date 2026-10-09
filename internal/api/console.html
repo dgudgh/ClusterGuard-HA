@@ -1707,7 +1707,7 @@
       </div>
       <div class="software-update-package" id="software-update-package" hidden>
         <div class="software-update-metadata">
-          <div class="identity-cell"><span>升级包 ID</span><strong class="mono" id="software-update-patch-id">-</strong></div><div class="identity-cell"><span>来源版本</span><strong id="software-update-source-version">-</strong></div><div class="identity-cell"><span>目标版本</span><strong id="software-update-target-version">-</strong></div><div class="identity-cell"><span>包大小</span><strong id="software-update-size">-</strong></div>
+          <div class="identity-cell"><span>升级包 ID</span><strong class="mono" id="software-update-patch-id">-</strong></div><div class="identity-cell"><span>RPM兼容基线</span><strong id="software-update-source-version">-</strong></div><div class="identity-cell"><span>目标版本</span><strong id="software-update-target-version">-</strong></div><div class="identity-cell"><span>包大小</span><strong id="software-update-size">-</strong></div>
           <div class="identity-cell"><span>包类型</span><strong id="software-update-package-kind">-</strong></div><div class="identity-cell"><span>签名校验</span><strong id="software-update-signature">-</strong></div><div class="identity-cell"><span>滚动升级</span><strong id="software-update-rolling">-</strong></div><div class="identity-cell"><span>可回退</span><strong id="software-update-rollback">-</strong></div><div class="identity-cell"><span>上传时间</span><strong id="software-update-uploaded-at">-</strong></div>
         </div>
       </div>
@@ -2852,6 +2852,11 @@
       "签名升级包 + 受限 Helper": "Signed package + restricted Helper",
       "正在检查升级包签名信任和本机升级服务。新装离线包不能直接用于滚动升级。": "Checking package signature trust and the local update service. Full offline installation packages cannot be used directly for rolling updates.",
       "来源版本": "Source version",
+      "RPM兼容基线": "RPM compatibility baseline",
+      "RPM基线：{0}": "RPM baseline: {0}",
+      "执行前版本未记录": "Pre-operation version not recorded",
+      "节点版本不一致": "Mixed node versions",
+      "回退目标未记录": "Rollback target not recorded",
       "目标版本": "Target version",
       "包大小": "Package size",
       "包类型": "Package type",
@@ -4747,6 +4752,23 @@
       return version.release && version.release !== '0' ? `${version.version}-${version.release}` : version.version;
     };
     const softwareUpdateTargetVersion = record => record.patch_version || record.target_version || '-';
+    const softwareUpdateVersionChange = (record, job) => {
+      const nodes = job && Array.isArray(job.from_node_versions) ? job.from_node_versions : [];
+      const versions = new Set(nodes.map(node => node.version).filter(Boolean));
+      const missing = nodes.some(node => !node.version);
+      const from = versions.size > 1 ? ui('节点版本不一致')
+        : missing ? ui('执行前版本未记录')
+        : (job && job.from_version) || ui('执行前版本未记录');
+      const to = (job && job.to_version) || (job && (job.mode === 'rollback' || job.status === 'rolled_back')
+        ? ui('回退目标未记录') : softwareUpdateTargetVersion(record));
+      return `${from} → ${to}`;
+    };
+    const softwareUpdateVersionCell = (record, job) => {
+      const cell = text('td', '', '');
+      cell.append(text('div', '', softwareUpdateVersionChange(record, job)),
+        text('small', 'muted', ui('RPM基线：{0}', record.source_version || '-')));
+      return cell;
+    };
     const renderPlatformVersion = () => {
       const label = platformVersionText();
       const version = state.platformVersion || {};
@@ -4942,7 +4964,7 @@
         row.append(
           statusCell,
           text('td', 'mono', record.patch_id || '-'),
-          text('td', '', `${record.source_version || ui('不限')} → ${softwareUpdateTargetVersion(record)}`),
+          softwareUpdateVersionCell(record, job),
           text('td', '', softwareUpdateModeText(job && job.mode, record.kind)),
           text('td', '', softwareUpdateDateText(occurredAt)),
           messageCell
@@ -5043,7 +5065,7 @@
         : verificationRequired ? ui('任务状态文件不可读取或解析；控制面维护状态与节点版本需要独立核验。')
           : terminal ? ui('任务已结束，最终状态和节点事件将保留在升级历史中。') : ui('当前没有正在执行的升级任务。');
       byId('software-update-progress-patch-id').textContent = record.patch_id || ui('控制面维护任务');
-      byId('software-update-progress-version').textContent = `${record.source_version || '-'} → ${softwareUpdateTargetVersion(record)}`;
+      byId('software-update-progress-version').textContent = softwareUpdateVersionChange(record, job);
       const statusElement = byId('software-update-progress-status');
       statusElement.textContent = softwareUpdateStatusText(status);
       statusElement.className = `badge ${softwareUpdateBadgeClass(status)}`;

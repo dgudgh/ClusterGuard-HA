@@ -137,18 +137,23 @@ publish_public_artifacts() {
 started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 write_status() {
   local status="$1" message="$2" maintenance="$3" finished="${4:-}"
-  local temporary="${status_file}.tmp"
+  local temporary="${status_file}.tmp" versions='{}'
+  # Preserve only this operation's root-owned pre-mutation observations.
+  if [[ -f "${status_file}" ]]; then
+    versions="$("${jq_binary}" -c --arg operation "${operation_id}" '
+      if .operation_id==$operation then {from_version,from_node_versions,to_version} else {} end' "${status_file}")"
+  fi
   "${jq_binary}" -n \
     --arg operation_id "${operation_id}" --arg patch_id "${patch_id}" --arg mode "${mode}" --arg status "${status}" \
     --arg message "${message}" --arg warning "系统升级期间无法进行自动切换，请注意关注。" \
     --arg started_at "${started_at}" --arg updated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    --arg finished_at "${finished}" --argjson maintenance_active "${maintenance}" \
+    --argjson versions "${versions}" --arg finished_at "${finished}" --argjson maintenance_active "${maintenance}" \
     '{operation_id:$operation_id,patch_id:$patch_id,mode:$mode,status:$status,message:$message,
       warning:(if $mode == "plan" then "" else $warning end),
       maintenance_active:$maintenance_active,
       automatic_failover_available:($maintenance_active | not),
       started_at:$started_at,updated_at:$updated_at,
-      finished_at:(if $finished_at == "" then null else $finished_at end)}' >"${temporary}"
+      finished_at:(if $finished_at == "" then null else $finished_at end)} + $versions' >"${temporary}"
   "${jq_binary}" -c . "${temporary}" >>"${job_dir}/operations.jsonl"
   chmod 0640 "${job_dir}/operations.jsonl"
   if [[ ! -f "${job_dir}/deployment.json" ]]; then

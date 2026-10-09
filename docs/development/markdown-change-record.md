@@ -42,7 +42,7 @@ recorded-through: 73ff4a3
 | 2026-10-08 | `docs/zh-CN/version-release-policy.md` | M | 交付身份条改为新封板版本线起点 `3.1.1.1` + `MAJOR.MINOR.PATCH.BUGFIX`。 |
 | 2026-10-08 | `docs/zh-CN/validation-gate-workflow.md` | M | 去掉已过期的固定17项计数，以本次源码门禁输出为准；新增功能仍须补充实际回归。 |
 | 2026-10-08 | `docs/development/backend/settings/version.md` | M | 说明product_version运行来源和旧历史验签补读，RPM兼容字段不变。 |
-| 2026-10-09 | `docs/development/frontend/settings/updates.md` | M | 明确当前/目标/历史版本来源及验签替代；新增staging步骤和新操作重置规则。补充历史/当前/事件共用双语消息映射、未知诊断随语言提示并保留原文、原始状态不变及桌面/窄屏语言切换回归入口。 |
+| 2026-10-09 | `docs/development/frontend/settings/updates.md` | M | 明确当前/目标/历史版本来源及验签替代；新增staging步骤和新操作重置规则。新增操作前产品版本与RPM基线独立展示、旧来源缺失/混合节点和回退未知规则及浏览器回归。补充历史/当前/事件共用双语消息映射、未知诊断随语言提示并保留原文、原始状态不变及桌面/窄屏语言切换回归入口。 |
 | 2026-10-09 | `docs/development/backend/settings/update-history.md` | M | 记录Snapshot验签后继及部署判据。新增staging与updating共用节点百分比的读取投影、原始状态保留和三节点持久化回归入口。 |
 
 | 2026-10-09 | `docs/development/frontend/settings/preferences.md` | M | 语言设置接入静态原文绑定、动态双语目录和完整重绘；明确业务数据/原始证据、内存偏好及无请求/表单保持边界，登记四引擎八页面真实浏览器与目录回归。 |
@@ -72,3 +72,5 @@ recorded-through: 73ff4a3
 9. **本机参考与门禁修复（2026-10-08）。** 本机记忆逐章节原文拆分到忽略的 `.workbuddy/reference/` 并保留完整快照和摘要对拍；入库规则说明根本机目录的扫描边界。许可 CLI 回归覆盖本机归档不误报、真实源码/文档/嵌套同名目录错误声明仍拒绝。热修修订链支持版本文件名，继续验证递增修订及双向替代。流程不再固定旧检查数量；执行完整 HTML 重建。私有新补丁用于交付尚未入包的主线修复，制品及现场验收分开记录。
 
 本次目录规则调整：当前3.1.1.3入口按产品版本定位，renderer同步新旧目录识别与台账解包路径示例；HTML重建。
+
+| 2026-10-09 | `docs/development/backend/settings/update-history.md` | M | 操作执行前产品身份按节点观测、同operation_id持久化；RPM基线独立，缺失历史不猜测，补充实跑回归入口。 |

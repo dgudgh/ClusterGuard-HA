@@ -646,7 +646,7 @@ const main = async () => {
     } else if (scenario.versionCheck) {
       record(`${scenario.name}: current version comes from the running binary`, page.runningVersion === '3.1.1.1', page.runningVersion);
       record(`${scenario.name}: pending target does not impersonate the runtime`, page.targetVersion === '3.1.1.3', page.targetVersion);
-      record(`${scenario.name}: own signed version appears in installed history`, page.history.some(row => row.patchID === HOTFIX_FRESH && row.version === '2.2-105 → 3.1.1.1'), JSON.stringify(page.history));
+      record(`${scenario.name}: own signed version appears in installed history`, page.history.some(row => row.patchID === HOTFIX_FRESH && row.version === '执行前版本未记录 → 3.1.1.1RPM基线：2.2-105'), JSON.stringify(page.history));
       record(`${scenario.name}: actual viewport`, page.viewport === scenario.width, String(page.viewport));
     } else {
       record(`${scenario.name}: legacy runtime retains its RPM display`, page.runningVersion === '2.2-105', page.runningVersion);

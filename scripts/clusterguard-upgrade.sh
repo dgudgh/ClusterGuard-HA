@@ -58,6 +58,9 @@ hotfix_package_sha=""
 restart_units=""
 source_version=""
 target_version=""
+observed_from_version=""
+observed_node_versions='[]'
+operation_to_version=""
 source_rpm=""
 target_rpm=""
 source_sha=""
@@ -1587,10 +1590,47 @@ publish_update_progress() {
   done
 }
 
+# Diagnostic product identity is observed before this operation mutates payloads.
+# A mixed or unreadable set is never replaced by the RPM eligibility baseline.
+capture_operation_versions() {
+  local host info version
+  observed_node_versions='[]'
+  for host in "${all_nodes[@]}"; do
+    version=""
+    if info="$(remote_run "${host}" "/usr/local/bin/clusterguard --version-json")"; then
+      version="$(jq -er '
+        if (.product_version // "" | test("^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+$") and (split(".")[-1] | test("[1-9]"))) then .product_version
+        elif (.product_version // "")=="" and (.version | type=="string" and length>0) and (.release | type=="string" and length>0 and .!="0") then .version+"-"+.release
+        else empty end' <<<"${info}" 2>/dev/null || true)"
+    fi
+    observed_node_versions="$(jq -c --arg node "${host}" --arg version "${version}" '. + [{node:$node,version:$version}]' <<<"${observed_node_versions}")"
+  done
+  observed_from_version="$(jq -r 'if length>0 and all(.[]; .version!="") and ([.[].version] | unique | length)==1 then .[0].version else "" end' <<<"${observed_node_versions}")"
+  operation_to_version="${target_version}"
+  if [[ "${package_kind}" == hotfix ]]; then
+    operation_to_version="$(jq -r '.patch_version // (.target.version+"-"+.target.release)' "${patch_root}/HOTFIX-MANIFEST.json")"
+  fi
+  # The RPM source is not proof of the product stored in hotfix backups.
+  if ${rollback_requested}; then
+    operation_to_version=""
+    [[ "${package_kind}" == hotfix ]] || operation_to_version="${source_version}"
+  fi
+}
+
+capture_rollback_result_version() {
+  local before="${observed_from_version}" nodes="${observed_node_versions}"
+  capture_operation_versions
+  operation_to_version="${observed_from_version}"
+  observed_from_version="${before}"
+  observed_node_versions="${nodes}"
+}
+
 write_journal() {
   local status="$1" node="${2:-}" message="${3:-}" phase="${4:-}" current="${5:-0}" total="${6:-0}"
   local event_tmp job_status maintenance finished_at started_at percent=0
   [[ -n "${journal_file}" ]] || return 0
+  # A verified rollback has a restored product identity, not the attempted target.
+  [[ "${status}" != rolled_back ]] || capture_rollback_result_version
   if ((total > 0)); then
     percent=$((current * 100 / total))
     ((percent <= 100)) || percent=100
@@ -1598,8 +1638,9 @@ write_journal() {
   event_tmp="${journal_file}.event.tmp"
   jq -cn --arg execution_id "${execution_id}" --arg patch_id "${patch_id}" --arg mode "${update_mode}" --arg status "${status}" --arg node "${node}" --arg message "${message}" \
     --arg phase "${phase}" --argjson current "${current}" --argjson total "${total}" \
+    --arg from_version "${observed_from_version}" --argjson from_nodes "${observed_node_versions}" --arg to_version "${operation_to_version}" \
     --arg source "${source_version}" --arg target "${target_version}" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    '{operation_id:$execution_id,execution_id:$execution_id,patch_id:$patch_id,mode:$mode,status:$status,node:$node,message:$message,phase:$phase,current:$current,total:$total,source:$source,target:$target,updated_at:$at}' >"${event_tmp}"
+    '{operation_id:$execution_id,execution_id:$execution_id,patch_id:$patch_id,mode:$mode,status:$status,node:$node,message:$message,phase:$phase,current:$current,total:$total,source:$source,target:$target,from_version:$from_version,from_node_versions:$from_nodes,to_version:$to_version,updated_at:$at}' >"${event_tmp}"
   chmod 0640 "${event_tmp}"
   cat "${event_tmp}" >>"${journal_events_file}"
   chmod 0640 "${journal_events_file}"
@@ -1623,8 +1664,10 @@ write_journal() {
   jq -n --arg execution_id "${execution_id}" --arg patch_id "${patch_id}" --arg mode "${update_mode}" --arg status "${job_status}" \
     --arg node "${node}" --arg message "${message}" --arg phase "${phase}" \
     --arg started_at "${started_at}" --arg updated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg finished_at "${finished_at}" \
+    --arg from_version "${observed_from_version}" --argjson from_nodes "${observed_node_versions}" --arg to_version "${operation_to_version}" \
     --argjson maintenance_active "${maintenance}" --argjson current "${current}" --argjson total "${total}" --argjson percent "${percent}" \
     '{operation_id:$execution_id,execution_id:$execution_id,patch_id:$patch_id,mode:$mode,status:$status,node:$node,message:$message,
+      from_version:$from_version,from_node_versions:$from_nodes,to_version:$to_version,
       maintenance_active:$maintenance_active,automatic_failover_available:($maintenance_active | not),
       started_at:$started_at,updated_at:$updated_at,finished_at:(if $finished_at == "" then null else $finished_at end),
       progress:{phase:$phase,current:$current,total:$total,percent:$percent}}' >"${PWD}/status.json.tmp"
@@ -2066,6 +2109,7 @@ run_hotfix_update() {
   total_nodes="${#ordered_nodes[@]}"
   publish_update_artifacts
   acquire_update_locks
+  capture_operation_versions
   journal_started=true
   write_journal running "" "hotfix maintenance gates are being acquired" locking 0 "${total_nodes}"
   wait_cluster_idle "${leader_host}" true idle || die "维护门禁建立后控制面未在时限内恢复一致"
@@ -2246,6 +2290,7 @@ journal_events_file="${PWD}/clusterguard-update-${patch_id}.events.jsonl"
 total_nodes="${#ordered_nodes[@]}"
 publish_update_artifacts
 acquire_update_locks
+capture_operation_versions
 journal_started=true
 write_journal running "" "rolling update started" preparing 0 "${total_nodes}"
 write_journal running "" "maintenance gates are being acquired" locking 0 "${total_nodes}"

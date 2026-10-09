@@ -46,3 +46,11 @@ Snapshot从原包SHA与验签结果补读supersedes，仅已安装且兼容的�
 `Manager.Job` → `deriveJobProgress` → `progressPercent`将同一operation_id的status/events投影为页面进度。Runner在每个热修节点前发出`staging`，current是已完成节点数；它与`updating`共用节点步骤的百分比计算，避免传输下一节点时走未知阶段的0%分支。只修改读取投影，原始状态和事件保持不变，完成仍须以终态及健康核验为准。
 
 [三节点持久化回归](../../../../internal/platformupdate/progress_staging_test.go)实际读取每一步status/events，覆盖准备、三次传输、节点更新、集群验证、最终成功；可将实际投影供[浏览器回归](../../../../tools/console-update-staging-progress-acceptance.cjs)使用。跨操作隔离仍由operation_id约束。
+
+## 操作版本与RPM准入基线
+
+Package.source_version仍是签名RPM兼容基线。Runner在维护锁建立后、载荷替换前通过各节点`clusterguard --version-json`观测已安装二进制的产品身份，写入`Job.from_node_versions`；全节点可读且一致才写`from_version`。`to_version`来自签名应用目标；热修回退的备份产品版本未取证时不猜成RPM来源；核验回退完成后重新观测恢复版本，保留原from字段，记录实际to字段（含自动回退）。观测失败不代替或绕过原有签名、准入与健康门禁。
+
+Runner将字段写入同operation_id的status/events/operations；wrapper终态仅保留同操作字段，并复制至其他控制节点。Manager按原样读取，重启不丢失。首次安装时已运行的旧wrapper可能丢弃新字段；Manager仅从同operation_id/patch_id/mode的Runner追加快照恢复读投影，不重写旧文件、不串用其他操作。旧记录没有观测则保持缺失，不用当前二进制身份或邻近历史补写。旧签名包和原日志不改。
+
+验证入口：[真实Runner与wrapper回归](../../../../scripts/operation_version_test.go)、[Manager重启/JSON往返](../../../../internal/platformupdate/operation_version_test.go)、[浏览器版本变化](../../../../tools/console-update-version-transition-acceptance.cjs)。

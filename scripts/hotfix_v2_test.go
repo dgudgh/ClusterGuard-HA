@@ -25,6 +25,7 @@ load_nodes() { :; }; configure_passwords() { :; }; configure_known_hosts() { :; 
 load_runtime_data_members() { :; }; log_all_node_service_facts() { :; }
 detect_current_update_lock() { :; }; detect_foreign_update_lock() { :; }
 remote_package_version() { printf '2.2-105\n'; }
+capture_operation_versions() { :; } # Version observations have their own real-shell regression.
 write_hotfix_state_probe() { :; }; publish_update_artifacts() { :; }; sha256_file() { printf 'deadbeef\n'; }
 jq() { printf 'clusterguard-ha.service\n'; }
 verify_cluster_idle() { :; }; wait_cluster_idle() { :; }; resolve_leader_host() { :; }
