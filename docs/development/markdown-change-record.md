@@ -46,6 +46,7 @@ recorded-through: 73ff4a3
 | 2026-10-09 | `docs/development/backend/settings/update-history.md` | M | 记录Snapshot验签后继及部署判据。新增staging与updating共用节点百分比的读取投影、原始状态保留和三节点持久化回归入口。 |
 
 | 2026-10-09 | `docs/development/frontend/settings/preferences.md` | M | 语言设置接入静态原文绑定、动态双语目录和完整重绘；明确业务数据/原始证据、内存偏好及无请求/表单保持边界，登记四引擎八页面真实浏览器与目录回归。 |
+| 2026-10-09 | `docs/development/frontend/settings/configuration.md` | M | 记录参数分组默认折叠、点击/键盘展开、刷新与双语保留、注销清空、局部表格滚动和专用真实浏览器验收；保留只读及下发范围边界。 |
 
 ## 批次说明
 

@@ -40,4 +40,10 @@
 | 策略失败、输入、保存与窄屏真浏览器检查 | [console-cluster-policy-audit.cjs](../../../../tools/console-cluster-policy-audit.cjs) |
 | 设置页尺寸烟测 | [console-engine-pages-audit.cjs](../../../../tools/console-engine-pages-audit.cjs) |
 
-`console-cluster-policy-audit.cjs` 会触发配置读取，但主要断言策略交互；`console-engine-pages-audit.cjs` 只检查页面可见和横向溢出。重新读取按钮、配置请求失败、警告、来源、凭据引用和重启标记目前没有专用真浏览器场景，未执行不得记为通过。
+## 参数分组默认折叠
+
+每个`sections[]`使用原生`details/summary`，初始全部关闭，标题点击、Enter或Space展开/折叠当前组；标题保留说明并显示该组参数数目。展开后的表格只在组内横向滚动，不拉宽整个页面。
+
+`state.configurationExpandedSections`按section.key记录当前会话的逐组状态，重新读取、读取失败和语言重绘保留展开选择；整个页面重新加载默认折叠。会话清理清空状态与旧参数DOM，不把前一个账户的选择带给后一个账户。只改变显示，不调用写参数、热加载或重启接口。
+
+[参数折叠真实浏览器验收](../../../../tools/console-configuration-collapse-acceptance.cjs)覆盖1440/390像素、初始折叠、独立点击/键盘切换、刷新、错误、语言、重载/会话清理、局部表格滚动、原始参数和凭据引用按文本显示、无写入。策略写入仍由`console-cluster-policy-audit.cjs`验证；现场配置下发与重启不属于折叠验收。
