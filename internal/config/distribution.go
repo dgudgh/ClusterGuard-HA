@@ -18,18 +18,44 @@ type ConfigurationField struct {
 	Path    string `json:"path"`
 	Minimum int    `json:"minimum"`
 	Maximum int    `json:"maximum"`
+	Scope   string `json:"scope"`
 }
 
 func EditableConfigurationFields() []ConfigurationField {
 	fields := []ConfigurationField{}
 	for _, engine := range []string{"mysql", "postgresql", "oracle", "sqlserver"} {
-		fields = append(fields, ConfigurationField{engine + ".discovery_interval_seconds", 1, 3600}, ConfigurationField{engine + ".discovery_timeout_seconds", 1, 600})
+		fields = append(fields, ConfigurationField{engine + ".discovery_interval_seconds", 1, 3600, "cluster"}, ConfigurationField{engine + ".discovery_timeout_seconds", 1, 600, "cluster"})
 	}
 	for _, engine := range []string{"mysql", "postgresql"} {
-		fields = append(fields, ConfigurationField{engine + ".automatic_failover_interval_seconds", 1, 3600}, ConfigurationField{engine + ".automatic_failover_retry_seconds", 1, 3600}, ConfigurationField{engine + ".automatic_failover_minimum_observations", 2, 100}, ConfigurationField{engine + ".automatic_failover_failure_window_seconds", 1, 3600}, ConfigurationField{engine + ".automatic_failover_operation_timeout_seconds", 30, 3600})
+		fields = append(fields, ConfigurationField{engine + ".automatic_failover_interval_seconds", 1, 3600, "cluster"}, ConfigurationField{engine + ".automatic_failover_retry_seconds", 1, 3600, "cluster"}, ConfigurationField{engine + ".automatic_failover_minimum_observations", 2, 100, "cluster"}, ConfigurationField{engine + ".automatic_failover_failure_window_seconds", 1, 3600, "cluster"}, ConfigurationField{engine + ".automatic_failover_operation_timeout_seconds", 30, 3600, "cluster"})
 	}
-	return append(fields, ConfigurationField{"consensus.apply_timeout_seconds", 1, 60}, ConfigurationField{"agent.command_timeout_seconds", 1, 600}, ConfigurationField{"agent.mutation_timeout_seconds", 1, 3600}, ConfigurationField{"agent.max_concurrent_sessions", 1, 128}, ConfigurationField{"fencing.timeout_seconds", 1, 600}, ConfigurationField{"fencing.agent_quorum_grace_seconds", 1, 60}, ConfigurationField{"node_lifecycle.control_certificate_validity_days", 1, 3650})
+	return append(fields, ConfigurationField{"consensus.apply_timeout_seconds", 1, 60, "node"}, ConfigurationField{"agent.command_timeout_seconds", 1, 600, "cluster"}, ConfigurationField{"agent.mutation_timeout_seconds", 1, 3600, "cluster"}, ConfigurationField{"agent.max_concurrent_sessions", 1, 128, "node"}, ConfigurationField{"fencing.timeout_seconds", 1, 600, "cluster"}, ConfigurationField{"fencing.agent_quorum_grace_seconds", 1, 60, "cluster"}, ConfigurationField{"node_lifecycle.control_certificate_validity_days", 1, 3650, "cluster"})
 }
+
+// ConfigurationRequiresAllVoters prevents Leader changes from changing failover,
+// discovery, fencing or operation decisions because only a subset was updated.
+func ConfigurationRequiresAllVoters(values map[string]int) bool {
+	for _, f := range EditableConfigurationFields() {
+		if _, changed := values[f.Path]; changed && f.Scope == "cluster" {
+			return true
+		}
+	}
+	return false
+}
+
+const DefaultConfigurationStepTimeoutSeconds = 180
+
+type ConfigurationDistribution struct {
+	StepTimeoutSeconds int `json:"step_timeout_seconds,omitempty"`
+}
+
+func (c ConfigurationDistribution) EffectiveStepTimeoutSeconds() int {
+	if c.StepTimeoutSeconds == 0 {
+		return DefaultConfigurationStepTimeoutSeconds
+	}
+	return c.StepTimeoutSeconds
+}
+
 func ValidateConfigurationChanges(values map[string]int) error {
 	if len(values) == 0 || len(values) > 64 {
 		return fmt.Errorf("configuration changes must contain 1..64 fields")

@@ -163,32 +163,33 @@ type Kubernetes struct {
 }
 
 type File struct {
-	AppliedConfiguration      ConfigurationOverrides `json:"-"`
-	LoadedConfigurationDigest string                 `json:"-"`
-	HTTPAddress               string                 `json:"http_address"`
-	AllowInsecureHTTP         bool                   `json:"allow_insecure_http,omitempty"`
-	TLSCertFile               string                 `json:"tls_cert_file,omitempty"`
-	TLSKeyFile                string                 `json:"tls_key_file,omitempty"`
-	TLSCAFile                 string                 `json:"tls_ca_file,omitempty"`
-	MetadataPath              string                 `json:"metadata_path"`
-	ControlTokenEnv           string                 `json:"control_token_env"`
-	ControlToken              string                 `json:"-"`
-	BootstrapAdminPasswordEnv string                 `json:"bootstrap_admin_password_env,omitempty"`
-	BootstrapAdminPassword    string                 `json:"-"`
-	MonitoringTokenEnv        string                 `json:"monitoring_token_env"`
-	MonitoringToken           string                 `json:"-"`
-	ApprovalTokenEnv          string                 `json:"approval_token_env"`
-	ApprovalToken             string                 `json:"-"`
-	DeprecationWarnings       []string               `json:"-"`
-	MySQL                     MySQL                  `json:"mysql"`
-	PostgreSQL                PostgreSQL             `json:"postgresql"`
-	Oracle                    Oracle                 `json:"oracle"`
-	SQLServer                 SQLServer              `json:"sqlserver"`
-	Agent                     Agent                  `json:"agent"`
-	Consensus                 Consensus              `json:"consensus"`
-	Fencing                   Fencing                `json:"fencing"`
-	Kubernetes                Kubernetes             `json:"kubernetes"`
-	NodeLifecycle             NodeLifecycle          `json:"node_lifecycle"`
+	AppliedConfiguration      ConfigurationOverrides    `json:"-"`
+	LoadedConfigurationDigest string                    `json:"-"`
+	HTTPAddress               string                    `json:"http_address"`
+	AllowInsecureHTTP         bool                      `json:"allow_insecure_http,omitempty"`
+	TLSCertFile               string                    `json:"tls_cert_file,omitempty"`
+	TLSKeyFile                string                    `json:"tls_key_file,omitempty"`
+	TLSCAFile                 string                    `json:"tls_ca_file,omitempty"`
+	MetadataPath              string                    `json:"metadata_path"`
+	ControlTokenEnv           string                    `json:"control_token_env"`
+	ControlToken              string                    `json:"-"`
+	BootstrapAdminPasswordEnv string                    `json:"bootstrap_admin_password_env,omitempty"`
+	BootstrapAdminPassword    string                    `json:"-"`
+	MonitoringTokenEnv        string                    `json:"monitoring_token_env"`
+	MonitoringToken           string                    `json:"-"`
+	ApprovalTokenEnv          string                    `json:"approval_token_env"`
+	ApprovalToken             string                    `json:"-"`
+	DeprecationWarnings       []string                  `json:"-"`
+	MySQL                     MySQL                     `json:"mysql"`
+	PostgreSQL                PostgreSQL                `json:"postgresql"`
+	Oracle                    Oracle                    `json:"oracle"`
+	SQLServer                 SQLServer                 `json:"sqlserver"`
+	Agent                     Agent                     `json:"agent"`
+	Consensus                 Consensus                 `json:"consensus"`
+	Fencing                   Fencing                   `json:"fencing"`
+	Kubernetes                Kubernetes                `json:"kubernetes"`
+	ConfigurationDistribution ConfigurationDistribution `json:"configuration_distribution"`
+	NodeLifecycle             NodeLifecycle             `json:"node_lifecycle"`
 }
 
 func Load(path string) (File, error) {
@@ -220,6 +221,11 @@ func loadConfigurationContents(contents []byte) (File, error) {
 		}
 		return File{}, fmt.Errorf("decode configuration: %w", err)
 	}
+	timeout := configuration.ConfigurationDistribution.EffectiveStepTimeoutSeconds()
+	if timeout < 30 || timeout > 3600 {
+		return File{}, fmt.Errorf("configuration_distribution.step_timeout_seconds must be between 30 and 3600")
+	}
+	configuration.ConfigurationDistribution.StepTimeoutSeconds = timeout
 	if strings.TrimSpace(configuration.HTTPAddress) == "" {
 		configuration.HTTPAddress = "127.0.0.1:8088"
 	}

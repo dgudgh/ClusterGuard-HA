@@ -34,6 +34,8 @@
  * Run: node tools/verify-hotfix-patch-catalog.cjs [--repo <path>]
  *                                                [--artifact-root <path>]
  *                                                [--public-key <file>]
+ *                                                [--ledger <file>] [--spec-dir <path>]
+ *                                                [--catalog-en <file>] [--catalog-zh <file>]
  *
  * --repo is the tree that carries the declarations, the ledger and the rendered
  * catalogues; --artifact-root is the tree that carries release/. They are usually
@@ -55,6 +57,12 @@ const path = require('path');
 const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 
+const flags = new Set(['--repo', '--artifact-root', '--public-key', '--ledger', '--spec-dir', '--catalog-en', '--catalog-zh']);
+for (let i = 2; i < process.argv.length; i += 2) {
+ if (!flags.has(process.argv[i]) || !process.argv[i + 1] || process.argv[i + 1].startsWith('--')) {
+  console.error('unknown argument or missing value: ' + process.argv[i]); process.exit(2);
+ }
+}
 const arg = (flag, fallback) => {
   const index = process.argv.indexOf(flag);
   return index !== -1 && process.argv[index + 1] ? process.argv[index + 1] : fallback;
@@ -62,6 +70,11 @@ const arg = (flag, fallback) => {
 
 const repo = path.resolve(arg('--repo', path.resolve(__dirname, '..')));
 const artifactRoot = path.resolve(arg('--artifact-root', repo));
+const ledgerPath = path.resolve(arg('--ledger', path.join(repo, 'hotfixes/hotfix-publications.json')));
+const specDirectory = path.resolve(arg('--spec-dir', path.join(repo, 'hotfixes')));
+const catalogueEnglish = path.resolve(arg('--catalog-en', path.join(repo, 'docs/hotfix-patches.md')));
+const catalogueChinese = path.resolve(arg('--catalog-zh', path.join(repo, 'docs/zh-CN/hotfix-patches.md')));
+console.log(`context repo=${repo} artifact_root=${artifactRoot} ledger=${ledgerPath} spec_dir=${specDirectory} catalog_en=${catalogueEnglish} catalog_zh=${catalogueChinese}`);
 const publicKey = arg('--public-key', process.env.CG_HOTFIX_TRUSTED_PUBLIC_KEY || '');
 // New delivery directories follow the product identity. Frozen historical
 // declarations retain their ledger location; RPM admission remains independent.
@@ -114,7 +127,6 @@ const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 
 // parse is reported the same way - these files are hand-edited, and a stray
 // comma must read as "HF-2026-0929-05.json is broken", not as a stack trace
 // from JSON.parse that looks like the gate itself fell over.
-const specDirectory = path.join(repo, 'hotfixes');
 const companionDocuments = new Set(['hotfix-publications.json']);
 const documents = [];
 const unparsableDocuments = [];
@@ -122,7 +134,9 @@ if (fs.existsSync(specDirectory)) {
   for (const name of fs.readdirSync(specDirectory).filter((entry) => entry.endsWith('.json')).sort()) {
     const file = path.join(specDirectory, name);
     try {
-      documents.push({ name, path: file, body: JSON.parse(fs.readFileSync(file, 'utf8')) });
+      const body = JSON.parse(fs.readFileSync(file, 'utf8'));
+      if (!body || typeof body !== 'object' || Array.isArray(body)) throw Error('declaration must be a JSON object');
+      documents.push({ name, path: file, body });
     } catch (error) {
       unparsableDocuments.push(`${name}: ${String(error.message).split('\n')[0]}`);
     }
@@ -336,16 +350,26 @@ const cleanArtifacts = [];
 // provenance record that exists on one machine only is not a record. Entries are
 // keyed by the artifact's path relative to the artifact root, so the file
 // travels with the branch while the artifacts stay where they are built.
-const ledgerPath = path.join(repo, 'hotfixes/hotfix-publications.json');
 let ledger = null;
-let ledgerError = null;
+let ledgerError = fs.existsSync(ledgerPath) ? null : 'publication ledger not found';
 if (fs.existsSync(ledgerPath)) {
   try {
     ledger = JSON.parse(fs.readFileSync(ledgerPath, 'utf8'));
+    if (!ledger || ledger.schema_version !== 1 || !Array.isArray(ledger.publications)) throw Error('invalid publication ledger schema');
+    const seen = new Set();
+    for (const entry of ledger.publications) {
+      if (!entry || typeof entry.file !== 'string' || !entry.file.startsWith('release/') ||
+          entry.file.includes('\\') || entry.file.split('/').some(p => !p || p === '.' || p === '..') ||
+          seen.has(entry.file) || !/^[a-f0-9]{64}$/.test(entry.sha256 || '') ||
+          !Number.isSafeInteger(entry.size) || entry.size < 0 ||
+          !['current','superseded','frozen'].includes(entry.status)) throw Error('invalid or duplicate publication ledger identity');
+      seen.add(entry.file);
+    }
   } catch (error) {
     // The ledger is hand-edited too; a syntax error in it must be reported as a
     // ledger problem, not thrown as a stack trace that hides every other check.
     ledgerError = String(error.message).split('\n')[0];
+    ledger = null;
   }
 }
 const publications = new Map();
@@ -889,8 +913,6 @@ check('no declaration points at a superseded artifact: the catalogue must name t
   notCurrent.length === 0, notCurrent.join('; '));
 
 // --- Gate 3: the bilingual catalogue is rendered and truthful --------------
-const catalogueEnglish = path.join(repo, 'docs/hotfix-patches.md');
-const catalogueChinese = path.join(repo, 'docs/zh-CN/hotfix-patches.md');
 check('the hotfix catalogue exists in both languages',
   fs.existsSync(catalogueEnglish) && fs.existsSync(catalogueChinese));
 

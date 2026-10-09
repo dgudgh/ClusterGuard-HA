@@ -17,6 +17,7 @@ function parseArgs(argv) {
     repository: defaultRepository,
     artifactRoot: process.env.CG_HOTFIX_ARTIFACT_ROOT || defaultRepository,
     artifactDir: null,
+    ledger: null,
     outEn: path.join(defaultRepository, "docs/hotfix-patches.md"),
     outZh: path.join(defaultRepository, "docs/zh-CN/hotfix-patches.md")
   };
@@ -26,12 +27,13 @@ function parseArgs(argv) {
     switch (argument) {
       case "--repo": options.repository = path.resolve(value); index += 1; break;
       case "--artifact-root": options.artifactRoot = path.resolve(value); index += 1; break;
+      case "--ledger": options.ledger = path.resolve(value); index += 1; break;
       case "--artifact-dir": options.artifactDir = value; index += 1; break;
       case "--out-en": options.outEn = path.resolve(value); index += 1; break;
       case "--out-zh": options.outZh = path.resolve(value); index += 1; break;
       case "-h":
       case "--help":
-        console.log("usage: render-hotfix-catalog.cjs [--repo DIR] [--artifact-root DIR] [--artifact-dir REL] [--out-en FILE] [--out-zh FILE]");
+        console.log("usage: render-hotfix-catalog.cjs [--repo DIR] [--artifact-root DIR] [--artifact-dir REL] [--ledger FILE] [--out-en FILE] [--out-zh FILE]");
         process.exit(0);
         break;
       default:
@@ -62,7 +64,7 @@ function readManifest(archive) {
 // of what a site once ran - so "newest file wins" would be a guess and "list them
 // all as separate patches" tells an operator nothing about which to upload.
 function loadLedger(options) {
-  const ledgerPath = path.join(options.repository, "hotfixes/hotfix-publications.json");
+  const ledgerPath = options.ledger || path.join(options.repository, "hotfixes/hotfix-publications.json");
   if (!fs.existsSync(ledgerPath)) {
     throw new Error(`publication ledger not found: ${ledgerPath}`);
   }

@@ -9,6 +9,7 @@
 | 构建新身份的 RPM、介质或签名包 | [版本与制品规范](../../zh-CN/version-release-policy.md)、[打包阻断清单](../rules/release-checklist.md)、[许可与依赖规则](../rules/licensing.md)、[公开渠道规则](../rules/public-release.md) |
 | 维护许可声明、引入依赖、封装文档许可 | [许可与依赖规则](../rules/licensing.md) |
 | 上传/删除 GitHub Release 或其附件 | [公开渠道规则](../rules/public-release.md) |
+| 校验私有制品台账、目录或复跑隔离浏览器 | [制品与浏览器工具入口](hotfix-catalog-validation.md) |
 | 推进源码、新包与现场的门禁证据 | [分阶段门禁流程](../../zh-CN/validation-gate-workflow.md) |
 | 现场上传、升级、重试、回退 | [现场升级手册](../../zh-CN/update-and-patch.md)、[强制契约](../../zh-CN/upgrade-validation-chain.md) |
 

@@ -22,22 +22,23 @@ type ConfigurationTarget struct {
 	Error       string         `json:"error,omitempty"`
 }
 type ConfigurationTask struct {
-	Members       []string              `json:"members"`
-	PolicyDigest  string                `json:"policy_digest"`
-	PlanHash      string                `json:"plan_hash"`
-	TaskID        string                `json:"task_id"`
-	Revision      uint64                `json:"revision"`
-	Changes       map[string]int        `json:"changes"`
-	Targets       []ConfigurationTarget `json:"targets"`
-	CurrentNode   string                `json:"current_node,omitempty"`
-	Status        string                `json:"status"`
-	Mode          string                `json:"mode"`
-	Active        bool                  `json:"active"`
-	Actor         string                `json:"actor"`
-	CreatedAt     time.Time             `json:"created_at"`
-	UpdatedAt     time.Time             `json:"updated_at"`
-	StepStartedAt time.Time             `json:"step_started_at"`
-	Error         string                `json:"error,omitempty"`
+	StepTimeoutSeconds int                   `json:"step_timeout_seconds,omitempty"`
+	Members            []string              `json:"members"`
+	PolicyDigest       string                `json:"policy_digest"`
+	PlanHash           string                `json:"plan_hash"`
+	TaskID             string                `json:"task_id"`
+	Revision           uint64                `json:"revision"`
+	Changes            map[string]int        `json:"changes"`
+	Targets            []ConfigurationTarget `json:"targets"`
+	CurrentNode        string                `json:"current_node,omitempty"`
+	Status             string                `json:"status"`
+	Mode               string                `json:"mode"`
+	Active             bool                  `json:"active"`
+	Actor              string                `json:"actor"`
+	CreatedAt          time.Time             `json:"created_at"`
+	UpdatedAt          time.Time             `json:"updated_at"`
+	StepStartedAt      time.Time             `json:"step_started_at"`
+	Error              string                `json:"error,omitempty"`
 }
 
 func CloneConfigurationTask(t ConfigurationTask) ConfigurationTask {
@@ -47,6 +48,10 @@ func CloneConfigurationTask(t ConfigurationTask) ConfigurationTask {
 	return c
 }
 func ValidateConfigurationTask(t ConfigurationTask) error {
+	// Zero is reserved for tasks persisted by 3.1.2.1 with the legacy 180s limit.
+	if t.StepTimeoutSeconds != 0 && (t.StepTimeoutSeconds < 30 || t.StepTimeoutSeconds > 3600) {
+		return fmt.Errorf("invalid configuration task timeout")
+	}
 	if !model.ValidResourceID(model.ResourceID(t.TaskID)) || t.Revision == 0 || len(t.Targets) == 0 || len(t.Targets) > 32 {
 		return fmt.Errorf("invalid configuration task identity/targets")
 	}
@@ -60,6 +65,9 @@ func ValidateConfigurationTask(t ConfigurationTask) error {
 			return fmt.Errorf("invalid configuration membership")
 		}
 		members[id] = true
+	}
+	if t.StepTimeoutSeconds > 0 && config.ConfigurationRequiresAllVoters(t.Changes) && len(t.Targets) != len(t.Members) {
+		return fmt.Errorf("cluster-scoped configuration requires all voters")
 	}
 	if e := config.ValidateConfigurationChanges(t.Changes); e != nil {
 		return e
@@ -210,7 +218,7 @@ func (r *Repository) UpdateConfigurationTask(t ConfigurationTask, expected uint6
 	// Neither retries nor an advancing Leader can change the selected subject.
 	a, _ := json.Marshal(old.Changes)
 	b, _ := json.Marshal(t.Changes)
-	if old.Actor != t.Actor || !old.CreatedAt.Equal(t.CreatedAt) || old.PlanHash != t.PlanHash || old.PolicyDigest != t.PolicyDigest || !reflect.DeepEqual(old.Members, t.Members) || string(a) != string(b) || len(old.Targets) != len(t.Targets) {
+	if old.StepTimeoutSeconds != t.StepTimeoutSeconds || old.Actor != t.Actor || !old.CreatedAt.Equal(t.CreatedAt) || old.PlanHash != t.PlanHash || old.PolicyDigest != t.PolicyDigest || !reflect.DeepEqual(old.Members, t.Members) || string(a) != string(b) || len(old.Targets) != len(t.Targets) {
 		return t, validationError("configuration task subject changed")
 	}
 	for i, n := range old.Targets {

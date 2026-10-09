@@ -1198,7 +1198,7 @@ func New(configuration config.File, settings ...Option) (*Runtime, error) {
 			return nil, fmt.Errorf("configure leader mutation RPC: %w", clientErr)
 		}
 		if _, pathErr := os.Stat(configurationPath); configurationPath != "" && pathErr == nil {
-			distribution := &configurationtask.Manager{Repository: repository, Authority: result.consensus, Maintenance: baseMaintenance, Config: configuration, ConfigPath: configurationPath, StartedAt: startedAt, Validate: ValidateConfiguration, Restart: platformupdate.ControllerRestarter{Client: platformupdate.NewUnixHelperClient(platformupdate.DefaultHelperSocketPath)}, Peer: configurationtask.HTTPPeer{Client: mutationRPCClient, Token: configuration.ControlToken}}
+			distribution := &configurationtask.Manager{Repository: repository, Authority: result.consensus, Maintenance: baseMaintenance, Config: configuration, ConfigPath: configurationPath, StartedAt: startedAt, Validate: ValidateConfiguration, Restart: softwareUpdates.ControllerRestarter(), Peer: configurationtask.HTTPPeer{Client: mutationRPCClient, Token: configuration.ControlToken}}
 			if err := distribution.Initialize(); err != nil {
 				_ = result.Close()
 				return nil, fmt.Errorf("initialize configuration distribution: %w", err)

@@ -165,7 +165,14 @@ func (m *Manager) Plan(ctx context.Context, r Request) (Plan, error) {
 	if len(want) == 0 {
 		return Plan{}, fmt.Errorf("select controller targets")
 	}
-	plan := Plan{PolicyDigest: store.ConfigurationPolicyDigest(m.Repository.ClusterPolicy()), Changes: r.Changes, RestartRequired: true, Targets: []store.ConfigurationTarget{}}
+	if config.ConfigurationRequiresAllVoters(r.Changes) && len(want) != len(members) {
+		return Plan{}, fmt.Errorf("cluster-scoped parameters require all current voters")
+	}
+	timeout := m.Config.ConfigurationDistribution.EffectiveStepTimeoutSeconds()
+	if timeout < 30 || timeout > 3600 {
+		return Plan{}, fmt.Errorf("invalid configuration step timeout")
+	}
+	plan := Plan{StepTimeoutSeconds: timeout, PolicyDigest: store.ConfigurationPolicyDigest(m.Repository.ClusterPolicy()), Changes: r.Changes, RestartRequired: true, Targets: []store.ConfigurationTarget{}}
 	sort.Slice(members, func(i, j int) bool { return members[i].ResourceID < members[j].ResourceID })
 	for _, member := range members {
 		id := string(member.ResourceID)
@@ -215,7 +222,7 @@ func (m *Manager) Dispatch(ctx context.Context, r Request, actor string) (store.
 	if r.PlanHash == "" || r.PlanHash != plan.Hash {
 		return store.ConfigurationTask{}, fmt.Errorf("configuration preflight changed; review again")
 	}
-	return m.Repository.CreateConfigurationTask(store.ConfigurationTask{TaskID: r.RequestID, Changes: plan.Changes, Targets: plan.Targets, Members: plan.Members, PlanHash: plan.Hash, PolicyDigest: plan.PolicyDigest, Actor: actor})
+	return m.Repository.CreateConfigurationTask(store.ConfigurationTask{TaskID: r.RequestID, StepTimeoutSeconds: plan.StepTimeoutSeconds, Changes: plan.Changes, Targets: plan.Targets, Members: plan.Members, PlanHash: plan.Hash, PolicyDigest: plan.PolicyDigest, Actor: actor})
 }
 func (m *Manager) Recover(ctx context.Context, id, mode string, revision uint64) (store.ConfigurationTask, error) {
 	if e := m.Authority.RequireMutationAuthority(ctx); e != nil {

@@ -31,6 +31,8 @@ Retry uses the same bytes/ID/version. Signed or delivered artifacts cannot be re
 
 A new feature increments PATCH and starts BUGFIX at 1: configuration editing and controller distribution use `3.1.2.1`; `3.1.1.x` remains the previous feature release. Its first artifact has `revision=0`, without `supersedes_artifact` from a different feature line. Signed `supersedes` still records operation replacement; old signatures and hashes remain frozen. Increment BUGFIX and revision for defect repairs within the same feature release.
 
+The feature increment rule was established on 2026-10-09 following the user correction to 3.1.2.1 and committed with configuration distribution. It is not a convention established before that feature.
+
 ## 5. Admission and history checks
 
 Check actual RPM source, architecture, ID=patch_version, four numeric segments with BUGFIX>0, signature, sidecar and current private ledger. CLI/API runtime identity must match the signed product version. Targets/history use each package's own verified patch_version; missing legacy metadata may be enriched only from its hash- and identity-verified signed original. Only an installed, verified successor's signed supersedes declaration retires an old failure; historical results remain visible, never guessed from time/version ordering.

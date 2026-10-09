@@ -1885,6 +1885,9 @@
  "仅向选定控制节点下发。普通数值参数保存后逐节点重启；节点身份、网络、凭据与隔离开关需专用变更流程。":"Apply only to selected controllers. Numeric tuning changes require rolling restarts; identity, network, credentials and fencing switches require dedicated change procedures.",
  "解锁参数下发":"Unlock configuration changes", "重新锁定参数下发":"Lock configuration changes",
  "检查并下发":"Review and apply", "清除草稿":"Clear draft", "确认参数下发":"Confirm configuration changes",
+ "集群级参数必须选择全部投票节点。":"Cluster-wide parameters require all voting controllers.",
+ "逐节点超时":"Per-controller timeout",
+ "秒":"seconds",
  "各节点将依次重启，核验实际生效值后才完成。":"Controllers restart one at a time. Completion requires verifying the values used by the new processes.",
  "确认下发":"Apply changes", "取消":"Cancel", "已下发配置":"Distributed configuration",
  "此参数需专用变更流程，不能直接下发。":"This parameter requires a dedicated change procedure.",
@@ -3169,7 +3172,7 @@
     const configurationIntentCurrent = intent => intent && state.configurationIntent===intent && intent.authEpoch===state.authEpoch && intent.user===state.currentUser && intent.clusterID===state.selectedClusterId && intent.lockEpoch===state.operationLockEpoch && intent.draftEpoch===state.configurationDraftEpoch && state.configurationUnlocked && canAdministerPlatform() && !state.operationRunning && !state.lifecycleRunning && !configurationTaskActive() && !state.configurationDistributionError;
     const configurationMessage = text => {byId('configuration-distribution-message').textContent=text;};
     const renderConfigurationDistribution = () => {
-     byId('configuration-distribution-title').textContent=ui('控制节点参数下发');byId('configuration-distribution-note').textContent=ui('仅向选定控制节点下发。普通数值参数保存后逐节点重启；节点身份、网络、凭据与隔离开关需专用变更流程。');
+     byId('configuration-distribution-title').textContent=ui('控制节点参数下发');byId('configuration-distribution-note').textContent=ui('仅向选定控制节点下发。普通数值参数保存后逐节点重启；节点身份、网络、凭据与隔离开关需专用变更流程。')+' '+ui('集群级参数必须选择全部投票节点。');
      const unlocked=state.configurationUnlocked;
      byId('configuration-unlock').textContent=ui(unlocked?'重新锁定参数下发':'解锁参数下发');byId('configuration-unlock').disabled=!canAdministerPlatform()||state.configurationBusy||(configurationTaskActive()&&!state.configurationDistribution?.tasks?.some(t=>t.active&&t.status==='failed'))||!!state.configurationDistributionError||!state.configurationDistribution?.local?.ready;
      byId('configuration-plan').textContent=ui('检查并下发');byId('configuration-plan').disabled=!configurationEditAllowed();byId('configuration-clear').textContent=ui('清除草稿');byId('configuration-clear').disabled=state.configurationBusy;
@@ -3193,7 +3196,7 @@
     };
     const configurationPayload = () => {
      const changes={};for(const [key,raw] of Object.entries(state.configurationDraft)){const field=state.configurationDistribution?.local?.fields?.find(f=>f.path===key);const number=Number(raw);if(!field||String(raw).trim()===''||!Number.isSafeInteger(number)||number<field.minimum||number>field.maximum)throw Error(ui('参数必须为范围内的整数。'));if(number!==state.configurationDistribution.local.values[key])changes[key]=number;}
-     const node_ids=state.configurationTargets===null?(state.configurationDistribution?.members||[]).map(m=>m.resource_id):[...state.configurationTargets];if(!Object.keys(changes).length||!node_ids.length)throw Error(ui('请编辑参数并选择控制节点。'));return {changes,node_ids};
+     const node_ids=state.configurationTargets===null?(state.configurationDistribution?.members||[]).map(m=>m.resource_id):[...state.configurationTargets];if(!Object.keys(changes).length||!node_ids.length)throw Error(ui('请编辑参数并选择控制节点。'));const clusterScoped=state.configurationDistribution.local.fields.some(f=>f.scope==='cluster'&&Object.hasOwn(changes,f.path));if(clusterScoped&&node_ids.length!==(state.configurationDistribution.members||[]).length)throw Error(ui('集群级参数必须选择全部投票节点。'));return {changes,node_ids};
     };
     const previewConfiguration = async () => {
      if(!configurationEditAllowed())return;
@@ -3201,7 +3204,7 @@
      const intent={request,authEpoch:state.authEpoch,user:state.currentUser,clusterID:state.selectedClusterId,lockEpoch:state.operationLockEpoch,draftEpoch:state.configurationDraftEpoch};state.configurationIntent=intent;state.configurationBusy=true;state.configurationBusyOwner=intent;renderConfigurationDistribution();configurationMessage(ui('检查中……'));
      try{const plan=await fetchResult('/api/v1/control-plane/configuration/plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(request)});if(!configurationIntentCurrent(intent)){configurationMessage(ui('参数下发条件或草稿已变化，请重新检查。'));return;}
       intent.request={...request,request_id:crypto.randomUUID(),plan_hash:plan.hash};
-      byId('configuration-confirm-title').textContent=ui('确认参数下发');byId('configuration-confirm-note').textContent=ui('各节点将依次重启，核验实际生效值后才完成。');
+      byId('configuration-confirm-title').textContent=ui('确认参数下发');byId('configuration-confirm-note').textContent=ui('各节点将依次重启，核验实际生效值后才完成。')+' '+ui('逐节点超时')+': '+plan.step_timeout_seconds+' '+ui('秒');
       byId('configuration-confirm-diff').textContent=(plan.targets||[]).map(t=>t.node_id+'\n'+Object.entries(request.changes).map(([k,v])=>k+': '+t.before[k]+' → '+v).join('\n')).join('\n\n');
       byId('configuration-confirm-submit').textContent=ui('确认下发');byId('configuration-confirm-cancel').textContent=ui('取消');byId('configuration-confirm').showModal();
      }catch(error){if(!error.staleSession)configurationMessage(error.message);}finally{if(state.configurationBusyOwner===intent){state.configurationBusy=false;state.configurationBusyOwner=null;renderConfigurationDistribution();}}

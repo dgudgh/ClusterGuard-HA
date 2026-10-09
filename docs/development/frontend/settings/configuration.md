@@ -59,3 +59,9 @@
 所有控件随界面语言切换。周期读取任务状态，结束后刷新节点有效值；未编辑草稿保留，刷新不下发参数。详细后端边界见[运行参数与节点下发](../../backend/settings/configuration.md)。
 
 回归：[真实浏览器编辑与下发验收](../../../../tools/console-configuration-distribution-acceptance.cjs)，覆盖1440/390、数值边界、目标选择、预检差异、任务提交与实际核验区别、失败与读错误、迟到预检、会话清理、双语和窄屏。它使用隔离API响应，不作为生产节点参数生效证据。
+
+## 审查修正：范围、时限与可复跑证据
+
+字段`scope=cluster`要求全部投票节点；子集选择时前端拒绝预检并显示双语原因，后端独立检查当前成员。仅`scope=node`的Raft应用时限和Agent并发数可选子集。确认框显示后端计划的逐节点`step_timeout_seconds`，该时限参与摘要并持久化，Leader变化不以新Leader本地配置替换。
+
+浏览器验收使用Playwright库及本机已安装Chrome的`channel: chrome`；无需Playwright专属Chromium缓存，但必须能加载库并启动Chrome。桌面/窄屏的范围限制、实际时限、中文/英文确认均有真实浏览器事件测试，API仍是隔离fixture。依赖诊断及复跑命令见[验收工具入口](../../delivery/hotfix-catalog-validation.md)；不能写成现场生效验证。

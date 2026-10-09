@@ -53,7 +53,11 @@ recorded-through: 73ff4a3
 | 2026-10-09 | `docs/development/frontend/settings/README.md` | M | 参数入口指向编辑、选定控制节点下发与实际重启核验，移除只读入口误导。 |
 | 2026-10-09 | `docs/development/backend/settings/README.md` | M | 参数导航加入plan/dispatch/permit、Raft配置任务和逐节点重启核验路径。 |
 
+| 2026-10-09 | `docs/development/delivery/hotfix-catalog-validation.md` | A | 显式私有台账/声明/目录输入，同判据与失败回归；Chrome依赖复跑和fixture/现场证据边界。 |
+
 ## 批次说明
+
+本轮配置下发审查：前后端configuration页补全23项集群级/2项节点级范围、schema 2、显式且任务绑定的超时、拒绝覆盖恢复及首次现场证据；门禁流程/交付入口链接私有工具页；命名页中英明确功能版本规则的设立日期。完整HTML重建。
 
 本次新增功能按用户纠正使用3.1.2.1；同步中英命名页的PATCH递增/BUGFIX重置及revision=0边界，更新版本规范的产品身份和唯一主线口径。
 

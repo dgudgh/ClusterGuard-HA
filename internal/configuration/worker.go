@@ -113,8 +113,35 @@ func (m *Manager) applyLocal(ctx context.Context, t store.ConfigurationTask) {
 		m.localFailure(e)
 		return
 	}
+	previous := current
+	validateSaved := func() error {
+		loaded, err := config.Load(m.ConfigPath)
+		if err != nil {
+			return fmt.Errorf("saved configuration validation failed: %w", err)
+		}
+		if loaded.LoadedConfigurationDigest != m.StartedBaseHash || loaded.AppliedConfiguration.TaskID != marker(t) {
+			return fmt.Errorf("saved configuration ownership or base changed")
+		}
+		expected := map[string]int{}
+		for key, value := range target.Before {
+			expected[key] = value
+		}
+		if t.Mode == "apply" {
+			for key, value := range t.Changes {
+				expected[key] = value
+			}
+		}
+		if !matches(config.ConfigurationNumbers(loaded), expected) {
+			return fmt.Errorf("saved configuration differs from approved complete candidate")
+		}
+		if m.Validate != nil {
+			return m.Validate(loaded)
+		}
+		return nil
+	}
 	desired := marker(t)
-	if current.TaskID != desired {
+	publishing := current.TaskID != desired
+	if publishing {
 		backup := filepath.Join(filepath.Dir(path), "configuration-"+t.TaskID+".before.json")
 		if t.Mode == "apply" {
 			if n.Fingerprint != target.Fingerprint {
@@ -145,6 +172,10 @@ func (m *Manager) applyLocal(ctx context.Context, t store.ConfigurationTask) {
 			}
 			current.Values = values
 		} else {
+			// Validation failures may already have restored the untouched prestate.
+			if n.Fingerprint == target.Fingerprint && matches(n.Values, target.Before) {
+				return
+			}
 			old, err := config.ReadConfigurationOverrides(backup)
 			if err != nil {
 				m.localFailure(err)
@@ -172,24 +203,16 @@ func (m *Manager) applyLocal(ctx context.Context, t store.ConfigurationTask) {
 		if !ok || latest.Revision != t.Revision || !latest.Active || latest.Status != "running" {
 			return
 		}
-		if e = config.WriteConfigurationOverrides(path, current); e != nil {
+		if e = publishValidatedOverrides(path, previous, current, validateSaved); e != nil {
 			m.localFailure(e)
 			return
 		}
 	}
-	loaded, loadErr := config.Load(m.ConfigPath)
-	expectedValues := map[string]int{}
-	for key, value := range target.Before {
-		expectedValues[key] = value
-	}
-	if t.Mode == "apply" {
-		for key, value := range t.Changes {
-			expectedValues[key] = value
+	if !publishing {
+		if e = validateSaved(); e != nil {
+			m.localFailure(e)
+			return
 		}
-	}
-	if loadErr != nil || !matches(config.ConfigurationNumbers(loaded), expectedValues) {
-		m.localFailure(fmt.Errorf("saved configuration differs from approved complete candidate"))
-		return
 	}
 	if m.restartRequested == fmt.Sprintf("%s/%d", desired, t.Revision) {
 		return
@@ -262,10 +285,11 @@ func (m *Manager) advance(ctx context.Context, id string) {
 		m.fail(t, "controller membership changed")
 		return
 	}
-	timeout := m.StepTimeout
-	if timeout == 0 {
-		timeout = 180 * time.Second
-	}
+	seconds := t.StepTimeoutSeconds
+	if seconds == 0 {
+		seconds = config.DefaultConfigurationStepTimeoutSeconds
+	} // legacy persisted task only
+	timeout := time.Duration(seconds) * time.Second
 	if t.CurrentNode != "" && m.now().Sub(t.StepStartedAt) > timeout {
 		m.fail(t, "controller restart or actual-value verification timed out")
 		return

@@ -11,7 +11,8 @@ import (
 	"time"
 )
 
-const SchemaVersion = 1
+// Schema 2 requires scope enforcement and a task-bound restart timeout.
+const SchemaVersion = 2
 
 type Node struct {
 	TaskErrorRevision uint64                      `json:"task_error_revision,omitempty"`
@@ -33,12 +34,13 @@ type Request struct {
 	Changes   map[string]int `json:"changes"`
 }
 type Plan struct {
-	PolicyDigest    string                      `json:"policy_digest"`
-	Hash            string                      `json:"hash"`
-	Members         []string                    `json:"members"`
-	Targets         []store.ConfigurationTarget `json:"targets"`
-	Changes         map[string]int              `json:"changes"`
-	RestartRequired bool                        `json:"restart_required"`
+	StepTimeoutSeconds int                         `json:"step_timeout_seconds"`
+	PolicyDigest       string                      `json:"policy_digest"`
+	Hash               string                      `json:"hash"`
+	Members            []string                    `json:"members"`
+	Targets            []store.ConfigurationTarget `json:"targets"`
+	Changes            map[string]int              `json:"changes"`
+	RestartRequired    bool                        `json:"restart_required"`
 }
 type Status struct {
 	SchemaVersion int                          `json:"schema_version"`
@@ -62,20 +64,18 @@ type Peer interface {
 	Permit(context.Context, consensus.ControllerMember, Permit) error
 }
 type Manager struct {
-	Repository      *store.Repository
-	Authority       Authority
-	Maintenance     Maintenance
-	Restart         Restart
-	Peer            Peer
-	Config          config.File
-	ConfigPath      string
-	StartedAt       time.Time
-	StartedOverride config.ConfigurationOverrides
-	StartedBaseHash string
-	Validate        func(config.File) error
-	Now             func() time.Time
-	// StepTimeout includes restart, election, catch-up and actual-value verification.
-	StepTimeout      time.Duration
+	Repository       *store.Repository
+	Authority        Authority
+	Maintenance      Maintenance
+	Restart          Restart
+	Peer             Peer
+	Config           config.File
+	ConfigPath       string
+	StartedAt        time.Time
+	StartedOverride  config.ConfigurationOverrides
+	StartedBaseHash  string
+	Validate         func(config.File) error
+	Now              func() time.Time
 	restartRequested string
 	mu               sync.RWMutex
 	localError       string
