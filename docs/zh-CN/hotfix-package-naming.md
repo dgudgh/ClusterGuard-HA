@@ -38,6 +38,9 @@
 - 签名revision及supersedes_artifact记录原文件与SHA；supersedes记录被替代操作ID。旧字节和失败历史保留。
 - 目录移动不改包内字节，不重新签名；台账记录旧/新路径与同SHA，并同步回指。签名中的历史替代路径不改写。
 
+
+新增功能递增PATCH，并从BUGFIX=1开始：例如参数编辑与节点下发为`3.1.2.1`；`3.1.1.x`保留为上一功能版的缺陷修订。新功能版本的首次制品`revision=0`，不声明同功能版修订链`supersedes_artifact`；操作替代仍使用签名`supersedes`，旧签名和SHA冻结。只修复同功能版的缺陷时才递增BUGFIX及对应revision。
+
 ## 5. 上传前核对
 
 1. 签名source与现场实际RPM基线一致；文件名架构等于清单架构。

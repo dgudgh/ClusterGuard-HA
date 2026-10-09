@@ -16,6 +16,14 @@ func (repository *Repository) PutLifecycleTask(task lifecycle.Task) (lifecycle.T
 	defer repository.mutationMu.Unlock()
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
+	switch task.Status {
+	case lifecycle.TaskPlanned, lifecycle.TaskQueued, lifecycle.TaskRunning, lifecycle.TaskVerifying:
+		for _, t := range repository.snapshot.ConfigurationTasks {
+			if t.Active {
+				return lifecycle.Task{}, conflictError("configuration distribution maintenance active")
+			}
+		}
+	}
 	now := repository.now().UTC()
 	existing, existed := repository.snapshot.LifecycleTasks[task.ResourceID]
 	if existed {

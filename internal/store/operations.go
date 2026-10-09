@@ -396,6 +396,13 @@ func (repository *Repository) TransitionOperation(resourceID model.ResourceID, e
 	if operation.MetadataRevision != expectedRevision {
 		return model.OperationRecord{}, conflictError("operation metadata revision changed")
 	}
+	if transition.Status == model.OperationRunning {
+		for _, task := range repository.snapshot.ConfigurationTasks {
+			if task.Active {
+				return model.OperationRecord{}, conflictError("configuration distribution maintenance active")
+			}
+		}
+	}
 	operation, err := applyOperationTransition(operation, transition, repository.now())
 	if err != nil {
 		return model.OperationRecord{}, err

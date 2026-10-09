@@ -143,6 +143,11 @@ func (repository *Repository) PutClusterPolicy(policy ClusterPolicy, actor strin
 	defer repository.mutationMu.Unlock()
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
+	for _, task := range repository.snapshot.ConfigurationTasks {
+		if task.Active {
+			return ClusterPolicy{}, conflictError("configuration distribution maintenance active")
+		}
+	}
 	if repository.snapshot.ClusterPolicy == nil && len(stored.Engines) == 0 {
 		// Nothing to clear: do not spend a replicated commit on a no-op.
 		return ClusterPolicy{}, nil

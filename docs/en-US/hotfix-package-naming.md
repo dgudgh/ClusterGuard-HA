@@ -28,6 +28,9 @@ Historical delivered HF IDs, signatures and operation logs retain their original
 
 Retry uses the same bytes/ID/version. Signed or delivered artifacts cannot be rebuilt in place. A correction advances BUGFIX, allocates the same new version as ID, records revision and supersedes_artifact with the original file/SHA, and retains historical bytes and failed attempts. Directory relocation changes no signed bytes; record old/new paths and identical SHA in the ledger and update backlinks, leaving signed historical replacement paths unchanged.
 
+
+A new feature increments PATCH and starts BUGFIX at 1: configuration editing and controller distribution use `3.1.2.1`; `3.1.1.x` remains the previous feature release. Its first artifact has `revision=0`, without `supersedes_artifact` from a different feature line. Signed `supersedes` still records operation replacement; old signatures and hashes remain frozen. Increment BUGFIX and revision for defect repairs within the same feature release.
+
 ## 5. Admission and history checks
 
 Check actual RPM source, architecture, ID=patch_version, four numeric segments with BUGFIX>0, signature, sidecar and current private ledger. CLI/API runtime identity must match the signed product version. Targets/history use each package's own verified patch_version; missing legacy metadata may be enriched only from its hash- and identity-verified signed original. Only an installed, verified successor's signed supersedes declaration retires an old failure; historical results remain visible, never guessed from time/version ordering.

@@ -27,6 +27,7 @@ import (
 	"clusterguard.io/ha/internal/approval"
 	platformauth "clusterguard.io/ha/internal/auth"
 	"clusterguard.io/ha/internal/config"
+	configurationtask "clusterguard.io/ha/internal/configuration"
 	"clusterguard.io/ha/internal/consensus"
 	"clusterguard.io/ha/internal/coordination"
 	"clusterguard.io/ha/internal/discovery"
@@ -1131,7 +1132,8 @@ func New(configuration config.File, settings ...Option) (*Runtime, error) {
 		}
 	}
 	locks := newRuntimeLocks(repository, failoverAuthority)
-	updateMaintenance := maintenance.NewGate(maintenance.DefaultMarkerPath, repository)
+	baseMaintenance := maintenance.NewGate(maintenance.DefaultMarkerPath, repository)
+	updateMaintenance := maintenance.ConfigurationGate{Base: baseMaintenance, Reader: repository}
 	// The release line is read from this binary's own build metadata: it is what
 	// the updater's baseline guard compares an installed RPM release against, and
 	// stamping it here means every construction path gets it without the control
@@ -1175,7 +1177,7 @@ func New(configuration config.File, settings ...Option) (*Runtime, error) {
 		api.WithConfiguration(newConfigurationViewProvider(configuration, configurationPath, startedAt, func() store.ClusterPolicy {
 			return repository.ClusterPolicy()
 		})),
-		api.WithMutationMaintenance(updateMaintenance),
+		api.WithMutationMaintenance(baseMaintenance),
 		api.WithSoftwareUpdates(softwareUpdates),
 	}
 	if agentTransport != nil && result.consensus != nil && ownershipLeases != nil {
@@ -1194,6 +1196,15 @@ func New(configuration config.File, settings ...Option) (*Runtime, error) {
 		if clientErr != nil {
 			_ = result.Close()
 			return nil, fmt.Errorf("configure leader mutation RPC: %w", clientErr)
+		}
+		if _, pathErr := os.Stat(configurationPath); configurationPath != "" && pathErr == nil {
+			distribution := &configurationtask.Manager{Repository: repository, Authority: result.consensus, Maintenance: baseMaintenance, Config: configuration, ConfigPath: configurationPath, StartedAt: startedAt, Validate: ValidateConfiguration, Restart: platformupdate.ControllerRestarter{Client: platformupdate.NewUnixHelperClient(platformupdate.DefaultHelperSocketPath)}, Peer: configurationtask.HTTPPeer{Client: mutationRPCClient, Token: configuration.ControlToken}}
+			if err := distribution.Initialize(); err != nil {
+				_ = result.Close()
+				return nil, fmt.Errorf("initialize configuration distribution: %w", err)
+			}
+			options = append(options, api.WithConfigurationDistribution(distribution))
+			result.startLoop(distribution.Run)
 		}
 		options = append(options,
 			api.WithMutationAuthority(result.consensus),
@@ -1279,7 +1290,9 @@ func New(configuration config.File, settings ...Option) (*Runtime, error) {
 			recovery.WithOperationTimeoutProvider(func() time.Duration {
 				return automaticFailoverPolicyOperationTimeout(configuration, model.EngineMySQL, repository.ClusterEnginePolicy(model.EngineMySQL))
 			}),
-			recovery.WithSuppression(func() bool { return repository.AutomaticFailoverSuppressed(model.EngineMySQL) }),
+			recovery.WithSuppression(func() bool {
+				return repository.ConfigurationMaintenanceActive() || repository.AutomaticFailoverSuppressed(model.EngineMySQL)
+			}),
 		)
 		result.startAutomaticRecovery(controller)
 	}
@@ -1298,7 +1311,9 @@ func New(configuration config.File, settings ...Option) (*Runtime, error) {
 			recovery.WithOperationTimeoutProvider(func() time.Duration {
 				return automaticFailoverPolicyOperationTimeout(configuration, model.EnginePostgreSQL, repository.ClusterEnginePolicy(model.EnginePostgreSQL))
 			}),
-			recovery.WithSuppression(func() bool { return repository.AutomaticFailoverSuppressed(model.EnginePostgreSQL) }),
+			recovery.WithSuppression(func() bool {
+				return repository.ConfigurationMaintenanceActive() || repository.AutomaticFailoverSuppressed(model.EnginePostgreSQL)
+			}),
 		)
 		result.startAutomaticRecovery(controller)
 	}

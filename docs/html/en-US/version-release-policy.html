@@ -47,7 +47,8 @@
 <h2 id="v2-release-preconditions">v2 Release Preconditions<a class="heading-anchor" href="#v2-release-preconditions" aria-label="Link to v2 Release Preconditions">#</a></h2>
 <p>Updates and hotfixes enforce the v2 contract: failed hotfixes use <code>retry</code>; interrupted rolling updates use <code>resume</code>. The repair recorded on 2026-10-03 used baseline <code>7b643f4</code> on <code>codex/2.2-postgresql</code>; it produced no new package or deployment and recorded ART/FIELD as <strong>OPEN</strong>. That historical record does not replace this delivery&#39;s source, package identity, or applicable strict acceptance.</p>
 <p>The four build entry points run <code>verify-upgrade-validation-chain.cjs --contract-only</code> before producing/signing artifacts and require Node (<code>CG_NODE_BIN</code> may override its path). This checks contract loading and schema consistency only, not complete PRE/ART/FIELD acceptance. Run the complete gate and <code>--strict</code> before release; OPEN blocks formal release. Past results are in the <a href="../../en-US/upgrade-validation-chain-implementation-status.md">historical implementation and acceptance snapshot</a>, which is not an acceptance input for this run. Hotfix acceptance covers same-package retry, rejected resume, signed supersedes, and independent history; rolling acceptance covers resume. Never rebuild a delivered identity in place.</p>
-<h2 id="1-version-format">1. Version Format<a class="heading-anchor" href="#1-version-format" aria-label="Link to 1. Version Format">#</a></h2>
+<p>Product identities use four segments. The new configuration editing/distribution feature is <code>3.1.2.1</code>; defect repairs within a feature release increment BUGFIX. The RPM format below describes installation eligibility, not the runtime product version.</p>
+<h2 id="1-rpm-version-format">1. RPM Version Format<a class="heading-anchor" href="#1-rpm-version-format" aria-label="Link to 1. RPM Version Format">#</a></h2>
 <p>ClusterGuard HA packages use the following format:</p>
 <pre><code class="language-text">MAJOR.FEATURE-RELEASE
 </code></pre>
@@ -101,7 +102,7 @@ v2.2.2
 <li>SHA256 files;</li>
 <li>Release Notes.</li>
 </ul>
-<p>Hotfix <code>.cgpatch</code> filenames are part of the delivery identity. The new sealed release line starts at <code>3.1.1.1</code>; new specifications use <code>patch_version</code> and the <a href="../../en-US/hotfix-package-naming.md">hotfix version and filename rules</a>: <code>clusterguard-MAJOR.MINOR.PATCH.BUGFIX.&lt;arch&gt;.cgpatch</code>, with the same version signed into the manifest. <code>HF-...</code> remains the console and audit <code>hotfix_id</code>; historical 2.x/HF specifications retain their frozen names. Signed files are never rebuilt in place, and a failed same-package retry keeps the original file.</p>
+<p>Hotfix <code>.cgpatch</code> filenames are part of the delivery identity. The new sealed release line starts at <code>3.1.1.1</code>; new specifications use <code>patch_version</code> and the <a href="../../en-US/hotfix-package-naming.md">hotfix version and filename rules</a>: <code>clusterguard-MAJOR.MINOR.PATCH.BUGFIX.&lt;arch&gt;.cgpatch</code>, with the same version signed into the manifest. New sealed package IDs equal the four-part product version; <code>HF-...</code> is retained only for historical identities; historical 2.x/HF specifications retain their frozen names. Signed files are never rebuilt in place, and a failed same-package retry keeps the original file.</p>
 <p>Any changes to the content of files with the same name are considered a new version. Even if only the installation script or operation manual inside the package is modified, the release number must be increased because the delivery package has changed.</p>
 <p>The following practices are prohibited:</p>
 <ul>
@@ -168,10 +169,7 @@ the deletion GitHub&#39;s Latest marker moved back to <code>v2.2.39</code>, whic
 </ul>
 <h2 id="4-branch-rules">4. Branch Rules<a class="heading-anchor" href="#4-branch-rules" aria-label="Link to 4. Branch Rules">#</a></h2>
 <ul>
-<li><code>main</code> stores formally reviewed, traceable code.</li>
-<li><code>codex/2.2-postgresql</code> is the starting point for 2.2 PostgreSQL development, with the baseline being
-<code>v2.1.45</code>.</li>
-<li>Features and fixes are first formed as independent commits and then merged into the corresponding version line.</li>
+<li>Keep only <code>codex/2.2-postgresql</code> as the mainline. Commit all features and repairs there with traceable history; keep historical tags immutable.</li>
 <li>The working tree must be clean before building a formal package; the commits in <code>RELEASE-INFO</code> must be consistent with the release tag.</li>
 </ul>
 <p>Do not rewrite changes for 2.2 PostgreSQL back to <code>v2.1.45</code>, nor deliver 2.2 code using 2.1 filenames.</p>
@@ -238,7 +236,7 @@ RPM, offline kit, or a customer server.</p>
         </article>
         <aside class="page-toc" aria-label="On this page">
           <strong>On this page</strong>
-          <a class="toc-level-2" href="#v2-release-preconditions">v2 Release Preconditions</a><a class="toc-level-2" href="#1-version-format">1. Version Format</a><a class="toc-level-2" href="#2-current-version-lines">2. Current Version Lines</a><a class="toc-level-2" href="#3-immutable-release-rules">3. Immutable Release Rules</a><a class="toc-level-3" href="#3-1-publication-channel-split-from-2026-09-22">3.1 Publication Channel Split (from 2026-09-22)</a><a class="toc-level-2" href="#4-branch-rules">4. Branch Rules</a><a class="toc-level-2" href="#5-postgresql-2-2-delivery-rules">5. PostgreSQL 2.2 Delivery Rules</a><a class="toc-level-2" href="#6-formal-release-gate">6. Formal Release Gate</a><a class="toc-level-2" href="#7-release-steps">7. Release Steps</a>
+          <a class="toc-level-2" href="#v2-release-preconditions">v2 Release Preconditions</a><a class="toc-level-2" href="#1-rpm-version-format">1. RPM Version Format</a><a class="toc-level-2" href="#2-current-version-lines">2. Current Version Lines</a><a class="toc-level-2" href="#3-immutable-release-rules">3. Immutable Release Rules</a><a class="toc-level-3" href="#3-1-publication-channel-split-from-2026-09-22">3.1 Publication Channel Split (from 2026-09-22)</a><a class="toc-level-2" href="#4-branch-rules">4. Branch Rules</a><a class="toc-level-2" href="#5-postgresql-2-2-delivery-rules">5. PostgreSQL 2.2 Delivery Rules</a><a class="toc-level-2" href="#6-formal-release-gate">6. Formal Release Gate</a><a class="toc-level-2" href="#7-release-steps">7. Release Steps</a>
         </aside>
       </main>
     </div>

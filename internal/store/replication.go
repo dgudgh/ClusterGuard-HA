@@ -316,6 +316,26 @@ func normalizeSnapshot(value snapshot) (snapshot, error) {
 		}
 		normalized.ClusterPolicy = &policy
 	}
+	if normalized.ConfigurationTasks != nil {
+		copied := map[string]ConfigurationTask{}
+		activeCount := 0
+		for id, task := range normalized.ConfigurationTasks {
+			if task.Active {
+				activeCount++
+				if activeCount > 1 {
+					return snapshot{}, fmt.Errorf("multiple active configuration tasks")
+				}
+			}
+			if id != task.TaskID {
+				return snapshot{}, fmt.Errorf("configuration task key mismatch")
+			}
+			if err := ValidateConfigurationTask(task); err != nil {
+				return snapshot{}, err
+			}
+			copied[id] = CloneConfigurationTask(task)
+		}
+		normalized.ConfigurationTasks = copied
+	}
 	return normalized, nil
 }
 

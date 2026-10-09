@@ -47,7 +47,8 @@
 <h2 id="v2-发布前置检查">v2 发布前置检查<a class="heading-anchor" href="#v2-发布前置检查" aria-label="Link to v2 发布前置检查">#</a></h2>
 <p>升级与热修统一执行 v2 契约；热修失败使用独立 <code>retry</code>，滚动升级失败使用 <code>resume</code>。2026-10-03 的修复记录基线为 <code>7b643f4</code>，主线为 <code>codex/2.2-postgresql</code>；该次修复没有新包或部署、ART/FIELD 为 <strong>OPEN</strong>。该历史记录不代替本次交付源码、包身份和相应严格验收。</p>
 <p>四个构建入口在产出/签名前执行 <code>verify-upgrade-validation-chain.cjs --contract-only</code>，需要 Node（可设置 <code>CG_NODE_BIN</code>）。这仅检查契约加载与模式一致性，不代表完整 PRE/ART/FIELD 验收。发布前必须执行完整门禁及 <code>--strict</code>；OPEN 必须阻断正式发布。旧结果见<a href="../../zh-CN/upgrade-validation-chain-implementation-status.md">历史实现与验收快照</a>，不作为本次验收输入。热修检查同包 retry、拒绝 resume、签名 supersedes 和独立历史；滚动升级检查 resume。已交付身份不得原地重建。</p>
-<h2 id="1-版本格式">1. 版本格式<a class="heading-anchor" href="#1-版本格式" aria-label="Link to 1. 版本格式">#</a></h2>
+<p>产品封板身份采用四段版本；新增功能如参数编辑/节点下发为<code>3.1.2.1</code>，同功能版缺陷修复递增末段。以下两段RPM格式只描述安装与兼容来源，不能替代产品运行版本。</p>
+<h2 id="1-rpm版本格式">1. RPM版本格式<a class="heading-anchor" href="#1-rpm版本格式" aria-label="Link to 1. RPM版本格式">#</a></h2>
 <p>ClusterGuard HA 的安装包使用：</p>
 <pre><code class="language-text">主版本.功能版本-发行序号
 </code></pre>
@@ -102,7 +103,7 @@ v2.2.2
 <li>SHA256 文件；</li>
 <li>Release Notes。</li>
 </ul>
-<p>热修 <code>.cgpatch</code> 的文件名是交付身份的一部分：新的封板版本线从 <code>3.1.1.1</code> 开始，新规格按<a href="../../zh-CN/hotfix-package-naming.md">热修补丁包版本与文件名规则</a>使用 <code>clusterguard-MAJOR.MINOR.PATCH.BUGFIX.&lt;架构&gt;.cgpatch</code>，并把同一 <code>patch_version</code> 写入签名清单。<code>HF-...</code> 仍是控制台和审计用的 <code>hotfix_id</code>；历史 2.x/HF 规格的旧文件名保持冻结。已签名文件不得原地重建，同包失败重试继续使用原文件。</p>
+<p>热修 <code>.cgpatch</code> 的文件名是交付身份的一部分：新的封板版本线从 <code>3.1.1.1</code> 开始，新规格按<a href="../../zh-CN/hotfix-package-naming.md">热修补丁包版本与文件名规则</a>使用 <code>clusterguard-MAJOR.MINOR.PATCH.BUGFIX.&lt;架构&gt;.cgpatch</code>，并把同一 <code>patch_version</code> 写入签名清单。新封板包ID等于四段产品版本；<code>HF-...</code>仅保留为历史包的原始身份，历史2.x/HF规格的旧文件名保持冻结。已签名文件不得原地重建，同包失败重试继续使用原文件。</p>
 <p>同名文件内容发生任何变化都视为新版本。即使只修改安装脚本或包内操作手册，
 也必须增加发行序号，因为交付包已经发生变化。</p>
 <p>禁止使用以下做法：</p>
@@ -159,10 +160,7 @@ v2.2.2
 </ul>
 <h2 id="4-分支规则">4. 分支规则<a class="heading-anchor" href="#4-分支规则" aria-label="Link to 4. 分支规则">#</a></h2>
 <ul>
-<li><code>main</code> 保存已审查、可追溯的正式代码。</li>
-<li><code>codex/2.2-postgresql</code> 是 2.2 PostgreSQL 开发起点，基线为
-<code>v2.1.45</code>。</li>
-<li>功能和修复先形成独立提交，再合入对应版本线。</li>
+<li>仅保留主线 <code>codex/2.2-postgresql</code>，所有功能与修复在该线形成可追溯提交；历史标签不移动。</li>
 <li>构建正式包前工作树必须干净；<code>RELEASE-INFO</code> 中的提交必须与发布标签一致。</li>
 </ul>
 <p>不得把 2.2 的 PostgreSQL 改动回写到 <code>v2.1.45</code>，也不得用 2.1 文件名交付
@@ -231,7 +229,7 @@ git diff --check
         </article>
         <aside class="page-toc" aria-label="本页目录">
           <strong>本页目录</strong>
-          <a class="toc-level-2" href="#v2-发布前置检查">v2 发布前置检查</a><a class="toc-level-2" href="#1-版本格式">1. 版本格式</a><a class="toc-level-2" href="#2-当前版本线">2. 当前版本线</a><a class="toc-level-2" href="#3-不可变发布规则">3. 不可变发布规则</a><a class="toc-level-3" href="#3-1-发布渠道分层-2026-09-22-起">3.1 发布渠道分层（2026-09-22 起）</a><a class="toc-level-2" href="#4-分支规则">4. 分支规则</a><a class="toc-level-2" href="#5-postgresql-2-2-交付规则">5. PostgreSQL 2.2 交付规则</a><a class="toc-level-2" href="#6-正式发版门禁">6. 正式发版门禁</a><a class="toc-level-2" href="#7-发布步骤">7. 发布步骤</a>
+          <a class="toc-level-2" href="#v2-发布前置检查">v2 发布前置检查</a><a class="toc-level-2" href="#1-rpm版本格式">1. RPM版本格式</a><a class="toc-level-2" href="#2-当前版本线">2. 当前版本线</a><a class="toc-level-2" href="#3-不可变发布规则">3. 不可变发布规则</a><a class="toc-level-3" href="#3-1-发布渠道分层-2026-09-22-起">3.1 发布渠道分层（2026-09-22 起）</a><a class="toc-level-2" href="#4-分支规则">4. 分支规则</a><a class="toc-level-2" href="#5-postgresql-2-2-交付规则">5. PostgreSQL 2.2 交付规则</a><a class="toc-level-2" href="#6-正式发版门禁">6. 正式发版门禁</a><a class="toc-level-2" href="#7-发布步骤">7. 发布步骤</a>
         </aside>
       </main>
     </div>

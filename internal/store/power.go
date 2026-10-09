@@ -31,6 +31,11 @@ func (repository *Repository) CreatePowerOperation(ctx context.Context, operatio
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 
+	for _, task := range repository.snapshot.ConfigurationTasks {
+		if task.Active {
+			return model.PowerOperation{}, conflictError("configuration distribution maintenance active")
+		}
+	}
 	cluster, found := repository.snapshot.Clusters[operation.ClusterID]
 	if !found {
 		return model.PowerOperation{}, notFoundError("unknown cluster ID: %s", operation.ClusterID)
@@ -135,6 +140,13 @@ func (repository *Repository) TransitionPowerOperation(
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 
+	if targetState == model.PowerPrechecking || targetState == model.PowerMaintenance || targetState == model.PowerShutdownPlanned || targetState == model.PowerShuttingDown {
+		for _, task := range repository.snapshot.ConfigurationTasks {
+			if task.Active {
+				return model.PowerOperation{}, conflictError("configuration distribution maintenance active")
+			}
+		}
+	}
 	operation, found := repository.snapshot.PowerOperations[resourceID]
 	if !found {
 		return model.PowerOperation{}, notFoundError("unknown power operation ID: %s", resourceID)

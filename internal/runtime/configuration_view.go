@@ -100,11 +100,11 @@ func buildConfigurationView(configuration config.File, path string, startedAt ti
 			configuration.MySQL.Enabled, configuration.MySQL.DiscoveryIntervalSeconds,
 			configuration.MySQL.DiscoveryTimeoutSeconds,
 			failoverSettings{
-				enabled: configuration.MySQL.AutomaticFailoverEnabled,
-				intervalSeconds: configuration.MySQL.AutomaticFailoverIntervalSeconds,
-				retrySeconds:    configuration.MySQL.AutomaticFailoverRetrySeconds,
-				minimumObservations: configuration.MySQL.AutomaticFailoverMinimumObservations,
-				failureWindowSeconds: configuration.MySQL.AutomaticFailoverFailureWindowSeconds,
+				enabled:                 configuration.MySQL.AutomaticFailoverEnabled,
+				intervalSeconds:         configuration.MySQL.AutomaticFailoverIntervalSeconds,
+				retrySeconds:            configuration.MySQL.AutomaticFailoverRetrySeconds,
+				minimumObservations:     configuration.MySQL.AutomaticFailoverMinimumObservations,
+				failureWindowSeconds:    configuration.MySQL.AutomaticFailoverFailureWindowSeconds,
 				operationTimeoutSeconds: configuration.MySQL.AutomaticFailoverOperationTimeoutSeconds,
 			},
 			[]api.ConfigurationValue{
@@ -116,11 +116,11 @@ func buildConfigurationView(configuration config.File, path string, startedAt ti
 			configuration.PostgreSQL.Enabled, configuration.PostgreSQL.DiscoveryIntervalSeconds,
 			configuration.PostgreSQL.DiscoveryTimeoutSeconds,
 			failoverSettings{
-				enabled: configuration.PostgreSQL.AutomaticFailoverEnabled,
-				intervalSeconds: configuration.PostgreSQL.AutomaticFailoverIntervalSeconds,
-				retrySeconds:    configuration.PostgreSQL.AutomaticFailoverRetrySeconds,
-				minimumObservations: configuration.PostgreSQL.AutomaticFailoverMinimumObservations,
-				failureWindowSeconds: configuration.PostgreSQL.AutomaticFailoverFailureWindowSeconds,
+				enabled:                 configuration.PostgreSQL.AutomaticFailoverEnabled,
+				intervalSeconds:         configuration.PostgreSQL.AutomaticFailoverIntervalSeconds,
+				retrySeconds:            configuration.PostgreSQL.AutomaticFailoverRetrySeconds,
+				minimumObservations:     configuration.PostgreSQL.AutomaticFailoverMinimumObservations,
+				failureWindowSeconds:    configuration.PostgreSQL.AutomaticFailoverFailureWindowSeconds,
 				operationTimeoutSeconds: configuration.PostgreSQL.AutomaticFailoverOperationTimeoutSeconds,
 			},
 			[]api.ConfigurationValue{
@@ -146,6 +146,15 @@ func buildConfigurationView(configuration config.File, path string, startedAt ti
 		fencingSection(configuration, presence),
 		nodeLifecycleSection(configuration, presence),
 		clusterPolicySection(policy),
+	}
+	for i := range view.Sections {
+		section := strings.TrimPrefix(view.Sections[i].Key, "engine:")
+		for j := range view.Sections[i].Values {
+			value := &view.Sections[i].Values[j]
+			if _, ok := configuration.AppliedConfiguration.Values[section+"."+value.Key]; ok {
+				value.Source = "distributed"
+			}
+		}
 	}
 	return view
 }

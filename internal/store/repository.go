@@ -152,7 +152,8 @@ type snapshot struct {
 	// identical state - and therefore the same digest - as one running the
 	// previous build. Rolling upgrades stay digest-compatible until an operator
 	// actually sets a policy.
-	ClusterPolicy *ClusterPolicy `json:"cluster_policy,omitempty"`
+	ClusterPolicy      *ClusterPolicy               `json:"cluster_policy,omitempty"`
+	ConfigurationTasks map[string]ConfigurationTask `json:"configuration_tasks,omitempty"`
 }
 
 type Repository struct {

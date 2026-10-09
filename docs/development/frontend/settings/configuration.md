@@ -1,4 +1,4 @@
-# 设置：运行参数只读视图
+# 设置：运行参数与节点下发
 
 [开发入口](../../README.md) · [前端页面入口](../README.md) · [设置功能](README.md)
 
@@ -6,7 +6,7 @@
 
 `settings-configuration-tab` → `setSettingsSection('configuration')` → `loadConfiguration()` → `GET /api/v1/control-plane/configuration` → `renderConfiguration()` → `configuration-sections`。
 
-进入运行参数面板时还会并行调用 `fetchClusterPolicy()`。本页只描述配置投影；修改同一面板中的策略字段、保存或清除行为时继续读[引擎策略编辑](cluster-policy.md)。
+进入运行参数面板时还会并行调用 `fetchClusterPolicy()`。本页描述配置投影与节点下发；修改同一面板中的动态策略字段、保存或清除行为时继续读[引擎策略编辑](cluster-policy.md)。
 
 `reload-configuration` 只再次调用 `loadConfiguration()`，刷新操作员看到的投影。它不修改配置文件、不重新配置运行进程，也不能表示配置已经热加载。
 
@@ -17,7 +17,7 @@
 - `state.configurationError`：保留请求失败原因；旧投影存在时不会把错误伪装成新成功结果。
 - `renderConfiguration()` 展示 `file_present`、`path`、`process_started_at`、`file_modified_at`、`reload_supported`、`reload_note` 和 `warnings`。
 - `sections[].values[]` 展示 `key`、`value`、`source`、`restart_required`、`credential_ref` 和 `note`。
-- `source` 显示为配置文件、集群策略或平台默认；配置值只用 `textContent` 渲染。
+- `source` 显示为配置文件、已下发配置、集群策略或平台默认；配置值只用 `textContent` 渲染。
 
 浏览器没有配置 `localStorage` 或 `sessionStorage` 键。配置路径、值和时间来自当前节点的只读接口；凭据只显示引用信息。若改接口字段、脱敏、来源或重启语义，必须读[运行参数接口](../../backend/settings/configuration.md)。
 
@@ -47,3 +47,15 @@
 `state.configurationExpandedSections`按section.key记录当前会话的逐组状态，重新读取、读取失败和语言重绘保留展开选择；整个页面重新加载默认折叠。会话清理清空状态与旧参数DOM，不把前一个账户的选择带给后一个账户。只改变显示，不调用写参数、热加载或重启接口。
 
 [参数折叠真实浏览器验收](../../../../tools/console-configuration-collapse-acceptance.cjs)覆盖1440/390像素、初始折叠、独立点击/键盘切换、刷新、错误、语言、重载/会话清理、局部表格滚动、原始参数和凭据引用按文本显示、无写入。策略写入仍由`console-cluster-policy-audit.cjs`验证；现场配置下发与重启不属于折叠验收。
+
+## 3.1.2.1：页面编辑与节点下发
+
+原只读表升级为“有效值＋可编辑草稿”；默认折叠和会话展开状态保持。25项白名单整数有范围限制，凭据、网络、身份、数据路径及隔离启停显示专用变更流程说明；原动态策略面板保持独立。
+
+调用链：读取当前Leader的`configuration/distribution`及本节点的`configuration/node` → 解锁 → 编辑参数、选择控制节点 → `POST configuration/plan` → 展示逐节点原值/目标值、重启说明 → 二次确认 → `POST configuration/dispatch`。请求绑定唯一UUID、预检摘要、参数和目标集合，不能把顶部数据库集群当控制节点范围。
+
+草稿、目标、登录会话、操作锁或页面集群上下文变化后，旧预检不得执行；重复点击不能创建第二个任务。提交后分别显示等待、重启/核验、已核验或失败，不能把Raft提交当全部应用。状态读取失败显示未确认并禁用恢复动作；失败恢复需重新解锁、确认指定任务ID及revision，使用其retry/rollback接口。注销清除草稿与选择，但不能取消已提交的后端任务。
+
+所有控件随界面语言切换。周期读取任务状态，结束后刷新节点有效值；未编辑草稿保留，刷新不下发参数。详细后端边界见[运行参数与节点下发](../../backend/settings/configuration.md)。
+
+回归：[真实浏览器编辑与下发验收](../../../../tools/console-configuration-distribution-acceptance.cjs)，覆盖1440/390、数值边界、目标选择、预检差异、任务提交与实际核验区别、失败与读错误、迟到预检、会话清理、双语和窄屏。它使用隔离API响应，不作为生产节点参数生效证据。

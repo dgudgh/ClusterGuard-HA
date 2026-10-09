@@ -14,7 +14,9 @@ The four build entry points run `verify-upgrade-validation-chain.cjs --contract-
 > **Language:** English | [简体中文](../zh-CN/version-release-policy.md)
 <!-- /LANGUAGE-SWITCH -->
 
-## 1. Version Format
+Product identities use four segments. The new configuration editing/distribution feature is `3.1.2.1`; defect repairs within a feature release increment BUGFIX. The RPM format below describes installation eligibility, not the runtime product version.
+
+## 1. RPM Version Format
 
 ClusterGuard HA packages use the following format:
 
@@ -67,7 +69,7 @@ After a formal release is completed, the following objects must not be overwritt
 - SHA256 files;
 - Release Notes.
 
-Hotfix `.cgpatch` filenames are part of the delivery identity. The new sealed release line starts at `3.1.1.1`; new specifications use `patch_version` and the [hotfix version and filename rules](hotfix-package-naming.md): `clusterguard-MAJOR.MINOR.PATCH.BUGFIX.<arch>.cgpatch`, with the same version signed into the manifest. `HF-...` remains the console and audit `hotfix_id`; historical 2.x/HF specifications retain their frozen names. Signed files are never rebuilt in place, and a failed same-package retry keeps the original file.
+Hotfix `.cgpatch` filenames are part of the delivery identity. The new sealed release line starts at `3.1.1.1`; new specifications use `patch_version` and the [hotfix version and filename rules](hotfix-package-naming.md): `clusterguard-MAJOR.MINOR.PATCH.BUGFIX.<arch>.cgpatch`, with the same version signed into the manifest. New sealed package IDs equal the four-part product version; `HF-...` is retained only for historical identities; historical 2.x/HF specifications retain their frozen names. Signed files are never rebuilt in place, and a failed same-package retry keeps the original file.
 
 Any changes to the content of files with the same name are considered a new version. Even if only the installation script or operation manual inside the package is modified, the release number must be increased because the delivery package has changed.
 
@@ -127,10 +129,7 @@ release notes, serves no purpose and must be deleted.
 
 ## 4. Branch Rules
 
-- `main` stores formally reviewed, traceable code.
-- `codex/2.2-postgresql` is the starting point for 2.2 PostgreSQL development, with the baseline being
-  `v2.1.45`.
-- Features and fixes are first formed as independent commits and then merged into the corresponding version line.
+- Keep only `codex/2.2-postgresql` as the mainline. Commit all features and repairs there with traceable history; keep historical tags immutable.
 - The working tree must be clean before building a formal package; the commits in `RELEASE-INFO` must be consistent with the release tag.
 
 Do not rewrite changes for 2.2 PostgreSQL back to `v2.1.45`, nor deliver 2.2 code using 2.1 filenames.

@@ -421,7 +421,10 @@
     .settings-panel { overflow:hidden; box-shadow:none; }
     .settings-panel .panel-header { min-height:64px; padding:0 20px; }
     .settings-panel .panel-header p { margin:3px 0 0; color:var(--muted); font-size:12px; }
-    .configuration-sections { display:grid; gap:10px; min-width:0; }
+    #configuration-targets {flex-wrap:wrap;min-width:0;}
+ #configuration-targets label {overflow-wrap:anywhere;min-width:0;max-width:100%;}
+ #configuration-confirm {box-sizing:border-box;max-width:min(680px,calc(100vw - 32px));max-height:85vh;overflow:auto;border:1px solid var(--line);border-radius:12px;padding:24px;}
+ .configuration-sections { display:grid; gap:10px; min-width:0; }
     .configuration-section { min-width:0; border:1px solid var(--line); border-radius:8px; }
     .configuration-section > summary { display:grid; grid-template-columns:minmax(0,1fr) auto 12px; align-items:center; gap:12px; padding:12px 14px; cursor:pointer; list-style:none; }
     .configuration-section > summary::-webkit-details-marker { display:none; }
@@ -1431,7 +1434,15 @@
               <p class="settings-note" id="configuration-reload-note">正在读取本节点配置……</p>
               <div class="configuration-file-meta" id="configuration-file-meta"></div>
               <div class="configuration-warnings" id="configuration-warnings" hidden></div>
-              <div class="configuration-sections" id="configuration-sections"><p class="settings-note">尚未取得运行参数。</p></div>
+              <div class="configuration-policy" id="configuration-distribution">
+ <h4 id="configuration-distribution-title">控制节点参数下发</h4>
+ <p id="configuration-distribution-note" class="settings-note"></p>
+ <div id="configuration-targets" class="settings-inline-actions"></div>
+ <div class="settings-inline-actions"><button type="button" id="configuration-unlock">解锁参数下发</button><button type="button" id="configuration-plan" class="primary-button">检查并下发</button><button type="button" id="configuration-clear">清除草稿</button></div>
+ <p id="configuration-distribution-message" role="status" class="settings-note"></p><div id="configuration-tasks"></div>
+ </div>
+ <dialog id="configuration-confirm"><h3 id="configuration-confirm-title"></h3><p id="configuration-confirm-note"></p><pre id="configuration-confirm-diff" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre><div class="settings-inline-actions"><button id="configuration-confirm-submit" type="button" class="primary-button"></button><button id="configuration-confirm-cancel" type="button"></button></div></dialog>
+ <div class="configuration-sections" id="configuration-sections"><p class="settings-note">尚未取得运行参数。</p></div>
               <div class="configuration-policy" id="configuration-policy" hidden>
                 <h4>引擎级全局策略（复制存储 · 改完即生效）</h4>
                 <p class="configuration-section-note">作用于此控制面管理的所有同引擎集群，不随顶部所选集群改变。策略写入 Raft 复制存储，改动记审计，下一轮生效；留空字段沿用节点配置。</p>
@@ -1852,7 +1863,8 @@
       softwareUpdateValidationState: 'idle', softwareUpdateValidationMessage: '',
       softwareUpdateDialogAlert: '', softwareUpdateDialogAlertLevel: 'error',
       softwareUpdateProgressDismissed: '', softwareUpdateProgressWasActive: false,
-      selectedClusterId: '', selectedCandidateId: '', selectedRejoinId: '', topologySection: 'map', operationsSection: 'switchover', settingsSection: 'status', switchUnlocked: false, operationLockEpoch: 0, operationRunning: false, activeOperationIntent: null,
+      configurationDistribution:null, configurationDistributionError:'', configurationDraft:{}, configurationTargets:null, configurationDraftEpoch:0, configurationUnlocked:false, configurationBusy:false, configurationBusyOwner:null, configurationIntent:null, configurationReadEpoch:0,
+ selectedClusterId: '', selectedCandidateId: '', selectedRejoinId: '', topologySection: 'map', operationsSection: 'switchover', settingsSection: 'status', switchUnlocked: false, operationLockEpoch: 0, operationRunning: false, activeOperationIntent: null,
       operationReviewRunning: false, operationReviewTargetId: '',
       operationContext: null, fleetOperationContext: null, fleetContextError: '', fleetContextController: null,
       logLoaded: false, logError: '', logController: null,
@@ -1868,6 +1880,24 @@
     // Only authored UI literals call ui(). Interpolation values are kept verbatim.
     // Business names, credentials, IDs and original diagnostics never pass through a DOM translator.
     const uiCatalog =     {
+ "控制节点参数下发":"Controller configuration distribution",
+ "参数下发失败":"Configuration distribution failed",
+ "仅向选定控制节点下发。普通数值参数保存后逐节点重启；节点身份、网络、凭据与隔离开关需专用变更流程。":"Apply only to selected controllers. Numeric tuning changes require rolling restarts; identity, network, credentials and fencing switches require dedicated change procedures.",
+ "解锁参数下发":"Unlock configuration changes", "重新锁定参数下发":"Lock configuration changes",
+ "检查并下发":"Review and apply", "清除草稿":"Clear draft", "确认参数下发":"Confirm configuration changes",
+ "各节点将依次重启，核验实际生效值后才完成。":"Controllers restart one at a time. Completion requires verifying the values used by the new processes.",
+ "确认下发":"Apply changes", "取消":"Cancel", "已下发配置":"Distributed configuration",
+ "此参数需专用变更流程，不能直接下发。":"This parameter requires a dedicated change procedure.",
+ "请编辑参数并选择控制节点。":"Edit parameters and select controllers.",
+ "参数必须为范围内的整数。":"Parameters must be integers within the allowed range.",
+ "下发状态读取失败；不能确认任务结果。":"Cannot read distribution status; the result is unverified.",
+ "参数下发条件或草稿已变化，请重新检查。":"Configuration conditions or draft changed; review again.",
+ "检查中……":"Checking…", "任务已提交，正在等待逐节点核验。":"Task submitted; waiting for verification on each controller.",
+ "重试配置任务":"Retry configuration task", "回退配置任务":"Roll back configuration task",
+ "任务执行失败，维护门禁保留。":"Task failed; maintenance remains active.",
+ "确认恢复此配置任务？":"Confirm recovery for this configuration task?",
+ "已提交":"Submitted", "等待下发":"Pending", "重启与核验中":"Restarting and verifying", "已核验":"Verified", "已回退":"Rolled back",
+
       "需要处理": "Needs attention",
       "运行中": "Running",
       "跟随节点": "Follower",
@@ -3131,21 +3161,91 @@
     // A "policy" value lives in Raft-replicated metadata: cluster-wide,
     // changeable here, audited, and applied on the next round.
     const configurationSourceLabel = source =>
-      (source === 'file' ? ui('配置文件') : source === 'policy' ? ui('集群策略') : ui('平台默认'));
+      (source === 'distributed' ? ui('已下发配置') : source === 'file' ? ui('配置文件') : source === 'policy' ? ui('集群策略') : ui('平台默认'));
 
+
+    const configurationTaskActive = () => (state.configurationDistribution?.tasks||[]).some(t=>t.active);
+    const configurationEditAllowed = () => canAdministerPlatform() && state.configurationUnlocked && !state.configurationBusy && !state.operationRunning && !state.lifecycleRunning && !configurationTaskActive() && !state.configurationDistributionError && !!state.configurationDistribution?.local?.ready;
+    const configurationIntentCurrent = intent => intent && state.configurationIntent===intent && intent.authEpoch===state.authEpoch && intent.user===state.currentUser && intent.clusterID===state.selectedClusterId && intent.lockEpoch===state.operationLockEpoch && intent.draftEpoch===state.configurationDraftEpoch && state.configurationUnlocked && canAdministerPlatform() && !state.operationRunning && !state.lifecycleRunning && !configurationTaskActive() && !state.configurationDistributionError;
+    const configurationMessage = text => {byId('configuration-distribution-message').textContent=text;};
+    const renderConfigurationDistribution = () => {
+     byId('configuration-distribution-title').textContent=ui('控制节点参数下发');byId('configuration-distribution-note').textContent=ui('仅向选定控制节点下发。普通数值参数保存后逐节点重启；节点身份、网络、凭据与隔离开关需专用变更流程。');
+     const unlocked=state.configurationUnlocked;
+     byId('configuration-unlock').textContent=ui(unlocked?'重新锁定参数下发':'解锁参数下发');byId('configuration-unlock').disabled=!canAdministerPlatform()||state.configurationBusy||(configurationTaskActive()&&!state.configurationDistribution?.tasks?.some(t=>t.active&&t.status==='failed'))||!!state.configurationDistributionError||!state.configurationDistribution?.local?.ready;
+     byId('configuration-plan').textContent=ui('检查并下发');byId('configuration-plan').disabled=!configurationEditAllowed();byId('configuration-clear').textContent=ui('清除草稿');byId('configuration-clear').disabled=state.configurationBusy;
+     const targets=byId('configuration-targets');targets.replaceChildren();
+     for(const member of state.configurationDistribution?.members||[]){const label=document.createElement('label'),input=document.createElement('input');input.type='checkbox';input.dataset.configurationNode=member.resource_id;input.checked=state.configurationTargets===null||state.configurationTargets.includes(member.resource_id);input.disabled=!configurationEditAllowed();input.addEventListener('change',()=>{state.configurationTargets=[...targets.querySelectorAll('input:checked')].map(i=>i.dataset.configurationNode);state.configurationDraftEpoch++;state.configurationIntent=null;byId('configuration-confirm').close();});label.append(input,document.createTextNode(member.resource_id));targets.append(label);}
+     if(state.configurationDistributionError)configurationMessage(ui('下发状态读取失败；不能确认任务结果。'));
+     const tasks=byId('configuration-tasks');tasks.replaceChildren();
+     const labels={pending:'等待下发',applying:'重启与核验中',applied:'已核验',failed:'参数下发失败',rolled_back:'已回退',running:'执行中',succeeded:'已核验'};
+     for(const task of state.configurationDistribution?.tasks||[]){const group=document.createElement('details');group.open=task.active;const summary=document.createElement('summary');summary.textContent=task.task_id+' · '+ui(labels[task.status]||task.status);group.append(summary);
+      for(const target of task.targets||[]){const line=document.createElement('p');line.textContent=target.node_id+' · '+ui(labels[target.status]||target.status);group.append(line);}
+      if(task.status==='failed'){const note=document.createElement('p');note.textContent=ui('任务执行失败，维护门禁保留。');group.append(note);for(const mode of ['retry','rollback']){const button=document.createElement('button');button.type='button';button.dataset.configurationRecovery=mode;button.textContent=ui(mode==='retry'?'重试配置任务':'回退配置任务');button.disabled=!canAdministerPlatform()||!state.configurationUnlocked||state.configurationBusy||!!state.configurationDistributionError;button.addEventListener('click',()=>void recoverConfiguration(task,mode));group.append(button);}}
+      tasks.append(group);
+     }
+     for(const input of document.querySelectorAll('input[data-configuration-path]'))input.disabled=!configurationEditAllowed();
+    };
+    const loadConfigurationDistribution = async () => {
+     const epoch=++state.configurationReadEpoch;
+     try{const wasActive=configurationTaskActive();const [status,local]=await Promise.all([fetchResult('/api/v1/control-plane/configuration/distribution'),fetchResult('/api/v1/control-plane/configuration/node')]);if(epoch!==state.configurationReadEpoch)return;status.local=local;state.configurationDistribution=status;state.configurationDistributionError='';if(wasActive&&!configurationTaskActive()){state.configuration=await fetchResult('/api/v1/control-plane/configuration');if(epoch!==state.configurationReadEpoch)return;renderConfiguration();}}
+     catch(error){if(error.staleSession||epoch!==state.configurationReadEpoch)return;state.configurationDistributionError=error.message||'unavailable';}
+     renderConfigurationDistribution();
+    };
+    const configurationPayload = () => {
+     const changes={};for(const [key,raw] of Object.entries(state.configurationDraft)){const field=state.configurationDistribution?.local?.fields?.find(f=>f.path===key);const number=Number(raw);if(!field||String(raw).trim()===''||!Number.isSafeInteger(number)||number<field.minimum||number>field.maximum)throw Error(ui('参数必须为范围内的整数。'));if(number!==state.configurationDistribution.local.values[key])changes[key]=number;}
+     const node_ids=state.configurationTargets===null?(state.configurationDistribution?.members||[]).map(m=>m.resource_id):[...state.configurationTargets];if(!Object.keys(changes).length||!node_ids.length)throw Error(ui('请编辑参数并选择控制节点。'));return {changes,node_ids};
+    };
+    const previewConfiguration = async () => {
+     if(!configurationEditAllowed())return;
+     let request;try{request=configurationPayload();}catch(error){configurationMessage(error.message);return;}
+     const intent={request,authEpoch:state.authEpoch,user:state.currentUser,clusterID:state.selectedClusterId,lockEpoch:state.operationLockEpoch,draftEpoch:state.configurationDraftEpoch};state.configurationIntent=intent;state.configurationBusy=true;state.configurationBusyOwner=intent;renderConfigurationDistribution();configurationMessage(ui('检查中……'));
+     try{const plan=await fetchResult('/api/v1/control-plane/configuration/plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(request)});if(!configurationIntentCurrent(intent)){configurationMessage(ui('参数下发条件或草稿已变化，请重新检查。'));return;}
+      intent.request={...request,request_id:crypto.randomUUID(),plan_hash:plan.hash};
+      byId('configuration-confirm-title').textContent=ui('确认参数下发');byId('configuration-confirm-note').textContent=ui('各节点将依次重启，核验实际生效值后才完成。');
+      byId('configuration-confirm-diff').textContent=(plan.targets||[]).map(t=>t.node_id+'\n'+Object.entries(request.changes).map(([k,v])=>k+': '+t.before[k]+' → '+v).join('\n')).join('\n\n');
+      byId('configuration-confirm-submit').textContent=ui('确认下发');byId('configuration-confirm-cancel').textContent=ui('取消');byId('configuration-confirm').showModal();
+     }catch(error){if(!error.staleSession)configurationMessage(error.message);}finally{if(state.configurationBusyOwner===intent){state.configurationBusy=false;state.configurationBusyOwner=null;renderConfigurationDistribution();}}
+    };
+    const dispatchConfiguration = async () => {
+     const intent=state.configurationIntent;if(state.configurationBusy||!intent?.request?.plan_hash||!configurationIntentCurrent(intent)){byId('configuration-confirm').close();configurationMessage(ui('参数下发条件或草稿已变化，请重新检查。'));return;}
+     state.configurationBusy=true;state.configurationBusyOwner=intent;byId('configuration-confirm-submit').disabled=true;renderConfigurationDistribution();
+     try{await fetchResult('/api/v1/control-plane/configuration/dispatch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(intent.request)});if(intent.authEpoch!==state.authEpoch)return;state.configurationDraft={};state.configurationDraftEpoch++;state.configurationUnlocked=false;state.configurationIntent=null;configurationMessage(ui('任务已提交，正在等待逐节点核验。'));await loadConfigurationDistribution();}
+     catch(error){if(!error.staleSession){configurationMessage(error.message);await loadConfigurationDistribution();}}finally{if(state.configurationBusyOwner===intent){state.configurationBusy=false;state.configurationBusyOwner=null;byId('configuration-confirm-submit').disabled=false;byId('configuration-confirm').close();renderConfiguration();}}
+    };
+    const recoverConfiguration = async (task,mode) => {
+     if(!canAdministerPlatform()||!state.configurationUnlocked||state.configurationBusy||state.configurationDistributionError)return;
+     const epoch=state.authEpoch,lock=state.operationLockEpoch;
+     if(!window.confirm(ui('确认恢复此配置任务？')+'\n'+task.task_id+' · '+mode))return;
+     const current=state.configurationDistribution?.tasks?.find(t=>t.task_id===task.task_id);if(epoch!==state.authEpoch||lock!==state.operationLockEpoch||!canAdministerPlatform()||!state.configurationUnlocked||!current?.active||current.status!=='failed'||current.revision!==task.revision)return;
+     const owner={};state.configurationBusy=true;state.configurationBusyOwner=owner;renderConfigurationDistribution();try{await fetchResult('/api/v1/control-plane/configuration/tasks/'+encodeURIComponent(task.task_id)+'/'+mode,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:task.revision})});await loadConfigurationDistribution();}catch(error){if(!error.staleSession)configurationMessage(error.message);}finally{if(state.configurationBusyOwner===owner){state.configurationBusy=false;state.configurationBusyOwner=null;renderConfigurationDistribution();}}
+    };
+    byId('configuration-unlock').addEventListener('click',()=>{if(!canAdministerPlatform()||state.configurationBusy||(configurationTaskActive()&&!state.configurationDistribution?.tasks?.some(t=>t.active&&t.status==='failed'))||state.configurationDistributionError||!state.configurationDistribution?.local?.ready)return;state.configurationUnlocked=!state.configurationUnlocked;state.configurationIntent=null;state.configurationDraftEpoch++;renderConfiguration();});
+    byId('configuration-clear').addEventListener('click',()=>{if(state.configurationBusy)return;state.configurationDraft={};state.configurationTargets=null;state.configurationDraftEpoch++;state.configurationIntent=null;byId('configuration-confirm').close();renderConfiguration();});
+    byId('configuration-plan').addEventListener('click',()=>void previewConfiguration());
+    byId('configuration-confirm-submit').addEventListener('click',()=>void dispatchConfiguration());
+    byId('configuration-confirm').addEventListener('cancel',()=>{state.configurationIntent=null;});
+ byId('configuration-confirm-cancel').addEventListener('click',()=>{state.configurationIntent=null;byId('configuration-confirm').close();});
+    setInterval(()=>{if(state.currentUser&&state.settingsSection==='configuration'&&!state.configurationBusy)void loadConfigurationDistribution();},3000);
     const configurationTimeText = value => {
       if (!value) return '-';
       const parsed = new Date(value);
       return Number.isNaN(parsed.getTime()) ? '-' : parsed.toLocaleString(state.language);
     };
 
-    const configurationValueRow = value => {
+    const configurationValueRow = (value, section) => {
       const row = document.createElement('tr');
       const key = document.createElement('td');
       key.textContent = value.key;
       const effective = document.createElement('td');
       effective.className = 'configuration-value';
       effective.textContent = value.value;
+ const path=String(section.key||'').replace(/^engine:/,'')+'.'+value.key;
+ const field=state.configurationDistribution?.local?.fields?.find(f=>f.path===path);
+ if(field&&!value.credential_ref){
+ const input=document.createElement('input');input.type='number';input.min=field.minimum;input.max=field.maximum;input.step='1';input.inputMode='numeric';input.style.width='110px';input.dataset.configurationPath=path;input.setAttribute('aria-label',path);
+ input.value=Object.hasOwn(state.configurationDraft,path)?state.configurationDraft[path]:(state.configurationDistribution.local.values[path]??'');
+ input.disabled=!configurationEditAllowed();input.addEventListener('input',()=>{state.configurationDraft[path]=input.value;state.configurationDraftEpoch++;state.configurationIntent=null;byId('configuration-confirm').close();});effective.append(document.createElement('br'),input);
+ }
       const source = document.createElement('td');
       const sourceTag = document.createElement('span');
       sourceTag.className = `configuration-tag ${value.source === 'file' ? 'file' : ''}`;
@@ -3161,6 +3261,7 @@
       const noteParts = [];
       if (value.credential_ref) noteParts.push(ui('凭据引用'));
       if (value.note) noteParts.push(value.note);
+ if(!field&&section.key!=='cluster_policy')noteParts.push(ui('此参数需专用变更流程，不能直接下发。'));
       note.textContent = noteParts.length ? noteParts.join(' · ') : '-';
       row.append(key, effective, source, restart, note);
       return row;
@@ -3206,7 +3307,7 @@
       head.append(headRow);
       table.append(head);
       const body = document.createElement('tbody');
-      (section.values || []).forEach(value => body.append(configurationValueRow(value)));
+      (section.values || []).forEach(value => body.append(configurationValueRow(value,section)));
       table.append(body);
       const scroll = document.createElement('div');
       scroll.className = 'configuration-table-scroll';
@@ -3216,6 +3317,7 @@
     };
 
     const renderConfiguration = () => {
+ renderConfigurationDistribution();
       const container = byId('configuration-sections');
       const view = state.configuration;
       const reload = byId('reload-configuration');
@@ -3264,6 +3366,7 @@
       renderConfiguration();
       try {
         state.configuration = await fetchResult('/api/v1/control-plane/configuration');
+ await loadConfigurationDistribution();
       } catch (error) {
         if (error && error.staleSession) return;
         state.configurationError = (error && error.message) ? error.message : ui('未知错误');
@@ -3396,6 +3499,7 @@
       state.configuration = null; state.configurationError = ''; state.configurationLoading = false;
       state.configurationExpandedSections.clear();
       byId('configuration-sections').replaceChildren();
+ state.configurationDistribution=null;state.configurationBusy=false;state.configurationBusyOwner=null;state.configurationDraft={};state.configurationTargets=null;state.configurationDraftEpoch++;state.configurationUnlocked=false;state.configurationIntent=null;state.configurationReadEpoch++;byId('configuration-confirm').close();renderConfigurationDistribution();
       state.clusterPolicy = null; state.clusterPolicySaving = false;
       byId('cluster-policy-status').textContent = '';
       renderClusterPolicy();
@@ -3914,6 +4018,7 @@
       if (!preserveIntent) invalidateNodeLifecycle();
       state.switchUnlocked = false;
       state.operationLockEpoch++;
+ state.configurationUnlocked=false;state.configurationIntent=null;if(byId('configuration-confirm').open)byId('configuration-confirm').close();renderConfigurationDistribution();
       if (state.activeOperationIntent && state.activeOperationIntent !== preserveIntent) state.activeOperationIntent.cancelled = true;
       if (state.disaster) {
         state.disaster.ready = false;

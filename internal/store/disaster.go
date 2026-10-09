@@ -279,6 +279,11 @@ func (r *Repository) BeginRecovery(ctx context.Context, id model.ResourceID, rev
 	if !recoveryLeaseValid(r.snapshot, task, now) || !recoveryInventoryValid(r.snapshot, task) {
 		return task, conflictError("recovery lease or immutable inventory changed")
 	}
+	for _, configurationTask := range r.snapshot.ConfigurationTasks {
+		if configurationTask.Active {
+			return task, conflictError("configuration distribution maintenance active")
+		}
+	}
 	if r.snapshot.SoftwareUpdateGate != nil {
 		return task, conflictError("software upgrade maintenance is active")
 	}

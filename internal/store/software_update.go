@@ -81,6 +81,11 @@ func (repository *Repository) ClaimSoftwareUpdateGate(patchID, executionID, prev
 	defer repository.mutationMu.Unlock()
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
+	for _, task := range repository.snapshot.ConfigurationTasks {
+		if task.Active {
+			return SoftwareUpdateGate{}, conflictError("configuration distribution maintenance active")
+		}
+	}
 	if existing := repository.snapshot.SoftwareUpdateGate; existing != nil {
 		if existing.PatchID != patchID {
 			return SoftwareUpdateGate{}, conflictError("CG_FOREIGN_UPDATE_LOCK: maintenance gate belongs to another package")

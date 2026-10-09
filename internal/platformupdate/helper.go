@@ -126,11 +126,12 @@ func (launcher CommandLauncher) StartOperation(mode Mode, patchID, outputPath, o
 }
 
 type HelperHandler struct {
-	root        string
-	privateRoot string
-	launcher    JobLauncher
-	mu          sync.Mutex
-	active      bool
+	root              string
+	privateRoot       string
+	launcher          JobLauncher
+	mu                sync.Mutex
+	active            bool
+	restartController func(context.Context) error
 }
 
 func NewHelperHandler(root string, launcher JobLauncher) *HelperHandler {
@@ -148,6 +149,10 @@ func (handler *HelperHandler) ServeHTTP(writer http.ResponseWriter, request *htt
 	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 	if err := updatecontract.Validate(); err != nil {
 		helperError(writer, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	if request.URL.Path == "/v1/configuration-restart" {
+		handler.configurationRestart(writer, request)
 		return
 	}
 	if request.Method == http.MethodGet && request.URL.Path == "/healthz" {

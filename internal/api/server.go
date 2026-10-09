@@ -14,6 +14,7 @@ import (
 
 	"clusterguard.io/ha/internal/approval"
 	platformauth "clusterguard.io/ha/internal/auth"
+	"clusterguard.io/ha/internal/configuration"
 	"clusterguard.io/ha/internal/coordination"
 	"clusterguard.io/ha/internal/lifecycle"
 	"clusterguard.io/ha/internal/store"
@@ -38,28 +39,29 @@ type Server struct {
 	// administrator credential. It sits beside the configured metadata, so a
 	// custom MetadataPath must reach the password-change handler too - otherwise
 	// the plaintext survives the first password change.
-	bootstrapPasswordFile string
-	refresher             Refresher
-	controlToken          string
-	monitorToken          string
-	agentSecret           string
-	agentAuthz            *coordination.AgentAuthorizationTracker
-	lifecycle             NodeLifecycleManager
-	lifecycleCap          lifecycle.Capabilities
-	lifecycleSec          LifecycleSecretProvider
-	authority             MutationAuthority
-	mutationRPC           MutationRPC
-	secureCookies         bool
-	controlPlane          ControlPlaneStatusProvider
-	configuration         ConfigurationProvider
-	maintenance           MutationMaintenance
-	softwareUpdates       SoftwareUpdateManager
-	disasterRecovery      DisasterRecoveryManager
-	runRecovery           func(func(context.Context))
-	recoveryExecutions    sync.Map
-	sessionOperationMu    sync.Mutex
-	sessionOperationGates map[string]*sessionOperationExecutionGate
-	startedAt             time.Time
+	bootstrapPasswordFile     string
+	refresher                 Refresher
+	controlToken              string
+	monitorToken              string
+	agentSecret               string
+	agentAuthz                *coordination.AgentAuthorizationTracker
+	lifecycle                 NodeLifecycleManager
+	lifecycleCap              lifecycle.Capabilities
+	lifecycleSec              LifecycleSecretProvider
+	authority                 MutationAuthority
+	mutationRPC               MutationRPC
+	secureCookies             bool
+	controlPlane              ControlPlaneStatusProvider
+	configuration             ConfigurationProvider
+	configurationDistribution *configuration.Manager
+	maintenance               MutationMaintenance
+	softwareUpdates           SoftwareUpdateManager
+	disasterRecovery          DisasterRecoveryManager
+	runRecovery               func(func(context.Context))
+	recoveryExecutions        sync.Map
+	sessionOperationMu        sync.Mutex
+	sessionOperationGates     map[string]*sessionOperationExecutionGate
+	startedAt                 time.Time
 }
 
 type Refresher interface {
@@ -326,7 +328,9 @@ func (server *Server) route(writer http.ResponseWriter, request *http.Request) {
 				return
 			}
 		}
-		if !server.authorizeMutation(writer, request) {
+		// Candidate validation is a read-only local preflight; authentication and
+		// administrator/CSRF checks above still apply on every node.
+		if path != configurationRoot+"candidate" && !server.authorizeMutation(writer, request) {
 			return
 		}
 	}
@@ -346,6 +350,8 @@ func (server *Server) route(writer http.ResponseWriter, request *http.Request) {
 		server.controlPlaneStatusRoute(writer, request)
 	case request.Method == http.MethodGet && path == "/api/v1/control-plane/configuration":
 		server.configurationRoute(writer, request)
+	case strings.HasPrefix(path, configurationRoot):
+		server.configurationDistributionRoute(writer, request)
 	case (request.Method == http.MethodGet || request.Method == http.MethodPut) && path == "/api/v1/cluster-policy":
 		server.clusterPolicyRoute(writer, request)
 	case request.Method == http.MethodGet && path == "/api/v1/platform/version":
@@ -467,6 +473,10 @@ func (server *Server) authorizeMonitoring(writer http.ResponseWriter, request *h
 }
 
 func (server *Server) authorizeMutation(writer http.ResponseWriter, request *http.Request) bool {
+	if server.configurationDistribution != nil && server.configurationDistribution.Active() && !configurationRecoveryRoute(request.URL.Path) && request.URL.Path != configurationRoot+"permit" && request.URL.Path != configurationRoot+"dispatch" {
+		writeError(writer, 423, "configuration distribution maintenance is active")
+		return false
+	}
 	if server.maintenance != nil && !softwareUpdateMaintenanceRoute(request.Method, request.URL.Path) {
 		if err := server.maintenance.Check(request.Context()); err != nil {
 			writeJSON(writer, http.StatusLocked, map[string]interface{}{
