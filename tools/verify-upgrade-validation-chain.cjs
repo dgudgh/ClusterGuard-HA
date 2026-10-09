@@ -333,6 +333,73 @@ const CHECKS = [
   },
 
   {
+    // The distribution panel used to render one <label> per voter containing nothing but
+    // the raw resource id, and the console-wide `input { width:100%; min-height:34px }` rule
+    // stretched each checkbox into a slab. An operator about to restart three controllers has
+    // to recognise the machines, and must not be shown a liveness verdict the control plane
+    // cannot support: neither /control-plane/status nor the configuration distribution
+    // members carry per-voter reachability.
+    rule:'INV-004 / 23',
+    title:'a controller distribution card states the node facts and no unsupportable liveness',
+    run:()=>{
+      const source=read('internal/api/console.html')||'';
+      if(!source.includes('#configuration-targets { display:grid;')) return 'the controller targets are no longer laid out as a grid of cards';
+      if(!/\.configuration-target input\[type="checkbox"\] \{[^}]*min-height:16px/.test(source)) return 'the controller checkbox is not pinned to 16px, so the shared input width/min-height stretches it again';
+      const start=source.indexOf("const targets=byId('configuration-targets');");
+      const endMarker='body.append(name,id,address);card.append(input,body);targets.append(card);';
+      const end=source.indexOf(endMarker,start);
+      if(start<0||end<0) return 'the controller targets are no longer rendered as one card per voter';
+      const closing=source.indexOf('\n     }',end+endMarker.length);
+      if(closing<0) return 'the controller card loop is no longer a closed block';
+      const loop=source.slice(start,closing+'\n     }'.length);
+      if(/在线|离线/.test(loop)) return 'a controller card states a liveness the control plane API cannot back';
+      // Run the loop the page actually ships, against a stubbed DOM, so the verdict comes
+      // from the shipped branch rather than from a copy of the rule kept in this gate.
+      const render=vm.runInNewContext(`(state) => {
+        const make = tag => {
+          const element = { tagName:String(tag).toUpperCase(), className:'', dataset:{}, children:[], textContent:'', checked:false, disabled:false,
+            append(...items){ element.children.push(...items); },
+            replaceChildren(){ element.children.length = 0; },
+            addEventListener(){}, querySelectorAll(){ return []; }, close(){} };
+          return element;
+        };
+        const container = make('div');
+        const document = { createElement: tag => make(tag) };
+        const byId = id => id === 'configuration-targets' ? container : make('div');
+        const ui = template => template;
+        const configurationEditAllowed = () => true;
+        ${loop}
+        return container.children;
+      }`, {});
+      const members=[{resource_id:'aaaaaaaa-0000-4000-8000-000000000001'},{resource_id:'bbbbbbbb-0000-4000-8000-000000000002',api_address:'10.0.0.2:8443'}];
+      const cards=render({
+        configurationDistribution:{local:{node_id:members[0].resource_id},members},
+        nodes:[{resource_id:members[0].resource_id,node_name:'cg-prod-01',ip_address:'192.0.2.1'}],
+        configurationTargets:null,controlPlane:{leader_id:members[0].resource_id},
+      });
+      if(cards.length!==2) return `the distribution rendered ${cards.length} cards for two voters`;
+      if(cards[0].tagName!=='LABEL') return 'a controller card is no longer a label, so clicking anywhere on it stops toggling its checkbox';
+      const input=cards[0].children[0];
+      if(input.tagName!=='INPUT'||input.type!=='checkbox'||input.dataset.configurationNode!==members[0].resource_id) return 'a controller card no longer binds its own checkbox to the voter it names';
+      const first=cards[0].children[1].children;
+      if(first[0].textContent!=='cg-prod-01') return `a registered voter is presented as ${first[0].textContent} instead of its inventory node name`;
+      if(first[0].children.length!==1||first[0].children[0].textContent!=='本机 · Leader') return 'the card no longer marks the controller serving the page and the current Leader';
+      if(first[1].textContent!==members[0].resource_id) return 'the card no longer states the immutable voter id';
+      if(first[2].textContent!=='192.0.2.1') return 'the card no longer falls back to the inventory address when the voter carries no trusted API endpoint';
+      const second=cards[1].children[1].children;
+      if(second[0].textContent!=='未登记节点') return `a voter missing from the inventory is presented as ${second[0].textContent} instead of the registration fallback`;
+      if(second[1].textContent!==members[1].resource_id) return 'an unregistered voter lost its immutable id';
+      if(second[2].textContent!=='10.0.0.2:8443') return 'the card no longer prefers the trusted API endpoint the Leader recorded for that voter';
+      if(!source.includes('"未登记节点":"Node not registered"')||!source.includes('"本机":"This host"')||!source.includes('"无可用地址":"No address available"')) return 'the card wording has no English catalogue entry';
+      const acceptance=read('tools/console-configuration-distribution-acceptance.cjs')||'';
+      if(!acceptance.includes('every controller card names the node, its id and its trusted address')) return 'missing real-browser regression for the card facts';
+      if(!acceptance.includes('a controller card claims no liveness the API cannot back')) return 'missing real-browser regression for the liveness wording';
+      if(!acceptance.includes('the controller checkbox stays a 16px control instead of a stretched input')) return 'missing real-browser regression for the checkbox size';
+      return true;
+    },
+  },
+
+  {
     rule:'INV-004',
     title:'deployment result survives a later failed operation',
     run:() => {
@@ -849,7 +916,7 @@ const READ_FILES = [
   'scripts/clusterguard-update-job.sh', 'scripts/clusterguard-upgrade.sh', 'scripts/build-hotfix-patch.sh',
   'internal/platformupdate/manager.go', 'internal/api/updates.go', 'internal/api/console.html',
   'hotfixes/hotfix-publications.json', 'tools/verify-hotfix-patch-catalog.cjs',
-  'tools/console-update-hotfix-recovery-acceptance.cjs', 'tools/verify-upgrade-validation-chain.cjs',
+  'tools/console-update-hotfix-recovery-acceptance.cjs', 'tools/console-configuration-distribution-acceptance.cjs', 'tools/verify-upgrade-validation-chain.cjs',
 ];
 
 const MUTATIONS = [
@@ -869,6 +936,12 @@ const MUTATIONS = [
   { name:'the upload preview stops showing the running version', file:'internal/api/console.html', find:"byId('software-update-package-running-version').textContent = label;", replace:"byId('software-update-package-running-version').textContent = '-';", rule:'the upload preview separates the running version from the RPM baseline and the package kind' },
   { name:'every hotfix is a legacy compatible package again', file:'internal/api/console.html', find:": record.kind === 'hotfix' ? ui('已通过 · 热修补丁')", replace:": false ? ui('已通过 · 热修补丁')", rule:'the upload preview separates the running version from the RPM baseline and the package kind' },
   { name:'the hotfix kind stops naming the product version it updates', file:'internal/api/console.html', find:"ui('热修补丁（替换清单声明的文件并更新产品版本，保留 RPM 安装记录）')", replace:"ui('热修补丁（替换清单声明的文件）')", rule:'the upload preview separates the running version from the RPM baseline and the package kind' },
+
+  { name:'controller cards go back to a bare list', file:'internal/api/console.html', find:'#configuration-targets { display:grid;', replace:'#configuration-targets { display:flex;', rule:'a controller distribution card states the node facts and no unsupportable liveness' },
+  { name:'a controller card stops being a label', file:'internal/api/console.html', find:"const card=document.createElement('label');card.className='configuration-target';", replace:"const card=document.createElement('div');card.className='configuration-target';", rule:'a controller distribution card states the node facts and no unsupportable liveness' },
+  { name:'a controller card shows the raw id instead of the node name', file:'internal/api/console.html', find:"name.textContent=node?node.node_name:ui('未登记节点');", replace:"name.textContent=node?member.resource_id:ui('未登记节点');", rule:'a controller distribution card states the node facts and no unsupportable liveness' },
+  { name:'a controller card ignores the trusted API endpoint the Leader recorded', file:'internal/api/console.html', find:"address.textContent=member.api_address||member.address||node?.ip_address||node?.hostname||ui('无可用地址');", replace:"address.textContent=node?.ip_address||node?.hostname||ui('无可用地址');", rule:'a controller distribution card states the node facts and no unsupportable liveness' },
+  { name:'the controller checkbox stretches again', file:'internal/api/console.html', find:'.configuration-target input[type="checkbox"] { width:16px; min-width:16px; height:16px; min-height:16px;', replace:'.configuration-target input[type="checkbox"] { width:16px; min-width:16px; height:16px; min-height:34px;', rule:'a controller distribution card states the node facts and no unsupportable liveness' },
 
   {
     name:'a failed attempt overwrites installed deployment',file:'internal/api/console.html',

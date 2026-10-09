@@ -421,8 +421,20 @@
     .settings-panel { overflow:hidden; box-shadow:none; }
     .settings-panel .panel-header { min-height:64px; padding:0 20px; }
     .settings-panel .panel-header p { margin:3px 0 0; color:var(--muted); font-size:12px; }
-    #configuration-targets {flex-wrap:wrap;min-width:0;}
- #configuration-targets label {overflow-wrap:anywhere;min-width:0;max-width:100%;}
+    .configuration-distribution-heading { display:flex; align-items:center; gap:9px; margin:0 0 6px; color:var(--ink); font-size:13px; font-weight:700; }
+    .configuration-distribution-mark { display:grid; place-items:center; flex:0 0 20px; width:20px; height:20px; border:1.5px solid var(--ink); border-radius:5px; }
+    .configuration-distribution-mark::before { content:""; width:9px; height:6px; border-left:2px solid var(--ink); border-right:2px solid var(--ink); }
+    #configuration-targets { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(280px,100%),1fr)); gap:10px; margin-top:12px; }
+    .configuration-target { display:grid; grid-template-columns:17px minmax(0,1fr); align-items:start; gap:10px; padding:12px 14px; border:1px solid var(--line); border-radius:8px; background:#fff; cursor:pointer; }
+    .configuration-target:hover { border-color:var(--line-strong); }
+    .configuration-target:focus-within { border-color:var(--accent); }
+    .configuration-target input[type="checkbox"] { width:16px; min-width:16px; height:16px; min-height:16px; flex:0 0 16px; margin:2px 0 0; padding:0; accent-color:var(--accent); }
+    .configuration-target-body { min-width:0; }
+    .configuration-target-name { display:block; color:var(--ink); font-size:12px; font-weight:680; overflow-wrap:anywhere; }
+    .configuration-target-chip { display:inline-block; margin-left:6px; padding:1px 6px; border:1px solid var(--line-strong); border-radius:999px; color:var(--muted); font-size:10px; font-weight:600; vertical-align:middle; }
+    .configuration-target-id { display:block; margin-top:3px; color:var(--muted); font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:11px; overflow-wrap:anywhere; }
+    .configuration-target-address { display:block; margin-top:6px; color:var(--muted); font-size:11px; overflow-wrap:anywhere; }
+    .configuration-button-icon { width:14px; height:14px; flex:0 0 14px; }
  #configuration-confirm {box-sizing:border-box;max-width:min(680px,calc(100vw - 32px));max-height:85vh;overflow:auto;border:1px solid var(--line);border-radius:12px;padding:24px;}
  .configuration-sections { display:grid; gap:10px; min-width:0; }
     .configuration-section { min-width:0; border:1px solid var(--line); border-radius:8px; }
@@ -1435,10 +1447,10 @@
               <div class="configuration-file-meta" id="configuration-file-meta"></div>
               <div class="configuration-warnings" id="configuration-warnings" hidden></div>
               <div class="configuration-policy" id="configuration-distribution">
- <h4 id="configuration-distribution-title">控制节点参数下发</h4>
+ <h4 class="configuration-distribution-heading"><span class="configuration-distribution-mark" aria-hidden="true"></span><span id="configuration-distribution-title">控制节点参数下发</span></h4>
  <p id="configuration-distribution-note" class="settings-note"></p>
- <div id="configuration-targets" class="settings-inline-actions"></div>
- <div class="settings-inline-actions"><button type="button" id="configuration-unlock">解锁参数下发</button><button type="button" id="configuration-plan" class="primary-button">检查并下发</button><button type="button" id="configuration-clear">清除草稿</button></div>
+ <div id="configuration-targets"></div>
+ <div class="settings-inline-actions"><button type="button" id="configuration-unlock"><svg class="configuration-button-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><span id="configuration-unlock-label"></span></button><button type="button" id="configuration-plan" class="primary-button"><svg class="configuration-button-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"/><path d="m21.854 2.147-10.94 10.939"/></svg><span id="configuration-plan-label"></span></button><button type="button" id="configuration-clear"><svg class="configuration-button-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg><span id="configuration-clear-label"></span></button></div>
  <p id="configuration-distribution-message" role="status" class="settings-note"></p><div id="configuration-tasks"></div>
  </div>
  <dialog id="configuration-confirm"><h3 id="configuration-confirm-title"></h3><p id="configuration-confirm-note"></p><pre id="configuration-confirm-diff" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre><div class="settings-inline-actions"><button id="configuration-confirm-submit" type="button" class="primary-button"></button><button id="configuration-confirm-cancel" type="button"></button></div></dialog>
@@ -1886,6 +1898,7 @@
  "解锁参数下发":"Unlock configuration changes", "重新锁定参数下发":"Lock configuration changes",
  "检查并下发":"Review and apply", "清除草稿":"Clear draft", "确认参数下发":"Confirm configuration changes",
  "集群级参数必须选择全部投票节点。":"Cluster-wide parameters require all voting controllers.",
+ "本机":"This host", "未登记节点":"Node not registered", "无可用地址":"No address available",
  "逐节点超时":"Per-controller timeout",
  "秒":"seconds",
  "各节点将依次重启，核验实际生效值后才完成。":"Controllers restart one at a time. Completion requires verifying the values used by the new processes.",
@@ -3175,10 +3188,29 @@
     const renderConfigurationDistribution = () => {
      byId('configuration-distribution-title').textContent=ui('控制节点参数下发');byId('configuration-distribution-note').textContent=ui('仅向选定控制节点下发。普通数值参数保存后逐节点重启；节点身份、网络、凭据与隔离开关需专用变更流程。')+' '+ui('集群级参数必须选择全部投票节点。');
      const unlocked=state.configurationUnlocked;
-     byId('configuration-unlock').textContent=ui(unlocked?'重新锁定参数下发':'解锁参数下发');byId('configuration-unlock').disabled=!canAdministerPlatform()||state.configurationBusy||(configurationTaskActive()&&!state.configurationDistribution?.tasks?.some(t=>t.active&&t.status==='failed'))||!!state.configurationDistributionError||!state.configurationDistribution?.local?.ready;
-     byId('configuration-plan').textContent=ui('检查并下发');byId('configuration-plan').disabled=!configurationEditAllowed();byId('configuration-clear').textContent=ui('清除草稿');byId('configuration-clear').disabled=state.configurationBusy;
+     byId('configuration-unlock-label').textContent=ui(unlocked?'重新锁定参数下发':'解锁参数下发');byId('configuration-unlock').disabled=!canAdministerPlatform()||state.configurationBusy||(configurationTaskActive()&&!state.configurationDistribution?.tasks?.some(t=>t.active&&t.status==='failed'))||!!state.configurationDistributionError||!state.configurationDistribution?.local?.ready;
+     byId('configuration-plan-label').textContent=ui('检查并下发');byId('configuration-plan').disabled=!configurationEditAllowed();byId('configuration-clear-label').textContent=ui('清除草稿');byId('configuration-clear').disabled=state.configurationBusy;
      const targets=byId('configuration-targets');targets.replaceChildren();
-     for(const member of state.configurationDistribution?.members||[]){const label=document.createElement('label'),input=document.createElement('input');input.type='checkbox';input.dataset.configurationNode=member.resource_id;input.checked=state.configurationTargets===null||state.configurationTargets.includes(member.resource_id);input.disabled=!configurationEditAllowed();input.addEventListener('change',()=>{state.configurationTargets=[...targets.querySelectorAll('input:checked')].map(i=>i.dataset.configurationNode);state.configurationDraftEpoch++;state.configurationIntent=null;byId('configuration-confirm').close();});label.append(input,document.createTextNode(member.resource_id));targets.append(label);}
+     const localControllerID=state.configurationDistribution?.local?.node_id;
+     for(const member of state.configurationDistribution?.members||[]){
+      // A voter is a machine an operator has to recognise. The immutable resource id
+      // alone cannot be matched against the host in front of them, so every card
+      // reports the three facts that answer "which node am I about to restart": the
+      // name from the node inventory, the id, and the trusted API endpoint the Leader
+      // records for that voter. Nothing here is inferred from the selection or from
+      // the draft - the identity stays put while the operator edits.
+      const node=state.nodes.find(item=>item.resource_id===member.resource_id);
+      const card=document.createElement('label');card.className='configuration-target';
+      const input=document.createElement('input');input.type='checkbox';input.dataset.configurationNode=member.resource_id;input.checked=state.configurationTargets===null||state.configurationTargets.includes(member.resource_id);input.disabled=!configurationEditAllowed();
+      input.addEventListener('change',()=>{state.configurationTargets=[...targets.querySelectorAll('input:checked')].map(i=>i.dataset.configurationNode);state.configurationDraftEpoch++;state.configurationIntent=null;byId('configuration-confirm').close();});
+      const body=document.createElement('div');body.className='configuration-target-body';
+      const name=document.createElement('span');name.className='configuration-target-name';name.textContent=node?node.node_name:ui('未登记节点');
+      const chips=[];if(member.resource_id===localControllerID)chips.push(ui('本机'));if(member.resource_id===state.controlPlane?.leader_id)chips.push('Leader');
+      if(chips.length){const chip=document.createElement('span');chip.className='configuration-target-chip';chip.textContent=chips.join(' · ');name.append(chip);}
+      const id=document.createElement('span');id.className='configuration-target-id';id.textContent=member.resource_id;
+      const address=document.createElement('span');address.className='configuration-target-address';address.textContent=member.api_address||member.address||node?.ip_address||node?.hostname||ui('无可用地址');
+      body.append(name,id,address);card.append(input,body);targets.append(card);
+     }
      if(state.configurationDistributionError)configurationMessage(ui('下发状态读取失败；不能确认任务结果。'));
      const tasks=byId('configuration-tasks');tasks.replaceChildren();
      const labels={pending:'等待下发',applying:'重启与核验中',applied:'已核验',failed:'参数下发失败',rolled_back:'已回退',running:'执行中',succeeded:'已核验'};
