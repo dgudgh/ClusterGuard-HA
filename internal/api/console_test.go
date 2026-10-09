@@ -1871,7 +1871,8 @@ func TestSoftwareUpdateRollingActionTargetsTheNewestActionablePackage(t *testing
 		// why so the operator stops waiting for a rollout that can never start.
 		"const incompatible = !!(item && item.incompatible);",
 		"? ` · ${item.incompatible_reason || '与当前集群基线不一致，本集群装不上'}`",
-		"text('td', 'history-message', `${rowMessage}${rowNote}`)",
+		"renderSoftwareUpdateMessage(messageCell, job && job.message",
+		"未生效：` : '', rowNote);",
 		// A record from another release line can never be the one the console acts on.
 		"if (item && (item.incompatible || item.superseded_by)) return false;",
 		// "Nothing to run" has two causes now, and the panel has to name the right one:

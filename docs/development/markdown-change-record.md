@@ -42,7 +42,7 @@ recorded-through: 73ff4a3
 | 2026-10-08 | `docs/zh-CN/version-release-policy.md` | M | 交付身份条改为新封板版本线起点 `3.1.1.1` + `MAJOR.MINOR.PATCH.BUGFIX`。 |
 | 2026-10-08 | `docs/zh-CN/validation-gate-workflow.md` | M | 去掉已过期的固定17项计数，以本次源码门禁输出为准；新增功能仍须补充实际回归。 |
 | 2026-10-08 | `docs/development/backend/settings/version.md` | M | 说明product_version运行来源和旧历史验签补读，RPM兼容字段不变。 |
-| 2026-10-09 | `docs/development/frontend/settings/updates.md` | M | 明确当前/目标/历史版本来源及验签替代。新增staging属于节点滚动、传输提示、同操作进度和新操作重置规则，指向三节点实际Manager投影的桌面/窄屏浏览器回归。 |
+| 2026-10-09 | `docs/development/frontend/settings/updates.md` | M | 明确当前/目标/历史版本来源及验签替代；新增staging步骤和新操作重置规则。补充历史/当前/事件共用中文消息映射、未知诊断可展开原文、原始状态不变及桌面/窄屏语言切换回归入口。 |
 | 2026-10-09 | `docs/development/backend/settings/update-history.md` | M | 记录Snapshot验签后继及部署判据。新增staging与updating共用节点百分比的读取投影、原始状态保留和三节点持久化回归入口。 |
 
 ## 批次说明
@@ -50,6 +50,8 @@ recorded-through: 73ff4a3
 ### 2026-10-09 · 热修传输阶段进度
 
 修复staging缺少进度映射，补充上述前后端功能说明；登记仍按73ff4a3以来的路径净变更，重建docs/html生成页。原始任务和制品证据仅存本地。
+
+同日补充升级结果中文显示：统一已知Runner消息的历史/当前/事件显示，未知诊断保留可展开原文，语言切换重绘；只更新上述前端功能页并再次重建生成页。
 
 ### 2026-10-08 · 热修版本身份线迁移与统一校验链收口（基线 `73ff4a3`）
 

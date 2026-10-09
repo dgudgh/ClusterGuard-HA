@@ -535,6 +535,9 @@
     .software-update-history-table td { font-size:11px; }
     .software-update-history-table tr:last-child td { border-bottom:0; }
     .software-update-history-table .history-message { max-width:340px; overflow:hidden; color:var(--muted); text-overflow:ellipsis; white-space:nowrap; }
+    .software-update-message-original { margin-top:4px; white-space:normal; font-size:11px; }
+    .software-update-message-original summary { padding:0; border:0; cursor:pointer; color:var(--accent); }
+    .software-update-message-original pre { max-height:180px; margin:4px 0 0; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font-weight:normal; }
     .software-update-confirmation { display:grid; gap:12px; }
     .software-update-confirmation .confirmation-state { margin:0; }
     #software-update-confirmation-dialog .confirmation-phrase code { min-width:0; overflow-wrap:anywhere; }
@@ -3524,6 +3527,57 @@
       ? ({ plan:'只读热修计划', execute:'热修应用', retry:'重新执行热修', resume:'续跑热修', rollback:'热修回退' })[value]
       : ({ plan:'只读计划', execute:'滚动升级', resume:'续跑升级', rollback:'受控回退' })[value]) || value || '-';
     const softwareUpdateBadgeClass = value => ({ succeeded:'success', planned:'success', installed:'success', rolled_back:'warning', failed:'danger', interrupted:'warning', running:'warning', queued:'warning', applying:'warning', rollbacking:'warning', recovery_required:'danger', applied_attempt_failed:'warning' })[value] || '';
+    // Localize presentation only. Never derive an outcome from the message or rewrite history.
+    const softwareUpdateMessageText = message => {
+      const raw = String(message || '');
+      if (state.language !== 'zh-CN' || !raw.trim()) return raw;
+      const messages = {
+        'all node digests and maintenance release verified':'热修补丁完成，全部节点与控制面已验证，维护门禁已释放',
+        'all nodes and maintenance release verified':'全部节点升级和维护门禁释放已验证',
+        'all node contracts passed, but Leader update Helper refresh could not be scheduled':'全部节点合同检查已通过，但主控升级助手刷新无法调度，升级未完成',
+        'hotfix maintenance gates are being acquired':'正在建立热修维护门禁',
+        'maintenance gates are being acquired':'正在建立集群维护门禁',
+        'hotfix application started':'热修补丁应用已开始',
+        'rolling update started':'滚动升级已开始',
+        'staging the signed hotfix package':'正在向控制节点传输已签名补丁',
+        'applying hotfix payload':'正在应用热修载荷',
+        'installing target RPM':'正在安装目标软件包',
+        'every declared file digest already matches':'全部清单文件摘要已匹配',
+        'file digests, service state and readiness verified':'文件摘要、服务状态和节点就绪状态已验证',
+        'files matched but service restart or readiness could not be verified; maintenance retained':'文件摘要已匹配，但服务重启或就绪状态未能验证，维护门禁仍保留',
+        'node already matches target contract':'节点已符合目标升级合同',
+        'node version and readiness verified':'节点版本和就绪状态已验证',
+        'verifying all node digests and maintenance release':'正在验证全部节点文件摘要和维护门禁释放',
+        'verifying all node contracts and maintenance release':'正在验证全部节点升级合同和维护门禁释放',
+        'hotfix failed; automatic rollback started':'热修补丁应用失败，已开始自动回退',
+        'node update failed; automatic rollback started':'节点升级失败，已开始自动回退',
+        'restoring previous RPM':'正在恢复原软件包',
+        'restoring the files this hotfix replaced':'正在恢复本次热修替换的文件',
+        'previous file contents restored and services restarted':'原文件内容已恢复，服务已重启',
+        'rollback version and readiness verified':'回退版本和节点就绪状态已验证',
+        'automatic rollback completed and maintenance released':'自动回退已完成，维护门禁已释放',
+        'controlled rollback completed and maintenance released':'受控回退已完成，维护门禁已释放',
+        'automatic rollback incomplete; maintenance gate retained':'自动回退未完成，维护门禁仍保留，请核验节点状态',
+        'controlled rollback incomplete; maintenance gate retained':'受控回退未完成，维护门禁仍保留，请核验节点状态',
+        'rollback succeeded but maintenance release failed':'回退已完成，但维护门禁释放失败',
+        'controlled rollback restored files but maintenance release failed':'受控回退已恢复文件，但维护门禁释放失败',
+        'update stopped; inspect node diagnostics before resuming':'升级已停止，请先检查节点诊断并确认允许的恢复操作',
+      };
+      return Object.prototype.hasOwnProperty.call(messages, raw.trim()) ? messages[raw.trim()]
+        : (/[\u3400-\u9fff]/.test(raw) ? raw : '升级器返回了未识别的诊断信息，请展开原始信息核对');
+    };
+    const renderSoftwareUpdateMessage = (element, message, fallback = '-', prefix = '', suffix = '') => {
+      const raw = String(message || '');
+      const localized = softwareUpdateMessageText(raw);
+      element.replaceChildren(text('span', 'software-update-message-summary', `${prefix}${localized || fallback}${suffix}`));
+      element.title = raw;
+      if (localized === '升级器返回了未识别的诊断信息，请展开原始信息核对') {
+        const original = document.createElement('details');
+        original.className = 'software-update-message-original';
+        original.append(text('summary', '', '原始信息'), text('pre', '', raw));
+        element.append(original);
+      }
+    };
     // job.status describes the newest attempt; job.events holds what actually ran. An
     // attempt that is refused before it touches a node - a resume of a hotfix is rejected
     // on the updater's first line - is still what job.status ends up saying, so reading
@@ -3739,9 +3793,7 @@
         // below it in the list, so say it on the row rather than only in the log.
         // clock_skew sits on the record wrapper, not on the package it describes - reading
         // it off `record` here silently rendered nothing at all.
-        const attemptMessage = (job && job.message) || '升级包已上传并通过签名校验';
         const outcomeNote = softwareUpdateOutcomeNote(job);
-        const rowMessage = outcomeNote ? `${outcomeNote}本次${softwareUpdateModeText(job && job.mode, record.kind)}未生效：${attemptMessage}` : attemptMessage;
         // Both markers explain why this row is not the one the console will act
         // on, and both sit on the record wrapper rather than on the package it
         // describes - reading either one off `record` renders nothing at all.
@@ -3750,13 +3802,16 @@
         const rowNote = item.superseded_by ? ` · 已被 ${item.superseded_by} 替代，保留历史记录` : incompatible
           ? ` · ${item.incompatible_reason || '与当前集群基线不一致，本集群装不上'}`
           : skewed ? ' · 记录时间戳晚于当前时间，排序与时间不可信' : '';
+        const messageCell = text('td', 'history-message', '');
+        renderSoftwareUpdateMessage(messageCell, job && job.message, '升级包已上传并通过签名校验',
+          outcomeNote ? `${outcomeNote}本次${softwareUpdateModeText(job && job.mode, record.kind)}未生效：` : '', rowNote);
         row.append(
           statusCell,
           text('td', 'mono', record.patch_id || '-'),
           text('td', '', `${record.source_version || '不限'} → ${softwareUpdateTargetVersion(record)}`),
           text('td', '', softwareUpdateModeText(job && job.mode, record.kind)),
           text('td', '', softwareUpdateDateText(occurredAt)),
-          text('td', 'history-message', `${rowMessage}${rowNote}`)
+          messageCell
         );
         body.append(row);
       });
@@ -3906,10 +3961,13 @@
         events.slice().reverse().forEach(event => {
           const row = text('div', 'software-update-progress-event', '');
           row.dataset.status = event.status || '';
+          const message = text('span', '', '');
+          renderSoftwareUpdateMessage(message, event.message, softwareUpdateEventText(event.status),
+            event.node ? `${softwareUpdateEventText(event.status)} · ` : '');
           row.append(
             text('time', '', softwareUpdateTimeText(event.updated_at)),
             text('strong', '', event.node || softwareUpdateEventText(event.status)),
-            text('span', '', event.node ? `${softwareUpdateEventText(event.status)} · ${event.message || '-'}` : (event.message || softwareUpdateEventText(event.status)))
+            message
           );
           eventList.append(row);
         });
@@ -4079,9 +4137,9 @@
       byId('software-update-job-status').textContent = softwareUpdateStatusText(softwareUpdateOutcome(job));
       byId('software-update-job-mode').textContent = softwareUpdateModeText(job && job.mode, record.kind);
       byId('software-update-job-node').textContent = (job && job.node) || '-';
-      const jobMessage = (job && job.message) || '等待生成只读计划。';
       const jobOutcomeNote = softwareUpdateOutcomeNote(job);
-      byId('software-update-job-message').textContent = jobOutcomeNote ? `${jobOutcomeNote}本次${softwareUpdateModeText(job && job.mode, record.kind)}未生效：${jobMessage}` : jobMessage;
+      renderSoftwareUpdateMessage(byId('software-update-job-message'), job && job.message, '等待生成只读计划。',
+        jobOutcomeNote ? `${jobOutcomeNote}本次${softwareUpdateModeText(job && job.mode, record.kind)}未生效：` : '');
       const busy = state.softwareUpdateRunning || ['queued', 'running'].includes(status);
       // Action gates read the raw status and the subject record, never the display outcome:
       // what the operator is told and what they are allowed to do must not drift apart.
@@ -4112,10 +4170,12 @@
       } else {
         events.forEach(event => {
           const row = text('div', 'software-update-event', '');
+          const message = text('span', '', '');
+          renderSoftwareUpdateMessage(message, event.message, softwareUpdateEventText(event.status));
           row.append(
             text('span', '', event.updated_at ? new Date(event.updated_at).toLocaleString(state.language) : '-'),
             text('strong', '', event.node || softwareUpdateStatusText(event.status)),
-            text('span', '', event.message || event.status || '-')
+            message
           );
           eventList.append(row);
         });
@@ -6489,7 +6549,7 @@
     byId('cancel-password-change').addEventListener('click', () => { if (!state.passwordChangeRequired) byId('password-modal').close(); });
     byId('save-password').addEventListener('click', savePasswordChange);
     byId('password-modal').addEventListener('cancel', event => { if (state.passwordChangeRequired) event.preventDefault(); });
-    byId('language-select').addEventListener('change', event => { state.language = event.target.value; applyLanguage(); renderOverview(); renderTopology(); renderOperationContext(); renderMetrics(); renderNodes(); renderLifecycleTasks(); renderOperationLog(); });
+    byId('language-select').addEventListener('change', event => { state.language = event.target.value; applyLanguage(); renderOverview(); renderTopology(); renderOperationContext(); renderMetrics(); renderNodes(); renderLifecycleTasks(); renderOperationLog(); renderSoftwareUpdates(); });
     byId('refresh-interval').addEventListener('change', event => { state.refreshIntervalMs = Number(event.target.value); scheduleAutoRefresh(); });
     window.addEventListener('hashchange', () => showView(window.location.hash.slice(1)));
 

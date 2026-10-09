@@ -42,3 +42,11 @@
 `staging` 表示向下一控制节点传输已签名补丁，属于“节点滚动”步骤；页面显示传输提示，百分比取同一操作的后端进度，不退回准备步骤。进入新 retry/rollback 操作时显示新操作的进度，不能用上次成功的100%或跨操作累计最大值代替。
 
 [传输进度浏览器回归](../../../../tools/console-update-staging-progress-acceptance.cjs)使用真实Manager读取持久化status/events的三节点序列，再通过隔离API轮询真实页面，覆盖1440/390像素、每个节点的staging边界、最终成功及新操作重置；不执行现场升级。
+
+## 结果和事件的语言
+
+中文页面的历史结果、当前任务说明和两处事件列表共用`softwareUpdateMessageText`/`renderSoftwareUpdateMessage`。已知Runner消息使用明确中文映射，已有中文保持原文；切换语言时立即重绘升级结果。状态、subject和动作判断仍读取原始字段，不从翻译结果推断成功或门禁状态。
+
+未知诊断显示中文核对提示，并提供可展开的“原始信息”，按字面文本呈现，不执行其中的HTML；原始Job/events与输出日志不改。原始输出区域继续保留原文，供排查使用。
+
+[消息映射回归](../../../../tools/console-update-message-language.test.cjs)检查Runner全部固定事件消息；[真实浏览器回归](../../../../tools/console-update-message-language-acceptance.cjs)覆盖桌面/窄屏、新旧成功记录、失败/门禁保留、传输、未知诊断和语言切换。

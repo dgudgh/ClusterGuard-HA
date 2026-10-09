@@ -182,6 +182,24 @@ const writeOperationTree = (root, name, status, events) => {
 const CHECKS = [
   {
     rule: '22 / FIELD-012',
+    title: 'update history and events localize messages without rewriting evidence',
+    run: () => {
+      const page=read('internal/api/console.html') || '';
+      const start=page.indexOf('    const softwareUpdateMessageText = message => {');
+      if(start<0) return 'missing shared message formatter';
+      const source=page.slice(start,page.indexOf('    const renderSoftwareUpdateMessage =',start));
+      const result=vm.runInNewContext(`${source}\nsoftwareUpdateMessageText('all node digests and maintenance release verified');`,{state:{language:'zh-CN'}});
+      if(result!=='热修补丁完成，全部节点与控制面已验证，维护门禁已释放')return 'verified success lost its Chinese presentation';
+      if(!page.includes('renderSoftwareUpdateMessage(messageCell, job && job.message'))return 'history bypasses shared formatter';
+      if(!page.includes("renderSoftwareUpdateMessage(byId('software-update-job-message'), job && job.message"))return 'current job bypasses shared formatter';
+      if((page.match(/renderSoftwareUpdateMessage\(message, event\.message/g)||[]).length!==2)return 'inline or progress events bypass shared formatter';
+      if(!page.includes("text('pre', '', raw)"))return 'unknown diagnosis is no longer retained as literal text';
+      if(!(read('tools/console-update-message-language-acceptance.cjs')||'').includes('unknown raw diagnosis is expandable and unchanged'))return 'missing real-browser evidence preservation regression';
+      return true;
+    },
+  },
+  {
+    rule: '22 / FIELD-012',
     title: 'hotfix staging retains node progress and its console stage',
     run: () => {
       const manager = read('internal/platformupdate/manager.go') || '';
@@ -738,6 +756,7 @@ const reportOpen = failures => {
 // The files the rules read. The self-test copies exactly these, so a mutation cannot be
 // caught by reading something the gate does not actually consult.
 const READ_FILES = [
+  'tools/console-update-message-language-acceptance.cjs',
   'internal/platformupdate/progress_staging_test.go', 'tools/console-update-staging-progress-acceptance.cjs',
   'internal/platformupdate/version.go', 'internal/platformupdate/inspector.go',
   CONTRACT_DOC, CONTRACT_DOC_ZH, 'internal/updatecontract/contract.md', 'internal/updatecontract/schema.json', 'internal/platformupdate/helper.go',
@@ -749,6 +768,8 @@ const READ_FILES = [
 ];
 
 const MUTATIONS = [
+  {name:'history prints raw English again',file:'internal/api/console.html',find:'renderSoftwareUpdateMessage(messageCell, job && job.message',replace:'renderSoftwareUpdateMessage(messageCell, null',rule:'update history and events localize messages without rewriting evidence'},
+  {name:'verified hotfix result loses Chinese translation',file:'internal/api/console.html',find:"'all node digests and maintenance release verified':'热修补丁完成，全部节点与控制面已验证，维护门禁已释放'",replace:"'all node digests and maintenance release verified':'all node digests and maintenance release verified'",rule:'update history and events localize messages without rewriting evidence'},
   {name:'hotfix staging becomes zero again',file:'internal/platformupdate/manager.go',find:'case "staging", "updating":',replace:'case "updating":',rule:'hotfix staging retains node progress and its console stage'},
   {name:'hotfix staging jumps back to console preparation',file:'internal/api/console.html',find:"['staging', 'updating', 'rollback'].includes(phase) ? 1 : 0",replace:"['updating', 'rollback'].includes(phase) ? 1 : 0",rule:'hotfix staging retains node progress and its console stage'},
   {name:'retired historical failure occupies current summary again',file:'internal/api/console.html',find:'item.incompatible || item.superseded_by',replace:'item.incompatible || false',rule:'version identity and signed supersession reach the current subject'},
