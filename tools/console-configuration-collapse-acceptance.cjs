@@ -14,6 +14,8 @@ async function main(){
    {key:'consensus',label:'Raft 共识与成员',note:'每台控制器各有一份，三台之间 address 必须互不相同。',values:[{key:'local_id',value:'sample-node-1',source:'file',restart_required:true},{key:'peers',value:'sample-node-2@192.0.2.2:10009;'.repeat(8),source:'file',restart_required:true}]}
   ]};
   fixture.control.hook=async({url,req})=>{
+   if(url.pathname==='/api/v1/control-plane/configuration/node')return {result:{fields:[],values:{},ready:false}};
+   if(url.pathname==='/api/v1/control-plane/configuration/distribution')return {result:{members:[],tasks:[]}};
    if(url.pathname==='/api/v1/control-plane/configuration')return failRead?{status:503,message:'configuration unavailable'}:{result:view};
    if(req.method!=='GET')throw Error('unexpected mutation '+req.method+' '+url.pathname);
    return null;
@@ -21,7 +23,7 @@ async function main(){
   await new Promise(resolve=>fixture.server.listen(0,'127.0.0.1',resolve));const origin='http://127.0.0.1:'+fixture.server.address().port;
   const page=await browser.newPage({viewport:{width,height:900}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
   try{
-   await page.goto(origin+'/#settings');await page.locator('#settings-configuration-tab').click();await page.locator('#configuration-source-summary').getByText('配置文件已读取',{exact:true}).waitFor();
+   await page.goto(origin+'/#settings');await page.locator('#settings-configuration-tab').click();await page.locator('#configuration-source-summary').getByText('配置文件已读取',{exact:true}).waitFor();await page.waitForFunction(()=>!state.configurationLoading);
    const group=key=>page.locator('details.configuration-section[data-configuration-section="'+key+'"]');
    check(width,'all groups initially collapsed',await page.locator('details.configuration-section').count()===2 && await page.locator('details.configuration-section[open]').count()===0,await page.locator('details.configuration-section').count());
    check(width,'tables initially hidden',await page.locator('.configuration-table').evaluateAll(nodes=>nodes.every(n=>!n.checkVisibility())),await page.locator('.configuration-table').count());
@@ -52,7 +54,7 @@ async function main(){
    const scroll=group('consensus').locator('.configuration-table-scroll');
    check(width,'expanded table scroll stays inside the group',await scroll.evaluate(n=>n.scrollWidth>=n.clientWidth&&getComputedStyle(n).overflowX==='auto'),'table readable on narrow viewport');
    await page.screenshot({path:path.join(out,'configuration-'+width+'.png'),fullPage:true});
-   await page.reload();await page.locator('#settings-configuration-tab').click();await page.locator('#configuration-source-summary').getByText('配置文件已读取',{exact:true}).waitFor();
+   await page.reload();await page.locator('#settings-configuration-tab').click();await page.locator('#configuration-source-summary').getByText('配置文件已读取',{exact:true}).waitFor();await page.waitForFunction(()=>!state.configurationLoading);
    check(width,'full page reload restores collapsed default',await page.locator('details.configuration-section[open]').count()===0,'session-only view preference');
    await group('runtime').locator('summary').click();await page.evaluate(()=>clearSessionData());
    check(width,'session cleanup clears expansion cache',await page.evaluate(()=>state.configurationExpandedSections.size===0),'no cross-account preference');

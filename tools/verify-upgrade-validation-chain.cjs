@@ -443,6 +443,39 @@ const CHECKS = [
   },
 
   {
+    rule:'INV-004 / 23',
+    title:'configuration editors follow capabilities and appear after effective values',
+    run:()=>{
+      const source=read('internal/api/console.html')||'';
+      const start=source.indexOf('    const configurationField =');
+      const end=source.indexOf('    const configurationValueRow =',start);
+      if(start<0||end<0)return 'missing capability classifier';
+      const classify=vm.runInNewContext(`(state,value,section)=>{${source.slice(start,end)}return configurationParameterCategory(value,section);}`,{});
+      const state={configurationDistribution:{local:{fields:[{path:'agent.allowed'}]}}};
+      for(const [value,section,want] of [
+        [{key:'allowed',restart_required:true},{key:'agent'},'editable'],
+        [{key:'other',restart_required:false},{key:'agent'},'readonly'],
+        [{key:'allowed',credential_ref:true},{key:'agent'},'readonly'],
+        [{key:'allowed',credential_ref:true,source:'policy'},{key:'agent'},'readonly'],
+        [{key:'allowed',source:'policy'},{key:'agent'},'policy'],
+        [{key:'summary'},{key:'cluster_policy'},'policy']
+      ])if(classify(state,value,section)!==want)return 'classification bypasses the whitelist, credentials or policy editor';
+      if(classify({}, {key:'allowed'},{key:'agent'})!=='pending')return 'unread capabilities are guessed';
+      if(classify({configurationDistribution:{local:{fields:[]}}},{key:'allowed'},{key:'agent'})!=='readonly')return 'an empty whitelist is widened';
+      const row=source.slice(end,source.indexOf('    const configurationSectionNode =',end));
+      if(row.includes('effective.append(')||!row.includes('edit.append(input);')||!row.includes("if(category==='editable')row.append(edit);")||!row.includes("if(category==='editable'&&field)"))return 'editor is misplaced or exposed on read-only rows';
+      if(!row.includes('input.disabled=!configurationEditAllowed()'))return 'edit placement bypasses authorization';
+      const editable=source.indexOf("const editable = appendCategory('editable'");
+      if(editable<0||source.indexOf("appendCategory('readonly'",editable)<editable||!source.includes('editable.append(policyEditor)'))return 'read-only parameters precede editable ones or the independent policy editor';
+      if(!source.includes("const expansionKey = category + ':' + sectionKey"))return 'split groups share an expansion state';
+      if(!source.includes('else if(oldFields!==JSON.stringify(local.fields??null)){renderConfiguration();}'))return 'late capabilities do not reclassify the projection';
+      const acceptance=read('tools/console-configuration-groups-acceptance.cjs')||'';
+      for(const name of ['all editors occupy the final column, separate from effective values','mixed module is split without losing or duplicating rows','read-only rows never gain inputs, including nonrestart fields','capability arrival replaces the pending category','split copies retain independent expansion states','policy editor remains in the upper area with its independent save action'])if(!acceptance.includes(name))return 'missing browser regression: '+name;
+      return true;
+    },
+  },
+
+  {
     rule:'INV-004',
     title:'deployment result survives a later failed operation',
     run:() => {
@@ -959,10 +992,16 @@ const READ_FILES = [
   'scripts/clusterguard-update-job.sh', 'scripts/clusterguard-upgrade.sh', 'scripts/build-hotfix-patch.sh',
   'internal/platformupdate/manager.go', 'internal/api/updates.go', 'internal/api/console.html',
   'hotfixes/hotfix-publications.json', 'tools/verify-hotfix-patch-catalog.cjs',
-  'tools/console-update-hotfix-recovery-acceptance.cjs', 'tools/console-configuration-distribution-acceptance.cjs', 'tools/verify-upgrade-validation-chain.cjs',
+  'tools/console-update-hotfix-recovery-acceptance.cjs', 'tools/console-configuration-groups-acceptance.cjs', 'tools/console-configuration-distribution-acceptance.cjs', 'tools/verify-upgrade-validation-chain.cjs',
 ];
 
 const MUTATIONS = [
+  {name:'read-only nonrestart parameter gets an editor',file:'internal/api/console.html',find:"return configurationField(value, section) ? 'editable' : 'readonly';",replace:"return !value.restart_required ? 'editable' : 'readonly';",rule:'configuration editors follow capabilities and appear after effective values'},
+  {name:'unread capabilities are assumed editable',file:'internal/api/console.html',find:"return 'pending';",replace:"return 'editable';",rule:'configuration editors follow capabilities and appear after effective values'},
+  {name:'input returns underneath effective value',file:'internal/api/console.html',find:'edit.append(input);',replace:'effective.append(input);',rule:'configuration editors follow capabilities and appear after effective values'},
+  {name:'readonly group gets modification cells',file:'internal/api/console.html',find:"if(category==='editable')row.append(edit);",replace:'row.append(edit);',rule:'configuration editors follow capabilities and appear after effective values'},
+  {name:'split groups share their collapse state',file:'internal/api/console.html',find:"const expansionKey = category + ':' + sectionKey;",replace:'const expansionKey = sectionKey;',rule:'configuration editors follow capabilities and appear after effective values'},
+  {name:'late capabilities never rebuild the groups',file:'internal/api/console.html',find:'else if(oldFields!==JSON.stringify(local.fields??null)){renderConfiguration();}',replace:'else if(false){renderConfiguration();}',rule:'configuration editors follow capabilities and appear after effective values'},
   {name:'English settings retain Chinese account heading',file:'internal/api/console.html',find:'"账户与安全": "Account and security"',replace:'"账户与安全": "账户与安全"',rule:'console language preference covers settings and keeps raw values intact'},
   {name:'language switch omits controller status',file:'internal/api/console.html',find:'renderAccountIdentity(); renderControlPlaneStatus(); renderConfiguration();',replace:'renderAccountIdentity(); renderConfiguration();',rule:'console language preference covers settings and keeps raw values intact'},
 

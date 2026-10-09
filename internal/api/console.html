@@ -472,7 +472,12 @@
     }
     .configuration-button-icon { width:14px; height:14px; flex:0 0 14px; }
  #configuration-confirm {box-sizing:border-box;max-width:min(680px,calc(100vw - 32px));max-height:85vh;overflow:auto;border:1px solid var(--line);border-radius:12px;padding:24px;}
- .configuration-sections { display:grid; gap:10px; min-width:0; }
+ .configuration-sections { display:grid; gap:18px; min-width:0; }
+    .configuration-category { display:grid; gap:10px; min-width:0; }
+    .configuration-category > .configuration-category-heading { margin:0; font-size:14px; }
+    .configuration-category-note { margin:0; color:var(--muted); font-size:12px; }
+    .configuration-edit-value input { width:110px; min-height:34px; }
+    .configuration-category[data-configuration-category="readonly"] { padding-top:18px; border-top:1px solid var(--line); }
     .configuration-section { min-width:0; border:1px solid var(--line); border-radius:8px; }
     .configuration-section > summary { display:grid; grid-template-columns:minmax(0,1fr) auto 12px; align-items:center; gap:12px; padding:12px 14px; cursor:pointer; list-style:none; }
     .configuration-section > summary::-webkit-details-marker { display:none; }
@@ -2942,6 +2947,15 @@
       "保存新密码": "Save new password",
       "参数下发操作": "Configuration distribution actions",
       "已选 {0} 个控制节点": "Controllers selected: {0}",
+      "可在页面变更": "Change from this page",
+      "需专用变更流程": "Requires a dedicated change workflow",
+      "变更能力尚未确认": "Change capabilities not confirmed",
+      "修改值": "New value",
+      "白名单参数检查并确认下发后逐节点重启；动态策略在独立策略区修改，下一轮生效。": "Review and confirm allowed parameter changes before controllers restart one at a time. Edit dynamic policies in their separate panel; they take effect on the next round.",
+      "以下参数仅供查看，不能从通用下发表单修改。": "The following parameters are read only here and require their dedicated change workflows.",
+      "尚未取得本节点变更白名单，暂不提供下发编辑器。": "This node's allowed fields have not been read. Distribution editors are unavailable until capabilities are confirmed.",
+      "通过下方独立策略区修改，不使用参数下发。": "Use the separate policy panel below instead of parameter distribution.",
+      "本节点没有可通过通用表单下发的参数。": "This node has no parameters available for distribution from the generic form.",
       "参数分组": "Parameter groups",
       "共 {0} 组 · {1} 项参数。点击展开查看当前值、来源和生效方式。": "Groups: {0} · Parameters: {1}. Expand to see current values, sources and how changes take effect.",
       "配置文件": "Configuration file",
@@ -3296,7 +3310,7 @@
     };
     const loadConfigurationDistribution = async () => {
      const epoch=++state.configurationReadEpoch;
-     try{const wasActive=configurationTaskActive();const [status,local]=await Promise.all([fetchResult('/api/v1/control-plane/configuration/distribution'),fetchResult('/api/v1/control-plane/configuration/node')]);if(epoch!==state.configurationReadEpoch)return;status.local=local;state.configurationDistribution=status;state.configurationDistributionError='';if(wasActive&&!configurationTaskActive()){state.configuration=await fetchResult('/api/v1/control-plane/configuration');if(epoch!==state.configurationReadEpoch)return;renderConfiguration();}}
+     try{const wasActive=configurationTaskActive();const oldFields=JSON.stringify(state.configurationDistribution?.local?.fields??null);const [status,local]=await Promise.all([fetchResult('/api/v1/control-plane/configuration/distribution'),fetchResult('/api/v1/control-plane/configuration/node')]);if(epoch!==state.configurationReadEpoch)return;status.local=local;state.configurationDistribution=status;if(state.configurationDistributionError)configurationMessage('');state.configurationDistributionError='';if(wasActive&&!configurationTaskActive()){state.configuration=await fetchResult('/api/v1/control-plane/configuration');if(epoch!==state.configurationReadEpoch)return;renderConfiguration();}else if(oldFields!==JSON.stringify(local.fields??null)){renderConfiguration();}}
      catch(error){if(error.staleSession||epoch!==state.configurationReadEpoch)return;state.configurationDistributionError=error.message||'unavailable';}
      renderConfigurationDistribution();
     };
@@ -3341,7 +3355,20 @@
       return Number.isNaN(parsed.getTime()) ? '-' : parsed.toLocaleString(state.language);
     };
 
-    const configurationValueRow = (value, section) => {
+    const configurationField = (value, section) => {
+      if (value.credential_ref) return null;
+      const path = String(section.key || '').replace(/^engine:/, '') + '.' + value.key;
+      const fields = state.configurationDistribution?.local?.fields;
+      return Array.isArray(fields) ? fields.find(field => field.path === path) || null : null;
+    };
+    const configurationParameterCategory = (value, section) => {
+      if (value.credential_ref) return 'readonly';
+      if (section.key === 'cluster_policy' || value.source === 'policy') return 'policy';
+      if (!Array.isArray(state.configurationDistribution?.local?.fields)) return 'pending';
+      return configurationField(value, section) ? 'editable' : 'readonly';
+    };
+
+    const configurationValueRow = (value, section, category) => {
       const row = document.createElement('tr');
       const key = document.createElement('td');
       key.textContent = value.key;
@@ -3349,11 +3376,12 @@
       effective.className = 'configuration-value';
       effective.textContent = value.value;
  const path=String(section.key||'').replace(/^engine:/,'')+'.'+value.key;
- const field=state.configurationDistribution?.local?.fields?.find(f=>f.path===path);
- if(field&&!value.credential_ref){
+ const field=configurationField(value,section);
+ const edit = document.createElement('td');edit.className='configuration-edit-value';
+ if(category==='editable'&&field){
  const input=document.createElement('input');input.type='number';input.min=field.minimum;input.max=field.maximum;input.step='1';input.inputMode='numeric';input.style.width='110px';input.dataset.configurationPath=path;input.setAttribute('aria-label',path);
  input.value=Object.hasOwn(state.configurationDraft,path)?state.configurationDraft[path]:(state.configurationDistribution.local.values[path]??'');
- input.disabled=!configurationEditAllowed();input.addEventListener('input',()=>{state.configurationDraft[path]=input.value;state.configurationDraftEpoch++;state.configurationIntent=null;byId('configuration-confirm').close();});effective.append(document.createElement('br'),input);
+ input.disabled=!configurationEditAllowed();input.addEventListener('input',()=>{state.configurationDraft[path]=input.value;state.configurationDraftEpoch++;state.configurationIntent=null;byId('configuration-confirm').close();});edit.append(input);
  }
       const source = document.createElement('td');
       const sourceTag = document.createElement('span');
@@ -3370,22 +3398,26 @@
       const noteParts = [];
       if (value.credential_ref) noteParts.push(ui('凭据引用'));
       if (value.note) noteParts.push(value.note);
- if(!field&&section.key!=='cluster_policy')noteParts.push(ui('此参数需专用变更流程，不能直接下发。'));
+ if(category==='readonly')noteParts.push(ui('此参数需专用变更流程，不能直接下发。'));
+ if(category==='policy')noteParts.push(ui('通过下方独立策略区修改，不使用参数下发。'));
       note.textContent = noteParts.length ? noteParts.join(' · ') : '-';
       row.append(key, effective, source, restart, note);
+      if(category==='editable')row.append(edit);
       return row;
     };
 
-    const configurationSectionNode = section => {
+    const configurationSectionNode = (section, category) => {
       const wrapper = document.createElement('details');
       wrapper.className = 'configuration-section';
       const sectionKey = String(section.key || section.label || '');
       wrapper.dataset.configurationSection = sectionKey;
-      wrapper.open = state.configurationExpandedSections.has(sectionKey);
+      const expansionKey = category + ':' + sectionKey;
+      wrapper.dataset.configurationExpansion = expansionKey;
+      wrapper.open = state.configurationExpandedSections.has(expansionKey);
       wrapper.addEventListener('toggle', () => {
         if (!wrapper.isConnected) return;
-        if (wrapper.open) state.configurationExpandedSections.add(sectionKey);
-        else state.configurationExpandedSections.delete(sectionKey);
+        if (wrapper.open) state.configurationExpandedSections.add(expansionKey);
+        else state.configurationExpandedSections.delete(expansionKey);
       });
       const summary = document.createElement('summary');
       const headingGroup = document.createElement('div');
@@ -3408,7 +3440,9 @@
       table.className = 'configuration-table';
       const head = document.createElement('thead');
       const headRow = document.createElement('tr');
-      [ui('参数'), ui('生效值'), ui('来源'), ui('生效方式'), ui('说明')].forEach(label => {
+      const columns = [ui('参数'), ui('生效值'), ui('来源'), ui('生效方式'), ui('说明')];
+      if(category==='editable')columns.push(ui('修改值'));
+      columns.forEach(label => {
         const cell = document.createElement('th');
         cell.textContent = label;
         headRow.append(cell);
@@ -3416,7 +3450,7 @@
       head.append(headRow);
       table.append(head);
       const body = document.createElement('tbody');
-      (section.values || []).forEach(value => body.append(configurationValueRow(value,section)));
+      (section.values || []).forEach(value => body.append(configurationValueRow(value,section,category)));
       table.append(body);
       const scroll = document.createElement('div');
       scroll.className = 'configuration-table-scroll';
@@ -3428,13 +3462,16 @@
     const renderConfiguration = () => {
  renderConfigurationDistribution();
       const container = byId('configuration-sections');
+      // Retain the independent policy form and its handlers/draft across table redraws.
+      const policyEditor = byId('configuration-policy');
+      policyEditor.remove();
       const view = state.configuration;
       const reload = byId('reload-configuration');
       if (reload) reload.disabled = state.configurationLoading;
       // Read native state before replacement; a toggle event may still be queued.
       if (view) container.querySelectorAll('details.configuration-section').forEach(group => {
-        if (group.open) state.configurationExpandedSections.add(group.dataset.configurationSection);
-        else state.configurationExpandedSections.delete(group.dataset.configurationSection);
+        if (group.open) state.configurationExpandedSections.add(group.dataset.configurationExpansion);
+        else state.configurationExpandedSections.delete(group.dataset.configurationExpansion);
       });
       container.textContent = '';
       if (state.configurationError) {
@@ -3446,6 +3483,7 @@
       const summary = byId('configuration-source-summary');
       const meta = byId('configuration-file-meta');
       if (!view) {
+        policyEditor.hidden = true; container.append(policyEditor);
         summary.textContent = state.configurationLoading ? ui('读取中') : ui('不可用');
         summary.className = `badge ${state.configurationLoading ? '' : 'danger'}`;
         meta.textContent = '';
@@ -3469,7 +3507,34 @@
       const messages = view.warnings || [];
       warnings.hidden = messages.length === 0;
       warnings.textContent = messages.map(localizeUIMessage).join(' / ');
-      (view.sections || []).forEach(section => container.append(configurationSectionNode(section)));
+      const partitions = { editable: [], policy: [], pending: [], readonly: [] };
+      for (const section of view.sections || []) {
+        for (const category of Object.keys(partitions)) {
+          const values = (section.values || []).filter(value => configurationParameterCategory(value, section) === category);
+          if(values.length)partitions[category].push({...section, values});
+        }
+      }
+      const appendCategory = (category, title, note) => {
+        const area = document.createElement('section');area.className='configuration-category';area.dataset.configurationCategory=category;
+        const heading = document.createElement('h4');heading.className='configuration-category-heading';heading.textContent=ui(title);
+        const description = document.createElement('p');description.className='configuration-category-note';description.textContent=ui(note);
+        area.append(heading, description);container.append(area);return area;
+      };
+      const editable = appendCategory('editable', '可在页面变更', '白名单参数检查并确认下发后逐节点重启；动态策略在独立策略区修改，下一轮生效。');
+      partitions.editable.forEach(section => editable.append(configurationSectionNode(section, 'editable')));
+      if(!partitions.editable.length && Array.isArray(state.configurationDistribution?.local?.fields)) {
+        const empty = document.createElement('p');empty.className='settings-note';empty.textContent=ui('本节点没有可通过通用表单下发的参数。');editable.append(empty);
+      }
+      partitions.policy.forEach(section => editable.append(configurationSectionNode(section, 'policy')));
+      policyEditor.hidden=false;editable.append(policyEditor);
+      if(partitions.pending.length) {
+        const pending=appendCategory('pending','变更能力尚未确认','尚未取得本节点变更白名单，暂不提供下发编辑器。');
+        partitions.pending.forEach(section => pending.append(configurationSectionNode(section, 'pending')));
+      }
+      if(partitions.readonly.length) {
+        const readonly=appendCategory('readonly','需专用变更流程','以下参数仅供查看，不能从通用下发表单修改。');
+        partitions.readonly.forEach(section => readonly.append(configurationSectionNode(section, 'readonly')));
+      }
     };
 
     const loadConfiguration = async () => {
@@ -3478,6 +3543,7 @@
       renderConfiguration();
       try {
         state.configuration = await fetchResult('/api/v1/control-plane/configuration');
+ renderConfiguration();
  await loadConfigurationDistribution();
       } catch (error) {
         if (error && error.staleSession) return;
@@ -3610,7 +3676,8 @@
       state.controlPlane = null; state.platformVersion = null;
       state.configuration = null; state.configurationError = ''; state.configurationLoading = false;
       state.configurationExpandedSections.clear();
-      byId('configuration-sections').replaceChildren();
+      const policyEditor=byId('configuration-policy');policyEditor.hidden=true;policyEditor.remove();
+      byId('configuration-sections').replaceChildren(policyEditor);
  state.configurationDistribution=null;state.configurationBusy=false;state.configurationBusyOwner=null;state.configurationDraft={};state.configurationTargets=null;state.configurationDraftEpoch++;state.configurationUnlocked=false;state.configurationIntent=null;state.configurationReadEpoch++;byId('configuration-confirm').close();renderConfigurationDistribution();
       state.clusterPolicy = null; state.clusterPolicySaving = false;
       byId('cluster-policy-status').textContent = '';
