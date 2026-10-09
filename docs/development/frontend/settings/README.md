@@ -7,7 +7,7 @@
 | 状态设置 | Leader、quorum、任务状态展示 | [控制面状态](status.md) |
 | 状态设置 | 修改密码、退出、登录失效 | [账户与会话](account.md) |
 | 状态设置 | 语言、自动刷新频率 | [显示偏好](preferences.md) |
-| 运行参数 | 配置值、来源、重启提示 | [配置只读视图](configuration.md) |
+| 运行参数 | 配置值、来源、参数编辑、指定节点下发与重启核验 | [运行参数与节点下发](configuration.md) |
 | 运行参数 | 修改或清除引擎级全局覆盖 | [引擎策略编辑](cluster-policy.md) |
 | 版本更新 | 上传、确认、retry/resume、历史展示 | [升级与热修交互](updates.md) |
 

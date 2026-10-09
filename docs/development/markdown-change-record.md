@@ -50,6 +50,9 @@ recorded-through: 73ff4a3
 
 | 2026-10-09 | `docs/development/backend/settings/configuration.md` | M | 3.1.2.1新增25项整数编辑、指定控制节点、预检绑定、Raft任务、固定Helper滚动重启、实际值回执与失败重试回退；区分生产验收。 |
 
+| 2026-10-09 | `docs/development/frontend/settings/README.md` | M | 参数入口指向编辑、选定控制节点下发与实际重启核验，移除只读入口误导。 |
+| 2026-10-09 | `docs/development/backend/settings/README.md` | M | 参数导航加入plan/dispatch/permit、Raft配置任务和逐节点重启核验路径。 |
+
 ## 批次说明
 
 本次新增功能按用户纠正使用3.1.2.1；同步中英命名页的PATCH递增/BUGFIX重置及revision=0边界，更新版本规范的产品身份和唯一主线口径。
