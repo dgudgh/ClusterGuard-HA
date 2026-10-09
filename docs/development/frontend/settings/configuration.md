@@ -76,6 +76,18 @@
 
 回归：[真实浏览器编辑与下发验收](../../../../tools/console-configuration-distribution-acceptance.cjs)新增五组断言（1440/390 各一组）：名称／ID／地址三件事实、“本机”只出现在服务本页的控制节点、复选框 16 像素、卡片内不出现“在线／离线”措辞、点击卡片切换自身复选框。[统一校验链](../../delivery/hotfix-catalog-validation.md)的 `INV-004 / 23` 用页面实际下发的渲染循环（stub DOM）反查同一组事实，并有五条变异。
 
+## 3.1.2.5：卡片角色标记与端点链接
+
+在 3.1.2.4 的卡片基础上按现场截图调整视觉，事实来源不变：
+
+- 每卡恰好一个角色标记，优先级“本机 > Leader > 投票节点”。三者都有据可查：服务本页的控制节点来自 `state.configurationDistribution.local.node_id`，当前 Leader 来自 `state.controlPlane.leader_id`，出现在下发成员列表本身即投票节点。标记配色只沿用既有变量（蓝 `--blue-soft/--accent-strong`、橙 `--warning-soft/--warning`、绿 `--success` 的浅底），不新增色相；本机同时是 Leader 时只显示“本机”。
+- 复选框移到卡片右侧，固定 18×18 像素；尺寸规则仍在卡片作用域内，覆盖全局 `input { width:100%; min-height:34px }`。
+- 地址行带链接图标。Leader 记录的可信端点自带协议（`internal/runtime/runtime.go` 拼 `apiScheme://host:port`，形如 `https://192.168.102.152:3000`），带 `http(s)://` 时渲染为新页打开的链接；裸 IP／主机名仍是纯文本，不拼协议。链接在 `<label>` 内属交互元素，点击打开新页不会触发卡片复选框。
+
+三件事实互不推导、不显示在线／离线的规则与 3.1.2.4 相同。
+
+回归：真实浏览器验收在 1440/390 各更新断言——单角色标记序列（本机／Leader／投票节点，fixture 让本机与 Leader 落在不同节点）、`https://` 端点渲染为新页链接、复选框 18 像素。统一校验链 `INV-004 / 23` 的 stub DOM 反查同步更新，变异增至八条（新增：复选框移回事实左侧、投票节点标记丢失、`https` 端点退化为纯文本）。
+
 ## 审查修正：范围、时限与可复跑证据
 
 字段`scope=cluster`要求全部投票节点；子集选择时前端拒绝预检并显示双语原因，后端独立检查当前成员。仅`scope=node`的Raft应用时限和Agent并发数可选子集。确认框显示后端计划的逐节点`step_timeout_seconds`，该时限参与摘要并持久化，Leader变化不以新Leader本地配置替换。

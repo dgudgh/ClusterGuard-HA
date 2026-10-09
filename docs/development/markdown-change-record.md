@@ -46,7 +46,7 @@ recorded-through: 73ff4a3
 | 2026-10-09 | `docs/development/backend/settings/update-history.md` | M | 记录Snapshot验签后继及部署判据。新增staging与updating共用节点百分比的读取投影、原始状态保留和三节点持久化回归入口。 |
 
 | 2026-10-09 | `docs/development/frontend/settings/preferences.md` | M | 语言设置接入静态原文绑定、动态双语目录和完整重绘；明确业务数据/原始证据、内存偏好及无请求/表单保持边界，登记四引擎八页面真实浏览器与目录回归。 |
-| 2026-10-09 | `docs/development/frontend/settings/configuration.md` | M | 记录参数分组默认折叠、点击/键盘展开、刷新与双语保留、注销清空、局部表格滚动和专用真实浏览器验收；增加3.1.2.1页面编辑、选定控制节点、二次确认、逐节点结果与失效拦截，记录隔离浏览器范围。 2026-10-09 追加登记「控制节点卡片」批次：目标选择由裸 UUID 改为名称/不可变 ID/可信 API 地址三件独立事实的卡片，只在事实成立时标「本机」「Leader」，不显示控制面没有数据源的在线/离线，复选框固定在卡片作用域内 16 像素，卡片是 label 且点击任意处切换自身复选框。 |
+| 2026-10-09 | `docs/development/frontend/settings/configuration.md` | M | 记录参数分组默认折叠、点击/键盘展开、刷新与双语保留、注销清空、局部表格滚动和专用真实浏览器验收；增加3.1.2.1页面编辑、选定控制节点、二次确认、逐节点结果与失效拦截，记录隔离浏览器范围。 2026-10-09 追加登记「控制节点卡片」批次：目标选择由裸 UUID 改为名称/不可变 ID/可信 API 地址三件独立事实的卡片，只在事实成立时标「本机」「Leader」，不显示控制面没有数据源的在线/离线，复选框固定在卡片作用域内 16 像素，卡片是 label 且点击任意处切换自身复选框。 2026-10-09 追加登记「卡片角色标记与端点链接」批次：每卡改为恰好一个角色标记（本机>Leader>投票节点，配色只沿用既有变量），复选框移到卡片右侧固定 18 像素，地址行带链接图标且 `http(s)://` 可信端点渲染为新页链接，裸地址仍是纯文本；浏览器验收与 INV-004/23 反查及变异同步更新。 |
 
 | 2026-10-09 | `docs/development/backend/settings/configuration.md` | M | 3.1.2.1新增25项整数编辑、指定控制节点、预检绑定、Raft任务、固定Helper滚动重启、实际值回执与失败重试回退；区分生产验收。 |
 
@@ -88,5 +88,7 @@ recorded-through: 73ff4a3
 本次目录规则调整：当前3.1.1.3入口按产品版本定位，renderer同步新旧目录识别与台账解包路径示例；HTML重建。
 
 控制节点卡片：目标选择不再是一行裸 UUID 加被全局 `input` 规则拉大的复选框，而是每个投票节点一张卡片——复选框、节点名称、不可变 ID、该投票节点的可信 API 地址。名称来自节点清单，地址优先取 Leader 记录的端点，两者都不猜测。卡片不写「在线/离线」：控制面没有逐投票节点存活探测，`controller_members` 与 `members` 都只带身份与端点，要显示就得先补后端接口。源码改动在 `internal/api/console.html`（非 md，不在本页登记范围）；本批 md 只改了 `docs/development/frontend/settings/configuration.md` 与本页。这份 md 不在 `docs/build-html-docs.mjs` 的生成清单里，因此本批**不重建** `docs/html`。
+
+卡片角色标记与端点链接（2026-10-09 第二批）：按现场截图把每卡的角色标记收敛为恰好一个（本机>Leader>投票节点），配色只沿用既有变量不新增色相；复选框移到右侧固定 18 像素；地址行加链接图标，Leader 记录的端点自带 `apiScheme://`（`internal/runtime/runtime.go`），带协议就渲染为新页链接、裸地址仍纯文本。本批 md 同样只改 `configuration.md` 与本页，均不在 `docs/build-html-docs.mjs` 清单内（`grep -c development` 实测 0），**不重建** `docs/html`。
 
 | 2026-10-09 | `docs/development/backend/settings/update-history.md` | M | 操作执行前产品身份按节点观测、同operation_id持久化；RPM基线独立，缺失历史不猜测，补充实跑回归入口。 |
