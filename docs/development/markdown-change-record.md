@@ -27,7 +27,7 @@ recorded-through: 73ff4a3
 | 2026-10-08 | `docs/README.md` | M | 文档中心导航表新增一行「改文档 → Markdown 变更记录」，让台账在入口页可发现。 |
 | 2026-10-08 | `docs/development/README.md` | M | 开发入口在「先确定问题发生在哪一层」之后补一句：改动任何 Markdown 都要登记台账并跑对应门禁。 |
 | 2026-10-08 | `docs/development/delivery/README.md` | M | 热修命名条从「四段版本 `MAJOR.CAPABILITY.INTERNAL.BUGFIX`」改为「新封板版本线从 `3.1.1.1` 开始、四段为 `MAJOR.MINOR.PATCH.BUGFIX`」，并写明旧 2.x/HF 文件名全部冻结为历史。 当前交付按产品版本目录与版本ID定位，不用旧RPM目录作当前入口。 |
-| 2026-10-08 | `docs/development/markdown-change-record.md` | A | 本页：建立 md 变更台账，规定增删改都要登记，并由 `tools/verify-markdown-change-record.cjs` 做结构与覆盖校验。 2026-10-09 追加登记「升级预览版本语义修复」批次与 `updates.md` 的展示口径变更。 |
+| 2026-10-08 | `docs/development/markdown-change-record.md` | A | 本页：建立 md 变更台账，规定增删改都要登记，并由 `tools/verify-markdown-change-record.cjs` 做结构与覆盖校验。 2026-10-09 追加登记「升级预览版本语义修复」批次与 `updates.md` 的展示口径变更。 2026-10-09 追加登记「控制节点卡片」批次与对应批次说明。 |
 | 2026-10-08 | `docs/development/rules/change-policy.md` | M | 新增「文档变更必须登记」一节：登记范围、`A`/`M`/`D` 判据、门禁的三种判红情形、`git add` 后门禁才可见、通过后重建生成页。 |
 | 2026-10-08 | `docs/development/rules/licensing.md` | M | 许可声明扫描排除整个根 .workbuddy 本机资料；明确业务/文档及嵌套同名目录仍须扫描并拒绝错误声明。 |
 | 2026-10-08 | `docs/en-US/hotfix-package-naming.md` | A | 新增英文版包命名规则页；本轮重建为与中文逐节对齐的 7 节结构，补回初版漏掉的「禁止的名字」一节与 `.cgupgrade` 跨语法禁令；迁移示例改为新运行时 ID HF-2026-1008-02，并说明同旧 ID 不同摘要会导致上传冲突。 补充运行产品版本、RPM兼容基线和历史签名字段来源；目录按四段版本，不以RPM来源命名。 同步版本ID、产品目录、验签替代与旧HF兼容规则。 |
@@ -46,7 +46,7 @@ recorded-through: 73ff4a3
 | 2026-10-09 | `docs/development/backend/settings/update-history.md` | M | 记录Snapshot验签后继及部署判据。新增staging与updating共用节点百分比的读取投影、原始状态保留和三节点持久化回归入口。 |
 
 | 2026-10-09 | `docs/development/frontend/settings/preferences.md` | M | 语言设置接入静态原文绑定、动态双语目录和完整重绘；明确业务数据/原始证据、内存偏好及无请求/表单保持边界，登记四引擎八页面真实浏览器与目录回归。 |
-| 2026-10-09 | `docs/development/frontend/settings/configuration.md` | M | 记录参数分组默认折叠、点击/键盘展开、刷新与双语保留、注销清空、局部表格滚动和专用真实浏览器验收；增加3.1.2.1页面编辑、选定控制节点、二次确认、逐节点结果与失效拦截，记录隔离浏览器范围。 |
+| 2026-10-09 | `docs/development/frontend/settings/configuration.md` | M | 记录参数分组默认折叠、点击/键盘展开、刷新与双语保留、注销清空、局部表格滚动和专用真实浏览器验收；增加3.1.2.1页面编辑、选定控制节点、二次确认、逐节点结果与失效拦截，记录隔离浏览器范围。 2026-10-09 追加登记「控制节点卡片」批次：目标选择由裸 UUID 改为名称/不可变 ID/可信 API 地址三件独立事实的卡片，只在事实成立时标「本机」「Leader」，不显示控制面没有数据源的在线/离线，复选框固定在卡片作用域内 16 像素，卡片是 label 且点击任意处切换自身复选框。 |
 
 | 2026-10-09 | `docs/development/backend/settings/configuration.md` | M | 3.1.2.1新增25项整数编辑、指定控制节点、预检绑定、Raft任务、固定Helper滚动重启、实际值回执与失败重试回退；区分生产验收。 |
 
@@ -86,5 +86,7 @@ recorded-through: 73ff4a3
 9. **本机参考与门禁修复（2026-10-08）。** 本机记忆逐章节原文拆分到忽略的 `.workbuddy/reference/` 并保留完整快照和摘要对拍；入库规则说明根本机目录的扫描边界。许可 CLI 回归覆盖本机归档不误报、真实源码/文档/嵌套同名目录错误声明仍拒绝。热修修订链支持版本文件名，继续验证递增修订及双向替代。流程不再固定旧检查数量；执行完整 HTML 重建。私有新补丁用于交付尚未入包的主线修复，制品及现场验收分开记录。
 
 本次目录规则调整：当前3.1.1.3入口按产品版本定位，renderer同步新旧目录识别与台账解包路径示例；HTML重建。
+
+控制节点卡片：目标选择不再是一行裸 UUID 加被全局 `input` 规则拉大的复选框，而是每个投票节点一张卡片——复选框、节点名称、不可变 ID、该投票节点的可信 API 地址。名称来自节点清单，地址优先取 Leader 记录的端点，两者都不猜测。卡片不写「在线/离线」：控制面没有逐投票节点存活探测，`controller_members` 与 `members` 都只带身份与端点，要显示就得先补后端接口。源码改动在 `internal/api/console.html`（非 md，不在本页登记范围）；本批 md 只改了 `docs/development/frontend/settings/configuration.md` 与本页。这份 md 不在 `docs/build-html-docs.mjs` 的生成清单里，因此本批**不重建** `docs/html`。
 
 | 2026-10-09 | `docs/development/backend/settings/update-history.md` | M | 操作执行前产品身份按节点观测、同operation_id持久化；RPM基线独立，缺失历史不猜测，补充实跑回归入口。 |

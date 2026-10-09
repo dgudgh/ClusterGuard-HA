@@ -60,6 +60,22 @@
 
 回归：[真实浏览器编辑与下发验收](../../../../tools/console-configuration-distribution-acceptance.cjs)，覆盖1440/390、数值边界、目标选择、预检差异、任务提交与实际核验区别、失败与读错误、迟到预检、会话清理、双语和窄屏。它使用隔离API响应，不作为生产节点参数生效证据。
 
+## 3.1.2.4：控制节点卡片
+
+“控制节点参数下发”的目标选择从一行裸 UUID 改为每个投票节点一张卡片：复选框、节点名称、节点不可变 ID、该投票节点的可信 API 地址。三件事实各自独立，互不推导：
+
+- 名称来自节点清单（`GET /api/v1/nodes` 的 `node_name`）；清单没有这个 `resource_id` 时显示“未登记节点”，不回退成 ID。
+- ID 是这个投票节点的不可变身份；选择、编辑草稿、切换到别的集群都不改写它。
+- 地址优先取 Leader 为该投票节点记录的可信 API 端点（`members[].api_address`），缺失时回退到清单的 `ip_address`／`hostname`，都没有时显示“无可用地址”。
+
+名称旁只在事实成立时加标记：服务本页的控制节点显示“本机”，当前 Leader 显示“Leader”，两者可同时出现（`本机 · Leader`）。标记来自 `state.configurationDistribution.local.node_id` 与 `state.controlPlane.leader_id`，不来自被选中的集合。
+
+卡片**不显示“在线／离线”**：控制面没有控制器存活探测。`/api/v1/control-plane/status` 的 `controller_members` 和 `configuration/distribution` 的 `members` 都只带身份与端点（`resource_id`、`raft_address`／`api_address`），没有任何逐投票节点可达性字段。要显示在线／离线必须先在后端补探测接口，属新功能；在此之前页面不猜测状态。
+
+复选框固定 16×16 像素并沿用主题强调色。控制台全局的 `input { width:100%; min-height:34px }`（窄屏与 review 模式另有 36／44 像素）会把它拉成长方块，这条尺寸规则必须留在卡片作用域内。卡片本身是 `<label>`，点击卡片任意位置切换它自己的复选框；复选框仍带 `data-configuration-node`，提交仍按 `input:checked` 收集目标集合。
+
+回归：[真实浏览器编辑与下发验收](../../../../tools/console-configuration-distribution-acceptance.cjs)新增五组断言（1440/390 各一组）：名称／ID／地址三件事实、“本机”只出现在服务本页的控制节点、复选框 16 像素、卡片内不出现“在线／离线”措辞、点击卡片切换自身复选框。[统一校验链](../../delivery/hotfix-catalog-validation.md)的 `INV-004 / 23` 用页面实际下发的渲染循环（stub DOM）反查同一组事实，并有五条变异。
+
 ## 审查修正：范围、时限与可复跑证据
 
 字段`scope=cluster`要求全部投票节点；子集选择时前端拒绝预检并显示双语原因，后端独立检查当前成员。仅`scope=node`的Raft应用时限和Agent并发数可选子集。确认框显示后端计划的逐节点`step_timeout_seconds`，该时限参与摘要并持久化，Leader变化不以新Leader本地配置替换。
