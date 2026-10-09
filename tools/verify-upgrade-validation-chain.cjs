@@ -413,6 +413,36 @@ const CHECKS = [
   },
 
   {
+    rule:'INV-009 / 23',
+    title:'configuration selection and fixed actions describe the current members',
+    run:()=>{
+      const source=read('internal/api/console.html')||'';
+      const start=source.indexOf('const renderConfigurationSelection = () => {');
+      const end=source.indexOf('    const renderConfigurationDistribution = () => {',start);
+      if(start<0||end<0) return 'the selection count has no single renderer';
+      const resolve=vm.runInNewContext(`(state)=>{
+        const cell={textContent:''}; const byId=()=>cell;
+        const ui=(template,count)=>template.replace('{0}',count);
+        ${source.slice(start,end)}
+        renderConfigurationSelection(); return cell.textContent;
+      }`,{});
+      const members=['one','two','three'].map(resource_id=>({resource_id}));
+      for(const [targets,count] of [[null,3],[['one','three'],2],[[],0],[['one','removed'],1]]){
+        if(resolve({configurationDistribution:{members},configurationTargets:targets})!==`已选 ${count} 个控制节点`) return 'selection count does not match the current members';
+      }
+      if(!source.includes("configuration-confirm').close();renderConfigurationSelection();")) return 'card selection changes do not refresh the count';
+      if(!/\.configuration-action-bar \{[^}]*position:fixed/.test(source)) return 'the configuration actions no longer stay at the viewport bottom';
+      if(!source.includes('messages.map(localizeUIMessage)')) return 'known configuration warnings bypass the selected language';
+      if(!source.includes('共 {0} 组 · {1} 项参数。点击展开查看当前值、来源和生效方式。')) return 'the group summary lost actual counts';
+      const acceptance=read('tools/console-configuration-distribution-acceptance.cjs')||'';
+      for(const text of ['selected count and border immediately follow card click','fixed toolbar is hidden when leaving parameters','notification does not cover fixed action buttons','English note and warning are localized']){
+        if(!acceptance.includes(text)) return `missing browser regression: ${text}`;
+      }
+      return true;
+    },
+  },
+
+  {
     rule:'INV-004',
     title:'deployment result survives a later failed operation',
     run:() => {
@@ -942,6 +972,9 @@ const MUTATIONS = [
   {name:'wrapper inherits unrelated product source',file:'scripts/clusterguard-update-job.sh',find:'if .operation_id==$operation then {from_version,from_node_versions,to_version} else {} end',replace:'{from_version,from_node_versions,to_version}',rule:'operation product transition is separate from RPM baseline'},
   {name:'hotfix staging becomes zero again',file:'internal/platformupdate/manager.go',find:'case "staging", "updating":',replace:'case "updating":',rule:'hotfix staging retains node progress and its console stage'},
   {name:'hotfix staging jumps back to console preparation',file:'internal/api/console.html',find:"['staging', 'updating', 'rollback'].includes(phase) ? 1 : 0",replace:"['updating', 'rollback'].includes(phase) ? 1 : 0",rule:'hotfix staging retains node progress and its console stage'},
+  {name:'selected controller count is hardcoded',file:'internal/api/console.html',find:"ui('已选 {0} 个控制节点', count)",replace:"ui('已选 {0} 个控制节点', 3)",rule:'configuration selection and fixed actions describe the current members'},
+  {name:'fixed configuration actions disappear on scroll',file:'internal/api/console.html',find:'.configuration-action-bar { position:fixed;',replace:'.configuration-action-bar { position:static;',rule:'configuration selection and fixed actions describe the current members'},
+  {name:'configuration warnings ignore UI language',file:'internal/api/console.html',find:'messages.map(localizeUIMessage)',replace:'messages',rule:'configuration selection and fixed actions describe the current members'},
   {name:'retired historical failure occupies current summary again',file:'internal/api/console.html',find:'item.incompatible || item.superseded_by',replace:'item.incompatible || false',rule:'version identity and signed supersession reach the current subject'},
 
   { name:'filename migration leaves runtime behind', file:'scripts/build-hotfix-patch.sh', find:'internal/buildinfo.ProductVersion=${patch_version}', replace:'internal/buildinfo.Release=${patch_version}', rule:'runtime and history use their own verified product versions' },

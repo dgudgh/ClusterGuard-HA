@@ -173,7 +173,7 @@ func TestSettingsExposesReadOnlyEffectiveConfigurationSection(t *testing.T) {
 		"const renderConfiguration = () =>",
 		"effective.textContent = value.value;",
 		"restartTag.textContent = value.restart_required ? ui('需重启') : ui('可热改');",
-		"byId('configuration-reload-note').textContent = view.reload_supported ? ui('本节点支持重新加载配置。') : view.reload_note;",
+		"byId('configuration-reload-note').textContent = view.reload_supported ? ui('本节点支持重新加载配置。') : localizeUIMessage(view.reload_note);",
 	} {
 		if !strings.Contains(page, contract) {
 			t.Fatalf("console missing configuration rendering contract %q", contract)
