@@ -4,6 +4,10 @@
 
 **开发或文档修改前先读[根规则](../../AGENTS.md)、[门禁执行流程](validation-gate-workflow.md)和[阅读顺序与适用规则](../development/rules/README.md)，再进入[开发模块](../development/README.md)。** 涉及升级契约范围的修改或动作前，完整读取[强制契约 v2](upgrade-validation-chain.md)。
 
+## 当前完整介质 / Current Installation Kit
+
+[3.1.2.8 双语发布说明 / release notes](release-3.1.2.8.md) · [GitHub v3.1.2.8](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v3.1.2.8)。产品版本 3.1.2.8，RPM 兼容基线 2.2-106；GitHub 预发布，FIELD OPEN。 / Product 3.1.2.8, RPM baseline 2.2-106; prerelease with FIELD OPEN. Historical entries below preserve their original scope.
+
 ## 按资料作用查找
 
 | 资料作用 | 入口与效力 |
@@ -59,7 +63,7 @@
 ## 历史资料列表（原 2.2-39 基线）
 
 2.2-105 介质记录见 [2.2-105 发布说明](release-2.2.105.md)。英文侧发布说明只维护到
-`release-2.2.47.md`；此后的发布说明**没有英文对应版本**，只维护简体中文，现存
+`release-2.2.47.md`；后续历史 2.2 发布说明**没有英文对应版本**，只维护简体中文，现存
 `release-2.2.69.md` 至 `release-2.2.105.md`，按版本号倒序存放在本目录。
 
 下方保留原正式基线 `2.2-39` 的资料链接，列表次序不代表本次修改或动作的阅读优先级；现行任务先进入上方规则与场景入口。

@@ -6,6 +6,7 @@
 
 | 当前任务 | 下一份文档 |
 | --- | --- |
+| 当前完整安装介质 / Current kit | [3.1.2.8 release notes](release-3.1.2.8.md)，预发布 / prerelease，FIELD OPEN |
 | 安装 / Installation | [ClusterGuard HA 离线安装与部署手册](offline-rpm-install.md) |
 | 数据库接入 / Database preparation | [ClusterGuard HA 数据库接入手册](database-preparation.md) |
 | 运维 / Operations | [ClusterGuard HA 运维操作手册](operations-manual.md) |

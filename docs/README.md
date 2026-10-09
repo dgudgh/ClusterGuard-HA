@@ -8,6 +8,7 @@
 
 | 当前任务 | 下一份文档 |
 | --- | --- |
+| 当前完整安装介质 / Current kit | [3.1.2.8 release notes](zh-CN/release-3.1.2.8.md)，预发布 / prerelease，FIELD OPEN |
 | 开发：前端 / Frontend | [前端页面](development/frontend/README.md) |
 | 开发：后端 / Backend | [后端功能](development/backend/README.md) |
 | 打包与交付 / Delivery | [交付流程](development/delivery/README.md) |

@@ -4,6 +4,10 @@
 
 **修改前先读[根规则](../AGENTS.md)、[门禁执行流程](zh-CN/validation-gate-workflow.md)和[阅读顺序与适用规则](development/rules/README.md)，再进入[开发模块](development/README.md)。** 涉及升级契约范围的修改或动作前，完整读取[强制契约 v2](zh-CN/upgrade-validation-chain.md)。 / Before changes, read the repository rules, gate workflow, and applicable rules, then select a development module; read the complete mandatory contract before changes or actions within its scope.
 
+## 当前完整介质 / Current Installation Kit
+
+[3.1.2.8 双语发布说明 / release notes](zh-CN/release-3.1.2.8.md) · [GitHub v3.1.2.8](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v3.1.2.8)。产品版本 3.1.2.8，RPM 兼容基线 2.2-106；GitHub 预发布，FIELD OPEN。 / Product 3.1.2.8, RPM baseline 2.2-106; prerelease with FIELD OPEN. Historical entries below preserve their original scope.
+
 ## Document Roles / 资料作用
 
 | Role / 作用 | Entry / 入口 |

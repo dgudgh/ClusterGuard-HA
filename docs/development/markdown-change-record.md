@@ -24,9 +24,9 @@ recorded-through: 73ff4a3
 | 日期 | 文件 | 变更 | 说明 |
 | --- | --- | --- | --- |
 | 2026-10-08 | `AGENTS.md` | M | 在「所有修改必须遵守」里新增一条：任何 Markdown 的新增/删除/修改都必须在 `docs/development/markdown-change-record.md` 登记并过 `verify-markdown-change-record.cjs`，改了 md 必须重建 `docs/html`，未登记不得提交。 |
-| 2026-10-08 | `docs/README.md` | M | 文档中心导航表新增一行「改文档 → Markdown 变更记录」，让台账在入口页可发现。 |
+| 2026-10-08 | `docs/README.md` | M | 文档中心导航表新增一行「改文档 → Markdown 变更记录」，让台账在入口页可发现。  增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。 |
 | 2026-10-08 | `docs/development/README.md` | M | 开发入口在「先确定问题发生在哪一层」之后补一句：改动任何 Markdown 都要登记台账并跑对应门禁。 |
-| 2026-10-08 | `docs/development/delivery/README.md` | M | 热修命名条从「四段版本 `MAJOR.CAPABILITY.INTERNAL.BUGFIX`」改为「新封板版本线从 `3.1.1.1` 开始、四段为 `MAJOR.MINOR.PATCH.BUGFIX`」，并写明旧 2.x/HF 文件名全部冻结为历史。 当前交付按产品版本目录与版本ID定位，不用旧RPM目录作当前入口。 |
+| 2026-10-08 | `docs/development/delivery/README.md` | M | 热修命名条从「四段版本 `MAJOR.CAPABILITY.INTERNAL.BUGFIX`」改为「新封板版本线从 `3.1.1.1` 开始、四段为 `MAJOR.MINOR.PATCH.BUGFIX`」，并写明旧 2.x/HF 文件名全部冻结为历史。 当前交付按产品版本目录与版本ID定位，不用旧RPM目录作当前入口。  增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。 |
 | 2026-10-08 | `docs/development/markdown-change-record.md` | A | 本页：建立 md 变更台账，规定增删改都要登记，并由 `tools/verify-markdown-change-record.cjs` 做结构与覆盖校验。 2026-10-09 追加登记「升级预览版本语义修复」批次与 `updates.md` 的展示口径变更。 2026-10-09 追加登记「控制节点卡片」批次与对应批次说明。 |
 | 2026-10-08 | `docs/development/rules/change-policy.md` | M | 新增「文档变更必须登记」一节：登记范围、`A`/`M`/`D` 判据、门禁的三种判红情形、`git add` 后门禁才可见、通过后重建生成页。 |
 | 2026-10-08 | `docs/development/rules/licensing.md` | M | 许可声明扫描排除整个根 .workbuddy 本机资料；明确业务/文档及嵌套同名目录仍须扫描并拒绝错误声明。 |
@@ -54,6 +54,26 @@ recorded-through: 73ff4a3
 | 2026-10-09 | `docs/development/backend/settings/README.md` | M | 参数导航加入plan/dispatch/permit、Raft配置任务和逐节点重启核验路径。 |
 
 | 2026-10-09 | `docs/development/delivery/hotfix-catalog-validation.md` | A | 显式私有台账/声明/目录输入，同判据与失败回归；Chrome依赖复跑和fixture/现场证据边界。 |
+
+| 2026-10-09 | `README.md` | M | 增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。 |
+
+| 2026-10-09 | `README.zh-CN.md` | M | 增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。 |
+
+| 2026-10-09 | `docs/zh-CN/README.md` | M | 增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。 |
+
+| 2026-10-09 | `docs/en-US/README.md` | M | 增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。 |
+
+| 2026-10-09 | `docs/catalogue.md` | M | 增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。 |
+
+| 2026-10-09 | `docs/zh-CN/catalogue.md` | M | 增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。 |
+
+| 2026-10-09 | `docs/en-US/catalogue.md` | M | 增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。 |
+
+| 2026-10-09 | `docs/development/delivery/offline-installation-media.md` | A | 完整介质子功能路径、产品身份传递、实际版本回归、干净构建与唯一目录、显式公开附件及分阶段验收。 |
+
+| 2026-10-09 | `docs/zh-CN/release-3.1.2.8.md` | A | 3.1.2.8双语发布说明：完整包产品版本注入、累计修复/下发功能、下载摘要入口、介质内容及现场未验收边界。 |
+
+| 2026-10-09 | `docs/en-US/release-3.1.2.8.md` | A | 3.1.2.8双语发布说明：完整包产品版本注入、累计修复/下发功能、下载摘要入口、介质内容及现场未验收边界。 |
 
 ## 批次说明
 
@@ -96,3 +116,5 @@ recorded-through: 73ff4a3
 2026-10-09参考图参数页改稿：仅更新配置功能页和本台账，重建HTML文档；SOURCE与隔离浏览器独立记录，FIELD不冒充。
 
 本批参数分类修改只涉及上述设置功能页与本台账，生成页照流程重建；SOURCE、隔离Chrome与ART/FIELD分别记录。
+
+3.1.2.8完整介质发布批次：统一运行产品身份和RPM兼容基线，补当前公开下载路径及双语发布说明；完整重建HTML，保留历史记录。

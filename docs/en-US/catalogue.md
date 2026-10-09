@@ -4,6 +4,10 @@
 
 **Before development or document changes, read the [repository rules](../../AGENTS.md), [gate workflow](../zh-CN/validation-gate-workflow.md), and [reading order and applicable rules](../development/rules/README.md), then select a [development module](../development/README.md).** Read the complete [mandatory v2 contract](../upgrade-validation-chain.md) before changes or actions within its scope.
 
+## 当前完整介质 / Current Installation Kit
+
+[3.1.2.8 双语发布说明 / release notes](release-3.1.2.8.md) · [GitHub v3.1.2.8](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v3.1.2.8)。产品版本 3.1.2.8，RPM 兼容基线 2.2-106；GitHub 预发布，FIELD OPEN。 / Product 3.1.2.8, RPM baseline 2.2-106; prerelease with FIELD OPEN. Historical entries below preserve their original scope.
+
 ## Find Documents by Role
 
 | Document role | Entry and authority |
@@ -43,7 +47,7 @@ The previous kit,
 verified and uploaded as a GitHub prerelease from commit `78dbdbf`.
 
 English release notes are maintained through
-[2.2.47](release-2.2.47.md); every later release note exists only in Simplified Chinese,
+[2.2.47](release-2.2.47.md); the subsequent historical 2.2 release notes exist only in Simplified Chinese,
 and this historical list records 2.2.69-2.2.73, 2.2.86 and 2.2.88-2.2.102. The gaps in
 between never had a release note generated, so they are not broken links.
 Checksums and documentation corrections for that artifact are recorded in the
