@@ -45,8 +45,8 @@
 
 ## 结果和事件的语言
 
-中文页面的历史结果、当前任务说明和两处事件列表共用`softwareUpdateMessageText`/`renderSoftwareUpdateMessage`。已知Runner消息使用明确中文映射，已有中文保持原文；切换语言时立即重绘升级结果。状态、subject和动作判断仍读取原始字段，不从翻译结果推断成功或门禁状态。
+中文页面的历史结果、当前任务说明和两处事件列表共用`softwareUpdateMessageText`/`renderSoftwareUpdateMessage`。已知Runner消息及旧中文结果按当前语言双向映射；切换语言时立即重绘升级结果、状态、动作和事件。状态、subject和动作判断仍读取原始字段，不从翻译结果推断成功或门禁状态。
 
-未知诊断显示中文核对提示，并提供可展开的“原始信息”，按字面文本呈现，不执行其中的HTML；原始Job/events与输出日志不改。原始输出区域继续保留原文，供排查使用。
+未知诊断显示当前语言的核对提示，并提供可展开的“原始信息”，按字面文本呈现，不执行其中的HTML；原始Job/events与输出日志不改。原始输出区域继续保留原文，供排查使用。
 
-[消息映射回归](../../../../tools/console-update-message-language.test.cjs)检查Runner全部固定事件消息；[真实浏览器回归](../../../../tools/console-update-message-language-acceptance.cjs)覆盖桌面/窄屏、新旧成功记录、失败/门禁保留、传输、未知诊断和语言切换。
+[消息映射回归](../../../../tools/console-update-message-language.test.cjs)检查Runner全部固定事件消息；[真实浏览器回归](../../../../tools/console-update-message-language-acceptance.cjs)覆盖桌面/窄屏、新旧成功记录、失败/门禁保留、传输、未知诊断和语言往返切换。完整页面语言绑定见[显示偏好](preferences.md)。

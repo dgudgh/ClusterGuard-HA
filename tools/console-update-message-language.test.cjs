@@ -30,3 +30,9 @@ test('existing Chinese is preserved and unknown diagnosis is not guessed as succ
   assert.match(format('automatic rollback incomplete; maintenance gate retained'),/未完成.*门禁仍保留/);
   assert.match(format('rollback succeeded but maintenance release failed'),/门禁释放失败/);
 });
+
+test('legacy Chinese results follow English preference without changing failure semantics',()=>{
+  assert.equal(format('热修补丁完成，全部节点与控制面已验证，维护门禁已释放','en-US'),'all node digests and maintenance release verified');
+  assert.equal(format('自动回退未完成，维护门禁仍保留，请核验节点状态','en-US'),'automatic rollback incomplete; maintenance gate retained');
+  assert.match(format('未知节点错误','en-US'),/unrecognized diagnostic/);
+});

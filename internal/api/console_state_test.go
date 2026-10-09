@@ -11,7 +11,7 @@ func TestConsoleClusterLoadingKeepsSelectionAndFailsClosed(t *testing.T) {
 	for _, contract := range []string{
 		`id="cluster-load-notice"`, `id="retry-cluster-load"`,
 		"if (!sameCluster) clearClusterView(preserveOperationResult);",
-		"byId('topology-risk').textContent = '未知';",
+		"byId('topology-risk').textContent = ui('未知');",
 		"byId('topology-connector').hidden = true;",
 		"canOperateClusters() && state.clusterDataReady && !state.clusterLoading && !state.clusterLoadError",
 		"capabilityAvailable('execute') && cluster && cluster.resource_id === state.selectedClusterId",

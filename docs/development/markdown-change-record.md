@@ -42,8 +42,10 @@ recorded-through: 73ff4a3
 | 2026-10-08 | `docs/zh-CN/version-release-policy.md` | M | 交付身份条改为新封板版本线起点 `3.1.1.1` + `MAJOR.MINOR.PATCH.BUGFIX`。 |
 | 2026-10-08 | `docs/zh-CN/validation-gate-workflow.md` | M | 去掉已过期的固定17项计数，以本次源码门禁输出为准；新增功能仍须补充实际回归。 |
 | 2026-10-08 | `docs/development/backend/settings/version.md` | M | 说明product_version运行来源和旧历史验签补读，RPM兼容字段不变。 |
-| 2026-10-09 | `docs/development/frontend/settings/updates.md` | M | 明确当前/目标/历史版本来源及验签替代；新增staging步骤和新操作重置规则。补充历史/当前/事件共用中文消息映射、未知诊断可展开原文、原始状态不变及桌面/窄屏语言切换回归入口。 |
+| 2026-10-09 | `docs/development/frontend/settings/updates.md` | M | 明确当前/目标/历史版本来源及验签替代；新增staging步骤和新操作重置规则。补充历史/当前/事件共用双语消息映射、未知诊断随语言提示并保留原文、原始状态不变及桌面/窄屏语言切换回归入口。 |
 | 2026-10-09 | `docs/development/backend/settings/update-history.md` | M | 记录Snapshot验签后继及部署判据。新增staging与updating共用节点百分比的读取投影、原始状态保留和三节点持久化回归入口。 |
+
+| 2026-10-09 | `docs/development/frontend/settings/preferences.md` | M | 语言设置接入静态原文绑定、动态双语目录和完整重绘；明确业务数据/原始证据、内存偏好及无请求/表单保持边界，登记四引擎八页面真实浏览器与目录回归。 |
 
 ## 批次说明
 

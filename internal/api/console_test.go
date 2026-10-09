@@ -124,7 +124,7 @@ func TestSettingsUsesSwitchableAdministrativeSections(t *testing.T) {
 		`class="software-update-metadata"`,
 		`id="software-update-package-file" type="file" accept=".cgupgrade,.cgpatch,application/octet-stream"`,
 		"--accent:#0071e3", "--canvas:#f5f5f7", "renderSelectedSoftwareUpdateFile",
-		"const setSettingsSection = (section, focus = false) =>", "settingsSection: 'status'",
+		"const setSettingsSection = (section, focus = false, reload = true) =>", "settingsSection: 'status'",
 		"const settingsSectionOrder = ['status', 'configuration', 'updates']",
 		"const softwareUpdates = await softwareUpdateRequest('/api/v1/platform/updates')",
 		"void softwareUpdateRequest('/api/v1/platform/version').then(version =>",
@@ -167,13 +167,13 @@ func TestSettingsExposesReadOnlyEffectiveConfigurationSection(t *testing.T) {
 	for _, contract := range []string{
 		"const settingsSectionPanels = { status:'settings-status-panel', configuration:'settings-configuration-panel', updates:'software-update-panel' }",
 		"configuration:'settings-configuration-panel'",
-		"if (selected === 'configuration') { void loadConfiguration(); void fetchClusterPolicy(); }",
+		"if (selected === 'configuration' && reload) { void loadConfiguration(); void fetchClusterPolicy(); }",
 		"const loadConfiguration = async () =>",
 		"fetchResult('/api/v1/control-plane/configuration')",
 		"const renderConfiguration = () =>",
 		"effective.textContent = value.value;",
-		"restartTag.textContent = value.restart_required ? '需重启' : '可热改';",
-		"byId('configuration-reload-note').textContent = view.reload_supported ? '本节点支持重新加载配置。' : view.reload_note;",
+		"restartTag.textContent = value.restart_required ? ui('需重启') : ui('可热改');",
+		"byId('configuration-reload-note').textContent = view.reload_supported ? ui('本节点支持重新加载配置。') : view.reload_note;",
 	} {
 		if !strings.Contains(page, contract) {
 			t.Fatalf("console missing configuration rendering contract %q", contract)
@@ -527,7 +527,7 @@ func TestAboutDistinguishesConfiguredExecutionFromReadOnlyAndUnsupportedAdapters
 	for _, contract := range []string{
 		"const observable = ['discover', 'topology', 'health']",
 		"every(name => capability.features && capability.features[name] && capability.features[name].available)",
-		"const label = executable ? '可执行' : observable ? '只读可用' : '未实现'",
+		"const label = executable ? ui('可执行') : observable ? ui('只读可用') : ui('未实现')",
 	} {
 		if !strings.Contains(page, contract) {
 			t.Fatalf("console missing truthful adapter capability contract %q", contract)
@@ -676,8 +676,8 @@ func TestOperationSelectorsUseDatabaseInstanceLabels(t *testing.T) {
 		"const candidateOptionLabel =",
 		"new Option(candidateOptionLabel(instance, assessment), instance.resource_id)",
 		"rejoin.append(new Option(instanceDisplayName(instance), instance.resource_id))",
-		"不可切换：${candidateBlockReason(assessment)}",
-		"存在 ${errant[1]} 个游离事务",
+		"ui(\"{0}（不可切换：{1}）\", label, candidateBlockReason(assessment))",
+		"ui(\"存在 {0} 个游离事务\", errant[1])",
 	} {
 		if !strings.Contains(page, contract) {
 			t.Fatalf("console operation selector must use database instance labels: missing %q", contract)
@@ -694,7 +694,7 @@ func TestOperationSelectorsUseDatabaseInstanceLabels(t *testing.T) {
 func TestConsoleExplainsUnavailableExecutionAndFiltersFormerPrimaryCandidates(t *testing.T) {
 	page := string(consoleHTML)
 	for _, contract := range []string{
-		"const capabilityReason =", "当前环境不可执行：${capabilityReason('execute')}",
+		"const capabilityReason =", "ui(\"当前环境不可执行：{0}\", capabilityReason('execute'))",
 		"const replicaIsRunning =", "health.replication === 'running'",
 		"replication.io_thread === 'running' && replication.sql_thread === 'running'",
 		"const formerPrimaryCandidates =", "historicalSourceIDs.has(instance.resource_id)",
@@ -763,7 +763,7 @@ func TestFormerPrimaryRecoverySupportsPostgreSQLThroughUnifiedWorkflow(t *testin
 		"正在执行 pg_rewind 增量回挂，必要时自动回退 pg_basebackup 全量同步",
 		"旧主回挂完成，节点已作为只读流复制从库重新加入",
 		"const operationFailureGuidance = error =>",
-		"rebuild_failed:'旧主同步失败",
+		"rebuild_failed:ui('旧主同步失败，请确认当前主库、目标节点数据库服务和 Agent 均可达后重试')",
 		"旧主同步失败，请确认当前主库、目标节点数据库服务和 Agent 均可达后重试",
 		"operationFailureGuidance(error)",
 	} {
@@ -1179,7 +1179,7 @@ func TestConsoleRelocksDestructiveActionWhenClusterOrTargetChanges(t *testing.T)
 		"if (state.activeOperationIntent === intent)", "state.operationRunning = false;\n          relockSwitch();",
 		"requireOperationIntent(intent);", "requireOperationIntent(operationIntent);",
 		"state.currentUser !== intent.user", "state.selectedClusterId !== intent.clusterID",
-		"byId('operation-result').textContent = '等待操作。';",
+		"byId('operation-result').textContent = ui('等待操作。');",
 	} {
 		if !strings.Contains(page, contract) {
 			t.Fatalf("console must relock target-specific destructive action: missing %q", contract)
@@ -1288,7 +1288,7 @@ func TestConsoleDerivesTopologyAttentionFromObservedInstanceHealth(t *testing.T)
 		"const topologyAttentionReasons = () =>",
 		"instance.health && instance.health.state",
 		"const attentionReasons = topologyAttentionReasons();",
-		"attentionReasons.length ? '需关注' : '健康'",
+		"attentionReasons.length ? ui('需关注') : ui('健康')",
 	} {
 		if !strings.Contains(page, contract) {
 			t.Fatalf("topology must not report healthy when observed instances are degraded or unknown: missing %q", contract)
@@ -1319,18 +1319,18 @@ func TestConsoleRendersTypedProbeEvidenceWithoutInventingRuntimeState(t *testing
 		"summary.includes('database probe failed')",
 		"const instanceAvailability = (instance, topology = state.topology) =>",
 		"probeOutcome(probe) === 'database_unavailable'",
-		"label:'数据库未启动或不可达'",
+		"label:ui('数据库未启动或不可达')",
 		"probeOutcome(probe) === 'credentials_unavailable'",
-		"label:'凭据不可用'",
-		"label:'尚未采集'",
-		"if (!instanceAvailability(instance).available) return '无当前角色'",
+		"label:ui('凭据不可用')",
+		"label:ui('尚未采集')",
+		"if (!instanceAvailability(instance).available) return ui('无当前角色')",
 		"instanceAvailability(instance, topology).available &&",
 		"['replica', 'standby'].includes(instance.role)",
 		"detachedNodes.hidden = detached.length === 0",
 		"const observedPrimaryInstances = (instances, topology = state.topology) =>",
 		"instance.role === 'primary' && instanceAvailability(instance, topology).available",
 		"return primaries.length === 1 ? primaries[0] : undefined",
-		"return '冲突写主'",
+		"return ui('冲突写主')",
 		"已拒绝选择当前主库",
 		"const instanceOwnsActiveWriterEndpoint = instance =>",
 		"writer.endpoint.instance_id === instance.resource_id",
@@ -1350,7 +1350,7 @@ func TestConsoleUsesClusterDisplayNameForLifecycleTasks(t *testing.T) {
 	page := string(consoleHTML)
 	for _, contract := range []string{
 		"const clusterDisplayName = clusterID =>",
-		"['集群', clusterDisplayName(task.cluster_id)]",
+		"[ui('集群'), clusterDisplayName(task.cluster_id)]",
 	} {
 		if !strings.Contains(page, contract) {
 			t.Fatalf("node lifecycle evidence must show the registered cluster name instead of an internal UUID: missing %q", contract)
@@ -1385,7 +1385,7 @@ func TestConsoleConsolidatesAutomaticRecoveryRetriesByIncident(t *testing.T) {
 	for _, contract := range []string{
 		"state.logRecordCount = page.record_count",
 		"incident_attempt_count",
-		"'log-record-count', `${state.logRecordCount} 条原始记录`",
+		"'log-record-count', ui(\"{0} 条原始记录\", state.logRecordCount)",
 		"原始返回（最近一次，事故共",
 	} {
 		if !strings.Contains(page, contract) {
@@ -1414,7 +1414,7 @@ func TestConsoleExplainsFollowerQuorumAndUsesControllerNames(t *testing.T) {
 	for _, contract := range []string{
 		"const controllerDisplayName = controllerID =>",
 		"const controlRoleText = role =>",
-		"status.leader_known ? `${status.voter_count || 0} 个投票节点，由 Leader 确认`",
+		"status.leader_known ? ui(\"{0} 个投票节点，由 Leader 确认\", status.voter_count || 0)",
 		"controllerDisplayName(status.local_controller_id)",
 		"controllerDisplayName(status.leader_id)",
 	} {
@@ -1428,8 +1428,8 @@ func TestConsoleFormatsMetricsAndOrdersEvidenceForOperators(t *testing.T) {
 	page := string(consoleHTML)
 	for _, contract := range []string{
 		"const formatMetric = (value, digits = 2) =>",
-		"{ label:'QPS', key:'qps', aggregate:'sum' }", "{ label:'连接', key:'connections', aggregate:'sum', digits:0 }",
-		"{ label:'运行线程', key:'running_threads', aggregate:'sum', digits:0 }", "formatMetricValue(item, aggregate(item))",
+		"{ label:'QPS', key:'qps', aggregate:'sum' }", "{ label:ui('连接'), key:'connections', aggregate:'sum', digits:0 }",
+		"{ label:ui('运行线程'), key:'running_threads', aggregate:'sum', digits:0 }", "formatMetricValue(item, aggregate(item))",
 		"const visibleOperations = state.allOperations;", "state.logNextCursor = page.next_cursor;",
 		"const newestTaskFirst =", "state.lifecycleTasks.slice().sort(newestTaskFirst).slice(0, 8)",
 		`id="lifecycle-task-count"`,
@@ -1554,7 +1554,7 @@ func TestConsoleClosesThePageAfterAHostPoweroff(t *testing.T) {
 	if !strings.Contains(page, "mode === 'poweroff' && executedClusters.length && controlAPIConnectionLost(error)") {
 		t.Fatalf("a shutdown response lost to the dropping host must settle the page instead of reporting an error")
 	}
-	if !strings.Contains(page, "setLiveStatus('数据库集群已安全停机。');") {
+	if !strings.Contains(page, "setLiveStatus(ui('数据库集群已安全停机。'));") {
 		t.Fatalf("stopping only the database service must keep the existing console behaviour")
 	}
 	// The probe reads the real power status endpoint before deciding, so a
@@ -1589,7 +1589,7 @@ func TestConsoleProvidesAdminOnlySignedSoftwareUpdateWorkflow(t *testing.T) {
 		`id="software-update-events" hidden`,
 		`id="software-update-progress-toggle-label">展开</span>`,
 		`const setInlineSoftwareUpdateProgressExpanded = expanded => {`,
-		`byId('software-update-progress-toggle-label').textContent = expanded ? '收起' : '展开'`,
+		"byId('software-update-progress-toggle-label').textContent = expanded ? ui('收起') : ui('展开')",
 		`events.hidden = !expanded`,
 		`setInlineSoftwareUpdateProgressExpanded(!expanded)`,
 		`setInlineSoftwareUpdateProgressExpanded(false)`,
@@ -1662,7 +1662,7 @@ func TestSoftwareUpdatePanelExplainsUnavailableUpgradeService(t *testing.T) {
 		`const panelReason = byId('software-update-panel-reason');`,
 		`panelReason.hidden = snapshot.available;`,
 		`panelReason.textContent = unavailableCopy;`,
-		`校验服务不可用：${softwareUpdateUnavailableReason(snapshot)}`,
+		"ui(\"校验服务不可用：{0}\", softwareUpdateUnavailableReason(snapshot))",
 	} {
 		if !strings.Contains(page, contract) {
 			t.Fatalf("console missing unavailable upgrade reason contract %q", contract)
@@ -1674,15 +1674,15 @@ func TestClusterLoadBannerReportsPerSectionEvidenceReason(t *testing.T) {
 	page := string(consoleHTML)
 	for _, contract := range []string{
 		`const evidenceReasonText = reason => ({`,
-		`'cluster has no persisted topology observation': '尚未持久化拓扑观测',`,
-		`'candidate evaluation requires persisted probe evidence': '缺少当轮探测证据',`,
-		`'candidate evaluation requires exactly one current primary': '当前主节点不唯一，需恰好 1 个',`,
+		"'cluster has no persisted topology observation': ui('尚未持久化拓扑观测'),",
+		"'candidate evaluation requires persisted probe evidence': ui('缺少当轮探测证据'),",
+		"'candidate evaluation requires exactly one current primary': ui('当前主节点不唯一，需恰好 1 个'),",
 		`reason:evidenceReasonText(error.message)`,
 		`const evidenceUnavailableText = loaded => (loaded.unavailableSections || []).map((section, index) => {`,
 		"return reason ? `${section}（${reason}）` : section;",
 		`unavailableReasons:unavailableEvidence.map(section => section.reason || '')`,
-		"部分数据不可用：${evidenceUnavailableText(loaded)}；操作已锁定，可重试读取。",
-		"部分数据不可用：${evidenceUnavailableText(loaded)}。",
+		"ui(\"部分数据不可用：{0}；操作已锁定，可重试读取。\", evidenceUnavailableText(loaded))",
+		"ui(\"部分数据不可用：{0}。\", evidenceUnavailableText(loaded))",
 	} {
 		if !strings.Contains(page, contract) {
 			t.Fatalf("console missing evidence reason contract %q", contract)
@@ -1740,13 +1740,13 @@ func TestSoftwareUpdateDialogEnablesRollingUpgradeOnlyAfterValidation(t *testing
 		`state.softwareUpdateValidationState = 'validating'`,
 		`state.softwareUpdateValidationState = 'verified'`,
 		`state.softwareUpdateValidationState = 'failed'`,
-		`validating: ['正在校验'`,
-		`verified: ['校验完成'`,
-		`failed: ['校验失败'`,
+		"validating: [ui('正在校验')",
+		"verified: [ui('校验完成')",
+		"failed: [ui('校验失败')",
 		`.software-update-actions button[hidden] { display:none; }`,
 		`packagePanel.hidden = !(pending && !selectedFile && validationState === 'verified')`,
 		`validationState !== 'verified'`,
-		`state.softwareUpdateValidationMessage = ` + "`" + `升级包 ${uploaded.patch_id} 已通过签名与兼容性校验。` + "`" + `;`,
+		`state.softwareUpdateValidationMessage = ui("升级包 {0} 已通过签名与兼容性校验。", uploaded.patch_id);`,
 	} {
 		if !strings.Contains(page, contract) {
 			t.Fatalf("software update validation workflow is missing %q", contract)
@@ -1764,7 +1764,7 @@ func TestSoftwareUpdateSummaryDistinguishesPendingAndCompletedTargets(t *testing
 		`id="software-update-target-label">待升级目标版本`,
 		`id="software-update-latest-target">尚无待升级包`,
 		"const renderSoftwareUpdateTargetSummary = subject =>",
-		"label.textContent = softwareUpdateActionable(subject) ? '待升级目标版本' : status === 'succeeded' ? '最近完成版本' : '最近处理版本'",
+		"label.textContent = softwareUpdateActionable(subject) ? ui('待升级目标版本') : status === 'succeeded' ? ui('最近完成版本') : ui('最近处理版本')",
 		// The summary reports whether the patch took effect, using the same read as the
 		// history row, so the two never tell the operator different stories about one record.
 		"value.textContent = `${softwareUpdateTargetVersion(subject.package)} · ${softwareUpdateStatusText(softwareUpdateOutcome(subject.job))}`",
@@ -1798,8 +1798,8 @@ func TestSoftwareUpdateErrorsStayAtTopOfOpenDialog(t *testing.T) {
 		`.software-update-dialog-alert[hidden] { display:none; }`,
 		"const setSoftwareUpdateDialogAlert = (message = '', level = 'error') =>",
 		"if (message && !(dialog && dialog.open)) setLiveStatus(message, level !== 'info')",
-		"setSoftwareUpdateDialogAlert('只读升级计划正在生成，完成后将自动打开确认框。', 'info')",
-		"setSoftwareUpdateDialogAlert(`升级计划生成失败：${error.message}`)",
+		"setSoftwareUpdateDialogAlert(ui('只读升级计划正在生成，完成后将自动打开确认框。'), 'info')",
+		"setSoftwareUpdateDialogAlert(ui(\"升级计划生成失败：{0}\", localizeUIMessage(error.message)))",
 	} {
 		if !strings.Contains(page, contract) {
 			t.Fatalf("software update warning must stay visible inside the modal: missing %q", contract)
@@ -1859,27 +1859,27 @@ func TestSoftwareUpdateRollingActionTargetsTheNewestActionablePackage(t *testing
 		"const patchID = target && target.package && target.package.patch_id;",
 		// The uploaded-and-verified panel must not keep a green "校验完成" above a dead button.
 		"if (!selectedFile && !pending && validationState === 'verified') validationState = 'verified-blocked';",
-		"'verified-blocked': ['校验完成，但当前没有可执行的升级包'",
+		"'verified-blocked': [ui('校验完成，但当前没有可执行的升级包')",
 		".software-update-validation[data-state=\"verified-blocked\"] {",
 		// The row whose timestamp cannot be trusted has to say so where the operator sees it.
 		// clock_skew belongs to the record wrapper, and reading it off the package nested
 		// inside rendered the marker on no row at all - a browser run, not this contract,
 		// is what caught that, so the shape is pinned here and the wrong read is rejected below.
 		"const skewed = !!(item && item.clock_skew);",
-		"skewed ? ' · 记录时间戳晚于当前时间，排序与时间不可信' : ''",
+		"skewed ? ui(' · 记录时间戳晚于当前时间，排序与时间不可信') : ''",
 		// A package from another release line is annotated, not hidden, and the row says
 		// why so the operator stops waiting for a rollout that can never start.
 		"const incompatible = !!(item && item.incompatible);",
-		"? ` · ${item.incompatible_reason || '与当前集群基线不一致，本集群装不上'}`",
+		"? ` · ${item.incompatible_reason || ui('与当前集群基线不一致，本集群装不上')}`",
 		"renderSoftwareUpdateMessage(messageCell, job && job.message",
-		"未生效：` : '', rowNote);",
+		"ui(\"{0}本次{1}未生效：\", outcomeNote, softwareUpdateModeText(job && job.mode, record.kind)) : '', rowNote);",
 		// A record from another release line can never be the one the console acts on.
 		"if (item && (item.incompatible || item.superseded_by)) return false;",
 		// "Nothing to run" has two causes now, and the panel has to name the right one:
 		// telling the operator the newest record "已经执行完成" when it actually belongs to
 		// another release line repeats the wrong-cause message that started this incident.
 		"const newestIncompatible = !!(newestRecord && newestRecord.incompatible);",
-		"${newestRecord.incompatible_reason || '它不属于本集群的发布线，本集群装不上。'}",
+		"ui(\"升级包已通过签名与兼容性校验，但列表里排在最新的记录是 {0}，{1}\", newestRecordID, newestRecord.incompatible_reason || ui('它不属于本集群的发布线，本集群装不上。'))",
 	} {
 		if !strings.Contains(page, contract) {
 			t.Fatalf("the rolling upgrade must act on the newest actionable package: missing %q", contract)
@@ -1939,12 +1939,12 @@ func TestSoftwareUpdateHistoryReportsWhetherThePatchTookEffect(t *testing.T) {
 		".filter(event => ['succeeded', 'failed', 'rolled_back', 'rollback_failed'].includes(event.status))",
 		"const softwareUpdateOutcome = job => {",
 		"return completed && completed.status === 'succeeded' ? 'applied_attempt_failed' : status;",
-		"applied_attempt_failed:'已生效 · 本次尝试失败'",
+		"applied_attempt_failed:ui('已生效 · 本次尝试失败')",
 		"applied_attempt_failed:'warning'",
 		"const status = softwareUpdateOutcome(job);",
 		"byId('software-update-job-status').textContent = softwareUpdateStatusText(softwareUpdateOutcome(job));",
 		"const softwareUpdateOutcomeNote = job => softwareUpdateOutcome(job) !== 'applied_attempt_failed'",
-		"补丁已生效：最近一次完成的执行于 ${softwareUpdateDateText(softwareUpdateCompletedAttempt(job)?.updated_at)} 逐文件校验通过。",
+		"ui(\"补丁已生效：最近一次完成的执行于 {0} 逐文件校验通过。\", softwareUpdateDateText(softwareUpdateCompletedAttempt(job)?.updated_at))",
 	} {
 		if !strings.Contains(page, contract) {
 			t.Fatalf("the history must report whether the patch took effect: missing %q", contract)
@@ -1995,10 +1995,10 @@ func TestConsoleNeverOffersResumeForAHotfix(t *testing.T) {
 		"byId('resume-software-update').disabled = !snapshot.available || busy || status !== 'failed' || softwareUpdateIsHotfix(subject);",
 		"const softwareUpdateIsRetry = item => softwareUpdateIsHotfix(item)",
 		"&& softwareUpdateOutcome(item.job) === 'failed';",
-		"byId('execute-software-update').textContent = retry ? '重新执行'",
+		"byId('execute-software-update').textContent = retry ? ui('重新执行')",
 		// A hotfix is not rolled out, it is applied, and the label has to say so: calling it a
 		// rolling upgrade is the label on the record that started this whole repair.
-		": softwareUpdateIsHotfix(subject) ? '应用热修补丁' : '滚动升级';",
+		": softwareUpdateIsHotfix(subject) ? ui('应用热修补丁') : ui('滚动升级');",
 		"|| !(retry || ['uploaded', 'planned'].includes(status || 'uploaded'));",
 		"确认重新执行", // the typed confirmation has to name the action the button does
 		"将重新执行同一个热修补丁：应用本身是幂等的，不会产生新的版本。",
@@ -2060,7 +2060,7 @@ func TestConsoleShowsRecoverableStructuredSoftwareUpdateProgress(t *testing.T) {
 		"job && job.verification_required",
 		"softwareUpdateDateText",
 		"控制面维护状态与节点版本需要独立核验",
-		"verificationRequired ? '待核验'",
+		"verificationRequired ? ui('待核验')",
 		"state.softwareUpdateProgressDismissed !== key",
 		"openSoftwareUpdateProgress()",
 	} {

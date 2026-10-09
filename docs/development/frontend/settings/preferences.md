@@ -6,7 +6,7 @@
 
 显示偏好位于 `settings-status-panel`，只有界面语言和自动刷新间隔两个控件。
 
-- 语言：`language-select change` → `state.language` → `applyLanguage()` → 重新渲染总览、拓扑、操作上下文、指标、节点、生命周期任务和操作日志。
+- 语言：`language-select change` → `changeConsoleLanguage()` → 校验语言 → `state.language` → `applyLanguage()` → 重绘账户、控制面、运行参数、八个页面及打开的对话框。
 - 自动刷新：`refresh-interval change` → `state.refreshIntervalMs` → `scheduleAutoRefresh()` → `setInterval()` → `loadSelectedCluster({ preserveOperationResult:true })`。
 
 自动刷新只在已选择集群，且没有操作执行、节点任务执行、节点生命周期弹窗或集群加载时触发。它刷新所选集群，不写配置文件或集群策略。
@@ -16,7 +16,10 @@
 - `state.language` 默认 `zh-CN`；可选 `zh-CN`、`en-US`。
 - `state.refreshIntervalMs` 默认 `60000`；可选 30 秒、60 秒、2 分钟或关闭 `0`。
 - `state.refreshTimer` 保存当前定时器；重新选择间隔前先清除旧定时器。
-- `applyLanguage()` 只更新带 `data-i18n` 的文字和显式重新渲染的动态区域，不代表所有硬编码中文均已翻译。
+- 静态文案在首次 API 加载前通过 `registerStaticUILanguage()` 绑定原始 HTML 文本节点和 title/placeholder/aria-label；只绑定双语目录已有的界面文字。切换时更新仍在页面内的绑定，不扫描或替换后来加载的业务数据。
+- 动态界面文案用 `ui()` 和同一 `uiCatalog`；插值值保留原文。缓存状态标签在访问时按当前语言生成；已知界面提示可通过 `localizeUIMessage()` 在重绘时切换语言。
+- `changeConsoleLanguage()` 更新账户/Leader/quorum/任务/时长、各页、升级消息和打开的确认/进度/改密等窗口；不加载配置或策略，不提交后端动作，不重置表单输入。
+- 集群/节点/用户名称、ID、参数值和原始诊断不是界面文案，保持原值。未知升级诊断用当前语言的核对提示及可展开原文，不能凭状态推断成功。
 
 没有偏好 `localStorage`、`sessionStorage` 或后端存储键：
 
@@ -44,4 +47,4 @@
 | 自动刷新期间节点安全边界 | [console-node-safety-audit.cjs](../../../../tools/console-node-safety-audit.cjs) |
 | 设置页桌面与窄屏尺寸烟测 | [console-engine-pages-audit.cjs](../../../../tools/console-engine-pages-audit.cjs) |
 
-现有设置页浏览器脚本只确认两个控件可见；节点安全脚本通过直接修改 `state` 驱动短间隔。用户实际切换语言、切换或关闭刷新间隔、退出后重建定时器以及完整页面刷新恢复默认值目前没有专用真浏览器覆盖，未执行不得记为通过。
+[完整语言浏览器回归](../../../../tools/console-language-acceptance.cjs)通过真实语言选择事件检查四引擎八页面、设置、打开的改密窗口、数据刷新、往返切换、无请求及输入/身份值保持；[双语目录回归](../../../../tools/console-language.test.cjs)核对静态文字/辅助属性覆盖、英文与插值对应、已知提示往返。升级结果另见[升级设置](updates.md)。自动刷新间隔、退出后定时器重建和完整页面刷新恢复默认值仍未由语言回归覆盖，需分别验证。

@@ -181,6 +181,23 @@ const writeOperationTree = (root, name, status, events) => {
 
 const CHECKS = [
   {
+    rule:'22 / FIELD-012', title:'console language preference covers settings and keeps raw values intact',
+    run:()=>{
+      const page=read('internal/api/console.html')||'';
+      const start=page.indexOf('    const uiCatalog = '),end=page.indexOf('    const staticUILanguageBindings =',start);
+      if(start<0||end<0)return 'missing authored UI catalogue';
+      const context={document:{documentElement:{lang:'en-US'}},state:{}};
+      const result=vm.runInNewContext(page.slice(start,end)+`\n[ui('账户与安全'),ui('显示偏好'),ui('配置文件：{0}','管理员')];`,context);
+      if(result[0]!=='Account and security'||result[1]!=='Display preferences'||result[2]!=='Configuration file: 管理员')return 'English setting or verbatim interpolation broken';
+      const change=page.match(/const changeConsoleLanguage = language => \{([\s\S]*?)\n    \};/);
+      if(!change||!change[1].includes('renderAccountIdentity(); renderControlPlaneStatus(); renderConfiguration();')||!change[1].includes('renderSoftwareUpdates(); renderSoftwareUpdateConfirmation();'))return 'language change omits a dynamic settings renderer';
+      if(!change[1].includes('setSettingsSection(state.settingsSection, false, false)'))return 'locale change can reload settings';
+      if(!(read('tools/console-language-acceptance.cjs')||'').includes('user-provided display name untouched'))return 'missing full-page browser regression';
+      return true;
+    },
+  },
+
+  {
     rule: '22 / FIELD-012',
     title: 'update history and events localize messages without rewriting evidence',
     run: () => {
@@ -208,7 +225,7 @@ const CHECKS = [
       if (!body.includes('case "staging", "updating":')) return 'staging no longer shares the node-step progress calculation';
       const page = read('internal/api/console.html') || '';
       if (!page.includes("['staging', 'updating', 'rollback'].includes(phase) ? 1 : 0")) return 'staging jumps back to preparation in the console';
-      if (!page.includes("staging:'正在向控制节点传输已签名补丁'")) return 'staging lost its operator label';
+      if (!page.includes("staging:ui('正在向控制节点传输已签名补丁')")) return 'staging lost its operator label';
       if (!(read('internal/platformupdate/progress_staging_test.go') || '').includes('func TestHotfixStagingProgressAcrossThreeNodes(')) return 'missing persisted three-node progress regression';
       if (!(read('tools/console-update-staging-progress-acceptance.cjs') || '').includes('new operation resets rather than inherits 100%')) return 'missing actual-browser progress/reset regression';
       return true;
@@ -756,6 +773,7 @@ const reportOpen = failures => {
 // The files the rules read. The self-test copies exactly these, so a mutation cannot be
 // caught by reading something the gate does not actually consult.
 const READ_FILES = [
+  'tools/console-language-acceptance.cjs',
   'tools/console-update-message-language-acceptance.cjs',
   'internal/platformupdate/progress_staging_test.go', 'tools/console-update-staging-progress-acceptance.cjs',
   'internal/platformupdate/version.go', 'internal/platformupdate/inspector.go',
@@ -768,6 +786,9 @@ const READ_FILES = [
 ];
 
 const MUTATIONS = [
+  {name:'English settings retain Chinese account heading',file:'internal/api/console.html',find:'"账户与安全": "Account and security"',replace:'"账户与安全": "账户与安全"',rule:'console language preference covers settings and keeps raw values intact'},
+  {name:'language switch omits controller status',file:'internal/api/console.html',find:'renderAccountIdentity(); renderControlPlaneStatus(); renderConfiguration();',replace:'renderAccountIdentity(); renderConfiguration();',rule:'console language preference covers settings and keeps raw values intact'},
+
   {name:'history prints raw English again',file:'internal/api/console.html',find:'renderSoftwareUpdateMessage(messageCell, job && job.message',replace:'renderSoftwareUpdateMessage(messageCell, null',rule:'update history and events localize messages without rewriting evidence'},
   {name:'verified hotfix result loses Chinese translation',file:'internal/api/console.html',find:"'all node digests and maintenance release verified':'热修补丁完成，全部节点与控制面已验证，维护门禁已释放'",replace:"'all node digests and maintenance release verified':'all node digests and maintenance release verified'",rule:'update history and events localize messages without rewriting evidence'},
   {name:'hotfix staging becomes zero again',file:'internal/platformupdate/manager.go',find:'case "staging", "updating":',replace:'case "updating":',rule:'hotfix staging retains node progress and its console stage'},

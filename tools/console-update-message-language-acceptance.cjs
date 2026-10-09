@@ -74,6 +74,7 @@ async function main() {
       await fetch('/api/__message/case?key=success');await loadSoftwareUpdates(false);
       byId('language-select').value='en-US';byId('language-select').dispatchEvent(new Event('change',{bubbles:true}));
       check('language switch refreshes results',document.querySelector('#software-update-history .history-message').textContent===${JSON.stringify(SUCCESS)},document.querySelector('#software-update-history .history-message').textContent);
+      check('all historical Chinese and English results follow English preference',[...document.querySelectorAll('#software-update-history .history-message')].every(c=>c.textContent===${JSON.stringify(SUCCESS)}),[...document.querySelectorAll('#software-update-history .history-message')].map(c=>c.textContent));
       byId('language-select').value='zh-CN';byId('language-select').dispatchEvent(new Event('change',{bubbles:true}));
       check('switching back restores Chinese',document.querySelector('#software-update-history .history-message').textContent===${JSON.stringify(SUCCESS_ZH)},document.querySelector('#software-update-history .history-message').textContent);
       return checks;
