@@ -27,7 +27,7 @@ recorded-through: 73ff4a3
 | 2026-10-08 | `docs/README.md` | M | 文档中心导航表新增一行「改文档 → Markdown 变更记录」，让台账在入口页可发现。 |
 | 2026-10-08 | `docs/development/README.md` | M | 开发入口在「先确定问题发生在哪一层」之后补一句：改动任何 Markdown 都要登记台账并跑对应门禁。 |
 | 2026-10-08 | `docs/development/delivery/README.md` | M | 热修命名条从「四段版本 `MAJOR.CAPABILITY.INTERNAL.BUGFIX`」改为「新封板版本线从 `3.1.1.1` 开始、四段为 `MAJOR.MINOR.PATCH.BUGFIX`」，并写明旧 2.x/HF 文件名全部冻结为历史。 当前交付按产品版本目录与版本ID定位，不用旧RPM目录作当前入口。 |
-| 2026-10-08 | `docs/development/markdown-change-record.md` | A | 本页：建立 md 变更台账，规定增删改都要登记，并由 `tools/verify-markdown-change-record.cjs` 做结构与覆盖校验。 |
+| 2026-10-08 | `docs/development/markdown-change-record.md` | A | 本页：建立 md 变更台账，规定增删改都要登记，并由 `tools/verify-markdown-change-record.cjs` 做结构与覆盖校验。 2026-10-09 追加登记「升级预览版本语义修复」批次与 `updates.md` 的展示口径变更。 |
 | 2026-10-08 | `docs/development/rules/change-policy.md` | M | 新增「文档变更必须登记」一节：登记范围、`A`/`M`/`D` 判据、门禁的三种判红情形、`git add` 后门禁才可见、通过后重建生成页。 |
 | 2026-10-08 | `docs/development/rules/licensing.md` | M | 许可声明扫描排除整个根 .workbuddy 本机资料；明确业务/文档及嵌套同名目录仍须扫描并拒绝错误声明。 |
 | 2026-10-08 | `docs/en-US/hotfix-package-naming.md` | A | 新增英文版包命名规则页；本轮重建为与中文逐节对齐的 7 节结构，补回初版漏掉的「禁止的名字」一节与 `.cgupgrade` 跨语法禁令；迁移示例改为新运行时 ID HF-2026-1008-02，并说明同旧 ID 不同摘要会导致上传冲突。 补充运行产品版本、RPM兼容基线和历史签名字段来源；目录按四段版本，不以RPM来源命名。 同步版本ID、产品目录、验签替代与旧HF兼容规则。 |
@@ -42,7 +42,7 @@ recorded-through: 73ff4a3
 | 2026-10-08 | `docs/zh-CN/version-release-policy.md` | M | 交付身份条改为新封板版本线起点 `3.1.1.1` + `MAJOR.MINOR.PATCH.BUGFIX`。 |
 | 2026-10-08 | `docs/zh-CN/validation-gate-workflow.md` | M | 去掉已过期的固定17项计数，以本次源码门禁输出为准；新增功能仍须补充实际回归。 |
 | 2026-10-08 | `docs/development/backend/settings/version.md` | M | 说明product_version运行来源和旧历史验签补读，RPM兼容字段不变。 |
-| 2026-10-09 | `docs/development/frontend/settings/updates.md` | M | 明确当前/目标/历史版本来源及验签替代；新增staging步骤和新操作重置规则。新增操作前产品版本与RPM基线独立展示、旧来源缺失/混合节点和回退未知规则及浏览器回归。补充历史/当前/事件共用双语消息映射、未知诊断随语言提示并保留原文、原始状态不变及桌面/窄屏语言切换回归入口。 |
+| 2026-10-09 | `docs/development/frontend/settings/updates.md` | M | 明确当前/目标/历史版本来源及验签替代；新增staging步骤和新操作重置规则。新增操作前产品版本与RPM基线独立展示、旧来源缺失/混合节点和回退未知规则及浏览器回归。补充历史/当前/事件共用双语消息映射、未知诊断随语言提示并保留原文、原始状态不变及桌面/窄屏语言切换回归入口。 「版本显示来源」再补两处展示口径：上传预览身份栅格把**当前运行版本 / RPM兼容基线 / 目标版本**三件独立事实分开，运行版本与版本摘要同源、不随上传改变；签名校验按包类型分派，热修补丁不带 RPM 升级引导器时显示`已通过 · 热修补丁`而非`已通过 · 历史兼容包`，滚动升级保留引导器/历史兼容两种描述，包类型文案写明热修会更新产品版本并保留 RPM 安装记录。 |
 | 2026-10-09 | `docs/development/backend/settings/update-history.md` | M | 记录Snapshot验签后继及部署判据。新增staging与updating共用节点百分比的读取投影、原始状态保留和三节点持久化回归入口。 |
 
 | 2026-10-09 | `docs/development/frontend/settings/preferences.md` | M | 语言设置接入静态原文绑定、动态双语目录和完整重绘；明确业务数据/原始证据、内存偏好及无请求/表单保持边界，登记四引擎八页面真实浏览器与目录回归。 |
@@ -58,6 +58,8 @@ recorded-through: 73ff4a3
 ## 批次说明
 
 本轮配置下发审查：前后端configuration页补全23项集群级/2项节点级范围、schema 2、显式且任务绑定的超时、拒绝覆盖恢复及首次现场证据；门禁流程/交付入口链接私有工具页；命名页中英明确功能版本规则的设立日期。完整HTML重建。
+
+升级预览版本语义修复：上传预览不再只有「RPM兼容基线」，新增独立的「当前运行版本」，并停止用 RPM 升级引导器给热修补丁判「历史兼容包」。源码改动在 `internal/api/console.html`（非 md，不在本页登记范围）；本批 md 只改了 `docs/development/frontend/settings/updates.md` 与本页。这两份 md 都不在 `docs/build-html-docs.mjs` 的生成清单里，因此本批**不重建** `docs/html`。
 
 本次新增功能按用户纠正使用3.1.2.1；同步中英命名页的PATCH递增/BUGFIX重置及revision=0边界，更新版本规范的产品身份和唯一主线口径。
 

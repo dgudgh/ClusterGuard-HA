@@ -1728,7 +1728,7 @@
       </div>
       <div class="software-update-package" id="software-update-package" hidden>
         <div class="software-update-metadata">
-          <div class="identity-cell"><span>升级包 ID</span><strong class="mono" id="software-update-patch-id">-</strong></div><div class="identity-cell"><span>RPM兼容基线</span><strong id="software-update-source-version">-</strong></div><div class="identity-cell"><span>目标版本</span><strong id="software-update-target-version">-</strong></div><div class="identity-cell"><span>包大小</span><strong id="software-update-size">-</strong></div>
+          <div class="identity-cell"><span>升级包 ID</span><strong class="mono" id="software-update-patch-id">-</strong></div><div class="identity-cell"><span>当前运行版本</span><strong id="software-update-package-running-version">-</strong></div><div class="identity-cell"><span>RPM兼容基线</span><strong id="software-update-source-version">-</strong></div><div class="identity-cell"><span>目标版本</span><strong id="software-update-target-version">-</strong></div><div class="identity-cell"><span>包大小</span><strong id="software-update-size">-</strong></div>
           <div class="identity-cell"><span>包类型</span><strong id="software-update-package-kind">-</strong></div><div class="identity-cell"><span>签名校验</span><strong id="software-update-signature">-</strong></div><div class="identity-cell"><span>滚动升级</span><strong id="software-update-rolling">-</strong></div><div class="identity-cell"><span>可回退</span><strong id="software-update-rollback">-</strong></div><div class="identity-cell"><span>上传时间</span><strong id="software-update-uploaded-at">-</strong></div>
         </div>
       </div>
@@ -2270,10 +2270,11 @@
       "校验失败": "Validation failed",
       "升级包未通过校验，请检查错误后重新上传。": "Package validation failed. Inspect the error and upload again.",
       "上传并校验": "Upload and validate",
-      "热修补丁（只替换清单声明的文件，不改 RPM 版本）": "Hotfix (replaces declared files only; RPM version unchanged)",
+      "热修补丁（替换清单声明的文件并更新产品版本，保留 RPM 安装记录）": "Hotfix (replaces the declared files and updates the product version; the installed RPM record is kept)",
       "滚动升级（整包 RPM 替换）": "Rolling update (full RPM replacement)",
       "已通过 · 引导器 v{0}": "Passed · Bootstrap v{0}",
       "已通过 · 历史兼容包": "Passed · Legacy compatible package",
+      "已通过 · 热修补丁": "Passed · Hotfix",
       "未通过": "Not passed",
       "支持": "Supported",
       "不支持": "Unsupported",
@@ -4919,6 +4920,11 @@
       const version = state.platformVersion || {};
       byId('platform-current-version').textContent = label;
       byId('software-update-running-version').textContent = label;
+      // The upload preview must answer "what am I running now" from the same
+      // single source. It is deliberately not derived from the uploaded record:
+      // a package's RPM compatibility baseline is not the version in service,
+      // and picking a file must not change what the console claims is running.
+      byId('software-update-package-running-version').textContent = label;
       byId('software-update-running-architecture').textContent = version.rpm_architecture || version.architecture || '-';
     };
     const latestSoftwareUpdate = () => (state.softwareUpdates && state.softwareUpdates.packages && state.softwareUpdates.packages[0]) || null;
@@ -5421,14 +5427,22 @@
       const job = subject.job || null;
       byId('software-update-patch-id').textContent = record.patch_id || '-';
       byId('software-update-package-kind').textContent = record.kind === 'hotfix'
-        ? ui('热修补丁（只替换清单声明的文件，不改 RPM 版本）')
+        ? ui('热修补丁（替换清单声明的文件并更新产品版本，保留 RPM 安装记录）')
         : ui('滚动升级（整包 RPM 替换）');
       byId('software-update-source-version').textContent = record.source_version || ui('不限');
       byId('software-update-target-version').textContent = softwareUpdateTargetVersion(record);
       byId('software-update-size').textContent = formatBytes(Number(record.size_bytes));
-      byId('software-update-signature').textContent = record.signature_verified
-        ? record.bootstrap_available ? ui("已通过 · 引导器 v{0}", record.bootstrap_protocol || 1) : ui('已通过 · 历史兼容包')
-        : ui('未通过');
+      // A hotfix never carries the RPM upgrade bootstrapper: it replaces the files its
+      // manifest names and deliberately keeps the installed RPM record, so there is no
+      // bootstrap to report. Judging every record by bootstrap_available therefore
+      // labelled every hotfix a "legacy compatible package", which an operator reads as
+      // "this patch is old". Report the fact that does hold for a hotfix - the signature
+      // verified - and keep the bootstrap wording for the rolling packages the
+      // bootstrapper actually belongs to.
+      byId('software-update-signature').textContent = !record.signature_verified ? ui('未通过')
+        : record.kind === 'hotfix' ? ui('已通过 · 热修补丁')
+        : record.bootstrap_available ? ui("已通过 · 引导器 v{0}", record.bootstrap_protocol || 1)
+        : ui('已通过 · 历史兼容包');
       byId('software-update-rolling').textContent = record.rolling ? ui('支持') : ui('不支持');
       byId('software-update-rollback').textContent = record.rollback_available ? ui('可回退') : ui('不可回退');
       byId('software-update-uploaded-at').textContent = record.uploaded_at ? new Date(record.uploaded_at).toLocaleString(state.language) : '-';

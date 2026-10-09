@@ -285,6 +285,54 @@ const CHECKS = [
   },
 
   {
+    // The upload preview is where the operator decides whether a package belongs on
+    // this cluster, and two of its cells were answering the wrong question. The grid
+    // showed no running version, so its RPM compatibility baseline sat nearest to the
+    // word "version" and a 2.2-105 baseline read as "the product is still 2.2-105".
+    // And the signature cell judged every record by the RPM upgrade bootstrapper,
+    // which a hotfix never carries, so every hotfix was presented as a legacy
+    // compatible package. The running version has to come from the node's own build
+    // metadata and be independent of whatever was uploaded; the bootstrap wording has
+    // to stay with the rolling packages it actually describes.
+    rule:'INV-004 / 22',
+    title:'the upload preview separates the running version from the RPM baseline and the package kind',
+    run:()=>{
+      const page=read('internal/api/console.html')||'';
+      if(!page.includes('<span>当前运行版本</span><strong id="software-update-package-running-version">')) return 'the upload preview has no running-version cell';
+      const render=page.match(/const renderPlatformVersion = \(\) => \{([\s\S]*?)\n    \};/);
+      if(!render) return 'missing renderPlatformVersion';
+      if(!render[1].includes('const label = platformVersionText();')) return 'the running version is no longer read from the node build metadata';
+      if(!render[1].includes("byId('software-update-package-running-version').textContent = label;")) return 'the preview running version is no longer the node build metadata but something the uploaded record decides';
+      const marker="byId('software-update-signature').textContent =";
+      const tail="ui('已通过 · 历史兼容包');";
+      const start=page.indexOf(marker);
+      const end=page.indexOf(tail,start);
+      if(start<0||end<0) return 'the signature cell no longer tells the package kinds apart';
+      const expression=page.slice(start+marker.length,end+tail.length-1);
+      // Run the statement the page actually contains, with byId/ui stubbed to the same
+      // shapes the console uses, so the verdict comes from the shipped branch and not
+      // from a copy of the rule living in this gate.
+      const resolve=vm.runInNewContext(`record => {
+        const cell = {};
+        const byId = () => cell;
+        const ui = (template, ...values) => values.reduce((text, value, index) => text.replace('{' + index + '}', value), template);
+        ${marker} ${expression};
+        return cell.textContent;
+      }`, {});
+      const hotfix={kind:'hotfix',signature_verified:true,rolling:true};
+      if(resolve(hotfix)!=='已通过 · 热修补丁') return `a verified hotfix is still presented as ${resolve(hotfix)}`;
+      if(resolve({...hotfix,signature_verified:false})!=='未通过') return 'an unverified hotfix is not reported as unverified';
+      if(resolve({kind:'upgrade',signature_verified:true,bootstrap_available:true,bootstrap_protocol:1})!=='已通过 · 引导器 v1') return 'a rolling package lost its bootstrap description';
+      if(resolve({kind:'upgrade',signature_verified:true})!=='已通过 · 历史兼容包') return 'a rolling package without a bootstrapper lost its wording';
+      if(!page.includes("ui('热修补丁（替换清单声明的文件并更新产品版本，保留 RPM 安装记录）')")) return 'the hotfix kind no longer states that it updates the product version and keeps the RPM record';
+      const acceptance=read('tools/console-update-version-transition-acceptance.cjs')||'';
+      if(!acceptance.includes('running version stays independent of the uploaded record')) return 'missing real-browser regression for the independent running version';
+      if(!acceptance.includes('a hotfix is never a legacy compatible package')) return 'missing real-browser regression for the hotfix signature label';
+      return true;
+    },
+  },
+
+  {
     rule:'INV-004',
     title:'deployment result survives a later failed operation',
     run:() => {
@@ -818,6 +866,9 @@ const MUTATIONS = [
 
   { name:'filename migration leaves runtime behind', file:'scripts/build-hotfix-patch.sh', find:'internal/buildinfo.ProductVersion=${patch_version}', replace:'internal/buildinfo.Release=${patch_version}', rule:'runtime and history use their own verified product versions' },
   { name:'UI ignores sealed runtime version', file:'internal/api/console.html', find:'if (version.product_version) return version.product_version;', replace:'if (false) return version.product_version;', rule:'runtime and history use their own verified product versions' },
+  { name:'the upload preview stops showing the running version', file:'internal/api/console.html', find:"byId('software-update-package-running-version').textContent = label;", replace:"byId('software-update-package-running-version').textContent = '-';", rule:'the upload preview separates the running version from the RPM baseline and the package kind' },
+  { name:'every hotfix is a legacy compatible package again', file:'internal/api/console.html', find:": record.kind === 'hotfix' ? ui('已通过 · 热修补丁')", replace:": false ? ui('已通过 · 热修补丁')", rule:'the upload preview separates the running version from the RPM baseline and the package kind' },
+  { name:'the hotfix kind stops naming the product version it updates', file:'internal/api/console.html', find:"ui('热修补丁（替换清单声明的文件并更新产品版本，保留 RPM 安装记录）')", replace:"ui('热修补丁（替换清单声明的文件）')", rule:'the upload preview separates the running version from the RPM baseline and the package kind' },
 
   {
     name:'a failed attempt overwrites installed deployment',file:'internal/api/console.html',
