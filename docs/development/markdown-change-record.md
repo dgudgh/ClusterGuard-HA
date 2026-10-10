@@ -117,4 +117,4 @@ recorded-through: 73ff4a3
 
 本批参数分类修改只涉及上述设置功能页与本台账，生成页照流程重建；SOURCE、隔离Chrome与ART/FIELD分别记录。
 
-3.1.2.8完整介质发布批次：统一运行产品身份和RPM兼容基线，补当前公开下载路径及双语发布说明；完整重建HTML，保留历史记录。
+3.1.2.8完整介质发布批次：统一运行产品身份和RPM兼容基线，补当前公开下载路径及双语发布说明；完整重建HTML，保留历史记录。后续修正：把「注入全部五个 Go 目标」做成真实可观察——五个负载命令（clusterguard/cgctl/clusterguard-agent/clusterguard-k8s-fence-guard/clusterguard-update-helper）都报告共享四段身份，契约 ART-005 逐个命令判红（+2 变异），发布说明与介质指南同步登记；本页与两份发布说明、介质指南仍在同一批次内，不新增台账行。

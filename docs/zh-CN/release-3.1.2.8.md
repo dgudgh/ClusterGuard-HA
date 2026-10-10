@@ -23,7 +23,7 @@ bash install_clusterguard.sh --help
 
 ## 本版修复与累计功能
 
-- 完整安装介质和 RPM 的全部 Go 构建目标注入四段产品版本；控制台和版本接口使用同一产品身份。包内 `BUILD-INFO`、`RELEASE-INFO` 记录产品版本及 RPM 基线。
+- 完整安装介质和 RPM 的全部 Go 构建目标注入四段产品版本，五个负载命令（`clusterguard`、`cgctl`、`clusterguard-agent`、`clusterguard-k8s-fence-guard`、`clusterguard-update-helper`）都以 `--version` 报告该身份；控制台和版本接口使用同一产品身份。包内 `BUILD-INFO`、`RELEASE-INFO` 记录产品版本及 RPM 基线。
 - 完整介质校验器按实际四段介质版本定位运行包，核对产品身份、构建源码、两份控制台嵌入内容与全部摘要。构建入口拒绝覆盖已存在的交付物。
 - 完整包累计包含版本/历史投影、重试与续跑分流、升级进度保持、中英文偏好及历史结果本地化等主线修复。
 - 控制节点参数下发：页面编辑允许的 25 项整数参数，预检与二次确认后下发，逐节点受控重启并读取实际生效值；集群级参数必须选择全部投票节点。失败保留维护门禁，通过重试或回退恢复。

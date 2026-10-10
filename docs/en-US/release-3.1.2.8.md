@@ -23,7 +23,7 @@ Use the [installation guide](offline-rpm-install.md) to review the plan before a
 
 ## Fixes and Cumulative Features
 
-- All Go targets in complete media and RPM builds receive the four-part product identity. Runtime APIs and the console share this identity; `BUILD-INFO` and `RELEASE-INFO` retain both product version and RPM baseline.
+- All Go targets in complete media and RPM builds receive the four-part product identity, and all five payload commands (`clusterguard`, `cgctl`, `clusterguard-agent`, `clusterguard-k8s-fence-guard`, `clusterguard-update-helper`) report it through `--version`. Runtime APIs and the console share this identity; `BUILD-INFO` and `RELEASE-INFO` retain both product version and RPM baseline.
 - Media verification resolves the actual four-part bundle path and checks product identity, source revision, both embedded consoles and all checksums. Builders refuse to overwrite existing deliverables.
 - Includes mainline fixes for version/history projection, hotfix retry versus rolling resume, progress continuity, language preferences and localized update results.
 - Controller parameter distribution supports 25 allowed integer parameters, prechecks, confirmation, controlled sequential restarts and effective-value readback. Cluster parameters require all voting members. Failed tasks retain the maintenance gate until retry or rollback recovers them.

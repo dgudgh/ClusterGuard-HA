@@ -7,10 +7,10 @@
 四段产品版本用于运行展示、介质目录和 GitHub 标签；RPM Version/Release 只用于安装和兼容。例如产品 `3.1.2.8` 对应新 RPM `2.2-106`。不得仅给文件改名却不注入运行产品版本。
 
 - `scripts/build-clusterguard-offline-kit.sh`：校验四段介质身份，向运行包和 RPM 两个入口传递 `--product-version`，在 `RELEASE-INFO` 记录产品身份。
-- `scripts/build-clusterguard-bundle.sh`：注入所有运行二进制；四段 `--version` 自动绑定同一产品版本，显式不一致拒绝构建。
+- `scripts/build-clusterguard-bundle.sh`：注入所有运行二进制；四段 `--version` 自动绑定同一产品版本，显式不一致拒绝构建。注入只有被引用才留在制品里：每个负载命令都必须报告该身份（`buildinfo.VersionLine`），否则链接器会丢掉未引用的变量，制品悄悄退回 RPM 基线。契约 `ART-005` 从两个构建脚本推导负载命令集，逐个要求报告身份。
 - `scripts/build-clusterguard-rpm.sh`：注入全部五个 Go 目标，在 RPM `BUILD-INFO` 保留产品版本。
 - `tools/bundle-version-acceptance.cjs`：实际执行本机二进制版本接口，保留旧基线行为并验证新产品版本及拒绝场景。
-- `tools/verify-offline-kit.cjs`：解包介质与 RPM，验证各级摘要、来源、产品身份、运行包、嵌入页面、许可和敏感文件；不部署节点。
+- `tools/verify-offline-kit.cjs`：解包介质与 RPM，验证各级摘要、来源、产品身份、运行包、嵌入页面、许可和敏感文件；产品身份按字节检查每个负载二进制；不部署节点。
 
 ## 构建示例
 
