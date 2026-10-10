@@ -120,9 +120,7 @@ func runAdmin(arguments []string, stdout, stderr io.Writer, random io.Reader, no
 
 func main() {
 	if len(os.Args) == 2 && (os.Args[1] == "--version" || os.Args[1] == "version") {
-		info := buildinfo.Current("clusterguard")
-		fmt.Printf("%s %s (%s, state-format=%d, update-protocol=%d)\n",
-			info.Product, info.DisplayVersion(), info.Commit, info.StateFormat, info.UpdateProtocol)
+		fmt.Println(buildinfo.VersionLine("clusterguard"))
 		return
 	}
 	if len(os.Args) == 2 && os.Args[1] == "--version-json" {

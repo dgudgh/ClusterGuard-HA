@@ -1,6 +1,7 @@
 package buildinfo
 
 import (
+	"fmt"
 	"regexp"
 	"runtime"
 	"strings"
@@ -87,6 +88,18 @@ func (info Info) DisplayVersion() string {
 		return info.Version
 	}
 	return info.Version + "-" + info.Release
+}
+
+// VersionLine is the single-line identity every payload binary reports. The
+// release builder links the same four-part product identity into all of them,
+// so an operator can ask any binary on a node which product build it is. A
+// linker flag alone is not enough: the Go linker drops a variable nothing
+// references, so every command has to report the identity to keep it compiled
+// into the artifact.
+func VersionLine(binary string) string {
+	info := Current(binary)
+	return fmt.Sprintf("%s %s (%s, state-format=%d, update-protocol=%d)",
+		info.Product, info.DisplayVersion(), info.Commit, info.StateFormat, info.UpdateProtocol)
 }
 
 func RPMArchitecture(architecture string) string {

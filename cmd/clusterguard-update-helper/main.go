@@ -15,11 +15,18 @@ import (
 	"syscall"
 	"time"
 
+	"clusterguard.io/ha/internal/buildinfo"
 	"clusterguard.io/ha/internal/platformupdate"
 	"clusterguard.io/ha/internal/updatecontract"
 )
 
 func main() {
+	// The release builder links the four-part product identity into every payload
+	// binary. Reporting it here is what keeps it compiled into the artifact.
+	if len(os.Args) == 2 && (os.Args[1] == "--version" || os.Args[1] == "version") {
+		fmt.Println(buildinfo.VersionLine("clusterguard-update-helper"))
+		return
+	}
 	if len(os.Args) == 2 && os.Args[1] == "contract" {
 		if err := updatecontract.Validate(); err != nil {
 			log.Fatal(err)

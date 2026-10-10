@@ -9,6 +9,7 @@ import (
 	"os"
 
 	"clusterguard.io/ha/internal/agent"
+	"clusterguard.io/ha/internal/buildinfo"
 )
 
 type runtimeControllers struct {
@@ -56,6 +57,12 @@ func newRuntimeMutationLedger(configuration agent.Config) (agent.MutationLedger,
 }
 
 func main() {
+	// The release builder links the four-part product identity into every payload
+	// binary. Reporting it here is what keeps it compiled into the artifact.
+	if len(os.Args) == 2 && (os.Args[1] == "--version" || os.Args[1] == "version") {
+		fmt.Println(buildinfo.VersionLine("clusterguard-agent"))
+		return
+	}
 	configurationPath := flag.String("config", "/etc/clusterguard/agent.json", "agent configuration path")
 	checkConfig := flag.Bool("check-config", false, "validate configuration and exit")
 	reconcile := flag.Bool("reconcile", false, "reconcile local VIP ownership against the majority controller")

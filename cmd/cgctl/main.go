@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"clusterguard.io/ha/internal/buildinfo"
 	"clusterguard.io/ha/pkg/model"
 	"clusterguard.io/ha/pkg/redact"
 )
@@ -521,6 +522,12 @@ func valueOrUnknown(value string) string {
 }
 
 func main() {
+	// Report the local build identity instead of the server's, so the payload
+	// binary the release builder linked keeps that identity in the artifact.
+	if len(os.Args) == 2 && os.Args[1] == "--version" {
+		fmt.Println(buildinfo.VersionLine("cgctl"))
+		return
+	}
 	client := &http.Client{Timeout: 10 * time.Second}
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, client))
 }

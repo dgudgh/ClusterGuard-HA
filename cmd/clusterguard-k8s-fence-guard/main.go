@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"clusterguard.io/ha/internal/buildinfo"
 	"clusterguard.io/ha/internal/kubernetes"
 	"clusterguard.io/ha/pkg/model"
 )
@@ -120,6 +121,12 @@ func run() error {
 }
 
 func main() {
+	// The release builder links the four-part product identity into every payload
+	// binary. Reporting it here is what keeps it compiled into the artifact.
+	if len(os.Args) == 2 && (os.Args[1] == "--version" || os.Args[1] == "version") {
+		fmt.Println(buildinfo.VersionLine("clusterguard-k8s-fence-guard"))
+		return
+	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "ClusterGuard Kubernetes start guard blocked database startup:", err)
 		os.Exit(1)

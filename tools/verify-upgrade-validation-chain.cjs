@@ -194,6 +194,21 @@ const CHECKS = [
       const verify=read('tools/verify-offline-kit.cjs')||'';
       if(!verify.includes('assert.equal(metadata.product_version,expectedProductVersion)')||!verify.includes('assert.equal(build.product_version,expectedProductVersion)'))return 'kit verifier fails to bind product identity';
       if(!(read('tools/bundle-version-acceptance.cjs')||'').includes("info.product_version === item.product"))return 'actual native binary regression missing';
+      // A linker flag is not enough on its own: the Go linker drops a variable
+      // nothing references, so a compiled payload command that never reports the
+      // identity silently ships the RPM baseline instead. Derive the command set
+      // from the builders so a new payload target cannot skip the check.
+      const targets=new Set();
+      for(const name of ['rpm','bundle']) {
+        const script=read(`scripts/build-clusterguard-${name}.sh`)||'';
+        for(const match of script.matchAll(/"([^":]+):\.\/cmd\/([^"]+)"/g)) targets.add(match[2]);
+      }
+      if(targets.size<5) return `the release builders compile only ${targets.size} payload commands`;
+      for(const target of targets) {
+        const main=read(`cmd/${target}/main.go`);
+        if(main===null) return `payload command ${target} has no main package`;
+        if(!main.includes('buildinfo.VersionLine(')) return `payload command ${target} never reports the shared product identity, so the linker drops it`;
+      }
       return true;
     },
   },
@@ -1000,6 +1015,7 @@ const reportOpen = failures => {
 // caught by reading something the gate does not actually consult.
 const READ_FILES = [
   'scripts/build-clusterguard-rpm.sh','scripts/build-clusterguard-bundle.sh','scripts/build-clusterguard-offline-kit.sh','tools/verify-offline-kit.cjs','tools/bundle-version-acceptance.cjs',
+  'cmd/clusterguard/main.go','cmd/cgctl/main.go','cmd/clusterguard-agent/main.go','cmd/clusterguard-k8s-fence-guard/main.go','cmd/clusterguard-update-helper/main.go',
   'internal/platformupdate/history.go',
   'scripts/operation_version_test.go', 'internal/platformupdate/operation_version_test.go', 'tools/console-update-version-transition-acceptance.cjs',
   'tools/console-language-acceptance.cjs',
@@ -1019,6 +1035,8 @@ const MUTATIONS = [
   {name:'runtime bundle loses product version injection',file:'scripts/build-clusterguard-bundle.sh',find:'buildinfo.ProductVersion=${product_version}',replace:'buildinfo.Version=${product_version}',rule:'full installation builders bind product identity independently of RPM'},
   {name:'offline kit loses product version propagation',file:'scripts/build-clusterguard-offline-kit.sh',find:'--product-version "${product_version}"',replace:'--version "${product_version}"',rule:'full installation builders bind product identity independently of RPM'},
   {name:'RPM product version proof is ignored',file:'tools/verify-offline-kit.cjs',find:'assert.equal(build.product_version,expectedProductVersion)',replace:'assert.ok(build.product_version)',rule:'full installation builders bind product identity independently of RPM'},
+  {name:'the cgctl payload stops reporting the product identity',file:'cmd/cgctl/main.go',find:'fmt.Println(buildinfo.VersionLine("cgctl"))',replace:'fmt.Println("cgctl")',rule:'full installation builders bind product identity independently of RPM'},
+  {name:'the update helper payload stops reporting the product identity',file:'cmd/clusterguard-update-helper/main.go',find:'fmt.Println(buildinfo.VersionLine("clusterguard-update-helper"))',replace:'fmt.Println("clusterguard-update-helper")',rule:'full installation builders bind product identity independently of RPM'},
 
   {name:'read-only nonrestart parameter gets an editor',file:'internal/api/console.html',find:"return configurationField(value, section) ? 'editable' : 'readonly';",replace:"return !value.restart_required ? 'editable' : 'readonly';",rule:'configuration editors follow capabilities and appear after effective values'},
   {name:'unread capabilities are assumed editable',file:'internal/api/console.html',find:"return 'pending';",replace:"return 'editable';",rule:'configuration editors follow capabilities and appear after effective values'},
