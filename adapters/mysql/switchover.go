@@ -1055,13 +1055,19 @@ func (adapterInstance *Adapter) switchoverExecute(ctx context.Context, request a
 	}
 
 	rows, err := adapterInstance.runner.Query(mutationContext, sourceEndpoint, credentials, gtidPositionQuery)
-	if err != nil || len(rows) != 1 || strings.TrimSpace(rows[0]["gtid_executed"]) == "" {
+	if err != nil || len(rows) != 1 {
 		if err == nil {
-			err = fmt.Errorf("source GTID response is empty")
+			err = fmt.Errorf("source GTID response returned %d rows", len(rows))
 		}
 		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("capture fenced source GTID: %w", err))
 	}
-	gtidPosition := strings.TrimSpace(rows[0]["gtid_executed"])
+	position, present := rows[0]["gtid_executed"]
+	if !present {
+		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("capture fenced source GTID: response omitted gtid_executed"))
+	}
+	// A freshly initialized GTID-enabled source can have no logged transactions.
+	// Its empty set is valid; missing query evidence must still fail closed.
+	gtidPosition := strings.TrimSpace(position)
 	if _, err := ParseGTIDSet(gtidPosition); err != nil {
 		return executionFailure(request.Operation.ResourceID, started, model.OperationBlocked, "fenced", fmt.Errorf("validate fenced source GTID: %w", err))
 	}
