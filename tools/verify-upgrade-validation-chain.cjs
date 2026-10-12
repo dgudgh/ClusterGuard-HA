@@ -214,6 +214,35 @@ const CHECKS = [
   },
 
   {
+    rule:'the field installer owns its substitutions and waits for the unit it just started',
+    title:'the field installer never hands a substitution to the operator and never races a Type=simple unit',
+    run:()=>{
+      const installer=read('scripts/install_clusterguard.sh');
+      if(installer===null) return 'the field installer is missing';
+      // Every remote payload is a double-quoted string, so a backtick inside one is a command
+      // substitution the operator machine runs before the payload ever reaches the node. The
+      // file's convention is $(), so a backtick here is a defect rather than a style choice.
+      if(installer.includes('`')) return 'the installer uses a backtick, so the operator machine substitutes it before the payload reaches the node';
+      const lines=installer.split('\n');
+      // systemd reports a Type=simple unit active as soon as the process is forked, so asserting
+      // readiness straight after `enable --now` races the helper's own socket bind.
+      for(let index=0;index<lines.length;index+=1){
+        const enable=lines[index].match(/systemctl enable --now (\S+)/);
+        if(!enable) continue;
+        const unit=enable[1];
+        let waited=false;
+        for(let cursor=index+1;cursor<Math.min(lines.length,index+12);cursor+=1){
+          const line=lines[cursor];
+          if(/^"\s*(>|$)/.test(line)) break;
+          if(/break; sleep/.test(line)) waited=true;
+          if(line.includes(`is-active --quiet ${unit}`)&&!waited) return `the installer asserts ${unit} is active right after enabling it, so a Type=simple unit races its own readiness`;
+        }
+      }
+      return true;
+    },
+  },
+
+  {
     rule:'22 / FIELD-012', title:'console language preference covers settings and keeps raw values intact',
     run:()=>{
       const page=read('internal/api/console.html')||'';
@@ -1024,7 +1053,7 @@ const READ_FILES = [
   'internal/platformupdate/version.go', 'internal/platformupdate/inspector.go',
   CONTRACT_DOC, CONTRACT_DOC_ZH, 'internal/updatecontract/contract.md', 'internal/updatecontract/schema.json', 'internal/platformupdate/helper.go',
   'internal/platformupdate/supersedes.go', 'internal/platformupdate/supersedes_test.go',
-  'scripts/clusterguard-update-job.sh', 'scripts/clusterguard-upgrade.sh', 'scripts/build-hotfix-patch.sh',
+  'scripts/clusterguard-update-job.sh', 'scripts/clusterguard-upgrade.sh', 'scripts/build-hotfix-patch.sh', 'scripts/install_clusterguard.sh',
   'internal/platformupdate/manager.go', 'internal/api/updates.go', 'internal/api/console.html',
   'hotfixes/hotfix-publications.json', 'tools/verify-hotfix-patch-catalog.cjs',
   'tools/console-update-hotfix-recovery-acceptance.cjs', 'tools/console-configuration-groups-acceptance.cjs', 'tools/console-configuration-distribution-acceptance.cjs', 'tools/verify-upgrade-validation-chain.cjs',
@@ -1037,6 +1066,8 @@ const MUTATIONS = [
   {name:'RPM product version proof is ignored',file:'tools/verify-offline-kit.cjs',find:'assert.equal(build.product_version,expectedProductVersion)',replace:'assert.ok(build.product_version)',rule:'full installation builders bind product identity independently of RPM'},
   {name:'the cgctl payload stops reporting the product identity',file:'cmd/cgctl/main.go',find:'fmt.Println(buildinfo.VersionLine("cgctl"))',replace:'fmt.Println("cgctl")',rule:'full installation builders bind product identity independently of RPM'},
   {name:'the update helper payload stops reporting the product identity',file:'cmd/clusterguard-update-helper/main.go',find:'fmt.Println(buildinfo.VersionLine("clusterguard-update-helper"))',replace:'fmt.Println("clusterguard-update-helper")',rule:'full installation builders bind product identity independently of RPM'},
+  {name:'the installer hands a backtick substitution to the operator machine',file:'scripts/install_clusterguard.sh',find:'# The rolling upgrade job validates privileged inputs with workspace check-file,',replace:'# The rolling upgrade job validates privileged inputs with `workspace check-file`,',rule:'the field installer owns its substitutions and waits for the unit it just started'},
+  {name:'the installer asserts the update helper is ready without waiting',file:'scripts/install_clusterguard.sh',find:'for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do systemctl is-active --quiet clusterguard-update-helper.service && test -S /run/clusterguard/update-helper.sock && break; sleep 1; done\n',replace:'',rule:'the field installer owns its substitutions and waits for the unit it just started'},
 
   {name:'read-only nonrestart parameter gets an editor',file:'internal/api/console.html',find:"return configurationField(value, section) ? 'editable' : 'readonly';",replace:"return !value.restart_required ? 'editable' : 'readonly';",rule:'configuration editors follow capabilities and appear after effective values'},
   {name:'unread capabilities are assumed editable',file:'internal/api/console.html',find:"return 'pending';",replace:"return 'editable';",rule:'configuration editors follow capabilities and appear after effective values'},

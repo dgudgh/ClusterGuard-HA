@@ -2194,7 +2194,7 @@ install -d -m 0750 -o root -g clusterguard /etc/clusterguard/trust
 install -d -m 0750 -o clusterguard -g clusterguard /var/lib/clusterguard/updates
 install -d -m 0700 -o root -g root /var/lib/clusterguard-update-private
 install -d -m 0750 -o root -g root /etc/clusterguard/updates
-# The rolling upgrade job validates privileged inputs with `workspace check-file`,
+# The rolling upgrade job validates privileged inputs with workspace check-file,
 # which requires root ownership. /etc/clusterguard/ssh/controller_ed25519 is owned by
 # the clusterguard user (agent runtime), so give the updater its own root-owned copy.
 # OpenSSH additionally refuses group/world-readable identity files, hence 0600 root:root.
@@ -2204,6 +2204,9 @@ install -m 0600 -o root -g root '${remote_stage}/deployment-state.json' /etc/clu
 install -m 0600 -o root -g root '${remote_stage}/update.json' /etc/clusterguard/update.json
 systemctl daemon-reload
 systemctl enable --now clusterguard-update-helper.service
+# systemd reports a Type=simple unit active as soon as the process is forked, so the helper can
+# still be binding its socket while the assertions below run.
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do systemctl is-active --quiet clusterguard-update-helper.service && test -S /run/clusterguard/update-helper.sock && break; sleep 1; done
 systemctl is-active --quiet clusterguard-update-helper.service
 test -S /run/clusterguard/update-helper.sock
 " >/dev/null
