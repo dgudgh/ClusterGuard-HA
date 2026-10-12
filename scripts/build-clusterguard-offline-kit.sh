@@ -340,9 +340,10 @@ for ((database_package_index=0; database_package_index<database_package_count; d
 done
 
 cat >"${kit}/packages/database/README.txt" <<'EOF'
-本目录保存构建正式介质时通过 --database-package 明确嵌入的、已经批准的
+本目录可选地保存构建正式介质时通过 --database-package 显式嵌入的、已经批准的
 MySQL、UPSQL 原厂二进制包，或 PostgreSQL 原厂二进制/官方 release 源码包。
-每个嵌入包均附带同名 .sha256，安装器会在连接远端前再次校验。
+完整介质默认不嵌入任何数据库包，本目录因此通常为空。每个嵌入包均附带同名
+.sha256，安装器会在连接远端前再次校验。
 
 如果本目录没有所需版本，也可以在现场放入批准的软件包；ClusterGuard HA
 不会联网下载数据库软件、补丁或绕过数据库厂商许可证要求。

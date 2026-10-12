@@ -6,7 +6,7 @@
 
 ## 当前完整介质 / Current Installation Kit
 
-[3.1.2.9 双语发布说明 / release notes](zh-CN/release-3.1.2.9.md) · [GitHub v3.1.2.9](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v3.1.2.9)。产品版本 3.1.2.9，RPM 兼容基线 2.2-107；GitHub 预发布，FIELD OPEN。 / Product 3.1.2.9, RPM baseline 2.2-107; prerelease with FIELD OPEN. Historical entries below preserve their original scope.
+[3.1.2.10 双语发布说明 / release notes](zh-CN/release-3.1.2.10.md) · [GitHub v3.1.2.10](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v3.1.2.10)。产品版本 3.1.2.10，RPM 兼容基线 2.2-108；GitHub 预发布，FIELD OPEN。 / Product 3.1.2.10, RPM baseline 2.2-108; prerelease with FIELD OPEN. Historical entries below preserve their original scope.
 
 ## Document Roles / 资料作用
 

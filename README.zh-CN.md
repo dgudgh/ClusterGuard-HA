@@ -31,9 +31,9 @@ ClusterGuard HA 是一个独立、洁净室的高可用控制平面。
 拓扑和审计证据组织在同一套运维流程中。拓扑、节点生命周期和操作日志等
 页面见中英文[产品导览](docs/zh-CN/product-tour.md)。
 
-## 当前完整安装介质：3.1.2.9
+## 当前完整安装介质：3.1.2.10
 
-[GitHub 预发布 v3.1.2.9](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v3.1.2.9) 提供完整 Linux x86_64 安装介质，包含 MySQL 8.0.44 与 PostgreSQL 16.4 介质。运行产品版本为 **3.1.2.9**，RPM 兼容基线为 **2.2-107**。下载、摘要和部署边界见[本版发布说明](docs/zh-CN/release-3.1.2.9.md)。本版 FIELD 尚 OPEN，属于预发布。
+[GitHub 预发布 v3.1.2.10](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v3.1.2.10) 提供完整 Linux x86_64 安装介质。本介质不再嵌入数据库包，MySQL / PostgreSQL 介质由现场自备。运行产品版本为 **3.1.2.10**，RPM 兼容基线为 **2.2-108**。下载、摘要和部署边界见[本版发布说明](docs/zh-CN/release-3.1.2.10.md)。本版 FIELD 尚 OPEN，属于预发布。
 
 ## 已记录的正式发布版本
 

@@ -33,9 +33,9 @@ controlled execution, recovery, topology, and audit evidence in one operator
 workflow. See the bilingual [product tour](docs/en-US/product-tour.md) for the
 topology, node lifecycle, and operation-log views.
 
-## Current Installation Kit: 3.1.2.9
+## Current Installation Kit: 3.1.2.10
 
-[GitHub prerelease v3.1.2.9](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v3.1.2.9) provides the complete Linux x86_64 installation kit with MySQL 8.0.44 and PostgreSQL 16.4 media. Product version **3.1.2.9** is distinct from RPM compatibility baseline **2.2-107**. See [release notes](docs/en-US/release-3.1.2.9.md) for downloads, checksums and deployment boundaries. Current FIELD acceptance is OPEN; this is a prerelease.
+[GitHub prerelease v3.1.2.10](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v3.1.2.10) provides the complete Linux x86_64 installation kit. The kit no longer embeds a database package: supply the approved MySQL / PostgreSQL media on site. Product version **3.1.2.10** is distinct from RPM compatibility baseline **2.2-108**. See [release notes](docs/en-US/release-3.1.2.10.md) for downloads, checksums and deployment boundaries. Current FIELD acceptance is OPEN; this is a prerelease.
 
 ## Recorded Formal Releases
 
