@@ -611,6 +611,14 @@ The display timezone is pinned across every node from the installer's `--timezon
 
 `clusterguard-clock-mesh.sh --server` only promotes itself to the cluster's clock authority when given `--set-utc` or `--accept-current-time`: it imposes the node's own time on every other node and makes it permanent with `hwclock --systohc`. Persisting an unverified clock is how a one-off install mistake becomes a permanent offset.
 
+### 12.8 Retrying an interrupted install while the old MySQL unit keeps restarting
+
+The installation helper creates `clusterguard-mysql-<port>.service` in `/etc/systemd/system/`. It is outside the RPM file list, so removing the RPM leaves this unit behind. Its `Restart=on-failure` job can race runtime-directory preparation during a retry.
+
+Before replacing software or removing a managed partial initialization directory, the fixed helper checks this port's unit description, executable, loaded fragment, absence of drop-ins, and the data directory in any existing configuration. It then runs `systemctl disable --now` and requires `ActiveState=inactive` and `MainPID=0` before continuing. A failed stop, modified or overridden unit, or mismatched data directory aborts installation. The unit is enabled and started again only after initialization succeeds. On interruption, the old unit and diagnostics remain; the unit may remain disabled. Retry using the original site state.
+
+A running instance with verifiable credentials follows the existing synchronization path. A complete database is still protected from replacement unless a rebuild was explicitly authorized. This fix adds neither database deletion nor machine-wide uninstall. Use controlled upgrades or node recovery for production database version changes, data-directory moves, and node rebuilds; do not remove data, management markers, or site state to bypass protection.
+
 ## 13. Uninstallation and Rollback
 
 Uninstalling RPM individually will not delete `/etc/clusterguard/`, `/var/lib/clusterguard/`, and audit data:

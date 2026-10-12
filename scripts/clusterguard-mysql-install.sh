@@ -287,6 +287,48 @@ if ! tar -tf "${package_path}" | awk '
   echo "MySQL package must contain one safe top-level directory" >&2
   exit 3
 fi
+quiesce_managed_mysql_service() {
+  local load_state fragment dropins active_state main_pid
+  load_state="$(systemctl show --property=LoadState --value "${service}")" || return 3
+  if [[ ! -e "${service_file}" && ! -L "${service_file}" && "${load_state}" == "not-found" ]]; then
+    return 0
+  fi
+  # Only the exact unit generated for this port may be retired. A name alone is
+  # not ownership evidence, and drop-ins can redirect an otherwise known unit.
+  [[ -f "${service_file}" && ! -L "${service_file}" ]] &&
+    grep -Fqx "Description=ClusterGuard managed MySQL ${port}" "${service_file}" &&
+    grep -Fqx "ExecStart=${managed_mysqld} --defaults-file=${config_file}" "${service_file}" || {
+      echo "refusing to stop an unrecognized MySQL service: ${service}" >&2
+      return 3
+    }
+  fragment="$(systemctl show --property=FragmentPath --value "${service}")" || return 3
+  dropins="$(systemctl show --property=DropInPaths --value "${service}")" || return 3
+  [[ "${fragment}" == "${service_file}" && -z "${dropins}" ]] || {
+    echo "refusing to stop an overridden MySQL service: ${service}" >&2
+    return 3
+  }
+  if [[ -e "${config_file}" || -L "${config_file}" ]]; then
+    [[ -f "${config_file}" && ! -L "${config_file}" ]] &&
+      grep -Fqx "datadir=${data_dir}" "${config_file}" || {
+        echo "existing MySQL service belongs to a different data directory" >&2
+        return 3
+      }
+  fi
+  # disable --now cancels Restart=on-failure before directories or binaries are
+  # replaced. Failure is fatal; leaving a live daemon and continuing is unsafe.
+  systemctl disable --now "${service}" || {
+    echo "cannot stop and disable previous MySQL service: ${service}" >&2
+    return 3
+  }
+  active_state="$(systemctl show --property=ActiveState --value "${service}")" || return 3
+  main_pid="$(systemctl show --property=MainPID --value "${service}")" || return 3
+  [[ "${active_state}" == "inactive" && "${main_pid}" == "0" ]] || {
+    echo "previous MySQL service did not stop: ${service}" >&2
+    return 3
+  }
+  echo "previous managed MySQL service stopped; reinstall may continue: ${service}"
+}
+
 managed_evidence=false
 if [[ -f "${managed_marker}" || -f "${service_file}" ]]; then
   managed_evidence=true
@@ -297,13 +339,18 @@ fi
 if [[ -d "${data_dir}/mysql" ]]; then
   [[ "${rebuild}" == "true" ]] || { echo "existing unmanaged MySQL data directory blocks installation" >&2; exit 3; }
   [[ "${managed_evidence}" == "true" ]] || { echo "refusing to rebuild an unmanaged MySQL instance" >&2; exit 3; }
-  systemctl stop "${service}" || true
-  rm -rf "${data_dir}"
 elif [[ -d "${data_dir}" ]] && [[ -n "$(find "${data_dir}" -mindepth 1 -print -quit 2>/dev/null)" ]]; then
   [[ "${managed_evidence}" == "true" || -f "${installing_marker}" ]] || {
     echo "refusing to replace an unmanaged partial MySQL data directory" >&2
     exit 3
   }
+fi
+
+# Validate data protection before stopping anything. Live instances have already
+# returned through the synchronization path above; complete data still requires
+# an explicit rebuild. This also covers empty/partial interrupted installations.
+quiesce_managed_mysql_service
+if [[ -d "${data_dir}" ]] && [[ -n "$(find "${data_dir}" -mindepth 1 -print -quit 2>/dev/null)" ]]; then
   rm -rf "${data_dir}"
 fi
 

@@ -1411,7 +1411,7 @@ func TestMySQLInstallUsesManagedTransactionAndOwnsTheDataParent(t *testing.T) {
 	if strings.Contains(installText, `chown -R mysql:mysql "${data_dir}" "${log_dir}" "${run_dir}"`) {
 		t.Fatal("MySQL install still leaves the protected data parent owned by root")
 	}
-	stop := strings.Index(installText, `systemctl stop "${service}"`)
+	stop := strings.Index(installText, "\nquiesce_managed_mysql_service\n")
 	recreate := strings.LastIndex(installText, `mkdir -p "${install_root}/software" "${data_dir}" "${log_dir}" "${run_dir}"`)
 	ownership := strings.Index(installText, `chown -R mysql:mysql "${install_parent}" "${log_dir}" "${run_dir}"`)
 	if stop < 0 || recreate < 0 || ownership < 0 || recreate < stop || ownership < recreate {

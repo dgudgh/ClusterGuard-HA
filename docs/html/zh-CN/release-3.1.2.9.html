@@ -68,6 +68,7 @@ bash install_clusterguard.sh --help
 <p>包含控制面、cgctl、Agent、Kubernetes fencing guard、受限 Update Helper、systemd 单元、安装/配置/升级/恢复脚本、静态 Linux jq、Rocky Linux 8 x86_64 基础运行依赖及仓库元数据、配置示例、签名公钥、安装运维手册与 AGPL-3.0-only / 第三方许可。</p>
 <p>同一介质嵌入 MySQL <strong>8.0.44</strong> 原厂最小二进制包和 PostgreSQL <strong>16.4</strong> 官方源码包，各有摘要。PostgreSQL 源码的编译依赖采用独立依赖包或构建节点可信软件源，不包含在基础运行仓库内；全隔离环境须事先按<a href="database-preparation.html">数据库接入手册</a>准备匹配的编译依赖。Oracle / SQL Server 未增加生产支持声明。</p>
 <p>公开附件为完整 <code>.tar.gz</code>、RPM、对应 SHA-256、<code>RELEASE-INFO</code>、<code>verification.json</code> 及发布说明；签名升级/热修制品只留本地和签约交付渠道。</p>
+<p>历史介质说明：3.1.2.9 的附件内含 MySQL 原厂 minimal 二进制包；保留该历史附件，3.1.2.10 起默认不再嵌入数据库包，改由现场提供已批准的原厂介质。</p>
 <h2 id="验证与现场状态">验证与现场状态<a class="heading-anchor" href="#验证与现场状态" aria-label="Link to 验证与现场状态">#</a></h2>
 <p>本版验证范围：Go 回归、适用 race/vet、源码契约及变异（含本版新增的反引号与就绪等待两条规则）、许可/Markdown 门禁、完整介质解包/摘要/源码绑定/嵌入页面/可执行版本、私有升级配套件签名与只读检查。每项结果以本次验证记录及公开 <code>verification.json</code> 为准；隔离 API 浏览器不等于现场验证。</p>
 <p><strong>未在目标 Linux 执行客户生产现场验收，未进行本版真实数据库、systemctl 逐节点重启、多数派/VIP/恢复与滚动升级的现场验收。FIELD 仍 OPEN，因此为预发布，不宣称生产稳定验收。</strong> 历史验收报告只说明其对应版本和范围。部署前核对目标系统 RPM 信任链、配置与适用门禁。</p>

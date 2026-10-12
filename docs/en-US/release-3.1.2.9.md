@@ -46,6 +46,8 @@ The same medium embeds the MySQL **8.0.44** vendor minimal binary package and th
 
 Public assets are the complete `.tar.gz`, the RPM, their SHA-256 sidecars, `RELEASE-INFO`, `verification.json` and the release notes; signed upgrade / hotfix artifacts remain local and in the contracted delivery channel only.
 
+Historical media notice: the 3.1.2.9 attachment includes the vendor MySQL minimal binary package. That historical attachment is retained; from 3.1.2.10 onward, database packages are omitted by default and approved vendor media is provided at the installation site.
+
 ## Verification and Field Status
 
 Verification scope for this release: Go regression, applicable race/vet, source contract and mutations (including the two backtick and readiness-wait rules added here), license/Markdown gates, and complete-media unpacking/checksum/source binding/embedded pages/executable versions, plus private upgrade companion signing and read-only inspection. Every result is governed by this verification record and the public `verification.json`; an isolated API browser is not field verification.

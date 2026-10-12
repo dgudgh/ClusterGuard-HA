@@ -612,6 +612,14 @@ journalctl -u clusterguard-ha.service -n 200 --no-pager
 
 `clusterguard-clock-mesh.sh --server` 只有在给出 `--set-utc` 或 `--accept-current-time` 时才会把自己升格为全集群时钟权威：它会把本机时间施加到其他所有节点，并用 `hwclock --systohc` 固化进 RTC。未经验证就固化，会让一次安装失误变成永久偏差。
 
+### 12.8 中断安装重试时，旧 MySQL 服务仍在自动重启
+
+`clusterguard-mysql-<端口>.service` 由安装助手生成在 `/etc/systemd/system/`，不属于 RPM 的文件清单，卸载 RPM 不会移除它。旧单元的 `Restart=on-failure` 会在安装重试时竞争运行目录。
+
+修复后的 MySQL 安装助手在替换软件和清理受管的部分初始化目录前，核对本端口单元的描述、执行路径、实际加载路径、无覆盖配置，以及现存配置的目标数据目录；然后执行 `systemctl disable --now` 并确认单元为 `inactive`、`MainPID=0`，再继续安装。停止失败、单元被改写或带 drop-in、数据目录不匹配均中止。成功初始化后才重新 `enable --now`；中断时保留旧单元和诊断资料，单元可能保持停用，复用原站点状态重试。
+
+已在线且凭据可验证的实例继续走原续接路径。已有完整数据库且未明确授权重建时仍拒绝覆盖；本修复不提供清库或整机卸载入口。生产集群换数据库版本、数据目录迁移或节点重建须走受控升级/节点恢复流程，不要删除数据、管理标记或站点状态来绕过保护。
+
 ## 13. 卸载与回滚
 
 单独卸载 RPM 不会删除 `/etc/clusterguard/`、`/var/lib/clusterguard/` 和审计资料：

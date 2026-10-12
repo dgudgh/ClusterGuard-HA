@@ -74,8 +74,8 @@ recorded-through: 73ff4a3
 | 2026-10-09 | `docs/zh-CN/release-3.1.2.8.md` | A | 3.1.2.8双语发布说明：完整包产品版本注入、累计修复/下发功能、下载摘要入口、介质内容及现场未验收边界。 |
 
 | 2026-10-09 | `docs/en-US/release-3.1.2.8.md` | A | 3.1.2.8双语发布说明：完整包产品版本注入、累计修复/下发功能、下载摘要入口、介质内容及现场未验收边界。 |
-| 2026-10-12 | `docs/zh-CN/release-3.1.2.9.md` | A | 3.1.2.9双语发布说明：安装器两处修复（双引号远端载荷内的反引号在运维机本地执行、`Type=simple` 单元 `enable --now` 后就绪断言竞态）；产品版本 3.1.2.9 对 RPM 兼容基线 2.2-107；下载入口与 FIELD OPEN 边界。 |
-| 2026-10-12 | `docs/en-US/release-3.1.2.9.md` | A | 与中文逐节对齐的 3.1.2.9 英文发布说明：同两处安装器修复、同一产品版本与 RPM 基线、同一下载入口与 FIELD OPEN 边界。 |
+| 2026-10-12 | `docs/zh-CN/release-3.1.2.9.md` | A | 3.1.2.9双语发布说明：安装器两处修复（双引号远端载荷内的反引号在运维机本地执行、`Type=simple` 单元 `enable --now` 后就绪断言竞态）；产品版本 3.1.2.9 对 RPM 兼容基线 2.2-107；下载入口与 FIELD OPEN 边界。 标注历史附件内含 MySQL minimal 包且保留；3.1.2.10 起默认不嵌入数据库介质。 |
+| 2026-10-12 | `docs/en-US/release-3.1.2.9.md` | A | 与中文逐节对齐的 3.1.2.9 英文发布说明：同两处安装器修复、同一产品版本与 RPM 基线、同一下载入口与 FIELD OPEN 边界。 同步历史 minimal 数据库附件保留及3.1.2.10默认不嵌入的英文说明。 |
 | 2026-10-12 | `docs/zh-CN/release-3.1.2.10.md` | A | 3.1.2.10 双语发布说明：完整介质默认不再嵌入数据库包（`packages/database/` 为空，数据库介质由现场自备并经 `-r` 或 `/opt` 兜底）；产品版本 3.1.2.10 对 RPM 兼容基线 2.2-108；下载入口与 FIELD OPEN 边界。 |
 | 2026-10-12 | `docs/en-US/release-3.1.2.10.md` | A | 与中文逐节对齐的 3.1.2.10 英文发布说明：同「默认不嵌入数据库介质」口径、同一产品版本与 RPM 基线、同一下载入口与 FIELD OPEN 边界。 |
 | 2026-10-12 | `README.md` | M | 当前完整安装介质入口由 3.1.2.8 起经 3.1.2.9 更新到 3.1.2.10；RPM 兼容基线 2.2-106→2.2-107→2.2-108；本版声明介质不再嵌入数据库包；发布说明链接同步。 |
@@ -88,6 +88,9 @@ recorded-through: 73ff4a3
 | 2026-10-12 | `docs/en-US/catalogue.md` | M | 同上英文完整资料目录的当前介质段更新到 3.1.2.10。 |
 | 2026-10-12 | `docs/development/delivery/offline-installation-media.md` | M | 身份示例由产品 3.1.2.9 对 RPM 2.2-107 更新为 3.1.2.10 对 2.2-108；新增「数据库介质：默认不嵌入」一节（介质不携带数据库包、安装器三级查找优先级、缺 `.sha256` 侧车静默跳过校验）；构建示例去掉 `--database-package`、校验示例期望数据库包数 2→0；保留随介质安装器的契约条目。 |
 | 2026-10-12 | `docs/development/markdown-change-record.md` | M | 登记 3.1.2.9 与 3.1.2.10 两个完整介质发布批次（本页）。 |
+
+| 2026-10-12 | `docs/zh-CN/offline-rpm-install.md` | M | 新增中断安装重试 FAQ：精确识别本端口受管单元、停用并确认无主进程后再替换；明确完整数据保护与失败停用状态。 |
+| 2026-10-12 | `docs/en-US/offline-rpm-install.md` | M | 同步英文中断安装重试 FAQ、受管单元识别与停止失败阻断、完整数据保护和生产恢复边界。 |
 
 ## 批次说明
 
@@ -136,3 +139,7 @@ recorded-through: 73ff4a3
 3.1.2.9完整介质发布批次（2026-10-12）：修复随介质出货安装器 `scripts/install_clusterguard.sh` 的两处现场缺陷——配置滚动升级 Helper 的远端载荷是双引号字符串，其中注释里的反引号被运维机本地在执行时当命令替换（打印 `workspace: 未找到命令` 并清空该注释行）；`Type=simple` 的 `clusterguard-update-helper.service` 在 `enable --now` 返回后立即断言 `is-active` 与 socket，未等进程绑定造成就绪竞态、整步 `exit=1`。源码修复与契约同批：`verify-upgrade-validation-chain.cjs` 新增 1 条检查（安装器不得含反引号；`enable --now` 后的就绪断言前必须有有界重试）+ 2 条变异，检查数 32→33、变异 58→60。补双语发布说明与当前下载/介质入口；目录按产品版本 `3.1.2.9` 定位，RPM 兼容基线 `2.2-106`→`2.2-107`（RPM 内装入当前版本发布说明，内容变化故递增）。完整重建 HTML。SOURCE 与 ART 以本次记录为准；FIELD（客户生产现场验收）仍 OPEN，实验室三节点全新安装的验证结果另记于交付台账。
 
 3.1.2.10完整介质发布批次（2026-10-12）：确立并落地「数据库介质默认不嵌入」口径——完整介质不再携带 MySQL/PostgreSQL 二进制。构建脚本 `build-clusterguard-offline-kit.sh` 的 `database_packages=()` 空起步、全脚本唯一自动发现是 `--dependencies`，只有显式 `--database-package FILE` 才嵌入，`THIRD-PARTY-NOTICES.md` 也把数据库包写成 "(when embedded by `--database-package`)"；此前 3.1.2.9 公开介质显式嵌入了 mysql-8.0.44-minimal 与 postgresql-16.4 两个包，其再分发义务由发布方承担，属本版显式嵌入的例外，已记录。`docs/development/delivery/offline-installation-media.md` 新增「数据库介质：默认不嵌入」一节（安装器三级查找优先级、`/opt` 兜底位、缺 `.sha256` 侧车会静默跳过校验），构建示例去掉 `--database-package`、`verify-offline-kit.cjs` 期望数据库包数 2→0；每次发布独立定稿的随介质发布说明由 3.1.2.9 递增为 3.1.2.10，RPM 兼容基线 `2.2-107`→`2.2-108`。同步构建脚本 `scripts/build-clusterguard-offline-kit.sh` 生成的 `packages/database/README.txt` 措辞（脚本非 md，不在本页登记范围；改写使 DB-less 时自述不再声称已嵌入包，故本版介质可安全重建，不撞「同一产品版本只构建一次」）。目录按产品版本 `3.1.2.10` 定位。完整重建 HTML。SOURCE 与 ART 以本次记录为准；FIELD（客户生产现场验收）仍 OPEN，实验室三节点用本版介质配现场自备完整包的重新安装验证结果另记于交付台账。
+
+### 2026-10-12 · 中断安装的旧 MySQL 单元处理
+
+双语安装手册补充本端口受管服务停用/验证与数据保护边界；按用户决定给3.1.2.9历史附件加minimal数据库说明，保留原制品字节。重建全部生成HTML。源码回归在scripts/mysql_reinstall_test.go，现场未在本任务重新执行。
