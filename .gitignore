@@ -12,3 +12,11 @@
 /cgctl
 /docs/node_modules/
 /packaging/offline-dependencies/rocky-8-x86_64/
+__pycache__/
+/preview/
+
+# Field-captured evidence produced by the tools/diagnostics probes. It describes a
+# real site, so it stays local: the repository is public and one `git add -A` is
+# enough to publish it. The probe sources next to it stay tracked.
+/tools/diagnostics/**/live-api-evidence.json
+/tools/diagnostics/**/offline-reproduction.json
