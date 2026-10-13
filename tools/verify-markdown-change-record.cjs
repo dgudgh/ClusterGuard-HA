@@ -303,12 +303,12 @@ const MUTATIONS = [
   {
     name: 'a file that existed at the baseline is declared newly added',
     rule: 'every markdown change since the baseline is declared with the same type',
-    apply: (source) => source.replace(/^(\| 2026-10-08 \| `docs\/README\.md` \| )M( \|)/m, '$1A$2'),
+    apply: (source) => source.replace(/^(\| 2026-10-08 \| `docs\/zh-CN\/version-release-policy\.md` \| )M( \|)/m, '$1A$2'),
   },
   {
     name: 'an unchanged file is declared anyway',
     rule: 'no declaration survives the file it describes',
-    apply: (source) => source.replace(/^(\| 2026-10-08 \| `docs\/README\.md` \| M \|)/m, '| 2026-10-08 | `docs/en-US/README.md` | M | 无变化占位条目。 |\n$1'),
+    apply: (source) => source.replace(/^(\| 2026-10-08 \| `docs\/README\.md` \| M \|)/m, '| 2026-10-08 | `docs/development/backend/recovery.md` | M | 虚构变更占位条目。 |\n$1'),
   },
   {
     name: 'a file still on disk is declared deleted',

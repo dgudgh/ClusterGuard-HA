@@ -906,6 +906,11 @@ func TestCandidateReadFailsClosedBeforeAdapterInvocation(t *testing.T) {
 		if response.Code != http.StatusConflict || len(requests) != 0 {
 			t.Fatalf("primary count %d did not fail closed: %d %s calls=%d", primaryCount, response.Code, response.Body.String(), len(requests))
 		}
+		reason := "candidate evaluation has no current primary"
+		if primaryCount > 1 { reason = "candidate evaluation found multiple current primaries" }
+		if !strings.Contains(response.Body.String(), reason) {
+			t.Fatalf("primary count %d returned wrong reason: %s", primaryCount, response.Body.String())
+		}
 	}
 
 	repository := store.NewMemory()

@@ -73,6 +73,9 @@ const deferred = () => { let resolve; const promise = new Promise(done => { reso
         ]) {
           await page.locator(`#operations-${section}-tab`).click();
           assert.equal(await page.locator(`#${button}`).isDisabled(), true);
+          if (kind === 'replication_repair') {
+            await page.locator('#repair-action').selectOption(clusters[index].engine === 'mysql' ? 'start_io_thread' : 'resume_wal_replay');
+          }
           const beforeRequests = control.requests.filter(item => item.method !== 'GET').length;
           await page.evaluate(id => document.getElementById(id).dispatchEvent(new MouseEvent('click')), button);
           await page.waitForTimeout(100);
@@ -94,10 +97,17 @@ const deferred = () => { let resolve; const promise = new Promise(done => { reso
           assert.equal(standardExecutions.length, beforeExecutions + 1);
           assert.equal(standardExecutions.at(-1).operation.cluster_id, clusters[index].resource_id);
           assert.equal(standardExecutions.at(-1).operation.kind, kind);
+          if (kind === 'replication_repair') assert.equal(standardExecutions.at(-1).parameters.action, clusters[index].engine === 'mysql' ? 'start_io_thread' : 'resume_wal_replay');
           assert.equal(await page.locator(`#${button}`).isDisabled(), true);
           assert.match(await page.locator('#switch-lock').textContent(), /操作锁定/);
           checks.push(`${clusters[index].engine}/${kind}: locked handler rejects forced clicks; explicit unlock submits once; backend rejection restores lock`);
         }
+        await page.locator('#operations-recovery-tab').click();
+        await unlock();
+        await page.locator('#repair-action').selectOption(clusters[index].engine === 'mysql' ? 'start_sql_thread' : 'reload_configuration');
+        assert.equal(await page.locator('#execute-repair').isDisabled(), true);
+        assert.match(await page.locator('#switch-lock').textContent(), /操作锁定/);
+        checks.push(`${clusters[index].engine}: changing repair action relocks before submission`);
         await page.locator('#operations-switchover-tab').click();
         await unlock();
         const otherCandidate = await page.locator('#candidate-select').evaluate(select => [...select.options].find(option => option.value && option.value !== select.value)?.value);

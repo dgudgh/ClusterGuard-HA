@@ -641,8 +641,12 @@ func (server *Server) clusterCandidates(writer http.ResponseWriter, request *htt
 			primaries = append(primaries, instance)
 		}
 	}
-	if len(primaries) != 1 {
-		writeError(writer, http.StatusConflict, "candidate evaluation requires exactly one current primary")
+	if len(primaries) == 0 {
+		writeError(writer, http.StatusConflict, "candidate evaluation has no current primary")
+		return
+	}
+	if len(primaries) > 1 {
+		writeError(writer, http.StatusConflict, "candidate evaluation found multiple current primaries")
 		return
 	}
 	candidate, registered := server.registry.Get(cluster.Engine)

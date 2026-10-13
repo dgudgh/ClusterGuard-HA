@@ -92,6 +92,7 @@ const deferred = () => { let resolve; const promise = new Promise(done => { reso
         ['lost-response', 'switchover', 'execute-switchover']
       ]) {
         await start(index, scenario); await page.locator(`#operations-${section}-tab`).click();
+        if (scenario === 'success-repair') await page.locator('#repair-action').selectOption(engine === 'mysql' ? 'start_io_thread' : 'resume_wal_replay');
         await page.locator('#switch-lock').click(); await page.locator(`#${button}`).click();
         await page.waitForFunction(() => !state.operationRunning);
         const message = await page.locator('#operation-result').textContent();

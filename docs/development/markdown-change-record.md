@@ -23,6 +23,7 @@ recorded-through: 73ff4a3
 
 | 日期 | 文件 | 变更 | 说明 |
 | --- | --- | --- | --- |
+| 2026-10-13 | `docs/development/recovery-repair-gate-2026-10-13.md` | A | 记录复制修复缺失动作参数、灾难恢复已复核操作仍被阻断的历史对照、现场版本只读证据、修复边界与源码/现场分层验证计划。 |
 | 2026-10-12 | `docs/development/backend/operations.md` | M | 说明新装 MySQL 合法空 GTID 集合、查询证据缺失仍阻断、目标追平与最终核验不省略；登记空集合执行/坏查询/等待失败回归及不确定任务按原始证据复核的边界。 |
 | 2026-10-08 | `AGENTS.md` | M | 在「所有修改必须遵守」里新增一条：任何 Markdown 的新增/删除/修改都必须在 `docs/development/markdown-change-record.md` 登记并过 `verify-markdown-change-record.cjs`，改了 md 必须重建 `docs/html`，未登记不得提交。 |
 | 2026-10-08 | `docs/README.md` | M | 文档中心导航表新增一行「改文档 → Markdown 变更记录」，让台账在入口页可发现。  增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。 |

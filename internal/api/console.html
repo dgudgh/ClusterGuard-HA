@@ -1377,7 +1377,7 @@
             <div class="operation-box operation-section-panel" id="operations-recovery-panel" role="tabpanel" aria-labelledby="operations-recovery-tab" hidden>
               <div class="operation-box-head"><div><span class="summary-label">旧主一键恢复</span><h3>恢复为当前主库的从库</h3><p>自动判断增量回挂或全量重建，完成后验证数据、复制和业务入口归属。</p></div><span class="badge warning">中</span></div>
               <div class="operation-box-body">
-                <div class="center-actions"><button id="execute-rejoin" class="execute-button" type="button" disabled>一键恢复为从库</button><button id="execute-repair" type="button" disabled>修复复制</button></div>
+                <div class="center-actions"><button id="execute-rejoin" class="execute-button" type="button" disabled>一键恢复为从库</button><label for="repair-action">修复动作<select id="repair-action"><option value="">选择修复动作</option></select></label><button id="execute-repair" type="button" disabled>修复复制</button></div>
               </div>
             </div>
           </div>
@@ -2032,13 +2032,20 @@
       "读取集群状态超时，请重试。": "Cluster status request timed out. Retry.",
       "尚未持久化拓扑观测": "No persisted topology observation",
       "缺少当轮探测证据": "Probe evidence for this observation is missing",
-      "当前主节点不唯一，需恰好 1 个": "Exactly one current primary is required",
+      "当前没有主库，需按灾难恢复流程处理": "No current primary; use disaster recovery",
+      "检测到多个主库，需先处理主库冲突": "Multiple current primaries; resolve the primary conflict",
       "接口未返回数据": "The API returned no data",
       "拓扑": "Topology",
       "主库切换": "Primary switchover",
       "故障切换": "Failover",
       "旧主回挂": "Former primary rejoin",
       "复制修复": "Replication repair",
+      "修复动作": "Repair action",
+      "选择修复动作": "Choose a repair action",
+      "启动复制 IO 线程": "Start replication IO thread",
+      "启动复制 SQL 线程": "Start replication SQL thread",
+      "恢复 WAL 回放": "Resume WAL replay",
+      "重新加载配置": "Reload configuration",
       "节点同步": "Node synchronization",
       "元数据修正": "Metadata correction",
       "数据节点": "Data node",
@@ -3120,7 +3127,8 @@
     const noEvidenceMessages = new Set([
       'cluster has no persisted topology observation',
       'candidate evaluation requires persisted probe evidence',
-      'candidate evaluation requires exactly one current primary'
+      'candidate evaluation has no current primary',
+      'candidate evaluation found multiple current primaries'
     ]);
 
     const setLiveStatus = (message, isError = false) => {
@@ -3878,7 +3886,8 @@
     const evidenceReasonText = reason => ({
       'cluster has no persisted topology observation': ui('尚未持久化拓扑观测'),
       'candidate evaluation requires persisted probe evidence': ui('缺少当轮探测证据'),
-      'candidate evaluation requires exactly one current primary': ui('当前主节点不唯一，需恰好 1 个'),
+      'candidate evaluation has no current primary': ui('当前没有主库，需按灾难恢复流程处理'),
+      'candidate evaluation found multiple current primaries': ui('检测到多个主库，需先处理主库冲突'),
     }[reason] || reason);
 
     const evidenceResult = async (path, fallback, section, signal) => {
@@ -4569,6 +4578,14 @@
     };
     const ordinaryOperationAllowed = (kind, targetID) => !state.operationRunning && state.switchUnlocked && !state.lifecycleRunning
       && ordinaryOperationContextReady(kind, targetID);
+    const repairActions = {
+      mysql: [['start_io_thread', '启动复制 IO 线程'], ['start_sql_thread', '启动复制 SQL 线程']],
+      postgresql: [['resume_wal_replay', '恢复 WAL 回放'], ['reload_configuration', '重新加载配置']]
+    };
+    const selectedRepairAction = () => {
+      const action = byId('repair-action').value;
+      return (repairActions[state.clusterDetail?.cluster?.engine] || []).some(([value]) => value === action) ? action : '';
+    };
     const beginOperationIntent = (kind, targetID) => {
       if (!ordinaryOperationAllowed(kind, targetID)) return null;
       const intent = { kind, targetID, clusterID:state.selectedClusterId, user:state.currentUser, cancelled:false };
@@ -4578,7 +4595,8 @@
     };
     const requireOperationIntent = intent => {
       if (state.activeOperationIntent !== intent || intent.cancelled || state.currentUser !== intent.user
-        || state.selectedClusterId !== intent.clusterID || !ordinaryOperationContextReady(intent.kind, intent.targetID)) {
+        || state.selectedClusterId !== intent.clusterID || !ordinaryOperationContextReady(intent.kind, intent.targetID)
+        || (intent.kind === 'replication_repair' && selectedRepairAction() !== intent.action)) {
         throw new APIError('操作已重新锁定或上下文已变化，请重新解锁后执行。', 409);
       }
     };
@@ -4628,10 +4646,17 @@
         : !operationLockAvailable() ? ui('当前条件不允许解锁。') : state.switchUnlocked ? ui('重新锁定操作') : ui('解锁当前操作');
     };
     const updateExecutionButtons = () => {
+      const actionSelect = byId('repair-action');
+      const engine = state.clusterDetail?.cluster?.engine;
+      if (actionSelect.dataset.engine !== engine) {
+        actionSelect.dataset.engine = engine || '';
+        actionSelect.replaceChildren(new Option(ui('选择修复动作'), ''), ...(repairActions[engine] || []).map(([value, label]) => new Option(ui(label), value)));
+      }
+      actionSelect.disabled = state.operationRunning || !(repairActions[engine] || []).length;
       const execute = byId('execute-switchover');
       execute.disabled = !ordinaryOperationAllowed('switchover', state.selectedCandidateId);
       byId('execute-rejoin').disabled = !ordinaryOperationAllowed('former_primary_rejoin', state.selectedRejoinId);
-      byId('execute-repair').disabled = !ordinaryOperationAllowed('replication_repair', state.selectedRejoinId);
+      byId('execute-repair').disabled = !selectedRepairAction() || !ordinaryOperationAllowed('replication_repair', state.selectedRejoinId);
       const repairReason = ['mysql', 'postgresql'].includes(state.clusterDetail?.cluster?.engine) ? '' : ui('此引擎尚未实现旧主回挂与复制修复');
       byId('execute-rejoin').title = repairReason;
       byId('execute-repair').title = repairReason;
@@ -4759,9 +4784,11 @@
         && ['precheck', 'plan'].includes(result.stage);
     };
 
-    const executeOperation = async (kind, targetID, label) => {
+    const executeOperation = async (kind, targetID, label, action = '') => {
+      if (kind === 'replication_repair' && (!action || action !== selectedRepairAction())) return;
       const intent = beginOperationIntent(kind, targetID);
       if (!intent) return;
+      if (kind === 'replication_repair') intent.action = action;
       const cluster = state.clusterDetail.cluster;
       updateExecutionButtons();
       if (kind === 'switchover') renderOperationProgress({ stage:'precheck', status:'running' });
@@ -4776,6 +4803,7 @@
             target_id: targetID,
             idempotency_key: idempotencyKey
           };
+          if (kind === 'replication_repair') payload.parameters = { action:intent.action };
           let settled = false;
           const executionOutcome = fetchResult('/api/v1/operations/execute', mutationOptions(payload)).then(
             operation => ({ operation }),
@@ -7941,7 +7969,8 @@
     });
     byId('execute-switchover').addEventListener('click', () => executeOperation('switchover', state.selectedCandidateId, ui('主库切换')));
     byId('execute-rejoin').addEventListener('click', () => recoverFormerPrimary(state.selectedRejoinId));
-    byId('execute-repair').addEventListener('click', () => executeOperation('replication_repair', state.selectedRejoinId, ui('复制修复')));
+    byId('repair-action').addEventListener('change', () => { relockSwitch(); updateExecutionButtons(); });
+    byId('execute-repair').addEventListener('click', () => executeOperation('replication_repair', state.selectedRejoinId, ui('复制修复'), selectedRepairAction()));
     byId('open-node-lifecycle-modal').addEventListener('click', openNodeLifecycleModal);
     byId('close-node-lifecycle-modal').addEventListener('click', () => byId('node-lifecycle-modal').close());
     byId('cancel-node-lifecycle').addEventListener('click', () => byId('node-lifecycle-modal').close());

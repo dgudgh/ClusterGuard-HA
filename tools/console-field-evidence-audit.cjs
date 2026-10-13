@@ -17,7 +17,7 @@ const { createConsoleFixture } = require('./console-ui-fixture.cjs');
     const route = url.pathname.replace('/api/v1/', '');
     if (route === `clusters/${pg.resource_id}/candidates`) {
       counts.pgCandidates++;
-      return { status:409, message:'candidate evaluation requires exactly one current primary' };
+      return { status:409, message:'candidate evaluation has no current primary' };
     }
     if (source[route]) return {status:source[route].http, result:source[route].body?.result, message:source[route].body?.message};
     return null;

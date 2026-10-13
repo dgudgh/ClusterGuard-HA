@@ -298,7 +298,7 @@ func (r *Repository) BeginRecovery(ctx context.Context, id model.ResourceID, rev
 		}
 	}
 	for _, op := range r.snapshot.Operations {
-		if op.Operation.ClusterID == task.ClusterID && (op.Status == model.OperationRunning || op.Status == model.OperationIndeterminate) {
+		if op.Operation.ClusterID == task.ClusterID && (op.Status == model.OperationRunning || op.RequiresReview()) {
 			return task, conflictError("database operation is running or needs verification")
 		}
 	}

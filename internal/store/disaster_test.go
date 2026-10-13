@@ -16,7 +16,7 @@ import (
 	"clusterguard.io/ha/pkg/model"
 )
 
-func disasterFixture(t *testing.T, engine model.Engine) (*Repository, model.RecoveryTask) {
+func disasterFixture(t *testing.T, engine model.Engine, beforeBegin ...func(*Repository, model.RecoveryTask) bool) (*Repository, model.RecoveryTask) {
 	t.Helper()
 	r, err := Open(filepath.Join(t.TempDir(), "recovery.json"))
 	if err != nil {
@@ -48,11 +48,73 @@ func disasterFixture(t *testing.T, engine model.Engine) (*Repository, model.Reco
 	if err != nil {
 		t.Fatal(err)
 	}
+	expectBlocked := false
+	for _, prepare := range beforeBegin {
+		expectBlocked = prepare(r, task)
+	}
 	task, err = r.BeginRecovery(context.Background(), task.ResourceID, task.MetadataRevision, lease)
+	if expectBlocked && errors.Is(err, ErrConflict) {
+		return r, task
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
+	if expectBlocked {
+		t.Fatal("recovery began despite a blocking operation")
+	}
 	return r, task
+}
+
+func TestBeginRecoveryAllowsReviewedHistoricalOperation(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		status    model.OperationStatus
+		reviewed  bool
+		other     bool
+		wantBlock bool
+	}{
+		{name: "running", status: model.OperationRunning, wantBlock: true},
+		{name: "unreviewed", status: model.OperationIndeterminate, wantBlock: true},
+		{name: "reviewed", status: model.OperationIndeterminate, reviewed: true},
+		{name: "other cluster", status: model.OperationIndeterminate, other: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, task := disasterFixture(t, model.EngineMySQL, func(r *Repository, task model.RecoveryTask) bool {
+				clusterID := task.ClusterID
+				if test.other {
+					clusterID = model.NewResourceID()
+				}
+				op, _, err := r.CreateOperation(model.OperationRecord{
+					Operation: model.Operation{ClusterID: clusterID, Engine: model.EngineMySQL, Kind: model.OperationSwitchover, RequestedBy: "dba"},
+					TargetID:  model.NewResourceID(), IdempotencyKey: "historical-" + test.name,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				op, err = r.TransitionOperation(op.ResourceID, op.MetadataRevision, model.OperationTransition{Stage: model.StageVerify, Status: test.status, Message: "historical result"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if test.reviewed {
+					op, err = r.ReviewIndeterminateOperation(op.ResourceID, op.MetadataRevision, "dba", "checked database and writer endpoint")
+					if err != nil {
+						t.Fatal(err)
+					}
+					if op.Status != model.OperationIndeterminate || op.Review == nil {
+						t.Fatal("review changed historical outcome")
+					}
+				}
+				return test.wantBlock
+			})
+			wantStage := model.RecoveryFencing
+			if test.wantBlock {
+				wantStage = model.RecoveryPlanned
+			}
+			if task.Stage != wantStage {
+				t.Fatalf("stage=%s want %s", task.Stage, wantStage)
+			}
+		})
+	}
 }
 
 func advanceDisasterFixture(t *testing.T, r *Repository, task model.RecoveryTask) model.RecoveryTask {
