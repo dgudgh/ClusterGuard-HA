@@ -87,7 +87,7 @@ cp "${repository}"/packaging/logrotate/* "${root}/packaging/logrotate/"
 cp "${repository}/LICENSE" "${root}/LICENSE"
 cp "${repository}/THIRD-PARTY-NOTICES.md" "${root}/THIRD-PARTY-NOTICES.md"
 cp "${repository}/docs/licenses/MPL-2.0.txt" "${root}/MPL-2.0.txt"
-cp "${repository}/README.md" "${root}/README.md"
+cp "${repository}/README.en.md" "${root}/README.md"
 cp "${repository}/docs/offline-install.md" "${root}/OFFLINE-INSTALL.md"
 cp "${repository}"/docs/zh-CN/*.md "${root}/docs/zh-CN/"
 if [[ -n "${jq_binary}" ]]; then

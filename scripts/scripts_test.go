@@ -3822,7 +3822,7 @@ func TestAuthenticationDeliveryDocumentationCoversBootstrapAndRecovery(t *testin
 	// requires the documentation to name the mechanism. What this test protects
 	// is unchanged: an operator must be able to bootstrap and recover the
 	// administrator account from the shipped documentation alone.
-	for _, path := range []string{"../README.md", "../docs/operations.md", "../docs/architecture.md", "../docs/mysql-feature-parity-acceptance.md"} {
+	for _, path := range []string{"../README.en.md", "../docs/operations.md", "../docs/architecture.md", "../docs/mysql-feature-parity-acceptance.md"} {
 		contents, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)

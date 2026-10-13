@@ -81,7 +81,7 @@ const entries = [
   ...releases["zh-CN"],
 
   entry("en-US", "index", "ClusterGuard HA Documentation", "docs/en-US/README.md"),
-  entry("en-US", "product-overview", "Product Overview", "README.md"),
+  entry("en-US", "product-overview", "Product Overview", "README.en.md"),
   entry("en-US", "product-tour", "Console Product Tour", "docs/en-US/product-tour.md"),
   entry("en-US", "architecture", "Architecture", "docs/architecture.md"),
   entry("en-US", "offline-rpm-install", "Offline RPM Installation", "docs/en-US/offline-rpm-install.md"),
@@ -108,7 +108,7 @@ const entries = [
   entry("en-US", "update-operation-identity-incident-2026-09-30", "Update Action Identity and Hotfix Recovery Incident (2026-09-30)", "docs/en-US/update-operation-identity-incident-2026-09-30.md"),
 
   entry("zh-CN", "index", "ClusterGuard HA 中文文档", "docs/zh-CN/README.md"),
-  entry("zh-CN", "product-overview", "产品概览", "README.zh-CN.md"),
+  entry("zh-CN", "product-overview", "产品概览", "README.md"),
   entry("zh-CN", "product-tour", "控制台产品导览", "docs/zh-CN/product-tour.md"),
   entry("zh-CN", "architecture", "系统架构", "docs/zh-CN/architecture.md"),
   entry("zh-CN", "offline-rpm-install", "离线 RPM 安装", "docs/zh-CN/offline-rpm-install.md"),

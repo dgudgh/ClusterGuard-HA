@@ -38,26 +38,149 @@
       </header>
       <main class="document-layout" id="document-content">
         <article class="document-content"><h1 id="clusterguard-ha">ClusterGuard HA<a class="heading-anchor" href="#clusterguard-ha" aria-label="Link to ClusterGuard HA">#</a></h1>
-<h2 id="before-development-or-document-changes">Before Development or Document Changes<a class="heading-anchor" href="#before-development-or-document-changes" aria-label="Link to Before Development or Document Changes">#</a></h2>
-<p>Read the <a href="../../../AGENTS.md">repository rules</a>, <a href="../../zh-CN/validation-gate-workflow.md">gate workflow</a>, and <a href="../../development/rules/README.md">reading order and applicable rules</a> before making changes; then select the relevant <a href="../../development/README.md">development module</a>. Before modifying or executing work within the upgrade contract&#39;s scope, read the complete <a href="upgrade-validation-chain.html">mandatory v2 contract</a>. Installation and operations follow the matching version&#39;s task guide after its applicable rules.</p>
-<h2 id="recorded-v2-source-repair-and-acceptance-status">Recorded v2 Source Repair and Acceptance Status<a class="heading-anchor" href="#recorded-v2-source-repair-and-acceptance-status" aria-label="Link to Recorded v2 Source Repair and Acceptance Status">#</a></h2>
-<p>The recorded source repair baseline is <code>7b643f4</code> (2026-10-03), on the sole mainline <code>codex/2.2-postgresql</code>. That repair enforces the v2 contract for updates and hotfixes: failed hotfixes use <code>retry</code>; interrupted rolling updates use <code>resume</code>. Its new-artifact and site ART/FIELD acceptance record remains <strong>OPEN</strong>; that repair produced no new package or production deployment. See the <a href="../../en-US/upgrade-validation-chain-implementation-status.md">implementation and acceptance record</a>. This record does not replace verification of the current checkout, package, or site.</p>
-<p>ClusterGuard HA requires Go 1.22 or newer.</p>
-<p><strong>ClusterGuard HA 多数据库企业级高可用控制平台</strong></p>
-<p><strong>ClusterGuard HA — Multi-Database High Availability Control Plane</strong></p>
-<p>ClusterGuard HA is an independent, clean-room high-availability control plane.
-The stable 2.1 line is the MySQL HA product line. PostgreSQL delivery starts in
-2.2. Oracle Data Guard Broker and SQL Server Always On remain separately gated
-future product lines and are not part of the 2.1 support scope.</p>
+<h3 id="enterprise-database-high-availability-and-failover-management-platform">Enterprise Database High Availability and Failover Management Platform<a class="heading-anchor" href="#enterprise-database-high-availability-and-failover-management-platform" aria-label="Link to Enterprise Database High Availability and Failover Management Platform">#</a></h3>
+<p><strong>Make database failover safer. Make business recovery more controllable.</strong></p>
+<p>ClusterGuard HA is a database high-availability management platform for <strong>MySQL and PostgreSQL</strong>. It provides one integrated HA management capability covering database cluster monitoring, primary/standby topology management, failure detection, safety arbitration, automatic or controlled failover, write-endpoint migration, failed-node recovery and operation audit.</p>
+<p>Its core goal is not simply to promote a standby to primary. It is to ensure that when a database fails or during planned maintenance, and <strong>on the premise that the safety conditions are met</strong>, the <strong>database write service moves safely from the old primary to a new primary, while no two nodes can hold legitimate write permission at the same time.</strong></p>
+<h2 id="why-clusterguard-ha">Why ClusterGuard HA?<a class="heading-anchor" href="#why-clusterguard-ha" aria-label="Link to Why ClusterGuard HA?">#</a></h2>
+<p>Enterprise core business systems normally depend on the database providing service continuously.</p>
+<p>Even with database primary/standby replication already deployed, several problems remain that replication alone cannot solve:</p>
+<ul>
+<li>After the primary database fails, who decides whether a switchover is needed?</li>
+<li>Among several standbys, which one should take over the business?</li>
+<li>How do you ensure the old primary will not come back online and cause split brain?</li>
+<li>After a primary/standby switchover, how does the business access endpoint migrate with it?</li>
+<li>After the primary recovers, how does it rejoin the cluster?</li>
+<li>How do you confirm the switchover really succeeded and trace the whole failure-handling process?</li>
+</ul>
+<p><strong>Database replication solves data synchronization; ClusterGuard HA solves safe takeover and high-availability management after a database failure.</strong></p>
+<h2 id="what-can-clusterguard-ha-do">What Can ClusterGuard HA Do?<a class="heading-anchor" href="#what-can-clusterguard-ha-do" aria-label="Link to What Can ClusterGuard HA Do?">#</a></h2>
+<p><strong>Unified database cluster management</strong></p>
+<p>Continuously discovers and monitors node state, primary/standby topology, replication relationships, replication lag and cluster health for MySQL and PostgreSQL.</p>
+<p><strong>Safe primary/standby switchover</strong></p>
+<p>Uses Raft-majority arbitration, replication safety checks, candidate assessment and operation gates to perform a planned switchover — or, once enabled, automatic failover — after the conditions are met.</p>
+<p><strong>Automatic database write-endpoint migration</strong></p>
+<p>Brings the database role change and the business write-endpoint migration into the same controlled flow, supporting a Linux VIP, a Docker Swarm host VIP, and the implemented Kubernetes write-endpoint mechanism.</p>
+<p><strong>Reduced split-brain and wrong-takeover risk</strong></p>
+<p>Node fencing, writer leases, endpoint leases and safety checks prevent the old primary and the new primary from both becoming legitimate writers. When switchover safety cannot be proven, the platform refuses the high-risk operation.</p>
+<p><strong>Recovery management after a failure</strong></p>
+<p>Provides former-primary rejoin, node rebuild, replication repair, operation verification and result reporting, reducing manual risk.</p>
+<p><strong>Unified operation and audit</strong></p>
+<p>Manages high-availability operations through a web console, CLI and HTTP API, and records execution stages, verification evidence and audit information for every critical change.</p>
+<h2 id="the-core-idea-behind-clusterguard-ha">The Core Idea Behind ClusterGuard HA<a class="heading-anchor" href="#the-core-idea-behind-clusterguard-ha" aria-label="Link to The Core Idea Behind ClusterGuard HA">#</a></h2>
+<p><strong>A failure can happen, but a wrong takeover should not become a second incident.</strong></p>
+<p>ClusterGuard HA moves database high availability away from scattered scripts and manual operations into one system with cluster arbitration, safety gates, controlled execution and result verification.</p>
+<p>It is not a database proxy and not database backup software. Application traffic connects to the database write endpoint directly; ClusterGuard HA manages the ownership of the write endpoint and the database role transition.</p>
+<h2 id="where-it-fits">Where It Fits<a class="heading-anchor" href="#where-it-fits" aria-label="Link to Where It Fits">#</a></h2>
+<p>Suited to enterprise core business databases, primary/standby clusters that need automatic or controlled failover, planned maintenance in production, database primary/standby migration, and operations that require explicit operation permission and failure audit.</p>
+<p>MySQL and PostgreSQL are currently the main supported engines; Oracle Data Guard and SQL Server Always On are later controlled expansion directions.</p>
+<p><strong>ClusterGuard HA — every database failover with evidence, control and verification.</strong></p>
 <h2 id="console-preview">Console Preview<a class="heading-anchor" href="#console-preview" aria-label="Link to Console Preview">#</a></h2>
+<p>The operations workbench keeps cluster context, primary and candidate selection, VIP state, controlled execution, recovery, topology, and audit evidence in one operator workflow.</p>
 <p><img src="../assets/screenshots/ha-operation-workbench.png" alt="ClusterGuard HA operations workbench"></p>
-<p>The console keeps cluster context, primary and candidate selection, VIP state,
-controlled execution, recovery, topology, and audit evidence in one operator
-workflow. See the bilingual <a href="product-tour.html">product tour</a> for the
-topology, node lifecycle, and operation-log views.</p>
-<h2 id="current-installation-kit-3-1-2-10">Current Installation Kit: 3.1.2.10<a class="heading-anchor" href="#current-installation-kit-3-1-2-10" aria-label="Link to Current Installation Kit: 3.1.2.10">#</a></h2>
+<p>The topology page is organized by immutable resource identity and answers four operational questions: which instance is the currently observed primary, which instances replicate and in which direction, which node owns the VIP, and which nodes are unreachable, degraded or require attention.</p>
+<p><img src="../assets/screenshots/cluster-topology.png" alt="ClusterGuard HA cluster topology"></p>
+<p>See the bilingual <a href="product-tour.html">product tour</a> for the node lifecycle and operation-log views.</p>
+<h2 id="how-it-differs-from-other-ha-tools">How It Differs from Other HA Tools<a class="heading-anchor" href="#how-it-differs-from-other-ha-tools" aria-label="Link to How It Differs from Other HA Tools">#</a></h2>
+<p>The same kind of tool as MHA or Orchestrator for MySQL, and Patroni or repmgr for PostgreSQL: something you keep running so that one primary stays writable and the write endpoint moves with it.</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>MHA / Orchestrator / Patroni / repmgr</th>
+<th>ClusterGuard HA</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Engine coverage</td>
+<td>One database per tool</td>
+<td>MySQL and PostgreSQL under one control plane</td>
+</tr>
+<tr>
+<td>Decision basis</td>
+<td>Script or process state; a zero exit code is treated as &quot;switched&quot;</td>
+<td>Every action is gated on <em>current</em> evidence: current topology, health and replication relationships</td>
+</tr>
+<tr>
+<td>Proof of outcome</td>
+<td>Logs for a human to read</td>
+<td>Each step leaves verifiable evidence, an audit trail and a report; a change that did not verify is never presented as a success</td>
+</tr>
+<tr>
+<td>Identity</td>
+<td>hostname:port, hostname, or a name that changes</td>
+<td>Immutable platform UUID plus native engine identity (<code>server_uuid</code>, <code>system_identifier</code>); hostname, IP and port are correctable coordinates</td>
+</tr>
+</tbody></table>
+<h2 id="how-it-works-architecture-and-safety">How It Works: Architecture and Safety<a class="heading-anchor" href="#how-it-works-architecture-and-safety" aria-label="Link to How It Works: Architecture and Safety">#</a></h2>
+<p>Three Raft controllers form the control plane: metadata is replicated across them and every authority decision — writer lease, endpoint lease, operation lock — needs a current majority. Database nodes may be separate from, or co-located with, controllers; node lifecycle tasks enforce an odd controller count and verify Raft membership.</p>
+<pre><code class="language-text">operators / automation
+        |
+        v
+[ ClusterGuard HA control plane ]
+  console | HTTP API | cgctl
+  3 Raft controllers; every authority
+  decision needs a current majority
+        |
+        | mTLS / HTTPS, allowlisted actions only
+        v
+[ restricted node agent, one per host ]
+        |
+        v
+[ database nodes: primary + replicas ]
+[ write endpoint: Linux VIP, Kubernetes Service, Swarm host VIP ]
+
+clients ------&gt; write endpoint (direct; traffic never enters the control plane)
+</code></pre>
+<p>Client traffic goes to the write endpoint directly; it never passes through ClusterGuard. The control plane moves the endpoint&#39;s owner and then verifies that the move happened.</p>
+<p>Every implemented mutation passes the same workflow, and a mutation that did not verify is never presented as a success:</p>
+<pre><code class="language-text">DISCOVER -&gt; PRECHECK -&gt; PLAN -&gt; SAFETY_GUARD -&gt; LOCK -&gt; APPROVE -&gt; EXECUTE -&gt; VERIFY -&gt; AUDIT -&gt; REPORT
+</code></pre>
+<p>The safety mechanisms behind that workflow:</p>
+<ul>
+<li><strong>Evidence before action.</strong> A real role or write-endpoint change becomes executable only when the cluster has a complete HA endpoint inventory, an odd Raft controller set, current Leader-backed majority authority, purpose-specific database credentials, agent signing material, an operation lock and an approval. Missing or unknown evidence blocks the operation.</li>
+<li><strong>Unavailability before a second writer.</strong> The platform prefers a period of unavailability over a second writer or a second endpoint owner. Stale authorization expires, the old node fails closed to no endpoint plus persistent read-only, and the Leader revalidates the exact transition lease before promotion.</li>
+<li><strong>The data path stays direct.</strong> Applications connect to the write endpoint themselves; ClusterGuard does not proxy, buffer or route database traffic, and it never edits database data files.</li>
+<li><strong>Automatic failover is opt-in.</strong> When enabled it requires four current failure observations spanning at least three seconds, the rank-one eligible candidate, current controller quorum, old-primary isolation and an exclusive endpoint lease. An external BMC, PDU, cloud or hypervisor fencer remains an optional stronger layer. The three-second figure is the controller&#39;s stable-failure evidence window, not an end-to-end RTO promise; the restricted Agent keeps a separate 15-second authorization-expiry fence before an isolated old primary can no longer serve as writer or endpoint owner.</li>
+<li><strong>High availability is not a zero-downtime, zero-data-loss promise.</strong> The design deliberately chooses safety first: when old-primary isolation or candidate safety cannot be proven, the platform refuses to switch. That refusal is a safety feature of the product, not a guarantee that any failure will recover unconditionally.</li>
+<li><strong>Databases, data and backups stay yours.</strong> The platform does not take over database software, data directories, replication topology or backup policy, and the upgrade plane does not touch them either.</li>
+<li><strong>Identity is immutable; coordinates are not.</strong> Renaming a host, changing an IP or moving a port updates an endpoint and keeps the same platform instance.</li>
+<li><strong>The database is not bundled.</strong> The complete installation kit does not embed MySQL or PostgreSQL binaries; supply the approved database media on site.</li>
+</ul>
+<h2 id="supported-engines-and-versions">Supported Engines and Versions<a class="heading-anchor" href="#supported-engines-and-versions" aria-label="Link to Supported Engines and Versions">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Engine</th>
+<th>Status</th>
+<th>Scope</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>MySQL</td>
+<td>Supported</td>
+<td>The sealed 2.1 line is the MySQL HA product line, and MySQL HA is retained in 2.2 and later. Discovery covers MySQL 5.7, 8.0, 8.4 and 9.x; tested MySQL 5.7/8.x/9.x mutation dialects run behind an independent adapter and writer-endpoint contract. The 9.x dialect path is unit-tested against 9.7.0 only and has no recorded 9.x site qualification. Kubernetes write-endpoint takeover is currently MySQL-only.</td>
+</tr>
+<tr>
+<td>PostgreSQL</td>
+<td>Delivered from 2.2</td>
+<td>PostgreSQL 16.4: inventory-scoped discovery, <code>system_identifier</code> cluster binding, primary/standby topology, streaming health, timeline and WAL evidence, deterministic candidate assessment, guarded switchover and failover, <code>pg_rewind</code> former-primary recovery, allowlisted low-risk repair, and <code>pg_basebackup</code>/<code>pg_rewind</code> node lifecycle.</td>
+</tr>
+<tr>
+<td>Oracle</td>
+<td>Gated future line</td>
+<td>Data Guard Broker discovery, health, topology, standby candidate assessment, precheck, plan, execute and dual-node verification for controlled switchover. A dedicated password-file <code>SYSDG</code> account is used instead of <code>SYS</code>; the local Agent runs DGMGRL as the Oracle operating-system account and accepts only configured Broker members. Failover stays blocked until old-primary fencing is configured. Code may exist behind capability gates, but it is not a production claim.</td>
+</tr>
+<tr>
+<td>SQL Server</td>
+<td>Gated future line</td>
+<td>Always On read-only discovery, health, topology, synchronized-secondary candidate assessment, precheck, plan, execute, verify and send/redo queue metrics for planned failover to a synchronized synchronous-commit secondary. Discovery and execution are advertised only when <code>sqlcmd</code> is available or a SQL Server runner is injected, and forced failover stays blocked by default unless an explicit data-loss approval policy is configured.</td>
+</tr>
+</tbody></table>
+<p>Runtime targets: bare metal or virtual machines (systemd-managed database), Docker Swarm (fixed single-replica Service) and Kubernetes (dedicated single-replica StatefulSet). Mutations are advertised only when the restricted Agent, operation credentials, endpoint provider, controller quorum and required fencing evidence are configured; these capabilities are not retroactively added to <code>v2.1.45</code>.</p>
+<h3 id="current-installation-kit-3-1-2-10">Current Installation Kit: 3.1.2.10<a class="heading-anchor" href="#current-installation-kit-3-1-2-10" aria-label="Link to Current Installation Kit: 3.1.2.10">#</a></h3>
 <p><a href="https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v3.1.2.10">GitHub prerelease v3.1.2.10</a> provides the complete Linux x86_64 installation kit. The kit no longer embeds a database package: supply the approved MySQL / PostgreSQL media on site. Product version <strong>3.1.2.10</strong> is distinct from RPM compatibility baseline <strong>2.2-108</strong>. See <a href="release-3.1.2.10.html">release notes</a> for downloads, checksums and deployment boundaries. Current FIELD acceptance is OPEN; this is a prerelease.</p>
-<h2 id="recorded-formal-releases">Recorded Formal Releases<a class="heading-anchor" href="#recorded-formal-releases" aria-label="Link to Recorded Formal Releases">#</a></h2>
+<h3 id="recorded-formal-releases">Recorded Formal Releases<a class="heading-anchor" href="#recorded-formal-releases" aria-label="Link to Recorded Formal Releases">#</a></h3>
 <p>Release policy and support boundary:</p>
 <ul>
 <li><code>v2.1.45</code> is the immutable final release of the 2.1 line.</li>
@@ -124,109 +247,8 @@ three-controller deployment. PostgreSQL acceptance belongs to the 2.2 line
 and is documented separately in
 <a href="postgresql-ha.html">postgresql-ha.md</a>.</p>
 </blockquote>
-<p>The current MySQL adapter provides:</p>
-<ul>
-<li>inventory-scoped discovery for MySQL 5.7, 8.0, 8.4, and 9.x (the 9.x dialect
-path is unit-tested against 9.7.0 only; no 9.x site qualification is recorded);</li>
-<li>globally unique immutable node names, platform UUIDs, and native MySQL
-<code>server_uuid</code> identity;</li>
-<li>persisted topology, health, replication links, probe evidence, and metrics;</li>
-<li>promotion-candidate assessment with GTID and replication safety checks;</li>
-<li>guarded three-node planned switchover with primary and VIP ownership coupled;</li>
-<li>former-primary rejoin and allowlisted replication repair;</li>
-<li>four observations across a three-second stable-failure window and optional automatic failover;</li>
-<li>Raft-backed operation locks, endpoint leases, local self-isolation, and
-reboot-time VIP convergence through the restricted node agent;</li>
-<li>add/rebuild lifecycle tasks with fixed node-slot reuse, staged install,
-synchronization, verification, audit, and report output;</li>
-<li>endpoint metadata reconciliation without changing immutable resource identity;</li>
-<li>JSON, Prometheus, and monitoring-safe health output;</li>
-<li>fail-closed liveness/readiness separation, Raft role and quorum diagnostics,
-bounded history, paginated operation logs, and rate-limited incident reminders;</li>
-<li>an authenticated Chinese console with role-based access, mandatory bootstrap
-password change, CSRF protection, and the <code>cgctl</code> service CLI;</li>
-<li>durable operation UUIDs, idempotency keys, stage progress, audit, and reports;</li>
-<li>plan-bound, single-use approval grants for manual high-risk database
-operations (five-minute default lifetime, capped at fifteen minutes);</li>
-<li>tested MySQL 5.7/8.x/9.x mutation dialects behind an independent adapter and
-writer-endpoint contract.</li>
-</ul>
-<h2 id="2-2-release-scope">2.2 Release Scope<a class="heading-anchor" href="#2-2-release-scope" aria-label="Link to 2.2 Release Scope">#</a></h2>
-<p>The PostgreSQL adapter in 2.2 provides inventory-scoped
-discovery, immutable node identity, <code>system_identifier</code> cluster binding,
-primary/standby topology,
-streaming health, timeline and WAL evidence, native metrics, deterministic
-candidate assessment, guarded planned switchover and failover, former-primary
-<code>pg_rewind</code> recovery, allowlisted low-risk repair, writer-VIP coupling, and
-<code>pg_basebackup</code>/<code>pg_rewind</code> node lifecycle, plus optional three-second stable-failure
-automatic failover. Mutations are advertised only when
-the restricted Agent, operation credentials, endpoint provider, controller
-quorum, and required fencing evidence are configured. These capabilities are
-not retroactively added to <code>v2.1.45</code>.</p>
-<p>The Oracle adapter is a future gated integration for signed-Agent Data Guard
-Broker discovery, health,
-topology, standby candidate assessment, precheck, plan, execute, and dual-node
-verification for controlled switchover. A dedicated password-file
-<code>SYSDG</code> account is used instead of <code>SYS</code>; the local Agent runs DGMGRL as the
-Oracle operating-system account and accepts only configured Broker members.
-ClusterGuard never edits Oracle data files directly. Failure failover remains
-blocked until old-primary fencing is configured.</p>
-<p>The SQL Server adapter is a future gated integration for Always On read-only
-discovery, health, topology, synchronized-secondary candidate assessment,
-precheck, plan, execute, verify, and send/redo queue metrics for planned
-failover to a synchronized synchronous-commit secondary.
-Discovery and execution are advertised only when <code>sqlcmd</code> is available or a SQL
-Server runner is injected. Forced failover remains blocked by default unless a
-future explicit data-loss approval policy is configured.</p>
-<h2 id="safety-boundary">Safety Boundary<a class="heading-anchor" href="#safety-boundary" aria-label="Link to Safety Boundary">#</a></h2>
-<p>The example configuration keeps the restricted node agent and automatic
-failover disabled. Real MySQL role or VIP mutation becomes executable only when
-the cluster has a complete HA endpoint inventory, an odd Raft controller set,
-current leader-backed majority authority, purpose-specific MySQL credentials,
-agent signing material, an operation lock, and approval. Missing or unknown
-evidence blocks the operation; it never produces a simulated success.</p>
-<p>Automatic failover is separately opt-in. It requires four current failure
-observations spanning at least three seconds, the rank-one eligible candidate, current
-controller quorum, old-primary isolation, and an exclusive VIP lease. MySQL can
-use short-lived Raft-majority Agent authorization: stale authorization expires,
-the old node fails closed to no VIP plus persistent read-only, and the Leader
-revalidates the exact transition lease before promotion. An external BMC, PDU,
-cloud, or hypervisor fencer remains an optional stronger layer. The platform
-prefers temporary unavailability over a second writer or VIP owner.</p>
-<p>The three-second interval is the controller&#39;s stable-failure evidence window,
-not an end-to-end RTO promise. The restricted Agent retains a separate 15-second
-authorization-expiry fence before an isolated old primary can no longer serve
-as writer or VIP owner. PostgreSQL 16.4 laboratory qualification measured
-17.973 seconds of writer-endpoint interruption with a two-second client connect
-timeout; every production site must repeat that test with its own network,
-storage, database package, client timeout, and fencing policy.</p>
-<p>The browser console authenticates against platform users stored in the
-replicated metadata snapshot. A fresh installation creates <code>admin</code> with
-<code>MustChangePassword=true</code>. Unless the deployment sets
-<code>bootstrap_admin_password_env</code>, the Leader generates the first-login password
-and writes it to a root-only <code>bootstrap-admin-password</code> file (mode 0600) beside
-the metadata file; read it on the control node where it appears. The platform
-removes that file once the first password change succeeds. The first password
-change is mandatory: until it succeeds, all cluster and metadata API reads and
-every mutation are blocked. The password is stored only as an Argon2id hash; it
-is never written to configuration, environment files, audit events, or reports. Sessions have an eight-hour absolute lifetime, use HttpOnly
-SameSite cookies plus CSRF validation, and are revoked by password change or
-logout.</p>
-<p>For an authenticated administrator or operator, the server builds the exact
-plan and internally issues and consumes a one-time grant; the browser never
-sees an approval secret. External service automation keeps the explicit grant
-API: only the grant hash is replicated, plaintext is returned once, and
-consumption is atomic with the workflow approval stage. Automatic failover uses
-an internal incident authorization path and does not depend on a reusable human
-token.</p>
-<p>The common workflow remains:</p>
-<pre><code class="language-text">DISCOVER -&gt; PRECHECK -&gt; PLAN -&gt; SAFETY_GUARD -&gt; LOCK -&gt; APPROVE -&gt; EXECUTE -&gt; VERIFY -&gt; AUDIT -&gt; REPORT
-</code></pre>
-<p>Every implemented mutation passes the same workflow. Oracle and SQL Server
-execution remains fail-closed unless the native broker/AG command runner is
-configured and the platform has current identity, role, health, lock, approval,
-and verification evidence.</p>
-<h2 id="start">Start<a class="heading-anchor" href="#start" aria-label="Link to Start">#</a></h2>
+<h2 id="quick-start">Quick Start<a class="heading-anchor" href="#quick-start" aria-label="Link to Quick Start">#</a></h2>
+<p>ClusterGuard HA requires Go 1.22 or newer.</p>
 <p>Create a dedicated MySQL account with only the permissions needed by the
 documented read-only queries. Keep secrets in environment variables, never in
 the JSON configuration.</p>
@@ -245,11 +267,21 @@ go run ./cmd/clusterguard --config configs/clusterguard.example.json
 </code></pre>
 <p>When started directly from the source configuration, the console and API are
 served from <code>http://127.0.0.1:8088/</code> by default. The supported RPM/offline
-deployment serves HTTPS on port <code>3000</code>. On a new metadata store, sign in as
-<code>admin</code> with the generated password from the root-only <code>bootstrap-admin-password</code>
-file (or with the password configured through <code>bootstrap_admin_password_env</code>).
-The console immediately requires a new password and
-does not load cluster data until that first password change succeeds.</p>
+deployment serves HTTPS on port <code>3000</code>.</p>
+<p>The browser console authenticates against platform users stored in the
+replicated metadata snapshot. A fresh installation creates <code>admin</code> with
+<code>MustChangePassword=true</code>. Unless the deployment sets
+<code>bootstrap_admin_password_env</code>, the Leader generates the first-login password
+and writes it to a root-only <code>bootstrap-admin-password</code> file (mode 0600) beside
+the metadata file; read it on the control node where it appears. The platform
+removes that file once the first password change succeeds. The first password
+change is mandatory: until it succeeds, all cluster and metadata API reads and
+every mutation are blocked. The password is stored only as an Argon2id hash; it
+is never written to configuration, environment files, audit events, or reports.
+Sessions have an eight-hour absolute lifetime, use HttpOnly SameSite cookies
+plus CSRF validation, and are revoked by password change or logout.</p>
+<p>This example configuration keeps the restricted node agent and automatic
+failover disabled, so it is a read-only control plane until you configure them.</p>
 <p>Service managers should use <code>/healthz</code> for liveness and <code>/readyz</code> for
 fail-closed control-plane readiness. Authenticated operators can use
 <code>cgctl status</code> or <code>/api/v1/control-plane/status</code> for Raft role, Leader, quorum,
@@ -267,39 +299,10 @@ lifecycle helper; it is not the initial multi-node production bootstrap tool.</p
 <p>Use <code>scripts/install_clusterguard.sh</code> and the complete offline kit for the
 initial production deployment. It creates the control plane, fixed resource
 identities, certificates, database topology, Agent configuration, and VIP
-reconciliation policy as one audited workflow.</p>
-<h2 id="documentation">Documentation<a class="heading-anchor" href="#documentation" aria-label="Link to Documentation">#</a></h2>
-<p>The <a href="../index.html">bilingual documentation center</a> maps every maintained
-English document to its Simplified Chinese counterpart. Read applicable rules
-before the task guide; use release and acceptance records for traceability:</p>
-<ul>
-<li><a href="../../development/rules/README.md">Reading order and applicable rules</a> / <a href="../../development/README.md">Development modules</a></li>
-<li><a href="upgrade-validation-chain.html">Mandatory upgrade contract</a> / <a href="../../zh-CN/validation-gate-workflow.md">Gate workflow</a></li>
-<li><a href="index.html">English documentation</a> / <a href="../zh-CN/index.html">中文文档</a></li>
-<li><a href="product-tour.html">English product tour</a> / <a href="../zh-CN/product-tour.html">中文产品导览</a></li>
-<li><a href="offline-rpm-install.html">English offline installation</a> / <a href="../zh-CN/offline-rpm-install.html">中文离线安装</a></li>
-<li><a href="operations-manual.html">English operations manual</a> / <a href="../zh-CN/operations-manual.html">中文运维手册</a></li>
-<li><a href="update-and-patch.html">English version update guide</a> / <a href="../zh-CN/update-and-patch.html">中文版本升级与回退手册</a></li>
-<li><a href="version-release-policy.html">English release policy</a> / <a href="../zh-CN/version-release-policy.html">中文版本规范</a></li>
-</ul>
-<h2 id="license">License<a class="heading-anchor" href="#license" aria-label="Link to License">#</a></h2>
-<p>ClusterGuard HA is licensed under the <strong>GNU Affero General Public License, version 3 only</strong>
-(<code>AGPL-3.0-only</code>). The full text is <a href="../../../LICENSE">LICENSE</a>.</p>
-<p>In short: you may use, modify and sell it, but if you make a modified version available to
-others — <strong>including as a network service only</strong> — you must publish the Corresponding Source
-under the same license. Running it unmodified for your own operations creates no publication
-duty. Contracted customers receive the software under these same terms; the channel rule that
-keeps update packages off the public channel is a delivery policy, not a license restriction.</p>
-<p>Third-party components and their licenses — the MPL-2.0 modules linked into the binaries and
-the packages bundled in the offline kit — are listed in
-<a href="../../../THIRD-PARTY-NOTICES.md">THIRD-PARTY-NOTICES.md</a>. The obligations are spelled out scenario by
-scenario in <a href="licensing.html">Licensing and Compliance</a> /
-<a href="../zh-CN/licensing.html">许可与合规</a>.</p>
-<p>Verify that <code>LICENSE</code>, <code>go.mod</code>, the RPM metadata and the packaging scripts stay in agreement
-after any dependency or packaging change:</p>
-<pre><code class="language-bash">node tools/verify-license-consistency.cjs
-</code></pre>
-<h2 id="register-and-refresh-a-mysql-cluster">Register and Refresh a MySQL Cluster<a class="heading-anchor" href="#register-and-refresh-a-mysql-cluster" aria-label="Link to Register and Refresh a MySQL Cluster">#</a></h2>
+reconciliation policy as one audited workflow. See
+<a href="offline-rpm-install.html">English offline installation</a> /
+<a href="../zh-CN/offline-rpm-install.html">中文离线安装</a>.</p>
+<h3 id="register-and-refresh-a-mysql-cluster">Register and Refresh a MySQL Cluster<a class="heading-anchor" href="#register-and-refresh-a-mysql-cluster" aria-label="Link to Register and Refresh a MySQL Cluster">#</a></h3>
 <p>Registration creates the authoritative endpoint inventory. Hostname, IP, and
 port are coordinates, not resource identifiers.</p>
 <pre><code class="language-bash">curl -sS -X POST http://127.0.0.1:8088/api/v1/clusters \
@@ -324,7 +327,7 @@ are rejected because credentials are resolved on the server.</p>
   -H &quot;Authorization: Bearer ${CG_CONTROL_TOKEN}&quot; \
   -d &#39;{}&#39;
 </code></pre>
-<h2 id="register-and-refresh-a-postgresql-cluster">Register and Refresh a PostgreSQL Cluster<a class="heading-anchor" href="#register-and-refresh-a-postgresql-cluster" aria-label="Link to Register and Refresh a PostgreSQL Cluster">#</a></h2>
+<h3 id="register-and-refresh-a-postgresql-cluster">Register and Refresh a PostgreSQL Cluster<a class="heading-anchor" href="#register-and-refresh-a-postgresql-cluster" aria-label="Link to Register and Refresh a PostgreSQL Cluster">#</a></h3>
 <p>Each PostgreSQL instance must have a unique immutable
 <code>clusterguard.node_id</code>. Every standby also declares the current primary&#39;s node
 UUID in <code>clusterguard.primary_node_id</code>. ClusterGuard binds the cluster to
@@ -357,7 +360,7 @@ mutating control remains disabled until the corresponding runtime capability
 and safety evidence are real; the console never presents simulated success.
 See <a href="postgresql-ha.html">postgresql-ha.md</a> for database grants, restricted
 Agent policy, lifecycle, fencing, and production qualification.</p>
-<h2 id="cli">CLI<a class="heading-anchor" href="#cli" aria-label="Link to CLI">#</a></h2>
+<h3 id="cli">CLI<a class="heading-anchor" href="#cli" aria-label="Link to CLI">#</a></h3>
 <pre><code class="language-bash">go run ./cmd/cgctl engines
 go run ./cmd/cgctl clusters
 go run ./cmd/cgctl topology &lt;cluster-uuid&gt;
@@ -404,15 +407,51 @@ go run ./cmd/cgctl --server http://127.0.0.1:8088 clusters
 <p>See <a href="api-operations.html">operations.md</a> for the complete API workflow and
 operator procedures. See <a href="architecture.html">architecture.md</a> for resource
 identity, adapter, persistence, candidate, and safety design.</p>
+<h2 id="documentation">Documentation<a class="heading-anchor" href="#documentation" aria-label="Link to Documentation">#</a></h2>
+<p>The <a href="../index.html">bilingual documentation center</a> maps every maintained
+English document to its Simplified Chinese counterpart. Read applicable rules
+before the task guide; use release and acceptance records for traceability:</p>
+<ul>
+<li><a href="../../development/rules/README.md">Reading order and applicable rules</a> / <a href="../../development/README.md">Development modules</a></li>
+<li><a href="upgrade-validation-chain.html">Mandatory upgrade contract</a> / <a href="../../zh-CN/validation-gate-workflow.md">Gate workflow</a></li>
+<li><a href="index.html">English documentation</a> / <a href="../zh-CN/index.html">中文文档</a></li>
+<li><a href="product-tour.html">English product tour</a> / <a href="../zh-CN/product-tour.html">中文产品导览</a></li>
+<li><a href="offline-rpm-install.html">English offline installation</a> / <a href="../zh-CN/offline-rpm-install.html">中文离线安装</a></li>
+<li><a href="operations-manual.html">English operations manual</a> / <a href="../zh-CN/operations-manual.html">中文运维手册</a></li>
+<li><a href="update-and-patch.html">English version update guide</a> / <a href="../zh-CN/update-and-patch.html">中文版本升级与回退手册</a></li>
+<li><a href="version-release-policy.html">English release policy</a> / <a href="../zh-CN/version-release-policy.html">中文版本规范</a></li>
+</ul>
+<h2 id="license">License<a class="heading-anchor" href="#license" aria-label="Link to License">#</a></h2>
+<p>ClusterGuard HA is licensed under the <strong>GNU Affero General Public License, version 3 only</strong>
+(<code>AGPL-3.0-only</code>). The full text is <a href="../../../LICENSE">LICENSE</a>.</p>
+<p>In short: you may use, modify and sell it, but if you make a modified version available to
+others — <strong>including as a network service only</strong> — you must publish the Corresponding Source
+under the same license. Running it unmodified for your own operations creates no publication
+duty. Contracted customers receive the software under these same terms; the channel rule that
+keeps update packages off the public channel is a delivery policy, not a license restriction.</p>
+<p>Third-party components and their licenses — the MPL-2.0 modules linked into the binaries and
+the packages bundled in the offline kit — are listed in
+<a href="../../../THIRD-PARTY-NOTICES.md">THIRD-PARTY-NOTICES.md</a>. The obligations are spelled out scenario by
+scenario in <a href="licensing.html">Licensing and Compliance</a> /
+<a href="../zh-CN/licensing.html">许可与合规</a>.</p>
+<p>Verify that <code>LICENSE</code>, <code>go.mod</code>, the RPM metadata and the packaging scripts stay in agreement
+after any dependency or packaging change:</p>
+<pre><code class="language-bash">node tools/verify-license-consistency.cjs
+</code></pre>
+<h2 id="maintainer-notes">Maintainer Notes<a class="heading-anchor" href="#maintainer-notes" aria-label="Link to Maintainer Notes">#</a></h2>
+<h3 id="document-and-gate-workflow">Document and gate workflow<a class="heading-anchor" href="#document-and-gate-workflow" aria-label="Link to Document and gate workflow">#</a></h3>
+<p>Read the <a href="../../../AGENTS.md">repository rules</a>, the <a href="../../zh-CN/validation-gate-workflow.md">gate workflow</a>, and the <a href="../../development/rules/README.md">reading order and applicable rules</a> before making changes; then select the relevant <a href="../../development/README.md">development module</a>. Before modifying or executing work within the upgrade contract&#39;s scope, read the complete <a href="upgrade-validation-chain.html">mandatory v2 contract</a>. Installation and operations follow the matching version&#39;s task guide after its applicable rules. Any Markdown change must be registered in the <a href="../../development/markdown-change-record.md">Markdown change record</a> and must rebuild the generated documentation pages.</p>
+<h3 id="recorded-v2-source-repair-and-acceptance-status">Recorded v2 source repair and acceptance status<a class="heading-anchor" href="#recorded-v2-source-repair-and-acceptance-status" aria-label="Link to Recorded v2 source repair and acceptance status">#</a></h3>
+<p>The recorded source repair baseline is <code>7b643f4</code> (2026-10-03), on the sole mainline <code>codex/2.2-postgresql</code>. That repair enforces the v2 contract for updates and hotfixes: failed hotfixes use <code>retry</code>; interrupted rolling updates use <code>resume</code>. Its new-artifact and site ART/FIELD acceptance record remains <strong>OPEN</strong>; that repair produced no new package or production deployment. See the <a href="../../en-US/upgrade-validation-chain-implementation-status.md">implementation and acceptance record</a>. This record does not replace verification of the current checkout, package, or site.</p>
 
           <footer class="document-footer">
-            <span>Source: <code>README.md</code></span>
+            <span>Source: <code>README.en.md</code></span>
             <a href="../index.html">Documentation language home</a>
           </footer>
         </article>
         <aside class="page-toc" aria-label="On this page">
           <strong>On this page</strong>
-          <a class="toc-level-2" href="#before-development-or-document-changes">Before Development or Document Changes</a><a class="toc-level-2" href="#recorded-v2-source-repair-and-acceptance-status">Recorded v2 Source Repair and Acceptance Status</a><a class="toc-level-2" href="#console-preview">Console Preview</a><a class="toc-level-2" href="#current-installation-kit-3-1-2-10">Current Installation Kit: 3.1.2.10</a><a class="toc-level-2" href="#recorded-formal-releases">Recorded Formal Releases</a><a class="toc-level-2" href="#2-2-release-scope">2.2 Release Scope</a><a class="toc-level-2" href="#safety-boundary">Safety Boundary</a><a class="toc-level-2" href="#start">Start</a><a class="toc-level-2" href="#documentation">Documentation</a><a class="toc-level-2" href="#license">License</a><a class="toc-level-2" href="#register-and-refresh-a-mysql-cluster">Register and Refresh a MySQL Cluster</a><a class="toc-level-2" href="#register-and-refresh-a-postgresql-cluster">Register and Refresh a PostgreSQL Cluster</a><a class="toc-level-2" href="#cli">CLI</a>
+          <a class="toc-level-3" href="#enterprise-database-high-availability-and-failover-management-platform">Enterprise Database High Availability and Failover Management Platform</a><a class="toc-level-2" href="#why-clusterguard-ha">Why ClusterGuard HA?</a><a class="toc-level-2" href="#what-can-clusterguard-ha-do">What Can ClusterGuard HA Do?</a><a class="toc-level-2" href="#the-core-idea-behind-clusterguard-ha">The Core Idea Behind ClusterGuard HA</a><a class="toc-level-2" href="#where-it-fits">Where It Fits</a><a class="toc-level-2" href="#console-preview">Console Preview</a><a class="toc-level-2" href="#how-it-differs-from-other-ha-tools">How It Differs from Other HA Tools</a><a class="toc-level-2" href="#how-it-works-architecture-and-safety">How It Works: Architecture and Safety</a><a class="toc-level-2" href="#supported-engines-and-versions">Supported Engines and Versions</a><a class="toc-level-3" href="#current-installation-kit-3-1-2-10">Current Installation Kit: 3.1.2.10</a><a class="toc-level-3" href="#recorded-formal-releases">Recorded Formal Releases</a><a class="toc-level-2" href="#quick-start">Quick Start</a><a class="toc-level-3" href="#register-and-refresh-a-mysql-cluster">Register and Refresh a MySQL Cluster</a><a class="toc-level-3" href="#register-and-refresh-a-postgresql-cluster">Register and Refresh a PostgreSQL Cluster</a><a class="toc-level-3" href="#cli">CLI</a><a class="toc-level-2" href="#documentation">Documentation</a><a class="toc-level-2" href="#license">License</a><a class="toc-level-2" href="#maintainer-notes">Maintainer Notes</a><a class="toc-level-3" href="#document-and-gate-workflow">Document and gate workflow</a><a class="toc-level-3" href="#recorded-v2-source-repair-and-acceptance-status">Recorded v2 source repair and acceptance status</a>
         </aside>
       </main>
     </div>

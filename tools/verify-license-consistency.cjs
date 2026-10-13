@@ -241,7 +241,7 @@ check('no-conflicting-declarations', conflicting.length === 0,
 
 const STATEMENT_FILES = [
   'README.md',
-  'README.zh-CN.md',
+  'README.en.md',
   'docs/README.md',
   'docs/zh-CN/README.md',
   'docs/en-US/README.md',

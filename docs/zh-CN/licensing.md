@@ -120,7 +120,7 @@ git checkout <BUILD-INFO 中的版本>     # 例如 v2.2.103
 | `packaging/rpm/nfpm.yaml` 的 `contents` | 保证 `LICENSE` 进 RPM |
 | `scripts/build-clusterguard-rpm.sh` | 把 `LICENSE` 拷进打包 stage |
 | `scripts/build-clusterguard-offline-kit.sh` | 把 `LICENSE` 放进离线介质 |
-| `README.md` / `README.zh-CN.md` | 公开首页陈述 |
+| `README.md` / `README.en.md` | 公开首页陈述（中文默认首页 + 英文版） |
 | `docs/zh-CN/licensing.md` / `docs/en-US/licensing.md` | 本页双语版 |
 | `THIRD-PARTY-NOTICES.md` | 第三方清单与许可兼容性结论 |
 | `AGENTS.md` | 后续 agent 的硬性规则 |

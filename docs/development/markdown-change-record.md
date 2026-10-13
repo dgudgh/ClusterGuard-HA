@@ -23,6 +23,12 @@ recorded-through: 73ff4a3
 
 | 日期 | 文件 | 变更 | 说明 |
 | --- | --- | --- | --- |
+| 2026-10-13 | `README.md` | M | 首页按用户给定文案重写（用户要求：首页介绍改成「企业级数据库高可用与故障接管平台」这一版）。标题下定位由自造类别名改为 `Enterprise Database High Availability and Failover Management Platform`，其下 `Make database failover safer. Make business recovery more controllable.`；正文承接用户原文：产品定义段 + 「不是简单提升备库，而是安全转移写入服务、避免多节点同时合法可写」的核心目标段、`Why ClusterGuard HA?`（六问 + 「复制解决同步、本产品解决安全接管」）、`What Can ClusterGuard HA Do?`（统一集群管理/安全切换/写入口同批迁移/降脑裂/故障恢复/统一审计 六项，含「无法证明安全即拒绝」）、`The Core Idea Behind ClusterGuard HA`（「故障可以发生，但错误的故障接管不应该成为第二次事故」+ 不是代理/不是备份）、`Where It Fits`（适用场景 + 后续受控扩展方向 + 收尾标语）。**保留** `Console Preview`/`How It Differs from Other HA Tools`（MHA·Orchestrator·Patroni·repmgr 四维对照表）/`How It Works: Architecture and Safety`（三控制器 Raft 部署图 + 十步工作流 + 八条安全机制，含「高可用不等于零中断零丢失」边界条）/支持矩阵/快速开始/文档/许可，维护者内容仍在文末 `Maintainer Notes`。事实声明（`3.1.2.10`/`2.2-108`/`2.1.45`/`2.2.39`/两条 SHA-256/四条 curl/全部相对链接/`AGPL-3.0-only`/`7b643f4`）逐字保留。 **追加（2026-10-13 同日晚些）：** 该英文首页正文现位于 `README.en.md`——本批为「GitHub 首页默认中文」把中文版移到 `README.md`、英文版改名为 `README.en.md`；同时补回上一行改稿漏掉的控制台鉴权模型段落（`MustChangePassword`、8 小时绝对会话、`logout`），以恢复 `scripts/scripts_test.go` 的认证交付文档契约。 |
+| 2026-10-13 | `README.zh-CN.md` | M | 与英文版逐节同构改写（20 个标题一一对应、层级顺序一致，代码块 26/26、表格行 17/17、列表项 28/28）：`企业级数据库高可用与故障接管平台`/`为什么需要 ClusterGuard HA？`/`ClusterGuard HA 能做什么？`/`ClusterGuard HA 的核心理念`/`适用场景`/`控制台预览`/`与其他高可用方案的区别`/`架构与安全机制`/`支持矩阵与版本`/`快速开始`/`文档`/`许可`/`维护者须知`。首屏即用户给定原文（含六问、六项能力、核心理念、适用场景与收尾标语）。命令、路径、API 名、版本号、SHA-256 与英文逐字一致；仅 ASCII 部署图按中文重绘以避免多字节等宽错位。维护者内容同样在文末。 **追加：** 本路径改为指向新首页的短跳转页（正文只剩一行说明加语言链接，分别指向 `README.md` 与 `README.en.md`），使旧链接仍可解析；中文正文整体移到 `README.md`，不再双份维护。 |
+| 2026-10-13 | `docs/development/markdown-change-record.md` | M | 登记本批根 README 双语改稿的 3 条变更与批次说明（含生成页 `product-overview` 中英两页重建）。 **追加：** 登记「默认中文首页 + 首页语言切换」批次的 `README.en.md`（A）与双语 `licensing.md`（M）三条变更及批次说明。 |
+| 2026-10-13 | `README.en.md` | A | 英文 README 由 `README.md` 改名而来（GitHub 只渲染根 `README.md`，故把中文版放 `README.md` 作默认首页、英文版改名 `README.en.md`）。顶部语言切换改为指向 `README.md` 的简体中文入口；`Quick Start` 补回控制台鉴权模型段落（`MustChangePassword=true`、root 专属 `bootstrap-admin-password` 文件或 `bootstrap_admin_password_env`、Argon2id 哈希、8 小时绝对会话、改密或 `logout` 失效），恢复 `scripts/scripts_test.go` 的认证交付文档契约（上一批改稿漏掉 `MustChangePassword`/`eight-hour`/`logout` 使其变红）。 |
+| 2026-10-13 | `docs/zh-CN/licensing.md` | M | 许可声明载体表的根 README 条目由 `README.md` / `README.zh-CN.md` 改为 `README.md` / `README.en.md`，与语言切换后的实际文件名一致。 |
+| 2026-10-13 | `docs/en-US/licensing.md` | M | 同中文版：载体表根 README 条目改为 `README.md` / `README.en.md`。 |
 | 2026-10-13 | `docs/development/recovery-repair-gate-2026-10-13.md` | A | 记录复制修复缺失动作参数、灾难恢复已复核操作仍被阻断的历史对照、现场版本只读证据、修复边界与源码/现场分层验证计划。 |
 | 2026-10-12 | `docs/development/backend/operations.md` | M | 说明新装 MySQL 合法空 GTID 集合、查询证据缺失仍阻断、目标追平与最终核验不省略；登记空集合执行/坏查询/等待失败回归及不确定任务按原始证据复核的边界。 |
 | 2026-10-08 | `AGENTS.md` | M | 在「所有修改必须遵守」里新增一条：任何 Markdown 的新增/删除/修改都必须在 `docs/development/markdown-change-record.md` 登记并过 `verify-markdown-change-record.cjs`，改了 md 必须重建 `docs/html`，未登记不得提交。 |
@@ -145,3 +151,25 @@ recorded-through: 73ff4a3
 ### 2026-10-12 · 中断安装的旧 MySQL 单元处理
 
 双语安装手册补充本端口受管服务停用/验证与数据保护边界；按用户决定给3.1.2.9历史附件加minimal数据库说明，保留原制品字节。重建全部生成HTML。源码回归在scripts/mysql_reinstall_test.go，现场未在本任务重新执行。
+
+### 2026-10-13 · 根 README 双语「产品作用」改稿
+
+问题：根 README 的首屏是仓库门禁与源码修复基线（提交号、ART/FIELD 状态），读者落页后读不到这个软件做什么；能力清单是 20+ 条平铺实现细节，下载与校验和章节压在产品描述之前，标题下还遗留两行重复的中英标语与错位的 `Go 1.22` 要求。
+
+改动：把「它解决什么问题 / 它做什么 / 引擎与运行形态支持 / 部署形态 / 设计取舍与边界」提到首屏；下游章节（安装介质、正式发布、从源码快速开始、注册与发现、CLI、文档、许可）顺序调整但**不改**任何数字、摘要、命令与链接；开发门禁段压缩为一行指引，与 `7b643f4` 源码修复基线一起集中到文末 `Maintainer Notes`。
+
+未改变的事实声明：当前完整介质 `3.1.2.10` / RPM 兼容基线 `2.2-108` / 预发布且 FIELD OPEN；许可仍是 `AGPL-3.0-only`；`v2.1.45` 与 `v2.2.39` 的支持边界、SHA-256 值、`2.1-45` 与 `2.2-39` 下载命令逐字保留；MySQL 9.x 只有单元测试、无现场验收记录这一限定也保留。
+
+结构化自检（本地只读脚本，不入库）：双语章节层级与顺序一致（各 17 节）、代码块数 26/26、表格行 23/23、列表项 28/28，相对链接全部可解析，`AGPL-3.0-only` 两侧均出现。
+
+截图：控制台预览由 1 张改为 2 张（新增 `docs/assets/screenshots/cluster-topology.png`，复用产品导览已入库的同一文件，不新增图片资产），两处语言切换页面共用同一张图，避免双语展示冲突。
+
+生成页：`docs/html/en-US/product-overview.html` 与 `docs/html/zh-CN/product-overview.html` 随本批重建，不逐页登记。
+
+### 2026-10-13 · 默认中文首页与首页语言切换
+
+GitHub 只渲染仓库根 `README.md`，所以「首页默认中文」只能由 `README.md` 承载中文正文来实现。做法：中文版移到 `README.md`（默认），英文版改名 `README.en.md`，两页顶部各留一条 `<!-- LANGUAGE-SWITCH -->`（生成 HTML 时会整段剥离，不影响离线文档），正文互为语言入口。旧路径 `README.zh-CN.md` **保留为短跳转页**（指向 `README.md`），既不丢旧链接也不删除路径，因此台账中该路径的既有条目仍然成立，无需回改历史行。
+
+同时修一处回归：上一批 README 改稿把控制台鉴权模型段落（`MustChangePassword`、八小时绝对会话、改密或 `logout` 失效、root 专属 `bootstrap-admin-password`）删掉，`scripts/scripts_test.go` 的 `TestAuthenticationDeliveryDocumentationCoversBootstrapAndRecovery`（原先读 `../README.md`）因此变红；本批按原文事实把该段落补回中英两版，并把该契约测试的读取路径改为 `../README.en.md`——交付物里落盘为 `README.md` 的那一份仍然是英文版。
+
+耦合点同步（非 md，不逐条登记）：`docs/build-html-docs.mjs` 的 en-US `product-overview` 源改指 `README.en.md`、zh-CN 源改指 `README.md`；`tools/verify-license-consistency.cjs` 的声明载体清单把 `README.zh-CN.md` 换成 `README.en.md`；`scripts/build-clusterguard-bundle.sh` 与 `scripts/build-clusterguard-rpm.sh` 复制/安装的 README 源改指 `README.en.md`，使交付物中的 `README.md` 仍为英文版，与既有交付行为一致。生成页 `docs/html/{en-US,zh-CN}/product-overview.html` 与两页 `licensing.html` 随本批重建，不逐页登记。

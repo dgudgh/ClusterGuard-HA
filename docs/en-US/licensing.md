@@ -144,7 +144,7 @@ contradicts itself:
 | `contents` in `packaging/rpm/nfpm.yaml` | ensures `LICENSE` lands in the RPM |
 | `scripts/build-clusterguard-rpm.sh` | copies `LICENSE` into the packaging stage |
 | `scripts/build-clusterguard-offline-kit.sh` | puts `LICENSE` into the offline kit |
-| `README.md` / `README.zh-CN.md` | public front page |
+| `README.md` / `README.en.md` | public front page (Chinese default plus English edition) |
 | `docs/zh-CN/licensing.md` / `docs/en-US/licensing.md` | this page, both languages |
 | `THIRD-PARTY-NOTICES.md` | third-party list and compatibility conclusions |
 | `AGENTS.md` | binding rule for subsequent agents |
