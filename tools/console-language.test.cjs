@@ -23,6 +23,23 @@ test('owned cached prompts switch both ways, unknown diagnostics remain intact',
  context.document.documentElement.lang='zh-CN';assert.equal(context.localize('Save failed: native E42'),'保存失败：native E42');
  assert.equal(context.localize('unknown database diagnostic <script>'),'unknown database diagnostic <script>');
 });
+test('the actual backend approval note and file warning follow both UI languages',()=>{
+ const runtime=fs.readFileSync(require('node:path').join(__dirname,'../internal/runtime/configuration_view.go'),'utf8');
+ const expression=runtime.match(/value\.Note = ([\s\S]*?)\n\treturn value/);
+ assert.ok(expression,'approval-token note must exist');
+ const note=[...expression[1].matchAll(/"(?:[^"\\]|\\.)*"/g)].map(match=>JSON.parse(match[0])).join('');
+ context.document.documentElement.lang='en-US';
+ const english=context.localize(note);
+ assert.doesNotMatch(english,/[\u3400-\u9fff]/);
+ assert.match(english,/Deprecated/);assert.match(english,/node lifecycle/);assert.match(english,/empty/);assert.match(english,/rejected/);
+ const reason='open /etc/clusterguard/clusterguard.json: permission denied <literal> {0}';
+ const warning='配置文件当前不可读（'+reason+'）；以下为进程启动时已生效的值。';
+ const translated=context.localize(warning);
+ assert.ok(translated.startsWith('The configuration file is currently unreadable'));
+ assert.ok(translated.includes(reason));
+ context.document.documentElement.lang='zh-CN';
+ assert.equal(context.localize(english),note);assert.equal(context.localize(translated),warning);
+});
 test('static authored markup has catalogue coverage, including accessibility attributes',()=>{
  const markup=page.slice(page.indexOf('<body>'),page.indexOf('  <script>'));
  for(const m of markup.matchAll(/>([^<]+)</g)){

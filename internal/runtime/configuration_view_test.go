@@ -179,8 +179,10 @@ func TestBuildConfigurationViewKeepsTheApprovalTokenNoticeOffTheWarningStrip(t *
 		t.Fatalf("unrelated warnings must survive the filter: %v", view.Warnings)
 	}
 	value := configurationValueForTest(t, view, "runtime", "approval_token_env")
-	if !strings.Contains(value.Note, "已弃用") {
-		t.Fatalf("the approval_token_env parameter must carry the deprecation: %q", value.Note)
+	for _, detail := range []string{"已弃用", "一次性操作授权", "节点生命周期", "引用的环境变量为空", "拒绝"} {
+		if !strings.Contains(value.Note, detail) {
+			t.Fatalf("the approval_token_env parameter must explain %q: %q", detail, value.Note)
+		}
 	}
 }
 

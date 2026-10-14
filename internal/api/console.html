@@ -1992,6 +1992,8 @@
       "需重启": "Restart required",
       "可热改": "Live change supported",
       "凭据引用": "Credential reference",
+      "凭据只按环境变量引用展示：控制台不读取、也不返回其内容。已弃用：数据库操作与自动恢复不再使用它，请改用一次性操作授权；该键仅保留给旧的节点生命周期审批，且引用的环境变量为空时节点生命周期操作会被拒绝。": "Only the environment variable reference is shown; the console neither reads nor returns its contents. Deprecated: database operations and automatic recovery use one-time approval grants instead. This key remains only for legacy node lifecycle approvals; node lifecycle operations are rejected when the referenced environment variable is empty.",
+      "配置文件当前不可读（{0}）；以下为进程启动时已生效的值。": "The configuration file is currently unreadable ({0}); the values below were loaded when the process started.",
       "参数": "Parameter",
       "生效值": "Effective value",
       "来源": "Source",
@@ -3401,7 +3403,7 @@
       note.className = 'configuration-value';
       const noteParts = [];
       if (value.credential_ref) noteParts.push(ui('凭据引用'));
-      if (value.note) noteParts.push(value.note);
+      if (value.note) noteParts.push(localizeUIMessage(value.note));
  if(category==='readonly')noteParts.push(ui('此参数需专用变更流程，不能直接下发。'));
  if(category==='policy')noteParts.push(ui('通过下方独立策略区修改，不使用参数下发。'));
       note.textContent = noteParts.length ? noteParts.join(' · ') : '-';

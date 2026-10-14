@@ -495,10 +495,18 @@ const CHECKS = [
       if(!source.includes("configuration-confirm').close();renderConfigurationSelection();")) return 'card selection changes do not refresh the count';
       if(!/\.configuration-action-bar \{[^}]*position:fixed/.test(source)) return 'the configuration actions no longer stay at the viewport bottom';
       if(!source.includes('messages.map(localizeUIMessage)')) return 'known configuration warnings bypass the selected language';
+      if(!source.includes('noteParts.push(localizeUIMessage(value.note))')) return 'known parameter notes bypass the selected language';
+      if(!source.includes('Deprecated: database operations and automatic recovery use one-time approval grants instead.')) return 'the approval-token parameter note has no English translation';
+      if(!source.includes('The configuration file is currently unreadable ({0})')) return 'the file-read warning has no English translation';
+      if(source.includes('configuration-reload-note') || source.includes('.configuration-instruction')) return 'the retired reload instruction returned';
       if(!source.includes('共 {0} 组 · {1} 项参数。点击展开查看当前值、来源和生效方式。')) return 'the group summary lost actual counts';
       const acceptance=read('tools/console-configuration-distribution-acceptance.cjs')||'';
       for(const text of ['selected count and border immediately follow card click','fixed toolbar is hidden when leaving parameters','notification does not cover fixed action buttons','English warning is localized and the reload note is gone']){
         if(!acceptance.includes(text)) return `missing browser regression: ${text}`;
+      }
+      const notices=read('tools/console-configuration-notices-acceptance.cjs')||'';
+      for(const text of ['approval deprecation does not occupy the top warning strip','English parameter note has no Chinese residue','real file error remains visible and follows English','unknown diagnostic stays literal and cannot execute markup']){
+        if(!notices.includes(text)) return `missing configuration-notice browser regression: ${text}`;
       }
       return true;
     },
@@ -1055,11 +1063,14 @@ const READ_FILES = [
   'internal/platformupdate/supersedes.go', 'internal/platformupdate/supersedes_test.go',
   'scripts/clusterguard-update-job.sh', 'scripts/clusterguard-upgrade.sh', 'scripts/build-hotfix-patch.sh', 'scripts/install_clusterguard.sh',
   'internal/platformupdate/manager.go', 'internal/api/updates.go', 'internal/api/console.html',
-  'hotfixes/hotfix-publications.json', 'tools/verify-hotfix-patch-catalog.cjs',
+  'hotfixes/hotfix-publications.json', 'tools/verify-hotfix-patch-catalog.cjs', 'tools/console-configuration-notices-acceptance.cjs',
   'tools/console-update-hotfix-recovery-acceptance.cjs', 'tools/console-configuration-groups-acceptance.cjs', 'tools/console-configuration-distribution-acceptance.cjs', 'tools/verify-upgrade-validation-chain.cjs',
 ];
 
 const MUTATIONS = [
+  {name:'parameter notes print raw Chinese in English',file:'internal/api/console.html',find:'noteParts.push(localizeUIMessage(value.note))',replace:'noteParts.push(value.note)',rule:'configuration selection and fixed actions describe the current members'},
+  {name:'approval parameter note loses its English translation',file:'internal/api/console.html',find:'Deprecated: database operations and automatic recovery use one-time approval grants instead.',replace:'已弃用：数据库操作改用一次性授权。',rule:'configuration selection and fixed actions describe the current members'},
+  {name:'real file warning loses its English translation',file:'internal/api/console.html',find:'The configuration file is currently unreadable ({0})',replace:'配置文件当前不可读（{0}）',rule:'configuration selection and fixed actions describe the current members'},
   {name:'full RPM loses product version injection',file:'scripts/build-clusterguard-rpm.sh',find:'buildinfo.ProductVersion=${product_version}',replace:'buildinfo.Version=${product_version}',rule:'full installation builders bind product identity independently of RPM'},
   {name:'runtime bundle loses product version injection',file:'scripts/build-clusterguard-bundle.sh',find:'buildinfo.ProductVersion=${product_version}',replace:'buildinfo.Version=${product_version}',rule:'full installation builders bind product identity independently of RPM'},
   {name:'offline kit loses product version propagation',file:'scripts/build-clusterguard-offline-kit.sh',find:'--product-version "${product_version}"',replace:'--version "${product_version}"',rule:'full installation builders bind product identity independently of RPM'},
