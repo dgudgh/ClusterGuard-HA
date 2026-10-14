@@ -1486,7 +1486,6 @@
             <div class="panel-body">
               <div class="configuration-information">
                 <div class="configuration-file-meta" id="configuration-file-meta"></div>
-                <p class="configuration-instruction" id="configuration-reload-note">正在读取本节点配置……</p>
                 <div class="configuration-warnings" id="configuration-warnings" hidden></div>
               </div>
               <div class="configuration-policy" id="configuration-distribution">
@@ -3496,13 +3495,11 @@
         summary.className = `badge ${state.configurationLoading ? '' : 'danger'}`;
         meta.textContent = '';
         byId('configuration-groups-summary').textContent = '';
-        byId('configuration-reload-note').textContent = ui('正在读取本节点配置……');
         byId('configuration-warnings').hidden = true;
         return;
       }
       summary.textContent = view.file_present ? ui('配置文件已读取') : ui('配置文件不存在');
       summary.className = `badge ${view.file_present ? 'success' : 'danger'}`;
-      byId('configuration-reload-note').textContent = view.reload_supported ? ui('本节点支持重新加载配置。') : localizeUIMessage(view.reload_note);
       byId('configuration-groups-summary').textContent = ui('共 {0} 组 · {1} 项参数。点击展开查看当前值、来源和生效方式。', (view.sections || []).length, (view.sections || []).reduce((count, section) => count + (section.values || []).length, 0));
       meta.textContent = '';
       [[ui('配置文件'), view.path], [ui('进程启动'), configurationTimeText(view.process_started_at)], [ui('文件修改'), configurationTimeText(view.file_modified_at)]].forEach(([label, value]) => {

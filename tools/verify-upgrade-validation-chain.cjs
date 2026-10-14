@@ -497,7 +497,7 @@ const CHECKS = [
       if(!source.includes('messages.map(localizeUIMessage)')) return 'known configuration warnings bypass the selected language';
       if(!source.includes('共 {0} 组 · {1} 项参数。点击展开查看当前值、来源和生效方式。')) return 'the group summary lost actual counts';
       const acceptance=read('tools/console-configuration-distribution-acceptance.cjs')||'';
-      for(const text of ['selected count and border immediately follow card click','fixed toolbar is hidden when leaving parameters','notification does not cover fixed action buttons','English note and warning are localized']){
+      for(const text of ['selected count and border immediately follow card click','fixed toolbar is hidden when leaving parameters','notification does not cover fixed action buttons','English warning is localized and the reload note is gone']){
         if(!acceptance.includes(text)) return `missing browser regression: ${text}`;
       }
       return true;

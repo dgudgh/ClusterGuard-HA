@@ -20,6 +20,12 @@ import (
 // literal in several packages.
 const DefaultPath = "/etc/clusterguard/clusterguard.json"
 
+// ApprovalTokenDeprecation is the startup-log notice for the legacy approval
+// token. The console does not render it among the configuration warnings: the
+// same fact is stated on the approval_token_env parameter itself, so the panel
+// no longer repeats a notice that every installer-generated node would show.
+const ApprovalTokenDeprecation = "CG_APPROVAL_TOKEN is deprecated for database operations and automatic recovery; use one-time approval grants"
+
 type Credential struct {
 	Username    string `json:"username"`
 	Database    string `json:"database,omitempty"`
@@ -279,8 +285,7 @@ func loadConfigurationContents(contents []byte) (File, error) {
 	if environment := strings.TrimSpace(configuration.ApprovalTokenEnv); environment != "" {
 		configuration.ApprovalTokenEnv = environment
 		configuration.ApprovalToken = os.Getenv(environment)
-		configuration.DeprecationWarnings = append(configuration.DeprecationWarnings,
-			"CG_APPROVAL_TOKEN is deprecated for database operations and automatic recovery; use one-time approval grants")
+		configuration.DeprecationWarnings = append(configuration.DeprecationWarnings, ApprovalTokenDeprecation)
 	}
 	if configuration.MySQL.AutomaticFailoverEnabled && !configuration.MySQL.Enabled {
 		return File{}, fmt.Errorf("MySQL must be enabled before automatic failover can be enabled")

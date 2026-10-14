@@ -15,7 +15,7 @@
 - `state.configuration`：当前应答控制节点返回的配置投影。
 - `state.configurationLoading`：禁用重新读取按钮并显示读取中。
 - `state.configurationError`：保留请求失败原因；旧投影存在时不会把错误伪装成新成功结果。
-- `renderConfiguration()` 展示 `file_present`、`path`、`process_started_at`、`file_modified_at`、`reload_supported`、`reload_note` 和 `warnings`。
+- `renderConfiguration()` 展示 `file_present`、`path`、`process_started_at`、`file_modified_at`、`reload_supported` 和 `warnings`；接口仍返回 `reload_note`，但面板不再渲染它。
 - `sections[].values[]` 展示 `key`、`value`、`source`、`restart_required`、`credential_ref` 和 `note`。
 - `source` 显示为配置文件、已下发配置、集群策略或平台默认；配置值只用 `textContent` 渲染。
 
@@ -100,7 +100,7 @@
 
 文件路径、进程启动和文件修改时间独立展示；分组标题统计接口实际`sections/values`，初始仍全部折叠。运行参数页底部固定显示所选数、解锁、预检下发和清稿；窄屏换行，离开此页隐藏，通知上移避免遮挡操作，底部留空间避免遮住最后一项。不会因按钮移位绕过原授权、预检或实际生效核验。
 
-“重新读取”只刷新投影，白名单通过确认下发和逐节点重启后核验，动态策略另用策略面板。已知旧版reload_note与CG_APPROVAL_TOKEN弃用告警按语言映射，接口原文不修改，未知诊断仍按文本保留。文件路径和参数值不作为翻译键。真实Chrome验收覆盖1440/390、所选数量、按钮定位/切页隐藏、通知无覆盖、键盘、双语及原下发链；这是隔离API验证，不是现场重启验收。
+“重新读取”只刷新投影，白名单通过确认下发和逐节点重启后核验，动态策略另用策略面板。面板顶部不再显示 `reload_note` 说明与 `CG_APPROVAL_TOKEN` 弃用告警：前者是防止误以为按钮即生效的重复说明，后者已移到 `approval_token_env` 参数的 `note`（已弃用、仅用于旧节点生命周期审批、引用环境变量为空会使节点生命周期操作被拒），避免每个安装器生成的配置都常驻一条告警。接口仍返回 `reload_note` 与 `warnings` 原文，未知诊断仍按文本保留并按语言映射。文件路径和参数值不作为翻译键。真实Chrome验收覆盖1440/390、所选数量、按钮定位/切页隐藏、通知无覆盖、键盘、双语及原下发链；这是隔离API验证，不是现场重启验收。
 
 ## 参数分类与末列修改值
 

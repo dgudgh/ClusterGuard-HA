@@ -161,6 +161,29 @@ func TestBuildConfigurationViewStatesThatReloadIsUnsupported(t *testing.T) {
 	}
 }
 
+// The approval-token notice now lives on the parameter itself. The console
+// warning strip must not repeat it, because every installer-generated
+// configuration carries approval_token_env and would therefore show it forever.
+func TestBuildConfigurationViewKeepsTheApprovalTokenNoticeOffTheWarningStrip(t *testing.T) {
+	configuration := config.File{
+		ApprovalTokenEnv:    "CG_APPROVAL_TOKEN",
+		DeprecationWarnings: []string{config.ApprovalTokenDeprecation, "an unrelated warning"},
+	}
+	view := buildConfigurationView(configuration, filepath.Join(t.TempDir(), "absent.json"), time.Now().UTC(), nil)
+	for _, warning := range view.Warnings {
+		if warning == config.ApprovalTokenDeprecation {
+			t.Fatalf("the console strip must not repeat the approval-token notice: %q", warning)
+		}
+	}
+	if len(view.Warnings) == 0 || view.Warnings[0] != "an unrelated warning" {
+		t.Fatalf("unrelated warnings must survive the filter: %v", view.Warnings)
+	}
+	value := configurationValueForTest(t, view, "runtime", "approval_token_env")
+	if !strings.Contains(value.Note, "已弃用") {
+		t.Fatalf("the approval_token_env parameter must carry the deprecation: %q", value.Note)
+	}
+}
+
 func TestBuildConfigurationViewKeepsClusterPolicySectionHonest(t *testing.T) {
 	view := buildConfigurationView(config.File{}, filepath.Join(t.TempDir(), "absent.json"), time.Now().UTC(), nil)
 	value := configurationValueForTest(t, view, "cluster_policy", "cluster_policy")

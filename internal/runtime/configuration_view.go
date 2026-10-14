@@ -84,7 +84,7 @@ func buildConfigurationView(configuration config.File, path string, startedAt ti
 		ProcessStartedAt: startedAt.UTC(),
 		ReloadSupported:  false,
 		ReloadNote:       configurationReloadNote,
-		Warnings:         append([]string{}, configuration.DeprecationWarnings...),
+		Warnings:         consoleWarnings(configuration.DeprecationWarnings),
 	}
 	if info, err := os.Stat(path); err == nil {
 		view.FilePresent = true
@@ -159,6 +159,34 @@ func buildConfigurationView(configuration config.File, path string, startedAt ti
 	return view
 }
 
+// consoleWarnings keeps the startup warnings that still help an operator on the
+// console page. The legacy approval-token notice is dropped here because it is
+// now stated on the approval_token_env parameter itself, and every installer
+// generates a configuration that carries that key.
+func consoleWarnings(warnings []string) []string {
+	kept := make([]string, 0, len(warnings))
+	for _, warning := range warnings {
+		if warning == config.ApprovalTokenDeprecation {
+			continue
+		}
+		kept = append(kept, warning)
+	}
+	return kept
+}
+
+// approvalTokenValue states the deprecated approval token where an operator
+// actually reads it. The key is retained for the legacy node-lifecycle
+// approval, and that gate fails closed when the referenced environment
+// variable is empty, so the note records both facts rather than only the
+// deprecation.
+func approvalTokenValue(configuration config.File, presence configurationPresence) api.ConfigurationValue {
+	value := credentialValue(presence, "", "approval_token_env", "审批令牌", configuration.ApprovalTokenEnv)
+	value.Note = "凭据只按环境变量引用展示：控制台不读取、也不返回其内容。" +
+		"已弃用：数据库操作与自动恢复不再使用它，请改用一次性操作授权；" +
+		"该键仅保留给旧的节点生命周期审批，且引用的环境变量为空时节点生命周期操作会被拒绝。"
+	return value
+}
+
 func runtimeSection(configuration config.File, presence configurationPresence) api.ConfigurationSection {
 	tlsValue := "未启用（明文 HTTP）"
 	if strings.TrimSpace(configuration.TLSCertFile) != "" {
@@ -174,7 +202,7 @@ func runtimeSection(configuration config.File, presence configurationPresence) a
 			"该路径决定快照与引导口令文件的位置"),
 		credentialValue(presence, "", "control_token_env", "控制令牌", configuration.ControlTokenEnv),
 		credentialValue(presence, "", "monitoring_token_env", "监控令牌", configuration.MonitoringTokenEnv),
-		credentialValue(presence, "", "approval_token_env", "审批令牌", configuration.ApprovalTokenEnv),
+		approvalTokenValue(configuration, presence),
 		credentialValue(presence, "", "bootstrap_admin_password_env", "引导管理员口令", configuration.BootstrapAdminPasswordEnv),
 	}
 	return api.ConfigurationSection{
