@@ -450,14 +450,19 @@
     html[data-ui="review"] .configuration-action-bar { left:208px; }
     .configuration-selected-count { color:var(--muted); font-size:12px; }
     #settings-configuration-panel > .panel-body { padding-bottom:132px; }
+    #settings-configuration-panel[data-configuration-mode="policy"] > .panel-body { padding-bottom:24px; }
+    .configuration-mode-tabs { display:flex; gap:26px; margin:0 0 20px; border-bottom:1px solid var(--line); }
+    .configuration-mode-tabs button { padding:10px 0; border:0; border-bottom:3px solid transparent; border-radius:0; background:transparent; color:var(--muted); font-size:13px; }
+    .configuration-mode-tabs button[aria-selected="true"] { color:var(--accent); border-bottom-color:var(--accent); }
+    .configuration-subpanel[hidden], .configuration-action-bar[hidden], #configuration-policy[hidden] { display:none; }
     .configuration-groups-heading { margin:24px 0 12px; }
     .configuration-groups-heading h4 { margin:0; font-size:14px; }
     .configuration-groups-heading p { margin:5px 0 0; color:var(--muted); font-size:12px; }
     .configuration-file-meta { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; margin:0; }
     .configuration-information { padding:18px; border:1px solid var(--line); border-radius:12px; background:#fff; }
     .configuration-information .configuration-warnings { margin:12px 0 0; }
-    body:has(.settings-view:not([hidden]) #settings-configuration-panel:not([hidden])) .live-status { bottom:90px; }
-    @media(max-width:600px) { body:has(.settings-view:not([hidden]) #settings-configuration-panel:not([hidden])) .live-status { bottom:140px; } }
+    body:has(.settings-view:not([hidden]) #settings-configuration-panel:not([hidden])[data-configuration-mode="nodes"]) .live-status { bottom:90px; }
+    @media(max-width:600px) { body:has(.settings-view:not([hidden]) #settings-configuration-panel:not([hidden])[data-configuration-mode="nodes"]) .live-status { bottom:140px; } }
     .configuration-file-meta > div { min-width:0; }
     .configuration-file-meta span { display:block; margin-bottom:5px; }
     .configuration-file-meta strong { display:block; color:var(--ink); overflow-wrap:anywhere; font-weight:600; }
@@ -500,13 +505,37 @@
     .configuration-warnings { margin:0 0 14px; padding:10px 12px; border:1px solid #e0b48a; border-radius:7px; background:#fff5e9; color:#8a5a00; font-size:11px; }
     .configuration-file-meta { color:var(--muted); font-size:12px; }
     .configuration-policy { margin-top:18px; padding-top:16px; border-top:1px solid var(--line); }
-    .configuration-policy-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px 14px; margin:10px 0 12px; }
-    .configuration-policy-grid label { display:flex; flex-direction:column; gap:4px; color:var(--muted); font-size:11px; }
-    .configuration-policy-grid select, .configuration-policy-grid input[type="number"] { min-height:32px; padding:0 8px; border:1px solid var(--line-strong); border-radius:6px; background:var(--surface); color:var(--ink); font-size:12px; }
-    .configuration-policy-check { flex-direction:row !important; align-items:center; gap:6px !important; grid-column:1 / -1; }
-    .configuration-policy-check input[type="checkbox"] { width:16px; height:16px; min-height:16px; flex:0 0 16px; margin:0; padding:0; accent-color:var(--accent); }
-    .configuration-policy-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; }
+    #configuration-policy { margin:0; padding:0; border:0; }
+    .configuration-policy-header { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:5px; }
+    .configuration-policy-header h4 { margin:0; font-size:16px; }
+    .configuration-policy-engine-row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin:18px 0; }
+    .configuration-policy-engine-row label { color:var(--ink); font-size:12px; }
+    .configuration-policy-engine-row select { width:180px; }
+    .configuration-policy-scope { border-radius:999px; padding:4px 10px; background:var(--accent-soft); color:var(--accent-strong); font-size:11px; }
+    .configuration-policy-card { border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+    .configuration-policy-card-header { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 16px; border-bottom:1px solid var(--line); font-size:13px; }
+    .configuration-policy-card-header span { color:var(--muted); font-size:11px; }
+    .configuration-policy-table { width:100%; min-width:650px; border-collapse:collapse; }
+    .configuration-policy-table th, .configuration-policy-table td { padding:12px 16px; text-align:left; vertical-align:top; border-bottom:1px solid var(--line); font-size:12px; }
+    .configuration-policy-table th { background:var(--canvas); color:var(--muted); font-size:11px; font-weight:600; }
+    .configuration-policy-table td:first-child { width:38%; }
+    .configuration-policy-table td:last-child { width:30%; }
+    .configuration-policy-table small { display:block; color:var(--muted); font-size:11px; margin-top:4px; }
+    .configuration-policy-input { display:flex; align-items:center; border:1px solid var(--line-strong); border-radius:7px; max-width:230px; min-height:36px; }
+    .configuration-policy-input input { border:0; min-width:0; width:100%; padding:0 10px; font-size:12px; }
+    .configuration-policy-input span { padding-right:10px; color:var(--muted); font-size:11px; white-space:nowrap; }
+    .configuration-policy-maintenance { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 16px; background:var(--canvas); }
+    .configuration-policy-maintenance label { color:var(--ink); font-size:12px; cursor:pointer; }
+    .configuration-policy-maintenance small { display:block; margin-top:4px; color:var(--muted); font-size:11px; }
+    .configuration-policy-maintenance input { appearance:none; position:relative; flex:0 0 36px; width:36px; height:22px; min-height:22px; border:0; border-radius:12px; background:var(--line-strong); cursor:pointer; }
+    .configuration-policy-maintenance input::before { content:""; position:absolute; top:3px; left:3px; width:16px; height:16px; border-radius:50%; background:#fff; }
+    .configuration-policy-maintenance input:checked { background:var(--accent); }
+    .configuration-policy-maintenance input:checked::before { left:17px; }
+    .configuration-policy-actions { display:flex; justify-content:space-between; align-items:center; gap:16px; margin-top:18px; flex-wrap:wrap; }
+    .configuration-policy-actions small { display:block; color:var(--muted); font-size:10px; margin-top:4px; }
+    #clear-cluster-policy { background:transparent; border:0; padding:0; min-height:24px; color:var(--muted); font-size:11px; }
     .configuration-policy-status { color:var(--muted); font-size:11px; }
+    .configuration-policy-boundary { padding-top:14px; margin:18px 0 0; border-top:1px solid var(--line); color:var(--muted); font-size:11px; }
     .settings-kicker { display:block; margin-bottom:4px; color:var(--accent); font-size:10px; font-weight:800; text-transform:uppercase; }
     .control-plane-strip { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); }
     .control-plane-group { min-width:0; padding:16px 18px; border-right:1px solid var(--line); }
@@ -1483,6 +1512,11 @@
           <div class="panel settings-panel settings-section-panel" id="settings-configuration-panel" role="tabpanel" aria-labelledby="settings-configuration-tab" hidden>
             <div class="panel-header"><div><h3 class="panel-title">运行参数</h3><p>本节点实际生效的配置、每个值的来源，以及改动是否需要重启</p></div><div class="settings-inline-actions"><span class="badge" id="configuration-source-summary">读取中</span><button id="reload-configuration" type="button">重新读取文件</button></div></div>
             <div class="panel-body">
+              <div class="configuration-mode-tabs" role="tablist" aria-label="运行参数功能">
+                <button id="configuration-nodes-tab" type="button" role="tab" aria-selected="true" aria-controls="configuration-nodes-panel" data-configuration-mode="nodes">节点参数</button>
+                <button id="configuration-policy-tab" type="button" role="tab" aria-selected="false" aria-controls="configuration-policy-panel" data-configuration-mode="policy" tabindex="-1">自动切换策略</button>
+              </div>
+              <div class="configuration-subpanel" id="configuration-nodes-panel" role="tabpanel" aria-labelledby="configuration-nodes-tab">
               <div class="configuration-information">
                 <div class="configuration-file-meta" id="configuration-file-meta"></div>
                 <div class="configuration-warnings" id="configuration-warnings" hidden></div>
@@ -1497,20 +1531,23 @@
  <dialog id="configuration-confirm"><h3 id="configuration-confirm-title"></h3><p id="configuration-confirm-note"></p><pre id="configuration-confirm-diff" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre><div class="settings-inline-actions"><button id="configuration-confirm-submit" type="button" class="primary-button"></button><button id="configuration-confirm-cancel" type="button"></button></div></dialog>
  <div class="configuration-groups-heading"><h4>参数分组</h4><p id="configuration-groups-summary"></p></div>
  <div class="configuration-sections" id="configuration-sections"><p class="settings-note">尚未取得运行参数。</p></div>
-              <div class="configuration-policy" id="configuration-policy" hidden>
-                <h4>引擎级全局策略（复制存储 · 改完即生效）</h4>
-                <p class="configuration-section-note">作用于此控制面管理的所有同引擎集群，不随顶部所选集群改变。策略写入 Raft 复制存储，改动记审计，下一轮生效；留空字段沿用节点配置。</p>
-                <div class="configuration-policy-grid">
-                  <label>引擎<select id="cluster-policy-engine"><option value="mysql">mysql</option><option value="postgresql">postgresql</option></select></label>
-                  <label>故障证据观测次数<input id="cluster-policy-observations" type="number" min="2" max="100" inputmode="numeric" placeholder="留空＝沿用配置"></label>
-                  <label>证据窗口（秒）<input id="cluster-policy-window" type="number" min="1" max="3600" inputmode="numeric" placeholder="留空＝沿用配置"></label>
-                  <label>切换操作预算（秒）<input id="cluster-policy-budget" type="number" min="30" max="3600" inputmode="numeric" placeholder="留空＝沿用配置"></label>
-                  <label class="configuration-policy-check"><input id="cluster-policy-suppressed" type="checkbox">维护抑制：暂停所有该引擎集群的自动切换</label>
-                </div>
-                <div class="configuration-policy-actions">
-                  <button id="save-cluster-policy" class="primary-button" type="button">保存策略</button>
-                  <button id="clear-cluster-policy" type="button">清除全部覆盖</button>
-                  <span class="configuration-policy-status" id="cluster-policy-status"></span>
+              </div>
+              <div class="configuration-subpanel" id="configuration-policy-panel" role="tabpanel" aria-labelledby="configuration-policy-tab" hidden>
+                <div class="configuration-policy" id="configuration-policy" hidden>
+                  <div class="configuration-policy-header"><h4>按引擎设置自动切换策略</h4><span class="badge success">无需重启</span></div>
+                  <p class="configuration-section-note">策略覆盖节点中的自动切换参数，保存后在下一轮判断生效。</p>
+                  <div class="configuration-policy-engine-row"><label for="cluster-policy-engine">数据库引擎</label><select id="cluster-policy-engine"><option value="mysql">MySQL</option><option value="postgresql">PostgreSQL</option></select><span class="configuration-policy-scope" id="cluster-policy-scope"></span></div>
+                  <div class="configuration-policy-card">
+                    <div class="configuration-policy-card-header"><strong>故障确认与切换限制</strong><span id="cluster-policy-override-state"></span></div>
+                    <div class="configuration-table-scroll"><table class="configuration-policy-table"><thead><tr><th>策略参数</th><th>本节点生效值</th><th>修改值</th></tr></thead><tbody>
+                      <tr><td><label for="cluster-policy-observations">故障证据观测次数</label><small>连续故障观测达到该次数后，才继续判断</small></td><td><strong id="cluster-policy-effective-observations">-</strong><small id="cluster-policy-source-observations"></small></td><td><div class="configuration-policy-input"><input id="cluster-policy-observations" type="number" min="2" max="100" step="1" inputmode="numeric" placeholder="留空沿用节点配置"><span>次</span></div></td></tr>
+                      <tr><td><label for="cluster-policy-window">证据窗口</label><small>故障至少持续多久；需同时满足观测次数</small></td><td><strong id="cluster-policy-effective-window">-</strong><small id="cluster-policy-source-window"></small></td><td><div class="configuration-policy-input"><input id="cluster-policy-window" type="number" min="1" max="3600" step="1" inputmode="numeric" placeholder="留空沿用节点配置"><span>秒</span></div></td></tr>
+                      <tr><td><label for="cluster-policy-budget">切换操作预算</label><small>一次自动切换任务的执行时间上限</small></td><td><strong id="cluster-policy-effective-budget">-</strong><small id="cluster-policy-source-budget"></small></td><td><div class="configuration-policy-input"><input id="cluster-policy-budget" type="number" min="30" max="3600" step="1" inputmode="numeric" placeholder="留空沿用节点配置"><span>秒</span></div></td></tr>
+                    </tbody></table></div>
+                    <div class="configuration-policy-maintenance"><div><label for="cluster-policy-suppressed">维护期间暂停自动切换</label><small id="cluster-policy-maintenance-scope"></small></div><input id="cluster-policy-suppressed" type="checkbox"></div>
+                  </div>
+                  <div class="configuration-policy-actions"><div><button id="clear-cluster-policy" type="button">清除所有引擎的策略覆盖</button><small>同时移除 MySQL / PostgreSQL 覆盖，恢复各节点配置</small></div><div class="settings-inline-actions"><span class="configuration-policy-status" id="cluster-policy-status" role="status" aria-live="polite"></span><button id="save-cluster-policy" class="primary-button" type="button">保存策略</button></div></div>
+                  <p class="configuration-policy-boundary">作用于此控制面管理的所有同引擎集群，不随顶部所选集群改变。此处保存只修改自动切换策略。</p>
                 </div>
               </div>
             </div>
@@ -1905,7 +1942,7 @@
     const operationLogPageSize = 20;
     const state = {
       language: 'zh-CN', clusters: [], clusterDirectory: new Map(), fleetTopology: new Map(), capabilities: [], nodes: [], allOperations: [], lifecycleTasks: [], lifecycleCapability: { available:false, reason:'未配置' },
-      controlPlane: null, configuration: null, configurationLoading: false, configurationError: '', configurationExpandedSections: new Set(),
+      controlPlane: null, configuration: null, configurationLoading: false, configurationError: '', configurationExpandedSections: new Set(), configurationMode: 'nodes',
       clusterPolicy: null, clusterPolicySaving: false, platformVersion: null, powerStatus: null, powerRunning: false,
       poweroffSubmitted: false, poweroffWatchdog: null,
       disaster: null, disasterEpoch:0, disasterTimer:null,
@@ -1934,6 +1971,38 @@
     // Only authored UI literals call ui(). Interpolation values are kept verbatim.
     // Business names, credentials, IDs and original diagnostics never pass through a DOM translator.
     const uiCatalog =     {
+      "切换操作预算": "Failover operation budget",
+      "未确认": "Unconfirmed",
+      "{0} 秒": "{0} seconds",
+      "次": "times",
+      "运行参数功能": "Runtime parameter functions",
+      "节点参数": "Node parameters",
+      "自动切换策略": "Automatic failover policy",
+      "按引擎设置自动切换策略": "Set automatic failover policy by engine",
+      "无需重启": "No restart required",
+      "策略覆盖节点中的自动切换参数，保存后在下一轮判断生效。": "Policies override node automatic failover settings and take effect on the next evaluation cycle after saving.",
+      "数据库引擎": "Database engine",
+      "故障确认与切换限制": "Failure confirmation and failover limits",
+      "策略参数": "Policy parameter",
+      "本节点生效值": "Effective value on this node",
+      "连续故障观测达到该次数后，才继续判断": "Continue evaluation only after this many consecutive failure observations",
+      "证据窗口": "Evidence window",
+      "故障至少持续多久；需同时满足观测次数": "Minimum failure duration; the observation count must also be met",
+      "一次自动切换任务的执行时间上限": "Time limit for one automatic failover operation",
+      "留空沿用节点配置": "Leave blank to inherit node configuration",
+      "维护期间暂停自动切换": "Pause automatic failover during maintenance",
+      "清除所有引擎的策略覆盖": "Clear policy overrides for all engines",
+      "同时移除 MySQL / PostgreSQL 覆盖，恢复各节点配置": "Remove both MySQL and PostgreSQL overrides and restore each node configuration",
+      "作用于此控制面管理的所有同引擎集群，不随顶部所选集群改变。此处保存只修改自动切换策略。": "Applies to all clusters of the same engine managed by this control plane, independently of the cluster selected above. Saving here only changes the automatic failover policy.",
+      "作用于所有 {0} 集群": "Applies to all {0} clusters",
+      "暂停所有 {0} 集群的自动切换，故障监测继续运行": "Pause automatic failover for all {0} clusters while continuing failure monitoring",
+      "策略尚未确认": "Policy not confirmed",
+      "已设置策略覆盖": "Policy overrides configured",
+      "当前未设置覆盖": "No overrides configured",
+      "保存 {0} 策略": "Save {0} policy",
+      "取值来源尚未确认": "Value source not confirmed",
+      "来自引擎策略覆盖": "From engine policy override",
+      "来自本节点：{0}": "From this node: {0}",
  "控制节点参数下发":"Controller configuration distribution",
  "参数下发失败":"Configuration distribution failed",
  "仅向选定控制节点下发。普通数值参数保存后逐节点重启；节点身份、网络、凭据与隔离开关需专用变更流程。":"Apply only to selected controllers. Numeric tuning changes require rolling restarts; identity, network, credentials and fencing switches require dedicated change procedures.",
@@ -3247,6 +3316,39 @@
     // placed with textContent so a configuration value can never inject markup.
     // A "policy" value lives in Raft-replicated metadata: cluster-wide,
     // changeable here, audited, and applied on the next round.
+    const renderConfigurationMode = () => {
+      const selected = state.configurationMode === 'policy' ? 'policy' : 'nodes';
+      state.configurationMode = selected;
+      byId('settings-configuration-panel').dataset.configurationMode = selected;
+      for (const mode of ['nodes', 'policy']) {
+        const tab = byId(`configuration-${mode}-tab`);
+        tab.setAttribute('aria-selected', String(mode === selected));
+        tab.tabIndex = mode === selected ? 0 : -1;
+        byId(`configuration-${mode}-panel`).hidden = mode !== selected;
+      }
+      byId('configuration-action-bar').hidden = selected !== 'nodes';
+    };
+    const setConfigurationMode = (mode, focus = false) => {
+      const selected = mode === 'policy' ? 'policy' : 'nodes';
+      if (selected !== state.configurationMode) {
+        // Changing the task view cannot resurrect a pending node-dispatch confirmation.
+        state.configurationIntent = null;
+        byId('configuration-confirm').close();
+      }
+      state.configurationMode = selected;
+      renderConfigurationMode();
+      if (focus) byId(`configuration-${selected}-tab`).focus();
+    };
+    for (const mode of ['nodes', 'policy']) {
+      const tab = byId(`configuration-${mode}-tab`);
+      tab.addEventListener('click', () => setConfigurationMode(mode));
+      tab.addEventListener('keydown', event => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        setConfigurationMode(event.key === 'Home' ? 'nodes' : event.key === 'End' ? 'policy' : mode === 'nodes' ? 'policy' : 'nodes', true);
+      });
+    }
+
     const configurationSourceLabel = source =>
       (source === 'distributed' ? ui('已下发配置') : source === 'file' ? ui('配置文件') : source === 'policy' ? ui('集群策略') : ui('平台默认'));
 
@@ -3468,9 +3570,10 @@
     const renderConfiguration = () => {
  renderConfigurationDistribution();
       const container = byId('configuration-sections');
-      // Retain the independent policy form and its handlers/draft across table redraws.
+      // The policy form has a stable, separate mount; node table redraws never move it.
       const policyEditor = byId('configuration-policy');
-      policyEditor.remove();
+      renderConfigurationMode();
+      renderClusterPolicy();
       const view = state.configuration;
       const reload = byId('reload-configuration');
       if (reload) reload.disabled = state.configurationLoading;
@@ -3489,7 +3592,7 @@
       const summary = byId('configuration-source-summary');
       const meta = byId('configuration-file-meta');
       if (!view) {
-        policyEditor.hidden = true; container.append(policyEditor);
+        policyEditor.hidden = true;
         summary.textContent = state.configurationLoading ? ui('读取中') : ui('不可用');
         summary.className = `badge ${state.configurationLoading ? '' : 'danger'}`;
         meta.textContent = '';
@@ -3499,7 +3602,8 @@
       }
       summary.textContent = view.file_present ? ui('配置文件已读取') : ui('配置文件不存在');
       summary.className = `badge ${view.file_present ? 'success' : 'danger'}`;
-      byId('configuration-groups-summary').textContent = ui('共 {0} 组 · {1} 项参数。点击展开查看当前值、来源和生效方式。', (view.sections || []).length, (view.sections || []).reduce((count, section) => count + (section.values || []).length, 0));
+      const nodeSections = (view.sections || []).filter(section => section.key !== 'cluster_policy');
+      byId('configuration-groups-summary').textContent = ui('共 {0} 组 · {1} 项参数。点击展开查看当前值、来源和生效方式。', nodeSections.length, nodeSections.reduce((count, section) => count + (section.values || []).length, 0));
       meta.textContent = '';
       [[ui('配置文件'), view.path], [ui('进程启动'), configurationTimeText(view.process_started_at)], [ui('文件修改'), configurationTimeText(view.file_modified_at)]].forEach(([label, value]) => {
         const item = document.createElement('div');
@@ -3529,8 +3633,8 @@
       if(!partitions.editable.length && Array.isArray(state.configurationDistribution?.local?.fields)) {
         const empty = document.createElement('p');empty.className='settings-note';empty.textContent=ui('本节点没有可通过通用表单下发的参数。');editable.append(empty);
       }
-      partitions.policy.forEach(section => editable.append(configurationSectionNode(section, 'policy')));
-      policyEditor.hidden=false;editable.append(policyEditor);
+      // Replicated-policy summaries belong to the single strategy editor, not node groups.
+      policyEditor.hidden=false;
       if(partitions.pending.length) {
         const pending=appendCategory('pending','变更能力尚未确认','尚未取得本节点变更白名单，暂不提供下发编辑器。');
         partitions.pending.forEach(section => pending.append(configurationSectionNode(section, 'pending')));
@@ -3582,8 +3686,26 @@
       const clear = byId('clear-cluster-policy');
       if (save) save.disabled = state.clusterPolicySaving || !state.clusterPolicy;
       if (clear) clear.disabled = state.clusterPolicySaving || !state.clusterPolicy;
+      const engine = byId('cluster-policy-engine').value;
+      const engineLabel = engine === 'postgresql' ? 'PostgreSQL' : 'MySQL';
+      const settings = clusterPolicyCurrent()[engine] || {};
+      byId('cluster-policy-scope').textContent = ui('作用于所有 {0} 集群', engineLabel);
+      byId('cluster-policy-maintenance-scope').textContent = ui('暂停所有 {0} 集群的自动切换，故障监测继续运行', engineLabel);
+      byId('cluster-policy-override-state').textContent = !state.clusterPolicy ? ui('策略尚未确认') : Object.keys(settings).length ? ui('已设置策略覆盖') : ui('当前未设置覆盖');
+      save.textContent = ui('保存 {0} 策略', engineLabel);
+      const section = (state.configuration?.sections || []).find(item => item.key === `engine:${engine}` || item.key === engine);
+      for (const [name, key, unit] of [
+        ['observations', 'automatic_failover_minimum_observations', '次'],
+        ['window', 'automatic_failover_failure_window_seconds', '秒'],
+        ['budget', 'automatic_failover_operation_timeout_seconds', '秒']
+      ]) {
+        const base = (section?.values || []).find(value => value.key === key);
+        const override = settings[key];
+        const confirmed = !!state.clusterPolicy && (override > 0 || (!!base && !state.configurationError));
+        byId(`cluster-policy-effective-${name}`).textContent = !confirmed ? ui('未确认') : override > 0 ? `${override} ${ui(unit)}` : localizeUIMessage(base.value);
+        byId(`cluster-policy-source-${name}`).textContent = !confirmed ? ui('取值来源尚未确认') : override > 0 ? ui('来自引擎策略覆盖') : ui('来自本节点：{0}', configurationSourceLabel(base.source));
+      }
       if (!resetFields || !state.clusterPolicy) return;
-      const settings = clusterPolicyCurrent()[byId('cluster-policy-engine').value] || {};
       byId('cluster-policy-observations').value = settings.automatic_failover_minimum_observations || '';
       byId('cluster-policy-window').value = settings.automatic_failover_failure_window_seconds || '';
       byId('cluster-policy-budget').value = settings.automatic_failover_operation_timeout_seconds || '';
@@ -3680,10 +3802,15 @@
       state.controlPlane = null; state.platformVersion = null;
       state.configuration = null; state.configurationError = ''; state.configurationLoading = false;
       state.configurationExpandedSections.clear();
-      const policyEditor=byId('configuration-policy');policyEditor.hidden=true;policyEditor.remove();
-      byId('configuration-sections').replaceChildren(policyEditor);
+      state.configurationMode = 'nodes';
+      byId('configuration-policy').hidden=true;
+      byId('configuration-sections').replaceChildren();
+      renderConfigurationMode();
  state.configurationDistribution=null;state.configurationBusy=false;state.configurationBusyOwner=null;state.configurationDraft={};state.configurationTargets=null;state.configurationDraftEpoch++;state.configurationUnlocked=false;state.configurationIntent=null;state.configurationReadEpoch++;byId('configuration-confirm').close();renderConfigurationDistribution();
       state.clusterPolicy = null; state.clusterPolicySaving = false;
+      byId('cluster-policy-engine').value = 'mysql';
+      for (const id of ['cluster-policy-observations', 'cluster-policy-window', 'cluster-policy-budget']) byId(id).value = '';
+      byId('cluster-policy-suppressed').checked = false;
       byId('cluster-policy-status').textContent = '';
       renderClusterPolicy();
       state.operationContext = null; state.fleetOperationContext = null; state.fleetContextError = '';

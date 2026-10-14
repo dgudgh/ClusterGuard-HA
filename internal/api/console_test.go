@@ -199,7 +199,7 @@ func TestSettingsEditsClusterPolicyThroughTheReplicatedPolicyEndpoint(t *testing
 		`id="cluster-policy-budget" type="number" min="30" max="3600"`,
 		`id="cluster-policy-suppressed" type="checkbox"`,
 		`id="save-cluster-policy" class="primary-button" type="button">保存策略</button>`,
-		`id="clear-cluster-policy" type="button">清除全部覆盖</button>`,
+		`id="clear-cluster-policy" type="button">清除所有引擎的策略覆盖</button>`,
 		`作用于此控制面管理的所有同引擎集群，不随顶部所选集群改变`,
 	} {
 		if !strings.Contains(view, contract) {

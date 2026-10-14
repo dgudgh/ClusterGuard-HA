@@ -536,15 +536,41 @@ const CHECKS = [
       if(row.includes('effective.append(')||!row.includes('edit.append(input);')||!row.includes("if(category==='editable')row.append(edit);")||!row.includes("if(category==='editable'&&field)"))return 'editor is misplaced or exposed on read-only rows';
       if(!row.includes('input.disabled=!configurationEditAllowed()'))return 'edit placement bypasses authorization';
       const editable=source.indexOf("const editable = appendCategory('editable'");
-      if(editable<0||source.indexOf("appendCategory('readonly'",editable)<editable||!source.includes('editable.append(policyEditor)'))return 'read-only parameters precede editable ones or the independent policy editor';
+      if(editable<0||source.indexOf("appendCategory('readonly'",editable)<editable||source.includes('editable.append(policyEditor)')||!source.includes('id="configuration-policy-panel"'))return 'read-only parameters precede editable ones or the policy editor shares the node view';
       if(!source.includes("const expansionKey = category + ':' + sectionKey"))return 'split groups share an expansion state';
       if(!source.includes('else if(oldFields!==JSON.stringify(local.fields??null)){renderConfiguration();}'))return 'late capabilities do not reclassify the projection';
       const acceptance=read('tools/console-configuration-groups-acceptance.cjs')||'';
-      for(const name of ['all editors occupy the final column, separate from effective values','mixed module is split without losing or duplicating rows','read-only rows never gain inputs, including nonrestart fields','capability arrival replaces the pending category','split copies retain independent expansion states','policy editor remains in the upper area with its independent save action'])if(!acceptance.includes(name))return 'missing browser regression: '+name;
+      for(const name of ['all editors occupy the final column, separate from effective values','mixed module is split without losing or duplicating rows','read-only rows never gain inputs, including nonrestart fields','capability arrival replaces the pending category','split copies retain independent expansion states','policy editor has its own view and independent save action'])if(!acceptance.includes(name))return 'missing browser regression: '+name;
       return true;
     },
   },
 
+  {
+    rule:'INV-004 / 23',
+    title:'node dispatch and engine policy have separate task views',
+    run:()=>{
+      const source=read('internal/api/console.html')||'';
+      const start=source.indexOf('    const renderConfigurationMode =');
+      const end=source.indexOf('    const setConfigurationMode =',start);
+      if(start<0||end<0)return 'task-view renderer is missing';
+      const render=vm.runInNewContext(`(state,byId)=>{${source.slice(start,end)}renderConfigurationMode();}`,{});
+      const elements={};
+      const byId=id=>elements[id]??=( {hidden:false,dataset:{},attributes:{},setAttribute(name,value){this.attributes[name]=value;}} );
+      for(const selected of ['nodes','policy','unknown']){
+        render({configurationMode:selected},byId);
+        const mode=selected==='policy'?'policy':'nodes';
+        if(byId('configuration-action-bar').hidden!==(mode!=='nodes')||byId('configuration-nodes-panel').hidden!==(mode!=='nodes')||byId('configuration-policy-panel').hidden!==(mode!=='policy'))return 'node actions or targets remain visible in the policy view';
+        if(byId(`configuration-${mode}-tab`).attributes['aria-selected']!=='true'||byId(`configuration-${mode}-tab`).tabIndex!==0)return 'active task view is not accessible';
+      }
+      if(source.includes('editable.append(policyEditor)')||source.includes('partitions.policy.forEach'))return 'replicated policy is duplicated in the node parameter area';
+      if(!source.includes("filter(section => section.key !== 'cluster_policy')"))return 'node parameter count includes replicated-policy summaries';
+      if(!source.includes('const confirmed = !!state.clusterPolicy && (override > 0 || (!!base && !state.configurationError));'))return 'unconfirmed effective values are guessed';
+      if(!source.includes("state.configurationMode = 'nodes';"))return 'session cleanup retains the previous task view';
+      const acceptance=read('tools/console-configuration-layout-acceptance.cjs')||'';
+      for(const name of ['policy mode hides targets and the node dispatch bar','policy summary is not duplicated in node parameter groups','policy save preserves the other engine and uses only its own endpoint','missing projected values stay unconfirmed instead of using defaults','session cleanup resets mode and removes previous node values'])if(!acceptance.includes(name))return 'missing browser regression: '+name;
+      return true;
+    },
+  },
   {
     rule:'INV-004',
     title:'deployment result survives a later failed operation',
@@ -1051,6 +1077,7 @@ const reportOpen = failures => {
 // The files the rules read. The self-test copies exactly these, so a mutation cannot be
 // caught by reading something the gate does not actually consult.
 const READ_FILES = [
+  'tools/console-configuration-layout-acceptance.cjs',
   'scripts/build-clusterguard-rpm.sh','scripts/build-clusterguard-bundle.sh','scripts/build-clusterguard-offline-kit.sh','tools/verify-offline-kit.cjs','tools/bundle-version-acceptance.cjs',
   'cmd/clusterguard/main.go','cmd/cgctl/main.go','cmd/clusterguard-agent/main.go','cmd/clusterguard-k8s-fence-guard/main.go','cmd/clusterguard-update-helper/main.go',
   'internal/platformupdate/history.go',
@@ -1068,6 +1095,9 @@ const READ_FILES = [
 ];
 
 const MUTATIONS = [
+  {name:'node dispatch bar leaks into the policy view',file:'internal/api/console.html',find:"byId('configuration-action-bar').hidden = selected !== 'nodes';",replace:"byId('configuration-action-bar').hidden = false;",rule:'node dispatch and engine policy have separate task views'},
+  {name:'policy summaries return to node groups',file:'internal/api/console.html',find:"filter(section => section.key !== 'cluster_policy')",replace:"filter(section => true)",rule:'node dispatch and engine policy have separate task views'},
+  {name:'unconfirmed policy values are presented as known',file:'internal/api/console.html',find:'const confirmed = !!state.clusterPolicy && (override > 0 || (!!base && !state.configurationError));',replace:'const confirmed = true;',rule:'node dispatch and engine policy have separate task views'},
   {name:'parameter notes print raw Chinese in English',file:'internal/api/console.html',find:'noteParts.push(localizeUIMessage(value.note))',replace:'noteParts.push(value.note)',rule:'configuration selection and fixed actions describe the current members'},
   {name:'approval parameter note loses its English translation',file:'internal/api/console.html',find:'Deprecated: database operations and automatic recovery use one-time approval grants instead.',replace:'已弃用：数据库操作改用一次性授权。',rule:'configuration selection and fixed actions describe the current members'},
   {name:'real file warning loses its English translation',file:'internal/api/console.html',find:'The configuration file is currently unreadable ({0})',replace:'配置文件当前不可读（{0}）',rule:'configuration selection and fixed actions describe the current members'},

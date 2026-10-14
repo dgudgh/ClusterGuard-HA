@@ -63,9 +63,9 @@ async function main() {
         await page.screenshot({ path: path.join(out, baseline ? 'before-' + width + '.png' : 'collapsed-' + width + '.png'), fullPage: true });
         if (baseline) continue;
         await check('capability arrival replaces the pending category', await page.locator('[data-configuration-category="pending"]').count() === 0);
-        await check('mixed module is split without losing or duplicating rows', await page.locator('.configuration-table tbody tr').count() === 8 && await editable.locator('details[data-configuration-section="node_lifecycle"] tbody tr').count() === 1 && await readonly.locator('details[data-configuration-section="node_lifecycle"] tbody tr').count() === 3);
+        await check('mixed module is split without losing or duplicating rows', await page.locator('.configuration-table tbody tr').count() === 7 && await page.locator('[data-configuration-section="cluster_policy"]').count() === 0 && await editable.locator('details[data-configuration-section="node_lifecycle"] tbody tr').count() === 1 && await readonly.locator('details[data-configuration-section="node_lifecycle"] tbody tr').count() === 3);
         await check('read-only rows never gain inputs, including nonrestart fields', await readonly.locator('input').count() === 0 && (await readonly.textContent()).includes('unsafe_nonrestart'));
-        await check('policy editor remains in the upper area with its independent save action', await editable.locator('#configuration-policy').count() === 1 && await readonly.locator('#configuration-policy').count() === 0 && await page.locator('#save-cluster-policy').count() === 1);
+        await check('policy editor has its own view and independent save action', await page.locator('#configuration-policy-panel #configuration-policy').count() === 1 && await editable.locator('#configuration-policy').count() === 0 && await readonly.locator('#configuration-policy').count() === 0 && await page.locator('#save-cluster-policy').count() === 1);
         await check('all split groups default to collapsed', await page.locator('details.configuration-section[open]').count() === 0);
         const topGroup = editable.locator('details[data-configuration-section="node_lifecycle"]');
         const bottomGroup = readonly.locator('details[data-configuration-section="node_lifecycle"]');
@@ -74,9 +74,11 @@ async function main() {
         await check('editing column is labeled and locked without changing classification', (await topGroup.locator('th').last().textContent()) === '修改值' && await input.isDisabled());
         await page.locator('#configuration-unlock').click();
         await input.fill('830');
+        await page.locator('#configuration-policy-tab').click();
         await page.locator('#cluster-policy-observations').fill('5');
         await page.evaluate(() => loadConfiguration());
         await check('independent policy draft survives parameter table redraw', await page.locator('#cluster-policy-observations').inputValue() === '5');
+        await page.locator('#configuration-nodes-tab').click();
         await check('reload preserves the draft and independent group expansion', await input.inputValue() === '830' && await topGroup.getAttribute('open') !== null && await bottomGroup.getAttribute('open') === null);
         await bottomGroup.locator('summary').focus();
         await page.keyboard.press('Enter');

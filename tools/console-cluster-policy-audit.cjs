@@ -44,6 +44,7 @@ const output = path.resolve(process.env.CONSOLE_TEST_OUTPUT || '.build/cluster-p
     failRead = false;
     await page.locator('#settings-status-tab').click();
     await page.locator('#settings-configuration-tab').click();
+    await page.locator('#configuration-policy-tab').click();
     await page.locator('#save-cluster-policy').waitFor({ state:'visible' });
     await page.waitForFunction(() => !document.getElementById('save-cluster-policy').disabled);
     await page.locator('#cluster-policy-observations').fill('1');

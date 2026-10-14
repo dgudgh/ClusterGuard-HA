@@ -23,6 +23,8 @@ recorded-through: 73ff4a3
 
 | 日期 | 文件 | 变更 | 说明 |
 | --- | --- | --- | --- |
+| 2026-10-14 | `docs/development/console-configuration-layout-2026-10-14.md` | A | 记录双视图布局任务：源码基线与历史对照、用户确认的两种操作范围、CG-UPGRADE-CONTRACT v2已读、浏览器旧版复现、SOURCE/ART/FIELD验证计划与不可变补丁身份。 |
+| 2026-10-14 | `docs/development/frontend/settings/cluster-policy.md` | M | 策略入口改为独立视图；说明唯一表单、真实值与来源、缺字段/读取失败未确认、全部引擎清除范围、草稿/会话清理及双视图Chrome回归。 |
 | 2026-10-14 | `docs/development/console-configuration-hints-2026-10-14.md` | A | 记录本轮任务：控制台「运行参数」页顶部两条提示的下线与参数级说明。含首轮门禁判断、基线 `754a824`、提示来源、安装器默认配置触发面、接口/启动日志/审批不变量与验证计划；追加独立复核：工作区Playwright路径、英文新增注释失败复现与修正、190项隔离Chrome检查及不等于FIELD的边界，保留首轮未执行浏览器的历史事实。 |
 | 2026-10-14 | `docs/development/frontend/settings/configuration.md` | M | 运行参数页顶部不再渲染重新读取说明和弃用提示，弃用/空引用风险移到approval_token_env注释；追加已知注释及文件错误按语言映射、未知文本与路径保留、当前投影浏览器回归及旧告警夹具不能代替后端过滤验收的边界。 |
 | 2026-10-13 | `README.md` | M | 首页按用户给定文案重写（用户要求：首页介绍改成「企业级数据库高可用与故障接管平台」这一版）。标题下定位由自造类别名改为 `Enterprise Database High Availability and Failover Management Platform`，其下 `Make database failover safer. Make business recovery more controllable.`；正文承接用户原文：产品定义段 + 「不是简单提升备库，而是安全转移写入服务、避免多节点同时合法可写」的核心目标段、`Why ClusterGuard HA?`（六问 + 「复制解决同步、本产品解决安全接管」）、`What Can ClusterGuard HA Do?`（统一集群管理/安全切换/写入口同批迁移/降脑裂/故障恢复/统一审计 六项，含「无法证明安全即拒绝」）、`The Core Idea Behind ClusterGuard HA`（「故障可以发生，但错误的故障接管不应该成为第二次事故」+ 不是代理/不是备份）、`Where It Fits`（适用场景 + 后续受控扩展方向 + 收尾标语）。**保留** `Console Preview`/`How It Differs from Other HA Tools`（MHA·Orchestrator·Patroni·repmgr 四维对照表）/`How It Works: Architecture and Safety`（三控制器 Raft 部署图 + 十步工作流 + 八条安全机制，含「高可用不等于零中断零丢失」边界条）/支持矩阵/快速开始/文档/许可，维护者内容仍在文末 `Maintainer Notes`。事实声明（`3.1.2.10`/`2.2-108`/`2.1.45`/`2.2.39`/两条 SHA-256/四条 curl/全部相对链接/`AGPL-3.0-only`/`7b643f4`）逐字保留。 **追加（2026-10-13 同日晚些）：** 该英文首页正文现位于 `README.en.md`——本批为「GitHub 首页默认中文」把中文版移到 `README.md`、英文版改名为 `README.en.md`；同时补回上一行改稿漏掉的控制台鉴权模型段落（`MustChangePassword`、8 小时绝对会话、`logout`），以恢复 `scripts/scripts_test.go` 的认证交付文档契约。 |
@@ -175,3 +177,7 @@ GitHub 只渲染仓库根 `README.md`，所以「首页默认中文」只能由 
 同时修一处回归：上一批 README 改稿把控制台鉴权模型段落（`MustChangePassword`、八小时绝对会话、改密或 `logout` 失效、root 专属 `bootstrap-admin-password`）删掉，`scripts/scripts_test.go` 的 `TestAuthenticationDeliveryDocumentationCoversBootstrapAndRecovery`（原先读 `../README.md`）因此变红；本批按原文事实把该段落补回中英两版，并把该契约测试的读取路径改为 `../README.en.md`——交付物里落盘为 `README.md` 的那一份仍然是英文版。
 
 耦合点同步（非 md，不逐条登记）：`docs/build-html-docs.mjs` 的 en-US `product-overview` 源改指 `README.en.md`、zh-CN 源改指 `README.md`；`tools/verify-license-consistency.cjs` 的声明载体清单把 `README.zh-CN.md` 换成 `README.en.md`；`scripts/build-clusterguard-bundle.sh` 与 `scripts/build-clusterguard-rpm.sh` 复制/安装的 README 源改指 `README.en.md`，使交付物中的 `README.md` 仍为英文版，与既有交付行为一致。生成页 `docs/html/{en-US,zh-CN}/product-overview.html` 与两页 `licensing.html` 随本批重建，不逐页登记。
+
+## 2026-10-14：运行参数整页双视图
+
+修改 configuration.md 的节点底栏与策略分类说明，追加双视图、末列输入、真实值/来源、缺值未确认及隔离Chrome验收入口；已有 M 记录继续有效。新增任务页及修改策略页在本批登记。生成页使用 docs/build-html-docs.mjs 重建；本地 release 与 .build 中的证据不入公共仓库。
