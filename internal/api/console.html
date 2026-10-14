@@ -455,7 +455,6 @@
     .configuration-groups-heading p { margin:5px 0 0; color:var(--muted); font-size:12px; }
     .configuration-file-meta { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; margin:0; }
     .configuration-information { padding:18px; border:1px solid var(--line); border-radius:12px; background:#fff; }
-    .configuration-instruction { margin:16px 0 0; padding:12px 14px; border:1px solid #e0b48a; border-radius:8px; background:#fff5e9; color:#8a5a00; font-size:12px; line-height:1.6; }
     .configuration-information .configuration-warnings { margin:12px 0 0; }
     body:has(.settings-view:not([hidden]) #settings-configuration-panel:not([hidden])) .live-status { bottom:90px; }
     @media(max-width:600px) { body:has(.settings-view:not([hidden]) #settings-configuration-panel:not([hidden])) .live-status { bottom:140px; } }
@@ -2967,7 +2966,6 @@
       "配置文件": "Configuration file",
       "进程启动": "Process started",
       "文件修改": "File modified",
-      "“重新读取文件”只刷新显示。白名单参数可在下方编辑，检查并确认下发后逐节点重启，核验实际生效值；动态策略通过策略面板修改。": "Reload file refreshes the display only. Edit allowed parameters below, review and confirm distribution, then controllers restart one at a time and the effective values are verified. Change dynamic policies in the policy panel.",
       "数据库操作与自动恢复不再使用 CG_APPROVAL_TOKEN，请使用一次性操作授权。": "CG_APPROVAL_TOKEN is deprecated for database operations and automatic recovery; use one-time approval grants",
       "平台升级": "Platform update",
       "上传签名升级包，校验补丁信息后发起受控滚动升级。": "Upload a signed package, validate its metadata and start a controlled rolling update.",
@@ -3065,7 +3063,6 @@
     const localizeUIMessage = message => {
       const raw = String(message || '');
       if (raw === 'CG_APPROVAL_TOKEN is deprecated for database operations and automatic recovery; use one-time approval grants') return ui('数据库操作与自动恢复不再使用 CG_APPROVAL_TOKEN，请使用一次性操作授权。');
-      if (raw === '本节点配置仅在进程启动时读取一次（cmd/clusterguard/main.go 的 config.Load），控制台不提供热重载；此处的“重新读取文件”只重新读取文件用于显示，不会改变正在运行的进程，参数改动需要滚动重启控制面。') return ui('“重新读取文件”只刷新显示。白名单参数可在下方编辑，检查并确认下发后逐节点重启，核验实际生效值；动态策略通过策略面板修改。');
       const exact = uiMessagePatterns.find(entry => raw === entry.source || raw === entry.english);
       if (exact) return ui(exact.source);
       for (const entry of uiMessagePatterns) {
