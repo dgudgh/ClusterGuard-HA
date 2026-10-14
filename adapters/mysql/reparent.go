@@ -2,6 +2,7 @@ package mysql
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"clusterguard.io/ha/pkg/adapter"
 	"clusterguard.io/ha/pkg/model"
+	"clusterguard.io/ha/pkg/redact"
 )
 
 const (
@@ -77,6 +79,7 @@ func waitForFollowerReplicationHealthy(ctx context.Context, runner SQLRunner, en
 	ticker := time.NewTicker(followerReplicationPollInterval)
 	defer ticker.Stop()
 	var lastError error
+	var lastNativeError error
 	stableSamples := 0
 	for {
 		status, configured, err := probeReplication(waitContext, runner, endpoint, credentials)
@@ -90,9 +93,18 @@ func waitForFollowerReplicationHealthy(ctx context.Context, runner SQLRunner, en
 		} else {
 			stableSamples = 0
 		}
+		if err == nil && configured {
+			lastNativeError = nil
+			if status.LastIOError != "" || status.LastSQLError != "" {
+				lastNativeError = fmt.Errorf("native replication error: IO=%s; SQL=%s", redact.Bounded(status.LastIOError, 1024), redact.Bounded(status.LastSQLError, 1024))
+			}
+		}
 		lastError = err
 		select {
 		case <-waitContext.Done():
+			if lastNativeError != nil {
+				return model.ReplicationStatus{}, fmt.Errorf("replication health did not converge: %w", errors.Join(lastNativeError, lastError, waitContext.Err()))
+			}
 			if lastError != nil {
 				return model.ReplicationStatus{}, fmt.Errorf("replication health did not converge: %w", lastError)
 			}

@@ -134,8 +134,7 @@ func (e DisasterExecutor) StartPrimary(ctx context.Context, member model.Databas
 	if err != nil || configured {
 		return fmt.Errorf("selected MySQL primary still has an upstream replication channel")
 	}
-	_, err = e.qualified(ctx, member, credentials)
-	return err
+	return e.refreshRecoveryBinlog(ctx, member, credentials, expectedGTID, authorize)
 }
 
 func (e DisasterExecutor) Rebuild(ctx context.Context, target, primary model.DatabaseInstance, credentials adapter.OperationCredentials, authorize, verifyGuard, restart func() error) error {
@@ -169,6 +168,14 @@ func (e DisasterExecutor) Rebuild(ctx context.Context, target, primary model.Dat
 	if err != nil || assessment.ErrantTransactions != 0 {
 		return fmt.Errorf("replica history diverged after recovery selection")
 	}
+	needsClone := !assessment.FastRejoinSafe
+	if assessment.MissingTransactions != 0 && !needsClone {
+		available, err := recoveryIncrementalAvailable(ctx, e.Runner, primary, credentials.Administrative, sourceGTID, targetGTID)
+		if err != nil {
+			return err
+		}
+		needsClone = !available
+	}
 	dialect, err := dialectForVersion(recipient.version)
 	if err != nil {
 		return err
@@ -178,11 +185,14 @@ func (e DisasterExecutor) Rebuild(ctx context.Context, target, primary model.Dat
 		return err
 	}
 	if configured {
+		if err = authorize(); err != nil {
+			return err
+		}
 		if err = e.exec(ctx, target, credentials.Administrative, dialect.StopReplication); err != nil {
 			return err
 		}
 	}
-	if !assessment.FastRejoinSafe {
+	if needsClone {
 		if source.version != recipient.version {
 			return fmt.Errorf("physical MySQL clone requires identical qualified source and recipient versions")
 		}
@@ -196,6 +206,9 @@ func (e DisasterExecutor) Rebuild(ctx context.Context, target, primary model.Dat
 	if err = e.exec(ctx, target, credentials.Administrative, "SET PERSIST super_read_only=ON; SET PERSIST read_only=ON"); err != nil {
 		return err
 	}
+	if err = authorize(); err != nil {
+		return err
+	}
 	if err = e.exec(ctx, target, credentials.Administrative, dialect.ResetReplication); err != nil {
 		return err
 	}
@@ -203,7 +216,13 @@ func (e DisasterExecutor) Rebuild(ctx context.Context, target, primary model.Dat
 	if err != nil {
 		return err
 	}
+	if err = authorize(); err != nil {
+		return err
+	}
 	if err = e.exec(ctx, target, credentials.Administrative, statement); err != nil {
+		return err
+	}
+	if err = authorize(); err != nil {
 		return err
 	}
 	if err = e.exec(ctx, target, credentials.Administrative, dialect.StartReplication); err != nil {
@@ -248,7 +267,7 @@ func (e DisasterExecutor) ensureClone(ctx context.Context, member model.Database
 	return nil
 }
 
-func (e DisasterExecutor) clone(ctx context.Context, target, primary model.DatabaseInstance, credentials adapter.Credentials, authorize, verifyGuard, restart func() error) error {
+func (e DisasterExecutor) clone(ctx context.Context, target, primary model.DatabaseInstance, credentials adapter.Credentials, authorize, verifyGuard, restart func() error) (err error) {
 	for _, member := range []model.DatabaseInstance{primary, target} {
 		if err := e.ensureClone(ctx, member, credentials); err != nil {
 			return err
@@ -274,7 +293,18 @@ func (e DisasterExecutor) clone(ctx context.Context, target, primary model.Datab
 	if err = e.exec(ctx, target, credentials, "SET GLOBAL clone_valid_donor_list="+mysqlStringLiteral(donor+":"+strconv.Itoa(primary.Port))); err != nil {
 		return err
 	}
+	defer func() {
+		restoreCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		defer cancel()
+		err = errors.Join(err, e.exec(restoreCtx, target, credentials, "SET PERSIST super_read_only=ON; SET PERSIST read_only=ON"))
+	}()
 	if err = e.exec(ctx, target, credentials, "SET GLOBAL super_read_only=OFF"); err != nil {
+		return err
+	}
+	if err = verifyGuard(); err != nil {
+		return err
+	}
+	if err = authorize(); err != nil {
 		return err
 	}
 	statement := "CLONE INSTANCE FROM " + mysqlStringLiteral(credentials.Username) + "@" + mysqlStringLiteral(donor) + ":" + strconv.Itoa(primary.Port) + " IDENTIFIED BY " + mysqlStringLiteral(credentials.Password) + " REQUIRE SSL"

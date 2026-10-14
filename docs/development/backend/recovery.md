@@ -22,5 +22,6 @@
 
 ## 必须保持与回归
 
+- MySQL灾难恢复的增量重建必须检查实际binlog的Previous GTID边界及可读性，不能只信`gtid_purged`。选定主库在冻结GTID、持久双只读及有效授权下建立新日志；物理删除后的文件名复用需再次旋转。缺失事务不再位于可读历史时走受控克隆，接收方身份、offline guard、失败只读和精确GTID继续核验。权限/连接/坏证据不触发克隆。实现见`adapters/mysql/disaster_binlog.go`，原生及边界回归见[实际日志可用性修复](../disaster-binlog-availability-2026-10-14.md)。
 - 恢复计划必须绑定当前不可变库存；过期但从未执行、无证据/保护/活跃租约的计划保留为`superseded`并重新规划，旧确认失效。已经执行的任务不自动换库存，继续保留保护并要求复核。预检必须先校验计划库存，再查Driver能力。回归见`internal/store/disaster_replan_test.go`及[物理缺日志复现记录](../disaster-binlog-recovery-2026-10-14.md)。
 - PostgreSQL 灾难恢复必须用真实实例覆盖遗留 `default_transaction_read_only=on`；不能只证明提升成功或复制连接存在，必须验证最终主库读写状态、两条拓扑链路和 Recovery Commit。处理旧 SQL fence 必须位于有效授权和已验证 HBA 业务隔离之后，不能为修链接而放宽健康条件；覆盖缺 guard、旧指纹和授权撤销。

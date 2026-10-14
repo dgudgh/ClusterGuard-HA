@@ -181,6 +181,24 @@ const writeOperationTree = (root, name, status, events) => {
 
 const CHECKS = [
   {
+    rule:'9 / 12 / 22', title:'disaster reconstruction proves actual binlog history and keeps guards',
+    run:()=>{
+      const source=read('adapters/mysql/disaster_recovery.go')||'', binlog=read('adapters/mysql/disaster_binlog.go')||'', waiter=read('adapters/mysql/reparent.go')||'';
+      if(!source.includes('e.refreshRecoveryBinlog(ctx, member, credentials, expectedGTID, authorize)'))return 'selected primary lacks a qualified new binlog boundary';
+      if(!source.includes('assessment.MissingTransactions != 0 && !needsClone')||!source.includes('needsClone = !available')||!source.includes('recoveryIncrementalAvailable(ctx, e.Runner, primary'))return 'rebuild still relies on purge metadata instead of actual logs';
+      for(const proof of ['"FLUSH BINARY LOGS"','verifyFrozenGTID(expectedGTID, previous)','verifyFrozenGTID(expectedGTID, after.gtidExecuted)','attempt < 2','return authorize()'])if(!binlog.includes(proof))return 'missing new boundary proof: '+proof;
+      if(!binlog.includes('if !assessment.FastRejoinSafe')||!binlog.includes('"Previous_gtids"')||!binlog.includes('query.Code == 29')||!binlog.includes('"OS errno 2 "'))return 'log loss or recreated-file history is unqualified';
+      const clone=source.slice(source.indexOf('func (e DisasterExecutor) clone('),source.indexOf('// VerifyGuardedPrimary'));
+      if(!clone.includes('verifyGuard()')||!clone.includes('defer func()')||!clone.includes('errors.Join(err, e.exec(restoreCtx, target')||!clone.includes('SET PERSIST super_read_only=ON; SET PERSIST read_only=ON'))return 'clone failure can lose the guarded read-only state';
+      const cloneWindow=clone.slice(clone.indexOf('"SET GLOBAL super_read_only=OFF"'),clone.indexOf('cloneErr := e.exec'));
+      if(!cloneWindow.includes('verifyGuard()')||!cloneWindow.includes('authorize()'))return 'temporary clone fence change is followed by a stale authorization';
+      if(!waiter.includes('errors.Join(lastNativeError, lastError, waitContext.Err())')||!waiter.includes('redact.Bounded(status.LastIOError'))return 'native replication error or credential redaction is lost';
+      const unit=read('adapters/mysql/disaster_binlog_test.go')||'', security=read('adapters/mysql/disaster_binlog_security_test.go')||'', native=read('adapters/mysql/disaster_binlog_integration_test.go')||'';
+      if(!unit.includes('recreated-log-header-is-not-old-history')||!security.includes('TestDisasterRebuildRejectsLostAuthorityGuardAndNativeIdentity')||!security.includes('TestReplicationWaitRetainsSanitizedNativeError')||!native.includes('TestDisasterNativePhysicalBinlogLoss')||!native.includes('TestDisasterNativeReadableBinlogIncremental'))return 'missing behavioral or native recovery regression';
+      return true;
+    },
+  },
+  {
     rule:'INV-001 / INV-003 / 22', title:'recovery replanning preserves inventory, protection and fresh confirmation',
     run:()=>{
       const store=read('internal/store/disaster.go')||'', manager=read('internal/disaster/manager.go')||'', page=read('internal/api/console.html')||'';
@@ -1093,6 +1111,7 @@ const reportOpen = failures => {
 // The files the rules read. The self-test copies exactly these, so a mutation cannot be
 // caught by reading something the gate does not actually consult.
 const READ_FILES = [
+  'adapters/mysql/disaster_recovery.go','adapters/mysql/disaster_binlog.go','adapters/mysql/reparent.go','adapters/mysql/disaster_binlog_test.go','adapters/mysql/disaster_binlog_security_test.go','adapters/mysql/disaster_binlog_integration_test.go',
   'internal/store/disaster.go','internal/disaster/manager.go','internal/store/disaster_replan_test.go','tools/console-recovery-inventory-acceptance.cjs',
   'tools/console-configuration-layout-acceptance.cjs',
   'scripts/build-clusterguard-rpm.sh','scripts/build-clusterguard-bundle.sh','scripts/build-clusterguard-offline-kit.sh','tools/verify-offline-kit.cjs','tools/bundle-version-acceptance.cjs',
@@ -1112,6 +1131,15 @@ const READ_FILES = [
 ];
 
 const MUTATIONS = [
+  {name:'recovery source omits new binlog boundary',file:'adapters/mysql/disaster_recovery.go',find:'return e.refreshRecoveryBinlog(ctx, member, credentials, expectedGTID, authorize)',replace:'return nil',rule:'disaster reconstruction proves actual binlog history and keeps guards'},
+  {name:'clone authorization expires after temporary fence change',file:'adapters/mysql/disaster_recovery.go',find:'if err = e.exec(ctx, target, credentials, "SET GLOBAL super_read_only=OFF"); err != nil {\n\t\treturn err\n\t}\n\tif err = verifyGuard(); err != nil {\n\t\treturn err\n\t}\n\tif err = authorize(); err != nil {\n\t\treturn err\n\t}',replace:'if err = e.exec(ctx, target, credentials, "SET GLOBAL super_read_only=OFF"); err != nil {\n\t\treturn err\n\t}\n\tif err = verifyGuard(); err != nil {\n\t\treturn err\n\t}',rule:'disaster reconstruction proves actual binlog history and keeps guards'},
+  {name:'physical log loss still uses incremental rejoin',file:'adapters/mysql/disaster_recovery.go',find:'needsClone = !available',replace:'needsClone = false',rule:'disaster reconstruction proves actual binlog history and keeps guards'},
+  {name:'recreated log header is treated as missing history available',file:'adapters/mysql/disaster_binlog.go',find:'if !assessment.FastRejoinSafe',replace:'if false',rule:'disaster reconstruction proves actual binlog history and keeps guards'},
+  {name:'permission and transport errors can trigger clone',file:'adapters/mysql/disaster_binlog.go',find:'query.Code == 29',replace:'query.Code != 0',rule:'disaster reconstruction proves actual binlog history and keeps guards'},
+  {name:'new binlog can contain changed frozen GTIDs',file:'adapters/mysql/disaster_binlog.go',find:'verifyFrozenGTID(expectedGTID, previous)',replace:'verifyFrozenGTID(previous, previous)',rule:'disaster reconstruction proves actual binlog history and keeps guards'},
+  {name:'recovery clone drops failure read-only restoration',file:'adapters/mysql/disaster_recovery.go',find:'errors.Join(err, e.exec(restoreCtx, target',replace:'errors.Join(err, e.exec(restoreCtx, primary',rule:'disaster reconstruction proves actual binlog history and keeps guards'},
+  {name:'replication timeout overwrites native cause',file:'adapters/mysql/reparent.go',find:'errors.Join(lastNativeError, lastError, waitContext.Err())',replace:'lastError',rule:'disaster reconstruction proves actual binlog history and keeps guards'},
+  {name:'native replication errors expose raw credentials',file:'adapters/mysql/reparent.go',find:'redact.Bounded(status.LastIOError, 1024)',replace:'status.LastIOError',rule:'disaster reconstruction proves actual binlog history and keeps guards'},
   {name:'stale recovery plans bypass protection checks',file:'internal/store/disaster.go',find:'!recoveryInventoryValid(r.snapshot, task) && recoveryPlanReplaceable(r.snapshot, cluster, task, now)',replace:'!recoveryInventoryValid(r.snapshot, task)',rule:'recovery replanning preserves inventory, protection and fresh confirmation'},
   {name:'started recovery can silently rebind inventory',file:'internal/store/disaster.go',find:'!task.AttemptStartedAt.IsZero()',replace:'false',rule:'recovery replanning preserves inventory, protection and fresh confirmation'},
   {name:'retired recovery is falsely marked successful',file:'internal/store/disaster.go',find:'old.Stage = model.RecoverySuperseded',replace:'old.Stage = model.RecoverySucceeded',rule:'recovery replanning preserves inventory, protection and fresh confirmation'},

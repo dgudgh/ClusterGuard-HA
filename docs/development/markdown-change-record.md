@@ -23,8 +23,9 @@ recorded-through: 73ff4a3
 
 | 日期 | 文件 | 变更 | 说明 |
 | --- | --- | --- | --- |
-| 2026-10-14 | `docs/development/disaster-binlog-recovery-2026-10-14.md` | A | 登记物理缺binlog现场复现、过期库存计划ready误报、修改前对照、仅替代未执行计划及保留保护、SOURCE/浏览器/ART/恢复分层验证边界。 |
-| 2026-10-14 | `docs/development/backend/recovery.md` | M | 说明恢复计划库存校验、无保护未执行计划superseded、新确认和已开始任务继续复核，链接原生复现及回归入口。 |
+| 2026-10-14 | `docs/development/disaster-binlog-availability-2026-10-14.md` | A | 记录3.1.2.15现场缺日志失败、长期纯GTID可用性判断缺口、修改前完整调用链对照、新日志边界/受控克隆/错误保留范围，以及SOURCE、隔离数据库、ART和用户自行安装的FIELD边界。 |
+| 2026-10-14 | `docs/development/disaster-binlog-recovery-2026-10-14.md` | A | 登记物理缺binlog现场复现、过期库存计划ready误报、修改前对照、仅替代未执行计划及保留保护、SOURCE/浏览器/ART/恢复分层验证边界；追加3.1.2.15现场重规划通过但首次重建失败、还原原日志才收尾成功，以及后续实际日志可用性修复指路。 |
+| 2026-10-14 | `docs/development/backend/recovery.md` | M | 说明恢复计划库存校验、无保护未执行计划superseded、新确认和已开始任务继续复核；增加实际Previous GTID与可读性、新日志边界、受控克隆及失败保护要求，链接原生复现与回归入口。 |
 | 2026-10-14 | `docs/development/frontend/operations.md` | M | 区分普通候选不可用与管理员独立灾难恢复预检，记录新计划确认、已保护库存变化及双语/窄屏回归。 |
 | 2026-10-14 | `docs/development/console-configuration-layout-2026-10-14.md` | A | 记录双视图布局任务：源码基线与历史对照、用户确认的两种操作范围、CG-UPGRADE-CONTRACT v2已读、浏览器旧版复现、SOURCE/ART/FIELD验证计划与不可变补丁身份。 |
 | 2026-10-14 | `docs/development/frontend/settings/cluster-policy.md` | M | 策略入口改为独立视图；说明唯一表单、真实值与来源、缺字段/读取失败未确认、全部引擎清除范围、草稿/会话清理及双视图Chrome回归。 |
