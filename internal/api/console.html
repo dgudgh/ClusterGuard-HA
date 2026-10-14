@@ -2678,7 +2678,8 @@
       "操作上下文（{0}）": "Operation context ({0})",
       "无法读取一致的拓扑快照": "Cannot read a consistent topology snapshot",
       "拓扑视图仍在同步，操作已锁定，请刷新复核。": "Topology view is still synchronizing. Operations locked; refresh and verify.",
-      "部分数据不可用：{0}；操作已锁定，可重试读取。": "Some data unavailable: {0}. Operations locked; retry reading.",
+      "部分数据不可用：{0}；普通切换与旧主恢复已锁定，可重试读取。": "Some data unavailable: {0}. Switchover and former-primary recovery are locked; retry reading.",
+      " 灾难恢复使用独立预检，仍需管理员解锁并确认。": " Disaster recovery has an independent preflight and still requires administrator unlock and confirmation.",
       "启停状态读取失败：{0}": "Failed to read power status: {0}",
       "操作已验证，但当前控制节点的拓扑视图仍在同步，请刷新复核。": "Operation verified, but this controller's topology view is still synchronizing. Refresh and verify.",
       "部分数据不可用：{0}。": "Some data unavailable: {0}.",
@@ -2730,6 +2731,9 @@
       "恢复已提交，验证业务入口": "Recovery committed; verify service endpoint",
       "恢复成功": "Recovery succeeded",
       "恢复已阻断": "Recovery blocked",
+      "原恢复计划已替代": "Recovery plan superseded",
+      "恢复计划绑定的节点库存已变化，请重新规划并确认；已经开始的恢复须先复核原保护状态。": "The recovery plan inventory changed. Replan and confirm; review the existing protection state if recovery has already started.",
+      "恢复确认已过期，请重新读取恢复计划。": "The recovery confirmation is stale. Reload the recovery plan.",
       "已进入恢复冻结，正在逐台隔离节点。": "Recovery freeze active. Isolating each node.",
       "正在隔离该节点，并验证重启后仍保持写入保护。": "Isolating this node and verifying that write protection persists after restart.",
       "该节点写入保护已验证。": "Node write protection verified.",
@@ -7400,7 +7404,9 @@
           const clusterIndex = state.clusters.findIndex(cluster => cluster.resource_id === clusterId);
           if (clusterIndex >= 0 && loaded.clusterDetail.cluster) state.clusters[clusterIndex] = loaded.clusterDetail.cluster;
           renderTopology(); renderOperationContext(); renderMetrics(); renderOverview();
-          renderClusterLoadStatus(state.clusterDataReady ? 'ready' : 'partial', !topologyConverged ? ui('拓扑视图仍在同步，操作已锁定，请刷新复核。') : ui("部分数据不可用：{0}；操作已锁定，可重试读取。", evidenceUnavailableText(loaded)));
+          const partialMessage = ui("部分数据不可用：{0}；普通切换与旧主恢复已锁定，可重试读取。", evidenceUnavailableText(loaded))
+            + (canAdministerPlatform() && disasterContextReady() ? ui(' 灾难恢复使用独立预检，仍需管理员解锁并确认。') : '');
+          renderClusterLoadStatus(state.clusterDataReady ? 'ready' : 'partial', !topologyConverged ? ui('拓扑视图仍在同步，操作已锁定，请刷新复核。') : partialMessage);
           loadPowerStatus(clusterId).catch(error => commitIfCurrent(generation, () => setLiveStatus(ui("启停状态读取失败：{0}", localizeUIMessage(error.message)), true)));
           if (!topologyConverged) setLiveStatus(ui('操作已验证，但当前控制节点的拓扑视图仍在同步，请刷新复核。'), true);
           else setLiveStatus(loaded.unavailableSections.length ? ui("部分数据不可用：{0}。", evidenceUnavailableText(loaded)) : ui('集群状态已更新。'));
@@ -7790,9 +7796,11 @@
       if (focus) byId(`topology-${selected}-tab`).focus();
     };
 
-    const disasterStages = { get planned() { return ui('待确认'); }, get fencing() { return ui('隔离全部节点'); }, get inspecting() { return ui('采集恢复证据'); }, get selecting() { return ui('比较事务历史'); }, get starting_primary() { return ui('启动权威主库'); }, get rebuilding_replicas() { return ui('重建从库'); }, get verifying() { return ui('验证复制与拓扑'); }, get committed() { return ui('恢复已提交，验证业务入口'); }, get succeeded() { return ui('恢复成功'); }, get blocked() { return ui('恢复已阻断'); } };
-    const disasterActive = task => task && !['planned', 'blocked', 'succeeded'].includes(task.stage);
+    const disasterStages = { get planned() { return ui('待确认'); }, get fencing() { return ui('隔离全部节点'); }, get inspecting() { return ui('采集恢复证据'); }, get selecting() { return ui('比较事务历史'); }, get starting_primary() { return ui('启动权威主库'); }, get rebuilding_replicas() { return ui('重建从库'); }, get verifying() { return ui('验证复制与拓扑'); }, get committed() { return ui('恢复已提交，验证业务入口'); }, get succeeded() { return ui('恢复成功'); }, get blocked() { return ui('恢复已阻断'); }, get superseded() { return ui('原恢复计划已替代'); } };
+    const disasterActive = task => task && !['planned', 'blocked', 'succeeded', 'superseded'].includes(task.stage);
     const disasterMessage = message => ({
+      'repository conflict: recovery plan immutable inventory changed; replan before confirmation; started recovery protections require review':ui('恢复计划绑定的节点库存已变化，请重新规划并确认；已经开始的恢复须先复核原保护状态。'),
+      'repository conflict: recovery confirmation is stale; reload the recovery plan':ui('恢复确认已过期，请重新读取恢复计划。'),
       'recovery freeze acquired; every member must be fenced':ui('已进入恢复冻结，正在逐台隔离节点。'),
       'isolating member and verifying persistent write fence':ui('正在隔离该节点，并验证重启后仍保持写入保护。'),
       'member write fence verified':ui('该节点写入保护已验证。'),
@@ -7814,7 +7822,7 @@
       const allowed = disasterActionAllowed(recovery.clusterID);
       const lockMessage = !allowed && (!task || ['planned', 'blocked'].includes(task.stage)) ? ui('操作已锁定，请关闭窗口，解锁后重新预检。') : '';
       byId('disaster-cluster-name').textContent = recovery.name;
-      byId('disaster-alert').textContent = lockMessage || recovery.error || (recovery.pendingRevision != null ? ui('恢复请求已提交，正在等待新的执行状态。') : recovery.busy ? ui('正在检查，请稍候。') : recovery.ready ? ui('预检完成，等待确认。') : task ? disasterMessage(task.message) || disasterStages[task.stage] : ui('尚无恢复任务。'));
+      byId('disaster-alert').textContent = lockMessage || disasterMessage(recovery.error) || (recovery.pendingRevision != null ? ui('恢复请求已提交，正在等待新的执行状态。') : recovery.busy ? ui('正在检查，请稍候。') : recovery.ready ? ui('预检完成，等待确认。') : task ? disasterMessage(task.message) || disasterStages[task.stage] : ui('尚无恢复任务。'));
       byId('disaster-alert').className = `result-banner${recovery.error || task?.stage === 'blocked' ? ' error' : ''}`;
       const members = task?.members || [];
       byId('disaster-members').replaceChildren(...members.map(member => text('li', '', member.ip_address || member.hostname || member.resource_id)));
@@ -7855,7 +7863,7 @@
         recovery.error = '';
         recovery.busy = recovery.pendingRevision != null;
         renderDisaster();
-        if (!recovery.busy && task && ['succeeded', 'blocked'].includes(task.stage)) return;
+        if (!recovery.busy && task && ['succeeded', 'blocked', 'superseded'].includes(task.stage)) return;
       } catch (error) {
         if (epoch !== state.disasterEpoch) return;
         recovery.error = ui("状态读取失败：{0}。任务未被取消。", localizeUIMessage(error.message));
@@ -7899,7 +7907,7 @@
         if (!result.available) throw new Error('当前控制端未启用灾难恢复执行器。');
         recovery.task = (result.tasks || []).find(task => task.resource_id === result.recovery?.task_id) || null;
         recovery.busy = false;
-        if (recovery.task && recovery.task.stage !== 'succeeded') {
+        if (recovery.task && !['succeeded', 'superseded'].includes(recovery.task.stage)) {
           renderDisaster();
           if (disasterActive(recovery.task)) pollDisaster(epoch);
         } else await planDisaster();

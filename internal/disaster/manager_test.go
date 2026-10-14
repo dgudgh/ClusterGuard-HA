@@ -33,6 +33,9 @@ func (h *recoveryHarness) Acquire(ctx context.Context, _ model.Operation) (conte
 func (h *recoveryHarness) RecoveryTask(model.ResourceID) (model.RecoveryTask, bool) {
 	return h.task, true
 }
+func (h *recoveryHarness) ValidateRecoveryPlan(context.Context, model.RecoveryTask) error {
+	return h.step("inventory")
+}
 func (h *recoveryHarness) BeginRecovery(_ context.Context, _ model.ResourceID, _ uint64, lease model.ResourceID) (model.RecoveryTask, error) {
 	h.task.LeaseID = lease
 	h.task.Stage = model.RecoveryFencing
@@ -115,7 +118,7 @@ func (h *recoveryHarness) Complete(ctx context.Context, task model.RecoveryTask)
 
 func TestRecoveryManagerFencesBeforeEvidenceAndCommitsBeforeActivation(t *testing.T) {
 	for _, engine := range []model.Engine{model.EngineMySQL, model.EnginePostgreSQL} {
-		for _, fail := range []string{"", "preflight", "fence", "inspect", "compare", "start", "rebuild", "verify", "commit", "activate", "verify-activation", "complete"} {
+		for _, fail := range []string{"", "inventory", "preflight", "fence", "inspect", "compare", "start", "rebuild", "verify", "commit", "activate", "verify-activation", "complete"} {
 			t.Run(string(engine)+"/"+fail, func(t *testing.T) {
 				members, evidence := selectionFixture(engine)
 				evidence[0].GTIDExecuted = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:1-20"
@@ -136,8 +139,11 @@ func TestRecoveryManagerFencesBeforeEvidenceAndCommitsBeforeActivation(t *testin
 					if err == nil || result.Stage == model.RecoverySucceeded {
 						t.Fatalf("failure became success: %+v %s", result, joined)
 					}
-					if fail == "preflight" && joined != "preflight" {
+					if fail == "preflight" && joined != "inventory,preflight" {
 						t.Fatalf("preflight failure changed runtime: %s", joined)
+					}
+					if fail == "inventory" && joined != "inventory" {
+						t.Fatalf("stale plan touched the driver: %s", joined)
 					}
 					if fail == "commit" && strings.Contains(joined, "activate") {
 						t.Fatalf("failed commit activated writer: %s", joined)

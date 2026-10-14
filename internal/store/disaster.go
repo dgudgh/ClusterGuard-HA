@@ -72,7 +72,7 @@ func (r *Repository) BlockAbandonedRecoveries(ctx context.Context) error {
 	next := cloneDiscoverySnapshot(r.snapshot)
 	changed := false
 	for id, task := range r.snapshot.RecoveryTasks {
-		if task.Stage == model.RecoveryPlanned || task.Stage == model.RecoveryBlocked || task.Stage == model.RecoverySucceeded {
+		if task.Stage == model.RecoveryPlanned || task.Stage == model.RecoveryBlocked || task.Stage == model.RecoverySucceeded || task.Stage == model.RecoverySuperseded {
 			continue
 		}
 		if recoveryLeaseValid(r.snapshot, task, now.Add(-15*time.Second)) {
@@ -152,10 +152,17 @@ func (r *Repository) PlanRecovery(ctx context.Context, clusterID model.ResourceI
 	if cluster.Engine != model.EngineMySQL && cluster.Engine != model.EnginePostgreSQL {
 		return model.RecoveryTask{}, validationError("disaster recovery supports MySQL and PostgreSQL")
 	}
+	var obsolete []model.RecoveryTask
+	now := r.now().UTC()
 	for _, task := range r.snapshot.RecoveryTasks {
-		if task.ClusterID == clusterID && task.Stage != model.RecoverySucceeded {
-			return cloneRecoveryTask(task), nil
+		if task.ClusterID != clusterID || task.Stage == model.RecoverySucceeded || task.Stage == model.RecoverySuperseded {
+			continue
 		}
+		if !recoveryInventoryValid(r.snapshot, task) && recoveryPlanReplaceable(r.snapshot, cluster, task, now) {
+			obsolete = append(obsolete, task)
+			continue
+		}
+		return cloneRecoveryTask(task), nil
 	}
 	for _, op := range r.snapshot.PowerOperations {
 		if op.ClusterID == clusterID && !model.TerminalPowerState(op.State) {
@@ -172,7 +179,6 @@ func (r *Repository) PlanRecovery(ctx context.Context, clusterID model.ResourceI
 		return model.RecoveryTask{}, validationError("recovery requires all registered database members")
 	}
 	sort.Slice(members, func(i, j int) bool { return members[i].ResourceID < members[j].ResourceID })
-	now := r.now().UTC()
 	task := model.RecoveryTask{ResourceMeta: model.ResourceMeta{ResourceID: model.NewResourceID(), MetadataRevision: 1, CreatedAt: now, UpdatedAt: now}, ClusterID: clusterID, Engine: cluster.Engine, RequestedBy: actor, Stage: model.RecoveryPlanned, InventoryGeneration: r.snapshot.InventoryGenerations[clusterID], Members: members, Events: []model.RecoveryEvent{}, Message: "all members will be fenced before authoritative history selection"}
 	task.PlanDigest = disaster.Digest(struct {
 		ID, ClusterID model.ResourceID
@@ -181,11 +187,49 @@ func (r *Repository) PlanRecovery(ctx context.Context, clusterID model.ResourceI
 	}{task.ResourceID, clusterID, task.InventoryGeneration, members})
 	next := r.snapshot
 	next.RecoveryTasks = cloneRecoveryTasks(next.RecoveryTasks)
+	for _, old := range obsolete {
+		old.Stage = model.RecoverySuperseded
+		old.MetadataRevision++
+		old.UpdatedAt = now
+		old.Message = fmt.Sprintf("unstarted recovery plan superseded by %s after immutable inventory changed; fresh confirmation required", task.ResourceID)
+		old.Events = append(old.Events, model.RecoveryEvent{At: now, Stage: old.Stage, Message: old.Message})
+		next.RecoveryTasks[old.ResourceID] = cloneRecoveryTask(old)
+	}
 	next.RecoveryTasks[task.ResourceID] = task
 	if err := r.commitSnapshotLocked(next); err != nil {
 		return model.RecoveryTask{}, err
 	}
 	return cloneRecoveryTask(task), nil
+}
+
+// Only a plan that never acquired physical recovery protection may be replaced.
+// Started/committed attempts keep their original inventory and fencing receipts.
+func recoveryPlanReplaceable(s snapshot, cluster model.DatabaseCluster, task model.RecoveryTask, now time.Time) bool {
+	if (task.Stage != model.RecoveryPlanned && task.Stage != model.RecoveryBlocked) || !task.AttemptStartedAt.IsZero() || !task.CommittedAt.IsZero() || task.PrimaryID != "" || len(task.Evidence) != 0 || len(task.Proofs) != 0 || (cluster.Recovery != nil && cluster.Recovery.TaskID == task.ResourceID) {
+		return false
+	}
+	for _, lock := range s.OperationLocks {
+		if lock.ClusterID == task.ClusterID && lock.ExpiresAt.After(now) {
+			return false
+		}
+	}
+	return true
+}
+
+func (r *Repository) ValidateRecoveryPlan(ctx context.Context, task model.RecoveryTask) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	current, found := r.snapshot.RecoveryTasks[task.ResourceID]
+	if !found || current.MetadataRevision != task.MetadataRevision || (current.Stage != model.RecoveryPlanned && current.Stage != model.RecoveryBlocked) {
+		return conflictError("recovery confirmation is stale; reload the recovery plan")
+	}
+	if !recoveryInventoryValid(r.snapshot, current) {
+		return conflictError("recovery plan immutable inventory changed; replan before confirmation; started recovery protections require review")
+	}
+	return nil
 }
 
 func recoveryLeaseValid(s snapshot, task model.RecoveryTask, now time.Time) bool {
@@ -271,7 +315,7 @@ func (r *Repository) BeginRecovery(ctx context.Context, id model.ResourceID, rev
 	if !found {
 		return task, notFoundError("unknown recovery task")
 	}
-	if task.MetadataRevision != revision || task.Stage == model.RecoverySucceeded || (task.Stage != model.RecoveryPlanned && task.Stage != model.RecoveryBlocked && recoveryLeaseValid(r.snapshot, task, r.now())) {
+	if task.MetadataRevision != revision || task.Stage == model.RecoverySucceeded || task.Stage == model.RecoverySuperseded || (task.Stage != model.RecoveryPlanned && task.Stage != model.RecoveryBlocked && recoveryLeaseValid(r.snapshot, task, r.now())) {
 		return task, conflictError("recovery task changed or already has an executor")
 	}
 	task.LeaseID = leaseID
@@ -346,10 +390,10 @@ func (r *Repository) BeginRecovery(ctx context.Context, id model.ResourceID, rev
 
 func recoveryTransition(from, to model.RecoveryStage) bool {
 	if to == model.RecoveryBlocked {
-		return from != model.RecoverySucceeded && from != model.RecoveryPlanned
+		return from != model.RecoverySucceeded && from != model.RecoverySuperseded && from != model.RecoveryPlanned
 	}
 	if from == to {
-		return from != model.RecoverySucceeded && from != model.RecoveryPlanned
+		return from != model.RecoverySucceeded && from != model.RecoverySuperseded && from != model.RecoveryPlanned
 	}
 	return (from == model.RecoveryFencing && to == model.RecoveryInspecting) || (from == model.RecoveryInspecting && to == model.RecoverySelecting) || (from == model.RecoverySelecting && to == model.RecoveryStarting) || (from == model.RecoveryStarting && to == model.RecoveryRebuilding) || (from == model.RecoveryRebuilding && to == model.RecoveryVerifying)
 }

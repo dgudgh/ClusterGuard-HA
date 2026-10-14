@@ -1681,7 +1681,9 @@ func TestClusterLoadBannerReportsPerSectionEvidenceReason(t *testing.T) {
 		`const evidenceUnavailableText = loaded => (loaded.unavailableSections || []).map((section, index) => {`,
 		"return reason ? `${section}（${reason}）` : section;",
 		`unavailableReasons:unavailableEvidence.map(section => section.reason || '')`,
-		"ui(\"部分数据不可用：{0}；操作已锁定，可重试读取。\", evidenceUnavailableText(loaded))",
+		"ui(\"部分数据不可用：{0}；普通切换与旧主恢复已锁定，可重试读取。\", evidenceUnavailableText(loaded))",
+		"canAdministerPlatform() && disasterContextReady()",
+		"灾难恢复使用独立预检，仍需管理员解锁并确认。",
 		"ui(\"部分数据不可用：{0}。\", evidenceUnavailableText(loaded))",
 	} {
 		if !strings.Contains(page, contract) {

@@ -186,7 +186,7 @@ func (r *Repository) CreateConfigurationTask(t ConfigurationTask) (Configuration
 		}
 	}
 	for _, o := range r.snapshot.RecoveryTasks {
-		if o.Stage != model.RecoveryPlanned && o.Stage != model.RecoverySucceeded {
+		if o.Stage != model.RecoveryPlanned && o.Stage != model.RecoverySucceeded && o.Stage != model.RecoverySuperseded {
 			return t, conflictError("disaster recovery requires completion or review")
 		}
 	}

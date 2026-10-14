@@ -23,6 +23,9 @@ recorded-through: 73ff4a3
 
 | 日期 | 文件 | 变更 | 说明 |
 | --- | --- | --- | --- |
+| 2026-10-14 | `docs/development/disaster-binlog-recovery-2026-10-14.md` | A | 登记物理缺binlog现场复现、过期库存计划ready误报、修改前对照、仅替代未执行计划及保留保护、SOURCE/浏览器/ART/恢复分层验证边界。 |
+| 2026-10-14 | `docs/development/backend/recovery.md` | M | 说明恢复计划库存校验、无保护未执行计划superseded、新确认和已开始任务继续复核，链接原生复现及回归入口。 |
+| 2026-10-14 | `docs/development/frontend/operations.md` | M | 区分普通候选不可用与管理员独立灾难恢复预检，记录新计划确认、已保护库存变化及双语/窄屏回归。 |
 | 2026-10-14 | `docs/development/console-configuration-layout-2026-10-14.md` | A | 记录双视图布局任务：源码基线与历史对照、用户确认的两种操作范围、CG-UPGRADE-CONTRACT v2已读、浏览器旧版复现、SOURCE/ART/FIELD验证计划与不可变补丁身份。 |
 | 2026-10-14 | `docs/development/frontend/settings/cluster-policy.md` | M | 策略入口改为独立视图；说明唯一表单、真实值与来源、缺字段/读取失败未确认、全部引擎清除范围、草稿/会话清理及双视图Chrome回归。 |
 | 2026-10-14 | `docs/development/console-configuration-hints-2026-10-14.md` | A | 记录本轮任务：控制台「运行参数」页顶部两条提示的下线与参数级说明。含首轮门禁判断、基线 `754a824`、提示来源、安装器默认配置触发面、接口/启动日志/审批不变量与验证计划；追加独立复核：工作区Playwright路径、英文新增注释失败复现与修正、190项隔离Chrome检查及不等于FIELD的边界，保留首轮未执行浏览器的历史事实。 |

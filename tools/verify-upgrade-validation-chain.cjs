@@ -181,6 +181,22 @@ const writeOperationTree = (root, name, status, events) => {
 
 const CHECKS = [
   {
+    rule:'INV-001 / INV-003 / 22', title:'recovery replanning preserves inventory, protection and fresh confirmation',
+    run:()=>{
+      const store=read('internal/store/disaster.go')||'', manager=read('internal/disaster/manager.go')||'', page=read('internal/api/console.html')||'';
+      if(!store.includes('!recoveryInventoryValid(r.snapshot, task) && recoveryPlanReplaceable(r.snapshot, cluster, task, now)'))return 'stale plans can be reused or replaced without protection checks';
+      for(const guard of ['!task.AttemptStartedAt.IsZero()','!task.CommittedAt.IsZero()','len(task.Evidence) != 0','len(task.Proofs) != 0','cluster.Recovery.TaskID == task.ResourceID','lock.ClusterID == task.ClusterID && lock.ExpiresAt.After(now)'])if(!store.includes(guard))return 'replan loses original protection: '+guard;
+      if(!store.includes('old.Stage = model.RecoverySuperseded')||!store.includes('next.RecoveryTasks[old.ResourceID] = cloneRecoveryTask(old)'))return 'historical plan is lost or falsely reported successful';
+      const preflight=manager.slice(manager.indexOf('func (m *Manager) Preflight'),manager.indexOf('func (m *Manager) Execute'));
+      if(!preflight.includes('m.Store.ValidateRecoveryPlan(ctx, task)')||preflight.indexOf('ValidateRecoveryPlan')>preflight.indexOf('m.Driver.Preflight'))return 'driver preflight precedes inventory validation';
+      if(!store.includes('task.Stage == model.RecoverySuperseded ||')||!page.includes("['planned', 'blocked'].includes(recovery.task.stage)"))return 'retired or unconfirmed plans can execute';
+      if(!(read('internal/store/disaster_replan_test.go')||'').includes('TestRecoveryReplanPreservesStartedProtectedOrLeasedPlans'))return 'protected replan regression missing';
+      const browser=read('tools/console-recovery-inventory-acceptance.cjs')||'';
+      if(!browser.includes('forced stale confirmation rejected')||!browser.includes('untrusted detail cannot unlock'))return 'recovery context browser regression missing';
+      return true;
+    },
+  },
+  {
     rule:'3 / ART-005', title:'full installation builders bind product identity independently of RPM',
     run:()=>{
       for(const name of ['rpm','bundle']) {
@@ -1077,6 +1093,7 @@ const reportOpen = failures => {
 // The files the rules read. The self-test copies exactly these, so a mutation cannot be
 // caught by reading something the gate does not actually consult.
 const READ_FILES = [
+  'internal/store/disaster.go','internal/disaster/manager.go','internal/store/disaster_replan_test.go','tools/console-recovery-inventory-acceptance.cjs',
   'tools/console-configuration-layout-acceptance.cjs',
   'scripts/build-clusterguard-rpm.sh','scripts/build-clusterguard-bundle.sh','scripts/build-clusterguard-offline-kit.sh','tools/verify-offline-kit.cjs','tools/bundle-version-acceptance.cjs',
   'cmd/clusterguard/main.go','cmd/cgctl/main.go','cmd/clusterguard-agent/main.go','cmd/clusterguard-k8s-fence-guard/main.go','cmd/clusterguard-update-helper/main.go',
@@ -1095,6 +1112,10 @@ const READ_FILES = [
 ];
 
 const MUTATIONS = [
+  {name:'stale recovery plans bypass protection checks',file:'internal/store/disaster.go',find:'!recoveryInventoryValid(r.snapshot, task) && recoveryPlanReplaceable(r.snapshot, cluster, task, now)',replace:'!recoveryInventoryValid(r.snapshot, task)',rule:'recovery replanning preserves inventory, protection and fresh confirmation'},
+  {name:'started recovery can silently rebind inventory',file:'internal/store/disaster.go',find:'!task.AttemptStartedAt.IsZero()',replace:'false',rule:'recovery replanning preserves inventory, protection and fresh confirmation'},
+  {name:'retired recovery is falsely marked successful',file:'internal/store/disaster.go',find:'old.Stage = model.RecoverySuperseded',replace:'old.Stage = model.RecoverySucceeded',rule:'recovery replanning preserves inventory, protection and fresh confirmation'},
+  {name:'recovery preflight ignores current inventory',file:'internal/disaster/manager.go',find:'m.Store.ValidateRecoveryPlan(ctx, task)',replace:'m.Driver.Preflight(ctx, task)',rule:'recovery replanning preserves inventory, protection and fresh confirmation'},
   {name:'node dispatch bar leaks into the policy view',file:'internal/api/console.html',find:"byId('configuration-action-bar').hidden = selected !== 'nodes';",replace:"byId('configuration-action-bar').hidden = false;",rule:'node dispatch and engine policy have separate task views'},
   {name:'policy summaries return to node groups',file:'internal/api/console.html',find:"filter(section => section.key !== 'cluster_policy')",replace:"filter(section => true)",rule:'node dispatch and engine policy have separate task views'},
   {name:'unconfirmed policy values are presented as known',file:'internal/api/console.html',find:'const confirmed = !!state.clusterPolicy && (override > 0 || (!!base && !state.configurationError));',replace:'const confirmed = true;',rule:'node dispatch and engine policy have separate task views'},

@@ -68,12 +68,13 @@ const (
 	RecoveryCommitted  RecoveryStage = "committed"
 	RecoverySucceeded  RecoveryStage = "succeeded"
 	RecoveryBlocked    RecoveryStage = "blocked"
+	RecoverySuperseded RecoveryStage = "superseded"
 )
 
 func (s RecoveryStage) Valid() bool {
 	switch s {
 	case RecoveryPlanned, RecoveryFencing, RecoveryInspecting, RecoverySelecting, RecoveryStarting,
-		RecoveryRebuilding, RecoveryVerifying, RecoveryCommitted, RecoverySucceeded, RecoveryBlocked:
+		RecoveryRebuilding, RecoveryVerifying, RecoveryCommitted, RecoverySucceeded, RecoveryBlocked, RecoverySuperseded:
 		return true
 	}
 	return false

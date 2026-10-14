@@ -13,6 +13,7 @@ import (
 
 type Store interface {
 	RecoveryTask(model.ResourceID) (model.RecoveryTask, bool)
+	ValidateRecoveryPlan(context.Context, model.RecoveryTask) error
 	BeginRecovery(context.Context, model.ResourceID, uint64, model.ResourceID) (model.RecoveryTask, error)
 	AdvanceRecovery(context.Context, model.RecoveryTask, model.RecoveryEvent) (model.RecoveryTask, error)
 	CommitRecovery(context.Context, model.RecoveryTask, model.TopologySnapshot) (model.RecoveryTask, error)
@@ -59,6 +60,9 @@ func (m *Manager) Preflight(ctx context.Context, task model.RecoveryTask) error 
 		return err
 	}
 	if err := m.Maintenance.Check(ctx); err != nil {
+		return err
+	}
+	if err := m.Store.ValidateRecoveryPlan(ctx, task); err != nil {
 		return err
 	}
 	return m.Driver.Preflight(ctx, task)
