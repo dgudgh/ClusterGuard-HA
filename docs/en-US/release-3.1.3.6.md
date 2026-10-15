@@ -22,3 +22,7 @@ With the same approximately 831 MiB vendor archive on the same Linux node, archi
 Use the existing installation command; no speed option is required. Preserve original state, secrets and work-dir when repeating installation. Reuse does not bypass management identity, residue protection or acceptance checks. The complete tar is for CLI installation, not a console cgpatch upload.
 
 See the [complete CLI reference](offline-installer-parameters.md), [installation manual](offline-rpm-install.md) and [development record](../development/mysql-install-performance-2026-10-15.md). Fresh installation and replication/VIP FIELD for this version remain unexecuted; running databases were not reset for timing.
+
+## Build receipt
+
+Clean source 9339a6a, zero untracked files, pushed to GitHub. Complete tar: 33,851,103 bytes; SHA256: 22b7adc5d5576b0404d0ce29c0c2a70b317ba6a5e094686a0e601b4d62c98b8f. All 15 structure checks and three actual script payload comparisons passed; the previous 3.1.3.5 artifact is unchanged. SOURCE 45 checks, 128 mutations and two controls, 40 Go packages, the final scripts rerun and 109 Chrome fixture assertions passed. Strict artifact acceptance still exits 1 with one OPEN obligation; full signature ART/FIELD have not passed. MANUAL-TEST.md accompanies the artifact. This receipt was appended after building without rebuilding the media.

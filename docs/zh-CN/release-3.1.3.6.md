@@ -22,3 +22,7 @@
 仍使用原安装命令，不增加提速开关。重复执行必须保留原state、secrets与work-dir；介质复用不能替代受管身份、残留保护或安装验收。完整tar用于命令行安装，不可作为控制台cgpatch上传。
 
 完整命令参数见[命令参考](offline-installer-parameters.md)，安装步骤见[安装手册](offline-rpm-install.md)。本版本全新安装及复制/VIP/FIELD仍需实装验证；本次没有为计时重置运行数据库。源码、实测和门禁细节见[开发任务](../development/mysql-install-performance-2026-10-15.md)。
+
+## 构建回执
+
+构建提交9339a6a已推GitHub，干净树、未跟踪0。完整tar33,851,103字节，SHA256为22b7adc5d5576b0404d0ce29c0c2a70b317ba6a5e094686a0e601b4d62c98b8f。结构15项、实际脚本载荷3处比对通过，旧3.1.3.5字节不变。SOURCE45项、128变异及2控制、Go40包、最终脚本包复验、Chrome夹具109项通过。严格artifact仍因1项验收义务OPEN退出1，完整签名ART/FIELD没有通过。人工安装命令与验收表附在本版本目录MANUAL-TEST.md；本回执在构建后追加，不重建介质。

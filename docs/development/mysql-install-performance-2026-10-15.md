@@ -39,3 +39,11 @@ MySQL原生helper将两次完整tar目录读取合并为一次0600临时清单�
 SOURCE严格门禁45项通过，128条变异全部命中、2条控制正确；Chrome隔离夹具31+5+73项通过；全仓Go测试40包通过、3包无测试，go vet全仓通过。实际tar正反例和介质复用正反例纳入Go测试。进度中继追加后专项、go vet脚本包及完整scripts复验通过，最终scripts142.128秒。独立审查收口通过。许可68项、Markdown台账11项通过，HTML生成118页。隔离浏览器只证明页面与夹具契约。
 
 新完整介质身份3.1.3.6/RPM2.2-114，唯一目录release/3.1.3.6/，旧3.1.3.5不可覆盖。结构与实际载荷校验在构建后追加。生产签名ART、新版本全新三节点安装、复制/VIP和升级回退FIELD仍OPEN；旧版续装及本次隔离性能测试不能关闭这些项。不创建正式GitHub Release。
+
+## 构建后回执
+
+干净源码9339a6a718586a6db8ddd319a315258f728633a4已推GitHub唯一主线，未跟踪0，构建元数据source_tree_dirty=false。完整tar33,851,103字节，SHA256为22b7adc5d5576b0404d0ce29c0c2a70b317ba6a5e094686a0e601b4d62c98b8f，与sidecar及verification.json一致。结构15项通过；介质安装器、运行包MySQL helper、RPM MySQL helper三份实际载荷与源码逐字节一致。旧3.1.3.5摘要仍为809abbf457f851134471de8ad3689d9f66da66c91154c4bb12fc06da29dd4c85。
+
+追溯门禁status=passed；工具按旧RPM版本拼出的note-absent为兼容提示，本产品中英3.1.3.6说明实际在构建提交内。严格artifact实跑退出1，仍有一项artifact_acceptance义务OPEN；45项源码检查不受影响，未将结构结果冒充签名ART完成。release/3.1.3.6/包含人工安装命令、性能摘要和交付结果，未公开私有证据。
+
+最终只读确认隔离缓存目录已移除，实际/data及/data/packages仍0:0:755，HA/Helper/MySQL均active；没有安装本候选。回执仅追加记录，不重新构建或改动已生成介质。
