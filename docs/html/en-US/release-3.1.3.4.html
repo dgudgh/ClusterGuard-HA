@@ -57,6 +57,14 @@
 <p>Artifacts are <code>clusterguard-ha-3.1.3.4-offline-linux-x86_64.tar.gz</code>, its checksum, RPM, <code>RELEASE-INFO</code>, <code>SHA256SUMS</code> and <code>verification.json</code>. The tar includes the installer, five programs, systemd units, helper scripts, production templates, static jq, offline base runtime dependencies, public key, licenses and bilingual installer option references.</p>
 <p>Vendor database archives are not embedded by default. Supply the approved complete vendor archive and checksum using <code>-r FILE</code> or the documented <code>/opt</code> discovery. Software defaults to <code>/usr/local/mysql</code> and the data root to <code>/data</code>. Custom directories must satisfy target permissions and SELinux policy; disabling SELinux is not acceptance.</p>
 <p>Current results, raw evidence and baseline are recorded in the <a href="../../development/mysql-install-resume-2026-10-15.md">development task</a>. Isolated native full-helper checks use a separate port/directory and temporary systemd bridge to test real MySQL startup and accounts. They do not establish three-node replication, VIP, switchover or disaster-recovery acceptance. Media structure verification does not replace production signature ART; unsigned RPM and current acceptance-model limitations remain recorded.</p>
+<h2 id="local-build-receipt">Local build receipt<a class="heading-anchor" href="#local-build-receipt" aria-label="Link to Local build receipt">#</a></h2>
+<ul>
+<li>Clean build commit <code>c088653d4d1fc415d1b145f5a74b00f24814088d</code>, zero untracked files, pushed to the main branch.</li>
+<li>Complete tar: 33,845,130 bytes; SHA-256 <code>0600b1d0f9d7a2b0cb8f79b13effd35621887c1a9fed127248c0fa8576f5eb67</code>.</li>
+<li>All 15 media structure checks passed. Three actual installer/helper copies in the kit, runtime and RPM match tested source bytes. Previous 3.1.3.1/2/3 archive hashes are unchanged.</li>
+<li>All 40 Go packages, 41 source checks, 108 mutations, 109 Chrome assertions and isolated native full-helper integration passed. The task records the temporary systemd link and diagnostic SELinux-label differences; these do not constitute three-node FIELD.</li>
+<li><code>MANUAL-TEST.md</code> and <code>delivery-result.json</code> accompany the artifact. This receipt was added after the immutable build. Signature ART and manual three-node acceptance remain OPEN; no GitHub Release was created.</li>
+</ul>
 
           <footer class="document-footer">
             <span>Source: <code>docs/en-US/release-3.1.3.4.md</code></span>
@@ -65,7 +73,7 @@
         </article>
         <aside class="page-toc" aria-label="On this page">
           <strong>On this page</strong>
-          <a class="toc-level-2" href="#identity-and-purpose">Identity and purpose</a><a class="toc-level-2" href="#fixes">Fixes</a><a class="toc-level-2" href="#existing-legacy-failed-installation">Existing legacy failed installation</a><a class="toc-level-2" href="#media-and-evidence">Media and evidence</a>
+          <a class="toc-level-2" href="#identity-and-purpose">Identity and purpose</a><a class="toc-level-2" href="#fixes">Fixes</a><a class="toc-level-2" href="#existing-legacy-failed-installation">Existing legacy failed installation</a><a class="toc-level-2" href="#media-and-evidence">Media and evidence</a><a class="toc-level-2" href="#local-build-receipt">Local build receipt</a>
         </aside>
       </main>
     </div>

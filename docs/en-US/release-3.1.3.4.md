@@ -29,3 +29,11 @@ Artifacts are `clusterguard-ha-3.1.3.4-offline-linux-x86_64.tar.gz`, its checksu
 Vendor database archives are not embedded by default. Supply the approved complete vendor archive and checksum using `-r FILE` or the documented `/opt` discovery. Software defaults to `/usr/local/mysql` and the data root to `/data`. Custom directories must satisfy target permissions and SELinux policy; disabling SELinux is not acceptance.
 
 Current results, raw evidence and baseline are recorded in the [development task](../development/mysql-install-resume-2026-10-15.md). Isolated native full-helper checks use a separate port/directory and temporary systemd bridge to test real MySQL startup and accounts. They do not establish three-node replication, VIP, switchover or disaster-recovery acceptance. Media structure verification does not replace production signature ART; unsigned RPM and current acceptance-model limitations remain recorded.
+
+## Local build receipt
+
+- Clean build commit `c088653d4d1fc415d1b145f5a74b00f24814088d`, zero untracked files, pushed to the main branch.
+- Complete tar: 33,845,130 bytes; SHA-256 `0600b1d0f9d7a2b0cb8f79b13effd35621887c1a9fed127248c0fa8576f5eb67`.
+- All 15 media structure checks passed. Three actual installer/helper copies in the kit, runtime and RPM match tested source bytes. Previous 3.1.3.1/2/3 archive hashes are unchanged.
+- All 40 Go packages, 41 source checks, 108 mutations, 109 Chrome assertions and isolated native full-helper integration passed. The task records the temporary systemd link and diagnostic SELinux-label differences; these do not constitute three-node FIELD.
+- `MANUAL-TEST.md` and `delivery-result.json` accompany the artifact. This receipt was added after the immutable build. Signature ART and manual three-node acceptance remain OPEN; no GitHub Release was created.
