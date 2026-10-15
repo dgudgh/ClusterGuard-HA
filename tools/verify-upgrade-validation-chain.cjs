@@ -182,6 +182,29 @@ const writeOperationTree = (root, name, status, events) => {
 
 const CHECKS = [
   {
+    rule:'12 / 22', title:'MySQL failed installation resumes only from bound evidence and preserves residue',
+    run:()=>{
+      const native=read('scripts/clusterguard-mysql-install.sh')||'', parent=read('scripts/install_clusterguard.sh')||'';
+      const failed=shellFunction(native,'cg_mysql_failed_initialization_matches')||'', preparing=shellFunction(native,'cg_mysql_retryable_preparation_matches')||'';
+      const quarantine=shellFunction(native,'cg_mysql_quarantine_failed_initialization')||'';
+      for(const proof of ['.phase == "initialize-failed"','.fresh_empty == true','.native_exit >= 1','.config_sha256 == $config_sha','.package_sha256 == $package_sha','.template_sha256 == $template_sha','.data_identity == $data_identity','.software_identity == $software_identity','.error_log_sha256 == $error_sha','cg_mysql_data_sha256','cg_mysql_assert_quiet'])if(!failed.includes(proof))return 'missing failed-initialization proof: '+proof;
+      for(const proof of ['.phase == "preparing"','[[ -z "${contents}" ]]','.data_identity == $data_identity','.software_identity == $software_identity','.package_sha256 == $package_sha','cg_mysql_assert_quiet'])if(!preparing.includes(proof))return 'missing empty-preparation proof: '+proof;
+      for(const proof of ['mktemp -d','cg_mysql_failed_initialization_matches','cg_mysql_retryable_preparation_matches','mv "${install_parent}" "${reservation}/instance"'])if(!quarantine.includes(proof))return 'whole failed instance is not preserved: '+proof;
+      const mounts=shellFunction(native,'cg_mysql_assert_instance_unmounted')||'';
+      for(const proof of ['/proc/self/mountinfo','$5 == instance || index($5,instance "/") == 1','NR == 0 || bad || mounted'])if(!mounts.includes(proof))return 'missing kernel mount-boundary protection: '+proof;
+      if(!quarantine.includes('cg_mysql_assert_instance_unmounted'))return 'automatic isolation does not inspect child and bind mounts';
+      for(const proof of ['flock --nonblock 9','cg_mysql_write_install_state initializing','cg_mysql_write_install_state initialize-failed "${initialization_status}"','cg_mysql_write_install_state initialized','cg_mysql_write_install_state complete','parts[2] == ".clusterguard-managed"'])if(!native.includes(proof))return 'missing installation phase, lock or ownership guard: '+proof;
+      const preparation=native.slice(native.indexOf('rm -rf "${software_dir}"'));
+      if(preparation.indexOf('chmod 0600 "${software_dir}/.clusterguard-managed"')<0||preparation.indexOf('chmod 0600 "${software_dir}/.clusterguard-managed"')>preparation.indexOf('tar --no-same-owner'))return 'software ownership must precede archive extraction';
+      if(!parent.includes('no verified initialization journal')||!parent.includes("exit 27"))return 'legacy ambiguity is not rejected before install mutations';
+      if(!(read('packaging/rpm/nfpm.yaml')||'').includes('  - util-linux'))return 'flock system dependency is absent';
+      const tests=read('scripts/mysql_install_state_test.go')||'';
+      for(const name of ['TestMySQLInstallFailedJournalPreservesWholeInstanceBeforeRetry','TestMySQLInstallRefusesUnprovedHistoryWithoutChangingBytes','TestMySQLRepeatedFailedInitializationKeepsEveryAttempt','TestMySQLNativeInitializeRecordsOnlyObservedOutcome','TestMySQLPreparationFailureCanRetryAfterExternalCauseIsFixed'])if(!tests.includes(name))return 'missing behavioral regression: '+name;
+      if(!(read('scripts/mysql_preflight_test.go')||'').includes('TestMySQLPreflightRejectsLegacyAmbiguityBeforeMutation'))return 'missing early-preflight regression';
+      return true;
+    },
+  },
+  {
     rule:'12 / 22', title:'MySQL initialization isolates plugin options and reports native failures',
     run:()=>{
       const native=read('scripts/clusterguard-mysql-install.sh')||'', helper=read('scripts/clusterguard-mysql-layout.sh')||'', tests=read('scripts/mysql_initialize_test.go')||'';
@@ -1171,6 +1194,7 @@ const reportOpen = failures => {
 // The files the rules read. The self-test copies exactly these, so a mutation cannot be
 // caught by reading something the gate does not actually consult.
 const READ_FILES = [
+  'scripts/mysql_install_state_test.go','scripts/mysql_preflight_test.go','packaging/rpm/nfpm.yaml',
   'scripts/mysql_initialize_test.go',
   'docs/zh-CN/offline-installer-parameters.md','docs/en-US/offline-installer-parameters.md',
   'adapters/mysql/probe.go','adapters/mysql/probe_vip_retention_test.go','internal/coordination/ownership_keeper.go','internal/coordination/ownership_ack.go','internal/coordination/lease.go','internal/coordination/ownership_replica_failure_test.go',
@@ -1195,6 +1219,16 @@ const READ_FILES = [
 ];
 
 const MUTATIONS = [
+  {name:'failed initialization accepts an unknown outcome',file:'scripts/clusterguard-mysql-install.sh',find:'.phase == "initialize-failed"',replace:'.phase == "initializing"',replaceAll:true,rule:'MySQL failed installation resumes only from bound evidence and preserves residue'},
+  {name:'empty preparation accepts nonempty data',file:'scripts/clusterguard-mysql-install.sh',find:'[[ -z "${contents}" ]]',replace:'[[ -n "${contents}" ]]',rule:'MySQL failed installation resumes only from bound evidence and preserves residue'},
+  {name:'failed initialization forgets original data inode',file:'scripts/clusterguard-mysql-install.sh',find:'.data_identity == $data_identity',replace:'true',replaceAll:true,rule:'MySQL failed installation resumes only from bound evidence and preserves residue'},
+  {name:'failed initialization trusts changed logs',file:'scripts/clusterguard-mysql-install.sh',find:'.error_log_sha256 == $error_sha',replace:'true',rule:'MySQL failed installation resumes only from bound evidence and preserves residue'},
+  {name:'retry deletes the failed instance',file:'scripts/clusterguard-mysql-install.sh',find:'mv "${install_parent}" "${reservation}/instance"',replace:'rm -rf "${install_parent}"',rule:'MySQL failed installation resumes only from bound evidence and preserves residue'},
+  {name:'native call is no longer durably marked as unknown',file:'scripts/clusterguard-mysql-install.sh',find:'cg_mysql_write_install_state initializing',replace:'cg_mysql_write_install_state initialized',rule:'MySQL failed installation resumes only from bound evidence and preserves residue'},
+  {name:'installer loses concurrency exclusion',file:'scripts/clusterguard-mysql-install.sh',find:'flock --nonblock 9',replace:'true',rule:'MySQL failed installation resumes only from bound evidence and preserves residue'},
+  {name:'vendor archive can replace installation ownership',file:'scripts/clusterguard-mysql-install.sh',find:'parts[2] == ".clusterguard-managed"',replace:'parts[2] == ".unrelated-file"',rule:'MySQL failed installation resumes only from bound evidence and preserves residue'},
+  {name:'instance child mounts can move into a backup',file:'scripts/clusterguard-mysql-install.sh',find:'$5 == instance || index($5,instance "/") == 1',replace:'$5 == instance',rule:'MySQL failed installation resumes only from bound evidence and preserves residue'},
+  {name:'an unreadable mount table is treated as empty',file:'scripts/clusterguard-mysql-install.sh',find:'NR == 0 || bad || mounted',replace:'mounted',rule:'MySQL failed installation resumes only from bound evidence and preserves residue'},
   {name:'initialization uses strict runtime options again',file:'scripts/clusterguard-mysql-install.sh',find:'run_mysql_setup_step initialization "${mysqld}" --defaults-file="${initialize_config}"',replace:'run_mysql_setup_step initialization "${mysqld}" --defaults-file="${config_file}"',rule:'MySQL initialization isolates plugin options and reports native failures'},
   {name:'initialization makes every unknown option loose',file:'scripts/clusterguard-mysql-layout.sh',find:'key ~ /^rpl_semi_sync_[a-z0-9][a-z0-9_]*$/',replace:'key ~ /./',rule:'MySQL initialization isolates plugin options and reports native failures'},
   {name:'initialization failure no longer preserves its exit status',file:'scripts/clusterguard-mysql-install.sh',find:'return "${status}"',replace:'return 0',rule:'MySQL initialization isolates plugin options and reports native failures'},

@@ -101,6 +101,22 @@ each other.**
 | `jq` (static binary shipped in the RPM) | MIT | n/a — see https://github.com/jqlang/jq |
 | Lucide icon geometry inlined in the console | ISC | [`docs/licenses/lucide-ui-review.txt`](docs/licenses/lucide-ui-review.txt) |
 
+The MySQL installer also requires the operating system's `util-linux` package for
+`flock`; it is now an explicit RPM dependency. This does not link util-linux into
+ClusterGuard or add a vendored executable. The reviewed util-linux 2.32.1
+[`sys-utils/flock.c`](https://github.com/util-linux/util-linux/blob/v2.32.1/sys-utils/flock.c)
+is MIT, copyright 2003–2005 H. Peter Anvin. The complete distribution package has
+multiple licenses; use its RPM metadata and included COPYING files rather than
+applying that one file's MIT license to the entire package. On the inspected
+Rocky 8 host, util-linux 2.32.1-46.el8 declares GPLv2, GPLv2+, LGPLv2+, BSD with
+advertising and Public Domain. Site versions remain operating-system managed.
+
+MySQL 安装器新增显式系统依赖 `util-linux`，使用其 `flock` 串行化同端口安装；
+不将它链接到 ClusterGuard，也不新增 vendored 可执行文件。上游 2.32.1 的
+`flock.c` 实读为 MIT（H. Peter Anvin，2003–2005）；整个发行版 RPM 是多许可证
+集合，仍以对应 RPM 元数据及其 COPYING 文件为准，不能将单个源码文件的 MIT
+声明扩展到整个包。现场具体版本由操作系统维护。
+
 Notes / 说明:
 
 - ClusterGuard HA **drives** MySQL, PostgreSQL, Oracle and SQL Server by executing their

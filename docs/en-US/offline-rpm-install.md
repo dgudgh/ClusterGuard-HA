@@ -621,7 +621,7 @@ The display timezone is pinned across every node from the installer's `--timezon
 
 The installation helper creates `clusterguard-mysql-<port>.service` in `/etc/systemd/system/`. It is outside the RPM file list, so removing the RPM leaves this unit behind. Its `Restart=on-failure` job can race runtime-directory preparation during a retry.
 
-Before replacing software or removing a managed partial initialization directory, the fixed helper checks this port's unit description, executable, loaded fragment, absence of drop-ins, and the data directory in any existing configuration. It then runs `systemctl disable --now` and requires `ActiveState=inactive` and `MainPID=0` before continuing. A failed stop, modified or overridden unit, or mismatched data directory aborts installation. The unit is enabled and started again only after initialization succeeds. On interruption, the old unit and diagnostics remain; the unit may remain disabled. Retry using the original site state.
+Before replacing software or isolating a proven failed initialization, the helper checks this port's unit description, executable, loaded fragment, absence of drop-ins, and the data directory in any existing configuration. It then runs `systemctl disable --now` and requires `ActiveState=inactive` and `MainPID=0` before continuing. A failed stop, modified or overridden unit, or mismatched data directory aborts installation. The unit is enabled and started again only after initialization succeeds. On interruption, the old unit and diagnostics remain; the unit may remain disabled. Retry using the original site state. A management marker or `.installing` alone no longer permits clearing partial data; see the phase journal below.
 
 A running instance with verifiable credentials follows the existing synchronization path. A complete database is still protected from replacement unless a rebuild was explicitly authorized. This fix adds neither database deletion nor machine-wide uninstall. Use controlled upgrades or node recovery for production database version changes, data-directory moves, and node rebuilds; do not remove data, management markers, or site state to bypass protection.
 
@@ -630,6 +630,28 @@ A running instance with verifiable credentials follows the existing synchronizat
 If error.log says initialization ignored plugin-load and reports unknown variable rpl_semi_sync_master_wait_point, runtime plugins were not loaded during initialization. From3.1.3.3 the original runtime configuration is validated strictly, then initialization uses a disposable copy. Only semi-sync plugin options in that copy gain a loose prefix. Production values, InnoDB layout, normal service my.cnf and read-only guards are unchanged. Failures print the original status and final80 password-redacted native log lines.
 
 A failed data/mysql/ can trigger existing full-data protection. Preserve logs, state, secrets and work-dir first. Only after confirming a fresh failed install with no business data or running process, quarantine the failed instance directory before resuming. Never delete data or markers or force-rebuild an existing real instance to bypass protection.
+
+### 12.10 Failed initialization, resume and manual delivery acceptance
+
+From 3.1.3.4, `conf/installation-state.json` atomically records `preparing`, `initializing`, `initialize-failed`, `initialized`, `starting` and `complete`. Automatic isolation requires an initially empty directory, an observed nonzero native initialization exit, matching node/port/path/configuration/media/data and software directory inode/data bytes/error log, no mysqld process and no listener on the target port. A pre-initialization `preparing` attempt may also be preserved and retried when identity bindings match and the original data directory remains strictly empty, covering extraction, linkage and strict-validation failures. Configuration and diagnostic logs may change during preparation and are preserved with the whole instance. A stable parent `flock` also prevents concurrent installation for the same port.
+
+The complete old instance moves to a unique sibling `.port.failed-initialize.random/instance/`, preserving data, configuration and logs without replacing another backup. Any mount at the instance itself or a child path (including same-filesystem bind mounts), failed moves and evidence mismatches abort. Ancestor mounts such as `/data` are allowed. A mysqld running on another port also conservatively prevents automatic isolation. `initializing` means an unknown outcome and never authorizes reinitialization. Initialized databases, startup failures and account-setup failures require preservation and review.
+
+**Legacy 3.1.3.2/3.1.3.3 residue cannot be backfilled as new evidence.** An offline instance containing `.installing` and `data/mysql/` but lacking the new journal is rejected before clock, RPM or firewall changes. An operator must confirm a fresh failed initialization with no business data or running process, confirm no instance or child-path mounts (including bind mounts), then atomically rename the entire `/data/mysql/<port>` on the same filesystem. Never rename an instance containing mounts: a replacement database could land on the wrong underlying disk. Software ownership must still match. Resume with the original state, secrets, work directory and approved vendor archive. Do not move only `data/`, delete markers, reset node identity or set `rebuild=true`.
+
+Record each manual scenario before delivery; unexecuted items remain `OPEN`:
+
+| Manual scenario | Required observations |
+| --- | --- |
+| Fresh three-node installation using the approved full vendor MySQL archive and production primary/replica cnf | Final exit 0; identical product versions; no tuning of approved non-path parameters; unique server_id values |
+| Services and accounts | MySQL, HA, Agent, Helper and reconcile.timer ready as documented; protected local client credentials work without passwords in CLI arguments or screenshots |
+| Roles, replication and entry point | Primary read_only/super_read_only OFF; replicas ON; replica IO/SQL Yes, caught up with no errors; VIP only on the current primary |
+| Repeat installation with identical site files | No reinitialization; stable identities and preserved test business data |
+| Explicit initialization failure in an independent empty test environment, then retry after fixing the external cause | initialize-failed journal; complete preserved original instance at the reported location; successful fresh installation; never inject destructive failures into the delivery database |
+| Interrupted initialization, changed journal or replaced data in isolation | Resume rejected and original bytes preserved; operator review before further action |
+| Custom software/data roots and port | Native validation, service, clients and logs use the selected paths without modifying another instance |
+
+Single-node isolated native validation and source tests do not replace this three-node checklist. Replication, VIP, switchover and disaster recovery require their own manual maintenance-window acceptance.
 
 ## 13. Uninstallation and Rollback
 

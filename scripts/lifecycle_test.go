@@ -1405,8 +1405,15 @@ func TestMySQLInstallUsesManagedTransactionAndOwnsTheDataParent(t *testing.T) {
 			t.Fatalf("managed MySQL installation transaction is missing %q", required)
 		}
 	}
-	if !strings.Contains(installText, `refusing to replace an unmanaged partial MySQL data directory`) {
-		t.Fatal("partial MySQL data can be replaced without durable ClusterGuard ownership evidence")
+	for _, required := range []string{
+		`existing MySQL data was preserved: initialization is complete or its state cannot be proved`,
+		`elif cg_mysql_retryable_preparation_matches || cg_mysql_failed_initialization_matches; then`,
+		`cg_mysql_quarantine_failed_initialization`,
+		`elif [[ "${rebuild}" == true && -d "${data_dir}" ]]`,
+	} {
+		if !strings.Contains(installText, required) {
+			t.Fatalf("partial MySQL data can be replaced without proved failure preservation or explicit rebuild: missing %q", required)
+		}
 	}
 	if strings.Contains(installText, `chown -R mysql:mysql "${install_parent}"`) || !strings.Contains(installText, `chown root:root "${install_parent}" "${software_dir}"`) {
 		t.Fatal("MySQL installation exposes configuration or software ownership to the mysql user")

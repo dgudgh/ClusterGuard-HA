@@ -1342,6 +1342,17 @@ fi
 if [[ '${role}' == data || '${role}' == mixed ]]; then
   database_free=\"\$(available_kb '${database_data_root}')\"
   (( database_free >= ${database_required_kb} )) || { echo \"insufficient database space: \${database_free} KiB\" >&2; exit 25; }
+  if [[ '${database_engine}' == mysql ]]; then
+    command -v flock >/dev/null 2>&1 || { echo 'missing:flock (util-linux)' >&2; exit 20; }
+    mysql_instance='${database_data_root}/mysql/${database_port}'
+    # Legacy installing markers do not distinguish a failed initialize from a
+    # completed database whose account setup was interrupted. Stop before RPM,
+    # clock or firewall changes; the helper performs the full journal check.
+    if [[ -e \"\${mysql_instance}/.installing\" && -d \"\${mysql_instance}/data/mysql\" && ! -e \"\${mysql_instance}/conf/installation-state.json\" ]] && ! ss -H -ltn 'sport = :${database_port}' 2>/dev/null | grep -q .; then
+      echo \"MySQL installation is incomplete and has no verified initialization journal: \${mysql_instance}; original data preserved. Inspect \${mysql_instance}/log/error.log and preserve the whole instance before any operator-approved retry. Do not delete data or set rebuild=true.\" >&2
+      exit 27
+    fi
+  fi
 fi
 if [[ '${build_node_required}' == true ]]; then
   source_build_free=\"\$(available_kb '/var/lib/clusterguard/postgresql-source-build')\"

@@ -64,6 +64,7 @@ service="clusterguard-mysql-${port}.service"
 service_file="/etc/systemd/system/${service}"
 managed_marker="${install_parent}/.clusterguard-managed"
 installing_marker="${install_parent}/.installing"
+installation_state="${config_dir}/installation-state.json"
 managed_mysql="${software_dir}/bin/mysql"
 managed_mysqld="${software_dir}/bin/mysqld"
 managed_mysqladmin="${software_dir}/bin/mysqladmin"
@@ -97,6 +98,28 @@ for candidate in "${managed_mysql}" "${CG_MYSQL_CLIENT:-}" "$(command -v mysql 2
     break
   fi
 done
+
+# Reject links before mkdir/chmod or any later instance preparation follows them.
+for mysql_directory in "${data_root}" "${install_parent}" "${data_dir}" "${config_dir}" "${log_dir}" "${run_dir}" "${software_dir}"; do
+  mysql_component="${mysql_directory}"
+  while [[ "${mysql_component}" != / ]]; do
+    [[ ! -L "${mysql_component}" ]] || { echo "refusing a symlink MySQL installation path: ${mysql_component}" >&2; exit 3; }
+    mysql_component="$(dirname "${mysql_component}")"
+  done
+done
+command -v flock >/dev/null 2>&1 || { echo 'flock is required to serialize MySQL installation attempts' >&2; exit 3; }
+mkdir -p "${data_root}/mysql"
+[[ -O "${data_root}/mysql" ]] || { echo 'MySQL instance parent must be owned by the installation user' >&2; exit 3; }
+installation_lock="${data_root}/mysql/.clusterguard-install-${port}.lock"
+if [[ -e "${installation_lock}" || -L "${installation_lock}" ]]; then
+  [[ -f "${installation_lock}" && ! -L "${installation_lock}" && -O "${installation_lock}" ]] || {
+    echo 'refusing an unrecognized MySQL installation lock file' >&2; exit 3;
+  }
+else
+  (umask 077; set -o noclobber; : >"${installation_lock}") || exit 3
+fi
+exec 9>>"${installation_lock}"
+flock --nonblock 9 || { echo "another MySQL installation attempt owns port ${port}" >&2; exit 3; }
 
 mkdir -p "${config_dir}" "${log_dir}" "${run_dir}" "${data_root}" "${install_parent}"
 chmod 0750 "${config_dir}" "${log_dir}" "${install_parent}"
@@ -298,6 +321,10 @@ if ! tar -tf "${package_path}" | awk '
     if (root == "") root=parts[1]
     if (parts[1] != root) bad=1
     if (count == 1 && original !~ /\/$/) bad=1
+    # The installer owns this marker before extraction, including interrupted
+    # extractions. Vendor archive entries must never replace or alias its path.
+    for (i=2; i<=count; i++) if (parts[i] == ".") bad=1
+    if (count >= 2 && parts[2] == ".clusterguard-managed") bad=1
   }
   END {exit !(root != "" && !bad)}
 '; then
@@ -346,28 +373,253 @@ quiesce_managed_mysql_service() {
   echo "previous managed MySQL service stopped; reinstall may continue: ${service}"
 }
 
+cg_mysql_sha256_stream() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum | awk '{print $1}';
+  elif command -v shasum >/dev/null 2>&1; then shasum -a 256 | awk '{print $1}';
+  else echo 'a SHA-256 implementation is required for MySQL installation state' >&2; return 3; fi
+}
+
+cg_mysql_sha256() { cg_mysql_sha256_stream <"$1"; }
+
+cg_mysql_data_identity() {
+  [[ -d "$1" && ! -L "$1" ]] || return 3
+  stat -c '%d:%i' "$1" 2>/dev/null || stat -f '%d:%i' "$1"
+}
+
+cg_mysql_root_file() {
+  local owner mode
+  [[ -f "$1" && ! -L "$1" ]] || return 3
+  owner="$(stat -c '%u' "$1" 2>/dev/null || stat -f '%u' "$1")" || return 3
+  mode="$(stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1")" || return 3
+  [[ "${owner}" == 0 && "${mode}" =~ ^[0-7]{3,4}$ ]] && (( (8#${mode} & 0022) == 0 ))
+}
+
+cg_mysql_data_sha256() {
+  local entry relative links started="${SECONDS}"
+  [[ -d "${data_dir}" && ! -L "${data_dir}" ]] || return 3
+  if ! find "${data_dir}" -print0 | LC_ALL=C sort -z |
+    while IFS= read -r -d '' entry; do
+      relative="${entry#"${data_dir}"}"
+      if [[ -L "${entry}" ]]; then return 3
+      elif [[ -d "${entry}" ]]; then printf 'directory:%s\0' "${relative}"
+      elif [[ -f "${entry}" ]]; then
+        links="$(stat -c '%h' "${entry}" 2>/dev/null || stat -f '%l' "${entry}")" || return 3
+        [[ "${links}" == 1 ]] || return 3
+        printf 'file:%s\0' "${relative}"
+        cg_mysql_sha256 "${entry}" || return 3
+      else return 3; fi
+    done | cg_mysql_sha256_stream; then return 3; fi
+  printf 'MySQL failed-initialization data SHA-256 check took %s seconds\n' "$((SECONDS - started))" >&2
+}
+
+cg_mysql_template_sha256() {
+  local template_dir
+  if jq -e '.target.mysql_cnf | type == "string" and length > 0' "${payload}" >/dev/null; then
+    jq -jr '.target.mysql_cnf' "${payload}" | cg_mysql_sha256_stream
+  else
+    template_dir=/usr/share/clusterguard/mysql
+    [[ -d "${template_dir}" ]] || template_dir="$(dirname "$0")/../configs/mysql"
+    if [[ -f "${template_dir}/my-slave.cnf" && ! -L "${template_dir}/my-slave.cnf" ]]; then
+      cg_mysql_sha256 "${template_dir}/my-slave.cnf"
+    else
+      printf '' | cg_mysql_sha256_stream
+    fi
+  fi
+}
+
+cg_mysql_assert_quiet() {
+  local processes listeners
+  command -v ps >/dev/null 2>&1 && command -v ss >/dev/null 2>&1 || {
+    echo 'ps and ss are required to prove that failed MySQL initialization is offline' >&2; return 3;
+  }
+  processes="$(ps -eo comm=)" || return 3
+  if printf '%s\n' "${processes}" | awk '/(^|\/)mysqld(-debug)?$/ {found=1} END {exit !found}'; then
+    echo 'a MySQL process is still present (any port); automatic failed-initialization isolation is unavailable and data was preserved' >&2; return 3
+  fi
+  listeners="$(ss -H -ltn "sport = :${port}")" || return 3
+  [[ -z "${listeners}" ]] || { echo "port ${port} is still listening; failed initialization data was preserved" >&2; return 3; }
+}
+
+cg_mysql_write_install_state() {
+  local phase="$1" native_exit="${2:-0}" temporary config_sha="" error_sha="" data_sha="" software_identity
+  case "${phase}" in preparing|initializing|initialize-failed|initialized|starting|complete) ;; *) return 3 ;; esac
+  [[ ! -e "${installation_state}" && ! -L "${installation_state}" ]] || cg_mysql_root_file "${installation_state}" || {
+    echo 'refusing an unrecognized MySQL installation state file' >&2; return 3;
+  }
+  if [[ -e "${config_file}" || -L "${config_file}" ]]; then
+    cg_mysql_root_file "${config_file}" || return 3
+    config_sha="$(cg_mysql_sha256 "${config_file}")" || return 3
+  fi
+  if [[ -f "${log_dir}/error.log" && ! -L "${log_dir}/error.log" ]]; then
+    error_sha="$(cg_mysql_sha256 "${log_dir}/error.log")" || return 3
+  fi
+  if [[ "${phase}" == initialize-failed ]]; then
+    cg_mysql_assert_quiet || return 3
+    data_sha="$(cg_mysql_data_sha256)" || return 3
+  fi
+  software_identity="$(cg_mysql_data_identity "${software_dir}")" || return 3
+  temporary="$(mktemp "${config_dir}/.installation-state.XXXXXXXX")" || return 3
+  if jq -n --arg phase "${phase}" --argjson port "${port}" --arg node_id "${installation_node_id}" \
+    --arg instance "${install_parent}" --arg software_dir "${software_dir}" \
+    --arg config_sha "${config_sha}" --arg package_sha "${installation_package_sha256}" \
+    --arg template_sha "${installation_template_sha256}" --arg data_identity "${installation_data_identity}" --arg software_identity "${software_identity}" \
+    --argjson fresh_empty "${installation_fresh_empty}" --argjson native_exit "${native_exit}" --arg error_sha "${error_sha}" --arg data_sha "${data_sha}" \
+    '{schema_version:1,phase:$phase,port:$port,node_id:$node_id,instance:$instance,software_dir:$software_dir,software_identity:$software_identity,config_sha256:$config_sha,package_sha256:$package_sha,template_sha256:$template_sha,data_identity:$data_identity,data_sha256:$data_sha,fresh_empty:$fresh_empty,native_exit:$native_exit,error_log_sha256:$error_sha}' >"${temporary}" &&
+    chmod 0600 "${temporary}" && chown root:root "${temporary}" && mv -f "${temporary}" "${installation_state}"; then
+    return 0
+  fi
+  rm -f "${temporary}"
+  echo 'could not persist MySQL installation state; existing data must be preserved' >&2
+  return 3
+}
+
+cg_mysql_retryable_preparation_matches() {
+  local data_identity software_identity contents
+  cg_mysql_root_file "${installation_state}" && cg_mysql_root_file "${managed_marker}" &&
+    cg_mysql_root_file "${installing_marker}" && cg_mysql_root_file "${software_dir}/.clusterguard-managed" || return 3
+  grep -Fqx 'managed_by=clusterguard-ha' "${managed_marker}" && grep -Fqx "port=${port}" "${managed_marker}" &&
+    grep -Fqx 'state=installing' "${installing_marker}" &&
+    grep -Fqx 'managed_by=clusterguard-ha' "${software_dir}/.clusterguard-managed" &&
+    grep -Fqx "port=${port}" "${software_dir}/.clusterguard-managed" &&
+    grep -Fqx "instance=${install_parent}" "${software_dir}/.clusterguard-managed" || return 3
+  jq -e '.schema_version == 1 and .phase == "preparing" and .fresh_empty == true' "${installation_state}" >/dev/null || return 3
+  data_identity="$(cg_mysql_data_identity "${data_dir}")" &&
+    software_identity="$(cg_mysql_data_identity "${software_dir}")" || return 3
+  contents="$(find "${data_dir}" -mindepth 1 -print -quit)" || return 3
+  [[ -z "${contents}" ]] || return 3
+  if [[ -e "${config_file}" || -L "${config_file}" ]]; then cg_mysql_root_file "${config_file}" || return 3; fi
+  if [[ -e "${log_dir}/error.log" || -L "${log_dir}/error.log" ]]; then
+    [[ -f "${log_dir}/error.log" && ! -L "${log_dir}/error.log" ]] || return 3
+  fi
+  # Before "initializing" is durably recorded, extraction, linkage checks and
+  # strict validation may write configuration or logs, but cannot initialize
+  # data. Preserve those files as-is; only a still-empty, identical data inode
+  # and the bound software directory authorize restarting this preparation.
+  jq -e --argjson port "${port}" --arg node_id "${installation_node_id}" --arg instance "${install_parent}" \
+    --arg software_dir "${software_dir}" --arg software_identity "${software_identity}" \
+    --arg package_sha "${installation_package_sha256}" --arg template_sha "${installation_template_sha256}" --arg data_identity "${data_identity}" '
+      (keys | sort) == (["schema_version","phase","port","node_id","instance","software_dir","software_identity","config_sha256","package_sha256","template_sha256","data_identity","data_sha256","fresh_empty","native_exit","error_log_sha256"] | sort) and
+      .schema_version == 1 and .phase == "preparing" and .port == $port and
+      ($node_id | length) > 0 and .node_id == $node_id and .instance == $instance and .software_dir == $software_dir and
+      .software_identity == $software_identity and .data_identity == $data_identity and .fresh_empty == true and .native_exit == 0 and .data_sha256 == "" and
+      (.config_sha256 | type == "string" and test("^([0-9a-f]{64})?$")) and
+      (.error_log_sha256 | type == "string" and test("^([0-9a-f]{64})?$")) and
+      .package_sha256 == $package_sha and ($package_sha | test("^[0-9a-f]{64}$")) and
+      .template_sha256 == $template_sha and ($template_sha | test("^[0-9a-f]{64}$"))
+    ' "${installation_state}" >/dev/null || return 3
+  cg_mysql_assert_quiet
+}
+
+cg_mysql_failed_initialization_matches() {
+  local config_sha error_sha data_identity data_sha software_identity
+  cg_mysql_root_file "${installation_state}" && cg_mysql_root_file "${managed_marker}" &&
+    cg_mysql_root_file "${config_file}" && cg_mysql_root_file "${installing_marker}" || return 3
+  grep -Fqx 'managed_by=clusterguard-ha' "${managed_marker}" && grep -Fqx "port=${port}" "${managed_marker}" &&
+    grep -Fqx 'state=installing' "${installing_marker}" && grep -Fqx "datadir=${data_dir}" "${config_file}" || return 3
+  # Do not hash a complete/unknown database. The inexpensive phase check must
+  # precede all recursive inspection; ordinary existing instances may be large.
+  jq -e '.schema_version == 1 and .phase == "initialize-failed" and .fresh_empty == true' "${installation_state}" >/dev/null || return 3
+  cg_mysql_assert_quiet || return 3
+  [[ -f "${log_dir}/error.log" && ! -L "${log_dir}/error.log" ]] || return 3
+  config_sha="$(cg_mysql_sha256 "${config_file}")" && error_sha="$(cg_mysql_sha256 "${log_dir}/error.log")" &&
+    data_identity="$(cg_mysql_data_identity "${data_dir}")" && software_identity="$(cg_mysql_data_identity "${software_dir}")" || return 3
+  jq -e --argjson port "${port}" --arg node_id "${installation_node_id}" --arg instance "${install_parent}" \
+    --arg software_dir "${software_dir}" --arg software_identity "${software_identity}" --arg config_sha "${config_sha}" --arg package_sha "${installation_package_sha256}" \
+    --arg template_sha "${installation_template_sha256}" --arg data_identity "${data_identity}" --arg error_sha "${error_sha}" '
+      (keys | sort) == (["schema_version","phase","port","node_id","instance","software_dir","software_identity","config_sha256","package_sha256","template_sha256","data_identity","data_sha256","fresh_empty","native_exit","error_log_sha256"] | sort) and
+      .schema_version == 1 and .phase == "initialize-failed" and .port == $port and
+      ($node_id | length) > 0 and .node_id == $node_id and .instance == $instance and .software_dir == $software_dir and
+      .fresh_empty == true and (.native_exit | type) == "number" and .native_exit == (.native_exit | floor) and .native_exit >= 1 and .native_exit <= 255 and
+      .config_sha256 == $config_sha and ($config_sha | test("^[0-9a-f]{64}$")) and
+      .package_sha256 == $package_sha and ($package_sha | test("^[0-9a-f]{64}$")) and
+      .template_sha256 == $template_sha and ($template_sha | test("^[0-9a-f]{64}$")) and
+      .software_identity == $software_identity and .data_identity == $data_identity and (.data_sha256 | type == "string" and test("^[0-9a-f]{64}$")) and
+      .error_log_sha256 == $error_sha and ($error_sha | test("^[0-9a-f]{64}$"))
+    ' "${installation_state}" >/dev/null || return 3
+  data_sha="$(cg_mysql_data_sha256)" || return 3
+  [[ "${data_sha}" == "$(jq -r '.data_sha256' "${installation_state}")" ]]
+}
+
+cg_mysql_assert_instance_unmounted() {
+  local mountinfo_file="${1:-/proc/self/mountinfo}" mountinfo
+  [[ -r "${mountinfo_file}" ]] && mountinfo="$(cat "${mountinfo_file}")" || {
+    echo 'cannot inspect MySQL instance mount boundaries; automatic isolation is unavailable' >&2; return 3;
+  }
+  # Renaming an outer directory also relocates its child mounts. Recreating
+  # data/ at the old path would then silently select the underlying disk. Device
+  # numbers alone cannot detect bind mounts, so inspect the kernel mount table.
+  if ! awk -v instance="${install_parent}" '
+    NF < 10 || $1 !~ /^[0-9]+$/ || $2 !~ /^[0-9]+$/ || $5 !~ /^\// || index($0," - ") == 0 {bad=1}
+    $5 == instance || index($5,instance "/") == 1 {mounted=1}
+    END {exit (NR == 0 || bad || mounted)}
+  ' <<<"${mountinfo}"; then
+    echo 'MySQL instance contains a mount or its mount table is invalid; preserve it for operator review' >&2
+    return 3
+  fi
+}
+
+cg_mysql_quarantine_failed_initialization() {
+  local parent reservation instance_device parent_device
+  parent="$(dirname "${install_parent}")"
+  cg_mysql_assert_instance_unmounted || return 3
+  instance_device="$(cg_mysql_data_identity "${install_parent}" | cut -d: -f1)" &&
+    parent_device="$(cg_mysql_data_identity "${parent}" | cut -d: -f1)" || return 3
+  [[ -n "${instance_device}" && "${instance_device}" == "${parent_device}" ]] || {
+    echo 'failed MySQL instance is a separate mount; automatic isolation is unavailable' >&2; return 3;
+  }
+  # The directory reservation prevents overwriting an older backup. Its sibling
+  # source and destination are on the same filesystem, so mv uses atomic rename.
+  reservation="$(mktemp -d "${parent}/.$(basename "${install_parent}").failed-initialize.XXXXXXXX")" || return 3
+  chmod 0700 "${reservation}"
+  [[ ! -e "${reservation}/instance" && ! -L "${reservation}/instance" ]] &&
+    { cg_mysql_retryable_preparation_matches || cg_mysql_failed_initialization_matches; } &&
+    cg_mysql_assert_quiet && cg_mysql_assert_instance_unmounted || return 3
+  mv "${install_parent}" "${reservation}/instance" || {
+    echo 'failed MySQL initialization could not be isolated; original data was preserved' >&2; return 3;
+  }
+  printf 'incomplete MySQL installation preserved at: %s/instance\n' "${reservation}"
+  mkdir -p "${config_dir}" "${log_dir}" "${run_dir}" "${install_parent}"
+  chmod 0750 "${config_dir}" "${log_dir}" "${install_parent}"
+}
+
+installation_node_id="$(jq -r '.target.node_id // ""' "${payload}")"
+installation_package_sha256="$(cg_mysql_sha256 "${package_path}")"
+installation_template_sha256="$(cg_mysql_template_sha256)"
+installation_data_identity=""
+installation_fresh_empty=false
+for installation_file in "${managed_marker}" "${installing_marker}" "${config_file}" "${installation_state}"; do
+  if [[ -e "${installation_file}" || -L "${installation_file}" ]]; then
+    cg_mysql_root_file "${installation_file}" || { echo "refusing an unrecognized MySQL installation file: ${installation_file}" >&2; exit 3; }
+  fi
+done
 managed_evidence=false
-if [[ -f "${managed_marker}" || -f "${service_file}" ]]; then
+if cg_mysql_root_file "${managed_marker}" && grep -Fqx 'managed_by=clusterguard-ha' "${managed_marker}" && grep -Fqx "port=${port}" "${managed_marker}"; then
   managed_evidence=true
-elif [[ -f "${config_file}" && -x "${managed_mysqld}" ]] && grep -Fqx "datadir=${data_dir}" "${config_file}"; then
+elif [[ -f "${service_file}" && ! -L "${service_file}" ]] ||
+  { cg_mysql_root_file "${config_file}" && [[ -x "${managed_mysqld}" ]] && grep -Fqx "datadir=${data_dir}" "${config_file}"; }; then
   # Upgrade compatibility for an installation interrupted before managed markers existed.
   managed_evidence=true
 fi
-if [[ -d "${data_dir}/mysql" ]]; then
-  [[ "${rebuild}" == "true" ]] || { echo "existing unmanaged MySQL data directory blocks installation" >&2; exit 3; }
-  [[ "${managed_evidence}" == "true" ]] || { echo "refusing to rebuild an unmanaged MySQL instance" >&2; exit 3; }
-elif [[ -d "${data_dir}" ]] && [[ -n "$(find "${data_dir}" -mindepth 1 -print -quit 2>/dev/null)" ]]; then
-  [[ "${managed_evidence}" == "true" || -f "${installing_marker}" ]] || {
-    echo "refusing to replace an unmanaged partial MySQL data directory" >&2
+quarantine_failed_initialization=false
+if [[ -f "${installation_state}" ]] ||
+  { [[ -d "${data_dir}" ]] && [[ -n "$(find "${data_dir}" -mindepth 1 -print -quit 2>/dev/null)" ]]; }; then
+  if [[ "${rebuild}" == true ]]; then
+    [[ "${managed_evidence}" == true ]] || { echo 'refusing to rebuild an unmanaged MySQL instance' >&2; exit 3; }
+  elif cg_mysql_retryable_preparation_matches || cg_mysql_failed_initialization_matches; then
+    cg_mysql_assert_quiet
+    quarantine_failed_initialization=true
+  else
+    printf 'existing MySQL data was preserved: initialization is complete or its state cannot be proved; log: %s/error.log; state: %s\n' "${log_dir}" "${installation_state}" >&2
+    echo 'do not delete data or deployment state; preserve and review the failed instance before an explicit recovery/rebuild' >&2
     exit 3
-  }
+  fi
 fi
 
 # Validate data protection before stopping anything. Live instances have already
 # returned through the synchronization path above; complete data still requires
 # an explicit rebuild. This also covers empty/partial interrupted installations.
 if [[ -d "${software_dir}" && -n "$(find "${software_dir}" -mindepth 1 -print -quit)" ]]; then
-  [[ -f "${software_dir}/.clusterguard-managed" && ! -L "${software_dir}/.clusterguard-managed" ]] &&
+  cg_mysql_root_file "${software_dir}/.clusterguard-managed" &&
     grep -Fqx "port=${port}" "${software_dir}/.clusterguard-managed" &&
     grep -Fqx "instance=${install_parent}" "${software_dir}/.clusterguard-managed" || {
       echo 'refusing to replace an unmanaged or foreign MySQL software directory' >&2; exit 3
@@ -375,7 +627,9 @@ if [[ -d "${software_dir}" && -n "$(find "${software_dir}" -mindepth 1 -print -q
 fi
 [[ ! -L "${software_dir}" ]] || { echo 'refusing a symlink MySQL software directory' >&2; exit 3; }
 quiesce_managed_mysql_service
-if [[ -d "${data_dir}" ]] && [[ -n "$(find "${data_dir}" -mindepth 1 -print -quit 2>/dev/null)" ]]; then
+if [[ "${quarantine_failed_initialization}" == true ]]; then
+  cg_mysql_quarantine_failed_initialization
+elif [[ "${rebuild}" == true && -d "${data_dir}" ]] && [[ -n "$(find "${data_dir}" -mindepth 1 -print -quit 2>/dev/null)" ]]; then
   rm -rf "${data_dir}"
 fi
 
@@ -385,8 +639,13 @@ printf 'state=installing\n' >"${installing_marker}"
 chmod 0600 "${installing_marker}"
 rm -rf "${software_dir}"
 mkdir -p "${software_dir}" "${data_dir}" "${log_dir}" "${run_dir}" "${install_parent}/binlog" "${install_parent}/relaylog" "${install_parent}/tmp"
-tar --no-same-owner --no-same-permissions -xf "${package_path}" -C "${software_dir}" --strip-components=1
+[[ -z "$(find "${data_dir}" -mindepth 1 -print -quit)" ]] || { echo 'MySQL initialization requires an empty data directory' >&2; exit 3; }
+installation_data_identity="$(cg_mysql_data_identity "${data_dir}")"
+installation_fresh_empty=true
 printf 'managed_by=clusterguard-ha\nport=%s\ninstance=%s\n' "${port}" "${install_parent}" >"${software_dir}/.clusterguard-managed"
+chmod 0600 "${software_dir}/.clusterguard-managed"
+cg_mysql_write_install_state preparing
+tar --no-same-owner --no-same-permissions -xf "${package_path}" -C "${software_dir}" --strip-components=1
 mysqld="${software_dir}/bin/mysqld"
 mysql="${software_dir}/bin/mysql"
 mysqladmin="${software_dir}/bin/mysqladmin"
@@ -588,7 +847,7 @@ chown root:mysql "${config_dir}"
 run_mysql_setup_step() {
   local phase="$1" output status secret
   shift
-  if output="$("$@" 2>&1)"; then
+  if output="$("$@" 9>&- 2>&1)"; then
     status=0
   else
     status=$?
@@ -609,7 +868,22 @@ if (( release_major >= 8 )); then run_mysql_setup_step validation "${mysqld}" --
 initialize_config="$(mktemp /tmp/clusterguard-initialize-cnf.XXXXXX)"
 chmod 0600 "${initialize_config}"
 cg_mysql_render_initialize_cnf "${config_file}" "${initialize_config}"
-run_mysql_setup_step initialization "${mysqld}" --defaults-file="${initialize_config}" --initialize-insecure --user=mysql
+[[ "$(cg_mysql_data_identity "${data_dir}")" == "${installation_data_identity}" &&
+  -z "$(find "${data_dir}" -mindepth 1 -print -quit)" ]] || {
+  echo 'MySQL data changed before initialization; original data was preserved' >&2; exit 3;
+}
+cg_mysql_write_install_state initializing
+if run_mysql_setup_step initialization "${mysqld}" --defaults-file="${initialize_config}" --initialize-insecure --user=mysql; then
+  cg_mysql_write_install_state initialized
+else
+  initialization_status=$?
+  # An interrupted or unrecorded call remains "initializing" and is never a
+  # license to recreate data. Only this observed nonzero native exit is failed.
+  cg_mysql_write_install_state initialize-failed "${initialization_status}" || {
+    echo 'initialization failed but failure proof could not be persisted; preserve the instance for review' >&2;
+  }
+  exit "${initialization_status}"
+fi
 rm -f "${initialize_config}"
 initialize_config=""
 
@@ -655,7 +929,8 @@ EOF
 chmod 0644 "${config_dir}/logrotate.conf"
 install -d -m 0755 /etc/logrotate.d
 ln -sfn "${config_dir}/logrotate.conf" "/etc/logrotate.d/clusterguard-mysql-${port}"
-systemctl enable --now "${service}"
+cg_mysql_write_install_state starting
+systemctl enable --now "${service}" 9>&-
 
 for _ in $(seq 1 60); do
   [[ -S "${socket}" ]] && "${mysql}" --no-defaults --protocol=socket --socket="${socket}" -uroot -e 'SELECT 1' >/dev/null 2>&1 && break
@@ -707,4 +982,5 @@ install_local_client_defaults
 SET GLOBAL super_read_only=ON;
 SET GLOBAL read_only=ON;
 SQL
+cg_mysql_write_install_state complete
 rm -f "${installing_marker}"

@@ -6,7 +6,7 @@
 
 ## 当前完整介质 / Current Installation Kit
 
-[3.1.3.3 双语发布说明 / release notes](zh-CN/release-3.1.3.3.md) · [离线安装命令参数 / installer options](zh-CN/offline-installer-parameters.md)。产品版本 3.1.3.3，RPM 兼容基线 2.2-111；本地候选，ART/FIELD OPEN，尚未发布 GitHub Release。 / Product 3.1.3.3, RPM baseline 2.2-111; local candidate, ART/FIELD OPEN, no GitHub Release published. Historical entries below preserve their original scope.
+[3.1.3.4 双语发布说明 / release notes](zh-CN/release-3.1.3.4.md) · [离线安装命令参数 / installer options](zh-CN/offline-installer-parameters.md)。产品版本 3.1.3.4，RPM 兼容基线 2.2-112；本地候选，ART/FIELD OPEN，尚未发布 GitHub Release。 / Product 3.1.3.4, RPM baseline 2.2-112; local candidate, ART/FIELD OPEN, no GitHub Release published. Historical entries below preserve their original scope.
 
 ## Document Roles / 资料作用
 

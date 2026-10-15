@@ -254,6 +254,10 @@ func TestMySQLInitializeFlowUsesTemporaryCnfAndCleansIt(t *testing.T) {
 		t.Fatal("cannot locate validation and initialization program")
 	}
 	program := script[start : marker+end]
+	identityFunction, ok := extractShellFunction(script, "cg_mysql_data_identity")
+	if !ok {
+		t.Fatal("missing data identity function")
+	}
 	var exitTrap string
 	for _, line := range strings.Split(script, "\n") {
 		if strings.HasPrefix(line, "trap ") && strings.HasSuffix(line, " EXIT") {
@@ -303,6 +307,12 @@ log_dir="$1/log"; mkdir -p "$log_dir"
 config_file="$1/my.cnf"; mysqld="$1/mysqld"; release_major=8
 payload="$1/disposable-payload"; production_template=''; initialize_config=''
 root_password=''; discovery_password=''; operation_password=''; replication_password=''
+data_dir="$1/data"; mkdir -p "$data_dir"
+# Journal transitions are exercised with real files in mysql_install_state_test.
+# This fixture isolates the disposable option-file and native-status contract.
+cg_mysql_write_install_state() { :; }
+`+identityFunction+`
+installation_data_identity="$(cg_mysql_data_identity "$data_dir")"
 `+mysqlSetupStepFunction(t, script)+"\n"+exitTrap+"\n"+program, "initialize-flow", root)
 			command.Env = append(os.Environ(), "CG_TEST_ROOT="+root, "CG_TEST_RUNTIME="+config, "CG_TEST_FAIL_AT="+tc.failAt)
 			output, runErr := command.CombinedOutput()

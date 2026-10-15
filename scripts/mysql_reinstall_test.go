@@ -24,7 +24,8 @@ func TestMySQLReinstallRetiresOnlyItsStoppedManagedUnit(t *testing.T) {
 	if start < 0 || end <= start {
 		t.Fatal("cannot locate reinstall preparation program")
 	}
-	program := text[start:end]
+	program := mysqlInstallTestMountTable(text[start:end])
+	functions, _ := mysqlInstallStateSource(t)
 	for _, tc := range []struct {
 		name         string
 		mode         string
@@ -36,7 +37,7 @@ func TestMySQLReinstallRetiresOnlyItsStoppedManagedUnit(t *testing.T) {
 	}{
 		{name: "fresh", mode: "absent", wantSuccess: true},
 		{name: "interrupted-empty", mode: "managed", wantSuccess: true, wantDisabled: true},
-		{name: "interrupted-partial", mode: "managed", partial: true, wantSuccess: true, wantDisabled: true},
+		{name: "interrupted-partial-without-proof-preserved", mode: "managed", partial: true},
 		{name: "stop-failed", mode: "stop-failed", partial: true},
 		{name: "still-running", mode: "still-running", partial: true, wantDisabled: true},
 		{name: "leftover-process", mode: "leftover-process", partial: true, wantDisabled: true},
@@ -71,6 +72,12 @@ func TestMySQLReinstallRetiresOnlyItsStoppedManagedUnit(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			writeFile(t, filepath.Join(root, "payload.json"), `{"target":{"node_id":"node-152","mysql_cnf":"approved template"}}`, 0600)
+			writeFile(t, filepath.Join(root, "mysql.tar.xz"), "approved original package bytes", 0600)
+			writeFile(t, filepath.Join(root, "mountinfo"), "36 25 8:1 / / rw,relatime - ext4 /dev/vda1 rw\n", 0600)
+			writeFile(t, filepath.Join(filepath.Dir(data), ".clusterguard-managed"), "managed_by=clusterguard-ha\nport=3306\n", 0600)
+			writeFile(t, filepath.Join(filepath.Dir(data), ".installing"), "state=installing\n", 0600)
+			writeFile(t, filepath.Join(filepath.Dir(data), "log", "error.log"), "initialization failed\n", 0600)
 			command := exec.Command("bash", "-c", `
 set -euo pipefail
 port=3306
@@ -78,15 +85,27 @@ install_root="$CG_TEST_ROOT"
 software_dir="$CG_TEST_ROOT/software"
 install_parent="$CG_TEST_ROOT/state/mysql/3306"
 data_dir="$install_parent/data"
-log_dir="$CG_TEST_ROOT/log"
+config_dir="$install_parent/conf"
+mkdir -p "$config_dir"
+log_dir="$install_parent/log"
 run_dir="$CG_TEST_ROOT/run"
 service=clusterguard-mysql-3306.service
 service_file="$CG_TEST_ROOT/unit.service"
-config_file="$CG_TEST_ROOT/3306.cnf"
+config_file="$config_dir/my.cnf"
+installation_state="$config_dir/installation-state.json"
+package_path="$CG_TEST_ROOT/mysql.tar.xz"
+payload="$CG_TEST_ROOT/payload.json"
 managed_marker="$install_parent/.clusterguard-managed"
 installing_marker="$install_parent/.installing"
 managed_mysqld="$CG_TEST_ROOT/software/bin/mysqld"
 rebuild="$CG_TEST_REBUILD"
+stat() {
+ if [[ "$1" == -c && "$2" == %u || "$1" == -f && "$2" == %u ]]; then printf '0\n'; return; fi
+ command stat "$@"
+}
+chown() { :; }
+ps() { printf 'bash\n'; }
+ss() { :; }
 if [[ "$CG_TEST_MODE" != absent ]]; then
  printf 'Description=ClusterGuard managed MySQL 3306\nExecStart=%s --defaults-file=%s\n' "$managed_mysqld" "$config_file" > "$service_file"
  printf 'datadir=%s\n' "$data_dir" > "$config_file"
@@ -128,6 +147,15 @@ rm() {
  fi
  /bin/rm "$@"
 }
+`+functions+`
+if [[ "$CG_TEST_JOURNAL" == true ]]; then
+ installation_node_id=node-152
+ installation_package_sha256="$(cg_mysql_sha256 "$package_path")"
+ installation_template_sha256="$(cg_mysql_template_sha256)"
+ installation_data_identity="$(cg_mysql_data_identity "$data_dir")"
+ installation_fresh_empty=true
+ cg_mysql_write_install_state initialize-failed 37
+fi
 `+program+`
 [[ -d "$run_dir" && -d "$install_root/software" ]]
 `)
@@ -135,7 +163,11 @@ rm() {
 			if tc.rebuild {
 				rebuild = "true"
 			}
-			command.Env = append(os.Environ(), "CG_TEST_ROOT="+root, "CG_TEST_MODE="+tc.mode, "CG_TEST_REBUILD="+rebuild)
+			journal := "false"
+			if tc.partial && tc.mode != "managed" {
+				journal = "true"
+			}
+			command.Env = append(os.Environ(), "CG_TEST_ROOT="+root, "CG_TEST_MODE="+tc.mode, "CG_TEST_REBUILD="+rebuild, "CG_TEST_JOURNAL="+journal)
 			output, err := command.CombinedOutput()
 			if (err == nil) != tc.wantSuccess {
 				t.Fatalf("success=%v want=%v: %v\n%s", err == nil, tc.wantSuccess, err, output)
