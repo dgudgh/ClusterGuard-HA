@@ -23,6 +23,9 @@ recorded-through: 73ff4a3
 
 | 日期 | 文件 | 变更 | 说明 |
 | --- | --- | --- | --- |
+| 2026-10-15 | `docs/development/mysql-install-performance-2026-10-15.md` | A | 记录新鲜安装与旧版对照、单次完整归档读取和摘要复用设计、安全审查修正、81.15秒对39.53秒原生同包实测及SOURCE/制品/FIELD分层。 |
+| 2026-10-15 | `docs/zh-CN/release-3.1.3.6.md` | A | 新候选3.1.3.6/RPM114：单次归档检查、逐节点SHA256复用与私有原子发布、安装阶段耗时；保留旧件与本版完整FIELD未执行边界。 |
+| 2026-10-15 | `docs/en-US/release-3.1.3.6.md` | A | 同范围英文安装优化说明与单次性能测量限制，保留生产签名ART和完整安装FIELD的OPEN状态。 |
 | 2026-10-15 | `docs/development/installation-field-3.1.3.5-2026-10-15.md` | A | 登记用户明确授权后的真实三节点完整续装exit0、52项API、实际五程序/服务/Helper重启/GTID写入/VIP、配置保留与真实登录页面核对；保留签名ART、空盘/故障注入及升级历史未执行范围。 |
 | 2026-10-15 | `docs/development/update-helper-namespace-2026-10-15.md` | A | 记录3.1.3.4真实Helper226、旧unit对照、systemd239原生复现/修复、隔离不变量与用户自行续装边界；追加其后用户授权接管及真实现场记录指路。 |
 | 2026-10-15 | `docs/zh-CN/release-3.1.3.5.md` | A | 新候选3.1.3.5/RPM113修复易失运行目录与namespace启动顺序，保留已完成MySQL并复用原站点文件续装；追加真实三节点续装、复制/VIP/Helper与登录页面验收范围。 |
@@ -43,8 +46,8 @@ recorded-through: 73ff4a3
 | 2026-10-15 | `docs/en-US/release-3.1.3.1.md` | A | 新增同范围英文完整介质候选说明，区分本地包、GitHub源码与未发布Release。  最终复核后改为内部候选停用记录并指路3.1.3.2，修正首次安装与lease时序。 |
 | 2026-10-15 | `docs/development/mysql-replica-failure-vip-2026-10-15.md` | A | 记录从库失去半同步ACK导致现役主库VIP续租失败的旧版对照、仅续租边界、负向保护和SOURCE/ART/FIELD验证结果。 |
 | 2026-10-15 | `docs/development/backend/operations.md` | M | 明确从库数据库/复制故障保留现役主库VIP的仅续租条件，保留半同步告警、Raft与Agent观测两套多数派及失效隔离边界。 |
-| 2026-10-15 | `docs/zh-CN/offline-rpm-install.md` | M | MySQL8.0改用现场生产主从cnf，取消该分支内存调优；记录数据根默认/data、软件默认/usr/local/mysql及独立自定义选项、IP末段拼端口、用户确认的只读保护、原件和目录记录及解析/现场验收边界。  增加独立安装命令参数手册入口。 |
-| 2026-10-15 | `docs/en-US/offline-rpm-install.md` | M | 同步英文生产cnf基线、允许变更的路径/身份/只读字段、软件默认/usr/local/mysql、自定义目录与离线参数解析和现场验收边界。  增加独立安装命令参数手册入口。 |
+| 2026-10-15 | `docs/zh-CN/offline-rpm-install.md` | M | MySQL8.0改用现场生产主从cnf，取消该分支内存调优；记录数据根默认/data、软件默认/usr/local/mysql及独立自定义选项、IP末段拼端口、用户确认的只读保护、原件和目录记录及解析/现场验收边界。  增加独立安装命令参数手册入口。 增加§4.1：归档阶段耗时、按实际SHA256复用与原子发布、父目录仅检查和单次性能收益边界。 |
+| 2026-10-15 | `docs/en-US/offline-rpm-install.md` | M | 同步英文生产cnf基线、允许变更的路径/身份/只读字段、软件默认/usr/local/mysql、自定义目录与离线参数解析和现场验收边界。  增加独立安装命令参数手册入口。 增加同范围英文安装耗时、摘要复用、原子发布、父目录条件及测量边界。 |
 | 2026-10-15 | `docs/development/mysql-production-cnf-paths-2026-10-15.md` | A | 记录生产cnf基线、旧安装链对照、默认/data及独立软件路径、用户确认的身份与只读保护；追加软件默认/usr/local/mysql的修改前对照和回归，区分SOURCE与ART/FIELD边界。 |
 | 2026-10-14 | `docs/development/disaster-binlog-availability-2026-10-14.md` | A | 记录3.1.2.15现场缺日志失败、长期纯GTID可用性判断缺口、修改前完整调用链对照、新日志边界/受控克隆/错误保留范围，以及SOURCE、隔离数据库、ART和用户自行安装的FIELD边界。 |
 | 2026-10-14 | `docs/development/disaster-binlog-recovery-2026-10-14.md` | A | 登记物理缺binlog现场复现、过期库存计划ready误报、修改前对照、仅替代未执行计划及保留保护、SOURCE/浏览器/ART/恢复分层验证边界；追加3.1.2.15现场重规划通过但首次重建失败、还原原日志才收尾成功，以及后续实际日志可用性修复指路。 |
@@ -63,7 +66,7 @@ recorded-through: 73ff4a3
 | 2026-10-13 | `docs/development/recovery-repair-gate-2026-10-13.md` | A | 记录复制修复缺失动作参数、灾难恢复已复核操作仍被阻断的历史对照、现场版本只读证据、修复边界与源码/现场分层验证计划。 |
 | 2026-10-12 | `docs/development/backend/operations.md` | M | 说明新装 MySQL 合法空 GTID 集合、查询证据缺失仍阻断、目标追平与最终核验不省略；登记空集合执行/坏查询/等待失败回归及不确定任务按原始证据复核的边界。 |
 | 2026-10-08 | `AGENTS.md` | M | 在「所有修改必须遵守」里新增一条：任何 Markdown 的新增/删除/修改都必须在 `docs/development/markdown-change-record.md` 登记并过 `verify-markdown-change-record.cjs`，改了 md 必须重建 `docs/html`，未登记不得提交。 |
-| 2026-10-08 | `docs/README.md` | M | 文档中心导航表新增一行「改文档 → Markdown 变更记录」，让台账在入口页可发现。  增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。  追加2026-10-15：当前完整介质指向3.1.3.2本地候选与安装命令参考，删除不存在的GitHubRelease链接，明确ART/FIELD OPEN。 |
+| 2026-10-08 | `docs/README.md` | M | 文档中心导航表新增一行「改文档 → Markdown 变更记录」，让台账在入口页可发现。  增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。  追加2026-10-15：当前完整介质指向3.1.3.2本地候选与安装命令参考，删除不存在的GitHubRelease链接，明确ART/FIELD OPEN。 当前完整介质导航更新为3.1.3.6候选，ART/FIELD仍OPEN。 |
 | 2026-10-08 | `docs/development/README.md` | M | 开发入口在「先确定问题发生在哪一层」之后补一句：改动任何 Markdown 都要登记台账并跑对应门禁。 |
 | 2026-10-08 | `docs/development/delivery/README.md` | M | 热修命名条从「四段版本 `MAJOR.CAPABILITY.INTERNAL.BUGFIX`」改为「新封板版本线从 `3.1.1.1` 开始、四段为 `MAJOR.MINOR.PATCH.BUGFIX`」，并写明旧 2.x/HF 文件名全部冻结为历史。 当前交付按产品版本目录与版本ID定位，不用旧RPM目录作当前入口。  增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。 |
 | 2026-10-08 | `docs/development/markdown-change-record.md` | A | 本页：建立 md 变更台账，规定增删改都要登记，并由 `tools/verify-markdown-change-record.cjs` 做结构与覆盖校验。 2026-10-09 追加登记「升级预览版本语义修复」批次与 `updates.md` 的展示口径变更。 2026-10-09 追加登记「控制节点卡片」批次与对应批次说明。 |
@@ -102,13 +105,13 @@ recorded-through: 73ff4a3
 
 | 2026-10-09 | `docs/en-US/README.md` | M | 增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。  追加2026-10-15：当前完整介质指向3.1.3.2本地候选与安装命令参考，删除不存在的GitHubRelease链接，明确ART/FIELD OPEN。 |
 
-| 2026-10-09 | `docs/catalogue.md` | M | 增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。  追加2026-10-15：当前完整介质指向3.1.3.2本地候选与安装命令参考，删除不存在的GitHubRelease链接，明确ART/FIELD OPEN。 |
+| 2026-10-09 | `docs/catalogue.md` | M | 增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。  追加2026-10-15：当前完整介质指向3.1.3.2本地候选与安装命令参考，删除不存在的GitHubRelease链接，明确ART/FIELD OPEN。 当前完整介质身份更新为3.1.3.6/RPM114，保留未发布Release状态。 |
 
 | 2026-10-09 | `docs/zh-CN/catalogue.md` | M | 增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。  追加2026-10-15：当前完整介质指向3.1.3.2本地候选与安装命令参考，删除不存在的GitHubRelease链接，明确ART/FIELD OPEN。 |
 
 | 2026-10-09 | `docs/en-US/catalogue.md` | M | 增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。  追加2026-10-15：当前完整介质指向3.1.3.2本地候选与安装命令参考，删除不存在的GitHubRelease链接，明确ART/FIELD OPEN。 |
 
-| 2026-10-09 | `docs/development/delivery/offline-installation-media.md` | A | 完整介质子功能路径、产品身份传递、实际版本回归、干净构建与唯一目录、显式公开附件及分阶段验收。 |
+| 2026-10-09 | `docs/development/delivery/offline-installation-media.md` | A | 完整介质子功能路径、产品身份传递、实际版本回归、干净构建与唯一目录、显式公开附件及分阶段验收。 当前构建与校验示例更新为3.1.3.6/RPM114，不复用旧制品身份。 |
 
 | 2026-10-09 | `docs/zh-CN/release-3.1.2.8.md` | A | 3.1.2.8双语发布说明：完整包产品版本注入、累计修复/下发功能、下载摘要入口、介质内容及现场未验收边界。 |
 
@@ -226,3 +229,7 @@ MySQL初始化插件选项批次（2026-10-15）：修复生产模板正常运�
 ### 2026-10-15 · 更新Helper缺失运行目录的226
 
 新增本轮任务和中英3.1.3.5/RPM113说明；当前完整介质导航与构建示例升至3.1.3.5。中英安装手册§12.11说明systemd239启动顺序、仅易失目录缺失容忍与持久路径强制，强调已完成MySQL/registered站点保留数据和原state/secrets/work-dir。3.1.3.4说明补已知故障和新版本指路，保留旧制品与历史回执；追加2024567干净构建、33,850,253字节/809abbf4摘要、结构15项及3处实际载荷比对。HTML全量重建，ART/FIELD未完成不冒充通过。
+
+## 2026-10-15 安装速度优化批次
+
+新增性能任务与中英3.1.3.6/RPM114候选说明，更新当前介质导航和构建示例。安装手册§4.1同步解释单次归档检查、SHA256缓存、原子发布、父目录安全条件和分阶段日志。单节点同包81.15秒对39.53秒仅是归档阶段，完整本版FIELD未执行。生成页全量重建，旧3.1.3.5制品不变。

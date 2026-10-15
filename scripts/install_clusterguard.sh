@@ -1118,11 +1118,64 @@ redact_remote_output() {
 }
 
 remote_exec_checked() {
-  local host="$1" label="$2" command="$3" output status
-  set +e
-  output="$(remote_exec "${host}" "${command}" 2>&1)"
-  status=$?
-  set -e
+  local host="$1" label="$2" command="$3" progress_mode="${4:-}" output status status_file="" line relay_status remote_status
+  case "${progress_mode}" in
+    "")
+      set +e
+      output="$(remote_exec "${host}" "${command}" 2>&1)"
+      status=$?
+      set -e
+      ;;
+    mysql-install)
+      status_file="$(mktemp /tmp/clusterguard-remote-status.XXXXXX)" || return 125
+      chmod 0600 "${status_file}" || { rm -f "${status_file}"; return 125; }
+      output=""
+      relay_status=0
+      set +e
+      while IFS= read -r line || [[ -n "${line}" ]]; do
+        output+="${line}"$'\n'
+        if [[ "${line}" =~ ^MySQL[[:space:]][0-9]+:[[:space:]]checking[[:space:]]database[[:space:]]archive$ ||
+              "${line}" =~ ^MySQL[[:space:]][0-9]+:[[:space:]]archive[[:space:]]verified[[:space:]]\([0-9]+[[:space:]]seconds\)$ ||
+              "${line}" =~ ^MySQL[[:space:]][0-9]+:[[:space:]]extracting[[:space:]]database[[:space:]]software$ ||
+              "${line}" =~ ^MySQL[[:space:]][0-9]+:[[:space:]]software[[:space:]]extracted[[:space:]]\([0-9]+[[:space:]]seconds\)$ ||
+              "${line}" =~ ^MySQL[[:space:]][0-9]+:[[:space:]](validation|initialization)[[:space:]]started$ ||
+              "${line}" =~ ^MySQL[[:space:]][0-9]+:[[:space:]](validation|initialization)[[:space:]]finished[[:space:]]\(exit=[0-9]+,[[:space:]][0-9]+[[:space:]]seconds\)$ ||
+              "${line}" =~ ^MySQL[[:space:]][0-9]+:[[:space:]]starting[[:space:]]database[[:space:]]service$ ||
+              "${line}" =~ ^MySQL[[:space:]][0-9]+:[[:space:]]database[[:space:]]service[[:space:]]ready[[:space:]]\([0-9]+[[:space:]]seconds\)$ ]]; then
+          printf '%s\n' "${line}" || relay_status=$?
+        fi
+      done < <(
+        set +e
+        remote_exec "${host}" "${command}" 2>&1
+        remote_status=$?
+        printf '%s\n' "${remote_status}" >"${status_file}"
+      )
+      set -e
+      output="$(printf '%s' "${output}")"
+      if [[ ! -s "${status_file}" ]]; then
+        rm -f "${status_file}"
+        printf '本地进度中继无法读取远端退出码：%s [%s]\n' "${label}" "${host}" >&2
+        return 125
+      fi
+      if ! status="$(cat "${status_file}")"; then
+        rm -f "${status_file}"
+        return 125
+      fi
+      rm -f "${status_file}"
+      if [[ ! "${status}" =~ ^[0-9]+$ || "${status}" -gt 255 ]]; then
+        printf '本地进度中继收到无效远端退出码：%s [%s]\n' "${label}" "${host}" >&2
+        return 125
+      fi
+      if [[ "${relay_status}" -ne 0 ]]; then
+        printf '本地进度中继失败：%s [%s] (exit=%s)\n' "${label}" "${host}" "${relay_status}" >&2
+        return "${relay_status}"
+      fi
+      ;;
+    *)
+      printf '内部错误：不支持的远端进度模式 %s\n' "${progress_mode}" >&2
+      return 2
+      ;;
+  esac
   if [[ "${status}" -ne 0 ]]; then
     output="$(redact_remote_output "${output}")"
     printf '远端步骤失败：%s [%s] (exit=%s)\n' "${label}" "${host}" "${status}" >&2
@@ -1637,13 +1690,166 @@ verify_remote_tcp_reachability() {
 }
 
 distribute_database_package() {
-  local host package_name destination
+  local host package_name destination hash_output expected_sha probe remote_temp temp_suffix node_started elapsed
   package_name="$(basename "${database_package}")"
+  [[ "${package_name}" =~ ^[A-Za-z0-9._+-]+$ && "${package_name}" != "." && "${package_name}" != ".." ]] || die "数据库介质文件名包含不支持的字符"
+  [[ "${database_engine}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "数据库引擎目录名包含不支持的字符"
+  if command -v sha256sum >/dev/null 2>&1; then
+    hash_output="$(sha256sum -- "${database_package}")" || die "无法计算数据库介质 SHA256：${database_package}"
+  elif command -v shasum >/dev/null 2>&1; then
+    hash_output="$(shasum -a 256 -- "${database_package}")" || die "无法计算数据库介质 SHA256：${database_package}"
+  else
+    die "缺少本地 SHA256 工具，拒绝分发数据库介质"
+  fi
+  expected_sha="$(printf '%s\n' "${hash_output}" | awk 'NR == 1 {print $1}')"
+  expected_sha="$(printf '%s' "${expected_sha}" | tr 'A-F' 'a-f')"
+  [[ "${expected_sha}" =~ ^[0-9a-f]{64}$ ]] || die "数据库介质 SHA256 输出无效：${database_package}"
   destination="/data/packages/${database_engine}/${package_name}"
   for host in "${all_nodes[@]}"; do
-    remote_exec "${host}" "install -d -m 0750 /data/packages/${database_engine}"
-    remote_copy "${database_package}" "${host}" "${destination}"
-    remote_exec "${host}" "chmod 0640 '${destination}'"
+    node_started="${SECONDS}"
+    if ! probe="$(remote_exec "${host}" "
+set -euo pipefail
+directory='/data/packages/${database_engine}'
+destination='${destination}'
+for path in /data /data/packages \"\${directory}\"; do
+  if test -L \"\${path}\"; then
+    printf '数据库介质目标路径不能是符号链接：%s\\n' \"\${path}\" >&2
+    exit 80
+  fi
+done
+if test -e /data; then
+  test -d /data || exit 81
+else
+  install -d -o root -g root -m 0755 /data
+fi
+if test -e /data/packages; then
+  test -d /data/packages || exit 81
+else
+  install -d -o root -g root -m 0750 /data/packages
+fi
+required_parent_uid=0
+for path in /data /data/packages; do
+  parent_identity=\$(stat -c '%u:%a' -- \"\${path}\" 2>/dev/null || stat -f '%u:%Lp' -- \"\${path}\") || exit 81
+  parent_uid=\${parent_identity%%:*}
+  parent_mode=\${parent_identity#*:}
+  if [[ ! \"\${parent_uid}\" =~ ^[0-9]+$ || ! \"\${parent_mode}\" =~ ^[0-7]{3,4}$ ]]; then
+    exit 81
+  fi
+  if [[ \"\${parent_uid}\" != \"\${required_parent_uid}\" ]] || (( (8#\${parent_mode} & 8#022) != 0 )); then
+    printf '数据库介质父目录必须由 root 拥有且不能被组或其他用户写入：%s\\n' \"\${path}\" >&2
+    exit 81
+  fi
+done
+install -d -o root -g root -m 0750 \"\${directory}\"
+directory_identity=\$(stat -c '%u:%g:%a' -- \"\${directory}\" 2>/dev/null || stat -f '%u:%g:%Lp' -- \"\${directory}\") || exit 81
+test \"\${directory_identity}\" = '0:0:750' || exit 81
+for path in /data /data/packages \"\${directory}\"; do
+  test -d \"\${path}\" && test ! -L \"\${path}\" || exit 81
+done
+command -v sha256sum >/dev/null 2>&1 || {
+  printf '远端缺少 SHA256 工具\\n' >&2
+  exit 82
+}
+if test -L \"\${destination}\"; then
+  printf '数据库介质目标文件不能是符号链接\\n' >&2
+  exit 83
+fi
+if test -e \"\${destination}\"; then
+  test -f \"\${destination}\" || {
+    printf '数据库介质目标不是普通文件\\n' >&2
+    exit 84
+  }
+  actual_output=\$(sha256sum -- \"\${destination}\") || exit 85
+  actual_sha=\${actual_output%% *}
+  test \"\${actual_sha}\" = '${expected_sha}' || {
+    printf 'transfer\\n'
+    exit 0
+  }
+  chown root:root \"\${destination}\"
+  chmod 0640 \"\${destination}\"
+  file_identity=\$(stat -c '%u:%g:%a' -- \"\${destination}\" 2>/dev/null || stat -f '%u:%g:%Lp' -- \"\${destination}\") || exit 86
+  test \"\${file_identity}\" = '0:0:640' || exit 86
+  printf 'reuse\\n'
+else
+  printf 'transfer\\n'
+fi
+" 2>&1)"; then
+      probe="$(redact_remote_output "${probe}")"
+      [[ -z "${probe}" ]] || printf '%s\n' "${probe}" >&2
+      die "${host} 无法安全检查数据库介质目标"
+    fi
+    probe="$(printf '%s\n' "${probe}" | tail -n 1 | tr -d '\r')"
+    if [[ "${probe}" == "reuse" ]]; then
+      elapsed=$((SECONDS - node_started))
+      log "复用数据库介质：${host}（SHA256 一致，耗时 ${elapsed} 秒）"
+      continue
+    fi
+    [[ "${probe}" == "transfer" ]] || die "${host} 返回了无效的数据库介质检查结果"
+
+    if ! remote_temp="$(remote_exec "${host}" "
+set -euo pipefail
+directory='/data/packages/${database_engine}'
+destination='${destination}'
+for path in /data /data/packages \"\${directory}\" \"\${destination}\"; do
+  test ! -L \"\${path}\" || exit 87
+done
+test -d \"\${directory}\" || exit 88
+temp=\$(mktemp \"\${directory}/.${package_name}.upload.XXXXXX\")
+test -f \"\${temp}\" && test ! -L \"\${temp}\" || exit 89
+chmod 0600 \"\${temp}\"
+printf '%s\\n' \"\${temp}\"
+" 2>&1)"; then
+      remote_temp="$(redact_remote_output "${remote_temp}")"
+      [[ -z "${remote_temp}" ]] || printf '%s\n' "${remote_temp}" >&2
+      die "${host} 无法创建数据库介质私有临时文件"
+    fi
+    remote_temp="$(printf '%s\n' "${remote_temp}" | tail -n 1 | tr -d '\r')"
+    temp_suffix="${remote_temp#"/data/packages/${database_engine}/.${package_name}.upload."}"
+    if [[ "${remote_temp}" != "/data/packages/${database_engine}/.${package_name}.upload.${temp_suffix}" || ! "${temp_suffix}" =~ ^[A-Za-z0-9]+$ ]]; then
+      die "${host} 返回了无效的数据库介质临时路径"
+    fi
+    if ! remote_copy "${database_package}" "${host}" "${remote_temp}"; then
+      remote_exec "${host}" "test -L '${remote_temp}' || rm -f -- '${remote_temp}'" >/dev/null 2>&1 || true
+      die "向 ${host} 传输数据库介质失败"
+    fi
+    if ! remote_exec "${host}" "
+set -euo pipefail
+directory='/data/packages/${database_engine}'
+destination='${destination}'
+temp='${remote_temp}'
+cleanup() { test -L \"\${temp}\" || rm -f -- \"\${temp}\"; }
+trap cleanup EXIT
+for path in /data /data/packages \"\${directory}\" \"\${destination}\" \"\${temp}\"; do
+  test ! -L \"\${path}\" || exit 90
+done
+test -d \"\${directory}\" || exit 91
+test -f \"\${temp}\" || exit 92
+if test -e \"\${destination}\"; then test -f \"\${destination}\" || exit 93; fi
+command -v sha256sum >/dev/null 2>&1 || exit 94
+actual_output=\$(sha256sum -- \"\${temp}\") || exit 95
+actual_sha=\${actual_output%% *}
+test \"\${actual_sha}\" = '${expected_sha}' || {
+  printf '数据库介质传输后 SHA256 不匹配\\n' >&2
+  exit 96
+}
+chown root:root \"\${temp}\"
+chmod 0640 \"\${temp}\"
+file_identity=\$(stat -c '%u:%g:%a' -- \"\${temp}\" 2>/dev/null || stat -f '%u:%g:%Lp' -- \"\${temp}\") || exit 97
+test \"\${file_identity}\" = '0:0:640' || exit 97
+mv -fT -- \"\${temp}\" \"\${destination}\"
+trap - EXIT
+test -f \"\${destination}\" && test ! -L \"\${destination}\" || exit 98
+file_identity=\$(stat -c '%u:%g:%a' -- \"\${destination}\" 2>/dev/null || stat -f '%u:%g:%Lp' -- \"\${destination}\") || exit 99
+test \"\${file_identity}\" = '0:0:640' || exit 99
+actual_output=\$(sha256sum -- \"\${destination}\") || exit 100
+actual_sha=\${actual_output%% *}
+test \"\${actual_sha}\" = '${expected_sha}' || exit 101
+"; then
+      remote_exec "${host}" "test -L '${remote_temp}' || rm -f -- '${remote_temp}'" >/dev/null 2>&1 || true
+      die "${host} 数据库介质校验或原子发布失败"
+    fi
+    elapsed=$((SECONDS - node_started))
+    log "传输数据库介质：${host}（SHA256 已校验并原子发布，耗时 ${elapsed} 秒）"
   done
 }
 
@@ -1727,7 +1933,7 @@ postgresql_payload() {
 }
 
 remote_json_helper() {
-  local host="$1" helper="$2" argument="$3" payload="$4" environment_prefix="${5:-}" payload_file remote_payload command
+  local host="$1" helper="$2" argument="$3" payload="$4" environment_prefix="${5:-}" progress_mode="${6:-}" payload_file remote_payload command
   payload_file="$(mktemp "${work_dir}/payload.XXXXXX.json")"
   printf '%s\n' "${payload}" >"${payload_file}"; chmod 0600 "${payload_file}"
   remote_payload="${remote_stage}/$(basename "${payload_file}")"
@@ -1736,7 +1942,7 @@ remote_json_helper() {
   command="PATH=/usr/local/bin:/usr/local/libexec:/usr/sbin:/usr/bin:/sbin:/bin '${helper}'"
   [[ -z "${environment_prefix}" ]] || command="${environment_prefix} ${command}"
   [[ -z "${argument}" ]] || command+=" '${argument}'"
-  remote_exec_checked "${host}" "$(basename "${helper}")" "${command} <'${remote_payload}'; status=\$?; rm -f '${remote_payload}'; exit \${status}"
+  remote_exec_checked "${host}" "$(basename "${helper}")" "${command} <'${remote_payload}'; status=\$?; rm -f '${remote_payload}'; exit \${status}" "${progress_mode}"
 }
 
 verify_managed_mysql_node() {
@@ -1764,7 +1970,7 @@ initialize_mysql_cluster() {
       fi
       log "安装或续接 MySQL：${host}:${database_port}"
       payload="$(mysql_payload "${host}")"
-      remote_json_helper "${host}" /usr/local/libexec/clusterguard-mysql-install.sh "" "${payload}"
+      remote_json_helper "${host}" /usr/local/libexec/clusterguard-mysql-install.sh "" "${payload}" "" mysql-install
       verify_managed_mysql_node "${host}" "安装后"
     done
     set_state_phase installed

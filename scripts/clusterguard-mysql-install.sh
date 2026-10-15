@@ -6,7 +6,8 @@ payload="$(mktemp /tmp/clusterguard-install.XXXXXX)"
 chmod 0600 "${payload}"
 production_template=""
 initialize_config=""
-trap 'rm -f "${payload}"; [[ -z "${production_template}" ]] || rm -f "${production_template}"; [[ -z "${initialize_config}" ]] || rm -f "${initialize_config}"' EXIT
+archive_listing=""
+trap 'rm -f "${payload}"; [[ -z "${production_template}" ]] || rm -f "${production_template}"; [[ -z "${initialize_config}" ]] || rm -f "${initialize_config}"; [[ -z "${archive_listing:-}" ]] || rm -f "${archive_listing}"' EXIT
 cat >"${payload}"
 jq -e '.target.node_name and .target.mysql_port and .secrets.mysql_root_password and .secrets.mysql_discovery_username and .secrets.mysql_discovery_password and .secrets.mysql_operation_username and .secrets.mysql_operation_password and .secrets.mysql_replication_username and .secrets.replication_password' "${payload}" >/dev/null
 
@@ -308,8 +309,14 @@ if [[ -n "${mysql_client}" && -f "${client_file}" ]] && "${mysql_client}" --defa
 fi
 
 [[ -n "${package_path}" && -f "${package_path}" ]] || { echo "a local MySQL binary package is required" >&2; exit 3; }
-tar -tf "${package_path}" >/dev/null 2>&1 || { echo "MySQL package is not a readable tar archive" >&2; exit 3; }
-if ! tar -tf "${package_path}" | awk '
+archive_started=${SECONDS}
+printf 'MySQL %s: checking database archive\n' "${port}"
+archive_listing="$(mktemp /tmp/clusterguard-mysql-archive.XXXXXX)"
+chmod 0600 "${archive_listing}"
+# Read and validate the complete compressed stream once. Keep the path checks
+# before any service retirement or extraction, including for a damaged archive.
+tar -tf "${package_path}" >"${archive_listing}" 2>/dev/null || { echo "MySQL package is not a readable tar archive" >&2; exit 3; }
+if ! awk '
   /(^\/|(^|\/)\.\.($|\/))/ {bad=1}
   {
     original=$0
@@ -327,10 +334,13 @@ if ! tar -tf "${package_path}" | awk '
     if (count >= 2 && parts[2] == ".clusterguard-managed") bad=1
   }
   END {exit !(root != "" && !bad)}
-'; then
+' "${archive_listing}"; then
   echo "MySQL package must contain one safe top-level directory" >&2
   exit 3
 fi
+rm -f "${archive_listing}"
+archive_listing=""
+printf 'MySQL %s: archive verified (%s seconds)\n' "${port}" "$((SECONDS - archive_started))"
 quiesce_managed_mysql_service() {
   local load_state fragment dropins active_state main_pid
   load_state="$(systemctl show --property=LoadState --value "${service}")" || return 3
@@ -645,7 +655,10 @@ installation_fresh_empty=true
 printf 'managed_by=clusterguard-ha\nport=%s\ninstance=%s\n' "${port}" "${install_parent}" >"${software_dir}/.clusterguard-managed"
 chmod 0600 "${software_dir}/.clusterguard-managed"
 cg_mysql_write_install_state preparing
+unpack_started=${SECONDS}
+printf 'MySQL %s: extracting database software\n' "${port}"
 tar --no-same-owner --no-same-permissions -xf "${package_path}" -C "${software_dir}" --strip-components=1
+printf 'MySQL %s: software extracted (%s seconds)\n' "${port}" "$((SECONDS - unpack_started))"
 mysqld="${software_dir}/bin/mysqld"
 mysql="${software_dir}/bin/mysql"
 mysqladmin="${software_dir}/bin/mysqladmin"
@@ -845,8 +858,9 @@ chown -R mysql:mysql "${data_dir}" "${log_dir}" "${run_dir}" "${install_parent}/
 chown root:mysql "${config_dir}"
 
 run_mysql_setup_step() {
-  local phase="$1" output status secret
+  local phase="$1" output status secret started=${SECONDS}
   shift
+  printf 'MySQL %s: %s started\n' "${port:-unknown}" "${phase}" >&2
   if output="$("$@" 9>&- 2>&1)"; then
     status=0
   else
@@ -860,6 +874,7 @@ run_mysql_setup_step() {
     [[ -z "${secret}" ]] || output="${output//"${secret}"/<redacted>}"
   done
   if [[ -n "${output}" ]]; then printf '%s\n' "${output}" >&2; fi
+  printf 'MySQL %s: %s finished (exit=%s, %s seconds)\n' "${port:-unknown}" "${phase}" "${status}" "$((SECONDS - started))" >&2
   return "${status}"
 }
 
@@ -930,6 +945,8 @@ chmod 0644 "${config_dir}/logrotate.conf"
 install -d -m 0755 /etc/logrotate.d
 ln -sfn "${config_dir}/logrotate.conf" "/etc/logrotate.d/clusterguard-mysql-${port}"
 cg_mysql_write_install_state starting
+startup_started=${SECONDS}
+printf 'MySQL %s: starting database service\n' "${port}"
 systemctl enable --now "${service}" 9>&-
 
 for _ in $(seq 1 60); do
@@ -937,6 +954,7 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 "${mysql}" --no-defaults --protocol=socket --socket="${socket}" -uroot -e 'SELECT 1' >/dev/null
+printf 'MySQL %s: database service ready (%s seconds)\n' "${port}" "$((SECONDS - startup_started))"
 password_hex="$(printf '%s' "${root_password}" | od -An -tx1 | tr -d ' \n')"
 write_managed_private_client
 

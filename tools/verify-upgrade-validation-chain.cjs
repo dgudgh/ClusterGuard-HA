@@ -182,6 +182,54 @@ const writeOperationTree = (root, name, status, events) => {
 
 const CHECKS = [
   {
+    rule:'12 / 22', title:'MySQL installation streams bounded progress and preserves failure evidence',
+    run:()=>{
+      const installer=read('scripts/install_clusterguard.sh')||'';
+      const start=installer.indexOf('\nremote_exec_checked() {'),end=installer.indexOf('\nremote_copy() {',start);
+      if(start<0||end<start)return 'missing bounded checked execution function';
+      const checked=installer.slice(start,end);
+      for(const proof of ['mysql-install)','^MySQL[[:space:]][0-9]+:','archive$','remote_status=$?','redact_remote_output "${output}"','tail -n 120','return "${status}"'])if(!checked.includes(proof))return 'progress lost a metadata boundary or failure behavior: '+proof;
+      if(!installer.includes('remote_json_helper "${host}" /usr/local/libexec/clusterguard-mysql-install.sh "" "${payload}" "" mysql-install'))return 'MySQL install does not enable the constrained progress relay';
+      const tests=read('scripts/installer_progress_test.go')||'';
+      for(const proof of ['TestInstallerMySQLProgressRelaysOnlyFixedMetadata','TestInstallerMySQLProgressRelaysBeforeRemoteCompletes','TestInstallerMySQLProgressFailurePreservesExitAndRedactsCapturedOutput','TestInstallerRemoteChecksDoNotRelayProgressUnlessExplicitlyEnabled'])if(!tests.includes(proof))return 'missing progress stream behavior regression: '+proof;
+      return true;
+    },
+  },
+  {
+    rule:'12 / 22', title:'database media reuse verifies content and publishes privately before installation',
+    run:()=>{
+      const installer=read('scripts/install_clusterguard.sh')||'';
+      const start=installer.indexOf('\ndistribute_database_package() {'), end=installer.indexOf('\nprepare_postgresql_binary_package() {',start);
+      if(start<0||end<start)return 'missing bounded database media distribution function';
+      const transfer=installer.slice(start,end);
+      for(const proof of ['sha256sum -- "${database_package}"','shasum -a 256 -- "${database_package}"','^[0-9a-f]{64}$','actual_sha','expected_sha','SHA256 一致','mktemp','chmod 0600','chmod 0640','chown root:root','0:0:750','0:0:640','required_parent_uid=0','8#022','trap cleanup EXIT','mv -fT --','test -L'])if(!transfer.includes(proof))return 'missing content identity, private transfer or filesystem guard: '+proof;
+      const verify=transfer.indexOf("exit 96"), publish=transfer.indexOf('mv -fT --');
+      if(verify<0||publish<verify)return 'media is published before the transferred SHA256 is checked';
+      if(transfer.includes('remote_copy "${database_package}" "${host}" "${destination}"'))return 'transfer writes directly to the previously verified destination';
+      const tests=read('scripts/installer_media_reuse_test.go')||'';
+      for(const proof of ['TestInstallerDatabaseMediaReusesOnlyMatchingSHA256','TestInstallerDatabaseMediaReplacesSameLengthDifferentContentAtomically','TestInstallerDatabaseMediaKeepsOldFileOnCorruptCopyOrRemoteFailure','TestInstallerDatabaseMediaRejectsTargetSymlinks','TestInstallerDatabaseMediaFailsClosedWhenHashingFails','TestInstallerDatabaseMediaRejectsUnsafeParentDirectoriesWithoutChangingThem'])if(!tests.includes(proof))return 'missing media cache behavior regression: '+proof;
+      return true;
+    },
+  },
+  {
+    rule:'12 / 22', title:'MySQL archive validation reuses one complete private listing before mutation',
+    run:()=>{
+      const native=read('scripts/clusterguard-mysql-install.sh')||'';
+      const start=native.indexOf('[[ -n "${package_path}" && -f "${package_path}" ]]');
+      const end=native.indexOf('\nquiesce_managed_mysql_service() {',start);
+      if(start<0||end<start)return 'missing archive validation before installation preparation';
+      const validation=native.slice(start,end);
+      if((validation.match(/\btar -tf /g)||[]).length!==1)return 'archive readability and paths decode the compressed stream more than once';
+      if(!validation.includes('tar -tf "${package_path}" >"${archive_listing}" 2>/dev/null || {')||!validation.includes('exit 3; }'))return 'an unreadable compressed stream can pass validation';
+      if(!validation.includes('chmod 0600 "${archive_listing}"')||!validation.includes('mktemp /tmp/clusterguard-mysql-archive.XXXXXX')||!native.split('\n').find(line=>line.startsWith('trap ')&&line.includes('rm -f "${archive_listing}"')))return 'archive listing is not private or cleaned on exit';
+      if(!validation.includes('if ! awk')||!validation.includes('\' "${archive_listing}"; then')||!validation.includes('END {exit !(root != "" && !bad)}'))return 'safe-root checks no longer consume the full validated listing';
+      if(native.indexOf('tar --no-same-owner --no-same-permissions -xf')<end)return 'extraction precedes archive validation';
+      for(const proof of ['archive verified (%s seconds)','software extracted (%s seconds)','finished (exit=%s, %s seconds)','database service ready (%s seconds)'])if(!native.includes(proof))return 'installation stage timing is missing: '+proof;
+      if(!(read('scripts/mysql_archive_validation_test.go')||'').includes('TestMySQLArchiveValidationReadsOnceAndRejectsUnsafeContent'))return 'missing actual tar validation regression';
+      return true;
+    },
+  },
+  {
     rule:'12 / 22', title:'update Helper starts with an absent volatile runtime directory and keeps its sandbox',
     run:()=>{
       const unit=(read('packaging/systemd/clusterguard-update-helper.service')||'').split('\n').filter(line=>line&&!line.startsWith('#')).join('\n');
@@ -1206,6 +1254,9 @@ const reportOpen = failures => {
 // The files the rules read. The self-test copies exactly these, so a mutation cannot be
 // caught by reading something the gate does not actually consult.
 const READ_FILES = [
+  'scripts/installer_progress_test.go',
+  'scripts/installer_media_reuse_test.go',
+  'scripts/mysql_archive_validation_test.go',
   'packaging/systemd/clusterguard-update-helper.service',
   'scripts/mysql_install_state_test.go','scripts/mysql_preflight_test.go','packaging/rpm/nfpm.yaml',
   'scripts/mysql_initialize_test.go',
@@ -1232,6 +1283,20 @@ const READ_FILES = [
 ];
 
 const MUTATIONS = [
+  {name:'MySQL installer hides successful stage progress again',file:'scripts/install_clusterguard.sh',find:'remote_json_helper "${host}" /usr/local/libexec/clusterguard-mysql-install.sh "" "${payload}" "" mysql-install',replace:'remote_json_helper "${host}" /usr/local/libexec/clusterguard-mysql-install.sh "" "${payload}"',rule:'MySQL installation streams bounded progress and preserves failure evidence'},
+  {name:'MySQL progress accepts trailing raw output',file:'scripts/install_clusterguard.sh',find:'archive$ ||',replace:'archive ||',rule:'MySQL installation streams bounded progress and preserves failure evidence'},
+  {name:'MySQL progress failure loses credential redaction',file:'scripts/install_clusterguard.sh',find:'output="$(redact_remote_output "${output}")"',replace:'output="${output}"',rule:'MySQL installation streams bounded progress and preserves failure evidence'},
+  {name:'MySQL progress changes remote failure to success',file:'scripts/install_clusterguard.sh',find:'remote_status=$?',replace:'remote_status=0',rule:'MySQL installation streams bounded progress and preserves failure evidence'},
+  {name:'database media accepts nonroot cache parents',file:'scripts/install_clusterguard.sh',find:'required_parent_uid=0',replace:'required_parent_uid=1000',rule:'database media reuse verifies content and publishes privately before installation'},
+  {name:'database media accepts writable cache parents',file:'scripts/install_clusterguard.sh',find:'8#022',replace:'8#000',rule:'database media reuse verifies content and publishes privately before installation'},
+  {name:'database media upload overwrites the live destination',file:'scripts/install_clusterguard.sh',find:'remote_copy "${database_package}" "${host}" "${remote_temp}"',replace:'remote_copy "${database_package}" "${host}" "${destination}"',rule:'database media reuse verifies content and publishes privately before installation'},
+  {name:'database media temporary upload is public',file:'scripts/install_clusterguard.sh',find:'chmod 0600 \\"\\${temp}\\"',replace:'chmod 0644 \\"\\${temp}\\"',rule:'database media reuse verifies content and publishes privately before installation'},
+  {name:'database media publication loses the atomic move',file:'scripts/install_clusterguard.sh',find:'mv -fT --',replace:'cp --',rule:'database media reuse verifies content and publishes privately before installation'},
+  {name:'database media engine directory permits nonroot ownership',file:'scripts/install_clusterguard.sh',find:"0:0:750",replace:"1000:1000:750",rule:'database media reuse verifies content and publishes privately before installation'},
+  {name:'MySQL archive readability decodes the stream twice again',file:'scripts/clusterguard-mysql-install.sh',find:'tar -tf "${package_path}" >"${archive_listing}"',replace:'tar -tf "${package_path}" >/dev/null\ntar -tf "${package_path}" >"${archive_listing}"',rule:'MySQL archive validation reuses one complete private listing before mutation'},
+  {name:'MySQL archive listing is world writable',file:'scripts/clusterguard-mysql-install.sh',find:'chmod 0600 "${archive_listing}"',replace:'chmod 0666 "${archive_listing}"',rule:'MySQL archive validation reuses one complete private listing before mutation'},
+  {name:'MySQL root validation examines an empty file',file:'scripts/clusterguard-mysql-install.sh',find:'\' "${archive_listing}"; then',replace:'\' /dev/null; then',rule:'MySQL archive validation reuses one complete private listing before mutation'},
+  {name:'MySQL archive read errors are ignored',file:'scripts/clusterguard-mysql-install.sh',find:'tar -tf "${package_path}" >"${archive_listing}" 2>/dev/null || {',replace:'tar -tf "${package_path}" >"${archive_listing}" 2>/dev/null && {',rule:'MySQL archive validation reuses one complete private listing before mutation'},
   {name:'Helper checks the missing runtime directory before creating it again',file:'packaging/systemd/clusterguard-update-helper.service',find:'ReadWritePaths=-/run/clusterguard ',replace:'ReadWritePaths=/run/clusterguard ',rule:'update Helper starts with an absent volatile runtime directory and keeps its sandbox'},
   {name:'Helper ignores a missing private workspace too',file:'packaging/systemd/clusterguard-update-helper.service',find:'ReadWritePaths=-/run/clusterguard /var/lib/clusterguard/updates /var/lib/clusterguard-update-private ',replace:'ReadWritePaths=-/run/clusterguard /var/lib/clusterguard/updates -/var/lib/clusterguard-update-private ',rule:'update Helper starts with an absent volatile runtime directory and keeps its sandbox'},
   {name:'Helper makes the shared parent inaccessible to engines',file:'packaging/systemd/clusterguard-update-helper.service',find:'-m 0755 -o root -g clusterguard',replace:'-m 0750 -o root -g clusterguard',rule:'update Helper starts with an absent volatile runtime directory and keeps its sandbox'},

@@ -197,6 +197,14 @@ The official offline package can embed approved database media directly through 
 
 The installer requires the media to be readable `tar`, `tar.gz`, `tgz`, `tar.xz`, `tar.bz2`, or `tbz2`, and the compressed package must have only one secure top-level directory. It uses `--engine` and `--database-version` to match filenames; for example, MySQL 8.0.44 will match packages with filenames that simultaneously include `mysql` or `upsql` and `8.0.44`. Multiple candidates in the selected directory still require an explicit `-r`. Older published installers also require `-r` when both the kit and `/opt` contain a match.
 
+### 4.1 Installation duration and media reuse
+
+From 3.1.3.6, native MySQL installation reads one complete archive listing before the existing safety checks and extraction. Live progress reports archive inspection, extraction, configuration validation, initialization and startup duration and failure stage. Distribution logs distinguish reuse from transfer.
+
+An existing filename under /data/packages/<engine>/ is reused only after its actual SHA256 matches. Different content uploads privately and is verified before atomic replacement. Names, sizes and deployment state are insufficient, and this transfer check does not replace vendor provenance or an approved checksum. Existing /data and /data/packages are checked without permission changes: they must be root-owned and not group/other writable. Unsafe parents reject distribution instead of automatically changing the data volume.
+
+In a single comparison using the same approximately 831 MiB vendor archive, inspection decreased from 81.15 to 39.53 seconds. Extraction, InnoDB initialization, transfer and cluster verification remain separate costs; the roughly 51.3% stage reduction is not a complete-installation result. See [3.1.3.6 notes](release-3.1.3.6.md) for source, isolated measurements and outstanding field checks.
+
 MySQL 8.0 example:
 
 ```bash
