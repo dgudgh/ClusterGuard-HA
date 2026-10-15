@@ -37,3 +37,10 @@
 
 - 本次重新执行真实Chrome隔离API审计：node-safety31、bootstrap5、engine-pages73，共109项通过，0失败；完整HTML112页。独立最终代码/说明审查未发现构建阻断。
 - 对照[MySQL8.0官方初始化说明](https://dev.mysql.com/doc/refman/8.0/en/data-directory-initialization.html)：影响InnoDB物理布局的配置必须在初始化时保留，因此没有使用丢弃生产布局的空白初始化配置。
+
+## 最终完整介质
+
+- 新身份3.1.3.3/RPM2.2-111，从干净且已推送源码`055dd19c28ee5e70a917938eb1bc8f324dd2fb7c`构建，未修改旧3.1.3.2包字节。
+- 完整tar 33827556字节，SHA256 `9f8775acd404f4c3d7a6b497b805d5227ce5f12d8b4d36c6bc944a89a2ed251e`；结构校验15项通过。解包help及control-only只读plan通过，不连接远端。
+- 原生隔离初始化证据与完整包结构证据独立；实际3306安装没有续跑，部分失败目录和站点文件保留。没有放宽rebuild或数据删除条件。
+- RPM未生产签名，既有ART完整包门禁适配缺口未在此任务旁路处理，ART/FIELD保持OPEN；GitHub只推源码/文档，不声称Release已发布。
