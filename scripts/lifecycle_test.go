@@ -1092,7 +1092,7 @@ func TestNewNodeBootstrapDoesNotCreateErrantGTIDsBeforeSynchronization(t *testin
 	}
 }
 
-func TestMySQLInstallerAutoTunesMemoryWithProductionDefaults(t *testing.T) {
+func TestMySQLLegacyFallbackKeepsBoundedMemoryTuning(t *testing.T) {
 	contents, err := os.ReadFile("clusterguard-mysql-install.sh")
 	if err != nil {
 		t.Fatal(err)
@@ -1131,7 +1131,7 @@ func TestMySQLInstallerAutoTunesMemoryWithProductionDefaults(t *testing.T) {
 	if functionStart < 0 {
 		t.Fatal("cannot isolate MySQL memory tuning function for behavior verification")
 	}
-	functionEnd := strings.Index(text[functionStart:], "\n}\n\ntotal_memory_mb=")
+	functionEnd := strings.Index(text[functionStart:], "\n}\n\n# Production MySQL 8.0")
 	if functionEnd < 0 {
 		t.Fatal("cannot isolate MySQL memory tuning function for behavior verification")
 	}
@@ -1384,11 +1384,11 @@ func TestMySQLInstallUsesManagedTransactionAndOwnsTheDataParent(t *testing.T) {
 	}
 	installText := string(installContents)
 	for _, required := range []string{
-		`data_root="$(jq -r '.target.data_root // "/var/lib/clusterguard"' "${payload}")"`,
-		`install_parent="${data_root}/mysql/${port}"`,
-		`state_root="/var/lib/clusterguard"`,
-		`log_root="/var/log/clusterguard"`,
-		`config_root="/etc/clusterguard"`,
+		`cg_mysql_layout "${data_root}" "${port}" "${software_dir}"`,
+		`install_parent="${cg_mysql_instance}"`,
+		`state_root="${data_root}"`,
+		`log_root="${install_parent}"`,
+		`config_root="${install_parent}"`,
 		`managed_marker="${install_parent}/.clusterguard-managed"`,
 		`installing_marker="${install_parent}/.installing"`,
 		`ensure_mysql_traverse "${state_root}"`,
@@ -1397,7 +1397,7 @@ func TestMySQLInstallUsesManagedTransactionAndOwnsTheDataParent(t *testing.T) {
 		`ensure_mysql_traverse "${config_dir}"`,
 		`setfacl -m u:mysql:--x "${directory}"`,
 		`runuser -u mysql -- test -x "${directory}"`,
-		`chown -R mysql:mysql "${install_parent}" "${log_dir}" "${run_dir}"`,
+		`chown -R mysql:mysql "${data_dir}" "${log_dir}" "${run_dir}"`,
 		`chown root:mysql "${config_file}"`,
 		`rm -f "${installing_marker}"`,
 	} {
@@ -1408,12 +1408,12 @@ func TestMySQLInstallUsesManagedTransactionAndOwnsTheDataParent(t *testing.T) {
 	if !strings.Contains(installText, `refusing to replace an unmanaged partial MySQL data directory`) {
 		t.Fatal("partial MySQL data can be replaced without durable ClusterGuard ownership evidence")
 	}
-	if strings.Contains(installText, `chown -R mysql:mysql "${data_dir}" "${log_dir}" "${run_dir}"`) {
-		t.Fatal("MySQL install still leaves the protected data parent owned by root")
+	if strings.Contains(installText, `chown -R mysql:mysql "${install_parent}"`) || !strings.Contains(installText, `chown root:root "${install_parent}" "${software_dir}"`) {
+		t.Fatal("MySQL installation exposes configuration or software ownership to the mysql user")
 	}
 	stop := strings.Index(installText, "\nquiesce_managed_mysql_service\n")
-	recreate := strings.LastIndex(installText, `mkdir -p "${install_root}/software" "${data_dir}" "${log_dir}" "${run_dir}"`)
-	ownership := strings.Index(installText, `chown -R mysql:mysql "${install_parent}" "${log_dir}" "${run_dir}"`)
+	recreate := strings.LastIndex(installText, `mkdir -p "${software_dir}" "${data_dir}" "${log_dir}" "${run_dir}"`)
+	ownership := strings.Index(installText, `chown -R mysql:mysql "${data_dir}" "${log_dir}" "${run_dir}"`)
 	if stop < 0 || recreate < 0 || ownership < 0 || recreate < stop || ownership < recreate {
 		t.Fatal("managed MySQL retry does not recreate systemd RuntimeDirectory after stopping the prior attempt")
 	}

@@ -142,6 +142,24 @@ check('installer help runs without deployment', () => {
   const help = run('bash',[path.join(kit,'install_clusterguard.sh'),'--help']);
   assert.ok(help.includes('--execute') && /plan|计划/.test(help));
 });
+check('approved production MySQL templates and path helper are shipped unchanged', () => {
+  for (const name of ['my-master.cnf','my-slave.cnf']) {
+    const original=fs.readFileSync(path.join(source,'configs/mysql',name));
+    for(const target of [path.join(kit,'templates/mysql',name),path.join(runtime,'configs/mysql',name),path.join(rpmRoot,'usr/share/clusterguard/mysql',name)]) {
+      assert.ok(fs.readFileSync(target).equals(original), `production cnf drift: ${target}`);
+    }
+  }
+  const helper=fs.readFileSync(path.join(source,'scripts/clusterguard-mysql-layout.sh'));
+  for(const target of [path.join(kit,'tools/clusterguard-mysql-layout.sh'),path.join(runtime,'scripts/clusterguard-mysql-layout.sh'),path.join(rpmRoot,'usr/local/libexec/clusterguard-mysql-layout.sh')]) {
+    assert.ok(fs.readFileSync(target).equals(helper), `MySQL path helper drift: ${target}`);
+  }
+});
+check('complete offline installer command references match their source', () => {
+  for (const [locale, name] of [['zh-CN','offline-installer-parameters.md'],['en-US','offline-installer-parameters.en.md']]) {
+    const original = fs.readFileSync(path.join(source,'docs',locale,'offline-installer-parameters.md'));
+    assert.ok(fs.readFileSync(path.join(kit,'docs',name)).equals(original), `installer reference drift: ${locale}`);
+  }
+});
 const report = {status:'passed', archive:path.basename(archive), sha256:sha(archive), commit:expectedCommit,
   console_sha256:sha(path.join(source,'internal/api/console.html')), metadata, checks,
   deployed:false, field_acceptance:false,

@@ -234,6 +234,12 @@ func (keeper *OwnershipKeeper) reconcileCluster(ctx context.Context, cluster mod
 		return endpoint.LeaseRequest{}, fmt.Errorf("cluster %s VIP ownership coverage is unsafe", cluster.ResourceID)
 	}
 	primary, primaryErr := writablePrimary(snapshot)
+	ackRenewal := false
+	if primaryErr != nil && cluster.Engine == model.EngineMySQL {
+		if candidate, allowed := ackDegradedPrimaryForRenewal(snapshot, observation); allowed {
+			primary, primaryErr, ackRenewal = candidate, nil, true
+		}
+	}
 	bootstrap := false
 	bootstrapConvergenceRenewal := false
 	if primaryErr != nil {
@@ -266,7 +272,7 @@ func (keeper *OwnershipKeeper) reconcileCluster(ctx context.Context, cluster mod
 		}
 	}
 	partialRenewal := !observation.Complete
-	renewOnly := partialRenewal || bootstrapConvergenceRenewal
+	renewOnly := partialRenewal || bootstrapConvergenceRenewal || ackRenewal
 	if partialRenewal && !safePartialOwnershipCoverage(snapshot, observation, primary.ResourceID) {
 		return endpoint.LeaseRequest{}, fmt.Errorf("cluster %s VIP ownership majority coverage is unsafe", cluster.ResourceID)
 	}

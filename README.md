@@ -146,9 +146,9 @@ DISCOVER -> PRECHECK -> PLAN -> SAFETY_GUARD -> LOCK -> APPROVE -> EXECUTE -> VE
 
 运行形态：物理机或虚拟机（systemd 托管数据库）、Docker Swarm（固定单副本 Service）、Kubernetes（独立单副本 StatefulSet）。只有当受限 Agent、操作凭据、端点提供器、控制器多数派和所需隔离证据全部配置完成时，相关变更能力才会对外标记为可用；这些能力不会回溯添加到 `v2.1.45`。
 
-### 当前完整安装介质：3.1.2.10
+### 当前完整安装介质：3.1.3.1（本地候选）
 
-[GitHub 预发布 v3.1.2.10](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v3.1.2.10) 提供完整 Linux x86_64 安装介质。本介质不再嵌入数据库包，MySQL / PostgreSQL 介质由现场自备。运行产品版本为 **3.1.2.10**，RPM 兼容基线为 **2.2-108**。下载、摘要和部署边界见[本版发布说明](docs/zh-CN/release-3.1.2.10.md)。本版 FIELD 尚 OPEN，属于预发布。
+完整 Linux x86_64 安装介质位于本地 `release/3.1.3.1/`，产品版本 **3.1.3.1**，RPM 兼容基线 **2.2-109**。数据库介质由现场自备。见[本版说明](docs/zh-CN/release-3.1.3.1.md)与[完整安装命令参数](docs/zh-CN/offline-installer-parameters.md)。源码与文档提交 GitHub；本版尚未发布 GitHub Release，ART/FIELD 仍 OPEN。
 
 ### 已记录的正式发布版本
 

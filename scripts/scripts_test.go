@@ -44,7 +44,7 @@ func fakeInstallBundle(t *testing.T) string {
 		writeExecutable(t, filepath.Join(root, "bin", name), "#!/usr/bin/env bash\nexit 0\n")
 	}
 	for _, name := range []string{
-		"clusterguard-node-lifecycle.sh", "clusterguard-package-resolve.sh", "clusterguard-mysql-install.sh", "clusterguard-mysql-sync.sh",
+		"clusterguard-node-lifecycle.sh", "clusterguard-package-resolve.sh", "clusterguard-mysql-install.sh", "clusterguard-mysql-layout.sh", "clusterguard-mysql-sync.sh",
 		"clusterguard-mysql-probe-cleanup.sh", "clusterguard-mysql-qualification.sh",
 		"clusterguard-adapter-runtime-install.sh", "clusterguard-control-join.sh",
 		"clusterguard-postgresql-build.sh", "clusterguard-postgresql-install.sh", "clusterguard-postgresql-sync.sh",
@@ -3027,6 +3027,18 @@ func TestMultiNodeInstallerPlanPrefersBundledMySQLMedia(t *testing.T) {
 		}
 	}
 	writeFile(t, filepath.Join(kit, "packages", "clusterguard-ha-2.2-103.x86_64.rpm"), "rpm fixture", 0o644)
+	for source, destination := range map[string]string{
+		"clusterguard-mysql-layout.sh":   "tools/clusterguard-mysql-layout.sh",
+		"../configs/mysql/my-master.cnf": "templates/mysql/my-master.cnf",
+		"../configs/mysql/my-slave.cnf":  "templates/mysql/my-slave.cnf",
+	} {
+		contents, err := os.ReadFile(source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, filepath.Join(kit, destination), string(contents), 0644)
+	}
+
 	bundled := filepath.Join(bundledDir, "mysql-8.0.44-linux-glibc2.17-x86_64-minimal.tar.gz")
 	if err := os.Rename(fakeDatabaseArchive(t, "mysql", ""), bundled); err != nil {
 		t.Fatal(err)
@@ -4045,7 +4057,7 @@ func TestInstallerWritesProtectedEnvironmentAndDefersAgentReconcileByDefault(t *
 		t.Fatalf("environment mode=%#o, want 0640", info.Mode().Perm())
 	}
 	for _, helper := range []string{
-		"clusterguard-node-lifecycle.sh", "clusterguard-package-resolve.sh", "clusterguard-mysql-install.sh", "clusterguard-mysql-sync.sh",
+		"clusterguard-node-lifecycle.sh", "clusterguard-package-resolve.sh", "clusterguard-mysql-install.sh", "clusterguard-mysql-layout.sh", "clusterguard-mysql-sync.sh",
 		"clusterguard-postgresql-build.sh", "clusterguard-postgresql-install.sh", "clusterguard-postgresql-sync.sh",
 	} {
 		info, err := os.Stat(filepath.Join(installRoot, "usr", "local", "libexec", helper))
@@ -5334,7 +5346,7 @@ func TestMultiNodeInstallerAutoUsesBundledDependenciesAndReportsRemoteFailures(t
 		"credential_password_for_host",
 		"SSH 凭据       : 节点级凭据文件",
 		"复用 ClusterGuard 管理的 MySQL 客户端",
-		"/opt/clusterguard/mysql/${database_port}/software/bin/mysql",
+		"${database_software_dir}/bin/mysql",
 		"--postgresql-dependencies DIR",
 		"--online-dependencies",
 		"默认从构建节点已配置的软件源联网获取",
@@ -5761,6 +5773,14 @@ func TestManagedEngineUnitsKeepSharedRuntimeDirectoryTraversable(t *testing.T) {
 			t.Fatal(err)
 		}
 		text := string(contents)
+		if name == "clusterguard-mysql-install.sh" {
+			if !strings.Contains(text, "RequiresMountsFor=${install_parent} ${software_dir}") ||
+				!strings.Contains(text, "ExecStartPre=+/usr/bin/install -d -m 0750 -o mysql -g mysql ${run_dir}") ||
+				strings.Contains(text, "RuntimeDirectory=clusterguard/mysql/") {
+				t.Fatal("MySQL must mount /data and create its own runtime directory before startup")
+			}
+			continue
+		}
 		// Each engine runs unprivileged and nests its own RuntimeDirectory below
 		// /run/clusterguard. It must repair the shared parent before starting, so
 		// that a reboot in which another unit creates the parent as 0750 cannot

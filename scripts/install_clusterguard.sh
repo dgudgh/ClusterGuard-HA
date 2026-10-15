@@ -28,6 +28,9 @@ ssh_key=""
 ssh_port=22
 controller_data_root="/var/lib/clusterguard"
 database_data_root="/data"
+database_software_dir=""
+mysql_master_cnf=""
+mysql_slave_cnf=""
 cluster_name=""
 vip=""
 vip_interface="ens160"
@@ -118,6 +121,10 @@ ClusterGuard HA 多节点离线安装器
                                 节点级 SSH 密码文件；每行“节点地址=密码”，权限必须为 0600
   -ld, --controller-data DIR   控制面元数据和 Raft 根目录
   -nd, --database-data DIR     数据库数据根目录
+      --database-software-dir DIR
+                                MySQL 软件完整安装目录；默认 /usr/local/mysql
+      --mysql-master-cnf FILE  生产主库 cnf；默认使用介质中的生产模板
+      --mysql-slave-cnf FILE   生产从库 cnf；除路径、节点身份和只读保护外原样保留
 
 集群参数：
       --engine ENGINE          mysql、postgresql 或 none；有数据节点时默认 mysql
@@ -199,6 +206,9 @@ parse_args() {
       --ssh-credentials-file) need_value "$@"; ssh_credentials_file="$2"; shift 2 ;;
       -ld|--controller-data) need_value "$@"; controller_data_root="$2"; shift 2 ;;
       -nd|--database-data|--mysql-data) need_value "$@"; database_data_root="$2"; shift 2 ;;
+      --database-software-dir|--mysql-software-dir) need_value "$@"; database_software_dir="$2"; shift 2 ;;
+      --mysql-master-cnf) need_value "$@"; mysql_master_cnf="$2"; shift 2 ;;
+      --mysql-slave-cnf) need_value "$@"; mysql_slave_cnf="$2"; shift 2 ;;
       --engine) need_value "$@"; database_engine="$2"; shift 2 ;;
       --database-version|--postgresql-version) need_value "$@"; database_version="$2"; shift 2 ;;
       --database-port|--mysql-port|--postgresql-port) need_value "$@"; database_port="$2"; shift 2 ;;
@@ -645,6 +655,31 @@ validate_inputs() {
   [[ "${database_min_free_gb}" =~ ^[1-9][0-9]*$ ]] || die "数据库最小空间必须是正整数 GiB"
   valid_absolute_root "${controller_data_root}" || die "-ld 必须是安全的绝对目录"
   valid_absolute_root "${database_data_root}" || die "-nd 必须是安全的绝对目录"
+  database_data_root="${database_data_root%/}"
+  if [[ "${database_engine}" == mysql ]]; then
+    local layout_helper="${script_dir}/clusterguard-mysql-layout.sh" template_root candidate id host ids=" "
+    [[ -f "${layout_helper}" ]] || layout_helper="${script_dir}/tools/clusterguard-mysql-layout.sh"
+    [[ -f "${layout_helper}" ]] || die "缺少 MySQL 路径与生产配置组件"
+    source "${layout_helper}"
+    cg_mysql_layout "${database_data_root}" "${database_port}" "${database_software_dir}" || die "数据库目录无效或软件与数据目录重叠"
+    database_software_dir="${cg_mysql_software}"
+    for candidate in "${script_dir}/templates/mysql" "${script_dir}/../configs/mysql"; do
+      [[ -f "${candidate}/my-master.cnf" && -f "${candidate}/my-slave.cnf" ]] || continue
+      template_root="${candidate}"; break
+    done
+    mysql_master_cnf="${mysql_master_cnf:-${template_root:-}/my-master.cnf}"
+    mysql_slave_cnf="${mysql_slave_cnf:-${template_root:-}/my-slave.cnf}"
+    for candidate in "${mysql_master_cnf}" "${mysql_slave_cnf}"; do
+      [[ -f "${candidate}" && ! -L "${candidate}" ]] || die "生产 MySQL cnf 不存在或不是普通文件：${candidate}"
+    done
+    for host in "${data_nodes[@]}"; do
+      id="$(mysql_server_id "${host}")" || die "无法为 ${host} 生成 MySQL server_id"
+      [[ "${ids}" != *" ${id} "* ]] || die "MySQL server_id 重复：${id}；IP最后一段和端口必须在本集群唯一"
+      ids+="${id} "
+    done
+  elif [[ -n "${database_software_dir}${mysql_master_cnf}${mysql_slave_cnf}" ]]; then
+    die "软件目录和生产 cnf 选项目前只适用于 MySQL"
+  fi
   [[ "${remote_stage}" == /* && "${remote_stage}" != *$'\n'* ]] || die "远端暂存目录无效"
   [[ -z "${ssh_key}" || -f "${ssh_key}" ]] || die "SSH 私钥不存在：${ssh_key}"
   [[ -z "${ssh_credentials_file}" || -f "${ssh_credentials_file}" ]] || die "节点级 SSH 凭据文件不存在：${ssh_credentials_file}"
@@ -749,6 +784,14 @@ print_plan() {
   printf '  首次管理员口令 : 随机生成；交互安装完成时显示，非交互时读取 %s/bootstrap-admin-password\n' "${controller_data_root}"
   if [[ "${database_engine}" != "none" ]]; then
     printf '  数据库数据目录 : %s/%s/%s\n' "${database_data_root}" "${database_engine}" "${database_port}"
+  fi
+  if [[ "${database_engine}" == mysql ]]; then
+    printf '  MySQL 软件目录 : %s\n' "${database_software_dir}"
+    printf '  MySQL 实际数据 : %s/data\n' "${cg_mysql_instance}"
+    printf '  MySQL 配置目录 : %s/conf\n' "${cg_mysql_instance}"
+    printf '  生产主库 cnf   : %s\n' "${mysql_master_cnf}"
+    printf '  生产从库 cnf   : %s\n' "${mysql_slave_cnf}"
+    for host in "${data_nodes[@]}"; do printf '  MySQL server_id: %s -> %s\n' "${host}" "$(mysql_server_id "${host}")"; done
   fi
   printf '  控制台         : https://%s:%s/\n' "${controller_nodes[0]}" "${api_port}"
   printf '  VIP            : %s/%s (%s)\n' "${vip:-未配置}" "${vip_prefix}" "${vip_interface}"
@@ -1585,9 +1628,9 @@ verify_remote_tcp_reachability() {
 distribute_database_package() {
   local host package_name destination
   package_name="$(basename "${database_package}")"
-  destination="/opt/clusterguard/packages/${package_name}"
+  destination="/data/packages/${database_engine}/${package_name}"
   for host in "${all_nodes[@]}"; do
-    remote_exec "${host}" "install -d -m 0750 /opt/clusterguard/packages"
+    remote_exec "${host}" "install -d -m 0750 /data/packages/${database_engine}"
     remote_copy "${database_package}" "${host}" "${destination}"
     remote_exec "${host}" "chmod 0640 '${destination}'"
   done
@@ -1598,12 +1641,12 @@ prepare_postgresql_binary_package() {
   local source_package="${database_package}" source_name remote_source remote_output remote_artifact artifact_name local_output local_artifact jobs_argument="" repository_argument="" dependencies_archive=""
   source_name="$(basename "${source_package}")"
   [[ "${source_name}" =~ ^[A-Za-z0-9._+-]+$ ]] || die "PostgreSQL 源码包文件名包含不支持的字符"
-  remote_source="/opt/clusterguard/packages/source/${source_name}"
-  remote_output="/opt/clusterguard/packages/source-build"
+  remote_source="/data/packages/${database_engine}/source/${source_name}"
+  remote_output="/data/packages/${database_engine}/source-build"
   local_output="${work_dir}/generated-database"
   install -d -m 0700 "${local_output}"
   log "上传 PostgreSQL 官方源码：${postgresql_build_node}"
-  remote_exec "${postgresql_build_node}" "install -d -m 0750 /opt/clusterguard/packages/source '${remote_output}'"
+  remote_exec "${postgresql_build_node}" "install -d -m 0750 /data/packages/${database_engine}/source '${remote_output}'"
   remote_copy "${source_package}" "${postgresql_build_node}" "${remote_source}"
   remote_exec "${postgresql_build_node}" "chmod 0640 '${remote_source}'"
   [[ -z "${postgresql_build_jobs}" ]] || jobs_argument="--jobs '${postgresql_build_jobs}'"
@@ -1645,20 +1688,19 @@ set -euo pipefail
 }
 
 mysql_server_id() {
-  local checksum
-  checksum="$(printf '%s' "$1:${database_port}" | cksum | awk '{print $1}')"
-  printf '%s\n' "$((checksum % 4294967294 + 1))"
+  cg_mysql_server_id "$1" "${database_port}"
 }
 
 mysql_payload() {
-  local host="$1" package_name root discovery operation replication
+  local host="$1" package_name root discovery operation replication template="${mysql_slave_cnf}"
+  [[ "${host}" != "${data_nodes[0]}" ]] || template="${mysql_master_cnf}"
   package_name="$(basename "${database_package}")"
   root="$(read_env_value CG_NODE_MYSQL_ROOT_PASSWORD "${secrets_file}")"
   discovery="$(read_env_value CG_MYSQL_DISCOVERY_PASSWORD "${secrets_file}")"
   operation="$(read_env_value CG_MYSQL_OPERATION_PASSWORD "${secrets_file}")"
   replication="$(read_env_value CG_MYSQL_REPLICATION_PASSWORD "${secrets_file}")"
-  "${jq_binary}" -nc --arg node_id "$(node_id_for "${host}")" --arg node_name "$(node_name_for "${host}")" --arg hostname "$(node_hostname_for "${host}")" --arg ip "${host}" --arg package "/opt/clusterguard/packages/${package_name}" --arg data_root "${database_data_root}" --arg root "${root}" --arg mysql_root_remote_host "${mysql_root_remote_host}" --arg discovery "${discovery}" --arg operation "${operation}" --arg replication "${replication}" --argjson port "${database_port}" --argjson server_id "$(mysql_server_id "${host}")" '
-    {target:{node_id:$node_id,node_name:$node_name,hostname:$hostname,ip_address:$ip,mysql_port:$port,server_id:$server_id,package_path:$package,data_root:$data_root,mysql_root_remote_host:$mysql_root_remote_host,rebuild:false},secrets:{mysql_root_password:$root,mysql_discovery_username:"cg_discovery",mysql_discovery_password:$discovery,mysql_operation_username:"cg_operator",mysql_operation_password:$operation,mysql_replication_username:"cg_replication",replication_password:$replication}}
+  "${jq_binary}" -nc --rawfile mysql_cnf "${template}" --arg software_dir "${database_software_dir}" --arg node_id "$(node_id_for "${host}")" --arg node_name "$(node_name_for "${host}")" --arg hostname "$(node_hostname_for "${host}")" --arg ip "${host}" --arg package "/data/packages/${database_engine}/${package_name}" --arg data_root "${database_data_root}" --arg root "${root}" --arg mysql_root_remote_host "${mysql_root_remote_host}" --arg discovery "${discovery}" --arg operation "${operation}" --arg replication "${replication}" --argjson port "${database_port}" --argjson server_id "$(mysql_server_id "${host}")" '
+    {target:{node_id:$node_id,node_name:$node_name,hostname:$hostname,ip_address:$ip,mysql_port:$port,server_id:$server_id,package_path:$package,data_root:$data_root,software_dir:$software_dir,mysql_cnf:$mysql_cnf,mysql_root_remote_host:$mysql_root_remote_host,rebuild:false},secrets:{mysql_root_password:$root,mysql_discovery_username:"cg_discovery",mysql_discovery_password:$discovery,mysql_operation_username:"cg_operator",mysql_operation_password:$operation,mysql_replication_username:"cg_replication",replication_password:$replication}}
   '
 }
 
@@ -1668,7 +1710,7 @@ postgresql_payload() {
   admin="$(read_env_value CG_POSTGRESQL_ADMIN_PASSWORD "${secrets_file}")"
   replication="$(read_env_value CG_POSTGRESQL_REPLICATION_PASSWORD "${secrets_file}")"
   data_directory="${database_data_root}/postgresql/${database_port}/data"
-  "${jq_binary}" -nc --arg node_id "$(node_id_for "${host}")" --arg node_name "$(node_name_for "${host}")" --arg hostname "$(node_hostname_for "${host}")" --arg ip "${host}" --arg version "${database_version}" --arg package "/opt/clusterguard/packages/${package_name}" --arg data_directory "${data_directory}" --arg admin "${admin}" --arg replication "${replication}" --argjson port "${database_port}" '
+  "${jq_binary}" -nc --arg node_id "$(node_id_for "${host}")" --arg node_name "$(node_name_for "${host}")" --arg hostname "$(node_hostname_for "${host}")" --arg ip "${host}" --arg version "${database_version}" --arg package "/data/packages/${database_engine}/${package_name}" --arg data_directory "${data_directory}" --arg admin "${admin}" --arg replication "${replication}" --argjson port "${database_port}" '
     {target:{node_id:$node_id,node_name:$node_name,hostname:$hostname,ip_address:$ip,postgresql_version:$version,postgresql_port:$port,postgresql_service:("clusterguard-postgresql-"+($port|tostring)+".service"),postgresql_data_directory:$data_directory,package_path:$package,rebuild:true},secrets:{postgresql_admin_password:$admin,postgresql_replication_password:$replication}}
   '
 }
@@ -1691,13 +1733,13 @@ verify_managed_mysql_node() {
   remote_exec_checked "${host}" "验证 MySQL 节点 ${stage}" "
 set -euo pipefail
 service='clusterguard-mysql-${database_port}.service'
-client='/etc/clusterguard/mysql/${database_port}-client.cnf'
+client='${database_data_root}/mysql/${database_port}/conf/client.cnf'
 managed='${database_data_root}/mysql/${database_port}/.clusterguard-managed'
 systemctl is-enabled --quiet \"\${service}\"
 systemctl is-active --quiet \"\${service}\"
 test -s \"\${client}\"
 test -f \"\${managed}\"
-/opt/clusterguard/mysql/${database_port}/software/bin/mysql --defaults-file=\"\${client}\" --protocol=tcp --host=127.0.0.1 --port='${database_port}' --connect-timeout=5 --batch --skip-column-names -e 'SELECT @@server_uuid, @@read_only, @@super_read_only' >/dev/null
+${database_software_dir}/bin/mysql --defaults-file=\"\${client}\" --protocol=tcp --host=127.0.0.1 --port='${database_port}' --connect-timeout=5 --batch --skip-column-names -e 'SELECT @@server_uuid, @@read_only, @@super_read_only' >/dev/null
 "
 }
 
@@ -1728,14 +1770,14 @@ initialize_mysql_cluster() {
       if ((index == 0)); then index=$((index + 1)); continue; fi
       log "同步副本：${primary}:${database_port} -> ${host}:${database_port}"
       verify_remote_tcp_reachability "${host}" "${primary}" "${database_port}" "MySQL 复制源连通性 ${host} -> ${primary}:${database_port}"
-      sync_payload="$("${jq_binary}" -nc --arg cluster_id "$(state_cluster_id)" --arg donor_host "$(node_hostname_for "${primary}")" --arg donor_ip "${primary}" --arg target_node_id "$(node_id_for "${host}")" --arg target_name "$(node_name_for "${host}")" --arg target_host "$(node_hostname_for "${host}")" --arg target_ip "${host}" --arg data_root "${database_data_root}" --arg vip "${vip}" --arg root "${root}" --arg mysql_root_remote_host "${mysql_root_remote_host}" --arg discovery "${discovery}" --arg operation "${operation}" --arg replication "${replication}" --argjson port "${database_port}" '
-        {request:{cluster_id:$cluster_id,donor:{hostname:$donor_host,ip_address:$donor_ip,port:$port},vip:$vip},target:{node_id:$target_node_id,node_name:$target_name,hostname:$target_host,ip_address:$target_ip,mysql_port:$port,data_root:$data_root,mysql_root_remote_host:$mysql_root_remote_host,rebuild:false},secrets:{mysql_root_password:$root,mysql_discovery_username:"cg_discovery",mysql_discovery_password:$discovery,mysql_operation_username:"cg_operator",mysql_operation_password:$operation,mysql_replication_username:"cg_replication",replication_password:$replication}}
+      sync_payload="$("${jq_binary}" -nc --arg cluster_id "$(state_cluster_id)" --arg donor_host "$(node_hostname_for "${primary}")" --arg donor_ip "${primary}" --arg target_node_id "$(node_id_for "${host}")" --arg target_name "$(node_name_for "${host}")" --arg target_host "$(node_hostname_for "${host}")" --arg target_ip "${host}" --arg data_root "${database_data_root}" --arg software_dir "${database_software_dir}" --arg vip "${vip}" --arg root "${root}" --arg mysql_root_remote_host "${mysql_root_remote_host}" --arg discovery "${discovery}" --arg operation "${operation}" --arg replication "${replication}" --argjson port "${database_port}" '
+        {request:{cluster_id:$cluster_id,donor:{hostname:$donor_host,ip_address:$donor_ip,port:$port},vip:$vip},target:{node_id:$target_node_id,node_name:$target_name,hostname:$target_host,ip_address:$target_ip,mysql_port:$port,data_root:$data_root,software_dir:$software_dir,mysql_root_remote_host:$mysql_root_remote_host,rebuild:false},secrets:{mysql_root_password:$root,mysql_discovery_username:"cg_discovery",mysql_discovery_password:$discovery,mysql_operation_username:"cg_operator",mysql_operation_password:$operation,mysql_replication_username:"cg_replication",replication_password:$replication}}
       ')"
       remote_json_helper "${host}" /usr/local/libexec/clusterguard-mysql-sync.sh logical_dump "${sync_payload}"
       verify_managed_mysql_node "${host}" "副本同步后"
       index=$((index + 1))
     done
-    remote_exec "${primary}" "/opt/clusterguard/mysql/${database_port}/software/bin/mysql --defaults-file=/etc/clusterguard/mysql/${database_port}-client.cnf --protocol=tcp --host=127.0.0.1 --port=${database_port} -e 'SET GLOBAL super_read_only=OFF; SET GLOBAL read_only=OFF;'"
+    remote_exec "${primary}" "${database_software_dir}/bin/mysql --defaults-file=${database_data_root}/mysql/${database_port}/conf/client.cnf --protocol=tcp --host=127.0.0.1 --port=${database_port} -e 'SET GLOBAL super_read_only=OFF; SET GLOBAL read_only=OFF;'"
     verify_managed_mysql_node "${primary}" "主库写入启用后"
     set_state_phase synchronized
   fi
@@ -1795,35 +1837,35 @@ install_database_client_on_controllers() {
       if remote_exec "${host}" "command -v mysql >/dev/null 2>&1"; then continue; fi
       # Mixed nodes already have the managed server distribution. Reuse its
       # client tools instead of extracting the database archive a second time.
-      if remote_exec "${host}" "test -x '/opt/clusterguard/mysql/${database_port}/software/bin/mysql' && test -x '/opt/clusterguard/mysql/${database_port}/software/bin/mysqldump'"; then
+      if remote_exec "${host}" "test -x '${database_software_dir}/bin/mysql' && test -x '${database_software_dir}/bin/mysqldump'"; then
         remote_exec_checked "${host}" "复用 ClusterGuard 管理的 MySQL 客户端" "
 set -euo pipefail
 install -d -m 0755 /usr/local/bin
-ln -sfn '/opt/clusterguard/mysql/${database_port}/software/bin/mysql' /usr/local/bin/mysql
-ln -sfn '/opt/clusterguard/mysql/${database_port}/software/bin/mysqldump' /usr/local/bin/mysqldump
+ln -sfn '${database_software_dir}/bin/mysql' /usr/local/bin/mysql
+ln -sfn '${database_software_dir}/bin/mysqldump' /usr/local/bin/mysqldump
 /usr/local/bin/mysql --version
 " >/dev/null
         continue
       fi
       remote_exec "${host}" "
 set -euo pipefail
-rm -rf /opt/clusterguard/mysql-client/software
-install -d -m 0755 /opt/clusterguard/mysql-client/software /usr/local/bin
-tar -xf '/opt/clusterguard/packages/${package_name}' -C /opt/clusterguard/mysql-client/software --strip-components=1
-ln -sfn /opt/clusterguard/mysql-client/software/bin/mysql /usr/local/bin/mysql
-ln -sfn /opt/clusterguard/mysql-client/software/bin/mysqldump /usr/local/bin/mysqldump
+rm -rf /data/mysql-client/software
+install -d -m 0755 /data/mysql-client/software /usr/local/bin
+tar -xf '/data/packages/${database_engine}/${package_name}' -C /data/mysql-client/software --strip-components=1
+ln -sfn /data/mysql-client/software/bin/mysql /usr/local/bin/mysql
+ln -sfn /data/mysql-client/software/bin/mysqldump /usr/local/bin/mysqldump
 mysql --version
 " >/dev/null
     else
       if remote_exec "${host}" "command -v psql >/dev/null 2>&1"; then continue; fi
       remote_exec "${host}" "
 set -euo pipefail
-rm -rf /opt/clusterguard/postgresql-client/software
-install -d -m 0755 /opt/clusterguard/postgresql-client/software /usr/local/bin
-tar -xf '/opt/clusterguard/packages/${package_name}' -C /opt/clusterguard/postgresql-client/software --strip-components=1
+rm -rf /data/postgresql-client/software
+install -d -m 0755 /data/postgresql-client/software /usr/local/bin
+tar -xf '/data/packages/${database_engine}/${package_name}' -C /data/postgresql-client/software --strip-components=1
 for binary in psql pg_basebackup pg_rewind pg_controldata; do
-  test -x \"/opt/clusterguard/postgresql-client/software/bin/\${binary}\"
-  ln -sfn \"/opt/clusterguard/postgresql-client/software/bin/\${binary}\" \"/usr/local/bin/\${binary}\"
+  test -x \"/data/postgresql-client/software/bin/\${binary}\"
+  ln -sfn \"/data/postgresql-client/software/bin/\${binary}\" \"/usr/local/bin/\${binary}\"
 done
 psql --version
 " >/dev/null
@@ -1903,8 +1945,9 @@ controller_urls_json() {
 }
 
 generate_controller_config() {
-  local host="$1" bootstrap="$2" target="${work_dir}/nodes/${host}/clusterguard.json"
-  "${jq_binary}" -n --arg http "0.0.0.0:${api_port}" --arg metadata "${controller_data_root}/metadata.json" --arg local_id "$(node_id_for "${host}")" --arg bind "0.0.0.0:${raft_port}" --arg advertise "${host}:${raft_port}" --arg raft_data "${controller_data_root}/raft" --arg mysql_root_remote_host "${mysql_root_remote_host}" --argjson bootstrap "${bootstrap}" --argjson peers "$(peers_json)" --argjson mysql_enabled "$([[ "${database_engine}" == "mysql" ]] && echo true || echo false)" --argjson mysql_automatic_failover "${mysql_automatic_failover}" --argjson postgresql_enabled "$([[ "${database_engine}" == "postgresql" ]] && echo true || echo false)" --argjson postgresql_automatic_failover "${postgresql_automatic_failover}" --argjson fencing_enabled "$([[ -n "${fencer_file}" ]] && echo true || echo false)" --argjson agent_quorum_fencing "${agent_quorum_fencing}" '
+  local host="$1" bootstrap="$2"
+  local target="${work_dir}/nodes/${host}/clusterguard.json"
+  "${jq_binary}" -n --arg http "0.0.0.0:${api_port}" --arg metadata "${controller_data_root}/metadata.json" --arg local_id "$(node_id_for "${host}")" --arg bind "0.0.0.0:${raft_port}" --arg advertise "${host}:${raft_port}" --arg raft_data "${controller_data_root}/raft" --arg package_repository "/data/packages/${database_engine}" --arg mysql_root_remote_host "${mysql_root_remote_host}" --argjson bootstrap "${bootstrap}" --argjson peers "$(peers_json)" --argjson mysql_enabled "$([[ "${database_engine}" == "mysql" ]] && echo true || echo false)" --argjson mysql_automatic_failover "${mysql_automatic_failover}" --argjson postgresql_enabled "$([[ "${database_engine}" == "postgresql" ]] && echo true || echo false)" --argjson postgresql_automatic_failover "${postgresql_automatic_failover}" --argjson fencing_enabled "$([[ -n "${fencer_file}" ]] && echo true || echo false)" --argjson agent_quorum_fencing "${agent_quorum_fencing}" '
   {
     http_address:$http,tls_cert_file:"/etc/clusterguard/tls/server.crt",tls_key_file:"/etc/clusterguard/tls/server.key",tls_ca_file:"/etc/clusterguard/tls/ca.crt",metadata_path:$metadata,
     control_token_env:"CG_CONTROL_TOKEN",monitoring_token_env:"CG_MONITORING_TOKEN",approval_token_env:"CG_APPROVAL_TOKEN",
@@ -1915,7 +1958,7 @@ generate_controller_config() {
     sqlserver:{enabled:false,discovery:{username:"cg_monitor",database:"master",password_env:"CG_SQLSERVER_DISCOVERY_PASSWORD"}},
     agent:{enabled:true,user:"root",identity_file:"/etc/clusterguard/ssh/controller_ed25519",known_hosts_file:"/etc/clusterguard/ssh/controller_known_hosts",ssh_binary:"/usr/bin/ssh",agent_binary:"/usr/local/libexec/clusterguard-agent-stdio",agent_config_path:"/etc/clusterguard/agent.json",command_timeout_seconds:5,mutation_timeout_seconds:1800,max_concurrent_sessions:4,shared_secret_env:"CG_AGENT_SHARED_SECRET"},
     fencing:{enabled:$fencing_enabled,executable_path:"/usr/local/libexec/clusterguard-fencer",timeout_seconds:30,agent_quorum_enabled:$agent_quorum_fencing,agent_quorum_grace_seconds:15},
-    node_lifecycle:{enabled:true,executor_path:"/usr/local/libexec/clusterguard-node-lifecycle.sh",package_repository:"/opt/clusterguard/packages",known_hosts_file:"/etc/clusterguard/ssh/controller_known_hosts",identity_file:"/etc/clusterguard/ssh/controller_ed25519",jq_binary:"/usr/local/libexec/jq-linux-amd64",adapter_runtime_helper:"/usr/local/libexec/clusterguard-adapter-runtime-install.sh",control_join_helper:"/usr/local/libexec/clusterguard-control-join.sh",control_api_issuer_cert_file:"/etc/clusterguard/pki/api-issuer.crt",control_api_issuer_key_file:"/etc/clusterguard/pki/api-issuer.key",control_raft_issuer_cert_file:"/etc/clusterguard/pki/raft-issuer.crt",control_raft_issuer_key_file:"/etc/clusterguard/pki/raft-issuer.key",control_certificate_validity_days:825,mysql_root_password_env:"CG_NODE_MYSQL_ROOT_PASSWORD",mysql_root_remote_host:$mysql_root_remote_host,replication_password_env:"CG_NODE_MYSQL_REPLICATION_PASSWORD",postgresql_install_helper:"/usr/local/libexec/clusterguard-postgresql-install.sh",postgresql_sync_helper:"/usr/local/libexec/clusterguard-postgresql-sync.sh",postgresql_admin_password_env:"CG_POSTGRESQL_ADMIN_PASSWORD",postgresql_replication_password_env:"CG_POSTGRESQL_REPLICATION_PASSWORD",clone_available:false,xtrabackup_versions:{},logical_dump_allowed:true,postgresql_basebackup_available:$postgresql_enabled,postgresql_rewind_available:$postgresql_enabled}
+    node_lifecycle:{enabled:true,executor_path:"/usr/local/libexec/clusterguard-node-lifecycle.sh",package_repository:$package_repository,known_hosts_file:"/etc/clusterguard/ssh/controller_known_hosts",identity_file:"/etc/clusterguard/ssh/controller_ed25519",jq_binary:"/usr/local/libexec/jq-linux-amd64",adapter_runtime_helper:"/usr/local/libexec/clusterguard-adapter-runtime-install.sh",control_join_helper:"/usr/local/libexec/clusterguard-control-join.sh",control_api_issuer_cert_file:"/etc/clusterguard/pki/api-issuer.crt",control_api_issuer_key_file:"/etc/clusterguard/pki/api-issuer.key",control_raft_issuer_cert_file:"/etc/clusterguard/pki/raft-issuer.crt",control_raft_issuer_key_file:"/etc/clusterguard/pki/raft-issuer.key",control_certificate_validity_days:825,mysql_root_password_env:"CG_NODE_MYSQL_ROOT_PASSWORD",mysql_root_remote_host:$mysql_root_remote_host,replication_password_env:"CG_NODE_MYSQL_REPLICATION_PASSWORD",postgresql_install_helper:"/usr/local/libexec/clusterguard-postgresql-install.sh",postgresql_sync_helper:"/usr/local/libexec/clusterguard-postgresql-sync.sh",postgresql_admin_password_env:"CG_POSTGRESQL_ADMIN_PASSWORD",postgresql_replication_password_env:"CG_POSTGRESQL_REPLICATION_PASSWORD",clone_available:false,xtrabackup_versions:{},logical_dump_allowed:true,postgresql_basebackup_available:$postgresql_enabled,postgresql_rewind_available:$postgresql_enabled}
   }' >"${target}"
   chmod 0600 "${target}"
 }
@@ -1930,10 +1973,11 @@ postgresql_peers_json() {
 }
 
 generate_agent_config() {
-  local host="$1" target="${work_dir}/nodes/${host}/agent.json"
+  local host="$1"
+  local target="${work_dir}/nodes/${host}/agent.json"
   if [[ "${database_engine}" == "mysql" ]]; then
-    "${jq_binary}" -n --argjson urls "$(controller_urls_json)" --arg cluster_id "$(state_cluster_id)" --arg instance_id "$(instance_id_for "${host}")" --arg vip "${vip}" --arg interface "${vip_interface}" --argjson prefix "${vip_prefix}" --argjson port "${database_port}" '{
-      shared_secret_env:"CG_AGENT_SHARED_SECRET",controller_urls:$urls,controller_ca_file:"/etc/clusterguard/tls/ca.crt",reconcile_timeout_seconds:5,ip_binary:"/sbin/ip",arping_binary:"/usr/sbin/arping",mysql_binary:("/opt/clusterguard/mysql/"+($port|tostring)+"/software/bin/mysql"),role_state_directory:"/var/lib/clusterguard-agent/roles",decision_state_directory:"/var/lib/clusterguard-agent/decisions",mutation_state_directory:"/var/lib/clusterguard-agent/mutations",clusters:[{cluster_id:$cluster_id,instance_id:$instance_id,engine:"mysql",vip:$vip,interface:$interface,prefix:$prefix,mysql_port:$port,mysql_binary:("/opt/clusterguard/mysql/"+($port|tostring)+"/software/bin/mysql"),mysql_defaults_file:("/etc/clusterguard/mysql/"+($port|tostring)+"-client.cnf"),mysql_service:("clusterguard-mysql-"+($port|tostring)+".service"),mysql_server_binary:("/opt/clusterguard/mysql/"+($port|tostring)+"/software/bin/mysqld"),mysql_server_defaults_file:("/etc/clusterguard/mysql/"+($port|tostring)+".cnf")}]
+    "${jq_binary}" -n --arg software_dir "${database_software_dir}" --arg instance_dir "${database_data_root}/mysql/${database_port}" --argjson urls "$(controller_urls_json)" --arg cluster_id "$(state_cluster_id)" --arg instance_id "$(instance_id_for "${host}")" --arg vip "${vip}" --arg interface "${vip_interface}" --argjson prefix "${vip_prefix}" --argjson port "${database_port}" '{
+      shared_secret_env:"CG_AGENT_SHARED_SECRET",controller_urls:$urls,controller_ca_file:"/etc/clusterguard/tls/ca.crt",reconcile_timeout_seconds:5,ip_binary:"/sbin/ip",arping_binary:"/usr/sbin/arping",mysql_binary:($software_dir+"/bin/mysql"),role_state_directory:"/var/lib/clusterguard-agent/roles",decision_state_directory:"/var/lib/clusterguard-agent/decisions",mutation_state_directory:"/var/lib/clusterguard-agent/mutations",clusters:[{cluster_id:$cluster_id,instance_id:$instance_id,engine:"mysql",vip:$vip,interface:$interface,prefix:$prefix,mysql_port:$port,mysql_binary:($software_dir+"/bin/mysql"),mysql_defaults_file:($instance_dir+"/conf/client.cnf"),mysql_service:("clusterguard-mysql-"+($port|tostring)+".service"),mysql_server_binary:($software_dir+"/bin/mysqld"),mysql_server_defaults_file:($instance_dir+"/conf/my.cnf")}]
     }' >"${target}"
   else
     "${jq_binary}" -n --argjson urls "$(controller_urls_json)" --arg cluster_id "$(state_cluster_id)" --arg instance_id "$(instance_id_for "${host}")" --arg node_id "$(node_id_for "${host}")" --arg hostname "$(node_hostname_for "${host}")" --arg vip "${vip}" --arg interface "${vip_interface}" --arg data_directory "${database_data_root}/postgresql/${database_port}/data" --argjson peers "$(postgresql_peers_json "${host}")" --argjson prefix "${vip_prefix}" --argjson port "${database_port}" '{
@@ -2278,7 +2322,7 @@ diagnose_vip_lease_readiness() {
   case "${database_engine}" in
     mysql)
       database_service="clusterguard-mysql-${database_port}.service"
-      database_config="/etc/clusterguard/mysql/${database_port}-client.cnf"
+      database_config="${database_data_root}/mysql/${database_port}/conf/client.cnf"
       managed_data="${database_data_root}/mysql/${database_port}/.clusterguard-managed"
       ;;
     postgresql)

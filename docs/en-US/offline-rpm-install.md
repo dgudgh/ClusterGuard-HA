@@ -19,6 +19,8 @@ Do not mix this manual with old versions of Orchestrator, single-machine RPM man
 
 `clusterguard-configure` is the node-level configuration program called by the installer on remote nodes. During the initial deployment, it should not be manually invoked by the operations personnel one by one; it is only used when the platform node lifecycle, controlled recovery process, or engineering support explicitly requires it.
 
+See the [offline installer command reference](offline-installer-parameters.md) for every option, alias, default, required condition and safety boundary.
+
 ## 1. Deliverables and Installation Methods
 
 The official delivery directory is the build output directory `release/<bundle-version>/`
@@ -201,11 +203,15 @@ MySQL 8.0 example:
 sha256sum /opt/mysql-8.0.44-linux-glibc2.17-x86_64.tar.xz
 ```
 
-MySQL 8.4 only needs to replace the filename, `--database-version`, and cluster name. UPSQL uses its enterprise-approved compatible MySQL tar package and deploys it under `--engine mysql`.
+MySQL 8.4 also requires production cnf files validated for that version; do not reuse the supplied MySQL 8.0 profiles unchanged. UPSQL uses its enterprise-approved compatible MySQL tar package and deploys it under `--engine mysql`.
 
-The installer will read the physical memory on each MySQL data node and automatically generate the parameters for that node. `innodb_buffer_pool_size` defaults to 70% of the physical memory and rounds up to the nearest integer multiple of 4 GiB; if the rounded value exceeds 80% of the physical memory, it will take the maximum 4 GiB multiple that does not exceed 80%, without setting a fixed capacity upper limit. For example, 256 GiB of memory will be configured as 180 GiB. `max_connections` defaults to 1000. Caching, temporary tables, and redo still follow memory tiers. Single connection buffering remains controlled, avoiding uncontrollable additional memory amplification when 1000 connections are concurrent.
+MySQL 8.0 uses the site-approved production `my-master.cnf` and `my-slave.cnf`, shipped unchanged under `templates/mysql/`. The first data node uses the primary template and the remaining nodes use the replica template. The installer does not retune memory, connection, replication, or semisynchronous parameters, or rewrite duplicate/deprecated settings. Supply approved alternatives with `--mysql-master-cnf FILE --mysql-slave-cnf FILE`. Other database versions require compatible approved configurations; the 8.0 templates are not a cross-version guarantee.
 
-MySQL data nodes require at least 5 GiB of physical memory; if the capacity is below this, the installer will block before initializing the data directory as it cannot simultaneously satisfy 4 GiB alignment and 80% upper limit.
+Only paths, the port, unique node `server_id`, and the explicitly approved read-only startup guard may change. The default ID concatenates the last IPv4 octet and port: `.152:3306` becomes `1523306`. Duplicate cluster IDs are rejected before execution. All nodes start with `read_only=ON` and `super_read_only=ON`; the existing guarded workflow controls write access.
+
+The default instance directory is `/data/mysql/<port>/`, containing `data/`, `conf/`, `log/`, `binlog/`, `relaylog/`, `run/`, `tmp/`, and backup staging. `-nd /db` places the instance under `/db/mysql/<port>/`. Software defaults to `/usr/local/mysql/`; `--database-software-dir /apps/mysql8` overrides the full software path. Root owns software and configuration; mysql owns only writable database directories.
+
+The server and private client configurations are `conf/my.cnf` and `conf/client.cnf`. Logrotate rules also live under `conf/`. The systemd registration stays in the standard system directory so it is readable before the data volume mounts; it references the actual software/configuration and declares mount dependencies. Agent, sync and diagnostics use these paths; `conf/layout.json` retains placement for later recovery. Compatibility entries reference the original files instead of copying credentials. Reinstallation cannot migrate existing instance paths. Review the installation plan before execution. Native MySQL `--validate-config` runs before initialization; parser success does not constitute startup or field HA acceptance.
 
 MySQL by default listens on all IPv4 addresses of the database port, and the ClusterGuard management account can directly connect via TCP. To be compatible with traditional drivers, MySQL 8.0 uses `default_authentication_plugin=mysql_native_password`; MySQL 8.4 uses its supported `mysql_native_password=ON` and explicitly sets the platform account plugin. By default, no remote `root` account will be created or modified, and remote control uses independent discovery, execution, and replication accounts.
 

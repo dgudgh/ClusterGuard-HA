@@ -124,6 +124,21 @@ contents:
     expand: true
     file_info:
       mode: 0755
+  - src: ${CG_RPM_STAGE}/scripts/clusterguard-mysql-layout.sh
+    dst: /usr/local/libexec/clusterguard-mysql-layout.sh
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${CG_RPM_STAGE}/configs/mysql/my-master.cnf
+    dst: /usr/share/clusterguard/mysql/my-master.cnf
+    expand: true
+    file_info:
+      mode: 0644
+  - src: ${CG_RPM_STAGE}/configs/mysql/my-slave.cnf
+    dst: /usr/share/clusterguard/mysql/my-slave.cnf
+    expand: true
+    file_info:
+      mode: 0644
   - src: ${CG_RPM_STAGE}/scripts/clusterguard-mysql-sync.sh
     dst: /usr/local/libexec/clusterguard-mysql-sync.sh
     expand: true

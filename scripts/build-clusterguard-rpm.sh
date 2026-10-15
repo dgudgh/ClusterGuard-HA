@@ -129,6 +129,7 @@ helpers=(
   clusterguard-adapter-runtime-install.sh
   clusterguard-control-join.sh
   clusterguard-mysql-install.sh
+  clusterguard-mysql-layout.sh
   clusterguard-mysql-sync.sh
   clusterguard-mysql-probe-cleanup.sh
   clusterguard-mysql-qualification.sh
@@ -151,6 +152,8 @@ for helper in "${helpers[@]}"; do
 done
 
 install -m 0644 "${repository}/configs/clusterguard.example.json" "${root}/configs/"
+install -d -m 0755 "${root}/configs/mysql"
+install -m 0644 "${repository}/configs/mysql/"*.cnf "${root}/configs/mysql/"
 install -m 0644 "${repository}/configs/clusterguard-agent.example.json" "${root}/configs/"
 install -m 0644 "${repository}/configs/clusterguard-agent.docker-swarm.example.json" "${root}/configs/"
 install -m 0644 "${repository}/configs/clusterguard-update.example.json" "${root}/configs/"

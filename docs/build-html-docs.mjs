@@ -62,14 +62,14 @@ const releaseSlugs = {
 const groups = {
   "en-US": [
     ["Start Here", ["index", "product-overview", "product-tour", "architecture", ...releaseSlugs["en-US"]]],
-    ["Deploy and Migrate", ["offline-rpm-install", "database-preparation", "orchestrator-migration"]],
+    ["Deploy and Migrate", ["offline-rpm-install", "offline-installer-parameters", "database-preparation", "orchestrator-migration"]],
     ["Operate", ["operations-manual", "api-operations", "postgresql-ha", "docker-swarm-mysql", "kubernetes-mysql", "update-and-patch", "hotfix-patches", "upgrade-validation-chain", "version-release-policy", "update-operation-identity-incident-2026-09-30"]],
     ["Qualification", ["proven-mysql-ha-methods", "mysql-feature-parity-acceptance", "mysql-former-primary-recovery", "mysql-production-qualification", "postgresql-production-qualification", "docker-swarm-mysql-validation", "production-chaos-test", "power-lifecycle-test"]],
     ["License", ["licensing"]]
   ],
   "zh-CN": [
     ["开始使用", ["index", "product-overview", "product-tour", "architecture", ...releaseSlugs["zh-CN"]]],
-    ["部署与迁移", ["offline-rpm-install", "database-preparation", "orchestrator-migration"]],
+    ["部署与迁移", ["offline-rpm-install", "offline-installer-parameters", "database-preparation", "orchestrator-migration"]],
     ["日常运维", ["operations-manual", "api-operations", "postgresql-ha", "docker-swarm-mysql", "kubernetes-mysql", "update-and-patch", "hotfix-patches", "upgrade-validation-chain", "version-release-policy", "update-operation-identity-incident-2026-09-30"]],
     ["验收证据", ["proven-mysql-ha-methods", "mysql-feature-parity-acceptance", "mysql-former-primary-recovery", "mysql-production-qualification", "postgresql-production-qualification", "docker-swarm-mysql-validation", "production-chaos-test", "power-lifecycle-test", "release-recovery-acceptance-checklist"]],
     ["许可", ["licensing"]]
@@ -85,6 +85,7 @@ const entries = [
   entry("en-US", "product-tour", "Console Product Tour", "docs/en-US/product-tour.md"),
   entry("en-US", "architecture", "Architecture", "docs/architecture.md"),
   entry("en-US", "offline-rpm-install", "Offline RPM Installation", "docs/en-US/offline-rpm-install.md"),
+  entry("en-US", "offline-installer-parameters", "Offline Installer Parameters", "docs/en-US/offline-installer-parameters.md"),
   entry("en-US", "database-preparation", "Database Preparation", "docs/en-US/database-preparation.md"),
   entry("en-US", "orchestrator-migration", "Migration from Orchestrator", "docs/en-US/orchestrator-migration.md"),
   entry("en-US", "operations-manual", "Operations Manual", "docs/en-US/operations-manual.md"),
@@ -112,6 +113,7 @@ const entries = [
   entry("zh-CN", "product-tour", "控制台产品导览", "docs/zh-CN/product-tour.md"),
   entry("zh-CN", "architecture", "系统架构", "docs/zh-CN/architecture.md"),
   entry("zh-CN", "offline-rpm-install", "离线 RPM 安装", "docs/zh-CN/offline-rpm-install.md"),
+  entry("zh-CN", "offline-installer-parameters", "离线安装命令参数", "docs/zh-CN/offline-installer-parameters.md"),
   entry("zh-CN", "database-preparation", "数据库接入", "docs/zh-CN/database-preparation.md"),
   entry("zh-CN", "orchestrator-migration", "从 Orchestrator 迁移", "docs/zh-CN/orchestrator-migration.md"),
   entry("zh-CN", "operations-manual", "运维操作手册", "docs/zh-CN/operations-manual.md"),

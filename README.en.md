@@ -146,9 +146,9 @@ The safety mechanisms behind that workflow:
 
 Runtime targets: bare metal or virtual machines (systemd-managed database), Docker Swarm (fixed single-replica Service) and Kubernetes (dedicated single-replica StatefulSet). Mutations are advertised only when the restricted Agent, operation credentials, endpoint provider, controller quorum and required fencing evidence are configured; these capabilities are not retroactively added to `v2.1.45`.
 
-### Current Installation Kit: 3.1.2.10
+### Current Installation Kit: 3.1.3.1 (Local Candidate)
 
-[GitHub prerelease v3.1.2.10](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v3.1.2.10) provides the complete Linux x86_64 installation kit. The kit no longer embeds a database package: supply the approved MySQL / PostgreSQL media on site. Product version **3.1.2.10** is distinct from RPM compatibility baseline **2.2-108**. See [release notes](docs/en-US/release-3.1.2.10.md) for downloads, checksums and deployment boundaries. Current FIELD acceptance is OPEN; this is a prerelease.
+The complete Linux x86_64 installation kit is local at `release/3.1.3.1/`: product **3.1.3.1**, RPM compatibility baseline **2.2-109**. Supply approved database media on site. See [release notes](docs/en-US/release-3.1.3.1.md) and the [complete installer option reference](docs/en-US/offline-installer-parameters.md). Source and documentation are committed to GitHub; no GitHub Release is published for this candidate. ART/FIELD remain OPEN.
 
 ### Recorded Formal Releases
 

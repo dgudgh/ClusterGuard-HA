@@ -1,0 +1,678 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="Offline Installer Parameters - ClusterGuard HA operational documentation">
+  <title>Offline Installer Parameters | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">Skip to content</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>Search documentation</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="Filter by title">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>Start Here</h2><a href="index.html" data-doc-title="clusterguard ha documentation">ClusterGuard HA Documentation</a><a href="product-overview.html" data-doc-title="product overview">Product Overview</a><a href="product-tour.html" data-doc-title="console product tour">Console Product Tour</a><a href="architecture.html" data-doc-title="architecture">Architecture</a><a href="release-3.1.3.1.html" data-doc-title="release 3.1.3.1">Release 3.1.3.1</a><a href="release-3.1.2.10.html" data-doc-title="release 3.1.2.10">Release 3.1.2.10</a><a href="release-3.1.2.9.html" data-doc-title="release 3.1.2.9">Release 3.1.2.9</a><a href="release-3.1.2.8.html" data-doc-title="release 3.1.2.8">Release 3.1.2.8</a><a href="release-2.2.47.html" data-doc-title="release 2.2.47">Release 2.2.47</a><a href="release-2.2.46.html" data-doc-title="release 2.2.46">Release 2.2.46</a><a href="release-2.2.45.html" data-doc-title="release 2.2.45">Release 2.2.45</a><a href="release-2.2.44.html" data-doc-title="release 2.2.44">Release 2.2.44</a><a href="release-2.2.43.html" data-doc-title="release 2.2.43">Release 2.2.43</a><a href="release-2.2.42.html" data-doc-title="release 2.2.42">Release 2.2.42</a><a href="release-2.2.41.html" data-doc-title="release 2.2.41">Release 2.2.41</a><a href="release-2.2.40.html" data-doc-title="release 2.2.40">Release 2.2.40</a><a href="release-2.2.39.html" data-doc-title="release 2.2.39">Release 2.2.39</a><a href="release-2.1.45.html" data-doc-title="release 2.1.45">Release 2.1.45</a></section><section><h2>Deploy and Migrate</h2><a href="offline-rpm-install.html" data-doc-title="offline rpm installation">Offline RPM Installation</a><a href="offline-installer-parameters.html" data-doc-title="offline installer parameters" aria-current="page" class="active">Offline Installer Parameters</a><a href="database-preparation.html" data-doc-title="database preparation">Database Preparation</a><a href="orchestrator-migration.html" data-doc-title="migration from orchestrator">Migration from Orchestrator</a></section><section><h2>Operate</h2><a href="operations-manual.html" data-doc-title="operations manual">Operations Manual</a><a href="api-operations.html" data-doc-title="api operations reference">API Operations Reference</a><a href="postgresql-ha.html" data-doc-title="postgresql ha">PostgreSQL HA</a><a href="docker-swarm-mysql.html" data-doc-title="docker swarm mysql">Docker Swarm MySQL</a><a href="kubernetes-mysql.html" data-doc-title="kubernetes mysql">Kubernetes MySQL</a><a href="update-and-patch.html" data-doc-title="version update and rollback">Version Update and Rollback</a><a href="hotfix-patches.html" data-doc-title="hotfix patch catalogue">Hotfix Patch Catalogue</a><a href="upgrade-validation-chain.html" data-doc-title="upgrade and hotfix validation chain">Upgrade and Hotfix Validation Chain</a><a href="version-release-policy.html" data-doc-title="version and release policy">Version and Release Policy</a><a href="update-operation-identity-incident-2026-09-30.html" data-doc-title="update action identity and hotfix recovery incident (2026-09-30)">Update Action Identity and Hotfix Recovery Incident (2026-09-30)</a></section><section><h2>Qualification</h2><a href="proven-mysql-ha-methods.html" data-doc-title="proven mysql ha methods">Proven MySQL HA Methods</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql feature acceptance">MySQL Feature Acceptance</a><a href="mysql-former-primary-recovery.html" data-doc-title="former-primary recovery qualification">Former-Primary Recovery Qualification</a><a href="mysql-production-qualification.html" data-doc-title="mysql production qualification">MySQL Production Qualification</a><a href="postgresql-production-qualification.html" data-doc-title="postgresql 16.4 production qualification">PostgreSQL 16.4 Production Qualification</a><a href="docker-swarm-mysql-validation.html" data-doc-title="docker swarm mysql lab qualification">Docker Swarm MySQL Lab Qualification</a><a href="production-chaos-test.html" data-doc-title="production chaos test report">Production Chaos Test Report</a><a href="power-lifecycle-test.html" data-doc-title="power lifecycle test report">Power Lifecycle Test Report</a></section><section><h2>License</h2><a href="licensing.html" data-doc-title="licensing and compliance">Licensing and Compliance</a></section></nav>
+      <div class="sidebar-meta">
+        <span>Offline documentation build</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">Open navigation</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>Offline Installer Parameters</strong></div>
+        <div class="header-actions">
+          <a href="../zh-CN/offline-installer-parameters.html" lang="zh-CN">简体中文</a>
+          <button id="print-button" type="button">Print</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha-complete-offline-installer-parameter-reference">ClusterGuard HA Complete Offline Installer Parameter Reference<a class="heading-anchor" href="#clusterguard-ha-complete-offline-installer-parameter-reference" aria-label="Link to ClusterGuard HA Complete Offline Installer Parameter Reference">#</a></h1>
+<p>Target: ClusterGuard HA <code>3.1.3.1</code>, RPM <code>2.2-109</code>, and the current repository version of <code>scripts/install_clusterguard.sh</code>. This page describes source behavior only. Artifact build, upload, and field acceptance require their own stage evidence.</p>
+<p>Related manual: “ClusterGuard HA Complete Offline Installation and Deployment Manual.” The actual entry point is <code>install_clusterguard.sh</code> at the root of the extracted offline kit.</p>
+<h2 id="1-execution-boundary">1. Execution boundary<a class="heading-anchor" href="#1-execution-boundary" aria-label="Link to 1. Execution boundary">#</a></h2>
+<ul>
+<li>The installer defaults to <code>--plan</code>. It parses arguments, selects and validates media, validates topology/path/credential mapping, and prints a plan without connecting to or changing remote nodes.</li>
+<li>Only an explicit <code>--execute</code> enters real installation. Noninteractive execution also requires <code>-y/--yes</code>; interactive execution asks the operator to type the cluster name.</li>
+<li>Examples below are fragments or read-only plans. They are not copy-ready field execution commands. Addresses use the documentation subnet <code>192.0.2.0/24</code>.</li>
+<li>A successful plan is local input validation. It is not RPM, database, Raft, replication, VIP, or field HA acceptance.</li>
+<li>Control nodes run the API, Console, and Raft. There must be an odd number of at least three control nodes. Data nodes have no odd-count rule, and the two sets may be separate or overlap.</li>
+</ul>
+<h2 id="2-quick-index">2. Quick index<a class="heading-anchor" href="#2-quick-index" aria-label="Link to 2. Quick index">#</a></h2>
+<p>The sections below list every option accepted by the current parser, grouped by function. Short and long forms in one row are equivalent.</p>
+<table>
+<thead>
+<tr>
+<th>Category</th>
+<th>Options</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Nodes and media</td>
+<td><code>-l</code>, <code>-n</code>, <code>-g</code>, <code>-r</code>, <code>--database-package-dir</code>, <code>--engine</code>, <code>--data-on-arbitrators</code>, <code>--control-only</code></td>
+</tr>
+<tr>
+<td>SSH and host identity</td>
+<td><code>-u</code>, <code>-P</code>, <code>-p</code>, <code>--ssh-credentials-file</code>, <code>--ssh-key</code>, <code>--ssh-port</code>, <code>--known-hosts</code>, <code>--accept-host-keys</code></td>
+</tr>
+<tr>
+<td>Paths and state</td>
+<td><code>-ld</code>, <code>-nd</code>, <code>--database-software-dir</code>, <code>--state-file</code>, <code>--secrets-file</code>, <code>--work-dir</code>, <code>--remote-stage</code></td>
+</tr>
+<tr>
+<td>Database</td>
+<td><code>--database-version</code>, <code>--database-port</code>, and engine-specific MySQL/PostgreSQL options</td>
+</tr>
+<tr>
+<td>HA, safety, and network</td>
+<td><code>--vip</code>, <code>--interface</code>, <code>--prefix</code>, <code>--fencer</code>, <code>--fencer-assets</code>, <code>--manual-failover-only</code>, <code>--no-vip-reconcile</code>, <code>--patch-trust-key</code></td>
+</tr>
+<tr>
+<td>Control plane and capacity</td>
+<td><code>--cluster-name</code>, <code>--timezone</code>, <code>--api-port</code>, <code>--raft-port</code>, and the two minimum-space options</td>
+</tr>
+<tr>
+<td>Mode</td>
+<td><code>--plan</code>, <code>--execute</code>, <code>-y</code>, <code>-h</code></td>
+</tr>
+</tbody></table>
+<p>In the “Used by” column, <strong>plan + execute</strong> means both modes parse and validate the value, while remote effects occur only under <code>--execute</code>. <strong>Execute phase</strong> means the plan retains or displays the input but the value is consumed during execution. <strong>Flow control</strong> directly selects whether execution happens.</p>
+<h2 id="3-nodes-roles-and-installation-media">3. Nodes, roles, and installation media<a class="heading-anchor" href="#3-nodes-roles-and-installation-media" aria-label="Link to 3. Nodes, roles, and installation media">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Option and aliases</th>
+<th>Default / requirement</th>
+<th>Meaning, validation, effect, and limit</th>
+<th>Safe example</th>
+<th>Used by</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>-l LIST</code>, <code>--arbitrator-nodes LIST</code>, <code>--controller-nodes LIST</code></td>
+<td>Required</td>
+<td>Comma-separated control nodes, trimmed and deduplicated. At least three and an odd count are required. This is the Raft voter set; data-node count does not replace quorum.</td>
+<td><code>-l 192.0.2.11,192.0.2.12,192.0.2.13</code></td>
+<td>Plan + execute</td>
+</tr>
+<tr>
+<td><code>-n LIST</code>, <code>--data-nodes LIST</code></td>
+<td>Required for a database deployment that is not control-only</td>
+<td>Database and Agent nodes, deduplicated, with no odd-count rule. VIP automatic failover requires at least two.</td>
+<td><code>-n 192.0.2.21,192.0.2.22</code></td>
+<td>Plan + execute</td>
+</tr>
+<tr>
+<td><code>--data-on-arbitrators</code></td>
+<td>Off</td>
+<td>Appends every control node to the data-node set. Duplicate addresses are not repeated; overlapping nodes become mixed-role nodes.</td>
+<td><code>--data-on-arbitrators</code></td>
+<td>Plan + execute</td>
+</tr>
+<tr>
+<td><code>-g FILE</code>, <code>--application-rpm FILE</code></td>
+<td>Optional</td>
+<td>ClusterGuard RPM. If omitted, exactly one <code>clusterguard-ha-*.rpm</code> must exist in kit <code>packages/</code>; zero or multiple matches fail. An adjacent <code>.sha256</code>, when present, must match.</td>
+<td><code>-g ./packages/clusterguard-ha-2.2-109.x86_64.rpm</code></td>
+<td>Plan + execute</td>
+</tr>
+<tr>
+<td><code>-r FILE</code>, <code>--database-package FILE</code>, <code>--mysql-package FILE</code>, <code>--postgresql-source-package FILE</code></td>
+<td>Required for database deployment unless auto-discovery resolves one</td>
+<td>Explicit MySQL/UPSQL binary tar or PostgreSQL binary/official-source tar. Aliases do not force the engine. Media needs one safe top-level directory and the required binaries/source files.</td>
+<td><code>-r /secure/media/mysql-8.0.44-linux-x86_64.tar.xz</code></td>
+<td>Plan + execute</td>
+</tr>
+<tr>
+<td><code>--database-package-dir DIR</code></td>
+<td>Empty; may start from <code>CG_DATABASE_PACKAGE_DIR</code></td>
+<td>Used only without <code>-r</code> and restricts discovery to this directory. Otherwise the kit <code>packages/database/</code> is searched first; if it has any match, <code>/opt</code> is not searched. <code>/opt</code> is the fallback. Multiple matches fail closed.</td>
+<td><code>--database-package-dir /secure/database-media</code></td>
+<td>Plan + execute</td>
+</tr>
+<tr>
+<td><code>--engine mysql|postgresql|none</code></td>
+<td><code>mysql</code> with data nodes; <code>none</code> without data nodes or in control-only mode</td>
+<td>Selects the database flow. <code>none</code> disables database work and VIP reconciliation. MySQL/PG require data nodes.</td>
+<td><code>--engine postgresql</code></td>
+<td>Plan + execute</td>
+</tr>
+<tr>
+<td><code>--control-only</code>, <code>--skip-mysql</code></td>
+<td>Off</td>
+<td>Installs only the control plane. It cannot be combined with data nodes or database media, and engine must be empty or <code>none</code>. <code>--skip-mysql</code> is a legacy name and also skips PostgreSQL.</td>
+<td><code>--control-only</code></td>
+<td>Plan + execute</td>
+</tr>
+</tbody></table>
+<h2 id="4-ssh-passwords-and-host-keys">4. SSH, passwords, and host keys<a class="heading-anchor" href="#4-ssh-passwords-and-host-keys" aria-label="Link to 4. SSH, passwords, and host keys">#</a></h2>
+<p>Credential precedence follows the selected mode. A per-node list rejects a shared password, per-node file, and private key. A per-node file rejects a per-node list and private key. The source accepts a shared password together with a per-node file, in which case the file supplies the actual node values. It also accepts a shared password with a private key, in which case password transport mode is selected while the key is still passed to SSH. Do not depend on mixed inputs; production commands should select one explicit authentication method. Passwords are not written to deployment state or shown in the plan. Command-line secrets can appear in shell history and process listings; prefer a private key, a <code>0600</code> credential file, or the hidden prompt.</p>
+<table>
+<thead>
+<tr>
+<th>Option and aliases</th>
+<th>Default / requirement</th>
+<th>Meaning, validation, effect, and limit</th>
+<th>Safe example</th>
+<th>Used by</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>-u USER</code>, <code>--ssh-user USER</code></td>
+<td><code>root</code></td>
+<td>Remote SSH user, validated as a regular Linux username. The current installer never invokes <code>sudo</code>. Real installation writes system paths, installs software, and operates systemd, so the remote session must have UID 0; use <code>-u root</code>. An ordinary non-root account is not supported by this entry point even with NOPASSWD sudo.</td>
+<td><code>-u root</code></td>
+<td>Plan + execute</td>
+</tr>
+<tr>
+<td><code>-P PASS</code>, <code>--ssh-password PASS</code></td>
+<td>Starts from <code>CG_SSH_PASSWORD</code>; hidden prompt if still empty at execution</td>
+<td>One shared password for all nodes. A simultaneous per-node file supplies actual node values; a simultaneous key still leaves password transport selected. Never put a real password in documentation, task records, or public command lines.</td>
+<td><code>--ssh-password &#39;&lt;secure-input&gt;&#39;</code></td>
+<td>Execute phase</td>
+</tr>
+<tr>
+<td><code>-p LIST</code>, <code>--ssh-passwords LIST</code></td>
+<td>Empty</td>
+<td>Maps passwords to the <strong>deduplicated <code>all_nodes</code> order</strong>: control nodes in order, then data nodes not already present. Count must match exactly and values cannot be empty. Mutually exclusive with <code>-P</code>, credential file, and key. Passwords containing commas cannot use this form.</td>
+<td><code>-p &#39;&lt;node1-pass&gt;,&lt;node2-pass&gt;,&lt;node3-pass&gt;&#39;</code></td>
+<td>Plan validates mapping; execute consumes it</td>
+</tr>
+<tr>
+<td><code>--ssh-credentials-file FILE</code></td>
+<td>Empty</td>
+<td>Lines use <code>node=password</code>; blank and <code>#</code> lines are ignored. Mode must be exactly <code>0600</code>; every deduplicated node must be covered, with no duplicate keys. Values may contain <code>=</code>. Mutually exclusive with per-node list and private key.</td>
+<td><code>--ssh-credentials-file /secure/site/ssh-passwords.env</code></td>
+<td>Plan validates; execute consumes it</td>
+</tr>
+<tr>
+<td><code>--ssh-key FILE</code></td>
+<td>Empty</td>
+<td>SSH private key. This is a private key for SSH and is unrelated to the patch-signing public key. Mutually exclusive with per-node password list/file.</td>
+<td><code>--ssh-key /secure/site/installer_ed25519</code></td>
+<td>Plan + execute</td>
+</tr>
+<tr>
+<td><code>--ssh-port NUMBER</code></td>
+<td><code>22</code></td>
+<td>Installation SSH port, 1..65535. A database deployment currently rejects non-22 because the Agent inventory uses port 22; control-only may change it.</td>
+<td><code>--ssh-port 22</code></td>
+<td>Plan + execute</td>
+</tr>
+<tr>
+<td><code>--known-hosts FILE</code></td>
+<td>Empty</td>
+<td>Uses a reviewed known_hosts file in place. It must exist. All SSH/SCP keeps strict host-key checking.</td>
+<td><code>--known-hosts /secure/site/known_hosts</code></td>
+<td>Execute phase</td>
+</tr>
+<tr>
+<td><code>--accept-host-keys</code></td>
+<td>Off</td>
+<td>On first execution, collects keys into the work directory with <code>ssh-keyscan</code> and prints fingerprints. It explicitly accepts the keys observed then; it does not disable later strict checking. An existing work-directory file is reused.</td>
+<td><code>--accept-host-keys</code></td>
+<td>Execute phase</td>
+</tr>
+</tbody></table>
+<p>Per-node credential file shape, with placeholders only:</p>
+<pre><code class="language-text">192.0.2.11=&lt;password-for-11&gt;
+192.0.2.12=&lt;password-for-12&gt;
+192.0.2.13=&lt;password-for-13&gt;
+</code></pre>
+<h2 id="5-data-software-state-and-work-paths">5. Data, software, state, and work paths<a class="heading-anchor" href="#5-data-software-state-and-work-paths" aria-label="Link to 5. Data, software, state, and work paths">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Option and aliases</th>
+<th>Default / requirement</th>
+<th>Meaning, validation, effect, and limit</th>
+<th>Safe example</th>
+<th>Used by</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>-ld DIR</code>, <code>--controller-data DIR</code></td>
+<td><code>/var/lib/clusterguard</code></td>
+<td>Root for control metadata, Raft, and bootstrap admin password. It must be a safe absolute path other than <code>/</code>. It is not the database data root.</td>
+<td><code>-ld /data/clusterguard</code></td>
+<td>Plan + execute</td>
+</tr>
+<tr>
+<td><code>-nd DIR</code>, <code>--database-data DIR</code>, <code>--mysql-data DIR</code></td>
+<td><code>/data</code></td>
+<td>Database data root. MySQL instance is <code>&lt;DIR&gt;/mysql/&lt;port&gt;</code>; PG data is <code>&lt;DIR&gt;/postgresql/&lt;port&gt;/data</code>. <code>--mysql-data</code> also affects PostgreSQL because it is only an alias.</td>
+<td><code>-nd /data</code></td>
+<td>Plan + execute</td>
+</tr>
+<tr>
+<td><code>--database-software-dir DIR</code>, <code>--mysql-software-dir DIR</code></td>
+<td>MySQL <code>/usr/local/mysql</code></td>
+<td>Complete MySQL software directory, independent of <code>-nd</code>. It must be a safe absolute path and cannot contain/overlap instance state. MySQL only. It is not the tar path.</td>
+<td><code>--database-software-dir /apps/mysql8</code></td>
+<td>Plan + execute</td>
+</tr>
+<tr>
+<td><code>--state-file FILE</code></td>
+<td><code>$PWD/clusterguard-deployment-state.json</code></td>
+<td>Holds fixed cluster/node/instance UUIDs, phase, and identity binding. Recovery/rerun must reuse it. An existing file with a different cluster name, engine, port, or remote-root policy fails. Created as <code>0600</code>.</td>
+<td><code>--state-file /secure/site/deployment-state.json</code></td>
+<td>Plan displays; execute reads/writes</td>
+</tr>
+<tr>
+<td><code>--secrets-file FILE</code></td>
+<td><code>$PWD/clusterguard-deployment-secrets.env</code></td>
+<td>Site secrets and managed database credentials. First execution creates it as <code>0600</code>; rerun requires all 13 keys. Losing it cannot safely “resume” an existing identity by inventing a new file.</td>
+<td><code>--secrets-file /secure/site/deployment-secrets.env</code></td>
+<td>Execute reads/writes</td>
+</tr>
+<tr>
+<td><code>--work-dir DIR</code></td>
+<td><code>$PWD/clusterguard-site</code></td>
+<td>Local certificate source, SSH keys, node configs, temporary API files, and known_hosts; execution uses <code>umask 077</code>. Preserve and back it up with state/secrets for recovery.</td>
+<td><code>--work-dir /secure/site/work</code></td>
+<td>Execute reads/writes</td>
+</tr>
+<tr>
+<td><code>--remote-stage DIR</code></td>
+<td><code>/var/lib/clusterguard/bootstrap</code></td>
+<td>Remote staging directory on every node; must be absolute and contain no newline.</td>
+<td><code>--remote-stage /var/lib/clusterguard/bootstrap</code></td>
+<td>Execute phase</td>
+</tr>
+</tbody></table>
+<p>The state file owns identity and phase, the secrets file owns secrets, and the work directory owns certificates and rendered configuration. They are not interchangeable caches. Changing any of them on a rerun can create identity, certificate, or credential mismatch.</p>
+<h2 id="6-common-database-options">6. Common database options<a class="heading-anchor" href="#6-common-database-options" aria-label="Link to 6. Common database options">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Option and aliases</th>
+<th>Default / requirement</th>
+<th>Meaning, validation, effect, and limit</th>
+<th>Safe example</th>
+<th>Used by</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>--database-version VER</code>, <code>--postgresql-version VER</code></td>
+<td>Initially empty; PG is defaulted to <code>16</code> only after media selection</td>
+<td>An explicit value participates in media filename matching and is passed to PG build/install; PG accepts dotted digits only. When omitted, auto-discovery does not filter on <code>16</code>; the PG value becomes <code>16</code> only after media has been selected. Multiple versions in a search directory require an explicit value. Production commands should always state the version.</td>
+<td><code>--database-version 16.4</code></td>
+<td>Plan + execute</td>
+</tr>
+<tr>
+<td><code>--database-port N</code>, <code>--mysql-port N</code>, <code>--postgresql-port N</code></td>
+<td>MySQL <code>3306</code>; PG <code>5432</code>; none <code>0</code></td>
+<td>Port 1..65535. All three spellings are equivalent and do not select an engine. Port participates in paths, unit names, identity, and MySQL <code>server_id</code>.</td>
+<td><code>--database-port 3306</code></td>
+<td>Plan + execute</td>
+</tr>
+<tr>
+<td><code>--dependencies DIR</code></td>
+<td>Auto-selects kit <code>dependencies/</code> when it contains RPMs</td>
+<td>Local RPM repository for base runtime dependencies. PG source build borrows it only when <code>COLLECTION-INFO</code> says <code>postgresql_source_build=true</code>; normally keep PG build dependencies separate.</td>
+<td><code>--dependencies ./dependencies</code></td>
+<td>Plan + execute</td>
+</tr>
+<tr>
+<td><code>--controller-min-free-gb N</code></td>
+<td><code>2</code></td>
+<td>Minimum free GiB on every control node filesystem containing <code>-ld</code>; positive integer.</td>
+<td><code>--controller-min-free-gb 4</code></td>
+<td>Plan + execution preflight</td>
+</tr>
+<tr>
+<td><code>--database-min-free-gb N</code></td>
+<td><code>10</code></td>
+<td>Minimum free GiB on every data-node filesystem containing <code>-nd</code>; positive integer.</td>
+<td><code>--database-min-free-gb 100</code></td>
+<td>Plan + execution preflight</td>
+</tr>
+</tbody></table>
+<p>Every database tar must be readable, contain no absolute or <code>..</code> traversal entries, and have one top-level directory. MySQL requires <code>mysqld</code>, <code>mysql</code>, and <code>mysqldump</code>. A PG binary requires <code>initdb</code>, <code>postgres</code>, <code>psql</code>, <code>pg_basebackup</code>, <code>pg_rewind</code>, and <code>pg_controldata</code>; otherwise the official source-tree shape is tested. An adjacent <code>.sha256</code>, when present, is checked. Absence of a sidecar does not prove vendor-signature verification.</p>
+<h2 id="7-mysql-options-and-configuration-preservation">7. MySQL options and configuration preservation<a class="heading-anchor" href="#7-mysql-options-and-configuration-preservation" aria-label="Link to 7. MySQL options and configuration preservation">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Default / requirement</th>
+<th>Meaning, validation, effect, and limit</th>
+<th>Safe example</th>
+<th>Used by</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>--mysql-master-cnf FILE</code></td>
+<td>Kit <code>templates/mysql/my-master.cnf</code>, with development-tree fallback to <code>configs/mysql/</code></td>
+<td>Production template for the first data node. Must be a regular non-symlink file. A custom template changes only the source template; renderer still changes paths, port, <code>server_id</code>, and read-only startup guards while preserving all other values, comments, order, and duplicates.</td>
+<td><code>--mysql-master-cnf /secure/config/my-master.cnf</code></td>
+<td>Plan + execute</td>
+</tr>
+<tr>
+<td><code>--mysql-slave-cnf FILE</code></td>
+<td>Kit <code>templates/mysql/my-slave.cnf</code>, with development-tree fallback to <code>configs/mysql/</code></td>
+<td>Template for the second and later data nodes; same rules as above. “slave” is a legacy option name. Runtime role remains controlled by topology and writer lease.</td>
+<td><code>--mysql-slave-cnf /secure/config/my-slave.cnf</code></td>
+<td>Plan + execute</td>
+</tr>
+<tr>
+<td><code>--mysql-root-password PASS</code></td>
+<td>Starts from <code>CG_NODE_MYSQL_ROOT_PASSWORD</code>; random on first execution if still empty</td>
+<td>Local MySQL root password, 8..128 characters from letters, digits, and <code>@%+=:,._-</code>. Command-line use exposes history/process data; prefer protected environment injection or generated value.</td>
+<td><code>--mysql-root-password &#39;&lt;generated-secret&gt;&#39;</code></td>
+<td>Plan validates; execute writes secrets</td>
+</tr>
+<tr>
+<td><code>--mysql-root-remote-host HOST</code></td>
+<td>Starts from <code>CG_NODE_MYSQL_ROOT_REMOTE_HOST</code>; empty means do not create/change remote root</td>
+<td>Explicitly creates <code>root@HOST</code>; MySQL only. <code>%</code> is widest scope and must follow site policy. The value is bound into state and must match on rerun.</td>
+<td><code>--mysql-root-remote-host &#39;192.0.2.%&#39;</code></td>
+<td>Plan + execute</td>
+</tr>
+</tbody></table>
+<p>MySQL software defaults to <code>/usr/local/mysql</code>, while the instance defaults to <code>/data/mysql/&lt;port&gt;</code>; they are independent. Custom primary/replica templates change only the template source. The installer preserves other production parameters and renders the deployment paths, port, node identity, and read-only startup guards. Every node starts with <code>read_only=ON</code> and <code>super_read_only=ON</code>; only after controlled replication setup and role authorization does the primary switch them to <code>OFF</code>, while replicas remain read-only. Duplicate generated node identities fail before execution.</p>
+<h2 id="8-postgresql-options-and-separate-build-dependencies">8. PostgreSQL options and separate build dependencies<a class="heading-anchor" href="#8-postgresql-options-and-separate-build-dependencies" aria-label="Link to 8. PostgreSQL options and separate build dependencies">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Default / requirement</th>
+<th>Meaning, validation, effect, and limit</th>
+<th>Safe example</th>
+<th>Used by</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>--postgresql-password PASS</code></td>
+<td>Starts from <code>CG_POSTGRESQL_ADMIN_PASSWORD</code>; random on first execution if empty</td>
+<td><code>postgres</code> admin password; same character policy as MySQL root.</td>
+<td><code>--postgresql-password &#39;&lt;generated-secret&gt;&#39;</code></td>
+<td>Plan validates; execute consumes it</td>
+</tr>
+<tr>
+<td><code>--postgresql-allowed-cidr CIDR</code></td>
+<td>Inferred for one IPv4 <code>/24</code>; required for DNS or multiple subnets</td>
+<td>PG management and replication network; IPv4 CIDR only.</td>
+<td><code>--postgresql-allowed-cidr 192.0.2.0/24</code></td>
+<td>Plan + execute</td>
+</tr>
+<tr>
+<td><code>--postgresql-build-node HOST</code></td>
+<td>First data node for an official source package</td>
+<td>Compiles once on this data node, then distributes one SHA256-verified binary. Must belong to data nodes. Invalid for PG binary media and other engines.</td>
+<td><code>--postgresql-build-node 192.0.2.21</code></td>
+<td>Plan + execute</td>
+</tr>
+<tr>
+<td><code>--postgresql-build-jobs N</code></td>
+<td>Starts from <code>CG_POSTGRESQL_BUILD_JOBS</code>; empty lets helper detect, capped at 16</td>
+<td>Explicit values 1..128; official PG source media only. Explicit and automatic caps intentionally differ.</td>
+<td><code>--postgresql-build-jobs 8</code></td>
+<td>Plan + execute</td>
+</tr>
+<tr>
+<td><code>--postgresql-dependencies DIR</code></td>
+<td>Empty; without it, source build uses the build node&#39;s online repository</td>
+<td><strong>Separate PG source-build dependency repository</strong>. At execution it must contain <code>repodata/repomd.xml</code>. It is distinct from base runtime <code>--dependencies</code>.</td>
+<td><code>--postgresql-dependencies /secure/pg-build-dependencies</code></td>
+<td>Plan displays; execute archives/transfers</td>
+</tr>
+</tbody></table>
+<p>The source build node also needs at least 6 GiB of temporary space. <code>--postgresql-dependencies</code> does not turn a binary package into a source build. <code>--postgresql-build-node/jobs</code> fail for non-source media.</p>
+<h2 id="9-control-plane-network-timezone-and-ha-safety">9. Control plane, network, timezone, and HA safety<a class="heading-anchor" href="#9-control-plane-network-timezone-and-ha-safety" aria-label="Link to 9. Control plane, network, timezone, and HA safety">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Default / requirement</th>
+<th>Meaning, validation, effect, and limit</th>
+<th>Safe example</th>
+<th>Used by</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>--cluster-name NAME</code></td>
+<td><code>clusterguard-control-plane</code> or <code>&lt;engine&gt;-ha-&lt;port&gt;</code></td>
+<td>3..63 allowed characters, beginning with alphanumeric. It is bound into state and used for execution confirmation.</td>
+<td><code>--cluster-name mysql-ha-3306</code></td>
+<td>Plan + execute</td>
+</tr>
+<tr>
+<td><code>--vip ADDRESS</code></td>
+<td>Empty</td>
+<td>Optional IPv4 writer endpoint. MySQL/PG + VIP without manual-only enables both database automatic failover and Agent majority fencing; at least two data nodes. A VIP alone is not safety authorization.</td>
+<td><code>--vip 192.0.2.100</code></td>
+<td>Plan + execute</td>
+</tr>
+<tr>
+<td><code>--interface NAME</code></td>
+<td><code>ens160</code></td>
+<td>VIP interface; letters, digits, and <code>_.:-</code> are accepted.</td>
+<td><code>--interface ens160</code></td>
+<td>Plan + execute</td>
+</tr>
+<tr>
+<td><code>--prefix N</code></td>
+<td><code>24</code></td>
+<td>VIP CIDR prefix, 1..32. It is validated even when no VIP is configured but binds no address then.</td>
+<td><code>--prefix 24</code></td>
+<td>Plan + execute</td>
+</tr>
+<tr>
+<td><code>--no-vip-reconcile</code></td>
+<td>Absent, so post-install convergence is enabled</td>
+<td>Prevents enabling the Agent reconcile timer and waiting for the initial VIP lease at the end of installation. It <strong>does not disable database automatic-failover configuration</strong>. Use <code>--manual-failover-only</code> to prohibit automatic switching.</td>
+<td><code>--no-vip-reconcile</code></td>
+<td>Execute phase</td>
+</tr>
+<tr>
+<td><code>--manual-failover-only</code></td>
+<td>Off</td>
+<td>For MySQL/PG with VIP, explicitly disables automatic failover and retains controlled manual switching. It cannot be combined with fencer or fencer assets. Without VIP, it changes no other default.</td>
+<td><code>--manual-failover-only</code></td>
+<td>Plan + execute</td>
+</tr>
+<tr>
+<td><code>--fencer FILE</code></td>
+<td>Empty</td>
+<td>Optional external fencing enhancement. Must be a local executable regular non-symlink file; allowed only for MySQL/PG with VIP and installed at <code>/usr/local/libexec/clusterguard-fencer</code>. It supplements, and never replaces, Raft quorum, Agent quorum fencing, writer lease, or maintenance gates.</td>
+<td><code>--fencer /secure/fencing/site-fencer</code></td>
+<td>Plan + execute</td>
+</tr>
+<tr>
+<td><code>--fencer-assets DIR</code></td>
+<td>Empty; requires <code>--fencer</code></td>
+<td>Site configuration directory. It cannot be a symlink or contain symlinks/subdirectories; top-level regular filenames are restricted. Installed under <code>/etc/clusterguard/fencing/</code>. Do not place unprotected private-key examples there.</td>
+<td><code>--fencer-assets /secure/fencing/site-config</code></td>
+<td>Plan + execute</td>
+</tr>
+<tr>
+<td><code>--api-port N</code></td>
+<td><code>3000</code></td>
+<td>Console/API port, 1..65535, used for control access and Leader targeting.</td>
+<td><code>--api-port 3000</code></td>
+<td>Plan + execute</td>
+</tr>
+<tr>
+<td><code>--raft-port N</code></td>
+<td><code>10009</code></td>
+<td>Control-node Raft port, 1..65535. Changing it does not alter the odd voter count or majority requirement.</td>
+<td><code>--raft-port 10009</code></td>
+<td>Plan + execute</td>
+</tr>
+<tr>
+<td><code>--timezone ZONE</code></td>
+<td>If empty, read operator-host <code>timedatectl</code>, then try its <code>/etc/localtime</code> zone</td>
+<td>When valid zoneinfo is found, pins one display timezone on all nodes. An invalid explicit value or unresolved default only warns and sends no timezone, leaving each node&#39;s display zone unchanged. It does not replace NTP/skew checks.</td>
+<td><code>--timezone Asia/Shanghai</code></td>
+<td>Plan + execute</td>
+</tr>
+<tr>
+<td><code>--patch-trust-key FILE</code></td>
+<td>Starts from <code>CG_PATCH_TRUST_KEY</code>, then kit public-key discovery; read-only update UI if still empty</td>
+<td>Must be an OpenSSL-readable regular <strong>public key</strong>, never a signing private key. Execution deploys trust and enables the controlled update Helper. It does not bypass signature, plan, maintenance lock, or rolling gates.</td>
+<td><code>--patch-trust-key ./trust/patch-signing-public.pem</code></td>
+<td>Plan + execute</td>
+</tr>
+</tbody></table>
+<p>The fixed safety relationship is: Raft majority confirms control authority; Agent quorum fencing makes a former node without majority authorization revoke VIP locally and stay read-only; writer lease controls write role; an optional external fencer adds site-specific isolation proof. <code>--no-vip-reconcile</code> controls activation of periodic VIP convergence only and is not a substitute for disabling automatic failover.</p>
+<h2 id="10-execution-mode-and-help">10. Execution mode and help<a class="heading-anchor" href="#10-execution-mode-and-help" aria-label="Link to 10. Execution mode and help">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>Option and aliases</th>
+<th>Default / requirement</th>
+<th>Meaning, validation, effect, and limit</th>
+<th>Safe example</th>
+<th>Used by</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>--plan</code></td>
+<td>Default</td>
+<td>Sets <code>execute=false</code>. If combined with <code>--execute</code>, the last occurrence wins. It still reads local tar listings, sidecars, cnf files, and credential mapping.</td>
+<td><code>./install_clusterguard.sh ... --plan</code></td>
+<td>Flow control</td>
+</tr>
+<tr>
+<td><code>--execute</code></td>
+<td>Explicitly required for real installation</td>
+<td>After local validation and plan output, checks execution tools, confirms, connects, and changes remote nodes.</td>
+<td>Review the same arguments with <code>--plan</code>; an authorized operator appends it separately</td>
+<td>Flow control</td>
+</tr>
+<tr>
+<td><code>-y</code>, <code>--yes</code></td>
+<td>Off</td>
+<td>Skips typing the cluster name; required for noninteractive <code>--execute</code>. It skips no safety, media, or topology validation.</td>
+<td><code>--execute --yes</code> (authorized automation only)</td>
+<td>Flow control</td>
+</tr>
+<tr>
+<td><code>-h</code>, <code>--help</code></td>
+<td>Optional</td>
+<td>Prints built-in help and exits 0. Built-in help omits some accepted compatibility aliases; use this page and the parser for the complete set.</td>
+<td><code>./install_clusterguard.sh --help</code></td>
+<td>No installation</td>
+</tr>
+</tbody></table>
+<h2 id="11-public-environment-variables">11. Public environment variables<a class="heading-anchor" href="#11-public-environment-variables" aria-label="Link to 11. Public environment variables">#</a></h2>
+<p>A corresponding CLI option normally overrides the environment value read during initialization. Never expose secrets in public logs. Wait/retry variables below are accepted operational tuning inputs; they do not relax health criteria.</p>
+<table>
+<thead>
+<tr>
+<th>Environment variable</th>
+<th>Default</th>
+<th>Effect and limit</th>
+<th>CLI / phase</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>CG_DATABASE_PACKAGE_DIR</code></td>
+<td>Empty</td>
+<td>Sole directory for database auto-discovery.</td>
+<td>Overridden by <code>--database-package-dir</code></td>
+</tr>
+<tr>
+<td><code>CG_POSTGRESQL_BUILD_JOBS</code></td>
+<td>Empty</td>
+<td>PG source parallelism; explicit value 1..128.</td>
+<td>Overridden by <code>--postgresql-build-jobs</code></td>
+</tr>
+<tr>
+<td><code>CG_SSH_PASSWORD</code></td>
+<td>Empty</td>
+<td>Shared SSH password; needed at execution only when no other authentication exists.</td>
+<td>Overridden by <code>-P</code></td>
+</tr>
+<tr>
+<td><code>CG_NODE_MYSQL_ROOT_PASSWORD</code></td>
+<td>Empty</td>
+<td>Initial MySQL root value when creating secrets; reruns use the secrets file.</td>
+<td>Initial value overridden by <code>--mysql-root-password</code></td>
+</tr>
+<tr>
+<td><code>CG_NODE_MYSQL_ROOT_REMOTE_HOST</code></td>
+<td>Empty</td>
+<td>Explicit remote-root Host policy.</td>
+<td>Overridden by <code>--mysql-root-remote-host</code></td>
+</tr>
+<tr>
+<td><code>CG_POSTGRESQL_ADMIN_PASSWORD</code></td>
+<td>Empty</td>
+<td>Initial PG admin value when creating secrets; reruns use secrets.</td>
+<td>Initial value overridden by <code>--postgresql-password</code></td>
+</tr>
+<tr>
+<td><code>CG_POSTGRESQL_ALLOWED_CIDR</code></td>
+<td>Empty</td>
+<td>PG management/replication IPv4 CIDR.</td>
+<td>Overridden by <code>--postgresql-allowed-cidr</code></td>
+</tr>
+<tr>
+<td><code>CG_PATCH_TRUST_KEY</code></td>
+<td>Empty</td>
+<td>Patch-signing public-key path.</td>
+<td>Overridden by <code>--patch-trust-key</code>, followed by kit discovery</td>
+</tr>
+<tr>
+<td><code>CG_JQ_BINARY</code></td>
+<td><code>jq</code> in PATH, then kit static jq</td>
+<td>Selects an executable jq; invalid path fails.</td>
+<td>No CLI</td>
+</tr>
+<tr>
+<td><code>CG_INSTALL_API_RETRY_ATTEMPTS</code></td>
+<td><code>4</code></td>
+<td>API Leader-target/GET retry attempts, 1..10. A non-GET transport failure is not blindly retried.</td>
+<td>Execute phase</td>
+</tr>
+<tr>
+<td><code>CG_INSTALL_VIP_LEASE_TIMEOUT_SECONDS</code></td>
+<td><code>300</code></td>
+<td>Initial VIP lease wait, 30..600 seconds.</td>
+<td>Execution acceptance</td>
+</tr>
+<tr>
+<td><code>CG_INSTALL_VERIFY_TIMEOUT_SECONDS</code></td>
+<td><code>180</code></td>
+<td>Total stable-topology health wait, 30..900 seconds.</td>
+<td>Execution acceptance</td>
+</tr>
+<tr>
+<td><code>CG_INSTALL_VERIFY_POLL_SECONDS</code></td>
+<td><code>2</code></td>
+<td>Topology polling interval, 1..30 seconds.</td>
+<td>Execution acceptance</td>
+</tr>
+<tr>
+<td><code>CG_INSTALL_VERIFY_STABLE_OBSERVATIONS</code></td>
+<td><code>3</code></td>
+<td>Consecutive healthy observations, 2..10.</td>
+<td>Execution acceptance</td>
+</tr>
+</tbody></table>
+
+          <footer class="document-footer">
+            <span>Source: <code>docs/en-US/offline-installer-parameters.md</code></span>
+            <a href="../index.html">Documentation language home</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="On this page">
+          <strong>On this page</strong>
+          <a class="toc-level-2" href="#1-execution-boundary">1. Execution boundary</a><a class="toc-level-2" href="#2-quick-index">2. Quick index</a><a class="toc-level-2" href="#3-nodes-roles-and-installation-media">3. Nodes, roles, and installation media</a><a class="toc-level-2" href="#4-ssh-passwords-and-host-keys">4. SSH, passwords, and host keys</a><a class="toc-level-2" href="#5-data-software-state-and-work-paths">5. Data, software, state, and work paths</a><a class="toc-level-2" href="#6-common-database-options">6. Common database options</a><a class="toc-level-2" href="#7-mysql-options-and-configuration-preservation">7. MySQL options and configuration preservation</a><a class="toc-level-2" href="#8-postgresql-options-and-separate-build-dependencies">8. PostgreSQL options and separate build dependencies</a><a class="toc-level-2" href="#9-control-plane-network-timezone-and-ha-safety">9. Control plane, network, timezone, and HA safety</a><a class="toc-level-2" href="#10-execution-mode-and-help">10. Execution mode and help</a><a class="toc-level-2" href="#11-public-environment-variables">11. Public environment variables</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

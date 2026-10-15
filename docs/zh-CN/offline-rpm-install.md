@@ -20,6 +20,8 @@
 
 `clusterguard-configure` 是安装器在远端调用的节点级配置程序。初次部署不应由运维人员逐台手工调用它；只有平台节点生命周期、受控恢复流程或工程支持明确要求时才使用该程序。
 
+全部命令参数、别名、默认值、必填条件与安全边界见[离线安装命令参数](offline-installer-parameters.md)。
+
 ## 1. 交付物与安装方式
 
 正式交付目录是构建产物目录 `release/<bundle-version>/`（下例使用 2.1-45 介质版本）：
@@ -201,11 +203,15 @@ MySQL 8.0 示例：
 sha256sum /opt/mysql-8.0.44-linux-glibc2.17-x86_64.tar.xz
 ```
 
-MySQL 8.4 仅需替换文件名、`--database-version` 和集群名。UPSQL 使用其企业审批的兼容 MySQL tar 包，并在 `--engine mysql` 下部署。
+MySQL 8.4 还须提供经过该版本验证的生产 cnf，不能直接套用本次 MySQL 8.0 模板。UPSQL 使用其企业审批的兼容 MySQL tar 包，并在 `--engine mysql` 下部署。
 
-安装器会在每个 MySQL 数据节点读取物理内存并自动生成该节点的参数。`innodb_buffer_pool_size` 默认取物理内存的 70% 并向上取整到 4 GiB 的整数倍；若取整后超过物理内存的 80%，则取不超过 80% 的最大 4 GiB 倍数，不设置固定容量上限。例如 256 GiB 内存会配置为 180 GiB。`max_connections` 默认固定为 1000。缓存、临时表和 redo 仍按内存分档。单连接缓冲保持受控值，避免 1000 个连接并发时产生不可控的额外内存放大。
+MySQL 8.0 以现场批准的生产 `my-master.cnf`、`my-slave.cnf` 为基线，介质内原件位于 `templates/mysql/`，第一台数据节点使用主库模板，其余使用从库模板。安装器不按内存重算其中的 Buffer Pool、连接数、缓冲、复制或半同步参数，也不因参数重复或弃用而擅改原值。可用 `--mysql-master-cnf FILE --mysql-slave-cnf FILE` 指定现场审核的替代模板；其他数据库版本必须使用与该版本兼容的审批配置，不得假定 8.0 模板跨版本通用。
 
-MySQL 数据节点至少需要 5 GiB 物理内存；低于此容量时无法同时满足 4 GiB 对齐和 80% 上限，安装器会在初始化数据目录前阻断。
+允许改写的范围只有路径、端口、逐节点 `server_id`，以及用户确认保留的只读启动保护。`server_id` 默认为 IPv4 最后一段拼接端口，例如 `.152:3306` 为 `1523306`；执行前拒绝本集群重复 ID。三台启动均为 `read_only=ON`、`super_read_only=ON`，写入角色由原有受控流程管理。
+
+默认实例目录为 `/data/mysql/<端口>/`，下设 `data/`、`conf/`、`log/`、`binlog/`、`relaylog/`、`run/`、`tmp/` 和备份暂存。`-nd /db` 将实例目录改为 `/db/mysql/<端口>/`；软件默认 `/usr/local/mysql/`，可用 `--database-software-dir /apps/mysql8` 单独指定完整目录。软件和配置由 root 管理，数据库可写目录归 mysql，不能递归把整个实例目录交给 mysql。
+
+服务端、私有客户端配置分别为实例目录下的 `conf/my.cnf`、`conf/client.cnf`。轮转规则的实际文件也在 `conf/`；systemd 登记单元保留于标准系统目录，启动参数引用实际软件和配置，并声明数据盘挂载依赖，避免开机时因数据盘尚未挂载而读不到单元；Agent、同步和诊断使用同一实际路径。`conf/layout.json` 保存目录供后续恢复使用，旧兼容入口只作引用，不复制凭据。重新安装不得直接改变已有实例路径；旧实例迁移须单独停机规划。安装前以计划输出核对全部目录，初始化前由实际 MySQL 程序执行 `--validate-config`；解析成功不等于已完成现场启动和高可用验收。
 
 MySQL 默认监听数据库端口的所有 IPv4 地址，ClusterGuard 管理账号可直接通过 TCP 连接。为兼容传统驱动，MySQL 8.0 使用 `default_authentication_plugin=mysql_native_password`；MySQL 8.4 使用其支持的 `mysql_native_password=ON` 并显式设置平台账号插件。默认不会创建或修改任何远程 `root` 账户，远程控制使用独立的发现、执行和复制账号。
 

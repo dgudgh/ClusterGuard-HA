@@ -6,7 +6,8 @@ Choose one task below. The full catalogue preserves historical releases and acce
 
 | 当前任务 | 下一份文档 |
 | --- | --- |
-| 当前完整安装介质 / Current kit | [3.1.2.10 release notes](release-3.1.2.10.md)，预发布 / prerelease，FIELD OPEN |
+| 当前完整安装介质 / Current kit | [3.1.3.1 release notes](release-3.1.3.1.md)，本地候选 / local candidate，ART/FIELD OPEN |
+| 离线安装命令参数 / Installer options | [完整命令参考](offline-installer-parameters.md) |
 | 安装 / Installation | [ClusterGuard HA Offline Installation and Deployment Manual](offline-rpm-install.md) |
 | 数据库接入 / Database preparation | [ClusterGuard HA Database Integration Manual](database-preparation.md) |
 | 运维 / Operations | [ClusterGuard HA Operations Manual](operations-manual.md) |

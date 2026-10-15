@@ -1,0 +1,678 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="离线安装命令参数 - ClusterGuard HA operational documentation">
+  <title>离线安装命令参数 | ClusterGuard HA</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="../assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#document-content">跳到正文</a>
+  <div class="docs-shell">
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <a class="brand" href="index.html" aria-label="ClusterGuard HA documentation home">
+        <span class="brand-mark">CG</span>
+        <span><strong>ClusterGuard HA</strong><small>Multi-DB HA Control</small></span>
+      </a>
+      <label class="search-box">
+        <span>搜索文档</span>
+        <input id="docs-search" type="search" autocomplete="off" placeholder="输入标题关键词">
+      </label>
+      <nav class="docs-nav" aria-label="Documentation"><section><h2>开始使用</h2><a href="index.html" data-doc-title="clusterguard ha 中文文档">ClusterGuard HA 中文文档</a><a href="product-overview.html" data-doc-title="产品概览">产品概览</a><a href="product-tour.html" data-doc-title="控制台产品导览">控制台产品导览</a><a href="architecture.html" data-doc-title="系统架构">系统架构</a><a href="release-3.1.3.1.html" data-doc-title="3.1.3.1 发布说明">3.1.3.1 发布说明</a><a href="release-3.1.2.10.html" data-doc-title="3.1.2.10 发布说明">3.1.2.10 发布说明</a><a href="release-3.1.2.9.html" data-doc-title="3.1.2.9 发布说明">3.1.2.9 发布说明</a><a href="release-3.1.2.8.html" data-doc-title="3.1.2.8 发布说明">3.1.2.8 发布说明</a><a href="release-2.2.105.html" data-doc-title="2.2.105 发布说明">2.2.105 发布说明</a><a href="release-2.2.104.html" data-doc-title="2.2.104 发布说明">2.2.104 发布说明</a><a href="release-2.2.103.html" data-doc-title="2.2.103 发布说明">2.2.103 发布说明</a><a href="release-2.2.102.html" data-doc-title="2.2.102 发布说明">2.2.102 发布说明</a><a href="release-2.2.101.html" data-doc-title="2.2.101 发布说明">2.2.101 发布说明</a><a href="release-2.2.100.html" data-doc-title="2.2.100 发布说明">2.2.100 发布说明</a><a href="release-2.2.99.html" data-doc-title="2.2.99 发布说明">2.2.99 发布说明</a><a href="release-2.2.98.html" data-doc-title="2.2.98 发布说明">2.2.98 发布说明</a><a href="release-2.2.97.html" data-doc-title="2.2.97 发布说明">2.2.97 发布说明</a><a href="release-2.2.96.html" data-doc-title="2.2.96 发布说明">2.2.96 发布说明</a><a href="release-2.2.95.html" data-doc-title="2.2.95 发布说明">2.2.95 发布说明</a><a href="release-2.2.94.html" data-doc-title="2.2.94 发布说明">2.2.94 发布说明</a><a href="release-2.2.93.html" data-doc-title="2.2.93 发布说明">2.2.93 发布说明</a><a href="release-2.2.92.html" data-doc-title="2.2.92 发布说明">2.2.92 发布说明</a><a href="release-2.2.91.html" data-doc-title="2.2.91 发布说明">2.2.91 发布说明</a><a href="release-2.2.90.html" data-doc-title="2.2.90 发布说明">2.2.90 发布说明</a><a href="release-2.2.89.html" data-doc-title="2.2.89 发布说明">2.2.89 发布说明</a><a href="release-2.2.88.html" data-doc-title="2.2.88 发布说明">2.2.88 发布说明</a><a href="release-2.2.86.html" data-doc-title="2.2.86 发布说明">2.2.86 发布说明</a><a href="release-2.2.73.html" data-doc-title="2.2.73 发布说明">2.2.73 发布说明</a><a href="release-2.2.72.html" data-doc-title="2.2.72 发布说明">2.2.72 发布说明</a><a href="release-2.2.71.html" data-doc-title="2.2.71 发布说明">2.2.71 发布说明</a><a href="release-2.2.70.html" data-doc-title="2.2.70 发布说明">2.2.70 发布说明</a><a href="release-2.2.69.html" data-doc-title="2.2.69 发布说明">2.2.69 发布说明</a><a href="release-2.2.47.html" data-doc-title="2.2.47 发布说明">2.2.47 发布说明</a><a href="release-2.2.46.html" data-doc-title="2.2.46 发布说明">2.2.46 发布说明</a><a href="release-2.2.45.html" data-doc-title="2.2.45 发布说明">2.2.45 发布说明</a><a href="release-2.2.44.html" data-doc-title="2.2.44 发布说明">2.2.44 发布说明</a><a href="release-2.2.43.html" data-doc-title="2.2.43 发布说明">2.2.43 发布说明</a><a href="release-2.2.42.html" data-doc-title="2.2.42 发布说明">2.2.42 发布说明</a><a href="release-2.2.41.html" data-doc-title="2.2.41 发布说明">2.2.41 发布说明</a><a href="release-2.2.40.html" data-doc-title="2.2.40 发布说明">2.2.40 发布说明</a><a href="release-2.2.39.html" data-doc-title="2.2.39 发布说明">2.2.39 发布说明</a><a href="release-2.1.45.html" data-doc-title="2.1.45 发布说明">2.1.45 发布说明</a></section><section><h2>部署与迁移</h2><a href="offline-rpm-install.html" data-doc-title="离线 rpm 安装">离线 RPM 安装</a><a href="offline-installer-parameters.html" data-doc-title="离线安装命令参数" aria-current="page" class="active">离线安装命令参数</a><a href="database-preparation.html" data-doc-title="数据库接入">数据库接入</a><a href="orchestrator-migration.html" data-doc-title="从 orchestrator 迁移">从 Orchestrator 迁移</a></section><section><h2>日常运维</h2><a href="operations-manual.html" data-doc-title="运维操作手册">运维操作手册</a><a href="api-operations.html" data-doc-title="api 运维参考">API 运维参考</a><a href="postgresql-ha.html" data-doc-title="postgresql 高可用">PostgreSQL 高可用</a><a href="docker-swarm-mysql.html" data-doc-title="docker swarm mysql">Docker Swarm MySQL</a><a href="kubernetes-mysql.html" data-doc-title="kubernetes mysql">Kubernetes MySQL</a><a href="update-and-patch.html" data-doc-title="版本升级与回退">版本升级与回退</a><a href="hotfix-patches.html" data-doc-title="热修补丁台账">热修补丁台账</a><a href="upgrade-validation-chain.html" data-doc-title="升级与热修统一校验链">升级与热修统一校验链</a><a href="version-release-policy.html" data-doc-title="版本与发版规范">版本与发版规范</a><a href="update-operation-identity-incident-2026-09-30.html" data-doc-title="升级动作对象错配与热修恢复语义复盘（2026-09-30）">升级动作对象错配与热修恢复语义复盘（2026-09-30）</a></section><section><h2>验收证据</h2><a href="proven-mysql-ha-methods.html" data-doc-title="mysql 已验证方法">MySQL 已验证方法</a><a href="mysql-feature-parity-acceptance.html" data-doc-title="mysql 功能验收">MySQL 功能验收</a><a href="mysql-former-primary-recovery.html" data-doc-title="旧主恢复专项验收">旧主恢复专项验收</a><a href="mysql-production-qualification.html" data-doc-title="mysql 生产验收">MySQL 生产验收</a><a href="postgresql-production-qualification.html" data-doc-title="postgresql 16.4 生产验收">PostgreSQL 16.4 生产验收</a><a href="docker-swarm-mysql-validation.html" data-doc-title="docker swarm mysql 实机验证">Docker Swarm MySQL 实机验证</a><a href="production-chaos-test.html" data-doc-title="生产故障测试报告">生产故障测试报告</a><a href="power-lifecycle-test.html" data-doc-title="计划关机测试报告">计划关机测试报告</a><a href="release-recovery-acceptance-checklist.html" data-doc-title="恢复与升级发布验收清单">恢复与升级发布验收清单</a></section><section><h2>许可</h2><a href="licensing.html" data-doc-title="许可与合规">许可与合规</a></section></nav>
+      <div class="sidebar-meta">
+        <span>离线文档构建</span>
+        <strong>2.1 / 2.2</strong>
+      </div>
+    </aside>
+    <div class="docs-main">
+      <header class="docs-header">
+        <button class="menu-button" id="menu-button" type="button" aria-controls="docs-sidebar" aria-expanded="false">打开目录</button>
+        <div class="header-context"><span>ClusterGuard HA</span><strong>离线安装命令参数</strong></div>
+        <div class="header-actions">
+          <a href="../en-US/offline-installer-parameters.html" lang="en-US">English</a>
+          <button id="print-button" type="button">打印</button>
+        </div>
+      </header>
+      <main class="document-layout" id="document-content">
+        <article class="document-content"><h1 id="clusterguard-ha-完整离线安装器参数说明">ClusterGuard HA 完整离线安装器参数说明<a class="heading-anchor" href="#clusterguard-ha-完整离线安装器参数说明" aria-label="Link to ClusterGuard HA 完整离线安装器参数说明">#</a></h1>
+<p>适用目标：ClusterGuard HA <code>3.1.3.1</code>，RPM <code>2.2-109</code>，当前仓库 <code>scripts/install_clusterguard.sh</code>。本文只解释当前源码行为；制品是否已构建、上传或现场验收，须以对应阶段证据为准。</p>
+<p>关联手册：《ClusterGuard HA 完整离线安装与部署手册》。实际参数入口为离线介质根目录下的 <code>install_clusterguard.sh</code>。</p>
+<h2 id="1-先理解执行边界">1. 先理解执行边界<a class="heading-anchor" href="#1-先理解执行边界" aria-label="Link to 1. 先理解执行边界">#</a></h2>
+<ul>
+<li>安装器默认是 <code>--plan</code>：解析参数、选择并检查介质、校验拓扑/目录/凭据映射、打印计划，不连接或修改远端节点。</li>
+<li>只有显式加入 <code>--execute</code> 才进入真实安装。非交互执行还必须加入 <code>-y/--yes</code>；交互执行则要求输入集群名称确认。</li>
+<li>本文示例均为参数片段或只读计划，不给出可直接复制到现场的一键执行命令。示例地址使用文档网段 <code>192.0.2.0/24</code>。</li>
+<li>计划成功仅说明本地输入校验通过，不等于 RPM、数据库、Raft、复制、VIP 或现场高可用验收通过。</li>
+<li>控制节点运行 API、控制台和 Raft。控制节点必须至少 3 个且为奇数；数据节点没有奇数要求。二者可以分离或重叠。</li>
+</ul>
+<h2 id="2-快速索引">2. 快速索引<a class="heading-anchor" href="#2-快速索引" aria-label="Link to 2. 快速索引">#</a></h2>
+<p>以下按功能列出当前解析器接受的全部选项。同一行中的短选项和长选项完全等价。</p>
+<table>
+<thead>
+<tr>
+<th>分类</th>
+<th>参数</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>节点与介质</td>
+<td><code>-l</code>、<code>-n</code>、<code>-g</code>、<code>-r</code>、<code>--database-package-dir</code>、<code>--engine</code>、<code>--data-on-arbitrators</code>、<code>--control-only</code></td>
+</tr>
+<tr>
+<td>SSH 与主机身份</td>
+<td><code>-u</code>、<code>-P</code>、<code>-p</code>、<code>--ssh-credentials-file</code>、<code>--ssh-key</code>、<code>--ssh-port</code>、<code>--known-hosts</code>、<code>--accept-host-keys</code></td>
+</tr>
+<tr>
+<td>路径与状态</td>
+<td><code>-ld</code>、<code>-nd</code>、<code>--database-software-dir</code>、<code>--state-file</code>、<code>--secrets-file</code>、<code>--work-dir</code>、<code>--remote-stage</code></td>
+</tr>
+<tr>
+<td>数据库</td>
+<td><code>--database-version</code>、<code>--database-port</code>、MySQL 和 PostgreSQL 专用选项</td>
+</tr>
+<tr>
+<td>HA、安全与网络</td>
+<td><code>--vip</code>、<code>--interface</code>、<code>--prefix</code>、<code>--fencer</code>、<code>--fencer-assets</code>、<code>--manual-failover-only</code>、<code>--no-vip-reconcile</code>、<code>--patch-trust-key</code></td>
+</tr>
+<tr>
+<td>控制面与容量</td>
+<td><code>--cluster-name</code>、<code>--timezone</code>、<code>--api-port</code>、<code>--raft-port</code>、两个最小空间参数</td>
+</tr>
+<tr>
+<td>模式</td>
+<td><code>--plan</code>、<code>--execute</code>、<code>-y</code>、<code>-h</code></td>
+</tr>
+</tbody></table>
+<p>“执行使用”列的含义：<strong>计划+执行</strong>表示两种模式都会解析和校验，真实远端效果只在 <code>--execute</code> 发生；<strong>仅执行阶段</strong>表示计划中保存输入，但只在执行阶段使用；<strong>流程控制</strong>表示直接决定是否执行。</p>
+<h2 id="3-节点-角色与安装介质">3. 节点、角色与安装介质<a class="heading-anchor" href="#3-节点-角色与安装介质" aria-label="Link to 3. 节点、角色与安装介质">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>参数及别名</th>
+<th>默认/必填条件</th>
+<th>含义、校验、影响与限制</th>
+<th>安全示例</th>
+<th>执行使用</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>-l LIST</code>、<code>--arbitrator-nodes LIST</code>、<code>--controller-nodes LIST</code></td>
+<td>必填</td>
+<td>逗号分隔的控制节点；去空白、去重。必须至少 3 个且为奇数。它们形成 Raft voter 集合，不能用数据节点数量替代多数派要求。</td>
+<td><code>-l 192.0.2.11,192.0.2.12,192.0.2.13</code></td>
+<td>计划+执行</td>
+</tr>
+<tr>
+<td><code>-n LIST</code>、<code>--data-nodes LIST</code></td>
+<td>非 control-only 数据库部署必填</td>
+<td>数据库和 Agent 节点，去重后可为任意数量；少于 2 个时不能启用带 VIP 的自动故障切换。</td>
+<td><code>-n 192.0.2.21,192.0.2.22</code></td>
+<td>计划+执行</td>
+</tr>
+<tr>
+<td><code>--data-on-arbitrators</code></td>
+<td>默认关闭</td>
+<td>把所有控制节点追加进数据节点集合；重复地址不重复添加，节点角色变为 mixed。</td>
+<td><code>--data-on-arbitrators</code></td>
+<td>计划+执行</td>
+</tr>
+<tr>
+<td><code>-g FILE</code>、<code>--application-rpm FILE</code></td>
+<td>可省略</td>
+<td>ClusterGuard RPM。省略时只接受介质 <code>packages/</code> 下唯一的 <code>clusterguard-ha-*.rpm</code>；0 个或多个都拒绝。存在 <code>.sha256</code> 时必须匹配。</td>
+<td><code>-g ./packages/clusterguard-ha-2.2-109.x86_64.rpm</code></td>
+<td>计划+执行</td>
+</tr>
+<tr>
+<td><code>-r FILE</code>、<code>--database-package FILE</code>、<code>--mysql-package FILE</code>、<code>--postgresql-source-package FILE</code></td>
+<td>数据库部署需要，可由自动发现满足</td>
+<td>显式选择 MySQL/UPSQL 二进制 tar，或 PostgreSQL 二进制/官方源码 tar。别名只改变拼写，不强制引擎；介质须单一安全顶层目录并包含对应必需程序/源码文件。</td>
+<td><code>-r /secure/media/mysql-8.0.44-linux-x86_64.tar.xz</code></td>
+<td>计划+执行</td>
+</tr>
+<tr>
+<td><code>--database-package-dir DIR</code></td>
+<td>默认空；也可由 <code>CG_DATABASE_PACKAGE_DIR</code> 给出</td>
+<td>仅在未给 <code>-r</code> 时使用，并把搜索范围限制到该目录。未设置时先查介质 <code>packages/database/</code>；只要这里有匹配便不再查 <code>/opt</code>，否则才查 <code>/opt</code>。多个匹配项拒绝猜选。</td>
+<td><code>--database-package-dir /secure/database-media</code></td>
+<td>计划+执行</td>
+</tr>
+<tr>
+<td><code>--engine mysql|postgresql|none</code></td>
+<td>有数据节点时默认 <code>mysql</code>；无数据节点或 control-only 时为 <code>none</code></td>
+<td>选择数据库路径。<code>none</code> 禁用数据库和 VIP 收敛。MySQL/PG 都需要数据节点。</td>
+<td><code>--engine postgresql</code></td>
+<td>计划+执行</td>
+</tr>
+<tr>
+<td><code>--control-only</code>、<code>--skip-mysql</code></td>
+<td>默认关闭</td>
+<td>只部署控制面；不能同时给数据节点或数据库介质，engine 只能空或 <code>none</code>。<code>--skip-mysql</code> 是旧兼容名，实际也跳过 PostgreSQL。</td>
+<td><code>--control-only</code></td>
+<td>计划+执行</td>
+</tr>
+</tbody></table>
+<h2 id="4-ssh-密码与主机密钥">4. SSH、密码与主机密钥<a class="heading-anchor" href="#4-ssh-密码与主机密钥" aria-label="Link to 4. SSH、密码与主机密钥">#</a></h2>
+<p>密码优先级按所选模式确定。逐节点列表排斥统一密码、逐节点文件和私钥；逐节点文件排斥逐节点列表和私钥。源码允许统一密码与逐节点文件同时出现，此时逐节点文件覆盖实际节点取值；也允许统一密码与私钥同时出现，此时进入密码传输模式并仍把私钥传给 SSH。不要依赖这种混合输入，生产命令应只选择一种明确认证方式。密码不写入部署状态，也不在计划中显示。命令行参数可能进入 shell 历史和进程列表，生产环境优先使用私钥、<code>0600</code> 凭据文件或交互隐藏输入。</p>
+<table>
+<thead>
+<tr>
+<th>参数及别名</th>
+<th>默认/必填条件</th>
+<th>含义、校验、影响与限制</th>
+<th>安全示例</th>
+<th>执行使用</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>-u USER</code>、<code>--ssh-user USER</code></td>
+<td><code>root</code></td>
+<td>远端 SSH 用户；只接受常规 Linux 用户名。当前安装器不会调用 <code>sudo</code>，真实安装中的软件安装、系统目录写入和 systemd 操作要求远端会话为 UID 0，因此应使用 <code>-u root</code>；普通非 root 用户即使配置 NOPASSWD sudo 也不受当前入口支持。</td>
+<td><code>-u root</code></td>
+<td>计划+执行</td>
+</tr>
+<tr>
+<td><code>-P PASS</code>、<code>--ssh-password PASS</code></td>
+<td>默认取 <code>CG_SSH_PASSWORD</code>；仍空时执行前隐藏输入</td>
+<td>所有节点共用密码。逐节点文件同时存在时实际按文件取值；与私钥同时存在时仍进入密码传输模式。不要把真实密码写进手册、任务记录或公开命令。</td>
+<td><code>--ssh-password &#39;&lt;从安全输入获得&gt;&#39;</code></td>
+<td>仅执行阶段</td>
+</tr>
+<tr>
+<td><code>-p LIST</code>、<code>--ssh-passwords LIST</code></td>
+<td>默认空</td>
+<td>按<strong>去重后的 <code>all_nodes</code> 顺序</strong>映射密码：先控制节点原顺序，再追加尚未出现的数据节点。数量必须完全相等且不得为空；不能与 <code>-P</code>、凭据文件或私钥并用。密码含逗号时不能用此方式。</td>
+<td><code>-p &#39;&lt;node1-pass&gt;,&lt;node2-pass&gt;,&lt;node3-pass&gt;&#39;</code></td>
+<td>计划校验映射，执行使用</td>
+</tr>
+<tr>
+<td><code>--ssh-credentials-file FILE</code></td>
+<td>默认空</td>
+<td>每行 <code>节点地址=密码</code>，空行和 <code>#</code> 注释忽略。文件权限必须恰为 <code>0600</code>，必须覆盖所有去重节点且不能重复 key；值可包含 <code>=</code>。不能与逐节点列表或私钥并用。</td>
+<td><code>--ssh-credentials-file /secure/site/ssh-passwords.env</code></td>
+<td>计划校验，执行使用</td>
+</tr>
+<tr>
+<td><code>--ssh-key FILE</code></td>
+<td>默认空</td>
+<td>SSH 私钥路径。传入的是私钥，仅用于 SSH；它与补丁签名公钥用途不同。与逐节点密码列表/文件互斥。</td>
+<td><code>--ssh-key /secure/site/installer_ed25519</code></td>
+<td>计划+执行</td>
+</tr>
+<tr>
+<td><code>--ssh-port NUMBER</code></td>
+<td><code>22</code></td>
+<td>安装 SSH 端口，范围 1..65535。当前有数据库节点时 Agent 清单固定使用 22，因此数据库部署拒绝非 22；control-only 可改。</td>
+<td><code>--ssh-port 22</code></td>
+<td>计划+执行</td>
+</tr>
+<tr>
+<td><code>--known-hosts FILE</code></td>
+<td>默认空</td>
+<td>使用已审核的 known_hosts，不复制成另一份；文件必须存在。所有 SSH/SCP 都保持严格主机密钥校验。</td>
+<td><code>--known-hosts /secure/site/known_hosts</code></td>
+<td>仅执行阶段</td>
+</tr>
+<tr>
+<td><code>--accept-host-keys</code></td>
+<td>默认关闭</td>
+<td>首次执行时通过 <code>ssh-keyscan</code> 采集到工作目录并显示指纹。它表示显式接受当时看到的主机密钥，不关闭后续严格校验；已有工作目录文件会复用。</td>
+<td><code>--accept-host-keys</code></td>
+<td>仅执行阶段</td>
+</tr>
+</tbody></table>
+<p>逐节点文件格式示意（仅占位）：</p>
+<pre><code class="language-text">192.0.2.11=&lt;password-for-11&gt;
+192.0.2.12=&lt;password-for-12&gt;
+192.0.2.13=&lt;password-for-13&gt;
+</code></pre>
+<h2 id="5-数据-软件-状态与工作目录">5. 数据、软件、状态与工作目录<a class="heading-anchor" href="#5-数据-软件-状态与工作目录" aria-label="Link to 5. 数据、软件、状态与工作目录">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>参数及别名</th>
+<th>默认/必填条件</th>
+<th>含义、校验、影响与限制</th>
+<th>安全示例</th>
+<th>执行使用</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>-ld DIR</code>、<code>--controller-data DIR</code></td>
+<td><code>/var/lib/clusterguard</code></td>
+<td>控制面 metadata、Raft 和首次管理员口令根目录。必须是安全绝对路径且不能为 <code>/</code>。它不是数据库数据根。</td>
+<td><code>-ld /data/clusterguard</code></td>
+<td>计划+执行</td>
+</tr>
+<tr>
+<td><code>-nd DIR</code>、<code>--database-data DIR</code>、<code>--mysql-data DIR</code></td>
+<td><code>/data</code></td>
+<td>数据库数据根。MySQL 实例为 <code>&lt;DIR&gt;/mysql/&lt;port&gt;</code>，PG 为 <code>&lt;DIR&gt;/postgresql/&lt;port&gt;/data</code>。<code>--mysql-data</code> 也会影响 PostgreSQL，是兼容名。</td>
+<td><code>-nd /data</code></td>
+<td>计划+执行</td>
+</tr>
+<tr>
+<td><code>--database-software-dir DIR</code>、<code>--mysql-software-dir DIR</code></td>
+<td>MySQL 默认 <code>/usr/local/mysql</code></td>
+<td>MySQL <strong>完整软件目录</strong>，独立于 <code>-nd</code>。须为安全绝对路径，不能包含/重叠实例状态目录；仅 MySQL 接受。它不是 tar 包路径。</td>
+<td><code>--database-software-dir /apps/mysql8</code></td>
+<td>计划+执行</td>
+</tr>
+<tr>
+<td><code>--state-file FILE</code></td>
+<td><code>$PWD/clusterguard-deployment-state.json</code></td>
+<td>保存固定 cluster/node/instance UUID、phase 和身份绑定。恢复或重跑必须复用原文件；现有文件与集群名、引擎、端口或远程 root 策略不一致时拒绝。首次执行创建为 <code>0600</code>。</td>
+<td><code>--state-file /secure/site/deployment-state.json</code></td>
+<td>计划显示，执行读写</td>
+</tr>
+<tr>
+<td><code>--secrets-file FILE</code></td>
+<td><code>$PWD/clusterguard-deployment-secrets.env</code></td>
+<td>站点秘密和受管数据库凭据。首次执行生成并设为 <code>0600</code>；重跑复用并要求 13 个键齐全。丢失后不能靠新文件安全“续跑”既有身份。</td>
+<td><code>--secrets-file /secure/site/deployment-secrets.env</code></td>
+<td>执行读写</td>
+</tr>
+<tr>
+<td><code>--work-dir DIR</code></td>
+<td><code>$PWD/clusterguard-site</code></td>
+<td>本地证书源、SSH key、节点配置、临时 API 文件和 known_hosts 工作区，执行时 <code>umask 077</code>。恢复重跑应与 state/secrets 一起保留和备份。</td>
+<td><code>--work-dir /secure/site/work</code></td>
+<td>执行读写</td>
+</tr>
+<tr>
+<td><code>--remote-stage DIR</code></td>
+<td><code>/var/lib/clusterguard/bootstrap</code></td>
+<td>每个远端节点的安装暂存目录；必须绝对路径且不能含换行。</td>
+<td><code>--remote-stage /var/lib/clusterguard/bootstrap</code></td>
+<td>仅执行阶段</td>
+</tr>
+</tbody></table>
+<p><code>state-file</code> 负责身份和阶段，<code>secrets-file</code> 负责秘密，<code>work-dir</code> 负责证书与生成配置。三者不是可互换的缓存；重跑时更换任一项都可能造成身份、证书或凭据不一致。</p>
+<h2 id="6-数据库通用参数">6. 数据库通用参数<a class="heading-anchor" href="#6-数据库通用参数" aria-label="Link to 6. 数据库通用参数">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>参数及别名</th>
+<th>默认/必填条件</th>
+<th>含义、校验、影响与限制</th>
+<th>安全示例</th>
+<th>执行使用</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>--database-version VER</code>、<code>--postgresql-version VER</code></td>
+<td>初始为空；PG 选定介质后才补默认 <code>16</code></td>
+<td>显式值参与数据库介质文件名匹配，并传给 PG 构建/安装；PG 只接受点分数字。省略时，自动发现阶段不会用 <code>16</code> 过滤，介质选定后才把 PG 版本补为 <code>16</code>。目录内有多个版本时必须显式指定；生产命令建议始终明确版本。</td>
+<td><code>--database-version 16.4</code></td>
+<td>计划+执行</td>
+</tr>
+<tr>
+<td><code>--database-port N</code>、<code>--mysql-port N</code>、<code>--postgresql-port N</code></td>
+<td>MySQL <code>3306</code>；PG <code>5432</code>；none <code>0</code></td>
+<td>数据库端口 1..65535。三个拼写完全等价，不会因别名自动切换引擎。端口参与路径、服务名、身份和 MySQL <code>server_id</code>。</td>
+<td><code>--database-port 3306</code></td>
+<td>计划+执行</td>
+</tr>
+<tr>
+<td><code>--dependencies DIR</code></td>
+<td>若介质 <code>dependencies/</code> 有 RPM 则自动使用</td>
+<td>基础运行依赖的本地 RPM 仓库。PG 源码构建只有当其 <code>COLLECTION-INFO</code> 明示 <code>postgresql_source_build=true</code> 时才兼容借用；通常应与 PG 构建依赖分开。</td>
+<td><code>--dependencies ./dependencies</code></td>
+<td>计划+执行</td>
+</tr>
+<tr>
+<td><code>--controller-min-free-gb N</code></td>
+<td><code>2</code></td>
+<td>每个控制节点对 <code>-ld</code> 所在文件系统的最小可用 GiB；必须正整数。</td>
+<td><code>--controller-min-free-gb 4</code></td>
+<td>计划+执行预检</td>
+</tr>
+<tr>
+<td><code>--database-min-free-gb N</code></td>
+<td><code>10</code></td>
+<td>每个数据节点对 <code>-nd</code> 所在文件系统的最小可用 GiB；必须正整数。</td>
+<td><code>--database-min-free-gb 100</code></td>
+<td>计划+执行预检</td>
+</tr>
+</tbody></table>
+<p>所有数据库 tar 都要求可读取、无绝对路径/<code>..</code> 越界项且只有一个顶层目录。MySQL 包必须含 <code>mysqld</code>、<code>mysql</code>、<code>mysqldump</code>；PG 二进制包必须含 <code>initdb</code>、<code>postgres</code>、<code>psql</code>、<code>pg_basebackup</code>、<code>pg_rewind</code>、<code>pg_controldata</code>，否则按官方源码结构继续识别。存在同名 <code>.sha256</code> 时会校验；没有 sidecar 不代表已验证供应方签名。</p>
+<h2 id="7-mysql-专用参数和配置保真">7. MySQL 专用参数和配置保真<a class="heading-anchor" href="#7-mysql-专用参数和配置保真" aria-label="Link to 7. MySQL 专用参数和配置保真">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>默认/必填条件</th>
+<th>含义、校验、影响与限制</th>
+<th>安全示例</th>
+<th>执行使用</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>--mysql-master-cnf FILE</code></td>
+<td>默认介质 <code>templates/mysql/my-master.cnf</code>，开发树回退 <code>configs/mysql/</code></td>
+<td>第一台数据节点的生产模板。必须是非符号链接普通文件。自定义模板只替换模板来源；安装器仍只改路径、端口、<code>server_id</code> 和只读启动保护，保留其余参数、注释、顺序及重复项。</td>
+<td><code>--mysql-master-cnf /secure/config/my-master.cnf</code></td>
+<td>计划+执行</td>
+</tr>
+<tr>
+<td><code>--mysql-slave-cnf FILE</code></td>
+<td>默认介质 <code>templates/mysql/my-slave.cnf</code>，开发树回退 <code>configs/mysql/</code></td>
+<td>第二台及后续数据节点模板；规则同上。参数名是历史叫法，运行角色仍由受控拓扑和 writer lease 决定。</td>
+<td><code>--mysql-slave-cnf /secure/config/my-slave.cnf</code></td>
+<td>计划+执行</td>
+</tr>
+<tr>
+<td><code>--mysql-root-password PASS</code></td>
+<td>默认取 <code>CG_NODE_MYSQL_ROOT_PASSWORD</code>；仍空则首次执行随机生成</td>
+<td>本机 MySQL root 密码，8..128 字符，仅允许字母、数字和 <code>@%+=:,._-</code>。命令行会泄露历史/进程信息，优先环境安全注入或让安装器生成。</td>
+<td><code>--mysql-root-password &#39;&lt;generated-secret&gt;&#39;</code></td>
+<td>计划校验，执行写入秘密文件</td>
+</tr>
+<tr>
+<td><code>--mysql-root-remote-host HOST</code></td>
+<td>默认取 <code>CG_NODE_MYSQL_ROOT_REMOTE_HOST</code>；空表示不创建/修改远程 root</td>
+<td>显式创建远程 <code>root@HOST</code>；只适用于 MySQL。<code>%</code> 范围最大，应由现场安全策略决定。值绑定进状态文件，重跑必须一致。</td>
+<td><code>--mysql-root-remote-host &#39;192.0.2.%&#39;</code></td>
+<td>计划+执行</td>
+</tr>
+</tbody></table>
+<p>MySQL 软件默认 <code>/usr/local/mysql</code>，实例默认 <code>/data/mysql/&lt;port&gt;</code>，二者独立。自定义主从模板只改变模板来源；安装器保留其他生产参数，并按部署路径、端口、节点身份和只读启动保护生成实例配置。所有节点以 <code>read_only=ON</code>、<code>super_read_only=ON</code> 安全启动；主库完成受控复制配置和角色授权后才切换为 <code>OFF</code>，从库继续保持只读。生成的节点身份重复会在执行前拒绝。</p>
+<h2 id="8-postgresql-专用参数和独立构建依赖">8. PostgreSQL 专用参数和独立构建依赖<a class="heading-anchor" href="#8-postgresql-专用参数和独立构建依赖" aria-label="Link to 8. PostgreSQL 专用参数和独立构建依赖">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>默认/必填条件</th>
+<th>含义、校验、影响与限制</th>
+<th>安全示例</th>
+<th>执行使用</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>--postgresql-password PASS</code></td>
+<td>默认取 <code>CG_POSTGRESQL_ADMIN_PASSWORD</code>；仍空则首次执行随机生成</td>
+<td><code>postgres</code> 管理密码，字符规则与 MySQL root 相同。</td>
+<td><code>--postgresql-password &#39;&lt;generated-secret&gt;&#39;</code></td>
+<td>计划校验，执行使用</td>
+</tr>
+<tr>
+<td><code>--postgresql-allowed-cidr CIDR</code></td>
+<td>同一 IPv4 <code>/24</code> 数据网时自动推导；DNS 或跨网段时必填</td>
+<td>PG 管理与复制允许网段，只接受 IPv4 CIDR。</td>
+<td><code>--postgresql-allowed-cidr 192.0.2.0/24</code></td>
+<td>计划+执行</td>
+</tr>
+<tr>
+<td><code>--postgresql-build-node HOST</code></td>
+<td>PG 官方源码包时默认第一台数据节点</td>
+<td>只在该数据节点编译一次，再按 SHA256 分发统一二进制；必须属于数据节点。对 PG 二进制包或其他引擎非法。</td>
+<td><code>--postgresql-build-node 192.0.2.21</code></td>
+<td>计划+执行</td>
+</tr>
+<tr>
+<td><code>--postgresql-build-jobs N</code></td>
+<td>默认取 <code>CG_POSTGRESQL_BUILD_JOBS</code>；空时构建 Helper 自动检测，最多 16</td>
+<td>显式值允许 1..128，只适用于 PG 官方源码包。显式上限与自动上限不同。</td>
+<td><code>--postgresql-build-jobs 8</code></td>
+<td>计划+执行</td>
+</tr>
+<tr>
+<td><code>--postgresql-dependencies DIR</code></td>
+<td>默认空；源码构建为空时使用构建节点联网源</td>
+<td><strong>单独的 PG 源码编译依赖仓库</strong>，执行时必须含 <code>repodata/repomd.xml</code>。不要把它等同于基础运行 <code>--dependencies</code>。</td>
+<td><code>--postgresql-dependencies /secure/pg-build-dependencies</code></td>
+<td>计划显示，执行打包传输</td>
+</tr>
+</tbody></table>
+<p>源码构建节点还要求至少 6 GiB 临时空间。<code>--postgresql-dependencies</code> 对 PG 二进制包不会触发源码构建；<code>--postgresql-build-node/jobs</code> 在非源码包时直接拒绝。</p>
+<h2 id="9-控制面-网络-时区与-ha-安全关系">9. 控制面、网络、时区与 HA 安全关系<a class="heading-anchor" href="#9-控制面-网络-时区与-ha-安全关系" aria-label="Link to 9. 控制面、网络、时区与 HA 安全关系">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>默认/必填条件</th>
+<th>含义、校验、影响与限制</th>
+<th>安全示例</th>
+<th>执行使用</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>--cluster-name NAME</code></td>
+<td><code>clusterguard-control-plane</code>，或 <code>&lt;engine&gt;-ha-&lt;port&gt;</code></td>
+<td>3..63 个允许字符，以字母/数字开头。它参与 state 绑定和真实执行确认。</td>
+<td><code>--cluster-name mysql-ha-3306</code></td>
+<td>计划+执行</td>
+</tr>
+<tr>
+<td><code>--vip ADDRESS</code></td>
+<td>默认空</td>
+<td>可选 IPv4 写入口。MySQL/PG + VIP 且未设 manual-only 时，源码会同时启用数据库自动故障切换和 Agent 多数派隔离；至少 2 个数据节点。VIP 本身不是安全授权。</td>
+<td><code>--vip 192.0.2.100</code></td>
+<td>计划+执行</td>
+</tr>
+<tr>
+<td><code>--interface NAME</code></td>
+<td><code>ens160</code></td>
+<td>VIP 网卡名，允许字母数字及 <code>_.:-</code>。</td>
+<td><code>--interface ens160</code></td>
+<td>计划+执行</td>
+</tr>
+<tr>
+<td><code>--prefix N</code></td>
+<td><code>24</code></td>
+<td>VIP CIDR 前缀，1..32。未配置 VIP 时仍会校验但不绑定地址。</td>
+<td><code>--prefix 24</code></td>
+<td>计划+执行</td>
+</tr>
+<tr>
+<td><code>--no-vip-reconcile</code></td>
+<td>默认不设置，即安装后启用收敛</td>
+<td>关闭安装结束时的 Agent reconcile timer 启用和初始 VIP lease 等待。它<strong>不关闭数据库自动故障切换配置</strong>；如需禁止自动切换，使用 <code>--manual-failover-only</code>。</td>
+<td><code>--no-vip-reconcile</code></td>
+<td>执行阶段</td>
+</tr>
+<tr>
+<td><code>--manual-failover-only</code></td>
+<td>默认关闭</td>
+<td>对带 VIP 的 MySQL/PG 明确关闭自动故障切换，仅保留人工受控切换；同时不能提供 fencer 或 fencer assets。无 VIP 时不改变其他默认。</td>
+<td><code>--manual-failover-only</code></td>
+<td>计划+执行</td>
+</tr>
+<tr>
+<td><code>--fencer FILE</code></td>
+<td>默认空</td>
+<td>可选外部隔离增强程序，须是本地可执行、非符号链接普通文件；只允许带 VIP 的 MySQL/PG，安装到 <code>/usr/local/libexec/clusterguard-fencer</code>。它增强隔离，不替代 Raft 多数派、Agent quorum fencing、writer lease 或维护门禁。</td>
+<td><code>--fencer /secure/fencing/site-fencer</code></td>
+<td>计划+执行</td>
+</tr>
+<tr>
+<td><code>--fencer-assets DIR</code></td>
+<td>默认空；使用时 <code>--fencer</code> 必填</td>
+<td>站点配置目录；不能是符号链接，不能含符号链接或子目录，顶层普通文件名受限，安装到 <code>/etc/clusterguard/fencing/</code>。不要放未受保护的私钥样例。</td>
+<td><code>--fencer-assets /secure/fencing/site-config</code></td>
+<td>计划+执行</td>
+</tr>
+<tr>
+<td><code>--api-port N</code></td>
+<td><code>3000</code></td>
+<td>控制台/API 端口，1..65535；用于控制节点访问及 Leader 定向。</td>
+<td><code>--api-port 3000</code></td>
+<td>计划+执行</td>
+</tr>
+<tr>
+<td><code>--raft-port N</code></td>
+<td><code>10009</code></td>
+<td>控制节点 Raft 端口，1..65535。改变端口不改变至少 3 个奇数 voter 和多数派要求。</td>
+<td><code>--raft-port 10009</code></td>
+<td>计划+执行</td>
+</tr>
+<tr>
+<td><code>--timezone ZONE</code></td>
+<td>空时先读执行机 <code>timedatectl</code>，再尝试 <code>/etc/localtime</code> 对应区域</td>
+<td>找到有效 zoneinfo 时固定所有节点显示时区。显式值无效或默认值无法识别时，源码只告警并不下发时区，各节点保留自身显示时区。它不代替 NTP/时钟偏差检查。</td>
+<td><code>--timezone Asia/Shanghai</code></td>
+<td>计划+执行</td>
+</tr>
+<tr>
+<td><code>--patch-trust-key FILE</code></td>
+<td>默认取 <code>CG_PATCH_TRUST_KEY</code>；否则自动查介质公钥；仍空则更新入口只读不可用</td>
+<td>必须是 OpenSSL 可解析的<strong>公钥</strong>普通文件，不是签名私钥。执行时部署可信链并启用受控更新 Helper；不会绕过签名、计划、维护锁或滚动门禁。</td>
+<td><code>--patch-trust-key ./trust/patch-signing-public.pem</code></td>
+<td>计划+执行</td>
+</tr>
+</tbody></table>
+<p>安全关系固定为：Raft 多数派确认控制面授权；Agent quorum fencing 使失去多数派授权的旧节点本地撤销 VIP 并保持只读；writer lease 控制写角色；可选外部 fencer 提供额外现场隔离证明。<code>--no-vip-reconcile</code> 仅控制 VIP 定时收敛激活，不能当作关闭自动故障切换的替代参数。</p>
+<h2 id="10-执行模式与帮助">10. 执行模式与帮助<a class="heading-anchor" href="#10-执行模式与帮助" aria-label="Link to 10. 执行模式与帮助">#</a></h2>
+<table>
+<thead>
+<tr>
+<th>参数及别名</th>
+<th>默认/必填条件</th>
+<th>含义、校验、影响与限制</th>
+<th>安全示例</th>
+<th>执行使用</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>--plan</code></td>
+<td>默认</td>
+<td>把 <code>execute</code> 设为 false；若与 <code>--execute</code> 同时出现，最后出现者生效。仍会读取本地 tar 列表、摘要、cnf 和凭据映射。</td>
+<td><code>./install_clusterguard.sh ... --plan</code></td>
+<td>流程控制</td>
+</tr>
+<tr>
+<td><code>--execute</code></td>
+<td>必须显式提供才真实安装</td>
+<td>完成本地验证并打印计划后，才检查执行工具、确认、连接节点和变更远端。</td>
+<td>先审查同参数 <code>--plan</code>，再由授权人员单独追加</td>
+<td>流程控制</td>
+</tr>
+<tr>
+<td><code>-y</code>、<code>--yes</code></td>
+<td>默认关闭</td>
+<td>跳过输入集群名称的交互确认；非交互 <code>--execute</code> 必填。它不跳过任何安全/介质/拓扑校验。</td>
+<td><code>--execute --yes</code>（仅经授权的自动化）</td>
+<td>流程控制</td>
+</tr>
+<tr>
+<td><code>-h</code>、<code>--help</code></td>
+<td>可选</td>
+<td>打印内置帮助并以 0 退出。内置帮助未列出全部兼容别名，完整集合以本文和解析器为准。</td>
+<td><code>./install_clusterguard.sh --help</code></td>
+<td>不执行安装</td>
+</tr>
+</tbody></table>
+<h2 id="11-公开环境变量">11. 公开环境变量<a class="heading-anchor" href="#11-公开环境变量" aria-label="Link to 11. 公开环境变量">#</a></h2>
+<p>命令行同类参数通常覆盖初始化时读取的环境值。秘密不得写入公开日志。下表中的等待/重试变量是当前脚本接受的运维调节面，但不会放宽健康条件。</p>
+<table>
+<thead>
+<tr>
+<th>环境变量</th>
+<th>默认</th>
+<th>作用与限制</th>
+<th>对应 CLI/阶段</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>CG_DATABASE_PACKAGE_DIR</code></td>
+<td>空</td>
+<td>数据库自动搜索的唯一目录。</td>
+<td><code>--database-package-dir</code> 可覆盖</td>
+</tr>
+<tr>
+<td><code>CG_POSTGRESQL_BUILD_JOBS</code></td>
+<td>空</td>
+<td>PG 源码并行任务数，显式值 1..128。</td>
+<td><code>--postgresql-build-jobs</code> 可覆盖</td>
+</tr>
+<tr>
+<td><code>CG_SSH_PASSWORD</code></td>
+<td>空</td>
+<td>全节点统一 SSH 密码；真实执行无其他认证时才需要。</td>
+<td><code>-P</code> 可覆盖</td>
+</tr>
+<tr>
+<td><code>CG_NODE_MYSQL_ROOT_PASSWORD</code></td>
+<td>空</td>
+<td>首次 secrets 创建时的 MySQL root 初值；重跑以 secrets 文件为准。</td>
+<td><code>--mysql-root-password</code> 可覆盖初值</td>
+</tr>
+<tr>
+<td><code>CG_NODE_MYSQL_ROOT_REMOTE_HOST</code></td>
+<td>空</td>
+<td>显式远程 root Host 策略。</td>
+<td><code>--mysql-root-remote-host</code> 可覆盖</td>
+</tr>
+<tr>
+<td><code>CG_POSTGRESQL_ADMIN_PASSWORD</code></td>
+<td>空</td>
+<td>首次 secrets 创建时的 PG 管理密码初值；重跑以 secrets 为准。</td>
+<td><code>--postgresql-password</code> 可覆盖初值</td>
+</tr>
+<tr>
+<td><code>CG_POSTGRESQL_ALLOWED_CIDR</code></td>
+<td>空</td>
+<td>PG 管理/复制 IPv4 CIDR。</td>
+<td><code>--postgresql-allowed-cidr</code> 可覆盖</td>
+</tr>
+<tr>
+<td><code>CG_PATCH_TRUST_KEY</code></td>
+<td>空</td>
+<td>补丁签名公钥路径。</td>
+<td><code>--patch-trust-key</code> 可覆盖，随后还有介质自动发现</td>
+</tr>
+<tr>
+<td><code>CG_JQ_BINARY</code></td>
+<td>PATH 中的 jq，随后回退介质静态 jq</td>
+<td>指定可执行 jq；无效路径会拒绝。</td>
+<td>无 CLI</td>
+</tr>
+<tr>
+<td><code>CG_INSTALL_API_RETRY_ATTEMPTS</code></td>
+<td><code>4</code></td>
+<td>API Leader 定向/GET 传输重试次数，1..10。非 GET 传输失败不会盲重试突变。</td>
+<td>执行阶段</td>
+</tr>
+<tr>
+<td><code>CG_INSTALL_VIP_LEASE_TIMEOUT_SECONDS</code></td>
+<td><code>300</code></td>
+<td>初始 VIP lease 等待，30..600 秒。</td>
+<td>执行验收</td>
+</tr>
+<tr>
+<td><code>CG_INSTALL_VERIFY_TIMEOUT_SECONDS</code></td>
+<td><code>180</code></td>
+<td>数据库拓扑稳定健康总等待，30..900 秒。</td>
+<td>执行验收</td>
+</tr>
+<tr>
+<td><code>CG_INSTALL_VERIFY_POLL_SECONDS</code></td>
+<td><code>2</code></td>
+<td>拓扑轮询间隔，1..30 秒。</td>
+<td>执行验收</td>
+</tr>
+<tr>
+<td><code>CG_INSTALL_VERIFY_STABLE_OBSERVATIONS</code></td>
+<td><code>3</code></td>
+<td>连续健康观测次数，2..10。</td>
+<td>执行验收</td>
+</tr>
+</tbody></table>
+
+          <footer class="document-footer">
+            <span>源文件: <code>docs/zh-CN/offline-installer-parameters.md</code></span>
+            <a href="../index.html">文档语言入口</a>
+          </footer>
+        </article>
+        <aside class="page-toc" aria-label="本页目录">
+          <strong>本页目录</strong>
+          <a class="toc-level-2" href="#1-先理解执行边界">1. 先理解执行边界</a><a class="toc-level-2" href="#2-快速索引">2. 快速索引</a><a class="toc-level-2" href="#3-节点-角色与安装介质">3. 节点、角色与安装介质</a><a class="toc-level-2" href="#4-ssh-密码与主机密钥">4. SSH、密码与主机密钥</a><a class="toc-level-2" href="#5-数据-软件-状态与工作目录">5. 数据、软件、状态与工作目录</a><a class="toc-level-2" href="#6-数据库通用参数">6. 数据库通用参数</a><a class="toc-level-2" href="#7-mysql-专用参数和配置保真">7. MySQL 专用参数和配置保真</a><a class="toc-level-2" href="#8-postgresql-专用参数和独立构建依赖">8. PostgreSQL 专用参数和独立构建依赖</a><a class="toc-level-2" href="#9-控制面-网络-时区与-ha-安全关系">9. 控制面、网络、时区与 HA 安全关系</a><a class="toc-level-2" href="#10-执行模式与帮助">10. 执行模式与帮助</a><a class="toc-level-2" href="#11-公开环境变量">11. 公开环境变量</a>
+        </aside>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

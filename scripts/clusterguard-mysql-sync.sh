@@ -45,17 +45,18 @@ replication_user="$(jq -r '.secrets.mysql_replication_username' "${payload}")"
 [[ "${replication_user}" =~ ^[A-Za-z0-9_]{1,32}$ ]] || { echo "invalid managed MySQL replication username" >&2; exit 2; }
 (( ${#replication_password} <= 32 )) || { echo "managed MySQL replication password exceeds the 32-character channel limit" >&2; exit 2; }
 
-install_root="/opt/clusterguard/mysql/${target_port}/software"
-data_root="$(jq -r '.target.data_root // "/var/lib/clusterguard"' "${payload}")"
-[[ "${data_root}" == /* && "${data_root}" != "/" && "${data_root}" != *$'\n'* && "${data_root}" != *$'\r'* ]] || {
-  echo "MySQL data root must be a safe absolute directory" >&2
-  exit 2
-}
-data_root="${data_root%/}"
-case "/${data_root#/}/" in
-  */../*|*/./*) echo "MySQL data root cannot contain dot path segments" >&2; exit 2 ;;
-esac
-sync_state_dir="${data_root}/mysql/${target_port}"
+source "$(dirname "$0")/clusterguard-mysql-layout.sh"
+layout_record="/etc/clusterguard/mysql/${target_port}-layout.json"
+saved_data_root=""; saved_software_dir=""
+if [[ -f "${layout_record}" ]]; then
+  saved_data_root="$(jq -er '.data_root' "${layout_record}")"
+  saved_software_dir="$(jq -er '.software_dir' "${layout_record}")"
+fi
+data_root="$(jq -r --arg saved "${saved_data_root}" '.target.data_root // (if $saved != "" then $saved else "/data" end)' "${payload}")"
+software_dir="$(jq -r --arg saved "${saved_software_dir}" '.target.software_dir // $saved' "${payload}")"
+cg_mysql_layout "${data_root}" "${target_port}" "${software_dir}"
+install_root="${cg_mysql_software}"
+sync_state_dir="${cg_mysql_instance}"
 verified_sync_marker="${sync_state_dir}/.last-verified-sync.json"
 
 discover_running_mysql_client() {
@@ -82,7 +83,9 @@ for candidate in "${install_root}/bin/mysql" "${CG_MYSQL_CLIENT:-}" "$(command -
     break
   fi
 done
-target_defaults="/etc/clusterguard/mysql/${target_port}-client.cnf"
+target_defaults="${cg_mysql_conf}/client.cnf"
+# Registered instances predating layout records retain their own protected file.
+[[ -f "${target_defaults}" ]] || target_defaults="/etc/clusterguard/mysql/${target_port}-client.cnf"
 [[ -n "${mysql}" && -x "${mysql}" && -f "${target_defaults}" ]] || { echo "target MySQL client or protected option file is unavailable" >&2; exit 3; }
 cat >"${donor_defaults}" <<EOF
 [client]
@@ -184,8 +187,8 @@ case "${method}" in
       sync_strategy="incremental_rejoin"
     else
       sync_strategy="full_reseed"
-      install -d -m 0700 /var/lib/clusterguard/stage
-      donor_dump_file="$(mktemp "/var/lib/clusterguard/stage/mysql-${target_port}-donor.XXXXXX.sql")"
+      install -d -m 0700 "${sync_state_dir}/backup/stage"
+      donor_dump_file="$(mktemp "${sync_state_dir}/backup/stage/mysql-${target_port}-donor.XXXXXX.sql")"
       chmod 0600 "${donor_dump_file}"
       mapfile -t user_databases < <(mysql_donor --batch --skip-column-names -e \
         "SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT IN ('information_schema','performance_schema','mysql','sys','cg_rc28_test','clusterguard_ha_test','clusterguard_matrix_probe','clusterguard_validation') ORDER BY schema_name")

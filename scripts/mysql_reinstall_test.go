@@ -44,6 +44,8 @@ func TestMySQLReinstallRetiresOnlyItsStoppedManagedUnit(t *testing.T) {
 		{name: "overridden-unit", mode: "overridden", partial: true},
 		{name: "different-data-root", mode: "different-data-root", partial: true},
 		{name: "symlink-unit", mode: "symlink", partial: true},
+		{name: "unmanaged-software", mode: "unmanaged-software", partial: true},
+		{name: "foreign-software", mode: "foreign-software", partial: true},
 		{name: "initialized-data-preserved", mode: "managed", initialized: true},
 		{name: "explicit-managed-rebuild", mode: "managed", initialized: true, rebuild: true, wantSuccess: true, wantDisabled: true},
 	} {
@@ -51,6 +53,13 @@ func TestMySQLReinstallRetiresOnlyItsStoppedManagedUnit(t *testing.T) {
 			root := t.TempDir()
 			data := filepath.Join(root, "state", "mysql", "3306", "data")
 			writeFile(t, filepath.Join(root, "software", "sentinel"), "old binary", 0600)
+			if tc.mode != "unmanaged-software" {
+				marker := "managed_by=clusterguard-ha\nport=3306\ninstance=" + filepath.Dir(data) + "\n"
+				if tc.mode == "foreign-software" {
+					marker = "managed_by=clusterguard-ha\nport=3307\ninstance=/another/database\n"
+				}
+				writeFile(t, filepath.Join(root, "software", ".clusterguard-managed"), marker, 0600)
+			}
 			if err := os.MkdirAll(data, 0700); err != nil {
 				t.Fatal(err)
 			}
@@ -66,6 +75,7 @@ func TestMySQLReinstallRetiresOnlyItsStoppedManagedUnit(t *testing.T) {
 set -euo pipefail
 port=3306
 install_root="$CG_TEST_ROOT"
+software_dir="$CG_TEST_ROOT/software"
 install_parent="$CG_TEST_ROOT/state/mysql/3306"
 data_dir="$install_parent/data"
 log_dir="$CG_TEST_ROOT/log"

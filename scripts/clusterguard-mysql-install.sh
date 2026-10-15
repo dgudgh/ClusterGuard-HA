@@ -4,7 +4,8 @@ set -euo pipefail
 command -v jq >/dev/null 2>&1 || { echo "jq is required" >&2; exit 2; }
 payload="$(mktemp /tmp/clusterguard-install.XXXXXX)"
 chmod 0600 "${payload}"
-trap 'rm -f "${payload}"' EXIT
+production_template=""
+trap 'rm -f "${payload}"; [[ -z "${production_template}" ]] || rm -f "${production_template}"' EXIT
 cat >"${payload}"
 jq -e '.target.node_name and .target.mysql_port and .secrets.mysql_root_password and .secrets.mysql_discovery_username and .secrets.mysql_discovery_password and .secrets.mysql_operation_username and .secrets.mysql_operation_password and .secrets.mysql_replication_username and .secrets.replication_password' "${payload}" >/dev/null
 
@@ -29,36 +30,47 @@ for mysql_username in "${discovery_username}" "${operation_username}" "${replica
   [[ "${mysql_username}" =~ ^[A-Za-z0-9_]{1,32}$ ]] || { echo "invalid managed MySQL username" >&2; exit 2; }
 done
 
-install_root="/opt/clusterguard/mysql/${port}"
-state_root="/var/lib/clusterguard"
-log_root="/var/log/clusterguard"
-config_root="/etc/clusterguard"
-data_root="$(jq -r '.target.data_root // "/var/lib/clusterguard"' "${payload}")"
-[[ "${data_root}" == /* && "${data_root}" != "/" && "${data_root}" != *$'\n'* && "${data_root}" != *$'\r'* ]] || {
-  echo "MySQL data root must be a safe absolute directory" >&2
-  exit 2
-}
+source "$(dirname "$0")/clusterguard-mysql-layout.sh"
+legacy_config_dir="/etc/clusterguard/mysql"
+layout_record="${legacy_config_dir}/${port}-layout.json"
+saved_data_root=""; saved_software_dir=""
+if [[ -f "${layout_record}" ]]; then
+  saved_data_root="$(jq -er '.data_root' "${layout_record}")"
+  saved_software_dir="$(jq -er '.software_dir' "${layout_record}")"
+fi
+data_root="$(jq -r --arg saved "${saved_data_root}" '.target.data_root // (if $saved != "" then $saved else "/data" end)' "${payload}")"
+software_dir="$(jq -r --arg saved "${saved_software_dir}" '.target.software_dir // $saved' "${payload}")"
+cg_mysql_layout "${data_root}" "${port}" "${software_dir}"
 data_root="${data_root%/}"
-case "/${data_root#/}/" in
-  */../*|*/./*) echo "MySQL data root cannot contain dot path segments" >&2; exit 2 ;;
-esac
-install_parent="${data_root}/mysql/${port}"
-data_dir="${install_parent}/data"
-log_dir="/var/log/clusterguard/mysql/${port}"
-run_dir="/run/clusterguard/mysql/${port}"
-config_dir="/etc/clusterguard/mysql"
-config_file="${config_dir}/${port}.cnf"
-client_file="${config_dir}/${port}-client.cnf"
+install_parent="${cg_mysql_instance}"
+install_root="${install_parent}"
+software_dir="${cg_mysql_software}"
+if [[ -n "${saved_data_root}" && ( "${data_root}" != "${saved_data_root}" || "${software_dir}" != "${saved_software_dir}" ) ]]; then
+  echo 'existing MySQL paths cannot be changed by reinstall; an offline migration is required' >&2; exit 3
+fi
+state_root="${data_root}"
+log_root="${install_parent}"
+config_root="${install_parent}"
+data_dir="${cg_mysql_data}"
+log_dir="${cg_mysql_log}"
+run_dir="${cg_mysql_run}"
+config_dir="${cg_mysql_conf}"
+config_file="${config_dir}/my.cnf"
+client_file="${config_dir}/client.cnf"
 system_client_file="${config_dir}/default-client.cnf"
 socket="${run_dir}/mysql.sock"
 service="clusterguard-mysql-${port}.service"
 service_file="/etc/systemd/system/${service}"
 managed_marker="${install_parent}/.clusterguard-managed"
 installing_marker="${install_parent}/.installing"
-managed_mysql="${install_root}/software/bin/mysql"
-managed_mysqld="${install_root}/software/bin/mysqld"
-managed_mysqladmin="${install_root}/software/bin/mysqladmin"
-managed_mysqldump="${install_root}/software/bin/mysqldump"
+managed_mysql="${software_dir}/bin/mysql"
+managed_mysqld="${software_dir}/bin/mysqld"
+managed_mysqladmin="${software_dir}/bin/mysqladmin"
+managed_mysqldump="${software_dir}/bin/mysqldump"
+if [[ "${server_id}" == 0 ]]; then
+  server_id="$(cg_mysql_server_id "$(jq -r '.target.ip_address // .target.hostname' "${payload}")" "${port}")"
+fi
+[[ "${server_id}" =~ ^[1-9][0-9]*$ ]] && (( server_id <= 4294967295 )) || { echo 'invalid MySQL server_id' >&2; exit 2; }
 
 discover_running_mysql_client() {
   command -v ss >/dev/null 2>&1 || return 1
@@ -85,7 +97,7 @@ for candidate in "${managed_mysql}" "${CG_MYSQL_CLIENT:-}" "$(command -v mysql 2
   fi
 done
 
-mkdir -p "${config_dir}" "${log_dir}" "${run_dir}" "${data_root}" "${install_parent}" "${install_root}"
+mkdir -p "${config_dir}" "${log_dir}" "${run_dir}" "${data_root}" "${install_parent}"
 chmod 0750 "${config_dir}" "${log_dir}" "${install_parent}"
 if ! getent group mysql >/dev/null 2>&1; then groupadd --system mysql; fi
 if ! id mysql >/dev/null 2>&1; then useradd --system --gid mysql --home-dir /nonexistent --shell /sbin/nologin mysql; fi
@@ -162,6 +174,10 @@ port=${port}
 EOF
   chown root:root "${system_client_file}"
   chmod 0644 "${system_client_file}"
+  install -d -m 0750 "${legacy_config_dir}"
+  ln -sfn "${client_file}" "${legacy_config_dir}/${port}-client.cnf"
+  ln -sfn "${config_file}" "${legacy_config_dir}/${port}.cnf"
+  if [[ "${port}" == 3306 ]]; then ln -sfn "${system_client_file}" "${legacy_config_dir}/default-client.cnf"; fi
   ensure_option_file_include /etc/my.cnf 0644
   ensure_option_file_include /root/.my.cnf 0600
 
@@ -349,6 +365,14 @@ fi
 # Validate data protection before stopping anything. Live instances have already
 # returned through the synchronization path above; complete data still requires
 # an explicit rebuild. This also covers empty/partial interrupted installations.
+if [[ -d "${software_dir}" && -n "$(find "${software_dir}" -mindepth 1 -print -quit)" ]]; then
+  [[ -f "${software_dir}/.clusterguard-managed" && ! -L "${software_dir}/.clusterguard-managed" ]] &&
+    grep -Fqx "port=${port}" "${software_dir}/.clusterguard-managed" &&
+    grep -Fqx "instance=${install_parent}" "${software_dir}/.clusterguard-managed" || {
+      echo 'refusing to replace an unmanaged or foreign MySQL software directory' >&2; exit 3
+    }
+fi
+[[ ! -L "${software_dir}" ]] || { echo 'refusing a symlink MySQL software directory' >&2; exit 3; }
 quiesce_managed_mysql_service
 if [[ -d "${data_dir}" ]] && [[ -n "$(find "${data_dir}" -mindepth 1 -print -quit 2>/dev/null)" ]]; then
   rm -rf "${data_dir}"
@@ -358,13 +382,14 @@ printf 'managed_by=clusterguard-ha\nport=%s\n' "${port}" >"${managed_marker}"
 chmod 0600 "${managed_marker}"
 printf 'state=installing\n' >"${installing_marker}"
 chmod 0600 "${installing_marker}"
-rm -rf "${install_root}/software"
-mkdir -p "${install_root}/software" "${data_dir}" "${log_dir}" "${run_dir}"
-tar --no-same-owner --no-same-permissions -xf "${package_path}" -C "${install_root}/software" --strip-components=1
-mysqld="${install_root}/software/bin/mysqld"
-mysql="${install_root}/software/bin/mysql"
-mysqladmin="${install_root}/software/bin/mysqladmin"
-mysqldump="${install_root}/software/bin/mysqldump"
+rm -rf "${software_dir}"
+mkdir -p "${software_dir}" "${data_dir}" "${log_dir}" "${run_dir}" "${install_parent}/binlog" "${install_parent}/relaylog" "${install_parent}/tmp"
+tar --no-same-owner --no-same-permissions -xf "${package_path}" -C "${software_dir}" --strip-components=1
+printf 'managed_by=clusterguard-ha\nport=%s\ninstance=%s\n' "${port}" "${install_parent}" >"${software_dir}/.clusterguard-managed"
+mysqld="${software_dir}/bin/mysqld"
+mysql="${software_dir}/bin/mysql"
+mysqladmin="${software_dir}/bin/mysqladmin"
+mysqldump="${software_dir}/bin/mysqldump"
 [[ -x "${mysqld}" && -x "${mysql}" && -x "${mysqladmin}" && -x "${mysqldump}" ]] || {
   echo "MySQL package does not contain required binaries" >&2
   exit 3
@@ -390,9 +415,6 @@ validate_runtime_linkage "${mysqld}" "${mysql}" "${mysqladmin}" "${mysqldump}"
 mysql_version="$(${mysqld} --version | awk '{for(i=1;i<=NF;i++) if ($i ~ /^[0-9]+\.[0-9]+\./) {print $i; exit}}')"
 release_family="$(awk -F. '{print $1"."$2}' <<<"${mysql_version}")"
 release_major="$(awk -F. '{print $1}' <<<"${mysql_version}")"
-if [[ "${server_id}" == "0" ]]; then
-  server_id="$(( ($(printf '%s:%s' "$(hostname)" "${port}" | cksum | awk '{print $1}') % 4294967294) + 1 ))"
-fi
 
 detect_total_memory_mb() {
   local detected
@@ -452,8 +474,15 @@ calculate_memory_tuning() {
     "${mysql_table_open_cache}" "${mysql_tmp_table_size_mb}" "${innodb_redo_log_capacity_mb}"
 }
 
-total_memory_mb="$(detect_total_memory_mb)"
-calculate_memory_tuning "${total_memory_mb}"
+# Production MySQL 8.0 uses the approved cnf verbatim, not memory tuning.
+use_production_cnf=false
+if [[ "${release_family}" == 8.0 ]] || jq -e '.target.mysql_cnf | type == "string" and length > 0' "${payload}" >/dev/null; then
+  use_production_cnf=true
+fi
+if [[ "${use_production_cnf}" != true ]]; then
+  total_memory_mb="$(detect_total_memory_mb)"
+  calculate_memory_tuning "${total_memory_mb}"
+fi
 
 authentication_options="default_authentication_plugin=mysql_native_password"
 managed_authentication_clause="IDENTIFIED WITH mysql_native_password BY"
@@ -464,10 +493,13 @@ elif [[ "${release_major}" =~ ^[0-9]+$ ]] && (( release_major >= 9 )); then
   managed_authentication_clause="IDENTIFIED BY"
 fi
 
-redo_log_options="innodb_redo_log_capacity=${innodb_redo_log_capacity_mb}M"
-if [[ "${release_family}" == "5.7" ]]; then
-  redo_log_options="innodb_log_file_size=$((innodb_redo_log_capacity_mb / 2))M
+redo_log_options=""
+if [[ "${use_production_cnf}" != true ]]; then
+  redo_log_options="innodb_redo_log_capacity=${innodb_redo_log_capacity_mb}M"
+  if [[ "${release_family}" == "5.7" ]]; then
+    redo_log_options="innodb_log_file_size=$((innodb_redo_log_capacity_mb / 2))M
 innodb_log_files_in_group=2"
+  fi
 fi
 
 replica_update_option="log_replica_updates=ON"
@@ -490,9 +522,21 @@ loose-rpl_semi_sync_master_wait_for_slave_count=1
 loose-rpl_semi_sync_master_wait_no_slave=ON
 loose-rpl_semi_sync_master_wait_point=AFTER_SYNC"
 fi
+if [[ "${use_production_cnf}" == true ]]; then
+  production_template="$(mktemp /tmp/clusterguard-production-cnf.XXXXXX)"
+  chmod 0600 "${production_template}"
+  if jq -e '.target.mysql_cnf | type == "string" and length > 0' "${payload}" >/dev/null; then
+    jq -jr '.target.mysql_cnf' "${payload}" >"${production_template}"
+  else
+    template_dir="/usr/share/clusterguard/mysql"
+    [[ -d "${template_dir}" ]] || template_dir="$(dirname "$0")/../configs/mysql"
+    cat "${template_dir}/my-slave.cnf" >"${production_template}"
+  fi
+  cg_mysql_render_cnf "${production_template}" "${config_file}" "${data_root}" "${software_dir}" "${port}" "${server_id}"
+else
 cat >"${config_file}" <<EOF
 [mysqld]
-basedir=${install_root}/software
+basedir=${software_dir}
 datadir=${data_dir}
 socket=${socket}
 port=${port}
@@ -532,28 +576,30 @@ ${authentication_options}
 pid_file=${run_dir}/mysqld.pid
 log_error=${log_dir}/error.log
 EOF
+fi
 chmod 0640 "${config_file}"
 chown root:mysql "${config_file}"
-chown -R mysql:mysql "${install_parent}" "${log_dir}" "${run_dir}"
+chown root:root "${install_parent}" "${software_dir}"
+chmod 0755 "${install_parent}" "${software_dir}"
+chown -R mysql:mysql "${data_dir}" "${log_dir}" "${run_dir}" "${install_parent}/binlog" "${install_parent}/relaylog" "${install_parent}/tmp"
+chown root:mysql "${config_dir}"
+if (( release_major >= 8 )); then "${mysqld}" --defaults-file="${config_file}" --validate-config; fi
 "${mysqld}" --defaults-file="${config_file}" --initialize-insecure --user=mysql
 
+# Keep the system registration readable before /data is mounted; the database
+# configuration, software and runtime state themselves live under the site paths.
 cat >"${service_file}" <<EOF
 [Unit]
 Description=ClusterGuard managed MySQL ${port}
 After=network-online.target
 Wants=network-online.target
+RequiresMountsFor=${install_parent} ${software_dir}
 [Service]
 Type=notify
 User=mysql
 Group=mysql
-RuntimeDirectory=clusterguard/mysql/${port}
-RuntimeDirectoryMode=0750
-# /run/clusterguard is shared with the update helper and any other managed engine.
-# Keep that shared parent traversable for the unprivileged mysql user: it is not a
-# member of the clusterguard group, and /run is a tmpfs, so whichever unit creates
-# the parent first decides whether mysqld can reach its own socket. Without this
-# the daemon dies on every boot with "Could not create unix socket lock file".
-ExecStartPre=+/usr/bin/install -d -m 0755 /run/clusterguard
+# Create the runtime directory only after the instance filesystem is mounted.
+ExecStartPre=+/usr/bin/install -d -m 0750 -o mysql -g mysql ${run_dir}
 ExecStart=${mysqld} --defaults-file=${config_file}
 Restart=on-failure
 RestartSec=5
@@ -561,7 +607,27 @@ LimitNOFILE=65535
 [Install]
 WantedBy=multi-user.target
 EOF
+chmod 0644 "${service_file}"
 systemctl daemon-reload
+jq -n --arg data_root "${data_root}" --arg software_dir "${software_dir}" '{data_root:$data_root,software_dir:$software_dir}' >"${config_dir}/layout.json"
+chmod 0600 "${config_dir}/layout.json"
+install -d -m 0750 "${legacy_config_dir}"
+ln -sfn "${config_dir}/layout.json" "${layout_record}"
+cat >"${config_dir}/logrotate.conf" <<EOF
+${log_dir}/*.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    su mysql mysql
+}
+EOF
+chmod 0644 "${config_dir}/logrotate.conf"
+install -d -m 0755 /etc/logrotate.d
+ln -sfn "${config_dir}/logrotate.conf" "/etc/logrotate.d/clusterguard-mysql-${port}"
 systemctl enable --now "${service}"
 
 for _ in $(seq 1 60); do

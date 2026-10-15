@@ -199,6 +199,7 @@ func discover(ctx context.Context, runner SQLRunner, request adapter.DiscoverReq
 		healthSummary = "MySQL primary is reachable and writable"
 	}
 	promotionEligible := configured && replicaReadOnly && healthState == model.HealthHealthy
+	ackMissing := false
 	if semiSyncRequired {
 		switch {
 		case semiSyncErr != nil:
@@ -208,6 +209,7 @@ func discover(ctx context.Context, runner SQLRunner, request adapter.DiscoverReq
 		case role == model.RolePrimary && !semiSync.sourceReady():
 			healthState = model.HealthDegraded
 			healthSummary = "MySQL primary has no active semi-sync replica acknowledgement"
+			ackMissing = semiSync.sourceConfigured()
 		case role == model.RoleReplica && !semiSync.replicaReady():
 			healthState = model.HealthDegraded
 			healthSummary = "MySQL replica is not actively acknowledging semi-sync transactions"
@@ -230,6 +232,11 @@ func discover(ctx context.Context, runner SQLRunner, request adapter.DiscoverReq
 		engineMetadata[key] = value
 	}
 	engineMetadata["semi_sync_required"] = strconv.FormatBool(semiSyncRequired)
+	if ackMissing {
+		// Keep durability degraded. This cause only permits renewal of the
+		// already-authorized writer; it is not a promotion or bootstrap permit.
+		engineMetadata["semi_sync_ack_missing"] = "true"
+	}
 	if semiSyncErr != nil {
 		engineMetadata["semi_sync_probe_error"] = "true"
 	}

@@ -78,10 +78,12 @@ for target in "${build_targets[@]}"; do
   package_path="${target#*:}"
   CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" go -C "${repository}" build -trimpath -ldflags "${version_ldflags}" -o "${root}/bin/${command_path}" "${package_path}"
 done
-for helper in install_clusterguard.sh clusterguard-install.sh clusterguard-configure.sh clusterguard-preflight.sh clusterguard-smoke.sh clusterguard-ha-matrix.sh clusterguard-offline-deps.sh clusterguard-clock-mesh.sh clusterguard-node-lifecycle.sh clusterguard-package-resolve.sh clusterguard-adapter-runtime-install.sh clusterguard-control-join.sh clusterguard-mysql-install.sh clusterguard-mysql-sync.sh clusterguard-mysql-probe-cleanup.sh clusterguard-mysql-qualification.sh clusterguard-postgresql-build.sh clusterguard-postgresql-install.sh clusterguard-postgresql-sync.sh clusterguard-agent-stdio.sh clusterguard-cluster-shutdown.sh clusterguard-cluster-restore.sh clusterguard-cluster-finalize.sh; do
+for helper in install_clusterguard.sh clusterguard-install.sh clusterguard-configure.sh clusterguard-preflight.sh clusterguard-smoke.sh clusterguard-ha-matrix.sh clusterguard-offline-deps.sh clusterguard-clock-mesh.sh clusterguard-node-lifecycle.sh clusterguard-package-resolve.sh clusterguard-adapter-runtime-install.sh clusterguard-control-join.sh clusterguard-mysql-install.sh clusterguard-mysql-layout.sh clusterguard-mysql-sync.sh clusterguard-mysql-probe-cleanup.sh clusterguard-mysql-qualification.sh clusterguard-postgresql-build.sh clusterguard-postgresql-install.sh clusterguard-postgresql-sync.sh clusterguard-agent-stdio.sh clusterguard-cluster-shutdown.sh clusterguard-cluster-restore.sh clusterguard-cluster-finalize.sh; do
   install -m 0755 "${repository}/scripts/${helper}" "${root}/scripts/${helper}"
 done
 cp "${repository}"/configs/*.json "${root}/configs/"
+install -d -m 0755 "${root}/configs/mysql"
+install -m 0644 "${repository}/configs/mysql/"*.cnf "${root}/configs/mysql/"
 cp "${repository}"/packaging/systemd/* "${root}/packaging/systemd/"
 cp "${repository}"/packaging/logrotate/* "${root}/packaging/logrotate/"
 cp "${repository}/LICENSE" "${root}/LICENSE"

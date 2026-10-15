@@ -15,6 +15,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const vm = require('node:vm');
+const { createHash } = require('node:crypto');
 const evidence = require('./upgrade-acceptance-evidence.cjs');
 
 const SUPPORTED_CONTRACT_VERSION = 2;
@@ -180,6 +181,53 @@ const writeOperationTree = (root, name, status, events) => {
 };
 
 const CHECKS = [
+  {
+    rule:'12 / 22', title:'offline installation ships a complete bilingual command reference',
+    run:()=>{
+      const parser=shellFunction(read('scripts/install_clusterguard.sh')||'', 'parse_args')||'';
+      const options=[...parser.matchAll(/^\s+(-[A-Za-z0-9|_-]+)\)/gm)].flatMap(match=>match[1].split('|'));
+      if(options.length===0)return 'installer option parser was not found';
+      const builder=read('scripts/build-clusterguard-offline-kit.sh')||'', verifier=read('tools/verify-offline-kit.cjs')||'';
+      for(const [locale,name] of [['zh-CN','offline-installer-parameters.md'],['en-US','offline-installer-parameters.en.md']]) {
+        const reference=read(`docs/${locale}/offline-installer-parameters.md`)||'';
+        for(const option of options)if(!reference.includes('`'+option+'`')&&!reference.includes('`'+option+' '))return `undocumented installer option: ${locale} ${option}`;
+        if(!builder.includes(`install -m 0644 "\u0024{repository}/docs/${locale}/offline-installer-parameters.md" "\u0024{kit}/docs/${name}"`))return 'installer reference is absent from media: '+locale;
+        if(!verifier.includes(`['${locale}','${name}']`))return 'installer reference has no artifact byte check: '+locale;
+      }
+      return true;
+    },
+  },
+  {
+    rule:'12 / 22', title:'replica ACK loss only renews the existing MySQL writer lease',
+    run:()=>{
+      const probe=read('adapters/mysql/probe.go')||'', keeper=read('internal/coordination/ownership_keeper.go')||'', ack=read('internal/coordination/ownership_ack.go')||'';
+      if(!probe.includes('ackMissing = semiSync.sourceConfigured()')||!probe.includes('engineMetadata["semi_sync_ack_missing"] = "true"')||!probe.includes('healthState = model.HealthDegraded'))return 'ACK classification masks degradation or accepts an invalid source configuration';
+      for(const proof of ['primary.ResourceID != ""','primary.Health.State != model.HealthDegraded','!primaryProvenWritable(primary)','!currentACKDegradedProbe(snapshot, primary.ResourceID)','observation.CanonicalOwnerID != primary.ResourceID','observation.EndpointOwnerID != primary.ResourceID','len(observation.OwnerIDs) != 1','!observed[primary.ResourceID]','observation.Complete && len(observed) != len(instances)','"semi_sync_ack_missing"','"semi_sync_required"','"semi_sync_available"','"semi_sync_source_enabled"','"semi_sync_probe_error"','required < 1 || clients < 0','status == "false" || clients < required','!probe.DiscoveryObservedAt.Equal(snapshot.ObservedAt)','model.ProbeOutcomeReachable','model.ProbeOutcomeMetricsUnavailable']) {
+        if(!ack.includes(proof))return 'missing existing-writer renewal evidence: '+proof;
+      }
+      if(!keeper.includes('ackDegradedPrimaryForRenewal(snapshot, observation)')||!keeper.includes('renewOnly := partialRenewal || bootstrapConvergenceRenewal || ackRenewal')||!keeper.includes('keeper.authority.RequireMutationAuthority(ctx)')||!keeper.includes('safePartialOwnershipCoverage(snapshot, observation, primary.ResourceID)'))return 'ACK-only renewal can create ownership or bypass authority/coverage';
+      const lease=read('internal/coordination/lease.go')||'', batch=lease.slice(lease.indexOf('func (store *LeaseStore) AcquireStableBatch'),lease.indexOf('func leaseScope'));
+      if(!batch.includes('if request.RenewOnly {')||!batch.includes('record.Lease.OperationID != request.OperationID || record.Lease.OwnerID != request.OwnerID')||!batch.includes('!lease.Active || !lease.ExpiresAt.After(now)'))return 'renew-only no longer requires the same live stable lease';
+      const tests=read('internal/coordination/ownership_replica_failure_test.go')||'', discovery=read('adapters/mysql/probe_vip_retention_test.go')||'';
+      for(const name of ['TestOwnershipKeeperRetainsStableVIPAcrossReplicaFailuresAndMultipleTTLs','TestOwnershipKeeperAckMissingNeverCreatesOrRecoversUnsafeLease','TestOwnershipKeeperAckMissingRejectsUnsafeEvidence','TestOwnershipKeeperAckMissingRejectsMissingOrMalformedMetadata'])if(!tests.includes(name))return 'missing ACK-loss behavior regression: '+name;
+      if(!discovery.includes('TestDiscoverClassifiesOnlyConfiguredPrimaryACKLossForVIPRenewal'))return 'missing producer classification regression';
+      return true;
+    },
+  },
+  {
+    rule:'12 / 22', title:'offline MySQL installation preserves approved production cnf and explicit paths',
+    run:()=>{
+      for(const [name,digest] of [['my-master.cnf','100c5354517e774421cdb0ea713a607288d8d298ab0a1c8eb515d01ceaa91d1b'],['my-slave.cnf','ae4bf82b60620165731d27744817980ae1bcd50865c4a1b008c4817039b4069c']]) {
+        const original=read('configs/mysql/'+name);
+        if(original===null || createHash('sha256').update(original).digest('hex')!==digest) return 'approved production cnf changed: '+name;
+      }
+      const installer=read('scripts/install_clusterguard.sh')||'', native=read('scripts/clusterguard-mysql-install.sh')||'', helper=read('scripts/clusterguard-mysql-layout.sh')||'';
+      if(!installer.includes('cg_mysql_server_id "$1" "${database_port}"') || !installer.includes('--rawfile mysql_cnf') || !installer.includes('software_dir:$software_dir')) return 'offline node identity, original cnf or software path is not propagated';
+      if(!native.includes('if [[ "${use_production_cnf}" != true ]]; then') || !native.includes('cg_mysql_render_cnf "${production_template}"') || !native.includes('"${mysqld}" --defaults-file="${config_file}" --validate-config')) return 'production configuration is retuned or lacks native validation';
+      if(!helper.includes('print "read_only=ON\\nsuper_read_only=ON"')) return 'read-only startup guard removed';
+      return true;
+    },
+  },
   {
     rule:'9 / 12 / 22', title:'disaster reconstruction proves actual binlog history and keeps guards',
     run:()=>{
@@ -1111,6 +1159,9 @@ const reportOpen = failures => {
 // The files the rules read. The self-test copies exactly these, so a mutation cannot be
 // caught by reading something the gate does not actually consult.
 const READ_FILES = [
+  'docs/zh-CN/offline-installer-parameters.md','docs/en-US/offline-installer-parameters.md',
+  'adapters/mysql/probe.go','adapters/mysql/probe_vip_retention_test.go','internal/coordination/ownership_keeper.go','internal/coordination/ownership_ack.go','internal/coordination/lease.go','internal/coordination/ownership_replica_failure_test.go',
+  'configs/mysql/my-master.cnf', 'configs/mysql/my-slave.cnf', 'scripts/clusterguard-mysql-layout.sh', 'scripts/clusterguard-mysql-install.sh',
   'adapters/mysql/disaster_recovery.go','adapters/mysql/disaster_binlog.go','adapters/mysql/reparent.go','adapters/mysql/disaster_binlog_test.go','adapters/mysql/disaster_binlog_security_test.go','adapters/mysql/disaster_binlog_integration_test.go',
   'internal/store/disaster.go','internal/disaster/manager.go','internal/store/disaster_replan_test.go','tools/console-recovery-inventory-acceptance.cjs',
   'tools/console-configuration-layout-acceptance.cjs',
@@ -1131,6 +1182,21 @@ const READ_FILES = [
 ];
 
 const MUTATIONS = [
+  {name:'Chinese installer reference omits a parser option',file:'docs/zh-CN/offline-installer-parameters.md',find:'--controller-min-free-gb',replace:'--controller-space',replaceAll:true,rule:'offline installation ships a complete bilingual command reference'},
+  {name:'English installer reference omits a parser option',file:'docs/en-US/offline-installer-parameters.md',find:'--controller-min-free-gb',replace:'--controller-space',replaceAll:true,rule:'offline installation ships a complete bilingual command reference'},
+  {name:'offline media omits the English installer reference',file:'scripts/build-clusterguard-offline-kit.sh',find:'"${kit}/docs/offline-installer-parameters.en.md"',replace:'"${kit}/docs/other.en.md"',rule:'offline installation ships a complete bilingual command reference'},
+  {name:'ACK-only primary renewal creates a fresh lease',file:'internal/coordination/ownership_keeper.go',find:'renewOnly := partialRenewal || bootstrapConvergenceRenewal || ackRenewal',replace:'renewOnly := partialRenewal || bootstrapConvergenceRenewal',rule:'replica ACK loss only renews the existing MySQL writer lease'},
+  {name:'ACK loss classification includes disabled semi-sync',file:'adapters/mysql/probe.go',find:'ackMissing = semiSync.sourceConfigured()',replace:'ackMissing = true',rule:'replica ACK loss only renews the existing MySQL writer lease'},
+  {name:'ACK-only renewal ignores a read-only primary',file:'internal/coordination/ownership_ack.go',find:'!primaryProvenWritable(primary)',replace:'false',rule:'replica ACK loss only renews the existing MySQL writer lease'},
+  {name:'ACK-only renewal trusts stale SQL evidence',file:'internal/coordination/ownership_ack.go',find:'!probe.DiscoveryObservedAt.Equal(snapshot.ObservedAt)',replace:'false',rule:'replica ACK loss only renews the existing MySQL writer lease'},
+  {name:'ACK-only renewal ignores the canonical VIP owner',file:'internal/coordination/ownership_ack.go',find:'observation.CanonicalOwnerID != primary.ResourceID',replace:'false',rule:'replica ACK loss only renews the existing MySQL writer lease'},
+  {name:'ACK-only renewal accepts duplicate VIP owners',file:'internal/coordination/ownership_ack.go',find:'len(observation.OwnerIDs) != 1',replace:'false',rule:'replica ACK loss only renews the existing MySQL writer lease'},
+  {name:'ACK-only renewal bypasses the controller majority',file:'internal/coordination/ownership_keeper.go',find:'keeper.authority.RequireMutationAuthority(ctx)',replace:'error(nil)',rule:'replica ACK loss only renews the existing MySQL writer lease'},
+  {name:'renew-only batch revives a missing or expired lease',file:'internal/coordination/lease.go',find:'if request.RenewOnly {\n\t\t\tfailures = append(failures, fmt.Errorf("cluster %s: %w: stable quorum lease is missing or expired"',replace:'if false {\n\t\t\tfailures = append(failures, fmt.Errorf("cluster %s: %w: stable quorum lease is missing or expired"',rule:'replica ACK loss only renews the existing MySQL writer lease'},
+  {name:'approved production connection count is silently retuned',file:'configs/mysql/my-master.cnf',find:'max_connections = 800',replace:'max_connections = 1000',rule:'offline MySQL installation preserves approved production cnf and explicit paths'},
+  {name:'offline installation replaces the IP-port identity rule',file:'scripts/install_clusterguard.sh',find:'cg_mysql_server_id "$1" "${database_port}"',replace:'echo 12345',rule:'offline MySQL installation preserves approved production cnf and explicit paths'},
+  {name:'production configuration loses its native validation',file:'scripts/clusterguard-mysql-install.sh',find:'"${mysqld}" --defaults-file="${config_file}" --validate-config',replace:'true',rule:'offline MySQL installation preserves approved production cnf and explicit paths'},
+  {name:'production startup silently permits writes',file:'scripts/clusterguard-mysql-layout.sh',find:'print "read_only=ON\\nsuper_read_only=ON"',replace:'print "read_only=OFF\\nsuper_read_only=OFF"',rule:'offline MySQL installation preserves approved production cnf and explicit paths'},
   {name:'recovery source omits new binlog boundary',file:'adapters/mysql/disaster_recovery.go',find:'return e.refreshRecoveryBinlog(ctx, member, credentials, expectedGTID, authorize)',replace:'return nil',rule:'disaster reconstruction proves actual binlog history and keeps guards'},
   {name:'clone authorization expires after temporary fence change',file:'adapters/mysql/disaster_recovery.go',find:'if err = e.exec(ctx, target, credentials, "SET GLOBAL super_read_only=OFF"); err != nil {\n\t\treturn err\n\t}\n\tif err = verifyGuard(); err != nil {\n\t\treturn err\n\t}\n\tif err = authorize(); err != nil {\n\t\treturn err\n\t}',replace:'if err = e.exec(ctx, target, credentials, "SET GLOBAL super_read_only=OFF"); err != nil {\n\t\treturn err\n\t}\n\tif err = verifyGuard(); err != nil {\n\t\treturn err\n\t}',rule:'disaster reconstruction proves actual binlog history and keeps guards'},
   {name:'physical log loss still uses incremental rejoin',file:'adapters/mysql/disaster_recovery.go',find:'needsClone = !available',replace:'needsClone = false',rule:'disaster reconstruction proves actual binlog history and keeps guards'},
