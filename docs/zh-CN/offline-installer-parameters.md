@@ -1,6 +1,6 @@
 # ClusterGuard HA 完整离线安装器参数说明
 
-适用目标：ClusterGuard HA `3.1.3.1`，RPM `2.2-109`，当前仓库 `scripts/install_clusterguard.sh`。本文只解释当前源码行为；制品是否已构建、上传或现场验收，须以对应阶段证据为准。
+适用目标：ClusterGuard HA `3.1.3.2`，RPM `2.2-110`，当前仓库 `scripts/install_clusterguard.sh`。本文只解释当前源码行为；制品是否已构建、上传或现场验收，须以对应阶段证据为准。
 
 关联手册：《ClusterGuard HA 完整离线安装与部署手册》。实际参数入口为离线介质根目录下的 `install_clusterguard.sh`。
 
@@ -35,7 +35,7 @@
 | `-l LIST`、`--arbitrator-nodes LIST`、`--controller-nodes LIST` | 必填 | 逗号分隔的控制节点；去空白、去重。必须至少 3 个且为奇数。它们形成 Raft voter 集合，不能用数据节点数量替代多数派要求。 | `-l 192.0.2.11,192.0.2.12,192.0.2.13` | 计划+执行 |
 | `-n LIST`、`--data-nodes LIST` | 非 control-only 数据库部署必填 | 数据库和 Agent 节点，去重后可为任意数量；少于 2 个时不能启用带 VIP 的自动故障切换。 | `-n 192.0.2.21,192.0.2.22` | 计划+执行 |
 | `--data-on-arbitrators` | 默认关闭 | 把所有控制节点追加进数据节点集合；重复地址不重复添加，节点角色变为 mixed。 | `--data-on-arbitrators` | 计划+执行 |
-| `-g FILE`、`--application-rpm FILE` | 可省略 | ClusterGuard RPM。省略时只接受介质 `packages/` 下唯一的 `clusterguard-ha-*.rpm`；0 个或多个都拒绝。存在 `.sha256` 时必须匹配。 | `-g ./packages/clusterguard-ha-2.2-109.x86_64.rpm` | 计划+执行 |
+| `-g FILE`、`--application-rpm FILE` | 可省略 | ClusterGuard RPM。省略时只接受介质 `packages/` 下唯一的 `clusterguard-ha-*.rpm`；0 个或多个都拒绝。存在 `.sha256` 时必须匹配。 | `-g ./packages/clusterguard-ha-2.2-110.x86_64.rpm` | 计划+执行 |
 | `-r FILE`、`--database-package FILE`、`--mysql-package FILE`、`--postgresql-source-package FILE` | 数据库部署需要，可由自动发现满足 | 显式选择 MySQL/UPSQL 二进制 tar，或 PostgreSQL 二进制/官方源码 tar。别名只改变拼写，不强制引擎；介质须单一安全顶层目录并包含对应必需程序/源码文件。 | `-r /secure/media/mysql-8.0.44-linux-x86_64.tar.xz` | 计划+执行 |
 | `--database-package-dir DIR` | 默认空；也可由 `CG_DATABASE_PACKAGE_DIR` 给出 | 仅在未给 `-r` 时使用，并把搜索范围限制到该目录。未设置时先查介质 `packages/database/`；只要这里有匹配便不再查 `/opt`，否则才查 `/opt`。多个匹配项拒绝猜选。 | `--database-package-dir /secure/database-media` | 计划+执行 |
 | `--engine mysql\|postgresql\|none` | 有数据节点时默认 `mysql`；无数据节点或 control-only 时为 `none` | 选择数据库路径。`none` 禁用数据库和 VIP 收敛。MySQL/PG 都需要数据节点。 | `--engine postgresql` | 计划+执行 |

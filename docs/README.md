@@ -8,7 +8,7 @@
 
 | 当前任务 | 下一份文档 |
 | --- | --- |
-| 当前完整安装介质 / Current kit | [3.1.3.1 release notes](zh-CN/release-3.1.3.1.md)，本地候选 / local candidate，ART/FIELD OPEN |
+| 当前完整安装介质 / Current kit | [3.1.3.2 release notes](zh-CN/release-3.1.3.2.md)，本地候选 / local candidate，ART/FIELD OPEN |
 | 离线安装命令参数 / Installer options | [完整命令参考](zh-CN/offline-installer-parameters.md) |
 | 开发：前端 / Frontend | [前端页面](development/frontend/README.md) |
 | 开发：后端 / Backend | [后端功能](development/backend/README.md) |

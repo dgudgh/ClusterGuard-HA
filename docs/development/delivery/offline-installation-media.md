@@ -4,7 +4,7 @@
 
 ## 身份与构建入口
 
-四段产品版本用于运行展示、介质目录和 GitHub 标签；RPM Version/Release 只用于安装和兼容。例如产品 `3.1.3.1` 对应新 RPM `2.2-109`。不得仅给文件改名却不注入运行产品版本。
+四段产品版本用于运行展示、介质目录和 GitHub 标签；RPM Version/Release 只用于安装和兼容。例如产品 `3.1.3.2` 对应新 RPM `2.2-110`。不得仅给文件改名却不注入运行产品版本。
 
 - `scripts/build-clusterguard-offline-kit.sh`：校验四段介质身份，向运行包和 RPM 两个入口传递 `--product-version`，在 `RELEASE-INFO` 记录产品身份。
 - `scripts/build-clusterguard-bundle.sh`：注入所有运行二进制；四段 `--version` 自动绑定同一产品版本，显式不一致拒绝构建。注入只有被引用才留在制品里：每个负载命令都必须报告该身份（`buildinfo.VersionLine`），否则链接器会丢掉未引用的变量，制品悄悄退回 RPM 基线。契约 `ART-005` 从两个构建脚本推导负载命令集，逐个要求报告身份。
@@ -33,16 +33,16 @@
 
 ```bash
 bash scripts/build-clusterguard-offline-kit.sh \
-  --output /path/to/main-repository/release/3.1.3.1 \
-  --version 2.2 --release 109 --bundle-version 3.1.3.1 \
-  --product-version 3.1.3.1 --release-channel candidate \
+  --output /path/to/main-repository/release/3.1.3.2 \
+  --version 2.2 --release 110 --bundle-version 3.1.3.2 \
+  --product-version 3.1.3.2 --release-channel candidate \
   --goarch amd64 --nfpm-binary /trusted/nfpm \
   --jq-binary /trusted/jq-linux-amd64 \
   --patch-trust-key /trusted/public.pem
 node tools/verify-offline-kit.cjs \
-  /path/to/main-repository/release/3.1.3.1/clusterguard-ha-3.1.3.1-offline-linux-x86_64.tar.gz \
-  /path/to/clean-source /path/to/main-repository/release/3.1.3.1/verification.json \
-  2.2 109 0 3.1.3.1
+  /path/to/main-repository/release/3.1.3.2/clusterguard-ha-3.1.3.2-offline-linux-x86_64.tar.gz \
+  /path/to/clean-source /path/to/main-repository/release/3.1.3.2/verification.json \
+  2.2 110 0 3.1.3.2
 ```
 
 `verify-offline-kit.cjs` 的第六个参数是期望的数据库包数量，默认口径为 `0`；该数字必须与 `RELEASE-INFO` 的 `database_package_count` 一致。确需把已批准的数据库包封进介质时，加 `--database-package FILE`（可重复）并把该参数改成实际数量——这会改变介质内容，因而必须分配新的产品版本与 RPM 基线。

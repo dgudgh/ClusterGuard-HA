@@ -23,11 +23,13 @@ recorded-through: 73ff4a3
 
 | 日期 | 文件 | 变更 | 说明 |
 | --- | --- | --- | --- |
+| 2026-10-15 | `docs/zh-CN/release-3.1.3.2.md` | A | 最终完整介质3.1.3.2/RPM110说明，正确区分首次安装开放写入与运行期writer lease；保留ART/FIELD限制。 |
+| 2026-10-15 | `docs/en-US/release-3.1.3.2.md` | A | 同范围英文最终候选说明；明确初版内部候选停用、保留制品字节。 |
 | 2026-10-15 | `docs/development/offline-3.1.3.1-2026-10-15.md` | A | 记录完整介质3.1.3.1/RPM2.2-109任务、用户仅要安装命令参数的范围、旧版对照、门禁计划及SOURCE/ART/FIELD与公开渠道边界。 |
 | 2026-10-15 | `docs/zh-CN/offline-installer-parameters.md` | A | 新增当前离线安装器全部命令参数、别名、默认、必填与冲突、安全输入、目录、引擎及执行模式的完整中文参考。 |
 | 2026-10-15 | `docs/en-US/offline-installer-parameters.md` | A | 新增与源码对齐的英文离线安装命令参数参考，明确UID0要求、PG介质选择顺序与只读启动授权边界。 |
-| 2026-10-15 | `docs/zh-CN/release-3.1.3.1.md` | A | 新增3.1.3.1完整介质候选说明，涵盖生产模板/独立路径、ACK缺失仅续租、命令手册及未签名ART/FIELD限制。 |
-| 2026-10-15 | `docs/en-US/release-3.1.3.1.md` | A | 新增同范围英文完整介质候选说明，区分本地包、GitHub源码与未发布Release。 |
+| 2026-10-15 | `docs/zh-CN/release-3.1.3.1.md` | A | 新增3.1.3.1完整介质候选说明，涵盖生产模板/独立路径、ACK缺失仅续租、命令手册及未签名ART/FIELD限制。  最终复核后改为内部候选停用记录并指路3.1.3.2，修正首次安装与lease时序。 |
+| 2026-10-15 | `docs/en-US/release-3.1.3.1.md` | A | 新增同范围英文完整介质候选说明，区分本地包、GitHub源码与未发布Release。  最终复核后改为内部候选停用记录并指路3.1.3.2，修正首次安装与lease时序。 |
 | 2026-10-15 | `docs/development/mysql-replica-failure-vip-2026-10-15.md` | A | 记录从库失去半同步ACK导致现役主库VIP续租失败的旧版对照、仅续租边界、负向保护和SOURCE/ART/FIELD验证结果。 |
 | 2026-10-15 | `docs/development/backend/operations.md` | M | 明确从库数据库/复制故障保留现役主库VIP的仅续租条件，保留半同步告警、Raft与Agent观测两套多数派及失效隔离边界。 |
 | 2026-10-15 | `docs/zh-CN/offline-rpm-install.md` | M | MySQL8.0改用现场生产主从cnf，取消该分支内存调优；记录数据根默认/data、软件默认/usr/local/mysql及独立自定义选项、IP末段拼端口、用户确认的只读保护、原件和目录记录及解析/现场验收边界。  增加独立安装命令参数手册入口。 |
@@ -41,16 +43,16 @@ recorded-through: 73ff4a3
 | 2026-10-14 | `docs/development/frontend/settings/cluster-policy.md` | M | 策略入口改为独立视图；说明唯一表单、真实值与来源、缺字段/读取失败未确认、全部引擎清除范围、草稿/会话清理及双视图Chrome回归。 |
 | 2026-10-14 | `docs/development/console-configuration-hints-2026-10-14.md` | A | 记录本轮任务：控制台「运行参数」页顶部两条提示的下线与参数级说明。含首轮门禁判断、基线 `754a824`、提示来源、安装器默认配置触发面、接口/启动日志/审批不变量与验证计划；追加独立复核：工作区Playwright路径、英文新增注释失败复现与修正、190项隔离Chrome检查及不等于FIELD的边界，保留首轮未执行浏览器的历史事实。 |
 | 2026-10-14 | `docs/development/frontend/settings/configuration.md` | M | 运行参数页顶部不再渲染重新读取说明和弃用提示，弃用/空引用风险移到approval_token_env注释；追加已知注释及文件错误按语言映射、未知文本与路径保留、当前投影浏览器回归及旧告警夹具不能代替后端过滤验收的边界。 |
-| 2026-10-13 | `README.md` | M | 首页按用户给定文案重写（用户要求：首页介绍改成「企业级数据库高可用与故障接管平台」这一版）。标题下定位由自造类别名改为 `Enterprise Database High Availability and Failover Management Platform`，其下 `Make database failover safer. Make business recovery more controllable.`；正文承接用户原文：产品定义段 + 「不是简单提升备库，而是安全转移写入服务、避免多节点同时合法可写」的核心目标段、`Why ClusterGuard HA?`（六问 + 「复制解决同步、本产品解决安全接管」）、`What Can ClusterGuard HA Do?`（统一集群管理/安全切换/写入口同批迁移/降脑裂/故障恢复/统一审计 六项，含「无法证明安全即拒绝」）、`The Core Idea Behind ClusterGuard HA`（「故障可以发生，但错误的故障接管不应该成为第二次事故」+ 不是代理/不是备份）、`Where It Fits`（适用场景 + 后续受控扩展方向 + 收尾标语）。**保留** `Console Preview`/`How It Differs from Other HA Tools`（MHA·Orchestrator·Patroni·repmgr 四维对照表）/`How It Works: Architecture and Safety`（三控制器 Raft 部署图 + 十步工作流 + 八条安全机制，含「高可用不等于零中断零丢失」边界条）/支持矩阵/快速开始/文档/许可，维护者内容仍在文末 `Maintainer Notes`。事实声明（`3.1.2.10`/`2.2-108`/`2.1.45`/`2.2.39`/两条 SHA-256/四条 curl/全部相对链接/`AGPL-3.0-only`/`7b643f4`）逐字保留。 **追加（2026-10-13 同日晚些）：** 该英文首页正文现位于 `README.en.md`——本批为「GitHub 首页默认中文」把中文版移到 `README.md`、英文版改名为 `README.en.md`；同时补回上一行改稿漏掉的控制台鉴权模型段落（`MustChangePassword`、8 小时绝对会话、`logout`），以恢复 `scripts/scripts_test.go` 的认证交付文档契约。  追加2026-10-15：当前完整介质指向3.1.3.1本地候选与安装命令参考，删除不存在的GitHubRelease链接，明确ART/FIELD OPEN。 |
+| 2026-10-13 | `README.md` | M | 首页按用户给定文案重写（用户要求：首页介绍改成「企业级数据库高可用与故障接管平台」这一版）。标题下定位由自造类别名改为 `Enterprise Database High Availability and Failover Management Platform`，其下 `Make database failover safer. Make business recovery more controllable.`；正文承接用户原文：产品定义段 + 「不是简单提升备库，而是安全转移写入服务、避免多节点同时合法可写」的核心目标段、`Why ClusterGuard HA?`（六问 + 「复制解决同步、本产品解决安全接管」）、`What Can ClusterGuard HA Do?`（统一集群管理/安全切换/写入口同批迁移/降脑裂/故障恢复/统一审计 六项，含「无法证明安全即拒绝」）、`The Core Idea Behind ClusterGuard HA`（「故障可以发生，但错误的故障接管不应该成为第二次事故」+ 不是代理/不是备份）、`Where It Fits`（适用场景 + 后续受控扩展方向 + 收尾标语）。**保留** `Console Preview`/`How It Differs from Other HA Tools`（MHA·Orchestrator·Patroni·repmgr 四维对照表）/`How It Works: Architecture and Safety`（三控制器 Raft 部署图 + 十步工作流 + 八条安全机制，含「高可用不等于零中断零丢失」边界条）/支持矩阵/快速开始/文档/许可，维护者内容仍在文末 `Maintainer Notes`。事实声明（`3.1.2.10`/`2.2-108`/`2.1.45`/`2.2.39`/两条 SHA-256/四条 curl/全部相对链接/`AGPL-3.0-only`/`7b643f4`）逐字保留。 **追加（2026-10-13 同日晚些）：** 该英文首页正文现位于 `README.en.md`——本批为「GitHub 首页默认中文」把中文版移到 `README.md`、英文版改名为 `README.en.md`；同时补回上一行改稿漏掉的控制台鉴权模型段落（`MustChangePassword`、8 小时绝对会话、`logout`），以恢复 `scripts/scripts_test.go` 的认证交付文档契约。  追加2026-10-15：当前完整介质指向3.1.3.2本地候选与安装命令参考，删除不存在的GitHubRelease链接，明确ART/FIELD OPEN。 |
 | 2026-10-13 | `README.zh-CN.md` | M | 与英文版逐节同构改写（20 个标题一一对应、层级顺序一致，代码块 26/26、表格行 17/17、列表项 28/28）：`企业级数据库高可用与故障接管平台`/`为什么需要 ClusterGuard HA？`/`ClusterGuard HA 能做什么？`/`ClusterGuard HA 的核心理念`/`适用场景`/`控制台预览`/`与其他高可用方案的区别`/`架构与安全机制`/`支持矩阵与版本`/`快速开始`/`文档`/`许可`/`维护者须知`。首屏即用户给定原文（含六问、六项能力、核心理念、适用场景与收尾标语）。命令、路径、API 名、版本号、SHA-256 与英文逐字一致；仅 ASCII 部署图按中文重绘以避免多字节等宽错位。维护者内容同样在文末。 **追加：** 本路径改为指向新首页的短跳转页（正文只剩一行说明加语言链接，分别指向 `README.md` 与 `README.en.md`），使旧链接仍可解析；中文正文整体移到 `README.md`，不再双份维护。 |
 | 2026-10-13 | `docs/development/markdown-change-record.md` | M | 登记本批根 README 双语改稿的 3 条变更与批次说明（含生成页 `product-overview` 中英两页重建）。 **追加：** 登记「默认中文首页 + 首页语言切换」批次的 `README.en.md`（A）与双语 `licensing.md`（M）三条变更及批次说明。 |
-| 2026-10-13 | `README.en.md` | A | 英文 README 由 `README.md` 改名而来（GitHub 只渲染根 `README.md`，故把中文版放 `README.md` 作默认首页、英文版改名 `README.en.md`）。顶部语言切换改为指向 `README.md` 的简体中文入口；`Quick Start` 补回控制台鉴权模型段落（`MustChangePassword=true`、root 专属 `bootstrap-admin-password` 文件或 `bootstrap_admin_password_env`、Argon2id 哈希、8 小时绝对会话、改密或 `logout` 失效），恢复 `scripts/scripts_test.go` 的认证交付文档契约（上一批改稿漏掉 `MustChangePassword`/`eight-hour`/`logout` 使其变红）。  追加2026-10-15：当前完整介质改为3.1.3.1本地候选/RPM2.2-109，链接安装命令参考并明确尚无GitHubRelease、ART/FIELD OPEN。 |
+| 2026-10-13 | `README.en.md` | A | 英文 README 由 `README.md` 改名而来（GitHub 只渲染根 `README.md`，故把中文版放 `README.md` 作默认首页、英文版改名 `README.en.md`）。顶部语言切换改为指向 `README.md` 的简体中文入口；`Quick Start` 补回控制台鉴权模型段落（`MustChangePassword=true`、root 专属 `bootstrap-admin-password` 文件或 `bootstrap_admin_password_env`、Argon2id 哈希、8 小时绝对会话、改密或 `logout` 失效），恢复 `scripts/scripts_test.go` 的认证交付文档契约（上一批改稿漏掉 `MustChangePassword`/`eight-hour`/`logout` 使其变红）。  追加2026-10-15：当前完整介质改为3.1.3.2本地候选/RPM2.2-110，链接安装命令参考并明确尚无GitHubRelease、ART/FIELD OPEN。 |
 | 2026-10-13 | `docs/zh-CN/licensing.md` | M | 许可声明载体表的根 README 条目由 `README.md` / `README.zh-CN.md` 改为 `README.md` / `README.en.md`，与语言切换后的实际文件名一致。 |
 | 2026-10-13 | `docs/en-US/licensing.md` | M | 同中文版：载体表根 README 条目改为 `README.md` / `README.en.md`。 |
 | 2026-10-13 | `docs/development/recovery-repair-gate-2026-10-13.md` | A | 记录复制修复缺失动作参数、灾难恢复已复核操作仍被阻断的历史对照、现场版本只读证据、修复边界与源码/现场分层验证计划。 |
 | 2026-10-12 | `docs/development/backend/operations.md` | M | 说明新装 MySQL 合法空 GTID 集合、查询证据缺失仍阻断、目标追平与最终核验不省略；登记空集合执行/坏查询/等待失败回归及不确定任务按原始证据复核的边界。 |
 | 2026-10-08 | `AGENTS.md` | M | 在「所有修改必须遵守」里新增一条：任何 Markdown 的新增/删除/修改都必须在 `docs/development/markdown-change-record.md` 登记并过 `verify-markdown-change-record.cjs`，改了 md 必须重建 `docs/html`，未登记不得提交。 |
-| 2026-10-08 | `docs/README.md` | M | 文档中心导航表新增一行「改文档 → Markdown 变更记录」，让台账在入口页可发现。  增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。  追加2026-10-15：当前完整介质指向3.1.3.1本地候选与安装命令参考，删除不存在的GitHubRelease链接，明确ART/FIELD OPEN。 |
+| 2026-10-08 | `docs/README.md` | M | 文档中心导航表新增一行「改文档 → Markdown 变更记录」，让台账在入口页可发现。  增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。  追加2026-10-15：当前完整介质指向3.1.3.2本地候选与安装命令参考，删除不存在的GitHubRelease链接，明确ART/FIELD OPEN。 |
 | 2026-10-08 | `docs/development/README.md` | M | 开发入口在「先确定问题发生在哪一层」之后补一句：改动任何 Markdown 都要登记台账并跑对应门禁。 |
 | 2026-10-08 | `docs/development/delivery/README.md` | M | 热修命名条从「四段版本 `MAJOR.CAPABILITY.INTERNAL.BUGFIX`」改为「新封板版本线从 `3.1.1.1` 开始、四段为 `MAJOR.MINOR.PATCH.BUGFIX`」，并写明旧 2.x/HF 文件名全部冻结为历史。 当前交付按产品版本目录与版本ID定位，不用旧RPM目录作当前入口。  增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。 |
 | 2026-10-08 | `docs/development/markdown-change-record.md` | A | 本页：建立 md 变更台账，规定增删改都要登记，并由 `tools/verify-markdown-change-record.cjs` 做结构与覆盖校验。 2026-10-09 追加登记「升级预览版本语义修复」批次与 `updates.md` 的展示口径变更。 2026-10-09 追加登记「控制节点卡片」批次与对应批次说明。 |
@@ -85,15 +87,15 @@ recorded-through: 73ff4a3
 
 | 2026-10-09 | `README.zh-CN.md` | M | 增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。 |
 
-| 2026-10-09 | `docs/zh-CN/README.md` | M | 增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。  追加2026-10-15：当前完整介质指向3.1.3.1本地候选与安装命令参考，删除不存在的GitHubRelease链接，明确ART/FIELD OPEN。 |
+| 2026-10-09 | `docs/zh-CN/README.md` | M | 增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。  追加2026-10-15：当前完整介质指向3.1.3.2本地候选与安装命令参考，删除不存在的GitHubRelease链接，明确ART/FIELD OPEN。 |
 
-| 2026-10-09 | `docs/en-US/README.md` | M | 增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。  追加2026-10-15：当前完整介质指向3.1.3.1本地候选与安装命令参考，删除不存在的GitHubRelease链接，明确ART/FIELD OPEN。 |
+| 2026-10-09 | `docs/en-US/README.md` | M | 增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。  追加2026-10-15：当前完整介质指向3.1.3.2本地候选与安装命令参考，删除不存在的GitHubRelease链接，明确ART/FIELD OPEN。 |
 
-| 2026-10-09 | `docs/catalogue.md` | M | 增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。  追加2026-10-15：当前完整介质指向3.1.3.1本地候选与安装命令参考，删除不存在的GitHubRelease链接，明确ART/FIELD OPEN。 |
+| 2026-10-09 | `docs/catalogue.md` | M | 增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。  追加2026-10-15：当前完整介质指向3.1.3.2本地候选与安装命令参考，删除不存在的GitHubRelease链接，明确ART/FIELD OPEN。 |
 
-| 2026-10-09 | `docs/zh-CN/catalogue.md` | M | 增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。  追加2026-10-15：当前完整介质指向3.1.3.1本地候选与安装命令参考，删除不存在的GitHubRelease链接，明确ART/FIELD OPEN。 |
+| 2026-10-09 | `docs/zh-CN/catalogue.md` | M | 增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。  追加2026-10-15：当前完整介质指向3.1.3.2本地候选与安装命令参考，删除不存在的GitHubRelease链接，明确ART/FIELD OPEN。 |
 
-| 2026-10-09 | `docs/en-US/catalogue.md` | M | 增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。  追加2026-10-15：当前完整介质指向3.1.3.1本地候选与安装命令参考，删除不存在的GitHubRelease链接，明确ART/FIELD OPEN。 |
+| 2026-10-09 | `docs/en-US/catalogue.md` | M | 增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。  追加2026-10-15：当前完整介质指向3.1.3.2本地候选与安装命令参考，删除不存在的GitHubRelease链接，明确ART/FIELD OPEN。 |
 
 | 2026-10-09 | `docs/development/delivery/offline-installation-media.md` | A | 完整介质子功能路径、产品身份传递、实际版本回归、干净构建与唯一目录、显式公开附件及分阶段验收。 |
 
@@ -112,7 +114,7 @@ recorded-through: 73ff4a3
 | 2026-10-12 | `docs/catalogue.md` | M | 「当前完整介质」段由 3.1.2.9 更新为 3.1.2.10、RPM 基线 2.2-108，历史条目保持原范围。 |
 | 2026-10-12 | `docs/zh-CN/catalogue.md` | M | 同上中文完整资料目录的当前介质段更新到 3.1.2.10。 |
 | 2026-10-12 | `docs/en-US/catalogue.md` | M | 同上英文完整资料目录的当前介质段更新到 3.1.2.10。 |
-| 2026-10-12 | `docs/development/delivery/offline-installation-media.md` | M | 身份示例由产品 3.1.2.9 对 RPM 2.2-107 更新为 3.1.2.10 对 2.2-108；新增「数据库介质：默认不嵌入」一节（介质不携带数据库包、安装器三级查找优先级、缺 `.sha256` 侧车静默跳过校验）；构建示例去掉 `--database-package`、校验示例期望数据库包数 2→0；保留随介质安装器的契约条目。  追加2026-10-15：示例版本3.1.3.1/RPM109，记录中英文命令参考映射和制品字节校验。 |
+| 2026-10-12 | `docs/development/delivery/offline-installation-media.md` | M | 身份示例由产品 3.1.2.9 对 RPM 2.2-107 更新为 3.1.2.10 对 2.2-108；新增「数据库介质：默认不嵌入」一节（介质不携带数据库包、安装器三级查找优先级、缺 `.sha256` 侧车静默跳过校验）；构建示例去掉 `--database-package`、校验示例期望数据库包数 2→0；保留随介质安装器的契约条目。  追加2026-10-15：示例版本3.1.3.2/RPM110，记录中英文命令参考映射和制品字节校验。 |
 | 2026-10-12 | `docs/development/markdown-change-record.md` | M | 登记 3.1.2.9 与 3.1.2.10 两个完整介质发布批次（本页）。 |
 
 | 2026-10-12 | `docs/zh-CN/offline-rpm-install.md` | M | 新增中断安装重试 FAQ：精确识别本端口受管单元、停用并确认无主进程后再替换；明确完整数据保护与失败停用状态。 |
@@ -201,3 +203,5 @@ GitHub 只渲染仓库根 `README.md`，所以「首页默认中文」只能由 
 从库故障VIP续租批次（2026-10-15）：登记专项任务及后端操作模块说明，明确ACK缺失只允许现役稳定Owner续租，保留降级、授权及观测保护。对应SOURCE门禁新增8个失败变异；开发模块文档由源文件链接访问，按要求运行104页生成器，不新增公开交付或现场验收声明。
 
 完整介质3.1.3.1批次（2026-10-15）：安装命令详情独立中英文手册，入口页只指路；介质显式携带并校验原文字节，生成器增加对应两页及版本说明导航。当前介质入口统一为3.1.3.1本地候选/RPM2.2-109，删除尚不存在的GitHub Release入口；SOURCE、结构校验、未签名ART及FIELD状态分开记录。
+
+3.1.3.1内部候选停用：最终复核发现新写随包说明混淆安装引导与运行期writer lease，原件保留并停用，不覆盖重建。对应双语发布页改为停用记录，最终新增3.1.3.2/RPM2.2-110说明；上层当前入口、命令参考与构建示例随之更新，HTML重新生成。任务记录继续使用初始任务文件名追踪两次候选。
