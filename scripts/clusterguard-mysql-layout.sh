@@ -86,3 +86,27 @@ cg_mysql_render_cnf() {
     }
   ' "${template}" >"${output}"
 }
+
+# --initialize does not load semi-sync plugins. Keep the runtime file strict,
+# and relax only those plugin-owned names in a disposable initialization copy.
+# InnoDB layout, case handling and every other production value stay intact.
+cg_mysql_render_initialize_cnf() {
+  local runtime_config="$1" output="$2"
+  [[ -f "${runtime_config}" && ! -L "${runtime_config}" && ! -L "${output}" && "${runtime_config}" != "${output}" ]] &&
+    [[ ! -e "${output}" || ! "${runtime_config}" -ef "${output}" ]] || {
+    echo 'initialization requires a separate copy of the runtime MySQL configuration' >&2; return 2;
+  }
+  awk '
+    /^[[:space:]]*[#;]/ { print; next }
+    /^[[:space:]]*\[/ {
+      section=$0; gsub(/[[:space:]\r]/,"",section); section=tolower(section); print; next
+    }
+    {
+      key=$0; sub(/=.*/,"",key); gsub(/[[:space:]]/,"",key); key=tolower(key); gsub(/-/,"_",key)
+      if (section ~ /^\[(mysqld|server)(-[0-9]+(\.[0-9]+)?)?\]$/ && key ~ /^rpl_semi_sync_[a-z0-9][a-z0-9_]*$/) {
+        sub(/[^[:space:]]/,"loose_&")
+      }
+      print
+    }
+  ' "${runtime_config}" >"${output}"
+}

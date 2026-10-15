@@ -120,7 +120,7 @@ func TestNativeProductionConfigGenerationHasNoTuningDependency(t *testing.T) {
 	}
 	s := string(script)
 	start := strings.Index(s, `mysql_version="$(${mysqld} --version`)
-	end := strings.Index(s, `"${mysqld}" --defaults-file="${config_file}" --initialize-insecure --user=mysql`)
+	end := strings.Index(s, "# Initialization uses a disposable option file")
 	if start < 0 || end <= start {
 		t.Fatal("cannot locate actual configuration generation")
 	}
@@ -141,6 +141,7 @@ cg_mysql_layout "$data_root" "$port" "$software_dir"
 install_parent="$cg_mysql_instance"; config_dir="$cg_mysql_conf"; config_file="$config_dir/my.cnf"
 log_dir="$cg_mysql_log"; run_dir="$cg_mysql_run"; data_dir="$cg_mysql_data"; socket="$run_dir/mysql.sock"
 payload="$1/payload.json"; mysqld="$software_dir/bin/mysqld"; production_template=''
+root_password=''; discovery_password=''; operation_password=''; replication_password=''
 mkdir -p "$config_dir" "$log_dir" "$run_dir" "$data_dir" "$install_parent/binlog" "$install_parent/relaylog" "$install_parent/tmp"
 chown() { :; }
 `+s[start:end]+`

@@ -1,6 +1,6 @@
 # ClusterGuard HA Complete Offline Installer Parameter Reference
 
-Target: ClusterGuard HA `3.1.3.2`, RPM `2.2-110`, and the current repository version of `scripts/install_clusterguard.sh`. This page describes source behavior only. Artifact build, upload, and field acceptance require their own stage evidence.
+Target: ClusterGuard HA `3.1.3.3`, RPM `2.2-111`, and the current repository version of `scripts/install_clusterguard.sh`. This page describes source behavior only. Artifact build, upload, and field acceptance require their own stage evidence.
 
 Related manual: “ClusterGuard HA Complete Offline Installation and Deployment Manual.” The actual entry point is `install_clusterguard.sh` at the root of the extracted offline kit.
 
@@ -35,7 +35,7 @@ In the “Used by” column, **plan + execute** means both modes parse and valid
 | `-l LIST`, `--arbitrator-nodes LIST`, `--controller-nodes LIST` | Required | Comma-separated control nodes, trimmed and deduplicated. At least three and an odd count are required. This is the Raft voter set; data-node count does not replace quorum. | `-l 192.0.2.11,192.0.2.12,192.0.2.13` | Plan + execute |
 | `-n LIST`, `--data-nodes LIST` | Required for a database deployment that is not control-only | Database and Agent nodes, deduplicated, with no odd-count rule. VIP automatic failover requires at least two. | `-n 192.0.2.21,192.0.2.22` | Plan + execute |
 | `--data-on-arbitrators` | Off | Appends every control node to the data-node set. Duplicate addresses are not repeated; overlapping nodes become mixed-role nodes. | `--data-on-arbitrators` | Plan + execute |
-| `-g FILE`, `--application-rpm FILE` | Optional | ClusterGuard RPM. If omitted, exactly one `clusterguard-ha-*.rpm` must exist in kit `packages/`; zero or multiple matches fail. An adjacent `.sha256`, when present, must match. | `-g ./packages/clusterguard-ha-2.2-110.x86_64.rpm` | Plan + execute |
+| `-g FILE`, `--application-rpm FILE` | Optional | ClusterGuard RPM. If omitted, exactly one `clusterguard-ha-*.rpm` must exist in kit `packages/`; zero or multiple matches fail. An adjacent `.sha256`, when present, must match. | `-g ./packages/clusterguard-ha-2.2-111.x86_64.rpm` | Plan + execute |
 | `-r FILE`, `--database-package FILE`, `--mysql-package FILE`, `--postgresql-source-package FILE` | Required for database deployment unless auto-discovery resolves one | Explicit MySQL/UPSQL binary tar or PostgreSQL binary/official-source tar. Aliases do not force the engine. Media needs one safe top-level directory and the required binaries/source files. | `-r /secure/media/mysql-8.0.44-linux-x86_64.tar.xz` | Plan + execute |
 | `--database-package-dir DIR` | Empty; may start from `CG_DATABASE_PACKAGE_DIR` | Used only without `-r` and restricts discovery to this directory. Otherwise the kit `packages/database/` is searched first; if it has any match, `/opt` is not searched. `/opt` is the fallback. Multiple matches fail closed. | `--database-package-dir /secure/database-media` | Plan + execute |
 | `--engine mysql\|postgresql\|none` | `mysql` with data nodes; `none` without data nodes or in control-only mode | Selects the database flow. `none` disables database work and VIP reconciliation. MySQL/PG require data nodes. | `--engine postgresql` | Plan + execute |

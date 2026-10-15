@@ -182,6 +182,18 @@ const writeOperationTree = (root, name, status, events) => {
 
 const CHECKS = [
   {
+    rule:'12 / 22', title:'MySQL initialization isolates plugin options and reports native failures',
+    run:()=>{
+      const native=read('scripts/clusterguard-mysql-install.sh')||'', helper=read('scripts/clusterguard-mysql-layout.sh')||'', tests=read('scripts/mysql_initialize_test.go')||'';
+      for(const proof of ['run_mysql_setup_step validation "${mysqld}" --defaults-file="${config_file}" --validate-config','cg_mysql_render_initialize_cnf "${config_file}" "${initialize_config}"','run_mysql_setup_step initialization "${mysqld}" --defaults-file="${initialize_config}" --initialize-insecure --user=mysql','rm -f "${initialize_config}"','tail -n 80 "${log_dir}/error.log"','"${root_password}" "${discovery_password}" "${operation_password}" "${replication_password}"','return "${status}"']) {
+        if(!native.includes(proof))return 'missing strict runtime validation, disposable initialization or diagnostic guard: '+proof;
+      }
+      if(!helper.includes('cg_mysql_render_initialize_cnf()')||!helper.includes('key ~ /^rpl_semi_sync_[a-z0-9][a-z0-9_]*$/')||!helper.includes('sub(/[^[:space:]]/,"loose_&")'))return 'initialization copy no longer limits relaxation to semi-sync plugin options';
+      for(const name of ['TestMySQLInitializeCnfPreservesProductionRuntime','TestMySQLInitializeCnfChangesOnlyServerPluginOptions','TestMySQLSetupStepPreservesStatusAndRedactsBoundedDiagnostics','TestMySQLInitializeFlowUsesTemporaryCnfAndCleansIt'])if(!tests.includes(name))return 'missing initialization regression: '+name;
+      return true;
+    },
+  },
+  {
     rule:'12 / 22', title:'offline installation ships a complete bilingual command reference',
     run:()=>{
       const parser=shellFunction(read('scripts/install_clusterguard.sh')||'', 'parse_args')||'';
@@ -1159,6 +1171,7 @@ const reportOpen = failures => {
 // The files the rules read. The self-test copies exactly these, so a mutation cannot be
 // caught by reading something the gate does not actually consult.
 const READ_FILES = [
+  'scripts/mysql_initialize_test.go',
   'docs/zh-CN/offline-installer-parameters.md','docs/en-US/offline-installer-parameters.md',
   'adapters/mysql/probe.go','adapters/mysql/probe_vip_retention_test.go','internal/coordination/ownership_keeper.go','internal/coordination/ownership_ack.go','internal/coordination/lease.go','internal/coordination/ownership_replica_failure_test.go',
   'configs/mysql/my-master.cnf', 'configs/mysql/my-slave.cnf', 'scripts/clusterguard-mysql-layout.sh', 'scripts/clusterguard-mysql-install.sh',
@@ -1182,6 +1195,10 @@ const READ_FILES = [
 ];
 
 const MUTATIONS = [
+  {name:'initialization uses strict runtime options again',file:'scripts/clusterguard-mysql-install.sh',find:'run_mysql_setup_step initialization "${mysqld}" --defaults-file="${initialize_config}"',replace:'run_mysql_setup_step initialization "${mysqld}" --defaults-file="${config_file}"',rule:'MySQL initialization isolates plugin options and reports native failures'},
+  {name:'initialization makes every unknown option loose',file:'scripts/clusterguard-mysql-layout.sh',find:'key ~ /^rpl_semi_sync_[a-z0-9][a-z0-9_]*$/',replace:'key ~ /./',rule:'MySQL initialization isolates plugin options and reports native failures'},
+  {name:'initialization failure no longer preserves its exit status',file:'scripts/clusterguard-mysql-install.sh',find:'return "${status}"',replace:'return 0',rule:'MySQL initialization isolates plugin options and reports native failures'},
+  {name:'initialization error output forgets the replication secret',file:'scripts/clusterguard-mysql-install.sh',find:'"${root_password}" "${discovery_password}" "${operation_password}" "${replication_password}"',replace:'"${root_password}" "${discovery_password}" "${operation_password}"',rule:'MySQL initialization isolates plugin options and reports native failures'},
   {name:'Chinese installer reference omits a parser option',file:'docs/zh-CN/offline-installer-parameters.md',find:'--controller-min-free-gb',replace:'--controller-space',replaceAll:true,rule:'offline installation ships a complete bilingual command reference'},
   {name:'English installer reference omits a parser option',file:'docs/en-US/offline-installer-parameters.md',find:'--controller-min-free-gb',replace:'--controller-space',replaceAll:true,rule:'offline installation ships a complete bilingual command reference'},
   {name:'offline media omits the English installer reference',file:'scripts/build-clusterguard-offline-kit.sh',find:'"${kit}/docs/offline-installer-parameters.en.md"',replace:'"${kit}/docs/other.en.md"',rule:'offline installation ships a complete bilingual command reference'},

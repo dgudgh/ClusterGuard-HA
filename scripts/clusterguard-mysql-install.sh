@@ -5,7 +5,8 @@ command -v jq >/dev/null 2>&1 || { echo "jq is required" >&2; exit 2; }
 payload="$(mktemp /tmp/clusterguard-install.XXXXXX)"
 chmod 0600 "${payload}"
 production_template=""
-trap 'rm -f "${payload}"; [[ -z "${production_template}" ]] || rm -f "${production_template}"' EXIT
+initialize_config=""
+trap 'rm -f "${payload}"; [[ -z "${production_template}" ]] || rm -f "${production_template}"; [[ -z "${initialize_config}" ]] || rm -f "${initialize_config}"' EXIT
 cat >"${payload}"
 jq -e '.target.node_name and .target.mysql_port and .secrets.mysql_root_password and .secrets.mysql_discovery_username and .secrets.mysql_discovery_password and .secrets.mysql_operation_username and .secrets.mysql_operation_password and .secrets.mysql_replication_username and .secrets.replication_password' "${payload}" >/dev/null
 
@@ -583,8 +584,34 @@ chown root:root "${install_parent}" "${software_dir}"
 chmod 0755 "${install_parent}" "${software_dir}"
 chown -R mysql:mysql "${data_dir}" "${log_dir}" "${run_dir}" "${install_parent}/binlog" "${install_parent}/relaylog" "${install_parent}/tmp"
 chown root:mysql "${config_dir}"
-if (( release_major >= 8 )); then "${mysqld}" --defaults-file="${config_file}" --validate-config; fi
-"${mysqld}" --defaults-file="${config_file}" --initialize-insecure --user=mysql
+
+run_mysql_setup_step() {
+  local phase="$1" output status secret
+  shift
+  if output="$("$@" 2>&1)"; then
+    status=0
+  else
+    status=$?
+    printf 'MySQL %s failed (exit=%s); diagnostic log: %s\n' "${phase}" "${status}" "${log_dir}/error.log" >&2
+    if [[ -f "${log_dir}/error.log" && ! -L "${log_dir}/error.log" ]]; then
+      output+=$'\n'"$(tail -n 80 "${log_dir}/error.log" || true)"
+    fi
+  fi
+  for secret in "${root_password}" "${discovery_password}" "${operation_password}" "${replication_password}"; do
+    [[ -z "${secret}" ]] || output="${output//"${secret}"/<redacted>}"
+  done
+  if [[ -n "${output}" ]]; then printf '%s\n' "${output}" >&2; fi
+  return "${status}"
+}
+
+if (( release_major >= 8 )); then run_mysql_setup_step validation "${mysqld}" --defaults-file="${config_file}" --validate-config; fi
+# Initialization uses a disposable option file; the service keeps config_file.
+initialize_config="$(mktemp /tmp/clusterguard-initialize-cnf.XXXXXX)"
+chmod 0600 "${initialize_config}"
+cg_mysql_render_initialize_cnf "${config_file}" "${initialize_config}"
+run_mysql_setup_step initialization "${mysqld}" --defaults-file="${initialize_config}" --initialize-insecure --user=mysql
+rm -f "${initialize_config}"
+initialize_config=""
 
 # Keep the system registration readable before /data is mounted; the database
 # configuration, software and runtime state themselves live under the site paths.

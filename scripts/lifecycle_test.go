@@ -1307,7 +1307,7 @@ func TestMySQLInstallFailsBeforeInitializationWhenRuntimeLibrariesAreMissing(t *
 		}
 	}
 	linkageCheck := strings.Index(installText, `validate_runtime_linkage "${mysqld}" "${mysql}"`)
-	initialize := strings.Index(installText, `"${mysqld}" --defaults-file="${config_file}" --initialize-insecure --user=mysql`)
+	initialize := strings.Index(installText, `run_mysql_setup_step initialization "${mysqld}" --defaults-file="${initialize_config}" --initialize-insecure --user=mysql`)
 	if linkageCheck < 0 || initialize < 0 || linkageCheck > initialize {
 		t.Fatal("managed MySQL runtime linkage must be checked before the data directory is initialized")
 	}

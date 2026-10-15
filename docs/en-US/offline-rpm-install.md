@@ -625,6 +625,12 @@ Before replacing software or removing a managed partial initialization directory
 
 A running instance with verifiable credentials follows the existing synchronization path. A complete database is still protected from replacement unless a rebuild was explicitly authorized. This fix adds neither database deletion nor machine-wide uninstall. Use controlled upgrades or node recovery for production database version changes, data-directory moves, and node rebuilds; do not remove data, management markers, or site state to bypass protection.
 
+### 12.9 Production configuration validates but semi-sync options break initialization
+
+If error.log says initialization ignored plugin-load and reports unknown variable rpl_semi_sync_master_wait_point, runtime plugins were not loaded during initialization. From3.1.3.3 the original runtime configuration is validated strictly, then initialization uses a disposable copy. Only semi-sync plugin options in that copy gain a loose prefix. Production values, InnoDB layout, normal service my.cnf and read-only guards are unchanged. Failures print the original status and final80 password-redacted native log lines.
+
+A failed data/mysql/ can trigger existing full-data protection. Preserve logs, state, secrets and work-dir first. Only after confirming a fresh failed install with no business data or running process, quarantine the failed instance directory before resuming. Never delete data or markers or force-rebuild an existing real instance to bypass protection.
+
 ## 13. Uninstallation and Rollback
 
 Uninstalling RPM individually will not delete `/etc/clusterguard/`, `/var/lib/clusterguard/`, and audit data:
