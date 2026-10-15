@@ -653,6 +653,12 @@ Record each manual scenario before delivery; unexecuted items remain `OPEN`:
 
 Single-node isolated native validation and source tests do not replace this three-node checklist. Replication, VIP, switchover and disaster recovery require their own manual maintenance-window acceptance.
 
+### 12.11 Helper226/NAMESPACE after completed MySQL installation
+
+In3.1.3.4, systemd resolves ReadWritePaths before the pre-command can create an absent /run/clusterguard. From3.1.3.5 only that volatile path may initially be missing; the normal pre-command creates it0755 and persistent paths remain mandatory. The installer also prepares the parent before startup. Main-process isolation, private-workspace permissions and Unix peer checks remain.
+
+For a completed database at phase=registered, resume with the new kit and original state/secrets/work directory. Matching management markers skip initialization and first synchronization. Do not move data, remove state or regenerate credentials. Final services, replication, VIP and update-channel acceptance remain manual.
+
 ## 13. Uninstallation and Rollback
 
 Uninstalling RPM individually will not delete `/etc/clusterguard/`, `/var/lib/clusterguard/`, and audit data:

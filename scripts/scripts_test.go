@@ -5730,7 +5730,11 @@ func TestSoftwareUpdateHelperSystemdUnitAllowsControlledPrivilegedUpdate(t *test
 		"User=root",
 		"Group=clusterguard",
 		"ProtectSystem=false",
-		"/usr/bin/install -d -m 0755 -o root -g clusterguard /run/clusterguard",
+		"ExecStartPre=/usr/bin/install -d -m 0755 -o root -g clusterguard /run/clusterguard",
+		"NoNewPrivileges=true",
+		"PrivateTmp=true",
+		"ProtectHome=true",
+		"ReadWritePaths=-/run/clusterguard /var/lib/clusterguard/updates /var/lib/clusterguard-update-private /etc/clusterguard /var/lib/clusterguard /var/log/clusterguard",
 		"/usr/local/libexec/clusterguard-update-helper",
 		"/usr/local/libexec/clusterguard-update-job.sh",
 	} {
@@ -5754,6 +5758,7 @@ func TestSoftwareUpdateHelperSystemdUnitAllowsControlledPrivilegedUpdate(t *test
 	// race to create the parent — turning any host reboot into a full cluster
 	// outage. Do not reintroduce 0750.
 	for _, forbidden := range []string{
+		"ExecStart=+",
 		"ProtectSystem=strict",
 		"CapabilityBoundingSet=",
 		"RuntimeDirectory=clusterguard",

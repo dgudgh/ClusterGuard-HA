@@ -32,6 +32,8 @@ Current results, raw evidence and baseline are recorded in the [development task
 
 ## Local build receipt
 
+Subsequent manual installation exposed Helper226/NAMESPACE when /run/clusterguard is absent. See the [3.1.3.5 fix](release-3.1.3.5.md). Sites with completed MySQL installation must preserve databases and site files and resume without the previous legacy-directory rename step. The historical receipt below does not establish full installation acceptance.
+
 - Clean build commit `c088653d4d1fc415d1b145f5a74b00f24814088d`, zero untracked files, pushed to the main branch.
 - Complete tar: 33,845,130 bytes; SHA-256 `0600b1d0f9d7a2b0cb8f79b13effd35621887c1a9fed127248c0fa8576f5eb67`.
 - All 15 media structure checks passed. Three actual installer/helper copies in the kit, runtime and RPM match tested source bytes. Previous 3.1.3.1/2/3 archive hashes are unchanged.

@@ -22,13 +22,16 @@ RestartSec=3s
 # abort with "Could not create unix socket lock file" on every single start.
 # /run is a tmpfs, so this unit usually wins the boot race to create the parent:
 # a 0750 mode makes every host reboot a guaranteed cluster outage.
+# ReadWritePaths is applied before ExecStartPre, including '+' commands on
+# systemd 239. Only this volatile parent may be absent until install creates it;
+# all persistent paths below remain mandatory. The Helper keeps its namespace.
 ExecStartPre=/usr/bin/install -d -m 0755 -o root -g clusterguard /run/clusterguard
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=false
-ReadWritePaths=/run/clusterguard /var/lib/clusterguard/updates /var/lib/clusterguard-update-private /etc/clusterguard /var/lib/clusterguard /var/log/clusterguard
+ReadWritePaths=-/run/clusterguard /var/lib/clusterguard/updates /var/lib/clusterguard-update-private /etc/clusterguard /var/lib/clusterguard /var/log/clusterguard
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 
 [Install]

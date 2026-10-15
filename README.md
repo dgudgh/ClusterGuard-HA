@@ -146,9 +146,9 @@ DISCOVER -> PRECHECK -> PLAN -> SAFETY_GUARD -> LOCK -> APPROVE -> EXECUTE -> VE
 
 运行形态：物理机或虚拟机（systemd 托管数据库）、Docker Swarm（固定单副本 Service）、Kubernetes（独立单副本 StatefulSet）。只有当受限 Agent、操作凭据、端点提供器、控制器多数派和所需隔离证据全部配置完成时，相关变更能力才会对外标记为可用；这些能力不会回溯添加到 `v2.1.45`。
 
-### 当前完整安装介质：3.1.3.4（本地候选）
+### 当前完整安装介质：3.1.3.5（本地候选）
 
-完整 Linux x86_64 安装介质位于本地 `release/3.1.3.4/`，产品版本 **3.1.3.4**，RPM 兼容基线 **2.2-112**。数据库介质由现场自备。见[本版说明](docs/zh-CN/release-3.1.3.4.md)与[完整安装命令参数](docs/zh-CN/offline-installer-parameters.md)。源码与文档提交 GitHub；本版尚未发布 GitHub Release，ART/FIELD 仍 OPEN。
+完整 Linux x86_64 安装介质位于本地 `release/3.1.3.5/`，产品版本 **3.1.3.5**，RPM 兼容基线 **2.2-113**。数据库介质由现场自备。见[本版说明](docs/zh-CN/release-3.1.3.5.md)与[完整安装命令参数](docs/zh-CN/offline-installer-parameters.md)。源码与文档提交 GitHub；本版尚未发布 GitHub Release，ART/FIELD 仍 OPEN。
 
 ### 已记录的正式发布版本
 

@@ -654,6 +654,12 @@ MySQL 安装助手在替换软件或隔离已证实初始化失败的目录前�
 
 单节点隔离原生验证和源码测试不能代替这张三节点清单；复制、VIP、切换和灾难恢复仍须按各自手册在人工维护窗口验收。
 
+### 12.11 MySQL完成后更新Helper启动报226/NAMESPACE
+
+3.1.3.4的Helper在/run/clusterguard不存在时，systemd先建立ReadWritePaths namespace，导致普通ExecStartPre来不及创建目录。3.1.3.5只允许该易失运行路径暂缺，由预命令创建为0755，其他持久目录仍强制存在；安装器也在启动前准备父目录。主进程隔离、私有工作区权限和Unix凭据检查保持生效。
+
+数据库已安装且phase=registered的站点，使用新介质复用原state/secrets/work-dir续装，先核对所有受管标记，数据库初始化与首次同步不会重跑。不要移动数据、删除状态或重新生成凭据。完整包仍须用户人工完成最终服务、复制、VIP与更新通道验收。
+
 ## 13. 卸载与回滚
 
 单独卸载 RPM 不会删除 `/etc/clusterguard/`、`/var/lib/clusterguard/` 和审计资料：

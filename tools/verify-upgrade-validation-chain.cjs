@@ -182,6 +182,18 @@ const writeOperationTree = (root, name, status, events) => {
 
 const CHECKS = [
   {
+    rule:'12 / 22', title:'update Helper starts with an absent volatile runtime directory and keeps its sandbox',
+    run:()=>{
+      const unit=(read('packaging/systemd/clusterguard-update-helper.service')||'').split('\n').filter(line=>line&&!line.startsWith('#')).join('\n');
+      for(const proof of ['ExecStartPre=/usr/bin/install -d -m 0755 -o root -g clusterguard /run/clusterguard','ReadWritePaths=-/run/clusterguard /var/lib/clusterguard/updates /var/lib/clusterguard-update-private /etc/clusterguard /var/lib/clusterguard /var/log/clusterguard','NoNewPrivileges=true','PrivateTmp=true','ProtectHome=true'])if(!unit.includes(proof))return 'missing compatible runtime preparation or sandbox directive: '+proof;
+      if(/^RuntimeDirectory=/m.test(unit)||/^ExecStart=\+/m.test(unit))return 'Helper owns the shared runtime or its main process bypasses the sandbox';
+      const setup=shellFunction(read('scripts/install_clusterguard.sh')||'','configure_platform_updates')||'';
+      const prepare=setup.indexOf('install -d -m 0755 -o root -g clusterguard /run/clusterguard'), start=setup.indexOf('systemctl enable --now clusterguard-update-helper.service');
+      if(prepare<0||start<0||prepare>start)return 'installer does not prepare the runtime parent before starting Helper';
+      return true;
+    },
+  },
+  {
     rule:'12 / 22', title:'MySQL failed installation resumes only from bound evidence and preserves residue',
     run:()=>{
       const native=read('scripts/clusterguard-mysql-install.sh')||'', parent=read('scripts/install_clusterguard.sh')||'';
@@ -346,9 +358,9 @@ const CHECKS = [
       for(let index=0;index<lines.length;index+=1){
         const enable=lines[index].match(/systemctl enable --now (\S+)/);
         if(!enable) continue;
-        const unit=enable[1];
+        const unit=enable[1].replace(/;$/,'');
         let waited=false;
-        for(let cursor=index+1;cursor<Math.min(lines.length,index+12);cursor+=1){
+        for(let cursor=index+1;cursor<lines.length;cursor+=1){
           const line=lines[cursor];
           if(/^"\s*(>|$)/.test(line)) break;
           if(/break; sleep/.test(line)) waited=true;
@@ -1194,6 +1206,7 @@ const reportOpen = failures => {
 // The files the rules read. The self-test copies exactly these, so a mutation cannot be
 // caught by reading something the gate does not actually consult.
 const READ_FILES = [
+  'packaging/systemd/clusterguard-update-helper.service',
   'scripts/mysql_install_state_test.go','scripts/mysql_preflight_test.go','packaging/rpm/nfpm.yaml',
   'scripts/mysql_initialize_test.go',
   'docs/zh-CN/offline-installer-parameters.md','docs/en-US/offline-installer-parameters.md',
@@ -1219,6 +1232,12 @@ const READ_FILES = [
 ];
 
 const MUTATIONS = [
+  {name:'Helper checks the missing runtime directory before creating it again',file:'packaging/systemd/clusterguard-update-helper.service',find:'ReadWritePaths=-/run/clusterguard ',replace:'ReadWritePaths=/run/clusterguard ',rule:'update Helper starts with an absent volatile runtime directory and keeps its sandbox'},
+  {name:'Helper ignores a missing private workspace too',file:'packaging/systemd/clusterguard-update-helper.service',find:'ReadWritePaths=-/run/clusterguard /var/lib/clusterguard/updates /var/lib/clusterguard-update-private ',replace:'ReadWritePaths=-/run/clusterguard /var/lib/clusterguard/updates -/var/lib/clusterguard-update-private ',rule:'update Helper starts with an absent volatile runtime directory and keeps its sandbox'},
+  {name:'Helper makes the shared parent inaccessible to engines',file:'packaging/systemd/clusterguard-update-helper.service',find:'-m 0755 -o root -g clusterguard',replace:'-m 0750 -o root -g clusterguard',rule:'update Helper starts with an absent volatile runtime directory and keeps its sandbox'},
+  {name:'Helper main process loses no-new-privileges',file:'packaging/systemd/clusterguard-update-helper.service',find:'NoNewPrivileges=true',replace:'NoNewPrivileges=false',rule:'update Helper starts with an absent volatile runtime directory and keeps its sandbox'},
+  {name:'Helper claims ownership of the shared runtime on stop',file:'packaging/systemd/clusterguard-update-helper.service',find:'UMask=0077',replace:'UMask=0077\nRuntimeDirectory=clusterguard',rule:'update Helper starts with an absent volatile runtime directory and keeps its sandbox'},
+  {name:'installer starts Helper before preparing its runtime parent',file:'scripts/install_clusterguard.sh',find:'install -d -m 0755 -o root -g clusterguard /run/clusterguard\n',replace:'',rule:'update Helper starts with an absent volatile runtime directory and keeps its sandbox'},
   {name:'failed initialization accepts an unknown outcome',file:'scripts/clusterguard-mysql-install.sh',find:'.phase == "initialize-failed"',replace:'.phase == "initializing"',replaceAll:true,rule:'MySQL failed installation resumes only from bound evidence and preserves residue'},
   {name:'empty preparation accepts nonempty data',file:'scripts/clusterguard-mysql-install.sh',find:'[[ -z "${contents}" ]]',replace:'[[ -n "${contents}" ]]',rule:'MySQL failed installation resumes only from bound evidence and preserves residue'},
   {name:'failed initialization forgets original data inode',file:'scripts/clusterguard-mysql-install.sh',find:'.data_identity == $data_identity',replace:'true',replaceAll:true,rule:'MySQL failed installation resumes only from bound evidence and preserves residue'},

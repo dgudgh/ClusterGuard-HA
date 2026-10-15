@@ -2257,8 +2257,17 @@ install -m 0600 -o root -g root /etc/clusterguard/ssh/controller_ed25519 /etc/cl
 install -m 0640 -o root -g clusterguard '${remote_stage}/patch-signing-public.pem' /etc/clusterguard/trust/patch-signing-public.pem
 install -m 0600 -o root -g root '${remote_stage}/deployment-state.json' /etc/clusterguard/deployment-state.json
 install -m 0600 -o root -g root '${remote_stage}/update.json' /etc/clusterguard/update.json
+# Prepare the shared parent before systemd resolves ReadWritePaths. The unit also
+# tolerates this one missing volatile path until its pre-command recreates it.
+install -d -m 0755 -o root -g clusterguard /run/clusterguard
 systemctl daemon-reload
-systemctl enable --now clusterguard-update-helper.service
+if ! systemctl enable --now clusterguard-update-helper.service; then
+  systemctl show clusterguard-update-helper.service -p LoadState -p ActiveState -p SubState -p Result -p ExecMainStatus >&2 || true
+  for helper_path in /run/clusterguard /var/lib/clusterguard/updates /var/lib/clusterguard-update-private; do
+    if [[ -d \"\${helper_path}\" ]]; then stat -c '%a %U:%G %n' \"\${helper_path}\" >&2; else printf 'missing helper directory: %s\\n' \"\${helper_path}\" >&2; fi
+  done
+  exit 1
+fi
 # systemd reports a Type=simple unit active as soon as the process is forked, so the helper can
 # still be binding its socket while the assertions below run.
 for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do systemctl is-active --quiet clusterguard-update-helper.service && test -S /run/clusterguard/update-helper.sock && break; sleep 1; done
