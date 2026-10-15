@@ -33,3 +33,9 @@
 - .152当前只读确认.cluster.phase=registered，MySQL active且主库RO/SRO=0，真实/run/clusterguard仍缺失；未代用户修改真实Helper或执行任何续装。完整三节点最终验收及签名ART保持OPEN。
 
 systemd239参考：[缺失路径前缀](https://github.com/systemd/systemd/blob/v239/man/systemd.exec.xml)、[执行namespace实现](https://github.com/systemd/systemd/blob/v239/src/core/execute.c)。本次以真实239复现为准，未把较新手册或单纯加+的猜测算作修复完成。
+
+## 完整候选封板
+
+从已推主线的干净2024567构建3.1.3.5/RPM113；tar33,850,253字节，SHA256=809abbf457f851134471de8ad3689d9f66da66c91154c4bb12fc06da29dd4c85。实际介质结构15项与安装器、运行包unit、RPM unit三处字节比对通过。旧3.1.3.4 tar仍为0600b1d0摘要，未改包；其本地辅助人工指南只补当前数据库已完成、旧改名步骤不再适用的提示。
+
+安装器实际远端命令通过夹具捕获与Bash解析，证明helper_path在远端展开，运行父目录创建先于enable，失败诊断含正确路径。3.1.3.5只在release/3.1.3.5保留一份，附原三节点完整续装命令；没有复制Downloads、没有代用户运行安装或修改真实Helper，没有创建GitHub Release。ART签名和整体三节点FIELD未完成，仍为人工测试候选。

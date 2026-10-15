@@ -26,3 +26,7 @@
 在真实systemd239的独立命名单元和路径，用同一实际Helper程序复现旧226，并验证新单元首次启动、healthz、停止保留邻居文件、清空仅测试runtime后的再次启动、陌生UID拒绝、socket660/private700和主进程namespace/NoNewPrivs。持久私有目录缺失仍以226拒绝。真实Helper、数据库、站点配置未被代为修改。
 
 源码、回归、制品结果及临时诊断清理记录见[开发任务](../development/update-helper-namespace-2026-10-15.md)。隔离Helper生命周期验证不代表已完成用户三节点安装、复制/VIP/恢复或生产签名验收。安装与全部命令参数见[安装手册](offline-rpm-install.md)及[命令参考](offline-installer-parameters.md)。
+
+## 构建回执
+
+构建提交2024567，干净树、未跟踪0，已推GitHub主线。完整tar为33,850,253字节，SHA256为809abbf457f851134471de8ad3689d9f66da66c91154c4bb12fc06da29dd4c85。结构15项及安装器/运行包unit/RPM unit三处实际载荷字节比对通过，3.1.3.4原tar摘要不变。SOURCE42项、114变异、Go40包及Chrome109项通过。包目录附完整续装命令与人工验收表，签名ART/FIELD保持OPEN；回执在构建后追加，未覆盖重建已封板介质。

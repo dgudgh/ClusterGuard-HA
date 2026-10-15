@@ -26,3 +26,7 @@ Database software defaults to /usr/local/mysql and the data root to /data; ordin
 Independent named units and paths on real systemd239 reproduce old226 and validate the fixed unit using the actual Helper binary: first startup, healthz, neighboring-file preservation on stop, restart after removing only the test runtime, unknown-UID rejection, socket660/private700, main-process namespace and NoNewPrivs. A missing persistent private directory still fails226. The real Helper, databases and site configuration were not changed on the user's behalf.
 
 Source, regression, media and diagnostic cleanup results are recorded in the [task](../development/update-helper-namespace-2026-10-15.md). Isolated Helper lifecycle tests do not establish three-node installation, replication/VIP/recovery or production signature acceptance. See the [installation manual](offline-rpm-install.md) and [complete CLI reference](offline-installer-parameters.md).
+
+## Build receipt
+
+Clean source2024567, zero untracked files, pushed to GitHub mainline. Complete tar:33,850,253 bytes; SHA256:809abbf457f851134471de8ad3689d9f66da66c91154c4bb12fc06da29dd4c85. All15 structure checks and three actual installer/runtime-unit/RPM-unit byte comparisons passed; previous3.1.3.4 tar is unchanged. SOURCE42 checks,114 mutations,40 Go packages and109 Chrome assertions passed. Resume command and manual checklist accompany the artifact. Signature ART/FIELD remain OPEN; this receipt was appended after the immutable build.
