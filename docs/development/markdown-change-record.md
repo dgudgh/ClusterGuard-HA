@@ -23,9 +23,10 @@ recorded-through: 73ff4a3
 
 | 日期 | 文件 | 变更 | 说明 |
 | --- | --- | --- | --- |
-| 2026-10-15 | `docs/development/update-helper-namespace-2026-10-15.md` | A | 记录3.1.3.4真实Helper226、旧unit对照、systemd239原生复现/修复、隔离不变量与用户自行续装边界。 |
-| 2026-10-15 | `docs/zh-CN/release-3.1.3.5.md` | A | 新候选3.1.3.5/RPM113修复易失运行目录与namespace启动顺序，保留已完成MySQL并复用原站点文件续装。 |
-| 2026-10-15 | `docs/en-US/release-3.1.3.5.md` | A | 同范围英文修复说明及原生隔离/ART/FIELD分层边界。 |
+| 2026-10-15 | `docs/development/installation-field-3.1.3.5-2026-10-15.md` | A | 登记用户明确授权后的真实三节点完整续装exit0、52项API、实际五程序/服务/Helper重启/GTID写入/VIP、配置保留与真实登录页面核对；保留签名ART、空盘/故障注入及升级历史未执行范围。 |
+| 2026-10-15 | `docs/development/update-helper-namespace-2026-10-15.md` | A | 记录3.1.3.4真实Helper226、旧unit对照、systemd239原生复现/修复、隔离不变量与用户自行续装边界；追加其后用户授权接管及真实现场记录指路。 |
+| 2026-10-15 | `docs/zh-CN/release-3.1.3.5.md` | A | 新候选3.1.3.5/RPM113修复易失运行目录与namespace启动顺序，保留已完成MySQL并复用原站点文件续装；追加真实三节点续装、复制/VIP/Helper与登录页面验收范围。 |
+| 2026-10-15 | `docs/en-US/release-3.1.3.5.md` | A | 同范围英文修复说明及原生隔离/ART/FIELD分层边界，追加用户授权后实际三节点安装和登录页面核对回执。 |
 | 2026-10-15 | `THIRD-PARTY-NOTICES.md` | M | 显式记录系统util-linux/flock依赖、实读2.32.1单文件MIT与整个RPM多许可证的边界，不将单组件许可扩展到发行版包。 |
 | 2026-10-15 | `docs/development/mysql-install-resume-2026-10-15.md` | A | 记录旧版部分数据误删/受管残留误报、修改前基线、阶段证明与保留隔离、准备期重试审查、完整原生helper与人工交付边界。 |
 | 2026-10-15 | `docs/zh-CN/release-3.1.3.4.md` | A | 新候选3.1.3.4/RPM112：安装失败阶段记录、完整实例保留续装、旧残留早阻断、flock依赖与用户自行人工验收边界。 |

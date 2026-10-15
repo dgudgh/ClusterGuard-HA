@@ -4,7 +4,7 @@
 
 产品3.1.3.5，RPM基线2.2-113，唯一目录release/3.1.3.5/。修复3.1.3.4在MySQL与控制面已完成后，首次启动更新Helper因缺少共享运行目录而退出226/NAMESPACE的问题。旧3.1.3.4制品保持不变，当前源码与文档使用唯一主线codex/2.2-postgresql。
 
-这是供用户人工续装/新装的本地候选，未创建GitHub Release；生产签名ART与完整三节点FIELD仍OPEN。
+这是本地安装测试候选，未创建GitHub Release。用户随后授权接管三台，完整续装已退出0，服务器侧真实验收与登录后页面核对通过；生产签名ART与升级完整FIELD契约仍有未执行项。
 
 ## 修复
 
@@ -23,10 +23,12 @@
 
 ## 验证与边界
 
-在真实systemd239的独立命名单元和路径，用同一实际Helper程序复现旧226，并验证新单元首次启动、healthz、停止保留邻居文件、清空仅测试runtime后的再次启动、陌生UID拒绝、socket660/private700和主进程namespace/NoNewPrivs。持久私有目录缺失仍以226拒绝。真实Helper、数据库、站点配置未被代为修改。
+构建前在真实systemd239的独立命名单元和路径，用同一实际Helper程序复现旧226，并验证新单元首次启动、healthz、停止保留邻居文件、清空仅测试runtime后的再次启动、陌生UID拒绝、socket660/private700和主进程namespace/NoNewPrivs。持久私有目录缺失仍以226拒绝；该阶段未修改真实Helper、数据库或站点配置。
 
 源码、回归、制品结果及临时诊断清理记录见[开发任务](../development/update-helper-namespace-2026-10-15.md)。隔离Helper生命周期验证不代表已完成用户三节点安装、复制/VIP/恢复或生产签名验收。安装与全部命令参数见[安装手册](offline-rpm-install.md)及[命令参考](offline-installer-parameters.md)。
 
+随后按用户明确授权执行完整三节点续装，2026-10-15 14:57:41安装验证通过、exit0。三台RPM/运行版本、五程序摘要、实际Helper启动与重启、Raft、Agent及定时器通过；真实写入在两副本GTID追平，VIP绑定唯一可写主库，生产my.cnf与受管标记字节保留。详细范围、原始证据与未执行项见[现场验收](../development/installation-field-3.1.3.5-2026-10-15.md)。本次不是空盘重装，也未测试故障切换、灾难注入或签名升级回退。
+
 ## 构建回执
 
-构建提交2024567，干净树、未跟踪0，已推GitHub主线。完整tar为33,850,253字节，SHA256为809abbf457f851134471de8ad3689d9f66da66c91154c4bb12fc06da29dd4c85。结构15项及安装器/运行包unit/RPM unit三处实际载荷字节比对通过，3.1.3.4原tar摘要不变。SOURCE42项、114变异、Go40包及Chrome109项通过。包目录附完整续装命令与人工验收表，签名ART/FIELD保持OPEN；回执在构建后追加，未覆盖重建已封板介质。
+构建提交2024567，干净树、未跟踪0，已推GitHub主线。完整tar为33,850,253字节，SHA256为809abbf457f851134471de8ad3689d9f66da66c91154c4bb12fc06da29dd4c85。结构15项及安装器/运行包unit/RPM unit三处实际载荷字节比对通过，3.1.3.4原tar摘要不变。SOURCE42项、114变异、Go40包及Chrome109项通过。包目录附完整续装命令与人工验收表；构建时签名ART/FIELD为OPEN，后续真实安装验收按上节单独记录。回执及现场记录均在构建后追加，未覆盖重建已封板介质。
