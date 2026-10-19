@@ -7,17 +7,21 @@
 | 本次工作 | 必须完成的门禁 |
 | --- | --- |
 | 源码修复 | `node tools/verify-upgrade-validation-chain.cjs --stage source --strict` 及相应功能回归 |
-| 新包交付/发布 | `node tools/verify-upgrade-validation-chain.cjs --stage artifact --strict --acceptance-report FILE`；报告绑定本次源码和实际制品 |
-| 现场升级/恢复验收 | `node tools/verify-upgrade-validation-chain.cjs --stage field --strict --acceptance-report FILE`；包含本次真实 ART/FIELD 证据 |
+| 签名升级/热修包交付 | `node tools/verify-upgrade-validation-chain.cjs --stage artifact --strict --acceptance-report FILE`；报告绑定本次源码及实际 `.cgupgrade/.cgpatch` |
+| 签名升级/热修现场验收 | `node tools/verify-upgrade-validation-chain.cjs --stage field --strict --acceptance-report FILE`；包含本次更新包真实 ART/FIELD 证据 |
+| 完整离线介质预发布 | SOURCE严格阶段、包绑定干净源码上的 `verify-offline-kit.cjs`、实际载荷比对、发布血缘/许可/公开资产门禁及附件下载回读；明确未执行的本版安装验收 |
+| 完整离线介质正式稳定发布 | 上述制品检查，加[正式发版要求](../../zh-CN/version-release-policy.md#6-正式发版门禁)的本版实装、签名和故障矩阵等全部适用项 |
 
 完整流程见[门禁执行与更新流程](../../zh-CN/validation-gate-workflow.md)。仅有“0 failed”、源码阶段通过或旧状态页的通过记录都不构成制品/现场通过；适用严格阶段必须退出 0，未完成义务仍如实保留。下面约束与对应阶段证据一并核对。
+
+完整安装tar与签名更新包分别走对应制品门禁。升级报告校验器只接受.cgupgrade/.cgpatch；不得为了上传完整安装包伪造更新包报告，也不得反过来用完整安装包检查关闭签名更新包ART。完整介质的专用流程见[完整离线介质](../delivery/offline-installation-media.md)。
 
 ## 完整阻断项
 
 - [ ] 已有修改前旧代码对照记录；记录基线与实际差异，不得倒填为已事前完成。
 - [ ] 保持的旧行为及新增/修复行为均有对应回归证据。
 - [ ] 最终源码、已测试 HTML 与包内嵌版本一致。
-- [ ] 来源 RPM、目标 RPM、签名、现场信任公钥、回退载荷、SHA-256 和只读 inspect 校验一致。
+- [ ] 签名升级/热修包的来源RPM、目标RPM、签名、现场信任公钥、回退载荷、SHA-256和只读inspect一致；完整介质则核对包绑定提交、RPM/程序身份、各层摘要、许可、权限和实际脚本载荷，未完成的目标OS签名信任与现场项明确列出。
 - [ ] 已说明现场版本是否核实、哪些场景未测试、是否部署；用户手动升级的请求不得擅自改成直接安装 RPM。
 - [ ] 不覆盖已交付版本；新修复用新的版本和补丁 ID。
 - [ ] 交付记录可追溯：`node tools/verify-release-records.cjs` 报 `status=passed`，即 `release/` 下每个 `RELEASE-INFO` 的 `commit=` 都能被标签或远端引用到达（`local-only` 表示只被本地分支指着，必须推送到远端）。发布说明的提交必须回到主仓库分支，不得只留在 `.build/` 的一次性构建克隆里。

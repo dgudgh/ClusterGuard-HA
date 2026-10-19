@@ -4,7 +4,7 @@
 
 Product 3.1.3.6, RPM baseline 2.2-114, sole directory release/3.1.3.6/. This optimizes database archive inspection and repeated media distribution, with stage timing. Existing 3.1.3.5 and previously delivered artifacts remain byte-identical.
 
-This is a local complete installation-test candidate. SOURCE, media structure and field acceptance are recorded separately. Production signature ART and full FIELD for this version remain OPEN; no GitHub Release has been created.
+The 2026-10-15 build was recorded as a local complete installation-test candidate. SOURCE, offline-media artifact checks and this version's field acceptance are separate. See the 2026-10-19 review below for the applicable acceptance route and prerelease scope.
 
 ## Changes
 
@@ -26,3 +26,9 @@ See the [complete CLI reference](offline-installer-parameters.md), [installation
 ## Build receipt
 
 Clean source 9339a6a, zero untracked files, pushed to GitHub. Complete tar: 33,851,103 bytes; SHA256: 22b7adc5d5576b0404d0ce29c0c2a70b317ba6a5e094686a0e601b4d62c98b8f. All 15 structure checks and three actual script payload comparisons passed; the previous 3.1.3.5 artifact is unchanged. SOURCE 45 checks, 128 mutations and two controls, 40 Go packages, the final scripts rerun and 109 Chrome fixture assertions passed. Strict artifact acceptance still exits 1 with one OPEN obligation; full signature ART/FIELD have not passed. MANUAL-TEST.md accompanies the artifact. This receipt was appended after building without rebuilding the media.
+
+## 2026-10-19 Offline-media review
+
+Rerunning the dedicated media verifier against the clean source at build commit 9339a6a passed all 15 checks; the tar retains the SHA256 above. The historical update artifact OPEN requires .cgupgrade/.cgpatch and cannot establish failure of an installation tar. Consumer documentation now routes by artifact type; signed-update gates and original failure evidence remain unchanged. See the [scope review](../development/full-media-release-scope-2026-10-19.md).
+
+This is a candidate-media prerelease tagged at 9339a6a. Recorded source, artifact, payload and isolated regression evidence supports that scope. Full installation, failure-matrix and target-OS production signature trust for this version are not closed by those checks; stable acceptance is not claimed. Supply the complete vendor database archive separately and use the existing installation command. The media is not rebuilt.

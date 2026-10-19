@@ -2,13 +2,15 @@
 
 > **Document role: mandatory policy for the applicable task.** Read before building, signing, releasing, or handling delivery artifacts, together with the [contract](../upgrade-validation-chain.md), [gate workflow](../zh-CN/validation-gate-workflow.md), [build checklist](../development/rules/release-checklist.md), and applicable licensing/channel rules. Dated implementation results provide context; acceptance for this run needs its own bindings and actual evidence.
 
-> Gate workflow update (2026-10-04): use `--stage source --strict` for source development. Artifact and field acceptance require `--stage artifact` or `--stage field`, `--strict`, and `--acceptance-report FILE` with actual evidence. The default remains field; real ART/FIELD evidence is still unavailable. See the [workflow](../zh-CN/validation-gate-workflow.md).
+> Gate routing update (2026-10-19): use source strict for development. Signed updates/hotfixes require artifact/field strict with actual acceptance reports. Complete offline media use verify-offline-kit, actual payload comparisons and the public asset gate; incomplete field acceptance allows a disclosed prerelease only. Judge the actual version and artifact type instead of applying a historical OPEN to every artifact. See the [workflow](../zh-CN/validation-gate-workflow.md) and [offline media procedure](../development/delivery/offline-installation-media.md).
 
 ## v2 Release Preconditions
 
 Updates and hotfixes enforce the v2 contract: failed hotfixes use `retry`; interrupted rolling updates use `resume`. The repair recorded on 2026-10-03 used baseline `7b643f4` on `codex/2.2-postgresql`; it produced no new package or deployment and recorded ART/FIELD as **OPEN**. That historical record does not replace this delivery's source, package identity, or applicable strict acceptance.
 
 The four build entry points run `verify-upgrade-validation-chain.cjs --contract-only` before producing/signing artifacts and require Node (`CG_NODE_BIN` may override its path). This checks contract loading and schema consistency only, not complete PRE/ART/FIELD acceptance. Run the complete gate and `--strict` before release; OPEN blocks formal release. Past results are in the [historical implementation and acceptance snapshot](upgrade-validation-chain-implementation-status.md), which is not an acceptance input for this run. Hotfix acceptance covers same-package retry, rejected resume, signed supersedes, and independent history; rolling acceptance covers resume. Never rebuild a delivered identity in place.
+
+These artifact/field reports apply to signed updates: the validator requires .cgupgrade/.cgpatch. A complete installation tar uses the dedicated offline-media checks. A validator that does not accept tar cannot establish that the installer failed, and successful installer checks cannot waive update signatures or rollback. The v2 contract and machine interface remain unchanged.
 
 <!-- LANGUAGE-SWITCH -->
 > **Language:** English | [简体中文](../zh-CN/version-release-policy.md)
@@ -173,9 +175,11 @@ And verify:
 6. Corresponding database versions complete switching, failure, old master recovery, restart, network partition, and concurrency testing.
 7. Security gate, Leader forwarding, Raft majority, VIP uniqueness, audit, and report all pass.
 8. Release Notes clearly specify the supported scope, known boundaries, and upgrade methods.
-9. The patch contains target and rollback RPMs, and passes signature, compatibility, rolling-order, resume, and automatic-rollback tests.
+9. When delivering signed update/hotfix packages, verify target and rollback RPMs, signatures, compatibility, rolling order, resume/same-package retry and automatic rollback. Publishing a complete installation tar does not itself require producing a separate update package.
 
-If any gate fails, only an internal candidate package can be generated, and formal tags or GitHub Releases cannot be created.
+Any failed applicable safety or artifact gate limits the result to an internal candidate; a prerelease must not bypass it. Incomplete installation, signature-trust or failure-matrix checks for this version must not be described as formal stable acceptance.
+
+Complete installation media may use the dedicated prerelease procedure after source, media, payload, provenance, licensing and public-channel checks pass while field acceptance remains incomplete. The tag must point to the media's build commit, prerelease must be explicit and Latest disabled, and outstanding installation/failure/signature-trust checks must be disclosed. This does not close signed-update ART/FIELD or establish a stable release.
 
 `release_channel` in `RELEASE-INFO` is decided automatically by the build script
 (`scripts/build-clusterguard-offline-kit.sh`) from whether the **source tree is clean**: clean
@@ -190,7 +194,7 @@ Formal release is executed in the following order:
 
 1. Gather and submit all changes for this version.
 2. Execute full testing and on-site acceptance.
-3. Build RPM, main offline package, signed update package, and necessary independent dependency packages from a clean commit (the update package stays local; see §3.1).
+3. Build the RPM, complete offline media and necessary dependency add-ons from a clean commit according to the delivery type. Build signed update/hotfix packages only when delivering that type; keep them local and enforce their strict acceptance route (see §3.1).
 4. Verify the summary, signature, package content, and installation process.
 5. Create an annotated tag, for example, `v2.2.1`.
 6. Push the commit and tag.

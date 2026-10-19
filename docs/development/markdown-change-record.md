@@ -23,9 +23,12 @@ recorded-through: 73ff4a3
 
 | 日期 | 文件 | 变更 | 说明 |
 | --- | --- | --- | --- |
+| 2026-10-19 | `docs/development/full-media-release-scope-2026-10-19.md` | A | 记录修改前旧路由对照、完整介质15项复核、签名更新报告类型限制、保持v2契约与制品字节、预发布和下载回读计划。 |
+| 2026-10-19 | `docs/development/rules/release-checklist.md` | M | 补完整介质预发布/正式稳定发布两条适用路由，签名更新继续artifact/field strict，完整tar不伪造更新包报告。 |
+| 2026-10-19 | `docs/development/rules/public-release.md` | M | 补完整介质上传资格导航，区分候选预发布与完整正式验收，不把更新包报告缺失视为tar失败。 |
 | 2026-10-15 | `docs/development/mysql-install-performance-2026-10-15.md` | A | 记录新鲜安装与旧版对照、单次完整归档读取和摘要复用设计、安全审查修正、81.15秒对39.53秒原生同包实测及SOURCE/制品/FIELD分层。 |
-| 2026-10-15 | `docs/zh-CN/release-3.1.3.6.md` | A | 新候选3.1.3.6/RPM114：单次归档检查、逐节点SHA256复用与私有原子发布、安装阶段耗时；保留旧件与本版完整FIELD未执行边界。 |
-| 2026-10-15 | `docs/en-US/release-3.1.3.6.md` | A | 同范围英文安装优化说明与单次性能测量限制，保留生产签名ART和完整安装FIELD的OPEN状态。 |
+| 2026-10-15 | `docs/zh-CN/release-3.1.3.6.md` | A | 新候选3.1.3.6/RPM114：单次归档检查、逐节点SHA256复用与私有原子发布、安装阶段耗时；保留旧件与本版完整FIELD未执行边界。 2026-10-19：追加2026-10-19本包15项复核与验收路由纠正，保留历史OPEN日志，明确候选预发布及本版现场/生产签名信任未关闭。 |
+| 2026-10-15 | `docs/en-US/release-3.1.3.6.md` | A | 同范围英文安装优化说明与单次性能测量限制，保留生产签名ART和完整安装FIELD的OPEN状态。 2026-10-19：同步英文完整介质复核、构建提交/摘要绑定、签名更新门禁保留及预发布范围。 |
 | 2026-10-15 | `docs/development/installation-field-3.1.3.5-2026-10-15.md` | A | 登记用户明确授权后的真实三节点完整续装exit0、52项API、实际五程序/服务/Helper重启/GTID写入/VIP、配置保留与真实登录页面核对；保留签名ART、空盘/故障注入及升级历史未执行范围。 |
 | 2026-10-15 | `docs/development/update-helper-namespace-2026-10-15.md` | A | 记录3.1.3.4真实Helper226、旧unit对照、systemd239原生复现/修复、隔离不变量与用户自行续装边界；追加其后用户授权接管及真实现场记录指路。 |
 | 2026-10-15 | `docs/zh-CN/release-3.1.3.5.md` | A | 新候选3.1.3.5/RPM113修复易失运行目录与namespace启动顺序，保留已完成MySQL并复用原站点文件续装；追加真实三节点续装、复制/VIP/Helper与登录页面验收范围。 |
@@ -75,14 +78,14 @@ recorded-through: 73ff4a3
 | 2026-10-08 | `docs/en-US/hotfix-package-naming.md` | A | 新增英文版包命名规则页；本轮重建为与中文逐节对齐的 7 节结构，补回初版漏掉的「禁止的名字」一节与 `.cgupgrade` 跨语法禁令；迁移示例改为新运行时 ID HF-2026-1008-02，并说明同旧 ID 不同摘要会导致上传冲突。 补充运行产品版本、RPM兼容基线和历史签名字段来源；目录按四段版本，不以RPM来源命名。 同步版本ID、产品目录、验签替代与旧HF兼容规则。 |
 | 2026-10-08 | `docs/en-US/update-and-patch.md` | M | 制品说明与热修规格节改用 `clusterguard-3.1.1.1.x86_64.cgpatch` 示例，并点明新封板版本线起点 `3.1.1.1`；与中文版同口径。 |
 | 2026-10-08 | `docs/en-US/upgrade-validation-chain-implementation-status.md` | M | 2026-10-08 增补：登记「载荷已落地是单一判据」「回退只命名最新已应用记录」「supersede 守卫必须有非 deployment 的输入源」三处落点，并记下 2 项未决义务。 |
-| 2026-10-08 | `docs/en-US/version-release-policy.md` | M | 交付身份条改为新封板版本线起点 `3.1.1.1` + `MAJOR.MINOR.PATCH.BUGFIX`，并写明历史 2.x/HF 规格名称冻结。 |
+| 2026-10-08 | `docs/en-US/version-release-policy.md` | M | 交付身份条改为新封板版本线起点 `3.1.1.1` + `MAJOR.MINOR.PATCH.BUGFIX`，并写明历史 2.x/HF 规格名称冻结。 2026-10-19：同步英文制品类型路由、签名更新要求与完整安装候选预发布边界，保留正式稳定验收要求。 |
 | 2026-10-08 | `docs/hotfix-patches.md` | M | 导言改用新命名与封板起点；换行按 `scripts/render-hotfix-catalog.cjs` 的实际输出对齐，避免下次渲染产生无意义重排。 渲染器使用实际台账制品路径的解包示例，兼容产品版本目录。 |
 | 2026-10-08 | `docs/zh-CN/hotfix-package-naming.md` | A | 新增中文版包命名规则页（本次随命名线迁移首次入库）：7 节结构，规定四段版本 `MAJOR.MINOR.PATCH.BUGFIX` 从 `3.1.1.1` 起、`HF-...` 只留在签名清单、修订递增 Bug 修订段并记 `supersedes_artifact`。本轮把「本次规格示例」改为「新规格示例」，并修正禁止示例的注释措辞；迁移示例改为 HF-2026-1008-02，要求首次迁移分配新 ID、签名 supersedes 关联旧包，避免上传身份冲突。 产品版本绑定运行二进制与API；历史目标读取自身签名版本；旧已交付包冻结并用3.1.1.3修正；当前制品目录改为release/<四段版本>，旧目录仅留历史，台账迁移不改签名字节。 新产品ID等于patch_version；目录按四段版本；旧HF身份保留历史，签名后继替代投影不改旧失败。 |
 | 2026-10-08 | `docs/zh-CN/hotfix-patches.md` | M | 同英文台账：导言改用新命名与封板起点。 渲染器使用实际台账制品路径的解包示例，兼容产品版本目录。 |
 | 2026-10-08 | `docs/zh-CN/update-and-patch.md` | M | 制品说明与热修规格节改用 `clusterguard-3.1.1.1.x86_64.cgpatch` 示例并点明封板起点；与英文版同口径。 |
 | 2026-10-08 | `docs/zh-CN/upgrade-validation-chain-implementation-status.md` | M | 同英文状态页：登记三处落点与 2 项未决义务。 |
-| 2026-10-08 | `docs/zh-CN/version-release-policy.md` | M | 交付身份条改为新封板版本线起点 `3.1.1.1` + `MAJOR.MINOR.PATCH.BUGFIX`。 |
-| 2026-10-08 | `docs/zh-CN/validation-gate-workflow.md` | M | 去掉已过期的固定17项计数，以本次源码门禁输出为准；新增功能仍须补充实际回归。 |
+| 2026-10-08 | `docs/zh-CN/version-release-policy.md` | M | 交付身份条改为新封板版本线起点 `3.1.1.1` + `MAJOR.MINOR.PATCH.BUGFIX`。 2026-10-19：纠正签名更新报告与完整介质路由；正式稳定要求保持，合格介质现场未完仅prerelease，标签绑定构建提交且不设Latest。 |
+| 2026-10-08 | `docs/zh-CN/validation-gate-workflow.md` | M | 去掉已过期的固定17项计数，以本次源码门禁输出为准；新增功能仍须补充实际回归。 2026-10-19：按制品类型区分签名更新ART/FIELD与完整介质专用校验；将2026-10-04全局OPEN改为日期化历史，不将其套用新产物。 |
 | 2026-10-08 | `docs/development/backend/settings/version.md` | M | 说明product_version运行来源和旧历史验签补读，RPM兼容字段不变。 |
 | 2026-10-09 | `docs/development/frontend/settings/updates.md` | M | 明确当前/目标/历史版本来源及验签替代；新增staging步骤和新操作重置规则。新增操作前产品版本与RPM基线独立展示、旧来源缺失/混合节点和回退未知规则及浏览器回归。补充历史/当前/事件共用双语消息映射、未知诊断随语言提示并保留原文、原始状态不变及桌面/窄屏语言切换回归入口。 「版本显示来源」再补两处展示口径：上传预览身份栅格把**当前运行版本 / RPM兼容基线 / 目标版本**三件独立事实分开，运行版本与版本摘要同源、不随上传改变；签名校验按包类型分派，热修补丁不带 RPM 升级引导器时显示`已通过 · 热修补丁`而非`已通过 · 历史兼容包`，滚动升级保留引导器/历史兼容两种描述，包类型文案写明热修会更新产品版本并保留 RPM 安装记录。 |
 | 2026-10-09 | `docs/development/backend/settings/update-history.md` | M | 记录Snapshot验签后继及部署判据。新增staging与updating共用节点百分比的读取投影、原始状态保留和三节点持久化回归入口。 |
@@ -111,7 +114,7 @@ recorded-through: 73ff4a3
 
 | 2026-10-09 | `docs/en-US/catalogue.md` | M | 增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。  追加2026-10-15：当前完整介质指向3.1.3.2本地候选与安装命令参考，删除不存在的GitHubRelease链接，明确ART/FIELD OPEN。 |
 
-| 2026-10-09 | `docs/development/delivery/offline-installation-media.md` | A | 完整介质子功能路径、产品身份传递、实际版本回归、干净构建与唯一目录、显式公开附件及分阶段验收。 当前构建与校验示例更新为3.1.3.6/RPM114，不复用旧制品身份。 |
+| 2026-10-09 | `docs/development/delivery/offline-installation-media.md` | A | 完整介质子功能路径、产品身份传递、实际版本回归、干净构建与唯一目录、显式公开附件及分阶段验收。 当前构建与校验示例更新为3.1.3.6/RPM114，不复用旧制品身份。 2026-10-19：明确完整介质SOURCE、绑定源码校验、实际载荷、公开资产与回读要求，保持签名更新及正式稳定验收边界。 |
 
 | 2026-10-09 | `docs/zh-CN/release-3.1.2.8.md` | A | 3.1.2.8双语发布说明：完整包产品版本注入、累计修复/下发功能、下载摘要入口、介质内容及现场未验收边界。 |
 
@@ -235,3 +238,7 @@ MySQL初始化插件选项批次（2026-10-15）：修复生产模板正常运�
 新增性能任务与中英3.1.3.6/RPM114候选说明，更新当前介质导航和构建示例。安装手册§4.1同步解释单次归档检查、SHA256缓存、原子发布、父目录安全条件和分阶段日志。单节点同包81.15秒对39.53秒仅是归档阶段，完整本版FIELD未执行。生成页全量重建，旧3.1.3.5制品不变。
 
 构建后追加9339a6a干净构建、33,851,103字节/22b7adc5摘要、结构15项和实际载荷3处比对、最终45项源码/128变异与实时进度回归结果；严格artifact的1项验收义务仍OPEN。回执追加不覆盖制品，未将隔离实测当作新版本完整现场验收。
+
+## 2026-10-19 完整介质验收路由纠正
+
+按实际制品类型修正文档消费路由：完整安装tar使用SOURCE、verify-offline-kit、实际载荷与公开资产检查；签名.cgupgrade/.cgpatch继续原artifact/field strict。v2契约、schema、校验器及旧OPEN证据不变；不重建3.1.3.6。本版完整介质15项复核通过后走显式prerelease并下载回读，保留本版现场/正式稳定未完成范围，HTML重建。

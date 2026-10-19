@@ -19,20 +19,23 @@
 | 阶段 | 命令 | 通过表示什么 |
 | --- | --- | --- |
 | 源码 | `node tools/verify-upgrade-validation-chain.cjs --stage source --strict` | 当前源码规则集合成立，数量以本次输出为准；不声明新包或现场通过 |
-| 新包 | `node tools/verify-upgrade-validation-chain.cjs --stage artifact --strict --acceptance-report /private/acceptance.json` | 源码规则及 ART-001..013 证据清单均满足；不声明现场通过 |
-| 最终验收 | `node tools/verify-upgrade-validation-chain.cjs --stage field --strict --acceptance-report /private/acceptance.json` | 源码规则与 ART-001..013、FIELD-001..012 的验收记录及证据引用均满足 |
+| 签名升级/热修新包 | `node tools/verify-upgrade-validation-chain.cjs --stage artifact --strict --acceptance-report /private/acceptance.json` | `.cgupgrade/.cgpatch` 的源码规则及 ART-001..013 证据清单均满足；不声明现场通过 |
+| 签名升级/热修最终验收 | `node tools/verify-upgrade-validation-chain.cjs --stage field --strict --acceptance-report /private/acceptance.json` | 更新包的源码规则与 ART-001..013、FIELD-001..012 的验收记录及证据引用均满足 |
+| 完整离线安装介质 | 源码严格阶段，加包绑定源码上的 `node tools/verify-offline-kit.cjs ARCHIVE CLEAN_SOURCE REPORT VERSION RELEASE DATABASE_COUNT PRODUCT_VERSION`，实际载荷比对及公开渠道门禁 | 验证完整 tar/RPM 的来源、身份、摘要与内容；现场验收未完成只能按[完整介质流程](../development/delivery/offline-installation-media.md)预发布 |
 | 契约预检查 | `node tools/verify-upgrade-validation-chain.cjs --contract-only` | 仅契约加载与兼容性，不能代替上述阶段 |
 
 源码阶段明确将 ART/FIELD 标为 DEFERRED，禁止用其 exit 0 宣称已发布、已部署或已现场验收。未带证据的 artifact/field 阶段仍为 OPEN；strict 返回非零。提供坏证据时即使不加 strict 也失败。
 
+必须先识别制品类型。升级证据报告要求至少一份 `.cgupgrade/.cgpatch`，不能接收仅含完整安装 tar 的报告；其 OPEN 不等于完整安装包验证失败。完整安装介质须执行自己的制品检查，不得只跑源码阶段，也不得拿安装包检查关闭升级包的签名/回退义务。v2契约、签名更新包报告及其失败行为保持不变。
+
 ## 每次功能更新怎么推进
 
-先按本次目标推进：纯源码修复完成源码回归、source 严格门禁及源码归档；新包交付再进入构建和 ART，现场升级/验收再进入 FIELD。各阶段的完成声明仍以本次实际证据为准。
+先按本次目标和制品类型推进：纯源码修复完成源码回归、source严格门禁及源码归档；签名更新包进入ART/FIELD报告；完整离线介质进入专用制品校验和安装验收。各阶段的完成声明仍以本次实际证据为准。
 
 1. 按 AGENTS 留下旧代码对照；实现功能并完成相应真实回归。
 2. 更新该功能的门禁断言和失败变异用例，执行源码阶段及 `--self-test`。已有源码检查的数量以本次运行输出为准；它们不是全部功能测试，新增功能还须增加相应测试。
 3. 提交源码时，将本次源码和新文件归入唯一主线；涉及交付身份时，再核对版本、来源与目标及不可变身份。
-4. 需要新包交付时，从这份源码构建新的包，不重建已交付身份；执行 ART 项并保存实际验签、载荷、权限、脚本一致性等原始输出。
+4. 需要新包交付时，从这份源码构建新的包，不重建已交付身份；签名升级/热修执行ART项，完整介质执行专用制品校验；保存各自适用的验签、载荷、权限、脚本一致性等原始输出。
 5. 需要现场升级/验收时，在有现场授权后执行 FIELD 项，记录实际集群、控制节点和结果。没有执行的项不能填 passed。
 6. 执行新包或现场阶段时，根据真实结果整理证据报告，运行对应严格阶段；源码、契约或包变了，旧报告不能复用。源码阶段通过不关闭 ART/FIELD，也不触发自动构建或部署。
 
@@ -80,6 +83,6 @@ node tools/verify-upgrade-validation-chain.cjs --print-evidence-binding
 - 报告与现场日志放私有验收目录，不上传公共 Release。该报告不替代许可、公开资产、交付血缘、真实浏览器和数据库验收门禁。
 - Runner 对旧 Helper 的 contract 能力要求不变。这是现场组件兼容问题，须用匹配的新身份交付解决，不能靠修改 Markdown 或选择 source 阶段绕过。
 
-## 当前结果
+## 历史结果（2026-10-04）
 
-现有 v2 源码通过 source strict；仓库没有新的真实包/现场验收报告，默认 field strict 仍被 OPEN 阻断。实现和回归见[修复记录](validation-gate-evolution-2026-10-04.md)。
+当日v2源码通过source strict，默认更新包field strict因缺少该类报告仍为OPEN。实现和回归见[修复记录](validation-gate-evolution-2026-10-04.md)。此历史状态不能代替后续实际制品/现场证据，也不能自动判定所有版本和制品类型都未验收。

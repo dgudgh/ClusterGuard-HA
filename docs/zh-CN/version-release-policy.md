@@ -2,13 +2,15 @@
 
 > **文档性质：适用任务的强制规范。** 开始构建、签名、发布或处理交付物前读取本页，并先完成[强制契约](upgrade-validation-chain.md)、[门禁流程](validation-gate-workflow.md)、[打包清单](../development/rules/release-checklist.md)和适用许可/渠道规则的必读。日期化的旧实现结果只是背景；本次验收须使用本次绑定与真实证据。
 
-> 门禁执行更新（2026-10-04）：开发使用 `--stage source --strict`；新包与现场使用 `--stage artifact/field --strict --acceptance-report FILE`，需真实证据。默认仍为 field，当前 ART/FIELD 未完成；详情见[分阶段门禁与更新流程](validation-gate-workflow.md)。
+> 门禁执行更新（2026-10-19）：开发使用source strict；签名升级/热修使用artifact/field strict及实际acceptance-report。完整离线介质使用专用verify-offline-kit、实际载荷比对及公开渠道门禁；本版现场未完成只能预发布。按实际版本和制品类型判断，不把历史OPEN扩展到所有产物。详情见[分阶段门禁流程](validation-gate-workflow.md)和[完整介质流程](../development/delivery/offline-installation-media.md)。
 
 ## v2 发布前置检查
 
 升级与热修统一执行 v2 契约；热修失败使用独立 `retry`，滚动升级失败使用 `resume`。2026-10-03 的修复记录基线为 `7b643f4`，主线为 `codex/2.2-postgresql`；该次修复没有新包或部署、ART/FIELD 为 **OPEN**。该历史记录不代替本次交付源码、包身份和相应严格验收。
 
 四个构建入口在产出/签名前执行 `verify-upgrade-validation-chain.cjs --contract-only`，需要 Node（可设置 `CG_NODE_BIN`）。这仅检查契约加载与模式一致性，不代表完整 PRE/ART/FIELD 验收。发布前必须执行完整门禁及 `--strict`；OPEN 必须阻断正式发布。旧结果见[历史实现与验收快照](upgrade-validation-chain-implementation-status.md)，不作为本次验收输入。热修检查同包 retry、拒绝 resume、签名 supersedes 和独立历史；滚动升级检查 resume。已交付身份不得原地重建。
+
+这里的artifact/field报告属于签名更新包：验收器必须读取.cgupgrade/.cgpatch。完整安装tar应执行完整介质专用制品检查；不能拿不接受tar的更新验收器来判定安装包未通过，也不能拿安装包通过来豁免更新包签名或回退。v2契约及其机器接口不变。
 
 <!-- LANGUAGE-SWITCH -->
 > **语言：** [English](../en-US/version-release-policy.md) | 简体中文
@@ -168,9 +170,11 @@ git diff --check
 6. 对应数据库版本完成切换、故障、旧主恢复、重启、网络分区和并发测试。
 7. 安全门禁、Leader 转发、Raft 多数、VIP 唯一性、审计和报告均通过。
 8. Release Notes 明确支持范围、已知边界和升级方法。
-9. 升级包同时包含目标与回退 RPM，签名、兼容合同、滚动顺序、断点续跑和自动回退测试通过。
+9. 交付签名升级/热修包时，目标与回退RPM、签名、兼容合同、滚动顺序、断点续跑/同包retry和自动回退测试通过；这不是发布完整安装tar必须额外制作升级包的要求。
 
-任一门禁失败时只能生成内部候选包，不能创建正式标签或 GitHub Release。
+任一适用安全或制品门禁失败时只能生成内部候选包，不得用预发布绕过。正式稳定发布的本版实装、签名信任或故障矩阵未完成时，不得宣称正式验收通过。
+
+完整安装介质的源码、专用制品检查、载荷比对、血缘、许可和公开资产检查均通过，而本版现场仍未完成时，可以按完整介质流程创建GitHub预发布：标签指向包内构建提交，显式设置prerelease且不设为Latest，说明未执行的实装/故障/签名信任范围。此路径不关闭升级包ART/FIELD，也不把预发布升级为正式稳定版本。
 
 `RELEASE-INFO` 中的 `release_channel` 由构建脚本（`scripts/build-clusterguard-offline-kit.sh`）
 按**源码树是否干净**自动判定：干净写 `stable`，否则写 `candidate`。它**不代表**本节门禁已通过，
@@ -183,7 +187,7 @@ git diff --check
 
 1. 整理并提交本版本全部变更。
 2. 执行全量测试和现场验收。
-3. 从干净提交构建 RPM、主离线包、签名升级包和必要的独立依赖包（升级包只留本地，见 §3.1）。
+3. 按交付类型从干净提交构建RPM、完整离线包及必要的独立依赖包；交付签名更新/热修时才构建对应签名包，签名包只留本地并走该类型严格验收（见§3.1）。
 4. 验证摘要、签名、包内容和安装流程。
 5. 创建注释标签，例如 `v2.2.1`。
 6. 推送提交和标签。

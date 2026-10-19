@@ -42,11 +42,12 @@
 <p><strong>Document role: mandatory policy for the applicable task.</strong> Read before building, signing, releasing, or handling delivery artifacts, together with the <a href="upgrade-validation-chain.html">contract</a>, <a href="../../zh-CN/validation-gate-workflow.md">gate workflow</a>, <a href="../../development/rules/release-checklist.md">build checklist</a>, and applicable licensing/channel rules. Dated implementation results provide context; acceptance for this run needs its own bindings and actual evidence.</p>
 </blockquote>
 <blockquote>
-<p>Gate workflow update (2026-10-04): use <code>--stage source --strict</code> for source development. Artifact and field acceptance require <code>--stage artifact</code> or <code>--stage field</code>, <code>--strict</code>, and <code>--acceptance-report FILE</code> with actual evidence. The default remains field; real ART/FIELD evidence is still unavailable. See the <a href="../../zh-CN/validation-gate-workflow.md">workflow</a>.</p>
+<p>Gate routing update (2026-10-19): use source strict for development. Signed updates/hotfixes require artifact/field strict with actual acceptance reports. Complete offline media use verify-offline-kit, actual payload comparisons and the public asset gate; incomplete field acceptance allows a disclosed prerelease only. Judge the actual version and artifact type instead of applying a historical OPEN to every artifact. See the <a href="../../zh-CN/validation-gate-workflow.md">workflow</a> and <a href="../../development/delivery/offline-installation-media.md">offline media procedure</a>.</p>
 </blockquote>
 <h2 id="v2-release-preconditions">v2 Release Preconditions<a class="heading-anchor" href="#v2-release-preconditions" aria-label="Link to v2 Release Preconditions">#</a></h2>
 <p>Updates and hotfixes enforce the v2 contract: failed hotfixes use <code>retry</code>; interrupted rolling updates use <code>resume</code>. The repair recorded on 2026-10-03 used baseline <code>7b643f4</code> on <code>codex/2.2-postgresql</code>; it produced no new package or deployment and recorded ART/FIELD as <strong>OPEN</strong>. That historical record does not replace this delivery&#39;s source, package identity, or applicable strict acceptance.</p>
 <p>The four build entry points run <code>verify-upgrade-validation-chain.cjs --contract-only</code> before producing/signing artifacts and require Node (<code>CG_NODE_BIN</code> may override its path). This checks contract loading and schema consistency only, not complete PRE/ART/FIELD acceptance. Run the complete gate and <code>--strict</code> before release; OPEN blocks formal release. Past results are in the <a href="../../en-US/upgrade-validation-chain-implementation-status.md">historical implementation and acceptance snapshot</a>, which is not an acceptance input for this run. Hotfix acceptance covers same-package retry, rejected resume, signed supersedes, and independent history; rolling acceptance covers resume. Never rebuild a delivered identity in place.</p>
+<p>These artifact/field reports apply to signed updates: the validator requires .cgupgrade/.cgpatch. A complete installation tar uses the dedicated offline-media checks. A validator that does not accept tar cannot establish that the installer failed, and successful installer checks cannot waive update signatures or rollback. The v2 contract and machine interface remain unchanged.</p>
 <p>Product identities use four segments. The new configuration editing/distribution feature is <code>3.1.2.1</code>; defect repairs within a feature release increment BUGFIX. The RPM format below describes installation eligibility, not the runtime product version.</p>
 <h2 id="1-rpm-version-format">1. RPM Version Format<a class="heading-anchor" href="#1-rpm-version-format" aria-label="Link to 1. RPM Version Format">#</a></h2>
 <p>ClusterGuard HA packages use the following format:</p>
@@ -203,9 +204,10 @@ git diff --check
 <li>Corresponding database versions complete switching, failure, old master recovery, restart, network partition, and concurrency testing.</li>
 <li>Security gate, Leader forwarding, Raft majority, VIP uniqueness, audit, and report all pass.</li>
 <li>Release Notes clearly specify the supported scope, known boundaries, and upgrade methods.</li>
-<li>The patch contains target and rollback RPMs, and passes signature, compatibility, rolling-order, resume, and automatic-rollback tests.</li>
+<li>When delivering signed update/hotfix packages, verify target and rollback RPMs, signatures, compatibility, rolling order, resume/same-package retry and automatic rollback. Publishing a complete installation tar does not itself require producing a separate update package.</li>
 </ol>
-<p>If any gate fails, only an internal candidate package can be generated, and formal tags or GitHub Releases cannot be created.</p>
+<p>Any failed applicable safety or artifact gate limits the result to an internal candidate; a prerelease must not bypass it. Incomplete installation, signature-trust or failure-matrix checks for this version must not be described as formal stable acceptance.</p>
+<p>Complete installation media may use the dedicated prerelease procedure after source, media, payload, provenance, licensing and public-channel checks pass while field acceptance remains incomplete. The tag must point to the media&#39;s build commit, prerelease must be explicit and Latest disabled, and outstanding installation/failure/signature-trust checks must be disclosed. This does not close signed-update ART/FIELD or establish a stable release.</p>
 <p><code>release_channel</code> in <code>RELEASE-INFO</code> is decided automatically by the build script
 (<code>scripts/build-clusterguard-offline-kit.sh</code>) from whether the <strong>source tree is clean</strong>: clean
 writes <code>stable</code>, otherwise <code>candidate</code>. It does <strong>not</strong> mean the gates above have passed. A
@@ -217,7 +219,7 @@ release eligibility depends only on whether every gate in this section passes, a
 <ol>
 <li>Gather and submit all changes for this version.</li>
 <li>Execute full testing and on-site acceptance.</li>
-<li>Build RPM, main offline package, signed update package, and necessary independent dependency packages from a clean commit (the update package stays local; see §3.1).</li>
+<li>Build the RPM, complete offline media and necessary dependency add-ons from a clean commit according to the delivery type. Build signed update/hotfix packages only when delivering that type; keep them local and enforce their strict acceptance route (see §3.1).</li>
 <li>Verify the summary, signature, package content, and installation process.</li>
 <li>Create an annotated tag, for example, <code>v2.2.1</code>.</li>
 <li>Push the commit and tag.</li>

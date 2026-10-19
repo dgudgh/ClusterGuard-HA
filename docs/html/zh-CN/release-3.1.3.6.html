@@ -40,7 +40,7 @@
         <article class="document-content"><h1 id="clusterguard-ha-3-1-3-6-完整离线安装候选">ClusterGuard HA 3.1.3.6 完整离线安装候选<a class="heading-anchor" href="#clusterguard-ha-3-1-3-6-完整离线安装候选" aria-label="Link to ClusterGuard HA 3.1.3.6 完整离线安装候选">#</a></h1>
 <h2 id="版本与范围">版本与范围<a class="heading-anchor" href="#版本与范围" aria-label="Link to 版本与范围">#</a></h2>
 <p>产品3.1.3.6，RPM基线2.2-114，唯一目录release/3.1.3.6/。优化数据库介质检查与重复分发，并增加安装阶段耗时。保留3.1.3.5与所有已交付制品字节。</p>
-<p>这是本地完整安装测试候选。SOURCE、制品结构和现场验收分别记录；生产签名ART与本版本完整FIELD仍OPEN，未创建GitHub Release。</p>
+<p>2026-10-15构建时记录为本地完整安装测试候选。SOURCE、完整介质制品校验与本版现场验收分别记录；后续预发布状态及验收适用范围见文末2026-10-19复核。</p>
 <h2 id="改动">改动<a class="heading-anchor" href="#改动" aria-label="Link to 改动">#</a></h2>
 <ul>
 <li>MySQL归档检查从两次完整读取合并为一次私有清单，完整压缩流、单根目录、路径越界与受管标记保护仍在任何安装修改之前执行。</li>
@@ -55,6 +55,9 @@
 <p>完整命令参数见<a href="offline-installer-parameters.html">命令参考</a>，安装步骤见<a href="offline-rpm-install.html">安装手册</a>。本版本全新安装及复制/VIP/FIELD仍需实装验证；本次没有为计时重置运行数据库。源码、实测和门禁细节见<a href="../../development/mysql-install-performance-2026-10-15.md">开发任务</a>。</p>
 <h2 id="构建回执">构建回执<a class="heading-anchor" href="#构建回执" aria-label="Link to 构建回执">#</a></h2>
 <p>构建提交9339a6a已推GitHub，干净树、未跟踪0。完整tar33,851,103字节，SHA256为22b7adc5d5576b0404d0ce29c0c2a70b317ba6a5e094686a0e601b4d62c98b8f。结构15项、实际脚本载荷3处比对通过，旧3.1.3.5字节不变。SOURCE45项、128变异及2控制、Go40包、最终脚本包复验、Chrome夹具109项通过。严格artifact仍因1项验收义务OPEN退出1，完整签名ART/FIELD没有通过。人工安装命令与验收表附在本版本目录MANUAL-TEST.md；本回执在构建后追加，不重建介质。</p>
+<h2 id="2026-10-19-完整介质复核">2026-10-19 完整介质复核<a class="heading-anchor" href="#2026-10-19-完整介质复核" aria-label="Link to 2026-10-19 完整介质复核">#</a></h2>
+<p>在包绑定的9339a6a干净源码上重新运行完整介质校验，15项通过，tar摘要保持上述值。此前升级artifact strict的OPEN要求.cgupgrade/.cgpatch，不能作为完整安装tar验证失败的依据；消费文档已按制品类型纠正，签名升级包的原有门禁和原始日志均保留。详情见<a href="../../development/full-media-release-scope-2026-10-19.md">路由复核记录</a>。</p>
+<p>本版按候选介质预发布，标签绑定9339a6a。已记录的源码、制品、载荷和隔离回归可用于该预发布；本版完整现场安装、故障矩阵及目标OS生产签名信任没有据此关闭，不宣称正式稳定验收。数据库完整原厂包仍由现场另行提供；沿用原安装命令即可，无须重建现有介质。</p>
 
           <footer class="document-footer">
             <span>源文件: <code>docs/zh-CN/release-3.1.3.6.md</code></span>
@@ -63,7 +66,7 @@
         </article>
         <aside class="page-toc" aria-label="本页目录">
           <strong>本页目录</strong>
-          <a class="toc-level-2" href="#版本与范围">版本与范围</a><a class="toc-level-2" href="#改动">改动</a><a class="toc-level-2" href="#实测与使用">实测与使用</a><a class="toc-level-2" href="#构建回执">构建回执</a>
+          <a class="toc-level-2" href="#版本与范围">版本与范围</a><a class="toc-level-2" href="#改动">改动</a><a class="toc-level-2" href="#实测与使用">实测与使用</a><a class="toc-level-2" href="#构建回执">构建回执</a><a class="toc-level-2" href="#2026-10-19-完整介质复核">2026-10-19 完整介质复核</a>
         </aside>
       </main>
     </div>
