@@ -8,7 +8,7 @@
 
 | 当前任务 | 下一份文档 |
 | --- | --- |
-| 当前完整安装介质 / Current kit | [3.1.3.6 release notes](zh-CN/release-3.1.3.6.md)，本地候选 / local candidate，ART/FIELD OPEN |
+| 当前完整安装介质 / Current kit | [3.1.3.6 release notes](zh-CN/release-3.1.3.6.md) · [GitHub预发布 / prerelease](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v3.1.3.6)，完整介质已验证 / media verified；完整现场验收未关闭 / full field acceptance outstanding |
 | 离线安装命令参数 / Installer options | [完整命令参考](zh-CN/offline-installer-parameters.md) |
 | 开发：前端 / Frontend | [前端页面](development/frontend/README.md) |
 | 开发：后端 / Backend | [后端功能](development/backend/README.md) |

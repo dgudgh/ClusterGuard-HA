@@ -69,7 +69,7 @@ recorded-through: 73ff4a3
 | 2026-10-13 | `docs/development/recovery-repair-gate-2026-10-13.md` | A | 记录复制修复缺失动作参数、灾难恢复已复核操作仍被阻断的历史对照、现场版本只读证据、修复边界与源码/现场分层验证计划。 |
 | 2026-10-12 | `docs/development/backend/operations.md` | M | 说明新装 MySQL 合法空 GTID 集合、查询证据缺失仍阻断、目标追平与最终核验不省略；登记空集合执行/坏查询/等待失败回归及不确定任务按原始证据复核的边界。 |
 | 2026-10-08 | `AGENTS.md` | M | 在「所有修改必须遵守」里新增一条：任何 Markdown 的新增/删除/修改都必须在 `docs/development/markdown-change-record.md` 登记并过 `verify-markdown-change-record.cjs`，改了 md 必须重建 `docs/html`，未登记不得提交。 |
-| 2026-10-08 | `docs/README.md` | M | 文档中心导航表新增一行「改文档 → Markdown 变更记录」，让台账在入口页可发现。  增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。  追加2026-10-15：当前完整介质指向3.1.3.2本地候选与安装命令参考，删除不存在的GitHubRelease链接，明确ART/FIELD OPEN。 当前完整介质导航更新为3.1.3.6候选，ART/FIELD仍OPEN。 |
+| 2026-10-08 | `docs/README.md` | M | 文档中心导航表新增一行「改文档 → Markdown 变更记录」，让台账在入口页可发现。  增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。  追加2026-10-15：当前完整介质指向3.1.3.2本地候选与安装命令参考，删除不存在的GitHubRelease链接，明确ART/FIELD OPEN。 当前完整介质导航更新为3.1.3.6候选，ART/FIELD仍OPEN。 2026-10-19：当前完整介质入口更新为已验证的3.1.3.6 GitHub预发布，保留本版完整现场未关闭范围。 |
 | 2026-10-08 | `docs/development/README.md` | M | 开发入口在「先确定问题发生在哪一层」之后补一句：改动任何 Markdown 都要登记台账并跑对应门禁。 |
 | 2026-10-08 | `docs/development/delivery/README.md` | M | 热修命名条从「四段版本 `MAJOR.CAPABILITY.INTERNAL.BUGFIX`」改为「新封板版本线从 `3.1.1.1` 开始、四段为 `MAJOR.MINOR.PATCH.BUGFIX`」，并写明旧 2.x/HF 文件名全部冻结为历史。 当前交付按产品版本目录与版本ID定位，不用旧RPM目录作当前入口。  增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。 |
 | 2026-10-08 | `docs/development/markdown-change-record.md` | A | 本页：建立 md 变更台账，规定增删改都要登记，并由 `tools/verify-markdown-change-record.cjs` 做结构与覆盖校验。 2026-10-09 追加登记「升级预览版本语义修复」批次与 `updates.md` 的展示口径变更。 2026-10-09 追加登记「控制节点卡片」批次与对应批次说明。 |
@@ -108,7 +108,7 @@ recorded-through: 73ff4a3
 
 | 2026-10-09 | `docs/en-US/README.md` | M | 增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。  追加2026-10-15：当前完整介质指向3.1.3.2本地候选与安装命令参考，删除不存在的GitHubRelease链接，明确ART/FIELD OPEN。 |
 
-| 2026-10-09 | `docs/catalogue.md` | M | 增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。  追加2026-10-15：当前完整介质指向3.1.3.2本地候选与安装命令参考，删除不存在的GitHubRelease链接，明确ART/FIELD OPEN。 当前完整介质身份更新为3.1.3.6/RPM114，保留未发布Release状态。 |
+| 2026-10-09 | `docs/catalogue.md` | M | 增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。  追加2026-10-15：当前完整介质指向3.1.3.2本地候选与安装命令参考，删除不存在的GitHubRelease链接，明确ART/FIELD OPEN。 当前完整介质身份更新为3.1.3.6/RPM114，保留未发布Release状态。 2026-10-19：同步3.1.3.6实际预发布链接、介质/公开附件回读通过与非正式稳定验收边界。 |
 
 | 2026-10-09 | `docs/zh-CN/catalogue.md` | M | 增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。  追加2026-10-15：当前完整介质指向3.1.3.2本地候选与安装命令参考，删除不存在的GitHubRelease链接，明确ART/FIELD OPEN。 |
 
@@ -242,3 +242,5 @@ MySQL初始化插件选项批次（2026-10-15）：修复生产模板正常运�
 ## 2026-10-19 完整介质验收路由纠正
 
 按实际制品类型修正文档消费路由：完整安装tar使用SOURCE、verify-offline-kit、实际载荷与公开资产检查；签名.cgupgrade/.cgpatch继续原artifact/field strict。v2契约、schema、校验器及旧OPEN证据不变；不重建3.1.3.6。本版完整介质15项复核通过后走显式prerelease并下载回读，保留本版现场/正式稳定未完成范围，HTML重建。
+
+2026-10-19预发布回执：v3.1.3.6标签指向原构建9339a6a；8个公开附件逐一下载核对摘要，下载介质15项复验通过，tar/RPM未重建。当前导航和双语说明补实际Release链接，公开资产与血缘检查通过；完整现场及签名更新验收未被关闭。未上传私有证据或更新包。

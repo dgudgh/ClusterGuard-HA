@@ -6,7 +6,7 @@
 
 ## 当前完整介质 / Current Installation Kit
 
-[3.1.3.6 双语发布说明 / release notes](zh-CN/release-3.1.3.6.md) · [离线安装命令参数 / installer options](zh-CN/offline-installer-parameters.md)。产品版本 3.1.3.6，RPM 兼容基线 2.2-114；本地候选，ART/FIELD OPEN，尚未发布 GitHub Release。 / Product 3.1.3.6, RPM baseline 2.2-114; local candidate, ART/FIELD OPEN, no GitHub Release published. Historical entries below preserve their original scope.
+[3.1.3.6 双语发布说明 / release notes](zh-CN/release-3.1.3.6.md) · [离线安装命令参数 / installer options](zh-CN/offline-installer-parameters.md)。产品版本3.1.3.6，RPM基线2.2-114；[GitHub预发布](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v3.1.3.6)，完整介质及公开附件回读已验证，未宣称完整现场或正式稳定验收。 / Product 3.1.3.6, RPM baseline 2.2-114; GitHub prerelease with verified media and asset downloads; full field/stable acceptance is not claimed. Historical entries below preserve their original scope.
 
 ## Document Roles / 资料作用
 
