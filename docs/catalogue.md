@@ -66,6 +66,11 @@ Recorded installer / 已记录的 2.2-105 安装介质：[2.2-105 发布说明�
 | Task entry / 场景入口 | Documentation index / 文档索引 | [English](en-US/README.md) | [中文](zh-CN/README.md) |
 | Design or reference / 设计参考 | Product tour / 产品导览 | [English](en-US/product-tour.md) | [中文](zh-CN/product-tour.md) |
 | Design or reference / 设计参考 | Architecture / 架构 | [English](architecture.md) | [中文](zh-CN/architecture.md) |
+| Historical release / 历史发布 | 3.1.3.5 release notes / 3.1.3.5 发布说明 | [English](en-US/release-3.1.3.5.md) | [中文](zh-CN/release-3.1.3.5.md) |
+| Historical release / 历史发布 | 3.1.3.4 release notes / 3.1.3.4 发布说明 | [English](en-US/release-3.1.3.4.md) | [中文](zh-CN/release-3.1.3.4.md) |
+| Historical release / 历史发布 | 3.1.3.3 release notes / 3.1.3.3 发布说明 | [English](en-US/release-3.1.3.3.md) | [中文](zh-CN/release-3.1.3.3.md) |
+| Historical release / 历史发布 | 3.1.3.2 release notes / 3.1.3.2 发布说明 | [English](en-US/release-3.1.3.2.md) | [中文](zh-CN/release-3.1.3.2.md) |
+| Historical release / 历史发布 | 3.1.3.1 release notes / 3.1.3.1 发布说明 | [English](en-US/release-3.1.3.1.md) | [中文](zh-CN/release-3.1.3.1.md) |
 | Historical release / 历史发布 | 2.2.47 release notes / 2.2.47 发布说明 | [English](en-US/release-2.2.47.md) | [中文](zh-CN/release-2.2.47.md) |
 | Historical release / 历史发布 | 2.2.46 release notes / 2.2.46 发布说明 | [English](en-US/release-2.2.46.md) | [中文](zh-CN/release-2.2.46.md) |
 | Historical release / 历史发布 | 2.2.45 release notes / 2.2.45 发布说明 | [English](en-US/release-2.2.45.md) | [中文](zh-CN/release-2.2.45.md) |
@@ -109,6 +114,8 @@ Qualification reports record a specific laboratory build and date. They do not r
 ## Internal Engineering Records / 内部工程记录
 
 Source and test reference / 源码与测试追溯资料：[文件与测试导览](zh-CN/source-layout-and-testing.md) · [旧版对比与清理记录](zh-CN/dead-code-cleanup-2026-09-11.md)。These development records distinguish local checks, browser fixtures, historical tools, and field validation; they are not a production acceptance claim.
+
+Documentation and gate evolution / 文档与门禁演进（仅中文，暂无英文对应页 / Chinese only, no English counterpart yet）：[文档同步 2026-10-03](zh-CN/documentation-sync-2026-10-03.md) · [文档导航调整](zh-CN/documentation-navigation-2026-10-04.md) · [文档导航复核](zh-CN/documentation-navigation-review-2026-10-04.md) · [阅读优先级](zh-CN/documentation-reading-priority-2026-10-05.md) · [在线验证](zh-CN/documentation-online-verification-2026-10-05.md) · [门禁阶段演进](zh-CN/validation-gate-evolution-2026-10-04.md) · [门禁阅读优先级](zh-CN/validation-gate-reading-priority-2026-10-04.md) · [升级契约 v2 审计](zh-CN/upgrade-hotfix-v2-audit-2026-10-03.md) · [升级契约 v2 修复](zh-CN/upgrade-hotfix-v2-repair-2026-10-03.md) · [主线热修集成](zh-CN/mainline-hotfix-integration-2026-10-02.md)。These records document how documentation and the validation gate changed; they are historical engineering evidence and not a production acceptance claim.
 
 `docs/superpowers/` contains design specifications and implementation plans for traceability. Each English record has a Simplified Chinese counterpart under `docs/superpowers/zh-CN/`, except the bilingual index `docs/superpowers/README.md` itself. These records are historical engineering evidence. Current changes and actions follow the repository rules and applicable mandatory contracts. A release’s RELEASE-INFO, checksums and release notes establish its delivered identity and historical behavior; they cannot override current mandatory rules.
 
