@@ -196,6 +196,10 @@ func TestGatewayMajorityLeaseTransitionAndKeeperRenewal(t *testing.T) {
 		t.Fatal("steady-state renewal changed owner epoch or did not progress")
 	}
 	f.a.blocked.Store(true)
+	view, e := f.p.InspectGateway(ctx, f.c.ResourceID)
+	if e != nil || view.Ready || !view.AuthorityUnconfirmed {
+		t.Fatal("minority/follower inspection claimed current writer authority", e)
+	}
 	_ = keeper.RunOnce(ctx)
 	if f.i.GatewayGrant(f.c.ResourceID) != after {
 		t.Fatal("lost majority still published a route")

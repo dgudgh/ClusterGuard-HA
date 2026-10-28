@@ -5,13 +5,13 @@ const {createConsoleFixture}=require('./console-ui-fixture.cjs');
 (async()=>{
  const browser=await chromium.launch({channel:'chrome',headless:true});let checks=0;
  try{for(const width of [1440,390]){
-  const f=createConsoleFixture(),{server,control,clusters}=f;let ready=true,delay=null,fail=false;const executions=[];
+  const f=createConsoleFixture(),{server,control,clusters}=f;let ready=true,delay=null,fail=false,stale=false;const executions=[];
   control.hook=async({req,url,cluster})=>{
    if(req.method==='POST'&&url.pathname.endsWith('/discover'))return {result:{}};
    if(req.method==='POST'&&url.pathname==='/api/v1/operations/execute'){let body='';for await(const chunk of req)body+=chunk;executions.push(JSON.parse(body));return {status:403,message:'isolated fixture: database mutations blocked'};}
 
    if(cluster&&url.pathname===`/api/v1/clusters/${cluster.resource_id}`){const d=f.detail(cluster);if(cluster===clusters[0]){d.ha_endpoints=[{resource_id:'gw-resource',endpoint_id:'gw-endpoint',provider:'gateway',owner_id:cluster.resource_id+'-instance-1'}];d.endpoints.push({resource_id:'gw-endpoint',kind:'service',active:true,hostname:'database.example',port:63306});d.runtime_profile.endpoint_providers=['gateway'];}return {result:d};}
-   if(cluster&&url.pathname.endsWith('/gateway')){if(delay)await delay;if(fail)return {status:503,message:'fixture gateway unreachable'};return {result:{cluster_id:cluster.resource_id,ready,lease_valid:ready,gateways:[1,2].map(()=>({cluster_id:cluster.resource_id,active:ready,last_grant:{target_instance_id:`${cluster.resource_id}-instance-1`,expires_at:new Date(Date.now()+15000).toISOString()}}))}};}
+   if(cluster&&url.pathname.endsWith('/gateway')){if(delay)await delay;if(fail)return {status:503,message:'fixture gateway unreachable'};return {result:{cluster_id:cluster.resource_id,ready,lease_valid:ready,gateways:[1,2].map(()=>({cluster_id:cluster.resource_id,active:ready,last_grant:{target_instance_id:`${cluster.resource_id}-instance-1`,expires_at:new Date(Date.now()+(stale?-1000:15000)).toISOString()}}))}};}
   };
   await new Promise(r=>server.listen(0,'127.0.0.1',r));const page=await browser.newPage({viewport:{width,height:1000}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
   try{
@@ -38,6 +38,9 @@ const {createConsoleFixture}=require('./console-ui-fixture.cjs');
    fail=true;await page.locator('#refresh-cluster').click();await page.waitForFunction(()=>document.querySelector('#gateway-route-state').textContent.includes('Gateway route read failed'),null,{timeout:5000});
    assert.equal(await page.locator('#execute-switchover').isDisabled(),true);checks++;
    fail=false;ready=false;await page.locator('#refresh-cluster').click();await page.waitForFunction(()=>document.querySelector('#gateway-route-state').textContent==='Gateway routes are not ready');checks++;
+   await page.waitForRequest(r=>r.method()==='GET'&&r.url().endsWith('/gateway'),{timeout:7000});
+   assert.equal(await page.locator('#execute-switchover').isDisabled(),true);checks++;
+   ready=true;stale=true;await page.locator('#refresh-cluster').click();await page.waitForFunction(()=>document.querySelector('#gateway-route-state').textContent==='Gateway status needs a fresh read');checks++;
    let release;delay=new Promise(r=>release=r);
    const pending=page.waitForRequest(r=>r.url().endsWith('/gateway'));
    await page.locator('#refresh-cluster').click();await pending;

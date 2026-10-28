@@ -1982,11 +1982,14 @@
     // Only authored UI literals call ui(). Interpolation values are kept verbatim.
     // Business names, credentials, IDs and original diagnostics never pass through a DOM translator.
     const uiCatalog =     {
+      "网关灾难恢复尚未实现，仍可使用受控主库切换。":"gateway disaster recovery is not implemented; controlled switchover remains available",
       "网关":"Gateway",
       "业务连接网关":"Database connection gateway",
       "正在读取网关路由。":"Reading gateway routes.",
       "路由与当前主库一致":"Routes match the current primary",
       "网关路由尚未就绪":"Gateway routes are not ready",
+      "网关状态需重新读取":"Gateway status needs a fresh read",
+      "网关路由已读取，写入授权未确认":"Gateway routes read; writer authority is unconfirmed",
       "网关路由读取失败，请检查控制器配置与网关连接。":"Gateway route read failed. Check controller configuration and gateway connectivity.",
       "切换将同步更新网关路由；旧连接会关闭，应用连接池需要重连。":"Switchover also updates gateway routes. Existing connections close; application pools must reconnect.",
       "网关 {0}":"Gateway {0}",
@@ -4379,7 +4382,7 @@
 
     const beginClusterRequest = (clusterId, preserveOperationResult = false, operationIntent = null) => {
       const generation = ++state.requestGeneration;
-      state.gatewayRoute=null;state.gatewayRouteError=false;renderGatewayRoute();
+      state.gatewayRoute=null;state.gatewayRouteError=false;state.gatewayRouteReadEpoch=(state.gatewayRouteReadEpoch||0)+1;renderGatewayRoute();
       invalidateNodeLifecycle();
       if (state.clusterReadController) state.clusterReadController.abort();
       state.clusterReadController = new AbortController();
@@ -7383,9 +7386,10 @@
       const enabled=runtimeProfileForDetail(state.clusterDetail).endpoint_providers.includes('gateway');
       byId('gateway-route-panel').hidden=!enabled;if(!enabled)return;
       const result=state.gatewayRoute?.cluster_id===state.clusterDetail?.cluster?.resource_id?state.gatewayRoute:null;
+      const stale=result && (result.gateways||[]).some(node=>node.active && Date.parse(node.last_grant?.expires_at)<=Date.now());
       byId('gateway-route-heading').textContent=ui('业务连接网关');
-      byId('gateway-route-state').textContent=ui(state.gatewayRouteError?'网关路由读取失败，请检查控制器配置与网关连接。':!result?'正在读取网关路由。':result.ready?'路由与当前主库一致':'网关路由尚未就绪');
-      byId('gateway-route-state').className=result?.ready?'badge success':'badge warning';
+      byId('gateway-route-state').textContent=ui(state.gatewayRouteError?'网关路由读取失败，请检查控制器配置与网关连接。':!result?'正在读取网关路由。':stale?'网关状态需重新读取':result.authority_unconfirmed?'网关路由已读取，写入授权未确认':result.ready?'路由与当前主库一致':'网关路由尚未就绪');
+      byId('gateway-route-state').className=result?.ready&&!stale?'badge success':'badge warning';
       byId('gateway-route-note').textContent=ui('切换将同步更新网关路由；旧连接会关闭，应用连接池需要重连。');
       byId('gateway-node-heading').textContent=ui('网关');byId('gateway-target-heading').textContent=ui('路由目标');byId('gateway-expiry-heading').textContent=ui('路由授权到期');
       byId('gateway-route-rows').replaceChildren();
@@ -7395,16 +7399,17 @@
         byId('gateway-route-rows').append(row);
       }
     };
-    const loadGatewayRoute = async (clusterID,generation) => {
-      state.gatewayRoute=null;state.gatewayRouteError=false;renderGatewayRoute();
+    const loadGatewayRoute = async (clusterID,generation,quiet=false) => {
+      const readEpoch=state.gatewayRouteReadEpoch=(state.gatewayRouteReadEpoch||0)+1;
+      if(!quiet){state.gatewayRoute=null;state.gatewayRouteError=false;}renderGatewayRoute();
       if(!runtimeProfileForDetail(state.clusterDetail).endpoint_providers.includes('gateway'))return;
       try{
         const result=await fetchResult(`/api/v1/clusters/${encodeURIComponent(clusterID)}/gateway`,{signal:state.clusterReadController.signal});
-        if(generation!==state.requestGeneration || state.clusterDetail?.cluster?.resource_id!==clusterID)return;
+        if(generation!==state.requestGeneration || readEpoch!==state.gatewayRouteReadEpoch || state.clusterDetail?.cluster?.resource_id!==clusterID)return;
         if(result.cluster_id!==clusterID)throw new Error('gateway cluster mismatch');
-        state.gatewayRoute=result;renderGatewayRoute();
+        state.gatewayRoute=result;state.gatewayRouteError=false;renderGatewayRoute();
       }catch(error){
-        if(generation!==state.requestGeneration || error?.staleSession || error?.name==='AbortError')return;
+        if(generation!==state.requestGeneration || readEpoch!==state.gatewayRouteReadEpoch || error?.staleSession || error?.name==='AbortError')return;
         state.gatewayRouteError=true;renderGatewayRoute();
       }
     };
@@ -7863,6 +7868,15 @@
         });
       }
     };
+
+    // The general topology refresh can be 60s, longer than route grants. Poll
+    // this read-only evidence separately without touching the operation lock.
+    let gatewayPollPending=false;
+    window.setInterval(async()=>{
+      if(gatewayPollPending || !state.currentUser || state.clusterLoading || window.location.hash!=='#operations' || !runtimeProfileForDetail(state.clusterDetail).endpoint_providers.includes('gateway'))return;
+      gatewayPollPending=true;
+      try{await loadGatewayRoute(state.selectedClusterId,state.requestGeneration,true)}finally{gatewayPollPending=false}
+    },5000);
 
     const scheduleAutoRefresh = () => {
       if (state.refreshTimer) window.clearInterval(state.refreshTimer);

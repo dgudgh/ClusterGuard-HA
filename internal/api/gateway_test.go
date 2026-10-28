@@ -88,3 +88,29 @@ func TestGatewayAgentDecisionBindsSignedProviderWithoutHostVIP(t *testing.T) {
 		t.Fatal("gateway still depends on an active local VIP", vip)
 	}
 }
+
+func TestGatewayDisasterRecoveryRejectsBeforePlanning(t *testing.T) {
+	r := store.NewMemory()
+	c, primary, _, lease := seedAgentReconcileState(t, r, time.Now().UTC())
+	if e := r.DeleteCoordinationLease(lease.ResourceID); e != nil {
+		t.Fatal(e)
+	}
+	if _, _, e := r.PutHAEndpoint(store.HAEndpointSpec{ClusterID: c.ResourceID, Kind: model.EndpointService, Provider: model.EndpointProviderGateway, ProviderRef: "site", Hostname: "database.example", Port: 63306, OwnerID: primary.ResourceID, Active: true}); e != nil {
+		t.Fatal(e)
+	}
+	s := newAPIServer(t, r, adapter.NewUnsupported(model.EngineMySQL), &fakeRefresher{}, WithDisasterRecovery(&recoveryManagerStub{}, func(func(context.Context)) {}))
+	path := "/api/v1/clusters/" + string(c.ResourceID) + "/recovery/"
+	response := callJSON(t, s.Handler(), http.MethodPost, path+"plan", map[string]interface{}{})
+	if response.Code != http.StatusNotImplemented || len(r.RecoveryTasks(c.ResourceID)) != 0 {
+		t.Fatal("unsupported gateway recovery created a task", response.Code, response.Body.String())
+	}
+	response = callJSON(t, s.Handler(), http.MethodGet, path+"status", nil)
+	var status struct {
+		Result struct {
+			Available bool `json:"available"`
+		} `json:"result"`
+	}
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &status) != nil || status.Result.Available {
+		t.Fatal("gateway recovery advertised unsupported execution")
+	}
+}

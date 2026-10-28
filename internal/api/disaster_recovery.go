@@ -51,6 +51,13 @@ func (server *Server) disasterRecoveryRoute(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "disaster recovery supports MySQL and PostgreSQL")
 		return
 	}
+	gatewayMode := false
+	for _, resource := range server.store.HAEndpoints(clusterID) {
+		entry, ok := server.store.Endpoint(resource.EndpointID)
+		if ok && entry.Active && resource.Provider == model.EndpointProviderGateway {
+			gatewayMode = true
+		}
+	}
 	if action == "recovery/status" && r.Method == http.MethodGet {
 		tasks := server.store.RecoveryTasks(clusterID)
 		if tasks == nil {
@@ -59,11 +66,15 @@ func (server *Server) disasterRecoveryRoute(w http.ResponseWriter, r *http.Reque
 		for i := range tasks {
 			tasks[i] = publicRecoveryTask(tasks[i])
 		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{"status": "ok", "result": map[string]interface{}{"available": server.disasterRecovery != nil && server.runRecovery != nil, "tasks": tasks, "recovery": cluster.Recovery}})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"status": "ok", "result": map[string]interface{}{"available": !gatewayMode && server.disasterRecovery != nil && server.runRecovery != nil, "tasks": tasks, "recovery": cluster.Recovery}})
 		return
 	}
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "recovery command requires POST")
+		return
+	}
+	if gatewayMode {
+		writeError(w, http.StatusNotImplemented, "gateway disaster recovery is not implemented; controlled switchover remains available")
 		return
 	}
 	if server.disasterRecovery == nil || server.runRecovery == nil {

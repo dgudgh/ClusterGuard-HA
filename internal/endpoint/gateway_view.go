@@ -8,12 +8,13 @@ import (
 )
 
 type GatewayView struct {
-	ClusterID      model.ResourceID `json:"cluster_id"`
-	OwnerID        model.ResourceID `json:"owner_id"`
-	Ready          bool             `json:"ready"`
-	LeaseValid     bool             `json:"lease_valid"`
-	LeaseExpiresAt time.Time        `json:"lease_expires_at"`
-	Statuses       []GatewayStatus  `json:"gateways"`
+	AuthorityUnconfirmed bool             `json:"authority_unconfirmed"`
+	ClusterID            model.ResourceID `json:"cluster_id"`
+	OwnerID              model.ResourceID `json:"owner_id"`
+	Ready                bool             `json:"ready"`
+	LeaseValid           bool             `json:"lease_valid"`
+	LeaseExpiresAt       time.Time        `json:"lease_expires_at"`
+	Statuses             []GatewayStatus  `json:"gateways"`
 }
 
 func (p *GatewayProvider) InspectGateway(ctx context.Context, cluster model.ResourceID) (GatewayView, error) {
@@ -29,6 +30,7 @@ func (p *GatewayProvider) InspectGateway(ctx context.Context, cluster model.Reso
 	}
 	lease, err := p.current(ctx, r, r.resource.OwnerID)
 	if err != nil {
+		view.AuthorityUnconfirmed = true
 		return view, nil
 	}
 	view.LeaseValid = true

@@ -190,6 +190,10 @@ const CHECKS = [
       const agent=read('internal/agent/gateway_reconcile.go')||'';
       const protocol=read('internal/agent/reconcile_protocol.go')||'';
       const keeper=read('internal/coordination/ownership_keeper.go')||'';
+      const recovery=read('internal/api/disaster_recovery.go')||'';
+      if(!recovery.includes('if gatewayMode {')||recovery.indexOf('if gatewayMode {')>recovery.indexOf('server.store.PlanRecovery('))return 'gateway reaches an unsupported recovery planner';
+      const page=read('internal/api/console.html')||'';
+      if(!page.includes(":stale?'网关状态需重新读取':")||!page.includes('},5000);')||!page.includes('if(generation!==state.requestGeneration || readEpoch!==state.gatewayRouteReadEpoch || state.clusterDetail?.cluster?.resource_id!==clusterID)return;'))return 'gateway page reuses expired or late routing evidence';
       for(const proof of ['authorizeTransitionLease(ctx, p.leases','p.leases.Validate(check, lease)','gateway withdrawal barrier incomplete','p.inventory.ReserveGatewayGrant(lease, operation, "withdraw", false)','if primaries != 1 || !proven'])if(!provider.includes(proof))return 'missing gateway safety boundary: '+proof;
       for(const proof of ['endpoint.SameLeaseIdentity(current, presented)','!current.ExpiresAt.After(now.Add(time.Second))','grant.ExpiresAt = current.ExpiresAt','r.commitSnapshotLocked(next)'])if(!store.includes(proof))return 'missing persisted grant boundary: '+proof;
       if(!agent.includes('decision.EndpointProvider != model.EndpointProviderGateway')||!protocol.includes('EndpointProvider: response.EndpointProvider'))return 'gateway Agent scope is no longer explicit and signed';
@@ -1272,6 +1276,7 @@ const reportOpen = failures => {
 // The files the rules read. The self-test copies exactly these, so a mutation cannot be
 // caught by reading something the gate does not actually consult.
 const READ_FILES = [
+ 'internal/api/disaster_recovery.go',
   'adapters/mysql/runner.go',
   'internal/endpoint/gateway.go','internal/store/gateway.go','internal/agent/gateway_reconcile.go','internal/agent/reconcile_protocol.go','internal/coordination/ownership_keeper.go','internal/endpoint/gateway_test.go','internal/store/gateway_test.go','internal/agent/gateway_reconcile_test.go','adapters/mysql/gateway_switchover_test.go','tools/console-gateway-acceptance.cjs',
 
@@ -1304,6 +1309,9 @@ const READ_FILES = [
 ];
 
 const MUTATIONS = [
+  {name:'gateway enters the legacy disaster recovery planner',file:'internal/api/disaster_recovery.go',find:'if gatewayMode {',replace:'if false && gatewayMode {',rule:'gateway publication preserves majority authority and bounded routing'},
+  {name:'gateway page calls expired cached routes ready',file:'internal/api/console.html',find:":stale?'网关状态需重新读取':",replace:':',rule:'gateway publication preserves majority authority and bounded routing'},
+  {name:'gateway page accepts an older polling read',file:'internal/api/console.html',find:'if(generation!==state.requestGeneration || readEpoch!==state.gatewayRouteReadEpoch || state.clusterDetail?.cluster?.resource_id!==clusterID)return;',replace:'if(generation!==state.requestGeneration || state.clusterDetail?.cluster?.resource_id!==clusterID)return;',rule:'gateway publication preserves majority authority and bounded routing'},
   {name:'SQL pipe wait bypasses the query deadline',file:'adapters/mysql/runner.go',find:'command.WaitDelay = 100 * time.Millisecond',replace:'command.WaitDelay = 0',rule:'gateway publication preserves majority authority and bounded routing'},
   {name:'gateway grants outlive majority leases',file:'internal/store/gateway.go',find:'grant.ExpiresAt = current.ExpiresAt',replace:'grant.ExpiresAt = now.Add(15 * time.Second)',rule:'gateway publication preserves majority authority and bounded routing'},
   {name:'gateway renews a read-only SQL owner',file:'internal/endpoint/gateway.go',find:'if primaries != 1 || !proven',replace:'if primaries < 0 || !proven && false',rule:'gateway publication preserves majority authority and bounded routing'},
