@@ -168,6 +168,18 @@ type Kubernetes struct {
 	FenceTimeoutSeconds   int  `json:"fence_timeout_seconds,omitempty"`
 }
 
+// ExternalEndpoint enables the external-command writer endpoint provider.
+//
+// The executable behind each endpoint is named by HAEndpoint.ProviderRef rather
+// than here, so two clusters served by one process can use different hooks.
+// Enabling this section does not weaken existing providers; it only registers
+// one more provider that clusters must opt into by naming it.
+type ExternalEndpoint struct {
+	Enabled               bool `json:"enabled"`
+	CommandTimeoutSeconds int  `json:"command_timeout_seconds,omitempty"`
+	MaxOutputBytes        int  `json:"max_output_bytes,omitempty"`
+}
+
 type File struct {
 	AppliedConfiguration      ConfigurationOverrides    `json:"-"`
 	LoadedConfigurationDigest string                    `json:"-"`
@@ -196,6 +208,7 @@ type File struct {
 	Kubernetes                Kubernetes                `json:"kubernetes"`
 	ConfigurationDistribution ConfigurationDistribution `json:"configuration_distribution"`
 	NodeLifecycle             NodeLifecycle             `json:"node_lifecycle"`
+	ExternalEndpoint          ExternalEndpoint          `json:"external_endpoint"`
 }
 
 func Load(path string) (File, error) {

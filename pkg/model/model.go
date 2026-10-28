@@ -251,10 +251,19 @@ type EndpointProviderKind string
 const (
 	EndpointProviderLinuxVIP          EndpointProviderKind = "linux_vip"
 	EndpointProviderKubernetesService EndpointProviderKind = "kubernetes_service"
+	// EndpointProviderExternalCommand hands writer-endpoint mutations to an
+	// operator-supplied executable. It exists because a layer-2 VIP cannot be
+	// announced on an SDN fabric such as Azure: gratuitous ARP from the guest is
+	// ignored there, so the forwarding entry has to be moved by the platform
+	// itself. ClusterGuard still decides who the writable primary is; the hook
+	// only moves traffic under that decision.
+	EndpointProviderExternalCommand EndpointProviderKind = "external_command"
 )
 
 func (kind EndpointProviderKind) Valid() bool {
-	return kind == EndpointProviderLinuxVIP || kind == EndpointProviderKubernetesService
+	return kind == EndpointProviderLinuxVIP ||
+		kind == EndpointProviderKubernetesService ||
+		kind == EndpointProviderExternalCommand
 }
 
 type Endpoint struct {

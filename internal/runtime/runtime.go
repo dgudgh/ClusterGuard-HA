@@ -1060,6 +1060,17 @@ func New(configuration config.File, settings ...Option) (*Runtime, error) {
 		kubernetesFactory = factory
 		endpointProviders[model.EndpointProviderKubernetesService] = writerendpoint.NewKubernetesServiceProvider(repository, factory, ownershipLeases)
 	}
+	if configuration.ExternalEndpoint.Enabled {
+		if repository == nil {
+			return nil, fmt.Errorf("external command endpoint execution requires a cluster inventory")
+		}
+		endpointProviders[model.EndpointProviderExternalCommand] = writerendpoint.NewExternalCommandProvider(
+			repository,
+			writerendpoint.OSProcessRunner{},
+			time.Duration(configuration.ExternalEndpoint.CommandTimeoutSeconds)*time.Second,
+			configuration.ExternalEndpoint.MaxOutputBytes,
+		)
+	}
 	if len(endpointProviders) > 0 {
 		endpointRouter = writerendpoint.NewProviderRouter(repository, endpointProviders)
 		endpointProvider = endpointRouter
