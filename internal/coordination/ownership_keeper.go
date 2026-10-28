@@ -346,6 +346,15 @@ func (keeper *OwnershipKeeper) RunOnce(ctx context.Context) error {
 		if err := keeper.leases.AcquireStableBatch(ctx, validRequests); err != nil {
 			failures = append(failures, fmt.Errorf("renew VIP ownership lease batch: %w", err))
 		}
+		if publisher, ok := keeper.observer.(interface {
+			RefreshStableRoute(context.Context, endpoint.LeaseRequest) error
+		}); ok {
+			for _, request := range validRequests {
+				if err := publisher.RefreshStableRoute(ctx, request); err != nil {
+					failures = append(failures, fmt.Errorf("refresh stable endpoint route for %s: %w", request.ClusterID, err))
+				}
+			}
+		}
 	}
 	return errors.Join(failures...)
 }

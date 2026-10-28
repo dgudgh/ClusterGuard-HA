@@ -255,6 +255,10 @@ func (server *Server) clusterRoute(writer http.ResponseWriter, request *http.Req
 	}
 
 	action := strings.Join(parts[1:], "/")
+	if action == "gateway" {
+		server.clusterGateway(writer, request, clusterID)
+		return
+	}
 	if action == "database-endpoints" {
 		server.registerDatabaseEndpoints(writer, request, clusterID)
 		return

@@ -46,7 +46,10 @@ func NewReconciler(vip VIPController, roles RoleController, decisions ReconcileD
 }
 
 func (reconciler *Reconciler) convergeSelfIsolation(ctx context.Context, policy ClusterPolicy) (ReconcileResult, error) {
-	releaseErr := reconciler.vip.Release(ctx, policy)
+	var releaseErr error
+	if policy.EndpointProvider != model.EndpointProviderGateway {
+		releaseErr = reconciler.vip.Release(ctx, policy)
+	}
 	if policy.Engine == model.EnginePostgreSQL {
 		if reconciler.postgresql == nil {
 			return ReconcileResult{ClusterID: policy.ClusterID, InstanceID: policy.InstanceID, Action: ReconcileSelfIsolate, Message: "VIP released; PostgreSQL controller is unavailable"}, errors.Join(releaseErr, fmt.Errorf("PostgreSQL reconciler controller is not configured"))
@@ -109,6 +112,9 @@ func (reconciler *Reconciler) reconcile(ctx context.Context, policy ClusterPolic
 	}
 	if decision.Action == ReconcileSelfIsolate {
 		return reconciler.convergeSelfIsolation(ctx, policy)
+	}
+	if policy.EndpointProvider == model.EndpointProviderGateway || decision.EndpointProvider == model.EndpointProviderGateway {
+		return reconciler.reconcileGateway(ctx, policy, decision)
 	}
 	if decision.Action == ReconcileRecoveryPrimary || decision.Action == ReconcileRecoveryActivate || decision.Action == ReconcileRecoveryReplica || decision.Action == ReconcileRecoveryPrepare {
 		return reconciler.reconcileRecovery(ctx, policy, decision)

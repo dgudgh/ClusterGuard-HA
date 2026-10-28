@@ -51,7 +51,7 @@ func validateHAEndpointSpec(current snapshot, spec HAEndpointSpec) error {
 			return validationError("Linux VIP endpoint prefix must be between 1 and 32")
 		}
 	}
-	if provider == model.EndpointProviderKubernetesService {
+	if provider == model.EndpointProviderKubernetesService || provider == model.EndpointProviderGateway {
 		if spec.Kind != model.EndpointService {
 			return validationError("Kubernetes Service provider requires a service endpoint")
 		}
@@ -86,6 +86,20 @@ func (repository *Repository) PutHAEndpoint(spec HAEndpointSpec) (model.HAEndpoi
 	defer repository.mu.Unlock()
 	if err := validateHAEndpointSpec(repository.snapshot, spec); err != nil {
 		return model.HAEndpoint{}, model.Endpoint{}, err
+	}
+	// Switching gateway profiles/providers while a writer lease is still live
+	// would leave a second forwarding domain outside the withdrawal barrier.
+	// Retire the old authority in a maintenance window before rebinding it.
+	gatewayBinding := spec.Provider == model.EndpointProviderGateway
+	for _, existing := range repository.snapshot.HAEndpoints {
+		gatewayBinding = gatewayBinding || existing.ClusterID == spec.ClusterID && existing.Provider == model.EndpointProviderGateway
+	}
+	if gatewayBinding {
+		for _, record := range repository.snapshot.CoordinationLeases {
+			if record.Lease.ClusterID == spec.ClusterID && record.Lease.Active && record.Lease.ExpiresAt.After(repository.now()) {
+				return model.HAEndpoint{}, model.Endpoint{}, conflictError("gateway binding cannot change while a writer lease is live")
+			}
+		}
 	}
 
 	var resource model.HAEndpoint
@@ -173,7 +187,7 @@ func (repository *Repository) commitHAEndpointOwner(clusterID, resourceID, owner
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 	resource, found := repository.snapshot.HAEndpoints[resourceID]
-	if !found || resource.ClusterID != clusterID || resource.Kind != model.EndpointVIP {
+	if !found || resource.ClusterID != clusterID || !writerEndpointKind(resource.Kind, resource.Provider) {
 		return validationError("HA endpoint resource is outside the selected cluster")
 	}
 	owner, found := repository.snapshot.Instances[ownerID]
@@ -181,7 +195,7 @@ func (repository *Repository) commitHAEndpointOwner(clusterID, resourceID, owner
 		return validationError("HA endpoint owner is outside the selected cluster")
 	}
 	endpoint, found := repository.snapshot.Endpoints[clusterID][resource.EndpointID]
-	if !found || endpoint.Kind != model.EndpointVIP || !endpoint.Active {
+	if !found || endpoint.Kind != resource.Kind || !endpoint.Active {
 		return validationError("active VIP endpoint metadata is unavailable")
 	}
 	if expectedResourceRevision != nil && resource.MetadataRevision != *expectedResourceRevision {
@@ -242,4 +256,8 @@ func (repository *Repository) Endpoint(resourceID model.ResourceID) (model.Endpo
 		}
 	}
 	return model.Endpoint{}, false
+}
+
+func writerEndpointKind(kind model.EndpointKind, provider model.EndpointProviderKind) bool {
+	return kind == model.EndpointVIP && (provider == "" || provider == model.EndpointProviderLinuxVIP) || kind == model.EndpointService && provider == model.EndpointProviderGateway
 }

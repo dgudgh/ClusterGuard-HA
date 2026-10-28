@@ -34,3 +34,7 @@ GTID 已启用但尚无已记录事务时，`@@GLOBAL.gtid_executed` 可以为�
 仅允许明确的半同步ACK缺失原因续租同一Owner的既有稳定租约：必须有当前批次成功SQL探针、有效半同步配置、主库两项运行时只读均关闭、唯一主库和直接VIP观测。该分支只发`RenewOnly`，不新建/恢复已过期租约，不改Owner，不做零Owner引导。
 
 Raft多数派和数据节点Agent的VIP观测覆盖分别校验。两台整机或Agent失联导致观测不足、失去控制面多数派、主库失联/只读、归属冲突或灾难恢复冻结时，继续按原规则停止授权并隔离。实现与验证记录见[从库故障下的VIP续租修复](../mysql-replica-failure-vip-2026-10-15.md)。
+
+## 云/混合云固定业务入口
+
+MySQL受控切换可选择`gateway` Service端点提供者，复用原操作流程和多数派LeaseStore；切换前全体网关撤权，隔离/提升后发布新目标，稳定续期由OwnershipKeeper在新鲜SQL与多数派检查后执行。网关无数据库选主权，Agent须显式使用无宿主机VIP的gateway模式。当前首次接入、旧VIP维护迁移、TLS配置、限制和本地验证见[页面网关联动记录](../gateway-switchover-2026-10-28.md)；不由此声明现场部署或其他引擎已验收。

@@ -168,7 +168,9 @@ func (server *Server) agentReconcileRoute(writer http.ResponseWriter, request *h
 	if snapshotFound {
 		evidence.CurrentPrimaryID = topologyPrimaryID(snapshot)
 	}
-	if resource, vipEndpoint, found := server.activeVIP(payload.ClusterID); found {
+	gatewayEndpoint := false
+	if resource, vipEndpoint, found := server.reconcileWriterEndpoint(payload.ClusterID); found {
+		gatewayEndpoint = resource.Provider == model.EndpointProviderGateway
 		evidence.CanonicalOwnerID = resource.OwnerID
 		evidence.EndpointOwnerID = vipEndpoint.InstanceID
 		if leaseRecord, leaseFound := server.activeOwnershipLease(payload.ClusterID, resource.ResourceID, now); leaseFound {
@@ -208,6 +210,9 @@ func (server *Server) agentReconcileRoute(writer http.ResponseWriter, request *h
 		}
 	} else {
 		response.Action = agent.ReconcileSelfIsolate
+	}
+	if gatewayEndpoint {
+		response.EndpointProvider = model.EndpointProviderGateway
 	}
 	if cluster, found := server.store.Cluster(payload.ClusterID); found && cluster.DisasterRecoveryActive() {
 		response.Action = agent.ReconcileSelfIsolate
@@ -255,4 +260,27 @@ func (server *Server) agentReconcileRoute(writer http.ResponseWriter, request *h
 		server.agentAuthz.Record(response, leadershipEpoch)
 	}
 	writeJSON(writer, http.StatusOK, response)
+}
+
+// Reconcile writer authority independently of host address ownership. Legacy
+// VIP callers retain activeVIP; gateway policies must explicitly opt in.
+func (server *Server) reconcileWriterEndpoint(id model.ResourceID) (model.HAEndpoint, model.Endpoint, bool) {
+	var selected model.HAEndpoint
+	var entry model.Endpoint
+	for _, r := range server.store.HAEndpoints(id) {
+		e, ok := server.store.Endpoint(r.EndpointID)
+		if !ok || !e.Active {
+			continue
+		}
+		if selected.ResourceID != "" {
+			return model.HAEndpoint{}, model.Endpoint{}, false
+		}
+		if r.Kind == model.EndpointVIP && e.Kind == model.EndpointVIP && (r.Provider == "" || r.Provider == model.EndpointProviderLinuxVIP) || r.Kind == model.EndpointService && e.Kind == model.EndpointService && r.Provider == model.EndpointProviderGateway {
+			selected = r
+			entry = e
+		} else {
+			return model.HAEndpoint{}, model.Endpoint{}, false
+		}
+	}
+	return selected, entry, selected.ResourceID != ""
 }

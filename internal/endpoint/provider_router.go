@@ -140,3 +140,16 @@ func (router *ProviderRouter) ObserveOwnership(ctx context.Context, cluster mode
 	}
 	return observer.ObserveOwnership(ctx, cluster, snapshot)
 }
+
+func (router *ProviderRouter) RefreshStableRoute(ctx context.Context, request LeaseRequest) error {
+	provider, err := router.provider(request.ClusterID)
+	if err != nil {
+		return err
+	}
+	if publisher, ok := provider.(interface {
+		RefreshStableRoute(context.Context, LeaseRequest) error
+	}); ok {
+		return publisher.RefreshStableRoute(ctx, request)
+	}
+	return nil
+}

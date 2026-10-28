@@ -209,6 +209,7 @@ type File struct {
 	ConfigurationDistribution ConfigurationDistribution `json:"configuration_distribution"`
 	NodeLifecycle             NodeLifecycle             `json:"node_lifecycle"`
 	ExternalEndpoint          ExternalEndpoint          `json:"external_endpoint"`
+	Gateway                   Gateway                   `json:"gateway"`
 }
 
 func Load(path string) (File, error) {

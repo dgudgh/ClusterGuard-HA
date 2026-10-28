@@ -24,7 +24,7 @@ const (
 	ReconcileRecoveryPrimary  ReconcileAction = "recovery_primary"
 	ReconcileRecoveryActivate ReconcileAction = "recovery_activate"
 	ReconcileRecoveryReplica  ReconcileAction = "recovery_replica"
-	ReconcileRecoveryPrepare ReconcileAction = "recovery_prepare"
+	ReconcileRecoveryPrepare  ReconcileAction = "recovery_prepare"
 )
 
 type ReconcileRequest struct {
@@ -36,15 +36,16 @@ type ReconcileRequest struct {
 }
 
 type ReconcileResponse struct {
-	RecoveryTaskID model.ResourceID `json:"recovery_task_id,omitempty"`
-	ClusterID      model.ResourceID `json:"cluster_id"`
-	InstanceID     model.ResourceID `json:"instance_id"`
-	Action         ReconcileAction  `json:"action"`
-	Reason         string           `json:"reason"`
-	LeaseID        model.ResourceID `json:"lease_id,omitempty"`
-	ValidUntil     time.Time        `json:"valid_until"`
-	ControllerID   model.ResourceID `json:"controller_id"`
-	Signature      string           `json:"signature"`
+	EndpointProvider model.EndpointProviderKind `json:"endpoint_provider,omitempty"`
+	RecoveryTaskID   model.ResourceID           `json:"recovery_task_id,omitempty"`
+	ClusterID        model.ResourceID           `json:"cluster_id"`
+	InstanceID       model.ResourceID           `json:"instance_id"`
+	Action           ReconcileAction            `json:"action"`
+	Reason           string                     `json:"reason"`
+	LeaseID          model.ResourceID           `json:"lease_id,omitempty"`
+	ValidUntil       time.Time                  `json:"valid_until"`
+	ControllerID     model.ResourceID           `json:"controller_id"`
+	Signature        string                     `json:"signature"`
 }
 
 type unsignedReconcileRequest struct {
@@ -55,14 +56,15 @@ type unsignedReconcileRequest struct {
 }
 
 type unsignedReconcileResponse struct {
-	RecoveryTaskID model.ResourceID `json:"recovery_task_id,omitempty"`
-	ClusterID      model.ResourceID `json:"cluster_id"`
-	InstanceID     model.ResourceID `json:"instance_id"`
-	Action         ReconcileAction  `json:"action"`
-	Reason         string           `json:"reason"`
-	LeaseID        model.ResourceID `json:"lease_id,omitempty"`
-	ValidUntil     time.Time        `json:"valid_until"`
-	ControllerID   model.ResourceID `json:"controller_id"`
+	EndpointProvider model.EndpointProviderKind `json:"endpoint_provider,omitempty"`
+	RecoveryTaskID   model.ResourceID           `json:"recovery_task_id,omitempty"`
+	ClusterID        model.ResourceID           `json:"cluster_id"`
+	InstanceID       model.ResourceID           `json:"instance_id"`
+	Action           ReconcileAction            `json:"action"`
+	Reason           string                     `json:"reason"`
+	LeaseID          model.ResourceID           `json:"lease_id,omitempty"`
+	ValidUntil       time.Time                  `json:"valid_until"`
+	ControllerID     model.ResourceID           `json:"controller_id"`
 }
 
 func reconcileMAC(value interface{}, secret string) (string, error) {
@@ -113,8 +115,8 @@ func SignReconcileResponse(response *ReconcileResponse, secret string) error {
 	response.Reason = strings.TrimSpace(response.Reason)
 	response.ValidUntil = response.ValidUntil.UTC()
 	signature, err := reconcileMAC(unsignedReconcileResponse{
-		RecoveryTaskID: response.RecoveryTaskID,
-		ClusterID:      response.ClusterID, InstanceID: response.InstanceID, Action: response.Action, Reason: response.Reason,
+		EndpointProvider: response.EndpointProvider, RecoveryTaskID: response.RecoveryTaskID,
+		ClusterID: response.ClusterID, InstanceID: response.InstanceID, Action: response.Action, Reason: response.Reason,
 		LeaseID: response.LeaseID, ValidUntil: response.ValidUntil, ControllerID: response.ControllerID,
 	}, secret)
 	if err != nil {
@@ -125,6 +127,9 @@ func SignReconcileResponse(response *ReconcileResponse, secret string) error {
 }
 
 func VerifyReconcileResponse(response ReconcileResponse, request ReconcileRequest, secret string, now time.Time) error {
+	if response.EndpointProvider != "" && response.EndpointProvider != model.EndpointProviderGateway {
+		return fmt.Errorf("unknown reconcile endpoint provider")
+	}
 	if response.ClusterID != request.ClusterID || response.InstanceID != request.InstanceID || !model.ValidResourceID(response.ControllerID) || strings.TrimSpace(response.Reason) == "" {
 		return fmt.Errorf("agent reconcile response scope is invalid")
 	}
@@ -145,8 +150,8 @@ func VerifyReconcileResponse(response ReconcileResponse, request ReconcileReques
 		return fmt.Errorf("agent reconcile response is expired or outside the allowed time window")
 	}
 	expected, err := reconcileMAC(unsignedReconcileResponse{
-		RecoveryTaskID: response.RecoveryTaskID,
-		ClusterID:      response.ClusterID, InstanceID: response.InstanceID, Action: response.Action, Reason: strings.TrimSpace(response.Reason),
+		EndpointProvider: response.EndpointProvider, RecoveryTaskID: response.RecoveryTaskID,
+		ClusterID: response.ClusterID, InstanceID: response.InstanceID, Action: response.Action, Reason: strings.TrimSpace(response.Reason),
 		LeaseID: response.LeaseID, ValidUntil: response.ValidUntil.UTC(), ControllerID: response.ControllerID,
 	}, secret)
 	if err != nil || subtle.ConstantTimeCompare([]byte(expected), []byte(strings.TrimSpace(response.Signature))) != 1 {

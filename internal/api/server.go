@@ -30,6 +30,7 @@ const maximumJSONBodyBytes = 1 << 20
 const requestIDHeader = "X-Request-ID"
 
 type Server struct {
+	gateway        GatewayInspector
 	registry       *adapter.Registry
 	store          *store.Repository
 	workflow       *workflow.Service

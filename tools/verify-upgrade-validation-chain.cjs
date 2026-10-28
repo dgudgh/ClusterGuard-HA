@@ -182,6 +182,24 @@ const writeOperationTree = (root, name, status, events) => {
 
 const CHECKS = [
   {
+    rule:'12 / 22',title:'gateway publication preserves majority authority and bounded routing',
+    run:()=>{
+      const provider=read('internal/endpoint/gateway.go')||'';
+      if(!(read('adapters/mysql/runner.go')||'').includes('command.WaitDelay = 100 * time.Millisecond'))return 'SQL deadline no longer bounds inherited output pipes';
+      const store=read('internal/store/gateway.go')||'';
+      const agent=read('internal/agent/gateway_reconcile.go')||'';
+      const protocol=read('internal/agent/reconcile_protocol.go')||'';
+      const keeper=read('internal/coordination/ownership_keeper.go')||'';
+      for(const proof of ['authorizeTransitionLease(ctx, p.leases','p.leases.Validate(check, lease)','gateway withdrawal barrier incomplete','p.inventory.ReserveGatewayGrant(lease, operation, "withdraw", false)','if primaries != 1 || !proven'])if(!provider.includes(proof))return 'missing gateway safety boundary: '+proof;
+      for(const proof of ['endpoint.SameLeaseIdentity(current, presented)','!current.ExpiresAt.After(now.Add(time.Second))','grant.ExpiresAt = current.ExpiresAt','r.commitSnapshotLocked(next)'])if(!store.includes(proof))return 'missing persisted grant boundary: '+proof;
+      if(!agent.includes('decision.EndpointProvider != model.EndpointProviderGateway')||!protocol.includes('EndpointProvider: response.EndpointProvider'))return 'gateway Agent scope is no longer explicit and signed';
+      const batch=keeper.indexOf('keeper.leases.AcquireStableBatch(ctx, validRequests)'),publish=keeper.indexOf('publisher.RefreshStableRoute(ctx, request)');
+      if(batch<0||publish<batch)return 'route refresh no longer follows stable lease validation';
+      for(const file of ['internal/endpoint/gateway_test.go','internal/store/gateway_test.go','internal/agent/gateway_reconcile_test.go','adapters/mysql/gateway_switchover_test.go','tools/console-gateway-acceptance.cjs'])if(!read(file))return 'gateway regression missing: '+file;
+      return true;
+    }
+  },
+  {
     rule:'12 / 22', title:'MySQL installation streams bounded progress and preserves failure evidence',
     run:()=>{
       const installer=read('scripts/install_clusterguard.sh')||'';
@@ -1254,6 +1272,9 @@ const reportOpen = failures => {
 // The files the rules read. The self-test copies exactly these, so a mutation cannot be
 // caught by reading something the gate does not actually consult.
 const READ_FILES = [
+  'adapters/mysql/runner.go',
+  'internal/endpoint/gateway.go','internal/store/gateway.go','internal/agent/gateway_reconcile.go','internal/agent/reconcile_protocol.go','internal/coordination/ownership_keeper.go','internal/endpoint/gateway_test.go','internal/store/gateway_test.go','internal/agent/gateway_reconcile_test.go','adapters/mysql/gateway_switchover_test.go','tools/console-gateway-acceptance.cjs',
+
   'scripts/installer_progress_test.go',
   'scripts/installer_media_reuse_test.go',
   'scripts/mysql_archive_validation_test.go',
@@ -1283,6 +1304,11 @@ const READ_FILES = [
 ];
 
 const MUTATIONS = [
+  {name:'SQL pipe wait bypasses the query deadline',file:'adapters/mysql/runner.go',find:'command.WaitDelay = 100 * time.Millisecond',replace:'command.WaitDelay = 0',rule:'gateway publication preserves majority authority and bounded routing'},
+  {name:'gateway grants outlive majority leases',file:'internal/store/gateway.go',find:'grant.ExpiresAt = current.ExpiresAt',replace:'grant.ExpiresAt = now.Add(15 * time.Second)',rule:'gateway publication preserves majority authority and bounded routing'},
+  {name:'gateway renews a read-only SQL owner',file:'internal/endpoint/gateway.go',find:'if primaries != 1 || !proven',replace:'if primaries < 0 || !proven && false',rule:'gateway publication preserves majority authority and bounded routing'},
+  {name:'gateway partial activation loses withdrawal',file:'internal/endpoint/gateway.go',find:'p.inventory.ReserveGatewayGrant(lease, operation, "withdraw", false)',replace:'p.inventory.ReserveGatewayGrant(lease, operation, "activate", false)',rule:'gateway publication preserves majority authority and bounded routing'},
+  {name:'gateway Agent accepts a legacy VIP grant',file:'internal/agent/gateway_reconcile.go',find:'decision.EndpointProvider != model.EndpointProviderGateway',replace:'decision.EndpointProvider == "invalid"',rule:'gateway publication preserves majority authority and bounded routing'},
   {name:'MySQL installer hides successful stage progress again',file:'scripts/install_clusterguard.sh',find:'remote_json_helper "${host}" /usr/local/libexec/clusterguard-mysql-install.sh "" "${payload}" "" mysql-install',replace:'remote_json_helper "${host}" /usr/local/libexec/clusterguard-mysql-install.sh "" "${payload}"',rule:'MySQL installation streams bounded progress and preserves failure evidence'},
   {name:'MySQL progress accepts trailing raw output',file:'scripts/install_clusterguard.sh',find:'archive$ ||',replace:'archive ||',rule:'MySQL installation streams bounded progress and preserves failure evidence'},
   {name:'MySQL progress failure loses credential redaction',file:'scripts/install_clusterguard.sh',find:'output="$(redact_remote_output "${output}")"',replace:'output="${output}"',rule:'MySQL installation streams bounded progress and preserves failure evidence'},

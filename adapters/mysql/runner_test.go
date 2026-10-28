@@ -126,3 +126,47 @@ func TestCLIQueryRunnerAppliesDefaultQueryDeadline(t *testing.T) {
 		t.Fatalf("query timeout took %s, want less than one second", elapsed)
 	}
 }
+
+func TestCLIQueryDeadlineBoundsInheritedOutputPipes(t *testing.T) {
+	directory := t.TempDir()
+	binary := filepath.Join(directory, "mysql")
+	ready := filepath.Join(directory, "child-started")
+	quotedReady := "'" + strings.ReplaceAll(ready, "'", "'\\''") + "'"
+	// Cancel only after the shell has forked its pipe-owning child. This avoids
+	// a slow exec killing the parent before the inherited-pipe case exists.
+	script := "#!/bin/sh\nsleep 2 &\nprintf ready > " + quotedReady + "\nwait\n"
+	if e := os.WriteFile(binary, []byte(script), 0700); e != nil {
+		t.Fatal(e)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, e := (CLIQueryRunner{Binary: binary, QueryTimeout: 5 * time.Second}).Query(ctx, adapter.Endpoint{Hostname: "mysql-a", Port: 3306}, adapter.Credentials{Username: "discover", Password: "test"}, "SELECT 1")
+		done <- e
+	}()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if _, e := os.Stat(ready); e == nil {
+			break
+		}
+		select {
+		case e := <-done:
+			t.Fatalf("fixture exited before child readiness: %v", e)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("fixture child did not start")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	started := time.Now()
+	cancel()
+	e := <-done
+	if !errors.Is(e, context.Canceled) {
+		t.Fatalf("wanted context cancellation, got %v", e)
+	}
+	if elapsed := time.Since(started); elapsed >= time.Second {
+		t.Fatalf("inherited pipe outlived query cancellation: %s", elapsed)
+	}
+}

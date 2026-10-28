@@ -120,6 +120,7 @@ type discoveryMetricCandidate struct {
 const discoveryMetricSampleLimit = 60
 
 type snapshot struct {
+	GatewayPublications   map[model.ResourceID]model.GatewayGrant                  `json:"gateway_publications,omitempty"`
 	Clusters              map[model.ResourceID]model.DatabaseCluster               `json:"clusters"`
 	Nodes                 map[model.ResourceID]model.DatabaseNode                  `json:"nodes"`
 	RuntimeTargets        map[model.ResourceID]model.RuntimeTarget                 `json:"runtime_targets"`
@@ -509,6 +510,7 @@ func cloneAnomalyMap(anomalies map[model.ResourceID]model.MetadataAnomaly) map[m
 
 func cloneDiscoverySnapshot(value snapshot) snapshot {
 	copy := value
+	copy.GatewayPublications = cloneGatewayGrants(value.GatewayPublications)
 	copy.Clusters = cloneClusterMap(value.Clusters)
 	copy.Nodes = cloneNodeMap(value.Nodes)
 	copy.RuntimeTargets = cloneRuntimeTargetMap(value.RuntimeTargets)

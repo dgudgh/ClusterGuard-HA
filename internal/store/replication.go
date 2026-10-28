@@ -178,6 +178,14 @@ func normalizeSnapshot(value snapshot) (snapshot, error) {
 	if normalized.CoordinationLeases == nil {
 		normalized.CoordinationLeases = map[model.ResourceID]coordination.LeaseRecord{}
 	}
+	for clusterID, grant := range normalized.GatewayPublications {
+		if grant.ClusterID != clusterID || !model.ValidResourceID(clusterID) ||
+			grant.Epoch == 0 || grant.Sequence == 0 ||
+			!model.ValidResourceID(grant.TargetID) || !model.ValidResourceID(grant.LeaseID) || !model.ValidResourceID(grant.OperationID) ||
+			(grant.Mode != "activate" && grant.Mode != "withdraw") || grant.IssuedAt.IsZero() || !grant.ExpiresAt.After(grant.IssuedAt) {
+			return snapshot{}, fmt.Errorf("invalid persisted gateway publication fence")
+		}
+	}
 	if normalized.OperationLocks == nil {
 		normalized.OperationLocks = map[model.ResourceID]coordination.OperationLockRecord{}
 	}

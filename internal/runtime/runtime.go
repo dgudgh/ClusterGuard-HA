@@ -1071,6 +1071,23 @@ func New(configuration config.File, settings ...Option) (*Runtime, error) {
 			configuration.ExternalEndpoint.MaxOutputBytes,
 		)
 	}
+	if configuration.Gateway.Enabled {
+		if ownershipLeases == nil || len(configuration.Gateway.Profiles) == 0 {
+			return nil, fmt.Errorf("gateway endpoint requires majority consensus and trusted profiles")
+		}
+		profiles := map[string]writerendpoint.GatewayTransport{}
+		for name, profile := range configuration.Gateway.Profiles {
+			if strings.TrimSpace(name) == "" {
+				return nil, fmt.Errorf("gateway profile name is required")
+			}
+			client, err := writerendpoint.NewGatewayHTTP(profile)
+			if err != nil {
+				return nil, fmt.Errorf("configure gateway profile %s: %w", name, err)
+			}
+			profiles[name] = client
+		}
+		endpointProviders[model.EndpointProviderGateway] = writerendpoint.NewGatewayProvider(repository, ownershipLeases, profiles)
+	}
 	if len(endpointProviders) > 0 {
 		endpointRouter = writerendpoint.NewProviderRouter(repository, endpointProviders)
 		endpointProvider = endpointRouter
@@ -1179,6 +1196,7 @@ func New(configuration config.File, settings ...Option) (*Runtime, error) {
 		return databaseDiscoveryCredentials(configuration, cluster)
 	}), nil, discoveryOptions...)
 	options := []api.ServerOption{
+		api.WithGatewayInspector(endpointRouter),
 		api.WithControlToken(configuration.ControlToken),
 		api.WithMonitoringToken(configuration.MonitoringToken),
 		api.WithApprovalService(approvalService),

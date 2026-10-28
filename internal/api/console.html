@@ -353,6 +353,11 @@
     .controller-pair-note { grid-column:1 / -1; margin:0; padding:9px 11px; border-left:3px solid var(--accent); background:var(--accent-soft); color:var(--muted); font-size:11px; line-height:1.5; }
     .inventory-table, .metrics-table { min-width:900px; width:100%; border-collapse:collapse; }
     .topology-inventory-table { min-width:1280px; }
+    .gateway-route-table { width:100%; table-layout:fixed; border-collapse:collapse; }
+    .gateway-route-table th, .gateway-route-table td { padding:10px 8px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; overflow-wrap:anywhere; white-space:normal; }
+    .gateway-route-table th { color:var(--muted); font-size:11px; }
+    .gateway-route-table th:first-child { width:22%; }
+    .gateway-route-table tr:last-child td { border-bottom:0; }
     .inventory-table th, .inventory-table td, .metrics-table th, .metrics-table td { padding:10px 11px; border-bottom:1px solid var(--line); text-align:left; vertical-align:middle; }
     .inventory-table th, .metrics-table th { color:var(--muted); font-size:11px; }
     .inventory-table tr:last-child td, .metrics-table tr:last-child td { border-bottom:0; }
@@ -1379,6 +1384,10 @@
               <div class="context-cell ux-context-lag"><span class="summary-label" id="operation-lag-label">候选延迟</span><strong class="context-value" id="operation-lag">-</strong></div>
             </div>
           </div>
+          <details class="panel" id="gateway-route-panel" hidden>
+            <summary class="panel-header"><strong id="gateway-route-heading"></strong><span id="gateway-route-state" class="badge warning"></span></summary>
+            <div class="panel-body"><p id="gateway-route-note"></p><table class="gateway-route-table"><thead><tr><th id="gateway-node-heading"></th><th id="gateway-target-heading"></th><th id="gateway-expiry-heading"></th></tr></thead><tbody id="gateway-route-rows"></tbody></table></div>
+          </details>
           <div class="operation-grid">
             <div class="operation-box operation-section-panel" id="operations-switchover-panel" role="tabpanel" aria-labelledby="operations-switchover-tab">
               <div class="operation-box-head"><div><span class="summary-label">受控主库切换</span><h3>主库与业务入口同步切换</h3><p>只有后端完整验证主库角色和业务入口唯一性后才会返回成功。</p></div><span class="badge danger">高</span></div>
@@ -1973,6 +1982,18 @@
     // Only authored UI literals call ui(). Interpolation values are kept verbatim.
     // Business names, credentials, IDs and original diagnostics never pass through a DOM translator.
     const uiCatalog =     {
+      "网关":"Gateway",
+      "业务连接网关":"Database connection gateway",
+      "正在读取网关路由。":"Reading gateway routes.",
+      "路由与当前主库一致":"Routes match the current primary",
+      "网关路由尚未就绪":"Gateway routes are not ready",
+      "网关路由读取失败，请检查控制器配置与网关连接。":"Gateway route read failed. Check controller configuration and gateway connectivity.",
+      "切换将同步更新网关路由；旧连接会关闭，应用连接池需要重连。":"Switchover also updates gateway routes. Existing connections close; application pools must reconnect.",
+      "网关 {0}":"Gateway {0}",
+      "路由目标":"Route target",
+      "路由授权到期":"Route grant expires",
+      "路由已关闭":"Route withdrawn",
+      "企业连接网关":"Enterprise connection gateway",
       "切换操作预算": "Failover operation budget",
       "未确认": "Unconfirmed",
       "{0} 秒": "{0} seconds",
@@ -4122,7 +4143,7 @@
       kubernetes:'Kubernetes StatefulSet'
     })[kind] || ui('运行层未登记');
     const runtimeKindShortText = kind => ({ linux:ui('主机层'), docker:ui('容器层'), kubernetes:'Kubernetes' })[kind] || ui('未登记');
-    const endpointProviderText = provider => ({ linux_vip:ui('宿主机 VIP'), kubernetes_service:'Kubernetes Service' })[provider] || ui('入口提供方未登记');
+    const endpointProviderText = provider => ({ gateway:ui('企业连接网关'), linux_vip:ui('宿主机 VIP'), kubernetes_service:'Kubernetes Service' })[provider] || ui('入口提供方未登记');
     const activeWorkloadBindings = (detail = state.clusterDetail) => detail ? (detail.workload_bindings || []).filter(binding => binding.active) : [];
     const workloadBindingForInstance = (instance, detail = state.clusterDetail) =>
       instance ? activeWorkloadBindings(detail).find(binding => binding.instance_id === instance.resource_id) : undefined;
@@ -4171,7 +4192,7 @@
     const runtimeBoundaryLabel = detail => `${runtimeProfileLabel(detail)} · ${endpointBoundaryLabel(detail)}`;
     const runtimeProfileBadgeClass = detail => {
       const profile = runtimeProfileForDetail(detail);
-      const expectedProvider = profile.kinds.length === 1 && profile.kinds[0] === 'kubernetes' ? 'kubernetes_service' : 'linux_vip';
+      const expectedProvider = profile.endpoint_providers.length === 1 && profile.endpoint_providers[0] === 'gateway' ? 'gateway' : profile.kinds.length === 1 && profile.kinds[0] === 'kubernetes' ? 'kubernetes_service' : 'linux_vip';
       const endpointMismatch = profile.endpoint_providers.length !== 1 || profile.endpoint_providers[0] !== expectedProvider;
       return !profile.complete || profile.mixed || endpointMismatch ? 'badge warning' : 'badge runtime';
     };
@@ -4276,7 +4297,7 @@
     };
 
     const clearClusterView = (preserveOperationResult = false) => {
-      state.clusterDetail = null; state.topology = null; state.health = null; state.candidates = []; state.metrics = { instances: [] }; state.operations = []; state.operationContext = null; state.powerStatus = null;
+      state.clusterDetail = null; state.gatewayRoute=null;state.gatewayRouteError=false; byId('gateway-route-panel').hidden = true; byId('gateway-route-rows').replaceChildren(); state.topology = null; state.health = null; state.candidates = []; state.metrics = { instances: [] }; state.operations = []; state.operationContext = null; state.powerStatus = null;
       const cluster = state.clusters.find(item => item.resource_id === state.selectedClusterId);
       byId('topology-cluster-name').textContent = cluster ? cluster.display_name || cluster.resource_id : ui('未选择集群');
       byId('topology-risk').textContent = ui('未知');
@@ -4358,6 +4379,7 @@
 
     const beginClusterRequest = (clusterId, preserveOperationResult = false, operationIntent = null) => {
       const generation = ++state.requestGeneration;
+      state.gatewayRoute=null;state.gatewayRouteError=false;renderGatewayRoute();
       invalidateNodeLifecycle();
       if (state.clusterReadController) state.clusterReadController.abort();
       state.clusterReadController = new AbortController();
@@ -4595,6 +4617,7 @@
     };
 
     const renderOperationContext = () => {
+      renderGatewayRoute();
       const cluster = state.clusterDetail && state.clusterDetail.cluster;
       const instances = state.topology ? state.topology.instances || [] : [];
       const primary = currentObservedPrimary(instances);
@@ -7356,6 +7379,35 @@
       updatePowerControls();
     };
 
+    const renderGatewayRoute = () => {
+      const enabled=runtimeProfileForDetail(state.clusterDetail).endpoint_providers.includes('gateway');
+      byId('gateway-route-panel').hidden=!enabled;if(!enabled)return;
+      const result=state.gatewayRoute?.cluster_id===state.clusterDetail?.cluster?.resource_id?state.gatewayRoute:null;
+      byId('gateway-route-heading').textContent=ui('业务连接网关');
+      byId('gateway-route-state').textContent=ui(state.gatewayRouteError?'网关路由读取失败，请检查控制器配置与网关连接。':!result?'正在读取网关路由。':result.ready?'路由与当前主库一致':'网关路由尚未就绪');
+      byId('gateway-route-state').className=result?.ready?'badge success':'badge warning';
+      byId('gateway-route-note').textContent=ui('切换将同步更新网关路由；旧连接会关闭，应用连接池需要重连。');
+      byId('gateway-node-heading').textContent=ui('网关');byId('gateway-target-heading').textContent=ui('路由目标');byId('gateway-expiry-heading').textContent=ui('路由授权到期');
+      byId('gateway-route-rows').replaceChildren();
+      for(const [index,status] of (result?.gateways||[]).entries()) {
+        const row=document.createElement('tr');
+        for(const text of [ui('网关 {0}',index+1),status.active?instanceLabel(status.last_grant?.target_instance_id):ui('路由已关闭'),status.active?new Date(status.last_grant.expires_at).toLocaleString(state.language):'-']){const cell=document.createElement('td');cell.textContent=text;row.append(cell)}
+        byId('gateway-route-rows').append(row);
+      }
+    };
+    const loadGatewayRoute = async (clusterID,generation) => {
+      state.gatewayRoute=null;state.gatewayRouteError=false;renderGatewayRoute();
+      if(!runtimeProfileForDetail(state.clusterDetail).endpoint_providers.includes('gateway'))return;
+      try{
+        const result=await fetchResult(`/api/v1/clusters/${encodeURIComponent(clusterID)}/gateway`,{signal:state.clusterReadController.signal});
+        if(generation!==state.requestGeneration || state.clusterDetail?.cluster?.resource_id!==clusterID)return;
+        if(result.cluster_id!==clusterID)throw new Error('gateway cluster mismatch');
+        state.gatewayRoute=result;renderGatewayRoute();
+      }catch(error){
+        if(generation!==state.requestGeneration || error?.staleSession || error?.name==='AbortError')return;
+        state.gatewayRouteError=true;renderGatewayRoute();
+      }
+    };
     const loadSelectedCluster = async ({ preserveOperationResult = false, expectedPrimaryID = '', operationIntent = null } = {}) => {
       const clusterId = byId('cluster-select').value;
       const generation = beginClusterRequest(clusterId, preserveOperationResult, operationIntent);
@@ -7417,6 +7469,7 @@
           const clusterIndex = state.clusters.findIndex(cluster => cluster.resource_id === clusterId);
           if (clusterIndex >= 0 && loaded.clusterDetail.cluster) state.clusters[clusterIndex] = loaded.clusterDetail.cluster;
           renderTopology(); renderOperationContext(); renderMetrics(); renderOverview();
+          void loadGatewayRoute(clusterId,generation);
           const partialMessage = ui("部分数据不可用：{0}；普通切换与旧主恢复已锁定，可重试读取。", evidenceUnavailableText(loaded))
             + (canAdministerPlatform() && disasterContextReady() ? ui(' 灾难恢复使用独立预检，仍需管理员解锁并确认。') : '');
           renderClusterLoadStatus(state.clusterDataReady ? 'ready' : 'partial', !topologyConverged ? ui('拓扑视图仍在同步，操作已锁定，请刷新复核。') : partialMessage);
@@ -7428,6 +7481,7 @@
         commitIfCurrent(generation, () => {
           state.clusterLoading = false;
           state.clusterLoadError = error.message;
+          state.gatewayRoute=null;state.gatewayRouteError=true;renderGatewayRoute();
           state.clusterDataReady = false;
           renderClusterLoadStatus('error', `${error.message}${state.topology ? ui(' 当前显示上次观测，不代表最新状态；操作已锁定。') : ui(' 未取得当前集群的拓扑，操作已锁定。')}`);
           updateExecutionButtons();
@@ -7801,6 +7855,7 @@
         commitIfCurrent(generation, () => {
           state.clusterLoading = false;
           state.clusterLoadError = error.message;
+          state.gatewayRoute=null;state.gatewayRouteError=true;renderGatewayRoute();
           state.clusterDataReady = false;
           renderClusterLoadStatus('error', ui("{0} 当前显示上次观测，不代表最新状态；操作已锁定。", localizeUIMessage(error.message)));
           updateExecutionButtons();

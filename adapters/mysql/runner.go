@@ -101,6 +101,9 @@ func (runner CLIQueryRunner) execute(ctx context.Context, endpoint adapter.Endpo
 	defer os.Remove(credentialFile)
 	connectTimeout := mysqlConnectTimeoutSeconds(ctx)
 	command := exec.CommandContext(ctx, binary, "--defaults-file="+credentialFile, "--batch", "--protocol=TCP", "--connect-timeout="+strconv.Itoa(connectTimeout), "-h", host, "-P", strconv.Itoa(endpoint.Port), "-u", credentials.Username)
+	// A wrapper's child may inherit the output pipes after CommandContext kills
+	// the wrapper. Bound pipe draining too, so the query deadline is meaningful.
+	command.WaitDelay = 100 * time.Millisecond
 	command.Stdin = strings.NewReader(query + "\n")
 	command.Env = environmentWithout("MYSQL_PWD")
 	output, err := command.CombinedOutput()

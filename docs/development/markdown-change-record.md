@@ -23,6 +23,9 @@ recorded-through: 73ff4a3
 
 | 日期 | 文件 | 变更 | 说明 |
 | --- | --- | --- | --- |
+| 2026-10-28 | `docs/development/backend/operations.md` | M | 补MySQL页面切换到gateway提供者的真实租约、屏障、Agent模式与部署指路。 |
+| 2026-10-28 | `docs/development/frontend/operations.md` | M | 补默认折叠网关状态、语言/上下文与原操作锁交互规则。 |
+| 2026-10-28 | `docs/development/gateway-switchover-2026-10-28.md` | A | 记录页面切换与独立网关对接的修改前基线、契约加载、多数派租约约束、验证计划及实际边界。 |
 | 2026-10-28 | `docs/development/existing-instance-registration-2026-10-28.md` | A | 记录已有实例端点接入的修改前对照、契约加载、原子登记/发现边界及实际回归结果。 |
 | 2026-10-28 | `docs/development/backend/clusters.md` | M | 补既有集群数据库端点追加API、幂等/原子冲突与发现失效规则。 |
 | 2026-10-28 | `docs/development/frontend/context.md` | M | 补集群管理接入已有实例入口、固定集群上下文及登记/发现/执行能力区分。 |

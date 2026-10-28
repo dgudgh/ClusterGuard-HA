@@ -34,50 +34,51 @@ type PostgreSQLPeer struct {
 }
 
 type ClusterPolicy struct {
-	RecoveryArchiveID             model.ResourceID  `json:"-"`
-	RecoveryControllerAddresses   []string          `json:"-"`
-	ClusterID                     model.ResourceID  `json:"cluster_id"`
-	InstanceID                    model.ResourceID  `json:"instance_id"`
-	RuntimeKind                   model.RuntimeKind `json:"runtime_kind,omitempty"`
-	VIP                           string            `json:"vip"`
-	Interface                     string            `json:"interface"`
-	Prefix                        int               `json:"prefix"`
-	MySQLPort                     int               `json:"mysql_port"`
-	MySQLBinary                   string            `json:"mysql_binary,omitempty"`
-	MySQLDefaultsFile             string            `json:"mysql_defaults_file"`
-	MySQLService                  string            `json:"mysql_service,omitempty"`
-	MySQLServerBinary             string            `json:"mysql_server_binary,omitempty"`
-	MySQLServerDefaultsFile       string            `json:"mysql_server_defaults_file,omitempty"`
-	DockerSwarmService            string            `json:"docker_swarm_service,omitempty"`
-	DockerSwarmServiceID          string            `json:"docker_swarm_service_id,omitempty"`
-	DockerMySQLBinary             string            `json:"docker_mysql_binary,omitempty"`
-	DockerFenceFile               string            `json:"docker_fence_file,omitempty"`
-	Engine                        model.Engine      `json:"engine,omitempty"`
-	PostgreSQLNodeID              model.ResourceID  `json:"postgresql_node_id,omitempty"`
-	PostgreSQLHostname            string            `json:"postgresql_hostname,omitempty"`
-	PostgreSQLPort                int               `json:"postgresql_port,omitempty"`
-	DockerPostgreSQLPort          int               `json:"docker_postgresql_port,omitempty"`
-	PostgreSQLService             string            `json:"postgresql_service,omitempty"`
-	PostgreSQLUser                string            `json:"postgresql_user,omitempty"`
-	PostgreSQLDataDirectory       string            `json:"postgresql_data_directory,omitempty"`
-	DockerPostgreSQLDataDirectory string            `json:"docker_postgresql_data_directory,omitempty"`
-	PostgreSQLBinaryDirectory     string            `json:"postgresql_binary_directory,omitempty"`
-	PostgreSQLPassfile            string            `json:"postgresql_passfile,omitempty"`
-	PostgreSQLDatabase            string            `json:"postgresql_database,omitempty"`
-	PostgreSQLReplicationUser     string            `json:"postgresql_replication_user,omitempty"`
-	PostgreSQLPeers               []PostgreSQLPeer  `json:"postgresql_peers,omitempty"`
-	OracleHome                    string            `json:"oracle_home,omitempty"`
-	OracleSID                     string            `json:"oracle_sid,omitempty"`
-	OracleOSUser                  string            `json:"oracle_os_user,omitempty"`
-	OracleDGMGRLBinary            string            `json:"oracle_dgmgrl_binary,omitempty"`
-	OracleUsername                string            `json:"oracle_username,omitempty"`
-	OracleAuthenticationRole      string            `json:"oracle_authentication_role,omitempty"`
-	OraclePasswordEnv             string            `json:"oracle_password_env,omitempty"`
-	OraclePassword                string            `json:"-"`
-	OracleConnectIdentifier       string            `json:"oracle_connect_identifier,omitempty"`
-	OracleDatabaseUniqueName      string            `json:"oracle_database_unique_name,omitempty"`
-	OracleBrokerConfiguration     string            `json:"oracle_broker_configuration,omitempty"`
-	OracleMembers                 []string          `json:"oracle_members,omitempty"`
+	EndpointProvider              model.EndpointProviderKind `json:"endpoint_provider,omitempty"`
+	RecoveryArchiveID             model.ResourceID           `json:"-"`
+	RecoveryControllerAddresses   []string                   `json:"-"`
+	ClusterID                     model.ResourceID           `json:"cluster_id"`
+	InstanceID                    model.ResourceID           `json:"instance_id"`
+	RuntimeKind                   model.RuntimeKind          `json:"runtime_kind,omitempty"`
+	VIP                           string                     `json:"vip"`
+	Interface                     string                     `json:"interface"`
+	Prefix                        int                        `json:"prefix"`
+	MySQLPort                     int                        `json:"mysql_port"`
+	MySQLBinary                   string                     `json:"mysql_binary,omitempty"`
+	MySQLDefaultsFile             string                     `json:"mysql_defaults_file"`
+	MySQLService                  string                     `json:"mysql_service,omitempty"`
+	MySQLServerBinary             string                     `json:"mysql_server_binary,omitempty"`
+	MySQLServerDefaultsFile       string                     `json:"mysql_server_defaults_file,omitempty"`
+	DockerSwarmService            string                     `json:"docker_swarm_service,omitempty"`
+	DockerSwarmServiceID          string                     `json:"docker_swarm_service_id,omitempty"`
+	DockerMySQLBinary             string                     `json:"docker_mysql_binary,omitempty"`
+	DockerFenceFile               string                     `json:"docker_fence_file,omitempty"`
+	Engine                        model.Engine               `json:"engine,omitempty"`
+	PostgreSQLNodeID              model.ResourceID           `json:"postgresql_node_id,omitempty"`
+	PostgreSQLHostname            string                     `json:"postgresql_hostname,omitempty"`
+	PostgreSQLPort                int                        `json:"postgresql_port,omitempty"`
+	DockerPostgreSQLPort          int                        `json:"docker_postgresql_port,omitempty"`
+	PostgreSQLService             string                     `json:"postgresql_service,omitempty"`
+	PostgreSQLUser                string                     `json:"postgresql_user,omitempty"`
+	PostgreSQLDataDirectory       string                     `json:"postgresql_data_directory,omitempty"`
+	DockerPostgreSQLDataDirectory string                     `json:"docker_postgresql_data_directory,omitempty"`
+	PostgreSQLBinaryDirectory     string                     `json:"postgresql_binary_directory,omitempty"`
+	PostgreSQLPassfile            string                     `json:"postgresql_passfile,omitempty"`
+	PostgreSQLDatabase            string                     `json:"postgresql_database,omitempty"`
+	PostgreSQLReplicationUser     string                     `json:"postgresql_replication_user,omitempty"`
+	PostgreSQLPeers               []PostgreSQLPeer           `json:"postgresql_peers,omitempty"`
+	OracleHome                    string                     `json:"oracle_home,omitempty"`
+	OracleSID                     string                     `json:"oracle_sid,omitempty"`
+	OracleOSUser                  string                     `json:"oracle_os_user,omitempty"`
+	OracleDGMGRLBinary            string                     `json:"oracle_dgmgrl_binary,omitempty"`
+	OracleUsername                string                     `json:"oracle_username,omitempty"`
+	OracleAuthenticationRole      string                     `json:"oracle_authentication_role,omitempty"`
+	OraclePasswordEnv             string                     `json:"oracle_password_env,omitempty"`
+	OraclePassword                string                     `json:"-"`
+	OracleConnectIdentifier       string                     `json:"oracle_connect_identifier,omitempty"`
+	OracleDatabaseUniqueName      string                     `json:"oracle_database_unique_name,omitempty"`
+	OracleBrokerConfiguration     string                     `json:"oracle_broker_configuration,omitempty"`
+	OracleMembers                 []string                   `json:"oracle_members,omitempty"`
 }
 
 type Config struct {
@@ -214,6 +215,12 @@ func LoadConfig(path string) (Config, error) {
 		}
 		if policy.Engine == "" {
 			policy.Engine = model.EngineMySQL
+		}
+		if policy.EndpointProvider != "" && policy.EndpointProvider != model.EndpointProviderLinuxVIP && policy.EndpointProvider != model.EndpointProviderGateway {
+			return Config{}, fmt.Errorf("unsupported Agent endpoint provider")
+		}
+		if policy.EndpointProvider == model.EndpointProviderGateway && (policy.Engine != model.EngineMySQL || policy.VIP != "" || policy.Interface != "" || policy.Prefix != 0) {
+			return Config{}, fmt.Errorf("gateway Agent requires MySQL and no local VIP/interface/prefix")
 		}
 		if policy.RuntimeKind == "" {
 			policy.RuntimeKind = model.RuntimeLinux

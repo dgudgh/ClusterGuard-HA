@@ -249,6 +249,7 @@ const (
 type EndpointProviderKind string
 
 const (
+	EndpointProviderGateway           EndpointProviderKind = "gateway"
 	EndpointProviderLinuxVIP          EndpointProviderKind = "linux_vip"
 	EndpointProviderKubernetesService EndpointProviderKind = "kubernetes_service"
 	// EndpointProviderExternalCommand hands writer-endpoint mutations to an
@@ -261,7 +262,7 @@ const (
 )
 
 func (kind EndpointProviderKind) Valid() bool {
-	return kind == EndpointProviderLinuxVIP ||
+	return kind == EndpointProviderGateway || kind == EndpointProviderLinuxVIP ||
 		kind == EndpointProviderKubernetesService ||
 		kind == EndpointProviderExternalCommand
 }
