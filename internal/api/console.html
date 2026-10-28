@@ -739,7 +739,7 @@
     .cluster-management-dialog .dialog-head { align-items:flex-start; background:#fff; }
     .cluster-management-dialog .dialog-body { min-height:0; overflow:auto; background:#f7faf8; }
     .cluster-management-dialog .dialog-actions { align-items:center; justify-content:space-between; padding:14px 18px; border-top:1px solid var(--line); background:#fff; }
-    .cluster-management-tabs { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:4px; margin-bottom:16px; padding:4px; border:1px solid var(--line); border-radius:7px; background:#edf2ef; }
+    .cluster-management-tabs { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:4px; margin-bottom:16px; padding:4px; border:1px solid var(--line); border-radius:7px; background:#edf2ef; }
     .cluster-management-tabs button { border:0; background:transparent; color:var(--muted); }
     .cluster-management-tabs button[aria-selected="true"] { background:#fff; color:var(--accent-strong); box-shadow:0 1px 4px rgba(19,48,36,.08); }
     .cluster-management-panel { display:grid; gap:14px; }
@@ -1590,6 +1590,7 @@
     <div class="dialog-body">
       <div class="cluster-management-tabs" role="tablist" aria-label="集群管理操作">
         <button id="cluster-create-tab" type="button" role="tab" aria-controls="cluster-create-panel" aria-selected="true">新增集群</button>
+        <button id="cluster-attach-tab" type="button" role="tab" aria-controls="cluster-create-panel" aria-selected="false">接入已有实例</button>
         <button id="cluster-retire-tab" type="button" role="tab" aria-controls="cluster-retire-panel" aria-selected="false">退役集群</button>
       </div>
 
@@ -1605,6 +1606,7 @@
         <div class="cluster-management-section">
           <h3>发现入口</h3>
           <p>至少登记一个可访问的数据库端点。认证信息由控制节点后端配置管理，不在浏览器中收集。</p>
+          <p id="cluster-attach-note" hidden>仅登记当前集群中的已有数据库实例并执行发现，不安装、重建数据库或 Agent。请使用所有控制节点均可访问的地址；单机回环隧道不能作为共享地址。发现成功不代表已具备切换能力。</p>
           <div class="cluster-endpoint-list" id="cluster-endpoint-list"></div>
           <div class="cluster-management-inline-action"><button id="add-cluster-endpoint" type="button">＋ 添加端点</button></div>
         </div>
@@ -2949,6 +2951,17 @@
       "结果": "Result",
       "登记新的数据库集群，或将不再管理的集群安全移出活动清单。": "Register a database cluster or safely remove a retired cluster from the active directory.",
       "新增集群": "Add cluster",
+      "接入已有实例": "Connect existing instances",
+      "正在登记实例。": "Registering instances.",
+      "实例已登记，正在执行首次发现。": "Instances registered. Running initial discovery.",
+      "实例已登记，但首次发现未完成：{0}": "Instances registered, but initial discovery did not complete: {0}",
+      "实例已接入集群 {0} 并完成发现。": "Instances connected to cluster {0} and discovery completed.",
+      "实例已接入集群 {0}。": "Instances connected to cluster {0}.",
+      "接入实例失败：{0}": "Failed to connect instances: {0}",
+
+      "将已有数据库实例接入当前所选集群。": "Connect existing database instances to the selected cluster.",
+      "所选集群已变化，请重新打开接入窗口。": "The selected cluster changed. Reopen the connection dialog.",
+      "仅登记当前集群中的已有数据库实例并执行发现，不安装、重建数据库或 Agent。请使用所有控制节点均可访问的地址；单机回环隧道不能作为共享地址。发现成功不代表已具备切换能力。": "Register and discover existing database instances in this cluster. This does not install or rebuild databases or Agents. Use addresses reachable by every controller; a host-local tunnel is not a shared address. Successful discovery does not establish failover readiness.",
       "退役集群": "Retire cluster",
       "集群身份": "Cluster identity",
       "集群名称长期保持稳定；主库、主机名、IP 和端口变化不会改变集群身份。": "The cluster name remains stable. Changes to the primary, hostname, IP and port do not change cluster identity.",
@@ -7501,9 +7514,26 @@
     };
 
     const setClusterManagementMode = mode => {
-      state.clusterManagementMode = mode === 'retire' ? 'retire' : 'create';
-      const create = state.clusterManagementMode === 'create';
-      byId('cluster-create-tab').setAttribute('aria-selected', String(create));
+      state.clusterManagementMode = ['retire','attach'].includes(mode) ? mode : 'create';
+      const attach = state.clusterManagementMode === 'attach';
+      const create = state.clusterManagementMode !== 'retire';
+      if (attach) {
+        const cluster = selectedCluster();
+        state.clusterAttachID = cluster?.resource_id || '';
+        byId('cluster-display-name').value = cluster?.display_name || '';
+        byId('cluster-engine').value = cluster?.engine || 'mysql';
+      } else if (create) {
+        byId('cluster-display-name').value = '';
+        byId('cluster-engine').value = 'mysql';
+      }
+      byId('cluster-display-name').disabled = attach;
+      byId('cluster-engine').disabled = attach;
+      byId('cluster-attach-note').hidden = !attach;
+      byId('cluster-attach-tab').setAttribute('aria-selected', String(attach));
+      byId('cluster-attach-tab').disabled = !selectedCluster();
+      byId('cluster-create-panel').setAttribute('aria-labelledby', attach ? 'cluster-attach-tab' : 'cluster-create-tab');
+      applyClusterEngineDefaults();
+      byId('cluster-create-tab').setAttribute('aria-selected', String(create && !attach));
       byId('cluster-retire-tab').setAttribute('aria-selected', String(!create));
       byId('cluster-create-panel').hidden = !create;
       byId('cluster-retire-panel').hidden = create;
@@ -7511,7 +7541,7 @@
       byId('submit-cluster-retirement').hidden = create;
       if (!create) state.retireConfirmationClusterId = '';
       if (!create) renderClusterRetirementContext();
-      setClusterManagementResult(create ? ui('填写稳定集群名称和至少一个发现入口。') : ui('输入完整集群名称后才能退役。'));
+      setClusterManagementResult(attach ? ui('将已有数据库实例接入当前所选集群。') : create ? ui('填写稳定集群名称和至少一个发现入口。') : ui('输入完整集群名称后才能退役。'));
     };
 
     const setClusterManagementRunning = running => {
@@ -7520,10 +7550,11 @@
       byId('add-cluster-endpoint').disabled = running;
       byId('cluster-create-tab').disabled = running;
       byId('cluster-retire-tab').disabled = running;
+      byId('cluster-attach-tab').disabled = running || !selectedCluster();
       byId('cancel-cluster-management').disabled = running;
       byId('close-cluster-management-modal').disabled = running;
-      byId('cluster-display-name').disabled = running;
-      byId('cluster-engine').disabled = running;
+      byId('cluster-display-name').disabled = running || state.clusterManagementMode === 'attach';
+      byId('cluster-engine').disabled = running || state.clusterManagementMode === 'attach';
       byId('retire-cluster-confirmation').disabled = running;
       byId('cluster-endpoint-list').querySelectorAll('input').forEach(input => { input.disabled = running; });
       updateClusterEndpointRemoveButtons();
@@ -7552,6 +7583,8 @@
 
     const submitClusterRegistration = async () => {
       if (!canAdministerPlatform() || state.clusterMutationRunning) return;
+      const attach = state.clusterManagementMode === 'attach';
+      const clusterID = state.clusterAttachID;
       const displayName = byId('cluster-display-name').value.trim();
       const engine = byId('cluster-engine').value;
       const endpoints = [...byId('cluster-endpoint-list').querySelectorAll('.cluster-endpoint-row')].map(row => ({
@@ -7564,27 +7597,30 @@
         if (!endpoints.length) throw new APIError('at least one database endpoint：请至少填写一个数据库端点。');
         if (endpoints.some(endpoint => !Number.isInteger(endpoint.port) || endpoint.port < 1 || endpoint.port > 65535)) throw new APIError('数据库端口必须在 1 到 65535 之间。');
         setClusterManagementRunning(true);
-        setClusterManagementResult(ui('正在登记集群。'));
-        const payload = { display_name:displayName, engine, endpoints };
-        const registered = await fetchResult('/api/v1/clusters', mutationOptions(payload));
+        setClusterManagementResult(ui(attach ? '正在登记实例。' : '正在登记集群。'));
+        if (attach && (!clusterID || selectedCluster()?.resource_id !== clusterID)) throw new APIError('所选集群已变化，请重新打开接入窗口。');
+        const payload = attach ? { endpoints } : { display_name:displayName, engine, endpoints };
+        const registered = attach
+          ? (await fetchResult(`/api/v1/clusters/${clusterID}/database-endpoints`, mutationOptions(payload)), { cluster:{ resource_id:clusterID } })
+          : await fetchResult('/api/v1/clusters', mutationOptions(payload));
         let discoveryWarning = '';
         try {
-          setClusterManagementResult(ui('集群已登记，正在执行首次发现。'));
+          setClusterManagementResult(ui(attach ? '实例已登记，正在执行首次发现。' : '集群已登记，正在执行首次发现。'));
           await fetchResult(`/api/v1/clusters/${registered.cluster.resource_id}/discover`, mutationOptions({}));
         } catch (error) {
           discoveryWarning = error.message;
         }
-        await loadClusters(registered.cluster.resource_id);
+        if (!attach || selectedCluster()?.resource_id === clusterID) await loadClusters(registered.cluster.resource_id);
         if (discoveryWarning) {
-          setClusterManagementResult(ui("集群已登记，但首次发现未完成：{0}", discoveryWarning), 'error');
+          setClusterManagementResult(ui(attach ? "实例已登记，但首次发现未完成：{0}" : "集群已登记，但首次发现未完成：{0}", discoveryWarning), 'error');
           setLiveStatus(ui("集群 {0} 已登记，首次发现需要处理。", displayName), true);
         } else {
-          setClusterManagementResult(ui("集群 {0} 已登记并完成首次发现。", displayName), 'success');
-          setLiveStatus(ui("集群 {0} 已添加。", displayName));
+          setClusterManagementResult(ui(attach ? "实例已接入集群 {0} 并完成发现。" : "集群 {0} 已登记并完成首次发现。", displayName), 'success');
+          setLiveStatus(ui(attach ? "实例已接入集群 {0}。" : "集群 {0} 已添加。", displayName));
           window.setTimeout(closeClusterManagementModal, 500);
         }
       } catch (error) {
-        setClusterManagementResult(ui("新增集群失败：{0}", localizeUIMessage(error.message)), 'error');
+        setClusterManagementResult(ui(attach ? "接入实例失败：{0}" : "新增集群失败：{0}", localizeUIMessage(error.message)), 'error');
       } finally {
         setClusterManagementRunning(false);
       }
@@ -8020,6 +8056,7 @@
     byId('cancel-cluster-management').addEventListener('click', closeClusterManagementModal);
     byId('cluster-management-modal').addEventListener('cancel', event => { if (state.clusterMutationRunning) event.preventDefault(); });
     byId('cluster-create-tab').addEventListener('click', () => setClusterManagementMode('create'));
+    byId('cluster-attach-tab').addEventListener('click', () => setClusterManagementMode('attach'));
     byId('cluster-retire-tab').addEventListener('click', () => setClusterManagementMode('retire'));
     byId('cluster-engine').addEventListener('change', applyClusterEngineDefaults);
     byId('add-cluster-endpoint').addEventListener('click', () => addClusterEndpointRow());

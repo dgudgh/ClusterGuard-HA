@@ -23,6 +23,9 @@ recorded-through: 73ff4a3
 
 | 日期 | 文件 | 变更 | 说明 |
 | --- | --- | --- | --- |
+| 2026-10-28 | `docs/development/existing-instance-registration-2026-10-28.md` | A | 记录已有实例端点接入的修改前对照、契约加载、原子登记/发现边界及实际回归结果。 |
+| 2026-10-28 | `docs/development/backend/clusters.md` | M | 补既有集群数据库端点追加API、幂等/原子冲突与发现失效规则。 |
+| 2026-10-28 | `docs/development/frontend/context.md` | M | 补集群管理接入已有实例入口、固定集群上下文及登记/发现/执行能力区分。 |
 | 2026-10-28 | `docs/development/external-command-endpoint-2026-10-28.md` | A | 任务卡：新增 external_command 端点提供者。记录已读门禁与 source 阶段、旧 LinuxVIPProvider 逐项对照、七条安全决策（钩子路径校验/不经 shell/不传凭据/输出上限/超时/coverage 不完整即拒/钩子不参与选主）、18 条测试与 13 条变异全部抓住，以及未做现场与数据库验收的边界。 |
 | 2026-10-28 | `docs/development/markdown-change-record.md` | M | 登记 2026-10-28 external_command 端点提供者批次（本页）。 |
 | 2026-10-20 | `docs/development/documentation-sync-2026-10-20.md` | A | 本批次任务记录：现场测试数据写入器重建与 17:00 事件同既有灾备记录的对应（标注为吻合而非确认）、catalogue 补齐、README 版本同步的旧版对照与验证计划。 |
