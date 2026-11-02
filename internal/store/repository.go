@@ -120,7 +120,6 @@ type discoveryMetricCandidate struct {
 const discoveryMetricSampleLimit = 60
 
 type snapshot struct {
-	GatewayPublications   map[model.ResourceID]model.GatewayGrant                  `json:"gateway_publications,omitempty"`
 	Clusters              map[model.ResourceID]model.DatabaseCluster               `json:"clusters"`
 	Nodes                 map[model.ResourceID]model.DatabaseNode                  `json:"nodes"`
 	RuntimeTargets        map[model.ResourceID]model.RuntimeTarget                 `json:"runtime_targets"`
@@ -155,6 +154,9 @@ type snapshot struct {
 	// actually sets a policy.
 	ClusterPolicy      *ClusterPolicy               `json:"cluster_policy,omitempty"`
 	ConfigurationTasks map[string]ConfigurationTask `json:"configuration_tasks,omitempty"`
+	// Keep optional extensions after the legacy payload, whose first key is
+	// clusters. snapshotPayload uses that boundary for consensus digest checks.
+	GatewayPublications map[model.ResourceID]model.GatewayGrant `json:"gateway_publications,omitempty"`
 }
 
 type Repository struct {

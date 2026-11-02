@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"clusterguard.io/ha/internal/coordination"
 	"clusterguard.io/ha/internal/endpoint"
 	"clusterguard.io/ha/pkg/model"
@@ -9,6 +10,35 @@ import (
 	"testing"
 	"time"
 )
+
+func TestGatewayGrantRevisionPayloadRoundTripAndTamperDetection(t *testing.T) {
+	value := emptySnapshot()
+	id := model.NewResourceID()
+	now := time.Now().UTC()
+	value.GatewayPublications = map[model.ResourceID]model.GatewayGrant{id: {
+		ClusterID: id, Epoch: 1, Sequence: 1, Mode: "withdraw",
+		TargetID: model.NewResourceID(), LeaseID: model.NewResourceID(),
+		OperationID: model.NewResourceID(), IssuedAt: now, ExpiresAt: now.Add(time.Second),
+	}}
+	encoded, err := encodeSnapshotRevision(value, 1, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, _, err := decodeSnapshotState(encoded)
+	if err != nil {
+		t.Fatalf("real consensus must accept an encoded gateway publication: %v", err)
+	}
+	if decoded.GatewayPublications[id] != value.GatewayPublications[id] {
+		t.Fatal("lost gateway ordering fence")
+	}
+	tampered := bytes.Replace(encoded, []byte(`"sequence":1`), []byte(`"sequence":2`), 1)
+	if bytes.Equal(encoded, tampered) {
+		t.Fatal("tamper did not change payload")
+	}
+	if _, _, err = decodeSnapshotState(tampered); err == nil {
+		t.Fatal("tampered gateway fence was accepted")
+	}
+}
 
 type gatewayStoreAuthority struct{}
 

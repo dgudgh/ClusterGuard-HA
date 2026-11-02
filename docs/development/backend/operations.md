@@ -38,3 +38,5 @@ Raft多数派和数据节点Agent的VIP观测覆盖分别校验。两台整机�
 ## 云/混合云固定业务入口
 
 MySQL受控切换可选择`gateway` Service端点提供者，复用原操作流程和多数派LeaseStore；切换前全体网关撤权，隔离/提升后发布新目标，稳定续期由OwnershipKeeper在新鲜SQL与多数派检查后执行。网关无数据库选主权，Agent须显式使用无宿主机VIP的gateway模式。当前首次接入、旧VIP维护迁移、TLS配置、限制和本地验证见[页面网关联动记录](../gateway-switchover-2026-10-28.md)；不由此声明现场部署或其他引擎已验收。
+
+真实MySQL、三节点Raft、双网关及实际页面往返切换的复跑入口、摘要缺陷和测试结果见[真实数据库端到端测试](../gateway-real-mysql-2026-11-02.md)。该本机实验与跨云网络、云LB、现场Agent验收分别记录。
