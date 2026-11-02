@@ -192,7 +192,9 @@ const CHECKS = [
       for(const proof of ['r.reconcileGatewayPostgreSQL(ctx, policy, decision)', 'r.postgresql.Status(ctx, policy)', 'inspector.Writable(ctx, policy)', '!running || recovery || !ok', 'if err != nil || !writable', 'r.selfIsolate(ctx, policy'])if(!agent.includes(proof))return 'PG Agent fence missing: '+proof;
       if(!config.includes('PostgreSQL gateway Agent currently requires the Linux runtime')||!config.includes('policy.VIP != "" || policy.Interface != "" || policy.Prefix != 0'))return 'PG runtime or host VIP policy is no longer bounded';
       if(!local.includes('"HOME=" + filepath.Dir(policy.PostgreSQLPassfile)')||!local.includes("SELECT NOT pg_is_in_recovery() AND NOT current_setting('transaction_read_only')::boolean"))return 'PG native tool identity or write check missing';
-      for(const file of ['internal/endpoint/gateway_postgresql_test.go','adapters/postgresql/gateway_switchover_test.go'])if(!read(file))return 'PG gateway regression missing: '+file;
+      const runtime=read('internal/agent/docker_postgresql.go')||'';
+      if(!runtime.includes('return inspector.Writable(ctx, policy)'))return 'runtime PG writer inspector is not wired';
+      for(const file of ['internal/endpoint/gateway_postgresql_test.go','adapters/postgresql/gateway_switchover_test.go','cmd/clusterguard-agent/gateway_postgresql_test.go'])if(!read(file))return 'PG gateway regression missing: '+file;
       return true;
     }
   },
@@ -1302,6 +1304,7 @@ const reportOpen = failures => {
 // The files the rules read. The self-test copies exactly these, so a mutation cannot be
 // caught by reading something the gate does not actually consult.
 const READ_FILES = [
+ 'internal/agent/docker_postgresql.go','cmd/clusterguard-agent/gateway_postgresql_test.go',
  'internal/agent/config.go', 'internal/agent/postgresql.go','internal/endpoint/gateway_postgresql_test.go','adapters/postgresql/gateway_switchover_test.go',
  'internal/api/disaster_recovery.go',
   'adapters/mysql/runner.go',
@@ -1343,6 +1346,7 @@ const MUTATIONS = [
   {name:'PG gateway omits recovery SQL evidence',file:'internal/endpoint/gateway.go',find:'instance.EngineMetadata["in_recovery"], "false"',replace:'instance.EngineMetadata["missing_recovery"], "false"',rule:'PostgreSQL gateway preserves native writer and hard fencing'},
   {name:'PG gateway omits read-only SQL evidence',file:'internal/endpoint/gateway.go',find:'instance.EngineMetadata["transaction_read_only"], "false"',replace:'instance.EngineMetadata["missing_read_only"], "false"',rule:'PostgreSQL gateway preserves native writer and hard fencing'},
   {name:'PG Agent accepts a standby writer',file:'internal/agent/gateway_reconcile.go',find:'!running || recovery || !ok',replace:'!running || !ok',rule:'PostgreSQL gateway preserves native writer and hard fencing'},
+  {name:'runtime PG wrapper loses native writer inspection',file:'internal/agent/docker_postgresql.go',find:'return inspector.Writable(ctx, policy)',replace:'return false, nil',rule:'PostgreSQL gateway preserves native writer and hard fencing'},
   {name:'PG tools inherit root HOME',file:'internal/agent/postgresql.go',find:'"HOME=" + filepath.Dir(policy.PostgreSQLPassfile)',replace:'"HOME=/root"',rule:'PostgreSQL gateway preserves native writer and hard fencing'},
   {name:'gateway enters the legacy disaster recovery planner',file:'internal/api/disaster_recovery.go',find:'if gatewayMode {',replace:'if false && gatewayMode {',rule:'gateway publication preserves majority authority and bounded routing'},
   {name:'gateway page calls expired cached routes ready',file:'internal/api/console.html',find:":stale?'网关状态需重新读取':",replace:':',rule:'gateway publication preserves majority authority and bounded routing'},

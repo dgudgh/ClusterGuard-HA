@@ -32,3 +32,13 @@
 四节点PG16.15已运行一主三备（本地152为初始主），system_identifier一致；100行测试数据及摘要四库相同，三备streaming且只读。三个控制节点到四库共12条verify-full TLS/发现权限查询通过。MySQL原四库及三控制节点仍健康，原155网关配置未改。部署原始失败保留：PG就绪socket竞态、云runuser继承root HOME的客户端证书权限错误、SELinux init_t直接exec ssh被拒；对应使用显式就绪等待、专用HOME和已有受控脚本启动方式修正，没有关闭SELinux。
 
 PGgateway旧实现先复现预检和正常writer被拒；新增PG原生可写/多数派续期、Linux无VIP策略及停主隔离。Go全仓、受影响包race/vet通过；native PG BuildPlan/Execute/Verify配真实LeaseStore及隔离SQL/网关传输测试通过，证明withdraw→旧主停止证明→WAL追平→提升→激活→rewind。48项SOURCE严格门禁、143项门禁变异与2个控制通过；12/12独立行为变异由断言捕获（含PG恢复/只读、本机写证据、HOME），编译失败不算捕获。隔离Chrome网关40项及原操作锁18场景通过，均为fixture API，不是现场页面执行。签名包和PG真实网关切主此时尚未执行。
+
+## 首次真实Agent验收发现的运行时分发缺口
+
+3.1.6.1已验签并通过13项ART，正式通道按153→154→152更新成功，维护门禁释放；云端使用相同签名原件更新Agent。四节点源/新包摘要一致检查另存。私有制品目录完整检查在升级排队后才完成，顺序不符合先检查后执行的计划，已保留此时序事实，不能倒填成排队前已跑；该次完整目录检查实际通过。
+
+PG正式登记与12条控制器TLS查询通过，网关进程在156尚未启用时取得多数派稳定租约。首次只在152追加PG Agent策略，实际systemd却停止PG主库：cmd/clusterguard-agent的newRuntimeControllers实际传入RuntimePostgreSQLController；24c1c88只为PostgreSQLLocalController实现Writable，分发器未转发可选接口，源码夹具直接注入本地控制器遗漏该接线。首个补丁未通过PG现场验收，字节永久保留，不重建或改写通过。
+
+纠正前对照：读取24c1c88的main.go/newRuntimeControllers、docker_postgresql.go的RuntimePostgreSQLController.Selected/Status和gateway_reconcile.go；运行时分发器缺Writable，导致!ok保护触发。原15分钟内新PG尚无应用入口，三备仍为备用，未出现第二writer；152的PG策略已单独撤回保留其他MySQL策略，MySQL实际协调恢复Result=success。PG端点将经正式接口撤权并等待租约自然失效后再按初始部署恢复PG，禁止伪造writer/grant或删水位。修复须增加实际newRuntimeControllers→Reconciler的测试与分发器失败路径，使用3.1.6.2新身份及同封板修订链重新ART/现场验证；原6.1失败日志保留。
+
+分发修复回归：新增cmd/clusterguard-agent测试使用实际newRuntimeControllers构造和运行时分发器，先重现正常writer被停，修复后正常writer保持且只读writer被停；分发器缺实现/缺运行时仍拒绝。受影响包unit/race/vet、48项SOURCE、144项门禁变异与2控制、13/13行为变异通过。PG端点已正式设inactive，旧授权自然到期；没有删租约或路由水位，没有启用156。新身份将为3.1.6.2、revision=1，原6.1字节保留。

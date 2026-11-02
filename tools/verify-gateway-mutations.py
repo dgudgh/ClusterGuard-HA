@@ -8,6 +8,7 @@ import tempfile
 root=Path(__file__).resolve().parent.parent
 files=subprocess.check_output(['git','ls-files','-z'],cwd=root).decode().split('\0')
 cases=[
+ ('pg-runtime-inspector','internal/agent/docker_postgresql.go','return inspector.Writable(ctx, policy)','writable, err := inspector.Writable(ctx, policy); return writable || err == nil, err','./cmd/clusterguard-agent','TestRuntimeControllerWiresPostgreSQLGatewayWritability'),
  ('pg-writable-proof','internal/endpoint/gateway.go','strings.EqualFold(instance.EngineMetadata["transaction_read_only"], "false")','true','./internal/endpoint','TestGatewayPostgreSQLUsesNativeWritableEvidenceAndMajority'),
  ('pg-recovery-proof','internal/endpoint/gateway.go','strings.EqualFold(instance.EngineMetadata["in_recovery"], "false")','true','./internal/endpoint','TestGatewayPostgreSQLUsesNativeWritableEvidenceAndMajority'),
  ('pg-local-write-proof','internal/agent/gateway_reconcile.go','if err != nil || !writable {','if err != nil || (!writable && false) {','./internal/agent','TestGatewayPostgreSQLAgentPreservesHardFencingAndNeverTouchesVIP'),

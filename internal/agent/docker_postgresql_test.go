@@ -126,3 +126,17 @@ func TestRuntimePostgreSQLControllerRejectsUnknownRuntime(t *testing.T) {
 		t.Fatal("Kubernetes PostgreSQL policy escaped the host runtime controller")
 	}
 }
+
+func TestRuntimePostgreSQLWritableRequiresSelectedInspector(t *testing.T) {
+	p := postgresqlControllerPolicy()
+	for name, r := range map[string]*RuntimePostgreSQLController{
+		"missing runtime":   NewRuntimePostgreSQLController(nil, nil),
+		"missing inspector": NewRuntimePostgreSQLController(&fakePostgreSQLController{}, nil),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if ok, err := r.Writable(context.Background(), p); err == nil || ok {
+				t.Fatalf("unsupported inspection accepted: %v %v", ok, err)
+			}
+		})
+	}
+}

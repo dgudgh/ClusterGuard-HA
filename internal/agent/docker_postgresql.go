@@ -577,6 +577,18 @@ func (controller *RuntimePostgreSQLController) Status(ctx context.Context, polic
 	return selected.Status(ctx, policy)
 }
 
+func (controller *RuntimePostgreSQLController) Writable(ctx context.Context, policy ClusterPolicy) (bool, error) {
+	selected, err := controller.selected(policy)
+	if err != nil {
+		return false, err
+	}
+	inspector, ok := selected.(postgreSQLWritableInspector)
+	if !ok {
+		return false, fmt.Errorf("runtime %q cannot inspect PostgreSQL writability", policy.RuntimeKind)
+	}
+	return inspector.Writable(ctx, policy)
+}
+
 func (controller *RuntimePostgreSQLController) Stop(ctx context.Context, policy ClusterPolicy) error {
 	selected, err := controller.selected(policy)
 	if err != nil {
@@ -641,3 +653,4 @@ var _ PostgreSQLController = (*DockerPostgreSQLController)(nil)
 var _ PostgreSQLStandbyIntentInspector = (*DockerPostgreSQLController)(nil)
 var _ PostgreSQLController = (*RuntimePostgreSQLController)(nil)
 var _ PostgreSQLStandbyIntentInspector = (*RuntimePostgreSQLController)(nil)
+var _ postgreSQLWritableInspector = (*RuntimePostgreSQLController)(nil)
