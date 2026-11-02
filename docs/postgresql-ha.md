@@ -221,6 +221,8 @@ For the actual systemd sandbox, setpriv identity, narrow PGDATA writes and passf
 
 The subsequent PG gateway source adds Linux/no-host-VIP Agent support, native writable SQL evidence and the complete withdrawal barrier. Compatible HA/Agent deployment is required; older binaries remain unsupported. Native HA, source checks and actual gateway acceptance are separate; see the [deployment/test record](development/postgresql-hybrid-field-2026-11-02.md). PG gateway disaster rebuild remains unsupported; manual route publication cannot substitute for authority.
 
+For the PG16.15 four-node site, portable HBA/TLS requirements and configuration copied by rewind, see the [Agent guide](en-US/postgresql-agent-systemd.md#hybrid-configuration-and-return-switch-prerequisites). Long operations must retain the same authorized route, and recovery must be measured through the actual application entry rather than an HTTP200 response.
+
 ## Restricted Agent Policy
 
 Every database node runs `clusterguard-agent` with a cluster-specific policy.

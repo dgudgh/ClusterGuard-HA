@@ -214,6 +214,7 @@ GRANT EXECUTE ON FUNCTION pg_reload_conf() TO cg_operator;
 <h2 id="pg-agent部署与企业网关边界">PG Agent部署与企业网关边界<a class="heading-anchor" href="#pg-agent部署与企业网关边界" aria-label="Link to PG Agent部署与企业网关边界">#</a></h2>
 <p>Agent的实际systemd沙箱、setpriv身份、PGDATA窄范围写权限及passfile排查见<a href="../../zh-CN/postgresql-agent-systemd.md">PG Agent单功能指南</a>。现有配置工具会生成PG专用drop-in；不要复制MySQL现场CAP_SYS_NICE修复。</p>
 <p>后续PG网关适配已在本轮源码增加，要求匹配HA/Agent、Linux无本机VIP策略、PG原生可写SQL证据和严格撤权屏障；旧版本仍不支持。原生HA、源码回归和真实PG网关联动分别验收，见<a href="../../development/postgresql-hybrid-field-2026-11-02.md">本轮部署与测试</a>。PG gateway灾难重建不在该适配范围，不能手工发布路由代替授权。</p>
+<p>本轮PG16.15四节点的统一HBA/TLS配置与重绕携带配置风险见<a href="../../zh-CN/postgresql-agent-systemd.md#%E6%B7%B7%E5%90%88%E4%BA%91%E7%AB%99%E7%82%B9%E9%85%8D%E7%BD%AE%E4%B8%8E%E5%9B%9E%E5%88%87%E5%89%8D%E7%BD%AE">Agent指南</a>。长操作必须持续维持原授权路由，并从实际业务入口测量恢复时间；页面200不能代替这一检查。</p>
 <h2 id="受限-agent-策略">受限 Agent 策略<a class="heading-anchor" href="#受限-agent-策略" aria-label="Link to 受限 Agent 策略">#</a></h2>
 <p>每个数据库节点运行 <code>clusterguard-agent</code>，具有特定于集群的策略。该策略固定集群 UUID、平台实例 UUID、PostgreSQL 本地节点 UUID、引擎、服务、OS 用户、数据目录、二进制目录、数据库、passfile、端口、VIP 和对等允许列表。
 签名请求是短暂的且受计划限制。Agent 仅暴露固定的命令向量；它不是一个远程 shell。</p>

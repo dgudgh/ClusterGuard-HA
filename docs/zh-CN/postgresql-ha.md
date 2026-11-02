@@ -169,6 +169,8 @@ Agent的实际systemd沙箱、setpriv身份、PGDATA窄范围写权限及passfil
 
 后续PG网关适配已在本轮源码增加，要求匹配HA/Agent、Linux无本机VIP策略、PG原生可写SQL证据和严格撤权屏障；旧版本仍不支持。原生HA、源码回归和真实PG网关联动分别验收，见[本轮部署与测试](../development/postgresql-hybrid-field-2026-11-02.md)。PG gateway灾难重建不在该适配范围，不能手工发布路由代替授权。
 
+本轮PG16.15四节点的统一HBA/TLS配置与重绕携带配置风险见[Agent指南](postgresql-agent-systemd.md#混合云站点配置与回切前置)。长操作必须持续维持原授权路由，并从实际业务入口测量恢复时间；页面200不能代替这一检查。
+
 ## 受限 Agent 策略
 
 每个数据库节点运行 `clusterguard-agent`，具有特定于集群的策略。该策略固定集群 UUID、平台实例 UUID、PostgreSQL 本地节点 UUID、引擎、服务、OS 用户、数据目录、二进制目录、数据库、passfile、端口、VIP 和对等允许列表。
