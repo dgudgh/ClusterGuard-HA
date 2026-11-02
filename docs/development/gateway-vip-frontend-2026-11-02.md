@@ -96,3 +96,11 @@ HA增加显式allow_single_gateway配置（只允许一个URL，默认至少2）
 文档落点：双语mysql-agent-systemd.md承载可执行排查和条件化drop-in；后端nodes/operations只给模块指路与终态后验证边界，双语API参考补gateway配置。独立网关README/deploy/frontend/development同步preview.3四程序与单次云现场范围，单机失联不被描述为仍可服务。未改代码、现场配置或既有包。
 
 本次文档静态验证：62个相关本地链接可解析；双语指南各5个同范围章节、8个bash示例通过bash -n，仅解析未在服务器执行；版本/能力/路径/验收数字在双语之间一致。HTML重建118页，两个API生成页均正确链接对应源Markdown；许可68、Markdown台账11通过。独立preview.3原归档摘要仍与原sidecar相同。以上为文档检查，未重做现场测试或扩展62秒稳定性证据。
+
+## PostgreSQL对应文档补齐计划
+
+2026-11-02，用户追问PG对应说明。HA进入4076825、独立gateway13d4f01，工作树干净。已读门禁流程、后端nodes/operations、PG HA原有Agent策略、systemd_sandbox.go/postgresql.go及gateway/Agent配置限制；CG-UPGRADE-CONTRACT v2已完整加载，规则未改。本轮只做文档和静态核验，不执行PG部署、切换或新包构建。
+
+源码事实：PG实际身份切换默认使用/usr/bin/setpriv，PGPASSFILE与配置OS用户/本地数据库用户绑定；沙箱生成器输出20-postgresql-recovery.conf，仅允许已校验PGDATA及其.clusterguard-recovery目录可写。gateway端点Precheck和gateway Agent策略明确只支持MySQL，故不得把协议无关TCP转发或MySQL云现场结果标成PG网关切主能力。新增双语PG Agent单功能页，从PG HA手册/后端节点与操作模块指路，并同步独立网关支持边界。验证字段/命令/路径对照源码、PG专属限制与未实测范围、链接和示例语法、许可/Markdown/HTML；不复用MySQL的CAP_SYS_NICE修复为PG通用解法。
+
+本次PG文档验证：72个相关本地链接存在，双语各5节、6段bash示例通过语法检查，4个重建HTML入口可指向PG指南；Agent的原生角色/服务、窄范围PG沙箱及gateway签名范围3项源码夹具测试通过。许可68项、Markdown台账11项通过，HTML重建118页。以上只覆盖文档与源码夹具，未在真实PG/systemd环境执行命令、部署、往返切主或验收PG企业网关；现有MySQL限定未移除。

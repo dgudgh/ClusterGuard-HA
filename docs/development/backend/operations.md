@@ -46,3 +46,7 @@ MySQL受控切换可选择`gateway` Service端点提供者，复用原操作流�
 执行中的撤权与短暂关闭路由属于切换流程；终态后持续出现只读/路由开关交替则须按操作ID检查Agent计时器、数据库角色和授权续期，不能仅重试切换。原厂RPM文件能力导致协调服务exec失败的已复现处理，见[Agent systemd兼容指南](../../zh-CN/mysql-agent-systemd.md)。
 
 2026-11-02用户完成一次真实本地→云切主；现场能力修正后16次/约62秒的入口SQL和续期检查通过。回切、应用事务/连接池和完整故障验收尚未完成；原始异常、修复与分阶段范围见[现场记录](../gateway-vip-frontend-2026-11-02.md)。该结果不扩大其他引擎、云LB或K8s的支持承诺。
+
+## PostgreSQL原生HA与网关联动分开验收
+
+PG原生切换仍按自己的身份/时间线/WAL/旧主隔离和入口流程核验，说明见[PG HA手册](../../zh-CN/postgresql-ha.md)与[PG Agent systemd指南](../../zh-CN/postgresql-agent-systemd.md)。当前gateway提供者Precheck与gateway Agent配置均要求MySQL，不允许以改端口或跳过检查方式给PG开放网关联动。MySQL的16次云现场样本不是PG验收；本轮没有PG云切主或新增支持实现。

@@ -22,6 +22,10 @@ SSH 中的只读角色检查通过，不代表实际 systemd 协调计时器具�
 
 指南保留现有实现不会自动探测该 MySQL 差异的限制，并要求真实计时器、持续固定入口 SQL 与复制验证；不以任务 succeeded 代替持续 writer 验收。
 
+## PostgreSQL Agent身份与文件系统边界
+
+PG使用专属策略、默认setpriv身份切换、受保护passfile，以及由实际PGDATA生成的20-postgresql-recovery.conf。按[PG Agent单功能指南](../../zh-CN/postgresql-agent-systemd.md)核对真实协调单元；不能用SSH完整root结果替代，也不能套用MySQL文件能力修复。当前gateway Agent策略拒绝PG，普通TCP可转发不等于PG网关联动已实现。
+
 ## 需要时再读
 
 - [节点与生命周期弹窗](../frontend/nodes.md)

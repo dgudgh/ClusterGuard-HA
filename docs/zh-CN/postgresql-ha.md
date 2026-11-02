@@ -163,6 +163,12 @@ PostgreSQL 恢复控制器与 MySQL 控制器隔离。它仅从相同的 `system
 
 被阻止或失败的预晋升尝试只能在配置的重试间隔后重新考虑。运行中、成功或不确定的尝试从不盲目重放。晋升等待直到 `pg_is_in_recovery()` 为 false；重定向和原主恢复等待直到审批的不可变源 UUID 和 `primary_conninfo` 都已收敛。
 
+## PG Agent部署与企业网关边界
+
+Agent的实际systemd沙箱、setpriv身份、PGDATA窄范围写权限及passfile排查见[PG Agent单功能指南](postgresql-agent-systemd.md)。现有配置工具会生成PG专用drop-in；不要复制MySQL现场CAP_SYS_NICE修复。
+
+当前企业gateway切主适配明确只支持MySQL：PG原生HA能力与PG企业网关联动是两项不同能力。TCP转发可承载5432流量，不等于已有PG多数派授权发布、隔离、续期与云切换验收。本次文档更新没有执行PG现场测试。
+
 ## 受限 Agent 策略
 
 每个数据库节点运行 `clusterguard-agent`，具有特定于集群的策略。该策略固定集群 UUID、平台实例 UUID、PostgreSQL 本地节点 UUID、引擎、服务、OS 用户、数据目录、二进制目录、数据库、passfile、端口、VIP 和对等允许列表。

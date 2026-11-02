@@ -215,6 +215,12 @@ never replayed blindly. Promotion waits until `pg_is_in_recovery()` is false;
 repoint and former-primary recovery wait until the approved immutable source
 UUID and `primary_conninfo` have both converged.
 
+## PG Agent deployment and enterprise gateway scope
+
+For the actual systemd sandbox, setpriv identity, narrow PGDATA writes and passfile diagnosis, use the [PG Agent guide](en-US/postgresql-agent-systemd.md). The configuration tool generates a PG-specific drop-in; do not copy the MySQL CAP_SYS_NICE site fix.
+
+The current enterprise gateway switchover adapter explicitly supports MySQL only. Native PG HA and PG enterprise-gateway integration are separate capabilities. Relaying port 5432 does not establish PG majority-backed publication, fencing, renewal or accepted cloud switching. This documentation change ran no PG site tests.
+
 ## Restricted Agent Policy
 
 Every database node runs `clusterguard-agent` with a cluster-specific policy.
