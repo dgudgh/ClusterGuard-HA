@@ -206,6 +206,31 @@ func (p *GatewayProvider) AuthorizeTransition(ctx context.Context, resolved adap
 		return adapter.TransitionAuthorization{}, errors.Join(err, rollback)
 	}
 	baseFinalize, baseAbort := authorization.Finalize, authorization.Abort
+	baseCancel := authorization.Cancel
+	guarded, cancelRoute := context.WithCancelCause(authorization.Context)
+	stopRenewal, stopped := make(chan struct{}), make(chan struct{})
+	var stopOnce sync.Once
+	stop := func() { stopOnce.Do(func() { close(stopRenewal) }); <-stopped }
+	go func() {
+		defer close(stopped)
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-guarded.Done():
+				return
+			case <-stopRenewal:
+				return
+			case <-ticker.C:
+				if err := p.renewTransitionRoute(guarded, resolved, authorization.LeaseID); err != nil {
+					cancelRoute(fmt.Errorf("renew gateway transition route: %w", err))
+					return
+				}
+			}
+		}
+	}()
+	authorization.Context = guarded
+	authorization.Cancel = func() { stop(); cancelRoute(context.Canceled); baseCancel() }
 	authorization.Finalize = func(finalize context.Context) error {
 		check := p.Verify(finalize, resolved)
 		if check.Status != model.CheckPass {
@@ -214,6 +239,7 @@ func (p *GatewayProvider) AuthorizeTransition(ctx context.Context, resolved adap
 		return baseFinalize(finalize)
 	}
 	authorization.Abort = func(abort context.Context) error {
+		stop()
 		p.mu.Lock()
 		defer p.mu.Unlock()
 		current, e := p.current(abort, r, resolved.Target.ResourceID)
@@ -230,6 +256,44 @@ func (p *GatewayProvider) AuthorizeTransition(ctx context.Context, resolved adap
 		return baseAbort(abort)
 	}
 	return authorization, nil
+}
+
+// The DB transition lease may outlive a route grant while PostgreSQL rewinds
+// the old primary. Keep only an already-active, exactly bound route alive;
+// a pending withdrawal, expired route or changed authority is never activated.
+func (p *GatewayProvider) renewTransitionRoute(ctx context.Context, resolved adapter.ResolvedOperation, leaseID model.ResourceID) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	r, client, err := p.resource(resolved.Cluster.ResourceID)
+	if err != nil {
+		return err
+	}
+	lease, err := p.current(ctx, r, resolved.Target.ResourceID)
+	if err != nil {
+		return err
+	}
+	if lease.ResourceID != leaseID || lease.OperationID != resolved.OperationID && !stableGatewayLease(lease) {
+		return fmt.Errorf("gateway transition lease binding changed")
+	}
+	last := p.inventory.GatewayGrant(resolved.Cluster.ResourceID)
+	if last.LeaseID != leaseID || last.TargetID != resolved.Target.ResourceID || last.OperationID != resolved.OperationID {
+		return fmt.Errorf("gateway transition publication binding changed")
+	}
+	if last.Mode == "withdraw" {
+		return nil
+	}
+	states, err := p.statuses(ctx, r, client)
+	if err != nil {
+		return err
+	}
+	if !stableGatewayStates(states, last, lease) {
+		return fmt.Errorf("gateway transition route is no longer live and bound")
+	}
+	grant, err := p.inventory.ReserveGatewayGrant(lease, resolved.OperationID, "activate", false)
+	if err != nil {
+		return err
+	}
+	return p.send(ctx, client, lease, grant)
 }
 func (p *GatewayProvider) Transfer(ctx context.Context, resolved adapter.ResolvedOperation) error {
 	p.mu.Lock()
@@ -261,6 +325,8 @@ func (p *GatewayProvider) Transfer(ctx context.Context, resolved adapter.Resolve
 	return p.inventory.CommitHAEndpointOwner(resolved.Cluster.ResourceID, r.resource.ResourceID, resolved.Target.ResourceID, true)
 }
 func (p *GatewayProvider) Verify(ctx context.Context, resolved adapter.ResolvedOperation) model.Check {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	r, client, err := p.resource(resolved.Cluster.ResourceID)
 	if err == nil {
 		var lease Lease

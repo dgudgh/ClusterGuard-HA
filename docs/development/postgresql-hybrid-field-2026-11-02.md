@@ -42,3 +42,33 @@ PG正式登记与12条控制器TLS查询通过，网关进程在156尚未启用�
 纠正前对照：读取24c1c88的main.go/newRuntimeControllers、docker_postgresql.go的RuntimePostgreSQLController.Selected/Status和gateway_reconcile.go；运行时分发器缺Writable，导致!ok保护触发。原15分钟内新PG尚无应用入口，三备仍为备用，未出现第二writer；152的PG策略已单独撤回保留其他MySQL策略，MySQL实际协调恢复Result=success。PG端点将经正式接口撤权并等待租约自然失效后再按初始部署恢复PG，禁止伪造writer/grant或删水位。修复须增加实际newRuntimeControllers→Reconciler的测试与分发器失败路径，使用3.1.6.2新身份及同封板修订链重新ART/现场验证；原6.1失败日志保留。
 
 分发修复回归：新增cmd/clusterguard-agent测试使用实际newRuntimeControllers构造和运行时分发器，先重现正常writer被停，修复后正常writer保持且只读writer被停；分发器缺实现/缺运行时仍拒绝。受影响包unit/race/vet、48项SOURCE、144项门禁变异与2控制、13/13行为变异通过。PG端点已正式设inactive，旧授权自然到期；没有删租约或路由水位，没有启用156。新身份将为3.1.6.2、revision=1，原6.1字节保留。
+
+## 3.1.6.2 制品与实际部署
+
+修复提交63c99bd，3.1.6.2/revision=1以24c1c88为基线；签名原件SHA-256为e62ec41dde2beea2fd09bf9c4813ad5fa921496bd5a9debaf5927a50b155f901。仅更换HA与Agent；ART-001..013和私有完整台账检查均在本次排队之前通过，随后正式升级三控制节点，云端应用同一验签原件。原3.1.6.1保留并标注PG现场失败。没有公开上传签名包，也未重建既有身份。
+
+6.2部署后四节点Agent实际systemd协调通过，PG仍只有三控制投票节点。PG网关使用既有preview.3原件，在151另建独立服务/状态目录、65432数据端口、9543管理端口、8180健康端口和VRID56，将156:5432精确映射至PG网关；151原有5432、MySQL3306和155/63306/VRID55保留。三控制节点至四库12条verify-full TLS查询通过。云连接走专用限定SSH通道，没有开放公网5432。
+
+部署脚本一次错误地查询154这个Follower并等待authoritative ready，随后外层未启用set-e而继续配置；此等待不记为通过。已把只读验收工具改为动态寻找唯一ready且有多数派的Leader，并单独复核实际Agent和路由。Follower的authority_unconfirmed不能当作网关实际停止或跳过Leader检查的理由。
+
+## 实际页面与业务读回发现
+
+真实Chrome登录现有控制台，未使用fixture API；只对预先核对证书的公钥指纹做临时浏览器固定，不关闭系统或全局TLS验证。页面切主仍通过原操作锁、一次性审批、安全门禁和原生编排。
+
+首轮本地→云操作成功，页面约20.7秒；云→本地约16.6秒，原TCP连接按撤权关闭，原生UUID/角色/三备streaming均通过。但是返回本地后实际156入口SQL被HBA拒绝，不能据此宣称业务闭环：pg_rewind复制源端配置，云端原HBA缺少151的限定规则，该配置随重绕返回本地。四个本轮新建测试实例已统一窄规则hostssl cg_gateway_acceptance cg_test 192.168.102.151/32 scram-sha-256并仅reload；原文件逐机备份。统一后HBA摘要d98154e646308c72fda834bb6f65ed694ec4a2ccb31b8c85a7b3ef3b220ffae1。未声称支持异构节点本地配置的自动保留。
+
+完整重测又发现切主激活后15秒授权可能在稳定续期接续前到期，156会按安全规则短暂撤下，再由稳定授权恢复。页面原生任务成功时间不能代替业务RTO；首次严格连续SQL脚本失败和入口超时均保留。本轮后续验收明确测量操作完成后的重连窗口，再检查连续SQL，不能把加等待写成零中断或掩盖失败。云端旧主rewind耗时也须从实际操作记录计算；正在执行的任务不算通过。
+
+私有原始证据：.build/pg-field-20261102/browser、browser-back、browser-final、portable-hba-configuration.json、stable-cloud-after-convergence-stability.json。前两套页面流程曾发生验收脚本等待/继续超时，已经成功的服务端操作不盲目重放；脚本失败与数据库失败分别保留。
+
+## 长耗时切换的路由续期缺陷（修复前对照）
+
+6.2现场回切时pg_rewind持续数分钟，旧主已隔离、新主已提升且多数派过渡租约仍在5秒续期；但是15秒路由grant没有续期，OwnershipKeeper按设计跳过受控PG操作，导致156在恢复期间到期撤下。原生任务与业务中断分别保留。真实浏览器测试脚本180秒等待亦超时，不等于后端30分钟受控执行已失败；不能重放或中断正在恢复的旧主。
+
+修改前核对63c99bd与24c1c88/e2d6def的gateway.AuthorizeTransition/Transfer、lease_authorization.go及ownership_keeper.go：过渡授权只续期DB lease，没有续期已激活的gateway grant；稳定续期必须待操作结束。拟增加与同一授权生命周期绑定的5秒路由续期：只续期同一operation/lease/owner/epoch、已观测active的路由；withdraw阶段绝不激活，失去多数派/变更身份/撤权/错误时取消过渡上下文并到期关闭。保留严格全网关屏障，Cancel/Abort停止并等待续期退出。新增长于15秒的行为回归和丢失授权/取消/撤权反例，再走新不可变候选3.1.6.3与SOURCE/ART/现场，6.2不可覆盖。
+
+长耗时复现结果：7800a73f-5745-445c-82f0-a08fe4147597实际执行约283秒，四库角色/复制检查通过，writer_endpoint_owner失败，原结果为indeterminate，保留不改成成功。稳定keeper在任务结束后恢复156。新增真实时间回归在旧6.2源码上21秒重现15秒grant到期，不能再将此问题只解释为重连窗口。
+
+审查留痕纠正：一次复核脚本的断言失败后，外层shell未set-e，后续review仍被提交。复核API实际返回plan_integrity失败（批准后集群revision已变化），review说明中的“API re-verification now passes”不实。review本身为不可变acknowledged_indeterminate，未将操作改成成功，不能删改原审计；以本段及私有long-rewind-final-verification.json纠正口径，后续只读/部署脚本必须显式检查每一步状态后才写入。本次人工已核对新主152、云备和稳定路由，但它不能替代该批准计划的API复验。
+
+长过渡续期修复已完成同一真实时间回归：withdraw阶段保持关闭，激活路由连续保持超过原15秒有效期，epoch/operation/lease/target均不变，仅sequence推进；实际授权拒绝使上下文取消，Cancel后不再发布。修复前21秒失败，修复后endpoint race约27秒通过；PG原生编排/coordination/store回归与受影响vet通过。49项SOURCE、147项门禁变异和2个控制通过。首轮自测复制清单漏新测试，控制样本因此失败，修正复制清单后重测，首轮不算通过。许可68、Markdown11和HTML重建通过。6.3制品及新现场结果仍须随后单独记录。

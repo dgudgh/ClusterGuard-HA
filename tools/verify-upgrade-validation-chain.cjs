@@ -182,6 +182,16 @@ const writeOperationTree = (root, name, status, events) => {
 
 const CHECKS = [
   {
+    rule:'12 / 22',title:'long gateway transitions renew only live bound routes',
+    run:()=>{
+      const s=read('internal/endpoint/gateway.go')||'';
+      for(const proof of ['p.renewTransitionRoute(guarded, resolved, authorization.LeaseID)','lease.ResourceID != leaseID','last.LeaseID != leaseID || last.TargetID != resolved.Target.ResourceID || last.OperationID != resolved.OperationID','if last.Mode == "withdraw"','!stableGatewayStates(states, last, lease)','cancelRoute(fmt.Errorf("renew gateway transition route: %w", err))','authorization.Cancel = func() { stop(); cancelRoute(context.Canceled); baseCancel() }'])if(!s.includes(proof))return 'transition renewal guard missing: '+proof;
+      if(!read('internal/endpoint/gateway_transition_renewal_test.go'))return 'long transition behavior regression missing';
+      return true;
+    }
+  },
+
+  {
     rule:'12 / 22',title:'PostgreSQL gateway preserves native writer and hard fencing',
     run:()=>{
       const provider=read('internal/endpoint/gateway.go')||'';
@@ -1305,7 +1315,7 @@ const reportOpen = failures => {
 // caught by reading something the gate does not actually consult.
 const READ_FILES = [
  'internal/agent/docker_postgresql.go','cmd/clusterguard-agent/gateway_postgresql_test.go',
- 'internal/agent/config.go', 'internal/agent/postgresql.go','internal/endpoint/gateway_postgresql_test.go','adapters/postgresql/gateway_switchover_test.go',
+ 'internal/endpoint/gateway_transition_renewal_test.go', 'internal/agent/config.go', 'internal/agent/postgresql.go','internal/endpoint/gateway_postgresql_test.go','adapters/postgresql/gateway_switchover_test.go',
  'internal/api/disaster_recovery.go',
   'adapters/mysql/runner.go',
   'internal/endpoint/gateway_client.go','internal/endpoint/gateway_availability_test.go','internal/endpoint/gateway_http_test.go',
@@ -1343,6 +1353,9 @@ const MUTATIONS = [
   {name:'partial gateway observation claims complete coverage',file:'internal/endpoint/gateway.go',find:'Complete: !partial',replace:'Complete: true',rule:'gateway availability renews only the existing stable writer'},
   {name:'stable renewal accepts another target',file:'internal/endpoint/gateway_client.go',find:'old.TargetID != grant.TargetID',replace:'false',rule:'gateway availability renews only the existing stable writer'},
   {name:'gateway defaults to single node without opt in',file:'internal/endpoint/gateway_client.go',find:'minimum := 2',replace:'minimum := 1',rule:'gateway availability renews only the existing stable writer'},
+  {name:'long transition route has no heartbeat',file:'internal/endpoint/gateway.go',find:'p.renewTransitionRoute(guarded, resolved, authorization.LeaseID)',replace:'nil',rule:'long gateway transitions renew only live bound routes'},
+  {name:'transition ignores publication owner binding',file:'internal/endpoint/gateway.go',find:'last.LeaseID != leaseID || last.TargetID != resolved.Target.ResourceID || last.OperationID != resolved.OperationID',replace:'false',rule:'long gateway transitions renew only live bound routes'},
+  {name:'transition resumes an expired route',file:'internal/endpoint/gateway.go',find:'!stableGatewayStates(states, last, lease)',replace:'false',rule:'long gateway transitions renew only live bound routes'},
   {name:'PG gateway omits recovery SQL evidence',file:'internal/endpoint/gateway.go',find:'instance.EngineMetadata["in_recovery"], "false"',replace:'instance.EngineMetadata["missing_recovery"], "false"',rule:'PostgreSQL gateway preserves native writer and hard fencing'},
   {name:'PG gateway omits read-only SQL evidence',file:'internal/endpoint/gateway.go',find:'instance.EngineMetadata["transaction_read_only"], "false"',replace:'instance.EngineMetadata["missing_read_only"], "false"',rule:'PostgreSQL gateway preserves native writer and hard fencing'},
   {name:'PG Agent accepts a standby writer',file:'internal/agent/gateway_reconcile.go',find:'!running || recovery || !ok',replace:'!running || !ok',rule:'PostgreSQL gateway preserves native writer and hard fencing'},
