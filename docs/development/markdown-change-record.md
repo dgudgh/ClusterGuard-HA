@@ -23,7 +23,7 @@ recorded-through: 73ff4a3
 
 | 日期 | 文件 | 变更 | 说明 |
 | --- | --- | --- | --- |
-| 2026-11-02 | `docs/development/cloud-instance-onboarding-2026-11-02.md` | A | 记录云复制/网络和误诊纠正、旧现场缺少登记接口；追加冻结候选与3.1.4.2身份链、ART/历史门禁边界、正式通道上传/计划、用户确认的候选升级成功、四库真实页面与SQL验收，保留半同步降级和云切主未完成范围。 |
+| 2026-11-02 | `docs/development/cloud-instance-onboarding-2026-11-02.md` | A | 记录云复制/网络和误诊纠正、旧现场缺少登记接口；追加冻结候选与3.1.4.2身份链、ART/历史门禁边界、正式通道上传/计划、用户确认的候选升级成功、四库真实页面与SQL验收，补记云副本缺少半同步插件的实测、独立cnf及只读保护下云MySQL重启、4实例healthy/主库3个半同步客户端和实际页面回归；云切主仍未完成。 |
 | 2026-11-02 | `docs/development/gateway-real-mysql-2026-11-02.md` | A | 记录真实MySQL、真实控制面与页面网关端到端测试的旧证据差异、门禁、隔离范围及本轮实际结果。 |
 | 2026-10-28 | `docs/development/backend/operations.md` | M | 补MySQL页面切换到gateway提供者的真实租约、屏障、Agent模式与部署指路。2026-11-02追加真实MySQL/Raft/双网关及页面端到端复跑、摘要修复与实际结果入口。 |
 | 2026-10-28 | `docs/development/frontend/operations.md` | M | 补默认折叠网关状态、语言/上下文与原操作锁交互规则。 |

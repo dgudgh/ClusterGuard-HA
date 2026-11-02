@@ -73,3 +73,18 @@
 云副本显示degraded，原因明确为“MySQL replica is not actively acknowledging semi-sync transactions”；复制运行和延迟0不等于半同步确认正常。没有修改半同步参数或伪造healthy。gateway仍disabled，云端Agent和运行目标未绑定，**本轮只完成云库可见与上述现场升级/复制核验，不声明云切主、云业务入口、实际回退或全部FIELD契约验收通过**。全历史制品台账三类失败仍OPEN，候选身份未转为正式稳定交付。
 
 私有证据：release/3.1.4.2下field-plan.json、field-final.json、native-inspect.log与ART报告；.build/cloud-deployment-20261102下真实上传、更新成功和cloud-visible-topology.jpg截图。受信私钥未传到任何服务器，未公开签名补丁或现场证据。
+
+## 后续修复：云副本半同步缺失（2026-11-02）
+
+用户要求继续修复降级，已读门禁流程、操作授权、修改证据、后端集群与观测文档；当前工作树干净，主线5aa5f61，实际3.1.4.2/4f077a2。旧版2024567与当前adapters/mysql/probe.go及semisync.go对照：副本就绪要求source配置完备、replica enabled及真实ACK状态，不是本次登记引入的判定回归。云现场实测半同步plugins/variables/status均空；原厂安装目录已有source/replica共享库，四库GTID相同、云IO/SQL正常，双只读ON；本地三个节点source/replica已启用、等待1副本、AFTER_SYNC、timeout5000ms。
+
+适用范围为现有云MySQL配置修复和真实SQL/页面回归，不修改业务源码、不构建新包、不声称关闭历史制品或全部FIELD验收。遵循MySQL8官方插件/配置文档；super_read_only不可临时关闭来INSTALL PLUGIN。计划新增独立cnf，通过plugin-load-add加载原厂两插件，半同步变量沿用上述实测策略，并明确read_only/super_read_only=ON。先保存原配置摘要和现场复制身份，校验配置，再仅重启云MySQL；保留原隧道/源/GTID/数据，不重建、不跳事务。启动/复制失败则将本次独立配置移入远端私有回退目录并恢复原启动方式，保留证据。
+
+验证计划：原生SQL检查两插件ACTIVE、replica enabled/status ON、主库semi-sync clients由2变3、云IO/SQL Yes/lag0/错误0、双只读不变及四库GTID一致；新鲜discovery和真实浏览器确认降级消除；核对三控制节点多数派/维护锁/VIP。普通文档执行许可、Markdown台账与生成页，未执行项目不得记为通过。
+
+
+修复已实际执行并验证：在云主机私有目录保留原cnf副本与摘要，仅新增zz-clusterguard-semisync.cnf；mysqld以mysql用户validate-config通过后仅重启云实例。所有原cnf摘要不变，未临时关闭super_read_only。启动后source/replica两插件ACTIVE，replica_enabled及真实replica_status均ON，source策略沿用实测5000ms/1副本/AFTER_SYNC。本地主库semi-sync clients由2增至3，云源UUID、隧道地址和端口不变，IO/SQL Yes、lag0、错误0，双只读ON，四库GTID仍一致。
+
+新鲜控制面观测和实际浏览器刷新均显示4实例healthy、拓扑暂无异常；三控制节点ready、原三投票成员、维护锁false，VIP仍唯一在原主库。后续无需改产品健康判定或新制品，当前是云MySQL配置修复；没有执行新业务写入或云切主验收，不能扩张为业务入口闭环证明。原“半同步降级待修”的结论至本段被实际修复结果取代，其余Agent/网关/历史制品门禁未完成边界仍保留。
+
+证据位于本机.build/cloud-semisync-20261102/：before.json、after.json、control-before.json、control-after.json、verification-summary.json和topology-healthy.jpg；回退副本与validate-config日志留云主机受保护目录。参考[MySQL8半同步安装](https://dev.mysql.com/doc/refman/8.0/en/replication-semisync-installation.html)和[插件加载](https://dev.mysql.com/doc/refman/8.0/en/plugin-loading.html)；未使用INSTALL PLUGIN绕过只读，也未修改凭据。
