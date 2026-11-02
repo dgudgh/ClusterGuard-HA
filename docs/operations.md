@@ -22,6 +22,12 @@ gated until their own production qualification is complete.
 > (global flags must precede the subcommand). For day-to-day work follow the
 > [Operations Manual](en-US/operations-manual.md).
 
+## Verify the actual MySQL Agent reconcile service
+
+After cloud enrollment or a vendor RPM change, validate restart read-only inspection inside the actual systemd unit, not only full-root SSH. For post-success isolation loops, `inspect MySQL restart defaults` or `EPERM`, follow [MySQL Agent: systemd and vendor RPM capabilities](en-US/mysql-agent-systemd.md). The guide records a conditional fix, one real cloud switchover and the remaining acceptance scope.
+
+Prepare HA authority, Agent policy, network and clocks together. Verify SQL through the fixed frontend, unique writability, replication/GTID and continuing grant renewal; a single successful response or TCP probe is insufficient.
+
 ## 1. Configure the Control Plane
 
 Use `configs/clusterguard.example.json` as the configuration shape. The loader
@@ -39,6 +45,7 @@ Implemented keys:
 | `control_token_env` | No | Environment variable containing the Bearer token for control API `POST` requests. Without it, all control `POST` routes fail closed with `503`. |
 | `approval_token_env` | Deprecated | Legacy node-lifecycle approval only. It is ignored by database operations and automatic recovery; new database execution uses one-time grants. |
 | `mysql.enabled` | No | Enables server-side MySQL discovery and operation credentials. |
+| `mysql.discovery_timeout_seconds` | No | Per-endpoint discovery timeout; source default is 1 second. Assess cross-cloud latency: the 2026-11-02 site used 5 seconds, without changing source defaults or health/promotion requirements. |
 | `mysql.discovery` | When enabled | Dedicated read-only discovery username and password environment reference. |
 | `mysql.operation` | When enabled | Dedicated administrative operation username and password environment reference. |
 | `mysql.replication` | When enabled | Dedicated replication username and password environment reference. |
@@ -60,7 +67,10 @@ Implemented keys:
 | `consensus.tls_cert_file`, `tls_key_file`, `tls_ca_file` | For non-loopback Raft | Mutual-TLS identity and private CA for controller-to-controller Raft traffic. All three are required together. |
 | `consensus.peers[].api_address` | Recommended | Trusted HTTPS address used to forward mutations to that controller when it is Leader. It is never derived from the inbound HTTP Host header. |
 | `consensus.allow_insecure_transport` | Lab only | Explicitly permits non-loopback plaintext Raft and emits a startup warning. |
-| `agent` | For VIP mutation | Restricted signed node command transport for VIP ownership, role status, and in-band self-isolation. |
+| `gateway.enabled` | Optional | Explicitly enables the enterprise connection gateway adapter; disabled by default, without replacing database election or majority authority. |
+| `gateway.profiles` | When enabled | Trusted profiles selected by the endpoint `provider_ref`, including `management_urls`, `ca_file`, `cert_file` and `key_file`; management requires verified mutual TLS. |
+| `gateway.profiles.<name>.allow_single_gateway` | Single validation only | Explicit `true` permits exactly one management URL; the default requires at least two gateways. Requires compatible new HA code (included in 3.1.5.1, unavailable in 3.1.4.2). One gateway has no frontend redundancy. |
+| `agent` | Managed writer endpoint changes | Restricted signed commands for endpoint/role evidence and local isolation; gateway policy must explicitly omit the host VIP. |
 | `fencing.agent_quorum_enabled` | For MySQL automatic failover | Uses a short Raft-majority authorization and local Agent fail-closed reconciliation before promotion. |
 | `fencing` | Optional stronger isolation | Site-specific external fence/status command for BMC, PDU, cloud, or hypervisor isolation. |
 | `mysql.semi_sync_required` | Recommended for production MySQL | Requires current semi-sync source acknowledgement and replica readiness evidence during discovery, candidate selection, precheck, and post-operation verification. Missing evidence blocks promotion. |

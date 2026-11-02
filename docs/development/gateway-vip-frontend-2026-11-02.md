@@ -86,3 +86,13 @@ HA增加显式allow_single_gateway配置（只允许一个URL，默认至少2）
 用户本次单向切换现已稳定：16次采样覆盖约62秒，固定155:3306均返回云原生UUID、read_only/super_read_only=OFF；同一租约的授权序号17→29。修复后协调日志没有再次self_isolate、inspect失败或非零退出；三台本地均只读、IO/SQL=Yes、延迟0、复制源为云库，四库GTID一致，三投票节点就绪且无旧VIP。页面刷新为云主库、网关指向云地址及“操作完成，验证通过”。这是用户操作后的一次真实云切主及稳定性复核，尚未回切、未验收应用事务/连接池/故障注入或生产发布。原“准备完成”检查遗漏了原厂RPM带文件能力时的systemd可写主库分支，已如实保留此失误与补验记录。
 
 本次修复为现场服务配置兼容，不改Agent业务逻辑，不覆盖签名包。drop-in必须随云Agent现场配置保留；现有通用ConfigureReconcileSandbox尚不自动探测原厂MySQL文件能力，后续通用接入实现仍需处理该部署差异，不能宣称已有所有RPM自动兼容。新现场证据为私有user-switch-capability-reproduction.log、user-switch-capability-fix.log、user-switch-stability-result.json、user-switch-agent-after-fix.log及user-switch-final-health.json。
+
+## 对应功能文档同步计划
+
+2026-11-02，用户要求更新对应Markdown。HA进入HEAD72d221c、独立gateway95b1742，两工作树干净。已读门禁流程、规则索引、后端节点/操作入口与独立网关AGENTS；沿用已完整加载的CG-UPGRADE-CONTRACT，contract_version=2，contract_loaded=true。只整理已有源码与私有现场证据，不执行服务器变更、切主、构建或发布。
+
+新增双语MySQL Agent systemd兼容单功能页，节点模块只给指路；API参考补网关配置/Agent入口，操作模块区分过渡撤权、终态及持续SQL验证。同步独立网关README/部署/本地VIP说明与开发记录，纠正“尚未打包/部署”的过期现状，保留历史验收边界。验证文档路径/命令与当前源码和原始日志对应、双语范围一致、新增链接与shell示例语法、Markdown台账/许可及HTML生成；未重新做现场验收，不把文档同步写成新测试或新包。
+
+文档落点：双语mysql-agent-systemd.md承载可执行排查和条件化drop-in；后端nodes/operations只给模块指路与终态后验证边界，双语API参考补gateway配置。独立网关README/deploy/frontend/development同步preview.3四程序与单次云现场范围，单机失联不被描述为仍可服务。未改代码、现场配置或既有包。
+
+本次文档静态验证：62个相关本地链接可解析；双语指南各5个同范围章节、8个bash示例通过bash -n，仅解析未在服务器执行；版本/能力/路径/验收数字在双语之间一致。HTML重建118页，两个API生成页均正确链接对应源Markdown；许可68、Markdown台账11通过。独立preview.3原归档摘要仍与原sidecar相同。以上为文档检查，未重做现场测试或扩展62秒稳定性证据。

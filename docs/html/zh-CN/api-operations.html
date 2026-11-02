@@ -51,6 +51,9 @@
 <code>cgctl --server https://&lt;host&gt;:3000 --ca-file /etc/clusterguard/tls/ca.crt &lt;子命令&gt;</code>
 （全局 flag 必须写在子命令之前）。日常值守流程以<a href="operations-manual.html">运维操作手册</a>为准。</p>
 </blockquote>
+<h2 id="mysql-agent-的实际协调服务验证">MySQL Agent 的实际协调服务验证<a class="heading-anchor" href="#mysql-agent-的实际协调服务验证" aria-label="Link to MySQL Agent 的实际协调服务验证">#</a></h2>
+<p>云接入或更换原厂RPM后，须在实际 systemd 协调单元中验证重启只读检查，不能只测SSH根用户。遇到任务成功后反复自隔离、<code>inspect MySQL restart defaults</code> 或 <code>EPERM</code>，按<a href="../../zh-CN/mysql-agent-systemd.md">MySQL Agent：systemd 与原厂RPM权限兼容</a>核对证据和条件化修复。该指南还记录一次真实云切主的验证范围及未完成项。</p>
+<p>网关端点由HA提供唯一writer授权；发布方、Agent、网络与时钟必须一起准备。固定入口SQL、唯一可写主库、复制/GTID与连续授权续期都要核验，不以单次接口成功或TCP就绪代替。</p>
 <h2 id="1-配置控制平面">1. 配置控制平面<a class="heading-anchor" href="#1-配置控制平面" aria-label="Link to 1. 配置控制平面">#</a></h2>
 <p>使用 <code>configs/clusterguard.example.json</code> 作为配置形状。加载器拒绝未知的键和多个 JSON 值。</p>
 <p>实现的键：</p>
@@ -101,6 +104,11 @@
 <td><code>mysql.enabled</code></td>
 <td>否</td>
 <td>启用服务器端 MySQL 发现和操作凭证。</td>
+</tr>
+<tr>
+<td><code>mysql.discovery_timeout_seconds</code></td>
+<td>否</td>
+<td>每端点探测超时；源码默认1秒。跨云按实际延迟评估；2026-11-02现场从1秒调为5秒是站点配置，不改变源码默认或放宽健康/晋升条件。</td>
 </tr>
 <tr>
 <td><code>mysql.discovery</code></td>
@@ -208,9 +216,24 @@
 <td>明确允许非回环明文 Raft 并发出启动警告。</td>
 </tr>
 <tr>
+<td><code>gateway.enabled</code></td>
+<td>可选</td>
+<td>显式启用企业连接网关适配；默认关闭，不替代数据库选主或多数派。</td>
+</tr>
+<tr>
+<td><code>gateway.profiles</code></td>
+<td>启用网关时</td>
+<td>按端点 <code>provider_ref</code> 索引的受信网关配置，包含 <code>management_urls</code>、<code>ca_file</code>、<code>cert_file</code>、<code>key_file</code>。管理采用双向 TLS，不能关闭验证。</td>
+</tr>
+<tr>
+<td><code>gateway.profiles.&lt;name&gt;.allow_single_gateway</code></td>
+<td>仅单机验证</td>
+<td>显式为 <code>true</code> 且仅一个管理地址时允许单网关；默认至少两台。需要含此字段的新 HA 版本，现役3.1.5.1已包含，不兼容旧3.1.4.2。单机无入口冗余。</td>
+</tr>
+<tr>
 <td><code>agent</code></td>
-<td>VIP 变更操作</td>
-<td>用于 VIP 所有权、角色状态和带内自隔离的受限签名节点命令传输。</td>
+<td>受管写入口变更</td>
+<td>用于端点/角色状态与带内自隔离的受限签名命令；gateway 模式须显式配置无宿主机 VIP 的 Agent 策略。</td>
 </tr>
 <tr>
 <td><code>fencing.agent_quorum_enabled</code></td>
@@ -778,7 +801,7 @@ cgctl cluster shutdown --cluster &lt;集群显示名&gt; --mode service --dry-ru
         </article>
         <aside class="page-toc" aria-label="本页目录">
           <strong>本页目录</strong>
-          <a class="toc-level-2" href="#1-配置控制平面">1. 配置控制平面</a><a class="toc-level-3" href="#平台登录">平台登录</a><a class="toc-level-2" href="#2-检查引擎和功能">2. 检查引擎和功能</a><a class="toc-level-2" href="#3-注册权威清单">3. 注册权威清单</a><a class="toc-level-2" href="#4-刷新-mysql-拓扑">4. 刷新 MySQL 拓扑</a><a class="toc-level-2" href="#5-检查控制平面健康和就绪状态">5. 检查控制平面健康和就绪状态</a><a class="toc-level-2" href="#6-读取拓扑-健康状况-候选者和指标">6. 读取拓扑、健康状况、候选者和指标</a><a class="toc-level-2" href="#7-使用-cgctl">7. 使用 cgctl</a><a class="toc-level-2" href="#8-准备一个受保护的-mysql-切换">8. 准备一个受保护的 MySQL 切换</a><a class="toc-level-3" href="#浏览器控制台">浏览器控制台</a><a class="toc-level-3" href="#外部服务-api">外部服务 API</a><a class="toc-level-2" href="#9-重新协调可变元数据">9. 重新协调可变元数据</a><a class="toc-level-2" href="#10-内置节点安装和同步">10. 内置节点安装和同步</a><a class="toc-level-2" href="#11-自动故障转移和安全边界">11. 自动故障转移和安全边界</a><a class="toc-level-3" href="#外部隔离合同">外部隔离合同</a><a class="toc-level-2" href="#12-计划关闭和自动恢复">12. 计划关闭和自动恢复</a><a class="toc-level-3" href="#12-1-关闭模式">12.1 关闭模式</a><a class="toc-level-3" href="#12-2-启动关闭">12.2 启动关闭</a><a class="toc-level-3" href="#12-3-重启后的自动恢复">12.3 重启后的自动恢复</a><a class="toc-level-3" href="#12-4-超时和失败回退-关闭">12.4 超时和失败回退（关闭）</a><a class="toc-level-3" href="#12-5-检查恢复状态">12.5 检查恢复状态</a><a class="toc-level-2" href="#13-postgresql-ha">13. PostgreSQL HA</a><a class="toc-level-2" href="#14-适配器路线图">14. 适配器路线图</a><a class="toc-level-3" href="#mysql">MySQL</a><a class="toc-level-3" href="#postgresql">PostgreSQL</a><a class="toc-level-3" href="#oracle">Oracle</a><a class="toc-level-3" href="#sql-server">SQL Server</a>
+          <a class="toc-level-2" href="#mysql-agent-的实际协调服务验证">MySQL Agent 的实际协调服务验证</a><a class="toc-level-2" href="#1-配置控制平面">1. 配置控制平面</a><a class="toc-level-3" href="#平台登录">平台登录</a><a class="toc-level-2" href="#2-检查引擎和功能">2. 检查引擎和功能</a><a class="toc-level-2" href="#3-注册权威清单">3. 注册权威清单</a><a class="toc-level-2" href="#4-刷新-mysql-拓扑">4. 刷新 MySQL 拓扑</a><a class="toc-level-2" href="#5-检查控制平面健康和就绪状态">5. 检查控制平面健康和就绪状态</a><a class="toc-level-2" href="#6-读取拓扑-健康状况-候选者和指标">6. 读取拓扑、健康状况、候选者和指标</a><a class="toc-level-2" href="#7-使用-cgctl">7. 使用 cgctl</a><a class="toc-level-2" href="#8-准备一个受保护的-mysql-切换">8. 准备一个受保护的 MySQL 切换</a><a class="toc-level-3" href="#浏览器控制台">浏览器控制台</a><a class="toc-level-3" href="#外部服务-api">外部服务 API</a><a class="toc-level-2" href="#9-重新协调可变元数据">9. 重新协调可变元数据</a><a class="toc-level-2" href="#10-内置节点安装和同步">10. 内置节点安装和同步</a><a class="toc-level-2" href="#11-自动故障转移和安全边界">11. 自动故障转移和安全边界</a><a class="toc-level-3" href="#外部隔离合同">外部隔离合同</a><a class="toc-level-2" href="#12-计划关闭和自动恢复">12. 计划关闭和自动恢复</a><a class="toc-level-3" href="#12-1-关闭模式">12.1 关闭模式</a><a class="toc-level-3" href="#12-2-启动关闭">12.2 启动关闭</a><a class="toc-level-3" href="#12-3-重启后的自动恢复">12.3 重启后的自动恢复</a><a class="toc-level-3" href="#12-4-超时和失败回退-关闭">12.4 超时和失败回退（关闭）</a><a class="toc-level-3" href="#12-5-检查恢复状态">12.5 检查恢复状态</a><a class="toc-level-2" href="#13-postgresql-ha">13. PostgreSQL HA</a><a class="toc-level-2" href="#14-适配器路线图">14. 适配器路线图</a><a class="toc-level-3" href="#mysql">MySQL</a><a class="toc-level-3" href="#postgresql">PostgreSQL</a><a class="toc-level-3" href="#oracle">Oracle</a><a class="toc-level-3" href="#sql-server">SQL Server</a>
         </aside>
       </main>
     </div>

@@ -23,10 +23,15 @@ recorded-through: 73ff4a3
 
 | 日期 | 文件 | 变更 | 说明 |
 | --- | --- | --- | --- |
+| 2026-11-02 | `docs/zh-CN/mysql-agent-systemd.md` | A | MySQL原厂RPM文件能力/Agent实际systemd沙箱的条件化诊断、单项drop-in、oneshot判读、持续SQL验收及现场范围。 |
+| 2026-11-02 | `docs/en-US/mysql-agent-systemd.md` | A | 与中文版对应的权限兼容诊断和受限修复，明确手动云切主已验与回切/事务/生产认证未验。 |
+| 2026-11-02 | `docs/development/backend/nodes.md` | M | 节点入口增加Agent原厂RPM兼容的按需指路，区分SSH检查与实际协调服务。 |
+| 2026-11-02 | `docs/operations.md` | M | 英文API参考补网关启用/profile/显式单机配置及Agent systemd验证入口。 |
+| 2026-11-02 | `docs/zh-CN/operations.md` | M | 中文API参考同步网关配置、Agent无VIP策略与实际协调服务诊断入口。 |
 | 2026-11-02 | `docs/development/gateway-vip-frontend-2026-11-02.md` | A | 记录单/双网关VIP生成/就绪探针、155端口映射、稳定主库部分续期；实际Linux命名空间/VRRP、真实网关进程与四库连通验收及未交付/未接管边界；续记用户人工切主环境、历史门禁修正、3.1.5.1真实更新、网关/Agent/初始VIP接管、21项预检及12次稳定采样；续记用户云切主后的厂商mysqld文件能力与Agent沙箱兼容故障及修复验证。 |
 | 2026-11-02 | `docs/development/cloud-instance-onboarding-2026-11-02.md` | A | 记录云复制/网络和误诊纠正、旧现场缺少登记接口；追加冻结候选与3.1.4.2身份链、ART/历史门禁边界、正式通道上传/计划、用户确认的候选升级成功、四库真实页面与SQL验收，补记云副本缺少半同步插件的实测、独立cnf及只读保护下云MySQL重启、4实例healthy/主库3个半同步客户端和实际页面回归；云切主仍未完成。 |
 | 2026-11-02 | `docs/development/gateway-real-mysql-2026-11-02.md` | A | 记录真实MySQL、真实控制面与页面网关端到端测试的旧证据差异、门禁、隔离范围及本轮实际结果。 |
-| 2026-10-28 | `docs/development/backend/operations.md` | M | 补MySQL页面切换到gateway提供者的真实租约、屏障、Agent模式与部署指路。2026-11-02追加真实MySQL/Raft/双网关及页面端到端复跑、摘要修复与实际结果入口。 |
+| 2026-10-28 | `docs/development/backend/operations.md` | M | 补MySQL页面切换到gateway提供者的真实租约、屏障、Agent模式与部署指路。2026-11-02追加真实MySQL/Raft/双网关及页面端到端复跑、摘要修复与实际结果入口。  追加终态后持续writer/网关检查及Agent兼容指路。 |
 | 2026-10-28 | `docs/development/frontend/operations.md` | M | 补默认折叠网关状态、语言/上下文与原操作锁交互规则。 |
 | 2026-10-28 | `docs/development/gateway-switchover-2026-10-28.md` | A | 记录页面切换与独立网关对接的旧版/多数派边界；补11-02显式单网关、本地VIP、部分稳定续期与严格撤权的实现范围。 |
 | 2026-10-28 | `docs/development/existing-instance-registration-2026-10-28.md` | A | 记录已有实例端点接入的修改前对照、契约加载、原子登记/发现边界及实际回归结果。 |
@@ -264,3 +269,5 @@ MySQL初始化插件选项批次（2026-10-15）：修复生产模板正常运�
 ## 2026-10-20 文档同步批次
 
 现场测试数据写入器重建与17:00事件留痕：事件与10-14灾备恢复记录逐项吻合（binlog被purge、两副本1236、三台双只读、数分钟后同一主库恢复），但证据全部来自数据面、无控制面token，**标注为吻合而非确认**，不宣称定位触发者、也不记为新源码缺陷；旧轮次(round_no,seq)重复行仍保留为统计陷阱说明。catalogue补齐3.1.3.1~3.1.3.5双语发布说明与十份仅中文的文档/门禁演进记录；根README中英首页由3.1.3.5/2.2-113同步为3.1.3.6/2.2-114，按契约§18区分「已推送并预发布」与「未完成的现场安装/稳定验收」。纯文档批次：不构建、不签名、不上传、不在现场安装；不执行source/artifact/field阶段，也不因本批次改动重新声明它们通过。生成页全量重建。
+
+2026-11-02文档同步批次：更新节点/操作与双语API参考，新增双语MySQL Agent systemd兼容单功能页；重建入库HTML。只同步已存现场证据，不重做部署、切主或构建制品。

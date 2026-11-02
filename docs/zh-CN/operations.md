@@ -16,6 +16,13 @@
 > `cgctl --server https://<host>:3000 --ca-file /etc/clusterguard/tls/ca.crt <子命令>`
 > （全局 flag 必须写在子命令之前）。日常值守流程以[运维操作手册](operations-manual.md)为准。
 
+
+## MySQL Agent 的实际协调服务验证
+
+云接入或更换原厂RPM后，须在实际 systemd 协调单元中验证重启只读检查，不能只测SSH根用户。遇到任务成功后反复自隔离、`inspect MySQL restart defaults` 或 `EPERM`，按[MySQL Agent：systemd 与原厂RPM权限兼容](mysql-agent-systemd.md)核对证据和条件化修复。该指南还记录一次真实云切主的验证范围及未完成项。
+
+网关端点由HA提供唯一writer授权；发布方、Agent、网络与时钟必须一起准备。固定入口SQL、唯一可写主库、复制/GTID与连续授权续期都要核验，不以单次接口成功或TCP就绪代替。
+
 ## 1. 配置控制平面
 
 使用 `configs/clusterguard.example.json` 作为配置形状。加载器拒绝未知的键和多个 JSON 值。
@@ -32,6 +39,7 @@
 | `control_token_env` | 否 | 包含控制 API `POST` 请求的 Bearer 令牌的环境变量。没有它，所有控制 `POST` 路由都会以 `503` 关闭。 |
 | `approval_token_env` | 已弃用 | 仅用于旧版节点生命周期审批。数据库操作和自动恢复会忽略它；新数据库执行使用一次性授权。 |
 | `mysql.enabled` | 否 | 启用服务器端 MySQL 发现和操作凭证。 |
+| `mysql.discovery_timeout_seconds` | 否 | 每端点探测超时；源码默认1秒。跨云按实际延迟评估；2026-11-02现场从1秒调为5秒是站点配置，不改变源码默认或放宽健康/晋升条件。 |
 | `mysql.discovery` | 启用时 | 专用只读发现用户名和密码环境引用。 |
 | `mysql.operation` | 启用时 | 专用管理操作用户名和密码环境引用。 |
 | `mysql.replication` | 启用时 | 专用复制用户名和密码环境引用。 |
@@ -53,7 +61,10 @@
 | `consensus.tls_cert_file`, `tls_key_file`, `tls_ca_file` | 非回环 Raft | 控制器到控制器 Raft 流量的相互 TLS 身份和私有 CA。这三个都需要一起使用。 |
 | `consensus.peers[].api_address` | 推荐 | 用于将变更操作转发到该控制器的受信任 HTTPS 地址，当它是 Leader 时。它永远不会从入站 HTTP Host 头派生。 |
 | `consensus.allow_insecure_transport` | 实验室专用 | 明确允许非回环明文 Raft 并发出启动警告。 |
-| `agent` | VIP 变更操作 | 用于 VIP 所有权、角色状态和带内自隔离的受限签名节点命令传输。 |
+| `gateway.enabled` | 可选 | 显式启用企业连接网关适配；默认关闭，不替代数据库选主或多数派。 |
+| `gateway.profiles` | 启用网关时 | 按端点 `provider_ref` 索引的受信网关配置，包含 `management_urls`、`ca_file`、`cert_file`、`key_file`。管理采用双向 TLS，不能关闭验证。 |
+| `gateway.profiles.<name>.allow_single_gateway` | 仅单机验证 | 显式为 `true` 且仅一个管理地址时允许单网关；默认至少两台。需要含此字段的新 HA 版本，现役3.1.5.1已包含，不兼容旧3.1.4.2。单机无入口冗余。 |
+| `agent` | 受管写入口变更 | 用于端点/角色状态与带内自隔离的受限签名命令；gateway 模式须显式配置无宿主机 VIP 的 Agent 策略。 |
 | `fencing.agent_quorum_enabled` | MySQL 自动故障转移 | 使用短 Raft 多数授权和本地 Agent 关闭协调，在晋升前进行。 |
 | `fencing` | 更强的隔离（可选） | 用于 BMC、PDU、云或虚拟化隔离的特定站点外部隔离/状态命令。 |
 | `mysql.semi_sync_required` | 生产 MySQL 推荐 | 在发现、候选选择、预检查和后操作验证期间要求当前半同步源确认和副本准备就绪的证据。缺少证据会阻止晋升。 |
