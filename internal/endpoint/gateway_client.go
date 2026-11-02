@@ -7,8 +7,10 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -17,29 +19,39 @@ import (
 )
 
 type GatewayProfile struct {
-	URLs     []string `json:"management_urls"`
-	CAFile   string   `json:"ca_file"`
-	CertFile string   `json:"cert_file"`
-	KeyFile  string   `json:"key_file"`
+	URLs               []string `json:"management_urls"`
+	AllowSingleGateway bool     `json:"allow_single_gateway,omitempty"`
+	CAFile             string   `json:"ca_file"`
+	CertFile           string   `json:"cert_file"`
+	KeyFile            string   `json:"key_file"`
 }
 type GatewayStatus struct {
-	InstanceID string             `json:"instance_id"`
-	ClusterID  model.ResourceID   `json:"cluster_id"`
-	LastGrant  model.GatewayGrant `json:"last_grant"`
-	Active     bool               `json:"active"`
-	Targets    map[string]string  `json:"targets"`
+	InstanceID    string `json:"instance_id"`
+	managementURL string
+	ClusterID     model.ResourceID   `json:"cluster_id"`
+	LastGrant     model.GatewayGrant `json:"last_grant"`
+	Active        bool               `json:"active"`
+	Targets       map[string]string  `json:"targets"`
 }
 type GatewayTransport interface {
 	Statuses(context.Context, model.ResourceID) ([]GatewayStatus, error)
 	Apply(context.Context, model.GatewayGrant, func(context.Context) error) error
 }
 type gatewayHTTP struct {
-	urls   []string
-	client *http.Client
+	urls    []string
+	client  *http.Client
+	minimum int
 }
 
 func NewGatewayHTTP(profile GatewayProfile) (GatewayTransport, error) {
-	if len(profile.URLs) < 2 || len(profile.URLs) > 8 {
+	minimum := 2
+	if profile.AllowSingleGateway {
+		minimum = 1
+		if len(profile.URLs) != 1 {
+			return nil, fmt.Errorf("single gateway mode requires exactly one management URL")
+		}
+	}
+	if len(profile.URLs) < minimum || len(profile.URLs) > 8 {
 		return nil, fmt.Errorf("gateway profile requires 2..8 management URLs")
 	}
 	seen := map[string]bool{}
@@ -68,7 +80,7 @@ func NewGatewayHTTP(profile GatewayProfile) (GatewayTransport, error) {
 	if !roots.AppendCertsFromPEM(data) {
 		return nil, fmt.Errorf("invalid gateway CA")
 	}
-	return &gatewayHTTP{urls: urls, client: &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots, Certificates: []tls.Certificate{cert}}}, CheckRedirect: func(*http.Request, []*http.Request) error { return fmt.Errorf("gateway redirect refused") }}}, nil
+	return &gatewayHTTP{urls: urls, minimum: minimum, client: &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots, Certificates: []tls.Certificate{cert}}}, CheckRedirect: func(*http.Request, []*http.Request) error { return fmt.Errorf("gateway redirect refused") }}}, nil
 }
 func (c *gatewayHTTP) request(ctx context.Context, base, path string, grant *model.GatewayGrant) (GatewayStatus, error) {
 	var input []byte
@@ -140,4 +152,140 @@ func (c *gatewayHTTP) Apply(ctx context.Context, grant model.GatewayGrant, valid
 		return first
 	}
 	return validate(ctx)
+}
+
+// GatewayAvailability is incomplete only for network failures. Invalid TLS,
+// identities and malformed responses never become an availability exception.
+type GatewayAvailability struct {
+	Statuses    []GatewayStatus
+	Unavailable int
+}
+type availableGateway struct {
+	base   string
+	status GatewayStatus
+}
+
+func (c *gatewayHTTP) MinimumGatewayObservations() int { return c.minimum }
+func gatewayNetworkFailure(ctx context.Context, err error) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	var op *net.OpError
+	if errors.As(err, &op) {
+		return op.Op == "dial" || op.Op == "read" || op.Op == "write"
+	}
+	var timeout net.Error
+	return errors.As(err, &timeout) && timeout.Timeout() || errors.Is(err, io.EOF)
+}
+func (c *gatewayHTTP) available(ctx context.Context, cluster model.ResourceID) ([]availableGateway, int, error) {
+	type observation struct {
+		index  int
+		status GatewayStatus
+		err    error
+	}
+	replies := make(chan observation, len(c.urls))
+	for index, base := range c.urls {
+		go func(index int, base string) {
+			status, err := c.request(ctx, base, "/v1/status?cluster_id="+url.QueryEscape(string(cluster)), nil)
+			replies <- observation{index, status, err}
+		}(index, base)
+	}
+	received := make([]observation, len(c.urls))
+	for range c.urls {
+		r := <-replies
+		received[r.index] = r
+	}
+	var available []availableGateway
+	missing := 0
+	for _, r := range received {
+		if r.err != nil {
+			if gatewayNetworkFailure(ctx, r.err) {
+				missing++
+				continue
+			}
+			return nil, missing, r.err
+		}
+		if r.status.ClusterID != cluster {
+			return nil, missing, fmt.Errorf("gateway cluster mismatch")
+		}
+		r.status.managementURL = c.urls[r.index]
+		available = append(available, availableGateway{base: c.urls[r.index], status: r.status})
+	}
+	if len(available) == 0 {
+		return nil, missing, fmt.Errorf("no gateway observation available")
+	}
+	return available, missing, nil
+}
+func (c *gatewayHTTP) AvailableStatuses(ctx context.Context, cluster model.ResourceID) (GatewayAvailability, error) {
+	states, missing, err := c.available(ctx, cluster)
+	result := GatewayAvailability{Unavailable: missing}
+	for _, state := range states {
+		result.Statuses = append(result.Statuses, state.status)
+	}
+	return result, err
+}
+
+// RenewStable cannot change a route's identity or revive a restarted gateway.
+// It never rolls back another live gateway on a partial renewal error.
+func (c *gatewayHTTP) RenewStable(ctx context.Context, grant model.GatewayGrant, expected []GatewayStatus, validate func(context.Context) error) (int, error) {
+	allowed := map[string]bool{}
+	for _, base := range c.urls {
+		allowed[base] = true
+	}
+	var states []availableGateway
+	for _, prior := range expected {
+		if !allowed[prior.managementURL] {
+			return 0, fmt.Errorf("stable renewal has no authenticated observation source")
+		}
+		current, err := c.request(ctx, prior.managementURL, "/v1/status?cluster_id="+url.QueryEscape(string(grant.ClusterID)), nil)
+		if err != nil {
+			return 0, err
+		}
+		states = append(states, availableGateway{base: prior.managementURL, status: current})
+	}
+	missing := len(c.urls) - len(states)
+	if len(states) == 0 {
+		return 0, fmt.Errorf("no authenticated stable gateway available")
+	}
+	var err error
+	seen := map[string]bool{}
+	for _, state := range states {
+		known := false
+		for _, previous := range expected {
+			if previous.InstanceID == state.status.InstanceID {
+				known = true
+			}
+		}
+		old := state.status.LastGrant
+		if state.status.ClusterID != grant.ClusterID || old.ClusterID != grant.ClusterID || !known || state.status.InstanceID == "" || seen[state.status.InstanceID] || !state.status.Active || old.Mode != "activate" || !old.ExpiresAt.After(time.Now()) || grant.Mode != "activate" || old.Epoch != grant.Epoch || old.LeaseID != grant.LeaseID || old.TargetID != grant.TargetID || old.OperationID != grant.OperationID || old.Sequence >= grant.Sequence {
+			return 0, fmt.Errorf("stable renewal identity changed")
+		}
+		seen[state.status.InstanceID] = true
+	}
+	updated := 0
+	var failures []error
+	if missing > 0 {
+		failures = append(failures, fmt.Errorf("%d gateway(s) unavailable during stable renewal", missing))
+	}
+	for _, state := range states {
+		if err = validate(ctx); err != nil {
+			return updated, errors.Join(append(failures, err)...)
+		}
+		result, e := c.request(ctx, state.base, "/v1/route", &grant)
+		if e == nil && (result.InstanceID != state.status.InstanceID || result.ClusterID != grant.ClusterID || !result.Active || !sameGatewayGrant(result.LastGrant, grant)) {
+			e = fmt.Errorf("stable renewal acknowledgement mismatch")
+		}
+		if e != nil {
+			failures = append(failures, e)
+		} else {
+			updated++
+		}
+	}
+	if err = validate(ctx); err != nil {
+		failures = append(failures, err)
+	}
+	if updated == 0 {
+		failures = append(failures, fmt.Errorf("no gateway confirmed stable renewal"))
+	}
+	return updated, errors.Join(failures...)
 }

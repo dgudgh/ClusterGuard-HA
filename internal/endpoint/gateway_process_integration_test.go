@@ -61,6 +61,11 @@ func freeGatewayAddress(t *testing.T) string {
 	return address
 }
 func TestGatewayActualProcessesWithMajorityAuthorizationAndRoundTrip(t *testing.T) {
+	for _, count := range []int{1, 2} {
+		t.Run(fmt.Sprintf("%d-gateway", count), func(t *testing.T) { gatewayActualProcessCase(t, count) })
+	}
+}
+func gatewayActualProcessCase(t *testing.T, count int) {
 	binary := os.Getenv("CG_GATEWAY_BINARY")
 	if binary == "" {
 		t.Fatal("CG_GATEWAY_BINARY is required for this explicit integration suite")
@@ -108,7 +113,8 @@ func TestGatewayActualProcessesWithMajorityAuthorizationAndRoundTrip(t *testing.
 	os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: kd}), 0600)
 	urls := []string{}
 	frontends := []string{}
-	for index := 0; index < 2; index++ {
+	processes := []*exec.Cmd{}
+	for index := 0; index < count; index++ {
 		management, data, health := freeGatewayAddress(t), freeGatewayAddress(t), freeGatewayAddress(t)
 		urls = append(urls, "https://"+management)
 		frontends = append(frontends, data)
@@ -126,9 +132,10 @@ func TestGatewayActualProcessesWithMajorityAuthorizationAndRoundTrip(t *testing.
 		if e = cmd.Start(); e != nil {
 			t.Fatal(e)
 		}
+		processes = append(processes, cmd)
 		t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait(); log.Close() })
 	}
-	client, e := endpoint.NewGatewayHTTP(endpoint.GatewayProfile{URLs: urls, CAFile: caPath, CertFile: certPath, KeyFile: keyPath})
+	client, e := endpoint.NewGatewayHTTP(endpoint.GatewayProfile{URLs: urls, AllowSingleGateway: count == 1, CAFile: caPath, CertFile: certPath, KeyFile: keyPath})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -203,6 +210,31 @@ func TestGatewayActualProcessesWithMajorityAuthorizationAndRoundTrip(t *testing.
 	after := f.i.GatewayGrant(f.c.ResourceID)
 	if after.Sequence <= before.Sequence || after.Epoch != before.Epoch {
 		t.Fatal("actual stable renewal failed")
+	}
+	if count == 2 {
+		processes[1].Process.Kill()
+		processes[1].Wait()
+		prior := f.i.GatewayGrant(f.c.ResourceID)
+		for n := 0; n < 2; n++ {
+			e = keeper.RunOnce(context.Background())
+			if e == nil {
+				t.Fatal("unavailable peer was not reported")
+			}
+			updated := f.i.GatewayGrant(f.c.ResourceID)
+			if updated.Epoch != prior.Epoch || updated.Sequence <= prior.Sequence {
+				t.Fatal("surviving real process lost stable renewal", e)
+			}
+			connection, dialErr := net.Dial("tcp", frontends[0])
+			if dialErr != nil {
+				t.Fatal(dialErr)
+			}
+			roundTrip(connection, "cloud")
+			connection.Close()
+			prior = updated
+		}
+		if _, e = f.p.AuthorizeTransition(context.Background(), f.resolved()); e == nil {
+			t.Fatal("offline peer allowed transition")
+		}
 	}
 	t.Log("PASS: real gateway processes, authenticated majority-lease publisher, fixed TCP entry local->cloud, old-session close and OwnershipKeeper renewal. SQL topology is simulated; no real database or cloud LB.")
 }

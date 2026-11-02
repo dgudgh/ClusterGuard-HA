@@ -204,6 +204,17 @@ const CHECKS = [
     }
   },
   {
+    rule:'12 / 22',title:'gateway availability renews only the existing stable writer',
+    run:()=>{
+      const provider=read('internal/endpoint/gateway.go')||'';
+      const client=read('internal/endpoint/gateway_client.go')||'';
+      for(const proof of ['partial gateway observation cannot establish a new owner','partial gateway availability cannot bootstrap or change a route','Complete: !partial','g.Epoch != last.Epoch','g.Sequence > last.Sequence','!g.ExpiresAt.After(time.Now())'])if(!provider.includes(proof))return 'partial route guard missing: '+proof;
+      for(const proof of ['minimum := 2','profile.AllowSingleGateway','single gateway mode requires exactly one management URL','old.TargetID != grant.TargetID','old.Sequence >= grant.Sequence','!state.status.Active','!old.ExpiresAt.After(time.Now())','no gateway confirmed stable renewal'])if(!client.includes(proof))return 'stable renewal guard missing: '+proof;
+      for(const file of ['internal/endpoint/gateway_availability_test.go','internal/endpoint/gateway_http_test.go'])if(!read(file))return 'availability regression missing: '+file;
+      return true;
+    }
+  },
+  {
     rule:'12 / 22', title:'MySQL installation streams bounded progress and preserves failure evidence',
     run:()=>{
       const installer=read('scripts/install_clusterguard.sh')||'';
@@ -1278,6 +1289,7 @@ const reportOpen = failures => {
 const READ_FILES = [
  'internal/api/disaster_recovery.go',
   'adapters/mysql/runner.go',
+  'internal/endpoint/gateway_client.go','internal/endpoint/gateway_availability_test.go','internal/endpoint/gateway_http_test.go',
   'internal/endpoint/gateway.go','internal/store/gateway.go','internal/agent/gateway_reconcile.go','internal/agent/reconcile_protocol.go','internal/coordination/ownership_keeper.go','internal/endpoint/gateway_test.go','internal/store/gateway_test.go','internal/agent/gateway_reconcile_test.go','adapters/mysql/gateway_switchover_test.go','tools/console-gateway-acceptance.cjs',
 
   'scripts/installer_progress_test.go',
@@ -1309,6 +1321,9 @@ const READ_FILES = [
 ];
 
 const MUTATIONS = [
+  {name:'partial gateway observation claims complete coverage',file:'internal/endpoint/gateway.go',find:'Complete: !partial',replace:'Complete: true',rule:'gateway availability renews only the existing stable writer'},
+  {name:'stable renewal accepts another target',file:'internal/endpoint/gateway_client.go',find:'old.TargetID != grant.TargetID',replace:'false',rule:'gateway availability renews only the existing stable writer'},
+  {name:'gateway defaults to single node without opt in',file:'internal/endpoint/gateway_client.go',find:'minimum := 2',replace:'minimum := 1',rule:'gateway availability renews only the existing stable writer'},
   {name:'gateway enters the legacy disaster recovery planner',file:'internal/api/disaster_recovery.go',find:'if gatewayMode {',replace:'if false && gatewayMode {',rule:'gateway publication preserves majority authority and bounded routing'},
   {name:'gateway page calls expired cached routes ready',file:'internal/api/console.html',find:":stale?'网关状态需重新读取':",replace:':',rule:'gateway publication preserves majority authority and bounded routing'},
   {name:'gateway page accepts an older polling read',file:'internal/api/console.html',find:'if(generation!==state.requestGeneration || readEpoch!==state.gatewayRouteReadEpoch || state.clusterDetail?.cluster?.resource_id!==clusterID)return;',replace:'if(generation!==state.requestGeneration || state.clusterDetail?.cluster?.resource_id!==clusterID)return;',rule:'gateway publication preserves majority authority and bounded routing'},

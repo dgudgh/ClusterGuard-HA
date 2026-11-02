@@ -13,6 +13,9 @@ cases=[
  ('partial-activation','internal/endpoint/gateway.go','p.inventory.ReserveGatewayGrant(lease, operation, "withdraw", false)','p.inventory.ReserveGatewayGrant(lease, operation, "activate", false)','./internal/endpoint','TestGatewayFailuresNeverAuthorizeUnknownOwner'),
  ('sql-writability','internal/endpoint/gateway.go','if primaries != 1 || !proven','if primaries < 0 || !proven && false','./internal/endpoint','TestGatewayFailuresNeverAuthorizeUnknownOwner'),
  ('agent-scope','internal/agent/gateway_reconcile.go','decision.EndpointProvider != model.EndpointProviderGateway','decision.EndpointProvider == "invalid"','./internal/agent','TestGatewayAgentNeverTouchesHostVIPAndFencesOnAuthorizationLoss'),
+ ('renewal-target','internal/endpoint/gateway_client.go','old.TargetID != grant.TargetID','false','./internal/endpoint','TestGatewayHTTPRenewalNeverReactivatesUnknownState'),
+ ('single-opt-in','internal/endpoint/gateway_client.go','minimum := 2','minimum := 1','./internal/endpoint','TestSingleGatewayProfileRequiresExplicitOptIn'),
+ ('partial-epoch','internal/endpoint/gateway.go','g.Epoch != last.Epoch','false','./internal/endpoint','TestGatewayPartialAvailabilityNeverBootstrapsOrRebinds'),
 ]
 base=root/'.build/gateway';base.mkdir(parents=True,exist_ok=True)
 results=[]

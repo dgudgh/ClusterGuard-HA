@@ -11,6 +11,9 @@ type GatewayView struct {
 	AuthorityUnconfirmed bool             `json:"authority_unconfirmed"`
 	ClusterID            model.ResourceID `json:"cluster_id"`
 	OwnerID              model.ResourceID `json:"owner_id"`
+	Serving              bool             `json:"serving"`
+	UnavailableGateways  int              `json:"unavailable_gateways"`
+	SingleGateway        bool             `json:"single_gateway"`
 	Ready                bool             `json:"ready"`
 	LeaseValid           bool             `json:"lease_valid"`
 	LeaseExpiresAt       time.Time        `json:"lease_expires_at"`
@@ -24,7 +27,11 @@ func (p *GatewayProvider) InspectGateway(ctx context.Context, cluster model.Reso
 		return view, err
 	}
 	view.OwnerID = r.resource.OwnerID
-	view.Statuses, err = p.statuses(ctx, r, client)
+	view.Statuses, view.UnavailableGateways, err = p.stableStatuses(ctx, r, client)
+	partial := view.UnavailableGateways > 0
+	if minimum, ok := client.(interface{ MinimumGatewayObservations() int }); ok {
+		view.SingleGateway = minimum.MinimumGatewayObservations() == 1
+	}
 	if err != nil {
 		return view, err
 	}
@@ -36,7 +43,8 @@ func (p *GatewayProvider) InspectGateway(ctx context.Context, cluster model.Reso
 	view.LeaseValid = true
 	view.LeaseExpiresAt = lease.ExpiresAt
 	last := p.inventory.GatewayGrant(cluster)
-	view.Ready = lease.OperationID == lease.HAEndpointID && lease.PreviousOwnerID == "" && last.Epoch > 0
+	view.Serving = stableGatewayLease(lease) && stableGatewayStates(view.Statuses, last, lease)
+	view.Ready = !partial && lease.OperationID == lease.HAEndpointID && lease.PreviousOwnerID == "" && last.Epoch > 0
 	for _, status := range view.Statuses {
 		view.Ready = view.Ready && status.Active && status.LastGrant.TargetID == view.OwnerID && status.LastGrant.LeaseID == lease.ResourceID && sameGatewayGrant(status.LastGrant, last)
 	}

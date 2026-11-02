@@ -23,11 +23,12 @@ recorded-through: 73ff4a3
 
 | 日期 | 文件 | 变更 | 说明 |
 | --- | --- | --- | --- |
+| 2026-11-02 | `docs/development/gateway-vip-frontend-2026-11-02.md` | A | 记录单/双网关VIP生成/就绪探针、155端口映射、稳定主库部分续期；实际Linux命名空间/VRRP、真实网关进程与四库连通验收及未交付/未接管边界。 |
 | 2026-11-02 | `docs/development/cloud-instance-onboarding-2026-11-02.md` | A | 记录云复制/网络和误诊纠正、旧现场缺少登记接口；追加冻结候选与3.1.4.2身份链、ART/历史门禁边界、正式通道上传/计划、用户确认的候选升级成功、四库真实页面与SQL验收，补记云副本缺少半同步插件的实测、独立cnf及只读保护下云MySQL重启、4实例healthy/主库3个半同步客户端和实际页面回归；云切主仍未完成。 |
 | 2026-11-02 | `docs/development/gateway-real-mysql-2026-11-02.md` | A | 记录真实MySQL、真实控制面与页面网关端到端测试的旧证据差异、门禁、隔离范围及本轮实际结果。 |
 | 2026-10-28 | `docs/development/backend/operations.md` | M | 补MySQL页面切换到gateway提供者的真实租约、屏障、Agent模式与部署指路。2026-11-02追加真实MySQL/Raft/双网关及页面端到端复跑、摘要修复与实际结果入口。 |
 | 2026-10-28 | `docs/development/frontend/operations.md` | M | 补默认折叠网关状态、语言/上下文与原操作锁交互规则。 |
-| 2026-10-28 | `docs/development/gateway-switchover-2026-10-28.md` | A | 记录页面切换与独立网关对接的修改前基线、契约加载、多数派租约约束、验证计划及实际边界。 |
+| 2026-10-28 | `docs/development/gateway-switchover-2026-10-28.md` | A | 记录页面切换与独立网关对接的旧版/多数派边界；补11-02显式单网关、本地VIP、部分稳定续期与严格撤权的实现范围。 |
 | 2026-10-28 | `docs/development/existing-instance-registration-2026-10-28.md` | A | 记录已有实例端点接入的修改前对照、契约加载、原子登记/发现边界及实际回归结果。 |
 | 2026-10-28 | `docs/development/backend/clusters.md` | M | 补既有集群数据库端点追加API、幂等/原子冲突与发现失效规则。 |
 | 2026-10-28 | `docs/development/frontend/context.md` | M | 补集群管理接入已有实例入口、固定集群上下文及登记/发现/执行能力区分。 |

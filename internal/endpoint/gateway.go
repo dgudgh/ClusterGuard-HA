@@ -82,19 +82,32 @@ func (p *GatewayProvider) statuses(ctx context.Context, r endpointResource, clie
 	if err != nil {
 		return nil, err
 	}
-	if len(statuses) < 2 {
-		return nil, fmt.Errorf("two gateway observations required")
+	if err = p.validateStatuses(r, client, statuses, false); err != nil {
+		return nil, err
+	}
+	return statuses, nil
+}
+func (p *GatewayProvider) validateStatuses(r endpointResource, client GatewayTransport, statuses []GatewayStatus, partial bool) error {
+	minimum := 2
+	if configured, ok := client.(interface{ MinimumGatewayObservations() int }); ok && configured.MinimumGatewayObservations() == 1 {
+		minimum = 1
+	}
+	if partial {
+		minimum = 1
+	}
+	if len(statuses) < minimum {
+		return fmt.Errorf("insufficient gateway observations")
 	}
 	// Authenticate both resource ID and exact configured DB address before any
 	// mutation. DNS aliases must be explicitly registered as database endpoints.
 	seen := map[string]bool{}
 	for _, status := range statuses {
 		if status.InstanceID == "" || seen[status.InstanceID] {
-			return nil, fmt.Errorf("distinct gateway process identities are required")
+			return fmt.Errorf("distinct gateway process identities are required")
 		}
 		seen[status.InstanceID] = true
-		if status.ClusterID != r.resource.ClusterID || len(status.Targets) == 0 {
-			return nil, fmt.Errorf("gateway identity inventory is unavailable; compatible gateway required")
+		if status.ClusterID != r.resource.ClusterID || len(status.Targets) == 0 || status.Active && status.Targets[string(status.LastGrant.TargetID)] == "" {
+			return fmt.Errorf("gateway identity inventory is unavailable; compatible gateway required")
 		}
 		for id, address := range status.Targets {
 			matched := false
@@ -109,11 +122,11 @@ func (p *GatewayProvider) statuses(ctx context.Context, r endpointResource, clie
 				}
 			}
 			if !matched {
-				return nil, fmt.Errorf("gateway backend %s does not match registered database address", id)
+				return fmt.Errorf("gateway backend %s does not match registered database address", id)
 			}
 		}
 	}
-	return statuses, nil
+	return nil
 }
 func (p *GatewayProvider) send(ctx context.Context, client GatewayTransport, lease Lease, grant model.GatewayGrant) error {
 	return client.Apply(ctx, grant, func(check context.Context) error { return p.leases.Validate(check, lease) })
@@ -278,11 +291,22 @@ func (p *GatewayProvider) ObserveOwnership(ctx context.Context, cluster model.Da
 	if err != nil {
 		return OwnershipObservation{}, err
 	}
-	statuses, err := p.statuses(ctx, r, client)
+	statuses, unavailable, err := p.stableStatuses(ctx, r, client)
+	partial := unavailable > 0
 	if err != nil {
 		return OwnershipObservation{}, err
 	}
-	result := OwnershipObservation{HAEndpointID: r.resource.ResourceID, HAEndpointRevision: r.resource.MetadataRevision, EndpointRevision: r.endpoint.MetadataRevision, CanonicalOwnerID: r.resource.OwnerID, EndpointOwnerID: r.endpoint.InstanceID, Complete: true, OwnerIDs: []model.ResourceID{}}
+	if partial {
+		lease, e := p.current(ctx, r, r.resource.OwnerID)
+		if e != nil {
+			return OwnershipObservation{}, e
+		}
+		last := p.inventory.GatewayGrant(cluster.ResourceID)
+		if !stableGatewayLease(lease) || r.endpoint.InstanceID != lease.OwnerID || !stableGatewayStates(statuses, last, lease) {
+			return OwnershipObservation{}, fmt.Errorf("partial gateway observation cannot establish a new owner")
+		}
+	}
+	result := OwnershipObservation{HAEndpointID: r.resource.ResourceID, HAEndpointRevision: r.resource.MetadataRevision, EndpointRevision: r.endpoint.MetadataRevision, CanonicalOwnerID: r.resource.OwnerID, EndpointOwnerID: r.endpoint.InstanceID, Complete: !partial, OwnerIDs: []model.ResourceID{}}
 	owners := map[model.ResourceID]bool{}
 	for _, status := range statuses {
 		if status.Active {
@@ -295,8 +319,10 @@ func (p *GatewayProvider) ObserveOwnership(ctx context.Context, cluster model.Da
 	for owner := range owners {
 		result.OwnerIDs = append(result.OwnerIDs, owner)
 	}
-	for _, instance := range snapshot.Instances {
-		result.ObservedInstanceIDs = append(result.ObservedInstanceIDs, instance.ResourceID)
+	for _, probe := range snapshot.Probes {
+		if probe.DiscoveryObservedAt.Equal(snapshot.ObservedAt) && probe.Health.State == model.HealthHealthy {
+			result.ObservedInstanceIDs = append(result.ObservedInstanceIDs, probe.InstanceID)
+		}
 	}
 	return result, nil
 }
@@ -336,7 +362,7 @@ func (p *GatewayProvider) RefreshStableRoute(ctx context.Context, request LeaseR
 	if err != nil {
 		return err
 	}
-	if lease.OperationID != lease.HAEndpointID || lease.PreviousOwnerID != "" {
+	if !stableGatewayLease(lease) {
 		return fmt.Errorf("gateway stable renewal blocked by transition")
 	}
 	snapshot, ok := p.inventory.TopologySnapshot(request.ClusterID)
@@ -361,17 +387,64 @@ func (p *GatewayProvider) RefreshStableRoute(ctx context.Context, request LeaseR
 	if primaries != 1 || !proven {
 		return fmt.Errorf("gateway routing waits for a current uniquely writable SQL primary")
 	}
-	statuses, err := p.statuses(ctx, r, client)
+	statuses, unavailable, err := p.stableStatuses(ctx, r, client)
+	partial := unavailable > 0
 	if err != nil {
 		return err
 	}
 	last := p.inventory.GatewayGrant(request.ClusterID)
-	matching := last.Epoch > 0 && last.TargetID == lease.OwnerID && last.LeaseID == lease.ResourceID && last.Mode == "activate"
-	for _, status := range statuses {
-		matching = matching && status.Active && sameGatewayGrant(status.LastGrant, last)
-	}
+	matching := stableGatewayStates(statuses, last, lease)
 	if !matching {
+		if partial {
+			return fmt.Errorf("partial gateway availability cannot bootstrap or change a route")
+		}
 		return p.publish(ctx, r, client, lease, lease.OperationID, true)
 	}
+	if renewer, ok := client.(interface {
+		RenewStable(context.Context, model.GatewayGrant, []GatewayStatus, func(context.Context) error) (int, error)
+	}); ok {
+		grant, e := p.inventory.ReserveGatewayGrant(lease, last.OperationID, "activate", false)
+		if e != nil {
+			return e
+		}
+		_, e = renewer.RenewStable(ctx, grant, statuses, func(check context.Context) error { return p.leases.Validate(check, lease) })
+		return e
+	}
+	if partial {
+		return fmt.Errorf("transport cannot renew a partial stable route")
+	}
 	return p.activate(ctx, client, lease, last.OperationID)
+}
+
+func stableGatewayLease(lease Lease) bool {
+	return lease.OperationID == lease.HAEndpointID && lease.PreviousOwnerID == ""
+}
+func stableGatewayStates(statuses []GatewayStatus, last model.GatewayGrant, lease Lease) bool {
+	if last.ClusterID != lease.ClusterID || last.Mode != "activate" || last.Epoch == 0 || last.TargetID != lease.OwnerID || last.LeaseID != lease.ResourceID || len(statuses) == 0 {
+		return false
+	}
+	for _, s := range statuses {
+		g := s.LastGrant
+		if g.ClusterID != last.ClusterID || !s.Active || g.Mode != "activate" || g.Epoch != last.Epoch || g.TargetID != last.TargetID || g.LeaseID != last.LeaseID || g.OperationID != last.OperationID || g.Sequence > last.Sequence || g.Sequence == 0 || !g.ExpiresAt.After(time.Now()) || g.ExpiresAt.After(last.ExpiresAt) {
+			return false
+		}
+	}
+	return true
+}
+func (p *GatewayProvider) stableStatuses(ctx context.Context, r endpointResource, client GatewayTransport) ([]GatewayStatus, int, error) {
+	if reader, ok := client.(interface {
+		AvailableStatuses(context.Context, model.ResourceID) (GatewayAvailability, error)
+	}); ok {
+		observations, err := reader.AvailableStatuses(ctx, r.resource.ClusterID)
+		if err != nil {
+			return nil, 0, err
+		}
+		partial := observations.Unavailable > 0
+		if err = p.validateStatuses(r, client, observations.Statuses, partial); err != nil {
+			return nil, observations.Unavailable, err
+		}
+		return observations.Statuses, observations.Unavailable, nil
+	}
+	states, err := p.statuses(ctx, r, client)
+	return states, 0, err
 }
