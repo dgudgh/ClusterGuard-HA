@@ -236,5 +236,5 @@ func gatewayActualProcessCase(t *testing.T, count int) {
 			t.Fatal("offline peer allowed transition")
 		}
 	}
-	t.Log("PASS: real gateway processes, authenticated majority-lease publisher, fixed TCP entry local->cloud, old-session close and OwnershipKeeper renewal. SQL topology is simulated; no real database or cloud LB.")
+	t.Log("PASS: real gateway processes, HA LeaseStore publisher, fixed TCP entry local->cloud, old-session close and OwnershipKeeper renewal. Mutation authority and SQL topology are fixtures; no real Raft cluster, database or cloud LB.")
 }
