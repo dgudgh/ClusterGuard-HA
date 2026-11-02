@@ -2,7 +2,7 @@
 
 [English](../en-US/postgresql-agent-systemd.md) · [PostgreSQL HA 手册](postgresql-ha.md) · [后端节点入口](../development/backend/nodes.md)
 
-本页用于 Linux PostgreSQL 原生主备的 Agent 部署与排障。2026-11-02 按当前源码核对；本轮没有部署或切换 PG，也没有把 MySQL 云现场结果计为 PG 验收。
+本页用于 Linux PostgreSQL 原生主备的 Agent 部署与排障。2026-11-02 按当前源码核对；先前文档核对不包含PG现场；随后用户授权部署和网关测试，阶段进展以[本轮记录](../development/postgresql-hybrid-field-2026-11-02.md)为准，不能把MySQL结果计为PG验收。
 
 ## 先确认支持路径
 
@@ -10,10 +10,10 @@
 | --- | --- |
 | 原生 PG HA | 有发现、候选、受控切换、故障接管、旧主恢复和节点生命周期实现；按匹配版本与现场矩阵验收后启用。 |
 | Linux Agent | 使用 PG 专属服务、OS 用户、PGDATA、工具目录、passfile 和节点身份；与主机 VIP、签名和多数派租约配合。 |
-| 企业网关自动跟随 PG 切主 | 当前尚不支持。gateway 提供者预检要求 MySQL，gateway Agent 配置也拒绝 PG；不能只把端口改成5432或去掉VIP字段来启用。 |
+| 企业网关自动跟随 PG 切主 | 本轮源码增加Linux PG适配：多数派租约、严格撤权、原生停止/提升/重挂及持续可写证据。必须同时部署匹配HA/Agent和受信gateway配置；现役旧版本不会自动获得能力，制品与现场结果见本轮记录。 |
 | TCP转发 | 独立组件可转发TCP字节，但这不证明PG授权发布、隔离、续期或真实切主闭环；没有PG连接池、读写分离或事务重放承诺。 |
 
-对应源码为 `internal/endpoint/gateway.go` 的 `Precheck`、`internal/agent/config.go` 的 gateway 策略限制及 PG 专属协调分支。保留这些阻断，不能靠文档、手工授予网关路由或跳过检查宣称支持。
+对应源码为 `internal/endpoint/gateway.go` 的 `Precheck` 与原生可写证据、`internal/agent/config.go` 的Linux/无本机VIP策略，以及 `gateway_reconcile.go` 的PG协调分支。其他引擎和PG非Linux运行时仍拒绝；不能手工授予网关路由或跳过检查。
 
 ## 固定本机身份与配置
 
@@ -22,9 +22,9 @@
 - `cluster_id`、平台 `instance_id`、独立的 `postgresql_node_id` 与集群 `system_identifier`；平台UUID和数据库本地UUID用途不同。
 - `engine: "postgresql"`、实际 `postgresql_service`、`postgresql_user`、`postgresql_port` 和 `postgresql_database`。
 - `postgresql_data_directory`、`postgresql_binary_directory`、`postgresql_passfile` 和 `postgresql_peers` 中允许的源身份/坐标。
-- 当前原生VIP部署的 `vip`、`interface`、`prefix`，以及可信控制器URL、CA和签名共享秘密引用；不能套用MySQL的无VIP gateway策略。
+- 当前原生VIP部署的 `vip`、`interface`、`prefix`，以及可信控制器URL、CA和签名共享秘密引用；原生VIP模式与gateway模式分开：新PG gateway策略显式配置 `endpoint_provider: "gateway"`，VIP/interface留空、prefix=0，继续填写完整PG身份/路径/peers。
 
-当前默认本地执行器使用 `/usr/bin/setpriv --reuid ... --regid ... --init-groups` 切换到配置的PG用户，再调用工具；既有部分回归夹具使用runuser。确认实际 `setpriv`、用户/组、工具及目录权限，不把测试夹具的命令当成部署实现。
+当前默认本地执行器使用 `/usr/bin/setpriv --reuid ... --regid ... --init-groups` 切换到配置的PG用户，再调用工具，并把HOME固定到受保护passfile的父目录，避免继承root的libpq客户端证书路径；既有部分回归夹具使用runuser。确认实际 `setpriv`、用户/组、工具及目录权限，不把测试夹具的命令当成部署实现。
 
 passfile须由配置的PG OS用户拥有、0600，父目录允许该用户穿越，内容匹配本地管理和允许的复制连接；不在浏览器、命令行或日志中填写密码。`PGPASSFILE` 和文件权限规则参见[PG16官方说明](https://www.postgresql.org/docs/16/libpq-pgpass.html)。
 
@@ -69,7 +69,7 @@ PG_PASSFILE=/etc/clusterguard/postgresql/5432.pass
 PG_PORT=5432
 PG_DATABASE=postgres
 /usr/bin/setpriv --reuid "$PG_OS_USER" --regid "$PG_OS_USER" --init-groups -- \
-  /usr/bin/env PGPASSFILE="$PG_PASSFILE" PGCONNECT_TIMEOUT=5 \
+  /usr/bin/env HOME="$(dirname "$PG_PASSFILE")" PGPASSFILE="$PG_PASSFILE" PGCONNECT_TIMEOUT=5 \
   "$PG_BIN/psql" --no-password --no-psqlrc --set=ON_ERROR_STOP=1 \
   --host=127.0.0.1 --port="$PG_PORT" --username="$PG_OS_USER" \
   --dbname="$PG_DATABASE" --tuples-only --no-align \
@@ -82,4 +82,4 @@ PG_DATABASE=postgres
 
 核对原生节点UUID、`system_identifier`、时间线、实际上下游身份、WAL接收/重放/延迟、服务状态、唯一writer和唯一入口；主库恢复模式为false、备用为true只是其中部分证据。通过实际业务入口复核角色、TLS、连接池重连及结果不明事务，再观察多个Agent授权周期。历史PG16.4实验室结果须按其原日期和场景阅读，不代表新站点自动通过。
 
-本轮只核对源码与文档，没有PG现场权限修复、原生往返切换或PG企业网关测试。PG网关联动还缺少已接通并验证的PG专属授权/隔离/稳定续期路径及真实数据库、页面、断链/失去多数派、过期/回退和应用验收；在这些完成前，保持“不支持/未验收”的准确边界。
+四节点原生复制已部署并做初步真实数据/TLS核验，网关适配已进入源码回归；这不代表云往返、故障注入和应用恢复通过。PG稳定授权要求本地运行且非恢复、原生SQL可写；授权失去或证据错误时停止主库，流式备用保留运行。过渡不由Agent提升或修改写角色，PG gateway灾难重建仍未支持。制品、页面、往返、断链/过期/回退与应用实际结果仅见本轮记录，不以源码绿灯代替现场。

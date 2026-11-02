@@ -55,7 +55,7 @@
 <p>云接入或更换原厂RPM后，须在实际 systemd 协调单元中验证重启只读检查，不能只测SSH根用户。遇到任务成功后反复自隔离、<code>inspect MySQL restart defaults</code> 或 <code>EPERM</code>，按<a href="../../zh-CN/mysql-agent-systemd.md">MySQL Agent：systemd 与原厂RPM权限兼容</a>核对证据和条件化修复。该指南还记录一次真实云切主的验证范围及未完成项。</p>
 <p>网关端点由HA提供唯一writer授权；发布方、Agent、网络与时钟必须一起准备。固定入口SQL、唯一可写主库、复制/GTID与连续授权续期都要核验，不以单次接口成功或TCP就绪代替。</p>
 <h2 id="postgresql-agent的单独入口">PostgreSQL Agent的单独入口<a class="heading-anchor" href="#postgresql-agent的单独入口" aria-label="Link to PostgreSQL Agent的单独入口">#</a></h2>
-<p>PG的服务/身份/PGDATA/权限说明见<a href="../../zh-CN/postgresql-agent-systemd.md">PG Agent systemd指南</a>，原生切换与接管见<a href="postgresql-ha.html">PG HA手册</a>。PG专用沙箱生成与MySQL的RPM文件能力问题分开处理；当前gateway适配和无VIP Agent策略不接受PG，本轮MySQL云验收不扩大为PG支持。</p>
+<p>PG的服务/身份/PGDATA/权限说明见<a href="../../zh-CN/postgresql-agent-systemd.md">PG Agent systemd指南</a>，原生切换与接管见<a href="postgresql-ha.html">PG HA手册</a>。PG专用沙箱生成与MySQL的RPM文件能力问题分开处理；本轮源码新增Linux PG网关联动与签名无本机VIP策略，使用原生可写检查和停主隔离，必须成套部署匹配程序；SOURCE/ART/真实PG结果分别见<a href="../../development/postgresql-hybrid-field-2026-11-02.md">本轮记录</a>，MySQL结果不扩大为PG验收。</p>
 <h2 id="1-配置控制平面">1. 配置控制平面<a class="heading-anchor" href="#1-配置控制平面" aria-label="Link to 1. 配置控制平面">#</a></h2>
 <p>使用 <code>configs/clusterguard.example.json</code> 作为配置形状。加载器拒绝未知的键和多个 JSON 值。</p>
 <p>实现的键：</p>
@@ -220,7 +220,7 @@
 <tr>
 <td><code>gateway.enabled</code></td>
 <td>可选</td>
-<td>显式启用当前MySQL企业连接网关适配；默认关闭，不替代数据库选主或多数派。PG网关切主尚不支持。</td>
+<td>显式启用MySQL/Linux原生PG企业连接网关适配；默认关闭，须匹配HA/Agent，不替代数据库选主、隔离或多数派。PG网关灾难重建不支持。</td>
 </tr>
 <tr>
 <td><code>gateway.profiles</code></td>

@@ -219,8 +219,8 @@ func LoadConfig(path string) (Config, error) {
 		if policy.EndpointProvider != "" && policy.EndpointProvider != model.EndpointProviderLinuxVIP && policy.EndpointProvider != model.EndpointProviderGateway {
 			return Config{}, fmt.Errorf("unsupported Agent endpoint provider")
 		}
-		if policy.EndpointProvider == model.EndpointProviderGateway && (policy.Engine != model.EngineMySQL || policy.VIP != "" || policy.Interface != "" || policy.Prefix != 0) {
-			return Config{}, fmt.Errorf("gateway Agent requires MySQL and no local VIP/interface/prefix")
+		if policy.EndpointProvider == model.EndpointProviderGateway && ((policy.Engine != model.EngineMySQL && policy.Engine != model.EnginePostgreSQL) || policy.VIP != "" || policy.Interface != "" || policy.Prefix != 0) {
+			return Config{}, fmt.Errorf("gateway Agent requires MySQL or PostgreSQL and no local VIP/interface/prefix")
 		}
 		if policy.RuntimeKind == "" {
 			policy.RuntimeKind = model.RuntimeLinux
@@ -230,6 +230,9 @@ func LoadConfig(path string) (Config, error) {
 		}
 		if !policy.Engine.Valid() || (policy.Engine != model.EngineMySQL && policy.Engine != model.EnginePostgreSQL && policy.Engine != model.EngineOracle) {
 			return Config{}, fmt.Errorf("agent cluster engine must be mysql, postgresql, or oracle")
+		}
+		if policy.EndpointProvider == model.EndpointProviderGateway && policy.Engine == model.EnginePostgreSQL && policy.RuntimeKind != model.RuntimeLinux {
+			return Config{}, fmt.Errorf("PostgreSQL gateway Agent currently requires the Linux runtime")
 		}
 		if policy.RuntimeKind == model.RuntimeKubernetes {
 			return Config{}, fmt.Errorf("kubernetes workloads require the Kubernetes runtime controller and cannot use the host Agent")

@@ -30,7 +30,7 @@ Prepare HA authority, Agent policy, network and clocks together. Verify SQL thro
 
 ## Separate PostgreSQL Agent guidance
 
-Use the [PG Agent systemd guide](en-US/postgresql-agent-systemd.md) for service/identity/PGDATA permissions and the [PG HA runbook](postgresql-ha.md) for native switching and failover. PG sandbox generation is separate from the MySQL vendor capability issue. Current gateway integration and no-VIP Agent policy reject PG; the MySQL cloud results do not extend PG support.
+Use the [PG Agent systemd guide](en-US/postgresql-agent-systemd.md) for service/identity/PGDATA permissions and the [PG HA runbook](postgresql-ha.md) for native switching and failover. PG sandbox generation is separate from the MySQL vendor capability issue. This source adds Linux PG gateway integration and a signed no-host-VIP Agent policy with native write-state proof and primary-stop isolation. Deploy compatible binaries together; source, artifact and actual PG site acceptance are tracked separately in the [field record](development/postgresql-hybrid-field-2026-11-02.md). MySQL results do not certify PG.
 
 ## 1. Configure the Control Plane
 
@@ -71,7 +71,7 @@ Implemented keys:
 | `consensus.tls_cert_file`, `tls_key_file`, `tls_ca_file` | For non-loopback Raft | Mutual-TLS identity and private CA for controller-to-controller Raft traffic. All three are required together. |
 | `consensus.peers[].api_address` | Recommended | Trusted HTTPS address used to forward mutations to that controller when it is Leader. It is never derived from the inbound HTTP Host header. |
 | `consensus.allow_insecure_transport` | Lab only | Explicitly permits non-loopback plaintext Raft and emits a startup warning. |
-| `gateway.enabled` | Optional | Explicitly enables the current MySQL enterprise gateway adapter; disabled by default, without replacing database election or majority authority. PG gateway switching is not yet supported. |
+| `gateway.enabled` | Optional | Explicitly enables the MySQL/native Linux PostgreSQL enterprise gateway adapter; disabled by default. Compatible HA/Agent deployment is required; database election, fencing and majority authority remain mandatory. PG gateway disaster rebuild is unsupported. |
 | `gateway.profiles` | When enabled | Trusted profiles selected by the endpoint `provider_ref`, including `management_urls`, `ca_file`, `cert_file` and `key_file`; management requires verified mutual TLS. |
 | `gateway.profiles.<name>.allow_single_gateway` | Single validation only | Explicit `true` permits exactly one management URL; the default requires at least two gateways. Requires compatible new HA code (included in 3.1.5.1, unavailable in 3.1.4.2). One gateway has no frontend redundancy. |
 | `agent` | Managed writer endpoint changes | Restricted signed commands for endpoint/role evidence and local isolation; gateway policy must explicitly omit the host VIP. |

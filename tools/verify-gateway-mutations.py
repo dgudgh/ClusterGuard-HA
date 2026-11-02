@@ -8,6 +8,10 @@ import tempfile
 root=Path(__file__).resolve().parent.parent
 files=subprocess.check_output(['git','ls-files','-z'],cwd=root).decode().split('\0')
 cases=[
+ ('pg-writable-proof','internal/endpoint/gateway.go','strings.EqualFold(instance.EngineMetadata["transaction_read_only"], "false")','true','./internal/endpoint','TestGatewayPostgreSQLUsesNativeWritableEvidenceAndMajority'),
+ ('pg-recovery-proof','internal/endpoint/gateway.go','strings.EqualFold(instance.EngineMetadata["in_recovery"], "false")','true','./internal/endpoint','TestGatewayPostgreSQLUsesNativeWritableEvidenceAndMajority'),
+ ('pg-local-write-proof','internal/agent/gateway_reconcile.go','if err != nil || !writable {','if err != nil || (!writable && false) {','./internal/agent','TestGatewayPostgreSQLAgentPreservesHardFencingAndNeverTouchesVIP'),
+ ('pg-client-home','internal/agent/postgresql.go','"HOME=" + filepath.Dir(policy.PostgreSQLPassfile)','"HOME=/root"','./internal/agent','TestPostgreSQLGatewayWritabilityAndPrivateClientHome'),
  ('query-pipe-deadline','adapters/mysql/runner.go','command.WaitDelay = 100 * time.Millisecond','command.WaitDelay = 0','./adapters/mysql','TestCLIQueryDeadlineBoundsInheritedOutputPipes'),
  ('lease-expiry','internal/store/gateway.go','grant.ExpiresAt = current.ExpiresAt','grant.ExpiresAt = now.Add(15 * time.Second)','./internal/store','TestGatewayGrantReservationRequiresExactLiveLeaseAndPersistsOrder'),
  ('partial-activation','internal/endpoint/gateway.go','p.inventory.ReserveGatewayGrant(lease, operation, "withdraw", false)','p.inventory.ReserveGatewayGrant(lease, operation, "activate", false)','./internal/endpoint','TestGatewayFailuresNeverAuthorizeUnknownOwner'),

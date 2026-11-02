@@ -25,7 +25,7 @@
 
 ## PostgreSQL Agent的单独入口
 
-PG的服务/身份/PGDATA/权限说明见[PG Agent systemd指南](postgresql-agent-systemd.md)，原生切换与接管见[PG HA手册](postgresql-ha.md)。PG专用沙箱生成与MySQL的RPM文件能力问题分开处理；当前gateway适配和无VIP Agent策略不接受PG，本轮MySQL云验收不扩大为PG支持。
+PG的服务/身份/PGDATA/权限说明见[PG Agent systemd指南](postgresql-agent-systemd.md)，原生切换与接管见[PG HA手册](postgresql-ha.md)。PG专用沙箱生成与MySQL的RPM文件能力问题分开处理；本轮源码新增Linux PG网关联动与签名无本机VIP策略，使用原生可写检查和停主隔离，必须成套部署匹配程序；SOURCE/ART/真实PG结果分别见[本轮记录](../development/postgresql-hybrid-field-2026-11-02.md)，MySQL结果不扩大为PG验收。
 
 ## 1. 配置控制平面
 
@@ -65,7 +65,7 @@ PG的服务/身份/PGDATA/权限说明见[PG Agent systemd指南](postgresql-age
 | `consensus.tls_cert_file`, `tls_key_file`, `tls_ca_file` | 非回环 Raft | 控制器到控制器 Raft 流量的相互 TLS 身份和私有 CA。这三个都需要一起使用。 |
 | `consensus.peers[].api_address` | 推荐 | 用于将变更操作转发到该控制器的受信任 HTTPS 地址，当它是 Leader 时。它永远不会从入站 HTTP Host 头派生。 |
 | `consensus.allow_insecure_transport` | 实验室专用 | 明确允许非回环明文 Raft 并发出启动警告。 |
-| `gateway.enabled` | 可选 | 显式启用当前MySQL企业连接网关适配；默认关闭，不替代数据库选主或多数派。PG网关切主尚不支持。 |
+| `gateway.enabled` | 可选 | 显式启用MySQL/Linux原生PG企业连接网关适配；默认关闭，须匹配HA/Agent，不替代数据库选主、隔离或多数派。PG网关灾难重建不支持。 |
 | `gateway.profiles` | 启用网关时 | 按端点 `provider_ref` 索引的受信网关配置，包含 `management_urls`、`ca_file`、`cert_file`、`key_file`。管理采用双向 TLS，不能关闭验证。 |
 | `gateway.profiles.<name>.allow_single_gateway` | 仅单机验证 | 显式为 `true` 且仅一个管理地址时允许单网关；默认至少两台。需要含此字段的新 HA 版本，现役3.1.5.1已包含，不兼容旧3.1.4.2。单机无入口冗余。 |
 | `agent` | 受管写入口变更 | 用于端点/角色状态与带内自隔离的受限签名命令；gateway 模式须显式配置无宿主机 VIP 的 Agent 策略。 |

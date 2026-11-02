@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -371,6 +372,43 @@ func TestLoadConfigValidatesRestrictedOraclePolicy(t *testing.T) {
 			}
 			if _, err := LoadConfig(invalidPath); err == nil {
 				t.Fatalf("invalid Oracle policy was accepted: %s", invalid)
+			}
+		})
+	}
+}
+
+func TestGatewayPostgreSQLConfigRequiresNativePolicyWithoutHostVIP(t *testing.T) {
+	t.Setenv("CG_AGENT_TEST_SECRET", "test-secret")
+	policy := postgresqlControllerPolicy()
+	policy.EndpointProvider = model.EndpointProviderGateway
+	for _, c := range []struct {
+		name    string
+		mutate  func(*ClusterPolicy)
+		wantErr bool
+	}{
+		{"native PG", func(*ClusterPolicy) {}, false},
+		{"unsupported runtime", func(p *ClusterPolicy) { p.RuntimeKind = model.RuntimeDocker }, true},
+		{"host VIP", func(p *ClusterPolicy) { p.VIP = "192.0.2.10" }, true},
+		{"interface", func(p *ClusterPolicy) { p.Interface = "eth0" }, true},
+		{"prefix", func(p *ClusterPolicy) { p.Prefix = 24 }, true},
+		{"unsupported engine", func(p *ClusterPolicy) { p.Engine = model.EngineOracle }, true},
+		{"missing native identity", func(p *ClusterPolicy) { p.PostgreSQLNodeID = "" }, true},
+		{"relative data", func(p *ClusterPolicy) { p.PostgreSQLDataDirectory = "relative" }, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			value := policy
+			c.mutate(&value)
+			data, err := json.Marshal(map[string]any{"shared_secret_env": "CG_AGENT_TEST_SECRET", "clusters": []ClusterPolicy{value}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			p := filepath.Join(t.TempDir(), "agent.json")
+			if err = os.WriteFile(p, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			_, err = LoadConfig(p)
+			if (err != nil) != c.wantErr {
+				t.Fatalf("load error=%v", err)
 			}
 		})
 	}

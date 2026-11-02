@@ -161,8 +161,8 @@ func (p *GatewayProvider) activate(ctx context.Context, client GatewayTransport,
 	return nil
 }
 func (p *GatewayProvider) Precheck(ctx context.Context, resolved adapter.ResolvedOperation) []model.Check {
-	if resolved.Cluster.Engine != model.EngineMySQL {
-		return []model.Check{{Name: "writer_endpoint_provider", Status: model.CheckFail, Message: "gateway execution currently requires MySQL"}}
+	if resolved.Cluster.Engine != model.EngineMySQL && resolved.Cluster.Engine != model.EnginePostgreSQL {
+		return []model.Check{{Name: "writer_endpoint_provider", Status: model.CheckFail, Message: "gateway execution requires MySQL or PostgreSQL"}}
 	}
 	r, client, err := p.resource(resolved.Cluster.ResourceID)
 	if err == nil {
@@ -376,7 +376,7 @@ func (p *GatewayProvider) RefreshStableRoute(ctx context.Context, request LeaseR
 			continue
 		}
 		primaries++
-		if instance.ResourceID == lease.OwnerID && instance.Engine == model.EngineMySQL && instance.Health.State == model.HealthHealthy && strings.EqualFold(instance.EngineMetadata["read_only"], "false") && strings.EqualFold(instance.EngineMetadata["super_read_only"], "false") {
+		if instance.ResourceID == lease.OwnerID && gatewayWriterProvenWritable(instance) {
 			for _, probe := range snapshot.Probes {
 				if probe.InstanceID == instance.ResourceID && probe.DiscoveryObservedAt.Equal(snapshot.ObservedAt) && probe.Health.State == model.HealthHealthy {
 					proven = true
@@ -414,6 +414,22 @@ func (p *GatewayProvider) RefreshStableRoute(ctx context.Context, request LeaseR
 		return fmt.Errorf("transport cannot renew a partial stable route")
 	}
 	return p.activate(ctx, client, lease, last.OperationID)
+}
+
+// A TCP backend is never role evidence. Require the engine's native, current
+// SQL fields; absent fields and all other engines remain fail-closed.
+func gatewayWriterProvenWritable(instance model.DatabaseInstance) bool {
+	if instance.Health.State != model.HealthHealthy {
+		return false
+	}
+	switch instance.Engine {
+	case model.EngineMySQL:
+		return strings.EqualFold(instance.EngineMetadata["read_only"], "false") && strings.EqualFold(instance.EngineMetadata["super_read_only"], "false")
+	case model.EnginePostgreSQL:
+		return strings.EqualFold(instance.EngineMetadata["in_recovery"], "false") && strings.EqualFold(instance.EngineMetadata["transaction_read_only"], "false")
+	default:
+		return false
+	}
 }
 
 func stableGatewayLease(lease Lease) bool {

@@ -60,7 +60,7 @@ to curl commands, and rewrite each <code>cgctl &lt;subcommand&gt;</code> as
 <p>After cloud enrollment or a vendor RPM change, validate restart read-only inspection inside the actual systemd unit, not only full-root SSH. For post-success isolation loops, <code>inspect MySQL restart defaults</code> or <code>EPERM</code>, follow <a href="../../en-US/mysql-agent-systemd.md">MySQL Agent: systemd and vendor RPM capabilities</a>. The guide records a conditional fix, one real cloud switchover and the remaining acceptance scope.</p>
 <p>Prepare HA authority, Agent policy, network and clocks together. Verify SQL through the fixed frontend, unique writability, replication/GTID and continuing grant renewal; a single successful response or TCP probe is insufficient.</p>
 <h2 id="separate-postgresql-agent-guidance">Separate PostgreSQL Agent guidance<a class="heading-anchor" href="#separate-postgresql-agent-guidance" aria-label="Link to Separate PostgreSQL Agent guidance">#</a></h2>
-<p>Use the <a href="../../en-US/postgresql-agent-systemd.md">PG Agent systemd guide</a> for service/identity/PGDATA permissions and the <a href="postgresql-ha.html">PG HA runbook</a> for native switching and failover. PG sandbox generation is separate from the MySQL vendor capability issue. Current gateway integration and no-VIP Agent policy reject PG; the MySQL cloud results do not extend PG support.</p>
+<p>Use the <a href="../../en-US/postgresql-agent-systemd.md">PG Agent systemd guide</a> for service/identity/PGDATA permissions and the <a href="postgresql-ha.html">PG HA runbook</a> for native switching and failover. PG sandbox generation is separate from the MySQL vendor capability issue. This source adds Linux PG gateway integration and a signed no-host-VIP Agent policy with native write-state proof and primary-stop isolation. Deploy compatible binaries together; source, artifact and actual PG site acceptance are tracked separately in the <a href="../../development/postgresql-hybrid-field-2026-11-02.md">field record</a>. MySQL results do not certify PG.</p>
 <h2 id="1-configure-the-control-plane">1. Configure the Control Plane<a class="heading-anchor" href="#1-configure-the-control-plane" aria-label="Link to 1. Configure the Control Plane">#</a></h2>
 <p>Use <code>configs/clusterguard.example.json</code> as the configuration shape. The loader
 rejects unknown keys and multiple JSON values.</p>
@@ -226,7 +226,7 @@ rejects unknown keys and multiple JSON values.</p>
 <tr>
 <td><code>gateway.enabled</code></td>
 <td>Optional</td>
-<td>Explicitly enables the current MySQL enterprise gateway adapter; disabled by default, without replacing database election or majority authority. PG gateway switching is not yet supported.</td>
+<td>Explicitly enables the MySQL/native Linux PostgreSQL enterprise gateway adapter; disabled by default. Compatible HA/Agent deployment is required; database election, fencing and majority authority remain mandatory. PG gateway disaster rebuild is unsupported.</td>
 </tr>
 <tr>
 <td><code>gateway.profiles</code></td>

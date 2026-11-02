@@ -80,15 +80,18 @@ type gatewayFixture struct {
 
 func newGatewayFixture(t *testing.T) *gatewayFixture { return gatewayFixtureWithPorts(t, 3306, 3307) }
 func gatewayFixtureWithPorts(t *testing.T, localPort, cloudPort int) *gatewayFixture {
+	return gatewayFixtureWithEngine(t, localPort, cloudPort, model.EngineMySQL)
+}
+func gatewayFixtureWithEngine(t *testing.T, localPort, cloudPort int, engine model.Engine) *gatewayFixture {
 	t.Helper()
 	r := store.NewMemory()
-	c, _, e := r.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: model.EngineMySQL, DisplayName: "hybrid"}, []model.Endpoint{{Kind: model.EndpointDatabase, IPAddress: "127.0.0.1", Port: localPort, Active: true}, {Kind: model.EndpointDatabase, IPAddress: "127.0.0.1", Port: cloudPort, Active: true}})
+	c, _, e := r.CreateClusterWithEndpoints(model.DatabaseCluster{Engine: engine, DisplayName: "hybrid"}, []model.Endpoint{{Kind: model.EndpointDatabase, IPAddress: "127.0.0.1", Port: localPort, Active: true}, {Kind: model.EndpointDatabase, IPAddress: "127.0.0.1", Port: cloudPort, Active: true}})
 	if e != nil {
 		t.Fatal(e)
 	}
 	instances := []model.DatabaseInstance{}
 	for n, port := range []int{localPort, cloudPort} {
-		v, e := r.ReconcileInstance(model.DatabaseInstance{ClusterID: c.ResourceID, Engine: model.EngineMySQL, EngineIdentity: model.EngineIdentity{"server_uuid": []string{"local-id", "cloud-id"}[n]}, IPAddress: "127.0.0.1", Port: port})
+		v, e := r.ReconcileInstance(model.DatabaseInstance{ClusterID: c.ResourceID, Engine: engine, EngineIdentity: model.EngineIdentity{"server_uuid": []string{"local-id", "cloud-id"}[n], "resource_id": []string{"11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"}[n], "system_identifier": "12345678"}, IPAddress: "127.0.0.1", Port: port})
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -121,6 +124,12 @@ func gatewayFixtureWithPorts(t *testing.T, localPort, cloudPort int) *gatewayFix
 			ro = "false"
 		}
 		top.Instances[n].EngineMetadata = map[string]string{"read_only": ro, "super_read_only": ro}
+		if engine == model.EnginePostgreSQL {
+			top.Instances[n].EngineMetadata = map[string]string{"in_recovery": ro, "transaction_read_only": ro}
+			if n != 0 {
+				top.Instances[n].Role = model.RoleStandby
+			}
+		}
 		top.Probes = append(top.Probes, model.ProbeStatus{InstanceID: instances[n].ResourceID, DiscoveryObservedAt: now, Health: model.Health{State: model.HealthHealthy, ObservedAt: now}})
 	}
 	inventory := &gatewayInventory{Repository: r, top: top}

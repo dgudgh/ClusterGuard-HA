@@ -134,7 +134,7 @@ func postgresqlControllerPolicy() ClusterPolicy {
 func TestPostgreSQLControllerStatusRequiresActiveServiceAndNativeRole(t *testing.T) {
 	runner := &orderedCommandRunner{t: t, expected: []commandExpectation{
 		{contains: "/usr/bin/systemctl show --property=ActiveState --value postgresql-16", output: "active\n"},
-		{contains: "/usr/sbin/runuser -u postgres -- /usr/bin/env PGPASSFILE=/etc/clusterguard/postgresql.pass", output: "t\n"},
+		{contains: "/usr/sbin/runuser -u postgres -- /usr/bin/env HOME=/etc/clusterguard /usr/bin/env PGPASSFILE=/etc/clusterguard/postgresql.pass", output: "t\n"},
 	}}
 	controller, err := NewPostgreSQLController(runner, "/usr/bin/systemctl", "/usr/sbin/runuser")
 	if err != nil {
@@ -218,7 +218,7 @@ func TestPostgreSQLControllerPromoteVerifiesRecoveryEnded(t *testing.T) {
 	runner := &orderedCommandRunner{t: t, expected: []commandExpectation{
 		{contains: "systemctl show", output: "active\n"},
 		{contains: "SELECT pg_is_in_recovery()", output: "t\n"},
-		{contains: "/usr/sbin/runuser -u postgres -- /usr/pgsql-16/bin/pg_ctl -D /var/lib/pgsql/16/data -w -t 60 promote"},
+		{contains: "/usr/sbin/runuser -u postgres -- /usr/bin/env HOME=/etc/clusterguard /usr/pgsql-16/bin/pg_ctl -D /var/lib/pgsql/16/data -w -t 60 promote"},
 		{contains: "systemctl show", output: "active\n"},
 		{contains: "SELECT pg_is_in_recovery()", output: "f\n"},
 		{contains: "ALTER SYSTEM RESET primary_conninfo"},
@@ -610,4 +610,31 @@ func ExamplePostgreSQLController() {
 	_, _ = NewPostgreSQLController(OSCommandRunner{}, "/usr/bin/systemctl", "/usr/sbin/runuser")
 	fmt.Println("restricted")
 	// Output: restricted
+}
+
+func TestPostgreSQLGatewayWritabilityAndPrivateClientHome(t *testing.T) {
+	t.Setenv("HOME", "/root")
+	for _, c := range []struct {
+		name, output string
+		err          error
+		want         bool
+		wantErr      bool
+	}{
+		{"writer", "t\n", nil, true, false}, {"read only", "f\n", nil, false, false},
+		{"unknown", "", nil, false, true}, {"malformed", "yes\n", nil, false, true},
+		{"failed SQL", "", fmt.Errorf("SQL unavailable"), false, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			runner := &orderedCommandRunner{t: t, expected: []commandExpectation{{contains: "SELECT NOT pg_is_in_recovery() AND NOT current_setting('transaction_read_only')::boolean", output: c.output, err: c.err}}}
+			controller, _ := NewDefaultPostgreSQLController(runner)
+			writable, err := controller.Writable(context.Background(), postgresqlControllerPolicy())
+			if writable != c.want || (err != nil) != c.wantErr {
+				t.Fatalf("writable=%v err=%v", writable, err)
+			}
+			runner.assertComplete()
+			if !strings.Contains(runner.commands[0], "-- /usr/bin/env HOME=/etc/clusterguard ") || strings.Contains(runner.commands[0], "HOME=/root") {
+				t.Fatal("PG inherited root's client home")
+			}
+		})
+	}
 }

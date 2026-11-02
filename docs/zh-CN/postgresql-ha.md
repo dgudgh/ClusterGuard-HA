@@ -167,7 +167,7 @@ PostgreSQL 恢复控制器与 MySQL 控制器隔离。它仅从相同的 `system
 
 Agent的实际systemd沙箱、setpriv身份、PGDATA窄范围写权限及passfile排查见[PG Agent单功能指南](postgresql-agent-systemd.md)。现有配置工具会生成PG专用drop-in；不要复制MySQL现场CAP_SYS_NICE修复。
 
-当前企业gateway切主适配明确只支持MySQL：PG原生HA能力与PG企业网关联动是两项不同能力。TCP转发可承载5432流量，不等于已有PG多数派授权发布、隔离、续期与云切换验收。本次文档更新没有执行PG现场测试。
+后续PG网关适配已在本轮源码增加，要求匹配HA/Agent、Linux无本机VIP策略、PG原生可写SQL证据和严格撤权屏障；旧版本仍不支持。原生HA、源码回归和真实PG网关联动分别验收，见[本轮部署与测试](../development/postgresql-hybrid-field-2026-11-02.md)。PG gateway灾难重建不在该适配范围，不能手工发布路由代替授权。
 
 ## 受限 Agent 策略
 

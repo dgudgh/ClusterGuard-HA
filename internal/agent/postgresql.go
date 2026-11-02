@@ -47,11 +47,29 @@ func NewDefaultPostgreSQLController(runner CommandRunner) (*PostgreSQLLocalContr
 }
 
 func (controller *PostgreSQLLocalController) runAsPostgreSQLUser(ctx context.Context, policy ClusterPolicy, command string, arguments ...string) ([]byte, error) {
-	prefix := []string{"-u", policy.PostgreSQLUser, "--", command}
+	// setpriv preserves HOME. libpq must not inspect root's client certificates
+	// after dropping uid; use the operator-owned PG credential directory.
+	child := append([]string{"/usr/bin/env", "HOME=" + filepath.Dir(policy.PostgreSQLPassfile), command}, arguments...)
+	prefix := []string{"-u", policy.PostgreSQLUser, "--"}
 	if filepath.Base(controller.runuserBinary) == "setpriv" {
-		prefix = []string{"--reuid", policy.PostgreSQLUser, "--regid", policy.PostgreSQLUser, "--init-groups", "--", command}
+		prefix = []string{"--reuid", policy.PostgreSQLUser, "--regid", policy.PostgreSQLUser, "--init-groups", "--"}
 	}
-	return controller.runner.Run(ctx, controller.runuserBinary, append(prefix, arguments...)...)
+	return controller.runner.Run(ctx, controller.runuserBinary, append(prefix, child...)...)
+}
+
+func (controller *PostgreSQLLocalController) Writable(ctx context.Context, policy ClusterPolicy) (bool, error) {
+	output, err := controller.psql(ctx, policy, "SELECT NOT pg_is_in_recovery() AND NOT current_setting('transaction_read_only')::boolean")
+	if err != nil {
+		return false, fmt.Errorf("inspect PostgreSQL native writability: %w", err)
+	}
+	switch strings.ToLower(strings.TrimSpace(string(output))) {
+	case "t", "true":
+		return true, nil
+	case "f", "false":
+		return false, nil
+	default:
+		return false, fmt.Errorf("unexpected PostgreSQL writability result")
+	}
 }
 
 func (controller *PostgreSQLLocalController) serviceState(ctx context.Context, policy ClusterPolicy) (string, error) {

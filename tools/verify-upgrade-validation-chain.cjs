@@ -182,6 +182,21 @@ const writeOperationTree = (root, name, status, events) => {
 
 const CHECKS = [
   {
+    rule:'12 / 22',title:'PostgreSQL gateway preserves native writer and hard fencing',
+    run:()=>{
+      const provider=read('internal/endpoint/gateway.go')||'';
+      const agent=read('internal/agent/gateway_reconcile.go')||'';
+      const config=read('internal/agent/config.go')||'';
+      const local=read('internal/agent/postgresql.go')||'';
+      for(const proof of ['case model.EnginePostgreSQL:', 'instance.EngineMetadata["in_recovery"], "false"', 'instance.EngineMetadata["transaction_read_only"], "false"'])if(!provider.includes(proof))return 'PG native SQL role proof missing: '+proof;
+      for(const proof of ['r.reconcileGatewayPostgreSQL(ctx, policy, decision)', 'r.postgresql.Status(ctx, policy)', 'inspector.Writable(ctx, policy)', '!running || recovery || !ok', 'if err != nil || !writable', 'r.selfIsolate(ctx, policy'])if(!agent.includes(proof))return 'PG Agent fence missing: '+proof;
+      if(!config.includes('PostgreSQL gateway Agent currently requires the Linux runtime')||!config.includes('policy.VIP != "" || policy.Interface != "" || policy.Prefix != 0'))return 'PG runtime or host VIP policy is no longer bounded';
+      if(!local.includes('"HOME=" + filepath.Dir(policy.PostgreSQLPassfile)')||!local.includes("SELECT NOT pg_is_in_recovery() AND NOT current_setting('transaction_read_only')::boolean"))return 'PG native tool identity or write check missing';
+      for(const file of ['internal/endpoint/gateway_postgresql_test.go','adapters/postgresql/gateway_switchover_test.go'])if(!read(file))return 'PG gateway regression missing: '+file;
+      return true;
+    }
+  },
+  {
     rule:'12 / 22',title:'gateway publication preserves majority authority and bounded routing',
     run:()=>{
       const provider=read('internal/endpoint/gateway.go')||'';
@@ -1287,6 +1302,7 @@ const reportOpen = failures => {
 // The files the rules read. The self-test copies exactly these, so a mutation cannot be
 // caught by reading something the gate does not actually consult.
 const READ_FILES = [
+ 'internal/agent/config.go', 'internal/agent/postgresql.go','internal/endpoint/gateway_postgresql_test.go','adapters/postgresql/gateway_switchover_test.go',
  'internal/api/disaster_recovery.go',
   'adapters/mysql/runner.go',
   'internal/endpoint/gateway_client.go','internal/endpoint/gateway_availability_test.go','internal/endpoint/gateway_http_test.go',
@@ -1324,6 +1340,10 @@ const MUTATIONS = [
   {name:'partial gateway observation claims complete coverage',file:'internal/endpoint/gateway.go',find:'Complete: !partial',replace:'Complete: true',rule:'gateway availability renews only the existing stable writer'},
   {name:'stable renewal accepts another target',file:'internal/endpoint/gateway_client.go',find:'old.TargetID != grant.TargetID',replace:'false',rule:'gateway availability renews only the existing stable writer'},
   {name:'gateway defaults to single node without opt in',file:'internal/endpoint/gateway_client.go',find:'minimum := 2',replace:'minimum := 1',rule:'gateway availability renews only the existing stable writer'},
+  {name:'PG gateway omits recovery SQL evidence',file:'internal/endpoint/gateway.go',find:'instance.EngineMetadata["in_recovery"], "false"',replace:'instance.EngineMetadata["missing_recovery"], "false"',rule:'PostgreSQL gateway preserves native writer and hard fencing'},
+  {name:'PG gateway omits read-only SQL evidence',file:'internal/endpoint/gateway.go',find:'instance.EngineMetadata["transaction_read_only"], "false"',replace:'instance.EngineMetadata["missing_read_only"], "false"',rule:'PostgreSQL gateway preserves native writer and hard fencing'},
+  {name:'PG Agent accepts a standby writer',file:'internal/agent/gateway_reconcile.go',find:'!running || recovery || !ok',replace:'!running || !ok',rule:'PostgreSQL gateway preserves native writer and hard fencing'},
+  {name:'PG tools inherit root HOME',file:'internal/agent/postgresql.go',find:'"HOME=" + filepath.Dir(policy.PostgreSQLPassfile)',replace:'"HOME=/root"',rule:'PostgreSQL gateway preserves native writer and hard fencing'},
   {name:'gateway enters the legacy disaster recovery planner',file:'internal/api/disaster_recovery.go',find:'if gatewayMode {',replace:'if false && gatewayMode {',rule:'gateway publication preserves majority authority and bounded routing'},
   {name:'gateway page calls expired cached routes ready',file:'internal/api/console.html',find:":stale?'网关状态需重新读取':",replace:':',rule:'gateway publication preserves majority authority and bounded routing'},
   {name:'gateway page accepts an older polling read',file:'internal/api/console.html',find:'if(generation!==state.requestGeneration || readEpoch!==state.gatewayRouteReadEpoch || state.clusterDetail?.cluster?.resource_id!==clusterID)return;',replace:'if(generation!==state.requestGeneration || state.clusterDetail?.cluster?.resource_id!==clusterID)return;',rule:'gateway publication preserves majority authority and bounded routing'},

@@ -219,7 +219,7 @@ UUID and `primary_conninfo` have both converged.
 
 For the actual systemd sandbox, setpriv identity, narrow PGDATA writes and passfile diagnosis, use the [PG Agent guide](en-US/postgresql-agent-systemd.md). The configuration tool generates a PG-specific drop-in; do not copy the MySQL CAP_SYS_NICE site fix.
 
-The current enterprise gateway switchover adapter explicitly supports MySQL only. Native PG HA and PG enterprise-gateway integration are separate capabilities. Relaying port 5432 does not establish PG majority-backed publication, fencing, renewal or accepted cloud switching. This documentation change ran no PG site tests.
+The subsequent PG gateway source adds Linux/no-host-VIP Agent support, native writable SQL evidence and the complete withdrawal barrier. Compatible HA/Agent deployment is required; older binaries remain unsupported. Native HA, source checks and actual gateway acceptance are separate; see the [deployment/test record](development/postgresql-hybrid-field-2026-11-02.md). PG gateway disaster rebuild remains unsupported; manual route publication cannot substitute for authority.
 
 ## Restricted Agent Policy
 

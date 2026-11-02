@@ -23,19 +23,20 @@ recorded-through: 73ff4a3
 
 | 日期 | 文件 | 变更 | 说明 |
 | --- | --- | --- | --- |
-| 2026-11-02 | `docs/zh-CN/postgresql-agent-systemd.md` | A | PG原生Agent身份/setpriv/passfile、窄沙箱生成、只读诊断与持续验收；明确PG企业网关联动尚不支持。 |
-| 2026-11-02 | `docs/en-US/postgresql-agent-systemd.md` | A | PG Agent双语对应指南；保留源码核对/未部署未实测边界，不套用MySQL能力修复。 |
-| 2026-11-02 | `docs/zh-CN/postgresql-ha.md` | M | PG手册增加Agent单功能指路及原生HA与企业gateway范围区分。 |
-| 2026-11-02 | `docs/postgresql-ha.md` | M | 英文PG手册同步Agent实际沙箱入口和gateway当前MySQL限定。 |
+| 2026-11-02 | `docs/development/postgresql-hybrid-field-2026-11-02.md` | A | 用户授权四节点真实PG部署测试的前检、门禁、独立实例和MySQL保护边界；逐项记录实际现场结果与未实现PG网关联动。 |
+| 2026-11-02 | `docs/zh-CN/postgresql-agent-systemd.md` | A | PG原生Agent身份/setpriv/passfile、窄沙箱生成、只读诊断与持续验收；明确PG企业网关联动尚不支持。  追加PG网关联动源码范围、Linux签名无VIP/原生停主隔离和独立现场记录指路；MySQL结果不代替PG验收。 |
+| 2026-11-02 | `docs/en-US/postgresql-agent-systemd.md` | A | PG Agent双语对应指南；保留源码核对/未部署未实测边界，不套用MySQL能力修复。  追加PG网关联动源码范围、Linux签名无VIP/原生停主隔离和独立现场记录指路；MySQL结果不代替PG验收。 |
+| 2026-11-02 | `docs/zh-CN/postgresql-ha.md` | M | PG手册增加Agent单功能指路及原生HA与企业gateway范围区分。  追加PG网关联动源码范围、Linux签名无VIP/原生停主隔离和独立现场记录指路；MySQL结果不代替PG验收。 |
+| 2026-11-02 | `docs/postgresql-ha.md` | M | 英文PG手册同步Agent实际沙箱入口和gateway当前MySQL限定。  追加PG网关联动源码范围、Linux签名无VIP/原生停主隔离和独立现场记录指路；MySQL结果不代替PG验收。 |
 | 2026-11-02 | `docs/zh-CN/mysql-agent-systemd.md` | A | MySQL原厂RPM文件能力/Agent实际systemd沙箱的条件化诊断、单项drop-in、oneshot判读、持续SQL验收及现场范围。 |
 | 2026-11-02 | `docs/en-US/mysql-agent-systemd.md` | A | 与中文版对应的权限兼容诊断和受限修复，明确手动云切主已验与回切/事务/生产认证未验。 |
-| 2026-11-02 | `docs/development/backend/nodes.md` | M | 节点入口增加Agent原厂RPM兼容的按需指路，区分SSH检查与实际协调服务。  追加PG文档：追加PG身份/setpriv/PGDATA沙箱与按需指南入口，区别MySQL兼容项。 |
-| 2026-11-02 | `docs/operations.md` | M | 英文API参考补网关启用/profile/显式单机配置及Agent systemd验证入口。  追加PG文档：英文API参考补PG专属指南，并把gateway启用描述限定为当前MySQL适配。 |
-| 2026-11-02 | `docs/zh-CN/operations.md` | M | 中文API参考同步网关配置、Agent无VIP策略与实际协调服务诊断入口。  追加PG文档：中文API参考同步PG指路和MySQL/PG gateway支持范围。 |
+| 2026-11-02 | `docs/development/backend/nodes.md` | M | 节点入口增加Agent原厂RPM兼容的按需指路，区分SSH检查与实际协调服务。  追加PG文档：追加PG身份/setpriv/PGDATA沙箱与按需指南入口，区别MySQL兼容项。  追加PG网关联动源码范围、Linux签名无VIP/原生停主隔离和独立现场记录指路；MySQL结果不代替PG验收。 |
+| 2026-11-02 | `docs/operations.md` | M | 英文API参考补网关启用/profile/显式单机配置及Agent systemd验证入口。  追加PG文档：英文API参考补PG专属指南，并把gateway启用描述限定为当前MySQL适配。  追加PG网关联动源码范围、Linux签名无VIP/原生停主隔离和独立现场记录指路；MySQL结果不代替PG验收。 |
+| 2026-11-02 | `docs/zh-CN/operations.md` | M | 中文API参考同步网关配置、Agent无VIP策略与实际协调服务诊断入口。  追加PG文档：中文API参考同步PG指路和MySQL/PG gateway支持范围。  追加PG网关联动源码范围、Linux签名无VIP/原生停主隔离和独立现场记录指路；MySQL结果不代替PG验收。 |
 | 2026-11-02 | `docs/development/gateway-vip-frontend-2026-11-02.md` | A | 记录单/双网关VIP生成/就绪探针、155端口映射、稳定主库部分续期；实际Linux命名空间/VRRP、真实网关进程与四库连通验收及未交付/未接管边界；续记用户人工切主环境、历史门禁修正、3.1.5.1真实更新、网关/Agent/初始VIP接管、21项预检及12次稳定采样；续记用户云切主后的厂商mysqld文件能力与Agent沙箱兼容故障及修复验证。  追加PG文档：追加PG文档源码核对、范围和静态验证计划；本轮不执行PG现场。 |
 | 2026-11-02 | `docs/development/cloud-instance-onboarding-2026-11-02.md` | A | 记录云复制/网络和误诊纠正、旧现场缺少登记接口；追加冻结候选与3.1.4.2身份链、ART/历史门禁边界、正式通道上传/计划、用户确认的候选升级成功、四库真实页面与SQL验收，补记云副本缺少半同步插件的实测、独立cnf及只读保护下云MySQL重启、4实例healthy/主库3个半同步客户端和实际页面回归；云切主仍未完成。 |
 | 2026-11-02 | `docs/development/gateway-real-mysql-2026-11-02.md` | A | 记录真实MySQL、真实控制面与页面网关端到端测试的旧证据差异、门禁、隔离范围及本轮实际结果。 |
-| 2026-10-28 | `docs/development/backend/operations.md` | M | 补MySQL页面切换到gateway提供者的真实租约、屏障、Agent模式与部署指路。2026-11-02追加真实MySQL/Raft/双网关及页面端到端复跑、摘要修复与实际结果入口。  追加终态后持续writer/网关检查及Agent兼容指路。  追加PG文档：追加PG原生HA和网关联动分开验收，保留非MySQL预检阻断。 |
+| 2026-10-28 | `docs/development/backend/operations.md` | M | 补MySQL页面切换到gateway提供者的真实租约、屏障、Agent模式与部署指路。2026-11-02追加真实MySQL/Raft/双网关及页面端到端复跑、摘要修复与实际结果入口。  追加终态后持续writer/网关检查及Agent兼容指路。  追加PG文档：追加PG原生HA和网关联动分开验收，保留非MySQL预检阻断。  追加PG网关联动源码范围、Linux签名无VIP/原生停主隔离和独立现场记录指路；MySQL结果不代替PG验收。 |
 | 2026-10-28 | `docs/development/frontend/operations.md` | M | 补默认折叠网关状态、语言/上下文与原操作锁交互规则。 |
 | 2026-10-28 | `docs/development/gateway-switchover-2026-10-28.md` | A | 记录页面切换与独立网关对接的旧版/多数派边界；补11-02显式单网关、本地VIP、部分稳定续期与严格撤权的实现范围。 |
 | 2026-10-28 | `docs/development/existing-instance-registration-2026-10-28.md` | A | 记录已有实例端点接入的修改前对照、契约加载、原子登记/发现边界及实际回归结果。 |
@@ -277,3 +278,5 @@ MySQL初始化插件选项批次（2026-10-15）：修复生产模板正常运�
 2026-11-02文档同步批次：更新节点/操作与双语API参考，新增双语MySQL Agent systemd兼容单功能页；重建入库HTML。只同步已存现场证据，不重做部署、切主或构建制品。
 
 2026-11-02 PG对应文档批次：新增双语Agent配置/沙箱单功能页，PG HA和后端/双语API参考增加按需指路，独立网关另记支持范围。重建HTML；不宣称PG网关功能已实现或已现场验收。
+
+2026-11-02 PG混合现场批次：新增四节点部署/网关测试任务记录，修订PG双语单功能页、原生HA/节点/操作/API范围及生成页；各阶段实际结果单独记录，未验收部分不写通过。
