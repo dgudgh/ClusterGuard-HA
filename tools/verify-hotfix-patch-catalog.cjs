@@ -552,28 +552,6 @@ check('every artifact checksum file matches its payload', checksumMismatch.lengt
 // directions matter equally - an undeclared defect hides a known-bad package,
 // and a stale declaration would let a defect be repaired silently under cover of
 // a note that says it is still there.
-const liveProblems = [];
-const undeclaredDefects = [];
-const staleDefects = [];
-for (const item of resolved) {
-  const found = problemsByArtifact.get(item.archive) || [];
-  const declared = (item.publication && item.publication.known_defects) || [];
-  if (item.publication && item.publication.status === 'frozen') {
-    for (const problem of found) {
-      if (!declared.includes(problem)) undeclaredDefects.push(`${item.body.id}: 冻结产物有未声明的缺陷 — ${problem}`);
-    }
-    for (const defect of declared) {
-      if (!found.includes(defect)) staleDefects.push(`${item.body.id}: 已声明的缺陷不再存在 — ${defect}`);
-    }
-  } else {
-    liveProblems.push(...found);
-  }
-}
-check('apply.sh and rollback.sh are valid, verify checksums, install every path and never restart by themselves',
-  liveProblems.length === 0, liveProblems.join('; '));
-check('a frozen publication declares exactly the defects it still carries',
-  undeclaredDefects.length === 0 && staleDefects.length === 0,
-  [...undeclaredDefects, ...staleDefects].join('; '));
 check('README names every unit the payload replaces in both its Apply and its Rollback block', undocumentedRestarts.length === 0, undocumentedRestarts.join('; '));
 check('the signed manifest anchors apply.sh and rollback.sh and SHA256SUMS covers them', unboundTooling.length === 0, unboundTooling.join('; '));
 if (publicKey) {
@@ -620,7 +598,7 @@ const requiredDestinations = (commit) => {
   };
 };
 
-const underdelivered = [];
+const publicationPolicy = require('./hotfix-publication-policy.cjs');
 const unmappedRequirements = [];
 for (const item of resolved) {
   const shipped = new Set(item.manifest.files.map((file) => file.install_path).filter(Boolean));
@@ -629,14 +607,20 @@ for (const item of resolved) {
     const { paths, unmapped, installerOnly } = requiredDestinations(commit);
     for (const problem of unmapped) unmappedRequirements.push(`${item.body.id}:${commit.slice(0, 7)} ${problem}`);
     for (const destination of paths) {
-      if (!shipped.has(destination)) underdelivered.push(`${item.body.id}:${commit.slice(0, 7)} 需要 ${destination}`);
+      if (!shipped.has(destination)) note(item.archive, `${item.body.id}:${commit.slice(0, 7)} 需要 ${destination}`);
     }
     if (installerOnly && !kinds.has('installer')) {
-      underdelivered.push(`${item.body.id}:${commit.slice(0, 7)} 需要 installer payload`);
+      note(item.archive, `${item.body.id}:${commit.slice(0, 7)} 需要 installer payload`);
     }
   }
 }
-check('every declared fix is really present in the payload', underdelivered.length === 0, underdelivered.join('; '));
+const audited = publicationPolicy.assessProblems(resolved, problemsByArtifact);
+check('apply.sh and rollback.sh are valid, verify checksums, install every path and never restart by themselves',
+  audited.live.length === 0, audited.live.join('; '));
+check('a frozen publication declares exactly the defects it still carries',
+  audited.undeclared.length === 0 && audited.stale.length === 0,
+  [...audited.undeclared, ...audited.stale].join('; '));
+check('every declared fix is really present in the payload', audited.live.length === 0, audited.live.join('; '));
 check('every runtime script a fix touches is declared by the packaging manifest',
   unmappedRequirements.length === 0, unmappedRequirements.join('; '));
 
@@ -954,9 +938,11 @@ for (const spec of specs) {
     }
   }
 }
-const baselines = [...new Set(specs
-  .map((spec) => spec.body.base_commit)
-  .filter((baseline) => typeof baseline === 'string' && baseline.length > 0))];
+// A retired line is still fully audited above, but does not promise every
+// future HEAD fix. Current, superseded, unknown and absent identities retain
+// coverage obligations; only explicit frozen ledger identities end them.
+const baselines = publicationPolicy.coverageBaselines(specs, publications,
+  body => `${artifactDirFor(body)}/${archiveName(body)}`);
 const undeclaredFixes = [];
 for (const baseline of baselines) {
   let commits;

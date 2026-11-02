@@ -23,7 +23,7 @@ recorded-through: 73ff4a3
 
 | 日期 | 文件 | 变更 | 说明 |
 | --- | --- | --- | --- |
-| 2026-11-02 | `docs/development/gateway-vip-frontend-2026-11-02.md` | A | 记录单/双网关VIP生成/就绪探针、155端口映射、稳定主库部分续期；实际Linux命名空间/VRRP、真实网关进程与四库连通验收及未交付/未接管边界。 |
+| 2026-11-02 | `docs/development/gateway-vip-frontend-2026-11-02.md` | A | 记录单/双网关VIP生成/就绪探针、155端口映射、稳定主库部分续期；实际Linux命名空间/VRRP、真实网关进程与四库连通验收及未交付/未接管边界；续记用户人工切主的环境准备、历史门禁缺陷与验证计划。 |
 | 2026-11-02 | `docs/development/cloud-instance-onboarding-2026-11-02.md` | A | 记录云复制/网络和误诊纠正、旧现场缺少登记接口；追加冻结候选与3.1.4.2身份链、ART/历史门禁边界、正式通道上传/计划、用户确认的候选升级成功、四库真实页面与SQL验收，补记云副本缺少半同步插件的实测、独立cnf及只读保护下云MySQL重启、4实例healthy/主库3个半同步客户端和实际页面回归；云切主仍未完成。 |
 | 2026-11-02 | `docs/development/gateway-real-mysql-2026-11-02.md` | A | 记录真实MySQL、真实控制面与页面网关端到端测试的旧证据差异、门禁、隔离范围及本轮实际结果。 |
 | 2026-10-28 | `docs/development/backend/operations.md` | M | 补MySQL页面切换到gateway提供者的真实租约、屏障、Agent模式与部署指路。2026-11-02追加真实MySQL/Raft/双网关及页面端到端复跑、摘要修复与实际结果入口。 |
@@ -114,7 +114,7 @@ recorded-through: 73ff4a3
 | 2026-10-09 | `docs/development/frontend/settings/README.md` | M | 参数入口指向编辑、选定控制节点下发与实际重启核验，移除只读入口误导。 |
 | 2026-10-09 | `docs/development/backend/settings/README.md` | M | 参数导航加入plan/dispatch/permit、Raft配置任务和逐节点重启核验路径。 |
 
-| 2026-10-09 | `docs/development/delivery/hotfix-catalog-validation.md` | A | 显式私有台账/声明/目录输入，同判据与失败回归；Chrome依赖复跑和fixture/现场证据边界。 |
+| 2026-10-09 | `docs/development/delivery/hotfix-catalog-validation.md` | A | 显式私有台账/声明/目录输入，同判据与失败回归；明确冻结身份完整审计、双向缺陷登记、现役基线覆盖及历史描述缺失显示；Chrome依赖和现场边界。 |
 
 | 2026-10-09 | `README.md` | M | 增加3.1.2.8完整安装介质入口，区分产品版本与RPM基线、预发布和FIELD未执行边界。 |
 

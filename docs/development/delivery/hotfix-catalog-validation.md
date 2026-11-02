@@ -15,7 +15,7 @@ node tools/verify-hotfix-patch-catalog.cjs \
   --public-key /private/trusted-public.pem
 ```
 
-`--repo`仍指真实源码；`--artifact-root`仅在制品位于另一工作树时指定。私有声明目录只放当前声明JSON；历史替代声明放子目录，不让过期声明成为当前入口。私有目录须具备全部对应声明，不只是最新一份规格。工具打印所有输入路径；未知选项、缺值、丢失/非法台账、重复身份、坏声明仍拒绝。缺公钥明确SKIPPED，不冒充验签通过。
+`--repo`仍指真实源码；`--artifact-root`仅在制品位于另一工作树时指定。私有声明目录保留每条交付线的现役声明和需完整审计的冻结声明；同一修订链的 superseded 声明放历史子目录，避免误指向已替代入口。私有目录须具备全部对应声明，不只是最新一份规格。冻结声明仍验签、检查原字节/载荷/工具，发现的问题必须与 known_defects 双向精确一致；不能靠 frozen 隐藏未知缺陷。只有显式退役的 frozen 身份不再要求覆盖其基线之后未来的 HEAD 修复；当前身份、未知/缺失身份及 superseded 身份不能使用此规则。工具打印所有输入路径；未知选项、缺值、丢失/非法台账、重复身份、坏声明仍拒绝。缺公钥明确SKIPPED，不冒充验签通过。
 
 私有台账、声明、目录、签名包和摘要均留在受保护的本地交付目录；不得为了门禁变绿提交到公共GitHub。生成私有目录使用同一台账：
 
@@ -25,6 +25,8 @@ node scripts/render-hotfix-catalog.cjs \
   --out-en /private/catalog/en.md --out-zh /private/catalog/zh.md
 node --test tools/verify-hotfix-catalog-context.test.cjs
 ```
+
+历史冻结签名清单未记录的双语描述显示明确的“未记录”标记，不补造历史内容；活动清单缺失仍阻断渲染。冻结记录不代表每份制品均曾安装。
 
 这验证已有制品身份，不证明当前所有未发布修改已经进入旧包。新修复须使用新包、新验收绑定；已签名产物不覆盖。
 

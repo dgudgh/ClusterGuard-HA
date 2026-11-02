@@ -9,6 +9,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 
+const {localizedDescription} = require('../tools/hotfix-publication-policy.cjs');
+
 const scriptDirectory = __dirname;
 const defaultRepository = path.resolve(scriptDirectory, "..");
 
@@ -221,7 +223,7 @@ function renderEnglish(groups) {
     lines.push(`- Restart required: ${units.length ? units.map((unit) => `\`${unit}\``).join(", ") : "none"}`);
     lines.push("");
     if (primary.publication && primary.publication.status === "frozen") {
-      lines.push("> **This identity is frozen.** It is the artifact a site actually ran, kept as evidence; it is not");
+      lines.push("> **This identity is frozen.** Its original bytes are retained as historical evidence; it is not");
       lines.push("> the upload entry point for its line. It still carries the defects listed below, and it is never");
       lines.push("> rebuilt to today's rules — that would destroy the record.");
       lines.push("");
@@ -236,13 +238,13 @@ function renderEnglish(groups) {
     }
     for (const [index, item] of (primary.fixes || []).entries()) {
       const commit = (item.commit || "").slice(0, 7);
-      lines.push(`### ${primary.hotfix_id}.${index + 1} ${item.title.en} (\`${commit}\`, ${item.severity})`);
+      lines.push(`### ${primary.hotfix_id}.${index + 1} ${localizedDescription(primary, item, 'title', 'en')} (\`${commit}\`, ${item.severity})`);
       lines.push("");
-      lines.push(`- Symptom: ${item.symptom.en}`);
+      lines.push(`- Symptom: ${localizedDescription(primary, item, 'symptom', 'en')}`);
       lines.push("");
-      lines.push(`- Root cause: ${item.root_cause.en}`);
+      lines.push(`- Root cause: ${localizedDescription(primary, item, 'root_cause', 'en')}`);
       lines.push("");
-      lines.push(`- Fix: ${item.fix.en}`);
+      lines.push(`- Fix: ${localizedDescription(primary, item, 'fix', 'en')}`);
       lines.push("");
       if ((item.applies_to || []).length > 0) {
         lines.push("- When to apply:");
@@ -347,7 +349,7 @@ function renderChinese(groups) {
     lines.push(`- 需要重启：${units.length ? units.map((unit) => `\`${unit}\``).join("、") : "无"}`);
     lines.push("");
     if (primary.publication && primary.publication.status === "frozen") {
-      lines.push("> **本身份已冻结。** 它是现场实际执行过的那一份，作为证据保留，**不是该交付线的上传入口**。");
+      lines.push("> **本身份已冻结。** 原始字节作为历史证据保留（不表示每份均曾安装），**不是该交付线的上传入口**。");
       lines.push("> 它仍带着下列缺陷，且不会按今天的规则回炉重造——那会毁掉这份证据。");
       lines.push("");
       for (const defect of primary.publication.known_defects || []) lines.push(`- 已知缺陷：${defect}`);
@@ -361,13 +363,13 @@ function renderChinese(groups) {
     }
     for (const [index, item] of (primary.fixes || []).entries()) {
       const commit = (item.commit || "").slice(0, 7);
-      lines.push(`### ${primary.hotfix_id}.${index + 1} ${item.title.zh}（\`${commit}\`，${item.severity}）`);
+      lines.push(`### ${primary.hotfix_id}.${index + 1} ${localizedDescription(primary, item, 'title', 'zh')}（\`${commit}\`，${item.severity}）`);
       lines.push("");
-      lines.push(`- 现象：${item.symptom.zh}`);
+      lines.push(`- 现象：${localizedDescription(primary, item, 'symptom', 'zh')}`);
       lines.push("");
-      lines.push(`- 根因：${item.root_cause.zh}`);
+      lines.push(`- 根因：${localizedDescription(primary, item, 'root_cause', 'zh')}`);
       lines.push("");
-      lines.push(`- 修复：${item.fix.zh}`);
+      lines.push(`- 修复：${localizedDescription(primary, item, 'fix', 'zh')}`);
       lines.push("");
       if ((item.applies_to || []).length > 0) {
         lines.push("- 何时需要应用：");
