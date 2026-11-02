@@ -72,3 +72,17 @@ HA增加显式allow_single_gateway配置（只允许一个URL，默认至少2）
 真实结果：本机及远端经固定入口3306和网关63306查询，UUID均为原主库且双只读OFF；其余三个副本双只读ON、IO/SQL均Yes，四库GTID一致，三控制节点就绪。原页面显示企业连接网关、路由与当前主库一致，云候选可切换；云目标只读预检21/21通过。页面曾短暂显示云探测不足，现场1秒探测超时相对约0.6秒云探测余量不足；三节点调整至5秒并滚动核验后，连续12次采样云候选可用、路由有效、固定入口SQL正确，真实多数派授权序号85→92。此前瞬时异常保留原证据，不抹掉。
 
 用户要求自己在页面执行主库切换，因此未执行本地→云→本地切换；页面已选云候选并保留操作锁。单网关没有入口冗余，真实云写入/连接池恢复、往返切主、失败/回退/失去多数派及完整FIELD清单仍待手动验收；没有将21项只读预检和环境就绪当作切主成功或正式发布。私有证据在release/3.1.5.1/field-readiness.json、3.1.5.1-evidence/与.build/gateway-field-20261102，页面实图manual-test-ready.png。
+
+## 用户首次云切换后的实际故障定位（17:40后）
+
+用户手动操作ff9c3d8c-193b-473c-8d55-60bc9cdd9997，后台17:40:06记录完成，但后续Agent反复bootstrap_primary/self_isolate，云主库双只读交替，网关Keepalived曾撤VIP。不能仅凭succeeded认定业务入口持续可用。本轮继续读取门禁执行流程、操作授权规则及现行CG-UPGRADE-CONTRACT v2（已完整加载），现场修复只针对原生RPM权限兼容；没有替用户重新切主或回切。
+
+旧版对照：HEAD0c3dde4、现役Agent3.1.4.2的systemd协调单元限制CapabilityBoundingSet为网络、setuid/setgid和DAC权限；本地原厂tar的mysqld没有文件capability，因此此前本地主库稳定。云端阿里云mysql-server-8.0.46 RPM的/usr/libexec/mysqld带cap_sys_nice=ep，在SSH完整root上下文中的role_status通过，但同命令在实际systemd能力边界下exec返回EPERM（退出126），触发原有fail-closed隔离。原Agent日志只报“inspect MySQL restart defaults: local command failed”。
+
+修复验证计划：保留原始日志/操作记录；在相同systemd沙箱重现原厂mysqld --verbose --help执行失败，对照只增加CAP_SYS_NICE后的只读检查；仅为云Agent协调单元增加该能力上界，不移除厂商文件capability、不关闭ProtectSystem/SELinux或跳过重启只读检查。随后观察真实协调计时器多轮保持授权writer、网关续期及唯一VIP、155入口SQL持续指向云库、三台本地副本只读/复制/GTID。源码业务逻辑与签名包字节不改；未验证的现场项继续OPEN。
+
+现场修复实跑：相同ProtectSystem/ProtectHome及原能力边界下mysqld帮助命令退出126/EPERM；仅在边界加入CAP_SYS_NICE后退出0。为云端协调单元新增30-mysql-vendor-capability.conf，只追加CapabilityBoundingSet=CAP_SYS_NICE，AmbientCapabilities和其他隔离保持原值，原厂二进制及文件capability未修改。daemon-reload后真实Agent计时器连续keep_vip成功，未手工强开数据库写入。
+
+用户本次单向切换现已稳定：16次采样覆盖约62秒，固定155:3306均返回云原生UUID、read_only/super_read_only=OFF；同一租约的授权序号17→29。修复后协调日志没有再次self_isolate、inspect失败或非零退出；三台本地均只读、IO/SQL=Yes、延迟0、复制源为云库，四库GTID一致，三投票节点就绪且无旧VIP。页面刷新为云主库、网关指向云地址及“操作完成，验证通过”。这是用户操作后的一次真实云切主及稳定性复核，尚未回切、未验收应用事务/连接池/故障注入或生产发布。原“准备完成”检查遗漏了原厂RPM带文件能力时的systemd可写主库分支，已如实保留此失误与补验记录。
+
+本次修复为现场服务配置兼容，不改Agent业务逻辑，不覆盖签名包。drop-in必须随云Agent现场配置保留；现有通用ConfigureReconcileSandbox尚不自动探测原厂MySQL文件能力，后续通用接入实现仍需处理该部署差异，不能宣称已有所有RPM自动兼容。新现场证据为私有user-switch-capability-reproduction.log、user-switch-capability-fix.log、user-switch-stability-result.json、user-switch-agent-after-fix.log及user-switch-final-health.json。
