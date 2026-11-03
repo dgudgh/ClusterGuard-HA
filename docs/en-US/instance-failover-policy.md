@@ -29,3 +29,5 @@ Saving uses a dedicated policy revision CAS, independent of frequent discovery r
 A transition already fencing/promoting a writer must finish under its existing safety protocol. This switch cannot kill an executor, remove leases or skip fencing. See the [implementation and acceptance record](../development/instance-failover-policy-2026-11-03.md) for actual test stages; isolated browser and unit checks are not live failover acceptance.
 
 Before saving any instance policy, signed file rollback follows the existing process. After saving a policy, switching automation off does not remove the policy and does not make downgrade to unaware controllers safe.
+
+Gateway database failover uses the signed native Agent isolation path: durable MySQL read-only/restart protection or a verified PostgreSQL service stop. Database hosts never acquire the gateway frontend VIP. An unreachable Agent or incomplete isolation still requires verifiable external fencing; weights cannot override this boundary. The native-VIP unreachable-Agent expiry fallback is not enabled for gateways.

@@ -239,7 +239,7 @@ func (provider *GuardedFailoverSafety) Fence(ctx context.Context, resolved adapt
 		return fmt.Errorf("acquire failover quorum lease: %w", err)
 	}
 	var agentFailure error
-	if endpointProviderKind(resource) == model.EndpointProviderLinuxVIP && provider.transport != nil && provider.secret != "" {
+	if restrictedAgentEndpoint(resource) && provider.transport != nil && provider.secret != "" {
 		request, requestErr := provider.signedRequest(resolved, resource, agent.CommandSelfIsolate, lease.ResourceID)
 		if requestErr == nil {
 			probeContext, cancel := context.WithTimeout(ctx, failoverAgentProbeTimeout)
@@ -466,6 +466,13 @@ func (provider *GuardedFailoverSafety) activeVIP(clusterID model.ResourceID) (fa
 		if strings.TrimSpace(result.endpoint.Hostname) == "" || result.endpoint.Port < 1 || result.endpoint.Port > 65535 || strings.TrimSpace(result.haEndpoint.ProviderRef) == "" {
 			return failoverVIPResource{}, fmt.Errorf("active Kubernetes Service endpoint is incomplete")
 		}
+	case model.EndpointProviderGateway:
+		if result.haEndpoint.Kind != model.EndpointService || result.endpoint.Kind != model.EndpointService ||
+			result.endpoint.Port < 1 || result.endpoint.Port > 65535 ||
+			(strings.TrimSpace(result.endpoint.IPAddress) == "" && strings.TrimSpace(result.endpoint.Hostname) == "") ||
+			strings.TrimSpace(result.haEndpoint.ProviderRef) == "" {
+			return failoverVIPResource{}, fmt.Errorf("active gateway Service endpoint is incomplete")
+		}
 	}
 	return result, nil
 }
@@ -478,15 +485,26 @@ func endpointProviderKind(resource failoverVIPResource) model.EndpointProviderKi
 	return kind
 }
 
+// Gateway endpoints use the same signed database isolation commands, without
+// managing the gateway's fixed address on a database host. This does not enable
+// the Linux-VIP-only unreachable-Agent authorization-expiry fallback.
+func restrictedAgentEndpoint(resource failoverVIPResource) bool {
+	kind := endpointProviderKind(resource)
+	return kind == model.EndpointProviderLinuxVIP || kind == model.EndpointProviderGateway
+}
+
 func (provider *GuardedFailoverSafety) signedRequest(resolved adapter.ResolvedOperation, resource failoverVIPResource, command string, leaseID model.ResourceID) (agent.Request, error) {
-	if endpointProviderKind(resource) != model.EndpointProviderLinuxVIP {
-		return agent.Request{}, fmt.Errorf("restricted node Agent commands require a Linux VIP endpoint")
+	if !restrictedAgentEndpoint(resource) {
+		return agent.Request{}, fmt.Errorf("restricted node Agent commands require a Linux VIP or gateway endpoint")
 	}
 	request := agent.Request{
 		Command: command, ClusterID: resolved.Cluster.ResourceID, OperationID: resolved.OperationID,
 		Engine:  resolved.Cluster.Engine,
 		LeaseID: leaseID, PlanDigest: resolved.PlanDigest, ExpiresAt: provider.now().UTC().Add(30 * time.Second),
 		VIP: resource.endpoint.IPAddress, Interface: resource.haEndpoint.Interface, Prefix: resource.haEndpoint.Prefix,
+	}
+	if endpointProviderKind(resource) == model.EndpointProviderGateway {
+		request.VIP, request.Interface, request.Prefix = "", "", 0
 	}
 	if strings.TrimSpace(request.PlanDigest) == "" {
 		request.PlanDigest = "sha256:failover-precheck:" + string(resolved.OperationID)
@@ -513,7 +531,7 @@ func (provider *GuardedFailoverSafety) externalFenceRequest(resolved adapter.Res
 
 func (provider *GuardedFailoverSafety) probeIsolation(ctx context.Context, resolved adapter.ResolvedOperation) (isolationProbe, error) {
 	resource, resourceErr := provider.activeVIP(resolved.Cluster.ResourceID)
-	if resourceErr == nil && endpointProviderKind(resource) == model.EndpointProviderLinuxVIP && provider.transport != nil && provider.secret != "" {
+	if resourceErr == nil && restrictedAgentEndpoint(resource) && provider.transport != nil && provider.secret != "" {
 		resource, err := provider.activeVIP(resolved.Cluster.ResourceID)
 		if err == nil {
 			vipRequest, requestErr := provider.signedRequest(resolved, resource, agent.CommandVIPStatus, "")

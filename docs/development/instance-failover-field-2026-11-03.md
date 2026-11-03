@@ -43,3 +43,15 @@ Bash原函数回归证明两条合法终态继承被旧版拒绝，修复后7项
 本次保留历史同操作缺失mode的旧兼容读取，但缺失mode不得证明不同操作的终态祖先；不同已知mode和同ID矛盾终态仍拒绝。既有同操作跨Leader导入回归已复跑通过；新增Bash8项覆盖未知mode不能充当新祖先。SOURCE53、158变异及双对照通过。原Go全仓首轮仅历史夹具分支失败，修正兼容边界后重新跑完整仓库，不把旧失败改绿；最终结果以独立日志为准。
 
 最终源码回归全仓go test ./...退出0、platformupdate race与全仓vet退出0、shell语法/diff检查通过；本机root专属用例明确跳过，但同一用例的Linux root实际旧/新、3分支及公共GID验证已执行并通过，不能把本机跳过算通过。许可68、Markdown11、HTML重建通过。代码将从此已测提交构建3.1.7.2新候选，旧制品59份摘要已冻结。
+
+## 3.1.7.2实际升级与实例故障新发现（修改前记录）
+
+新包3.1.7.2/d0e5637，17522997字节，SHA256 76dd40d9bcaaa05037bc44a01dd3765d332edb94754fcdc0a80e44b3a4a1e06f，6件载荷含5程序与job脚本。ART13/篡改3/回退原语5通过；复用仅含二进制的验证器时两次错误假设脚本0755目标/载体一致，已对照nFPM修正为载体0755、签名目标0750，未重建包。私有台账初次旧声明superseded与新四段目录检查冲突，按明确撤回候选的frozen历史声明保留7.1完整审计和已知功能缺陷，当前7.2完整基线覆盖不变；全部43判据通过后才现场上传，纠正过一次提前的通过口述。
+
+正式plan 6cc3f029-091c-4928-a013-6dc1ba031d59，execute 4bef8faf-5220-4220-9fc5-47bf1f2ab4f4，14:27:09~14:29:39成功。三节点实际进程及6文件摘要、job脚本root/root/0750、数据库PID不变、维护释放通过。升级窗口MySQL/PG各141次原生入口SQL全通过，145次VIP/就绪采样均正常且网关PID未变；此前受控回退窗口各82次SQL全通过、86次VIP正常。旧轮询器没识别rolled_back，后续本地状态文件被新plan读回覆盖；原append-only采样保留，以唯一rollback操作ID从原始采样提取真实终态，不改现场历史。
+
+MySQL新策略保存与三节点读回成功：云副本权重1000但排除，153权重900、154权重100，152恢复后权重1000。仅停152数据库后自动选择了153，连续操作在old_primary_fenced预检阻断，没有提升或新的过渡lease。现场失败保留，先暂停自动、按只读启动保护恢复152，程序自行恢复唯一writer和入口，再恢复原自动开关/当前四实例权重100；显式policy revision3保留，不能恢复为不存在的历史。
+
+事前对照d0e5637的internal/coordination/failover_safety.go与既有gateway手动切换：activeVIP已接受gateway资源，但Fence/probeIsolation/signedRequest仅允许LinuxVIP，导致已配置无本机VIP Agent的gateway故障接管无法使用数据库隔离。Agent本身已有无VIP self_isolate：MySQL持久只读与停库原生证据，PG原生停服；请求仍签名、engine/cluster/plan/lease绑定。拟仅将这条受限且可达的Agent直接隔离路径接入gateway，清空VIP/interface/prefix并校验Service端点；不开放K8s/external_command，不把gateway加入失联Agent的授权超时兜底，不跳过外部隔离要求。新增两引擎正向顺序/签名及无多数派、失联Agent、可写重启、仍运行PG等拒绝测试，先红后绿；新修复使用3.1.7.3，基线为现场7.2/d0e5637，不覆盖7.2签名字节。
+
+新gateway直接隔离路径源码回归：全仓Go、coordination/recovery/workflow race、全仓vet通过；SOURCE54、161变异与双对照通过。两引擎10场景拒绝/成功矩阵通过，保留旧源码失败日志。仅源码阶段通过，尚未构建或现场验证3.1.7.3。

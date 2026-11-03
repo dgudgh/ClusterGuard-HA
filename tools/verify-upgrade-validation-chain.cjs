@@ -182,6 +182,17 @@ const writeOperationTree = (root, name, status, events) => {
 
 const CHECKS = [
   {
+    rule:'INV-009 / 6',title:'gateway failover fences only through a scoped reachable native Agent',
+    run:()=>{
+      const s=read('internal/coordination/failover_safety.go')||'';
+      for(const token of ['return kind == model.EndpointProviderLinuxVIP || kind == model.EndpointProviderGateway','request.VIP, request.Interface, request.Prefix = "", "", 0','resourceErr == nil && restrictedAgentEndpoint(resource)','result.haEndpoint.Kind != model.EndpointService'])if(!s.includes(token))return 'missing scoped gateway fencing guard: '+token;
+      const start=s.indexOf('func (provider *GuardedFailoverSafety) agentQuorumEnabled('),end=s.indexOf('\n}',start),body=s.slice(start,end);
+      if(!body.includes('linuxEndpoint := err == nil && endpointProviderKind(resource) == model.EndpointProviderLinuxVIP'))return 'gateway gained an unverified unreachable-Agent fallback';
+      const test=read('internal/coordination/gateway_failover_safety_test.go')||'';
+      return test.includes('model.EnginePostgreSQL')&&test.includes('unsafe-role')&&test.includes('no-majority')&&test.includes('unreachable')||'missing engine/fencing rejection regressions';
+    },
+  },
+  {
     rule: 'INV-006 / 6', title: 'root history accepts only proven terminal ancestors',
     run: () => {
       const s=read('scripts/clusterguard-update-job.sh')||'';
@@ -1383,6 +1394,7 @@ const READ_FILES = [
   'internal/platformupdate/version.go', 'internal/platformupdate/inspector.go',
   CONTRACT_DOC, CONTRACT_DOC_ZH, 'internal/updatecontract/contract.md', 'internal/updatecontract/schema.json', 'internal/platformupdate/helper.go',
   'internal/platformupdate/supersedes.go', 'internal/platformupdate/supersedes_test.go',
+  'internal/coordination/failover_safety.go', 'internal/coordination/gateway_failover_safety_test.go',
   'tools/update-private-history.test.cjs', 'internal/platformupdate/helper_private_failure_test.go', 'internal/platformupdate/helper_files_unix.go',
   'scripts/clusterguard-update-job.sh', 'scripts/clusterguard-upgrade.sh', 'scripts/build-hotfix-patch.sh', 'scripts/install_clusterguard.sh',
   'internal/platformupdate/manager.go', 'internal/api/updates.go', 'internal/api/console.html',
@@ -1391,6 +1403,9 @@ const READ_FILES = [
 ];
 
 const MUTATIONS = [
+  {name:'gateway fencing sends fixed frontend to DB host',file:'internal/coordination/failover_safety.go',find:'request.VIP, request.Interface, request.Prefix = "", "", 0',replace:'request.VIP, request.Interface, request.Prefix = resource.endpoint.IPAddress, resource.haEndpoint.Interface, resource.haEndpoint.Prefix',rule:'gateway failover fences only through a scoped reachable native Agent'},
+  {name:'restricted Agent accepts any endpoint kind',file:'internal/coordination/failover_safety.go',find:'return kind == model.EndpointProviderLinuxVIP || kind == model.EndpointProviderGateway',replace:'return kind.Valid()',rule:'gateway failover fences only through a scoped reachable native Agent'},
+  {name:'gateway borrows native VIP unreachable-Agent fallback',file:'internal/coordination/failover_safety.go',find:'linuxEndpoint := err == nil && endpointProviderKind(resource) == model.EndpointProviderLinuxVIP',replace:'linuxEndpoint := err == nil && restrictedAgentEndpoint(resource)',rule:'gateway failover fences only through a scoped reachable native Agent'},
   {name:'public failure status loses its console group',file:'internal/platformupdate/helper_files_unix.go',find:'file.Chown(-1, int(directoryStat.Gid))',replace:'error(nil)',rule:'early private launch failure reaches only its pinned public subject'},
   {name:'private history loses causal ancestor proof',file:'scripts/clusterguard-update-job.sh',find:'contains_terminal($ancestor[0]) and contains_terminal($current[0])',replace:'true',rule:'root history accepts only proven terminal ancestors'},
   {name:'private history permits one ID with two modes',file:'scripts/clusterguard-update-job.sh',find:'([.[].mode|select(.!=null)]|unique|length)<=1',replace:'true',rule:'root history accepts only proven terminal ancestors'},
