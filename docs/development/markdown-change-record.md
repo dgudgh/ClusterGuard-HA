@@ -23,7 +23,7 @@ recorded-through: 73ff4a3
 
 | 日期 | 文件 | 变更 | 说明 |
 | --- | --- | --- | --- |
-| 2026-11-03 | `docs/development/ha-remaining-fixes-2026-11-03.md` | A | 三项HA缺陷门禁/旧码对照、API/Raft滞后读、PG16源失联与绑定、因果历史和201/8项变异；记录失败准备与SOURCE/ART/FIELD边界，单网关不变。 |
+| 2026-11-03 | `docs/development/ha-remaining-fixes-2026-11-03.md` | A | 三项HA缺陷门禁/旧码对照、API/Raft滞后读、PG16源失联与绑定、因果历史和201/8项变异；记录失败准备与SOURCE/ART/FIELD边界，单网关不变；追加正式3.1.7.11升级、全窗口真实写入、PG权重故障/正式回挂切回及跨节点历史缺失和回挂断连反例，FIELD未全通过。 |
 | 2026-11-03 | `docs/development/policy-floor-field-3.1.7.10-2026-11-03.md` | A | 记录明确现场升级授权、包身份与契约、当前前检/原生入口监测、逐节点及50新观察FIELD计划；追加正式升级操作ID、完成时间、真实进程/原生SQL/策略审计及只读原备份拒绝实测、浏览器上传替代路径与业务未修边界。 |
 | 2026-11-03 | `docs/development/policy-floor-patch-3.1.7.8-2026-11-03.md` | A | 记录初始构建、候选封存、新身份、macOS UID回归及修复前旧码对照、签名载荷与ART/现场边界，旧制品不变。 |
 | 2026-11-03 | `docs/development/backend/settings/updates.md` | M | 升级索引增加持久兼容门槛的按需入口。 |

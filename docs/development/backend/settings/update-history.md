@@ -59,3 +59,6 @@ Runner将字段写入同operation_id的status/events/operations；wrapper终态�
 ## 一致历史投影
 
 同一包的根执行operations与受理requests各自首见操作顺序构成因果约束。晚到旧快照不能把旧操作变成最新；本机status只在因果关系已证实时投影为较后操作。无关系旧记录仅作确定性显示排序，不能用时间戳替换当前subject。相同身份终态时间取原始终态事件，保留wrapper及原文件时间。模式/终态矛盾、因果循环阻断新动作并要求核验；缓存只用于未变文件的读取，动作前仍新鲜校验。实现和隔离回归见[本轮记录](../../ha-remaining-fixes-2026-11-03.md)，未以SOURCE声称现场旧记录已更新。
+
+
+2026-11-03的3.1.7.11实测补充：仅折叠本机root operations/requests不足以覆盖原Leader独有受理与Helper启动前失败。154保留而新Leader153缺少的两次旧3.1.7.1尝试，在当前API/UI不可见；同Leader投影一致不能关闭跨节点完整性。原件保留，修复仍未通过FIELD，见[真实反例](../../ha-remaining-fixes-2026-11-03.md)。禁止手工复制/删改原日志伪造通过。
