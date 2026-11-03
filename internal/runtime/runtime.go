@@ -560,7 +560,7 @@ func automaticFailoverOperationTimeout(seconds int) time.Duration {
 
 func automaticFailoverMySQLProfile(configuration config.File) automaticFailoverEvidenceProfile {
 	return automaticFailoverEvidenceProfileFor(
-		configuration.MySQL.AutomaticFailoverEnabled,
+		configuration.MySQL.Enabled || configuration.MySQL.AutomaticFailoverEnabled,
 		configuration.MySQL.DiscoveryIntervalSeconds, configuration.MySQL.DiscoveryTimeoutSeconds,
 		configuration.MySQL.AutomaticFailoverMinimumObservations, configuration.MySQL.AutomaticFailoverFailureWindowSeconds,
 	)
@@ -573,14 +573,14 @@ func automaticFailoverMySQLProfile(configuration config.File) automaticFailoverE
 func automaticFailoverProfileWithPolicy(configuration config.File, engine model.Engine, settings store.ClusterEnginePolicy) automaticFailoverEvidenceProfile {
 	if engine != model.EnginePostgreSQL {
 		return automaticFailoverEvidenceProfileFor(
-			configuration.MySQL.AutomaticFailoverEnabled,
+			configuration.MySQL.Enabled || configuration.MySQL.AutomaticFailoverEnabled,
 			configuration.MySQL.DiscoveryIntervalSeconds, configuration.MySQL.DiscoveryTimeoutSeconds,
 			firstPositive(settings.AutomaticFailoverMinimumObservations, configuration.MySQL.AutomaticFailoverMinimumObservations),
 			firstPositive(settings.AutomaticFailoverFailureWindowSeconds, configuration.MySQL.AutomaticFailoverFailureWindowSeconds),
 		)
 	}
 	return automaticFailoverEvidenceProfileFor(
-		configuration.PostgreSQL.AutomaticFailoverEnabled,
+		configuration.PostgreSQL.Enabled || configuration.PostgreSQL.AutomaticFailoverEnabled,
 		configuration.PostgreSQL.DiscoveryIntervalSeconds, configuration.PostgreSQL.DiscoveryTimeoutSeconds,
 		firstPositive(settings.AutomaticFailoverMinimumObservations, configuration.PostgreSQL.AutomaticFailoverMinimumObservations),
 		firstPositive(settings.AutomaticFailoverFailureWindowSeconds, configuration.PostgreSQL.AutomaticFailoverFailureWindowSeconds),
@@ -793,13 +793,13 @@ func newConfiguredFailureEvidence(configuration config.File, inventory clusterEn
 		return cluster.Engine, ok
 	}
 	evidence := newEngineFailureEvidence(fallback, engineOf)
-	if configuration.MySQL.AutomaticFailoverEnabled {
+	if configuration.MySQL.Enabled || configuration.MySQL.AutomaticFailoverEnabled {
 		profile := automaticFailoverMySQLProfile(configuration)
 		evidence.windows[model.EngineMySQL] = coordination.NewFailureWindow(profile.checks, profile.duration,
 			coordination.WithMaximumObservationGap(profile.maximumGap))
 		evidence.profiles[model.EngineMySQL] = profile
 	}
-	if configuration.PostgreSQL.AutomaticFailoverEnabled {
+	if configuration.PostgreSQL.Enabled || configuration.PostgreSQL.AutomaticFailoverEnabled {
 		profile := automaticFailoverPostgreSQLProfile(configuration)
 		evidence.windows[model.EnginePostgreSQL] = coordination.NewFailureWindow(profile.checks, profile.duration,
 			coordination.WithMaximumObservationGap(profile.maximumGap))
@@ -1235,6 +1235,7 @@ func New(configuration config.File, settings ...Option) (*Runtime, error) {
 			options = append(options, api.WithConfigurationDistribution(distribution))
 			result.startLoop(distribution.Run)
 		}
+		options = append(options, api.WithInstanceFailoverPeerCheck(configuration.Consensus.LocalID, newInstanceFailoverPeerCheck(result.consensus, mutationRPCClient, configuration.ControlToken, configuration.AllowInsecureHTTP)))
 		options = append(options,
 			api.WithMutationAuthority(result.consensus),
 			api.WithMutationRPC(api.NewLeaderMutationRPCClient(mutationRPCClient, repository)),
@@ -1290,6 +1291,11 @@ func New(configuration config.File, settings ...Option) (*Runtime, error) {
 	// default. Without this a custom MetadataPath leaves the plaintext
 	// credential in place after the first password change.
 	options = append(options, api.WithBootstrapPasswordFile(bootstrapPasswordPath(configuration)))
+	mysqlAutomaticAvailable := configuration.MySQL.Enabled && result.consensus != nil && failoverRuntime.failureEvidence != nil && (configuration.Agent.Enabled || configuration.Kubernetes.Enabled) && configuration.MySQL.DiscoveryIntervalSeconds > 0
+	pgAutomaticAvailable := configuration.PostgreSQL.Enabled && result.consensus != nil && failoverRuntime.failureEvidence != nil && configuration.Agent.Enabled && configuration.PostgreSQL.DiscoveryIntervalSeconds > 0
+	options = append(options, api.WithInstanceFailoverCapabilities(
+		map[model.Engine]bool{model.EngineMySQL: configuration.MySQL.AutomaticFailoverEnabled, model.EnginePostgreSQL: configuration.PostgreSQL.AutomaticFailoverEnabled},
+		map[model.Engine]bool{model.EngineMySQL: mysqlAutomaticAvailable, model.EnginePostgreSQL: pgAutomaticAvailable}))
 	result.server = api.NewServer(registry, repository, service, refresher, options...)
 	var discoveryAuthority discovery.ScheduledMutationAuthority
 	if result.consensus != nil {
@@ -1305,7 +1311,7 @@ func New(configuration config.File, settings ...Option) (*Runtime, error) {
 		)
 		result.startLoop(scheduler.Run)
 	}
-	if configuration.MySQL.AutomaticFailoverEnabled {
+	if configuration.MySQL.AutomaticFailoverEnabled || mysqlAutomaticAvailable {
 		if result.consensus == nil || failoverRuntime.failureEvidence == nil || (!configuration.Agent.Enabled && !configuration.Kubernetes.Enabled) {
 			_ = result.Close()
 			return nil, fmt.Errorf("automatic MySQL failover requires consensus, runtime fencing, and failure evidence")
@@ -1315,6 +1321,7 @@ func New(configuration config.File, settings ...Option) (*Runtime, error) {
 			result.consensus,
 			time.Duration(configuration.MySQL.AutomaticFailoverRetrySeconds)*time.Second, nil,
 			recovery.WithInterval(time.Duration(configuration.MySQL.AutomaticFailoverIntervalSeconds)*time.Second),
+			recovery.WithDefaultAutomationEnabled(configuration.MySQL.AutomaticFailoverEnabled),
 			recovery.WithOperationTimeout(automaticFailoverOperationTimeout(configuration.MySQL.AutomaticFailoverOperationTimeoutSeconds)),
 			recovery.WithOperationTimeoutProvider(func() time.Duration {
 				return automaticFailoverPolicyOperationTimeout(configuration, model.EngineMySQL, repository.ClusterEnginePolicy(model.EngineMySQL))
@@ -1325,7 +1332,7 @@ func New(configuration config.File, settings ...Option) (*Runtime, error) {
 		)
 		result.startAutomaticRecovery(controller)
 	}
-	if configuration.PostgreSQL.AutomaticFailoverEnabled {
+	if configuration.PostgreSQL.AutomaticFailoverEnabled || pgAutomaticAvailable {
 		if result.consensus == nil || failoverRuntime.failureEvidence == nil || !configuration.Agent.Enabled {
 			_ = result.Close()
 			return nil, fmt.Errorf("automatic PostgreSQL failover requires consensus, agent fencing, and failure evidence")
@@ -1335,6 +1342,7 @@ func New(configuration config.File, settings ...Option) (*Runtime, error) {
 			result.consensus,
 			time.Duration(configuration.PostgreSQL.AutomaticFailoverRetrySeconds)*time.Second, nil,
 			recovery.WithEngine(model.EnginePostgreSQL),
+			recovery.WithDefaultAutomationEnabled(configuration.PostgreSQL.AutomaticFailoverEnabled),
 			recovery.WithInterval(time.Duration(configuration.PostgreSQL.AutomaticFailoverIntervalSeconds)*time.Second),
 			recovery.WithOperationTimeout(automaticFailoverOperationTimeout(configuration.PostgreSQL.AutomaticFailoverOperationTimeoutSeconds)),
 			recovery.WithOperationTimeoutProvider(func() time.Duration {

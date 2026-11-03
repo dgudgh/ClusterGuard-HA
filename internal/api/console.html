@@ -529,6 +529,8 @@
     .configuration-policy-input { display:flex; align-items:center; border:1px solid var(--line-strong); border-radius:7px; max-width:230px; min-height:36px; }
     .configuration-policy-input input { border:0; min-width:0; width:100%; padding:0 10px; font-size:12px; }
     .configuration-policy-input span { padding-right:10px; color:var(--muted); font-size:11px; white-space:nowrap; }
+    #instance-failover-rows input[type="checkbox"] { width:18px; min-width:18px; height:18px; min-height:18px; vertical-align:middle; }
+    #instance-failover-rows input[type="number"] { max-width:120px; }
     .configuration-policy-maintenance { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 16px; background:var(--canvas); }
     .configuration-policy-maintenance label { color:var(--ink); font-size:12px; cursor:pointer; }
     .configuration-policy-maintenance small { display:block; margin-top:4px; color:var(--muted); font-size:11px; }
@@ -1542,6 +1544,17 @@
  <div class="configuration-sections" id="configuration-sections"><p class="settings-note">尚未取得运行参数。</p></div>
               </div>
               <div class="configuration-subpanel" id="configuration-policy-panel" role="tabpanel" aria-labelledby="configuration-policy-tab" hidden>
+                <div role="region" aria-label="当前集群自动切换与实例权重" id="instance-failover-policy" class="configuration-policy-card" style="margin-bottom:24px">
+                  <div class="configuration-policy-card-header"><strong>当前集群自动切换与实例权重</strong><span id="instance-failover-cluster">未选择集群</span></div>
+                  <div style="padding:16px">
+                    <p class="settings-note">仅主库故障时按安全条件和权重选择；恢复后不自动抢回。保存不会立即切主。</p>
+                    <div class="configuration-policy-maintenance"><div><label for="instance-failover-enabled">开启此集群自动切换</label></div><input type="checkbox" id="instance-failover-enabled" disabled></div>
+                    <p class="settings-note" id="instance-failover-effective"></p>
+                    <div class="configuration-table-scroll"><table class="configuration-policy-table"><thead><tr><th>数据库实例</th><th>参与自动切换</th><th>权重（越大越优先）</th></tr></thead><tbody id="instance-failover-rows"></tbody></table></div>
+                    <p class="settings-note">关闭实例自动参与后仍可手动切换；新发现的未配置实例默认不参与已配置集群的自动切换。</p>
+                    <div class="configuration-policy-actions"><span id="instance-failover-status" role="status" aria-live="polite"></span><div class="settings-inline-actions"><button id="instance-failover-unlock" type="button" disabled>解锁策略编辑</button><button id="instance-failover-save" type="button" class="primary-button" disabled>保存当前集群策略</button></div></div>
+                  </div>
+                </div>
                 <div class="configuration-policy" id="configuration-policy" hidden>
                   <div class="configuration-policy-header"><h4>按引擎设置自动切换策略</h4><span class="badge success">无需重启</span></div>
                   <p class="configuration-section-note">策略覆盖节点中的自动切换参数，保存后在下一轮判断生效。</p>
@@ -1982,6 +1995,37 @@
     // Only authored UI literals call ui(). Interpolation values are kept verbatim.
     // Business names, credentials, IDs and original diagnostics never pass through a DOM translator.
     const uiCatalog =     {
+      "实例策略修订已变化，请重新读取后保存。": "failover policy revision changed; reload before saving",
+      "所选实例不属于当前数据库集群。": "policy instance is outside this database cluster",
+      "实例权重必须是0到1000之间的整数。": "instance weight must be between 0 and 1000",
+      "集群操作正在执行，请完成后再修改策略。": "cluster operation is running",
+      "所有投票节点必须升级到支持实例策略的版本。": "all voters must support the instance failover policy protocol",
+      "某个投票节点的自动切换执行条件未就绪。": "automatic failover prerequisites are unavailable on a voter",
+      "自动切换执行条件未就绪，不能开启。": "automatic failover prerequisites are unavailable",
+      "未能核验投票节点：{0}": "instance failover voter could not be verified: {0}",
+      "实例策略协议核验暂不可用。": "instance failover peer verification is unavailable",
+      "必须显式指定策略修订、自动开关和实例配置。": "explicit policy revision, automatic switch and instance preferences are required",
+      "必须显式指定实例参与资格和权重。": "explicit instance participation and weight are required",
+
+      "当前集群自动切换与实例权重": "Selected cluster automatic failover and instance weights",
+      "仅主库故障时按安全条件和权重选择；恢复后不自动抢回。保存不会立即切主。": "Select by safety and weight only after primary failure; never preempt on recovery. Saving does not switch the primary.",
+      "开启此集群自动切换": "Enable automatic failover for this cluster",
+      "参与自动切换": "Participate in automatic failover",
+      "权重（越大越优先）": "Weight (higher is preferred)",
+      "关闭实例自动参与后仍可手动切换；新发现的未配置实例默认不参与已配置集群的自动切换。": "Excluded instances remain available for manual switching. Newly discovered instances do not automatically join an explicitly configured cluster policy.",
+      "解锁策略编辑": "Unlock policy editing",
+      "锁定策略编辑": "Lock policy editing",
+      "保存当前集群策略": "Save selected cluster policy",
+      "实例策略尚未读取，不能保存。": "Instance policy has not been loaded; saving is unavailable.",
+      "自动切换执行条件未就绪。": "Automatic failover prerequisites are not ready.",
+      "引擎级维护策略正在暂停自动切换。": "Engine maintenance policy is pausing automatic failover.",
+      "此集群允许自动切换。": "Automatic failover is allowed for this cluster.",
+      "此集群仅允许手动切换。": "This cluster allows manual switching only.",
+      "切换权重": "Failover weight",
+      "权重必须是0到1000之间的整数。": "Weights must be integers between 0 and 1000.",
+      "策略响应与所选集群不一致。": "Policy response does not match the selected cluster.",
+      "当前集群策略已保存，下一轮判断生效。": "Cluster policy saved; effective on the next evaluation cycle.",
+
       "网关灾难恢复尚未实现，仍可使用受控主库切换。":"gateway disaster recovery is not implemented; controlled switchover remains available",
       "网关":"Gateway",
       "业务连接网关":"Database connection gateway",
@@ -3163,7 +3207,7 @@
     };
     const transientUIIds = ['live-status', 'sidebar-service-state', 'login-status', 'password-result',
       'operation-result', 'node-lifecycle-result', 'cluster-management-result', 'cluster-policy-status',
-      'operation-review-result', 'metadata-result', 'power-shutdown-result', 'power-offline-hint',
+      'instance-failover-status', 'operation-review-result', 'metadata-result', 'power-shutdown-result', 'power-offline-hint',
       'software-update-dialog-alert-detail', 'software-update-confirmation-result'];
     const uiMessagePatterns = Object.entries(uiCatalog).flatMap(([source, english]) => {
       const slots = [...source.matchAll(/\{(\d+)\}/g)].map(match => Number(match[1]));
@@ -3268,6 +3312,7 @@
         if (value) element.textContent = value;
       });
       byId('refresh-interval').querySelector('[value="0"]').textContent = state.language === 'en-US' ? 'Off' : '关闭';
+      renderInstanceFailoverPolicy();
     };
 
     const csrfCookieValue = () => {
@@ -3777,6 +3822,60 @@
       return { engines };
     };
 
+    const resetInstanceFailoverEditor = () => {
+      state.instanceFailoverEpoch=(state.instanceFailoverEpoch||0)+1;
+      state.instanceFailoverEditor=null;state.instanceFailoverUnlocked=false;state.instanceFailoverSaving=false;
+      if(byId('instance-failover-status'))byId('instance-failover-status').textContent='';
+      renderInstanceFailoverPolicy();
+    };
+    const hydrateInstanceFailoverPolicy = view => {
+      state.instanceFailoverEpoch=(state.instanceFailoverEpoch||0)+1;
+      state.instanceFailoverEditor=view&&view.cluster_id===state.selectedClusterId&&view.policy ? {view:JSON.parse(JSON.stringify(view)),user:state.currentUser?.username,generation:state.requestGeneration}:null;
+      state.instanceFailoverUnlocked=false;state.instanceFailoverSaving=false;renderInstanceFailoverPolicy();
+    };
+    const instanceFailoverEditable = () => {
+      const editor=state.instanceFailoverEditor;
+      return !!(canAdministerPlatform()&&editor&&editor.user===state.currentUser?.username&&editor.generation===state.requestGeneration&&editor.view.cluster_id===state.selectedClusterId&&state.selectedClusterId===byId('cluster-select').value&&!state.clusterLoading&&!state.instanceFailoverSaving);
+    };
+    const renderInstanceFailoverPolicy = () => {
+      const editor=state.instanceFailoverEditor,valid=instanceFailoverEditable(),unlocked=valid&&state.instanceFailoverUnlocked;
+      byId('instance-failover-cluster').textContent=editor ? state.clusterDetail?.cluster?.display_name||editor.view.cluster_id:ui('未选择集群');
+      const available=!!editor?.view.automatic_available;
+      byId('instance-failover-enabled').disabled=!unlocked||(!available&&!editor?.view.policy.automatic_enabled);
+      byId('instance-failover-enabled').checked=!!editor?.view.policy.automatic_enabled;
+      byId('instance-failover-unlock').disabled=!valid;
+      byId('instance-failover-unlock').textContent=ui(state.instanceFailoverUnlocked?'锁定策略编辑':'解锁策略编辑');
+      byId('instance-failover-save').disabled=!unlocked;
+      byId('instance-failover-effective').textContent=ui(!editor?'实例策略尚未读取，不能保存。':!available?'自动切换执行条件未就绪。':editor.view.engine_suppressed?'引擎级维护策略正在暂停自动切换。':editor.view.policy.automatic_enabled?'此集群允许自动切换。':'此集群仅允许手动切换。');
+      const rows=byId('instance-failover-rows');rows.replaceChildren();
+      if(!editor)return;
+      for(const instance of state.clusterDetail.instances||[]) {
+        const preference=editor.view.policy.instances[instance.resource_id];if(!preference)continue;
+        const row=document.createElement('tr'),label=document.createElement('td'),participation=document.createElement('td'),weightCell=document.createElement('td');
+        label.textContent=`${instance.hostname||instance.ip_address||instance.resource_id}:${instance.port}`;
+        const toggle=document.createElement('input');toggle.type='checkbox';toggle.checked=preference.automatic_eligible;toggle.disabled=!unlocked;toggle.dataset.instanceId=instance.resource_id;toggle.setAttribute('aria-label',ui('参与自动切换')+' '+label.textContent);toggle.addEventListener('change',()=>{preference.automatic_eligible=toggle.checked;});
+        const weight=document.createElement('input');weight.type='number';weight.min='0';weight.max='1000';weight.step='1';weight.value=String(preference.weight);weight.disabled=!unlocked;weight.dataset.instanceWeight=instance.resource_id;weight.setAttribute('aria-label',ui('切换权重')+' '+label.textContent);weight.addEventListener('input',()=>{preference.weight=weight.value===''?null:Number(weight.value);});
+        participation.append(toggle);weightCell.append(weight);row.append(label,participation,weightCell);rows.append(row);
+      }
+    };
+    const saveInstanceFailoverPolicy = async () => {
+      if(!instanceFailoverEditable()||!state.instanceFailoverUnlocked)return;
+      const editor=state.instanceFailoverEditor,epoch=state.instanceFailoverEpoch,subject=editor.view.cluster_id;
+      const inputs=[...byId('instance-failover-rows').querySelectorAll('input[type="number"]')];
+      if(inputs.some(input=>!input.checkValidity())||Object.values(editor.view.policy.instances).some(p=>!Number.isInteger(p.weight)||p.weight<0||p.weight>1000)){byId('instance-failover-status').textContent=ui('权重必须是0到1000之间的整数。');return;}
+      const body={expected_revision:editor.view.policy.revision,automatic_enabled:!!editor.view.policy.automatic_enabled,instances:JSON.parse(JSON.stringify(editor.view.policy.instances))};
+      state.instanceFailoverSaving=true;renderInstanceFailoverPolicy();
+      try {
+        const result=await fetchResult(`/api/v1/clusters/${subject}/failover-policy`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+        if(epoch!==state.instanceFailoverEpoch||subject!==state.selectedClusterId||editor.user!==state.currentUser?.username)return;
+        if(result?.cluster_id!==subject||!result.policy)throw new Error(ui('策略响应与所选集群不一致。'));
+        state.clusterDetail.failover_policy=result;hydrateInstanceFailoverPolicy(result);byId('instance-failover-status').textContent=ui('当前集群策略已保存，下一轮判断生效。');
+      } catch(error) {
+        if(epoch!==state.instanceFailoverEpoch||subject!==state.selectedClusterId||error?.staleSession)return;
+        state.instanceFailoverUnlocked=false;byId('instance-failover-status').textContent=ui('保存失败：{0}',localizeUIMessage(String(error.message||'').replace(/^repository (?:validation failed|conflict): /,'')));
+      } finally {if(epoch===state.instanceFailoverEpoch){state.instanceFailoverSaving=false;renderInstanceFailoverPolicy();}}
+    };
+
     const fetchClusterPolicy = async () => {
       state.clusterPolicy = null;
       renderClusterPolicy();
@@ -3836,6 +3935,7 @@
       state.logFilterTimer = null;
       if (state.softwareUpdatePlanWait) state.softwareUpdatePlanWait.cancelled = true;
       state.softwareUpdatePlanWait = null; state.softwareUpdateSubmission = null;
+      resetInstanceFailoverEditor();
       state.clusters = []; state.clusterDirectory = new Map(); state.fleetTopology = new Map();
       state.capabilities = []; state.nodes = []; state.lifecycleTasks = []; state.allOperations = [];
       state.nodesLoaded = false; state.nodesLoadError = '';
@@ -4300,7 +4400,7 @@
     };
 
     const clearClusterView = (preserveOperationResult = false) => {
-      state.clusterDetail = null; state.gatewayRoute=null;state.gatewayRouteError=false; byId('gateway-route-panel').hidden = true; byId('gateway-route-rows').replaceChildren(); state.topology = null; state.health = null; state.candidates = []; state.metrics = { instances: [] }; state.operations = []; state.operationContext = null; state.powerStatus = null;
+      state.clusterDetail = null; resetInstanceFailoverEditor(); state.gatewayRoute=null;state.gatewayRouteError=false; byId('gateway-route-panel').hidden = true; byId('gateway-route-rows').replaceChildren(); state.topology = null; state.health = null; state.candidates = []; state.metrics = { instances: [] }; state.operations = []; state.operationContext = null; state.powerStatus = null;
       const cluster = state.clusters.find(item => item.resource_id === state.selectedClusterId);
       byId('topology-cluster-name').textContent = cluster ? cluster.display_name || cluster.resource_id : ui('未选择集群');
       byId('topology-risk').textContent = ui('未知');
@@ -4382,6 +4482,7 @@
 
     const beginClusterRequest = (clusterId, preserveOperationResult = false, operationIntent = null) => {
       const generation = ++state.requestGeneration;
+      resetInstanceFailoverEditor();
       state.gatewayRoute=null;state.gatewayRouteError=false;state.gatewayRouteReadEpoch=(state.gatewayRouteReadEpoch||0)+1;renderGatewayRoute();
       invalidateNodeLifecycle();
       if (state.clusterReadController) state.clusterReadController.abort();
@@ -7474,6 +7575,7 @@
           const clusterIndex = state.clusters.findIndex(cluster => cluster.resource_id === clusterId);
           if (clusterIndex >= 0 && loaded.clusterDetail.cluster) state.clusters[clusterIndex] = loaded.clusterDetail.cluster;
           renderTopology(); renderOperationContext(); renderMetrics(); renderOverview();
+          hydrateInstanceFailoverPolicy(loaded.clusterDetail.failover_policy);
           void loadGatewayRoute(clusterId,generation);
           const partialMessage = ui("部分数据不可用：{0}；普通切换与旧主恢复已锁定，可重试读取。", evidenceUnavailableText(loaded))
             + (canAdministerPlatform() && disasterContextReady() ? ui(' 灾难恢复使用独立预检，仍需管理员解锁并确认。') : '');
@@ -8150,6 +8252,9 @@
     byId('power-offline-close').addEventListener('click', closeConsolePage);
     byId('power-offline-stay').addEventListener('click', dismissPowerOfflineScreen);
     byId('retire-cluster-confirmation').addEventListener('input', renderClusterRetirementContext);
+    byId('instance-failover-unlock').addEventListener('click',()=>{if(!instanceFailoverEditable())return;state.instanceFailoverUnlocked=!state.instanceFailoverUnlocked;renderInstanceFailoverPolicy();});
+    byId('instance-failover-enabled').addEventListener('change',()=>{if(!instanceFailoverEditable()||!state.instanceFailoverUnlocked)return;state.instanceFailoverEditor.view.policy.automatic_enabled=byId('instance-failover-enabled').checked;renderInstanceFailoverPolicy();});
+    byId('instance-failover-save').addEventListener('click',saveInstanceFailoverPolicy);
     byId('cluster-select').addEventListener('change', loadSelectedCluster);
     byId('retry-cluster-load').addEventListener('click', () => loadSelectedCluster({ preserveOperationResult:true }));
     document.querySelectorAll('.topology-section-tabs [data-topology-section]').forEach((tab, index) => {

@@ -52,13 +52,15 @@ func (adapterInstance *Adapter) failoverCandidateAssessments(resolved *adapter.R
 	return evaluateCandidates(adapter.CandidateRequest{
 		Cluster: resolved.Cluster, Primary: resolved.Primary, Instances: candidates, Links: resolved.Snapshot.Links,
 		Probes: resolved.Snapshot.Probes, ObservedAt: resolved.Snapshot.ObservedAt,
-		Policy: model.CandidatePolicy{MaximumLagSeconds: 30, RequireGTID: true, AllowSourceDisconnected: true},
+		Policy: model.CandidatePolicy{AutomaticSelection: !resolved.AutomaticFailureIncidentAt.IsZero(), MaximumLagSeconds: 30, RequireGTID: true, AllowSourceDisconnected: true},
 	})
 }
 
 func (adapterInstance *Adapter) eligibleFailoverFollowers(resolved *adapter.ResolvedOperation) []model.DatabaseInstance {
 	eligible := make(map[model.ResourceID]bool)
-	for _, assessment := range adapterInstance.failoverCandidateAssessments(resolved) {
+	followersResolved := *resolved
+	followersResolved.AutomaticFailureIncidentAt = time.Time{}
+	for _, assessment := range adapterInstance.failoverCandidateAssessments(&followersResolved) {
 		eligible[assessment.InstanceID] = assessment.Eligible
 	}
 	followers := make([]model.DatabaseInstance, 0)

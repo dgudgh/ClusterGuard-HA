@@ -181,6 +181,22 @@ const writeOperationTree = (root, name, status, events) => {
 };
 
 const CHECKS = [
+  {rule:'12 / 22',title:'instance failover policy preserves automatic scope and native safety',run:()=>{
+    const selector=read('internal/recovery/mysql_selector.go')||'',controller=read('internal/recovery/controller.go')||'',workflow=read('internal/workflow/durable.go')||'';
+    for(const proof of ['AutomaticSelection:      true','!cluster.FailoverPolicy.AutomaticEnabled'])if(!selector.includes(proof))return 'automatic selector policy missing: '+proof;
+    for(const proof of ['cluster.FailoverPolicy.AutomaticEnabled','if !enabled {'])if(!controller.includes(proof))return 'controller policy missing: '+proof;
+    if(!workflow.includes('automaticInstancePolicyCheck(request)'))return 'automatic execution bypasses instance policy';
+    for(const engine of ['mysql','postgresql']){const source=read('adapters/'+engine+'/candidates.go')||'';if(!source.includes('request.Policy.AutomaticSelection && !request.Cluster.FailoverPolicy.Preference(instance.ResourceID).AutomaticEligible')||!source.includes('leftWeight > rightWeight'))return 'instance candidate control missing for '+engine;}
+    return true;
+  }},
+  {rule:'12 / 22',title:'instance failover policy saves only bound replicated revisions',run:()=>{
+    const store=read('internal/store/instance_failover_policy.go')||'',peers=read('internal/runtime/instance_failover_peers.go')||'',page=read('internal/api/console.html')||'';
+    for(const proof of ['expected != current','instance.ClusterID != id','prefe'+'rence.Weight > model.MaximumFailoverWeight','next.Audits = append'])if(!store.includes(proof))return 'replicated preference guard missing: '+proof;
+    for(const proof of ['payload.Result.ProtocolVersion != 1','payload.Result.ControllerID != member.ResourceID','enabling && !payload.Result.AutomaticAvailable'])if(!peers.includes(proof))return 'voter support guard missing: '+proof;
+    for(const proof of ['if(!instanceFailoverEditable()||!state.instanceFailoverUnlocked)return;','expected_revision:editor.view.policy.revision','epoch!==state.instanceFailoverEpoch||subject!==state.selectedClusterId||editor.user!==state.currentUser?.username'])if(!page.includes(proof))return 'console instance policy binding missing: '+proof;
+    return true;
+  }},
+
   {
     rule:'12 / 22',title:'long gateway transitions renew only live bound routes',
     run:()=>{
@@ -1315,6 +1331,8 @@ const reportOpen = failures => {
 // caught by reading something the gate does not actually consult.
 const READ_FILES = [
  'internal/agent/docker_postgresql.go','cmd/clusterguard-agent/gateway_postgresql_test.go',
+ 'adapters/mysql/candidates.go','adapters/postgresql/candidates.go',
+ 'internal/recovery/mysql_selector.go','internal/recovery/controller.go','internal/workflow/durable.go','internal/store/instance_failover_policy.go','internal/runtime/instance_failover_peers.go',
  'internal/endpoint/gateway_transition_renewal_test.go', 'internal/agent/config.go', 'internal/agent/postgresql.go','internal/endpoint/gateway_postgresql_test.go','adapters/postgresql/gateway_switchover_test.go',
  'internal/api/disaster_recovery.go',
   'adapters/mysql/runner.go',
@@ -1353,6 +1371,12 @@ const MUTATIONS = [
   {name:'partial gateway observation claims complete coverage',file:'internal/endpoint/gateway.go',find:'Complete: !partial',replace:'Complete: true',rule:'gateway availability renews only the existing stable writer'},
   {name:'stable renewal accepts another target',file:'internal/endpoint/gateway_client.go',find:'old.TargetID != grant.TargetID',replace:'false',rule:'gateway availability renews only the existing stable writer'},
   {name:'gateway defaults to single node without opt in',file:'internal/endpoint/gateway_client.go',find:'minimum := 2',replace:'minimum := 1',rule:'gateway availability renews only the existing stable writer'},
+  {name:'automatic selector ignores cluster manual-only switch',file:'internal/recovery/mysql_selector.go',find:'!cluster.FailoverPolicy.AutomaticEnabled',replace:'false',rule:'instance failover policy preserves automatic scope and native safety'},
+  {name:'automatic execution skips instance authorization',file:'internal/workflow/durable.go',find:'automaticInstancePolicyCheck(request)',replace:'error(nil)',rule:'instance failover policy preserves automatic scope and native safety'},
+  {name:'instance preference accepts stale revision',file:'internal/store/instance_failover_policy.go',find:'expected != current',replace:'false',rule:'instance failover policy saves only bound replicated revisions'},
+  {name:'instance preference accepts another cluster',file:'internal/store/instance_failover_policy.go',find:'instance.ClusterID != id',replace:'false',rule:'instance failover policy saves only bound replicated revisions'},
+  {name:'old voter may ignore instance preference',file:'internal/runtime/instance_failover_peers.go',find:'payload.Result.ProtocolVersion != 1',replace:'false',rule:'instance failover policy saves only bound replicated revisions'},
+  {name:'late policy response changes another cluster',file:'internal/api/console.html',find:'epoch!==state.instanceFailoverEpoch||subject!==state.selectedClusterId||editor.user!==state.currentUser?.username',replace:'false',rule:'instance failover policy saves only bound replicated revisions'},
   {name:'long transition route has no heartbeat',file:'internal/endpoint/gateway.go',find:'p.renewTransitionRoute(guarded, resolved, authorization.LeaseID)',replace:'nil',rule:'long gateway transitions renew only live bound routes'},
   {name:'transition ignores publication owner binding',file:'internal/endpoint/gateway.go',find:'last.LeaseID != leaseID || last.TargetID != resolved.Target.ResourceID || last.OperationID != resolved.OperationID',replace:'false',rule:'long gateway transitions renew only live bound routes'},
   {name:'transition resumes an expired route',file:'internal/endpoint/gateway.go',find:'!stableGatewayStates(states, last, lease)',replace:'false',rule:'long gateway transitions renew only live bound routes'},

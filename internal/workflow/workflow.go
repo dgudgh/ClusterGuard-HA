@@ -426,6 +426,10 @@ func (service *Service) executeLegacy(ctx context.Context, request adapter.Opera
 	}
 	approvalMessage := ""
 	if authorization.automatic {
+		if policyErr := automaticInstancePolicyCheck(request); policyErr != nil {
+			execution := model.Execution{OperationID: operation.ResourceID, Status: model.OperationBlocked, Message: policyErr.Error()}
+			return service.recordOutcome(operation, execution, model.StageApprove, policyErr.Error(), policyErr)
+		}
 		approvalMessage = "automatic recovery authorized for incident " + authorization.incidentID
 	} else {
 		record := model.OperationRecord{
@@ -707,4 +711,33 @@ func (service *Service) executeMetadata(ctx context.Context, operation model.Ope
 		return execution, commitErr
 	}
 	return execution, nil
+}
+
+// This check is reached only through internal automatic authorization. Manual
+// operations never treat the automatic-participation switch as an exclusion.
+func automaticInstancePolicyCheck(request adapter.OperationRequest) error {
+	if request.Resolved == nil {
+		return nil
+	}
+	policy := request.Resolved.Cluster.FailoverPolicy
+	revision := uint64(0)
+	if policy != nil {
+		revision = policy.Revision
+	}
+	if request.AutomaticPolicyRevision != nil && *request.AutomaticPolicyRevision != revision {
+		return fmt.Errorf("automatic failover policy changed after candidate selection")
+	}
+	if policy == nil {
+		return nil
+	}
+	if request.AutomaticPolicyRevision == nil {
+		return fmt.Errorf("automatic selection is not bound to the current policy revision")
+	}
+	if !policy.AutomaticEnabled {
+		return fmt.Errorf("cluster automatic failover is disabled")
+	}
+	if !policy.Preference(request.TargetID).AutomaticEligible {
+		return fmt.Errorf("target instance is excluded from automatic failover")
+	}
+	return nil
 }

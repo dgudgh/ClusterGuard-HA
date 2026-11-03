@@ -246,7 +246,7 @@ func (server *Server) clusterRoute(writer http.ResponseWriter, request *http.Req
 		}
 		writeDiagnosticJSON(writer, http.StatusOK, map[string]interface{}{
 			"status": "ok", "result": map[string]interface{}{
-				"cluster": cluster, "instances": server.store.Instances(clusterID), "endpoints": server.store.Endpoints(clusterID),
+				"cluster": cluster, "failover_policy": server.instanceFailoverPolicyView(cluster), "instances": server.store.Instances(clusterID), "endpoints": server.store.Endpoints(clusterID),
 				"ha_endpoints": server.store.HAEndpoints(clusterID), "workload_bindings": server.store.WorkloadBindingsForCluster(clusterID),
 				"runtime_profile": server.clusterRuntimeProfile(clusterID),
 			},
@@ -255,6 +255,10 @@ func (server *Server) clusterRoute(writer http.ResponseWriter, request *http.Req
 	}
 
 	action := strings.Join(parts[1:], "/")
+	if action == "failover-policy" {
+		server.instanceFailoverPolicyRoute(writer, request, clusterID)
+		return
+	}
 	if action == "gateway" {
 		server.clusterGateway(writer, request, clusterID)
 		return

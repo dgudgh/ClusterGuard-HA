@@ -35,6 +35,11 @@ func evaluateCandidates(request adapter.CandidateRequest) []model.CandidateAsses
 		if left.replayLSN != right.replayLSN {
 			return left.replayLSN > right.replayLSN
 		}
+		leftWeight := request.Cluster.FailoverPolicy.Preference(left.assessment.InstanceID).Weight
+		rightWeight := request.Cluster.FailoverPolicy.Preference(right.assessment.InstanceID).Weight
+		if leftWeight != rightWeight {
+			return leftWeight > rightWeight
+		}
 		if left.lagSeconds != right.lagSeconds {
 			return left.lagSeconds < right.lagSeconds
 		}
@@ -70,6 +75,10 @@ func evaluateCandidate(request adapter.CandidateRequest, instance model.Database
 			evaluation.warnings = true
 		}
 	}
+	if request.Policy.AutomaticSelection && !request.Cluster.FailoverPolicy.Preference(instance.ResourceID).AutomaticEligible {
+		addCheck("automatic_participation", model.CheckFail, "instance is excluded from automatic failover; manual selection remains available")
+	}
+
 	healthyBoundProbe := hasCurrentHealthyProbe(request.Probes, instance.ResourceID, request.ObservedAt)
 	reachableBoundProbe := hasCurrentReachableProbe(request.Probes, instance.ResourceID, request.ObservedAt)
 	sourceDisconnected := request.Policy.AllowSourceDisconnected && reachableBoundProbe &&

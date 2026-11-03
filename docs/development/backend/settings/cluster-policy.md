@@ -45,3 +45,6 @@
 | 每轮读取、热覆盖和清除后回退 | [runtime](../../../../internal/runtime) | [runtime/cluster_policy_test.go](../../../../internal/runtime/cluster_policy_test.go) |
 
 只指明与改动对应的验证入口；未执行的浏览器、真实数据库、真实集群或现场验证不得记为通过。前端交互任务再读[设置：集群策略编辑](../../frontend/settings/cluster-policy.md)。
+
+
+单集群自动/手动开关与数据库实例权重是独立配置，见[实例切换策略](instance-failover.md)；不要用本页所有同引擎集群的覆盖替代单集群设置。

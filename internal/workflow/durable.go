@@ -501,6 +501,10 @@ func (service *Service) executeDurable(ctx context.Context, request adapter.Oper
 	request.Resolved.ObservationToken = observationLabel
 	approvalMessage := ""
 	if authorization.automatic {
+		if policyErr := automaticInstancePolicyCheck(request); policyErr != nil {
+			execution := newDurableExecution(operation.ResourceID, model.OperationBlocked, policyErr.Error(), service.now)
+			return service.finishDurable(record.ResourceID, operation, model.StageApprove, execution, "pre_commit", policyErr, false)
+		}
 		approvalMessage = "automatic recovery authorized for incident " + authorization.incidentID
 		record, err = service.advanceDurable(record.ResourceID, model.StageApprove, model.OperationTransition{Message: approvalMessage})
 		if err != nil {

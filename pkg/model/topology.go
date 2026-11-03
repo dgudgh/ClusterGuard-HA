@@ -66,6 +66,7 @@ type TopologySnapshot struct {
 }
 
 type CandidatePolicy struct {
+	AutomaticSelection      bool  `json:"-"`
 	MaximumLagSeconds       int64 `json:"maximum_lag_seconds"`
 	RequireGTID             bool  `json:"require_gtid"`
 	AllowSourceDisconnected bool  `json:"allow_source_disconnected,omitempty"`

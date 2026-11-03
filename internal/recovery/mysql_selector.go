@@ -23,6 +23,7 @@ func NewMySQLCandidateSelector(evaluator CandidateEvaluator) *DatabaseCandidateS
 		evaluator: evaluator,
 		engine:    model.EngineMySQL,
 		policy: model.CandidatePolicy{
+			AutomaticSelection:      true,
 			MaximumLagSeconds:       30,
 			RequireGTID:             true,
 			AllowSourceDisconnected: true,
@@ -35,6 +36,7 @@ func NewPostgreSQLCandidateSelector(evaluator CandidateEvaluator) *DatabaseCandi
 		evaluator: evaluator,
 		engine:    model.EnginePostgreSQL,
 		policy: model.CandidatePolicy{
+			AutomaticSelection:      true,
 			MaximumLagSeconds:       0,
 			RequireGTID:             false,
 			AllowSourceDisconnected: true,
@@ -45,6 +47,9 @@ func NewPostgreSQLCandidateSelector(evaluator CandidateEvaluator) *DatabaseCandi
 func (selector *DatabaseCandidateSelector) Select(ctx context.Context, cluster model.DatabaseCluster, snapshot model.TopologySnapshot, sourceID model.ResourceID) (model.ResourceID, error) {
 	if selector == nil || selector.evaluator == nil {
 		return "", fmt.Errorf("database candidate evaluator is not configured")
+	}
+	if cluster.FailoverPolicy != nil && !cluster.FailoverPolicy.AutomaticEnabled {
+		return "", fmt.Errorf("cluster automatic failover is disabled")
 	}
 	if cluster.Engine != selector.engine {
 		return "", fmt.Errorf("candidate selector for %s cannot evaluate %s cluster", selector.engine, cluster.Engine)

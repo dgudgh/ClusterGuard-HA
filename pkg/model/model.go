@@ -96,13 +96,14 @@ type Controller struct {
 
 type DatabaseCluster struct {
 	ResourceMeta
-	PlatformID     ResourceID     `json:"platform_id"`
-	Engine         Engine         `json:"engine"`
-	EngineIdentity EngineIdentity `json:"engine_identity"`
-	DisplayName    string         `json:"display_name"`
-	Health         Health         `json:"health"`
-	RecoveryFreeze bool           `json:"recovery_freeze"`
-	Recovery       *RecoveryState `json:"recovery,omitempty"`
+	PlatformID     ResourceID              `json:"platform_id"`
+	Engine         Engine                  `json:"engine"`
+	EngineIdentity EngineIdentity          `json:"engine_identity"`
+	DisplayName    string                  `json:"display_name"`
+	Health         Health                  `json:"health"`
+	RecoveryFreeze bool                    `json:"recovery_freeze"`
+	Recovery       *RecoveryState          `json:"recovery,omitempty"`
+	FailoverPolicy *InstanceFailoverPolicy `json:"failover_policy,omitempty"`
 }
 
 type NodeKind string

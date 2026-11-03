@@ -23,6 +23,12 @@ recorded-through: 73ff4a3
 
 | 日期 | 文件 | 变更 | 说明 |
 | --- | --- | --- | --- |
+| 2026-11-03 | `docs/development/instance-failover-policy-2026-11-03.md` | A | 实例级自动资格/权重任务、事前旧码对照、门禁与分阶段回归计划。 |
+| 2026-11-03 | `docs/zh-CN/instance-failover-policy.md` | A | 中文页面操作、实例UUID/权重、安全排序、全节点版本前置和并发边界。 |
+| 2026-11-03 | `docs/en-US/instance-failover-policy.md` | A | 对应英文实例策略操作与安全/升级/并发说明。 |
+| 2026-11-03 | `docs/development/backend/settings/instance-failover.md` | A | 单集群接口、复制CAS、执行前复核与验证路径。 |
+| 2026-11-03 | `docs/development/frontend/settings/instance-failover.md` | A | 实例编辑器范围、授权草稿、迟到响应、失败和浏览器回归。 |
+| 2026-11-03 | `docs/development/backend/settings/cluster-policy.md` | M | 区分引擎全局维护覆盖与所选集群实例参与/权重，增加单功能页指路。 |
 | 2026-11-02 | `docs/development/postgresql-hybrid-field-2026-11-02.md` | A | 用户授权四节点真实PG部署测试的前检、门禁、独立实例和MySQL保护边界；逐项记录实际现场结果与未实现PG网关联动。 |
 | 2026-11-02 | `docs/zh-CN/postgresql-agent-systemd.md` | A | PG原生Agent身份/setpriv/passfile、窄沙箱生成、只读诊断与持续验收；明确PG企业网关联动尚不支持。  追加PG网关联动源码范围、Linux签名无VIP/原生停主隔离和独立现场记录指路；MySQL结果不代替PG验收。 |
 | 2026-11-02 | `docs/en-US/postgresql-agent-systemd.md` | A | PG Agent双语对应指南；保留源码核对/未部署未实测边界，不套用MySQL能力修复。  追加PG网关联动源码范围、Linux签名无VIP/原生停主隔离和独立现场记录指路；MySQL结果不代替PG验收。 |
@@ -286,3 +292,10 @@ MySQL初始化插件选项批次（2026-10-15）：修复生产模板正常运�
 PG双语Agent/HA页追加固定入口TLS、统一HBA与rewind复制配置的前置、长操作授权与业务恢复时间边界；索引仍指向本轮现场记录，重建入库生成页。
 
 PG现场收尾：登记6.3实际页面两方向耗时、两项限定故障/6项管理拒绝/三备用拒写、2400次尝试的分阶段失败和1960次确认写入四库保留、MySQL不变核验与49/13/12阶段证据。双语Agent页同步已验范围和单网关等未验边界；签名包与摘要回执留本地，不生成公开附件。
+
+
+
+
+
+
+2026-11-03 实例策略导航：更新前后端settings/README与cluster-policy单功能页、catalogue，区分所选集群实例规则与同引擎全局覆盖；新增双语指南及任务，重建入库HTML。

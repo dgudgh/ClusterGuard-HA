@@ -33,6 +33,10 @@ ClusterGuard HA product documentation is maintained in English and Simplified Ch
 
 ClusterGuard HA 产品文档同时维护英文和简体中文版本。安装、变更和排障时请选择对应语言，并以同版本文档为准。
 
+## Instance failover policy / 实例切换策略
+
+[中文操作说明](zh-CN/instance-failover-policy.md) · [English guide](en-US/instance-failover-policy.md) · [前端路径](development/frontend/settings/instance-failover.md) · [后端路径](development/backend/settings/instance-failover.md)。单集群开关与实例UUID资格/权重，安全优先，不自动抢回；版本和已验阶段见功能记录。
+
 ## License / 许可
 
 ClusterGuard HA is licensed under the **GNU Affero General Public License, version 3 only** (`AGPL-3.0-only`); the authoritative text is [`../LICENSE`](../LICENSE). You may use, modify and sell it, but a modified version made available to others — including as a network service only — must have its Corresponding Source published under the same license. Third-party components are listed in [`../THIRD-PARTY-NOTICES.md`](../THIRD-PARTY-NOTICES.md). Run `node tools/verify-license-consistency.cjs` after any dependency or packaging change.

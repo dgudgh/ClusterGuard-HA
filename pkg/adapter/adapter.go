@@ -113,6 +113,7 @@ type OperationRequest struct {
 	// AutomaticFailureIncidentAt binds an internally authorized automatic
 	// failover to the exact stable failure series that triggered it. It is never
 	// accepted from the external API.
+	AutomaticPolicyRevision    *uint64              `json:"-"`
 	AutomaticFailureIncidentAt time.Time            `json:"-"`
 	IdempotencyKey             string               `json:"idempotency_key,omitempty"`
 	Parameters                 map[string]string    `json:"parameters,omitempty"`

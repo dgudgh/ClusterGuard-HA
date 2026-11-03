@@ -46,6 +46,11 @@ func evaluateCandidates(request adapter.CandidateRequest) []model.CandidateAsses
 		if left.missingTransactions != right.missingTransactions {
 			return left.missingTransactions < right.missingTransactions
 		}
+		leftWeight := request.Cluster.FailoverPolicy.Preference(left.assessment.InstanceID).Weight
+		rightWeight := request.Cluster.FailoverPolicy.Preference(right.assessment.InstanceID).Weight
+		if leftWeight != rightWeight {
+			return leftWeight > rightWeight
+		}
 		if left.lagSeconds != right.lagSeconds {
 			return left.lagSeconds < right.lagSeconds
 		}
@@ -85,6 +90,10 @@ func evaluateCandidate(request adapter.CandidateRequest, instance model.Database
 		if status == model.CheckWarn {
 			evaluation.hasWarnings = true
 		}
+	}
+
+	if request.Policy.AutomaticSelection && !request.Cluster.FailoverPolicy.Preference(instance.ResourceID).AutomaticEligible {
+		addCheck("automatic_participation", model.CheckFail, "instance is excluded from automatic failover; manual selection remains available")
 	}
 
 	healthyBoundProbe := hasHealthyBoundProbe(request.Probes, instance.ResourceID, request.ObservedAt)

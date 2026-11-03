@@ -64,13 +64,14 @@ type Controller struct {
 	operationTimeoutProvider func() time.Duration
 	// suppressed pauses automatic failover for planned maintenance. Evidence is
 	// still recorded, so lifting the pause cannot resurrect a stale series.
-	suppressed func() bool
-	now        func() time.Time
-	onError          func(error)
-	errorReminder    *observability.ErrorReminder
-	recoveryGate     chan struct{}
-	inFlightMu       sync.Mutex
-	inFlight         map[model.ResourceID]struct{}
+	suppressed               func() bool
+	defaultAutomationEnabled bool
+	now                      func() time.Time
+	onError                  func(error)
+	errorReminder            *observability.ErrorReminder
+	recoveryGate             chan struct{}
+	inFlightMu               sync.Mutex
+	inFlight                 map[model.ResourceID]struct{}
 }
 
 type Option func(*Controller)
@@ -121,6 +122,12 @@ func WithSuppression(suppressed func() bool) Option {
 	}
 }
 
+// WithDefaultAutomationEnabled preserves the startup default until an explicit
+// per-cluster policy is saved. The loop must exist to allow hot enabling.
+func WithDefaultAutomationEnabled(enabled bool) Option {
+	return func(c *Controller) { c.defaultAutomationEnabled = enabled }
+}
+
 func WithErrorHandler(handler func(error)) Option {
 	return func(controller *Controller) {
 		if handler != nil {
@@ -138,7 +145,7 @@ func NewController(state StateReader, failures FailureEvidence, selector Candida
 	}
 	controller := &Controller{
 		state: state, failures: failures, selector: selector, executor: executor, authority: authority,
-		engine: model.EngineMySQL, retryDelay: retryDelay, interval: 5 * time.Second,
+		defaultAutomationEnabled: true, engine: model.EngineMySQL, retryDelay: retryDelay, interval: 5 * time.Second,
 		operationTimeout: defaultAutomaticFailoverOperationTimeout, now: now,
 		onError:       func(err error) { log.Printf("automatic recovery cycle failed: %v", err) },
 		errorReminder: observability.NewErrorReminder(5*time.Minute, now),
@@ -280,6 +287,27 @@ func (controller *Controller) finishRecovery(clusterID model.ResourceID) {
 }
 
 func (controller *Controller) recoverCluster(ctx context.Context, cluster model.DatabaseCluster) error {
+	// Refresh the policy rather than acting on the cluster slice captured earlier.
+	if reader, ok := controller.state.(interface {
+		Cluster(model.ResourceID) (model.DatabaseCluster, bool)
+	}); ok {
+		current, found := reader.Cluster(cluster.ResourceID)
+		if !found {
+			return nil
+		}
+		cluster = current
+	}
+	enabled := controller.defaultAutomationEnabled
+	if cluster.FailoverPolicy != nil {
+		enabled = cluster.FailoverPolicy.AutomaticEnabled
+	}
+	if !enabled {
+		return nil
+	}
+	policyRevision := uint64(0)
+	if cluster.FailoverPolicy != nil {
+		policyRevision = cluster.FailoverPolicy.Revision
+	}
 	now := controller.now().UTC()
 	if cluster.RecoveryFreeze {
 		// Planned-shutdown protection: automatic recovery stays frozen for this
@@ -298,7 +326,8 @@ func (controller *Controller) recoverCluster(ctx context.Context, cluster model.
 				RequestedBy: AutomaticRecoveryActor,
 			},
 			TargetID: previous.TargetID, IdempotencyKey: previous.IdempotencyKey,
-			Parameters: map[string]string{"trigger": "resume_promoted_unverified"},
+			AutomaticPolicyRevision: &policyRevision,
+			Parameters:              map[string]string{"trigger": "resume_promoted_unverified"},
 		}
 		operationContext, cancel := context.WithTimeout(ctx, controller.automaticOperationTimeout())
 		defer cancel()
@@ -333,7 +362,7 @@ func (controller *Controller) recoverCluster(ctx context.Context, cluster model.
 			ClusterID: cluster.ResourceID, Engine: cluster.Engine, Kind: model.OperationFailover,
 			RequestedBy: AutomaticRecoveryActor,
 		},
-		SourceID: primaryID, TargetID: targetID, AutomaticFailureIncidentAt: incident,
+		SourceID: primaryID, TargetID: targetID, AutomaticFailureIncidentAt: incident, AutomaticPolicyRevision: &policyRevision,
 		IdempotencyKey: prefix + strconv.Itoa(attempt),
 		Parameters:     map[string]string{"trigger": "stable_primary_failure"},
 	}

@@ -374,6 +374,7 @@ func cloneInstance(instance model.DatabaseInstance) model.DatabaseInstance {
 func cloneCluster(cluster model.DatabaseCluster) model.DatabaseCluster {
 	copy := cluster
 	copy.EngineIdentity = cluster.EngineIdentity.Clone()
+	copy.FailoverPolicy = cluster.FailoverPolicy.Clone()
 	if cluster.Recovery != nil {
 		state := *cluster.Recovery
 		copy.Recovery = &state
@@ -801,6 +802,11 @@ func (repository *Repository) UpsertCluster(cluster model.DatabaseCluster) (mode
 	} else {
 		cluster.CreatedAt = now
 		cluster.MetadataRevision = 1
+	}
+	// Policy is writable only through its validated, audited CAS entry point.
+	cluster.FailoverPolicy = nil
+	if existing, ok := repository.snapshot.Clusters[cluster.ResourceID]; ok {
+		cluster.FailoverPolicy = existing.FailoverPolicy.Clone()
 	}
 	cluster.UpdatedAt = now
 	next := repository.snapshot

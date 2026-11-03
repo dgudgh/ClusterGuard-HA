@@ -110,6 +110,21 @@ func normalizeSnapshot(value snapshot) (snapshot, error) {
 	if normalized.Instances == nil {
 		normalized.Instances = map[model.ResourceID]model.DatabaseInstance{}
 	}
+	for id, cluster := range normalized.Clusters {
+		if policy := cluster.FailoverPolicy; policy != nil {
+			if (cluster.Engine != model.EngineMySQL && cluster.Engine != model.EnginePostgreSQL) || policy.Revision == 0 || policy.UpdatedAt.IsZero() || strings.TrimSpace(policy.UpdatedBy) == "" || policy.Instances == nil {
+				return snapshot{}, fmt.Errorf("invalid persisted instance failover policy")
+			}
+			for instanceID, pref := range policy.Instances {
+				if !model.ValidResourceID(instanceID) || pref.Weight < 0 || pref.Weight > model.MaximumFailoverWeight {
+					return snapshot{}, fmt.Errorf("invalid persisted instance failover preference")
+				}
+				if instance, found := normalized.Instances[instanceID]; found && (instance.ClusterID != id || instance.Engine != cluster.Engine) {
+					return snapshot{}, fmt.Errorf("persisted failover preference belongs to another cluster")
+				}
+			}
+		}
+	}
 	for resourceID, target := range normalized.RuntimeTargets {
 		if target.ResourceID != resourceID {
 			return snapshot{}, fmt.Errorf("invalid runtime target record")

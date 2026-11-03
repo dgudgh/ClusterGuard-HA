@@ -53,6 +53,10 @@ type Server struct {
 	mutationRPC               MutationRPC
 	secureCookies             bool
 	controlPlane              ControlPlaneStatusProvider
+	failoverControllerID      model.ResourceID
+	failoverPeerCheck         func(context.Context, model.ResourceID, model.Engine, bool) error
+	failoverDefaults          map[model.Engine]bool
+	failoverAvailable         map[model.Engine]bool
 	configuration             ConfigurationProvider
 	configurationDistribution *configuration.Manager
 	maintenance               MutationMaintenance
