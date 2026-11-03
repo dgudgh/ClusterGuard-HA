@@ -33,3 +33,5 @@ Before saving any instance policy, signed file rollback follows the existing pro
 Gateway database failover uses the signed native Agent isolation path: durable MySQL read-only/restart protection or a verified PostgreSQL service stop. Database hosts never acquire the gateway frontend VIP. An unreachable Agent or incomplete isolation still requires verifiable external fencing; weights cannot override this boundary. The native-VIP unreachable-Agent expiry fallback is not enabled for gateways.
 
 The database-side Agent command path also requires an explicit no-VIP gateway policy: only MySQL/PG with empty VIP/interface/prefix. Status/release do not invoke local IP tools and VIP acquisition is always rejected. Native durable read-only or stopped-service evidence remains mandatory for database fencing.
+
+MySQL semi-sync activation selects master or source statements from the complete unique live plugin variable/status family, independently of server version. Existing legacy plugin configuration remains valid. Missing/ambiguous families, failed activation and absent replica acknowledgements still block the writer entry.

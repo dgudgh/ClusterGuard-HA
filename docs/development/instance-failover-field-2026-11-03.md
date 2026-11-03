@@ -65,3 +65,13 @@ MySQL新策略保存与三节点读回成功：云副本权重1000但排除，15
 事前git show d0e5637:internal/agent/vip.go与211c22e相同；拟对明确gateway、MySQL/PG且VIP/interface/prefix全空的数据库策略，使Status/Release不操作本机VIP，Acquire始终拒绝；错误混合VIP配置仍拒绝，Linux路径不变。新增生产newRuntimeControllers+实际Service+真实原生角色包装的签名命令链测试，两引擎先红后绿，防止再用纯transport stub遮蔽接线缺陷。新身份3.1.7.4，保留7.3失败和签名包，不放宽数据库隔离/多数派/租约。
 
 真实命令链两引擎/启停4场景旧码全红，修改后通过；8项混合配置/引擎拒绝和既有原生VIP回归通过。全仓Go/vet、Agent生产构造与Agent/coordination race通过，SOURCE54、164变异及双对照通过；许可68/Markdown11/生成页重建通过。尚未把3.1.7.4源码检查当现场通过。
+
+## 半同步真实插件方言缺陷（修改前）
+
+3.1.7.4/c106a2f已通过正式通道完成两程序HA+Agent更新，13ART/54SOURCE/43私有台账通过；计划dd50ca36-bf76-4df1-80d0-b2b27c8893bb、执行ed0ae80a-b3d3-495b-bbaa-b0eebe2ab154成功，执行窗口两入口各120次全通过、124次VIP/就绪正常、网关和DB PID不变。第一次后验发生在任务尚运行的维护释放阶段，正确被断言拒绝；终态后重新取样通过，没有跳过维护检查。签名原生Agent实际vip_status/role_status均ok。
+
+MySQL新故障已真正隔离152并按权重提升153，随后c1253ba3-4dfe-4f9a-890f-8c2db537420c在activate_failover_semisync_source收到1193，目标被保守重新隔离、入口withdraw，结果indeterminate；另一早期774d2095操作因正常观测变化stale_plan阻断，保留。原生SQL证明153/154/云均read_only/super_read_only=1，152仍停服且持久重启保护成立，没有双写。按正式review记录已核验关闭态且不修改indeterminate结果，暂停自动，准备签名代码修复后按原计划受控继续。
+
+事前对照adapters/mysql/semisync.go的activateSemiSyncSource按dialectForVersion.ModernSource选source变量；parseSemiSync其实已接受master/slave真实变量。生产cnf与现场SHOW VARIABLES均只有master/slave插件变量，8.0.44不代表安装了source/replica插件。拟把启停变量名绑定到实际读取的完整source配置族，而非服务器版本；不改现场cnf、插件或半同步要求，不吞1193或放宽ACK判据。新增8.0旧插件和现代插件启停、配置族不完整/冲突拒绝及activation故障重新隔离回归，3.1.7.5新身份。
+
+半同步变量修复全仓Go/vet、MySQL/workflow/recovery race通过，55SOURCE与167变异/双对照通过；旧8.0旧插件1193及双插件歧义先红后绿。许可68、Markdown11和生成页通过。3.1.7.5将在MySQL已确认隔离关闭、自动暂停、旧操作已正式复核且仍保留indeterminate、PG健康的明确基线中正式升级；不能把当前MySQL断连归入HA升级连续性样本，也不能当作全站健康基线。

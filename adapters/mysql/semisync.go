@@ -22,16 +22,17 @@ const (
 )
 
 type semiSyncProbe struct {
-	available           bool
-	sourceEnabled       bool
-	sourceStatus        bool
-	sourceClients       int
-	replicaEnabled      bool
-	replicaStatus       bool
-	waitForReplicaCount int
-	sourceTimeoutMS     int
-	waitNoReplica       bool
-	waitPoint           string
+	sourceEnableVariable string
+	available            bool
+	sourceEnabled        bool
+	sourceStatus         bool
+	sourceClients        int
+	replicaEnabled       bool
+	replicaStatus        bool
+	waitForReplicaCount  int
+	sourceTimeoutMS      int
+	waitNoReplica        bool
+	waitPoint            string
 }
 
 func probeSemiSync(ctx context.Context, runner SQLRunner, endpoint adapter.Endpoint, credentials adapter.Credentials) (semiSyncProbe, error) {
@@ -50,6 +51,31 @@ func parseSemiSync(variableRows, statusRows []Row) (semiSyncProbe, error) {
 	variables := semiSyncValues(variableRows)
 	status := semiSyncValues(statusRows)
 	probe := semiSyncProbe{available: len(variables) > 0 || len(status) > 0}
+	// MySQL server version does not identify the loaded semi-sync plugin family.
+	// Require a complete, unique live family before choosing a writable variable.
+	_, modern := variables["rpl_semi_sync_source_enabled"]
+	_, legacy := variables["rpl_semi_sync_master_enabled"]
+	if modern != legacy {
+		source, replica := "master", "slave"
+		if modern {
+			source, replica = "source", "replica"
+		}
+		prefix := "rpl_semi_sync_" + source
+		complete := true
+		for _, key := range []string{prefix + "_enabled", prefix + "_timeout", prefix + "_wait_point", prefix + "_wait_no_" + replica, prefix + "_wait_for_" + replica + "_count"} {
+			if _, ok := variables[key]; !ok {
+				complete = false
+			}
+		}
+		for _, key := range []string{prefix + "_status", prefix + "_clients"} {
+			if _, ok := status[key]; !ok {
+				complete = false
+			}
+		}
+		if complete {
+			probe.sourceEnableVariable = prefix + "_enabled"
+		}
+	}
 	var err error
 	if probe.sourceEnabled, err = semiSyncBoolean(variables, "rpl_semi_sync_source_enabled", "rpl_semi_sync_master_enabled"); err != nil {
 		return semiSyncProbe{}, err
@@ -243,19 +269,21 @@ func activateSemiSyncSource(ctx context.Context, runner SQLRunner, executor SQLE
 	if err != nil {
 		return err
 	}
+	if probe.sourceEnableVariable == "" {
+		return fmt.Errorf("promoted MySQL semi-sync source plugin family is incomplete or ambiguous")
+	}
 	if probe.sourceReady() {
 		return nil
 	}
 	if !probe.sourceConfigured() {
 		return fmt.Errorf("promoted MySQL instance lacks complete semi-sync source configuration")
 	}
-	dialect, err := dialectForVersion(version)
-	if err != nil {
+	if _, err := dialectForVersion(version); err != nil {
 		return err
 	}
 	disableStatement := disableSemiSyncMaster
 	enableStatement := enableSemiSyncMaster
-	if dialect.ModernSource {
+	if probe.sourceEnableVariable == "rpl_semi_sync_source_enabled" {
 		disableStatement = disableSemiSyncSource
 		enableStatement = enableSemiSyncSource
 	}
