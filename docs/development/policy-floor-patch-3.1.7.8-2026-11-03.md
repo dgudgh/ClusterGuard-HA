@@ -15,3 +15,9 @@ CG-UPGRADE-CONTRACT，contract_version=2，contract_loaded=true。构建/签名�
 3.1.7.8构建后ART13及artifact strict通过，但私有目录门禁因supersedes_artifact.reason中包含数字与斜线而失败。构建前漏跑了这个既有文本判据；不能修改已签名清单或换字节重建。原包/规格/摘要和失败输出全部留存为未交付候选，新的最终身份改为3.1.7.9、revision=8，指向封存原件SHA，base/build/fix仍为9bb5047/d3c0be0。新理由只解释替换原因，并在签名前显式断言不含数字或路径分隔符；不修改门禁。
 
 首次ART验证器对全部文件误设root组，实际升级器规范为root:clusterguard；修正为逐项匹配nfpm后通过，包字节不变。Linux临时载荷检查初次因Python36不支持capture_output而未执行程序；保留失败，改兼容参数后另跑，不作为现场操作。新身份必须重新验签、ART及运行载荷检查，不能复用旧身份验收。
+
+## 原生产调用链的权限回归与补修计划
+
+实际签名3.1.7.9在Linux root隔离执行，五程序身份与脚本能力探针通过，但新目标兼容检查因载荷属主UID501而失败。9bb5047的Builder直接tar本机stage，Runner本地/远端tar保留归档属主；当时没有root可信属主检查，未暴露。d3c0be0新增独立可信文件检查后，同样的macOS载体不再可用。这是实际跨系统交付回归，不能削弱trustedRegularFile的root限制。
+
+修改前对照git show9bb5047及当前Builder/Runner相同归档/解包路径并读取change-policy。拟局部修改：Builder用BSD/GNU对应参数固定载体uid/gid零，Runner解包显式不沿用归档属主；保留nfpm目标owner/group/mode及签名/摘要。将现有目录门禁的修订理由限制前移到Builder签名前，防止再产生明知会被目录拒绝的签名身份。增加真实tar头回归、生产Node理由校验片段的正负回归与SOURCE变异，再签新身份3.1.7.10；封存8/9并记录原SHA，不覆盖。

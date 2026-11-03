@@ -302,7 +302,7 @@ safe_extract_patch() {
   if tar -tvzf "${patch_file}" | awk 'substr($1,1,1) != "-" && substr($1,1,1) != "d" {found=1} END {exit found ? 0 : 1}'; then
     die "升级包禁止包含链接或特殊文件"
   fi
-  tar -xzf "${patch_file}" -C "${work_dir}"
+  tar --no-same-owner -xzf "${patch_file}" -C "${work_dir}"
   # Hotfix patches reuse the legacy .cgpatch suffix but carry their own
   # apply.sh/rollback.sh instead of an RPM pair. They are a first-class package
   # kind here, not a trap: --inspect reports them and run_hotfix_update applies
@@ -1943,7 +1943,7 @@ mv -f '${remote_dir}/package.cgpatch.tmp' '${remote_dir}/package.cgpatch'
 chmod 0700 '${remote_dir}/hotfix-state-probe.sh.tmp'
 mv -f '${remote_dir}/hotfix-state-probe.sh.tmp' '${remote_dir}/hotfix-state-probe.sh'
 rm -rf '${remote_dir}/clusterguard-hotfix'
-tar -xzf '${remote_dir}/package.cgpatch' -C '${remote_dir}'
+tar --no-same-owner -xzf '${remote_dir}/package.cgpatch' -C '${remote_dir}'
 test -f '${remote_dir}/clusterguard-hotfix/HOTFIX-MANIFEST.json'"
 }
 

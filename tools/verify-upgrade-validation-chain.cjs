@@ -246,6 +246,12 @@ const CHECKS = [
       return (read('internal/platformupdate/helper_private_failure_test.go')||'').includes('replaced-parent')||'missing pinned private/public failure regression';
     },
   },
+  {rule:'8 / 10 / 11',title:'hotfix carriers use trusted ownership and reject drifting revision reasons before signing',run:()=>{
+    const builder=read('scripts/build-hotfix-patch.sh')||'',runner=read('scripts/clusterguard-upgrade.sh')||'';
+    for(const proof of ['owner_options=(--owner=0 --group=0 --numeric-owner)','owner_options=(--uid 0 --gid 0 --uname root --gname root)','process.exit(4)'])if(!builder.includes(proof))return 'carrier or pre-sign reason guard missing: '+proof;
+    if((runner.match(/tar --no-same-owner -xzf/g)||[]).length!==2)return 'archive ownership may leak into private runtime evidence';
+    return !!read('tools/hotfix-carrier.test.cjs');
+  }},
   {rule:'8 / 12 / 22',title:'runtime compatibility floor is durable and monotonic',run:()=>{
     const policy=read('internal/store/instance_failover_policy.go')||'',floor=read('internal/store/runtime_compatibility.go')||'',replica=read('internal/store/replication.go')||'',peers=read('internal/runtime/instance_failover_peers.go')||'';
     for(const proof of ['next.RuntimeCompatibilityFloor = &floor','r.snapshot.SoftwareUpdateGate != nil'])if(!policy.includes(proof))return 'policy floor commit missing: '+proof;
@@ -1428,6 +1434,7 @@ const reportOpen = failures => {
 // The files the rules read. The self-test copies exactly these, so a mutation cannot be
 // caught by reading something the gate does not actually consult.
 const READ_FILES = [
+ 'tools/hotfix-carrier.test.cjs',
  'tools/console-runtime-compatibility-acceptance.cjs','internal/store/repository.go',
  'internal/platformupdate/rolling_compatibility.go','internal/platformupdate/rolling_compatibility_test.go',
  'internal/runtimecompat/metadata.go','internal/store/replication.go','internal/api/instance_failover_policy.go',
@@ -1475,6 +1482,10 @@ const READ_FILES = [
 ];
 
 const MUTATIONS = [
+  {name: 'GNU carrier retains builder uid', file: 'scripts/build-hotfix-patch.sh', find: 'owner_options=(--owner=0 --group=0 --numeric-owner)', replace: 'owner_options=(--owner=501 --group=0 --numeric-owner)', rule: 'hotfix carriers use trusted ownership and reject drifting revision reasons before signing'},
+  {name: 'BSD carrier retains builder uid', file: 'scripts/build-hotfix-patch.sh', find: 'owner_options=(--uid 0 --gid 0 --uname root --gname root)', replace: 'owner_options=(--uid 501 --gid 0 --uname root --gname root)', rule: 'hotfix carriers use trusted ownership and reject drifting revision reasons before signing'},
+  {name: 'runtime extraction preserves archive uid', file: 'scripts/clusterguard-upgrade.sh', find: 'tar --no-same-owner -xzf', replace: 'tar -xzf', rule: 'hotfix carriers use trusted ownership and reject drifting revision reasons before signing'},
+  {name: 'revision reason checked only after signing', file: 'scripts/build-hotfix-patch.sh', find: 'process.exit(4)', replace: 'void 0', rule: 'hotfix carriers use trusted ownership and reject drifting revision reasons before signing'},
   {name: 'bad protected state falls back before policy existed', file: 'internal/store/repository.go', find: 'if protectedRuntimeGeneration(repository.path)', replace: 'if false', rule: 'runtime compatibility floor is durable and monotonic'},
   {name: 'policy commit forgets persistent floor', file: 'internal/store/instance_failover_policy.go', find: 'next.RuntimeCompatibilityFloor = &floor', replace: '/* floor removed */', rule: 'runtime compatibility floor is durable and monotonic'},
   {name: 'replicated restore can lower floor', file: 'internal/store/replication.go', find: 'preserveRuntimeFloor(&decoded, repository.snapshot)', replace: 'error(nil)', rule: 'runtime compatibility floor is durable and monotonic'},

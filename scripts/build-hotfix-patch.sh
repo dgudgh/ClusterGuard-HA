@@ -182,11 +182,12 @@ hotfix_revision="$("${node_bin}" -e '
     if (!replaced || typeof replaced.file !== "string" || !replaced.file.length ||
         typeof replaced.sha256 !== "string" || !replaced.sha256.length ||
         typeof replaced.reason !== "string" || !replaced.reason.length) process.exit(2);
+    if (/[/\\0-9]/.test(replaced.reason)) process.exit(4);
   } else if (replaced) {
     process.exit(3);
   }
   console.log(value);
-' "${spec}")" || die "revision/supersedes_artifact 不合法：revision>0 必须给出 supersedes_artifact{file,sha256,reason}，revision=0 不得给出 supersedes_artifact"
+' "${spec}")" || die "revision/supersedes_artifact 不合法：revision>0 必须给出 supersedes_artifact{file,sha256,reason}，revision=0 不得给出 supersedes_artifact；修订理由不得包含数字或路径分隔符"
 revision_suffix=""
 [[ "${hotfix_revision}" -gt 0 ]] && revision_suffix="-r${hotfix_revision}"
 
@@ -740,7 +741,19 @@ if [[ -e "${output}" ]]; then
 fi
 temporary_output="${output}.tmp.$$"
 rm -f "${temporary_output}"
-tar --no-xattrs -C "${stage}" -czf "${temporary_output}" clusterguard-hotfix
+# Carrier ownership must not expose the builder account on a Linux node.
+# Signed install ownership/modes remain independently resolved from nfpm.
+write_hotfix_archive() {
+  local source="$1" destination="$2"
+  local -a owner_options
+  if tar --version 2>/dev/null | grep -q 'GNU tar'; then
+    owner_options=(--owner=0 --group=0 --numeric-owner)
+  else
+    owner_options=(--uid 0 --gid 0 --uname root --gname root)
+  fi
+  tar --no-xattrs "${owner_options[@]}" -C "${source}" -czf "${destination}" clusterguard-hotfix
+}
+write_hotfix_archive "${stage}" "${temporary_output}"
 chmod 0644 "${temporary_output}"
 mv -f "${temporary_output}" "${output}"
 archive_sha="$(sha256_file "${output}")"
