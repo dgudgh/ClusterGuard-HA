@@ -23,6 +23,7 @@ recorded-through: 73ff4a3
 
 | 日期 | 文件 | 变更 | 说明 |
 | --- | --- | --- | --- |
+| 2026-11-03 | `docs/development/policy-floor-patch-3.1.7.8-2026-11-03.md` | A | 记录3.1.7.8构建前契约/旧版/基线核对、版本修订、签名载荷与ART/现场范围，旧制品不变。 |
 | 2026-11-03 | `docs/development/backend/settings/updates.md` | M | 升级索引增加持久兼容门槛的按需入口。 |
 | 2026-11-03 | `docs/development/backend/settings/runtime-compatibility.md` | A | 说明持久最低协议、首次保护栈就绪、签名实际热修/原备份/RPM检查、拒绝边界与SOURCE/现场区别。 |
 | 2026-11-03 | `docs/development/policy-compatibility-floor-2026-11-03.md` | A | 记录持久兼容门槛、旧码对照、API/Helper/Runner和生成工具的前置拒绝设计、红绿及分阶段证据。 |
