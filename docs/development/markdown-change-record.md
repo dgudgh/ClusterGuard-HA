@@ -23,6 +23,7 @@ recorded-through: 73ff4a3
 
 | 日期 | 文件 | 变更 | 说明 |
 | --- | --- | --- | --- |
+| 2026-11-03 | `docs/development/gateway-vip-readiness-2026-11-03.md` | A | VIP/LB探针旧版对照、授权保护与诊断；记录preview.4原件Linux红/绿、151双网关更新和原生SQL/复制实测边界。 |
 | 2026-11-03 | `docs/development/instance-failover-policy-2026-11-03.md` | A | 实例级自动资格/权重任务、事前旧码对照及分阶段回归；追加3.1.7.1真实三节点升级、页面/入口/不同观测周期、升级前VIP探针失败与新策略现场未验边界。 |
 | 2026-11-03 | `docs/zh-CN/instance-failover-policy.md` | A | 中文页面操作、实例UUID/权重、安全排序、全节点版本前置和并发边界。 |
 | 2026-11-03 | `docs/en-US/instance-failover-policy.md` | A | 对应英文实例策略操作与安全/升级/并发说明。 |
