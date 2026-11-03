@@ -1,6 +1,7 @@
 package buildinfo
 
 import (
+	"clusterguard.io/ha/pkg/model"
 	"fmt"
 	"regexp"
 	"runtime"
@@ -33,19 +34,21 @@ var (
 )
 
 type Info struct {
-	Product            string `json:"product"`
-	Binary             string `json:"binary"`
-	Version            string `json:"version"`
-	Release            string `json:"release"`
-	ProductVersion     string `json:"product_version,omitempty"`
-	Commit             string `json:"commit"`
-	BuiltAt            string `json:"built_at"`
-	OS                 string `json:"os"`
-	Architecture       string `json:"architecture"`
-	RPMArchitecture    string `json:"rpm_architecture"`
-	StateFormat        int    `json:"state_format"`
-	UpdateProtocol     int    `json:"update_protocol"`
-	UpdateGateProtocol int    `json:"update_gate_protocol"`
+	RuntimeCompatibilityProtocol   int    `json:"runtime_compatibility_protocol"`
+	InstanceFailoverPolicyProtocol int    `json:"instance_failover_policy_protocol"`
+	Product                        string `json:"product"`
+	Binary                         string `json:"binary"`
+	Version                        string `json:"version"`
+	Release                        string `json:"release"`
+	ProductVersion                 string `json:"product_version,omitempty"`
+	Commit                         string `json:"commit"`
+	BuiltAt                        string `json:"built_at"`
+	OS                             string `json:"os"`
+	Architecture                   string `json:"architecture"`
+	RPMArchitecture                string `json:"rpm_architecture"`
+	StateFormat                    int    `json:"state_format"`
+	UpdateProtocol                 int    `json:"update_protocol"`
+	UpdateGateProtocol             int    `json:"update_gate_protocol"`
 }
 
 func Current(binary string) Info {
@@ -54,19 +57,21 @@ func Current(binary string) Info {
 		productVersion = ""
 	}
 	return Info{
-		Product:            Product,
-		Binary:             binary,
-		Version:            Version,
-		Release:            Release,
-		ProductVersion:     productVersion,
-		Commit:             Commit,
-		BuiltAt:            BuiltAt,
-		OS:                 runtime.GOOS,
-		Architecture:       runtime.GOARCH,
-		RPMArchitecture:    RPMArchitecture(runtime.GOARCH),
-		StateFormat:        StateFormat,
-		UpdateProtocol:     UpdateProtocol,
-		UpdateGateProtocol: UpdateGateProtocol,
+		RuntimeCompatibilityProtocol:   model.RuntimeCompatibilityProtocol,
+		InstanceFailoverPolicyProtocol: model.InstanceFailoverPolicyProtocol,
+		Product:                        Product,
+		Binary:                         binary,
+		Version:                        Version,
+		Release:                        Release,
+		ProductVersion:                 productVersion,
+		Commit:                         Commit,
+		BuiltAt:                        BuiltAt,
+		OS:                             runtime.GOOS,
+		Architecture:                   runtime.GOARCH,
+		RPMArchitecture:                RPMArchitecture(runtime.GOARCH),
+		StateFormat:                    StateFormat,
+		UpdateProtocol:                 UpdateProtocol,
+		UpdateGateProtocol:             UpdateGateProtocol,
 	}
 }
 

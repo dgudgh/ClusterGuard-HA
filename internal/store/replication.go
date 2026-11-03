@@ -87,6 +87,9 @@ func snapshotDigest(value snapshot) (string, error) {
 
 func normalizeSnapshot(value snapshot) (snapshot, error) {
 	normalized := value
+	if value.RuntimeCompatibilityFloor != nil && (!value.RuntimeCompatibilityFloor.Valid() || !value.RuntimeCompatibilityFloor.Required()) {
+		return snapshot{}, fmt.Errorf("unsupported runtime compatibility floor")
+	}
 	if normalized.RecoveryTasks == nil {
 		normalized.RecoveryTasks = map[model.ResourceID]model.RecoveryTask{}
 	}
@@ -583,6 +586,9 @@ func (repository *Repository) applyReplicatedState(contents []byte, authoritativ
 	} else if !authoritative && metadata.BaseDigest != "" && metadata.BaseDigest != currentDigest {
 		return conflictError("replicated metadata base digest does not match local state")
 	}
+	if err := preserveRuntimeFloor(&decoded, repository.snapshot); err != nil {
+		return err
+	}
 	if err := repository.persistSnapshotRevisionLocked(decoded, nextRevision); err != nil {
 		return err
 	}
@@ -590,6 +596,9 @@ func (repository *Repository) applyReplicatedState(contents []byte, authoritativ
 }
 
 func (repository *Repository) commitSnapshotLocked(value snapshot) error {
+	if err := preserveRuntimeFloor(&value, repository.snapshot); err != nil {
+		return err
+	}
 	value = compactSnapshotHistory(value, repository.now().UTC())
 	if repository.consensus == nil {
 		return repository.persistSnapshotRevisionLocked(value, repository.stateRevision+1)

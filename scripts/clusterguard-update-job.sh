@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "${1:-}" == --runtime-compatibility-protocol && "$#" == 1 ]]; then
+  printf '%s\n' '{"binary":"clusterguard-update-job","runtime_compatibility_protocol":1,"instance_failover_policy_protocol":1}'
+  exit 0
+fi
 umask 077
 unset CG_UPDATE_BOOTSTRAP_DEPTH
 

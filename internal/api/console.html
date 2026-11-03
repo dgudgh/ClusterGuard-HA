@@ -1995,6 +1995,7 @@
     // Only authored UI literals call ui(). Interpolation values are kept verbatim.
     // Business names, credentials, IDs and original diagnostics never pass through a DOM translator.
     const uiCatalog =     {
+      "已保存的策略需要兼容保护，目标程序能力不足或无法验证，已阻止升级或回退。": "Saved policies require compatibility protection. The target programs are incompatible or unverified; the update or rollback was blocked.",
       "实例策略修订已变化，请重新读取后保存。": "failover policy revision changed; reload before saving",
       "所选实例不属于当前数据库集群。": "policy instance is outside this database cluster",
       "实例权重必须是0到1000之间的整数。": "instance weight must be between 0 and 1000",
@@ -3218,6 +3219,7 @@
     });
     const localizeUIMessage = message => {
       const raw = String(message || '');
+      if (/^runtime compatibility floor prohibits this update target(?:$|:)/.test(raw)) return ui('已保存的策略需要兼容保护，目标程序能力不足或无法验证，已阻止升级或回退。');
       if (raw === 'CG_APPROVAL_TOKEN is deprecated for database operations and automatic recovery; use one-time approval grants') return ui('数据库操作与自动恢复不再使用 CG_APPROVAL_TOKEN，请使用一次性操作授权。');
       const exact = uiMessagePatterns.find(entry => raw === entry.source || raw === entry.english);
       if (exact) return ui(exact.source);
@@ -6110,7 +6112,10 @@
         else setLiveStatus(message);
       } catch (error) {
         if (submission) {
-          if (!(error instanceof APIError) || error.status < 400 || error.status >= 500 || [408, 409].includes(error.status) || error.committed) {
+          if (error instanceof APIError && error.status === 409 && !error.committed && error.result?.runtime_compatibility_rejected === true) {
+            state.softwareUpdateSubmission = null;
+            state.softwareUpdateConfirmationMessage = error.message;
+          } else if (!(error instanceof APIError) || error.status < 400 || error.status >= 500 || [408, 409].includes(error.status) || error.committed) {
             submission.phase = 'uncertain';
             state.softwareUpdateConfirmationMessage = ui("提交结果待确认：{0}。请核对任务状态；不会重复提交升级。", localizeUIMessage(error.message));
           } else {

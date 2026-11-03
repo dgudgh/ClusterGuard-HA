@@ -297,6 +297,7 @@ type Helper interface {
 }
 
 type Manager struct {
+	runtimeRequirements   func() model.RuntimeCompatibilityFloor
 	config                Config
 	inspector             Inspector
 	helper                Helper
@@ -618,6 +619,11 @@ func (manager *Manager) StartWithOperationID(ctx context.Context, mode Mode, pat
 	case ModePlan, ModeExecute, ModeRetry, ModeResume, ModeRollback:
 	default:
 		return Job{}, ErrInvalidPatch
+	}
+	if manager.runtimeRequirements != nil {
+		if err := manager.CheckRuntimeCompatibility(ctx, mode, patchID, manager.runtimeRequirements()); err != nil {
+			return Job{}, err
+		}
 	}
 	now := manager.now().UTC()
 	if operationID == "" {

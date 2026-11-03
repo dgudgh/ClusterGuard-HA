@@ -13,6 +13,7 @@ import (
 	"clusterguard.io/ha/internal/platformupdate"
 	"clusterguard.io/ha/internal/store"
 	"clusterguard.io/ha/pkg/model"
+	"clusterguard.io/ha/pkg/redact"
 )
 
 const softwareUpdateMultipartOverhead = int64(1 << 20)
@@ -226,6 +227,19 @@ func (server *Server) startSoftwareUpdate(writer http.ResponseWriter, request *h
 		writeError(writer, http.StatusBadRequest, "invalid software update action")
 		return
 	}
+	if mode != platformupdate.ModePlan && server.store != nil && server.store.RuntimeCompatibilityRequirements().Required() {
+		checker, ok := server.softwareUpdates.(interface {
+			CheckRuntimeCompatibility(context.Context, platformupdate.Mode, string, model.RuntimeCompatibilityFloor) error
+		})
+		if !ok {
+			server.writeSoftwareUpdateError(writer, platformupdate.ErrRuntimeIncompatible)
+			return
+		}
+		if err := checker.CheckRuntimeCompatibility(request.Context(), mode, patchID, server.store.RuntimeCompatibilityRequirements()); err != nil {
+			server.writeSoftwareUpdateError(writer, err)
+			return
+		}
+	}
 	actor := softwareUpdateActor(request)
 	stage := model.StagePlan
 	if server.store != nil {
@@ -269,6 +283,9 @@ func (server *Server) writeSoftwareUpdateError(writer http.ResponseWriter, err e
 		writeError(writer, http.StatusNotFound, err.Error())
 	case errors.Is(err, platformupdate.ErrInvalidPatch), errors.Is(err, platformupdate.ErrBootstrapRequired), errors.Is(err, platformupdate.ErrConfirmationRequired):
 		writeError(writer, http.StatusBadRequest, err.Error())
+	case errors.Is(err, platformupdate.ErrRuntimeIncompatible):
+		// This error is returned only by admission, before a job is written.
+		writeJSON(writer, http.StatusConflict, map[string]interface{}{"status": "error", "message": redact.Text(err.Error()), "result": map[string]bool{"runtime_compatibility_rejected": true}})
 	case errors.Is(err, platformupdate.ErrPlanRequired), errors.Is(err, platformupdate.ErrJobActive), errors.Is(err, platformupdate.ErrPackageConflict), errors.Is(err, platformupdate.ErrPackagePruned), errors.Is(err, platformupdate.ErrPackageBaselineMismatch), errors.Is(err, platformupdate.ErrResumeUnsupported):
 		writeError(writer, http.StatusConflict, err.Error())
 	default:

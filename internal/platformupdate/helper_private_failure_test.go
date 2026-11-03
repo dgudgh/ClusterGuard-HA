@@ -3,6 +3,8 @@
 package platformupdate
 
 import (
+	"clusterguard.io/ha/pkg/model"
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -37,6 +39,8 @@ func TestPrivateEarlyFailurePublishesOnlyMatchingPinnedPublicJob(t *testing.T) {
 			}
 			launcher := &launcherStub{}
 			h := NewHelperHandlerWithPrivateRoot(root, private, launcher)
+			// This test isolates post-launch publication. Actual admission is covered by the compatibility HTTP tests.
+			h.compatibilityGuard = func(context.Context, Mode, string, model.RuntimeCompatibilityFloor) error { return nil }
 			response := httptest.NewRecorder()
 			h.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/jobs", strings.NewReader(`{"patch_id":"patch","mode":"execute","operation_id":"new-execute"}`)))
 			if response.Code != http.StatusAccepted {

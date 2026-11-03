@@ -34,7 +34,16 @@ func (s *Server) instanceFailoverPolicyView(cluster model.DatabaseCluster) map[s
 	}
 	policy.Instances = preferences
 	suppressed := s.store.AutomaticFailoverSuppressed(cluster.Engine)
-	return map[string]interface{}{"protocol_version": 1, "controller_id": s.failoverControllerID, "cluster_id": cluster.ResourceID, "policy": policy, "automatic_available": s.failoverAvailable[cluster.Engine], "engine_suppressed": suppressed, "effective_automatic_enabled": policy.AutomaticEnabled && s.failoverAvailable[cluster.Engine] && !suppressed}
+	return map[string]interface{}{"protocol_version": 1, "compatibility_floor": s.store.RuntimeCompatibilityRequirements(), "controller_id": s.failoverControllerID, "cluster_id": cluster.ResourceID, "policy": policy, "automatic_available": s.failoverAvailable[cluster.Engine], "engine_suppressed": suppressed, "effective_automatic_enabled": policy.AutomaticEnabled && s.failoverAvailable[cluster.Engine] && !suppressed}
+}
+func (s *Server) verifiedInstanceFailoverPolicyView(ctx context.Context, cluster model.DatabaseCluster) map[string]interface{} {
+	gateProtocol := 0
+	if checker, ok := s.softwareUpdates.(interface{ RuntimeCompatibilityReady(context.Context) error }); ok && checker.RuntimeCompatibilityReady(ctx) == nil {
+		gateProtocol = model.RuntimeCompatibilityProtocol
+	}
+	view := s.instanceFailoverPolicyView(cluster)
+	view["runtime_compatibility_protocol"] = gateProtocol
+	return view
 }
 func (s *Server) instanceFailoverPolicyRoute(w http.ResponseWriter, r *http.Request, id model.ResourceID) {
 	w.Header().Set("Cache-Control", "no-store")
@@ -49,7 +58,7 @@ func (s *Server) instanceFailoverPolicyRoute(w http.ResponseWriter, r *http.Requ
 	}
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, 200, map[string]interface{}{"status": "ok", "result": s.instanceFailoverPolicyView(cluster)})
+		writeJSON(w, 200, map[string]interface{}{"status": "ok", "result": s.verifiedInstanceFailoverPolicyView(r.Context(), cluster)})
 	case http.MethodPut:
 		var body struct {
 			ExpectedRevision *uint64 `json:"expected_revision"`
@@ -95,7 +104,7 @@ func (s *Server) instanceFailoverPolicyRoute(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		cluster, _ = s.store.Cluster(id)
-		writeJSON(w, 200, map[string]interface{}{"status": "ok", "result": s.instanceFailoverPolicyView(cluster)})
+		writeJSON(w, 200, map[string]interface{}{"status": "ok", "result": s.verifiedInstanceFailoverPolicyView(r.Context(), cluster)})
 	default:
 		writeError(w, 405, "instance failover policy supports GET and PUT")
 	}

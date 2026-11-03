@@ -56,3 +56,7 @@
 [消息映射回归](../../../../tools/console-update-message-language.test.cjs)检查Runner全部固定事件消息；[真实浏览器回归](../../../../tools/console-update-message-language-acceptance.cjs)覆盖桌面/窄屏、新旧成功记录、失败/门禁保留、传输、未知诊断和语言往返切换。完整页面语言绑定见[显示偏好](preferences.md)。
 
 [操作版本浏览器回归](../../../../tools/console-update-version-transition-acceptance.cjs)覆盖桌面/窄屏、实际7到8、旧记录、混合节点、观测缺失、回退、双语及原始API字段不改。
+
+## 持久兼容协议的明确拒绝
+
+服务端仅在job建立前的兼容准入拒绝返回409及`result.runtime_compatibility_rejected=true`。页面还要求committed不为true，才明确显示已阻止并退出不确定提交状态；普通409、缺标记或已提交保持按operation_id核对，不因消息字符串相似推断未执行。提示按当前中英文重新渲染，原诊断保留。[真实浏览器回归](../../../../tools/console-runtime-compatibility-acceptance.cjs)实际点击回退及确认，在1440/390像素验证拒绝和语言往返，并以无标记/committed对照守住不确定边界；API为隔离夹具，不执行现场回退。

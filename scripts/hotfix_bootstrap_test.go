@@ -23,7 +23,7 @@ func TestGeneratedHotfixLoadsOnlyVerifiedContractConsumer(t *testing.T) {
 		t.Fatal("render-scripts heredoc missing")
 	}
 	renderer := strings.SplitN(parts[1], "\nRENDER_JS", 2)[0]
-	for _, scenario := range []string{"valid", "payload changed", "tool changed", "signature changed", "contract refused"} {
+	for _, scenario := range []string{"valid", "payload changed", "tool changed", "signature changed", "contract refused", "metadata unavailable"} {
 		t.Run(scenario, func(t *testing.T) {
 			dir := t.TempDir()
 			helperPath := filepath.Join(dir, "payload/bin/clusterguard-update-helper")
@@ -74,9 +74,18 @@ func TestGeneratedHotfixLoadsOnlyVerifiedContractConsumer(t *testing.T) {
 			if start < 0 || end <= start {
 				t.Fatal("pre-mutation verification block missing")
 			}
+			// Explicit no-policy metadata belongs to this isolated fixture. Do not
+			// read the developer machine's /etc or disable the production guard.
+			statePath, configPath := filepath.Join(dir, "state.json"), filepath.Join(dir, "runtime.json")
+			writeFile(t, statePath, `{"clusters":{}}`, 0600)
+			configBytes, _ := json.Marshal(map[string]string{"metadata_path": statePath})
+			writeFile(t, configPath, string(configBytes), 0600)
+			block := strings.Replace(string(apply)[start:end], "runtime-compatibility check --manifest", "runtime-compatibility check --config '"+configPath+"' --manifest", 1)
 			guard := filepath.Join(dir, "guard.sh")
-			writeFile(t, guard, "#!/bin/bash\nset -euo pipefail\n"+string(apply)[start:end]+"\nprintf 'contract guard passed\\n'\n", 0o700)
+			writeFile(t, guard, "#!/bin/bash\nset -euo pipefail\n"+block+"\nprintf 'contract guard passed\\n'\n", 0o700)
 			switch scenario {
+			case "metadata unavailable":
+				os.Remove(statePath)
 			case "payload changed":
 				writeFile(t, helperPath, "#!/bin/sh\nexit 0\n", 0o700)
 			case "tool changed":

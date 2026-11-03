@@ -47,3 +47,11 @@ test('static authored markup has catalogue coverage, including accessibility att
  }
  for(const m of markup.matchAll(/(?:title|placeholder|aria-label)="([^"]+)"/g))if(/[\u3400-\u9fff]/.test(m[1]))assert.ok(Object.hasOwn(context.catalog,m[1]),m[1]);
 });
+
+test('persistent compatibility rejection follows language changes without rewriting raw evidence',()=>{
+ const raw='runtime compatibility floor prohibits this update target: original backup missing';
+ context.document.documentElement.lang='zh-CN';const chinese=context.localize(raw);assert.match(chinese,/已阻止升级或回退/);
+ context.document.documentElement.lang='en-US';const english=context.localize(raw);assert.match(english,/incompatible or unverified/);assert.doesNotMatch(english,/[\u3400-\u9fff]/);
+ assert.equal(context.localize(chinese),english);context.document.documentElement.lang='zh-CN';assert.equal(context.localize(english),chinese);
+ assert.equal(raw,'runtime compatibility floor prohibits this update target: original backup missing');
+});

@@ -246,6 +246,39 @@ const CHECKS = [
       return (read('internal/platformupdate/helper_private_failure_test.go')||'').includes('replaced-parent')||'missing pinned private/public failure regression';
     },
   },
+  {rule:'8 / 12 / 22',title:'runtime compatibility floor is durable and monotonic',run:()=>{
+    const policy=read('internal/store/instance_failover_policy.go')||'',floor=read('internal/store/runtime_compatibility.go')||'',replica=read('internal/store/replication.go')||'',peers=read('internal/runtime/instance_failover_peers.go')||'';
+    for(const proof of ['next.RuntimeCompatibilityFloor = &floor','r.snapshot.SoftwareUpdateGate != nil'])if(!policy.includes(proof))return 'policy floor commit missing: '+proof;
+    for(const proof of ['previous.RuntimeCompatibilityFloor != nil && next.RuntimeCompatibilityFloor == nil','!after.Covers(before)','c.FailoverPolicy != nil'])if(!floor.includes(proof))return 'monotonic floor guard missing: '+proof;
+    if(!(read('internal/store/repository.go')||'').includes('if protectedRuntimeGeneration(repository.path)'))return 'previous generation hides unknown protected state';
+    if(!replica.includes('preserveRuntimeFloor(&decoded, repository.snapshot)'))return 'snapshot restoration can lower floor';
+    if(!peers.includes('payload.Result.RuntimeCompatibilityProtocol != model.RuntimeCompatibilityProtocol'))return 'old enforcing stack can activate policy';
+    return !!read('internal/store/runtime_compatibility_test.go');
+  }},
+  {rule:'6 / 8 / 12',title:'runtime compatibility rejects before jobs and privileged launch',run:()=>{
+    const api=read('internal/api/updates.go')||'',manager=read('internal/platformupdate/manager.go')||'',helper=read('internal/platformupdate/helper.go')||'',guard=read('internal/platformupdate/runtime_compatibility.go')||'';
+    if(!api.includes('checker.CheckRuntimeCompatibility(request.Context(), mode, patchID'))return 'API misses target guard';
+    const at=manager.indexOf('manager.CheckRuntimeCompatibility(ctx, mode, patchID');if(at<0||at>manager.indexOf('jobPath := filepath.Join(manager.config.RootDirectory, patchID, jobFileName)'))return 'job written before target guard';
+    const check=helper.indexOf('handler.compatibilityGuard(request.Context()');if(check<0||check>helper.indexOf('directory := filepath.Join(handler.root, payload.PatchID)'))return 'Helper launch precedes independent target guard';
+    if(!guard.includes('if !ok {')||!guard.includes('checker.CheckRuntimeCompatibility(ctx, mode, id, floor)'))return 'unknown Helper target capability accepted';
+    if(!api.includes('map[string]bool{"runtime_compatibility_rejected": true}'))return 'admission refusal is indistinguishable from uncertain conflict';
+    const console=read('internal/api/console.html')||'';
+    if(!console.includes('error.result?.runtime_compatibility_rejected === true') || !console.includes('!error.committed'))return 'UI treats an uncertain conflict as definite refusal';
+    return !!read('internal/api/runtime_compatibility_test.go') && !!read('tools/console-runtime-compatibility-acceptance.cjs');
+  }},
+  {rule:'8 / 12',title:'runtime compatibility checks actual original target programs',run:()=>{
+    const source=read('internal/platformupdate/hotfix_compatibility.go')||'';
+    for(const proof of ['m.ID != id','sort.Strings(files)','!st.Mode().IsRegular()','info.Protocol != model.RuntimeCompatibilityProtocol','info.Policy != model.InstanceFailoverPolicyProtocol','sha256.Sum256(after) != digest','candidate, ok = backups[dest]'])if(!source.includes(proof))return 'actual target evidence guard missing: '+proof;
+    const rpm=read('internal/platformupdate/rolling_compatibility.go')||'';
+    for(const proof of ['target = m.Source','hex.EncodeToString(sum[:]) != target.SHA','exec.CommandContext(ctx, "rpm2cpio", rpm)','inspect(ctx, path, binary)','mode&0170000 != 0100000','links != 1'])if(!rpm.includes(proof))return 'signed RPM actual target guard missing: '+proof;
+    return !!read('internal/platformupdate/hotfix_compatibility_test.go') && !!read('internal/platformupdate/rolling_compatibility_test.go');
+  }},
+  {rule:'8 / 12 / 22',title:'runtime compatibility repeats before node replacement and generated tools',run:()=>{
+    const runner=read('scripts/clusterguard-upgrade.sh')||'',builder=read('scripts/build-hotfix-patch.sh')||'';
+    for(const proof of ['  prepare_runtime_compatibility\n','  verify_runtime_compatibility\n','\n  runtime_compatibility_on_node "${host}" rollback','\n  runtime_compatibility_on_node "${host}" "${update_mode}"'])if(!runner.includes(proof))return 'node boundary guard missing: '+proof;
+    for(const proof of ['--mode execute --trust-key','--mode rollback --trust-key'])if(!builder.includes(proof))return 'generated node tool misses guard: '+proof;
+    return !!read('tools/runtime-compatibility-runner.test.cjs');
+  }},
   {rule:'12 / 22',title:'instance failover policy preserves automatic scope and native safety',run:()=>{
     const selector=read('internal/recovery/mysql_selector.go')||'',controller=read('internal/recovery/controller.go')||'',workflow=read('internal/workflow/durable.go')||'';
     for(const proof of ['AutomaticSelection:      true','!cluster.FailoverPolicy.AutomaticEnabled'])if(!selector.includes(proof))return 'automatic selector policy missing: '+proof;
@@ -1395,6 +1428,10 @@ const reportOpen = failures => {
 // The files the rules read. The self-test copies exactly these, so a mutation cannot be
 // caught by reading something the gate does not actually consult.
 const READ_FILES = [
+ 'tools/console-runtime-compatibility-acceptance.cjs','internal/store/repository.go',
+ 'internal/platformupdate/rolling_compatibility.go','internal/platformupdate/rolling_compatibility_test.go',
+ 'internal/runtimecompat/metadata.go','internal/store/replication.go','internal/api/instance_failover_policy.go',
+ 'internal/store/runtime_compatibility.go','internal/store/runtime_compatibility_test.go','internal/platformupdate/runtime_compatibility.go','internal/platformupdate/hotfix_compatibility.go','internal/platformupdate/hotfix_compatibility_test.go','internal/api/runtime_compatibility_test.go','tools/runtime-compatibility-runner.test.cjs',
  'internal/agent/docker_postgresql.go','cmd/clusterguard-agent/gateway_postgresql_test.go',
  'adapters/mysql/candidates.go','adapters/postgresql/candidates.go',
  'internal/recovery/mysql_selector.go','internal/recovery/controller.go','internal/workflow/durable.go','internal/store/instance_failover_policy.go','internal/runtime/instance_failover_peers.go',
@@ -1438,6 +1475,22 @@ const READ_FILES = [
 ];
 
 const MUTATIONS = [
+  {name: 'bad protected state falls back before policy existed', file: 'internal/store/repository.go', find: 'if protectedRuntimeGeneration(repository.path)', replace: 'if false', rule: 'runtime compatibility floor is durable and monotonic'},
+  {name: 'policy commit forgets persistent floor', file: 'internal/store/instance_failover_policy.go', find: 'next.RuntimeCompatibilityFloor = &floor', replace: '/* floor removed */', rule: 'runtime compatibility floor is durable and monotonic'},
+  {name: 'replicated restore can lower floor', file: 'internal/store/replication.go', find: 'preserveRuntimeFloor(&decoded, repository.snapshot)', replace: 'error(nil)', rule: 'runtime compatibility floor is durable and monotonic'},
+  {name: 'old stack can activate floor', file: 'internal/runtime/instance_failover_peers.go', find: 'payload.Result.RuntimeCompatibilityProtocol != model.RuntimeCompatibilityProtocol', replace: 'false', rule: 'runtime compatibility floor is durable and monotonic'},
+  {name: 'API omits explicit prejob refusal marker', file: 'internal/api/updates.go', find: 'map[string]bool{"runtime_compatibility_rejected": true}', replace: 'map[string]bool{"runtime_compatibility_rejected": false}', rule: 'runtime compatibility rejects before jobs and privileged launch'},
+  {name: 'UI treats unmarked conflict as definite refusal', file: 'internal/api/console.html', find: 'error.result?.runtime_compatibility_rejected === true', replace: 'true', rule: 'runtime compatibility rejects before jobs and privileged launch'},
+  {name: 'API skips runtime floor', file: 'internal/api/updates.go', find: 'checker.CheckRuntimeCompatibility(request.Context(), mode, patchID', replace: 'checker.IgnoredRuntimeCompatibility(request.Context(), mode, patchID', rule: 'runtime compatibility rejects before jobs and privileged launch'},
+  {name: 'manager writes job without runtime check', file: 'internal/platformupdate/manager.go', find: 'manager.CheckRuntimeCompatibility(ctx, mode, patchID', replace: 'manager.IgnoredCompatibility(ctx, mode, patchID', rule: 'runtime compatibility rejects before jobs and privileged launch'},
+  {name: 'Helper trusts caller without target guard', file: 'internal/platformupdate/helper.go', find: 'handler.compatibilityGuard(request.Context()', replace: 'handler.ignoredGuard(request.Context()', rule: 'runtime compatibility rejects before jobs and privileged launch'},
+  {name: 'RPM rollback inspects upgrade instead of source', file: 'internal/platformupdate/rolling_compatibility.go', find: 'target = m.Source', replace: 'target = m.Target', rule: 'runtime compatibility checks actual original target programs'},
+  {name: 'RPM payload digest ignored', file: 'internal/platformupdate/rolling_compatibility.go', find: 'hex.EncodeToString(sum[:]) != target.SHA', replace: 'false', rule: 'runtime compatibility checks actual original target programs'},
+  {name: 'RPM hardlinked runtime target allowed', file: 'internal/platformupdate/rolling_compatibility.go', find: 'links != 1', replace: 'false', rule: 'runtime compatibility checks actual original target programs'},
+  {name: 'unknown target program accepted', file: 'internal/platformupdate/hotfix_compatibility.go', find: 'info.Protocol != model.RuntimeCompatibilityProtocol', replace: 'false', rule: 'runtime compatibility checks actual original target programs'},
+  {name: 'newest backup mistaken for original', file: 'internal/platformupdate/hotfix_compatibility.go', find: 'sort.Strings(files)', replace: 'sort.Sort(sort.Reverse(sort.StringSlice(files)))', rule: 'runtime compatibility checks actual original target programs'},
+  {name: 'automatic rollback skips runtime guard', file: 'scripts/clusterguard-upgrade.sh', find: 'runtime_compatibility_on_node "${host}" rollback', replace: 'ignored_runtime_compatibility_on_node "${host}" rollback', rule: 'runtime compatibility repeats before node replacement and generated tools'},
+  {name: 'generated rollback checks wrong target', file: 'scripts/build-hotfix-patch.sh', find: '--mode rollback --trust-key', replace: '--mode execute --trust-key', rule: 'runtime compatibility repeats before node replacement and generated tools'},
   {name:'manual fallback applies to healthy or automatic source selection',file:'internal/workflow/resolver.go',find:'request.Operation.Kind == model.OperationFailover && request.Operation.RequestedBy != AutomaticRecoveryActor && primaryCount == 0',replace:'request.Operation.Kind == model.OperationFailover',rule:'manual failover resolves only the current failed canonical owner'},
   {name:'manual source ignores canonical endpoint mismatch',file:'internal/workflow/resolver.go',find:'endpoint.InstanceID != resource.OwnerID',replace:'false',rule:'manual failover resolves only the current failed canonical owner'},
   {name:'manual source accepts missing current database failure proof',file:'internal/workflow/resolver.go',find:'!resolverCurrentDatabaseFailureProbe(snapshot, owner)',replace:'false',rule:'manual failover resolves only the current failed canonical owner'},

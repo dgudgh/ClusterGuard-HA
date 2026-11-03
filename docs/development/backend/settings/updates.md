@@ -6,6 +6,7 @@
 
 | 当前问题 | 进入的子功能 |
 | --- | --- |
+| 保存策略后降级、最低运行协议、真实载荷/原备份兼容性 | [持久兼容门槛](runtime-compatibility.md) |
 | execute/retry/resume/rollback、验签、基线、外包锁 | [动作与执行保护](update-actions.md) |
 | 成功被失败覆盖、重复提交、操作 ID、Leader 历史冲突 | [部署状态与操作历史](update-history.md) |
 | 契约加载、门禁阶段、构建前检查、验收证据更新 | [契约与验收门禁](update-validation.md) |

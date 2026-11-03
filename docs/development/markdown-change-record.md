@@ -23,13 +23,16 @@ recorded-through: 73ff4a3
 
 | 日期 | 文件 | 变更 | 说明 |
 | --- | --- | --- | --- |
-| 2026-11-03 | `docs/development/backend/settings/update-actions.md` | M | 说明已知根终态祖先的合法历史合并、未知/活动冲突拒绝及Helper同身份失败发布与组可读边界。 |
-| 2026-11-03 | `docs/development/instance-failover-field-2026-11-03.md` | A | 记录用户授权的实例策略真实故障与preview.4下HA回退/重新升级连续性计划、基线及分阶段现场结果。 |
+| 2026-11-03 | `docs/development/backend/settings/updates.md` | M | 升级索引增加持久兼容门槛的按需入口。 |
+| 2026-11-03 | `docs/development/backend/settings/runtime-compatibility.md` | A | 说明持久最低协议、首次保护栈就绪、签名实际热修/原备份/RPM检查、拒绝边界与SOURCE/现场区别。 |
+| 2026-11-03 | `docs/development/policy-compatibility-floor-2026-11-03.md` | A | 记录持久兼容门槛、旧码对照、API/Helper/Runner和生成工具的前置拒绝设计、红绿及分阶段证据。 |
+| 2026-11-03 | `docs/development/backend/settings/update-actions.md` | M | 说明已知根终态祖先的合法历史合并、未知/活动冲突拒绝及Helper同身份失败发布与组可读边界。  追加2026-11-03：持久最低协议、实际目标保护及新SOURCE结果；保留旧现场失败与未部署边界。 |
+| 2026-11-03 | `docs/development/instance-failover-field-2026-11-03.md` | A | 记录实例策略真实故障、HA回退/更新与持久查询结果；明确MySQL分阶段通过、PG上游身份丢失仍阻断、策略/入口恢复及归档时钟矛盾；追加DeepSeek实际prepare/start/status/reconcile、716/717笔四库保留、HA末节点重启断写失败与恢复证据；旧查询FIELD不覆盖新失败，底层根因尚未确认；追加保存策略后不兼容降级四项隔离实际API/Runner失败和两项无策略对照，不冒充现场拒绝。 |
 | 2026-11-03 | `docs/development/gateway-vip-readiness-2026-11-03.md` | A | VIP/LB探针旧版对照、授权保护与诊断；记录preview.4原件Linux红/绿、151双网关更新和原生SQL/复制实测边界。 |
 | 2026-11-03 | `docs/development/instance-failover-policy-2026-11-03.md` | A | 实例级自动资格/权重任务、事前旧码对照及分阶段回归；追加3.1.7.1真实三节点升级、页面/入口/不同观测周期、升级前VIP探针失败与新策略现场未验边界。 |
-| 2026-11-03 | `docs/zh-CN/instance-failover-policy.md` | A | 中文页面操作、实例UUID/权重、安全排序、全节点版本前置和并发边界；追加网关直接数据库隔离、生产Agent无VIP命令路径与失联Agent仍阻断的边界，补实际半同步插件族选择、旧主恢复身份与稳定入口判据，以及关闭自动后的手动故障源解析。 |
-| 2026-11-03 | `docs/en-US/instance-failover-policy.md` | A | 对应英文实例策略操作与安全/升级/并发说明；追加网关直接数据库隔离、生产Agent无VIP命令路径及失联Agent无兜底边界，补半同步插件族选择和旧主恢复身份判据，以及手动故障源解析。 |
-| 2026-11-03 | `docs/development/backend/settings/instance-failover.md` | A | 单集群接口、复制CAS、执行前复核与验证路径。 |
+| 2026-11-03 | `docs/zh-CN/instance-failover-policy.md` | A | 中文实例策略、安全排序/升级/并发边界，网关隔离/Agent/半同步插件族/旧主恢复及手动故障源解析；明确MySQL已验与PG停主源身份丢失尚未修复，新增DeepSeek真实写入失败与四库保留分离、原主/入口恢复及根因未确认边界；补保存策略后旧版本回退保护尚未实现的四项失败。  追加2026-11-03：持久最低协议、实际目标保护及新SOURCE结果；保留旧现场失败与未部署边界。 |
+| 2026-11-03 | `docs/en-US/instance-failover-policy.md` | A | 对应英文实例策略及安全/升级/并发、网关隔离/半同步/旧主恢复/手动故障源解析；同步MySQL分阶段已验、PG自动未通过及DeepSeek升级断写失败、确认数据四库保留和恢复边界；补不兼容降级四项SOURCE集成失败和未执行现场边界。  追加2026-11-03：持久最低协议、实际目标保护及新SOURCE结果；保留旧现场失败与未部署边界。 |
+| 2026-11-03 | `docs/development/backend/settings/instance-failover.md` | A | 单集群接口、复制CAS、执行前复核与验证路径。  追加2026-11-03：持久最低协议、实际目标保护及新SOURCE结果；保留旧现场失败与未部署边界。 |
 | 2026-11-03 | `docs/development/frontend/settings/instance-failover.md` | A | 实例编辑器范围、授权草稿、迟到响应、失败和浏览器回归。 |
 | 2026-11-03 | `docs/development/backend/settings/cluster-policy.md` | M | 区分引擎全局维护覆盖与所选集群实例参与/权重，增加单功能页指路。 |
 | 2026-11-02 | `docs/development/postgresql-hybrid-field-2026-11-02.md` | A | 用户授权四节点真实PG部署测试的前检、门禁、独立实例和MySQL保护边界；逐项记录实际现场结果与未实现PG网关联动。 |
@@ -122,7 +125,7 @@ recorded-through: 73ff4a3
 | 2026-10-08 | `docs/zh-CN/version-release-policy.md` | M | 交付身份条改为新封板版本线起点 `3.1.1.1` + `MAJOR.MINOR.PATCH.BUGFIX`。 2026-10-19：纠正签名更新报告与完整介质路由；正式稳定要求保持，合格介质现场未完仅prerelease，标签绑定构建提交且不设Latest。 |
 | 2026-10-08 | `docs/zh-CN/validation-gate-workflow.md` | M | 去掉已过期的固定17项计数，以本次源码门禁输出为准；新增功能仍须补充实际回归。 2026-10-19：按制品类型区分签名更新ART/FIELD与完整介质专用校验；将2026-10-04全局OPEN改为日期化历史，不将其套用新产物。 |
 | 2026-10-08 | `docs/development/backend/settings/version.md` | M | 说明product_version运行来源和旧历史验签补读，RPM兼容字段不变。 |
-| 2026-10-09 | `docs/development/frontend/settings/updates.md` | M | 明确当前/目标/历史版本来源及验签替代；新增staging步骤和新操作重置规则。新增操作前产品版本与RPM基线独立展示、旧来源缺失/混合节点和回退未知规则及浏览器回归。补充历史/当前/事件共用双语消息映射、未知诊断随语言提示并保留原文、原始状态不变及桌面/窄屏语言切换回归入口。 「版本显示来源」再补两处展示口径：上传预览身份栅格把**当前运行版本 / RPM兼容基线 / 目标版本**三件独立事实分开，运行版本与版本摘要同源、不随上传改变；签名校验按包类型分派，热修补丁不带 RPM 升级引导器时显示`已通过 · 热修补丁`而非`已通过 · 历史兼容包`，滚动升级保留引导器/历史兼容两种描述，包类型文案写明热修会更新产品版本并保留 RPM 安装记录。 |
+| 2026-10-09 | `docs/development/frontend/settings/updates.md` | M | 明确当前/目标/历史版本来源及验签替代；新增staging步骤和新操作重置规则。新增操作前产品版本与RPM基线独立展示、旧来源缺失/混合节点和回退未知规则及浏览器回归。补充历史/当前/事件共用双语消息映射、未知诊断随语言提示并保留原文、原始状态不变及桌面/窄屏语言切换回归入口。 「版本显示来源」再补两处展示口径：上传预览身份栅格把**当前运行版本 / RPM兼容基线 / 目标版本**三件独立事实分开，运行版本与版本摘要同源、不随上传改变；签名校验按包类型分派，热修补丁不带 RPM 升级引导器时显示`已通过 · 热修补丁`而非`已通过 · 历史兼容包`，滚动升级保留引导器/历史兼容两种描述，包类型文案写明热修会更新产品版本并保留 RPM 安装记录。  追加兼容准入明确未受理标记、普通409/committed不确定对照和双尺寸真实浏览器语言往返。 |
 | 2026-10-09 | `docs/development/backend/settings/update-history.md` | M | 记录Snapshot验签后继及部署判据。新增staging与updating共用节点百分比的读取投影、原始状态保留和三节点持久化回归入口。 |
 
 | 2026-10-09 | `docs/development/frontend/settings/preferences.md` | M | 语言设置接入静态原文绑定、动态双语目录和完整重绘；明确业务数据/原始证据、内存偏好及无请求/表单保持边界，登记四引擎八页面真实浏览器与目录回归。 |
@@ -302,3 +305,5 @@ PG现场收尾：登记6.3实际页面两方向耗时、两项限定故障/6项�
 
 
 2026-11-03 实例策略导航：更新前后端settings/README与cluster-policy单功能页、catalogue，区分所选集群实例规则与同引擎全局覆盖；新增双语指南及任务，重建入库HTML。
+
+2026-11-03持久兼容门槛：按需新增后端单功能页与升级索引，双语实例策略指南分别保留旧源码红例与新源码修复；任务记录绑定实际API、Runner、Linux root隔离和全仓验证。新增拒绝文案随中英设置切换。重建生成页，不把本批源码测试当作新包或现场验收。

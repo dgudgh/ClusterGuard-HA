@@ -22,6 +22,9 @@ func (r *Repository) PutInstanceFailoverPolicy(id model.ResourceID, expected uin
 	if cluster.Engine != model.EngineMySQL && cluster.Engine != model.EnginePostgreSQL {
 		return model.InstanceFailoverPolicy{}, validationError("automatic failover policy supports MySQL and PostgreSQL")
 	}
+	if r.snapshot.SoftwareUpdateGate != nil {
+		return model.InstanceFailoverPolicy{}, conflictError("software update maintenance active")
+	}
 	current := uint64(0)
 	if cluster.FailoverPolicy != nil {
 		current = cluster.FailoverPolicy.Revision
@@ -67,6 +70,8 @@ func (r *Repository) PutInstanceFailoverPolicy(id model.ResourceID, expected uin
 	next := r.snapshot
 	next.Clusters = cloneClusterMap(next.Clusters)
 	next.Clusters[id] = cluster
+	floor := model.PolicyCompatibilityFloor()
+	next.RuntimeCompatibilityFloor = &floor
 	next.Audits = append(append([]model.AuditEvent{}, next.Audits...), audit)
 	if err := r.commitSnapshotLocked(next); err != nil {
 		return model.InstanceFailoverPolicy{}, fmt.Errorf("persist instance failover policy: %w", err)

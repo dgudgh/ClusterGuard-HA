@@ -51,15 +51,16 @@ func newInstanceFailoverPeerCheck(membership consensusMembershipReader, client *
 			}
 			var payload struct {
 				Result struct {
-					ProtocolVersion    int              `json:"protocol_version"`
-					ControllerID       model.ResourceID `json:"controller_id"`
-					ClusterID          model.ResourceID `json:"cluster_id"`
-					AutomaticAvailable bool             `json:"automatic_available"`
+					RuntimeCompatibilityProtocol int              `json:"runtime_compatibility_protocol"`
+					ProtocolVersion              int              `json:"protocol_version"`
+					ControllerID                 model.ResourceID `json:"controller_id"`
+					ClusterID                    model.ResourceID `json:"cluster_id"`
+					AutomaticAvailable           bool             `json:"automatic_available"`
 				} `json:"result"`
 			}
 			decodeErr := json.NewDecoder(io.LimitReader(response.Body, 2<<20)).Decode(&payload)
 			response.Body.Close()
-			if response.StatusCode != 200 || decodeErr != nil || payload.Result.ProtocolVersion != 1 || payload.Result.ControllerID != member.ResourceID || payload.Result.ClusterID != id {
+			if response.StatusCode != 200 || decodeErr != nil || payload.Result.ProtocolVersion != 1 || payload.Result.RuntimeCompatibilityProtocol != model.RuntimeCompatibilityProtocol || payload.Result.ControllerID != member.ResourceID || payload.Result.ClusterID != id {
 				return fmt.Errorf("all voters must support the instance failover policy protocol")
 			}
 			if enabling && !payload.Result.AutomaticAvailable {

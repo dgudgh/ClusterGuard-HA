@@ -117,7 +117,7 @@ function createConsoleFixture(htmlPath = path.resolve(__dirname, '../internal/ap
       else if (url.pathname === '/api/v1/platform/version') result = { version:'2.2', release:'88', architecture:'x86_64' };
       else if (url.pathname === '/api/v1/control-plane/status') result = { mode:'raft', role:'leader', ready:true, quorum_confirmed:true, voter_count:3, local_controller_id:'node-1', leader_id:'node-1', update_maintenance_active:false, uptime_seconds:72600 };
       res.writeHead(status, { 'Content-Type':'application/json', 'Cache-Control':'no-store' });
-      res.end(JSON.stringify({ status:status < 400 ? 'ok' : 'error', result, message }));
+      res.end(JSON.stringify({ status:status < 400 ? 'ok' : 'error', result, message, ...(intercepted?.committed === true ? { committed:true } : {}) }));
     } catch (error) { res.writeHead(500); res.end(JSON.stringify({ status:'error', message:error.message })); }
   });
   return { server, control, clusters, detail, topology, packageItem, operations };

@@ -3,6 +3,7 @@ package platformupdate
 import (
 	"bytes"
 	"clusterguard.io/ha/internal/updatecontract"
+	"clusterguard.io/ha/pkg/model"
 	"context"
 	"encoding/json"
 	"errors"
@@ -75,9 +76,10 @@ func (client *UnixHelperClient) StartOperation(ctx context.Context, mode Mode, p
 }
 
 type helperRequest struct {
-	Mode        Mode   `json:"mode"`
-	PatchID     string `json:"patch_id"`
-	OperationID string `json:"operation_id,omitempty"`
+	Requirements *model.RuntimeCompatibilityFloor `json:"requirements,omitempty"`
+	Mode         Mode                             `json:"mode"`
+	PatchID      string                           `json:"patch_id"`
+	OperationID  string                           `json:"operation_id,omitempty"`
 }
 
 type JobLauncher interface {
@@ -127,12 +129,13 @@ func (launcher CommandLauncher) StartOperation(mode Mode, patchID, outputPath, o
 }
 
 type HelperHandler struct {
-	root              string
-	privateRoot       string
-	launcher          JobLauncher
-	mu                sync.Mutex
-	active            bool
-	restartController func(context.Context) error
+	compatibilityGuard func(context.Context, Mode, string, model.RuntimeCompatibilityFloor) error
+	root               string
+	privateRoot        string
+	launcher           JobLauncher
+	mu                 sync.Mutex
+	active             bool
+	restartController  func(context.Context) error
 }
 
 func NewHelperHandler(root string, launcher JobLauncher) *HelperHandler {
@@ -143,13 +146,24 @@ func NewHelperHandler(root string, launcher JobLauncher) *HelperHandler {
 }
 
 func NewHelperHandlerWithPrivateRoot(root, privateRoot string, launcher JobLauncher) *HelperHandler {
-	return &HelperHandler{root: filepath.Clean(root), privateRoot: filepath.Clean(privateRoot), launcher: launcher}
+	return &HelperHandler{root: filepath.Clean(root), privateRoot: filepath.Clean(privateRoot), launcher: launcher, compatibilityGuard: RuntimeCompatibilityChecker{RootDirectory: filepath.Clean(root)}.Check}
 }
 
 func (handler *HelperHandler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 	if err := updatecontract.Validate(); err != nil {
 		helperError(writer, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	if request.Method == http.MethodGet && request.URL.Path == "/v1/runtime-capabilities" {
+		for path, binary := range criticalRuntimePrograms {
+			if err := inspectRuntimeProgram(request.Context(), path, binary); err != nil {
+				helperError(writer, http.StatusServiceUnavailable, err.Error())
+				return
+			}
+		}
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write([]byte(`{"runtime_compatibility_protocol":1,"instance_failover_policy_protocol":1}`))
 		return
 	}
 	if request.URL.Path == "/v1/configuration-restart" {
@@ -161,7 +175,7 @@ func (handler *HelperHandler) ServeHTTP(writer http.ResponseWriter, request *htt
 		_, _ = writer.Write([]byte(`{"status":"ok"}`))
 		return
 	}
-	if request.Method != http.MethodPost || request.URL.Path != "/v1/jobs" {
+	if request.Method != http.MethodPost || (request.URL.Path != "/v1/jobs" && request.URL.Path != "/v1/compatibility") {
 		helperError(writer, http.StatusNotFound, "route not found")
 		return
 	}
@@ -174,6 +188,28 @@ func (handler *HelperHandler) ServeHTTP(writer http.ResponseWriter, request *htt
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		helperError(writer, http.StatusBadRequest, "invalid software update request")
+		return
+	}
+	floor := model.RuntimeCompatibilityFloor{}
+	if payload.Requirements != nil {
+		floor = *payload.Requirements
+	}
+	if !floor.Valid() {
+		helperError(writer, http.StatusConflict, ErrRuntimeIncompatible.Error())
+		return
+	}
+	if payload.Mode != ModePlan && handler.compatibilityGuard != nil {
+		if err := handler.compatibilityGuard(request.Context(), payload.Mode, payload.PatchID, floor); err != nil {
+			helperError(writer, http.StatusConflict, err.Error())
+			return
+		}
+	} else if floor.Required() {
+		helperError(writer, http.StatusConflict, ErrRuntimeIncompatible.Error())
+		return
+	}
+	if request.URL.Path == "/v1/compatibility" {
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write([]byte(`{"status":"ok"}`))
 		return
 	}
 	directory := filepath.Join(handler.root, payload.PatchID)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -21,6 +22,21 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--version-json" {
+		if err := json.NewEncoder(os.Stdout).Encode(buildinfo.Current("clusterguard-update-helper")); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "runtime-compatibility" {
+		if err := updatecontract.Validate(); err != nil {
+			log.Fatal(err)
+		}
+		if err := platformupdate.RunRuntimeCompatibilityCommand(os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	// The release builder links the four-part product identity into every payload
 	// binary. Reporting it here is what keeps it compiled into the artifact.
 	if len(os.Args) == 2 && (os.Args[1] == "--version" || os.Args[1] == "version") {

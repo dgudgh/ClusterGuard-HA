@@ -1484,7 +1484,10 @@ case "$host" in
   d1) node_id=44444444-4444-4444-8444-444444444444; node_role=data ;;
   *) exit 90 ;;
 esac
-if [[ "$command" == *"rpm -q --qf"* ]]; then
+if [[ "$command" == *"runtime-compatibility requirements"* ]]; then
+  # This fixture predates persisted policies. Dedicated floor tests cover nonzero and unknown requirements.
+  printf '{"protocol":0,"instance_failover_policy":0}\n'
+elif [[ "$command" == *"rpm -q --qf"* ]]; then
   printf '%s\n' "$version"
 elif [[ "$command" == *"clusterguard --version-json"* ]]; then
   gate_protocol="${FAKE_UPDATE_GATE_PROTOCOL:-1}"

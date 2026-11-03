@@ -163,7 +163,14 @@ func WithMutationMaintenance(gate MutationMaintenance) ServerOption {
 }
 
 func WithSoftwareUpdates(manager SoftwareUpdateManager) ServerOption {
-	return func(server *Server) { server.softwareUpdates = manager }
+	return func(server *Server) {
+		server.softwareUpdates = manager
+		if binder, ok := manager.(interface {
+			SetRuntimeCompatibilityRequirements(func() model.RuntimeCompatibilityFloor)
+		}); ok && server.store != nil {
+			binder.SetRuntimeCompatibilityRequirements(server.store.RuntimeCompatibilityRequirements)
+		}
+	}
 }
 
 func NewServer(registry *adapter.Registry, repository *store.Repository, service *workflow.Service, refresher Refresher, options ...ServerOption) *Server {

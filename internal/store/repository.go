@@ -156,7 +156,8 @@ type snapshot struct {
 	ConfigurationTasks map[string]ConfigurationTask `json:"configuration_tasks,omitempty"`
 	// Keep optional extensions after the legacy payload, whose first key is
 	// clusters. snapshotPayload uses that boundary for consensus digest checks.
-	GatewayPublications map[model.ResourceID]model.GatewayGrant `json:"gateway_publications,omitempty"`
+	GatewayPublications       map[model.ResourceID]model.GatewayGrant `json:"gateway_publications,omitempty"`
+	RuntimeCompatibilityFloor *model.RuntimeCompatibilityFloor        `json:"runtime_compatibility_floor,omitempty"`
 }
 
 type Repository struct {
@@ -292,6 +293,11 @@ func Open(path string) (*Repository, error) {
 	currentErr := loadRepositorySnapshot(repository, repository.path)
 	if currentErr == nil {
 		return repository, nil
+	}
+	// Do not let fallback hide an unknown/corrupt protected generation.
+	// Its predecessor may predate the first policy save and lack the floor.
+	if protectedRuntimeGeneration(repository.path) {
+		return nil, fmt.Errorf("protected runtime metadata cannot fall back to an older generation: %w", currentErr)
 	}
 	previousPath := previousSnapshotPath(repository.path)
 	if errors.Is(currentErr, os.ErrNotExist) {
@@ -524,6 +530,10 @@ func cloneDiscoverySnapshot(value snapshot) snapshot {
 	copy.PlatformUsers = clonePlatformUserMap(value.PlatformUsers)
 	copy.PlatformSessions = clonePlatformSessionMap(value.PlatformSessions)
 	copy.ApprovalGrants = cloneApprovalGrantMap(value.ApprovalGrants)
+	if value.RuntimeCompatibilityFloor != nil {
+		floor := *value.RuntimeCompatibilityFloor
+		copy.RuntimeCompatibilityFloor = &floor
+	}
 	copy.CoordinationLeases = cloneCoordinationLeaseMap(value.CoordinationLeases)
 	copy.OperationLocks = cloneOperationLockMap(value.OperationLocks)
 	if value.SoftwareUpdateGate != nil {

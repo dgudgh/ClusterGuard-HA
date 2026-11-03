@@ -379,6 +379,14 @@ func (server *Server) retireCluster(writer http.ResponseWriter, request *http.Re
 	if authentication, found := requestAuthentication(request); found && strings.TrimSpace(authentication.principal.Username) != "" {
 		actor = authentication.principal.Username
 	}
+	// A legacy policy retirement materializes the durable floor. Do not publish
+	// that extension while an old voter could silently strip it.
+	if cluster, found := server.store.Cluster(clusterID); found && cluster.FailoverPolicy != nil && server.failoverPeerCheck != nil {
+		if err := server.failoverPeerCheck(request.Context(), clusterID, cluster.Engine, false); err != nil {
+			writeError(writer, http.StatusConflict, err.Error())
+			return
+		}
+	}
 	result, err := server.store.RetireCluster(clusterID, payload.ConfirmDisplayName, actor)
 	if writeClusterRetirementFailure(writer, result, err) {
 		return

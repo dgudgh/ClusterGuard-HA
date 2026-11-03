@@ -469,6 +469,7 @@ apply.push("");
 apply.push(`if [[ "$(id -u)" -ne 0 ]]; then printf "${esc("必须以 root 运行 apply.sh。")}\\n" >&2; exit 1; fi`);
 apply.push("");
 apply.push(...verification);
+apply.push(`"\${contract_helper}" runtime-compatibility check --manifest "\${here}/HOTFIX-MANIFEST.json" --patch-id ${quote(manifest.hotfix_id)} --mode execute --trust-key "\${trust_key}"`);
 apply.push("sha() {");
 apply.push('  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk "{print \\$1}"; else shasum -a 256 "$1" | awk "{print \\$1}"; fi');
 apply.push("}");
@@ -557,6 +558,7 @@ rollback.push(`for backup_list in "\${backup_lists[@]}"; do
   }
 done`);
 rollback.push("");
+rollback.push(`"\${contract_helper}" runtime-compatibility check --manifest "\${here}/HOTFIX-MANIFEST.json" --patch-id ${quote(manifest.hotfix_id)} --mode rollback --trust-key "\${trust_key}"`);
 rollback.push("restore_backup() {");
 rollback.push('  local destination="$1" backup restore_tmp backup_list entry=""');
 rollback.push('  for backup_list in "${backup_lists[@]}"; do');

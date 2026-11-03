@@ -2,6 +2,8 @@
 
 [简体中文](../zh-CN/instance-failover-policy.md) · [Frontend](../development/frontend/settings/instance-failover.md) · [Backend](../development/backend/settings/instance-failover.md)
 
+Field boundary (2026-11-03): MySQL weights, exclusions, no preemption, and manual failover with automation disabled were tested across the documented versions. PostgreSQL automatic failover remains blocked by lost upstream identity after primary shutdown. The additional real DeepSeek write test FAILED as well: both clients exited early after 716/717 acknowledged transactions when the last controller restarted; the Agent stopped PostgreSQL and persisted MySQL read-only. Native reconciliation on all four nodes retained every acknowledged transaction. Retention does not prove upgrade write continuity. Original primaries and entries155/156 were restored; the complete underlying cause remains unresolved. See the [field record](../development/instance-failover-field-2026-11-03.md).
+
 ## Configure in the console
 
 Select the database cluster at the top, then open **Settings → Runtime parameters → Automatic failover policy → Selected cluster automatic failover and instance weights**. Sign in as an administrator, unlock editing and save. Cluster changes, refresh, session changes and completed saves lock editing again. This policy affects the selected cluster independently of other clusters using the same engine.
@@ -39,3 +41,12 @@ MySQL semi-sync activation selects master or source statements from the complete
 For gateway former-primary rejoin, Primary is the current writer and Target is the recovered node. Complete gateway observation, canonical metadata and a stable majority lease must all identify only the current writer; the recovered node must own no route. Partial observation, no route, a third owner or a transition lease blocks rejoin.
 
 Manual failover remains available with automation disabled after a database-service failure. If discovery clears the failed role to unknown, resolve only the unique active writer endpoint canonical OwnerID/InstanceID inventory UUID with current database-unavailable evidence and distinct source/target. Credential errors, stale/duplicate probes, conflicting ownership, replica sources or arbitrary caller SourceID never replace failure evidence. Approval, fencing and majority leases remain required.
+
+
+Historical downgrade defect in source9bb5047 (2026-11-03): isolated tests against the actual API/Manager and a real signed3.1.7.1 archive accepted rollback toward the original3.1.6.3 baseline after a policy was saved. All four MySQL/PostgreSQL enabled and saved-then-disabled cases returned202 and reached the recording Helper; the original Runner control functions also reached the restore boundaries with isolated node transport. Two never-saved controls were allowed. That execution chain did not implement the required early rejection; disabling automation does not remove the policy. No incompatible downgrade was executed on the live cluster, and live acceptance of this safety requirement remains open. See the [field record](../development/instance-failover-field-2026-11-03.md).
+
+## Persistent compatibility floor: source fix, not yet deployed
+
+The first policy save commits a minimum runtime protocol atomically with the policy and audit. Disabling automation, restarting, retiring a cluster or restoring an older snapshot cannot lower it. Legacy persisted policies also require protection. Update and rollback admission inspect actual target programs, including signed hotfix payloads/original backups and source or target RPMs. Unknown or incompatible targets are rejected before jobs, locks or file restoration; compatible targets still follow the existing workflow. No clear-floor or force option exists. Every voting node must first have compatible HA, Helper, upgrader and job wrapper programs.
+
+The isolated actual API rerun rejected all four saved-policy MySQL/PG cases with HTTP409 and zero Helper calls; both never-saved controls remained accepted. Linux root isolation covered the Helper and real RPM decoding. These are SOURCE results, not new ART or FIELD acceptance. Deployed3.1.7.7 does not contain this fix; interrupted upgrade writes and the PostgreSQL automatic failover defect remain open. See the [implementation record](../development/policy-compatibility-floor-2026-11-03.md).

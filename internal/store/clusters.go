@@ -39,6 +39,9 @@ func (repository *Repository) RetireCluster(clusterID model.ResourceID, confirmD
 	defer repository.mutationMu.Unlock()
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
+	if repository.snapshot.SoftwareUpdateGate != nil {
+		return ClusterRetirement{}, conflictError("software update maintenance active")
+	}
 
 	cluster, found := repository.snapshot.Clusters[clusterID]
 	if !found {
@@ -141,6 +144,10 @@ func (repository *Repository) RetireCluster(clusterID model.ResourceID, confirmD
 		if grant.ClusterID == clusterID {
 			delete(next.ApprovalGrants, resourceID)
 		}
+	}
+	floor := runtimeRequirements(repository.snapshot)
+	if floor.Required() {
+		next.RuntimeCompatibilityFloor = &floor
 	}
 	next.CoordinationLeases = cloneCoordinationLeaseMap(repository.snapshot.CoordinationLeases)
 	for resourceID, record := range next.CoordinationLeases {

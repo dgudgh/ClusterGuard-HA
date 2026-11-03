@@ -17,6 +17,7 @@ func (m instancePolicyMembers) ControllerMembers(context.Context) ([]consensus.C
 }
 func TestInstanceFailoverPeerProtocolRequiresEveryVoterAndIdentity(t *testing.T) {
 	id, controller := model.NewResourceID(), model.NewResourceID()
+	gateProtocol := 1
 	version := 1
 	available := true
 	status := 200
@@ -28,16 +29,17 @@ func TestInstanceFailoverPeerProtocolRequiresEveryVoterAndIdentity(t *testing.T)
 			t.Error("unbound or unauthenticated peer request")
 		}
 		w.WriteHeader(status)
-		json.NewEncoder(w).Encode(map[string]interface{}{"result": map[string]interface{}{"protocol_version": version, "controller_id": identity, "cluster_id": id, "automatic_available": available}})
+		json.NewEncoder(w).Encode(map[string]interface{}{"result": map[string]interface{}{"runtime_compatibility_protocol": gateProtocol, "protocol_version": version, "controller_id": identity, "cluster_id": id, "automatic_available": available}})
 	}))
 	defer server.Close()
 	check := newInstanceFailoverPeerCheck(instancePolicyMembers{{ResourceID: controller, APIAddress: server.URL}}, server.Client(), "fixture-token", false)
 	if e := check(context.Background(), id, model.EngineMySQL, true); e != nil {
 		t.Fatal(e)
 	}
-	for _, kind := range []string{"old", "unknown", "wrong identity", "unavailable"} {
+	for _, kind := range []string{"old", "unknown", "missing gate", "unknown gate", "wrong identity", "unavailable"} {
 		t.Run(kind, func(t *testing.T) {
 			version = 1
+			gateProtocol = 1
 			status = 200
 			identity = controller
 			available = true
@@ -46,6 +48,10 @@ func TestInstanceFailoverPeerProtocolRequiresEveryVoterAndIdentity(t *testing.T)
 				status = 404
 			case "unknown":
 				version = 2
+			case "missing gate":
+				gateProtocol = 0
+			case "unknown gate":
+				gateProtocol = 2
 			case "wrong identity":
 				identity = model.NewResourceID()
 			case "unavailable":
@@ -57,13 +63,14 @@ func TestInstanceFailoverPeerProtocolRequiresEveryVoterAndIdentity(t *testing.T)
 		})
 	}
 	status = 200
+	gateProtocol = 1
 	version = 1
 	identity = controller
 	available = false
 	if e := check(context.Background(), id, model.EngineMySQL, false); e != nil {
 		t.Fatal("manual-only policy cannot be set on compatible voter", e)
 	}
-	if calls != 6 {
+	if calls != 8 {
 		t.Fatal("peer was not revalidated", calls)
 	}
 	unavailable := newInstanceFailoverPeerCheck(instancePolicyMembers{{ResourceID: controller, APIAddress: server.URL}, {ResourceID: model.NewResourceID(), APIAddress: "https://127.0.0.1:1"}}, server.Client(), "fixture-token", false)

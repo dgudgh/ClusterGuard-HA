@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "${1:-}" == --runtime-compatibility-protocol && "$#" == 1 ]]; then
+  printf '%s\n' '{"binary":"clusterguard-upgrade","runtime_compatibility_protocol":1,"instance_failover_policy_protocol":1}'
+  exit 0
+fi
 umask 077
 
 declare -a original_arguments=("$@")
+runtime_required_floor='{"protocol":0,"instance_failover_policy":0}'
 patch_file=""
 input_patch_file=""
 trust_key=""
@@ -1779,6 +1784,10 @@ install_node_rpm() {
   for service in ${services}; do
     service_commands="${service_commands} systemctl restart '${service}';"
   done
+  read_cluster_runtime_floor
+  local compatibility_action=execute
+  [[ "${expected}" != "${source_version}" ]] || compatibility_action=rollback
+  runtime_compatibility_on_node "${host}" "${compatibility_action}" || return 1
   remote_run "${host}" "set -eu; ${mutation_guard}
 if test -f '${upgrade_lock_name}/execution-id'; then test \"\$(cat '${upgrade_lock_name}/execution-id')\" = '${execution_id}'; fi
 chmod 0600 '${remote_file}.tmp'
@@ -1967,6 +1976,7 @@ for unit in ${node_units}; do systemctl is-active --quiet \"\${unit}\"; done"
 apply_hotfix_on_node() {
   local host="$1" remote_dir="$2" units="$3"
   assert_update_lock_ownership || { log "升级执行所有权已改变，停止节点变更 host=${host}"; return 1; }
+  runtime_compatibility_on_node "${host}" "${update_mode}" || return 1
   remote_run "${host}" "set -eu; ${mutation_guard}
 cd '${remote_dir}/clusterguard-hotfix'
 bash apply.sh" || return 1
@@ -1974,8 +1984,75 @@ bash apply.sh" || return 1
   wait_node_ready "${host}" "$(remote_package_version "${host}")" || return 1
 }
 
+# Use the installed enforcing Helper or the exact signed payload Helper. Unknown
+# capabilities never mean an empty floor. Staging is private, before maintenance.
+runtime_compatibility_on_node() {
+  local host="$1" action="$2" remote_dir="${remote_stage}/${patch_id}" manifest_relative="clusterguard-hotfix/HOTFIX-MANIFEST.json"
+  [[ "${package_kind}" == hotfix ]] || manifest_relative="clusterguard-patch/PATCH-MANIFEST.json"
+  remote_run "${host}" "set -eu
+jq_bin=/usr/local/libexec/jq-linux-amd64
+if test ! -x \"\${jq_bin}\"; then jq_bin=\$(command -v jq); fi
+helper=/usr/local/libexec/clusterguard-update-helper
+supports() { \"\$1\" --version-json 2>/dev/null | \"\${jq_bin}\" -e '.binary==\"clusterguard-update-helper\" and .runtime_compatibility_protocol==1 and .instance_failover_policy_protocol==1' >/dev/null; }
+if ! supports \"\${helper}\"; then
+  helper='${remote_dir}/clusterguard-hotfix/payload/bin/clusterguard-update-helper'
+  test -f \"\${helper}\" && test ! -L \"\${helper}\"
+  expected=\$(\"\${jq_bin}\" -er '.files[] | select(.artifact==\"payload/bin/clusterguard-update-helper\") | .sha256' '${remote_dir}/clusterguard-hotfix/HOTFIX-MANIFEST.json')
+  test \"\$(sha256sum \"\${helper}\" | awk '{print \$1}')\" = \"\${expected}\"
+  supports \"\${helper}\"
+fi
+if test '${action}' = requirements; then
+  \"\${helper}\" runtime-compatibility requirements
+else
+  key=\$(\"\${jq_bin}\" -er .trust_key /etc/clusterguard/update.json)
+  \"\${helper}\" runtime-compatibility check --manifest '${remote_dir}/${manifest_relative}' --patch-id '${patch_id}' --mode '${action}' --required-json '${runtime_required_floor}' --trust-key \"\${key}\"
+fi"
+}
+
+read_cluster_runtime_floor() {
+  local host floor samples='[]'
+  for host in "${controllers[@]}"; do
+    floor="$(runtime_compatibility_on_node "${host}" requirements)" || die "runtime compatibility requirements unavailable: ${host}"
+    jq -e 'keys==["instance_failover_policy","protocol"] and ((.protocol==0 and .instance_failover_policy==0) or (.protocol==1 and .instance_failover_policy==1))' <<<"${floor}" >/dev/null || die "runtime compatibility requirements unknown: ${host}"
+    samples="$(jq -c --argjson floor "${floor}" '. + [$floor]' <<<"${samples}")"
+  done
+  [[ "$(jq length <<<"${samples}")" -gt 0 ]] || die "runtime compatibility requires controller inventory"
+  runtime_required_floor="$(jq -c '{protocol:([.[].protocol]|max),instance_failover_policy:([.[].instance_failover_policy]|max)}' <<<"${samples}")"
+}
+
+verify_runtime_compatibility() {
+  local host
+  read_cluster_runtime_floor
+  for host in "${all_nodes[@]}"; do
+    runtime_compatibility_on_node "${host}" "${update_mode}" || die "runtime compatibility target rejected: ${host}"
+  done
+}
+
+stage_rolling_compatibility_on_node() {
+  local host="$1" remote_dir="${remote_stage}/${patch_id}/clusterguard-patch" file
+  remote_run "${host}" "install -d -m 0700 '${remote_dir}/payload'" || return 1
+  for file in PATCH-MANIFEST.json PATCH-MANIFEST.sig "payload/${source_rpm}" "payload/${target_rpm}"; do
+    remote_copy "${host}" "${patch_root}/${file}" "${remote_dir}/${file}.tmp" || return 1
+    remote_run "${host}" "chmod 0600 '${remote_dir}/${file}.tmp'; mv -f '${remote_dir}/${file}.tmp' '${remote_dir}/${file}'" || return 1
+  done
+}
+
+prepare_runtime_compatibility() {
+  local host
+  for host in "${all_nodes[@]}"; do
+    if [[ "${package_kind}" == hotfix ]]; then
+      stage_hotfix_on_node "${host}" "${remote_stage}/${patch_id}" || die "cannot stage signed compatibility evidence: ${host}"
+    else
+      stage_rolling_compatibility_on_node "${host}" || die "cannot stage signed RPM compatibility evidence: ${host}"
+    fi
+  done
+  verify_runtime_compatibility
+}
+
+
 restore_hotfix_on_node() {
   local host="$1" remote_dir="$2" units="$3" installed
+  runtime_compatibility_on_node "${host}" rollback || return 1
   remote_run "${host}" "set -eu; ${mutation_guard}
 cd '${remote_dir}/clusterguard-hotfix'
 bash rollback.sh" || return 1
@@ -2104,6 +2181,7 @@ run_hotfix_update() {
     [[ "${confirmation}" == "${patch_id}" ]] || die "确认内容不匹配"
   fi
 
+  prepare_runtime_compatibility
   journal_file="${PWD}/clusterguard-update-${patch_id}.json"
   journal_events_file="${PWD}/clusterguard-update-${patch_id}.events.jsonl"
   total_nodes="${#ordered_nodes[@]}"
@@ -2117,6 +2195,7 @@ run_hotfix_update() {
     acquire_replicated_update_gate || die "无法建立 Raft 维护门禁；未修改任何文件"
   fi
 
+  verify_runtime_compatibility
   if ${rollback_requested}; then
     updated_nodes=("${ordered_nodes[@]}")
     if rollback_hotfix_nodes "${restart_units}"; then
@@ -2289,6 +2368,7 @@ journal_file="${PWD}/clusterguard-update-${patch_id}.json"
 journal_events_file="${PWD}/clusterguard-update-${patch_id}.events.jsonl"
 total_nodes="${#ordered_nodes[@]}"
 publish_update_artifacts
+prepare_runtime_compatibility
 acquire_update_locks
 capture_operation_versions
 journal_started=true
