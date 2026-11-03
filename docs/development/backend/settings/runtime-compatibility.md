@@ -34,6 +34,6 @@
 - 边界：[API](../../../../internal/api/updates.go)、[Manager](../../../../internal/platformupdate/runtime_compatibility.go)、[Helper/热修](../../../../internal/platformupdate/hotfix_compatibility.go)、[RPM](../../../../internal/platformupdate/rolling_compatibility.go)、[Runner](../../../../scripts/clusterguard-upgrade.sh)。
 - 回归：store/runtimecompat/platformupdate/api/runtime 对应测试、[Runner 真实 Bash 边界](../../../../tools/runtime-compatibility-runner.test.cjs)、SOURCE strict/self-test。
 
-2026-11-03仅完成源码与隔离回归，包括 Linux root 私有目录实测；未生成、安装或验收包含此保护的新交付包。旧 HA3.1.7.7 的四项失败仍是历史事实，不能以新源码结果关闭现场验收。完整结果见本轮记录。
+2026-11-03先完成源码与隔离回归，随后3.1.7.10签名包已通过正式通道安装至152/153/154；现场三台有效最低协议1，对实际原7.7备份的只读兼容性检查均提前拒绝，未执行真实降级。保护与升级收尾证据见[现场记录](../../policy-floor-field-3.1.7.10-2026-11-03.md)。旧HA3.1.7.7四项失败仍保留，升级断写和PG自动接管源身份缺失没有在本包修复；不得把本次安装等同这些业务用例通过。
 
 跨系统载体必须使用root UID/GID，不能把macOS构建账号UID带到Linux；Runner解包显式不保留归档属主，签名目标的owner/group/mode仍逐项按nfpm安装。可信文件的root检查不放宽。构建器签名前拒绝会被目录门禁拦截的修订理由，归档头及原始tar执行回归在tools/hotfix-carrier.test.cjs。

@@ -23,9 +23,10 @@ recorded-through: 73ff4a3
 
 | 日期 | 文件 | 变更 | 说明 |
 | --- | --- | --- | --- |
+| 2026-11-03 | `docs/development/policy-floor-field-3.1.7.10-2026-11-03.md` | A | 记录明确现场升级授权、包身份与契约、当前前检/原生入口监测、逐节点及50新观察FIELD计划；追加正式升级操作ID、完成时间、真实进程/原生SQL/策略审计及只读原备份拒绝实测、浏览器上传替代路径与业务未修边界。 |
 | 2026-11-03 | `docs/development/policy-floor-patch-3.1.7.8-2026-11-03.md` | A | 记录初始构建、候选封存、新身份、macOS UID回归及修复前旧码对照、签名载荷与ART/现场边界，旧制品不变。 |
 | 2026-11-03 | `docs/development/backend/settings/updates.md` | M | 升级索引增加持久兼容门槛的按需入口。 |
-| 2026-11-03 | `docs/development/backend/settings/runtime-compatibility.md` | A | 说明持久最低协议、首次保护栈就绪、签名实际热修/原备份/RPM检查、拒绝边界与SOURCE/现场区别。 |
+| 2026-11-03 | `docs/development/backend/settings/runtime-compatibility.md` | A | 说明持久最低协议、首次保护栈就绪、签名实际热修/原备份/RPM检查、拒绝边界与SOURCE/现场区别；追加3.1.7.10三台安装和实际原备份只读拒绝，保留历史业务失败。 |
 | 2026-11-03 | `docs/development/policy-compatibility-floor-2026-11-03.md` | A | 记录持久兼容门槛、旧码对照、API/Helper/Runner和生成工具的前置拒绝设计、红绿及分阶段证据。 |
 | 2026-11-03 | `docs/development/backend/settings/update-actions.md` | M | 说明已知根终态祖先的合法历史合并、未知/活动冲突拒绝及Helper同身份失败发布与组可读边界。  追加2026-11-03：持久最低协议、实际目标保护及新SOURCE结果；保留旧现场失败与未部署边界。 |
 | 2026-11-03 | `docs/development/instance-failover-field-2026-11-03.md` | A | 记录实例策略真实故障、HA回退/更新与持久查询结果；明确MySQL分阶段通过、PG上游身份丢失仍阻断、策略/入口恢复及归档时钟矛盾；追加DeepSeek实际prepare/start/status/reconcile、716/717笔四库保留、HA末节点重启断写失败与恢复证据；旧查询FIELD不覆盖新失败，底层根因尚未确认；追加保存策略后不兼容降级四项隔离实际API/Runner失败和两项无策略对照，不冒充现场拒绝。 |
