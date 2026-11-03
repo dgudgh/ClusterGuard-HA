@@ -75,3 +75,13 @@ MySQL新故障已真正隔离152并按权重提升153，随后c1253ba3-4dfe-4f9a
 事前对照adapters/mysql/semisync.go的activateSemiSyncSource按dialectForVersion.ModernSource选source变量；parseSemiSync其实已接受master/slave真实变量。生产cnf与现场SHOW VARIABLES均只有master/slave插件变量，8.0.44不代表安装了source/replica插件。拟把启停变量名绑定到实际读取的完整source配置族，而非服务器版本；不改现场cnf、插件或半同步要求，不吞1193或放宽ACK判据。新增8.0旧插件和现代插件启停、配置族不完整/冲突拒绝及activation故障重新隔离回归，3.1.7.5新身份。
 
 半同步变量修复全仓Go/vet、MySQL/workflow/recovery race通过，55SOURCE与167变异/双对照通过；旧8.0旧插件1193及双插件歧义先红后绿。许可68、Markdown11和生成页通过。3.1.7.5将在MySQL已确认隔离关闭、自动暂停、旧操作已正式复核且仍保留indeterminate、PG健康的明确基线中正式升级；不能把当前MySQL断连归入HA升级连续性样本，也不能当作全站健康基线。
+
+## 网关旧主恢复身份错误（修改前）
+
+3.1.7.5/1dec471正式plan a21e27f2-3707-4df8-863d-12ba2c7d8922，execute1d855385-aded-4fc4-bdff-a6f95919f688成功；按事前隔离关闭基线核对三节点文件、其余文件/DB PID、PG入口及多数派通过。MySQL原c1253ba3自动操作在重新开启原策略后按原不可变计划受控续跑，真实完成半同步激活、入口迁移及最终验证，记录成为succeeded，原indeterminate报告/复核/失败原始证据保留。原生155 SQL证明153 UUID且可写，网关授权稳定，旧152经ON只读保护启动。
+
+恢复旧152的正式approval仅规划、未授权执行：7d8bb6ac-2022-4bca-8711-15e8ad8e4eb7所有身份/只读/GTID/binlog检查通过，仅former_primary_endpoint_absent失败。根原文为former primary still owns a gateway route。事前对照1dec471:internal/endpoint/gateway.go，FormerPrimaryPrecheck错误比较resolved.Primary（当前新主），而MySQL rejoin和既有LinuxVIP约定resolved.Target才是待恢复旧主，故健康新主路由必然误拒。
+
+拟要求有效且不同的当前主/旧主身份，完整观测仅当前主拥有路由、canonical/endpoint均为当前主，稳定多数派租约与所有网关精确grant验证；待恢复旧主仍不得拥有入口，未知/部分观测/无路由/第三方/过期/transition均阻断。补实际GatewayProvider与生产LeaseStore回归先红后绿，新身份3.1.7.6。没有直接改复制SQL、写权限或历史去绕过该预检。当前153为真实可写主、154和云健康副本，152保持只读未挂回；第一项完整验收仍未通过。
+
+网关旧主恢复9场景先红后绿，完整Go/vet和endpoint/MySQL/PG race通过；56SOURCE、170变异与双对照、许可68、Markdown11/生成页通过。实际新基线为MySQL153可写且155入口已恢复、152只读等待挂回，PG152原主与156健康。后续HA滚动连续性样本将记录真实MySQL153身份，不能沿用152旧identity断言。

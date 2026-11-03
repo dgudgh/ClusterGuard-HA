@@ -393,18 +393,37 @@ func (p *GatewayProvider) ObserveOwnership(ctx context.Context, cluster model.Da
 	return result, nil
 }
 func (p *GatewayProvider) FormerPrimaryPrecheck(ctx context.Context, resolved adapter.ResolvedOperation) []model.Check {
+	fail := func(message string) []model.Check {
+		return []model.Check{{Name: "former_primary_endpoint_absent", Status: model.CheckFail, Message: message}}
+	}
+	// Rejoin uses Primary for the current writer and Target for the recovered node.
+	if !model.ValidResourceID(resolved.Primary.ResourceID) || !model.ValidResourceID(resolved.Target.ResourceID) || resolved.Primary.ResourceID == resolved.Target.ResourceID || resolved.Primary.ClusterID != resolved.Cluster.ResourceID || resolved.Target.ClusterID != resolved.Cluster.ResourceID {
+		return fail("current and former primary identities are invalid")
+	}
 	observation, err := p.ObserveOwnership(ctx, resolved.Cluster, resolved.Snapshot)
-	if err == nil {
-		for _, owner := range observation.OwnerIDs {
-			if owner == resolved.Primary.ResourceID {
-				err = fmt.Errorf("former primary still owns a gateway route")
-			}
-		}
-	}
 	if err != nil {
-		return []model.Check{{Name: "former_primary_endpoint_absent", Status: model.CheckFail, Message: err.Error()}}
+		return fail(err.Error())
 	}
-	return []model.Check{{Name: "former_primary_endpoint_absent", Status: model.CheckPass, Message: "former primary gateway routes withdrawn"}}
+	if !observation.Complete || len(observation.OwnerIDs) != 1 || observation.OwnerIDs[0] != resolved.Primary.ResourceID || observation.CanonicalOwnerID != resolved.Primary.ResourceID || observation.EndpointOwnerID != resolved.Primary.ResourceID {
+		return fail("complete gateway ownership must identify only the current primary and exclude the recovered target")
+	}
+	current := resolved
+	current.Target = resolved.Primary
+	if check := p.Verify(ctx, current); check.Status != model.CheckPass {
+		return fail(check.Message)
+	}
+	resource, _, err := p.resource(resolved.Cluster.ResourceID)
+	if err != nil {
+		return fail(err.Error())
+	}
+	lease, err := p.current(ctx, resource, resolved.Primary.ResourceID)
+	if err != nil {
+		return fail(err.Error())
+	}
+	if !stableGatewayLease(lease) {
+		return fail("former-primary rejoin requires a stable current-primary lease")
+	}
+	return []model.Check{{Name: "former_primary_endpoint_absent", Status: model.CheckPass, Message: "all gateways serve only the stable current primary; recovered target owns no route"}}
 }
 func (p *GatewayProvider) AuthorizeStableOwner(ctx context.Context, resolved adapter.ResolvedOperation) (adapter.StableOwnershipAuthorization, error) {
 	r, _, err := p.resource(resolved.Cluster.ResourceID)

@@ -182,6 +182,16 @@ const writeOperationTree = (root, name, status, events) => {
 
 const CHECKS = [
   {
+    rule:'INV-009 / 6',title:'gateway rejoin excludes the recovered target and verifies the stable current writer',
+    run:()=>{
+      const s=read('internal/endpoint/gateway.go')||'',t=read('internal/endpoint/gateway_rejoin_test.go')||'';
+      const start=s.indexOf('func (p *GatewayProvider) FormerPrimaryPrecheck('),end=s.indexOf('func (p *GatewayProvider) AuthorizeStableOwner',start),body=s.slice(start,end);
+      for(const token of ['resolved.Primary.ResourceID == resolved.Target.ResourceID','!observation.Complete || len(observation.OwnerIDs) != 1','observation.OwnerIDs[0] != resolved.Primary.ResourceID','current.Target = resolved.Primary','p.Verify(ctx, current)','if !stableGatewayLease(lease) {'])if(!body.includes(token))return 'missing current/former gateway ownership guard: '+token;
+      for(const token of ['TestGatewayFormerPrimaryRejoinChecksTheRecoveredTarget','current-owner','former-owner','partial','canonical-stale','stale-grant','transition'])if(!t.includes(token))return 'missing gateway rejoin regression: '+token;
+      return true;
+    },
+  },
+  {
     rule:'INV-009 / 6', title:'MySQL semi-sync activation uses the observed complete plugin family',
     run:()=>{
       const s=read('adapters/mysql/semisync.go')||'',t=read('adapters/mysql/semisync_activation_family_test.go')||'';
@@ -1407,6 +1417,7 @@ const READ_FILES = [
   'internal/platformupdate/version.go', 'internal/platformupdate/inspector.go',
   CONTRACT_DOC, CONTRACT_DOC_ZH, 'internal/updatecontract/contract.md', 'internal/updatecontract/schema.json', 'internal/platformupdate/helper.go',
   'internal/platformupdate/supersedes.go', 'internal/platformupdate/supersedes_test.go',
+  'internal/endpoint/gateway_rejoin_test.go',
   'adapters/mysql/semisync.go','adapters/mysql/semisync_activation_family_test.go',
   'internal/coordination/failover_safety.go', 'internal/coordination/gateway_failover_safety_test.go', 'internal/agent/vip.go', 'cmd/clusterguard-agent/gateway_fencing_test.go',
   'tools/update-private-history.test.cjs', 'internal/platformupdate/helper_private_failure_test.go', 'internal/platformupdate/helper_files_unix.go',
@@ -1417,6 +1428,9 @@ const READ_FILES = [
 ];
 
 const MUTATIONS = [
+  {name:'gateway rejoin verifies recovered target as writer',file:'internal/endpoint/gateway.go',find:'current.Target = resolved.Primary',replace:'current.Target = resolved.Target',rule:'gateway rejoin excludes the recovered target and verifies the stable current writer'},
+  {name:'gateway rejoin accepts incomplete route observations',file:'internal/endpoint/gateway.go',find:'!observation.Complete || len(observation.OwnerIDs) != 1',replace:'len(observation.OwnerIDs) != 1',rule:'gateway rejoin excludes the recovered target and verifies the stable current writer'},
+  {name:'gateway rejoin accepts a transition lease',file:'internal/endpoint/gateway.go',find:'if !stableGatewayLease(lease) {',replace:'if false {',rule:'gateway rejoin excludes the recovered target and verifies the stable current writer'},
   {name:'semi-sync chooses plugin names by server version',file:'adapters/mysql/semisync.go',find:'if probe.sourceEnableVariable == "rpl_semi_sync_source_enabled" {',replace:'if version != "" {',rule:'MySQL semi-sync activation uses the observed complete plugin family'},
   {name:'semi-sync permits ambiguous source plugin families',file:'adapters/mysql/semisync.go',find:'if modern != legacy {',replace:'if modern || legacy {',rule:'MySQL semi-sync activation uses the observed complete plugin family'},
   {name:'semi-sync mutates incomplete source plugin configuration',file:'adapters/mysql/semisync.go',find:'if probe.sourceEnableVariable == "" {',replace:'if false {',rule:'MySQL semi-sync activation uses the observed complete plugin family'},
