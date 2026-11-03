@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -236,6 +237,11 @@ func (handler *HelperHandler) ServeHTTP(writer http.ResponseWriter, request *htt
 			}
 			if err != nil {
 				handler.recordLaunchFailure(privateDirectory, payload.PatchID, payload.Mode, err, payload.OperationID)
+				if privateSeparate {
+					if err := publishPrivateLaunchFailure(jobDirectory, privateDirectory, payload.PatchID, payload.Mode, payload.OperationID); err != nil {
+						log.Printf("publish software update launch failure %s/%s: %v", payload.PatchID, payload.OperationID, err)
+					}
+				}
 			}
 			handler.mu.Lock()
 			handler.active = false
@@ -257,6 +263,40 @@ func (handler *HelperHandler) ServeHTTP(writer http.ResponseWriter, request *htt
 	}
 	writer.WriteHeader(http.StatusAccepted)
 	_, _ = writer.Write([]byte(`{"status":"accepted"}`))
+}
+
+// Publish the actual root-owned failure when the wrapper exits before its own
+// publication trap is installed. Both directory descriptors were pinned before
+// launch; no pathname reopening or public-state recovery authority is involved.
+func publishPrivateLaunchFailure(public, private *os.File, patchID string, mode Mode, operationID string) error {
+	if operationID == "" {
+		return nil
+	}
+	read := func(directory *os.File) (Job, error) {
+		file, err := openHelperFile(directory, jobFileName, os.O_RDONLY, 0)
+		if err != nil {
+			return Job{}, err
+		}
+		defer file.Close()
+		var job Job
+		err = json.NewDecoder(io.LimitReader(file, 1<<20)).Decode(&job)
+		return job, err
+	}
+	job, err := read(private)
+	if err != nil {
+		return err
+	}
+	if job.PatchID != patchID || job.OperationID != operationID || job.Mode != mode || job.Status != StatusFailed {
+		return nil
+	}
+	current, err := read(public)
+	if err != nil {
+		return err
+	}
+	if current.PatchID != patchID || current.OperationID != operationID || current.Mode != mode || (current.Status != StatusQueued && current.Status != StatusRunning) {
+		return nil
+	}
+	return writeHelperJob(public, job)
 }
 
 func (handler *HelperHandler) recordLaunchFailure(directory *os.File, patchID string, mode Mode, cause error, operationIDs ...string) {

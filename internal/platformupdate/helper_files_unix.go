@@ -79,6 +79,15 @@ func writeHelperJob(directory *os.File, job Job) error {
 	if _, err := file.Write(append(contents, '\n')); err != nil {
 		return err
 	}
+	// Public job directories use the console service's group. A root-created
+	// replacement must retain that group or mode 0640 would hide the failure.
+	var directoryStat unix.Stat_t
+	if err := unix.Fstat(int(directory.Fd()), &directoryStat); err != nil {
+		return err
+	}
+	if err := file.Chown(-1, int(directoryStat.Gid)); err != nil {
+		return err
+	}
 	if err := file.Chmod(updateFileMode); err != nil {
 		return err
 	}

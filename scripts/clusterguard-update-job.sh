@@ -53,6 +53,22 @@ status_file="${job_dir}/status.json"
 # Public uploads/status are deliberately excluded from this import.
 import_private_history() {
   local history_name history_file replicated_status local_owner replicated_owner local_status replicated_terminal replicated_operations operation_line
+  local history_inputs=()
+  for history_file in "${job_dir}/operations.jsonl" "${private_root}/history/${patch_id}/operations.jsonl"; do
+    if [[ -f "${history_file}" ]]; then
+      "${workspace_helper}" workspace check-file "${history_file}"
+      history_inputs+=("${history_file}")
+    fi
+  done
+  if ((${#history_inputs[@]})); then
+    "${jq_binary}" -se --arg patch "${patch_id}" '
+      all(.[]; .patch_id==$patch and (.operation_id|type=="string" and length>0)
+        and (.mode==null or (.mode|IN("plan","execute","retry","resume","rollback"))))
+      and (group_by(.operation_id)|all(.[];
+        ([.[].mode|select(.!=null)]|unique|length)<=1 and
+        ([.[]|select(.status|IN("planned","succeeded","failed","rolled_back"))|.status]|unique|length)<=1))
+    ' "${history_inputs[@]}" >/dev/null || die "CG_HISTORY_OVERWRITE_FORBIDDEN: 根操作历史身份或终态冲突"
+  fi
   for history_name in operations.jsonl deployment.json status.json; do
     history_file="${private_root}/history/${patch_id}/${history_name}"
     if [[ ! -e "${job_dir}/${history_name}" && -e "${history_file}" ]]; then
@@ -65,9 +81,26 @@ import_private_history() {
     "${workspace_helper}" workspace check-file "${replicated_status}"
     local_owner="$("${jq_binary}" -r '.operation_id // .execution_id // "legacy"' "${status_file}")"
     replicated_owner="$("${jq_binary}" -r '.operation_id // .execution_id // "legacy"' "${replicated_status}")"
-    [[ "${local_owner}" == "${replicated_owner}" ]] || die "CG_HISTORY_OVERWRITE_FORBIDDEN: 私有与复制操作身份不一致，必须先核对历史"
     local_status="$("${jq_binary}" -r '.status' "${status_file}")"
     replicated_terminal="$("${jq_binary}" -r '.status | IN("succeeded","failed","rolled_back","planned")' "${replicated_status}")"
+    if [[ "${local_owner}" != "${replicated_owner}" ]]; then
+      # A root-written plan/failure can follow a replicated rollback. Different
+      # operations are not conflicting outcomes of one operation. Require a
+      # causal record of both terminals; never infer ancestry from timestamps
+      # or from the service-writable public status.
+      [[ "${replicated_terminal}" == true ]] || die "CG_HISTORY_OVERWRITE_FORBIDDEN: 复制操作仍活动"
+      case "${local_status}" in
+        succeeded|failed|rolled_back|planned) ;;
+        *) die "CG_HISTORY_OVERWRITE_FORBIDDEN: 私有操作仍活动" ;;
+      esac
+      [[ -f "${job_dir}/operations.jsonl" ]] || die "CG_HISTORY_OVERWRITE_FORBIDDEN: 缺少根操作祖先"
+      "${jq_binary}" -se --slurpfile ancestor "${replicated_status}" --slurpfile current "${status_file}" '
+        def contains_terminal($r): ($r.mode|IN("plan","execute","retry","resume","rollback")) and
+          any(.[]; .operation_id==$r.operation_id and
+          .patch_id==$r.patch_id and .mode==$r.mode and .status==$r.status);
+        contains_terminal($ancestor[0]) and contains_terminal($current[0])
+      ' "${job_dir}/operations.jsonl" >/dev/null || die "CG_HISTORY_OVERWRITE_FORBIDDEN: 私有与复制操作祖先未证实"
+    else
     case "${local_status}" in
       succeeded|failed|rolled_back|planned)
         if [[ "${replicated_terminal}" == true ]]; then
@@ -79,6 +112,7 @@ import_private_history() {
           [[ ! -f "${private_root}/history/${patch_id}/deployment.json" ]] || "${workspace_helper}" workspace snapshot "${private_root}/history/${patch_id}/deployment.json" "${job_dir}/deployment.json"
         fi ;;
     esac
+    fi
   fi
   replicated_operations="${private_root}/history/${patch_id}/operations.jsonl"
   if [[ -f "${replicated_operations}" ]]; then

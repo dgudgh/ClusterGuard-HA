@@ -181,6 +181,28 @@ const writeOperationTree = (root, name, status, events) => {
 };
 
 const CHECKS = [
+  {
+    rule: 'INV-006 / 6', title: 'root history accepts only proven terminal ancestors',
+    run: () => {
+      const s=read('scripts/clusterguard-update-job.sh')||'';
+      for(const token of ['group_by(.operation_id)','([.[].mode|select(.!=null)]|unique|length)<=1','contains_terminal($ancestor[0]) and contains_terminal($current[0])','私有操作仍活动','复制操作仍活动']) {
+        if(!s.includes(token))return 'missing root-history guard: '+token;
+      }
+      const t=read('tools/update-private-history.test.cjs')||'';
+      return t.includes('root history proves rollback')&&t.includes('unknown ancestry')&&t.includes('same operation contradictory terminal') || 'missing actual Bash history regressions';
+    },
+  },
+  {
+    rule:'INV-001 / 6', title:'early private launch failure reaches only its pinned public subject',
+    run:()=>{
+      const s=read('internal/platformupdate/helper.go')||'';
+      for(const token of ['publishPrivateLaunchFailure(jobDirectory, privateDirectory','job.OperationID != operationID','current.OperationID != operationID','current.Status != StatusQueued && current.Status != StatusRunning','return writeHelperJob(public, job)']) {
+        if(!s.includes(token))return 'missing bound failure publication: '+token;
+      }
+      if(!(read('internal/platformupdate/helper_files_unix.go')||'').includes('file.Chown(-1, int(directoryStat.Gid))'))return 'public failure loses console group readability';
+      return (read('internal/platformupdate/helper_private_failure_test.go')||'').includes('replaced-parent')||'missing pinned private/public failure regression';
+    },
+  },
   {rule:'12 / 22',title:'instance failover policy preserves automatic scope and native safety',run:()=>{
     const selector=read('internal/recovery/mysql_selector.go')||'',controller=read('internal/recovery/controller.go')||'',workflow=read('internal/workflow/durable.go')||'';
     for(const proof of ['AutomaticSelection:      true','!cluster.FailoverPolicy.AutomaticEnabled'])if(!selector.includes(proof))return 'automatic selector policy missing: '+proof;
@@ -1361,6 +1383,7 @@ const READ_FILES = [
   'internal/platformupdate/version.go', 'internal/platformupdate/inspector.go',
   CONTRACT_DOC, CONTRACT_DOC_ZH, 'internal/updatecontract/contract.md', 'internal/updatecontract/schema.json', 'internal/platformupdate/helper.go',
   'internal/platformupdate/supersedes.go', 'internal/platformupdate/supersedes_test.go',
+  'tools/update-private-history.test.cjs', 'internal/platformupdate/helper_private_failure_test.go', 'internal/platformupdate/helper_files_unix.go',
   'scripts/clusterguard-update-job.sh', 'scripts/clusterguard-upgrade.sh', 'scripts/build-hotfix-patch.sh', 'scripts/install_clusterguard.sh',
   'internal/platformupdate/manager.go', 'internal/api/updates.go', 'internal/api/console.html',
   'hotfixes/hotfix-publications.json', 'tools/verify-hotfix-patch-catalog.cjs', 'tools/console-configuration-notices-acceptance.cjs',
@@ -1368,6 +1391,11 @@ const READ_FILES = [
 ];
 
 const MUTATIONS = [
+  {name:'public failure status loses its console group',file:'internal/platformupdate/helper_files_unix.go',find:'file.Chown(-1, int(directoryStat.Gid))',replace:'error(nil)',rule:'early private launch failure reaches only its pinned public subject'},
+  {name:'private history loses causal ancestor proof',file:'scripts/clusterguard-update-job.sh',find:'contains_terminal($ancestor[0]) and contains_terminal($current[0])',replace:'true',rule:'root history accepts only proven terminal ancestors'},
+  {name:'private history permits one ID with two modes',file:'scripts/clusterguard-update-job.sh',find:'([.[].mode|select(.!=null)]|unique|length)<=1',replace:'true',rule:'root history accepts only proven terminal ancestors'},
+  {name:'launch failure publishes over another public operation',file:'internal/platformupdate/helper.go',find:'current.OperationID != operationID',replace:'false',rule:'early private launch failure reaches only its pinned public subject'},
+  {name:'launch failure no longer publishes its real status',file:'internal/platformupdate/helper.go',find:'return writeHelperJob(public, job)',replace:'return nil',rule:'early private launch failure reaches only its pinned public subject'},
   {name:'partial gateway observation claims complete coverage',file:'internal/endpoint/gateway.go',find:'Complete: !partial',replace:'Complete: true',rule:'gateway availability renews only the existing stable writer'},
   {name:'stable renewal accepts another target',file:'internal/endpoint/gateway_client.go',find:'old.TargetID != grant.TargetID',replace:'false',rule:'gateway availability renews only the existing stable writer'},
   {name:'gateway defaults to single node without opt in',file:'internal/endpoint/gateway_client.go',find:'minimum := 2',replace:'minimum := 1',rule:'gateway availability renews only the existing stable writer'},
