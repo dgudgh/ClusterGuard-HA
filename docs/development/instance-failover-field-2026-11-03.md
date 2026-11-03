@@ -85,3 +85,13 @@ MySQL新故障已真正隔离152并按权重提升153，随后c1253ba3-4dfe-4f9a
 拟要求有效且不同的当前主/旧主身份，完整观测仅当前主拥有路由、canonical/endpoint均为当前主，稳定多数派租约与所有网关精确grant验证；待恢复旧主仍不得拥有入口，未知/部分观测/无路由/第三方/过期/transition均阻断。补实际GatewayProvider与生产LeaseStore回归先红后绿，新身份3.1.7.6。没有直接改复制SQL、写权限或历史去绕过该预检。当前153为真实可写主、154和云健康副本，152保持只读未挂回；第一项完整验收仍未通过。
 
 网关旧主恢复9场景先红后绿，完整Go/vet和endpoint/MySQL/PG race通过；56SOURCE、170变异与双对照、许可68、Markdown11/生成页通过。实际新基线为MySQL153可写且155入口已恢复、152只读等待挂回，PG152原主与156健康。后续HA滚动连续性样本将记录真实MySQL153身份，不能沿用152旧identity断言。
+
+## 关闭自动后的手动故障源解析缺口（修改前）
+
+7.6正式更新成功（plan d228167a-fad6-4431-9577-c883320a0439，execute5e8400bc-8ac8-4a37-b856-27ffd0171c51），两入口各122次原生可写身份SQL零失败、127次VIP/就绪正常、网关/DB PID不变。实际旧主恢复b33e7ce1与计划回切3719bb3f均成功、原策略修订10。完整新MySQL用例再次自动选择153，排除权重更高云节点，旧主恢复1789c7d0成功；40秒高权重152健康后不抢回和50秒关闭自动不生成切主均通过。
+
+随后手动failover的approval在discover/resolve阶段失败，b3bb0caf-d531-45b3-8ab7-cb9a3db0f9ee未形成plan/approval/执行或步骤，不能假装手动分支通过。事前对照a2808e1:internal/workflow/resolver.go只为自动SourceID允许当前失败源；停止主库后发现清除Role为unknown，手动无SourceID还要求RolePrimary恰好1，必然拒绝。保持自动关闭修订12，通过ON启动配置及mysqld-auto.cnf检查只读启动153，等待产品既有稳定所有者恢复，不直接改写SQL权限或复制。
+
+拟仅手动failover且零主库时，从唯一激活HA入口的权威OwnerID与Endpoint.InstanceID一致性确定故障源；源须是同集群清单UUID、不同于目标、明确当前database_unavailable探针和unhealthy/unknown，不能接受任意调用者SourceID、凭据错误、旧/缺失探针、冲突入口或另一主库。后续完整预检/授权/隔离/多数派/lease不变。新增两引擎正向和拒绝矩阵先红后绿，7.7新身份后重测手动分支；自动/不抢回/关闭不自动的既有FIELD单独保留。
+
+手动源解析28场景先红后绿；首轮正向夹具漏填复制用户名导致解析后的既有凭据门禁正确拒绝，已补夹具，未放宽凭据要求。源还限定unknown、无复制上游、当前同批次健康时间、15秒新鲜拓扑与单探针。全Go/vet及workflow/recovery/API race通过，SOURCE57/173变异与双对照通过，许可68/Markdown11/生成页通过。153按ON保护启动后产品恢复为唯一可写主，四节点/两入口健康，准备7.7正式升级；保持自动关闭12，不用开启自动来冒充手动恢复。

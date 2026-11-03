@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"clusterguard.io/ha/pkg/adapter"
 	"clusterguard.io/ha/pkg/model"
@@ -12,6 +13,63 @@ import (
 type OperationResourceReader interface {
 	Cluster(model.ResourceID) (model.DatabaseCluster, bool)
 	TopologySnapshot(model.ResourceID) (model.TopologySnapshot, bool)
+}
+
+// Canonical endpoint metadata may identify a failed manual source after discovery
+// clears its runtime role. It selects an inventory UUID, never an arbitrary host.
+type failoverOwnerReader interface {
+	HAEndpoints(model.ResourceID) []model.HAEndpoint
+	Endpoints(model.ResourceID) []model.Endpoint
+}
+
+func resolveManualFailoverOwner(reader OperationResourceReader, cluster model.DatabaseCluster, snapshot model.TopologySnapshot, targetID model.ResourceID) (model.DatabaseInstance, error) {
+	inventory, ok := reader.(failoverOwnerReader)
+	if !ok {
+		return model.DatabaseInstance{}, fmt.Errorf("manual failover needs authoritative endpoint ownership")
+	}
+	now := time.Now().UTC()
+	if snapshot.ObservedAt.IsZero() || now.Sub(snapshot.ObservedAt) > 15*time.Second || snapshot.ObservedAt.After(now.Add(time.Second)) {
+		return model.DatabaseInstance{}, fmt.Errorf("manual failover topology is stale")
+	}
+	endpoints := inventory.Endpoints(cluster.ResourceID)
+	owner := model.ResourceID("")
+	active := 0
+	for _, resource := range inventory.HAEndpoints(cluster.ResourceID) {
+		if resource.ClusterID != cluster.ResourceID || !model.ValidResourceID(resource.ResourceID) || (resource.Kind != model.EndpointVIP && resource.Kind != model.EndpointService) || (resource.DesiredRole != "" && resource.DesiredRole != model.RolePrimary) {
+			continue
+		}
+		for _, endpoint := range endpoints {
+			if endpoint.ResourceID != resource.EndpointID || !endpoint.Active {
+				continue
+			}
+			active++
+			if endpoint.ClusterID != cluster.ResourceID || endpoint.Kind != resource.Kind || !model.ValidResourceID(resource.OwnerID) || endpoint.InstanceID != resource.OwnerID {
+				return model.DatabaseInstance{}, fmt.Errorf("manual failover endpoint ownership is inconsistent")
+			}
+			owner = resource.OwnerID
+		}
+	}
+	if active != 1 || owner == targetID {
+		return model.DatabaseInstance{}, fmt.Errorf("manual failover requires exactly one distinct canonical source")
+	}
+	var source model.DatabaseInstance
+	count := 0
+	for _, instance := range snapshot.Instances {
+		if instance.ResourceID == owner {
+			source = instance
+			count++
+		}
+	}
+	probes := 0
+	for _, probe := range snapshot.Probes {
+		if probe.InstanceID == owner {
+			probes++
+		}
+	}
+	if count != 1 || probes != 1 || source.Role != model.RoleUnknown || len(source.Replication.SourceIdentity) != 0 || !source.Health.ObservedAt.Equal(snapshot.ObservedAt) || source.ClusterID != cluster.ResourceID || source.Engine != cluster.Engine || (source.Health.State != model.HealthUnknown && source.Health.State != model.HealthUnhealthy) || !resolverCurrentDatabaseFailureProbe(snapshot, owner) {
+		return model.DatabaseInstance{}, fmt.Errorf("canonical manual source lacks current database-failure evidence")
+	}
+	return source, nil
 }
 
 type CredentialProvider interface {
@@ -264,6 +322,12 @@ func (resolver RepositoryResolver) resolve(ctx context.Context, request adapter.
 			primary, resolved = resolveFormerPrimaryRejoinPrimary(snapshot, target)
 			if !resolved {
 				return adapter.OperationRequest{}, fmt.Errorf("exactly one current primary is required")
+			}
+		} else if request.Operation.Kind == model.OperationFailover && request.Operation.RequestedBy != AutomaticRecoveryActor && primaryCount == 0 {
+			var err error
+			primary, err = resolveManualFailoverOwner(resolver.Reader, cluster, snapshot, request.TargetID)
+			if err != nil {
+				return adapter.OperationRequest{}, err
 			}
 		} else if primaryCount != 1 {
 			return adapter.OperationRequest{}, fmt.Errorf("exactly one current primary is required")

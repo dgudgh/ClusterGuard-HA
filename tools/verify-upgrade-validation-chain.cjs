@@ -182,6 +182,15 @@ const writeOperationTree = (root, name, status, events) => {
 
 const CHECKS = [
   {
+    rule:'INV-009 / 6',title:'manual failover resolves only the current failed canonical owner',
+    run:()=>{
+      const s=read('internal/workflow/resolver.go')||'',t=read('internal/workflow/manual_failover_source_test.go')||'';
+      for(const token of ['request.Operation.Kind == model.OperationFailover && request.Operation.RequestedBy != AutomaticRecoveryActor && primaryCount == 0','endpoint.InstanceID != resource.OwnerID','active != 1 || owner == targetID','probes != 1','source.Role != model.RoleUnknown','!resolverCurrentDatabaseFailureProbe(snapshot, owner)','now.Sub(snapshot.ObservedAt) > 15*time.Second','explicit operation source is reserved for automatic failover'])if(!s.includes(token))return 'missing canonical manual source guard: '+token;
+      for(const token of ['TestManualFailoverUsesOnlyCanonicalFailedOwner','model.EnginePostgreSQL','credential-error','old-snapshot','duplicate-active','explicit-source','old-source-health'])if(!t.includes(token))return 'missing manual source scope regression: '+token;
+      return true;
+    },
+  },
+  {
     rule:'INV-009 / 6',title:'gateway rejoin excludes the recovered target and verifies the stable current writer',
     run:()=>{
       const s=read('internal/endpoint/gateway.go')||'',t=read('internal/endpoint/gateway_rejoin_test.go')||'';
@@ -1417,6 +1426,7 @@ const READ_FILES = [
   'internal/platformupdate/version.go', 'internal/platformupdate/inspector.go',
   CONTRACT_DOC, CONTRACT_DOC_ZH, 'internal/updatecontract/contract.md', 'internal/updatecontract/schema.json', 'internal/platformupdate/helper.go',
   'internal/platformupdate/supersedes.go', 'internal/platformupdate/supersedes_test.go',
+  'internal/workflow/resolver.go','internal/workflow/manual_failover_source_test.go',
   'internal/endpoint/gateway_rejoin_test.go',
   'adapters/mysql/semisync.go','adapters/mysql/semisync_activation_family_test.go',
   'internal/coordination/failover_safety.go', 'internal/coordination/gateway_failover_safety_test.go', 'internal/agent/vip.go', 'cmd/clusterguard-agent/gateway_fencing_test.go',
@@ -1428,6 +1438,9 @@ const READ_FILES = [
 ];
 
 const MUTATIONS = [
+  {name:'manual fallback applies to healthy or automatic source selection',file:'internal/workflow/resolver.go',find:'request.Operation.Kind == model.OperationFailover && request.Operation.RequestedBy != AutomaticRecoveryActor && primaryCount == 0',replace:'request.Operation.Kind == model.OperationFailover',rule:'manual failover resolves only the current failed canonical owner'},
+  {name:'manual source ignores canonical endpoint mismatch',file:'internal/workflow/resolver.go',find:'endpoint.InstanceID != resource.OwnerID',replace:'false',rule:'manual failover resolves only the current failed canonical owner'},
+  {name:'manual source accepts missing current database failure proof',file:'internal/workflow/resolver.go',find:'!resolverCurrentDatabaseFailureProbe(snapshot, owner)',replace:'false',rule:'manual failover resolves only the current failed canonical owner'},
   {name:'gateway rejoin verifies recovered target as writer',file:'internal/endpoint/gateway.go',find:'current.Target = resolved.Primary',replace:'current.Target = resolved.Target',rule:'gateway rejoin excludes the recovered target and verifies the stable current writer'},
   {name:'gateway rejoin accepts incomplete route observations',file:'internal/endpoint/gateway.go',find:'!observation.Complete || len(observation.OwnerIDs) != 1',replace:'len(observation.OwnerIDs) != 1',rule:'gateway rejoin excludes the recovered target and verifies the stable current writer'},
   {name:'gateway rejoin accepts a transition lease',file:'internal/endpoint/gateway.go',find:'if !stableGatewayLease(lease) {',replace:'if false {',rule:'gateway rejoin excludes the recovered target and verifies the stable current writer'},
