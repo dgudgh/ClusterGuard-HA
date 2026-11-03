@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"clusterguard.io/ha/pkg/model"
 	"context"
 	"strings"
 	"testing"
@@ -47,5 +48,39 @@ func TestVIPAcquireAddsAddressBeforeGARP(t *testing.T) {
 	arp := strings.Index(joined, "/usr/sbin/arping -U -c 1 -I ens160 192.0.2.100")
 	if add < 0 || arp < 0 || add > arp {
 		t.Fatalf("VIP command order=%s", joined)
+	}
+}
+
+func TestGatewayDatabaseVIPScopeRejectsMixedPolicy(t *testing.T) {
+	for _, engine := range []model.Engine{model.EngineMySQL, model.EnginePostgreSQL} {
+		for _, bad := range []string{"vip", "interface", "prefix", "engine"} {
+			t.Run(string(engine)+bad, func(t *testing.T) {
+				runner := &fakeCommandRunner{}
+				c := NewLinuxVIPController(runner, "/sbin/ip", "/sbin/arping")
+				p := ClusterPolicy{Engine: engine, EndpointProvider: model.EndpointProviderGateway}
+				switch bad {
+				case "vip":
+					p.VIP = "192.0.2.1"
+				case "interface":
+					p.Interface = "eth0"
+				case "prefix":
+					p.Prefix = 24
+				case "engine":
+					p.Engine = model.EngineOracle
+				}
+				if _, err := c.Status(context.Background(), p); err == nil {
+					t.Fatal("mixed gateway policy status accepted")
+				}
+				if err := c.Release(context.Background(), p); err == nil {
+					t.Fatal("mixed gateway policy release accepted")
+				}
+				if err := c.Acquire(context.Background(), p); err == nil {
+					t.Fatal("gateway database acquired VIP")
+				}
+				if len(runner.calls) != 0 {
+					t.Fatal(runner.calls)
+				}
+			})
+		}
 	}
 }

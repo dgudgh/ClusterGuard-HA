@@ -55,3 +55,13 @@ MySQL新策略保存与三节点读回成功：云副本权重1000但排除，15
 事前对照d0e5637的internal/coordination/failover_safety.go与既有gateway手动切换：activeVIP已接受gateway资源，但Fence/probeIsolation/signedRequest仅允许LinuxVIP，导致已配置无本机VIP Agent的gateway故障接管无法使用数据库隔离。Agent本身已有无VIP self_isolate：MySQL持久只读与停库原生证据，PG原生停服；请求仍签名、engine/cluster/plan/lease绑定。拟仅将这条受限且可达的Agent直接隔离路径接入gateway，清空VIP/interface/prefix并校验Service端点；不开放K8s/external_command，不把gateway加入失联Agent的授权超时兜底，不跳过外部隔离要求。新增两引擎正向顺序/签名及无多数派、失联Agent、可写重启、仍运行PG等拒绝测试，先红后绿；新修复使用3.1.7.3，基线为现场7.2/d0e5637，不覆盖7.2签名字节。
 
 新gateway直接隔离路径源码回归：全仓Go、coordination/recovery/workflow race、全仓vet通过；SOURCE54、161变异与双对照通过。两引擎10场景拒绝/成功矩阵通过，保留旧源码失败日志。仅源码阶段通过，尚未构建或现场验证3.1.7.3。
+
+## Agent真实命令链第二缺口（修改前）
+
+3.1.7.3/211c22e正式plan322d58dd-e130-45d6-8ead-730718c202e3、execute db506167-bf4e-4e1a-8a55-b8cec822dc87已成功。实际仅HA载荷，其余程序和DB PID不变；执行窗口两入口各117次全成功、121次VIP/就绪检查正常、网关PID未变。后验首次错误假定--version-json输出完整commit导致本地断言失败，按既有七位输出与清单full hash及实际文件摘要绑定后通过，未更改现场。
+
+第二轮MySQL停152服务后仍被old_primary_fenced阻断；签名只读Agent真实请求定位vip_status调用Linux ip dev空接口返回Device does not exist，而role_status正确证明停服、restart_read_only=true、persisted_read_only=true。此前对网关NoVIP实现存在的判断错误：只有gateway reconciler绕过VIP，生产newRuntimeControllers的命令路径仍直接LinuxVIPController。已有coordination夹具隔离了该真实构造链，所以源码通过不能证明FIELD。自动脚本遇Leader重选已退出，保留全部blocked操作；暂停自动、验证只读重启保护后恢复原152，再恢复等效策略，修订递增不清空历史。
+
+事前git show d0e5637:internal/agent/vip.go与211c22e相同；拟对明确gateway、MySQL/PG且VIP/interface/prefix全空的数据库策略，使Status/Release不操作本机VIP，Acquire始终拒绝；错误混合VIP配置仍拒绝，Linux路径不变。新增生产newRuntimeControllers+实际Service+真实原生角色包装的签名命令链测试，两引擎先红后绿，防止再用纯transport stub遮蔽接线缺陷。新身份3.1.7.4，保留7.3失败和签名包，不放宽数据库隔离/多数派/租约。
+
+真实命令链两引擎/启停4场景旧码全红，修改后通过；8项混合配置/引擎拒绝和既有原生VIP回归通过。全仓Go/vet、Agent生产构造与Agent/coordination race通过，SOURCE54、164变异及双对照通过；许可68/Markdown11/生成页重建通过。尚未把3.1.7.4源码检查当现场通过。

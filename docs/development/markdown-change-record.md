@@ -27,8 +27,8 @@ recorded-through: 73ff4a3
 | 2026-11-03 | `docs/development/instance-failover-field-2026-11-03.md` | A | 记录用户授权的实例策略真实故障与preview.4下HA回退/重新升级连续性计划、基线及分阶段现场结果。 |
 | 2026-11-03 | `docs/development/gateway-vip-readiness-2026-11-03.md` | A | VIP/LB探针旧版对照、授权保护与诊断；记录preview.4原件Linux红/绿、151双网关更新和原生SQL/复制实测边界。 |
 | 2026-11-03 | `docs/development/instance-failover-policy-2026-11-03.md` | A | 实例级自动资格/权重任务、事前旧码对照及分阶段回归；追加3.1.7.1真实三节点升级、页面/入口/不同观测周期、升级前VIP探针失败与新策略现场未验边界。 |
-| 2026-11-03 | `docs/zh-CN/instance-failover-policy.md` | A | 中文页面操作、实例UUID/权重、安全排序、全节点版本前置和并发边界；追加网关直接数据库隔离与失联Agent仍阻断的边界。 |
-| 2026-11-03 | `docs/en-US/instance-failover-policy.md` | A | 对应英文实例策略操作与安全/升级/并发说明；追加网关直接数据库隔离及失联Agent无兜底边界。 |
+| 2026-11-03 | `docs/zh-CN/instance-failover-policy.md` | A | 中文页面操作、实例UUID/权重、安全排序、全节点版本前置和并发边界；追加网关直接数据库隔离、生产Agent无VIP命令路径与失联Agent仍阻断的边界。 |
+| 2026-11-03 | `docs/en-US/instance-failover-policy.md` | A | 对应英文实例策略操作与安全/升级/并发说明；追加网关直接数据库隔离、生产Agent无VIP命令路径及失联Agent无兜底边界。 |
 | 2026-11-03 | `docs/development/backend/settings/instance-failover.md` | A | 单集群接口、复制CAS、执行前复核与验证路径。 |
 | 2026-11-03 | `docs/development/frontend/settings/instance-failover.md` | A | 实例编辑器范围、授权草稿、迟到响应、失败和浏览器回归。 |
 | 2026-11-03 | `docs/development/backend/settings/cluster-policy.md` | M | 区分引擎全局维护覆盖与所选集群实例参与/权重，增加单功能页指路。 |

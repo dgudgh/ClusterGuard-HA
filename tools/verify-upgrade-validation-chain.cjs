@@ -188,6 +188,9 @@ const CHECKS = [
       for(const token of ['return kind == model.EndpointProviderLinuxVIP || kind == model.EndpointProviderGateway','request.VIP, request.Interface, request.Prefix = "", "", 0','resourceErr == nil && restrictedAgentEndpoint(resource)','result.haEndpoint.Kind != model.EndpointService'])if(!s.includes(token))return 'missing scoped gateway fencing guard: '+token;
       const start=s.indexOf('func (provider *GuardedFailoverSafety) agentQuorumEnabled('),end=s.indexOf('\n}',start),body=s.slice(start,end);
       if(!body.includes('linuxEndpoint := err == nil && endpointProviderKind(resource) == model.EndpointProviderLinuxVIP'))return 'gateway gained an unverified unreachable-Agent fallback';
+      const vip=read('internal/agent/vip.go')||'',wire=read('cmd/clusterguard-agent/gateway_fencing_test.go')||'';
+      for(const token of ['policy.EndpointProvider != model.EndpointProviderGateway','policy.VIP != "" || policy.Interface != "" || policy.Prefix != 0','gateway database nodes cannot acquire the frontend VIP','return false, err','return err'])if(!vip.includes(token))return 'missing database-side no-VIP guard: '+token;
+      for(const token of ['newRuntimeControllers(cfg, runner)','agent.NewService(cfg, ctrls.vip, ctrls.roles','agent.CommandSelfIsolate','agent.CommandRoleStatus','agent.CommandPostgreSQLStatus','agent.CommandVIPAcquire'])if(!wire.includes(token))return 'missing production signed-command regression: '+token;
       const test=read('internal/coordination/gateway_failover_safety_test.go')||'';
       return test.includes('model.EnginePostgreSQL')&&test.includes('unsafe-role')&&test.includes('no-majority')&&test.includes('unreachable')||'missing engine/fencing rejection regressions';
     },
@@ -1394,7 +1397,7 @@ const READ_FILES = [
   'internal/platformupdate/version.go', 'internal/platformupdate/inspector.go',
   CONTRACT_DOC, CONTRACT_DOC_ZH, 'internal/updatecontract/contract.md', 'internal/updatecontract/schema.json', 'internal/platformupdate/helper.go',
   'internal/platformupdate/supersedes.go', 'internal/platformupdate/supersedes_test.go',
-  'internal/coordination/failover_safety.go', 'internal/coordination/gateway_failover_safety_test.go',
+  'internal/coordination/failover_safety.go', 'internal/coordination/gateway_failover_safety_test.go', 'internal/agent/vip.go', 'cmd/clusterguard-agent/gateway_fencing_test.go',
   'tools/update-private-history.test.cjs', 'internal/platformupdate/helper_private_failure_test.go', 'internal/platformupdate/helper_files_unix.go',
   'scripts/clusterguard-update-job.sh', 'scripts/clusterguard-upgrade.sh', 'scripts/build-hotfix-patch.sh', 'scripts/install_clusterguard.sh',
   'internal/platformupdate/manager.go', 'internal/api/updates.go', 'internal/api/console.html',
@@ -1403,6 +1406,9 @@ const READ_FILES = [
 ];
 
 const MUTATIONS = [
+  {name:'gateway DB policy accepts a host VIP',file:'internal/agent/vip.go',find:'policy.VIP != "" || policy.Interface != "" || policy.Prefix != 0',replace:'false',rule:'gateway failover fences only through a scoped reachable native Agent'},
+  {name:'gateway DB native VIP acquisition is permitted',file:'internal/agent/vip.go',find:'gateway database nodes cannot acquire the frontend VIP',replace:'success',rule:'gateway failover fences only through a scoped reachable native Agent'},
+  {name:'signed native command regression loses production constructor',file:'cmd/clusterguard-agent/gateway_fencing_test.go',find:'newRuntimeControllers(cfg, runner)',replace:'fakeControllers(cfg, runner)',rule:'gateway failover fences only through a scoped reachable native Agent'},
   {name:'gateway fencing sends fixed frontend to DB host',file:'internal/coordination/failover_safety.go',find:'request.VIP, request.Interface, request.Prefix = "", "", 0',replace:'request.VIP, request.Interface, request.Prefix = resource.endpoint.IPAddress, resource.haEndpoint.Interface, resource.haEndpoint.Prefix',rule:'gateway failover fences only through a scoped reachable native Agent'},
   {name:'restricted Agent accepts any endpoint kind',file:'internal/coordination/failover_safety.go',find:'return kind == model.EndpointProviderLinuxVIP || kind == model.EndpointProviderGateway',replace:'return kind.Valid()',rule:'gateway failover fences only through a scoped reachable native Agent'},
   {name:'gateway borrows native VIP unreachable-Agent fallback',file:'internal/coordination/failover_safety.go',find:'linuxEndpoint := err == nil && endpointProviderKind(resource) == model.EndpointProviderLinuxVIP',replace:'linuxEndpoint := err == nil && restrictedAgentEndpoint(resource)',rule:'gateway failover fences only through a scoped reachable native Agent'},
