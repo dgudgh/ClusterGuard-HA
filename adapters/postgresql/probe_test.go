@@ -48,7 +48,7 @@ func TestDiscoverPrimaryUsesStableNodeAndSystemIdentities(t *testing.T) {
 	if instance.EngineMetadata["wal_log_hints"] != "true" || instance.EngineMetadata["data_checksum_version"] != "1" {
 		t.Fatalf("rewind prerequisites were not discovered: %+v", instance.EngineMetadata)
 	}
-	if len(runner.queries) != 1 || strings.Contains(strings.ToLower(runner.queries[0]), "primary_conninfo") {
+	if len(runner.queries) != 1 || !strings.Contains(runner.queries[0], "encode(sha256(convert_to(NULLIF(current_setting('primary_conninfo', true), ''), 'UTF8')), 'hex')") {
 		t.Fatalf("probe must be single-shot and must not read secrets: %v", runner.queries)
 	}
 }

@@ -13,3 +13,6 @@
 回归：API同名test、store同名test、runtime/instance_failover_peers_test.go、recovery/instance_failover_policy_test.go、两引擎同名单功能测试和workflow同名test。现场与制品阶段见[记录](../../instance-failover-policy-2026-11-03.md)。
 
 首次保存与策略同一次Raft提交持久化最低运行协议；关闭自动、退休和旧快照恢复不得降低。已存在的旧策略也视为需要协议1。保存后升级/回退先检查实际目标程序，详见[持久兼容门槛](runtime-compatibility.md)。本轮仅SOURCE与隔离root测试，现场3.1.7.7尚未包含该保护。
+
+
+PG上游失联后可使用先前双端原生核验的绑定，但必须重新核验当前注册端点、配置指纹、system identifier/timeline及已排空WAL；不把GUC或缓存healthy当故障接管证据。新鲜来源查询、Agent隔离、多数派、租约及提升后校验不变；新进展见[三项缺陷修复](../../ha-remaining-fixes-2026-11-03.md)。本机PG16停主后候选通过不等于现场自动切换/重挂通过。

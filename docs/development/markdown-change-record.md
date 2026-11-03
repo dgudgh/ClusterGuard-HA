@@ -23,6 +23,7 @@ recorded-through: 73ff4a3
 
 | 日期 | 文件 | 变更 | 说明 |
 | --- | --- | --- | --- |
+| 2026-11-03 | `docs/development/ha-remaining-fixes-2026-11-03.md` | A | 三项HA缺陷门禁/旧码对照、API/Raft滞后读、PG16源失联与绑定、因果历史和201/8项变异；记录失败准备与SOURCE/ART/FIELD边界，单网关不变。 |
 | 2026-11-03 | `docs/development/policy-floor-field-3.1.7.10-2026-11-03.md` | A | 记录明确现场升级授权、包身份与契约、当前前检/原生入口监测、逐节点及50新观察FIELD计划；追加正式升级操作ID、完成时间、真实进程/原生SQL/策略审计及只读原备份拒绝实测、浏览器上传替代路径与业务未修边界。 |
 | 2026-11-03 | `docs/development/policy-floor-patch-3.1.7.8-2026-11-03.md` | A | 记录初始构建、候选封存、新身份、macOS UID回归及修复前旧码对照、签名载荷与ART/现场边界，旧制品不变。 |
 | 2026-11-03 | `docs/development/backend/settings/updates.md` | M | 升级索引增加持久兼容门槛的按需入口。 |
@@ -34,7 +35,7 @@ recorded-through: 73ff4a3
 | 2026-11-03 | `docs/development/instance-failover-policy-2026-11-03.md` | A | 实例级自动资格/权重任务、事前旧码对照及分阶段回归；追加3.1.7.1真实三节点升级、页面/入口/不同观测周期、升级前VIP探针失败与新策略现场未验边界。 |
 | 2026-11-03 | `docs/zh-CN/instance-failover-policy.md` | A | 中文实例策略、安全排序/升级/并发边界，网关隔离/Agent/半同步插件族/旧主恢复及手动故障源解析；明确MySQL已验与PG停主源身份丢失尚未修复，新增DeepSeek真实写入失败与四库保留分离、原主/入口恢复及根因未确认边界；补保存策略后旧版本回退保护尚未实现的四项失败。  追加2026-11-03：持久最低协议、实际目标保护及新SOURCE结果；保留旧现场失败与未部署边界。 |
 | 2026-11-03 | `docs/en-US/instance-failover-policy.md` | A | 对应英文实例策略及安全/升级/并发、网关隔离/半同步/旧主恢复/手动故障源解析；同步MySQL分阶段已验、PG自动未通过及DeepSeek升级断写失败、确认数据四库保留和恢复边界；补不兼容降级四项SOURCE集成失败和未执行现场边界。  追加2026-11-03：持久最低协议、实际目标保护及新SOURCE结果；保留旧现场失败与未部署边界。 |
-| 2026-11-03 | `docs/development/backend/settings/instance-failover.md` | A | 单集群接口、复制CAS、执行前复核与验证路径。  追加2026-11-03：持久最低协议、实际目标保护及新SOURCE结果；保留旧现场失败与未部署边界。 |
+| 2026-11-03 | `docs/development/backend/settings/instance-failover.md` | A | 单集群接口、复制CAS、执行前复核与验证路径。  追加2026-11-03：持久最低协议、实际目标保护及新SOURCE结果；保留旧现场失败与未部署边界。  追加PG失联来源绑定、原生证据与现场边界。 |
 | 2026-11-03 | `docs/development/frontend/settings/instance-failover.md` | A | 实例编辑器范围、授权草稿、迟到响应、失败和浏览器回归。 |
 | 2026-11-03 | `docs/development/backend/settings/cluster-policy.md` | M | 区分引擎全局维护覆盖与所选集群实例参与/权重，增加单功能页指路。 |
 | 2026-11-02 | `docs/development/postgresql-hybrid-field-2026-11-02.md` | A | 用户授权四节点真实PG部署测试的前检、门禁、独立实例和MySQL保护边界；逐项记录实际现场结果与未实现PG网关联动。 |
@@ -50,7 +51,7 @@ recorded-through: 73ff4a3
 | 2026-11-02 | `docs/development/gateway-vip-frontend-2026-11-02.md` | A | 记录单/双网关VIP生成/就绪探针、155端口映射、稳定主库部分续期；实际Linux命名空间/VRRP、真实网关进程与四库连通验收及未交付/未接管边界；续记用户人工切主环境、历史门禁修正、3.1.5.1真实更新、网关/Agent/初始VIP接管、21项预检及12次稳定采样；续记用户云切主后的厂商mysqld文件能力与Agent沙箱兼容故障及修复验证。  追加PG文档：追加PG文档源码核对、范围和静态验证计划；本轮不执行PG现场。 |
 | 2026-11-02 | `docs/development/cloud-instance-onboarding-2026-11-02.md` | A | 记录云复制/网络和误诊纠正、旧现场缺少登记接口；追加冻结候选与3.1.4.2身份链、ART/历史门禁边界、正式通道上传/计划、用户确认的候选升级成功、四库真实页面与SQL验收，补记云副本缺少半同步插件的实测、独立cnf及只读保护下云MySQL重启、4实例healthy/主库3个半同步客户端和实际页面回归；云切主仍未完成。 |
 | 2026-11-02 | `docs/development/gateway-real-mysql-2026-11-02.md` | A | 记录真实MySQL、真实控制面与页面网关端到端测试的旧证据差异、门禁、隔离范围及本轮实际结果。 |
-| 2026-10-28 | `docs/development/backend/operations.md` | M | 补MySQL页面切换到gateway提供者的真实租约、屏障、Agent模式与部署指路。2026-11-02追加真实MySQL/Raft/双网关及页面端到端复跑、摘要修复与实际结果入口。  追加终态后持续writer/网关检查及Agent兼容指路。  追加PG文档：追加PG原生HA和网关联动分开验收，保留非MySQL预检阻断。  追加PG网关联动源码范围、Linux签名无VIP/原生停主隔离和独立现场记录指路；MySQL结果不代替PG验收。 |
+| 2026-10-28 | `docs/development/backend/operations.md` | M | 补MySQL页面切换到gateway提供者的真实租约、屏障、Agent模式与部署指路。2026-11-02追加真实MySQL/Raft/双网关及页面端到端复跑、摘要修复与实际结果入口。  追加终态后持续writer/网关检查及Agent兼容指路。  追加PG文档：追加PG原生HA和网关联动分开验收，保留非MySQL预检阻断。  追加PG网关联动源码范围、Linux签名无VIP/原生停主隔离和独立现场记录指路；MySQL结果不代替PG验收。  追加授权一致读与原许可/多数派不变。 |
 | 2026-10-28 | `docs/development/frontend/operations.md` | M | 补默认折叠网关状态、语言/上下文与原操作锁交互规则。 |
 | 2026-10-28 | `docs/development/gateway-switchover-2026-10-28.md` | A | 记录页面切换与独立网关对接的旧版/多数派边界；补11-02显式单网关、本地VIP、部分稳定续期与严格撤权的实现范围。 |
 | 2026-10-28 | `docs/development/existing-instance-registration-2026-10-28.md` | A | 记录已有实例端点接入的修改前对照、契约加载、原子登记/发现边界及实际回归结果。 |
@@ -128,7 +129,7 @@ recorded-through: 73ff4a3
 | 2026-10-08 | `docs/zh-CN/validation-gate-workflow.md` | M | 去掉已过期的固定17项计数，以本次源码门禁输出为准；新增功能仍须补充实际回归。 2026-10-19：按制品类型区分签名更新ART/FIELD与完整介质专用校验；将2026-10-04全局OPEN改为日期化历史，不将其套用新产物。 |
 | 2026-10-08 | `docs/development/backend/settings/version.md` | M | 说明product_version运行来源和旧历史验签补读，RPM兼容字段不变。 |
 | 2026-10-09 | `docs/development/frontend/settings/updates.md` | M | 明确当前/目标/历史版本来源及验签替代；新增staging步骤和新操作重置规则。新增操作前产品版本与RPM基线独立展示、旧来源缺失/混合节点和回退未知规则及浏览器回归。补充历史/当前/事件共用双语消息映射、未知诊断随语言提示并保留原文、原始状态不变及桌面/窄屏语言切换回归入口。 「版本显示来源」再补两处展示口径：上传预览身份栅格把**当前运行版本 / RPM兼容基线 / 目标版本**三件独立事实分开，运行版本与版本摘要同源、不随上传改变；签名校验按包类型分派，热修补丁不带 RPM 升级引导器时显示`已通过 · 热修补丁`而非`已通过 · 历史兼容包`，滚动升级保留引导器/历史兼容两种描述，包类型文案写明热修会更新产品版本并保留 RPM 安装记录。  追加兼容准入明确未受理标记、普通409/committed不确定对照和双尺寸真实浏览器语言往返。 |
-| 2026-10-09 | `docs/development/backend/settings/update-history.md` | M | 记录Snapshot验签后继及部署判据。新增staging与updating共用节点百分比的读取投影、原始状态保留和三节点持久化回归入口。 |
+| 2026-10-09 | `docs/development/backend/settings/update-history.md` | M | 记录Snapshot验签后继及部署判据。新增staging与updating共用节点百分比的读取投影、原始状态保留和三节点持久化回归入口。  追加因果历史投影、原终态时间与冲突/缓存边界。 |
 
 | 2026-10-09 | `docs/development/frontend/settings/preferences.md` | M | 语言设置接入静态原文绑定、动态双语目录和完整重绘；明确业务数据/原始证据、内存偏好及无请求/表单保持边界，登记四引擎八页面真实浏览器与目录回归。 |
 | 2026-10-09 | `docs/development/frontend/settings/configuration.md` | M | 记录参数分组默认折叠、点击/键盘展开、刷新与双语保留、注销清空、局部表格滚动和专用真实浏览器验收；增加3.1.2.1页面编辑、选定控制节点、二次确认、逐节点结果与失效拦截，记录隔离浏览器范围。 2026-10-09 追加登记「控制节点卡片」批次：目标选择由裸 UUID 改为名称/不可变 ID/可信 API 地址三件独立事实的卡片，只在事实成立时标「本机」「Leader」，不显示控制面没有数据源的在线/离线，复选框固定在卡片作用域内 16 像素，卡片是 label 且点击任意处切换自身复选框。 2026-10-09 追加登记「卡片角色标记与端点链接」批次：每卡改为恰好一个角色标记（本机>Leader>投票节点，配色只沿用既有变量），复选框移到卡片右侧固定 18 像素，地址行带链接图标且 `http(s)://` 可信端点渲染为新页链接，裸地址仍是纯文本；浏览器验收与 INV-004/23 反查及变异同步更新。 增补参考图布局：实际所选数、蓝色选中卡片、固定底栏/通知避让、文件元信息与分组总数、已知提示双语及隔离浏览器回归。 追加白名单分类（可编辑在上、专用流程在下）、末列修改值、异步能力确认与独立折叠/策略挂载，记录Chrome回归。 |

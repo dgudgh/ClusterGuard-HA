@@ -180,7 +180,9 @@ func (service *Service) prepareRefresh(ctx context.Context, clusterID model.Reso
 		return store.DiscoveryRefresh{}, err
 	}
 	if resolver, ok := candidate.(adapter.TopologyObservationResolver); ok && topologyAvailable {
-		resolveTopologyObservations(resolver, probeResults)
+		previous, _ := service.repository.TopologySnapshot(clusterID)
+		previous = topologyBoundToInventory(previous, inventory)
+		resolveTopologyObservations(resolver, probeResults, previous)
 	}
 	observations := make([]store.DiscoveryObservation, 0, len(probeResults))
 	writablePrimaryIdentities := make(map[string]struct{})
@@ -753,7 +755,23 @@ func boundedEndpointProbeContext(parent context.Context) (context.Context, conte
 	return context.WithTimeout(parent, budget)
 }
 
-func resolveTopologyObservations(resolver adapter.TopologyObservationResolver, probes []endpointProbe) {
+// Historical provenance is unusable after an endpoint move/removal or identity
+// rebinding. Publication still uses the captured inventory generation CAS.
+func topologyBoundToInventory(previous model.TopologySnapshot, inventory store.DiscoveryInventory) model.TopologySnapshot {
+	keep := []model.DatabaseInstance{}
+	for _, v := range previous.Instances {
+		for _, e := range inventory.Endpoints {
+			if e.Active && e.Kind == model.EndpointDatabase && e.ClusterID == v.ClusterID && e.InstanceID == v.ResourceID && e.Port == v.Port && e.IPAddress == v.IPAddress && e.Hostname == v.Hostname {
+				keep = append(keep, v)
+				break
+			}
+		}
+	}
+	previous.Instances = keep
+	return previous
+}
+
+func resolveTopologyObservations(resolver adapter.TopologyObservationResolver, probes []endpointProbe, previous model.TopologySnapshot) {
 	observations := make([]adapter.TopologyObservation, 0, len(probes))
 	indices := make([]int, 0, len(probes))
 	for index, probe := range probes {
@@ -766,7 +784,11 @@ func resolveTopologyObservations(resolver adapter.TopologyObservationResolver, p
 			Discovery: probe.discovery, Topology: probe.topology,
 		})
 	}
-	resolver.ResolveTopologyObservations(observations)
+	if historical, ok := resolver.(adapter.TopologyHistoryResolver); ok {
+		historical.ResolveTopologyObservationsWithHistory(observations, previous)
+	} else {
+		resolver.ResolveTopologyObservations(observations)
+	}
 	for index, observation := range observations {
 		probes[indices[index]].discovery = observation.Discovery
 		probes[indices[index]].topology = observation.Topology

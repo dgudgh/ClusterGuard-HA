@@ -54,3 +54,8 @@ Package.source_version仍是签名RPM兼容基线。Runner在维护锁建立后�
 Runner将字段写入同operation_id的status/events/operations；wrapper终态仅保留同操作字段，并复制至其他控制节点。Manager按原样读取，重启不丢失。首次安装时已运行的旧wrapper可能丢弃新字段；Manager仅从同operation_id/patch_id/mode的Runner追加快照恢复读投影，不重写旧文件、不串用其他操作。旧记录没有观测则保持缺失，不用当前二进制身份或邻近历史补写。旧签名包和原日志不改。
 
 验证入口：[真实Runner与wrapper回归](../../../../scripts/operation_version_test.go)、[Manager重启/JSON往返](../../../../internal/platformupdate/operation_version_test.go)、[浏览器版本变化](../../../../tools/console-update-version-transition-acceptance.cjs)。
+
+
+## 一致历史投影
+
+同一包的根执行operations与受理requests各自首见操作顺序构成因果约束。晚到旧快照不能把旧操作变成最新；本机status只在因果关系已证实时投影为较后操作。无关系旧记录仅作确定性显示排序，不能用时间戳替换当前subject。相同身份终态时间取原始终态事件，保留wrapper及原文件时间。模式/终态矛盾、因果循环阻断新动作并要求核验；缓存只用于未变文件的读取，动作前仍新鲜校验。实现和隔离回归见[本轮记录](../../ha-remaining-fixes-2026-11-03.md)，未以SOURCE声称现场旧记录已更新。

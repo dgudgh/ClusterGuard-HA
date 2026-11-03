@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -141,6 +142,18 @@ func (server *Server) agentReconcileRoute(writer http.ResponseWriter, request *h
 	// Upgrade maintenance blocks new operations, not signed decisions for an
 	// existing writer lease. Quorum, lease expiry, and local fencing still apply.
 	if !server.authorizeLeaderQuorum(writer, request) {
+		return
+	}
+	if reader, ok := server.authority.(interface{ SynchronizeRead(context.Context) error }); ok {
+		if err := reader.SynchronizeRead(request.Context()); err != nil {
+			writeError(writer, http.StatusServiceUnavailable, "controller ownership state is not synchronized")
+			return
+		}
+	}
+	// Synchronization time counts against both the request and any live lease.
+	now = time.Now().UTC()
+	if err := agent.VerifyReconcileRequest(payload, server.agentSecret, now); err != nil {
+		writeError(writer, http.StatusUnauthorized, "agent reconcile request expired during state synchronization")
 		return
 	}
 	releaseDecision := func() {}

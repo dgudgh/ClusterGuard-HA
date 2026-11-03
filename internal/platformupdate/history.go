@@ -165,42 +165,203 @@ func (manager *Manager) Deployment(patchID string) (*Deployment, bool) {
 // Operations folds append-only snapshots by identity. Events from one attempt
 // cannot update another attempt, even when clocks move backwards.
 func (manager *Manager) Operations(patchID string) []Job {
-	if !validPatchID(patchID) {
+	jobs, err := manager.readOperationHistory(patchID)
+	if err != nil {
 		return nil
 	}
-	byID := map[string]Job{}
+	events := readEvents(filepath.Join(manager.config.RootDirectory, patchID, eventsFileName), maximumTailLines)
+	for i := range jobs {
+		canonicalTerminalTime(&jobs[i], events)
+	}
+	return jobs
+}
+
+// Root-published operation append order is causal; per-node status and wall clocks are not.
+// Local requests add pending operations not yet published by the root wrapper.
+// A late snapshot of an already-seen operation must not make it newest again.
+type operationProjection struct {
+	files []os.FileInfo
+	jobs  []Job
+	err   error
+}
+
+func (manager *Manager) readOperationHistory(patchID string) ([]Job, error) {
+	if !validPatchID(patchID) {
+		return nil, ErrInvalidPatch
+	}
+	manager.historyProjectionMu.Lock()
+	defer manager.historyProjectionMu.Unlock()
+	files := []os.FileInfo{}
 	for _, name := range []string{"requests.jsonl", "operations.jsonl"} {
-		file, err := os.Open(filepath.Join(manager.config.RootDirectory, patchID, name))
-		if err != nil {
+		info, err := os.Lstat(filepath.Join(manager.config.RootDirectory, patchID, name))
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		if info != nil && !info.Mode().IsRegular() {
+			return nil, ErrInvalidPatch
+		}
+		files = append(files, info)
+	}
+	if cached, ok := manager.historyProjections[patchID]; ok && sameProjectionFiles(cached.files, files) {
+		return append([]Job(nil), cached.jobs...), cached.err
+	}
+	jobs, err := manager.readOperationHistoryUncached(patchID)
+	if manager.historyProjections == nil {
+		manager.historyProjections = map[string]operationProjection{}
+	}
+	manager.historyProjections[patchID] = operationProjection{files: files, jobs: jobs, err: err}
+	return append([]Job(nil), jobs...), err
+}
+func sameProjectionFiles(a, b []os.FileInfo) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i, x := range a {
+		y := b[i]
+		if x == nil || y == nil {
+			if x != y {
+				return false
+			}
 			continue
 		}
+		if !os.SameFile(x, y) || x.Size() != y.Size() || !x.ModTime().Equal(y.ModTime()) || x.Mode() != y.Mode() {
+			return false
+		}
+	}
+	return true
+}
+
+func (manager *Manager) readOperationHistoryUncached(patchID string) ([]Job, error) {
+	if !validPatchID(patchID) {
+		return nil, ErrInvalidPatch
+	}
+	byID := map[string]Job{}
+	order := []string{}
+	sequences := [][]string{}
+	for _, name := range []string{"operations.jsonl", "requests.jsonl"} {
+		file, err := os.Open(filepath.Join(manager.config.RootDirectory, patchID, name))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		sequence := []string{}
+		localSeen := map[string]bool{}
 		scanner := bufio.NewScanner(file)
 		scanner.Buffer(make([]byte, 4096), 2<<20)
 		for scanner.Scan() {
 			var job Job
 			if json.Unmarshal(scanner.Bytes(), &job) != nil || job.PatchID != patchID || job.OperationID == "" {
-				continue
+				file.Close()
+				return nil, fmt.Errorf("CG_HISTORY_OVERWRITE_FORBIDDEN: invalid operation history")
 			}
-			if previous, ok := byID[job.OperationID]; ok && terminalOperation(previous.Status) && !terminalOperation(job.Status) {
-				continue
+			if !localSeen[job.OperationID] {
+				sequence = append(sequence, job.OperationID)
+				localSeen[job.OperationID] = true
 			}
-			if previous, ok := byID[job.OperationID]; ok {
+			previous, seen := byID[job.OperationID]
+			if seen {
+				if previous.Mode != job.Mode || (terminalOperation(previous.Status) && terminalOperation(job.Status) && previous.Status != job.Status) {
+					file.Close()
+					return nil, fmt.Errorf("CG_HISTORY_OVERWRITE_FORBIDDEN: conflicting operation identity %s", job.OperationID)
+				}
+				if terminalOperation(previous.Status) && !terminalOperation(job.Status) {
+					continue
+				}
 				preserveOperationVersions(previous, &job)
+			} else {
+				order = append(order, job.OperationID)
 			}
 			byID[job.OperationID] = job
 		}
+		sequences = append(sequences, sequence)
+		scanErr := scanner.Err()
 		file.Close()
+		if scanErr != nil {
+			return nil, scanErr
+		}
 	}
-	jobs := make([]Job, 0, len(byID))
-	for _, job := range byID {
+	return causalHistoryOrder(byID, order, sequences)
+}
+
+// Both root-operation and accepted-request logs constrain causal order. Wall
+// clocks are only a stable display tie-break for unrelated legacy records; they
+// never prove that a different operation may replace the current subject.
+func causalHistoryOrder(byID map[string]Job, ids []string, sequences [][]string) ([]Job, error) {
+	edges := map[string]map[string]bool{}
+	degree := map[string]int{}
+	ancestors := map[string]map[string]bool{}
+	for _, id := range ids {
+		edges[id] = map[string]bool{}
+		ancestors[id] = map[string]bool{}
+	}
+	for _, sequence := range sequences {
+		for i := 1; i < len(sequence); i++ {
+			a, b := sequence[i-1], sequence[i]
+			if !edges[a][b] {
+				edges[a][b] = true
+				degree[b]++
+			}
+		}
+	}
+	jobs := []Job{}
+	done := map[string]bool{}
+	for len(jobs) < len(ids) {
+		ready := []string{}
+		for _, id := range ids {
+			if !done[id] && degree[id] == 0 {
+				ready = append(ready, id)
+			}
+		}
+		if len(ready) == 0 {
+			return nil, fmt.Errorf("CG_HISTORY_OVERWRITE_FORBIDDEN: contradictory causal operation history")
+		}
+		sort.Slice(ready, func(i, j int) bool {
+			a, b := byID[ready[i]], byID[ready[j]]
+			if a.StartedAt.Equal(b.StartedAt) {
+				return ready[i] < ready[j]
+			}
+			return a.StartedAt.Before(b.StartedAt)
+		})
+		id := ready[0]
+		done[id] = true
+		job := byID[id]
+		job.historyAfter = ancestors[id]
 		jobs = append(jobs, job)
+		for next := range edges[id] {
+			degree[next]--
+			ancestors[next][id] = true
+			for old := range ancestors[id] {
+				ancestors[next][old] = true
+			}
+		}
 	}
-	sort.Slice(jobs, func(i, j int) bool { return jobs[i].StartedAt.Before(jobs[j].StartedAt) })
-	return jobs
+	return jobs, nil
+}
+
+// Wrapper completion is observed a few seconds after the Runner's terminal
+// event. Use that same immutable event on every API projection, without editing
+// either original time. Never borrow another operation's terminal timestamp.
+func canonicalTerminalTime(job *Job, events []Event) {
+	if job.OperationID == "" || !terminalOperation(job.Status) {
+		return
+	}
+	for i := len(events) - 1; i >= 0; i-- {
+		event := events[i]
+		owner := event.OperationID
+		if owner == "" {
+			owner = event.ExecutionID
+		}
+		if owner == job.OperationID && event.PatchID == job.PatchID && event.Mode == job.Mode && event.Status == string(job.Status) && !event.UpdatedAt.IsZero() {
+			job.FinishedAt = event.UpdatedAt
+			return
+		}
+	}
 }
 
 func terminalOperation(status Status) bool {
-	return status == StatusSucceeded || status == StatusFailed || status == StatusRolledBack
+	return status == StatusSucceeded || status == StatusFailed || status == StatusRolledBack || status == StatusPlanned
 }
 
 type historyValidationCache struct {
@@ -302,7 +463,8 @@ func (manager *Manager) validateHistoryFiles(patchID string) error {
 			return err
 		}
 	}
-	return nil
+	_, err := manager.readOperationHistoryUncached(patchID)
+	return err
 }
 
 func (manager *Manager) verifyStoredDigest(record Package) error {

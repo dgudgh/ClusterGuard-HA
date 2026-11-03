@@ -103,6 +103,7 @@ func TestPostgreSQLNativeStreamingDiscoveryFiftyBackgroundCycles(t *testing.T) {
 	}
 	run("initdb", "-D", dirs["pg02"], "-U", "cg_fixture", "-A", "trust", "--locale=C", "-E", "UTF8")
 	start("pg02", "")
+	query("pg02", "CREATE ROLE cg_read LOGIN; GRANT pg_monitor TO cg_read")
 	for _, name := range []string{"pg01", "pg03"} {
 		slot := "cg_slot_" + name
 		query("pg02", "SELECT pg_create_physical_replication_slot('"+slot+"')")
@@ -169,7 +170,7 @@ func TestPostgreSQLNativeStreamingDiscoveryFiftyBackgroundCycles(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := New(registry, repository, CredentialResolverFunc(func(context.Context, model.DatabaseCluster, model.Endpoint) (adapter.Credentials, error) {
-		return adapter.Credentials{Username: "cg_fixture", Database: "postgres"}, nil
+		return adapter.Credentials{Username: "cg_read", Database: "postgres"}, nil
 	}), nil)
 	observer := nativePostgreSQLObserver{service: service, results: make(chan nativePostgreSQLObservation, 128)}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -212,10 +213,70 @@ func TestPostgreSQLNativeStreamingDiscoveryFiftyBackgroundCycles(t *testing.T) {
 			}
 			if result.snapshot.Health.State == model.HealthDegraded && len(result.snapshot.Links) == 1 {
 				t.Log("PostgreSQL 16: 50 distinct background cycles healthy with 2 links; paused replay degraded and retired its link")
-				return
+				goto sourceLoss
 			}
 		case <-ctx.Done():
 			t.Fatal("paused replay did not degrade topology")
 		}
 	}
+sourceLoss:
+	cancel()
+	<-done
+	query("pg01", "SELECT pg_wal_replay_resume()")
+	query("pg02", "CHECKPOINT")
+	finalLSN := query("pg02", "SELECT pg_current_wal_lsn()::text")
+	for _, name := range []string{"pg01", "pg03"} {
+		deadline := time.Now().Add(15 * time.Second)
+		for query(name, "SELECT (pg_last_wal_receive_lsn() = pg_last_wal_replay_lsn() AND pg_last_wal_replay_lsn() >= '"+finalLSN+"'::pg_lsn)::text") != "true" {
+			if time.Now().After(deadline) {
+				t.Fatal("standby did not drain WAL")
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	if _, err := service.Refresh(context.Background(), cluster.ResourceID); err != nil {
+		t.Fatal(err)
+	}
+	// Restart only this isolated fixture during cleanup, so the pre-existing
+	// teardown can stop all three instances normally even after a failed assert.
+	t.Cleanup(func() {
+		run("pg_ctl", "-D", dirs["pg02"], "-l", filepath.Join(root, "pg02.log"), "-w", "-t", "20", "start")
+	})
+	run("pg_ctl", "-D", dirs["pg02"], "-m", "fast", "-w", "-t", "15", "stop")
+	for _, name := range []string{"pg01", "pg03"} {
+		deadline := time.Now().Add(15 * time.Second)
+		for query(name, "SELECT count(*) FROM pg_stat_wal_receiver") != "0" {
+			if time.Now().After(deadline) {
+				t.Fatal("WAL receiver did not disappear")
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	for round := 0; round < 3; round++ {
+		snapshot, err := service.Refresh(context.Background(), cluster.ResourceID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var primary model.DatabaseInstance
+		targets := []model.DatabaseInstance{}
+		for _, v := range snapshot.Instances {
+			if v.EngineIdentity["resource_id"] == pgReplayPrimaryNativeID {
+				primary = v
+			} else {
+				targets = append(targets, v)
+			}
+		}
+		currentCluster, _ := repository.Cluster(cluster.ResourceID)
+		assessments, err := pgadapter.New().EvaluateCandidates(context.Background(), adapter.CandidateRequest{Cluster: currentCluster, Primary: primary, Instances: targets, Probes: snapshot.Probes, ObservedAt: snapshot.ObservedAt, Policy: model.CandidatePolicy{AllowSourceDisconnected: true, MaximumLagSeconds: 0}})
+		if err != nil || len(assessments) != 2 {
+			t.Fatalf("native source loss candidate error: %+v %v", assessments, err)
+		}
+		for _, a := range assessments {
+			if !a.Eligible {
+				t.Fatalf("native disconnected standby rejected: %+v", a)
+			}
+		}
+	}
+	t.Log("Native PG16: stopped primary, receiver rows gone, both drained standbys eligible from bound double-ended history; empty/wrong bootstrap GUCs unchanged")
+
 }

@@ -181,6 +181,26 @@ const writeOperationTree = (root, name, status, events) => {
 };
 
 const CHECKS = [
+  {rule:'7 / 12 / 22',title:'writer authorization waits for applied quorum state',run:()=>{
+    const raft=read('internal/consensus/raft.go')||'',api=read('internal/api/agent_reconcile.go')||'',keeper=read('internal/coordination/ownership_keeper.go')||'';
+    const start=raft.indexOf('func (node *Node) SynchronizeRead('),end=raft.indexOf('func (node *Node) Synchronize()',start),body=raft.slice(start,end);
+    for(const token of ['node.raft.Barrier(node.applyTimeout)','node.raft.CurrentTerm() != term','node.RequireMutationAuthority(ctx)'])if(!body.includes(token))return 'missing applied quorum read: '+token;
+    if(!api.includes('reader.SynchronizeRead(request.Context())')||api.indexOf('reader.SynchronizeRead(request.Context())')>api.indexOf('evidence := coordination.SelfIsolationEvidence'))return 'Agent signs before applied-state barrier';
+    if(!keeper.includes('reader.SynchronizeRead(ctx)')||keeper.indexOf('reader.SynchronizeRead(ctx)')>keeper.indexOf('registeredClusters := keeper.inventory.Clusters()'))return 'ownership renewal reads before replay';
+    return !!read('internal/consensus/authorization_read_test.go')&&!!read('internal/api/agent_consistent_read_test.go');
+  }},
+  {rule:'INV-009 / 12 / 22',title:'PG source loss retains bound native provenance and current WAL checks',run:()=>{
+    const source=read('adapters/postgresql/source_loss.go')||'',discovery=read('internal/discovery/service.go')||'',execution=read('adapters/postgresql/execution.go')||'';
+    for(const token of ['old.EngineMetadata["verified_upstream_config"] != fingerprint','received != replayed','replayed < oldReplay','sourceMatches != 1','v.Replication.SourceIdentity = old.Replication.SourceIdentity.Clone()'])if(!source.includes(token))return 'missing historical-source safety: '+token;
+    if(!discovery.includes('historical.ResolveTopologyObservationsWithHistory(observations, previous)')||!execution.includes('adapterInstance.ResolveTopologyObservationsWithHistory(observations, resolved.Snapshot)'))return 'history guard not wired through discovery and execution';
+    return !!read('internal/discovery/postgresql_source_loss_test.go')&&!!read('adapters/postgresql/source_loss_execution_test.go');
+  }},
+  {rule:'INV-006 / 12 / 22',title:'update history projects causal attempts and original terminal times',run:()=>{
+    const history=read('internal/platformupdate/history.go')||'',manager=read('internal/platformupdate/manager.go')||'';
+    for(const token of ['return causalHistoryOrder(byID, order, sequences)','previous.Status != job.Status','job.FinishedAt = event.UpdatedAt'])if(!history.includes(token))return 'missing deterministic history projection: '+token;
+    if(!manager.includes('latest.historyAfter[result.OperationID]')||!manager.includes('canonicalTerminalTime(&result, result.Events)')||!manager.includes('latest.OperationID != result.OperationID && terminalOperation(result.Status)'))return 'latest Job does not use verified causal history';
+    return !!read('internal/platformupdate/history_projection_test.go');
+  }},
   {
     rule:'INV-009 / 6',title:'manual failover resolves only the current failed canonical owner',
     run:()=>{
@@ -1434,6 +1454,17 @@ const reportOpen = failures => {
 // The files the rules read. The self-test copies exactly these, so a mutation cannot be
 // caught by reading something the gate does not actually consult.
 const READ_FILES = [
+ 'internal/consensus/raft.go',
+ 'internal/consensus/authorization_read_test.go',
+ 'internal/api/agent_reconcile.go',
+ 'internal/api/agent_consistent_read_test.go',
+ 'adapters/postgresql/source_loss.go',
+ 'adapters/postgresql/source_loss_execution_test.go',
+ 'adapters/postgresql/execution.go',
+ 'internal/discovery/service.go',
+ 'internal/discovery/postgresql_source_loss_test.go',
+ 'internal/platformupdate/history.go',
+ 'internal/platformupdate/history_projection_test.go',
  'tools/hotfix-carrier.test.cjs',
  'tools/console-runtime-compatibility-acceptance.cjs','internal/store/repository.go',
  'internal/platformupdate/rolling_compatibility.go','internal/platformupdate/rolling_compatibility_test.go',
@@ -1482,6 +1513,14 @@ const READ_FILES = [
 ];
 
 const MUTATIONS = [
+  {name:"clock-only replacement of unrelated operation",file:"internal/platformupdate/manager.go",find:"latest.historyAfter[result.OperationID]",replace:"true",rule:"update history projects causal attempts and original terminal times"},
+  {"name": "authorization barrier removed", "file": "internal/consensus/raft.go", "find": "node.raft.Barrier(node.applyTimeout)", "replace": "node.raft.VerifyLeader()", "rule": "writer authorization waits for applied quorum state"},
+  {"name": "Agent skips replay wait", "file": "internal/api/agent_reconcile.go", "find": "reader.SynchronizeRead(request.Context())", "replace": "request.Context().Err()", "rule": "writer authorization waits for applied quorum state"},
+  {"name": "keeper skips replay wait", "file": "internal/coordination/ownership_keeper.go", "find": "reader.SynchronizeRead(ctx)", "replace": "ctx.Err()", "rule": "writer authorization waits for applied quorum state"},
+  {"name": "PG changed conninfo trusted", "file": "adapters/postgresql/source_loss.go", "find": "old.EngineMetadata[\"verified_upstream_config\"] != fingerprint", "replace": "false", "rule": "PG source loss retains bound native provenance and current WAL checks"},
+  {"name": "PG unapplied WAL accepted", "file": "adapters/postgresql/source_loss.go", "find": "received != replayed", "replace": "received < replayed", "rule": "PG source loss retains bound native provenance and current WAL checks"},
+  {"name": "history lets conflicting terminal replace", "file": "internal/platformupdate/history.go", "find": "previous.Status != job.Status", "replace": "false", "rule": "update history projects causal attempts and original terminal times"},
+  {"name": "history uses wrapper completion time", "file": "internal/platformupdate/history.go", "find": "job.FinishedAt = event.UpdatedAt", "replace": "job.FinishedAt = job.UpdatedAt", "rule": "update history projects causal attempts and original terminal times"},
   {name: 'GNU carrier retains builder uid', file: 'scripts/build-hotfix-patch.sh', find: 'owner_options=(--owner=0 --group=0 --numeric-owner)', replace: 'owner_options=(--owner=501 --group=0 --numeric-owner)', rule: 'hotfix carriers use trusted ownership and reject drifting revision reasons before signing'},
   {name: 'BSD carrier retains builder uid', file: 'scripts/build-hotfix-patch.sh', find: 'owner_options=(--uid 0 --gid 0 --uname root --gname root)', replace: 'owner_options=(--uid 501 --gid 0 --uname root --gname root)', rule: 'hotfix carriers use trusted ownership and reject drifting revision reasons before signing'},
   {name: 'runtime extraction preserves archive uid', file: 'scripts/clusterguard-upgrade.sh', find: 'tar --no-same-owner -xzf', replace: 'tar -xzf', rule: 'hotfix carriers use trusted ownership and reject drifting revision reasons before signing'},

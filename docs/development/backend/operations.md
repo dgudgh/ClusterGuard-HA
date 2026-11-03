@@ -50,3 +50,6 @@ MySQL受控切换可选择`gateway` Service端点提供者，复用原操作流�
 ## PostgreSQL原生HA与网关联动分开验收
 
 PG原生切换仍按自己的身份/时间线/WAL/旧主隔离和入口流程核验，说明见[PG HA手册](../../zh-CN/postgresql-ha.md)与[PG Agent systemd指南](../../zh-CN/postgresql-agent-systemd.md)。本轮源码增加PG gateway预检、原生可写续期和Linux Agent停主隔离，沿用原生PG停止证明/WAL/晋升/重挂与全网关撤权；PG gateway灾难重建仍拒绝。旧版MySQL样本不是PG验收；PG SOURCE/ART/真实云往返进展见[部署测试记录](../postgresql-hybrid-field-2026-11-02.md)。
+
+
+授权续期和Agent决定在真实Raft Barrier后读取已应用状态，并核对Leader/term/quorum；同步失败返回不可用，不以重放前空读签隔离，也不延长旧许可。真实到期/撤权/无多数派仍隔离。源码与本机Raft/PG16证据见[三项缺陷记录](../ha-remaining-fixes-2026-11-03.md)，历史事务断写需新版本真实写入复测才能关闭。

@@ -241,6 +241,11 @@ func (adapterInstance *Adapter) postgresqlLiveFailoverTargetPrecheck(ctx context
 	live := result.Instance
 	identityMatches := postgresqlInstanceIdentityMatches(live, resolved.Target, resolved.Cluster.EngineIdentity["system_identifier"])
 	liveForEvidence := live
+	if identityMatches && resolved.Target.EngineMetadata["verified_upstream_config"] != "" {
+		observations := []adapter.TopologyObservation{{Endpoint: postgresqlInstanceEndpoint(resolved.Target), Discovery: result}}
+		adapterInstance.ResolveTopologyObservationsWithHistory(observations, resolved.Snapshot)
+		liveForEvidence = observations[0].Discovery.Instance
+	}
 	if identityMatches {
 		liveForEvidence.ResourceID = resolved.Target.ResourceID
 	}

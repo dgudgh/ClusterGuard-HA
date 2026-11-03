@@ -312,6 +312,11 @@ func (keeper *OwnershipKeeper) RunOnce(ctx context.Context) error {
 	if err := keeper.authority.RequireMutationAuthority(ctx); err != nil {
 		return nil
 	}
+	if reader, ok := keeper.authority.(interface{ SynchronizeRead(context.Context) error }); ok {
+		if err := reader.SynchronizeRead(ctx); err != nil {
+			return fmt.Errorf("synchronize writer ownership state: %w", err)
+		}
+	}
 	now := keeper.now().UTC()
 	registeredClusters := keeper.inventory.Clusters()
 	clusters := make([]model.DatabaseCluster, 0, len(registeredClusters))

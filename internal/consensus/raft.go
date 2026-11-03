@@ -1143,6 +1143,30 @@ func (node *Node) RequireMutationAuthority(ctx context.Context) error {
 	return nil
 }
 
+// SynchronizeRead establishes a linearizable view before signing ownership
+// decisions. VerifyLeader alone proves a quorum, not that this FSM has applied
+// inherited entries. Returning an availability error is safer than signing a
+// false revocation from a pre-replay snapshot.
+func (node *Node) SynchronizeRead(ctx context.Context) error {
+	if err := node.RequireMutationAuthority(ctx); err != nil {
+		return err
+	}
+	term := node.raft.CurrentTerm()
+	if err := waitFuture(ctx, node.raft.Barrier(node.applyTimeout)); err != nil {
+		return fmt.Errorf("synchronize authorization read: %w", err)
+	}
+	if node.raft.State() != raft.Leader || node.raft.CurrentTerm() != term {
+		return ErrNotLeader
+	}
+	if err := node.RequireMutationAuthority(ctx); err != nil {
+		return err
+	}
+	if node.raft.State() != raft.Leader || node.raft.CurrentTerm() != term {
+		return ErrNotLeader
+	}
+	return nil
+}
+
 func (node *Node) Synchronize() error {
 	return node.synchronize(true)
 }

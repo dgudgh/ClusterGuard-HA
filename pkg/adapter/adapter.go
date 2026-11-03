@@ -97,6 +97,12 @@ type TopologyObservationResolver interface {
 	ResolveTopologyObservations([]TopologyObservation)
 }
 
+// TopologyHistoryResolver may retain provenance verified by an earlier complete
+// observation. History never substitutes for current SQL/WAL safety evidence.
+type TopologyHistoryResolver interface {
+	ResolveTopologyObservationsWithHistory([]TopologyObservation, model.TopologySnapshot)
+}
+
 type TopologyLink = model.NativeReplicationLink
 
 type TopologyResult struct {

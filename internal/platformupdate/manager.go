@@ -205,6 +205,7 @@ type NodeVersion struct {
 
 // These are operation observations, independent of the signed RPM baseline.
 type Job struct {
+	historyAfter               map[string]bool
 	FromVersion                string        `json:"from_version,omitempty"`
 	FromNodeVersions           []NodeVersion `json:"from_node_versions,omitempty"`
 	ToVersion                  string        `json:"to_version,omitempty"`
@@ -306,6 +307,8 @@ type Manager struct {
 	verifiedPatchVersions map[string]Package
 	mu                    sync.Mutex
 	historyValidation     historyValidationCache
+	historyProjectionMu   sync.Mutex
+	historyProjections    map[string]operationProjection
 }
 
 type Option func(*Manager)
@@ -770,6 +773,23 @@ func (manager *Manager) Job(patchID string) (Job, bool) {
 		result.VerificationRequired = true
 		result.Message = err.Error()
 	}
+	if !result.VerificationRequired {
+		operations := manager.Operations(patchID)
+		if len(operations) > 0 {
+			latest := operations[len(operations)-1]
+			known := false
+			for _, operation := range operations {
+				if operation.OperationID == result.OperationID {
+					known = true
+				}
+			}
+			if known && latest.OperationID != result.OperationID && terminalOperation(result.Status) && latest.historyAfter[result.OperationID] {
+				latest.OutputTail = result.OutputTail
+				latest.Events = result.Events
+				result = latest
+			}
+		}
+	}
 	if !result.VerificationRequired && result.OperationID != "" && len(result.FromNodeVersions) == 0 && result.FromVersion == "" && result.ToVersion == "" {
 		for _, operation := range manager.Operations(patchID) {
 			if operation.OperationID == result.OperationID {
@@ -782,6 +802,7 @@ func (manager *Manager) Job(patchID string) (Job, bool) {
 		result.DeploymentState = deployment.State
 	}
 	deriveJobProgress(&result)
+	canonicalTerminalTime(&result, result.Events)
 	return result, true
 }
 
