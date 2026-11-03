@@ -28,3 +28,16 @@ CG-UPGRADE-CONTRACT，contract_version=2，contract_loaded=true。已完整读�
 最终验证日志在.build/remaining-ha-fixes-20261103/：全仓Go（显式CG_PG16_BIN，原生PG实际运行）、6包race、vet通过；SOURCE65通过、静态变异201全捕获/双对照，8项真实Go行为变异全捕获/5个原样对照及无关注释对照通过。编译/夹具准备失败、自测漏复制执行源码导致原样对照失败、初轮变异unused变量失败均保留，修正准备后才计行为红/绿，不把编译失败当安全变异捕获。历史因果实现迭代先暴露原Helper失败投影回归，最终补因果DAG与完整/部分节点日志对照修复，未删旧失败历史。
 
 已读delivery/README、release-checklist、public-release、licensing、版本/热修命名规范及恢复发布验收清单。拟新身份3.1.7.11（revision10），以现场7.10/build00a3946为基线；通过源码门禁后才构建，ART/现场另记，旧签名7.10不重建、不公开上传签名包。真实写入升级窗口、PG自动停主/提升/重挂、升级后历史多Leader页面一致性仍须新版本FIELD，不用本次源码/原生候选通过关闭。
+
+
+## 新补丁ART（已完成，FIELD待授权）
+
+源码提交6b059e7319ab2a2e7111a757c9022bc9fdbe7b86，单主线已提交；3.1.7.11/revision10以00a3946为base，仅本次生产提交列入fix_commits。正式构建输出release/3.1.7.11/clusterguard-3.1.7.11.x86_64.cgpatch，12088348字节，SHA-256 3230310ce9e9930da8c72076f795acf2043d3ebd714e13b89b0071137b112009。本轮三台只读版本重查仍3.1.7.10；未将此新包安装。
+
+import图及nfpm精确映射实际替换HA、Agent、Helper三程序，重启HA/Helper；升级器与job脚本未变化，不强塞旧脚本制造完整栈假象，现役基线两脚本SHA逐项与源码相同且协议1。cgctl/k8s guard未受影响，不声称其被更新到11。没有数据库、配置或151网关载荷。
+
+包验签、外内摘要、映射/权限/重启单元、生产提交血缘、实际生成回退原子恢复5场景、签名/载荷/工具3篡改拒绝和ART13及artifact strict通过。Linux152的root私有临时目录仅运行实际包内3程序的身份、现役未变脚本协议、合成状态下正向/旧不兼容/未来协议等9项只读载荷检查；没有启动Helper服务/job、写现役程序、改数据库或VIP，不能列为现场升级。此前65源码门禁仍通过。68份原签名包逐项SHA未变。
+
+初轮ART复用了7.10的“5程序+2脚本”假设而失败，随后调用不存在的component-map scripts模式又失败；这两次是验收器准备错误，均保留原日志，修正为真实import图与production路径映射后才通过，未重建签名包。私有台账初轮漏更新patch_version、遗漏旧物理目录声明而红，修正私有输入：10冻结保留与当前11入口分开、旧声明仍完整审计，最终同一完整目录判据全通过，不改门禁/签名原件。Docker守护进程不可用的尝试保留，实际Linux载荷检查另走受控root临时目录。
+
+新本地台账/目录及声明在.build/remaining-ha-fixes-20261103/catalog/；签名包及摘要仅release/3.1.7.11/，未复制下载目录、未公开GitHub。delivery-result/CURRENT-DELIVERY和更新说明明确SOURCE/ART完成、FIELD未做。已向用户提交可审查的包身份，询问是否安装及是否允许主动停PG主库的故障验收；等待明确选择前不安装、不注入故障、不修改策略或清理旧失败。
