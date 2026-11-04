@@ -146,9 +146,9 @@ DISCOVER -> PRECHECK -> PLAN -> SAFETY_GUARD -> LOCK -> APPROVE -> EXECUTE -> VE
 
 运行形态：物理机或虚拟机（systemd 托管数据库）、Docker Swarm（固定单副本 Service）、Kubernetes（独立单副本 StatefulSet）。只有当受限 Agent、操作凭据、端点提供器、控制器多数派和所需隔离证据全部配置完成时，相关变更能力才会对外标记为可用；这些能力不会回溯添加到 `v2.1.45`。
 
-### 当前完整安装介质：3.1.3.6（预发布候选）
+### 当前完整安装介质：3.1.7.11（用户确认MySQL现场生产可用）
 
-完整 Linux x86_64 安装介质位于本地 `release/3.1.3.6/`，产品版本 **3.1.3.6**，RPM 兼容基线 **2.2-114**，构建提交 `9339a6a`。数据库介质由现场自备。见[本版说明](docs/zh-CN/release-3.1.3.6.md)与[完整安装命令参数](docs/zh-CN/offline-installer-parameters.md)。源码已推送 GitHub，本版已按候选介质发布[预发布标签 v3.1.3.6](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v3.1.3.6)（未设为 Latest），8 个公开附件全部下载回读、大小与 SHA256 核对通过；本版完整现场安装、故障矩阵与目标 OS 生产签名信任**未关闭**，不宣称正式稳定验收。
+完整 Linux x86_64 安装介质版本 **3.1.7.11**，RPM安装基线 **2.2-115**，构建提交 `f1fd4b0`。见[GitHub发布与下载](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v3.1.7.11)、[本版说明](docs/zh-CN/release-3.1.7.11.md)与[完整安装命令参数](docs/zh-CN/offline-installer-parameters.md)。用户提供MySQL8.0.44三节点安装验证通过日志，并明确确认现场生产可用；完整故障矩阵未全部独立验收，缺acl依赖、跨Leader历史缺项和PG回挂入口断连仍按本版说明披露。数据库原厂包由现场自备，包内candidate及验证状态保留构建时快照，不重建旧字节。旧[3.1.3.6预发布](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v3.1.3.6)保留历史身份。
 
 ### 已记录的正式发布版本
 

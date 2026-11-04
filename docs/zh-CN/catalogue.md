@@ -6,7 +6,7 @@
 
 ## 当前完整介质 / Current Installation Kit
 
-[3.1.3.5 双语发布说明 / release notes](release-3.1.3.5.md) · [离线安装命令参数 / installer options](offline-installer-parameters.md)。产品版本 3.1.3.5，RPM 兼容基线 2.2-113；本地候选，ART/FIELD OPEN，尚未发布 GitHub Release。 / Product 3.1.3.5, RPM baseline 2.2-113; local candidate, ART/FIELD OPEN, no GitHub Release published. Historical entries below preserve their original scope.
+[3.1.7.11 发布说明 / release notes](release-3.1.7.11.md) · [完整安装参数 / installer options](offline-installer-parameters.md) · [GitHub v3.1.7.11](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v3.1.7.11)。产品3.1.7.11、RPM2.2-115；用户确认MySQL8.0.44三节点安装成功及现场生产可用。已知缺陷和未执行的全矩阵验收见本版说明；不改包内构建快照。 / User-accepted production use at the successfully installed three-node MySQL site; known defects and unverified scenarios remain disclosed. Immutable build snapshots are preserved. Earlier entries remain historical.
 
 ## 按资料作用查找
 

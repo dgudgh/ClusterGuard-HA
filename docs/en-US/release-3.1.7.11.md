@@ -1,26 +1,48 @@
-# ClusterGuard HA 3.1.7.11 complete offline installation candidate
+# ClusterGuard HA 3.1.7.11 Complete Offline Installation Kit
 
-2026-11-04. Local internal test candidate: product 3.1.7.11, RPM 2.2-115, Linux x86_64. Clean-site installation and stable-release acceptance are not certified. RELEASE-INFO and the adjacent SHA-256 sidecar identify the actual build.
+2026-11-04. Published at the user's explicit direction as a **production-usable release for the confirmed MySQL site**. Product **3.1.7.11**, RPM installation baseline **2.2-115**, Linux x86_64; [GitHub v3.1.7.11](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v3.1.7.11). This scoped user acceptance does not certify every engine, topology or failure scenario.
 
-## Media and installation
+## Media and identity
 
-clusterguard-ha-3.1.7.11-offline-linux-x86_64.tar.gz contains the HA RPM, Linux runtime bundle, Rocky 8 runtime dependencies, approved production MySQL templates, installer, complete Chinese/English installer option references and the patch verification public key. Vendor database binaries are not embedded. Supply approved vendor media on site: explicit -r takes precedence, followed by packages/database and then /opt. MySQL defaults to /usr/local/mysql and instance root /data/mysql/<port>; identity and read-only protections remain in force.
+`clusterguard-ha-3.1.7.11-offline-linux-x86_64.tar.gz`: 34,215,397 bytes; SHA-256:
+
+```text
+718673d73647c3ebd46a1194b84bbf5415b06ea2442a105b0f9f80ecfa2406c1
+```
+
+Build commit: `f1fd4b026acad8a8cf952112c5e28895fba85c20`. The tag identifies that commit; later documentation on the main branch does not change the build identity. Includes the HA RPM, runtime bundle, Rocky8 runtime dependencies, original production MySQL templates, installer, bilingual option reference and patch-verification public key. Vendor database binaries and the independent enterprise gateway are not included.
+
+Supply approved database media: explicit `-r` takes precedence, followed by `packages/database/`, then `/opt`. The accepted site used vendor MySQL8.0.44 media. Default software directory: `/usr/local/mysql`; instance root: `/data/mysql/<port>`. Node identity and read-only startup remain protected; authorized workflow enables primary writes.
 
 ```bash
 sha256sum -c clusterguard-ha-3.1.7.11-offline-linux-x86_64.tar.gz.sha256
 tar -xzf clusterguard-ha-3.1.7.11-offline-linux-x86_64.tar.gz
 cd clusterguard-ha-3.1.7.11-offline-linux-x86_64
+sha256sum -c SHA256SUMS
 ./install_clusterguard.sh --help
 ```
 
-Use the [installer option reference](offline-installer-parameters.md) to prepare site arguments and run --plan first. This media supports installation/controlled resumption; existing-cluster updates use the formal signed update channel. The immutable 3.1.7.11.cgpatch still requires its original RPM 2.2-113 baseline; RPM 115 is a new installation baseline. The independently deployed enterprise gateway binary is not included in HA media.
+Use the [complete option reference](offline-installer-parameters.md) and check the site command with `--plan`. Set the initial MySQL root password through `--mysql-root-password` or secure environment input. Remote root is opt-in with `--mysql-root-remote-host`. Resume with the original state, secrets and work directory; existing secrets take precedence over a new password argument. No site credentials are published.
 
-## Included changes and acceptance limits
+This media supports installation/controlled resumption. Existing clusters use the signed update channel. The immutable 3.1.7.11 hotfix still requires RPM2.2-113, distinct from installation baseline115. Signed update/hotfix packages remain local and enterprise delivery assets, never public attachments.
 
-Includes consistent Raft authorization reads, verified PG upstream provenance for source loss, and local causal update-history projection. The preceding hotfix with the same production source was installed on three controllers and exercised under transaction-bearing upgrade, weighted automatic PG failover/cloud exclusion, guarded rejoin/return and acknowledged-row retention. Those tests do not certify installation of this complete media.
+## Observed scope and user acceptance
 
-Known unresolved defects: attempts accepted only by the former Leader may be absent from the new Leader's update history/API; PG former-primary rejoin interrupted the current primary's business entry, with reconnection roughly 21 seconds later. One final observation also reported a transient 181-second cloud PG link lag; the failure is retained and a separate identical strict rerun passed 62/50 healthy cycles. See the [actual field record](../development/ha-remaining-fixes-2026-11-03.md). This candidate is not a fix or zero-interruption certification for these defects.
+- The user supplied a 2026-11-04 three-node MySQL8.0.44 installation transcript: strict configuration validation, initialization, database startup and replica synchronization completed on all nodes; HA, Helper, Agent and VIP reconciliation were configured.
+- The installer reported successful verification at15:15:15. Its final checks cover ready/quorum state, consecutive healthy topology observations with one primary, exactly one VIP owner, HA/Agent/Helper services and the Helper socket. Execution after confirmation took about8minutes35seconds.
+- The user then explicitly confirmed production usability and authorized GitHub publication. This is user-provided installation and usage acceptance, not a new independent Codex site inspection or a complete fault-matrix result.
+- Fifteen dedicated media checks, actual Linux payload execution and RPM file-mapping checks passed. Asset download/size/SHA checks are recorded by this publication workflow.
 
-Additional audit on 2026-11-04: the default dependencies neither declare nor carry acl, although MySQL directory preparation requires setfacl. The unchanged function exited 3 in a Linux child environment without that command. Uncached regression runs for three packages and the two Linux-specific tests passed, but do not certify clean three-node installation or close the field defects. This media remains unsuitable for stable delivery. This is an external clarification; existing archive bytes and its bundled notes are unchanged. See the [independent audit](../development/offline-3.1.7.11-2026-11-04.md).
+The original `RELEASE-INFO` (`release_channel=candidate`), `verification.json` (`deployed=false`, `field_acceptance=false`) and bundled notes remain build-time snapshots. The same archive is published without rebuilding, re-signing or changing its bytes; this external note records subsequent installation and publication. The publisher RPM has header/payload digests but no publisher RPM digital signature; the patch public key is not an RPM signature.
 
-The media verifier records artifact checks in verification.json. Clean-site full installation, the fault matrix, target-OS RPM/dependency signature trust and stable-release certification remain open. Source/artifact results are separate from field acceptance. No GitHub Release is published by this packaging task; signed patches are never public attachments.
+## Included changes and known issues
+
+Includes consistent Raft authorization reads, verified PG upstream provenance after source loss, and local causal update-history projection. Earlier hotfix tests exercised controller updates, acknowledged-row retention, weighted PG failover and guarded rejoin/return. Their successes and failures are retained separately.
+
+The following defects remain unresolved:
+
+1. **Missing acl dependency:** the default RPM/media dependencies do not cover `acl`; MySQL directory preparation requires `setfacl` and exits3 when it is missing. Check `command -v setfacl` on new targets and prepare trusted matching acl RPM/dependencies for fully offline sites.
+2. **Cross-Leader history gaps:** attempts present only on a previous Leader may be absent from the new Leader's query; original files are retained.
+3. **PG rejoin interruption:** former-primary rejoin previously interrupted the current writer's entry, with reconnection around21seconds later. A separate transient181-second cloud PG lag observation and its later recovery remain recorded.
+
+The complete kit has not independently passed every network-partition, concurrency/failure and target-OS signing-trust scenario. This publication does not claim universal stable certification, zero interruption or closure of the PG defects. See the [installation/publication record](../development/offline-3.1.7.11-2026-11-04.md) and [original field failures](../development/ha-remaining-fixes-2026-11-03.md).

@@ -6,7 +6,7 @@
 
 ## 当前完整介质 / Current Installation Kit
 
-[3.1.3.6 双语发布说明 / release notes](zh-CN/release-3.1.3.6.md) · [离线安装命令参数 / installer options](zh-CN/offline-installer-parameters.md)。产品版本3.1.3.6，RPM基线2.2-114；[GitHub预发布](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v3.1.3.6)，完整介质及公开附件回读已验证，未宣称完整现场或正式稳定验收。 / Product 3.1.3.6, RPM baseline 2.2-114; GitHub prerelease with verified media and asset downloads; full field/stable acceptance is not claimed. Historical entries below preserve their original scope.
+[3.1.7.11 发布说明 / release notes](zh-CN/release-3.1.7.11.md) · [完整安装参数 / installer options](zh-CN/offline-installer-parameters.md) · [GitHub v3.1.7.11](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v3.1.7.11)。产品3.1.7.11、RPM2.2-115；用户确认MySQL8.0.44三节点安装成功及现场生产可用。已知缺陷和未执行的全矩阵验收见本版说明；不改包内构建快照。 / User-accepted production use at the successfully installed three-node MySQL site; known defects and unverified scenarios remain disclosed. Immutable build snapshots are preserved. Earlier entries remain historical.
 
 ## Document Roles / 资料作用
 

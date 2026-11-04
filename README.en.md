@@ -146,9 +146,9 @@ The safety mechanisms behind that workflow:
 
 Runtime targets: bare metal or virtual machines (systemd-managed database), Docker Swarm (fixed single-replica Service) and Kubernetes (dedicated single-replica StatefulSet). Mutations are advertised only when the restricted Agent, operation credentials, endpoint provider, controller quorum and required fencing evidence are configured; these capabilities are not retroactively added to `v2.1.45`.
 
-### Current Installation Kit: 3.1.3.6 (Prerelease Candidate)
+### Current Installation Kit: 3.1.7.11 (User-accepted MySQL Site Release)
 
-The complete Linux x86_64 installation kit is local at `release/3.1.3.6/`: product **3.1.3.6**, RPM compatibility baseline **2.2-114**, build commit `9339a6a`. Supply approved database media on site. See [release notes](docs/en-US/release-3.1.3.6.md) and the [complete installer option reference](docs/en-US/offline-installer-parameters.md). Source is pushed to GitHub and this candidate is published as the [v3.1.3.6 prerelease](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v3.1.3.6) (not marked Latest); all eight public assets were downloaded and matched against local sizes and SHA256. Full site installation, the failure matrix, and target-OS production signature trust for this version remain **open**; stable acceptance is not claimed.
+Linux x86_64 complete kit **3.1.7.11**, RPM installation baseline **2.2-115**, build commit `f1fd4b0`. See [GitHub release/downloads](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v3.1.7.11), [release notes](docs/en-US/release-3.1.7.11.md) and the [complete installer option reference](docs/en-US/offline-installer-parameters.md). The user supplied a successful three-node MySQL8.0.44 installation log and explicitly accepted production use at that site. The full fault matrix is not independently certified; missing acl, cross-Leader history gaps and PG rejoin interruption remain disclosed. Supply vendor database media on site. Build-time candidate/verification snapshots and original artifact bytes remain unchanged. The previous [3.1.3.6 prerelease](https://github.com/dgudgh/ClusterGuard-HA/releases/tag/v3.1.3.6) remains historical.
 
 ### Recorded Formal Releases
 
