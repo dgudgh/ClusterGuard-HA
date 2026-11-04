@@ -28,3 +28,17 @@ Linux152仅在root私有临时目录解包、执行版本接口、Helper契约�
 三次Linux探针准备错误均保留：给文本版本程序传了不存在的JSON选项、错误假设运行包也带五程序、把兼容协议JSON当数字。按实际源码CLI/构建目标/协议修正验证器后才通过，没有改包字节或业务源码。新构建器始终输出candidate。RPM自身只有头/载荷摘要，没有发行方数字签名；目标安装和正式签名信任未认证。
 
 verify-release-records实跑status=passed，但新记录仍local-only，且旧门禁按RPM名称找说明而报note-absent；本包实际产品版双语说明已在f1fd4b0和介质内。该宽松输出不证明远端可达，当前不推送既有40个历史提交、不创建公开Release。签名热修FIELD两项失败原样保留，不用完整介质15项校验覆盖；本包仅满足本次本地候选打包交付。详细证据在release/3.1.7.11/offline-evidence-20261104/、verification.json及offline-delivery-result.json；后续交付说明提交不改变包内构建提交。
+
+## 用户质疑后的独立复核（2026-11-04）
+
+进入HEAD329c1b0，唯一主线干净、领先远端42。CG-UPGRADE-CONTRACT，contract_version=2，contract_loaded=true；重读门禁流程、完整契约、修改证据、模块/交付与操作安全规则。此次审核不重建11的原件，不把已有失败改绿，不改现役数据库或重装三台。安装器、MySQL helper/layout及原生产cnf从旧完整介质基线9339a6a到当前HEAD没有差异；旧原生helper验收e7b9e2bd与当前helper摘要不同，不能把那份原生成功直接算作当前包的安装验收。
+
+本次验证计划：不使用缓存运行scripts、coordination、platformupdate三个关键包；检查跳过项及其平台限制；在Linux私有临时目录仅执行本次跨编译的两项root/RPM专用测试，不调用安装器或安装RPM，不启停现场服务；复算不可变介质摘要与包内脚本；保留实际FIELD失败。后续修复仍须单独完成旧码对照、红绿行为回归和新身份构建，不能因本次审核自动生成另一个声称可交付的版本。
+
+已确认的安装风险：MySQL helper的ensure_mysql_traverse在root拥有的0750实例/配置目录上依赖setfacl，但packaging/rpm/nfpm.yaml的depends没有acl，默认离线依赖目录只有libaio/ncurses-compat-libs/numactl-libs，前检也未覆盖该依赖。Linux条件复现使用真实runuser/文件系统，仅在子进程PATH移除setfacl；从当前源码提取的原函数实际exit=3并报setfacl is required，临时目录随退出删除。此项是已复现的缺依赖条件缺陷，不是本轮三台现场安装失败；现场已有setfacl不能证明干净目标具备它。
+
+交付判定仍为未通过：跨Leader升级历史缺项、PG旧主回挂入口断连尚未修复，当前tar未经过三台干净安装、失败续装和完整业务矩阵。关键回归通过也不能关闭这些阻断项。新证据放.build/offline-assurance-20261104/，与旧证据分开。
+
+不使用缓存的三个包实跑完成：coordination 0.743秒、platformupdate 6.668秒、scripts 152.658秒；821条通过事件包含父用例及子用例，不能当821项独立验收义务。macOS跳过两项root/RPM专用测试，随后将同一源码跨编译的测试程序放Linux root私有临时目录，补跑两项共9个子场景全部通过，无跳过。只使用临时签名/RPM夹具，不安装RPM或重启服务；现役7程序摘要和服务PID/启动状态前后相同，临时目录已清除，SSH控制连接关闭。
+
+重跑现有签名补丁的field严格门禁实际exit=1：65项源码成立，但FIELD-011未通过及最终验收义务OPEN，原报告的FIELD-012失败也原样保留。此报告属于已有热修，不代替完整tar安装验证；同样不能用65项源码通过掩盖已知失败。完整tar复算仍为718673d73647c3ebd46a1194b84bbf5415b06ea2442a105b0f9f80ecfa2406c1，未重建或修改。此次只补充审核结论；生产修复及新安装包尚未完成，不宣称已修复。
