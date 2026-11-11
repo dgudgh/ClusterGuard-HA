@@ -30,6 +30,7 @@ Usage:
                              [--subnet CIDR] [--timezone ZONE] [--dry-run]
   clusterguard-clock-mesh.sh --client --server-address ADDRESS
                              [--timezone ZONE] [--dry-run]
+  clusterguard-clock-mesh.sh --check
 
 Options:
   --set-utc TS           Adopt this UTC instant before becoming the authority.
@@ -41,6 +42,8 @@ Options:
                          Asia/Shanghai. Apply the same zone on every node.
   --dry-run              Print the decisions and the configuration that would be
                          written, then exit without changing anything.
+  --check                Check Chrony commands and its persistent systemd unit;
+                         do not change clocks, configuration or services.
 EOF
 }
 
@@ -51,6 +54,7 @@ timezone=""
 set_utc=""
 accept_current_time=false
 dry_run=false
+check_only=false
 
 while (($#)); do
   case "$1" in
@@ -62,6 +66,7 @@ while (($#)); do
     --set-utc) set_utc="${2:-}"; shift 2 ;;
     --accept-current-time) accept_current_time=true; shift ;;
     --dry-run) dry_run=true; shift ;;
+    --check) check_only=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) printf 'Unknown argument: %s\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
@@ -73,7 +78,7 @@ epoch_of() {
   date -u -d "$1" +%s 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$1" +%s 2>/dev/null || true
 }
 
-[[ -n "$mode" ]] || { usage >&2; exit 2; }
+[[ -n "$mode" || "$check_only" == true ]] || { usage >&2; exit 2; }
 if [[ "$mode" == "client" && -z "$server_address" ]]; then
   printf '%s\n' '--client requires --server-address' >&2
   exit 2
@@ -107,6 +112,34 @@ EOF
   exit 2
 fi
 
+check_chrony_prerequisites() {
+  local name properties load_state fragment unit_state
+  for name in systemctl chronyd chronyc; do
+    command -v "$name" >/dev/null 2>&1 || {
+      printf 'Chrony prerequisites missing: %s; install/repair the matching chrony package on this node before retrying. Offline sites must provide trusted OS-matched RPMs.\n' "$name" >&2
+      return 1
+    }
+  done
+  if ! properties="$(systemctl show chronyd.service --property=LoadState --property=FragmentPath --property=UnitFileState --no-pager 2>/dev/null)"; then
+    printf 'Chrony prerequisites unavailable: cannot query chronyd.service; check systemd and the chrony package on this node.\n' >&2
+    return 1
+  fi
+  load_state="$(awk -F= '$1 == "LoadState" {print $2}' <<<"$properties")"
+  fragment="$(awk -F= '$1 == "FragmentPath" {print substr($0,14)}' <<<"$properties")"
+  unit_state="$(awk -F= '$1 == "UnitFileState" {print $2}' <<<"$properties")"
+  if [[ "$load_state" != loaded || -z "$fragment" || ! -f "$fragment" || "$fragment" == /run/* ||
+    ! "$unit_state" =~ ^(enabled|disabled|linked|indirect)$ ]]; then
+    printf 'Chrony prerequisites incomplete: persistent chronyd.service is unavailable (LoadState=%s, FragmentPath=%s, UnitFileState=%s). Install/repair chrony and run systemctl daemon-reload on this node, then retry with the original deployment state/secrets/work directory.\n' "$load_state" "$fragment" "$unit_state" >&2
+    return 1
+  fi
+}
+
+if [[ "$check_only" == true ]]; then
+  check_chrony_prerequisites
+  printf 'Chrony prerequisites ready: chronyd.service (read-only check)\n'
+  exit 0
+fi
+
 effective_timezone="$(timedatectl show -p Timezone --value 2>/dev/null || true)"
 [[ -n "$effective_timezone" ]] || effective_timezone="$(readlink -f /etc/localtime 2>/dev/null | sed 's#.*/zoneinfo/##' || true)"
 
@@ -127,6 +160,10 @@ if [[ "$dry_run" == true ]]; then
   printf 'dry-run: nothing was changed\n'
   exit 0
 fi
+
+# Fail before timezone/configuration/service/RTC mutations. A daemon binary or
+# an active process alone does not prove that systemd can persistently enable it.
+check_chrony_prerequisites
 
 backup="/etc/chrony.conf.clusterguard-backup.$(date -u +%Y%m%dT%H%M%SZ)"
 if [[ -f /etc/chrony.conf ]]; then cp -a /etc/chrony.conf "$backup"; fi

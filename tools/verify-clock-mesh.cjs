@@ -81,6 +81,22 @@ const docChinese = read('docs/zh-CN/offline-rpm-install.md');
 
 const at = (needle) => mesh.indexOf(needle);
 
+check(
+  'clock mesh: executable and persistent-unit prerequisites are checked before mutation',
+  mesh.includes('check_chrony_prerequisites()') &&
+    mesh.includes('for name in systemctl chronyd chronyc') &&
+    mesh.includes('FragmentPath') && mesh.includes('LoadState') &&
+    mesh.includes('! -f "$fragment"') &&
+    at('\ncheck_chrony_prerequisites\n') !== -1 &&
+    at('\ncheck_chrony_prerequisites\n') < at('backup="/etc/chrony.conf'),
+);
+check(
+  'installer: all clock nodes are checked before the fixed authority is changed',
+  installer.indexOf('clusterguard-clock-mesh.sh --check') !== -1 &&
+    installer.indexOf('clusterguard-clock-mesh.sh --check') <
+      installer.indexOf('clusterguard-clock-mesh.sh --server --accept-current-time'),
+);
+
 // --- Gate 1: becoming the clock authority is a deliberate decision ----------
 // An isolated deployment has no upstream, so whatever the server believes
 // becomes the truth for every node and then, through hwclock, for every future

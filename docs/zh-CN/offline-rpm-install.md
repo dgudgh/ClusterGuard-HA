@@ -595,6 +595,12 @@ ip -o -4 addr show dev ens160 | grep '192.168.102.155/24' || true
 
 生产环境应提供经过指纹审核的 `--known-hosts` 文件。实验环境可追加 `--accept-host-keys`。
 
+**更正IP后出现“No host key is known / Host key verification failed”**：安装器使用的是`--work-dir/ssh/installer_known_hosts`，不是默认的`~/.ssh/known_hosts`。3.1.7.11旧实现遇到非空缓存直接复用，更正地址后即使带`--accept-host-keys`也可能没有新节点的记录；后面的root/systemd错误不能据此认定为权限问题。
+
+旧包可在安装发起机使用`ssh -o UserKnownHostsFile=/secure/clusterguard/mysql-ha-3306/site/ssh/installer_known_hosts -o StrictHostKeyChecking=ask root@192.0.2.10 'id -u; command -v systemctl'`，将示例IP和站点路径替换为实际值；核对目标控制台的主机密钥指纹后接受首次信任，再用更正后的命令和原state/secrets/work-dir续装。已有密钥不匹配时停止核对，不覆盖旧pin或关闭严格检查。
+
+2026-11-11源码已改为逐地址/端口检查缓存：显式`--accept-host-keys`只补缺失地址，不重新采集已固定的节点；显式`--known-hosts`文件只读并要求覆盖全部节点。采集为空/失败时原缓存不变。该源码修复尚未进入已发布3.1.7.11的不可变介质，不能通过更新文档声称旧包已修复。
+
 ### 12.3 报错“状态文件与本次集群名称、引擎或端口不一致”
 
 说明复用了不属于当前集群的 `--state-file`。停止执行，恢复正确的站点目录；不要删除原状态文件规避检查。
@@ -625,6 +631,10 @@ journalctl -u clusterguard-ha.service -n 200 --no-pager
 显示时区由安装器的 `--timezone` 统一写死到全部节点，未指定时取运维机时区。集群存储的时间戳都是 UTC，唯一例外是控制台按应答节点的本地时区渲染配置更新时间，因此时区不统一会让同一条记录显示两个钟点。
 
 `clusterguard-clock-mesh.sh --server` 只有在给出 `--set-utc` 或 `--accept-current-time` 时才会把自己升格为全集群时钟权威：它会把本机时间施加到其他所有节点，并用 `hwclock --systohc` 固化进 RTC。未经验证就固化，会让一次安装失误变成永久偏差。
+
+**chronyd.service不存在**：先核对报错的准确IP，在该节点检查`rpm -q chrony`、`command -v chronyd chronyc`、`systemctl show chronyd.service -p LoadState -p FragmentPath -p UnitFileState`以及实际单元文件。另一节点能启动Chrony不能证明报错节点完整；“inactive”也不同于单元文件缺失。按目标Rocky/RHEL版本修复chrony包后执行`systemctl daemon-reload`，再重试。离线目标须准备匹配系统的可信RPM及依赖，不创建空服务或用软链绕过。
+
+2026-11-11源码增加时钟工具`--check`只读检查，并在所有节点检查完成后才修改第一台的时区/配置。命令、持久单元、加载状态不完整时提前拒绝；缺包的自动安装及新版完整介质仍未因此完成。旧3.1.7.11介质保持原字节。
 
 ### 12.8 中断安装重试时，旧 MySQL 服务仍在自动重启
 

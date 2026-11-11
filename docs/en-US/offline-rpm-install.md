@@ -594,6 +594,12 @@ This is normal behavior. The installer defaults to read-only, and only appending
 
 In production environments, provide the `--known-hosts` file that has been fingerprint-reviewed. In experimental environments, append `--accept-host-keys`.
 
+**After correcting an IP, SSH reports “No host key is known / Host key verification failed”:** the installer uses `--work-dir/ssh/installer_known_hosts`, not the default `~/.ssh/known_hosts`. Version 3.1.7.11 reuses a nonempty cache without checking coverage, so a corrected address may still be missing even with `--accept-host-keys`. The subsequent root/systemd message does not establish a permission failure.
+
+With the old kit, run `ssh -o UserKnownHostsFile=/secure/clusterguard/mysql-ha-3306/site/ssh/installer_known_hosts -o StrictHostKeyChecking=ask root@192.0.2.10 'id -u; command -v systemctl'` from the installer host, substituting the actual IP and site path. Verify the host-key fingerprint against the target console before accepting first use, then resume with the corrected command and original state/secrets/work directory. A changed existing key requires investigation; do not overwrite its pin or disable strict checking.
+
+The 2026-11-11 source fix checks each address/port: explicit `--accept-host-keys` appends missing addresses only and never rescans pinned peers; explicit `--known-hosts` stays read-only and must cover every target. Failed/empty scans leave the original cache unchanged. This source fix is not included in the immutable published 3.1.7.11 kit.
+
 ### 12.3 Error: "Status file is inconsistent with the current cluster name, engine, or port"
 
 This indicates that `--state-file` from a different cluster has been reused. Stop execution, restore the correct site directory; do not delete the original status file to bypass checks.
@@ -624,6 +630,10 @@ Nodes agreeing with each other is not the same as the time being correct. When a
 The display timezone is pinned across every node from the installer's `--timezone`, falling back to the operations machine's zone. Every timestamp the cluster stores is UTC; the one exception is the console, which renders the configuration update time in the answering node's local zone, so a cluster with mixed zones shows two wall clocks for the same record.
 
 `clusterguard-clock-mesh.sh --server` only promotes itself to the cluster's clock authority when given `--set-utc` or `--accept-current-time`: it imposes the node's own time on every other node and makes it permanent with `hwclock --systohc`. Persisting an unverified clock is how a one-off install mistake becomes a permanent offset.
+
+**Missing chronyd.service:** check the exact failing IP with `rpm -q chrony`, `command -v chronyd chronyc`, `systemctl show chronyd.service -p LoadState -p FragmentPath -p UnitFileState` and the actual unit file. A working service on another node proves nothing about that host; inactive is different from a missing unit. Repair the matching Rocky/RHEL chrony package, run `systemctl daemon-reload`, then retry. Offline hosts need trusted OS-matched RPMs/dependencies, not fabricated units or symlink workarounds.
+
+The 2026-11-11 source adds a read-only clock-tool `--check` and checks every target before changing the first node's timezone/configuration. Missing commands or persistent units stop the operation early. Automatic package installation and a new complete kit have not thereby been delivered; original 3.1.7.11 bytes remain unchanged.
 
 ### 12.8 Retrying an interrupted install while the old MySQL unit keeps restarting
 

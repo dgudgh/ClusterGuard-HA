@@ -902,24 +902,47 @@ validate_ssh_credentials_file() {
 }
 
 prepare_known_hosts() {
+  local host selector lookup candidate="" scanned=""
   if [[ -n "${known_hosts_input}" ]]; then
     known_hosts_file="${known_hosts_input}"
-    return
+  else
+    known_hosts_file="${work_dir}/ssh/installer_known_hosts"
+    mkdir -p "$(dirname "${known_hosts_file}")"
+    chmod 0700 "$(dirname "${known_hosts_file}")"
+    [[ ! -L "${known_hosts_file}" && ( ! -e "${known_hosts_file}" || -f "${known_hosts_file}" ) ]] ||
+      die "SSH 主机密钥缓存不是可安全更新的普通文件：${known_hosts_file}"
   fi
-  known_hosts_file="${work_dir}/ssh/installer_known_hosts"
-  mkdir -p "$(dirname "${known_hosts_file}")"
-  chmod 0700 "$(dirname "${known_hosts_file}")"
-  if [[ -s "${known_hosts_file}" ]]; then return; fi
-  [[ "${accept_host_keys}" == "true" ]] || die "首次执行必须提供 --known-hosts 或显式使用 --accept-host-keys"
-  : >"${known_hosts_file}"
-  chmod 0600 "${known_hosts_file}"
-  local host
   for host in "${all_nodes[@]}"; do
-    ssh-keyscan -T 8 -p "${ssh_port}" -H "${host}" >>"${known_hosts_file}" 2>/dev/null || die "无法采集 ${host} 的 SSH 主机密钥"
+    selector="${host}"
+    [[ "${ssh_port}" == 22 ]] || selector="[${host}]:${ssh_port}"
+    lookup="${candidate:-${known_hosts_file}}"
+    # Existing pins are authoritative. Never replace them with a fresh scan,
+    # even when --accept-host-keys was passed; SSH must detect changed keys.
+    if [[ -s "${lookup}" ]] && ssh-keygen -F "${selector}" -f "${lookup}" >/dev/null 2>&1; then continue; fi
+    [[ -z "${known_hosts_input}" ]] || die "已审核 known_hosts 缺少 ${selector}：${known_hosts_file}；请审核并补充该地址的密钥"
+    [[ "${accept_host_keys}" == true ]] || die "SSH 主机密钥缓存缺少 ${selector}；请提供 --known-hosts 或显式使用 --accept-host-keys"
+    if [[ -z "${candidate}" ]]; then
+      candidate="$(mktemp "${known_hosts_file}.pending.XXXXXX")"
+      chmod 0600 "${candidate}"
+      [[ ! -f "${known_hosts_file}" ]] || cat "${known_hosts_file}" >"${candidate}"
+    fi
+    scanned="$(mktemp "${known_hosts_file}.scan.XXXXXX")"
+    chmod 0600 "${scanned}"
+    if ! ssh-keyscan -T 8 -p "${ssh_port}" -H "${host}" >"${scanned}" 2>/dev/null ||
+      [[ ! -s "${scanned}" ]] ||
+      ! ssh-keygen -F "${selector}" -f "${scanned}" >/dev/null 2>&1 ||
+      ! ssh-keygen -lf "${scanned}" >/dev/null 2>&1; then
+      rm -f "${scanned}" "${candidate}"
+      die "无法采集 ${selector} 的有效 SSH 主机密钥；原缓存保持不变"
+    fi
+    printf '\n' >>"${candidate}"
+    cat "${scanned}" >>"${candidate}"
+    rm -f "${scanned}"
   done
-  sort -u "${known_hosts_file}" -o "${known_hosts_file}"
+  [[ -n "${candidate}" ]] || return 0
+  mv -f "${candidate}" "${known_hosts_file}"
   new_known_hosts=true
-  log "已采集 SSH 主机密钥；指纹如下："
+  log "已补齐当前节点 SSH 主机密钥（保留已有记录）；指纹如下："
   ssh-keygen -lf "${known_hosts_file}" || true
 }
 
@@ -1332,10 +1355,15 @@ assert_node_identity_unique() {
 }
 
 discover_node_identities() {
-  local host role hostname remote_identity resource fixed database index=1
+  local host role hostname remote_identity resource fixed database identity_status index=1
   for host in "${all_nodes[@]}"; do
     log "确认固定节点身份：${host}"
-    remote_exec "${host}" "test \"\$(id -u)\" -eq 0 && command -v bash >/dev/null && command -v systemctl >/dev/null" >/dev/null || die "${host} 必须允许 root 级安装并使用 systemd"
+    if remote_exec "${host}" "test \"\$(id -u)\" -eq 0 && command -v bash >/dev/null && command -v systemctl >/dev/null" >/dev/null; then
+      :
+    else
+      identity_status=$?
+      die "${host} SSH 连接或远端 root/systemd 检查失败（exit=${identity_status}）；请以上方原始错误为准"
+    fi
     hostname="$(remote_exec "${host}" "hostname -f 2>/dev/null || hostname")"
     hostname="${hostname%%$'\n'*}"
     [[ "${hostname}" =~ ^[A-Za-z0-9._-]+$ ]] || die "${host} 返回了无效 hostname：$(printf '%q' "${hostname}")"
@@ -1525,6 +1553,11 @@ configure_fixed_cluster_clock_source() {
     remote_exec_checked "${host}" "创建时钟工具目录" "install -d -m 0755 /usr/local/sbin"
     remote_copy "${tool}" "${host}" "/usr/local/sbin/clusterguard-clock-mesh.sh"
     remote_exec_checked "${host}" "安装固定内部时钟源工具" "chmod 0755 /usr/local/sbin/clusterguard-clock-mesh.sh"
+  done
+  # Check every node before changing the first node's timezone or Chrony config.
+  # Chrony is needed before the application RPM/dependency installation phase.
+  for host in "${all_nodes[@]}"; do
+    remote_exec_checked "${host}" "检查 Chrony 时钟依赖（尚未修改时钟配置）" "/usr/local/sbin/clusterguard-clock-mesh.sh --check"
   done
   # --accept-current-time carries the acknowledgement that verify_cluster_clock_skew
   # has just earned. The mesh tool refuses to hand a permanent, cluster-wide clock

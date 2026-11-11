@@ -505,6 +505,9 @@ readlink /tmp/mysql.sock
 <p>这是正常行为。安装器默认只读，只有追加 <code>--execute</code> 才会改动远端主机。</p>
 <h3 id="12-2-报错-首次执行必须提供-known-hosts-或显式使用-accept-host-keys">12.2 报错“首次执行必须提供 --known-hosts 或显式使用 --accept-host-keys”<a class="heading-anchor" href="#12-2-报错-首次执行必须提供-known-hosts-或显式使用-accept-host-keys" aria-label="Link to 12.2 报错“首次执行必须提供 --known-hosts 或显式使用 --accept-host-keys”">#</a></h3>
 <p>生产环境应提供经过指纹审核的 <code>--known-hosts</code> 文件。实验环境可追加 <code>--accept-host-keys</code>。</p>
+<p><strong>更正IP后出现“No host key is known / Host key verification failed”</strong>：安装器使用的是<code>--work-dir/ssh/installer_known_hosts</code>，不是默认的<code>~/.ssh/known_hosts</code>。3.1.7.11旧实现遇到非空缓存直接复用，更正地址后即使带<code>--accept-host-keys</code>也可能没有新节点的记录；后面的root/systemd错误不能据此认定为权限问题。</p>
+<p>旧包可在安装发起机使用<code>ssh -o UserKnownHostsFile=/secure/clusterguard/mysql-ha-3306/site/ssh/installer_known_hosts -o StrictHostKeyChecking=ask root@192.0.2.10 &#39;id -u; command -v systemctl&#39;</code>，将示例IP和站点路径替换为实际值；核对目标控制台的主机密钥指纹后接受首次信任，再用更正后的命令和原state/secrets/work-dir续装。已有密钥不匹配时停止核对，不覆盖旧pin或关闭严格检查。</p>
+<p>2026-11-11源码已改为逐地址/端口检查缓存：显式<code>--accept-host-keys</code>只补缺失地址，不重新采集已固定的节点；显式<code>--known-hosts</code>文件只读并要求覆盖全部节点。采集为空/失败时原缓存不变。该源码修复尚未进入已发布3.1.7.11的不可变介质，不能通过更新文档声称旧包已修复。</p>
 <h3 id="12-3-报错-状态文件与本次集群名称-引擎或端口不一致">12.3 报错“状态文件与本次集群名称、引擎或端口不一致”<a class="heading-anchor" href="#12-3-报错-状态文件与本次集群名称-引擎或端口不一致" aria-label="Link to 12.3 报错“状态文件与本次集群名称、引擎或端口不一致”">#</a></h3>
 <p>说明复用了不属于当前集群的 <code>--state-file</code>。停止执行，恢复正确的站点目录；不要删除原状态文件规避检查。</p>
 <h3 id="12-4-数据库包依赖缺失">12.4 数据库包依赖缺失<a class="heading-anchor" href="#12-4-数据库包依赖缺失" aria-label="Link to 12.4 数据库包依赖缺失">#</a></h3>
@@ -521,6 +524,8 @@ journalctl -u clusterguard-ha.service -n 200 --no-pager
 <p>节点之间彼此一致并不代表时间正确。虚拟化环境的 RTC 若存的是本地时间而内核按 UTC 读取，三台会一致地快一个时区偏移，节点间偏差仍只有几秒，只有与运维机比对才能发现。安装器现在逐节点比对本机 UTC，超过 30 秒即中止；请在报错节点上 <code>date -u</code> 核对，必要时 <code>timedatectl set-timezone</code> 校正时区，再用 <code>hwclock --systohc --utc</code> 写回 RTC，然后重试。</p>
 <p>显示时区由安装器的 <code>--timezone</code> 统一写死到全部节点，未指定时取运维机时区。集群存储的时间戳都是 UTC，唯一例外是控制台按应答节点的本地时区渲染配置更新时间，因此时区不统一会让同一条记录显示两个钟点。</p>
 <p><code>clusterguard-clock-mesh.sh --server</code> 只有在给出 <code>--set-utc</code> 或 <code>--accept-current-time</code> 时才会把自己升格为全集群时钟权威：它会把本机时间施加到其他所有节点，并用 <code>hwclock --systohc</code> 固化进 RTC。未经验证就固化，会让一次安装失误变成永久偏差。</p>
+<p><strong>chronyd.service不存在</strong>：先核对报错的准确IP，在该节点检查<code>rpm -q chrony</code>、<code>command -v chronyd chronyc</code>、<code>systemctl show chronyd.service -p LoadState -p FragmentPath -p UnitFileState</code>以及实际单元文件。另一节点能启动Chrony不能证明报错节点完整；“inactive”也不同于单元文件缺失。按目标Rocky/RHEL版本修复chrony包后执行<code>systemctl daemon-reload</code>，再重试。离线目标须准备匹配系统的可信RPM及依赖，不创建空服务或用软链绕过。</p>
+<p>2026-11-11源码增加时钟工具<code>--check</code>只读检查，并在所有节点检查完成后才修改第一台的时区/配置。命令、持久单元、加载状态不完整时提前拒绝；缺包的自动安装及新版完整介质仍未因此完成。旧3.1.7.11介质保持原字节。</p>
 <h3 id="12-8-中断安装重试时-旧-mysql-服务仍在自动重启">12.8 中断安装重试时，旧 MySQL 服务仍在自动重启<a class="heading-anchor" href="#12-8-中断安装重试时-旧-mysql-服务仍在自动重启" aria-label="Link to 12.8 中断安装重试时，旧 MySQL 服务仍在自动重启">#</a></h3>
 <p><code>clusterguard-mysql-&lt;端口&gt;.service</code> 由安装助手生成在 <code>/etc/systemd/system/</code>，不属于 RPM 的文件清单，卸载 RPM 不会移除它。旧单元的 <code>Restart=on-failure</code> 会在安装重试时竞争运行目录。</p>
 <p>MySQL 安装助手在替换软件或隔离已证实初始化失败的目录前，核对本端口单元的描述、执行路径、实际加载路径、无覆盖配置，以及现存配置的目标数据目录；然后执行 <code>systemctl disable --now</code> 并确认单元为 <code>inactive</code>、<code>MainPID=0</code>，再继续安装。停止失败、单元被改写或带 drop-in、数据目录不匹配均中止。成功初始化后才重新 <code>enable --now</code>；中断时保留旧单元和诊断资料，单元可能保持停用，复用原站点状态重试。仅有受管标记或 <code>.installing</code> 不再足以允许清理部分数据，详见下一节的阶段记录保护。</p>
