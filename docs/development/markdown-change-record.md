@@ -23,6 +23,9 @@ recorded-through: 73ff4a3
 
 | 日期 | 文件 | 变更 | 说明 |
 | --- | --- | --- | --- |
+| 2026-11-11 | `docs/development/offline-3.1.7.12-2026-11-11.md` | A | 记录新包12/RPM116、旧码/原件对照、SSH与Chrony修复范围及SOURCE/制品/实际载荷验证计划。 |
+| 2026-11-11 | `docs/zh-CN/release-3.1.7.12.md` | A | 中文完整包12说明：IP更正后补信任、准确报错、Chrony预检、续装参数与未执行现场边界。 |
+| 2026-11-11 | `docs/en-US/release-3.1.7.12.md` | A | 对应英文修复/完整介质说明，保留原包不变、依赖前提和已知未修缺陷。 |
 | 2026-11-11 | `docs/development/clock-prerequisites-2026-11-11.md` | A | 记录Chrony/更正IP后的SSH缓存缺陷、旧码对照、用户IP纠正、只读时钟检查与只追加新pin的验证范围，保留现场及新介质未执行项。 |
 | 2026-11-11 | `docs/zh-CN/offline-rpm-install.md` | M | 补充旧包IP更正后专用known_hosts的人工指纹确认续装、Chrony准确节点诊断及源码检查与旧介质的区别。 |
 | 2026-11-11 | `docs/en-US/offline-rpm-install.md` | M | 同步英文SSH信任缓存、Chrony前置条件和未修改3.1.7.11原件的排障说明。 |
